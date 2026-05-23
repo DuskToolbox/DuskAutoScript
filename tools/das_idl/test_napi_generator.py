@@ -126,6 +126,14 @@ def _function(doc, name):
     raise AssertionError(f"missing module function {name}")
 
 
+def _cpp_function_block(cpp, function_name):
+    start = cpp.index(f"Napi::Value {function_name}(")
+    next_start = cpp.find("\nNapi::Value ", start + 1)
+    if next_start == -1:
+        return cpp[start:]
+    return cpp[start:next_start]
+
+
 class TestNapiGenerator(unittest.TestCase):
     def test_napi_artifacts_share_export_names(self):
         artifacts = generate_napi_artifacts(
@@ -546,6 +554,25 @@ class TestNapiGenerator(unittest.TestCase):
             "IDasBinaryBufferWrapper::WrapAdopted(env, std::move(pp_out_buffer_owned))",
             artifacts.cpp,
         )
+
+    def test_napi_phase74_binary_buffer_methods_do_not_return_generic_wrappers(self):
+        artifacts = generate_napi_artifacts(
+            _phase74_contract_doc(),
+            package_name="das-core",
+            addon_name="das_core_napi",
+        )
+
+        for function_name in (
+            "IDasImage_getBinaryBuffer",
+            "IDasMemory_getMutableView",
+            "IDasMemory_getViewAndStatus",
+        ):
+            with self.subTest(function_name=function_name):
+                block = _cpp_function_block(artifacts.cpp, function_name)
+                self.assertIn("ConvertIDasBinaryBufferToBuffer", block)
+                self.assertIn("BinaryBufferOwnershipMode::AdoptOwned", block)
+                self.assertNotIn("IDasBinaryBufferWrapper::WrapAdopted", block)
+                self.assertNotIn("Napi::External", block)
 
     def test_napi_phase74_dts_declares_buffer_without_package_workflow(self):
         artifacts = generate_napi_artifacts(
