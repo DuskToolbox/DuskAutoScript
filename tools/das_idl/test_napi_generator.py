@@ -344,6 +344,38 @@ class TestNapiGenerator(unittest.TestCase):
             with self.subTest(pattern=pattern):
                 self.assertNotIn(pattern, combined)
 
+    def test_napi_host_bootstrap_export_and_loader_contract(self):
+        artifacts = generate_napi_artifacts(
+            _phase74_contract_doc(),
+            package_name="das-core",
+            addon_name="das_core_napi",
+        )
+
+        self.assertIn(
+            '#include "das/Core/IPC/Host/HostCommandHandlers.h"',
+            artifacts.cpp,
+        )
+        self.assertIn(
+            "DAS::Core::IPC::Host::CreateIpcContext(config)",
+            artifacts.cpp,
+        )
+        self.assertIn("RegisterHostCommandHandlers", artifacts.cpp)
+        self.assertIn("Napi::Value startHostIpc", artifacts.cpp)
+        self.assertIn('exports.Set("startHostIpc"', artifacts.cpp)
+        self.assertIn("MinimalNodePluginPackage", artifacts.cpp)
+        self.assertIn('plugin_language != "Node"', artifacts.cpp)
+        self.assertIn("DAS_IID_PLUGIN_PACKAGE", artifacts.cpp)
+        self.assertIn("DAS_IID_BASE", artifacts.cpp)
+        self.assertIn("on_before_shutdown", artifacts.cpp)
+
+        self.assertIn("export interface StartHostIpcOptions", artifacts.dts)
+        self.assertIn("export function startHostIpc", artifacts.dts)
+        self.assertIn("startHostIpc: native.startHostIpc", artifacts.js)
+
+        combined_public = "\n".join([artifacts.dts, artifacts.js])
+        self.assertNotIn("shutdownPlugin", combined_public)
+        self.assertNotIn("onPluginShutdown", combined_public)
+
     def test_napi_generator_public_class_matches_function_helper(self):
         doc = _sample_doc()
 
