@@ -378,8 +378,26 @@ class TestNapiGenerator(unittest.TestCase):
         self.assertIn("DAS_IID_PLUGIN_PACKAGE", artifacts.cpp)
         self.assertIn("DAS_IID_BASE", artifacts.cpp)
         self.assertIn("on_before_shutdown", artifacts.cpp)
+        self.assertIn("struct NodeManifestEntryPoint", artifacts.cpp)
+        self.assertIn("ResolveNodeManifestEntryPoint", artifacts.cpp)
+        self.assertIn('(*manifest_obj)[std::string_view("entryPoint")]', artifacts.cpp)
+        self.assertIn("package.json", artifacts.cpp)
+        self.assertIn("factory_name", artifacts.cpp)
+        self.assertIn("require_function_", artifacts.cpp)
+        self.assertIn("ExtractIDasBaseFromWrapper(env, package_value)", artifacts.cpp)
+        self.assertIn("Napi::ObjectReference", artifacts.cpp)
+        self.assertIn("package_refs_", artifacts.cpp)
+        self.assertNotIn(
+            "return LoadMinimalNodePackage(manifest_path, paths);",
+            artifacts.cpp,
+        )
+        self.assertLess(
+            artifacts.cpp.index("IDasBase* ExtractIDasBaseFromWrapper"),
+            artifacts.cpp.index("LoadNodePackageOnNodeThread"),
+        )
 
         self.assertIn("export interface StartHostIpcOptions", artifacts.dts)
+        self.assertIn("requireFunction?: (id: string) => unknown;", artifacts.dts)
         self.assertIn(
             "export function startHostIpc(options: StartHostIpcOptions): Promise<DasResult>;",
             artifacts.dts,
@@ -1084,6 +1102,7 @@ class TestNodeHostBootstrapScript(unittest.TestCase):
         self.assertIn("packageRoot: __dirname", text)
         self.assertIn("wrapperPath: path.join(__dirname, 'das_core_napi_export.js')", text)
         self.assertIn("addonPath: path.join(__dirname, 'das_core_napi.node')", text)
+        self.assertIn("requireFunction: require", text)
         self.assertNotIn("shutdownPlugin", text)
         self.assertNotIn("onPluginShutdown", text)
 
@@ -1148,6 +1167,9 @@ module.exports = {
     }
     if (options.addonPath !== path.join(__dirname, 'das_core_napi.node')) {
       throw new Error(`unexpected addonPath: ${options.addonPath}`);
+    }
+    if (typeof options.requireFunction !== 'function') {
+      throw new Error('unexpected requireFunction');
     }
     return 0;
   },

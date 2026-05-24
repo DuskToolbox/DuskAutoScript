@@ -220,10 +220,19 @@ class TestNapiBatchConfig(unittest.TestCase):
             self.assertTrue(dts.exists())
             self.assertTrue(js.exists())
             self.assertTrue(host_script.exists())
-            self.assertIn("NODE_API_MODULE(das_core_napi, Init)", cpp.read_text(encoding="utf-8"))
-            self.assertIn("// Package: das-core", dts.read_text(encoding="utf-8"))
+            cpp_text = cpp.read_text(encoding="utf-8")
+            dts_text = dts.read_text(encoding="utf-8")
+            host_text = host_script.read_text(encoding="utf-8")
+            self.assertIn("NODE_API_MODULE(das_core_napi, Init)", cpp_text)
+            self.assertIn("ResolveNodeManifestEntryPoint", cpp_text)
+            self.assertIn('std::string_view("entryPoint")', cpp_text)
+            self.assertIn("ExtractIDasBaseFromWrapper", cpp_text)
+            self.assertIn("Napi::ObjectReference", cpp_text)
+            self.assertIn("// Package: das-core", dts_text)
+            self.assertIn("requireFunction?: (id: string) => unknown;", dts_text)
             self.assertIn("das_core_napi.node", js.read_text(encoding="utf-8"))
-            self.assertIn("--dry-run-parse", host_script.read_text(encoding="utf-8"))
+            self.assertIn("--dry-run-parse", host_text)
+            self.assertIn("requireFunction: require", host_text)
 
     def test_batch_execution_rejects_incomplete_node_reduce_config(self):
         with tempfile.TemporaryDirectory() as temp_dir:
