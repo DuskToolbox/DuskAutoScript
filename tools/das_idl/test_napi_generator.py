@@ -363,6 +363,16 @@ class TestNapiGenerator(unittest.TestCase):
         self.assertIn("RegisterHostCommandHandlers", artifacts.cpp)
         self.assertIn("Napi::Value startHostIpc", artifacts.cpp)
         self.assertIn('exports.Set("startHostIpc"', artifacts.cpp)
+        self.assertIn("class NodeHostIpcWorker final : public Napi::AsyncWorker", artifacts.cpp)
+        self.assertIn("Napi::Promise::Deferred::New(env)", artifacts.cpp)
+        self.assertIn("worker->Queue()", artifacts.cpp)
+        self.assertIn("return deferred.Promise()", artifacts.cpp)
+        self.assertIn("ctx_->Run()", artifacts.cpp)
+        self.assertNotIn(
+            "const DasResult run_result = ctx->Run();\n"
+            "    return Napi::Number::New(env, static_cast<double>(run_result));",
+            artifacts.cpp,
+        )
         self.assertIn("MinimalNodePluginPackage", artifacts.cpp)
         self.assertIn('plugin_language != "Node"', artifacts.cpp)
         self.assertIn("DAS_IID_PLUGIN_PACKAGE", artifacts.cpp)
@@ -370,7 +380,10 @@ class TestNapiGenerator(unittest.TestCase):
         self.assertIn("on_before_shutdown", artifacts.cpp)
 
         self.assertIn("export interface StartHostIpcOptions", artifacts.dts)
-        self.assertIn("export function startHostIpc", artifacts.dts)
+        self.assertIn(
+            "export function startHostIpc(options: StartHostIpcOptions): Promise<DasResult>;",
+            artifacts.dts,
+        )
         self.assertIn("startHostIpc: native.startHostIpc", artifacts.js)
 
         combined_public = "\n".join([artifacts.dts, artifacts.js])
@@ -1066,6 +1079,8 @@ class TestNodeHostBootstrapScript(unittest.TestCase):
         self.assertIn("--main-pid", text)
         self.assertIn("--connect-url", text)
         self.assertIn("startHostIpc", text)
+        self.assertIn("async function main", text)
+        self.assertIn("await das.startHostIpc", text)
         self.assertIn("packageRoot: __dirname", text)
         self.assertIn("wrapperPath: path.join(__dirname, 'das_core_napi_export.js')", text)
         self.assertIn("addonPath: path.join(__dirname, 'das_core_napi.node')", text)
@@ -1086,6 +1101,30 @@ throw new Error('native wrapper must not be loaded during dry-run parse');
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_non_dry_run_awaits_host_ipc_result(self):
+        wrapper_text = """
+'use strict';
+
+module.exports = {
+  startHostIpc() {
+    return {
+      then(resolve) {
+        process.stdout.write('awaited-host-ipc');
+        resolve(0);
+      },
+    };
+  },
+};
+"""
+        result = self._run_script_package(
+            wrapper_text,
+            "--main-pid",
+            "12345",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("awaited-host-ipc", result.stdout)
 
     def test_non_dry_run_passes_package_relative_bootstrap_paths(self):
         wrapper_text = """
