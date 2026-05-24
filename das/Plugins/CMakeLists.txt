@@ -38,6 +38,11 @@ if(DAS_BUILD_TEST)
     if(EXPORT_LUA)
         add_subdirectory(LuaTestPlugin)
     endif()
+
+    # Node 测试插件（仅在启用 Node 导出时构建）
+    if(EXPORT_NODE)
+        add_subdirectory(NodeTestPlugin)
+    endif()
 endif()
 
 # IpcTestPlugin1 - IDasTouch Mock for IPC testing
