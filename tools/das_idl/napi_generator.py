@@ -2314,8 +2314,8 @@ Napi::Value startHostIpc(const Napi::CallbackInfo& info) {
                 f"{indent}}}",
                 f"{indent}const std::string {storage_name} = {value_expr}.As<Napi::String>().Utf8Value();",
                 f"{indent}IDasReadOnlyString* {created_name} = nullptr;",
-                f"{indent}const DasResult {created_name}_result = CreateIDasReadOnlyStringFromUtf8(",
-                f"{indent}    {storage_name}.c_str(), &{created_name});",
+                f"{indent}const DasResult {created_name}_result = CreateIDasReadOnlyStringFromUtf8WithLength(",
+                f"{indent}    {storage_name}.data(), {storage_name}.size(), &{created_name});",
                 f"{indent}if ({created_name}_result < 0 || {created_name} == nullptr) {{",
                 f'{indent}    LogDirectorError("{method_label}", "failed to create IDasReadOnlyString callback return");',
                 f"{indent}    return kNapiDirectorJavaScriptError;",
@@ -3041,9 +3041,11 @@ Napi::Value startHostIpc(const Napi::CallbackInfo& info) {
             )
             lines.append(f"    IDasReadOnlyString* {name}_value = nullptr;")
             lines.append(
-                f"    const DasResult {name}_create_result = CreateIDasReadOnlyStringFromUtf8("
+                f"    const DasResult {name}_create_result = CreateIDasReadOnlyStringFromUtf8WithLength("
             )
-            lines.append(f"        {name}_storage.c_str(), &{name}_value);")
+            lines.append(
+                f"        {name}_storage.data(), {name}_storage.size(), &{name}_value);"
+            )
             lines.append(
                 f"    if ({name}_create_result < 0 || {name}_value == nullptr) {{"
             )

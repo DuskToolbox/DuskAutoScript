@@ -615,6 +615,14 @@ class TestNapiGenerator(unittest.TestCase):
         self.assertIn("p_rect_value.x", artifacts.cpp)
         self.assertIn("DasColorRange p_range_value{};", artifacts.cpp)
         self.assertIn("p_range_value.lower.c1", artifacts.cpp)
+        self.assertIn(
+            "const DasResult p_name_create_result = CreateIDasReadOnlyStringFromUtf8WithLength(",
+            artifacts.cpp,
+        )
+        self.assertIn(
+            "p_name_storage.data(), p_name_storage.size(), &p_name_value);",
+            artifacts.cpp,
+        )
         self.assertIn("const DasResult p_name_utf8_result = p_name->GetUtf8(&p_name_utf8);", artifacts.cpp)
         self.assertIn("UnwrapAssignableIDasComponentInterface(env, info[1])", artifacts.cpp)
         self.assertIn(
@@ -993,6 +1001,14 @@ class TestNapiGenerator(unittest.TestCase):
         self.assertIn("DasResult Setscore(double value) override", property_director)
         self.assertIn("DasResult Gettitle(IDasReadOnlyString** p_out) override", property_director)
         self.assertIn("DasResult Settitle(IDasReadOnlyString* value) override", property_director)
+        self.assertIn(
+            "const DasResult p_out_created_result = CreateIDasReadOnlyStringFromUtf8WithLength(",
+            property_director,
+        )
+        self.assertIn(
+            "p_out_string.data(), p_out_string.size(), &p_out_created);",
+            property_director,
+        )
 
     def test_napi_phase74_director_dispatch_is_lazy_and_lower_camel(self):
         artifacts = generate_napi_artifacts(
