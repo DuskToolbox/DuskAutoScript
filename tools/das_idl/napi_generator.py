@@ -919,77 +919,6 @@ struct NodePackageLoadResult {
     DAS::DasPtr<IDasBase> package;
 };
 
-class MinimalNodePluginPackage final
-    : public Das::PluginInterface::IDasPluginPackage {
-public:
-    explicit MinimalNodePluginPackage(NodeHostBootstrapPaths paths)
-        : paths_(std::move(paths)) {}
-
-    uint32_t AddRef() override {
-        return ref_count_.fetch_add(1, std::memory_order_relaxed) + 1;
-    }
-
-    uint32_t Release() override {
-        const uint32_t count =
-            ref_count_.fetch_sub(1, std::memory_order_acq_rel) - 1;
-        if (count == 0) {
-            delete this;
-        }
-        return count;
-    }
-
-    DasResult QueryInterface(const DasGuid& iid, void** pp_object) override {
-        if (pp_object == nullptr) {
-            return DAS_E_INVALID_POINTER;
-        }
-        if (iid == DAS_IID_PLUGIN_PACKAGE) {
-            *pp_object = static_cast<Das::PluginInterface::IDasPluginPackage*>(this);
-            AddRef();
-            return DAS_S_OK;
-        }
-        if (iid == DAS_IID_BASE) {
-            *pp_object = static_cast<IDasBase*>(this);
-            AddRef();
-            return DAS_S_OK;
-        }
-        *pp_object = nullptr;
-        return DAS_E_NO_INTERFACE;
-    }
-
-    DasResult EnumFeature(
-        uint64_t index,
-        Das::PluginInterface::DasPluginFeature* p_out_feature) override {
-        (void)index;
-        if (p_out_feature == nullptr) {
-            return DAS_E_INVALID_POINTER;
-        }
-        return DAS_E_OUT_OF_RANGE;
-    }
-
-    DasResult CreateFeatureInterface(
-        uint64_t index,
-        IDasBase** pp_out_interface) override {
-        (void)index;
-        if (pp_out_interface == nullptr) {
-            return DAS_E_INVALID_POINTER;
-        }
-        *pp_out_interface = nullptr;
-        return DAS_E_OUT_OF_RANGE;
-    }
-
-    DasResult CanUnloadNow(bool* canUnloadNow) override {
-        if (canUnloadNow == nullptr) {
-            return DAS_E_INVALID_POINTER;
-        }
-        *canUnloadNow = true;
-        return DAS_S_OK;
-    }
-
-private:
-    std::atomic<uint32_t> ref_count_{1};
-    NodeHostBootstrapPaths paths_;
-};
-
 NodePackageLoadResult MakeNodePackageLoadFailure(DasResult result) {
     NodePackageLoadResult out{};
     out.result = result < 0 ? result : DAS_E_IPC_PLUGIN_LOAD_FAILED;
@@ -1002,6 +931,34 @@ NodePackageLoadResult MakeNodePackageLoadSuccess(
     out.result = DAS_S_OK;
     out.package = std::move(package);
     return out;
+}
+
+NodePackageLoadResult LogNodePackageLoadFailure(
+    const std::filesystem::path& manifest_path,
+    const char* message,
+    DasResult result = DAS_E_IPC_PLUGIN_LOAD_FAILED) {
+    const std::string log_message =
+        std::string{"[DAS NodeHost] package load failed for manifest "}
+        + manifest_path.string()
+        + ": "
+        + (message ? message : "unknown error");
+    DAS_LOG_ERROR(log_message.c_str());
+    return MakeNodePackageLoadFailure(result);
+}
+
+void LogNodePackageJavaScriptStack(
+    const char* phase,
+    const Napi::Error& error) {
+    Napi::Value stack = error.Value().As<Napi::Object>().Get("stack");
+    if (stack.IsString()) {
+        const std::string stack_text = stack.As<Napi::String>().Utf8Value();
+        const std::string log_message =
+            std::string{"[DAS NodeHost] "}
+            + (phase ? phase : "package load")
+            + " stack: "
+            + stack_text;
+        DAS_LOG_ERROR(log_message.c_str());
+    }
 }
 
 NodePackageLoadResult MakeNodePackageLoadResult(
@@ -1142,44 +1099,6 @@ NodeHostBootstrapPaths ReadNodeHostBootstrapPaths(
     return paths;
 }
 
-DAS::Utils::Expected<DAS::DasPtr<IDasBase>> LoadMinimalNodePackage(
-    const std::filesystem::path& manifest_path,
-    NodeHostBootstrapPaths paths) {
-    std::ifstream manifest_file(manifest_path);
-    if (!manifest_file.is_open()) {
-        return tl::make_unexpected(DAS_E_IPC_PLUGIN_LOAD_FAILED);
-    }
-
-    std::string manifest_content(
-        (std::istreambuf_iterator<char>(manifest_file)),
-        std::istreambuf_iterator<char>());
-    auto manifest_json_opt = Das::Utils::ParseYyjsonFromString(manifest_content);
-    if (!manifest_json_opt) {
-        return tl::make_unexpected(DAS_E_IPC_PLUGIN_LOAD_FAILED);
-    }
-    yyjson::value manifest_json = std::move(*manifest_json_opt);
-    auto manifest_obj = manifest_json.as_object();
-    if (!manifest_obj) {
-        return tl::make_unexpected(DAS_E_IPC_PLUGIN_LOAD_FAILED);
-    }
-
-    auto language_value = (*manifest_obj)[std::string_view("language")];
-    auto language_str = language_value.as_string();
-    if (!language_str) {
-        return tl::make_unexpected(DAS_E_IPC_PLUGIN_LOAD_FAILED);
-    }
-    const std::string plugin_language(*language_str);
-    if (plugin_language != "Node") {
-        return tl::make_unexpected(DAS_E_IPC_PLUGIN_LOAD_FAILED);
-    }
-
-    if (paths.package_root.empty()) {
-        paths.package_root = manifest_path.parent_path();
-    }
-    return DAS::DasPtr<IDasBase>::Attach(
-        static_cast<IDasBase*>(new MinimalNodePluginPackage(std::move(paths))));
-}
-
 class NodeHostState;
 
 struct NodePackageLoadRequest {
@@ -1272,7 +1191,9 @@ public:
         try {
             std::ifstream manifest_file(manifest_path);
             if (!manifest_file.is_open()) {
-                return MakeNodePackageLoadFailure(DAS_E_IPC_PLUGIN_LOAD_FAILED);
+                return LogNodePackageLoadFailure(
+                    manifest_path,
+                    "failed to open manifest");
             }
 
             std::string manifest_content(
@@ -1281,18 +1202,24 @@ public:
             auto manifest_json_opt =
                 Das::Utils::ParseYyjsonFromString(manifest_content);
             if (!manifest_json_opt) {
-                return MakeNodePackageLoadFailure(DAS_E_IPC_PLUGIN_LOAD_FAILED);
+                return LogNodePackageLoadFailure(
+                    manifest_path,
+                    "failed to parse manifest JSON");
             }
             yyjson::value manifest_json = std::move(*manifest_json_opt);
             auto manifest_obj = manifest_json.as_object();
             if (!manifest_obj) {
-                return MakeNodePackageLoadFailure(DAS_E_IPC_PLUGIN_LOAD_FAILED);
+                return LogNodePackageLoadFailure(
+                    manifest_path,
+                    "manifest root must be a JSON object");
             }
 
             auto language_value = (*manifest_obj)[std::string_view("language")];
             auto language_str = language_value.as_string();
             if (!language_str || std::string(*language_str) != "Node") {
-                return MakeNodePackageLoadFailure(DAS_E_IPC_PLUGIN_LOAD_FAILED);
+                return LogNodePackageLoadFailure(
+                    manifest_path,
+                    "manifest language must be Node");
             }
 
             std::filesystem::path package_root = paths_.package_root.empty()
@@ -1301,14 +1228,9 @@ public:
             auto entry_point_value = (*manifest_obj)[std::string_view("entryPoint")];
             auto entry_point_str = entry_point_value.as_string();
             if (!entry_point_str) {
-                auto legacy_entry_value = (*manifest_obj)[std::string_view("entry")];
-                if (legacy_entry_value.as_string()) {
-                    auto legacy_paths = paths_;
-                    legacy_paths.package_root = package_root;
-                    return MakeNodePackageLoadResult(
-                        LoadMinimalNodePackage(manifest_path, legacy_paths));
-                }
-                return MakeNodePackageLoadFailure(DAS_E_IPC_PLUGIN_LOAD_FAILED);
+                return LogNodePackageLoadFailure(
+                    manifest_path,
+                    "Node manifest requires string entryPoint");
             }
 
             auto entry = ResolveNodeManifestEntryPoint(
@@ -1316,19 +1238,26 @@ public:
                 package_root,
                 std::string(*entry_point_str));
             if (!entry) {
-                return MakeNodePackageLoadFailure(entry.error());
+                return LogNodePackageLoadFailure(
+                    manifest_path,
+                    "invalid Node manifest entryPoint",
+                    entry.error());
             }
 
             Napi::HandleScope scope(env);
             Napi::Value module_value = require_function_.Value().Call(
                 {Napi::String::New(env, entry->module_path.string())});
             if (!module_value.IsObject()) {
-                return MakeNodePackageLoadFailure(DAS_E_IPC_PLUGIN_LOAD_FAILED);
+                return LogNodePackageLoadFailure(
+                    manifest_path,
+                    "entryPoint module did not export an object");
             }
             Napi::Object module_object = module_value.As<Napi::Object>();
             Napi::Value factory_value = module_object.Get(entry->factory_name);
             if (!factory_value.IsFunction()) {
-                return MakeNodePackageLoadFailure(DAS_E_IPC_PLUGIN_LOAD_FAILED);
+                return LogNodePackageLoadFailure(
+                    manifest_path,
+                    "entryPoint factory export is not a function");
             }
 
             Napi::Object factory_context = Napi::Object::New(env);
@@ -1354,7 +1283,9 @@ public:
                     DAS_IID_PLUGIN_PACKAGE,
                     plugin_package.PutVoid());
             if (qi_result < 0 || !plugin_package) {
-                return MakeNodePackageLoadFailure(DAS_E_IPC_PLUGIN_LOAD_FAILED);
+                return LogNodePackageLoadFailure(
+                    manifest_path,
+                    "package factory result does not implement IDasPluginPackage");
             }
 
             DAS::DasPtr<IDasBase> package_as_base;
@@ -1362,7 +1293,9 @@ public:
                 DAS_IID_BASE,
                 package_as_base.PutVoid());
             if (qi_result < 0 || !package_as_base) {
-                return MakeNodePackageLoadFailure(DAS_E_IPC_PLUGIN_LOAD_FAILED);
+                return LogNodePackageLoadFailure(
+                    manifest_path,
+                    "package factory result does not expose IDasBase");
             }
 
             Napi::ObjectReference package_ref =
@@ -1374,19 +1307,28 @@ public:
             }
             return MakeNodePackageLoadSuccess(std::move(package_as_base));
         } catch (const Napi::Error& error) {
-            std::fprintf(
-                stderr,
-                "[DAS NodeHost] package factory failed: %s\n",
-                error.Message().c_str());
+            const std::string log_message =
+                std::string{"[DAS NodeHost] package factory failed for manifest "}
+                + manifest_path.string()
+                + ": "
+                + error.Message();
+            DAS_LOG_ERROR(log_message.c_str());
+            LogNodePackageJavaScriptStack("package factory", error);
             return MakeNodePackageLoadFailure(DAS_E_IPC_PLUGIN_LOAD_FAILED);
         } catch (const std::exception& error) {
-            std::fprintf(
-                stderr,
-                "[DAS NodeHost] package load failed: %s\n",
-                error.what());
+            const std::string log_message =
+                std::string{"[DAS NodeHost] package load failed for manifest "}
+                + manifest_path.string()
+                + ": "
+                + error.what();
+            DAS_LOG_ERROR(log_message.c_str());
             return MakeNodePackageLoadFailure(DAS_E_IPC_PLUGIN_LOAD_FAILED);
         } catch (...) {
-            std::fprintf(stderr, "[DAS NodeHost] package load failed\n");
+            const std::string log_message =
+                std::string{"[DAS NodeHost] package load failed for manifest "}
+                + manifest_path.string()
+                + ": unknown error";
+            DAS_LOG_ERROR(log_message.c_str());
             return MakeNodePackageLoadFailure(DAS_E_IPC_PLUGIN_LOAD_FAILED);
         }
     }

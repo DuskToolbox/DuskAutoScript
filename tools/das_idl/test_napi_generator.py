@@ -388,8 +388,10 @@ class TestNapiGenerator(unittest.TestCase):
             "    return Napi::Number::New(env, static_cast<double>(run_result));",
             artifacts.cpp,
         )
-        self.assertIn("MinimalNodePluginPackage", artifacts.cpp)
-        self.assertIn('plugin_language != "Node"', artifacts.cpp)
+        self.assertNotIn("MinimalNodePluginPackage", artifacts.cpp)
+        self.assertNotIn("LoadMinimalNodePackage", artifacts.cpp)
+        self.assertNotIn('std::string_view("entry")', artifacts.cpp)
+        self.assertIn('std::string(*language_str) != "Node"', artifacts.cpp)
         self.assertIn("DAS_IID_PLUGIN_PACKAGE", artifacts.cpp)
         self.assertIn("DAS_IID_BASE", artifacts.cpp)
         self.assertIn("on_before_shutdown", artifacts.cpp)
@@ -405,8 +407,31 @@ class TestNapiGenerator(unittest.TestCase):
         self.assertIn("ExtractIDasBaseFromWrapper(env, package_value)", artifacts.cpp)
         self.assertIn("Napi::ObjectReference", artifacts.cpp)
         self.assertIn("package_refs_", artifacts.cpp)
-        self.assertNotIn(
-            "return LoadMinimalNodePackage(manifest_path, paths);",
+        self.assertIn("LogNodePackageLoadFailure", artifacts.cpp)
+        self.assertIn("LogNodePackageJavaScriptStack", artifacts.cpp)
+        self.assertIn("DAS_LOG_ERROR(log_message.c_str())", artifacts.cpp)
+        self.assertIn("Node manifest requires string entryPoint", artifacts.cpp)
+        self.assertIn("invalid Node manifest entryPoint", artifacts.cpp)
+        self.assertIn(
+            'auto entry_point_value = (*manifest_obj)[std::string_view("entryPoint")];',
+            artifacts.cpp,
+        )
+        self.assertIn(
+            "auto entry_point_str = entry_point_value.as_string();\n"
+            "            if (!entry_point_str) {\n"
+            "                return LogNodePackageLoadFailure(\n"
+            "                    manifest_path,\n"
+            "                    \"Node manifest requires string entryPoint\");\n"
+            "            }",
+            artifacts.cpp,
+        )
+        self.assertIn(
+            "if (!entry) {\n"
+            "                return LogNodePackageLoadFailure(\n"
+            "                    manifest_path,\n"
+            "                    \"invalid Node manifest entryPoint\",\n"
+            "                    entry.error());\n"
+            "            }",
             artifacts.cpp,
         )
         self.assertLess(
@@ -1058,6 +1083,7 @@ class TestNapiGenerator(unittest.TestCase):
         self.assertIn("return kNapiDirectorJavaScriptError;", director_base)
         self.assertIn("void LogJavaScriptException", director_base)
         self.assertIn("[DAS NapiDirector]", director_base)
+        self.assertIn("std::fprintf", director_base)
         self.assertIn('error.Value().As<Napi::Object>().Get("stack")', director_base)
         self.assertIn("finalizer", director_base)
         self.assertNotIn("callback.Call", _cpp_class_block(artifacts.cpp, "DasInterfaceWrapperBase"))
