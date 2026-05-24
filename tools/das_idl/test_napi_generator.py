@@ -157,6 +157,21 @@ def _cpp_function_block(cpp, function_name):
     return cpp[start:next_start]
 
 
+def _cpp_free_function_block(cpp, function_name):
+    start = cpp.index(function_name)
+    brace = cpp.index("{", start)
+    depth = 0
+    for index in range(brace, len(cpp)):
+        char = cpp[index]
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return cpp[start:index + 1]
+    raise AssertionError(f"unterminated function {function_name}")
+
+
 def _cpp_class_block(cpp, class_name):
     start = cpp.index(f"class {class_name}")
     next_start = cpp.find("\nclass ", start + 1)
@@ -537,7 +552,7 @@ class TestNapiGenerator(unittest.TestCase):
         self.assertIn("DasColorRange p_range_value{};", artifacts.cpp)
         self.assertIn("p_range_value.lower.c1", artifacts.cpp)
         self.assertIn("const DasResult p_name_utf8_result = p_name->GetUtf8(&p_name_utf8);", artifacts.cpp)
-        self.assertIn("IDasComponentWrapper::UnwrapHandle(env, info[1])", artifacts.cpp)
+        self.assertIn("UnwrapAssignableIDasComponentInterface(env, info[1])", artifacts.cpp)
         self.assertIn(
             "const DasResult result = native->Clip(&p_rect_value, &pp_out_image_value);",
             artifacts.cpp,
@@ -758,6 +773,98 @@ class TestNapiGenerator(unittest.TestCase):
             artifacts.cpp,
         )
         self.assertIn("IDasComponentWrapper::WrapAdopted", artifacts.cpp)
+
+    def test_napi_interface_out_returns_accept_derived_wrappers_without_qi(self):
+        doc = parse_idl(
+            """
+            errorcode DasResult {
+                DAS_S_OK = 0,
+            }
+
+            [uuid("00000000-0000-0000-0000-000000000021")]
+            interface IDasFactory : IDasBase {
+                DasResult Create([out] IDasBase** pp_out_object);
+            }
+
+            [uuid("00000000-0000-0000-0000-000000000022")]
+            interface IDasDerivedFactory : IDasFactory {
+                DasResult Derived();
+            }
+            """
+        )
+        artifacts = generate_napi_artifacts(
+            doc,
+            package_name="das-core",
+            addon_name="das_core_napi",
+        )
+
+        helper = _cpp_free_function_block(
+            artifacts.cpp,
+            "IDasBase* UnwrapAssignableIDasBaseInterface",
+        )
+        self.assertIn("ResolveInterfaceNativeObject(env, value)", helper)
+        self.assertIn("IDasBaseWrapper::Constructor().Value()", helper)
+        self.assertIn("IDasFactoryWrapper::Constructor().Value()", helper)
+        self.assertIn("IDasDerivedFactoryWrapper::Constructor().Value()", helper)
+        self.assertIn(
+            "return static_cast<IDasBase*>(IDasDerivedFactoryWrapper::Unwrap(native_object)->EnsureAlive(env));",
+            helper,
+        )
+        self.assertNotIn("QueryInterface", helper)
+
+        director = _cpp_class_block(artifacts.cpp, "INapiDasFactory")
+        self.assertIn(
+            "auto* pp_out_object_native = UnwrapAssignableIDasBaseInterface(env, js_result);",
+            director,
+        )
+        self.assertIn("pp_out_object_native->AddRef();", director)
+        self.assertNotIn("IDasBaseWrapper::UnwrapHandle(env, js_result)", director)
+
+    def test_napi_interface_inputs_accept_derived_wrappers_without_qi(self):
+        doc = parse_idl(
+            """
+            errorcode DasResult {
+                DAS_S_OK = 0,
+            }
+
+            [uuid("00000000-0000-0000-0000-000000000031")]
+            interface IDasConsumer : IDasBase {
+                DasResult Use(IDasBase* p_object);
+            }
+
+            [uuid("00000000-0000-0000-0000-000000000032")]
+            interface IDasDerivedConsumer : IDasConsumer {
+                DasResult Derived();
+            }
+            """
+        )
+        artifacts = generate_napi_artifacts(
+            doc,
+            package_name="das-core",
+            addon_name="das_core_napi",
+        )
+
+        method = _cpp_function_block(artifacts.cpp, "IDasConsumer_use")
+        self.assertIn(
+            "IDasBase* p_object_value = UnwrapAssignableIDasBaseInterface(env, info[1]);",
+            method,
+        )
+        self.assertNotIn("IDasBaseWrapper::UnwrapHandle(env, info[1])", method)
+
+        helper = _cpp_free_function_block(
+            artifacts.cpp,
+            "IDasBase* UnwrapAssignableIDasBaseInterface",
+        )
+        resolver = _cpp_free_function_block(
+            artifacts.cpp,
+            "Napi::Object ResolveInterfaceNativeObject",
+        )
+        self.assertIn('Napi::Value native_value = object.Get("_native");', resolver)
+        self.assertIn(
+            "return static_cast<IDasBase*>(IDasDerivedConsumerWrapper::Unwrap(native_object)->EnsureAlive(env));",
+            helper,
+        )
+        self.assertNotIn("QueryInterface", helper)
 
     def test_napi_phase74_js_declares_base_interfaces_before_derived(self):
         doc = parse_idl(

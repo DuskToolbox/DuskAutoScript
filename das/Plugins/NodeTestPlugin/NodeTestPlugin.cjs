@@ -16,13 +16,6 @@ const OUT_OF_RANGE = DasResult.DAS_E_OUT_OF_RANGE;
 const FEATURE_COMPONENT_FACTORY =
   DasPluginFeature.DAS_PLUGIN_FEATURE_COMPONENT_FACTORY;
 
-function nativeHandle(value) {
-  if (!value || typeof value !== "object" || !value._native) {
-    throw new Error("DAS wrapper with native handle expected");
-  }
-  return value._native;
-}
-
 function toIndex(index) {
   return Number(index);
 }
@@ -94,14 +87,14 @@ function makeVariantVector(items = []) {
       if (item.type !== DasVariantType.DAS_VARIANT_TYPE_COMPONENT) {
         throw new Error("NodeTestPlugin variant is not component");
       }
-      return nativeHandle(item.value);
+      return item.value;
     },
     getBase(index) {
       const item = at(index);
       if (item.type !== DasVariantType.DAS_VARIANT_TYPE_BASE) {
         throw new Error("NodeTestPlugin variant is not base");
       }
-      return nativeHandle(item.value);
+      return item.value;
     },
     setInt(index, value) {
       return set(index, DasVariantType.DAS_VARIANT_TYPE_INT, BigInt(value));
@@ -184,7 +177,7 @@ function makeLifecycleDirector() {
     },
     dispatch(functionName) {
       if (functionName === "getSessionInfo") {
-        return nativeHandle(stringVector("Node", "NodeTestPlugin", "Director"));
+        return stringVector("Node", "NodeTestPlugin", "Director");
       }
       throw new Error(`Node lifecycle director does not implement ${functionName}`);
     },
@@ -202,41 +195,39 @@ function createComponent(sessionId) {
     dispatch(functionName, args) {
       switch (functionName) {
         case "getSessionInfo":
-          return nativeHandle(
-            makeVariantVector([
-              {
-                type: DasVariantType.DAS_VARIANT_TYPE_INT,
-                value: BigInt(sessionId),
-              },
-              {
-                type: DasVariantType.DAS_VARIANT_TYPE_STRING,
-                value: "Node",
-              },
-              {
-                type: DasVariantType.DAS_VARIANT_TYPE_STRING,
-                value: "NodeTestPlugin",
-              },
-            ]),
-          );
+          return makeVariantVector([
+            {
+              type: DasVariantType.DAS_VARIANT_TYPE_INT,
+              value: BigInt(sessionId),
+            },
+            {
+              type: DasVariantType.DAS_VARIANT_TYPE_STRING,
+              value: "Node",
+            },
+            {
+              type: DasVariantType.DAS_VARIANT_TYPE_STRING,
+              value: "NodeTestPlugin",
+            },
+          ]);
         case "echo": {
           const input = readString(args, 0);
-          return nativeHandle(stringVector(`[Node] echo: ${input}`));
+          return stringVector(`[Node] echo: ${input}`);
         }
         case "compute": {
           const operation = readString(args, 0);
           const left = readInt(args, 1);
           const right = readInt(args, 2);
           if (operation === "add") {
-            return nativeHandle(intVector(left + right));
+            return intVector(left + right);
           }
           if (operation === "sub") {
-            return nativeHandle(intVector(left - right));
+            return intVector(left - right);
           }
           if (operation === "mul") {
-            return nativeHandle(intVector(left * right));
+            return intVector(left * right);
           }
           if (operation === "div" && right !== 0) {
-            return nativeHandle(intVector(Math.trunc(left / right)));
+            return intVector(Math.trunc(left / right));
           }
           throw new Error(`NodeTestPlugin compute invalid operation: ${operation}`);
         }
@@ -248,18 +239,16 @@ function createComponent(sessionId) {
           callback.dispatch("lifecycle_callback", callbackArgs);
 
           const director = makeLifecycleDirector();
-          return nativeHandle(
-            makeVariantVector([
-              {
-                type: DasVariantType.DAS_VARIANT_TYPE_STRING,
-                value: `director_created:${marker}`,
-              },
-              {
-                type: DasVariantType.DAS_VARIANT_TYPE_COMPONENT,
-                value: director,
-              },
-            ]),
-          );
+          return makeVariantVector([
+            {
+              type: DasVariantType.DAS_VARIANT_TYPE_STRING,
+              value: `director_created:${marker}`,
+            },
+            {
+              type: DasVariantType.DAS_VARIANT_TYPE_COMPONENT,
+              value: director,
+            },
+          ]);
         }
         default:
           throw new Error(`NodeTestPlugin unknown dispatch method: ${functionName}`);
@@ -280,7 +269,7 @@ function createFactory(sessionId) {
       return OK;
     },
     createInstance() {
-      return nativeHandle(createComponent(sessionId));
+      return createComponent(sessionId);
     },
   });
 }
@@ -303,14 +292,14 @@ function createPlugin() {
       if (index !== 0n) {
         throw new Error(`NodeTestPlugin feature interface out of range: ${index}`);
       }
-      return nativeHandle(createFactory(sessionId));
+      return createFactory(sessionId);
     },
     canUnloadNow() {
       return true;
     },
   });
 
-  return nativeHandle(plugin);
+  return plugin;
 }
 
 module.exports = {

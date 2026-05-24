@@ -418,6 +418,39 @@ def _interface_chain(interface: InterfaceDef, doc: IdlDocument) -> list[str]:
     return chain
 
 
+def _is_interface_assignable_to(source_name: str, target_name: str, doc: IdlDocument) -> bool:
+    if source_name == target_name:
+        return True
+    if source_name == "IDasBase":
+        return False
+    if target_name == "IDasBase":
+        return True
+
+    interfaces = _interface_by_name(doc)
+    current_name = source_name
+    visited: set[str] = set()
+    while current_name and current_name not in visited:
+        visited.add(current_name)
+        interface = interfaces.get(current_name)
+        if interface is None:
+            return False
+        base_name = interface.base_interface
+        if base_name == target_name:
+            return True
+        if not base_name or base_name == "IDasBase":
+            return False
+        current_name = base_name
+    return False
+
+
+def _assignable_interface_names(target_name: str, doc: IdlDocument) -> list[str]:
+    return [
+        source_name
+        for source_name in _wrapped_interface_names(doc)
+        if _is_interface_assignable_to(source_name, target_name, doc)
+    ]
+
+
 def _interfaces_base_first(doc: IdlDocument) -> list[InterfaceDef]:
     interfaces = _interface_by_name(doc)
     ordered: list[InterfaceDef] = []
@@ -819,6 +852,9 @@ class NapiGenerator:
         for interface_name in _wrapped_interface_names(doc):
             lines.extend(self._generate_cpp_wrapper_class(interface_name))
             lines.append("")
+
+        lines.extend(self._generate_cpp_assignable_interface_unwrap_helpers(doc))
+        lines.append("")
 
         lines.extend(self._generate_cpp_director_base(doc))
         lines.append("")
@@ -1636,6 +1672,72 @@ Napi::Value startHostIpc(const Napi::CallbackInfo& info) {
             "};",
         ]
 
+    def _generate_cpp_assignable_interface_unwrap_helpers(
+        self,
+        doc: IdlDocument,
+    ) -> list[str]:
+        lines = [
+            "Napi::Object ResolveInterfaceNativeObject(",
+            "    Napi::Env env,",
+            "    const Napi::Value& value) {",
+            "    if (!value.IsObject()) {",
+            "        throw Napi::TypeError::New(env, \"DAS interface wrapper expected\");",
+            "    }",
+            "    Napi::Object object = value.As<Napi::Object>();",
+            '    Napi::Value native_value = object.Get("_native");',
+            "    if (!native_value.IsUndefined()) {",
+            "        if (!native_value.IsObject()) {",
+            "            throw Napi::TypeError::New(env, \"DAS native wrapper handle expected\");",
+            "        }",
+            "        return native_value.As<Napi::Object>();",
+            "    }",
+            "    return object;",
+            "}",
+            "",
+        ]
+        for interface_name in _wrapped_interface_names(doc):
+            lines.extend(
+                self._generate_cpp_assignable_interface_unwrap_helper(
+                    interface_name,
+                    doc,
+                )
+            )
+            lines.append("")
+        return lines
+
+    def _generate_cpp_assignable_interface_unwrap_helper(
+        self,
+        interface_name: str,
+        doc: IdlDocument,
+    ) -> list[str]:
+        function_name = (
+            f"UnwrapAssignable{_sanitize_identifier(interface_name)}Interface"
+        )
+        lines = [
+            f"{interface_name}* {function_name}(",
+            "    Napi::Env env,",
+            "    const Napi::Value& value) {",
+            "    Napi::Object native_object = ResolveInterfaceNativeObject(env, value);",
+        ]
+        for source_name in _assignable_interface_names(interface_name, doc):
+            source_wrapper = _cpp_wrapper_name(source_name)
+            lines.extend(
+                [
+                    f"    if (native_object.InstanceOf({source_wrapper}::Constructor().Value())) {{",
+                    f"        return static_cast<{interface_name}*>({source_wrapper}::Unwrap(native_object)->EnsureAlive(env));",
+                    "    }",
+                ]
+            )
+        lines.extend(
+            [
+                "    throw Napi::TypeError::New(",
+                "        env,",
+                f'        "DAS interface wrapper assignable to {interface_name} expected");',
+                "}",
+            ]
+        )
+        return lines
+
     def _generate_cpp_director_base(self, doc: IdlDocument) -> list[str]:
         js_error = (
             "DAS_E_JAVASCRIPT_ERROR"
@@ -2270,7 +2372,7 @@ Napi::Value startHostIpc(const Napi::CallbackInfo& info) {
                 f'{indent}    LogDirectorError("{method_label}", "{label} must be an interface wrapper");',
                 f"{indent}    return kNapiDirectorJavaScriptError;",
                 f"{indent}}}",
-                f"{indent}auto* {native_name} = {_cpp_wrapper_name(interface_name)}::UnwrapHandle(env, {value_expr});",
+                f"{indent}auto* {native_name} = UnwrapAssignable{_sanitize_identifier(interface_name)}Interface(env, {value_expr});",
                 f"{indent}{native_name}->AddRef();",
                 f"{indent}{target} = {native_name};",
             ]
@@ -2431,31 +2533,14 @@ Napi::Value startHostIpc(const Napi::CallbackInfo& info) {
         raise AssertionError(f"unsupported director output category {mapped.category}")
 
     def _generate_cpp_base_extractor(self, doc: IdlDocument) -> list[str]:
-        lines = [
+        del doc
+        return [
             "IDasBase* ExtractIDasBaseFromWrapper(",
             "    Napi::Env env,",
             "    const Napi::Value& value) {",
-            "    if (!value.IsObject()) {",
-            "        throw Napi::TypeError::New(env, \"DAS interface wrapper expected\");",
-            "    }",
-            "    Napi::Object object = value.As<Napi::Object>();",
+            "    return UnwrapAssignableIDasBaseInterface(env, value);",
+            "}",
         ]
-        for interface_name in _wrapped_interface_names(doc):
-            wrapper_name = _cpp_wrapper_name(interface_name)
-            lines.extend(
-                [
-                    f"    if (object.InstanceOf({wrapper_name}::Constructor().Value())) {{",
-                    f"        return static_cast<IDasBase*>({wrapper_name}::Unwrap(object)->EnsureAlive(env));",
-                    "    }",
-                ]
-            )
-        lines.extend(
-            [
-                "    throw Napi::TypeError::New(env, \"DAS interface wrapper expected\");",
-                "}",
-            ]
-        )
-        return lines
 
     def _generate_cpp_interface_helpers(
         self,
@@ -2674,7 +2759,7 @@ Napi::Value startHostIpc(const Napi::CallbackInfo& info) {
         if param.type_info.type_kind == TypeKind.INTERFACE:
             interface_name = type_simple_name(param.type_info)
             lines = [
-                f"    {interface_name}* {name}_value = {_cpp_wrapper_name(interface_name)}::UnwrapHandle(env, info[{index}]);",
+                f"    {interface_name}* {name}_value = UnwrapAssignable{_sanitize_identifier(interface_name)}Interface(env, info[{index}]);",
             ]
             return lines, f"{name}_value"
 
