@@ -22,6 +22,8 @@ else()
 endif()
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+include(DasAgentSkillSync)
+das_sync_codex_skills()
 
 # fix missing CMAKE_ASM_MASM_COMPILE_OBJECT or CMAKE_ASM_NASM_COMPILE_OBJECT
 # NOTICE: I have modified the CMakeLists.txt in boost context, so that boost can explicitly use MASM on Windows.

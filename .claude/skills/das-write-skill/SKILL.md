@@ -1,21 +1,21 @@
 ---
 name: das-write-skill
-description: Use when creating or editing skills that must work in both OpenCode and Claude Code — covers path placement, frontmatter compatibility, and auto-injection strategies
+description: Use when creating or editing DAS project skills that must work from the Claude-compatible source layout and be consumable by OpenCode, Claude Code, and Codex
 paths:
   - ".claude/skills/**/*.md"
 ---
 
-# 跨 OpenCode + Claude Code 的 Skill 编写指南
+# DAS Project Skill 编写指南
 
 ## 概述
 
-本项目同时使用 OpenCode 和 Claude Code。编写 skill 时需要确保两个工具都能正确发现和加载。
+本项目的 skill 源文件统一使用 Claude 兼容布局。编写 skill 时，先保证 `.claude/skills` 中的源文件正确；其他 agent 的兼容发现由项目适配层处理，不要把 agent 专用路径或兼容逻辑写进单个业务 skill。
 
 ## Skill 放置路径
 
 **统一放在 `.claude/skills/<name>/SKILL.md`**。
 
-两个工具都能发现此路径：
+各工具的处理方式：
 
 | 工具 | 发现路径 | 备注 |
 |------|----------|------|
@@ -23,24 +23,27 @@ paths:
 | OpenCode | `.claude/skills/*/SKILL.md` | Claude 兼容路径 |
 | OpenCode | `.agents/skills/*/SKILL.md` | OpenCode 兼容路径 |
 | OpenCode | `.opencode/skills/*/SKILL.md` | OpenCode 专属路径 |
+| Codex | `.codex/skills/*/SKILL.md` | 由 CMake 配置阶段从 `.claude/skills` 创建项目级 symlink |
 
-**不要用** `.agents/skills/` 或 `.opencode/skills/` — Claude Code 不发现这些路径。
+**不要用** `.agents/skills/`、`.opencode/skills/` 或 `.codex/skills/` 作为项目源路径。项目源文件只放 `.claude/skills/`。
+
+Codex 适配由 `cmake/DasAgentSkillSync.cmake` 维护。默认 `DAS_SYNC_CODEX_SKILLS=ON`，目标为项目内 `.codex/skills`，可通过 `DAS_CODEX_SKILLS_DIR` 覆盖。业务 skill 不应包含 Codex 专用说明，除非该说明本身就是业务约束。
 
 ## Frontmatter 兼容性
 
-### 两个工具都识别的字段
+### 基础字段
 
-| 字段 | OpenCode | Claude Code | 说明 |
-|------|----------|-------------|------|
-| `name` | ✅ 必需 | ✅ | 必须与目录名一致 |
-| `description` | ✅ 必需 | ✅ 推荐 | OpenCode 据此匹配加载 |
-| `license` | ✅ | ✅ | 可选 |
-| `compatibility` | ✅ | ✅ | 可选 |
-| `metadata` | ✅ | ✅ | string-to-string map |
+| 字段 | OpenCode | Claude Code | Codex | 说明 |
+|------|----------|-------------|-------|------|
+| `name` | 必需 | 支持 | 支持 | 必须与目录名一致 |
+| `description` | 必需 | 推荐 | 推荐 | OpenCode / Codex 据此匹配加载 |
+| `license` | 可选 | 可选 | 可选 | 可选 |
+| `compatibility` | 可选 | 可选 | 可选 | 可选 |
+| `metadata` | 可选 | 可选 | 可选 | string-to-string map |
 
 ### 仅 Claude Code 识别的字段
 
-OpenCode 会**直接忽略**未知字段（不报错），所以 Claude Code 独有的字段可以放心写：
+OpenCode 和 Codex 会忽略不认识的字段，所以 Claude Code 独有字段可以保留在项目源 skill 中：
 
 | 字段 | 说明 |
 |------|------|
@@ -67,9 +70,9 @@ paths:
 
 匹配文件进入上下文时自动加载 skill，无需 AI 判断。
 
-### OpenCode：靠 `description` 关键词匹配（尽力而为）
+### OpenCode / Codex：靠 `description` 关键词匹配（尽力而为）
 
-OpenCode 不支持 `paths`，只能在 AI 判断 task 相关时通过 description 匹配加载。因此 `description` 中必须包含：
+OpenCode 和 Codex 对 `paths` 的自动注入能力不应作为唯一前提，必须让 `description` 自身足够可匹配。因此 `description` 中必须包含：
 
 - 涉及的目录名（如 `IPC`、`Core/IPC`）
 - 涉及的操作（如 `message header`、`session ID`）
@@ -88,7 +91,7 @@ paths:
 ```
 
 - Claude Code：`paths` 保证自动注入
-- OpenCode：`description` 关键词覆盖兜底
+- OpenCode / Codex：`description` 关键词覆盖兜底
 
 ## Skill 同步维护
 
@@ -98,8 +101,10 @@ paths:
 
 - ❌ 放在 `.opencode/skills/` — Claude Code 不发现
 - ❌ 放在 `.agents/skills/` — Claude Code 不发现
-- ✅ 放在 `.claude/skills/` — 两个工具都发现
+- ❌ 放在 `.codex/skills/` — 不是项目源路径，会绕过代码审查和同步维护
+- ✅ 放在 `.claude/skills/` — 项目唯一源路径
 - ❌ `paths` 只写给 OpenCode — OpenCode 不识别此字段
-- ✅ `paths` 写给 Claude Code + `description` 写给 OpenCode — 双重保障
+- ✅ `paths` 写给 Claude Code + `description` 写给 OpenCode / Codex — 双重保障
 - ❌ OpenCode 用 `disable-model-invocation` 等独有字段 — 被忽略
 - ✅ OpenCode 独有字段可以写 — 静默忽略，不报错
+- ✅ Codex 兼容通过 CMake 创建项目级 symlink 处理，不复制业务规则到每个 skill
