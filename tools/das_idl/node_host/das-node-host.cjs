@@ -77,6 +77,7 @@ async function main(rawArgs = process.argv.slice(2)) {
     packageRoot: __dirname,
     wrapperPath: path.join(__dirname, 'das_core_napi_export.js'),
     addonPath: path.join(__dirname, 'das_core_napi.node'),
+    requireFunction: require,
   });
 
   return typeof result === 'number' ? result : 0;

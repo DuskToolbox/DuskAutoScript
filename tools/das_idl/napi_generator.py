@@ -674,8 +674,6 @@ class NapiGenerator:
             ]
         )
 
-        lines.extend(self._generate_cpp_host_bootstrap())
-
         if _doc_needs_binary_buffer_conversion(doc):
             lines.extend(
                 [
@@ -836,6 +834,9 @@ class NapiGenerator:
         lines.extend(self._generate_cpp_base_extractor(doc))
         lines.append("")
 
+        lines.extend(self._generate_cpp_host_bootstrap())
+        lines.append("")
+
         if not any(interface.name == "IDasBase" for interface in doc.interfaces):
             lines.extend(self._generate_cpp_dispose_function("IDasBase"))
             lines.append("")
@@ -864,274 +865,661 @@ class NapiGenerator:
         return "\n".join(lines)
 
     def _generate_cpp_host_bootstrap(self) -> list[str]:
-        return [
-            "struct NodeHostBootstrapPaths {",
-            "    std::filesystem::path package_root;",
-            "    std::filesystem::path wrapper_path;",
-            "    std::filesystem::path addon_path;",
-            "};",
-            "",
-            "class MinimalNodePluginPackage final",
-            "    : public Das::PluginInterface::IDasPluginPackage {",
-            "public:",
-            "    explicit MinimalNodePluginPackage(NodeHostBootstrapPaths paths)",
-            "        : paths_(std::move(paths)) {}",
-            "",
-            "    uint32_t AddRef() override {",
-            "        return ref_count_.fetch_add(1, std::memory_order_relaxed) + 1;",
-            "    }",
-            "",
-            "    uint32_t Release() override {",
-            "        const uint32_t count =",
-            "            ref_count_.fetch_sub(1, std::memory_order_acq_rel) - 1;",
-            "        if (count == 0) {",
-            "            delete this;",
-            "        }",
-            "        return count;",
-            "    }",
-            "",
-            "    DasResult QueryInterface(const DasGuid& iid, void** pp_object) override {",
-            "        if (pp_object == nullptr) {",
-            "            return DAS_E_INVALID_POINTER;",
-            "        }",
-            "        if (iid == DAS_IID_PLUGIN_PACKAGE) {",
-            "            *pp_object = static_cast<Das::PluginInterface::IDasPluginPackage*>(this);",
-            "            AddRef();",
-            "            return DAS_S_OK;",
-            "        }",
-            "        if (iid == DAS_IID_BASE) {",
-            "            *pp_object = static_cast<IDasBase*>(this);",
-            "            AddRef();",
-            "            return DAS_S_OK;",
-            "        }",
-            "        *pp_object = nullptr;",
-            "        return DAS_E_NO_INTERFACE;",
-            "    }",
-            "",
-            "    DasResult EnumFeature(",
-            "        uint64_t index,",
-            "        Das::PluginInterface::DasPluginFeature* p_out_feature) override {",
-            "        (void)index;",
-            "        if (p_out_feature == nullptr) {",
-            "            return DAS_E_INVALID_POINTER;",
-            "        }",
-            "        return DAS_E_OUT_OF_RANGE;",
-            "    }",
-            "",
-            "    DasResult CreateFeatureInterface(",
-            "        uint64_t index,",
-            "        IDasBase** pp_out_interface) override {",
-            "        (void)index;",
-            "        if (pp_out_interface == nullptr) {",
-            "            return DAS_E_INVALID_POINTER;",
-            "        }",
-            "        *pp_out_interface = nullptr;",
-            "        return DAS_E_OUT_OF_RANGE;",
-            "    }",
-            "",
-            "    DasResult CanUnloadNow(bool* canUnloadNow) override {",
-            "        if (canUnloadNow == nullptr) {",
-            "            return DAS_E_INVALID_POINTER;",
-            "        }",
-            "        *canUnloadNow = true;",
-            "        return DAS_S_OK;",
-            "    }",
-            "",
-            "private:",
-            "    std::atomic<uint32_t> ref_count_{1};",
-            "    NodeHostBootstrapPaths paths_;",
-            "};",
-            "",
-            "std::filesystem::path OptionalPathOption(",
-            "    Napi::Env env,",
-            "    Napi::Object options,",
-            "    const char* name) {",
-            "    Napi::Value value = options.Get(name);",
-            "    if (value.IsUndefined() || value.IsNull()) {",
-            "        return {};",
-            "    }",
-            "    if (!value.IsString()) {",
-            "        throw Napi::TypeError::New(",
-            "            env,",
-            "            std::string{name} + \" must be a string\");",
-            "    }",
-            "    return std::filesystem::path(value.As<Napi::String>().Utf8Value());",
-            "}",
-            "",
-            "NodeHostBootstrapPaths ReadNodeHostBootstrapPaths(",
-            "    Napi::Env env,",
-            "    Napi::Object options) {",
-            "    NodeHostBootstrapPaths paths{};",
-            "    paths.package_root = OptionalPathOption(env, options, \"packageRoot\");",
-            "    paths.wrapper_path = OptionalPathOption(env, options, \"wrapperPath\");",
-            "    paths.addon_path = OptionalPathOption(env, options, \"addonPath\");",
-            "    return paths;",
-            "}",
-            "",
-            "DAS::Utils::Expected<DAS::DasPtr<IDasBase>> LoadMinimalNodePackage(",
-            "    const std::filesystem::path& manifest_path,",
-            "    NodeHostBootstrapPaths paths) {",
-            "    std::ifstream manifest_file(manifest_path);",
-            "    if (!manifest_file.is_open()) {",
-            "        return tl::make_unexpected(DAS_E_IPC_PLUGIN_LOAD_FAILED);",
-            "    }",
-            "",
-            "    std::string manifest_content(",
-            "        (std::istreambuf_iterator<char>(manifest_file)),",
-            "        std::istreambuf_iterator<char>());",
-            "    auto manifest_json_opt = Das::Utils::ParseYyjsonFromString(manifest_content);",
-            "    if (!manifest_json_opt) {",
-            "        return tl::make_unexpected(DAS_E_IPC_PLUGIN_LOAD_FAILED);",
-            "    }",
-            "    yyjson::value manifest_json = std::move(*manifest_json_opt);",
-            "    auto manifest_obj = manifest_json.as_object();",
-            "    if (!manifest_obj) {",
-            "        return tl::make_unexpected(DAS_E_IPC_PLUGIN_LOAD_FAILED);",
-            "    }",
-            "",
-            "    auto language_value = (*manifest_obj)[std::string_view(\"language\")];",
-            "    auto language_str = language_value.as_string();",
-            "    if (!language_str) {",
-            "        return tl::make_unexpected(DAS_E_IPC_PLUGIN_LOAD_FAILED);",
-            "    }",
-            "    const std::string plugin_language(*language_str);",
-            "    if (plugin_language != \"Node\") {",
-            "        return tl::make_unexpected(DAS_E_IPC_PLUGIN_LOAD_FAILED);",
-            "    }",
-            "",
-            "    if (paths.package_root.empty()) {",
-            "        paths.package_root = manifest_path.parent_path();",
-            "    }",
-            "    return DAS::DasPtr<IDasBase>::Attach(",
-            "        static_cast<IDasBase*>(new MinimalNodePluginPackage(std::move(paths))));",
-            "}",
-            "",
-            "DasResult DAS_STD_CALL OnNodeHostBeforeShutdown(",
-            "    void* context,",
-            "    DAS::Core::IPC::Host::HostShutdownReason reason,",
-            "    uint32_t timeout_ms) {",
-            "    (void)context;",
-            "    (void)reason;",
-            "    (void)timeout_ms;",
-            "    return DAS_S_OK;",
-            "}",
-            "",
-            "class NodeHostIpcWorker final : public Napi::AsyncWorker {",
-            "public:",
-            "    NodeHostIpcWorker(",
-            "        Napi::Env env,",
-            "        Napi::Promise::Deferred deferred,",
-            "        DAS::Core::IPC::Host::IpcContextPtr ctx,",
-            "        std::shared_ptr<std::string> connect_url_storage)",
-            "        : Napi::AsyncWorker(env, \"DAS Node host IPC\"),",
-            "          deferred_(deferred),",
-            "          ctx_(std::move(ctx)),",
-            "          connect_url_storage_(std::move(connect_url_storage)) {}",
-            "",
-            "    void Execute() override {",
-            "        if (!ctx_) {",
-            "            result_ = DAS_E_IPC_INVALID_STATE;",
-            "            return;",
-            "        }",
-            "        result_ = ctx_->Run();",
-            "    }",
-            "",
-            "    void OnOK() override {",
-            "        deferred_.Resolve(",
-            "            Napi::Number::New(Env(), static_cast<double>(result_)));",
-            "    }",
-            "",
-            "    void OnError(const Napi::Error& error) override {",
-            "        deferred_.Reject(error.Value());",
-            "    }",
-            "",
-            "private:",
-            "    Napi::Promise::Deferred deferred_;",
-            "    DAS::Core::IPC::Host::IpcContextPtr ctx_;",
-            "    std::shared_ptr<std::string> connect_url_storage_;",
-            "    DasResult result_{DAS_E_FAIL};",
-            "};",
-            "",
-            "Napi::Value startHostIpc(const Napi::CallbackInfo& info) {",
-            "    Napi::Env env = info.Env();",
-            "    if (info.Length() != 1 || !info[0].IsObject()) {",
-            "        throw Napi::TypeError::New(env, \"startHostIpc(options) expects an object\");",
-            "    }",
-            "",
-            "    Napi::Object options = info[0].As<Napi::Object>();",
-            "    DAS::Core::IPC::Host::IpcContextConfig config{};",
-            "    auto connect_url_storage = std::make_shared<std::string>();",
-            "    bool has_main_pid = false;",
-            "    bool has_connect_url = false;",
-            "",
-            "    Napi::Value main_pid_value = options.Get(\"mainPid\");",
-            "    if (!main_pid_value.IsUndefined() && !main_pid_value.IsNull()) {",
-            "        if (!main_pid_value.IsNumber()) {",
-            "            throw Napi::TypeError::New(env, \"mainPid must be a number\");",
-            "        }",
-            "        const double main_pid_number =",
-            "            main_pid_value.As<Napi::Number>().DoubleValue();",
-            "        if (main_pid_number <= 0.0",
-            "            || main_pid_number > static_cast<double>(",
-            "                std::numeric_limits<uint32_t>::max())) {",
-            "            throw Napi::RangeError::New(env, \"mainPid is out of uint32 range\");",
-            "        }",
-            "        config.main_pid = static_cast<uint32_t>(main_pid_number);",
-            "        has_main_pid = true;",
-            "    }",
-            "",
-            "    Napi::Value connect_url_value = options.Get(\"connectUrl\");",
-            "    if (!connect_url_value.IsUndefined() && !connect_url_value.IsNull()) {",
-            "        if (!connect_url_value.IsString()) {",
-            "            throw Napi::TypeError::New(env, \"connectUrl must be a string\");",
-            "        }",
-            "        *connect_url_storage = connect_url_value.As<Napi::String>().Utf8Value();",
-            "        if (connect_url_storage->empty()) {",
-            "            throw Napi::TypeError::New(env, \"connectUrl must not be empty\");",
-            "        }",
-            "        config.connect_url = connect_url_storage->c_str();",
-            "        has_connect_url = true;",
-            "    }",
-            "",
-            "    if (!has_main_pid && !has_connect_url) {",
-            "        throw Napi::TypeError::New(env, \"startHostIpc requires mainPid or connectUrl\");",
-            "    }",
-            "",
-            "    NodeHostBootstrapPaths paths = ReadNodeHostBootstrapPaths(env, options);",
-            "    config.events.on_before_shutdown = OnNodeHostBeforeShutdown;",
-            "    DAS::Core::IPC::Host::IpcContextPtr ctx{",
-            "        DAS::Core::IPC::Host::CreateIpcContext(config)};",
-            "    if (!ctx) {",
-            "        ThrowDasException(env, DAS_E_IPC_INVALID_STATE, \"CreateIpcContext failed\");",
-            "        return env.Undefined();",
-            "    }",
-            "",
-            "    DAS::Core::IPC::Host::HostCommandHandlerOptions handler_options{};",
-            "    handler_options.load_plugin =",
-            "        [paths = std::move(paths)](",
-            "            const std::filesystem::path& manifest_path) mutable {",
-            "            return LoadMinimalNodePackage(manifest_path, paths);",
-            "        };",
-            "    const DasResult register_result =",
-            "        DAS::Core::IPC::Host::RegisterHostCommandHandlers(",
-            "            ctx.get(),",
-            "            std::move(handler_options));",
-            "    if (register_result < 0) {",
-            "        ThrowDasException(env, register_result, \"RegisterHostCommandHandlers failed\");",
-            "        return env.Undefined();",
-            "    }",
-            "",
-            "    auto deferred = Napi::Promise::Deferred::New(env);",
-            "    auto* worker = new NodeHostIpcWorker(",
-            "        env,",
-            "        deferred,",
-            "        std::move(ctx),",
-            "        std::move(connect_url_storage));",
-            "    worker->Queue();",
-            "    return deferred.Promise();",
-            "}",
-            "",
-        ]
+        return r'''
+struct NodeHostBootstrapPaths {
+    std::filesystem::path package_root;
+    std::filesystem::path wrapper_path;
+    std::filesystem::path addon_path;
+};
+
+struct NodeManifestEntryPoint {
+    std::filesystem::path module_path;
+    std::string factory_name;
+    std::string entry_point;
+};
+
+struct NodePackageLoadResult {
+    DasResult result{DAS_E_IPC_PLUGIN_LOAD_FAILED};
+    DAS::DasPtr<IDasBase> package;
+};
+
+class MinimalNodePluginPackage final
+    : public Das::PluginInterface::IDasPluginPackage {
+public:
+    explicit MinimalNodePluginPackage(NodeHostBootstrapPaths paths)
+        : paths_(std::move(paths)) {}
+
+    uint32_t AddRef() override {
+        return ref_count_.fetch_add(1, std::memory_order_relaxed) + 1;
+    }
+
+    uint32_t Release() override {
+        const uint32_t count =
+            ref_count_.fetch_sub(1, std::memory_order_acq_rel) - 1;
+        if (count == 0) {
+            delete this;
+        }
+        return count;
+    }
+
+    DasResult QueryInterface(const DasGuid& iid, void** pp_object) override {
+        if (pp_object == nullptr) {
+            return DAS_E_INVALID_POINTER;
+        }
+        if (iid == DAS_IID_PLUGIN_PACKAGE) {
+            *pp_object = static_cast<Das::PluginInterface::IDasPluginPackage*>(this);
+            AddRef();
+            return DAS_S_OK;
+        }
+        if (iid == DAS_IID_BASE) {
+            *pp_object = static_cast<IDasBase*>(this);
+            AddRef();
+            return DAS_S_OK;
+        }
+        *pp_object = nullptr;
+        return DAS_E_NO_INTERFACE;
+    }
+
+    DasResult EnumFeature(
+        uint64_t index,
+        Das::PluginInterface::DasPluginFeature* p_out_feature) override {
+        (void)index;
+        if (p_out_feature == nullptr) {
+            return DAS_E_INVALID_POINTER;
+        }
+        return DAS_E_OUT_OF_RANGE;
+    }
+
+    DasResult CreateFeatureInterface(
+        uint64_t index,
+        IDasBase** pp_out_interface) override {
+        (void)index;
+        if (pp_out_interface == nullptr) {
+            return DAS_E_INVALID_POINTER;
+        }
+        *pp_out_interface = nullptr;
+        return DAS_E_OUT_OF_RANGE;
+    }
+
+    DasResult CanUnloadNow(bool* canUnloadNow) override {
+        if (canUnloadNow == nullptr) {
+            return DAS_E_INVALID_POINTER;
+        }
+        *canUnloadNow = true;
+        return DAS_S_OK;
+    }
+
+private:
+    std::atomic<uint32_t> ref_count_{1};
+    NodeHostBootstrapPaths paths_;
+};
+
+NodePackageLoadResult MakeNodePackageLoadFailure(DasResult result) {
+    NodePackageLoadResult out{};
+    out.result = result < 0 ? result : DAS_E_IPC_PLUGIN_LOAD_FAILED;
+    return out;
+}
+
+NodePackageLoadResult MakeNodePackageLoadSuccess(
+    DAS::DasPtr<IDasBase> package) {
+    NodePackageLoadResult out{};
+    out.result = DAS_S_OK;
+    out.package = std::move(package);
+    return out;
+}
+
+NodePackageLoadResult MakeNodePackageLoadResult(
+    DAS::Utils::Expected<DAS::DasPtr<IDasBase>> expected) {
+    if (!expected) {
+        return MakeNodePackageLoadFailure(expected.error());
+    }
+    return MakeNodePackageLoadSuccess(std::move(expected.value()));
+}
+
+bool IsSafePackageRelativePath(const std::filesystem::path& relative_path) {
+    if (relative_path.empty() || relative_path.is_absolute()) {
+        return false;
+    }
+    for (const auto& part : relative_path) {
+        if (part == "..") {
+            return false;
+        }
+    }
+    return true;
+}
+
+DAS::Utils::Expected<std::string> ReadPackageJsonMain(
+    const std::filesystem::path& package_root) {
+    const auto package_json_path = package_root / "package.json";
+    if (!std::filesystem::is_regular_file(package_json_path)) {
+        return tl::make_unexpected(DAS_E_IPC_PLUGIN_LOAD_FAILED);
+    }
+    std::ifstream package_file(package_json_path);
+    if (!package_file.is_open()) {
+        return tl::make_unexpected(DAS_E_IPC_PLUGIN_LOAD_FAILED);
+    }
+
+    std::string package_content(
+        (std::istreambuf_iterator<char>(package_file)),
+        std::istreambuf_iterator<char>());
+    auto package_json_opt = Das::Utils::ParseYyjsonFromString(package_content);
+    if (!package_json_opt) {
+        return tl::make_unexpected(DAS_E_IPC_PLUGIN_LOAD_FAILED);
+    }
+    yyjson::value package_json = std::move(*package_json_opt);
+    auto package_obj = package_json.as_object();
+    if (!package_obj) {
+        return tl::make_unexpected(DAS_E_IPC_PLUGIN_LOAD_FAILED);
+    }
+    auto main_value = (*package_obj)[std::string_view("main")];
+    auto main_str = main_value.as_string();
+    if (!main_str || main_str->empty()) {
+        return tl::make_unexpected(DAS_E_IPC_PLUGIN_LOAD_FAILED);
+    }
+    return std::string(*main_str);
+}
+
+DAS::Utils::Expected<NodeManifestEntryPoint> ResolveNodeManifestEntryPoint(
+    const std::filesystem::path& manifest_path,
+    const std::filesystem::path& package_root,
+    const std::string& entry_point) {
+    const auto separator = entry_point.find('#');
+    if (separator == std::string::npos
+        || separator == 0
+        || separator + 1 >= entry_point.size()) {
+        return tl::make_unexpected(DAS_E_IPC_PLUGIN_LOAD_FAILED);
+    }
+
+    std::string entry_path = entry_point.substr(0, separator);
+    const std::string factory_name = entry_point.substr(separator + 1);
+    if (factory_name.empty()) {
+        return tl::make_unexpected(DAS_E_IPC_PLUGIN_LOAD_FAILED);
+    }
+
+    bool from_package_main = false;
+    if (entry_path == "." || entry_path == "./") {
+        auto main_entry = ReadPackageJsonMain(package_root);
+        if (!main_entry) {
+            return tl::make_unexpected(main_entry.error());
+        }
+        entry_path = main_entry.value();
+        from_package_main = true;
+    }
+
+    if (!from_package_main && entry_path.rfind("./", 0) != 0) {
+        return tl::make_unexpected(DAS_E_IPC_PLUGIN_LOAD_FAILED);
+    }
+
+    std::filesystem::path relative_entry{entry_path};
+    if (!IsSafePackageRelativePath(relative_entry)) {
+        return tl::make_unexpected(DAS_E_IPC_PLUGIN_LOAD_FAILED);
+    }
+
+    auto module_path = (package_root / relative_entry).lexically_normal();
+    if (!std::filesystem::is_regular_file(module_path)) {
+        return tl::make_unexpected(DAS_E_IPC_PLUGIN_LOAD_FAILED);
+    }
+
+    (void)manifest_path;
+    return NodeManifestEntryPoint{
+        .module_path = std::move(module_path),
+        .factory_name = factory_name,
+        .entry_point = entry_point};
+}
+
+std::filesystem::path OptionalPathOption(
+    Napi::Env env,
+    Napi::Object options,
+    const char* name) {
+    Napi::Value value = options.Get(name);
+    if (value.IsUndefined() || value.IsNull()) {
+        return {};
+    }
+    if (!value.IsString()) {
+        throw Napi::TypeError::New(
+            env,
+            std::string{name} + " must be a string");
+    }
+    return std::filesystem::path(value.As<Napi::String>().Utf8Value());
+}
+
+Napi::Function RequiredFunctionOption(
+    Napi::Env env,
+    Napi::Object options,
+    const char* name) {
+    Napi::Value value = options.Get(name);
+    if (!value.IsFunction()) {
+        throw Napi::TypeError::New(
+            env,
+            std::string{name} + " must be a function");
+    }
+    return value.As<Napi::Function>();
+}
+
+NodeHostBootstrapPaths ReadNodeHostBootstrapPaths(
+    Napi::Env env,
+    Napi::Object options) {
+    NodeHostBootstrapPaths paths{};
+    paths.package_root = OptionalPathOption(env, options, "packageRoot");
+    paths.wrapper_path = OptionalPathOption(env, options, "wrapperPath");
+    paths.addon_path = OptionalPathOption(env, options, "addonPath");
+    return paths;
+}
+
+DAS::Utils::Expected<DAS::DasPtr<IDasBase>> LoadMinimalNodePackage(
+    const std::filesystem::path& manifest_path,
+    NodeHostBootstrapPaths paths) {
+    std::ifstream manifest_file(manifest_path);
+    if (!manifest_file.is_open()) {
+        return tl::make_unexpected(DAS_E_IPC_PLUGIN_LOAD_FAILED);
+    }
+
+    std::string manifest_content(
+        (std::istreambuf_iterator<char>(manifest_file)),
+        std::istreambuf_iterator<char>());
+    auto manifest_json_opt = Das::Utils::ParseYyjsonFromString(manifest_content);
+    if (!manifest_json_opt) {
+        return tl::make_unexpected(DAS_E_IPC_PLUGIN_LOAD_FAILED);
+    }
+    yyjson::value manifest_json = std::move(*manifest_json_opt);
+    auto manifest_obj = manifest_json.as_object();
+    if (!manifest_obj) {
+        return tl::make_unexpected(DAS_E_IPC_PLUGIN_LOAD_FAILED);
+    }
+
+    auto language_value = (*manifest_obj)[std::string_view("language")];
+    auto language_str = language_value.as_string();
+    if (!language_str) {
+        return tl::make_unexpected(DAS_E_IPC_PLUGIN_LOAD_FAILED);
+    }
+    const std::string plugin_language(*language_str);
+    if (plugin_language != "Node") {
+        return tl::make_unexpected(DAS_E_IPC_PLUGIN_LOAD_FAILED);
+    }
+
+    if (paths.package_root.empty()) {
+        paths.package_root = manifest_path.parent_path();
+    }
+    return DAS::DasPtr<IDasBase>::Attach(
+        static_cast<IDasBase*>(new MinimalNodePluginPackage(std::move(paths))));
+}
+
+class NodeHostState;
+
+struct NodePackageLoadRequest {
+    NodePackageLoadRequest(
+        NodeHostState* in_state,
+        std::filesystem::path in_manifest_path)
+        : state(in_state), manifest_path(std::move(in_manifest_path)) {}
+
+    NodeHostState* state;
+    std::filesystem::path manifest_path;
+    std::mutex mutex;
+    std::condition_variable complete;
+    bool done{false};
+    NodePackageLoadResult result{};
+
+    void Finish(NodePackageLoadResult in_result) {
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            result = std::move(in_result);
+            done = true;
+        }
+        complete.notify_one();
+    }
+
+    NodePackageLoadResult Wait() {
+        std::unique_lock<std::mutex> lock(mutex);
+        complete.wait(lock, [this] { return done; });
+        return std::move(result);
+    }
+};
+
+class NodeHostState {
+public:
+    NodeHostState(
+        Napi::Env env,
+        NodeHostBootstrapPaths paths,
+        Napi::Function require_function)
+        : env_(env),
+          paths_(std::move(paths)),
+          require_function_(Napi::Persistent(require_function)),
+          node_thread_id_(std::this_thread::get_id()) {
+        require_function_.SuppressDestruct();
+        Napi::Function trampoline = Napi::Function::New(
+            env,
+            [](const Napi::CallbackInfo& finalizer_info) {
+                (void)finalizer_info;
+            });
+        package_loader_ = Napi::ThreadSafeFunction::New(
+            env,
+            trampoline,
+            "DAS Node package loader",
+            0,
+            1);
+    }
+
+    DAS::Utils::Expected<DAS::DasPtr<IDasBase>> LoadNodePackage(
+        const std::filesystem::path& manifest_path) {
+        if (std::this_thread::get_id() == node_thread_id_) {
+            auto loaded = LoadNodePackageOnNodeThread(env_, manifest_path);
+            if (loaded.result < 0) {
+                return tl::make_unexpected(loaded.result);
+            }
+            return std::move(loaded.package);
+        }
+
+        auto request = std::make_shared<NodePackageLoadRequest>(
+            this,
+            manifest_path);
+        napi_status status = package_loader_.BlockingCall(
+            request.get(),
+            [](Napi::Env env, Napi::Function, NodePackageLoadRequest* request) {
+                request->Finish(
+                    request->state->LoadNodePackageOnNodeThread(
+                        env,
+                        request->manifest_path));
+            });
+        if (status != napi_ok) {
+            return tl::make_unexpected(DAS_E_IPC_PLUGIN_LOAD_FAILED);
+        }
+        auto loaded = request->Wait();
+        if (loaded.result < 0) {
+            return tl::make_unexpected(loaded.result);
+        }
+        return std::move(loaded.package);
+    }
+
+    NodePackageLoadResult LoadNodePackageOnNodeThread(
+        Napi::Env env,
+        const std::filesystem::path& manifest_path) {
+        try {
+            std::ifstream manifest_file(manifest_path);
+            if (!manifest_file.is_open()) {
+                return MakeNodePackageLoadFailure(DAS_E_IPC_PLUGIN_LOAD_FAILED);
+            }
+
+            std::string manifest_content(
+                (std::istreambuf_iterator<char>(manifest_file)),
+                std::istreambuf_iterator<char>());
+            auto manifest_json_opt =
+                Das::Utils::ParseYyjsonFromString(manifest_content);
+            if (!manifest_json_opt) {
+                return MakeNodePackageLoadFailure(DAS_E_IPC_PLUGIN_LOAD_FAILED);
+            }
+            yyjson::value manifest_json = std::move(*manifest_json_opt);
+            auto manifest_obj = manifest_json.as_object();
+            if (!manifest_obj) {
+                return MakeNodePackageLoadFailure(DAS_E_IPC_PLUGIN_LOAD_FAILED);
+            }
+
+            auto language_value = (*manifest_obj)[std::string_view("language")];
+            auto language_str = language_value.as_string();
+            if (!language_str || std::string(*language_str) != "Node") {
+                return MakeNodePackageLoadFailure(DAS_E_IPC_PLUGIN_LOAD_FAILED);
+            }
+
+            std::filesystem::path package_root = paths_.package_root.empty()
+                                               ? manifest_path.parent_path()
+                                               : paths_.package_root;
+            auto entry_point_value = (*manifest_obj)[std::string_view("entryPoint")];
+            auto entry_point_str = entry_point_value.as_string();
+            if (!entry_point_str) {
+                auto legacy_entry_value = (*manifest_obj)[std::string_view("entry")];
+                if (legacy_entry_value.as_string()) {
+                    auto legacy_paths = paths_;
+                    legacy_paths.package_root = package_root;
+                    return MakeNodePackageLoadResult(
+                        LoadMinimalNodePackage(manifest_path, legacy_paths));
+                }
+                return MakeNodePackageLoadFailure(DAS_E_IPC_PLUGIN_LOAD_FAILED);
+            }
+
+            auto entry = ResolveNodeManifestEntryPoint(
+                manifest_path,
+                package_root,
+                std::string(*entry_point_str));
+            if (!entry) {
+                return MakeNodePackageLoadFailure(entry.error());
+            }
+
+            Napi::HandleScope scope(env);
+            Napi::Value module_value = require_function_.Value().Call(
+                {Napi::String::New(env, entry->module_path.string())});
+            if (!module_value.IsObject()) {
+                return MakeNodePackageLoadFailure(DAS_E_IPC_PLUGIN_LOAD_FAILED);
+            }
+            Napi::Object module_object = module_value.As<Napi::Object>();
+            Napi::Value factory_value = module_object.Get(entry->factory_name);
+            if (!factory_value.IsFunction()) {
+                return MakeNodePackageLoadFailure(DAS_E_IPC_PLUGIN_LOAD_FAILED);
+            }
+
+            Napi::Object factory_context = Napi::Object::New(env);
+            factory_context.Set(
+                "packageRoot",
+                Napi::String::New(env, package_root.string()));
+            factory_context.Set(
+                "manifestPath",
+                Napi::String::New(env, manifest_path.string()));
+            factory_context.Set(
+                "entryPoint",
+                Napi::String::New(env, entry->entry_point));
+            Napi::Value package_value =
+                factory_value.As<Napi::Function>().Call(
+                    module_object,
+                    {factory_context});
+
+            IDasBase* package_base =
+                ExtractIDasBaseFromWrapper(env, package_value);
+            DAS::DasPtr<Das::PluginInterface::IDasPluginPackage> plugin_package;
+            DasResult qi_result =
+                package_base->QueryInterface(
+                    DAS_IID_PLUGIN_PACKAGE,
+                    plugin_package.PutVoid());
+            if (qi_result < 0 || !plugin_package) {
+                return MakeNodePackageLoadFailure(DAS_E_IPC_PLUGIN_LOAD_FAILED);
+            }
+
+            DAS::DasPtr<IDasBase> package_as_base;
+            qi_result = plugin_package->QueryInterface(
+                DAS_IID_BASE,
+                package_as_base.PutVoid());
+            if (qi_result < 0 || !package_as_base) {
+                return MakeNodePackageLoadFailure(DAS_E_IPC_PLUGIN_LOAD_FAILED);
+            }
+
+            Napi::ObjectReference package_ref =
+                Napi::Persistent(package_value.As<Napi::Object>());
+            package_ref.SuppressDestruct();
+            {
+                std::lock_guard<std::mutex> lock(package_refs_mutex_);
+                package_refs_.push_back(std::move(package_ref));
+            }
+            return MakeNodePackageLoadSuccess(std::move(package_as_base));
+        } catch (const Napi::Error& error) {
+            std::fprintf(
+                stderr,
+                "[DAS NodeHost] package factory failed: %s\n",
+                error.Message().c_str());
+            return MakeNodePackageLoadFailure(DAS_E_IPC_PLUGIN_LOAD_FAILED);
+        } catch (const std::exception& error) {
+            std::fprintf(
+                stderr,
+                "[DAS NodeHost] package load failed: %s\n",
+                error.what());
+            return MakeNodePackageLoadFailure(DAS_E_IPC_PLUGIN_LOAD_FAILED);
+        } catch (...) {
+            std::fprintf(stderr, "[DAS NodeHost] package load failed\n");
+            return MakeNodePackageLoadFailure(DAS_E_IPC_PLUGIN_LOAD_FAILED);
+        }
+    }
+
+    void CloseOnNodeThread() {
+        {
+            std::lock_guard<std::mutex> lock(package_refs_mutex_);
+            for (auto& package_ref : package_refs_) {
+                package_ref.Reset();
+            }
+            package_refs_.clear();
+        }
+        require_function_.Reset();
+        if (package_loader_) {
+            package_loader_.Release();
+        }
+    }
+
+private:
+    Napi::Env env_;
+    NodeHostBootstrapPaths paths_;
+    Napi::FunctionReference require_function_;
+    std::thread::id node_thread_id_;
+    Napi::ThreadSafeFunction package_loader_;
+    std::mutex package_refs_mutex_;
+    std::vector<Napi::ObjectReference> package_refs_;
+};
+
+DasResult DAS_STD_CALL OnNodeHostBeforeShutdown(
+    void* context,
+    DAS::Core::IPC::Host::HostShutdownReason reason,
+    uint32_t timeout_ms) {
+    (void)context;
+    (void)reason;
+    (void)timeout_ms;
+    return DAS_S_OK;
+}
+
+class NodeHostIpcWorker final : public Napi::AsyncWorker {
+public:
+    NodeHostIpcWorker(
+        Napi::Env env,
+        Napi::Promise::Deferred deferred,
+        DAS::Core::IPC::Host::IpcContextPtr ctx,
+        std::shared_ptr<std::string> connect_url_storage,
+        std::shared_ptr<NodeHostState> host_state)
+        : Napi::AsyncWorker(env, "DAS Node host IPC"),
+          deferred_(deferred),
+          ctx_(std::move(ctx)),
+          connect_url_storage_(std::move(connect_url_storage)),
+          host_state_(std::move(host_state)) {}
+
+    void Execute() override {
+        if (!ctx_) {
+            result_ = DAS_E_IPC_INVALID_STATE;
+            return;
+        }
+        result_ = ctx_->Run();
+    }
+
+    void OnOK() override {
+        if (host_state_) {
+            host_state_->CloseOnNodeThread();
+        }
+        deferred_.Resolve(
+            Napi::Number::New(Env(), static_cast<double>(result_)));
+    }
+
+    void OnError(const Napi::Error& error) override {
+        if (host_state_) {
+            host_state_->CloseOnNodeThread();
+        }
+        deferred_.Reject(error.Value());
+    }
+
+private:
+    Napi::Promise::Deferred deferred_;
+    DAS::Core::IPC::Host::IpcContextPtr ctx_;
+    std::shared_ptr<std::string> connect_url_storage_;
+    std::shared_ptr<NodeHostState> host_state_;
+    DasResult result_{DAS_E_FAIL};
+};
+
+Napi::Value startHostIpc(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    if (info.Length() != 1 || !info[0].IsObject()) {
+        throw Napi::TypeError::New(env, "startHostIpc(options) expects an object");
+    }
+
+    Napi::Object options = info[0].As<Napi::Object>();
+    DAS::Core::IPC::Host::IpcContextConfig config{};
+    auto connect_url_storage = std::make_shared<std::string>();
+    bool has_main_pid = false;
+    bool has_connect_url = false;
+
+    Napi::Value main_pid_value = options.Get("mainPid");
+    if (!main_pid_value.IsUndefined() && !main_pid_value.IsNull()) {
+        if (!main_pid_value.IsNumber()) {
+            throw Napi::TypeError::New(env, "mainPid must be a number");
+        }
+        const double main_pid_number =
+            main_pid_value.As<Napi::Number>().DoubleValue();
+        if (main_pid_number <= 0.0
+            || main_pid_number > static_cast<double>(
+                std::numeric_limits<uint32_t>::max())) {
+            throw Napi::RangeError::New(env, "mainPid is out of uint32 range");
+        }
+        config.main_pid = static_cast<uint32_t>(main_pid_number);
+        has_main_pid = true;
+    }
+
+    Napi::Value connect_url_value = options.Get("connectUrl");
+    if (!connect_url_value.IsUndefined() && !connect_url_value.IsNull()) {
+        if (!connect_url_value.IsString()) {
+            throw Napi::TypeError::New(env, "connectUrl must be a string");
+        }
+        *connect_url_storage = connect_url_value.As<Napi::String>().Utf8Value();
+        if (connect_url_storage->empty()) {
+            throw Napi::TypeError::New(env, "connectUrl must not be empty");
+        }
+        config.connect_url = connect_url_storage->c_str();
+        has_connect_url = true;
+    }
+
+    if (!has_main_pid && !has_connect_url) {
+        throw Napi::TypeError::New(env, "startHostIpc requires mainPid or connectUrl");
+    }
+
+    NodeHostBootstrapPaths paths = ReadNodeHostBootstrapPaths(env, options);
+    Napi::Function require_function =
+        RequiredFunctionOption(env, options, "requireFunction");
+    auto host_state = std::make_shared<NodeHostState>(
+        env,
+        paths,
+        require_function);
+    config.events.on_before_shutdown = OnNodeHostBeforeShutdown;
+    DAS::Core::IPC::Host::IpcContextPtr ctx{
+        DAS::Core::IPC::Host::CreateIpcContext(config)};
+    if (!ctx) {
+        ThrowDasException(env, DAS_E_IPC_INVALID_STATE, "CreateIpcContext failed");
+        return env.Undefined();
+    }
+
+    DAS::Core::IPC::Host::HostCommandHandlerOptions handler_options{};
+    handler_options.load_plugin =
+        [host_state](
+            const std::filesystem::path& manifest_path) {
+            return host_state->LoadNodePackage(manifest_path);
+        };
+    const DasResult register_result =
+        DAS::Core::IPC::Host::RegisterHostCommandHandlers(
+            ctx.get(),
+            std::move(handler_options));
+    if (register_result < 0) {
+        ThrowDasException(env, register_result, "RegisterHostCommandHandlers failed");
+        return env.Undefined();
+    }
+
+    auto deferred = Napi::Promise::Deferred::New(env);
+    auto* worker = new NodeHostIpcWorker(
+        env,
+        deferred,
+        std::move(ctx),
+        std::move(connect_url_storage),
+        std::move(host_state));
+    worker->Queue();
+    return deferred.Promise();
+}
+'''.strip("\n").splitlines()
 
     def _generate_cpp_wrapper_base(self) -> list[str]:
         return [
@@ -2837,6 +3225,7 @@ class NapiGenerator:
                 "  packageRoot?: string;",
                 "  wrapperPath?: string;",
                 "  addonPath?: string;",
+                "  requireFunction?: (id: string) => unknown;",
                 "}",
                 "export function startHostIpc(options: StartHostIpcOptions): Promise<DasResult>;",
                 "",
