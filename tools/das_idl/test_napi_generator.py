@@ -998,6 +998,49 @@ class TestNapiGenerator(unittest.TestCase):
         self.assertIn("DispatchDirect(method_name, std::move(invoke))", artifacts.cpp)
         self.assertIn("DispatchThreadSafe(method_name, std::move(invoke))", artifacts.cpp)
 
+    def test_napi_director_prefetches_variant_vector_inputs_before_tsfn(self):
+        doc = parse_idl(
+            """
+            errorcode DasResult {
+                DAS_S_OK = 0,
+                DAS_E_INVALID_POINTER = -1073741819,
+            }
+
+            [uuid("00000000-0000-0000-0000-000000000010")]
+            interface IDasVariantVector : IDasBase {
+                DasResult GetSize();
+            }
+
+            [uuid("00000000-0000-0000-0000-000000000011")]
+            interface IDasComponent : IDasBase {
+                DasResult Dispatch(
+                    IDasReadOnlyString* p_function_name,
+                    IDasVariantVector* p_arguments,
+                    [out] IDasVariantVector** pp_out_result);
+            }
+            """
+        )
+        artifacts = generate_napi_artifacts(
+            doc,
+            package_name="das-core",
+            addon_name="das_core_napi",
+        )
+        director = _cpp_class_block(artifacts.cpp, "INapiDasComponent")
+
+        self.assertIn(
+            "DAS::DasPtr<IDasVariantVector> p_arguments_hold(p_arguments);",
+            director,
+        )
+        self.assertIn(
+            "const DasResult p_arguments_snapshot_result = p_arguments_hold->GetSize();",
+            director,
+        )
+        self.assertIn("return p_arguments_snapshot_result;", director)
+        self.assertLess(
+            director.index("p_arguments_snapshot_result"),
+            director.index('DispatchDirectorCall("dispatch"'),
+        )
+
     def test_napi_phase74_director_logs_exceptions_and_guards_recursion(self):
         artifacts = generate_napi_artifacts(
             _phase74_contract_doc(),

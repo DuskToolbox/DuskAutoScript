@@ -39,7 +39,6 @@
 #include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <das/Core/Utils/StdExecution.h>
 #include <das/IDasAsyncLoadPluginOperation.h>
-#include <fstream>
 #include <gtest/gtest.h>
 #include <optional>
 #include <vector>
@@ -394,66 +393,66 @@ namespace
                    package_root / "das_core_napi.node");
     }
 
-    class TemporaryNodePackageFixture
+    testing::AssertionResult ValidateNodeHostPackage(
+        const std::filesystem::path& node_executable,
+        const std::filesystem::path& package_root)
     {
-    public:
-        explicit TemporaryNodePackageFixture(
-            std::filesystem::path package_root)
-            : package_root_{std::move(package_root)}
+        if (node_executable.empty()
+            || !std::filesystem::is_regular_file(node_executable))
         {
-            const auto stamp =
-                std::chrono::steady_clock::now().time_since_epoch().count();
-            const auto base_name =
-                "das-node-host-load-plugin-" + std::to_string(stamp);
-            manifest_path_ = package_root_ / (base_name + ".json");
-            entry_path_ = package_root_ / (base_name + ".cjs");
-
-            {
-                std::ofstream entry{entry_path_};
-                entry << "'use strict';\n"
-                         "module.exports = { createPlugin() { return {}; } };\n";
-            }
-            {
-                std::ofstream manifest{manifest_path_};
-                manifest << R"({
-    "guid": "75090001-0000-4000-8000-000000000001",
-    "name": "NodeHostLoadPluginSmoke",
-    "language": "Node",
-    "description": "minimal Node host LOAD_PLUGIN smoke fixture",
-    "author": "test",
-    "version": "1.0",
-    "supportedSystem": "win",
-    "pluginFilenameExtension": "cjs",
-    "entry": ")"
-                         << entry_path_.filename().string() << R"(",
-    "settings": []
-})";
-            }
+            return testing::AssertionFailure() << "Node executable not found";
         }
 
-        TemporaryNodePackageFixture(const TemporaryNodePackageFixture&) =
-            delete;
-        TemporaryNodePackageFixture& operator=(
-            const TemporaryNodePackageFixture&) = delete;
-
-        ~TemporaryNodePackageFixture()
+        if (!HasGeneratedNodeHostPackage(package_root))
         {
-            std::error_code ec;
-            std::filesystem::remove(manifest_path_, ec);
-            std::filesystem::remove(entry_path_, ec);
+            return testing::AssertionFailure()
+                << "Generated Node host package missing from: "
+                << package_root.string();
         }
 
-        [[nodiscard]]
-        const std::filesystem::path& ManifestPath() const
+        return testing::AssertionSuccess();
+    }
+
+    DasResult StartNodeHostPackage(
+        DAS::Core::IPC::IHostLauncher* launcher,
+        const std::filesystem::path&   node_executable,
+        const std::filesystem::path&   package_root,
+        uint16_t*                      session_id)
+    {
+        if (!launcher || !session_id)
         {
-            return manifest_path_;
+            return DAS_E_INVALID_POINTER;
         }
 
-    private:
-        std::filesystem::path package_root_;
-        std::filesystem::path manifest_path_;
-        std::filesystem::path entry_path_;
-    };
+        const auto host_script = package_root / "das-node-host.cjs";
+        const auto executable_text = node_executable.string();
+        const auto script_text = host_script.string();
+        const auto main_pid_value = std::to_string(
+            static_cast<uint32_t>(DAS_IPC_TEST_CURRENT_PROCESS_ID()));
+        const auto working_directory_text = package_root.string();
+
+        DasReadOnlyString executable_string{executable_text.c_str()};
+        DasReadOnlyString script_arg{script_text.c_str()};
+        DasReadOnlyString main_pid_name{"--main-pid"};
+        DasReadOnlyString main_pid_arg{main_pid_value.c_str()};
+        DasReadOnlyString working_directory{working_directory_text.c_str()};
+
+        std::array<IDasReadOnlyString*, 3> args{
+            script_arg.Get(),
+            main_pid_name.Get(),
+            main_pid_arg.Get()};
+
+        DAS::Core::IPC::HostLaunchDesc desc{};
+        desc.p_executable_path = executable_string.Get();
+        desc.pp_args = args.data();
+        desc.arg_count = args.size();
+        desc.p_working_directory = working_directory.Get();
+
+        return launcher->StartWithDesc(
+            &desc,
+            IpcTestConfig::GetHostStartTimeoutMs(),
+            session_id);
+    }
 } // namespace
 
 TEST_F(IpcMultiProcessTestIntegration, HostLauncherStart)
@@ -478,46 +477,21 @@ TEST_F(IpcMultiProcessTestIntegration, HostLauncherStart)
 TEST_F(IpcMultiProcessTestIntegration, NodeHostLauncherStart)
 {
     const auto node_executable = ResolveNodeExecutableForIntegration();
-    if (node_executable.empty()
-        || !std::filesystem::is_regular_file(node_executable))
-    {
-        GTEST_SKIP() << "Node executable not found";
-    }
-
     const auto node_package_root =
         NodePackageRootFromHostExePath(host_exe_path_);
-    if (!HasGeneratedNodeHostPackage(node_package_root))
+    const auto node_host_package =
+        ValidateNodeHostPackage(node_executable, node_package_root);
+    if (!node_host_package)
     {
-        GTEST_SKIP()
-            << "Generated Node host package missing from: "
-            << node_package_root.string();
+        GTEST_SKIP() << node_host_package.message();
     }
-
-    const auto host_script = node_package_root / "das-node-host.cjs";
-    DasReadOnlyString executable_string{node_executable.string().c_str()};
-    DasReadOnlyString script_arg{host_script.string().c_str()};
-    DasReadOnlyString main_pid_name{"--main-pid"};
-    const auto        main_pid_value = std::to_string(
-        static_cast<uint32_t>(DAS_IPC_TEST_CURRENT_PROCESS_ID()));
-    DasReadOnlyString main_pid_arg{main_pid_value.c_str()};
-    DasReadOnlyString working_directory{node_package_root.string().c_str()};
-
-    std::array<IDasReadOnlyString*, 3> args{
-        script_arg.Get(),
-        main_pid_name.Get(),
-        main_pid_arg.Get()};
-
-    DAS::Core::IPC::HostLaunchDesc desc{};
-    desc.p_executable_path = executable_string.Get();
-    desc.pp_args = args.data();
-    desc.arg_count = args.size();
-    desc.p_working_directory = working_directory.Get();
 
     ScopedHostStop guard{launcher_};
     uint16_t       session_id = 0;
-    const auto     result = launcher_->StartWithDesc(
-        &desc,
-        IpcTestConfig::GetHostStartTimeoutMs(),
+    const auto     result = StartNodeHostPackage(
+        launcher_.Get(),
+        node_executable,
+        node_package_root,
         &session_id);
 
     ASSERT_EQ(result, DAS_S_OK);
@@ -529,49 +503,33 @@ TEST_F(IpcMultiProcessTestIntegration, NodeHostLauncherStart)
 
 TEST_F(IpcMultiProcessTestIntegration, NodeHostLoadPluginQueryInterface)
 {
+    std::string plugin_json_path;
+    try
+    {
+        plugin_json_path =
+            IpcTestConfig::GetTestPluginJsonPath("NodeTestPlugin");
+    }
+    catch (const std::exception& e)
+    {
+        GTEST_FAIL() << "NodeTestPlugin JSON not found: " << e.what();
+    }
+
     const auto node_executable = ResolveNodeExecutableForIntegration();
-    if (node_executable.empty()
-        || !std::filesystem::is_regular_file(node_executable))
-    {
-        GTEST_SKIP() << "Node executable not found";
-    }
-
     const auto node_package_root =
-        NodePackageRootFromHostExePath(host_exe_path_);
-    if (!HasGeneratedNodeHostPackage(node_package_root))
+        std::filesystem::path{plugin_json_path}.parent_path();
+    const auto node_host_package =
+        ValidateNodeHostPackage(node_executable, node_package_root);
+    if (!node_host_package)
     {
-        GTEST_SKIP()
-            << "Generated Node host package missing from: "
-            << node_package_root.string();
+        GTEST_SKIP() << node_host_package.message();
     }
-
-    TemporaryNodePackageFixture fixture{node_package_root};
-
-    const auto host_script = node_package_root / "das-node-host.cjs";
-    DasReadOnlyString executable_string{node_executable.string().c_str()};
-    DasReadOnlyString script_arg{host_script.string().c_str()};
-    DasReadOnlyString main_pid_name{"--main-pid"};
-    const auto        main_pid_value = std::to_string(
-        static_cast<uint32_t>(DAS_IPC_TEST_CURRENT_PROCESS_ID()));
-    DasReadOnlyString main_pid_arg{main_pid_value.c_str()};
-    DasReadOnlyString working_directory{node_package_root.string().c_str()};
-
-    std::array<IDasReadOnlyString*, 3> args{
-        script_arg.Get(),
-        main_pid_name.Get(),
-        main_pid_arg.Get()};
-
-    DAS::Core::IPC::HostLaunchDesc desc{};
-    desc.p_executable_path = executable_string.Get();
-    desc.pp_args = args.data();
-    desc.arg_count = args.size();
-    desc.p_working_directory = working_directory.Get();
 
     ScopedHostStop guard{launcher_};
     uint16_t       session_id = 0;
-    auto           result = launcher_->StartWithDesc(
-        &desc,
-        IpcTestConfig::GetHostStartTimeoutMs(),
+    auto           result = StartNodeHostPackage(
+        launcher_.Get(),
+        node_executable,
+        node_package_root,
         &session_id);
     ASSERT_EQ(result, DAS_S_OK);
     ASSERT_TRUE(launcher_->IsRunning());
@@ -580,7 +538,7 @@ TEST_F(IpcMultiProcessTestIntegration, NodeHostLoadPluginQueryInterface)
     DAS::DasPtr<IDasAsyncLoadPluginOperation> op;
     result = ctx_->LoadPluginAsync(
         launcher_.Get(),
-        fixture.ManifestPath().string().c_str(),
+        plugin_json_path.c_str(),
         op.Put(),
         IpcTestConfig::GetPluginLoadTimeout());
     ASSERT_EQ(result, DAS_S_OK);
@@ -607,7 +565,190 @@ TEST_F(IpcMultiProcessTestIntegration, NodeHostLoadPluginQueryInterface)
     DAS::PluginInterface::DasPluginFeature feature{};
     EXPECT_EQ(
         plugin_package->EnumFeature(0, &feature),
-        DAS_E_OUT_OF_RANGE);
+        DAS_S_OK);
+    EXPECT_EQ(
+        feature,
+        DAS::PluginInterface::DAS_PLUGIN_FEATURE_COMPONENT_FACTORY);
+
+    DAS::PluginInterface::DasPluginFeature out_of_range_feature{};
+    EXPECT_NE(
+        plugin_package->EnumFeature(1, &out_of_range_feature),
+        DAS_S_OK);
+    EXPECT_TRUE(launcher_->IsRunning())
+        << "Node host should remain alive after JS non-success result";
+}
+
+TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LoadNodePlugin)
+{
+    std::string plugin_json_path;
+    try
+    {
+        plugin_json_path =
+            IpcTestConfig::GetTestPluginJsonPath("NodeTestPlugin");
+    }
+    catch (const std::exception& e)
+    {
+        GTEST_FAIL() << "NodeTestPlugin JSON not found: " << e.what();
+    }
+
+    const auto node_executable = ResolveNodeExecutableForIntegration();
+    const auto node_package_root =
+        std::filesystem::path{plugin_json_path}.parent_path();
+    const auto node_host_package =
+        ValidateNodeHostPackage(node_executable, node_package_root);
+    if (!node_host_package)
+    {
+        GTEST_SKIP() << node_host_package.message();
+    }
+
+    ScopedHostStop guard{launcher_};
+    uint16_t       session_id = 0;
+    auto           result = StartNodeHostPackage(
+        launcher_.Get(),
+        node_executable,
+        node_package_root,
+        &session_id);
+    ASSERT_EQ(result, DAS_S_OK);
+    ASSERT_TRUE(launcher_->IsRunning());
+    ASSERT_GT(session_id, static_cast<uint16_t>(0));
+
+    DAS::DasPtr<IDasAsyncLoadPluginOperation> op;
+    result = ctx_->LoadPluginAsync(
+        launcher_.Get(),
+        plugin_json_path.c_str(),
+        op.Put(),
+        IpcTestConfig::GetPluginLoadTimeout());
+    ASSERT_EQ(result, DAS_S_OK);
+
+    auto opt = DAS::Core::IPC::wait(
+        GetContext(),
+        DAS::Core::IPC::async_op(GetContext(), std::move(op)));
+    ASSERT_TRUE(opt.has_value()) << "Node plugin load timed out or failed";
+
+    auto& [load_result, proxy] = *opt;
+    ASSERT_EQ(load_result, DAS_S_OK);
+    ASSERT_NE(proxy, nullptr);
+
+    DAS::DasPtr<IDasBase> raw_proxy =
+        DAS::DasPtr<IDasBase>::Attach(proxy);
+    DAS::PluginInterface::DasPluginPackage plugin_package;
+    ASSERT_EQ(raw_proxy.As(plugin_package.Put()), DAS_S_OK);
+
+    DAS::PluginInterface::DasPluginFeature feature{};
+    ASSERT_EQ(plugin_package->EnumFeature(0, &feature), DAS_S_OK);
+    EXPECT_EQ(
+        feature,
+        DAS::PluginInterface::DAS_PLUGIN_FEATURE_COMPONENT_FACTORY);
+
+    IDasBase* factory_base_raw = nullptr;
+    ASSERT_EQ(
+        plugin_package->CreateFeatureInterface(0, &factory_base_raw),
+        DAS_S_OK);
+    ASSERT_NE(factory_base_raw, nullptr);
+    DAS::DasPtr<IDasBase> factory_base(factory_base_raw);
+
+    DAS::DasPtr<IDasComponentFactory> factory;
+    ASSERT_EQ(factory_base.As(factory.Put()), DAS_S_OK);
+    EXPECT_EQ(
+        factory->IsSupported(DasIidOf<IDasComponent>()),
+        DAS_S_OK);
+
+    IDasComponent* component_raw = nullptr;
+    ASSERT_EQ(
+        factory->CreateInstance(
+            DasIidOf<IDasComponent>(),
+            &component_raw),
+        DAS_S_OK);
+    ASSERT_NE(component_raw, nullptr);
+    DAS::DasPtr<IDasComponent> component(component_raw);
+
+    {
+        DasReadOnlyString                      method_name{"getSessionInfo"};
+        DAS::ExportInterface::DasVariantVector dispatch_result;
+        DAS::ExportInterface::DasVariantVector params;
+        ASSERT_EQ(CreateIDasVariantVector(params.Put()), DAS_S_OK);
+
+        ASSERT_EQ(
+            component->Dispatch(
+                method_name.Get(),
+                params.Get(),
+                dispatch_result.Put()),
+            DAS_S_OK);
+        ASSERT_NE(dispatch_result.Get(), nullptr);
+        ASSERT_EQ(dispatch_result->GetSize(), 3u);
+
+        int64_t session_value = 0;
+        ASSERT_EQ(dispatch_result->GetInt(0, &session_value), DAS_S_OK);
+        EXPECT_GE(session_value, 0);
+
+        DAS::DasPtr<IDasReadOnlyString> language;
+        ASSERT_EQ(dispatch_result->GetString(1, language.Put()), DAS_S_OK);
+        const char* language_text = nullptr;
+        ASSERT_EQ(language->GetUtf8(&language_text), DAS_S_OK);
+        ASSERT_NE(language_text, nullptr);
+        EXPECT_STREQ(language_text, "Node");
+
+        DAS::DasPtr<IDasReadOnlyString> component_name;
+        ASSERT_EQ(
+            dispatch_result->GetString(2, component_name.Put()),
+            DAS_S_OK);
+        const char* component_name_text = nullptr;
+        ASSERT_EQ(component_name->GetUtf8(&component_name_text), DAS_S_OK);
+        ASSERT_NE(component_name_text, nullptr);
+        EXPECT_STREQ(component_name_text, "NodeTestPlugin");
+    }
+
+    {
+        DasReadOnlyString                      method_name{"echo"};
+        DAS::ExportInterface::DasVariantVector dispatch_result;
+        DAS::ExportInterface::DasVariantVector params;
+        ASSERT_EQ(CreateIDasVariantVector(params.Put()), DAS_S_OK);
+        DasReadOnlyString input_text{"ipc-node-e2e"};
+        ASSERT_EQ(
+            params.Get()->PushBackString(input_text.Get()),
+            DAS_S_OK);
+
+        ASSERT_EQ(
+            component->Dispatch(
+                method_name.Get(),
+                params.Get(),
+                dispatch_result.Put()),
+            DAS_S_OK);
+        ASSERT_NE(dispatch_result.Get(), nullptr);
+        ASSERT_EQ(dispatch_result->GetSize(), 1u);
+
+        DAS::DasPtr<IDasReadOnlyString> echo_value;
+        ASSERT_EQ(dispatch_result->GetString(0, echo_value.Put()), DAS_S_OK);
+        const char* echo_text = nullptr;
+        ASSERT_EQ(echo_value->GetUtf8(&echo_text), DAS_S_OK);
+        ASSERT_NE(echo_text, nullptr);
+        EXPECT_STREQ(echo_text, "[Node] echo: ipc-node-e2e");
+    }
+
+    {
+        DasReadOnlyString                      method_name{"compute"};
+        DAS::ExportInterface::DasVariantVector dispatch_result;
+        DAS::ExportInterface::DasVariantVector params;
+        ASSERT_EQ(CreateIDasVariantVector(params.Put()), DAS_S_OK);
+        DasReadOnlyString operation{"mul"};
+        ASSERT_EQ(params.Get()->PushBackString(operation.Get()), DAS_S_OK);
+        ASSERT_EQ(params.Get()->PushBackInt(6), DAS_S_OK);
+        ASSERT_EQ(params.Get()->PushBackInt(7), DAS_S_OK);
+
+        ASSERT_EQ(
+            component->Dispatch(
+                method_name.Get(),
+                params.Get(),
+                dispatch_result.Put()),
+            DAS_S_OK);
+        ASSERT_NE(dispatch_result.Get(), nullptr);
+        ASSERT_EQ(dispatch_result->GetSize(), 1u);
+
+        int64_t computed = 0;
+        ASSERT_EQ(dispatch_result->GetInt(0, &computed), DAS_S_OK);
+        EXPECT_EQ(computed, 42);
+    }
+
 }
 
 TEST_F(IpcMultiProcessTestIntegration, MultipleStartStop)
@@ -2323,6 +2464,7 @@ public:
     std::string                               received_status_;
     DAS::Core::IPC::MainProcess::IIpcContext* ctx_ = nullptr;
     IDasAsyncCallback*                        completion_signal_ = nullptr;
+    bool                                      request_stop_on_callback_ = true;
 
     void Configure(DAS::Core::IPC::MainProcess::IIpcContext& ctx)
     {
@@ -2343,19 +2485,28 @@ public:
 
         std::string func = func_ptr;
 
-        if (func == "lifecycle_callback")
+        const std::string callback_prefix = "lifecycle_callback:";
+        if (func == "lifecycle_callback"
+            || func.rfind(callback_prefix, 0) == 0)
         {
-            IDasReadOnlyString* status_ro = nullptr;
-            hr = p_arguments->GetString(0, &status_ro);
-            if (IsOk(hr) && status_ro)
+            if (func.rfind(callback_prefix, 0) == 0)
             {
-                const char* status_ptr = nullptr;
-                status_ro->GetUtf8(&status_ptr);
-                if (status_ptr)
+                received_status_ = func.substr(callback_prefix.size());
+            }
+            else if (p_arguments)
+            {
+                IDasReadOnlyString* status_ro = nullptr;
+                hr = p_arguments->GetString(0, &status_ro);
+                if (IsOk(hr) && status_ro)
                 {
-                    received_status_ = status_ptr;
+                    const char* status_ptr = nullptr;
+                    status_ro->GetUtf8(&status_ptr);
+                    if (status_ptr)
+                    {
+                        received_status_ = status_ptr;
+                    }
+                    status_ro->Release();
                 }
-                status_ro->Release();
             }
 
             callback_received_ = true;
@@ -2372,7 +2523,7 @@ public:
                 ctx_->PostCallback(completion_signal_);
             }
 
-            if (ctx_)
+            if (ctx_ && request_stop_on_callback_)
             {
                 ctx_->RequestStop();
             }
@@ -2432,6 +2583,194 @@ public:
 
 private:
 };
+
+TEST_F(IpcMultiProcessTestIntegration, CrossProcess_NodeDirectorLifecycleTest)
+{
+    std::string plugin_json_path;
+    try
+    {
+        plugin_json_path =
+            IpcTestConfig::GetTestPluginJsonPath("NodeTestPlugin");
+    }
+    catch (const std::exception& e)
+    {
+        GTEST_FAIL() << "NodeTestPlugin JSON not found: " << e.what();
+    }
+
+    const auto node_executable = ResolveNodeExecutableForIntegration();
+    const auto node_package_root =
+        std::filesystem::path{plugin_json_path}.parent_path();
+    const auto node_host_package =
+        ValidateNodeHostPackage(node_executable, node_package_root);
+    if (!node_host_package)
+    {
+        GTEST_SKIP() << node_host_package.message();
+    }
+
+    auto callback = DAS::MakeDasPtr<LifecycleCallbackComponent>();
+    callback->Configure(GetContext());
+    callback->request_stop_on_callback_ = false;
+
+    DasResult reg_result = ctx_->RegisterService(
+        callback.Get(),
+        DasIidOf<DAS::PluginInterface::IDasComponent>());
+    ASSERT_EQ(reg_result, DAS_S_OK);
+
+    ScopedHostStop guard{launcher_};
+    uint16_t       session_id = 0;
+    DasResult      result = StartNodeHostPackage(
+        launcher_.Get(),
+        node_executable,
+        node_package_root,
+        &session_id);
+    ASSERT_EQ(result, DAS_S_OK);
+    ASSERT_TRUE(launcher_->IsRunning());
+    ASSERT_GT(session_id, static_cast<uint16_t>(0));
+
+    DAS::DasPtr<IDasAsyncLoadPluginOperation> op;
+    result = ctx_->LoadPluginAsync(
+        launcher_.Get(),
+        plugin_json_path.c_str(),
+        op.Put(),
+        IpcTestConfig::GetPluginLoadTimeout());
+    ASSERT_EQ(result, DAS_S_OK);
+
+    auto opt = DAS::Core::IPC::wait(
+        GetContext(),
+        DAS::Core::IPC::async_op(GetContext(), std::move(op)));
+    ASSERT_TRUE(opt.has_value()) << "Node plugin load timed out or failed";
+
+    auto& [load_result, proxy] = *opt;
+    ASSERT_EQ(load_result, DAS_S_OK);
+    ASSERT_NE(proxy, nullptr);
+
+    DAS::DasPtr<IDasBase> raw_proxy =
+        DAS::DasPtr<IDasBase>::Attach(proxy);
+    DAS::PluginInterface::DasPluginPackage plugin_package;
+    ASSERT_EQ(raw_proxy.As(plugin_package.Put()), DAS_S_OK);
+
+    IDasBase* factory_base_raw = nullptr;
+    ASSERT_EQ(
+        plugin_package->CreateFeatureInterface(0, &factory_base_raw),
+        DAS_S_OK);
+    ASSERT_NE(factory_base_raw, nullptr);
+    DAS::DasPtr<IDasBase> factory_base(factory_base_raw);
+
+    DAS::DasPtr<IDasComponentFactory> factory;
+    ASSERT_EQ(factory_base.As(factory.Put()), DAS_S_OK);
+
+    IDasComponent* component_raw = nullptr;
+    ASSERT_EQ(
+        factory->CreateInstance(
+            DasIidOf<IDasComponent>(),
+            &component_raw),
+        DAS_S_OK);
+    ASSERT_NE(component_raw, nullptr);
+    DAS::DasPtr<IDasComponent> component(component_raw);
+
+    std::atomic<bool> done{false};
+    auto              signal = DAS::MakeDasPtr<CompletionSignal>(done);
+    callback->completion_signal_ = signal.Get();
+
+    DAS::DasPtr<IDasComponent> director_component;
+    {
+        DasReadOnlyString                      method_name{"bridgeLifecycleTest"};
+        DAS::ExportInterface::DasVariantVector dispatch_result;
+        DAS::ExportInterface::DasVariantVector params;
+        ASSERT_EQ(CreateIDasVariantVector(params.Put()), DAS_S_OK);
+
+        DasReadOnlyString marker{"node_bridge_marker"};
+        ASSERT_EQ(params.Get()->PushBackComponent(callback.Get()), DAS_S_OK);
+        ASSERT_EQ(params.Get()->PushBackString(marker.Get()), DAS_S_OK);
+
+        ASSERT_EQ(
+            component->Dispatch(
+                method_name.Get(),
+                params.Get(),
+                dispatch_result.Put()),
+            DAS_S_OK);
+        ASSERT_NE(dispatch_result.Get(), nullptr);
+        ASSERT_EQ(dispatch_result->GetSize(), 2u);
+
+        DAS::DasPtr<IDasReadOnlyString> director_status;
+        ASSERT_EQ(
+            dispatch_result->GetString(0, director_status.Put()),
+            DAS_S_OK);
+        const char* director_status_text = nullptr;
+        ASSERT_EQ(
+            director_status->GetUtf8(&director_status_text),
+            DAS_S_OK);
+        ASSERT_NE(director_status_text, nullptr);
+        EXPECT_STREQ(
+            director_status_text,
+            "director_created:node_bridge_marker");
+
+        ASSERT_EQ(
+            dispatch_result->GetComponent(1, director_component.Put()),
+            DAS_S_OK);
+        ASSERT_NE(director_component.Get(), nullptr);
+    }
+
+    constexpr auto kTimeout = std::chrono::seconds(15);
+    const auto     start_time = std::chrono::steady_clock::now();
+    while (!done.load())
+    {
+        const auto elapsed = std::chrono::steady_clock::now() - start_time;
+        if (elapsed >= kTimeout)
+        {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+
+    EXPECT_TRUE(callback->callback_received_)
+        << "Node bridge lifecycle callback was not received";
+    EXPECT_NE(
+        callback->received_status_.find(
+            "bridge_released:Node:node_bridge_marker"),
+        std::string::npos)
+        << "Unexpected status: " << callback->received_status_;
+
+    {
+        DasReadOnlyString                      director_method{"getSessionInfo"};
+        DAS::ExportInterface::DasVariantVector director_result;
+        DAS::ExportInterface::DasVariantVector director_params;
+        ASSERT_EQ(CreateIDasVariantVector(director_params.Put()), DAS_S_OK);
+        ASSERT_EQ(
+            director_component->Dispatch(
+                director_method.Get(),
+                director_params.Get(),
+                director_result.Put()),
+            DAS_S_OK);
+        ASSERT_NE(director_result.Get(), nullptr);
+        ASSERT_EQ(director_result->GetSize(), 3u);
+
+        DAS::DasPtr<IDasReadOnlyString> director_language;
+        ASSERT_EQ(
+            director_result->GetString(0, director_language.Put()),
+            DAS_S_OK);
+        const char* director_language_text = nullptr;
+        ASSERT_EQ(
+            director_language->GetUtf8(&director_language_text),
+            DAS_S_OK);
+        ASSERT_NE(director_language_text, nullptr);
+        EXPECT_STREQ(director_language_text, "Node");
+
+        DAS::DasPtr<IDasReadOnlyString> director_marker;
+        ASSERT_EQ(
+            director_result->GetString(2, director_marker.Put()),
+            DAS_S_OK);
+        const char* director_marker_text = nullptr;
+        ASSERT_EQ(
+            director_marker->GetUtf8(&director_marker_text),
+            DAS_S_OK);
+        ASSERT_NE(director_marker_text, nullptr);
+        EXPECT_STREQ(director_marker_text, "Director");
+    }
+
+    EXPECT_TRUE(launcher_->IsRunning())
+        << "Node host should remain alive after lifecycle director callback";
+}
 
 TEST_F(IpcMultiProcessTestIntegration, CrossProcess_JavaDirectorLifecycleTest)
 {

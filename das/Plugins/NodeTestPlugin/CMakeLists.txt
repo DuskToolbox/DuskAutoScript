@@ -37,6 +37,15 @@ set(_NODE_PLUGIN_SOURCE_FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/package.json"
 )
 
+set(_NODE_RUNTIME_DLL_COPY_COMMAND)
+if(WIN32)
+    list(APPEND _NODE_RUNTIME_DLL_COPY_COMMAND
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:DasCoreNodeExport>
+            "${_NODE_PLUGIN_OUTPUT_DIR}"
+    )
+endif()
+
 add_custom_target(${PLUGIN_NAME}Copy ALL
     COMMAND ${CMAKE_COMMAND} -E make_directory "${_NODE_PLUGIN_OUTPUT_DIR}"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
@@ -57,11 +66,13 @@ add_custom_target(${PLUGIN_NAME}Copy ALL
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "$<TARGET_FILE:DasCoreNodeExport>"
         "${_NODE_PLUGIN_OUTPUT_DIR}/${NODE_ADDON_NAME}.node"
+    ${_NODE_RUNTIME_DLL_COPY_COMMAND}
     DEPENDS
         ${_NODE_PLUGIN_SOURCE_FILES}
         "${_NODE_HOST_SCRIPT}"
         "${_NODE_WRAPPER_SCRIPT}"
     COMMENT "[NodeTestPlugin] Copying plugin files to output directory"
+    COMMAND_EXPAND_LISTS
     VERBATIM
 )
 

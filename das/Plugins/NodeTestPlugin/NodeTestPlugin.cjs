@@ -20,16 +20,32 @@ function toIndex(index) {
   return Number(index);
 }
 
-function wrapBase(nativeBase) {
-  return new das.IDasBase(nativeBase);
+function wrapComponent(nativeComponent) {
+  if (!nativeComponent || typeof nativeComponent !== "object") {
+    return nativeComponent;
+  }
+  if (typeof nativeComponent.dispatch === "function") {
+    return nativeComponent;
+  }
+  return new das.IDasComponent(nativeComponent);
+}
+
+function wrapVariantVector(args) {
+  if (!args || typeof args !== "object") {
+    return args;
+  }
+  if (typeof args.getString === "function") {
+    return args;
+  }
+  return new das.IDasVariantVector(args);
 }
 
 function readString(args, index) {
-  return args.getString(BigInt(index));
+  return wrapVariantVector(args).getString(BigInt(index));
 }
 
 function readInt(args, index) {
-  return Number(args.getInt(BigInt(index)));
+  return Number(wrapVariantVector(args).getInt(BigInt(index)));
 }
 
 function makeVariantVector(items = []) {
@@ -232,11 +248,16 @@ function createComponent(sessionId) {
           throw new Error(`NodeTestPlugin compute invalid operation: ${operation}`);
         }
         case "bridgeLifecycleTest": {
-          const callbackBase = args.getBase(0n);
+          const normalizedArgs = wrapVariantVector(args);
+          const callback = wrapComponent(normalizedArgs.getComponent(0n));
           const marker = readString(args, 1);
-          const callback = das.IDasComponent.from(wrapBase(callbackBase));
-          const callbackArgs = stringVector(`bridge_released:Node:${marker}`);
-          callback.dispatch("lifecycle_callback", callbackArgs);
+          const callbackArgs = makeVariantVector();
+          setTimeout(() => {
+            callback.dispatch(
+              `lifecycle_callback:bridge_released:Node:${marker}`,
+              callbackArgs,
+            );
+          }, 100);
 
           const director = makeLifecycleDirector();
           return makeVariantVector([
