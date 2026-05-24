@@ -26,7 +26,7 @@ from typing import List
 sys.path.insert(0, str(Path(__file__).parent))
 
 from das_idl_parser import parse_idl_file, IdlDocument, InterfaceDef
-from swig_lua_generator import LuaSwigGenerator
+from swig_lua_generator import LuaSwigGenerator, has_public_lua_module_functions
 
 
 def _collect_abi_interface_names(abi_dir: str) -> set[str]:
@@ -223,8 +223,7 @@ def generate_cpp_file(
         parts.append('')
 
     # ── Module function bindings ───────────────────────────────────────
-    has_functions = any(len(module.functions) > 0 for module in doc.modules)
-    if has_functions:
+    if has_public_lua_module_functions(doc):
         available_types = {iface.name for iface in abilable_interfaces}
         parts.append(
             gen._generate_module_binding(doc, available_types)

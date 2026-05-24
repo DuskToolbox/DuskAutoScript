@@ -5,7 +5,7 @@ Lua SWIG 生成器
 """
 
 import re
-from typing import TYPE_CHECKING, List
+from typing import TYPE_CHECKING, Iterable, List
 from das_idl_parser import (
     IdlDocument,
     ErrorCodeDef,
@@ -23,6 +23,23 @@ from shared_utils import type_simple_name
 
 if TYPE_CHECKING:
     from swig_api_model import SwigInterfaceModel
+
+
+def is_public_lua_module_function(func: ModuleFunctionDef) -> bool:
+    return not bool(func.attributes.get('c_abi', False))
+
+
+def iter_public_lua_module_functions(
+    doc: IdlDocument,
+) -> Iterable[ModuleFunctionDef]:
+    for module in doc.modules:
+        for func in module.functions:
+            if is_public_lua_module_function(func):
+                yield func
+
+
+def has_public_lua_module_functions(doc: IdlDocument) -> bool:
+    return any(iter_public_lua_module_functions(doc))
 
 
 class LuaSwigGenerator(SwigLangGenerator):
@@ -1264,7 +1281,7 @@ public:
         遍历所有模块及其函数，根据是否有 [out] 参数生成不同的绑定：
           - 无 [out] 参数 → 直接绑定函数指针
           - [swig_ret] 函数 → DasRet lambda（解包 DasRetXxx 为 tuple）
-          - 有 [out] 参数的 C ABI 函数 → lambda 包装为 tuple 返回值
+          - 有 [out] 参数的非 [swig_ret] 函数 → lambda 包装为 tuple 返回值
 
         Args:
             doc: 经 resolve_types() 标注后的 IDL 文档。
@@ -1278,6 +1295,8 @@ public:
 
         for module in doc.modules:
             for func in module.functions:
+                if not is_public_lua_module_function(func):
+                    continue
                 # 跳过引用了不完整接口类型的函数（无 ABI 头文件的接口）
                 if available_types is not None:
                     if self._func_references_unavailable_type(
@@ -1306,7 +1325,7 @@ public:
                         lines.append(f'    {ll}')
                     lines.append('    );')
                 else:
-                    # 有 [out] 参数的 C ABI 函数 → 原始 lambda
+                    # 有 [out] 参数的非 [swig_ret] 函数 → 原始 lambda
                     lambda_lines = (
                         self._generate_module_function_lambda(func)
                     )
@@ -1678,40 +1697,39 @@ public:
             lines.append('')
 
         # ── 模块函数注解 ─────────────────────────────────────────────
-        for module in doc.modules:
-            for func in module.functions:
-                # ---@param 注解
-                for param in func.parameters:
-                    if param.direction != ParamDirection.OUT:
-                        emmy_type = self._emmy_lua_type(param.type_info)
-                        lines.append(
-                            f'---@param {param.name} {emmy_type}'
-                        )
-
-                # ---@return 注解
-                return_parts = []
-                if func.return_type.base_type != 'void':
-                    return_parts.append(
-                        self._emmy_lua_type(func.return_type)
-                    )
-                for param in func.parameters:
-                    if param.direction in (ParamDirection.OUT, ParamDirection.INOUT):
-                        return_parts.append(
-                            self._emmy_lua_type(param.type_info)
-                        )
-                if return_parts:
+        for func in iter_public_lua_module_functions(doc):
+            # ---@param 注解
+            for param in func.parameters:
+                if param.direction != ParamDirection.OUT:
+                    emmy_type = self._emmy_lua_type(param.type_info)
                     lines.append(
-                        f'---@return {", ".join(return_parts)}'
+                        f'---@param {param.name} {emmy_type}'
                     )
 
-                # 函数声明（最小化：仅签名 + end）
-                in_params = [
-                    p for p in func.parameters
-                    if p.direction != ParamDirection.OUT
-                ]
-                param_names = ', '.join(p.name for p in in_params)
-                lines.append(f'function {func.name}({param_names}) end')
-                lines.append('')
+            # ---@return 注解
+            return_parts = []
+            if func.return_type.base_type != 'void':
+                return_parts.append(
+                    self._emmy_lua_type(func.return_type)
+                )
+            for param in func.parameters:
+                if param.direction in (ParamDirection.OUT, ParamDirection.INOUT):
+                    return_parts.append(
+                        self._emmy_lua_type(param.type_info)
+                    )
+            if return_parts:
+                lines.append(
+                    f'---@return {", ".join(return_parts)}'
+                )
+
+            # 函数声明（最小化：仅签名 + end）
+            in_params = [
+                p for p in func.parameters
+                if p.direction != ParamDirection.OUT
+            ]
+            param_names = ', '.join(p.name for p in in_params)
+            lines.append(f'function {func.name}({param_names}) end')
+            lines.append('')
 
         return '\n'.join(lines)
 
@@ -1818,10 +1836,7 @@ public:
             lines.append('')
 
         # 注册模块函数
-        has_functions = any(
-            len(module.functions) > 0 for module in doc.modules
-        )
-        if has_functions:
+        if has_public_lua_module_functions(doc):
             lines.append('    // Register module functions')
             lines.append('    register_module_functions(lua);')
             lines.append('')

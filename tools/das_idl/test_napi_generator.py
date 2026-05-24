@@ -34,12 +34,12 @@ def _sample_doc():
         }
 
         module {
-            [export, c_abi] void DasLogInfoU8(const char* p_string);
-            [export, c_abi] DasResult DasSetIpcTimeout(uint32_t timeout_ms);
-            [export, c_abi] DasResult DasUnregisterMainProcessServiceByName(const char* name);
-            [export, c_abi] DasResult DasUseGuid(const DasGuid& guid);
-            [export, c_abi] DasResult DasGetIpcTimeout([out] uint32_t* p_out_timeout_ms);
-            [export, c_abi] DasResult DasQueryMainProcessInterface(const DasGuid& iid, [out] IDasBase** pp_out_object);
+            [export] void DasLogInfoU8(const char* p_string);
+            [export] DasResult DasSetIpcTimeout(uint32_t timeout_ms);
+            [export] DasResult DasUnregisterMainProcessServiceByName(const char* name);
+            [export] DasResult DasUseGuid(const DasGuid& guid);
+            [export] DasResult DasGetIpcTimeout([out] uint32_t* p_out_timeout_ms);
+            [export] DasResult DasQueryMainProcessInterface(const DasGuid& iid, [out] IDasBase** pp_out_object);
         }
         """
     )
@@ -135,7 +135,7 @@ def _phase74_contract_doc():
         }
 
         module {
-            [export, c_abi] DasResult DasSetIpcTimeout(uint32_t timeout_ms);
+            [export] DasResult DasSetIpcTimeout(uint32_t timeout_ms);
         }
         """
     )
@@ -213,11 +213,50 @@ class TestNapiGenerator(unittest.TestCase):
         self.assertIn("export const DasResult", artifacts.dts)
         self.assertIn("DAS_E_INVALID_ARGUMENT: -1073750038", artifacts.dts)
 
+    def test_napi_skips_c_abi_module_functions_from_public_artifacts(self):
+        doc = parse_idl(
+            """
+            errorcode DasResult {
+                DAS_S_OK = 0,
+            }
+
+            module {
+                [export, c_abi] void CAbiOnly(const char* p_string);
+                [export] DasResult PublicOnly(uint32_t timeout_ms);
+            }
+            """
+        )
+
+        artifacts = generate_napi_artifacts(
+            doc,
+            package_name="das-core",
+            addon_name="das_core_napi",
+        )
+        combined = "\n".join([artifacts.cpp, artifacts.dts, artifacts.js])
+
+        self.assertNotIn("CAbiOnly", artifacts.cpp)
+        self.assertNotIn("CAbiOnly", artifacts.dts)
+        self.assertNotIn("CAbiOnly", artifacts.js)
+        for forbidden in (
+            "Wrap_CAbiOnly",
+            'exports.Set("CAbiOnly"',
+            "export function CAbiOnly",
+            "CAbiOnly: unsupported",
+            "unsupported('CAbiOnly'",
+        ):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, combined)
+
+        self.assertIn("Wrap_PublicOnly", artifacts.cpp)
+        self.assertIn('exports.Set("PublicOnly"', artifacts.cpp)
+        self.assertIn("export function PublicOnly", artifacts.dts)
+        self.assertIn("PublicOnly: native.PublicOnly", artifacts.js)
+
     def test_napi_primitive_typescript_mapping(self):
         doc = parse_idl(
             """
             module {
-                [export, c_abi] DasResult PrimitiveMap(
+                [export] DasResult PrimitiveMap(
                     int64_t signed64,
                     uint64_t unsigned64,
                     size_t size,
@@ -267,8 +306,8 @@ class TestNapiGenerator(unittest.TestCase):
         doc = parse_idl(
             """
             module {
-                [export, c_abi] DasResult OutScalar([out] uint32_t* p_out_value);
-                [export, c_abi] DasResult InOutObject([inout] IDasBase** pp_value);
+                [export] DasResult OutScalar([out] uint32_t* p_out_value);
+                [export] DasResult InOutObject([inout] IDasBase** pp_value);
             }
             """
         )
@@ -293,11 +332,11 @@ class TestNapiGenerator(unittest.TestCase):
             }
 
             module {
-                [export, c_abi] DasResult UseObject(IDasBase* p_object);
-                [export, c_abi] DasResult UseText(IDasReadOnlyString* p_text);
-                [export, c_abi] DasResult UseStruct(const DasPoint& point);
-                [export, c_abi] DasResult UseBinary(IDasBinaryBuffer* p_buffer);
-                [export, c_abi] DasResult StartNodeHostBootstrap(const char* script);
+                [export] DasResult UseObject(IDasBase* p_object);
+                [export] DasResult UseText(IDasReadOnlyString* p_text);
+                [export] DasResult UseStruct(const DasPoint& point);
+                [export] DasResult UseBinary(IDasBinaryBuffer* p_buffer);
+                [export] DasResult StartNodeHostBootstrap(const char* script);
             }
             """
         )
@@ -1203,7 +1242,7 @@ class TestNapiExportCli(unittest.TestCase):
             (idl_dir / "Core.idl").write_text(
                 """
                 module {
-                    [export, c_abi] void DasLogInfoU8(const char* p_string);
+                    [export] void DasLogInfoU8(const char* p_string);
                 }
                 """,
                 encoding="utf-8",

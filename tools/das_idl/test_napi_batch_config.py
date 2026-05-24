@@ -14,7 +14,7 @@ def _write_minimal_idl(idl_dir: Path) -> None:
     (idl_dir / "Core.idl").write_text(
         """
         module {
-            [export, c_abi] void DasLogInfoU8(const char* p_string);
+            [export] void DasLogInfoU8(const char* p_string);
         }
         """,
         encoding="utf-8",

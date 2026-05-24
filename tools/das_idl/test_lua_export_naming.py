@@ -82,6 +82,38 @@ class TestLuaExportNaming(unittest.TestCase):
         ]
         self.assertEqual(module_functions, ["First", "Second"])
 
+    def test_lua_generator_skips_c_abi_module_functions_from_public_surfaces(self):
+        doc = parse_idl(
+            """
+            errorcode DasResult {
+                DAS_S_OK = 0,
+            }
+
+            module {
+                [export, c_abi] void CAbiOnly(const char* p_string);
+                [export] void PublicNoOut(uint32_t value);
+                [export, swig_ret] DasResult PublicRet([out] uint32_t* p_out_value);
+            }
+            """
+        )
+
+        generator = LuaSwigGenerator()
+        binding = generator._generate_module_binding(doc)
+        stub = generator._generate_lua_stub([], doc)
+
+        self.assertNotIn("CAbiOnly", binding)
+        self.assertNotIn("CAbiOnly", stub)
+        self.assertIn(
+            'lua.set_function("PublicNoOut", &PublicNoOut);',
+            binding,
+        )
+        self.assertIn("function PublicNoOut(value) end", stub)
+        self.assertIn('lua.set_function("PublicRet",', binding)
+        self.assertIn("auto ret = PublicRet();", binding)
+        self.assertIn("ret.GetErrorCode()", binding)
+        self.assertIn("ret.GetValue()", binding)
+        self.assertIn("function PublicRet() end", stub)
+
 
 if __name__ == "__main__":
     unittest.main()

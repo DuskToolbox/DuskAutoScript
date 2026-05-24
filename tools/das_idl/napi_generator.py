@@ -204,9 +204,15 @@ def classify_module_function(func: ModuleFunctionDef) -> FunctionSupport:
     return FunctionSupport(func.name, True)
 
 
-def _iter_module_functions(doc: IdlDocument) -> Iterable[ModuleFunctionDef]:
+def _is_public_module_function(func: ModuleFunctionDef) -> bool:
+    return not bool(func.attributes.get("c_abi", False))
+
+
+def _iter_public_module_functions(doc: IdlDocument) -> Iterable[ModuleFunctionDef]:
     for module in doc.modules:
-        yield from module.functions
+        for func in module.functions:
+            if _is_public_module_function(func):
+                yield func
 
 
 def _escape_cpp_string(value: str) -> str:
@@ -557,7 +563,7 @@ class NapiGenerator:
     def generate(self, doc: IdlDocument) -> NapiArtifacts:
         support = {
             func.name: classify_module_function(func)
-            for func in _iter_module_functions(doc)
+            for func in _iter_public_module_functions(doc)
         }
         return NapiArtifacts(
             cpp=self._generate_cpp(doc, support),
@@ -881,7 +887,7 @@ class NapiGenerator:
             lines.extend(self._generate_cpp_interface_helpers(interface, doc))
             lines.append("")
 
-        for func in _iter_module_functions(doc):
+        for func in _iter_public_module_functions(doc):
             if support[func.name].supported:
                 lines.extend(self._generate_supported_cpp_function(func))
             else:
@@ -3208,7 +3214,7 @@ Napi::Value startHostIpc(const Napi::CallbackInfo& info) {
                 lines.append(
                     f'    exports.Set("{wrapper_name}", Napi::Function::New(env, {wrapper_name}));'
                 )
-        for func in _iter_module_functions(doc):
+        for func in _iter_public_module_functions(doc):
             wrapper_name = f"Wrap_{_sanitize_identifier(func.name)}"
             if func.name not in support:
                 raise AssertionError(f"missing support table entry for {func.name}")
@@ -3303,7 +3309,7 @@ Napi::Value startHostIpc(const Napi::CallbackInfo& info) {
             lines.extend(self._generate_dts_director(interface, doc))
             lines.append("")
 
-        for func in _iter_module_functions(doc):
+        for func in _iter_public_module_functions(doc):
             if support[func.name].supported:
                 lines.append(self._dts_supported_signature(func))
             else:
@@ -3429,7 +3435,7 @@ Napi::Value startHostIpc(const Napi::CallbackInfo& info) {
             director_name = self._director_name(interface.name)
             lines.append(f"  {interface.name},")
             lines.append(f"  {director_name},")
-        for func in _iter_module_functions(doc):
+        for func in _iter_public_module_functions(doc):
             if support[func.name].supported:
                 lines.append(f"  {func.name}: native.{func.name},")
             else:
