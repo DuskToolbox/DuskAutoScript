@@ -63,7 +63,7 @@ function loadNativeBootstrap() {
   return das;
 }
 
-function main(rawArgs = process.argv.slice(2)) {
+async function main(rawArgs = process.argv.slice(2)) {
   const options = parseArgs(rawArgs);
   if (options.dryRunParse) {
     return 0;
@@ -71,7 +71,7 @@ function main(rawArgs = process.argv.slice(2)) {
 
   const das = loadNativeBootstrap();
 
-  const result = das.startHostIpc({
+  const result = await das.startHostIpc({
     mainPid: options.mainPid,
     connectUrl: options.connectUrl,
     packageRoot: __dirname,
@@ -83,13 +83,14 @@ function main(rawArgs = process.argv.slice(2)) {
 }
 
 if (require.main === module) {
-  try {
-    const result = main();
-    process.exitCode = result === 0 ? 0 : 1;
-  } catch (error) {
-    console.error(error && error.stack ? error.stack : String(error));
-    process.exitCode = 1;
-  }
+  main()
+    .then((result) => {
+      process.exitCode = result === 0 ? 0 : 1;
+    })
+    .catch((error) => {
+      console.error(error && error.stack ? error.stack : String(error));
+      process.exitCode = 1;
+    });
 }
 
 module.exports = {
