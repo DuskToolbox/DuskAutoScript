@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import shutil
 import sys
 from pathlib import Path
@@ -17,6 +18,35 @@ from shared_utils import idl_path_to_header_name
 
 NODE_HOST_SCRIPT_NAME = "das-node-host.cjs"
 NODE_HOST_SCRIPT_SOURCE = Path(__file__).parent / "node_host" / NODE_HOST_SCRIPT_NAME
+NODE_PACKAGE_HOST_SCRIPT = f"bin/{NODE_HOST_SCRIPT_NAME}"
+
+
+def _node_package_json(package_name: str) -> str:
+    return (
+        json.dumps(
+            {
+                "name": package_name,
+                "version": "0.0.0",
+                "private": True,
+                "type": "commonjs",
+                "main": "index.cjs",
+                "types": "index.d.ts",
+                "bin": {
+                    "das-node-host": NODE_PACKAGE_HOST_SCRIPT,
+                },
+            },
+            indent=2,
+        )
+        + "\n"
+    )
+
+
+def _node_index_cjs(addon_name: str) -> str:
+    return f"'use strict';\n\nmodule.exports = require(\"./{addon_name}_export.js\");\n"
+
+
+def _node_index_dts(addon_name: str) -> str:
+    return f'export * from "./{addon_name}_export";\n'
 
 
 def _merge_documents(documents: Sequence[IdlDocument]) -> IdlDocument:
@@ -67,22 +97,31 @@ def _validate_addon_name(addon_name: str) -> str:
     return value
 
 
-def _write_output(output_dir: Path, file_name: str, text: str) -> None:
-    target = (output_dir / file_name).resolve()
+def _resolve_output_path(output_dir: Path, file_name: str) -> Path:
+    relative = Path(file_name)
+    if relative.is_absolute() or any(part == ".." for part in relative.parts):
+        raise ValueError(f"refusing to write outside output directory: {file_name}")
     output_root = output_dir.resolve()
-    if target.parent != output_root:
+    target = (output_dir / relative).resolve()
+    try:
+        target.relative_to(output_root)
+    except ValueError as exc:
         raise ValueError(f"refusing to write outside output directory: {target}")
+    return target
+
+
+def _write_output(output_dir: Path, file_name: str, text: str) -> None:
+    target = _resolve_output_path(output_dir, file_name)
+    target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(text, encoding="utf-8")
     print(f"Generated: {target}")
 
 
 def _copy_output(output_dir: Path, source: Path, file_name: str) -> None:
-    target = (output_dir / file_name).resolve()
-    output_root = output_dir.resolve()
-    if target.parent != output_root:
-        raise ValueError(f"refusing to write outside output directory: {target}")
+    target = _resolve_output_path(output_dir, file_name)
     if not source.exists():
         raise FileNotFoundError(source)
+    target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(source, target)
     print(f"Generated: {target}")
 
@@ -158,7 +197,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         _write_output(output_dir, f"{addon_name}_export.cpp", artifacts.cpp)
         _write_output(output_dir, f"{addon_name}_export.d.ts", artifacts.dts)
         _write_output(output_dir, f"{addon_name}_export.js", artifacts.js)
-        _copy_output(output_dir, NODE_HOST_SCRIPT_SOURCE, NODE_HOST_SCRIPT_NAME)
+        _write_output(output_dir, "package.json", _node_package_json(package_name))
+        _write_output(output_dir, "index.cjs", _node_index_cjs(addon_name))
+        _write_output(output_dir, "index.d.ts", _node_index_dts(addon_name))
+        _copy_output(output_dir, NODE_HOST_SCRIPT_SOURCE, NODE_PACKAGE_HOST_SCRIPT)
     except OSError as exc:
         print(f"Error writing NAPI output: {exc}", file=sys.stderr)
         return 4

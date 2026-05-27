@@ -509,7 +509,10 @@ JSON 配置格式:
 
         if node_output_dir and node_addon_name:
             node_stem = f"{node_addon_name}_export"
-            all_outputs.append(f"{node_output_dir}/das-node-host.cjs")
+            all_outputs.append(f"{node_output_dir}/package.json")
+            all_outputs.append(f"{node_output_dir}/index.cjs")
+            all_outputs.append(f"{node_output_dir}/index.d.ts")
+            all_outputs.append(f"{node_output_dir}/bin/das-node-host.cjs")
             all_outputs.append(f"{node_output_dir}/{node_stem}.cpp")
             all_outputs.append(f"{node_output_dir}/{node_stem}.d.ts")
             all_outputs.append(f"{node_output_dir}/{node_stem}.js")

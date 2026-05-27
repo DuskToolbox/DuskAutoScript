@@ -1281,7 +1281,7 @@ class TestNapiExportCli(unittest.TestCase):
                     "--output",
                     str(output_dir),
                     "--package-name",
-                    "das-core",
+                    "das-core-node",
                     "--addon-name",
                     "das_core_napi",
                     "--idl-files",
@@ -1310,7 +1310,7 @@ class TestNapiExportCli(unittest.TestCase):
             self.assertFalse((output_dir / "das-node-host.cjs").exists())
             self.assertFalse((output_dir / "das_core_napi_napi_export.cpp").exists())
             package = json.loads(package_json.read_text(encoding="utf-8"))
-            self.assertEqual(package["name"], "das-core")
+            self.assertEqual(package["name"], "das-core-node")
             self.assertEqual(package["main"], "index.cjs")
             self.assertEqual(package["types"], "index.d.ts")
             self.assertEqual(package["bin"]["das-node-host"], "bin/das-node-host.cjs")
@@ -1330,6 +1330,7 @@ class TestNapiExportCli(unittest.TestCase):
                 '#include "das/_autogen/idl/header/Core.generated.h"',
                 cpp.read_text(encoding="utf-8"),
             )
+            self.assertIn("// Package: das-core-node", dts.read_text(encoding="utf-8"))
             self.assertIn("DAS_S_OK", dts.read_text(encoding="utf-8"))
             self.assertIn("DasLogInfoU8", js.read_text(encoding="utf-8"))
 

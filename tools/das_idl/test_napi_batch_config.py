@@ -58,7 +58,7 @@ class TestNapiBatchConfig(unittest.TestCase):
                 "--node-output-dir",
                 str(temp / "node"),
                 "--node-package-name",
-                "das-core",
+                "das-core-node",
                 "--node-addon-name",
                 "das_core_napi",
             )
@@ -67,7 +67,7 @@ class TestNapiBatchConfig(unittest.TestCase):
             config = json.loads((temp / "batch.json").read_text(encoding="utf-8"))
             reduce_config = config["reduce"]
             self.assertEqual(reduce_config["node_output_dir"], str(temp / "node"))
-            self.assertEqual(reduce_config["node_package_name"], "das-core")
+            self.assertEqual(reduce_config["node_package_name"], "das-core-node")
             self.assertEqual(reduce_config["node_addon_name"], "das_core_napi")
             self.assertEqual(reduce_config["node_idl_dir"], str(temp / "idl"))
             self.assertEqual(reduce_config["node_idl_files"], ["Core.idl"])
@@ -86,7 +86,7 @@ class TestNapiBatchConfig(unittest.TestCase):
                 "--node-output-dir",
                 str(temp / "node"),
                 "--node-package-name",
-                "das-core",
+                "das-core-node",
                 "--node-addon-name",
                 "das_core_napi",
             )
@@ -118,7 +118,7 @@ class TestNapiBatchConfig(unittest.TestCase):
                     "--node-output-dir",
                     "node",
                     "--node-package-name",
-                    "das-core",
+                    "das-core-node",
                 ],
                 "--node-addon-name",
             ),
@@ -144,7 +144,7 @@ class TestNapiBatchConfig(unittest.TestCase):
                 "--node-output-dir",
                 str(node_dir),
                 "--node-package-name",
-                "das-core",
+                "das-core-node",
                 "--node-addon-name",
                 "das_core_napi",
             )
@@ -194,7 +194,7 @@ class TestNapiBatchConfig(unittest.TestCase):
                 "--node-output-dir",
                 str(node_dir),
                 "--node-package-name",
-                "das-core",
+                "das-core-node",
                 "--node-addon-name",
                 "das_core_napi",
             )
@@ -245,10 +245,10 @@ class TestNapiBatchConfig(unittest.TestCase):
             self.assertIn("DAS_LOG_ERROR", cpp_text)
             self.assertIn("ExtractIDasBaseFromWrapper", cpp_text)
             self.assertIn("Napi::ObjectReference", cpp_text)
-            self.assertIn("// Package: das-core", dts_text)
+            self.assertIn("// Package: das-core-node", dts_text)
             self.assertIn("requireFunction?: (id: string) => unknown;", dts_text)
             self.assertIn("das_core_napi.node", js.read_text(encoding="utf-8"))
-            self.assertIn('"name": "das-core"', package_text)
+            self.assertIn('"name": "das-core-node"', package_text)
             self.assertIn('"main": "index.cjs"', package_text)
             self.assertIn('"types": "index.d.ts"', package_text)
             self.assertIn('module.exports = require("./das_core_napi_export.js");', index_cjs_text)
@@ -267,7 +267,7 @@ class TestNapiBatchConfig(unittest.TestCase):
                 "--node-output-dir",
                 str(temp / "node"),
                 "--node-package-name",
-                "das-core",
+                "das-core-node",
                 "--node-addon-name",
                 "das_core_napi",
             )
