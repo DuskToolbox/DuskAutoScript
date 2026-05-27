@@ -836,7 +836,70 @@ function(das_add_idl_export)
             )
         endif()
 
+        if(CMAKE_CONFIGURATION_TYPES)
+            set(_NODE_RUNTIME_PACKAGE_DIR
+                "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/plugins/node_modules/${DAS_IDL_EXPORT_NODE_PACKAGE_NAME}")
+        else()
+            set(_NODE_RUNTIME_PACKAGE_DIR
+                "${CMAKE_BINARY_DIR}/bin/${CMAKE_BUILD_TYPE}/plugins/node_modules/${DAS_IDL_EXPORT_NODE_PACKAGE_NAME}")
+        endif()
+
+        set(_NODE_PACKAGE_COPY_TARGET "${DAS_IDL_EXPORT_NAME}NodePackageCopy")
+        set(_NODE_PACKAGE_JSON "${_NODE_OUTPUT_DIR}/package.json")
+        set(_NODE_INDEX_CJS "${_NODE_OUTPUT_DIR}/index.cjs")
+        set(_NODE_INDEX_DTS "${_NODE_OUTPUT_DIR}/index.d.ts")
+        set(_NODE_WRAPPER_JS "${_NODE_OUTPUT_DIR}/${DAS_IDL_EXPORT_NODE_ADDON_NAME}_export.js")
+        set(_NODE_WRAPPER_DTS "${_NODE_OUTPUT_DIR}/${DAS_IDL_EXPORT_NODE_ADDON_NAME}_export.d.ts")
+        set(_NODE_HOST_PACKAGE_SCRIPT "${_NODE_OUTPUT_DIR}/bin/das-node-host.cjs")
+
+        if(NOT TARGET ${_NODE_PACKAGE_COPY_TARGET})
+            add_custom_target(${_NODE_PACKAGE_COPY_TARGET}
+                COMMAND ${CMAKE_COMMAND} -E make_directory
+                    "${_NODE_RUNTIME_PACKAGE_DIR}"
+                    "${_NODE_RUNTIME_PACKAGE_DIR}/bin"
+                    "${_NODE_RUNTIME_PACKAGE_DIR}/native"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${_NODE_PACKAGE_JSON}"
+                    "${_NODE_RUNTIME_PACKAGE_DIR}/package.json"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${_NODE_INDEX_CJS}"
+                    "${_NODE_RUNTIME_PACKAGE_DIR}/index.cjs"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${_NODE_INDEX_DTS}"
+                    "${_NODE_RUNTIME_PACKAGE_DIR}/index.d.ts"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${_NODE_WRAPPER_JS}"
+                    "${_NODE_RUNTIME_PACKAGE_DIR}/${DAS_IDL_EXPORT_NODE_ADDON_NAME}_export.js"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${_NODE_WRAPPER_DTS}"
+                    "${_NODE_RUNTIME_PACKAGE_DIR}/${DAS_IDL_EXPORT_NODE_ADDON_NAME}_export.d.ts"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${_NODE_HOST_PACKAGE_SCRIPT}"
+                    "${_NODE_RUNTIME_PACKAGE_DIR}/bin/das-node-host.cjs"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "$<TARGET_FILE:${_NODE_LIB_NAME}>"
+                    "${_NODE_RUNTIME_PACKAGE_DIR}/native/${DAS_IDL_EXPORT_NODE_ADDON_NAME}.node"
+                DEPENDS
+                    ${_NODE_LIB_NAME}
+                    "${_NODE_PACKAGE_JSON}"
+                    "${_NODE_INDEX_CJS}"
+                    "${_NODE_INDEX_DTS}"
+                    "${_NODE_WRAPPER_JS}"
+                    "${_NODE_WRAPPER_DTS}"
+                    "${_NODE_HOST_PACKAGE_SCRIPT}"
+                COMMENT "[das_add_idl_export] Assembling ${DAS_IDL_EXPORT_NODE_PACKAGE_NAME} Node runtime package"
+                VERBATIM
+            )
+        endif()
+
+        set_target_properties(${_NODE_PACKAGE_COPY_TARGET} PROPERTIES
+            DAS_NODE_PACKAGE_DIR "${_NODE_RUNTIME_PACKAGE_DIR}")
+
         set(${DAS_IDL_EXPORT_NAME}_NODE_OUTPUT_DIR ${_NODE_OUTPUT_DIR} PARENT_SCOPE)
+        set(${DAS_IDL_EXPORT_NAME}_NODE_PACKAGE_COPY_TARGET
+            ${_NODE_PACKAGE_COPY_TARGET} PARENT_SCOPE)
+        set(${DAS_IDL_EXPORT_NAME}_NODE_PACKAGE_DIR
+            "${_NODE_RUNTIME_PACKAGE_DIR}" PARENT_SCOPE)
     endif()
 
     # ====== 构建导出宏列表 ======
