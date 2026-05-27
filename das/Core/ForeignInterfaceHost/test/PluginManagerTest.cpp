@@ -1920,18 +1920,25 @@ TEST_F(
 
 TEST_F(PluginManagerGuidTest, LoadPlugin_NodeManifestRoutesThroughNodeRuntime)
 {
-    constexpr auto kNodeHostEnv = "DAS_NODE_HOST_EXE_PATH";
+    constexpr auto NODE_HOST_ENV = "DAS_NODE_HOST_EXE_PATH";
     auto           test_dir =
         std::filesystem::current_path() / "test_plugin_node_runtime_route";
+    std::filesystem::remove_all(test_dir);
     std::filesystem::create_directories(test_dir);
 
     const auto manifest_path = test_dir / "node_plugin.json";
     const auto node_exe_path = test_dir / "fake-node.exe";
+    const auto node_modules_root = test_dir / "node_modules";
+    const auto runtime_root = node_modules_root / "das-core-node";
     {
         std::ofstream{node_exe_path} << "\n";
-        std::ofstream{test_dir / "das-node-host.cjs"} << "\n";
-        std::ofstream{test_dir / "das_core_napi_export.js"} << "\n";
-        std::ofstream{test_dir / "das_core_napi.node"} << "\n";
+        std::filesystem::create_directories(runtime_root / "bin");
+        std::filesystem::create_directories(runtime_root / "native");
+        std::ofstream{runtime_root / "package.json"} << "\n";
+        std::ofstream{runtime_root / "index.cjs"} << "\n";
+        std::ofstream{runtime_root / "das_core_napi_export.js"} << "\n";
+        std::ofstream{runtime_root / "bin" / "das-node-host.cjs"} << "\n";
+        std::ofstream{runtime_root / "native" / "das_core_napi.node"} << "\n";
     }
 
     auto manifest = Das::Utils::MakeYyjsonObject();
@@ -1952,7 +1959,7 @@ TEST_F(PluginManagerGuidTest, LoadPlugin_NodeManifestRoutesThroughNodeRuntime)
         ofs << *Das::Utils::SerializeYyjsonValue(manifest, false);
     }
 
-    ScopedEnvVar             env{kNodeHostEnv, node_exe_path.string()};
+    ScopedEnvVar             env{NODE_HOST_ENV, node_exe_path.string()};
     CapturingRemoteHostState remote_state;
     pm_->SetRemotePluginHostFactoryForTest(
         [&remote_state]()
@@ -1970,12 +1977,17 @@ TEST_F(PluginManagerGuidTest, LoadPlugin_NodeManifestRoutesThroughNodeRuntime)
     EXPECT_EQ(remote_state.load_count, 1);
     EXPECT_EQ(remote_state.manifest_path, manifest_path);
     EXPECT_EQ(remote_state.executable, node_exe_path.string());
-    ASSERT_EQ(remote_state.args.size(), 3u);
+    ASSERT_EQ(remote_state.args.size(), 7u);
     EXPECT_EQ(
         remote_state.args.front(),
-        (test_dir / "das-node-host.cjs").string());
+        (runtime_root / std::filesystem::path{"bin/das-node-host.cjs"})
+            .string());
     EXPECT_EQ(remote_state.args[1], "--main-pid");
     EXPECT_FALSE(remote_state.args[2].empty());
+    EXPECT_EQ(remote_state.args[3], "--package-root");
+    EXPECT_EQ(remote_state.args[4], test_dir.string());
+    EXPECT_EQ(remote_state.args[5], "--node-modules-root");
+    EXPECT_EQ(remote_state.args[6], node_modules_root.string());
     EXPECT_EQ(remote_state.working_directory, test_dir.string());
 
     std::vector<FeatureInfo> features;
