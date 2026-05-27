@@ -194,8 +194,10 @@ class TestNapiGenerator(unittest.TestCase):
         self.assertIn('#include "das/DasString.hpp"', artifacts.cpp)
         self.assertIn('#include "das/DasApi.h"', artifacts.cpp)
         self.assertIn("NODE_API_MODULE(das_core_napi, Init)", artifacts.cpp)
-        self.assertIn("require(path.join(__dirname, 'das_core_napi.node'))", artifacts.js)
+        self.assertIn("require(path.join(__dirname, 'native', 'das_core_napi.node'))", artifacts.js)
+        self.assertNotIn("require(path.join(__dirname, 'das_core_napi.node'))", artifacts.js)
         self.assertIn("Failed to load DAS native addon das_core_napi.node", artifacts.js)
+        self.assertIn("// Package: das-core", artifacts.dts)
 
         for name in (
             "DasLogInfoU8",
@@ -480,12 +482,16 @@ class TestNapiGenerator(unittest.TestCase):
         )
 
         self.assertIn("export interface StartHostIpcOptions", artifacts.dts)
+        self.assertIn("  wrapperPath?: string;", artifacts.dts)
+        self.assertIn("  addonPath?: string;", artifacts.dts)
         self.assertIn("requireFunction?: (id: string) => unknown;", artifacts.dts)
         self.assertIn(
             "export function startHostIpc(options: StartHostIpcOptions): Promise<DasResult>;",
             artifacts.dts,
         )
         self.assertIn("startHostIpc: native.startHostIpc", artifacts.js)
+        self.assertIn('paths.wrapper_path = OptionalPathOption(env, options, "wrapperPath");', artifacts.cpp)
+        self.assertIn('paths.addon_path = OptionalPathOption(env, options, "addonPath");', artifacts.cpp)
 
         combined_public = "\n".join([artifacts.dts, artifacts.js])
         self.assertNotIn("shutdownPlugin", combined_public)
