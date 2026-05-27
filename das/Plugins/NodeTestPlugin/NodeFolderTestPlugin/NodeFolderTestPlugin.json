@@ -1,0 +1,12 @@
+{
+    "name": "NodeFolderTestPlugin",
+    "author": "Dusk",
+    "version": "0.1",
+    "guid": "4D5E6F70-8A9B-4D5E-A0F1-3B4C5D6E7F80",
+    "description": "Folder-mode Node Test Plugin for IPC integration testing",
+    "supportedSystem": "Windows",
+    "language": "Node",
+    "pluginFilenameExtension": "cjs",
+    "entryPoint": ".#createPlugin",
+    "settings": []
+}

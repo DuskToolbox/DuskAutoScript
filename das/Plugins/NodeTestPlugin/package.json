@@ -1,4 +1,6 @@
 {
+  "name": "node-test-plugin",
+  "private": true,
   "type": "commonjs",
   "main": "NodeTestPlugin.cjs"
 }

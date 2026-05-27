@@ -1,0 +1,6 @@
+{
+  "name": "node-folder-test-plugin",
+  "private": true,
+  "type": "commonjs",
+  "main": "index.cjs"
+}
