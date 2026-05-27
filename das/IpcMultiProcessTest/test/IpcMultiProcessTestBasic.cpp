@@ -11,6 +11,7 @@
  * - 消息队列/共享内存名称生成
  */
 
+#include "IpcTestConfig.h"
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
@@ -22,10 +23,60 @@
 #include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <das/Utils/fmt.h>
 #include <filesystem>
+#include <fstream>
 #include <gtest/gtest.h>
 #include <mutex>
+#include <optional>
 #include <thread>
 #include <unordered_set>
+
+namespace
+{
+    class ScopedEnvVar
+    {
+    public:
+        explicit ScopedEnvVar(const char* name) : name_(name)
+        {
+            const char* value = std::getenv(name_.c_str());
+            if (value != nullptr)
+            {
+                old_value_ = value;
+            }
+        }
+
+        ~ScopedEnvVar()
+        {
+            if (old_value_.has_value())
+            {
+                Set(old_value_.value());
+                return;
+            }
+            Clear();
+        }
+
+        void Set(const std::string& value)
+        {
+#ifdef _WIN32
+            _putenv_s(name_.c_str(), value.c_str());
+#else
+            setenv(name_.c_str(), value.c_str(), 1);
+#endif
+        }
+
+        void Clear()
+        {
+#ifdef _WIN32
+            _putenv_s(name_.c_str(), "");
+#else
+            unsetenv(name_.c_str());
+#endif
+        }
+
+    private:
+        std::string                name_;
+        std::optional<std::string> old_value_;
+    };
+} // namespace
 
 // ====== 基础测试 ======
 
@@ -40,6 +91,54 @@ TEST(IpcMultiProcessTestBasic, DirectoryStructureTest)
     // 验证目录结构能够被正确包含
     // 测试编译时期能够找到相关的头文件
     EXPECT_TRUE(true);
+}
+
+TEST(IpcMultiProcessTestBasic, TestPluginJsonPathResolvesFlatAndFolderManifests)
+{
+    auto test_root =
+        std::filesystem::temp_directory_path()
+        / DAS_FMT_NS::format(
+            "das_ipc_manifest_lookup_{}",
+            std::chrono::steady_clock::now().time_since_epoch().count());
+    std::filesystem::create_directories(test_root);
+
+    ScopedEnvVar plugin_dir("DAS_PLUGIN_DIR");
+    plugin_dir.Set(test_root.string());
+
+    const auto flat_manifest = test_root / "FlatPlugin.json";
+    {
+        std::ofstream ofs(flat_manifest);
+        ofs << "{}";
+    }
+    EXPECT_EQ(
+        std::filesystem::path{
+            IpcTestConfig::GetTestPluginJsonPath("FlatPlugin")},
+        flat_manifest);
+
+    const auto folder_root = test_root / "FolderPlugin";
+    std::filesystem::create_directories(folder_root);
+    const auto folder_primary = folder_root / "FolderPlugin.json";
+    {
+        std::ofstream ofs(folder_primary);
+        ofs << "{}";
+    }
+    EXPECT_EQ(
+        std::filesystem::path{
+            IpcTestConfig::GetTestPluginJsonPath("FolderPlugin")},
+        folder_primary);
+
+    std::filesystem::remove(folder_primary);
+    const auto folder_fallback = folder_root / "manifest.json";
+    {
+        std::ofstream ofs(folder_fallback);
+        ofs << "{}";
+    }
+    EXPECT_EQ(
+        std::filesystem::path{
+            IpcTestConfig::GetTestPluginJsonPath("FolderPlugin")},
+        folder_fallback);
+
+    std::filesystem::remove_all(test_root);
 }
 
 // ====== ObjectId 编解码测试 ======
