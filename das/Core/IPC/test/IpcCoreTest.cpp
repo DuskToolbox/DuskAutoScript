@@ -14,21 +14,21 @@
  * - IpcRunLoopTest: Re-entrant / concurrent / timeout / cancel / >32 reject
  */
 
-#include <gtest/gtest.h>
+#include <atomic>
 #include <boost/asio/io_context.hpp>
+#include <cstring>
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/HandshakeSerialization.h>
 #include <das/Core/IPC/Host/HostCommandHandlers.h>
-#include <das/Core/IPC/HostLauncher.h>
 #include <das/Core/IPC/Host/IIpcContext.h>
+#include <das/Core/IPC/HostLauncher.h>
 #include <das/Core/IPC/IpcCommandHandler.h>
 #include <das/Core/IPC/MainProcess/IHostLauncher.h>
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
 #include <das/_autogen/idl/abi/IDasPluginPackage.h>
-#include <atomic>
-#include <cstring>
 #include <filesystem>
+#include <gtest/gtest.h>
 #include <type_traits>
 #include <unordered_map>
 
@@ -109,8 +109,7 @@ namespace Das::IPC::Test
             if (iid == DAS_IID_PLUGIN_PACKAGE)
             {
                 *pp_object =
-                    static_cast<Das::PluginInterface::IDasPluginPackage*>(
-                        this);
+                    static_cast<Das::PluginInterface::IDasPluginPackage*>(this);
                 AddRef();
                 return DAS_S_OK;
             }
@@ -118,9 +117,8 @@ namespace Das::IPC::Test
             return DAS_E_NO_INTERFACE;
         }
 
-        DasResult EnumFeature(
-            uint64_t,
-            Das::PluginInterface::DasPluginFeature*) override
+        DasResult EnumFeature(uint64_t, Das::PluginInterface::DasPluginFeature*)
+            override
         {
             return DAS_E_OUT_OF_RANGE;
         }
@@ -156,7 +154,7 @@ namespace Das::IPC::Test
         bool IsConnected() const override { return true; }
 
         void RegisterCommandHandler(
-            uint32_t                              cmd_type,
+            uint32_t                             cmd_type,
             Das::Core::IPC::Host::CommandHandler handler) override
         {
             handlers[cmd_type] = std::move(handler);
@@ -165,7 +163,7 @@ namespace Das::IPC::Test
         void PostCallback(IDasAsyncCallback*) override {}
 
         DasResult RegisterLocalObject(
-            IDasBase*                  object_ptr,
+            IDasBase*                 object_ptr,
             Das::Core::IPC::ObjectId& out_object_id) override
         {
             return object_manager_.RegisterLocalObject(
@@ -239,8 +237,7 @@ namespace Das::IPC::Test
         using Das::Core::IPC::Host::HOST_SHUTDOWN_REASON_GOODBYE;
         using Das::Core::IPC::Host::HOST_SHUTDOWN_REASON_PARENT_PROCESS_EXITED;
         using Das::Core::IPC::Host::HOST_SHUTDOWN_REASON_REQUEST_STOP;
-        using Das::Core::IPC::Host::
-            HOST_SHUTDOWN_REASON_TRANSPORT_DISCONNECTED;
+        using Das::Core::IPC::Host::HOST_SHUTDOWN_REASON_TRANSPORT_DISCONNECTED;
         using Das::Core::IPC::Host::HostShutdownReason;
         using Das::Core::IPC::Host::OnBeforeShutdown;
 
@@ -258,10 +255,8 @@ namespace Das::IPC::Test
         raw_reason = HOST_SHUTDOWN_REASON_FORCE_DWORD;
         EXPECT_EQ(raw_reason, 0x7FFFFFFFu);
 
-        using ExpectedCallback = DasResult(DAS_STD_CALL*)(
-            void*,
-            HostShutdownReason,
-            uint32_t);
+        using ExpectedCallback =
+            DasResult(DAS_STD_CALL*)(void*, HostShutdownReason, uint32_t);
         EXPECT_TRUE((std::is_same_v<OnBeforeShutdown, ExpectedCallback>));
     }
 
@@ -272,25 +267,23 @@ namespace Das::IPC::Test
 
         EXPECT_TRUE(std::is_standard_layout_v<HostLaunchDesc>);
         EXPECT_TRUE(std::is_trivially_copyable_v<HostLaunchDesc>);
-        EXPECT_TRUE(
-            (std::is_same_v<
-                decltype(HostLaunchDesc::p_executable_path),
-                IDasReadOnlyString*>));
-        EXPECT_TRUE(
-            (std::is_same_v<
-                decltype(HostLaunchDesc::pp_args),
-                IDasReadOnlyString* const*>));
+        EXPECT_TRUE((std::is_same_v<
+                     decltype(HostLaunchDesc::p_executable_path),
+                     IDasReadOnlyString*>));
+        EXPECT_TRUE((std::is_same_v<
+                     decltype(HostLaunchDesc::pp_args),
+                     IDasReadOnlyString* const*>));
         EXPECT_TRUE(
             (std::is_same_v<decltype(HostLaunchDesc::arg_count), size_t>));
-        EXPECT_TRUE(
-            (std::is_same_v<
-                decltype(HostLaunchDesc::p_working_directory),
-                IDasReadOnlyString*>));
+        EXPECT_TRUE((std::is_same_v<
+                     decltype(HostLaunchDesc::p_working_directory),
+                     IDasReadOnlyString*>));
+        EXPECT_TRUE((std::is_same_v<
+                     decltype(HostLaunchDesc::p_environment_config),
+                     IDasReadOnlyString*>));
 
-        using StartWithDescSignature = DasResult (IHostLauncher::*)(
-            const HostLaunchDesc*,
-            uint32_t,
-            uint16_t*);
+        using StartWithDescSignature = DasResult (
+            IHostLauncher::*)(const HostLaunchDesc*, uint32_t, uint16_t*);
         StartWithDescSignature method = &IHostLauncher::StartWithDesc;
         EXPECT_NE(method, nullptr);
 
@@ -299,11 +292,12 @@ namespace Das::IPC::Test
         EXPECT_EQ(desc.pp_args, nullptr);
         EXPECT_EQ(desc.arg_count, 0u);
         EXPECT_EQ(desc.p_working_directory, nullptr);
+        EXPECT_EQ(desc.p_environment_config, nullptr);
     }
 
     TEST_F(IpcCoreTestBase, HostLaunchDescRejectsInvalidPointers)
     {
-        boost::asio::io_context       io_context;
+        boost::asio::io_context      io_context;
         Das::Core::IPC::HostLauncher launcher(io_context, 1, nullptr);
         uint16_t                     session_id = 0;
 
@@ -340,6 +334,48 @@ namespace Das::IPC::Test
             DAS_E_INVALID_ARGUMENT);
     }
 
+    TEST_F(IpcCoreTestBase, HostLaunchDescRejectsMalformedEnvironmentConfig)
+    {
+        boost::asio::io_context      io_context;
+        Das::Core::IPC::HostLauncher launcher(io_context, 1, nullptr);
+        uint16_t                     session_id = 0;
+
+        DAS::DasPtr<IDasReadOnlyString> executable;
+        ASSERT_EQ(
+            CreateIDasReadOnlyStringFromUtf8(
+                "missing-host-executable",
+                executable.Put()),
+            DAS_S_OK);
+
+        Das::Core::IPC::HostLaunchDesc desc{};
+        desc.p_executable_path = executable.Get();
+
+        const char* invalid_configs[] = {
+            "not-json",
+            R"([])",
+            R"({"version":2,"prepend":[]})",
+            R"({"version":1,"prepend":{}})",
+            R"({"version":1,"prepend":[{"name":"","value":"C:/das"}]})",
+            R"({"version":1,"prepend":[{"name":"PATH","value":""}]})",
+        };
+
+        for (const char* invalid_config : invalid_configs)
+        {
+            DAS::DasPtr<IDasReadOnlyString> environment_config;
+            ASSERT_EQ(
+                CreateIDasReadOnlyStringFromUtf8(
+                    invalid_config,
+                    environment_config.Put()),
+                DAS_S_OK);
+            desc.p_environment_config = environment_config.Get();
+
+            EXPECT_EQ(
+                launcher.StartWithDesc(&desc, 1, &session_id),
+                DAS_E_INVALID_ARGUMENT)
+                << invalid_config;
+        }
+    }
+
     TEST_F(
         IpcCoreTestBase,
         HostCommandHandlersRegisterLoadPluginAndQueryInterface)
@@ -351,14 +387,13 @@ namespace Das::IPC::Test
         using Das::Core::IPC::Host::HostCommandHandlerOptions;
         using Das::Core::IPC::Host::RegisterHostCommandHandlers;
 
-        FakeHostCommandContext ctx;
-        bool                   loader_called = false;
+        FakeHostCommandContext      ctx;
+        bool                        loader_called = false;
         const std::filesystem::path manifest_path{
             "C:/das/plugins/node-plugin/manifest.json"};
 
         HostCommandHandlerOptions options{};
-        options.load_plugin =
-            [&](const std::filesystem::path& path)
+        options.load_plugin = [&](const std::filesystem::path& path)
             -> Das::Utils::Expected<DAS::DasPtr<IDasBase>>
         {
             loader_called = true;
@@ -367,7 +402,9 @@ namespace Das::IPC::Test
                 static_cast<IDasBase*>(new HostCommandHandlerTestPackage));
         };
 
-        ASSERT_EQ(RegisterHostCommandHandlers(&ctx, std::move(options)), DAS_S_OK);
+        ASSERT_EQ(
+            RegisterHostCommandHandlers(&ctx, std::move(options)),
+            DAS_S_OK);
 
         const auto load_command =
             static_cast<uint32_t>(IpcCommandType::LOAD_PLUGIN);
@@ -377,9 +414,7 @@ namespace Das::IPC::Test
         ASSERT_TRUE(ctx.handlers.contains(qi_command));
 
         std::vector<uint8_t> load_payload;
-        Das::Core::IPC::SerializeString(
-            load_payload,
-            manifest_path.string());
+        Das::Core::IPC::SerializeString(load_payload, manifest_path.string());
 
         IpcCommandResponse load_response{};
         ASSERT_EQ(
