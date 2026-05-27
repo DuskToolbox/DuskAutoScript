@@ -53,6 +53,47 @@ namespace
         return normalized_path;
     }
 
+    bool IsFolderModeManifest(
+        const std::filesystem::path& normalized_path,
+        const std::filesystem::path& manifest_path)
+    {
+        if (manifest_path.empty())
+        {
+            return false;
+        }
+
+        if (std::filesystem::is_directory(normalized_path))
+        {
+            return true;
+        }
+
+        if (manifest_path.filename() == "manifest.json")
+        {
+            return true;
+        }
+
+        return manifest_path.filename()
+               == manifest_path.parent_path().filename().string() + ".json";
+    }
+
+    std::filesystem::path ResolveNodeModulesRoot(
+        const std::filesystem::path& normalized_path,
+        const std::filesystem::path& manifest_path)
+    {
+        if (manifest_path.empty())
+        {
+            return {};
+        }
+
+        const auto package_root = manifest_path.parent_path();
+        if (IsFolderModeManifest(normalized_path, manifest_path))
+        {
+            return package_root.parent_path() / "node_modules";
+        }
+
+        return package_root / "node_modules";
+    }
+
     std::vector<FeatureInfo*> CollectFeaturePointers(
         LoadedPlugin&                          plugin,
         Das::PluginInterface::DasPluginFeature feature_type)
@@ -74,11 +115,8 @@ PluginManager::PluginManager(
     Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext> ipc_context)
     : settings_manager_(settings_manager), ipc_context_{std::move(ipc_context)}
 {
-    remote_plugin_host_factory_ =
-        [this]()
-    {
-        return std::make_unique<IpcRemotePluginHost>(ipc_context_);
-    };
+    remote_plugin_host_factory_ = [this]()
+    { return std::make_unique<IpcRemotePluginHost>(ipc_context_); };
 }
 
 PluginManager::~PluginManager()
@@ -325,6 +363,11 @@ DasResult PluginManager::LoadPlugin(
     request.language = desc->language;
     request.load_mode = desc->load_mode;
     request.main_process_owner_session_id = session_id_;
+    if (request.language == ForeignInterfaceLanguage::Node)
+    {
+        request.node_modules_root =
+            ResolveNodeModulesRoot(normalized_path, manifest_path);
+    }
 
     std::unique_ptr<IRuntimeProvider> scoped_provider;
     IRuntimeProvider*                 provider = nullptr;
@@ -416,9 +459,8 @@ DasResult PluginManager::LoadPlugin(
         feature_info.plugin_guid = desc->guid;
 
         DasPtr<IDasBase> p_interface = nullptr;
-        auto create_result = plugin.package->CreateFeatureInterface(
-            index,
-            p_interface.Put());
+        auto             create_result =
+            plugin.package->CreateFeatureInterface(index, p_interface.Put());
         if (create_result == DAS_S_OK)
         {
             feature_info.interface_ptr = p_interface;

@@ -18,9 +18,10 @@ class IRemotePluginHost;
 
 struct RuntimeLoadRequest
 {
-    std::filesystem::path manifest_path;
-    std::filesystem::path runtime_path;
-    DasGuid               plugin_guid{};
+    std::filesystem::path    manifest_path;
+    std::filesystem::path    runtime_path;
+    std::filesystem::path    node_modules_root;
+    DasGuid                  plugin_guid{};
     ForeignInterfaceLanguage language{};
     LoadMode                 load_mode{LoadMode::InProcess};
     uint16_t                 main_process_owner_session_id = 0;
@@ -34,8 +35,8 @@ struct RuntimeLoadResult
 
 struct RuntimeProviderFactoryDesc
 {
-    ForeignInterfaceLanguage language{};
-    LoadMode                 load_mode{LoadMode::InProcess};
+    ForeignInterfaceLanguage             language{};
+    LoadMode                             load_mode{LoadMode::InProcess};
     DAS::DasPtr<IForeignLanguageRuntime> local_runtime;
     std::filesystem::path                native_host_exe_path;
     std::unique_ptr<IRemotePluginHost>   remote_plugin_host;

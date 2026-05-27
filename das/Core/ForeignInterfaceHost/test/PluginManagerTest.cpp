@@ -1759,6 +1759,7 @@ TEST_F(PluginManagerGuidTest, LoadPlugin_UsesInjectedRuntimeProvider)
     ASSERT_EQ(raw_provider->requests.size(), 1u);
     EXPECT_EQ(raw_provider->requests.front().manifest_path, manifest_path);
     EXPECT_EQ(raw_provider->requests.front().runtime_path, manifest_path);
+    EXPECT_TRUE(raw_provider->requests.front().node_modules_root.empty());
     EXPECT_EQ(raw_provider->requests.front().main_process_owner_session_id, 1);
 
     std::filesystem::remove_all(test_dir);
