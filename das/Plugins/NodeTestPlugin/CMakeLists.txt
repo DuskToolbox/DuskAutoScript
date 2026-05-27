@@ -57,6 +57,8 @@ add_custom_target(${PLUGIN_NAME}Copy ALL
         "${_NODE_PLUGIN_OUTPUT_DIR}/${NODE_ADDON_NAME}_export.js"
         "${_NODE_PLUGIN_OUTPUT_DIR}/${NODE_ADDON_NAME}_export.d.ts"
         "${_NODE_PLUGIN_OUTPUT_DIR}/${NODE_ADDON_NAME}.node"
+        "${_NODE_PLUGIN_OUTPUT_DIR}/$<TARGET_FILE_NAME:DasCore>"
+        "${_NODE_FOLDER_PLUGIN_OUTPUT_DIR}/$<TARGET_FILE_NAME:DasCore>"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${CMAKE_CURRENT_SOURCE_DIR}/${PLUGIN_NAME}.json"
         "${_NODE_PLUGIN_OUTPUT_DIR}/${PLUGIN_NAME}.json"

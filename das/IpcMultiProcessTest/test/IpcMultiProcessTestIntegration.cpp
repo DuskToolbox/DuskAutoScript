@@ -424,7 +424,8 @@ namespace
             return true;
         }
         if (file_name.rfind("libDasCore", 0) == 0
-            && (extension == ".so" || extension == ".dylib"))
+            && (extension == ".dll" || extension == ".so"
+                || extension == ".dylib"))
         {
             return true;
         }
