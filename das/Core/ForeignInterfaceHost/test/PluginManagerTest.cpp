@@ -246,7 +246,7 @@ namespace
 
     private:
         std::vector<DasPluginFeature> features_;
-        std::atomic<uint32_t> ref_count_{0};
+        std::atomic<uint32_t>         ref_count_{0};
     };
 
     class CapturingRuntime final : public IForeignLanguageRuntime
@@ -307,7 +307,7 @@ namespace
     {
     public:
         explicit CapturingRuntimeProvider(
-            uint16_t                     owner_session_id,
+            uint16_t                      owner_session_id,
             std::vector<DasPluginFeature> features = {})
             : owner_session_id_{owner_session_id},
               features_{std::move(features)}
@@ -332,7 +332,7 @@ namespace
         std::vector<RuntimeLoadRequest> requests;
 
     private:
-        uint16_t owner_session_id_ = 0;
+        uint16_t                      owner_session_id_ = 0;
         std::vector<DasPluginFeature> features_;
     };
 
@@ -352,8 +352,7 @@ namespace
             CapturingRemoteHostState&     state,
             uint16_t                      owner_session_id,
             std::vector<DasPluginFeature> features)
-            : state_{state},
-              owner_session_id_{owner_session_id},
+            : state_{state}, owner_session_id_{owner_session_id},
               features_{std::move(features)}
         {
         }
@@ -409,6 +408,30 @@ namespace
             "pluginFilenameExtension": "dll",
             "settings": []
         })";
+    }
+
+    void WriteNodeManifest(
+        const std::filesystem::path& path,
+        const std::string&           guid,
+        const std::string&           name)
+    {
+        auto manifest = Das::Utils::MakeYyjsonObject();
+        {
+            auto obj = *manifest.as_object();
+            obj[std::string_view("guid")] = guid;
+            obj[std::string_view("name")] = name;
+            obj[std::string_view("language")] = "Node";
+            obj[std::string_view("loadMode")] = "ipc";
+            obj[std::string_view("description")] = "test";
+            obj[std::string_view("author")] = "test";
+            obj[std::string_view("version")] = "1.0";
+            obj[std::string_view("supportedSystem")] = "win";
+            obj[std::string_view("pluginFilenameExtension")] = "js";
+            obj[std::string_view("settings")] = Das::Utils::MakeYyjsonArray();
+        }
+
+        std::ofstream ofs(path);
+        ofs << *Das::Utils::SerializeYyjsonValue(manifest, false);
     }
 
     DasGuid MakeTaskComponentTestGuid(uint32_t value)
@@ -1723,13 +1746,13 @@ TEST_F(PluginManagerGuidTest, LoadPlugin_UsesInjectedRuntimeProvider)
         "00000000-0000-0000-0000-000000750701",
         "ProviderRoutedPlugin");
 
-    auto provider = std::make_unique<CapturingRuntimeProvider>(73);
+    auto  provider = std::make_unique<CapturingRuntimeProvider>(73);
     auto* raw_provider = provider.get();
     pm_->SetRuntimeProviderForTest(std::move(provider));
 
     IDasPluginPackage* raw_package = nullptr;
-    auto result = pm_->LoadPlugin(manifest_path, &raw_package);
-    auto package = DasPtr<IDasPluginPackage>::Attach(raw_package);
+    auto               result = pm_->LoadPlugin(manifest_path, &raw_package);
+    auto               package = DasPtr<IDasPluginPackage>::Attach(raw_package);
 
     EXPECT_EQ(result, DAS_S_OK);
     ASSERT_NE(package.Get(), nullptr);
@@ -1753,8 +1776,7 @@ TEST_F(
     auto manifest = Das::Utils::MakeYyjsonObject();
     {
         auto obj = *manifest.as_object();
-        obj[std::string_view("guid")] =
-            "00000000-0000-0000-0000-000000750702";
+        obj[std::string_view("guid")] = "00000000-0000-0000-0000-000000750702";
         obj[std::string_view("name")] = "ProviderIpcModePlugin";
         obj[std::string_view("language")] = "Cpp";
         obj[std::string_view("loadMode")] = "ipc";
@@ -1772,8 +1794,7 @@ TEST_F(
 
     auto provider = std::make_unique<CapturingRuntimeProvider>(
         94,
-        std::vector<DasPluginFeature>{
-            DAS_PLUGIN_FEATURE_CAPTURE_FACTORY});
+        std::vector<DasPluginFeature>{DAS_PLUGIN_FEATURE_CAPTURE_FACTORY});
     auto* raw_provider = provider.get();
     pm_->SetRuntimeProviderForTest(std::move(provider));
 
@@ -1791,10 +1812,115 @@ TEST_F(
     std::filesystem::remove_all(test_dir);
 }
 
+TEST_F(
+    PluginManagerGuidTest,
+    LoadPlugin_FlatNodeRuntimeRequestUsesCollectionNodeModulesRoot)
+{
+    auto test_dir = std::filesystem::current_path()
+                    / "test_plugin_flat_node_runtime_request";
+    std::filesystem::remove_all(test_dir);
+    std::filesystem::create_directories(test_dir);
+
+    const auto manifest_path = test_dir / "FlatNodePlugin.json";
+    WriteNodeManifest(
+        manifest_path,
+        "00000000-0000-0000-0000-000000760101",
+        "FlatNodePlugin");
+
+    auto  provider = std::make_unique<CapturingRuntimeProvider>(119);
+    auto* raw_provider = provider.get();
+    pm_->SetRuntimeProviderForTest(std::move(provider));
+
+    auto result = pm_->LoadPlugin(manifest_path);
+
+    EXPECT_EQ(result, DAS_S_OK);
+    ASSERT_EQ(raw_provider->requests.size(), 1u);
+    const auto& request = raw_provider->requests.front();
+    EXPECT_EQ(request.manifest_path, manifest_path);
+    EXPECT_EQ(request.runtime_path, manifest_path);
+    EXPECT_EQ(request.language, ForeignInterfaceLanguage::Node);
+    EXPECT_EQ(request.load_mode, LoadMode::Ipc);
+    EXPECT_EQ(request.node_modules_root, test_dir / "node_modules");
+
+    std::filesystem::remove_all(test_dir);
+}
+
+TEST_F(
+    PluginManagerGuidTest,
+    LoadPlugin_FolderNodeRuntimeRequestUsesCollectionNodeModulesRoot)
+{
+    auto test_root = std::filesystem::current_path()
+                     / "test_plugin_folder_node_runtime_request";
+    std::filesystem::remove_all(test_root);
+
+    const auto plugins_dir = test_root / "plugins";
+    const auto package_dir = plugins_dir / "FolderNodePlugin";
+    std::filesystem::create_directories(package_dir);
+
+    const auto manifest_path = package_dir / "FolderNodePlugin.json";
+    WriteNodeManifest(
+        manifest_path,
+        "00000000-0000-0000-0000-000000760102",
+        "FolderNodePlugin");
+
+    auto  provider = std::make_unique<CapturingRuntimeProvider>(120);
+    auto* raw_provider = provider.get();
+    pm_->SetRuntimeProviderForTest(std::move(provider));
+
+    auto result = pm_->LoadPlugin(manifest_path);
+
+    EXPECT_EQ(result, DAS_S_OK);
+    ASSERT_EQ(raw_provider->requests.size(), 1u);
+    const auto& request = raw_provider->requests.front();
+    EXPECT_EQ(request.manifest_path, manifest_path);
+    EXPECT_EQ(request.runtime_path, manifest_path);
+    EXPECT_EQ(request.language, ForeignInterfaceLanguage::Node);
+    EXPECT_EQ(request.load_mode, LoadMode::Ipc);
+    EXPECT_EQ(request.node_modules_root, plugins_dir / "node_modules");
+
+    std::filesystem::remove_all(test_root);
+}
+
+TEST_F(
+    PluginManagerGuidTest,
+    LoadPlugin_NodeManifestJsonRuntimeRequestUsesCollectionNodeModulesRoot)
+{
+    auto test_root = std::filesystem::current_path()
+                     / "test_plugin_node_manifest_json_runtime_request";
+    std::filesystem::remove_all(test_root);
+
+    const auto plugins_dir = test_root / "plugins";
+    const auto package_dir = plugins_dir / "ManifestJsonNodePlugin";
+    std::filesystem::create_directories(package_dir);
+
+    const auto manifest_path = package_dir / "manifest.json";
+    WriteNodeManifest(
+        manifest_path,
+        "00000000-0000-0000-0000-000000760103",
+        "ManifestJsonNodePlugin");
+
+    auto  provider = std::make_unique<CapturingRuntimeProvider>(121);
+    auto* raw_provider = provider.get();
+    pm_->SetRuntimeProviderForTest(std::move(provider));
+
+    auto result = pm_->LoadPlugin(manifest_path);
+
+    EXPECT_EQ(result, DAS_S_OK);
+    ASSERT_EQ(raw_provider->requests.size(), 1u);
+    const auto& request = raw_provider->requests.front();
+    EXPECT_EQ(request.manifest_path, manifest_path);
+    EXPECT_EQ(request.runtime_path, manifest_path);
+    EXPECT_EQ(request.language, ForeignInterfaceLanguage::Node);
+    EXPECT_EQ(request.load_mode, LoadMode::Ipc);
+    EXPECT_EQ(request.node_modules_root, plugins_dir / "node_modules");
+
+    std::filesystem::remove_all(test_root);
+}
+
 TEST_F(PluginManagerGuidTest, LoadPlugin_NodeManifestRoutesThroughNodeRuntime)
 {
     constexpr auto kNodeHostEnv = "DAS_NODE_HOST_EXE_PATH";
-    auto test_dir =
+    auto           test_dir =
         std::filesystem::current_path() / "test_plugin_node_runtime_route";
     std::filesystem::create_directories(test_dir);
 
@@ -1810,8 +1936,7 @@ TEST_F(PluginManagerGuidTest, LoadPlugin_NodeManifestRoutesThroughNodeRuntime)
     auto manifest = Das::Utils::MakeYyjsonObject();
     {
         auto obj = *manifest.as_object();
-        obj[std::string_view("guid")] =
-            "00000000-0000-0000-0000-000000750703";
+        obj[std::string_view("guid")] = "00000000-0000-0000-0000-000000750703";
         obj[std::string_view("name")] = "NodeProviderRoutePlugin";
         obj[std::string_view("language")] = "Node";
         obj[std::string_view("description")] = "test";
@@ -1826,7 +1951,7 @@ TEST_F(PluginManagerGuidTest, LoadPlugin_NodeManifestRoutesThroughNodeRuntime)
         ofs << *Das::Utils::SerializeYyjsonValue(manifest, false);
     }
 
-    ScopedEnvVar env{kNodeHostEnv, node_exe_path.string()};
+    ScopedEnvVar             env{kNodeHostEnv, node_exe_path.string()};
     CapturingRemoteHostState remote_state;
     pm_->SetRemotePluginHostFactoryForTest(
         [&remote_state]()
@@ -1871,8 +1996,7 @@ TEST_F(PluginManagerGuidTest, LoadPlugin_LowercaseNodeManifestIsRejected)
     auto       manifest = Das::Utils::MakeYyjsonObject();
     {
         auto obj = *manifest.as_object();
-        obj[std::string_view("guid")] =
-            "00000000-0000-0000-0000-000000750904";
+        obj[std::string_view("guid")] = "00000000-0000-0000-0000-000000750904";
         obj[std::string_view("name")] = "LowercaseNodePlugin";
         obj[std::string_view("language")] = "node";
         obj[std::string_view("description")] = "test";
@@ -1915,6 +2039,7 @@ TEST_F(PluginManagerGuidTest, RuntimeLoadRequest_CarriesRoutingInputs)
     request.plugin_guid = MakeTaskComponentTestGuid(0x75040001);
     request.language = ForeignInterfaceLanguage::Cpp;
     request.load_mode = LoadMode::Ipc;
+    request.node_modules_root = std::filesystem::path{"plugins/node_modules"};
     request.main_process_owner_session_id = 17;
 
     EXPECT_EQ(
@@ -1924,6 +2049,9 @@ TEST_F(PluginManagerGuidTest, RuntimeLoadRequest_CarriesRoutingInputs)
     EXPECT_EQ(request.plugin_guid.data1, 0x75040001u);
     EXPECT_EQ(request.language, ForeignInterfaceLanguage::Cpp);
     EXPECT_EQ(request.load_mode, LoadMode::Ipc);
+    EXPECT_EQ(
+        request.node_modules_root,
+        std::filesystem::path{"plugins/node_modules"});
     EXPECT_EQ(request.main_process_owner_session_id, 17);
 }
 
@@ -1933,8 +2061,7 @@ TEST_F(PluginManagerGuidTest, RuntimeLoadResult_CarriesObjectAndOwnerSession)
     package->AddRef();
 
     RuntimeLoadResult result{};
-    result.object =
-        DasPtr<IDasBase>::Attach(static_cast<IDasBase*>(package));
+    result.object = DasPtr<IDasBase>::Attach(static_cast<IDasBase*>(package));
     result.owner_session_id = 23;
 
     EXPECT_NE(result.object.Get(), nullptr);
