@@ -3381,7 +3381,7 @@ Napi::Value startHostIpc(const Napi::CallbackInfo& info) {
             "const path = require('node:path');",
             "let native;",
             "try {",
-            f"  native = require(path.join(__dirname, '{self.addon_name}.node'));",
+            f"  native = require(path.join(__dirname, 'native', '{self.addon_name}.node'));",
             "} catch (error) {",
             f"  const wrapped = new Error('Failed to load DAS native addon {self.addon_name}.node');",
             "  wrapped.cause = error;",
