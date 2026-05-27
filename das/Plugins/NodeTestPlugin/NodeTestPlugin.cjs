@@ -1,6 +1,6 @@
 "use strict";
 
-const das = require("./das_core_napi_export.js");
+const das = require("das-core-node");
 
 const {
   DasPluginFeature,
