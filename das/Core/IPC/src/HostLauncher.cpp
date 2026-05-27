@@ -3,6 +3,7 @@
  * @brief Host 进程启动器实现
  */
 
+#include <cctype>
 #include <das/Core/IPC/AsyncIpcTransport.h>
 #include <das/Core/IPC/Config.h>
 #include <das/Core/IPC/Handshake.h>
@@ -16,8 +17,10 @@
 #include <das/DasPtr.hpp>
 #include <das/IDasAsyncHandshakeOperation.h>
 #include <das/IDasAsyncOperation.h>
+#include <das/Utils/DasJsonCore.h>
 #include <das/Utils/StringUtils.h>
 #include <das/Utils/fmt.h>
+#include <map>
 #include <optional>
 #include <thread>
 
@@ -51,6 +54,7 @@
 #include <boost/asio/use_future.hpp>
 #include <boost/interprocess/exceptions.hpp>
 #include <boost/interprocess/ipc/message_queue.hpp>
+#include <boost/process/v2/environment.hpp>
 #include <boost/process/v2/pid.hpp>
 #include <boost/process/v2/process.hpp>
 #include <boost/process/v2/start_dir.hpp>
@@ -247,6 +251,205 @@ namespace
         return DAS_S_OK;
     }
 
+    struct EnvironmentPrepend
+    {
+        std::string name;
+        std::string value;
+    };
+
+    constexpr std::string_view VERSION_KEY = "version";
+    constexpr std::string_view PREPEND_KEY = "prepend";
+    constexpr std::string_view NAME_KEY = "name";
+    constexpr std::string_view VALUE_KEY = "value";
+
+    bool IsEnvironmentConfigVersionOne(const yyjson::value& value)
+    {
+        if (auto version = value.as_sint())
+        {
+            return *version == 1;
+        }
+
+        if (auto version = value.as_uint())
+        {
+            return *version == 1;
+        }
+
+        return false;
+    }
+
+    char PathListDelimiter()
+    {
+#ifdef _WIN32
+        return ';';
+#else
+        return ':';
+#endif
+    }
+
+    bool EnvironmentNameEquals(std::string_view lhs, std::string_view rhs)
+    {
+        if (lhs.size() != rhs.size())
+        {
+            return false;
+        }
+
+#ifdef _WIN32
+        for (size_t i = 0; i < lhs.size(); ++i)
+        {
+            const auto lhs_ch = static_cast<unsigned char>(lhs[i]);
+            const auto rhs_ch = static_cast<unsigned char>(rhs[i]);
+            if (std::tolower(lhs_ch) != std::tolower(rhs_ch))
+            {
+                return false;
+            }
+        }
+        return true;
+#else
+        return lhs == rhs;
+#endif
+    }
+
+    auto FindEnvironmentEntry(
+        std::map<std::string, std::string>& values,
+        std::string_view name) -> std::map<std::string, std::string>::iterator
+    {
+        for (auto it = values.begin(); it != values.end(); ++it)
+        {
+            if (EnvironmentNameEquals(it->first, name))
+            {
+                return it;
+            }
+        }
+
+        return values.end();
+    }
+
+    DasResult ParseEnvironmentConfig(
+        std::string_view                 raw_config,
+        std::vector<EnvironmentPrepend>& out_prepends)
+    {
+        auto parsed = Das::Utils::ParseYyjsonFromString(raw_config);
+        if (!parsed)
+        {
+            return DAS_E_INVALID_ARGUMENT;
+        }
+
+        auto root = parsed->as_object();
+        if (!root)
+        {
+            return DAS_E_INVALID_ARGUMENT;
+        }
+
+        if (!root->contains(VERSION_KEY)
+            || !IsEnvironmentConfigVersionOne((*root)[VERSION_KEY]))
+        {
+            return DAS_E_INVALID_ARGUMENT;
+        }
+
+        if (!root->contains(PREPEND_KEY))
+        {
+            return DAS_E_INVALID_ARGUMENT;
+        }
+
+        auto prepend = (*root)[PREPEND_KEY].as_array();
+        if (!prepend)
+        {
+            return DAS_E_INVALID_ARGUMENT;
+        }
+
+        for (auto it = prepend->begin(); it != prepend->end(); ++it)
+        {
+            auto item = it->as_object();
+            if (!item)
+            {
+                return DAS_E_INVALID_ARGUMENT;
+            }
+
+            if (!item->contains(NAME_KEY) || !item->contains(VALUE_KEY))
+            {
+                return DAS_E_INVALID_ARGUMENT;
+            }
+
+            auto name = (*item)[NAME_KEY].as_string();
+            auto value = (*item)[VALUE_KEY].as_string();
+            if (!name || name->empty() || !value || value->empty())
+            {
+                return DAS_E_INVALID_ARGUMENT;
+            }
+
+            out_prepends.push_back(
+                EnvironmentPrepend{std::string(*name), std::string(*value)});
+        }
+
+        return DAS_S_OK;
+    }
+
+    std::vector<std::string> BuildProcessEnvironment(
+        const std::vector<EnvironmentPrepend>& prepends)
+    {
+        std::map<std::string, std::string> values;
+        for (const auto item : boost::process::v2::environment::current())
+        {
+            values[item.key().string()] = item.value().string();
+        }
+
+        const auto delimiter = PathListDelimiter();
+        for (const auto& prepend : prepends)
+        {
+            auto existing = FindEnvironmentEntry(values, prepend.name);
+            if (existing == values.end())
+            {
+                values[prepend.name] = prepend.value;
+                continue;
+            }
+
+            if (existing->second.empty())
+            {
+                existing->second = prepend.value;
+            }
+            else
+            {
+                existing->second = prepend.value + delimiter + existing->second;
+            }
+        }
+
+        std::vector<std::string> result;
+        result.reserve(values.size());
+        for (const auto& [key, value] : values)
+        {
+            result.push_back(key + "=" + value);
+        }
+        return result;
+    }
+
+    DasResult ReadEnvironmentConfig(
+        IDasReadOnlyString*                      p_environment_config,
+        std::optional<std::vector<std::string>>& out_environment)
+    {
+        if (!p_environment_config)
+        {
+            out_environment.reset();
+            return DAS_S_OK;
+        }
+
+        std::string raw_config;
+        auto        result = ReadUtf8String(p_environment_config, raw_config);
+        if (DAS::IsFailed(result) || raw_config.empty())
+        {
+            return DAS_E_INVALID_ARGUMENT;
+        }
+
+        std::vector<EnvironmentPrepend> prepends;
+        result = ParseEnvironmentConfig(raw_config, prepends);
+        if (DAS::IsFailed(result))
+        {
+            return result;
+        }
+
+        out_environment = BuildProcessEnvironment(prepends);
+        return DAS_S_OK;
+    }
+
     std::string DefaultWorkingDirectoryFor(const std::string& exe_path)
     {
         const auto parent = std::filesystem::path(exe_path).parent_path();
@@ -300,6 +503,7 @@ DasResult HostLauncher::Start(
     return StartLaunchSequence(
         host_exe_path,
         args,
+        std::nullopt,
         std::nullopt,
         out_session_id,
         timeout_ms);
@@ -357,22 +561,32 @@ DasResult HostLauncher::StartWithDesc(
         working_directory = std::move(value);
     }
 
+    std::optional<std::vector<std::string>> environment;
+    result = ReadEnvironmentConfig(p_desc->p_environment_config, environment);
+    if (DAS::IsFailed(result))
+    {
+        return result;
+    }
+
     return StartLaunchSequence(
         exe_path,
         args,
         working_directory,
+        environment,
         *p_out_session_id,
         timeout_ms);
 }
 
 DasResult HostLauncher::StartLaunchSequence(
-    const std::string&              exe_path,
-    const std::vector<std::string>& args,
-    const std::optional<std::string>& working_directory,
-    uint16_t&                       out_session_id,
-    uint32_t                        timeout_ms)
+    const std::string&                             exe_path,
+    const std::vector<std::string>&                args,
+    const std::optional<std::string>&              working_directory,
+    const std::optional<std::vector<std::string>>& environment,
+    uint16_t&                                      out_session_id,
+    uint32_t                                       timeout_ms)
 {
-    DasResult result = LaunchProcess(exe_path, args, working_directory);
+    DasResult result =
+        LaunchProcess(exe_path, args, working_directory, environment);
     if (result != DAS_S_OK)
     {
         return result;
@@ -714,21 +928,36 @@ DasResult HostLauncher::QueryInterface(const DasGuid& iid, void** pp)
 }
 
 DasResult HostLauncher::LaunchProcess(
-    const std::string&              exe_path,
-    const std::vector<std::string>& args,
-    const std::optional<std::string>& working_directory)
+    const std::string&                             exe_path,
+    const std::vector<std::string>&                args,
+    const std::optional<std::string>&              working_directory,
+    const std::optional<std::vector<std::string>>& environment)
 {
     try
     {
         const auto launch_working_directory =
             working_directory.value_or(DefaultWorkingDirectoryFor(exe_path));
 
-        impl_->process = std::make_unique<boost::process::v2::process>(
-            impl_->io_ctx,
-            exe_path,
-            args,
-            boost::process::v2::process_start_dir(
-                launch_working_directory));
+        if (environment)
+        {
+            boost::process::v2::process_environment child_environment{
+                *environment};
+            impl_->process = std::make_unique<boost::process::v2::process>(
+                impl_->io_ctx,
+                exe_path,
+                args,
+                boost::process::v2::process_start_dir(launch_working_directory),
+                std::move(child_environment));
+        }
+        else
+        {
+            impl_->process = std::make_unique<boost::process::v2::process>(
+                impl_->io_ctx,
+                exe_path,
+                args,
+                boost::process::v2::process_start_dir(
+                    launch_working_directory));
+        }
 
         impl_->pid = static_cast<uint32_t>(impl_->process->id());
         impl_->is_running = true;
@@ -1386,11 +1615,11 @@ boost::asio::awaitable<DasResult> HostLauncher::ConnectToHostAsync()
     {
         auto [transport_result, maybe_transport] =
             co_await AnyTransport::CreateAsync(
-            impl_->io_ctx,
-            host_to_plugin_pipe,
-            plugin_to_host_pipe,
-            true, // is_server = true (MainProcess creates pipes)
-            65536);
+                impl_->io_ctx,
+                host_to_plugin_pipe,
+                plugin_to_host_pipe,
+                true, // is_server = true (MainProcess creates pipes)
+                65536);
 
         if (DAS::IsFailed(transport_result) || !maybe_transport)
         {

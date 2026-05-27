@@ -144,16 +144,19 @@ public:
 
 private:
     DasResult LaunchProcess(
-        const std::string&              exe_path,
-        const std::vector<std::string>& args,
-        const std::optional<std::string>& working_directory = std::nullopt);
+        const std::string&                exe_path,
+        const std::vector<std::string>&   args,
+        const std::optional<std::string>& working_directory = std::nullopt,
+        const std::optional<std::vector<std::string>>& environment =
+            std::nullopt);
 
     DasResult StartLaunchSequence(
-        const std::string&              exe_path,
-        const std::vector<std::string>& args,
-        const std::optional<std::string>& working_directory,
-        uint16_t&                       out_session_id,
-        uint32_t                        timeout_ms);
+        const std::string&                             exe_path,
+        const std::vector<std::string>&                args,
+        const std::optional<std::string>&              working_directory,
+        const std::optional<std::vector<std::string>>& environment,
+        uint16_t&                                      out_session_id,
+        uint32_t                                       timeout_ms);
 
     DasResult WaitForHostReady(uint32_t timeout_ms);
     DasResult ConnectToHost(uint32_t timeout_ms);

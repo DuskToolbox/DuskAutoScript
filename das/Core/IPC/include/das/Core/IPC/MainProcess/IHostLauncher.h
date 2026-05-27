@@ -26,8 +26,9 @@ struct HostLaunchDesc
 {
     IDasReadOnlyString*        p_executable_path;
     IDasReadOnlyString* const* pp_args;
-    size_t                    arg_count;
+    size_t                     arg_count;
     IDasReadOnlyString*        p_working_directory;
+    IDasReadOnlyString*        p_environment_config;
 };
 
 DAS_INTERFACE IHostLauncher : public IDasBase
