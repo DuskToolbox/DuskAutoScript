@@ -1,3 +1,4 @@
+import os
 import subprocess
 import shutil
 import sys
@@ -1305,18 +1306,52 @@ class TestNapiExportCli(unittest.TestCase):
 
 
 class TestNodeHostBootstrapScript(unittest.TestCase):
-    def _run_script_package(self, wrapper_text, *args):
+    def _run_script_package(self, wrapper_text, *args, include_roots=True, shadow_package=False):
         script = Path(__file__).parent / "node_host" / "das-node-host.cjs"
         with tempfile.TemporaryDirectory() as tmp:
-            package_dir = Path(tmp)
-            shutil.copy2(script, package_dir / "das-node-host.cjs")
-            (package_dir / "das_core_napi_export.js").write_text(
+            temp = Path(tmp)
+            node_modules_root = temp / "plugins" / "node_modules"
+            runtime_root = node_modules_root / "das-core-node"
+            script_path = runtime_root / "bin" / "das-node-host.cjs"
+            plugin_root = temp / "plugins" / "NodePlugin"
+            script_path.parent.mkdir(parents=True)
+            plugin_root.mkdir(parents=True)
+            shutil.copy2(script, script_path)
+            (runtime_root / "index.cjs").write_text(
                 wrapper_text,
                 encoding="utf-8",
             )
+            if shadow_package:
+                shadow_root = plugin_root / "node_modules" / "das-core-node"
+                shadow_root.mkdir(parents=True)
+                (shadow_root / "package.json").write_text(
+                    '{"name":"das-core-node","main":"index.cjs"}',
+                    encoding="utf-8",
+                )
+                (shadow_root / "index.cjs").write_text(
+                    "module.exports = {};",
+                    encoding="utf-8",
+                )
+
+            command_args = list(args)
+            if include_roots:
+                command_args.extend(
+                    [
+                        "--package-root",
+                        str(plugin_root),
+                        "--node-modules-root",
+                        str(node_modules_root),
+                    ]
+                )
+
+            env = os.environ.copy()
+            env["EXPECTED_PACKAGE_ROOT"] = str(plugin_root)
+            env["EXPECTED_NODE_MODULES_ROOT"] = str(node_modules_root)
+            env["EXPECTED_RUNTIME_ROOT"] = str(runtime_root)
             return subprocess.run(
-                ["node", str(package_dir / "das-node-host.cjs"), *args],
+                ["node", str(script_path), *command_args],
                 capture_output=True,
+                env=env,
                 text=True,
             )
 
@@ -1326,19 +1361,54 @@ class TestNodeHostBootstrapScript(unittest.TestCase):
         self.assertTrue(script.exists())
         text = script.read_text(encoding="utf-8")
         self.assertIn("'use strict';", text)
-        self.assertIn("require(path.join(__dirname, 'das_core_napi_export.js'))", text)
+        self.assertIn("path.resolve(__dirname, '..')", text)
+        self.assertIn("require(path.join(runtimeRoot, 'index.cjs'))", text)
         self.assertIn("--dry-run-parse", text)
         self.assertIn("--main-pid", text)
         self.assertIn("--connect-url", text)
+        self.assertIn("--package-root", text)
+        self.assertIn("--node-modules-root", text)
         self.assertIn("startHostIpc", text)
         self.assertIn("async function main", text)
         self.assertIn("await das.startHostIpc", text)
-        self.assertIn("packageRoot: __dirname", text)
-        self.assertIn("wrapperPath: path.join(__dirname, 'das_core_napi_export.js')", text)
-        self.assertIn("addonPath: path.join(__dirname, 'das_core_napi.node')", text)
+        self.assertNotIn("packageRoot: __dirname", text)
+        self.assertIn("packageRoot: options.packageRoot", text)
+        self.assertIn("nodeModulesRoot: options.nodeModulesRoot", text)
+        self.assertIn("wrapperPath: path.join(runtimeRoot, 'das_core_napi_export.js')", text)
+        self.assertIn("addonPath: path.join(runtimeRoot, 'native', 'das_core_napi.node')", text)
         self.assertIn("requireFunction: require", text)
+        self.assertNotIn("JSON.stringify(process.env", text)
+        self.assertNotIn("console.error(process.env", text)
         self.assertNotIn("shutdownPlugin", text)
         self.assertNotIn("onPluginShutdown", text)
+
+    def test_dry_run_parse_requires_package_root(self):
+        result = self._run_script_package(
+            "'use strict';\nmodule.exports = {};",
+            "--dry-run-parse",
+            "--main-pid",
+            "12345",
+            "--node-modules-root",
+            "plugins/node_modules",
+            include_roots=False,
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("--package-root must be specified", result.stderr)
+
+    def test_dry_run_parse_requires_node_modules_root(self):
+        result = self._run_script_package(
+            "'use strict';\nmodule.exports = {};",
+            "--dry-run-parse",
+            "--main-pid",
+            "12345",
+            "--package-root",
+            "plugins/NodePlugin",
+            include_roots=False,
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("--node-modules-root must be specified", result.stderr)
 
     def test_dry_run_parse_does_not_call_native_bootstrap(self):
         wrapper_text = """
@@ -1379,7 +1449,7 @@ module.exports = {
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("awaited-host-ipc", result.stdout)
 
-    def test_non_dry_run_passes_package_relative_bootstrap_paths(self):
+    def test_non_dry_run_passes_normalized_bootstrap_paths(self):
         wrapper_text = """
 'use strict';
 
@@ -1393,13 +1463,16 @@ module.exports = {
     if (options.connectUrl !== 'ws://localhost:9527') {
       throw new Error(`unexpected connectUrl: ${options.connectUrl}`);
     }
-    if (options.packageRoot !== __dirname) {
+    if (options.packageRoot !== process.env.EXPECTED_PACKAGE_ROOT) {
       throw new Error(`unexpected packageRoot: ${options.packageRoot}`);
     }
-    if (options.wrapperPath !== path.join(__dirname, 'das_core_napi_export.js')) {
+    if (options.nodeModulesRoot !== process.env.EXPECTED_NODE_MODULES_ROOT) {
+      throw new Error(`unexpected nodeModulesRoot: ${options.nodeModulesRoot}`);
+    }
+    if (options.wrapperPath !== path.join(process.env.EXPECTED_RUNTIME_ROOT, 'das_core_napi_export.js')) {
       throw new Error(`unexpected wrapperPath: ${options.wrapperPath}`);
     }
-    if (options.addonPath !== path.join(__dirname, 'das_core_napi.node')) {
+    if (options.addonPath !== path.join(process.env.EXPECTED_RUNTIME_ROOT, 'native', 'das_core_napi.node')) {
       throw new Error(`unexpected addonPath: ${options.addonPath}`);
     }
     if (typeof options.requireFunction !== 'function') {
@@ -1418,6 +1491,26 @@ module.exports = {
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_plugin_local_das_core_node_shadow_warns(self):
+        wrapper_text = """
+'use strict';
+
+module.exports = {
+  startHostIpc() {
+    return 0;
+  },
+};
+"""
+        result = self._run_script_package(
+            wrapper_text,
+            "--main-pid",
+            "12345",
+            shadow_package=True,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("shadows DAS runtime package", result.stderr)
 
 
 if __name__ == "__main__":
