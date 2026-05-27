@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include <array>
 #include <chrono>
 #include <csignal>
 #include <cstdlib>
@@ -129,16 +130,28 @@ namespace IpcTestConfig
      */
     inline std::string GetTestPluginJsonPath(const std::string& plugin_name)
     {
-        std::filesystem::path json_path =
-            std::filesystem::path{GetPluginDir()}
-            / DAS_FMT_NS::format("{}.json", plugin_name);
+        const std::filesystem::path plugin_dir{GetPluginDir()};
+        const std::filesystem::path folder_path = plugin_dir / plugin_name;
+        const std::array<std::filesystem::path, 3> checked_paths = {
+            plugin_dir / DAS_FMT_NS::format("{}.json", plugin_name),
+            folder_path / DAS_FMT_NS::format("{}.json", plugin_name),
+            folder_path / "manifest.json"};
 
-        if (!std::filesystem::exists(json_path))
+        for (const auto& json_path : checked_paths)
         {
-            throw std::runtime_error(
-                "Plugin JSON not found at: " + json_path.string());
+            if (std::filesystem::exists(json_path))
+            {
+                return json_path.string();
+            }
         }
-        return json_path.string();
+
+        throw std::runtime_error(
+            DAS_FMT_NS::format(
+                "Plugin JSON for '{}' not found. Checked: {}; {}; {}",
+                plugin_name,
+                checked_paths[0].string(),
+                checked_paths[1].string(),
+                checked_paths[2].string()));
     }
 
 } // namespace IpcTestConfig

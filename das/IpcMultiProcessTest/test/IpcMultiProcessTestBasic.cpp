@@ -27,6 +27,7 @@
 #include <gtest/gtest.h>
 #include <mutex>
 #include <optional>
+#include <stdexcept>
 #include <thread>
 #include <unordered_set>
 
@@ -137,6 +138,19 @@ TEST(IpcMultiProcessTestBasic, TestPluginJsonPathResolvesFlatAndFolderManifests)
         std::filesystem::path{
             IpcTestConfig::GetTestPluginJsonPath("FolderPlugin")},
         folder_fallback);
+
+    try
+    {
+        (void)IpcTestConfig::GetTestPluginJsonPath("MissingPlugin");
+        FAIL() << "Expected missing plugin manifest lookup to throw";
+    }
+    catch (const std::runtime_error& e)
+    {
+        const std::string message = e.what();
+        EXPECT_NE(message.find("MissingPlugin"), std::string::npos);
+        EXPECT_NE(message.find("MissingPlugin.json"), std::string::npos);
+        EXPECT_NE(message.find("manifest.json"), std::string::npos);
+    }
 
     std::filesystem::remove_all(test_root);
 }
