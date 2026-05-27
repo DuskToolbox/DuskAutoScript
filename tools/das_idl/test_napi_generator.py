@@ -1,3 +1,4 @@
+import json
 import os
 import subprocess
 import shutil
@@ -1295,10 +1296,32 @@ class TestNapiExportCli(unittest.TestCase):
             cpp = output_dir / "das_core_napi_export.cpp"
             dts = output_dir / "das_core_napi_export.d.ts"
             js = output_dir / "das_core_napi_export.js"
+            package_json = output_dir / "package.json"
+            index_cjs = output_dir / "index.cjs"
+            index_dts = output_dir / "index.d.ts"
+            host_script = output_dir / "bin" / "das-node-host.cjs"
             self.assertTrue(cpp.exists())
             self.assertTrue(dts.exists())
             self.assertTrue(js.exists())
+            self.assertTrue(package_json.exists())
+            self.assertTrue(index_cjs.exists())
+            self.assertTrue(index_dts.exists())
+            self.assertTrue(host_script.exists())
+            self.assertFalse((output_dir / "das-node-host.cjs").exists())
             self.assertFalse((output_dir / "das_core_napi_napi_export.cpp").exists())
+            package = json.loads(package_json.read_text(encoding="utf-8"))
+            self.assertEqual(package["name"], "das-core")
+            self.assertEqual(package["main"], "index.cjs")
+            self.assertEqual(package["types"], "index.d.ts")
+            self.assertEqual(package["bin"]["das-node-host"], "bin/das-node-host.cjs")
+            self.assertIn(
+                'module.exports = require("./das_core_napi_export.js");',
+                index_cjs.read_text(encoding="utf-8"),
+            )
+            self.assertIn(
+                'export * from "./das_core_napi_export";',
+                index_dts.read_text(encoding="utf-8"),
+            )
             self.assertIn(
                 '#include "das/_autogen/idl/abi/Core.h"',
                 cpp.read_text(encoding="utf-8"),

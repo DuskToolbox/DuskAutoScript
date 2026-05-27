@@ -168,7 +168,10 @@ class TestNapiBatchConfig(unittest.TestCase):
             self.assertCountEqual(
                 node_outputs,
                 [
-                    f"{node_dir}/das-node-host.cjs".replace("\\", "/"),
+                    f"{node_dir}/bin/das-node-host.cjs".replace("\\", "/"),
+                    f"{node_dir}/index.cjs".replace("\\", "/"),
+                    f"{node_dir}/index.d.ts".replace("\\", "/"),
+                    f"{node_dir}/package.json".replace("\\", "/"),
                     f"{node_dir}/das_core_napi_export.cpp".replace("\\", "/"),
                     f"{node_dir}/das_core_napi_export.d.ts".replace("\\", "/"),
                     f"{node_dir}/das_core_napi_export.js".replace("\\", "/"),
@@ -215,13 +218,23 @@ class TestNapiBatchConfig(unittest.TestCase):
             cpp = node_dir / "das_core_napi_export.cpp"
             dts = node_dir / "das_core_napi_export.d.ts"
             js = node_dir / "das_core_napi_export.js"
-            host_script = node_dir / "das-node-host.cjs"
+            package_json = node_dir / "package.json"
+            index_cjs = node_dir / "index.cjs"
+            index_dts = node_dir / "index.d.ts"
+            host_script = node_dir / "bin" / "das-node-host.cjs"
             self.assertTrue(cpp.exists())
             self.assertTrue(dts.exists())
             self.assertTrue(js.exists())
+            self.assertTrue(package_json.exists())
+            self.assertTrue(index_cjs.exists())
+            self.assertTrue(index_dts.exists())
             self.assertTrue(host_script.exists())
+            self.assertFalse((node_dir / "das-node-host.cjs").exists())
             cpp_text = cpp.read_text(encoding="utf-8")
             dts_text = dts.read_text(encoding="utf-8")
+            package_text = package_json.read_text(encoding="utf-8")
+            index_cjs_text = index_cjs.read_text(encoding="utf-8")
+            index_dts_text = index_dts.read_text(encoding="utf-8")
             host_text = host_script.read_text(encoding="utf-8")
             self.assertIn("NODE_API_MODULE(das_core_napi, Init)", cpp_text)
             self.assertIn("ResolveNodeManifestEntryPoint", cpp_text)
@@ -235,6 +248,11 @@ class TestNapiBatchConfig(unittest.TestCase):
             self.assertIn("// Package: das-core", dts_text)
             self.assertIn("requireFunction?: (id: string) => unknown;", dts_text)
             self.assertIn("das_core_napi.node", js.read_text(encoding="utf-8"))
+            self.assertIn('"name": "das-core"', package_text)
+            self.assertIn('"main": "index.cjs"', package_text)
+            self.assertIn('"types": "index.d.ts"', package_text)
+            self.assertIn('module.exports = require("./das_core_napi_export.js");', index_cjs_text)
+            self.assertIn('export * from "./das_core_napi_export";', index_dts_text)
             self.assertIn("--dry-run-parse", host_text)
             self.assertIn("requireFunction: require", host_text)
 
