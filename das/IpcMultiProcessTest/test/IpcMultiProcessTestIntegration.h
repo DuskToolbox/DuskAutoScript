@@ -35,8 +35,8 @@
 #include <atomic>
 #include <chrono>
 #include <das/Core/IPC/DasAsyncSender.h>
-#include <das/Core/IPC/HttpIpcServer.h>
 #include <das/Core/IPC/HostLauncher.h>
+#include <das/Core/IPC/HttpIpcServer.h>
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
 #include <das/Core/IPC/MainProcess/IpcContext.h>
 #include <das/Core/Logger/Logger.h>
@@ -181,7 +181,7 @@ protected:
 
     uint16_t FindFreeLoopbackPort()
     {
-        boost::asio::io_context io_context;
+        boost::asio::io_context        io_context;
         boost::asio::ip::tcp::acceptor acceptor(
             io_context,
             {boost::asio::ip::make_address("127.0.0.1"), 0});

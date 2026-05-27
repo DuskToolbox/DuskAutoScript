@@ -444,6 +444,8 @@ class TestNapiGenerator(unittest.TestCase):
         self.assertIn("package.json", artifacts.cpp)
         self.assertIn("IsSafePackageRelativePath", artifacts.cpp)
         self.assertIn('entry_path.rfind("./", 0) != 0', artifacts.cpp)
+        self.assertIn("relative_path.is_absolute()", artifacts.cpp)
+        self.assertIn('if (part == "..")', artifacts.cpp)
         self.assertIn("std::filesystem::is_regular_file(module_path)", artifacts.cpp)
         self.assertIn("factory_name", artifacts.cpp)
         self.assertIn("require_function_", artifacts.cpp)
@@ -455,6 +457,9 @@ class TestNapiGenerator(unittest.TestCase):
         self.assertIn("DAS_LOG_ERROR(log_message.c_str())", artifacts.cpp)
         self.assertIn("Node manifest requires string entryPoint", artifacts.cpp)
         self.assertIn("invalid Node manifest entryPoint", artifacts.cpp)
+        self.assertIn("entryPoint module did not export an object", artifacts.cpp)
+        self.assertIn("entryPoint factory export is not a function", artifacts.cpp)
+        self.assertIn("ReadPackageJsonMain", artifacts.cpp)
         self.assertIn(
             'auto entry_point_value = (*manifest_obj)[std::string_view("entryPoint")];',
             artifacts.cpp,

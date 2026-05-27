@@ -449,11 +449,39 @@ TEST(NodeRuntimePackage, MissingRuntimeRootFailsDeterministically)
     EXPECT_EQ(launch.error(), DAS_E_FILE_NOT_FOUND);
 }
 
+TEST(NodeRuntimePackage, MissingPackageJsonFailsDeterministically)
+{
+    TempNodeRuntimeLayout layout;
+    layout.CreateRuntimePackageFiles();
+    layout.RemoveRuntimeFile("package.json");
+    ScopedEnvVar env{NODE_HOST_EXECUTABLE_ENV, layout.FakeNode().string()};
+
+    NodeRuntime runtime{layout.PackageRoot(), layout.NodeModulesRoot()};
+    auto        launch = runtime.BuildHostLaunchDesc();
+
+    ASSERT_FALSE(launch);
+    EXPECT_EQ(launch.error(), DAS_E_FILE_NOT_FOUND);
+}
+
 TEST(NodeRuntimePackage, MissingPackageEntryFailsDeterministically)
 {
     TempNodeRuntimeLayout layout;
     layout.CreateRuntimePackageFiles();
     layout.RemoveRuntimeFile(PACKAGE_ENTRY_RELATIVE);
+    ScopedEnvVar env{NODE_HOST_EXECUTABLE_ENV, layout.FakeNode().string()};
+
+    NodeRuntime runtime{layout.PackageRoot(), layout.NodeModulesRoot()};
+    auto        launch = runtime.BuildHostLaunchDesc();
+
+    ASSERT_FALSE(launch);
+    EXPECT_EQ(launch.error(), DAS_E_FILE_NOT_FOUND);
+}
+
+TEST(NodeRuntimePackage, MissingWrapperFailsDeterministically)
+{
+    TempNodeRuntimeLayout layout;
+    layout.CreateRuntimePackageFiles();
+    layout.RemoveRuntimeFile(WRAPPER_RELATIVE);
     ScopedEnvVar env{NODE_HOST_EXECUTABLE_ENV, layout.FakeNode().string()};
 
     NodeRuntime runtime{layout.PackageRoot(), layout.NodeModulesRoot()};
