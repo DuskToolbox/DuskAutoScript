@@ -443,7 +443,7 @@ namespace Das::IPC::Test
             &load_iid,
             load_response.response_data.data() + sizeof(ObjectId),
             sizeof(load_iid));
-        EXPECT_EQ(load_iid, DAS_IID_PLUGIN_PACKAGE);
+        EXPECT_EQ(load_iid, DAS_IID_BASE);
 
         std::vector<uint8_t> qi_payload;
         qi_payload.insert(

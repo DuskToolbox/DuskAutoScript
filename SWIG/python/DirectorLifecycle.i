@@ -18,10 +18,23 @@ static int DasSwigPreventManagedObject(DasSwigRuntimeContext* p_context)
     }
     PyGILState_STATE gil = PyGILState_Ensure();
     PyObject* self = static_cast<PyObject*>(p_context->py_self);
-    PyObject* result = PyObject_CallMethod(self, "__das_bridge_prevent", nullptr);
+    if (!self)
+    {
+        PyGILState_Release(gil);
+        return -1;
+    }
+
+    Py_INCREF(self);
+
+    PyObject* result = PyObject_CallMethod(self, "_das_bridge_prevent", nullptr);
     if (!result)
     {
-        PyErr_Print();
+        PyErr_Clear();
+        result = PyObject_CallMethod(self, "__das_bridge_prevent", nullptr);
+    }
+    if (!result)
+    {
+        PyErr_Clear();
     }
     else
     {
@@ -39,15 +52,27 @@ static int DasSwigReleaseManagedObject(DasSwigRuntimeContext* p_context)
     }
     PyGILState_STATE gil = PyGILState_Ensure();
     PyObject* self = static_cast<PyObject*>(p_context->py_self);
-    PyObject* result = PyObject_CallMethod(self, "__das_bridge_release", nullptr);
+    if (!self)
+    {
+        PyGILState_Release(gil);
+        return -1;
+    }
+
+    PyObject* result = PyObject_CallMethod(self, "_das_bridge_release", nullptr);
     if (!result)
     {
-        PyErr_Print();
+        PyErr_Clear();
+        result = PyObject_CallMethod(self, "__das_bridge_release", nullptr);
+    }
+    if (!result)
+    {
+        PyErr_Clear();
     }
     else
     {
         Py_DECREF(result);
     }
+    Py_DECREF(self);
     PyGILState_Release(gil);
     return 0;
 }

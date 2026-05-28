@@ -4,10 +4,13 @@ Python 测试插件 - 用于端到端集成测试
 参考 IpcTestPlugin2 实现
 """
 
+import weakref
+
 from DuskAutoScript import (
     ISwigDasPluginPackage,
     ISwigDasComponentFactory,
     ISwigDasComponent,
+    IDasComponent,
     DasRetBase,
     DasRetDasPluginFeature,
     DasRetDasBase,
@@ -24,6 +27,7 @@ from DuskAutoScript import (
     CreateDasRetIDasVariantVector,
     DasReadOnlyString,
     IsFailed,
+    IsDasGuidEqual,
 )
 
 
@@ -112,6 +116,20 @@ def _result_error_code(value) -> int:
     return DAS_S_OK
 
 
+def _set_pointer_result(
+    result,
+    value,
+    keepalive_attr: str | None = None,
+) -> int:
+    try:
+        result.SetValue(value)
+        if keepalive_attr is not None:
+            setattr(result, keepalive_attr, value)
+        return DAS_S_OK
+    except Exception:
+        return DAS_E_FAIL
+
+
 def _dispatch_lifecycle_callback(callback, status: str) -> int:
     if callback is None:
         return DAS_E_INVALID_ARGUMENT
@@ -121,7 +139,6 @@ def _dispatch_lifecycle_callback(callback, status: str) -> int:
         return _result_error_code(result)
     if IsFailed(_push_string(vector, status)):
         return DAS_E_FAIL
-
     dispatch_result = callback.Dispatch(
         DasReadOnlyString("lifecycle_callback"),
         vector,
@@ -136,7 +153,14 @@ class BridgeLifecycleDirector(ISwigDasComponent):
         super().__init__()
         self._callback = callback
         self._marker = marker
+        self._release_callback_armed = False
         self._release_sent = False
+
+    def arm_release_callback(self):
+        self._release_callback_armed = True
+
+    def cancel_release_callback(self):
+        self._release_callback_armed = False
 
     def Dispatch(self, p_function_name, p_arguments) -> DasRetDasVariantVector:
         try:
@@ -169,6 +193,8 @@ class BridgeLifecycleDirector(ISwigDasComponent):
             pass
 
     def _dispatch_release_callback(self) -> int:
+        if not self._release_callback_armed:
+            return DAS_S_OK
         if self._release_sent:
             return DAS_S_OK
         self._release_sent = True
@@ -181,9 +207,18 @@ class BridgeLifecycleDirector(ISwigDasComponent):
 class SimpleComponent(ISwigDasComponent):
     """简单测试组件"""
 
-    def __init__(self, session_id: int):
+    def __init__(self, session_id: int, on_release=None):
         super().__init__()
         self._session_id = session_id
+        self._on_release = on_release
+        self._released = False
+
+    def _das_bridge_release(self) -> int:
+        if not self._released:
+            self._released = True
+            if self._on_release is not None:
+                self._on_release(self)
+        return DAS_S_OK
 
     def Dispatch(self, p_function_name, p_arguments) -> DasRetDasVariantVector:
         """普通组件调度入口，所有失败都转换为 DasResult。"""
@@ -257,7 +292,8 @@ class SimpleComponent(ISwigDasComponent):
         elif operation == "mul":
             computed = left * right
         elif operation == "div" and right != 0:
-            computed = int(left / right)
+            quotient = abs(left) // abs(right)
+            computed = quotient if (left >= 0) == (right >= 0) else -quotient
         else:
             return _failed_variant_result(DAS_E_INVALID_ARGUMENT)
 
@@ -287,7 +323,9 @@ class SimpleComponent(ISwigDasComponent):
 
         director = BridgeLifecycleDirector(callback, marker)
         if IsFailed(vector.PushBackComponent(director)):
+            director.cancel_release_callback()
             return _failed_variant_result(DAS_E_FAIL)
+        director.arm_release_callback()
         return result
 
     def _handle_lifecycle_callback_failure(self, args) -> DasRetDasVariantVector:
@@ -314,20 +352,42 @@ class TestComponentFactory(ISwigDasComponentFactory):
     def __init__(self, session_id: int):
         super().__init__()
         self._session_id = session_id
-        self._components = []
+        self._components = weakref.WeakSet()
+
+    def _forget_component(self, component):
+        self._components.discard(component)
+
+    def _is_supported_component_iid(self, component_iid) -> bool:
+        if component_iid is None:
+            return False
+        try:
+            return bool(IsDasGuidEqual(component_iid, IDasComponent.IID()))
+        except Exception:
+            return False
+
+    def has_active_components(self) -> bool:
+        return len(self._components) > 0
 
     def IsSupported(self, component_iid):
         """检查是否支持指定组件接口"""
-        return DAS_S_OK
+        if self._is_supported_component_iid(component_iid):
+            return DAS_S_OK
+        return DAS_E_NO_IMPLEMENTATION
 
     def CreateInstance(self, component_iid) -> DasRetDasComponent:
         """创建组件实例"""
         result = DasRetDasComponent()
+        if not self._is_supported_component_iid(component_iid):
+            result.error_code = DAS_E_NO_IMPLEMENTATION
+            return result
         try:
-            component = SimpleComponent(self._session_id)
-            self._components.append(component)
+            component = SimpleComponent(self._session_id, self._forget_component)
+            self._components.add(component)
             result.error_code = DAS_S_OK
-            result.value = component
+            set_result = _set_pointer_result(result, component)
+            if IsFailed(set_result):
+                self._components.discard(component)
+                result.error_code = set_result
         except Exception:
             result.error_code = DAS_E_OUT_OF_MEMORY
         return result
@@ -366,7 +426,9 @@ class PythonTestPlugin(ISwigDasPluginPackage):
             if self._factory is None:
                 self._factory = TestComponentFactory(self._session_id)
             result.error_code = DAS_S_OK
-            result.value = self._factory
+            set_result = _set_pointer_result(result, self._factory)
+            if IsFailed(set_result):
+                result.error_code = set_result
         else:
             result.error_code = DAS_E_OUT_OF_RANGE
         return result
@@ -375,7 +437,7 @@ class PythonTestPlugin(ISwigDasPluginPackage):
         """检查是否可以卸载"""
         result = DasRetBool()
         result.error_code = DAS_S_OK
-        result.value = True
+        result.value = self._factory is None or not self._factory.has_active_components()
         return result
 
 
@@ -386,7 +448,9 @@ def create_plugin() -> DasRetBase:
     try:
         plugin = PythonTestPlugin()
         result.error_code = DAS_S_OK
-        result.value = plugin
+        set_result = _set_pointer_result(result, plugin, "_das_python_value")
+        if IsFailed(set_result):
+            result.error_code = set_result
     except Exception:
         result.error_code = DAS_E_OUT_OF_MEMORY
     return result

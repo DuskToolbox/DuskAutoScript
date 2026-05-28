@@ -630,6 +630,54 @@ class TestQualifiedInterfaceOutParamGeneration(unittest.TestCase):
                 header,
             )
 
+    def test_interface_out_raw_override_uses_get_value_for_ref_transfer(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = Path(temp_dir)
+            (temp / "IDasVariantVector.idl").write_text(
+                """
+                namespace Das::ExportInterface {
+                    [uuid("12345678-1234-1234-1234-123456789007")]
+                    interface IDasVariantVector : IDasBase {
+                        DasResult GetSize();
+                    }
+                }
+                """,
+                encoding="utf-8",
+            )
+            main = temp / "IDasComponent.idl"
+            main.write_text(
+                """
+                import "IDasVariantVector.idl";
+                namespace Das::PluginInterface {
+                    [uuid("12345678-1234-1234-1234-123456789008")]
+                    interface IDasComponent : IDasBase {
+                        DasResult Dispatch(
+                            IDasReadOnlyString* p_function_name,
+                            Das::ExportInterface::IDasVariantVector* p_arguments,
+                            [out] Das::ExportInterface::IDasVariantVector** pp_out_result);
+                    }
+                }
+                """,
+                encoding="utf-8",
+            )
+
+            document = parse_idl_file(str(main))
+            interface = document.interfaces[0]
+            generated = SwigCodeGenerator(
+                document,
+                idl_file_name=main.name,
+                idl_file_path=str(main),
+            ).generate_interface_i_file(interface)
+
+            self.assertIn(
+                "if (pp_out_result) *pp_out_result = result.GetValue();",
+                generated,
+            )
+            self.assertNotIn(
+                "if (pp_out_result) *pp_out_result = result.value;",
+                generated,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

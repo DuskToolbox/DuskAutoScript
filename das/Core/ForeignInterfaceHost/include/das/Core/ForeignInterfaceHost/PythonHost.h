@@ -155,7 +155,7 @@ private:
 DAS_API void RaisePythonInterpreterException();
 
 /**
- * @brief 包装类，同时持有 PyObject* 和 IDasBase*
+ * @brief Python IDasBase holder，同时持有 PyObject* 和 IDasBase*
  *
  * 用于协调 Python GC 和 DasPtr 两套独立的引用计数系统。
  * 构造时同时 Py_INCREF 和 AddRef，析构时同时 Py_DECREF 和 Release。

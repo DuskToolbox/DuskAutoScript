@@ -8,7 +8,6 @@
 #include <das/Core/IPC/ObjectId.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/Utils/fmt.h>
-#include <das/_autogen/idl/abi/IDasPluginPackage.h>
 
 #include <cstring>
 #include <utility>
@@ -48,10 +47,10 @@ namespace Das::Core::IPC::Host
         }
 
         DasResult HandleLoadPlugin(
-            IIpcContext&                         ctx,
-            const HostPluginLoader&              load_plugin,
-            std::span<const uint8_t>             payload,
-            IpcCommandResponse&                  response)
+            IIpcContext&             ctx,
+            const HostPluginLoader&  load_plugin,
+            std::span<const uint8_t> payload,
+            IpcCommandResponse&      response)
         {
             std::string manifest_path;
             size_t      offset = 0;
@@ -70,9 +69,7 @@ namespace Das::Core::IPC::Host
             if (!result.has_value())
             {
                 DAS_LOG_ERROR(
-                    DAS_FMT_NS::format(
-                        "Plugin load failed: {}",
-                        manifest_path)
+                    DAS_FMT_NS::format("Plugin load failed: {}", manifest_path)
                         .c_str());
                 response.error_code = result.error();
                 response.response_data.clear();
@@ -88,7 +85,7 @@ namespace Das::Core::IPC::Host
             {
                 DAS_LOG_ERROR(
                     DAS_FMT_NS::format(
-                        "[LOAD_PLUGIN] 对象注册失败: {}",
+                        "Plugin object registration failed: result = {}",
                         static_cast<uint32_t>(reg_result))
                         .c_str());
                 response.error_code = reg_result;
@@ -100,7 +97,7 @@ namespace Das::Core::IPC::Host
             response.response_data.clear();
             AppendObjectId(response.response_data, object_id);
 
-            const DasGuid iid = DAS_IID_PLUGIN_PACKAGE;
+            const DasGuid iid = DAS_IID_BASE;
             AppendBytes(response.response_data, &iid, sizeof(iid));
 
             AppendUInt16(response.response_data, object_id.session_id);
@@ -108,7 +105,7 @@ namespace Das::Core::IPC::Host
 
             DAS_LOG_INFO(
                 DAS_FMT_NS::format(
-                    "[LOAD_PLUGIN] 插件已加载, object_id={{session:{}, gen:{}, local:{}}}",
+                    "Plugin loaded: object_id = {{ session: {}, gen: {}, local: {} }}",
                     object_id.session_id,
                     object_id.generation,
                     object_id.local_id)
@@ -125,7 +122,7 @@ namespace Das::Core::IPC::Host
             {
                 DAS_LOG_ERROR(
                     DAS_FMT_NS::format(
-                        "[QUERY_INTERFACE] payload too small: {}",
+                        "Interface query payload too small: size = {}",
                         payload.size())
                         .c_str());
                 response.error_code = DAS_E_IPC_INVALID_MESSAGE_BODY;
@@ -149,7 +146,7 @@ namespace Das::Core::IPC::Host
             {
                 DAS_LOG_ERROR(
                     DAS_FMT_NS::format(
-                        "[QUERY_INTERFACE] LookupObject failed: session={}, local={}, result={}",
+                        "Interface query object lookup failed: session = {}, local = {}, result = {}",
                         object_id.session_id,
                         object_id.local_id,
                         lookup_result)
@@ -166,13 +163,13 @@ namespace Das::Core::IPC::Host
             {
                 DAS_LOG_INFO(
                     DAS_FMT_NS::format(
-                        "[QUERY_INTERFACE] QueryInterface returned: {}",
+                        "Interface query returned: result = {}",
                         qi_result)
                         .c_str());
 
                 response.error_code = qi_result;
                 response.response_data.clear();
-                const int32_t fail_result = static_cast<int32_t>(qi_result);
+                const int32_t  fail_result = static_cast<int32_t>(qi_result);
                 const uint32_t zero32 = 0;
                 const uint64_t zero64 = 0;
                 AppendBytes(
@@ -205,11 +202,14 @@ namespace Das::Core::IPC::Host
                 response.response_data,
                 &interface_id,
                 sizeof(interface_id));
-            AppendBytes(response.response_data, &encoded_id, sizeof(encoded_id));
+            AppendBytes(
+                response.response_data,
+                &encoded_id,
+                sizeof(encoded_id));
 
             DAS_LOG_INFO(
                 DAS_FMT_NS::format(
-                    "[QUERY_INTERFACE] success: iid_hash=0x{:08X}, new_obj_id={{session:{}, gen:{}, local:{}}}",
+                    "Interface query succeeded: iid_hash = 0x{:08X}, new_obj_id = {{ session: {}, gen: {}, local: {} }}",
                     interface_id,
                     new_obj_id.session_id,
                     new_obj_id.generation,
@@ -236,13 +236,7 @@ namespace Das::Core::IPC::Host
                 const ValidatedIPCMessageHeader&,
                 std::span<const uint8_t> payload,
                 IpcCommandResponse&      response) -> DasResult
-            {
-                return HandleLoadPlugin(
-                    *ctx,
-                    load_plugin,
-                    payload,
-                    response);
-            });
+            { return HandleLoadPlugin(*ctx, load_plugin, payload, response); });
 
         ctx->RegisterCommandHandler(
             static_cast<uint32_t>(IpcCommandType::QUERY_INTERFACE),

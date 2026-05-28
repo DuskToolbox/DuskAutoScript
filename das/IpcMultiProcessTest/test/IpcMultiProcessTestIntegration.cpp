@@ -68,21 +68,21 @@ using namespace Das::ExportInterface;
 
 namespace
 {
-    constexpr DasGuid kIpcTaskGuid{
+    constexpr DasGuid IPC_TASK_GUID{
         0xA1B2C3D4,
         0xE5F6,
         0x4A7B,
         {0x8C, 0x9D, 0x0E, 0x1F, 0x2A, 0x3B, 0x4C, 0x5D}};
 
-    constexpr DasGuid kIpcTaskComponentGuid{
+    constexpr DasGuid IPC_TASK_COMPONENT_GUID{
         0x68F10701,
         0x0000,
         0x4000,
         {0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01}};
 
-    constexpr std::string_view kDasMaaPiTaskGuidText =
+    constexpr std::string_view DAS_MAAPI_TASK_GUID_TEXT =
         "69F20001-0000-4000-8000-000000000001";
-    constexpr std::string_view kDasMaaPiAuthoringFactoryGuidText =
+    constexpr std::string_view DAS_MAAPI_AUTHORING_FACTORY_GUID_TEXT =
         "69F20002-0000-4000-8000-000000000001";
 
     yyjson::value ToYyjson(Das::ExportInterface::IDasJson* json)
@@ -302,14 +302,13 @@ namespace
             return {};
         }
 
-        IDasBase* factory_base_raw = nullptr;
+        DAS::DasPtr<IDasBase> factory_base;
         if (DAS::IsFailed(plugin_package->CreateFeatureInterface(
                 feature_index,
-                &factory_base_raw)))
+                factory_base.Put())))
         {
             return {};
         }
-        DAS::DasPtr<IDasBase> factory_base(factory_base_raw);
 
         DAS::DasPtr<IDasComponentFactory> factory;
         if (DAS::IsFailed(factory_base.As(factory.Put())))
@@ -328,15 +327,15 @@ namespace
             return {};
         }
 
-        IDasComponent* component_raw = nullptr;
+        DAS::DasPtr<IDasComponent> component;
         if (DAS::IsFailed(factory->CreateInstance(
                 DasIidOf<IDasComponent>(),
-                &component_raw)))
+                component.Put())))
         {
             return {};
         }
 
-        return DAS::DasPtr<IDasComponent>(component_raw);
+        return component;
     }
 
     std::filesystem::path ResolveNodeExecutableForIntegration()
@@ -890,6 +889,18 @@ namespace
                    << plugin_dir.string();
         }
 
+        std::error_code ec;
+        const auto      stale_root_manifest =
+            plugin_dir / "PythonFolderTestPlugin.json";
+        std::filesystem::remove(stale_root_manifest, ec);
+        if (ec)
+        {
+            return testing::AssertionFailure()
+                   << "Failed to remove stale Python folder root manifest: "
+                   << stale_root_manifest.string()
+                   << ", error=" << ec.message();
+        }
+
         std::filesystem::path flat_manifest_path;
         try
         {
@@ -920,7 +931,6 @@ namespace
             return containment;
         }
 
-        std::error_code ec;
         std::filesystem::remove_all(folder_root, ec);
         if (ec)
         {
@@ -983,6 +993,27 @@ namespace
 
         *out_manifest_path = manifest_path;
         return testing::AssertionSuccess();
+    }
+
+    void AssertPythonFactoryRejectsUnsupportedIid(IDasComponentFactory* factory)
+    {
+        ASSERT_NE(factory, nullptr);
+
+        DasGuid unsupported_component_iid{};
+        EXPECT_EQ(
+            factory->IsSupported(unsupported_component_iid),
+            DAS_E_NO_IMPLEMENTATION)
+            << "Python component factory must reject unsupported IIDs";
+
+        IDasComponent* unsupported_component_raw = nullptr;
+        EXPECT_EQ(
+            factory->CreateInstance(
+                unsupported_component_iid,
+                &unsupported_component_raw),
+            DAS_E_NO_IMPLEMENTATION)
+            << "Python component factory must not create unsupported "
+               "component interfaces";
+        EXPECT_EQ(unsupported_component_raw, nullptr);
     }
 
     void AssertPythonComponentDispatchBehavior(
@@ -1166,23 +1197,22 @@ namespace
             feature,
             DAS::PluginInterface::DAS_PLUGIN_FEATURE_COMPONENT_FACTORY);
 
-        IDasBase* factory_base_raw = nullptr;
+        DAS::DasPtr<IDasBase> factory_base;
         ASSERT_EQ(
-            plugin_package->CreateFeatureInterface(0, &factory_base_raw),
+            plugin_package->CreateFeatureInterface(0, factory_base.Put()),
             DAS_S_OK);
-        ASSERT_NE(factory_base_raw, nullptr);
-        DAS::DasPtr<IDasBase> factory_base(factory_base_raw);
+        ASSERT_NE(factory_base.Get(), nullptr);
 
         DAS::DasPtr<IDasComponentFactory> factory;
         ASSERT_EQ(factory_base.As(factory.Put()), DAS_S_OK);
         EXPECT_EQ(factory->IsSupported(DasIidOf<IDasComponent>()), DAS_S_OK);
+        AssertPythonFactoryRejectsUnsupportedIid(factory.Get());
 
-        IDasComponent* component_raw = nullptr;
+        DAS::DasPtr<IDasComponent> component;
         ASSERT_EQ(
-            factory->CreateInstance(DasIidOf<IDasComponent>(), &component_raw),
+            factory->CreateInstance(DasIidOf<IDasComponent>(), component.Put()),
             DAS_S_OK);
-        ASSERT_NE(component_raw, nullptr);
-        DAS::DasPtr<IDasComponent> component(component_raw);
+        ASSERT_NE(component.Get(), nullptr);
 
         AssertPythonComponentDispatchBehavior(
             component.Get(),
@@ -1406,23 +1436,21 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LoadNodePlugin)
         feature,
         DAS::PluginInterface::DAS_PLUGIN_FEATURE_COMPONENT_FACTORY);
 
-    IDasBase* factory_base_raw = nullptr;
+    DAS::DasPtr<IDasBase> factory_base;
     ASSERT_EQ(
-        plugin_package->CreateFeatureInterface(0, &factory_base_raw),
+        plugin_package->CreateFeatureInterface(0, factory_base.Put()),
         DAS_S_OK);
-    ASSERT_NE(factory_base_raw, nullptr);
-    DAS::DasPtr<IDasBase> factory_base(factory_base_raw);
+    ASSERT_NE(factory_base.Get(), nullptr);
 
     DAS::DasPtr<IDasComponentFactory> factory;
     ASSERT_EQ(factory_base.As(factory.Put()), DAS_S_OK);
     EXPECT_EQ(factory->IsSupported(DasIidOf<IDasComponent>()), DAS_S_OK);
 
-    IDasComponent* component_raw = nullptr;
+    DAS::DasPtr<IDasComponent> component;
     ASSERT_EQ(
-        factory->CreateInstance(DasIidOf<IDasComponent>(), &component_raw),
+        factory->CreateInstance(DasIidOf<IDasComponent>(), component.Put()),
         DAS_S_OK);
-    ASSERT_NE(component_raw, nullptr);
-    DAS::DasPtr<IDasComponent> component(component_raw);
+    ASSERT_NE(component.Get(), nullptr);
 
     AssertNodeComponentDispatchBehavior(component.Get());
 }
@@ -1574,7 +1602,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LoadPythonFolderPlugin)
         GTEST_FAIL() << "PythonFolderTestPlugin manifest not found: "
                      << e.what();
     }
-    EXPECT_EQ(
+    ASSERT_EQ(
         std::filesystem::weakly_canonical(plugin_json_path),
         std::filesystem::weakly_canonical(folder_manifest_path));
 
@@ -1704,9 +1732,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LoadPlugin)
     // 4. 验证返回的代理对象
     ASSERT_NE(proxy, nullptr);
 
-    DAS_CORE_LOG_INFO(
-        "[CrossProcess_LoadPlugin] Plugin loaded, proxy = {}",
-        (void*)proxy);
+    DAS_CORE_LOG_INFO("Plugin loaded: proxy = {}", (void*)proxy);
 }
 
 TEST_F(IpcMultiProcessTestIntegration, CrossProcess_TaskAuthoringFactory)
@@ -1754,19 +1780,18 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_TaskAuthoringFactory)
     ASSERT_EQ(plugin_package->EnumFeature(2, &feature), DAS_S_OK);
     EXPECT_EQ(feature, DAS_PLUGIN_FEATURE_TASK_AUTHORING_FACTORY);
 
-    IDasBase* factory_base_raw = nullptr;
+    DAS::DasPtr<IDasBase> factory_base;
     ASSERT_EQ(
-        plugin_package->CreateFeatureInterface(2, &factory_base_raw),
+        plugin_package->CreateFeatureInterface(2, factory_base.Put()),
         DAS_S_OK);
-    ASSERT_NE(factory_base_raw, nullptr);
-    DAS::DasPtr<IDasBase> factory_base(factory_base_raw);
+    ASSERT_NE(factory_base.Get(), nullptr);
 
     DAS::DasPtr<IDasTaskAuthoringSessionFactory> factory;
     ASSERT_EQ(factory_base.As(factory.Put()), DAS_S_OK);
 
     IDasTaskAuthoringSession* session_raw = nullptr;
     ASSERT_EQ(
-        factory->CreateSession(kIpcTaskGuid, nullptr, &session_raw),
+        factory->CreateSession(IPC_TASK_GUID, nullptr, &session_raw),
         DAS_S_OK);
     ASSERT_NE(session_raw, nullptr);
     DAS::DasPtr<IDasTaskAuthoringSession> session(session_raw);
@@ -1841,12 +1866,11 @@ TEST_F(
     ASSERT_EQ(plugin_package->EnumFeature(1, &feature), DAS_S_OK);
     EXPECT_EQ(feature, DAS_PLUGIN_FEATURE_TASK_AUTHORING_FACTORY);
 
-    IDasBase* factory_base_raw = nullptr;
+    DAS::DasPtr<IDasBase> factory_base;
     ASSERT_EQ(
-        plugin_package->CreateFeatureInterface(1, &factory_base_raw),
+        plugin_package->CreateFeatureInterface(1, factory_base.Put()),
         DAS_S_OK);
-    ASSERT_NE(factory_base_raw, nullptr);
-    DAS::DasPtr<IDasBase> factory_base(factory_base_raw);
+    ASSERT_NE(factory_base.Get(), nullptr);
 
     DAS::DasPtr<IDasTaskAuthoringSessionFactory> factory;
     ASSERT_EQ(factory_base.As(factory.Put()), DAS_S_OK);
@@ -1855,12 +1879,13 @@ TEST_F(
     EXPECT_EQ(
         factory_guid,
         DAS::Core::ForeignInterfaceHost::MakeDasGuid(
-            kDasMaaPiAuthoringFactoryGuidText));
+            DAS_MAAPI_AUTHORING_FACTORY_GUID_TEXT));
 
     IDasTaskAuthoringSession* session_raw = nullptr;
     ASSERT_EQ(
         factory->CreateSession(
-            DAS::Core::ForeignInterfaceHost::MakeDasGuid(kDasMaaPiTaskGuidText),
+            DAS::Core::ForeignInterfaceHost::MakeDasGuid(
+                DAS_MAAPI_TASK_GUID_TEXT),
             nullptr,
             &session_raw),
         DAS_S_OK);
@@ -1922,25 +1947,24 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_TaskComponentFactory)
     ASSERT_EQ(plugin_package->EnumFeature(3, &feature), DAS_S_OK);
     EXPECT_EQ(feature, DAS_PLUGIN_FEATURE_TASK_COMPONENT_FACTORY);
 
-    IDasBase* factory_base_raw = nullptr;
+    DAS::DasPtr<IDasBase> factory_base;
     ASSERT_EQ(
-        plugin_package->CreateFeatureInterface(3, &factory_base_raw),
+        plugin_package->CreateFeatureInterface(3, factory_base.Put()),
         DAS_S_OK);
-    ASSERT_NE(factory_base_raw, nullptr);
-    DAS::DasPtr<IDasBase> factory_base(factory_base_raw);
+    ASSERT_NE(factory_base.Get(), nullptr);
 
     DAS::DasPtr<IDasTaskComponentFactory> factory;
     ASSERT_EQ(factory_base.As(factory.Put()), DAS_S_OK);
 
     IDasTaskComponent* missing_component_raw = nullptr;
     ASSERT_EQ(
-        factory->CreateComponent(kIpcTaskGuid, &missing_component_raw),
+        factory->CreateComponent(IPC_TASK_GUID, &missing_component_raw),
         DAS_E_NOT_FOUND);
     ASSERT_EQ(missing_component_raw, nullptr);
 
     IDasTaskComponent* component_raw = nullptr;
     ASSERT_EQ(
-        factory->CreateComponent(kIpcTaskComponentGuid, &component_raw),
+        factory->CreateComponent(IPC_TASK_COMPONENT_GUID, &component_raw),
         DAS_S_OK);
     ASSERT_NE(component_raw, nullptr);
     DAS::DasPtr<IDasTaskComponent> component(component_raw);
@@ -2048,8 +2072,8 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_HostToHostCall)
     ASSERT_NE(proxy_a.Get(), proxy_b.Get());
 
     DAS_CORE_LOG_INFO(
-        "[CrossProcess_HostToHostCall] Cross-process infrastructure verified: "
-        "HostA(session={}) can reach HostB(session={}) via IpcContext",
+        "Cross-process infrastructure verified: host_a_session = {}, "
+        "host_b_session = {}",
         session_a,
         session_b);
 
@@ -2229,7 +2253,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LoadJavaPlugin)
 
     auto& [load_result, proxy] = *opt;
     ASSERT_TRUE(DAS::IsOk(load_result)) << DAS_FMT_NS::format(
-        "Failed to load Java plugin (result={:#x}). "
+        "Failed to load Java plugin (result = {}). "
         "Ensure JVM is properly installed and JAVA_HOME is set.",
         load_result);
 
@@ -2250,12 +2274,11 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LoadJavaPlugin)
         DAS::PluginInterface::DAS_PLUGIN_FEATURE_COMPONENT_FACTORY);
 
     // 通过 feature 创建 IDasComponentFactory
-    IDasBase* factory_base_raw = nullptr;
+    DAS::DasPtr<IDasBase> factory_base;
     ASSERT_EQ(
-        plugin_package->CreateFeatureInterface(0, &factory_base_raw),
+        plugin_package->CreateFeatureInterface(0, factory_base.Put()),
         DAS_S_OK);
-    ASSERT_NE(factory_base_raw, nullptr);
-    DAS::DasPtr<IDasBase> factory_base(factory_base_raw);
+    ASSERT_NE(factory_base.Get(), nullptr);
 
     DAS::DasPtr<DAS::PluginInterface::IDasComponentFactory> factory;
     ASSERT_EQ(factory_base.As(factory.Put()), DAS_S_OK);
@@ -2319,9 +2342,8 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LoadJavaPlugin)
     }
 
     DAS_CORE_LOG_INFO(
-        "[CrossProcess_LoadJavaPlugin] Java plugin fully verified: "
-        "LoadPlugin → EnumFeature → CreateFeatureInterface → IsSupported "
-        "→ CreateInstance → Dispatch(echo/compute/getSessionInfo)");
+        "Java plugin fully verified: load, feature enumeration, factory "
+        "creation, support check, instance creation, and dispatch");
 }
 
 // ====== 主进程退出检测测试 ======
@@ -2364,8 +2386,7 @@ TEST_F(
     ASSERT_GT(host_pid, 0u);
 
     DAS_CORE_LOG_INFO(
-        "[ParentProcessExit_HostAutoExit_InvalidPid] "
-        "Host process started with fake main_pid={}, host_pid={}",
+        "Host process started with fake main_pid = {}, host_pid = {}",
         fake_main_pid,
         host_pid);
 
@@ -2393,9 +2414,7 @@ TEST_F(
                "Parent process monitoring is not working.";
     }
 
-    DAS_CORE_LOG_INFO(
-        "[ParentProcessExit_HostAutoExit_InvalidPid] "
-        "Host process exited automatically as expected");
+    DAS_CORE_LOG_INFO("Host process exited automatically as expected");
     SUCCEED();
 }
 
@@ -2458,7 +2477,7 @@ TEST_F(
 
     auto fake_main_pid = static_cast<uint32_t>(fake_main.id());
 
-    DAS_CORE_LOG_INFO("[KillParent] Fake main started: PID={}", fake_main_pid);
+    DAS_CORE_LOG_INFO("Fake main started: pid = {}", fake_main_pid);
 
     // 5. 启动 DasHost（连接到假主进程）
     //    先启动 DasHost 获取 host_pid，然后写入共享内存让 FakeMain 创建管道
@@ -2476,7 +2495,7 @@ TEST_F(
 
     auto host_pid = static_cast<uint32_t>(host_process.id());
     DAS_CORE_LOG_INFO(
-        "[KillParent] Host started: PID={}, main_pid={}",
+        "Host started: pid = {}, main_pid = {}",
         host_pid,
         fake_main_pid);
 
@@ -2486,15 +2505,13 @@ TEST_F(
             FakeMainProcess::KILL_PARENT_SHM_NAME,
             std::chrono::seconds(10));
     ASSERT_TRUE(shm_ready) << "FakeMain did not create shared memory in time";
-    DAS_CORE_LOG_INFO("[KillParent] Shared memory is ready");
+    DAS_CORE_LOG_INFO("Shared memory is ready");
 
     // 7. 将 host_pid 写入共享内存，让 FakeMain 可以创建正确命名的管道
     FakeMainProcess::KillParentSharedMemory::WriteHostPid(
         FakeMainProcess::KILL_PARENT_SHM_NAME,
         host_pid);
-    DAS_CORE_LOG_INFO(
-        "[KillParent] Wrote host_pid={} to shared memory",
-        host_pid);
+    DAS_CORE_LOG_INFO("Wrote host_pid = {} to shared memory", host_pid);
 
     // 8. 等待假主进程就绪（管道已创建）
     //    DasHost 有 1 秒的连接重试超时，应该足够让 FakeMain 创建管道
@@ -2514,7 +2531,7 @@ TEST_F(
             FakeMainProcess::KILL_PARENT_SHM_NAME,
             std::chrono::seconds(10));
     ASSERT_TRUE(handshake_done) << "Handshake did not complete in time";
-    DAS_CORE_LOG_INFO("[KillParent] Handshake completed");
+    DAS_CORE_LOG_INFO("Handshake completed");
 
     // 11. 确认 Host 还在运行
     {
@@ -2527,9 +2544,7 @@ TEST_F(
     {
         boost::system::error_code ec;
         fake_main.terminate(ec);
-        DAS_CORE_LOG_INFO(
-            "[KillParent] Fake main killed: PID={}",
-            fake_main_pid);
+        DAS_CORE_LOG_INFO("Fake main killed: pid = {}", fake_main_pid);
     }
 
     // 13. 等待 Host 自动退出（父进程监控应检测到并退出）
@@ -2558,8 +2573,7 @@ TEST_F(
                   "Parent process monitoring is not working.";
     }
 
-    DAS_CORE_LOG_INFO(
-        "[KillParent] Test PASSED - Host exited automatically after real handshake");
+    DAS_CORE_LOG_INFO("Host exited automatically after real handshake");
 }
 
 /**
@@ -2651,8 +2665,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_AsyncLoadPlugins)
     ASSERT_NE(proxy1.Get(), proxy2.Get());
 
     DAS_CORE_LOG_INFO(
-        "[CrossProcess_AsyncLoadPlugins] Both plugins loaded: "
-        "object1 = {}, object2 = {}",
+        "Both plugins loaded: object1 = {}, object2 = {}",
         (void*)proxy1.Get(),
         (void*)proxy2.Get());
 
@@ -2734,8 +2747,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_AsyncLoadPlugins_WhenAll)
     ASSERT_NE(proxy1.Get(), proxy2.Get());
 
     DAS_CORE_LOG_INFO(
-        "[CrossProcess_AsyncLoadPlugins_WhenAll] Both plugins loaded via "
-        "when_all: object1 = {}, object2 = {}",
+        "Both plugins loaded via when_all: object1 = {}, object2 = {}",
         (void*)proxy1.Get(),
         (void*)proxy2.Get());
 
@@ -2827,7 +2839,7 @@ TEST_F(IpcMultiProcessTestIntegration, RemoteProxy_ComponentFactory_IsSupported)
         factory->IsSupported(DasIidOf<DAS::PluginInterface::IDasComponent>()),
         DAS_S_OK);
 
-    DAS_CORE_LOG_INFO("[RemoteProxy_ComponentFactory_IsSupported] Test passed");
+    DAS_CORE_LOG_INFO("Remote component factory support verification passed");
 }
 
 // ====== QueryMainProcessInterface E2E 测试 ======
@@ -2898,9 +2910,8 @@ TEST_F(IpcMultiProcessTestIntegration, QueryMainProcessInterface_E2E)
                     if (DAS::IsFailed(reg_result))
                     {
                         DAS_CORE_LOG_ERROR(
-                            "[QueryMainProcessInterface_E2E] "
-                            "DasRegisterMainProcessService(IDasReadOnlyString) "
-                            "failed: result={}",
+                            "Main process string service registration failed: "
+                            "result = {}",
                             reg_result);
                         return reg_result;
                     }
@@ -2913,9 +2924,8 @@ TEST_F(IpcMultiProcessTestIntegration, QueryMainProcessInterface_E2E)
                     if (DAS::IsFailed(query_result))
                     {
                         DAS_CORE_LOG_ERROR(
-                            "[QueryMainProcessInterface_E2E] "
-                            "DasQueryMainProcessInterface(IDasReadOnlyString) "
-                            "failed: result={}",
+                            "Main process string service query failed: "
+                            "result = {}",
                             query_result);
                         return query_result;
                     }
@@ -2925,10 +2935,8 @@ TEST_F(IpcMultiProcessTestIntegration, QueryMainProcessInterface_E2E)
                     }
 
                     DAS_CORE_LOG_INFO(
-                        "[QueryMainProcessInterface_E2E] "
-                        "DasRegisterMainProcessService + "
-                        "DasQueryMainProcessInterface(IDasReadOnlyString) "
-                        "OK");
+                        "Main process string service registration and query "
+                        "succeeded");
                     return DAS_S_OK;
                 }),
             [&](DasResult prev_result) noexcept -> DasResult
@@ -2945,9 +2953,8 @@ TEST_F(IpcMultiProcessTestIntegration, QueryMainProcessInterface_E2E)
                 if (DAS::IsFailed(reg_result))
                 {
                     DAS_CORE_LOG_ERROR(
-                        "[QueryMainProcessInterface_E2E] "
-                        "DasRegisterMainProcessService(IDasVariantVector) "
-                        "failed: result={}",
+                        "Main process variant vector service registration "
+                        "failed: result = {}",
                         reg_result);
                     return reg_result;
                 }
@@ -2960,9 +2967,8 @@ TEST_F(IpcMultiProcessTestIntegration, QueryMainProcessInterface_E2E)
                 if (DAS::IsFailed(query_result))
                 {
                     DAS_CORE_LOG_ERROR(
-                        "[QueryMainProcessInterface_E2E] "
-                        "DasQueryMainProcessInterface(IDasVariantVector) "
-                        "failed: result={}",
+                        "Main process variant vector service query failed: "
+                        "result = {}",
                         query_result);
                     return query_result;
                 }
@@ -2972,9 +2978,8 @@ TEST_F(IpcMultiProcessTestIntegration, QueryMainProcessInterface_E2E)
                 }
 
                 DAS_CORE_LOG_INFO(
-                    "[QueryMainProcessInterface_E2E] "
-                    "DasRegisterMainProcessService + "
-                    "DasQueryMainProcessInterface(IDasVariantVector) OK");
+                    "Main process variant vector service registration and "
+                    "query succeeded");
                 return DAS_S_OK;
             }));
 
@@ -3004,9 +3009,7 @@ TEST_F(IpcMultiProcessTestIntegration, QueryMainProcessInterface_E2E)
     ASSERT_EQ(load_result, DAS_S_OK) << "Load plugin failed";
     ASSERT_NE(proxy, nullptr);
 
-    DAS_CORE_LOG_INFO(
-        "[QueryMainProcessInterface_E2E] Plugin loaded, proxy = {}",
-        (void*)proxy);
+    DAS_CORE_LOG_INFO("Plugin loaded: proxy = {}", (void*)proxy);
 
     // 5. Use the proxy directly to get IDasPluginPackage
     DAS::DasPtr<IDasBase> raw_proxy;
@@ -3091,14 +3094,10 @@ TEST_F(IpcMultiProcessTestIntegration, QueryMainProcessInterface_E2E)
     }
 
     DAS_CORE_LOG_INFO(
-        "[QueryMainProcessInterface_E2E] VariantVector test passed — "
-        "Host plugin successfully queried main process "
-        "IDasVariantVector via DasQueryMainProcessInterface");
+        "Host plugin successfully queried main process IDasVariantVector");
 
     DAS_CORE_LOG_INFO(
-        "[QueryMainProcessInterface_E2E] Test passed — "
-        "Host plugin successfully queried main process "
-        "IDasReadOnlyString via DasQueryMainProcessInterface");
+        "Host plugin successfully queried main process IDasReadOnlyString");
 }
 
 // ====== CrossProcess QueryMainProcessString E2E 测试 ======
@@ -3145,9 +3144,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_QueryMainProcessString)
         DasIidOf<IDasReadOnlyString>());
     ASSERT_EQ(result, DAS_S_OK) << "RegisterService failed";
 
-    DAS_CORE_LOG_INFO(
-        "[CrossProcess_QueryMainProcessString] Registered "
-        "IDasReadOnlyString service in main process");
+    DAS_CORE_LOG_INFO("Registered IDasReadOnlyString service in main process");
 
     // 3. 启动 Host 进程
     result = StartHostAndSetupRunLoop();
@@ -3168,9 +3165,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_QueryMainProcessString)
     ASSERT_EQ(load_result, DAS_S_OK) << "Load plugin failed";
     ASSERT_NE(proxy, nullptr);
 
-    DAS_CORE_LOG_INFO(
-        "[QueryMainProcessInterface_E2E] Plugin loaded, proxy = {}",
-        (void*)proxy);
+    DAS_CORE_LOG_INFO("Plugin loaded: proxy = {}", (void*)proxy);
 
     // 5. Use the proxy directly to get IDasPluginPackage
     DAS::DasPtr<IDasBase> raw_proxy;
@@ -3239,9 +3234,8 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_QueryMainProcessString)
     }
 
     DAS_CORE_LOG_INFO(
-        "[CrossProcess_QueryMainProcessString] Test passed — "
-        "Host plugin queried main process IDasReadOnlyString "
-        "and returned correct value via IPC");
+        "Host plugin queried main process IDasReadOnlyString and returned "
+        "correct value via IPC");
 }
 
 // ==========================================================================
@@ -3317,7 +3311,7 @@ public:
     std::atomic<bool>                         callback_received_{false};
     std::string                               received_status_;
     DAS::Core::IPC::MainProcess::IIpcContext* ctx_ = nullptr;
-    IDasAsyncCallback*                        completion_signal_ = nullptr;
+    DAS::DasPtr<IDasAsyncCallback>            completion_signal_;
     bool                                      request_stop_on_callback_ = true;
     bool                                      force_dispatch_failure_ = false;
 
@@ -3368,15 +3362,14 @@ public:
             callback_received_ = true;
 
             DAS_CORE_LOG_INFO(
-                "[LifecycleCallback] received finalize callback, status = {}",
+                "Lifecycle callback received: status = {}",
                 received_status_);
 
             // 事件驱动通知：通过 PostCallback 触发 CompletionSignal
             // 测试线程以 1ms 粒度轮询 done（与 DAS::Core::IPC::wait() 一致）
             if (ctx_ && completion_signal_)
             {
-                completion_signal_->AddRef();
-                ctx_->PostCallback(completion_signal_);
+                ctx_->PostCallback(completion_signal_.Get());
             }
 
             if (ctx_ && request_stop_on_callback_)
@@ -3484,23 +3477,22 @@ void AssertPythonDirectorLifecycleBehavior(
         feature,
         DAS::PluginInterface::DAS_PLUGIN_FEATURE_COMPONENT_FACTORY);
 
-    IDasBase* factory_base_raw = nullptr;
+    DAS::DasPtr<IDasBase> factory_base;
     ASSERT_EQ(
-        plugin_package->CreateFeatureInterface(0, &factory_base_raw),
+        plugin_package->CreateFeatureInterface(0, factory_base.Put()),
         DAS_S_OK);
-    ASSERT_NE(factory_base_raw, nullptr);
-    DAS::DasPtr<IDasBase> factory_base(factory_base_raw);
+    ASSERT_NE(factory_base.Get(), nullptr);
 
     DAS::DasPtr<IDasComponentFactory> factory;
     ASSERT_EQ(factory_base.As(factory.Put()), DAS_S_OK);
     EXPECT_EQ(factory->IsSupported(DasIidOf<IDasComponent>()), DAS_S_OK);
+    AssertPythonFactoryRejectsUnsupportedIid(factory.Get());
 
-    IDasComponent* component_raw = nullptr;
+    DAS::DasPtr<IDasComponent> component;
     ASSERT_EQ(
-        factory->CreateInstance(DasIidOf<IDasComponent>(), &component_raw),
+        factory->CreateInstance(DasIidOf<IDasComponent>(), component.Put()),
         DAS_S_OK);
-    ASSERT_NE(component_raw, nullptr);
-    DAS::DasPtr<IDasComponent> component(component_raw);
+    ASSERT_NE(component.Get(), nullptr);
 
     AssertPythonComponentDispatchBehavior(
         component.Get(),
@@ -3511,7 +3503,7 @@ void AssertPythonDirectorLifecycleBehavior(
 
     std::atomic<bool> done{false};
     auto              signal = DAS::MakeDasPtr<CompletionSignal>(done);
-    callback->completion_signal_ = signal.Get();
+    callback->completion_signal_ = signal;
 
     DAS::DasPtr<IDasComponent> director_component;
     {
@@ -3554,12 +3546,12 @@ void AssertPythonDirectorLifecycleBehavior(
 
     director_component.Reset();
 
-    constexpr auto kTimeout = std::chrono::seconds(15);
+    constexpr auto TIMEOUT = std::chrono::seconds(15);
     const auto     start_time = std::chrono::steady_clock::now();
     while (!done.load())
     {
         const auto elapsed = std::chrono::steady_clock::now() - start_time;
-        if (elapsed >= kTimeout)
+        if (elapsed >= TIMEOUT)
         {
             break;
         }
@@ -3669,7 +3661,7 @@ TEST_F(
         GTEST_FAIL() << "PythonFolderTestPlugin manifest not found: "
                      << e.what();
     }
-    EXPECT_EQ(
+    ASSERT_EQ(
         std::filesystem::weakly_canonical(plugin_json_path),
         std::filesystem::weakly_canonical(folder_manifest_path));
 
@@ -3802,23 +3794,22 @@ void AssertPythonFailurePathBehavior(
         feature,
         DAS::PluginInterface::DAS_PLUGIN_FEATURE_COMPONENT_FACTORY);
 
-    IDasBase* factory_base_raw = nullptr;
+    DAS::DasPtr<IDasBase> factory_base;
     ASSERT_EQ(
-        plugin_package->CreateFeatureInterface(0, &factory_base_raw),
+        plugin_package->CreateFeatureInterface(0, factory_base.Put()),
         DAS_S_OK);
-    ASSERT_NE(factory_base_raw, nullptr);
-    DAS::DasPtr<IDasBase> factory_base(factory_base_raw);
+    ASSERT_NE(factory_base.Get(), nullptr);
 
     DAS::DasPtr<IDasComponentFactory> factory;
     ASSERT_EQ(factory_base.As(factory.Put()), DAS_S_OK);
     EXPECT_EQ(factory->IsSupported(DasIidOf<IDasComponent>()), DAS_S_OK);
+    AssertPythonFactoryRejectsUnsupportedIid(factory.Get());
 
-    IDasComponent* component_raw = nullptr;
+    DAS::DasPtr<IDasComponent> component;
     ASSERT_EQ(
-        factory->CreateInstance(DasIidOf<IDasComponent>(), &component_raw),
+        factory->CreateInstance(DasIidOf<IDasComponent>(), component.Put()),
         DAS_S_OK);
-    ASSERT_NE(component_raw, nullptr);
-    DAS::DasPtr<IDasComponent> component(component_raw);
+    ASSERT_NE(component.Get(), nullptr);
 
     AssertPythonComponentDispatchBehavior(
         component.Get(),
@@ -3945,7 +3936,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_PythonFolderFailurePathTest)
         GTEST_FAIL() << "PythonFolderTestPlugin manifest not found: "
                      << e.what();
     }
-    EXPECT_EQ(
+    ASSERT_EQ(
         std::filesystem::weakly_canonical(plugin_json_path),
         std::filesystem::weakly_canonical(folder_manifest_path));
 
@@ -4045,26 +4036,24 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_NodeDirectorLifecycleTest)
     DAS::PluginInterface::DasPluginPackage plugin_package;
     ASSERT_EQ(raw_proxy.As(plugin_package.Put()), DAS_S_OK);
 
-    IDasBase* factory_base_raw = nullptr;
+    DAS::DasPtr<IDasBase> factory_base;
     ASSERT_EQ(
-        plugin_package->CreateFeatureInterface(0, &factory_base_raw),
+        plugin_package->CreateFeatureInterface(0, factory_base.Put()),
         DAS_S_OK);
-    ASSERT_NE(factory_base_raw, nullptr);
-    DAS::DasPtr<IDasBase> factory_base(factory_base_raw);
+    ASSERT_NE(factory_base.Get(), nullptr);
 
     DAS::DasPtr<IDasComponentFactory> factory;
     ASSERT_EQ(factory_base.As(factory.Put()), DAS_S_OK);
 
-    IDasComponent* component_raw = nullptr;
+    DAS::DasPtr<IDasComponent> component;
     ASSERT_EQ(
-        factory->CreateInstance(DasIidOf<IDasComponent>(), &component_raw),
+        factory->CreateInstance(DasIidOf<IDasComponent>(), component.Put()),
         DAS_S_OK);
-    ASSERT_NE(component_raw, nullptr);
-    DAS::DasPtr<IDasComponent> component(component_raw);
+    ASSERT_NE(component.Get(), nullptr);
 
     std::atomic<bool> done{false};
     auto              signal = DAS::MakeDasPtr<CompletionSignal>(done);
-    callback->completion_signal_ = signal.Get();
+    callback->completion_signal_ = signal;
 
     DAS::DasPtr<IDasComponent> director_component;
     {
@@ -4103,12 +4092,12 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_NodeDirectorLifecycleTest)
         ASSERT_NE(director_component.Get(), nullptr);
     }
 
-    constexpr auto kTimeout = std::chrono::seconds(15);
+    constexpr auto TIMEOUT = std::chrono::seconds(15);
     const auto     start_time = std::chrono::steady_clock::now();
     while (!done.load())
     {
         const auto elapsed = std::chrono::steady_clock::now() - start_time;
-        if (elapsed >= kTimeout)
+        if (elapsed >= TIMEOUT)
         {
             break;
         }
@@ -4222,22 +4211,22 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_JavaDirectorLifecycleTest)
     DAS::PluginInterface::DasPluginFeature feature;
     ASSERT_EQ(plugin_package->EnumFeature(0, &feature), DAS_S_OK);
 
-    IDasBase* factory_base_raw = nullptr;
+    DAS::DasPtr<IDasBase> factory_base;
     ASSERT_EQ(
-        plugin_package->CreateFeatureInterface(0, &factory_base_raw),
+        plugin_package->CreateFeatureInterface(0, factory_base.Put()),
         DAS_S_OK);
-    DAS::DasPtr<IDasBase> factory_base(factory_base_raw);
+    ASSERT_NE(factory_base.Get(), nullptr);
 
     DAS::DasPtr<DAS::PluginInterface::IDasComponentFactory> factory;
     ASSERT_EQ(factory_base.As(factory.Put()), DAS_S_OK);
 
-    DAS::PluginInterface::IDasComponent* component_raw = nullptr;
+    DAS::DasPtr<DAS::PluginInterface::IDasComponent> component;
     ASSERT_EQ(
         factory->CreateInstance(
             DasIidOf<DAS::PluginInterface::IDasComponent>(),
-            &component_raw),
+            component.Put()),
         DAS_S_OK);
-    DAS::DasPtr<DAS::PluginInterface::IDasComponent> component(component_raw);
+    ASSERT_NE(component.Get(), nullptr);
 
     // 5. Dispatch bridgeLifecycleTest
     // PushBackBase 传 IDasBase* → 验证 Java 侧 as() 向下转换
@@ -4263,8 +4252,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_JavaDirectorLifecycleTest)
         {
             uint64_t size = result->GetSize();
             DAS_CORE_LOG_INFO(
-                "[CrossProcess_JavaDirectorLifecycleTest] Dispatch returned "
-                "success, result size = {}",
+                "Java lifecycle dispatch returned success: result size = {}",
                 size);
             if (size > 0)
             {
@@ -4275,7 +4263,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_JavaDirectorLifecycleTest)
                     const char* str = nullptr;
                     elem0->GetUtf8(&str);
                     DAS_CORE_LOG_INFO(
-                        "[CrossProcess_JavaDirectorLifecycleTest] result[0] = {}",
+                        "Java lifecycle dispatch result[0] = {}",
                         str ? str : "(null)");
                     elem0->Release();
                 }
@@ -4283,9 +4271,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_JavaDirectorLifecycleTest)
         }
         else
         {
-            DAS_CORE_LOG_ERROR(
-                "[CrossProcess_JavaDirectorLifecycleTest] Dispatch returned null "
-                "result");
+            DAS_CORE_LOG_ERROR("Java lifecycle dispatch returned null result");
         }
 
         // 关键：不提取返回值中的 Director 对象。
@@ -4311,19 +4297,17 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_JavaDirectorLifecycleTest)
     //    测试线程以 1ms 粒度轮询 done（与 DAS::Core::IPC::wait() 一致）
     std::atomic<bool> done{false};
     auto              signal = DAS::MakeDasPtr<CompletionSignal>(done);
-    callback->completion_signal_ = signal.Get();
+    callback->completion_signal_ = signal;
 
-    DAS_CORE_LOG_INFO(
-        "[CrossProcess_JavaDirectorLifecycleTest] Waiting for bridge release "
-        "callback from Java side...");
+    DAS_CORE_LOG_INFO("Waiting for bridge release callback from Java side");
 
-    constexpr auto kTimeout = std::chrono::seconds(15);
+    constexpr auto TIMEOUT = std::chrono::seconds(15);
     auto           start_time = std::chrono::steady_clock::now();
 
     while (!done.load())
     {
         auto elapsed = std::chrono::steady_clock::now() - start_time;
-        if (elapsed >= kTimeout)
+        if (elapsed >= TIMEOUT)
         {
             break;
         }
@@ -4338,8 +4322,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_JavaDirectorLifecycleTest)
         callback->received_status_.find("bridge_released") != std::string::npos)
         << "Unexpected status: " << callback->received_status_;
 
-    DAS_CORE_LOG_INFO(
-        "[CrossProcess_JavaDirectorLifecycleTest] All verifications passed");
+    DAS_CORE_LOG_INFO("Java lifecycle verification passed");
 }
 
 TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LuaDirectorLifecycleTest)
@@ -4400,22 +4383,22 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LuaDirectorLifecycleTest)
     DAS::PluginInterface::DasPluginFeature feature;
     ASSERT_EQ(plugin_package->EnumFeature(0, &feature), DAS_S_OK);
 
-    IDasBase* factory_base_raw = nullptr;
+    DAS::DasPtr<IDasBase> factory_base;
     ASSERT_EQ(
-        plugin_package->CreateFeatureInterface(0, &factory_base_raw),
+        plugin_package->CreateFeatureInterface(0, factory_base.Put()),
         DAS_S_OK);
-    DAS::DasPtr<IDasBase> factory_base(factory_base_raw);
+    ASSERT_NE(factory_base.Get(), nullptr);
 
     DAS::DasPtr<DAS::PluginInterface::IDasComponentFactory> factory;
     ASSERT_EQ(factory_base.As(factory.Put()), DAS_S_OK);
 
-    DAS::PluginInterface::IDasComponent* component_raw = nullptr;
+    DAS::DasPtr<DAS::PluginInterface::IDasComponent> component;
     ASSERT_EQ(
         factory->CreateInstance(
             DasIidOf<DAS::PluginInterface::IDasComponent>(),
-            &component_raw),
+            component.Put()),
         DAS_S_OK);
-    DAS::DasPtr<DAS::PluginInterface::IDasComponent> component(component_raw);
+    ASSERT_NE(component.Get(), nullptr);
 
     // 5. Dispatch bridgeLifecycleTest
     {
@@ -4436,8 +4419,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LuaDirectorLifecycleTest)
         {
             uint64_t size = result->GetSize();
             DAS_CORE_LOG_INFO(
-                "[CrossProcess_LuaDirectorLifecycleTest] Dispatch returned "
-                "success, result size = {}",
+                "Lua lifecycle dispatch returned success: result size = {}",
                 size);
             if (size > 0)
             {
@@ -4448,7 +4430,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LuaDirectorLifecycleTest)
                     const char* str = nullptr;
                     elem0->GetUtf8(&str);
                     DAS_CORE_LOG_INFO(
-                        "[CrossProcess_LuaDirectorLifecycleTest] result[0] = {}",
+                        "Lua lifecycle dispatch result[0] = {}",
                         str ? str : "(null)");
                     elem0->Release();
                 }
@@ -4456,9 +4438,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LuaDirectorLifecycleTest)
         }
         else
         {
-            DAS_CORE_LOG_ERROR(
-                "[CrossProcess_LuaDirectorLifecycleTest] Dispatch returned null "
-                "result");
+            DAS_CORE_LOG_ERROR("Lua lifecycle dispatch returned null result");
         }
     }
     // ← result 析构，Director proxy 被释放
@@ -4478,19 +4458,17 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LuaDirectorLifecycleTest)
     //    → CompletionSignal.Do() → done = true
     std::atomic<bool> done{false};
     auto              signal = DAS::MakeDasPtr<CompletionSignal>(done);
-    callback->completion_signal_ = signal.Get();
+    callback->completion_signal_ = signal;
 
-    DAS_CORE_LOG_INFO(
-        "[CrossProcess_LuaDirectorLifecycleTest] Waiting for bridge release "
-        "callback from Lua side...");
+    DAS_CORE_LOG_INFO("Waiting for bridge release callback from Lua side");
 
-    constexpr auto kTimeout = std::chrono::seconds(15);
+    constexpr auto TIMEOUT = std::chrono::seconds(15);
     auto           start_time = std::chrono::steady_clock::now();
 
     while (!done.load())
     {
         auto elapsed = std::chrono::steady_clock::now() - start_time;
-        if (elapsed >= kTimeout)
+        if (elapsed >= TIMEOUT)
         {
             break;
         }
@@ -4505,8 +4483,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LuaDirectorLifecycleTest)
         callback->received_status_.find("bridge_released") != std::string::npos)
         << "Unexpected status: " << callback->received_status_;
 
-    DAS_CORE_LOG_INFO(
-        "[CrossProcess_LuaDirectorLifecycleTest] All verifications passed");
+    DAS_CORE_LOG_INFO("Lua lifecycle verification passed");
 }
 
 // ====== CrossProcess QueryMainProcessInterfaceByName E2E 测试 ======
@@ -4550,7 +4527,7 @@ TEST_F(
         service_string.Put());
     ASSERT_EQ(create_result, DAS_S_OK) << "Failed to create test string";
 
-    const char* kServiceName = "test_string_service";
+    const char* SERVICE_NAME = "test_string_service";
 
     // 在 io_context 线程中注册（BusinessThread TLS 已就绪）
     auto reg_opt = DAS::Core::IPC::wait(
@@ -4562,7 +4539,7 @@ TEST_F(
                     return ctx_->RegisterServiceByName(
                         service_string.Get(),
                         DasIidOf<IDasReadOnlyString>(),
-                        kServiceName);
+                        SERVICE_NAME);
                 }),
             [](DasResult r) noexcept -> DasResult { return r; }));
 
@@ -4571,9 +4548,8 @@ TEST_F(
     ASSERT_EQ(result, DAS_S_OK) << "RegisterServiceByName failed";
 
     DAS_CORE_LOG_INFO(
-        "[CrossProcess_QueryMainProcessStringByName] Registered "
-        "IDasReadOnlyString with name '{}' in main process",
-        kServiceName);
+        "Registered IDasReadOnlyString with name '{}' in main process",
+        SERVICE_NAME);
 
     // 3. 启动 Host 进程
     result = StartHostAndSetupRunLoop();
@@ -4627,7 +4603,7 @@ TEST_F(
         ASSERT_EQ(CreateIDasVariantVector(params.Put()), DAS_S_OK);
 
         // 传递 service name 作为参数
-        DasReadOnlyString name_param{kServiceName};
+        DasReadOnlyString name_param{SERVICE_NAME};
         params.PushBackString(name_param.Get());
 
         DasResult dispatch_hr = component->Dispatch(
@@ -4666,7 +4642,7 @@ TEST_F(
                 stdexec::then(
                     stdexec::schedule(GetContext()),
                     [&]() noexcept -> DasResult
-                    { return ctx_->UnregisterServiceByName(kServiceName); }),
+                    { return ctx_->UnregisterServiceByName(SERVICE_NAME); }),
                 [](DasResult r) noexcept -> DasResult { return r; }));
         ASSERT_TRUE(unreg_opt.has_value()) << "UnregisterByName: wait failed";
         result = std::get<0>(*unreg_opt);
@@ -4680,7 +4656,7 @@ TEST_F(
         DAS::ExportInterface::DasVariantVector params;
         ASSERT_EQ(CreateIDasVariantVector(params.Put()), DAS_S_OK);
 
-        DasReadOnlyString name_param{kServiceName};
+        DasReadOnlyString name_param{SERVICE_NAME};
         params.PushBackString(name_param.Get());
 
         DasResult dispatch_hr = component->Dispatch(
@@ -4694,7 +4670,6 @@ TEST_F(
     }
 
     DAS_CORE_LOG_INFO(
-        "[CrossProcess_QueryMainProcessStringByName] Test passed — "
-        "Host plugin queried main process IDasReadOnlyString by name "
-        "via LOOKUP_BY_NAME IPC, and unregister was verified");
+        "Host plugin queried main process IDasReadOnlyString by name via "
+        "LOOKUP_BY_NAME IPC, and unregister was verified");
 }

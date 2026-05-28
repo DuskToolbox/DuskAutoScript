@@ -20,6 +20,9 @@ paths:
 
 **Use DasPtr instead when:** you need shared ownership, copy semantics, or no out-parameter binding.
 
+Use the `das-dasptr` skill for caller-side `DasPtr::Put()`, `Attach()`, and
+`DasPtr(raw)` ownership decisions.
+
 ## Quick Reference
 
 | Method | Purpose |

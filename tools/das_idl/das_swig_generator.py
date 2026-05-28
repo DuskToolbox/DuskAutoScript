@@ -873,7 +873,10 @@ class SwigCodeGenerator:
             lines.append(f'    // Raw override: delegates to DasRetXxx virtual method above')
             lines.append(f'    DasResult {method.name}({all_params_str}) override {{')
             lines.append(f'        auto result = this->{method.name}({in_call_args_str});')
-            lines.append(f'        if ({out_param.name}) *{out_param.name} = result.value;')
+            if out_param.type_info.type_kind == TypeKind.INTERFACE:
+                lines.append(f'        if ({out_param.name}) *{out_param.name} = result.GetValue();')
+            else:
+                lines.append(f'        if ({out_param.name}) *{out_param.name} = result.value;')
             lines.append(f'        return result.error_code;')
             lines.append(f'    }}')
 
@@ -1268,6 +1271,33 @@ namespace {interface.namespace} {{
 class {swig_name} : public {base_class_name} {{
 private:
     std::atomic<uint32_t> ref_count_{{1}};
+#ifdef SWIGPYTHON
+    std::atomic<bool> managed_object_prevented_{{false}};
+
+    int PreventManagedObject() {{
+        auto* director = SWIG_DIRECTOR_CAST(this);
+        if (!director) {{
+            return -1;
+        }}
+
+        DasSwigRuntimeContext context{{}};
+        context.kind = DasSwigRuntimeKind::Python;
+        context.py_self = director->swig_get_self();
+        return DasSwigPreventManagedObject(&context);
+    }}
+
+    int ReleaseManagedObject() {{
+        auto* director = SWIG_DIRECTOR_CAST(this);
+        if (!director) {{
+            return -1;
+        }}
+
+        DasSwigRuntimeContext context{{}};
+        context.kind = DasSwigRuntimeKind::Python;
+        context.py_self = director->swig_get_self();
+        return DasSwigReleaseManagedObject(&context);
+    }}
+#endif
 
 public:
     virtual ~{swig_name}() = default;
@@ -1277,11 +1307,30 @@ public:
 
     // 实现引用计数方法（标记为 final）
     uint32_t AddRef() final {{
-        return ++ref_count_;
+        const auto result = ++ref_count_;
+#ifdef SWIGPYTHON
+        if (result == 2) {{
+            bool expected = false;
+            if (managed_object_prevented_.compare_exchange_strong(expected, true)) {{
+                if (PreventManagedObject() != 0) {{
+                    managed_object_prevented_.store(false);
+                }}
+            }}
+        }}
+#endif
+        return result;
     }}
 
     uint32_t Release() final {{
         const auto result = --ref_count_;
+#ifdef SWIGPYTHON
+        if (result == 1) {{
+            bool expected = true;
+            if (managed_object_prevented_.compare_exchange_strong(expected, false)) {{
+                ReleaseManagedObject();
+            }}
+        }}
+#endif
         if (result == 0) {{
             delete this;
         }}
@@ -1361,6 +1410,33 @@ public:
 class {swig_name} : public {base_class_name} {{
 private:
     std::atomic<uint32_t> ref_count_{{1}};
+#ifdef SWIGPYTHON
+    std::atomic<bool> managed_object_prevented_{{false}};
+
+    int PreventManagedObject() {{
+        auto* director = SWIG_DIRECTOR_CAST(this);
+        if (!director) {{
+            return -1;
+        }}
+
+        DasSwigRuntimeContext context{{}};
+        context.kind = DasSwigRuntimeKind::Python;
+        context.py_self = director->swig_get_self();
+        return DasSwigPreventManagedObject(&context);
+    }}
+
+    int ReleaseManagedObject() {{
+        auto* director = SWIG_DIRECTOR_CAST(this);
+        if (!director) {{
+            return -1;
+        }}
+
+        DasSwigRuntimeContext context{{}};
+        context.kind = DasSwigRuntimeKind::Python;
+        context.py_self = director->swig_get_self();
+        return DasSwigReleaseManagedObject(&context);
+    }}
+#endif
 
 public:
     virtual ~{swig_name}() = default;
@@ -1370,11 +1446,30 @@ public:
 
     // 实现引用计数方法（标记为 final）
     uint32_t AddRef() final {{
-        return ++ref_count_;
+        const auto result = ++ref_count_;
+#ifdef SWIGPYTHON
+        if (result == 2) {{
+            bool expected = false;
+            if (managed_object_prevented_.compare_exchange_strong(expected, true)) {{
+                if (PreventManagedObject() != 0) {{
+                    managed_object_prevented_.store(false);
+                }}
+            }}
+        }}
+#endif
+        return result;
     }}
 
     uint32_t Release() final {{
         const auto result = --ref_count_;
+#ifdef SWIGPYTHON
+        if (result == 1) {{
+            bool expected = true;
+            if (managed_object_prevented_.compare_exchange_strong(expected, false)) {{
+                ReleaseManagedObject();
+            }}
+        }}
+#endif
         if (result == 0) {{
             delete this;
         }}

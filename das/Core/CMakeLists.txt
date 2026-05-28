@@ -338,6 +338,26 @@ if(EXPORT_PYTHON)
         POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:DasCorePythonExport> $<TARGET_FILE_DIR:DasCore>)
 
+    if(WIN32)
+        add_custom_command(
+            TARGET DasCorePythonExport
+            POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                $<TARGET_FILE:Python3::SABIModule>
+                $<TARGET_FILE_DIR:DasCore>
+            COMMENT "[DasCore] Copying Python stable ABI runtime DLL")
+
+        if(TARGET Python3::Python)
+            add_custom_command(
+                TARGET DasCorePythonExport
+                POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    $<TARGET_FILE:Python3::Python>
+                    $<TARGET_FILE_DIR:DasCore>
+                COMMENT "[DasCore] Copying Python runtime DLL")
+        endif()
+    endif()
+
     if(DAS_BUILD_TEST)
 #确保 Test 目录存在
         if(NOT EXISTS ${CMAKE_BINARY_DIR}/Test)

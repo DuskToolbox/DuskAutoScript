@@ -57,8 +57,7 @@ auto CreateForeignLanguageRuntime(const ForeignLanguageRuntimeFactoryDesc& desc)
     // 校验 language
     if (desc.language != ForeignInterfaceLanguage::Python)
     {
-        DAS_CORE_LOG_ERROR(
-            "CreateForeignLanguageRuntime: invalid language, expected Python");
+        DAS_CORE_LOG_ERROR("Invalid foreign language runtime, expected Python");
         return tl::make_unexpected(DAS_E_INVALID_ARGUMENT);
     }
 
@@ -73,7 +72,7 @@ auto CreateForeignLanguageRuntime(const ForeignLanguageRuntimeFactoryDesc& desc)
     catch (const std::exception& e)
     {
         DAS_CORE_LOG_ERROR(
-            "Exception in CreateForeignLanguageRuntime: {}",
+            "Exception while creating Python runtime: {}",
             e.what());
         return tl::make_unexpected(DAS_E_FAIL);
     }
@@ -529,11 +528,12 @@ DasResult PythonPluginHolder::QueryInterface(
 /**
  * @brief 从 SWIG 包装的 DasRetBase 对象中提取 IDasBase 指针
  *
- * 使用 Python 数字协议 hack (int() 转换) 从 SwigPyObject 获取指针。
+ * 优先从 _das_python_value 获取原始 Python director 对象，再使用 Python
+ * 数字协议 hack (int() 转换) 从 SwigPyObject 获取指针。
  * 不直接访问 SwigPyObject 结构体成员，因为 ptr 是 C 成员而非 Python 属性。
  *
  * @param das_ret_base Python DasRetBase 对象
- * @return DasPtr<IDasBase> 包装后的指针，失败返回空指针
+ * @return DasPtr<IDasBase> Python holder 指针，失败返回空指针
  */
 auto ExtractIDasBaseFromDasRetBase(PyObject* das_ret_base) -> DasPtr<IDasBase>
 {
@@ -543,12 +543,20 @@ auto ExtractIDasBaseFromDasRetBase(PyObject* das_ret_base) -> DasPtr<IDasBase>
         return {};
     }
 
-    // 1. 获取 value 属性
-    PyObjectPtr value =
-        PyObjectPtr::Attach(PyObject_GetAttrString(das_ret_base, "value"));
+    // 1. 获取原始 Python director 对象。直接读取 value 属性会创建 IDasBase
+    // proxy 对象，并可能替换 SWIG director 持有的 self。
+    PyObjectPtr value = PyObjectPtr::Attach(
+        PyObject_GetAttrString(das_ret_base, "_das_python_value"));
     if (!value)
     {
-        DAS_CORE_LOG_ERROR("Failed to get 'value' attribute from DasRetBase");
+        PyErr_Clear();
+        value =
+            PyObjectPtr::Attach(PyObject_GetAttrString(das_ret_base, "value"));
+    }
+    if (!value)
+    {
+        DAS_CORE_LOG_ERROR(
+            "Failed to get plugin object from DasRetBase return value");
         return {};
     }
 
@@ -580,7 +588,7 @@ auto ExtractIDasBaseFromDasRetBase(PyObject* das_ret_base) -> DasPtr<IDasBase>
 
     IDasBase* cpp_ptr = static_cast<IDasBase*>(raw_ptr);
 
-    // 5. 创建 PythonPluginHolder 包装
+    // 5. 创建 PythonPluginHolder。它只实现 IDasBase，并把 QI 委托给底层对象。
     // 使用 Attach 因为 PythonPluginHolder 构造时已持有初始引用计数 1
     return DasPtr<IDasBase>::Attach(
         new PythonPluginHolder(value.Get(), cpp_ptr));
@@ -773,12 +781,14 @@ auto PythonRuntime::LoadPlugin(const std::filesystem::path& path)
     }
     catch (const PythonException& e)
     {
-        DAS_CORE_LOG_ERROR("Python error in LoadPlugin: {}", e.what());
+        DAS_CORE_LOG_ERROR("Python error while loading plugin: {}", e.what());
         return tl::make_unexpected(DAS_E_PYTHON_ERROR);
     }
     catch (const std::exception& e)
     {
-        DAS_CORE_LOG_ERROR("Exception in LoadPlugin: {}", e.what());
+        DAS_CORE_LOG_ERROR(
+            "Exception while loading Python plugin: {}",
+            e.what());
         return tl::make_unexpected(DAS_E_INTERNAL_FATAL_ERROR);
     }
 }

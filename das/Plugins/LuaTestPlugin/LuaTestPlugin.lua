@@ -67,7 +67,7 @@ local function dispatch_with_name(component, name, arguments)
 end
 
 local function create_variant_vector()
-    local hr, vector = CreateIDasVariantVector()
+    local hr, vector = CreateDasRetIDasVariantVector()
     if hr < 0 then
         return nil
     end

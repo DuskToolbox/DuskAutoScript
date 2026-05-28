@@ -252,9 +252,10 @@ function createComponent(sessionId) {
           const callback = wrapComponent(normalizedArgs.getComponent(0n));
           const marker = readString(args, 1);
           const callbackArgs = makeVariantVector();
+          callbackArgs.pushBackString(`bridge_released:Node:${marker}`);
           setTimeout(() => {
             callback.dispatch(
-              `lifecycle_callback:bridge_released:Node:${marker}`,
+              "lifecycle_callback",
               callbackArgs,
             );
           }, 100);
