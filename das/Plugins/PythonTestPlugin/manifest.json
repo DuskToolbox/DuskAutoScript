@@ -1,3 +1,12 @@
 {
-    "entryPoint": "python_test_plugin.create_plugin"
+    "name": "PythonTestPlugin",
+    "author": "Dusk",
+    "version": "0.1",
+    "guid": "5E6F7081-9ABC-4E6F-B102-4C5D6E7F8091",
+    "description": "Python Test Plugin for IPC integration testing",
+    "supportedSystem": "Windows",
+    "language": "Python",
+    "pluginFilenameExtension": "py",
+    "entryPoint": "python_test_plugin.create_plugin",
+    "settings": []
 }
