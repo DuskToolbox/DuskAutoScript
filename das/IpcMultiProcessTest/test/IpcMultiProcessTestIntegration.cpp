@@ -1379,6 +1379,20 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LoadPythonPlugin)
         "PythonTestPlugin");
 }
 
+TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LoadPythonFolderPlugin)
+{
+#ifndef DAS_EXPORT_PYTHON
+    GTEST_SKIP() << "DAS_EXPORT_PYTHON is not enabled";
+#endif
+
+    if (!std::filesystem::exists(host_exe_path_))
+    {
+        GTEST_SKIP() << "DasHost.exe not found at: " << host_exe_path_;
+    }
+
+    GTEST_FAIL() << "Python folder fixture helper not implemented";
+}
+
 TEST_F(IpcMultiProcessTestIntegration, MultipleStartStop)
 {
     // 测试多次启动/停止
