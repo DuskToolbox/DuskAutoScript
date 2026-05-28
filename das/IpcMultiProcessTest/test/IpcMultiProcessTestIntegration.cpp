@@ -3290,7 +3290,9 @@ public:
     DasResult QueryInterface(const DasGuid& iid, void** pp) override
     {
         if (!pp)
+        {
             return DAS_E_INVALID_POINTER;
+        }
         if (iid == DasIidOf<IDasAsyncCallback>())
         {
             AddRef();
@@ -3333,7 +3335,9 @@ public:
         const char* func_ptr = nullptr;
         DasResult   hr = p_function_name->GetUtf8(&func_ptr);
         if (IsFailed(hr) || !func_ptr)
+        {
             return hr;
+        }
 
         std::string func = func_ptr;
 
@@ -3436,6 +3440,266 @@ public:
 
 private:
 };
+
+void AssertPythonDirectorLifecycleBehavior(
+    DAS::Core::IPC::MainProcess::IIpcContext&  context,
+    DAS::DasPtr<DAS::Core::IPC::IHostLauncher> launcher,
+    const std::string&                         host_exe_path,
+    const std::string&                         plugin_json_path,
+    std::string_view                           expected_component_name,
+    std::string_view                           marker,
+    LifecycleCallbackComponent*                callback)
+{
+    ASSERT_NE(launcher.Get(), nullptr);
+    ASSERT_NE(callback, nullptr);
+    ScopedHostStop guard{launcher};
+
+    uint16_t        session_id = 0;
+    const DasResult start_result = launcher->Start(
+        host_exe_path,
+        session_id,
+        IpcTestConfig::GetHostStartTimeoutMs());
+    ASSERT_EQ(start_result, DAS_S_OK);
+    ASSERT_TRUE(launcher->IsRunning());
+    ASSERT_GT(session_id, static_cast<uint16_t>(0));
+
+    auto raw_proxy =
+        LoadPluginPackageForHost(context, launcher.Get(), plugin_json_path, 3);
+    ASSERT_NE(raw_proxy.Get(), nullptr)
+        << "Python plugin must load through IIpcContext::LoadPluginAsync";
+
+    DAS::DasPtr<IDasPluginPackage> plugin_package;
+    ASSERT_EQ(raw_proxy.As(plugin_package.Put()), DAS_S_OK)
+        << "Python LOAD_PLUGIN proxy must QI to IDasPluginPackage";
+
+    DAS::PluginInterface::DasPluginFeature feature{};
+    ASSERT_EQ(plugin_package->EnumFeature(0, &feature), DAS_S_OK);
+    EXPECT_EQ(
+        feature,
+        DAS::PluginInterface::DAS_PLUGIN_FEATURE_COMPONENT_FACTORY);
+
+    IDasBase* factory_base_raw = nullptr;
+    ASSERT_EQ(
+        plugin_package->CreateFeatureInterface(0, &factory_base_raw),
+        DAS_S_OK);
+    ASSERT_NE(factory_base_raw, nullptr);
+    DAS::DasPtr<IDasBase> factory_base(factory_base_raw);
+
+    DAS::DasPtr<IDasComponentFactory> factory;
+    ASSERT_EQ(factory_base.As(factory.Put()), DAS_S_OK);
+    EXPECT_EQ(factory->IsSupported(DasIidOf<IDasComponent>()), DAS_S_OK);
+
+    IDasComponent* component_raw = nullptr;
+    ASSERT_EQ(
+        factory->CreateInstance(DasIidOf<IDasComponent>(), &component_raw),
+        DAS_S_OK);
+    ASSERT_NE(component_raw, nullptr);
+    DAS::DasPtr<IDasComponent> component(component_raw);
+
+    AssertPythonComponentDispatchBehavior(
+        component.Get(),
+        expected_component_name);
+    EXPECT_TRUE(launcher->IsRunning())
+        << "Python host should remain alive after ordinary and failure "
+           "dispatch before lifecycle release";
+
+    std::atomic<bool> done{false};
+    auto              signal = DAS::MakeDasPtr<CompletionSignal>(done);
+    callback->completion_signal_ = signal.Get();
+
+    DAS::DasPtr<IDasComponent> director_component;
+    {
+        DasReadOnlyString method_name{"bridgeLifecycleTest"};
+        DAS::ExportInterface::DasVariantVector dispatch_result;
+        DAS::ExportInterface::DasVariantVector params;
+        ASSERT_EQ(CreateIDasVariantVector(params.Put()), DAS_S_OK);
+
+        const std::string marker_text{marker};
+        DasReadOnlyString marker_value{marker_text.c_str()};
+        ASSERT_EQ(params.Get()->PushBackComponent(callback), DAS_S_OK);
+        ASSERT_EQ(params.Get()->PushBackString(marker_value.Get()), DAS_S_OK);
+
+        const DasResult dispatch_code = component->Dispatch(
+            method_name.Get(),
+            params.Get(),
+            dispatch_result.Put());
+        ASSERT_EQ(dispatch_code, DAS_S_OK)
+            << "bridgeLifecycleTest returned DAS_E/non-success: result="
+            << dispatch_code;
+        ASSERT_NE(dispatch_result.Get(), nullptr);
+        ASSERT_EQ(dispatch_result->GetSize(), 2u);
+
+        DAS::DasPtr<IDasReadOnlyString> director_status;
+        ASSERT_EQ(
+            dispatch_result->GetString(0, director_status.Put()),
+            DAS_S_OK);
+        const char* director_status_text = nullptr;
+        ASSERT_EQ(director_status->GetUtf8(&director_status_text), DAS_S_OK);
+        ASSERT_NE(director_status_text, nullptr);
+        const std::string expected_status =
+            std::string{"director_created:"} + marker_text;
+        EXPECT_STREQ(director_status_text, expected_status.c_str());
+
+        ASSERT_EQ(
+            dispatch_result->GetComponent(1, director_component.Put()),
+            DAS_S_OK);
+        ASSERT_NE(director_component.Get(), nullptr);
+    }
+
+    director_component.Reset();
+
+    constexpr auto kTimeout = std::chrono::seconds(15);
+    const auto     start_time = std::chrono::steady_clock::now();
+    while (!done.load())
+    {
+        const auto elapsed = std::chrono::steady_clock::now() - start_time;
+        if (elapsed >= kTimeout)
+        {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+
+    const std::string expected_release_status =
+        std::string{"bridge_released:Python:"} + std::string{marker};
+    EXPECT_TRUE(callback->callback_received_)
+        << expected_release_status << " release callback not received";
+    EXPECT_NE(
+        callback->received_status_.find(expected_release_status),
+        std::string::npos)
+        << "Unexpected Python lifecycle status: " << callback->received_status_;
+    EXPECT_TRUE(launcher->IsRunning())
+        << "Python host should remain alive after lifecycle release callback";
+
+    AssertPythonPackageUnloadabilityEquivalent(
+        component,
+        factory,
+        factory_base,
+        plugin_package,
+        raw_proxy,
+        launcher.Get());
+}
+
+TEST_F(IpcMultiProcessTestIntegration, CrossProcess_PythonDirectorLifecycleTest)
+{
+#ifndef DAS_EXPORT_PYTHON
+    GTEST_SKIP() << "DAS_EXPORT_PYTHON is not enabled";
+#endif
+
+    if (!std::filesystem::exists(host_exe_path_))
+    {
+        GTEST_SKIP() << "DasHost.exe not found at: " << host_exe_path_;
+    }
+
+    std::string plugin_json_path;
+    try
+    {
+        plugin_json_path =
+            IpcTestConfig::GetTestPluginJsonPath("PythonTestPlugin");
+    }
+    catch (const std::exception& e)
+    {
+        GTEST_SKIP() << "PythonTestPlugin manifest not found: " << e.what();
+    }
+
+    const auto package_artifacts = ValidatePythonPluginPackageArtifacts(
+        plugin_json_path,
+        "python_test_plugin.py");
+    if (!package_artifacts)
+    {
+        GTEST_SKIP() << package_artifacts.message();
+    }
+
+    const auto runtime_artifacts =
+        ValidatePythonRuntimeArtifacts(host_exe_path_);
+    if (!runtime_artifacts)
+    {
+        GTEST_SKIP() << runtime_artifacts.message();
+    }
+
+    auto callback = DAS::MakeDasPtr<LifecycleCallbackComponent>();
+    callback->Configure(GetContext());
+    callback->request_stop_on_callback_ = false;
+
+    const DasResult reg_result = ctx_->RegisterService(
+        callback.Get(),
+        DasIidOf<DAS::PluginInterface::IDasComponent>());
+    ASSERT_EQ(reg_result, DAS_S_OK);
+
+    AssertPythonDirectorLifecycleBehavior(
+        GetContext(),
+        launcher_,
+        host_exe_path_,
+        plugin_json_path,
+        "PythonTestPlugin",
+        "python_bridge_marker",
+        callback.Get());
+}
+
+TEST_F(
+    IpcMultiProcessTestIntegration,
+    CrossProcess_PythonFolderDirectorLifecycleTest)
+{
+#ifndef DAS_EXPORT_PYTHON
+    GTEST_SKIP() << "DAS_EXPORT_PYTHON is not enabled";
+#endif
+
+    if (!std::filesystem::exists(host_exe_path_))
+    {
+        GTEST_SKIP() << "DasHost.exe not found at: " << host_exe_path_;
+    }
+
+    std::filesystem::path folder_manifest_path;
+    ASSERT_TRUE(PreparePythonFolderTestPluginFixture(&folder_manifest_path));
+
+    std::string plugin_json_path;
+    try
+    {
+        plugin_json_path =
+            IpcTestConfig::GetTestPluginJsonPath("PythonFolderTestPlugin");
+    }
+    catch (const std::exception& e)
+    {
+        GTEST_FAIL() << "PythonFolderTestPlugin manifest not found: "
+                     << e.what();
+    }
+    EXPECT_EQ(
+        std::filesystem::weakly_canonical(plugin_json_path),
+        std::filesystem::weakly_canonical(folder_manifest_path));
+
+    const auto package_artifacts = ValidatePythonPluginPackageArtifacts(
+        plugin_json_path,
+        "python_folder_test_plugin.py");
+    if (!package_artifacts)
+    {
+        GTEST_SKIP() << package_artifacts.message();
+    }
+
+    const auto runtime_artifacts =
+        ValidatePythonRuntimeArtifacts(host_exe_path_);
+    if (!runtime_artifacts)
+    {
+        GTEST_SKIP() << runtime_artifacts.message();
+    }
+
+    auto callback = DAS::MakeDasPtr<LifecycleCallbackComponent>();
+    callback->Configure(GetContext());
+    callback->request_stop_on_callback_ = false;
+
+    const DasResult reg_result = ctx_->RegisterService(
+        callback.Get(),
+        DasIidOf<DAS::PluginInterface::IDasComponent>());
+    ASSERT_EQ(reg_result, DAS_S_OK);
+
+    AssertPythonDirectorLifecycleBehavior(
+        GetContext(),
+        launcher_,
+        host_exe_path_,
+        plugin_json_path,
+        "PythonFolderTestPlugin",
+        "python_folder_bridge_marker",
+        callback.Get());
+}
 
 TEST_F(IpcMultiProcessTestIntegration, CrossProcess_NodeDirectorLifecycleTest)
 {
