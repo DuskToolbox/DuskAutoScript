@@ -28,6 +28,8 @@ from DuskAutoScript import (
 
 
 DETERMINISTIC_FAILURE_METHOD = "failDeterministically"
+RAISE_EXCEPTION_METHOD = "raisePythonException"
+CALLBACK_FAILURE_METHOD = "bridgeLifecycleCallbackFailure"
 
 
 def _component_name() -> str:
@@ -87,8 +89,93 @@ def _get_int(args, index: int):
     return int(value_result.GetValue())
 
 
+def _get_component(args, index: int):
+    value_result = args.GetComponent(index)
+    if IsFailed(value_result.GetErrorCode()):
+        return None
+    return value_result.GetValue()
+
+
 def _push_string(vector, value: str) -> int:
     return vector.PushBackString(DasReadOnlyString(value))
+
+
+def _result_error_code(value) -> int:
+    if value is None:
+        return DAS_E_FAIL
+    if isinstance(value, int):
+        return int(value)
+    if hasattr(value, "GetErrorCode"):
+        return int(value.GetErrorCode())
+    if hasattr(value, "error_code"):
+        return int(value.error_code)
+    return DAS_S_OK
+
+
+def _dispatch_lifecycle_callback(callback, status: str) -> int:
+    if callback is None:
+        return DAS_E_INVALID_ARGUMENT
+
+    result, vector = _new_variant_vector_result()
+    if vector is None:
+        return _result_error_code(result)
+    if IsFailed(_push_string(vector, status)):
+        return DAS_E_FAIL
+
+    dispatch_result = callback.Dispatch(
+        DasReadOnlyString("lifecycle_callback"),
+        vector,
+    )
+    return _result_error_code(dispatch_result)
+
+
+class BridgeLifecycleDirector(ISwigDasComponent):
+    """Director returned to C++ so bridge release can call back into IPC."""
+
+    def __init__(self, callback, marker: str):
+        super().__init__()
+        self._callback = callback
+        self._marker = marker
+        self._release_sent = False
+
+    def Dispatch(self, p_function_name, p_arguments) -> DasRetDasVariantVector:
+        try:
+            method = _read_string(p_function_name)
+            if method == "getSessionInfo":
+                return self._handle_get_session_info()
+            return _failed_variant_result(DAS_E_NO_IMPLEMENTATION)
+        except Exception:
+            return _failed_variant_result(DAS_E_FAIL)
+
+    def _handle_get_session_info(self) -> DasRetDasVariantVector:
+        result, vector = _new_variant_vector_result()
+        if vector is None:
+            return result
+        if IsFailed(_push_string(vector, "Python")):
+            return _failed_variant_result(DAS_E_FAIL)
+        if IsFailed(_push_string(vector, _component_name())):
+            return _failed_variant_result(DAS_E_FAIL)
+        if IsFailed(_push_string(vector, "Director")):
+            return _failed_variant_result(DAS_E_FAIL)
+        return result
+
+    def _das_bridge_release(self) -> int:
+        return self._dispatch_release_callback()
+
+    def __del__(self):
+        try:
+            self._dispatch_release_callback()
+        except Exception:
+            pass
+
+    def _dispatch_release_callback(self) -> int:
+        if self._release_sent:
+            return DAS_S_OK
+        self._release_sent = True
+        return _dispatch_lifecycle_callback(
+            self._callback,
+            f"bridge_released:Python:{self._marker}",
+        )
 
 
 class SimpleComponent(ISwigDasComponent):
@@ -111,8 +198,14 @@ class SimpleComponent(ISwigDasComponent):
                 return self._handle_echo(p_arguments)
             if method == "compute":
                 return self._handle_compute(p_arguments)
+            if method == "bridgeLifecycleTest":
+                return self._handle_bridge_lifecycle_test(p_arguments)
+            if method == CALLBACK_FAILURE_METHOD:
+                return self._handle_lifecycle_callback_failure(p_arguments)
             if method == DETERMINISTIC_FAILURE_METHOD:
                 return _failed_variant_result(DAS_E_FAIL)
+            if method == RAISE_EXCEPTION_METHOD:
+                raise RuntimeError("deterministic Python exception")
 
             return _failed_variant_result(DAS_E_NO_IMPLEMENTATION)
         except Exception:
@@ -175,6 +268,44 @@ class SimpleComponent(ISwigDasComponent):
         if IsFailed(vector.PushBackInt(computed)):
             return _failed_variant_result(DAS_E_FAIL)
         return result
+
+    def _handle_bridge_lifecycle_test(self, args) -> DasRetDasVariantVector:
+        if args is None or args.GetSize() < 2:
+            return _failed_variant_result(DAS_E_INVALID_ARGUMENT)
+
+        callback = _get_component(args, 0)
+        marker = _get_string(args, 1)
+        if callback is None or marker is None:
+            return _failed_variant_result(DAS_E_INVALID_ARGUMENT)
+
+        result, vector = _new_variant_vector_result()
+        if vector is None:
+            return result
+
+        if IsFailed(_push_string(vector, f"director_created:{marker}")):
+            return _failed_variant_result(DAS_E_FAIL)
+
+        director = BridgeLifecycleDirector(callback, marker)
+        if IsFailed(vector.PushBackComponent(director)):
+            return _failed_variant_result(DAS_E_FAIL)
+        return result
+
+    def _handle_lifecycle_callback_failure(self, args) -> DasRetDasVariantVector:
+        if args is None or args.GetSize() < 2:
+            return _failed_variant_result(DAS_E_INVALID_ARGUMENT)
+
+        callback = _get_component(args, 0)
+        marker = _get_string(args, 1)
+        if callback is None or marker is None:
+            return _failed_variant_result(DAS_E_INVALID_ARGUMENT)
+
+        callback_result = _dispatch_lifecycle_callback(
+            callback,
+            f"bridge_setup_failure:Python:{marker}",
+        )
+        if IsFailed(callback_result):
+            return _failed_variant_result(callback_result)
+        return _failed_variant_result(DAS_E_FAIL)
 
 
 class TestComponentFactory(ISwigDasComponentFactory):

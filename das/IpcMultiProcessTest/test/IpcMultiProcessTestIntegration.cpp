@@ -3319,6 +3319,7 @@ public:
     DAS::Core::IPC::MainProcess::IIpcContext* ctx_ = nullptr;
     IDasAsyncCallback*                        completion_signal_ = nullptr;
     bool                                      request_stop_on_callback_ = true;
+    bool                                      force_dispatch_failure_ = false;
 
     void Configure(DAS::Core::IPC::MainProcess::IIpcContext& ctx)
     {
@@ -3381,6 +3382,11 @@ public:
             if (ctx_ && request_stop_on_callback_)
             {
                 ctx_->RequestStop();
+            }
+
+            if (force_dispatch_failure_)
+            {
+                return DAS_E_FAIL;
             }
         }
 
@@ -3699,6 +3705,271 @@ TEST_F(
         "PythonFolderTestPlugin",
         "python_folder_bridge_marker",
         callback.Get());
+}
+
+void AssertPythonEchoDispatchStillWorks(IDasComponent* component)
+{
+    ASSERT_NE(component, nullptr);
+
+    DasReadOnlyString                      method_name{"echo"};
+    DAS::ExportInterface::DasVariantVector dispatch_result;
+    DAS::ExportInterface::DasVariantVector params;
+    ASSERT_EQ(CreateIDasVariantVector(params.Put()), DAS_S_OK);
+    DasReadOnlyString input_text{"ipc-python-after-failure"};
+    ASSERT_EQ(params.Get()->PushBackString(input_text.Get()), DAS_S_OK);
+
+    ASSERT_EQ(
+        component
+            ->Dispatch(method_name.Get(), params.Get(), dispatch_result.Put()),
+        DAS_S_OK);
+    ASSERT_NE(dispatch_result.Get(), nullptr);
+    ASSERT_EQ(dispatch_result->GetSize(), 1u);
+
+    DAS::DasPtr<IDasReadOnlyString> echo_value;
+    ASSERT_EQ(dispatch_result->GetString(0, echo_value.Put()), DAS_S_OK);
+    const char* echo_text = nullptr;
+    ASSERT_EQ(echo_value->GetUtf8(&echo_text), DAS_S_OK);
+    ASSERT_NE(echo_text, nullptr);
+    EXPECT_STREQ(echo_text, "[Python] echo: ipc-python-after-failure");
+}
+
+void ExpectPythonDispatchFailure(
+    IDasComponent*                 component,
+    std::string_view               method,
+    IDasVariantVector*             params,
+    std::string_view               failure_description,
+    DAS::Core::IPC::IHostLauncher* launcher)
+{
+    ASSERT_NE(component, nullptr);
+    ASSERT_NE(params, nullptr);
+    ASSERT_NE(launcher, nullptr);
+
+    const std::string                      method_text{method};
+    DasReadOnlyString                      method_name{method_text.c_str()};
+    DAS::ExportInterface::DasVariantVector dispatch_result;
+
+    const DasResult result =
+        component->Dispatch(method_name.Get(), params, dispatch_result.Put());
+    EXPECT_NE(result, DAS_S_OK) << failure_description;
+    EXPECT_TRUE(launcher->IsRunning())
+        << "Python host should remain alive after " << failure_description;
+    AssertPythonEchoDispatchStillWorks(component);
+    EXPECT_TRUE(launcher->IsRunning())
+        << "Python host should remain alive after post-failure echo";
+}
+
+void AssertPythonFailurePathBehavior(
+    DAS::Core::IPC::MainProcess::IIpcContext&  context,
+    DAS::DasPtr<DAS::Core::IPC::IHostLauncher> launcher,
+    const std::string&                         host_exe_path,
+    const std::string&                         plugin_json_path,
+    std::string_view                           expected_component_name)
+{
+    ASSERT_NE(launcher.Get(), nullptr);
+
+    auto failing_callback = DAS::MakeDasPtr<LifecycleCallbackComponent>();
+    failing_callback->Configure(context);
+    failing_callback->request_stop_on_callback_ = false;
+    failing_callback->force_dispatch_failure_ = true;
+
+    const DasResult reg_result = context.RegisterService(
+        failing_callback.Get(),
+        DasIidOf<DAS::PluginInterface::IDasComponent>());
+    ASSERT_EQ(reg_result, DAS_S_OK);
+
+    ScopedHostStop  guard{launcher};
+    uint16_t        session_id = 0;
+    const DasResult start_result = launcher->Start(
+        host_exe_path,
+        session_id,
+        IpcTestConfig::GetHostStartTimeoutMs());
+    ASSERT_EQ(start_result, DAS_S_OK);
+    ASSERT_TRUE(launcher->IsRunning());
+    ASSERT_GT(session_id, static_cast<uint16_t>(0));
+
+    auto raw_proxy =
+        LoadPluginPackageForHost(context, launcher.Get(), plugin_json_path, 3);
+    ASSERT_NE(raw_proxy.Get(), nullptr)
+        << "Python plugin must load through IIpcContext::LoadPluginAsync";
+
+    DAS::DasPtr<IDasPluginPackage> plugin_package;
+    ASSERT_EQ(raw_proxy.As(plugin_package.Put()), DAS_S_OK)
+        << "Python LOAD_PLUGIN proxy must QI to IDasPluginPackage";
+
+    DAS::PluginInterface::DasPluginFeature feature{};
+    ASSERT_EQ(plugin_package->EnumFeature(0, &feature), DAS_S_OK);
+    EXPECT_EQ(
+        feature,
+        DAS::PluginInterface::DAS_PLUGIN_FEATURE_COMPONENT_FACTORY);
+
+    IDasBase* factory_base_raw = nullptr;
+    ASSERT_EQ(
+        plugin_package->CreateFeatureInterface(0, &factory_base_raw),
+        DAS_S_OK);
+    ASSERT_NE(factory_base_raw, nullptr);
+    DAS::DasPtr<IDasBase> factory_base(factory_base_raw);
+
+    DAS::DasPtr<IDasComponentFactory> factory;
+    ASSERT_EQ(factory_base.As(factory.Put()), DAS_S_OK);
+    EXPECT_EQ(factory->IsSupported(DasIidOf<IDasComponent>()), DAS_S_OK);
+
+    IDasComponent* component_raw = nullptr;
+    ASSERT_EQ(
+        factory->CreateInstance(DasIidOf<IDasComponent>(), &component_raw),
+        DAS_S_OK);
+    ASSERT_NE(component_raw, nullptr);
+    DAS::DasPtr<IDasComponent> component(component_raw);
+
+    AssertPythonComponentDispatchBehavior(
+        component.Get(),
+        expected_component_name);
+
+    {
+        DAS::ExportInterface::DasVariantVector params;
+        ASSERT_EQ(CreateIDasVariantVector(params.Put()), DAS_S_OK);
+        ExpectPythonDispatchFailure(
+            component.Get(),
+            "raisePythonException",
+            params.Get(),
+            "Python exception dispatch should map to non-success",
+            launcher.Get());
+    }
+
+    {
+        DAS::ExportInterface::DasVariantVector params;
+        ASSERT_EQ(CreateIDasVariantVector(params.Put()), DAS_S_OK);
+        ExpectPythonDispatchFailure(
+            component.Get(),
+            "unsupportedPythonMethod",
+            params.Get(),
+            "Unsupported Python dispatch should map to non-success",
+            launcher.Get());
+    }
+
+    {
+        DAS::ExportInterface::DasVariantVector params;
+        ASSERT_EQ(CreateIDasVariantVector(params.Put()), DAS_S_OK);
+        ASSERT_EQ(
+            params.Get()->PushBackComponent(failing_callback.Get()),
+            DAS_S_OK);
+        DasReadOnlyString marker{"callback_failure_marker"};
+        ASSERT_EQ(params.Get()->PushBackString(marker.Get()), DAS_S_OK);
+
+        ExpectPythonDispatchFailure(
+            component.Get(),
+            "bridgeLifecycleCallbackFailure",
+            params.Get(),
+            "Python lifecycle setup callback failure should map to non-success",
+            launcher.Get());
+        EXPECT_TRUE(failing_callback->callback_received_)
+            << "Failing callback should have been invoked before Python "
+               "returned non-success";
+    }
+
+    AssertPythonPackageUnloadabilityEquivalent(
+        component,
+        factory,
+        factory_base,
+        plugin_package,
+        raw_proxy,
+        launcher.Get());
+}
+
+TEST_F(IpcMultiProcessTestIntegration, CrossProcess_PythonFailurePathTest)
+{
+#ifndef DAS_EXPORT_PYTHON
+    GTEST_SKIP() << "DAS_EXPORT_PYTHON is not enabled";
+#endif
+
+    if (!std::filesystem::exists(host_exe_path_))
+    {
+        GTEST_SKIP() << "DasHost.exe not found at: " << host_exe_path_;
+    }
+
+    std::string plugin_json_path;
+    try
+    {
+        plugin_json_path =
+            IpcTestConfig::GetTestPluginJsonPath("PythonTestPlugin");
+    }
+    catch (const std::exception& e)
+    {
+        GTEST_SKIP() << "PythonTestPlugin manifest not found: " << e.what();
+    }
+
+    const auto package_artifacts = ValidatePythonPluginPackageArtifacts(
+        plugin_json_path,
+        "python_test_plugin.py");
+    if (!package_artifacts)
+    {
+        GTEST_SKIP() << package_artifacts.message();
+    }
+
+    const auto runtime_artifacts =
+        ValidatePythonRuntimeArtifacts(host_exe_path_);
+    if (!runtime_artifacts)
+    {
+        GTEST_SKIP() << runtime_artifacts.message();
+    }
+
+    AssertPythonFailurePathBehavior(
+        GetContext(),
+        launcher_,
+        host_exe_path_,
+        plugin_json_path,
+        "PythonTestPlugin");
+}
+
+TEST_F(IpcMultiProcessTestIntegration, CrossProcess_PythonFolderFailurePathTest)
+{
+#ifndef DAS_EXPORT_PYTHON
+    GTEST_SKIP() << "DAS_EXPORT_PYTHON is not enabled";
+#endif
+
+    if (!std::filesystem::exists(host_exe_path_))
+    {
+        GTEST_SKIP() << "DasHost.exe not found at: " << host_exe_path_;
+    }
+
+    std::filesystem::path folder_manifest_path;
+    ASSERT_TRUE(PreparePythonFolderTestPluginFixture(&folder_manifest_path));
+
+    std::string plugin_json_path;
+    try
+    {
+        plugin_json_path =
+            IpcTestConfig::GetTestPluginJsonPath("PythonFolderTestPlugin");
+    }
+    catch (const std::exception& e)
+    {
+        GTEST_FAIL() << "PythonFolderTestPlugin manifest not found: "
+                     << e.what();
+    }
+    EXPECT_EQ(
+        std::filesystem::weakly_canonical(plugin_json_path),
+        std::filesystem::weakly_canonical(folder_manifest_path));
+
+    const auto package_artifacts = ValidatePythonPluginPackageArtifacts(
+        plugin_json_path,
+        "python_folder_test_plugin.py");
+    if (!package_artifacts)
+    {
+        GTEST_SKIP() << package_artifacts.message();
+    }
+
+    const auto runtime_artifacts =
+        ValidatePythonRuntimeArtifacts(host_exe_path_);
+    if (!runtime_artifacts)
+    {
+        GTEST_SKIP() << runtime_artifacts.message();
+    }
+
+    AssertPythonFailurePathBehavior(
+        GetContext(),
+        launcher_,
+        host_exe_path_,
+        plugin_json_path,
+        "PythonFolderTestPlugin");
 }
 
 TEST_F(IpcMultiProcessTestIntegration, CrossProcess_NodeDirectorLifecycleTest)
