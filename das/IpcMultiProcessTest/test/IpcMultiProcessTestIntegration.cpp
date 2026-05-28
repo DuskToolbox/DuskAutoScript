@@ -39,6 +39,7 @@
 #include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <das/Core/Utils/StdExecution.h>
 #include <das/IDasAsyncLoadPluginOperation.h>
+#include <fstream>
 #include <gtest/gtest.h>
 #include <optional>
 #include <string_view>
@@ -815,6 +816,175 @@ namespace
         return testing::AssertionSuccess();
     }
 
+    testing::AssertionResult AssertPathContainedInDirectory(
+        const std::filesystem::path& child,
+        const std::filesystem::path& parent)
+    {
+        std::error_code ec;
+        const auto      canonical_parent =
+            std::filesystem::weakly_canonical(parent, ec);
+        if (ec)
+        {
+            return testing::AssertionFailure()
+                   << "Could not canonicalize parent directory: "
+                   << parent.string() << ", error=" << ec.message();
+        }
+
+        const auto canonical_child =
+            std::filesystem::weakly_canonical(child, ec);
+        if (ec)
+        {
+            return testing::AssertionFailure()
+                   << "Could not canonicalize child path: " << child.string()
+                   << ", error=" << ec.message();
+        }
+
+        const auto relative =
+            std::filesystem::relative(canonical_child, canonical_parent, ec);
+        if (ec || relative.empty() || relative.is_absolute())
+        {
+            return testing::AssertionFailure()
+                   << "Path is not inside expected directory: child="
+                   << canonical_child.string()
+                   << ", parent=" << canonical_parent.string();
+        }
+
+        for (const auto& part : relative)
+        {
+            if (part == "..")
+            {
+                return testing::AssertionFailure()
+                       << "Path escapes expected directory: child="
+                       << canonical_child.string()
+                       << ", parent=" << canonical_parent.string();
+            }
+        }
+
+        return testing::AssertionSuccess();
+    }
+
+    testing::AssertionResult PreparePythonFolderTestPluginFixture(
+        std::filesystem::path* out_manifest_path)
+    {
+        if (!out_manifest_path)
+        {
+            return testing::AssertionFailure()
+                   << "out_manifest_path must not be null";
+        }
+
+        std::filesystem::path plugin_dir;
+        try
+        {
+            plugin_dir = IpcTestConfig::GetPluginDir();
+        }
+        catch (const std::exception& e)
+        {
+            return testing::AssertionFailure()
+                   << "DAS_PLUGIN_DIR not available: " << e.what();
+        }
+
+        if (!std::filesystem::is_directory(plugin_dir))
+        {
+            return testing::AssertionFailure()
+                   << "DAS_PLUGIN_DIR is not a directory: "
+                   << plugin_dir.string();
+        }
+
+        std::filesystem::path flat_manifest_path;
+        try
+        {
+            flat_manifest_path =
+                IpcTestConfig::GetTestPluginJsonPath("PythonTestPlugin");
+        }
+        catch (const std::exception& e)
+        {
+            return testing::AssertionFailure()
+                   << "PythonTestPlugin manifest not found for folder fixture: "
+                   << e.what();
+        }
+
+        const auto flat_root = flat_manifest_path.parent_path();
+        const auto flat_source = flat_root / "python_test_plugin.py";
+        if (!std::filesystem::is_regular_file(flat_source))
+        {
+            return testing::AssertionFailure()
+                   << "PythonTestPlugin source not found for folder fixture: "
+                   << flat_source.string();
+        }
+
+        const auto folder_root = plugin_dir / "PythonFolderTestPlugin";
+        const auto containment =
+            AssertPathContainedInDirectory(folder_root, plugin_dir);
+        if (!containment)
+        {
+            return containment;
+        }
+
+        std::error_code ec;
+        std::filesystem::remove_all(folder_root, ec);
+        if (ec)
+        {
+            return testing::AssertionFailure()
+                   << "Failed to remove Python folder fixture: "
+                   << folder_root.string() << ", error=" << ec.message();
+        }
+
+        std::filesystem::create_directories(folder_root, ec);
+        if (ec)
+        {
+            return testing::AssertionFailure()
+                   << "Failed to create Python folder fixture: "
+                   << folder_root.string() << ", error=" << ec.message();
+        }
+
+        const auto folder_source = folder_root / "python_folder_test_plugin.py";
+        std::filesystem::copy_file(
+            flat_source,
+            folder_source,
+            std::filesystem::copy_options::overwrite_existing,
+            ec);
+        if (ec)
+        {
+            return testing::AssertionFailure()
+                   << "Failed to copy Python folder fixture source: "
+                   << folder_source.string() << ", error=" << ec.message();
+        }
+
+        const auto    manifest_path = folder_root / "manifest.json";
+        std::ofstream manifest{manifest_path, std::ios::binary};
+        if (!manifest)
+        {
+            return testing::AssertionFailure()
+                   << "Failed to open Python folder fixture manifest: "
+                   << manifest_path.string();
+        }
+
+        manifest << "{\n"
+                 << "    \"name\": \"PythonFolderTestPlugin\",\n"
+                 << "    \"author\": \"Dusk\",\n"
+                 << "    \"version\": \"0.1\",\n"
+                 << "    \"guid\": \"5E6F7081-9ABC-4E6F-B102-4C5D6E7F8092\",\n"
+                 << "    \"description\": \"Python Folder Test Plugin for IPC "
+                    "integration testing\",\n"
+                 << "    \"supportedSystem\": \"Windows\",\n"
+                 << "    \"language\": \"Python\",\n"
+                 << "    \"pluginFilenameExtension\": \"py\",\n"
+                 << "    \"entryPoint\": "
+                    "\"python_folder_test_plugin.create_plugin\",\n"
+                 << "    \"settings\": []\n"
+                 << "}\n";
+        manifest.close();
+        if (!manifest)
+        {
+            return testing::AssertionFailure()
+                   << "Failed to write Python folder fixture manifest: "
+                   << manifest_path.string();
+        }
+
+        *out_manifest_path = manifest_path;
+        return testing::AssertionSuccess();
+    }
+
     void AssertPythonComponentDispatchBehavior(
         IDasComponent*   component,
         std::string_view expected_component_name)
@@ -1390,7 +1560,45 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LoadPythonFolderPlugin)
         GTEST_SKIP() << "DasHost.exe not found at: " << host_exe_path_;
     }
 
-    GTEST_FAIL() << "Python folder fixture helper not implemented";
+    std::filesystem::path folder_manifest_path;
+    ASSERT_TRUE(PreparePythonFolderTestPluginFixture(&folder_manifest_path));
+
+    std::string plugin_json_path;
+    try
+    {
+        plugin_json_path =
+            IpcTestConfig::GetTestPluginJsonPath("PythonFolderTestPlugin");
+    }
+    catch (const std::exception& e)
+    {
+        GTEST_FAIL() << "PythonFolderTestPlugin manifest not found: "
+                     << e.what();
+    }
+    EXPECT_EQ(
+        std::filesystem::weakly_canonical(plugin_json_path),
+        std::filesystem::weakly_canonical(folder_manifest_path));
+
+    const auto package_artifacts = ValidatePythonPluginPackageArtifacts(
+        plugin_json_path,
+        "python_folder_test_plugin.py");
+    if (!package_artifacts)
+    {
+        GTEST_SKIP() << package_artifacts.message();
+    }
+
+    const auto runtime_artifacts =
+        ValidatePythonRuntimeArtifacts(host_exe_path_);
+    if (!runtime_artifacts)
+    {
+        GTEST_SKIP() << runtime_artifacts.message();
+    }
+
+    AssertPythonHostIpcPluginLoadAndDispatch(
+        GetContext(),
+        launcher_,
+        host_exe_path_,
+        plugin_json_path,
+        "PythonFolderTestPlugin");
 }
 
 TEST_F(IpcMultiProcessTestIntegration, MultipleStartStop)
