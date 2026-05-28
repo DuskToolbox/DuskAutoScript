@@ -43,6 +43,11 @@ if(DAS_BUILD_TEST)
     if(EXPORT_NODE)
         add_subdirectory(NodeTestPlugin)
     endif()
+
+    # Python 测试插件（仅在启用 Python 导出时构建）
+    if(EXPORT_PYTHON)
+        add_subdirectory(PythonTestPlugin)
+    endif()
 endif()
 
 # IpcTestPlugin1 - IDasTouch Mock for IPC testing
