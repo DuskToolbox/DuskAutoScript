@@ -1026,6 +1026,40 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LoadNodeFolderPlugin)
     EXPECT_TRUE(launcher_->IsRunning());
 }
 
+TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LoadPythonPlugin)
+{
+#ifndef DAS_EXPORT_PYTHON
+    GTEST_SKIP() << "DAS_EXPORT_PYTHON is not enabled";
+#endif
+
+    if (!std::filesystem::exists(host_exe_path_))
+    {
+        GTEST_SKIP() << "DasHost.exe not found at: " << host_exe_path_;
+    }
+
+    std::string plugin_json_path;
+    try
+    {
+        plugin_json_path =
+            IpcTestConfig::GetTestPluginJsonPath("PythonTestPlugin");
+    }
+    catch (const std::exception& e)
+    {
+        GTEST_SKIP() << "PythonTestPlugin manifest not found: " << e.what();
+    }
+
+    const auto plugin_root =
+        std::filesystem::path{plugin_json_path}.parent_path();
+    const auto plugin_source = plugin_root / "python_test_plugin.py";
+    if (!std::filesystem::is_regular_file(plugin_source))
+    {
+        GTEST_SKIP() << "Python plugin source not found at: "
+                     << plugin_source.string();
+    }
+
+    GTEST_FAIL() << "Python Host IPC load/dispatch helper not implemented";
+}
+
 TEST_F(IpcMultiProcessTestIntegration, MultipleStartStop)
 {
     // 测试多次启动/停止
