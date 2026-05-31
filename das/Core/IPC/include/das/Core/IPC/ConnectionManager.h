@@ -6,10 +6,10 @@
 #include <boost/interprocess/ipc/message_queue.hpp>
 #include <cstdint>
 #include <das/Core/IPC/AnyTransport.h>
-#include <das/Core/IPC/HostLauncher.h>
 #include <das/Core/IPC/IHostConnection.h>
 #include <das/Core/IPC/IpcErrors.h>
 #include <das/Core/IPC/ValidatedIPCMessageHeader.h>
+#include <das/DasPtr.hpp>
 #include <das/IDasBase.h>
 #include <functional>
 #include <memory>
@@ -24,6 +24,7 @@ DAS_CORE_IPC_NS_BEGIN
 
 class SharedMemoryPool;
 class IpcRunLoop;
+class HostLauncher;
 
 /**
  * @brief 连接资源信息

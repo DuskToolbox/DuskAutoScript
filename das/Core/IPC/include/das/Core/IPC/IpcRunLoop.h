@@ -29,7 +29,6 @@
 
 #include <das/Core/IPC/AnyTransport.h>
 #include <das/Core/IPC/DistributedObjectManager.h>
-#include <das/Core/IPC/HostLauncher.h>
 #include <das/Core/IPC/IpcResponseSender.h>
 #include <das/DasPtr.hpp>
 
@@ -38,6 +37,7 @@ DAS_CORE_IPC_NS_BEGIN
 class IMessageHandler;
 class IAwaitableMessageHandler;
 class ConnectionManager;
+class HostLauncher;
 class IHostConnection;
 class IpcRunLoop; // Forward declaration for templates
 class ProxyFactory;
