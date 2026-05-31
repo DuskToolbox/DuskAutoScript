@@ -1,7 +1,10 @@
 #include <atomic>
 #include <boost/asio/awaitable.hpp>
+#include <boost/asio/use_future.hpp>
 #include <chrono>
+#include <das/Core/IPC/AfUnixAvailable.h>
 #include <das/Core/IPC/DistributedObjectManager.h>
+#include <das/Core/IPC/IInternalHost.h>
 #include <das/Core/IPC/IMessageHandler.h>
 #include <das/Core/IPC/IpcMessageHeader.h>
 #include <das/Core/IPC/IpcMessageHeaderBuilder.h>
@@ -12,17 +15,113 @@
 #include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <das/IDasAsyncCallback.h>
 #include <das/Utils/fmt.h>
+#include <future>
 #include <gtest/gtest.h>
+#include <optional>
 #include <thread>
 #include <vector>
+using DAS::Core::IPC::AnyTransport;
+using DAS::Core::IPC::CallKey;
+using DAS::Core::IPC::IInternalHost;
 using DAS::Core::IPC::IMessageHandler;
+using DAS::Core::IPC::InboundMessage;
 using DAS::Core::IPC::IPCMessageHeader;
 using DAS::Core::IPC::IPCMessageHeaderBuilder;
+using DAS::Core::IPC::IpcMessageQueue;
 using DAS::Core::IPC::IpcResponseSender;
 using DAS::Core::IPC::IpcRunLoop;
 using DAS::Core::IPC::IpcTransport;
 using DAS::Core::IPC::MessageType;
+using DAS::Core::IPC::PendingCallState;
 using DAS::Core::IPC::ValidatedIPCMessageHeader;
+
+namespace
+{
+    constexpr uint16_t LOCAL_SESSION_ID = 1;
+    constexpr uint16_t REMOTE_SESSION_ID = 2;
+
+    struct ConnectedAnyTransportPair
+    {
+        AnyTransport run_loop_side;
+        AnyTransport peer_side;
+    };
+
+    class TestInternalHost final : public IInternalHost
+    {
+    public:
+        TestInternalHost(
+            boost::asio::io_context& io_context,
+            uint16_t                 session_id,
+            AnyTransport&            transport)
+            : io_context_(io_context), session_id_(session_id),
+              transport_(transport)
+        {
+        }
+
+        [[nodiscard]]
+        uint32_t AddRef() override
+        {
+            return ++ref_count_;
+        }
+
+        [[nodiscard]]
+        uint32_t Release() override
+        {
+            const auto result = --ref_count_;
+            if (result == 0)
+            {
+                delete this;
+            }
+            return result;
+        }
+
+        DasResult QueryInterface(const DasGuid& iid, void** pp_object) override
+        {
+            if (!pp_object)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+
+            if (iid == DasIidOf<IInternalHost>())
+            {
+                (void)AddRef();
+                *pp_object = static_cast<IInternalHost*>(this);
+                return DAS_S_OK;
+            }
+
+            *pp_object = nullptr;
+            return DAS_E_NO_INTERFACE;
+        }
+
+        DAS::Core::IPC::TransportLookupResult GetTransport() override
+        {
+            if (!transport_.IsConnected())
+            {
+                return {DAS_E_IPC_CONNECTION_LOST, std::nullopt};
+            }
+            return {DAS_S_OK, std::optional{std::ref(transport_)}};
+        }
+
+        boost::asio::io_context& GetIoContext() override { return io_context_; }
+
+        uint16_t GetSessionId() const override { return session_id_; }
+
+        uint32_t GetPid() const override { return 0; }
+
+        bool IsRunning() const override { return true; }
+
+        void Stop() override {}
+        void ClearCallbacks() override {}
+        void NotifyHeartbeatTimeout() override {}
+        void TerminateIfRunning() override {}
+
+    private:
+        std::atomic<uint32_t>    ref_count_{0};
+        boost::asio::io_context& io_context_;
+        uint16_t                 session_id_;
+        AnyTransport&            transport_;
+    };
+} // namespace
 
 // Test fixture for IpcRunLoop tests
 class IpcRunLoopTest : public ::testing::Test
@@ -30,13 +129,16 @@ class IpcRunLoopTest : public ::testing::Test
 protected:
     void SetUp() override
     {
+        inbound_queue_ = std::make_unique<IpcMessageQueue<InboundMessage>>(32);
+
         try
         {
             runloop_ = std::make_unique<IpcRunLoop>(
                 true,
-                nullptr,
+                inbound_queue_.get(),
                 proxy_factory_,
                 registry_);
+            runloop_->SetSessionId(LOCAL_SESSION_ID);
         }
         catch (const std::exception& e)
         {
@@ -66,6 +168,7 @@ protected:
             runloop_->RequestStop();
             runloop_.reset(); // 析构函数会自动调用 Shutdown()
         }
+        inbound_queue_.reset();
     }
 
     bool SetupRunLoopWithTransport()
@@ -86,11 +189,127 @@ protected:
             .Build();
     }
 
-    std::unique_ptr<IpcRunLoop>          runloop_;
-    std::string                          host_queue_name_;
-    std::string                          plugin_queue_name_;
-    DAS::Core::IPC::ProxyFactory         proxy_factory_;
-    DAS::Core::IPC::RemoteObjectRegistry registry_;
+    ValidatedIPCMessageHeader CreateBusinessResponseHeader(
+        uint16_t call_id,
+        uint32_t body_size)
+    {
+        return IPCMessageHeaderBuilder()
+            .SetMessageType(MessageType::RESPONSE)
+            .SetHeaderFlags(DAS::Core::IPC::HeaderFlags::NONE)
+            .SetInterfaceId(0x1234)
+            .SetCallId(call_id)
+            .SetSourceSessionId(REMOTE_SESSION_ID)
+            .SetTargetSessionId(LOCAL_SESSION_ID)
+            .SetBodySize(body_size)
+            .Build();
+    }
+
+    std::optional<ConnectedAnyTransportPair> CreateConnectedTransportPair(
+        const char* test_name)
+    {
+        (void)test_name;
+        auto&                        io_context = runloop_->GetIoContext();
+        static std::atomic<uint32_t> next_endpoint_id{1};
+        const auto                   base = DAS_FMT_NS::format(
+            "drt_{}_{}",
+            GetCurrentProcessId() % 10000,
+            next_endpoint_id.fetch_add(1));
+        const auto read_endpoint = base + "_read";
+        const auto write_endpoint = base + "_write";
+        const bool use_single_endpoint = DAS::Core::IPC::AfUnixAvailable();
+        const auto peer_read_endpoint =
+            use_single_endpoint ? read_endpoint : write_endpoint;
+        const auto peer_write_endpoint =
+            use_single_endpoint ? write_endpoint : read_endpoint;
+
+        auto server_future = boost::asio::co_spawn(
+            io_context,
+            AnyTransport::CreateAsync(
+                io_context,
+                read_endpoint,
+                write_endpoint,
+                true,
+                65536),
+            boost::asio::use_future);
+        auto peer_future = boost::asio::co_spawn(
+            io_context,
+            AnyTransport::CreateAsync(
+                io_context,
+                peer_read_endpoint,
+                peer_write_endpoint,
+                false,
+                65536),
+            boost::asio::use_future);
+
+        std::thread io_thread([&io_context]() { io_context.run(); });
+
+        auto [server_result, server_transport] = server_future.get();
+        auto [peer_result, peer_transport] = peer_future.get();
+
+        if (io_thread.joinable())
+        {
+            io_thread.join();
+        }
+        io_context.restart();
+
+        if (server_result != DAS_S_OK || !server_transport)
+        {
+            ADD_FAILURE() << "Failed to create run-loop-side transport: "
+                          << server_result;
+            return std::nullopt;
+        }
+
+        if (peer_result != DAS_S_OK || !peer_transport)
+        {
+            ADD_FAILURE() << "Failed to create peer transport: " << peer_result;
+            return std::nullopt;
+        }
+
+        return ConnectedAnyTransportPair{
+            std::move(*server_transport),
+            std::move(*peer_transport)};
+    }
+
+    void StartRunLoop(std::thread& run_thread)
+    {
+        run_thread = std::thread([this]() { runloop_->Run(); });
+        for (int i = 0; i < 100 && !runloop_->IsRunning(); ++i)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+    }
+
+    void StopRunLoop(std::thread& run_thread)
+    {
+        runloop_->RequestStop();
+        if (run_thread.joinable())
+        {
+            run_thread.join();
+        }
+    }
+
+    std::optional<InboundMessage> WaitForInboundMessage(
+        std::chrono::milliseconds timeout)
+    {
+        const auto deadline = std::chrono::steady_clock::now() + timeout;
+        while (std::chrono::steady_clock::now() < deadline)
+        {
+            auto msg = inbound_queue_->TryPop();
+            if (msg)
+            {
+                return msg;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        return std::nullopt;
+    }
+
+    std::unique_ptr<IpcRunLoop>                      runloop_;
+    std::unique_ptr<IpcMessageQueue<InboundMessage>> inbound_queue_;
+    std::string                                      host_queue_name_;
+    std::string                                      plugin_queue_name_;
+    DAS::Core::IPC::ProxyFactory                     proxy_factory_;
+    DAS::Core::IPC::RemoteObjectRegistry             registry_;
 };
 
 // ====== Initialize/Shutdown Tests ======
@@ -268,6 +487,126 @@ TEST_F(IpcRunLoopTest, RegisterHandler_Succeeds)
     IMessageHandler* retrieved =
         runloop_->GetHandler(DAS::Core::IPC::HeaderFlags::NONE, 1);
     EXPECT_NE(retrieved, nullptr);
+}
+
+TEST_F(IpcRunLoopTest, BusinessResponseWithPendingCallbackUsesFastPath)
+{
+    constexpr uint16_t call_id = 77;
+    auto               transport_pair =
+        CreateConnectedTransportPair("business_response_callback");
+    ASSERT_TRUE(transport_pair.has_value());
+
+    DAS::DasPtr<IInternalHost> host(new TestInternalHost(
+        runloop_->GetIoContext(),
+        REMOTE_SESSION_ID,
+        transport_pair->run_loop_side));
+    ASSERT_EQ(runloop_->RegisterInternalHost(host), DAS_S_OK);
+
+    std::atomic<bool>    callback_called{false};
+    DasResult            callback_result = DAS_E_UNDEFINED_RETURN_VALUE;
+    std::vector<uint8_t> callback_body;
+    uint16_t             callback_flags = 0;
+    const CallKey        call_key{REMOTE_SESSION_ID, call_id};
+
+    {
+        std::unique_lock<std::mutex> lock(runloop_->pending_mutex_);
+        runloop_->pending_calls_[call_key] = PendingCallState{
+            .call_key = call_key,
+            .deadline = std::chrono::steady_clock::time_point::max(),
+            .on_complete =
+                [&](DasResult            result,
+                    std::vector<uint8_t> response,
+                    uint16_t             flags)
+            {
+                callback_result = result;
+                callback_body = std::move(response);
+                callback_flags = flags;
+                callback_called.store(true, std::memory_order_release);
+            },
+            .response_flags = 0};
+    }
+
+    std::thread run_thread;
+    StartRunLoop(run_thread);
+
+    const std::vector<uint8_t> body{1, 2, 3, 4};
+    auto                       header = CreateBusinessResponseHeader(
+        call_id,
+        static_cast<uint32_t>(body.size()));
+    auto send_future = boost::asio::co_spawn(
+        runloop_->GetIoContext(),
+        transport_pair->peer_side
+            .SendCoroutine(header, body.data(), body.size()),
+        boost::asio::use_future);
+    EXPECT_EQ(send_future.get(), DAS_S_OK);
+
+    for (int i = 0; i < 100 && !callback_called.load(std::memory_order_acquire);
+         ++i)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    const auto queued = inbound_queue_->TryPop();
+    StopRunLoop(run_thread);
+
+    EXPECT_TRUE(callback_called.load(std::memory_order_acquire));
+    EXPECT_EQ(callback_result, DAS_S_OK);
+    EXPECT_EQ(callback_body, body);
+    EXPECT_EQ(callback_flags, 0);
+    EXPECT_FALSE(queued.has_value());
+}
+
+TEST_F(IpcRunLoopTest, BusinessResponseWithoutPendingCallbackFallsBackToQueue)
+{
+    constexpr uint16_t call_id = 78;
+    auto               transport_pair =
+        CreateConnectedTransportPair("business_response_inbound_fallback");
+    ASSERT_TRUE(transport_pair.has_value());
+
+    DAS::DasPtr<IInternalHost> host(new TestInternalHost(
+        runloop_->GetIoContext(),
+        REMOTE_SESSION_ID,
+        transport_pair->run_loop_side));
+    ASSERT_EQ(runloop_->RegisterInternalHost(host), DAS_S_OK);
+
+    const CallKey call_key{REMOTE_SESSION_ID, call_id};
+    {
+        std::unique_lock<std::mutex> lock(runloop_->pending_mutex_);
+        runloop_->pending_calls_[call_key] = PendingCallState{
+            .call_key = call_key,
+            .deadline = std::chrono::steady_clock::time_point::max(),
+            .on_complete = nullptr,
+            .response_flags = 0};
+    }
+
+    std::thread run_thread;
+    StartRunLoop(run_thread);
+
+    const std::vector<uint8_t> body{9, 8, 7, 6};
+    auto                       header = CreateBusinessResponseHeader(
+        call_id,
+        static_cast<uint32_t>(body.size()));
+    auto send_future = boost::asio::co_spawn(
+        runloop_->GetIoContext(),
+        transport_pair->peer_side
+            .SendCoroutine(header, body.data(), body.size()),
+        boost::asio::use_future);
+    EXPECT_EQ(send_future.get(), DAS_S_OK);
+
+    auto queued = WaitForInboundMessage(std::chrono::milliseconds(500));
+    StopRunLoop(run_thread);
+
+    EXPECT_TRUE(queued.has_value())
+        << "business RESPONSE without an on_complete callback must remain "
+           "visible to BusinessThread::PumpUntilResponse";
+    if (queued)
+    {
+        EXPECT_EQ(queued->header.GetMessageType(), MessageType::RESPONSE);
+        EXPECT_EQ(queued->header.GetSourceSessionId(), REMOTE_SESSION_ID);
+        EXPECT_EQ(queued->header.GetTargetSessionId(), LOCAL_SESSION_ID);
+        EXPECT_EQ(queued->header.GetCallId(), call_id);
+        EXPECT_EQ(queued->body, body);
+    }
 }
 
 // ====== Concurrency Tests ======
