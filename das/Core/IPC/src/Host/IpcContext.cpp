@@ -517,7 +517,7 @@ namespace Core
                                         auto& conn_mgr =
                                             run_loop_.GetConnectionManager();
                                         uint16_t main_process_session_id = 1;
-                                        conn_mgr.RegisterAnyTransport(
+                                        conn_mgr.RegisterHostLocalTransport(
                                             main_process_session_id,
                                             std::move(pipe_transport));
 
@@ -569,7 +569,8 @@ namespace Core
                         auto& conn_mgr = run_loop_.GetConnectionManager();
                         constexpr uint16_t main_process_session_id = 1;
                         auto [lookup_result, maybe_transport] =
-                            conn_mgr.FindTransport(main_process_session_id);
+                            conn_mgr.FindHostLocalTransport(
+                                main_process_session_id);
                         if (DAS::IsFailed(lookup_result) || !maybe_transport)
                         {
                             DAS_CORE_LOG_ERROR(
@@ -606,49 +607,9 @@ namespace Core
                         // 成功接收消息
                         auto&& [header, body] = std::get<1>(result);
 
-                        // IO 线程消息分流：按 header_flags 决定处理方式
-                        if ((header.GetHeaderFlags()
-                             & HeaderFlags::CONTROL_PLANE)
-                            != 0)
-                        {
-                            // 控制平面消息：在 IO 线程直接处理
-                            if (header.GetMessageType()
-                                == MessageType::RESPONSE)
-                            {
-                                // V3: RESPONSE 使用 (source_session_id,
-                                // call_id) 匹配
-                                CallKey call_key{
-                                    header.GetSourceSessionId(),
-                                    header.GetCallId()};
-                                run_loop_.CompletePendingCall(
-                                    call_key,
-                                    DAS_S_OK,
-                                    std::move(body),
-                                    header.GetFlags());
-                            }
-                            else
-                            {
-                                co_await run_loop_.DispatchToHandlerCoroutine(
-                                    header,
-                                    body,
-                                    transport);
-                            }
-                        }
-                        else
-                        {
-                            // 业务消息：投递到 inbound_queue
-                            InboundMessage msg;
-                            msg.header = header;
-                            msg.body = std::move(body);
-                            auto push_result =
-                                inbound_queue_.Push(std::move(msg));
-                            if (push_result != DAS_S_OK)
-                            {
-                                DAS_CORE_LOG_ERROR(
-                                    "ReceiveLoopCoroutine: failed to push to inbound_queue, result={}",
-                                    push_result);
-                            }
-                        }
+                        co_await run_loop_.RouteIncomingMessage(
+                            header,
+                            std::move(body));
                     }
                     catch (const boost::system::system_error& e)
                     {
@@ -726,7 +687,7 @@ namespace Core
                     {
                         auto&    conn_mgr = run_loop_.GetConnectionManager();
                         uint16_t main_session_id = 1;
-                        conn_mgr.RegisterAnyTransport(
+                        conn_mgr.RegisterHostLocalTransport(
                             main_session_id,
                             std::move(*http_transport));
                         http_transport.reset();
@@ -772,8 +733,7 @@ namespace Core
                 run_loop_.RequestStop();
             }
 
-            void IpcContext::InvokeOnBeforeShutdown(
-                HostShutdownReason reason)
+            void IpcContext::InvokeOnBeforeShutdown(HostShutdownReason reason)
             {
                 if (before_shutdown_invoked_.exchange(
                         true,

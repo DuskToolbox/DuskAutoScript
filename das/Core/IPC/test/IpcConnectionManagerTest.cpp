@@ -1,5 +1,6 @@
 #include <chrono>
 #include <condition_variable>
+#include <das/Core/IPC/AnyTransport.h>
 #include <das/Core/IPC/ConnectionManager.h>
 #include <das/Core/IPC/HostLauncher.h>
 #include <das/DasPtr.hpp>
@@ -11,6 +12,7 @@
 #include <boost/asio/io_context.hpp>
 
 using Das::DasPtr;
+using DAS::Core::IPC::AnyTransport;
 using DAS::Core::IPC::ConnectionInfo;
 using DAS::Core::IPC::ConnectionManager;
 using DAS::Core::IPC::HostLauncher;
@@ -213,6 +215,20 @@ TEST_F(IpcConnectionManagerTest, RegisterUnregisterCycle)
     }
 }
 
+TEST_F(IpcConnectionManagerTest, HostLocalTransportRejectsDisconnectedTransport)
+{
+    boost::asio::io_context io_context;
+    auto transport = AnyTransport::CreateUninitialized(io_context);
+
+    EXPECT_EQ(
+        manager_->RegisterHostLocalTransport(1, std::move(transport)),
+        DAS_E_INVALID_ARGUMENT);
+
+    auto [lookup_result, maybe_transport] = manager_->FindHostLocalTransport(1);
+    EXPECT_NE(lookup_result, DAS_S_OK);
+    EXPECT_FALSE(maybe_transport.has_value());
+}
+
 // ====== SendHeartbeatToAll Tests ======
 
 TEST_F(
@@ -385,7 +401,7 @@ TEST_F(IpcConnectionManagerTest, TimeoutMarksClosingBeforeCallbacksFinish)
 
     auto lookup_future = std::async(
         std::launch::async,
-        [&]() { return manager_->FindTransport(2); });
+        [&]() { return manager_->FindManagedHostTransport(2); });
     const bool lookup_returned =
         lookup_future.wait_for(std::chrono::milliseconds(250))
         == std::future_status::ready;

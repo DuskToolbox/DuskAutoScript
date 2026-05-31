@@ -476,7 +476,7 @@ namespace Core
 
                 auto& conn_mgr = runloop_.GetConnectionManager();
                 auto [lookup_result, maybe_transport] =
-                    conn_mgr.FindTransport(session_id);
+                    conn_mgr.FindManagedHostTransport(session_id);
                 if (DAS::IsFailed(lookup_result) || !maybe_transport)
                 {
                     DAS_CORE_LOG_ERROR(

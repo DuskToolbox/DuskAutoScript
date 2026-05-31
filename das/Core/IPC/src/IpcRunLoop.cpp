@@ -366,7 +366,8 @@ boost::asio::awaitable<void> IpcRunLoop::RouteIncomingMessage(
             static_cast<int>(header.GetMessageType()));
 
         DasPtr<IHostConnection> target_connection =
-            connection_manager_->GetInternalHost(header.GetTargetSessionId());
+            connection_manager_->FindManagedHostConnection(
+                header.GetTargetSessionId());
         DasResult fwd_result = DAS_E_IPC_OBJECT_NOT_FOUND;
         if (target_connection)
         {
@@ -814,7 +815,7 @@ boost::asio::awaitable<void> IpcRunLoop::SendToSessionCoroutine(
 
     const uint16_t          target_session_id = header.GetTargetSessionId();
     DasPtr<IHostConnection> host =
-        connection_manager_->GetInternalHost(target_session_id);
+        connection_manager_->FindManagedHostConnection(target_session_id);
 
     DasResult                      lookup_result = DAS_E_IPC_OBJECT_NOT_FOUND;
     std::optional<AnyTransportRef> maybe_transport;
@@ -825,7 +826,7 @@ boost::asio::awaitable<void> IpcRunLoop::SendToSessionCoroutine(
     else
     {
         std::tie(lookup_result, maybe_transport) =
-            connection_manager_->FindTransport(target_session_id);
+            connection_manager_->FindHostLocalTransport(target_session_id);
     }
 
     if (DAS::IsFailed(lookup_result) || !maybe_transport)

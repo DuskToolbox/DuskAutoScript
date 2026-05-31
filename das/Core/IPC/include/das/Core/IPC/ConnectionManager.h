@@ -37,7 +37,7 @@ class HostLauncher;
  *   - Child: 仅释放引用，不删除资源
  *
  * ConnectionManager 持有 IHostConnection 引用（DasPtr），
- * Transport 由具体 internal host 或 Host-side any_transports_ 拥有。
+ * Transport 由具体 internal host 或 Host-local transport storage 拥有。
  */
 struct ConnectionInfo
 {
@@ -124,6 +124,25 @@ public:
     DasPtr<IHostConnection> GetInternalHost(uint16_t session_id) const;
 
     /**
+     * @brief Find a MainProcess-managed host connection owner.
+     *
+     * The returned DasPtr is the lifetime guard for managed-host transport
+     * access across async work.
+     */
+    DasPtr<IHostConnection> FindManagedHostConnection(
+        uint16_t session_id) const;
+
+    /**
+     * @brief Find a transport owned by a MainProcess-managed host.
+     */
+    TransportLookupResult FindManagedHostTransport(uint16_t session_id);
+
+    /**
+     * @brief Find a Host-side local transport value.
+     */
+    TransportLookupResult FindHostLocalTransport(uint16_t session_id);
+
+    /**
      * @brief Find a transport at nullable lookup boundaries.
      *
      * DAS_S_OK means the optional reference is engaged. Any failed result
@@ -131,15 +150,17 @@ public:
      */
     TransportLookupResult FindTransport(uint16_t session_id);
 
-    DasResult RegisterAnyTransport(
+    DasResult RegisterHostLocalTransport(
         uint16_t                 session_id,
         Win32AsyncIpcTransport&& t);
-    DasResult RegisterAnyTransport(
+    DasResult RegisterHostLocalTransport(
         uint16_t                session_id,
         UnixAsyncIpcTransport&& t);
-    DasResult RegisterAnyTransport(uint16_t session_id, HttpIpcTransport&& t);
+    DasResult RegisterHostLocalTransport(
+        uint16_t           session_id,
+        HttpIpcTransport&& t);
 
-    DasResult RegisterAnyTransport(uint16_t session_id, AnyTransport&& t);
+    DasResult RegisterHostLocalTransport(uint16_t session_id, AnyTransport&& t);
 
     /**
      * @brief 更新连接的活跃状态

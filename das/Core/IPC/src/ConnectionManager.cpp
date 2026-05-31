@@ -29,8 +29,8 @@ struct ConnectionManager::Impl
     std::unordered_map<uint16_t, ConnectionInfo> connections_;
     // MainProcess-managed connected hosts such as HostLauncher or HttpHost.
     std::unordered_map<uint16_t, DasPtr<IHostConnection>> hosts_;
-    // AnyTransport 注册（支持 Named Pipe 和 HTTP/WS 传输器）
-    std::unordered_map<uint16_t, AnyTransport> any_transports_;
+    // Host-local transports owned by Host-side IpcContext.
+    std::unordered_map<uint16_t, AnyTransport> host_local_transports_;
     // 共享内存池（每个连接一个，按 remote_id 索引）
     std::unordered_map<uint16_t, std::unique_ptr<SharedMemoryPool>> shm_pools_;
     mutable std::shared_mutex connections_mutex_;
@@ -56,7 +56,7 @@ ConnectionManager::~ConnectionManager()
     }
     impl_->connections_.clear();
     impl_->hosts_.clear();
-    impl_->any_transports_.clear();
+    impl_->host_local_transports_.clear();
 }
 
 DasResult ConnectionManager::RegisterConnection(
@@ -334,7 +334,7 @@ DasResult ConnectionManager::UnregisterHostLauncher(uint16_t session_id)
     return DAS_S_OK;
 }
 
-DasResult ConnectionManager::RegisterAnyTransport(
+DasResult ConnectionManager::RegisterHostLocalTransport(
     uint16_t                 session_id,
     Win32AsyncIpcTransport&& t)
 {
@@ -344,12 +344,14 @@ DasResult ConnectionManager::RegisterAnyTransport(
     }
 
     std::unique_lock<std::shared_mutex> lock(impl_->connections_mutex_);
-    impl_->any_transports_.try_emplace(session_id, std::move(t));
-    DAS_CORE_LOG_INFO("AnyTransport registered: session_id={}", session_id);
+    impl_->host_local_transports_.try_emplace(session_id, std::move(t));
+    DAS_CORE_LOG_INFO(
+        "Host-local transport registered: session_id = {}",
+        session_id);
     return DAS_S_OK;
 }
 
-DasResult ConnectionManager::RegisterAnyTransport(
+DasResult ConnectionManager::RegisterHostLocalTransport(
     uint16_t                session_id,
     UnixAsyncIpcTransport&& t)
 {
@@ -359,12 +361,14 @@ DasResult ConnectionManager::RegisterAnyTransport(
     }
 
     std::unique_lock<std::shared_mutex> lock(impl_->connections_mutex_);
-    impl_->any_transports_.try_emplace(session_id, std::move(t));
-    DAS_CORE_LOG_INFO("AnyTransport registered: session_id={}", session_id);
+    impl_->host_local_transports_.try_emplace(session_id, std::move(t));
+    DAS_CORE_LOG_INFO(
+        "Host-local transport registered: session_id = {}",
+        session_id);
     return DAS_S_OK;
 }
 
-DasResult ConnectionManager::RegisterAnyTransport(
+DasResult ConnectionManager::RegisterHostLocalTransport(
     uint16_t           session_id,
     HttpIpcTransport&& t)
 {
@@ -374,12 +378,14 @@ DasResult ConnectionManager::RegisterAnyTransport(
     }
 
     std::unique_lock<std::shared_mutex> lock(impl_->connections_mutex_);
-    impl_->any_transports_.try_emplace(session_id, std::move(t));
-    DAS_CORE_LOG_INFO("AnyTransport registered: session_id={}", session_id);
+    impl_->host_local_transports_.try_emplace(session_id, std::move(t));
+    DAS_CORE_LOG_INFO(
+        "Host-local transport registered: session_id = {}",
+        session_id);
     return DAS_S_OK;
 }
 
-DasResult ConnectionManager::RegisterAnyTransport(
+DasResult ConnectionManager::RegisterHostLocalTransport(
     uint16_t       session_id,
     AnyTransport&& t)
 {
@@ -389,12 +395,20 @@ DasResult ConnectionManager::RegisterAnyTransport(
     }
 
     std::unique_lock<std::shared_mutex> lock(impl_->connections_mutex_);
-    impl_->any_transports_.try_emplace(session_id, std::move(t));
-    DAS_CORE_LOG_INFO("AnyTransport registered: session_id={}", session_id);
+    impl_->host_local_transports_.try_emplace(session_id, std::move(t));
+    DAS_CORE_LOG_INFO(
+        "Host-local transport registered: session_id = {}",
+        session_id);
     return DAS_S_OK;
 }
 
 DasPtr<IHostConnection> ConnectionManager::GetInternalHost(
+    uint16_t session_id) const
+{
+    return FindManagedHostConnection(session_id);
+}
+
+DasPtr<IHostConnection> ConnectionManager::FindManagedHostConnection(
     uint16_t session_id) const
 {
     std::shared_lock<std::shared_mutex> lock(impl_->connections_mutex_);
@@ -414,42 +428,46 @@ DasPtr<IHostConnection> ConnectionManager::GetInternalHost(
     return nullptr;
 }
 
-TransportLookupResult ConnectionManager::FindTransport(uint16_t session_id)
+TransportLookupResult ConnectionManager::FindManagedHostTransport(
+    uint16_t session_id)
 {
-    DasPtr<IHostConnection> host;
-
+    DasPtr<IHostConnection> host = FindManagedHostConnection(session_id);
+    if (!host)
     {
-        std::shared_lock<std::shared_mutex> lock(impl_->connections_mutex_);
-
-        auto host_it = impl_->hosts_.find(session_id);
-        if (host_it != impl_->hosts_.end())
-        {
-            host = host_it->second;
-        }
-        else
-        {
-            auto conn_it = impl_->connections_.find(session_id);
-            if (conn_it != impl_->connections_.end() && conn_it->second.host)
-            {
-                host = conn_it->second.host;
-            }
-        }
-
-        if (!host)
-        {
-            auto any_it = impl_->any_transports_.find(session_id);
-            if (any_it != impl_->any_transports_.end())
-            {
-                return {
-                    DAS_S_OK,
-                    std::optional<AnyTransportRef>{std::ref(any_it->second)}};
-            }
-        }
+        return {DAS_E_IPC_OBJECT_NOT_FOUND, std::nullopt};
     }
 
-    if (host)
+    return host->GetTransport();
+}
+
+TransportLookupResult ConnectionManager::FindHostLocalTransport(
+    uint16_t session_id)
+{
+    std::shared_lock<std::shared_mutex> lock(impl_->connections_mutex_);
+
+    auto it = impl_->host_local_transports_.find(session_id);
+    if (it == impl_->host_local_transports_.end())
     {
-        return host->GetTransport();
+        return {DAS_E_IPC_OBJECT_NOT_FOUND, std::nullopt};
+    }
+
+    return {DAS_S_OK, std::optional<AnyTransportRef>{std::ref(it->second)}};
+}
+
+TransportLookupResult ConnectionManager::FindTransport(uint16_t session_id)
+{
+    auto [managed_result, managed_transport] =
+        FindManagedHostTransport(session_id);
+    if (!DAS::IsFailed(managed_result) && managed_transport)
+    {
+        return {managed_result, managed_transport};
+    }
+
+    auto [host_local_result, host_local_transport] =
+        FindHostLocalTransport(session_id);
+    if (!DAS::IsFailed(host_local_result) && host_local_transport)
+    {
+        return {host_local_result, host_local_transport};
     }
 
     DAS_CORE_LOG_WARN("Transport not found for session_id = {}", session_id);
@@ -553,8 +571,8 @@ void ConnectionManager::StartHeartbeatThread()
                                 impl_->hosts_.erase(host_it);
                             }
 
-                            CleanupConnectionResources(session_id);
-                            it = impl_->connections_.erase(it);
+                            it->second.host = nullptr;
+                            ++it;
 
                             timed_out.push_back(std::move(toc));
 
@@ -578,6 +596,15 @@ void ConnectionManager::StartHeartbeatThread()
                         toc.host->NotifyHeartbeatTimeout();
                         toc.host->ClearCallbacks();
                         toc.host->TerminateIfRunning();
+                    }
+
+                    std::unique_lock<std::shared_mutex> lock(
+                        impl_->connections_mutex_);
+                    auto it = impl_->connections_.find(toc.session_id);
+                    if (it != impl_->connections_.end() && !it->second.is_alive)
+                    {
+                        CleanupConnectionResources(toc.session_id);
+                        impl_->connections_.erase(it);
                     }
                 }
             }
@@ -765,7 +792,7 @@ DasResult ConnectionManager::CleanupConnectionResources(uint16_t remote_id)
     impl_->hosts_.erase(remote_id);
 
     // 清理 AnyTransport before SHM because transports may borrow SHM state.
-    impl_->any_transports_.erase(remote_id);
+    impl_->host_local_transports_.erase(remote_id);
 
     // 清理 SHM pool（unique_ptr 自动析构）
     impl_->shm_pools_.erase(remote_id);
