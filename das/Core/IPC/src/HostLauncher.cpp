@@ -911,10 +911,10 @@ uint32_t HostLauncher::Release()
 
 DasResult HostLauncher::QueryInterface(const DasGuid& iid, void** pp)
 {
-    if (iid == DasIidOf<IInternalHost>())
+    if (iid == DasIidOf<IHostConnection>())
     {
         AddRef();
-        *pp = static_cast<IInternalHost*>(this);
+        *pp = static_cast<IHostConnection*>(this);
         return DAS_S_OK;
     }
 

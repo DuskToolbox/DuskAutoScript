@@ -38,7 +38,7 @@ DAS_CORE_IPC_NS_BEGIN
 class IMessageHandler;
 class IAwaitableMessageHandler;
 class ConnectionManager;
-class IInternalHost;
+class IHostConnection;
 class IpcRunLoop; // Forward declaration for templates
 class ProxyFactory;
 class RemoteObjectRegistry;
@@ -258,11 +258,11 @@ public:
      */
     [[nodiscard]]
     stdexec::sender auto SendMessageAsync(
-        AnyTransport&                       transport DAS_LIFETIMEBOUND,
-        const ValidatedIPCMessageHeader&    request_header,
-        const uint8_t*                      body,
-        size_t                              body_size,
-        std::chrono::milliseconds           timeout = std::chrono::seconds(30));
+        AnyTransport& transport          DAS_LIFETIMEBOUND,
+        const ValidatedIPCMessageHeader& request_header,
+        const uint8_t*                   body,
+        size_t                           body_size,
+        std::chrono::milliseconds        timeout = std::chrono::seconds(30));
 
     bool IsRunning() const;
 
@@ -378,10 +378,10 @@ public:
      * 用于 MainProcess 管理的已连接 host，例如后续 HTTP accept path 创建的
      * HttpHost。不会创建新的 IO 线程，接收协程运行在现有 io_context_ 上。
      *
-     * @param host IInternalHost 实例（DasPtr 保持 transport owner 存活）
+     * @param host IHostConnection 实例（DasPtr 保持 transport owner 存活）
      * @return DasResult DAS_S_OK 成功
      */
-    DasResult RegisterInternalHost(DasPtr<IInternalHost> host);
+    DasResult RegisterInternalHost(DasPtr<IHostConnection> host);
 
     friend class ::Das::Core::IPC::Host::HandshakeHandler;
 
@@ -415,21 +415,21 @@ public:
      * 协程会捕获 host 的 DasPtr 以保持 AnyTransport owner 跨 co_await 存活。
      *
      * @param session_id 会话 ID
-     * @param host IInternalHost 的 DasPtr
+     * @param host IHostConnection 的 DasPtr
      */
     void StartAsyncReceiveForInternalHost(
-        uint16_t              session_id,
-        DasPtr<IInternalHost> host);
+        uint16_t                session_id,
+        DasPtr<IHostConnection> host);
 
     /**
      * @brief 内部 Host 的接收协程循环
      *
      * @param session_id 会话 ID
-     * @param host IInternalHost 的 DasPtr
+     * @param host IHostConnection 的 DasPtr
      */
     boost::asio::awaitable<void> InternalHostReceiveLoop(
-        uint16_t              session_id,
-        DasPtr<IInternalHost> host);
+        uint16_t                session_id,
+        DasPtr<IHostConnection> host);
 
     /**
      * @brief 调度超时检查定时器

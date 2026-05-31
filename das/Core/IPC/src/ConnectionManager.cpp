@@ -8,7 +8,7 @@
 #include <das/Core/IPC/ConnectionManager.h>
 #include <das/Core/IPC/Handshake.h>
 #include <das/Core/IPC/HostLauncher.h>
-#include <das/Core/IPC/IInternalHost.h>
+#include <das/Core/IPC/IHostConnection.h>
 #include <das/Core/IPC/IpcMessageHeaderBuilder.h>
 #include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/IPC/MainProcess/IHostLauncher.h>
@@ -28,7 +28,7 @@ struct ConnectionManager::Impl
 {
     std::unordered_map<uint16_t, ConnectionInfo> connections_;
     // MainProcess-managed connected hosts such as HostLauncher or HttpHost.
-    std::unordered_map<uint16_t, DasPtr<IInternalHost>> hosts_;
+    std::unordered_map<uint16_t, DasPtr<IHostConnection>> hosts_;
     // AnyTransport 注册（支持 Named Pipe 和 HTTP/WS 传输器）
     std::unordered_map<uint16_t, AnyTransport> any_transports_;
     // 共享内存池（每个连接一个，按 remote_id 索引）
@@ -185,7 +185,7 @@ DasResult ConnectionManager::RegisterHostLauncher(
         return DAS_E_INVALID_ARGUMENT;
     }
 
-    DasPtr<IInternalHost> host = launcher;
+    DasPtr<IHostConnection>             host = launcher;
     std::unique_lock<std::shared_mutex> lock(impl_->connections_mutex_);
     impl_->hosts_[session_id] = host;
 
@@ -244,8 +244,8 @@ DasResult ConnectionManager::RegisterHostLauncher(
 }
 
 DasResult ConnectionManager::RegisterInternalHost(
-    uint16_t              session_id,
-    DasPtr<IInternalHost> host)
+    uint16_t                session_id,
+    DasPtr<IHostConnection> host)
 {
     if (!host)
     {
@@ -394,7 +394,7 @@ DasResult ConnectionManager::RegisterAnyTransport(
     return DAS_S_OK;
 }
 
-DasPtr<IInternalHost> ConnectionManager::GetInternalHost(
+DasPtr<IHostConnection> ConnectionManager::GetInternalHost(
     uint16_t session_id) const
 {
     std::shared_lock<std::shared_mutex> lock(impl_->connections_mutex_);
@@ -416,7 +416,7 @@ DasPtr<IInternalHost> ConnectionManager::GetInternalHost(
 
 TransportLookupResult ConnectionManager::FindTransport(uint16_t session_id)
 {
-    DasPtr<IInternalHost> host;
+    DasPtr<IHostConnection> host;
 
     {
         std::shared_lock<std::shared_mutex> lock(impl_->connections_mutex_);
@@ -442,8 +442,7 @@ TransportLookupResult ConnectionManager::FindTransport(uint16_t session_id)
             {
                 return {
                     DAS_S_OK,
-                    std::optional<AnyTransportRef>{
-                        std::ref(any_it->second)}};
+                    std::optional<AnyTransportRef>{std::ref(any_it->second)}};
             }
         }
     }
@@ -520,9 +519,9 @@ void ConnectionManager::StartHeartbeatThread()
                 // 阶段 1: 锁内收集超时连接信息
                 struct TimedOutConnection
                 {
-                    uint16_t             session_id;
-                    uint32_t             pid;
-                    DasPtr<IInternalHost> host;
+                    uint16_t                session_id;
+                    uint32_t                pid;
+                    DasPtr<IHostConnection> host;
                 };
 
                 std::vector<TimedOutConnection> timed_out;
@@ -671,11 +670,12 @@ DasResult ConnectionManager::SendHeartbeatToAll()
                             co_return;
                         }
 
-                        auto result = co_await maybe_transport->get()
-                                          .SendCoroutine(
-                            header,
-                            reinterpret_cast<const uint8_t*>(&heartbeat_copy),
-                            sizeof(heartbeat_copy));
+                        auto result =
+                            co_await maybe_transport->get().SendCoroutine(
+                                header,
+                                reinterpret_cast<const uint8_t*>(
+                                    &heartbeat_copy),
+                                sizeof(heartbeat_copy));
                         if (result != DAS_S_OK)
                         {
                             DAS_CORE_LOG_WARN(
@@ -738,7 +738,7 @@ boost::asio::awaitable<DasResult> ConnectionManager::ForwardMessage(
 
     // 4. 发送消息
     AnyTransport& transport = maybe_transport->get();
-    auto result =
+    auto          result =
         co_await transport.SendCoroutine(forward_header, body, body_size);
 
     if (result != DAS_S_OK)

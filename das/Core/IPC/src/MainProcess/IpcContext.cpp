@@ -192,8 +192,8 @@ namespace Core
 
                         AnyTransport transport{
                             HttpIpcTransport(std::move(*ws))};
-                        DasPtr<IInternalHost> host =
-                            DasPtr<IInternalHost>::Attach(
+                        DasPtr<IHostConnection> host =
+                            DasPtr<IHostConnection>::Attach(
                                 new HttpHost(session_id, std::move(transport)));
 
                         boost::asio::co_spawn(

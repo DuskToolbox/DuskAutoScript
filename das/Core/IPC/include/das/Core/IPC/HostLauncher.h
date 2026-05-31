@@ -20,7 +20,7 @@
 
 #include <boost/asio/awaitable.hpp>
 #include <das/Core/IPC/Config.h>
-#include <das/Core/IPC/IInternalHost.h>
+#include <das/Core/IPC/IHostConnection.h>
 #include <das/Core/IPC/MainProcess/IHostLauncher.h>
 
 // Forward declaration for io_context
@@ -31,7 +31,7 @@ namespace boost::asio
 
 DAS_CORE_IPC_NS_BEGIN
 
-class HostLauncher final : public IHostLauncher, public IInternalHost
+class HostLauncher final : public IHostLauncher, public IHostConnection
 {
 public:
     using OnRegisterCallback = std::function<DasResult()>;

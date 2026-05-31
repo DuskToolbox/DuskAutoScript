@@ -4,7 +4,7 @@
 #include <chrono>
 #include <das/Core/IPC/AfUnixAvailable.h>
 #include <das/Core/IPC/DistributedObjectManager.h>
-#include <das/Core/IPC/IInternalHost.h>
+#include <das/Core/IPC/IHostConnection.h>
 #include <das/Core/IPC/IMessageHandler.h>
 #include <das/Core/IPC/IpcMessageHeader.h>
 #include <das/Core/IPC/IpcMessageHeaderBuilder.h>
@@ -22,7 +22,7 @@
 #include <vector>
 using DAS::Core::IPC::AnyTransport;
 using DAS::Core::IPC::CallKey;
-using DAS::Core::IPC::IInternalHost;
+using DAS::Core::IPC::IHostConnection;
 using DAS::Core::IPC::IMessageHandler;
 using DAS::Core::IPC::InboundMessage;
 using DAS::Core::IPC::IPCMessageHeader;
@@ -46,7 +46,7 @@ namespace
         AnyTransport peer_side;
     };
 
-    class TestInternalHost final : public IInternalHost
+    class TestInternalHost final : public IHostConnection
     {
     public:
         TestInternalHost(
@@ -82,10 +82,10 @@ namespace
                 return DAS_E_INVALID_POINTER;
             }
 
-            if (iid == DasIidOf<IInternalHost>())
+            if (iid == DasIidOf<IHostConnection>())
             {
                 (void)AddRef();
-                *pp_object = static_cast<IInternalHost*>(this);
+                *pp_object = static_cast<IHostConnection*>(this);
                 return DAS_S_OK;
             }
 
@@ -496,7 +496,7 @@ TEST_F(IpcRunLoopTest, BusinessResponseWithPendingCallbackUsesFastPath)
         CreateConnectedTransportPair("business_response_callback");
     ASSERT_TRUE(transport_pair.has_value());
 
-    DAS::DasPtr<IInternalHost> host(new TestInternalHost(
+    DAS::DasPtr<IHostConnection> host(new TestInternalHost(
         runloop_->GetIoContext(),
         REMOTE_SESSION_ID,
         transport_pair->run_loop_side));
@@ -563,7 +563,7 @@ TEST_F(IpcRunLoopTest, BusinessResponseWithoutPendingCallbackFallsBackToQueue)
         CreateConnectedTransportPair("business_response_inbound_fallback");
     ASSERT_TRUE(transport_pair.has_value());
 
-    DAS::DasPtr<IInternalHost> host(new TestInternalHost(
+    DAS::DasPtr<IHostConnection> host(new TestInternalHost(
         runloop_->GetIoContext(),
         REMOTE_SESSION_ID,
         transport_pair->run_loop_side));

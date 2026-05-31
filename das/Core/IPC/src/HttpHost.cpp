@@ -8,8 +8,7 @@ DAS_CORE_IPC_NS_BEGIN
 
 HttpHost::HttpHost(uint16_t session_id, AnyTransport&& transport)
     : transport_(std::move(transport)),
-      endpoint_name_(transport_.GetEndpointName()),
-      session_id_(session_id)
+      endpoint_name_(transport_.GetEndpointName()), session_id_(session_id)
 {
 }
 
@@ -30,39 +29,23 @@ boost::asio::io_context& HttpHost::GetIoContext()
     return transport_.GetIoContext();
 }
 
-uint16_t HttpHost::GetSessionId() const
-{
-    return session_id_;
-}
+uint16_t HttpHost::GetSessionId() const { return session_id_; }
 
-uint32_t HttpHost::GetPid() const
-{
-    return 0;
-}
+uint32_t HttpHost::GetPid() const { return 0; }
 
 bool HttpHost::IsRunning() const
 {
     return !cleanup_requested_.load(std::memory_order_acquire)
-        && transport_.IsConnected();
+           && transport_.IsConnected();
 }
 
-void HttpHost::Stop()
-{
-    ScheduleCleanup("stop");
-}
+void HttpHost::Stop() { ScheduleCleanup("stop"); }
 
-void HttpHost::ClearCallbacks()
-{
-}
+void HttpHost::ClearCallbacks() {}
 
-void HttpHost::NotifyHeartbeatTimeout()
-{
-}
+void HttpHost::NotifyHeartbeatTimeout() {}
 
-void HttpHost::TerminateIfRunning()
-{
-    ScheduleCleanup("heartbeat timeout");
-}
+void HttpHost::TerminateIfRunning() { ScheduleCleanup("heartbeat timeout"); }
 
 const std::string& HttpHost::GetEndpointName() const noexcept
 {
@@ -76,8 +59,7 @@ uint32_t HttpHost::AddRef()
 
 uint32_t HttpHost::Release()
 {
-    const auto value =
-        ref_count_.fetch_sub(1, std::memory_order_acq_rel) - 1;
+    const auto value = ref_count_.fetch_sub(1, std::memory_order_acq_rel) - 1;
     if (value == 0)
     {
         delete this;
@@ -92,10 +74,10 @@ DasResult HttpHost::QueryInterface(const DasGuid& iid, void** pp_object)
         return DAS_E_INVALID_POINTER;
     }
 
-    if (iid == DasIidOf<IInternalHost>() || iid == DasIidOf<IDasBase>())
+    if (iid == DasIidOf<IHostConnection>() || iid == DasIidOf<IDasBase>())
     {
         AddRef();
-        *pp_object = static_cast<IInternalHost*>(this);
+        *pp_object = static_cast<IHostConnection*>(this);
         return DAS_S_OK;
     }
 

@@ -6,7 +6,7 @@
 #include <das/Core/IPC/ConnectionManager.h>
 #include <das/Core/IPC/Handshake.h>
 #include <das/Core/IPC/HostLauncher.h>
-#include <das/Core/IPC/IInternalHost.h>
+#include <das/Core/IPC/IHostConnection.h>
 #include <das/Core/IPC/IMessageHandler.h>
 #include <das/Core/IPC/InternalCallbackHandler.h>
 #include <das/Core/IPC/IpcErrors.h>
@@ -618,10 +618,8 @@ boost::asio::awaitable<void> IpcRunLoop::DoSendCoroutine(
             co_return;
         }
 
-        auto result = co_await transport.SendCoroutine(
-            header,
-            body.data(),
-            body.size());
+        auto result =
+            co_await transport.SendCoroutine(header, body.data(), body.size());
         if (result != DAS_S_OK)
         {
             NotifySendFailure(header, result);
@@ -674,11 +672,11 @@ boost::asio::awaitable<void> IpcRunLoop::SendToSessionCoroutine(
             .response_flags = 0};
     }
 
-    const uint16_t target_session_id = header.GetTargetSessionId();
-    DasPtr<IInternalHost> host =
+    const uint16_t          target_session_id = header.GetTargetSessionId();
+    DasPtr<IHostConnection> host =
         connection_manager_->GetInternalHost(target_session_id);
 
-    DasResult lookup_result = DAS_E_IPC_OBJECT_NOT_FOUND;
+    DasResult                      lookup_result = DAS_E_IPC_OBJECT_NOT_FOUND;
     std::optional<AnyTransportRef> maybe_transport;
     if (host)
     {
@@ -709,10 +707,8 @@ boost::asio::awaitable<void> IpcRunLoop::SendToSessionCoroutine(
             co_return;
         }
 
-        auto result = co_await transport.SendCoroutine(
-            header,
-            body.data(),
-            body.size());
+        auto result =
+            co_await transport.SendCoroutine(header, body.data(), body.size());
         if (result != DAS_S_OK)
         {
             complete_send_failure(result);
@@ -764,10 +760,7 @@ DasResult IpcRunLoop::PostSendWithTransport(
 
     boost::asio::co_spawn(
         *io_context_,
-        DoSendCoroutine(
-            std::ref(transport),
-            header,
-            std::move(body)),
+        DoSendCoroutine(std::ref(transport), header, std::move(body)),
         boost::asio::detached);
 
     return DAS_S_OK;
@@ -890,7 +883,7 @@ DasResult IpcRunLoop::RegisterHostLauncher(DasPtr<HostLauncher> launcher)
 
     uint16_t session_id = launcher->GetSessionId();
 
-    DasPtr<IInternalHost> host = launcher;
+    DasPtr<IHostConnection> host = launcher;
     auto [lookup_result, maybe_transport] = host->GetTransport();
     if (DAS::IsFailed(lookup_result) || !maybe_transport)
     {
@@ -924,7 +917,7 @@ DasResult IpcRunLoop::RegisterHostLauncher(DasPtr<HostLauncher> launcher)
     return DAS_S_OK;
 }
 
-DasResult IpcRunLoop::RegisterInternalHost(DasPtr<IInternalHost> host)
+DasResult IpcRunLoop::RegisterInternalHost(DasPtr<IHostConnection> host)
 {
     if (!host)
     {
@@ -971,8 +964,8 @@ DasResult IpcRunLoop::RegisterInternalHost(DasPtr<IInternalHost> host)
 }
 
 void IpcRunLoop::StartAsyncReceiveForInternalHost(
-    uint16_t              session_id,
-    DasPtr<IInternalHost> host)
+    uint16_t                session_id,
+    DasPtr<IHostConnection> host)
 {
     if (!host)
     {
@@ -997,8 +990,8 @@ void IpcRunLoop::StartAsyncReceiveForInternalHost(
 }
 
 boost::asio::awaitable<void> IpcRunLoop::InternalHostReceiveLoop(
-    uint16_t              session_id,
-    DasPtr<IInternalHost> host)
+    uint16_t                session_id,
+    DasPtr<IHostConnection> host)
 {
     while (running_.load())
     {

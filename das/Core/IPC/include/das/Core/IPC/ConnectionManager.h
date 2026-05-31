@@ -7,7 +7,7 @@
 #include <cstdint>
 #include <das/Core/IPC/AnyTransport.h>
 #include <das/Core/IPC/HostLauncher.h>
-#include <das/Core/IPC/IInternalHost.h>
+#include <das/Core/IPC/IHostConnection.h>
 #include <das/Core/IPC/IpcErrors.h>
 #include <das/Core/IPC/ValidatedIPCMessageHeader.h>
 #include <das/IDasBase.h>
@@ -35,17 +35,18 @@ class IpcRunLoop;
  *   - Host: 关闭并可能删除资源
  *   - Child: 仅释放引用，不删除资源
  *
- * ConnectionManager 持有 IInternalHost 引用（DasPtr），
+ * ConnectionManager 持有 IHostConnection 引用（DasPtr），
  * Transport 由具体 internal host 或 Host-side any_transports_ 拥有。
  */
 struct ConnectionInfo
 {
-    uint16_t             host_id;
-    uint16_t             plugin_id;
-    bool                 is_alive;
-    uint64_t             last_heartbeat_ms;
-    DasPtr<IInternalHost> host; ///< Internal host owner for managed transports
-    SharedMemoryPool*    shm_pool = nullptr; ///< 共享内存池（非拥有指针）
+    uint16_t host_id;
+    uint16_t plugin_id;
+    bool     is_alive;
+    uint64_t last_heartbeat_ms;
+    DasPtr<IHostConnection>
+                      host; ///< Internal host owner for managed transports
+    SharedMemoryPool* shm_pool = nullptr; ///< 共享内存池（非拥有指针）
 };
 
 /**
@@ -108,8 +109,8 @@ public:
      * nullptr.
      */
     DasResult RegisterInternalHost(
-        uint16_t              session_id,
-        DasPtr<IInternalHost> host);
+        uint16_t                session_id,
+        DasPtr<IHostConnection> host);
 
     /**
      * @brief 取消注册 HostLauncher
@@ -119,7 +120,7 @@ public:
      */
     DasResult UnregisterHostLauncher(uint16_t session_id);
 
-    DasPtr<IInternalHost> GetInternalHost(uint16_t session_id) const;
+    DasPtr<IHostConnection> GetInternalHost(uint16_t session_id) const;
 
     /**
      * @brief Find a transport at nullable lookup boundaries.
