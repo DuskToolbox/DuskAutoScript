@@ -24,6 +24,17 @@
 
 DAS_CORE_IPC_NS_BEGIN
 
+namespace
+{
+    uint64_t CurrentTimeMs()
+    {
+        return static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now().time_since_epoch())
+                .count());
+    }
+} // namespace
+
 struct ConnectionManager::Impl
 {
     std::unordered_map<uint16_t, ConnectionInfo> connections_;
@@ -66,11 +77,8 @@ DasResult ConnectionManager::RegisterConnection(
     ConnectionInfo info{};
     info.host_id = remote_id;
     info.plugin_id = local_id;
-    info.is_alive = true;
-    info.last_heartbeat_ms = static_cast<uint64_t>(
-        std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now().time_since_epoch())
-            .count());
+    info.MarkAlive();
+    info.last_heartbeat_ms = CurrentTimeMs();
     info.host = nullptr;
     info.shm_pool = nullptr;
 
@@ -148,7 +156,7 @@ bool ConnectionManager::IsConnectionAlive(uint16_t remote_id) const
         DAS_CORE_LOG_WARN("Connection not found for remote_id = {}", remote_id);
         return false;
     }
-    return it->second.is_alive;
+    return it->second.IsAlive() && !it->second.IsClosing();
 }
 
 DasResult ConnectionManager::GetConnection(
@@ -169,8 +177,8 @@ DasResult ConnectionManager::GetConnection(
     // Shallow copy: 只复制非 DasPtr 字段
     out_info.host_id = it->second.host_id;
     out_info.plugin_id = it->second.plugin_id;
-    out_info.is_alive = it->second.is_alive;
     out_info.last_heartbeat_ms = it->second.last_heartbeat_ms;
+    out_info.state_flags = it->second.state_flags;
     out_info.host = nullptr;
     out_info.shm_pool = it->second.shm_pool;
     return DAS_S_OK;
@@ -194,11 +202,8 @@ DasResult ConnectionManager::RegisterHostLauncher(
     if (it != impl_->connections_.end())
     {
         it->second.host = host;
-        it->second.is_alive = true;
-        it->second.last_heartbeat_ms = static_cast<uint64_t>(
-            std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::steady_clock::now().time_since_epoch())
-                .count());
+        it->second.MarkAlive();
+        it->second.last_heartbeat_ms = CurrentTimeMs();
     }
     else
     {
@@ -206,11 +211,8 @@ DasResult ConnectionManager::RegisterHostLauncher(
         ConnectionInfo info{};
         info.host_id = session_id;
         info.plugin_id = 0;
-        info.is_alive = true;
-        info.last_heartbeat_ms = static_cast<uint64_t>(
-            std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::steady_clock::now().time_since_epoch())
-                .count());
+        info.MarkAlive();
+        info.last_heartbeat_ms = CurrentTimeMs();
         info.host = host;
         info.shm_pool = nullptr;
 
@@ -288,11 +290,8 @@ DasResult ConnectionManager::RegisterInternalHost(
     if (it != impl_->connections_.end())
     {
         it->second.host = host;
-        it->second.is_alive = true;
-        it->second.last_heartbeat_ms = static_cast<uint64_t>(
-            std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::steady_clock::now().time_since_epoch())
-                .count());
+        it->second.MarkAlive();
+        it->second.last_heartbeat_ms = CurrentTimeMs();
         it->second.shm_pool = nullptr;
     }
     else
@@ -300,11 +299,8 @@ DasResult ConnectionManager::RegisterInternalHost(
         ConnectionInfo info{};
         info.host_id = session_id;
         info.plugin_id = 0;
-        info.is_alive = true;
-        info.last_heartbeat_ms = static_cast<uint64_t>(
-            std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::steady_clock::now().time_since_epoch())
-                .count());
+        info.MarkAlive();
+        info.last_heartbeat_ms = CurrentTimeMs();
         info.host = host;
         info.shm_pool = nullptr;
         impl_->connections_[session_id] = std::move(info);
@@ -413,13 +409,18 @@ DasPtr<IHostConnection> ConnectionManager::FindManagedHostConnection(
 {
     std::shared_lock<std::shared_mutex> lock(impl_->connections_mutex_);
 
+    auto conn_it = impl_->connections_.find(session_id);
+    if (conn_it != impl_->connections_.end() && conn_it->second.IsClosing())
+    {
+        return nullptr;
+    }
+
     auto it = impl_->hosts_.find(session_id);
     if (it != impl_->hosts_.end())
     {
         return it->second;
     }
 
-    auto conn_it = impl_->connections_.find(session_id);
     if (conn_it != impl_->connections_.end())
     {
         return conn_it->second.host;
@@ -444,6 +445,12 @@ TransportLookupResult ConnectionManager::FindHostLocalTransport(
     uint16_t session_id)
 {
     std::shared_lock<std::shared_mutex> lock(impl_->connections_mutex_);
+
+    auto conn_it = impl_->connections_.find(session_id);
+    if (conn_it != impl_->connections_.end() && conn_it->second.IsClosing())
+    {
+        return {DAS_E_IPC_CONNECTION_LOST, std::nullopt};
+    }
 
     auto it = impl_->host_local_transports_.find(session_id);
     if (it == impl_->host_local_transports_.end())
@@ -489,13 +496,14 @@ DasResult ConnectionManager::SetConnectionAlive(
         return DAS_E_IPC_OBJECT_NOT_FOUND;
     }
 
-    it->second.is_alive = is_alive;
     if (is_alive)
     {
-        it->second.last_heartbeat_ms =
-            std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::steady_clock::now().time_since_epoch())
-                .count();
+        it->second.MarkAlive();
+        it->second.last_heartbeat_ms = CurrentTimeMs();
+    }
+    else
+    {
+        it->second.MarkDead();
     }
 
     return DAS_S_OK;
@@ -537,9 +545,9 @@ void ConnectionManager::StartHeartbeatThread()
                 // 阶段 1: 锁内收集超时连接信息
                 struct TimedOutConnection
                 {
-                    uint16_t                session_id;
-                    uint32_t                pid;
                     DasPtr<IHostConnection> host;
+                    uint32_t                pid = 0;
+                    uint16_t                session_id = 0;
                 };
 
                 std::vector<TimedOutConnection> timed_out;
@@ -551,27 +559,36 @@ void ConnectionManager::StartHeartbeatThread()
                     for (auto it = impl_->connections_.begin();
                          it != impl_->connections_.end();)
                     {
+                        ConnectionInfo& info = it->second;
+                        if (info.IsClosing())
+                        {
+                            ++it;
+                            continue;
+                        }
+
                         uint64_t elapsed_ms =
-                            current_time_ms - it->second.last_heartbeat_ms;
+                            current_time_ms - info.last_heartbeat_ms;
 
                         if (elapsed_ms > timeout_ms)
                         {
-                            it->second.is_alive = false;
+                            info.MarkClosing();
                             uint16_t session_id = it->first;
 
                             TimedOutConnection toc;
                             toc.session_id = session_id;
-                            toc.pid = 0;
 
                             auto host_it = impl_->hosts_.find(session_id);
                             if (host_it != impl_->hosts_.end())
                             {
                                 toc.host = host_it->second;
                                 toc.pid = toc.host->GetPid();
-                                impl_->hosts_.erase(host_it);
+                            }
+                            else if (info.host)
+                            {
+                                toc.host = info.host;
+                                toc.pid = toc.host->GetPid();
                             }
 
-                            it->second.host = nullptr;
                             ++it;
 
                             timed_out.push_back(std::move(toc));
@@ -601,7 +618,8 @@ void ConnectionManager::StartHeartbeatThread()
                     std::unique_lock<std::shared_mutex> lock(
                         impl_->connections_mutex_);
                     auto it = impl_->connections_.find(toc.session_id);
-                    if (it != impl_->connections_.end() && !it->second.is_alive)
+                    if (it != impl_->connections_.end()
+                        && it->second.IsClosing())
                     {
                         CleanupConnectionResources(toc.session_id);
                         impl_->connections_.erase(it);
@@ -633,7 +651,7 @@ DasResult ConnectionManager::SendHeartbeatToAll()
 
     for (const auto& [session_id, info] : impl_->connections_)
     {
-        if (!info.is_alive || !info.host)
+        if (!info.IsAlive() || info.IsClosing() || !info.host)
         {
             continue;
         }
@@ -723,12 +741,10 @@ void ConnectionManager::UpdateHeartbeatTimestamp(uint16_t session_id)
     std::unique_lock<std::shared_mutex> lock(impl_->connections_mutex_);
 
     auto it = impl_->connections_.find(session_id);
-    if (it != impl_->connections_.end())
+    if (it != impl_->connections_.end() && !it->second.IsClosing())
     {
-        it->second.last_heartbeat_ms = static_cast<uint64_t>(
-            std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::steady_clock::now().time_since_epoch())
-                .count());
+        it->second.MarkAlive();
+        it->second.last_heartbeat_ms = CurrentTimeMs();
     }
 }
 
@@ -813,7 +829,7 @@ DasResult ConnectionManager::CleanupConnectionResources(uint16_t remote_id)
 
     info.shm_pool = nullptr;
     info.host = nullptr;
-    info.is_alive = false;
+    info.state_flags = 0;
 
     return DAS_S_OK;
 }

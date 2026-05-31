@@ -406,6 +406,13 @@ TEST_F(IpcConnectionManagerTest, TimeoutMarksClosingBeforeCallbacksFinish)
         lookup_future.wait_for(std::chrono::milliseconds(250))
         == std::future_status::ready;
 
+    auto owner_future = std::async(
+        std::launch::async,
+        [&]() { return manager_->FindManagedHostConnection(2); });
+    const bool owner_returned =
+        owner_future.wait_for(std::chrono::milliseconds(250))
+        == std::future_status::ready;
+
     {
         std::lock_guard<std::mutex> lock(mutex);
         release_callback = true;
@@ -418,6 +425,7 @@ TEST_F(IpcConnectionManagerTest, TimeoutMarksClosingBeforeCallbacksFinish)
     }
 
     auto [lookup_result, maybe_transport] = lookup_future.get();
+    auto closing_owner = owner_future.get();
 
     manager_->StopHeartbeatThread();
 
@@ -426,13 +434,18 @@ TEST_F(IpcConnectionManagerTest, TimeoutMarksClosingBeforeCallbacksFinish)
         << "timeout callbacks must run outside the ConnectionManager lock";
     EXPECT_TRUE(lookup_returned)
         << "timeout lookup lock-out must not wait for callbacks";
+    EXPECT_TRUE(owner_returned)
+        << "closing owner lookup must not wait for callbacks";
     EXPECT_EQ(get_result, DAS_S_OK)
         << "timed-out connection should be marked closing and retained until "
            "timeout callbacks finish";
     if (get_result == DAS_S_OK)
     {
-        EXPECT_FALSE(info.is_alive);
+        EXPECT_FALSE(info.IsAlive());
+        EXPECT_TRUE(info.IsClosing());
     }
+    EXPECT_FALSE(closing_owner)
+        << "managed host owner lookup must fail for a closing session";
     EXPECT_TRUE(DAS::IsFailed(lookup_result));
     EXPECT_FALSE(maybe_transport.has_value());
 

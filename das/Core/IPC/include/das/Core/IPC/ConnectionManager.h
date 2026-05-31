@@ -39,15 +39,43 @@ class HostLauncher;
  * ConnectionManager 持有 IHostConnection 引用（DasPtr），
  * Transport 由具体 internal host 或 Host-local transport storage 拥有。
  */
+enum ConnectionStateFlags : uint8_t
+{
+    CONNECTION_STATE_ALIVE = 0x01,
+    CONNECTION_STATE_CLOSING = 0x02,
+};
+
 struct ConnectionInfo
 {
-    uint16_t host_id;
-    uint16_t plugin_id;
-    bool     is_alive;
-    uint64_t last_heartbeat_ms;
     DasPtr<IHostConnection>
                       host; ///< Internal host owner for managed transports
     SharedMemoryPool* shm_pool = nullptr; ///< 共享内存池（非拥有指针）
+    uint64_t          last_heartbeat_ms = 0;
+    uint16_t          host_id = 0;
+    uint16_t          plugin_id = 0;
+    uint8_t           state_flags = 0;
+
+    [[nodiscard]]
+    bool IsAlive() const noexcept
+    {
+        return (state_flags & CONNECTION_STATE_ALIVE) != 0;
+    }
+
+    [[nodiscard]]
+    bool IsClosing() const noexcept
+    {
+        return (state_flags & CONNECTION_STATE_CLOSING) != 0;
+    }
+
+    void MarkAlive() noexcept { state_flags = CONNECTION_STATE_ALIVE; }
+
+    void MarkDead() noexcept { state_flags &= ~CONNECTION_STATE_ALIVE; }
+
+    void MarkClosing() noexcept
+    {
+        state_flags = static_cast<uint8_t>(
+            (state_flags & ~CONNECTION_STATE_ALIVE) | CONNECTION_STATE_CLOSING);
+    }
 };
 
 /**
