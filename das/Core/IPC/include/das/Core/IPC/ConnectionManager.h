@@ -185,7 +185,9 @@ public:
     /**
      * @brief 向所有已连接的 Host 发送 HEARTBEAT 消息
      *
-     * 异步发送，不等待回复。回复会在消息循环中处理。
+     * Posts HEARTBEAT requests to connected hosts. Connection freshness is
+     * updated only after a HEARTBEAT RESPONSE is received and routed through
+     * UpdateHeartbeatTimestamp().
      *
      * @return DasResult DAS_S_OK 成功
      */
