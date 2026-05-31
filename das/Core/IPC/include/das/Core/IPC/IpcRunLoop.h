@@ -411,6 +411,36 @@ public:
         const std::vector<uint8_t>&      body,
         DasPtr<IHostConnection>          connection);
 
+    /**
+     * @brief Route a received message through the shared IPC receive rules.
+     *
+     * Receive adapters own transport acquire/receive/disconnect behavior and
+     * delegate header/body semantics here.
+     *
+     * @param header Message header
+     * @param body Message body
+     * @return boost::asio::awaitable<void>
+     */
+    boost::asio::awaitable<void> RouteIncomingMessage(
+        const ValidatedIPCMessageHeader& header,
+        std::vector<uint8_t>             body);
+
+    /**
+     * @brief Route a received message with a managed-host owner guard.
+     *
+     * Used by MainProcess managed-host receive adapters so response sends and
+     * forwards can retain the connected-host owner across async work.
+     *
+     * @param header Message header
+     * @param body Message body
+     * @param connection Managed host owner guard
+     * @return boost::asio::awaitable<void>
+     */
+    boost::asio::awaitable<void> RouteIncomingMessage(
+        const ValidatedIPCMessageHeader& header,
+        std::vector<uint8_t>             body,
+        DasPtr<IHostConnection>          connection);
+
     //=========================================================================
     // 事件驱动方法（内部使用）
     //=========================================================================

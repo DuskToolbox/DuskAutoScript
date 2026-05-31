@@ -35,6 +35,32 @@
 
 DAS_CORE_IPC_NS_BEGIN
 
+namespace
+{
+    bool IsControlPlaneMessage(const ValidatedIPCMessageHeader& header) noexcept
+    {
+        return (header.GetHeaderFlags() & HeaderFlags::CONTROL_PLANE) != 0;
+    }
+
+    bool IsHeartbeatMessage(const ValidatedIPCMessageHeader& header) noexcept
+    {
+        return header.GetInterfaceId()
+               == static_cast<uint32_t>(
+                   HandshakeInterfaceId::HANDSHAKE_IFACE_HEARTBEAT);
+    }
+
+    DasResult GetResponseResult(
+        const ValidatedIPCMessageHeader& header) noexcept
+    {
+        if (header.HasError())
+        {
+            return static_cast<DasResult>(header.GetErrorCode());
+        }
+
+        return DAS_S_OK;
+    }
+} // namespace
+
 IpcRunLoop::IpcRunLoop(
     bool                             enable_heartbeat,
     IpcMessageQueue<InboundMessage>* inbound_queue,
@@ -219,64 +245,6 @@ boost::asio::awaitable<void> IpcRunLoop::DispatchToHandlerWithSender(
         header.GetHeaderFlags(),
         body.size());
 
-    // 转发检查：如果 target_session_id 不是本地 session，转发到目标
-    if (connection_manager_ && header.GetTargetSessionId() != 0
-        && header.GetTargetSessionId() != local_session_id_)
-    {
-        DAS_CORE_LOG_DEBUG(
-            "Forwarding message: target={}, source={}, type={}",
-            header.GetTargetSessionId(),
-            header.GetSourceSessionId(),
-            static_cast<int>(header.GetMessageType()));
-
-        // Route through send queue instead of direct ForwardMessage
-        // to prevent concurrent async_write on the same pipe
-        DasPtr<IHostConnection> target_connection =
-            connection_manager_->GetInternalHost(header.GetTargetSessionId());
-        std::vector<uint8_t> fwd_body(body.begin(), body.end());
-        DasResult            fwd_result = DAS_E_IPC_OBJECT_NOT_FOUND;
-        if (target_connection)
-        {
-            fwd_result = PostSendWithTransport(
-                std::move(target_connection),
-                header,
-                std::move(fwd_body));
-        }
-        else
-        {
-            fwd_result = PostSend(header, std::move(fwd_body));
-        }
-
-        if (fwd_result != DAS_S_OK)
-        {
-            DAS_CORE_LOG_ERROR(
-                "Forward failed: target = {}, result = {}",
-                header.GetTargetSessionId(),
-                fwd_result);
-        }
-
-        co_return;
-    }
-
-    // 处理 HEARTBEAT RESPONSE：收到心跳回复时更新时间戳
-    if (header.GetInterfaceId()
-        == static_cast<uint32_t>(
-            HandshakeInterfaceId::HANDSHAKE_IFACE_HEARTBEAT))
-    {
-        if (header.GetMessageType() == MessageType::RESPONSE)
-        {
-            // 收到心跳回复，更新时间戳
-            if (connection_manager_)
-            {
-                // V3: 使用 source_session_id
-                connection_manager_->UpdateHeartbeatTimestamp(
-                    header.GetSourceSessionId());
-            }
-            co_return;
-        }
-        // REQUEST 继续交给 handler 处理
-    }
-
     // CONTROL_PLANE dispatch: use IO-safe ControlPlaneContext.
     // This path runs on the IO coroutine domain and must not access
     // BusinessThread-owned DOM/Registry/proxy state.
@@ -339,6 +307,126 @@ boost::asio::awaitable<void> IpcRunLoop::DispatchToHandlerWithSender(
         DAS_CORE_LOG_WARN(
             "No handler found for interface_id = 0x{:08X}",
             header.GetInterfaceId());
+    }
+}
+
+boost::asio::awaitable<void> IpcRunLoop::RouteIncomingMessage(
+    const ValidatedIPCMessageHeader& header,
+    std::vector<uint8_t>             body)
+{
+    co_await RouteIncomingMessage(header, std::move(body), {});
+}
+
+boost::asio::awaitable<void> IpcRunLoop::RouteIncomingMessage(
+    const ValidatedIPCMessageHeader& header,
+    std::vector<uint8_t>             body,
+    DasPtr<IHostConnection>          connection)
+{
+    if (IsControlPlaneMessage(header))
+    {
+        if (header.GetMessageType() == MessageType::RESPONSE)
+        {
+            if (IsHeartbeatMessage(header) && connection_manager_)
+            {
+                connection_manager_->UpdateHeartbeatTimestamp(
+                    header.GetSourceSessionId());
+            }
+
+            CallKey call_key{header.GetSourceSessionId(), header.GetCallId()};
+            static_cast<void>(TryCompletePendingCallbackOnly(
+                call_key,
+                GetResponseResult(header),
+                body,
+                header.GetFlags()));
+            co_return;
+        }
+
+        if (connection)
+        {
+            co_await DispatchToHandlerCoroutine(
+                header,
+                body,
+                std::move(connection));
+        }
+        else
+        {
+            IpcResponseSender sender(*this);
+            co_await DispatchToHandlerWithSender(header, body, sender);
+        }
+        co_return;
+    }
+
+    if (connection_manager_ && header.GetTargetSessionId() != 0
+        && header.GetTargetSessionId() != local_session_id_)
+    {
+        DAS_CORE_LOG_DEBUG(
+            "Forwarding message: target = {}, source = {}, type = {}",
+            header.GetTargetSessionId(),
+            header.GetSourceSessionId(),
+            static_cast<int>(header.GetMessageType()));
+
+        DasPtr<IHostConnection> target_connection =
+            connection_manager_->GetInternalHost(header.GetTargetSessionId());
+        DasResult fwd_result = DAS_E_IPC_OBJECT_NOT_FOUND;
+        if (target_connection)
+        {
+            fwd_result = PostSendWithTransport(
+                std::move(target_connection),
+                header,
+                std::move(body));
+        }
+        else
+        {
+            fwd_result = PostSend(header, std::move(body));
+        }
+
+        if (fwd_result != DAS_S_OK)
+        {
+            DAS_CORE_LOG_ERROR(
+                "Forward failed: target = {}, result = {}",
+                header.GetTargetSessionId(),
+                fwd_result);
+        }
+
+        co_return;
+    }
+
+    if (header.GetMessageType() == MessageType::RESPONSE)
+    {
+        CallKey call_key{header.GetSourceSessionId(), header.GetCallId()};
+        if (TryCompletePendingCallbackOnly(
+                call_key,
+                GetResponseResult(header),
+                body,
+                header.GetFlags()))
+        {
+            co_return;
+        }
+    }
+
+    if (!inbound_queue_)
+    {
+        DAS_CORE_LOG_ERROR(
+            "Inbound queue is not initialized, dropping message: "
+            "source = {}, target = {}, call_id = {}",
+            header.GetSourceSessionId(),
+            header.GetTargetSessionId(),
+            header.GetCallId());
+        co_return;
+    }
+
+    InboundMessage msg;
+    msg.header = header;
+    msg.body = std::move(body);
+    auto push_result = inbound_queue_->Push(std::move(msg));
+    if (push_result != DAS_S_OK)
+    {
+        DAS_CORE_LOG_ERROR(
+            "Failed to push inbound message: source = {}, target = {}, "
+            "result = {}",
+            header.GetSourceSessionId(),
+            header.GetTargetSessionId(),
+            push_result);
     }
 }
 
@@ -1118,103 +1206,7 @@ boost::asio::awaitable<void> IpcRunLoop::InternalHostReceiveLoop(
                 header.Raw().interface_id,
                 header.Raw().call_id);
 
-            if ((header.GetHeaderFlags() & HeaderFlags::CONTROL_PLANE) != 0)
-            {
-                if (header.GetMessageType() == MessageType::RESPONSE)
-                {
-                    CallKey call_key{
-                        header.GetSourceSessionId(),
-                        header.GetCallId()};
-                    CompletePendingCall(
-                        call_key,
-                        DAS_S_OK,
-                        std::move(body),
-                        header.GetFlags());
-                }
-                else
-                {
-                    co_await DispatchToHandlerCoroutine(header, body, host);
-                }
-            }
-            else
-            {
-                if (connection_manager_
-                    && header.GetTargetSessionId() != local_session_id_)
-                {
-                    DasPtr<IHostConnection> target_connection =
-                        connection_manager_->GetInternalHost(
-                            header.GetTargetSessionId());
-                    std::vector<uint8_t> fwd_body(body.begin(), body.end());
-                    DasResult fwd_result = DAS_E_IPC_OBJECT_NOT_FOUND;
-                    if (target_connection)
-                    {
-                        fwd_result = PostSendWithTransport(
-                            std::move(target_connection),
-                            header,
-                            std::move(fwd_body));
-                    }
-                    else
-                    {
-                        fwd_result = PostSend(header, std::move(fwd_body));
-                    }
-
-                    if (fwd_result != DAS_S_OK)
-                    {
-                        DAS_CORE_LOG_ERROR(
-                            "Internal host forward failed: target = {}, result = {}",
-                            header.GetTargetSessionId(),
-                            fwd_result);
-                    }
-                    co_return;
-                }
-
-                if (header.GetMessageType() == MessageType::RESPONSE)
-                {
-                    CallKey call_key{
-                        header.GetSourceSessionId(),
-                        header.GetCallId()};
-                    if (TryCompletePendingCallbackOnly(
-                            call_key,
-                            DAS_S_OK,
-                            body,
-                            header.GetFlags()))
-                    {
-                        continue;
-                    }
-
-                    InboundMessage msg;
-                    msg.header = header;
-                    msg.body = std::move(body);
-                    if (inbound_queue_)
-                    {
-                        auto push_result = inbound_queue_->Push(std::move(msg));
-                        if (push_result != DAS_S_OK)
-                        {
-                            DAS_CORE_LOG_ERROR(
-                                "Internal host failed to push response: session_id = {}, result = {}",
-                                session_id,
-                                push_result);
-                        }
-                    }
-                }
-                else
-                {
-                    InboundMessage msg;
-                    msg.header = header;
-                    msg.body = std::move(body);
-                    if (inbound_queue_)
-                    {
-                        auto push_result = inbound_queue_->Push(std::move(msg));
-                        if (push_result != DAS_S_OK)
-                        {
-                            DAS_CORE_LOG_ERROR(
-                                "Internal host failed to push inbound message: session_id = {}, result = {}",
-                                session_id,
-                                push_result);
-                        }
-                    }
-                }
-            }
+            co_await RouteIncomingMessage(header, std::move(body), host);
         }
         catch (const boost::system::system_error& e)
         {
