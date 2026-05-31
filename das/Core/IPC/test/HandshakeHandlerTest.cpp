@@ -1,14 +1,115 @@
+#include <atomic>
 #include <chrono>
 #include <cstring>
+#ifdef DAS_WINDOWS
+#include <winsock2.h>
+#ifdef interface
+#undef interface
+#endif
+#endif
+#include <das/Core/IPC/AfUnixAvailable.h>
 #include <das/Core/IPC/Host/HandshakeHandler.h>
 #include <das/Core/IPC/IpcMessageHeaderBuilder.h>
+#include <das/Core/IPC/IpcMessageQueue.h>
+#include <das/Core/IPC/IpcResponseSender.h>
+#include <das/Core/IPC/IpcRunLoop.h>
+#include <das/Core/IPC/ProxyFactory.h>
+#include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <das/DasPtr.hpp>
+#include <future>
 #include <gtest/gtest.h>
+#include <optional>
 #include <thread>
+
+#include <boost/asio/use_future.hpp>
 
 using namespace DAS;
 using namespace DAS::Core::IPC;
 using namespace DAS::Core::IPC::Host;
+
+namespace
+{
+    constexpr uint16_t LOCAL_SESSION_ID = 1;
+    constexpr uint16_t REMOTE_SESSION_ID = 2;
+
+    struct ConnectedAnyTransportPair
+    {
+        AnyTransport run_loop_side;
+        AnyTransport peer_side;
+    };
+
+    uint64_t CurrentSystemTimeMs()
+    {
+        return static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::system_clock::now().time_since_epoch())
+                .count());
+    }
+
+    std::optional<ConnectedAnyTransportPair> CreateConnectedTransportPair(
+        boost::asio::io_context& io_context)
+    {
+        static std::atomic<uint32_t> next_endpoint_id{1};
+        const auto                   base = DAS_FMT_NS::format(
+            "dhb_{}_{}",
+            GetCurrentProcessId() % 10000,
+            next_endpoint_id.fetch_add(1));
+        const auto read_endpoint = base + "_read";
+        const auto write_endpoint = base + "_write";
+        const bool use_single_endpoint = AfUnixAvailable();
+        const auto peer_read_endpoint =
+            use_single_endpoint ? read_endpoint : write_endpoint;
+        const auto peer_write_endpoint =
+            use_single_endpoint ? write_endpoint : read_endpoint;
+
+        auto server_future = boost::asio::co_spawn(
+            io_context,
+            AnyTransport::CreateAsync(
+                io_context,
+                read_endpoint,
+                write_endpoint,
+                true,
+                65536),
+            boost::asio::use_future);
+        auto peer_future = boost::asio::co_spawn(
+            io_context,
+            AnyTransport::CreateAsync(
+                io_context,
+                peer_read_endpoint,
+                peer_write_endpoint,
+                false,
+                65536),
+            boost::asio::use_future);
+
+        std::thread io_thread([&io_context]() { io_context.run(); });
+
+        auto [server_result, server_transport] = server_future.get();
+        auto [peer_result, peer_transport] = peer_future.get();
+
+        if (io_thread.joinable())
+        {
+            io_thread.join();
+        }
+        io_context.restart();
+
+        if (server_result != DAS_S_OK || !server_transport)
+        {
+            ADD_FAILURE() << "Failed to create handler-side transport: "
+                          << server_result;
+            return std::nullopt;
+        }
+
+        if (peer_result != DAS_S_OK || !peer_transport)
+        {
+            ADD_FAILURE() << "Failed to create peer transport: " << peer_result;
+            return std::nullopt;
+        }
+
+        return ConnectedAnyTransportPair{
+            std::move(*server_transport),
+            std::move(*peer_transport)};
+    }
+} // namespace
 
 // Test fixture for HandshakeHandler tests
 class HandshakeHandlerTest : public ::testing::Test
@@ -81,78 +182,97 @@ protected:
 
 // ====== HandleHeartbeat Tests ======
 
-// 注意：由于旧的同步 HandleMessage 接口已删除，这些测试暂时跳过
-// 实际的 heartbeat 功能需要通过协程接口测试
-// TODO: 重新实现通过协程接口的测试
-
-TEST_F(HandshakeHandlerTest, DISABLED_HandleHeartbeat_UpdatesOnlySenderClient)
-{
-    // 1. 注册两个客户端
-    RegisterMockClient(2, 1001, "PluginA");
-    RegisterMockClient(3, 1002, "PluginB");
-
-    ASSERT_EQ(handler_->GetClientCount(), 2u);
-
-    // 2. 获取两个客户端的初始心跳时间
-    auto client1 = handler_->GetClient(2);
-    auto client2 = handler_->GetClient(3);
-    ASSERT_TRUE(client1.has_value());
-    ASSERT_TRUE(client2.has_value());
-
-    auto initial_heartbeat_1 = client1->last_heartbeat;
-    auto initial_heartbeat_2 = client2->last_heartbeat;
-
-    // 等待一小段时间确保时间戳差异
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-
-    // 3. 发送心跳，指定 session_id = 2
-    auto result = SendHeartbeat(2);
-    EXPECT_EQ(result, DAS_S_OK);
-
-    // 4. 验证只有 session_id = 2 的客户端的心跳时间被更新
-    client1 = handler_->GetClient(2);
-    client2 = handler_->GetClient(3);
-    ASSERT_TRUE(client1.has_value());
-    ASSERT_TRUE(client2.has_value());
-
-    // client1 的时间应该已更新
-    EXPECT_GT(client1->last_heartbeat, initial_heartbeat_1);
-    // client2 的时间应该保持不变
-    EXPECT_EQ(client2->last_heartbeat, initial_heartbeat_2);
-}
-
-TEST_F(HandshakeHandlerTest, DISABLED_HandleHeartbeat_NonExistentClientNoCrash)
-{
-    // 测试当心跳来自不存在的客户端时，系统不崩溃
-    auto result = SendHeartbeat(9999);
-    EXPECT_EQ(result, DAS_S_OK);
-}
-
 TEST_F(
     HandshakeHandlerTest,
-    DISABLED_HandleHeartbeat_MultipleClientsIndependent)
+    HandleHeartbeatSendsHeartbeatResponseWithResponderTimestamp)
 {
-    // 注册三个客户端
-    RegisterMockClient(10, 2001, "Plugin1");
-    RegisterMockClient(20, 2002, "Plugin2");
-    RegisterMockClient(30, 2003, "Plugin3");
+    IpcMessageQueue<InboundMessage> inbound_queue(8);
+    ProxyFactory                    proxy_factory;
+    RemoteObjectRegistry            registry;
+    IpcRunLoop run_loop(false, &inbound_queue, proxy_factory, registry);
+    run_loop.SetSessionId(LOCAL_SESSION_ID);
 
-    ASSERT_EQ(handler_->GetClientCount(), 3u);
+    auto transport_pair = CreateConnectedTransportPair(run_loop.GetIoContext());
+    ASSERT_TRUE(transport_pair.has_value());
 
-    // 记录初始心跳时间
-    auto initial_10 = handler_->GetClient(10)->last_heartbeat;
-    auto initial_20 = handler_->GetClient(20)->last_heartbeat;
-    auto initial_30 = handler_->GetClient(30)->last_heartbeat;
+    IpcResponseSender sender(transport_pair->run_loop_side, run_loop);
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    HeartbeatV1 request{};
+    InitHeartbeat(request, 1234);
+    std::vector<uint8_t> body(sizeof(request));
+    std::memcpy(body.data(), &request, sizeof(request));
 
-    // 发送心跳给 session_id = 20
-    SendHeartbeat(20);
+    auto header = IPCMessageHeaderBuilder()
+                      .SetMessageType(MessageType::REQUEST)
+                      .SetControlPlaneCommand(
+                          HandshakeInterfaceId::HANDSHAKE_IFACE_HEARTBEAT)
+                      .SetBodySize(static_cast<uint32_t>(body.size()))
+                      .SetCallId(next_call_id_++)
+                      .SetSourceSessionId(REMOTE_SESSION_ID)
+                      .SetTargetSessionId(LOCAL_SESSION_ID)
+                      .Build();
 
-    // 验证只有 session_id = 20 的客户端被更新
-    EXPECT_EQ(handler_->GetClient(10)->last_heartbeat, initial_10);
-    EXPECT_GT(handler_->GetClient(20)->last_heartbeat, initial_20);
-    EXPECT_EQ(handler_->GetClient(30)->last_heartbeat, initial_30);
+    ControlPlaneContext ctx{run_loop, header};
+
+    std::thread run_thread([&run_loop]() { run_loop.Run(); });
+    for (int i = 0; i < 100 && !run_loop.IsRunning(); ++i)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    auto receive_future = boost::asio::co_spawn(
+        run_loop.GetIoContext(),
+        transport_pair->peer_side.ReceiveCoroutine(),
+        boost::asio::use_future);
+    const uint64_t before_ms = CurrentSystemTimeMs();
+    auto           handle_future = boost::asio::co_spawn(
+        run_loop.GetIoContext(),
+        handler_->HandleMessage(header, body, sender, ctx),
+        boost::asio::use_future);
+
+    EXPECT_EQ(handle_future.get(), DAS_S_OK);
+
+    std::optional<AsyncIpcMessage> received_message;
+    if (receive_future.wait_for(std::chrono::milliseconds(500))
+        == std::future_status::ready)
+    {
+        auto received = receive_future.get();
+        if (auto* message = std::get_if<AsyncIpcMessage>(&received))
+        {
+            received_message = std::move(*message);
+        }
+    }
+    else
+    {
+        ADD_FAILURE()
+            << "HEARTBEAT request should produce a HeartbeatV1 RESPONSE";
+        transport_pair->peer_side.Cleanup();
+        transport_pair->run_loop_side.Cleanup();
+        (void)receive_future.wait_for(std::chrono::milliseconds(500));
+    }
+
+    const uint64_t after_ms = CurrentSystemTimeMs();
+    run_loop.RequestStop();
+    if (run_thread.joinable())
+    {
+        run_thread.join();
+    }
+
+    ASSERT_TRUE(received_message.has_value());
+    const auto& [response_header, response_body] = *received_message;
+    EXPECT_EQ(response_header.GetMessageType(), MessageType::RESPONSE);
+    EXPECT_EQ(
+        response_header.GetInterfaceId(),
+        static_cast<uint32_t>(HandshakeInterfaceId::HANDSHAKE_IFACE_HEARTBEAT));
+    EXPECT_EQ(response_header.GetCallId(), header.GetCallId());
+    EXPECT_EQ(response_header.GetSourceSessionId(), LOCAL_SESSION_ID);
+    EXPECT_EQ(response_header.GetTargetSessionId(), REMOTE_SESSION_ID);
+    ASSERT_EQ(response_body.size(), sizeof(HeartbeatV1));
+
+    HeartbeatV1 response{};
+    std::memcpy(&response, response_body.data(), sizeof(response));
+    EXPECT_GE(response.timestamp_ms, before_ms);
+    EXPECT_LE(response.timestamp_ms, after_ms + 1000);
 }
 
 // ====== Basic Tests ======

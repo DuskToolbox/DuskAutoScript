@@ -1,13 +1,17 @@
 #include <chrono>
+#include <condition_variable>
 #include <das/Core/IPC/ConnectionManager.h>
 #include <das/Core/IPC/HostLauncher.h>
 #include <das/DasPtr.hpp>
+#include <future>
 #include <gtest/gtest.h>
+#include <mutex>
 #include <thread>
 
 #include <boost/asio/io_context.hpp>
 
 using Das::DasPtr;
+using DAS::Core::IPC::ConnectionInfo;
 using DAS::Core::IPC::ConnectionManager;
 using DAS::Core::IPC::HostLauncher;
 
@@ -322,4 +326,100 @@ TEST_F(IpcConnectionManagerTest, HeartbeatTimeout_TriggersCallback)
     // Verify: the heartbeat timeout callback was invoked with correct GUID
     EXPECT_TRUE(callback_called);
     EXPECT_EQ(received_guid, test_guid);
+}
+
+TEST_F(IpcConnectionManagerTest, TimeoutMarksClosingBeforeCallbacksFinish)
+{
+    boost::asio::io_context io_ctx;
+
+    DasPtr<HostLauncher> launcher(new HostLauncher(io_ctx, 2, nullptr));
+
+    std::mutex              mutex;
+    std::condition_variable cv;
+    bool                    callback_entered = false;
+    bool                    release_callback = false;
+
+    DasGuid test_guid{
+        0x01020304,
+        0x0506,
+        0x0708,
+        {0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10}};
+
+    launcher->SetAssociatedGuid(test_guid);
+    launcher->SetOnHeartbeatTimeout(
+        [&](DasGuid)
+        {
+            std::unique_lock<std::mutex> lock(mutex);
+            callback_entered = true;
+            cv.notify_all();
+            cv.wait(lock, [&release_callback]() { return release_callback; });
+        });
+
+    ASSERT_EQ(manager_->RegisterHostLauncher(2, launcher), DAS_S_OK);
+
+    manager_->StartHeartbeatThread();
+
+    bool entered = false;
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        entered = cv.wait_for(
+            lock,
+            std::chrono::milliseconds(
+                ConnectionManager::HEARTBEAT_TIMEOUT_MS
+                + (2 * ConnectionManager::HEARTBEAT_INTERVAL_MS)),
+            [&callback_entered]() { return callback_entered; });
+    }
+
+    ConnectionInfo info{};
+    DasResult      get_result = DAS_E_UNDEFINED_RETURN_VALUE;
+    auto           get_future = std::async(
+        std::launch::async,
+        [&]() { return manager_->GetConnection(2, info); });
+    const bool get_returned =
+        get_future.wait_for(std::chrono::milliseconds(250))
+        == std::future_status::ready;
+    if (get_returned)
+    {
+        get_result = get_future.get();
+    }
+
+    auto lookup_future = std::async(
+        std::launch::async,
+        [&]() { return manager_->FindTransport(2); });
+    const bool lookup_returned =
+        lookup_future.wait_for(std::chrono::milliseconds(250))
+        == std::future_status::ready;
+
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        release_callback = true;
+    }
+    cv.notify_all();
+
+    if (!get_returned)
+    {
+        get_result = get_future.get();
+    }
+
+    auto [lookup_result, maybe_transport] = lookup_future.get();
+
+    manager_->StopHeartbeatThread();
+
+    EXPECT_TRUE(entered);
+    EXPECT_TRUE(get_returned)
+        << "timeout callbacks must run outside the ConnectionManager lock";
+    EXPECT_TRUE(lookup_returned)
+        << "timeout lookup lock-out must not wait for callbacks";
+    EXPECT_EQ(get_result, DAS_S_OK)
+        << "timed-out connection should be marked closing and retained until "
+           "timeout callbacks finish";
+    if (get_result == DAS_S_OK)
+    {
+        EXPECT_FALSE(info.is_alive);
+    }
+    EXPECT_TRUE(DAS::IsFailed(lookup_result));
+    EXPECT_FALSE(maybe_transport.has_value());
+
+    ConnectionInfo after_info{};
+    EXPECT_NE(manager_->GetConnection(2, after_info), DAS_S_OK);
 }
