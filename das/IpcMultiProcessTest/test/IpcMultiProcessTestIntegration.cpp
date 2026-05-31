@@ -28,6 +28,7 @@
 #include <das/_autogen/idl/abi/IDasTaskComponent.h>
 
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -56,6 +57,7 @@ DAS_DISABLE_WARNING_END
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
+#include <tlhelp32.h>
 #include <windows.h>
 #define DAS_IPC_TEST_CURRENT_PROCESS_ID() GetCurrentProcessId()
 #else
@@ -249,6 +251,150 @@ namespace
 
     private:
         DAS::DasPtr<DAS::Core::IPC::IHostLauncher> launcher_;
+    };
+
+    struct SuspendedProcessForTest
+    {
+        uint32_t    pid = 0;
+        bool        suspended = false;
+        std::string failure;
+
+#ifdef _WIN32
+        std::vector<HANDLE> thread_handles;
+#endif
+
+        explicit operator bool() const noexcept { return suspended; }
+    };
+
+    SuspendedProcessForTest SuspendProcessForTest(uint32_t pid)
+    {
+        SuspendedProcessForTest result;
+        result.pid = pid;
+        if (pid == 0)
+        {
+            result.failure = "Cannot suspend process with pid 0";
+            return result;
+        }
+
+#ifdef _WIN32
+        HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+        if (snapshot == INVALID_HANDLE_VALUE)
+        {
+            result.failure = DAS_FMT_NS::format(
+                "CreateToolhelp32Snapshot failed: error={}",
+                GetLastError());
+            return result;
+        }
+
+        THREADENTRY32 entry{};
+        entry.dwSize = sizeof(entry);
+        if (!Thread32First(snapshot, &entry))
+        {
+            result.failure = DAS_FMT_NS::format(
+                "Thread32First failed: error={}",
+                GetLastError());
+            CloseHandle(snapshot);
+            return result;
+        }
+
+        do
+        {
+            if (entry.th32OwnerProcessID != pid)
+            {
+                continue;
+            }
+
+            HANDLE thread =
+                OpenThread(THREAD_SUSPEND_RESUME, FALSE, entry.th32ThreadID);
+            if (!thread)
+            {
+                continue;
+            }
+
+            if (SuspendThread(thread) == static_cast<DWORD>(-1))
+            {
+                CloseHandle(thread);
+                continue;
+            }
+
+            result.thread_handles.push_back(thread);
+        } while (Thread32Next(snapshot, &entry));
+
+        CloseHandle(snapshot);
+
+        if (result.thread_handles.empty())
+        {
+            result.failure = DAS_FMT_NS::format(
+                "No threads could be suspended for pid={}",
+                pid);
+            return result;
+        }
+#else
+        if (kill(static_cast<pid_t>(pid), SIGSTOP) != 0)
+        {
+            result.failure = DAS_FMT_NS::format(
+                "SIGSTOP failed for pid={}: errno={}",
+                pid,
+                errno);
+            return result;
+        }
+#endif
+
+        result.suspended = true;
+        return result;
+    }
+
+    void ResumeProcessForTest(SuspendedProcessForTest& process)
+    {
+        if (!process.suspended)
+        {
+            return;
+        }
+
+#ifdef _WIN32
+        for (HANDLE thread : process.thread_handles)
+        {
+            if (!thread)
+            {
+                continue;
+            }
+
+            ResumeThread(thread);
+            CloseHandle(thread);
+        }
+        process.thread_handles.clear();
+#else
+        if (process.pid != 0)
+        {
+            static_cast<void>(kill(static_cast<pid_t>(process.pid), SIGCONT));
+        }
+#endif
+
+        process.suspended = false;
+    }
+
+    class ScopedProcessResumeForTest
+    {
+    public:
+        explicit ScopedProcessResumeForTest(SuspendedProcessForTest& process)
+            : process_(&process)
+        {
+        }
+
+        ~ScopedProcessResumeForTest()
+        {
+            if (process_)
+            {
+                ResumeProcessForTest(*process_);
+            }
+        }
+
+        ScopedProcessResumeForTest(const ScopedProcessResumeForTest&) = delete;
+        ScopedProcessResumeForTest& operator=(
+            const ScopedProcessResumeForTest&) = delete;
+
+    private:
+        SuspendedProcessForTest* process_ = nullptr;
     };
 
     DAS::DasPtr<IDasBase> LoadPluginPackageForHost(
