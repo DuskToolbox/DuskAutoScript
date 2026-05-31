@@ -1169,6 +1169,8 @@ boost::asio::awaitable<DasResult> HostLauncher::SendHandshakeHelloAsync(
     InitHelloRequest(hello, my_pid, client_name.c_str());
     hello.assigned_session_id = assigned_session_id;
 
+    constexpr uint16_t MAIN_PROCESS_SESSION_ID = 1;
+
     // V3: 16-bit call_id
     uint16_t call_id = impl_->next_call_id++;
     if (impl_->next_call_id == 0)
@@ -1181,6 +1183,8 @@ boost::asio::awaitable<DasResult> HostLauncher::SendHandshakeHelloAsync(
             .SetControlPlaneCommand(HandshakeInterfaceId::HANDSHAKE_IFACE_HELLO)
             .SetBodySize(sizeof(hello))
             .SetCallId(call_id)
+            .SetSourceSessionId(MAIN_PROCESS_SESSION_ID)
+            .SetTargetSessionId(assigned_session_id)
             .Build();
 
     // 直接使用协程方法，不再用 sync_wait
@@ -1282,6 +1286,8 @@ boost::asio::awaitable<DasResult> HostLauncher::SendHandshakeReadyAsync(
     ReadyRequestV1 ready;
     InitReadyRequest(ready, session_id);
 
+    constexpr uint16_t MAIN_PROCESS_SESSION_ID = 1;
+
     // V3: 16-bit call_id
     uint16_t call_id = impl_->next_call_id++;
     if (impl_->next_call_id == 0)
@@ -1294,6 +1300,8 @@ boost::asio::awaitable<DasResult> HostLauncher::SendHandshakeReadyAsync(
             .SetControlPlaneCommand(HandshakeInterfaceId::HANDSHAKE_IFACE_READY)
             .SetBodySize(sizeof(ready))
             .SetCallId(call_id)
+            .SetSourceSessionId(MAIN_PROCESS_SESSION_ID)
+            .SetTargetSessionId(session_id)
             .Build();
 
     DasResult result = co_await impl_->async_transport->SendCoroutine(
