@@ -327,21 +327,22 @@ public:
             std::chrono::steady_clock::time_point::max());
 
     /**
-     * @brief 投递发送任务到 IO 线程（指定 transport，IO 线程调用）
+     * @brief 投递发送任务到 IO 线程（指定 connected-host owner）
      *
-     * 使用指定的 transport 发送消息，通过发送队列序列化。
-     * 所有通过同一 transport 的发送必须经过此方法（或 PostSend），
-     * 以防止多个 async_write 并发写入同一管道。
+     * 协程捕获 IHostConnection owner guard，并在协程内部临时取得
+     * AnyTransport 引用后发送，避免裸 transport 引用逃逸到 detached
+     * coroutine。
      *
-     * @param transport 目标传输层
+     * @param connection connected-host owner guard
      * @param header 消息头
      * @param body 消息体（会被 move）
      * @return DasResult 投递结果
      */
-    DasResult PostSendWithTransport(
-        AnyTransport&                    transport,
-        const ValidatedIPCMessageHeader& header,
-        std::vector<uint8_t>&&           body);
+    // clang-format off
+    DasResult PostSendWithTransport(DasPtr<IHostConnection> connection,
+                                    const ValidatedIPCMessageHeader& header,
+                                    std::vector<uint8_t>&& body);
+    // clang-format on
 
     /**
      * @brief Fire-and-forget enqueue to BusinessThread.
@@ -404,6 +405,11 @@ public:
         const ValidatedIPCMessageHeader& header,
         const std::vector<uint8_t>&      body,
         AnyTransport&                    transport);
+
+    boost::asio::awaitable<void> DispatchToHandlerCoroutine(
+        const ValidatedIPCMessageHeader& header,
+        const std::vector<uint8_t>&      body,
+        DasPtr<IHostConnection>          connection);
 
     //=========================================================================
     // 事件驱动方法（内部使用）
@@ -481,6 +487,12 @@ public:
         DasResult            result,
         std::vector<uint8_t> response,
         uint16_t             response_flags);
+
+    bool TryCompletePendingCallbackOnly(
+        CallKey               call_key,
+        DasResult             result,
+        std::vector<uint8_t>& response,
+        uint16_t              response_flags);
 
     /**
      * @brief 扫描并完成所有超时的 pending call
@@ -609,7 +621,7 @@ private:
     /// @param header 消息头
     /// @param body 消息体
     boost::asio::awaitable<void> DoSendCoroutine(
-        AnyTransportRef           transport,
+        DasPtr<IHostConnection>   connection,
         ValidatedIPCMessageHeader header,
         std::vector<uint8_t>      body);
 
@@ -627,6 +639,11 @@ private:
         std::vector<uint8_t>                  body,
         PendingCallCompletion                 on_complete,
         std::chrono::steady_clock::time_point deadline);
+
+    boost::asio::awaitable<void> DispatchToHandlerWithSender(
+        const ValidatedIPCMessageHeader& header,
+        const std::vector<uint8_t>&      body,
+        IpcResponseSender&               sender);
 };
 
 //=============================================================================

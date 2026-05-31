@@ -8,7 +8,9 @@
 #endif
 #endif
 #include <das/Core/IPC/AfUnixAvailable.h>
+#include <das/Core/IPC/AnyTransport.h>
 #include <das/Core/IPC/Host/HandshakeHandler.h>
+#include <das/Core/IPC/IHostConnection.h>
 #include <das/Core/IPC/IpcMessageHeaderBuilder.h>
 #include <das/Core/IPC/IpcMessageQueue.h>
 #include <das/Core/IPC/IpcResponseSender.h>
@@ -109,6 +111,82 @@ namespace
             std::move(*server_transport),
             std::move(*peer_transport)};
     }
+
+    class TestHostConnection final : public IHostConnection
+    {
+    public:
+        TestHostConnection(
+            boost::asio::io_context& io_context,
+            uint16_t                 session_id,
+            AnyTransport&            transport)
+            : io_context_(io_context), session_id_(session_id),
+              transport_(transport)
+        {
+        }
+
+        [[nodiscard]]
+        uint32_t AddRef() override
+        {
+            return ++ref_count_;
+        }
+
+        [[nodiscard]]
+        uint32_t Release() override
+        {
+            const auto result = --ref_count_;
+            if (result == 0)
+            {
+                delete this;
+            }
+            return result;
+        }
+
+        DasResult QueryInterface(const DasGuid& iid, void** pp_object) override
+        {
+            if (!pp_object)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+
+            if (iid == DasIidOf<IHostConnection>())
+            {
+                (void)AddRef();
+                *pp_object = static_cast<IHostConnection*>(this);
+                return DAS_S_OK;
+            }
+
+            *pp_object = nullptr;
+            return DAS_E_NO_INTERFACE;
+        }
+
+        TransportLookupResult GetTransport() override
+        {
+            if (!transport_.IsConnected())
+            {
+                return {DAS_E_IPC_CONNECTION_LOST, std::nullopt};
+            }
+            return {DAS_S_OK, std::optional{std::ref(transport_)}};
+        }
+
+        boost::asio::io_context& GetIoContext() override { return io_context_; }
+
+        uint16_t GetSessionId() const override { return session_id_; }
+
+        uint32_t GetPid() const override { return 0; }
+
+        bool IsRunning() const override { return true; }
+
+        void Stop() override {}
+        void ClearCallbacks() override {}
+        void NotifyHeartbeatTimeout() override {}
+        void TerminateIfRunning() override {}
+
+    private:
+        std::atomic<uint32_t>    ref_count_{0};
+        boost::asio::io_context& io_context_;
+        uint16_t                 session_id_;
+        AnyTransport&            transport_;
+    };
 } // namespace
 
 // Test fixture for HandshakeHandler tests
@@ -195,7 +273,12 @@ TEST_F(
     auto transport_pair = CreateConnectedTransportPair(run_loop.GetIoContext());
     ASSERT_TRUE(transport_pair.has_value());
 
-    IpcResponseSender sender(transport_pair->run_loop_side, run_loop);
+    DasPtr<IHostConnection> connection(new TestHostConnection(
+        run_loop.GetIoContext(),
+        REMOTE_SESSION_ID,
+        transport_pair->run_loop_side));
+    IpcResponseSender       sender(
+        IpcResponseSender::HostConnectionRoute{&run_loop, connection});
 
     HeartbeatV1 request{};
     InitHeartbeat(request, 1234);
