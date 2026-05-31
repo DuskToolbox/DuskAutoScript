@@ -34,6 +34,7 @@
 #include <cstdlib>
 #include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/Core/IPC/AsyncOperationImpl.h>
+#include <das/Core/IPC/ConnectionManager.h>
 #include <das/Core/IPC/DasAsyncSender.h>
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/ObjectId.h>
@@ -482,6 +483,105 @@ namespace
         }
 
         return component;
+    }
+
+    template <typename Predicate>
+    bool WaitUntilForTest(
+        Predicate&&               predicate,
+        std::chrono::milliseconds timeout,
+        std::chrono::milliseconds poll_interval =
+            std::chrono::milliseconds(100))
+    {
+        const auto deadline = std::chrono::steady_clock::now() + timeout;
+        while (std::chrono::steady_clock::now() < deadline)
+        {
+            if (predicate())
+            {
+                return true;
+            }
+
+            std::this_thread::sleep_for(poll_interval);
+        }
+
+        return predicate();
+    }
+
+    std::chrono::milliseconds HeartbeatTimeoutWindowForTest()
+    {
+        using DAS::Core::IPC::ConnectionManager;
+        return std::chrono::milliseconds(
+            ConnectionManager::HEARTBEAT_TIMEOUT_MS
+            + (3 * ConnectionManager::HEARTBEAT_INTERVAL_MS));
+    }
+
+    void AssertQueryMainProcessStringIpcSucceeds(
+        DAS::Core::IPC::MainProcess::IIpcContext& context,
+        DAS::Core::IPC::IHostLauncher*            launcher,
+        std::string_view                          expected_text)
+    {
+        ASSERT_NE(launcher, nullptr);
+
+        std::string plugin_path;
+        try
+        {
+            plugin_path =
+                IpcTestConfig::GetTestPluginJsonPath("IpcTestPlugin1");
+        }
+        catch (const std::exception& e)
+        {
+            GTEST_SKIP() << "IpcTestPlugin1 JSON not found: " << e.what();
+        }
+
+        const std::string               expected_storage{expected_text};
+        DAS::DasPtr<IDasReadOnlyString> service_string;
+        ASSERT_EQ(
+            CreateIDasReadOnlyStringFromUtf8(
+                expected_storage.c_str(),
+                service_string.Put()),
+            DAS_S_OK);
+
+        ASSERT_EQ(
+            context.RegisterService(
+                service_string.Get(),
+                DasIidOf<IDasReadOnlyString>()),
+            DAS_S_OK);
+
+        auto package_proxy =
+            LoadPluginPackageForHost(context, launcher, plugin_path, 3);
+        ASSERT_NE(package_proxy.Get(), nullptr)
+            << "IpcTestPlugin1 must load through IIpcContext::LoadPluginAsync";
+
+        auto factory = GetComponentFactoryFromPackage(
+            package_proxy.Get(),
+            /*feature_index=*/1);
+        ASSERT_NE(factory.Get(), nullptr);
+
+        auto component = CreateComponentFromFactory(factory.Get());
+        ASSERT_NE(component.Get(), nullptr);
+
+        DasReadOnlyString method_name{"queryMainProcessString"};
+        DAS::ExportInterface::DasVariantVector dispatch_result;
+        DAS::ExportInterface::DasVariantVector params;
+        ASSERT_EQ(CreateIDasVariantVector(params.Put()), DAS_S_OK);
+
+        const DasResult dispatch_hr = component->Dispatch(
+            method_name.Get(),
+            params.Get(),
+            dispatch_result.Put());
+        ASSERT_EQ(dispatch_hr, DAS_S_OK)
+            << "Dispatch(queryMainProcessString) failed";
+
+        ASSERT_NE(dispatch_result.Get(), nullptr);
+        ASSERT_EQ(dispatch_result->GetSize(), 1u);
+
+        DAS::DasPtr<IDasReadOnlyString> out_string;
+        ASSERT_EQ(dispatch_result->GetString(0, out_string.Put()), DAS_S_OK);
+        ASSERT_NE(out_string.Get(), nullptr);
+
+        const char* out_text = nullptr;
+        ASSERT_EQ(out_string->GetUtf8(&out_text), DAS_S_OK);
+        ASSERT_NE(out_text, nullptr);
+        EXPECT_STREQ(out_text, expected_storage.c_str());
     }
 
     std::filesystem::path ResolveNodeExecutableForIntegration()
@@ -1394,6 +1494,92 @@ TEST_F(IpcMultiProcessTestIntegration, HostLauncherStart)
     EXPECT_GT(launcher_->GetPid(), 0u);
     EXPECT_GT(session_id, static_cast<uint16_t>(0));
     EXPECT_EQ(session_id, launcher_->GetSessionId());
+}
+
+TEST_F(IpcMultiProcessTestIntegration, HeartbeatResponse_KeepsRealHostAlive)
+{
+    if (!std::filesystem::exists(host_exe_path_))
+    {
+        GTEST_SKIP() << "DasHost.exe not found at: " << host_exe_path_;
+    }
+    ASSERT_FALSE(IpcTestConfig::ShouldDisableHeartbeat())
+        << "Heartbeat keepalive test requires heartbeat to be enabled";
+
+    ScopedHostStop guard{launcher_};
+
+    DasResult result = StartHostAndSetupRunLoop();
+    ASSERT_EQ(result, DAS_S_OK);
+    ASSERT_TRUE(launcher_->IsRunning());
+    ASSERT_GT(launcher_->GetPid(), 0u);
+
+    std::this_thread::sleep_for(HeartbeatTimeoutWindowForTest());
+
+    ASSERT_TRUE(launcher_->IsRunning())
+        << "Real Host should stay alive when HEARTBEAT RESPONSE refreshes the "
+           "connection timestamp";
+
+    AssertQueryMainProcessStringIpcSucceeds(
+        GetContext(),
+        launcher_.Get(),
+        "Hello from heartbeat keepalive");
+}
+
+TEST_F(
+    IpcMultiProcessTestIntegration,
+    HeartbeatTimeout_SuspendedRealHostIsTerminated)
+{
+    if (!std::filesystem::exists(host_exe_path_))
+    {
+        GTEST_SKIP() << "DasHost.exe not found at: " << host_exe_path_;
+    }
+    ASSERT_FALSE(IpcTestConfig::ShouldDisableHeartbeat())
+        << "Heartbeat timeout test requires heartbeat to be enabled";
+
+    ScopedHostStop guard{launcher_};
+
+    DasResult result = StartHostAndSetupRunLoop();
+    ASSERT_EQ(result, DAS_S_OK);
+    ASSERT_TRUE(launcher_->IsRunning());
+
+    const uint32_t host_pid = launcher_->GetPid();
+    ASSERT_GT(host_pid, 0u);
+
+    {
+        auto suspended = SuspendProcessForTest(host_pid);
+        ASSERT_TRUE(suspended) << suspended.failure;
+        ScopedProcessResumeForTest resume_guard{suspended};
+
+        const bool terminated = WaitUntilForTest(
+            [this]() { return !launcher_->IsRunning(); },
+            HeartbeatTimeoutWindowForTest());
+        ASSERT_TRUE(terminated)
+            << "Suspended Host should be terminated by heartbeat timeout";
+    }
+
+    EXPECT_FALSE(launcher_->IsRunning());
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+    DAS::Core::IPC::IHostLauncher* raw_restart_launcher = nullptr;
+    ASSERT_EQ(ctx_->CreateHostLauncher(&raw_restart_launcher), DAS_S_OK);
+    DAS::DasPtr<DAS::Core::IPC::IHostLauncher> restart_launcher(
+        raw_restart_launcher);
+    ASSERT_NE(restart_launcher.Get(), nullptr);
+    ScopedHostStop restart_guard{restart_launcher};
+
+    uint16_t restarted_session_id = 0;
+    result = restart_launcher->Start(
+        host_exe_path_,
+        restarted_session_id,
+        IpcTestConfig::GetHostStartTimeoutMs());
+    ASSERT_EQ(result, DAS_S_OK);
+    ASSERT_TRUE(restart_launcher->IsRunning());
+    ASSERT_GT(restarted_session_id, static_cast<uint16_t>(0));
+    EXPECT_EQ(restarted_session_id, restart_launcher->GetSessionId());
+
+    AssertQueryMainProcessStringIpcSucceeds(
+        GetContext(),
+        restart_launcher.Get(),
+        "Hello from heartbeat recovery");
 }
 
 TEST_F(IpcMultiProcessTestIntegration, NodeHostLauncherStart)
