@@ -14,6 +14,13 @@ TEST(IpcResponseSenderTest, SessionRouteConstructorRemainsAvailable)
     EXPECT_TRUE((std::is_constructible_v<IpcResponseSender, IpcRunLoop&>));
 }
 
+TEST(IpcResponseSenderTest, HostConnectionRouteConstructorRemainsAvailable)
+{
+    EXPECT_TRUE((std::is_constructible_v<
+                 IpcResponseSender,
+                 IpcResponseSender::HostConnectionRoute>));
+}
+
 TEST(IpcResponseSenderTest, HostConnectionRouteDoesNotUseBorrowedTransport)
 {
     EXPECT_FALSE((std::is_constructible_v<IpcResponseSender, AnyTransport&>))
