@@ -227,8 +227,10 @@ namespace
             return;
         }
 
+        // Owner-guarded async operations may borrow this AnyTransport across
+        // co_await. Cleanup wakes those operations, but backing storage stays
+        // owned by HostLauncher until owner teardown or controlled Start reuse.
         transport->Cleanup();
-        transport.reset();
     }
 
     DasResult ReadUtf8String(

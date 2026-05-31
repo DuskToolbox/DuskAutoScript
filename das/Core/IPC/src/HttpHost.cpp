@@ -92,6 +92,8 @@ void HttpHost::ScheduleCleanup(const char* reason)
         return;
     }
 
+    // HttpHost owns transport_ as stable backing storage. Cleanup only closes
+    // the transport so owner-guarded async operations can unwind safely.
     auto& io_context = transport_.GetIoContext();
     AddRef();
     boost::asio::post(
