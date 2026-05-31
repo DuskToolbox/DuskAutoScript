@@ -285,6 +285,9 @@ TEST_F(
     std::vector<uint8_t> body(sizeof(request));
     std::memcpy(body.data(), &request, sizeof(request));
 
+    auto heartbeat_handler = HandshakeHandler::Create(LOCAL_SESSION_ID);
+    ASSERT_NE(heartbeat_handler, nullptr);
+
     auto header = IPCMessageHeaderBuilder()
                       .SetMessageType(MessageType::REQUEST)
                       .SetControlPlaneCommand(
@@ -310,7 +313,7 @@ TEST_F(
     const uint64_t before_ms = CurrentSystemTimeMs();
     auto           handle_future = boost::asio::co_spawn(
         run_loop.GetIoContext(),
-        handler_->HandleMessage(header, body, sender, ctx),
+        heartbeat_handler->HandleMessage(header, body, sender, ctx),
         boost::asio::use_future);
 
     EXPECT_EQ(handle_future.get(), DAS_S_OK);

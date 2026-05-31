@@ -1,3 +1,4 @@
+#include <chrono>
 #include <cstring>
 #include <das/Core/IPC/Handshake.h>
 #include <das/Core/IPC/Host/HandshakeHandler.h>
@@ -121,10 +122,10 @@ namespace Core
 
                 case HandshakeInterfaceId::HANDSHAKE_IFACE_HEARTBEAT:
                 {
-                    if (body.size() < sizeof(HeartbeatV1))
+                    if (body.size() != sizeof(HeartbeatV1))
                     {
                         std::string msg = DAS_FMT_NS::format(
-                            "HandshakeHandler: Heartbeat body too small: {} < {}",
+                            "Heartbeat body size invalid: {} != {}",
                             body.size(),
                             sizeof(HeartbeatV1));
                         DAS_LOG_ERROR(msg.c_str());
@@ -136,7 +137,25 @@ namespace Core
                     result = HandleHeartbeat(
                         header.GetSourceSessionId(),
                         *heartbeat);
-                    co_return result;
+                    if (DAS::IsOk(result))
+                    {
+                        HeartbeatV1 response;
+                        InitHeartbeat(
+                            response,
+                            static_cast<uint64_t>(
+                                std::chrono::duration_cast<
+                                    std::chrono::milliseconds>(
+                                    std::chrono::system_clock::now()
+                                        .time_since_epoch())
+                                    .count()));
+
+                        response_body.resize(sizeof(response));
+                        std::memcpy(
+                            response_body.data(),
+                            &response,
+                            sizeof(response));
+                    }
+                    break;
                 }
 
                 case HandshakeInterfaceId::HANDSHAKE_IFACE_GOODBYE:
