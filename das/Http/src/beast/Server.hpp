@@ -53,10 +53,10 @@ namespace Das::Http::Beast
         void Run() { DoRead(); }
 
         /**
-         * @brief 使用已读取的请求启动会话（由 UpgradeDetector 调用）。
+         * @brief 使用 UpgradeDetector 已读取的完整请求启动会话。
          *
-         * 当 UpgradeDetector 已从 socket 读取 HTTP 头并判定为普通 HTTP
-         * 请求时，直接复用已读取的 parser，避免重复读取。
+         * 当 UpgradeDetector 已从 socket 读取完整 HTTP 请求并判定为
+         * 普通 HTTP 请求时，直接复用已读取的请求进行处理。
          */
         void RunWithParser(http::request<http::string_body> request)
         {
@@ -235,7 +235,7 @@ namespace Das::Http::Beast
     /**
      * @brief 检测 HTTP 请求是否为 WebSocket 升级请求。
      *
-     * 先读取 HTTP 请求头，检查是否为 Upgrade: websocket。
+     * 读取完整的 HTTP 请求，检查是否为 Upgrade: websocket。
      * - 是 WebSocket → 创建 WsSession 并执行握手
      * - 否 → 创建普通 HTTP Session 并处理
      */
@@ -260,10 +260,9 @@ namespace Das::Http::Beast
 
         void Detect()
         {
-            // Read only the HTTP header — use request_parser
             auto self = shared_from_this();
 
-            http::async_read_header(
+            http::async_read(
                 socket_,
                 buffer_,
                 parser_,
@@ -286,7 +285,7 @@ namespace Das::Http::Beast
                     }
                     else
                     {
-                        // Normal HTTP — create Session with pre-read data
+                        // Normal HTTP — create Session with complete request
                         auto session = std::make_shared<Session>(
                             std::move(self->socket_),
                             self->router_,
