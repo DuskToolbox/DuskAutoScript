@@ -6,25 +6,54 @@ option(
     ON
 )
 
-set(
-    DAS_CODEX_SKILLS_DIR
-    "${CMAKE_SOURCE_DIR}/.codex/skills"
-    CACHE PATH
-    "Project-local Codex skills directory used when DAS_SYNC_CODEX_SKILLS=ON"
+option(
+    DAS_SYNC_CODEX_AGENTS_MD
+    "Create project-local AGENTS.md symlink to CLAUDE.md during CMake configure"
+    ON
 )
 
 function(das_sync_codex_skills)
+    # --- AGENTS.md symlink (CLAUDE.md -> AGENTS.md) ---
+    if (DAS_SYNC_CODEX_AGENTS_MD)
+        set(_claude_instructions "${CMAKE_SOURCE_DIR}/CLAUDE.md")
+        set(_agents_instructions "${CMAKE_SOURCE_DIR}/AGENTS.md")
+
+        if (EXISTS "${_claude_instructions}")
+            if (NOT EXISTS "${_agents_instructions}" AND NOT IS_SYMLINK "${_agents_instructions}")
+                execute_process(
+                    COMMAND "${CMAKE_COMMAND}" -E create_symlink "CLAUDE.md" "AGENTS.md"
+                    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+                    RESULT_VARIABLE _agents_link_result
+                    ERROR_VARIABLE _agents_link_error
+                )
+
+                if (_agents_link_result EQUAL 0)
+                    message(STATUS "DAS Codex AGENTS linked: ${_agents_instructions} -> CLAUDE.md")
+                else()
+                    message(WARNING
+                        "DAS Codex AGENTS symlink failed; "
+                        "project-local AGENTS.md link was not created. CMake error: ${_agents_link_error}"
+                    )
+                endif()
+            else()
+                message(STATUS "DAS Codex AGENTS sync skipped existing target: ${_agents_instructions}")
+            endif()
+        else()
+            message(STATUS "DAS Codex AGENTS sync skipped: CLAUDE.md not found")
+        endif()
+    endif()
+
+    # --- Codex skills symlinks (.claude/skills/* -> .codex/skills/*) ---
     if (NOT DAS_SYNC_CODEX_SKILLS)
         return()
     endif()
-
     set(_project_skills_dir "${CMAKE_SOURCE_DIR}/.claude/skills")
     if (NOT IS_DIRECTORY "${_project_skills_dir}")
         message(STATUS "DAS Codex skill sync skipped: .claude/skills not found")
         return()
     endif()
 
-    set(_codex_skills_dir "${DAS_CODEX_SKILLS_DIR}")
+    set(_codex_skills_dir "${CMAKE_SOURCE_DIR}/.codex/skills")
     file(MAKE_DIRECTORY "${_codex_skills_dir}")
     file(
         GLOB _skill_dirs
