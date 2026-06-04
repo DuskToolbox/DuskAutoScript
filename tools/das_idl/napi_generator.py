@@ -2493,16 +2493,6 @@ Napi::Value startHostIpc(const Napi::CallbackInfo& info) {
                 "        }",
                 f"        DAS::DasPtr<{interface_name}> {capture_name}({name});",
             ]
-            if interface_name == "IDasVariantVector":
-                snapshot_result_name = f"{name}_snapshot_result"
-                lines.extend(
-                    [
-                        f"        const DasResult {snapshot_result_name} = {capture_name}->GetSize();",
-                        f"        if ({snapshot_result_name} < 0) {{",
-                        f"            return {snapshot_result_name};",
-                        "        }",
-                    ]
-                )
             return lines, capture_name
 
         raise AssertionError(f"unsupported director input parameter {param.name}")
