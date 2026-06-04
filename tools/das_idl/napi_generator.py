@@ -390,6 +390,13 @@ def _method_ts_return(method: MethodDef) -> str:
     return "void"
 
 
+def _interface_method_ts_success_return(method: MethodDef) -> str:
+    out_params = _method_out_params(method)
+    if out_params:
+        return _method_ts_return(method)
+    return "void"
+
+
 def _doc_needs_binary_buffer_conversion(doc: IdlDocument) -> bool:
     for interface in doc.interfaces:
         for method in _interface_declared_methods(interface):
@@ -582,6 +589,7 @@ class NapiGenerator:
             "#include <atomic>",
             "#include <condition_variable>",
             "#include <cstdint>",
+            "#include <exception>",
             "#include <cstdio>",
             "#include <filesystem>",
             "#include <functional>",
@@ -593,6 +601,7 @@ class NapiGenerator:
             "#include <string>",
             "#include <string_view>",
             "#include <thread>",
+            "#include <type_traits>",
             "#include <utility>",
             "#include <vector>",
             "",
@@ -605,6 +614,11 @@ class NapiGenerator:
             '#include "das/DasApi.h"',
             '#include "das/Utils/DasJsonCore.h"',
             '#include "das/_autogen/idl/abi/IDasPluginPackage.h"',
+            "DAS_DISABLE_WARNING_BEGIN",
+            "DAS_IGNORE_STDEXEC_PARAMETERS",
+            "#include <exec/single_thread_context.hpp>",
+            "#include <stdexec/execution.hpp>",
+            "DAS_DISABLE_WARNING_END",
         ]
         for header in self.idl_header_names:
             lines.append(f'#include "das/_autogen/idl/abi/{header}"')
@@ -712,6 +726,8 @@ class NapiGenerator:
                 "",
             ]
         )
+        lines.extend(self._generate_cpp_async_call_helpers())
+        lines.append("")
 
         if _doc_needs_binary_buffer_conversion(doc):
             lines.extend(
@@ -1620,6 +1636,252 @@ Napi::Value startHostIpc(const Napi::CallbackInfo& info) {
             "};",
         ]
 
+    def _generate_cpp_async_call_helpers(self) -> list[str]:
+        return [
+            "exec::single_thread_context& GetDasNapiAsyncOffloadContext() {",
+            "    static exec::single_thread_context context;",
+            "    return context;",
+            "}",
+            "",
+            "struct DasNapiAsyncOperationLifetime {",
+            "    void* operation{nullptr};",
+            "    void (*destroy)(void*) noexcept {nullptr};",
+            "",
+            "    void Destroy() noexcept {",
+            "        if (operation != nullptr && destroy != nullptr) {",
+            "            destroy(operation);",
+            "            operation = nullptr;",
+            "            destroy = nullptr;",
+            "        }",
+            "    }",
+            "};",
+            "",
+            "class DasNapiAsyncCallBase {",
+            "public:",
+            "    DasNapiAsyncCallBase(",
+            "        Napi::Promise::Deferred deferred,",
+            "        std::string failure_message)",
+            "        : deferred_(deferred),",
+            "          failure_message_(std::move(failure_message)) {}",
+            "",
+            "    virtual ~DasNapiAsyncCallBase() = default;",
+            "",
+            "    Napi::Env Env() const {",
+            "        return deferred_.Env();",
+            "    }",
+            "",
+            "    virtual void Execute() noexcept = 0;",
+            "",
+            "    void RecordError(std::exception_ptr error) noexcept {",
+            "        error_ = std::move(error);",
+            "    }",
+            "",
+            "    void RecordStopped() noexcept {",
+            "        stopped_ = true;",
+            "    }",
+            "",
+            "    void SetResult(DasResult result) noexcept {",
+            "        result_ = result;",
+            "    }",
+            "",
+            "    void CompleteOnNodeThread(Napi::Env env) {",
+            "        try {",
+            "            if (stopped_) {",
+            "                deferred_.Reject(",
+            "                    MakeDasException(env, DAS_E_FAIL, failure_message_ + \" stopped\"));",
+            "                return;",
+            "            }",
+            "            if (error_) {",
+            "                CompleteException(env);",
+            "                return;",
+            "            }",
+            "            if (result_ < 0) {",
+            "                deferred_.Reject(MakeDasException(env, result_, failure_message_));",
+            "                return;",
+            "            }",
+            "            Resolve(env, deferred_);",
+            "        } catch (const Napi::Error& error) {",
+            "            deferred_.Reject(error.Value());",
+            "        } catch (const std::exception& error) {",
+            "            deferred_.Reject(Napi::Error::New(env, error.what()).Value());",
+            "        } catch (...) {",
+            "            deferred_.Reject(Napi::Error::New(env, \"unknown native exception\").Value());",
+            "        }",
+            "    }",
+            "",
+            "protected:",
+            "    virtual void Resolve(",
+            "        Napi::Env env,",
+            "        Napi::Promise::Deferred& deferred) = 0;",
+            "",
+            "private:",
+            "    void CompleteException(Napi::Env env) {",
+            "        try {",
+            "            std::rethrow_exception(error_);",
+            "        } catch (const std::exception& error) {",
+            "            deferred_.Reject(Napi::Error::New(env, error.what()).Value());",
+            "        } catch (...) {",
+            "            deferred_.Reject(Napi::Error::New(env, \"unknown native exception\").Value());",
+            "        }",
+            "    }",
+            "",
+            "    Napi::Promise::Deferred deferred_;",
+            "    std::string failure_message_;",
+            "    DasResult result_{DAS_E_FAIL};",
+            "    std::exception_ptr error_;",
+            "    bool stopped_{false};",
+            "};",
+            "",
+            "template <typename State>",
+            "class DasNapiAsyncCall final : public DasNapiAsyncCallBase {",
+            "public:",
+            "    DasNapiAsyncCall(",
+            "        Napi::Promise::Deferred deferred,",
+            "        std::string failure_message,",
+            "        State state)",
+            "        : DasNapiAsyncCallBase(",
+            "              deferred,",
+            "              std::move(failure_message)),",
+            "          state_(std::move(state)) {}",
+            "",
+            "    void Execute() noexcept override {",
+            "        try {",
+            "            SetResult(state_.Execute());",
+            "        } catch (...) {",
+            "            RecordError(std::current_exception());",
+            "        }",
+            "    }",
+            "",
+            "protected:",
+            "    void Resolve(",
+            "        Napi::Env env,",
+            "        Napi::Promise::Deferred& deferred) override {",
+            "        state_.Resolve(env, deferred);",
+            "    }",
+            "",
+            "private:",
+            "    State state_;",
+            "};",
+            "",
+            "class DasNapiAsyncCompletionHook",
+            "    : public std::enable_shared_from_this<DasNapiAsyncCompletionHook> {",
+            "public:",
+            "    explicit DasNapiAsyncCompletionHook(Napi::Env env) {",
+            "        Napi::Function trampoline = Napi::Function::New(",
+            "            env,",
+            "            [](const Napi::CallbackInfo& info) {",
+            "                (void)info;",
+            "            });",
+            "        tsfn_ = Napi::ThreadSafeFunction::New(",
+            "            env,",
+            "            trampoline,",
+            "            \"DAS NAPI async completion\",",
+            "            0,",
+            "            1);",
+            "    }",
+            "",
+            "    ~DasNapiAsyncCompletionHook() {",
+            "        if (tsfn_) {",
+            "            tsfn_.Release();",
+            "        }",
+            "    }",
+            "",
+            "    void Post(",
+            "        std::shared_ptr<DasNapiAsyncCallBase> call,",
+            "        std::shared_ptr<DasNapiAsyncOperationLifetime> lifetime) {",
+            "        struct Payload {",
+            "            std::shared_ptr<DasNapiAsyncCompletionHook> hook;",
+            "            std::shared_ptr<DasNapiAsyncCallBase> call;",
+            "            std::shared_ptr<DasNapiAsyncOperationLifetime> lifetime;",
+            "        };",
+            "        auto* payload = new Payload{",
+            "            shared_from_this(),",
+            "            std::move(call),",
+            "            std::move(lifetime)};",
+            "        napi_status status = tsfn_.NonBlockingCall(",
+            "            payload,",
+            "            [](Napi::Env env, Napi::Function, Payload* payload) {",
+            "                std::unique_ptr<Payload> owned(payload);",
+            "                owned->call->CompleteOnNodeThread(env);",
+            "                owned->lifetime->Destroy();",
+            "            });",
+            "        if (status != napi_ok) {",
+            "            delete payload;",
+            "        }",
+            "    }",
+            "",
+            "private:",
+            "    Napi::ThreadSafeFunction tsfn_;",
+            "};",
+            "",
+            "struct DasNapiAsyncReceiver {",
+            "    using receiver_concept = stdexec::receiver_t;",
+            "",
+            "    std::shared_ptr<DasNapiAsyncCallBase> call;",
+            "    std::shared_ptr<DasNapiAsyncCompletionHook> hook;",
+            "    std::shared_ptr<DasNapiAsyncOperationLifetime> lifetime;",
+            "",
+            "    friend stdexec::env<> tag_invoke(",
+            "        stdexec::get_env_t,",
+            "        const DasNapiAsyncReceiver&) noexcept {",
+            "        return {};",
+            "    }",
+            "",
+            "    friend void tag_invoke(",
+            "        stdexec::set_value_t,",
+            "        DasNapiAsyncReceiver&& self) noexcept {",
+            "        self.hook->Post(std::move(self.call), std::move(self.lifetime));",
+            "    }",
+            "",
+            "    friend void tag_invoke(",
+            "        stdexec::set_error_t,",
+            "        DasNapiAsyncReceiver&& self,",
+            "        std::exception_ptr error) noexcept {",
+            "        self.call->RecordError(std::move(error));",
+            "        self.hook->Post(std::move(self.call), std::move(self.lifetime));",
+            "    }",
+            "",
+            "    friend void tag_invoke(",
+            "        stdexec::set_stopped_t,",
+            "        DasNapiAsyncReceiver&& self) noexcept {",
+            "        self.call->RecordStopped();",
+            "        self.hook->Post(std::move(self.call), std::move(self.lifetime));",
+            "    }",
+            "};",
+            "",
+            "template <typename Sender, typename Receiver>",
+            "void ConnectAndStartDasNapiAsyncOperation(",
+            "    std::shared_ptr<DasNapiAsyncOperationLifetime> lifetime,",
+            "    Sender&& sender,",
+            "    Receiver&& receiver) {",
+            "    using OperationType = decltype(stdexec::connect(",
+            "        std::forward<Sender>(sender),",
+            "        std::forward<Receiver>(receiver)));",
+            "    auto* operation = new OperationType(stdexec::connect(",
+            "        std::forward<Sender>(sender),",
+            "        std::forward<Receiver>(receiver)));",
+            "    lifetime->operation = operation;",
+            "    lifetime->destroy = [](void* raw) noexcept {",
+            "        delete static_cast<OperationType*>(raw);",
+            "    };",
+            "    stdexec::start(*operation);",
+            "}",
+            "",
+            "void QueueDasNapiAsyncCall(std::shared_ptr<DasNapiAsyncCallBase> call) {",
+            "    auto hook = std::make_shared<DasNapiAsyncCompletionHook>(call->Env());",
+            "    auto lifetime = std::make_shared<DasNapiAsyncOperationLifetime>();",
+            "    auto sender = stdexec::then(",
+            "        stdexec::schedule(GetDasNapiAsyncOffloadContext().get_scheduler()),",
+            "        [call] {",
+            "            call->Execute();",
+            "        });",
+            "    ConnectAndStartDasNapiAsyncOperation(",
+            "        lifetime,",
+            "        std::move(sender),",
+            "        DasNapiAsyncReceiver{call, hook, lifetime});",
+            "}",
+        ]
+
     def _generate_cpp_assignable_interface_unwrap_helpers(
         self,
         doc: IdlDocument,
@@ -2513,13 +2775,14 @@ Napi::Value startHostIpc(const Napi::CallbackInfo& info) {
         lines.append("")
         for method in _interface_declared_methods(interface):
             js_name = public_js_name(method.name)
-            wrapper_name = f"{_sanitize_identifier(interface.name)}_{_sanitize_identifier(js_name)}"
+            async_js_name = f"{js_name}Async"
+            wrapper_name = f"{_sanitize_identifier(interface.name)}_{_sanitize_identifier(async_js_name)}"
             unsupported_reason = self._unsupported_interface_method_reason(method, doc)
             if unsupported_reason:
                 lines.extend(
                     [
                         f"Napi::Value {wrapper_name}(const Napi::CallbackInfo& info) {{",
-                        f'    return MakeUnsupported(info, "{interface.name}.{js_name}", "{_escape_cpp_string(unsupported_reason)}");',
+                        f'    return MakeUnsupported(info, "{interface.name}.{async_js_name}", "{_escape_cpp_string(unsupported_reason)}");',
                     ]
                 )
             else:
@@ -2647,49 +2910,331 @@ Napi::Value startHostIpc(const Napi::CallbackInfo& info) {
     ) -> list[str]:
         in_params = _method_in_params(method)
         out_params = _method_out_params(method)
+        state_name = f"{wrapper_name}State"
         lines = [
-            f"Napi::Value {wrapper_name}(const Napi::CallbackInfo& info) {{",
-            "    Napi::Env env = info.Env();",
-            f"    if (info.Length() != {1 + len(in_params)}) {{",
-            "        throw Napi::TypeError::New(",
-            "            env,",
-            f'            "{interface.name}.{public_js_name(method.name)} expects {len(in_params)} argument(s)");',
-            "    }",
-            f"    auto* native = {_cpp_wrapper_name(interface.name)}::UnwrapHandle(env, info[0]);",
+            f"struct {state_name} {{",
+            f"    DAS::DasPtr<{interface.name}> native;",
         ]
 
-        call_args_by_param: dict[str, str] = {}
-        cleanup_lines: list[str] = []
-        for offset, param in enumerate(in_params, start=1):
-            conversion_lines, call_arg = self._generate_cpp_method_in_param(
-                offset,
-                param,
-                doc,
-                cleanup_lines,
-            )
-            lines.extend(conversion_lines)
-            call_args_by_param[param.name] = call_arg
-
+        for param in in_params:
+            lines.append(f"    {self._async_state_member_declaration(param, doc)}")
         for param in out_params:
-            declaration_lines, call_arg = self._generate_cpp_out_declaration(param)
-            lines.extend(declaration_lines)
-            call_args_by_param[param.name] = call_arg
+            lines.append(f"    {self._async_state_member_declaration(param, doc)}")
 
-        call_args = [call_args_by_param[param.name] for param in method.parameters]
-        lines.append(
-            f"    const DasResult result = native->{method.name}({', '.join(call_args)});"
-        )
-        lines.extend(cleanup_lines)
+        call_args = [
+            self._async_state_call_argument(param, doc)
+            for param in method.parameters
+        ]
         lines.extend(
             [
-                "    if (result < 0) {",
-                f'        ThrowDasException(env, result, "{interface.name}.{public_js_name(method.name)} failed");',
-                "        return env.Undefined();",
+                "",
+                "    DasResult Execute() {",
+                f"        return native->{method.name}({', '.join(call_args)});",
                 "    }",
+                "",
+                "    void Resolve(",
+                "        Napi::Env env,",
+                "        Napi::Promise::Deferred& deferred) {",
             ]
         )
-        lines.extend(self._generate_cpp_method_success_return(method, doc))
+        lines.extend(self._generate_async_cpp_method_success_resolve(method, doc, indent="        "))
+        lines.extend(
+            [
+                "    }",
+                "};",
+                "",
+                f"Napi::Value {wrapper_name}(const Napi::CallbackInfo& info) {{",
+                "    Napi::Env env = info.Env();",
+                f"    if (info.Length() != {1 + len(in_params)}) {{",
+                "        throw Napi::TypeError::New(",
+                "            env,",
+                f'            "{interface.name}.{public_js_name(method.name)}Async expects {len(in_params)} argument(s)");',
+                "    }",
+                "    auto deferred = Napi::Promise::Deferred::New(env);",
+                f"    {state_name} state{{}};",
+                f"    state.native = DAS::DasPtr<{interface.name}>({_cpp_wrapper_name(interface.name)}::UnwrapHandle(env, info[0]));",
+            ]
+        )
+
+        for offset, param in enumerate(in_params, start=1):
+            lines.extend(self._generate_async_cpp_method_in_param_capture(offset, param, doc))
+
+        lines.extend(
+            [
+                f"    auto call = std::make_shared<DasNapiAsyncCall<{state_name}>>(",
+                "        deferred,",
+                f'        "{interface.name}.{public_js_name(method.name)}Async failed",',
+                "        std::move(state));",
+                "    QueueDasNapiAsyncCall(std::move(call));",
+                "    return deferred.Promise();",
+            ]
+        )
         return lines
+
+    def _async_state_member_declaration(
+        self,
+        param: ParameterDef,
+        doc: IdlDocument,
+    ) -> str:
+        value_type = (
+            _value_type_for_out_param(param)
+            if param.direction == ParamDirection.OUT
+            else param.type_info
+        )
+        name = f"{_sanitize_identifier(param.name)}_value"
+        mapped = _map_type(value_type)
+        if param.direction == ParamDirection.OUT and value_type.type_kind == TypeKind.INTERFACE:
+            return f"DAS::DasPtr<{type_simple_name(value_type)}> {name};"
+        if mapped is not None:
+            if mapped.category == "utf8_string":
+                return f"std::string {name};"
+            if mapped.category == "readonly_string":
+                return f"DAS::DasPtr<IDasReadOnlyString> {name};"
+            return f"{_cpp_storage_type(value_type)} {name}{{}};"
+        if value_type.type_kind == TypeKind.STRUCT:
+            struct = _find_struct(doc, value_type)
+            if struct is None:
+                raise AssertionError(f"missing struct {type_simple_name(value_type)}")
+            return f"{type_simple_name(value_type)} {name}{{}};"
+        if value_type.type_kind == TypeKind.INTERFACE:
+            return f"DAS::DasPtr<{type_simple_name(value_type)}> {name};"
+        raise AssertionError(f"unsupported async state parameter {param.name}")
+
+    def _async_state_call_argument(self, param: ParameterDef, doc: IdlDocument) -> str:
+        value_type = (
+            _value_type_for_out_param(param)
+            if param.direction == ParamDirection.OUT
+            else param.type_info
+        )
+        name = f"{_sanitize_identifier(param.name)}_value"
+        mapped = _map_type(value_type)
+        prefix = f"{name}"
+        if param.direction == ParamDirection.OUT:
+            if value_type.type_kind == TypeKind.INTERFACE:
+                return f"{prefix}.Put()"
+            return f"&{prefix}"
+        if mapped is not None:
+            if mapped.category == "utf8_string":
+                return f"{prefix}.c_str()"
+            if mapped.category == "readonly_string":
+                return f"{prefix}.Get()"
+            return prefix
+        if value_type.type_kind == TypeKind.STRUCT:
+            if param.type_info.is_pointer:
+                return f"&{prefix}"
+            return prefix
+        if value_type.type_kind == TypeKind.INTERFACE:
+            return f"{prefix}.Get()"
+        raise AssertionError(f"unsupported async call argument {param.name}")
+
+    def _generate_async_cpp_method_in_param_capture(
+        self,
+        index: int,
+        param: ParameterDef,
+        doc: IdlDocument,
+    ) -> list[str]:
+        mapped = _map_type(param.type_info)
+        name = _sanitize_identifier(param.name)
+        state_name = f"state.{name}_value"
+        if mapped is not None:
+            return self._generate_async_mapped_param_capture(
+                index,
+                param,
+                mapped,
+                state_name,
+            )
+
+        if param.type_info.type_kind == TypeKind.STRUCT:
+            struct = _find_struct(doc, param.type_info)
+            if struct is None:
+                raise AssertionError(f"missing struct {type_simple_name(param.type_info)}")
+            lines = self._generate_cpp_struct_conversion(index, param, struct, doc)
+            lines.append(f"    {state_name} = {name}_value;")
+            return lines
+
+        if param.type_info.type_kind == TypeKind.INTERFACE:
+            interface_name = type_simple_name(param.type_info)
+            return [
+                f"    {state_name} = DAS::DasPtr<{interface_name}>(",
+                f"        UnwrapAssignable{_sanitize_identifier(interface_name)}Interface(env, info[{index}]));",
+            ]
+
+        raise AssertionError(f"unsupported async method input parameter {param.name}")
+
+    def _generate_async_mapped_param_capture(
+        self,
+        index: int,
+        param: ParameterDef,
+        mapped: _MappedType,
+        state_name: str,
+    ) -> list[str]:
+        name = _sanitize_identifier(param.name)
+        type_error = f"{param.name} must be {mapped.js_check}"
+        lines = [
+            f"    if (!info[{index}].Is{self._napi_type_check(mapped)}()) {{",
+            "        throw Napi::TypeError::New(",
+            "            env,",
+            f'            "{type_error}");',
+            "    }",
+        ]
+        if mapped.category == "utf8_string":
+            lines.append(
+                f"    {state_name} = info[{index}].As<Napi::String>().Utf8Value();"
+            )
+        elif mapped.category == "readonly_string":
+            lines.extend(
+                [
+                    f"    const std::string {name}_storage = info[{index}].As<Napi::String>().Utf8Value();",
+                    f"    IDasReadOnlyString* {name}_raw = nullptr;",
+                    f"    const DasResult {name}_create_result = CreateIDasReadOnlyStringFromUtf8WithLength(",
+                    f"        {name}_storage.data(), {name}_storage.size(), &{name}_raw);",
+                    f"    if ({name}_create_result < 0 || {name}_raw == nullptr) {{",
+                    "        throw Napi::Error::New(env, \"failed to create DAS string\");",
+                    "    }",
+                    f"    {state_name} = DAS::DasPtr<IDasReadOnlyString>::Attach({name}_raw);",
+                ]
+            )
+        elif mapped.category == "das_guid":
+            lines.append(f"    {state_name} = ReadDasGuid(env, info[{index}]);")
+        elif mapped.category == "int64":
+            lossless = f"{name}_lossless"
+            raw = f"{name}_raw"
+            lines.append(f"    bool {lossless} = false;")
+            lines.append(
+                f"    const int64_t {raw} = info[{index}].As<Napi::BigInt>().Int64Value(&{lossless});"
+            )
+            lines.append(f"    if (!{lossless}) {{")
+            lines.append(
+                "        throw Napi::RangeError::New(env, \"bigint value is out of int64 range\");"
+            )
+            lines.append("    }")
+            lines.append(
+                f"    {state_name} = static_cast<{_cpp_storage_type(param.type_info)}>({raw});"
+            )
+        elif mapped.category == "uint64":
+            lossless = f"{name}_lossless"
+            raw = f"{name}_raw"
+            lines.append(f"    bool {lossless} = false;")
+            lines.append(
+                f"    const uint64_t {raw} = info[{index}].As<Napi::BigInt>().Uint64Value(&{lossless});"
+            )
+            lines.append(f"    if (!{lossless}) {{")
+            lines.append(
+                "        throw Napi::RangeError::New(env, \"bigint value is out of uint64 range\");"
+            )
+            lines.append("    }")
+            lines.append(
+                f"    {state_name} = static_cast<{_cpp_storage_type(param.type_info)}>({raw});"
+            )
+        elif mapped.category in {"int32", "enum", "das_result"}:
+            lines.append(
+                f"    {state_name} = static_cast<{_cpp_storage_type(param.type_info)}>("
+            )
+            lines.append(f"        info[{index}].As<Napi::Number>().Int32Value());")
+        elif mapped.category == "uint32":
+            lines.append(
+                f"    {state_name} = static_cast<{_cpp_storage_type(param.type_info)}>("
+            )
+            lines.append(f"        info[{index}].As<Napi::Number>().Uint32Value());")
+        elif mapped.category == "number":
+            lines.append(
+                f"    {state_name} = static_cast<{_cpp_storage_type(param.type_info)}>("
+            )
+            lines.append(f"        info[{index}].As<Napi::Number>().DoubleValue());")
+        elif mapped.category == "boolean":
+            if type_simple_name(param.type_info) == "DasBool":
+                lines.append(
+                    f"    {state_name} = info[{index}].As<Napi::Boolean>().Value()"
+                )
+                lines.append("        ? DAS_TRUE")
+                lines.append("        : DAS_FALSE;")
+            else:
+                lines.append(
+                    f"    {state_name} = info[{index}].As<Napi::Boolean>().Value();"
+                )
+        else:
+            raise AssertionError(f"unhandled async mapped category {mapped.category}")
+        return lines
+
+    def _generate_async_cpp_method_success_resolve(
+        self,
+        method: MethodDef,
+        doc: IdlDocument,
+        *,
+        indent: str,
+    ) -> list[str]:
+        out_params = _method_out_params(method)
+        if not out_params:
+            return [
+                f"{indent}deferred.Resolve(env.Undefined());",
+            ]
+        if len(out_params) == 1:
+            value_lines, value_expr = self._generate_async_cpp_out_value_expression(
+                out_params[0],
+                doc,
+                indent=indent,
+            )
+            return [*value_lines, f"{indent}deferred.Resolve({value_expr});"]
+
+        lines = [f"{indent}Napi::Object output = Napi::Object::New(env);"]
+        for param in out_params:
+            field_name = clean_out_field_name(param.name)
+            value_lines, value_expr = self._generate_async_cpp_out_value_expression(
+                param,
+                doc,
+                indent=indent,
+            )
+            lines.extend(value_lines)
+            lines.append(f'{indent}output.Set("{field_name}", {value_expr});')
+        lines.append(f"{indent}deferred.Resolve(output);")
+        return lines
+
+    def _generate_async_cpp_out_value_expression(
+        self,
+        param: ParameterDef,
+        doc: IdlDocument,
+        *,
+        indent: str,
+    ) -> tuple[list[str], str]:
+        value_type = _value_type_for_out_param(param)
+        value_name = f"{_sanitize_identifier(param.name)}_value"
+        if _is_binary_buffer_interface(value_type):
+            return [
+                f"{indent}if (!{value_name}) {{",
+                f'{indent}    throw Napi::Error::New(env, "native method returned null {param.name}");',
+                f"{indent}}}",
+            ], f"ConvertIDasBinaryBufferToBuffer(env, std::move({value_name}))"
+        if _is_readonly_string_interface_pointer(value_type):
+            return [
+                f"{indent}if (!{value_name}) {{",
+                f'{indent}    throw Napi::Error::New(env, "native method returned null {param.name}");',
+                f"{indent}}}",
+            ], f"ConvertDasReadOnlyStringToString(env, {value_name}.Get())"
+        if value_type.type_kind == TypeKind.INTERFACE:
+            wrapper_name = _cpp_wrapper_name(type_simple_name(value_type))
+            return [
+                f"{indent}if (!{value_name}) {{",
+                f'{indent}    throw Napi::Error::New(env, "native method returned null {param.name}");',
+                f"{indent}}}",
+            ], f"{wrapper_name}::WrapAdopted(env, std::move({value_name}))"
+        if value_type.type_kind == TypeKind.STRUCT:
+            struct = _find_struct(doc, value_type)
+            if struct is None:
+                raise AssertionError(f"missing struct {type_simple_name(value_type)}")
+            object_name = f"{_sanitize_identifier(param.name)}_object"
+            lines = self._generate_cpp_struct_to_js_object(
+                doc,
+                struct,
+                value_name,
+                object_name,
+                indent=indent,
+            )
+            return lines, object_name
+
+        mapped = _map_type(value_type)
+        if mapped is None:
+            raise AssertionError(f"unsupported out value type {type_simple_name(value_type)}")
+        return [], self._cpp_return_expression(value_name, mapped)
 
     def _generate_cpp_method_in_param(
         self,
@@ -3212,7 +3757,8 @@ Napi::Value startHostIpc(const Napi::CallbackInfo& info) {
         for interface in doc.interfaces:
             for method in _interface_declared_methods(interface):
                 js_name = public_js_name(method.name)
-                wrapper_name = f"{_sanitize_identifier(interface.name)}_{_sanitize_identifier(js_name)}"
+                async_js_name = f"{js_name}Async"
+                wrapper_name = f"{_sanitize_identifier(interface.name)}_{_sanitize_identifier(async_js_name)}"
                 lines.append(
                     f'    exports.Set("{wrapper_name}", Napi::Function::New(env, {wrapper_name}));'
                 )
@@ -3337,7 +3883,7 @@ Napi::Value startHostIpc(const Napi::CallbackInfo& info) {
         for method in _interface_declared_methods(interface):
             js_name = public_js_name(method.name)
             lines.append(
-                f"  {js_name}({_method_ts_params(method)}): {_method_ts_return(method)};"
+                f"  {js_name}Async({_method_ts_params(method)}): Promise<{_interface_method_ts_success_return(method)}>;"
             )
         lines.append("}")
         return lines
@@ -3517,12 +4063,13 @@ Napi::Value startHostIpc(const Napi::CallbackInfo& info) {
         )
         for method in _interface_declared_methods(interface):
             js_name = public_js_name(method.name)
-            native_name = f"{interface.name}_{js_name}"
+            async_js_name = f"{js_name}Async"
+            native_name = f"{interface.name}_{async_js_name}"
             in_params = _method_in_params(method)
             if not in_params:
                 lines.extend(
                     [
-                        f"  {js_name}(...args) {{",
+                        f"  {async_js_name}(...args) {{",
                         f"    return native.{native_name}(this._ensureAlive(), ...args);",
                         "  }",
                     ]
@@ -3545,7 +4092,7 @@ Napi::Value startHostIpc(const Napi::CallbackInfo& info) {
             native_arg_list = ", ".join(["this._ensureAlive()", *native_args])
             lines.extend(
                 [
-                    f"  {js_name}({arg_list}) {{",
+                    f"  {async_js_name}({arg_list}) {{",
                     f"    return native.{native_name}({native_arg_list});",
                     "  }",
                 ]

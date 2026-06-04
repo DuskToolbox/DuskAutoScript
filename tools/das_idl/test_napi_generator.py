@@ -180,10 +180,17 @@ def _function(doc, name):
 
 def _cpp_function_block(cpp, function_name):
     start = cpp.index(f"Napi::Value {function_name}(")
-    next_start = cpp.find("\nNapi::Value ", start + 1)
-    if next_start == -1:
-        return cpp[start:]
-    return cpp[start:next_start]
+    brace = cpp.index("{", start)
+    depth = 0
+    for index in range(brace, len(cpp)):
+        char = cpp[index]
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return cpp[start:index + 1]
+    raise AssertionError(f"unterminated function {function_name}")
 
 
 def _cpp_free_function_block(cpp, function_name):
@@ -603,21 +610,21 @@ class TestNapiGenerator(unittest.TestCase):
         self.assertIn("export class IDasImage", artifacts.dts)
         self.assertIn("static from(base: IDasBase): IDasImage;", artifacts.dts)
         self.assertIn("dispose(): void;", artifacts.dts)
-        self.assertIn("getSize(): DasSize;", artifacts.dts)
-        self.assertIn("getMode(): number;", artifacts.dts)
-        self.assertIn("getName(): string;", artifacts.dts)
-        self.assertIn("setName(pName: string): DasResult;", artifacts.dts)
-        self.assertIn("clip(pRect: DasRect): IDasImage;", artifacts.dts)
-        self.assertIn("setComponent(pComponent: IDasComponent): DasResult;", artifacts.dts)
-        self.assertIn("getBinaryBuffer(): Buffer;", artifacts.dts)
-        self.assertIn("getComponent(): IDasComponent;", artifacts.dts)
-        self.assertIn("setColorRange(pRange: DasColorRange): DasResult;", artifacts.dts)
-        self.assertIn("getColorRange(): DasColorRange;", artifacts.dts)
-        self.assertIn("getLastResult(): DasResult;", artifacts.dts)
-        self.assertIn("flush(): DasResult;", artifacts.dts)
-        self.assertIn("getMutableView(offset: bigint): Buffer;", artifacts.dts)
+        self.assertIn("getSizeAsync(): Promise<DasSize>;", artifacts.dts)
+        self.assertIn("getModeAsync(): Promise<number>;", artifacts.dts)
+        self.assertIn("getNameAsync(): Promise<string>;", artifacts.dts)
+        self.assertIn("setNameAsync(pName: string): Promise<void>;", artifacts.dts)
+        self.assertIn("clipAsync(pRect: DasRect): Promise<IDasImage>;", artifacts.dts)
+        self.assertIn("setComponentAsync(pComponent: IDasComponent): Promise<void>;", artifacts.dts)
+        self.assertIn("getBinaryBufferAsync(): Promise<Buffer>;", artifacts.dts)
+        self.assertIn("getComponentAsync(): Promise<IDasComponent>;", artifacts.dts)
+        self.assertIn("setColorRangeAsync(pRange: DasColorRange): Promise<void>;", artifacts.dts)
+        self.assertIn("getColorRangeAsync(): Promise<DasColorRange>;", artifacts.dts)
+        self.assertIn("getLastResultAsync(): Promise<DasResult>;", artifacts.dts)
+        self.assertIn("flushAsync(): Promise<void>;", artifacts.dts)
+        self.assertIn("getMutableViewAsync(offset: bigint): Promise<Buffer>;", artifacts.dts)
         self.assertIn(
-            "getViewAndStatus(offset: bigint): { status: number; buffer: Buffer; };",
+            "getViewAndStatusAsync(offset: bigint): Promise<{ status: number; buffer: Buffer; }>;",
             artifacts.dts,
         )
         self.assertIn("export interface INapiDasImageCallbacks", artifacts.dts)
@@ -625,8 +632,10 @@ class TestNapiGenerator(unittest.TestCase):
         self.assertIn("getBinaryBuffer?: () => Buffer;", artifacts.dts)
         self.assertIn("getMutableView?: (offset: bigint) => Buffer;", artifacts.dts)
 
-        self.assertIn("getSize(...args)", artifacts.js)
-        self.assertIn("getBinaryBuffer(...args)", artifacts.js)
+        self.assertIn("getSizeAsync(...args)", artifacts.js)
+        self.assertIn("getBinaryBufferAsync(...args)", artifacts.js)
+        self.assertNotIn("getSize(...args)", artifacts.js)
+        self.assertNotIn("getBinaryBuffer(...args)", artifacts.js)
         self.assertNotIn("GetSize():", artifacts.dts)
         self.assertNotIn("GetBinaryBuffer():", artifacts.dts)
         self.assertNotIn("getSizeEz", artifacts.js)
@@ -640,15 +649,15 @@ class TestNapiGenerator(unittest.TestCase):
 
         self.assertNotIn("const DasResult result = DAS_E_NO_IMPLEMENTATION;", artifacts.cpp)
         self.assertIn("DasSize p_out_size_value{};", artifacts.cpp)
-        self.assertIn("const DasResult result = native->GetSize(&p_out_size_value);", artifacts.cpp)
+        self.assertIn("return native->GetSize(&p_out_size_value);", artifacts.cpp)
         self.assertIn("DasMode p_out_mode_value{};", artifacts.cpp)
-        self.assertIn("const DasResult result = native->GetMode(&p_out_mode_value);", artifacts.cpp)
-        self.assertIn("IDasReadOnlyString* pp_out_name_value = nullptr;", artifacts.cpp)
-        self.assertIn("const DasResult result = native->GetName(&pp_out_name_value);", artifacts.cpp)
+        self.assertIn("return native->GetMode(&p_out_mode_value);", artifacts.cpp)
+        self.assertIn("DAS::DasPtr<IDasReadOnlyString> pp_out_name_value;", artifacts.cpp)
+        self.assertIn("return native->GetName(pp_out_name_value.Put());", artifacts.cpp)
         self.assertIn("uint32_t p_out_width_value{};", artifacts.cpp)
         self.assertIn("uint32_t out_height_value{};", artifacts.cpp)
         self.assertIn(
-            "const DasResult result = native->GetDimensions(&p_out_width_value, &out_height_value);",
+            "return native->GetDimensions(&p_out_width_value, &out_height_value);",
             artifacts.cpp,
         )
         self.assertIn("DasRect p_rect_value{};", artifacts.cpp)
@@ -660,18 +669,18 @@ class TestNapiGenerator(unittest.TestCase):
             artifacts.cpp,
         )
         self.assertIn(
-            "p_name_storage.data(), p_name_storage.size(), &p_name_value);",
+            "p_name_storage.data(), p_name_storage.size(), &p_name_raw);",
             artifacts.cpp,
         )
         self.assertIn("const DasResult p_name_utf8_result = p_name->GetUtf8(&p_name_utf8);", artifacts.cpp)
         self.assertIn("UnwrapAssignableIDasComponentInterface(env, info[1])", artifacts.cpp)
         self.assertIn(
-            "const DasResult result = native->Clip(&p_rect_value, &pp_out_image_value);",
+            "return native->Clip(&p_rect_value, pp_out_image_value.Put());",
             artifacts.cpp,
         )
-        self.assertIn("const DasResult result = native->SetComponent(p_component_value);", artifacts.cpp)
-        self.assertIn("const DasResult result = native->SetColorRange(&p_range_value);", artifacts.cpp)
-        self.assertIn("const DasResult result = native->Flush();", artifacts.cpp)
+        self.assertIn("return native->SetComponent(p_component_value.Get());", artifacts.cpp)
+        self.assertIn("return native->SetColorRange(&p_range_value);", artifacts.cpp)
+        self.assertIn("return native->Flush();", artifacts.cpp)
 
     def test_napi_phase74_cpp_converts_out_values_after_success(self):
         artifacts = generate_napi_artifacts(
@@ -680,7 +689,7 @@ class TestNapiGenerator(unittest.TestCase):
             addon_name="das_core_napi",
         )
 
-        failure_check = 'ThrowDasException(env, result, "IDasImage.getSize failed");'
+        failure_check = 'deferred_.Reject(MakeDasException(env, result_, failure_message_));'
         struct_read = 'p_out_size_object.Set("width", Napi::Number::New(env, static_cast<double>(p_out_size_value.width)))'
         self.assertLess(artifacts.cpp.index(failure_check), artifacts.cpp.index(struct_read))
         self.assertIn(
@@ -688,10 +697,10 @@ class TestNapiGenerator(unittest.TestCase):
             artifacts.cpp,
         )
         self.assertIn(
-            'return Napi::Number::New(env, static_cast<double>(p_out_mode_value));',
+            'deferred.Resolve(Napi::Number::New(env, static_cast<double>(p_out_mode_value)));',
             artifacts.cpp,
         )
-        self.assertIn("return ConvertDasReadOnlyStringToString(env, pp_out_name_owned.Get());", artifacts.cpp)
+        self.assertIn("deferred.Resolve(ConvertDasReadOnlyStringToString(env, pp_out_name_value.Get()));", artifacts.cpp)
         self.assertIn(
             'output.Set("width", Napi::Number::New(env, static_cast<double>(p_out_width_value)));',
             artifacts.cpp,
@@ -716,26 +725,19 @@ class TestNapiGenerator(unittest.TestCase):
             addon_name="das_core_napi",
         )
 
-        self.assertIn("IDasImage* pp_out_image_value = nullptr;", artifacts.cpp)
-        self.assertIn("if (pp_out_image_value == nullptr) {", artifacts.cpp)
+        self.assertIn("DAS::DasPtr<IDasImage> pp_out_image_value;", artifacts.cpp)
+        self.assertIn("if (!pp_out_image_value) {", artifacts.cpp)
         self.assertIn(
-            "auto pp_out_image_owned = DAS::DasPtr<IDasImage>::Attach(pp_out_image_value);",
+            "deferred.Resolve(IDasImageWrapper::WrapAdopted(env, std::move(pp_out_image_value)));",
+            artifacts.cpp,
+        )
+        self.assertIn("DAS::DasPtr<IDasComponent> pp_out_component_value;", artifacts.cpp)
+        self.assertIn(
+            "IDasComponentWrapper::WrapAdopted(env, std::move(pp_out_component_value))",
             artifacts.cpp,
         )
         self.assertIn(
-            "return IDasImageWrapper::WrapAdopted(env, std::move(pp_out_image_owned));",
-            artifacts.cpp,
-        )
-        self.assertIn(
-            "auto pp_out_component_owned = DAS::DasPtr<IDasComponent>::Attach(pp_out_component_value);",
-            artifacts.cpp,
-        )
-        self.assertIn(
-            "return IDasComponentWrapper::WrapAdopted(env, std::move(pp_out_component_owned));",
-            artifacts.cpp,
-        )
-        self.assertIn(
-            "return ConvertIDasBinaryBufferToBuffer(env, pp_out_buffer_value, BinaryBufferOwnershipMode::AdoptOwned);",
+            "deferred.Resolve(ConvertIDasBinaryBufferToBuffer(env, std::move(pp_out_buffer_value)));",
             artifacts.cpp,
         )
         self.assertNotIn("IDasBinaryBufferWrapper::WrapAdopted(env, std::move(pp_out_buffer_owned))", artifacts.cpp)
@@ -811,11 +813,11 @@ class TestNapiGenerator(unittest.TestCase):
         )
 
         self.assertIn(
-            "return ConvertIDasBinaryBufferToBuffer(env, pp_out_buffer_value, BinaryBufferOwnershipMode::AdoptOwned);",
+            "deferred.Resolve(ConvertIDasBinaryBufferToBuffer(env, std::move(pp_out_buffer_value)));",
             artifacts.cpp,
         )
         self.assertIn(
-            'output.Set("buffer", ConvertIDasBinaryBufferToBuffer(env, pp_out_buffer_value, BinaryBufferOwnershipMode::AdoptOwned));',
+            'output.Set("buffer", ConvertIDasBinaryBufferToBuffer(env, std::move(pp_out_buffer_value)));',
             artifacts.cpp,
         )
         self.assertNotIn(
@@ -831,16 +833,19 @@ class TestNapiGenerator(unittest.TestCase):
         )
 
         for function_name in (
-            "IDasImage_getBinaryBuffer",
-            "IDasMemory_getMutableView",
-            "IDasMemory_getViewAndStatus",
+            "IDasImage_getBinaryBufferAsync",
+            "IDasMemory_getMutableViewAsync",
+            "IDasMemory_getViewAndStatusAsync",
         ):
             with self.subTest(function_name=function_name):
                 block = _cpp_function_block(artifacts.cpp, function_name)
-                self.assertIn("ConvertIDasBinaryBufferToBuffer", block)
-                self.assertIn("BinaryBufferOwnershipMode::AdoptOwned", block)
+                state_name = f"struct {function_name}State"
+                state = _cpp_free_function_block(artifacts.cpp, state_name)
+                self.assertIn("ConvertIDasBinaryBufferToBuffer", state)
+                self.assertIn("std::move(pp_out_buffer_value)", state)
                 self.assertNotIn("IDasBinaryBufferWrapper::WrapAdopted", block)
-                self.assertNotIn("Napi::External", block)
+                self.assertNotIn("IDasBinaryBufferWrapper::WrapAdopted", state)
+                self.assertNotIn("Napi::External", state)
 
     def test_napi_phase74_dts_declares_buffer_without_package_workflow(self):
         artifacts = generate_napi_artifacts(
@@ -850,7 +855,7 @@ class TestNapiGenerator(unittest.TestCase):
         )
 
         self.assertIn("export interface Buffer extends Uint8Array", artifacts.dts)
-        self.assertIn("getBinaryBuffer(): Buffer;", artifacts.dts)
+        self.assertIn("getBinaryBufferAsync(): Promise<Buffer>;", artifacts.dts)
         self.assertNotIn('/// <reference types="node" />', artifacts.dts)
 
     def test_napi_phase74_public_surface_hides_com_refcounting(self):
@@ -956,11 +961,12 @@ class TestNapiGenerator(unittest.TestCase):
             addon_name="das_core_napi",
         )
 
-        method = _cpp_function_block(artifacts.cpp, "IDasConsumer_use")
+        method = _cpp_function_block(artifacts.cpp, "IDasConsumer_useAsync")
         self.assertIn(
-            "IDasBase* p_object_value = UnwrapAssignableIDasBaseInterface(env, info[1]);",
+            "state.p_object_value = DAS::DasPtr<IDasBase>(",
             method,
         )
+        self.assertIn("UnwrapAssignableIDasBaseInterface(env, info[1])", method)
         self.assertNotIn("IDasBaseWrapper::UnwrapHandle(env, info[1])", method)
 
         helper = _cpp_free_function_block(
@@ -1291,11 +1297,11 @@ class TestNapiGenerator(unittest.TestCase):
         )
 
         self.assertIn(
-            "getDimensions(): { width: number; height: number; };",
+            "getDimensionsAsync(): Promise<{ width: number; height: number; }>;",
             artifacts.dts,
         )
         self.assertIn(
-            "getMixed(): { count: number; component: IDasComponent; status: number; };",
+            "getMixedAsync(): Promise<{ count: number; component: IDasComponent; status: number; }>;",
             artifacts.dts,
         )
         self.assertIn('"width"', artifacts.cpp)
