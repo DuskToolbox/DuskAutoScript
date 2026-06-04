@@ -3680,9 +3680,12 @@ public:
         const std::string callback_prefix = "lifecycle_callback:";
         if (func == "lifecycle_callback" || func.rfind(callback_prefix, 0) == 0)
         {
+            received_status_source_.store(LifecycleCallbackStatusSource::None);
             if (func.rfind(callback_prefix, 0) == 0)
             {
                 received_status_ = func.substr(callback_prefix.size());
+                received_status_source_.store(
+                    LifecycleCallbackStatusSource::MethodNameFallback);
             }
             else if (p_arguments)
             {
@@ -3695,6 +3698,8 @@ public:
                     if (status_ptr)
                     {
                         received_status_ = status_ptr;
+                        received_status_source_.store(
+                            LifecycleCallbackStatusSource::ArgumentReadback);
                     }
                     status_ro->Release();
                 }

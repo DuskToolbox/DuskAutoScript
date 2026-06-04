@@ -257,15 +257,14 @@ function createComponent(sessionId) {
           const marker = await readStringAsync(args, 1);
           const callbackArgs = makeVariantVector();
           await callbackArgs.pushBackStringAsync(`bridge_released:Node:${marker}`);
-          setTimeout(() => {
-            void callback.dispatchAsync(
-              "lifecycle_callback",
-              callbackArgs,
-            ).catch((error) => {
+          setTimeout(async () => {
+            try {
+              await callback.dispatchAsync("lifecycle_callback", callbackArgs);
+            } catch (error) {
               process.stderr.write(
                 `Node lifecycle callback dispatch failed: ${error.message}\n`,
               );
-            });
+            }
           }, 100);
 
           const director = makeLifecycleDirector();
