@@ -20,32 +20,34 @@ function toIndex(index) {
   return Number(index);
 }
 
-function wrapComponent(nativeComponent) {
+async function wrapComponentAsync(nativeComponent) {
   if (!nativeComponent || typeof nativeComponent !== "object") {
     return nativeComponent;
   }
-  if (typeof nativeComponent.dispatch === "function") {
+  if (typeof nativeComponent.dispatchAsync === "function") {
     return nativeComponent;
   }
   return new das.IDasComponent(nativeComponent);
 }
 
-function wrapVariantVector(args) {
+async function wrapVariantVectorAsync(args) {
   if (!args || typeof args !== "object") {
     return args;
   }
-  if (typeof args.getString === "function") {
+  if (typeof args.getStringAsync === "function") {
     return args;
   }
   return new das.IDasVariantVector(args);
 }
 
-function readString(args, index) {
-  return wrapVariantVector(args).getString(BigInt(index));
+async function readStringAsync(args, index) {
+  const vector = await wrapVariantVectorAsync(args);
+  return vector.getStringAsync(BigInt(index));
 }
 
-function readInt(args, index) {
-  return Number(wrapVariantVector(args).getInt(BigInt(index)));
+async function readIntAsync(args, index) {
+  const vector = await wrapVariantVectorAsync(args);
+  return Number(await vector.getIntAsync(BigInt(index)));
 }
 
 function makeVariantVector(items = []) {
@@ -208,7 +210,7 @@ function createComponent(sessionId) {
     getRuntimeClassName() {
       return "Das.NodeTestPlugin.Component";
     },
-    dispatch(functionName, args) {
+    async dispatch(functionName, args) {
       switch (functionName) {
         case "getSessionInfo":
           return makeVariantVector([
@@ -226,13 +228,13 @@ function createComponent(sessionId) {
             },
           ]);
         case "echo": {
-          const input = readString(args, 0);
+          const input = await readStringAsync(args, 0);
           return stringVector(`[Node] echo: ${input}`);
         }
         case "compute": {
-          const operation = readString(args, 0);
-          const left = readInt(args, 1);
-          const right = readInt(args, 2);
+          const operation = await readStringAsync(args, 0);
+          const left = await readIntAsync(args, 1);
+          const right = await readIntAsync(args, 2);
           if (operation === "add") {
             return intVector(left + right);
           }
@@ -248,16 +250,22 @@ function createComponent(sessionId) {
           throw new Error(`NodeTestPlugin compute invalid operation: ${operation}`);
         }
         case "bridgeLifecycleTest": {
-          const normalizedArgs = wrapVariantVector(args);
-          const callback = wrapComponent(normalizedArgs.getComponent(0n));
-          const marker = readString(args, 1);
+          const normalizedArgs = await wrapVariantVectorAsync(args);
+          const callback = await wrapComponentAsync(
+            await normalizedArgs.getComponentAsync(0n),
+          );
+          const marker = await readStringAsync(args, 1);
           const callbackArgs = makeVariantVector();
-          callbackArgs.pushBackString(`bridge_released:Node:${marker}`);
+          await callbackArgs.pushBackStringAsync(`bridge_released:Node:${marker}`);
           setTimeout(() => {
-            callback.dispatch(
+            void callback.dispatchAsync(
               "lifecycle_callback",
               callbackArgs,
-            );
+            ).catch((error) => {
+              process.stderr.write(
+                `Node lifecycle callback dispatch failed: ${error.message}\n`,
+              );
+            });
           }, 100);
 
           const director = makeLifecycleDirector();
