@@ -197,6 +197,11 @@ function makeLifecycleDirector() {
       if (functionName === "getSessionInfo") {
         return stringVector("Node", "NodeTestPlugin", "Director");
       }
+      if (functionName === "getSessionInfoPromise") {
+        return Promise.resolve(
+          stringVector("Node", "NodeTestPlugin", "DirectorPromise"),
+        );
+      }
       throw new Error(`Node lifecycle director does not implement ${functionName}`);
     },
   });
