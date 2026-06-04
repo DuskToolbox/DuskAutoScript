@@ -16,18 +16,26 @@
 
 #include <atomic>
 #include <boost/asio/io_context.hpp>
+#include <chrono>
 #include <cstring>
+#include <das/Core/IPC/BusinessThread.h>
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/HandshakeSerialization.h>
 #include <das/Core/IPC/Host/HostCommandHandlers.h>
 #include <das/Core/IPC/Host/IIpcContext.h>
 #include <das/Core/IPC/HostLauncher.h>
 #include <das/Core/IPC/IpcCommandHandler.h>
+#include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/IPC/MainProcess/IHostLauncher.h>
+#include <das/Core/IPC/ProxyFactory.h>
+#include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
+#include <das/IDasAsyncCallback.h>
 #include <das/_autogen/idl/abi/IDasPluginPackage.h>
 #include <filesystem>
+#include <functional>
+#include <future>
 #include <gtest/gtest.h>
 #include <type_traits>
 #include <unordered_map>
@@ -195,6 +203,94 @@ namespace Das::IPC::Test
         Das::Core::IPC::DistributedObjectManager object_manager_;
     };
 
+    class FakeResolveContext final : public Das::Core::IPC::IResolveContext
+    {
+    public:
+        DasResult ResolveMainProcessInterface(const DasGuid&, IDasBase**)
+            override
+        {
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+
+        DasResult RegisterService(IDasBase*, const DasGuid&) override
+        {
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+
+        DasResult UnregisterService(const DasGuid&) override
+        {
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+
+        DasResult ResolveMainProcessInterfaceByName(const char*, IDasBase**)
+            override
+        {
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+
+        DasResult RegisterServiceByName(IDasBase*, const DasGuid&, const char*)
+            override
+        {
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+
+        DasResult UnregisterServiceByName(const char*) override
+        {
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+    };
+
+    class BusinessThreadProbeCallback final : public IDasAsyncCallback
+    {
+    public:
+        explicit BusinessThreadProbeCallback(std::function<void()> fn)
+            : fn_(std::move(fn))
+        {
+        }
+
+        uint32_t AddRef() override
+        {
+            return ref_count_.fetch_add(1, std::memory_order_relaxed) + 1;
+        }
+
+        uint32_t Release() override
+        {
+            const uint32_t count =
+                ref_count_.fetch_sub(1, std::memory_order_acq_rel) - 1;
+            if (count == 0)
+            {
+                delete this;
+            }
+            return count;
+        }
+
+        DasResult QueryInterface(const DasGuid& iid, void** pp_object) override
+        {
+            if (pp_object == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            if (iid == DAS_IID_BASE)
+            {
+                *pp_object = static_cast<IDasBase*>(this);
+                AddRef();
+                return DAS_S_OK;
+            }
+            *pp_object = nullptr;
+            return DAS_E_NO_INTERFACE;
+        }
+
+        DasResult Do() noexcept override
+        {
+            fn_();
+            return DAS_S_OK;
+        }
+
+    private:
+        std::atomic<uint32_t> ref_count_{1};
+        std::function<void()> fn_;
+    };
+
     // ====== Basic Connectivity Tests ======
 
     /**
@@ -212,6 +308,77 @@ namespace Das::IPC::Test
     TEST_F(IpcCoreTestBase, TestFrameworkWorking)
     {
         EXPECT_TRUE(true) << "Test framework is functional";
+    }
+
+    TEST_F(IpcCoreTestBase, BusinessThreadCurrentPointerIsAvailableDuringPump)
+    {
+        using Das::Core::IPC::BusinessThread;
+        using Das::Core::IPC::GetCurrentBusinessThread;
+        using Das::Core::IPC::InboundMessage;
+        using Das::Core::IPC::IpcMessageQueue;
+        using Das::Core::IPC::IpcRunLoop;
+        using Das::Core::IPC::ProxyFactory;
+        using Das::Core::IPC::RemoteObjectRegistry;
+
+        EXPECT_EQ(GetCurrentBusinessThread(), nullptr);
+
+        IpcMessageQueue<InboundMessage> inbound_queue(8);
+        ProxyFactory                    proxy_factory;
+        RemoteObjectRegistry            registry;
+        IpcRunLoop run_loop(false, &inbound_queue, proxy_factory, registry);
+        FakeResolveContext resolve_context;
+        auto               business_thread = std::make_shared<BusinessThread>(
+            inbound_queue,
+            run_loop,
+            resolve_context,
+            proxy_factory,
+            registry);
+
+        std::promise<void> callback_done;
+        auto               callback_done_future = callback_done.get_future();
+        std::atomic<BusinessThread*> observed_current{nullptr};
+        std::atomic<DasResult>       observed_pump_result{DAS_E_FAIL};
+        std::atomic_bool             predicate_called{false};
+
+        DAS::DasPtr<IDasAsyncCallback> callback(new BusinessThreadProbeCallback(
+            [&]()
+            {
+                auto* current = GetCurrentBusinessThread();
+                observed_current.store(current, std::memory_order_release);
+
+                std::atomic_bool done{true};
+                if (current != nullptr)
+                {
+                    observed_pump_result.store(
+                        current->PumpUntilPredicate(
+                            "test current BusinessThread",
+                            [&]()
+                            {
+                                predicate_called.store(
+                                    true,
+                                    std::memory_order_release);
+                                return done.load(std::memory_order_acquire);
+                            }),
+                        std::memory_order_release);
+                }
+                callback_done.set_value();
+            }));
+
+        ASSERT_EQ(run_loop.PostToBusinessThread(callback.Get()), DAS_S_OK);
+        ASSERT_EQ(
+            callback_done_future.wait_for(std::chrono::seconds(5)),
+            std::future_status::ready);
+
+        EXPECT_EQ(
+            observed_current.load(std::memory_order_acquire),
+            business_thread.get());
+        EXPECT_EQ(
+            observed_pump_result.load(std::memory_order_acquire),
+            DAS_S_OK);
+        EXPECT_TRUE(predicate_called.load(std::memory_order_acquire));
+
+        business_thread->Stop();
+        EXPECT_EQ(GetCurrentBusinessThread(), nullptr);
     }
 
     TEST_F(IpcCoreTestBase, HostIpcContextConfigRemainsCAbiFriendly)

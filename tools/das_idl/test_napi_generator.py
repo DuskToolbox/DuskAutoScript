@@ -1210,6 +1210,65 @@ class TestNapiGenerator(unittest.TestCase):
         self.assertNotIn("PostToBusinessThread", combined)
         self.assertNotIn("IsIpcProxyBase", combined)
 
+    def test_napi_phase76_director_accepts_promise_return(self):
+        artifacts = generate_napi_artifacts(
+            _phase76_async_contract_doc(),
+            package_name="das-core",
+            addon_name="das_core_napi",
+        )
+        director_base = _cpp_class_block(artifacts.cpp, "NapiDirectorBase")
+
+        for decision in (
+            "D-76.4-03",
+            "D-76.4-03a",
+            "D-76.4-03b",
+            "D-76.4-03c",
+            "D-76.4-06",
+            "D-76.4-07",
+        ):
+            with self.subTest(decision=decision):
+                self.assertIn(decision, director_base)
+
+        self.assertIn("napi_is_promise", director_base)
+        self.assertIn("AttachPromiseSettlement", director_base)
+        self.assertIn("NapiDirectorCallData::Finish", artifacts.cpp)
+        self.assertIn("WaitWithBusinessThreadPump", director_base)
+        self.assertIn("GetCurrentBusinessThread()", director_base)
+        self.assertIn("PumpUntilPredicate", director_base)
+        self.assertIn("Promise rejection", director_base)
+
+        attach = _cpp_free_function_block(
+            artifacts.cpp,
+            "void AttachPromiseSettlement",
+        )
+        self.assertIn("then_callback", attach)
+        self.assertIn("catch_callback", attach)
+        self.assertIn("Finish(kNapiDirectorJavaScriptError)", attach)
+        self.assertNotIn("uv_run", director_base)
+        self.assertNotIn("napi_run", director_base)
+        self.assertNotIn("stdexec::sync_wait", director_base)
+
+    def test_napi_phase76_director_rejection_completes_waiter(self):
+        artifacts = generate_napi_artifacts(
+            _phase76_async_contract_doc(),
+            package_name="das-core",
+            addon_name="das_core_napi",
+        )
+        director_base = _cpp_class_block(artifacts.cpp, "NapiDirectorBase")
+
+        self.assertIn("void Finish(DasResult in_result)", director_base)
+        self.assertIn("Finish(DAS_E_JAVASCRIPT_ERROR)", artifacts.cpp)
+        self.assertIn("complete.notify_one()", director_base)
+        self.assertIn("NotifyWaiters()", director_base)
+        self.assertLess(
+            director_base.index("done = true;"),
+            director_base.index("NotifyWaiters()"),
+        )
+        self.assertIn("WaitWithBusinessThreadPump", director_base)
+        self.assertIn("complete.wait(lock, [this] { return done; });", director_base)
+        self.assertNotIn("wait_for", director_base)
+        self.assertNotIn("sleep_for", director_base)
+
     def test_napi_director_prefetches_variant_vector_inputs_before_tsfn(self):
         doc = parse_idl(
             """
