@@ -143,6 +143,33 @@ def _phase74_contract_doc():
     )
 
 
+def _phase76_async_contract_doc():
+    return parse_idl(
+        """
+        errorcode DasResult {
+            DAS_S_OK = 0,
+            DAS_E_FAIL = -2147483648,
+            DAS_E_JAVASCRIPT_ERROR = -1073750042,
+        }
+
+        [uuid("00000000-0000-0000-0000-000000000010")]
+        interface IDasVariantVector : IDasBase {
+            DasResult GetSize([out] uint64_t* p_out_size);
+            DasResult GetString(uint64_t index, [out] IDasReadOnlyString** pp_out_string);
+            DasResult PushBackString(IDasReadOnlyString* in_string);
+        }
+
+        [uuid("00000000-0000-0000-0000-000000000011")]
+        interface IDasComponent : IDasBase {
+            DasResult Dispatch(
+                IDasReadOnlyString* p_function_name,
+                IDasVariantVector* p_arguments,
+                [out] IDasVariantVector** pp_out_result);
+        }
+        """
+    )
+
+
 def _function(doc, name):
     for module in doc.modules:
         for func in module.functions:
@@ -1090,6 +1117,92 @@ class TestNapiGenerator(unittest.TestCase):
         self.assertIn("call->Wait()", artifacts.cpp)
         self.assertIn("DispatchDirect(method_name, std::move(invoke))", artifacts.cpp)
         self.assertIn("DispatchThreadSafe(method_name, std::move(invoke))", artifacts.cpp)
+
+    def test_napi_phase76_generated_interface_methods_are_async_only(self):
+        artifacts = generate_napi_artifacts(
+            _phase76_async_contract_doc(),
+            package_name="das-core",
+            addon_name="das_core_napi",
+        )
+
+        self.assertIn("dispatchAsync(pFunctionName, pArguments) {", artifacts.js)
+        self.assertIn("native.IDasComponent_dispatchAsync", artifacts.js)
+        self.assertIn("getStringAsync(index) {", artifacts.js)
+        self.assertIn("native.IDasVariantVector_getStringAsync", artifacts.js)
+        self.assertIn("pushBackStringAsync(inString) {", artifacts.js)
+        self.assertIn("getSizeAsync(...args) {", artifacts.js)
+        self.assertNotIn("  dispatch(pFunctionName, pArguments) {", artifacts.js)
+        self.assertNotIn("native.IDasComponent_dispatch(", artifacts.js)
+        self.assertNotIn("  getString(index) {", artifacts.js)
+        self.assertNotIn("native.IDasVariantVector_getString(", artifacts.js)
+
+        self.assertIn(
+            "dispatchAsync(pFunctionName: string, pArguments: IDasVariantVector): Promise<IDasVariantVector>;",
+            artifacts.dts,
+        )
+        self.assertIn(
+            "getStringAsync(index: bigint): Promise<string>;",
+            artifacts.dts,
+        )
+        self.assertIn(
+            "pushBackStringAsync(inString: string): Promise<void>;",
+            artifacts.dts,
+        )
+        self.assertIn("getSizeAsync(): Promise<bigint>;", artifacts.dts)
+        self.assertNotIn(
+            "dispatch(pFunctionName: string, pArguments: IDasVariantVector):",
+            artifacts.dts,
+        )
+        self.assertNotIn("getString(index: bigint):", artifacts.dts)
+        self.assertNotIn("pushBackString(inString: string):", artifacts.dts)
+
+    def test_napi_phase76_async_exports_use_stdexec_sender_chain(self):
+        artifacts = generate_napi_artifacts(
+            _phase76_async_contract_doc(),
+            package_name="das-core",
+            addon_name="das_core_napi",
+        )
+
+        self.assertIn("exec::single_thread_context", artifacts.cpp)
+        self.assertIn("GetDasNapiAsyncOffloadContext", artifacts.cpp)
+        self.assertIn("QueueDasNapiAsyncCall", artifacts.cpp)
+        self.assertIn("class DasNapiAsyncCallBase", artifacts.cpp)
+        self.assertIn("template <typename State>", artifacts.cpp)
+        self.assertIn("class DasNapiAsyncCall", artifacts.cpp)
+        self.assertIn("class DasNapiAsyncCompletionHook", artifacts.cpp)
+        self.assertIn("stdexec::schedule", artifacts.cpp)
+        self.assertIn("stdexec::connect", artifacts.cpp)
+        self.assertIn("stdexec::start", artifacts.cpp)
+        self.assertIn("stdexec::then", artifacts.cpp)
+        self.assertIn("set_value", artifacts.cpp)
+        self.assertIn("set_error", artifacts.cpp)
+        self.assertIn("set_stopped", artifacts.cpp)
+        self.assertIn("Napi::Promise::Deferred::New(env)", artifacts.cpp)
+        self.assertIn("return deferred.Promise()", artifacts.cpp)
+        self.assertIn("Napi::Value IDasComponent_dispatchAsync", artifacts.cpp)
+        self.assertIn('exports.Set("IDasComponent_dispatchAsync"', artifacts.cpp)
+        self.assertIn("native->Dispatch(", artifacts.cpp)
+        self.assertIn("DasNapiAsyncCompletionHook", artifacts.cpp)
+
+        dispatch = _cpp_function_block(artifacts.cpp, "IDasComponent_dispatchAsync")
+        self.assertIn("QueueDasNapiAsyncCall", dispatch)
+        self.assertIn("return deferred.Promise()", dispatch)
+        self.assertNotIn("native->Dispatch(", dispatch)
+        self.assertNotIn("stdexec::sync_wait", dispatch)
+        self.assertNotIn("DAS::Core::IPC::wait", dispatch)
+        self.assertNotIn("std::thread", dispatch)
+        self.assertNotIn("std::async", dispatch)
+        self.assertNotIn("PostToBusinessThread", dispatch)
+        self.assertNotIn("IsIpcProxyBase", dispatch)
+
+        combined = artifacts.cpp
+        self.assertNotIn('exports.Set("IDasComponent_dispatch"', combined)
+        self.assertNotIn("Napi::Value IDasComponent_dispatch(", combined)
+        self.assertNotIn("stdexec::sync_wait", combined)
+        self.assertNotIn("DAS::Core::IPC::wait", combined)
+        self.assertNotIn("std::async", combined)
+        self.assertNotIn("PostToBusinessThread", combined)
+        self.assertNotIn("IsIpcProxyBase", combined)
 
     def test_napi_director_prefetches_variant_vector_inputs_before_tsfn(self):
         doc = parse_idl(
