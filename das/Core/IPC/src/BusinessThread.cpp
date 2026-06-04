@@ -340,4 +340,6 @@ DasResult BusinessThread::PumpUntilPredicate(
     return DAS_E_IPC_CANCELED;
 }
 
+void BusinessThread::NotifyWaiters() { inbound_.NotifyWaiters(); }
+
 DAS_CORE_IPC_NS_END

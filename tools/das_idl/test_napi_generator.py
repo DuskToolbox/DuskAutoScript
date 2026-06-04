@@ -1120,7 +1120,7 @@ class TestNapiGenerator(unittest.TestCase):
         self.assertIn("Napi::ThreadSafeFunction::New", artifacts.cpp)
         self.assertIn("tsfn_.BlockingCall", artifacts.cpp)
         self.assertIn("std::condition_variable complete;", artifacts.cpp)
-        self.assertIn("call->Wait()", artifacts.cpp)
+        self.assertIn("call->WaitWithBusinessThreadPump()", artifacts.cpp)
         self.assertIn("DispatchDirect(method_name, std::move(invoke))", artifacts.cpp)
         self.assertIn("DispatchThreadSafe(method_name, std::move(invoke))", artifacts.cpp)
 
@@ -1227,15 +1227,15 @@ class TestNapiGenerator(unittest.TestCase):
             "D-76.4-07",
         ):
             with self.subTest(decision=decision):
-                self.assertIn(decision, director_base)
+                self.assertIn(decision, artifacts.cpp)
 
-        self.assertIn("napi_is_promise", director_base)
-        self.assertIn("AttachPromiseSettlement", director_base)
+        self.assertIn("napi_is_promise", artifacts.cpp)
+        self.assertIn("AttachPromiseSettlement", artifacts.cpp)
         self.assertIn("NapiDirectorCallData::Finish", artifacts.cpp)
         self.assertIn("WaitWithBusinessThreadPump", director_base)
-        self.assertIn("GetCurrentBusinessThread()", director_base)
-        self.assertIn("PumpUntilPredicate", director_base)
-        self.assertIn("Promise rejection", director_base)
+        self.assertIn("GetCurrentBusinessThread()", artifacts.cpp)
+        self.assertIn("PumpUntilPredicate", artifacts.cpp)
+        self.assertIn("Promise rejection", artifacts.cpp)
 
         attach = _cpp_free_function_block(
             artifacts.cpp,
@@ -1243,7 +1243,7 @@ class TestNapiGenerator(unittest.TestCase):
         )
         self.assertIn("then_callback", attach)
         self.assertIn("catch_callback", attach)
-        self.assertIn("Finish(kNapiDirectorJavaScriptError)", attach)
+        self.assertIn("Finish(DAS_E_JAVASCRIPT_ERROR)", attach)
         self.assertNotIn("uv_run", director_base)
         self.assertNotIn("napi_run", director_base)
         self.assertNotIn("stdexec::sync_wait", director_base)
@@ -1256,16 +1256,19 @@ class TestNapiGenerator(unittest.TestCase):
         )
         director_base = _cpp_class_block(artifacts.cpp, "NapiDirectorBase")
 
-        self.assertIn("void Finish(DasResult in_result)", director_base)
+        self.assertIn("void Finish(DasResult in_result)", artifacts.cpp)
         self.assertIn("Finish(DAS_E_JAVASCRIPT_ERROR)", artifacts.cpp)
-        self.assertIn("complete.notify_one()", director_base)
-        self.assertIn("NotifyWaiters()", director_base)
+        self.assertIn("complete.notify_one()", artifacts.cpp)
+        self.assertIn("NotifyWaiters()", artifacts.cpp)
         self.assertLess(
-            director_base.index("done = true;"),
-            director_base.index("NotifyWaiters()"),
+            artifacts.cpp.index("done.store(true, std::memory_order_release);"),
+            artifacts.cpp.index("NotifyWaiters()"),
         )
         self.assertIn("WaitWithBusinessThreadPump", director_base)
-        self.assertIn("complete.wait(lock, [this] { return done; });", director_base)
+        self.assertIn(
+            "complete.wait(lock, [this] { return done.load(std::memory_order_acquire); });",
+            artifacts.cpp,
+        )
         self.assertNotIn("wait_for", director_base)
         self.assertNotIn("sleep_for", director_base)
 

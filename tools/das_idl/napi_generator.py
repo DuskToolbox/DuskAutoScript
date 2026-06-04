@@ -607,6 +607,7 @@ class NapiGenerator:
             "",
             '#include "das/Core/IPC/Host/HostCommandHandlers.h"',
             '#include "das/Core/IPC/Host/IIpcContext.h"',
+            '#include "das/Core/IPC/BusinessThread.h"',
             '#include "das/Core/IPC/IpcErrors.h"',
             '#include "das/IDasBase.h"',
             '#include "das/DasPtr.hpp"',
@@ -1962,9 +1963,14 @@ Napi::Value startHostIpc(const Napi::CallbackInfo& info) {
         return [
             f"constexpr DasResult kNapiDirectorJavaScriptError = {js_error};",
             f"constexpr DasResult kNapiDirectorMissingCallbackResult = {missing_callback};",
+            "constexpr DasResult kNapiDirectorPendingResult = std::numeric_limits<DasResult>::max();",
             "",
             "struct NapiDirectorCallData {",
-            "    using Invoke = std::function<DasResult(Napi::Env)>;",
+            "    using Invoke = std::function<DasResult(Napi::Env, NapiDirectorCallData&)>;",
+            "",
+            "    // D-76.4-03/D-76.4-03a/D-76.4-03b/D-76.4-03c/D-76.4-06/D-76.4-07:",
+            "    // director callbacks may settle asynchronously without blocking the Node event loop.",
+            "    using PromiseResultConverter = std::function<DasResult(Napi::Env, Napi::Value)>;",
             "",
             "    explicit NapiDirectorCallData(Invoke in_invoke)",
             "        : invoke(std::move(in_invoke)) {}",
@@ -1972,32 +1978,104 @@ Napi::Value startHostIpc(const Napi::CallbackInfo& info) {
             "    Invoke invoke;",
             "    std::mutex mutex;",
             "    std::condition_variable complete;",
-            "    bool done{false};",
+            "    std::atomic_bool done{false};",
+            "    std::atomic<DAS::Core::IPC::BusinessThread*> waiting_business_thread{nullptr};",
             "    DasResult result{kNapiDirectorJavaScriptError};",
             "",
             "    void Run(Napi::Env env) {",
-            "        Finish(invoke(env));",
+            "        const DasResult invoke_result = invoke(env, *this);",
+            "        if (invoke_result != kNapiDirectorPendingResult) {",
+            "            Finish(invoke_result);",
+            "        }",
             "    }",
             "",
+            "    // NapiDirectorCallData::Finish",
             "    void Finish(DasResult in_result) {",
             "        {",
             "            std::lock_guard<std::mutex> lock(mutex);",
             "            result = in_result;",
-            "            done = true;",
             "        }",
+            "        done.store(true, std::memory_order_release);",
             "        complete.notify_one();",
+            "        auto* waiting_bt = waiting_business_thread.load(std::memory_order_acquire);",
+            "        if (waiting_bt != nullptr) {",
+            "            waiting_bt->NotifyWaiters();",
+            "        }",
+            "    }",
+            "",
+            "    void AttachPromiseSettlement(",
+            "        Napi::Env env,",
+            "        Napi::Value promise_value,",
+            "        PromiseResultConverter convert_result) {",
+            "        Napi::Object promise_object = promise_value.As<Napi::Object>();",
+            "        auto converter = std::make_shared<PromiseResultConverter>(",
+            "            std::move(convert_result));",
+            "        Napi::Function then_callback = Napi::Function::New(",
+            "            env,",
+            "            [this, converter](const Napi::CallbackInfo& info) {",
+            "                try {",
+            "                    Napi::Value fulfilled_value = info.Length() > 0",
+            "                        ? info[0]",
+            "                        : info.Env().Undefined();",
+            "                    Finish((*converter)(info.Env(), fulfilled_value));",
+            "                } catch (const Napi::Error&) {",
+            f"                    Finish({js_error});",
+            "                } catch (...) {",
+            f"                    Finish({js_error});",
+            "                }",
+            "                return info.Env().Undefined();",
+            "            });",
+            "        Napi::Function catch_callback = Napi::Function::New(",
+            "            env,",
+            "            [this](const Napi::CallbackInfo& info) {",
+            "                (void)info;",
+            "                // Promise rejection completes the native waiter.",
+            f"                Finish({js_error});",
+            "                return info.Env().Undefined();",
+            "            });",
+            "        Napi::Value then_value = promise_object.Get(\"then\");",
+            "        if (!then_value.IsFunction()) {",
+            f"            Finish({js_error});",
+            "            return;",
+            "        }",
+            "        try {",
+            "            then_value.As<Napi::Function>().Call(",
+            "                promise_object,",
+            "                {then_callback, catch_callback});",
+            "        } catch (const Napi::Error&) {",
+            f"            Finish({js_error});",
+            "        } catch (...) {",
+            f"            Finish({js_error});",
+            "        }",
             "    }",
             "",
             "    DasResult Wait() {",
             "        std::unique_lock<std::mutex> lock(mutex);",
-            "        complete.wait(lock, [this] { return done; });",
+            "        complete.wait(lock, [this] { return done.load(std::memory_order_acquire); });",
+            "        return result;",
+            "    }",
+            "",
+            "    DasResult WaitWithBusinessThreadPump() {",
+            "        auto* business_thread = DAS::Core::IPC::GetCurrentBusinessThread();",
+            "        if (business_thread == nullptr) {",
+            "            return Wait();",
+            "        }",
+            "        waiting_business_thread.store(business_thread, std::memory_order_release);",
+            "        const DasResult pump_result = business_thread->PumpUntilPredicate(",
+            "            \"NAPI director promise\",",
+            "            [this]() { return done.load(std::memory_order_acquire); });",
+            "        waiting_business_thread.store(nullptr, std::memory_order_release);",
+            "        if (pump_result < 0) {",
+            "            return pump_result;",
+            "        }",
+            "        std::lock_guard<std::mutex> lock(mutex);",
             "        return result;",
             "    }",
             "};",
             "",
             "class NapiDirectorBase {",
             "protected:",
-            "    using DirectorInvoke = std::function<DasResult(Napi::Env, Napi::Function)>;",
+            "    using DirectorInvoke = std::function<DasResult(Napi::Env, Napi::Function, NapiDirectorCallData*)>;",
             "",
             "    NapiDirectorBase(Napi::Env env, Napi::Object callbacks)",
             "        : env_(env),",
@@ -2056,6 +2134,21 @@ Napi::Value startHostIpc(const Napi::CallbackInfo& info) {
             "    DasResult DispatchDirect(",
             "        const char* method_name,",
             "        DirectorInvoke invoke) {",
+            "        const DasResult result = InvokeDirectorCallback(",
+            "            method_name,",
+            "            std::move(invoke),",
+            "            nullptr);",
+            "        if (result == kNapiDirectorPendingResult) {",
+            '            LogDirectorError(method_name, "Promise return cannot be waited on the Node thread");',
+            "            return kNapiDirectorJavaScriptError;",
+            "        }",
+            "        return result;",
+            "    }",
+            "",
+            "    DasResult InvokeDirectorCallback(",
+            "        const char* method_name,",
+            "        DirectorInvoke invoke,",
+            "        NapiDirectorCallData* call) {",
             "        Napi::HandleScope scope(env_);",
             "        if (!hasCallbackMethod(method_name)) {",
             "            LogMissingCallback(method_name);",
@@ -2064,7 +2157,7 @@ Napi::Value startHostIpc(const Napi::CallbackInfo& info) {
             "        try {",
             "            Napi::Value method = callbacks_.Value().Get(method_name);",
             "            Napi::Function callback = method.As<Napi::Function>();",
-            "            return invoke(env_, callback);",
+            "            return invoke(env_, callback, call);",
             "        } catch (const Napi::Error& error) {",
             "            LogJavaScriptException(method_name, error);",
             "            return kNapiDirectorJavaScriptError;",
@@ -2081,9 +2174,11 @@ Napi::Value startHostIpc(const Napi::CallbackInfo& info) {
             "        const char* method_name,",
             "        DirectorInvoke invoke) {",
             "        auto call = std::make_shared<NapiDirectorCallData>(",
-            "            [this, method_name, invoke = std::move(invoke)](Napi::Env env) mutable {",
+            "            [this, method_name, invoke = std::move(invoke)](",
+            "                Napi::Env env,",
+            "                NapiDirectorCallData& call_data) mutable {",
             "                (void)env;",
-            "                return DispatchDirect(method_name, std::move(invoke));",
+            "                return InvokeDirectorCallback(method_name, std::move(invoke), &call_data);",
             "            });",
             "        napi_status status = tsfn_.BlockingCall(",
             "            call.get(),",
@@ -2094,7 +2189,7 @@ Napi::Value startHostIpc(const Napi::CallbackInfo& info) {
             '            LogDirectorError(method_name, "failed to marshal JavaScript director upcall to Node thread");',
             "            return kNapiDirectorJavaScriptError;",
             "        }",
-            "        return call->Wait();",
+            "        return call->WaitWithBusinessThreadPump();",
             "    }",
             "",
             "    void LogMissingCallback(const char* method_name) const {",
@@ -2276,7 +2371,10 @@ Napi::Value startHostIpc(const Napi::CallbackInfo& info) {
         lines.extend(
             [
                 f'        return DispatchDirectorCall("{method_label}",',
-                f"            [{capture_list}](Napi::Env env, Napi::Function callback) mutable -> DasResult {{",
+                f"            [{capture_list}](",
+                "                Napi::Env env,",
+                "                Napi::Function callback,",
+                "                NapiDirectorCallData* call) mutable -> DasResult {",
                 "                std::vector<napi_value> js_args;",
             ]
         )
@@ -2285,6 +2383,41 @@ Napi::Value startHostIpc(const Napi::CallbackInfo& info) {
         lines.extend(
             [
                 "                Napi::Value js_result = callback.Call(CallbackThis(), js_args);",
+                "                bool js_result_is_promise = false;",
+                "                napi_status promise_status = napi_is_promise(",
+                "                    env,",
+                "                    js_result,",
+                "                    &js_result_is_promise);",
+                "                if (promise_status != napi_ok) {",
+                f'                    LogDirectorError("{method_label}", "failed to inspect Promise return");',
+                "                    return kNapiDirectorJavaScriptError;",
+                "                }",
+                "                if (js_result_is_promise) {",
+                "                    if (call == nullptr) {",
+                f'                        LogDirectorError("{method_label}", "Promise return cannot be waited on the Node thread");',
+                "                        return kNapiDirectorJavaScriptError;",
+                "                    }",
+                "                    call->AttachPromiseSettlement(",
+                "                        env,",
+                "                        js_result,",
+                f"                        [{capture_list}](",
+                "                            Napi::Env env,",
+                "                            Napi::Value js_result) mutable -> DasResult {",
+            ]
+        )
+        lines.extend(
+            self._generate_cpp_director_result_conversion(
+                method,
+                doc,
+                method_label,
+                indent="                            ",
+            )
+        )
+        lines.extend(
+            [
+                "                        });",
+                "                    return kNapiDirectorPendingResult;",
+                "                }",
             ]
         )
         lines.extend(
@@ -2296,8 +2429,8 @@ Napi::Value startHostIpc(const Napi::CallbackInfo& info) {
         )
         lines.extend(
             [
-                "            });",
-                "    }",
+            "            });",
+            "    }",
             ]
         )
         return lines
@@ -2491,15 +2624,17 @@ Napi::Value startHostIpc(const Napi::CallbackInfo& info) {
         method: MethodDef,
         doc: IdlDocument,
         method_label: str,
+        *,
+        indent: str = "                ",
     ) -> list[str]:
         out_params = _method_out_params(method)
         if not out_params:
             return [
-                "                if (!js_result.IsNumber()) {",
-                f'                    LogDirectorError("{method_label}", "callback must return DasResult");',
-                "                    return kNapiDirectorJavaScriptError;",
-                "                }",
-                "                return static_cast<DasResult>(js_result.As<Napi::Number>().Int32Value());",
+                f"{indent}if (!js_result.IsNumber()) {{",
+                f'{indent}    LogDirectorError("{method_label}", "callback must return DasResult");',
+                f"{indent}    return kNapiDirectorJavaScriptError;",
+                f"{indent}}}",
+                f"{indent}return static_cast<DasResult>(js_result.As<Napi::Number>().Int32Value());",
             ]
         if len(out_params) == 1:
             return self._generate_cpp_director_assign_out_param(
@@ -2507,21 +2642,21 @@ Napi::Value startHostIpc(const Napi::CallbackInfo& info) {
                 "js_result",
                 method_label,
                 doc,
-                indent="                ",
-            ) + ["                return DAS_S_OK;"]
+                indent=indent,
+            ) + [f"{indent}return DAS_S_OK;"]
 
         lines = [
-            "                if (!js_result.IsObject()) {",
-            f'                    LogDirectorError("{method_label}", "callback must return an object");',
-            "                    return kNapiDirectorJavaScriptError;",
-            "                }",
-            "                Napi::Object js_output = js_result.As<Napi::Object>();",
+            f"{indent}if (!js_result.IsObject()) {{",
+            f'{indent}    LogDirectorError("{method_label}", "callback must return an object");',
+            f"{indent}    return kNapiDirectorJavaScriptError;",
+            f"{indent}}}",
+            f"{indent}Napi::Object js_output = js_result.As<Napi::Object>();",
         ]
         for param in out_params:
             field_name = clean_out_field_name(param.name)
             value_name = f"{_sanitize_identifier(param.name)}_js_value"
             lines.append(
-                f'                Napi::Value {value_name} = js_output.Get("{field_name}");'
+                f'{indent}Napi::Value {value_name} = js_output.Get("{field_name}");'
             )
             lines.extend(
                 self._generate_cpp_director_assign_out_param(
@@ -2529,10 +2664,10 @@ Napi::Value startHostIpc(const Napi::CallbackInfo& info) {
                     value_name,
                     method_label,
                     doc,
-                    indent="                ",
+                    indent=indent,
                 )
             )
-        lines.append("                return DAS_S_OK;")
+        lines.append(f"{indent}return DAS_S_OK;")
         return lines
 
     def _generate_cpp_director_assign_out_param(

@@ -5,6 +5,7 @@
 #include <das/Core/IPC/CurrentIpcContextScope.h>
 #include <das/Core/IPC/IpcMessageQueue.h>
 #include <das/Core/IPC/IpcRunLoop.h>
+#include <das/DasExport.h>
 #include <functional>
 #include <memory>
 #include <string_view>
@@ -18,10 +19,10 @@ class ProxyFactory;
 class RemoteObjectRegistry;
 
 [[nodiscard]]
-bool IsCurrentBusinessThread() noexcept;
+DAS_API bool IsCurrentBusinessThread() noexcept;
 
 [[nodiscard]]
-BusinessThread* GetCurrentBusinessThread() noexcept;
+DAS_API BusinessThread* GetCurrentBusinessThread() noexcept;
 
 /**
  * @brief 业务线程类
@@ -29,7 +30,8 @@ BusinessThread* GetCurrentBusinessThread() noexcept;
  * 从 inbound queue 取消息并 dispatch 到 handler。
  * 支持 PumpUntilResponse 用于嵌套 pump（Phase 24 Proxy 调用）。
  */
-class BusinessThread : public std::enable_shared_from_this<BusinessThread>
+class DAS_API BusinessThread
+    : public std::enable_shared_from_this<BusinessThread>
 {
 public:
     /**
@@ -94,6 +96,9 @@ public:
     DasResult PumpUntilPredicate(
         std::string_view             wait_reason,
         const std::function<bool()>& is_done);
+
+    /// @brief 唤醒当前 BusinessThread 队列等待者重新检查外部 predicate
+    void NotifyWaiters();
 
     /**
      * @brief 检查业务线程是否正在运行
