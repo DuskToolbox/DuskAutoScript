@@ -3635,12 +3635,21 @@ public:
     }
 };
 
+enum class LifecycleCallbackStatusSource
+{
+    None,
+    ArgumentReadback,
+    MethodNameFallback,
+};
+
 class LifecycleCallbackComponent : public DAS::PluginInterface::IDasComponent
 {
     DAS_UTILS_IDASBASE_AUTO_IMPL(LifecycleCallbackComponent);
 
 public:
-    std::atomic<bool>                         callback_received_{false};
+    std::atomic<bool>                          callback_received_{false};
+    std::atomic<LifecycleCallbackStatusSource> received_status_source_{
+        LifecycleCallbackStatusSource::None};
     std::string                               received_status_;
     DAS::Core::IPC::MainProcess::IIpcContext* ctx_ = nullptr;
     DAS::DasPtr<IDasAsyncCallback>            completion_signal_;
@@ -4443,6 +4452,11 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_NodeDirectorLifecycleTest)
             "bridge_released:Node:node_bridge_marker"),
         std::string::npos)
         << "Unexpected status: " << callback->received_status_;
+    EXPECT_EQ(
+        callback->received_status_source_.load(),
+        LifecycleCallbackStatusSource::ArgumentReadback)
+        << "Node bridge lifecycle callback status must come from "
+           "p_arguments->GetString(0)";
 
     {
         DasReadOnlyString director_method{"getSessionInfo"};
