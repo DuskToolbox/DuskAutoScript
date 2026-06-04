@@ -1162,6 +1162,58 @@ class TestNapiGenerator(unittest.TestCase):
         self.assertNotIn("getString(index: bigint):", artifacts.dts)
         self.assertNotIn("pushBackString(inString: string):", artifacts.dts)
 
+    def test_napi_phase76_no_idasvariantvector_special_factory(self):
+        artifacts = generate_napi_artifacts(
+            _phase76_async_contract_doc(),
+            package_name="das-core",
+            addon_name="das_core_napi",
+        )
+        combined = "\n".join([artifacts.cpp, artifacts.dts, artifacts.js])
+
+        for forbidden in (
+            "createVariantVector",
+            "CreateIDasVariantVector",
+            "CreateNativeIDasVariantVector",
+            "DasVariantVectorImpl",
+            "p_arguments_snapshot_result",
+        ):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, combined)
+
+    def test_napi_phase76_variant_vector_uses_uniform_async_interface_path(self):
+        artifacts = generate_napi_artifacts(
+            _phase76_async_contract_doc(),
+            package_name="das-core",
+            addon_name="das_core_napi",
+        )
+
+        self.assertIn("getSizeAsync(...args) {", artifacts.js)
+        self.assertIn("getStringAsync(index) {", artifacts.js)
+        self.assertIn("pushBackStringAsync(inString) {", artifacts.js)
+        self.assertIn("native.IDasVariantVector_getSizeAsync", artifacts.js)
+        self.assertIn("native.IDasVariantVector_getStringAsync", artifacts.js)
+        self.assertIn("native.IDasVariantVector_pushBackStringAsync", artifacts.js)
+        self.assertIn('exports.Set("IDasVariantVector_getSizeAsync"', artifacts.cpp)
+        self.assertIn('exports.Set("IDasVariantVector_getStringAsync"', artifacts.cpp)
+        self.assertIn('exports.Set("IDasVariantVector_pushBackStringAsync"', artifacts.cpp)
+        self.assertIn("QueueDasNapiAsyncCall", artifacts.cpp)
+
+        vector_get_string = _cpp_function_block(
+            artifacts.cpp,
+            "IDasVariantVector_getStringAsync",
+        )
+        component_dispatch = _cpp_function_block(
+            artifacts.cpp,
+            "IDasComponent_dispatchAsync",
+        )
+        for block in (vector_get_string, component_dispatch):
+            with self.subTest(block=block.splitlines()[0]):
+                self.assertIn("QueueDasNapiAsyncCall", block)
+                self.assertIn("return deferred.Promise()", block)
+                self.assertNotIn("stdexec::sync_wait", block)
+                self.assertNotIn("DAS::Core::IPC::wait", block)
+                self.assertNotIn("IsIpcProxyBase", block)
+
     def test_napi_phase76_async_exports_use_stdexec_sender_chain(self):
         artifacts = generate_napi_artifacts(
             _phase76_async_contract_doc(),
@@ -1272,7 +1324,7 @@ class TestNapiGenerator(unittest.TestCase):
         self.assertNotIn("wait_for", director_base)
         self.assertNotIn("sleep_for", director_base)
 
-    def test_napi_director_prefetches_variant_vector_inputs_before_tsfn(self):
+    def test_napi_director_keeps_variant_vector_inputs_on_uniform_director_path(self):
         doc = parse_idl(
             """
             errorcode DasResult {
@@ -1305,15 +1357,9 @@ class TestNapiGenerator(unittest.TestCase):
             "DAS::DasPtr<IDasVariantVector> p_arguments_hold(p_arguments);",
             director,
         )
-        self.assertIn(
-            "const DasResult p_arguments_snapshot_result = p_arguments_hold->GetSize();",
-            director,
-        )
-        self.assertIn("return p_arguments_snapshot_result;", director)
-        self.assertLess(
-            director.index("p_arguments_snapshot_result"),
-            director.index('DispatchDirectorCall("dispatch"'),
-        )
+        self.assertNotIn("p_arguments_snapshot_result", director)
+        self.assertNotIn("GetSize();", director)
+        self.assertIn('DispatchDirectorCall("dispatch"', director)
 
     def test_napi_phase74_director_logs_exceptions_and_guards_recursion(self):
         artifacts = generate_napi_artifacts(
