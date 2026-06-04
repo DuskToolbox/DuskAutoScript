@@ -4498,6 +4498,30 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_NodeDirectorLifecycleTest)
         EXPECT_STREQ(director_marker_text, "Director");
     }
 
+    {
+        DasReadOnlyString director_method{"getSessionInfoPromise"};
+        DAS::ExportInterface::DasVariantVector director_result;
+        DAS::ExportInterface::DasVariantVector director_params;
+        ASSERT_EQ(CreateIDasVariantVector(director_params.Put()), DAS_S_OK);
+        ASSERT_EQ(
+            director_component->Dispatch(
+                director_method.Get(),
+                director_params.Get(),
+                director_result.Put()),
+            DAS_S_OK);
+        ASSERT_NE(director_result.Get(), nullptr);
+        ASSERT_EQ(director_result->GetSize(), 3u);
+
+        DAS::DasPtr<IDasReadOnlyString> director_marker;
+        ASSERT_EQ(
+            director_result->GetString(2, director_marker.Put()),
+            DAS_S_OK);
+        const char* director_marker_text = nullptr;
+        ASSERT_EQ(director_marker->GetUtf8(&director_marker_text), DAS_S_OK);
+        ASSERT_NE(director_marker_text, nullptr);
+        EXPECT_STREQ(director_marker_text, "DirectorPromise");
+    }
+
     EXPECT_TRUE(launcher_->IsRunning())
         << "Node host should remain alive after lifecycle director callback";
 }
