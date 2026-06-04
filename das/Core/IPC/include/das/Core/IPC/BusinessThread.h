@@ -5,17 +5,23 @@
 #include <das/Core/IPC/CurrentIpcContextScope.h>
 #include <das/Core/IPC/IpcMessageQueue.h>
 #include <das/Core/IPC/IpcRunLoop.h>
+#include <functional>
 #include <memory>
+#include <string_view>
 #include <thread>
 
 DAS_CORE_IPC_NS_BEGIN
 
+class BusinessThread;
 class DistributedObjectManager;
 class ProxyFactory;
 class RemoteObjectRegistry;
 
 [[nodiscard]]
 bool IsCurrentBusinessThread() noexcept;
+
+[[nodiscard]]
+BusinessThread* GetCurrentBusinessThread() noexcept;
 
 /**
  * @brief 业务线程类
@@ -73,6 +79,21 @@ public:
         CallKey               my_call_key,
         std::vector<uint8_t>& out_response,
         uint16_t*             out_flags = nullptr);
+
+    /**
+     * @brief 泵入直到外部 predicate 完成（用于 BT 内同步 ABI 等待）
+     *
+     * 用于 JS director Promise settlement 等非 IPC response
+     * 信号。当前线程已经是 BusinessThread 时，等待期间继续处理入站
+     * IPC，避免阻塞嵌套 REQUEST/EVENT。
+     *
+     * @param wait_reason 调试用等待原因
+     * @param is_done 轻量完成条件；必须只读取 atomic/已同步状态
+     * @return DasResult DAS_S_OK predicate 完成，DAS_E_IPC_CANCELED 队列已关闭
+     */
+    DasResult PumpUntilPredicate(
+        std::string_view             wait_reason,
+        const std::function<bool()>& is_done);
 
     /**
      * @brief 检查业务线程是否正在运行

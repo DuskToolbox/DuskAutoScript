@@ -13,25 +13,37 @@ DAS_CORE_IPC_NS_BEGIN
 
 namespace
 {
-    thread_local bool g_is_current_business_thread = false;
+    thread_local BusinessThread* g_current_business_thread = nullptr;
 
     class ScopedBusinessThreadMarker
     {
     public:
-        ScopedBusinessThreadMarker() noexcept
+        explicit ScopedBusinessThreadMarker(BusinessThread* thread) noexcept
+            : previous_(g_current_business_thread)
         {
-            g_is_current_business_thread = true;
+            g_current_business_thread = thread;
         }
 
-        ~ScopedBusinessThreadMarker() { g_is_current_business_thread = false; }
+        ~ScopedBusinessThreadMarker() { g_current_business_thread = previous_; }
 
         ScopedBusinessThreadMarker(const ScopedBusinessThreadMarker&) = delete;
         ScopedBusinessThreadMarker& operator=(
             const ScopedBusinessThreadMarker&) = delete;
+
+    private:
+        BusinessThread* previous_ = nullptr;
     };
 } // namespace
 
-bool IsCurrentBusinessThread() noexcept { return g_is_current_business_thread; }
+bool IsCurrentBusinessThread() noexcept
+{
+    return g_current_business_thread != nullptr;
+}
+
+BusinessThread* GetCurrentBusinessThread() noexcept
+{
+    return g_current_business_thread;
+}
 
 BusinessThread::BusinessThread(
     IpcMessageQueue<InboundMessage>& inbound,
@@ -79,7 +91,7 @@ void BusinessThread::Run()
 {
     DAS_CORE_LOG_INFO("BusinessThread::Run() started");
 
-    ScopedBusinessThreadMarker business_thread_marker;
+    ScopedBusinessThreadMarker business_thread_marker(this);
     ScopedCurrentIpcContext    scope(&resolve_context_);
 
     proxy_factory_.GetObjectManager().SetBusinessThreadId(
@@ -286,6 +298,45 @@ DasResult BusinessThread::PumpUntilResponse(
     }
 
     // 线程已停止
+    return DAS_E_IPC_CANCELED;
+}
+
+DasResult BusinessThread::PumpUntilPredicate(
+    std::string_view             wait_reason,
+    const std::function<bool()>& is_done)
+{
+    (void)wait_reason;
+
+    if (!is_done)
+    {
+        return DAS_E_INVALID_ARGUMENT;
+    }
+
+    while (running_.load())
+    {
+        if (is_done())
+        {
+            return DAS_S_OK;
+        }
+
+        auto msg_opt = inbound_.PopUntil(is_done);
+        if (!msg_opt.has_value())
+        {
+            if (is_done())
+            {
+                return DAS_S_OK;
+            }
+            return DAS_E_IPC_CANCELED;
+        }
+
+        InboundMessage msg = std::move(msg_opt.value());
+        ProcessInboundMessage(msg);
+    }
+
+    if (is_done())
+    {
+        return DAS_S_OK;
+    }
     return DAS_E_IPC_CANCELED;
 }
 

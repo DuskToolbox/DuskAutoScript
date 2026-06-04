@@ -24,6 +24,7 @@
 #include <das/Core/IPC/Host/HostCommandHandlers.h>
 #include <das/Core/IPC/Host/IIpcContext.h>
 #include <das/Core/IPC/HostLauncher.h>
+#include <das/Core/IPC/InternalCallbackHandler.h>
 #include <das/Core/IPC/IpcCommandHandler.h>
 #include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/IPC/MainProcess/IHostLauncher.h>
@@ -326,6 +327,13 @@ namespace Das::IPC::Test
         ProxyFactory                    proxy_factory;
         RemoteObjectRegistry            registry;
         IpcRunLoop run_loop(false, &inbound_queue, proxy_factory, registry);
+        DAS::DasPtr<Das::Core::IPC::InternalCallbackHandler>
+            internal_callback_handler(
+                new Das::Core::IPC::InternalCallbackHandler);
+        run_loop.RegisterHandler(
+            Das::Core::IPC::HeaderFlags::BUSINESS_CONTROL,
+            internal_callback_handler->GetInterfaceId(),
+            internal_callback_handler.Get());
         FakeResolveContext resolve_context;
         auto               business_thread = std::make_shared<BusinessThread>(
             inbound_queue,

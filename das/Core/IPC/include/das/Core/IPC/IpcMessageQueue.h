@@ -9,6 +9,7 @@
 #include <condition_variable>
 #include <mutex>
 #include <optional>
+#include <type_traits>
 #include <vector>
 
 DAS_CORE_IPC_NS_BEGIN
@@ -96,6 +97,34 @@ public:
         return item;
     }
 
+    /// @brief 出队（阻塞），也可被外部轻量 predicate 唤醒
+    /// @param is_done 外部完成条件；必须是轻量/atomic predicate
+    /// @return 有元素返回元素；队列关闭或 predicate 完成且无元素时返回 nullopt
+    template <typename Predicate>
+    std::optional<T> PopUntil(Predicate&& is_done)
+    {
+        static_assert(
+            std::is_invocable_r_v<bool, Predicate&>,
+            "IpcMessageQueue::PopUntil predicate must return bool");
+
+        std::unique_lock<std::mutex> lock(mutex_);
+
+        cv_.wait(
+            lock,
+            [this, &is_done]()
+            { return !ring_.empty() || uninitialized_ || is_done(); });
+
+        if (ring_.empty())
+        {
+            return std::nullopt;
+        }
+
+        T item = std::move(ring_.front());
+        ring_.pop_front();
+
+        return item;
+    }
+
     /// @brief 尝试出队（非阻塞）
     /// @return 有元素返回元素，否则返回 nullopt
     std::optional<T> TryPop()
@@ -121,6 +150,9 @@ public:
         uninitialized_ = true;
         cv_.notify_all();
     }
+
+    /// @brief 唤醒等待者重新检查队列状态和外部 predicate
+    void NotifyWaiters() { cv_.notify_all(); }
 
     /// @brief 检查队列是否已反初始化
     /// @return 已反初始化返回 true
