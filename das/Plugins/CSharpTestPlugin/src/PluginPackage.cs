@@ -18,6 +18,8 @@ public sealed class PluginPackage : IDisposable
         return component;
     }
 
+    public bool CanUnloadNow => component.ActiveLifecycleDirectorCount == 0;
+
     public void Dispose()
     {
         component.Dispose();

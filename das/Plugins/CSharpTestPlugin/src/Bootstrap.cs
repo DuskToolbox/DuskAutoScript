@@ -23,6 +23,6 @@ public static class Bootstrap
 
     private static object CreatePackage()
     {
-        return new PluginPackage();
+        return GeneratedPackageFactory.CreatePackage(new PluginPackage());
     }
 }
