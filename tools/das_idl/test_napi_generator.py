@@ -1453,10 +1453,14 @@ class TestNapiGenerator(unittest.TestCase):
         messages = (
             root / "das" / "Core" / "Exceptions" / "src" / "GlobalErrorMessages.cpp"
         ).read_text(encoding="utf-8")
-        self.assertIn('{DAS_E_JAVASCRIPT_ERROR, "JavaScript error"}', messages)
-        self.assertIn(
-            '{DAS_E_JAVASCRIPT_NO_IMPLEMENTATION, "JavaScript callback not implemented"}',
+        self.assertRegex(
             messages,
+            r"\{\s*DAS_E_JAVASCRIPT_ERROR\s*,\s*\"JavaScript error\"\s*\}",
+        )
+        self.assertRegex(
+            messages,
+            r"\{\s*DAS_E_JAVASCRIPT_NO_IMPLEMENTATION\s*,\s*"
+            r"\"JavaScript callback not implemented\"\s*\}",
         )
 
 
