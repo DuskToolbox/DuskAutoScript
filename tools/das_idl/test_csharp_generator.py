@@ -478,6 +478,19 @@ class TestCSharpGeneratorPhase77CompleteSurface(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertNotIn(token, combined)
 
+    def test_d77_47_output_count_scales_with_type_graph(self):
+        simple_artifacts = _artifacts()
+        rich_artifacts = _phase77_artifacts()
+
+        simple_csharp_paths = [path for path in simple_artifacts.files if path.endswith(".cs")]
+        rich_csharp_paths = [path for path in rich_artifacts.files if path.endswith(".cs")]
+
+        self.assertGreater(len(rich_csharp_paths), len(simple_csharp_paths))
+        self.assertIn("Das.Generated/Wrappers/IDasBase.cs", rich_artifacts.files)
+        self.assertIn("Das.Generated/Wrappers/IDasReadOnlyString.cs", rich_artifacts.files)
+        self.assertIn("Native/DasCSharpDirectorSupport.h", rich_artifacts.files)
+        self.assertIn("Native/DasCSharpDirectorSupport.cpp", rich_artifacts.files)
+
 
 if __name__ == "__main__":
     unittest.main()
