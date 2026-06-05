@@ -893,6 +893,82 @@ JSON 配置格式:
                     )
                     batch_result = 1
 
+        # ====== 执行 C# 聚合 ======
+        csharp_fields = {
+            "csharp_output_dir": reduce_config.get("csharp_output_dir"),
+            "csharp_namespace_root": reduce_config.get("csharp_namespace_root"),
+            "csharp_package_name": reduce_config.get("csharp_package_name"),
+            "csharp_project_name": reduce_config.get("csharp_project_name"),
+            "csharp_idl_dir": reduce_config.get("csharp_idl_dir"),
+            "csharp_idl_files": reduce_config.get("csharp_idl_files", []),
+        }
+        csharp_reduce_requested = any(csharp_fields.values())
+
+        if csharp_reduce_requested and batch_result == 0:
+            missing_csharp_fields = [
+                name for name, value in csharp_fields.items() if not value
+            ]
+            if missing_csharp_fields:
+                print(
+                    "错误: C# reduce config missing "
+                    + ", ".join(missing_csharp_fields),
+                    file=sys.stderr,
+                )
+                batch_result = 1
+            else:
+                csharp_script = Path(__file__).parent / "das_csharp_export.py"
+                if csharp_script.exists():
+                    cmd = [
+                        sys.executable,
+                        str(csharp_script),
+                        "--idl-dir",
+                        csharp_fields["csharp_idl_dir"],
+                        "--output",
+                        csharp_fields["csharp_output_dir"],
+                        "--namespace-root",
+                        csharp_fields["csharp_namespace_root"],
+                        "--package-name",
+                        csharp_fields["csharp_package_name"],
+                        "--project-name",
+                        csharp_fields["csharp_project_name"],
+                        "--idl-files",
+                        *csharp_fields["csharp_idl_files"],
+                    ]
+
+                    try:
+                        t0 = time.time()
+                        result = subprocess.run(
+                            cmd,
+                            capture_output=True,
+                            text=True,
+                            timeout=60,
+                        )
+                        dt = time.time() - t0
+
+                        if result.returncode == 0:
+                            reduce_phases.append(
+                                ("CSharp Binding", dt, "ok", result.stdout.strip())
+                            )
+                        else:
+                            reduce_phases.append(
+                                (
+                                    "CSharp Binding",
+                                    dt,
+                                    "failed",
+                                    result.stderr.strip(),
+                                )
+                            )
+                            batch_result = result.returncode or 1
+                    except Exception as e:
+                        reduce_phases.append(("CSharp Binding", 0.0, "error", str(e)))
+                        batch_result = 1
+                else:
+                    print(
+                        f"错误: C# reduce script missing: {csharp_script}",
+                        file=sys.stderr,
+                    )
+                    batch_result = 1
+
     # ====== 打印 Reduce 阶段汇总 ======
     if reduce_phases:
         print(f"\nReduce Phase Timeline")

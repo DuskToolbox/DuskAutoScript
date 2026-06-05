@@ -265,6 +265,45 @@ class TestCSharpBatchConfig(unittest.TestCase):
                 rf'_LANG_LOWER STREQUAL "{language}"[\s\S]*?continue\(\)',
             )
 
+    def test_batch_execution_runs_csharp_reduce_phase(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = Path(temp_dir)
+            csharp_dir = temp / "csharp"
+
+            result = self._run_gen_config(
+                temp,
+                "--languages",
+                "CSharp",
+                "--csharp-output-dir",
+                str(csharp_dir),
+                "--csharp-namespace-root",
+                "Das.Generated",
+                "--csharp-package-name",
+                "Das.Generated",
+                "--csharp-project-name",
+                "DasGenerated",
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+            batch_result = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT_DIR / "das_idl_batch_gen.py"),
+                    "--config",
+                    str(temp / "batch.json"),
+                ],
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(batch_result.returncode, 0, batch_result.stderr)
+            self.assertIn("CSharp Binding", batch_result.stdout)
+            self.assertTrue((csharp_dir / "DasGenerated.csproj").exists())
+            self.assertTrue((csharp_dir / "Das.Generated" / "DasResult.cs").exists())
+            self.assertTrue(
+                (csharp_dir / "Das.Generated" / "Wrappers" / "IDasSample.cs").exists()
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

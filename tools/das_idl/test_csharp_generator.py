@@ -1,4 +1,6 @@
 import sys
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -133,6 +135,67 @@ class TestCSharpGeneratorContract(unittest.TestCase):
         self.assertIn("#if NETFRAMEWORK", native_methods)
         self.assertIn("LibraryImport", native_methods)
         self.assertIn("delegate* unmanaged", native_methods)
+
+
+class TestCSharpExportCli(unittest.TestCase):
+    def test_csharp_cli_merges_idl_and_writes_artifacts(self):
+        script = Path(__file__).parent / "das_csharp_export.py"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = Path(temp_dir)
+            idl_dir = temp / "idl"
+            output_dir = temp / "out"
+            idl_dir.mkdir()
+            (idl_dir / "Result.idl").write_text(
+                "errorcode DasResult { DAS_S_OK = 0, }",
+                encoding="utf-8",
+            )
+            (idl_dir / "Core.idl").write_text(
+                """
+                namespace Das {
+                    [uuid("11111111-2222-3333-4444-555555555555")]
+                    interface IDasSample : IDasBase {
+                        DasResult Flush();
+                    }
+                }
+                """,
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(script),
+                    "--idl-dir",
+                    str(idl_dir),
+                    "--output",
+                    str(output_dir),
+                    "--namespace-root",
+                    "Das.Generated",
+                    "--package-name",
+                    "Das.Generated",
+                    "--project-name",
+                    "DasGenerated",
+                    "--idl-files",
+                    "Result.idl",
+                    "Core.idl",
+                ],
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue((output_dir / "DasGenerated.csproj").exists())
+            self.assertTrue((output_dir / "Das.Generated" / "DasResult.cs").exists())
+            self.assertTrue(
+                (output_dir / "Das.Generated" / "Wrappers" / "IDasSample.cs").exists()
+            )
+            self.assertIn(
+                "DAS_S_OK",
+                (output_dir / "Das.Generated" / "DasResult.cs").read_text(
+                    encoding="utf-8"
+                ),
+            )
+            self.assertIn("Generated:", result.stdout)
 
 
 if __name__ == "__main__":
