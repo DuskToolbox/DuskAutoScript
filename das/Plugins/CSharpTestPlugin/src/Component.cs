@@ -78,7 +78,6 @@ public sealed class Component : IDisposable
         out IntPtr resultHandle)
     {
         resultHandle = IntPtr.Zero;
-
         var callbackResult = arguments.GetComponent(0);
         if ((int)callbackResult.Result < 0 || callbackResult.Component.Handle == IntPtr.Zero)
         {
@@ -108,7 +107,7 @@ public sealed class Component : IDisposable
             return pushStatusResult;
         }
 
-        var lifecycleComponent = GeneratedPackageFactory.CreateLifecycleComponent(
+        using var lifecycleComponent = GeneratedPackageFactory.CreateLifecycleComponent(
             callbackResult.Component,
             marker,
             lifecycle);

@@ -93,6 +93,9 @@ function(das_add_csharp_test_plugin_package
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${_BUILD_OUTPUT_DIR}/${_PACKAGE_BINARY}"
             "${_PACKAGE_OUTPUT_DIR}/${_PACKAGE_BINARY}"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${_BUILD_OUTPUT_DIR}/Das.Generated.dll"
+            "${_PACKAGE_OUTPUT_DIR}/Das.Generated.dll"
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
         VERBATIM)
     add_dependencies(${TARGET_NAME} ${BUILD_TARGET} DasCoreCSharpExport)
@@ -121,6 +124,9 @@ function(das_add_csharp_test_plugin_modern_package
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${_BUILD_OUTPUT_DIR}/${_PACKAGE_BINARY}"
             "${_PACKAGE_OUTPUT_DIR}/${_PACKAGE_BINARY}"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${_BUILD_OUTPUT_DIR}/Das.Generated.dll"
+            "${_PACKAGE_OUTPUT_DIR}/Das.Generated.dll"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${_BUILD_OUTPUT_DIR}/${_RUNTIME_CONFIG}"
             "${_PACKAGE_OUTPUT_DIR}/${_RUNTIME_CONFIG}"

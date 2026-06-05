@@ -443,6 +443,40 @@ DasResult CreateIDasVariantVector(
     }
 }
 
+DasResult GetIDasVariantVectorString(
+    Das::ExportInterface::IDasVariantVector* p_vector,
+    uint64_t                                 index,
+    IDasReadOnlyString**                     pp_out_string)
+{
+    DAS_UTILS_CHECK_POINTER(p_vector);
+    return p_vector->GetString(index, pp_out_string);
+}
+
+DasResult GetIDasVariantVectorComponent(
+    Das::ExportInterface::IDasVariantVector* p_vector,
+    uint64_t                                 index,
+    Das::PluginInterface::IDasComponent**    pp_out_component)
+{
+    DAS_UTILS_CHECK_POINTER(p_vector);
+    return p_vector->GetComponent(index, pp_out_component);
+}
+
+DasResult PushBackIDasVariantVectorString(
+    Das::ExportInterface::IDasVariantVector* p_vector,
+    IDasReadOnlyString*                      p_in_string)
+{
+    DAS_UTILS_CHECK_POINTER(p_vector);
+    return p_vector->PushBackString(p_in_string);
+}
+
+DasResult PushBackIDasVariantVectorComponent(
+    Das::ExportInterface::IDasVariantVector* p_vector,
+    Das::PluginInterface::IDasComponent*     p_in_component)
+{
+    DAS_UTILS_CHECK_POINTER(p_vector);
+    return p_vector->PushBackComponent(p_in_component);
+}
+
 DasRetIDasVariantVector CreateDasRetIDasVariantVector()
 {
     DAS::DasPtr<Das::ExportInterface::IDasVariantVector> p_vector;

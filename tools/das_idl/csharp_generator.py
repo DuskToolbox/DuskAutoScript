@@ -625,6 +625,11 @@ class CSharpGenerator:
                 ["System.IntPtr handle"],
             ),
             (
+                "DasRelease",
+                "int",
+                ["System.IntPtr handle"],
+            ),
+            (
                 "CreateIDasReadOnlyStringFromUtf16WithLength",
                 "DasResult",
                 ["ushort* pUtf16", "nuint length", "out System.IntPtr ppOutReadOnlyString"],
@@ -663,6 +668,16 @@ class CSharpGenerator:
                 "PushBackIDasVariantVectorComponent",
                 "DasResult",
                 ["System.IntPtr vector", "System.IntPtr value"],
+            ),
+            (
+                "DispatchIDasComponent",
+                "DasResult",
+                [
+                    "System.IntPtr component",
+                    "System.IntPtr functionName",
+                    "System.IntPtr arguments",
+                    "out System.IntPtr ppOutResult",
+                ],
             ),
         ]
         lines: list[str] = []
@@ -954,6 +969,7 @@ class CSharpGenerator:
             [
                 "// DAS C# base interface wrapper (auto-generated - DO NOT MODIFY)",
                 "using System;",
+                f"using {self.namespace_root}.Abi;",
                 "",
                 f"namespace {self.namespace_root}.Wrappers;",
                 "",
@@ -975,6 +991,10 @@ class CSharpGenerator:
                 "",
                 "    public virtual void Dispose()",
                 "    {",
+                "        if (_handle != System.IntPtr.Zero)",
+                "        {",
+                "            NativeMethods.DasRelease(_handle);",
+                "        }",
                 "        _handle = System.IntPtr.Zero;",
                 "    }",
                 "}",
@@ -1011,6 +1031,7 @@ class CSharpGenerator:
             [
                 "// DAS C# first-class read-only string wrapper (auto-generated - DO NOT MODIFY)",
                 "using System;",
+                f"using {self.namespace_root}.Abi;",
                 "",
                 f"namespace {self.namespace_root}.Wrappers;",
                 "",
@@ -1042,6 +1063,10 @@ class CSharpGenerator:
                 "",
                 "    public void Dispose()",
                 "    {",
+                "        if (_handle != System.IntPtr.Zero)",
+                "        {",
+                "            NativeMethods.DasRelease(_handle);",
+                "        }",
                 "        _handle = System.IntPtr.Zero;",
                 "    }",
                 "}",
@@ -1055,6 +1080,7 @@ class CSharpGenerator:
                 "// DAS C# binary buffer wrapper (auto-generated - DO NOT MODIFY)",
                 "using System;",
                 f"using {self.namespace_root};",
+                f"using {self.namespace_root}.Abi;",
                 "",
                 f"namespace {self.namespace_root}.Wrappers;",
                 "",
@@ -1089,6 +1115,10 @@ class CSharpGenerator:
                 "",
                 "    public void Dispose()",
                 "    {",
+                "        if (_handle != System.IntPtr.Zero)",
+                "        {",
+                "            NativeMethods.DasRelease(_handle);",
+                "        }",
                 "        _handle = System.IntPtr.Zero;",
                 "    }",
                 "}",
@@ -1240,6 +1270,8 @@ class CSharpGenerator:
             variant_lines = self._generate_variant_vector_method(method)
             if variant_lines is not None:
                 return variant_lines
+        if interface.name == "IDasComponent" and method.name == "Dispatch":
+            return self._generate_component_dispatch_method()
 
         in_params = _method_in_params(method)
         out_params = _method_out_params(method)
@@ -1433,6 +1465,56 @@ class CSharpGenerator:
             "    }",
         ]
 
+    def _generate_component_dispatch_method(self) -> list[str]:
+        return [
+            "    public IDasComponentDispatchResult Dispatch(DasReadOnlyString functionName, IDasVariantVector arguments)",
+            "    {",
+            "        ArgumentNullException.ThrowIfNull(functionName);",
+            "        if (functionName.Handle == System.IntPtr.Zero)",
+            "        {",
+            "            return new IDasComponentDispatchResult(DasResult.DAS_E_INVALID_ARGUMENT, new IDasVariantVector(System.IntPtr.Zero));",
+            "        }",
+            "        ArgumentNullException.ThrowIfNull(arguments);",
+            "        if (!arguments.CanAssignTo(\"IDasVariantVector\"))",
+            "        {",
+            "            return new IDasComponentDispatchResult(DasResult.DAS_E_INVALID_ARGUMENT, new IDasVariantVector(System.IntPtr.Zero));",
+            "        }",
+            "        var result = NativeMethods.DispatchIDasComponent(",
+            "            _handle,",
+            "            functionName.Handle,",
+            "            arguments.Handle,",
+            "            out var resultHandle);",
+            "        return new IDasComponentDispatchResult(",
+            "            result,",
+            "            new IDasVariantVector(resultHandle));",
+            "    }",
+            "",
+            "    public IDasComponentDispatchResult DispatchOrThrow(DasReadOnlyString functionName, IDasVariantVector arguments)",
+            "    {",
+            "        var result = Dispatch(functionName, arguments);",
+            "        result.Result.OrThrow();",
+            "        return result;",
+            "    }",
+            "",
+            "    public unsafe IDasComponentDispatchResult Dispatch(string functionName, IDasVariantVector arguments)",
+            "    {",
+            "        ArgumentNullException.ThrowIfNull(functionName);",
+            "        fixed (char* pValue = functionName)",
+            "        {",
+            "            var createResult = Das.Generated.Abi.NativeMethods.CreateIDasReadOnlyStringFromUtf16WithLength(",
+            "                (ushort*)pValue,",
+            "                checked((nuint)functionName.Length),",
+            "                out var functionNameHandle);",
+            "            if ((int)createResult < 0)",
+            "            {",
+            "                return new IDasComponentDispatchResult(createResult, new IDasVariantVector(System.IntPtr.Zero));",
+            "            }",
+            "            using var functionNameString = DasReadOnlyString.Attach(functionNameHandle);",
+            "            return Dispatch(functionNameString, arguments);",
+            "        }",
+            "    }",
+        ]
+
     def _generate_string_convenience_method(
         self,
         interface: InterfaceDef,
@@ -1579,10 +1661,6 @@ class CSharpGenerator:
             if _is_interface_pointer(value_type) or _is_read_only_string_pointer(value_type):
                 lines.extend(
                     [
-                        f"            if ({out_name} != System.IntPtr.Zero)",
-                        "            {",
-                        f"                NativeMethods.DasAddRef({out_name});",
-                        "            }",
                         f"            *{param_name} = {out_name};",
                     ]
                 )

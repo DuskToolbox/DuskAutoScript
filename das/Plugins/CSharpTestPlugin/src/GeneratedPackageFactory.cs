@@ -96,11 +96,21 @@ public static class GeneratedPackageFactory
                 return DasResult.DAS_E_OUT_OF_RANGE;
             }
 
-            var factory = CreateComponentFactory(package);
-            interfaceHandle = factory.Handle;
-            return interfaceHandle == IntPtr.Zero
-                ? DasResult.DAS_E_CSHARP_DIRECTOR_FACTORY_FAILED
-                : DasResult.DAS_S_OK;
+            try
+            {
+                var factory = CreateComponentFactory(package);
+                interfaceHandle = factory.Handle;
+                return interfaceHandle == IntPtr.Zero
+                    ? DasResult.DAS_E_CSHARP_DIRECTOR_FACTORY_FAILED
+                    : DasResult.DAS_S_OK;
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine(
+                    $"CSharpTestPlugin CreateFeatureInterface failed: {ex}");
+                interfaceHandle = IntPtr.Zero;
+                return DasResult.DAS_E_CSHARP_DIRECTOR_FACTORY_FAILED;
+            }
         }
 
         public DasResult CanUnloadNow(out bool canUnloadNow)
@@ -146,11 +156,21 @@ public static class GeneratedPackageFactory
                 return DasResult.DAS_E_NO_INTERFACE;
             }
 
-            var component = CreateComponent(package.CreateComponent());
-            componentHandle = component.Handle;
-            return componentHandle == IntPtr.Zero
-                ? DasResult.DAS_E_CSHARP_DIRECTOR_FACTORY_FAILED
-                : DasResult.DAS_S_OK;
+            try
+            {
+                var component = CreateComponent(package.CreateComponent());
+                componentHandle = component.Handle;
+                return componentHandle == IntPtr.Zero
+                    ? DasResult.DAS_E_CSHARP_DIRECTOR_FACTORY_FAILED
+                    : DasResult.DAS_S_OK;
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine(
+                    $"CSharpTestPlugin CreateInstance failed: {ex}");
+                componentHandle = IntPtr.Zero;
+                return DasResult.DAS_E_CSHARP_DIRECTOR_FACTORY_FAILED;
+            }
         }
     }
 

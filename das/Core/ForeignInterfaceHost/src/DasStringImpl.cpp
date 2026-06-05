@@ -712,3 +712,28 @@ DasResult CreateIDasReadOnlyStringFromUtf16WithLength(
     *pp_out_readonly_string = p_string;
     return DAS_S_OK;
 }
+
+DasResult GetIDasReadOnlyStringUtf16(
+    IDasReadOnlyString*      p_readonly_string,
+    const DasUtf16CodeUnit** pp_out_utf16_string,
+    size_t*                  p_out_length)
+{
+    if (p_readonly_string == nullptr || pp_out_utf16_string == nullptr
+        || p_out_length == nullptr)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+
+    const char16_t* p_utf16_string = nullptr;
+    size_t          length = 0;
+    const auto result = p_readonly_string->GetUtf16(&p_utf16_string, &length);
+    if (result != DAS_S_OK)
+    {
+        return result;
+    }
+
+    *pp_out_utf16_string =
+        reinterpret_cast<const DasUtf16CodeUnit*>(p_utf16_string);
+    *p_out_length = length;
+    return DAS_S_OK;
+}

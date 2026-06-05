@@ -102,10 +102,16 @@ DAS_C_API DasResult CreateIDasReadOnlyStringFromUtf16WithLength(
     size_t                  length,
     IDasReadOnlyString**    pp_out_readonly_string);
 
+DAS_C_API DasResult GetIDasReadOnlyStringUtf16(
+    IDasReadOnlyString*      p_readonly_string,
+    const DasUtf16CodeUnit** pp_out_utf16_string,
+    size_t*                  p_out_length);
+
 /**
  * @brief output format should be "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
  *
- * @param p_guid_string
+
+ * * @param p_guid_string
  * @return DAS_S_OK if success.
  */
 DAS_C_API DasResult DasGuidToString(
@@ -251,7 +257,6 @@ public:
 
 /**
  * @brief 由于SWIG对于Java支持可能存在缺陷，这一功能由本项目实现
- *
 
  */
 #ifndef SWIG

@@ -628,6 +628,21 @@ class TestCSharpGeneratorPhase77CompleteSurface(unittest.TestCase):
         self.assertIn("delegate* unmanaged<System.IntPtr", director)
         self.assertIn("managed_state", director)
 
+    def test_d79_05_builtin_wrappers_release_native_handles_on_dispose(self):
+        artifacts = _phase77_artifacts()
+        base_wrapper = artifacts.files["Das.Generated/Wrappers/IDasBase.cs"]
+        string_wrapper = artifacts.files["Das.Generated/Wrappers/DasReadOnlyString.cs"]
+        binary_wrapper = artifacts.files["Das.Generated/Wrappers/DasBinaryBuffer.cs"]
+        native_methods = artifacts.files["Das.Generated/Abi/NativeMethods.cs"]
+
+        self.assertIn("using Das.Generated.Abi;", base_wrapper)
+        self.assertIn("NativeMethods.DasRelease(_handle);", base_wrapper)
+        self.assertIn("using Das.Generated.Abi;", string_wrapper)
+        self.assertIn("NativeMethods.DasRelease(_handle);", string_wrapper)
+        self.assertIn("using Das.Generated.Abi;", binary_wrapper)
+        self.assertIn("NativeMethods.DasRelease(_handle);", binary_wrapper)
+        self.assertIn('EntryPoint = "DasRelease"', native_methods)
+
     def test_d77_43_native_director_support_files_and_boundary_checks_exist(self):
         artifacts = _phase77_artifacts()
         self.assertIn("Native/DasCSharpDirectorSupport.h", artifacts.files)
@@ -885,12 +900,14 @@ class TestCSharpGeneratorPhase79NativeDirectorSurface(unittest.TestCase):
                     "LibraryImport(DAS_CSHARP_NATIVE_SUPPORT_MODULE",
                     native_methods,
                     "D-79-02: director factory imports must not bind to das.",
-                )
+        )
 
         for core_api in (
-            'LibraryImport("das", EntryPoint = "DasAddRef")',
             'LibraryImport("das", EntryPoint = "CreateIDasVariantVector")',
+            'LibraryImport("das", EntryPoint = "DispatchIDasComponent")',
             'LibraryImport("das", EntryPoint = "GetIDasVariantVectorString")',
+            'LibraryImport("das", EntryPoint = "GetIDasVariantVectorComponent")',
+            'LibraryImport("das", EntryPoint = "PushBackIDasVariantVectorString")',
             'LibraryImport("das", EntryPoint = "PushBackIDasVariantVectorComponent")',
         ):
             with self.subTest(core_api=core_api):
@@ -915,6 +932,21 @@ class TestCSharpGeneratorPhase79NativeDirectorSurface(unittest.TestCase):
         self.assertNotIn("_ = (_handle, index);", wrapper)
         self.assertNotIn("_ = (_handle, inString);", wrapper)
         self.assertNotIn("_ = (_handle, inComponent);", wrapper)
+
+    def test_d79_05_component_dispatch_wrapper_uses_native_call(self):
+        artifacts = _phase79_director_artifacts()
+        wrapper = artifacts.files["Das.Generated/Wrappers/IDasComponent.cs"]
+        native_methods = artifacts.files["Das.Generated/Abi/NativeMethods.cs"]
+
+        self.assertIn("NativeMethods.DispatchIDasComponent(", wrapper)
+        self.assertIn(
+            'LibraryImport("das", EntryPoint = "DispatchIDasComponent")',
+            native_methods,
+        )
+        self.assertNotIn(
+            "_ = (_handle, functionName.Handle, arguments.Handle);",
+            wrapper,
+        )
 
     def test_d79_08_d79_09_release_thunk_runs_hook_then_frees_once(self):
         director = _phase79_director_artifacts().files[

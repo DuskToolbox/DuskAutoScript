@@ -3924,6 +3924,132 @@ void AssertPythonDirectorLifecycleBehavior(
         launcher.Get());
 }
 
+void RunCSharpBridgeLifecycleTest(
+    DAS::Core::IPC::MainProcess::IIpcContext&  context,
+    DAS::DasPtr<DAS::Core::IPC::IHostLauncher> launcher,
+    const std::string&                         host_exe_path,
+    const std::string&                         plugin_json_path,
+    std::string_view                           marker,
+    std::string_view                           runtime_label,
+    LifecycleCallbackComponent*                callback)
+{
+    ASSERT_NE(launcher.Get(), nullptr);
+    ASSERT_NE(callback, nullptr);
+    ScopedHostStop guard{launcher};
+
+    uint16_t        session_id = 0;
+    const DasResult start_result = launcher->Start(
+        host_exe_path,
+        session_id,
+        IpcTestConfig::GetHostStartTimeoutMs());
+    ASSERT_EQ(start_result, DAS_S_OK);
+    ASSERT_TRUE(launcher->IsRunning());
+    ASSERT_GT(session_id, static_cast<uint16_t>(0));
+
+    auto package_proxy =
+        LoadPluginPackageForHost(context, launcher.Get(), plugin_json_path, 3);
+    ASSERT_NE(package_proxy.Get(), nullptr)
+        << runtime_label
+        << " C# package must load through IIpcContext::LoadPluginAsync";
+
+    DAS::DasPtr<IDasPluginPackage> plugin_package;
+    ASSERT_EQ(package_proxy.As(plugin_package.Put()), DAS_S_OK)
+        << runtime_label
+        << " C# LOAD_PLUGIN proxy must QI to IDasPluginPackage";
+
+    DAS::PluginInterface::DasPluginFeature feature{};
+    ASSERT_EQ(plugin_package->EnumFeature(0, &feature), DAS_S_OK);
+    EXPECT_EQ(
+        feature,
+        DAS::PluginInterface::DAS_PLUGIN_FEATURE_COMPONENT_FACTORY);
+
+    DAS::DasPtr<IDasBase> factory_base;
+    ASSERT_EQ(
+        plugin_package->CreateFeatureInterface(0, factory_base.Put()),
+        DAS_S_OK);
+    ASSERT_NE(factory_base.Get(), nullptr);
+
+    DAS::DasPtr<IDasComponentFactory> factory;
+    ASSERT_EQ(factory_base.As(factory.Put()), DAS_S_OK);
+    ASSERT_EQ(factory->IsSupported(DasIidOf<IDasComponent>()), DAS_S_OK);
+
+    DAS::DasPtr<IDasComponent> component;
+    ASSERT_EQ(
+        factory->CreateInstance(DasIidOf<IDasComponent>(), component.Put()),
+        DAS_S_OK);
+    ASSERT_NE(component.Get(), nullptr);
+
+    std::atomic<bool> done{false};
+    auto              signal = DAS::MakeDasPtr<CompletionSignal>(done);
+    callback->completion_signal_ = signal;
+
+    DAS::DasPtr<IDasComponent> director_component;
+    {
+        DasReadOnlyString method_name{"bridgeLifecycleTest"};
+        DAS::ExportInterface::DasVariantVector dispatch_result;
+        DAS::ExportInterface::DasVariantVector params;
+        ASSERT_EQ(CreateIDasVariantVector(params.Put()), DAS_S_OK);
+
+        const std::string marker_text{marker};
+        DasReadOnlyString marker_value{marker_text.c_str()};
+        ASSERT_EQ(params.Get()->PushBackComponent(callback), DAS_S_OK);
+        ASSERT_EQ(params.Get()->PushBackString(marker_value.Get()), DAS_S_OK);
+
+        const DasResult dispatch_result_code = component->Dispatch(
+            method_name.Get(),
+            params.Get(),
+            dispatch_result.Put());
+        ASSERT_EQ(dispatch_result_code, DAS_S_OK)
+            << runtime_label << " C# bridgeLifecycleTest dispatch must succeed";
+        ASSERT_NE(dispatch_result.Get(), nullptr);
+        ASSERT_EQ(dispatch_result->GetSize(), 2u);
+
+        DAS::DasPtr<IDasReadOnlyString> director_status;
+        ASSERT_EQ(
+            dispatch_result->GetString(0, director_status.Put()),
+            DAS_S_OK);
+        const char* director_status_text = nullptr;
+        ASSERT_EQ(director_status->GetUtf8(&director_status_text), DAS_S_OK);
+        ASSERT_NE(director_status_text, nullptr);
+        const std::string expected_director_status =
+            std::string{"director_created:"} + marker_text;
+        EXPECT_STREQ(director_status_text, expected_director_status.c_str());
+
+        ASSERT_EQ(
+            dispatch_result->GetComponent(1, director_component.Put()),
+            DAS_S_OK);
+        ASSERT_NE(director_component.Get(), nullptr)
+            << runtime_label
+            << " C# bridgeLifecycleTest must return a director component";
+    }
+
+    director_component.Reset();
+
+    const std::string expected_release_status =
+        std::string{"bridge_released:CSharp:"} + std::string{marker};
+    EXPECT_TRUE(WaitUntilForTest(
+        [&done]() { return done.load(); },
+        std::chrono::seconds(15),
+        std::chrono::milliseconds(1)))
+        << runtime_label << " C# release callback timed out";
+
+    EXPECT_TRUE(callback->callback_received_)
+        << runtime_label << " C# bridge lifecycle callback was not received";
+    EXPECT_NE(
+        callback->received_status_.find(expected_release_status),
+        std::string::npos)
+        << "Unexpected C# lifecycle status: " << callback->received_status_;
+    EXPECT_EQ(
+        callback->received_status_source_.load(),
+        LifecycleCallbackStatusSource::ArgumentReadback)
+        << runtime_label
+        << " C# bridge lifecycle callback status must come from "
+           "p_arguments->GetString(0)";
+    EXPECT_TRUE(launcher->IsRunning())
+        << runtime_label
+        << " C# host should remain alive after lifecycle release callback";
+}
+
 TEST_F(IpcMultiProcessTestIntegration, CrossProcess_PythonDirectorLifecycleTest)
 {
 #ifndef DAS_EXPORT_PYTHON
@@ -4524,6 +4650,53 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_NodeDirectorLifecycleTest)
 
     EXPECT_TRUE(launcher_->IsRunning())
         << "Node host should remain alive after lifecycle director callback";
+}
+
+TEST_F(
+    IpcMultiProcessTestIntegration,
+    CrossProcess_CSharpModernDirectorLifecycleTest)
+{
+#ifndef DAS_EXPORT_CSHARP
+    GTEST_SKIP() << "DAS_EXPORT_CSHARP is not enabled";
+#elif !defined(DAS_CSHARP_BUILD_MODERN)
+    GTEST_SKIP()
+        << "DAS_CSHARP_BUILD_MODERN is not enabled for IpcMultiProcessTest";
+#endif
+
+    if (!std::filesystem::exists(host_exe_path_))
+    {
+        GTEST_SKIP() << "DasHost.exe not found at: " << host_exe_path_;
+    }
+
+    std::string plugin_json_path;
+    try
+    {
+        plugin_json_path = IpcTestConfig::GetCSharpTestPluginJsonPath(
+            "DasCSharpTestPluginModern");
+    }
+    catch (const std::exception& e)
+    {
+        GTEST_SKIP() << "DasCSharpTestPluginModern manifest not found: "
+                     << e.what();
+    }
+
+    auto callback = DAS::MakeDasPtr<LifecycleCallbackComponent>();
+    callback->Configure(GetContext());
+    callback->request_stop_on_callback_ = false;
+
+    const DasResult reg_result = ctx_->RegisterService(
+        callback.Get(),
+        DasIidOf<DAS::PluginInterface::IDasComponent>());
+    ASSERT_EQ(reg_result, DAS_S_OK);
+
+    RunCSharpBridgeLifecycleTest(
+        GetContext(),
+        launcher_,
+        host_exe_path_,
+        plugin_json_path,
+        "csharp_modern_bridge_marker",
+        "Modern",
+        callback.Get());
 }
 
 TEST_F(IpcMultiProcessTestIntegration, CrossProcess_JavaDirectorLifecycleTest)
