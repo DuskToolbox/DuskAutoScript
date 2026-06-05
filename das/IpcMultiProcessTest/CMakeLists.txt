@@ -52,6 +52,22 @@ if (${DAS_BUILD_TEST})
     if(TARGET PythonTestPluginCopy)
         add_dependencies(${IpcMultiProcessTest_NAME} PythonTestPluginCopy)
     endif()
+    if(TARGET CSharpTestPluginModernIpcPackage)
+        add_dependencies(
+            ${IpcMultiProcessTest_NAME}
+            CSharpTestPluginModernIpcPackage)
+        target_compile_definitions(
+            ${IpcMultiProcessTest_NAME}
+            PRIVATE DAS_CSHARP_BUILD_MODERN)
+    endif()
+    if(TARGET CSharpTestPluginNet48IpcPackage)
+        add_dependencies(
+            ${IpcMultiProcessTest_NAME}
+            CSharpTestPluginNet48IpcPackage)
+        target_compile_definitions(
+            ${IpcMultiProcessTest_NAME}
+            PRIVATE DAS_CSHARP_BUILD_NET48)
+    endif()
     if(TARGET DasMaaPi)
         add_dependencies(
             ${IpcMultiProcessTest_NAME}

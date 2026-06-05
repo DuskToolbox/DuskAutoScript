@@ -154,4 +154,37 @@ namespace IpcTestConfig
                 checked_paths[2].string()));
     }
 
+    /**
+     * @brief 获取 C# 测试插件包 JSON 清单路径
+     * @param package_name C# 插件包名称（如 "DasCSharpTestPluginModern"）
+     * @return JSON 文件路径
+     * @throws std::runtime_error 如果环境变量未设置或文件不存在
+     */
+    inline std::string GetCSharpTestPluginJsonPath(
+        const std::string& package_name)
+    {
+        const std::filesystem::path package_dir =
+            std::filesystem::path{GetPluginDir()} / package_name;
+        const std::array<std::filesystem::path, 3> checked_paths = {
+            package_dir / "CSharpTestPlugin.json",
+            package_dir / DAS_FMT_NS::format("{}.json", package_name),
+            package_dir / "manifest.json"};
+
+        for (const auto& json_path : checked_paths)
+        {
+            if (std::filesystem::exists(json_path))
+            {
+                return json_path.string();
+            }
+        }
+
+        throw std::runtime_error(
+            DAS_FMT_NS::format(
+                "C# plugin JSON for package '{}' not found. Checked: {}; {}; {}",
+                package_name,
+                checked_paths[0].string(),
+                checked_paths[1].string(),
+                checked_paths[2].string()));
+    }
+
 } // namespace IpcTestConfig
