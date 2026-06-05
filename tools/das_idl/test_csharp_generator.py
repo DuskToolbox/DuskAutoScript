@@ -126,6 +126,21 @@ class TestCSharpGeneratorContract(unittest.TestCase):
             with self.subTest(pattern=pattern):
                 self.assertNotIn(pattern, combined)
 
+    def test_d77_19_d77_22_d77_59_combined_source_gate_keeps_explicit_abi(self):
+        artifacts = _artifacts()
+        combined = _combined_text(artifacts)
+        wrapper = artifacts.files["Das.Generated/Wrappers/IDasSample.cs"]
+
+        self.assertIn("public DasResult Flush()", combined)
+        self.assertIn("public void FlushOrThrow()", combined)
+        self.assertIn("public readonly struct NativeHandle", combined)
+        self.assertIn("public System.IntPtr Value", combined)
+        self.assertIn("unsafe partial class NativeMethods", combined)
+        self.assertIn("delegate* unmanaged<System.IntPtr, int>", combined)
+        self.assertLess(wrapper.index("public DasResult Flush()"), wrapper.index("FlushOrThrow"))
+        self.assertNotIn("throw new DasException", wrapper)
+        self.assertNotIn("public nint", combined)
+
     def test_d77_23_d77_25_d77_26_modern_interop_has_tfm_gates(self):
         native_methods = _artifacts().files["Das.Generated/Abi/NativeMethods.cs"]
 
