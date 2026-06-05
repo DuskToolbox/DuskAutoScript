@@ -392,17 +392,80 @@ class TestCSharpHostBridgeBoundaries(unittest.TestCase):
         for token in (
             "CSharpTestPluginModernBuild",
             "CSharpTestPluginModernPackage",
+            "CSharpTestPluginModernIpcPackage",
             "CSharpTestPluginNet48Build",
             "CSharpTestPluginNet48Package",
+            "CSharpTestPluginNet48IpcPackage",
+            "CSharpTestPluginGeneratedNativeSupport",
             "CSharpTestPluginGeneratedNativeSupportCompile",
             "DasCoreCSharpExport",
             "CSharpTestPlugin.net8.json.in",
             "CSharpTestPlugin.net48.json.in",
+            "$<TARGET_FILE:CSharpTestPluginGeneratedNativeSupport>",
+            "$<TARGET_FILE_NAME:CSharpTestPluginGeneratedNativeSupport>",
+            "DasCSharpNativeSupport",
+            "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/plugins",
         ):
             self.assertIn(token, text)
 
+        self.assertIsNotNone(
+            re.search(
+                r"if\(DAS_CSHARP_BUILD_MODERN\)\s+"
+                r"das_add_csharp_test_plugin_ipc_package\(\s+"
+                r"CSharpTestPluginModernIpcPackage",
+                text,
+                re.S,
+            ),
+            "modern IPC package target must stay behind the modern C# build gate",
+        )
+        self.assertIsNotNone(
+            re.search(
+                r"if\(DAS_CSHARP_BUILD_NET48\).*?"
+                r"das_add_csharp_test_plugin_ipc_package\(\s+"
+                r"CSharpTestPluginNet48IpcPackage",
+                text,
+                re.S,
+            ),
+            "net48 IPC package target must stay behind the net48 C# build gate",
+        )
         self.assertNotIn("Das.CSharp.Runtime.dll", text)
         self.assertNotIn("NuGet", text)
+
+    def test_ipc_multiprocess_cmake_depends_on_csharp_packages_conditionally(self):
+        cmake_path = ROOT / "das" / "IpcMultiProcessTest" / "CMakeLists.txt"
+        text = _read_text(cmake_path)
+
+        for target, definition in (
+            ("CSharpTestPluginModernIpcPackage", "DAS_CSHARP_BUILD_MODERN"),
+            ("CSharpTestPluginNet48IpcPackage", "DAS_CSHARP_BUILD_NET48"),
+        ):
+            with self.subTest(target=target):
+                match = re.search(
+                    rf"if\(TARGET {target}\)(.*?)endif\(\)",
+                    text,
+                    re.S,
+                )
+                self.assertIsNotNone(match)
+                block = match.group(1)
+                self.assertIn(
+                    f"add_dependencies(\n            ${{IpcMultiProcessTest_NAME}}\n            {target})",
+                    block,
+                )
+                self.assertIn("target_compile_definitions(", block)
+                self.assertIn(definition, block)
+
+    def test_ipc_test_config_exposes_csharp_package_manifest_helper(self):
+        config_path = (
+            ROOT / "das" / "IpcMultiProcessTest" / "test" / "IpcTestConfig.h"
+        )
+        text = _read_text(config_path)
+
+        self.assertIn("GetCSharpTestPluginJsonPath", text)
+        self.assertIn('package_dir / "CSharpTestPlugin.json"', text)
+        self.assertIn('DAS_FMT_NS::format("{}.json", package_name)', text)
+        self.assertIn('package_dir / "manifest.json"', text)
+        self.assertIn("C# plugin JSON for package", text)
+        self.assertNotIn("Das.CSharp.Runtime.dll", text)
 
 
 if __name__ == "__main__":
