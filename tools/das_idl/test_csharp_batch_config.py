@@ -80,6 +80,26 @@ class TestCSharpBatchConfig(unittest.TestCase):
             self.assertNotIn("--swig-output-dir", task)
             self.assertNotIn("--swig", task)
 
+    def test_python_and_java_languages_still_enable_swig_tasks(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = Path(temp_dir)
+
+            result = self._run_gen_config(
+                temp,
+                "--languages",
+                "Python",
+                "Java",
+                "--swig-output-dir",
+                str(temp / "swig"),
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            config = json.loads((temp / "batch.json").read_text(encoding="utf-8"))
+            self.assertEqual(len(config["tasks"]), 1)
+            task = config["tasks"][0]
+            self.assertEqual(task["--swig-output-dir"], str(temp / "swig"))
+            self.assertTrue(task["--swig"])
+
     def test_csharp_reduce_config_writes_explicit_contract(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             temp = Path(temp_dir)
@@ -228,6 +248,8 @@ class TestCSharpBatchConfig(unittest.TestCase):
         )
         self.assertIn('_LANG_LOWER STREQUAL "python"', cmake_text)
         self.assertIn('_LANG_LOWER STREQUAL "java"', cmake_text)
+        self.assertIn("C# is a pure reduce-owned generator", cmake_text)
+        self.assertIn("Registered C# pure reduce generator outputs", cmake_text)
         self.assertNotRegex(
             cmake_text,
             r"_NEED_SWIG[\s\S]*?_LANG_LOWER STREQUAL \"csharp\"[\s\S]*?set\(_NEED_SWIG TRUE\)",
@@ -236,6 +258,12 @@ class TestCSharpBatchConfig(unittest.TestCase):
             cmake_text,
             r"find_package\(SWIG REQUIRED\)[\s\S]*?_LANG_NAME \"CSharp\"",
         )
+        self.assertNotIn('set(_LANG_NAME "CSharp")', cmake_text)
+        for language in ("csharp", "lua", "node"):
+            self.assertRegex(
+                cmake_text,
+                rf'_LANG_LOWER STREQUAL "{language}"[\s\S]*?continue\(\)',
+            )
 
 
 if __name__ == "__main__":
