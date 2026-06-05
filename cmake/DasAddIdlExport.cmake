@@ -1,9 +1,9 @@
 # DasAddIdlExport.cmake
-# 通用的 IDL 导出函数，用于生成 ABI、Wrapper、SWIG 接口和 IPC 代码
+# 通用的 IDL 导出函数，用于生成 ABI、Wrapper、SWIG 接口、reduce 语言包和 IPC 代码
 #
 # 功能:
 #   - 当 LANGUAGES 为空时：生成 ABI + wrapper + IPC 代码，不执行 find_package(SWIG)
-#   - 当 LANGUAGES 非空时：生成 ABI + wrapper + SWIG 接口 + 目标语言绑定 + IPC 代码
+#   - 当 LANGUAGES 非空时：生成 ABI + wrapper + SWIG 接口 / reduce 语言包 + 目标语言绑定 + IPC 代码
 #   - IPC 代码默认生成到 ${OUTPUT_DIR}/_autogen/idl/ipc/ 目录
 #   - C++ 头文件生成到 ${OUTPUT_DIR}/_autogen/idl/header/ 目录
 #   - 支持增量检查和批量生成，提高构建效率
@@ -24,7 +24,7 @@
 #       LANGUAGES ""  # 不需要 SWIG 导出
 #   )
 #
-#   # 生成 C++ 代码 + SWIG 绑定 + IPC（使用用户自定义 SWIG 文件）
+#   # 生成 C++ 代码 + SWIG 绑定 / reduce 语言包 + IPC（使用用户自定义 SWIG 文件）
 #   das_add_idl_export(
 #       NAME DasCore
 #       IDL_DIR "${CMAKE_SOURCE_DIR}/idl"
@@ -48,8 +48,8 @@
 #   - ${NAME}IdlUpdateList: 增量检查目标，生成需要更新的 IDL 列表
 #   - ${NAME}IdlHeadersGenerated: 头文件生成目标，生成 .generated.h 文件
 #   - ${NAME}IdlGenerated: 批量生成目标，执行 IDL 代码生成
-#   - ${NAME}IdlDepsExtracted: (仅当 LANGUAGES 非空) 依赖提取目标
-#   - ${NAME}SwigInterfacesSorted: (仅当 LANGUAGES 非空) 拓扑排序目标
+#   - ${NAME}IdlDepsExtracted: (仅当 SWIG-backed 语言非空) 依赖提取目标
+#   - ${NAME}SwigInterfacesSorted: (仅当 SWIG-backed 语言非空) 拓扑排序目标
 #
 # 输出变量:
 #   - ${NAME}_GENERATED_FILES: 所有生成的文件列表
@@ -92,7 +92,7 @@ endif()
 #   IDL_DIR               - IDL 源文件目录
 #   OUTPUT_DIR            - 用户指定的输出根目录
 #   IDL_FILES             - 要处理的 IDL 文件列表（文件名，不含路径）
-#   LANGUAGES             - 要导出的语言列表 (Python, Java, CSharp)，可为空
+#   LANGUAGES             - 要导出的语言列表 (Python, Java, CSharp, Lua, Node)，可为空
 #                         - 为空时只生成 C++ 代码和 IPC，不调用 SWIG
 #   USER_SWIG_FILES       - 用户自定义的 SWIG 文件列表（可选）
 #                         - 用于覆盖代码生成器生成的 SWIG 文件
@@ -102,12 +102,14 @@ endif()
 #   NAMESPACE             - 可选的命名空间
 #   SWIG_OPTIONS_Python   - Python 的 SWIG 编译选项（可选）
 #   SWIG_OPTIONS_Java     - Java 的 SWIG 编译选项（可选）
-#   SWIG_OPTIONS_CSharp   - CSharp 的 SWIG 编译选项（可选）
 #   SWIG_INCLUDE_DIRS     - 额外的 SWIG 包含目录列表（可选，如 ${CMAKE_SOURCE_DIR}/include/ 等）
 #   DEPENDS_ON            - SWIG 导出库依赖的其他目标列表（可选，如 DasCore）
 #   LUA_OPEN_MODULE_NAME  - Lua C API open symbol suffix, required when LANGUAGES contains Lua
 #   NODE_PACKAGE_NAME     - Node public package identity, required when LANGUAGES contains Node
 #   NODE_ADDON_NAME       - Node native addon basename, required when LANGUAGES contains Node
+#   CSHARP_NAMESPACE_ROOT - C# generated namespace root, required when LANGUAGES contains CSharp
+#   CSHARP_PACKAGE_NAME   - C# package/assembly identity, required when LANGUAGES contains CSharp
+#   CSHARP_PROJECT_NAME   - C# project basename, required when LANGUAGES contains CSharp
 #
 # 输出变量 (通过 PARENT_SCOPE 输出):
 #   ${NAME}_GENERATED_FILES        - 所有生成的文件列表
@@ -125,8 +127,8 @@ function(das_add_idl_export)
     cmake_parse_arguments(
         DAS_IDL_EXPORT                          # 前缀
         ""                                      # 选项 (无值参数)
-        "NAME;IDL_DIR;OUTPUT_DIR;NAMESPACE;GENERATE_IPC_PROXY;GENERATE_IPC_STUB;IPC_CACHE_DIR;SWIG_MODULE_NAME;EXPORT_MACRO;EXPORT_C_MACRO;LUA_OPEN_MODULE_NAME;NODE_PACKAGE_NAME;NODE_ADDON_NAME"  # 单值参数
-        "IDL_FILES;LANGUAGES;USER_SWIG_FILES;GENERATED_FILES;GENERATED_ABI_FILES;GENERATED_WRAPPER_FILES;GENERATED_SWIG_FILES;GENERATED_IPC_FILES;SWIG_OPTIONS_Python;SWIG_OPTIONS_Java;SWIG_OPTIONS_CSharp;SWIG_INCLUDE_DIRS;DEPENDS_ON"  # 多值参数
+        "NAME;IDL_DIR;OUTPUT_DIR;NAMESPACE;GENERATE_IPC_PROXY;GENERATE_IPC_STUB;IPC_CACHE_DIR;SWIG_MODULE_NAME;EXPORT_MACRO;EXPORT_C_MACRO;LUA_OPEN_MODULE_NAME;NODE_PACKAGE_NAME;NODE_ADDON_NAME;CSHARP_NAMESPACE_ROOT;CSHARP_PACKAGE_NAME;CSHARP_PROJECT_NAME"  # 单值参数
+        "IDL_FILES;LANGUAGES;USER_SWIG_FILES;GENERATED_FILES;GENERATED_ABI_FILES;GENERATED_WRAPPER_FILES;GENERATED_SWIG_FILES;GENERATED_IPC_FILES;SWIG_OPTIONS_Python;SWIG_OPTIONS_Java;SWIG_INCLUDE_DIRS;DEPENDS_ON"  # 多值参数
         ${ARGN}
     )
 
@@ -191,8 +193,7 @@ function(das_add_idl_export)
         foreach(_LANG ${DAS_IDL_EXPORT_LANGUAGES})
             string(TOLOWER "${_LANG}" _LANG_LOWER)
             if(_LANG_LOWER STREQUAL "python"
-                OR _LANG_LOWER STREQUAL "java"
-                OR _LANG_LOWER STREQUAL "csharp")
+                OR _LANG_LOWER STREQUAL "java")
                 set(_NEED_SWIG TRUE)
                 break()
             endif()
@@ -273,6 +274,31 @@ function(das_add_idl_export)
         set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_NODE_HOST_SCRIPT}")
     endif()
 
+    # 检测 LANGUAGES 中是否包含 CSharp（大小写不敏感），设置 C# reduce 输出目录
+    set(_HAS_CSHARP FALSE)
+    set(_CSHARP_OUTPUT_DIR "")
+    foreach(_LANG ${DAS_IDL_EXPORT_LANGUAGES})
+        string(TOLOWER "${_LANG}" _LANG_LOWER)
+        if(_LANG_LOWER STREQUAL "csharp")
+            set(_HAS_CSHARP TRUE)
+            set(_CSHARP_OUTPUT_DIR "${DAS_IDL_EXPORT_OUTPUT_DIR}/_autogen/idl/csharp")
+            file(MAKE_DIRECTORY ${_CSHARP_OUTPUT_DIR})
+            break()
+        endif()
+    endforeach()
+
+    if(_HAS_CSHARP AND NOT DAS_IDL_EXPORT_CSHARP_NAMESPACE_ROOT)
+        message(FATAL_ERROR "[das_add_idl_export] CSHARP_NAMESPACE_ROOT is required when LANGUAGES contains CSharp")
+    endif()
+
+    if(_HAS_CSHARP AND NOT DAS_IDL_EXPORT_CSHARP_PACKAGE_NAME)
+        message(FATAL_ERROR "[das_add_idl_export] CSHARP_PACKAGE_NAME is required when LANGUAGES contains CSharp")
+    endif()
+
+    if(_HAS_CSHARP AND NOT DAS_IDL_EXPORT_CSHARP_PROJECT_NAME)
+        message(FATAL_ERROR "[das_add_idl_export] CSHARP_PROJECT_NAME is required when LANGUAGES contains CSharp")
+    endif()
+
     # 使用 Python 脚本生成 JSON，替代 file(CONFIGURE OUTPUT ...) 以避免内容比对导致的不更新问题
     set(_GEN_CONFIG_SCRIPT "${CMAKE_SOURCE_DIR}/tools/das_idl/gen_batch_config.py")
 
@@ -331,6 +357,16 @@ function(das_add_idl_export)
             --node-output-dir "${_NODE_OUTPUT_DIR}"
             --node-package-name "${DAS_IDL_EXPORT_NODE_PACKAGE_NAME}"
             --node-addon-name "${DAS_IDL_EXPORT_NODE_ADDON_NAME}"
+        )
+    endif()
+
+    # C# pure generator 输出目录（仅在 LANGUAGES 包含 CSharp 时设置）
+    if(_CSHARP_OUTPUT_DIR)
+        list(APPEND _GEN_CONFIG_ARGS
+            --csharp-output-dir "${_CSHARP_OUTPUT_DIR}"
+            --csharp-namespace-root "${DAS_IDL_EXPORT_CSHARP_NAMESPACE_ROOT}"
+            --csharp-package-name "${DAS_IDL_EXPORT_CSHARP_PACKAGE_NAME}"
+            --csharp-project-name "${DAS_IDL_EXPORT_CSHARP_PROJECT_NAME}"
         )
     endif()
 
@@ -559,7 +595,8 @@ function(das_add_idl_export)
             elseif(_LANG_LOWER STREQUAL "java")
                 set(_LANG_NAME "Java")
             elseif(_LANG_LOWER STREQUAL "csharp")
-                set(_LANG_NAME "CSharp")
+                # C# is a pure reduce-owned generator, not a SWIG export library.
+                continue()
             elseif(_LANG_LOWER STREQUAL "lua")
                 # Lua uses sol2 path, not SWIG — handled separately below
                 continue()
@@ -900,6 +937,14 @@ function(das_add_idl_export)
             ${_NODE_PACKAGE_COPY_TARGET} PARENT_SCOPE)
         set(${DAS_IDL_EXPORT_NAME}_NODE_PACKAGE_DIR
             "${_NODE_RUNTIME_PACKAGE_DIR}" PARENT_SCOPE)
+    endif()
+
+    # ====== C# pure generator output（非 SWIG 路径） ======
+    # C# 生成由 batch pipeline 的 reduce 阶段统一拥有。
+    # Phase 77 后续计划会消费这些通过 --list-outputs 注册的 package/support 文件。
+    if(_HAS_CSHARP)
+        message(STATUS "[das_add_idl_export] Registered C# pure reduce generator outputs")
+        set(${DAS_IDL_EXPORT_NAME}_CSHARP_OUTPUT_DIR ${_CSHARP_OUTPUT_DIR} PARENT_SCOPE)
     endif()
 
     # ====== 构建导出宏列表 ======

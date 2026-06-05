@@ -40,7 +40,11 @@ JSON 结构:
         [--lua-open-module-name <name>] \
         [--node-output-dir <dir>] \
         [--node-package-name <name>] \
-        [--node-addon-name <name>]
+        [--node-addon-name <name>] \
+        [--csharp-output-dir <dir>] \
+        [--csharp-namespace-root <name>] \
+        [--csharp-package-name <name>] \
+        [--csharp-project-name <name>]
 """
 
 import argparse
@@ -126,11 +130,31 @@ def main() -> int:
         default="",
         help="Native addon basename, for example das_core_napi",
     )
+    parser.add_argument(
+        "--csharp-output-dir",
+        default="",
+        help="C# reduce-stage package output directory",
+    )
+    parser.add_argument(
+        "--csharp-namespace-root",
+        default="",
+        help="C# generated namespace root, for example Das.Generated",
+    )
+    parser.add_argument(
+        "--csharp-package-name",
+        default="",
+        help="C# package/assembly identity, for example Das.Generated",
+    )
+    parser.add_argument(
+        "--csharp-project-name",
+        default="",
+        help="C# generated project basename, for example DasGenerated",
+    )
 
     args = parser.parse_args()
 
-    # 判断是否需要 SWIG (只有 SWIG-backed 语言需要；Lua/Node 是 reduce-only)
-    swig_languages = {"python", "java", "csharp"}
+    # 判断是否需要 SWIG (只有 SWIG-backed 语言需要；Lua/Node/CSharp 是 reduce-only)
+    swig_languages = {"python", "java"}
     _need_swig = args.swig_output_dir and any(
         lang.lower() in swig_languages for lang in args.languages
     )
@@ -239,6 +263,51 @@ def main() -> int:
         reduce_config["node_addon_name"] = args.node_addon_name
         reduce_config["node_idl_dir"] = args.idl_dir
         reduce_config["node_idl_files"] = args.idl_files
+
+    has_csharp = any(lang.lower() == "csharp" for lang in args.languages)
+    csharp_reduce_requested = has_csharp or any(
+        [
+            args.csharp_output_dir,
+            args.csharp_namespace_root,
+            args.csharp_package_name,
+            args.csharp_project_name,
+        ]
+    )
+    if csharp_reduce_requested:
+        missing_csharp_args = [
+            name
+            for name, value in [
+                ("--csharp-output-dir", args.csharp_output_dir),
+                ("--csharp-namespace-root", args.csharp_namespace_root),
+                ("--csharp-package-name", args.csharp_package_name),
+                ("--csharp-project-name", args.csharp_project_name),
+            ]
+            if not value
+        ]
+        if missing_csharp_args:
+            print(
+                "error: C# reduce config requires "
+                + ", ".join(missing_csharp_args),
+                file=sys.stderr,
+            )
+            return 2
+
+        if not (
+            args.csharp_namespace_root == "Das"
+            or args.csharp_namespace_root.startswith("Das.")
+        ):
+            print(
+                "error: C# namespace root must be Das or start with Das.",
+                file=sys.stderr,
+            )
+            return 2
+
+        reduce_config["csharp_output_dir"] = args.csharp_output_dir
+        reduce_config["csharp_namespace_root"] = args.csharp_namespace_root
+        reduce_config["csharp_package_name"] = args.csharp_package_name
+        reduce_config["csharp_project_name"] = args.csharp_project_name
+        reduce_config["csharp_idl_dir"] = args.idl_dir
+        reduce_config["csharp_idl_files"] = args.idl_files
 
     # 组装最终 JSON
     config = {"tasks": tasks}

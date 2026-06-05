@@ -23,7 +23,6 @@ from das_idl_parser import (
 )
 from das_idl_parser import parse_idl_file as _das_idl_parser_parse_idl_file
 from swig_java_generator import JavaSwigGenerator
-from swig_csharp_generator import CSharpSwigGenerator
 from swig_python_generator import PythonSwigGenerator
 from swig_lua_generator import LuaSwigGenerator
 from swig_lang_generator_base import SwigLangGenerator, SwigLangGeneratorContext
@@ -112,7 +111,11 @@ class SwigCodeGenerator:
         self._parse_imported_documents()
 
         if lang_generators is None:
-            self.lang_generators = [JavaSwigGenerator(), CSharpSwigGenerator(), PythonSwigGenerator(), LuaSwigGenerator()]
+            self.lang_generators = [
+                JavaSwigGenerator(),
+                PythonSwigGenerator(),
+                LuaSwigGenerator(),
+            ]
         else:
             self.lang_generators = lang_generators
 

@@ -39,6 +39,53 @@ from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_compl
 from datetime import datetime
 
 # 检测Python是否支持NO GIL (Python 3.13+ free-threaded build)
+
+
+def _list_csharp_reduce_outputs(reduce_config: Dict[str, Any]) -> List[str]:
+    """List reduce-owned C# package outputs for CMake dependency tracking."""
+    csharp_output_dir = reduce_config.get("csharp_output_dir")
+    csharp_namespace_root = reduce_config.get("csharp_namespace_root")
+    csharp_project_name = reduce_config.get("csharp_project_name")
+    csharp_idl_dir = reduce_config.get("csharp_idl_dir")
+    csharp_idl_files = reduce_config.get("csharp_idl_files", [])
+
+    if not (csharp_output_dir and csharp_namespace_root and csharp_project_name):
+        return []
+
+    outputs = [
+        f"{csharp_output_dir}/{csharp_project_name}.csproj",
+        f"{csharp_output_dir}/{csharp_namespace_root}/DasResult.cs",
+        f"{csharp_output_dir}/{csharp_namespace_root}/DasException.cs",
+        f"{csharp_output_dir}/{csharp_namespace_root}/Abi/DasGuid.cs",
+        f"{csharp_output_dir}/{csharp_namespace_root}/Abi/NativeMethods.cs",
+        f"{csharp_output_dir}/Native/DasCSharpDirectorSupport.h",
+        f"{csharp_output_dir}/Native/DasCSharpDirectorSupport.cpp",
+    ]
+
+    if csharp_idl_dir and csharp_idl_files:
+        from das_idl_parser import parse_idl_file
+
+        idl_dir = Path(csharp_idl_dir)
+        interface_names: set[str] = set()
+        for idl_file in csharp_idl_files:
+            document = parse_idl_file(str(idl_dir / idl_file))
+            for interface in document.interfaces:
+                interface_names.add(interface.name)
+
+        for interface_name in sorted(interface_names):
+            outputs.append(
+                f"{csharp_output_dir}/{csharp_namespace_root}/Wrappers/{interface_name}.cs"
+            )
+            outputs.append(
+                f"{csharp_output_dir}/{csharp_namespace_root}/Directors/{interface_name}Director.cs"
+            )
+            outputs.append(
+                f"{csharp_output_dir}/{csharp_namespace_root}/Results/{interface_name}Results.cs"
+            )
+
+    return outputs
+
+
 def check_nogil_support() -> bool:
     """
     检测当前Python环境是否支持NO GIL
@@ -516,6 +563,8 @@ JSON 配置格式:
             all_outputs.append(f"{node_output_dir}/{node_stem}.cpp")
             all_outputs.append(f"{node_output_dir}/{node_stem}.d.ts")
             all_outputs.append(f"{node_output_dir}/{node_stem}.js")
+
+        all_outputs.extend(_list_csharp_reduce_outputs(reduce_config))
 
         # 输出到 stdout（每行一个路径），去重并排序，统一使用正斜杠
         for f in sorted(set(all_outputs)):
