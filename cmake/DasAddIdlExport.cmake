@@ -124,11 +124,47 @@ endif()
 #   ${NAME}_GENERATED_SWIG_FILES   - SWIG 文件列表（代码生成器生成）
 #   ${NAME}_USER_SWIG_FILES        - 用户指定的 SWIG 文件列表
 function(das_add_idl_export)
+    set(_DAS_IDL_EXPORT_ONE_VALUE_ARGS
+        NAME
+        IDL_DIR
+        OUTPUT_DIR
+        NAMESPACE
+        GENERATE_IPC_PROXY
+        GENERATE_IPC_STUB
+        IPC_CACHE_DIR
+        SWIG_MODULE_NAME
+        EXPORT_MACRO
+        EXPORT_C_MACRO
+        LUA_OPEN_MODULE_NAME
+        NODE_PACKAGE_NAME
+        NODE_ADDON_NAME
+    )
+    list(APPEND _DAS_IDL_EXPORT_ONE_VALUE_ARGS
+        CSHARP_NAMESPACE_ROOT
+        CSHARP_PACKAGE_NAME
+        CSHARP_PROJECT_NAME
+    )
+
+    set(_DAS_IDL_EXPORT_MULTI_VALUE_ARGS
+        IDL_FILES
+        LANGUAGES
+        USER_SWIG_FILES
+        GENERATED_FILES
+        GENERATED_ABI_FILES
+        GENERATED_WRAPPER_FILES
+        GENERATED_SWIG_FILES
+        GENERATED_IPC_FILES
+        SWIG_OPTIONS_Python
+        SWIG_OPTIONS_Java
+        SWIG_INCLUDE_DIRS
+        DEPENDS_ON
+    )
+
     cmake_parse_arguments(
         DAS_IDL_EXPORT                          # 前缀
         ""                                      # 选项 (无值参数)
-        "NAME;IDL_DIR;OUTPUT_DIR;NAMESPACE;GENERATE_IPC_PROXY;GENERATE_IPC_STUB;IPC_CACHE_DIR;SWIG_MODULE_NAME;EXPORT_MACRO;EXPORT_C_MACRO;LUA_OPEN_MODULE_NAME;NODE_PACKAGE_NAME;NODE_ADDON_NAME;CSHARP_NAMESPACE_ROOT;CSHARP_PACKAGE_NAME;CSHARP_PROJECT_NAME"  # 单值参数
-        "IDL_FILES;LANGUAGES;USER_SWIG_FILES;GENERATED_FILES;GENERATED_ABI_FILES;GENERATED_WRAPPER_FILES;GENERATED_SWIG_FILES;GENERATED_IPC_FILES;SWIG_OPTIONS_Python;SWIG_OPTIONS_Java;SWIG_INCLUDE_DIRS;DEPENDS_ON"  # 多值参数
+        "${_DAS_IDL_EXPORT_ONE_VALUE_ARGS}"     # 单值参数
+        "${_DAS_IDL_EXPORT_MULTI_VALUE_ARGS}"   # 多值参数
         ${ARGN}
     )
 
@@ -551,6 +587,7 @@ function(das_add_idl_export)
     set(_ALL_HEADER_FILES "")
     set(_ALL_LUA_FILES "")
     set(_ALL_NODE_FILES "")
+    set(_ALL_CSHARP_FILES "")
     set(_ALL_GENERATED_FILES ${_DYNAMIC_OUTPUT_LIST})
 
     foreach(_FILE ${_DYNAMIC_OUTPUT_LIST})
@@ -568,6 +605,8 @@ function(das_add_idl_export)
             list(APPEND _ALL_LUA_FILES "${_FILE}")
         elseif(_FILE MATCHES "/node/")
             list(APPEND _ALL_NODE_FILES "${_FILE}")
+        elseif(_FILE MATCHES "/csharp/")
+            list(APPEND _ALL_CSHARP_FILES "${_FILE}")
         endif()
     endforeach()
 
@@ -944,7 +983,26 @@ function(das_add_idl_export)
     # Phase 77 后续计划会消费这些通过 --list-outputs 注册的 package/support 文件。
     if(_HAS_CSHARP)
         message(STATUS "[das_add_idl_export] Registered C# pure reduce generator outputs")
+        set(_CSHARP_EXPORT_TARGET "${DAS_IDL_EXPORT_NAME}CSharpExport")
+        set(_CSHARP_PROJECT_FILE "${_CSHARP_OUTPUT_DIR}/${DAS_IDL_EXPORT_CSHARP_PROJECT_NAME}.csproj")
+
+        if(NOT TARGET ${_CSHARP_EXPORT_TARGET})
+            add_custom_target(${_CSHARP_EXPORT_TARGET}
+                DEPENDS ${_ALL_CSHARP_FILES}
+            )
+            add_dependencies(${_CSHARP_EXPORT_TARGET} ${_GENERATED_TARGET})
+        endif()
+
+        set_target_properties(${_CSHARP_EXPORT_TARGET} PROPERTIES
+            DAS_CSHARP_OUTPUT_DIR "${_CSHARP_OUTPUT_DIR}"
+            DAS_CSHARP_PROJECT_FILE "${_CSHARP_PROJECT_FILE}"
+            DAS_CSHARP_GENERATED_FILES "${_ALL_CSHARP_FILES}"
+        )
+
         set(${DAS_IDL_EXPORT_NAME}_CSHARP_OUTPUT_DIR ${_CSHARP_OUTPUT_DIR} PARENT_SCOPE)
+        set(${DAS_IDL_EXPORT_NAME}_CSHARP_PROJECT_FILE ${_CSHARP_PROJECT_FILE} PARENT_SCOPE)
+        set(${DAS_IDL_EXPORT_NAME}_CSHARP_GENERATED_FILES ${_ALL_CSHARP_FILES} PARENT_SCOPE)
+        set(${DAS_IDL_EXPORT_NAME}_CSHARP_EXPORT_TARGET ${_CSHARP_EXPORT_TARGET} PARENT_SCOPE)
     endif()
 
     # ====== 构建导出宏列表 ======
