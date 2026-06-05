@@ -265,6 +265,21 @@ class TestCSharpBatchConfig(unittest.TestCase):
                 rf'_LANG_LOWER STREQUAL "{language}"[\s\S]*?continue\(\)',
             )
 
+    def test_third_party_swig_discovery_excludes_csharp(self):
+        third_party_text = (REPO_ROOT / "3rdParty" / "CMakeLists.txt").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("das_check_language_export(JAVA", third_party_text)
+        self.assertIn("das_check_language_export(PYTHON", third_party_text)
+        self.assertNotRegex(
+            third_party_text,
+            r"das_check_language_export\s*\(\s*CSHARP\b",
+        )
+        self.assertIn(
+            "find_package(SWIG 4.1.1 COMPONENTS ${DAS_EXPORT_LANGUAGES_LIST} REQUIRED)",
+            third_party_text,
+        )
+
     def test_batch_execution_runs_csharp_reduce_phase(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             temp = Path(temp_dir)

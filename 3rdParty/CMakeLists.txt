@@ -18,7 +18,6 @@ set(DAS_EXPORT_LANGUAGES_LIST "")
 set(SWIG_COMPONENTS "")
 
 das_check_language_export(JAVA DAS_EXPORT_LANGUAGES_LIST)
-das_check_language_export(CSHARP DAS_EXPORT_LANGUAGES_LIST)
 das_check_language_export(PYTHON DAS_EXPORT_LANGUAGES_LIST)
 
 if (NOT DAS_EXPORT_LANGUAGES_LIST)
