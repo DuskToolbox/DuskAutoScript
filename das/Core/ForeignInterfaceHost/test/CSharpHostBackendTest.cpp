@@ -390,6 +390,7 @@ TEST(CSharpHostBackend, FindDotNetDefinesNativeHostingDiscoveryContract)
                                     .parent_path()
                                     .parent_path()
                                     .parent_path()
+                                    .parent_path()
                                 / "cmake" / "FindDotNet.cmake";
     std::ifstream source{source_path};
     ASSERT_TRUE(source.is_open());

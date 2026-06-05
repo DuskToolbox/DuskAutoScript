@@ -4,6 +4,7 @@
 #include "CSharpHost.h"
 
 #include <filesystem>
+#include <memory>
 #include <string_view>
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
@@ -48,7 +49,10 @@ public:
         DasCSharpBootstrapArgsV1& bootstrap_args) override;
 
 private:
-    CSharpHostFxrApi api_{};
+    CSharpHostFxrBackend(CSharpHostFxrApi api, std::shared_ptr<void> state);
+
+    CSharpHostFxrApi      api_{};
+    std::shared_ptr<void> state_;
 };
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_END

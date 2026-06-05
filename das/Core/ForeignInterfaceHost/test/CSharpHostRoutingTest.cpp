@@ -308,7 +308,7 @@ TEST(CSharpHostRouting, LoadPluginMapsUnavailableModernBackend)
 {
     TempCSharpManifestLayout layout;
     const auto               manifest_path = layout.WriteManifest("net8.0");
-    CSharpHost               host;
+    CSharpHost               host{CSharpRuntimeBackendSet{}};
 
     auto result = host.LoadPlugin(manifest_path);
 
@@ -320,7 +320,7 @@ TEST(CSharpHostRouting, LoadPluginMapsUnavailableNetFxBackend)
 {
     TempCSharpManifestLayout layout;
     const auto               manifest_path = layout.WriteManifest("net48");
-    CSharpHost               host;
+    CSharpHost               host{CSharpRuntimeBackendSet{}};
 
     auto result = host.LoadPlugin(manifest_path);
 

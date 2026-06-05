@@ -65,8 +65,25 @@ if(EXPORT_CSHARP)
         set(DAS_CSHARP_NATIVEAOT_SMOKE ${DAS_CSHARP_NATIVEAOT_SMOKE} CACHE BOOL "Publish the C# NativeAOT smoke target")
     endif()
 
+    if(NOT DEFINED DAS_CSHARP_HOSTFXR_BACKEND_AUTO_VALUE)
+        set(DAS_CSHARP_HOSTFXR_BACKEND_AUTO_VALUE ${DotNet_NATIVE_HOSTING_FOUND} CACHE INTERNAL "Last auto-selected C# hostfxr backend default")
+    endif()
+
+    if(NOT DEFINED DAS_CSHARP_HOSTFXR_BACKEND)
+        set(DAS_CSHARP_HOSTFXR_BACKEND ${DotNet_NATIVE_HOSTING_FOUND} CACHE BOOL "Enable modern .NET hostfxr backend")
+    elseif(DAS_CSHARP_HOSTFXR_BACKEND STREQUAL DAS_CSHARP_HOSTFXR_BACKEND_AUTO_VALUE)
+        set(DAS_CSHARP_HOSTFXR_BACKEND ${DotNet_NATIVE_HOSTING_FOUND} CACHE BOOL "Enable modern .NET hostfxr backend" FORCE)
+    else()
+        set(DAS_CSHARP_HOSTFXR_BACKEND ${DAS_CSHARP_HOSTFXR_BACKEND} CACHE BOOL "Enable modern .NET hostfxr backend")
+    endif()
+    set(DAS_CSHARP_HOSTFXR_BACKEND_AUTO_VALUE ${DotNet_NATIVE_HOSTING_FOUND} CACHE INTERNAL "Last auto-selected C# hostfxr backend default" FORCE)
+
     if(DAS_CSHARP_BUILD_MODERN AND NOT DotNet_FOUND)
         message(FATAL_ERROR "DAS_CSHARP_BUILD_MODERN=ON requires dotnet. Set DotNet_EXECUTABLE or DOTNET_EXECUTABLE.")
+    endif()
+
+    if(DAS_CSHARP_HOSTFXR_BACKEND AND NOT DotNet_NATIVE_HOSTING_FOUND)
+        message(FATAL_ERROR "DAS_CSHARP_HOSTFXR_BACKEND=ON requires .NET native hosting headers and nethost library. Set DotNet_NATIVE_HOSTING_DIR or DOTNET_NATIVE_HOSTING_INCLUDE_DIR/DotNet_NETHOST_LIBRARY.")
     endif()
 
     if(DAS_CSHARP_BUILD_NET48 AND NOT DotNetFramework_FOUND)
@@ -78,6 +95,7 @@ if(EXPORT_CSHARP)
     endif()
 
     message(STATUS "[CSharp] Modern build: ${DAS_CSHARP_BUILD_MODERN}")
+    message(STATUS "[CSharp] hostfxr backend: ${DAS_CSHARP_HOSTFXR_BACKEND}")
     message(STATUS "[CSharp] net48 build: ${DAS_CSHARP_BUILD_NET48}")
     message(STATUS "[CSharp] NativeAOT smoke: ${DAS_CSHARP_NATIVEAOT_SMOKE}")
 endif()

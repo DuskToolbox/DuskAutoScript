@@ -1,4 +1,5 @@
 #include "CSharpHost.h"
+#include "CSharpHostFxrBackend.h"
 
 #include <das/Core/Logger/Logger.h>
 #include <das/DasPtr.hpp>
@@ -28,7 +29,12 @@ namespace
     }
 } // namespace
 
-CSharpHost::CSharpHost() = default;
+CSharpHost::CSharpHost()
+{
+#ifdef DAS_CSHARP_HOSTFXR_BACKEND
+    backends_.modern_dotnet = std::make_unique<CSharpHostFxrBackend>();
+#endif
+}
 
 CSharpHost::CSharpHost(CSharpRuntimeBackendSet backends)
     : backends_{std::move(backends)}
