@@ -328,7 +328,7 @@ class TestCSharpGeneratorPhase77CompleteSurface(unittest.TestCase):
             wrapper,
         )
         self.assertIn(
-            "public DasResult Dispatch(string functionName, IDasVariantVector arguments)",
+            "public unsafe DasResult Dispatch(string functionName, IDasVariantVector arguments)",
             wrapper,
         )
         self.assertIn("ArgumentNullException.ThrowIfNull(functionName);", wrapper)
@@ -370,8 +370,8 @@ class TestCSharpGeneratorPhase77CompleteSurface(unittest.TestCase):
     def test_d77_24_interface_inputs_use_same_type_and_upcast_wrappers_only(self):
         wrapper = _phase77_artifacts().files["Das.Generated/Wrappers/IDasComponent.cs"]
 
-        self.assertIn("public DasResult Attach(IDasBase base, IDasComponent component)", wrapper)
-        self.assertIn("base.Handle", wrapper)
+        self.assertIn("public DasResult Attach(IDasBase baseObject, IDasComponent component)", wrapper)
+        self.assertIn("baseObject.Handle", wrapper)
         self.assertIn("component.Handle", wrapper)
         self.assertIn("CanAssignTo(\"IDasBase\")", wrapper)
         self.assertIn("CanAssignTo(\"IDasComponent\")", wrapper)

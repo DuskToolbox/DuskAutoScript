@@ -58,6 +58,12 @@ _UNSIGNED_INTEGER_TYPES = frozenset(
     }
 )
 _FLOAT_TYPES = frozenset({"float", "double"})
+_CSHARP_KEYWORD_RENAMES = {
+    "base": "baseObject",
+    "event": "eventValue",
+    "params": "paramsValue",
+    "string": "stringValue",
+}
 
 
 def _require_das_namespace(namespace_root: str) -> str:
@@ -96,6 +102,12 @@ def _pascal_name(name: str) -> str:
     return "".join(part[:1].upper() + part[1:] for part in parts)
 
 
+def _camel_name(name: str) -> str:
+    pascal = _pascal_name(name)
+    result = pascal[:1].lower() + pascal[1:]
+    return _CSHARP_KEYWORD_RENAMES.get(result, result)
+
+
 def _is_result_type(type_info: TypeInfo) -> bool:
     return type_simple_name(type_info) == "DasResult" and not type_info.is_pointer
 
@@ -114,6 +126,10 @@ def _is_interface_pointer(type_info: TypeInfo) -> bool:
 
 def _is_read_only_string_pointer(type_info: TypeInfo) -> bool:
     return type_simple_name(type_info) == "IDasReadOnlyString" and type_info.is_pointer
+
+
+def _is_binary_buffer_pointer(type_info: TypeInfo) -> bool:
+    return type_simple_name(type_info) == "IDasBinaryBuffer" and type_info.is_pointer
 
 
 def _is_out_param(param: ParameterDef) -> bool:
@@ -193,6 +209,24 @@ def _csharp_type(type_info: TypeInfo, *, public_surface: bool = True) -> str:
     return "System.IntPtr" if public_surface else "IntPtr"
 
 
+def _wrapper_type(type_info: TypeInfo) -> str:
+    simple = type_simple_name(type_info)
+    if _is_read_only_string_pointer(type_info):
+        return "DasReadOnlyString"
+    if _is_binary_buffer_pointer(type_info):
+        return "DasBinaryBuffer"
+    if _is_interface_pointer(type_info):
+        return simple
+    return _csharp_type(type_info)
+
+
+def _default_value_expression(type_info: TypeInfo) -> str:
+    wrapper = _wrapper_type(type_info)
+    if _is_interface_pointer(type_info) or _is_read_only_string_pointer(type_info):
+        return f"new {wrapper}(System.IntPtr.Zero)"
+    return f"default({wrapper})"
+
+
 def _method_in_params(method: MethodDef) -> list[ParameterDef]:
     return [param for param in method.parameters if param.direction == ParamDirection.IN]
 
@@ -217,8 +251,10 @@ class CSharpGenerator:
         self.package_name = _require_nonempty(package_name, "package_name")
         self.project_name = _require_nonempty(project_name, "project_name")
         self.idl_header_names = tuple(idl_header_names or ())
+        self._interfaces: dict[str, InterfaceDef] = {}
 
     def generate(self, doc: IdlDocument) -> CSharpArtifacts:
+        self._interfaces = {interface.name: interface for interface in doc.interfaces}
         files: dict[str, str] = {
             f"{self.project_name}.csproj": self._generate_project(),
             f"{self.namespace_root}/DasResult.cs": self._generate_das_result(doc),
@@ -227,6 +263,10 @@ class CSharpGenerator:
             f"{self.namespace_root}/Abi/NativeMethods.cs": self._generate_native_methods(),
             f"{self.namespace_root}/Interop/DasStringInterop.cs": self._generate_string_interop(),
             f"{self.namespace_root}/Interop/NativeHandle.cs": self._generate_native_handle(),
+            f"{self.namespace_root}/Wrappers/IDasBase.cs": self._generate_builtin_base_wrapper(),
+            f"{self.namespace_root}/Wrappers/IDasReadOnlyString.cs": self._generate_builtin_read_only_string_wrapper(),
+            f"{self.namespace_root}/Wrappers/DasReadOnlyString.cs": self._generate_das_read_only_string_wrapper(),
+            f"{self.namespace_root}/Wrappers/DasBinaryBuffer.cs": self._generate_das_binary_buffer_wrapper(),
         }
 
         for enum in sorted(doc.enums, key=lambda item: item.name):
@@ -245,6 +285,10 @@ class CSharpGenerator:
             files[
                 f"{self.namespace_root}/Results/{interface.name}Results.cs"
             ] = self._generate_results(interface)
+
+        if doc.interfaces:
+            files["Native/DasCSharpDirectorSupport.h"] = self._generate_native_director_support_header(doc.interfaces)
+            files["Native/DasCSharpDirectorSupport.cpp"] = self._generate_native_director_support_source(doc.interfaces)
 
         return CSharpArtifacts(dict(sorted(files.items())))
 
@@ -375,6 +419,7 @@ class CSharpGenerator:
                 f"// IDL headers: {header_comment}",
                 "using System;",
                 "using System.Runtime.InteropServices;",
+                f"using {self.namespace_root};",
                 "",
                 f"namespace {self.namespace_root}.Abi;",
                 "",
@@ -417,6 +462,7 @@ class CSharpGenerator:
             [
                 "// DAS C# UTF-16 string helpers (auto-generated - DO NOT MODIFY)",
                 "using System;",
+                f"using {self.namespace_root};",
                 f"using {self.namespace_root}.Abi;",
                 "",
                 f"namespace {self.namespace_root}.Interop;",
@@ -425,6 +471,12 @@ class CSharpGenerator:
                 "{",
                 "    internal const string EmbeddedNul = \"left\\0right\";",
                 "    internal const string UnpairedSurrogate = \"\\ud800\";",
+                "",
+                "    public static string ToManagedString(System.IntPtr readOnlyString)",
+                "    {",
+                "        _ = readOnlyString;",
+                "        return new string(System.ReadOnlySpan<char>.Empty);",
+                "    }",
                 "",
                 "    public static DasResult CreateReadOnly(",
                 "        string? managedString,",
@@ -478,6 +530,148 @@ class CSharpGenerator:
                 "    public System.IntPtr Value { get; }",
                 "",
                 "    public bool IsNull => Value == System.IntPtr.Zero;",
+                "}",
+                "",
+            ]
+        )
+
+    def _generate_builtin_base_wrapper(self) -> str:
+        return "\n".join(
+            [
+                "// DAS C# base interface wrapper (auto-generated - DO NOT MODIFY)",
+                "using System;",
+                "",
+                f"namespace {self.namespace_root}.Wrappers;",
+                "",
+                "public class IDasBase : IDisposable",
+                "{",
+                "    protected System.IntPtr _handle;",
+                "",
+                "    public IDasBase(System.IntPtr handle)",
+                "    {",
+                "        _handle = handle;",
+                "    }",
+                "",
+                "    public System.IntPtr Handle => _handle;",
+                "",
+                "    public virtual bool CanAssignTo(string interfaceName)",
+                "    {",
+                "        return interfaceName == \"IDasBase\";",
+                "    }",
+                "",
+                "    public virtual void Dispose()",
+                "    {",
+                "        _handle = System.IntPtr.Zero;",
+                "    }",
+                "}",
+                "",
+            ]
+        )
+
+    def _generate_builtin_read_only_string_wrapper(self) -> str:
+        return "\n".join(
+            [
+                "// DAS C# read-only string interface wrapper (auto-generated - DO NOT MODIFY)",
+                "using System;",
+                "",
+                f"namespace {self.namespace_root}.Wrappers;",
+                "",
+                "public sealed class IDasReadOnlyString : IDasBase",
+                "{",
+                "    public IDasReadOnlyString(System.IntPtr handle)",
+                "        : base(handle)",
+                "    {",
+                "    }",
+                "",
+                "    public override bool CanAssignTo(string interfaceName)",
+                "    {",
+                "        return interfaceName == \"IDasReadOnlyString\" || interfaceName == \"IDasBase\";",
+                "    }",
+                "}",
+                "",
+            ]
+        )
+
+    def _generate_das_read_only_string_wrapper(self) -> str:
+        return "\n".join(
+            [
+                "// DAS C# first-class read-only string wrapper (auto-generated - DO NOT MODIFY)",
+                "using System;",
+                "",
+                f"namespace {self.namespace_root}.Wrappers;",
+                "",
+                "public sealed class DasReadOnlyString : IDisposable",
+                "{",
+                "    private System.IntPtr _handle;",
+                "",
+                "    public DasReadOnlyString(System.IntPtr handle)",
+                "    {",
+                "        _handle = handle;",
+                "    }",
+                "",
+                "    public System.IntPtr Handle => _handle;",
+                "",
+                "    public static DasReadOnlyString Attach(System.IntPtr handle)",
+                "    {",
+                "        return new DasReadOnlyString(handle);",
+                "    }",
+                "",
+                "    public string ToManagedString()",
+                "    {",
+                f"        return {self.namespace_root}.Interop.DasStringInterop.ToManagedString(_handle);",
+                "    }",
+                "",
+                "    public void Dispose()",
+                "    {",
+                "        _handle = System.IntPtr.Zero;",
+                "    }",
+                "}",
+                "",
+            ]
+        )
+
+    def _generate_das_binary_buffer_wrapper(self) -> str:
+        return "\n".join(
+            [
+                "// DAS C# binary buffer wrapper (auto-generated - DO NOT MODIFY)",
+                "using System;",
+                f"using {self.namespace_root};",
+                "",
+                f"namespace {self.namespace_root}.Wrappers;",
+                "",
+                "public readonly struct DasBinaryBufferView",
+                "{",
+                "    public DasBinaryBufferView(System.IntPtr data, nuint size)",
+                "    {",
+                "        Data = data;",
+                "        Size = size;",
+                "    }",
+                "",
+                "    public System.IntPtr Data { get; }",
+                "    public nuint Size { get; }",
+                "}",
+                "",
+                "public sealed class DasBinaryBuffer : IDisposable",
+                "{",
+                "    private System.IntPtr _handle;",
+                "",
+                "    public DasBinaryBuffer(System.IntPtr handle)",
+                "    {",
+                "        _handle = handle;",
+                "    }",
+                "",
+                "    public System.IntPtr Handle => _handle;",
+                "",
+                "    public DasResult GetView(out DasBinaryBufferView view)",
+                "    {",
+                "        view = new DasBinaryBufferView(System.IntPtr.Zero, 0);",
+                "        return DasResult.DAS_S_OK;",
+                "    }",
+                "",
+                "    public void Dispose()",
+                "    {",
+                "        _handle = System.IntPtr.Zero;",
+                "    }",
                 "}",
                 "",
             ]
@@ -538,28 +732,49 @@ class CSharpGenerator:
         return type_name
 
     def _generate_wrapper(self, interface: InterfaceDef) -> str:
+        base_class = "IDasBase" if interface.name != "IDasBase" else "IDisposable"
         lines = [
             "// DAS C# interface wrapper (auto-generated - DO NOT MODIFY)",
             "using System;",
+            f"using {self.namespace_root};",
+            f"using {self.namespace_root}.Results;",
             "",
             f"namespace {self.namespace_root}.Wrappers;",
             "",
-            f"public sealed class {interface.name} : IDisposable",
+            f"public sealed class {interface.name} : {base_class}",
             "{",
-            "    private System.IntPtr _handle;",
-            "",
+        "",
             f"    public {interface.name}(System.IntPtr handle)",
-            "    {",
-            "        _handle = handle;",
-            "    }",
-            "",
-            "    public System.IntPtr Handle => _handle;",
-            "",
-            "    public void Dispose()",
-            "    {",
-            "        _handle = System.IntPtr.Zero;",
-            "    }",
         ]
+        if base_class == "IDisposable":
+            lines.extend(
+                [
+                    "    {",
+                    "        _handle = handle;",
+                    "    }",
+                    "",
+                    "    private System.IntPtr _handle;",
+                    "    public System.IntPtr Handle => _handle;",
+                    "",
+                    "    public void Dispose()",
+                    "    {",
+                    "        _handle = System.IntPtr.Zero;",
+                    "    }",
+                ]
+            )
+        else:
+            lines.extend(
+                [
+                    "        : base(handle)",
+                    "    {",
+                    "    }",
+                    "",
+                    "    public override bool CanAssignTo(string interfaceName)",
+                    "    {",
+                    f"        return interfaceName == \"{interface.name}\" || interfaceName == \"{interface.base_interface}\";",
+                    "    }",
+                ]
+            )
 
         for method in _interface_methods(interface):
             lines.append("")
@@ -569,27 +784,58 @@ class CSharpGenerator:
         lines.append("")
         return "\n".join(lines)
 
+    def _method_param_decls(self, params: Sequence[ParameterDef]) -> str:
+        return ", ".join(
+            f"{_wrapper_type(param.type_info)} {_camel_name(param.name)}"
+            for param in params
+        )
+
+    def _method_call_args(self, params: Sequence[ParameterDef]) -> str:
+        return ", ".join(_camel_name(param.name) for param in params)
+
+    def _method_native_args(self, params: Sequence[ParameterDef]) -> str:
+        args = ["_handle"]
+        for param in params:
+            name = _camel_name(param.name)
+            if _is_interface_pointer(param.type_info) or _is_read_only_string_pointer(param.type_info):
+                args.append(f"{name}.Handle")
+            else:
+                args.append(name)
+        return ", ".join(args)
+
     def _generate_wrapper_method(self, method: MethodDef) -> list[str]:
         in_params = _method_in_params(method)
         out_params = _method_out_params(method)
         method_name = _sanitize_identifier(method.name)
-        param_text = ", ".join(
-            f"{_csharp_type(param.type_info)} {_sanitize_identifier(param.name)}"
-            for param in in_params
-        )
-        call_args = ", ".join(_sanitize_identifier(param.name) for param in in_params)
-        native_args = ", ".join(item for item in ("_handle", call_args) if item)
+        param_text = self._method_param_decls(in_params)
+        call_args = self._method_call_args(in_params)
+        native_args = self._method_native_args(in_params)
         result_type = f"{method_name}Result" if out_params else "DasResult"
 
         lines = [f"    public {result_type} {method_name}({param_text})"]
         lines.append("    {")
+        for param in in_params:
+            if _is_interface_pointer(param.type_info) or _is_read_only_string_pointer(param.type_info):
+                param_name = _camel_name(param.name)
+                lines.append(f"        ArgumentNullException.ThrowIfNull({param_name});")
+                lines.append(
+                    f"        if (!{param_name}.CanAssignTo(\"{type_simple_name(param.type_info)}\"))"
+                    if _is_interface_pointer(param.type_info) and type_simple_name(param.type_info) != "IDasReadOnlyString"
+                    else f"        if ({param_name}.Handle == System.IntPtr.Zero)"
+                )
+                lines.append("        {")
+                lines.append("            return DasResult.DAS_E_INVALID_ARGUMENT;")
+                lines.append("        }")
         if out_params:
             lines.append("        var result = DasResult.DAS_S_OK;")
             for param in out_params:
-                value_type = _csharp_type(_out_value_type(param))
+                value_type_info = _out_value_type(param)
                 field_name = _pascal_name(param.name)
-                lines.append(f"        var {field_name} = default({value_type});")
+                lines.append(
+                    f"        var {field_name} = {_default_value_expression(value_type_info)};"
+                )
             out_values = ", ".join(_pascal_name(param.name) for param in out_params)
+            lines.append(f"        _ = {native_args};")
             lines.append(f"        return new {method_name}Result(result, {out_values});")
         elif _is_result_type(method.return_type):
             lines.append(f"        _ = {native_args};")
@@ -597,7 +843,8 @@ class CSharpGenerator:
         elif _is_void_type(method.return_type):
             lines.append(f"        _ = {native_args};")
         else:
-            return_type = _csharp_type(method.return_type)
+            return_type = _wrapper_type(method.return_type)
+            lines.append(f"        _ = {native_args};")
             lines.append(f"        return default({return_type});")
         lines.append("    }")
 
@@ -605,6 +852,7 @@ class CSharpGenerator:
             lines.append("")
             checked_return = "void" if not out_params else result_type
             lines.append(f"    public {checked_return} {method_name}OrThrow({param_text})")
+            "    {",
             lines.append("    {")
             call = f"{method_name}({call_args})" if call_args else f"{method_name}()"
             if out_params:
@@ -628,35 +876,37 @@ class CSharpGenerator:
         string_param: ParameterDef,
     ) -> list[str]:
         method_name = _sanitize_identifier(method.name)
-        param_name = _sanitize_identifier(string_param.name)
-        value_name = _pascal_name(string_param.name)
-        convenience_name = f"{method_name}{value_name}String"
+        param_name = _camel_name(string_param.name)
         call_args: list[str] = []
         for param in _method_in_params(method):
             if param is string_param:
-                call_args.append(f"{param_name}Handle")
+                call_args.append(f"{param_name}String")
             else:
-                call_args.append(_sanitize_identifier(param.name))
+                call_args.append(_camel_name(param.name))
         extra_params = [
-            f"{_csharp_type(param.type_info)} {_sanitize_identifier(param.name)}"
+            f"{_wrapper_type(param.type_info)} {_camel_name(param.name)}"
             for param in _method_in_params(method)
             if param is not string_param
         ]
-        params = ", ".join(["string? managedString", *extra_params])
+        params = ", ".join([f"string {param_name}", *extra_params])
 
         return [
-            f"    public DasResult {convenience_name}({params})",
+            f"    public unsafe DasResult {method_name}({params})",
             "    {",
-            "        var value = managedString;",
-            "        ArgumentNullException.ThrowIfNull(value);",
-            f"        var createResult = {self.namespace_root}.Interop.DasStringInterop.CreateReadOnly(",
-            "            value,",
-            f"            out var {param_name}Handle);",
-            "        if ((int)createResult < 0)",
+            f"        ArgumentNullException.ThrowIfNull({param_name});",
+            f"        fixed (char* pValue = {param_name})",
             "        {",
-            "            return createResult;",
+            "            var createResult = Das.Generated.Abi.NativeMethods.CreateIDasReadOnlyStringFromUtf16WithLength(",
+            "                (ushort*)pValue,",
+            f"                checked((nuint){param_name}.Length),",
+            f"                out var {param_name}Handle);",
+            "            if ((int)createResult < 0)",
+            "            {",
+            "                return createResult;",
+            "            }",
+            f"            using var {param_name}String = DasReadOnlyString.Attach({param_name}Handle);",
+            f"            return {method_name}({', '.join(call_args)});",
             "        }",
-            f"        return {method_name}({', '.join(call_args)});",
             "    }",
         ]
 
@@ -667,6 +917,7 @@ class CSharpGenerator:
             "// DAS C# director surface (auto-generated - DO NOT MODIFY)",
             "using System;",
             "using System.Runtime.InteropServices;",
+            f"using {self.namespace_root};",
             "",
             f"namespace {self.namespace_root}.Directors;",
             "",
@@ -683,9 +934,15 @@ class CSharpGenerator:
             [
                 "}",
                 "",
+                "public unsafe struct " + f"{director_name}NativeCallbacks",
+                "{",
+                "    public delegate* unmanaged<System.IntPtr, DasResult> Release;",
+                "}",
+                "",
                 f"public sealed class {director_name} : IDisposable",
                 "{",
                 "    private readonly GCHandle _managedState;",
+                "    private bool _disposed;",
                 "",
                 f"    public {director_name}({callbacks_name} callbacks)",
                 "    {",
@@ -697,9 +954,24 @@ class CSharpGenerator:
                 "",
                 "    public void Dispose()",
                 "    {",
-                "        if (_managedState.IsAllocated)",
+                "        if (!_disposed)",
                 "        {",
-                "            _managedState.Free();",
+                "            var managed_state = ManagedState;",
+                "            ReleaseManagedState(managed_state);",
+                "            _disposed = true;",
+                "        }",
+                "    }",
+                "",
+                "    internal static void ReleaseManagedState(System.IntPtr managedState)",
+                "    {",
+                "        if (managedState == System.IntPtr.Zero)",
+                "        {",
+                "            return;",
+                "        }",
+                "        var handle = GCHandle.FromIntPtr(managedState);",
+                "        if (handle.IsAllocated)",
+                "        {",
+                "            handle.Free();",
                 "        }",
                 "    }",
                 "}",
@@ -716,6 +988,9 @@ class CSharpGenerator:
         }
         lines = [
             "// DAS C# result objects (auto-generated - DO NOT MODIFY)",
+            f"using {self.namespace_root};",
+            f"using {self.namespace_root}.Wrappers;",
+            "",
             f"namespace {self.namespace_root}.Results;",
             "",
             f"public readonly struct {interface.name}Results",
@@ -733,7 +1008,7 @@ class CSharpGenerator:
             lines.append("{")
             ctor_params = ["DasResult result"]
             for param in out_params:
-                value_type = _csharp_type(_out_value_type(param))
+                value_type = _wrapper_type(_out_value_type(param))
                 field_name = _pascal_name(param.name)
                 ctor_params.append(f"{value_type} {field_name[:1].lower() + field_name[1:]}")
             lines.append(f"    public {result_name}({', '.join(ctor_params)})")
@@ -747,7 +1022,7 @@ class CSharpGenerator:
             lines.append("")
             lines.append("    public DasResult Result { get; }")
             for param in out_params:
-                value_type = _csharp_type(_out_value_type(param))
+                value_type = _wrapper_type(_out_value_type(param))
                 field_name = _pascal_name(param.name)
                 lines.append(f"    public {value_type} {field_name} {{ get; }}")
             lines.append("}")
@@ -756,6 +1031,95 @@ class CSharpGenerator:
         if not result_names:
             lines.append("// This interface currently has no out-parameter result objects.")
             lines.append("")
+        return "\n".join(lines)
+
+    def _generate_native_director_support_header(
+        self,
+        interfaces: Sequence[InterfaceDef],
+    ) -> str:
+        lines = [
+            "// DAS C# native director support (auto-generated - DO NOT MODIFY)",
+            "#pragma once",
+            "",
+            "#include <das/DasConfig.h>",
+            "#include <das/IDasBase.h>",
+            "#include <cstdint>",
+            "",
+            "extern \"C\" {",
+        ]
+        for interface in sorted(interfaces, key=lambda item: item.name):
+            director_name = f"{interface.name}Director"
+            callbacks_name = f"{director_name}Callbacks"
+            lines.extend(
+                [
+                    f"struct {callbacks_name};",
+                    f"DAS_C_API DasResult DasCreateCSharp{director_name}(",
+                    "    void* managed_state,",
+                    f"    const {callbacks_name}* callbacks,",
+                    f"    {interface.name}** pp_out_object);",
+                    "",
+                ]
+            )
+        lines.extend(["}", ""])
+        return "\n".join(lines)
+
+    def _generate_native_director_support_source(
+        self,
+        interfaces: Sequence[InterfaceDef],
+    ) -> str:
+        lines = [
+            "// DAS C# native director support (auto-generated - DO NOT MODIFY)",
+            '#include "DasCSharpDirectorSupport.h"',
+            "",
+        ]
+        for interface in sorted(interfaces, key=lambda item: item.name):
+            director_name = f"{interface.name}Director"
+            callbacks_name = f"{director_name}Callbacks"
+            lines.extend(
+                [
+                    f"class CSharp{director_name} final : public {interface.name}",
+                    "{",
+                    "public:",
+                    "    CSharp" + director_name + "(",
+                    "        void* managed_state,",
+                    f"        const {callbacks_name}* callbacks)",
+                    "        : managed_state_{managed_state}",
+                    "        , callbacks_{callbacks}",
+                    "    {",
+                    "    }",
+                    "",
+                    "private:",
+                    "    void* managed_state_{};",
+                    f"    const {callbacks_name}* callbacks_{{}};",
+                    "};",
+                    "",
+                    f"DasResult DasCreateCSharp{director_name}(",
+                    "    void* managed_state,",
+                    f"    const {callbacks_name}* callbacks,",
+                    f"    {interface.name}** pp_out_object)",
+                    "{",
+                    "    if (pp_out_object == nullptr)",
+                    "    {",
+                    "        return DAS_E_INVALID_POINTER;",
+                    "    }",
+                    "    *pp_out_object = nullptr;",
+                    "    if (callbacks == nullptr)",
+                    "    {",
+                    "        *pp_out_object = nullptr;",
+                    "        return DAS_E_INVALID_POINTER;",
+                    "    }",
+                    "    if (managed_state == 0)",
+                    "    {",
+                    "        *pp_out_object = nullptr;",
+                    "        return DAS_E_INVALID_ARGUMENT;",
+                    "    }",
+                    f"    auto* object = new CSharp{director_name}(managed_state, callbacks);",
+                    "    *pp_out_object = object;",
+                    "    return DAS_S_OK;",
+                    "}",
+                    "",
+                ]
+            )
         return "\n".join(lines)
 
 
