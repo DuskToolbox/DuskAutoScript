@@ -434,6 +434,34 @@ namespace
         ofs << *Das::Utils::SerializeYyjsonValue(manifest, false);
     }
 
+    void WriteCSharpManifest(
+        const std::filesystem::path& path,
+        const std::string&           guid,
+        const std::string&           name)
+    {
+        auto manifest = Das::Utils::MakeYyjsonObject();
+        {
+            auto obj = *manifest.as_object();
+            obj[std::string_view("guid")] = guid;
+            obj[std::string_view("name")] = name;
+            obj[std::string_view("language")] = "CSharp";
+            obj[std::string_view("description")] = "test";
+            obj[std::string_view("author")] = "test";
+            obj[std::string_view("version")] = "1.0";
+            obj[std::string_view("supportedSystem")] = "win";
+            obj[std::string_view("pluginFilenameExtension")] = "dll";
+            obj[std::string_view("targetFramework")] = "net8.0";
+            obj[std::string_view("entryPoint")] =
+                "Das.TestPlugin.TestPluginEntrypoint.Create";
+            obj[std::string_view("runtimeConfigPath")] =
+                "DasCSharpRoutingPlugin.runtimeconfig.json";
+            obj[std::string_view("settings")] = Das::Utils::MakeYyjsonArray();
+        }
+
+        std::ofstream ofs(path);
+        ofs << *Das::Utils::SerializeYyjsonValue(manifest, false);
+    }
+
     DasGuid MakeTaskComponentTestGuid(uint32_t value)
     {
         DasGuid guid{};
@@ -2066,6 +2094,40 @@ TEST_F(PluginManagerGuidTest, RuntimeLoadRequest_CarriesRoutingInputs)
         request.node_modules_root,
         std::filesystem::path{"plugins/node_modules"});
     EXPECT_EQ(request.main_process_owner_session_id, 17);
+}
+
+TEST_F(
+    PluginManagerGuidTest,
+    LoadPlugin_CSharpManifestKeepsCSharpFieldsOutOfRuntimeRequest)
+{
+    auto test_dir =
+        std::filesystem::current_path() / "test_plugin_csharp_request_shape";
+    std::filesystem::remove_all(test_dir);
+    std::filesystem::create_directories(test_dir);
+
+    const auto manifest_path = test_dir / "CSharpRoutingPlugin.json";
+    WriteCSharpManifest(
+        manifest_path,
+        "00000000-0000-0000-0000-000000780201",
+        "CSharpRoutingPlugin");
+
+    auto  provider = std::make_unique<CapturingRuntimeProvider>(122);
+    auto* raw_provider = provider.get();
+    pm_->SetRuntimeProviderForTest(std::move(provider));
+
+    auto result = pm_->LoadPlugin(manifest_path);
+
+    EXPECT_EQ(result, DAS_S_OK);
+    ASSERT_EQ(raw_provider->requests.size(), 1u);
+    const auto& request = raw_provider->requests.front();
+    EXPECT_EQ(request.manifest_path, manifest_path);
+    EXPECT_EQ(request.runtime_path, manifest_path);
+    EXPECT_EQ(request.language, ForeignInterfaceLanguage::CSharp);
+    EXPECT_EQ(request.load_mode, LoadMode::InProcess);
+    EXPECT_TRUE(request.node_modules_root.empty());
+    EXPECT_EQ(request.main_process_owner_session_id, 1);
+
+    std::filesystem::remove_all(test_dir);
 }
 
 TEST_F(PluginManagerGuidTest, RuntimeLoadResult_CarriesObjectAndOwnerSession)
