@@ -128,7 +128,6 @@ public:
         (void)out_string_size;
         return DAS_E_NO_IMPLEMENTATION;
     }
-    DasResult GetW(const wchar_t**) override { return DAS_E_NO_IMPLEMENTATION; }
     const int32_t* CBegin() override { return nullptr; }
     const int32_t* CEnd() override { return nullptr; }
 };

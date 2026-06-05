@@ -112,6 +112,10 @@ def _is_interface_pointer(type_info: TypeInfo) -> bool:
     )
 
 
+def _is_read_only_string_pointer(type_info: TypeInfo) -> bool:
+    return type_simple_name(type_info) == "IDasReadOnlyString" and type_info.is_pointer
+
+
 def _is_out_param(param: ParameterDef) -> bool:
     return param.direction in {ParamDirection.OUT, ParamDirection.INOUT}
 
@@ -221,6 +225,7 @@ class CSharpGenerator:
             f"{self.namespace_root}/DasException.cs": self._generate_das_exception(),
             f"{self.namespace_root}/Abi/DasGuid.cs": self._generate_das_guid(),
             f"{self.namespace_root}/Abi/NativeMethods.cs": self._generate_native_methods(),
+            f"{self.namespace_root}/Interop/DasStringInterop.cs": self._generate_string_interop(),
             f"{self.namespace_root}/Interop/NativeHandle.cs": self._generate_native_handle(),
         }
 
@@ -392,6 +397,64 @@ class CSharpGenerator:
                 "    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]",
                 "    internal delegate int AddRefDelegate(System.IntPtr handle);",
                 "#endif",
+                "",
+                "    internal static partial DasResult CreateIDasReadOnlyStringFromUtf16WithLength(",
+                "        ushort* pUtf16,",
+                "        nuint length,",
+                "        out System.IntPtr ppOutReadOnlyString);",
+                "",
+                "    internal static partial DasResult CreateIDasStringFromUtf16WithLength(",
+                "        ushort* pUtf16,",
+                "        nuint length,",
+                "        out System.IntPtr ppOutString);",
+                "}",
+                "",
+            ]
+        )
+
+    def _generate_string_interop(self) -> str:
+        return "\n".join(
+            [
+                "// DAS C# UTF-16 string helpers (auto-generated - DO NOT MODIFY)",
+                "using System;",
+                f"using {self.namespace_root}.Abi;",
+                "",
+                f"namespace {self.namespace_root}.Interop;",
+                "",
+                "public static unsafe class DasStringInterop",
+                "{",
+                "    internal const string EmbeddedNul = \"left\\0right\";",
+                "    internal const string UnpairedSurrogate = \"\\ud800\";",
+                "",
+                "    public static DasResult CreateReadOnly(",
+                "        string? managedString,",
+                "        out System.IntPtr handle)",
+                "    {",
+                "        var value = managedString;",
+                "        ArgumentNullException.ThrowIfNull(value);",
+                "        fixed (char* pValue = value)",
+                "        {",
+                "            return NativeMethods.CreateIDasReadOnlyStringFromUtf16WithLength(",
+                "                (ushort*)pValue,",
+                "                checked((nuint)value.Length),",
+                "                out handle);",
+                "        }",
+                "    }",
+                "",
+                "    public static DasResult CreateMutable(",
+                "        string? managedString,",
+                "        out System.IntPtr handle)",
+                "    {",
+                "        var value = managedString;",
+                "        ArgumentNullException.ThrowIfNull(value);",
+                "        fixed (char* pValue = value)",
+                "        {",
+                "            return NativeMethods.CreateIDasStringFromUtf16WithLength(",
+                "                (ushort*)pValue,",
+                "                checked((nuint)value.Length),",
+                "                out handle);",
+                "        }",
+                "    }",
                 "}",
                 "",
             ]
@@ -552,7 +615,50 @@ class CSharpGenerator:
                 lines.append(f"        {call}.OrThrow();")
             lines.append("    }")
 
+        for param in in_params:
+            if _is_read_only_string_pointer(param.type_info):
+                lines.append("")
+                lines.extend(self._generate_string_convenience_method(method, param))
+
         return lines
+
+    def _generate_string_convenience_method(
+        self,
+        method: MethodDef,
+        string_param: ParameterDef,
+    ) -> list[str]:
+        method_name = _sanitize_identifier(method.name)
+        param_name = _sanitize_identifier(string_param.name)
+        value_name = _pascal_name(string_param.name)
+        convenience_name = f"{method_name}{value_name}String"
+        call_args: list[str] = []
+        for param in _method_in_params(method):
+            if param is string_param:
+                call_args.append(f"{param_name}Handle")
+            else:
+                call_args.append(_sanitize_identifier(param.name))
+        extra_params = [
+            f"{_csharp_type(param.type_info)} {_sanitize_identifier(param.name)}"
+            for param in _method_in_params(method)
+            if param is not string_param
+        ]
+        params = ", ".join(["string? managedString", *extra_params])
+
+        return [
+            f"    public DasResult {convenience_name}({params})",
+            "    {",
+            "        var value = managedString;",
+            "        ArgumentNullException.ThrowIfNull(value);",
+            f"        var createResult = {self.namespace_root}.Interop.DasStringInterop.CreateReadOnly(",
+            "            value,",
+            f"            out var {param_name}Handle);",
+            "        if ((int)createResult < 0)",
+            "        {",
+            "            return createResult;",
+            "        }",
+            f"        return {method_name}({', '.join(call_args)});",
+            "    }",
+        ]
 
     def _generate_director(self, interface: InterfaceDef) -> str:
         director_name = f"{interface.name}Director"

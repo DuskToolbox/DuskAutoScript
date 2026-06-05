@@ -185,13 +185,11 @@ public:
     {
         U8 = 0,
         U32 = 1,
-        WideChar = 2,
     };
 
 private:
     DAS::Utils::RefCounter<DasStringCppImpl> ref_counter_{};
     ICUString                                impl_{};
-    DAS::Details::DynamicBuffer<char16_t>    u16_buffer_{};
     /**
      * @brief Notice: Boost regex assume std::string contains
      * utf-8 encoding string.
@@ -200,9 +198,8 @@ private:
      */
     std::string                          cached_utf8_string_{};
     DAS::Details::DynamicBuffer<UChar32> cached_utf32_string_{};
-    DAS::Details::DynamicBuffer<wchar_t> cached_wchar_string_{};
 
-    std::array<bool, 3> is_cache_expired_{true, true, true};
+    std::array<bool, 2> is_cache_expired_{true, true};
 
     template <Encode E>
     bool IsCacheExpired() const noexcept
@@ -241,22 +238,6 @@ public:
     DasResult GetUtf16(
         const char16_t** out_string,
         size_t*          out_string_size) noexcept override;
-    /**
-     * @brief 接受一串外部为wchar_t的UTF-16编码的字符串
-     *
-     * @param p_string
-     * @return DAS_METHOD
-     */
-    DasResult SetSwigW(const wchar_t* p_string) override;
-    DasResult SetW(const wchar_t* p_string, size_t length) override;
-    /**
-     * @brief 在Windows下返回UTF-16 ，在Linux下返回UTF-32的字符串
-     * * C# is using this function.
-     *
-     * @param p_string
-     * @return DAS_METHOD
-     */
-    DasResult GetW(const wchar_t** out_wstring) override;
     // * DasStringCppImpl
     DasResult GetImpl(ICUString** out_icu_string) noexcept;
     DasResult GetImpl(const ICUString** out_icu_string) const noexcept;

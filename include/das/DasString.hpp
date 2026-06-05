@@ -1,11 +1,14 @@
 #ifndef DAS_STRING_HPP
 #define DAS_STRING_HPP
 
+#include <cstdint>
 #include <das/DasConfig.h>
 #include <das/DasException.hpp>
 #include <das/DasPtr.hpp>
 #include <das/IDasBase.h>
 #include <string>
+
+using DasUtf16CodeUnit = uint16_t;
 
 // {C09E276A-B824-4667-A504-7609B4B7DD28}
 DAS_DEFINE_GUID(
@@ -27,18 +30,11 @@ DAS_INTERFACE IDasReadOnlyString : public IDasBase
 {
     // * Python
     DAS_METHOD GetUtf8(const char** out_string) = 0;
-    // * Java
+#ifndef SWIG
     DAS_METHOD GetUtf16(
         const char16_t** out_string,
         size_t*          out_string_size) noexcept = 0;
-    // * C#
-    /**
-     * @brief 在Windows下返回UTF-16字符串，在Linux下返回UTF-32字符串
-     *
-     * @param p_string
-     * @return DAS_METHOD
-     */
-    DAS_METHOD GetW(const wchar_t**) = 0;
+#endif // SWIG
     // * C++
     virtual const int32_t* CBegin() = 0;
     virtual const int32_t* CEnd() = 0;
@@ -64,26 +60,9 @@ DAS_INTERFACE IDasString : public IDasReadOnlyString
 {
     // * Python
     DAS_METHOD SetUtf8(const char* p_string) = 0;
-    // * Java
+#ifndef SWIG
     DAS_METHOD SetUtf16(const char16_t* p_string, size_t length) = 0;
-    // * C#
-    /**
-     * @brief 接受一串字符类型为wchar_t的UTF-16编码的字符串
-     *
-     * @param p_string
-     * @return DAS_METHOD
-     */
-    DAS_METHOD SetSwigW(const wchar_t* p_string) = 0;
-    // * C++
-    /**
-     * @brief 在Windows下接收UTF-16字符串，在Linux下接收UTF-32字符串。
-     *
-     * @param p_string
-     * @param length
-     * Unicode码元的数量。例如：“侮”（U+2F805）是2个码元。建议使用wcslen获取。
-     * @return DAS_METHOD
-     */
-    DAS_METHOD SetW(const wchar_t* p_string, size_t length) = 0;
+#endif // SWIG
 };
 
 #ifndef SWIG
@@ -113,27 +92,15 @@ DAS_C_API DasResult CreateIDasReadOnlyStringFromUtf8WithLength(
     size_t               length,
     IDasReadOnlyString** pp_out_readonly_string);
 
-/**
- * @brief same as DAS_METHOD IDasString::SetW(const wchar_t* p_string,
- * size_t length) = 0
- *
- * @param p_wstring
- * @param size
- * @param pp_out_string
- * @return DAS_C_API
- */
-DAS_C_API DasResult CreateIDasStringFromWChar(
-    const wchar_t* p_wstring,
-    size_t         length,
-    IDasString**   pp_out_string);
+DAS_C_API DasResult CreateIDasStringFromUtf16WithLength(
+    const DasUtf16CodeUnit* p_utf16_string,
+    size_t                  length,
+    IDasString**            pp_out_string);
 
-/**
- * @See CreateIDasStringFromWChar
- */
-DAS_C_API DasResult CreateIDasReadOnlyStringFromWChar(
-    const wchar_t*       p_wstring,
-    size_t               length,
-    IDasReadOnlyString** pp_out_readonly_string);
+DAS_C_API DasResult CreateIDasReadOnlyStringFromUtf16WithLength(
+    const DasUtf16CodeUnit* p_utf16_string,
+    size_t                  length,
+    IDasReadOnlyString**    pp_out_readonly_string);
 
 /**
  * @brief output format should be "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
@@ -283,35 +250,11 @@ public:
 #endif // defined(DAS_STRING_ENABLE_WHEN_CPP) || defined(SWIGPYTHON)
 
 /**
- * @brief
- * 从其它语言运行时获得UTF-16的字符串，但是外层使用wchar_t包装。
-    Get时在Win32环境下返回UTF-16，在Linux环境下返回UTF-32。
-    当前使用这一策略的语言：C#
- *
- */
-#if defined(DAS_STRING_ENABLE_WHEN_CPP) || defined(SWIGCSHARP)
-    DasReadOnlyString(const wchar_t* p_wstring)
-    {
-        IDasString* p_string;
-        DAS_THROW_IF_FAILED(CreateDasString(&p_string));
-        DAS_THROW_IF_FAILED(p_string->SetSwigW(p_wstring));
-        p_impl_ = Impl::Attach(p_string);
-    }
-
-    const wchar_t* GetW() const
-    {
-        const wchar_t* p_wstring = nullptr;
-        DAS_THROW_IF_FAILED(p_impl_->GetW(&p_wstring));
-        return p_wstring;
-    }
-
-#endif // defined(DAS_STRING_ENABLE_WHEN_CPP) || defined(SWIGCSHARP)
-
-/**
  * @brief 由于SWIG对于Java支持可能存在缺陷，这一功能由本项目实现
  *
+
  */
-#if defined(DAS_STRING_ENABLE_WHEN_CPP) || defined(SWIGJAVA)
+#ifndef SWIG
     DasReadOnlyString(const char16_t* p_u16string, size_t length)
     {
         IDasString* p_string;
@@ -324,7 +267,12 @@ public:
     {
         DAS_THROW_IF_FAILED(p_impl_->GetUtf16(out_string, out_string_size));
     }
-#endif // defined(DAS_STRING_ENABLE_WHEN_CPP) || defined(SWIGJAVA)
+
+    void BorrowUtf16(const char16_t** out_string, size_t* out_string_size) const
+    {
+        DAS_THROW_IF_FAILED(p_impl_->GetUtf16(out_string, out_string_size));
+    }
+#endif // SWIG
 };
 
 DAS_DEFINE_RET_TYPE(DasRetReadOnlyString, DasReadOnlyString);
