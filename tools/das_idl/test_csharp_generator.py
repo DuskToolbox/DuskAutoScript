@@ -81,6 +81,8 @@ def _phase77_contract_doc():
             DAS_E_CSHARP_ERROR = -1073750021,
             DAS_E_INVALID_ARGUMENT = -1073750038,
             DAS_E_CSHARP_MISSING_RUNTIMECONFIG = -1073750044,
+            DAS_E_CSHARP_BOOTSTRAP_INVALID = -1073800002,
+            DAS_E_CSHARP_DIRECTOR_FACTORY_FAILED = -1073800003,
         }
 
         enum DasSampleKind {
@@ -531,6 +533,90 @@ class TestCSharpGeneratorPhase77CompleteSurface(unittest.TestCase):
             "    }",
             source,
         )
+
+    def test_d78_05_bootstrap_helper_has_dual_entrypoint_signatures(self):
+        artifacts = _phase77_artifacts()
+        self.assertIn(
+            "Das.Generated/Runtime/DasCSharpBootstrap.cs",
+            artifacts.files,
+        )
+        bootstrap = artifacts.files["Das.Generated/Runtime/DasCSharpBootstrap.cs"]
+
+        self.assertIn(
+            "public static DasResult Invoke(\n"
+            "        IntPtr args,\n"
+            "        int sizeBytes,\n"
+            "        Func<object> packageFactory)",
+            bootstrap,
+        )
+        self.assertIn(
+            "public static DasResult Invoke(\n"
+            "        string bootstrapCookie,\n"
+            "        Func<object> packageFactory)",
+            bootstrap,
+        )
+        self.assertIn("private static IntPtr DecodeBootstrapCookie", bootstrap)
+        self.assertIn("ValidateBootstrapArgs(bootstrapArgs, sizeBytes)", bootstrap)
+        self.assertIn("args->size != Marshal.SizeOf<DasCSharpBootstrapArgsV1>()", bootstrap)
+        self.assertIn(
+            "args->abi_version != DAS_CSHARP_BOOTSTRAP_ARGS_V1_ABI_VERSION",
+            bootstrap,
+        )
+        self.assertIn("Marshal.WriteIntPtr(packageOut, IntPtr.Zero);", bootstrap)
+        self.assertIn("catch (Exception)", bootstrap)
+        self.assertIn("return DasResult.DAS_E_CSHARP_BOOTSTRAP_INVALID;", bootstrap)
+        self.assertNotIn("DAS_CSHARP_BOOTSTRAP_INVALID", bootstrap)
+        self.assertNotIn("public nint", bootstrap)
+
+    def test_d78_05_csharp_support_retains_managed_state_without_pinning(self):
+        artifacts = _phase77_artifacts()
+        director = artifacts.files["Das.Generated/Directors/IDasComponentDirector.cs"]
+        combined = _combined_text(artifacts)
+
+        self.assertIn("GCHandle.Alloc(callbacks, GCHandleType.Normal)", director)
+        self.assertNotIn("GCHandleType.Pinned", combined)
+        self.assertIn(
+            "internal static void ReleaseManagedState(System.IntPtr managedState)",
+            director,
+        )
+        self.assertEqual(director.count("handle.Free();"), 1)
+
+    def test_d78_05_native_director_support_has_com_lifetime_and_qi(self):
+        artifacts = _phase77_artifacts()
+        header = artifacts.files["Native/DasCSharpDirectorSupport.h"]
+        source = artifacts.files["Native/DasCSharpDirectorSupport.cpp"]
+
+        self.assertIn("using DasCSharpDirectorReleaseThunk", header)
+        self.assertIn("DasCSharpDirectorReleaseThunk release;", header)
+        self.assertIn("DasResult (*Dispatch)", header)
+        self.assertIn("DasResult (*CreateInstance)", header)
+        self.assertIn("uint32_t DAS_STD_CALL AddRef() override", source)
+        self.assertIn("uint32_t DAS_STD_CALL Release() override", source)
+        self.assertIn("void FinalRelease() noexcept", source)
+        self.assertEqual(source.count("callbacks_->release(managed_state_);"), 1)
+        self.assertIn("DasResult QueryInterface(const DasGuid& iid, void** pp_out_object) override", source)
+        self.assertIn("if (iid == DAS_IID_BASE)", source)
+        self.assertIn("if (iid == DasIidOf<IDasComponent>())", source)
+        self.assertIn("static_cast<IDasComponent*>(this)", source)
+        self.assertIn("static_cast<IDasTypeInfo*>(this)", source)
+        self.assertIn("AddRef();", source)
+        self.assertIn("return DAS_E_NO_INTERFACE;", source)
+
+    def test_d78_05_native_callback_table_forwards_methods_and_nulls_out_params(self):
+        source = _phase77_artifacts().files["Native/DasCSharpDirectorSupport.cpp"]
+
+        self.assertIn("callbacks_->Dispatch(", source)
+        self.assertIn("callbacks_->CreateInstance(", source)
+        self.assertIn("if (pp_out_object == nullptr)", source)
+        self.assertIn("*pp_out_object = nullptr;", source)
+        self.assertIn("if (callbacks->release == nullptr)", source)
+        self.assertIn("return DAS_E_CSHARP_DIRECTOR_FACTORY_FAILED;", source)
+        self.assertLess(
+            source.index("if (callbacks->release == nullptr)"),
+            source.index("new (std::nothrow) CSharpIDasComponentDirector"),
+        )
+        self.assertIn("if (object == nullptr)", source)
+        self.assertIn("return DAS_E_CSHARP_DIRECTOR_FACTORY_FAILED;", source)
 
     def test_d77_47_reviewable_layout_and_forbidden_surface_scan(self):
         artifacts = _phase77_artifacts()
