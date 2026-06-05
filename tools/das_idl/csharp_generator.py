@@ -363,6 +363,20 @@ def _interface_methods(interface: InterfaceDef) -> list[MethodDef]:
     return list(interface.methods)
 
 
+def _native_methods_name(interface_name: str, method_name: str) -> str:
+    return f"{method_name}{interface_name}"
+
+
+def _callback_out_name(param: ParameterDef) -> str:
+    value_type = _out_value_type(param)
+    if _is_interface_pointer(value_type) or _is_read_only_string_pointer(value_type):
+        pascal = _pascal_name(param.name)
+        name = pascal[:1].lower() + pascal[1:]
+        return f"{name}Handle"
+    name = _result_ctor_param_name(param.name)
+    return name
+
+
 class CSharpGenerator:
     def __init__(
         self,
@@ -384,7 +398,7 @@ class CSharpGenerator:
             f"{self.namespace_root}/DasResult.cs": self._generate_das_result(doc),
             f"{self.namespace_root}/DasException.cs": self._generate_das_exception(),
             f"{self.namespace_root}/Abi/DasGuid.cs": self._generate_das_guid(),
-            f"{self.namespace_root}/Abi/NativeMethods.cs": self._generate_native_methods(),
+            f"{self.namespace_root}/Abi/NativeMethods.cs": self._generate_native_methods(doc.interfaces),
             f"{self.namespace_root}/Interop/DasStringInterop.cs": self._generate_string_interop(),
             f"{self.namespace_root}/Interop/NativeHandle.cs": self._generate_native_handle(),
             f"{self.namespace_root}/Wrappers/IDasBase.cs": self._generate_builtin_base_wrapper(),
@@ -536,63 +550,40 @@ class CSharpGenerator:
             ]
         )
 
-    def _generate_native_methods(self) -> str:
+    def _generate_native_methods(self, interfaces: Sequence[InterfaceDef]) -> str:
         header_comment = ", ".join(self.idl_header_names)
-        return "\n".join(
+        lines = [
+            "// DAS C# native method declarations (auto-generated - DO NOT MODIFY)",
+            f"// IDL headers: {header_comment}",
+            "using System;",
+            "using System.Runtime.InteropServices;",
+            f"using {self.namespace_root};",
+            "",
+            f"namespace {self.namespace_root}.Abi;",
+            "",
+            "internal static unsafe partial class NativeMethods",
+            "{",
+            "    internal const string DAS_CSHARP_NATIVE_SUPPORT_MODULE = \"DasCSharpNativeSupport\";",
+            "",
+            "#if NET5_0_OR_GREATER",
+            "    internal static readonly bool IsModernRuntime = true;",
+            "#endif",
+            "",
+            "#if NET7_0_OR_GREATER",
+        ]
+        lines.extend(self._generate_library_import_core_methods("LibraryImport"))
+        for interface in sorted(interfaces, key=lambda item: item.name):
+            lines.extend(self._generate_library_import_director_factory(interface))
+        lines.extend(
             [
-                "// DAS C# native method declarations (auto-generated - DO NOT MODIFY)",
-                f"// IDL headers: {header_comment}",
-                "using System;",
-                "using System.Runtime.InteropServices;",
-                f"using {self.namespace_root};",
-                "",
-                f"namespace {self.namespace_root}.Abi;",
-                "",
-                "internal static unsafe partial class NativeMethods",
-                "{",
-                "#if NET5_0_OR_GREATER",
-                "    internal static readonly bool IsModernRuntime = true;",
-                "#endif",
-                "",
-                "#if NET7_0_OR_GREATER",
-                "    [LibraryImport(\"das\", EntryPoint = \"DasAddRef\")]",
-                "    internal static partial int DasAddRef(System.IntPtr handle);",
-                "",
-                "    [LibraryImport(\"das\", EntryPoint = \"CreateIDasReadOnlyStringFromUtf16WithLength\")]",
-                "    internal static partial DasResult CreateIDasReadOnlyStringFromUtf16WithLength(",
-                "        ushort* pUtf16,",
-                "        nuint length,",
-                "        out System.IntPtr ppOutReadOnlyString);",
-                "",
-                "    [LibraryImport(\"das\", EntryPoint = \"CreateIDasStringFromUtf16WithLength\")]",
-                "    internal static partial DasResult CreateIDasStringFromUtf16WithLength(",
-                "        ushort* pUtf16,",
-                "        nuint length,",
-                "        out System.IntPtr ppOutString);",
-                "",
-                "    [LibraryImport(\"das\", EntryPoint = \"GetIDasReadOnlyStringUtf16\")]",
-                "    internal static partial DasResult GetIDasReadOnlyStringUtf16(",
-                "        System.IntPtr readOnlyString,",
-                "        out ushort* pUtf16,",
-                "        out nuint length);",
                 "#else",
-                "    [DllImport(\"das\", EntryPoint = \"CreateIDasReadOnlyStringFromUtf16WithLength\", CallingConvention = CallingConvention.Cdecl)]",
-                "    internal static extern DasResult CreateIDasReadOnlyStringFromUtf16WithLength(",
-                "        ushort* pUtf16,",
-                "        nuint length,",
-                "        out System.IntPtr ppOutReadOnlyString);",
-                "",
-                "    [DllImport(\"das\", EntryPoint = \"CreateIDasStringFromUtf16WithLength\", CallingConvention = CallingConvention.Cdecl)]",
-                "    internal static extern DasResult CreateIDasStringFromUtf16WithLength(",
-                "        ushort* pUtf16,",
-                "        nuint length,",
-                "        out System.IntPtr ppOutString);",
-                "",
-                "    [DllImport(\"das\", EntryPoint = \"GetIDasReadOnlyStringUtf16\", CallingConvention = CallingConvention.Cdecl)]",
-                "    internal static extern DasResult GetIDasReadOnlyStringUtf16(",
-                "        System.IntPtr readOnlyString,",
-                "        out ushort* pUtf16,",
-                "        out nuint length);",
+            ]
+        )
+        lines.extend(self._generate_library_import_core_methods("DllImport"))
+        for interface in sorted(interfaces, key=lambda item: item.name):
+            lines.extend(self._generate_dll_import_director_factory(interface))
+        lines.extend(
+            [
                 "#endif",
                 "",
                 "#if NET8_0_OR_GREATER",
@@ -607,6 +598,105 @@ class CSharpGenerator:
                 "",
             ]
         )
+        return "\n".join(lines)
+
+    def _generate_library_import_core_methods(self, import_kind: str) -> list[str]:
+        is_library_import = import_kind == "LibraryImport"
+        declarations = [
+            (
+                "DasAddRef",
+                "int",
+                ["System.IntPtr handle"],
+            ),
+            (
+                "CreateIDasReadOnlyStringFromUtf16WithLength",
+                "DasResult",
+                ["ushort* pUtf16", "nuint length", "out System.IntPtr ppOutReadOnlyString"],
+            ),
+            (
+                "CreateIDasStringFromUtf16WithLength",
+                "DasResult",
+                ["ushort* pUtf16", "nuint length", "out System.IntPtr ppOutString"],
+            ),
+            (
+                "GetIDasReadOnlyStringUtf16",
+                "DasResult",
+                ["System.IntPtr readOnlyString", "out ushort* pUtf16", "out nuint length"],
+            ),
+            (
+                "CreateIDasVariantVector",
+                "DasResult",
+                ["out System.IntPtr ppOutVector"],
+            ),
+            (
+                "GetIDasVariantVectorString",
+                "DasResult",
+                ["System.IntPtr vector", "ulong index", "out System.IntPtr ppOutString"],
+            ),
+            (
+                "GetIDasVariantVectorComponent",
+                "DasResult",
+                ["System.IntPtr vector", "ulong index", "out System.IntPtr ppOutComponent"],
+            ),
+            (
+                "PushBackIDasVariantVectorString",
+                "DasResult",
+                ["System.IntPtr vector", "System.IntPtr value"],
+            ),
+            (
+                "PushBackIDasVariantVectorComponent",
+                "DasResult",
+                ["System.IntPtr vector", "System.IntPtr value"],
+            ),
+        ]
+        lines: list[str] = []
+        for entry_point, return_type, parameters in declarations:
+            if is_library_import:
+                lines.append(f"    [LibraryImport(\"das\", EntryPoint = \"{entry_point}\")]")
+                lines.append(
+                    f"    internal static partial {return_type} {entry_point}("
+                )
+            else:
+                lines.append(
+                    f"    [DllImport(\"das\", EntryPoint = \"{entry_point}\", CallingConvention = CallingConvention.Cdecl)]"
+                )
+                lines.append(
+                    f"    internal static extern {return_type} {entry_point}("
+                )
+            lines.extend(self._format_csharp_parameters(parameters))
+            lines.append("")
+        return lines
+
+    def _generate_library_import_director_factory(self, interface: InterfaceDef) -> list[str]:
+        director_name = f"{interface.name}Director"
+        factory_name = f"DasCreateCSharp{director_name}"
+        return [
+            f"    [LibraryImport(DAS_CSHARP_NATIVE_SUPPORT_MODULE, EntryPoint = \"{factory_name}\")]",
+            f"    internal static partial DasResult {factory_name}(",
+            "        System.IntPtr managedState,",
+            f"        ref Das.Generated.Directors.{director_name}NativeCallbacks callbacks,",
+            "        out System.IntPtr ppOutObject);",
+            "",
+        ]
+
+    def _generate_dll_import_director_factory(self, interface: InterfaceDef) -> list[str]:
+        director_name = f"{interface.name}Director"
+        factory_name = f"DasCreateCSharp{director_name}"
+        return [
+            f"    [DllImport(DAS_CSHARP_NATIVE_SUPPORT_MODULE, EntryPoint = \"{factory_name}\", CallingConvention = CallingConvention.Cdecl)]",
+            f"    internal static extern DasResult {factory_name}(",
+            "        System.IntPtr managedState,",
+            f"        ref Das.Generated.Directors.{director_name}NativeCallbacks callbacks,",
+            "        out System.IntPtr ppOutObject);",
+            "",
+        ]
+
+    def _format_csharp_parameters(self, parameters: Sequence[str]) -> list[str]:
+        lines: list[str] = []
+        for index, parameter in enumerate(parameters):
+            suffix = "," if index < len(parameters) - 1 else ");"
+            lines.append(f"        {parameter}{suffix}")
+        return lines
 
     def _generate_string_interop(self) -> str:
         return "\n".join(
@@ -1089,6 +1179,18 @@ class CSharpGenerator:
                     "    }",
                 ]
             )
+        if interface.name == "IDasVariantVector":
+            lines.extend(
+                [
+                    "",
+                    "    public static IDasVariantVector Create()",
+                    "    {",
+                    "        var result = NativeMethods.CreateIDasVariantVector(out var nativeHandle);",
+                    "        result.OrThrow();",
+                    "        return new IDasVariantVector(nativeHandle);",
+                    "    }",
+                ]
+            )
 
         for method in _interface_methods(interface):
             lines.append("")
@@ -1118,6 +1220,11 @@ class CSharpGenerator:
         return ", ".join(args)
 
     def _generate_wrapper_method(self, interface: InterfaceDef, method: MethodDef) -> list[str]:
+        if interface.name == "IDasVariantVector":
+            variant_lines = self._generate_variant_vector_method(method)
+            if variant_lines is not None:
+                return variant_lines
+
         in_params = _method_in_params(method)
         out_params = _method_out_params(method)
         method_name = _sanitize_identifier(method.name)
@@ -1204,6 +1311,112 @@ class CSharpGenerator:
 
         return lines
 
+    def _generate_variant_vector_method(self, method: MethodDef) -> list[str] | None:
+        method_name = _sanitize_identifier(method.name)
+        if method_name not in {
+            "GetString",
+            "GetComponent",
+            "PushBackString",
+            "PushBackComponent",
+        }:
+            return None
+
+        if method_name == "GetString":
+            result_type = _result_type_name("IDasVariantVector", method.name)
+            return [
+                "    public IDasVariantVectorGetStringResult GetString(ulong index)",
+                "    {",
+                "        var result = NativeMethods.GetIDasVariantVectorString(",
+                "            _handle,",
+                "            index,",
+                "            out var stringHandle);",
+                "        return new IDasVariantVectorGetStringResult(",
+                "            result,",
+                "            new DasReadOnlyString(stringHandle));",
+                "    }",
+                "",
+                "    public IDasVariantVectorGetStringResult GetStringOrThrow(ulong index)",
+                "    {",
+                "        var result = GetString(index);",
+                "        result.Result.OrThrow();",
+                "        return result;",
+                "    }",
+            ]
+
+        if method_name == "GetComponent":
+            return [
+                "    public IDasVariantVectorGetComponentResult GetComponent(ulong index)",
+                "    {",
+                "        var result = NativeMethods.GetIDasVariantVectorComponent(",
+                "            _handle,",
+                "            index,",
+                "            out var componentHandle);",
+                "        return new IDasVariantVectorGetComponentResult(",
+                "            result,",
+                "            new IDasComponent(componentHandle));",
+                "    }",
+                "",
+                "    public IDasVariantVectorGetComponentResult GetComponentOrThrow(ulong index)",
+                "    {",
+                "        var result = GetComponent(index);",
+                "        result.Result.OrThrow();",
+                "        return result;",
+                "    }",
+            ]
+
+        if method_name == "PushBackString":
+            return [
+                "    public DasResult PushBackString(DasReadOnlyString inString)",
+                "    {",
+                "        ArgumentNullException.ThrowIfNull(inString);",
+                "        if (inString.Handle == System.IntPtr.Zero)",
+                "        {",
+                "            return DasResult.DAS_E_INVALID_ARGUMENT;",
+                "        }",
+                "        return NativeMethods.PushBackIDasVariantVectorString(_handle, inString.Handle);",
+                "    }",
+                "",
+                "    public void PushBackStringOrThrow(DasReadOnlyString inString)",
+                "    {",
+                "        PushBackString(inString).OrThrow();",
+                "    }",
+                "",
+                "    public unsafe DasResult PushBackString(string inString)",
+                "    {",
+                "        ArgumentNullException.ThrowIfNull(inString);",
+                "        fixed (char* pValue = inString)",
+                "        {",
+                "            var createResult = Das.Generated.Abi.NativeMethods.CreateIDasReadOnlyStringFromUtf16WithLength(",
+                "                (ushort*)pValue,",
+                "                checked((nuint)inString.Length),",
+                "                out var inStringHandle);",
+                "            if ((int)createResult < 0)",
+                "            {",
+                "                return createResult;",
+                "            }",
+                "            using var inStringString = DasReadOnlyString.Attach(inStringHandle);",
+                "            return PushBackString(inStringString);",
+                "        }",
+                "    }",
+            ]
+
+        return [
+            "    public DasResult PushBackComponent(IDasComponent inComponent)",
+            "    {",
+            "        ArgumentNullException.ThrowIfNull(inComponent);",
+            "        if (!inComponent.CanAssignTo(\"IDasComponent\"))",
+            "        {",
+            "            return DasResult.DAS_E_INVALID_ARGUMENT;",
+            "        }",
+            "        return NativeMethods.PushBackIDasVariantVectorComponent(_handle, inComponent.Handle);",
+            "    }",
+            "",
+            "    public void PushBackComponentOrThrow(IDasComponent inComponent)",
+            "    {",
+            "        PushBackComponent(inComponent).OrThrow();",
+            "    }",
+        ]
+
     def _generate_string_convenience_method(
         self,
         interface: InterfaceDef,
@@ -1249,45 +1462,214 @@ class CSharpGenerator:
             "    }",
         ]
 
+    def _callback_managed_type(self, type_info: TypeInfo) -> str:
+        if _is_read_only_string_pointer(type_info):
+            return "DasReadOnlyString"
+        if _is_interface_pointer(type_info):
+            return type_simple_name(type_info)
+        return _csharp_type(type_info)
+
+    def _callback_out_type(self, param: ParameterDef) -> str:
+        value_type = _out_value_type(param)
+        if _is_interface_pointer(value_type) or _is_read_only_string_pointer(value_type):
+            return "System.IntPtr"
+        return _csharp_type(value_type)
+
+    def _callback_interface_param_decls(self, method: MethodDef) -> str:
+        params: list[str] = []
+        for param in method.parameters:
+            if _is_out_param(param):
+                params.append(f"out {self._callback_out_type(param)} {_callback_out_name(param)}")
+            else:
+                params.append(
+                    f"{self._callback_managed_type(param.type_info)} {_camel_name(param.name)}"
+                )
+        return ", ".join(params)
+
+    def _native_callback_param_type(self, param: ParameterDef) -> str:
+        if _is_out_param(param):
+            value_type = _out_value_type(param)
+            if _is_interface_pointer(value_type) or _is_read_only_string_pointer(value_type):
+                return "System.IntPtr*"
+            return f"{_csharp_type(value_type, public_surface=False)}*"
+        return _csharp_type(param.type_info, public_surface=False)
+
+    def _native_callback_field_type(self, method: MethodDef) -> str:
+        types = ["System.IntPtr"]
+        types.extend(self._native_callback_param_type(param) for param in method.parameters)
+        types.append(_csharp_type(method.return_type, public_surface=False))
+        return f"delegate* unmanaged<{', '.join(types)}>"
+
+    def _native_callback_param_decls(self, method: MethodDef) -> str:
+        params = ["System.IntPtr managedState"]
+        params.extend(
+            f"{self._native_callback_param_type(param)} {_sanitize_identifier(param.name)}"
+            for param in method.parameters
+        )
+        return ", ".join(params)
+
+    def _callback_call_expression(self, method: MethodDef) -> str:
+        args: list[str] = []
+        for param in method.parameters:
+            param_name = _sanitize_identifier(param.name)
+            if _is_out_param(param):
+                args.append(f"out var {_callback_out_name(param)}")
+            elif _is_read_only_string_pointer(param.type_info):
+                args.append(f"new DasReadOnlyString({param_name})")
+            elif _is_interface_pointer(param.type_info):
+                args.append(f"new {type_simple_name(param.type_info)}({param_name})")
+            else:
+                args.append(param_name)
+        return f"state.Callbacks.{_sanitize_identifier(method.name)}({', '.join(args)})"
+
+    def _generate_director_thunk(self, method: MethodDef) -> list[str]:
+        method_name = _sanitize_identifier(method.name)
+        lines = [
+            "    [UnmanagedCallersOnly]",
+            f"    private static {_csharp_type(method.return_type, public_surface=False)} {method_name}Thunk({self._native_callback_param_decls(method)})",
+            "    {",
+        ]
+        for param in method.parameters:
+            if not _is_out_param(param):
+                continue
+            param_name = _sanitize_identifier(param.name)
+            lines.extend(
+                [
+                    f"        if ({param_name} == null)",
+                    "        {",
+                    "            return DasResult.DAS_E_INVALID_POINTER;",
+                    "        }",
+                    f"        *{param_name} = default;",
+                ]
+            )
+        lines.extend(
+            [
+                "        try",
+                "        {",
+                "            var state = DirectorState.FromManagedState(managedState);",
+                f"            var result = {self._callback_call_expression(method)};",
+                "            if ((int)result < 0)",
+                "            {",
+                "                return result;",
+                "            }",
+            ]
+        )
+        for param in method.parameters:
+            if not _is_out_param(param):
+                continue
+            param_name = _sanitize_identifier(param.name)
+            out_name = _callback_out_name(param)
+            value_type = _out_value_type(param)
+            if _is_interface_pointer(value_type) or _is_read_only_string_pointer(value_type):
+                lines.extend(
+                    [
+                        f"            if ({out_name} != System.IntPtr.Zero)",
+                        "            {",
+                        f"                NativeMethods.DasAddRef({out_name});",
+                        "            }",
+                        f"            *{param_name} = {out_name};",
+                    ]
+                )
+            else:
+                lines.append(f"            *{param_name} = {out_name};")
+        lines.extend(
+            [
+                "            return result;",
+                "        }",
+                "        catch (Exception)",
+                "        {",
+                "            return DasResult.DAS_E_CSHARP_ERROR;",
+                "        }",
+                "    }",
+            ]
+        )
+        return lines
+
     def _generate_director(self, interface: InterfaceDef) -> str:
         director_name = f"{interface.name}Director"
         callbacks_name = f"{director_name}Callbacks"
+        final_release_name = f"{director_name}FinalReleaseCallbacks"
+        methods = self._all_interface_methods(interface)
         lines = [
             "// DAS C# director surface (auto-generated - DO NOT MODIFY)",
             "using System;",
             "using System.Runtime.InteropServices;",
             f"using {self.namespace_root};",
             f"using {self.namespace_root}.Abi;",
+            f"using {self.namespace_root}.Wrappers;",
             "",
             f"namespace {self.namespace_root}.Directors;",
             "",
             f"public interface {callbacks_name}",
             "{",
         ]
-        for method in _interface_methods(interface):
-            params = ", ".join(
-                f"{_csharp_type(param.type_info)} {_camel_name(param.name)}"
-                for param in _method_in_params(method)
-            )
+        for method in methods:
+            params = self._callback_interface_param_decls(method)
             lines.append(f"    DasResult {_sanitize_identifier(method.name)}({params});")
         lines.extend(
             [
                 "}",
                 "",
+                f"public interface {final_release_name}",
+                "{",
+                "    void OnFinalRelease();",
+                "}",
+                "",
                 "public unsafe struct " + f"{director_name}NativeCallbacks",
                 "{",
-                "    public delegate* unmanaged<System.IntPtr, DasResult> Release;",
+                "    public delegate* unmanaged<System.IntPtr, uint> Release;",
+            ]
+        )
+        for method in methods:
+            lines.append(
+                f"    public {self._native_callback_field_type(method)} {_sanitize_identifier(method.name)};"
+            )
+        lines.extend(
+            [
                 "}",
                 "",
                 f"public sealed class {director_name} : IDisposable",
                 "{",
+                "    private readonly DirectorState _state;",
                 "    private readonly GCHandle _managedState;",
+                f"    private {director_name}NativeCallbacks _nativeCallbacks;",
                 "    private bool _disposed;",
                 "",
                 f"    public {director_name}({callbacks_name} callbacks)",
                 "    {",
                 "        ArgumentNullException.ThrowIfNull(callbacks);",
-                "        _managedState = GCHandle.Alloc(callbacks, GCHandleType.Normal);",
+                "        var state = new DirectorState(callbacks);",
+                "        _state = state;",
+                "        _managedState = GCHandle.Alloc(state, GCHandleType.Normal);",
+                f"        _nativeCallbacks = new {director_name}NativeCallbacks",
+                "        {",
+                "            Release = &ReleaseManagedStateThunk,",
+            ]
+        )
+        for method in methods:
+            method_name = _sanitize_identifier(method.name)
+            lines.append(f"            {method_name} = &{method_name}Thunk,")
+        lines.extend(
+            [
+                "        };",
+                "        state.NativeCallbacks = _nativeCallbacks;",
+                "    }",
+                "",
+                f"    public static Das.Generated.Wrappers.{interface.name} Create({callbacks_name} callbacks)",
+                "    {",
+                f"        var director = new {director_name}(callbacks);",
+                "        var nativeCallbacks = director._state.NativeCallbacks;",
+                f"        var result = NativeMethods.DasCreateCSharp{director_name}(",
+                "            director.ManagedState,",
+                "            ref nativeCallbacks,",
+                "            out var nativeHandle);",
+                "        if ((int)result < 0 || nativeHandle == System.IntPtr.Zero)",
+                "        {",
+                "            ReleaseManagedState(director.ManagedState);",
+                "            result.OrThrow();",
+                "            throw new DasException(DasResult.DAS_E_CSHARP_DIRECTOR_FACTORY_FAILED);",
+                "        }",
+                f"        return new Das.Generated.Wrappers.{interface.name}(nativeHandle);",
                 "    }",
                 "",
                 "    public System.IntPtr ManagedState => GCHandle.ToIntPtr(_managedState);",
@@ -1311,7 +1693,61 @@ class CSharpGenerator:
                 "        var handle = GCHandle.FromIntPtr(managedState);",
                 "        if (handle.IsAllocated)",
                 "        {",
-                "            handle.Free();",
+                "            var state = handle.Target as DirectorState;",
+                "            try",
+                "            {",
+                "                if (state is not null)",
+                "                {",
+                "                    state.OnFinalRelease();",
+                "                }",
+                "            }",
+                "            finally",
+                "            {",
+                "                handle.Free();",
+                "            }",
+                "        }",
+                "    }",
+                "",
+                "    [UnmanagedCallersOnly]",
+                "    private static uint ReleaseManagedStateThunk(System.IntPtr managedState)",
+                "    {",
+                "        ReleaseManagedState(managedState);",
+                "        return 0;",
+                "    }",
+                "",
+            ]
+        )
+        for method in methods:
+            lines.extend(self._generate_director_thunk(method))
+            lines.append("")
+        lines.extend(
+            [
+                "    private sealed class DirectorState",
+                "    {",
+                f"        public DirectorState({callbacks_name} callbacks)",
+                "        {",
+                "            Callbacks = callbacks;",
+                "        }",
+                "",
+                f"        public {callbacks_name} Callbacks {{ get; }}",
+                f"        public {director_name}NativeCallbacks NativeCallbacks {{ get; set; }}",
+                "",
+                "        public static DirectorState FromManagedState(System.IntPtr managedState)",
+                "        {",
+                "            var handle = GCHandle.FromIntPtr(managedState);",
+                "            if (handle.Target is not DirectorState state)",
+                "            {",
+                "                throw new InvalidOperationException(\"Invalid C# director managed state.\");",
+                "            }",
+                "            return state;",
+                "        }",
+                "",
+                "        public void OnFinalRelease()",
+                "        {",
+                f"            if (Callbacks is {final_release_name} finalRelease)",
+                "            {",
+                "                finalRelease.OnFinalRelease();",
+                "            }",
                 "        }",
                 "    }",
                 "}",
@@ -1511,7 +1947,7 @@ class CSharpGenerator:
                     "        void* managed_state,",
                     f"        const {callbacks_name}* callbacks)",
                     "        : lifetime_{managed_state, callbacks->release}",
-                    "        , callbacks_{callbacks}",
+                    "        , callbacks_{*callbacks}",
                     "    {",
                     "    }",
                     "",
@@ -1570,7 +2006,7 @@ class CSharpGenerator:
                 [
                     "private:",
                     "    CSharpDirectorLifetime lifetime_;",
-                    f"    const {callbacks_name}* callbacks_{{}};",
+                    f"    {callbacks_name} callbacks_{{}};",
                     "};",
                     "",
                     f"DasResult DasCreateCSharp{director_name}(",
@@ -1713,7 +2149,7 @@ class CSharpGenerator:
         lines = [
             f"    {return_type} DAS_STD_CALL {method_name}({', '.join(params)}) override",
             "    {",
-            f"        if (callbacks_ == nullptr || callbacks_->{method_name} == nullptr)",
+            f"        if (callbacks_.{method_name} == nullptr)",
             "        {",
         ]
         default_return = _cpp_default_return(method.return_type)
@@ -1721,9 +2157,9 @@ class CSharpGenerator:
             lines.append(f"            return {default_return};")
         lines.append("        }")
         if _is_void_type(method.return_type):
-            lines.append(f"        callbacks_->{method_name}({args});")
+            lines.append(f"        callbacks_.{method_name}({args});")
         else:
-            lines.append(f"        return callbacks_->{method_name}({args});")
+            lines.append(f"        return callbacks_.{method_name}({args});")
         lines.append("    }")
         return lines
 

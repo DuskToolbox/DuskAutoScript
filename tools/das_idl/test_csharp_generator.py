@@ -568,7 +568,7 @@ class TestCSharpGeneratorPhase77CompleteSurface(unittest.TestCase):
             "Das.Generated/Directors/IDasComponentDirector.cs"
         ]
 
-        self.assertIn("GCHandle.Alloc(callbacks, GCHandleType.Normal)", director)
+        self.assertIn("GCHandle.Alloc(state, GCHandleType.Normal)", director)
         self.assertNotIn("GCHandleType.Pinned", director)
         self.assertIn("public System.IntPtr ManagedState => GCHandle.ToIntPtr", director)
         self.assertIn("internal static void ReleaseManagedState(System.IntPtr managedState)", director)
@@ -658,7 +658,7 @@ class TestCSharpGeneratorPhase77CompleteSurface(unittest.TestCase):
         director = artifacts.files["Das.Generated/Directors/IDasComponentDirector.cs"]
         combined = _combined_text(artifacts)
 
-        self.assertIn("GCHandle.Alloc(callbacks, GCHandleType.Normal)", director)
+        self.assertIn("GCHandle.Alloc(state, GCHandleType.Normal)", director)
         self.assertNotIn("GCHandleType.Pinned", combined)
         self.assertIn(
             "internal static void ReleaseManagedState(System.IntPtr managedState)",
@@ -690,8 +690,8 @@ class TestCSharpGeneratorPhase77CompleteSurface(unittest.TestCase):
     def test_d78_05_native_callback_table_forwards_methods_and_nulls_out_params(self):
         source = _phase77_artifacts().files["Native/DasCSharpDirectorSupport.cpp"]
 
-        self.assertIn("callbacks_->Dispatch(", source)
-        self.assertIn("callbacks_->CreateInstance(", source)
+        self.assertIn("callbacks_.Dispatch(", source)
+        self.assertIn("callbacks_.CreateInstance(", source)
         self.assertIn("if (pp_out_object == nullptr)", source)
         self.assertIn("*pp_out_object = nullptr;", source)
         self.assertIn("if (callbacks->release == nullptr)", source)
