@@ -1,0 +1,8 @@
+{
+  "name": "DasCSharpTestPluginNet48",
+  "guid": "78D6C0A1-0048-4000-8000-000000000078",
+  "language": "CSharp",
+  "pluginFilenameExtension": "dll",
+  "targetFramework": "net48",
+  "entryPoint": "Das.TestPlugin.Bootstrap.Create"
+}

@@ -2,6 +2,7 @@
   <PropertyGroup>
     <TargetFrameworks>net8.0;net48</TargetFrameworks>
     <AssemblyName>CSharpTestPlugin</AssemblyName>
+    <AssemblyName Condition="'$(DasPluginAssemblyName)' != ''">$(DasPluginAssemblyName)</AssemblyName>
     <RootNamespace>Das.TestPlugin</RootNamespace>
     <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
@@ -22,6 +23,6 @@
     <ProjectReference
       Include="$(DasGeneratedProject)"
       SetTargetFramework="TargetFramework=$(TargetFramework)"
-      GlobalPropertiesToRemove="PublishAot;RuntimeIdentifier;SelfContained" />
+      GlobalPropertiesToRemove="PublishAot;RuntimeIdentifier;SelfContained;DasPluginAssemblyName" />
   </ItemGroup>
 </Project>
