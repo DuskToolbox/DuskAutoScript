@@ -140,6 +140,81 @@ def _phase77_artifacts():
     )
 
 
+def _phase79_director_contract_doc():
+    return parse_idl(
+        """
+        errorcode DasResult {
+            DAS_S_OK = 0,
+            DAS_E_INVALID_POINTER = -1073750017,
+            DAS_E_CSHARP_ERROR = -1073750021,
+            DAS_E_INVALID_ARGUMENT = -1073750038,
+            DAS_E_CSHARP_DIRECTOR_FACTORY_FAILED = -1073800003,
+        }
+
+        enum DasPluginFeature {
+            DAS_PLUGIN_FEATURE_COMPONENT_FACTORY = 8,
+        }
+
+        enum DasVariantType {
+            DAS_VARIANT_TYPE_STRING = 2,
+            DAS_VARIANT_TYPE_COMPONENT = 5,
+        }
+
+        struct DasGuid {
+            uint32_t data1;
+        }
+
+        namespace Das {
+            [uuid("00000000-0000-0000-0000-000000000001")]
+            interface IDasVariantVector : IDasBase {
+                DasResult GetString(uint64_t index, [out] IDasReadOnlyString** pp_out_string);
+                DasResult GetComponent(uint64_t index, [out] IDasComponent** pp_out_component);
+                DasResult PushBackString(IDasReadOnlyString* in_string);
+                DasResult PushBackComponent(IDasComponent* in_component);
+            }
+
+            [uuid("00000000-0000-0000-0000-000000000002")]
+            interface IDasTypeInfo : IDasBase {
+                DasResult GetGuid([out] DasGuid* p_out_guid);
+            }
+
+            [uuid("15FF0855-E031-4602-829D-040230515C55")]
+            interface IDasComponent : IDasTypeInfo {
+                DasResult Dispatch(IDasReadOnlyString* p_function_name, IDasVariantVector* p_arguments, [out] IDasVariantVector** pp_out_result);
+            }
+
+            [uuid("104C288C-5970-40B9-8E3F-B0B7E4ED509A")]
+            interface IDasComponentFactory : IDasTypeInfo {
+                DasResult IsSupported(const DasGuid& component_iid);
+                DasResult CreateInstance(const DasGuid& component_iid, [out] IDasComponent** pp_out_component);
+            }
+
+            [uuid("09EA2A40-6A10-4756-AB2B-41B2FD75AB36")]
+            interface IDasPluginPackage : IDasBase {
+                DasResult EnumFeature(uint64_t index, [out] DasPluginFeature* p_out_feature);
+                DasResult CreateFeatureInterface(uint64_t index, [out] IDasBase** pp_out_interface);
+                DasResult CanUnloadNow([out] bool* canUnloadNow);
+            }
+        }
+        """
+    )
+
+
+def _phase79_director_artifacts():
+    return generate_csharp_artifacts(
+        _phase79_director_contract_doc(),
+        namespace_root="Das.Generated",
+        package_name="Das.Generated",
+        project_name="DasGenerated",
+        idl_header_names=[
+            "DasResult.h",
+            "IDasPluginPackage.h",
+            "IDasComponent.h",
+            "IDasVariantVector.h",
+        ],
+    )
+
+
 class TestCSharpGeneratorContract(unittest.TestCase):
     def test_d77_46_d77_47_outputs_stable_per_type_paths(self):
         artifacts = _artifacts()
@@ -671,6 +746,142 @@ class TestCSharpGeneratorPhase77CompleteSurface(unittest.TestCase):
         self.assertIn("Das.Generated/Wrappers/IDasReadOnlyString.cs", rich_artifacts.files)
         self.assertIn("Native/DasCSharpDirectorSupport.h", rich_artifacts.files)
         self.assertIn("Native/DasCSharpDirectorSupport.cpp", rich_artifacts.files)
+
+
+class TestCSharpGeneratorPhase79NativeDirectorSurface(unittest.TestCase):
+    def test_d79_01_d79_02_director_create_apis_return_wrappers(self):
+        artifacts = _phase79_director_artifacts()
+
+        expected = {
+            "IDasPluginPackage": "DasCreateCSharpIDasPluginPackageDirector",
+            "IDasComponentFactory": "DasCreateCSharpIDasComponentFactoryDirector",
+            "IDasComponent": "DasCreateCSharpIDasComponentDirector",
+        }
+        for interface_name, factory_name in expected.items():
+            with self.subTest(interface_name=interface_name):
+                director = artifacts.files[
+                    f"Das.Generated/Directors/{interface_name}Director.cs"
+                ]
+                self.assertIn(
+                    f"public static Das.Generated.Wrappers.{interface_name} Create(",
+                    director,
+                    f"D-79-01: {interface_name}Director must expose a Create API "
+                    "that returns a generated wrapper with a real native handle.",
+                )
+                self.assertIn(
+                    f"NativeMethods.{factory_name}(",
+                    director,
+                    f"D-79-02: {interface_name}Director.Create must call the stable "
+                    "native director factory.",
+                )
+                self.assertIn(
+                    f"return new Das.Generated.Wrappers.{interface_name}(nativeHandle);",
+                    director,
+                    f"D-79-01: {interface_name}Director.Create must wrap the "
+                    "nonzero native handle returned by the support DLL.",
+                )
+
+    def test_d79_01_d79_03_director_callbacks_keep_out_param_shapes(self):
+        artifacts = _phase79_director_artifacts()
+        package_director = artifacts.files[
+            "Das.Generated/Directors/IDasPluginPackageDirector.cs"
+        ]
+        factory_director = artifacts.files[
+            "Das.Generated/Directors/IDasComponentFactoryDirector.cs"
+        ]
+        component_director = artifacts.files[
+            "Das.Generated/Directors/IDasComponentDirector.cs"
+        ]
+
+        self.assertIn(
+            "DasResult CreateFeatureInterface(ulong index, out System.IntPtr interfaceHandle);",
+            package_director,
+            "D-79-01: plugin package callbacks must carry the native out interface handle.",
+        )
+        self.assertIn(
+            "DasResult CreateInstance(DasGuid componentIid, out System.IntPtr componentHandle);",
+            factory_director,
+            "D-79-01: component factory callbacks must carry the native out component handle.",
+        )
+        self.assertIn(
+            "DasResult Dispatch(DasReadOnlyString functionName, IDasVariantVector arguments, out System.IntPtr resultHandle);",
+            component_director,
+            "D-79-03: component Dispatch callback must return DasResult and an out vector handle.",
+        )
+        for director in (package_director, factory_director, component_director):
+            self.assertIn("catch (Exception)", director)
+            self.assertIn("return DasResult.DAS_E_CSHARP_ERROR;", director)
+
+    def test_d79_02_native_methods_split_director_support_from_core_das(self):
+        native_methods = _phase79_director_artifacts().files[
+            "Das.Generated/Abi/NativeMethods.cs"
+        ]
+
+        self.assertIn(
+            'internal const string DAS_CSHARP_NATIVE_SUPPORT_MODULE = "DasCSharpNativeSupport";',
+            native_methods,
+            "D-79-02: director factories must bind to the stable support DLL name.",
+        )
+        for factory_name in (
+            "DasCreateCSharpIDasPluginPackageDirector",
+            "DasCreateCSharpIDasComponentFactoryDirector",
+            "DasCreateCSharpIDasComponentDirector",
+        ):
+            with self.subTest(factory_name=factory_name):
+                self.assertIn(factory_name, native_methods)
+                self.assertIn(
+                    "LibraryImport(DAS_CSHARP_NATIVE_SUPPORT_MODULE",
+                    native_methods,
+                    "D-79-02: director factory imports must not bind to das.",
+                )
+
+        for core_api in (
+            'LibraryImport("das", EntryPoint = "DasAddRef")',
+            'LibraryImport("das", EntryPoint = "CreateIDasVariantVector")',
+            'LibraryImport("das", EntryPoint = "GetIDasVariantVectorString")',
+            'LibraryImport("das", EntryPoint = "PushBackIDasVariantVectorComponent")',
+        ):
+            with self.subTest(core_api=core_api):
+                self.assertIn(core_api, native_methods)
+
+    def test_d79_04_d79_06_variant_vector_wrapper_uses_native_calls(self):
+        artifacts = _phase79_director_artifacts()
+        wrapper = artifacts.files["Das.Generated/Wrappers/IDasVariantVector.cs"]
+        native_methods = artifacts.files["Das.Generated/Abi/NativeMethods.cs"]
+
+        expected_calls = (
+            "NativeMethods.GetIDasVariantVectorString(",
+            "NativeMethods.GetIDasVariantVectorComponent(",
+            "NativeMethods.PushBackIDasVariantVectorString(",
+            "NativeMethods.PushBackIDasVariantVectorComponent(",
+            "NativeMethods.CreateIDasVariantVector(",
+        )
+        for call in expected_calls:
+            with self.subTest(call=call):
+                self.assertIn(call, wrapper + native_methods)
+
+        self.assertNotIn("_ = (_handle, index);", wrapper)
+        self.assertNotIn("_ = (_handle, inString);", wrapper)
+        self.assertNotIn("_ = (_handle, inComponent);", wrapper)
+
+    def test_d79_08_d79_09_release_thunk_runs_hook_then_frees_once(self):
+        director = _phase79_director_artifacts().files[
+            "Das.Generated/Directors/IDasComponentDirector.cs"
+        ]
+        combined = _combined_text(_phase79_director_artifacts())
+
+        self.assertIn("GCHandle.Alloc(state, GCHandleType.Normal)", director)
+        self.assertNotIn("GCHandleType.Pinned", combined)
+        self.assertIn("state.OnFinalRelease();", director)
+        self.assertLess(
+            director.index("state.OnFinalRelease();"),
+            director.index("handle.Free();"),
+            "D-79-09: managed final-release hook must run before freeing the GCHandle.",
+        )
+        self.assertEqual(director.count("handle.Free();"), 1)
+        for forbidden in ("dynamic", "GetCustomAttributes", "SWIG"):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, combined)
 
 
 if __name__ == "__main__":
