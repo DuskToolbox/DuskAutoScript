@@ -1,3 +1,5 @@
+#ifdef DAS_EXPORT_CSHARP
+
 #include "CSharpHost.h"
 #include "CSharpHostFxrBackend.h"
 #include "CSharpNetFxBackend.h"
@@ -171,3 +173,5 @@ DasResult CSharpHost::BackendUnavailableError(
 }
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_END
+
+#endif // DAS_EXPORT_CSHARP

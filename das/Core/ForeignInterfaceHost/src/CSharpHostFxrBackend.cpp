@@ -1,3 +1,5 @@
+#ifdef DAS_EXPORT_CSHARP
+
 #include "CSharpHostFxrBackend.h"
 
 #include <das/DasPtr.hpp>
@@ -500,3 +502,5 @@ DasResult CSharpHostFxrBackend::LoadPlugin(
 }
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_END
+
+#endif // DAS_EXPORT_CSHARP

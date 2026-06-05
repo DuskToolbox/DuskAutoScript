@@ -1,6 +1,8 @@
 #ifndef DAS_CORE_FOREIGNINTERFACEHOST_CSHARPHOST_H
 #define DAS_CORE_FOREIGNINTERFACEHOST_CSHARPHOST_H
 
+#ifdef DAS_EXPORT_CSHARP
+
 #include <das/Core/ForeignInterfaceHost/CSharpBootstrap.h>
 #include <das/Core/ForeignInterfaceHost/CSharpManifest.h>
 #include <das/Core/ForeignInterfaceHost/IForeignLanguageRuntime.h>
@@ -52,5 +54,7 @@ private:
 };
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_END
+
+#endif // DAS_EXPORT_CSHARP
 
 #endif // DAS_CORE_FOREIGNINTERFACEHOST_CSHARPHOST_H

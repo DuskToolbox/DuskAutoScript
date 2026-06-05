@@ -59,7 +59,7 @@ def _rel(path: Path) -> str:
     return path.relative_to(ROOT).as_posix()
 
 
-class TestCSharpPhase78Boundaries(unittest.TestCase):
+class TestCSharpHostBridgeBoundaries(unittest.TestCase):
     def test_csharp_swig_route_is_not_restored(self):
         self.assertFalse(
             (ROOT / "tools" / "das_idl" / "swig_csharp_generator.py").exists()
@@ -68,20 +68,20 @@ class TestCSharpPhase78Boundaries(unittest.TestCase):
         forbidden = {
             "CSharpSwigGenerator": [
                 "tools/das_idl/test_csharp_batch_config.py",
-                "tools/das_idl/test_csharp_phase78_boundaries.py",
+                "tools/das_idl/test_csharp_host_bridge_boundaries.py",
             ],
             "SWIGCSHARP": [
                 "tools/das_idl/swig_lang_generator_base.py",
                 "tools/das_idl/swig_java_generator.py",
                 "tools/das_idl/test_csharp_batch_config.py",
-                "tools/das_idl/test_csharp_phase78_boundaries.py",
+                "tools/das_idl/test_csharp_host_bridge_boundaries.py",
             ],
             "das_check_language_export(CSHARP": [
-                "tools/das_idl/test_csharp_phase78_boundaries.py",
+                "tools/das_idl/test_csharp_host_bridge_boundaries.py",
             ],
             'set(_LANG_NAME "CSharp")': [
                 "tools/das_idl/test_csharp_batch_config.py",
-                "tools/das_idl/test_csharp_phase78_boundaries.py",
+                "tools/das_idl/test_csharp_host_bridge_boundaries.py",
             ],
         }
         violations = []
@@ -158,7 +158,7 @@ class TestCSharpPhase78Boundaries(unittest.TestCase):
         }
         allowed_paths = {
             "tools/das_idl/test_csharp_generator.py",
-            "tools/das_idl/test_csharp_phase78_boundaries.py",
+            "tools/das_idl/test_csharp_host_bridge_boundaries.py",
         }
         violations = []
         for path in _iter_source_files(
@@ -196,7 +196,7 @@ class TestCSharpPhase78Boundaries(unittest.TestCase):
             "tools/das_idl/napi_generator.py",
             "tools/das_idl/test_napi_generator.py",
             "tools/das_idl/test_napi_batch_config.py",
-            "tools/das_idl/test_csharp_phase78_boundaries.py",
+            "tools/das_idl/test_csharp_host_bridge_boundaries.py",
         }
         violations = []
         for path in _iter_source_files(
@@ -218,7 +218,7 @@ class TestCSharpPhase78Boundaries(unittest.TestCase):
 
         self.assertEqual(violations, [])
 
-    def test_phase78_does_not_touch_runtime_e2e_or_remote_boundaries(self):
+    def test_host_bridge_does_not_touch_runtime_e2e_or_remote_boundaries(self):
         diff_targets = {
             "das/IpcMultiProcessTest": "C# runtime proof belongs to Phase 79",
             "das/Core/IPC": "remote package addressing belongs to Phase 80",
@@ -242,6 +242,43 @@ class TestCSharpPhase78Boundaries(unittest.TestCase):
                 violations.append(f"{target}: {reason}: {changed}")
 
         self.assertEqual(violations, [])
+
+    def test_csharp_source_and_headers_are_macro_guarded(self):
+        guarded_files = [
+            "das/Core/ForeignInterfaceHost/src/CSharpHost.h",
+            "das/Core/ForeignInterfaceHost/src/CSharpHost.cpp",
+            "das/Core/ForeignInterfaceHost/src/CSharpHostFxrBackend.h",
+            "das/Core/ForeignInterfaceHost/src/CSharpHostFxrBackend.cpp",
+            "das/Core/ForeignInterfaceHost/src/CSharpNetFxBackend.h",
+            "das/Core/ForeignInterfaceHost/src/CSharpNetFxBackend.cpp",
+        ]
+
+        for rel_path in guarded_files:
+            path = ROOT / rel_path
+            with self.subTest(path=rel_path):
+                text = _read_text(path)
+                self.assertIn("DAS_EXPORT_CSHARP", text)
+                self.assertIn("#ifdef DAS_EXPORT_CSHARP", text)
+                self.assertTrue(
+                    re.search(r"^#endif\s*//\s*DAS_EXPORT_CSHARP", text, re.M)
+                    is not None,
+                    "missing closing DAS_EXPORT_CSHARP guard",
+                )
+
+    def test_csharp_factory_branch_only_under_export_guard(self):
+        runtime_cpp = ROOT / "das" / "Core" / "ForeignInterfaceHost" / "src" / "IForeignLanguageRuntime.cpp"
+        text = _read_text(runtime_cpp)
+
+        match = re.search(r"case CSharp:(.*?)case Java:", text, re.S)
+        self.assertIsNotNone(match)
+        csharp_block = match.group(1)
+        self.assertIn("#ifndef DAS_EXPORT_CSHARP", csharp_block)
+        self.assertIn("#else", csharp_block)
+        self.assertIn("#endif // DAS_EXPORT_CSHARP", csharp_block)
+        self.assertIn(
+            "return CSharpHost::CreateForeignLanguageRuntime(desc_base);",
+            csharp_block,
+        )
 
     def test_csharp_package_cmake_exposes_final_targets(self):
         cmake_path = ROOT / "das" / "Plugins" / "CSharpTestPlugin" / "CMakeLists.txt"

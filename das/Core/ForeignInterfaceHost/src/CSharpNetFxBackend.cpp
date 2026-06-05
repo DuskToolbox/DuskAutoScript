@@ -1,3 +1,5 @@
+#ifdef DAS_EXPORT_CSHARP
+
 #include "CSharpNetFxBackend.h"
 
 #include <cstdint>
@@ -338,3 +340,5 @@ DasResult CSharpNetFxBackend::LoadPlugin(
 }
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_END
+
+#endif // DAS_EXPORT_CSHARP

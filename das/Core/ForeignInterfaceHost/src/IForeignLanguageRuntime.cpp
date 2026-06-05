@@ -1,4 +1,3 @@
-#include "CSharpHost.h"
 #include "CppHost.h"
 #include "JavaHost.h"
 #include "LuaHost.h"
@@ -6,6 +5,10 @@
 #include <das/Core/ForeignInterfaceHost/PythonHost.h>
 #include <das/Utils/UnexpectedEnumException.h>
 #include <tl/expected.hpp>
+
+#ifdef DAS_EXPORT_CSHARP
+#include "CSharpHost.h"
+#endif
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 
