@@ -280,6 +280,111 @@ class TestCSharpHostBridgeBoundaries(unittest.TestCase):
             csharp_block,
         )
 
+    def test_export_csharp_stays_out_of_swig_needed_routing(self):
+        self.assertFalse(
+            (ROOT / "tools" / "das_idl" / "swig_csharp_generator.py").exists(),
+            "swig_csharp_generator.py must not exist per D-79-04",
+        )
+
+        gen_batch_config_text = _read_text(
+            ROOT / "tools" / "das_idl" / "gen_batch_config.py"
+        )
+        self.assertIn(
+            'swig_languages = {"python", "java"}',
+            gen_batch_config_text,
+            "swig_languages must be exactly {python, java}; CSharp is excluded per D-79-05",
+        )
+
+        cmake_text = _read_text(ROOT / "cmake" / "DasAddIdlExport.cmake")
+        need_swig_match = re.search(
+            r"set\(_NEED_SWIG FALSE\)(.*?)endif\(\)",
+            cmake_text,
+            re.S,
+        )
+        self.assertIsNotNone(need_swig_match, "_NEED_SWIG block not found")
+        need_swig_block = need_swig_match.group(1)
+        self.assertNotIn(
+            "csharp",
+            need_swig_block.lower(),
+            "_NEED_SWIG must not include csharp per D-79-05",
+        )
+
+        csharp_continue_match = re.search(
+            r'_LANG_LOWER STREQUAL "csharp".*?continue\(\)',
+            cmake_text,
+            re.S | re.I,
+        )
+        self.assertIsNotNone(
+            csharp_continue_match,
+            "CSharp must continue() past das_add_swig_export_library per D-79-06",
+        )
+
+        forbidden = {
+            "CSharpSwigGenerator": [
+                "tools/das_idl/test_csharp_batch_config.py",
+                "tools/das_idl/test_csharp_host_bridge_boundaries.py",
+            ],
+            "SWIGCSHARP": [
+                "tools/das_idl/swig_lang_generator_base.py",
+                "tools/das_idl/swig_java_generator.py",
+                "tools/das_idl/test_csharp_batch_config.py",
+                "tools/das_idl/test_csharp_host_bridge_boundaries.py",
+            ],
+        }
+        violations = []
+        for path in _iter_source_files("cmake", "tools/das_idl"):
+            text = _read_text(path)
+            rel = _rel(path)
+            for token, allowed_paths in forbidden.items():
+                if token in text and rel not in allowed_paths:
+                    violations.append(f"{rel}: {token}")
+
+        self.assertEqual(
+            violations,
+            [],
+            "C# must not participate in SWIG routing (D-79-04, D-79-05)",
+        )
+
+    def test_csharp_tokens_are_only_in_pure_generator_host_plugin_or_tests(self):
+        allowed_csharp_paths = {
+            "tools/das_idl/csharp_generator.py",
+            "tools/das_idl/das_csharp_export.py",
+            "tools/das_idl/gen_batch_config.py",
+            "tools/das_idl/das_idl_batch_gen.py",
+            "cmake/DasAddIdlExport.cmake",
+            "tools/das_idl/test_csharp_batch_config.py",
+            "tools/das_idl/test_csharp_generator.py",
+            "tools/das_idl/test_csharp_host_bridge_boundaries.py",
+            "tools/das_idl/swig_lang_generator_base.py",
+            "tools/das_idl/swig_java_generator.py",
+            "SWIG/ExportAll.i",
+            "SWIG/csharp/DasException.i",
+            "SWIG/csharp/DirectorLifecycle.i",
+            "SWIG/csharp/IDasBase.i",
+            "SWIG/csharp/IDasReadOnlyString.i",
+        }
+        forbidden_tokens = {
+            "CSharpSwigGenerator",
+            "swig_csharp_generator",
+        }
+        violations = []
+        for path in _iter_source_files(
+            "cmake", "3rdParty", "SWIG", "tools/das_idl"
+        ):
+            rel = _rel(path)
+            if rel in allowed_csharp_paths:
+                continue
+            text = _read_text(path)
+            for token in forbidden_tokens:
+                if token in text:
+                    violations.append(f"{rel}: {token}")
+
+        self.assertEqual(
+            violations,
+            [],
+            "EXPORT_CSHARP must not enter _NEED_SWIG or SWIG cleanup per D-79-06",
+        )
+
     def test_csharp_package_cmake_exposes_final_targets(self):
         cmake_path = ROOT / "das" / "Plugins" / "CSharpTestPlugin" / "CMakeLists.txt"
         text = _read_text(cmake_path)
