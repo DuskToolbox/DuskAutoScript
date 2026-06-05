@@ -4,19 +4,34 @@
 
 DAS_CORE_ORTWRAPPER_NS_BEGIN
 
-const ORTCHAR_T* ToOrtChar(DasReadOnlyString string)
+std::basic_string<ORTCHAR_T> ToOrtPath(DasReadOnlyString string)
 {
 #if (BOOST_OS_WINDOWS)
-    return string.GetW();
+    const char16_t* utf16 = nullptr;
+    size_t          utf16_size = 0;
+    string.BorrowUtf16(&utf16, &utf16_size);
+
+    std::basic_string<ORTCHAR_T> result;
+    if (utf16 == nullptr || utf16_size == 0)
+    {
+        return result;
+    }
+
+    result.reserve(utf16_size);
+    for (size_t index = 0; index < utf16_size; ++index)
+    {
+        result.push_back(static_cast<ORTCHAR_T>(utf16[index]));
+    }
+    return result;
 #else
     return string.GetUtf8();
 #endif
 }
 
-const ORTCHAR_T* ToOrtChar(IDasReadOnlyString* p_string)
+std::basic_string<ORTCHAR_T> ToOrtPath(IDasReadOnlyString* p_string)
 {
     auto string = DasReadOnlyString(p_string);
-    return ToOrtChar(string);
+    return ToOrtPath(string);
 }
 
 Ort::MemoryInfo& DasOrt::GetDefaultCpuMemoryInfo()

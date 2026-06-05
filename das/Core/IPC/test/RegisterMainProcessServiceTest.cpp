@@ -54,11 +54,6 @@ namespace
             return DAS_E_NO_IMPLEMENTATION;
         }
 
-        DasResult DAS_STD_CALL GetW(const wchar_t**) override
-        {
-            return DAS_E_NO_IMPLEMENTATION;
-        }
-
         const int32_t* CBegin() override { return nullptr; }
         const int32_t* CEnd() override { return nullptr; }
 

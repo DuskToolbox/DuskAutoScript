@@ -77,8 +77,7 @@ private:
 
 namespace
 {
-    class SessionOnlyHostLauncher final
-        : public DAS::Core::IPC::IHostLauncher
+    class SessionOnlyHostLauncher final : public DAS::Core::IPC::IHostLauncher
     {
     public:
         SessionOnlyHostLauncher(uint16_t session_id, uint32_t pid)
@@ -90,9 +89,8 @@ namespace
 
         uint32_t DAS_STD_CALL Release() override { return --ref_count_; }
 
-        DasResult DAS_STD_CALL QueryInterface(
-            const DasGuid& iid,
-            void**         pp_object) override
+        DasResult DAS_STD_CALL
+        QueryInterface(const DasGuid& iid, void** pp_object) override
         {
             if (!pp_object)
             {
@@ -111,17 +109,13 @@ namespace
             return DAS_E_NO_INTERFACE;
         }
 
-        DasResult StartAsync(
-            const std::string&,
-            IDasAsyncHandshakeOperation**) override
+        DasResult StartAsync(const std::string&, IDasAsyncHandshakeOperation**)
+            override
         {
             return DAS_E_NO_IMPLEMENTATION;
         }
 
-        DasResult Start(
-            const std::string&,
-            uint16_t&,
-            uint32_t) override
+        DasResult Start(const std::string&, uint16_t&, uint32_t) override
         {
             return DAS_E_NO_IMPLEMENTATION;
         }
@@ -182,9 +176,8 @@ namespace
 
         uint32_t GetPid() const
         {
-            return process_
-                       ? static_cast<uint32_t>(process_->id())
-                       : static_cast<uint32_t>(0);
+            return process_ ? static_cast<uint32_t>(process_->id())
+                            : static_cast<uint32_t>(0);
         }
 
         bool IsRunning()
@@ -239,7 +232,7 @@ namespace
             }
 
             const char* remote_text = nullptr;
-            DasResult result = target_->GetUtf8(&remote_text);
+            DasResult   result = target_->GetUtf8(&remote_text);
             if (DAS::IsFailed(result))
             {
                 return result;
@@ -249,9 +242,9 @@ namespace
             return DAS_S_OK;
         }
 
-        DasResult DAS_STD_CALL
-        GetUtf16(const char16_t** out_string, size_t* out_string_size) noexcept
-            override
+        DasResult DAS_STD_CALL GetUtf16(
+            const char16_t** out_string,
+            size_t*          out_string_size) noexcept override
         {
             if (!out_string || !out_string_size)
             {
@@ -288,17 +281,11 @@ namespace
             return DAS_S_OK;
         }
 
-        DasResult DAS_STD_CALL GetW(const wchar_t**) override
-        {
-            return DAS_E_NO_IMPLEMENTATION;
-        }
-
         const int32_t* CBegin() override { return nullptr; }
         const int32_t* CEnd() override { return nullptr; }
 
-        DasResult DAS_STD_CALL QueryInterface(
-            const DasGuid& iid,
-            void**         pp_object) override
+        DasResult DAS_STD_CALL
+        QueryInterface(const DasGuid& iid, void** pp_object) override
         {
             if (!pp_object)
             {
@@ -369,8 +356,7 @@ protected:
             && std::string_view(test_info->name())
                    == "MixedTransport_HttpAndIpcHostToHostPerformance";
         const bool enable_heartbeat =
-            use_http_context ? false
-                             : !IpcTestConfig::ShouldDisableHeartbeat();
+            use_http_context ? false : !IpcTestConfig::ShouldDisableHeartbeat();
 
         if (use_http_context)
         {
@@ -831,7 +817,7 @@ protected:
 
     uint16_t FindFreeLoopbackPort()
     {
-        boost::asio::io_context io_context;
+        boost::asio::io_context        io_context;
         boost::asio::ip::tcp::acceptor acceptor(
             io_context,
             {boost::asio::ip::make_address("127.0.0.1"), 0});
@@ -1755,10 +1741,10 @@ TEST_F(IpcPerformanceTest, MixedTransport_HttpAndIpcHostToHostPerformance)
     std::string http_plugin_path;
     try
     {
-        ipc_plugin_path = IpcTestConfig::GetTestPluginJsonPath(
-            "IpcTestPlugin1");
-        http_plugin_path = IpcTestConfig::GetTestPluginJsonPath(
-            "IpcTestPlugin2");
+        ipc_plugin_path =
+            IpcTestConfig::GetTestPluginJsonPath("IpcTestPlugin1");
+        http_plugin_path =
+            IpcTestConfig::GetTestPluginJsonPath("IpcTestPlugin2");
     }
     catch (const std::exception& e)
     {
@@ -1778,7 +1764,9 @@ TEST_F(IpcPerformanceTest, MixedTransport_HttpAndIpcHostToHostPerformance)
     ASSERT_NE(http_factory.Get(), nullptr);
 
     DAS::DasPtr<IDasReadOnlyString> http_remote_name;
-    ASSERT_EQ(http_factory->GetRuntimeClassName(http_remote_name.Put()), DAS_S_OK);
+    ASSERT_EQ(
+        http_factory->GetRuntimeClassName(http_remote_name.Put()),
+        DAS_S_OK);
     ASSERT_NE(http_remote_name.Get(), nullptr);
 
     auto ipc_package = LoadPluginPackageForHost(
@@ -1835,8 +1823,7 @@ TEST_F(IpcPerformanceTest, MixedTransport_HttpAndIpcHostToHostPerformance)
         if (latency_us)
         {
             *latency_us =
-                std::chrono::duration<double, std::micro>(end - start)
-                    .count();
+                std::chrono::duration<double, std::micro>(end - start).count();
         }
 
         return call_result;
@@ -1857,7 +1844,7 @@ TEST_F(IpcPerformanceTest, MixedTransport_HttpAndIpcHostToHostPerformance)
 
     for (size_t i = 0; i < kIterations; ++i)
     {
-        double latency_us = 0.0;
+        double    latency_us = 0.0;
         DasResult result = invoke_mixed_dispatch(&latency_us);
         ASSERT_EQ(result, DAS_S_OK);
         latencies.push_back(latency_us);

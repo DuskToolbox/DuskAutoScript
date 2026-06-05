@@ -10,11 +10,13 @@
 #include "Config.h"
 #include <das/DasString.hpp>
 
+#include <string>
+
 DAS_CORE_ORTWRAPPER_NS_BEGIN
 
-const ORTCHAR_T* ToOrtChar(DasReadOnlyString string);
+std::basic_string<ORTCHAR_T> ToOrtPath(DasReadOnlyString string);
 
-const ORTCHAR_T* ToOrtChar(IDasReadOnlyString* p_string);
+std::basic_string<ORTCHAR_T> ToOrtPath(IDasReadOnlyString* p_string);
 
 class DasOrt
 {

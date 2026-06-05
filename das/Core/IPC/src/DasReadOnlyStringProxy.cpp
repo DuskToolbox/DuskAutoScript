@@ -112,60 +112,6 @@ DasResult DasReadOnlyStringProxy::EnsureUtf8Derived()
     return DAS_S_OK;
 }
 
-DasResult DasReadOnlyStringProxy::EnsureWDerived()
-{
-    if (w_ready_)
-    {
-        return DAS_S_OK;
-    }
-
-#ifdef DAS_WINDOWS
-    // Windows: wchar_t is 2 bytes, same as char16_t — direct copy
-    w_buffer_.assign(utf16_buffer_.begin(), utf16_buffer_.end());
-    w_ready_ = true;
-    return DAS_S_OK;
-#else
-    // Linux: wchar_t is 4 bytes, convert UTF-16 → UTF-32 via ICU
-    icu::UnicodeString icu_str(
-        reinterpret_cast<const UChar*>(utf16_buffer_.data()),
-        static_cast<int32_t>(utf16_buffer_.size()));
-
-    UErrorCode error_code = U_ZERO_ERROR;
-    int32_t    dest_capacity = 0;
-
-    // Pre-flight to get required capacity
-    u_strToWCS(
-        nullptr,
-        0,
-        &dest_capacity,
-        icu_str.getBuffer(),
-        icu_str.length(),
-        &error_code);
-    error_code = U_ZERO_ERROR;
-
-    w_buffer_.resize(static_cast<size_t>(dest_capacity));
-    u_strToWCS(
-        w_buffer_.data(),
-        dest_capacity,
-        nullptr,
-        icu_str.getBuffer(),
-        icu_str.length(),
-        &error_code);
-
-    if (error_code != U_ZERO_ERROR)
-    {
-        DAS_CORE_LOG_ERROR(
-            "u_strToWCS failed with error = {}",
-            static_cast<int>(error_code));
-        w_buffer_.clear();
-        return DAS_E_INVALID_STRING;
-    }
-
-    w_ready_ = true;
-    return DAS_S_OK;
-#endif
-}
-
 DasResult DasReadOnlyStringProxy::EnsureUtf32Derived()
 {
     if (utf32_ready_)
@@ -244,29 +190,6 @@ DasResult DasReadOnlyStringProxy::GetUtf16(
     return DAS_S_OK;
 }
 
-DasResult DasReadOnlyStringProxy::GetW(const wchar_t** out_string)
-{
-    if (out_string == nullptr)
-    {
-        return DAS_E_INVALID_POINTER;
-    }
-
-    DasResult result = EnsureUtf16Loaded();
-    if (DAS::IsFailed(result))
-    {
-        return result;
-    }
-
-    result = EnsureWDerived();
-    if (DAS::IsFailed(result))
-    {
-        return result;
-    }
-
-    *out_string = w_buffer_.c_str();
-    return DAS_S_OK;
-}
-
 const int32_t* DasReadOnlyStringProxy::CBegin()
 {
     DasResult result = EnsureUtf16Loaded();
@@ -286,8 +209,13 @@ const int32_t* DasReadOnlyStringProxy::CBegin()
 
 const int32_t* DasReadOnlyStringProxy::CEnd()
 {
-    // EnsureUtf32Derived internally calls EnsureUtf16Loaded
-    DasResult result = EnsureUtf32Derived();
+    DasResult result = EnsureUtf16Loaded();
+    if (DAS::IsFailed(result))
+    {
+        return nullptr;
+    }
+
+    result = EnsureUtf32Derived();
     if (DAS::IsFailed(result))
     {
         return nullptr;

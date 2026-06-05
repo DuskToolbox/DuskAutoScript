@@ -1,6 +1,6 @@
 #include <das/Core/ForeignInterfaceHost/CSharpManifest.h>
 
-#include <das/Core/Utils/StringUtils.h>
+#include <das/Utils/DasJsonCore.h>
 
 #include <algorithm>
 #include <cctype>
@@ -128,7 +128,17 @@ namespace
 
     bool IsUnsafePackageRelativePath(const std::filesystem::path& path)
     {
-        if (path.empty() || path.is_absolute())
+        const auto path_text = path.generic_string();
+        const bool has_windows_drive_prefix =
+            path_text.size() >= 2
+            && std::isalpha(static_cast<unsigned char>(path_text[0]))
+            && path_text[1] == ':';
+        const bool has_root_prefix =
+            !path_text.empty()
+            && (path_text.front() == '/' || path_text.front() == '\\');
+
+        if (path.empty() || path.is_absolute() || has_windows_drive_prefix
+            || has_root_prefix)
         {
             return true;
         }

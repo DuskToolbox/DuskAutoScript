@@ -4,10 +4,10 @@
 
 #include <das/Core/ForeignInterfaceHost/CSharpBootstrap.h>
 #include <das/Core/ForeignInterfaceHost/CSharpManifest.h>
-#include <das/Core/Utils/StringUtils.h>
 #include <das/DasTypes.hpp>
 
 #include <filesystem>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -121,7 +121,7 @@ namespace
         if (!manifest)
         {
             throw std::runtime_error(
-                DAS::Utils::Format("Parse failed: {}", manifest.error()));
+                "Parse failed: " + std::to_string(manifest.error()));
         }
         return *manifest;
     }
@@ -345,7 +345,7 @@ TEST(CSharpHostManifest, CSharpRuntimeConfigPathRejectsUnsafeInput)
 {
     CSharpManifestJsonOptions absolute{};
     absolute.with_runtime_config = true;
-    absolute.runtime_config = "/tmp/host.runtimeconfig.json";
+    absolute.runtime_config = "C:/host.runtimeconfig.json";
     EXPECT_EQ(
         ParseError(
             "package/DasCSharpTestPlugin.json",

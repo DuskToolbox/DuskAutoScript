@@ -53,7 +53,6 @@ public:
     DasResult GetUtf16(
         const char16_t** out_string,
         size_t*          out_string_size) noexcept override;
-    DasResult      GetW(const wchar_t** out_string) override;
     const int32_t* CBegin() override;
     const int32_t* CEnd() override;
 
@@ -64,9 +63,6 @@ private:
     /// @brief Derive UTF-8 from the cached UTF-16 buffer. Idempotent.
     DasResult EnsureUtf8Derived();
 
-    /// @brief Derive wstring from the cached UTF-16 buffer. Idempotent.
-    DasResult EnsureWDerived();
-
     /// @brief Derive UTF-32 from the cached UTF-16 buffer. Idempotent.
     DasResult EnsureUtf32Derived();
 
@@ -75,12 +71,10 @@ private:
 
     // Derived caches — lazy-converted from utf16_buffer_
     std::string          utf8_buffer_;
-    std::wstring         w_buffer_;
     std::vector<int32_t> utf32_buffer_;
 
     bool utf8_ready_ = false;
     bool utf16_ready_ = false;
-    bool w_ready_ = false;
     bool utf32_ready_ = false;
 };
 
