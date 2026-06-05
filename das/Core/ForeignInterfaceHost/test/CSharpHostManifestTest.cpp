@@ -2,6 +2,7 @@
 
 #include <gtest/gtest.h>
 
+#include <das/Core/ForeignInterfaceHost/CSharpBootstrap.h>
 #include <das/Core/ForeignInterfaceHost/CSharpManifest.h>
 #include <das/Core/Utils/StringUtils.h>
 #include <das/DasTypes.hpp>
@@ -283,6 +284,9 @@ TEST(CSharpHostManifest, CSharpTargetFrameworkClassification)
     EXPECT_EQ(
         ClassifyCSharpTargetFramework("net6.0").value(),
         CSharpTargetFrameworkFamily::ModernDotNet);
+    EXPECT_EQ(
+        ClassifyCSharpTargetFramework("net10.0").value(),
+        CSharpTargetFrameworkFamily::ModernDotNet);
 }
 
 TEST(CSharpHostManifest, CSharpTargetFrameworkRejectsUnsupportedValue)
@@ -426,4 +430,36 @@ TEST(CSharpHostManifest, CSharpAssemblyPathFollowsPackageConvention)
     EXPECT_EQ(
         manifest.plugin_binary_path,
         std::filesystem::path{"package"} / "DasCSharpTestPlugin.dll");
+}
+
+TEST(CSharpHostManifest, CSharpBootstrapArgsValidateSizeVersionAndPackageOut)
+{
+    DasCSharpBootstrapArgsV1 args{};
+    args.size = DAS_CSHARP_BOOTSTRAP_ARGS_V1_SIZE;
+    args.abi_version = DAS_CSHARP_BOOTSTRAP_ABI_VERSION_V1;
+    args.manifest_path = "package/DasCSharpTestPlugin.json";
+    args.plugin_root = "package";
+    args.plugin_binary_path = "package/DasCSharpTestPlugin.dll";
+    Das::PluginInterface::IDasPluginPackage* package = nullptr;
+    args.pp_package = &package;
+
+    EXPECT_EQ(ValidateDasCSharpBootstrapArgsV1(&args), DAS_S_OK);
+
+    auto invalid = args;
+    invalid.size = args.size - 1;
+    EXPECT_EQ(
+        ValidateDasCSharpBootstrapArgsV1(&invalid),
+        DAS_E_CSHARP_BOOTSTRAP_INVALID);
+
+    invalid = args;
+    invalid.abi_version = args.abi_version + 1;
+    EXPECT_EQ(
+        ValidateDasCSharpBootstrapArgsV1(&invalid),
+        DAS_E_CSHARP_BOOTSTRAP_INVALID);
+
+    invalid = args;
+    invalid.pp_package = nullptr;
+    EXPECT_EQ(
+        ValidateDasCSharpBootstrapArgsV1(&invalid),
+        DAS_E_CSHARP_BOOTSTRAP_INVALID);
 }

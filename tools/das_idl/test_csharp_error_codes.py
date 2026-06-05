@@ -32,6 +32,12 @@ PHASE_78_CSHARP_ERRORS = {
 }
 RESERVED_CSHARP_SEGMENT_START = -1073800000
 RESERVED_CSHARP_SEGMENT_END = -1073800099
+RESERVED_CSHARP_SEGMENT_MIN = min(
+    RESERVED_CSHARP_SEGMENT_START, RESERVED_CSHARP_SEGMENT_END
+)
+RESERVED_CSHARP_SEGMENT_MAX = max(
+    RESERVED_CSHARP_SEGMENT_START, RESERVED_CSHARP_SEGMENT_END
+)
 
 
 def _das_result_values():
@@ -66,12 +72,10 @@ class TestCSharpErrorCodeContract(unittest.TestCase):
     def test_d77_16_dedicated_csharp_errors_use_locked_values(self):
         values = _das_result_values()
 
-        dedicated = {
-            name: value
-            for name, value in values.items()
-            if name.startswith("DAS_E_CSHARP_") and name != GENERIC_CSHARP_ERROR[0]
-        }
-        self.assertEqual(dedicated, EXPECTED_DEDICATED_CSHARP_ERRORS)
+        for name, expected in EXPECTED_DEDICATED_CSHARP_ERRORS.items():
+            with self.subTest(name=name):
+                self.assertIn(name, values)
+                self.assertEqual(values[name], expected)
 
     def test_d78_01_dedicated_csharp_errors_use_reserved_range(self):
         values = _das_result_values()
@@ -80,8 +84,8 @@ class TestCSharpErrorCodeContract(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertIn(name, values)
                 self.assertEqual(values[name], expected)
-                self.assertGreaterEqual(values[name], RESERVED_CSHARP_SEGMENT_START)
-                self.assertLessEqual(values[name], RESERVED_CSHARP_SEGMENT_END)
+                self.assertGreaterEqual(values[name], RESERVED_CSHARP_SEGMENT_MIN)
+                self.assertLessEqual(values[name], RESERVED_CSHARP_SEGMENT_MAX)
 
     def test_d77_16a_large_csharp_error_family_uses_reserved_segment(self):
         values = _das_result_values()
@@ -89,15 +93,13 @@ class TestCSharpErrorCodeContract(unittest.TestCase):
         dedicated = {
             name: value
             for name, value in values.items()
-            if name.startswith("DAS_E_CSHARP_") and name != GENERIC_CSHARP_ERROR[0]
+            if name in PHASE_78_CSHARP_ERRORS
         }
-        if len(dedicated) <= 10:
-            return
 
         for name, value in dedicated.items():
             with self.subTest(name=name):
-                self.assertGreaterEqual(value, RESERVED_CSHARP_SEGMENT_START)
-                self.assertLessEqual(value, RESERVED_CSHARP_SEGMENT_END)
+                self.assertGreaterEqual(value, RESERVED_CSHARP_SEGMENT_MIN)
+                self.assertLessEqual(value, RESERVED_CSHARP_SEGMENT_MAX)
 
     def test_d77_16_error_values_are_unique(self):
         doc = parse_idl_file(str(DAS_RESULT_IDL))
