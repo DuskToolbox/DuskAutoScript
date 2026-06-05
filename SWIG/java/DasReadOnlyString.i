@@ -132,7 +132,7 @@ SWIGEXPORT jstring JNICALL Java_org_das_DuskAutoScriptJNI_DasReadOnlyString_1toJ
     try {
         const char16_t* utf16_str = nullptr;
         size_t utf16_len = 0;
-        self->GetUtf16(&utf16_str, &utf16_len);
+        self->BorrowUtf16(&utf16_str, &utf16_len);
         if (utf16_str && utf16_len > 0) {
             return jenv->NewString(reinterpret_cast<const jchar*>(utf16_str), static_cast<jsize>(utf16_len));
         }
