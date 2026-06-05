@@ -23,6 +23,13 @@ EXPECTED_DEDICATED_CSHARP_ERRORS = {
     "DAS_E_CSHARP_ENTRYPOINT_MISSING": -1073750048,
     "DAS_E_CSHARP_PLUGIN_INIT_FAILED": -1073750049,
 }
+PHASE_78_CSHARP_ERRORS = {
+    "DAS_E_CSHARP_MANIFEST_INVALID": -1073800000,
+    "DAS_E_CSHARP_ENTRYPOINT_INVALID": -1073800001,
+    "DAS_E_CSHARP_BOOTSTRAP_INVALID": -1073800002,
+    "DAS_E_CSHARP_DIRECTOR_FACTORY_FAILED": -1073800003,
+    "DAS_E_CSHARP_NETFX_UNSUPPORTED_PLATFORM": -1073800004,
+}
 RESERVED_CSHARP_SEGMENT_START = -1073800000
 RESERVED_CSHARP_SEGMENT_END = -1073800099
 
@@ -66,6 +73,16 @@ class TestCSharpErrorCodeContract(unittest.TestCase):
         }
         self.assertEqual(dedicated, EXPECTED_DEDICATED_CSHARP_ERRORS)
 
+    def test_d78_01_dedicated_csharp_errors_use_reserved_range(self):
+        values = _das_result_values()
+
+        for name, expected in PHASE_78_CSHARP_ERRORS.items():
+            with self.subTest(name=name):
+                self.assertIn(name, values)
+                self.assertEqual(values[name], expected)
+                self.assertGreaterEqual(values[name], RESERVED_CSHARP_SEGMENT_START)
+                self.assertLessEqual(values[name], RESERVED_CSHARP_SEGMENT_END)
+
     def test_d77_16a_large_csharp_error_family_uses_reserved_segment(self):
         values = _das_result_values()
 
@@ -100,7 +117,8 @@ class TestCSharpErrorCodeContract(unittest.TestCase):
     def test_dedicated_csharp_errors_have_predefined_messages(self):
         messages = _message_table_entries()
 
-        for name in EXPECTED_DEDICATED_CSHARP_ERRORS:
+        dedicated_errors = EXPECTED_DEDICATED_CSHARP_ERRORS | PHASE_78_CSHARP_ERRORS
+        for name in dedicated_errors:
             with self.subTest(name=name):
                 self.assertIn(name, messages)
                 self.assertTrue(messages[name].strip())
