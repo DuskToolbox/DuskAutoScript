@@ -503,11 +503,11 @@ class TestCSharpGeneratorPhase77CompleteSurface(unittest.TestCase):
         wrapper = _phase77_artifacts().files["Das.Generated/Wrappers/IDasComponent.cs"]
 
         self.assertIn(
-            "public DasResult Dispatch(DasReadOnlyString functionName, IDasVariantVector arguments)",
+            "public IDasComponentDispatchResult Dispatch(DasReadOnlyString functionName, IDasVariantVector arguments)",
             wrapper,
         )
         self.assertIn(
-            "public unsafe DasResult Dispatch(string functionName, IDasVariantVector arguments)",
+            "public unsafe IDasComponentDispatchResult Dispatch(string functionName, IDasVariantVector arguments)",
             wrapper,
         )
         self.assertIn("ArgumentNullException.ThrowIfNull(functionName);", wrapper)
