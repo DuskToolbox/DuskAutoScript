@@ -14,6 +14,8 @@ set(CSHARP_TEST_PLUGIN_MANIFEST_ROOT "${CMAKE_CURRENT_BINARY_DIR}/manifests")
 set(CSHARP_TEST_PLUGIN_CONFIGURATION "$<CONFIG>")
 set(CSHARP_TEST_PLUGIN_ENTRY_POINT "Das.TestPlugin.Bootstrap.Create")
 set(CSHARP_TEST_PLUGIN_EXTENSION "dll")
+set(CSHARP_TEST_PLUGIN_IPC_ROOT
+    "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/plugins")
 
 set(CSHARP_TEST_PLUGIN_MODERN_NAME "DasCSharpTestPluginModern")
 set(CSHARP_TEST_PLUGIN_MODERN_GUID "78D6C0A1-0008-4000-8000-000000000078")
@@ -130,6 +132,33 @@ function(das_add_csharp_test_plugin_modern_package
     add_dependencies(${TARGET_NAME} ${BUILD_TARGET} DasCoreCSharpExport)
 endfunction()
 
+function(das_add_csharp_test_plugin_ipc_package
+    TARGET_NAME
+    PACKAGE_TARGET
+    PACKAGE_SUBDIR
+    PACKAGE_NAME)
+    set(_PACKAGE_SOURCE_DIR
+        "${CSHARP_TEST_PLUGIN_PACKAGE_ROOT}/${PACKAGE_SUBDIR}/${CSHARP_TEST_PLUGIN_CONFIGURATION}")
+    set(_IPC_PACKAGE_OUTPUT_DIR
+        "${CSHARP_TEST_PLUGIN_IPC_ROOT}/${PACKAGE_NAME}")
+
+    add_custom_target(${TARGET_NAME}
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+            "${_IPC_PACKAGE_OUTPUT_DIR}"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${_PACKAGE_SOURCE_DIR}"
+            "${_IPC_PACKAGE_OUTPUT_DIR}"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:CSharpTestPluginGeneratedNativeSupport>"
+            "${_IPC_PACKAGE_OUTPUT_DIR}/$<TARGET_FILE_NAME:CSharpTestPluginGeneratedNativeSupport>"
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+        VERBATIM)
+    add_dependencies(
+        ${TARGET_NAME}
+        ${PACKAGE_TARGET}
+        CSharpTestPluginGeneratedNativeSupport)
+endfunction()
+
 if(DAS_CSHARP_BUILD_MODERN)
     das_add_csharp_test_plugin_build(
         CSharpTestPluginModernBuild
@@ -172,6 +201,14 @@ endif()
 add_custom_target(CSharpTestPluginGeneratedNativeSupportCompile
     DEPENDS CSharpTestPluginGeneratedNativeSupport)
 
+if(DAS_CSHARP_BUILD_MODERN)
+    das_add_csharp_test_plugin_ipc_package(
+        CSharpTestPluginModernIpcPackage
+        CSharpTestPluginModernPackage
+        "modern"
+        "${CSHARP_TEST_PLUGIN_MODERN_NAME}")
+endif()
+
 if(DAS_CSHARP_BUILD_NET48)
     das_add_csharp_test_plugin_build(
         CSharpTestPluginNet48Build
@@ -184,6 +221,11 @@ if(DAS_CSHARP_BUILD_NET48)
         "${CSHARP_TEST_PLUGIN_NET48_NAME}"
         "CSharpTestPlugin.net48.json"
         "net48")
+    das_add_csharp_test_plugin_ipc_package(
+        CSharpTestPluginNet48IpcPackage
+        CSharpTestPluginNet48Package
+        "net48"
+        "${CSHARP_TEST_PLUGIN_NET48_NAME}")
 endif()
 
 if(DAS_CSHARP_NATIVEAOT_SMOKE)
