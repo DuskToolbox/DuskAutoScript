@@ -72,6 +72,62 @@ def _combined_text(artifacts):
     return "\n".join(artifacts.files.values())
 
 
+def _phase77_contract_doc():
+    return parse_idl(
+        """
+        errorcode DasResult {
+            DAS_S_OK = 0,
+            DAS_E_INVALID_POINTER = -1073750017,
+            DAS_E_CSHARP_ERROR = -1073750021,
+            DAS_E_INVALID_ARGUMENT = -1073750038,
+            DAS_E_CSHARP_MISSING_RUNTIMECONFIG = -1073750044,
+        }
+
+        enum DasSampleKind {
+            DAS_SAMPLE_TEXT = 1,
+            DAS_SAMPLE_BINARY = 2,
+        }
+
+        struct DasSampleSize {
+            uint32_t width;
+            uint32_t height;
+        }
+
+        namespace Das {
+            [uuid("00000000-0000-0000-0000-000000000003")]
+            interface IDasBinaryBuffer : IDasBase {
+                DasResult GetData([out] const uint8_t** pp_out_data, [out] size_t* p_out_size);
+            }
+
+            [uuid("00000000-0000-0000-0000-000000000004")]
+            interface IDasVariantVector : IDasBase {
+                DasResult GetSize([out] uint64_t* p_out_size);
+            }
+
+            [uuid("00000000-0000-0000-0000-000000000005")]
+            interface IDasComponent : IDasBase {
+                DasResult Dispatch(IDasReadOnlyString* p_function_name, IDasVariantVector* p_arguments);
+                DasResult GetSummary([out] IDasReadOnlyString** pp_out_summary);
+                DasResult GetBinary([out] IDasBinaryBuffer** pp_out_buffer);
+                DasResult GetChild([out] IDasComponent** pp_out_child);
+                DasResult GetSizeAndKind([out] DasSampleSize* p_out_size, [out] DasSampleKind* p_out_kind);
+                DasResult Attach(IDasBase* p_base, IDasComponent* p_component);
+            }
+        }
+        """
+    )
+
+
+def _phase77_artifacts():
+    return generate_csharp_artifacts(
+        _phase77_contract_doc(),
+        namespace_root="Das.Generated",
+        package_name="Das.Generated",
+        project_name="DasGenerated",
+        idl_header_names=["DasResult.idl", "DasCore.idl"],
+    )
+
+
 class TestCSharpGeneratorContract(unittest.TestCase):
     def test_d77_46_d77_47_outputs_stable_per_type_paths(self):
         artifacts = _artifacts()
@@ -246,6 +302,181 @@ class TestCSharpExportCli(unittest.TestCase):
                 ),
             )
             self.assertIn("Generated:", result.stdout)
+
+
+class TestCSharpGeneratorPhase77CompleteSurface(unittest.TestCase):
+    def test_d77_21_d77_24_full_type_mapping_supports_core_abi_shapes(self):
+        artifacts = _phase77_artifacts()
+        combined = _combined_text(artifacts)
+
+        self.assertIn("public enum DasSampleKind : int", combined)
+        self.assertIn("public readonly struct DasSampleSize", combined)
+        self.assertIn("public readonly struct DasGuid", combined)
+        self.assertIn("DAS_E_CSHARP_ERROR = -1073750021", combined)
+        self.assertIn("DAS_E_CSHARP_MISSING_RUNTIMECONFIG = -1073750044", combined)
+        self.assertIn("public sealed class DasReadOnlyString", combined)
+        self.assertIn("public sealed class DasBinaryBuffer", combined)
+        self.assertIn("public sealed class IDasComponent", combined)
+        self.assertIn("public GetSizeAndKindResult GetSizeAndKind()", combined)
+        self.assertIn("public GetSizeAndKindResult GetSizeAndKindOrThrow()", combined)
+
+    def test_d77_28_d77_29_d77_33_string_input_has_object_and_utf16_overloads(self):
+        wrapper = _phase77_artifacts().files["Das.Generated/Wrappers/IDasComponent.cs"]
+
+        self.assertIn(
+            "public DasResult Dispatch(DasReadOnlyString functionName, IDasVariantVector arguments)",
+            wrapper,
+        )
+        self.assertIn(
+            "public DasResult Dispatch(string functionName, IDasVariantVector arguments)",
+            wrapper,
+        )
+        self.assertIn("ArgumentNullException.ThrowIfNull(functionName);", wrapper)
+        self.assertIn("fixed (char* pValue = functionName)", wrapper)
+        self.assertIn("(ushort*)pValue", wrapper)
+        self.assertIn("checked((nuint)functionName.Length)", wrapper)
+        self.assertIn("CreateIDasReadOnlyStringFromUtf16WithLength", wrapper)
+        self.assertIn("using var functionNameString", wrapper)
+
+    def test_d77_34_d77_38_d77_44_d77_48_string_helper_preserves_code_units(self):
+        string_interop = _phase77_artifacts().files[
+            "Das.Generated/Interop/DasStringInterop.cs"
+        ]
+        combined = _combined_text(_phase77_artifacts())
+
+        self.assertIn("ArgumentNullException.ThrowIfNull(value);", string_interop)
+        self.assertIn("internal const string EmbeddedNul = \"left\\0right\";", string_interop)
+        self.assertIn("internal const string UnpairedSurrogate = \"\\ud800\";", string_interop)
+        self.assertNotIn("Rune", combined)
+        self.assertNotIn("IsSurrogatePair", combined)
+        self.assertNotIn("Normalize(", combined)
+
+    def test_d77_24_d77_30_out_results_and_interface_returns_are_typed(self):
+        artifacts = _phase77_artifacts()
+        results = artifacts.files["Das.Generated/Results/IDasComponentResults.cs"]
+        wrapper = artifacts.files["Das.Generated/Wrappers/IDasComponent.cs"]
+
+        self.assertIn("public readonly struct GetSummaryResult", results)
+        self.assertIn("public DasReadOnlyString Summary { get; }", results)
+        self.assertIn("public readonly struct GetBinaryResult", results)
+        self.assertIn("public DasBinaryBuffer Buffer { get; }", results)
+        self.assertIn("public readonly struct GetChildResult", results)
+        self.assertIn("public IDasComponent Child { get; }", results)
+        self.assertIn("public DasSampleSize Size { get; }", results)
+        self.assertIn("public DasSampleKind Kind { get; }", results)
+        self.assertIn("public GetChildResult GetChildOrThrow()", wrapper)
+        self.assertIn("result.Result.OrThrow();", wrapper)
+
+    def test_d77_24_interface_inputs_use_same_type_and_upcast_wrappers_only(self):
+        wrapper = _phase77_artifacts().files["Das.Generated/Wrappers/IDasComponent.cs"]
+
+        self.assertIn("public DasResult Attach(IDasBase base, IDasComponent component)", wrapper)
+        self.assertIn("base.Handle", wrapper)
+        self.assertIn("component.Handle", wrapper)
+        self.assertIn("CanAssignTo(\"IDasBase\")", wrapper)
+        self.assertIn("CanAssignTo(\"IDasComponent\")", wrapper)
+        self.assertNotIn("QueryInterface(", wrapper)
+        self.assertNotIn("Downcast", wrapper)
+        self.assertNotIn("Sidecast", wrapper)
+
+    def test_d77_24_binary_buffer_return_has_explicit_view_shape(self):
+        artifacts = _phase77_artifacts()
+        binary = artifacts.files["Das.Generated/Wrappers/DasBinaryBuffer.cs"]
+        combined = _combined_text(artifacts)
+
+        self.assertIn("public sealed class DasBinaryBuffer : IDisposable", binary)
+        self.assertIn("public System.IntPtr Handle", binary)
+        self.assertIn("public DasResult GetView(out DasBinaryBufferView view)", binary)
+        self.assertIn("public readonly struct DasBinaryBufferView", binary)
+        self.assertNotIn("dynamic", combined)
+        self.assertNotIn("Reflection.Emit", combined)
+
+    def test_d77_27_director_uses_normal_gchandle_and_release_once(self):
+        director = _phase77_artifacts().files[
+            "Das.Generated/Directors/IDasComponentDirector.cs"
+        ]
+
+        self.assertIn("GCHandle.Alloc(callbacks, GCHandleType.Normal)", director)
+        self.assertNotIn("GCHandleType.Pinned", director)
+        self.assertIn("public System.IntPtr ManagedState => GCHandle.ToIntPtr", director)
+        self.assertIn("internal static void ReleaseManagedState(System.IntPtr managedState)", director)
+        self.assertEqual(director.count("handle.Free();"), 1)
+        self.assertIn("delegate* unmanaged<System.IntPtr", director)
+        self.assertIn("managed_state", director)
+
+    def test_d77_43_native_director_support_files_and_boundary_checks_exist(self):
+        artifacts = _phase77_artifacts()
+        self.assertIn("Native/DasCSharpDirectorSupport.h", artifacts.files)
+        self.assertIn("Native/DasCSharpDirectorSupport.cpp", artifacts.files)
+
+        header = artifacts.files["Native/DasCSharpDirectorSupport.h"]
+        source = artifacts.files["Native/DasCSharpDirectorSupport.cpp"]
+
+        self.assertIn("DasCreateCSharpIDasComponentDirector", header)
+        self.assertIn("IDasComponentDirectorCallbacks", header)
+        self.assertLess(source.index("if (pp_out_object == nullptr)"), source.index("new CSharpIDasComponentDirector"))
+        self.assertLess(source.index("if (callbacks == nullptr)"), source.index("new CSharpIDasComponentDirector"))
+        self.assertLess(source.index("if (managed_state == 0)"), source.index("new CSharpIDasComponentDirector"))
+        self.assertIn("return DAS_E_INVALID_POINTER;", source)
+        self.assertIn("return DAS_E_INVALID_ARGUMENT;", source)
+        self.assertIn("*pp_out_object = nullptr;", source)
+
+    def test_d77_43_native_factory_failures_do_not_return_objects(self):
+        source = _phase77_artifacts().files["Native/DasCSharpDirectorSupport.cpp"]
+
+        invalid_pointer_blocks = (
+            "if (pp_out_object == nullptr)\n"
+            "    {\n"
+            "        return DAS_E_INVALID_POINTER;\n"
+            "    }",
+            "if (callbacks == nullptr)\n"
+            "    {\n"
+            "        *pp_out_object = nullptr;\n"
+            "        return DAS_E_INVALID_POINTER;\n"
+            "    }",
+        )
+        for block in invalid_pointer_blocks:
+            with self.subTest(block=block):
+                self.assertIn(block, source)
+        self.assertIn(
+            "if (managed_state == 0)\n"
+            "    {\n"
+            "        *pp_out_object = nullptr;\n"
+            "        return DAS_E_INVALID_ARGUMENT;\n"
+            "    }",
+            source,
+        )
+
+    def test_d77_47_reviewable_layout_and_forbidden_surface_scan(self):
+        artifacts = _phase77_artifacts()
+        combined = _combined_text(artifacts)
+
+        self.assertGreaterEqual(len([path for path in artifacts.files if path.endswith(".cs")]), 20)
+        for path in (
+            "Das.Generated/Wrappers/IDasBase.cs",
+            "Das.Generated/Wrappers/IDasReadOnlyString.cs",
+            "Das.Generated/Wrappers/DasReadOnlyString.cs",
+            "Das.Generated/Wrappers/DasBinaryBuffer.cs",
+            "Das.Generated/Directors/IDasComponentDirector.cs",
+            "Das.Generated/Results/IDasComponentResults.cs",
+            "Native/DasCSharpDirectorSupport.h",
+            "Native/DasCSharpDirectorSupport.cpp",
+        ):
+            with self.subTest(path=path):
+                self.assertIn(path, artifacts.files)
+
+        for token in (
+            "Ez",
+            "SWIG",
+            "CSharpSwig",
+            "dynamic",
+            "Assembly.Load",
+            "Reflection.Emit",
+            "runtimeKind",
+            "DuskAutoScript.",
+        ):
+            with self.subTest(token=token):
+                self.assertNotIn(token, combined)
 
 
 if __name__ == "__main__":
