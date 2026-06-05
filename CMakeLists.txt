@@ -43,6 +43,45 @@ option(EXPORT_NODE "Export Node/NAPI bindings" OFF)
 set(NODE_PACKAGE_NAME "" CACHE STRING "Required public Node package name when EXPORT_NODE=ON")
 set(NODE_ADDON_NAME "" CACHE STRING "Required native Node addon basename when EXPORT_NODE=ON")
 
+if(EXPORT_CSHARP)
+    find_package(DotNet QUIET)
+    find_package(DotNetFramework QUIET)
+
+    if(NOT DEFINED DAS_CSHARP_BUILD_MODERN)
+        set(DAS_CSHARP_BUILD_MODERN ${DotNet_FOUND} CACHE BOOL "Build the modern .NET C# smoke target")
+    else()
+        set(DAS_CSHARP_BUILD_MODERN ${DAS_CSHARP_BUILD_MODERN} CACHE BOOL "Build the modern .NET C# smoke target")
+    endif()
+
+    if(NOT DEFINED DAS_CSHARP_BUILD_NET48)
+        set(DAS_CSHARP_BUILD_NET48 ${DotNetFramework_FOUND} CACHE BOOL "Build the net48 C# smoke target")
+    else()
+        set(DAS_CSHARP_BUILD_NET48 ${DAS_CSHARP_BUILD_NET48} CACHE BOOL "Build the net48 C# smoke target")
+    endif()
+
+    if(NOT DEFINED DAS_CSHARP_NATIVEAOT_SMOKE)
+        set(DAS_CSHARP_NATIVEAOT_SMOKE ${DotNet_NATIVEAOT_AVAILABLE} CACHE BOOL "Publish the C# NativeAOT smoke target")
+    else()
+        set(DAS_CSHARP_NATIVEAOT_SMOKE ${DAS_CSHARP_NATIVEAOT_SMOKE} CACHE BOOL "Publish the C# NativeAOT smoke target")
+    endif()
+
+    if(DAS_CSHARP_BUILD_MODERN AND NOT DotNet_FOUND)
+        message(FATAL_ERROR "DAS_CSHARP_BUILD_MODERN=ON requires dotnet. Set DotNet_EXECUTABLE or DOTNET_EXECUTABLE.")
+    endif()
+
+    if(DAS_CSHARP_BUILD_NET48 AND NOT DotNetFramework_FOUND)
+        message(FATAL_ERROR "DAS_CSHARP_BUILD_NET48=ON requires net48 refs. Set DOTNET_FRAMEWORK_REFERENCE_ASSEMBLIES_DIR or NET48_REFERENCE_ASSEMBLIES_DIR.")
+    endif()
+
+    if(DAS_CSHARP_NATIVEAOT_SMOKE AND NOT DotNet_NATIVEAOT_AVAILABLE)
+        message(FATAL_ERROR "DAS_CSHARP_NATIVEAOT_SMOKE=ON requires a dotnet SDK with NativeAOT support.")
+    endif()
+
+    message(STATUS "[CSharp] Modern build: ${DAS_CSHARP_BUILD_MODERN}")
+    message(STATUS "[CSharp] net48 build: ${DAS_CSHARP_BUILD_NET48}")
+    message(STATUS "[CSharp] NativeAOT smoke: ${DAS_CSHARP_NATIVEAOT_SMOKE}")
+endif()
+
 # See [C++ 20 Compiler support](https://en.cppreference.com/w/cpp/compiler_support/20)
 include(DasCheckStdFmt)
 
