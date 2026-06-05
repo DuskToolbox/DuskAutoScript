@@ -339,17 +339,23 @@ class TestCSharpGeneratorPhase77CompleteSurface(unittest.TestCase):
         self.assertIn("using var functionNameString", wrapper)
 
     def test_d77_34_d77_38_d77_44_d77_48_string_helper_preserves_code_units(self):
-        string_interop = _phase77_artifacts().files[
+        artifacts = _phase77_artifacts()
+        string_interop = artifacts.files[
             "Das.Generated/Interop/DasStringInterop.cs"
         ]
-        combined = _combined_text(_phase77_artifacts())
+        read_only_string = artifacts.files["Das.Generated/Wrappers/DasReadOnlyString.cs"]
+        combined = _combined_text(artifacts)
 
         self.assertIn("ArgumentNullException.ThrowIfNull(value);", string_interop)
         self.assertIn("internal const string EmbeddedNul = \"left\\0right\";", string_interop)
         self.assertIn("internal const string UnpairedSurrogate = \"\\ud800\";", string_interop)
+        self.assertIn("GetIDasReadOnlyStringUtf16", read_only_string)
+        self.assertIn("CopyUtf16(pUtf16, length)", read_only_string)
+        self.assertIn("new string((char*)pUtf16, 0, checked((int)length))", string_interop)
         self.assertNotIn("Rune", combined)
         self.assertNotIn("IsSurrogatePair", combined)
         self.assertNotIn("Normalize(", combined)
+        self.assertNotIn("string.Empty", combined)
 
     def test_d77_24_d77_30_out_results_and_interface_returns_are_typed(self):
         artifacts = _phase77_artifacts()
