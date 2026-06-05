@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFrameworks>net8.0;net48</TargetFrameworks>
+    <AssemblyName>CSharpTestPlugin</AssemblyName>
+    <RootNamespace>Das.TestPlugin</RootNamespace>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(PublishAot)' == 'true'">
+    <OutputType>Exe</OutputType>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <Target Name="RequireDasGeneratedProject" BeforeTargets="ResolveReferences" Condition="'$(DasGeneratedProject)' == ''">
+    <Error Text="DasGeneratedProject property is required so CSharpTestPlugin consumes the generated Das.Generated project." />
+  </Target>
+
+  <ItemGroup Condition="'$(DasGeneratedProject)' != ''">
+    <ProjectReference
+      Include="$(DasGeneratedProject)"
+      SetTargetFramework="TargetFramework=$(TargetFramework)"
+      GlobalPropertiesToRemove="PublishAot;RuntimeIdentifier;SelfContained" />
+  </ItemGroup>
+</Project>

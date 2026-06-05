@@ -44,6 +44,11 @@ if(DAS_BUILD_TEST)
         add_subdirectory(NodeTestPlugin)
     endif()
 
+    # C# 测试插件（仅在启用 C# 导出时构建）
+    if(EXPORT_CSHARP)
+        add_subdirectory(CSharpTestPlugin)
+    endif()
+
     # Python 测试插件（仅在启用 Python 导出时构建）
     if(EXPORT_PYTHON)
         add_subdirectory(PythonTestPlugin)

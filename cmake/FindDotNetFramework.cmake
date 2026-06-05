@@ -1,7 +1,7 @@
 include(FindPackageHandleStandardArgs)
 
-set(DOTNET_FRAMEWORK_REFERENCE_ASSEMBLIES_DIR "" CACHE PATH "Directory containing net48 reference assemblies")
-set(NET48_REFERENCE_ASSEMBLIES_DIR "" CACHE PATH "Directory containing net48 reference assemblies")
+set(DOTNET_FRAMEWORK_REFERENCE_ASSEMBLIES_DIR "" CACHE PATH "Directory containing net48 API metadata")
+set(NET48_REFERENCE_ASSEMBLIES_DIR "" CACHE PATH "Directory containing net48 API metadata")
 set(DotNetFramework_CSC_EXECUTABLE "" CACHE FILEPATH "Path to the C# compiler executable for net48 builds")
 
 set(_NET48_REF_CANDIDATES "")

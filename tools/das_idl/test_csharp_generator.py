@@ -217,6 +217,46 @@ class TestCSharpGeneratorContract(unittest.TestCase):
             with self.subTest(pattern=pattern):
                 self.assertNotIn(pattern, combined)
 
+    def test_d77_55_generated_compile_shape_avoids_csharp_syntax_traps(self):
+        doc = parse_idl(
+            """
+            errorcode DasResult {
+                DAS_S_OK = 0,
+                DAS_E_INVALID_ARGUMENT = -1073750038,
+            }
+
+            struct DasMatchParams {
+                uint32_t count;
+            }
+
+            namespace Das {
+                [uuid("11111111-2222-3333-4444-555555555555")]
+                interface IDasKeywordSample : IDasBase {
+                    DasResult Create([out] IDasBase** pp_out_interface);
+                    DasResult Configure(DasMatchParams params);
+                    DasResult At(uint64_t index, [out] DasGuid* p_out_iid, [out] uint64_t* p_out_int);
+                }
+            }
+            """
+        )
+        artifacts = generate_csharp_artifacts(
+            doc,
+            namespace_root="Das.Generated",
+            package_name="Das.Generated",
+            project_name="DasGenerated",
+            idl_header_names=["DasResult.idl"],
+        )
+        combined = _combined_text(artifacts)
+
+        self.assertIn("IDasBase interfaceValue", combined)
+        self.assertIn("DasMatchParams paramsValue", combined)
+        self.assertIn("ulong intValue", combined)
+        self.assertIn("_ = (_handle, index);", combined)
+        self.assertNotIn("_ = _handle, index;", combined)
+        self.assertNotIn(" IDasBase interface)", combined)
+        self.assertNotIn("DasMatchParams params)", combined)
+        self.assertNotIn(" ulong int)", combined)
+
     def test_d77_19_d77_22_d77_59_combined_source_gate_keeps_explicit_abi(self):
         artifacts = _artifacts()
         combined = _combined_text(artifacts)
@@ -317,8 +357,8 @@ class TestCSharpGeneratorPhase77CompleteSurface(unittest.TestCase):
         self.assertIn("public sealed class DasReadOnlyString", combined)
         self.assertIn("public sealed class DasBinaryBuffer", combined)
         self.assertIn("public sealed class IDasComponent", combined)
-        self.assertIn("public GetSizeAndKindResult GetSizeAndKind()", combined)
-        self.assertIn("public GetSizeAndKindResult GetSizeAndKindOrThrow()", combined)
+        self.assertIn("public IDasComponentGetSizeAndKindResult GetSizeAndKind()", combined)
+        self.assertIn("public IDasComponentGetSizeAndKindResult GetSizeAndKindOrThrow()", combined)
 
     def test_d77_28_d77_29_d77_33_string_input_has_object_and_utf16_overloads(self):
         wrapper = _phase77_artifacts().files["Das.Generated/Wrappers/IDasComponent.cs"]
@@ -362,15 +402,15 @@ class TestCSharpGeneratorPhase77CompleteSurface(unittest.TestCase):
         results = artifacts.files["Das.Generated/Results/IDasComponentResults.cs"]
         wrapper = artifacts.files["Das.Generated/Wrappers/IDasComponent.cs"]
 
-        self.assertIn("public readonly struct GetSummaryResult", results)
+        self.assertIn("public readonly struct IDasComponentGetSummaryResult", results)
         self.assertIn("public DasReadOnlyString Summary { get; }", results)
-        self.assertIn("public readonly struct GetBinaryResult", results)
+        self.assertIn("public readonly struct IDasComponentGetBinaryResult", results)
         self.assertIn("public DasBinaryBuffer Buffer { get; }", results)
-        self.assertIn("public readonly struct GetChildResult", results)
+        self.assertIn("public readonly struct IDasComponentGetChildResult", results)
         self.assertIn("public IDasComponent Child { get; }", results)
         self.assertIn("public DasSampleSize Size { get; }", results)
         self.assertIn("public DasSampleKind Kind { get; }", results)
-        self.assertIn("public GetChildResult GetChildOrThrow()", wrapper)
+        self.assertIn("public IDasComponentGetChildResult GetChildOrThrow()", wrapper)
         self.assertIn("result.Result.OrThrow();", wrapper)
 
     def test_d77_24_interface_inputs_use_same_type_and_upcast_wrappers_only(self):
@@ -384,6 +424,45 @@ class TestCSharpGeneratorPhase77CompleteSurface(unittest.TestCase):
         self.assertNotIn("QueryInterface(", wrapper)
         self.assertNotIn("Downcast", wrapper)
         self.assertNotIn("Sidecast", wrapper)
+
+    def test_d77_24_validation_failure_for_out_result_returns_typed_result(self):
+        doc = parse_idl(
+            """
+            errorcode DasResult {
+                DAS_S_OK = 0,
+                DAS_E_INVALID_ARGUMENT = -1073750038,
+            }
+
+            namespace Das {
+                [uuid("11111111-2222-3333-4444-555555555555")]
+                interface IDasValidationSample : IDasBase {
+                    DasResult Find(IDasBase* p_base, [out] IDasBase** pp_out_child);
+                }
+            }
+            """
+        )
+        artifacts = generate_csharp_artifacts(
+            doc,
+            namespace_root="Das.Generated",
+            package_name="Das.Generated",
+            project_name="DasGenerated",
+            idl_header_names=["DasResult.idl"],
+        )
+        wrapper = artifacts.files["Das.Generated/Wrappers/IDasValidationSample.cs"]
+
+        self.assertNotIn(
+            "return DasResult.DAS_E_INVALID_ARGUMENT;",
+            wrapper,
+        )
+        self.assertIn(
+            "public IDasValidationSampleFindResult Find(IDasBase baseObject)",
+            wrapper,
+        )
+        self.assertIn(
+            "return new IDasValidationSampleFindResult(DasResult.DAS_E_INVALID_ARGUMENT, "
+            "new IDasBase(System.IntPtr.Zero));",
+            wrapper,
+        )
 
     def test_d77_24_binary_buffer_return_has_explicit_view_shape(self):
         artifacts = _phase77_artifacts()

@@ -60,9 +60,26 @@ _UNSIGNED_INTEGER_TYPES = frozenset(
 _FLOAT_TYPES = frozenset({"float", "double"})
 _CSHARP_KEYWORD_RENAMES = {
     "base": "baseObject",
+    "bool": "boolValue",
+    "byte": "byteValue",
+    "char": "charValue",
+    "decimal": "decimalValue",
+    "double": "doubleValue",
     "event": "eventValue",
+    "float": "floatValue",
+    "int": "intValue",
+    "interface": "interfaceValue",
+    "long": "longValue",
+    "object": "objectValue",
     "params": "paramsValue",
+    "sbyte": "sbyteValue",
+    "short": "shortValue",
     "string": "stringValue",
+    "type": "typeValue",
+    "uint": "uintValue",
+    "ulong": "ulongValue",
+    "ushort": "ushortValue",
+    "void": "voidValue",
 }
 
 
@@ -87,8 +104,8 @@ def _sanitize_identifier(name: str) -> str:
     if not cleaned:
         return "_"
     if cleaned[0].isdigit():
-        return f"_{cleaned}"
-    return cleaned
+        cleaned = f"_{cleaned}"
+    return _CSHARP_KEYWORD_RENAMES.get(cleaned, cleaned)
 
 
 def _pascal_name(name: str) -> str:
@@ -106,6 +123,12 @@ def _camel_name(name: str) -> str:
     pascal = _pascal_name(name)
     result = pascal[:1].lower() + pascal[1:]
     return _CSHARP_KEYWORD_RENAMES.get(result, result)
+
+
+def _unused_expression(values: str) -> str:
+    if "," in values:
+        return f"_ = ({values});"
+    return f"_ = {values};"
 
 
 def _is_result_type(type_info: TypeInfo) -> bool:
@@ -225,6 +248,38 @@ def _default_value_expression(type_info: TypeInfo) -> str:
     if _is_interface_pointer(type_info) or _is_read_only_string_pointer(type_info):
         return f"new {wrapper}(System.IntPtr.Zero)"
     return f"default({wrapper})"
+
+
+def _result_type_name(interface_name: str, method_name: str) -> str:
+    return f"{interface_name}{_sanitize_identifier(method_name)}Result"
+
+
+def _result_field_name(param_name: str) -> str:
+    field_name = _pascal_name(param_name)
+    if field_name == "Result":
+        return "ResultValue"
+    return field_name
+
+
+def _result_ctor_param_name(param_name: str) -> str:
+    local_name = _camel_name(param_name)
+    if local_name == "result":
+        return "resultValue"
+    return local_name
+
+
+def _result_failure_expression(
+    result_type: str,
+    out_params: Sequence[ParameterDef],
+    result_expression: str,
+) -> str:
+    if not out_params:
+        return result_expression
+
+    failure_values = ", ".join(
+        _default_value_expression(_out_value_type(param)) for param in out_params
+    )
+    return f"new {result_type}({result_expression}, {failure_values})"
 
 
 def _method_in_params(method: MethodDef) -> list[ParameterDef]:
@@ -432,6 +487,42 @@ class CSharpGenerator:
                 "#if NET7_0_OR_GREATER",
                 "    [LibraryImport(\"das\", EntryPoint = \"DasAddRef\")]",
                 "    internal static partial int DasAddRef(System.IntPtr handle);",
+                "",
+                "    [LibraryImport(\"das\", EntryPoint = \"CreateIDasReadOnlyStringFromUtf16WithLength\")]",
+                "    internal static partial DasResult CreateIDasReadOnlyStringFromUtf16WithLength(",
+                "        ushort* pUtf16,",
+                "        nuint length,",
+                "        out System.IntPtr ppOutReadOnlyString);",
+                "",
+                "    [LibraryImport(\"das\", EntryPoint = \"CreateIDasStringFromUtf16WithLength\")]",
+                "    internal static partial DasResult CreateIDasStringFromUtf16WithLength(",
+                "        ushort* pUtf16,",
+                "        nuint length,",
+                "        out System.IntPtr ppOutString);",
+                "",
+                "    [LibraryImport(\"das\", EntryPoint = \"GetIDasReadOnlyStringUtf16\")]",
+                "    internal static partial DasResult GetIDasReadOnlyStringUtf16(",
+                "        System.IntPtr readOnlyString,",
+                "        out ushort* pUtf16,",
+                "        out nuint length);",
+                "#else",
+                "    [DllImport(\"das\", EntryPoint = \"CreateIDasReadOnlyStringFromUtf16WithLength\", CallingConvention = CallingConvention.Cdecl)]",
+                "    internal static extern DasResult CreateIDasReadOnlyStringFromUtf16WithLength(",
+                "        ushort* pUtf16,",
+                "        nuint length,",
+                "        out System.IntPtr ppOutReadOnlyString);",
+                "",
+                "    [DllImport(\"das\", EntryPoint = \"CreateIDasStringFromUtf16WithLength\", CallingConvention = CallingConvention.Cdecl)]",
+                "    internal static extern DasResult CreateIDasStringFromUtf16WithLength(",
+                "        ushort* pUtf16,",
+                "        nuint length,",
+                "        out System.IntPtr ppOutString);",
+                "",
+                "    [DllImport(\"das\", EntryPoint = \"GetIDasReadOnlyStringUtf16\", CallingConvention = CallingConvention.Cdecl)]",
+                "    internal static extern DasResult GetIDasReadOnlyStringUtf16(",
+                "        System.IntPtr readOnlyString,",
+                "        out ushort* pUtf16,",
+                "        out nuint length);",
                 "#endif",
                 "",
                 "#if NET8_0_OR_GREATER",
@@ -442,21 +533,6 @@ class CSharpGenerator:
                 "    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]",
                 "    internal delegate int AddRefDelegate(System.IntPtr handle);",
                 "#endif",
-                "",
-                "    internal static partial DasResult CreateIDasReadOnlyStringFromUtf16WithLength(",
-                "        ushort* pUtf16,",
-                "        nuint length,",
-                "        out System.IntPtr ppOutReadOnlyString);",
-                "",
-                "    internal static partial DasResult CreateIDasStringFromUtf16WithLength(",
-                "        ushort* pUtf16,",
-                "        nuint length,",
-                "        out System.IntPtr ppOutString);",
-                "",
-                "    internal static partial DasResult GetIDasReadOnlyStringUtf16(",
-                "        System.IntPtr readOnlyString,",
-                "        out ushort* pUtf16,",
-                "        out nuint length);",
                 "}",
                 "",
             ]
@@ -746,6 +822,7 @@ class CSharpGenerator:
             "// DAS C# interface wrapper (auto-generated - DO NOT MODIFY)",
             "using System;",
             f"using {self.namespace_root};",
+            f"using {self.namespace_root}.Abi;",
             f"using {self.namespace_root}.Results;",
             "",
             f"namespace {self.namespace_root}.Wrappers;",
@@ -787,7 +864,7 @@ class CSharpGenerator:
 
         for method in _interface_methods(interface):
             lines.append("")
-            lines.extend(self._generate_wrapper_method(method))
+            lines.extend(self._generate_wrapper_method(interface, method))
 
         lines.append("}")
         lines.append("")
@@ -812,14 +889,19 @@ class CSharpGenerator:
                 args.append(name)
         return ", ".join(args)
 
-    def _generate_wrapper_method(self, method: MethodDef) -> list[str]:
+    def _generate_wrapper_method(self, interface: InterfaceDef, method: MethodDef) -> list[str]:
         in_params = _method_in_params(method)
         out_params = _method_out_params(method)
         method_name = _sanitize_identifier(method.name)
         param_text = self._method_param_decls(in_params)
         call_args = self._method_call_args(in_params)
         native_args = self._method_native_args(in_params)
-        result_type = f"{method_name}Result" if out_params else "DasResult"
+        result_type = _result_type_name(interface.name, method.name) if out_params else "DasResult"
+        invalid_argument_return = _result_failure_expression(
+            result_type,
+            out_params,
+            "DasResult.DAS_E_INVALID_ARGUMENT",
+        )
 
         lines = [f"    public {result_type} {method_name}({param_text})"]
         lines.append("    {")
@@ -833,27 +915,27 @@ class CSharpGenerator:
                     else f"        if ({param_name}.Handle == System.IntPtr.Zero)"
                 )
                 lines.append("        {")
-                lines.append("            return DasResult.DAS_E_INVALID_ARGUMENT;")
+                lines.append(f"            return {invalid_argument_return};")
                 lines.append("        }")
         if out_params:
             lines.append("        var result = DasResult.DAS_S_OK;")
             for param in out_params:
                 value_type_info = _out_value_type(param)
-                field_name = _pascal_name(param.name)
+                field_name = _result_field_name(param.name)
                 lines.append(
                     f"        var {field_name} = {_default_value_expression(value_type_info)};"
                 )
-            out_values = ", ".join(_pascal_name(param.name) for param in out_params)
-            lines.append(f"        _ = {native_args};")
-            lines.append(f"        return new {method_name}Result(result, {out_values});")
+            out_values = ", ".join(_result_field_name(param.name) for param in out_params)
+            lines.append(f"        {_unused_expression(native_args)}")
+            lines.append(f"        return new {result_type}(result, {out_values});")
         elif _is_result_type(method.return_type):
-            lines.append(f"        _ = {native_args};")
+            lines.append(f"        {_unused_expression(native_args)}")
             lines.append("        return DasResult.DAS_S_OK;")
         elif _is_void_type(method.return_type):
-            lines.append(f"        _ = {native_args};")
+            lines.append(f"        {_unused_expression(native_args)}")
         else:
             return_type = _wrapper_type(method.return_type)
-            lines.append(f"        _ = {native_args};")
+            lines.append(f"        {_unused_expression(native_args)}")
             lines.append(f"        return default({return_type});")
         lines.append("    }")
 
@@ -861,7 +943,6 @@ class CSharpGenerator:
             lines.append("")
             checked_return = "void" if not out_params else result_type
             lines.append(f"    public {checked_return} {method_name}OrThrow({param_text})")
-            "    {",
             lines.append("    {")
             call = f"{method_name}({call_args})" if call_args else f"{method_name}()"
             if out_params:
@@ -872,35 +953,56 @@ class CSharpGenerator:
                 lines.append(f"        {call}.OrThrow();")
             lines.append("    }")
 
+        generated_signatures = {
+            tuple(_wrapper_type(param.type_info) for param in in_params)
+        }
         for param in in_params:
             if _is_read_only_string_pointer(param.type_info):
+                signature = tuple(
+                    "string" if candidate is param else _wrapper_type(candidate.type_info)
+                    for candidate in in_params
+                )
+                if signature in generated_signatures:
+                    continue
+                generated_signatures.add(signature)
                 lines.append("")
-                lines.extend(self._generate_string_convenience_method(method, param))
+                lines.extend(
+                    self._generate_string_convenience_method(
+                        interface,
+                        method,
+                        param,
+                    )
+                )
 
         return lines
 
     def _generate_string_convenience_method(
         self,
+        interface: InterfaceDef,
         method: MethodDef,
         string_param: ParameterDef,
     ) -> list[str]:
         method_name = _sanitize_identifier(method.name)
         param_name = _camel_name(string_param.name)
+        out_params = _method_out_params(method)
+        result_type = _result_type_name(interface.name, method.name) if out_params else "DasResult"
         call_args: list[str] = []
         for param in _method_in_params(method):
             if param is string_param:
                 call_args.append(f"{param_name}String")
             else:
                 call_args.append(_camel_name(param.name))
-        extra_params = [
-            f"{_wrapper_type(param.type_info)} {_camel_name(param.name)}"
+        convenience_params = [
+            f"string {param_name}"
+            if param is string_param
+            else f"{_wrapper_type(param.type_info)} {_camel_name(param.name)}"
             for param in _method_in_params(method)
-            if param is not string_param
         ]
-        params = ", ".join([f"string {param_name}", *extra_params])
+        params = ", ".join(convenience_params)
+        failure_return = _result_failure_expression(result_type, out_params, "createResult")
 
         return [
-            f"    public unsafe DasResult {method_name}({params})",
+            f"    public unsafe {result_type} {method_name}({params})",
             "    {",
             f"        ArgumentNullException.ThrowIfNull({param_name});",
             f"        fixed (char* pValue = {param_name})",
@@ -911,7 +1013,7 @@ class CSharpGenerator:
             f"                out var {param_name}Handle);",
             "            if ((int)createResult < 0)",
             "            {",
-            "                return createResult;",
+            f"                return {failure_return};",
             "            }",
             f"            using var {param_name}String = DasReadOnlyString.Attach({param_name}Handle);",
             f"            return {method_name}({', '.join(call_args)});",
@@ -927,6 +1029,7 @@ class CSharpGenerator:
             "using System;",
             "using System.Runtime.InteropServices;",
             f"using {self.namespace_root};",
+            f"using {self.namespace_root}.Abi;",
             "",
             f"namespace {self.namespace_root}.Directors;",
             "",
@@ -935,7 +1038,7 @@ class CSharpGenerator:
         ]
         for method in _interface_methods(interface):
             params = ", ".join(
-                f"{_csharp_type(param.type_info)} {_sanitize_identifier(param.name)}"
+                f"{_csharp_type(param.type_info)} {_camel_name(param.name)}"
                 for param in _method_in_params(method)
             )
             lines.append(f"    DasResult {_sanitize_identifier(method.name)}({params});")
@@ -991,13 +1094,14 @@ class CSharpGenerator:
 
     def _generate_results(self, interface: InterfaceDef) -> str:
         result_names = {
-            f"{_sanitize_identifier(method.name)}Result"
+            _result_type_name(interface.name, method.name)
             for method in _interface_methods(interface)
             if _method_out_params(method)
         }
         lines = [
             "// DAS C# result objects (auto-generated - DO NOT MODIFY)",
             f"using {self.namespace_root};",
+            f"using {self.namespace_root}.Abi;",
             f"using {self.namespace_root}.Wrappers;",
             "",
             f"namespace {self.namespace_root}.Results;",
@@ -1012,27 +1116,26 @@ class CSharpGenerator:
             out_params = _method_out_params(method)
             if not out_params:
                 continue
-            result_name = f"{_sanitize_identifier(method.name)}Result"
+            result_name = _result_type_name(interface.name, method.name)
             lines.append(f"public readonly struct {result_name}")
             lines.append("{")
             ctor_params = ["DasResult result"]
             for param in out_params:
                 value_type = _wrapper_type(_out_value_type(param))
-                field_name = _pascal_name(param.name)
-                ctor_params.append(f"{value_type} {field_name[:1].lower() + field_name[1:]}")
+                ctor_params.append(f"{value_type} {_result_ctor_param_name(param.name)}")
             lines.append(f"    public {result_name}({', '.join(ctor_params)})")
             lines.append("    {")
             lines.append("        Result = result;")
             for param in out_params:
-                field_name = _pascal_name(param.name)
-                local_name = field_name[:1].lower() + field_name[1:]
+                field_name = _result_field_name(param.name)
+                local_name = _result_ctor_param_name(param.name)
                 lines.append(f"        {field_name} = {local_name};")
             lines.append("    }")
             lines.append("")
             lines.append("    public DasResult Result { get; }")
             for param in out_params:
                 value_type = _wrapper_type(_out_value_type(param))
-                field_name = _pascal_name(param.name)
+                field_name = _result_field_name(param.name)
                 lines.append(f"    public {value_type} {field_name} {{ get; }}")
             lines.append("}")
             lines.append("")

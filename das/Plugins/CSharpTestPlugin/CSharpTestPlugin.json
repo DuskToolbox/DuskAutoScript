@@ -1,0 +1,7 @@
+{
+  "name": "CSharpTestPlugin",
+  "language": "CSharp",
+  "targetFramework": "net8.0",
+  "entryPoint": "Das.TestPlugin.Bootstrap.Create",
+  "runtimeConfigPath": "CSharpTestPlugin.runtimeconfig.json"
+}
