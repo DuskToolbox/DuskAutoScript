@@ -4699,6 +4699,53 @@ TEST_F(
         callback.Get());
 }
 
+TEST_F(
+    IpcMultiProcessTestIntegration,
+    CrossProcess_CSharpNet48DirectorLifecycleTest)
+{
+#ifndef DAS_EXPORT_CSHARP
+    GTEST_SKIP() << "DAS_EXPORT_CSHARP is not enabled";
+#elif !defined(DAS_CSHARP_BUILD_NET48)
+    GTEST_SKIP()
+        << "DAS_CSHARP_BUILD_NET48 is not enabled for IpcMultiProcessTest";
+#endif
+
+    if (!std::filesystem::exists(host_exe_path_))
+    {
+        GTEST_SKIP() << "DasHost.exe not found at: " << host_exe_path_;
+    }
+
+    std::string plugin_json_path;
+    try
+    {
+        plugin_json_path = IpcTestConfig::GetCSharpTestPluginJsonPath(
+            "DasCSharpTestPluginNet48");
+    }
+    catch (const std::exception& e)
+    {
+        GTEST_SKIP() << "DasCSharpTestPluginNet48 manifest not found: "
+                     << e.what();
+    }
+
+    auto callback = DAS::MakeDasPtr<LifecycleCallbackComponent>();
+    callback->Configure(GetContext());
+    callback->request_stop_on_callback_ = false;
+
+    const DasResult reg_result = ctx_->RegisterService(
+        callback.Get(),
+        DasIidOf<DAS::PluginInterface::IDasComponent>());
+    ASSERT_EQ(reg_result, DAS_S_OK);
+
+    RunCSharpBridgeLifecycleTest(
+        GetContext(),
+        launcher_,
+        host_exe_path_,
+        plugin_json_path,
+        "csharp_net48_bridge_marker",
+        "Net48",
+        callback.Get());
+}
+
 TEST_F(IpcMultiProcessTestIntegration, CrossProcess_JavaDirectorLifecycleTest)
 {
 #ifndef DAS_EXPORT_JAVA
