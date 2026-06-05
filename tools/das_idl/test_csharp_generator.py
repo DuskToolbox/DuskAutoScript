@@ -7,7 +7,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from csharp_generator import generate_csharp_artifacts
-from das_idl_parser import parse_idl
+from das_idl_parser import parse_idl, parse_idl_file
+
+
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def _contract_doc():
@@ -52,6 +55,16 @@ def _artifacts():
         package_name="Das.Generated",
         project_name="DasGenerated",
         idl_header_names=["Core.h", "DasResult.h"],
+    )
+
+
+def _source_das_result_artifacts():
+    return generate_csharp_artifacts(
+        parse_idl_file(str(ROOT / "idl" / "DasResult.idl")),
+        namespace_root="Das.Generated",
+        package_name="Das.Generated",
+        project_name="DasGenerated",
+        idl_header_names=["DasResult.idl"],
     )
 
 
@@ -107,6 +120,28 @@ class TestCSharpGeneratorContract(unittest.TestCase):
         self.assertIn("public DasResult Flush()", combined)
         self.assertIn("public void FlushOrThrow()", combined)
         self.assertNotIn("Ez", combined)
+
+    def test_d77_16_d77_30_generated_das_result_exposes_csharp_diagnostics(self):
+        artifacts = _source_das_result_artifacts()
+        das_result = artifacts.files["Das.Generated/DasResult.cs"]
+        combined = _combined_text(artifacts)
+
+        for name in (
+            "DAS_E_CSHARP_ERROR = -1073750021",
+            "DAS_E_CSHARP_MISSING_RUNTIMECONFIG = -1073750044",
+            "DAS_E_CSHARP_UNSUPPORTED_TFM = -1073750045",
+            "DAS_E_CSHARP_HOSTFXR_INIT_FAILED = -1073750046",
+            "DAS_E_CSHARP_COM_CLR_INIT_FAILED = -1073750047",
+            "DAS_E_CSHARP_ENTRYPOINT_MISSING = -1073750048",
+            "DAS_E_CSHARP_PLUGIN_INIT_FAILED = -1073750049",
+        ):
+            with self.subTest(name=name):
+                self.assertIn(name, das_result)
+
+        self.assertIn("public sealed class DasException : System.Exception", combined)
+        self.assertIn("public DasResult Result { get; }", combined)
+        self.assertIn("public static void OrThrow(this DasResult result", combined)
+        self.assertNotIn("public static class CSharpErrors", combined)
 
     def test_d77_22_generated_text_has_no_aot_hostile_constructs(self):
         combined = _combined_text(_artifacts())
