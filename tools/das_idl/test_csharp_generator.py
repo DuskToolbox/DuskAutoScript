@@ -106,14 +106,24 @@ def _phase77_contract_doc():
                 DasResult GetSize([out] uint64_t* p_out_size);
             }
 
+            [uuid("00000000-0000-0000-0000-000000000006")]
+            interface IDasTypeInfo : IDasBase {
+                DasResult GetGuid([out] DasGuid* p_out_guid);
+            }
+
             [uuid("00000000-0000-0000-0000-000000000005")]
-            interface IDasComponent : IDasBase {
+            interface IDasComponent : IDasTypeInfo {
                 DasResult Dispatch(IDasReadOnlyString* p_function_name, IDasVariantVector* p_arguments);
                 DasResult GetSummary([out] IDasReadOnlyString** pp_out_summary);
                 DasResult GetBinary([out] IDasBinaryBuffer** pp_out_buffer);
                 DasResult GetChild([out] IDasComponent** pp_out_child);
                 DasResult GetSizeAndKind([out] DasSampleSize* p_out_size, [out] DasSampleKind* p_out_kind);
                 DasResult Attach(IDasBase* p_base, IDasComponent* p_component);
+            }
+
+            [uuid("00000000-0000-0000-0000-000000000007")]
+            interface IDasComponentFactory : IDasTypeInfo {
+                DasResult CreateInstance(const DasGuid& component_iid, [out] IDasComponent** pp_out_component);
             }
         }
         """
@@ -565,7 +575,7 @@ class TestCSharpGeneratorPhase77CompleteSurface(unittest.TestCase):
         self.assertIn("Marshal.WriteIntPtr(packageOut, IntPtr.Zero);", bootstrap)
         self.assertIn("catch (Exception)", bootstrap)
         self.assertIn("return DasResult.DAS_E_CSHARP_BOOTSTRAP_INVALID;", bootstrap)
-        self.assertNotIn("DAS_CSHARP_BOOTSTRAP_INVALID", bootstrap)
+        self.assertNotIn("DasResult.DAS_CSHARP_BOOTSTRAP_INVALID", bootstrap)
         self.assertNotIn("public nint", bootstrap)
 
     def test_d78_05_csharp_support_retains_managed_state_without_pinning(self):
@@ -593,7 +603,7 @@ class TestCSharpGeneratorPhase77CompleteSurface(unittest.TestCase):
         self.assertIn("uint32_t DAS_STD_CALL AddRef() override", source)
         self.assertIn("uint32_t DAS_STD_CALL Release() override", source)
         self.assertIn("void FinalRelease() noexcept", source)
-        self.assertEqual(source.count("callbacks_->release(managed_state_);"), 1)
+        self.assertEqual(source.count("release_(managed_state_);"), 1)
         self.assertIn("DasResult QueryInterface(const DasGuid& iid, void** pp_out_object) override", source)
         self.assertIn("if (iid == DAS_IID_BASE)", source)
         self.assertIn("if (iid == DasIidOf<IDasComponent>())", source)

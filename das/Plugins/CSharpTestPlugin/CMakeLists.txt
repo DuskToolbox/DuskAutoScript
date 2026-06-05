@@ -36,6 +36,27 @@ if(DAS_CSHARP_BUILD_MODERN)
     add_dependencies(CSharpTestPluginModernBuild DasCoreCSharpExport)
 endif()
 
+set(CSHARP_TEST_PLUGIN_GENERATED_NATIVE_SUPPORT
+    "${DAS_CORE_CSHARP_OUTPUT_DIR}/Native/DasCSharpDirectorSupport.cpp")
+set_source_files_properties(
+    "${CSHARP_TEST_PLUGIN_GENERATED_NATIVE_SUPPORT}"
+    PROPERTIES GENERATED TRUE)
+add_library(CSharpTestPluginGeneratedNativeSupportCompile OBJECT
+    "${CSHARP_TEST_PLUGIN_GENERATED_NATIVE_SUPPORT}")
+add_dependencies(CSharpTestPluginGeneratedNativeSupportCompile DasCoreCSharpExport)
+target_include_directories(CSharpTestPluginGeneratedNativeSupportCompile PRIVATE
+    "${DAS_CORE_CSHARP_OUTPUT_DIR}/Native"
+    "${CMAKE_SOURCE_DIR}/include"
+    "${CMAKE_BINARY_DIR}/das/include"
+    "${CMAKE_BINARY_DIR}/das/include/das/_autogen/idl/abi"
+    "${CMAKE_BINARY_DIR}/das/include/das/_autogen/idl/header")
+target_compile_definitions(CSharpTestPluginGeneratedNativeSupportCompile PRIVATE
+    DAS_BUILD_SHARED)
+if(MSVC)
+    target_compile_options(CSharpTestPluginGeneratedNativeSupportCompile PRIVATE
+        /bigobj)
+endif()
+
 if(DAS_CSHARP_BUILD_NET48)
     das_add_csharp_test_plugin_build(CSharpTestPluginNet48Build net48)
     add_dependencies(CSharpTestPluginNet48Build DasCoreCSharpExport)

@@ -58,6 +58,7 @@ def _list_csharp_reduce_outputs(reduce_config: Dict[str, Any]) -> List[str]:
         f"{csharp_output_dir}/{csharp_namespace_root}/DasException.cs",
         f"{csharp_output_dir}/{csharp_namespace_root}/Abi/DasGuid.cs",
         f"{csharp_output_dir}/{csharp_namespace_root}/Abi/NativeMethods.cs",
+        f"{csharp_output_dir}/{csharp_namespace_root}/Runtime/DasCSharpBootstrap.cs",
         f"{csharp_output_dir}/Native/DasCSharpDirectorSupport.h",
         f"{csharp_output_dir}/Native/DasCSharpDirectorSupport.cpp",
     ]

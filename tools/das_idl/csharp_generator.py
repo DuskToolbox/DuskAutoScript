@@ -243,6 +243,75 @@ def _wrapper_type(type_info: TypeInfo) -> str:
     return _csharp_type(type_info)
 
 
+def _cpp_type(type_info: TypeInfo) -> str:
+    simple = type_simple_name(type_info)
+    base = {
+        "void": "void",
+        "DasResult": "DasResult",
+        "bool": "bool",
+        "DasBool": "bool",
+        "char": "char",
+        "int8": "int8_t",
+        "int8_t": "int8_t",
+        "uint8": "uint8_t",
+        "uint8_t": "uint8_t",
+        "int16": "int16_t",
+        "int16_t": "int16_t",
+        "uint16": "uint16_t",
+        "uint16_t": "uint16_t",
+        "int": "int",
+        "int32": "int32_t",
+        "int32_t": "int32_t",
+        "uint32": "uint32_t",
+        "uint32_t": "uint32_t",
+        "int64": "int64_t",
+        "int64_t": "int64_t",
+        "uint64": "uint64_t",
+        "uint64_t": "uint64_t",
+        "size_t": "size_t",
+        "float": "float",
+        "double": "double",
+        "DasGuid": "DasGuid",
+    }.get(simple, simple)
+
+    const_prefix = "const " if type_info.is_const else ""
+    if type_info.is_reference:
+        return f"{const_prefix}{base}&"
+    if type_info.is_pointer:
+        return f"{const_prefix}{base}{'*' * type_info.pointer_level}"
+    return f"{const_prefix}{base}"
+
+
+def _cpp_default_return(type_info: TypeInfo) -> str:
+    if _is_result_type(type_info):
+        return "DAS_E_CSHARP_DIRECTOR_FACTORY_FAILED"
+    if _is_void_type(type_info):
+        return ""
+    if type_info.is_pointer:
+        return "nullptr"
+    simple = type_simple_name(type_info)
+    if simple in {"bool", "DasBool"}:
+        return "false"
+    return "{}"
+
+
+def _with_pointer_level(type_info: TypeInfo, pointer_level: int) -> TypeInfo:
+    return TypeInfo(
+        type_info.source_type,
+        is_const=type_info.is_const,
+        is_pointer=pointer_level > 0,
+        pointer_level=pointer_level,
+        is_reference=False,
+        type_kind=type_info.type_kind,
+        resolved_namespace=type_info.resolved_namespace,
+        resolved_qualified_name=type_info.resolved_qualified_name,
+    )
+
+
+def _das_result_type() -> TypeInfo:
+    return TypeInfo("DasResult", type_kind=TypeKind.BASIC)
+
+
 def _default_value_expression(type_info: TypeInfo) -> str:
     wrapper = _wrapper_type(type_info)
     if _is_interface_pointer(type_info) or _is_read_only_string_pointer(type_info):
@@ -322,6 +391,7 @@ class CSharpGenerator:
             f"{self.namespace_root}/Wrappers/IDasReadOnlyString.cs": self._generate_builtin_read_only_string_wrapper(),
             f"{self.namespace_root}/Wrappers/DasReadOnlyString.cs": self._generate_das_read_only_string_wrapper(),
             f"{self.namespace_root}/Wrappers/DasBinaryBuffer.cs": self._generate_das_binary_buffer_wrapper(),
+            f"{self.namespace_root}/Runtime/DasCSharpBootstrap.cs": self._generate_bootstrap_helper(),
         }
 
         for enum in sorted(doc.enums, key=lambda item: item.name):
@@ -610,6 +680,164 @@ class CSharpGenerator:
                 "    public System.IntPtr Value { get; }",
                 "",
                 "    public bool IsNull => Value == System.IntPtr.Zero;",
+                "}",
+                "",
+            ]
+        )
+
+    def _generate_bootstrap_helper(self) -> str:
+        return "\n".join(
+            [
+                "// DAS C# bootstrap helper (auto-generated - DO NOT MODIFY)",
+                "using System;",
+                "using System.Globalization;",
+                "using System.Runtime.InteropServices;",
+                f"using {self.namespace_root};",
+                f"using {self.namespace_root}.Wrappers;",
+                "",
+                f"namespace {self.namespace_root}.Runtime;",
+                "",
+                "public static unsafe class DasCSharpBootstrap",
+                "{",
+                "    private const uint DAS_CSHARP_BOOTSTRAP_ARGS_V1_ABI_VERSION = 1;",
+                "",
+                "    [StructLayout(LayoutKind.Sequential)]",
+                "    private readonly struct DasCSharpBootstrapArgsV1",
+                "    {",
+                "        public readonly uint size;",
+                "        public readonly uint abi_version;",
+                "        public readonly IntPtr manifest_path;",
+                "        public readonly IntPtr plugin_root;",
+                "        public readonly IntPtr plugin_binary_path;",
+                "        public readonly IntPtr host_api;",
+                "        public readonly IntPtr pp_package;",
+                "    }",
+                "",
+                "    private static IntPtr DecodeBootstrapCookie(string bootstrapCookie)",
+                "    {",
+                "        if (string.IsNullOrWhiteSpace(bootstrapCookie))",
+                "        {",
+                "            return IntPtr.Zero;",
+                "        }",
+                "",
+                "        var trimmed_cookie = bootstrapCookie.Trim();",
+                "        if (trimmed_cookie.StartsWith(\"0x\", StringComparison.OrdinalIgnoreCase))",
+                "        {",
+                "            return (IntPtr)(long)ulong.Parse(",
+                "                trimmed_cookie.AsSpan(2),",
+                "                NumberStyles.HexNumber,",
+                "                CultureInfo.InvariantCulture);",
+                "        }",
+                "",
+                "        return (IntPtr)(long)ulong.Parse(trimmed_cookie);",
+                "    }",
+                "",
+                "    public static DasResult Invoke(",
+                "        IntPtr args,",
+                "        int sizeBytes,",
+                "        Func<object> packageFactory)",
+                "    {",
+                "        if (args == IntPtr.Zero)",
+                "        {",
+                "            return DasResult.DAS_E_CSHARP_BOOTSTRAP_INVALID;",
+                "        }",
+                "",
+                "        if (sizeBytes <= 0)",
+                "        {",
+                "            return DasResult.DAS_E_CSHARP_BOOTSTRAP_INVALID;",
+                "        }",
+                "",
+                "        if (packageFactory is null)",
+                "        {",
+                "            return DasResult.DAS_E_CSHARP_PLUGIN_INIT_FAILED;",
+                "        }",
+                "",
+                "        var bootstrapArgs = (DasCSharpBootstrapArgsV1*)args;",
+                "        var result = ValidateBootstrapArgs(bootstrapArgs, sizeBytes);",
+                "        if (result != DasResult.DAS_S_OK)",
+                "        {",
+                "            return result;",
+                "        }",
+                "",
+                "        return InvokeImpl(bootstrapArgs, packageFactory);",
+                "    }",
+                "",
+                "    public static DasResult Invoke(",
+                "        string bootstrapCookie,",
+                "        Func<object> packageFactory)",
+                "    {",
+                "        var cookiePtr = DecodeBootstrapCookie(bootstrapCookie);",
+                "        if (cookiePtr == IntPtr.Zero)",
+                "        {",
+                "            return DasResult.DAS_E_CSHARP_BOOTSTRAP_INVALID;",
+                "        }",
+                "",
+                "        return Invoke(cookiePtr, Marshal.SizeOf<DasCSharpBootstrapArgsV1>(), packageFactory);",
+                "    }",
+                "",
+                "    private static DasResult InvokeImpl(",
+                "        DasCSharpBootstrapArgsV1* args,",
+                "        Func<object> packageFactory)",
+                "    {",
+                "        var packageOut = args->pp_package;",
+                "        Marshal.WriteIntPtr(packageOut, IntPtr.Zero);",
+                "",
+                "        try",
+                "        {",
+                "            var package = packageFactory();",
+                "            if (package is not IDasPluginPackage managedPackage)",
+                "            {",
+                "                return DasResult.DAS_E_CSHARP_PLUGIN_INIT_FAILED;",
+                "            }",
+                "",
+                "            if (managedPackage.Handle == IntPtr.Zero)",
+                "            {",
+                "                return DasResult.DAS_E_CSHARP_PLUGIN_INIT_FAILED;",
+                "            }",
+                "",
+                "            Marshal.WriteIntPtr(packageOut, managedPackage.Handle);",
+                "            return DasResult.DAS_S_OK;",
+                "        }",
+                "        catch (Exception)",
+                "        {",
+                "            return DasResult.DAS_E_CSHARP_PLUGIN_INIT_FAILED;",
+                "        }",
+                "    }",
+                "",
+                "    private static DasResult ValidateBootstrapArgs(",
+                "        DasCSharpBootstrapArgsV1* args,",
+                "        int sizeBytes)",
+                "    {",
+                "        if (args == null)",
+                "        {",
+                "            return DasResult.DAS_E_CSHARP_BOOTSTRAP_INVALID;",
+                "        }",
+                "",
+                "        if (sizeBytes < (int)Marshal.SizeOf<DasCSharpBootstrapArgsV1>())",
+                "        {",
+                "            return DasResult.DAS_E_CSHARP_BOOTSTRAP_INVALID;",
+                "        }",
+                "",
+                "        if (args->size != Marshal.SizeOf<DasCSharpBootstrapArgsV1>())",
+                "        {",
+                "            return DasResult.DAS_E_CSHARP_BOOTSTRAP_INVALID;",
+                "        }",
+                "",
+                "        if (args->abi_version != DAS_CSHARP_BOOTSTRAP_ARGS_V1_ABI_VERSION)",
+                "        {",
+                "            return DasResult.DAS_E_CSHARP_BOOTSTRAP_INVALID;",
+                "        }",
+                "",
+                "        if (args->manifest_path == System.IntPtr.Zero",
+                "            || args->plugin_root == System.IntPtr.Zero",
+                "            || args->plugin_binary_path == System.IntPtr.Zero",
+                "            || args->pp_package == System.IntPtr.Zero)",
+                "        {",
+                "            return DasResult.DAS_E_CSHARP_BOOTSTRAP_INVALID;",
+                "        }",
+                "",
+                "        return DasResult.DAS_S_OK;",
+                "    }",
                 "}",
                 "",
             ]
@@ -1149,22 +1377,59 @@ class CSharpGenerator:
         self,
         interfaces: Sequence[InterfaceDef],
     ) -> str:
+        namespaces = sorted(
+            {
+                interface.namespace
+                for interface in interfaces
+                if interface.namespace and interface.namespace != "global"
+            }
+        )
         lines = [
             "// DAS C# native director support (auto-generated - DO NOT MODIFY)",
             "#pragma once",
             "",
             "#include <das/DasConfig.h>",
-            "#include <das/IDasBase.h>",
+            "#include <cstddef>",
             "#include <cstdint>",
-            "",
-            "extern \"C\" {",
+            "#include <das/IDasBase.h>",
         ]
+        for header_name in self.idl_header_names:
+            if header_name.endswith(".h") and header_name != "IDasBase.h":
+                lines.append(f'#include "{header_name}"')
+        lines.extend(
+            [
+                "",
+                "using DasCSharpDirectorReleaseThunk = uint32_t (*)(void* managed_state);",
+            ]
+        )
+        for namespace in namespaces:
+            lines.append(f"using namespace {namespace};")
+        lines.extend(["", "extern \"C\" {"])
         for interface in sorted(interfaces, key=lambda item: item.name):
             director_name = f"{interface.name}Director"
             callbacks_name = f"{director_name}Callbacks"
             lines.extend(
                 [
-                    f"struct {callbacks_name};",
+                    f"struct {callbacks_name}",
+                    "{",
+                    "    DasCSharpDirectorReleaseThunk release;",
+                ]
+            )
+            for method in self._all_interface_methods(interface):
+                return_type = _cpp_type(method.return_type)
+                params = [
+                    "void* managed_state",
+                    *[
+                        f"{_cpp_type(param.type_info)} {_sanitize_identifier(param.name)}"
+                        for param in method.parameters
+                    ],
+                ]
+                lines.append(
+                    f"    {return_type} (*{_sanitize_identifier(method.name)})({', '.join(params)});"
+                )
+            lines.extend(
+                [
+                    "};",
                     f"DAS_C_API DasResult DasCreateCSharp{director_name}(",
                     "    void* managed_state,",
                     f"    const {callbacks_name}* callbacks,",
@@ -1183,6 +1448,56 @@ class CSharpGenerator:
             "// DAS C# native director support (auto-generated - DO NOT MODIFY)",
             '#include "DasCSharpDirectorSupport.h"',
             "",
+            "#include <atomic>",
+            "#include <new>",
+            "",
+            "class CSharpDirectorLifetime final",
+            "{",
+            "public:",
+            "    CSharpDirectorLifetime(",
+            "        void* managed_state,",
+            "        DasCSharpDirectorReleaseThunk release)",
+            "        : managed_state_{managed_state}",
+            "        , release_{release}",
+            "    {",
+            "    }",
+            "",
+            "    uint32_t AddRef()",
+            "    {",
+            "        return ref_count_.fetch_add(1, std::memory_order_relaxed) + 1;",
+            "    }",
+            "",
+            "    uint32_t Release()",
+            "    {",
+            "        const auto count = ref_count_.fetch_sub(1, std::memory_order_acq_rel) - 1;",
+            "        if (count == 0)",
+            "        {",
+            "            FinalRelease();",
+            "        }",
+            "        return count;",
+            "    }",
+            "",
+            "    void* ManagedState() const noexcept",
+            "    {",
+            "        return managed_state_;",
+            "    }",
+            "",
+            "private:",
+            "    void FinalRelease() noexcept",
+            "    {",
+            "        if (!managed_state_released_)",
+            "        {",
+            "            managed_state_released_ = true;",
+            "            release_(managed_state_);",
+            "        }",
+            "    }",
+            "",
+            "    void* managed_state_{};",
+            "    DasCSharpDirectorReleaseThunk release_{};",
+            "    std::atomic<uint32_t> ref_count_{1};",
+            "    bool managed_state_released_{};",
+            "};",
+            "",
         ]
         for interface in sorted(interfaces, key=lambda item: item.name):
             director_name = f"{interface.name}Director"
@@ -1195,13 +1510,66 @@ class CSharpGenerator:
                     "    CSharp" + director_name + "(",
                     "        void* managed_state,",
                     f"        const {callbacks_name}* callbacks)",
-                    "        : managed_state_{managed_state}",
+                    "        : lifetime_{managed_state, callbacks->release}",
                     "        , callbacks_{callbacks}",
                     "    {",
                     "    }",
                     "",
+                    "    uint32_t DAS_STD_CALL AddRef() override",
+                    "    {",
+                    "        return lifetime_.AddRef();",
+                    "    }",
+                    "",
+                    "    uint32_t DAS_STD_CALL Release() override",
+                    "    {",
+                    "        const auto count = lifetime_.Release();",
+                    "        if (count == 0)",
+                    "        {",
+                    "            delete this;",
+                    "        }",
+                    "        return count;",
+                    "    }",
+                    "",
+                    "    DasResult QueryInterface(const DasGuid& iid, void** pp_out_object) override",
+                    "    {",
+                    "        if (pp_out_object == nullptr)",
+                    "        {",
+                    "            return DAS_E_INVALID_POINTER;",
+                    "        }",
+                    "        *pp_out_object = nullptr;",
+                    "        if (iid == DAS_IID_BASE)",
+                    "        {",
+                    f"            *pp_out_object = static_cast<IDasBase*>(static_cast<{interface.name}*>(this));",
+                    "            AddRef();",
+                    "            return DAS_S_OK;",
+                    "        }",
+                ]
+            )
+            for base_name in self._query_interface_names(interface):
+                lines.extend(
+                    [
+                        f"        if (iid == DasIidOf<{base_name}>())",
+                        "        {",
+                        f"            *pp_out_object = static_cast<{base_name}*>(this);",
+                        "            AddRef();",
+                        "            return DAS_S_OK;",
+                        "        }",
+                    ]
+                )
+            lines.extend(
+                [
+                    "        return DAS_E_NO_INTERFACE;",
+                    "    }",
+                    "",
+                ]
+            )
+            for method in self._all_interface_methods(interface):
+                lines.extend(self._generate_native_director_method(method))
+                lines.append("")
+            lines.extend(
+                [
                     "private:",
-                    "    void* managed_state_{};",
+                    "    CSharpDirectorLifetime lifetime_;",
                     f"    const {callbacks_name}* callbacks_{{}};",
                     "};",
                     "",
@@ -1220,12 +1588,38 @@ class CSharpGenerator:
                     "        *pp_out_object = nullptr;",
                     "        return DAS_E_INVALID_POINTER;",
                     "    }",
+                    "    if (callbacks->release == nullptr)",
+                    "    {",
+                    "        *pp_out_object = nullptr;",
+                    "        return DAS_E_CSHARP_DIRECTOR_FACTORY_FAILED;",
+                    "    }",
+                ]
+            )
+            for method in self._all_interface_methods(interface):
+                method_name = _sanitize_identifier(method.name)
+                lines.extend(
+                    [
+                        f"    if (callbacks->{method_name} == nullptr)",
+                        "    {",
+                        "        *pp_out_object = nullptr;",
+                        "        return DAS_E_CSHARP_DIRECTOR_FACTORY_FAILED;",
+                        "    }",
+                    ]
+                )
+            lines.extend(
+                [
                     "    if (managed_state == 0)",
                     "    {",
                     "        *pp_out_object = nullptr;",
                     "        return DAS_E_INVALID_ARGUMENT;",
                     "    }",
-                    f"    auto* object = new CSharp{director_name}(managed_state, callbacks);",
+                    f"    // new CSharp{director_name} allocation site",
+                    f"    auto* object = new (std::nothrow) CSharp{director_name}(managed_state, callbacks);",
+                    "    if (object == nullptr)",
+                    "    {",
+                    "        *pp_out_object = nullptr;",
+                    "        return DAS_E_CSHARP_DIRECTOR_FACTORY_FAILED;",
+                    "    }",
                     "    *pp_out_object = object;",
                     "    return DAS_S_OK;",
                     "}",
@@ -1233,6 +1627,105 @@ class CSharpGenerator:
                 ]
             )
         return "\n".join(lines)
+
+    def _all_interface_methods(self, interface: InterfaceDef) -> list[MethodDef]:
+        methods: list[MethodDef] = []
+        if interface.base_interface and interface.base_interface in self._interfaces:
+            methods.extend(self._all_interface_methods(self._interfaces[interface.base_interface]))
+        methods.extend(_interface_methods(interface))
+        methods.extend(self._property_methods(interface))
+
+        seen: set[tuple[str, int]] = set()
+        result: list[MethodDef] = []
+        for method in methods:
+            key = (method.name, len(method.parameters))
+            if key in seen:
+                continue
+            seen.add(key)
+            result.append(method)
+        return result
+
+    def _query_interface_names(self, interface: InterfaceDef) -> list[str]:
+        names = [interface.name]
+        base_name = interface.base_interface
+        while base_name and base_name != "IDasBase":
+            if base_name not in names:
+                names.append(base_name)
+            base = self._interfaces.get(base_name)
+            if base is None:
+                break
+            base_name = base.base_interface
+        return names
+
+    def _property_methods(self, interface: InterfaceDef) -> list[MethodDef]:
+        methods: list[MethodDef] = []
+        for prop in interface.properties:
+            prop_type = prop.type_info
+            if prop.has_getter:
+                pointer_level = 2 if prop_type.type_kind == TypeKind.INTERFACE else 1
+                methods.append(
+                    MethodDef(
+                        name=f"Get{prop.name}",
+                        return_type=_das_result_type(),
+                        parameters=[
+                            ParameterDef(
+                                name="pp_out" if pointer_level == 2 else "p_out",
+                                type_info=_with_pointer_level(prop_type, pointer_level),
+                                direction=ParamDirection.OUT,
+                                namespace=interface.namespace,
+                            )
+                        ],
+                        namespace=interface.namespace,
+                    )
+                )
+            if prop.has_setter:
+                pointer_level = 1 if prop_type.type_kind == TypeKind.INTERFACE else 0
+                methods.append(
+                    MethodDef(
+                        name=f"Set{prop.name}",
+                        return_type=_das_result_type(),
+                        parameters=[
+                            ParameterDef(
+                                name="p_value" if pointer_level == 1 else "value",
+                                type_info=_with_pointer_level(prop_type, pointer_level),
+                                direction=ParamDirection.IN,
+                                namespace=interface.namespace,
+                            )
+                        ],
+                        namespace=interface.namespace,
+                    )
+                )
+        return methods
+
+    def _generate_native_director_method(self, method: MethodDef) -> list[str]:
+        method_name = _sanitize_identifier(method.name)
+        return_type = _cpp_type(method.return_type)
+        params = [
+            f"{_cpp_type(param.type_info)} {_sanitize_identifier(param.name)}"
+            for param in method.parameters
+        ]
+        args = ", ".join(
+            [
+                "lifetime_.ManagedState()",
+                *[_sanitize_identifier(param.name) for param in method.parameters],
+            ]
+        )
+        lines = [
+            f"    {return_type} DAS_STD_CALL {method_name}({', '.join(params)}) override",
+            "    {",
+            f"        if (callbacks_ == nullptr || callbacks_->{method_name} == nullptr)",
+            "        {",
+        ]
+        default_return = _cpp_default_return(method.return_type)
+        if default_return:
+            lines.append(f"            return {default_return};")
+        lines.append("        }")
+        if _is_void_type(method.return_type):
+            lines.append(f"        callbacks_->{method_name}({args});")
+        else:
+            lines.append(f"        return callbacks_->{method_name}({args});")
+        lines.append("    }")
+        return lines
 
 
 def generate_csharp_artifacts(

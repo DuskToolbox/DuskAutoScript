@@ -1,14 +1,28 @@
+using System;
+
 namespace Das.TestPlugin;
 
 public static class Bootstrap
 {
-    public static PluginPackage Create()
+#if NETFRAMEWORK
+    public static int Create(string bootstrapCookie)
+    {
+        return (int)Das.Generated.Runtime.DasCSharpBootstrap.Invoke(
+            bootstrapCookie,
+            CreatePackage);
+    }
+#else
+    public static int Create(IntPtr args, int sizeBytes)
+    {
+        return (int)Das.Generated.Runtime.DasCSharpBootstrap.Invoke(
+            args,
+            sizeBytes,
+            CreatePackage);
+    }
+#endif
+
+    private static object CreatePackage()
     {
         return new PluginPackage();
-    }
-
-    public static int Main(string[] args)
-    {
-        return args.Length >= 0 ? 0 : 1;
     }
 }
