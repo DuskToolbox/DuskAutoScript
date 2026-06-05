@@ -110,8 +110,8 @@ namespace
 
         if (!g_runtime)
         {
-            DAS::Core::ForeignInterfaceHost::
-                ForeignLanguageRuntimeFactoryDesc desc;
+            DAS::Core::ForeignInterfaceHost::ForeignLanguageRuntimeFactoryDesc
+                desc;
 
             if (lang_lower == "python")
             {
@@ -127,6 +127,11 @@ namespace
             {
                 desc.language = DAS::Core::ForeignInterfaceHost::
                     ForeignInterfaceLanguage::Lua;
+            }
+            else if (lang_lower == "csharp")
+            {
+                desc.language = DAS::Core::ForeignInterfaceHost::
+                    ForeignInterfaceLanguage::CSharp;
             }
             else
             {
@@ -212,19 +217,33 @@ int main(int argc, char* argv[])
             std::string log_level_str = vm["log-level"].as<std::string>();
             int         level = -1;
             if (log_level_str == "trace")
+            {
                 level = DAS_LOG_LEVEL_TRACE;
+            }
             else if (log_level_str == "debug")
+            {
                 level = DAS_LOG_LEVEL_DEBUG;
+            }
             else if (log_level_str == "info")
+            {
                 level = DAS_LOG_LEVEL_INFO;
+            }
             else if (log_level_str == "warn")
+            {
                 level = DAS_LOG_LEVEL_WARN;
+            }
             else if (log_level_str == "error")
+            {
                 level = DAS_LOG_LEVEL_ERROR;
+            }
             else if (log_level_str == "critical")
+            {
                 level = DAS_LOG_LEVEL_CRITICAL;
+            }
             else if (log_level_str == "off")
+            {
                 level = DAS_LOG_LEVEL_OFF;
+            }
 
             if (level >= 0)
             {
@@ -247,19 +266,33 @@ int main(int argc, char* argv[])
             int         level = -1;
             std::string env_str(env_log_level);
             if (env_str == "trace")
+            {
                 level = DAS_LOG_LEVEL_TRACE;
+            }
             else if (env_str == "debug")
+            {
                 level = DAS_LOG_LEVEL_DEBUG;
+            }
             else if (env_str == "info")
+            {
                 level = DAS_LOG_LEVEL_INFO;
+            }
             else if (env_str == "warn")
+            {
                 level = DAS_LOG_LEVEL_WARN;
+            }
             else if (env_str == "error")
+            {
                 level = DAS_LOG_LEVEL_ERROR;
+            }
             else if (env_str == "critical")
+            {
                 level = DAS_LOG_LEVEL_CRITICAL;
+            }
             else if (env_str == "off")
+            {
                 level = DAS_LOG_LEVEL_OFF;
+            }
 
             if (level >= 0)
             {
@@ -277,7 +310,7 @@ int main(int argc, char* argv[])
 
         // 创建 IPC Context
         DAS::Core::IPC::Host::IpcContextConfig config{};
-        std::string                             connect_url_storage;
+        std::string                            connect_url_storage;
 
         if (vm.count("connect-url"))
         {

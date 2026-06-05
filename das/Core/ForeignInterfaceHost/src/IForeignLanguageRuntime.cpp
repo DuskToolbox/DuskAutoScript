@@ -1,3 +1,4 @@
+#include "CSharpHost.h"
 #include "CppHost.h"
 #include "JavaHost.h"
 #include "LuaHost.h"
@@ -25,7 +26,7 @@ auto CreateForeignLanguageRuntime(
 #ifndef DAS_EXPORT_CSHARP
         goto on_no_interface;
 #else
-        goto on_no_interface; // CSharp 尚未实现
+        return CSharpHost::CreateForeignLanguageRuntime(desc_base);
 #endif // DAS_EXPORT_CSHARP
     case Java:
 #ifndef DAS_EXPORT_JAVA
