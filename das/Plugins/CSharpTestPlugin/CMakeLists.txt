@@ -2,7 +2,7 @@ if(NOT TARGET DasCoreCSharpExport)
     message(FATAL_ERROR "CSharpTestPlugin requires DasCoreCSharpExport from EXPORT_CSHARP=ON.")
 endif()
 
-if(NOT DEFINED DAS_CORE_CSHARP_PROJECT_FILE OR NOT EXISTS "${DAS_CORE_CSHARP_PROJECT_FILE}")
+if(NOT DEFINED DAS_CORE_CSHARP_PROJECT_FILE)
     message(FATAL_ERROR "CSharpTestPlugin requires DAS_CORE_CSHARP_PROJECT_FILE from DasCore C# export.")
 endif()
 

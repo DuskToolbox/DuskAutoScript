@@ -12,12 +12,18 @@ set(DAS_IDL_REQUIREMENTS "${DAS_IDL_TOOLS_DIR}/requirements.txt")
 
 # 根据平台设置虚拟环境中的 Python 可执行文件路径
 if(WIN32)
-    set(DAS_IDL_VENV_PYTHON "${DAS_IDL_VENV_DIR}/Scripts/python.exe")
-    set(DAS_IDL_VENV_PIP "${DAS_IDL_VENV_DIR}/Scripts/python.exe -m pip")
-    # 某些环境下，Windows的venv可能使用bin目录而不是Scripts目录
-    if(NOT EXISTS "${DAS_IDL_VENV_PYTHON}")
-        set(DAS_IDL_VENV_PYTHON "${DAS_IDL_VENV_DIR}/bin/python.exe")
-        set(DAS_IDL_VENV_PIP "${DAS_IDL_VENV_DIR}/bin/python.exe -m pip")
+    set(DAS_IDL_VENV_PYTHON_SCRIPTS "${DAS_IDL_VENV_DIR}/Scripts/python.exe")
+    set(DAS_IDL_VENV_PYTHON_BIN "${DAS_IDL_VENV_DIR}/bin/python.exe")
+    if(EXISTS "${DAS_IDL_VENV_PYTHON_SCRIPTS}")
+        set(DAS_IDL_VENV_PYTHON "${DAS_IDL_VENV_PYTHON_SCRIPTS}")
+        set(DAS_IDL_VENV_PIP "${DAS_IDL_VENV_PYTHON_SCRIPTS} -m pip")
+    elseif(EXISTS "${DAS_IDL_VENV_PYTHON_BIN}")
+        # 某些环境下，Windows的venv可能使用bin目录而不是Scripts目录
+        set(DAS_IDL_VENV_PYTHON "${DAS_IDL_VENV_PYTHON_BIN}")
+        set(DAS_IDL_VENV_PIP "${DAS_IDL_VENV_PYTHON_BIN} -m pip")
+    else()
+        set(DAS_IDL_VENV_PYTHON "${DAS_IDL_VENV_PYTHON_SCRIPTS}")
+        set(DAS_IDL_VENV_PIP "${DAS_IDL_VENV_PYTHON_SCRIPTS} -m pip")
     endif()
 else()
     set(DAS_IDL_VENV_PYTHON "${DAS_IDL_VENV_DIR}/bin/python")
@@ -44,6 +50,13 @@ function(das_idl_setup_venv)
         execute_process(
             COMMAND ${CMAKE_COMMAND} -E sleep 2
         )
+
+        if(WIN32
+            AND NOT EXISTS "${DAS_IDL_VENV_PYTHON}"
+            AND EXISTS "${DAS_IDL_VENV_PYTHON_BIN}")
+            set(DAS_IDL_VENV_PYTHON "${DAS_IDL_VENV_PYTHON_BIN}")
+            set(DAS_IDL_VENV_PIP "${DAS_IDL_VENV_PYTHON_BIN} -m pip")
+        endif()
 
         if(NOT EXISTS "${DAS_IDL_VENV_PYTHON}")
             message(FATAL_ERROR
@@ -78,6 +91,8 @@ function(das_idl_setup_venv)
     else()
         message(STATUS "[DAS IDL] No requirements.txt found, skipping dependency installation")
     endif()
+    set(DAS_IDL_VENV_PYTHON "${DAS_IDL_VENV_PYTHON}" PARENT_SCOPE)
+    set(DAS_IDL_VENV_PIP "${DAS_IDL_VENV_PIP}" PARENT_SCOPE)
 endfunction()
 
 # 定义生成 IDL 的宏
