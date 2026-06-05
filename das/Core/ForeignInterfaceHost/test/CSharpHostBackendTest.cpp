@@ -1,4 +1,5 @@
 #include "../src/CSharpHostFxrBackend.h"
+#include "../src/CSharpNetFxBackend.h"
 
 #include <gtest/gtest.h>
 
@@ -9,6 +10,7 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -92,7 +94,7 @@ namespace
             const auto stamp =
                 std::chrono::steady_clock::now().time_since_epoch().count();
             root_ = std::filesystem::temp_directory_path()
-                    / ("das-csharp-hostfxr-backend-" + std::to_string(stamp));
+                    / ("das-csharp-backend-" + std::to_string(stamp));
             std::filesystem::create_directories(root_);
             WriteFile(root_ / "DasCSharpTestPlugin.dll", "");
         }
@@ -164,7 +166,23 @@ namespace
         int                   args_size = 0;
     };
 
+    struct FakeNetFxState
+    {
+        int                   start_result = 0;
+        int                   execute_result = 0;
+        unsigned long         managed_return = DAS_S_OK;
+        bool                  set_package = true;
+        int                   start_calls = 0;
+        int                   execute_calls = 0;
+        int                   release_calls = 0;
+        std::filesystem::path assembly_path;
+        std::string           type_name;
+        std::string           method_name;
+        std::string           bootstrap_cookie;
+    };
+
     FakeHostFxrState* g_fake_state = nullptr;
+    FakeNetFxState*   g_fake_netfx_state = nullptr;
 
     int FakeEntrypoint(void* args, int size_bytes)
     {
@@ -232,8 +250,81 @@ namespace
         return api;
     }
 
+    CSharpNetFxApi MakeFakeApi(FakeNetFxState& state)
+    {
+        g_fake_netfx_state = &state;
+
+        CSharpNetFxApi api{};
+        api.start_clr = [](CSharpNetFxHostHandle* handle, void*) -> int
+        {
+            g_fake_netfx_state->start_calls += 1;
+            *handle =
+                reinterpret_cast<CSharpNetFxHostHandle>(g_fake_netfx_state);
+            return g_fake_netfx_state->start_result;
+        };
+        api.execute_in_default_app_domain =
+            [](CSharpNetFxHostHandle,
+               const std::filesystem::path& assembly_path,
+               std::string_view             type_name,
+               std::string_view             method_name,
+               std::string_view             bootstrap_cookie,
+               unsigned long*               return_value,
+               void*) -> int
+        {
+            g_fake_netfx_state->execute_calls += 1;
+            g_fake_netfx_state->assembly_path = assembly_path;
+            g_fake_netfx_state->type_name = std::string{type_name};
+            g_fake_netfx_state->method_name = std::string{method_name};
+            g_fake_netfx_state->bootstrap_cookie =
+                std::string{bootstrap_cookie};
+            *return_value = g_fake_netfx_state->managed_return;
+
+            if (g_fake_netfx_state->set_package)
+            {
+                auto* package = new BackendPluginPackage();
+                package->AddRef();
+                auto* bootstrap_args =
+                    reinterpret_cast<DasCSharpBootstrapArgsV1*>(
+                        std::stoull(g_fake_netfx_state->bootstrap_cookie));
+                *bootstrap_args->pp_package = package;
+            }
+
+            return g_fake_netfx_state->execute_result;
+        };
+        api.release = [](CSharpNetFxHostHandle, void*)
+        { g_fake_netfx_state->release_calls += 1; };
+        return api;
+    }
+
     DasResult InvokeBackend(
         CSharpHostFxrBackend& backend,
+        const CSharpManifest& manifest)
+    {
+        Das::PluginInterface::IDasPluginPackage* package = nullptr;
+        const auto manifest_path_storage = manifest.manifest_path.string();
+        const auto plugin_root_storage = manifest.package_root.string();
+        const auto plugin_binary_path_storage =
+            manifest.plugin_binary_path.string();
+        DasCSharpBootstrapArgsV1 args{
+            .size = DAS_CSHARP_BOOTSTRAP_ARGS_V1_SIZE,
+            .abi_version = DAS_CSHARP_BOOTSTRAP_ABI_VERSION_V1,
+            .manifest_path = manifest_path_storage.c_str(),
+            .plugin_root = plugin_root_storage.c_str(),
+            .plugin_binary_path = plugin_binary_path_storage.c_str(),
+            .host_api = nullptr,
+            .pp_package = &package,
+        };
+
+        const auto result = backend.LoadPlugin(manifest, args);
+        if (package != nullptr)
+        {
+            package->Release();
+        }
+        return result;
+    }
+
+    DasResult InvokeBackend(
+        CSharpNetFxBackend&   backend,
         const CSharpManifest& manifest)
     {
         Das::PluginInterface::IDasPluginPackage* package = nullptr;
@@ -407,4 +498,152 @@ TEST(CSharpHostBackend, FindDotNetDefinesNativeHostingDiscoveryContract)
     EXPECT_EQ(
         content.find("Microsoft.NETCore.App.Host.win-x64"),
         std::string::npos);
+}
+
+TEST(CSharpHostBackendNetFx, WindowsSeamUsesDefaultAppDomainStringContract)
+{
+    TempBackendLayout layout;
+    auto              manifest = layout.Manifest();
+    manifest.target_framework = "net48";
+    manifest.target_framework_family = CSharpTargetFrameworkFamily::NetFx;
+    manifest.runtime_config_path = std::nullopt;
+
+    FakeNetFxState     state;
+    auto               api = MakeFakeApi(state);
+    CSharpNetFxBackend backend{api};
+
+    EXPECT_EQ(InvokeBackend(backend, manifest), DAS_S_OK);
+    EXPECT_EQ(state.start_calls, 1);
+    EXPECT_EQ(state.execute_calls, 1);
+    EXPECT_EQ(state.release_calls, 1);
+    EXPECT_EQ(
+        state.assembly_path,
+        layout.Manifest().package_root / "DasCSharpTestPlugin.dll");
+    EXPECT_EQ(state.type_name, "Das.TestPlugin.TestPluginEntrypoint");
+    EXPECT_EQ(state.method_name, "Create");
+    ASSERT_FALSE(state.bootstrap_cookie.empty());
+}
+
+TEST(CSharpHostBackendNetFx, ClrInitFailureMapsToClrInitFailed)
+{
+    TempBackendLayout layout;
+    auto              manifest = layout.Manifest();
+    manifest.target_framework = "net48";
+    manifest.target_framework_family = CSharpTargetFrameworkFamily::NetFx;
+    manifest.runtime_config_path = std::nullopt;
+
+    FakeNetFxState state;
+    state.start_result = -1;
+    auto               api = MakeFakeApi(state);
+    CSharpNetFxBackend backend{api};
+
+    EXPECT_EQ(
+        InvokeBackend(backend, manifest),
+        DAS_E_CSHARP_COM_CLR_INIT_FAILED);
+    EXPECT_EQ(state.execute_calls, 0);
+}
+
+TEST(CSharpHostBackendNetFx, EntrypointFailureMapsToEntrypointMissing)
+{
+    TempBackendLayout layout;
+    auto              manifest = layout.Manifest();
+    manifest.target_framework = "net48";
+    manifest.target_framework_family = CSharpTargetFrameworkFamily::NetFx;
+    manifest.runtime_config_path = std::nullopt;
+
+    FakeNetFxState state;
+    state.execute_result = -1;
+    auto               api = MakeFakeApi(state);
+    CSharpNetFxBackend backend{api};
+
+    EXPECT_EQ(
+        InvokeBackend(backend, manifest),
+        DAS_E_CSHARP_ENTRYPOINT_MISSING);
+}
+
+TEST(CSharpHostBackendNetFx, ManagedFailureMapsToPluginInitFailed)
+{
+    TempBackendLayout layout;
+    auto              manifest = layout.Manifest();
+    manifest.target_framework = "net48";
+    manifest.target_framework_family = CSharpTargetFrameworkFamily::NetFx;
+    manifest.runtime_config_path = std::nullopt;
+
+    FakeNetFxState state;
+    state.managed_return = DAS_E_CSHARP_ERROR;
+    auto               api = MakeFakeApi(state);
+    CSharpNetFxBackend backend{api};
+
+    EXPECT_EQ(
+        InvokeBackend(backend, manifest),
+        DAS_E_CSHARP_PLUGIN_INIT_FAILED);
+}
+
+TEST(CSharpHostBackendNetFx, NullPackageOutMapsToPluginInitFailed)
+{
+    TempBackendLayout layout;
+    auto              manifest = layout.Manifest();
+    manifest.target_framework = "net48";
+    manifest.target_framework_family = CSharpTargetFrameworkFamily::NetFx;
+    manifest.runtime_config_path = std::nullopt;
+
+    FakeNetFxState state;
+    state.set_package = false;
+    auto               api = MakeFakeApi(state);
+    CSharpNetFxBackend backend{api};
+
+    EXPECT_EQ(
+        InvokeBackend(backend, manifest),
+        DAS_E_CSHARP_PLUGIN_INIT_FAILED);
+}
+
+TEST(CSharpHostBackendNetFx, DefaultBackendIsDeterministicWithoutClrSeam)
+{
+    TempBackendLayout layout;
+    auto              manifest = layout.Manifest();
+    manifest.target_framework = "net48";
+    manifest.target_framework_family = CSharpTargetFrameworkFamily::NetFx;
+    manifest.runtime_config_path = std::nullopt;
+
+    CSharpNetFxBackend backend;
+
+#ifdef _WIN32
+    EXPECT_EQ(
+        InvokeBackend(backend, manifest),
+        DAS_E_CSHARP_COM_CLR_INIT_FAILED);
+#else
+    EXPECT_EQ(
+        InvokeBackend(backend, manifest),
+        DAS_E_CSHARP_NETFX_UNSUPPORTED_PLATFORM);
+#endif
+}
+
+TEST(CSharpHostBackendNetFx, FindDotNetFrameworkDefinesNet48GatingContract)
+{
+    const auto    source_path = std::filesystem::path{__FILE__}
+                                    .parent_path()
+                                    .parent_path()
+                                    .parent_path()
+                                    .parent_path()
+                                    .parent_path()
+                                / "cmake" / "FindDotNetFramework.cmake";
+    std::ifstream source{source_path};
+    ASSERT_TRUE(source.is_open());
+    const std::string content(
+        (std::istreambuf_iterator<char>(source)),
+        std::istreambuf_iterator<char>());
+
+    EXPECT_NE(
+        content.find("DotNetFramework_NET48_REFERENCE_DIR"),
+        std::string::npos);
+    EXPECT_NE(
+        content.find("DotNetFramework_CSC_EXECUTABLE"),
+        std::string::npos);
+    EXPECT_NE(
+        content.find("DotNetFramework_CLR_HOSTING_FOUND"),
+        std::string::npos);
+    EXPECT_NE(content.find("FindPackageHandleStandardArgs"), std::string::npos);
+    EXPECT_EQ(content.find("Program Files"), std::string::npos);
+    EXPECT_EQ(content.find("C:/"), std::string::npos);
+    EXPECT_EQ(content.find("C:\\"), std::string::npos);
 }

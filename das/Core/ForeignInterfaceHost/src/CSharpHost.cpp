@@ -1,5 +1,6 @@
 #include "CSharpHost.h"
 #include "CSharpHostFxrBackend.h"
+#include "CSharpNetFxBackend.h"
 
 #include <das/Core/Logger/Logger.h>
 #include <das/DasPtr.hpp>
@@ -34,6 +35,7 @@ CSharpHost::CSharpHost()
 #ifdef DAS_CSHARP_HOSTFXR_BACKEND
     backends_.modern_dotnet = std::make_unique<CSharpHostFxrBackend>();
 #endif
+    backends_.netfx = std::make_unique<CSharpNetFxBackend>();
 }
 
 CSharpHost::CSharpHost(CSharpRuntimeBackendSet backends)

@@ -3,6 +3,8 @@ include(FindPackageHandleStandardArgs)
 set(DOTNET_FRAMEWORK_REFERENCE_ASSEMBLIES_DIR "" CACHE PATH "Directory containing net48 API metadata")
 set(NET48_REFERENCE_ASSEMBLIES_DIR "" CACHE PATH "Directory containing net48 API metadata")
 set(DotNetFramework_CSC_EXECUTABLE "" CACHE FILEPATH "Path to the C# compiler executable for net48 builds")
+set(DotNetFramework_CLR_HOSTING_INCLUDE_DIR "" CACHE PATH "Directory containing CLR hosting headers")
+set(DotNetFramework_MSCOREE_LIBRARY "" CACHE FILEPATH "Path to the CLR hosting import library")
 
 set(_NET48_REF_CANDIDATES "")
 
@@ -35,14 +37,19 @@ foreach(_NET48_REF_DIR IN LISTS _NET48_REF_CANDIDATES)
     endif()
 endforeach()
 
+set(_DOTNET_FRAMEWORK_CSC_CANDIDATES "")
+
 if(DotNetFramework_CSC_EXECUTABLE)
-    set(_DOTNET_FRAMEWORK_CSC_CANDIDATES "${DotNetFramework_CSC_EXECUTABLE}")
-else()
-    set(_DOTNET_FRAMEWORK_CSC_CANDIDATES "")
+    list(APPEND _DOTNET_FRAMEWORK_CSC_CANDIDATES "${DotNetFramework_CSC_EXECUTABLE}")
 endif()
 
 if(DEFINED ENV{DotNetFramework_CSC_EXECUTABLE})
     file(TO_CMAKE_PATH "$ENV{DotNetFramework_CSC_EXECUTABLE}" _DOTNET_FRAMEWORK_ENV_CSC)
+    list(APPEND _DOTNET_FRAMEWORK_CSC_CANDIDATES "${_DOTNET_FRAMEWORK_ENV_CSC}")
+endif()
+
+if(DEFINED ENV{DOTNET_FRAMEWORK_CSC_EXECUTABLE})
+    file(TO_CMAKE_PATH "$ENV{DOTNET_FRAMEWORK_CSC_EXECUTABLE}" _DOTNET_FRAMEWORK_ENV_CSC)
     list(APPEND _DOTNET_FRAMEWORK_CSC_CANDIDATES "${_DOTNET_FRAMEWORK_ENV_CSC}")
 endif()
 
@@ -56,15 +63,93 @@ if(_DOTNET_FRAMEWORK_FOUND_CSC)
     set(DotNetFramework_CSC_EXECUTABLE "${_DOTNET_FRAMEWORK_FOUND_CSC}" CACHE FILEPATH "Path to the C# compiler executable for net48 builds" FORCE)
 endif()
 
-find_package_handle_standard_args(DotNetFramework
+set(_DOTNET_FRAMEWORK_CLR_HOSTING_HINTS "")
+
+if(DotNetFramework_CLR_HOSTING_INCLUDE_DIR)
+    list(APPEND _DOTNET_FRAMEWORK_CLR_HOSTING_HINTS "${DotNetFramework_CLR_HOSTING_INCLUDE_DIR}")
+endif()
+
+if(DEFINED ENV{DotNetFramework_CLR_HOSTING_INCLUDE_DIR})
+    file(TO_CMAKE_PATH "$ENV{DotNetFramework_CLR_HOSTING_INCLUDE_DIR}" _DOTNET_FRAMEWORK_ENV_CLR_INCLUDE)
+    list(APPEND _DOTNET_FRAMEWORK_CLR_HOSTING_HINTS "${_DOTNET_FRAMEWORK_ENV_CLR_INCLUDE}")
+endif()
+
+if(DEFINED ENV{DOTNET_FRAMEWORK_CLR_HOSTING_INCLUDE_DIR})
+    file(TO_CMAKE_PATH "$ENV{DOTNET_FRAMEWORK_CLR_HOSTING_INCLUDE_DIR}" _DOTNET_FRAMEWORK_ENV_CLR_INCLUDE)
+    list(APPEND _DOTNET_FRAMEWORK_CLR_HOSTING_HINTS "${_DOTNET_FRAMEWORK_ENV_CLR_INCLUDE}")
+endif()
+
+find_path(_DOTNET_FRAMEWORK_CLR_HOSTING_INCLUDE_DIR
+    NAMES mscoree.h metahost.h
+    HINTS ${_DOTNET_FRAMEWORK_CLR_HOSTING_HINTS}
+    NO_CACHE
+)
+
+if(_DOTNET_FRAMEWORK_CLR_HOSTING_INCLUDE_DIR)
+    set(DotNetFramework_CLR_HOSTING_INCLUDE_DIR "${_DOTNET_FRAMEWORK_CLR_HOSTING_INCLUDE_DIR}" CACHE PATH "Directory containing CLR hosting headers" FORCE)
+endif()
+
+set(_DOTNET_FRAMEWORK_MSCOREE_LIBRARY_HINTS "")
+
+if(DotNetFramework_MSCOREE_LIBRARY)
+    get_filename_component(_DOTNET_FRAMEWORK_MSCOREE_LIBRARY_DIR "${DotNetFramework_MSCOREE_LIBRARY}" DIRECTORY)
+    list(APPEND _DOTNET_FRAMEWORK_MSCOREE_LIBRARY_HINTS "${_DOTNET_FRAMEWORK_MSCOREE_LIBRARY_DIR}")
+endif()
+
+if(DEFINED ENV{DotNetFramework_MSCOREE_LIBRARY})
+    file(TO_CMAKE_PATH "$ENV{DotNetFramework_MSCOREE_LIBRARY}" _DOTNET_FRAMEWORK_ENV_MSCOREE)
+    get_filename_component(_DOTNET_FRAMEWORK_ENV_MSCOREE_DIR "${_DOTNET_FRAMEWORK_ENV_MSCOREE}" DIRECTORY)
+    list(APPEND _DOTNET_FRAMEWORK_MSCOREE_LIBRARY_HINTS "${_DOTNET_FRAMEWORK_ENV_MSCOREE_DIR}")
+endif()
+
+if(DEFINED ENV{DOTNET_FRAMEWORK_MSCOREE_LIBRARY})
+    file(TO_CMAKE_PATH "$ENV{DOTNET_FRAMEWORK_MSCOREE_LIBRARY}" _DOTNET_FRAMEWORK_ENV_MSCOREE)
+    get_filename_component(_DOTNET_FRAMEWORK_ENV_MSCOREE_DIR "${_DOTNET_FRAMEWORK_ENV_MSCOREE}" DIRECTORY)
+    list(APPEND _DOTNET_FRAMEWORK_MSCOREE_LIBRARY_HINTS "${_DOTNET_FRAMEWORK_ENV_MSCOREE_DIR}")
+endif()
+
+find_library(_DOTNET_FRAMEWORK_FOUND_MSCOREE
+    NAMES mscoree libmscoree
+    HINTS ${_DOTNET_FRAMEWORK_MSCOREE_LIBRARY_HINTS}
+    NO_CACHE
+)
+
+if(_DOTNET_FRAMEWORK_FOUND_MSCOREE)
+    set(DotNetFramework_MSCOREE_LIBRARY "${_DOTNET_FRAMEWORK_FOUND_MSCOREE}" CACHE FILEPATH "Path to the CLR hosting import library" FORCE)
+endif()
+
+find_package_handle_standard_args(DotNetFrameworkNet48
     REQUIRED_VARS
         DotNetFramework_NET48_REFERENCE_DIR
         DotNetFramework_NET48_MSCORLIB
+        DotNetFramework_CSC_EXECUTABLE
+    NAME_MISMATCHED
 )
+
+find_package_handle_standard_args(DotNetFrameworkClrHosting
+    REQUIRED_VARS
+        DotNetFramework_CLR_HOSTING_INCLUDE_DIR
+        DotNetFramework_MSCOREE_LIBRARY
+    NAME_MISMATCHED
+)
+
+set(DotNetFramework_FOUND ${DotNetFrameworkNet48_FOUND})
+set(DotNetFramework_CLR_HOSTING_FOUND ${DotNetFrameworkClrHosting_FOUND})
+
+if(DotNetFramework_CLR_HOSTING_FOUND AND NOT TARGET DotNetFramework::clr_hosting)
+    add_library(DotNetFramework::clr_hosting INTERFACE IMPORTED)
+    set_target_properties(DotNetFramework::clr_hosting PROPERTIES
+        INTERFACE_INCLUDE_DIRECTORIES "${DotNetFramework_CLR_HOSTING_INCLUDE_DIR}"
+        INTERFACE_LINK_LIBRARIES "${DotNetFramework_MSCOREE_LIBRARY}"
+    )
+endif()
 
 if(DotNetFramework_FOUND)
     message(STATUS "[FindDotNetFramework] net48 refs: ${DotNetFramework_NET48_REFERENCE_DIR}")
-    if(DotNetFramework_CSC_EXECUTABLE)
-        message(STATUS "[FindDotNetFramework] csc: ${DotNetFramework_CSC_EXECUTABLE}")
-    endif()
+    message(STATUS "[FindDotNetFramework] csc: ${DotNetFramework_CSC_EXECUTABLE}")
+endif()
+
+if(DotNetFramework_CLR_HOSTING_FOUND)
+    message(STATUS "[FindDotNetFramework] CLR hosting include: ${DotNetFramework_CLR_HOSTING_INCLUDE_DIR}")
+    message(STATUS "[FindDotNetFramework] CLR hosting library: ${DotNetFramework_MSCOREE_LIBRARY}")
 endif()
