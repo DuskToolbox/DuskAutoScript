@@ -67,11 +67,15 @@ _CSHARP_KEYWORD_RENAMES = {
     "double": "doubleValue",
     "event": "eventValue",
     "float": "floatValue",
+    "in": "inValue",
     "int": "intValue",
     "interface": "interfaceValue",
     "long": "longValue",
+    "namespace": "namespaceValue",
     "object": "objectValue",
+    "out": "outValue",
     "params": "paramsValue",
+    "ref": "refValue",
     "sbyte": "sbyteValue",
     "short": "shortValue",
     "string": "stringValue",
@@ -123,6 +127,18 @@ def _camel_name(name: str) -> str:
     pascal = _pascal_name(name)
     result = pascal[:1].lower() + pascal[1:]
     return _CSHARP_KEYWORD_RENAMES.get(result, result)
+
+
+def _native_callback_param_name(param: ParameterDef) -> str:
+    name = _sanitize_identifier(param.name)
+    if not _is_out_param(param):
+        return name
+    if name in ("pp_out", "p_out"):
+        return name
+    for prefix in ("pp_out_", "p_out_"):
+        if name.startswith(prefix):
+            return name
+    return f"p_out_{name}"
 
 
 def _unused_expression(values: str) -> str:
@@ -1503,7 +1519,7 @@ class CSharpGenerator:
     def _native_callback_param_decls(self, method: MethodDef) -> str:
         params = ["System.IntPtr managedState"]
         params.extend(
-            f"{self._native_callback_param_type(param)} {_sanitize_identifier(param.name)}"
+            f"{self._native_callback_param_type(param)} {_native_callback_param_name(param)}"
             for param in method.parameters
         )
         return ", ".join(params)
@@ -1526,13 +1542,13 @@ class CSharpGenerator:
         method_name = _sanitize_identifier(method.name)
         lines = [
             "    [UnmanagedCallersOnly]",
-            f"    private static {_csharp_type(method.return_type, public_surface=False)} {method_name}Thunk({self._native_callback_param_decls(method)})",
+            f"    private static unsafe {_csharp_type(method.return_type, public_surface=False)} {method_name}Thunk({self._native_callback_param_decls(method)})",
             "    {",
         ]
         for param in method.parameters:
             if not _is_out_param(param):
                 continue
-            param_name = _sanitize_identifier(param.name)
+            param_name = _native_callback_param_name(param)
             lines.extend(
                 [
                     f"        if ({param_name} == null)",
@@ -1557,7 +1573,7 @@ class CSharpGenerator:
         for param in method.parameters:
             if not _is_out_param(param):
                 continue
-            param_name = _sanitize_identifier(param.name)
+            param_name = _native_callback_param_name(param)
             out_name = _callback_out_name(param)
             value_type = _out_value_type(param)
             if _is_interface_pointer(value_type) or _is_read_only_string_pointer(value_type):
@@ -1628,7 +1644,7 @@ class CSharpGenerator:
             [
                 "}",
                 "",
-                f"public sealed class {director_name} : IDisposable",
+                f"public sealed unsafe class {director_name} : IDisposable",
                 "{",
                 "    private readonly DirectorState _state;",
                 "    private readonly GCHandle _managedState;",

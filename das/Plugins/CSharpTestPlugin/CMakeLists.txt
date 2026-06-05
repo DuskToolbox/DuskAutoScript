@@ -149,21 +149,28 @@ set(CSHARP_TEST_PLUGIN_GENERATED_NATIVE_SUPPORT
 set_source_files_properties(
     "${CSHARP_TEST_PLUGIN_GENERATED_NATIVE_SUPPORT}"
     PROPERTIES GENERATED TRUE)
-add_library(CSharpTestPluginGeneratedNativeSupportCompile OBJECT
+add_library(CSharpTestPluginGeneratedNativeSupport SHARED
     "${CSHARP_TEST_PLUGIN_GENERATED_NATIVE_SUPPORT}")
-add_dependencies(CSharpTestPluginGeneratedNativeSupportCompile DasCoreCSharpExport)
-target_include_directories(CSharpTestPluginGeneratedNativeSupportCompile PRIVATE
+set_target_properties(CSharpTestPluginGeneratedNativeSupport PROPERTIES
+    OUTPUT_NAME DasCSharpNativeSupport
+    PREFIX "")
+add_dependencies(CSharpTestPluginGeneratedNativeSupport DasCoreCSharpExport)
+target_include_directories(CSharpTestPluginGeneratedNativeSupport PRIVATE
     "${DAS_CORE_CSHARP_OUTPUT_DIR}/Native"
     "${CMAKE_SOURCE_DIR}/include"
     "${CMAKE_BINARY_DIR}/das/include"
     "${CMAKE_BINARY_DIR}/das/include/das/_autogen/idl/abi"
     "${CMAKE_BINARY_DIR}/das/include/das/_autogen/idl/header")
-target_compile_definitions(CSharpTestPluginGeneratedNativeSupportCompile PRIVATE
+target_compile_definitions(CSharpTestPluginGeneratedNativeSupport PRIVATE
     DAS_BUILD_SHARED)
+target_link_libraries(CSharpTestPluginGeneratedNativeSupport PRIVATE
+    DasCore)
 if(MSVC)
-    target_compile_options(CSharpTestPluginGeneratedNativeSupportCompile PRIVATE
+    target_compile_options(CSharpTestPluginGeneratedNativeSupport PRIVATE
         /bigobj)
 endif()
+add_custom_target(CSharpTestPluginGeneratedNativeSupportCompile
+    DEPENDS CSharpTestPluginGeneratedNativeSupport)
 
 if(DAS_CSHARP_BUILD_NET48)
     das_add_csharp_test_plugin_build(

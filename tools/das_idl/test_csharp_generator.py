@@ -344,6 +344,58 @@ class TestCSharpGeneratorContract(unittest.TestCase):
         self.assertNotIn("DasMatchParams params)", combined)
         self.assertNotIn(" ulong int)", combined)
 
+    def test_d79_property_director_out_param_names_avoid_csharp_keywords(self):
+        doc = parse_idl(
+            """
+            errorcode DasResult {
+                DAS_S_OK = 0,
+                DAS_E_INVALID_POINTER = -1073750017,
+                DAS_E_CSHARP_ERROR = -1073750021,
+                DAS_E_CSHARP_DIRECTOR_FACTORY_FAILED = -1073800003,
+            }
+
+            namespace Das {
+                [uuid("11111111-2222-3333-4444-555555555555")]
+                interface IDasPropertySample : IDasBase {
+                    [get, set] int Line;
+                    DasResult CanUnloadNow([out] bool* canUnloadNow);
+                }
+            }
+            """
+        )
+        artifacts = generate_csharp_artifacts(
+            doc,
+            namespace_root="Das.Generated",
+            package_name="Das.Generated",
+            project_name="DasGenerated",
+            idl_header_names=["DasResult.idl"],
+        )
+        director = artifacts.files[
+            "Das.Generated/Directors/IDasPropertySampleDirector.cs"
+        ]
+
+        self.assertIn(
+            "public sealed unsafe class IDasPropertySampleDirector : IDisposable",
+            director,
+        )
+        self.assertIn("DasResult GetLine(out int outValue);", director)
+        self.assertIn("private static unsafe DasResult GetLineThunk(", director)
+        self.assertIn("var result = state.Callbacks.GetLine(out var outValue);", director)
+        self.assertIn("*p_out = outValue;", director)
+        self.assertIn("DasResult CanUnloadNow(out bool canUnloadNow);", director)
+        self.assertIn(
+            "private static unsafe DasResult CanUnloadNowThunk(System.IntPtr managedState, bool* p_out_canUnloadNow)",
+            director,
+        )
+        self.assertIn(
+            "var result = state.Callbacks.CanUnloadNow(out var canUnloadNow);",
+            director,
+        )
+        self.assertIn("*p_out_canUnloadNow = canUnloadNow;", director)
+        self.assertNotIn("out int out)", director)
+        self.assertNotIn("out var out)", director)
+        self.assertNotIn("bool* canUnloadNow)", director)
+
     def test_d77_19_d77_22_d77_59_combined_source_gate_keeps_explicit_abi(self):
         artifacts = _artifacts()
         combined = _combined_text(artifacts)
