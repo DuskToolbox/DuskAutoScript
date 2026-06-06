@@ -426,7 +426,7 @@ class TestCSharpGeneratorContract(unittest.TestCase):
         self.assertIn("internal readonly struct NativeHandle", combined)
         self.assertIn("internal System.IntPtr Value", combined)
         self.assertIn("unsafe partial class NativeMethods", combined)
-        self.assertIn("delegate* unmanaged<System.IntPtr, int>", combined)
+        self.assertIn("delegate* unmanaged<System.IntPtr, uint> Release;", combined)
         self.assertLess(wrapper.index("public DasResult Flush()"), wrapper.index("FlushOrThrow"))
         self.assertNotIn("throw new DasException", wrapper)
         self.assertNotIn("public readonly struct NativeHandle", combined)
@@ -438,10 +438,9 @@ class TestCSharpGeneratorContract(unittest.TestCase):
 
         self.assertIn("#if NET5_0_OR_GREATER", native_methods)
         self.assertIn("#if NET7_0_OR_GREATER", native_methods)
-        self.assertIn("#if NET8_0_OR_GREATER", native_methods)
         self.assertIn("#if NETFRAMEWORK", native_methods)
         self.assertIn("LibraryImport", native_methods)
-        self.assertIn("delegate* unmanaged", native_methods)
+        self.assertNotIn("ReleaseFunctionPointer", native_methods)
 
 
 class TestCSharpExportCli(unittest.TestCase):
@@ -532,7 +531,11 @@ class TestCSharpGeneratorPhase77CompleteSurface(unittest.TestCase):
             "public unsafe DasResult Dispatch(string functionName, IDasVariantVector arguments)",
             wrapper,
         )
-        self.assertIn("ArgumentNullException.ThrowIfNull(functionName);", wrapper)
+        self.assertIn("if (functionName is null)", wrapper)
+        self.assertIn(
+            "throw new ArgumentNullException(nameof(functionName));",
+            wrapper,
+        )
         self.assertIn("fixed (char* pValue = functionName)", wrapper)
         self.assertIn("(ushort*)pValue", wrapper)
         self.assertIn("checked((nuint)functionName.Length)", wrapper)
@@ -547,7 +550,8 @@ class TestCSharpGeneratorPhase77CompleteSurface(unittest.TestCase):
         read_only_string = artifacts.files["Das.Generated/Wrappers/DasReadOnlyString.cs"]
         combined = _combined_text(artifacts)
 
-        self.assertIn("ArgumentNullException.ThrowIfNull(value);", string_interop)
+        self.assertIn("if (value is null)", string_interop)
+        self.assertIn("throw new ArgumentNullException(nameof(value));", string_interop)
         self.assertIn("internal const string EmbeddedNul = \"left\\0right\";", string_interop)
         self.assertIn("internal const string UnpairedSurrogate = \"\\ud800\";", string_interop)
         self.assertIn("DasCSharpGetIDasReadOnlyStringUtf16", read_only_string)
@@ -731,6 +735,8 @@ class TestCSharpGeneratorPhase77CompleteSurface(unittest.TestCase):
             bootstrap,
         )
         self.assertIn("private static IntPtr DecodeBootstrapCookie", bootstrap)
+        self.assertIn("trimmed_cookie.Substring(2)", bootstrap)
+        self.assertNotIn("trimmed_cookie.AsSpan(2)", bootstrap)
         self.assertIn("ValidateBootstrapArgs(bootstrapArgs, sizeBytes)", bootstrap)
         self.assertIn("args->size != Marshal.SizeOf<DasCSharpBootstrapArgsV1>()", bootstrap)
         self.assertIn(
@@ -986,6 +992,30 @@ class TestCSharpGeneratorPhase79NativeDirectorSurface(unittest.TestCase):
         self.assertIn("#if !NETFRAMEWORK", component_wrapper)
         self.assertIn("public IDasComponentDispatchResult DispatchOrThrow", component_wrapper)
         self.assertNotIn("OrThrow", component_director)
+
+    def test_d79_2_netframework_director_callbacks_use_delegate_function_pointers(self):
+        director = _phase79_director_artifacts().files[
+            "Das.Generated/Directors/IDasComponentDirector.cs"
+        ]
+
+        self.assertIn("#if NETFRAMEWORK\n    public System.IntPtr Release;", director)
+        self.assertIn("#else\n    public delegate* unmanaged<System.IntPtr, uint> Release;", director)
+        self.assertIn("private delegate uint ReleaseDelegate(System.IntPtr managedState);", director)
+        self.assertIn(
+            "private delegate DasResult DispatchDelegate(System.IntPtr managedState, "
+            "IntPtr p_function_name, IntPtr p_arguments, System.IntPtr* pp_out_result);",
+            director,
+        )
+        self.assertIn("state.CallbackDelegates = new Delegate[]", director)
+        self.assertIn(
+            "Release = Marshal.GetFunctionPointerForDelegate(releaseThunk),",
+            director,
+        )
+        self.assertIn(
+            "Dispatch = Marshal.GetFunctionPointerForDelegate(dispatchThunk),",
+            director,
+        )
+        self.assertIn("#if !NETFRAMEWORK\n    [UnmanagedCallersOnly]\n#endif", director)
 
     def test_d79_02_native_methods_split_director_support_from_core_das(self):
         artifacts = _phase79_director_artifacts()

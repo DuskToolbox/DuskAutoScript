@@ -211,7 +211,8 @@ class TestCSharpGeneratorUtf16Contract(unittest.TestCase):
     def test_d77_34_d77_44_d77_48_csharp_string_fixtures_are_lossless(self):
         combined = _artifacts_text()
 
-        self.assertIn("ArgumentNullException.ThrowIfNull(value)", combined)
+        self.assertIn("if (value is null)", combined)
+        self.assertIn("throw new ArgumentNullException(nameof(value));", combined)
         self.assertIn('EmbeddedNul = "left\\0right"', combined)
         self.assertIn('UnpairedSurrogate = "\\ud800"', combined)
         self.assertIn("checked((nuint)value.Length)", combined)

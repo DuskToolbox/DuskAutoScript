@@ -23,19 +23,31 @@ public static class GeneratedPackageFactory
 
     public static IDasPluginPackage CreatePackage(PluginPackage package)
     {
-        ArgumentNullException.ThrowIfNull(package);
+        if (package is null)
+        {
+            throw new ArgumentNullException(nameof(package));
+        }
+
         return IDasPluginPackageDirector.Create(new PackageCallbacks(package));
     }
 
     public static IDasComponentFactory CreateComponentFactory(PluginPackage package)
     {
-        ArgumentNullException.ThrowIfNull(package);
+        if (package is null)
+        {
+            throw new ArgumentNullException(nameof(package));
+        }
+
         return IDasComponentFactoryDirector.Create(new ComponentFactoryCallbacks(package));
     }
 
     public static IDasComponent CreateComponent(Component component)
     {
-        ArgumentNullException.ThrowIfNull(component);
+        if (component is null)
+        {
+            throw new ArgumentNullException(nameof(component));
+        }
+
         return IDasComponentDirector.Create(new ComponentCallbacks(component));
     }
 
@@ -44,9 +56,20 @@ public static class GeneratedPackageFactory
         string marker,
         LifecycleFixtures lifecycle)
     {
-        ArgumentNullException.ThrowIfNull(callback);
-        ArgumentNullException.ThrowIfNull(marker);
-        ArgumentNullException.ThrowIfNull(lifecycle);
+        if (callback is null)
+        {
+            throw new ArgumentNullException(nameof(callback));
+        }
+
+        if (marker is null)
+        {
+            throw new ArgumentNullException(nameof(marker));
+        }
+
+        if (lifecycle is null)
+        {
+            throw new ArgumentNullException(nameof(lifecycle));
+        }
 
         var callbacks = new LifecycleComponentCallbacks(callback, marker, lifecycle);
         lifecycle.Track(callbacks);

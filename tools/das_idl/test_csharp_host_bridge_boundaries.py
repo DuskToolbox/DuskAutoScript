@@ -469,6 +469,7 @@ class TestCSharpHostBridgeBoundaries(unittest.TestCase):
             r'Include="$(DasGeneratedOutputDir)\Das.Generated\**\*.cs"',
             text,
         )
+        self.assertIn(r'Compile Remove="bin\**;obj\**"', text)
         self.assertNotIn("ProjectReference", text)
         self.assertNotIn("DasGeneratedProject", text)
 

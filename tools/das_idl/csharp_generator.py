@@ -85,6 +85,14 @@ _CSHARP_KEYWORD_RENAMES = {
     "ushort": "ushortValue",
     "void": "voidValue",
 }
+_CSHARP_INHERITED_MEMBER_NAMES = frozenset(
+    {
+        "Equals",
+        "GetHashCode",
+        "GetType",
+        "ToString",
+    }
+)
 
 
 def _require_das_namespace(namespace_root: str) -> str:
@@ -139,6 +147,19 @@ def _native_callback_param_name(param: ParameterDef) -> str:
         if name.startswith(prefix):
             return name
     return f"p_out_{name}"
+
+
+def _argument_null_check_lines(name: str, indent: str = "        ") -> list[str]:
+    return [
+        f"{indent}if ({name} is null)",
+        f"{indent}{{",
+        f"{indent}    throw new ArgumentNullException(nameof({name}));",
+        f"{indent}}}",
+    ]
+
+
+def _member_hiding_modifier(name: str) -> str:
+    return "new " if name in _CSHARP_INHERITED_MEMBER_NAMES else ""
 
 
 def _unused_expression(values: str) -> str:
@@ -675,10 +696,6 @@ class CSharpGenerator:
             [
                 "#endif",
                 "",
-                "#if NET8_0_OR_GREATER",
-                "    internal static delegate* unmanaged<System.IntPtr, int> ReleaseFunctionPointer;",
-                "#endif",
-                "",
                 "#if NETFRAMEWORK",
                 "    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]",
                 "    internal delegate int AddRefDelegate(System.IntPtr handle);",
@@ -848,7 +865,7 @@ class CSharpGenerator:
                 "        out System.IntPtr handle)",
                 "    {",
                 "        var value = managedString;",
-                "        ArgumentNullException.ThrowIfNull(value);",
+                *_argument_null_check_lines("value"),
                 "        fixed (char* pValue = value)",
                 "        {",
                 "            return NativeMethods.CreateIDasReadOnlyStringFromUtf16WithLength(",
@@ -863,7 +880,7 @@ class CSharpGenerator:
                 "        out System.IntPtr handle)",
                 "    {",
                 "        var value = managedString;",
-                "        ArgumentNullException.ThrowIfNull(value);",
+                *_argument_null_check_lines("value"),
                 "        fixed (char* pValue = value)",
                 "        {",
                 "            return NativeMethods.CreateIDasStringFromUtf16WithLength(",
@@ -939,7 +956,7 @@ class CSharpGenerator:
                 "        if (trimmed_cookie.StartsWith(\"0x\", StringComparison.OrdinalIgnoreCase))",
                 "        {",
                 "            return (IntPtr)(long)ulong.Parse(",
-                "                trimmed_cookie.AsSpan(2),",
+                "                trimmed_cookie.Substring(2),",
                 "                NumberStyles.HexNumber,",
                 "                CultureInfo.InvariantCulture);",
                 "        }",
@@ -1884,7 +1901,7 @@ class CSharpGenerator:
         for param in in_params:
             if _is_interface_pointer(param.type_info) or _is_read_only_string_pointer(param.type_info):
                 param_name = _camel_name(param.name)
-                lines.append(f"        ArgumentNullException.ThrowIfNull({param_name});")
+                lines.extend(_argument_null_check_lines(param_name))
                 lines.append(
                     f"        if (!{param_name}.CanAssignTo(\"{type_simple_name(param.type_info)}\"))"
                     if _is_interface_pointer(param.type_info) and type_simple_name(param.type_info) != "IDasReadOnlyString"
@@ -2009,7 +2026,7 @@ class CSharpGenerator:
         return [
             f"    public unsafe {result_type} {method_name}({params})",
             "    {",
-            f"        ArgumentNullException.ThrowIfNull({param_name});",
+            *_argument_null_check_lines(param_name),
             f"        fixed (char* pValue = {param_name})",
             "        {",
             "            var createResult = Das.Generated.Abi.NativeMethods.CreateIDasReadOnlyStringFromUtf16WithLength(",
@@ -2063,6 +2080,12 @@ class CSharpGenerator:
         types.append(_csharp_type(method.return_type, public_surface=False))
         return f"delegate* unmanaged<{', '.join(types)}>"
 
+    def _native_callback_delegate_type_name(self, method: MethodDef) -> str:
+        return f"{_sanitize_identifier(method.name)}Delegate"
+
+    def _native_callback_delegate_local_name(self, method: MethodDef) -> str:
+        return f"{_camel_name(method.name)}Thunk"
+
     def _native_callback_param_decls(self, method: MethodDef) -> str:
         params = ["System.IntPtr managedState"]
         params.extend(
@@ -2092,7 +2115,9 @@ class CSharpGenerator:
         out_params = _method_out_params(method)
         uses_result_object = _is_result_type(method.return_type) and bool(out_params)
         lines = [
+            "#if !NETFRAMEWORK",
             "    [UnmanagedCallersOnly]",
+            "#endif",
             f"    private static unsafe {_csharp_type(method.return_type, public_surface=False)} {method_name}Thunk({self._native_callback_param_decls(method)})",
             "    {",
         ]
@@ -2205,13 +2230,25 @@ class CSharpGenerator:
                 "",
                 "internal unsafe struct " + f"{director_name}NativeCallbacks",
                 "{",
+                "#if NETFRAMEWORK",
+                "    public System.IntPtr Release;",
+                "#else",
                 "    public delegate* unmanaged<System.IntPtr, uint> Release;",
+                "#endif",
             ]
         )
         for method in methods:
+            method_name = _sanitize_identifier(method.name)
+            hiding_modifier = _member_hiding_modifier(method_name)
             lines.append(
-                f"    public {self._native_callback_field_type(method)} {_sanitize_identifier(method.name)};"
+                "#if NETFRAMEWORK"
             )
+            lines.append(f"    public {hiding_modifier}System.IntPtr {method_name};")
+            lines.append("#else")
+            lines.append(
+                f"    public {hiding_modifier}{self._native_callback_field_type(method)} {method_name};"
+            )
+            lines.append("#endif")
         lines.extend(
             [
                 "}",
@@ -2223,20 +2260,70 @@ class CSharpGenerator:
                 f"    private {director_name}NativeCallbacks _nativeCallbacks;",
                 "    private bool _disposed;",
                 "",
+                "#if NETFRAMEWORK",
+                "    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]",
+                "    private delegate uint ReleaseDelegate(System.IntPtr managedState);",
+                "",
+            ]
+        )
+        for method in methods:
+            lines.append("    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]")
+            lines.append(
+                f"    private delegate {_csharp_type(method.return_type, public_surface=False)} {self._native_callback_delegate_type_name(method)}({self._native_callback_param_decls(method)});"
+            )
+            lines.append("")
+        lines.extend(
+            [
+                "#endif",
+                "",
                 f"    public {director_name}({callbacks_name} callbacks)",
                 "    {",
-                "        ArgumentNullException.ThrowIfNull(callbacks);",
+                *_argument_null_check_lines("callbacks"),
                 "        var state = new DirectorState(callbacks);",
                 "        _state = state;",
                 "        _managedState = GCHandle.Alloc(state, GCHandleType.Normal);",
-                f"        _nativeCallbacks = new {director_name}NativeCallbacks",
-                "        {",
-                "            Release = &ReleaseManagedStateThunk,",
+                "#if NETFRAMEWORK",
+                "        var releaseThunk = new ReleaseDelegate(ReleaseManagedStateThunk);",
             ]
         )
         for method in methods:
             method_name = _sanitize_identifier(method.name)
+            local_name = self._native_callback_delegate_local_name(method)
+            delegate_name = self._native_callback_delegate_type_name(method)
+            lines.append(f"        var {local_name} = new {delegate_name}({method_name}Thunk);")
+        lines.extend(
+            [
+                "        state.CallbackDelegates = new Delegate[]",
+                "        {",
+                "            releaseThunk,",
+            ]
+        )
+        for method in methods:
+            local_name = self._native_callback_delegate_local_name(method)
+            lines.append(f"            {local_name},")
+        lines.extend(
+            [
+                "        };",
+                "#endif",
+                f"        _nativeCallbacks = new {director_name}NativeCallbacks",
+                "        {",
+                "#if NETFRAMEWORK",
+                "            Release = Marshal.GetFunctionPointerForDelegate(releaseThunk),",
+                "#else",
+                "            Release = &ReleaseManagedStateThunk,",
+                "#endif",
+            ]
+        )
+        for method in methods:
+            method_name = _sanitize_identifier(method.name)
+            local_name = self._native_callback_delegate_local_name(method)
+            lines.append("#if NETFRAMEWORK")
+            lines.append(
+                f"            {method_name} = Marshal.GetFunctionPointerForDelegate({local_name}),"
+            )
+            lines.append("#else")
             lines.append(f"            {method_name} = &{method_name}Thunk,")
+            lines.append("#endif")
         lines.extend(
             [
                 "        };",
@@ -2299,7 +2386,9 @@ class CSharpGenerator:
                 "        }",
                 "    }",
                 "",
+                "#if !NETFRAMEWORK",
                 "    [UnmanagedCallersOnly]",
+                "#endif",
                 "    private static uint ReleaseManagedStateThunk(System.IntPtr managedState)",
                 "    {",
                 "        ReleaseManagedState(managedState);",
@@ -2322,6 +2411,9 @@ class CSharpGenerator:
                 "",
                 f"        public {callbacks_name} Callbacks {{ get; }}",
                 f"        public {director_name}NativeCallbacks NativeCallbacks {{ get; set; }}",
+                "#if NETFRAMEWORK",
+                "        public Delegate[] CallbackDelegates { get; set; } = Array.Empty<Delegate>();",
+                "#endif",
                 "",
                 "        public static DirectorState FromManagedState(System.IntPtr managedState)",
                 "        {",
