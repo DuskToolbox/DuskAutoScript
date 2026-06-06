@@ -1,6 +1,7 @@
 using Das.Generated;
 using Das.Generated.Abi;
 using Das.Generated.Directors;
+using Das.Generated.Results;
 using Das.Generated.Wrappers;
 
 namespace Das.TestPlugin;
@@ -76,47 +77,52 @@ public static class GeneratedPackageFactory
             this.package = package;
         }
 
-        public DasResult EnumFeature(ulong index, out DasPluginFeature feature)
+        public IDasPluginPackageEnumFeatureResult EnumFeature(ulong index)
         {
             if (index == 0)
             {
-                feature = DasPluginFeature.DAS_PLUGIN_FEATURE_COMPONENT_FACTORY;
-                return DasResult.DAS_S_OK;
+                return new IDasPluginPackageEnumFeatureResult(
+                    DasResult.DAS_S_OK,
+                    DasPluginFeature.DAS_PLUGIN_FEATURE_COMPONENT_FACTORY);
             }
 
-            feature = default;
-            return DasResult.DAS_E_OUT_OF_RANGE;
+            return new IDasPluginPackageEnumFeatureResult(
+                DasResult.DAS_E_OUT_OF_RANGE,
+                default);
         }
 
-        public DasResult CreateFeatureInterface(ulong index, out IntPtr interfaceHandle)
+        public IDasPluginPackageCreateFeatureInterfaceResult
+        CreateFeatureInterface(ulong index)
         {
             if (index != 0)
             {
-                interfaceHandle = IntPtr.Zero;
-                return DasResult.DAS_E_OUT_OF_RANGE;
+                return new IDasPluginPackageCreateFeatureInterfaceResult(
+                    DasResult.DAS_E_OUT_OF_RANGE,
+                    null!);
             }
 
             try
             {
                 var factory = CreateComponentFactory(package);
-                interfaceHandle = factory.Handle;
-                return interfaceHandle == IntPtr.Zero
-                    ? DasResult.DAS_E_CSHARP_DIRECTOR_FACTORY_FAILED
-                    : DasResult.DAS_S_OK;
+                return new IDasPluginPackageCreateFeatureInterfaceResult(
+                    DasResult.DAS_S_OK,
+                    factory);
             }
             catch (Exception ex)
             {
                 Console.Error.WriteLine(
                     $"CSharpTestPlugin CreateFeatureInterface failed: {ex}");
-                interfaceHandle = IntPtr.Zero;
-                return DasResult.DAS_E_CSHARP_DIRECTOR_FACTORY_FAILED;
+                return new IDasPluginPackageCreateFeatureInterfaceResult(
+                    DasResult.DAS_E_CSHARP_DIRECTOR_FACTORY_FAILED,
+                    null!);
             }
         }
 
-        public DasResult CanUnloadNow(out bool canUnloadNow)
+        public IDasPluginPackageCanUnloadNowResult CanUnloadNow()
         {
-            canUnloadNow = package.CanUnloadNow;
-            return DasResult.DAS_S_OK;
+            return new IDasPluginPackageCanUnloadNowResult(
+                DasResult.DAS_S_OK,
+                package.CanUnloadNow);
         }
     }
 
@@ -129,16 +135,18 @@ public static class GeneratedPackageFactory
             this.package = package;
         }
 
-        public DasResult GetGuid(out DasGuid guid)
+        public IDasComponentFactoryGetGuidResult GetGuid()
         {
-            guid = ComponentIid;
-            return DasResult.DAS_S_OK;
+            return new IDasComponentFactoryGetGuidResult(
+                DasResult.DAS_S_OK,
+                ComponentIid);
         }
 
-        public DasResult GetRuntimeClassName(out IntPtr nameHandle)
+        public IDasComponentFactoryGetRuntimeClassNameResult GetRuntimeClassName()
         {
-            nameHandle = IntPtr.Zero;
-            return DasResult.DAS_E_NO_IMPLEMENTATION;
+            return new IDasComponentFactoryGetRuntimeClassNameResult(
+                DasResult.DAS_E_NO_IMPLEMENTATION,
+                null!);
         }
 
         public DasResult IsSupported(DasGuid componentIid)
@@ -148,28 +156,30 @@ public static class GeneratedPackageFactory
                 : DasResult.DAS_E_NO_INTERFACE;
         }
 
-        public DasResult CreateInstance(DasGuid componentIid, out IntPtr componentHandle)
+        public IDasComponentFactoryCreateInstanceResult CreateInstance(
+            DasGuid componentIid)
         {
             if (!GuidEquals(componentIid, ComponentIid))
             {
-                componentHandle = IntPtr.Zero;
-                return DasResult.DAS_E_NO_INTERFACE;
+                return new IDasComponentFactoryCreateInstanceResult(
+                    DasResult.DAS_E_NO_INTERFACE,
+                    null!);
             }
 
             try
             {
                 var component = CreateComponent(package.CreateComponent());
-                componentHandle = component.Handle;
-                return componentHandle == IntPtr.Zero
-                    ? DasResult.DAS_E_CSHARP_DIRECTOR_FACTORY_FAILED
-                    : DasResult.DAS_S_OK;
+                return new IDasComponentFactoryCreateInstanceResult(
+                    DasResult.DAS_S_OK,
+                    component);
             }
             catch (Exception ex)
             {
                 Console.Error.WriteLine(
                     $"CSharpTestPlugin CreateInstance failed: {ex}");
-                componentHandle = IntPtr.Zero;
-                return DasResult.DAS_E_CSHARP_DIRECTOR_FACTORY_FAILED;
+                return new IDasComponentFactoryCreateInstanceResult(
+                    DasResult.DAS_E_CSHARP_DIRECTOR_FACTORY_FAILED,
+                    null!);
             }
         }
     }
@@ -183,24 +193,25 @@ public static class GeneratedPackageFactory
             this.component = component;
         }
 
-        public DasResult GetGuid(out DasGuid guid)
+        public IDasComponentGetGuidResult GetGuid()
         {
-            guid = ComponentIid;
-            return DasResult.DAS_S_OK;
+            return new IDasComponentGetGuidResult(
+                DasResult.DAS_S_OK,
+                ComponentIid);
         }
 
-        public DasResult GetRuntimeClassName(out IntPtr nameHandle)
+        public IDasComponentGetRuntimeClassNameResult GetRuntimeClassName()
         {
-            nameHandle = IntPtr.Zero;
-            return DasResult.DAS_E_NO_IMPLEMENTATION;
+            return new IDasComponentGetRuntimeClassNameResult(
+                DasResult.DAS_E_NO_IMPLEMENTATION,
+                null!);
         }
 
-        public DasResult Dispatch(
+        public IDasComponentDispatchResult Dispatch(
             DasReadOnlyString functionName,
-            IDasVariantVector arguments,
-            out IntPtr resultHandle)
+            IDasVariantVector arguments)
         {
-            return component.Dispatch(functionName, arguments, out resultHandle);
+            return component.Dispatch(functionName, arguments);
         }
     }
 
@@ -222,25 +233,27 @@ public static class GeneratedPackageFactory
             this.lifecycle = lifecycle;
         }
 
-        public DasResult GetGuid(out DasGuid guid)
+        public IDasComponentGetGuidResult GetGuid()
         {
-            guid = ComponentIid;
-            return DasResult.DAS_S_OK;
+            return new IDasComponentGetGuidResult(
+                DasResult.DAS_S_OK,
+                ComponentIid);
         }
 
-        public DasResult GetRuntimeClassName(out IntPtr nameHandle)
+        public IDasComponentGetRuntimeClassNameResult GetRuntimeClassName()
         {
-            nameHandle = IntPtr.Zero;
-            return DasResult.DAS_E_NO_IMPLEMENTATION;
+            return new IDasComponentGetRuntimeClassNameResult(
+                DasResult.DAS_E_NO_IMPLEMENTATION,
+                null!);
         }
 
-        public DasResult Dispatch(
+        public IDasComponentDispatchResult Dispatch(
             DasReadOnlyString functionName,
-            IDasVariantVector arguments,
-            out IntPtr resultHandle)
+            IDasVariantVector arguments)
         {
-            resultHandle = IntPtr.Zero;
-            return DasResult.DAS_E_NO_IMPLEMENTATION;
+            return new IDasComponentDispatchResult(
+                DasResult.DAS_E_NO_IMPLEMENTATION,
+                null!);
         }
 
         public void OnFinalRelease()

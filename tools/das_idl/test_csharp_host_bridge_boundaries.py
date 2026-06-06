@@ -443,6 +443,30 @@ class TestCSharpHostBridgeBoundaries(unittest.TestCase):
         self.assertNotIn("Das.CSharp.Runtime.dll", text)
         self.assertNotIn("NuGet", text)
 
+    def test_csharp_test_plugin_callbacks_use_typed_result_objects(self):
+        source_paths = [
+            ROOT
+            / "das"
+            / "Plugins"
+            / "CSharpTestPlugin"
+            / "src"
+            / "GeneratedPackageFactory.cs",
+            ROOT / "das" / "Plugins" / "CSharpTestPlugin" / "src" / "Component.cs",
+        ]
+        combined = "\n".join(_read_text(path) for path in source_paths)
+
+        for result_type in (
+            "IDasPluginPackageCreateFeatureInterfaceResult",
+            "IDasComponentFactoryCreateInstanceResult",
+            "IDasComponentDispatchResult",
+        ):
+            with self.subTest(result_type=result_type):
+                self.assertIn(result_type, combined)
+
+        self.assertNotIn("out IntPtr", combined)
+        self.assertNotIn("out System.IntPtr", combined)
+        self.assertNotIn(".Handle", combined)
+
     def test_ipc_multiprocess_cmake_depends_on_csharp_packages_conditionally(self):
         cmake_path = ROOT / "das" / "IpcMultiProcessTest" / "CMakeLists.txt"
         text = _read_text(cmake_path)

@@ -330,9 +330,44 @@ def _das_result_type() -> TypeInfo:
 
 def _default_value_expression(type_info: TypeInfo) -> str:
     wrapper = _wrapper_type(type_info)
-    if _is_interface_pointer(type_info) or _is_read_only_string_pointer(type_info):
-        return f"new {wrapper}(System.IntPtr.Zero)"
+    if (
+        _is_interface_pointer(type_info)
+        or _is_read_only_string_pointer(type_info)
+        or _is_binary_buffer_pointer(type_info)
+    ):
+        return f"{wrapper}.Borrow(System.IntPtr.Zero)"
     return f"default({wrapper})"
+
+
+def _wrapper_adopt_expression(type_info: TypeInfo, handle_expression: str) -> str:
+    return f"{_wrapper_type(type_info)}.Adopt({handle_expression})"
+
+
+def _wrapper_adopt_result_expression(
+    type_info: TypeInfo,
+    result_expression: str,
+    handle_expression: str,
+) -> str:
+    return (
+        f"{_wrapper_type(type_info)}.AdoptResult("
+        f"{result_expression}, {handle_expression})"
+    )
+
+
+def _wrapper_borrow_expression(type_info: TypeInfo, handle_expression: str) -> str:
+    return f"{_wrapper_type(type_info)}.Borrow({handle_expression})"
+
+
+def _wrapper_retain_handle_expression(
+    type_info: TypeInfo,
+    value_expression: str,
+    interface_name: str,
+) -> str:
+    if _is_read_only_string_pointer(type_info):
+        return f"DasReadOnlyString.RetainNativeHandle({value_expression})"
+    if _is_binary_buffer_pointer(type_info):
+        return f"DasBinaryBuffer.RetainNativeHandle({value_expression})"
+    return f"IDasBase.RetainNativeHandle({value_expression}, \"{interface_name}\")"
 
 
 def _result_type_name(interface_name: str, method_name: str) -> str:
@@ -508,6 +543,7 @@ class CSharpGenerator:
                 "    public DasResult Result { get; }",
                 "}",
                 "",
+                "#if !NETFRAMEWORK",
                 "public static class DasResultExtensions",
                 "{",
                 "    public static void OrThrow(this DasResult result, string? message = null)",
@@ -518,6 +554,7 @@ class CSharpGenerator:
                 "        }",
                 "    }",
                 "}",
+                "#endif",
                 "",
             ]
         )
@@ -830,16 +867,16 @@ class CSharpGenerator:
                 "",
                 f"namespace {self.namespace_root}.Interop;",
                 "",
-                "public readonly struct NativeHandle",
+                "internal readonly struct NativeHandle",
                 "{",
-                "    public NativeHandle(System.IntPtr value)",
+                "    internal NativeHandle(System.IntPtr value)",
                 "    {",
                 "        Value = value;",
                 "    }",
                 "",
-                "    public System.IntPtr Value { get; }",
+                "    internal System.IntPtr Value { get; }",
                 "",
-                "    public bool IsNull => Value == System.IntPtr.Zero;",
+                "    internal bool IsNull => Value == System.IntPtr.Zero;",
                 "}",
                 "",
             ]
@@ -950,12 +987,13 @@ class CSharpGenerator:
                 "                return DasResult.DAS_E_CSHARP_PLUGIN_INIT_FAILED;",
                 "            }",
                 "",
-                "            if (managedPackage.Handle == IntPtr.Zero)",
+                "            var packageHandle = managedPackage.DetachNativeHandle(\"IDasPluginPackage\");",
+                "            if (packageHandle == IntPtr.Zero)",
                 "            {",
                 "                return DasResult.DAS_E_CSHARP_PLUGIN_INIT_FAILED;",
                 "            }",
                 "",
-                "            Marshal.WriteIntPtr(packageOut, managedPackage.Handle);",
+                "            Marshal.WriteIntPtr(packageOut, packageHandle);",
                 "            return DasResult.DAS_S_OK;",
                 "        }",
                 "        catch (Exception)",
@@ -1012,16 +1050,85 @@ class CSharpGenerator:
                 "",
                 f"namespace {self.namespace_root}.Wrappers;",
                 "",
+                "internal enum NativeHandleOwnership",
+                "{",
+                "    Owned,",
+                "    Borrowed,",
+                "    Retained,",
+                "}",
+                "",
                 "public class IDasBase : IDisposable",
                 "{",
                 "    protected System.IntPtr _handle;",
+                "    private NativeHandleOwnership _ownership;",
+                "    private bool _disposed;",
                 "",
-                "    public IDasBase(System.IntPtr handle)",
+                "    internal IDasBase(System.IntPtr handle, NativeHandleOwnership ownership)",
                 "    {",
                 "        _handle = handle;",
+                "        _ownership = ownership;",
                 "    }",
                 "",
-                "    public System.IntPtr Handle => _handle;",
+                "    ~IDasBase()",
+                "    {",
+                "        Dispose(false);",
+                "    }",
+                "",
+                "    internal System.IntPtr NativeHandle => _handle;",
+                "",
+                "    internal static IDasBase Adopt(System.IntPtr handle)",
+                "    {",
+                "        return new IDasBase(handle, NativeHandleOwnership.Owned);",
+                "    }",
+                "",
+                "    internal static IDasBase Borrow(System.IntPtr handle)",
+                "    {",
+                "        return new IDasBase(handle, NativeHandleOwnership.Borrowed);",
+                "    }",
+                "",
+                "    internal static IDasBase Retain(System.IntPtr handle)",
+                "    {",
+                "        if (handle != System.IntPtr.Zero)",
+                "        {",
+                "            NativeMethods.DasCSharpRetainIDasBase(handle);",
+                "        }",
+                "        return new IDasBase(handle, NativeHandleOwnership.Retained);",
+                "    }",
+                "",
+                "    internal static IDasBase AdoptResult(DasResult result, System.IntPtr handle)",
+                "    {",
+                "        return new IDasBase(",
+                "            NormalizeOwnedResult(result, handle),",
+                "            NativeHandleOwnership.Owned);",
+                "    }",
+                "",
+                "    internal static System.IntPtr RetainNativeHandle(",
+                "        IDasBase value,",
+                "        string interfaceName)",
+                "    {",
+                "        if (value is null",
+                "            || value._handle == System.IntPtr.Zero",
+                "            || !value.CanAssignTo(interfaceName))",
+                "        {",
+                "            return System.IntPtr.Zero;",
+                "        }",
+                "        NativeMethods.DasCSharpRetainIDasBase(value._handle);",
+                "        return value._handle;",
+                "    }",
+                "",
+                "    internal System.IntPtr DetachNativeHandle(string interfaceName)",
+                "    {",
+                "        if (_handle == System.IntPtr.Zero",
+                "            || _ownership == NativeHandleOwnership.Borrowed",
+                "            || !CanAssignTo(interfaceName))",
+                "        {",
+                "            return System.IntPtr.Zero;",
+                "        }",
+                "        var handle = _handle;",
+                "        _handle = System.IntPtr.Zero;",
+                "        _ownership = NativeHandleOwnership.Borrowed;",
+                "        return handle;",
+                "    }",
                 "",
                 "    public virtual bool CanAssignTo(string interfaceName)",
                 "    {",
@@ -1030,11 +1137,39 @@ class CSharpGenerator:
                 "",
                 "    public virtual void Dispose()",
                 "    {",
-                "        if (_handle != System.IntPtr.Zero)",
+                "        Dispose(true);",
+                "        GC.SuppressFinalize(this);",
+                "    }",
+                "",
+                "    protected void Dispose(bool disposing)",
+                "    {",
+                "        if (_disposed)",
+                "        {",
+                "            return;",
+                "        }",
+                "        if (_handle != System.IntPtr.Zero",
+                "            && _ownership != NativeHandleOwnership.Borrowed)",
                 "        {",
                 "            NativeMethods.DasCSharpReleaseIDasBase(_handle);",
                 "        }",
                 "        _handle = System.IntPtr.Zero;",
+                "        _ownership = NativeHandleOwnership.Borrowed;",
+                "        _disposed = true;",
+                "    }",
+                "",
+                "    internal static System.IntPtr NormalizeOwnedResult(",
+                "        DasResult result,",
+                "        System.IntPtr handle)",
+                "    {",
+                "        if ((int)result >= 0)",
+                "        {",
+                "            return handle;",
+                "        }",
+                "        if (handle != System.IntPtr.Zero)",
+                "        {",
+                "            NativeMethods.DasCSharpReleaseIDasBase(handle);",
+                "        }",
+                "        return System.IntPtr.Zero;",
                 "    }",
                 "}",
                 "",
@@ -1046,14 +1181,45 @@ class CSharpGenerator:
             [
                 "// DAS C# read-only string interface wrapper (auto-generated - DO NOT MODIFY)",
                 "using System;",
+                f"using {self.namespace_root}.Abi;",
                 "",
                 f"namespace {self.namespace_root}.Wrappers;",
                 "",
                 "public sealed class IDasReadOnlyString : IDasBase",
                 "{",
-                "    public IDasReadOnlyString(System.IntPtr handle)",
-                "        : base(handle)",
+                "    internal IDasReadOnlyString(",
+                "        System.IntPtr handle,",
+                "        NativeHandleOwnership ownership)",
+                "        : base(handle, ownership)",
                 "    {",
+                "    }",
+                "",
+                "    internal static new IDasReadOnlyString Adopt(System.IntPtr handle)",
+                "    {",
+                "        return new IDasReadOnlyString(handle, NativeHandleOwnership.Owned);",
+                "    }",
+                "",
+                "    internal static new IDasReadOnlyString Borrow(System.IntPtr handle)",
+                "    {",
+                "        return new IDasReadOnlyString(handle, NativeHandleOwnership.Borrowed);",
+                "    }",
+                "",
+                "    internal static new IDasReadOnlyString Retain(System.IntPtr handle)",
+                "    {",
+                "        if (handle != System.IntPtr.Zero)",
+                "        {",
+                "            NativeMethods.DasCSharpRetainIDasBase(handle);",
+                "        }",
+                "        return new IDasReadOnlyString(handle, NativeHandleOwnership.Retained);",
+                "    }",
+                "",
+                "    internal static new IDasReadOnlyString AdoptResult(",
+                "        DasResult result,",
+                "        System.IntPtr handle)",
+                "    {",
+                "        return new IDasReadOnlyString(",
+                "            NormalizeOwnedResult(result, handle),",
+                "            NativeHandleOwnership.Owned);",
                 "    }",
                 "",
                 "    public override bool CanAssignTo(string interfaceName)",
@@ -1070,6 +1236,7 @@ class CSharpGenerator:
             [
                 "// DAS C# first-class read-only string wrapper (auto-generated - DO NOT MODIFY)",
                 "using System;",
+                f"using {self.namespace_root};",
                 f"using {self.namespace_root}.Abi;",
                 "",
                 f"namespace {self.namespace_root}.Wrappers;",
@@ -1077,17 +1244,60 @@ class CSharpGenerator:
                 "public sealed class DasReadOnlyString : IDisposable",
                 "{",
                 "    private System.IntPtr _handle;",
+                "    private NativeHandleOwnership _ownership;",
+                "    private bool _disposed;",
                 "",
-                "    public DasReadOnlyString(System.IntPtr handle)",
+                "    internal DasReadOnlyString(",
+                "        System.IntPtr handle,",
+                "        NativeHandleOwnership ownership)",
                 "    {",
                 "        _handle = handle;",
+                "        _ownership = ownership;",
                 "    }",
                 "",
-                "    public System.IntPtr Handle => _handle;",
-                "",
-                "    public static DasReadOnlyString Attach(System.IntPtr handle)",
+                "    ~DasReadOnlyString()",
                 "    {",
-                "        return new DasReadOnlyString(handle);",
+                "        Dispose(false);",
+                "    }",
+                "",
+                "    internal System.IntPtr NativeHandle => _handle;",
+                "",
+                "    internal static DasReadOnlyString Adopt(System.IntPtr handle)",
+                "    {",
+                "        return new DasReadOnlyString(handle, NativeHandleOwnership.Owned);",
+                "    }",
+                "",
+                "    internal static DasReadOnlyString Borrow(System.IntPtr handle)",
+                "    {",
+                "        return new DasReadOnlyString(handle, NativeHandleOwnership.Borrowed);",
+                "    }",
+                "",
+                "    internal static DasReadOnlyString Retain(System.IntPtr handle)",
+                "    {",
+                "        if (handle != System.IntPtr.Zero)",
+                "        {",
+                "            NativeMethods.DasCSharpRetainIDasBase(handle);",
+                "        }",
+                "        return new DasReadOnlyString(handle, NativeHandleOwnership.Retained);",
+                "    }",
+                "",
+                "    internal static DasReadOnlyString AdoptResult(",
+                "        DasResult result,",
+                "        System.IntPtr handle)",
+                "    {",
+                "        return new DasReadOnlyString(",
+                "            IDasBase.NormalizeOwnedResult(result, handle),",
+                "            NativeHandleOwnership.Owned);",
+                "    }",
+                "",
+                "    internal static System.IntPtr RetainNativeHandle(DasReadOnlyString value)",
+                "    {",
+                "        if (value is null || value._handle == System.IntPtr.Zero)",
+                "        {",
+                "            return System.IntPtr.Zero;",
+                "        }",
+                "        NativeMethods.DasCSharpRetainIDasBase(value._handle);",
+                "        return value._handle;",
                 "    }",
                 "",
                 "    public unsafe string ToManagedString()",
@@ -1096,17 +1306,33 @@ class CSharpGenerator:
                 "            _handle,",
                 "            out var pUtf16,",
                 "            out var length);",
-                "        result.OrThrow();",
+                "        if ((int)result < 0)",
+                "        {",
+                "            throw new DasException(result);",
+                "        }",
                 f"        return {self.namespace_root}.Interop.DasStringInterop.CopyUtf16(pUtf16, length);",
                 "    }",
                 "",
                 "    public void Dispose()",
                 "    {",
-                "        if (_handle != System.IntPtr.Zero)",
+                "        Dispose(true);",
+                "        GC.SuppressFinalize(this);",
+                "    }",
+                "",
+                "    private void Dispose(bool disposing)",
+                "    {",
+                "        if (_disposed)",
+                "        {",
+                "            return;",
+                "        }",
+                "        if (_handle != System.IntPtr.Zero",
+                "            && _ownership != NativeHandleOwnership.Borrowed)",
                 "        {",
                 "            NativeMethods.DasCSharpReleaseIDasBase(_handle);",
                 "        }",
                 "        _handle = System.IntPtr.Zero;",
+                "        _ownership = NativeHandleOwnership.Borrowed;",
+                "        _disposed = true;",
                 "    }",
                 "}",
                 "",
@@ -1138,13 +1364,61 @@ class CSharpGenerator:
                 "public sealed class DasBinaryBuffer : IDisposable",
                 "{",
                 "    private System.IntPtr _handle;",
+                "    private NativeHandleOwnership _ownership;",
+                "    private bool _disposed;",
                 "",
-                "    public DasBinaryBuffer(System.IntPtr handle)",
+                "    internal DasBinaryBuffer(",
+                "        System.IntPtr handle,",
+                "        NativeHandleOwnership ownership)",
                 "    {",
                 "        _handle = handle;",
+                "        _ownership = ownership;",
                 "    }",
                 "",
-                "    public System.IntPtr Handle => _handle;",
+                "    ~DasBinaryBuffer()",
+                "    {",
+                "        Dispose(false);",
+                "    }",
+                "",
+                "    internal System.IntPtr NativeHandle => _handle;",
+                "",
+                "    internal static DasBinaryBuffer Adopt(System.IntPtr handle)",
+                "    {",
+                "        return new DasBinaryBuffer(handle, NativeHandleOwnership.Owned);",
+                "    }",
+                "",
+                "    internal static DasBinaryBuffer Borrow(System.IntPtr handle)",
+                "    {",
+                "        return new DasBinaryBuffer(handle, NativeHandleOwnership.Borrowed);",
+                "    }",
+                "",
+                "    internal static DasBinaryBuffer Retain(System.IntPtr handle)",
+                "    {",
+                "        if (handle != System.IntPtr.Zero)",
+                "        {",
+                "            NativeMethods.DasCSharpRetainIDasBase(handle);",
+                "        }",
+                "        return new DasBinaryBuffer(handle, NativeHandleOwnership.Retained);",
+                "    }",
+                "",
+                "    internal static DasBinaryBuffer AdoptResult(",
+                "        DasResult result,",
+                "        System.IntPtr handle)",
+                "    {",
+                "        return new DasBinaryBuffer(",
+                "            IDasBase.NormalizeOwnedResult(result, handle),",
+                "            NativeHandleOwnership.Owned);",
+                "    }",
+                "",
+                "    internal static System.IntPtr RetainNativeHandle(DasBinaryBuffer value)",
+                "    {",
+                "        if (value is null || value._handle == System.IntPtr.Zero)",
+                "        {",
+                "            return System.IntPtr.Zero;",
+                "        }",
+                "        NativeMethods.DasCSharpRetainIDasBase(value._handle);",
+                "        return value._handle;",
+                "    }",
                 "",
                 "    public DasResult GetView(out DasBinaryBufferView view)",
                 "    {",
@@ -1154,11 +1428,24 @@ class CSharpGenerator:
                 "",
                 "    public void Dispose()",
                 "    {",
-                "        if (_handle != System.IntPtr.Zero)",
+                "        Dispose(true);",
+                "        GC.SuppressFinalize(this);",
+                "    }",
+                "",
+                "    private void Dispose(bool disposing)",
+                "    {",
+                "        if (_disposed)",
+                "        {",
+                "            return;",
+                "        }",
+                "        if (_handle != System.IntPtr.Zero",
+                "            && _ownership != NativeHandleOwnership.Borrowed)",
                 "        {",
                 "            NativeMethods.DasCSharpReleaseIDasBase(_handle);",
                 "        }",
                 "        _handle = System.IntPtr.Zero;",
+                "        _ownership = NativeHandleOwnership.Borrowed;",
+                "        _disposed = true;",
                 "    }",
                 "}",
                 "",
@@ -1221,6 +1508,12 @@ class CSharpGenerator:
 
     def _generate_wrapper(self, interface: InterfaceDef) -> str:
         base_class = "IDasBase" if interface.name != "IDasBase" else "IDisposable"
+        assignable_names = self._query_interface_names(interface)
+        if "IDasBase" not in assignable_names:
+            assignable_names.append("IDasBase")
+        assignable_expression = " || ".join(
+            f"interfaceName == \"{name}\"" for name in assignable_names
+        )
         lines = [
             "// DAS C# interface wrapper (auto-generated - DO NOT MODIFY)",
             "using System;",
@@ -1233,34 +1526,106 @@ class CSharpGenerator:
             f"public sealed class {interface.name} : {base_class}",
             "{",
         "",
-            f"    public {interface.name}(System.IntPtr handle)",
+            f"    internal {interface.name}(",
+            "        System.IntPtr handle,",
+            "        NativeHandleOwnership ownership)",
         ]
         if base_class == "IDisposable":
             lines.extend(
                 [
                     "    {",
                     "        _handle = handle;",
+                    "        _ownership = ownership;",
                     "    }",
                     "",
                     "    private System.IntPtr _handle;",
-                    "    public System.IntPtr Handle => _handle;",
+                    "    private NativeHandleOwnership _ownership;",
+                    "    private bool _disposed;",
+                    "    internal System.IntPtr NativeHandle => _handle;",
+                    "",
+                    f"    internal static {interface.name} Adopt(System.IntPtr handle)",
+                    "    {",
+                    f"        return new {interface.name}(handle, NativeHandleOwnership.Owned);",
+                    "    }",
+                    "",
+                    f"    internal static {interface.name} Borrow(System.IntPtr handle)",
+                    "    {",
+                    f"        return new {interface.name}(handle, NativeHandleOwnership.Borrowed);",
+                    "    }",
+                    "",
+                    f"    internal static {interface.name} Retain(System.IntPtr handle)",
+                    "    {",
+                    "        if (handle != System.IntPtr.Zero)",
+                    "        {",
+                    "            NativeMethods.DasCSharpRetainIDasBase(handle);",
+                    "        }",
+                    f"        return new {interface.name}(handle, NativeHandleOwnership.Retained);",
+                    "    }",
+                    "",
+                    f"    internal static {interface.name} AdoptResult(",
+                    "        DasResult result,",
+                    "        System.IntPtr handle)",
+                    "    {",
+                    f"        return new {interface.name}(",
+                    "            IDasBase.NormalizeOwnedResult(result, handle),",
+                    "            NativeHandleOwnership.Owned);",
+                    "    }",
                     "",
                     "    public void Dispose()",
                     "    {",
+                    "        if (_disposed)",
+                    "        {",
+                    "            return;",
+                    "        }",
+                    "        if (_handle != System.IntPtr.Zero",
+                    "            && _ownership != NativeHandleOwnership.Borrowed)",
+                    "        {",
+                    "            NativeMethods.DasCSharpReleaseIDasBase(_handle);",
+                    "        }",
                     "        _handle = System.IntPtr.Zero;",
+                    "        _ownership = NativeHandleOwnership.Borrowed;",
+                    "        _disposed = true;",
                     "    }",
                 ]
             )
         else:
             lines.extend(
                 [
-                    "        : base(handle)",
+                    "        : base(handle, ownership)",
                     "    {",
+                    "    }",
+                    "",
+                    f"    internal static new {interface.name} Adopt(System.IntPtr handle)",
+                    "    {",
+                    f"        return new {interface.name}(handle, NativeHandleOwnership.Owned);",
+                    "    }",
+                    "",
+                    f"    internal static new {interface.name} Borrow(System.IntPtr handle)",
+                    "    {",
+                    f"        return new {interface.name}(handle, NativeHandleOwnership.Borrowed);",
+                    "    }",
+                    "",
+                    f"    internal static new {interface.name} Retain(System.IntPtr handle)",
+                    "    {",
+                    "        if (handle != System.IntPtr.Zero)",
+                    "        {",
+                    "            NativeMethods.DasCSharpRetainIDasBase(handle);",
+                    "        }",
+                    f"        return new {interface.name}(handle, NativeHandleOwnership.Retained);",
+                    "    }",
+                    "",
+                    f"    internal static new {interface.name} AdoptResult(",
+                    "        DasResult result,",
+                    "        System.IntPtr handle)",
+                    "    {",
+                    f"        return new {interface.name}(",
+                    "            NormalizeOwnedResult(result, handle),",
+                    "            NativeHandleOwnership.Owned);",
                     "    }",
                     "",
                     "    public override bool CanAssignTo(string interfaceName)",
                     "    {",
-                    f"        return interfaceName == \"{interface.name}\" || interfaceName == \"{interface.base_interface}\";",
+                    f"        return {assignable_expression};",
                     "    }",
                 ]
             )
@@ -1271,8 +1636,11 @@ class CSharpGenerator:
                     "    public static IDasVariantVector Create()",
                     "    {",
                     "        var result = NativeMethods.CreateIDasVariantVector(out var nativeHandle);",
-                    "        result.OrThrow();",
-                    "        return new IDasVariantVector(nativeHandle);",
+                    "        if ((int)result < 0)",
+                    "        {",
+                    "            throw new DasException(result);",
+                    "        }",
+                    "        return IDasVariantVector.Adopt(nativeHandle);",
                     "    }",
                 ]
             )
@@ -1299,7 +1667,7 @@ class CSharpGenerator:
         for param in params:
             name = _camel_name(param.name)
             if _is_interface_pointer(param.type_info) or _is_read_only_string_pointer(param.type_info):
-                args.append(f"{name}.Handle")
+                args.append(f"{name}.NativeHandle")
             else:
                 args.append(name)
         return ", ".join(args)
@@ -1334,7 +1702,7 @@ class CSharpGenerator:
                 lines.append(
                     f"        if (!{param_name}.CanAssignTo(\"{type_simple_name(param.type_info)}\"))"
                     if _is_interface_pointer(param.type_info) and type_simple_name(param.type_info) != "IDasReadOnlyString"
-                    else f"        if ({param_name}.Handle == System.IntPtr.Zero)"
+                    else f"        if ({param_name}.NativeHandle == System.IntPtr.Zero)"
                 )
                 lines.append("        {")
                 lines.append(f"            return {invalid_argument_return};")
@@ -1363,6 +1731,7 @@ class CSharpGenerator:
 
         if _is_result_type(method.return_type):
             lines.append("")
+            lines.append("#if !NETFRAMEWORK")
             checked_return = "void" if not out_params else result_type
             lines.append(f"    public {checked_return} {method_name}OrThrow({param_text})")
             lines.append("    {")
@@ -1374,6 +1743,7 @@ class CSharpGenerator:
             else:
                 lines.append(f"        {call}.OrThrow();")
             lines.append("    }")
+            lines.append("#endif")
 
         generated_signatures = {
             tuple(_wrapper_type(param.type_info) for param in in_params)
@@ -1419,15 +1789,17 @@ class CSharpGenerator:
                 "            out var stringHandle);",
                 "        return new IDasVariantVectorGetStringResult(",
                 "            result,",
-                "            new DasReadOnlyString(stringHandle));",
+                "            DasReadOnlyString.AdoptResult(result, stringHandle));",
                 "    }",
                 "",
+                "#if !NETFRAMEWORK",
                 "    public IDasVariantVectorGetStringResult GetStringOrThrow(ulong index)",
                 "    {",
                 "        var result = GetString(index);",
                 "        result.Result.OrThrow();",
                 "        return result;",
                 "    }",
+                "#endif",
             ]
 
         if method_name == "GetComponent":
@@ -1440,15 +1812,17 @@ class CSharpGenerator:
                 "            out var componentHandle);",
                 "        return new IDasVariantVectorGetComponentResult(",
                 "            result,",
-                "            new IDasComponent(componentHandle));",
+                "            IDasComponent.AdoptResult(result, componentHandle));",
                 "    }",
                 "",
+                "#if !NETFRAMEWORK",
                 "    public IDasVariantVectorGetComponentResult GetComponentOrThrow(ulong index)",
                 "    {",
                 "        var result = GetComponent(index);",
                 "        result.Result.OrThrow();",
                 "        return result;",
                 "    }",
+                "#endif",
             ]
 
         if method_name == "PushBackString":
@@ -1456,17 +1830,19 @@ class CSharpGenerator:
                 "    public DasResult PushBackString(DasReadOnlyString inString)",
                 "    {",
                 "        ArgumentNullException.ThrowIfNull(inString);",
-                "        if (inString.Handle == System.IntPtr.Zero)",
+                "        if (inString.NativeHandle == System.IntPtr.Zero)",
                 "        {",
                 "            return DasResult.DAS_E_INVALID_ARGUMENT;",
                 "        }",
-                "        return NativeMethods.DasCSharpPushBackIDasVariantVectorString(_handle, inString.Handle);",
+                "        return NativeMethods.DasCSharpPushBackIDasVariantVectorString(_handle, inString.NativeHandle);",
                 "    }",
                 "",
+                "#if !NETFRAMEWORK",
                 "    public void PushBackStringOrThrow(DasReadOnlyString inString)",
                 "    {",
                 "        PushBackString(inString).OrThrow();",
                 "    }",
+                "#endif",
                 "",
                 "    public unsafe DasResult PushBackString(string inString)",
                 "    {",
@@ -1481,7 +1857,7 @@ class CSharpGenerator:
                 "            {",
                 "                return createResult;",
                 "            }",
-                "            using var inStringString = DasReadOnlyString.Attach(inStringHandle);",
+                "            using var inStringString = DasReadOnlyString.Adopt(inStringHandle);",
                 "            return PushBackString(inStringString);",
                 "        }",
                 "    }",
@@ -1495,13 +1871,15 @@ class CSharpGenerator:
             "        {",
             "            return DasResult.DAS_E_INVALID_ARGUMENT;",
             "        }",
-            "        return NativeMethods.DasCSharpPushBackIDasVariantVectorComponent(_handle, inComponent.Handle);",
+            "        return NativeMethods.DasCSharpPushBackIDasVariantVectorComponent(_handle, inComponent.NativeHandle);",
             "    }",
             "",
+            "#if !NETFRAMEWORK",
             "    public void PushBackComponentOrThrow(IDasComponent inComponent)",
             "    {",
             "        PushBackComponent(inComponent).OrThrow();",
             "    }",
+            "#endif",
         ]
 
     def _generate_component_dispatch_method(self) -> list[str]:
@@ -1509,31 +1887,33 @@ class CSharpGenerator:
             "    public IDasComponentDispatchResult Dispatch(DasReadOnlyString functionName, IDasVariantVector arguments)",
             "    {",
             "        ArgumentNullException.ThrowIfNull(functionName);",
-            "        if (functionName.Handle == System.IntPtr.Zero)",
+            "        if (functionName.NativeHandle == System.IntPtr.Zero)",
             "        {",
-            "            return new IDasComponentDispatchResult(DasResult.DAS_E_INVALID_ARGUMENT, new IDasVariantVector(System.IntPtr.Zero));",
+            "            return new IDasComponentDispatchResult(DasResult.DAS_E_INVALID_ARGUMENT, IDasVariantVector.Borrow(System.IntPtr.Zero));",
             "        }",
             "        ArgumentNullException.ThrowIfNull(arguments);",
             "        if (!arguments.CanAssignTo(\"IDasVariantVector\"))",
             "        {",
-            "            return new IDasComponentDispatchResult(DasResult.DAS_E_INVALID_ARGUMENT, new IDasVariantVector(System.IntPtr.Zero));",
+            "            return new IDasComponentDispatchResult(DasResult.DAS_E_INVALID_ARGUMENT, IDasVariantVector.Borrow(System.IntPtr.Zero));",
             "        }",
             "        var result = NativeMethods.DasCSharpDispatchIDasComponent(",
             "            _handle,",
-            "            functionName.Handle,",
-            "            arguments.Handle,",
+            "            functionName.NativeHandle,",
+            "            arguments.NativeHandle,",
             "            out var resultHandle);",
             "        return new IDasComponentDispatchResult(",
             "            result,",
-            "            new IDasVariantVector(resultHandle));",
+            "            IDasVariantVector.AdoptResult(result, resultHandle));",
             "    }",
             "",
+            "#if !NETFRAMEWORK",
             "    public IDasComponentDispatchResult DispatchOrThrow(DasReadOnlyString functionName, IDasVariantVector arguments)",
             "    {",
             "        var result = Dispatch(functionName, arguments);",
             "        result.Result.OrThrow();",
             "        return result;",
             "    }",
+            "#endif",
             "",
             "    public unsafe IDasComponentDispatchResult Dispatch(string functionName, IDasVariantVector arguments)",
             "    {",
@@ -1546,9 +1926,9 @@ class CSharpGenerator:
             "                out var functionNameHandle);",
             "            if ((int)createResult < 0)",
             "            {",
-            "                return new IDasComponentDispatchResult(createResult, new IDasVariantVector(System.IntPtr.Zero));",
+            "                return new IDasComponentDispatchResult(createResult, IDasVariantVector.Borrow(System.IntPtr.Zero));",
             "            }",
-            "            using var functionNameString = DasReadOnlyString.Attach(functionNameHandle);",
+            "            using var functionNameString = DasReadOnlyString.Adopt(functionNameHandle);",
             "            return Dispatch(functionNameString, arguments);",
             "        }",
             "    }",
@@ -1593,7 +1973,7 @@ class CSharpGenerator:
             "            {",
             f"                return {failure_return};",
             "            }",
-            f"            using var {param_name}String = DasReadOnlyString.Attach({param_name}Handle);",
+            f"            using var {param_name}String = DasReadOnlyString.Adopt({param_name}Handle);",
             f"            return {method_name}({', '.join(call_args)});",
             "        }",
             "    }",
@@ -1606,22 +1986,21 @@ class CSharpGenerator:
             return type_simple_name(type_info)
         return _csharp_type(type_info)
 
-    def _callback_out_type(self, param: ParameterDef) -> str:
-        value_type = _out_value_type(param)
-        if _is_interface_pointer(value_type) or _is_read_only_string_pointer(value_type):
-            return "System.IntPtr"
-        return _csharp_type(value_type)
-
     def _callback_interface_param_decls(self, method: MethodDef) -> str:
-        params: list[str] = []
-        for param in method.parameters:
-            if _is_out_param(param):
-                params.append(f"out {self._callback_out_type(param)} {_callback_out_name(param)}")
-            else:
-                params.append(
-                    f"{self._callback_managed_type(param.type_info)} {_camel_name(param.name)}"
-                )
+        params = [
+            f"{self._callback_managed_type(param.type_info)} {_camel_name(param.name)}"
+            for param in _method_in_params(method)
+        ]
         return ", ".join(params)
+
+    def _callback_interface_return_type(
+        self,
+        interface_name: str,
+        method: MethodDef,
+    ) -> str:
+        if _is_result_type(method.return_type) and _method_out_params(method):
+            return _result_type_name(interface_name, method.name)
+        return _csharp_type(method.return_type)
 
     def _native_callback_param_type(self, param: ParameterDef) -> str:
         if _is_out_param(param):
@@ -1647,20 +2026,24 @@ class CSharpGenerator:
 
     def _callback_call_expression(self, method: MethodDef) -> str:
         args: list[str] = []
-        for param in method.parameters:
+        for param in _method_in_params(method):
             param_name = _sanitize_identifier(param.name)
-            if _is_out_param(param):
-                args.append(f"out var {_callback_out_name(param)}")
-            elif _is_read_only_string_pointer(param.type_info):
-                args.append(f"new DasReadOnlyString({param_name})")
+            if _is_read_only_string_pointer(param.type_info):
+                args.append(_wrapper_borrow_expression(param.type_info, param_name))
             elif _is_interface_pointer(param.type_info):
-                args.append(f"new {type_simple_name(param.type_info)}({param_name})")
+                args.append(_wrapper_borrow_expression(param.type_info, param_name))
             else:
                 args.append(param_name)
         return f"state.Callbacks.{_sanitize_identifier(method.name)}({', '.join(args)})"
 
-    def _generate_director_thunk(self, method: MethodDef) -> list[str]:
+    def _generate_director_thunk(
+        self,
+        interface: InterfaceDef,
+        method: MethodDef,
+    ) -> list[str]:
         method_name = _sanitize_identifier(method.name)
+        out_params = _method_out_params(method)
+        uses_result_object = _is_result_type(method.return_type) and bool(out_params)
         lines = [
             "    [UnmanagedCallersOnly]",
             f"    private static unsafe {_csharp_type(method.return_type, public_surface=False)} {method_name}Thunk({self._native_callback_param_decls(method)})",
@@ -1684,27 +2067,48 @@ class CSharpGenerator:
                 "        try",
                 "        {",
                 "            var state = DirectorState.FromManagedState(managedState);",
-                f"            var result = {self._callback_call_expression(method)};",
+            ]
+        )
+        if uses_result_object:
+            lines.extend(
+                [
+                    f"            var resultObject = {self._callback_call_expression(method)};",
+                    "            var result = resultObject.Result;",
+                ]
+            )
+        else:
+            lines.extend(
+                [
+                    f"            var result = {self._callback_call_expression(method)};",
+                ]
+            )
+        lines.extend(
+            [
                 "            if ((int)result < 0)",
                 "            {",
                 "                return result;",
                 "            }",
             ]
         )
-        for param in method.parameters:
-            if not _is_out_param(param):
-                continue
+        for param in out_params:
             param_name = _native_callback_param_name(param)
-            out_name = _callback_out_name(param)
             value_type = _out_value_type(param)
+            field_name = _result_field_name(param.name)
             if _is_interface_pointer(value_type) or _is_read_only_string_pointer(value_type):
+                handle_name = _callback_out_name(param)
+                interface_name = type_simple_name(value_type)
                 lines.extend(
                     [
-                        f"            *{param_name} = {out_name};",
+                        f"            var {handle_name} = {_wrapper_retain_handle_expression(value_type, f'resultObject.{field_name}', interface_name)};",
+                        f"            if ({handle_name} == System.IntPtr.Zero)",
+                        "            {",
+                        "                return DasResult.DAS_E_INVALID_ARGUMENT;",
+                        "            }",
+                        f"            *{param_name} = {handle_name};",
                     ]
                 )
             else:
-                lines.append(f"            *{param_name} = {out_name};")
+                lines.append(f"            *{param_name} = resultObject.{field_name};")
         lines.extend(
             [
                 "            return result;",
@@ -1729,6 +2133,7 @@ class CSharpGenerator:
             "using System.Runtime.InteropServices;",
             f"using {self.namespace_root};",
             f"using {self.namespace_root}.Abi;",
+            f"using {self.namespace_root}.Results;",
             f"using {self.namespace_root}.Wrappers;",
             "",
             f"namespace {self.namespace_root}.Directors;",
@@ -1738,7 +2143,10 @@ class CSharpGenerator:
         ]
         for method in methods:
             params = self._callback_interface_param_decls(method)
-            lines.append(f"    DasResult {_sanitize_identifier(method.name)}({params});")
+            return_type = self._callback_interface_return_type(interface.name, method)
+            lines.append(
+                f"    {return_type} {_sanitize_identifier(method.name)}({params});"
+            )
         lines.extend(
             [
                 "}",
@@ -1748,7 +2156,7 @@ class CSharpGenerator:
                 "    void OnFinalRelease();",
                 "}",
                 "",
-                "public unsafe struct " + f"{director_name}NativeCallbacks",
+                "internal unsafe struct " + f"{director_name}NativeCallbacks",
                 "{",
                 "    public delegate* unmanaged<System.IntPtr, uint> Release;",
             ]
@@ -1799,13 +2207,16 @@ class CSharpGenerator:
                 "        if ((int)result < 0 || nativeHandle == System.IntPtr.Zero)",
                 "        {",
                 "            ReleaseManagedState(director.ManagedState);",
-                "            result.OrThrow();",
+                "            if ((int)result < 0)",
+                "            {",
+                "                throw new DasException(result);",
+                "            }",
                 "            throw new DasException(DasResult.DAS_E_CSHARP_DIRECTOR_FACTORY_FAILED);",
                 "        }",
-                f"        return new Das.Generated.Wrappers.{interface.name}(nativeHandle);",
+                f"        return Das.Generated.Wrappers.{interface.name}.Adopt(nativeHandle);",
                 "    }",
                 "",
-                "    public System.IntPtr ManagedState => GCHandle.ToIntPtr(_managedState);",
+                "    internal System.IntPtr ManagedState => GCHandle.ToIntPtr(_managedState);",
                 "",
                 "    public void Dispose()",
                 "    {",
@@ -1851,7 +2262,7 @@ class CSharpGenerator:
             ]
         )
         for method in methods:
-            lines.extend(self._generate_director_thunk(method))
+            lines.extend(self._generate_director_thunk(interface, method))
             lines.append("")
         lines.extend(
             [
@@ -1890,9 +2301,10 @@ class CSharpGenerator:
         return "\n".join(lines)
 
     def _generate_results(self, interface: InterfaceDef) -> str:
+        methods = self._all_interface_methods(interface)
         result_names = {
             _result_type_name(interface.name, method.name)
-            for method in _interface_methods(interface)
+            for method in methods
             if _method_out_params(method)
         }
         lines = [
@@ -1909,11 +2321,15 @@ class CSharpGenerator:
             "}",
             "",
         ]
-        for method in _interface_methods(interface):
+        emitted_results: set[str] = set()
+        for method in methods:
             out_params = _method_out_params(method)
             if not out_params:
                 continue
             result_name = _result_type_name(interface.name, method.name)
+            if result_name in emitted_results:
+                continue
+            emitted_results.add(result_name)
             lines.append(f"public readonly struct {result_name}")
             lines.append("{")
             ctor_params = ["DasResult result"]

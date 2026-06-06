@@ -1,4 +1,5 @@
 using Das.Generated;
+using Das.Generated.Results;
 using Das.Generated.Wrappers;
 
 namespace Das.TestPlugin;
@@ -18,20 +19,18 @@ public sealed class Component : IDisposable
         return DasResult.DAS_S_OK;
     }
 
-    public DasResult Dispatch(
+    public IDasComponentDispatchResult Dispatch(
         DasReadOnlyString functionName,
-        IDasVariantVector arguments,
-        out IntPtr resultHandle)
+        IDasVariantVector arguments)
     {
-        resultHandle = IntPtr.Zero;
-        if (functionName is null || functionName.Handle == IntPtr.Zero)
+        if (functionName is null)
         {
-            return DasResult.DAS_E_INVALID_ARGUMENT;
+            return DispatchFailure(DasResult.DAS_E_INVALID_ARGUMENT);
         }
 
-        if (arguments is null || arguments.Handle == IntPtr.Zero)
+        if (arguments is null || !arguments.CanAssignTo("IDasVariantVector"))
         {
-            return DasResult.DAS_E_INVALID_ARGUMENT;
+            return DispatchFailure(DasResult.DAS_E_INVALID_ARGUMENT);
         }
 
         string methodName;
@@ -41,15 +40,15 @@ public sealed class Component : IDisposable
         }
         catch
         {
-            return DasResult.DAS_E_INVALID_ARGUMENT;
+            return DispatchFailure(DasResult.DAS_E_INVALID_ARGUMENT);
         }
 
         if (methodName != "bridgeLifecycleTest")
         {
-            return DasResult.DAS_E_NO_IMPLEMENTATION;
+            return DispatchFailure(DasResult.DAS_E_NO_IMPLEMENTATION);
         }
 
-        return DispatchBridgeLifecycleTest(arguments, out resultHandle);
+        return DispatchBridgeLifecycleTest(arguments);
     }
 
     public DasResult Attach(IDasBase baseObject)
@@ -59,9 +58,9 @@ public sealed class Component : IDisposable
             return DasResult.DAS_E_INVALID_ARGUMENT;
         }
 
-        return baseObject.Handle == IntPtr.Zero
-            ? DasResult.DAS_E_INVALID_ARGUMENT
-            : DasResult.DAS_S_OK;
+        return baseObject.CanAssignTo("IDasBase")
+            ? DasResult.DAS_S_OK
+            : DasResult.DAS_E_INVALID_ARGUMENT;
     }
 
     public IReadOnlyList<string> Calls => lifecycle.Calls;
@@ -73,21 +72,24 @@ public sealed class Component : IDisposable
         lifecycle.Clear();
     }
 
-    private DasResult DispatchBridgeLifecycleTest(
-        IDasVariantVector arguments,
-        out IntPtr resultHandle)
+    private static IDasComponentDispatchResult DispatchFailure(DasResult result)
     {
-        resultHandle = IntPtr.Zero;
+        return new IDasComponentDispatchResult(result, null!);
+    }
+
+    private IDasComponentDispatchResult DispatchBridgeLifecycleTest(
+        IDasVariantVector arguments)
+    {
         var callbackResult = arguments.GetComponent(0);
-        if ((int)callbackResult.Result < 0 || callbackResult.Component.Handle == IntPtr.Zero)
+        if ((int)callbackResult.Result < 0 || callbackResult.Component is null)
         {
-            return DasResult.DAS_E_INVALID_ARGUMENT;
+            return DispatchFailure(DasResult.DAS_E_INVALID_ARGUMENT);
         }
 
         var markerResult = arguments.GetString(1);
-        if ((int)markerResult.Result < 0 || markerResult.String.Handle == IntPtr.Zero)
+        if ((int)markerResult.Result < 0 || markerResult.String is null)
         {
-            return DasResult.DAS_E_INVALID_ARGUMENT;
+            return DispatchFailure(DasResult.DAS_E_INVALID_ARGUMENT);
         }
 
         string marker;
@@ -97,14 +99,14 @@ public sealed class Component : IDisposable
         }
         catch
         {
-            return DasResult.DAS_E_INVALID_ARGUMENT;
+            return DispatchFailure(DasResult.DAS_E_INVALID_ARGUMENT);
         }
 
         var result = IDasVariantVector.Create();
         var pushStatusResult = result.PushBackString($"director_created:{marker}");
         if ((int)pushStatusResult < 0)
         {
-            return pushStatusResult;
+            return DispatchFailure(pushStatusResult);
         }
 
         using var lifecycleComponent = GeneratedPackageFactory.CreateLifecycleComponent(
@@ -115,12 +117,9 @@ public sealed class Component : IDisposable
         if ((int)pushComponentResult < 0)
         {
             lifecycle.CancelLastTrackedDirector();
-            return pushComponentResult;
+            return DispatchFailure(pushComponentResult);
         }
 
-        resultHandle = result.Handle;
-        return resultHandle == IntPtr.Zero
-            ? DasResult.DAS_E_CSHARP_DIRECTOR_FACTORY_FAILED
-            : DasResult.DAS_S_OK;
+        return new IDasComponentDispatchResult(DasResult.DAS_S_OK, result);
     }
 }

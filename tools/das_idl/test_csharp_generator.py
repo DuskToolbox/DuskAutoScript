@@ -389,22 +389,23 @@ class TestCSharpGeneratorContract(unittest.TestCase):
             "public sealed unsafe class IDasPropertySampleDirector : IDisposable",
             director,
         )
-        self.assertIn("DasResult GetLine(out int outValue);", director)
+        self.assertIn("IDasPropertySampleGetLineResult GetLine();", director)
         self.assertIn("private static unsafe DasResult GetLineThunk(", director)
-        self.assertIn("var result = state.Callbacks.GetLine(out var outValue);", director)
-        self.assertIn("*p_out = outValue;", director)
-        self.assertIn("DasResult CanUnloadNow(out bool canUnloadNow);", director)
+        self.assertIn("var resultObject = state.Callbacks.GetLine();", director)
+        self.assertIn("*p_out = resultObject.Out;", director)
+        self.assertIn("IDasPropertySampleCanUnloadNowResult CanUnloadNow();", director)
         self.assertIn(
             "private static unsafe DasResult CanUnloadNowThunk(System.IntPtr managedState, bool* p_out_canUnloadNow)",
             director,
         )
         self.assertIn(
-            "var result = state.Callbacks.CanUnloadNow(out var canUnloadNow);",
+            "var resultObject = state.Callbacks.CanUnloadNow();",
             director,
         )
-        self.assertIn("*p_out_canUnloadNow = canUnloadNow;", director)
+        self.assertIn("*p_out_canUnloadNow = resultObject.CanUnloadNow;", director)
         self.assertNotIn("out int out)", director)
         self.assertNotIn("out var out)", director)
+        self.assertNotIn("out bool canUnloadNow", director)
         self.assertNotIn("bool* canUnloadNow)", director)
 
     def test_d77_19_d77_22_d77_59_combined_source_gate_keeps_explicit_abi(self):
@@ -414,12 +415,14 @@ class TestCSharpGeneratorContract(unittest.TestCase):
 
         self.assertIn("public DasResult Flush()", combined)
         self.assertIn("public void FlushOrThrow()", combined)
-        self.assertIn("public readonly struct NativeHandle", combined)
-        self.assertIn("public System.IntPtr Value", combined)
+        self.assertIn("internal readonly struct NativeHandle", combined)
+        self.assertIn("internal System.IntPtr Value", combined)
         self.assertIn("unsafe partial class NativeMethods", combined)
         self.assertIn("delegate* unmanaged<System.IntPtr, int>", combined)
         self.assertLess(wrapper.index("public DasResult Flush()"), wrapper.index("FlushOrThrow"))
         self.assertNotIn("throw new DasException", wrapper)
+        self.assertNotIn("public readonly struct NativeHandle", combined)
+        self.assertNotIn("public System.IntPtr Handle =>", combined)
         self.assertNotIn("public nint", combined)
 
     def test_d77_23_d77_25_d77_26_modern_interop_has_tfm_gates(self):
@@ -571,8 +574,8 @@ class TestCSharpGeneratorPhase77CompleteSurface(unittest.TestCase):
         wrapper = _phase77_artifacts().files["Das.Generated/Wrappers/IDasComponent.cs"]
 
         self.assertIn("public DasResult Attach(IDasBase baseObject, IDasComponent component)", wrapper)
-        self.assertIn("baseObject.Handle", wrapper)
-        self.assertIn("component.Handle", wrapper)
+        self.assertIn("baseObject.NativeHandle", wrapper)
+        self.assertIn("component.NativeHandle", wrapper)
         self.assertIn("CanAssignTo(\"IDasBase\")", wrapper)
         self.assertIn("CanAssignTo(\"IDasComponent\")", wrapper)
         self.assertNotIn("QueryInterface(", wrapper)
@@ -614,7 +617,7 @@ class TestCSharpGeneratorPhase77CompleteSurface(unittest.TestCase):
         )
         self.assertIn(
             "return new IDasValidationSampleFindResult(DasResult.DAS_E_INVALID_ARGUMENT, "
-            "new IDasBase(System.IntPtr.Zero));",
+            "IDasBase.Borrow(System.IntPtr.Zero));",
             wrapper,
         )
 
@@ -624,7 +627,8 @@ class TestCSharpGeneratorPhase77CompleteSurface(unittest.TestCase):
         combined = _combined_text(artifacts)
 
         self.assertIn("public sealed class DasBinaryBuffer : IDisposable", binary)
-        self.assertIn("public System.IntPtr Handle", binary)
+        self.assertIn("internal System.IntPtr NativeHandle", binary)
+        self.assertNotIn("public System.IntPtr Handle", binary)
         self.assertIn("public DasResult GetView(out DasBinaryBufferView view)", binary)
         self.assertIn("public readonly struct DasBinaryBufferView", binary)
         self.assertNotIn("dynamic", combined)
@@ -637,7 +641,8 @@ class TestCSharpGeneratorPhase77CompleteSurface(unittest.TestCase):
 
         self.assertIn("GCHandle.Alloc(state, GCHandleType.Normal)", director)
         self.assertNotIn("GCHandleType.Pinned", director)
-        self.assertIn("public System.IntPtr ManagedState => GCHandle.ToIntPtr", director)
+        self.assertIn("internal System.IntPtr ManagedState => GCHandle.ToIntPtr", director)
+        self.assertNotIn("public System.IntPtr ManagedState", director)
         self.assertIn("internal static void ReleaseManagedState(System.IntPtr managedState)", director)
         self.assertEqual(director.count("handle.Free();"), 1)
         self.assertIn("delegate* unmanaged<System.IntPtr", director)
@@ -858,13 +863,13 @@ class TestCSharpGeneratorPhase79NativeDirectorSurface(unittest.TestCase):
                     "native director factory.",
                 )
                 self.assertIn(
-                    f"return new Das.Generated.Wrappers.{interface_name}(nativeHandle);",
+                    f"return Das.Generated.Wrappers.{interface_name}.Adopt(nativeHandle);",
                     director,
                     f"D-79-01: {interface_name}Director.Create must wrap the "
                     "nonzero native handle returned by the support DLL.",
                 )
 
-    def test_d79_01_d79_03_director_callbacks_keep_out_param_shapes(self):
+    def test_d79_01_d79_03_director_callbacks_use_typed_result_objects(self):
         artifacts = _phase79_director_artifacts()
         package_director = artifacts.files[
             "Das.Generated/Directors/IDasPluginPackageDirector.cs"
@@ -877,23 +882,104 @@ class TestCSharpGeneratorPhase79NativeDirectorSurface(unittest.TestCase):
         ]
 
         self.assertIn(
-            "DasResult CreateFeatureInterface(ulong index, out System.IntPtr interfaceHandle);",
+            "IDasPluginPackageCreateFeatureInterfaceResult CreateFeatureInterface(ulong index);",
             package_director,
-            "D-79-01: plugin package callbacks must carry the native out interface handle.",
+            "D-79.2-07: plugin package callbacks return typed result objects, not native handles.",
         )
         self.assertIn(
-            "DasResult CreateInstance(DasGuid componentIid, out System.IntPtr componentHandle);",
+            "IDasComponentFactoryCreateInstanceResult CreateInstance(DasGuid componentIid);",
             factory_director,
-            "D-79-01: component factory callbacks must carry the native out component handle.",
+            "D-79.2-07: component factory callbacks return typed result objects, not native handles.",
         )
         self.assertIn(
-            "DasResult Dispatch(DasReadOnlyString functionName, IDasVariantVector arguments, out System.IntPtr resultHandle);",
+            "IDasComponentDispatchResult Dispatch(DasReadOnlyString functionName, IDasVariantVector arguments);",
             component_director,
-            "D-79-03: component Dispatch callback must return DasResult and an out vector handle.",
+            "D-79.2-07: component callbacks return typed dispatch result objects.",
+        )
+        self.assertNotIn(
+            "Dispatch(string functionName",
+            component_director,
+            "D-79.2-16: callback implementers must not implement string overload duplicates.",
         )
         for director in (package_director, factory_director, component_director):
             self.assertIn("catch (Exception)", director)
             self.assertIn("return DasResult.DAS_E_CSHARP_ERROR;", director)
+            self.assertNotIn("out System.IntPtr", director)
+            self.assertNotIn("out IntPtr", director)
+            self.assertNotIn("OrThrow(", director)
+
+    def test_d79_2_wrapper_ownership_is_internal_and_release_is_gated(self):
+        artifacts = _phase79_director_artifacts()
+        base_wrapper = artifacts.files["Das.Generated/Wrappers/IDasBase.cs"]
+        component_wrapper = artifacts.files["Das.Generated/Wrappers/IDasComponent.cs"]
+        string_wrapper = artifacts.files["Das.Generated/Wrappers/DasReadOnlyString.cs"]
+        binary_wrapper = artifacts.files["Das.Generated/Wrappers/DasBinaryBuffer.cs"]
+        combined_wrappers = "\n".join(
+            [base_wrapper, component_wrapper, string_wrapper, binary_wrapper]
+        )
+
+        self.assertIn("internal enum NativeHandleOwnership", base_wrapper)
+        for state in ("Owned", "Borrowed", "Retained"):
+            self.assertIn(state, base_wrapper)
+        for helper in ("Adopt", "Borrow", "Retain", "AdoptResult"):
+            with self.subTest(helper=helper):
+                self.assertIn(f"internal static IDasBase {helper}", base_wrapper)
+                self.assertIn(
+                    f"internal static new IDasComponent {helper}",
+                    component_wrapper,
+                )
+        self.assertIn(
+            "&& _ownership != NativeHandleOwnership.Borrowed",
+            combined_wrappers,
+        )
+        self.assertIn("~IDasBase()", base_wrapper)
+        self.assertIn("~DasReadOnlyString()", string_wrapper)
+        self.assertIn("~DasBinaryBuffer()", binary_wrapper)
+        self.assertNotIn("public IDasBase(System.IntPtr handle)", base_wrapper)
+        self.assertNotIn("public IDasComponent(System.IntPtr handle)", component_wrapper)
+        self.assertNotIn("public DasReadOnlyString(System.IntPtr handle)", string_wrapper)
+        self.assertNotIn("public DasBinaryBuffer(System.IntPtr handle)", binary_wrapper)
+        self.assertNotIn("public System.IntPtr Handle", combined_wrappers)
+
+    def test_d79_2_owned_results_adopt_and_callback_inputs_borrow(self):
+        artifacts = _phase79_director_artifacts()
+        vector_wrapper = artifacts.files["Das.Generated/Wrappers/IDasVariantVector.cs"]
+        component_wrapper = artifacts.files["Das.Generated/Wrappers/IDasComponent.cs"]
+        component_director = artifacts.files[
+            "Das.Generated/Directors/IDasComponentDirector.cs"
+        ]
+        package_director = artifacts.files[
+            "Das.Generated/Directors/IDasPluginPackageDirector.cs"
+        ]
+
+        self.assertIn("return IDasVariantVector.Adopt(nativeHandle);", vector_wrapper)
+        self.assertIn("DasReadOnlyString.AdoptResult(result, stringHandle)", vector_wrapper)
+        self.assertIn("IDasComponent.AdoptResult(result, componentHandle)", vector_wrapper)
+        self.assertIn("IDasVariantVector.AdoptResult(result, resultHandle)", component_wrapper)
+        self.assertIn("DasReadOnlyString.Borrow(p_function_name)", component_director)
+        self.assertIn("IDasVariantVector.Borrow(p_arguments)", component_director)
+        self.assertIn(
+            'IDasBase.RetainNativeHandle(resultObject.ResultValue, "IDasVariantVector")',
+            component_director,
+        )
+        self.assertIn(
+            'IDasBase.RetainNativeHandle(resultObject.Interface, "IDasBase")',
+            package_director,
+        )
+
+    def test_d79_2_orthrow_is_caller_convenience_and_not_netframework_surface(self):
+        artifacts = _phase79_director_artifacts()
+        das_exception = artifacts.files["Das.Generated/DasException.cs"]
+        component_wrapper = artifacts.files["Das.Generated/Wrappers/IDasComponent.cs"]
+        component_director = artifacts.files[
+            "Das.Generated/Directors/IDasComponentDirector.cs"
+        ]
+
+        self.assertIn("#if !NETFRAMEWORK", das_exception)
+        self.assertIn("public static void OrThrow(this DasResult result", das_exception)
+        self.assertIn("#if !NETFRAMEWORK", component_wrapper)
+        self.assertIn("public IDasComponentDispatchResult DispatchOrThrow", component_wrapper)
+        self.assertNotIn("OrThrow", component_director)
 
     def test_d79_02_native_methods_split_director_support_from_core_das(self):
         native_methods = _phase79_director_artifacts().files[
@@ -1037,6 +1123,8 @@ class TestCSharpGeneratorPhase79NativeDirectorSurface(unittest.TestCase):
             "_ = (_handle, functionName.Handle, arguments.Handle);",
             wrapper,
         )
+        self.assertIn("functionName.NativeHandle", wrapper)
+        self.assertIn("arguments.NativeHandle", wrapper)
 
     def test_d79_08_d79_09_release_thunk_runs_hook_then_frees_once(self):
         director = _phase79_director_artifacts().files[
