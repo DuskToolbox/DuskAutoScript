@@ -45,15 +45,14 @@ def _list_csharp_reduce_outputs(reduce_config: Dict[str, Any]) -> List[str]:
     """List reduce-owned C# package outputs for CMake dependency tracking."""
     csharp_output_dir = reduce_config.get("csharp_output_dir")
     csharp_namespace_root = reduce_config.get("csharp_namespace_root")
-    csharp_project_name = reduce_config.get("csharp_project_name")
     csharp_idl_dir = reduce_config.get("csharp_idl_dir")
     csharp_idl_files = reduce_config.get("csharp_idl_files", [])
 
-    if not (csharp_output_dir and csharp_namespace_root and csharp_project_name):
+    if not (csharp_output_dir and csharp_namespace_root):
         return []
 
     outputs = [
-        f"{csharp_output_dir}/{csharp_project_name}.csproj",
+        f"{csharp_output_dir}/{csharp_namespace_root}/AssemblyAttributes.cs",
         f"{csharp_output_dir}/{csharp_namespace_root}/DasResult.cs",
         f"{csharp_output_dir}/{csharp_namespace_root}/DasException.cs",
         f"{csharp_output_dir}/{csharp_namespace_root}/Abi/DasGuid.cs",
@@ -898,8 +897,6 @@ JSON 配置格式:
         csharp_fields = {
             "csharp_output_dir": reduce_config.get("csharp_output_dir"),
             "csharp_namespace_root": reduce_config.get("csharp_namespace_root"),
-            "csharp_package_name": reduce_config.get("csharp_package_name"),
-            "csharp_project_name": reduce_config.get("csharp_project_name"),
             "csharp_das_native_module_name": reduce_config.get(
                 "csharp_das_native_module_name"
             ),
@@ -934,10 +931,6 @@ JSON 配置格式:
                         csharp_fields["csharp_output_dir"],
                         "--namespace-root",
                         csharp_fields["csharp_namespace_root"],
-                        "--package-name",
-                        csharp_fields["csharp_package_name"],
-                        "--project-name",
-                        csharp_fields["csharp_project_name"],
                         "--das-native-module-name",
                         csharp_fields["csharp_das_native_module_name"],
                         "--native-support-module-name",

@@ -439,6 +439,10 @@ def _native_methods_name(interface_name: str, method_name: str) -> str:
     return f"{method_name}{interface_name}"
 
 
+def _support_thunk_name(interface_name: str, method_name: str) -> str:
+    return f"DasCSharp{_sanitize_identifier(interface_name)}{_sanitize_identifier(method_name)}"
+
+
 def _callback_out_name(param: ParameterDef) -> str:
     value_type = _out_value_type(param)
     if _is_interface_pointer(value_type) or _is_read_only_string_pointer(value_type):
@@ -453,15 +457,11 @@ class CSharpGenerator:
     def __init__(
         self,
         namespace_root: str,
-        package_name: str,
-        project_name: str,
         das_native_module_name: str,
         csharp_native_support_module_name: str,
         idl_header_names: Sequence[str] | None = None,
     ):
         self.namespace_root = _require_das_namespace(namespace_root)
-        self.package_name = _require_nonempty(package_name, "package_name")
-        self.project_name = _require_nonempty(project_name, "project_name")
         self.das_native_module_name = _require_nonempty(
             das_native_module_name,
             "das_native_module_name",
@@ -476,7 +476,7 @@ class CSharpGenerator:
     def generate(self, doc: IdlDocument) -> CSharpArtifacts:
         self._interfaces = {interface.name: interface for interface in doc.interfaces}
         files: dict[str, str] = {
-            f"{self.project_name}.csproj": self._generate_project(),
+            f"{self.namespace_root}/AssemblyAttributes.cs": self._generate_assembly_attributes(),
             f"{self.namespace_root}/DasResult.cs": self._generate_das_result(doc),
             f"{self.namespace_root}/DasException.cs": self._generate_das_exception(),
             f"{self.namespace_root}/Abi/DasGuid.cs": self._generate_das_guid(),
@@ -512,17 +512,15 @@ class CSharpGenerator:
 
         return CSharpArtifacts(dict(sorted(files.items())))
 
-    def _generate_project(self) -> str:
+    def _generate_assembly_attributes(self) -> str:
         return "\n".join(
             [
-                '<Project Sdk="Microsoft.NET.Sdk">',
-                "  <PropertyGroup>",
-                "    <TargetFrameworks>net48;net5.0;net8.0</TargetFrameworks>",
-                "    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>",
-                "    <Nullable>enable</Nullable>",
-                f"    <AssemblyName>{self.package_name}</AssemblyName>",
-                "  </PropertyGroup>",
-                "</Project>",
+                "// DAS C# assembly attributes (auto-generated - DO NOT MODIFY)",
+                "#if NET7_0_OR_GREATER",
+                "using System.Runtime.CompilerServices;",
+                "",
+                "[assembly: DisableRuntimeMarshalling]",
+                "#endif",
                 "",
             ]
         )
@@ -662,7 +660,7 @@ class CSharpGenerator:
             "",
             "#if NET7_0_OR_GREATER",
         ]
-        lines.extend(self._generate_library_import_core_methods("LibraryImport"))
+        lines.extend(self._generate_library_import_methods("LibraryImport", interfaces))
         for interface in sorted(interfaces, key=lambda item: item.name):
             lines.extend(self._generate_library_import_director_factory(interface))
         lines.extend(
@@ -670,7 +668,7 @@ class CSharpGenerator:
                 "#else",
             ]
         )
-        lines.extend(self._generate_library_import_core_methods("DllImport"))
+        lines.extend(self._generate_library_import_methods("DllImport", interfaces))
         for interface in sorted(interfaces, key=lambda item: item.name):
             lines.extend(self._generate_dll_import_director_factory(interface))
         lines.extend(
@@ -691,9 +689,10 @@ class CSharpGenerator:
         )
         return "\n".join(lines)
 
-    def _generate_library_import_core_methods(self, import_kind: str) -> list[str]:
-        is_library_import = import_kind == "LibraryImport"
-        declarations = [
+    def _fixed_das_native_method_declarations(
+        self,
+    ) -> list[tuple[str, str, str, str, list[str]]]:
+        return [
             (
                 "DAS_NATIVE_MODULE",
                 "CreateIDasReadOnlyStringFromUtf16WithLength",
@@ -715,6 +714,12 @@ class CSharpGenerator:
                 "DasResult",
                 ["out System.IntPtr ppOutVector"],
             ),
+        ]
+
+    def _fixed_csharp_support_method_declarations(
+        self,
+    ) -> list[tuple[str, str, str, str, list[str]]]:
+        return [
             (
                 "DAS_CSHARP_NATIVE_SUPPORT_MODULE",
                 "DasCSharpRetainIDasBase",
@@ -736,49 +741,41 @@ class CSharpGenerator:
                 "DasResult",
                 ["System.IntPtr readOnlyString", "out ushort* pUtf16", "out nuint length"],
             ),
-            (
-                "DAS_CSHARP_NATIVE_SUPPORT_MODULE",
-                "DasCSharpGetIDasVariantVectorString",
-                "DasCSharpGetIDasVariantVectorString",
-                "DasResult",
-                ["System.IntPtr vector", "ulong index", "out System.IntPtr ppOutString"],
-            ),
-            (
-                "DAS_CSHARP_NATIVE_SUPPORT_MODULE",
-                "DasCSharpGetIDasVariantVectorComponent",
-                "DasCSharpGetIDasVariantVectorComponent",
-                "DasResult",
-                ["System.IntPtr vector", "ulong index", "out System.IntPtr ppOutComponent"],
-            ),
-            (
-                "DAS_CSHARP_NATIVE_SUPPORT_MODULE",
-                "DasCSharpPushBackIDasVariantVectorString",
-                "DasCSharpPushBackIDasVariantVectorString",
-                "DasResult",
-                ["System.IntPtr vector", "System.IntPtr value"],
-            ),
-            (
-                "DAS_CSHARP_NATIVE_SUPPORT_MODULE",
-                "DasCSharpPushBackIDasVariantVectorComponent",
-                "DasCSharpPushBackIDasVariantVectorComponent",
-                "DasResult",
-                ["System.IntPtr vector", "System.IntPtr value"],
-            ),
-            (
-                "DAS_CSHARP_NATIVE_SUPPORT_MODULE",
-                "DasCSharpDispatchIDasComponent",
-                "DasCSharpDispatchIDasComponent",
-                "DasResult",
-                [
-                    "System.IntPtr component",
-                    "System.IntPtr functionName",
-                    "System.IntPtr arguments",
-                    "out System.IntPtr ppOutResult",
-                ],
-            ),
         ]
+
+    def _support_thunk_method_declarations(
+        self,
+        interfaces: Sequence[InterfaceDef],
+    ) -> list[tuple[str, str, str, str, list[str]]]:
+        declarations: list[tuple[str, str, str, str, list[str]]] = []
+        for interface in sorted(interfaces, key=lambda item: item.name):
+            for method in _interface_methods(interface):
+                if not self._can_generate_support_thunk(method):
+                    continue
+                thunk_name = _support_thunk_name(interface.name, method.name)
+                declarations.append(
+                    (
+                        "DAS_CSHARP_NATIVE_SUPPORT_MODULE",
+                        thunk_name,
+                        thunk_name,
+                        _csharp_type(method.return_type),
+                        self._support_csharp_param_decls(interface, method),
+                    )
+                )
+        return declarations
+
+    def _generate_library_import_methods(
+        self,
+        import_kind: str,
+        interfaces: Sequence[InterfaceDef],
+    ) -> list[str]:
+        is_library_import = import_kind == "LibraryImport"
         lines: list[str] = []
-        for module_name, method_name, entry_point, return_type, parameters in declarations:
+        for module_name, method_name, entry_point, return_type, parameters in (
+            *self._fixed_das_native_method_declarations(),
+            *self._fixed_csharp_support_method_declarations(),
+            *self._support_thunk_method_declarations(interfaces),
+        ):
             if is_library_import:
                 lines.append(f"    [LibraryImport({module_name}, EntryPoint = \"{entry_point}\")]")
                 lines.append(
@@ -1730,14 +1727,145 @@ class CSharpGenerator:
                 args.append(name)
         return ", ".join(args)
 
-    def _generate_wrapper_method(self, interface: InterfaceDef, method: MethodDef) -> list[str]:
-        if interface.name == "IDasVariantVector":
-            variant_lines = self._generate_variant_vector_method(method)
-            if variant_lines is not None:
-                return variant_lines
-        if interface.name == "IDasComponent" and method.name == "Dispatch":
-            return self._generate_component_dispatch_method()
+    def _is_support_handle_type(self, type_info: TypeInfo) -> bool:
+        return (
+            _is_interface_pointer(type_info)
+            or _is_read_only_string_pointer(type_info)
+            or _is_binary_buffer_pointer(type_info)
+        )
 
+    def _is_support_scalar_type(self, type_info: TypeInfo) -> bool:
+        if type_info.is_pointer or type_info.is_reference:
+            return False
+        simple = type_simple_name(type_info)
+        if simple in {"void", "bool", "DasBool"}:
+            return False
+        if simple == "DasGuid":
+            return True
+        if type_info.type_kind in {TypeKind.ENUM, TypeKind.STRUCT}:
+            return True
+        return (
+            simple in _SIGNED_INTEGER_TYPES
+            or simple in _UNSIGNED_INTEGER_TYPES
+            or simple in _FLOAT_TYPES
+        )
+
+    def _can_generate_support_thunk(self, method: MethodDef) -> bool:
+        if not _is_result_type(method.return_type):
+            return False
+        for param in method.parameters:
+            if param.direction == ParamDirection.INOUT:
+                return False
+            if _is_out_param(param):
+                value_type = _out_value_type(param)
+                if self._is_support_handle_type(value_type):
+                    continue
+                if self._is_support_scalar_type(value_type):
+                    continue
+                return False
+            if param.type_info.is_reference:
+                referenced = TypeInfo(
+                    param.type_info.source_type,
+                    is_const=param.type_info.is_const,
+                    type_kind=param.type_info.type_kind,
+                    resolved_namespace=param.type_info.resolved_namespace,
+                    resolved_qualified_name=param.type_info.resolved_qualified_name,
+                )
+                if self._is_support_scalar_type(referenced):
+                    continue
+                return False
+            if self._is_support_handle_type(param.type_info):
+                continue
+            if self._is_support_scalar_type(param.type_info):
+                continue
+            return False
+        return True
+
+    def _support_csharp_param_decls(
+        self,
+        interface: InterfaceDef,
+        method: MethodDef,
+    ) -> list[str]:
+        del interface
+        params = ["System.IntPtr nativeObject"]
+        for param in _method_in_params(method):
+            param_name = _camel_name(param.name)
+            if param.type_info.is_reference:
+                prefix = "in" if param.type_info.is_const else "ref"
+                params.append(f"{prefix} {_csharp_type(param.type_info)} {param_name}")
+            elif self._is_support_handle_type(param.type_info):
+                params.append(f"System.IntPtr {param_name}")
+            else:
+                params.append(f"{_csharp_type(param.type_info)} {param_name}")
+        for param in _method_out_params(method):
+            value_type = _out_value_type(param)
+            out_name = self._support_csharp_out_arg_name(param)
+            if self._is_support_handle_type(value_type):
+                params.append(f"out System.IntPtr {out_name}")
+            else:
+                params.append(f"out {_csharp_type(value_type)} {out_name}")
+        return params
+
+    def _support_csharp_in_call_arg(self, param: ParameterDef) -> str:
+        param_name = _camel_name(param.name)
+        if param.type_info.is_reference:
+            prefix = "in" if param.type_info.is_const else "ref"
+            return f"{prefix} {param_name}"
+        if self._is_support_handle_type(param.type_info):
+            return f"{param_name}.NativeHandle"
+        return param_name
+
+    def _support_csharp_out_arg_name(self, param: ParameterDef) -> str:
+        value_type = _out_value_type(param)
+        if self._is_support_handle_type(value_type):
+            return _callback_out_name(param)
+        return _result_ctor_param_name(param.name)
+
+    def _support_csharp_call_args(self, method: MethodDef) -> str:
+        args = ["_handle"]
+        args.extend(
+            self._support_csharp_in_call_arg(param)
+            for param in _method_in_params(method)
+        )
+        args.extend(
+            f"out var {self._support_csharp_out_arg_name(param)}"
+            for param in _method_out_params(method)
+        )
+        return ", ".join(args)
+
+    def _support_cpp_reference_param_type(self, type_info: TypeInfo) -> str:
+        value_type = TypeInfo(
+            type_info.source_type,
+            is_const=type_info.is_const,
+            type_kind=type_info.type_kind,
+            resolved_namespace=type_info.resolved_namespace,
+            resolved_qualified_name=type_info.resolved_qualified_name,
+        )
+        return f"{_cpp_type(value_type)}*"
+
+    def _support_cpp_param_decl(self, param: ParameterDef) -> str:
+        param_name = _sanitize_identifier(param.name)
+        if param.type_info.is_reference:
+            return f"{self._support_cpp_reference_param_type(param.type_info)} p_{param_name}"
+        return f"{_cpp_type(param.type_info)} {param_name}"
+
+    def _support_cpp_call_arg(self, param: ParameterDef) -> str:
+        param_name = _sanitize_identifier(param.name)
+        if param.type_info.is_reference:
+            return f"*p_{param_name}"
+        return param_name
+
+    def _support_cpp_null_check_names(self, method: MethodDef) -> list[str]:
+        names = ["p_object"]
+        for param in method.parameters:
+            param_name = _sanitize_identifier(param.name)
+            if param.type_info.is_reference:
+                names.append(f"p_{param_name}")
+            elif param.type_info.is_pointer:
+                names.append(param_name)
+        return names
+
+    def _generate_wrapper_method(self, interface: InterfaceDef, method: MethodDef) -> list[str]:
         in_params = _method_in_params(method)
         out_params = _method_out_params(method)
         method_name = _sanitize_identifier(method.name)
@@ -1765,7 +1893,34 @@ class CSharpGenerator:
                 lines.append("        {")
                 lines.append(f"            return {invalid_argument_return};")
                 lines.append("        }")
-        if out_params:
+        if self._can_generate_support_thunk(method):
+            native_call_args = self._support_csharp_call_args(method)
+            if out_params:
+                lines.append(
+                    f"        var result = NativeMethods.{_support_thunk_name(interface.name, method.name)}({native_call_args});"
+                )
+                out_values: list[str] = []
+                for param in out_params:
+                    value_type_info = _out_value_type(param)
+                    out_name = self._support_csharp_out_arg_name(param)
+                    if self._is_support_handle_type(value_type_info):
+                        out_values.append(
+                            _wrapper_adopt_result_expression(
+                                value_type_info,
+                                "result",
+                                out_name,
+                            )
+                        )
+                    else:
+                        out_values.append(out_name)
+                lines.append(
+                    f"        return new {result_type}(result, {', '.join(out_values)});"
+                )
+            else:
+                lines.append(
+                    f"        return NativeMethods.{_support_thunk_name(interface.name, method.name)}({native_call_args});"
+                )
+        elif out_params:
             lines.append("        var result = DasResult.DAS_S_OK;")
             for param in out_params:
                 value_type_info = _out_value_type(param)
@@ -1825,172 +1980,6 @@ class CSharpGenerator:
                 )
 
         return lines
-
-    def _generate_variant_vector_method(self, method: MethodDef) -> list[str] | None:
-        method_name = _sanitize_identifier(method.name)
-        if method_name not in {
-            "GetString",
-            "GetComponent",
-            "PushBackString",
-            "PushBackComponent",
-        }:
-            return None
-
-        if method_name == "GetString":
-            result_type = _result_type_name("IDasVariantVector", method.name)
-            return [
-                "    public IDasVariantVectorGetStringResult GetString(ulong index)",
-                "    {",
-                "        var result = NativeMethods.DasCSharpGetIDasVariantVectorString(",
-                "            _handle,",
-                "            index,",
-                "            out var stringHandle);",
-                "        return new IDasVariantVectorGetStringResult(",
-                "            result,",
-                "            DasReadOnlyString.AdoptResult(result, stringHandle));",
-                "    }",
-                "",
-                "#if !NETFRAMEWORK",
-                "    public IDasVariantVectorGetStringResult GetStringOrThrow(ulong index)",
-                "    {",
-                "        var result = GetString(index);",
-                "        result.Result.OrThrow();",
-                "        return result;",
-                "    }",
-                "#endif",
-            ]
-
-        if method_name == "GetComponent":
-            return [
-                "    public IDasVariantVectorGetComponentResult GetComponent(ulong index)",
-                "    {",
-                "        var result = NativeMethods.DasCSharpGetIDasVariantVectorComponent(",
-                "            _handle,",
-                "            index,",
-                "            out var componentHandle);",
-                "        return new IDasVariantVectorGetComponentResult(",
-                "            result,",
-                "            IDasComponent.AdoptResult(result, componentHandle));",
-                "    }",
-                "",
-                "#if !NETFRAMEWORK",
-                "    public IDasVariantVectorGetComponentResult GetComponentOrThrow(ulong index)",
-                "    {",
-                "        var result = GetComponent(index);",
-                "        result.Result.OrThrow();",
-                "        return result;",
-                "    }",
-                "#endif",
-            ]
-
-        if method_name == "PushBackString":
-            return [
-                "    public DasResult PushBackString(DasReadOnlyString inString)",
-                "    {",
-                "        ArgumentNullException.ThrowIfNull(inString);",
-                "        if (inString.NativeHandle == System.IntPtr.Zero)",
-                "        {",
-                "            return DasResult.DAS_E_INVALID_ARGUMENT;",
-                "        }",
-                "        return NativeMethods.DasCSharpPushBackIDasVariantVectorString(_handle, inString.NativeHandle);",
-                "    }",
-                "",
-                "#if !NETFRAMEWORK",
-                "    public void PushBackStringOrThrow(DasReadOnlyString inString)",
-                "    {",
-                "        PushBackString(inString).OrThrow();",
-                "    }",
-                "#endif",
-                "",
-                "    public unsafe DasResult PushBackString(string inString)",
-                "    {",
-                "        ArgumentNullException.ThrowIfNull(inString);",
-                "        fixed (char* pValue = inString)",
-                "        {",
-                "            var createResult = Das.Generated.Abi.NativeMethods.CreateIDasReadOnlyStringFromUtf16WithLength(",
-                "                (ushort*)pValue,",
-                "                checked((nuint)inString.Length),",
-                "                out var inStringHandle);",
-                "            if ((int)createResult < 0)",
-                "            {",
-                "                return createResult;",
-                "            }",
-                "            using var inStringString = DasReadOnlyString.Adopt(inStringHandle);",
-                "            return PushBackString(inStringString);",
-                "        }",
-                "    }",
-            ]
-
-        return [
-            "    public DasResult PushBackComponent(IDasComponent inComponent)",
-            "    {",
-            "        ArgumentNullException.ThrowIfNull(inComponent);",
-            "        if (!inComponent.CanAssignTo(\"IDasComponent\"))",
-            "        {",
-            "            return DasResult.DAS_E_INVALID_ARGUMENT;",
-            "        }",
-            "        return NativeMethods.DasCSharpPushBackIDasVariantVectorComponent(_handle, inComponent.NativeHandle);",
-            "    }",
-            "",
-            "#if !NETFRAMEWORK",
-            "    public void PushBackComponentOrThrow(IDasComponent inComponent)",
-            "    {",
-            "        PushBackComponent(inComponent).OrThrow();",
-            "    }",
-            "#endif",
-        ]
-
-    def _generate_component_dispatch_method(self) -> list[str]:
-        return [
-            "    public IDasComponentDispatchResult Dispatch(DasReadOnlyString functionName, IDasVariantVector arguments)",
-            "    {",
-            "        ArgumentNullException.ThrowIfNull(functionName);",
-            "        if (functionName.NativeHandle == System.IntPtr.Zero)",
-            "        {",
-            "            return new IDasComponentDispatchResult(DasResult.DAS_E_INVALID_ARGUMENT, IDasVariantVector.Borrow(System.IntPtr.Zero));",
-            "        }",
-            "        ArgumentNullException.ThrowIfNull(arguments);",
-            "        if (!arguments.CanAssignTo(\"IDasVariantVector\"))",
-            "        {",
-            "            return new IDasComponentDispatchResult(DasResult.DAS_E_INVALID_ARGUMENT, IDasVariantVector.Borrow(System.IntPtr.Zero));",
-            "        }",
-            "        var result = NativeMethods.DasCSharpDispatchIDasComponent(",
-            "            _handle,",
-            "            functionName.NativeHandle,",
-            "            arguments.NativeHandle,",
-            "            out var resultHandle);",
-            "        return new IDasComponentDispatchResult(",
-            "            result,",
-            "            IDasVariantVector.AdoptResult(result, resultHandle));",
-            "    }",
-            "",
-            "#if !NETFRAMEWORK",
-            "    public IDasComponentDispatchResult DispatchOrThrow(DasReadOnlyString functionName, IDasVariantVector arguments)",
-            "    {",
-            "        var result = Dispatch(functionName, arguments);",
-            "        result.Result.OrThrow();",
-            "        return result;",
-            "    }",
-            "#endif",
-            "",
-            "    public unsafe IDasComponentDispatchResult Dispatch(string functionName, IDasVariantVector arguments)",
-            "    {",
-            "        ArgumentNullException.ThrowIfNull(functionName);",
-            "        fixed (char* pValue = functionName)",
-            "        {",
-            "            var createResult = Das.Generated.Abi.NativeMethods.CreateIDasReadOnlyStringFromUtf16WithLength(",
-            "                (ushort*)pValue,",
-            "                checked((nuint)functionName.Length),",
-            "                out var functionNameHandle);",
-            "            if ((int)createResult < 0)",
-            "            {",
-            "                return new IDasComponentDispatchResult(createResult, IDasVariantVector.Borrow(System.IntPtr.Zero));",
-            "            }",
-            "            using var functionNameString = DasReadOnlyString.Adopt(functionNameHandle);",
-            "            return Dispatch(functionNameString, arguments);",
-            "        }",
-            "    }",
-        ]
 
     def _generate_string_convenience_method(
         self,
@@ -2416,6 +2405,68 @@ class CSharpGenerator:
             lines.append("")
         return "\n".join(lines)
 
+    def _generate_support_thunk_header_declarations(
+        self,
+        interfaces: Sequence[InterfaceDef],
+    ) -> list[str]:
+        lines: list[str] = []
+        for interface in sorted(interfaces, key=lambda item: item.name):
+            for method in _interface_methods(interface):
+                if not self._can_generate_support_thunk(method):
+                    continue
+                params = [
+                    f"{interface.name}* p_object",
+                    *[self._support_cpp_param_decl(param) for param in method.parameters],
+                ]
+                lines.append(
+                    f"DAS_C_API {_cpp_type(method.return_type)} {_support_thunk_name(interface.name, method.name)}("
+                )
+                for index, param in enumerate(params):
+                    suffix = ");" if index == len(params) - 1 else ","
+                    lines.append(f"    {param}{suffix}")
+                lines.append("")
+        return lines
+
+    def _generate_support_thunk_source_definitions(
+        self,
+        interfaces: Sequence[InterfaceDef],
+    ) -> list[str]:
+        lines: list[str] = []
+        for interface in sorted(interfaces, key=lambda item: item.name):
+            for method in _interface_methods(interface):
+                if not self._can_generate_support_thunk(method):
+                    continue
+                params = [
+                    f"{interface.name}* p_object",
+                    *[self._support_cpp_param_decl(param) for param in method.parameters],
+                ]
+                lines.append(
+                    f"{_cpp_type(method.return_type)} {_support_thunk_name(interface.name, method.name)}("
+                )
+                for index, param in enumerate(params):
+                    suffix = ")" if index == len(params) - 1 else ","
+                    lines.append(f"    {param}{suffix}")
+                lines.append("{")
+                null_checks = self._support_cpp_null_check_names(method)
+                if null_checks:
+                    condition = " || ".join(
+                        f"{name} == nullptr" for name in null_checks
+                    )
+                    lines.append(f"    if ({condition})")
+                    lines.append("    {")
+                    lines.append("        return DAS_E_INVALID_POINTER;")
+                    lines.append("    }")
+                    lines.append("")
+                call_args = ", ".join(
+                    self._support_cpp_call_arg(param) for param in method.parameters
+                )
+                lines.append(
+                    f"    return p_object->{_sanitize_identifier(method.name)}({call_args});"
+                )
+                lines.append("}")
+                lines.append("")
+        return lines
+
     def _generate_native_director_support_header(
         self,
         interfaces: Sequence[InterfaceDef],
@@ -2468,28 +2519,10 @@ class CSharpGenerator:
                 "    IDasReadOnlyString* p_readonly_string,",
                 "    const DasUtf16CodeUnit** pp_out_utf16_string,",
                 "    size_t* p_out_length);",
-                "DAS_C_API DasResult DasCSharpGetIDasVariantVectorString(",
-                "    Das::ExportInterface::IDasVariantVector* p_vector,",
-                "    uint64_t index,",
-                "    IDasReadOnlyString** pp_out_string);",
-                "DAS_C_API DasResult DasCSharpGetIDasVariantVectorComponent(",
-                "    Das::ExportInterface::IDasVariantVector* p_vector,",
-                "    uint64_t index,",
-                "    Das::PluginInterface::IDasComponent** pp_out_component);",
-                "DAS_C_API DasResult DasCSharpPushBackIDasVariantVectorString(",
-                "    Das::ExportInterface::IDasVariantVector* p_vector,",
-                "    IDasReadOnlyString* p_in_string);",
-                "DAS_C_API DasResult DasCSharpPushBackIDasVariantVectorComponent(",
-                "    Das::ExportInterface::IDasVariantVector* p_vector,",
-                "    Das::PluginInterface::IDasComponent* p_in_component);",
-                "DAS_C_API DasResult DasCSharpDispatchIDasComponent(",
-                "    Das::PluginInterface::IDasComponent* p_component,",
-                "    IDasReadOnlyString* p_function_name,",
-                "    Das::ExportInterface::IDasVariantVector* p_arguments,",
-                "    Das::ExportInterface::IDasVariantVector** pp_out_result);",
                 "",
             ]
         )
+        lines.extend(self._generate_support_thunk_header_declarations(interfaces))
         for interface in sorted(interfaces, key=lambda item: item.name):
             director_name = f"{interface.name}Director"
             callbacks_name = f"{director_name}Callbacks"
@@ -2581,71 +2614,6 @@ class CSharpGenerator:
             "    return DAS_S_OK;",
             "}",
             "",
-            "DasResult DasCSharpGetIDasVariantVectorString(",
-            "    Das::ExportInterface::IDasVariantVector* p_vector,",
-            "    uint64_t index,",
-            "    IDasReadOnlyString** pp_out_string)",
-            "{",
-            "    if (p_vector == nullptr)",
-            "    {",
-            "        return DAS_E_INVALID_POINTER;",
-            "    }",
-            "",
-            "    return p_vector->GetString(index, pp_out_string);",
-            "}",
-            "",
-            "DasResult DasCSharpGetIDasVariantVectorComponent(",
-            "    Das::ExportInterface::IDasVariantVector* p_vector,",
-            "    uint64_t index,",
-            "    Das::PluginInterface::IDasComponent** pp_out_component)",
-            "{",
-            "    if (p_vector == nullptr)",
-            "    {",
-            "        return DAS_E_INVALID_POINTER;",
-            "    }",
-            "",
-            "    return p_vector->GetComponent(index, pp_out_component);",
-            "}",
-            "",
-            "DasResult DasCSharpPushBackIDasVariantVectorString(",
-            "    Das::ExportInterface::IDasVariantVector* p_vector,",
-            "    IDasReadOnlyString* p_in_string)",
-            "{",
-            "    if (p_vector == nullptr)",
-            "    {",
-            "        return DAS_E_INVALID_POINTER;",
-            "    }",
-            "",
-            "    return p_vector->PushBackString(p_in_string);",
-            "}",
-            "",
-            "DasResult DasCSharpPushBackIDasVariantVectorComponent(",
-            "    Das::ExportInterface::IDasVariantVector* p_vector,",
-            "    Das::PluginInterface::IDasComponent* p_in_component)",
-            "{",
-            "    if (p_vector == nullptr)",
-            "    {",
-            "        return DAS_E_INVALID_POINTER;",
-            "    }",
-            "",
-            "    return p_vector->PushBackComponent(p_in_component);",
-            "}",
-            "",
-            "DasResult DasCSharpDispatchIDasComponent(",
-            "    Das::PluginInterface::IDasComponent* p_component,",
-            "    IDasReadOnlyString* p_function_name,",
-            "    Das::ExportInterface::IDasVariantVector* p_arguments,",
-            "    Das::ExportInterface::IDasVariantVector** pp_out_result)",
-            "{",
-            "    if (p_component == nullptr || p_function_name == nullptr",
-            "        || p_arguments == nullptr || pp_out_result == nullptr)",
-            "    {",
-            "        return DAS_E_INVALID_POINTER;",
-            "    }",
-            "",
-            "    return p_component->Dispatch(p_function_name, p_arguments, pp_out_result);",
-            "}",
-            "",
             "class CSharpDirectorLifetime final",
             "{",
             "public:",
@@ -2694,6 +2662,7 @@ class CSharpGenerator:
             "};",
             "",
         ]
+        lines.extend(self._generate_support_thunk_source_definitions(interfaces))
         for interface in sorted(interfaces, key=lambda item: item.name):
             director_name = f"{interface.name}Director"
             callbacks_name = f"{director_name}Callbacks"
@@ -2926,16 +2895,12 @@ class CSharpGenerator:
 def generate_csharp_artifacts(
     doc: IdlDocument,
     namespace_root: str,
-    package_name: str,
-    project_name: str,
     das_native_module_name: str,
     csharp_native_support_module_name: str,
     idl_header_names: Sequence[str] | None = None,
 ) -> CSharpArtifacts:
     return CSharpGenerator(
         namespace_root=namespace_root,
-        package_name=package_name,
-        project_name=project_name,
         das_native_module_name=das_native_module_name,
         csharp_native_support_module_name=csharp_native_support_module_name,
         idl_header_names=idl_header_names,

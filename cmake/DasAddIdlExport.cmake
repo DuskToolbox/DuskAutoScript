@@ -108,8 +108,6 @@ endif()
 #   NODE_PACKAGE_NAME     - Node public package identity, required when LANGUAGES contains Node
 #   NODE_ADDON_NAME       - Node native addon basename, required when LANGUAGES contains Node
 #   CSHARP_NAMESPACE_ROOT - C# generated namespace root, required when LANGUAGES contains CSharp
-#   CSHARP_PACKAGE_NAME   - C# package/assembly identity, required when LANGUAGES contains CSharp
-#   CSHARP_PROJECT_NAME   - C# project basename, required when LANGUAGES contains CSharp
 #   CSHARP_DAS_NATIVE_MODULE_NAME - public DAS native module name, required when LANGUAGES contains CSharp
 #   CSHARP_NATIVE_SUPPORT_MODULE_NAME - C# native support module name, required when LANGUAGES contains CSharp
 #
@@ -143,8 +141,6 @@ function(das_add_idl_export)
     )
     list(APPEND _DAS_IDL_EXPORT_ONE_VALUE_ARGS
         CSHARP_NAMESPACE_ROOT
-        CSHARP_PACKAGE_NAME
-        CSHARP_PROJECT_NAME
         CSHARP_DAS_NATIVE_MODULE_NAME
         CSHARP_NATIVE_SUPPORT_MODULE_NAME
     )
@@ -331,14 +327,6 @@ function(das_add_idl_export)
         message(FATAL_ERROR "[das_add_idl_export] CSHARP_NAMESPACE_ROOT is required when LANGUAGES contains CSharp")
     endif()
 
-    if(_HAS_CSHARP AND NOT DAS_IDL_EXPORT_CSHARP_PACKAGE_NAME)
-        message(FATAL_ERROR "[das_add_idl_export] CSHARP_PACKAGE_NAME is required when LANGUAGES contains CSharp")
-    endif()
-
-    if(_HAS_CSHARP AND NOT DAS_IDL_EXPORT_CSHARP_PROJECT_NAME)
-        message(FATAL_ERROR "[das_add_idl_export] CSHARP_PROJECT_NAME is required when LANGUAGES contains CSharp")
-    endif()
-
     if(_HAS_CSHARP AND NOT DAS_IDL_EXPORT_CSHARP_DAS_NATIVE_MODULE_NAME)
         message(FATAL_ERROR "[das_add_idl_export] CSHARP_DAS_NATIVE_MODULE_NAME is required when LANGUAGES contains CSharp")
     endif()
@@ -413,8 +401,6 @@ function(das_add_idl_export)
         list(APPEND _GEN_CONFIG_ARGS
             --csharp-output-dir "${_CSHARP_OUTPUT_DIR}"
             --csharp-namespace-root "${DAS_IDL_EXPORT_CSHARP_NAMESPACE_ROOT}"
-            --csharp-package-name "${DAS_IDL_EXPORT_CSHARP_PACKAGE_NAME}"
-            --csharp-project-name "${DAS_IDL_EXPORT_CSHARP_PROJECT_NAME}"
             --csharp-das-native-module-name "${DAS_IDL_EXPORT_CSHARP_DAS_NATIVE_MODULE_NAME}"
             --csharp-native-support-module-name "${DAS_IDL_EXPORT_CSHARP_NATIVE_SUPPORT_MODULE_NAME}"
         )
@@ -998,7 +984,6 @@ function(das_add_idl_export)
     if(_HAS_CSHARP)
         message(STATUS "[das_add_idl_export] Registered C# pure reduce generator outputs")
         set(_CSHARP_EXPORT_TARGET "${DAS_IDL_EXPORT_NAME}CSharpExport")
-        set(_CSHARP_PROJECT_FILE "${_CSHARP_OUTPUT_DIR}/${DAS_IDL_EXPORT_CSHARP_PROJECT_NAME}.csproj")
 
         if(NOT TARGET ${_CSHARP_EXPORT_TARGET})
             add_custom_target(${_CSHARP_EXPORT_TARGET}
@@ -1009,14 +994,12 @@ function(das_add_idl_export)
 
         set_target_properties(${_CSHARP_EXPORT_TARGET} PROPERTIES
             DAS_CSHARP_OUTPUT_DIR "${_CSHARP_OUTPUT_DIR}"
-            DAS_CSHARP_PROJECT_FILE "${_CSHARP_PROJECT_FILE}"
             DAS_CSHARP_GENERATED_FILES "${_ALL_CSHARP_FILES}"
             DAS_CSHARP_DAS_NATIVE_MODULE_NAME "${DAS_IDL_EXPORT_CSHARP_DAS_NATIVE_MODULE_NAME}"
             DAS_CSHARP_NATIVE_SUPPORT_MODULE_NAME "${DAS_IDL_EXPORT_CSHARP_NATIVE_SUPPORT_MODULE_NAME}"
         )
 
         set(${DAS_IDL_EXPORT_NAME}_CSHARP_OUTPUT_DIR ${_CSHARP_OUTPUT_DIR} PARENT_SCOPE)
-        set(${DAS_IDL_EXPORT_NAME}_CSHARP_PROJECT_FILE ${_CSHARP_PROJECT_FILE} PARENT_SCOPE)
         set(${DAS_IDL_EXPORT_NAME}_CSHARP_GENERATED_FILES ${_ALL_CSHARP_FILES} PARENT_SCOPE)
         set(${DAS_IDL_EXPORT_NAME}_CSHARP_EXPORT_TARGET ${_CSHARP_EXPORT_TARGET} PARENT_SCOPE)
         set(${DAS_IDL_EXPORT_NAME}_CSHARP_DAS_NATIVE_MODULE_NAME

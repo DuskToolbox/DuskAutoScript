@@ -15,14 +15,13 @@
     <InvariantGlobalization>true</InvariantGlobalization>
   </PropertyGroup>
 
-  <Target Name="RequireDasGeneratedProject" BeforeTargets="ResolveReferences" Condition="'$(DasGeneratedProject)' == ''">
-    <Error Text="DasGeneratedProject property is required so CSharpTestPlugin consumes the generated Das.Generated project." />
+  <Target Name="RequireDasGeneratedOutputDir" BeforeTargets="ResolveReferences" Condition="'$(DasGeneratedOutputDir)' == ''">
+    <Error Text="DasGeneratedOutputDir property is required so CSharpTestPlugin consumes generated DAS C# source files." />
   </Target>
 
-  <ItemGroup Condition="'$(DasGeneratedProject)' != ''">
-    <ProjectReference
-      Include="$(DasGeneratedProject)"
-      SetTargetFramework="TargetFramework=$(TargetFramework)"
-      GlobalPropertiesToRemove="PublishAot;RuntimeIdentifier;SelfContained;DasPluginAssemblyName" />
+  <ItemGroup Condition="'$(DasGeneratedOutputDir)' != ''">
+    <Compile
+      Include="$(DasGeneratedOutputDir)\Das.Generated\**\*.cs"
+      LinkBase="DasGenerated" />
   </ItemGroup>
 </Project>

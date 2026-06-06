@@ -86,8 +86,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--idl-dir", required=True, help="Directory containing IDL files")
     parser.add_argument("--output", required=True, help="Output directory")
     parser.add_argument("--namespace-root", required=True, help="C# namespace root")
-    parser.add_argument("--package-name", required=True, help="C# package identity")
-    parser.add_argument("--project-name", required=True, help="C# project basename")
     parser.add_argument(
         "--das-native-module-name",
         required=True,
@@ -108,8 +106,6 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     try:
         namespace_root = _validate_nonempty(args.namespace_root, "--namespace-root")
-        package_name = _validate_nonempty(args.package_name, "--package-name")
-        project_name = _validate_nonempty(args.project_name, "--project-name")
         das_native_module_name = _validate_nonempty(
             args.das_native_module_name,
             "--das-native-module-name",
@@ -144,8 +140,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     artifacts = generate_csharp_artifacts(
         _merge_documents(documents),
         namespace_root=namespace_root,
-        package_name=package_name,
-        project_name=project_name,
         das_native_module_name=das_native_module_name,
         csharp_native_support_module_name=csharp_native_support_module_name,
         idl_header_names=[idl_path_to_header_name(name) for name in args.idl_files],

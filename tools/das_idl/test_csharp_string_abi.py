@@ -79,8 +79,6 @@ def _artifacts_text() -> str:
     artifacts = generate_csharp_artifacts(
         _contract_doc(),
         namespace_root="Das.Generated",
-        package_name="Das.Generated",
-        project_name="DasGenerated",
         idl_header_names=["Core.h"],
     )
     return "\n".join(artifacts.files.values())

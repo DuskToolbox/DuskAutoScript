@@ -63,8 +63,6 @@ def _artifacts():
     return generate_csharp_artifacts(
         _contract_doc(),
         namespace_root="Das.Generated",
-        package_name="Das.Generated",
-        project_name="DasGenerated",
         idl_header_names=["Core.h", "DasResult.h"],
     )
 
@@ -73,8 +71,6 @@ def _source_das_result_artifacts():
     return generate_csharp_artifacts(
         parse_idl_file(str(ROOT / "idl" / "DasResult.idl")),
         namespace_root="Das.Generated",
-        package_name="Das.Generated",
-        project_name="DasGenerated",
         idl_header_names=["DasResult.idl"],
     )
 
@@ -145,8 +141,6 @@ def _phase77_artifacts():
     return generate_csharp_artifacts(
         _phase77_contract_doc(),
         namespace_root="Das.Generated",
-        package_name="Das.Generated",
-        project_name="DasGenerated",
         idl_header_names=["DasResult.idl", "DasCore.idl"],
     )
 
@@ -215,8 +209,6 @@ def _phase79_director_artifacts():
     return generate_csharp_artifacts(
         _phase79_director_contract_doc(),
         namespace_root="Das.Generated",
-        package_name="Das.Generated",
-        project_name="DasGenerated",
         idl_header_names=[
             "DasResult.h",
             "IDasPluginPackage.h",
@@ -231,7 +223,7 @@ class TestCSharpGeneratorContract(unittest.TestCase):
         artifacts = _artifacts()
 
         self.assertIsInstance(artifacts.files, dict)
-        self.assertIn("DasGenerated.csproj", artifacts.files)
+        self.assertIn("Das.Generated/AssemblyAttributes.cs", artifacts.files)
         self.assertIn("Das.Generated/DasResult.cs", artifacts.files)
         self.assertIn("Das.Generated/DasException.cs", artifacts.files)
         self.assertIn("Das.Generated/Abi/DasGuid.cs", artifacts.files)
@@ -245,6 +237,13 @@ class TestCSharpGeneratorContract(unittest.TestCase):
             8,
             "D-77-47: C# reduce output must not collapse into one monolithic .cs file",
         )
+
+    def test_generated_project_disables_runtime_marshalling_for_library_import(self):
+        assembly_attributes = _artifacts().files["Das.Generated/AssemblyAttributes.cs"]
+
+        self.assertIn("#if NET7_0_OR_GREATER", assembly_attributes)
+        self.assertIn("using System.Runtime.CompilerServices;", assembly_attributes)
+        self.assertIn("[assembly: DisableRuntimeMarshalling]", assembly_attributes)
 
     def test_d77_58_generated_namespaces_use_das_root(self):
         combined = _combined_text(_artifacts())
@@ -340,16 +339,27 @@ class TestCSharpGeneratorContract(unittest.TestCase):
         artifacts = generate_csharp_artifacts(
             doc,
             namespace_root="Das.Generated",
-            package_name="Das.Generated",
-            project_name="DasGenerated",
             idl_header_names=["DasResult.idl"],
         )
         combined = _combined_text(artifacts)
+        wrapper = artifacts.files["Das.Generated/Wrappers/IDasKeywordSample.cs"]
+        native_methods = artifacts.files["Das.Generated/Abi/NativeMethods.cs"]
+        support_header = artifacts.files["Native/DasCSharpDirectorSupport.h"]
+        support_source = artifacts.files["Native/DasCSharpDirectorSupport.cpp"]
 
         self.assertIn("IDasBase interfaceValue", combined)
         self.assertIn("DasMatchParams paramsValue", combined)
         self.assertIn("ulong intValue", combined)
-        self.assertIn("_ = (_handle, index);", combined)
+        self.assertIn(
+            "NativeMethods.DasCSharpIDasKeywordSampleAt(_handle, index, out var iid, out var intValue)",
+            wrapper,
+        )
+        self.assertIn(
+            'LibraryImport(DAS_CSHARP_NATIVE_SUPPORT_MODULE, EntryPoint = "DasCSharpIDasKeywordSampleAt")',
+            native_methods,
+        )
+        self.assertIn("DasResult DasCSharpIDasKeywordSampleAt(", support_header)
+        self.assertIn("return p_object->At(index, p_out_iid, p_out_int);", support_source)
         self.assertNotIn("_ = _handle, index;", combined)
         self.assertNotIn(" IDasBase interface)", combined)
         self.assertNotIn("DasMatchParams params)", combined)
@@ -377,8 +387,6 @@ class TestCSharpGeneratorContract(unittest.TestCase):
         artifacts = generate_csharp_artifacts(
             doc,
             namespace_root="Das.Generated",
-            package_name="Das.Generated",
-            project_name="DasGenerated",
             idl_header_names=["DasResult.idl"],
         )
         director = artifacts.files[
@@ -470,10 +478,6 @@ class TestCSharpExportCli(unittest.TestCase):
                     str(output_dir),
                     "--namespace-root",
                     "Das.Generated",
-                    "--package-name",
-                    "Das.Generated",
-                    "--project-name",
-                    "DasGenerated",
                     "--das-native-module-name",
                     TEST_DAS_NATIVE_MODULE,
                     "--native-support-module-name",
@@ -487,7 +491,7 @@ class TestCSharpExportCli(unittest.TestCase):
             )
 
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertTrue((output_dir / "DasGenerated.csproj").exists())
+            self.assertFalse((output_dir / "DasGenerated.csproj").exists())
             self.assertTrue((output_dir / "Das.Generated" / "DasResult.cs").exists())
             self.assertTrue(
                 (output_dir / "Das.Generated" / "Wrappers" / "IDasSample.cs").exists()
@@ -521,11 +525,11 @@ class TestCSharpGeneratorPhase77CompleteSurface(unittest.TestCase):
         wrapper = _phase77_artifacts().files["Das.Generated/Wrappers/IDasComponent.cs"]
 
         self.assertIn(
-            "public IDasComponentDispatchResult Dispatch(DasReadOnlyString functionName, IDasVariantVector arguments)",
+            "public DasResult Dispatch(DasReadOnlyString functionName, IDasVariantVector arguments)",
             wrapper,
         )
         self.assertIn(
-            "public unsafe IDasComponentDispatchResult Dispatch(string functionName, IDasVariantVector arguments)",
+            "public unsafe DasResult Dispatch(string functionName, IDasVariantVector arguments)",
             wrapper,
         )
         self.assertIn("ArgumentNullException.ThrowIfNull(functionName);", wrapper)
@@ -601,8 +605,6 @@ class TestCSharpGeneratorPhase77CompleteSurface(unittest.TestCase):
         artifacts = generate_csharp_artifacts(
             doc,
             namespace_root="Das.Generated",
-            package_name="Das.Generated",
-            project_name="DasGenerated",
             idl_header_names=["DasResult.idl"],
         )
         wrapper = artifacts.files["Das.Generated/Wrappers/IDasValidationSample.cs"]
@@ -986,9 +988,9 @@ class TestCSharpGeneratorPhase79NativeDirectorSurface(unittest.TestCase):
         self.assertNotIn("OrThrow", component_director)
 
     def test_d79_02_native_methods_split_director_support_from_core_das(self):
-        native_methods = _phase79_director_artifacts().files[
-            "Das.Generated/Abi/NativeMethods.cs"
-        ]
+        artifacts = _phase79_director_artifacts()
+        native_methods = artifacts.files["Das.Generated/Abi/NativeMethods.cs"]
+        combined = _combined_text(artifacts)
 
         self.assertIn(
             f'public const string DAS_NATIVE_MODULE = "{TEST_DAS_NATIVE_MODULE}";',
@@ -1040,17 +1042,29 @@ class TestCSharpGeneratorPhase79NativeDirectorSurface(unittest.TestCase):
             "DasCSharpRetainIDasBase",
             "DasCSharpReleaseIDasBase",
             "DasCSharpGetIDasReadOnlyStringUtf16",
-            "DasCSharpGetIDasVariantVectorString",
-            "DasCSharpGetIDasVariantVectorComponent",
-            "DasCSharpPushBackIDasVariantVectorString",
-            "DasCSharpPushBackIDasVariantVectorComponent",
-            "DasCSharpDispatchIDasComponent",
+            "DasCSharpIDasVariantVectorGetString",
+            "DasCSharpIDasVariantVectorGetComponent",
+            "DasCSharpIDasVariantVectorPushBackString",
+            "DasCSharpIDasVariantVectorPushBackComponent",
+            "DasCSharpIDasComponentDispatch",
+            "DasCSharpIDasComponentFactoryIsSupported",
+            "DasCSharpIDasPluginPackageEnumFeature",
         ):
             with self.subTest(support_api=support_api):
                 self.assertIn(
                     f'LibraryImport(DAS_CSHARP_NATIVE_SUPPORT_MODULE, EntryPoint = "{support_api}")',
                     native_methods,
                 )
+
+        for old_support_api in (
+            "DasCSharpGetIDasVariantVectorString",
+            "DasCSharpGetIDasVariantVectorComponent",
+            "DasCSharpPushBackIDasVariantVectorString",
+            "DasCSharpPushBackIDasVariantVectorComponent",
+            "DasCSharpDispatchIDasComponent",
+        ):
+            with self.subTest(old_support_api=old_support_api):
+                self.assertNotIn(old_support_api, combined)
 
         for public_helper in (
             "DasAddRef",
@@ -1099,10 +1113,10 @@ class TestCSharpGeneratorPhase79NativeDirectorSurface(unittest.TestCase):
         native_methods = artifacts.files["Das.Generated/Abi/NativeMethods.cs"]
 
         expected_calls = (
-            "NativeMethods.DasCSharpGetIDasVariantVectorString(",
-            "NativeMethods.DasCSharpGetIDasVariantVectorComponent(",
-            "NativeMethods.DasCSharpPushBackIDasVariantVectorString(",
-            "NativeMethods.DasCSharpPushBackIDasVariantVectorComponent(",
+            "NativeMethods.DasCSharpIDasVariantVectorGetString(",
+            "NativeMethods.DasCSharpIDasVariantVectorGetComponent(",
+            "NativeMethods.DasCSharpIDasVariantVectorPushBackString(",
+            "NativeMethods.DasCSharpIDasVariantVectorPushBackComponent(",
             "NativeMethods.CreateIDasVariantVector(",
         )
         for call in expected_calls:
@@ -1118,9 +1132,9 @@ class TestCSharpGeneratorPhase79NativeDirectorSurface(unittest.TestCase):
         wrapper = artifacts.files["Das.Generated/Wrappers/IDasComponent.cs"]
         native_methods = artifacts.files["Das.Generated/Abi/NativeMethods.cs"]
 
-        self.assertIn("NativeMethods.DasCSharpDispatchIDasComponent(", wrapper)
+        self.assertIn("NativeMethods.DasCSharpIDasComponentDispatch(", wrapper)
         self.assertIn(
-            'LibraryImport(DAS_CSHARP_NATIVE_SUPPORT_MODULE, EntryPoint = "DasCSharpDispatchIDasComponent")',
+            'LibraryImport(DAS_CSHARP_NATIVE_SUPPORT_MODULE, EntryPoint = "DasCSharpIDasComponentDispatch")',
             native_methods,
         )
         self.assertNotIn(

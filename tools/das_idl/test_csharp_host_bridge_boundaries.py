@@ -459,6 +459,19 @@ class TestCSharpHostBridgeBoundaries(unittest.TestCase):
             "net48 IPC package target must stay behind the net48 C# build gate",
         )
 
+    def test_csharp_test_plugin_owns_project_and_includes_generated_sources(self):
+        project_path = (
+            ROOT / "das" / "Plugins" / "CSharpTestPlugin" / "CSharpTestPlugin.csproj"
+        )
+        text = _read_text(project_path)
+
+        self.assertIn(
+            r'Include="$(DasGeneratedOutputDir)\Das.Generated\**\*.cs"',
+            text,
+        )
+        self.assertNotIn("ProjectReference", text)
+        self.assertNotIn("DasGeneratedProject", text)
+
     def test_csharp_test_plugin_resolver_uses_generated_module_constants(self):
         bootstrap_path = (
             ROOT / "das" / "Plugins" / "CSharpTestPlugin" / "src" / "Bootstrap.cs"

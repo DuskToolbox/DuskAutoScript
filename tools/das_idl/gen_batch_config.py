@@ -43,8 +43,6 @@ JSON 结构:
         [--node-addon-name <name>] \
         [--csharp-output-dir <dir>] \
         [--csharp-namespace-root <name>] \
-        [--csharp-package-name <name>] \
-        [--csharp-project-name <name>] \
         [--csharp-das-native-module-name <name>] \
         [--csharp-native-support-module-name <name>]
 """
@@ -141,16 +139,6 @@ def main() -> int:
         "--csharp-namespace-root",
         default="",
         help="C# generated namespace root, for example Das.Generated",
-    )
-    parser.add_argument(
-        "--csharp-package-name",
-        default="",
-        help="C# package/assembly identity, for example Das.Generated",
-    )
-    parser.add_argument(
-        "--csharp-project-name",
-        default="",
-        help="C# generated project basename, for example DasGenerated",
     )
     parser.add_argument(
         "--csharp-das-native-module-name",
@@ -281,8 +269,6 @@ def main() -> int:
         [
             args.csharp_output_dir,
             args.csharp_namespace_root,
-            args.csharp_package_name,
-            args.csharp_project_name,
             args.csharp_das_native_module_name,
             args.csharp_native_support_module_name,
         ]
@@ -293,8 +279,6 @@ def main() -> int:
             for name, value in [
                 ("--csharp-output-dir", args.csharp_output_dir),
                 ("--csharp-namespace-root", args.csharp_namespace_root),
-                ("--csharp-package-name", args.csharp_package_name),
-                ("--csharp-project-name", args.csharp_project_name),
                 (
                     "--csharp-das-native-module-name",
                     args.csharp_das_native_module_name,
@@ -326,8 +310,6 @@ def main() -> int:
 
         reduce_config["csharp_output_dir"] = args.csharp_output_dir
         reduce_config["csharp_namespace_root"] = args.csharp_namespace_root
-        reduce_config["csharp_package_name"] = args.csharp_package_name
-        reduce_config["csharp_project_name"] = args.csharp_project_name
         reduce_config["csharp_das_native_module_name"] = (
             args.csharp_das_native_module_name
         )

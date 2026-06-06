@@ -2,10 +2,6 @@ if(NOT TARGET DasCoreCSharpExport)
     message(FATAL_ERROR "CSharpTestPlugin requires DasCoreCSharpExport from EXPORT_CSHARP=ON.")
 endif()
 
-if(NOT DEFINED DAS_CORE_CSHARP_PROJECT_FILE)
-    message(FATAL_ERROR "CSharpTestPlugin requires DAS_CORE_CSHARP_PROJECT_FILE from DasCore C# export.")
-endif()
-
 if(NOT DEFINED DAS_CORE_CSHARP_NATIVE_SUPPORT_MODULE_NAME)
     message(FATAL_ERROR "CSharpTestPlugin requires DAS_CORE_CSHARP_NATIVE_SUPPORT_MODULE_NAME from DasCore C# export.")
 endif()
@@ -64,7 +60,6 @@ function(das_add_csharp_test_plugin_build
             --output "${_BUILD_OUTPUT_DIR}"
             -p:DasPluginAssemblyName="${PACKAGE_NAME}"
             -p:GenerateRuntimeConfigurationFiles=true
-            -p:DasGeneratedProject="${DAS_CORE_CSHARP_PROJECT_FILE}"
             -p:DasGeneratedOutputDir="${DAS_CORE_CSHARP_OUTPUT_DIR}"
             -p:TargetFrameworks="${TARGET_FRAMEWORK}"
             -v:minimal
@@ -97,9 +92,6 @@ function(das_add_csharp_test_plugin_package
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${_BUILD_OUTPUT_DIR}/${_PACKAGE_BINARY}"
             "${_PACKAGE_OUTPUT_DIR}/${_PACKAGE_BINARY}"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${_BUILD_OUTPUT_DIR}/Das.Generated.dll"
-            "${_PACKAGE_OUTPUT_DIR}/Das.Generated.dll"
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
         VERBATIM)
     add_dependencies(${TARGET_NAME} ${BUILD_TARGET} DasCoreCSharpExport)
@@ -128,9 +120,6 @@ function(das_add_csharp_test_plugin_modern_package
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${_BUILD_OUTPUT_DIR}/${_PACKAGE_BINARY}"
             "${_PACKAGE_OUTPUT_DIR}/${_PACKAGE_BINARY}"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${_BUILD_OUTPUT_DIR}/Das.Generated.dll"
-            "${_PACKAGE_OUTPUT_DIR}/Das.Generated.dll"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${_BUILD_OUTPUT_DIR}/${_RUNTIME_CONFIG}"
             "${_PACKAGE_OUTPUT_DIR}/${_RUNTIME_CONFIG}"
@@ -251,7 +240,6 @@ if(DAS_CSHARP_NATIVEAOT_SMOKE)
             --output "${CSHARP_TEST_PLUGIN_BINARY_ROOT}/nativeaot/${CSHARP_TEST_PLUGIN_CONFIGURATION}"
             -p:PublishAot=true
             -p:DasPluginAssemblyName="${CSHARP_TEST_PLUGIN_MODERN_NAME}"
-            -p:DasGeneratedProject="${DAS_CORE_CSHARP_PROJECT_FILE}"
             -p:DasGeneratedOutputDir="${DAS_CORE_CSHARP_OUTPUT_DIR}"
             -p:TargetFrameworks=net8.0
             -v:minimal
