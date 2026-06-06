@@ -403,7 +403,8 @@ class TestCSharpHostBridgeBoundaries(unittest.TestCase):
             "CSharpTestPlugin.net48.json.in",
             "$<TARGET_FILE:CSharpTestPluginGeneratedNativeSupport>",
             "$<TARGET_FILE_NAME:CSharpTestPluginGeneratedNativeSupport>",
-            "DasCSharpNativeSupport",
+            "DAS_CORE_CSHARP_NATIVE_SUPPORT_MODULE_NAME",
+            "OUTPUT_NAME ${DAS_CORE_CSHARP_NATIVE_SUPPORT_MODULE_NAME}",
             "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/plugins",
         ):
             self.assertIn(token, text)
@@ -428,6 +429,17 @@ class TestCSharpHostBridgeBoundaries(unittest.TestCase):
             ),
             "net48 IPC package target must stay behind the net48 C# build gate",
         )
+
+    def test_csharp_test_plugin_resolver_uses_generated_module_constants(self):
+        bootstrap_path = (
+            ROOT / "das" / "Plugins" / "CSharpTestPlugin" / "src" / "Bootstrap.cs"
+        )
+        text = _read_text(bootstrap_path)
+
+        self.assertIn("NativeModules.DAS_CSHARP_NATIVE_SUPPORT_MODULE", text)
+        self.assertIn("NativeModules.DAS_NATIVE_MODULE", text)
+        self.assertNotIn('libraryName == "Das' + 'CSharpNativeSupport"', text)
+        self.assertNotIn('libraryName == "das"', text)
         self.assertNotIn("Das.CSharp.Runtime.dll", text)
         self.assertNotIn("NuGet", text)
 

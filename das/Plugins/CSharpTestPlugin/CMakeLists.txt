@@ -6,6 +6,10 @@ if(NOT DEFINED DAS_CORE_CSHARP_PROJECT_FILE)
     message(FATAL_ERROR "CSharpTestPlugin requires DAS_CORE_CSHARP_PROJECT_FILE from DasCore C# export.")
 endif()
 
+if(NOT DEFINED DAS_CORE_CSHARP_NATIVE_SUPPORT_MODULE_NAME)
+    message(FATAL_ERROR "CSharpTestPlugin requires DAS_CORE_CSHARP_NATIVE_SUPPORT_MODULE_NAME from DasCore C# export.")
+endif()
+
 set(CSHARP_TEST_PLUGIN_PROJECT "${CMAKE_CURRENT_SOURCE_DIR}/CSharpTestPlugin.csproj")
 set(CSHARP_TEST_PLUGIN_BINARY_ROOT "${CMAKE_BINARY_DIR}/das/Plugins/CSharpTestPlugin")
 set(CSHARP_TEST_PLUGIN_BUILD_ROOT "${CSHARP_TEST_PLUGIN_BINARY_ROOT}/build")
@@ -187,7 +191,7 @@ set_source_files_properties(
 add_library(CSharpTestPluginGeneratedNativeSupport SHARED
     "${CSHARP_TEST_PLUGIN_GENERATED_NATIVE_SUPPORT}")
 set_target_properties(CSharpTestPluginGeneratedNativeSupport PROPERTIES
-    OUTPUT_NAME DasCSharpNativeSupport
+    OUTPUT_NAME ${DAS_CORE_CSHARP_NATIVE_SUPPORT_MODULE_NAME}
     PREFIX "")
 add_dependencies(CSharpTestPluginGeneratedNativeSupport DasCoreCSharpExport)
 target_include_directories(CSharpTestPluginGeneratedNativeSupport PRIVATE

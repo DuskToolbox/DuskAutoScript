@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using Das.Generated.Abi;
 
 namespace Das.TestPlugin;
 
@@ -35,19 +36,21 @@ public static class Bootstrap
                         ?? AppContext.BaseDirectory;
         var appDir = AppContext.BaseDirectory;
 
-        if (libraryName == "DasCSharpNativeSupport")
+        if (libraryName == NativeModules.DAS_CSHARP_NATIVE_SUPPORT_MODULE)
         {
             return LoadFirstExisting(
-                Path.Combine(pluginDir, "DasCSharpNativeSupport.dll"));
+                Path.Combine(
+                    pluginDir,
+                    NativeModules.DAS_CSHARP_NATIVE_SUPPORT_MODULE + ".dll"));
         }
 
-        if (libraryName == "das")
+        if (libraryName == NativeModules.DAS_NATIVE_MODULE)
         {
             return LoadFirstExisting(
                 Path.Combine(appDir, "libDasCore.dll"),
                 Path.Combine(pluginDir, "libDasCore.dll"),
-                Path.Combine(appDir, "das.dll"),
-                Path.Combine(pluginDir, "das.dll"));
+                Path.Combine(appDir, NativeModules.DAS_NATIVE_MODULE + ".dll"),
+                Path.Combine(pluginDir, NativeModules.DAS_NATIVE_MODULE + ".dll"));
         }
 
         return IntPtr.Zero;

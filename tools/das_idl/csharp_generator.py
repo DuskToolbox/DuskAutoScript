@@ -399,11 +399,21 @@ class CSharpGenerator:
         namespace_root: str,
         package_name: str,
         project_name: str,
+        das_native_module_name: str,
+        csharp_native_support_module_name: str,
         idl_header_names: Sequence[str] | None = None,
     ):
         self.namespace_root = _require_das_namespace(namespace_root)
         self.package_name = _require_nonempty(package_name, "package_name")
         self.project_name = _require_nonempty(project_name, "project_name")
+        self.das_native_module_name = _require_nonempty(
+            das_native_module_name,
+            "das_native_module_name",
+        )
+        self.csharp_native_support_module_name = _require_nonempty(
+            csharp_native_support_module_name,
+            "csharp_native_support_module_name",
+        )
         self.idl_header_names = tuple(idl_header_names or ())
         self._interfaces: dict[str, InterfaceDef] = {}
 
@@ -441,9 +451,8 @@ class CSharpGenerator:
                 f"{self.namespace_root}/Results/{interface.name}Results.cs"
             ] = self._generate_results(interface)
 
-        if doc.interfaces:
-            files["Native/DasCSharpDirectorSupport.h"] = self._generate_native_director_support_header(doc.interfaces)
-            files["Native/DasCSharpDirectorSupport.cpp"] = self._generate_native_director_support_source(doc.interfaces)
+        files["Native/DasCSharpDirectorSupport.h"] = self._generate_native_director_support_header(doc.interfaces)
+        files["Native/DasCSharpDirectorSupport.cpp"] = self._generate_native_director_support_source(doc.interfaces)
 
         return CSharpArtifacts(dict(sorted(files.items())))
 
@@ -577,9 +586,17 @@ class CSharpGenerator:
             "",
             f"namespace {self.namespace_root}.Abi;",
             "",
+            "public static class NativeModules",
+            "{",
+            f"    public const string DAS_NATIVE_MODULE = \"{self.das_native_module_name}\";",
+            "    public const string DAS_CSHARP_NATIVE_SUPPORT_MODULE = "
+            f"\"{self.csharp_native_support_module_name}\";",
+            "}",
+            "",
             "internal static unsafe partial class NativeMethods",
             "{",
-            "    internal const string DAS_CSHARP_NATIVE_SUPPORT_MODULE = \"DasCSharpNativeSupport\";",
+            "    internal const string DAS_NATIVE_MODULE = NativeModules.DAS_NATIVE_MODULE;",
+            "    internal const string DAS_CSHARP_NATIVE_SUPPORT_MODULE = NativeModules.DAS_CSHARP_NATIVE_SUPPORT_MODULE;",
             "",
             "#if NET5_0_OR_GREATER",
             "    internal static readonly bool IsModernRuntime = true;",
@@ -620,57 +637,79 @@ class CSharpGenerator:
         is_library_import = import_kind == "LibraryImport"
         declarations = [
             (
-                "DasAddRef",
-                "int",
-                ["System.IntPtr handle"],
-            ),
-            (
-                "DasRelease",
-                "int",
-                ["System.IntPtr handle"],
-            ),
-            (
+                "DAS_NATIVE_MODULE",
+                "CreateIDasReadOnlyStringFromUtf16WithLength",
                 "CreateIDasReadOnlyStringFromUtf16WithLength",
                 "DasResult",
                 ["ushort* pUtf16", "nuint length", "out System.IntPtr ppOutReadOnlyString"],
             ),
             (
+                "DAS_NATIVE_MODULE",
+                "CreateIDasStringFromUtf16WithLength",
                 "CreateIDasStringFromUtf16WithLength",
                 "DasResult",
                 ["ushort* pUtf16", "nuint length", "out System.IntPtr ppOutString"],
             ),
             (
-                "GetIDasReadOnlyStringUtf16",
-                "DasResult",
-                ["System.IntPtr readOnlyString", "out ushort* pUtf16", "out nuint length"],
-            ),
-            (
+                "DAS_NATIVE_MODULE",
+                "CreateIDasVariantVector",
                 "CreateIDasVariantVector",
                 "DasResult",
                 ["out System.IntPtr ppOutVector"],
             ),
             (
-                "GetIDasVariantVectorString",
+                "DAS_CSHARP_NATIVE_SUPPORT_MODULE",
+                "DasCSharpRetainIDasBase",
+                "DasCSharpRetainIDasBase",
+                "int",
+                ["System.IntPtr handle"],
+            ),
+            (
+                "DAS_CSHARP_NATIVE_SUPPORT_MODULE",
+                "DasCSharpReleaseIDasBase",
+                "DasCSharpReleaseIDasBase",
+                "int",
+                ["System.IntPtr handle"],
+            ),
+            (
+                "DAS_CSHARP_NATIVE_SUPPORT_MODULE",
+                "DasCSharpGetIDasReadOnlyStringUtf16",
+                "DasCSharpGetIDasReadOnlyStringUtf16",
+                "DasResult",
+                ["System.IntPtr readOnlyString", "out ushort* pUtf16", "out nuint length"],
+            ),
+            (
+                "DAS_CSHARP_NATIVE_SUPPORT_MODULE",
+                "DasCSharpGetIDasVariantVectorString",
+                "DasCSharpGetIDasVariantVectorString",
                 "DasResult",
                 ["System.IntPtr vector", "ulong index", "out System.IntPtr ppOutString"],
             ),
             (
-                "GetIDasVariantVectorComponent",
+                "DAS_CSHARP_NATIVE_SUPPORT_MODULE",
+                "DasCSharpGetIDasVariantVectorComponent",
+                "DasCSharpGetIDasVariantVectorComponent",
                 "DasResult",
                 ["System.IntPtr vector", "ulong index", "out System.IntPtr ppOutComponent"],
             ),
             (
-                "PushBackIDasVariantVectorString",
+                "DAS_CSHARP_NATIVE_SUPPORT_MODULE",
+                "DasCSharpPushBackIDasVariantVectorString",
+                "DasCSharpPushBackIDasVariantVectorString",
                 "DasResult",
                 ["System.IntPtr vector", "System.IntPtr value"],
             ),
             (
-                "PushBackIDasVariantVectorComponent",
+                "DAS_CSHARP_NATIVE_SUPPORT_MODULE",
+                "DasCSharpPushBackIDasVariantVectorComponent",
+                "DasCSharpPushBackIDasVariantVectorComponent",
                 "DasResult",
                 ["System.IntPtr vector", "System.IntPtr value"],
             ),
             (
-                "DispatchIDasComponent",
+                "DAS_CSHARP_NATIVE_SUPPORT_MODULE",
+                "DasCSharpDispatchIDasComponent",
+                "DasCSharpDispatchIDasComponent",
                 "DasResult",
                 [
                     "System.IntPtr component",
@@ -681,18 +720,18 @@ class CSharpGenerator:
             ),
         ]
         lines: list[str] = []
-        for entry_point, return_type, parameters in declarations:
+        for module_name, method_name, entry_point, return_type, parameters in declarations:
             if is_library_import:
-                lines.append(f"    [LibraryImport(\"das\", EntryPoint = \"{entry_point}\")]")
+                lines.append(f"    [LibraryImport({module_name}, EntryPoint = \"{entry_point}\")]")
                 lines.append(
-                    f"    internal static partial {return_type} {entry_point}("
+                    f"    internal static partial {return_type} {method_name}("
                 )
             else:
                 lines.append(
-                    f"    [DllImport(\"das\", EntryPoint = \"{entry_point}\", CallingConvention = CallingConvention.Cdecl)]"
+                    f"    [DllImport({module_name}, EntryPoint = \"{entry_point}\", CallingConvention = CallingConvention.Cdecl)]"
                 )
                 lines.append(
-                    f"    internal static extern {return_type} {entry_point}("
+                    f"    internal static extern {return_type} {method_name}("
                 )
             lines.extend(self._format_csharp_parameters(parameters))
             lines.append("")
@@ -993,7 +1032,7 @@ class CSharpGenerator:
                 "    {",
                 "        if (_handle != System.IntPtr.Zero)",
                 "        {",
-                "            NativeMethods.DasRelease(_handle);",
+                "            NativeMethods.DasCSharpReleaseIDasBase(_handle);",
                 "        }",
                 "        _handle = System.IntPtr.Zero;",
                 "    }",
@@ -1053,7 +1092,7 @@ class CSharpGenerator:
                 "",
                 "    public unsafe string ToManagedString()",
                 "    {",
-                f"        var result = {self.namespace_root}.Abi.NativeMethods.GetIDasReadOnlyStringUtf16(",
+                f"        var result = {self.namespace_root}.Abi.NativeMethods.DasCSharpGetIDasReadOnlyStringUtf16(",
                 "            _handle,",
                 "            out var pUtf16,",
                 "            out var length);",
@@ -1065,7 +1104,7 @@ class CSharpGenerator:
                 "    {",
                 "        if (_handle != System.IntPtr.Zero)",
                 "        {",
-                "            NativeMethods.DasRelease(_handle);",
+                "            NativeMethods.DasCSharpReleaseIDasBase(_handle);",
                 "        }",
                 "        _handle = System.IntPtr.Zero;",
                 "    }",
@@ -1117,7 +1156,7 @@ class CSharpGenerator:
                 "    {",
                 "        if (_handle != System.IntPtr.Zero)",
                 "        {",
-                "            NativeMethods.DasRelease(_handle);",
+                "            NativeMethods.DasCSharpReleaseIDasBase(_handle);",
                 "        }",
                 "        _handle = System.IntPtr.Zero;",
                 "    }",
@@ -1374,7 +1413,7 @@ class CSharpGenerator:
             return [
                 "    public IDasVariantVectorGetStringResult GetString(ulong index)",
                 "    {",
-                "        var result = NativeMethods.GetIDasVariantVectorString(",
+                "        var result = NativeMethods.DasCSharpGetIDasVariantVectorString(",
                 "            _handle,",
                 "            index,",
                 "            out var stringHandle);",
@@ -1395,7 +1434,7 @@ class CSharpGenerator:
             return [
                 "    public IDasVariantVectorGetComponentResult GetComponent(ulong index)",
                 "    {",
-                "        var result = NativeMethods.GetIDasVariantVectorComponent(",
+                "        var result = NativeMethods.DasCSharpGetIDasVariantVectorComponent(",
                 "            _handle,",
                 "            index,",
                 "            out var componentHandle);",
@@ -1421,7 +1460,7 @@ class CSharpGenerator:
                 "        {",
                 "            return DasResult.DAS_E_INVALID_ARGUMENT;",
                 "        }",
-                "        return NativeMethods.PushBackIDasVariantVectorString(_handle, inString.Handle);",
+                "        return NativeMethods.DasCSharpPushBackIDasVariantVectorString(_handle, inString.Handle);",
                 "    }",
                 "",
                 "    public void PushBackStringOrThrow(DasReadOnlyString inString)",
@@ -1456,7 +1495,7 @@ class CSharpGenerator:
             "        {",
             "            return DasResult.DAS_E_INVALID_ARGUMENT;",
             "        }",
-            "        return NativeMethods.PushBackIDasVariantVectorComponent(_handle, inComponent.Handle);",
+            "        return NativeMethods.DasCSharpPushBackIDasVariantVectorComponent(_handle, inComponent.Handle);",
             "    }",
             "",
             "    public void PushBackComponentOrThrow(IDasComponent inComponent)",
@@ -1479,7 +1518,7 @@ class CSharpGenerator:
             "        {",
             "            return new IDasComponentDispatchResult(DasResult.DAS_E_INVALID_ARGUMENT, new IDasVariantVector(System.IntPtr.Zero));",
             "        }",
-            "        var result = NativeMethods.DispatchIDasComponent(",
+            "        var result = NativeMethods.DasCSharpDispatchIDasComponent(",
             "            _handle,",
             "            functionName.Handle,",
             "            arguments.Handle,",
@@ -1921,6 +1960,7 @@ class CSharpGenerator:
             "#include <das/DasConfig.h>",
             "#include <cstddef>",
             "#include <cstdint>",
+            "#include <das/DasString.hpp>",
             "#include <das/IDasBase.h>",
         ]
         for header_name in self.idl_header_names:
@@ -1929,12 +1969,53 @@ class CSharpGenerator:
         lines.extend(
             [
                 "",
+                "namespace Das::ExportInterface",
+                "{",
+                "    struct IDasVariantVector;",
+                "}",
+                "",
+                "namespace Das::PluginInterface",
+                "{",
+                "    struct IDasComponent;",
+                "}",
+                "",
                 "using DasCSharpDirectorReleaseThunk = uint32_t (*)(void* managed_state);",
             ]
         )
         for namespace in namespaces:
             lines.append(f"using namespace {namespace};")
-        lines.extend(["", "extern \"C\" {"])
+        lines.extend(
+            [
+                "",
+                "extern \"C\" {",
+                "DAS_C_API uint32_t DasCSharpRetainIDasBase(IDasBase* p_base);",
+                "DAS_C_API uint32_t DasCSharpReleaseIDasBase(IDasBase* p_base);",
+                "DAS_C_API DasResult DasCSharpGetIDasReadOnlyStringUtf16(",
+                "    IDasReadOnlyString* p_readonly_string,",
+                "    const DasUtf16CodeUnit** pp_out_utf16_string,",
+                "    size_t* p_out_length);",
+                "DAS_C_API DasResult DasCSharpGetIDasVariantVectorString(",
+                "    Das::ExportInterface::IDasVariantVector* p_vector,",
+                "    uint64_t index,",
+                "    IDasReadOnlyString** pp_out_string);",
+                "DAS_C_API DasResult DasCSharpGetIDasVariantVectorComponent(",
+                "    Das::ExportInterface::IDasVariantVector* p_vector,",
+                "    uint64_t index,",
+                "    Das::PluginInterface::IDasComponent** pp_out_component);",
+                "DAS_C_API DasResult DasCSharpPushBackIDasVariantVectorString(",
+                "    Das::ExportInterface::IDasVariantVector* p_vector,",
+                "    IDasReadOnlyString* p_in_string);",
+                "DAS_C_API DasResult DasCSharpPushBackIDasVariantVectorComponent(",
+                "    Das::ExportInterface::IDasVariantVector* p_vector,",
+                "    Das::PluginInterface::IDasComponent* p_in_component);",
+                "DAS_C_API DasResult DasCSharpDispatchIDasComponent(",
+                "    Das::PluginInterface::IDasComponent* p_component,",
+                "    IDasReadOnlyString* p_function_name,",
+                "    Das::ExportInterface::IDasVariantVector* p_arguments,",
+                "    Das::ExportInterface::IDasVariantVector** pp_out_result);",
+                "",
+            ]
+        )
         for interface in sorted(interfaces, key=lambda item: item.name):
             director_name = f"{interface.name}Director"
             callbacks_name = f"{director_name}Callbacks"
@@ -1980,6 +2061,116 @@ class CSharpGenerator:
             "",
             "#include <atomic>",
             "#include <new>",
+            "",
+            "uint32_t DasCSharpRetainIDasBase(IDasBase* p_base)",
+            "{",
+            "    if (p_base == nullptr)",
+            "    {",
+            "        return 0;",
+            "    }",
+            "",
+            "    return p_base->AddRef();",
+            "}",
+            "",
+            "uint32_t DasCSharpReleaseIDasBase(IDasBase* p_base)",
+            "{",
+            "    if (p_base == nullptr)",
+            "    {",
+            "        return 0;",
+            "    }",
+            "",
+            "    return p_base->Release();",
+            "}",
+            "",
+            "DasResult DasCSharpGetIDasReadOnlyStringUtf16(",
+            "    IDasReadOnlyString* p_readonly_string,",
+            "    const DasUtf16CodeUnit** pp_out_utf16_string,",
+            "    size_t* p_out_length)",
+            "{",
+            "    if (p_readonly_string == nullptr || pp_out_utf16_string == nullptr",
+            "        || p_out_length == nullptr)",
+            "    {",
+            "        return DAS_E_INVALID_POINTER;",
+            "    }",
+            "",
+            "    const char16_t* p_utf16_string = nullptr;",
+            "    size_t length = 0;",
+            "    const auto result = p_readonly_string->GetUtf16(&p_utf16_string, &length);",
+            "    if (result != DAS_S_OK)",
+            "    {",
+            "        return result;",
+            "    }",
+            "",
+            "    *pp_out_utf16_string =",
+            "        reinterpret_cast<const DasUtf16CodeUnit*>(p_utf16_string);",
+            "    *p_out_length = length;",
+            "    return DAS_S_OK;",
+            "}",
+            "",
+            "DasResult DasCSharpGetIDasVariantVectorString(",
+            "    Das::ExportInterface::IDasVariantVector* p_vector,",
+            "    uint64_t index,",
+            "    IDasReadOnlyString** pp_out_string)",
+            "{",
+            "    if (p_vector == nullptr)",
+            "    {",
+            "        return DAS_E_INVALID_POINTER;",
+            "    }",
+            "",
+            "    return p_vector->GetString(index, pp_out_string);",
+            "}",
+            "",
+            "DasResult DasCSharpGetIDasVariantVectorComponent(",
+            "    Das::ExportInterface::IDasVariantVector* p_vector,",
+            "    uint64_t index,",
+            "    Das::PluginInterface::IDasComponent** pp_out_component)",
+            "{",
+            "    if (p_vector == nullptr)",
+            "    {",
+            "        return DAS_E_INVALID_POINTER;",
+            "    }",
+            "",
+            "    return p_vector->GetComponent(index, pp_out_component);",
+            "}",
+            "",
+            "DasResult DasCSharpPushBackIDasVariantVectorString(",
+            "    Das::ExportInterface::IDasVariantVector* p_vector,",
+            "    IDasReadOnlyString* p_in_string)",
+            "{",
+            "    if (p_vector == nullptr)",
+            "    {",
+            "        return DAS_E_INVALID_POINTER;",
+            "    }",
+            "",
+            "    return p_vector->PushBackString(p_in_string);",
+            "}",
+            "",
+            "DasResult DasCSharpPushBackIDasVariantVectorComponent(",
+            "    Das::ExportInterface::IDasVariantVector* p_vector,",
+            "    Das::PluginInterface::IDasComponent* p_in_component)",
+            "{",
+            "    if (p_vector == nullptr)",
+            "    {",
+            "        return DAS_E_INVALID_POINTER;",
+            "    }",
+            "",
+            "    return p_vector->PushBackComponent(p_in_component);",
+            "}",
+            "",
+            "DasResult DasCSharpDispatchIDasComponent(",
+            "    Das::PluginInterface::IDasComponent* p_component,",
+            "    IDasReadOnlyString* p_function_name,",
+            "    Das::ExportInterface::IDasVariantVector* p_arguments,",
+            "    Das::ExportInterface::IDasVariantVector** pp_out_result)",
+            "{",
+            "    if (p_component == nullptr || p_function_name == nullptr",
+            "        || p_arguments == nullptr || pp_out_result == nullptr)",
+            "    {",
+            "        return DAS_E_INVALID_POINTER;",
+            "    }",
+            "",
+            "    return p_component->Dispatch(p_function_name, p_arguments, pp_out_result);",
+            "}",
             "",
             "class CSharpDirectorLifetime final",
             "{",
@@ -2263,11 +2454,15 @@ def generate_csharp_artifacts(
     namespace_root: str,
     package_name: str,
     project_name: str,
+    das_native_module_name: str,
+    csharp_native_support_module_name: str,
     idl_header_names: Sequence[str] | None = None,
 ) -> CSharpArtifacts:
     return CSharpGenerator(
         namespace_root=namespace_root,
         package_name=package_name,
         project_name=project_name,
+        das_native_module_name=das_native_module_name,
+        csharp_native_support_module_name=csharp_native_support_module_name,
         idl_header_names=idl_header_names,
     ).generate(doc)

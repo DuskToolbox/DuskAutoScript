@@ -119,41 +119,6 @@ DAS_C_API DasResult InitializeIDasPluginManager(
     return DAS_E_NO_IMPLEMENTATION;
 }
 
-DAS_C_API uint32_t DasAddRef(IDasBase* p_base)
-{
-    if (p_base == nullptr)
-    {
-        return 0;
-    }
-
-    return p_base->AddRef();
-}
-
-DAS_C_API uint32_t DasRelease(IDasBase* p_base)
-{
-    if (p_base == nullptr)
-    {
-        return 0;
-    }
-
-    return p_base->Release();
-}
-
-DAS_C_API DasResult DispatchIDasComponent(
-    Das::PluginInterface::IDasComponent*      p_component,
-    IDasReadOnlyString*                       p_function_name,
-    Das::ExportInterface::IDasVariantVector*  p_arguments,
-    Das::ExportInterface::IDasVariantVector** pp_out_result)
-{
-    if (p_component == nullptr || p_function_name == nullptr
-        || p_arguments == nullptr || pp_out_result == nullptr)
-    {
-        return DAS_E_INVALID_POINTER;
-    }
-
-    return p_component->Dispatch(p_function_name, p_arguments, pp_out_result);
-}
-
 // SWIG-compatible wrappers — now at global scope (moved out of Das::Swig)
 // Thin wrappers that delegate to C API, returning DasRetXxx value types.
 

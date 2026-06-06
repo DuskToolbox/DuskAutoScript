@@ -5,11 +5,22 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from csharp_generator import generate_csharp_artifacts
+from csharp_generator import generate_csharp_artifacts as _generate_csharp_artifacts
 from das_idl_parser import parse_idl
 
 
 ROOT = Path(__file__).resolve().parents[2]
+TEST_DAS_NATIVE_MODULE = "DasCoreNativeForTest"
+TEST_CSHARP_NATIVE_SUPPORT_MODULE = "DasCoreCSharpSupportForTest"
+
+
+def generate_csharp_artifacts(*args, **kwargs):
+    kwargs.setdefault("das_native_module_name", TEST_DAS_NATIVE_MODULE)
+    kwargs.setdefault(
+        "csharp_native_support_module_name",
+        TEST_CSHARP_NATIVE_SUPPORT_MODULE,
+    )
+    return _generate_csharp_artifacts(*args, **kwargs)
 
 
 def _read(path: str) -> str:
@@ -107,10 +118,7 @@ class TestNativeUtf16StringAbi(unittest.TestCase):
             header,
             r"CreateIDasStringFromUtf16WithLength\s*\(\s*const\s+DasUtf16CodeUnit\*\s+\w+\s*,\s*size_t\s+\w+",
         )
-        self.assertRegex(
-            header,
-            r"GetIDasReadOnlyStringUtf16\s*\(\s*IDasReadOnlyString\*\s+\w+\s*,\s*const\s+DasUtf16CodeUnit\*\*\s+\w+\s*,\s*size_t\*\s+\w+\s*\)",
-        )
+        self.assertNotIn("GetIDasReadOnlyStringUtf16", header)
 
     def test_d77_39_d77_41_raw_utf16_header_api_is_swig_hidden(self):
         header = _read("include/das/DasString.hpp")
@@ -159,7 +167,8 @@ class TestCSharpGeneratorUtf16Contract(unittest.TestCase):
         self.assertIn("ushort*", combined)
         self.assertIn("CreateIDasReadOnlyStringFromUtf16WithLength", combined)
         self.assertIn("CreateIDasStringFromUtf16WithLength", combined)
-        self.assertIn("GetIDasReadOnlyStringUtf16", combined)
+        self.assertIn("DasCSharpGetIDasReadOnlyStringUtf16", combined)
+        self.assertNotIn('EntryPoint = "GetIDasReadOnlyStringUtf16"', combined)
         self.assertNotIn("LPWStr", combined)
         self.assertNotIn("string value)", combined)
 

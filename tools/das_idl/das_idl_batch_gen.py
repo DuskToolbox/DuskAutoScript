@@ -900,6 +900,12 @@ JSON 配置格式:
             "csharp_namespace_root": reduce_config.get("csharp_namespace_root"),
             "csharp_package_name": reduce_config.get("csharp_package_name"),
             "csharp_project_name": reduce_config.get("csharp_project_name"),
+            "csharp_das_native_module_name": reduce_config.get(
+                "csharp_das_native_module_name"
+            ),
+            "csharp_native_support_module_name": reduce_config.get(
+                "csharp_native_support_module_name"
+            ),
             "csharp_idl_dir": reduce_config.get("csharp_idl_dir"),
             "csharp_idl_files": reduce_config.get("csharp_idl_files", []),
         }
@@ -932,6 +938,10 @@ JSON 配置格式:
                         csharp_fields["csharp_package_name"],
                         "--project-name",
                         csharp_fields["csharp_project_name"],
+                        "--das-native-module-name",
+                        csharp_fields["csharp_das_native_module_name"],
+                        "--native-support-module-name",
+                        csharp_fields["csharp_native_support_module_name"],
                         "--idl-files",
                         *csharp_fields["csharp_idl_files"],
                     ]

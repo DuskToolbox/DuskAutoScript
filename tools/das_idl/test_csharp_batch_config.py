@@ -8,6 +8,12 @@ from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).parent
 REPO_ROOT = SCRIPT_DIR.parent.parent
+CSHARP_MODULE_ARGS = (
+    "--csharp-das-native-module-name",
+    "DasCoreNativeForTest",
+    "--csharp-native-support-module-name",
+    "DasCoreCSharpSupportForTest",
+)
 
 
 def _write_minimal_idl(idl_dir: Path) -> None:
@@ -71,6 +77,7 @@ class TestCSharpBatchConfig(unittest.TestCase):
                 "Das.Generated",
                 "--csharp-project-name",
                 "DasGenerated",
+                *CSHARP_MODULE_ARGS,
             )
 
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -116,6 +123,7 @@ class TestCSharpBatchConfig(unittest.TestCase):
                 "Das.Generated",
                 "--csharp-project-name",
                 "DasGenerated",
+                *CSHARP_MODULE_ARGS,
             )
 
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -125,6 +133,14 @@ class TestCSharpBatchConfig(unittest.TestCase):
             self.assertEqual(reduce_config["csharp_namespace_root"], "Das.Generated")
             self.assertEqual(reduce_config["csharp_package_name"], "Das.Generated")
             self.assertEqual(reduce_config["csharp_project_name"], "DasGenerated")
+            self.assertEqual(
+                reduce_config["csharp_das_native_module_name"],
+                "DasCoreNativeForTest",
+            )
+            self.assertEqual(
+                reduce_config["csharp_native_support_module_name"],
+                "DasCoreCSharpSupportForTest",
+            )
             self.assertEqual(reduce_config["csharp_idl_dir"], str(temp / "idl"))
             self.assertEqual(reduce_config["csharp_idl_files"], ["Core.idl"])
 
@@ -140,6 +156,7 @@ class TestCSharpBatchConfig(unittest.TestCase):
                     "Das.Generated",
                     "--csharp-project-name",
                     "DasGenerated",
+                    *CSHARP_MODULE_ARGS,
                 ],
                 "--csharp-namespace-root",
             ),
@@ -153,6 +170,7 @@ class TestCSharpBatchConfig(unittest.TestCase):
                     "Das.Generated",
                     "--csharp-project-name",
                     "DasGenerated",
+                    *CSHARP_MODULE_ARGS,
                 ],
                 "--csharp-package-name",
             ),
@@ -166,8 +184,43 @@ class TestCSharpBatchConfig(unittest.TestCase):
                     "Das.Generated",
                     "--csharp-package-name",
                     "Das.Generated",
+                    *CSHARP_MODULE_ARGS,
                 ],
                 "--csharp-project-name",
+            ),
+            (
+                [
+                    "--languages",
+                    "CSharp",
+                    "--csharp-output-dir",
+                    "csharp",
+                    "--csharp-namespace-root",
+                    "Das.Generated",
+                    "--csharp-package-name",
+                    "Das.Generated",
+                    "--csharp-project-name",
+                    "DasGenerated",
+                    "--csharp-native-support-module-name",
+                    "DasCoreCSharpSupportForTest",
+                ],
+                "--csharp-das-native-module-name",
+            ),
+            (
+                [
+                    "--languages",
+                    "CSharp",
+                    "--csharp-output-dir",
+                    "csharp",
+                    "--csharp-namespace-root",
+                    "Das.Generated",
+                    "--csharp-package-name",
+                    "Das.Generated",
+                    "--csharp-project-name",
+                    "DasGenerated",
+                    "--csharp-das-native-module-name",
+                    "DasCoreNativeForTest",
+                ],
+                "--csharp-native-support-module-name",
             ),
         ]
 
@@ -198,6 +251,7 @@ class TestCSharpBatchConfig(unittest.TestCase):
                 "Das.Generated",
                 "--csharp-project-name",
                 "DasGenerated",
+                *CSHARP_MODULE_ARGS,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
 
@@ -224,6 +278,7 @@ class TestCSharpBatchConfig(unittest.TestCase):
                     f"{csharp_dir}/Das.Generated/DasException.cs".replace("\\", "/"),
                     f"{csharp_dir}/Das.Generated/Abi/DasGuid.cs".replace("\\", "/"),
                     f"{csharp_dir}/Das.Generated/Abi/NativeMethods.cs".replace("\\", "/"),
+                    f"{csharp_dir}/Das.Generated/Runtime/DasCSharpBootstrap.cs".replace("\\", "/"),
                     f"{csharp_dir}/Das.Generated/Wrappers/IDasSample.cs".replace("\\", "/"),
                     f"{csharp_dir}/Das.Generated/Directors/IDasSampleDirector.cs".replace("\\", "/"),
                     f"{csharp_dir}/Das.Generated/Results/IDasSampleResults.cs".replace("\\", "/"),
@@ -297,6 +352,7 @@ class TestCSharpBatchConfig(unittest.TestCase):
                 "Das.Generated",
                 "--csharp-project-name",
                 "DasGenerated",
+                *CSHARP_MODULE_ARGS,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
 

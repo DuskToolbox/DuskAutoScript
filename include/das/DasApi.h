@@ -72,34 +72,6 @@ struct DasImageDesc
 
 #include "DasCoreApi.generated.h"
 
-DAS_C_API DasResult GetIDasVariantVectorString(
-    Das::ExportInterface::IDasVariantVector* p_vector,
-    uint64_t                                 index,
-    IDasReadOnlyString**                     pp_out_string);
-
-DAS_C_API uint32_t DasAddRef(IDasBase* p_base);
-
-DAS_C_API uint32_t DasRelease(IDasBase* p_base);
-
-DAS_C_API DasResult GetIDasVariantVectorComponent(
-    Das::ExportInterface::IDasVariantVector* p_vector,
-    uint64_t                                 index,
-    Das::PluginInterface::IDasComponent**    pp_out_component);
-
-DAS_C_API DasResult PushBackIDasVariantVectorString(
-    Das::ExportInterface::IDasVariantVector* p_vector,
-    IDasReadOnlyString*                      p_in_string);
-
-DAS_C_API DasResult PushBackIDasVariantVectorComponent(
-    Das::ExportInterface::IDasVariantVector* p_vector,
-    Das::PluginInterface::IDasComponent*     p_in_component);
-
-DAS_C_API DasResult DispatchIDasComponent(
-    Das::PluginInterface::IDasComponent*      p_component,
-    IDasReadOnlyString*                       p_function_name,
-    Das::ExportInterface::IDasVariantVector*  p_arguments,
-    Das::ExportInterface::IDasVariantVector** pp_out_result);
-
 #define DAS_LOG_ERROR(...) DAS_LOG_WITH_SOURCE_LOCATION(Error, __VA_ARGS__)
 #define DAS_LOG_WARNING(...) DAS_LOG_WITH_SOURCE_LOCATION(Warning, __VA_ARGS__)
 #define DAS_LOG_INFO(...) DAS_LOG_WITH_SOURCE_LOCATION(Info, __VA_ARGS__)

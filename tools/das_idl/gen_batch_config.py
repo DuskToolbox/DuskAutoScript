@@ -44,7 +44,9 @@ JSON 结构:
         [--csharp-output-dir <dir>] \
         [--csharp-namespace-root <name>] \
         [--csharp-package-name <name>] \
-        [--csharp-project-name <name>]
+        [--csharp-project-name <name>] \
+        [--csharp-das-native-module-name <name>] \
+        [--csharp-native-support-module-name <name>]
 """
 
 import argparse
@@ -149,6 +151,16 @@ def main() -> int:
         "--csharp-project-name",
         default="",
         help="C# generated project basename, for example DasGenerated",
+    )
+    parser.add_argument(
+        "--csharp-das-native-module-name",
+        default="",
+        help="Public DAS native module name for generated C# P/Invoke",
+    )
+    parser.add_argument(
+        "--csharp-native-support-module-name",
+        default="",
+        help="C# native support module name for generated C# helper P/Invoke",
     )
 
     args = parser.parse_args()
@@ -271,6 +283,8 @@ def main() -> int:
             args.csharp_namespace_root,
             args.csharp_package_name,
             args.csharp_project_name,
+            args.csharp_das_native_module_name,
+            args.csharp_native_support_module_name,
         ]
     )
     if csharp_reduce_requested:
@@ -281,6 +295,14 @@ def main() -> int:
                 ("--csharp-namespace-root", args.csharp_namespace_root),
                 ("--csharp-package-name", args.csharp_package_name),
                 ("--csharp-project-name", args.csharp_project_name),
+                (
+                    "--csharp-das-native-module-name",
+                    args.csharp_das_native_module_name,
+                ),
+                (
+                    "--csharp-native-support-module-name",
+                    args.csharp_native_support_module_name,
+                ),
             ]
             if not value
         ]
@@ -306,6 +328,12 @@ def main() -> int:
         reduce_config["csharp_namespace_root"] = args.csharp_namespace_root
         reduce_config["csharp_package_name"] = args.csharp_package_name
         reduce_config["csharp_project_name"] = args.csharp_project_name
+        reduce_config["csharp_das_native_module_name"] = (
+            args.csharp_das_native_module_name
+        )
+        reduce_config["csharp_native_support_module_name"] = (
+            args.csharp_native_support_module_name
+        )
         reduce_config["csharp_idl_dir"] = args.idl_dir
         reduce_config["csharp_idl_files"] = args.idl_files
 

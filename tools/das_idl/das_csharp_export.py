@@ -89,6 +89,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--package-name", required=True, help="C# package identity")
     parser.add_argument("--project-name", required=True, help="C# project basename")
     parser.add_argument(
+        "--das-native-module-name",
+        required=True,
+        help="Public DAS native module name used by generated C# P/Invoke",
+    )
+    parser.add_argument(
+        "--native-support-module-name",
+        required=True,
+        help="C# native support module name used by generated C# P/Invoke helpers",
+    )
+    parser.add_argument(
         "--idl-files",
         nargs="+",
         required=True,
@@ -100,6 +110,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         namespace_root = _validate_nonempty(args.namespace_root, "--namespace-root")
         package_name = _validate_nonempty(args.package_name, "--package-name")
         project_name = _validate_nonempty(args.project_name, "--project-name")
+        das_native_module_name = _validate_nonempty(
+            args.das_native_module_name,
+            "--das-native-module-name",
+        )
+        csharp_native_support_module_name = _validate_nonempty(
+            args.native_support_module_name,
+            "--native-support-module-name",
+        )
     except ValueError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 2
@@ -128,6 +146,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         namespace_root=namespace_root,
         package_name=package_name,
         project_name=project_name,
+        das_native_module_name=das_native_module_name,
+        csharp_native_support_module_name=csharp_native_support_module_name,
         idl_header_names=[idl_path_to_header_name(name) for name in args.idl_files],
     )
 

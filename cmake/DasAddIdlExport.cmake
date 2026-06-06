@@ -110,6 +110,8 @@ endif()
 #   CSHARP_NAMESPACE_ROOT - C# generated namespace root, required when LANGUAGES contains CSharp
 #   CSHARP_PACKAGE_NAME   - C# package/assembly identity, required when LANGUAGES contains CSharp
 #   CSHARP_PROJECT_NAME   - C# project basename, required when LANGUAGES contains CSharp
+#   CSHARP_DAS_NATIVE_MODULE_NAME - public DAS native module name, required when LANGUAGES contains CSharp
+#   CSHARP_NATIVE_SUPPORT_MODULE_NAME - C# native support module name, required when LANGUAGES contains CSharp
 #
 # 输出变量 (通过 PARENT_SCOPE 输出):
 #   ${NAME}_GENERATED_FILES        - 所有生成的文件列表
@@ -143,6 +145,8 @@ function(das_add_idl_export)
         CSHARP_NAMESPACE_ROOT
         CSHARP_PACKAGE_NAME
         CSHARP_PROJECT_NAME
+        CSHARP_DAS_NATIVE_MODULE_NAME
+        CSHARP_NATIVE_SUPPORT_MODULE_NAME
     )
 
     set(_DAS_IDL_EXPORT_MULTI_VALUE_ARGS
@@ -335,6 +339,14 @@ function(das_add_idl_export)
         message(FATAL_ERROR "[das_add_idl_export] CSHARP_PROJECT_NAME is required when LANGUAGES contains CSharp")
     endif()
 
+    if(_HAS_CSHARP AND NOT DAS_IDL_EXPORT_CSHARP_DAS_NATIVE_MODULE_NAME)
+        message(FATAL_ERROR "[das_add_idl_export] CSHARP_DAS_NATIVE_MODULE_NAME is required when LANGUAGES contains CSharp")
+    endif()
+
+    if(_HAS_CSHARP AND NOT DAS_IDL_EXPORT_CSHARP_NATIVE_SUPPORT_MODULE_NAME)
+        message(FATAL_ERROR "[das_add_idl_export] CSHARP_NATIVE_SUPPORT_MODULE_NAME is required when LANGUAGES contains CSharp")
+    endif()
+
     # 使用 Python 脚本生成 JSON，替代 file(CONFIGURE OUTPUT ...) 以避免内容比对导致的不更新问题
     set(_GEN_CONFIG_SCRIPT "${CMAKE_SOURCE_DIR}/tools/das_idl/gen_batch_config.py")
 
@@ -403,6 +415,8 @@ function(das_add_idl_export)
             --csharp-namespace-root "${DAS_IDL_EXPORT_CSHARP_NAMESPACE_ROOT}"
             --csharp-package-name "${DAS_IDL_EXPORT_CSHARP_PACKAGE_NAME}"
             --csharp-project-name "${DAS_IDL_EXPORT_CSHARP_PROJECT_NAME}"
+            --csharp-das-native-module-name "${DAS_IDL_EXPORT_CSHARP_DAS_NATIVE_MODULE_NAME}"
+            --csharp-native-support-module-name "${DAS_IDL_EXPORT_CSHARP_NATIVE_SUPPORT_MODULE_NAME}"
         )
     endif()
 
@@ -997,12 +1011,18 @@ function(das_add_idl_export)
             DAS_CSHARP_OUTPUT_DIR "${_CSHARP_OUTPUT_DIR}"
             DAS_CSHARP_PROJECT_FILE "${_CSHARP_PROJECT_FILE}"
             DAS_CSHARP_GENERATED_FILES "${_ALL_CSHARP_FILES}"
+            DAS_CSHARP_DAS_NATIVE_MODULE_NAME "${DAS_IDL_EXPORT_CSHARP_DAS_NATIVE_MODULE_NAME}"
+            DAS_CSHARP_NATIVE_SUPPORT_MODULE_NAME "${DAS_IDL_EXPORT_CSHARP_NATIVE_SUPPORT_MODULE_NAME}"
         )
 
         set(${DAS_IDL_EXPORT_NAME}_CSHARP_OUTPUT_DIR ${_CSHARP_OUTPUT_DIR} PARENT_SCOPE)
         set(${DAS_IDL_EXPORT_NAME}_CSHARP_PROJECT_FILE ${_CSHARP_PROJECT_FILE} PARENT_SCOPE)
         set(${DAS_IDL_EXPORT_NAME}_CSHARP_GENERATED_FILES ${_ALL_CSHARP_FILES} PARENT_SCOPE)
         set(${DAS_IDL_EXPORT_NAME}_CSHARP_EXPORT_TARGET ${_CSHARP_EXPORT_TARGET} PARENT_SCOPE)
+        set(${DAS_IDL_EXPORT_NAME}_CSHARP_DAS_NATIVE_MODULE_NAME
+            ${DAS_IDL_EXPORT_CSHARP_DAS_NATIVE_MODULE_NAME} PARENT_SCOPE)
+        set(${DAS_IDL_EXPORT_NAME}_CSHARP_NATIVE_SUPPORT_MODULE_NAME
+            ${DAS_IDL_EXPORT_CSHARP_NATIVE_SUPPORT_MODULE_NAME} PARENT_SCOPE)
     endif()
 
     # ====== 构建导出宏列表 ======
