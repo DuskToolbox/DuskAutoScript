@@ -958,14 +958,18 @@ class TestCSharpGeneratorPhase79NativeDirectorSurface(unittest.TestCase):
         self.assertIn("IDasVariantVector.AdoptResult(result, resultHandle)", component_wrapper)
         self.assertIn("DasReadOnlyString.Borrow(p_function_name)", component_director)
         self.assertIn("IDasVariantVector.Borrow(p_arguments)", component_director)
+        base_wrapper = artifacts.files["Das.Generated/Wrappers/IDasBase.cs"]
+        self.assertIn("RetainNativeHandleForDirectorOutput", base_wrapper)
         self.assertIn(
-            'IDasBase.RetainNativeHandle(resultObject.ResultValue, "IDasVariantVector")',
+            'IDasBase.RetainNativeHandleForDirectorOutput(resultObject.ResultValue, "IDasVariantVector")',
             component_director,
         )
         self.assertIn(
-            'IDasBase.RetainNativeHandle(resultObject.Interface, "IDasBase")',
+            'IDasBase.RetainNativeHandleForDirectorOutput(resultObject.Interface, "IDasBase")',
             package_director,
         )
+        self.assertIn("value._ownership != NativeHandleOwnership.Borrowed", base_wrapper)
+        self.assertIn("value.Dispose();", base_wrapper)
 
     def test_d79_2_orthrow_is_caller_convenience_and_not_netframework_surface(self):
         artifacts = _phase79_director_artifacts()

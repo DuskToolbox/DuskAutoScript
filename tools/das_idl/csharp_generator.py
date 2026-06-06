@@ -370,6 +370,27 @@ def _wrapper_retain_handle_expression(
     return f"IDasBase.RetainNativeHandle({value_expression}, \"{interface_name}\")"
 
 
+def _wrapper_retain_director_output_expression(
+    type_info: TypeInfo,
+    value_expression: str,
+    interface_name: str,
+) -> str:
+    if _is_read_only_string_pointer(type_info):
+        return (
+            "DasReadOnlyString.RetainNativeHandleForDirectorOutput"
+            f"({value_expression})"
+        )
+    if _is_binary_buffer_pointer(type_info):
+        return (
+            "DasBinaryBuffer.RetainNativeHandleForDirectorOutput"
+            f"({value_expression})"
+        )
+    return (
+        "IDasBase.RetainNativeHandleForDirectorOutput"
+        f"({value_expression}, \"{interface_name}\")"
+    )
+
+
 def _result_type_name(interface_name: str, method_name: str) -> str:
     return f"{interface_name}{_sanitize_identifier(method_name)}Result"
 
@@ -1116,6 +1137,19 @@ class CSharpGenerator:
                 "        return value._handle;",
                 "    }",
                 "",
+                "    internal static System.IntPtr RetainNativeHandleForDirectorOutput(",
+                "        IDasBase value,",
+                "        string interfaceName)",
+                "    {",
+                "        var handle = RetainNativeHandle(value, interfaceName);",
+                "        if (handle != System.IntPtr.Zero",
+                "            && value._ownership != NativeHandleOwnership.Borrowed)",
+                "        {",
+                "            value.Dispose();",
+                "        }",
+                "        return handle;",
+                "    }",
+                "",
                 "    internal System.IntPtr DetachNativeHandle(string interfaceName)",
                 "    {",
                 "        if (_handle == System.IntPtr.Zero",
@@ -1300,6 +1334,18 @@ class CSharpGenerator:
                 "        return value._handle;",
                 "    }",
                 "",
+                "    internal static System.IntPtr RetainNativeHandleForDirectorOutput(",
+                "        DasReadOnlyString value)",
+                "    {",
+                "        var handle = RetainNativeHandle(value);",
+                "        if (handle != System.IntPtr.Zero",
+                "            && value._ownership != NativeHandleOwnership.Borrowed)",
+                "        {",
+                "            value.Dispose();",
+                "        }",
+                "        return handle;",
+                "    }",
+                "",
                 "    public unsafe string ToManagedString()",
                 "    {",
                 f"        var result = {self.namespace_root}.Abi.NativeMethods.DasCSharpGetIDasReadOnlyStringUtf16(",
@@ -1418,6 +1464,18 @@ class CSharpGenerator:
                 "        }",
                 "        NativeMethods.DasCSharpRetainIDasBase(value._handle);",
                 "        return value._handle;",
+                "    }",
+                "",
+                "    internal static System.IntPtr RetainNativeHandleForDirectorOutput(",
+                "        DasBinaryBuffer value)",
+                "    {",
+                "        var handle = RetainNativeHandle(value);",
+                "        if (handle != System.IntPtr.Zero",
+                "            && value._ownership != NativeHandleOwnership.Borrowed)",
+                "        {",
+                "            value.Dispose();",
+                "        }",
+                "        return handle;",
                 "    }",
                 "",
                 "    public DasResult GetView(out DasBinaryBufferView view)",
@@ -2099,7 +2157,7 @@ class CSharpGenerator:
                 interface_name = type_simple_name(value_type)
                 lines.extend(
                     [
-                        f"            var {handle_name} = {_wrapper_retain_handle_expression(value_type, f'resultObject.{field_name}', interface_name)};",
+                        f"            var {handle_name} = {_wrapper_retain_director_output_expression(value_type, f'resultObject.{field_name}', interface_name)};",
                         f"            if ({handle_name} == System.IntPtr.Zero)",
                         "            {",
                         "                return DasResult.DAS_E_INVALID_ARGUMENT;",
