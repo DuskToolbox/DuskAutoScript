@@ -60,6 +60,35 @@ def _rel(path: Path) -> str:
 
 
 class TestCSharpHostBridgeBoundaries(unittest.TestCase):
+    def test_public_headers_no_csharp_helper_abi_leak(self):
+        public_headers = "\n".join(
+            (
+                _read_text(
+                    ROOT / "include" / "das" / "DasApi.h"
+                ),
+                _read_text(
+                    ROOT / "include" / "das" / "DasString.hpp"
+                ),
+            )
+        )
+
+        for helper_name in (
+            "DasAddRef",
+            "DasRelease",
+            "GetIDasVariantVectorString",
+            "GetIDasVariantVectorComponent",
+            "PushBackIDasVariantVectorString",
+            "PushBackIDasVariantVectorComponent",
+            "DispatchIDasComponent",
+            "GetIDasReadOnlyStringUtf16",
+        ):
+            with self.subTest(helper_name=helper_name):
+                self.assertNotIn(
+                    helper_name,
+                    public_headers,
+                    "Helper ABI belongs to generated C# native support runtime and must remain out of public headers.",
+                )
+
     def test_csharp_swig_route_is_not_restored(self):
         self.assertFalse(
             (ROOT / "tools" / "das_idl" / "swig_csharp_generator.py").exists()

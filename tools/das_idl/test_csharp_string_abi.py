@@ -13,6 +13,16 @@ ROOT = Path(__file__).resolve().parents[2]
 TEST_DAS_NATIVE_MODULE = "DasCoreNativeForTest"
 TEST_CSHARP_NATIVE_SUPPORT_MODULE = "DasCoreCSharpSupportForTest"
 
+BANNED_PUBLIC_HELPERS = (
+    "DasAddRef",
+    "DasRelease",
+    "GetIDasVariantVectorString",
+    "GetIDasVariantVectorComponent",
+    "PushBackIDasVariantVectorString",
+    "PushBackIDasVariantVectorComponent",
+    "DispatchIDasComponent",
+)
+
 
 def generate_csharp_artifacts(*args, **kwargs):
     kwargs.setdefault("das_native_module_name", TEST_DAS_NATIVE_MODULE)
@@ -158,6 +168,34 @@ class TestNativeUtf16StringAbi(unittest.TestCase):
         self.assertNotIn("u_strlen(p_utf16_string)", impl)
         self.assertNotIn("fromWCS", impl)
         self.assertNotIn("toWCS", impl)
+
+    def test_public_headers_do_not_reintroduce_csharp_helper_abi(self):
+        public_api = "\n".join(
+            (
+                _read("include/das/DasApi.h"),
+                _read("das/Core/ForeignInterfaceHost/include/das/Core/ForeignInterfaceHost/DasStringImpl.h"),
+            )
+        )
+
+        for helper_name in BANNED_PUBLIC_HELPERS:
+            with self.subTest(helper_name=helper_name):
+                self.assertNotIn(
+                    helper_name,
+                    public_api,
+                    f"{helper_name} belongs to the generated C# native support boundary; "
+                    "it must not be reintroduced into public DAS headers.",
+                )
+
+    def test_get_idas_read_only_string_utf16_is_only_in_support_abi_path(self):
+        public_string_header = _read("include/das/DasString.hpp")
+        private_string_helper = "GetIDasReadOnlyStringUtf16"
+
+        self.assertNotIn(
+            private_string_helper,
+            public_string_header,
+            "GetIDasReadOnlyStringUtf16 is now exported via C# native support helpers "
+            f"({TEST_CSHARP_NATIVE_SUPPORT_MODULE}) and must not remain in public headers.",
+        )
 
 
 class TestCSharpGeneratorUtf16Contract(unittest.TestCase):

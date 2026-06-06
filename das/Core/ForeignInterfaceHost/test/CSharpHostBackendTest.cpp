@@ -745,3 +745,59 @@ TEST(CSharpHostBackendNetFx, FindDotNetFrameworkDefinesNet48GatingContract)
     EXPECT_EQ(content.find("C:/"), std::string::npos);
     EXPECT_EQ(content.find("C:\\"), std::string::npos);
 }
+
+std::string ReadTextFile(const std::filesystem::path& path)
+{
+    std::ifstream source{path};
+    if (!source.is_open())
+    {
+        return {};
+    }
+
+    return {
+        std::istreambuf_iterator<char>{source},
+        std::istreambuf_iterator<char>{},
+    };
+}
+
+TEST(
+    CSharpHostBackend,
+    BackendShims_use_behavior_interfaces_not_function_pointer_structs)
+{
+    const auto root = std::filesystem::path{__FILE__}
+                          .parent_path()
+                          .parent_path()
+                          .parent_path()
+                          .parent_path()
+                          .parent_path();
+    const auto host_fxr_header_path = root / "das" / "Core"
+                                      / "ForeignInterfaceHost" / "src"
+                                      / "CSharpHostFxrBackend.h";
+    const auto net_fx_header_path = root / "das" / "Core"
+                                    / "ForeignInterfaceHost" / "src"
+                                    / "CSharpNetFxBackend.h";
+
+    const auto host_fxr_header = ReadTextFile(host_fxr_header_path);
+    const auto net_fx_header = ReadTextFile(net_fx_header_path);
+
+    ASSERT_FALSE(host_fxr_header.empty());
+    ASSERT_FALSE(net_fx_header.empty());
+
+    EXPECT_EQ(
+        host_fxr_header.find("struct CSharpHostFxrApi"),
+        std::string::npos);
+    EXPECT_EQ(net_fx_header.find("struct CSharpNetFxApi"), std::string::npos);
+    EXPECT_NE(
+        host_fxr_header.find("ICSharpHostFxrRuntimeLoader"),
+        std::string::npos);
+    EXPECT_NE(host_fxr_header.find("ICSharpHostFxrRuntime"), std::string::npos);
+    EXPECT_NE(
+        host_fxr_header.find("ICSharpHostFxrAssemblyResolver"),
+        std::string::npos);
+    EXPECT_NE(net_fx_header.find("ICSharpNetFxRuntimeHost"), std::string::npos);
+    EXPECT_NE(
+        net_fx_header.find("ICSharpNetFxRuntimeLoader"),
+        std::string::npos);
+    EXPECT_EQ(host_fxr_header.find("(*)"), std::string::npos);
+    EXPECT_EQ(net_fx_header.find("(*)"), std::string::npos);
+}
