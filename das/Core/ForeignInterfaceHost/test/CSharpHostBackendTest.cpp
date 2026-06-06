@@ -10,6 +10,7 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -152,6 +153,7 @@ namespace
     {
         int                   init_result = 0;
         int                   delegate_result = 0;
+        int                   entrypoint_lookup_result = 0;
         void*                 entrypoint = nullptr;
         int                   entrypoint_result = DAS_S_OK;
         bool                  set_package = true;
@@ -182,7 +184,6 @@ namespace
     };
 
     FakeHostFxrState* g_fake_state = nullptr;
-    FakeNetFxState*   g_fake_netfx_state = nullptr;
 
     int FakeEntrypoint(void* args, int size_bytes)
     {
@@ -200,100 +201,183 @@ namespace
         return g_fake_state->entrypoint_result;
     }
 
-    CSharpHostFxrApi MakeFakeApi(FakeHostFxrState& state)
+    class FakeHostFxrAssemblyResolver final
+        : public ICSharpHostFxrAssemblyResolver
     {
-        state.entrypoint = reinterpret_cast<void*>(&FakeEntrypoint);
-        g_fake_state = &state;
+    public:
+        explicit FakeHostFxrAssemblyResolver(FakeHostFxrState& state)
+            : state_{state}
+        {
+        }
 
-        CSharpHostFxrApi api{};
-        api.initialize_for_runtime_config =
-            [](const std::filesystem::path& runtime_config,
-               CSharpHostFxrHandle*         handle,
-               void*) -> int
+        int LoadAssemblyAndGetFunctionPointer(
+            const std::filesystem::path& assembly_path,
+            std::string_view             type_name,
+            std::string_view             method_name,
+            void**                       entrypoint) override
         {
-            g_fake_state->init_calls += 1;
-            g_fake_state->runtime_config = runtime_config;
-            *handle = reinterpret_cast<CSharpHostFxrHandle>(g_fake_state);
-            return g_fake_state->init_result;
-        };
-        api.get_runtime_delegate = [](CSharpHostFxrHandle,
-                                      CSharpHostFxrDelegateType type,
-                                      void**                    delegate,
-                                      void*) -> int
+            state_.assembly_path = assembly_path;
+            state_.type_name = std::string{type_name};
+            state_.method_name = std::string{method_name};
+            if (entrypoint != nullptr)
+            {
+                *entrypoint = state_.entrypoint;
+            }
+            return state_.entrypoint_lookup_result;
+        }
+
+    private:
+        FakeHostFxrState& state_;
+    };
+
+    class FakeHostFxrRuntime final : public ICSharpHostFxrRuntime
+    {
+    public:
+        explicit FakeHostFxrRuntime(FakeHostFxrState& state) : state_{state} {}
+
+        ~FakeHostFxrRuntime() override { state_.close_calls += 1; }
+
+        int GetAssemblyResolver(
+            std::unique_ptr<ICSharpHostFxrAssemblyResolver>* resolver) override
         {
-            g_fake_state->delegate_calls += 1;
-            if (type
-                != CSharpHostFxrDelegateType::LoadAssemblyAndGetFunctionPointer)
+            if (resolver == nullptr)
             {
                 return -1;
             }
-            *delegate = g_fake_state;
-            return g_fake_state->delegate_result;
-        };
-        api.close = [](CSharpHostFxrHandle, void*)
-        { g_fake_state->close_calls += 1; };
-        api.load_assembly_and_get_function_pointer =
-            [](void*                        delegate,
-               const std::filesystem::path& assembly_path,
-               std::string_view             type_name,
-               std::string_view             method_name,
-               void**                       entrypoint,
-               void*) -> int
-        {
-            auto* state = static_cast<FakeHostFxrState*>(delegate);
-            state->assembly_path = assembly_path;
-            state->type_name = std::string{type_name};
-            state->method_name = std::string{method_name};
-            *entrypoint = state->entrypoint;
+
+            state_.delegate_calls += 1;
+            *resolver = nullptr;
+            if (state_.delegate_result != 0)
+            {
+                return state_.delegate_result;
+            }
+
+            *resolver = std::make_unique<FakeHostFxrAssemblyResolver>(state_);
             return 0;
-        };
-        return api;
+        }
+
+    private:
+        FakeHostFxrState& state_;
+    };
+
+    class FakeHostFxrRuntimeLoader final : public ICSharpHostFxrRuntimeLoader
+    {
+    public:
+        explicit FakeHostFxrRuntimeLoader(FakeHostFxrState& state)
+            : state_{state}
+        {
+            state_.entrypoint = reinterpret_cast<void*>(&FakeEntrypoint);
+            g_fake_state = &state_;
+        }
+
+        int InitializeForRuntimeConfig(
+            const std::filesystem::path&            runtime_config_path,
+            std::unique_ptr<ICSharpHostFxrRuntime>* runtime) override
+        {
+            if (runtime == nullptr)
+            {
+                return -1;
+            }
+
+            state_.init_calls += 1;
+            state_.runtime_config = runtime_config_path;
+            *runtime = nullptr;
+            if (state_.init_result < 0)
+            {
+                return state_.init_result;
+            }
+
+            *runtime = std::make_unique<FakeHostFxrRuntime>(state_);
+            return state_.init_result;
+        }
+
+    private:
+        FakeHostFxrState& state_;
+    };
+
+    std::shared_ptr<ICSharpHostFxrRuntimeLoader> MakeFakeHostFxrLoader(
+        FakeHostFxrState& state)
+    {
+        return std::make_shared<FakeHostFxrRuntimeLoader>(state);
     }
 
-    CSharpNetFxApi MakeFakeApi(FakeNetFxState& state)
+    class FakeNetFxRuntimeHost final : public ICSharpNetFxRuntimeHost
     {
-        g_fake_netfx_state = &state;
+    public:
+        explicit FakeNetFxRuntimeHost(FakeNetFxState& state) : state_{state} {}
 
-        CSharpNetFxApi api{};
-        api.start_clr = [](CSharpNetFxHostHandle* handle, void*) -> int
-        {
-            g_fake_netfx_state->start_calls += 1;
-            *handle =
-                reinterpret_cast<CSharpNetFxHostHandle>(g_fake_netfx_state);
-            return g_fake_netfx_state->start_result;
-        };
-        api.execute_in_default_app_domain =
-            [](CSharpNetFxHostHandle,
-               const std::filesystem::path& assembly_path,
-               std::string_view             type_name,
-               std::string_view             method_name,
-               std::string_view             bootstrap_cookie,
-               unsigned long*               return_value,
-               void*) -> int
-        {
-            g_fake_netfx_state->execute_calls += 1;
-            g_fake_netfx_state->assembly_path = assembly_path;
-            g_fake_netfx_state->type_name = std::string{type_name};
-            g_fake_netfx_state->method_name = std::string{method_name};
-            g_fake_netfx_state->bootstrap_cookie =
-                std::string{bootstrap_cookie};
-            *return_value = g_fake_netfx_state->managed_return;
+        ~FakeNetFxRuntimeHost() override { state_.release_calls += 1; }
 
-            if (g_fake_netfx_state->set_package)
+        int ExecuteInDefaultAppDomain(
+            const std::filesystem::path& assembly_path,
+            std::string_view             type_name,
+            std::string_view             method_name,
+            std::string_view             bootstrap_cookie,
+            unsigned long*               return_value) override
+        {
+            if (return_value == nullptr)
+            {
+                return -1;
+            }
+
+            state_.execute_calls += 1;
+            state_.assembly_path = assembly_path;
+            state_.type_name = std::string{type_name};
+            state_.method_name = std::string{method_name};
+            state_.bootstrap_cookie = std::string{bootstrap_cookie};
+            *return_value = state_.managed_return;
+
+            if (state_.set_package)
             {
                 auto* package = new BackendPluginPackage();
                 package->AddRef();
                 auto* bootstrap_args =
                     reinterpret_cast<DasCSharpBootstrapArgsV1*>(
-                        std::stoull(g_fake_netfx_state->bootstrap_cookie));
+                        std::stoull(state_.bootstrap_cookie));
                 *bootstrap_args->pp_package = package;
             }
 
-            return g_fake_netfx_state->execute_result;
-        };
-        api.release = [](CSharpNetFxHostHandle, void*)
-        { g_fake_netfx_state->release_calls += 1; };
-        return api;
+            return state_.execute_result;
+        }
+
+    private:
+        FakeNetFxState& state_;
+    };
+
+    class FakeNetFxRuntimeLoader final : public ICSharpNetFxRuntimeLoader
+    {
+    public:
+        explicit FakeNetFxRuntimeLoader(FakeNetFxState& state) : state_{state}
+        {
+        }
+
+        int StartRuntime(
+            std::unique_ptr<ICSharpNetFxRuntimeHost>* runtime_host) override
+        {
+            if (runtime_host == nullptr)
+            {
+                return -1;
+            }
+
+            state_.start_calls += 1;
+            *runtime_host = nullptr;
+            if (state_.start_result < 0)
+            {
+                return state_.start_result;
+            }
+
+            *runtime_host = std::make_unique<FakeNetFxRuntimeHost>(state_);
+            return state_.start_result;
+        }
+
+    private:
+        FakeNetFxState& state_;
+    };
+
+    std::shared_ptr<ICSharpNetFxRuntimeLoader> MakeFakeNetFxLoader(
+        FakeNetFxState& state)
+    {
+        return std::make_shared<FakeNetFxRuntimeLoader>(state);
     }
 
     DasResult InvokeBackend(
@@ -355,8 +439,8 @@ TEST(CSharpHostBackend, MissingRuntimeConfigMapsToSpecificError)
 {
     TempBackendLayout    layout;
     FakeHostFxrState     state;
-    auto                 api = MakeFakeApi(state);
-    CSharpHostFxrBackend backend{api};
+    auto                 loader = MakeFakeHostFxrLoader(state);
+    CSharpHostFxrBackend backend{loader};
 
     EXPECT_EQ(
         InvokeBackend(backend, layout.Manifest()),
@@ -370,8 +454,8 @@ TEST(CSharpHostBackend, HostFxrInitFailureMapsToHostFxrInitFailed)
     layout.WriteRuntimeConfig();
     FakeHostFxrState state;
     state.init_result = -1;
-    auto                 api = MakeFakeApi(state);
-    CSharpHostFxrBackend backend{api};
+    auto                 loader = MakeFakeHostFxrLoader(state);
+    CSharpHostFxrBackend backend{loader};
 
     EXPECT_EQ(
         InvokeBackend(backend, layout.Manifest()),
@@ -386,8 +470,8 @@ TEST(CSharpHostBackend, HostFxrDelegateFailureMapsToHostFxrInitFailed)
     layout.WriteRuntimeConfig();
     FakeHostFxrState state;
     state.delegate_result = -1;
-    auto                 api = MakeFakeApi(state);
-    CSharpHostFxrBackend backend{api};
+    auto                 loader = MakeFakeHostFxrLoader(state);
+    CSharpHostFxrBackend backend{loader};
 
     EXPECT_EQ(
         InvokeBackend(backend, layout.Manifest()),
@@ -400,9 +484,23 @@ TEST(CSharpHostBackend, MissingEntrypointPointerMapsToEntrypointMissing)
     TempBackendLayout layout;
     layout.WriteRuntimeConfig();
     FakeHostFxrState state;
-    auto             api = MakeFakeApi(state);
+    auto             loader = MakeFakeHostFxrLoader(state);
     state.entrypoint = nullptr;
-    CSharpHostFxrBackend backend{api};
+    CSharpHostFxrBackend backend{loader};
+
+    EXPECT_EQ(
+        InvokeBackend(backend, layout.Manifest()),
+        DAS_E_CSHARP_ENTRYPOINT_MISSING);
+}
+
+TEST(CSharpHostBackend, EntrypointLookupFailureMapsToEntrypointMissing)
+{
+    TempBackendLayout layout;
+    layout.WriteRuntimeConfig();
+    FakeHostFxrState state;
+    state.entrypoint_lookup_result = -1;
+    auto                 loader = MakeFakeHostFxrLoader(state);
+    CSharpHostFxrBackend backend{loader};
 
     EXPECT_EQ(
         InvokeBackend(backend, layout.Manifest()),
@@ -414,8 +512,8 @@ TEST(CSharpHostBackend, InvalidManifestEntrypointMapsToEntrypointInvalid)
     TempBackendLayout layout;
     layout.WriteRuntimeConfig();
     FakeHostFxrState     state;
-    auto                 api = MakeFakeApi(state);
-    CSharpHostFxrBackend backend{api};
+    auto                 loader = MakeFakeHostFxrLoader(state);
+    CSharpHostFxrBackend backend{loader};
     auto                 manifest = layout.Manifest();
     manifest.entry_point = {};
 
@@ -430,8 +528,8 @@ TEST(CSharpHostBackend, EntrypointFailureMapsToPluginInitFailed)
     layout.WriteRuntimeConfig();
     FakeHostFxrState state;
     state.entrypoint_result = DAS_E_CSHARP_ERROR;
-    auto                 api = MakeFakeApi(state);
-    CSharpHostFxrBackend backend{api};
+    auto                 loader = MakeFakeHostFxrLoader(state);
+    CSharpHostFxrBackend backend{loader};
 
     EXPECT_EQ(
         InvokeBackend(backend, layout.Manifest()),
@@ -444,8 +542,8 @@ TEST(CSharpHostBackend, NullPackageOutMapsToPluginInitFailed)
     layout.WriteRuntimeConfig();
     FakeHostFxrState state;
     state.set_package = false;
-    auto                 api = MakeFakeApi(state);
-    CSharpHostFxrBackend backend{api};
+    auto                 loader = MakeFakeHostFxrLoader(state);
+    CSharpHostFxrBackend backend{loader};
 
     EXPECT_EQ(
         InvokeBackend(backend, layout.Manifest()),
@@ -459,8 +557,8 @@ TEST(
     TempBackendLayout layout;
     layout.WriteRuntimeConfig();
     FakeHostFxrState     state;
-    auto                 api = MakeFakeApi(state);
-    CSharpHostFxrBackend backend{api};
+    auto                 loader = MakeFakeHostFxrLoader(state);
+    CSharpHostFxrBackend backend{loader};
 
     EXPECT_EQ(InvokeBackend(backend, layout.Manifest()), DAS_S_OK);
     EXPECT_EQ(
@@ -509,8 +607,8 @@ TEST(CSharpHostBackendNetFx, WindowsSeamUsesDefaultAppDomainStringContract)
     manifest.runtime_config_path = std::nullopt;
 
     FakeNetFxState     state;
-    auto               api = MakeFakeApi(state);
-    CSharpNetFxBackend backend{api};
+    auto               loader = MakeFakeNetFxLoader(state);
+    CSharpNetFxBackend backend{loader};
 
     EXPECT_EQ(InvokeBackend(backend, manifest), DAS_S_OK);
     EXPECT_EQ(state.start_calls, 1);
@@ -534,8 +632,8 @@ TEST(CSharpHostBackendNetFx, ClrInitFailureMapsToClrInitFailed)
 
     FakeNetFxState state;
     state.start_result = -1;
-    auto               api = MakeFakeApi(state);
-    CSharpNetFxBackend backend{api};
+    auto               loader = MakeFakeNetFxLoader(state);
+    CSharpNetFxBackend backend{loader};
 
     EXPECT_EQ(
         InvokeBackend(backend, manifest),
@@ -553,8 +651,8 @@ TEST(CSharpHostBackendNetFx, EntrypointFailureMapsToEntrypointMissing)
 
     FakeNetFxState state;
     state.execute_result = -1;
-    auto               api = MakeFakeApi(state);
-    CSharpNetFxBackend backend{api};
+    auto               loader = MakeFakeNetFxLoader(state);
+    CSharpNetFxBackend backend{loader};
 
     EXPECT_EQ(
         InvokeBackend(backend, manifest),
@@ -571,8 +669,8 @@ TEST(CSharpHostBackendNetFx, ManagedFailureMapsToPluginInitFailed)
 
     FakeNetFxState state;
     state.managed_return = DAS_E_CSHARP_ERROR;
-    auto               api = MakeFakeApi(state);
-    CSharpNetFxBackend backend{api};
+    auto               loader = MakeFakeNetFxLoader(state);
+    CSharpNetFxBackend backend{loader};
 
     EXPECT_EQ(
         InvokeBackend(backend, manifest),
@@ -589,8 +687,8 @@ TEST(CSharpHostBackendNetFx, NullPackageOutMapsToPluginInitFailed)
 
     FakeNetFxState state;
     state.set_package = false;
-    auto               api = MakeFakeApi(state);
-    CSharpNetFxBackend backend{api};
+    auto               loader = MakeFakeNetFxLoader(state);
+    CSharpNetFxBackend backend{loader};
 
     EXPECT_EQ(
         InvokeBackend(backend, manifest),

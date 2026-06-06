@@ -11,50 +11,50 @@
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 
-using CSharpHostFxrHandle = void*;
-
-enum class CSharpHostFxrDelegateType
+class ICSharpHostFxrAssemblyResolver
 {
-    LoadAssemblyAndGetFunctionPointer
-};
+public:
+    virtual ~ICSharpHostFxrAssemblyResolver() = default;
 
-struct CSharpHostFxrApi
-{
-    int (*initialize_for_runtime_config)(
-        const std::filesystem::path& runtime_config_path,
-        CSharpHostFxrHandle*         handle,
-        void*                        user_data) = nullptr;
-    int (*get_runtime_delegate)(
-        CSharpHostFxrHandle       handle,
-        CSharpHostFxrDelegateType type,
-        void**                    runtime_delegate,
-        void*                     user_data) = nullptr;
-    void (*close)(CSharpHostFxrHandle handle, void* user_data) = nullptr;
-    int (*load_assembly_and_get_function_pointer)(
-        void*                        runtime_delegate,
+    virtual int LoadAssemblyAndGetFunctionPointer(
         const std::filesystem::path& assembly_path,
         std::string_view             type_name,
         std::string_view             method_name,
-        void**                       entrypoint,
-        void*                        user_data) = nullptr;
-    void* user_data = nullptr;
+        void**                       entrypoint) = 0;
+};
+
+class ICSharpHostFxrRuntime
+{
+public:
+    virtual ~ICSharpHostFxrRuntime() = default;
+
+    virtual int GetAssemblyResolver(
+        std::unique_ptr<ICSharpHostFxrAssemblyResolver>* resolver) = 0;
+};
+
+class ICSharpHostFxrRuntimeLoader
+{
+public:
+    virtual ~ICSharpHostFxrRuntimeLoader() = default;
+
+    virtual int InitializeForRuntimeConfig(
+        const std::filesystem::path&            runtime_config_path,
+        std::unique_ptr<ICSharpHostFxrRuntime>* runtime) = 0;
 };
 
 class CSharpHostFxrBackend final : public ICSharpRuntimeBackend
 {
 public:
     CSharpHostFxrBackend();
-    explicit CSharpHostFxrBackend(CSharpHostFxrApi api);
+    explicit CSharpHostFxrBackend(
+        std::shared_ptr<ICSharpHostFxrRuntimeLoader> runtime_loader);
 
     DasResult LoadPlugin(
         const CSharpManifest&     manifest,
         DasCSharpBootstrapArgsV1& bootstrap_args) override;
 
 private:
-    CSharpHostFxrBackend(CSharpHostFxrApi api, std::shared_ptr<void> state);
-
-    CSharpHostFxrApi      api_{};
-    std::shared_ptr<void> state_;
+    std::shared_ptr<ICSharpHostFxrRuntimeLoader> runtime_loader_;
 };
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_END

@@ -11,38 +11,41 @@
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 
-using CSharpNetFxHostHandle = void*;
-
-struct CSharpNetFxApi
+class ICSharpNetFxRuntimeHost
 {
-    int (*start_clr)(CSharpNetFxHostHandle* handle, void* user_data) = nullptr;
-    int (*execute_in_default_app_domain)(
-        CSharpNetFxHostHandle        handle,
+public:
+    virtual ~ICSharpNetFxRuntimeHost() = default;
+
+    virtual int ExecuteInDefaultAppDomain(
         const std::filesystem::path& assembly_path,
         std::string_view             type_name,
         std::string_view             method_name,
         std::string_view             bootstrap_cookie,
-        unsigned long*               return_value,
-        void*                        user_data) = nullptr;
-    void (*release)(CSharpNetFxHostHandle handle, void* user_data) = nullptr;
-    void* user_data = nullptr;
+        unsigned long*               return_value) = 0;
+};
+
+class ICSharpNetFxRuntimeLoader
+{
+public:
+    virtual ~ICSharpNetFxRuntimeLoader() = default;
+
+    virtual int StartRuntime(
+        std::unique_ptr<ICSharpNetFxRuntimeHost>* runtime_host) = 0;
 };
 
 class CSharpNetFxBackend final : public ICSharpRuntimeBackend
 {
 public:
     CSharpNetFxBackend();
-    explicit CSharpNetFxBackend(CSharpNetFxApi api);
+    explicit CSharpNetFxBackend(
+        std::shared_ptr<ICSharpNetFxRuntimeLoader> runtime_loader);
 
     DasResult LoadPlugin(
         const CSharpManifest&     manifest,
         DasCSharpBootstrapArgsV1& bootstrap_args) override;
 
 private:
-    CSharpNetFxBackend(CSharpNetFxApi api, std::shared_ptr<void> state);
-
-    CSharpNetFxApi        api_{};
-    std::shared_ptr<void> state_;
+    std::shared_ptr<ICSharpNetFxRuntimeLoader> runtime_loader_;
 };
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_END

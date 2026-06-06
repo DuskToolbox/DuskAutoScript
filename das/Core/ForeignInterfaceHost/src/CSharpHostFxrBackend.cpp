@@ -5,6 +5,7 @@
 #include <das/DasPtr.hpp>
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <utility>
 
@@ -201,10 +202,104 @@ namespace
 #endif
     }
 
-    class DynamicHostFxr
+    class DynamicHostFxrAssemblyResolver final
+        : public ICSharpHostFxrAssemblyResolver
     {
     public:
-        explicit DynamicHostFxr(std::filesystem::path hostfxr_path)
+        explicit DynamicHostFxrAssemblyResolver(void* runtime_delegate)
+            : runtime_delegate_{runtime_delegate}
+        {
+        }
+
+        int LoadAssemblyAndGetFunctionPointer(
+            const std::filesystem::path& assembly_path,
+            std::string_view             type_name,
+            std::string_view             method_name,
+            void**                       entrypoint) override
+        {
+            auto load_assembly =
+                reinterpret_cast<load_assembly_and_get_function_pointer_fn>(
+                    runtime_delegate_);
+            if (load_assembly == nullptr)
+            {
+                return -1;
+            }
+
+            auto host_assembly_path = ToHostString(assembly_path);
+            auto host_type_name = ToHostString(type_name);
+            auto host_method_name = ToHostString(method_name);
+            return load_assembly(
+                host_assembly_path.c_str(),
+                host_type_name.c_str(),
+                host_method_name.c_str(),
+                nullptr,
+                nullptr,
+                entrypoint);
+        }
+
+    private:
+        void* runtime_delegate_ = nullptr;
+    };
+
+    class DynamicHostFxrRuntime final : public ICSharpHostFxrRuntime
+    {
+    public:
+        DynamicHostFxrRuntime(
+            hostfxr_handle                  handle,
+            hostfxr_get_runtime_delegate_fn get_runtime_delegate,
+            hostfxr_close_fn                close)
+            : handle_{handle}, get_runtime_delegate_{get_runtime_delegate},
+              close_{close}
+        {
+        }
+
+        DynamicHostFxrRuntime(const DynamicHostFxrRuntime&) = delete;
+        DynamicHostFxrRuntime& operator=(const DynamicHostFxrRuntime&) = delete;
+
+        ~DynamicHostFxrRuntime() override
+        {
+            if (handle_ != nullptr && close_ != nullptr)
+            {
+                close_(handle_);
+                handle_ = nullptr;
+            }
+        }
+
+        int GetAssemblyResolver(
+            std::unique_ptr<ICSharpHostFxrAssemblyResolver>* resolver) override
+        {
+            if (resolver == nullptr || get_runtime_delegate_ == nullptr
+                || handle_ == nullptr)
+            {
+                return -1;
+            }
+
+            *resolver = nullptr;
+            void*      runtime_delegate = nullptr;
+            const auto result = get_runtime_delegate_(
+                handle_,
+                hdt_load_assembly_and_get_function_pointer,
+                &runtime_delegate);
+            if (result != 0 || runtime_delegate == nullptr)
+            {
+                return result;
+            }
+
+            *resolver = std::make_unique<DynamicHostFxrAssemblyResolver>(
+                runtime_delegate);
+            return result;
+        }
+
+    private:
+        hostfxr_handle                  handle_ = nullptr;
+        hostfxr_get_runtime_delegate_fn get_runtime_delegate_ = nullptr;
+        hostfxr_close_fn                close_ = nullptr;
+    };
+
+    class DynamicHostFxrLoader final : public ICSharpHostFxrRuntimeLoader
+    {
+    public:
+        explicit DynamicHostFxrLoader(std::filesystem::path hostfxr_path)
             : library_{hostfxr_path}
         {
             if (!library_.IsLoaded())
@@ -238,66 +333,35 @@ namespace
         }
 
         int InitializeForRuntimeConfig(
-            const std::filesystem::path& runtime_config_path,
-            CSharpHostFxrHandle*         handle)
+            const std::filesystem::path&            runtime_config_path,
+            std::unique_ptr<ICSharpHostFxrRuntime>* runtime) override
         {
+            if (runtime == nullptr || !IsReady())
+            {
+                return -1;
+            }
+
+            *runtime = nullptr;
             auto           runtime_config = ToHostString(runtime_config_path);
             hostfxr_handle host_context = nullptr;
             const auto     result = initialize_for_runtime_config_(
                 runtime_config.c_str(),
                 nullptr,
                 &host_context);
-            *handle = host_context;
+            if (result < 0 || host_context == nullptr)
+            {
+                if (host_context != nullptr)
+                {
+                    close_(host_context);
+                }
+                return result;
+            }
+
+            *runtime = std::make_unique<DynamicHostFxrRuntime>(
+                host_context,
+                get_runtime_delegate_,
+                close_);
             return result;
-        }
-
-        int GetRuntimeDelegate(
-            CSharpHostFxrHandle       handle,
-            CSharpHostFxrDelegateType type,
-            void**                    runtime_delegate)
-        {
-            if (type
-                != CSharpHostFxrDelegateType::LoadAssemblyAndGetFunctionPointer)
-            {
-                return -1;
-            }
-
-            return get_runtime_delegate_(
-                static_cast<hostfxr_handle>(handle),
-                hdt_load_assembly_and_get_function_pointer,
-                runtime_delegate);
-        }
-
-        void Close(CSharpHostFxrHandle handle)
-        {
-            close_(static_cast<hostfxr_handle>(handle));
-        }
-
-        static int LoadAssemblyAndGetFunctionPointer(
-            void*                        runtime_delegate,
-            const std::filesystem::path& assembly_path,
-            std::string_view             type_name,
-            std::string_view             method_name,
-            void**                       entrypoint)
-        {
-            auto load_assembly =
-                reinterpret_cast<load_assembly_and_get_function_pointer_fn>(
-                    runtime_delegate);
-            if (load_assembly == nullptr)
-            {
-                return -1;
-            }
-
-            auto host_assembly_path = ToHostString(assembly_path);
-            auto host_type_name = ToHostString(type_name);
-            auto host_method_name = ToHostString(method_name);
-            return load_assembly(
-                host_assembly_path.c_str(),
-                host_type_name.c_str(),
-                host_method_name.c_str(),
-                nullptr,
-                nullptr,
-                entrypoint);
         }
 
     private:
@@ -308,86 +372,38 @@ namespace
         hostfxr_close_fn                close_ = nullptr;
     };
 
-    CSharpHostFxrApi MakeDynamicHostFxrApi(
-        const std::shared_ptr<DynamicHostFxr>& state)
-    {
-        CSharpHostFxrApi api{};
-        api.user_data = state.get();
-        api.initialize_for_runtime_config =
-            [](const std::filesystem::path& runtime_config,
-               CSharpHostFxrHandle*         handle,
-               void*                        user_data) -> int
-        {
-            return static_cast<DynamicHostFxr*>(user_data)
-                ->InitializeForRuntimeConfig(runtime_config, handle);
-        };
-        api.get_runtime_delegate = [](CSharpHostFxrHandle       handle,
-                                      CSharpHostFxrDelegateType type,
-                                      void** runtime_delegate,
-                                      void*  user_data) -> int
-        {
-            return static_cast<DynamicHostFxr*>(user_data)->GetRuntimeDelegate(
-                handle,
-                type,
-                runtime_delegate);
-        };
-        api.close = [](CSharpHostFxrHandle handle, void* user_data)
-        { static_cast<DynamicHostFxr*>(user_data)->Close(handle); };
-        api.load_assembly_and_get_function_pointer =
-            [](void*                        runtime_delegate,
-               const std::filesystem::path& assembly_path,
-               std::string_view             type_name,
-               std::string_view             method_name,
-               void**                       entrypoint,
-               void*) -> int
-        {
-            return DynamicHostFxr::LoadAssemblyAndGetFunctionPointer(
-                runtime_delegate,
-                assembly_path,
-                type_name,
-                method_name,
-                entrypoint);
-        };
-        return api;
-    }
-
-    std::pair<CSharpHostFxrApi, std::shared_ptr<void>> LoadDefaultApi()
+    std::shared_ptr<ICSharpHostFxrRuntimeLoader> LoadDefaultRuntimeLoader()
     {
         const auto hostfxr_path = ResolveHostFxrPath();
         if (hostfxr_path.empty())
         {
-            return {};
+            return nullptr;
         }
 
-        auto state = std::make_shared<DynamicHostFxr>(hostfxr_path);
-        if (!state->IsReady())
+        auto loader = std::make_shared<DynamicHostFxrLoader>(hostfxr_path);
+        if (!loader->IsReady())
         {
-            return {};
+            return nullptr;
         }
 
-        return {MakeDynamicHostFxrApi(state), state};
+        return loader;
     }
 #else
-    std::pair<CSharpHostFxrApi, std::shared_ptr<void>> LoadDefaultApi()
+    std::shared_ptr<ICSharpHostFxrRuntimeLoader> LoadDefaultRuntimeLoader()
     {
-        return {};
+        return nullptr;
     }
 #endif
 } // namespace
 
 CSharpHostFxrBackend::CSharpHostFxrBackend()
+    : runtime_loader_{LoadDefaultRuntimeLoader()}
 {
-    auto [api, state] = LoadDefaultApi();
-    api_ = api;
-    state_ = std::move(state);
 }
 
-CSharpHostFxrBackend::CSharpHostFxrBackend(CSharpHostFxrApi api) : api_{api} {}
-
 CSharpHostFxrBackend::CSharpHostFxrBackend(
-    CSharpHostFxrApi      api,
-    std::shared_ptr<void> state)
-    : api_{api}, state_{std::move(state)}
+    std::shared_ptr<ICSharpHostFxrRuntimeLoader> runtime_loader)
+    : runtime_loader_{std::move(runtime_loader)}
 {
 }
 
@@ -416,47 +432,26 @@ DasResult CSharpHostFxrBackend::LoadPlugin(
             return bootstrap_result;
         }
 
-        if (api_.initialize_for_runtime_config == nullptr
-            || api_.get_runtime_delegate == nullptr || api_.close == nullptr
-            || api_.load_assembly_and_get_function_pointer == nullptr)
+        if (runtime_loader_ == nullptr)
         {
             return DAS_E_CSHARP_HOSTFXR_INIT_FAILED;
         }
 
         *bootstrap_args.pp_package = nullptr;
 
-        CSharpHostFxrHandle handle = nullptr;
-        const auto          init_result = api_.initialize_for_runtime_config(
+        std::unique_ptr<ICSharpHostFxrRuntime> runtime;
+        const auto init_result = runtime_loader_->InitializeForRuntimeConfig(
             *manifest.runtime_config_path,
-            &handle,
-            api_.user_data);
-        if (init_result < 0 || handle == nullptr)
+            &runtime);
+        if (init_result < 0 || runtime == nullptr)
         {
             return DAS_E_CSHARP_HOSTFXR_INIT_FAILED;
         }
 
-        struct HostContextGuard
-        {
-            CSharpHostFxrApi*   api = nullptr;
-            CSharpHostFxrHandle handle = nullptr;
-
-            ~HostContextGuard()
-            {
-                if (api != nullptr && api->close != nullptr
-                    && handle != nullptr)
-                {
-                    api->close(handle, api->user_data);
-                }
-            }
-        } guard{&api_, handle};
-
-        void*      runtime_delegate = nullptr;
-        const auto delegate_result = api_.get_runtime_delegate(
-            handle,
-            CSharpHostFxrDelegateType::LoadAssemblyAndGetFunctionPointer,
-            &runtime_delegate,
-            api_.user_data);
-        if (delegate_result != 0 || runtime_delegate == nullptr)
+        std::unique_ptr<ICSharpHostFxrAssemblyResolver> assembly_resolver;
+        const auto                                      delegate_result =
+            runtime->GetAssemblyResolver(&assembly_resolver);
+        if (delegate_result != 0 || assembly_resolver == nullptr)
         {
             return DAS_E_CSHARP_HOSTFXR_INIT_FAILED;
         }
@@ -464,13 +459,11 @@ DasResult CSharpHostFxrBackend::LoadPlugin(
         void*      entrypoint = nullptr;
         const auto type_name = BuildAssemblyQualifiedTypeName(manifest);
         const auto entrypoint_result =
-            api_.load_assembly_and_get_function_pointer(
-                runtime_delegate,
+            assembly_resolver->LoadAssemblyAndGetFunctionPointer(
                 manifest.plugin_binary_path,
                 type_name,
                 manifest.entry_point.method_name,
-                &entrypoint,
-                api_.user_data);
+                &entrypoint);
         if (entrypoint_result != 0 || entrypoint == nullptr)
         {
             return DAS_E_CSHARP_ENTRYPOINT_MISSING;

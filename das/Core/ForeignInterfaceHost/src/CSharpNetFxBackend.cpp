@@ -3,6 +3,7 @@
 #include "CSharpNetFxBackend.h"
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <utility>
 
@@ -97,10 +98,49 @@ namespace
         ICLRRuntimeHost* host_ = nullptr;
     };
 
-    class DynamicNetFxClr
+    class DynamicNetFxRuntimeSession final : public ICSharpNetFxRuntimeHost
     {
     public:
-        ~DynamicNetFxClr()
+        explicit DynamicNetFxRuntimeSession(ICLRRuntimeHost* runtime_host)
+            : runtime_host_{runtime_host}
+        {
+        }
+
+        int ExecuteInDefaultAppDomain(
+            const std::filesystem::path& assembly_path,
+            std::string_view             type_name,
+            std::string_view             method_name,
+            std::string_view             bootstrap_cookie,
+            unsigned long*               return_value) override
+        {
+            if (runtime_host_ == nullptr || return_value == nullptr)
+            {
+                return -1;
+            }
+
+            const auto wide_assembly_path = ToWide(assembly_path);
+            const auto wide_type_name = ToWide(type_name);
+            const auto wide_method_name = ToWide(method_name);
+            const auto wide_bootstrap_cookie = ToWide(bootstrap_cookie);
+            DWORD      managed_return = 0;
+            const auto hr = runtime_host_->ExecuteInDefaultAppDomain(
+                wide_assembly_path.c_str(),
+                wide_type_name.c_str(),
+                wide_method_name.c_str(),
+                wide_bootstrap_cookie.c_str(),
+                &managed_return);
+            *return_value = managed_return;
+            return static_cast<int>(hr);
+        }
+
+    private:
+        ICLRRuntimeHost* runtime_host_ = nullptr;
+    };
+
+    class DynamicNetFxRuntimeLoader final : public ICSharpNetFxRuntimeLoader
+    {
+    public:
+        ~DynamicNetFxRuntimeLoader() override
         {
             if (runtime_host_ != nullptr)
             {
@@ -109,16 +149,19 @@ namespace
             }
         }
 
-        int Start(CSharpNetFxHostHandle* handle)
+        int StartRuntime(
+            std::unique_ptr<ICSharpNetFxRuntimeHost>* runtime_host) override
         {
-            if (handle == nullptr)
+            if (runtime_host == nullptr)
             {
                 return -1;
             }
 
-            if (runtime_host_)
+            *runtime_host = nullptr;
+            if (runtime_host_ != nullptr)
             {
-                *handle = runtime_host_;
+                *runtime_host =
+                    std::make_unique<DynamicNetFxRuntimeSession>(runtime_host_);
                 return 0;
             }
 
@@ -149,102 +192,35 @@ namespace
             }
 
             runtime_host_ = host.Detach();
-            *handle = runtime_host_;
+            *runtime_host =
+                std::make_unique<DynamicNetFxRuntimeSession>(runtime_host_);
             return 0;
         }
-
-        int ExecuteInDefaultAppDomain(
-            CSharpNetFxHostHandle        handle,
-            const std::filesystem::path& assembly_path,
-            std::string_view             type_name,
-            std::string_view             method_name,
-            std::string_view             bootstrap_cookie,
-            unsigned long*               return_value)
-        {
-            auto* runtime_host = static_cast<ICLRRuntimeHost*>(handle);
-            if (runtime_host == nullptr || return_value == nullptr)
-            {
-                return -1;
-            }
-
-            const auto wide_assembly_path = ToWide(assembly_path);
-            const auto wide_type_name = ToWide(type_name);
-            const auto wide_method_name = ToWide(method_name);
-            const auto wide_bootstrap_cookie = ToWide(bootstrap_cookie);
-            DWORD      managed_return = 0;
-            const auto hr = runtime_host->ExecuteInDefaultAppDomain(
-                wide_assembly_path.c_str(),
-                wide_type_name.c_str(),
-                wide_method_name.c_str(),
-                wide_bootstrap_cookie.c_str(),
-                &managed_return);
-            *return_value = managed_return;
-            return static_cast<int>(hr);
-        }
-
-        void Release(CSharpNetFxHostHandle) noexcept {}
 
     private:
         ICLRRuntimeHost* runtime_host_ = nullptr;
     };
 
-    CSharpNetFxApi MakeDynamicNetFxApi(
-        const std::shared_ptr<DynamicNetFxClr>& state)
+    std::shared_ptr<ICSharpNetFxRuntimeLoader> LoadDefaultRuntimeLoader()
     {
-        CSharpNetFxApi api{};
-        api.user_data = state.get();
-        api.start_clr = [](CSharpNetFxHostHandle* handle,
-                           void*                  user_data) -> int
-        { return static_cast<DynamicNetFxClr*>(user_data)->Start(handle); };
-        api.execute_in_default_app_domain =
-            [](CSharpNetFxHostHandle        handle,
-               const std::filesystem::path& assembly_path,
-               std::string_view             type_name,
-               std::string_view             method_name,
-               std::string_view             bootstrap_cookie,
-               unsigned long*               return_value,
-               void*                        user_data) -> int
-        {
-            return static_cast<DynamicNetFxClr*>(user_data)
-                ->ExecuteInDefaultAppDomain(
-                    handle,
-                    assembly_path,
-                    type_name,
-                    method_name,
-                    bootstrap_cookie,
-                    return_value);
-        };
-        api.release = [](CSharpNetFxHostHandle handle, void* user_data)
-        { static_cast<DynamicNetFxClr*>(user_data)->Release(handle); };
-        return api;
-    }
-
-    std::pair<CSharpNetFxApi, std::shared_ptr<void>> LoadDefaultApi()
-    {
-        auto state = std::make_shared<DynamicNetFxClr>();
-        return {MakeDynamicNetFxApi(state), state};
+        return std::make_shared<DynamicNetFxRuntimeLoader>();
     }
 #else
-    std::pair<CSharpNetFxApi, std::shared_ptr<void>> LoadDefaultApi()
+    std::shared_ptr<ICSharpNetFxRuntimeLoader> LoadDefaultRuntimeLoader()
     {
-        return {};
+        return nullptr;
     }
 #endif
 } // namespace
 
 CSharpNetFxBackend::CSharpNetFxBackend()
+    : runtime_loader_{LoadDefaultRuntimeLoader()}
 {
-    auto [api, state] = LoadDefaultApi();
-    api_ = api;
-    state_ = std::move(state);
 }
 
-CSharpNetFxBackend::CSharpNetFxBackend(CSharpNetFxApi api) : api_{api} {}
-
 CSharpNetFxBackend::CSharpNetFxBackend(
-    CSharpNetFxApi        api,
-    std::shared_ptr<void> state)
-    : api_{api}, state_{std::move(state)}
+    std::shared_ptr<ICSharpNetFxRuntimeLoader> runtime_loader)
+    : runtime_loader_{std::move(runtime_loader)}
 {
 }
 
@@ -272,47 +248,28 @@ DasResult CSharpNetFxBackend::LoadPlugin(
             return bootstrap_result;
         }
 
-        if (api_.start_clr == nullptr
-            || api_.execute_in_default_app_domain == nullptr
-            || api_.release == nullptr)
+        if (runtime_loader_ == nullptr)
         {
             return DAS_E_CSHARP_COM_CLR_INIT_FAILED;
         }
 
         *bootstrap_args.pp_package = nullptr;
 
-        CSharpNetFxHostHandle handle = nullptr;
-        const auto start_result = api_.start_clr(&handle, api_.user_data);
-        if (start_result < 0 || handle == nullptr)
+        std::unique_ptr<ICSharpNetFxRuntimeHost> runtime_host;
+        const auto start_result = runtime_loader_->StartRuntime(&runtime_host);
+        if (start_result < 0 || runtime_host == nullptr)
         {
             return DAS_E_CSHARP_COM_CLR_INIT_FAILED;
         }
 
-        struct HostHandleGuard
-        {
-            CSharpNetFxApi*       api = nullptr;
-            CSharpNetFxHostHandle handle = nullptr;
-
-            ~HostHandleGuard()
-            {
-                if (api != nullptr && api->release != nullptr
-                    && handle != nullptr)
-                {
-                    api->release(handle, api->user_data);
-                }
-            }
-        } guard{&api_, handle};
-
         unsigned long managed_return = 0;
         const auto    bootstrap_cookie = BuildBootstrapCookie(bootstrap_args);
-        const auto    entrypoint_result = api_.execute_in_default_app_domain(
-            handle,
+        const auto entrypoint_result = runtime_host->ExecuteInDefaultAppDomain(
             manifest.plugin_binary_path,
             manifest.entry_point.type_name,
             manifest.entry_point.method_name,
             bootstrap_cookie,
-            &managed_return,
-            api_.user_data);
+            &managed_return);
         if (entrypoint_result < 0)
         {
             return DAS_E_CSHARP_ENTRYPOINT_MISSING;
