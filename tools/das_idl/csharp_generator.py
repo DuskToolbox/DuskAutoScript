@@ -444,6 +444,61 @@ def _result_failure_expression(
     return f"new {result_type}({result_expression}, {failure_values})"
 
 
+def _tuple_result_type(
+    method: MethodDef,
+) -> str:
+    out_params = _method_out_params(method)
+    if not (_is_result_type(method.return_type) and out_params):
+        return _csharp_type(method.return_type)
+
+    fields = ["DasResult Result"]
+    for param in out_params:
+        fields.append(
+            f"{_wrapper_type(_out_value_type(param))} {_result_field_name(param.name)}"
+        )
+    return f"({', '.join(fields)})"
+
+
+def _tuple_result_expression(
+    out_params: Sequence[ParameterDef],
+    result_expression: str,
+    value_expressions: Sequence[str],
+) -> str:
+    if not out_params:
+        return result_expression
+    return f"({result_expression}, {', '.join(value_expressions)})"
+
+
+def _tuple_failure_expression(
+    out_params: Sequence[ParameterDef],
+    result_expression: str,
+) -> str:
+    return _tuple_result_expression(
+        out_params,
+        result_expression,
+        [_default_value_expression(_out_value_type(param)) for param in out_params],
+    )
+
+
+def _orthrow_return_type(out_params: Sequence[ParameterDef]) -> str:
+    if not out_params:
+        return "void"
+    if len(out_params) == 1:
+        return _wrapper_type(_out_value_type(out_params[0]))
+    fields = [
+        f"{_wrapper_type(_out_value_type(param))} {_result_field_name(param.name)}"
+        for param in out_params
+    ]
+    return f"({', '.join(fields)})"
+
+
+def _orthrow_return_expression(out_params: Sequence[ParameterDef]) -> str:
+    if len(out_params) == 1:
+        return f"result.{_result_field_name(out_params[0].name)}"
+    fields = ", ".join(f"result.{_result_field_name(param.name)}" for param in out_params)
+    return f"({fields})"
+
+
 def _method_in_params(method: MethodDef) -> list[ParameterDef]:
     return [param for param in method.parameters if param.direction == ParamDirection.IN]
 
@@ -766,7 +821,7 @@ class CSharpGenerator:
     ) -> list[tuple[str, str, str, str, list[str]]]:
         declarations: list[tuple[str, str, str, str, list[str]]] = []
         for interface in sorted(interfaces, key=lambda item: item.name):
-            for method in _interface_methods(interface):
+            for method in [*_interface_methods(interface), *self._property_methods(interface)]:
                 if not self._can_generate_support_thunk(method):
                     continue
                 thunk_name = _support_thunk_name(interface.name, method.name)
@@ -1094,9 +1149,16 @@ class CSharpGenerator:
                 "",
                 "public class IDasBase : IDisposable",
                 "{",
-                "    protected System.IntPtr _handle;",
-                "    private NativeHandleOwnership _ownership;",
-                "    private bool _disposed;",
+                "    private protected System.IntPtr _handle;",
+                "    private protected NativeHandleOwnership _ownership;",
+                "    private protected bool _disposed;",
+                "    private protected bool _isManagedDirector;",
+                "",
+                "    protected IDasBase()",
+                "    {",
+                "        _handle = System.IntPtr.Zero;",
+                "        _ownership = NativeHandleOwnership.Borrowed;",
+                "    }",
                 "",
                 "    internal IDasBase(System.IntPtr handle, NativeHandleOwnership ownership)",
                 "    {",
@@ -1181,6 +1243,10 @@ class CSharpGenerator:
                 "    public virtual bool CanAssignTo(string interfaceName)",
                 "    {",
                 "        return interfaceName == \"IDasBase\";",
+                "    }",
+                "",
+                "    protected internal virtual void OnFinalRelease()",
+                "    {",
                 "    }",
                 "",
                 "    public virtual void Dispose()",
@@ -1579,7 +1645,12 @@ class CSharpGenerator:
         return type_name
 
     def _generate_wrapper(self, interface: InterfaceDef) -> str:
-        base_class = "IDasBase" if interface.name != "IDasBase" else "IDisposable"
+        if interface.name == "IDasBase":
+            base_class = "IDisposable"
+        elif interface.base_interface and interface.base_interface in self._interfaces:
+            base_class = interface.base_interface
+        else:
+            base_class = "IDasBase"
         assignable_names = self._query_interface_names(interface)
         if "IDasBase" not in assignable_names:
             assignable_names.append("IDasBase")
@@ -1595,25 +1666,66 @@ class CSharpGenerator:
             "",
             f"namespace {self.namespace_root}.Wrappers;",
             "",
-            f"public sealed class {interface.name} : {base_class}",
+            f"public class {interface.name} : {base_class}",
             "{",
         "",
+        ]
+        if interface.name != "IDasBase":
+            lines.extend(
+                [
+                    f"    protected {interface.name}()",
+                ]
+            )
+            if base_class == "IDisposable":
+                lines.extend(
+                    [
+                        "    {",
+                        f"        _handle = {self.namespace_root}.Directors."
+                        f"{interface.name}Director.CreateNative(this);",
+                        "        _ownership = NativeHandleOwnership.Owned;",
+                        "        _isManagedDirector = true;",
+                        "    }",
+                        "",
+                    ]
+                )
+            else:
+                lines.extend(
+                    [
+                        "        : base()",
+                        "    {",
+                        f"        _handle = {self.namespace_root}.Directors."
+                        f"{interface.name}Director.CreateNative(this);",
+                        "        _ownership = NativeHandleOwnership.Owned;",
+                        "        _isManagedDirector = true;",
+                        "    }",
+                        "",
+                    ]
+                )
+        lines.extend(
+            [
             f"    internal {interface.name}(",
             "        System.IntPtr handle,",
             "        NativeHandleOwnership ownership)",
-        ]
+            ]
+        )
         if base_class == "IDisposable":
             lines.extend(
                 [
                     "    {",
                     "        _handle = handle;",
                     "        _ownership = ownership;",
+                    "        _isManagedDirector = false;",
                     "    }",
                     "",
                     "    private System.IntPtr _handle;",
                     "    private NativeHandleOwnership _ownership;",
                     "    private bool _disposed;",
+                    "    private bool _isManagedDirector;",
                     "    internal System.IntPtr NativeHandle => _handle;",
+                    "",
+                    "    protected internal virtual void OnFinalRelease()",
+                    "    {",
+                    "    }",
                     "",
                     f"    internal static {interface.name} Adopt(System.IntPtr handle)",
                     "    {",
@@ -1717,7 +1829,7 @@ class CSharpGenerator:
                 ]
             )
 
-        for method in _interface_methods(interface):
+        for method in [*_interface_methods(interface), *self._property_methods(interface)]:
             lines.append("")
             lines.extend(self._generate_wrapper_method(interface, method))
 
@@ -1889,15 +2001,23 @@ class CSharpGenerator:
         param_text = self._method_param_decls(in_params)
         call_args = self._method_call_args(in_params)
         native_args = self._method_native_args(in_params)
-        result_type = _result_type_name(interface.name, method.name) if out_params else "DasResult"
-        invalid_argument_return = _result_failure_expression(
-            result_type,
+        result_type = _tuple_result_type(method)
+        invalid_argument_return = _tuple_failure_expression(
             out_params,
             "DasResult.DAS_E_INVALID_ARGUMENT",
         )
+        no_implementation_return = _tuple_failure_expression(
+            out_params,
+            "DasResult.DAS_E_NO_IMPLEMENTATION",
+        )
 
-        lines = [f"    public {result_type} {method_name}({param_text})"]
+        lines = [f"    public virtual {result_type} {method_name}({param_text})"]
         lines.append("    {")
+        if _is_result_type(method.return_type):
+            lines.append("        if (_isManagedDirector)")
+            lines.append("        {")
+            lines.append(f"            return {no_implementation_return};")
+            lines.append("        }")
         for param in in_params:
             if _is_interface_pointer(param.type_info) or _is_read_only_string_pointer(param.type_info):
                 param_name = _camel_name(param.name)
@@ -1931,7 +2051,7 @@ class CSharpGenerator:
                     else:
                         out_values.append(out_name)
                 lines.append(
-                    f"        return new {result_type}(result, {', '.join(out_values)});"
+                    f"        return { _tuple_result_expression(out_params, 'result', out_values) };"
                 )
             else:
                 lines.append(
@@ -1947,7 +2067,7 @@ class CSharpGenerator:
                 )
             out_values = ", ".join(_result_field_name(param.name) for param in out_params)
             lines.append(f"        {_unused_expression(native_args)}")
-            lines.append(f"        return new {result_type}(result, {out_values});")
+            lines.append(f"        return (result, {out_values});")
         elif _is_result_type(method.return_type):
             lines.append(f"        {_unused_expression(native_args)}")
             lines.append("        return DasResult.DAS_S_OK;")
@@ -1962,14 +2082,14 @@ class CSharpGenerator:
         if _is_result_type(method.return_type):
             lines.append("")
             lines.append("#if !NETFRAMEWORK")
-            checked_return = "void" if not out_params else result_type
+            checked_return = _orthrow_return_type(out_params)
             lines.append(f"    public {checked_return} {method_name}OrThrow({param_text})")
             lines.append("    {")
             call = f"{method_name}({call_args})" if call_args else f"{method_name}()"
             if out_params:
                 lines.append(f"        var result = {call};")
                 lines.append("        result.Result.OrThrow();")
-                lines.append("        return result;")
+                lines.append(f"        return {_orthrow_return_expression(out_params)};")
             else:
                 lines.append(f"        {call}.OrThrow();")
             lines.append("    }")
@@ -2007,7 +2127,7 @@ class CSharpGenerator:
         method_name = _sanitize_identifier(method.name)
         param_name = _camel_name(string_param.name)
         out_params = _method_out_params(method)
-        result_type = _result_type_name(interface.name, method.name) if out_params else "DasResult"
+        result_type = _tuple_result_type(method)
         call_args: list[str] = []
         for param in _method_in_params(method):
             if param is string_param:
@@ -2021,7 +2141,7 @@ class CSharpGenerator:
             for param in _method_in_params(method)
         ]
         params = ", ".join(convenience_params)
-        failure_return = _result_failure_expression(result_type, out_params, "createResult")
+        failure_return = _tuple_failure_expression(out_params, "createResult")
 
         return [
             f"    public unsafe {result_type} {method_name}({params})",
@@ -2062,8 +2182,9 @@ class CSharpGenerator:
         interface_name: str,
         method: MethodDef,
     ) -> str:
+        del interface_name
         if _is_result_type(method.return_type) and _method_out_params(method):
-            return _result_type_name(interface_name, method.name)
+            return _tuple_result_type(method)
         return _csharp_type(method.return_type)
 
     def _native_callback_param_type(self, param: ParameterDef) -> str:
@@ -2104,7 +2225,7 @@ class CSharpGenerator:
                 args.append(_wrapper_borrow_expression(param.type_info, param_name))
             else:
                 args.append(param_name)
-        return f"state.Callbacks.{_sanitize_identifier(method.name)}({', '.join(args)})"
+        return f"state.Target.{_sanitize_identifier(method.name)}({', '.join(args)})"
 
     def _generate_director_thunk(
         self,
@@ -2196,11 +2317,9 @@ class CSharpGenerator:
 
     def _generate_director(self, interface: InterfaceDef) -> str:
         director_name = f"{interface.name}Director"
-        callbacks_name = f"{director_name}Callbacks"
-        final_release_name = f"{director_name}FinalReleaseCallbacks"
         methods = self._all_interface_methods(interface)
         lines = [
-            "// DAS C# director surface (auto-generated - DO NOT MODIFY)",
+            "// DAS C# director support (auto-generated - DO NOT MODIFY)",
             "using System;",
             "using System.Runtime.InteropServices;",
             f"using {self.namespace_root};",
@@ -2210,33 +2329,14 @@ class CSharpGenerator:
             "",
             f"namespace {self.namespace_root}.Directors;",
             "",
-            f"public interface {callbacks_name}",
+            "internal unsafe struct " + f"{director_name}NativeCallbacks",
             "{",
-        ]
-        for method in methods:
-            params = self._callback_interface_param_decls(method)
-            return_type = self._callback_interface_return_type(interface.name, method)
-            lines.append(
-                f"    {return_type} {_sanitize_identifier(method.name)}({params});"
-            )
-        lines.extend(
-            [
-                "}",
-                "",
-                f"public interface {final_release_name}",
-                "{",
-                "    void OnFinalRelease();",
-                "}",
-                "",
-                "internal unsafe struct " + f"{director_name}NativeCallbacks",
-                "{",
                 "#if NETFRAMEWORK",
                 "    public System.IntPtr Release;",
                 "#else",
                 "    public delegate* unmanaged<System.IntPtr, uint> Release;",
                 "#endif",
             ]
-        )
         for method in methods:
             method_name = _sanitize_identifier(method.name)
             hiding_modifier = _member_hiding_modifier(method_name)
@@ -2253,13 +2353,8 @@ class CSharpGenerator:
             [
                 "}",
                 "",
-                f"public sealed unsafe class {director_name} : IDisposable",
+                f"internal static unsafe class {director_name}",
                 "{",
-                "    private readonly DirectorState _state;",
-                "    private readonly GCHandle _managedState;",
-                f"    private {director_name}NativeCallbacks _nativeCallbacks;",
-                "    private bool _disposed;",
-                "",
                 "#if NETFRAMEWORK",
                 "    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]",
                 "    private delegate uint ReleaseDelegate(System.IntPtr managedState);",
@@ -2276,12 +2371,12 @@ class CSharpGenerator:
             [
                 "#endif",
                 "",
-                f"    public {director_name}({callbacks_name} callbacks)",
+                f"    internal static System.IntPtr CreateNative({self.namespace_root}.Wrappers.{interface.name} target)",
                 "    {",
-                *_argument_null_check_lines("callbacks"),
-                "        var state = new DirectorState(callbacks);",
-                "        _state = state;",
-                "        _managedState = GCHandle.Alloc(state, GCHandleType.Normal);",
+                *_argument_null_check_lines("target"),
+                "        var state = new DirectorState(target);",
+                "        var managedStateHandle = GCHandle.Alloc(state, GCHandleType.Normal);",
+                "        var managedState = GCHandle.ToIntPtr(managedStateHandle);",
                 "#if NETFRAMEWORK",
                 "        var releaseThunk = new ReleaseDelegate(ReleaseManagedStateThunk);",
             ]
@@ -2305,7 +2400,7 @@ class CSharpGenerator:
             [
                 "        };",
                 "#endif",
-                f"        _nativeCallbacks = new {director_name}NativeCallbacks",
+                f"        var nativeCallbacks = new {director_name}NativeCallbacks",
                 "        {",
                 "#if NETFRAMEWORK",
                 "            Release = Marshal.GetFunctionPointerForDelegate(releaseThunk),",
@@ -2327,39 +2422,21 @@ class CSharpGenerator:
         lines.extend(
             [
                 "        };",
-                "        state.NativeCallbacks = _nativeCallbacks;",
-                "    }",
-                "",
-                f"    public static Das.Generated.Wrappers.{interface.name} Create({callbacks_name} callbacks)",
-                "    {",
-                f"        var director = new {director_name}(callbacks);",
-                "        var nativeCallbacks = director._state.NativeCallbacks;",
+                "        state.NativeCallbacks = nativeCallbacks;",
                 f"        var result = NativeMethods.DasCreateCSharp{director_name}(",
-                "            director.ManagedState,",
+                "            managedState,",
                 "            ref nativeCallbacks,",
                 "            out var nativeHandle);",
                 "        if ((int)result < 0 || nativeHandle == System.IntPtr.Zero)",
                 "        {",
-                "            ReleaseManagedState(director.ManagedState);",
+                "            ReleaseManagedState(managedState);",
                 "            if ((int)result < 0)",
                 "            {",
                 "                throw new DasException(result);",
                 "            }",
                 "            throw new DasException(DasResult.DAS_E_CSHARP_DIRECTOR_FACTORY_FAILED);",
                 "        }",
-                f"        return Das.Generated.Wrappers.{interface.name}.Adopt(nativeHandle);",
-                "    }",
-                "",
-                "    internal System.IntPtr ManagedState => GCHandle.ToIntPtr(_managedState);",
-                "",
-                "    public void Dispose()",
-                "    {",
-                "        if (!_disposed)",
-                "        {",
-                "            var managed_state = ManagedState;",
-                "            ReleaseManagedState(managed_state);",
-                "            _disposed = true;",
-                "        }",
+                "        return nativeHandle;",
                 "    }",
                 "",
                 "    internal static void ReleaseManagedState(System.IntPtr managedState)",
@@ -2404,12 +2481,12 @@ class CSharpGenerator:
             [
                 "    private sealed class DirectorState",
                 "    {",
-                f"        public DirectorState({callbacks_name} callbacks)",
+                f"        public DirectorState({self.namespace_root}.Wrappers.{interface.name} target)",
                 "        {",
-                "            Callbacks = callbacks;",
+                "            Target = target;",
                 "        }",
                 "",
-                f"        public {callbacks_name} Callbacks {{ get; }}",
+                f"        public {self.namespace_root}.Wrappers.{interface.name} Target {{ get; }}",
                 f"        public {director_name}NativeCallbacks NativeCallbacks {{ get; set; }}",
                 "#if NETFRAMEWORK",
                 "        public Delegate[] CallbackDelegates { get; set; } = Array.Empty<Delegate>();",
@@ -2427,10 +2504,7 @@ class CSharpGenerator:
                 "",
                 "        public void OnFinalRelease()",
                 "        {",
-                f"            if (Callbacks is {final_release_name} finalRelease)",
-                "            {",
-                "                finalRelease.OnFinalRelease();",
-                "            }",
+                "            Target.OnFinalRelease();",
                 "        }",
                 "    }",
                 "}",
@@ -2503,7 +2577,7 @@ class CSharpGenerator:
     ) -> list[str]:
         lines: list[str] = []
         for interface in sorted(interfaces, key=lambda item: item.name):
-            for method in _interface_methods(interface):
+            for method in [*_interface_methods(interface), *self._property_methods(interface)]:
                 if not self._can_generate_support_thunk(method):
                     continue
                 params = [
@@ -2525,7 +2599,7 @@ class CSharpGenerator:
     ) -> list[str]:
         lines: list[str] = []
         for interface in sorted(interfaces, key=lambda item: item.name):
-            for method in _interface_methods(interface):
+            for method in [*_interface_methods(interface), *self._property_methods(interface)]:
                 if not self._can_generate_support_thunk(method):
                     continue
                 params = [
