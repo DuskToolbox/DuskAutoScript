@@ -70,7 +70,8 @@ namespace
     auto RawParamsJson(const std::string& raw_json) -> std::string
     {
         auto obj = DAS::Utils::MakeYyjsonObject();
-        (*obj.as_object())[std::string_view("raw_event_json")] = raw_json;
+        (*obj.as_object())[std::string_view("raw_event_json")] =
+            std::make_pair(std::string_view(raw_json), yyjson::copy_string);
         auto serialized = DAS::Utils::SerializeYyjsonValue(obj);
         return serialized.value_or("{}");
     }
@@ -158,7 +159,8 @@ namespace
         auto obj = DAS::Utils::MakeYyjsonObject();
         (*obj.as_object())[std::string_view("step")] =
             static_cast<uint64_t>(step);
-        (*obj.as_object())[std::string_view("type")] = event.type;
+        (*obj.as_object())[std::string_view("type")] =
+            std::make_pair(std::string_view(event.type), yyjson::copy_string);
         (*obj.as_object())[std::string_view("timestamp")] =
             event.timestamp.empty() ? NowIsoString() : event.timestamp;
         (*obj.as_object())[std::string_view("params")] =
@@ -170,8 +172,9 @@ namespace
             CurrentThreadIdString();
         (*obj.as_object())[std::string_view("process_pid")] =
             CurrentProcessId();
-        (*obj.as_object())[std::string_view("image_filename")] =
-            event.image_filename;
+        (*obj.as_object())[std::string_view("image_filename")] = std::make_pair(
+            std::string_view(event.image_filename),
+            yyjson::copy_string);
 
         return DAS::Utils::SerializeYyjsonValue(obj);
     }

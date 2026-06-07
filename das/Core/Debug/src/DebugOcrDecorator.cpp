@@ -198,7 +198,8 @@ namespace
     auto LineJson(const OcrLineInfo& line) -> yyjson::value
     {
         auto obj = DAS::Utils::MakeYyjsonObject();
-        (*obj.as_object())[std::string_view("text")] = line.text;
+        (*obj.as_object())[std::string_view("text")] =
+            std::make_pair(std::string_view(line.text), yyjson::copy_string);
         (*obj.as_object())[std::string_view("box")] = RectJson(line.box);
         (*obj.as_object())[std::string_view("score")] = line.score;
         (*obj.as_object())[std::string_view("char_count")] =

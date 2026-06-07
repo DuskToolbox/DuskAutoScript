@@ -87,7 +87,8 @@ namespace
     auto SerializeEventForSender(const DebugEvent& event) -> std::string
     {
         auto obj = DAS::Utils::MakeYyjsonObject();
-        (*obj.as_object())[std::string_view("type")] = event.type;
+        (*obj.as_object())[std::string_view("type")] =
+            std::make_pair(std::string_view(event.type), yyjson::copy_string);
         (*obj.as_object())[std::string_view("timestamp")] =
             event.timestamp.empty() ? NowIsoString() : event.timestamp;
         (*obj.as_object())[std::string_view("params")] =
@@ -95,8 +96,9 @@ namespace
         (*obj.as_object())[std::string_view("result")] =
             JsonOrEmptyObject(event.result_json);
         (*obj.as_object())[std::string_view("elapsed_ms")] = event.elapsed_ms;
-        (*obj.as_object())[std::string_view("image_filename")] =
-            event.image_filename;
+        (*obj.as_object())[std::string_view("image_filename")] = std::make_pair(
+            std::string_view(event.image_filename),
+            yyjson::copy_string);
         auto serialized = DAS::Utils::SerializeYyjsonValue(obj);
         return serialized.value_or("{}");
     }

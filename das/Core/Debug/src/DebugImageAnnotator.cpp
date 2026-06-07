@@ -560,12 +560,11 @@ DebugImageWriteResult SaveOriginalAndAnnotated(
     DrawAnnotations(annotated, annotations);
 
     const auto img_dir = DebugRuntime::DebugDir() / "img";
-    EnqueueImageJob(
-        ImageJob{
-            snapshot->bgr_image.clone(),
-            std::move(annotated),
-            img_dir / result.original_image_filename,
-            img_dir / result.image_filename});
+    EnqueueImageJob(ImageJob{
+        snapshot->bgr_image.clone(),
+        std::move(annotated),
+        img_dir / result.original_image_filename,
+        img_dir / result.image_filename});
 
     return result;
 }
@@ -573,11 +572,16 @@ DebugImageWriteResult SaveOriginalAndAnnotated(
 std::string BuildImageJson(const DebugImageWriteResult& result)
 {
     auto obj = DAS::Utils::MakeYyjsonObject();
-    (*obj.as_object())[std::string_view("image_status")] = result.image_status;
+    (*obj.as_object())[std::string_view("image_status")] = std::make_pair(
+        std::string_view(result.image_status),
+        yyjson::copy_string);
     (*obj.as_object())[std::string_view("original_image_filename")] =
-        result.original_image_filename;
-    (*obj.as_object())[std::string_view("image_filename")] =
-        result.image_filename;
+        std::make_pair(
+            std::string_view(result.original_image_filename),
+            yyjson::copy_string);
+    (*obj.as_object())[std::string_view("image_filename")] = std::make_pair(
+        std::string_view(result.image_filename),
+        yyjson::copy_string);
     auto serialized = DAS::Utils::SerializeYyjsonValue(obj);
     return serialized.value_or("{}");
 }
