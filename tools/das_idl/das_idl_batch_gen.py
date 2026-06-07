@@ -79,9 +79,6 @@ def _list_csharp_reduce_outputs(reduce_config: Dict[str, Any]) -> List[str]:
             outputs.append(
                 f"{csharp_output_dir}/{csharp_namespace_root}/Directors/{interface_name}Director.cs"
             )
-            outputs.append(
-                f"{csharp_output_dir}/{csharp_namespace_root}/Results/{interface_name}Results.cs"
-            )
 
     return outputs
 

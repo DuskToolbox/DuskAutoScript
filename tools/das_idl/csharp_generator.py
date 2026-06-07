@@ -412,10 +412,6 @@ def _wrapper_retain_director_output_expression(
     )
 
 
-def _result_type_name(interface_name: str, method_name: str) -> str:
-    return f"{interface_name}{_sanitize_identifier(method_name)}Result"
-
-
 def _result_field_name(param_name: str) -> str:
     field_name = _pascal_name(param_name)
     if field_name == "Result":
@@ -579,9 +575,6 @@ class CSharpGenerator:
             files[
                 f"{self.namespace_root}/Directors/{interface.name}Director.cs"
             ] = self._generate_director(interface)
-            files[
-                f"{self.namespace_root}/Results/{interface.name}Results.cs"
-            ] = self._generate_results(interface)
 
         files["Native/DasCSharpDirectorSupport.h"] = self._generate_native_director_support_header(doc.interfaces)
         files["Native/DasCSharpDirectorSupport.cpp"] = self._generate_native_director_support_source(doc.interfaces)
@@ -1662,7 +1655,6 @@ class CSharpGenerator:
             "using System;",
             f"using {self.namespace_root};",
             f"using {self.namespace_root}.Abi;",
-            f"using {self.namespace_root}.Results;",
             "",
             f"namespace {self.namespace_root}.Wrappers;",
             "",
@@ -2265,8 +2257,8 @@ class CSharpGenerator:
         if uses_result_object:
             lines.extend(
                 [
-                    f"            var resultObject = {self._callback_call_expression(method)};",
-                    "            var result = resultObject.Result;",
+                    f"            var callResult = {self._callback_call_expression(method)};",
+                    "            var result = callResult.Result;",
                 ]
             )
         else:
@@ -2292,7 +2284,7 @@ class CSharpGenerator:
                 interface_name = type_simple_name(value_type)
                 lines.extend(
                     [
-                        f"            var {handle_name} = {_wrapper_retain_director_output_expression(value_type, f'resultObject.{field_name}', interface_name)};",
+                        f"            var {handle_name} = {_wrapper_retain_director_output_expression(value_type, f'callResult.{field_name}', interface_name)};",
                         f"            if ({handle_name} == System.IntPtr.Zero)",
                         "            {",
                         "                return DasResult.DAS_E_INVALID_ARGUMENT;",
@@ -2301,7 +2293,7 @@ class CSharpGenerator:
                     ]
                 )
             else:
-                lines.append(f"            *{param_name} = resultObject.{field_name};")
+                lines.append(f"            *{param_name} = callResult.{field_name};")
         lines.extend(
             [
                 "            return result;",
@@ -2324,7 +2316,6 @@ class CSharpGenerator:
             "using System.Runtime.InteropServices;",
             f"using {self.namespace_root};",
             f"using {self.namespace_root}.Abi;",
-            f"using {self.namespace_root}.Results;",
             f"using {self.namespace_root}.Wrappers;",
             "",
             f"namespace {self.namespace_root}.Directors;",
@@ -2511,64 +2502,6 @@ class CSharpGenerator:
                 "",
             ]
         )
-        return "\n".join(lines)
-
-    def _generate_results(self, interface: InterfaceDef) -> str:
-        methods = self._all_interface_methods(interface)
-        result_names = {
-            _result_type_name(interface.name, method.name)
-            for method in methods
-            if _method_out_params(method)
-        }
-        lines = [
-            "// DAS C# result objects (auto-generated - DO NOT MODIFY)",
-            f"using {self.namespace_root};",
-            f"using {self.namespace_root}.Abi;",
-            f"using {self.namespace_root}.Wrappers;",
-            "",
-            f"namespace {self.namespace_root}.Results;",
-            "",
-            f"public readonly struct {interface.name}Results",
-            "{",
-            "    public DasResult Result { get; }",
-            "}",
-            "",
-        ]
-        emitted_results: set[str] = set()
-        for method in methods:
-            out_params = _method_out_params(method)
-            if not out_params:
-                continue
-            result_name = _result_type_name(interface.name, method.name)
-            if result_name in emitted_results:
-                continue
-            emitted_results.add(result_name)
-            lines.append(f"public readonly struct {result_name}")
-            lines.append("{")
-            ctor_params = ["DasResult result"]
-            for param in out_params:
-                value_type = _wrapper_type(_out_value_type(param))
-                ctor_params.append(f"{value_type} {_result_ctor_param_name(param.name)}")
-            lines.append(f"    public {result_name}({', '.join(ctor_params)})")
-            lines.append("    {")
-            lines.append("        Result = result;")
-            for param in out_params:
-                field_name = _result_field_name(param.name)
-                local_name = _result_ctor_param_name(param.name)
-                lines.append(f"        {field_name} = {local_name};")
-            lines.append("    }")
-            lines.append("")
-            lines.append("    public DasResult Result { get; }")
-            for param in out_params:
-                value_type = _wrapper_type(_out_value_type(param))
-                field_name = _result_field_name(param.name)
-                lines.append(f"    public {value_type} {field_name} {{ get; }}")
-            lines.append("}")
-            lines.append("")
-
-        if not result_names:
-            lines.append("// This interface currently has no out-parameter result objects.")
-            lines.append("")
         return "\n".join(lines)
 
     def _generate_support_thunk_header_declarations(

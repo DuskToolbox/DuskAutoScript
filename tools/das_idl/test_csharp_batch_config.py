@@ -229,7 +229,6 @@ class TestCSharpBatchConfig(unittest.TestCase):
                     f"{csharp_dir}/Das.Generated/Runtime/DasCSharpBootstrap.cs".replace("\\", "/"),
                     f"{csharp_dir}/Das.Generated/Wrappers/IDasSample.cs".replace("\\", "/"),
                     f"{csharp_dir}/Das.Generated/Directors/IDasSampleDirector.cs".replace("\\", "/"),
-                    f"{csharp_dir}/Das.Generated/Results/IDasSampleResults.cs".replace("\\", "/"),
                     f"{csharp_dir}/Native/DasCSharpDirectorSupport.h".replace("\\", "/"),
                     f"{csharp_dir}/Native/DasCSharpDirectorSupport.cpp".replace("\\", "/"),
                 ],

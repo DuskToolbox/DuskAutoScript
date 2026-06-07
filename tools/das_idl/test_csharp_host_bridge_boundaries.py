@@ -486,25 +486,23 @@ class TestCSharpHostBridgeBoundaries(unittest.TestCase):
         self.assertNotIn("Das.CSharp.Runtime.dll", text)
         self.assertNotIn("NuGet", text)
 
-    def test_csharp_test_plugin_callbacks_use_typed_result_objects(self):
+    def test_csharp_test_plugin_directly_subclasses_generated_wrappers(self):
         source_paths = [
-            ROOT
-            / "das"
-            / "Plugins"
-            / "CSharpTestPlugin"
-            / "src"
-            / "GeneratedPackageFactory.cs",
+            ROOT / "das" / "Plugins" / "CSharpTestPlugin" / "src" / "PluginPackage.cs",
             ROOT / "das" / "Plugins" / "CSharpTestPlugin" / "src" / "Component.cs",
         ]
         combined = "\n".join(_read_text(path) for path in source_paths)
 
+        self.assertIn("public sealed class PluginPackage : IDasPluginPackage", combined)
+        self.assertIn("public sealed class Component : IDasComponent", combined)
+        self.assertIn("(DasResult Result, IDasVariantVector ResultValue)", combined)
         for result_type in (
             "IDasPluginPackageCreateFeatureInterfaceResult",
             "IDasComponentFactoryCreateInstanceResult",
             "IDasComponentDispatchResult",
         ):
             with self.subTest(result_type=result_type):
-                self.assertIn(result_type, combined)
+                self.assertNotIn(result_type, combined)
 
         self.assertNotIn("out IntPtr", combined)
         self.assertNotIn("out System.IntPtr", combined)

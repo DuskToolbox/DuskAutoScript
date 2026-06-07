@@ -231,7 +231,7 @@ class TestCSharpGeneratorContract(unittest.TestCase):
         self.assertIn("Das.Generated/Interop/NativeHandle.cs", artifacts.files)
         self.assertIn("Das.Generated/Wrappers/IDasSample.cs", artifacts.files)
         self.assertIn("Das.Generated/Directors/IDasSampleDirector.cs", artifacts.files)
-        self.assertIn("Das.Generated/Results/IDasSampleResults.cs", artifacts.files)
+        self.assertNotIn("Das.Generated/Results/IDasSampleResults.cs", artifacts.files)
         self.assertGreaterEqual(
             len([path for path in artifacts.files if path.endswith(".cs")]),
             8,
@@ -269,7 +269,8 @@ class TestCSharpGeneratorContract(unittest.TestCase):
         self.assertIn("DAS_E_INVALID_ARGUMENT = -1073750038", combined)
         self.assertIn("public sealed class DasException : System.Exception", combined)
         self.assertIn("public static void OrThrow(this DasResult result", combined)
-        self.assertIn("public readonly struct IDasSampleResults", combined)
+        self.assertNotIn("namespace Das.Generated.Results", combined)
+        self.assertNotIn("public readonly struct IDasSampleResults", combined)
         self.assertIn("public virtual DasResult Flush()", combined)
         self.assertIn("public void FlushOrThrow()", combined)
         self.assertNotIn("Ez", combined)
@@ -347,7 +348,10 @@ class TestCSharpGeneratorContract(unittest.TestCase):
         support_header = artifacts.files["Native/DasCSharpDirectorSupport.h"]
         support_source = artifacts.files["Native/DasCSharpDirectorSupport.cpp"]
 
-        self.assertIn("IDasBase interfaceValue", combined)
+        self.assertIn("public virtual (DasResult Result, IDasBase Interface) Create()", combined)
+        self.assertIn("out var interfaceHandle", combined)
+        self.assertIn("return (result, IDasBase.AdoptResult(result, interfaceHandle));", combined)
+        self.assertIn("public IDasBase CreateOrThrow()", combined)
         self.assertIn("DasMatchParams paramsValue", combined)
         self.assertIn("ulong intValue", combined)
         self.assertIn(
@@ -395,17 +399,17 @@ class TestCSharpGeneratorContract(unittest.TestCase):
 
         self.assertIn("internal static unsafe class IDasPropertySampleDirector", director)
         self.assertIn("private static unsafe DasResult GetLineThunk(", director)
-        self.assertIn("var resultObject = state.Target.GetLine();", director)
-        self.assertIn("*p_out = resultObject.Out;", director)
+        self.assertIn("var callResult = state.Target.GetLine();", director)
+        self.assertIn("*p_out = callResult.Out;", director)
         self.assertIn(
             "private static unsafe DasResult CanUnloadNowThunk(System.IntPtr managedState, bool* p_out_canUnloadNow)",
             director,
         )
         self.assertIn(
-            "var resultObject = state.Target.CanUnloadNow();",
+            "var callResult = state.Target.CanUnloadNow();",
             director,
         )
-        self.assertIn("*p_out_canUnloadNow = resultObject.CanUnloadNow;", director)
+        self.assertIn("*p_out_canUnloadNow = callResult.CanUnloadNow;", director)
         self.assertNotIn("out int out)", director)
         self.assertNotIn("out var out)", director)
         self.assertNotIn("out bool canUnloadNow", director)
@@ -559,17 +563,13 @@ class TestCSharpGeneratorPhase77CompleteSurface(unittest.TestCase):
 
     def test_d77_24_d77_30_out_results_and_interface_returns_are_typed(self):
         artifacts = _phase77_artifacts()
-        results = artifacts.files["Das.Generated/Results/IDasComponentResults.cs"]
         wrapper = artifacts.files["Das.Generated/Wrappers/IDasComponent.cs"]
 
-        self.assertIn("public readonly struct IDasComponentGetSummaryResult", results)
-        self.assertIn("public DasReadOnlyString Summary { get; }", results)
-        self.assertIn("public readonly struct IDasComponentGetBinaryResult", results)
-        self.assertIn("public DasBinaryBuffer Buffer { get; }", results)
-        self.assertIn("public readonly struct IDasComponentGetChildResult", results)
-        self.assertIn("public IDasComponent Child { get; }", results)
-        self.assertIn("public DasSampleSize Size { get; }", results)
-        self.assertIn("public DasSampleKind Kind { get; }", results)
+        self.assertNotIn("Das.Generated/Results/IDasComponentResults.cs", artifacts.files)
+        self.assertIn("public virtual (DasResult Result, DasReadOnlyString Summary) GetSummary()", wrapper)
+        self.assertIn("public virtual (DasResult Result, DasBinaryBuffer Buffer) GetBinary()", wrapper)
+        self.assertIn("public virtual (DasResult Result, IDasComponent Child) GetChild()", wrapper)
+        self.assertIn("public virtual (DasResult Result, DasSampleSize Size, DasSampleKind Kind) GetSizeAndKind()", wrapper)
         self.assertIn("public IDasComponent GetChildOrThrow()", wrapper)
         self.assertIn("result.Result.OrThrow();", wrapper)
         self.assertIn("return result.Child;", wrapper)
@@ -861,18 +861,19 @@ class TestCSharpGeneratorPhase77CompleteSurface(unittest.TestCase):
             "Das.Generated/Wrappers/DasReadOnlyString.cs",
             "Das.Generated/Wrappers/DasBinaryBuffer.cs",
             "Das.Generated/Directors/IDasComponentDirector.cs",
-            "Das.Generated/Results/IDasComponentResults.cs",
             "Native/DasCSharpDirectorSupport.h",
             "Native/DasCSharpDirectorSupport.cpp",
         ):
             with self.subTest(path=path):
                 self.assertIn(path, artifacts.files)
+        self.assertNotIn("Das.Generated/Results/IDasComponentResults.cs", artifacts.files)
 
         for token in (
             "Ez",
             "SWIG",
             "CSharpSwig",
             "dynamic",
+            "namespace Das.Generated.Results",
             "Assembly.Load",
             "Reflection.Emit",
             "runtimeKind",
@@ -1055,11 +1056,11 @@ class TestCSharpGeneratorPhase79NativeDirectorSurface(unittest.TestCase):
         base_wrapper = artifacts.files["Das.Generated/Wrappers/IDasBase.cs"]
         self.assertIn("RetainNativeHandleForDirectorOutput", base_wrapper)
         self.assertIn(
-            'IDasBase.RetainNativeHandleForDirectorOutput(resultObject.ResultValue, "IDasVariantVector")',
+            'IDasBase.RetainNativeHandleForDirectorOutput(callResult.ResultValue, "IDasVariantVector")',
             component_director,
         )
         self.assertIn(
-            'IDasBase.RetainNativeHandleForDirectorOutput(resultObject.Interface, "IDasBase")',
+            'IDasBase.RetainNativeHandleForDirectorOutput(callResult.Interface, "IDasBase")',
             package_director,
         )
         self.assertIn("value._ownership != NativeHandleOwnership.Borrowed", base_wrapper)
