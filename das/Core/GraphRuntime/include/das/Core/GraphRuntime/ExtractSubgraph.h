@@ -40,12 +40,30 @@ struct ExtractResult
     std::vector<std::string>           diagnostics;
 };
 
+/// Snapshot of parent GraphDocument state BEFORE replacement (for undo).
+struct ParentSnapshot
+{
+    std::vector<Dto::GraphNodeDto> removed_nodes;
+    std::vector<Dto::GraphEdgeDto> removed_edges;
+    std::string                    replacement_node_id;
+    Dto::GraphDocumentDto          original_graph_document;
+};
+
+/// Result of ReplaceWithSubgraph().
+struct ReplaceResult
+{
+    std::string           replacement_node_id;
+    Dto::GraphDocumentDto updated_graph_document;
+    ParentSnapshot        undo_snapshot;
+    std::vector<std::string> diagnostics;
+};
+
 /// ExtractSubgraph: Transaction construction for the v23 Extract
 /// Subgraph workflow. Constructs a child GraphDocument from selected
 /// nodes, classifies edges, generates boundary ports, creates a child
 /// entry, and compiles it.
 ///
-/// 02-19 handles construction (this plan).
+/// 02-19 handles construction.
 /// 02-20 handles parent replacement + undo.
 class ExtractSubgraph
 {
@@ -58,12 +76,25 @@ public:
     using CompileCallback =
         std::function<Dto::CompiledGraphPlanDto(GraphEntryId)>;
 
+    using DeleteCallback  = std::function<bool(GraphEntryId)>;
+    using RefCountCallback = std::function<int(GraphEntryId)>;
+
     ExtractResult Extract(
         GraphEntryId                 parent_entry_id,
         const std::set<std::string>& selected_node_ids,
         const Dto::GraphDocumentDto& parent_graph_doc,
         EntryFactory                 entry_factory,
         CompileCallback              compile_callback) const;
+
+    ReplaceResult ReplaceWithSubgraph(
+        const Dto::GraphDocumentDto& parent_graph_doc,
+        const ExtractResult&         extract_result,
+        const std::set<std::string>& selected_node_ids) const;
+
+    Dto::GraphDocumentDto UndoExtract(
+        const ParentSnapshot& undo_snapshot,
+        DeleteCallback        delete_callback,
+        RefCountCallback      ref_count_callback) const;
 
 private:
     static std::string MakeChildNodeId(const std::string& old_node_id);
