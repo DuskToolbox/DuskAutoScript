@@ -1,7 +1,12 @@
 #include <das/Core/GraphRuntime/GraphDocument.h>
+#include <das/Core/GraphRuntime/GraphEntryId.h>
+#include <das/Core/TaskScheduler/TaskRepositoryDtos.h>
 #include <das/Utils/DasJsonCore.h>
 #include <gtest/gtest.h>
 #include <string_view>
+
+static_assert(std::is_same_v<Das::Core::GraphRuntime::GraphEntryId, int64_t>,
+              "GraphEntryId must be int64_t");
 
 namespace
 {
@@ -312,4 +317,255 @@ TEST(GraphDocumentDtoTest, GraphDocumentDtoRoundTrip)
     EXPECT_EQ(round_tripped.graph_inputs[0].port_id, "graph_input");
     ASSERT_EQ(round_tripped.graph_outputs.size(), 1u);
     EXPECT_EQ(round_tripped.graph_outputs[0].port_id, "graph_output");
+}
+
+// ===========================================================================
+// GraphTaskEntryStorageTest — entry storage round-trip (v31)
+// ===========================================================================
+
+namespace
+{
+    using TaskDto = Das::Core::TaskScheduler::Repository::Dto::RepositoryEntryDto;
+
+    /// Build a small but complete GraphDocumentDto for testing.
+    GraphDocumentDto MakeTestGraphDocument()
+    {
+        GraphDocumentDto doc;
+        doc.document_id = "test_graph_001";
+        doc.version = 1;
+        doc.fingerprint = "sha256:abc123";
+
+        // Node 1 — componentRef
+        GraphNodeDto node1;
+        node1.node_id = "node_comp";
+        node1.target = GraphNodeTargetDto{
+            "componentRef",
+            ComponentRefDto{
+                "componentRef",
+                "{aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee}",
+                "{11111111-2222-3333-4444-555555555555}"},
+            std::nullopt};
+        node1.settings = MakeSettingsPayload();
+
+        // Node 2 — entryRef
+        GraphNodeDto node2;
+        node2.node_id = "node_entry";
+        node2.target = GraphNodeTargetDto{
+            "entryRef",
+            std::nullopt,
+            EntryRefDto{"entryRef", 42, 7, "fp_abc123"}};
+        node2.settings = MakeDefaultPayload();
+
+        doc.nodes.push_back(std::move(node1));
+        doc.nodes.push_back(std::move(node2));
+
+        // Edge
+        doc.edges.push_back(GraphEdgeDto{
+            "edge_1",
+            "node_comp",
+            "output_result",
+            "node_entry",
+            "input_data"});
+
+        // Graph input port
+        doc.graph_inputs.push_back(GraphPortDefinitionDto{
+            "graph_in",
+            "Graph Input",
+            "image",
+            true,
+            yyjson::value(),
+            {}});
+        return doc;
+    }
+
+    /// Round-trip a GraphDocumentDto through RepositoryEntryDto::graph_document.
+    /// Serialises the full entry to JSON, deserialises, and extracts the graph.
+    GraphDocumentDto RoundTripGraphDocument(const GraphDocumentDto& original)
+    {
+        // 1. Build a RepositoryEntryDto with the graph stored in graph_document
+        TaskDto entry;
+        entry.entry_id = 1;
+        entry.display_name = "test_entry";
+        entry.plugin_guid = "{plugin-guid}";
+        entry.task_type_guid = "{task-type-guid}";
+        entry.graph_document = yyjson::object(original);
+
+        // 2. Serialise full entry to JSON string
+        auto entry_json = yyjson::object(entry);
+        auto json_str = std::string(entry_json.write());
+
+        // 3. Deserialise back
+        auto parsed = yyjson::read(json_str);
+        TaskDto restored = yyjson::cast<TaskDto>(parsed);
+
+        // 4. Extract and deserialise the graph_document
+        auto graph_obj = restored.graph_document;
+        return yyjson::cast<GraphDocumentDto>(graph_obj);
+    }
+
+    /// Round-trip via accepted_properties.graphDocument (legacy path).
+    GraphDocumentDto RoundTripThroughAcceptedProperties(
+        const GraphDocumentDto& original)
+    {
+        TaskDto entry;
+        entry.entry_id = 1;
+        entry.display_name = "legacy_entry";
+
+        auto props = Das::Utils::MakeYyjsonObject();
+        auto obj = *props.as_object();
+        obj[std::string_view("graphDocument")] = yyjson::object(original);
+        entry.accepted_properties = std::move(props);
+
+        auto entry_json = yyjson::object(entry);
+        auto json_str = std::string(entry_json.write());
+
+        auto parsed = yyjson::read(json_str);
+        TaskDto restored = yyjson::cast<TaskDto>(parsed);
+
+        auto ap = restored.accepted_properties;
+        auto ap_obj = ap.as_object();
+        EXPECT_TRUE(ap_obj.has_value());
+        auto graph_val = (*ap_obj)[std::string_view("graphDocument")];
+        return yyjson::cast<GraphDocumentDto>(graph_val);
+    }
+} // namespace
+
+// ---------------------------------------------------------------------------
+// GraphEntryId compile-time check
+// ---------------------------------------------------------------------------
+TEST(GraphTaskEntryStorageTest, GraphEntryIdIsInt64)
+{
+    // Also verified by static_assert at top of file.
+    Das::Core::GraphRuntime::GraphEntryId id = 42;
+    EXPECT_EQ(id, 42);
+    EXPECT_TRUE(std::is_same_v<decltype(id), int64_t>);
+}
+
+// ---------------------------------------------------------------------------
+// RepositoryEntryDto has graph_document field (compile-time)
+// ---------------------------------------------------------------------------
+TEST(GraphTaskEntryStorageTest, EntryDtoHasGraphDocumentField)
+{
+    TaskDto entry;
+    // The field must exist and be of type yyjson::value.
+    auto& field = entry.graph_document;
+    (void)field;
+    EXPECT_TRUE(entry.graph_document.is_null());
+}
+
+// ---------------------------------------------------------------------------
+// graph_document serialises as camelCase "graphDocument"
+// ---------------------------------------------------------------------------
+TEST(GraphTaskEntryStorageTest, GraphDocumentFieldSerializesAsCamelCase)
+{
+    TaskDto entry;
+    entry.entry_id = 99;
+    entry.graph_document = yyjson::object(MakeTestGraphDocument());
+
+    auto serialized = yyjson::object(entry);
+    auto json_str = std::string(serialized.write());
+
+    EXPECT_TRUE(json_str.find("\"graphDocument\"") != std::string::npos)
+        << "JSON must use camelCase key 'graphDocument', got: " << json_str;
+    EXPECT_FALSE(json_str.find("\"graph_document\"") != std::string::npos)
+        << "JSON must NOT use snake_case key 'graph_document'";
+}
+
+// ---------------------------------------------------------------------------
+// GraphDocument round-trip through graph_document field
+// ---------------------------------------------------------------------------
+TEST(GraphTaskEntryStorageTest, GraphDocumentRoundTripThroughGraphDocument)
+{
+    auto original = MakeTestGraphDocument();
+    auto restored = RoundTripGraphDocument(original);
+
+    EXPECT_EQ(restored.document_id, "test_graph_001");
+    EXPECT_EQ(restored.version, 1);
+    EXPECT_EQ(restored.fingerprint, "sha256:abc123");
+    ASSERT_EQ(restored.nodes.size(), 2u);
+    EXPECT_EQ(restored.nodes[0].node_id, "node_comp");
+    EXPECT_EQ(restored.nodes[0].target.target_kind, "componentRef");
+    ASSERT_TRUE(restored.nodes[0].target.component_ref.has_value());
+    EXPECT_EQ(
+        restored.nodes[0].target.component_ref->component_guid,
+        "{aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee}");
+    ASSERT_EQ(restored.edges.size(), 1u);
+    EXPECT_EQ(restored.edges[0].edge_id, "edge_1");
+    EXPECT_EQ(restored.edges[0].source_port_id, "output_result");
+    ASSERT_EQ(restored.graph_inputs.size(), 1u);
+    EXPECT_EQ(restored.graph_inputs[0].port_id, "graph_in");
+}
+
+// ---------------------------------------------------------------------------
+// Round-trip through accepted_properties.graphDocument (legacy path)
+// ---------------------------------------------------------------------------
+TEST(GraphTaskEntryStorageTest, GraphDocumentRoundTripThroughAcceptedProperties)
+{
+    auto original = MakeTestGraphDocument();
+    auto restored = RoundTripThroughAcceptedProperties(original);
+
+    EXPECT_EQ(restored.document_id, "test_graph_001");
+    ASSERT_EQ(restored.nodes.size(), 2u);
+    EXPECT_EQ(restored.nodes[0].target.target_kind, "componentRef");
+    ASSERT_EQ(restored.edges.size(), 1u);
+    EXPECT_EQ(restored.edges[0].source_port_id, "output_result");
+    ASSERT_EQ(restored.graph_inputs.size(), 1u);
+    EXPECT_EQ(restored.graph_inputs[0].port_id, "graph_in");
+}
+
+// ---------------------------------------------------------------------------
+// EntryRef target survives round-trip
+// ---------------------------------------------------------------------------
+TEST(GraphTaskEntryStorageTest, GraphDocumentRoundTripPreservesEntryRefTarget)
+{
+    auto original = MakeTestGraphDocument();
+    auto restored = RoundTripGraphDocument(original);
+
+    ASSERT_EQ(restored.nodes.size(), 2u);
+    auto& node2 = restored.nodes[1];
+    EXPECT_EQ(node2.node_id, "node_entry");
+    EXPECT_EQ(node2.target.target_kind, "entryRef");
+    ASSERT_TRUE(node2.target.entry_ref.has_value());
+    EXPECT_EQ(node2.target.entry_ref->entry_id, 42);
+    ASSERT_TRUE(node2.target.entry_ref->expected_revision.has_value());
+    EXPECT_EQ(node2.target.entry_ref->expected_revision.value(), 7);
+    ASSERT_TRUE(node2.target.entry_ref->source_fingerprint.has_value());
+    EXPECT_EQ(node2.target.entry_ref->source_fingerprint.value(), "fp_abc123");
+}
+
+// ---------------------------------------------------------------------------
+// Edge port_ids are strings (v45 contract) and survive round-trip
+// ---------------------------------------------------------------------------
+TEST(GraphTaskEntryStorageTest, GraphDocumentRoundTripPreservesPortIdSemantics)
+{
+    auto original = MakeTestGraphDocument();
+    auto restored = RoundTripGraphDocument(original);
+
+    ASSERT_EQ(restored.edges.size(), 1u);
+    EXPECT_EQ(restored.edges[0].source_port_id, "output_result");
+    EXPECT_EQ(restored.edges[0].target_port_id, "input_data");
+    // port_ids must be strings (not numeric indices)
+    EXPECT_FALSE(restored.edges[0].source_port_id.empty());
+    EXPECT_FALSE(restored.edges[0].target_port_id.empty());
+}
+
+// ---------------------------------------------------------------------------
+// Empty graph round-trips correctly
+// ---------------------------------------------------------------------------
+TEST(GraphTaskEntryStorageTest, GraphDocumentRoundTripEmptyGraph)
+{
+    GraphDocumentDto empty;
+    empty.document_id = "empty_graph";
+    empty.version = 1;
+    empty.fingerprint = "sha256:empty";
+
+    auto restored = RoundTripGraphDocument(empty);
+
+    EXPECT_EQ(restored.document_id, "empty_graph");
+    EXPECT_EQ(restored.version, 1);
+    EXPECT_EQ(restored.fingerprint, "sha256:empty");
+    EXPECT_TRUE(restored.nodes.empty());
+    EXPECT_TRUE(restored.edges.empty());
+    EXPECT_TRUE(restored.graph_inputs.empty());
+    EXPECT_TRUE(restored.graph_outputs.empty());
 }
