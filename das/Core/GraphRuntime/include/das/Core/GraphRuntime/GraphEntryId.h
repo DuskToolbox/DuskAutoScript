@@ -1,8 +1,8 @@
 #ifndef DAS_CORE_GRAPHRUNTIME_GRAPHENTRYID_H
 #define DAS_CORE_GRAPHRUNTIME_GRAPHENTRYID_H
 
-#include <das/Core/GraphRuntime/Config.h>
 #include <cstdint>
+#include <das/Core/GraphRuntime/Config.h>
 
 DAS_CORE_GRAPHRUNTIME_NS_BEGIN
 

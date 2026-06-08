@@ -5,8 +5,9 @@
 #include <gtest/gtest.h>
 #include <string_view>
 
-static_assert(std::is_same_v<Das::Core::GraphRuntime::GraphEntryId, int64_t>,
-              "GraphEntryId must be int64_t");
+static_assert(
+    std::is_same_v<Das::Core::GraphRuntime::GraphEntryId, int64_t>,
+    "GraphEntryId must be int64_t");
 
 namespace
 {
@@ -325,7 +326,8 @@ TEST(GraphDocumentDtoTest, GraphDocumentDtoRoundTrip)
 
 namespace
 {
-    using TaskDto = Das::Core::TaskScheduler::Repository::Dto::RepositoryEntryDto;
+    using TaskDto =
+        Das::Core::TaskScheduler::Repository::Dto::RepositoryEntryDto;
 
     /// Build a small but complete GraphDocumentDto for testing.
     GraphDocumentDto MakeTestGraphDocument()
@@ -360,26 +362,29 @@ namespace
         doc.nodes.push_back(std::move(node2));
 
         // Edge
-        doc.edges.push_back(GraphEdgeDto{
-            "edge_1",
-            "node_comp",
-            "output_result",
-            "node_entry",
-            "input_data"});
+        doc.edges.push_back(
+            GraphEdgeDto{
+                "edge_1",
+                "node_comp",
+                "output_result",
+                "node_entry",
+                "input_data"});
 
         // Graph input port
-        doc.graph_inputs.push_back(GraphPortDefinitionDto{
-            "graph_in",
-            "Graph Input",
-            "image",
-            true,
-            yyjson::value(),
-            {}});
+        doc.graph_inputs.push_back(
+            GraphPortDefinitionDto{
+                "graph_in",
+                "Graph Input",
+                "image",
+                true,
+                yyjson::value(),
+                {}});
         return doc;
     }
 
-    /// Round-trip a GraphDocumentDto through RepositoryEntryDto::graph_document.
-    /// Serialises the full entry to JSON, deserialises, and extracts the graph.
+    /// Round-trip a GraphDocumentDto through
+    /// RepositoryEntryDto::graph_document. Serialises the full entry to JSON,
+    /// deserialises, and extracts the graph.
     GraphDocumentDto RoundTripGraphDocument(const GraphDocumentDto& original)
     {
         // 1. Build a RepositoryEntryDto with the graph stored in graph_document
@@ -395,7 +400,7 @@ namespace
         auto json_str = std::string(entry_json.write());
 
         // 3. Deserialise back
-        auto parsed = yyjson::read(json_str);
+        auto    parsed = yyjson::read(json_str);
         TaskDto restored = yyjson::cast<TaskDto>(parsed);
 
         // 4. Extract and deserialise the graph_document
@@ -419,7 +424,7 @@ namespace
         auto entry_json = yyjson::object(entry);
         auto json_str = std::string(entry_json.write());
 
-        auto parsed = yyjson::read(json_str);
+        auto    parsed = yyjson::read(json_str);
         TaskDto restored = yyjson::cast<TaskDto>(parsed);
 
         auto ap = restored.accepted_properties;
