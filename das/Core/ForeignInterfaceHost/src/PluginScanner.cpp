@@ -335,22 +335,30 @@ yyjson::value PluginPackageDescToJson(const PluginPackageDesc& desc)
     {
         return j;
     }
-    (*obj)[std::string_view("name")] = desc.name;
-    (*obj)[std::string_view("description")] = desc.description;
-    (*obj)[std::string_view("author")] = desc.author;
-    (*obj)[std::string_view("version")] = desc.version;
+    (*obj)[std::string_view("name")] =
+        std::make_pair(std::string_view(desc.name), yyjson::copy_string);
+    (*obj)[std::string_view("description")] =
+        std::make_pair(std::string_view(desc.description), yyjson::copy_string);
+    (*obj)[std::string_view("author")] =
+        std::make_pair(std::string_view(desc.author), yyjson::copy_string);
+    (*obj)[std::string_view("version")] =
+        std::make_pair(std::string_view(desc.version), yyjson::copy_string);
     (*obj)[std::string_view("guid")] =
         Das::Core::ForeignInterfaceHost::DasGuidToStdString(desc.guid);
-    (*obj)[std::string_view("supportedSystem")] = desc.supported_system;
+    (*obj)[std::string_view("supportedSystem")] = std::make_pair(
+        std::string_view(desc.supported_system),
+        yyjson::copy_string);
     (*obj)[std::string_view("language")] =
         static_cast<std::int64_t>(desc.language);
-    (*obj)[std::string_view("pluginFilenameExtension")] =
-        desc.plugin_filename_extension;
+    (*obj)[std::string_view("pluginFilenameExtension")] = std::make_pair(
+        std::string_view(desc.plugin_filename_extension),
+        yyjson::copy_string);
 
     if (desc.opt_resource_path.has_value())
     {
-        (*obj)[std::string_view("resourcePath")] =
-            desc.opt_resource_path.value();
+        (*obj)[std::string_view("resourcePath")] = std::make_pair(
+            std::string_view(desc.opt_resource_path.value()),
+            yyjson::copy_string);
     }
 
     return j;
