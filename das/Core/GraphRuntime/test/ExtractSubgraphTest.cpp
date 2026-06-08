@@ -530,4 +530,448 @@ namespace
             "number");
     }
 
+    // ========================================================================
+    // Replace + Undo tests (02-20)
+    // ========================================================================
+
+    class ExtractSubgraphReplaceTest : public ::testing::Test
+    {
+    protected:
+        ExtractSubgraph extractor;
+        int64_t         next_entry_id = 2000;
+
+        ExtractSubgraph::EntryFactory MakeMockFactory()
+        {
+            return [this](const TaskDto& entry) -> GraphEntryId
+            { return next_entry_id++; };
+        }
+
+        ExtractSubgraph::CompileCallback MakeMockCompile()
+        {
+            return [](GraphEntryId entry_id) -> Dto::CompiledGraphPlanDto
+            { return MakeCompiledPlan(entry_id); };
+        }
+    };
+
+    TEST_F(ExtractSubgraphReplaceTest, ReplaceWithSubgraphRemovesSelectedNodes)
+    {
+        auto parent = MakeGraphDocument(
+            "p1",
+            {MakeComponentRefNode("A", "{gA}"),
+             MakeComponentRefNode("B", "{gB}"),
+             MakeComponentRefNode("C", "{gC}")},
+            {});
+
+        auto extract_result = extractor.Extract(
+            1, {"B"}, parent, MakeMockFactory(), MakeMockCompile());
+
+        auto replace_result = extractor.ReplaceWithSubgraph(
+            parent, extract_result, {"B"});
+
+        // Updated doc has 3 nodes: A, replacement, C
+        EXPECT_EQ(replace_result.updated_graph_document.nodes.size(), 3u);
+
+        // Node B is gone
+        for (const auto& n : replace_result.updated_graph_document.nodes)
+        {
+            EXPECT_NE(n.node_id, "B");
+        }
+
+        // Replacement node exists with entryRef target
+        bool found_replacement = false;
+        for (const auto& n : replace_result.updated_graph_document.nodes)
+        {
+            if (n.node_id == replace_result.replacement_node_id)
+            {
+                found_replacement = true;
+                EXPECT_EQ(n.target.target_kind, "entryRef");
+                ASSERT_TRUE(n.target.entry_ref.has_value());
+            }
+        }
+        EXPECT_TRUE(found_replacement);
+    }
+
+    TEST_F(ExtractSubgraphReplaceTest, ReplaceWithSubgraphEntryRefHasCorrectFields)
+    {
+        auto parent = MakeGraphDocument(
+            "p2",
+            {MakeComponentRefNode("A", "{gA}"),
+             MakeComponentRefNode("B", "{gB}"),
+             MakeComponentRefNode("C", "{gC}")},
+            {});
+
+        auto extract_result = extractor.Extract(
+            1, {"A", "B"}, parent, MakeMockFactory(), MakeMockCompile());
+
+        auto replace_result = extractor.ReplaceWithSubgraph(
+            parent, extract_result, {"A", "B"});
+
+        // Find replacement node and verify entryRef fields
+        bool found = false;
+        for (const auto& n : replace_result.updated_graph_document.nodes)
+        {
+            if (n.node_id == replace_result.replacement_node_id)
+            {
+                found = true;
+                ASSERT_TRUE(n.target.entry_ref.has_value());
+                const auto& ref = n.target.entry_ref.value();
+                EXPECT_EQ(ref.entry_id, extract_result.child_entry_id);
+                ASSERT_TRUE(ref.expected_revision.has_value());
+                EXPECT_EQ(ref.expected_revision.value(), 1);
+                ASSERT_TRUE(ref.source_fingerprint.has_value());
+                EXPECT_FALSE(ref.source_fingerprint.value().empty());
+            }
+        }
+        EXPECT_TRUE(found);
+    }
+
+    TEST_F(ExtractSubgraphReplaceTest, ReplaceWithSubgraphRewiresInboundEdge)
+    {
+        // A(outside) → B(selected), C(outside)
+        auto parent = MakeGraphDocument(
+            "p3",
+            {MakeComponentRefNode("A", "{gA}"),
+             MakeComponentRefNode("B", "{gB}"),
+             MakeComponentRefNode("C", "{gC}")},
+            {MakeEdge("e1", "A", "out1", "B", "in1")},
+            {MakePortDef("in1", "number")});
+
+        auto extract_result = extractor.Extract(
+            1, {"B"}, parent, MakeMockFactory(), MakeMockCompile());
+
+        auto replace_result = extractor.ReplaceWithSubgraph(
+            parent, extract_result, {"B"});
+
+        // Edge rewired: A → replacement_node, target_port from mapping
+        ASSERT_EQ(replace_result.updated_graph_document.edges.size(), 1u);
+        const auto& edge = replace_result.updated_graph_document.edges[0];
+        EXPECT_EQ(edge.source_node_id, "A");
+        EXPECT_EQ(edge.source_port_id, "out1");
+        EXPECT_EQ(edge.target_node_id, replace_result.replacement_node_id);
+
+        ASSERT_EQ(extract_result.input_port_mappings.size(), 1u);
+        EXPECT_EQ(
+            edge.target_port_id,
+            extract_result.input_port_mappings[0].child_port_id);
+    }
+
+    TEST_F(ExtractSubgraphReplaceTest, ReplaceWithSubgraphRewiresOutboundEdge)
+    {
+        // B(selected) → C(outside), A(outside)
+        auto parent = MakeGraphDocument(
+            "p4",
+            {MakeComponentRefNode("A", "{gA}"),
+             MakeComponentRefNode("B", "{gB}"),
+             MakeComponentRefNode("C", "{gC}")},
+            {MakeEdge("e1", "B", "out1", "C", "in1")},
+            {},
+            {MakePortDef("out1", "string")});
+
+        auto extract_result = extractor.Extract(
+            1, {"B"}, parent, MakeMockFactory(), MakeMockCompile());
+
+        auto replace_result = extractor.ReplaceWithSubgraph(
+            parent, extract_result, {"B"});
+
+        // Edge rewired: replacement_node → C, source_port from mapping
+        ASSERT_EQ(replace_result.updated_graph_document.edges.size(), 1u);
+        const auto& edge = replace_result.updated_graph_document.edges[0];
+        EXPECT_EQ(edge.source_node_id, replace_result.replacement_node_id);
+        EXPECT_EQ(edge.target_node_id, "C");
+        EXPECT_EQ(edge.target_port_id, "in1");
+
+        ASSERT_EQ(extract_result.output_port_mappings.size(), 1u);
+        EXPECT_EQ(
+            edge.source_port_id,
+            extract_result.output_port_mappings[0].child_port_id);
+    }
+
+    TEST_F(ExtractSubgraphReplaceTest, ReplaceWithSubgraphPreservesExternalEdge)
+    {
+        // A→B (both outside), C(selected)
+        auto parent = MakeGraphDocument(
+            "p5",
+            {MakeComponentRefNode("A", "{gA}"),
+             MakeComponentRefNode("B", "{gB}"),
+             MakeComponentRefNode("C", "{gC}")},
+            {MakeEdge("e1", "A", "out1", "B", "in1")});
+
+        auto extract_result = extractor.Extract(
+            1, {"C"}, parent, MakeMockFactory(), MakeMockCompile());
+
+        auto replace_result = extractor.ReplaceWithSubgraph(
+            parent, extract_result, {"C"});
+
+        // External edge A→B unchanged
+        ASSERT_EQ(replace_result.updated_graph_document.edges.size(), 1u);
+        const auto& edge = replace_result.updated_graph_document.edges[0];
+        EXPECT_EQ(edge.source_node_id, "A");
+        EXPECT_EQ(edge.source_port_id, "out1");
+        EXPECT_EQ(edge.target_node_id, "B");
+        EXPECT_EQ(edge.target_port_id, "in1");
+    }
+
+    TEST_F(ExtractSubgraphReplaceTest, ReplaceResultIncludesUndoSnapshot)
+    {
+        auto parent = MakeGraphDocument(
+            "p6",
+            {MakeComponentRefNode("A", "{gA}"),
+             MakeComponentRefNode("B", "{gB}"),
+             MakeComponentRefNode("C", "{gC}")},
+            {MakeEdge("e1", "A", "out1", "B", "in1")});
+
+        auto extract_result = extractor.Extract(
+            1, {"A", "B"}, parent, MakeMockFactory(), MakeMockCompile());
+
+        auto replace_result = extractor.ReplaceWithSubgraph(
+            parent, extract_result, {"A", "B"});
+
+        // Snapshot captures pre-replacement state
+        EXPECT_EQ(replace_result.undo_snapshot.removed_nodes.size(), 2u);
+        EXPECT_FALSE(replace_result.undo_snapshot.removed_edges.empty());
+        EXPECT_EQ(
+            replace_result.undo_snapshot.replacement_node_id,
+            replace_result.replacement_node_id);
+    }
+
+    TEST_F(ExtractSubgraphReplaceTest, UndoExtractRestoresOriginalNodes)
+    {
+        auto parent = MakeGraphDocument(
+            "p7",
+            {MakeComponentRefNode("A", "{gA}"),
+             MakeComponentRefNode("B", "{gB}"),
+             MakeComponentRefNode("C", "{gC}")},
+            {MakeEdge("e1", "A", "out1", "B", "in1")});
+
+        auto extract_result = extractor.Extract(
+            1, {"A", "B"}, parent, MakeMockFactory(), MakeMockCompile());
+
+        auto replace_result = extractor.ReplaceWithSubgraph(
+            parent, extract_result, {"A", "B"});
+
+        bool delete_called = false;
+        auto delete_cb = [&delete_called](GraphEntryId) -> bool
+        {
+            delete_called = true;
+            return true;
+        };
+        auto ref_count_cb = [](GraphEntryId) -> int { return 0; };
+
+        auto restored = extractor.UndoExtract(
+            replace_result.undo_snapshot, delete_cb, ref_count_cb);
+
+        // Restored doc has all original nodes with same IDs
+        EXPECT_EQ(restored.nodes.size(), parent.nodes.size());
+        for (const auto& orig : parent.nodes)
+        {
+            bool found = false;
+            for (const auto& r : restored.nodes)
+            {
+                if (r.node_id == orig.node_id)
+                {
+                    found = true;
+                    break;
+                }
+            }
+            EXPECT_TRUE(found) << "Node " << orig.node_id
+                               << " not restored";
+        }
+    }
+
+    TEST_F(ExtractSubgraphReplaceTest, UndoExtractRestoresOriginalEdgeStructure)
+    {
+        // X(outside) → A(selected), B(outside)
+        auto parent = MakeGraphDocument(
+            "p8",
+            {MakeComponentRefNode("X", "{gX}"),
+             MakeComponentRefNode("A", "{gA}"),
+             MakeComponentRefNode("B", "{gB}")},
+            {MakeEdge("e1", "X", "out1", "A", "in1")},
+            {MakePortDef("in1", "number")});
+
+        auto extract_result = extractor.Extract(
+            1, {"A"}, parent, MakeMockFactory(), MakeMockCompile());
+
+        auto replace_result = extractor.ReplaceWithSubgraph(
+            parent, extract_result, {"A"});
+
+        auto delete_cb = [](GraphEntryId) -> bool { return true; };
+        auto ref_count_cb = [](GraphEntryId) -> int { return 0; };
+
+        auto restored = extractor.UndoExtract(
+            replace_result.undo_snapshot, delete_cb, ref_count_cb);
+
+        // Edge restored: X → A with original ports
+        ASSERT_EQ(restored.edges.size(), 1u);
+        EXPECT_EQ(restored.edges[0].source_node_id, "X");
+        EXPECT_EQ(restored.edges[0].source_port_id, "out1");
+        EXPECT_EQ(restored.edges[0].target_node_id, "A");
+        EXPECT_EQ(restored.edges[0].target_port_id, "in1");
+    }
+
+    TEST_F(ExtractSubgraphReplaceTest, UndoExtractDeletesChildEntryWhenRefCountZero)
+    {
+        auto parent = MakeGraphDocument(
+            "p9",
+            {MakeComponentRefNode("A", "{gA}"),
+             MakeComponentRefNode("B", "{gB}"),
+             MakeComponentRefNode("C", "{gC}")},
+            {});
+
+        auto extract_result = extractor.Extract(
+            1, {"B"}, parent, MakeMockFactory(), MakeMockCompile());
+
+        auto replace_result = extractor.ReplaceWithSubgraph(
+            parent, extract_result, {"B"});
+
+        bool         delete_called = false;
+        GraphEntryId deleted_id    = 0;
+        auto         delete_cb =
+            [&delete_called, &deleted_id](GraphEntryId id) -> bool
+        {
+            delete_called = true;
+            deleted_id    = id;
+            return true;
+        };
+        auto ref_count_cb = [](GraphEntryId) -> int { return 0; };
+
+        extractor.UndoExtract(
+            replace_result.undo_snapshot, delete_cb, ref_count_cb);
+
+        EXPECT_TRUE(delete_called);
+        EXPECT_EQ(deleted_id, extract_result.child_entry_id);
+    }
+
+    TEST_F(ExtractSubgraphReplaceTest, UndoExtractSkipsDeleteWhenRefCountPositive)
+    {
+        auto parent = MakeGraphDocument(
+            "p10",
+            {MakeComponentRefNode("A", "{gA}"),
+             MakeComponentRefNode("B", "{gB}"),
+             MakeComponentRefNode("C", "{gC}")},
+            {});
+
+        auto extract_result = extractor.Extract(
+            1, {"B"}, parent, MakeMockFactory(), MakeMockCompile());
+
+        auto replace_result = extractor.ReplaceWithSubgraph(
+            parent, extract_result, {"B"});
+
+        bool delete_called = false;
+        auto delete_cb = [&delete_called](GraphEntryId) -> bool
+        {
+            delete_called = true;
+            return true;
+        };
+        auto ref_count_cb = [](GraphEntryId) -> int { return 2; };
+
+        extractor.UndoExtract(
+            replace_result.undo_snapshot, delete_cb, ref_count_cb);
+
+        EXPECT_FALSE(delete_called);
+    }
+
+    TEST_F(ExtractSubgraphReplaceTest, UndoExtractSkipsDeleteWhenRefCountCallbackAbsent)
+    {
+        auto parent = MakeGraphDocument(
+            "p11",
+            {MakeComponentRefNode("A", "{gA}"),
+             MakeComponentRefNode("B", "{gB}"),
+             MakeComponentRefNode("C", "{gC}")},
+            {});
+
+        auto extract_result = extractor.Extract(
+            1, {"B"}, parent, MakeMockFactory(), MakeMockCompile());
+
+        auto replace_result = extractor.ReplaceWithSubgraph(
+            parent, extract_result, {"B"});
+
+        bool delete_called = false;
+        auto delete_cb = [&delete_called](GraphEntryId) -> bool
+        {
+            delete_called = true;
+            return true;
+        };
+
+        // Empty / null ref_count_callback
+        ExtractSubgraph::RefCountCallback empty_ref_cb;
+
+        extractor.UndoExtract(
+            replace_result.undo_snapshot, delete_cb, empty_ref_cb);
+
+        EXPECT_FALSE(delete_called);
+    }
+
+    TEST_F(ExtractSubgraphReplaceTest, ReplaceWithSubgraphHandlesNoInboundEdges)
+    {
+        // B(selected) → C(outside), A(outside, no edge to B)
+        auto parent = MakeGraphDocument(
+            "p12",
+            {MakeComponentRefNode("A", "{gA}"),
+             MakeComponentRefNode("B", "{gB}"),
+             MakeComponentRefNode("C", "{gC}")},
+            {MakeEdge("e1", "B", "out1", "C", "in1")},
+            {},
+            {MakePortDef("out1", "string")});
+
+        auto extract_result = extractor.Extract(
+            1, {"B"}, parent, MakeMockFactory(), MakeMockCompile());
+
+        auto replace_result = extractor.ReplaceWithSubgraph(
+            parent, extract_result, {"B"});
+
+        // One outbound edge: replacement → C
+        ASSERT_EQ(replace_result.updated_graph_document.edges.size(), 1u);
+        const auto& edge = replace_result.updated_graph_document.edges[0];
+        EXPECT_EQ(edge.source_node_id, replace_result.replacement_node_id);
+        EXPECT_EQ(edge.target_node_id, "C");
+    }
+
+    TEST_F(ExtractSubgraphReplaceTest, ReplaceWithSubgraphHandlesNoOutboundEdges)
+    {
+        // A(outside) → B(selected), C(outside, no edge from B)
+        auto parent = MakeGraphDocument(
+            "p13",
+            {MakeComponentRefNode("A", "{gA}"),
+             MakeComponentRefNode("B", "{gB}"),
+             MakeComponentRefNode("C", "{gC}")},
+            {MakeEdge("e1", "A", "out1", "B", "in1")},
+            {MakePortDef("in1", "number")});
+
+        auto extract_result = extractor.Extract(
+            1, {"B"}, parent, MakeMockFactory(), MakeMockCompile());
+
+        auto replace_result = extractor.ReplaceWithSubgraph(
+            parent, extract_result, {"B"});
+
+        // One inbound edge: A → replacement
+        ASSERT_EQ(replace_result.updated_graph_document.edges.size(), 1u);
+        const auto& edge = replace_result.updated_graph_document.edges[0];
+        EXPECT_EQ(edge.source_node_id, "A");
+        EXPECT_EQ(edge.target_node_id, replace_result.replacement_node_id);
+    }
+
+    TEST_F(ExtractSubgraphReplaceTest, UndoExtractWithEmptySnapshot)
+    {
+        auto doc = MakeGraphDocument(
+            "original_doc",
+            {MakeComponentRefNode("X", "{gX}")},
+            {});
+
+        ParentSnapshot empty_snapshot;
+        empty_snapshot.original_graph_document = doc;
+        // replacement_node_id is empty, removed_nodes is empty
+
+        auto delete_cb = [](GraphEntryId) -> bool { return true; };
+        auto ref_count_cb = [](GraphEntryId) -> int { return 0; };
+
+        auto result = extractor.UndoExtract(
+            empty_snapshot, delete_cb, ref_count_cb);
+
+        // Returns original_graph_document unchanged
+        EXPECT_EQ(result.document_id, "original_doc");
+        ASSERT_EQ(result.nodes.size(), 1u);
+        EXPECT_EQ(result.nodes[0].node_id, "X");
+    }
+
 } // namespace
