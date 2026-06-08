@@ -301,9 +301,9 @@ DasResult GraphRuntime::GetStructuredError(
         return DAS_E_NOT_FOUND;
     }
 
-    DasReadOnlyString                                     locale{"en"};
-    DAS::DasPtr<Das::ExportInterface::IDasReadOnlyString> p_msg;
-    DasResult                                             hr =
+    DasReadOnlyString               locale{"en"};
+    DAS::DasPtr<IDasReadOnlyString> p_msg;
+    DasResult                       hr =
         p_error_lens_->GetErrorMessage(locale.Get(), error_code, p_msg.Put());
     if (DAS_S_OK != hr || !p_msg.Get())
     {
@@ -614,7 +614,7 @@ DasResult GraphRuntime::ExecuteNodeWithComponent(
     if (p_result_json.Get())
     {
         // Serialize result IDasJson → string
-        DAS::DasPtr<Das::ExportInterface::IDasReadOnlyString> p_result_str;
+        DAS::DasPtr<IDasReadOnlyString> p_result_str;
         hr = p_result_json->ToString(0, p_result_str.Put());
         if (DAS_S_OK != hr || !p_result_str.Get())
         {

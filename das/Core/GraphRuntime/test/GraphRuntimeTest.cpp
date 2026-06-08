@@ -749,24 +749,67 @@ TEST(GraphRuntimeTest, RuntimeExecutionCacheUsed)
 // Plan 02-14: Configure/Prepare/RunWithHost tests
 // =====================================================================
 
-namespace
+// Named namespace for mock types (required for template specializations)
+namespace GraphRuntimeTestMock
 {
     using IDasJson = Das::ExportInterface::IDasJson;
-    using IDasErrorLens = Das::PluginInterface::IDasErrorLens;
+    using IDasStopToken = Das::PluginInterface::IDasStopToken;
+    using IDasTaskComponent = Das::PluginInterface::IDasTaskComponent;
+    using IDasTaskComponentHost = Das::PluginInterface::IDasTaskComponentHost;
 
     // ---- Mock IDasTaskComponent ----
-    // Records calls and simulates pass-through behavior.
-    class MockTaskComponent final
-        : public Das::PluginInterface::DasTaskComponentImplBase<
-              MockTaskComponent>
+    // Manual implementation (not using ImplBase to avoid DasIidOf linker
+    // issues with anonymous-namespace types).
+    class MockTaskComponent final : public IDasTaskComponent
     {
     public:
-        std::atomic<int> apply_settings_call_count{0};
-        std::atomic<int> do_call_count{0};
-        std::string      last_settings_json;
-        std::string      last_input_json;
+        std::atomic<uint32_t> ref_count_{0};
+        std::atomic<int>      apply_settings_call_count{0};
+        std::atomic<int>      do_call_count{0};
+        std::string           last_settings_json;
+        std::string           last_input_json;
 
-        // Echo input as output (pass-through).
+        uint32_t DAS_STD_CALL AddRef() override { return ++ref_count_; }
+
+        uint32_t DAS_STD_CALL Release() override
+        {
+            auto c = --ref_count_;
+            if (c == 0)
+            {
+                ref_count_ = 1;
+                delete this;
+            }
+            return c;
+        }
+
+        DasResult DAS_STD_CALL
+        QueryInterface(const DasGuid& iid, void** pp_out) override
+        {
+            if (!pp_out)
+                return DAS_E_INVALID_POINTER;
+            *pp_out = nullptr;
+            return DAS_E_NO_INTERFACE;
+        }
+
+        DasResult DAS_STD_CALL GetGuid(DasGuid* p_out_guid) override
+        {
+            if (!p_out_guid)
+                return DAS_E_INVALID_POINTER;
+            *p_out_guid = Das::Core::ForeignInterfaceHost::MakeDasGuid(
+                "mock-task-component");
+            return DAS_S_OK;
+        }
+
+        DasResult DAS_STD_CALL
+        GetRuntimeClassName(IDasReadOnlyString** pp_out_name) override
+        {
+            if (!pp_out_name)
+                return DAS_E_INVALID_POINTER;
+            return CreateIDasReadOnlyStringFromUtf8(
+                "MockTaskComponent",
+                pp_out_name);
+        }
+
         DasResult ApplySettingsChange(
             IDasJson*  p_request_json,
             IDasJson** pp_out_result_json) override
@@ -774,7 +817,7 @@ namespace
             ++apply_settings_call_count;
             if (p_request_json)
             {
-                DAS::DasPtr<Das::ExportInterface::IDasReadOnlyString> p_str;
+                DAS::DasPtr<IDasReadOnlyString> p_str;
                 p_request_json->ToString(0, p_str.Put());
                 if (p_str.Get())
                 {
@@ -802,7 +845,7 @@ namespace
             ++do_call_count;
             if (p_input_json)
             {
-                DAS::DasPtr<Das::ExportInterface::IDasReadOnlyString> p_str;
+                DAS::DasPtr<IDasReadOnlyString> p_str;
                 p_input_json->ToString(0, p_str.Put());
                 if (p_str.Get())
                 {
@@ -812,12 +855,11 @@ namespace
                 }
             }
 
-            // Echo input as output
             if (pp_out_result_json)
             {
                 if (p_input_json)
                 {
-                    DAS::DasPtr<Das::ExportInterface::IDasReadOnlyString> p_str;
+                    DAS::DasPtr<IDasReadOnlyString> p_str;
                     p_input_json->ToString(0, p_str.Put());
                     if (p_str.Get())
                     {
@@ -845,10 +887,16 @@ namespace
             }
             return DAS_S_OK;
         }
+
+        static IDasTaskComponent* MakeRaw()
+        {
+            auto* p = new MockTaskComponent();
+            p->AddRef();
+            return p;
+        }
     };
 
     // ---- Mock IDasTaskComponentHost ----
-    // Creates MockTaskComponent instances.
     class MockTaskComponentHost final
         : public Das::PluginInterface::DasTaskComponentHostImplBase<
               MockTaskComponentHost>
@@ -863,7 +911,7 @@ namespace
             if (!pp_out_component)
                 return DAS_E_INVALID_POINTER;
 
-            auto guid_str = Das::Core::ForeignInterfaceHost::DasGuidToString(
+            auto guid_str = Das::Core::ForeignInterfaceHost::DasGuidToStdString(
                 component_guid);
             created_guids.push_back(guid_str);
 
@@ -885,13 +933,13 @@ namespace
             if (!pp_out_iids)
                 return DAS_E_INVALID_POINTER;
             *pp_out_iids = nullptr;
-            return DAS_E_NOT_IMPLEMENTED;
+            return DAS_E_NO_INTERFACE;
         }
 
         DasResult GetErrorMessage(
-            IDasReadOnlyString*                        locale_name,
-            DasResult                                  error_code,
-            Das::ExportInterface::IDasReadOnlyString** out_string) override
+            IDasReadOnlyString*  locale_name,
+            DasResult            error_code,
+            IDasReadOnlyString** out_string) override
         {
             if (!out_string)
                 return DAS_E_INVALID_POINTER;
@@ -899,7 +947,6 @@ namespace
             auto it = error_messages.find(error_code);
             if (it != error_messages.end())
             {
-                DasReadOnlyString msg{it->second.c_str()};
                 return CreateIDasReadOnlyStringFromUtf8(
                     it->second.c_str(),
                     out_string);
@@ -910,7 +957,7 @@ namespace
     };
 
     // Build a plan with a settings snapshot for a node
-    CompiledGraphPlanDto MakePlanWithSettings(
+    inline CompiledGraphPlanDto MakePlanWithSettings(
         const std::string& node_id,
         const std::string& component_guid,
         const std::string& settings_json,
@@ -943,17 +990,19 @@ namespace
         return plan;
     }
 
-} // namespace
+} // namespace GraphRuntimeTestMock
 
 // ===================================================================
 // Test 16: ConfigureCreatesComponents
 // ===================================================================
 TEST(GraphRuntimeTest, ConfigureCreatesComponents)
 {
+    using namespace GraphRuntimeTestMock;
+
     auto plan =
         MakePlanWithSettings(kNodeA, "comp-A", R"({"threshold": 42})", "");
 
-    auto host = Das::PluginInterface::MockTaskComponentHost::Make();
+    auto host = MockTaskComponentHost::Make();
 
     GraphRuntime rt;
     auto         hr = rt.Configure(plan, host.Get());
@@ -969,13 +1018,15 @@ TEST(GraphRuntimeTest, ConfigureCreatesComponents)
 // ===================================================================
 TEST(GraphRuntimeTest, ConfigureAppliesSettings)
 {
+    using namespace GraphRuntimeTestMock;
+
     auto plan = MakePlanWithSettings(
         kNodeA,
         "comp-A",
         R"({"threshold": 42})",
         R"({"mode": "fast"})");
 
-    auto host = Das::PluginInterface::MockTaskComponentHost::Make();
+    auto host = MockTaskComponentHost::Make();
 
     GraphRuntime rt;
     EXPECT_EQ(DAS_S_OK, rt.Configure(plan, host.Get()));
@@ -989,13 +1040,15 @@ TEST(GraphRuntimeTest, ConfigureAppliesSettings)
 // ===================================================================
 TEST(GraphRuntimeTest, PrepareValidatesConfiguredComponents)
 {
+    using namespace GraphRuntimeTestMock;
+
     // Prepare without Configure should fail
     GraphRuntime rt;
     EXPECT_NE(DAS_S_OK, rt.Prepare());
 
     // Prepare after Configure should succeed
     auto plan = MakeLinearPlan(2);
-    auto host = Das::PluginInterface::MockTaskComponentHost::Make();
+    auto host = MockTaskComponentHost::Make();
 
     EXPECT_EQ(DAS_S_OK, rt.Configure(plan, host.Get()));
     EXPECT_EQ(DAS_S_OK, rt.Prepare());
@@ -1019,6 +1072,7 @@ TEST(GraphRuntimeTest, ConfigureNullHost)
 // ===================================================================
 TEST(GraphRuntimeTest, RunWithHostSingleExecution)
 {
+    using namespace GraphRuntimeTestMock;
     CompiledGraphPlanDto plan;
     plan.source_fingerprint = "fp_v1";
     plan.compiled_fingerprint = "compiled_fp_v1";
@@ -1027,7 +1081,7 @@ TEST(GraphRuntimeTest, RunWithHostSingleExecution)
         MakeSnapshotWithPorts(kNodeA, {MakePortDef("out")}, "comp-A"));
     plan.execution_order = {kNodeA};
 
-    auto host = Das::PluginInterface::MockTaskComponentHost::Make();
+    auto host = MockTaskComponentHost::Make();
 
     GraphRuntime               rt;
     Das::DasPtr<IDasStopToken> token =
@@ -1042,9 +1096,10 @@ TEST(GraphRuntimeTest, RunWithHostSingleExecution)
 // ===================================================================
 TEST(GraphRuntimeTest, RunWithHostLinearChain)
 {
+    using namespace GraphRuntimeTestMock;
     auto plan = MakeLinearPlan(3);
 
-    auto host = Das::PluginInterface::MockTaskComponentHost::Make();
+    auto host = MockTaskComponentHost::Make();
 
     GraphRuntime               rt;
     Das::DasPtr<IDasStopToken> token =
@@ -1059,10 +1114,11 @@ TEST(GraphRuntimeTest, RunWithHostLinearChain)
 // ===================================================================
 TEST(GraphRuntimeTest, RunWithHostFingerprintMismatch)
 {
+    using namespace GraphRuntimeTestMock;
     auto plan = MakeLinearPlan(2);
     plan.source_fingerprint = "compiled_at_v1";
 
-    auto host = Das::PluginInterface::MockTaskComponentHost::Make();
+    auto host = MockTaskComponentHost::Make();
 
     GraphRuntime               rt;
     Das::DasPtr<IDasStopToken> token =
@@ -1078,7 +1134,8 @@ TEST(GraphRuntimeTest, RunWithHostFingerprintMismatch)
 // ===================================================================
 TEST(GraphRuntimeTest, ErrorLensIntegration)
 {
-    auto  lens = Das::PluginInterface::MockErrorLens::Make();
+    using namespace GraphRuntimeTestMock;
+    auto  lens = MockErrorLens::Make();
     auto* raw_lens = static_cast<MockErrorLens*>(lens.Get());
     raw_lens->error_messages[DAS_E_NOT_FOUND] = "Resource not available";
 
@@ -1100,9 +1157,10 @@ TEST(GraphRuntimeTest, ErrorLensIntegration)
 // ===================================================================
 TEST(GraphRuntimeTest, RunWithHostEmptyGraph)
 {
+    using namespace GraphRuntimeTestMock;
     auto plan = MakeEmptyPlan();
 
-    auto host = Das::PluginInterface::MockTaskComponentHost::Make();
+    auto host = MockTaskComponentHost::Make();
 
     GraphRuntime               rt;
     Das::DasPtr<IDasStopToken> token =
@@ -1117,12 +1175,13 @@ TEST(GraphRuntimeTest, RunWithHostEmptyGraph)
 // ===================================================================
 TEST(GraphRuntimeTest, V17DataSepSettingsNotInPortMap)
 {
+    using namespace GraphRuntimeTestMock;
     // Verify that settings are applied via ApplySettingsChange (Configure)
     // and NOT passed through the PortMap data plane during Do().
     auto plan =
         MakePlanWithSettings(kNodeA, "comp-A", R"({"threshold": 42})", "");
 
-    auto host = Das::PluginInterface::MockTaskComponentHost::Make();
+    auto host = MockTaskComponentHost::Make();
 
     GraphRuntime rt;
     EXPECT_EQ(DAS_S_OK, rt.Configure(plan, host.Get()));
