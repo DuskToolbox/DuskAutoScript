@@ -36,7 +36,7 @@ class TaskComponentFactoryManager
 {
 public:
     TaskComponentFactoryManager();
-    ~TaskComponentFactoryManager();
+    virtual ~TaskComponentFactoryManager();
 
     DasResult OnPluginLoaded(
         const DasGuid&                                   plugin_guid,
@@ -50,7 +50,8 @@ public:
         Das::PluginInterface::IDasTaskComponent** pp_out_component);
 
     [[nodiscard]]
-    std::vector<TaskComponentDefinitionInfo> EnumerateDefinitions() const;
+    virtual std::vector<TaskComponentDefinitionInfo> EnumerateDefinitions()
+        const;
 
 private:
     struct FactoryEntry

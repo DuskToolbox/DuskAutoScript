@@ -15,6 +15,9 @@ DAS_CORE_FOREIGNINTERFACEHOST_NS_END
 
 DAS_CORE_GRAPHRUNTIME_NS_BEGIN
 
+// Import forward-declared type into this namespace for convenience.
+using ForeignInterfaceHost::TaskComponentFactoryManager;
+
 // ---------------------------------------------------------------------------
 // Diagnostic types for compile-time edge validation
 // ---------------------------------------------------------------------------

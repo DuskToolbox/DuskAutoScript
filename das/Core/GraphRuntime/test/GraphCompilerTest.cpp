@@ -5,6 +5,7 @@
 #include <gtest/gtest.h>
 
 #include <string_view>
+#include <utility>
 
 namespace
 {
@@ -14,39 +15,32 @@ namespace
 
     // ---------------------------------------------------------------
     // Helpers to build synthetic manifest definitions (yyjson::value)
+    // via JSON string parsing — avoids mutable yyjson array API issues
     // ---------------------------------------------------------------
 
-    yyjson::value MakePortEntry(const std::string& id, const std::string& type)
-    {
-        auto payload = Das::Utils::MakeYyjsonObject();
-        auto obj = *payload.as_object();
-        obj[std::string_view("id")] =
-            std::make_pair(std::string_view(id), yyjson::copy_string);
-        obj[std::string_view("type")] =
-            std::make_pair(std::string_view(type), yyjson::copy_string);
-        return payload;
-    }
-
-    yyjson::value MakePortArray(const std::vector<yyjson::value>& ports)
-    {
-        auto arr = Das::Utils::MakeYyjsonArray();
-        auto a = *arr.as_array();
-        for (const auto& port : ports)
-        {
-            a.push_back(port);
-        }
-        return arr;
-    }
-
     yyjson::value MakeDefinition(
-        const std::vector<yyjson::value>& inputs,
-        const std::vector<yyjson::value>& outputs)
+        const std::vector<std::pair<std::string, std::string>>& inputs,
+        const std::vector<std::pair<std::string, std::string>>& outputs)
     {
-        auto payload = Das::Utils::MakeYyjsonObject();
-        auto obj = *payload.as_object();
-        obj[std::string_view("inputs")] = MakePortArray(inputs);
-        obj[std::string_view("outputs")] = MakePortArray(outputs);
-        return payload;
+        std::string json = R"({"inputs":[)";
+        for (size_t i = 0; i < inputs.size(); ++i)
+        {
+            if (i > 0)
+                json += ",";
+            json += R"({"id":")" + inputs[i].first + R"(","type":")"
+                    + inputs[i].second + R"("})";
+        }
+        json += R"(],"outputs":[)";
+        for (size_t i = 0; i < outputs.size(); ++i)
+        {
+            if (i > 0)
+                json += ",";
+            json += R"({"id":")" + outputs[i].first + R"(","type":")"
+                    + outputs[i].second + R"("})";
+        }
+        json += R"(]})";
+        auto result = Das::Utils::ParseYyjsonFromString(json);
+        return result ? std::move(*result) : yyjson::value{};
     }
 
     yyjson::value MakeEmptyDefinition() { return MakeDefinition({}, {}); }
@@ -109,27 +103,24 @@ namespace
 
     // ---------------------------------------------------------------
     // Stub TaskComponentFactoryManager for testing
+    // Overrides EnumerateDefinitions to return injected test data
     // ---------------------------------------------------------------
 
     class StubFactoryManager : public TaskComponentFactoryManager
     {
     public:
-        // Expose a way to inject definitions for testing.
-        // We override EnumerateDefinitions via a side-channel since the
-        // base class method reads from internal routes_ map.
-        // Instead, we store the test definitions here and the test
-        // accesses them through a custom interface.
-
         void AddDefinition(
             const std::string&   component_guid_str,
             const yyjson::value& definition)
         {
-            DasGuid guid = MakeDasGuid(component_guid_str);
+            DasGuid guid = Das::Core::ForeignInterfaceHost::MakeDasGuid(
+                component_guid_str);
             definitions_.push_back(
                 {guid, guid, guid, Das::Utils::CloneYyjsonValue(definition)});
         }
 
-        std::vector<TaskComponentDefinitionInfo> EnumerateDefinitions() const
+        std::vector<TaskComponentDefinitionInfo> EnumerateDefinitions()
+            const override
         {
             return definitions_;
         }
@@ -147,16 +138,14 @@ namespace
 TEST(ManifestReadingTest, ReadsInputPorts)
 {
     StubFactoryManager mgr;
-    auto               definition = MakeDefinition(
-        {MakePortEntry("in1", "int"), MakePortEntry("in2", "string")},
-        {MakePortEntry("out1", "bool")});
-    mgr.AddDefinition("{11111111-1111-1111-1111-111111111111}", definition);
+    auto               definition =
+        MakeDefinition({{"in1", "int"}, {"in2", "string"}}, {{"out1", "bool"}});
+    mgr.AddDefinition("11111111-1111-1111-1111-111111111111", definition);
 
     GraphCompiler compiler;
     compiler.SetFactoryManager(&mgr);
 
-    auto ports =
-        compiler.ReadManifest("{11111111-1111-1111-1111-111111111111}");
+    auto ports = compiler.ReadManifest("11111111-1111-1111-1111-111111111111");
     ASSERT_EQ(ports.inputs.size(), 2u);
     EXPECT_EQ(ports.inputs[0].port_id, "in1");
     EXPECT_EQ(ports.inputs[0].port_type, "int");
@@ -170,16 +159,13 @@ TEST(ManifestReadingTest, ReadsInputPorts)
 TEST(ManifestReadingTest, ReadsOutputPorts)
 {
     StubFactoryManager mgr;
-    auto               definition = MakeDefinition(
-        {},
-        {MakePortEntry("out1", "bool"), MakePortEntry("out2", "image")});
-    mgr.AddDefinition("{22222222-2222-2222-2222-222222222222}", definition);
+    auto definition = MakeDefinition({}, {{"out1", "bool"}, {"out2", "image"}});
+    mgr.AddDefinition("22222222-2222-2222-2222-222222222222", definition);
 
     GraphCompiler compiler;
     compiler.SetFactoryManager(&mgr);
 
-    auto ports =
-        compiler.ReadManifest("{22222222-2222-2222-2222-222222222222}");
+    auto ports = compiler.ReadManifest("22222222-2222-2222-2222-222222222222");
     EXPECT_EQ(ports.inputs.size(), 0u);
     ASSERT_EQ(ports.outputs.size(), 2u);
     EXPECT_EQ(ports.outputs[0].port_id, "out1");
@@ -192,14 +178,13 @@ TEST(ManifestReadingTest, ReadsEmptyManifest)
 {
     StubFactoryManager mgr;
     mgr.AddDefinition(
-        "{33333333-3333-3333-3333-333333333333}",
+        "33333333-3333-3333-3333-333333333333",
         MakeEmptyDefinition());
 
     GraphCompiler compiler;
     compiler.SetFactoryManager(&mgr);
 
-    auto ports =
-        compiler.ReadManifest("{33333333-3333-3333-3333-333333333333}");
+    auto ports = compiler.ReadManifest("33333333-3333-3333-3333-333333333333");
     EXPECT_EQ(ports.inputs.size(), 0u);
     EXPECT_EQ(ports.outputs.size(), 0u);
 }
@@ -208,14 +193,13 @@ TEST(ManifestReadingTest, ReadsMissingFields)
 {
     StubFactoryManager mgr;
     mgr.AddDefinition(
-        "{44444444-4444-4444-4444-444444444444}",
+        "44444444-4444-4444-4444-444444444444",
         MakeDefinitionNoPorts());
 
     GraphCompiler compiler;
     compiler.SetFactoryManager(&mgr);
 
-    auto ports =
-        compiler.ReadManifest("{44444444-4444-4444-4444-444444444444}");
+    auto ports = compiler.ReadManifest("44444444-4444-4444-4444-444444444444");
     EXPECT_EQ(ports.inputs.size(), 0u);
     EXPECT_EQ(ports.outputs.size(), 0u);
 }
@@ -227,19 +211,19 @@ TEST(ManifestReadingTest, ReadsMissingFields)
 TEST(EdgePortExistenceTest, ValidEdgeBothPortsExist)
 {
     StubFactoryManager mgr;
-    auto node_a_def = MakeDefinition({}, {MakePortEntry("out1", "int")});
-    auto node_b_def = MakeDefinition({MakePortEntry("in1", "int")}, {});
-    mgr.AddDefinition("{AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA}", node_a_def);
-    mgr.AddDefinition("{BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB}", node_b_def);
+    auto               node_a_def = MakeDefinition({}, {{"out1", "int"}});
+    auto               node_b_def = MakeDefinition({{"in1", "int"}}, {});
+    mgr.AddDefinition("AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA", node_a_def);
+    mgr.AddDefinition("BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB", node_b_def);
 
     GraphCompiler compiler;
     compiler.SetFactoryManager(&mgr);
 
     GraphDocumentDto doc;
     doc.nodes.push_back(
-        MakeComponentNode("nodeA", "{AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA}"));
+        MakeComponentNode("nodeA", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"));
     doc.nodes.push_back(
-        MakeComponentNode("nodeB", "{BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB}"));
+        MakeComponentNode("nodeB", "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"));
     doc.edges.push_back(MakeEdge("e1", "nodeA", "out1", "nodeB", "in1"));
 
     auto diagnostics = compiler.ValidateEdgePorts(doc);
@@ -249,19 +233,19 @@ TEST(EdgePortExistenceTest, ValidEdgeBothPortsExist)
 TEST(EdgePortExistenceTest, SourcePortNotFound)
 {
     StubFactoryManager mgr;
-    auto node_a_def = MakeDefinition({}, {MakePortEntry("out1", "int")});
-    auto node_b_def = MakeDefinition({MakePortEntry("in1", "int")}, {});
-    mgr.AddDefinition("{AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA}", node_a_def);
-    mgr.AddDefinition("{BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB}", node_b_def);
+    auto               node_a_def = MakeDefinition({}, {{"out1", "int"}});
+    auto               node_b_def = MakeDefinition({{"in1", "int"}}, {});
+    mgr.AddDefinition("AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA", node_a_def);
+    mgr.AddDefinition("BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB", node_b_def);
 
     GraphCompiler compiler;
     compiler.SetFactoryManager(&mgr);
 
     GraphDocumentDto doc;
     doc.nodes.push_back(
-        MakeComponentNode("nodeA", "{AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA}"));
+        MakeComponentNode("nodeA", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"));
     doc.nodes.push_back(
-        MakeComponentNode("nodeB", "{BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB}"));
+        MakeComponentNode("nodeB", "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"));
     doc.edges.push_back(MakeEdge("e1", "nodeA", "nonexistent", "nodeB", "in1"));
 
     auto diagnostics = compiler.ValidateEdgePorts(doc);
@@ -277,19 +261,19 @@ TEST(EdgePortExistenceTest, SourcePortNotFound)
 TEST(EdgePortExistenceTest, TargetPortNotFound)
 {
     StubFactoryManager mgr;
-    auto node_a_def = MakeDefinition({}, {MakePortEntry("out1", "int")});
-    auto node_b_def = MakeDefinition({MakePortEntry("in1", "int")}, {});
-    mgr.AddDefinition("{AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA}", node_a_def);
-    mgr.AddDefinition("{BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB}", node_b_def);
+    auto               node_a_def = MakeDefinition({}, {{"out1", "int"}});
+    auto               node_b_def = MakeDefinition({{"in1", "int"}}, {});
+    mgr.AddDefinition("AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA", node_a_def);
+    mgr.AddDefinition("BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB", node_b_def);
 
     GraphCompiler compiler;
     compiler.SetFactoryManager(&mgr);
 
     GraphDocumentDto doc;
     doc.nodes.push_back(
-        MakeComponentNode("nodeA", "{AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA}"));
+        MakeComponentNode("nodeA", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"));
     doc.nodes.push_back(
-        MakeComponentNode("nodeB", "{BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB}"));
+        MakeComponentNode("nodeB", "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"));
     doc.edges.push_back(
         MakeEdge("e1", "nodeA", "out1", "nodeB", "nonexistent"));
 
@@ -306,16 +290,15 @@ TEST(EdgePortExistenceTest, TargetPortNotFound)
 TEST(EdgePortExistenceTest, NodeNotFound)
 {
     StubFactoryManager mgr;
-    auto node_a_def = MakeDefinition({}, {MakePortEntry("out1", "int")});
-    mgr.AddDefinition("{AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA}", node_a_def);
+    auto               node_a_def = MakeDefinition({}, {{"out1", "int"}});
+    mgr.AddDefinition("AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA", node_a_def);
 
     GraphCompiler compiler;
     compiler.SetFactoryManager(&mgr);
 
     GraphDocumentDto doc;
     doc.nodes.push_back(
-        MakeComponentNode("nodeA", "{AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA}"));
-    // "missingNode" does not exist in doc.nodes
+        MakeComponentNode("nodeA", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"));
     doc.edges.push_back(MakeEdge("e1", "nodeA", "out1", "missingNode", "in1"));
 
     auto diagnostics = compiler.ValidateEdgePorts(doc);
@@ -326,16 +309,15 @@ TEST(EdgePortExistenceTest, NodeNotFound)
 TEST(EdgePortExistenceTest, NoEdgesGraph)
 {
     StubFactoryManager mgr;
-    auto node_a_def = MakeDefinition({}, {MakePortEntry("out1", "int")});
-    mgr.AddDefinition("{AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA}", node_a_def);
+    auto               node_a_def = MakeDefinition({}, {{"out1", "int"}});
+    mgr.AddDefinition("AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA", node_a_def);
 
     GraphCompiler compiler;
     compiler.SetFactoryManager(&mgr);
 
     GraphDocumentDto doc;
     doc.nodes.push_back(
-        MakeComponentNode("nodeA", "{AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA}"));
-    // No edges at all
+        MakeComponentNode("nodeA", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"));
 
     auto diagnostics = compiler.ValidateEdgePorts(doc);
     EXPECT_TRUE(diagnostics.empty());
@@ -348,19 +330,19 @@ TEST(EdgePortExistenceTest, NoEdgesGraph)
 TEST(PortTypeCompatibilityTest, SameTypeCompatible)
 {
     StubFactoryManager mgr;
-    auto node_a_def = MakeDefinition({}, {MakePortEntry("out1", "int")});
-    auto node_b_def = MakeDefinition({MakePortEntry("in1", "int")}, {});
-    mgr.AddDefinition("{AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA}", node_a_def);
-    mgr.AddDefinition("{BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB}", node_b_def);
+    auto               node_a_def = MakeDefinition({}, {{"out1", "int"}});
+    auto               node_b_def = MakeDefinition({{"in1", "int"}}, {});
+    mgr.AddDefinition("AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA", node_a_def);
+    mgr.AddDefinition("BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB", node_b_def);
 
     GraphCompiler compiler;
     compiler.SetFactoryManager(&mgr);
 
     GraphDocumentDto doc;
     doc.nodes.push_back(
-        MakeComponentNode("nodeA", "{AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA}"));
+        MakeComponentNode("nodeA", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"));
     doc.nodes.push_back(
-        MakeComponentNode("nodeB", "{BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB}"));
+        MakeComponentNode("nodeB", "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"));
     doc.edges.push_back(MakeEdge("e1", "nodeA", "out1", "nodeB", "in1"));
 
     auto diagnostics = compiler.ValidateEdgePorts(doc);
@@ -370,19 +352,19 @@ TEST(PortTypeCompatibilityTest, SameTypeCompatible)
 TEST(PortTypeCompatibilityTest, ImageToImageCompatible)
 {
     StubFactoryManager mgr;
-    auto node_a_def = MakeDefinition({}, {MakePortEntry("out1", "image")});
-    auto node_b_def = MakeDefinition({MakePortEntry("in1", "image")}, {});
-    mgr.AddDefinition("{AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA}", node_a_def);
-    mgr.AddDefinition("{BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB}", node_b_def);
+    auto               node_a_def = MakeDefinition({}, {{"out1", "image"}});
+    auto               node_b_def = MakeDefinition({{"in1", "image"}}, {});
+    mgr.AddDefinition("AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA", node_a_def);
+    mgr.AddDefinition("BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB", node_b_def);
 
     GraphCompiler compiler;
     compiler.SetFactoryManager(&mgr);
 
     GraphDocumentDto doc;
     doc.nodes.push_back(
-        MakeComponentNode("nodeA", "{AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA}"));
+        MakeComponentNode("nodeA", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"));
     doc.nodes.push_back(
-        MakeComponentNode("nodeB", "{BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB}"));
+        MakeComponentNode("nodeB", "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"));
     doc.edges.push_back(MakeEdge("e1", "nodeA", "out1", "nodeB", "in1"));
 
     auto diagnostics = compiler.ValidateEdgePorts(doc);
@@ -392,19 +374,19 @@ TEST(PortTypeCompatibilityTest, ImageToImageCompatible)
 TEST(PortTypeCompatibilityTest, TypeMismatch)
 {
     StubFactoryManager mgr;
-    auto node_a_def = MakeDefinition({}, {MakePortEntry("out1", "image")});
-    auto node_b_def = MakeDefinition({MakePortEntry("in1", "string")}, {});
-    mgr.AddDefinition("{AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA}", node_a_def);
-    mgr.AddDefinition("{BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB}", node_b_def);
+    auto               node_a_def = MakeDefinition({}, {{"out1", "image"}});
+    auto               node_b_def = MakeDefinition({{"in1", "string"}}, {});
+    mgr.AddDefinition("AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA", node_a_def);
+    mgr.AddDefinition("BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB", node_b_def);
 
     GraphCompiler compiler;
     compiler.SetFactoryManager(&mgr);
 
     GraphDocumentDto doc;
     doc.nodes.push_back(
-        MakeComponentNode("nodeA", "{AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA}"));
+        MakeComponentNode("nodeA", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"));
     doc.nodes.push_back(
-        MakeComponentNode("nodeB", "{BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB}"));
+        MakeComponentNode("nodeB", "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"));
     doc.edges.push_back(MakeEdge("e1", "nodeA", "out1", "nodeB", "in1"));
 
     auto diagnostics = compiler.ValidateEdgePorts(doc);
@@ -426,19 +408,19 @@ TEST(PortTypeCompatibilityTest, TypeMismatch)
 TEST(PortTypeCompatibilityTest, BaseToComponentCompatible)
 {
     StubFactoryManager mgr;
-    auto node_a_def = MakeDefinition({}, {MakePortEntry("out1", "base")});
-    auto node_b_def = MakeDefinition({MakePortEntry("in1", "component")}, {});
-    mgr.AddDefinition("{AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA}", node_a_def);
-    mgr.AddDefinition("{BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB}", node_b_def);
+    auto               node_a_def = MakeDefinition({}, {{"out1", "base"}});
+    auto               node_b_def = MakeDefinition({{"in1", "component"}}, {});
+    mgr.AddDefinition("AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA", node_a_def);
+    mgr.AddDefinition("BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB", node_b_def);
 
     GraphCompiler compiler;
     compiler.SetFactoryManager(&mgr);
 
     GraphDocumentDto doc;
     doc.nodes.push_back(
-        MakeComponentNode("nodeA", "{AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA}"));
+        MakeComponentNode("nodeA", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"));
     doc.nodes.push_back(
-        MakeComponentNode("nodeB", "{BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB}"));
+        MakeComponentNode("nodeB", "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"));
     doc.edges.push_back(MakeEdge("e1", "nodeA", "out1", "nodeB", "in1"));
 
     auto diagnostics = compiler.ValidateEdgePorts(doc);
@@ -448,19 +430,19 @@ TEST(PortTypeCompatibilityTest, BaseToComponentCompatible)
 TEST(PortTypeCompatibilityTest, ComponentToBaseCompatible)
 {
     StubFactoryManager mgr;
-    auto node_a_def = MakeDefinition({}, {MakePortEntry("out1", "component")});
-    auto node_b_def = MakeDefinition({MakePortEntry("in1", "base")}, {});
-    mgr.AddDefinition("{AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA}", node_a_def);
-    mgr.AddDefinition("{BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB}", node_b_def);
+    auto               node_a_def = MakeDefinition({}, {{"out1", "component"}});
+    auto               node_b_def = MakeDefinition({{"in1", "base"}}, {});
+    mgr.AddDefinition("AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA", node_a_def);
+    mgr.AddDefinition("BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB", node_b_def);
 
     GraphCompiler compiler;
     compiler.SetFactoryManager(&mgr);
 
     GraphDocumentDto doc;
     doc.nodes.push_back(
-        MakeComponentNode("nodeA", "{AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA}"));
+        MakeComponentNode("nodeA", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"));
     doc.nodes.push_back(
-        MakeComponentNode("nodeB", "{BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB}"));
+        MakeComponentNode("nodeB", "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"));
     doc.edges.push_back(MakeEdge("e1", "nodeA", "out1", "nodeB", "in1"));
 
     auto diagnostics = compiler.ValidateEdgePorts(doc);
@@ -470,25 +452,22 @@ TEST(PortTypeCompatibilityTest, ComponentToBaseCompatible)
 TEST(PortTypeCompatibilityTest, UnknownTypeWarning)
 {
     StubFactoryManager mgr;
-    auto               node_a_def =
-        MakeDefinition({}, {MakePortEntry("out1", "unknown_type")});
-    auto node_b_def =
-        MakeDefinition({MakePortEntry("in1", "unknown_type")}, {});
-    mgr.AddDefinition("{AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA}", node_a_def);
-    mgr.AddDefinition("{BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB}", node_b_def);
+    auto node_a_def = MakeDefinition({}, {{"out1", "unknown_type"}});
+    auto node_b_def = MakeDefinition({{"in1", "unknown_type"}}, {});
+    mgr.AddDefinition("AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA", node_a_def);
+    mgr.AddDefinition("BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB", node_b_def);
 
     GraphCompiler compiler;
     compiler.SetFactoryManager(&mgr);
 
     GraphDocumentDto doc;
     doc.nodes.push_back(
-        MakeComponentNode("nodeA", "{AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA}"));
+        MakeComponentNode("nodeA", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"));
     doc.nodes.push_back(
-        MakeComponentNode("nodeB", "{BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB}"));
+        MakeComponentNode("nodeB", "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"));
     doc.edges.push_back(MakeEdge("e1", "nodeA", "out1", "nodeB", "in1"));
 
     auto diagnostics = compiler.ValidateEdgePorts(doc);
-    // Unknown types should produce a warning diagnostic, not block
     bool found_unknown = false;
     for (const auto& d : diagnostics)
     {
@@ -508,18 +487,16 @@ TEST(PortTypeCompatibilityTest, UnknownTypeWarning)
 TEST(ComponentRefTargetResolutionTest, ResolveComponentRefNode)
 {
     StubFactoryManager mgr;
-    auto               node_def = MakeDefinition(
-        {MakePortEntry("data_in", "image")},
-        {MakePortEntry("data_out", "image")});
-    mgr.AddDefinition("{CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC}", node_def);
+    auto               node_def =
+        MakeDefinition({{"data_in", "image"}}, {{"data_out", "image"}});
+    mgr.AddDefinition("CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC", node_def);
 
     GraphCompiler compiler;
     compiler.SetFactoryManager(&mgr);
 
     GraphDocumentDto doc;
     doc.nodes.push_back(
-        MakeComponentNode("node1", "{CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC}"));
-    // self-loop edge: both ports exist in the same manifest
+        MakeComponentNode("node1", "CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC"));
     doc.edges.push_back(
         MakeEdge("e1", "node1", "data_out", "node1", "data_in"));
 
@@ -530,23 +507,19 @@ TEST(ComponentRefTargetResolutionTest, ResolveComponentRefNode)
 TEST(ComponentRefTargetResolutionTest, UnresolvableComponentGuid)
 {
     StubFactoryManager mgr;
-    // No definitions registered for the component_guid
 
     GraphCompiler compiler;
     compiler.SetFactoryManager(&mgr);
 
     GraphDocumentDto doc;
     doc.nodes.push_back(
-        MakeComponentNode("node1", "{CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC}"));
-
-    // Need two nodes to form an edge
+        MakeComponentNode("node1", "CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC"));
     doc.nodes.push_back(
-        MakeComponentNode("node2", "{DDDDDDDD-DDDD-DDDD-DDDD-DDDDDDDDDDDD}"));
+        MakeComponentNode("node2", "DDDDDDDD-DDDD-DDDD-DDDD-DDDDDDDDDDDD"));
     doc.edges.push_back(MakeEdge("e1", "node1", "out1", "node2", "in1"));
 
     auto diagnostics = compiler.ValidateEdgePorts(doc);
     ASSERT_FALSE(diagnostics.empty());
-    // At least one diagnostic should be UnresolvableComponentGuid
     bool found_unresolvable = false;
     for (const auto& d : diagnostics)
     {
