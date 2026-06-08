@@ -1,6 +1,6 @@
-#include <das/Core/GraphRuntime/RefManager.h>
 #include <das/Core/GraphRuntime/GraphDocument.h>
 #include <das/Core/GraphRuntime/GraphEntryId.h>
+#include <das/Core/GraphRuntime/RefManager.h>
 #include <das/Core/TaskScheduler/TaskRepositoryDtos.h>
 #include <das/Utils/DasJsonCore.h>
 #include <gtest/gtest.h>
@@ -45,8 +45,8 @@ namespace
     }
 
     GraphDocumentDto MakeGraphDocumentWithNodes(
-        const std::string&                 doc_id,
-        std::vector<GraphNodeDto>          nodes)
+        const std::string&        doc_id,
+        std::vector<GraphNodeDto> nodes)
     {
         GraphDocumentDto doc;
         doc.document_id = doc_id;
@@ -66,8 +66,8 @@ namespace
     }
 
     TaskDto MakeEntryWithGraphDocument(
-        int64_t                  entry_id,
-        const GraphDocumentDto&  graph_doc)
+        int64_t                 entry_id,
+        const GraphDocumentDto& graph_doc)
     {
         TaskDto entry;
         entry.entry_id = entry_id;
@@ -102,8 +102,7 @@ namespace
     {
         // 1 GraphDocument with 1 entryRef node pointing to entry 99
         auto doc = MakeGraphDocumentWithEntryRefNode("doc_1", 99);
-        auto entries = std::vector<TaskDto>{
-            MakeEntryWithGraphDocument(1, doc)};
+        auto entries = std::vector<TaskDto>{MakeEntryWithGraphDocument(1, doc)};
 
         auto result = manager.ScanEntryRefs(entries);
 
@@ -116,8 +115,7 @@ namespace
     TEST_F(RefManagerTest, ComputeRefCountSingleReference)
     {
         auto doc = MakeGraphDocumentWithEntryRefNode("doc_1", 99);
-        auto entries = std::vector<TaskDto>{
-            MakeEntryWithGraphDocument(1, doc)};
+        auto entries = std::vector<TaskDto>{MakeEntryWithGraphDocument(1, doc)};
 
         EXPECT_EQ(manager.ComputeRefCount(99, entries), 1);
     }
@@ -130,8 +128,8 @@ namespace
 
         // Entry without any entryRef
         auto doc = MakeGraphDocumentWithNodes("doc_empty", {});
-        auto entries_with_doc = std::vector<TaskDto>{
-            MakeEntryWithGraphDocument(1, doc)};
+        auto entries_with_doc =
+            std::vector<TaskDto>{MakeEntryWithGraphDocument(1, doc)};
         EXPECT_EQ(manager.ComputeRefCount(42, entries_with_doc), 0);
     }
 
@@ -152,10 +150,8 @@ namespace
         // 1 document referencing two different targets
         auto doc = MakeGraphDocumentWithNodes(
             "doc_multi",
-            {MakeEntryRefNode("node_a", 100),
-             MakeEntryRefNode("node_b", 200)});
-        auto entries = std::vector<TaskDto>{
-            MakeEntryWithGraphDocument(1, doc)};
+            {MakeEntryRefNode("node_a", 100), MakeEntryRefNode("node_b", 200)});
+        auto entries = std::vector<TaskDto>{MakeEntryWithGraphDocument(1, doc)};
 
         EXPECT_EQ(manager.ComputeRefCount(100, entries), 1);
         EXPECT_EQ(manager.ComputeRefCount(200, entries), 1);
@@ -165,10 +161,9 @@ namespace
     TEST_F(RefManagerTest, ComputeRefCountSelfReference)
     {
         // Document with node targeting its own entry_id (100)
-        auto doc =
-            MakeGraphDocumentWithEntryRefNode("doc_self", 100);
-        auto entries = std::vector<TaskDto>{
-            MakeEntryWithGraphDocument(100, doc)};
+        auto doc = MakeGraphDocumentWithEntryRefNode("doc_self", 100);
+        auto entries =
+            std::vector<TaskDto>{MakeEntryWithGraphDocument(100, doc)};
 
         // Self-reference counted normally — no infinite loop
         EXPECT_EQ(manager.ComputeRefCount(100, entries), 1);
@@ -197,10 +192,8 @@ namespace
         // 1 document with 2 entryRef nodes to the same target
         auto doc = MakeGraphDocumentWithNodes(
             "doc_double",
-            {MakeEntryRefNode("node_1", 50),
-             MakeEntryRefNode("node_2", 50)});
-        auto entries = std::vector<TaskDto>{
-            MakeEntryWithGraphDocument(1, doc)};
+            {MakeEntryRefNode("node_1", 50), MakeEntryRefNode("node_2", 50)});
+        auto entries = std::vector<TaskDto>{MakeEntryWithGraphDocument(1, doc)};
 
         EXPECT_EQ(manager.ComputeRefCount(50, entries), 2);
     }
@@ -209,8 +202,7 @@ namespace
     {
         // Document with 0 nodes
         auto doc = MakeGraphDocumentWithNodes("doc_empty", {});
-        auto entries = std::vector<TaskDto>{
-            MakeEntryWithGraphDocument(1, doc)};
+        auto entries = std::vector<TaskDto>{MakeEntryWithGraphDocument(1, doc)};
 
         auto result = manager.ScanEntryRefs(entries);
         EXPECT_TRUE(result.empty());
@@ -237,8 +229,7 @@ namespace
             {MakeComponentRefNode("comp_1", "{guid-a}"),
              MakeComponentRefNode("comp_2", "{guid-b}"),
              MakeEntryRefNode("entry_node", 77)});
-        auto entries = std::vector<TaskDto>{
-            MakeEntryWithGraphDocument(1, doc)};
+        auto entries = std::vector<TaskDto>{MakeEntryWithGraphDocument(1, doc)};
 
         auto result = manager.ScanEntryRefs(entries);
         ASSERT_EQ(result.size(), 1u);

@@ -1,16 +1,15 @@
-#include <das/Core/GraphRuntime/RefManager.h>
 #include <das/Core/GraphRuntime/GraphDocument.h>
+#include <das/Core/GraphRuntime/RefManager.h>
 #include <das/Core/Logger/Logger.h>
 
 #include <cpp_yyjson.hpp>
 
 DAS_CORE_GRAPHRUNTIME_NS_BEGIN
 
-std::map<GraphEntryId, std::vector<std::string>>
-    RefManager::ScanEntryRefs(
-        const std::vector<
-            Das::Core::TaskScheduler::Repository::Dto::RepositoryEntryDto>&
-            entries) const
+std::map<GraphEntryId, std::vector<std::string>> RefManager::ScanEntryRefs(
+    const std::vector<
+        Das::Core::TaskScheduler::Repository::Dto::RepositoryEntryDto>& entries)
+    const
 {
     std::map<GraphEntryId, std::vector<std::string>> ref_map;
 
@@ -57,8 +56,8 @@ std::map<GraphEntryId, std::vector<std::string>>
 int RefManager::ComputeRefCount(
     GraphEntryId entry_id,
     const std::vector<
-        Das::Core::TaskScheduler::Repository::Dto::RepositoryEntryDto>&
-        entries) const
+        Das::Core::TaskScheduler::Repository::Dto::RepositoryEntryDto>& entries)
+    const
 {
     auto ref_counts = ComputeRefCounts(entries);
     auto it = ref_counts.find(entry_id);
@@ -67,10 +66,10 @@ int RefManager::ComputeRefCount(
 
 std::map<GraphEntryId, int> RefManager::ComputeRefCounts(
     const std::vector<
-        Das::Core::TaskScheduler::Repository::Dto::RepositoryEntryDto>&
-        entries) const
+        Das::Core::TaskScheduler::Repository::Dto::RepositoryEntryDto>& entries)
+    const
 {
-    auto ref_map = ScanEntryRefs(entries);
+    auto                        ref_map = ScanEntryRefs(entries);
     std::map<GraphEntryId, int> ref_counts;
 
     for (const auto& [id, docs] : ref_map)
