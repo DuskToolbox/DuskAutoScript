@@ -62,12 +62,14 @@ Constructs a temporary rvalue `std::string`, which triggers the rvalue path (`st
 (*obj)[std::string_view("name")] = std::string(desc.name);
 ```
 
-### Explicit pair (verbose but clear)
+### Explicit `std::make_pair` (verbose but clear)
 
 ```cpp
 (*obj)[std::string_view("name")] =
-    std::pair<std::string, yyjson::copy_string_t>{desc.name, yyjson::copy_string};
+    std::make_pair(std::string(desc.name), yyjson::copy_string);
 ```
+
+This constructs a `std::pair<std::string, copy_string_t>` which matches the `pair_like` overload on all compilers (including MSVC), and triggers `create_primitive(std::string, copy_string_t)` → `yyjson_mut_strncpy`.
 
 ## Broken Pattern (DO NOT USE)
 
