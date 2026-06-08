@@ -28,6 +28,8 @@ namespace Das::ExportInterface
     struct IDasInitializeIDasPluginManagerWaiter;
     struct IDasVariantVector;
     struct IDasStringVector;
+    struct IDasReadOnlyPortMap;
+    struct IDasPortMap;
 } // namespace Das::ExportInterface
 
 DAS_INTERFACE IDasSettingsService;
