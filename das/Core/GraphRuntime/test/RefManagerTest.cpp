@@ -5,6 +5,7 @@
 #include <das/Utils/DasJsonCore.h>
 #include <gtest/gtest.h>
 
+#include <functional>
 #include <map>
 #include <string>
 #include <vector>
@@ -236,5 +237,347 @@ namespace
         ASSERT_TRUE(result.count(77) > 0);
         EXPECT_EQ(result[77].size(), 1u);
         EXPECT_EQ(manager.ComputeRefCount(77, entries), 1);
+    }
+
+    // ==================================================================
+    // RefManager Lifecycle tests (02-18: CheckDelete, ShallowCopy,
+    // DeepClone)
+    // ==================================================================
+
+    // --- Additional helpers for lifecycle tests ---
+
+    EntryRefDto MakeEntryRefDto(
+        int64_t                        entry_id,
+        std::optional<int64_t>         revision = std::nullopt,
+        std::optional<std::string>     fingerprint = std::nullopt)
+    {
+        return EntryRefDto{"entryRef", entry_id, revision, fingerprint};
+    }
+
+    TaskDto MakeEntryWithCompiledArtifact(
+        int64_t                 entry_id,
+        const GraphDocumentDto& graph_doc,
+        const std::string&      artifact_data)
+    {
+        TaskDto entry = MakeEntryWithGraphDocument(entry_id, graph_doc);
+        entry.compiled_artifact = yyjson::object();
+        return entry;
+    }
+
+    EntryFactory MockEntryFactory(std::vector<TaskDto>& created)
+    {
+        int64_t next_id = 1000;
+        return [&created,
+                next_id](const TaskDto& source) mutable -> GraphEntryId
+        {
+            TaskDto copy = source;
+            copy.entry_id = next_id++;
+            created.push_back(copy);
+            return copy.entry_id;
+        };
+    }
+
+    // --- Lifecycle fixture ---
+
+    class RefManagerLifecycleTest : public ::testing::Test
+    {
+    protected:
+        RefManager manager;
+    };
+
+    // --- CheckDelete tests ---
+
+    TEST_F(RefManagerLifecycleTest, CheckDeleteRefCountZero)
+    {
+        // Entry 42 is NOT referenced by any graph_document
+        auto doc = MakeGraphDocumentWithEntryRefNode("doc_1", 99);
+        auto entries =
+            std::vector<TaskDto>{MakeEntryWithGraphDocument(1, doc)};
+
+        auto result = manager.CheckDelete(42, entries);
+
+        EXPECT_TRUE(result.allowed);
+        EXPECT_EQ(result.ref_count, 0);
+    }
+
+    TEST_F(RefManagerLifecycleTest, CheckDeleteRefCountOne)
+    {
+        // 1 document references entry 99
+        auto doc = MakeGraphDocumentWithEntryRefNode("doc_1", 99);
+        auto entries =
+            std::vector<TaskDto>{MakeEntryWithGraphDocument(1, doc)};
+
+        auto result = manager.CheckDelete(99, entries);
+
+        EXPECT_FALSE(result.allowed);
+        EXPECT_EQ(result.ref_count, 1);
+        EXPECT_NE(result.reason.find("Referenced by"), std::string::npos);
+    }
+
+    TEST_F(RefManagerLifecycleTest, CheckDeleteRefCountMultiple)
+    {
+        // doc_1: 1 entryRef to 42, doc_2: 2 entryRef to 42 → total refCount=3
+        auto doc1 = MakeGraphDocumentWithEntryRefNode("doc_1", 42);
+        auto doc2 = MakeGraphDocumentWithNodes(
+            "doc_2",
+            {MakeEntryRefNode("ref_a", 42), MakeEntryRefNode("ref_b", 42)});
+        auto entries = std::vector<TaskDto>{
+            MakeEntryWithGraphDocument(1, doc1),
+            MakeEntryWithGraphDocument(2, doc2)};
+
+        auto result = manager.CheckDelete(42, entries);
+
+        EXPECT_FALSE(result.allowed);
+        EXPECT_EQ(result.ref_count, 3);
+    }
+
+    TEST_F(RefManagerLifecycleTest, CheckDeleteReasonIncludesDocumentIds)
+    {
+        // 2 documents reference entry 42
+        auto doc1 = MakeGraphDocumentWithEntryRefNode("doc_alpha", 42);
+        auto doc2 = MakeGraphDocumentWithEntryRefNode("doc_beta", 42);
+        auto entries = std::vector<TaskDto>{
+            MakeEntryWithGraphDocument(1, doc1),
+            MakeEntryWithGraphDocument(2, doc2)};
+
+        auto result = manager.CheckDelete(42, entries);
+
+        EXPECT_NE(result.reason.find("doc_alpha"), std::string::npos);
+        EXPECT_NE(result.reason.find("doc_beta"), std::string::npos);
+    }
+
+    TEST_F(RefManagerLifecycleTest, CheckDeleteDoesNotModifyEntries)
+    {
+        auto doc = MakeGraphDocumentWithEntryRefNode("doc_1", 99);
+        auto entries =
+            std::vector<TaskDto>{MakeEntryWithGraphDocument(1, doc)};
+
+        auto size_before = entries.size();
+        auto id_before = entries[0].entry_id;
+
+        // Call CheckDelete — it is a pure predicate, must not modify
+        auto result = manager.CheckDelete(99, entries);
+
+        EXPECT_EQ(entries.size(), size_before);
+        EXPECT_EQ(entries[0].entry_id, id_before);
+    }
+
+    // --- ShallowCopy tests ---
+
+    TEST_F(RefManagerLifecycleTest, ShallowCopyEntryRefSameEntryId)
+    {
+        EntryRefDto original{"entryRef", 42, std::nullopt, std::nullopt};
+
+        auto copy = RefManager::ShallowCopyEntryRef(original);
+
+        EXPECT_EQ(copy.entry_id, original.entry_id);
+    }
+
+    TEST_F(RefManagerLifecycleTest, ShallowCopyEntryRefPreservesOptionalFields)
+    {
+        EntryRefDto original{
+            "entryRef", 42, int64_t{7}, std::string{"sha256:abc"}};
+
+        auto copy = RefManager::ShallowCopyEntryRef(original);
+
+        EXPECT_EQ(copy.entry_id, original.entry_id);
+        ASSERT_TRUE(copy.expected_revision.has_value());
+        EXPECT_EQ(copy.expected_revision.value(), 7);
+        ASSERT_TRUE(copy.source_fingerprint.has_value());
+        EXPECT_EQ(copy.source_fingerprint.value(), "sha256:abc");
+    }
+
+    // --- DeepClone tests ---
+
+    TEST_F(RefManagerLifecycleTest, DeepCloneEntryRefCreatesNewEntryId)
+    {
+        // Root (100) has entryRef to child (200)
+        auto root_doc = MakeGraphDocumentWithEntryRefNode("doc_root", 200);
+        auto root_entry = MakeEntryWithGraphDocument(100, root_doc);
+        auto child_doc = MakeGraphDocumentWithNodes("doc_child", {});
+        auto child_entry = MakeEntryWithGraphDocument(200, child_doc);
+        auto entries =
+            std::vector<TaskDto>{root_entry, child_entry};
+
+        std::vector<TaskDto> created;
+        auto factory = MockEntryFactory(created);
+        auto result =
+            manager.DeepCloneEntryRef(100, entries, factory);
+
+        EXPECT_NE(result.new_entry_id, 100);
+        ASSERT_EQ(result.id_mapping.size(), 2u);
+        EXPECT_NE(result.id_mapping[100], 100);
+        EXPECT_NE(result.id_mapping[200], 200);
+    }
+
+    TEST_F(RefManagerLifecycleTest, DeepCloneEntryRefCopiesGraphDocument)
+    {
+        // Root (100) has entryRef to child (200)
+        auto root_doc = MakeGraphDocumentWithEntryRefNode("doc_root", 200);
+        auto root_entry = MakeEntryWithGraphDocument(100, root_doc);
+        auto child_doc = MakeGraphDocumentWithNodes("doc_child", {});
+        auto child_entry = MakeEntryWithGraphDocument(200, child_doc);
+        auto entries =
+            std::vector<TaskDto>{root_entry, child_entry};
+
+        std::vector<TaskDto> created;
+        auto factory = MockEntryFactory(created);
+        auto result =
+            manager.DeepCloneEntryRef(100, entries, factory);
+
+        // created[0] = cloned child (200 → 1000)
+        // created[1] = cloned root  (100 → 1001)
+        ASSERT_GE(created.size(), 2u);
+
+        // The cloned root's graph_document should have the entryRef
+        // remapped to the new child ID
+        auto cloned_root_doc = yyjson::cast<GraphDocumentDto>(
+            created[1].graph_document);
+        ASSERT_EQ(cloned_root_doc.nodes.size(), 1u);
+        ASSERT_TRUE(cloned_root_doc.nodes[0].target.entry_ref.has_value());
+        EXPECT_EQ(
+            cloned_root_doc.nodes[0].target.entry_ref->entry_id,
+            result.id_mapping[200]);
+    }
+
+    TEST_F(RefManagerLifecycleTest, DeepCloneEntryRefCopiesCompiledArtifact)
+    {
+        // Root (100) has entryRef to child (200), root has compiled_artifact
+        auto root_doc = MakeGraphDocumentWithEntryRefNode("doc_root", 200);
+        auto root_entry =
+            MakeEntryWithCompiledArtifact(100, root_doc, "artifact_data");
+        auto child_doc = MakeGraphDocumentWithNodes("doc_child", {});
+        auto child_entry = MakeEntryWithGraphDocument(200, child_doc);
+        auto entries =
+            std::vector<TaskDto>{root_entry, child_entry};
+
+        std::vector<TaskDto> created;
+        auto factory = MockEntryFactory(created);
+        auto result =
+            manager.DeepCloneEntryRef(100, entries, factory);
+
+        // The cloned root should also have a compiled_artifact
+        ASSERT_GE(created.size(), 2u);
+        // created[1] is the cloned root (reverse order: child first)
+        EXPECT_FALSE(created[1].compiled_artifact.is_null());
+    }
+
+    TEST_F(RefManagerLifecycleTest, DeepCloneEntryRefIdMapping)
+    {
+        // Root (100) with 2 distinct child entryRefs: 200 and 300
+        auto root_doc = MakeGraphDocumentWithNodes(
+            "doc_root",
+            {MakeEntryRefNode("ref_a", 200), MakeEntryRefNode("ref_b", 300)});
+        auto root_entry = MakeEntryWithGraphDocument(100, root_doc);
+        auto child_a = MakeEntryWithGraphDocument(
+            200, MakeGraphDocumentWithNodes("doc_a", {}));
+        auto child_b = MakeEntryWithGraphDocument(
+            300, MakeGraphDocumentWithNodes("doc_b", {}));
+        auto entries =
+            std::vector<TaskDto>{root_entry, child_a, child_b};
+
+        std::vector<TaskDto> created;
+        auto factory = MockEntryFactory(created);
+        auto result =
+            manager.DeepCloneEntryRef(100, entries, factory);
+
+        // id_mapping should contain 3 entries: root + 2 children
+        EXPECT_EQ(result.id_mapping.size(), 3u);
+        EXPECT_TRUE(result.id_mapping.count(100) > 0);
+        EXPECT_TRUE(result.id_mapping.count(200) > 0);
+        EXPECT_TRUE(result.id_mapping.count(300) > 0);
+    }
+
+    TEST_F(RefManagerLifecycleTest, DeepCloneEntryRefRootHasNoChildren)
+    {
+        // Root (100) with no entryRef children
+        auto root_doc = MakeGraphDocumentWithNodes("doc_root", {});
+        auto root_entry = MakeEntryWithGraphDocument(100, root_doc);
+        auto entries = std::vector<TaskDto>{root_entry};
+
+        std::vector<TaskDto> created;
+        auto factory = MockEntryFactory(created);
+        auto result =
+            manager.DeepCloneEntryRef(100, entries, factory);
+
+        EXPECT_EQ(result.id_mapping.size(), 1u);
+        EXPECT_TRUE(result.id_mapping.count(100) > 0);
+        EXPECT_NE(result.new_entry_id, 100);
+    }
+
+    TEST_F(RefManagerLifecycleTest, DeepCloneEntryRefPreservesComponentRef)
+    {
+        // Root (100) has 1 componentRef + 1 entryRef to child (200)
+        auto root_doc = MakeGraphDocumentWithNodes(
+            "doc_root",
+            {MakeComponentRefNode("comp_1", "{guid-a}"),
+             MakeEntryRefNode("ref_child", 200)});
+        auto root_entry = MakeEntryWithGraphDocument(100, root_doc);
+        auto child_doc = MakeGraphDocumentWithNodes("doc_child", {});
+        auto child_entry = MakeEntryWithGraphDocument(200, child_doc);
+        auto entries =
+            std::vector<TaskDto>{root_entry, child_entry};
+
+        std::vector<TaskDto> created;
+        auto factory = MockEntryFactory(created);
+        auto result =
+            manager.DeepCloneEntryRef(100, entries, factory);
+
+        // created[1] is the cloned root (reverse order: child first)
+        ASSERT_GE(created.size(), 2u);
+        auto cloned_root_doc = yyjson::cast<GraphDocumentDto>(
+            created[1].graph_document);
+
+        // Should have 2 nodes: componentRef + entryRef
+        ASSERT_EQ(cloned_root_doc.nodes.size(), 2u);
+
+        // Find the componentRef node — should be unchanged
+        bool found_component = false;
+        bool found_entry_ref = false;
+        for (const auto& node : cloned_root_doc.nodes)
+        {
+            if (node.target.target_kind == "componentRef")
+            {
+                found_component = true;
+                ASSERT_TRUE(node.target.component_ref.has_value());
+                EXPECT_EQ(
+                    node.target.component_ref->component_guid, "{guid-a}");
+            }
+            else if (node.target.target_kind == "entryRef")
+            {
+                found_entry_ref = true;
+                ASSERT_TRUE(node.target.entry_ref.has_value());
+                // entryRef should be remapped to the new child ID
+                EXPECT_NE(node.target.entry_ref->entry_id, 200);
+                EXPECT_EQ(
+                    node.target.entry_ref->entry_id,
+                    result.id_mapping[200]);
+            }
+        }
+        EXPECT_TRUE(found_component);
+        EXPECT_TRUE(found_entry_ref);
+    }
+
+    TEST_F(RefManagerLifecycleTest, ShallowCopyVsDeepClone)
+    {
+        // Shallow copy preserves entry_id
+        EntryRefDto original{"entryRef", 42, std::nullopt, std::nullopt};
+        auto shallow = RefManager::ShallowCopyEntryRef(original);
+        EXPECT_EQ(shallow.entry_id, 42);
+
+        // Deep clone creates new entry_id
+        auto root_doc = MakeGraphDocumentWithEntryRefNode("doc_root", 200);
+        auto root_entry = MakeEntryWithGraphDocument(100, root_doc);
+        auto child_doc = MakeGraphDocumentWithNodes("doc_child", {});
+        auto child_entry = MakeEntryWithGraphDocument(200, child_doc);
+        auto entries =
+            std::vector<TaskDto>{root_entry, child_entry};
+
+        std::vector<TaskDto> created;
+        auto factory = MockEntryFactory(created);
+        auto result =
+            manager.DeepCloneEntryRef(100, entries, factory);
+
+        EXPECT_NE(result.new_entry_id, 100);
     }
 } // namespace
