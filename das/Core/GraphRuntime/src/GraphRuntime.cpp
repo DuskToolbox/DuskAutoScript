@@ -1,5 +1,6 @@
 #include <das/Core/GraphRuntime/GraphRuntime.h>
 
+#include <das/Core/Exceptions/InvalidGuidStringException.h>
 #include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/Core/GraphRuntime/CompiledArtifact.h>
 #include <das/Core/GraphRuntime/DoAdapter.h>
@@ -320,7 +321,11 @@ DasResult GraphRuntime::GetStructuredError(
 // ResetNodeComponents
 // ===========================================================================
 
-void GraphRuntime::ResetNodeComponents() { node_components_.clear(); }
+void GraphRuntime::ResetNodeComponents()
+{
+    node_components_.clear();
+    configured_ = false;
+}
 
 // ===========================================================================
 // ApplyNodeSettings — v17 data-sep: bind settings/payload pre-Do
@@ -414,8 +419,30 @@ DasResult GraphRuntime::Configure(
     for (const auto& snapshot : plan.node_snapshots)
     {
         // Parse component_guid string → DasGuid
-        auto guid_result = Das::Core::ForeignInterfaceHost::MakeDasGuid(
-            snapshot.component_guid);
+        DasGuid guid_result;
+        try
+        {
+            guid_result = Das::Core::ForeignInterfaceHost::MakeDasGuid(
+                snapshot.component_guid);
+        }
+        catch (const Das::Core::Exceptions::InvalidGuidStringSizeException&)
+        {
+            auto msg = DAS_FMT_NS::format(
+                "Configure: invalid GUID format '{}' for node = {}",
+                snapshot.component_guid,
+                snapshot.node_id);
+            SetError(DAS_E_INVALID_ARGUMENT, msg);
+            return DAS_E_INVALID_ARGUMENT;
+        }
+        catch (const Das::Core::Exceptions::InvalidGuidStringException&)
+        {
+            auto msg = DAS_FMT_NS::format(
+                "Configure: invalid GUID string '{}' for node = {}",
+                snapshot.component_guid,
+                snapshot.node_id);
+            SetError(DAS_E_INVALID_ARGUMENT, msg);
+            return DAS_E_INVALID_ARGUMENT;
+        }
 
         // Create the task component via host
         DAS::DasPtr<Das::PluginInterface::IDasTaskComponent> component;
@@ -461,6 +488,7 @@ DasResult GraphRuntime::Configure(
         "Configure complete: {} nodes configured",
         node_components_.size());
 
+    configured_ = true;
     return DAS_S_OK;
 }
 
@@ -470,10 +498,16 @@ DasResult GraphRuntime::Configure(
 
 DasResult GraphRuntime::Prepare() const
 {
+    if (!configured_)
+    {
+        DAS_CORE_LOG_WARN("Prepare called before Configure");
+        return DAS_E_FAIL;
+    }
+
     if (node_components_.empty())
     {
-        DAS_CORE_LOG_WARN("Prepare called with no configured components");
-        return DAS_E_FAIL;
+        DAS_CORE_LOG_INFO("Prepare: no nodes to configure (empty graph)");
+        return DAS_S_OK;
     }
 
     for (const auto& [node_id, entry] : node_components_)

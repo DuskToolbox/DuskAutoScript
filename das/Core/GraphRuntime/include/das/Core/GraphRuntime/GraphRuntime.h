@@ -137,6 +137,9 @@ private:
     // Per-node component cache populated by Configure().
     std::unordered_map<std::string, NodeComponentEntry> node_components_;
 
+    // True after Configure() has been called at least once.
+    bool configured_ = false;
+
     // Optional error lens for structured error propagation.
     Das::PluginInterface::IDasErrorLens* p_error_lens_ = nullptr;
 

@@ -49,6 +49,10 @@ namespace
     const std::string kNodeB = "10000000-0000-0000-0000-000000000002";
     const std::string kNodeC = "10000000-0000-0000-0000-000000000003";
 
+    // Test component GUIDs — 36-char standard format for MakeDasGuid
+    const std::string kCompA = "20000000-0000-0000-0000-000000000001";
+    const std::string kCompTest = "20000000-0000-0000-0000-000000000099";
+
     // ---- Mock StopToken ----
 
     class MockStopToken final
@@ -80,7 +84,8 @@ namespace
 
     CompiledNodeSnapshotDto MakeSnapshot(
         const std::string& node_id,
-        const std::string& component_guid = "test-component-guid")
+        const std::string& component_guid =
+            "20000000-0000-0000-0000-000000000099")
     {
         CompiledNodeSnapshotDto snap;
         snap.node_id = node_id;
@@ -91,7 +96,8 @@ namespace
     CompiledNodeSnapshotDto MakeSnapshotWithPorts(
         const std::string&                         node_id,
         const std::vector<GraphPortDefinitionDto>& ports,
-        const std::string& component_guid = "test-component-guid")
+        const std::string&                         component_guid =
+            "20000000-0000-0000-0000-000000000099")
     {
         CompiledNodeSnapshotDto snap;
         snap.node_id = node_id;
@@ -134,7 +140,7 @@ namespace
             auto snap = MakeSnapshotWithPorts(
                 nid,
                 {MakePortDef("in"), MakePortDef("out")},
-                "test-comp");
+                kCompTest);
             plan.node_snapshots.push_back(std::move(snap));
             plan.execution_order.push_back(nid);
         }
@@ -204,7 +210,7 @@ TEST(GraphRuntimeTest, SingleNodeExecution)
 
     EXPECT_EQ(hr, DAS_S_OK);
     ASSERT_EQ(call_log.size(), 1u);
-    EXPECT_EQ(call_log[0], "test-comp");
+    EXPECT_EQ(call_log[0], kCompTest);
 }
 
 // ===================================================================
@@ -232,9 +238,9 @@ TEST(GraphRuntimeTest, LinearChainExecution)
     EXPECT_EQ(DAS_S_OK, rt.Run(plan, "fp_v1", token.Get(), resolver));
 
     ASSERT_EQ(call_log.size(), 3u);
-    EXPECT_EQ(call_log[0], "test-comp");
-    EXPECT_EQ(call_log[1], "test-comp");
-    EXPECT_EQ(call_log[2], "test-comp");
+    EXPECT_EQ(call_log[0], kCompTest);
+    EXPECT_EQ(call_log[1], kCompTest);
+    EXPECT_EQ(call_log[2], kCompTest);
 }
 
 // ===================================================================
@@ -796,7 +802,7 @@ namespace GraphRuntimeTestMock
             if (!p_out_guid)
                 return DAS_E_INVALID_POINTER;
             *p_out_guid = Das::Core::ForeignInterfaceHost::MakeDasGuid(
-                "mock-task-component");
+                "30000000-0000-0000-0000-000000000001");
             return DAS_S_OK;
         }
 
@@ -1000,7 +1006,7 @@ TEST(GraphRuntimeTest, ConfigureCreatesComponents)
     using namespace GraphRuntimeTestMock;
 
     auto plan =
-        MakePlanWithSettings(kNodeA, "comp-A", R"({"threshold": 42})", "");
+        MakePlanWithSettings(kNodeA, kCompA, R"({"threshold": 42})", "");
 
     auto host = MockTaskComponentHost::Make();
 
@@ -1022,7 +1028,7 @@ TEST(GraphRuntimeTest, ConfigureAppliesSettings)
 
     auto plan = MakePlanWithSettings(
         kNodeA,
-        "comp-A",
+        kCompA,
         R"({"threshold": 42})",
         R"({"mode": "fast"})");
 
@@ -1078,7 +1084,7 @@ TEST(GraphRuntimeTest, RunWithHostSingleExecution)
     plan.compiled_fingerprint = "compiled_fp_v1";
 
     plan.node_snapshots.push_back(
-        MakeSnapshotWithPorts(kNodeA, {MakePortDef("out")}, "comp-A"));
+        MakeSnapshotWithPorts(kNodeA, {MakePortDef("out")}, kCompA));
     plan.execution_order = {kNodeA};
 
     auto host = MockTaskComponentHost::Make();
@@ -1179,7 +1185,7 @@ TEST(GraphRuntimeTest, V17DataSepSettingsNotInPortMap)
     // Verify that settings are applied via ApplySettingsChange (Configure)
     // and NOT passed through the PortMap data plane during Do().
     auto plan =
-        MakePlanWithSettings(kNodeA, "comp-A", R"({"threshold": 42})", "");
+        MakePlanWithSettings(kNodeA, kCompA, R"({"threshold": 42})", "");
 
     auto host = MockTaskComponentHost::Make();
 
