@@ -4,58 +4,54 @@ import "IDasStringVector.idl";
 namespace Das::ExportInterface
 {
 
-    [uuid(
-        "B7F1A3D2-8C4E-4F1A-9B2D-6E5F3A1C7D8B")] interface IDasReadOnlyPortMap
-    : IDasBase
-{
-    DasResult Has([in] IDasReadOnlyString * p_port_id, [out] bool * out_has);
+    [uuid("B7F1A3D2-8C4E-4F1A-9B2D-6E5F3A1C7D8B")] interface IDasReadOnlyPortMap
+        : IDasBase
+    {
+        DasResult Has([in] IDasReadOnlyString * p_port_id, [out] bool* out_has);
 
-    DasResult GetType(
-        [in] IDasReadOnlyString * p_port_id,
-        [out] DasVariantType * out_kind);
+        DasResult GetType(
+            [in] IDasReadOnlyString * p_port_id,
+            [out] DasVariantType * out_kind);
 
-    DasResult GetBool(
-        [in] IDasReadOnlyString * p_port_id,
-        [out] bool * out_value);
+        DasResult
+        GetBool([in] IDasReadOnlyString * p_port_id, [out] bool* out_value);
 
-    DasResult GetInt(
-        [in] IDasReadOnlyString * p_port_id,
-        [out] int64_t * out_value);
+        DasResult
+        GetInt([in] IDasReadOnlyString * p_port_id, [out] int64_t* out_value);
 
-    DasResult GetFloat(
-        [in] IDasReadOnlyString * p_port_id,
-        [out] double * out_value);
+        DasResult
+        GetFloat([in] IDasReadOnlyString * p_port_id, [out] double* out_value);
 
-    DasResult GetString(
-        [in] IDasReadOnlyString * p_port_id,
-        [out] IDasReadOnlyString ** pp_out_string);
+        DasResult GetString(
+            [in] IDasReadOnlyString * p_port_id,
+            [out] IDasReadOnlyString * *pp_out_string);
 
-    DasResult GetJson(
-        [in] IDasReadOnlyString * p_port_id,
-        [out] IDasReadOnlyString ** pp_out_json);
+        DasResult GetJson(
+            [in] IDasReadOnlyString * p_port_id,
+            [out] IDasReadOnlyString * *pp_out_json);
 
-    DasResult GetImage(
-        [in] IDasReadOnlyString * p_port_id,
-        [out] IDasImage ** pp_out_image);
+        DasResult GetImage(
+            [in] IDasReadOnlyString * p_port_id,
+            [out] IDasImage * *pp_out_image);
 
-    DasResult GetBase(
-        [in] IDasReadOnlyString * p_port_id,
-        [in] DasGuid iid,
-        [out] IDasBase ** pp_out_object);
+        DasResult GetBase(
+            [in] IDasReadOnlyString * p_port_id,
+            [in] DasGuid iid,
+            [out] IDasBase * *pp_out_object);
 
-    DasResult GetComponent(
-        [in] IDasReadOnlyString * p_port_id,
-        [in] DasGuid iid,
-        [out] IDasBase ** pp_out_component);
+        DasResult GetComponent(
+            [in] IDasReadOnlyString * p_port_id,
+            [in] DasGuid iid,
+            [out] IDasBase * *pp_out_component);
 
-    DasResult GetKeys([out] IDasStringVector ** pp_out_keys);
-}
+        DasResult GetKeys([out] IDasStringVector * *pp_out_keys);
+    }
 
 }
 
 module
 {
-    [export, c_abi] DasResult DasVariantTypeToString(
+    [ export, c_abi ] DasResult DasVariantTypeToString(
         Das::ExportInterface::DasVariantType kind,
-        [out] IDasReadOnlyString ** pp_out_string);
+        [out] IDasReadOnlyString * *pp_out_string);
 }
