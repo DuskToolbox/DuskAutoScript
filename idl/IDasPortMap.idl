@@ -1,0 +1,45 @@
+import "IDasReadOnlyPortMap.idl";
+
+namespace Das::ExportInterface
+{
+
+    [uuid("C3D4E5F6-1A2B-3C4D-5E6F-7A8B9C0D1E2F")] interface IDasPortMap
+        : IDasReadOnlyPortMap
+    {
+        DasResult SetInt([in] IDasReadOnlyString * p_port_id, int64_t in_value);
+
+        DasResult
+        SetFloat([in] IDasReadOnlyString * p_port_id, double in_value);
+
+        DasResult SetString(
+            [in] IDasReadOnlyString * p_port_id,
+            [in] IDasReadOnlyString * in_value);
+
+        DasResult SetBool([in] IDasReadOnlyString * p_port_id, bool in_value);
+
+        DasResult SetImage(
+            [in] IDasReadOnlyString * p_port_id,
+            [in] IDasImage * p_image);
+
+        DasResult SetBase(
+            [in] IDasReadOnlyString * p_port_id,
+            [in] DasGuid iid,
+            [in] IDasBase * p_object);
+
+        DasResult SetComponent(
+            [in] IDasReadOnlyString * p_port_id,
+            [in] DasGuid iid,
+            [in] IDasBase * p_component);
+
+        DasResult Clear();
+
+        DasResult Remove([in] IDasReadOnlyString * p_port_id);
+    }
+
+}
+
+module
+{
+    [ export, c_abi ] DasResult CreateIDasPortMap(
+        [out] Das::ExportInterface::IDasPortMap * *pp_out_port_map);
+}
