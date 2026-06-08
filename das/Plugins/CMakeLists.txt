@@ -65,6 +65,11 @@ if(DAS_BUILD_TEST)
     das_add_plugin_library(IpcTestPlugin2 DAS_EX_PRIVATE_LIBS)
 endif()
 
+# GraphTask - GraphRuntime thin IDasTask adapter (core-first v18)
+if(DAS_BUILD_TEST)
+    add_subdirectory(GraphTask)
+endif()
+
 
 target_link_libraries(DasAdbCapture PRIVATE zlib)
 

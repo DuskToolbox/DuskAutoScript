@@ -1,0 +1,11 @@
+{
+    "name": "GraphTask",
+    "version": "0.1.0",
+    "description": "GraphRuntime thin IDasTask adapter plugin (core-first v18)",
+    "entryPoints": [
+        {
+            "name": "GraphTask",
+            "type": "task"
+        }
+    ]
+}

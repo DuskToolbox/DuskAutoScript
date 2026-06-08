@@ -30,6 +30,7 @@ namespace Das::ExportInterface
     struct IDasStringVector;
     struct IDasReadOnlyPortMap;
     struct IDasPortMap;
+    DAS_INTERFACE IDasGraphRuntime;
 } // namespace Das::ExportInterface
 
 DAS_INTERFACE IDasSettingsService;

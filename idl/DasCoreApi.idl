@@ -217,4 +217,11 @@ module
         IDasReadOnlyString * p_plugin_dir,
         IIpcContext * p_ipc_context,
         [out] IDasCoreServices * *pp_out);
+
+    //=============================================================================
+    // GraphRuntime
+    //=============================================================================
+
+    [ export, c_abi ] DasResult CreateGraphRuntime(
+        [out] Das::ExportInterface::IDasGraphRuntime * *pp_out_runtime);
 }
