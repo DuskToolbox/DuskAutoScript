@@ -303,7 +303,8 @@ TEST(CompiledArtifactTest, CompiledSubgraphSnapshotDtoRoundTrip)
 // ===========================================================================
 namespace
 {
-    using EntryDto = Das::Core::TaskScheduler::Repository::Dto::RepositoryEntryDto;
+    using EntryDto =
+        Das::Core::TaskScheduler::Repository::Dto::RepositoryEntryDto;
 
     CompiledGraphPlanDto MakeTestCompiledGraphPlan()
     {
@@ -313,31 +314,33 @@ namespace
         plan.source_fingerprint = "sha256:source_abc";
         plan.compiled_fingerprint = "abc123";
 
-        plan.node_snapshots.push_back(CompiledNodeSnapshotDto{
-            "nodeA",
-            "{guid-node-a}",
-            MakePayloadObject(),
-            MakeSettingsObject(),
-            {GraphPortDefinitionDto{
-                "output1",
-                "Output1",
-                "image",
-                true,
-                yyjson::value(),
-                {}}}});
+        plan.node_snapshots.push_back(
+            CompiledNodeSnapshotDto{
+                "nodeA",
+                "{guid-node-a}",
+                MakePayloadObject(),
+                MakeSettingsObject(),
+                {GraphPortDefinitionDto{
+                    "output1",
+                    "Output1",
+                    "image",
+                    true,
+                    yyjson::value(),
+                    {}}}});
 
-        plan.node_snapshots.push_back(CompiledNodeSnapshotDto{
-            "nodeB",
-            "{guid-node-b}",
-            MakePayloadObject(),
-            MakeSettingsObject(),
-            {GraphPortDefinitionDto{
-                "input1",
-                "Input1",
-                "string",
-                false,
-                yyjson::value(),
-                {}}}});
+        plan.node_snapshots.push_back(
+            CompiledNodeSnapshotDto{
+                "nodeB",
+                "{guid-node-b}",
+                MakePayloadObject(),
+                MakeSettingsObject(),
+                {GraphPortDefinitionDto{
+                    "input1",
+                    "Input1",
+                    "string",
+                    false,
+                    yyjson::value(),
+                    {}}}});
 
         plan.binding_plan.bindings.push_back(
             {"nodeA", "output1", "nodeB", "input1", "image"});
@@ -358,8 +361,7 @@ namespace
         EntryDto entry;
         entry.entry_id = 42;
         entry.display_name = "TestEntry";
-        entry.compiled_artifact =
-            Das::Utils::CloneYyjsonValue(serialized_plan);
+        entry.compiled_artifact = Das::Utils::CloneYyjsonValue(serialized_plan);
         return entry;
     }
 } // namespace
@@ -369,7 +371,7 @@ namespace
 // ---------------------------------------------------------------------------
 TEST(CompiledArtifactEntryStorageTest, EntryDtoHasCompiledArtifactField)
 {
-    EntryDto entry;
+    EntryDto      entry;
     yyjson::value test = entry.compiled_artifact;
     (void)test;
 
@@ -394,16 +396,14 @@ TEST(CompiledArtifactEntryStorageTest, CompiledArtifactRoundTripThroughEntry)
     EntryDto roundtripped_entry;
     SCOPED_TRACE(std::string(serialized_entry.write()));
     ASSERT_NO_THROW(
-        roundtripped_entry =
-            yyjson::cast<EntryDto>(serialized_entry));
+        roundtripped_entry = yyjson::cast<EntryDto>(serialized_entry));
 
     EXPECT_EQ(roundtripped_entry.entry_id, 42);
 
     CompiledGraphPlanDto roundtripped_plan;
     ASSERT_NO_THROW(
-        roundtripped_plan =
-            yyjson::cast<CompiledGraphPlanDto>(
-                roundtripped_entry.compiled_artifact));
+        roundtripped_plan = yyjson::cast<CompiledGraphPlanDto>(
+            roundtripped_entry.compiled_artifact));
 
     EXPECT_EQ(roundtripped_plan.document_id, "doc_test_001");
     ASSERT_EQ(roundtripped_plan.node_snapshots.size(), 2u);
@@ -425,11 +425,9 @@ TEST(CompiledArtifactEntryStorageTest, CompiledArtifactPreservesPortBindingPlan)
     auto entry = MakeTestEntryWithCompiledArtifact();
 
     auto serialized_entry = yyjson::object(entry);
-    auto roundtripped_entry =
-        yyjson::cast<EntryDto>(serialized_entry);
-    auto roundtripped_plan =
-        yyjson::cast<CompiledGraphPlanDto>(
-            roundtripped_entry.compiled_artifact);
+    auto roundtripped_entry = yyjson::cast<EntryDto>(serialized_entry);
+    auto roundtripped_plan = yyjson::cast<CompiledGraphPlanDto>(
+        roundtripped_entry.compiled_artifact);
 
     ASSERT_EQ(roundtripped_plan.binding_plan.bindings.size(), 1u);
 
@@ -450,11 +448,9 @@ TEST(CompiledArtifactEntryStorageTest, CompiledArtifactPreservesExecutionOrder)
     auto entry = MakeTestEntryWithCompiledArtifact();
 
     auto serialized_entry = yyjson::object(entry);
-    auto roundtripped_entry =
-        yyjson::cast<EntryDto>(serialized_entry);
-    auto roundtripped_plan =
-        yyjson::cast<CompiledGraphPlanDto>(
-            roundtripped_entry.compiled_artifact);
+    auto roundtripped_entry = yyjson::cast<EntryDto>(serialized_entry);
+    auto roundtripped_plan = yyjson::cast<CompiledGraphPlanDto>(
+        roundtripped_entry.compiled_artifact);
 
     ASSERT_EQ(roundtripped_plan.execution_order.size(), 2u);
     EXPECT_EQ(roundtripped_plan.execution_order[0], "nodeA");
@@ -464,16 +460,16 @@ TEST(CompiledArtifactEntryStorageTest, CompiledArtifactPreservesExecutionOrder)
 // ---------------------------------------------------------------------------
 // 5. compiled_fingerprint survives round-trip (v32 fingerprint validation)
 // ---------------------------------------------------------------------------
-TEST(CompiledArtifactEntryStorageTest, CompiledArtifactPreservesCompiledFingerprint)
+TEST(
+    CompiledArtifactEntryStorageTest,
+    CompiledArtifactPreservesCompiledFingerprint)
 {
     auto entry = MakeTestEntryWithCompiledArtifact();
 
     auto serialized_entry = yyjson::object(entry);
-    auto roundtripped_entry =
-        yyjson::cast<EntryDto>(serialized_entry);
-    auto roundtripped_plan =
-        yyjson::cast<CompiledGraphPlanDto>(
-            roundtripped_entry.compiled_artifact);
+    auto roundtripped_entry = yyjson::cast<EntryDto>(serialized_entry);
+    auto roundtripped_plan = yyjson::cast<CompiledGraphPlanDto>(
+        roundtripped_entry.compiled_artifact);
 
     EXPECT_EQ(roundtripped_plan.compiled_fingerprint, "abc123");
     EXPECT_EQ(roundtripped_plan.source_fingerprint, "sha256:source_abc");
@@ -482,7 +478,9 @@ TEST(CompiledArtifactEntryStorageTest, CompiledArtifactPreservesCompiledFingerpr
 // ---------------------------------------------------------------------------
 // 6. compiled_artifact and graph_document coexist independently
 // ---------------------------------------------------------------------------
-TEST(CompiledArtifactEntryStorageTest, CompiledArtifactIndependentFromGraphDocument)
+TEST(
+    CompiledArtifactEntryStorageTest,
+    CompiledArtifactIndependentFromGraphDocument)
 {
     auto plan = MakeTestCompiledGraphPlan();
     auto serialized_plan = yyjson::object(plan);
@@ -504,12 +502,10 @@ TEST(CompiledArtifactEntryStorageTest, CompiledArtifactIndependentFromGraphDocum
     ASSERT_NO_THROW(roundtripped = yyjson::cast<EntryDto>(serialized_entry));
 
     EXPECT_TRUE(roundtripped.graph_document.as_object().has_value());
-    EXPECT_TRUE(
-        roundtripped.graph_document.as_object()->contains(
-            std::string_view("nodes")));
-    EXPECT_TRUE(
-        roundtripped.graph_document.as_object()->contains(
-            std::string_view("edges")));
+    EXPECT_TRUE(roundtripped.graph_document.as_object()->contains(
+        std::string_view("nodes")));
+    EXPECT_TRUE(roundtripped.graph_document.as_object()->contains(
+        std::string_view("edges")));
 
     auto roundtripped_plan =
         yyjson::cast<CompiledGraphPlanDto>(roundtripped.compiled_artifact);
