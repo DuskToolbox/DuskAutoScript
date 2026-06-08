@@ -278,6 +278,7 @@ das_add_core_component(Logger)
 das_add_core_component(Exceptions)
 das_add_core_component(i18n)
 das_add_core_component(TaskScheduler)
+das_add_core_component(GraphRuntime)
 das_add_core_component(CoreServices)
 das_add_core_component(IPC)
 
@@ -342,6 +343,7 @@ if(${DAS_BUILD_TEST})
     das_add_core_test(Debug)
     das_add_core_test(OcvWrapper)
     das_add_core_test(OrtWrapper)
+    das_add_core_test(GraphRuntime)
 
 endif()
 
