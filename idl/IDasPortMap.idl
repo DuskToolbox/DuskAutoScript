@@ -1,3 +1,4 @@
+import "IDasImage.idl";
 import "IDasReadOnlyPortMap.idl";
 
 namespace Das::ExportInterface
@@ -24,12 +25,12 @@ namespace Das::ExportInterface
         DasResult SetBase(
             [in] IDasReadOnlyString * p_port_id,
             [in] DasGuid iid,
-            [in] IDasBase * p_object);
+            [in] IDasBase * p_in_object);
 
         DasResult SetComponent(
             [in] IDasReadOnlyString * p_port_id,
             [in] DasGuid iid,
-            [in] IDasBase * p_component);
+            [in] IDasBase * p_in_component);
 
         DasResult Clear();
 

@@ -2,6 +2,7 @@
 #include <das/DasString.hpp>
 #include <das/IDasBase.h>
 
+#include "IDasPortMap.h"
 #include "IDasVariantVector.h"
 
 // SWIG 友好接口：包含 [export] 函数（自动转为 DasRet 返回类型）

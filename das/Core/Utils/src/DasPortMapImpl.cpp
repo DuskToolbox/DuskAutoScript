@@ -28,7 +28,7 @@ std::string PortIdToString(IDasReadOnlyString* p_port_id)
         return {};
     }
     const char* raw = nullptr;
-    p_port_id->GetCString(&raw);
+    p_port_id->GetUtf8(&raw);
     return raw ? std::string{raw} : std::string{};
 }
 
@@ -311,7 +311,8 @@ DasResult DasPortMapImpl::GetComponent(
     return result;
 }
 
-DasResult DasPortMapImpl::GetKeys(IDasStringVector** pp_out_keys)
+DasResult DasPortMapImpl::GetKeys(
+    Das::ExportInterface::IDasStringVector** pp_out_keys)
 {
     DAS_UTILS_CHECK_POINTER(pp_out_keys);
 
@@ -430,17 +431,17 @@ DasResult DasPortMapImpl::SetImage(
 }
 
 DasResult DasPortMapImpl::SetBase(
-    IDasReadOnlyString* p_port_id,
-    DasGuid             iid,
-    IDasBase*           p_object)
+    IDasReadOnlyString*      p_port_id,
+    [[maybe_unused]] DasGuid iid,
+    IDasBase*                p_in_object)
 {
     DAS_UTILS_CHECK_POINTER(p_port_id);
-    DAS_UTILS_CHECK_POINTER(p_object);
+    DAS_UTILS_CHECK_POINTER(p_in_object);
 
     const auto key = Details::PortIdToString(p_port_id);
     try
     {
-        entries_[key] = DasBase{p_object};
+        entries_[key] = DasBase{p_in_object};
         return DAS_S_OK;
     }
     catch (const std::bad_alloc&)
@@ -450,17 +451,19 @@ DasResult DasPortMapImpl::SetBase(
 }
 
 DasResult DasPortMapImpl::SetComponent(
-    IDasReadOnlyString* p_port_id,
-    DasGuid             iid,
-    IDasBase*           p_component)
+    IDasReadOnlyString*      p_port_id,
+    [[maybe_unused]] DasGuid iid,
+    IDasBase*                p_in_component)
 {
     DAS_UTILS_CHECK_POINTER(p_port_id);
-    DAS_UTILS_CHECK_POINTER(p_component);
+    DAS_UTILS_CHECK_POINTER(p_in_component);
 
     const auto key = Details::PortIdToString(p_port_id);
     try
     {
-        entries_[key] = Das::PluginInterface::DasComponent{p_component};
+        auto* raw =
+            static_cast<Das::PluginInterface::IDasComponent*>(p_in_component);
+        entries_[key] = Das::PluginInterface::DasComponent{raw};
         return DAS_S_OK;
     }
     catch (const std::bad_alloc&)
