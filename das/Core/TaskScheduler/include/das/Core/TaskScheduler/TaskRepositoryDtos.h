@@ -35,6 +35,7 @@ namespace Das::Core::TaskScheduler::Repository::Dto
         std::string                    task_type_guid;
         RepositoryAuthoringMetadataDto authoring;
         yyjson::value                  accepted_properties;
+        yyjson::value                  graph_document;
         RepositoryAvailabilityDto      availability;
     };
 
@@ -106,6 +107,9 @@ namespace Das::Core::TaskScheduler::Repository::Dto
     } // namespace Detail
 } // namespace Das::Core::TaskScheduler::Repository::Dto
 
+#ifndef DAS_YYJSON_VALUE_CASTER_DEFINED
+#define DAS_YYJSON_VALUE_CASTER_DEFINED
+
 template <>
 struct yyjson::caster<yyjson::value>
 {
@@ -115,6 +119,8 @@ struct yyjson::caster<yyjson::value>
         return Das::Utils::CloneYyjsonValue(json);
     }
 };
+
+#endif // DAS_YYJSON_VALUE_CASTER_DEFINED
 
 #define DAS_TASK_REPOSITORY_DTO_CASTER(DtoType)                                \
     template <>                                                                \

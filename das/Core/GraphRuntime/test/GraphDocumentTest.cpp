@@ -438,7 +438,7 @@ TEST(GraphTaskEntryStorageTest, GraphEntryIdIsInt64)
     // Also verified by static_assert at top of file.
     Das::Core::GraphRuntime::GraphEntryId id = 42;
     EXPECT_EQ(id, 42);
-    EXPECT_TRUE(std::is_same_v<decltype(id), int64_t>);
+    EXPECT_TRUE((std::is_same_v<decltype(id), int64_t>));
 }
 
 // ---------------------------------------------------------------------------
