@@ -40,7 +40,8 @@ namespace
         const std::string& settings_json)
     {
         auto node = MakeComponentRefNode(node_id, component_guid);
-        node.settings = yyjson::parse(settings_json);
+        auto opt = Das::Utils::ParseYyjsonFromString(settings_json);
+        node.settings = opt ? std::move(*opt) : yyjson::value{};
         return node;
     }
 
@@ -143,11 +144,12 @@ namespace
 
     TEST_F(ExtractSubgraphTest, ExtractTwoNodesOneInternalEdge)
     {
-        // Parent: nodeA → nodeB, select both
+        // Parent: nodeA → nodeB (selected), nodeC (outside, prevents all-nodes guard)
         auto parent_doc = MakeGraphDocument(
             "parent_1",
             {MakeComponentRefNode("nodeA", "{guid-a}"),
-             MakeComponentRefNode("nodeB", "{guid-b}")},
+             MakeComponentRefNode("nodeB", "{guid-b}"),
+             MakeComponentRefNode("nodeC", "{guid-c}")},
             {MakeEdge("e1", "nodeA", "out1", "nodeB", "in1")});
 
         auto result = extractor.Extract(
@@ -165,7 +167,7 @@ namespace
         EXPECT_EQ(result.revision, 1);
         EXPECT_FALSE(result.fingerprint.empty());
 
-        // node_id_mapping has 2 entries
+        // node_id_mapping has 2 entries (selected nodes only)
         EXPECT_EQ(result.node_id_mapping.size(), 2u);
         EXPECT_EQ(result.node_id_mapping.count("nodeA"), 1u);
         EXPECT_EQ(result.node_id_mapping.count("nodeB"), 1u);
@@ -198,10 +200,11 @@ namespace
 
     TEST_F(ExtractSubgraphTest, ExtractSingleNodeNoEdges)
     {
-        // Parent: single node, no edges
+        // Parent: 2 nodes, select only nodeA
         auto parent_doc = MakeGraphDocument(
             "parent_2",
-            {MakeComponentRefNode("nodeA", "{guid-a}"), MakeComponentRefNode("nodeB", "{guid-b}")},
+            {MakeComponentRefNode("nodeA", "{guid-a}"),
+             MakeComponentRefNode("nodeB", "{guid-b}")},
             {});
 
         auto result = extractor.Extract(
@@ -312,11 +315,12 @@ namespace
 
     TEST_F(ExtractSubgraphTest, ExtractMixedTargetKinds)
     {
-        // 1 componentRef node + 1 entryRef node, select both
+        // 1 componentRef node + 1 entryRef node + 1 outside node, select first two
         auto parent_doc = MakeGraphDocument(
             "parent_6",
             {MakeComponentRefNode("compNode", "{guid-comp}"),
-             MakeEntryRefNode("entryNode", 42)},
+             MakeEntryRefNode("entryNode", 42),
+             MakeComponentRefNode("outsideNode", "{guid-out}")},
             {MakeEdge("e1", "compNode", "out1", "entryNode", "in1")});
 
         auto result = extractor.Extract(
@@ -343,12 +347,13 @@ namespace
 
     TEST_F(ExtractSubgraphTest, ExtractNodeIdMappingAccuracy)
     {
-        // 3 selected nodes, verify mapping accuracy
+        // 4 nodes, select 3 (n1, n2, n3), leave n4 outside
         auto parent_doc = MakeGraphDocument(
             "parent_7",
             {MakeComponentRefNode("n1", "{g1}"),
              MakeComponentRefNode("n2", "{g2}"),
-             MakeComponentRefNode("n3", "{g3}")},
+             MakeComponentRefNode("n3", "{g3}"),
+             MakeComponentRefNode("n4", "{g4}")},
             {MakeEdge("e1", "n1", "out", "n2", "in"),
              MakeEdge("e2", "n2", "out", "n3", "in")});
 
@@ -386,14 +391,15 @@ namespace
 
     TEST_F(ExtractSubgraphTest, ExtractPreservesNodeSettings)
     {
-        // componentRef node with settings
+        // componentRef node with settings + 2 outside nodes
         auto parent_doc = MakeGraphDocument(
             "parent_8",
             {MakeComponentRefNodeWithSettings(
                  "n1",
                  "{g1}",
                  R"({"threshold": 0.5, "mode": "auto"})"),
-             MakeComponentRefNode("n2", "{g2}")},
+             MakeComponentRefNode("n2", "{g2}"),
+             MakeComponentRefNode("n3", "{g3}")},
             {MakeEdge("e1", "n1", "out", "n2", "in")});
 
         auto result = extractor.Extract(
@@ -466,7 +472,8 @@ namespace
         auto parent_doc = MakeGraphDocument(
             "parent_11",
             {MakeComponentRefNode("n1", "{g1}"),
-             MakeComponentRefNode("n2", "{g2}")},
+             MakeComponentRefNode("n2", "{g2}"),
+             MakeComponentRefNode("n3", "{g3}")},
             {MakeEdge("e1", "n1", "out", "n2", "in")});
 
         GraphEntryId captured_entry_id = 0;
