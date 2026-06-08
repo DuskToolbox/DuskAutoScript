@@ -139,12 +139,16 @@ TEST(LegacyJsonAdapterTest, JsonToPortMap_NestedObject)
     std::string json_str(utf8 ? utf8 : "");
     p_json->Release();
 
-    // The stored value should be valid JSON representing the nested object.
+    // The stored value should be a non-empty string.
+    ASSERT_FALSE(json_str.empty());
+
+    // Parse the stored string to verify it's valid JSON.
     auto parsed = Das::Utils::ParseYyjsonFromString(json_str);
     ASSERT_TRUE(parsed.has_value());
-    auto obj = parsed->as_object();
-    ASSERT_TRUE(obj.has_value());
-    EXPECT_TRUE(obj->contains(std::string_view("key")));
+    auto nested_obj = parsed->as_object();
+    ASSERT_TRUE(nested_obj.has_value());
+    // Should contain the "key" field from the nested object.
+    EXPECT_TRUE(nested_obj->contains(std::string_view("key")));
 }
 
 TEST(LegacyJsonAdapterTest, JsonToPortMap_MultiType)
@@ -205,8 +209,11 @@ TEST(LegacyJsonAdapterTest, PortMapToJson_Int)
     ASSERT_TRUE(obj.has_value());
 
     auto val = (*obj)[std::string_view("x")];
-    ASSERT_TRUE(val.is_sint());
-    EXPECT_EQ(val.as_sint<int64_t>(), 99);
+    // yyjson may store positive int64_t as uint.
+    ASSERT_TRUE(val.is_sint() || val.is_uint());
+    int64_t int_val = val.is_sint() ? val.as_sint().value_or(0)
+                                    : static_cast<int64_t>(val.as_uint().value_or(0));
+    EXPECT_EQ(int_val, 99);
 }
 
 TEST(LegacyJsonAdapterTest, PortMapToJson_String)
@@ -255,7 +262,7 @@ TEST(LegacyJsonAdapterTest, PortMapToJson_Null)
 TEST(LegacyJsonAdapterTest, PortMapToJson_NestedJson)
 {
     auto map = MakePortMap();
-    // Store a JSON string via SetString (GetJson = GetString in impl).
+    // Store a JSON string via SetString.
     DasReadOnlyString key{"cfg"};
     DasReadOnlyString json_val{R"({"k": 1})"};
     ASSERT_EQ(map->SetString(key.Get(), json_val.Get()), DAS_S_OK);
@@ -267,7 +274,8 @@ TEST(LegacyJsonAdapterTest, PortMapToJson_NestedJson)
     auto obj  = root.as_object();
     ASSERT_TRUE(obj.has_value());
 
-    // The "cfg" value should be an inline object (not a string).
+    // The "cfg" value should be inlined as a nested object (not a string),
+    // because ConvertPortMapToJson detects JSON-like strings and inlines them.
     auto cfg_val = (*obj)[std::string_view("cfg")];
     ASSERT_TRUE(cfg_val.is_object());
     auto cfg_obj = cfg_val.as_object();
@@ -289,7 +297,7 @@ TEST(LegacyJsonAdapterTest, PortMapToJson_Float)
     ASSERT_TRUE(obj.has_value());
     ASSERT_TRUE((*obj)[std::string_view("pi")].is_real());
     EXPECT_NEAR(
-        (*obj)[std::string_view("pi")].as_real(), 3.14159, 1e-10);
+        (*obj)[std::string_view("pi")].as_real().value_or(0.0), 3.14159, 1e-10);
 }
 
 // ===========================================================================
@@ -314,8 +322,13 @@ TEST(LegacyJsonAdapterTest, JsonToPortMapRoundTrip)
     ASSERT_TRUE(out_obj.has_value());
 
     // Verify each field.
-    ASSERT_TRUE((*out_obj)[std::string_view("a")].is_sint());
-    EXPECT_EQ((*out_obj)[std::string_view("a")].as_sint<int64_t>(), 1);
+    {
+        auto a_val = (*out_obj)[std::string_view("a")];
+        ASSERT_TRUE(a_val.is_sint() || a_val.is_uint());
+        int64_t a_int = a_val.is_sint() ? a_val.as_sint().value_or(0)
+                                        : static_cast<int64_t>(a_val.as_uint().value_or(0));
+        EXPECT_EQ(a_int, 1);
+    }
 
     ASSERT_TRUE((*out_obj)[std::string_view("b")].is_string());
     EXPECT_EQ(
@@ -336,9 +349,9 @@ TEST(LegacyJsonAdapterTest, JsonToPortMapRoundTrip)
 TEST(LegacyJsonAdapterTest, MapDasResultToStatus)
 {
     EXPECT_STREQ(MapDasResultToStatus(DAS_S_OK), "ok");
-    EXPECT_STREQ(MapDasResultToStatus(DAS_E_PENDING), "cancelled");
-    EXPECT_STREQ(MapDasResultToStatus(DAS_E_UNEXPECTED), "error");
+    EXPECT_STREQ(MapDasResultToStatus(DAS_E_TIMEOUT), "cancelled");
     EXPECT_STREQ(MapDasResultToStatus(DAS_E_FAIL), "error");
+    EXPECT_STREQ(MapDasResultToStatus(DAS_E_NO_INTERFACE), "error");
 }
 
 // ===========================================================================
@@ -360,7 +373,7 @@ TEST(LegacyJsonAdapterTest, WrapsOldComponent)
         auto parsed = Das::Utils::ParseYyjsonFromString(input_json);
         if (!parsed.has_value())
         {
-            return DAS_E_INVALID_ARG;
+            return DAS_E_INVALID_JSON;
         }
 
         auto obj = *parsed->as_object();
@@ -391,16 +404,17 @@ TEST(LegacyJsonAdapterTest, WrapsOldComponent)
     auto captured = ParseJson(captured_input);
     auto cap_obj  = captured.as_object();
     ASSERT_TRUE(cap_obj.has_value());
-    ASSERT_TRUE((*cap_obj)[std::string_view("value")].is_sint());
-    EXPECT_EQ((*cap_obj)[std::string_view("value")].as_sint<int64_t>(), 42);
+    {
+        auto v_val = (*cap_obj)[std::string_view("value")];
+        ASSERT_TRUE(v_val.is_sint() || v_val.is_uint());
+        int64_t v_int = v_val.is_sint() ? v_val.as_sint().value_or(0)
+                                        : static_cast<int64_t>(v_val.as_uint().value_or(0));
+        EXPECT_EQ(v_int, 42);
+    }
 
     // Verify: output PortMap contains the echoed data + status.
-    int64_t echo_val{};
+    bool              bool_val{};
     DasReadOnlyString echo_key{"echo"};
-    ASSERT_EQ(output_map->GetBool(echo_key.Get(), reinterpret_cast<bool*>(&echo_val)));
-    // The "echo" field was set to true in the result JSON.
-    // ConvertJsonToPortMap should have stored it as bool.
-    bool bool_val{};
     ASSERT_EQ(output_map->GetBool(echo_key.Get(), &bool_val), DAS_S_OK);
     EXPECT_TRUE(bool_val);
 
