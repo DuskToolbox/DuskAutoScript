@@ -1,0 +1,78 @@
+import "DasBasicTypes.idl";
+import "IDasImage.idl";
+import "IDasComponent.idl";
+import "IDasStringVector.idl";
+
+namespace Das::ExportInterface
+{
+
+    enum DasVariantType
+    {
+        DAS_PORT_VALUE_KIND_NULL = 0,
+        DAS_PORT_VALUE_KIND_BOOL = 1,
+        DAS_PORT_VALUE_KIND_INT = 2,
+        DAS_PORT_VALUE_KIND_FLOAT = 3,
+        DAS_PORT_VALUE_KIND_STRING = 4,
+        DAS_PORT_VALUE_KIND_JSON = 5,
+        DAS_PORT_VALUE_KIND_IMAGE = 6,
+        DAS_PORT_VALUE_KIND_BASE = 7,
+        DAS_PORT_VALUE_KIND_COMPONENT = 8,
+        DAS_PORT_VALUE_KIND_SIGNAL = 9,
+        DAS_PORT_VALUE_KIND_FORCE_DWORD = 0x7FFFFFFF
+    }
+
+        [uuid(
+            "B7F1A3D2-8C4E-4F1A-9B2D-6E5F3A1C7D8B")] interface IDasReadOnlyPortMap
+        : IDasBase
+{
+    DasResult Has([in] IDasReadOnlyString * p_port_id, [out] bool * out_has);
+
+    DasResult GetType(
+        [in] IDasReadOnlyString * p_port_id,
+        [out] DasVariantType * out_kind);
+
+    DasResult GetBool(
+        [in] IDasReadOnlyString * p_port_id,
+        [out] bool * out_value);
+
+    DasResult GetInt(
+        [in] IDasReadOnlyString * p_port_id,
+        [out] int64_t * out_value);
+
+    DasResult GetFloat(
+        [in] IDasReadOnlyString * p_port_id,
+        [out] double * out_value);
+
+    DasResult GetString(
+        [in] IDasReadOnlyString * p_port_id,
+        [out] IDasReadOnlyString ** pp_out_string);
+
+    DasResult GetJson(
+        [in] IDasReadOnlyString * p_port_id,
+        [out] IDasReadOnlyString ** pp_out_json);
+
+    DasResult GetImage(
+        [in] IDasReadOnlyString * p_port_id,
+        [out] IDasImage ** pp_out_image);
+
+    DasResult GetBase(
+        [in] IDasReadOnlyString * p_port_id,
+        [in] DasGuid iid,
+        [out] void ** pp_out_object);
+
+    DasResult GetComponent(
+        [in] IDasReadOnlyString * p_port_id,
+        [in] DasGuid iid,
+        [out] void ** pp_out_component);
+
+    DasResult GetKeys([out] IDasStringVector ** pp_out_keys);
+}
+
+}
+
+module
+{
+    [export, c_abi] DasResult DasVariantTypeToString(
+        Das::ExportInterface::DasVariantType kind,
+        [out] IDasReadOnlyString ** pp_out_string);
+}
