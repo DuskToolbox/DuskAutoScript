@@ -97,10 +97,10 @@ DasResult ConvertJsonToPortMap(
 
     for (auto member : *obj)
     {
-        const auto key_sv = member.first;
-        const auto& val   = member.second;
+        const auto        key_sv = member.first;
+        const auto&       val = member.second;
         const std::string key_str{key_sv};
-        DasReadOnlyString  port_id{key_str.c_str()};
+        DasReadOnlyString port_id{key_str.c_str()};
 
         if (val.is_sint())
         {
@@ -119,8 +119,8 @@ DasResult ConvertJsonToPortMap(
         }
         else if (val.is_string())
         {
-            auto                  str = YyjsonAsString(val);
-            DasReadOnlyString     val_str{str.c_str()};
+            auto              str = YyjsonAsString(val);
+            DasReadOnlyString val_str{str.c_str()};
             p_portmap->SetString(port_id.Get(), val_str.Get());
         }
         else if (val.is_bool())
@@ -179,7 +179,7 @@ DasResult ConvertPortMapToJson(
 
     // Build yyjson mutable object.
     auto root = Das::Utils::MakeYyjsonObject();
-    auto obj  = *root.as_object();
+    auto obj = *root.as_object();
 
     for (uint64_t i = 0; i < count; ++i)
     {
@@ -195,7 +195,7 @@ DasResult ConvertPortMapToJson(
 
         const std::string_view port_id_sv{port_id};
 
-        DasVariantType kind = DAS_VARIANT_TYPE_NULL;
+        DasVariantType    kind = DAS_VARIANT_TYPE_NULL;
         DasReadOnlyString key_das{port_id.c_str()};
         result = p_portmap->GetType(key_das.Get(), &kind);
         if (DAS::IsFailed(result))
@@ -250,8 +250,8 @@ DasResult ConvertPortMapToJson(
 
                 // Try to parse as JSON for inlining.
                 auto parsed = Das::Utils::ParseYyjsonFromString(str_val);
-                if (parsed.has_value() &&
-                    (parsed->is_object() || parsed->is_array()))
+                if (parsed.has_value()
+                    && (parsed->is_object() || parsed->is_array()))
                 {
                     // Inline as nested JSON.
                     auto inlined = Das::Utils::CloneYyjsonValue(*parsed);
@@ -344,7 +344,7 @@ LegacyJsonTaskComponentAdapter::~LegacyJsonTaskComponentAdapter() = default;
 
 DasResult LegacyJsonTaskComponentAdapter::Do(
     Das::PluginInterface::IDasStopToken* /*p_stop_token*/,
-    IDasReadOnlyPortMap*                 p_input,
+    IDasReadOnlyPortMap* p_input,
     IDasPortMap**        pp_out_portmap)
 {
     if (pp_out_portmap == nullptr)
@@ -356,7 +356,7 @@ DasResult LegacyJsonTaskComponentAdapter::Do(
     // Since ConvertPortMapToJson takes IDasPortMap* (writable), but we have
     // IDasReadOnlyPortMap*, we need to copy entries to a writable map first.
     DAS::DasPtr<IDasPortMap> temp_input;
-    DasResult result = CreateIDasPortMap(temp_input.Put());
+    DasResult                result = CreateIDasPortMap(temp_input.Put());
     if (DAS::IsFailed(result))
     {
         return result;

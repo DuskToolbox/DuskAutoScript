@@ -63,10 +63,9 @@ namespace
 
 TEST(LegacyJsonAdapterTest, JsonToPortMap_Int)
 {
-    auto map = MakePortMap();
+    auto        map = MakePortMap();
     std::string err;
-    ASSERT_EQ(
-        ConvertJsonToPortMap(R"({"x": 42})", map.Get(), &err), DAS_S_OK);
+    ASSERT_EQ(ConvertJsonToPortMap(R"({"x": 42})", map.Get(), &err), DAS_S_OK);
 
     int64_t           val{};
     DasReadOnlyString key{"x"};
@@ -77,8 +76,7 @@ TEST(LegacyJsonAdapterTest, JsonToPortMap_Int)
 TEST(LegacyJsonAdapterTest, JsonToPortMap_Float)
 {
     auto map = MakePortMap();
-    ASSERT_EQ(
-        ConvertJsonToPortMap(R"({"pi": 3.14})", map.Get()), DAS_S_OK);
+    ASSERT_EQ(ConvertJsonToPortMap(R"({"pi": 3.14})", map.Get()), DAS_S_OK);
 
     double            val{};
     DasReadOnlyString key{"pi"};
@@ -89,8 +87,7 @@ TEST(LegacyJsonAdapterTest, JsonToPortMap_Float)
 TEST(LegacyJsonAdapterTest, JsonToPortMap_Bool)
 {
     auto map = MakePortMap();
-    ASSERT_EQ(
-        ConvertJsonToPortMap(R"({"flag": true})", map.Get()), DAS_S_OK);
+    ASSERT_EQ(ConvertJsonToPortMap(R"({"flag": true})", map.Get()), DAS_S_OK);
 
     bool              val{};
     DasReadOnlyString key{"flag"};
@@ -101,8 +98,7 @@ TEST(LegacyJsonAdapterTest, JsonToPortMap_Bool)
 TEST(LegacyJsonAdapterTest, JsonToPortMap_String)
 {
     auto map = MakePortMap();
-    ASSERT_EQ(
-        ConvertJsonToPortMap(R"({"name": "Dusk"})", map.Get()), DAS_S_OK);
+    ASSERT_EQ(ConvertJsonToPortMap(R"({"name": "Dusk"})", map.Get()), DAS_S_OK);
 
     EXPECT_EQ(GetStringValue(map.Get(), "name"), "Dusk");
 }
@@ -110,8 +106,7 @@ TEST(LegacyJsonAdapterTest, JsonToPortMap_String)
 TEST(LegacyJsonAdapterTest, JsonToPortMap_Null)
 {
     auto map = MakePortMap();
-    ASSERT_EQ(
-        ConvertJsonToPortMap(R"({"nil": null})", map.Get()), DAS_S_OK);
+    ASSERT_EQ(ConvertJsonToPortMap(R"({"nil": null})", map.Get()), DAS_S_OK);
 
     // Null values are not stored (no SetNull API). The key should not exist.
     DasReadOnlyString key{"nil"};
@@ -156,17 +151,18 @@ TEST(LegacyJsonAdapterTest, JsonToPortMap_MultiType)
     auto map = MakePortMap();
     ASSERT_EQ(
         ConvertJsonToPortMap(
-            R"({"a": 1, "b": "hello", "c": true, "d": null})", map.Get()),
+            R"({"a": 1, "b": "hello", "c": true, "d": null})",
+            map.Get()),
         DAS_S_OK);
 
-    int64_t a_val{};
+    int64_t           a_val{};
     DasReadOnlyString a_key{"a"};
     ASSERT_EQ(map->GetInt(a_key.Get(), &a_val), DAS_S_OK);
     EXPECT_EQ(a_val, 1);
 
     EXPECT_EQ(GetStringValue(map.Get(), "b"), "hello");
 
-    bool c_val{};
+    bool              c_val{};
     DasReadOnlyString c_key{"c"};
     ASSERT_EQ(map->GetBool(c_key.Get(), &c_val), DAS_S_OK);
     EXPECT_TRUE(c_val);
@@ -197,7 +193,7 @@ TEST(LegacyJsonAdapterTest, JsonToPortMap_EmptyObject)
 
 TEST(LegacyJsonAdapterTest, PortMapToJson_Int)
 {
-    auto map = MakePortMap();
+    auto              map = MakePortMap();
     DasReadOnlyString key{"x"};
     ASSERT_EQ(map->SetInt(key.Get(), 99), DAS_S_OK);
 
@@ -205,20 +201,21 @@ TEST(LegacyJsonAdapterTest, PortMapToJson_Int)
     ASSERT_EQ(ConvertPortMapToJson(map.Get(), json), DAS_S_OK);
 
     auto root = ParseJson(json);
-    auto obj  = root.as_object();
+    auto obj = root.as_object();
     ASSERT_TRUE(obj.has_value());
 
     auto val = (*obj)[std::string_view("x")];
     // yyjson may store positive int64_t as uint.
     ASSERT_TRUE(val.is_sint() || val.is_uint());
-    int64_t int_val = val.is_sint() ? val.as_sint().value_or(0)
-                                    : static_cast<int64_t>(val.as_uint().value_or(0));
+    int64_t int_val = val.is_sint()
+                          ? val.as_sint().value_or(0)
+                          : static_cast<int64_t>(val.as_uint().value_or(0));
     EXPECT_EQ(int_val, 99);
 }
 
 TEST(LegacyJsonAdapterTest, PortMapToJson_String)
 {
-    auto map = MakePortMap();
+    auto              map = MakePortMap();
     DasReadOnlyString key{"name"};
     DasReadOnlyString val{"Dusk"};
     ASSERT_EQ(map->SetString(key.Get(), val.Get()), DAS_S_OK);
@@ -227,15 +224,17 @@ TEST(LegacyJsonAdapterTest, PortMapToJson_String)
     ASSERT_EQ(ConvertPortMapToJson(map.Get(), json), DAS_S_OK);
 
     auto root = ParseJson(json);
-    auto obj  = root.as_object();
+    auto obj = root.as_object();
     ASSERT_TRUE(obj.has_value());
     ASSERT_TRUE((*obj)[std::string_view("name")].is_string());
-    EXPECT_EQ((*obj)[std::string_view("name")].as_string(), std::string_view("Dusk"));
+    EXPECT_EQ(
+        (*obj)[std::string_view("name")].as_string(),
+        std::string_view("Dusk"));
 }
 
 TEST(LegacyJsonAdapterTest, PortMapToJson_Bool)
 {
-    auto map = MakePortMap();
+    auto              map = MakePortMap();
     DasReadOnlyString key{"flag"};
     ASSERT_EQ(map->SetBool(key.Get(), true), DAS_S_OK);
 
@@ -243,7 +242,7 @@ TEST(LegacyJsonAdapterTest, PortMapToJson_Bool)
     ASSERT_EQ(ConvertPortMapToJson(map.Get(), json), DAS_S_OK);
 
     auto root = ParseJson(json);
-    auto obj  = root.as_object();
+    auto obj = root.as_object();
     ASSERT_TRUE(obj.has_value());
     ASSERT_TRUE((*obj)[std::string_view("flag")].is_bool());
     EXPECT_EQ((*obj)[std::string_view("flag")].as_bool(), true);
@@ -271,7 +270,7 @@ TEST(LegacyJsonAdapterTest, PortMapToJson_NestedJson)
     ASSERT_EQ(ConvertPortMapToJson(map.Get(), json), DAS_S_OK);
 
     auto root = ParseJson(json);
-    auto obj  = root.as_object();
+    auto obj = root.as_object();
     ASSERT_TRUE(obj.has_value());
 
     // The "cfg" value should be inlined as a nested object (not a string),
@@ -285,7 +284,7 @@ TEST(LegacyJsonAdapterTest, PortMapToJson_NestedJson)
 
 TEST(LegacyJsonAdapterTest, PortMapToJson_Float)
 {
-    auto map = MakePortMap();
+    auto              map = MakePortMap();
     DasReadOnlyString key{"pi"};
     ASSERT_EQ(map->SetFloat(key.Get(), 3.14159), DAS_S_OK);
 
@@ -293,11 +292,13 @@ TEST(LegacyJsonAdapterTest, PortMapToJson_Float)
     ASSERT_EQ(ConvertPortMapToJson(map.Get(), json), DAS_S_OK);
 
     auto root = ParseJson(json);
-    auto obj  = root.as_object();
+    auto obj = root.as_object();
     ASSERT_TRUE(obj.has_value());
     ASSERT_TRUE((*obj)[std::string_view("pi")].is_real());
     EXPECT_NEAR(
-        (*obj)[std::string_view("pi")].as_real().value_or(0.0), 3.14159, 1e-10);
+        (*obj)[std::string_view("pi")].as_real().value_or(0.0),
+        3.14159,
+        1e-10);
 }
 
 // ===========================================================================
@@ -318,15 +319,16 @@ TEST(LegacyJsonAdapterTest, JsonToPortMapRoundTrip)
 
     // Parse output and verify semantically equivalent.
     auto out_root = ParseJson(output);
-    auto out_obj  = out_root.as_object();
+    auto out_obj = out_root.as_object();
     ASSERT_TRUE(out_obj.has_value());
 
     // Verify each field.
     {
         auto a_val = (*out_obj)[std::string_view("a")];
         ASSERT_TRUE(a_val.is_sint() || a_val.is_uint());
-        int64_t a_int = a_val.is_sint() ? a_val.as_sint().value_or(0)
-                                        : static_cast<int64_t>(a_val.as_uint().value_or(0));
+        int64_t a_int = a_val.is_sint()
+                            ? a_val.as_sint().value_or(0)
+                            : static_cast<int64_t>(a_val.as_uint().value_or(0));
         EXPECT_EQ(a_int, 1);
     }
 
@@ -366,7 +368,8 @@ TEST(LegacyJsonAdapterTest, WrapsOldComponent)
 
     auto mock_do = [&captured_input](
                        const std::string& input_json,
-                       std::string&       out_result_json) -> DasResult {
+                       std::string&       out_result_json) -> DasResult
+    {
         captured_input = input_json;
 
         // Echo: parse input, add "echo": true, return as result JSON.
@@ -390,25 +393,25 @@ TEST(LegacyJsonAdapterTest, WrapsOldComponent)
     LegacyJsonTaskComponentAdapter adapter(mock_do);
 
     // Build input PortMap.
-    auto input_map = MakePortMap();
+    auto              input_map = MakePortMap();
     DasReadOnlyString in_key{"value"};
     input_map->SetInt(in_key.Get(), 42);
 
     // Call v42 Do().
     DAS::DasPtr<IDasPortMap> output_map;
-    ASSERT_EQ(
-        adapter.Do(nullptr, input_map.Get(), output_map.Put()), DAS_S_OK);
+    ASSERT_EQ(adapter.Do(nullptr, input_map.Get(), output_map.Put()), DAS_S_OK);
     ASSERT_NE(output_map.Get(), nullptr);
 
     // Verify: the mock received correct JSON input.
     auto captured = ParseJson(captured_input);
-    auto cap_obj  = captured.as_object();
+    auto cap_obj = captured.as_object();
     ASSERT_TRUE(cap_obj.has_value());
     {
         auto v_val = (*cap_obj)[std::string_view("value")];
         ASSERT_TRUE(v_val.is_sint() || v_val.is_uint());
-        int64_t v_int = v_val.is_sint() ? v_val.as_sint().value_or(0)
-                                        : static_cast<int64_t>(v_val.as_uint().value_or(0));
+        int64_t v_int = v_val.is_sint()
+                            ? v_val.as_sint().value_or(0)
+                            : static_cast<int64_t>(v_val.as_uint().value_or(0));
         EXPECT_EQ(v_int, 42);
     }
 

@@ -39,9 +39,9 @@ DAS_CORE_GRAPHRUNTIME_NS_BEGIN
 /// @return DAS_S_OK on success, DAS_E_INVALID_POINTER or DAS_E_INVALID_ARG on
 ///         failure.
 DasResult ConvertJsonToPortMap(
-    const std::string&                    input_json,
-    Das::ExportInterface::IDasPortMap*    p_portmap,
-    std::string*                          p_out_error_message = nullptr);
+    const std::string&                 input_json,
+    Das::ExportInterface::IDasPortMap* p_portmap,
+    std::string*                       p_out_error_message = nullptr);
 
 /// Serialize a PortMap into a JSON string.
 ///
@@ -75,9 +75,8 @@ const char* MapDasResultToStatus(DasResult result);
 
 /// Legacy component callback type.
 /// Receives input JSON string, produces output JSON string.
-using LegacyDoFn = std::function<DasResult(
-    const std::string& input_json,
-    std::string&       out_result_json)>;
+using LegacyDoFn = std::function<
+    DasResult(const std::string& input_json, std::string& out_result_json)>;
 
 /// Adapter that wraps a legacy JSON-based component and exposes a v42
 /// PortMap-based Do() interface.
@@ -90,9 +89,10 @@ public:
     ~LegacyJsonTaskComponentAdapter();
 
     // Non-copyable.
-    LegacyJsonTaskComponentAdapter(const LegacyJsonTaskComponentAdapter&) = delete;
-    LegacyJsonTaskComponentAdapter& operator=(const LegacyJsonTaskComponentAdapter&) =
+    LegacyJsonTaskComponentAdapter(const LegacyJsonTaskComponentAdapter&) =
         delete;
+    LegacyJsonTaskComponentAdapter& operator=(
+        const LegacyJsonTaskComponentAdapter&) = delete;
 
     /// v42-compatible Do().
     ///
@@ -104,7 +104,7 @@ public:
     /// @param pp_out_portmap Receives the newly allocated output PortMap.
     /// @return DAS_S_OK on success.
     DasResult Do(
-        Das::PluginInterface::IDasStopToken*     p_stop_token,
+        Das::PluginInterface::IDasStopToken*       p_stop_token,
         Das::ExportInterface::IDasReadOnlyPortMap* p_input,
         Das::ExportInterface::IDasPortMap**        pp_out_portmap);
 
