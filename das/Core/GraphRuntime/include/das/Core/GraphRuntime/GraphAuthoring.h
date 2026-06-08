@@ -1,6 +1,7 @@
 #ifndef DAS_CORE_GRAPHRUNTIME_GRAPHAUTHORING_H
 #define DAS_CORE_GRAPHRUNTIME_GRAPHAUTHORING_H
 
+#include <cassert>
 #include <cstdint>
 #include <optional>
 #include <string>
