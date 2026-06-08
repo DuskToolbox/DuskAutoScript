@@ -14,6 +14,8 @@ namespace Das::ExportInterface
         DAS_VARIANT_TYPE_COMPONENT = 5,
         DAS_VARIANT_TYPE_IMAGE = 6,
         DAS_VARIANT_TYPE_NULL = 7,
+        DAS_VARIANT_TYPE_JSON = 8,
+        DAS_VARIANT_TYPE_SIGNAL = 9,
         DAS_VARIANT_TYPE_FORCE_DWORD = 0x7FFFFFFF
     }
 
