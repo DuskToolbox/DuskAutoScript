@@ -211,14 +211,13 @@ ReplaceResult ExtractSubgraph::ReplaceWithSubgraph(
 
     if (selected_node_ids.empty())
     {
-        result.diagnostics.push_back(
-            "No nodes selected for replacement");
+        result.diagnostics.push_back("No nodes selected for replacement");
         return result;
     }
 
     // --- Generate replacement node_id ---
-    result.replacement_node_id = DAS_FMT_NS::format(
-        "extracted_{}_node", extract_result.child_entry_id);
+    result.replacement_node_id =
+        DAS_FMT_NS::format("extracted_{}_node", extract_result.child_entry_id);
 
     // --- Build undo snapshot ---
     result.undo_snapshot.replacement_node_id = result.replacement_node_id;
@@ -227,9 +226,9 @@ ReplaceResult ExtractSubgraph::ReplaceWithSubgraph(
     // --- Build updated GraphDocument ---
     Dto::GraphDocumentDto updated;
     updated.document_id = parent_graph_doc.document_id;
-    updated.version     = parent_graph_doc.version;
+    updated.version = parent_graph_doc.version;
     updated.fingerprint = parent_graph_doc.fingerprint;
-    updated.graph_inputs  = parent_graph_doc.graph_inputs;
+    updated.graph_inputs = parent_graph_doc.graph_inputs;
     updated.graph_outputs = parent_graph_doc.graph_outputs;
 
     // Filter nodes: keep non-selected, collect selected into snapshot
@@ -248,7 +247,7 @@ ReplaceResult ExtractSubgraph::ReplaceWithSubgraph(
     // Insert replacement entryRef node
     Dto::GraphNodeDto replacement_node;
     replacement_node.node_id = result.replacement_node_id;
-    replacement_node.target  = Dto::GraphNodeTargetDto{
+    replacement_node.target = Dto::GraphNodeTargetDto{
         "entryRef",
         std::nullopt,
         Dto::EntryRefDto{
@@ -277,8 +276,8 @@ ReplaceResult ExtractSubgraph::ReplaceWithSubgraph(
 
             for (const auto& mapping : extract_result.input_port_mappings)
             {
-                if (mapping.old_parent_node_id == edge.source_node_id &&
-                    mapping.old_parent_port_id == edge.source_port_id)
+                if (mapping.old_parent_node_id == edge.source_node_id
+                    && mapping.old_parent_port_id == edge.source_port_id)
                 {
                     new_edge.target_port_id = mapping.child_port_id;
                     break;
@@ -296,8 +295,8 @@ ReplaceResult ExtractSubgraph::ReplaceWithSubgraph(
 
             for (const auto& mapping : extract_result.output_port_mappings)
             {
-                if (mapping.old_parent_node_id == edge.target_node_id &&
-                    mapping.old_parent_port_id == edge.target_port_id)
+                if (mapping.old_parent_node_id == edge.target_node_id
+                    && mapping.old_parent_port_id == edge.target_port_id)
                 {
                     new_edge.source_port_id = mapping.child_port_id;
                     break;
@@ -335,8 +334,8 @@ Dto::GraphDocumentDto ExtractSubgraph::UndoExtract(
     RefCountCallback      ref_count_callback) const
 {
     // --- Validate snapshot ---
-    if (undo_snapshot.replacement_node_id.empty() ||
-        undo_snapshot.removed_nodes.empty())
+    if (undo_snapshot.replacement_node_id.empty()
+        || undo_snapshot.removed_nodes.empty())
     {
         DAS_CORE_LOG_INFO(
             "UndoExtract: invalid snapshot — "
@@ -345,8 +344,7 @@ Dto::GraphDocumentDto ExtractSubgraph::UndoExtract(
     }
 
     // Restore from the original parent document
-    Dto::GraphDocumentDto restored =
-        undo_snapshot.original_graph_document;
+    Dto::GraphDocumentDto restored = undo_snapshot.original_graph_document;
 
     // --- Delete child entry if refCount == 0 ---
     if (ref_count_callback)
@@ -357,11 +355,11 @@ Dto::GraphDocumentDto ExtractSubgraph::UndoExtract(
         // "extracted_{child_entry_id}_node"
         const auto& prefix = std::string("extracted_");
         const auto& suffix = std::string("_node");
-        const auto& rid    = undo_snapshot.replacement_node_id;
+        const auto& rid = undo_snapshot.replacement_node_id;
 
-        if (rid.size() > prefix.size() + suffix.size() &&
-            rid.substr(0, prefix.size()) == prefix &&
-            rid.substr(rid.size() - suffix.size()) == suffix)
+        if (rid.size() > prefix.size() + suffix.size()
+            && rid.substr(0, prefix.size()) == prefix
+            && rid.substr(rid.size() - suffix.size()) == suffix)
         {
             auto id_str = rid.substr(
                 prefix.size(),

@@ -52,9 +52,9 @@ struct ParentSnapshot
 /// Result of ReplaceWithSubgraph().
 struct ReplaceResult
 {
-    std::string           replacement_node_id;
-    Dto::GraphDocumentDto updated_graph_document;
-    ParentSnapshot        undo_snapshot;
+    std::string              replacement_node_id;
+    Dto::GraphDocumentDto    updated_graph_document;
+    ParentSnapshot           undo_snapshot;
     std::vector<std::string> diagnostics;
 };
 
@@ -76,7 +76,7 @@ public:
     using CompileCallback =
         std::function<Dto::CompiledGraphPlanDto(GraphEntryId)>;
 
-    using DeleteCallback  = std::function<bool(GraphEntryId)>;
+    using DeleteCallback = std::function<bool(GraphEntryId)>;
     using RefCountCallback = std::function<int(GraphEntryId)>;
 
     ExtractResult Extract(
