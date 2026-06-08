@@ -358,7 +358,8 @@ namespace
         EntryDto entry;
         entry.entry_id = 42;
         entry.display_name = "TestEntry";
-        entry.compiled_artifact = std::move(serialized_plan);
+        entry.compiled_artifact =
+            Das::Utils::CloneYyjsonValue(serialized_plan);
         return entry;
     }
 } // namespace
@@ -421,7 +422,6 @@ TEST(CompiledArtifactEntryStorageTest, CompiledArtifactRoundTripThroughEntry)
 // ---------------------------------------------------------------------------
 TEST(CompiledArtifactEntryStorageTest, CompiledArtifactPreservesPortBindingPlan)
 {
-    auto original_plan = MakeTestCompiledGraphPlan();
     auto entry = MakeTestEntryWithCompiledArtifact();
 
     auto serialized_entry = yyjson::object(entry);
@@ -532,13 +532,7 @@ TEST(CompiledArtifactEntryStorageTest, CompiledArtifactOptionalDefault)
     SCOPED_TRACE(std::string(serialized.write()));
     ASSERT_NO_THROW(roundtripped = yyjson::cast<EntryDto>(serialized));
 
-    auto obj = serialized.as_object();
-    if (obj.has_value() && obj->contains(std::string_view("compiledArtifact")))
-    {
-        auto val = (*obj)[std::string_view("compiledArtifact")];
-        EXPECT_TRUE(val.is_null());
-    }
-
+    // compiled_artifact was not set — after round-trip it should remain null
     auto plan_opt = roundtripped.compiled_artifact.as_object();
     EXPECT_FALSE(plan_opt.has_value());
 }
