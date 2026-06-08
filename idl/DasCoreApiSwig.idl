@@ -1,33 +1,43 @@
 // DasCoreApiSwig.idl — SWIG 友好接口（对齐 DasSwigApi.h）
 // 生成 DasCoreApiSwig.generated.h，供 DasSwigApi.h include
-// [export] 仅导出函数签名，[swig_ret] 会使 header generator 转为 DasRet 返回类型
+// [export] 仅导出函数签名，[swig_ret] 会使 header generator 转为 DasRet
+// 返回类型
 
-module {
+module
+{
 
-//=============================================================================
-// Logging (DasReadOnlyString 版本，供 SWIG 绑定使用)
-//=============================================================================
+    //=============================================================================
+    // Logging (DasReadOnlyString 版本，供 SWIG 绑定使用)
+    //=============================================================================
 
-[export] void DasLogError(DasReadOnlyString das_string);
+    [export] void DasLogError(DasReadOnlyString das_string);
 
-[export] void DasLogWarning(DasReadOnlyString das_string);
+    [export] void DasLogWarning(DasReadOnlyString das_string);
 
-[export] void DasLogInfo(DasReadOnlyString das_string);
+    [export] void DasLogInfo(DasReadOnlyString das_string);
 
-//=============================================================================
-// Main process interface
-// 带 [out] 参数的函数使用 [swig_ret] 标记，由 header generator 转为 DasRet 返回类型
-//=============================================================================
+    //=============================================================================
+    // Main process interface
+    // 带 [out] 参数的函数使用 [swig_ret] 标记，由 header generator 转为 DasRet
+    // 返回类型
+    //=============================================================================
 
-[export, swig_ret] DasResult QueryMainProcessInterface(const DasGuid& iid, [out] IDasBase** pp_object);
+    [ export, swig_ret ] DasResult
+    QueryMainProcessInterface(const DasGuid& iid, [out] IDasBase** pp_object);
 
-[export, swig_ret] DasResult QueryMainProcessInterfaceByName(const char* name, [out] IDasBase** pp_object);
+    [ export, swig_ret ] DasResult QueryMainProcessInterfaceByName(
+        const char*      name,
+        [out] IDasBase** pp_object);
 
-//=============================================================================
-// DasRetXxx 工厂方法
-// [swig_ret] 标记的函数，header generator 会将 [out] 参数转为 DasRet 返回类型
-//=============================================================================
+    //=============================================================================
+    // DasRetXxx 工厂方法
+    // [swig_ret] 标记的函数，header generator 会将 [out] 参数转为 DasRet
+    // 返回类型
+    //=============================================================================
 
-[export, swig_ret] DasResult CreateDasRetIDasVariantVector([out] Das::ExportInterface::IDasVariantVector** pp_out);
+    [ export, swig_ret ] DasResult CreateDasRetIDasVariantVector(
+        [out] Das::ExportInterface::IDasVariantVector * *pp_out);
 
+    [ export, swig_ret ] DasResult CreateDasRetIDasPortMap(
+        [out] Das::ExportInterface::IDasPortMap * *pp_out);
 }
