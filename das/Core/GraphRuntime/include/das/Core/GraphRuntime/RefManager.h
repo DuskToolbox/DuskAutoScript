@@ -15,10 +15,10 @@ DAS_CORE_GRAPHRUNTIME_NS_BEGIN
 /// Result of a delete ref-check.
 struct DeleteCheckResult
 {
-    bool                          allowed = true;
-    int                           ref_count = 0;
-    std::vector<std::string>      referencing_document_ids;
-    std::string                   reason;
+    bool                     allowed = true;
+    int                      ref_count = 0;
+    std::vector<std::string> referencing_document_ids;
+    std::string              reason;
 };
 
 /// Callback for creating new repository entries during deep clone.
@@ -32,8 +32,8 @@ using EntryFactory = std::function<GraphEntryId(
 /// Result of a deep clone operation.
 struct DeepCloneResult
 {
-    GraphEntryId                            new_entry_id = 0;
-    std::map<GraphEntryId, GraphEntryId>    id_mapping;
+    GraphEntryId                         new_entry_id = 0;
+    std::map<GraphEntryId, GraphEntryId> id_mapping;
 };
 
 /// RefManager: Cross-GraphDocument entryRef scanner.
@@ -106,7 +106,7 @@ public:
         GraphEntryId root_entry_id,
         const std::vector<
             Das::Core::TaskScheduler::Repository::Dto::RepositoryEntryDto>&
-            all_entries,
+                     all_entries,
         EntryFactory entry_factory) const;
 };
 

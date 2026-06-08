@@ -95,7 +95,7 @@ DeleteCheckResult RefManager::CheckDelete(
     DeleteCheckResult result;
 
     auto ref_map = ScanEntryRefs(entries);
-    auto it      = ref_map.find(entry_id);
+    auto it = ref_map.find(entry_id);
 
     if (it != ref_map.end())
     {
@@ -126,9 +126,9 @@ DeleteCheckResult RefManager::CheckDelete(
     }
     else
     {
-        result.allowed   = true;
+        result.allowed = true;
         result.ref_count = 0;
-        result.reason    = "Entry not referenced by any GraphDocument";
+        result.reason = "Entry not referenced by any GraphDocument";
     }
 
     return result;
@@ -136,14 +136,13 @@ DeleteCheckResult RefManager::CheckDelete(
 
 // --- ShallowCopyEntryRef ---
 
-Das::Core::GraphRuntime::Dto::EntryRefDto
-RefManager::ShallowCopyEntryRef(
+Das::Core::GraphRuntime::Dto::EntryRefDto RefManager::ShallowCopyEntryRef(
     const Das::Core::GraphRuntime::Dto::EntryRefDto& source)
 {
     Das::Core::GraphRuntime::Dto::EntryRefDto copy;
-    copy.kind               = source.kind;
-    copy.entry_id           = source.entry_id;
-    copy.expected_revision  = source.expected_revision;
+    copy.kind = source.kind;
+    copy.entry_id = source.entry_id;
+    copy.expected_revision = source.expected_revision;
     copy.source_fingerprint = source.source_fingerprint;
     return copy;
 }
@@ -154,7 +153,7 @@ DeepCloneResult RefManager::DeepCloneEntryRef(
     GraphEntryId root_entry_id,
     const std::vector<
         Das::Core::TaskScheduler::Repository::Dto::RepositoryEntryDto>&
-        all_entries,
+                 all_entries,
     EntryFactory entry_factory) const
 {
     DeepCloneResult result;
@@ -163,8 +162,7 @@ DeepCloneResult RefManager::DeepCloneEntryRef(
     auto root_it = std::find_if(
         all_entries.begin(),
         all_entries.end(),
-        [root_entry_id](const auto& e)
-        { return e.entry_id == root_entry_id; });
+        [root_entry_id](const auto& e) { return e.entry_id == root_entry_id; });
 
     if (root_it == all_entries.end())
     {
@@ -175,9 +173,9 @@ DeepCloneResult RefManager::DeepCloneEntryRef(
     }
 
     // DFS: collect all reachable entry_ids via entryRef
-    std::set<GraphEntryId>     visited;
-    std::vector<GraphEntryId>  to_clone;
-    std::vector<GraphEntryId>  frontier = {root_entry_id};
+    std::set<GraphEntryId>    visited;
+    std::vector<GraphEntryId> to_clone;
+    std::vector<GraphEntryId> frontier = {root_entry_id};
 
     while (!frontier.empty())
     {
@@ -195,8 +193,7 @@ DeepCloneResult RefManager::DeepCloneEntryRef(
         auto entry_it = std::find_if(
             all_entries.begin(),
             all_entries.end(),
-            [current](const auto& e)
-            { return e.entry_id == current; });
+            [current](const auto& e) { return e.entry_id == current; });
 
         if (entry_it == all_entries.end())
         {
@@ -216,8 +213,7 @@ DeepCloneResult RefManager::DeepCloneEntryRef(
                     if (node.target.target_kind == "entryRef"
                         && node.target.entry_ref.has_value())
                     {
-                        GraphEntryId child_id =
-                            node.target.entry_ref->entry_id;
+                        GraphEntryId child_id = node.target.entry_ref->entry_id;
                         if (!visited.count(child_id))
                         {
                             frontier.push_back(child_id);
@@ -246,8 +242,7 @@ DeepCloneResult RefManager::DeepCloneEntryRef(
         auto entry_it = std::find_if(
             all_entries.begin(),
             all_entries.end(),
-            [old_id](const auto& e)
-            { return e.entry_id == old_id; });
+            [old_id](const auto& e) { return e.entry_id == old_id; });
 
         if (entry_it == all_entries.end())
         {
@@ -295,12 +290,12 @@ DeepCloneResult RefManager::DeepCloneEntryRef(
         }
 
         // Create the new entry via factory
-        GraphEntryId new_id     = entry_factory(new_entry);
-        old_to_new[old_id]      = new_id;
+        GraphEntryId new_id = entry_factory(new_entry);
+        old_to_new[old_id] = new_id;
     }
 
-    result.id_mapping     = old_to_new;
-    result.new_entry_id   = old_to_new[root_entry_id];
+    result.id_mapping = old_to_new;
+    result.new_entry_id = old_to_new[root_entry_id];
 
     return result;
 }
