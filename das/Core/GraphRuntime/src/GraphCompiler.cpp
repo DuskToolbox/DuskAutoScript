@@ -2,8 +2,10 @@
 #include <das/Core/ForeignInterfaceHost/TaskComponentFactoryManager.h>
 #include <das/Core/GraphRuntime/GraphCompiler.h>
 #include <das/Core/Logger/Logger.h>
+#include <das/Utils/DasJsonCore.h>
 #include <das/Utils/fmt.h>
 
+#include <queue>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -482,6 +484,307 @@ std::vector<CompileEdgeDiagnostic> GraphCompiler::ValidateEdgePorts(
     }
 
     return diagnostics;
+}
+
+// ---------------------------------------------------------------------------
+// BuildNodeIndex
+// ---------------------------------------------------------------------------
+
+std::unordered_map<std::string, const Dto::GraphNodeDto*>
+GraphCompiler::BuildNodeIndex(const Dto::GraphDocumentDto& document)
+{
+    std::unordered_map<std::string, const Dto::GraphNodeDto*> index;
+    for (const auto& node : document.nodes)
+    {
+        index[node.node_id] = &node;
+    }
+    return index;
+}
+
+// ---------------------------------------------------------------------------
+// ComputeExecutionOrder (Kahn's algorithm)
+// ---------------------------------------------------------------------------
+
+std::vector<std::string> GraphCompiler::ComputeExecutionOrder(
+    const Dto::GraphDocumentDto& document)
+{
+    std::vector<std::string> execution_order;
+
+    if (document.nodes.empty())
+    {
+        return execution_order;
+    }
+
+    // Build adjacency list and in-degree map
+    std::unordered_map<std::string, std::vector<std::string>> adjacency;
+    std::unordered_map<std::string, int>                      in_degree;
+
+    for (const auto& node : document.nodes)
+    {
+        in_degree[node.node_id] = 0;
+    }
+
+    for (const auto& edge : document.edges)
+    {
+        adjacency[edge.source_node_id].push_back(edge.target_node_id);
+        in_degree[edge.target_node_id]++;
+    }
+
+    // Initialize queue with all zero in-degree nodes
+    std::queue<std::string> queue;
+    for (const auto& [node_id, degree] : in_degree)
+    {
+        if (degree == 0)
+        {
+            queue.push(node_id);
+        }
+    }
+
+    // BFS
+    while (!queue.empty())
+    {
+        std::string current = std::move(queue.front());
+        queue.pop();
+        execution_order.push_back(std::move(current));
+
+        auto it = adjacency.find(execution_order.back());
+        if (it != adjacency.end())
+        {
+            for (const auto& neighbor : it->second)
+            {
+                in_degree[neighbor]--;
+                if (in_degree[neighbor] == 0)
+                {
+                    queue.push(neighbor);
+                }
+            }
+        }
+    }
+
+    // Cycle detection: not all nodes visited
+    if (execution_order.size() != document.nodes.size())
+    {
+        return {};
+    }
+
+    return execution_order;
+}
+
+// ---------------------------------------------------------------------------
+// GeneratePortBindingPlan
+// ---------------------------------------------------------------------------
+
+Dto::PortBindingPlanDto GraphCompiler::GeneratePortBindingPlan(
+    const Dto::GraphDocumentDto& document)
+{
+    Dto::PortBindingPlanDto plan;
+
+    if (!factory_manager_)
+    {
+        return plan;
+    }
+
+    auto node_index = BuildNodeIndex(document);
+
+    // Cache manifest lookups
+    std::unordered_map<std::string, ManifestPorts> manifest_cache;
+
+    auto resolve_manifest = [&](const Dto::GraphNodeDto& node) -> ManifestPorts
+    {
+        if (node.target.target_kind != "componentRef"
+            || !node.target.component_ref.has_value())
+        {
+            return {};
+        }
+
+        const auto& guid = node.target.component_ref->component_guid;
+        auto        it = manifest_cache.find(guid);
+        if (it != manifest_cache.end())
+        {
+            return it->second;
+        }
+
+        auto ports = ReadManifest(guid);
+        manifest_cache[guid] = ports;
+        return ports;
+    };
+
+    for (const auto& edge : document.edges)
+    {
+        Dto::PortBindingDto binding;
+        binding.source_node_id = edge.source_node_id;
+        binding.source_port_id = edge.source_port_id;
+        binding.target_node_id = edge.target_node_id;
+        binding.target_port_id = edge.target_port_id;
+
+        // Resolve expected_type from source manifest
+        auto src_it = node_index.find(edge.source_node_id);
+        if (src_it != node_index.end())
+        {
+            const auto& src_node = *src_it->second;
+            if (src_node.target.target_kind == "componentRef")
+            {
+                auto src_manifest = resolve_manifest(src_node);
+                for (const auto& p : src_manifest.outputs)
+                {
+                    if (p.port_id == edge.source_port_id)
+                    {
+                        binding.expected_type = p.port_type;
+                        break;
+                    }
+                }
+            }
+            // entryRef nodes: expected_type remains empty
+        }
+
+        plan.bindings.push_back(std::move(binding));
+    }
+
+    return plan;
+}
+
+// ---------------------------------------------------------------------------
+// DetectCyclicEntryRefs
+// ---------------------------------------------------------------------------
+
+std::vector<CompileEdgeDiagnostic> GraphCompiler::DetectCyclicEntryRefs(
+    const Dto::GraphDocumentDto& document)
+{
+    std::vector<CompileEdgeDiagnostic> diagnostics;
+
+    for (const auto& node : document.nodes)
+    {
+        if (node.target.target_kind != "entryRef"
+            || !node.target.entry_ref.has_value())
+        {
+            continue;
+        }
+
+        const auto& entry_ref = *node.target.entry_ref;
+
+        // Self-reference: source_fingerprint matches the document's
+        // fingerprint
+        if (entry_ref.source_fingerprint.has_value()
+            && !entry_ref.source_fingerprint->empty()
+            && entry_ref.source_fingerprint == document.fingerprint)
+        {
+            CompileEdgeDiagnostic d;
+            d.kind = CompileDiagnosticKind::CyclicEntryRef;
+            d.node_id = node.node_id;
+            d.message = DAS_FMT_NS::format(
+                "Cyclic entryRef detected: node '{}' references "
+                "entry_id={} with matching fingerprint",
+                node.node_id,
+                entry_ref.entry_id);
+            diagnostics.push_back(std::move(d));
+        }
+    }
+
+    return diagnostics;
+}
+
+// ---------------------------------------------------------------------------
+// DiagnosticToJson
+// ---------------------------------------------------------------------------
+
+yyjson::value GraphCompiler::DiagnosticToJson(const CompileEdgeDiagnostic& diag)
+{
+    auto payload = Das::Utils::MakeYyjsonObject();
+    auto obj = *payload.as_object();
+
+    auto kind_str = std::to_string(static_cast<int>(diag.kind));
+    obj[std::string_view("kind")] =
+        std::make_pair(std::string_view(kind_str), yyjson::copy_string);
+    obj[std::string_view("node_id")] =
+        std::make_pair(std::string_view(diag.node_id), yyjson::copy_string);
+    obj[std::string_view("port_id")] =
+        std::make_pair(std::string_view(diag.port_id), yyjson::copy_string);
+    obj[std::string_view("edge_id")] =
+        std::make_pair(std::string_view(diag.edge_id), yyjson::copy_string);
+    obj[std::string_view("message")] =
+        std::make_pair(std::string_view(diag.message), yyjson::copy_string);
+    obj[std::string_view("expected_type")] = std::make_pair(
+        std::string_view(diag.expected_type),
+        yyjson::copy_string);
+    obj[std::string_view("actual_type")] =
+        std::make_pair(std::string_view(diag.actual_type), yyjson::copy_string);
+
+    return payload;
+}
+
+// ---------------------------------------------------------------------------
+// GenerateCompiledFingerprint
+// ---------------------------------------------------------------------------
+
+std::string GraphCompiler::GenerateCompiledFingerprint(
+    const std::string&              document_id,
+    int32_t                         source_revision,
+    const std::vector<std::string>& execution_order)
+{
+    std::string composite = document_id + ":" + std::to_string(source_revision);
+    for (const auto& node_id : execution_order)
+    {
+        composite += ":" + node_id;
+    }
+    return std::to_string(std::hash<std::string>{}(composite));
+}
+
+// ---------------------------------------------------------------------------
+// Compile
+// ---------------------------------------------------------------------------
+
+Dto::CompiledGraphPlanDto GraphCompiler::Compile(
+    const Dto::GraphDocumentDto& document)
+{
+    Dto::CompiledGraphPlanDto plan;
+
+    // Phase 1: Copy source metadata
+    plan.document_id = document.document_id;
+    plan.source_revision = document.version;
+    plan.source_fingerprint = document.fingerprint;
+
+    // Phase 2: Edge port validation
+    auto edge_diagnostics = ValidateEdgePorts(document);
+    for (const auto& d : edge_diagnostics)
+    {
+        plan.diagnostics.push_back(DiagnosticToJson(d));
+    }
+
+    // Phase 3: Topological sort
+    plan.execution_order = ComputeExecutionOrder(document);
+    if (plan.execution_order.empty() && !document.nodes.empty())
+    {
+        auto payload = Das::Utils::MakeYyjsonObject();
+        auto obj = *payload.as_object();
+        obj[std::string_view("kind")] = std::make_pair(
+            std::string_view(
+                std::to_string(
+                    static_cast<int>(CompileDiagnosticKind::CyclicEntryRef))),
+            yyjson::copy_string);
+        obj[std::string_view("message")] = std::make_pair(
+            std::string_view(
+                "Graph contains a cycle - topological sort failed"),
+            yyjson::copy_string);
+        plan.diagnostics.push_back(std::move(payload));
+    }
+
+    // Phase 4: Port binding plan
+    plan.binding_plan = GeneratePortBindingPlan(document);
+
+    // Phase 5: entryRef cycle detection
+    auto ref_diagnostics = DetectCyclicEntryRefs(document);
+    for (const auto& d : ref_diagnostics)
+    {
+        plan.diagnostics.push_back(DiagnosticToJson(d));
+    }
+
+    // Phase 6: Generate compiled fingerprint
+    plan.compiled_fingerprint = GenerateCompiledFingerprint(
+        plan.document_id,
+        plan.source_revision,
+        plan.execution_order);
+
+    return plan;
 }
 
 DAS_CORE_GRAPHRUNTIME_NS_END

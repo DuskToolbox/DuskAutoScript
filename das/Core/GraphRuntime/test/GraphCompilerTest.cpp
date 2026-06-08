@@ -1,9 +1,11 @@
 #include <das/Core/ForeignInterfaceHost/TaskComponentFactoryManager.h>
+#include <das/Core/GraphRuntime/CompiledArtifact.h>
 #include <das/Core/GraphRuntime/GraphCompiler.h>
 #include <das/Core/GraphRuntime/GraphDocument.h>
 #include <das/Utils/DasJsonCore.h>
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <string_view>
 #include <utility>
 
@@ -530,4 +532,358 @@ TEST(ComponentRefTargetResolutionTest, UnresolvableComponentGuid)
         }
     }
     EXPECT_TRUE(found_unresolvable);
+}
+
+// ===================================================================
+// Test Suite 5: ToposortTest
+// ===================================================================
+
+TEST(ToposortTest, LinearChain)
+{
+    GraphDocumentDto doc;
+    doc.nodes.push_back(
+        MakeComponentNode("A", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"));
+    doc.nodes.push_back(
+        MakeComponentNode("B", "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"));
+    doc.nodes.push_back(
+        MakeComponentNode("C", "CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC"));
+    doc.edges.push_back(MakeEdge("e1", "A", "out", "B", "in"));
+    doc.edges.push_back(MakeEdge("e2", "B", "out", "C", "in"));
+
+    GraphCompiler compiler;
+    auto          order = compiler.ComputeExecutionOrder(doc);
+
+    ASSERT_EQ(order.size(), 3u);
+    EXPECT_EQ(order[0], "A");
+    EXPECT_EQ(order[1], "B");
+    EXPECT_EQ(order[2], "C");
+}
+
+TEST(ToposortTest, Diamond)
+{
+    GraphDocumentDto doc;
+    doc.nodes.push_back(
+        MakeComponentNode("A", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"));
+    doc.nodes.push_back(
+        MakeComponentNode("B", "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"));
+    doc.nodes.push_back(
+        MakeComponentNode("C", "CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC"));
+    doc.nodes.push_back(
+        MakeComponentNode("D", "DDDDDDDD-DDDD-DDDD-DDDD-DDDDDDDDDDDD"));
+    doc.edges.push_back(MakeEdge("e1", "A", "out1", "B", "in"));
+    doc.edges.push_back(MakeEdge("e2", "A", "out2", "C", "in"));
+    doc.edges.push_back(MakeEdge("e3", "B", "out", "D", "in1"));
+    doc.edges.push_back(MakeEdge("e4", "C", "out", "D", "in2"));
+
+    GraphCompiler compiler;
+    auto          order = compiler.ComputeExecutionOrder(doc);
+
+    ASSERT_EQ(order.size(), 4u);
+    EXPECT_EQ(order.front(), "A");
+    EXPECT_EQ(order.back(), "D");
+    // B and C must appear between A and D (any order)
+    auto b_pos = std::find(order.begin(), order.end(), "B");
+    auto c_pos = std::find(order.begin(), order.end(), "C");
+    EXPECT_NE(b_pos, order.end());
+    EXPECT_NE(c_pos, order.end());
+}
+
+TEST(ToposortTest, SingleNode)
+{
+    GraphDocumentDto doc;
+    doc.nodes.push_back(
+        MakeComponentNode("node1", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"));
+
+    GraphCompiler compiler;
+    auto          order = compiler.ComputeExecutionOrder(doc);
+
+    ASSERT_EQ(order.size(), 1u);
+    EXPECT_EQ(order[0], "node1");
+}
+
+TEST(ToposortTest, DisconnectedGraph)
+{
+    GraphDocumentDto doc;
+    doc.nodes.push_back(
+        MakeComponentNode("A", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"));
+    doc.nodes.push_back(
+        MakeComponentNode("B", "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"));
+    doc.nodes.push_back(
+        MakeComponentNode("C", "CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC"));
+    // No edges — all nodes are disconnected
+
+    GraphCompiler compiler;
+    auto          order = compiler.ComputeExecutionOrder(doc);
+
+    ASSERT_EQ(order.size(), 3u);
+    // All three nodes must be present (order doesn't matter)
+    EXPECT_NE(std::find(order.begin(), order.end(), "A"), order.end());
+    EXPECT_NE(std::find(order.begin(), order.end(), "B"), order.end());
+    EXPECT_NE(std::find(order.begin(), order.end(), "C"), order.end());
+}
+
+TEST(ToposortTest, CycleDetection)
+{
+    GraphDocumentDto doc;
+    doc.nodes.push_back(
+        MakeComponentNode("A", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"));
+    doc.nodes.push_back(
+        MakeComponentNode("B", "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"));
+    doc.nodes.push_back(
+        MakeComponentNode("C", "CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC"));
+    doc.edges.push_back(MakeEdge("e1", "A", "out", "B", "in"));
+    doc.edges.push_back(MakeEdge("e2", "B", "out", "C", "in"));
+    doc.edges.push_back(MakeEdge("e3", "C", "out", "A", "in"));
+
+    GraphCompiler compiler;
+    auto          order = compiler.ComputeExecutionOrder(doc);
+
+    EXPECT_TRUE(order.empty());
+}
+
+TEST(ToposortTest, SelfLoopCycle)
+{
+    GraphDocumentDto doc;
+    doc.nodes.push_back(
+        MakeComponentNode("A", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"));
+    doc.edges.push_back(MakeEdge("e1", "A", "out", "A", "in"));
+
+    GraphCompiler compiler;
+    auto          order = compiler.ComputeExecutionOrder(doc);
+
+    EXPECT_TRUE(order.empty());
+}
+
+// ===================================================================
+// Test Suite 6: PortBindingPlanTest
+// ===================================================================
+
+TEST(PortBindingPlanTest, SingleEdgeBinding)
+{
+    StubFactoryManager mgr;
+    auto               node_a_def = MakeDefinition({}, {{"out1", "image"}});
+    auto               node_b_def = MakeDefinition({{"in1", "image"}}, {});
+    mgr.AddDefinition("AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA", node_a_def);
+    mgr.AddDefinition("BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB", node_b_def);
+
+    GraphCompiler compiler;
+    compiler.SetFactoryManager(&mgr);
+
+    GraphDocumentDto doc;
+    doc.nodes.push_back(
+        MakeComponentNode("A", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"));
+    doc.nodes.push_back(
+        MakeComponentNode("B", "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"));
+    doc.edges.push_back(MakeEdge("e1", "A", "out1", "B", "in1"));
+
+    auto plan = compiler.GeneratePortBindingPlan(doc);
+    ASSERT_EQ(plan.bindings.size(), 1u);
+    EXPECT_EQ(plan.bindings[0].source_node_id, "A");
+    EXPECT_EQ(plan.bindings[0].source_port_id, "out1");
+    EXPECT_EQ(plan.bindings[0].target_node_id, "B");
+    EXPECT_EQ(plan.bindings[0].target_port_id, "in1");
+    EXPECT_EQ(plan.bindings[0].expected_type, "image");
+}
+
+TEST(PortBindingPlanTest, MultiEdgeBindings)
+{
+    StubFactoryManager mgr;
+    auto node_def = MakeDefinition({{"in1", "int"}}, {{"out1", "int"}});
+    mgr.AddDefinition("AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA", node_def);
+    mgr.AddDefinition("BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB", node_def);
+    mgr.AddDefinition("CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC", node_def);
+    mgr.AddDefinition("DDDDDDDD-DDDD-DDDD-DDDD-DDDDDDDDDDDD", node_def);
+
+    GraphCompiler compiler;
+    compiler.SetFactoryManager(&mgr);
+
+    GraphDocumentDto doc;
+    doc.nodes.push_back(
+        MakeComponentNode("A", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"));
+    doc.nodes.push_back(
+        MakeComponentNode("B", "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"));
+    doc.nodes.push_back(
+        MakeComponentNode("C", "CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC"));
+    doc.nodes.push_back(
+        MakeComponentNode("D", "DDDDDDDD-DDDD-DDDD-DDDD-DDDDDDDDDDDD"));
+    doc.edges.push_back(MakeEdge("e1", "A", "out1", "B", "in1"));
+    doc.edges.push_back(MakeEdge("e2", "A", "out1", "C", "in1"));
+    doc.edges.push_back(MakeEdge("e3", "B", "out1", "D", "in1"));
+    doc.edges.push_back(MakeEdge("e4", "C", "out1", "D", "in1"));
+
+    auto plan = compiler.GeneratePortBindingPlan(doc);
+    EXPECT_EQ(plan.bindings.size(), 4u);
+}
+
+TEST(PortBindingPlanTest, ExpectedTypeFromSource)
+{
+    StubFactoryManager mgr;
+    auto               node_a_def = MakeDefinition({}, {{"out1", "image"}});
+    auto               node_b_def = MakeDefinition({{"in1", "image"}}, {});
+    mgr.AddDefinition("AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA", node_a_def);
+    mgr.AddDefinition("BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB", node_b_def);
+
+    GraphCompiler compiler;
+    compiler.SetFactoryManager(&mgr);
+
+    GraphDocumentDto doc;
+    doc.nodes.push_back(
+        MakeComponentNode("A", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"));
+    doc.nodes.push_back(
+        MakeComponentNode("B", "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"));
+    doc.edges.push_back(MakeEdge("e1", "A", "out1", "B", "in1"));
+
+    auto plan = compiler.GeneratePortBindingPlan(doc);
+    ASSERT_EQ(plan.bindings.size(), 1u);
+    // expected_type must come from source port type
+    EXPECT_EQ(plan.bindings[0].expected_type, "image");
+}
+
+TEST(PortBindingPlanTest, NoEdgesGraph)
+{
+    StubFactoryManager mgr;
+    auto node_def = MakeDefinition({{"in1", "int"}}, {{"out1", "int"}});
+    mgr.AddDefinition("AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA", node_def);
+
+    GraphCompiler compiler;
+    compiler.SetFactoryManager(&mgr);
+
+    GraphDocumentDto doc;
+    doc.nodes.push_back(
+        MakeComponentNode("A", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"));
+
+    auto plan = compiler.GeneratePortBindingPlan(doc);
+    EXPECT_TRUE(plan.bindings.empty());
+}
+
+// ===================================================================
+// Test Suite 7: CyclicEntryRefTest
+// ===================================================================
+
+TEST(CyclicEntryRefTest, NoCycle)
+{
+    GraphDocumentDto doc;
+    doc.document_id = "doc_001";
+    doc.nodes.push_back(MakeEntryRefNode("sub1", 42));
+
+    GraphCompiler compiler;
+    auto          diagnostics = compiler.DetectCyclicEntryRefs(doc);
+    EXPECT_TRUE(diagnostics.empty());
+}
+
+TEST(CyclicEntryRefTest, SelfReferenceCycle)
+{
+    GraphDocumentDto doc;
+    doc.document_id = "doc_001";
+    doc.fingerprint = "fp_abc123";
+    auto node = MakeEntryRefNode("sub1", 42);
+    // Self-reference: the entryRef's source_fingerprint matches the
+    // current document's fingerprint
+    node.target.entry_ref->source_fingerprint = doc.fingerprint;
+    doc.nodes.push_back(node);
+
+    GraphCompiler compiler;
+    auto diagnostics = compiler.DetectCyclicEntryRefs(doc);
+    ASSERT_FALSE(diagnostics.empty());
+    EXPECT_EQ(diagnostics[0].kind, CompileDiagnosticKind::CyclicEntryRef);
+}
+
+TEST(CyclicEntryRefTest, MultipleEntryRefsNoCycle)
+{
+    GraphDocumentDto doc;
+    doc.document_id = "doc_001";
+    doc.nodes.push_back(MakeEntryRefNode("sub1", 100));
+    doc.nodes.push_back(MakeEntryRefNode("sub2", 200));
+
+    GraphCompiler compiler;
+    auto          diagnostics = compiler.DetectCyclicEntryRefs(doc);
+    EXPECT_TRUE(diagnostics.empty());
+}
+
+// ===================================================================
+// Test Suite 8: CompileOrchestrationTest
+// ===================================================================
+
+TEST(CompileOrchestrationTest, CompileSuccessPath)
+{
+    StubFactoryManager mgr;
+    auto               node_a_def = MakeDefinition({}, {{"out1", "int"}});
+    auto               node_b_def = MakeDefinition({{"in1", "int"}}, {});
+    mgr.AddDefinition("AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA", node_a_def);
+    mgr.AddDefinition("BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB", node_b_def);
+
+    GraphCompiler compiler;
+    compiler.SetFactoryManager(&mgr);
+
+    GraphDocumentDto doc;
+    doc.document_id = "test_doc";
+    doc.version = 1;
+    doc.fingerprint = "abc123";
+    doc.nodes.push_back(
+        MakeComponentNode("A", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"));
+    doc.nodes.push_back(
+        MakeComponentNode("B", "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"));
+    doc.edges.push_back(MakeEdge("e1", "A", "out1", "B", "in1"));
+
+    auto plan = compiler.Compile(doc);
+    EXPECT_FALSE(plan.execution_order.empty());
+    EXPECT_FALSE(plan.binding_plan.bindings.empty());
+    EXPECT_EQ(plan.document_id, "test_doc");
+    EXPECT_EQ(plan.source_revision, 1);
+    EXPECT_EQ(plan.source_fingerprint, "abc123");
+}
+
+TEST(CompileOrchestrationTest, CompileWithErrors)
+{
+    StubFactoryManager mgr;
+    auto               node_a_def = MakeDefinition({}, {{"out1", "image"}});
+    auto               node_b_def = MakeDefinition({{"in1", "string"}}, {});
+    mgr.AddDefinition("AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA", node_a_def);
+    mgr.AddDefinition("BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB", node_b_def);
+
+    GraphCompiler compiler;
+    compiler.SetFactoryManager(&mgr);
+
+    GraphDocumentDto doc;
+    doc.document_id = "test_doc";
+    doc.version = 1;
+    doc.fingerprint = "abc123";
+    doc.nodes.push_back(
+        MakeComponentNode("A", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"));
+    doc.nodes.push_back(
+        MakeComponentNode("B", "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"));
+    doc.edges.push_back(MakeEdge("e1", "A", "out1", "B", "in1"));
+
+    auto plan = compiler.Compile(doc);
+    // Best-effort: still produces execution_order and binding_plan
+    EXPECT_FALSE(plan.execution_order.empty());
+    EXPECT_FALSE(plan.binding_plan.bindings.empty());
+    // Diagnostics contain the type mismatch
+    EXPECT_FALSE(plan.diagnostics.empty());
+}
+
+TEST(CompileOrchestrationTest, CompiledFingerprint)
+{
+    StubFactoryManager mgr;
+    auto               node_a_def = MakeDefinition({}, {{"out1", "int"}});
+    auto               node_b_def = MakeDefinition({{"in1", "int"}}, {});
+    mgr.AddDefinition("AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA", node_a_def);
+    mgr.AddDefinition("BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB", node_b_def);
+
+    GraphCompiler compiler;
+    compiler.SetFactoryManager(&mgr);
+
+    GraphDocumentDto doc;
+    doc.document_id = "test_doc";
+    doc.version = 1;
+    doc.fingerprint = "abc123";
+    doc.nodes.push_back(
+        MakeComponentNode("A", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"));
+    doc.nodes.push_back(
+        MakeComponentNode("B", "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"));
+    doc.edges.push_back(MakeEdge("e1", "A", "out1", "B", "in1"));
+
+    auto plan = compiler.Compile(doc);
+    EXPECT_FALSE(plan.compiled_fingerprint.empty());
+    EXPECT_NE(plan.compiled_fingerprint, plan.source_fingerprint);
 }

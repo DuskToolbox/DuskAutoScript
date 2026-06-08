@@ -2,10 +2,12 @@
 #define DAS_CORE_GRAPHRUNTIME_GRAPHCOMPILER_H
 
 #include <cpp_yyjson.hpp>
+#include <das/Core/GraphRuntime/CompiledArtifact.h>
 #include <das/Core/GraphRuntime/Config.h>
 #include <das/Core/GraphRuntime/GraphDocument.h>
 
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 // Forward declaration — avoid pulling full ForeignInterfaceHost header.
@@ -95,6 +97,28 @@ public:
     std::vector<CompileEdgeDiagnostic> ValidateEdgePorts(
         const Dto::GraphDocumentDto& document);
 
+    /// Compute topological order of nodes based on edge dependencies.
+    /// Uses Kahn's algorithm (BFS). Returns empty vector if cycle detected.
+    std::vector<std::string> ComputeExecutionOrder(
+        const Dto::GraphDocumentDto& document);
+
+    /// Generate port binding plan from edges + manifest port type info.
+    /// Each edge becomes one PortBindingDto with expected_type from source.
+    Dto::PortBindingPlanDto GeneratePortBindingPlan(
+        const Dto::GraphDocumentDto& document);
+
+    /// Detect cycles in entryRef references.
+    /// Scans all nodes with target.kind="entryRef" and checks for
+    /// self-reference or recursive references (via visited set).
+    std::vector<CompileEdgeDiagnostic> DetectCyclicEntryRefs(
+        const Dto::GraphDocumentDto& document);
+
+    /// Unified compile entry point: runs all phases and produces a
+    /// CompiledGraphPlanDto. Steps: ValidateEdgePorts ->
+    /// ComputeExecutionOrder -> GeneratePortBindingPlan ->
+    /// DetectCyclicEntryRefs -> generate compiled_fingerprint.
+    Dto::CompiledGraphPlanDto Compile(const Dto::GraphDocumentDto& document);
+
 private:
     TaskComponentFactoryManager* factory_manager_ = nullptr;
 
@@ -107,6 +131,21 @@ private:
     static std::vector<PortEntry> PortsFromDefinitionList(
         const yyjson::value& definition,
         const std::string&   list_key); // "inputs" or "outputs"
+
+    /// Build a node index: node_id -> GraphNodeDto* for O(1) lookup.
+    static std::unordered_map<std::string, const Dto::GraphNodeDto*>
+    BuildNodeIndex(const Dto::GraphDocumentDto& document);
+
+    /// Generate a compiled fingerprint from document metadata + execution
+    /// order.
+    static std::string GenerateCompiledFingerprint(
+        const std::string&              document_id,
+        int32_t                         source_revision,
+        const std::vector<std::string>& execution_order);
+
+    /// Convert a CompileEdgeDiagnostic to a yyjson::value for plan
+    /// diagnostics.
+    static yyjson::value DiagnosticToJson(const CompileEdgeDiagnostic& diag);
 };
 
 DAS_CORE_GRAPHRUNTIME_NS_END
