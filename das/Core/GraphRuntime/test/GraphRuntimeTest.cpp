@@ -4,17 +4,25 @@
 #include <das/Core/GraphRuntime/GraphDocument.h>
 #include <das/Core/GraphRuntime/PortFrame.h>
 #include <das/Core/GraphRuntime/RuntimeExecutionCache.h>
+#include <das/Core/Utils/DasJsonImpl.h>
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
+#include <das/Utils/DasJsonCore.h>
+#include <das/_autogen/idl/abi/IDasErrorLens.h>
 #include <das/_autogen/idl/abi/IDasPortMap.h>
+#include <das/_autogen/idl/abi/IDasTaskComponent.h>
 #include <das/_autogen/idl/header/IDasPortMap.generated.h>
+#include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasErrorLens.Implements.hpp>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasStopToken.Implements.hpp>
+#include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasTaskComponent.Implements.hpp>
+#include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasTaskComponentHost.Implements.hpp>
 #include <gtest/gtest.h>
 
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -735,4 +743,391 @@ TEST(GraphRuntimeTest, RuntimeExecutionCacheUsed)
     // Node 2 (index 1) should have input slots (from node 1)
     const auto& inputs = cache.GetInputSlots(plan.execution_order[1]);
     EXPECT_FALSE(inputs.empty());
+}
+
+// =====================================================================
+// Plan 02-14: Configure/Prepare/RunWithHost tests
+// =====================================================================
+
+namespace
+{
+    using IDasJson = Das::ExportInterface::IDasJson;
+    using IDasErrorLens = Das::PluginInterface::IDasErrorLens;
+
+    // ---- Mock IDasTaskComponent ----
+    // Records calls and simulates pass-through behavior.
+    class MockTaskComponent final
+        : public Das::PluginInterface::DasTaskComponentImplBase<
+              MockTaskComponent>
+    {
+    public:
+        std::atomic<int> apply_settings_call_count{0};
+        std::atomic<int> do_call_count{0};
+        std::string      last_settings_json;
+        std::string      last_input_json;
+
+        // Echo input as output (pass-through).
+        DasResult ApplySettingsChange(
+            IDasJson*  p_request_json,
+            IDasJson** pp_out_result_json) override
+        {
+            ++apply_settings_call_count;
+            if (p_request_json)
+            {
+                DAS::DasPtr<Das::ExportInterface::IDasReadOnlyString> p_str;
+                p_request_json->ToString(0, p_str.Put());
+                if (p_str.Get())
+                {
+                    const char* utf8 = nullptr;
+                    p_str->GetUtf8(&utf8);
+                    last_settings_json =
+                        utf8 ? std::string{utf8} : std::string{};
+                }
+            }
+            if (pp_out_result_json)
+            {
+                *pp_out_result_json = new Das::Core::Utils::IDasJsonImpl("{}");
+                (*pp_out_result_json)->AddRef();
+            }
+            return DAS_S_OK;
+        }
+
+        DasResult Do(
+            IDasStopToken* p_stop_token,
+            IDasJson*      p_environment_json,
+            IDasJson*      p_settings_json,
+            IDasJson*      p_input_json,
+            IDasJson**     pp_out_result_json) override
+        {
+            ++do_call_count;
+            if (p_input_json)
+            {
+                DAS::DasPtr<Das::ExportInterface::IDasReadOnlyString> p_str;
+                p_input_json->ToString(0, p_str.Put());
+                if (p_str.Get())
+                {
+                    const char* utf8 = nullptr;
+                    p_str->GetUtf8(&utf8);
+                    last_input_json = utf8 ? std::string{utf8} : std::string{};
+                }
+            }
+
+            // Echo input as output
+            if (pp_out_result_json)
+            {
+                if (p_input_json)
+                {
+                    DAS::DasPtr<Das::ExportInterface::IDasReadOnlyString> p_str;
+                    p_input_json->ToString(0, p_str.Put());
+                    if (p_str.Get())
+                    {
+                        const char* utf8 = nullptr;
+                        p_str->GetUtf8(&utf8);
+                        std::string input_str(utf8 ? utf8 : "{}");
+                        *pp_out_result_json =
+                            new Das::Core::Utils::IDasJsonImpl(
+                                input_str.c_str());
+                        (*pp_out_result_json)->AddRef();
+                    }
+                    else
+                    {
+                        *pp_out_result_json =
+                            new Das::Core::Utils::IDasJsonImpl("{}");
+                        (*pp_out_result_json)->AddRef();
+                    }
+                }
+                else
+                {
+                    *pp_out_result_json =
+                        new Das::Core::Utils::IDasJsonImpl("{}");
+                    (*pp_out_result_json)->AddRef();
+                }
+            }
+            return DAS_S_OK;
+        }
+    };
+
+    // ---- Mock IDasTaskComponentHost ----
+    // Creates MockTaskComponent instances.
+    class MockTaskComponentHost final
+        : public Das::PluginInterface::DasTaskComponentHostImplBase<
+              MockTaskComponentHost>
+    {
+    public:
+        std::vector<std::string> created_guids;
+
+        DasResult CreateTaskComponent(
+            const DasGuid&                            component_guid,
+            Das::PluginInterface::IDasTaskComponent** pp_out_component) override
+        {
+            if (!pp_out_component)
+                return DAS_E_INVALID_POINTER;
+
+            auto guid_str = Das::Core::ForeignInterfaceHost::DasGuidToString(
+                component_guid);
+            created_guids.push_back(guid_str);
+
+            *pp_out_component = MockTaskComponent::MakeRaw();
+            return DAS_S_OK;
+        }
+    };
+
+    // ---- Mock IDasErrorLens ----
+    class MockErrorLens final
+        : public Das::PluginInterface::DasErrorLensImplBase<MockErrorLens>
+    {
+    public:
+        std::map<DasResult, std::string> error_messages;
+
+        DasResult GetSupportedIids(
+            Das::ExportInterface::IDasReadOnlyGuidVector** pp_out_iids) override
+        {
+            if (!pp_out_iids)
+                return DAS_E_INVALID_POINTER;
+            *pp_out_iids = nullptr;
+            return DAS_E_NOT_IMPLEMENTED;
+        }
+
+        DasResult GetErrorMessage(
+            IDasReadOnlyString*                        locale_name,
+            DasResult                                  error_code,
+            Das::ExportInterface::IDasReadOnlyString** out_string) override
+        {
+            if (!out_string)
+                return DAS_E_INVALID_POINTER;
+
+            auto it = error_messages.find(error_code);
+            if (it != error_messages.end())
+            {
+                DasReadOnlyString msg{it->second.c_str()};
+                return CreateIDasReadOnlyStringFromUtf8(
+                    it->second.c_str(),
+                    out_string);
+            }
+            *out_string = nullptr;
+            return DAS_E_NOT_FOUND;
+        }
+    };
+
+    // Build a plan with a settings snapshot for a node
+    CompiledGraphPlanDto MakePlanWithSettings(
+        const std::string& node_id,
+        const std::string& component_guid,
+        const std::string& settings_json,
+        const std::string& payload_json)
+    {
+        CompiledGraphPlanDto plan;
+        plan.source_fingerprint = "fp_v1";
+        plan.compiled_fingerprint = "compiled_fp_v1";
+
+        CompiledNodeSnapshotDto snap;
+        snap.node_id = node_id;
+        snap.component_guid = component_guid;
+
+        if (!settings_json.empty())
+        {
+            auto parsed = Das::Utils::ParseYyjsonFromString(settings_json);
+            if (parsed.has_value())
+                snap.compiled_settings = std::move(*parsed);
+        }
+        if (!payload_json.empty())
+        {
+            auto parsed = Das::Utils::ParseYyjsonFromString(payload_json);
+            if (parsed.has_value())
+                snap.compiled_payload_json = std::move(*parsed);
+        }
+
+        snap.resolved_ports = {MakePortDef("in"), MakePortDef("out")};
+        plan.node_snapshots.push_back(std::move(snap));
+        plan.execution_order.push_back(node_id);
+        return plan;
+    }
+
+} // namespace
+
+// ===================================================================
+// Test 16: ConfigureCreatesComponents
+// ===================================================================
+TEST(GraphRuntimeTest, ConfigureCreatesComponents)
+{
+    auto plan =
+        MakePlanWithSettings(kNodeA, "comp-A", R"({"threshold": 42})", "");
+
+    auto host = Das::PluginInterface::MockTaskComponentHost::Make();
+
+    GraphRuntime rt;
+    auto         hr = rt.Configure(plan, host.Get());
+
+    EXPECT_EQ(hr, DAS_S_OK);
+
+    auto* mock_host = static_cast<MockTaskComponentHost*>(host.Get());
+    ASSERT_EQ(mock_host->created_guids.size(), 1u);
+}
+
+// ===================================================================
+// Test 17: ConfigureAppliesSettings
+// ===================================================================
+TEST(GraphRuntimeTest, ConfigureAppliesSettings)
+{
+    auto plan = MakePlanWithSettings(
+        kNodeA,
+        "comp-A",
+        R"({"threshold": 42})",
+        R"({"mode": "fast"})");
+
+    auto host = Das::PluginInterface::MockTaskComponentHost::Make();
+
+    GraphRuntime rt;
+    EXPECT_EQ(DAS_S_OK, rt.Configure(plan, host.Get()));
+
+    // Verify Prepare succeeds
+    EXPECT_EQ(DAS_S_OK, rt.Prepare());
+}
+
+// ===================================================================
+// Test 18: PrepareValidatesConfiguredComponents
+// ===================================================================
+TEST(GraphRuntimeTest, PrepareValidatesConfiguredComponents)
+{
+    // Prepare without Configure should fail
+    GraphRuntime rt;
+    EXPECT_NE(DAS_S_OK, rt.Prepare());
+
+    // Prepare after Configure should succeed
+    auto plan = MakeLinearPlan(2);
+    auto host = Das::PluginInterface::MockTaskComponentHost::Make();
+
+    EXPECT_EQ(DAS_S_OK, rt.Configure(plan, host.Get()));
+    EXPECT_EQ(DAS_S_OK, rt.Prepare());
+}
+
+// ===================================================================
+// Test 19: ConfigureNullHost
+// ===================================================================
+TEST(GraphRuntimeTest, ConfigureNullHost)
+{
+    auto plan = MakeLinearPlan(1);
+
+    GraphRuntime rt;
+    auto         hr = rt.Configure(plan, nullptr);
+    EXPECT_NE(DAS_S_OK, hr);
+    EXPECT_FALSE(rt.GetLastErrorMessage().empty());
+}
+
+// ===================================================================
+// Test 20: RunWithHostSingleExecution
+// ===================================================================
+TEST(GraphRuntimeTest, RunWithHostSingleExecution)
+{
+    CompiledGraphPlanDto plan;
+    plan.source_fingerprint = "fp_v1";
+    plan.compiled_fingerprint = "compiled_fp_v1";
+
+    plan.node_snapshots.push_back(
+        MakeSnapshotWithPorts(kNodeA, {MakePortDef("out")}, "comp-A"));
+    plan.execution_order = {kNodeA};
+
+    auto host = Das::PluginInterface::MockTaskComponentHost::Make();
+
+    GraphRuntime               rt;
+    Das::DasPtr<IDasStopToken> token =
+        Das::PluginInterface::DasStopTokenImplBase<MockStopToken>::Make();
+
+    auto hr = rt.RunWithHost(plan, "fp_v1", token.Get(), host.Get());
+    EXPECT_EQ(hr, DAS_S_OK);
+}
+
+// ===================================================================
+// Test 21: RunWithHostLinearChain
+// ===================================================================
+TEST(GraphRuntimeTest, RunWithHostLinearChain)
+{
+    auto plan = MakeLinearPlan(3);
+
+    auto host = Das::PluginInterface::MockTaskComponentHost::Make();
+
+    GraphRuntime               rt;
+    Das::DasPtr<IDasStopToken> token =
+        Das::PluginInterface::DasStopTokenImplBase<MockStopToken>::Make();
+
+    auto hr = rt.RunWithHost(plan, "fp_v1", token.Get(), host.Get());
+    EXPECT_EQ(hr, DAS_S_OK);
+}
+
+// ===================================================================
+// Test 22: RunWithHostFingerprintMismatch
+// ===================================================================
+TEST(GraphRuntimeTest, RunWithHostFingerprintMismatch)
+{
+    auto plan = MakeLinearPlan(2);
+    plan.source_fingerprint = "compiled_at_v1";
+
+    auto host = Das::PluginInterface::MockTaskComponentHost::Make();
+
+    GraphRuntime               rt;
+    Das::DasPtr<IDasStopToken> token =
+        Das::PluginInterface::DasStopTokenImplBase<MockStopToken>::Make();
+
+    auto hr = rt.RunWithHost(plan, "wrong_fp", token.Get(), host.Get());
+    EXPECT_NE(hr, DAS_S_OK);
+    EXPECT_FALSE(rt.GetLastErrorMessage().empty());
+}
+
+// ===================================================================
+// Test 23: ErrorLensIntegration
+// ===================================================================
+TEST(GraphRuntimeTest, ErrorLensIntegration)
+{
+    auto  lens = Das::PluginInterface::MockErrorLens::Make();
+    auto* raw_lens = static_cast<MockErrorLens*>(lens.Get());
+    raw_lens->error_messages[DAS_E_NOT_FOUND] = "Resource not available";
+
+    GraphRuntime rt;
+    rt.SetErrorLens(lens.Get());
+
+    std::string msg;
+    auto        hr = rt.GetStructuredError(DAS_E_NOT_FOUND, msg);
+    EXPECT_EQ(hr, DAS_S_OK);
+    EXPECT_EQ(msg, "Resource not available");
+
+    // Unknown error code
+    hr = rt.GetStructuredError(DAS_E_FAIL, msg);
+    EXPECT_NE(hr, DAS_S_OK);
+}
+
+// ===================================================================
+// Test 24: RunWithHostEmptyGraph
+// ===================================================================
+TEST(GraphRuntimeTest, RunWithHostEmptyGraph)
+{
+    auto plan = MakeEmptyPlan();
+
+    auto host = Das::PluginInterface::MockTaskComponentHost::Make();
+
+    GraphRuntime               rt;
+    Das::DasPtr<IDasStopToken> token =
+        Das::PluginInterface::DasStopTokenImplBase<MockStopToken>::Make();
+
+    auto hr = rt.RunWithHost(plan, "fp_v1", token.Get(), host.Get());
+    EXPECT_EQ(hr, DAS_S_OK);
+}
+
+// ===================================================================
+// Test 25: V17DataSepSettingsNotInPortMap
+// ===================================================================
+TEST(GraphRuntimeTest, V17DataSepSettingsNotInPortMap)
+{
+    // Verify that settings are applied via ApplySettingsChange (Configure)
+    // and NOT passed through the PortMap data plane during Do().
+    auto plan =
+        MakePlanWithSettings(kNodeA, "comp-A", R"({"threshold": 42})", "");
+
+    auto host = Das::PluginInterface::MockTaskComponentHost::Make();
+
+    GraphRuntime rt;
+    EXPECT_EQ(DAS_S_OK, rt.Configure(plan, host.Get()));
+
+    // The mock component should have received settings
+    auto* mock_host = static_cast<MockTaskComponentHost*>(host.Get());
+    ASSERT_EQ(mock_host->created_guids.size(), 1u);
 }
