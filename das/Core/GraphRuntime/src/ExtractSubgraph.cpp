@@ -12,7 +12,7 @@ std::string ExtractSubgraph::MakeChildNodeId(const std::string& old_node_id)
 }
 
 std::string ExtractSubgraph::InferPortType(
-    const std::string& port_id,
+    const std::string&                              port_id,
     const std::vector<Dto::GraphPortDefinitionDto>& port_defs)
 {
     for (const auto& def : port_defs)
@@ -26,11 +26,11 @@ std::string ExtractSubgraph::InferPortType(
 }
 
 ExtractResult ExtractSubgraph::Extract(
-    GraphEntryId parent_entry_id,
+    GraphEntryId                 parent_entry_id,
     const std::set<std::string>& selected_node_ids,
     const Dto::GraphDocumentDto& parent_graph_doc,
-    EntryFactory entry_factory,
-    CompileCallback compile_callback) const
+    EntryFactory                 entry_factory,
+    CompileCallback              compile_callback) const
 {
     ExtractResult result;
 
@@ -90,7 +90,9 @@ ExtractResult ExtractSubgraph::Extract(
         mapping.old_parent_node_id = edge.source_node_id;
         mapping.old_parent_port_id = edge.source_port_id;
         mapping.child_port_id = DAS_FMT_NS::format(
-            "in_{}_{}", edge.source_node_id, edge.source_port_id);
+            "in_{}_{}",
+            edge.source_node_id,
+            edge.source_port_id);
         mapping.port_type =
             InferPortType(edge.target_port_id, parent_graph_doc.graph_inputs);
 
@@ -104,9 +106,11 @@ ExtractResult ExtractSubgraph::Extract(
         mapping.old_parent_node_id = edge.target_node_id;
         mapping.old_parent_port_id = edge.target_port_id;
         mapping.child_port_id = DAS_FMT_NS::format(
-            "out_{}_{}", edge.target_node_id, edge.target_port_id);
-        mapping.port_type = InferPortType(
-            edge.source_port_id, parent_graph_doc.graph_outputs);
+            "out_{}_{}",
+            edge.target_node_id,
+            edge.target_port_id);
+        mapping.port_type =
+            InferPortType(edge.source_port_id, parent_graph_doc.graph_outputs);
 
         result.output_port_mappings.push_back(mapping);
     }
@@ -133,10 +137,8 @@ ExtractResult ExtractSubgraph::Extract(
     for (const auto& edge : internal_edges)
     {
         Dto::GraphEdgeDto child_edge = edge;
-        child_edge.source_node_id =
-            result.node_id_mapping[edge.source_node_id];
-        child_edge.target_node_id =
-            result.node_id_mapping[edge.target_node_id];
+        child_edge.source_node_id = result.node_id_mapping[edge.source_node_id];
+        child_edge.target_node_id = result.node_id_mapping[edge.target_node_id];
         child_doc.edges.push_back(child_edge);
     }
 

@@ -30,14 +30,14 @@ struct ExtractPortMapping
 /// to replace selected nodes with entryRef in the parent.
 struct ExtractResult
 {
-    GraphEntryId child_entry_id = 0;
-    int revision = 0;
-    std::string fingerprint;
-    Dto::GraphDocumentDto child_graph_document;
+    GraphEntryId                       child_entry_id = 0;
+    int                                revision = 0;
+    std::string                        fingerprint;
+    Dto::GraphDocumentDto              child_graph_document;
     std::map<std::string, std::string> node_id_mapping; // old → new
-    std::vector<ExtractPortMapping> input_port_mappings;
-    std::vector<ExtractPortMapping> output_port_mappings;
-    std::vector<std::string> diagnostics;
+    std::vector<ExtractPortMapping>    input_port_mappings;
+    std::vector<ExtractPortMapping>    output_port_mappings;
+    std::vector<std::string>           diagnostics;
 };
 
 /// ExtractSubgraph: Transaction construction for the v23 Extract
@@ -55,21 +55,21 @@ public:
     using EntryFactory = std::function<GraphEntryId(
         const Das::Core::TaskScheduler::Repository::Dto::RepositoryEntryDto&)>;
 
-    using CompileCallback = std::function<Dto::CompiledGraphPlanDto(
-        GraphEntryId)>;
+    using CompileCallback =
+        std::function<Dto::CompiledGraphPlanDto(GraphEntryId)>;
 
     ExtractResult Extract(
-        GraphEntryId parent_entry_id,
+        GraphEntryId                 parent_entry_id,
         const std::set<std::string>& selected_node_ids,
         const Dto::GraphDocumentDto& parent_graph_doc,
-        EntryFactory entry_factory,
-        CompileCallback compile_callback) const;
+        EntryFactory                 entry_factory,
+        CompileCallback              compile_callback) const;
 
 private:
     static std::string MakeChildNodeId(const std::string& old_node_id);
 
     static std::string InferPortType(
-        const std::string& port_id,
+        const std::string&                              port_id,
         const std::vector<Dto::GraphPortDefinitionDto>& port_defs);
 };
 

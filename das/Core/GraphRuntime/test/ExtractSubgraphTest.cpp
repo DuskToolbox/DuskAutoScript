@@ -54,8 +54,7 @@ namespace
         node.target = GraphNodeTargetDto{
             "entryRef",
             std::nullopt,
-            EntryRefDto{
-                "entryRef", ref_entry_id, std::nullopt, std::nullopt}};
+            EntryRefDto{"entryRef", ref_entry_id, std::nullopt, std::nullopt}};
         return node;
     }
 
@@ -86,11 +85,11 @@ namespace
     }
 
     GraphDocumentDto MakeGraphDocument(
-        const std::string&                        doc_id,
-        std::vector<GraphNodeDto>                 nodes,
-        std::vector<GraphEdgeDto>                 edges = {},
-        std::vector<GraphPortDefinitionDto>       graph_inputs = {},
-        std::vector<GraphPortDefinitionDto>       graph_outputs = {})
+        const std::string&                  doc_id,
+        std::vector<GraphNodeDto>           nodes,
+        std::vector<GraphEdgeDto>           edges = {},
+        std::vector<GraphPortDefinitionDto> graph_inputs = {},
+        std::vector<GraphPortDefinitionDto> graph_outputs = {})
     {
         GraphDocumentDto doc;
         doc.document_id = doc_id;
@@ -144,7 +143,8 @@ namespace
 
     TEST_F(ExtractSubgraphTest, ExtractTwoNodesOneInternalEdge)
     {
-        // Parent: nodeA → nodeB (selected), nodeC (outside, prevents all-nodes guard)
+        // Parent: nodeA → nodeB (selected), nodeC (outside, prevents all-nodes
+        // guard)
         auto parent_doc = MakeGraphDocument(
             "parent_1",
             {MakeComponentRefNode("nodeA", "{guid-a}"),
@@ -315,7 +315,8 @@ namespace
 
     TEST_F(ExtractSubgraphTest, ExtractMixedTargetKinds)
     {
-        // 1 componentRef node + 1 entryRef node + 1 outside node, select first two
+        // 1 componentRef node + 1 entryRef node + 1 outside node, select first
+        // two
         auto parent_doc = MakeGraphDocument(
             "parent_6",
             {MakeComponentRefNode("compNode", "{guid-comp}"),
@@ -337,7 +338,8 @@ namespace
         auto& child_comp = result.child_graph_document.nodes[0];
         EXPECT_TRUE(child_comp.target.component_ref.has_value());
         EXPECT_EQ(
-            child_comp.target.component_ref->component_guid, "{guid-comp}");
+            child_comp.target.component_ref->component_guid,
+            "{guid-comp}");
 
         // entryRef node preserves entry_id (same value, not changed)
         auto& child_entry = result.child_graph_document.nodes[1];
@@ -477,22 +479,18 @@ namespace
             {MakeEdge("e1", "n1", "out", "n2", "in")});
 
         GraphEntryId captured_entry_id = 0;
-        auto factory = [this](const TaskDto& entry) -> GraphEntryId
+        auto         factory = [this](const TaskDto& entry) -> GraphEntryId
         { return next_entry_id++; };
 
-        auto compile_cb =
-            [&captured_entry_id](GraphEntryId entry_id) -> Dto::CompiledGraphPlanDto
+        auto compile_cb = [&captured_entry_id](GraphEntryId entry_id)
+            -> Dto::CompiledGraphPlanDto
         {
             captured_entry_id = entry_id;
             return MakeCompiledPlan(entry_id);
         };
 
-        auto result = extractor.Extract(
-            1,
-            {"n1", "n2"},
-            parent_doc,
-            factory,
-            compile_cb);
+        auto result =
+            extractor.Extract(1, {"n1", "n2"}, parent_doc, factory, compile_cb);
 
         // compile_callback received the same entry_id as entry_factory returned
         EXPECT_EQ(captured_entry_id, result.child_entry_id);
@@ -500,12 +498,18 @@ namespace
 
     TEST_F(ExtractSubgraphTest, ExtractPortDefinitionTypePreservation)
     {
-        // Inbound edge → child input port type matches the source edge's port type
+        // Inbound edge → child input port type matches the source edge's port
+        // type
         auto parent_doc = MakeGraphDocument(
             "parent_12",
             {MakeComponentRefNode("outside", "{g1}"),
              MakeComponentRefNode("selected", "{g2}")},
-            {MakeEdge("e1", "outside", "output_port", "selected", "input_port")},
+            {MakeEdge(
+                "e1",
+                "outside",
+                "output_port",
+                "selected",
+                "input_port")},
             {MakePortDef("input_port", "number")}); // port type = "number"
 
         auto result = extractor.Extract(
@@ -522,7 +526,8 @@ namespace
         // Also verify the child graph_inputs port definition has the type
         ASSERT_EQ(result.child_graph_document.graph_inputs.size(), 1u);
         EXPECT_EQ(
-            result.child_graph_document.graph_inputs[0].port_type, "number");
+            result.child_graph_document.graph_inputs[0].port_type,
+            "number");
     }
 
 } // namespace
