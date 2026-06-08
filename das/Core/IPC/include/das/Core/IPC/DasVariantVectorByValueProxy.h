@@ -62,48 +62,60 @@ public:
 
     DasResult QueryInterface(const DasGuid& iid, void** pp_object) override;
 
-    // ── IDasVariantVector: read methods ────────────────────────────────────
+    // ── IDasVariantVector: Int group ────────────────────────────────────
     DasResult GetInt(uint64_t index, int64_t* p_out_int) override;
+    DasResult SetInt(uint64_t index, int64_t in_int) override;
+    DasResult PushBackInt(int64_t in_int) override;
+
+    // ── IDasVariantVector: Float group ──────────────────────────────────
     DasResult GetFloat(uint64_t index, float* p_out_float) override;
+    DasResult SetFloat(uint64_t index, float in_float) override;
+    DasResult PushBackFloat(float in_float) override;
+
+    // ── IDasVariantVector: String group ─────────────────────────────────
     DasResult GetString(uint64_t index, IDasReadOnlyString** pp_out_string)
         override;
+    DasResult SetString(uint64_t index, IDasReadOnlyString* in_string) override;
+    DasResult PushBackString(IDasReadOnlyString* in_string) override;
+
+    // ── IDasVariantVector: Bool group ───────────────────────────────────
     DasResult GetBool(uint64_t index, bool* p_out_bool) override;
+    DasResult SetBool(uint64_t index, bool in_bool) override;
+    DasResult PushBackBool(bool in_bool) override;
+
+    // ── IDasVariantVector: Component group ──────────────────────────────
     DasResult GetComponent(
         uint64_t                                index,
         ::Das::PluginInterface::IDasComponent** pp_out_component) override;
-    DasResult GetBase(uint64_t index, ::IDasBase** pp_out_base) override;
-    DasResult GetImage(
-        uint64_t                          index,
-        Das::ExportInterface::IDasImage** pp_out_image) override;
-    DasResult IsNull(uint64_t index, bool* out_is_null) override;
-    DasResult GetType(
-        uint64_t                                index,
-        ::Das::ExportInterface::DasVariantType* p_out_type) override;
-    DasResult GetSize() override;
-
-    // ── IDasVariantVector: write methods ───────────────────────────────────
-    DasResult SetInt(uint64_t index, int64_t in_int) override;
-    DasResult SetFloat(uint64_t index, float in_float) override;
-    DasResult SetString(uint64_t index, IDasReadOnlyString* in_string) override;
-    DasResult SetBool(uint64_t index, bool in_bool) override;
     DasResult SetComponent(
         uint64_t                               index,
         ::Das::PluginInterface::IDasComponent* in_component) override;
-    DasResult SetBase(uint64_t index, ::IDasBase* in_base) override;
-    DasResult SetImage(uint64_t index, Das::ExportInterface::IDasImage* p_image)
-        override;
-
-    DasResult PushBackInt(int64_t in_int) override;
-    DasResult PushBackFloat(float in_float) override;
-    DasResult PushBackString(IDasReadOnlyString* in_string) override;
-    DasResult PushBackBool(bool in_bool) override;
     DasResult PushBackComponent(
         ::Das::PluginInterface::IDasComponent* in_component) override;
+
+    // ── IDasVariantVector: Base group ───────────────────────────────────
+    DasResult GetBase(uint64_t index, ::IDasBase** pp_out_base) override;
+    DasResult SetBase(uint64_t index, ::IDasBase* in_base) override;
     DasResult PushBackBase(::IDasBase* in_base) override;
+
+    // ── IDasVariantVector: Image group ──────────────────────────────────
+    DasResult GetImage(
+        uint64_t                          index,
+        Das::ExportInterface::IDasImage** pp_out_image) override;
+    DasResult SetImage(uint64_t index, Das::ExportInterface::IDasImage* p_image)
+        override;
     DasResult PushBackImage(Das::ExportInterface::IDasImage* p_image) override;
+
+    // ── IDasVariantVector: Null group ───────────────────────────────────
+    DasResult IsNull(uint64_t index, bool* out_is_null) override;
     DasResult PushBackNull() override;
 
+    // ── IDasVariantVector: Utility methods ──────────────────────────────
+    DasResult GetType(
+        uint64_t                                index,
+        ::Das::ExportInterface::DasVariantType* p_out_type) override;
     DasResult RemoveAt(uint64_t index) override;
+    DasResult GetSize() override;
 
 private:
     /// @brief Lazy-load full VariantVector snapshot from remote stub.

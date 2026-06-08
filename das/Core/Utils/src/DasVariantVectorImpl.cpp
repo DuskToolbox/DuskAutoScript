@@ -77,6 +77,8 @@ DasRetVariantType VariantToType(const DasVariantVectorImpl::Variant& v)
 
 DAS_NS_ANONYMOUS_DETAILS_END
 
+// ── Int group ──────────────────────────────────────────────────────────────
+
 DasResult DasVariantVectorImpl::GetInt(uint64_t index, int64_t* p_out_int)
 {
     DAS_UTILS_CHECK_POINTER(p_out_int);
@@ -88,6 +90,39 @@ DasResult DasVariantVectorImpl::GetInt(uint64_t index, int64_t* p_out_int)
     return Details::GetVariant(variants_[index], p_out_int);
 }
 
+DasResult DasVariantVectorImpl::SetInt(uint64_t index, int64_t in_int)
+{
+    if (index >= variants_.size())
+    {
+        return DAS_E_OUT_OF_RANGE;
+    }
+    try
+    {
+        variants_[index] = in_int;
+        return DAS_S_OK;
+    }
+    catch (const std::bad_alloc&)
+    {
+        DAS_CORE_LOG_ERROR("Out of memory!");
+        return DAS_E_OUT_OF_MEMORY;
+    }
+}
+
+DasResult DasVariantVectorImpl::PushBackInt(int64_t in_int)
+{
+    try
+    {
+        variants_.emplace_back(in_int);
+        return DAS_S_OK;
+    }
+    catch (const std::bad_alloc&)
+    {
+        return DAS_E_OUT_OF_MEMORY;
+    }
+}
+
+// ── Float group ────────────────────────────────────────────────────────────
+
 DasResult DasVariantVectorImpl::GetFloat(uint64_t index, float* p_out_float)
 {
     DAS_UTILS_CHECK_POINTER(p_out_float);
@@ -98,6 +133,39 @@ DasResult DasVariantVectorImpl::GetFloat(uint64_t index, float* p_out_float)
     }
     return Details::GetVariant(variants_[index], p_out_float);
 }
+
+DasResult DasVariantVectorImpl::SetFloat(uint64_t index, float in_float)
+{
+    if (index >= variants_.size())
+    {
+        return DAS_E_OUT_OF_RANGE;
+    }
+    try
+    {
+        variants_[index] = in_float;
+        return DAS_S_OK;
+    }
+    catch (const std::bad_alloc&)
+    {
+        DAS_CORE_LOG_ERROR("Out of memory!");
+        return DAS_E_OUT_OF_MEMORY;
+    }
+}
+
+DasResult DasVariantVectorImpl::PushBackFloat(float in_float)
+{
+    try
+    {
+        variants_.emplace_back(in_float);
+        return DAS_S_OK;
+    }
+    catch (const std::bad_alloc&)
+    {
+        return DAS_E_OUT_OF_MEMORY;
+    }
+}
+
+// ── String group ───────────────────────────────────────────────────────────
 
 DasResult DasVariantVectorImpl::GetString(
     uint64_t             index,
@@ -123,6 +191,45 @@ DasResult DasVariantVectorImpl::GetString(
     return DAS_S_OK;
 }
 
+DasResult DasVariantVectorImpl::SetString(
+    uint64_t            index,
+    IDasReadOnlyString* in_string)
+{
+    DAS_UTILS_CHECK_POINTER(in_string);
+
+    if (index >= variants_.size())
+    {
+        return DAS_E_OUT_OF_RANGE;
+    }
+    try
+    {
+        variants_[index] = DasReadOnlyString{in_string};
+        return DAS_S_OK;
+    }
+    catch (const std::bad_alloc&)
+    {
+        DAS_CORE_LOG_ERROR("Out of memory!");
+        return DAS_E_OUT_OF_MEMORY;
+    }
+}
+
+DasResult DasVariantVectorImpl::PushBackString(IDasReadOnlyString* in_string)
+{
+    DAS_UTILS_CHECK_POINTER(in_string);
+
+    try
+    {
+        variants_.emplace_back(DasReadOnlyString{in_string});
+        return DAS_S_OK;
+    }
+    catch (const std::bad_alloc&)
+    {
+        return DAS_E_OUT_OF_MEMORY;
+    }
+}
+
+// ── Bool group ─────────────────────────────────────────────────────────────
+
 DasResult DasVariantVectorImpl::GetBool(uint64_t index, bool* p_out_bool)
 {
     DAS_UTILS_CHECK_POINTER(p_out_bool);
@@ -133,6 +240,39 @@ DasResult DasVariantVectorImpl::GetBool(uint64_t index, bool* p_out_bool)
     }
     return Details::GetVariant(variants_[index], p_out_bool);
 }
+
+DasResult DasVariantVectorImpl::SetBool(uint64_t index, bool in_bool)
+{
+    if (index >= variants_.size())
+    {
+        return DAS_E_OUT_OF_RANGE;
+    }
+    try
+    {
+        variants_[index] = in_bool;
+        return DAS_S_OK;
+    }
+    catch (const std::bad_alloc&)
+    {
+        DAS_CORE_LOG_ERROR("Out of memory!");
+        return DAS_E_OUT_OF_MEMORY;
+    }
+}
+
+DasResult DasVariantVectorImpl::PushBackBool(bool in_bool)
+{
+    try
+    {
+        variants_.emplace_back(in_bool);
+        return DAS_S_OK;
+    }
+    catch (const std::bad_alloc&)
+    {
+        return DAS_E_OUT_OF_MEMORY;
+    }
+}
+
+// ── Component group ────────────────────────────────────────────────────────
 
 DasResult DasVariantVectorImpl::GetComponent(
     uint64_t                              index,
@@ -161,6 +301,47 @@ DasResult DasVariantVectorImpl::GetComponent(
     return DAS_S_OK;
 }
 
+DasResult DasVariantVectorImpl::SetComponent(
+    uint64_t                             index,
+    Das::PluginInterface::IDasComponent* in_component)
+{
+    DAS_UTILS_CHECK_POINTER(in_component);
+
+    if (index >= variants_.size())
+    {
+        return DAS_E_OUT_OF_RANGE;
+    }
+    try
+    {
+        variants_[index] = Das::PluginInterface::DasComponent{in_component};
+        return DAS_S_OK;
+    }
+    catch (const std::bad_alloc&)
+    {
+        DAS_CORE_LOG_ERROR("Out of memory!");
+        return DAS_E_OUT_OF_MEMORY;
+    }
+}
+
+DasResult DasVariantVectorImpl::PushBackComponent(
+    Das::PluginInterface::IDasComponent* in_component)
+{
+    DAS_UTILS_CHECK_POINTER(in_component);
+
+    try
+    {
+        variants_.emplace_back(
+            Das::PluginInterface::DasComponent{in_component});
+        return DAS_S_OK;
+    }
+    catch (const std::bad_alloc&)
+    {
+        return DAS_E_OUT_OF_MEMORY;
+    }
+}
+
+// ── Base group ─────────────────────────────────────────────────────────────
+
 DasResult DasVariantVectorImpl::GetBase(uint64_t index, IDasBase** pp_out_base)
 {
     DAS_UTILS_CHECK_POINTER(pp_out_base);
@@ -184,6 +365,43 @@ DasResult DasVariantVectorImpl::GetBase(uint64_t index, IDasBase** pp_out_base)
     *pp_out_base = p_raw;
     return DAS_S_OK;
 }
+
+DasResult DasVariantVectorImpl::SetBase(uint64_t index, IDasBase* in_base)
+{
+    DAS_UTILS_CHECK_POINTER(in_base);
+
+    if (index >= variants_.size())
+    {
+        return DAS_E_OUT_OF_RANGE;
+    }
+    try
+    {
+        variants_[index] = DasBase{in_base};
+        return DAS_S_OK;
+    }
+    catch (const std::bad_alloc&)
+    {
+        DAS_CORE_LOG_ERROR("Out of memory!");
+        return DAS_E_OUT_OF_MEMORY;
+    }
+}
+
+DasResult DasVariantVectorImpl::PushBackBase(IDasBase* in_base)
+{
+    DAS_UTILS_CHECK_POINTER(in_base);
+
+    try
+    {
+        variants_.emplace_back(DasBase{in_base});
+        return DAS_S_OK;
+    }
+    catch (const std::bad_alloc&)
+    {
+        return DAS_E_OUT_OF_MEMORY;
+    }
+}
+
+// ── Image group ────────────────────────────────────────────────────────────
 
 DasResult DasVariantVectorImpl::GetImage(
     uint64_t                          index,
@@ -212,137 +430,6 @@ DasResult DasVariantVectorImpl::GetImage(
     return DAS_S_OK;
 }
 
-DasResult DasVariantVectorImpl::IsNull(uint64_t index, bool* out_is_null)
-{
-    DAS_UTILS_CHECK_POINTER(out_is_null);
-
-    if (index >= variants_.size())
-    {
-        return DAS_E_OUT_OF_RANGE;
-    }
-
-    *out_is_null = std::holds_alternative<std::monostate>(variants_[index]);
-    return DAS_S_OK;
-}
-
-DasResult DasVariantVectorImpl::SetInt(uint64_t index, int64_t in_int)
-{
-    if (index >= variants_.size())
-    {
-        return DAS_E_OUT_OF_RANGE;
-    }
-    try
-    {
-        variants_[index] = in_int;
-        return DAS_S_OK;
-    }
-    catch (const std::bad_alloc&)
-    {
-        DAS_CORE_LOG_ERROR("Out of memory!");
-        return DAS_E_OUT_OF_MEMORY;
-    }
-}
-
-DasResult DasVariantVectorImpl::SetFloat(uint64_t index, float in_float)
-{
-    if (index >= variants_.size())
-    {
-        return DAS_E_OUT_OF_RANGE;
-    }
-    try
-    {
-        variants_[index] = in_float;
-        return DAS_S_OK;
-    }
-    catch (const std::bad_alloc&)
-    {
-        DAS_CORE_LOG_ERROR("Out of memory!");
-        return DAS_E_OUT_OF_MEMORY;
-    }
-}
-
-DasResult DasVariantVectorImpl::SetString(
-    uint64_t            index,
-    IDasReadOnlyString* in_string)
-{
-    DAS_UTILS_CHECK_POINTER(in_string);
-
-    if (index >= variants_.size())
-    {
-        return DAS_E_OUT_OF_RANGE;
-    }
-    try
-    {
-        variants_[index] = DasReadOnlyString{in_string};
-        return DAS_S_OK;
-    }
-    catch (const std::bad_alloc&)
-    {
-        DAS_CORE_LOG_ERROR("Out of memory!");
-        return DAS_E_OUT_OF_MEMORY;
-    }
-}
-
-DasResult DasVariantVectorImpl::SetBool(uint64_t index, bool in_bool)
-{
-    if (index >= variants_.size())
-    {
-        return DAS_E_OUT_OF_RANGE;
-    }
-    try
-    {
-        variants_[index] = in_bool;
-        return DAS_S_OK;
-    }
-    catch (const std::bad_alloc&)
-    {
-        DAS_CORE_LOG_ERROR("Out of memory!");
-        return DAS_E_OUT_OF_MEMORY;
-    }
-}
-
-DasResult DasVariantVectorImpl::SetComponent(
-    uint64_t                             index,
-    Das::PluginInterface::IDasComponent* in_component)
-{
-    DAS_UTILS_CHECK_POINTER(in_component);
-
-    if (index >= variants_.size())
-    {
-        return DAS_E_OUT_OF_RANGE;
-    }
-    try
-    {
-        variants_[index] = Das::PluginInterface::DasComponent{in_component};
-        return DAS_S_OK;
-    }
-    catch (const std::bad_alloc&)
-    {
-        DAS_CORE_LOG_ERROR("Out of memory!");
-        return DAS_E_OUT_OF_MEMORY;
-    }
-}
-
-DasResult DasVariantVectorImpl::SetBase(uint64_t index, IDasBase* in_base)
-{
-    DAS_UTILS_CHECK_POINTER(in_base);
-
-    if (index >= variants_.size())
-    {
-        return DAS_E_OUT_OF_RANGE;
-    }
-    try
-    {
-        variants_[index] = DasBase{in_base};
-        return DAS_S_OK;
-    }
-    catch (const std::bad_alloc&)
-    {
-        DAS_CORE_LOG_ERROR("Out of memory!");
-        return DAS_E_OUT_OF_MEMORY;
-    }
-}
-
 DasResult DasVariantVectorImpl::SetImage(
     uint64_t                         index,
     Das::ExportInterface::IDasImage* p_image)
@@ -365,92 +452,6 @@ DasResult DasVariantVectorImpl::SetImage(
     }
 }
 
-DasResult DasVariantVectorImpl::PushBackInt(int64_t in_int)
-{
-    try
-    {
-        variants_.emplace_back(in_int);
-        return DAS_S_OK;
-    }
-    catch (const std::bad_alloc&)
-    {
-        return DAS_E_OUT_OF_MEMORY;
-    }
-}
-
-DasResult DasVariantVectorImpl::PushBackFloat(float in_float)
-{
-    try
-    {
-        variants_.emplace_back(in_float);
-        return DAS_S_OK;
-    }
-    catch (const std::bad_alloc&)
-    {
-        return DAS_E_OUT_OF_MEMORY;
-    }
-}
-
-DasResult DasVariantVectorImpl::PushBackString(IDasReadOnlyString* in_string)
-{
-    DAS_UTILS_CHECK_POINTER(in_string);
-
-    try
-    {
-        variants_.emplace_back(DasReadOnlyString{in_string});
-        return DAS_S_OK;
-    }
-    catch (const std::bad_alloc&)
-    {
-        return DAS_E_OUT_OF_MEMORY;
-    }
-}
-
-DasResult DasVariantVectorImpl::PushBackBool(bool in_bool)
-{
-    try
-    {
-        variants_.emplace_back(in_bool);
-        return DAS_S_OK;
-    }
-    catch (const std::bad_alloc&)
-    {
-        return DAS_E_OUT_OF_MEMORY;
-    }
-}
-
-DasResult DasVariantVectorImpl::PushBackComponent(
-    Das::PluginInterface::IDasComponent* in_component)
-{
-    DAS_UTILS_CHECK_POINTER(in_component);
-
-    try
-    {
-        variants_.emplace_back(
-            Das::PluginInterface::DasComponent{in_component});
-        return DAS_S_OK;
-    }
-    catch (const std::bad_alloc&)
-    {
-        return DAS_E_OUT_OF_MEMORY;
-    }
-}
-
-DasResult DasVariantVectorImpl::PushBackBase(IDasBase* in_base)
-{
-    DAS_UTILS_CHECK_POINTER(in_base);
-
-    try
-    {
-        variants_.emplace_back(DasBase{in_base});
-        return DAS_S_OK;
-    }
-    catch (const std::bad_alloc&)
-    {
-        return DAS_E_OUT_OF_MEMORY;
-    }
-}
-
 DasResult DasVariantVectorImpl::PushBackImage(
     Das::ExportInterface::IDasImage* p_image)
 {
@@ -467,6 +468,21 @@ DasResult DasVariantVectorImpl::PushBackImage(
     }
 }
 
+// ── Null group ─────────────────────────────────────────────────────────────
+
+DasResult DasVariantVectorImpl::IsNull(uint64_t index, bool* out_is_null)
+{
+    DAS_UTILS_CHECK_POINTER(out_is_null);
+
+    if (index >= variants_.size())
+    {
+        return DAS_E_OUT_OF_RANGE;
+    }
+
+    *out_is_null = std::holds_alternative<std::monostate>(variants_[index]);
+    return DAS_S_OK;
+}
+
 DasResult DasVariantVectorImpl::PushBackNull()
 {
     try
@@ -479,6 +495,8 @@ DasResult DasVariantVectorImpl::PushBackNull()
         return DAS_E_OUT_OF_MEMORY;
     }
 }
+
+// ── Utility methods ────────────────────────────────────────────────────────
 
 DasResult DasVariantVectorImpl::GetType(
     uint64_t        index,

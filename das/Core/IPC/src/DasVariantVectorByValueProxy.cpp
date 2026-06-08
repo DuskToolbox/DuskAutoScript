@@ -14,17 +14,16 @@
 DAS_CORE_IPC_NS_BEGIN
 
 // ============================================================
-// Method ID mapping (0-25):
-//   0: GetInt,        1: GetFloat,       2: GetString
-//   3: GetBool,       4: GetComponent,   5: GetBase
-//   6: SetInt,        7: SetFloat,       8: SetString
-//   9: SetBool,      10: SetComponent,  11: SetBase
-//  12: PushBackInt,  13: PushBackFloat, 14: PushBackString
-//  15: PushBackBool, 16: PushBackComponent, 17: PushBackBase
-//  18: GetType,      19: RemoveAt,      20: GetSize
-//  21: GetImage,     22: IsNull
-//  23: SetImage
-//  24: PushBackImage, 25: PushBackNull
+// Method ID mapping (0-25), grouped by type:
+//   0: GetInt,         1: SetInt,         2: PushBackInt
+//   3: GetFloat,       4: SetFloat,       5: PushBackFloat
+//   6: GetString,      7: SetString,      8: PushBackString
+//   9: GetBool,       10: SetBool,       11: PushBackBool
+//  12: GetComponent,  13: SetComponent,  14: PushBackComponent
+//  15: GetBase,       16: SetBase,       17: PushBackBase
+//  18: GetImage,      19: SetImage,      20: PushBackImage
+//  21: IsNull,        22: PushBackNull
+//  23: GetType,       24: RemoveAt,      25: GetSize
 // ============================================================
 
 DasVariantVectorByValueProxy::DasVariantVectorByValueProxy(
@@ -246,7 +245,7 @@ DasResult DasVariantVectorByValueProxy::EnsureDataLoaded(uint16_t method_id)
         case DasVariantType::DAS_VARIANT_TYPE_COMPONENT:
         case DasVariantType::DAS_VARIANT_TYPE_IMAGE:
         {
-            // BASE/COMPONENT wire format (12B):
+            // BASE/COMPONENT/IMAGE wire format (12B):
             // [session_id:2B][generation:2B][local_id:4B][interface_id:4B]
             uint16_t session_id = 0;
             uint16_t generation = 0;
@@ -297,7 +296,7 @@ DasResult DasVariantVectorByValueProxy::EnsureDataLoaded(uint16_t method_id)
         cache_.push_back(std::move(entry));
     }
 
-    // Second pass: create proxies for BASE/COMPONENT entries
+    // Second pass: create proxies for BASE/COMPONENT/IMAGE entries
     for (size_t idx = 0; idx < cache_.size(); ++idx)
     {
         auto& entry = cache_[idx];
@@ -369,7 +368,7 @@ DasResult DasVariantVectorByValueProxy::SendWriteBack(
     return GetRunLoop().PostSend(header, std::move(body));
 }
 
-// ── Read methods ──────────────────────────────────────────────────────────
+// ── Int group (method_id 0-2) ─────────────────────────────────────────────
 
 DasResult DasVariantVectorByValueProxy::GetInt(
     uint64_t index,
@@ -396,6 +395,57 @@ DasResult DasVariantVectorByValueProxy::GetInt(
     return DAS_S_OK;
 }
 
+DasResult DasVariantVectorByValueProxy::SetInt(uint64_t index, int64_t in_int)
+{
+    DasResult result = EnsureDataLoaded(1);
+    if (DAS::IsFailed(result))
+    {
+        return result;
+    }
+    if (index >= cache_.size())
+    {
+        return DAS_E_INVALID_ARGUMENT;
+    }
+
+    // Update local cache
+    cache_[index].type = ::Das::ExportInterface::DAS_VARIANT_TYPE_INT;
+    cache_[index].int_value = in_int;
+
+    // Fire-and-forget: [index:8B][value:8B]
+    MemorySerializerWriter writer;
+    writer.WriteUInt64(index);
+    writer.WriteInt64(in_int);
+    return SendWriteBack(
+        1,
+        writer.GetBuffer().data(),
+        writer.GetBuffer().size());
+}
+
+DasResult DasVariantVectorByValueProxy::PushBackInt(int64_t in_int)
+{
+    DasResult result = EnsureDataLoaded(2);
+    if (DAS::IsFailed(result))
+    {
+        return result;
+    }
+
+    // Update local cache
+    CachedVariant entry;
+    entry.type = ::Das::ExportInterface::DAS_VARIANT_TYPE_INT;
+    entry.int_value = in_int;
+    cache_.push_back(std::move(entry));
+
+    // Fire-and-forget: [value:8B]
+    MemorySerializerWriter writer;
+    writer.WriteInt64(in_int);
+    return SendWriteBack(
+        2,
+        writer.GetBuffer().data(),
+        writer.GetBuffer().size());
+}
+
+// ── Float group (method_id 3-5) ───────────────────────────────────────────
+
 DasResult DasVariantVectorByValueProxy::GetFloat(
     uint64_t index,
     float*   p_out_float)
@@ -404,7 +454,7 @@ DasResult DasVariantVectorByValueProxy::GetFloat(
     {
         return DAS_E_INVALID_POINTER;
     }
-    DasResult result = EnsureDataLoaded(1);
+    DasResult result = EnsureDataLoaded(3);
     if (DAS::IsFailed(result))
     {
         return result;
@@ -421,6 +471,55 @@ DasResult DasVariantVectorByValueProxy::GetFloat(
     return DAS_S_OK;
 }
 
+DasResult DasVariantVectorByValueProxy::SetFloat(uint64_t index, float in_float)
+{
+    DasResult result = EnsureDataLoaded(4);
+    if (DAS::IsFailed(result))
+    {
+        return result;
+    }
+    if (index >= cache_.size())
+    {
+        return DAS_E_INVALID_ARGUMENT;
+    }
+
+    cache_[index].type = ::Das::ExportInterface::DAS_VARIANT_TYPE_FLOAT;
+    cache_[index].float_value = in_float;
+
+    // [index:8B][value:4B]
+    MemorySerializerWriter writer;
+    writer.WriteUInt64(index);
+    writer.WriteFloat(in_float);
+    return SendWriteBack(
+        4,
+        writer.GetBuffer().data(),
+        writer.GetBuffer().size());
+}
+
+DasResult DasVariantVectorByValueProxy::PushBackFloat(float in_float)
+{
+    DasResult result = EnsureDataLoaded(5);
+    if (DAS::IsFailed(result))
+    {
+        return result;
+    }
+
+    CachedVariant entry;
+    entry.type = ::Das::ExportInterface::DAS_VARIANT_TYPE_FLOAT;
+    entry.float_value = in_float;
+    cache_.push_back(std::move(entry));
+
+    // [value:4B]
+    MemorySerializerWriter writer;
+    writer.WriteFloat(in_float);
+    return SendWriteBack(
+        5,
+        writer.GetBuffer().data(),
+        writer.GetBuffer().size());
+}
+
+// ── String group (method_id 6-8) ──────────────────────────────────────────
+
 DasResult DasVariantVectorByValueProxy::GetString(
     uint64_t             index,
     IDasReadOnlyString** pp_out_string)
@@ -431,7 +530,7 @@ DasResult DasVariantVectorByValueProxy::GetString(
     }
     *pp_out_string = nullptr;
 
-    DasResult result = EnsureDataLoaded(2);
+    DasResult result = EnsureDataLoaded(6);
     if (DAS::IsFailed(result))
     {
         return result;
@@ -453,218 +552,6 @@ DasResult DasVariantVectorByValueProxy::GetString(
     return result;
 }
 
-DasResult DasVariantVectorByValueProxy::GetBool(
-    uint64_t index,
-    bool*    p_out_bool)
-{
-    if (p_out_bool == nullptr)
-    {
-        return DAS_E_INVALID_POINTER;
-    }
-    DasResult result = EnsureDataLoaded(3);
-    if (DAS::IsFailed(result))
-    {
-        return result;
-    }
-    if (index >= cache_.size())
-    {
-        return DAS_E_INVALID_ARGUMENT;
-    }
-    if (cache_[index].type != ::Das::ExportInterface::DAS_VARIANT_TYPE_BOOL)
-    {
-        return DAS_E_INVALID_ARGUMENT;
-    }
-    *p_out_bool = cache_[index].bool_value;
-    return DAS_S_OK;
-}
-
-DasResult DasVariantVectorByValueProxy::GetComponent(
-    uint64_t                                index,
-    ::Das::PluginInterface::IDasComponent** pp_out_component)
-{
-    if (pp_out_component == nullptr)
-    {
-        return DAS_E_INVALID_POINTER;
-    }
-    *pp_out_component = nullptr;
-
-    DasResult result = EnsureDataLoaded(4);
-    if (DAS::IsFailed(result))
-    {
-        return result;
-    }
-    if (index >= cache_.size())
-    {
-        return DAS_E_INVALID_ARGUMENT;
-    }
-    if (cache_[index].type
-        != ::Das::ExportInterface::DAS_VARIANT_TYPE_COMPONENT)
-    {
-        return DAS_E_INVALID_ARGUMENT;
-    }
-
-    if (cache_[index].base_ptr.Get() != nullptr)
-    {
-        cache_[index].base_ptr.Get()->AddRef();
-        *pp_out_component = static_cast<Das::PluginInterface::IDasComponent*>(
-            cache_[index].base_ptr.Get());
-    }
-    return DAS_S_OK;
-}
-
-DasResult DasVariantVectorByValueProxy::GetBase(
-    uint64_t     index,
-    ::IDasBase** pp_out_base)
-{
-    if (pp_out_base == nullptr)
-    {
-        return DAS_E_INVALID_POINTER;
-    }
-    *pp_out_base = nullptr;
-
-    DasResult result = EnsureDataLoaded(5);
-    if (DAS::IsFailed(result))
-    {
-        return result;
-    }
-    if (index >= cache_.size())
-    {
-        return DAS_E_INVALID_ARGUMENT;
-    }
-    if (cache_[index].type != ::Das::ExportInterface::DAS_VARIANT_TYPE_BASE)
-    {
-        return DAS_E_INVALID_ARGUMENT;
-    }
-
-    if (cache_[index].base_ptr.Get() != nullptr)
-    {
-        cache_[index].base_ptr.Get()->AddRef();
-        *pp_out_base = cache_[index].base_ptr.Get();
-    }
-    return DAS_S_OK;
-}
-
-DasResult DasVariantVectorByValueProxy::GetImage(
-    uint64_t                          index,
-    Das::ExportInterface::IDasImage** pp_out_image)
-{
-    if (pp_out_image == nullptr)
-    {
-        return DAS_E_INVALID_POINTER;
-    }
-    *pp_out_image = nullptr;
-    (void)index;
-    // IMAGE IPC proxy not yet implemented — requires wire format extension
-    return DAS_E_NO_IMPLEMENTATION;
-}
-
-DasResult DasVariantVectorByValueProxy::IsNull(
-    uint64_t index,
-    bool*    out_is_null)
-{
-    if (out_is_null == nullptr)
-    {
-        return DAS_E_INVALID_POINTER;
-    }
-    DasResult result = EnsureDataLoaded(22);
-    if (DAS::IsFailed(result))
-    {
-        return result;
-    }
-    if (index >= cache_.size())
-    {
-        return DAS_E_INVALID_ARGUMENT;
-    }
-    *out_is_null =
-        (cache_[index].type == ::Das::ExportInterface::DAS_VARIANT_TYPE_NULL);
-    return DAS_S_OK;
-}
-
-DasResult DasVariantVectorByValueProxy::GetType(
-    uint64_t                                index,
-    ::Das::ExportInterface::DasVariantType* p_out_type)
-{
-    if (p_out_type == nullptr)
-    {
-        return DAS_E_INVALID_POINTER;
-    }
-    DasResult result = EnsureDataLoaded(18);
-    if (DAS::IsFailed(result))
-    {
-        return result;
-    }
-    if (index >= cache_.size())
-    {
-        return DAS_E_INVALID_ARGUMENT;
-    }
-    *p_out_type = cache_[index].type;
-    return DAS_S_OK;
-}
-
-DasResult DasVariantVectorByValueProxy::GetSize()
-{
-    DasResult result = EnsureDataLoaded(20);
-    if (DAS::IsFailed(result))
-    {
-        return result;
-    }
-    // GetSize returns size as DasResult per IDL convention
-    return static_cast<DasResult>(cache_.size());
-}
-
-// ── Write methods: update local cache + fire-and-forget write-back ────────
-
-DasResult DasVariantVectorByValueProxy::SetInt(uint64_t index, int64_t in_int)
-{
-    DasResult result = EnsureDataLoaded(6);
-    if (DAS::IsFailed(result))
-    {
-        return result;
-    }
-    if (index >= cache_.size())
-    {
-        return DAS_E_INVALID_ARGUMENT;
-    }
-
-    // Update local cache
-    cache_[index].type = ::Das::ExportInterface::DAS_VARIANT_TYPE_INT;
-    cache_[index].int_value = in_int;
-
-    // Fire-and-forget: [index:8B][value:8B]
-    MemorySerializerWriter writer;
-    writer.WriteUInt64(index);
-    writer.WriteInt64(in_int);
-    return SendWriteBack(
-        6,
-        writer.GetBuffer().data(),
-        writer.GetBuffer().size());
-}
-
-DasResult DasVariantVectorByValueProxy::SetFloat(uint64_t index, float in_float)
-{
-    DasResult result = EnsureDataLoaded(7);
-    if (DAS::IsFailed(result))
-    {
-        return result;
-    }
-    if (index >= cache_.size())
-    {
-        return DAS_E_INVALID_ARGUMENT;
-    }
-
-    cache_[index].type = ::Das::ExportInterface::DAS_VARIANT_TYPE_FLOAT;
-    cache_[index].float_value = in_float;
-
-    // [index:8B][value:4B]
-    MemorySerializerWriter writer;
-    writer.WriteUInt64(index);
-    writer.WriteFloat(in_float);
-    return SendWriteBack(
-        7,
-        writer.GetBuffer().data(),
-        writer.GetBuffer().size());
-}
-
 DasResult DasVariantVectorByValueProxy::SetString(
     uint64_t            index,
     IDasReadOnlyString* in_string)
@@ -673,7 +560,7 @@ DasResult DasVariantVectorByValueProxy::SetString(
     {
         return DAS_E_INVALID_POINTER;
     }
-    DasResult result = EnsureDataLoaded(8);
+    DasResult result = EnsureDataLoaded(7);
     if (DAS::IsFailed(result))
     {
         return result;
@@ -705,14 +592,80 @@ DasResult DasVariantVectorByValueProxy::SetString(
         writer.Write(utf8_data, utf8_len);
     }
     return SendWriteBack(
+        7,
+        writer.GetBuffer().data(),
+        writer.GetBuffer().size());
+}
+
+DasResult DasVariantVectorByValueProxy::PushBackString(
+    IDasReadOnlyString* in_string)
+{
+    if (in_string == nullptr)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+    DasResult result = EnsureDataLoaded(8);
+    if (DAS::IsFailed(result))
+    {
+        return result;
+    }
+
+    const char* utf8_data = nullptr;
+    result = in_string->GetUtf8(&utf8_data);
+    if (DAS::IsFailed(result))
+    {
+        return result;
+    }
+    size_t utf8_len = (utf8_data != nullptr) ? std::strlen(utf8_data) : 0;
+
+    CachedVariant entry;
+    entry.type = ::Das::ExportInterface::DAS_VARIANT_TYPE_STRING;
+    entry.string_value.assign(utf8_data, utf8_len);
+    cache_.push_back(std::move(entry));
+
+    // [str_len:8B][utf8_bytes:str_len]
+    MemorySerializerWriter writer;
+    writer.WriteUInt64(static_cast<uint64_t>(utf8_len));
+    if (utf8_len > 0 && utf8_data != nullptr)
+    {
+        writer.Write(utf8_data, utf8_len);
+    }
+    return SendWriteBack(
         8,
         writer.GetBuffer().data(),
         writer.GetBuffer().size());
 }
 
+// ── Bool group (method_id 9-11) ───────────────────────────────────────────
+
+DasResult DasVariantVectorByValueProxy::GetBool(
+    uint64_t index,
+    bool*    p_out_bool)
+{
+    if (p_out_bool == nullptr)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+    DasResult result = EnsureDataLoaded(9);
+    if (DAS::IsFailed(result))
+    {
+        return result;
+    }
+    if (index >= cache_.size())
+    {
+        return DAS_E_INVALID_ARGUMENT;
+    }
+    if (cache_[index].type != ::Das::ExportInterface::DAS_VARIANT_TYPE_BOOL)
+    {
+        return DAS_E_INVALID_ARGUMENT;
+    }
+    *p_out_bool = cache_[index].bool_value;
+    return DAS_S_OK;
+}
+
 DasResult DasVariantVectorByValueProxy::SetBool(uint64_t index, bool in_bool)
 {
-    DasResult result = EnsureDataLoaded(9);
+    DasResult result = EnsureDataLoaded(10);
     if (DAS::IsFailed(result))
     {
         return result;
@@ -730,16 +683,74 @@ DasResult DasVariantVectorByValueProxy::SetBool(uint64_t index, bool in_bool)
     writer.WriteUInt64(index);
     writer.WriteUInt8(in_bool ? 1 : 0);
     return SendWriteBack(
-        9,
+        10,
         writer.GetBuffer().data(),
         writer.GetBuffer().size());
+}
+
+DasResult DasVariantVectorByValueProxy::PushBackBool(bool in_bool)
+{
+    DasResult result = EnsureDataLoaded(11);
+    if (DAS::IsFailed(result))
+    {
+        return result;
+    }
+
+    CachedVariant entry;
+    entry.type = ::Das::ExportInterface::DAS_VARIANT_TYPE_BOOL;
+    entry.bool_value = in_bool;
+    cache_.push_back(std::move(entry));
+
+    // [value:1B]
+    MemorySerializerWriter writer;
+    writer.WriteUInt8(in_bool ? 1 : 0);
+    return SendWriteBack(
+        11,
+        writer.GetBuffer().data(),
+        writer.GetBuffer().size());
+}
+
+// ── Component group (method_id 12-14) ─────────────────────────────────────
+
+DasResult DasVariantVectorByValueProxy::GetComponent(
+    uint64_t                                index,
+    ::Das::PluginInterface::IDasComponent** pp_out_component)
+{
+    if (pp_out_component == nullptr)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+    *pp_out_component = nullptr;
+
+    DasResult result = EnsureDataLoaded(12);
+    if (DAS::IsFailed(result))
+    {
+        return result;
+    }
+    if (index >= cache_.size())
+    {
+        return DAS_E_INVALID_ARGUMENT;
+    }
+    if (cache_[index].type
+        != ::Das::ExportInterface::DAS_VARIANT_TYPE_COMPONENT)
+    {
+        return DAS_E_INVALID_ARGUMENT;
+    }
+
+    if (cache_[index].base_ptr.Get() != nullptr)
+    {
+        cache_[index].base_ptr.Get()->AddRef();
+        *pp_out_component = static_cast<Das::PluginInterface::IDasComponent*>(
+            cache_[index].base_ptr.Get());
+    }
+    return DAS_S_OK;
 }
 
 DasResult DasVariantVectorByValueProxy::SetComponent(
     uint64_t                               index,
     ::Das::PluginInterface::IDasComponent* in_component)
 {
-    DasResult result = EnsureDataLoaded(10);
+    DasResult result = EnsureDataLoaded(13);
     if (DAS::IsFailed(result))
     {
         return result;
@@ -785,7 +796,7 @@ DasResult DasVariantVectorByValueProxy::SetComponent(
     writer.WriteUInt32(oid.local_id);
     writer.WriteUInt32(cache_[index].interface_id);
     auto send_result =
-        SendWriteBack(10, writer.GetBuffer().data(), writer.GetBuffer().size());
+        SendWriteBack(13, writer.GetBuffer().data(), writer.GetBuffer().size());
     if (!IsTransportLevelError(send_result))
     {
         guard.Commit();
@@ -793,11 +804,98 @@ DasResult DasVariantVectorByValueProxy::SetComponent(
     return send_result;
 }
 
+DasResult DasVariantVectorByValueProxy::PushBackComponent(
+    ::Das::PluginInterface::IDasComponent* in_component)
+{
+    DasResult result = EnsureDataLoaded(14);
+    if (DAS::IsFailed(result))
+    {
+        return result;
+    }
+
+    PendingInParamExportGuard guard{GetObjectManager()};
+
+    ObjectId oid{};
+    bool     newly_registered = false;
+    result = SerializeInInterfaceParam(
+        in_component,
+        GetObjectManager(),
+        oid,
+        &newly_registered);
+    if (DAS::IsFailed(result))
+    {
+        return result;
+    }
+    guard.Track(oid, newly_registered);
+
+    CachedVariant entry;
+    entry.type = ::Das::ExportInterface::DAS_VARIANT_TYPE_COMPONENT;
+    entry.object_id = oid;
+    entry.interface_id =
+        ComputeInterfaceId(DasIidOf<Das::PluginInterface::IDasComponent>());
+    entry.base_ptr = DasPtr<IDasBase>::Attach(in_component);
+    if (in_component != nullptr)
+    {
+        in_component->AddRef();
+    }
+    cache_.push_back(std::move(entry));
+
+    // Fire-and-forget:
+    // [session_id:2B][generation:2B][local_id:4B][interface_id:4B]
+    MemorySerializerWriter writer;
+    writer.WriteUInt16(oid.session_id);
+    writer.WriteUInt16(oid.generation);
+    writer.WriteUInt32(oid.local_id);
+    writer.WriteUInt32(
+        ComputeInterfaceId(DasIidOf<Das::PluginInterface::IDasComponent>()));
+    auto send_result =
+        SendWriteBack(14, writer.GetBuffer().data(), writer.GetBuffer().size());
+    if (!IsTransportLevelError(send_result))
+    {
+        guard.Commit();
+    }
+    return send_result;
+}
+
+// ── Base group (method_id 15-17) ──────────────────────────────────────────
+
+DasResult DasVariantVectorByValueProxy::GetBase(
+    uint64_t     index,
+    ::IDasBase** pp_out_base)
+{
+    if (pp_out_base == nullptr)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+    *pp_out_base = nullptr;
+
+    DasResult result = EnsureDataLoaded(15);
+    if (DAS::IsFailed(result))
+    {
+        return result;
+    }
+    if (index >= cache_.size())
+    {
+        return DAS_E_INVALID_ARGUMENT;
+    }
+    if (cache_[index].type != ::Das::ExportInterface::DAS_VARIANT_TYPE_BASE)
+    {
+        return DAS_E_INVALID_ARGUMENT;
+    }
+
+    if (cache_[index].base_ptr.Get() != nullptr)
+    {
+        cache_[index].base_ptr.Get()->AddRef();
+        *pp_out_base = cache_[index].base_ptr.Get();
+    }
+    return DAS_S_OK;
+}
+
 DasResult DasVariantVectorByValueProxy::SetBase(
     uint64_t    index,
     ::IDasBase* in_base)
 {
-    DasResult result = EnsureDataLoaded(11);
+    DasResult result = EnsureDataLoaded(16);
     if (DAS::IsFailed(result))
     {
         return result;
@@ -839,175 +937,6 @@ DasResult DasVariantVectorByValueProxy::SetBase(
     writer.WriteUInt16(oid.generation);
     writer.WriteUInt32(oid.local_id);
     writer.WriteUInt32(cache_[index].interface_id);
-    auto send_result =
-        SendWriteBack(11, writer.GetBuffer().data(), writer.GetBuffer().size());
-    if (!IsTransportLevelError(send_result))
-    {
-        guard.Commit();
-    }
-    return send_result;
-}
-
-DasResult DasVariantVectorByValueProxy::SetImage(
-    uint64_t                         index,
-    Das::ExportInterface::IDasImage* p_image)
-{
-    (void)index;
-    (void)p_image;
-    // IMAGE IPC proxy not yet implemented
-    return DAS_E_NO_IMPLEMENTATION;
-}
-
-DasResult DasVariantVectorByValueProxy::PushBackInt(int64_t in_int)
-{
-    DasResult result = EnsureDataLoaded(12);
-    if (DAS::IsFailed(result))
-    {
-        return result;
-    }
-
-    // Update local cache
-    CachedVariant entry;
-    entry.type = ::Das::ExportInterface::DAS_VARIANT_TYPE_INT;
-    entry.int_value = in_int;
-    cache_.push_back(std::move(entry));
-
-    // Fire-and-forget: [value:8B]
-    MemorySerializerWriter writer;
-    writer.WriteInt64(in_int);
-    return SendWriteBack(
-        12,
-        writer.GetBuffer().data(),
-        writer.GetBuffer().size());
-}
-
-DasResult DasVariantVectorByValueProxy::PushBackFloat(float in_float)
-{
-    DasResult result = EnsureDataLoaded(13);
-    if (DAS::IsFailed(result))
-    {
-        return result;
-    }
-
-    CachedVariant entry;
-    entry.type = ::Das::ExportInterface::DAS_VARIANT_TYPE_FLOAT;
-    entry.float_value = in_float;
-    cache_.push_back(std::move(entry));
-
-    // [value:4B]
-    MemorySerializerWriter writer;
-    writer.WriteFloat(in_float);
-    return SendWriteBack(
-        13,
-        writer.GetBuffer().data(),
-        writer.GetBuffer().size());
-}
-
-DasResult DasVariantVectorByValueProxy::PushBackString(
-    IDasReadOnlyString* in_string)
-{
-    if (in_string == nullptr)
-    {
-        return DAS_E_INVALID_POINTER;
-    }
-    DasResult result = EnsureDataLoaded(14);
-    if (DAS::IsFailed(result))
-    {
-        return result;
-    }
-
-    const char* utf8_data = nullptr;
-    result = in_string->GetUtf8(&utf8_data);
-    if (DAS::IsFailed(result))
-    {
-        return result;
-    }
-    size_t utf8_len = (utf8_data != nullptr) ? std::strlen(utf8_data) : 0;
-
-    CachedVariant entry;
-    entry.type = ::Das::ExportInterface::DAS_VARIANT_TYPE_STRING;
-    entry.string_value.assign(utf8_data, utf8_len);
-    cache_.push_back(std::move(entry));
-
-    // [str_len:8B][utf8_bytes:str_len]
-    MemorySerializerWriter writer;
-    writer.WriteUInt64(static_cast<uint64_t>(utf8_len));
-    if (utf8_len > 0 && utf8_data != nullptr)
-    {
-        writer.Write(utf8_data, utf8_len);
-    }
-    return SendWriteBack(
-        14,
-        writer.GetBuffer().data(),
-        writer.GetBuffer().size());
-}
-
-DasResult DasVariantVectorByValueProxy::PushBackBool(bool in_bool)
-{
-    DasResult result = EnsureDataLoaded(15);
-    if (DAS::IsFailed(result))
-    {
-        return result;
-    }
-
-    CachedVariant entry;
-    entry.type = ::Das::ExportInterface::DAS_VARIANT_TYPE_BOOL;
-    entry.bool_value = in_bool;
-    cache_.push_back(std::move(entry));
-
-    // [value:1B]
-    MemorySerializerWriter writer;
-    writer.WriteUInt8(in_bool ? 1 : 0);
-    return SendWriteBack(
-        15,
-        writer.GetBuffer().data(),
-        writer.GetBuffer().size());
-}
-
-DasResult DasVariantVectorByValueProxy::PushBackComponent(
-    ::Das::PluginInterface::IDasComponent* in_component)
-{
-    DasResult result = EnsureDataLoaded(16);
-    if (DAS::IsFailed(result))
-    {
-        return result;
-    }
-
-    PendingInParamExportGuard guard{GetObjectManager()};
-
-    ObjectId oid{};
-    bool     newly_registered = false;
-    result = SerializeInInterfaceParam(
-        in_component,
-        GetObjectManager(),
-        oid,
-        &newly_registered);
-    if (DAS::IsFailed(result))
-    {
-        return result;
-    }
-    guard.Track(oid, newly_registered);
-
-    CachedVariant entry;
-    entry.type = ::Das::ExportInterface::DAS_VARIANT_TYPE_COMPONENT;
-    entry.object_id = oid;
-    entry.interface_id =
-        ComputeInterfaceId(DasIidOf<Das::PluginInterface::IDasComponent>());
-    entry.base_ptr = DasPtr<IDasBase>::Attach(in_component);
-    if (in_component != nullptr)
-    {
-        in_component->AddRef();
-    }
-    cache_.push_back(std::move(entry));
-
-    // Fire-and-forget:
-    // [session_id:2B][generation:2B][local_id:4B][interface_id:4B]
-    MemorySerializerWriter writer;
-    writer.WriteUInt16(oid.session_id);
-    writer.WriteUInt16(oid.generation);
-    writer.WriteUInt32(oid.local_id);
-    writer.WriteUInt32(
-        ComputeInterfaceId(DasIidOf<Das::PluginInterface::IDasComponent>()));
     auto send_result =
         SendWriteBack(16, writer.GetBuffer().data(), writer.GetBuffer().size());
     if (!IsTransportLevelError(send_result))
@@ -1067,17 +996,177 @@ DasResult DasVariantVectorByValueProxy::PushBackBase(::IDasBase* in_base)
     return send_result;
 }
 
+// ── Image group (method_id 18-20) ─────────────────────────────────────────
+
+DasResult DasVariantVectorByValueProxy::GetImage(
+    uint64_t                          index,
+    Das::ExportInterface::IDasImage** pp_out_image)
+{
+    if (pp_out_image == nullptr)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+    *pp_out_image = nullptr;
+
+    DasResult result = EnsureDataLoaded(18);
+    if (DAS::IsFailed(result))
+    {
+        return result;
+    }
+    if (index >= cache_.size())
+    {
+        return DAS_E_INVALID_ARGUMENT;
+    }
+    if (cache_[index].type != ::Das::ExportInterface::DAS_VARIANT_TYPE_IMAGE)
+    {
+        return DAS_E_INVALID_ARGUMENT;
+    }
+
+    if (cache_[index].base_ptr.Get() != nullptr)
+    {
+        cache_[index].base_ptr.Get()->AddRef();
+        *pp_out_image = static_cast<Das::ExportInterface::IDasImage*>(
+            cache_[index].base_ptr.Get());
+    }
+    return DAS_S_OK;
+}
+
+DasResult DasVariantVectorByValueProxy::SetImage(
+    uint64_t                         index,
+    Das::ExportInterface::IDasImage* p_image)
+{
+    DasResult result = EnsureDataLoaded(19);
+    if (DAS::IsFailed(result))
+    {
+        return result;
+    }
+    if (index >= cache_.size())
+    {
+        return DAS_E_INVALID_ARGUMENT;
+    }
+
+    PendingInParamExportGuard guard{GetObjectManager()};
+
+    ObjectId oid{};
+    bool     newly_registered = false;
+    result = SerializeInInterfaceParam(
+        p_image,
+        GetObjectManager(),
+        oid,
+        &newly_registered);
+    if (DAS::IsFailed(result))
+    {
+        return result;
+    }
+    guard.Track(oid, newly_registered);
+
+    cache_[index].type = ::Das::ExportInterface::DAS_VARIANT_TYPE_IMAGE;
+    cache_[index].object_id = oid;
+    cache_[index].interface_id =
+        ComputeInterfaceId(DasIidOf<Das::ExportInterface::IDasImage>());
+    cache_[index].base_ptr = DasPtr<IDasBase>::Attach(p_image);
+    if (p_image != nullptr)
+    {
+        p_image->AddRef();
+    }
+
+    // Fire-and-forget:
+    // [index:8B][session_id:2B][generation:2B][local_id:4B][interface_id:4B]
+    MemorySerializerWriter writer;
+    writer.WriteUInt64(index);
+    writer.WriteUInt16(oid.session_id);
+    writer.WriteUInt16(oid.generation);
+    writer.WriteUInt32(oid.local_id);
+    writer.WriteUInt32(cache_[index].interface_id);
+    auto send_result =
+        SendWriteBack(19, writer.GetBuffer().data(), writer.GetBuffer().size());
+    if (!IsTransportLevelError(send_result))
+    {
+        guard.Commit();
+    }
+    return send_result;
+}
+
 DasResult DasVariantVectorByValueProxy::PushBackImage(
     Das::ExportInterface::IDasImage* p_image)
 {
-    (void)p_image;
-    // IMAGE IPC proxy not yet implemented
-    return DAS_E_NO_IMPLEMENTATION;
+    DasResult result = EnsureDataLoaded(20);
+    if (DAS::IsFailed(result))
+    {
+        return result;
+    }
+
+    PendingInParamExportGuard guard{GetObjectManager()};
+
+    ObjectId oid{};
+    bool     newly_registered = false;
+    result = SerializeInInterfaceParam(
+        p_image,
+        GetObjectManager(),
+        oid,
+        &newly_registered);
+    if (DAS::IsFailed(result))
+    {
+        return result;
+    }
+    guard.Track(oid, newly_registered);
+
+    CachedVariant entry;
+    entry.type = ::Das::ExportInterface::DAS_VARIANT_TYPE_IMAGE;
+    entry.object_id = oid;
+    entry.interface_id =
+        ComputeInterfaceId(DasIidOf<Das::ExportInterface::IDasImage>());
+    entry.base_ptr = DasPtr<IDasBase>::Attach(p_image);
+    if (p_image != nullptr)
+    {
+        p_image->AddRef();
+    }
+    cache_.push_back(std::move(entry));
+
+    // Fire-and-forget:
+    // [session_id:2B][generation:2B][local_id:4B][interface_id:4B]
+    MemorySerializerWriter writer;
+    writer.WriteUInt16(oid.session_id);
+    writer.WriteUInt16(oid.generation);
+    writer.WriteUInt32(oid.local_id);
+    writer.WriteUInt32(
+        ComputeInterfaceId(DasIidOf<Das::ExportInterface::IDasImage>()));
+    auto send_result =
+        SendWriteBack(20, writer.GetBuffer().data(), writer.GetBuffer().size());
+    if (!IsTransportLevelError(send_result))
+    {
+        guard.Commit();
+    }
+    return send_result;
+}
+
+// ── Null group (method_id 21-22) ──────────────────────────────────────────
+
+DasResult DasVariantVectorByValueProxy::IsNull(
+    uint64_t index,
+    bool*    out_is_null)
+{
+    if (out_is_null == nullptr)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+    DasResult result = EnsureDataLoaded(21);
+    if (DAS::IsFailed(result))
+    {
+        return result;
+    }
+    if (index >= cache_.size())
+    {
+        return DAS_E_INVALID_ARGUMENT;
+    }
+    *out_is_null =
+        (cache_[index].type == ::Das::ExportInterface::DAS_VARIANT_TYPE_NULL);
+    return DAS_S_OK;
 }
 
 DasResult DasVariantVectorByValueProxy::PushBackNull()
 {
-    DasResult result = EnsureDataLoaded(25);
+    DasResult result = EnsureDataLoaded(22);
     if (DAS::IsFailed(result))
     {
         return result;
@@ -1088,12 +1177,35 @@ DasResult DasVariantVectorByValueProxy::PushBackNull()
     cache_.push_back(std::move(entry));
 
     // Fire-and-forget: no payload for NULL
-    return SendWriteBack(25, nullptr, 0);
+    return SendWriteBack(22, nullptr, 0);
+}
+
+// ── Utility methods (method_id 23-25) ─────────────────────────────────────
+
+DasResult DasVariantVectorByValueProxy::GetType(
+    uint64_t                                index,
+    ::Das::ExportInterface::DasVariantType* p_out_type)
+{
+    if (p_out_type == nullptr)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+    DasResult result = EnsureDataLoaded(23);
+    if (DAS::IsFailed(result))
+    {
+        return result;
+    }
+    if (index >= cache_.size())
+    {
+        return DAS_E_INVALID_ARGUMENT;
+    }
+    *p_out_type = cache_[index].type;
+    return DAS_S_OK;
 }
 
 DasResult DasVariantVectorByValueProxy::RemoveAt(uint64_t index)
 {
-    DasResult result = EnsureDataLoaded(19);
+    DasResult result = EnsureDataLoaded(24);
     if (DAS::IsFailed(result))
     {
         return result;
@@ -1110,9 +1222,20 @@ DasResult DasVariantVectorByValueProxy::RemoveAt(uint64_t index)
     MemorySerializerWriter writer;
     writer.WriteUInt64(index);
     return SendWriteBack(
-        19,
+        24,
         writer.GetBuffer().data(),
         writer.GetBuffer().size());
+}
+
+DasResult DasVariantVectorByValueProxy::GetSize()
+{
+    DasResult result = EnsureDataLoaded(25);
+    if (DAS::IsFailed(result))
+    {
+        return result;
+    }
+    // GetSize returns size as DasResult per IDL convention
+    return static_cast<DasResult>(cache_.size());
 }
 
 DAS_CORE_IPC_NS_END

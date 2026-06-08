@@ -17,17 +17,16 @@
 DAS_CORE_IPC_NS_BEGIN
 
 // ============================================================
-// Method ID mapping (0-25):
-//   0: GetInt,        1: GetFloat,       2: GetString
-//   3: GetBool,       4: GetComponent,   5: GetBase
-//   6: SetInt,        7: SetFloat,       8: SetString
-//   9: SetBool,      10: SetComponent,  11: SetBase
-//  12: PushBackInt,  13: PushBackFloat, 14: PushBackString
-//  15: PushBackBool, 16: PushBackComponent, 17: PushBackBase
-//  18: GetType,      19: RemoveAt,      20: GetSize
-//  21: GetImage,     22: IsNull
-//  23: SetImage
-//  24: PushBackImage, 25: PushBackNull
+// Method ID mapping (0-25), grouped by type:
+//   0: GetInt,         1: SetInt,         2: PushBackInt
+//   3: GetFloat,       4: SetFloat,       5: PushBackFloat
+//   6: GetString,      7: SetString,      8: PushBackString
+//   9: GetBool,       10: SetBool,       11: PushBackBool
+//  12: GetComponent,  13: SetComponent,  14: PushBackComponent
+//  15: GetBase,       16: SetBase,       17: PushBackBase
+//  18: GetImage,      19: SetImage,      20: PushBackImage
+//  21: IsNull,        22: PushBackNull
+//  23: GetType,       24: RemoveAt,      25: GetSize
 // ============================================================
 
 namespace
@@ -154,8 +153,6 @@ namespace
     }
 
     /// Write a single variant value to the snapshot writer.
-    /// Uses DasVariantType enum values: INT=0, FLOAT=1, STRING=2, BOOL=3,
-    /// BASE=4, COMPONENT=5
     DasResult WriteVariantValue(
         MemorySerializerWriter&                  writer,
         Das::ExportInterface::DasVariantType     type,
@@ -351,24 +348,35 @@ DasResult DasVariantVectorByValueStub::DispatchMethod(
     StubContext&          ctx,
     std::vector<uint8_t>& out_response)
 {
-    if (method_id <= 5 || (method_id >= 18 && method_id <= 20)
-        || method_id == 21 || method_id == 22)
+    // Get snapshot triggers — all read methods return full snapshot:
+    //   0:GetInt, 3:GetFloat, 6:GetString, 9:GetBool,
+    //   12:GetComponent, 15:GetBase, 18:GetImage,
+    //   21:IsNull, 23:GetType, 25:GetSize
+    if (method_id == 0 || method_id == 3 || method_id == 6 || method_id == 9
+        || method_id == 12 || method_id == 15 || method_id == 18
+        || method_id == 21 || method_id == 23 || method_id == 25)
     {
-        // Get methods (0-5, 18-22, 21=GetImage, 22=IsNull):
-        // return full VariantVector snapshot
         return HandleGetSnapshot(impl, ctx, out_response);
     }
 
-    if ((method_id >= 6 && method_id <= 11) || method_id == 23)
+    // Set methods + RemoveAt (write by index):
+    //   1:SetInt, 4:SetFloat, 7:SetString, 10:SetBool,
+    //   13:SetComponent, 16:SetBase, 19:SetImage, 24:RemoveAt
+    if (method_id == 1 || method_id == 4 || method_id == 7 || method_id == 10
+        || method_id == 13 || method_id == 16 || method_id == 19
+        || method_id == 24)
     {
-        // Set methods (6-11, 23=SetImage)
         return HandleSet(method_id, impl, params, params_size, ctx);
     }
 
-    if ((method_id >= 12 && method_id <= 17) || method_id == 24
-        || method_id == 25)
+    // PushBack methods:
+    //   2:PushBackInt, 5:PushBackFloat, 8:PushBackString,
+    //   11:PushBackBool, 14:PushBackComponent, 17:PushBackBase,
+    //   20:PushBackImage, 22:PushBackNull
+    if (method_id == 2 || method_id == 5 || method_id == 8 || method_id == 11
+        || method_id == 14 || method_id == 17 || method_id == 20
+        || method_id == 22)
     {
-        // PushBack methods (12-17, 24=PushBackImage, 25=PushBackNull)
         return HandlePushBack(method_id, impl, params, params_size, ctx);
     }
 
@@ -446,7 +454,7 @@ DasResult DasVariantVectorByValueStub::HandleSet(
 
     switch (method_id)
     {
-    case 6: // SetInt
+    case 1: // SetInt
     {
         int64_t value = 0;
         if (!ReadInt64(params, params_size, offset, value))
@@ -455,7 +463,7 @@ DasResult DasVariantVectorByValueStub::HandleSet(
         }
         return variant_vector->SetInt(index, value);
     }
-    case 7: // SetFloat
+    case 4: // SetFloat
     {
         float value = 0.0f;
         if (!ReadFloat(params, params_size, offset, value))
@@ -464,7 +472,7 @@ DasResult DasVariantVectorByValueStub::HandleSet(
         }
         return variant_vector->SetFloat(index, value);
     }
-    case 8: // SetString
+    case 7: // SetString
     {
         std::string utf8_str;
         if (!ReadString(params, params_size, offset, utf8_str))
@@ -483,7 +491,7 @@ DasResult DasVariantVectorByValueStub::HandleSet(
         }
         return variant_vector->SetString(index, str_obj.Get());
     }
-    case 9: // SetBool
+    case 10: // SetBool
     {
         bool value = false;
         if (!ReadBool(params, params_size, offset, value))
@@ -492,7 +500,7 @@ DasResult DasVariantVectorByValueStub::HandleSet(
         }
         return variant_vector->SetBool(index, value);
     }
-    case 10: // SetComponent — COMPONENT wire format (12B)
+    case 13: // SetComponent — COMPONENT wire format (12B)
     {
         uint16_t session_id = 0;
         uint16_t generation = 0;
@@ -527,7 +535,7 @@ DasResult DasVariantVectorByValueStub::HandleSet(
             static_cast<Das::PluginInterface::IDasComponent*>(base_ptr);
         return variant_vector->SetComponent(index, component);
     }
-    case 11: // SetBase — BASE wire format (12B)
+    case 16: // SetBase — BASE wire format (12B)
     {
         uint16_t session_id = 0;
         uint16_t generation = 0;
@@ -560,10 +568,44 @@ DasResult DasVariantVectorByValueStub::HandleSet(
         }
         return variant_vector->SetBase(index, base_ptr);
     }
-    case 23: // SetImage — IMAGE wire format (12B), same as BASE
+    case 19: // SetImage — IMAGE wire format (12B), same as BASE
     {
-        // IMAGE IPC not yet fully supported
-        return DAS_E_NO_IMPLEMENTATION;
+        uint16_t session_id = 0;
+        uint16_t generation = 0;
+        uint32_t local_id = 0;
+        uint32_t iface_id = 0;
+        if (!ReadUInt16(params, params_size, offset, session_id)
+            || !ReadUInt16(params, params_size, offset, generation)
+            || !ReadUInt32(params, params_size, offset, local_id)
+            || !ReadUInt32(params, params_size, offset, iface_id))
+        {
+            return DAS_E_IPC_DESERIALIZATION_FAILED;
+        }
+        ObjectId oid{session_id, generation, local_id};
+        if (IsNullObjectId(oid))
+        {
+            return variant_vector->SetImage(index, nullptr);
+        }
+        IDasBase* base_ptr = nullptr;
+        DasResult result = DeserializeInInterfaceParam(
+            EncodeObjectId(oid),
+            iface_id,
+            ctx.object_manager,
+            ctx.run_loop,
+            ctx.business_thread,
+            ctx.proxy_factory,
+            &base_ptr);
+        if (DAS::IsFailed(result))
+        {
+            return result;
+        }
+        auto* image = static_cast<Das::ExportInterface::IDasImage*>(base_ptr);
+        return variant_vector->SetImage(index, image);
+    }
+    case 24: // RemoveAt — wire format: [index:8B]
+    {
+        // index already read above
+        return variant_vector->RemoveAt(index);
     }
     default:
         DAS_CORE_LOG_ERROR("HandleSet: unexpected method_id = {}", method_id);
@@ -586,7 +628,7 @@ DasResult DasVariantVectorByValueStub::HandlePushBack(
     // PushBack methods wire format: [value:varies] (no index)
     switch (method_id)
     {
-    case 12: // PushBackInt
+    case 2: // PushBackInt
     {
         int64_t value = 0;
         if (!ReadInt64(params, params_size, offset, value))
@@ -595,7 +637,7 @@ DasResult DasVariantVectorByValueStub::HandlePushBack(
         }
         return variant_vector->PushBackInt(value);
     }
-    case 13: // PushBackFloat
+    case 5: // PushBackFloat
     {
         float value = 0.0f;
         if (!ReadFloat(params, params_size, offset, value))
@@ -604,7 +646,7 @@ DasResult DasVariantVectorByValueStub::HandlePushBack(
         }
         return variant_vector->PushBackFloat(value);
     }
-    case 14: // PushBackString
+    case 8: // PushBackString
     {
         std::string utf8_str;
         if (!ReadString(params, params_size, offset, utf8_str))
@@ -622,7 +664,7 @@ DasResult DasVariantVectorByValueStub::HandlePushBack(
         }
         return variant_vector->PushBackString(str_obj.Get());
     }
-    case 15: // PushBackBool
+    case 11: // PushBackBool
     {
         bool value = false;
         if (!ReadBool(params, params_size, offset, value))
@@ -631,7 +673,7 @@ DasResult DasVariantVectorByValueStub::HandlePushBack(
         }
         return variant_vector->PushBackBool(value);
     }
-    case 16: // PushBackComponent
+    case 14: // PushBackComponent
     {
         uint16_t session_id = 0;
         uint16_t generation = 0;
@@ -699,12 +741,41 @@ DasResult DasVariantVectorByValueStub::HandlePushBack(
         }
         return variant_vector->PushBackBase(base_ptr);
     }
-    case 24: // PushBackImage
+    case 20: // PushBackImage — IMAGE wire format (12B), same as BASE
     {
-        // IMAGE IPC not yet fully supported
-        return DAS_E_NO_IMPLEMENTATION;
+        uint16_t session_id = 0;
+        uint16_t generation = 0;
+        uint32_t local_id = 0;
+        uint32_t iface_id = 0;
+        if (!ReadUInt16(params, params_size, offset, session_id)
+            || !ReadUInt16(params, params_size, offset, generation)
+            || !ReadUInt32(params, params_size, offset, local_id)
+            || !ReadUInt32(params, params_size, offset, iface_id))
+        {
+            return DAS_E_IPC_DESERIALIZATION_FAILED;
+        }
+        ObjectId oid{session_id, generation, local_id};
+        if (IsNullObjectId(oid))
+        {
+            return variant_vector->PushBackImage(nullptr);
+        }
+        IDasBase* base_ptr = nullptr;
+        DasResult result = DeserializeInInterfaceParam(
+            EncodeObjectId(oid),
+            iface_id,
+            ctx.object_manager,
+            ctx.run_loop,
+            ctx.business_thread,
+            ctx.proxy_factory,
+            &base_ptr);
+        if (DAS::IsFailed(result))
+        {
+            return result;
+        }
+        auto* image = static_cast<Das::ExportInterface::IDasImage*>(base_ptr);
+        return variant_vector->PushBackImage(image);
     }
-    case 25: // PushBackNull — no params needed
+    case 22: // PushBackNull — no params needed
     {
         return variant_vector->PushBackNull();
     }
