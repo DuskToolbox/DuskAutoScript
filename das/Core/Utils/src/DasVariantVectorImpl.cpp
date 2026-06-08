@@ -16,7 +16,9 @@ using Das::ExportInterface::DAS_VARIANT_TYPE_BOOL;
 using Das::ExportInterface::DAS_VARIANT_TYPE_COMPONENT;
 using Das::ExportInterface::DAS_VARIANT_TYPE_FLOAT;
 using Das::ExportInterface::DAS_VARIANT_TYPE_FORCE_DWORD;
+using Das::ExportInterface::DAS_VARIANT_TYPE_IMAGE;
 using Das::ExportInterface::DAS_VARIANT_TYPE_INT;
+using Das::ExportInterface::DAS_VARIANT_TYPE_NULL;
 using Das::ExportInterface::DAS_VARIANT_TYPE_STRING;
 
 DAS_CORE_UTILS_NS_BEGIN
@@ -61,6 +63,10 @@ DasRetVariantType VariantToType(const DasVariantVectorImpl::Variant& v)
         return Details::MakeSuccess(DAS_VARIANT_TYPE_BASE);
     case 5:
         return Details::MakeSuccess(DAS_VARIANT_TYPE_COMPONENT);
+    case 6:
+        return Details::MakeSuccess(DAS_VARIANT_TYPE_IMAGE);
+    case 7:
+        return Details::MakeSuccess(DAS_VARIANT_TYPE_NULL);
     default:
         DAS_CORE_LOG_ERROR("Unexpected variant index={}.", v.index());
         return {
@@ -176,6 +182,46 @@ DasResult DasVariantVectorImpl::GetBase(uint64_t index, IDasBase** pp_out_base)
     auto* p_raw = p_value->Get();
     p_raw->AddRef();
     *pp_out_base = p_raw;
+    return DAS_S_OK;
+}
+
+DasResult DasVariantVectorImpl::GetImage(
+    uint64_t                          index,
+    Das::ExportInterface::IDasImage** pp_out_image)
+{
+    DAS_UTILS_CHECK_POINTER(pp_out_image);
+
+    if (index >= variants_.size())
+    {
+        return DAS_E_OUT_OF_RANGE;
+    }
+
+    const auto* p_value =
+        std::get_if<Das::ExportInterface::DasImage>(&variants_[index]);
+    if (p_value == nullptr)
+    {
+        DAS_CORE_LOG_ERROR(
+            "Type error. Expected IMAGE (index=6), actual index={}.",
+            static_cast<int>(variants_[index].index()));
+        return DAS_E_TYPE_ERROR;
+    }
+
+    auto* p_raw = p_value->Get();
+    p_raw->AddRef();
+    *pp_out_image = p_raw;
+    return DAS_S_OK;
+}
+
+DasResult DasVariantVectorImpl::IsNull(uint64_t index, bool* out_is_null)
+{
+    DAS_UTILS_CHECK_POINTER(out_is_null);
+
+    if (index >= variants_.size())
+    {
+        return DAS_E_OUT_OF_RANGE;
+    }
+
+    *out_is_null = std::holds_alternative<std::monostate>(variants_[index]);
     return DAS_S_OK;
 }
 
@@ -297,6 +343,28 @@ DasResult DasVariantVectorImpl::SetBase(uint64_t index, IDasBase* in_base)
     }
 }
 
+DasResult DasVariantVectorImpl::SetImage(
+    uint64_t                         index,
+    Das::ExportInterface::IDasImage* p_image)
+{
+    DAS_UTILS_CHECK_POINTER(p_image);
+
+    if (index >= variants_.size())
+    {
+        return DAS_E_OUT_OF_RANGE;
+    }
+    try
+    {
+        variants_[index] = Das::ExportInterface::DasImage{p_image};
+        return DAS_S_OK;
+    }
+    catch (const std::bad_alloc&)
+    {
+        DAS_CORE_LOG_ERROR("Out of memory!");
+        return DAS_E_OUT_OF_MEMORY;
+    }
+}
+
 DasResult DasVariantVectorImpl::PushBackInt(int64_t in_int)
 {
     try
@@ -375,6 +443,35 @@ DasResult DasVariantVectorImpl::PushBackBase(IDasBase* in_base)
     try
     {
         variants_.emplace_back(DasBase{in_base});
+        return DAS_S_OK;
+    }
+    catch (const std::bad_alloc&)
+    {
+        return DAS_E_OUT_OF_MEMORY;
+    }
+}
+
+DasResult DasVariantVectorImpl::PushBackImage(
+    Das::ExportInterface::IDasImage* p_image)
+{
+    DAS_UTILS_CHECK_POINTER(p_image);
+
+    try
+    {
+        variants_.emplace_back(Das::ExportInterface::DasImage{p_image});
+        return DAS_S_OK;
+    }
+    catch (const std::bad_alloc&)
+    {
+        return DAS_E_OUT_OF_MEMORY;
+    }
+}
+
+DasResult DasVariantVectorImpl::PushBackNull()
+{
+    try
+    {
+        variants_.emplace_back(std::monostate{});
         return DAS_S_OK;
     }
     catch (const std::bad_alloc&)

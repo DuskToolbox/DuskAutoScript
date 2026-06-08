@@ -17,7 +17,7 @@
 DAS_CORE_IPC_NS_BEGIN
 
 // ============================================================
-// Method ID mapping (0-20):
+// Method ID mapping (0-25):
 //   0: GetInt,        1: GetFloat,       2: GetString
 //   3: GetBool,       4: GetComponent,   5: GetBase
 //   6: SetInt,        7: SetFloat,       8: SetString
@@ -25,6 +25,9 @@ DAS_CORE_IPC_NS_BEGIN
 //  12: PushBackInt,  13: PushBackFloat, 14: PushBackString
 //  15: PushBackBool, 16: PushBackComponent, 17: PushBackBase
 //  18: GetType,      19: RemoveAt,      20: GetSize
+//  21: GetImage,     22: IsNull
+//  23: SetImage
+//  24: PushBackImage, 25: PushBackNull
 // ============================================================
 
 namespace
@@ -290,6 +293,46 @@ namespace
             }
             return DAS_S_OK;
         }
+        case DasVariantType::DAS_VARIANT_TYPE_IMAGE:
+        {
+            // IMAGE wire format: same 12B as BASE/COMPONENT (object reference)
+            DAS::DasPtr<Das::ExportInterface::IDasImage> image_obj;
+            DasResult result = impl->GetImage(index, image_obj.Put());
+            if (DAS::IsFailed(result))
+            {
+                return result;
+            }
+            if (image_obj.Get() != nullptr)
+            {
+                ObjectId  oid;
+                DasResult register_result =
+                    ctx.object_manager.RegisterLocalObject(
+                        image_obj.Get(),
+                        oid);
+                if (DAS::IsFailed(register_result))
+                {
+                    return register_result;
+                }
+                writer.WriteUInt16(oid.session_id);
+                writer.WriteUInt16(oid.generation);
+                writer.WriteUInt32(oid.local_id);
+                writer.WriteUInt32(ComputeInterfaceId(
+                    DasIidOf<Das::ExportInterface::IDasImage>()));
+            }
+            else
+            {
+                writer.WriteUInt16(0); // session_id
+                writer.WriteUInt16(0); // generation
+                writer.WriteUInt32(0); // local_id
+                writer.WriteUInt32(0); // interface_id
+            }
+            return DAS_S_OK;
+        }
+        case DasVariantType::DAS_VARIANT_TYPE_NULL:
+        {
+            // NULL has no value payload — just the type tag
+            return DAS_S_OK;
+        }
         default:
             DAS_CORE_LOG_ERROR(
                 "Unknown variant type = {}",
@@ -308,21 +351,24 @@ DasResult DasVariantVectorByValueStub::DispatchMethod(
     StubContext&          ctx,
     std::vector<uint8_t>& out_response)
 {
-    if (method_id <= 5 || (method_id >= 18 && method_id <= 20))
+    if (method_id <= 5 || (method_id >= 18 && method_id <= 20)
+        || method_id == 21 || method_id == 22)
     {
-        // Get methods (0-5, 18-20): return full VariantVector snapshot
+        // Get methods (0-5, 18-22, 21=GetImage, 22=IsNull):
+        // return full VariantVector snapshot
         return HandleGetSnapshot(impl, ctx, out_response);
     }
 
-    if (method_id >= 6 && method_id <= 11)
+    if ((method_id >= 6 && method_id <= 11) || method_id == 23)
     {
-        // Set methods (6-11): read index + value, call impl's Set method
+        // Set methods (6-11, 23=SetImage)
         return HandleSet(method_id, impl, params, params_size, ctx);
     }
 
-    if (method_id >= 12 && method_id <= 17)
+    if ((method_id >= 12 && method_id <= 17) || method_id == 24
+        || method_id == 25)
     {
-        // PushBack methods (12-17): read value, call impl's PushBack method
+        // PushBack methods (12-17, 24=PushBackImage, 25=PushBackNull)
         return HandlePushBack(method_id, impl, params, params_size, ctx);
     }
 
@@ -514,6 +560,11 @@ DasResult DasVariantVectorByValueStub::HandleSet(
         }
         return variant_vector->SetBase(index, base_ptr);
     }
+    case 23: // SetImage — IMAGE wire format (12B), same as BASE
+    {
+        // IMAGE IPC not yet fully supported
+        return DAS_E_NO_IMPLEMENTATION;
+    }
     default:
         DAS_CORE_LOG_ERROR("HandleSet: unexpected method_id = {}", method_id);
         return DAS_E_IPC_INVALID_ARGUMENT;
@@ -647,6 +698,15 @@ DasResult DasVariantVectorByValueStub::HandlePushBack(
             return result;
         }
         return variant_vector->PushBackBase(base_ptr);
+    }
+    case 24: // PushBackImage
+    {
+        // IMAGE IPC not yet fully supported
+        return DAS_E_NO_IMPLEMENTATION;
+    }
+    case 25: // PushBackNull — no params needed
+    {
+        return variant_vector->PushBackNull();
     }
     default:
         DAS_CORE_LOG_ERROR(

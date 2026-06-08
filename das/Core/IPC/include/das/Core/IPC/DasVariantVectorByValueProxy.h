@@ -72,6 +72,10 @@ public:
         uint64_t                                index,
         ::Das::PluginInterface::IDasComponent** pp_out_component) override;
     DasResult GetBase(uint64_t index, ::IDasBase** pp_out_base) override;
+    DasResult GetImage(
+        uint64_t                          index,
+        Das::ExportInterface::IDasImage** pp_out_image) override;
+    DasResult IsNull(uint64_t index, bool* out_is_null) override;
     DasResult GetType(
         uint64_t                                index,
         ::Das::ExportInterface::DasVariantType* p_out_type) override;
@@ -86,6 +90,8 @@ public:
         uint64_t                               index,
         ::Das::PluginInterface::IDasComponent* in_component) override;
     DasResult SetBase(uint64_t index, ::IDasBase* in_base) override;
+    DasResult SetImage(uint64_t index, Das::ExportInterface::IDasImage* p_image)
+        override;
 
     DasResult PushBackInt(int64_t in_int) override;
     DasResult PushBackFloat(float in_float) override;
@@ -94,6 +100,8 @@ public:
     DasResult PushBackComponent(
         ::Das::PluginInterface::IDasComponent* in_component) override;
     DasResult PushBackBase(::IDasBase* in_base) override;
+    DasResult PushBackImage(Das::ExportInterface::IDasImage* p_image) override;
+    DasResult PushBackNull() override;
 
     DasResult RemoveAt(uint64_t index) override;
 

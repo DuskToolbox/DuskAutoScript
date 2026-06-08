@@ -14,7 +14,7 @@
 DAS_CORE_IPC_NS_BEGIN
 
 // ============================================================
-// Method ID mapping (0-20):
+// Method ID mapping (0-25):
 //   0: GetInt,        1: GetFloat,       2: GetString
 //   3: GetBool,       4: GetComponent,   5: GetBase
 //   6: SetInt,        7: SetFloat,       8: SetString
@@ -22,6 +22,9 @@ DAS_CORE_IPC_NS_BEGIN
 //  12: PushBackInt,  13: PushBackFloat, 14: PushBackString
 //  15: PushBackBool, 16: PushBackComponent, 17: PushBackBase
 //  18: GetType,      19: RemoveAt,      20: GetSize
+//  21: GetImage,     22: IsNull
+//  23: SetImage
+//  24: PushBackImage, 25: PushBackNull
 // ============================================================
 
 DasVariantVectorByValueProxy::DasVariantVectorByValueProxy(
@@ -134,8 +137,8 @@ DasResult DasVariantVectorByValueProxy::EnsureDataLoaded(uint16_t method_id)
         // PostSend(带回调)，在 IO 线程注册 pending call 后再发送
         constexpr auto kTimeout = std::chrono::milliseconds{30000};
 
-        AwaitResponseSender sender{
-            &GetRunLoop(), header, std::move(body), call_key, kTimeout};
+        AwaitResponseSender
+             sender{&GetRunLoop(), header, std::move(body), call_key, kTimeout};
         auto result = stdexec::sync_wait(std::move(sender));
         if (!result)
         {
@@ -241,6 +244,7 @@ DasResult DasVariantVectorByValueProxy::EnsureDataLoaded(uint16_t method_id)
         }
         case DasVariantType::DAS_VARIANT_TYPE_BASE:
         case DasVariantType::DAS_VARIANT_TYPE_COMPONENT:
+        case DasVariantType::DAS_VARIANT_TYPE_IMAGE:
         {
             // BASE/COMPONENT wire format (12B):
             // [session_id:2B][generation:2B][local_id:4B][interface_id:4B]
@@ -276,6 +280,11 @@ DasResult DasVariantVectorByValueProxy::EnsureDataLoaded(uint16_t method_id)
             entry.interface_id = iface_id;
             break;
         }
+        case DasVariantType::DAS_VARIANT_TYPE_NULL:
+        {
+            // NULL has no value payload
+            break;
+        }
         default:
             DAS_CORE_LOG_ERROR(
                 "Unknown variant type = {} at index = {}",
@@ -293,7 +302,8 @@ DasResult DasVariantVectorByValueProxy::EnsureDataLoaded(uint16_t method_id)
     {
         auto& entry = cache_[idx];
         if ((entry.type == DasVariantType::DAS_VARIANT_TYPE_BASE
-             || entry.type == DasVariantType::DAS_VARIANT_TYPE_COMPONENT)
+             || entry.type == DasVariantType::DAS_VARIANT_TYPE_COMPONENT
+             || entry.type == DasVariantType::DAS_VARIANT_TYPE_IMAGE)
             && (entry.object_id.session_id != 0
                 || entry.object_id.local_id != 0))
         {
@@ -531,6 +541,42 @@ DasResult DasVariantVectorByValueProxy::GetBase(
         cache_[index].base_ptr.Get()->AddRef();
         *pp_out_base = cache_[index].base_ptr.Get();
     }
+    return DAS_S_OK;
+}
+
+DasResult DasVariantVectorByValueProxy::GetImage(
+    uint64_t                          index,
+    Das::ExportInterface::IDasImage** pp_out_image)
+{
+    if (pp_out_image == nullptr)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+    *pp_out_image = nullptr;
+    (void)index;
+    // IMAGE IPC proxy not yet implemented — requires wire format extension
+    return DAS_E_NO_IMPLEMENTATION;
+}
+
+DasResult DasVariantVectorByValueProxy::IsNull(
+    uint64_t index,
+    bool*    out_is_null)
+{
+    if (out_is_null == nullptr)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+    DasResult result = EnsureDataLoaded(22);
+    if (DAS::IsFailed(result))
+    {
+        return result;
+    }
+    if (index >= cache_.size())
+    {
+        return DAS_E_INVALID_ARGUMENT;
+    }
+    *out_is_null =
+        (cache_[index].type == ::Das::ExportInterface::DAS_VARIANT_TYPE_NULL);
     return DAS_S_OK;
 }
 
@@ -802,6 +848,16 @@ DasResult DasVariantVectorByValueProxy::SetBase(
     return send_result;
 }
 
+DasResult DasVariantVectorByValueProxy::SetImage(
+    uint64_t                         index,
+    Das::ExportInterface::IDasImage* p_image)
+{
+    (void)index;
+    (void)p_image;
+    // IMAGE IPC proxy not yet implemented
+    return DAS_E_NO_IMPLEMENTATION;
+}
+
 DasResult DasVariantVectorByValueProxy::PushBackInt(int64_t in_int)
 {
     DasResult result = EnsureDataLoaded(12);
@@ -1009,6 +1065,30 @@ DasResult DasVariantVectorByValueProxy::PushBackBase(::IDasBase* in_base)
         guard.Commit();
     }
     return send_result;
+}
+
+DasResult DasVariantVectorByValueProxy::PushBackImage(
+    Das::ExportInterface::IDasImage* p_image)
+{
+    (void)p_image;
+    // IMAGE IPC proxy not yet implemented
+    return DAS_E_NO_IMPLEMENTATION;
+}
+
+DasResult DasVariantVectorByValueProxy::PushBackNull()
+{
+    DasResult result = EnsureDataLoaded(25);
+    if (DAS::IsFailed(result))
+    {
+        return result;
+    }
+
+    CachedVariant entry;
+    entry.type = ::Das::ExportInterface::DAS_VARIANT_TYPE_NULL;
+    cache_.push_back(std::move(entry));
+
+    // Fire-and-forget: no payload for NULL
+    return SendWriteBack(25, nullptr, 0);
 }
 
 DasResult DasVariantVectorByValueProxy::RemoveAt(uint64_t index)

@@ -5,6 +5,7 @@
 #include <das/DasBase.hpp>
 #include <das/DasString.hpp>
 #include <das/_autogen/idl/abi/IDasVariantVector.h>
+#include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasImage.hpp>
 #include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasVariantVector.Implements.hpp>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasComponent.hpp>
 #include <variant>
@@ -23,7 +24,9 @@ public:
         bool,
         DasReadOnlyString,
         DasBase,
-        Das::PluginInterface::DasComponent>;
+        Das::PluginInterface::DasComponent,
+        Das::ExportInterface::DasImage,
+        std::monostate>;
 
     DasVariantVectorImpl() = default;
 
@@ -37,6 +40,10 @@ public:
         uint64_t                              index,
         Das::PluginInterface::IDasComponent** pp_out_component) override;
     DAS_IMPL GetBase(uint64_t index, IDasBase** pp_out_base) override;
+    DAS_IMPL
+    GetImage(uint64_t index, Das::ExportInterface::IDasImage** pp_out_image)
+        override;
+    DAS_IMPL IsNull(uint64_t index, bool* out_is_null) override;
 
     DAS_IMPL SetInt(uint64_t index, int64_t in_int) override;
     DAS_IMPL SetFloat(uint64_t index, float in_float) override;
@@ -48,6 +55,8 @@ public:
         uint64_t                             index,
         Das::PluginInterface::IDasComponent* in_component) override;
     DAS_IMPL SetBase(uint64_t index, IDasBase* in_base) override;
+    DAS_IMPL
+    SetImage(uint64_t index, Das::ExportInterface::IDasImage* p_image) override;
 
     DAS_IMPL PushBackInt(int64_t in_int) override;
     DAS_IMPL PushBackFloat(float in_float) override;
@@ -57,6 +66,9 @@ public:
     PushBackComponent(
         Das::PluginInterface::IDasComponent* in_component) override;
     DAS_IMPL PushBackBase(IDasBase* in_base) override;
+    DAS_IMPL
+    PushBackImage(Das::ExportInterface::IDasImage* p_image) override;
+    DAS_IMPL PushBackNull() override;
 
     DAS_IMPL
     GetType(uint64_t index, Das::ExportInterface::DasVariantType* p_out_type)
