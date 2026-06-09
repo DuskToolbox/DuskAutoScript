@@ -826,6 +826,10 @@ DasResult DasVariantVectorByValueProxy::SetComponent(
 DasResult DasVariantVectorByValueProxy::PushBackComponent(
     ::Das::PluginInterface::IDasComponent* in_component)
 {
+    if (in_component == nullptr)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
     DasResult result = EnsureDataLoaded(14);
     if (DAS::IsFailed(result))
     {
@@ -963,6 +967,10 @@ DasResult DasVariantVectorByValueProxy::SetBase(
 
 DasResult DasVariantVectorByValueProxy::PushBackBase(::IDasBase* in_base)
 {
+    if (in_base == nullptr)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
     DasResult result = EnsureDataLoaded(17);
     if (DAS::IsFailed(result))
     {
@@ -1106,6 +1114,10 @@ DasResult DasVariantVectorByValueProxy::SetImage(
 DasResult DasVariantVectorByValueProxy::PushBackImage(
     Das::ExportInterface::IDasImage* p_image)
 {
+    if (p_image == nullptr)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
     DasResult result = EnsureDataLoaded(20);
     if (DAS::IsFailed(result))
     {
