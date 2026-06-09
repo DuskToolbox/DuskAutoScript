@@ -18,10 +18,8 @@ DAS_CORE_GRAPHRUNTIME_NS_BEGIN
 class GraphRuntimeImpl final
     : public Das::ExportInterface::DasGraphRuntimeImplBase<GraphRuntimeImpl>
 {
-    GraphRuntime              engine_;
-    std::string               last_error_;
-    Dto::CompiledGraphPlanDto cached_plan_;
-    bool                      plan_loaded_ = false;
+    GraphRuntime engine_;
+    std::string  last_error_;
 
 public:
     GraphRuntimeImpl() = default;

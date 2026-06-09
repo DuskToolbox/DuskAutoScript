@@ -314,6 +314,7 @@ protected:
         return compiler.Compile(doc);
     }
 
+#if 0
     DasResult ExecutePlan(
         const CompiledGraphPlanDto& plan,
         ComponentResolver           resolver,
@@ -326,6 +327,7 @@ protected:
             stop_token ? stop_token : token_.Get(),
             std::move(resolver));
     }
+#endif
 
     std::vector<CompileEdgeDiagnostic> ValidateEdgePorts(
         const GraphDocumentDto& doc)
@@ -345,6 +347,9 @@ protected:
     DAS::DasPtr<IDasStopToken>          token_;
 };
 
+// All tests below use the removed ComponentResolver / Run() API.
+// RunWithHost is the only execution path now.
+#if 0
 // ===========================================================================
 // Group 1: Empty / Trivial Graphs
 // ===========================================================================
@@ -955,3 +960,5 @@ TEST_F(EdgeCaseCoverageTest, FingerprintMismatch_RunRejects)
     const auto& msg = rt.GetLastErrorMessage();
     EXPECT_FALSE(msg.empty());
 }
+
+#endif // Old Run() / ComponentResolver tests

@@ -308,6 +308,7 @@ protected:
         return plan;
     }
 
+#if 0
     /// Execute a compiled plan with a resolver callback
     DasResult ExecutePlan(
         const CompiledGraphPlanDto& plan,
@@ -321,11 +322,15 @@ protected:
             stop_token ? stop_token : token_.Get(),
             std::move(resolver));
     }
+#endif
 
     std::unique_ptr<StubFactoryManager> stub_mgr_;
     DAS::DasPtr<IDasStopToken>          token_;
 };
 
+// All tests below use the removed ComponentResolver / Run() API.
+// RunWithHost is the only execution path now.
+#if 0
 // =====================================================================
 // Test 1: AuthorCompileExecute_LinearTwoNode
 // =====================================================================
@@ -1082,3 +1087,5 @@ TEST_F(E2EGraphFlowTest, GraphInputOutputMapping)
     EXPECT_EQ(hr, DAS_S_OK);
     EXPECT_EQ(final_result, 84); // 42 * 2
 }
+
+#endif // Old Run() / ComponentResolver tests

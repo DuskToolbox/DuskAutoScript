@@ -182,6 +182,10 @@ namespace
 
 } // namespace
 
+// Old Run() / ComponentResolver tests removed — RunWithHost is the only
+// execution path.
+
+#if 0
 // ===================================================================
 // Test 1: SingleNodeExecution
 // ===================================================================
@@ -750,6 +754,8 @@ TEST(GraphRuntimeTest, RuntimeExecutionCacheUsed)
     const auto& inputs = cache.GetInputSlots(plan.execution_order[1]);
     EXPECT_FALSE(inputs.empty());
 }
+
+#endif // Old Run() / ComponentResolver tests
 
 // =====================================================================
 // Plan 02-14: Configure/Prepare/RunWithHost tests
