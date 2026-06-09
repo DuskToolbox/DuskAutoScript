@@ -169,7 +169,7 @@ Dto::SubgraphCompileResultDto SubgraphCompiler::CompileRecursiveImpl(
     std::stack<CompileFrame> frames;
 
     // Push initial (root) frame
-    frames.push({&document, CollectEntryRefIds(document), 0, {}, 0});
+    frames.push({&document, CollectEntryRefIds(document), 0, {}, 0, {}});
 
     while (!frames.empty())
     {
@@ -273,7 +273,8 @@ Dto::SubgraphCompileResultDto SubgraphCompiler::CompileRecursiveImpl(
                      std::move(inner_ids),
                      0,
                      {},
-                     frame.depth + 1});
+                     frame.depth + 1,
+                     {}});
             }
         }
 
