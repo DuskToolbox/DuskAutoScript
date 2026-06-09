@@ -62,8 +62,8 @@ namespace Dto
     {
         std::string outer_port_id; // port_id in the outer (calling) graph
         std::string inner_port_id; // port_id in the inner (referenced) graph
-        std::string node_id;       // node_id in the inner graph owning this port
-        std::string port_type;     // expected Variant type from port definition
+        std::string node_id;   // node_id in the inner graph owning this port
+        std::string port_type; // expected Variant type from port definition
     };
 
     // ---- compiled snapshot of a subgraph reference (02-07 serialization) ----
@@ -77,24 +77,25 @@ namespace Dto
         CompiledGraphPlanDto               inner_snapshot;
     };
 
-    // ---- compile-time result from SubgraphCompiler (02-21, in-memory only) ----
-    // Recursive structure — NOT serialised via yyjson aggregate reflection.
-    // Holds port projection mappings (outer↔inner), nested subgraph results,
-    // and cycle-detection diagnostics.
+    // ---- compile-time result from SubgraphCompiler (02-21, in-memory only)
+    // ---- Recursive structure — NOT serialised via yyjson aggregate
+    // reflection. Holds port projection mappings (outer↔inner), nested subgraph
+    // results, and cycle-detection diagnostics.
     struct SubgraphCompileResultDto
     {
-        GraphEntryId entry_id = 0;                    // the referenced entry
-        int64_t      revision = 0;                    // pinned revision
-        std::string  source_fingerprint;              // pinned fingerprint
+        GraphEntryId entry_id = 0;       // the referenced entry
+        int64_t      revision = 0;       // pinned revision
+        std::string  source_fingerprint; // pinned fingerprint
 
-        CompiledGraphPlanDto compiled_plan;           // from GraphCompiler::Compile()
+        CompiledGraphPlanDto compiled_plan; // from GraphCompiler::Compile()
 
-        std::vector<PortMappingDto> input_mapping;   // outer graph → inner root
-        std::vector<PortMappingDto> output_mapping;   // inner terminal → outer
+        std::vector<PortMappingDto> input_mapping;  // outer graph → inner root
+        std::vector<PortMappingDto> output_mapping; // inner terminal → outer
 
-        std::vector<SubgraphCompileResultDto> nested_snapshots; // recursive children
+        std::vector<SubgraphCompileResultDto>
+            nested_snapshots; // recursive children
 
-        std::vector<std::string> diagnostics;         // warnings and errors
+        std::vector<std::string> diagnostics; // warnings and errors
     };
 
 } // namespace Dto
