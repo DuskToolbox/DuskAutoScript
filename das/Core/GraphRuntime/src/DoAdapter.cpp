@@ -175,10 +175,15 @@ namespace
             result = map->GetBase(key_str.Get(), DAS_IID_BASE, &p_obj);
             if (DAS::IsOk(result))
             {
+                // Attach adopts the +1 ref from QueryInterface inside
+                // GetBase — no extra AddRef.  Using DasPtr(raw) here
+                // would double-count and leak (DasPtr.hpp:61 calls
+                // AddRef on raw-pointer construction).
+                auto base_ptr = DAS::DasPtr<IDasBase>::Attach(p_obj);
                 frame.Set(
                     node_id,
                     port_id,
-                    PortValue(BaseHandle{DAS::DasPtr<IDasBase>{p_obj}}));
+                    PortValue(BaseHandle{std::move(base_ptr)}));
             }
             return result;
         }
@@ -188,10 +193,13 @@ namespace
             result = map->GetComponent(key_str.Get(), DAS_IID_BASE, &p_comp);
             if (DAS::IsOk(result))
             {
+                // Same pattern: GetComponent returns +1 ref, Attach
+                // adopts it without double counting.
+                auto comp_ptr = DAS::DasPtr<IDasBase>::Attach(p_comp);
                 frame.Set(
                     node_id,
                     port_id,
-                    PortValue(ComponentHandle{DAS::DasPtr<IDasBase>{p_comp}}));
+                    PortValue(ComponentHandle{std::move(comp_ptr)}));
             }
             return result;
         }
