@@ -759,7 +759,7 @@ Dto::CompiledGraphPlanDto GraphCompiler::Compile(
         obj[std::string_view("kind")] = std::make_pair(
             std::string_view(
                 std::to_string(
-                    static_cast<int>(CompileDiagnosticKind::CyclicEntryRef))),
+                    static_cast<int>(CompileDiagnosticKind::CyclicEdgeGraph))),
             yyjson::copy_string);
         obj[std::string_view("message")] = std::make_pair(
             std::string_view(

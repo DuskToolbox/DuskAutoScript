@@ -31,7 +31,8 @@ enum class CompileDiagnosticKind
     NodeNotFound,              // Edge references a node_id not in the graph
     UnknownPortType,           // Port type string not in known set (warning)
     UnresolvableComponentGuid, // component_guid not in factory manager
-    CyclicEntryRef             // entryRef cycle detected (reserved for 02-10)
+    CyclicEntryRef,            // entryRef cycle detected (reserved for 02-10)
+    CyclicEdgeGraph // Edge-based cycle detected during topological sort
 };
 
 struct CompileEdgeDiagnostic
