@@ -461,9 +461,20 @@ DasResult DasPortMapImpl::SetComponent(
     const auto key = Details::PortIdToString(p_port_id);
     try
     {
-        auto* raw =
-            static_cast<Das::PluginInterface::IDasComponent*>(p_in_component);
-        entries_[key] = Das::PluginInterface::DasComponent{raw};
+        // Use QueryInterface to safely verify the object supports
+        // IDasComponent before storing it.
+        DAS::DasPtr<Das::PluginInterface::IDasComponent> comp;
+        DasResult hr = p_in_component->QueryInterface(
+            DasIidOf<Das::PluginInterface::IDasComponent>(),
+            comp.PutVoid());
+        if (DAS::IsFailed(hr))
+        {
+            DAS_CORE_LOG_ERROR(
+                "SetComponent: QueryInterface for IDasComponent failed. hr = {}.",
+                static_cast<int>(hr));
+            return DAS_E_NO_INTERFACE;
+        }
+        entries_[key] = Das::PluginInterface::DasComponent{comp.Get()};
         return DAS_S_OK;
     }
     catch (const std::bad_alloc&)
