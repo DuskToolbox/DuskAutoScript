@@ -2237,7 +2237,7 @@ struct {class_name} {{
         # 8. javadirectorout typemap: Java 返回值构建
         #    名字中含 "java"，SWIG 自动忽略非 Java 编译
         lines.append(f"%typemap(javadirectorout) ({full_type} {out_param.name}) %{{    {ret_class_name} result = new {ret_class_name}();")
-        lines.append(f"    result.error_code = $javainput;")
+        lines.append(f"    result.error_code = $jniinput;")
         lines.append(f"    if (*$2 != null) {{")
         lines.append(f"        result.value = *$2;")
         lines.append(f"    }}")
