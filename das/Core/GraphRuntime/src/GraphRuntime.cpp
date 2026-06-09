@@ -6,7 +6,6 @@
 #include <das/Core/GraphRuntime/DoAdapter.h>
 #include <das/Core/GraphRuntime/LegacyJsonAdapter.h>
 #include <das/Core/GraphRuntime/PortFrame.h>
-#include <das/Core/GraphRuntime/RuntimeExecutionCache.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/Core/Utils/DasJsonImpl.h>
 #include <das/Utils/DasJsonCore.h>
@@ -188,21 +187,10 @@ DasResult GraphRuntime::Run(
         return hr;
     }
 
-    // Phase 2: Build RuntimeExecutionCache from plan
-    RuntimeExecutionCache cache;
-    cache.BuildFrom(plan);
-
-    if (!cache.IsBuilt())
-    {
-        last_error_ = "RuntimeExecutionCache::BuildFrom failed";
-        DAS_CORE_LOG_ERROR("{}", last_error_);
-        return DAS_E_FAIL;
-    }
-
-    // Phase 3: Create fresh PortFrame for this execution
+    // Phase 2: Create fresh PortFrame for this execution
     PortFrame frame;
 
-    // Phase 4: Per-node sequential execution (execution_order)
+    // Phase 3: Per-node sequential execution (execution_order)
     // Build O(1) snapshot lookup map to avoid O(n²) linear scan
     std::unordered_map<std::string, const Dto::CompiledNodeSnapshotDto*>
         snapshot_map;
@@ -749,15 +737,9 @@ DasResult GraphRuntime::RunWithHost(
         return hr;
     }
 
-    // Phase 4: Build RuntimeExecutionCache
-    RuntimeExecutionCache cache;
-    cache.BuildFrom(plan);
-
-    if (!cache.IsBuilt())
-    {
-        SetError(DAS_E_FAIL, "RuntimeExecutionCache::BuildFrom failed");
-        return DAS_E_FAIL;
-    }
+    // Phase 4: Build RuntimeExecutionCache — reserved for future slot-optimized
+    // execution.  TODO: Wire cache into ExecuteNodeWithComponent when
+    // slot-based data transfer is implemented.
 
     // Phase 5: Create fresh PortFrame
     PortFrame frame;
