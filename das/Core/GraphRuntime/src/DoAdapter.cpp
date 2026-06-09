@@ -81,7 +81,7 @@ namespace
             DAS_CORE_LOG_WARN(
                 "Image type not yet supported in DoAdapter for port_id = {}.",
                 port_id);
-            return DAS_S_OK;
+            return DAS_E_NOT_SUPPORTED;
         }
         if (pv.IsJson())
         {
@@ -90,7 +90,7 @@ namespace
             DAS_CORE_LOG_WARN(
                 "Json type not yet supported in DoAdapter for port_id = {}.",
                 port_id);
-            return DAS_S_OK;
+            return DAS_E_NOT_SUPPORTED;
         }
         if (pv.IsSignal())
         {
