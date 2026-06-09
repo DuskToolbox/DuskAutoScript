@@ -41,13 +41,12 @@ DasResult GraphRuntimeImpl::Load(IDasReadOnlyString* p_compiled_artifact_json)
         return DAS_E_INVALID_JSON;
     }
 
-    // Store plan for later Configure/Run calls.
-    hr = engine_.Configure(plan, nullptr);
-    if (DAS::IsFailed(hr))
-    {
-        last_error_ = engine_.GetLastErrorMessage();
-    }
-    return hr;
+    // Cache the parsed plan — do NOT call engine_.Configure() here because
+    // p_host is unavailable at this point.  The caller must provide a host
+    // later (e.g., via RunWithHost) to actually execute the graph.
+    cached_plan_ = std::move(plan);
+    plan_loaded_ = true;
+    return DAS_S_OK;
 }
 
 DasResult GraphRuntimeImpl::Configure(IDasReadOnlyString* p_node_snapshots_json)
