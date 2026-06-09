@@ -82,6 +82,7 @@ public:
     {
         std::vector<PortEntry> inputs;
         std::vector<PortEntry> outputs;
+        bool                   was_resolved = false;
     };
 
     /// Read manifest definition.inputs/outputs for a given component_guid.

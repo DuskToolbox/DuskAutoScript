@@ -82,6 +82,7 @@ GraphCompiler::ManifestPorts GraphCompiler::ReadManifest(
         {
             result.inputs = PortsFromDefinitionList(def.definition, "inputs");
             result.outputs = PortsFromDefinitionList(def.definition, "outputs");
+            result.was_resolved = true;
             return result;
         }
     }
@@ -320,9 +321,10 @@ std::vector<CompileEdgeDiagnostic> GraphCompiler::ValidateEdgePorts(
 
             src_manifest = resolve_manifest(src_node);
 
-            // Check if manifest was resolved (empty inputs+outputs means
-            // unresolved)
-            if (src_manifest.inputs.empty() && src_manifest.outputs.empty())
+            // Check if manifest was resolved.  A component may legitimately
+            // declare zero ports, so we use an explicit flag instead of
+            // relying on empty port vectors.
+            if (!src_manifest.was_resolved)
             {
                 CompileEdgeDiagnostic d;
                 d.kind = CompileDiagnosticKind::UnresolvableComponentGuid;
@@ -363,7 +365,7 @@ std::vector<CompileEdgeDiagnostic> GraphCompiler::ValidateEdgePorts(
 
             tgt_manifest = resolve_manifest(tgt_node);
 
-            if (tgt_manifest.inputs.empty() && tgt_manifest.outputs.empty())
+            if (!tgt_manifest.was_resolved)
             {
                 CompileEdgeDiagnostic d;
                 d.kind = CompileDiagnosticKind::UnresolvableComponentGuid;
