@@ -277,8 +277,7 @@ DasResult BuildInputPortMap(
         }
     }
 
-    *out_map = map.Get();
-    map.Get()->AddRef();
+    *out_map = map.Detach();
     return DAS_S_OK;
 }
 

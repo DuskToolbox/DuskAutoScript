@@ -483,8 +483,7 @@ DasResult LegacyJsonTaskComponentAdapter::Do(
     }
 
     // Transfer ownership to caller.
-    *pp_out_portmap = output_map.Get();
-    output_map.Get()->AddRef();
+    *pp_out_portmap = output_map.Detach();
     return DAS_S_OK;
 }
 
