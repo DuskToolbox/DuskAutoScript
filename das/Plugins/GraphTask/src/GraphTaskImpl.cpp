@@ -83,7 +83,9 @@ namespace Das::Plugins::GraphTask
         {
             *p_out_date = {};
         }
-        return DAS_E_NO_IMPLEMENTATION;
+        // Scheduling is not applicable for one-shot graph tasks.
+        // Callers should treat this as "no future execution scheduled".
+        return DAS_S_FALSE;
     }
 
 } // namespace Das::Plugins::GraphTask
