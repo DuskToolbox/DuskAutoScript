@@ -142,12 +142,15 @@ Dto::SubgraphCompileResultDto SubgraphCompiler::CompileRecursiveImpl(
 
     for (GraphEntryId ref_entry_id : entry_ref_ids)
     {
-        // Cycle detection: already visited this entry
+        // Path-based cycle detection: only check if this entry_id is
+        // already on the *current* DFS path, not the global visited set.
+        // This allows shared subgraph references (A→B, C→B) while still
+        // catching true cycles (A→B→A).
         if (visited_entry_ids.count(ref_entry_id))
         {
             auto msg = DAS_FMT_NS::format(
                 "SubgraphCompiler: cyclic entryRef detected — "
-                "entry_id = {} already visited at depth = {}",
+                "entry_id = {} already on current DFS path at depth = {}",
                 ref_entry_id,
                 depth);
             DAS_CORE_LOG_WARN(msg.c_str());
@@ -155,6 +158,7 @@ Dto::SubgraphCompileResultDto SubgraphCompiler::CompileRecursiveImpl(
             continue;
         }
 
+        // Push onto DFS path
         visited_entry_ids.insert(ref_entry_id);
 
         // Compile this entryRef
@@ -202,11 +206,9 @@ Dto::SubgraphCompileResultDto SubgraphCompiler::CompileRecursiveImpl(
         // Add the sub_result to the current level
         result.nested_snapshots.push_back(std::move(sub_result));
 
-        // NOTE: visited_entry_ids is NOT cleared between siblings.
-        // This means shared references (A→B, C→B) will be treated as a
-        // cycle on the second encounter. For MVP this is acceptable —
-        // shared subgraph references are unusual. A future wave can
-        // refine to path-based cycle detection.
+        // Pop from DFS path — allows shared subgraph references (A→B, C→B)
+        // while still catching true cycles (A→B→A).
+        visited_entry_ids.erase(ref_entry_id);
     }
 
     return result;
