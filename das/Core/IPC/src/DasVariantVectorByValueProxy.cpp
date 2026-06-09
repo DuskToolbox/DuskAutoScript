@@ -168,6 +168,12 @@ DasResult DasVariantVectorByValueProxy::EnsureDataLoaded(uint16_t method_id)
         return result;
     }
 
+    // Release all proxy references before clearing the vector to avoid
+    // cascading Release calls during vector bulk destruction (WR-03).
+    for (auto& entry : cache_)
+    {
+        entry.base_ptr.Reset();
+    }
     cache_.clear();
     cache_.reserve(static_cast<size_t>(count));
 
@@ -311,6 +317,10 @@ DasResult DasVariantVectorByValueProxy::EnsureDataLoaded(uint16_t method_id)
                 "DasVariantVectorByValueProxy::EnsureDataLoaded");
             if (DAS::IsFailed(runtime_result))
             {
+                for (auto& e : cache_)
+                {
+                    e.base_ptr.Reset();
+                }
                 cache_.clear();
                 return runtime_result;
             }
@@ -329,6 +339,10 @@ DasResult DasVariantVectorByValueProxy::EnsureDataLoaded(uint16_t method_id)
                 DAS_CORE_LOG_ERROR(
                     "EnsureDataLoaded: GetOrCreateProxy failed, result = {}",
                     create_result);
+                for (auto& e : cache_)
+                {
+                    e.base_ptr.Reset();
+                }
                 cache_.clear();
                 return create_result;
             }
