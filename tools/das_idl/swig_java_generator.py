@@ -2244,9 +2244,9 @@ struct {class_name} {{
         lines.append(f"    return result;")
         lines.append(f"%}}")
 
-        # 9. javadirectorin typemap: Java → C++（Director 参数接收）
-        #    名字中含 "java"，SWIG 自动忽略非 Java 编译
-        lines.append(f'%typemap(javadirectorin) {full_type} "$javainput"')
+        # 9. javadirectorin typemap: Java → C++（Director 参数接收，scoped by param name）
+        #    SWIG docs 指定用 $jniinput 而非 $javainput
+        lines.append(f'%typemap(javadirectorin) ({full_type} {out_param.name}) "$jniinput"')
 
         return "\n".join(lines)
     def _generate_interface_helper_methods(self, interface: InterfaceDef) -> str:
