@@ -2277,6 +2277,12 @@ public:
         return DAS_S_OK;
     }
 
+    DasResult SetTaskComponentHost(
+        Das::PluginInterface::IDasTaskComponentHost* /*p_host*/) override
+    {
+        return DAS_S_OK;
+    }
+
 private:
     std::atomic<uint32_t> ref_count_{0};
 };

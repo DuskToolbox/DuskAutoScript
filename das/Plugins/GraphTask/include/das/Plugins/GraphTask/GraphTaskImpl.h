@@ -3,31 +3,40 @@
 
 #include <das/DasApi.h>
 #include <das/DasPtr.hpp>
-#include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasTask.Implements.hpp>
+#include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasTaskComponent.Implements.hpp>
 
 #include <string>
 
 namespace Das::Plugins::GraphTask
 {
 
-    // Thin adapter: IDasTask -> GraphRuntime execution.
-    // Per CORE-FIRST-v18: zero business logic — pure delegation.
+    // Thin adapter: IDasTaskComponent -> GraphRuntime execution.
+    // Receives compiled graph plan JSON via settings, creates
+    // GraphRuntime internally, and runs via RunWithHost().
     class GraphTaskImpl final
-        : public Das::PluginInterface::DasTaskImplBase<GraphTaskImpl>
+        : public Das::PluginInterface::DasTaskComponentImplBase<GraphTaskImpl>
     {
-        std::string last_error_;
+        std::string                                         last_error_;
+        DasPtr<Das::PluginInterface::IDasTaskComponentHost> host_;
 
     public:
-        GraphTaskImpl() = default;
+        explicit GraphTaskImpl(
+            Das::PluginInterface::IDasTaskComponentHost* p_host);
 
-        // --- IDasTask interface ---
+        // --- IDasTaskComponent interface ---
+        DAS_IMPL GetGuid(DasGuid* p_out_guid) override;
+        DAS_IMPL GetRuntimeClassName(IDasReadOnlyString** pp_out_name) override;
+
+        DAS_IMPL ApplySettingsChange(
+            Das::ExportInterface::IDasJson*  p_request_json,
+            Das::ExportInterface::IDasJson** pp_out_result_json) override;
+
         DAS_IMPL Do(
-            Das::PluginInterface::IDasStopToken* p_stop_token,
+            Das::PluginInterface::IDasStopToken* stop_token,
             Das::ExportInterface::IDasJson*      p_environment_json,
-            Das::ExportInterface::IDasJson*      p_task_settings_json);
-
-        DAS_IMPL GetNextExecutionTime(
-            Das::ExportInterface::DasDate* p_out_date);
+            Das::ExportInterface::IDasJson*      p_settings_json,
+            Das::ExportInterface::IDasJson*      p_input_json,
+            Das::ExportInterface::IDasJson**     pp_out_result_json) override;
     };
 
 } // namespace Das::Plugins::GraphTask

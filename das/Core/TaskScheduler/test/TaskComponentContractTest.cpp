@@ -585,6 +585,12 @@ namespace
 
         int create_call_count = 0;
 
+        DasResult DAS_STD_CALL SetTaskComponentHost(
+            Das::PluginInterface::IDasTaskComponentHost* /*p_host*/) override
+        {
+            return DAS_S_OK;
+        }
+
     private:
         std::shared_ptr<RecordingChildState> state_;
         std::atomic<uint32_t>                ref_count_{0};

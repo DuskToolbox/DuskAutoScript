@@ -7,7 +7,6 @@
 #include <das/Utils/CommonUtils.hpp>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasTaskComponent.Implements.hpp>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasTaskComponentFactory.Implements.hpp>
-#include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasTaskComponentHostAware.Implements.hpp>
 
 #include <string>
 #include <string_view>
@@ -83,7 +82,7 @@ private:
 };
 
 class DasFlowControlTaskComponentFactory final
-    : public PluginInterface::DasTaskComponentHostAwareImplBase<
+    : public PluginInterface::DasTaskComponentFactoryImplBase<
           DasFlowControlTaskComponentFactory>
 {
 public:

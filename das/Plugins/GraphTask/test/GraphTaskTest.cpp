@@ -5,6 +5,65 @@
 #include <gtest/gtest.h>
 
 using namespace Das::Plugins::GraphTask;
+using DAS::DasPtr;
+
+// ---- Minimal mock for IDasTaskComponentHost ----
+
+class MockTaskComponentHost final
+    : public Das::PluginInterface::IDasTaskComponentHost
+{
+    std::atomic<uint32_t> ref_count_{0};
+
+public:
+    uint32_t DAS_STD_CALL AddRef() override { return ++ref_count_; }
+
+    uint32_t DAS_STD_CALL Release() override
+    {
+        const auto count = --ref_count_;
+        if (count == 0)
+        {
+            delete this;
+        }
+        return count;
+    }
+
+    DasResult DAS_STD_CALL
+    QueryInterface(const DasGuid& iid, void** pp_out) override
+    {
+        if (pp_out == nullptr)
+        {
+            return DAS_E_INVALID_POINTER;
+        }
+        if (iid == DasIidOf<IDasBase>())
+        {
+            *pp_out = static_cast<IDasBase*>(this);
+            AddRef();
+            return DAS_S_OK;
+        }
+        if (iid == DasIidOf<Das::PluginInterface::IDasTaskComponentHost>())
+        {
+            *pp_out =
+                static_cast<Das::PluginInterface::IDasTaskComponentHost*>(this);
+            AddRef();
+            return DAS_S_OK;
+        }
+        *pp_out = nullptr;
+        return DAS_E_NO_INTERFACE;
+    }
+
+    DasResult DAS_STD_CALL CreateTaskComponent(
+        const DasGuid&                            component_guid,
+        Das::PluginInterface::IDasTaskComponent** pp_out_component) override
+    {
+        std::ignore = component_guid;
+        if (pp_out_component == nullptr)
+        {
+            return DAS_E_INVALID_POINTER;
+        }
+        *pp_out_component = nullptr;
+        return DAS_E_NOT_FOUND;
+    }
+};
 
 // ---- Minimal stop token mock ----
 
@@ -30,25 +89,60 @@ public:
 
 // ---- Tests ----
 
-TEST(GraphTaskTest, DoCreatesRuntimeAndRuns)
+TEST(GraphTaskTest, ConstructWithNullHost)
 {
-    // GraphTaskImpl::Do() creates a GraphRuntime internally and runs it.
-    // Without a loaded artifact, Run returns DAS_S_OK (empty graph).
-    auto task = GraphTaskImpl::Make();
+    auto task = GraphTaskImpl::Make(nullptr);
+    ASSERT_NE(task.Get(), nullptr);
+}
+
+TEST(GraphTaskTest, DoReturnsErrorWhenHostIsNull)
+{
+    auto task = GraphTaskImpl::Make(nullptr);
     ASSERT_NE(task.Get(), nullptr);
 
-    DasResult hr = task->Do(nullptr, nullptr, nullptr);
-    // Empty run — no artifact loaded, should succeed or return a graceful
-    // error.
-    EXPECT_TRUE(DAS::IsOk(hr) || DAS::IsFailed(hr));
+    DasPtr<Das::ExportInterface::IDasJson> result;
+    DasResult hr = task->Do(nullptr, nullptr, nullptr, nullptr, result.Put());
+    EXPECT_TRUE(DAS::IsFailed(hr));
+}
+
+TEST(GraphTaskTest, GetGuidReturnsNonEmpty)
+{
+    auto task = GraphTaskImpl::Make(nullptr);
+    ASSERT_NE(task.Get(), nullptr);
+
+    DasGuid   guid{};
+    DasResult hr = task->GetGuid(&guid);
+    EXPECT_TRUE(DAS::IsOk(hr));
+}
+
+TEST(GraphTaskTest, DoWithMockHostReturnsSuccessOnEmptyPlan)
+{
+    auto host = DasPtr<Das::PluginInterface::IDasTaskComponentHost>(
+        new MockTaskComponentHost());
+    auto task = GraphTaskImpl::Make(host.Get());
+    ASSERT_NE(task.Get(), nullptr);
+
+    DasPtr<Das::ExportInterface::IDasJson> result;
+    DasResult hr = task->Do(nullptr, nullptr, nullptr, nullptr, result.Put());
+    // Empty plan runs without error (empty graph).
+    EXPECT_TRUE(DAS::IsOk(hr));
 }
 
 TEST(GraphTaskTest, DoStopTokenCancel)
 {
-    auto task = GraphTaskImpl::Make();
+    auto host = DasPtr<Das::PluginInterface::IDasTaskComponentHost>(
+        new MockTaskComponentHost());
+    auto task = GraphTaskImpl::Make(host.Get());
     ASSERT_NE(task.Get(), nullptr);
 
-    auto      cancelled_token = MockStopTokenForTask::Make(true);
-    DasResult hr = task->Do(cancelled_token.Get(), nullptr, nullptr);
+    auto cancelled_token = MockStopTokenForTask::Make(true);
+    DasPtr<Das::ExportInterface::IDasJson> result;
+    DasResult                              hr = task->Do(
+        cancelled_token.Get(),
+        nullptr,
+        nullptr,
+        nullptr,
+        result.Put());
+    // RunWithHost should propagate cancellation.
     EXPECT_TRUE(DAS::IsFailed(hr));
 }

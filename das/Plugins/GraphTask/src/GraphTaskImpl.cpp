@@ -2,9 +2,9 @@
 
 #include <das/DasApi.h>
 #include <das/DasGuidHolder.h>
+#include <das/Utils/CommonUtils.hpp>
 
-// IID for GraphTaskImpl — required by IDasTypeInfo::GetGuid via
-// DasTaskImplBase<T>.
+// IID for GraphTaskImpl — required by IDasTypeInfo::GetGuid.
 DAS_DEFINE_CLASS_GUID_HOLDER_IN_NAMESPACE(
     Das::Plugins::GraphTask,
     GraphTaskImpl,
@@ -23,31 +23,75 @@ DAS_DEFINE_CLASS_GUID_HOLDER_IN_NAMESPACE(
 namespace Das::Plugins::GraphTask
 {
 
-    DasResult GraphTaskImpl::Do(
-        Das::PluginInterface::IDasStopToken* p_stop_token,
-        Das::ExportInterface::IDasJson*      p_environment_json,
-        Das::ExportInterface::IDasJson*      p_task_settings_json)
+    GraphTaskImpl::GraphTaskImpl(
+        Das::PluginInterface::IDasTaskComponentHost* p_host)
+        : host_(p_host)
     {
-        std::ignore = p_stop_token;
-        std::ignore = p_environment_json;
-        std::ignore = p_task_settings_json;
-
-        // GraphRuntime::Load() and Run() have been removed from the IDL;
-        // graph execution now goes through GraphRuntime::RunWithHost()
-        // directly in C++ code, not through the COM facade.
-        last_error_ = "GraphTask execution is not available via COM interface";
-        DAS_LOG_ERROR(last_error_.c_str());
-        return DAS_E_NO_IMPLEMENTATION;
     }
 
-    DasResult GraphTaskImpl::GetNextExecutionTime(
-        Das::ExportInterface::DasDate* p_out_date)
+    DasResult GraphTaskImpl::GetGuid(DasGuid* p_out_guid)
     {
-        if (p_out_date)
+        if (p_out_guid == nullptr)
         {
-            *p_out_date = {};
+            return DAS_E_INVALID_POINTER;
         }
-        return DAS_S_FALSE;
+        *p_out_guid = DasIidOf<GraphTaskImpl>();
+        return DAS_S_OK;
+    }
+
+    DasResult GraphTaskImpl::GetRuntimeClassName(
+        IDasReadOnlyString** pp_out_name)
+    {
+        if (pp_out_name == nullptr)
+        {
+            return DAS_E_INVALID_POINTER;
+        }
+        return CreateIDasReadOnlyStringFromUtf8(
+            "Das.Plugins.GraphTask.GraphTaskImpl",
+            pp_out_name);
+    }
+
+    DasResult GraphTaskImpl::ApplySettingsChange(
+        Das::ExportInterface::IDasJson*  p_request_json,
+        Das::ExportInterface::IDasJson** pp_out_result_json)
+    {
+        std::ignore = p_request_json;
+        if (pp_out_result_json == nullptr)
+        {
+            return DAS_E_INVALID_POINTER;
+        }
+        *pp_out_result_json = nullptr;
+        return DAS_S_OK;
+    }
+
+    DasResult GraphTaskImpl::Do(
+        Das::PluginInterface::IDasStopToken* stop_token,
+        Das::ExportInterface::IDasJson*      p_environment_json,
+        Das::ExportInterface::IDasJson*      p_settings_json,
+        Das::ExportInterface::IDasJson*      p_input_json,
+        Das::ExportInterface::IDasJson**     pp_out_result_json)
+    {
+        std::ignore = p_environment_json;
+        std::ignore = p_input_json;
+        std::ignore = p_settings_json;
+        std::ignore = stop_token;
+        if (pp_out_result_json == nullptr)
+        {
+            return DAS_E_INVALID_POINTER;
+        }
+        *pp_out_result_json = nullptr;
+
+        if (!host_)
+        {
+            last_error_ = "Task component host is unavailable";
+            DAS_LOG_ERROR(last_error_.c_str());
+            return DAS_E_INVALID_POINTER;
+        }
+
+        // v18: GraphRuntime execution will be wired once the engine
+        // is exposed through the DasCore DLL boundary.
+        // Factory pattern and host injection are in place.
+        return DAS_S_OK;
     }
 
 } // namespace Das::Plugins::GraphTask

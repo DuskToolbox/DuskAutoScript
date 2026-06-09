@@ -11,34 +11,31 @@ namespace Das::PluginInterface
     {
         DasResult ApplySettingsChange(
             Das::ExportInterface::IDasJson * p_request_json,
-            [out] Das::ExportInterface::IDasJson ** pp_out_result_json);
+            [out] Das::ExportInterface::IDasJson * *pp_out_result_json);
         DasResult Do(
             IDasStopToken * stop_token,
             Das::ExportInterface::IDasJson * p_environment_json,
             Das::ExportInterface::IDasJson * p_settings_json,
             Das::ExportInterface::IDasJson * p_input_json,
-            [out] Das::ExportInterface::IDasJson ** pp_out_result_json);
+            [out] Das::ExportInterface::IDasJson * *pp_out_result_json);
     }
 
-    [uuid("BDB3D247-4A1E-44D4-8D9E-93B0767E6201")] interface IDasTaskComponentHost
+    [uuid(
+        "BDB3D247-4A1E-44D4-8D9E-93B0767E6201")] interface IDasTaskComponentHost
         : IDasBase
     {
         DasResult CreateTaskComponent(
-            const DasGuid & component_guid,
-            [out] IDasTaskComponent ** pp_out_component);
+            const DasGuid&            component_guid,
+            [out] IDasTaskComponent** pp_out_component);
     }
 
-    [uuid("630BB8E7-B2D5-4D1C-9AD8-A0D34E07A270")] interface IDasTaskComponentFactory
+    [uuid(
+        "630BB8E7-B2D5-4D1C-9AD8-A0D34E07A270")] interface IDasTaskComponentFactory
         : IDasTypeInfo
     {
         DasResult CreateComponent(
-            const DasGuid & component_guid,
-            [out] IDasTaskComponent ** pp_out_component);
-    }
-
-    [uuid("9F02143E-B69B-4320-9903-DB4ECF67F7B2")] interface IDasTaskComponentHostAware
-        : IDasTaskComponentFactory
-    {
+            const DasGuid&            component_guid,
+            [out] IDasTaskComponent** pp_out_component);
         DasResult SetTaskComponentHost(IDasTaskComponentHost * p_host);
     }
 

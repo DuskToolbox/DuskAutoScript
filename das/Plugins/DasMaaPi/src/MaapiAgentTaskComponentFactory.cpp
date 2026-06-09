@@ -59,5 +59,12 @@ namespace Plugins::DasMaaPi
             return DAS_E_OUT_OF_MEMORY;
         }
     }
+
+    DasResult MaapiAgentTaskComponentFactory::SetTaskComponentHost(
+        PluginInterface::IDasTaskComponentHost* p_host)
+    {
+        host_ = DasPtr<PluginInterface::IDasTaskComponentHost>(p_host);
+        return DAS_S_OK;
+    }
 } // namespace Plugins::DasMaaPi
 DAS_NS_END

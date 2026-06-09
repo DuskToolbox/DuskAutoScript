@@ -548,6 +548,13 @@ DasResult IpcTaskComponentFactoryImpl::CreateComponent(
     return DAS_S_OK;
 }
 
+DasResult IpcTaskComponentFactoryImpl::SetTaskComponentHost(
+    PluginInterface::IDasTaskComponentHost* p_host)
+{
+    host_ = DasPtr<PluginInterface::IDasTaskComponentHost>(p_host);
+    return DAS_S_OK;
+}
+
 // === IpcTestPlugin1 ===
 
 DasResult IpcTestPlugin1::EnumFeature(

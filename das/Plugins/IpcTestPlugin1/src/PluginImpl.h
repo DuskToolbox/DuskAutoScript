@@ -254,10 +254,15 @@ class IpcTaskComponentFactoryImpl final
     : public PluginInterface::DasTaskComponentFactoryImplBase<
           IpcTaskComponentFactoryImpl>
 {
+    DasPtr<PluginInterface::IDasTaskComponentHost> host_;
+
 public:
     DAS_IMPL CreateComponent(
         const DasGuid&                       component_guid,
         PluginInterface::IDasTaskComponent** pp_out_component) override;
+
+    DAS_IMPL SetTaskComponentHost(
+        PluginInterface::IDasTaskComponentHost* p_host) override;
 };
 
 /**

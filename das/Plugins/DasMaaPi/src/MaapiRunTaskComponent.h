@@ -100,6 +100,8 @@ namespace Plugins::DasMaaPi
         : public PluginInterface::DasTaskComponentFactoryImplBase<
               MaapiRunTaskComponentFactory>
     {
+        DasPtr<PluginInterface::IDasTaskComponentHost> host_;
+
     public:
         DAS_IMPL GetGuid(DasGuid* p_out_guid) override;
         DAS_IMPL GetRuntimeClassName(IDasReadOnlyString** pp_out_name) override;
@@ -107,6 +109,9 @@ namespace Plugins::DasMaaPi
         DAS_IMPL CreateComponent(
             const DasGuid&                       component_guid,
             PluginInterface::IDasTaskComponent** pp_out_component) override;
+
+        DAS_IMPL SetTaskComponentHost(
+            PluginInterface::IDasTaskComponentHost* p_host) override;
     };
 } // namespace Plugins::DasMaaPi
 DAS_NS_END

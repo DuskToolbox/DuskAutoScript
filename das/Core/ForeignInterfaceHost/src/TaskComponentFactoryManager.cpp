@@ -143,20 +143,14 @@ DasResult TaskComponentFactoryManager::OnPluginLoaded(
             continue;
         }
 
-        DasPtr<Das::PluginInterface::IDasTaskComponentHostAware> host_aware;
-        const auto host_aware_result = factory.As(host_aware);
-        if (DAS::IsOk(host_aware_result) && host_aware)
+        const auto set_host_result = factory->SetTaskComponentHost(host_.Get());
+        if (DAS::IsFailed(set_host_result))
         {
-            const auto set_host_result =
-                host_aware->SetTaskComponentHost(host_.Get());
-            if (DAS::IsFailed(set_host_result))
-            {
-                DAS_CORE_LOG_WARN(
-                    "Invalid task component factory feature: "
-                    "SetTaskComponentHost failed, result={}",
-                    static_cast<int>(set_host_result));
-                return set_host_result;
-            }
+            DAS_CORE_LOG_WARN(
+                "Invalid task component factory feature: "
+                "SetTaskComponentHost failed, result={}",
+                static_cast<int>(set_host_result));
+            return set_host_result;
         }
 
         if (plugin_factories.contains(factory_guid))

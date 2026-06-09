@@ -1,11 +1,40 @@
 {
-    "name": "GraphTask",
-    "version": "0.1.0",
-    "description": "GraphRuntime thin IDasTask adapter plugin (core-first v18)",
-    "entryPoints": [
-        {
-            "name": "GraphTask",
-            "type": "task"
+  "name": "@CMAKE_SHARED_LIBRARY_PREFIX@GraphTask",
+  "author": "Dusk",
+  "version": "0.1",
+  "guid": "C8A4B7D0-1E2F-3A5B-6C9D-7E8F0A1B2C3D",
+  "description": "GraphRuntime thin IDasTaskComponent adapter plugin",
+  "supportedSystem": "Windows",
+  "language": "Cpp",
+  "pluginFilenameExtension": "dll",
+  "settings": {},
+  "taskComponents": {
+    "factories": [
+      "E8D1A2B3-4C5F-6D7E-8A9B-0C1D2E3F4A5B"
+    ],
+    "components": {
+      "F4A2C9D1-7B3E-4D8A-A15F-C2E86B4D91A3": {
+        "factoryGuid": "E8D1A2B3-4C5F-6D7E-8A9B-0C1D2E3F4A5B",
+        "definition": {
+          "schemaVersion": 1,
+          "kind": "das.graph.execute",
+          "componentGuid": "F4A2C9D1-7B3E-4D8A-A15F-C2E86B4D91A3",
+          "inputs": [
+            {
+              "id": "compiledPlan",
+              "type": "object"
+            }
+          ],
+          "outputs": [
+            {
+              "id": "result",
+              "type": "object"
+            }
+          ],
+          "config": {},
+          "diagnostics": []
         }
-    ]
+      }
+    }
+  }
 }

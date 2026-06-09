@@ -305,17 +305,24 @@ namespace
             return DAS_S_OK;
         }
 
-        DasGuid   guid_;
-        DasGuid   last_component_guid{};
-        DasResult create_result = DAS_S_OK;
-        int       create_call_count = 0;
+        DasResult DAS_STD_CALL
+        SetTaskComponentHost(IDasTaskComponentHost* p_host) override
+        {
+            host_ = DasPtr<IDasTaskComponentHost>(p_host);
+            return DAS_S_OK;
+        }
+
+        DasGuid                       guid_;
+        DasPtr<IDasTaskComponentHost> host_;
+        DasGuid                       last_component_guid{};
+        DasResult                     create_result = DAS_S_OK;
+        int                           create_call_count = 0;
 
     private:
         std::atomic<uint32_t> ref_count_{0};
     };
 
-    class HostAwareTaskComponentFactory final
-        : public IDasTaskComponentHostAware
+    class HostAwareTaskComponentFactory final : public IDasTaskComponentFactory
     {
     public:
         HostAwareTaskComponentFactory(
@@ -364,12 +371,6 @@ namespace
             if (iid == DasIidOf<IDasTaskComponentFactory>())
             {
                 *pp_out = static_cast<IDasTaskComponentFactory*>(this);
-                AddRef();
-                return DAS_S_OK;
-            }
-            if (iid == DasIidOf<IDasTaskComponentHostAware>())
-            {
-                *pp_out = static_cast<IDasTaskComponentHostAware*>(this);
                 AddRef();
                 return DAS_S_OK;
             }
