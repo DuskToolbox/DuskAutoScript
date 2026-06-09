@@ -2,13 +2,13 @@
 
 #include <das/DasApi.h>
 #include <das/IDasBase.h>
-#include <das/Plugins/GraphTask/GraphTaskPluginPackage.h>
+#include <das/Plugins/DasGraphTask/DasGraphTaskPluginPackage.h>
 #include <das/Utils/CommonUtils.hpp>
 
 #include <Windows.h>
 #include <new>
 
-using Das::Plugins::GraphTask::GraphTaskPluginPackage;
+using Das::Plugins::DasGraphTask::DasGraphTaskPluginPackage;
 
 BOOL APIENTRY
 DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserved)
@@ -28,12 +28,12 @@ DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserved)
 
 extern "C" DAS_EXPORT DasResult DasCoCreatePlugin(IDasBase** pp_out_plugin)
 {
-    DAS_LOG_INFO("[DasCoCreatePlugin] Entry - GraphTask");
+    DAS_LOG_INFO("[DasCoCreatePlugin] Entry - DasGraphTask");
     DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(pp_out_plugin)
 
     try
     {
-        auto* p_result = new GraphTaskPluginPackage{};
+        auto* p_result = new DasGraphTaskPluginPackage{};
         p_result->AddRef();
         *pp_out_plugin =
             static_cast<Das::PluginInterface::IDasPluginPackage*>(p_result);

@@ -26,6 +26,12 @@ public:
 
     // --- IDasGraphRuntime interface ---
     DAS_IMPL GetErrorMessage(IDasReadOnlyString** pp_out_error_message);
+
+    DAS_IMPL Execute(
+        IDasReadOnlyString*                          p_compiled_artifact_json,
+        Das::PluginInterface::IDasTaskComponentHost* p_host,
+        Das::PluginInterface::IDasStopToken*         p_stop_token,
+        Das::ExportInterface::IDasJson**             pp_out_result_json);
 };
 
 DAS_CORE_GRAPHRUNTIME_NS_END

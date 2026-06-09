@@ -1,5 +1,5 @@
-#ifndef DAS_PLUGINS_GRAPHTASK_GRAPHTASKIMPL_H
-#define DAS_PLUGINS_GRAPHTASK_GRAPHTASKIMPL_H
+#ifndef DAS_PLUGINS_DASGRAPHTASK_DASGRAPHTASKIMPL_H
+#define DAS_PLUGINS_DASGRAPHTASK_DASGRAPHTASKIMPL_H
 
 #include <das/DasApi.h>
 #include <das/DasPtr.hpp>
@@ -7,25 +7,26 @@
 
 #include <string>
 
-namespace Das::Plugins::GraphTask
+namespace Das::Plugins::DasGraphTask
 {
 
     // Thin adapter: IDasTaskComponent -> GraphRuntime execution.
-    // Receives compiled graph plan JSON via settings, creates
-    // GraphRuntime internally, and runs via RunWithHost().
-    class GraphTaskImpl final
-        : public Das::PluginInterface::DasTaskComponentImplBase<GraphTaskImpl>
+    // Delegates to IDasGraphRuntime::Execute() via the public DasCore API.
+    class DasGraphTaskImpl final
+        : public Das::PluginInterface::DasTaskComponentImplBase<
+              DasGraphTaskImpl>
     {
         std::string                                         last_error_;
         DasPtr<Das::PluginInterface::IDasTaskComponentHost> host_;
 
     public:
-        explicit GraphTaskImpl(
+        explicit DasGraphTaskImpl(
             Das::PluginInterface::IDasTaskComponentHost* p_host);
 
         // --- IDasTaskComponent interface ---
         DAS_IMPL GetGuid(DasGuid* p_out_guid) override;
-        DAS_IMPL GetRuntimeClassName(IDasReadOnlyString** pp_out_name) override;
+        DAS_IMPL
+        GetRuntimeClassName(IDasReadOnlyString** pp_out_name) override;
 
         DAS_IMPL ApplySettingsChange(
             Das::ExportInterface::IDasJson*  p_request_json,
@@ -39,6 +40,6 @@ namespace Das::Plugins::GraphTask
             Das::ExportInterface::IDasJson**     pp_out_result_json) override;
     };
 
-} // namespace Das::Plugins::GraphTask
+} // namespace Das::Plugins::DasGraphTask
 
-#endif // DAS_PLUGINS_GRAPHTASK_GRAPHTASKIMPL_H
+#endif // DAS_PLUGINS_DASGRAPHTASK_DASGRAPHTASKIMPL_H

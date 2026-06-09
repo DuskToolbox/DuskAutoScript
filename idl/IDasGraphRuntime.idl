@@ -1,5 +1,7 @@
 import "DasBasicTypes.idl";
+import "DasJson.idl";
 import "IDasTask.idl";
+import "IDasTaskComponent.idl";
 
 namespace Das::ExportInterface
 {
@@ -9,5 +11,13 @@ namespace Das::ExportInterface
         /// Get last error message (valid for the lifetime of this object).
         DasResult
             GetErrorMessage([out] IDasReadOnlyString * *pp_out_error_message);
+
+        /// Execute a compiled graph plan using the given host for component
+        /// resolution.
+        DasResult Execute(
+            IDasReadOnlyString * p_compiled_artifact_json,
+            Das::PluginInterface::IDasTaskComponentHost * p_host,
+            Das::PluginInterface::IDasStopToken * p_stop_token,
+            [out] Das::ExportInterface::IDasJson * *pp_out_result_json);
     }
 }

@@ -1,16 +1,16 @@
-#include <das/Plugins/GraphTask/GraphTaskPluginPackage.h>
+#include <das/Plugins/DasGraphTask/DasGraphTaskPluginPackage.h>
 
 #include <das/DasApi.h>
 #include <das/DasGuidHolder.h>
-#include <das/Plugins/GraphTask/GraphTaskImpl.h>
+#include <das/Plugins/DasGraphTask/DasGraphTaskImpl.h>
 #include <das/Utils/CommonUtils.hpp>
 
 #include <new>
 
 // {E8D1A2B3-4C5F-6D7E-8A9B-0C1D2E3F4A5B}
 DAS_DEFINE_CLASS_GUID_HOLDER_IN_NAMESPACE(
-    Das::Plugins::GraphTask,
-    GraphTaskPluginPackage,
+    Das::Plugins::DasGraphTask,
+    DasGraphTaskPluginPackage,
     0xE8D1A2B3,
     0x4C5F,
     0x6D7E,
@@ -23,15 +23,15 @@ DAS_DEFINE_CLASS_GUID_HOLDER_IN_NAMESPACE(
     0x4A,
     0x5B)
 
-namespace Das::Plugins::GraphTask
+namespace Das::Plugins::DasGraphTask
 {
 
-    uint32_t DAS_STD_CALL GraphTaskPluginPackage::AddRef()
+    uint32_t DAS_STD_CALL DasGraphTaskPluginPackage::AddRef()
     {
         return ++ref_count_;
     }
 
-    uint32_t DAS_STD_CALL GraphTaskPluginPackage::Release()
+    uint32_t DAS_STD_CALL DasGraphTaskPluginPackage::Release()
     {
         const auto count = --ref_count_;
         if (count == 0)
@@ -42,7 +42,7 @@ namespace Das::Plugins::GraphTask
     }
 
     DasResult DAS_STD_CALL
-    GraphTaskPluginPackage::QueryInterface(const DasGuid& iid, void** pp_out)
+    DasGraphTaskPluginPackage::QueryInterface(const DasGuid& iid, void** pp_out)
     {
         if (pp_out == nullptr)
         {
@@ -76,7 +76,7 @@ namespace Das::Plugins::GraphTask
         return DAS_E_NO_INTERFACE;
     }
 
-    DasResult GraphTaskPluginPackage::EnumFeature(
+    DasResult DasGraphTaskPluginPackage::EnumFeature(
         size_t                                  index,
         Das::PluginInterface::DasPluginFeature* p_out_feature)
     {
@@ -94,7 +94,7 @@ namespace Das::Plugins::GraphTask
         return DAS_S_OK;
     }
 
-    DasResult GraphTaskPluginPackage::CreateFeatureInterface(
+    DasResult DasGraphTaskPluginPackage::CreateFeatureInterface(
         size_t     index,
         IDasBase** pp_out_interface)
     {
@@ -114,17 +114,17 @@ namespace Das::Plugins::GraphTask
         return DAS_S_OK;
     }
 
-    DasResult GraphTaskPluginPackage::GetGuid(DasGuid* p_out_guid)
+    DasResult DasGraphTaskPluginPackage::GetGuid(DasGuid* p_out_guid)
     {
         if (p_out_guid == nullptr)
         {
             return DAS_E_INVALID_POINTER;
         }
-        *p_out_guid = DasIidOf<GraphTaskPluginPackage>();
+        *p_out_guid = DasIidOf<DasGraphTaskPluginPackage>();
         return DAS_S_OK;
     }
 
-    DasResult GraphTaskPluginPackage::CanUnloadNow(bool* p_can_unload)
+    DasResult DasGraphTaskPluginPackage::CanUnloadNow(bool* p_can_unload)
     {
         if (p_can_unload == nullptr)
         {
@@ -134,7 +134,7 @@ namespace Das::Plugins::GraphTask
         return DAS_S_OK;
     }
 
-    DasResult GraphTaskPluginPackage::GetRuntimeClassName(
+    DasResult DasGraphTaskPluginPackage::GetRuntimeClassName(
         IDasReadOnlyString** pp_out_name)
     {
         if (pp_out_name == nullptr)
@@ -142,11 +142,11 @@ namespace Das::Plugins::GraphTask
             return DAS_E_INVALID_POINTER;
         }
         return CreateIDasReadOnlyStringFromUtf8(
-            "Das.Plugins.GraphTask.GraphTaskPluginPackage",
+            "Das.Plugins.DasGraphTask.DasGraphTaskPluginPackage",
             pp_out_name);
     }
 
-    DasResult GraphTaskPluginPackage::CreateComponent(
+    DasResult DasGraphTaskPluginPackage::CreateComponent(
         const DasGuid&                            component_guid,
         Das::PluginInterface::IDasTaskComponent** pp_out_component)
     {
@@ -156,7 +156,7 @@ namespace Das::Plugins::GraphTask
         }
         *pp_out_component = nullptr;
 
-        const DasGuid graph_task_guid = DasIidOf<GraphTaskImpl>();
+        const DasGuid graph_task_guid = DasIidOf<DasGraphTaskImpl>();
         if (!(component_guid == graph_task_guid))
         {
             return DAS_E_NOT_FOUND;
@@ -164,7 +164,7 @@ namespace Das::Plugins::GraphTask
 
         try
         {
-            auto* component = new GraphTaskImpl(host_.Get());
+            auto* component = new DasGraphTaskImpl(host_.Get());
             component->AddRef();
             *pp_out_component =
                 static_cast<Das::PluginInterface::IDasTaskComponent*>(
@@ -177,11 +177,11 @@ namespace Das::Plugins::GraphTask
         }
     }
 
-    DasResult GraphTaskPluginPackage::SetTaskComponentHost(
+    DasResult DasGraphTaskPluginPackage::SetTaskComponentHost(
         Das::PluginInterface::IDasTaskComponentHost* p_host)
     {
         host_ = DasPtr<Das::PluginInterface::IDasTaskComponentHost>(p_host);
         return DAS_S_OK;
     }
 
-} // namespace Das::Plugins::GraphTask
+} // namespace Das::Plugins::DasGraphTask

@@ -1,5 +1,5 @@
 {
-  "name": "@CMAKE_SHARED_LIBRARY_PREFIX@GraphTask",
+  "name": "@CMAKE_SHARED_LIBRARY_PREFIX@DasGraphTask",
   "author": "Dusk",
   "version": "0.1",
   "guid": "C8A4B7D0-1E2F-3A5B-6C9D-7E8F0A1B2C3D",

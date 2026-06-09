@@ -1,5 +1,5 @@
-#ifndef DAS_PLUGINS_GRAPHTASK_GRAPHTASKPLUGINPACKAGE_H
-#define DAS_PLUGINS_GRAPHTASK_GRAPHTASKPLUGINPACKAGE_H
+#ifndef DAS_PLUGINS_DASGRAPHTASK_DASGRAPHTASKPLUGINPACKAGE_H
+#define DAS_PLUGINS_DASGRAPHTASK_DASGRAPHTASKPLUGINPACKAGE_H
 
 #include <das/DasApi.h>
 #include <das/DasPtr.hpp>
@@ -8,10 +8,10 @@
 
 #include <atomic>
 
-namespace Das::Plugins::GraphTask
+namespace Das::Plugins::DasGraphTask
 {
 
-    class GraphTaskPluginPackage final
+    class DasGraphTaskPluginPackage final
         : public Das::PluginInterface::IDasPluginPackage,
           public Das::PluginInterface::IDasTaskComponentFactory
     {
@@ -19,7 +19,7 @@ namespace Das::Plugins::GraphTask
         std::atomic<uint32_t>                               ref_count_{0};
 
     public:
-        GraphTaskPluginPackage() = default;
+        DasGraphTaskPluginPackage() = default;
 
         // --- IUnknown ---
         uint32_t DAS_STD_CALL AddRef() override;
@@ -41,7 +41,8 @@ namespace Das::Plugins::GraphTask
         DAS_IMPL CanUnloadNow(bool* p_can_unload) override;
 
         // --- IDasTaskComponentFactory ---
-        DAS_IMPL GetRuntimeClassName(IDasReadOnlyString** pp_out_name) override;
+        DAS_IMPL
+        GetRuntimeClassName(IDasReadOnlyString** pp_out_name) override;
 
         DAS_IMPL CreateComponent(
             const DasGuid&                            component_guid,
@@ -52,6 +53,6 @@ namespace Das::Plugins::GraphTask
             Das::PluginInterface::IDasTaskComponentHost* p_host) override;
     };
 
-} // namespace Das::Plugins::GraphTask
+} // namespace Das::Plugins::DasGraphTask
 
-#endif // DAS_PLUGINS_GRAPHTASK_GRAPHTASKPLUGINPACKAGE_H
+#endif // DAS_PLUGINS_DASGRAPHTASK_DASGRAPHTASKPLUGINPACKAGE_H

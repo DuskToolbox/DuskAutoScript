@@ -1,10 +1,10 @@
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
-#include <das/Plugins/GraphTask/GraphTaskImpl.h>
+#include <das/Plugins/DasGraphTask/DasGraphTaskImpl.h>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasStopToken.Implements.hpp>
 #include <gtest/gtest.h>
 
-using namespace Das::Plugins::GraphTask;
+using namespace Das::Plugins::DasGraphTask;
 using DAS::DasPtr;
 
 // ---- Minimal mock for IDasTaskComponentHost ----
@@ -89,15 +89,15 @@ public:
 
 // ---- Tests ----
 
-TEST(GraphTaskTest, ConstructWithNullHost)
+TEST(DasGraphTaskTest, ConstructWithNullHost)
 {
-    auto task = GraphTaskImpl::Make(nullptr);
+    auto task = DasGraphTaskImpl::Make(nullptr);
     ASSERT_NE(task.Get(), nullptr);
 }
 
-TEST(GraphTaskTest, DoReturnsErrorWhenHostIsNull)
+TEST(DasGraphTaskTest, DoReturnsErrorWhenHostIsNull)
 {
-    auto task = GraphTaskImpl::Make(nullptr);
+    auto task = DasGraphTaskImpl::Make(nullptr);
     ASSERT_NE(task.Get(), nullptr);
 
     DasPtr<Das::ExportInterface::IDasJson> result;
@@ -105,9 +105,9 @@ TEST(GraphTaskTest, DoReturnsErrorWhenHostIsNull)
     EXPECT_TRUE(DAS::IsFailed(hr));
 }
 
-TEST(GraphTaskTest, GetGuidReturnsNonEmpty)
+TEST(DasGraphTaskTest, GetGuidReturnsNonEmpty)
 {
-    auto task = GraphTaskImpl::Make(nullptr);
+    auto task = DasGraphTaskImpl::Make(nullptr);
     ASSERT_NE(task.Get(), nullptr);
 
     DasGuid   guid{};
@@ -115,11 +115,11 @@ TEST(GraphTaskTest, GetGuidReturnsNonEmpty)
     EXPECT_TRUE(DAS::IsOk(hr));
 }
 
-TEST(GraphTaskTest, DoWithMockHostReturnsSuccessOnEmptyPlan)
+TEST(DasGraphTaskTest, DoWithMockHostReturnsSuccessOnEmptyPlan)
 {
     auto host = DasPtr<Das::PluginInterface::IDasTaskComponentHost>(
         new MockTaskComponentHost());
-    auto task = GraphTaskImpl::Make(host.Get());
+    auto task = DasGraphTaskImpl::Make(host.Get());
     ASSERT_NE(task.Get(), nullptr);
 
     DasPtr<Das::ExportInterface::IDasJson> result;
@@ -128,11 +128,11 @@ TEST(GraphTaskTest, DoWithMockHostReturnsSuccessOnEmptyPlan)
     EXPECT_TRUE(DAS::IsOk(hr));
 }
 
-TEST(GraphTaskTest, DoStopTokenCancel)
+TEST(DasGraphTaskTest, DoStopTokenCancel)
 {
     auto host = DasPtr<Das::PluginInterface::IDasTaskComponentHost>(
         new MockTaskComponentHost());
-    auto task = GraphTaskImpl::Make(host.Get());
+    auto task = DasGraphTaskImpl::Make(host.Get());
     ASSERT_NE(task.Get(), nullptr);
 
     auto cancelled_token = MockStopTokenForTask::Make(true);

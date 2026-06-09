@@ -1,6 +1,7 @@
 #include <das/Core/GraphRuntime/GraphRuntimeFactory.h>
 
 #include <das/Core/Logger/Logger.h>
+#include <das/DasApi.h>
 #include <new>
 
 DAS_CORE_GRAPHRUNTIME_NS_BEGIN
@@ -18,6 +19,68 @@ DasResult GraphRuntimeImpl::GetErrorMessage(
     return CreateIDasReadOnlyStringFromUtf8(
         last_error_.c_str(),
         pp_out_error_message);
+}
+
+DasResult GraphRuntimeImpl::Execute(
+    IDasReadOnlyString*                          p_compiled_artifact_json,
+    Das::PluginInterface::IDasTaskComponentHost* p_host,
+    Das::PluginInterface::IDasStopToken*         p_stop_token,
+    Das::ExportInterface::IDasJson**             pp_out_result_json)
+{
+    if (!pp_out_result_json)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+    *pp_out_result_json = nullptr;
+
+    if (!p_host)
+    {
+        last_error_ = "Execute: task component host is null";
+        DAS_CORE_LOG_ERROR("{}", last_error_);
+        return DAS_E_INVALID_POINTER;
+    }
+
+    // Parse compiled graph plan from JSON string.
+    Dto::CompiledGraphPlanDto plan;
+    if (p_compiled_artifact_json)
+    {
+        const char* utf8 = nullptr;
+        DasResult   hr = p_compiled_artifact_json->GetUtf8(&utf8);
+        if (DAS::IsFailed(hr) || !utf8)
+        {
+            last_error_ = "Execute: failed to read compiled artifact JSON";
+            DAS_CORE_LOG_ERROR("{}", last_error_);
+            return DAS_E_INVALID_POINTER;
+        }
+
+        std::string json_str(utf8);
+        if (!json_str.empty())
+        {
+            auto doc = yyjson::read(json_str);
+            plan = yyjson::cast<Dto::CompiledGraphPlanDto>(doc);
+        }
+    }
+
+    // Execute via engine.
+    DasResult result = engine_.RunWithHost(
+        plan,
+        plan.compiled_fingerprint,
+        p_stop_token,
+        p_host);
+
+    if (DAS::IsFailed(result))
+    {
+        last_error_ = engine_.GetLastErrorMessage();
+        if (last_error_.empty())
+        {
+            last_error_ = "Graph execution failed";
+        }
+        DAS_CORE_LOG_ERROR("{}", last_error_);
+        return result;
+    }
+
+    // Return an empty result JSON on success.
+    return CreateEmptyDasJson(pp_out_result_json);
 }
 
 DAS_CORE_GRAPHRUNTIME_NS_END
