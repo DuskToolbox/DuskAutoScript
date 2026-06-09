@@ -1,10 +1,10 @@
 #include <das/Plugins/DasGraphTask/DasGraphTaskImpl.h>
 
+#include <das/Core/GraphRuntime/GraphRuntimeFactory.h>
 #include <das/DasApi.h>
 #include <das/DasGuidHolder.h>
 #include <das/DasString.hpp>
 #include <das/Utils/CommonUtils.hpp>
-#include <das/_autogen/idl/abi/IDasGraphRuntime.h>
 
 // IID for DasGraphTaskImpl — required by IDasTypeInfo::GetGuid.
 DAS_DEFINE_CLASS_GUID_HOLDER_IN_NAMESPACE(
@@ -102,9 +102,9 @@ namespace Das::Plugins::DasGraphTask
             }
         }
 
-        // Create GraphRuntime via public factory and call Execute().
+        // Create GraphRuntime with host bound at construction.
         DAS::DasPtr<Das::ExportInterface::IDasGraphRuntime> runtime;
-        DasResult hr = CreateGraphRuntime(runtime.Put());
+        DasResult hr = CreateGraphRuntimeWithHost(host_.Get(), runtime.Put());
         if (DAS::IsFailed(hr))
         {
             last_error_ = "Failed to create GraphRuntime";
@@ -115,7 +115,6 @@ namespace Das::Plugins::DasGraphTask
         DAS::DasPtr<Das::ExportInterface::IDasJson> result_json;
         hr = runtime->Execute(
             p_settings_str.Get(),
-            host_.Get(),
             stop_token,
             result_json.Put());
 

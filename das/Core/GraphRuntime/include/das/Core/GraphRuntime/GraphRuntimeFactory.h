@@ -18,20 +18,21 @@ DAS_CORE_GRAPHRUNTIME_NS_BEGIN
 class GraphRuntimeImpl final
     : public Das::ExportInterface::DasGraphRuntimeImplBase<GraphRuntimeImpl>
 {
-    GraphRuntime engine_;
-    std::string  last_error_;
+    GraphRuntime                                        engine_;
+    std::string                                         last_error_;
+    DasPtr<Das::PluginInterface::IDasTaskComponentHost> host_;
 
 public:
-    GraphRuntimeImpl() = default;
+    explicit GraphRuntimeImpl(
+        Das::PluginInterface::IDasTaskComponentHost* p_host);
 
     // --- IDasGraphRuntime interface ---
     DAS_IMPL GetErrorMessage(IDasReadOnlyString** pp_out_error_message);
 
     DAS_IMPL Execute(
-        IDasReadOnlyString*                          p_compiled_artifact_json,
-        Das::PluginInterface::IDasTaskComponentHost* p_host,
-        Das::PluginInterface::IDasStopToken*         p_stop_token,
-        Das::ExportInterface::IDasJson**             pp_out_result_json);
+        IDasReadOnlyString*                  p_compiled_artifact_json,
+        Das::PluginInterface::IDasStopToken* p_stop_token,
+        Das::ExportInterface::IDasJson**     pp_out_result_json);
 };
 
 DAS_CORE_GRAPHRUNTIME_NS_END
@@ -41,5 +42,9 @@ DAS_CORE_GRAPHRUNTIME_NS_END
 // call it before CMake reconfigure.
 DAS_C_API DasResult
 CreateGraphRuntime(Das::ExportInterface::IDasGraphRuntime** pp_out_runtime);
+
+DAS_C_API DasResult CreateGraphRuntimeWithHost(
+    Das::PluginInterface::IDasTaskComponentHost* p_host,
+    Das::ExportInterface::IDasGraphRuntime**     pp_out_runtime);
 
 #endif // DAS_CORE_GRAPHRUNTIME_GRAPHRUNTIMEFACTORY_H

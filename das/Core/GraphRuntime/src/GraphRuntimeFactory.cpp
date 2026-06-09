@@ -8,6 +8,12 @@ DAS_CORE_GRAPHRUNTIME_NS_BEGIN
 
 // --- GraphRuntimeImpl implementation ---
 
+GraphRuntimeImpl::GraphRuntimeImpl(
+    Das::PluginInterface::IDasTaskComponentHost* p_host)
+    : host_(p_host)
+{
+}
+
 DasResult GraphRuntimeImpl::GetErrorMessage(
     IDasReadOnlyString** pp_out_error_message)
 {
@@ -22,23 +28,15 @@ DasResult GraphRuntimeImpl::GetErrorMessage(
 }
 
 DasResult GraphRuntimeImpl::Execute(
-    IDasReadOnlyString*                          p_compiled_artifact_json,
-    Das::PluginInterface::IDasTaskComponentHost* p_host,
-    Das::PluginInterface::IDasStopToken*         p_stop_token,
-    Das::ExportInterface::IDasJson**             pp_out_result_json)
+    IDasReadOnlyString*                  p_compiled_artifact_json,
+    Das::PluginInterface::IDasStopToken* p_stop_token,
+    Das::ExportInterface::IDasJson**     pp_out_result_json)
 {
     if (!pp_out_result_json)
     {
         return DAS_E_INVALID_POINTER;
     }
     *pp_out_result_json = nullptr;
-
-    if (!p_host)
-    {
-        last_error_ = "Execute: task component host is null";
-        DAS_CORE_LOG_ERROR("{}", last_error_);
-        return DAS_E_INVALID_POINTER;
-    }
 
     // Parse compiled graph plan from JSON string.
     Dto::CompiledGraphPlanDto plan;
@@ -66,7 +64,7 @@ DasResult GraphRuntimeImpl::Execute(
         plan,
         plan.compiled_fingerprint,
         p_stop_token,
-        p_host);
+        host_.Get());
 
     if (DAS::IsFailed(result))
     {
@@ -99,7 +97,7 @@ CreateGraphRuntime(Das::ExportInterface::IDasGraphRuntime** pp_out_runtime)
 
     try
     {
-        auto* impl = new Das::Core::GraphRuntime::GraphRuntimeImpl{};
+        auto* impl = new Das::Core::GraphRuntime::GraphRuntimeImpl{nullptr};
         impl->AddRef();
         *pp_out_runtime = impl;
         DAS_CORE_LOG_INFO("CreateGraphRuntime: runtime created successfully");
@@ -108,6 +106,32 @@ CreateGraphRuntime(Das::ExportInterface::IDasGraphRuntime** pp_out_runtime)
     catch (const std::bad_alloc&)
     {
         DAS_CORE_LOG_ERROR("CreateGraphRuntime: out of memory");
+        return DAS_E_OUT_OF_MEMORY;
+    }
+}
+
+DAS_C_API DasResult CreateGraphRuntimeWithHost(
+    Das::PluginInterface::IDasTaskComponentHost* p_host,
+    Das::ExportInterface::IDasGraphRuntime**     pp_out_runtime)
+{
+    if (!pp_out_runtime)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+    if (!p_host)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+
+    try
+    {
+        auto* impl = new Das::Core::GraphRuntime::GraphRuntimeImpl{p_host};
+        impl->AddRef();
+        *pp_out_runtime = impl;
+        return DAS_S_OK;
+    }
+    catch (const std::bad_alloc&)
+    {
         return DAS_E_OUT_OF_MEMORY;
     }
 }
