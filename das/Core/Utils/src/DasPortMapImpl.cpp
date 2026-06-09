@@ -228,7 +228,10 @@ DasResult DasPortMapImpl::GetImage(
     }
 
     auto* p_raw = p_val->Get();
-    p_raw->AddRef();
+    if (p_raw != nullptr)
+    {
+        p_raw->AddRef();
+    }
     *pp_out_image = p_raw;
     return DAS_S_OK;
 }

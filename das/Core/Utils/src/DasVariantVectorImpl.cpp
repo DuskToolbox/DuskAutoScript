@@ -296,7 +296,10 @@ DasResult DasVariantVectorImpl::GetComponent(
     }
 
     auto* p_raw = p_value->Get();
-    p_raw->AddRef();
+    if (p_raw != nullptr)
+    {
+        p_raw->AddRef();
+    }
     *pp_out_component = p_raw;
     return DAS_S_OK;
 }
@@ -361,7 +364,10 @@ DasResult DasVariantVectorImpl::GetBase(uint64_t index, IDasBase** pp_out_base)
     }
 
     auto* p_raw = p_value->Get();
-    p_raw->AddRef();
+    if (p_raw != nullptr)
+    {
+        p_raw->AddRef();
+    }
     *pp_out_base = p_raw;
     return DAS_S_OK;
 }
@@ -425,7 +431,10 @@ DasResult DasVariantVectorImpl::GetImage(
     }
 
     auto* p_raw = p_value->Get();
-    p_raw->AddRef();
+    if (p_raw != nullptr)
+    {
+        p_raw->AddRef();
+    }
     *pp_out_image = p_raw;
     return DAS_S_OK;
 }
