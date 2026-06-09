@@ -99,9 +99,11 @@ namespace
         }
 
         DAS_CORE_LOG_ERROR(
-            "Unhandled PortValue type = {}.",
-            static_cast<int>(pv.GetType()));
-        return DAS_E_FAIL;
+            "Unhandled PortValue type = {} for port_id = {}. "
+            "Skipping binding.",
+            static_cast<int>(pv.GetType()),
+            port_id);
+        return DAS_S_OK;
     }
 
     DasResult PortMapEntryToPortValue(
