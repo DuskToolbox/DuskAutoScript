@@ -2216,14 +2216,14 @@ struct {class_name} {{
         lines.append(f'%typemap(jstype) {full_type} "long"')
 
         # 4. in typemap: JNI → C++ 转换（jlong → 接口指针**）
-        lines.append(f"%typemap(in) {full_type} (jlong jarg) %{{ $1 = *({out_type}**)&jarg; %}}")
+        lines.append(f"%typemap(in) {full_type} (jlong in_jni_val) %{{ $1 = ({out_type}**)&in_jni_val; %}}")
 
         # 5. javain typemap: Java → jni 参数传递
         lines.append(f'%typemap(javain) {full_type} "$javainput"')
 
         # 6. directorin typemap: C++ → JNI（Director upcall 参数）
         #    descriptor="J" 关键！缺了会产生 SWIG Warning 824
-        lines.append(f'%typemap(directorin, descriptor="J") {full_type} $input (jlong j$input) %{{ j$input = (jlong)$1; %}}')
+        lines.append(f'%typemap(directorin, descriptor="J") {full_type} $input (jlong dir_jni_val) %{{ dir_jni_val = (jlong)$1; %}}')
 
         # 7. directorout typemap: JNI → C++（Director out 参数写入）
         lines.append(f"%typemap(directorout) {full_type} $input ({ret_class_name} temp) %{{")
