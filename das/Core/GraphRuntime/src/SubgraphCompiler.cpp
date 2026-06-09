@@ -115,7 +115,11 @@ Dto::SubgraphCompileResultDto SubgraphCompiler::CompileRecursive(
     std::set<GraphEntryId> visited_entry_ids;
     std::set<GraphEntryId> compiled_cache;
     return CompileRecursiveImpl(
-        document, entry_accessor, visited_entry_ids, compiled_cache, 0);
+        document,
+        entry_accessor,
+        visited_entry_ids,
+        compiled_cache,
+        0);
 }
 
 // ---------------------------------------------------------------------------
@@ -130,6 +134,18 @@ Dto::SubgraphCompileResultDto SubgraphCompiler::CompileRecursiveImpl(
     int                          depth) const
 {
     Dto::SubgraphCompileResultDto result;
+
+    if (depth >= MAX_RECURSION_DEPTH)
+    {
+        auto msg = DAS_FMT_NS::format(
+            "SubgraphCompiler: recursion depth limit exceeded — "
+            "depth = {} >= MAX_RECURSION_DEPTH = {}",
+            depth,
+            MAX_RECURSION_DEPTH);
+        DAS_CORE_LOG_ERROR(msg.c_str());
+        result.diagnostics.push_back(std::move(msg));
+        return result;
+    }
 
     // Collect all entryRef nodes
     std::vector<GraphEntryId> entry_ref_ids;

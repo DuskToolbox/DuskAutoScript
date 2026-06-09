@@ -96,6 +96,10 @@ private:
     std::map<std::string, int> ComputeOutDegrees(
         const Dto::GraphDocumentDto& document) const;
 
+    /// Maximum recursion depth for CompileRecursiveImpl to prevent
+    /// stack overflow from deeply nested entryRef chains.
+    static constexpr int32_t MAX_RECURSION_DEPTH = 8192;
+
     /// Internal recursive compilation with visited set for cycle guard
     /// @param compiled_cache tracks fully-compiled entries to avoid
     ///        redundant recompilation of shared subgraph references
