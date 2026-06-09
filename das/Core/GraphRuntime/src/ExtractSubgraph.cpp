@@ -364,7 +364,18 @@ Dto::GraphDocumentDto ExtractSubgraph::UndoExtract(
             auto id_str = rid.substr(
                 prefix.size(),
                 rid.size() - prefix.size() - suffix.size());
-            child_entry_id = std::stoll(id_str);
+            try
+            {
+                child_entry_id = std::stoll(id_str);
+            }
+            catch (const std::exception& e)
+            {
+                DAS_CORE_LOG_WARN(
+                    "UndoExtract: failed to parse child_entry_id from '{}': {}",
+                    id_str,
+                    e.what());
+                child_entry_id = 0;
+            }
         }
 
         if (child_entry_id != 0)
