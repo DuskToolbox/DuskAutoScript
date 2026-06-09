@@ -73,6 +73,13 @@ namespace Das::Plugins::GraphTask
                 return hr;
             }
         }
+        else
+        {
+            last_error_ =
+                "No task settings provided — cannot load compiled graph artifact";
+            DAS_LOG_ERROR(last_error_.c_str());
+            return DAS_E_INVALID_POINTER;
+        }
 
         // Run the graph engine with the stop token.
         hr = runtime->Run(p_stop_token);
