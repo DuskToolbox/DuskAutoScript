@@ -51,9 +51,13 @@ DasResult GraphRuntimeImpl::Load(IDasReadOnlyString* p_compiled_artifact_json)
 
 DasResult GraphRuntimeImpl::Configure(IDasReadOnlyString* p_node_snapshots_json)
 {
-    // Configure is already handled inside Load for this implementation.
-    // A separate Configure with node snapshot overrides is for future use.
-    std::ignore = p_node_snapshots_json;
+    if (p_node_snapshots_json)
+    {
+        DAS_CORE_LOG_WARN(
+            "Configure() with node snapshot overrides is not implemented. "
+            "Node snapshots are configured during Load().");
+        return DAS_E_NOT_SUPPORTED;
+    }
     return DAS_S_OK;
 }
 
