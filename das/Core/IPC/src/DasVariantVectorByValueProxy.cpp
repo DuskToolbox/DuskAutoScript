@@ -1013,9 +1013,13 @@ DasResult DasVariantVectorByValueProxy::GetImage(
 
     if (cache_[index].base_ptr.Get() != nullptr)
     {
-        cache_[index].base_ptr.Get()->AddRef();
-        *pp_out_image = static_cast<Das::ExportInterface::IDasImage*>(
-            cache_[index].base_ptr.Get());
+        // Use QueryInterface to safely obtain IDasImage instead of
+        // an unsafe static_cast — the cached base_ptr may not actually
+        // implement IDasImage.
+        DasResult qi_result = cache_[index].base_ptr.Get()->QueryInterface(
+            DasIidOf<Das::ExportInterface::IDasImage>(),
+            reinterpret_cast<void**>(pp_out_image));
+        return qi_result;
     }
     return DAS_S_OK;
 }
