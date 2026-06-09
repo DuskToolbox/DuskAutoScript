@@ -373,9 +373,9 @@ DasResult GraphRuntime::ApplyNodeSettings(
     }
 
     // Create IDasJson from serialized string.
-    // IDasJsonImpl starts with refcount 0; wrapping in DasPtr(raw) is
-    // correct because DasPtr does NOT call AddRef on construction from
-    // a raw pointer — it assumes ownership of the initial ref.
+    // IDasJsonImpl starts with refcount 0.  DasPtr(T*) calls AddRef()
+    // on construction (DasPtr.hpp:61), bringing the refcount to 1.
+    // The DasPtr destructor will Release when it goes out of scope.
     auto p_settings_json = DAS::DasPtr<Das::ExportInterface::IDasJson>(
         new Das::Core::Utils::IDasJsonImpl(serialized->c_str()));
 
