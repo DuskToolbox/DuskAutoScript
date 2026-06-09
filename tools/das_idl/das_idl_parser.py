@@ -1223,26 +1223,37 @@ class Parser:
         for struct in self.document.structs:
             add_symbol(struct_symbols, struct.name, struct.namespace)
 
-        # 2. 扫描 import 的 IDL 文件，收集其中的类型
+        # 2. 递归扫描 import 的 IDL 文件，收集其中的类型
         if self.source_path:
             source_dir = Path(self.source_path).parent
-            for import_def in self.document.imports:
-                import_path = source_dir / import_def.idl_path.strip('"')
-                if not import_path.exists():
-                    continue
-                try:
-                    imported_doc = parse_idl_file(str(import_path))
-                    for iface in imported_doc.interfaces:
-                        add_symbol(interface_symbols, iface.name, iface.namespace)
-                        if iface.namespace and iface.name not in self.document.imported_interface_namespaces:
-                            self.document.imported_interface_namespaces[iface.name] = iface.namespace
-                    for enum in imported_doc.enums:
-                        add_symbol(enum_symbols, enum.name, enum.namespace)
-                    for struct in imported_doc.structs:
-                        add_symbol(struct_symbols, struct.name, struct.namespace)
-                except Exception:
-                    # import 文件解析失败时静默跳过，不影响当前文件
-                    pass
+            visited_imports: set[str] = set()
+
+            def scan_imports_recursive(doc, current_dir: Path):
+                for import_def in doc.imports:
+                    import_path = (current_dir / import_def.idl_path.strip('"')).resolve()
+                    import_key = str(import_path)
+                    if import_key in visited_imports:
+                        continue
+                    visited_imports.add(import_key)
+                    if not import_path.exists():
+                        continue
+                    try:
+                        imported_doc = parse_idl_file(str(import_path))
+                        for iface in imported_doc.interfaces:
+                            add_symbol(interface_symbols, iface.name, iface.namespace)
+                            if iface.namespace and iface.name not in self.document.imported_interface_namespaces:
+                                self.document.imported_interface_namespaces[iface.name] = iface.namespace
+                        for enum in imported_doc.enums:
+                            add_symbol(enum_symbols, enum.name, enum.namespace)
+                        for struct in imported_doc.structs:
+                            add_symbol(struct_symbols, struct.name, struct.namespace)
+                        # 递归扫描间接 import
+                        scan_imports_recursive(imported_doc, import_path.parent)
+                    except Exception:
+                        # import 文件解析失败时静默跳过，不影响当前文件
+                        pass
+
+            scan_imports_recursive(self.document, source_dir)
 
         for iface_name in self._INTERFACE_NAMES_WITHOUT_IDL_DEF:
             add_symbol(interface_symbols, iface_name, "")

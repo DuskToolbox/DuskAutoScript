@@ -852,7 +852,7 @@ class SwigCodeGenerator:
 
             # 初始化 out param 的默认值
             out_cpp_type = self._get_cpp_type(out_type)
-            if out_param.type_info.type_kind == TypeKind.INTERFACE:
+            if out_param.type_info.type_kind in (TypeKind.INTERFACE, TypeKind.UNKNOWN):
                 default_init = 'nullptr'
             elif out_type == 'bool':
                 default_init = 'false'
