@@ -33,7 +33,6 @@ namespace Das::Plugins::GraphTask
         Das::ExportInterface::IDasJson*      p_task_settings_json)
     {
         std::ignore = p_environment_json;
-        std::ignore = p_task_settings_json;
 
         // Check cancellation before doing any work.
         if (p_stop_token)
@@ -55,6 +54,24 @@ namespace Das::Plugins::GraphTask
         {
             last_error_ = "Failed to create GraphRuntime";
             return hr;
+        }
+
+        // Load the compiled graph artifact from task settings JSON.
+        if (p_task_settings_json)
+        {
+            Das::DasPtr<IDasReadOnlyString> artifact_str;
+            hr = p_task_settings_json->ToString(0, artifact_str.Put());
+            if (DAS::IsFailed(hr) || !artifact_str.Get())
+            {
+                last_error_ = "Failed to serialize task settings JSON";
+                return DAS::IsFailed(hr) ? hr : DAS_E_FAIL;
+            }
+            hr = runtime->Load(artifact_str.Get());
+            if (DAS::IsFailed(hr))
+            {
+                last_error_ = "Failed to load compiled graph artifact";
+                return hr;
+            }
         }
 
         // Run the graph engine with the stop token.
