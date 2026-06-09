@@ -97,10 +97,13 @@ private:
         const Dto::GraphDocumentDto& document) const;
 
     /// Internal recursive compilation with visited set for cycle guard
+    /// @param compiled_cache tracks fully-compiled entries to avoid
+    ///        redundant recompilation of shared subgraph references
     Dto::SubgraphCompileResultDto CompileRecursiveImpl(
         const Dto::GraphDocumentDto& document,
         EntryAccessor                entry_accessor,
         std::set<GraphEntryId>&      visited_entry_ids,
+        std::set<GraphEntryId>&      compiled_cache,
         int                          depth) const;
 };
 

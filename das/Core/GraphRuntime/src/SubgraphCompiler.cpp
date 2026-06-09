@@ -113,7 +113,9 @@ Dto::SubgraphCompileResultDto SubgraphCompiler::CompileRecursive(
     EntryAccessor                entry_accessor) const
 {
     std::set<GraphEntryId> visited_entry_ids;
-    return CompileRecursiveImpl(document, entry_accessor, visited_entry_ids, 0);
+    std::set<GraphEntryId> compiled_cache;
+    return CompileRecursiveImpl(
+        document, entry_accessor, visited_entry_ids, compiled_cache, 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -124,6 +126,7 @@ Dto::SubgraphCompileResultDto SubgraphCompiler::CompileRecursiveImpl(
     const Dto::GraphDocumentDto& document,
     EntryAccessor                entry_accessor,
     std::set<GraphEntryId>&      visited_entry_ids,
+    std::set<GraphEntryId>&      compiled_cache,
     int                          depth) const
 {
     Dto::SubgraphCompileResultDto result;
@@ -163,6 +166,14 @@ Dto::SubgraphCompileResultDto SubgraphCompiler::CompileRecursiveImpl(
             continue;
         }
 
+        // Skip if this entry has already been fully compiled —
+        // avoids redundant recompilation of shared subgraph
+        // references that appear multiple times in the same document.
+        if (compiled_cache.count(ref_entry_id))
+        {
+            continue;
+        }
+
         // Push onto DFS path
         visited_entry_ids.insert(ref_entry_id);
 
@@ -182,6 +193,7 @@ Dto::SubgraphCompileResultDto SubgraphCompiler::CompileRecursiveImpl(
                     *sub_result.deserialized_document,
                     entry_accessor,
                     visited_entry_ids,
+                    compiled_cache,
                     depth + 1);
 
                 // Merge nested results into the sub_result
@@ -208,6 +220,10 @@ Dto::SubgraphCompileResultDto SubgraphCompiler::CompileRecursiveImpl(
 
         // Add the sub_result to the current level
         result.nested_snapshots.push_back(std::move(sub_result));
+
+        // Mark this entry as fully compiled so future references at the
+        // same document level can skip redundant recompilation.
+        compiled_cache.insert(ref_entry_id);
 
         // Pop from DFS path — allows shared subgraph references (A→B, C→B)
         // while still catching true cycles (A→B→A).
