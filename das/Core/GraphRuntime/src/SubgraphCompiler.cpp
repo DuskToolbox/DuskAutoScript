@@ -78,12 +78,17 @@ Dto::SubgraphCompileResultDto SubgraphCompiler::CompileEntryRef(
     result.revision = inner_document.version;
     result.source_fingerprint = inner_document.fingerprint;
 
+    // Store deserialized document for reuse by CompileRecursiveImpl
+    result.deserialized_document = std::move(inner_document);
+
     // Build port projection mappings
-    result.input_mapping =
-        BuildInputMapping(outer_document, inner_document, result.compiled_plan);
+    result.input_mapping = BuildInputMapping(
+        outer_document,
+        *result.deserialized_document,
+        result.compiled_plan);
     result.output_mapping = BuildOutputMapping(
         outer_document,
-        inner_document,
+        *result.deserialized_document,
         result.compiled_plan);
 
     DAS_CORE_LOG_INFO(
@@ -91,8 +96,8 @@ Dto::SubgraphCompileResultDto SubgraphCompiler::CompileEntryRef(
         "nodes = {}, edges = {}, input_mappings = {}, "
         "output_mappings = {}",
         entry_id,
-        inner_document.nodes.size(),
-        inner_document.edges.size(),
+        result.deserialized_document->nodes.size(),
+        result.deserialized_document->edges.size(),
         result.input_mapping.size(),
         result.output_mapping.size());
 
@@ -165,18 +170,16 @@ Dto::SubgraphCompileResultDto SubgraphCompiler::CompileRecursiveImpl(
         auto sub_result =
             CompileEntryRef(ref_entry_id, document, entry_accessor);
 
-        // Load the inner document for recursive compilation of its entryRefs
-        auto entry_opt = entry_accessor(ref_entry_id);
-        if (entry_opt.has_value())
+        // Reuse the deserialized document from CompileEntryRef for recursive
+        // compilation of nested entryRefs — avoids a second entry_accessor()
+        // call for the same entry_id.
+        if (sub_result.deserialized_document.has_value())
         {
             try
             {
-                auto inner_doc = yyjson::cast<Dto::GraphDocumentDto>(
-                    entry_opt->graph_document);
-
                 // Recursively compile entryRefs within the inner document
                 auto inner_nested = CompileRecursiveImpl(
-                    inner_doc,
+                    *sub_result.deserialized_document,
                     entry_accessor,
                     visited_entry_ids,
                     depth + 1);

@@ -89,6 +89,11 @@ namespace Dto
 
         CompiledGraphPlanDto compiled_plan; // from GraphCompiler::Compile()
 
+        // Deserialized inner document — populated by CompileEntryRef(),
+        // consumed by CompileRecursiveImpl() to avoid a second
+        // entry_accessor() call per entryRef.
+        std::optional<GraphDocumentDto> deserialized_document;
+
         std::vector<PortMappingDto> input_mapping;  // outer graph → inner root
         std::vector<PortMappingDto> output_mapping; // inner terminal → outer
 
