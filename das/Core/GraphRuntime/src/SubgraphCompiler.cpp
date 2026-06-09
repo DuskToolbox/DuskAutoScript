@@ -9,6 +9,7 @@
 #include <cpp_yyjson.hpp>
 
 #include <algorithm>
+#include <stack>
 
 DAS_CORE_GRAPHRUNTIME_NS_BEGIN
 
@@ -118,67 +119,115 @@ Dto::SubgraphCompileResultDto SubgraphCompiler::CompileRecursive(
         document,
         entry_accessor,
         visited_entry_ids,
-        compiled_cache,
-        0);
+        compiled_cache);
 }
 
 // ---------------------------------------------------------------------------
-// CompileRecursiveImpl — internal recursive with visited set
+// CompileRecursiveImpl — internal iterative DFS with explicit stack
 // ---------------------------------------------------------------------------
 
 Dto::SubgraphCompileResultDto SubgraphCompiler::CompileRecursiveImpl(
     const Dto::GraphDocumentDto& document,
     EntryAccessor                entry_accessor,
     std::set<GraphEntryId>&      visited_entry_ids,
-    std::set<GraphEntryId>&      compiled_cache,
-    int                          depth) const
+    std::set<GraphEntryId>&      compiled_cache) const
 {
-    Dto::SubgraphCompileResultDto result;
-
-    if (depth >= MAX_RECURSION_DEPTH)
+    // Helper: collect entryRef IDs from a graph document
+    auto CollectEntryRefIds = [](const Dto::GraphDocumentDto& doc)
     {
-        auto msg = DAS_FMT_NS::format(
-            "SubgraphCompiler: recursion depth limit exceeded — "
-            "depth = {} >= MAX_RECURSION_DEPTH = {}",
-            depth,
-            MAX_RECURSION_DEPTH);
-        DAS_CORE_LOG_ERROR(msg.c_str());
-        result.diagnostics.push_back(std::move(msg));
-        return result;
-    }
-
-    // Collect all entryRef nodes
-    std::vector<GraphEntryId> entry_ref_ids;
-    for (const auto& node : document.nodes)
-    {
-        if (node.target.target_kind == "entryRef"
-            && node.target.entry_ref.has_value())
+        std::vector<GraphEntryId> ids;
+        for (const auto& node : doc.nodes)
         {
-            entry_ref_ids.push_back(node.target.entry_ref->entry_id);
+            if (node.target.target_kind == "entryRef"
+                && node.target.entry_ref.has_value())
+            {
+                ids.push_back(node.target.entry_ref->entry_id);
+            }
         }
-    }
+        return ids;
+    };
 
-    // No entryRefs → return empty result
-    if (entry_ref_ids.empty())
+    /// A single frame on the explicit DFS stack.
+    /// Each frame corresponds to one graph-document level in the
+    /// entryRef tree.  The stack replaces the original call stack,
+    /// eliminating stack-overflow risk for deeply nested entryRef chains.
+    struct CompileFrame
     {
-        return result;
-    }
+        const Dto::GraphDocumentDto*  document;
+        std::vector<GraphEntryId>     entry_ref_ids;
+        size_t                        next_index = 0;
+        Dto::SubgraphCompileResultDto result;
+        int                           depth = 0;
 
-    for (GraphEntryId ref_entry_id : entry_ref_ids)
+        // Saved state while a nested frame is being processed.
+        // When the nested frame completes these are used to finalize
+        // the parent's current sub_result.
+        Dto::SubgraphCompileResultDto pending_sub_result;
+        GraphEntryId                  pending_entry_id = 0;
+    };
+
+    std::stack<CompileFrame> frames;
+
+    // Push initial (root) frame
+    frames.push({&document, CollectEntryRefIds(document), 0, {}, 0});
+
+    while (!frames.empty())
     {
-        // Path-based cycle detection: only check if this entry_id is
-        // already on the *current* DFS path, not the global visited set.
-        // This allows shared subgraph references (A→B, C→B) while still
-        // catching true cycles (A→B→A).
+        auto& frame = frames.top();
+
+        // --- All entryRefs at this level have been processed? ---
+        if (frame.next_index >= frame.entry_ref_ids.size())
+        {
+            if (frames.size() == 1)
+            {
+                break; // Root frame complete
+            }
+
+            // Pop completed nested frame and merge into parent
+            auto completed = std::move(frames.top());
+            frames.pop();
+
+            auto& parent = frames.top();
+
+            // Merge nested results into parent's pending sub_result
+            for (auto& ns : completed.result.nested_snapshots)
+            {
+                parent.pending_sub_result.nested_snapshots.push_back(
+                    std::move(ns));
+            }
+            parent.pending_sub_result.diagnostics.insert(
+                parent.pending_sub_result.diagnostics.end(),
+                std::make_move_iterator(completed.result.diagnostics.begin()),
+                std::make_move_iterator(completed.result.diagnostics.end()));
+
+            // Finalize the parent's pending entry
+            compiled_cache.insert(parent.pending_entry_id);
+            visited_entry_ids.erase(parent.pending_entry_id);
+            parent.result.nested_snapshots.push_back(
+                std::move(parent.pending_sub_result));
+            parent.next_index++;
+
+            continue;
+        }
+
+        GraphEntryId ref_entry_id = frame.entry_ref_ids[frame.next_index];
+
+        // --- Path-based cycle detection ---
+        // Only check if this entry_id is already on the *current*
+        // DFS path, not the global visited set.  This allows shared
+        // subgraph references (A→B, C→B) while still catching true
+        // cycles (A→B→A).
         if (visited_entry_ids.count(ref_entry_id))
         {
             auto msg = DAS_FMT_NS::format(
                 "SubgraphCompiler: cyclic entryRef detected — "
-                "entry_id = {} already on current DFS path at depth = {}",
+                "entry_id = {} already on current DFS path "
+                "at depth = {}",
                 ref_entry_id,
-                depth);
+                frame.depth);
             DAS_CORE_LOG_WARN(msg.c_str());
-            result.diagnostics.push_back(std::move(msg));
+            frame.result.diagnostics.push_back(std::move(msg));
+            frame.next_index++;
             continue;
         }
 
@@ -187,6 +236,7 @@ Dto::SubgraphCompileResultDto SubgraphCompiler::CompileRecursiveImpl(
         // references that appear multiple times in the same document.
         if (compiled_cache.count(ref_entry_id))
         {
+            frame.next_index++;
             continue;
         }
 
@@ -195,58 +245,49 @@ Dto::SubgraphCompileResultDto SubgraphCompiler::CompileRecursiveImpl(
 
         // Compile this entryRef
         auto sub_result =
-            CompileEntryRef(ref_entry_id, document, entry_accessor);
+            CompileEntryRef(ref_entry_id, *frame.document, entry_accessor);
 
-        // Reuse the deserialized document from CompileEntryRef for recursive
-        // compilation of nested entryRefs — avoids a second entry_accessor()
-        // call for the same entry_id.
+        // Check for nested entryRefs in the inner document
+        bool has_nested = false;
         if (sub_result.deserialized_document.has_value())
         {
-            try
+            auto inner_ids =
+                CollectEntryRefIds(*sub_result.deserialized_document);
+            if (!inner_ids.empty())
             {
-                // Recursively compile entryRefs within the inner document
-                auto inner_nested = CompileRecursiveImpl(
-                    *sub_result.deserialized_document,
-                    entry_accessor,
-                    visited_entry_ids,
-                    compiled_cache,
-                    depth + 1);
+                has_nested = true;
 
-                // Merge nested results into the sub_result
-                for (auto& ns : inner_nested.nested_snapshots)
-                {
-                    sub_result.nested_snapshots.push_back(std::move(ns));
-                }
-                sub_result.diagnostics.insert(
-                    sub_result.diagnostics.end(),
-                    inner_nested.diagnostics.begin(),
-                    inner_nested.diagnostics.end());
-            }
-            catch (const std::exception& e)
-            {
-                auto msg = DAS_FMT_NS::format(
-                    "SubgraphCompiler::CompileRecursive: failed to "
-                    "deserialize inner document for entry_id = {}: {}",
-                    ref_entry_id,
-                    e.what());
-                DAS_CORE_LOG_ERROR(msg.c_str());
-                result.diagnostics.push_back(std::move(msg));
+                // Save state on current frame so we can merge
+                // results when the nested frame completes
+                frame.pending_sub_result = std::move(sub_result);
+                frame.pending_entry_id = ref_entry_id;
+
+                // Push nested frame.  std::stack is backed by
+                // std::deque, which guarantees that references to
+                // existing elements remain valid after push.
+                // Therefore the pointer into
+                // frame.pending_sub_result.deserialized_document
+                // is stable for the lifetime of the nested frame.
+                frames.push(
+                    {&*frame.pending_sub_result.deserialized_document,
+                     std::move(inner_ids),
+                     0,
+                     {},
+                     frame.depth + 1});
             }
         }
 
-        // Add the sub_result to the current level
-        result.nested_snapshots.push_back(std::move(sub_result));
-
-        // Mark this entry as fully compiled so future references at the
-        // same document level can skip redundant recompilation.
-        compiled_cache.insert(ref_entry_id);
-
-        // Pop from DFS path — allows shared subgraph references (A→B, C→B)
-        // while still catching true cycles (A→B→A).
-        visited_entry_ids.erase(ref_entry_id);
+        if (!has_nested)
+        {
+            // No nested entryRefs — finalize this entry immediately
+            compiled_cache.insert(ref_entry_id);
+            visited_entry_ids.erase(ref_entry_id);
+            frame.result.nested_snapshots.push_back(std::move(sub_result));
+            frame.next_index++;
+        }
     }
 
-    return result;
+    return std::move(frames.top().result);
 }
 
 // ---------------------------------------------------------------------------

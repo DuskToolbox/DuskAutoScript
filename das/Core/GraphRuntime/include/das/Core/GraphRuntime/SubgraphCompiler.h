@@ -27,7 +27,7 @@ using EntryAccessor = std::function<std::optional<
 ///
 /// Walks each entryRef target: loads the referenced graph document,
 /// compiles it via GraphCompiler, computes port projection mappings
-/// (outer↔inner), and recursively compiles any nested entryRefs.
+/// (outer↔inner), and iteratively compiles any nested entryRefs.
 class SubgraphCompiler
 {
 public:
@@ -49,12 +49,12 @@ public:
         const Dto::GraphDocumentDto& outer_document,
         EntryAccessor                entry_accessor) const;
 
-    /// Recursively compile ALL entryRef nodes in a graph document.
+    /// Iteratively compile ALL entryRef nodes in a graph document.
     ///
     /// For each node with target_kind == "entryRef", calls
     /// CompileEntryRef(). For each resulting subgraph result,
-    /// recurses into the subgraph's own entryRef nodes.
-    /// Maintains a visited set to detect cycles.
+    /// iterates into the subgraph's own entryRef nodes via an
+    /// explicit DFS stack.  Maintains a visited set to detect cycles.
     Dto::SubgraphCompileResultDto CompileRecursive(
         const Dto::GraphDocumentDto& document,
         EntryAccessor                entry_accessor) const;
@@ -96,19 +96,16 @@ private:
     std::map<std::string, int> ComputeOutDegrees(
         const Dto::GraphDocumentDto& document) const;
 
-    /// Maximum recursion depth for CompileRecursiveImpl to prevent
-    /// stack overflow from deeply nested entryRef chains.
-    static constexpr int32_t MAX_RECURSION_DEPTH = 8192;
-
-    /// Internal recursive compilation with visited set for cycle guard
+    /// Internal iterative compilation with visited set for cycle guard.
+    /// Uses an explicit stack to eliminate stack-overflow risk from
+    /// deeply nested entryRef chains.
     /// @param compiled_cache tracks fully-compiled entries to avoid
     ///        redundant recompilation of shared subgraph references
     Dto::SubgraphCompileResultDto CompileRecursiveImpl(
         const Dto::GraphDocumentDto& document,
         EntryAccessor                entry_accessor,
         std::set<GraphEntryId>&      visited_entry_ids,
-        std::set<GraphEntryId>&      compiled_cache,
-        int                          depth) const;
+        std::set<GraphEntryId>&      compiled_cache) const;
 };
 
 DAS_CORE_GRAPHRUNTIME_NS_END
