@@ -70,7 +70,7 @@ GraphCompiler::ManifestPorts GraphCompiler::ReadManifest(
     }
     catch (const std::exception&)
     {
-        DAS_CORE_LOG_WARN("Invalid GUID string: {}", component_guid.c_str());
+        DAS_CORE_LOG_WARN("Invalid GUID string: {}", component_guid);
         return result;
     }
 
