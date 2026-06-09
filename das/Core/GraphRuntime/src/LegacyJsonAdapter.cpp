@@ -461,8 +461,8 @@ DasResult LegacyJsonTaskComponentAdapter::Do(
     std::string result_json_str;
     DasResult   legacy_result = legacy_do_(input_json_str, result_json_str);
 
-    // Step 3: Build output PortMap from result JSON.
-    DAS::DasPtr<IDasPortMap> output_map;
+    // Step 3: Build output PortMap from result JSON, bound to out-param.
+    DAS::DasOutPtr<IDasPortMap> output_map(pp_out_portmap);
     result = CreateIDasPortMap(output_map.Put());
     if (DAS::IsFailed(result))
     {
@@ -483,7 +483,7 @@ DasResult LegacyJsonTaskComponentAdapter::Do(
     }
 
     // Transfer ownership to caller.
-    *pp_out_portmap = output_map.Detach();
+    output_map.Keep();
     return DAS_S_OK;
 }
 
