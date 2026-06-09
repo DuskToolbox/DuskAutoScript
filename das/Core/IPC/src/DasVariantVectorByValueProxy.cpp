@@ -739,9 +739,13 @@ DasResult DasVariantVectorByValueProxy::GetComponent(
 
     if (cache_[index].base_ptr.Get() != nullptr)
     {
-        cache_[index].base_ptr.Get()->AddRef();
-        *pp_out_component = static_cast<Das::PluginInterface::IDasComponent*>(
-            cache_[index].base_ptr.Get());
+        // Use QueryInterface to safely obtain IDasComponent instead of
+        // an unsafe static_cast — the cached base_ptr may not actually
+        // implement IDasComponent.
+        DasResult qi_result = cache_[index].base_ptr.Get()->QueryInterface(
+            DasIidOf<::Das::PluginInterface::IDasComponent>(),
+            reinterpret_cast<void**>(pp_out_component));
+        return qi_result;
     }
     return DAS_S_OK;
 }
