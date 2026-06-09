@@ -534,6 +534,7 @@ DasResult DasVariantVectorImpl::GetSize()
     if (size > static_cast<size_t>(std::numeric_limits<DasResult>::max()))
     {
         DAS_CORE_LOG_ERROR("Overflow detected! Size = {}.", size);
+        return DAS_E_INTERNAL_FATAL_ERROR;
     }
     return static_cast<DasResult>(size);
 }
