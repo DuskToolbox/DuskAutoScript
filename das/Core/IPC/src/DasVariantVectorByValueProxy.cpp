@@ -8,6 +8,7 @@
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
 #include <das/_autogen/idl/ipc/IpcProxyFactory.h>
+#include <limits>
 #include <stdexec/execution.hpp>
 #include <tuple>
 
@@ -754,6 +755,10 @@ DasResult DasVariantVectorByValueProxy::SetComponent(
     uint64_t                               index,
     ::Das::PluginInterface::IDasComponent* in_component)
 {
+    if (in_component == nullptr)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
     DasResult result = EnsureDataLoaded(13);
     if (DAS::IsFailed(result))
     {
@@ -891,6 +896,10 @@ DasResult DasVariantVectorByValueProxy::SetBase(
     uint64_t    index,
     ::IDasBase* in_base)
 {
+    if (in_base == nullptr)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
     DasResult result = EnsureDataLoaded(16);
     if (DAS::IsFailed(result))
     {
@@ -1028,6 +1037,10 @@ DasResult DasVariantVectorByValueProxy::SetImage(
     uint64_t                         index,
     Das::ExportInterface::IDasImage* p_image)
 {
+    if (p_image == nullptr)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
     DasResult result = EnsureDataLoaded(19);
     if (DAS::IsFailed(result))
     {
@@ -1220,8 +1233,13 @@ DasResult DasVariantVectorByValueProxy::GetSize()
     {
         return result;
     }
-    // GetSize returns size as DasResult per IDL convention
-    return static_cast<DasResult>(cache_.size());
+    const auto size = cache_.size();
+    if (size > static_cast<size_t>(std::numeric_limits<DasResult>::max()))
+    {
+        DAS_CORE_LOG_ERROR("GetSize overflow: cache size = {}", size);
+        return DAS_E_INTERNAL_FATAL_ERROR;
+    }
+    return static_cast<DasResult>(size);
 }
 
 DAS_CORE_IPC_NS_END
