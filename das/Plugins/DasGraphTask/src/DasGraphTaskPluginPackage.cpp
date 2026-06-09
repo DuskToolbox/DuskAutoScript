@@ -26,36 +26,19 @@ DAS_DEFINE_CLASS_GUID_HOLDER_IN_NAMESPACE(
 namespace Das::Plugins::DasGraphTask
 {
 
-    uint32_t DAS_STD_CALL DasGraphTaskPluginPackage::AddRef()
-    {
-        return ++ref_count_;
-    }
-
-    uint32_t DAS_STD_CALL DasGraphTaskPluginPackage::Release()
-    {
-        const auto count = --ref_count_;
-        if (count == 0)
-        {
-            delete this;
-        }
-        return count;
-    }
-
     DasResult DAS_STD_CALL
     DasGraphTaskPluginPackage::QueryInterface(const DasGuid& iid, void** pp_out)
     {
-        if (pp_out == nullptr)
+        // Try base class QI first (handles IDasBase, IDasTypeInfo,
+        // IDasTaskComponentFactory)
+        DasResult result =
+            DasTaskComponentFactoryImplBase::QueryInterface(iid, pp_out);
+        if (DAS::IsOk(result))
         {
-            return DAS_E_INVALID_POINTER;
+            return result;
         }
 
-        if (iid == DasIidOf<IDasBase>())
-        {
-            *pp_out = static_cast<IDasBase*>(
-                static_cast<Das::PluginInterface::IDasPluginPackage*>(this));
-            AddRef();
-            return DAS_S_OK;
-        }
+        // Handle IDasPluginPackage (not known to the CRTP base)
         if (iid == DasIidOf<Das::PluginInterface::IDasPluginPackage>())
         {
             *pp_out =
@@ -63,16 +46,7 @@ namespace Das::Plugins::DasGraphTask
             AddRef();
             return DAS_S_OK;
         }
-        if (iid == DasIidOf<Das::PluginInterface::IDasTaskComponentFactory>())
-        {
-            *pp_out =
-                static_cast<Das::PluginInterface::IDasTaskComponentFactory*>(
-                    this);
-            AddRef();
-            return DAS_S_OK;
-        }
 
-        *pp_out = nullptr;
         return DAS_E_NO_INTERFACE;
     }
 
@@ -114,16 +88,6 @@ namespace Das::Plugins::DasGraphTask
         return DAS_S_OK;
     }
 
-    DasResult DasGraphTaskPluginPackage::GetGuid(DasGuid* p_out_guid)
-    {
-        if (p_out_guid == nullptr)
-        {
-            return DAS_E_INVALID_POINTER;
-        }
-        *p_out_guid = DasIidOf<DasGraphTaskPluginPackage>();
-        return DAS_S_OK;
-    }
-
     DasResult DasGraphTaskPluginPackage::CanUnloadNow(bool* p_can_unload)
     {
         if (p_can_unload == nullptr)
@@ -132,18 +96,6 @@ namespace Das::Plugins::DasGraphTask
         }
         *p_can_unload = true;
         return DAS_S_OK;
-    }
-
-    DasResult DasGraphTaskPluginPackage::GetRuntimeClassName(
-        IDasReadOnlyString** pp_out_name)
-    {
-        if (pp_out_name == nullptr)
-        {
-            return DAS_E_INVALID_POINTER;
-        }
-        return CreateIDasReadOnlyStringFromUtf8(
-            "Das.Plugins.DasGraphTask.DasGraphTaskPluginPackage",
-            pp_out_name);
     }
 
     DasResult DasGraphTaskPluginPackage::CreateComponent(

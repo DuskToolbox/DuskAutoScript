@@ -4,26 +4,22 @@
 #include <das/DasApi.h>
 #include <das/DasPtr.hpp>
 #include <das/_autogen/idl/abi/IDasPluginPackage.h>
-#include <das/_autogen/idl/abi/IDasTaskComponent.h>
-
-#include <atomic>
+#include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasTaskComponentFactory.Implements.hpp>
 
 namespace Das::Plugins::DasGraphTask
 {
 
     class DasGraphTaskPluginPackage final
         : public Das::PluginInterface::IDasPluginPackage,
-          public Das::PluginInterface::IDasTaskComponentFactory
+          public Das::PluginInterface::DasTaskComponentFactoryImplBase<
+              DasGraphTaskPluginPackage>
     {
         DasPtr<Das::PluginInterface::IDasTaskComponentHost> host_;
-        std::atomic<uint32_t>                               ref_count_{0};
 
     public:
         DasGraphTaskPluginPackage() = default;
 
-        // --- IUnknown ---
-        uint32_t DAS_STD_CALL AddRef() override;
-        uint32_t DAS_STD_CALL Release() override;
+        // --- IUnknown (override to extend base QI with IDasPluginPackage) ---
         DasResult DAS_STD_CALL
         QueryInterface(const DasGuid& iid, void** pp_out) override;
 
@@ -36,14 +32,9 @@ namespace Das::Plugins::DasGraphTask
             size_t     index,
             IDasBase** pp_out_interface) override;
 
-        DAS_IMPL GetGuid(DasGuid* p_out_guid) override;
-
         DAS_IMPL CanUnloadNow(bool* p_can_unload) override;
 
         // --- IDasTaskComponentFactory ---
-        DAS_IMPL
-        GetRuntimeClassName(IDasReadOnlyString** pp_out_name) override;
-
         DAS_IMPL CreateComponent(
             const DasGuid&                            component_guid,
             Das::PluginInterface::IDasTaskComponent** pp_out_component)
