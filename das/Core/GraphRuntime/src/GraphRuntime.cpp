@@ -20,6 +20,7 @@
 
 #include <algorithm>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 DAS_CORE_GRAPHRUNTIME_NS_BEGIN
@@ -202,6 +203,14 @@ DasResult GraphRuntime::Run(
     PortFrame frame;
 
     // Phase 4: Per-node sequential execution (execution_order)
+    // Build O(1) snapshot lookup map to avoid O(n²) linear scan
+    std::unordered_map<std::string, const Dto::CompiledNodeSnapshotDto*>
+        snapshot_map;
+    for (const auto& snap : plan.node_snapshots)
+    {
+        snapshot_map[snap.node_id] = &snap;
+    }
+
     for (const auto& node_id : plan.execution_order)
     {
         DAS_CORE_LOG_INFO("Running node = {}", node_id);
@@ -216,14 +225,10 @@ DasResult GraphRuntime::Run(
             return hr;
         }
 
-        // 4b: Find node snapshot in plan
-        auto snapshot_it = std::find_if(
-            plan.node_snapshots.begin(),
-            plan.node_snapshots.end(),
-            [&node_id](const Dto::CompiledNodeSnapshotDto& snap)
-            { return snap.node_id == node_id; });
+        // 4b: Find node snapshot in plan (O(1) lookup)
+        auto snapshot_it = snapshot_map.find(node_id);
 
-        if (snapshot_it == plan.node_snapshots.end())
+        if (snapshot_it == snapshot_map.end())
         {
             last_error_ = DAS_FMT_NS::format(
                 "Node '{}' not found in plan.node_snapshots",
@@ -235,7 +240,7 @@ DasResult GraphRuntime::Run(
         // 4c: Execute the node
         hr = ExecuteNode(
             node_id,
-            snapshot_it->component_guid,
+            snapshot_it->second->component_guid,
             p_stop_token,
             resolve_component,
             frame,
