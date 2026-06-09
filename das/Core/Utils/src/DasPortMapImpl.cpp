@@ -32,6 +32,10 @@ std::string PortIdToString(IDasReadOnlyString* p_port_id)
     return raw ? std::string{raw} : std::string{};
 }
 
+// NOTE: DasPortMapImpl::Variant and DasVariantVectorImpl::Variant are
+// independent types with different index orders for BASE/COMPONENT/IMAGE.
+// Do NOT assume they are interchangeable — always use VariantToType()
+// to resolve the correct DasVariantType for each variant type.
 DasVariantType VariantToType(const DasPortMapImpl::Variant& v)
 {
     switch (v.index())

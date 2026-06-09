@@ -47,6 +47,10 @@ DasResult GetVariant(const DasVariantVectorImpl::Variant& v, T* p_out)
     return DAS_S_OK;
 }
 
+// NOTE: DasVariantVectorImpl::Variant and DasPortMapImpl::Variant are
+// independent types with different index orders for BASE/COMPONENT/IMAGE.
+// Do NOT assume they are interchangeable — always use VariantToType()
+// to resolve the correct DasVariantType for each variant type.
 DasRetVariantType VariantToType(const DasVariantVectorImpl::Variant& v)
 {
     switch (v.index())
