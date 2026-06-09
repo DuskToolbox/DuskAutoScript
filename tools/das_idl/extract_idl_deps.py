@@ -44,7 +44,7 @@ class IDLParser:
     INTERFACE_PATTERN = re.compile(
         r'''
         ^\s*
-        (?:\[uuid\(["'](?P<uuid>[^"']+)["']\)\]\s*)?  # 可选的 uuid 属性
+        (?:\[uuid\(\s*["'](?P<uuid>[^"']+)["']\s*\)\]\s*)?  # 可选的 uuid 属性（支持跨行）
         interface\s+
         (?P<name>\w+)\s*
         (?:\:\s*(?P<base>\w+))?                        # 可选的基类
