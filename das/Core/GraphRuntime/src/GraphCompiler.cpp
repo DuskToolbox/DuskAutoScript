@@ -784,6 +784,35 @@ Dto::CompiledGraphPlanDto GraphCompiler::Compile(
         plan.source_revision,
         plan.execution_order);
 
+    // Phase 7: Build node snapshots from graph document nodes
+    for (const auto& node : document.nodes)
+    {
+        Dto::CompiledNodeSnapshotDto snapshot;
+        snapshot.node_id = node.node_id;
+
+        // Extract component_guid from the node's target
+        if (node.target.target_kind == "componentRef"
+            && node.target.component_ref.has_value())
+        {
+            snapshot.component_guid = node.target.component_ref->component_guid;
+        }
+
+        // Copy settings if present
+        if (!node.settings.is_null())
+        {
+            snapshot.compiled_settings =
+                Das::Utils::CloneYyjsonValue(node.settings);
+        }
+
+        // Copy dynamic ports as resolved_ports
+        for (const auto& dp : node.dynamic_ports)
+        {
+            snapshot.resolved_ports.push_back(dp);
+        }
+
+        plan.node_snapshots.push_back(std::move(snapshot));
+    }
+
     return plan;
 }
 
