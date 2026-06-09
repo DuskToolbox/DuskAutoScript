@@ -785,11 +785,7 @@ DasResult DasVariantVectorByValueProxy::SetComponent(
     cache_[index].object_id = oid;
     cache_[index].interface_id =
         ComputeInterfaceId(DasIidOf<Das::PluginInterface::IDasComponent>());
-    cache_[index].base_ptr = DasPtr<IDasBase>::Attach(in_component);
-    if (in_component != nullptr)
-    {
-        in_component->AddRef();
-    }
+    cache_[index].base_ptr = DasPtr<IDasBase>(in_component);
 
     // Fire-and-forget:
     // [index:8B][session_id:2B][generation:2B][local_id:4B][interface_id:4B]
@@ -837,11 +833,7 @@ DasResult DasVariantVectorByValueProxy::PushBackComponent(
     entry.object_id = oid;
     entry.interface_id =
         ComputeInterfaceId(DasIidOf<Das::PluginInterface::IDasComponent>());
-    entry.base_ptr = DasPtr<IDasBase>::Attach(in_component);
-    if (in_component != nullptr)
-    {
-        in_component->AddRef();
-    }
+    entry.base_ptr = DasPtr<IDasBase>(in_component);
     cache_.push_back(std::move(entry));
 
     // Fire-and-forget:
@@ -927,11 +919,7 @@ DasResult DasVariantVectorByValueProxy::SetBase(
     cache_[index].type = ::Das::ExportInterface::DAS_VARIANT_TYPE_BASE;
     cache_[index].object_id = oid;
     cache_[index].interface_id = ComputeInterfaceId(DasIidOf<IDasBase>());
-    cache_[index].base_ptr = DasPtr<IDasBase>::Attach(in_base);
-    if (in_base != nullptr)
-    {
-        in_base->AddRef();
-    }
+    cache_[index].base_ptr = DasPtr<IDasBase>(in_base);
 
     // Fire-and-forget:
     // [index:8B][session_id:2B][generation:2B][local_id:4B][interface_id:4B]
@@ -977,11 +965,8 @@ DasResult DasVariantVectorByValueProxy::PushBackBase(::IDasBase* in_base)
     entry.type = ::Das::ExportInterface::DAS_VARIANT_TYPE_BASE;
     entry.object_id = oid;
     entry.interface_id = ComputeInterfaceId(DasIidOf<IDasBase>());
-    entry.base_ptr = DasPtr<IDasBase>::Attach(in_base);
-    if (in_base != nullptr)
-    {
-        in_base->AddRef();
-    }
+    entry.base_ptr = DasPtr<IDasBase>(in_base);
+
     cache_.push_back(std::move(entry));
 
     // Fire-and-forget:
@@ -1068,11 +1053,7 @@ DasResult DasVariantVectorByValueProxy::SetImage(
     cache_[index].object_id = oid;
     cache_[index].interface_id =
         ComputeInterfaceId(DasIidOf<Das::ExportInterface::IDasImage>());
-    cache_[index].base_ptr = DasPtr<IDasBase>::Attach(p_image);
-    if (p_image != nullptr)
-    {
-        p_image->AddRef();
-    }
+    cache_[index].base_ptr = DasPtr<IDasBase>(p_image);
 
     // Fire-and-forget:
     // [index:8B][session_id:2B][generation:2B][local_id:4B][interface_id:4B]
@@ -1120,11 +1101,8 @@ DasResult DasVariantVectorByValueProxy::PushBackImage(
     entry.object_id = oid;
     entry.interface_id =
         ComputeInterfaceId(DasIidOf<Das::ExportInterface::IDasImage>());
-    entry.base_ptr = DasPtr<IDasBase>::Attach(p_image);
-    if (p_image != nullptr)
-    {
-        p_image->AddRef();
-    }
+    entry.base_ptr = DasPtr<IDasBase>(p_image);
+
     cache_.push_back(std::move(entry));
 
     // Fire-and-forget:
