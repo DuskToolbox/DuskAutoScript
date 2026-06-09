@@ -251,8 +251,8 @@ DasResult BuildInputPortMap(
         return DAS_E_INVALID_POINTER;
     }
 
-    // Create a fresh IDasPortMap via the C API factory.
-    DAS::DasPtr<Das::ExportInterface::IDasPortMap> map;
+    // Create a fresh IDasPortMap via the C API factory, bound to out_map.
+    DAS::DasOutPtr<Das::ExportInterface::IDasPortMap> map(out_map);
     DasResult result = CreateIDasPortMap(map.Put());
     if (DAS::IsFailed(result))
     {
@@ -287,7 +287,7 @@ DasResult BuildInputPortMap(
         }
     }
 
-    *out_map = map.Detach();
+    map.Keep();
     return DAS_S_OK;
 }
 
