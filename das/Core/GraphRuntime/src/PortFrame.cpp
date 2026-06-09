@@ -156,7 +156,8 @@ std::size_t PortKeyHash::operator()(const PortKey& key) const noexcept
 {
     auto h1 = std::hash<DasGuid>{}(key.node_id);
     auto h2 = std::hash<std::string>{}(key.port_id);
-    return h1 ^ (h2 << 1);
+    h1 ^= h2 + 0x9e3779b9 + (h1 << 6) + (h1 >> 2);
+    return h1;
 }
 
 // ===========================================================================
