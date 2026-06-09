@@ -851,11 +851,13 @@ DasResult DasVariantVectorByValueProxy::PushBackComponent(
     }
     guard.Track(oid, newly_registered);
 
+    const auto iface_id =
+        ComputeInterfaceId(DasIidOf<Das::PluginInterface::IDasComponent>());
+
     CachedVariant entry;
     entry.type = ::Das::ExportInterface::DAS_VARIANT_TYPE_COMPONENT;
     entry.object_id = oid;
-    entry.interface_id =
-        ComputeInterfaceId(DasIidOf<Das::PluginInterface::IDasComponent>());
+    entry.interface_id = iface_id;
     entry.base_ptr = DasPtr<IDasBase>(in_component);
     cache_.push_back(std::move(entry));
 
@@ -865,8 +867,7 @@ DasResult DasVariantVectorByValueProxy::PushBackComponent(
     writer.WriteUInt16(oid.session_id);
     writer.WriteUInt16(oid.generation);
     writer.WriteUInt32(oid.local_id);
-    writer.WriteUInt32(
-        ComputeInterfaceId(DasIidOf<Das::PluginInterface::IDasComponent>()));
+    writer.WriteUInt32(iface_id);
     auto send_result =
         SendWriteBack(14, writer.GetBuffer().data(), writer.GetBuffer().size());
     if (!IsTransportLevelError(send_result))
@@ -992,10 +993,12 @@ DasResult DasVariantVectorByValueProxy::PushBackBase(::IDasBase* in_base)
     }
     guard.Track(oid, newly_registered);
 
+    const auto iface_id = ComputeInterfaceId(DasIidOf<IDasBase>());
+
     CachedVariant entry;
     entry.type = ::Das::ExportInterface::DAS_VARIANT_TYPE_BASE;
     entry.object_id = oid;
-    entry.interface_id = ComputeInterfaceId(DasIidOf<IDasBase>());
+    entry.interface_id = iface_id;
     entry.base_ptr = DasPtr<IDasBase>(in_base);
 
     cache_.push_back(std::move(entry));
@@ -1006,7 +1009,7 @@ DasResult DasVariantVectorByValueProxy::PushBackBase(::IDasBase* in_base)
     writer.WriteUInt16(oid.session_id);
     writer.WriteUInt16(oid.generation);
     writer.WriteUInt32(oid.local_id);
-    writer.WriteUInt32(ComputeInterfaceId(DasIidOf<IDasBase>()));
+    writer.WriteUInt32(iface_id);
     auto send_result =
         SendWriteBack(17, writer.GetBuffer().data(), writer.GetBuffer().size());
     if (!IsTransportLevelError(send_result))
@@ -1139,11 +1142,13 @@ DasResult DasVariantVectorByValueProxy::PushBackImage(
     }
     guard.Track(oid, newly_registered);
 
+    const auto iface_id =
+        ComputeInterfaceId(DasIidOf<Das::ExportInterface::IDasImage>());
+
     CachedVariant entry;
     entry.type = ::Das::ExportInterface::DAS_VARIANT_TYPE_IMAGE;
     entry.object_id = oid;
-    entry.interface_id =
-        ComputeInterfaceId(DasIidOf<Das::ExportInterface::IDasImage>());
+    entry.interface_id = iface_id;
     entry.base_ptr = DasPtr<IDasBase>(p_image);
 
     cache_.push_back(std::move(entry));
@@ -1154,8 +1159,7 @@ DasResult DasVariantVectorByValueProxy::PushBackImage(
     writer.WriteUInt16(oid.session_id);
     writer.WriteUInt16(oid.generation);
     writer.WriteUInt32(oid.local_id);
-    writer.WriteUInt32(
-        ComputeInterfaceId(DasIidOf<Das::ExportInterface::IDasImage>()));
+    writer.WriteUInt32(iface_id);
     auto send_result =
         SendWriteBack(20, writer.GetBuffer().data(), writer.GetBuffer().size());
     if (!IsTransportLevelError(send_result))
