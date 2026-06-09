@@ -6,16 +6,6 @@ namespace Das::ExportInterface
     [uuid("E8B7A3D1-4F2C-4A1E-9D5B-8C6E7F3A2B1D")] interface IDasGraphRuntime
         : IDasBase
     {
-        /// Load a compiled graph artifact (CompiledGraphPlanDto serialized as
-        /// JSON).
-        DasResult Load(IDasReadOnlyString * p_compiled_artifact_json);
-
-        /// Pre-configure all node executors from node snapshots JSON.
-        DasResult Configure(IDasReadOnlyString * p_node_snapshots_json);
-
-        /// Execute the compiled graph with the given stop token.
-        DasResult Run(Das::PluginInterface::IDasStopToken * p_stop_token);
-
         /// Get last error message (valid for the lifetime of this object).
         DasResult
             GetErrorMessage([out] IDasReadOnlyString * *pp_out_error_message);

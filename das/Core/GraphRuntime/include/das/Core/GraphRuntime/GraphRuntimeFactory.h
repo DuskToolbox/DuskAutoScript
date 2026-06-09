@@ -25,12 +25,6 @@ public:
     GraphRuntimeImpl() = default;
 
     // --- IDasGraphRuntime interface ---
-    DAS_IMPL Load(IDasReadOnlyString* p_compiled_artifact_json);
-
-    DAS_IMPL Configure(IDasReadOnlyString* p_node_snapshots_json);
-
-    DAS_IMPL Run(Das::PluginInterface::IDasStopToken* p_stop_token);
-
     DAS_IMPL GetErrorMessage(IDasReadOnlyString** pp_out_error_message);
 };
 

@@ -7,30 +7,6 @@ DAS_CORE_GRAPHRUNTIME_NS_BEGIN
 
 // --- GraphRuntimeImpl implementation ---
 
-DasResult GraphRuntimeImpl::Load(IDasReadOnlyString* p_compiled_artifact_json)
-{
-    std::ignore = p_compiled_artifact_json;
-    DAS_CORE_LOG_WARN(
-        "Load() is deprecated — use GraphRuntime::RunWithHost() directly. "
-        "GraphRuntimeImpl is now a minimal COM facade.");
-    return DAS_E_NO_IMPLEMENTATION;
-}
-
-DasResult GraphRuntimeImpl::Configure(IDasReadOnlyString* p_node_snapshots_json)
-{
-    std::ignore = p_node_snapshots_json;
-    return DAS_E_NO_IMPLEMENTATION;
-}
-
-DasResult GraphRuntimeImpl::Run(
-    Das::PluginInterface::IDasStopToken* p_stop_token)
-{
-    std::ignore = p_stop_token;
-    last_error_ =
-        "Run() is deprecated — use GraphRuntime::RunWithHost() instead";
-    return DAS_E_NO_IMPLEMENTATION;
-}
-
 DasResult GraphRuntimeImpl::GetErrorMessage(
     IDasReadOnlyString** pp_out_error_message)
 {
