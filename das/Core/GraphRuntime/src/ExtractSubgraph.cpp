@@ -4,6 +4,8 @@
 #include <das/Core/Logger/Logger.h>
 #include <das/Utils/fmt.h>
 
+#include <map>
+
 DAS_CORE_GRAPHRUNTIME_NS_BEGIN
 
 std::string ExtractSubgraph::MakeChildNodeId(const std::string& old_node_id)
@@ -49,8 +51,10 @@ ExtractResult ExtractSubgraph::Extract(
     }
 
     // --- Build node_id mapping (old parent → new child) ---
+    std::map<std::string, const Dto::GraphNodeDto*> node_lookup;
     for (const auto& node : parent_graph_doc.nodes)
     {
+        node_lookup[node.node_id] = &node;
         if (selected_node_ids.count(node.node_id))
         {
             result.node_id_mapping[node.node_id] =
@@ -93,8 +97,20 @@ ExtractResult ExtractSubgraph::Extract(
             "in_{}_{}",
             edge.source_node_id,
             edge.source_port_id);
-        mapping.port_type =
-            InferPortType(edge.target_port_id, parent_graph_doc.graph_inputs);
+
+        // Infer port type from the selected node's dynamic_ports, not the
+        // parent graph's graph_inputs (which describe graph-level boundaries).
+        auto tgt_it = node_lookup.find(edge.target_node_id);
+        if (tgt_it != node_lookup.end() && tgt_it->second)
+        {
+            mapping.port_type = InferPortType(
+                edge.target_port_id,
+                tgt_it->second->dynamic_ports);
+        }
+        else
+        {
+            mapping.port_type = {};
+        }
 
         result.input_port_mappings.push_back(mapping);
     }
@@ -109,8 +125,20 @@ ExtractResult ExtractSubgraph::Extract(
             "out_{}_{}",
             edge.target_node_id,
             edge.target_port_id);
-        mapping.port_type =
-            InferPortType(edge.source_port_id, parent_graph_doc.graph_outputs);
+
+        // Infer port type from the selected node's dynamic_ports, not the
+        // parent graph's graph_outputs (which describe graph-level boundaries).
+        auto src_it = node_lookup.find(edge.source_node_id);
+        if (src_it != node_lookup.end() && src_it->second)
+        {
+            mapping.port_type = InferPortType(
+                edge.source_port_id,
+                src_it->second->dynamic_ports);
+        }
+        else
+        {
+            mapping.port_type = {};
+        }
 
         result.output_port_mappings.push_back(mapping);
     }
