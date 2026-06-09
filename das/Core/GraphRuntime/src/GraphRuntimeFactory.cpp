@@ -64,28 +64,36 @@ DasResult GraphRuntimeImpl::Configure(IDasReadOnlyString* p_node_snapshots_json)
 DasResult GraphRuntimeImpl::Run(
     Das::PluginInterface::IDasStopToken* p_stop_token)
 {
-    // Delegate to engine's Prepare — the engine was already configured in
-    // Load().
-    DasResult hr = engine_.Prepare();
+    if (!plan_loaded_)
+    {
+        last_error_ = "No compiled artifact loaded — call Load() first";
+        return DAS_E_FAIL;
+    }
+
+    // Delegate to engine's Run() with a minimal ComponentResolver.
+    // The resolver is a placeholder — in production, components should be
+    // resolved via RunWithHost() using an IDasTaskComponentHost.
+    DasResult hr = engine_.Run(
+        cached_plan_,
+        cached_plan_.source_fingerprint,
+        p_stop_token,
+        /* resolve_component */
+        [](const std::string&                   component_guid,
+           Das::PluginInterface::IDasStopToken* p_stop,
+           Das::ExportInterface::IDasPortMap*   input_map,
+           Das::ExportInterface::IDasPortMap**  pp_out_map) -> DasResult
+        {
+            std::ignore = component_guid;
+            std::ignore = p_stop;
+            std::ignore = input_map;
+            std::ignore = pp_out_map;
+            return DAS_E_NOT_SUPPORTED;
+        });
     if (DAS::IsFailed(hr))
     {
         last_error_ = engine_.GetLastErrorMessage();
-        return hr;
     }
-
-    // Check stop token before execution.
-    if (p_stop_token)
-    {
-        bool can_stop = false;
-        hr = p_stop_token->StopRequested(&can_stop);
-        if (DAS::IsOk(hr) && can_stop)
-        {
-            last_error_ = "Execution cancelled by stop token";
-            return DAS_E_FAIL;
-        }
-    }
-
-    return DAS_S_OK;
+    return hr;
 }
 
 DasResult GraphRuntimeImpl::GetErrorMessage(
