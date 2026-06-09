@@ -37,8 +37,8 @@ DasResult GetVariant(const DasVariantVectorImpl::Variant& v, T* p_out)
     if (p_value == nullptr)
     {
         DAS_CORE_LOG_ERROR(
-            "Type error. Expected index={}, actual index={}.",
-            static_cast<int>(v.index()),
+            "Type error: actual variant index = {} does not match "
+            "requested type.",
             static_cast<int>(v.index()));
         return DAS_E_TYPE_ERROR;
     }
