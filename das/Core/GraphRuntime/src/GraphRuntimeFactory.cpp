@@ -56,7 +56,7 @@ DasResult GraphRuntimeImpl::Configure(IDasReadOnlyString* p_node_snapshots_json)
         DAS_CORE_LOG_WARN(
             "Configure() with node snapshot overrides is not implemented. "
             "Node snapshots are configured during Load().");
-        return DAS_E_NOT_SUPPORTED;
+        return DAS_E_NO_IMPLEMENTATION;
     }
     return DAS_S_OK;
 }
@@ -87,7 +87,7 @@ DasResult GraphRuntimeImpl::Run(
             std::ignore = p_stop;
             std::ignore = input_map;
             std::ignore = pp_out_map;
-            return DAS_E_NOT_SUPPORTED;
+            return DAS_E_NO_IMPLEMENTATION;
         });
     if (DAS::IsFailed(hr))
     {
