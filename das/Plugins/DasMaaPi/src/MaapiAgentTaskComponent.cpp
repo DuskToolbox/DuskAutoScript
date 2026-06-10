@@ -33,14 +33,6 @@ namespace Plugins::DasMaaPi
         {
             return Das::Utils::CloneYyjsonValue(value);
         }
-
-        bool StopRequested(PluginInterface::IDasStopToken* stop_token)
-        {
-            bool requested = false;
-            return stop_token
-                   && DAS::IsOk(stop_token->StopRequested(&requested))
-                   && requested;
-        }
     } // namespace
 
     MaapiAgentTaskComponent::MaapiAgentTaskComponent()

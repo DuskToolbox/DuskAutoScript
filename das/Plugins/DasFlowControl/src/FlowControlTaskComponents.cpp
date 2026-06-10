@@ -134,16 +134,6 @@ namespace
         map->SetString(key.Get(), val.Get());
     }
 
-    /// Write a bool value into a PortMap port.
-    void SetPortBool(
-        ExportInterface::IDasPortMap* map,
-        std::string_view              port_id,
-        bool                          value)
-    {
-        DasReadOnlyString key{std::string{port_id}.c_str()};
-        map->SetBool(key.Get(), value);
-    }
-
     /// Write a JSON value (as serialized string) into a PortMap port.
     void SetPortJson(
         ExportInterface::IDasPortMap* map,
