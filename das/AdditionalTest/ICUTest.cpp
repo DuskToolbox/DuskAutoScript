@@ -159,3 +159,69 @@ TEST(ICUTest, UnicodeStringToUtf32Test)
     std::cout << "NOTE: icu_string.getCapacity() = " << icu_string.getCapacity()
               << '.' << '\n';
 }
+
+// ============================================================================
+// GetUtf16 null-termination contract tests
+// ============================================================================
+
+TEST(ICUTest, GetUtf16_NullTermination_Ascii)
+{
+    // DasStringCppImpl from UTF-8 "hello" -> GetUtf16 must have
+    // out_string[out_string_size] == 0
+    auto* p_string = new DasStringCppImpl();
+    p_string->SetUtf8("hello");
+    const char16_t* out_string = nullptr;
+    size_t          out_string_size = 0;
+    auto            result = p_string->GetUtf16(&out_string, &out_string_size);
+    EXPECT_EQ(result, DAS_S_OK);
+    ASSERT_NE(out_string, nullptr);
+    EXPECT_EQ(out_string_size, 5u); // "hello" = 5 UTF-16 code units
+    EXPECT_EQ(out_string[out_string_size], u'\0');
+    p_string->Release();
+}
+
+TEST(ICUTest, GetUtf16_NullTermination_CJK)
+{
+    // DasStringCppImpl from CJK string -> GetUtf16 must have NUL terminator
+    auto* p_string = new DasStringCppImpl();
+    p_string->SetUtf8(reinterpret_cast<const char*>(u8"测试"));
+    const char16_t* out_string = nullptr;
+    size_t          out_string_size = 0;
+    auto            result = p_string->GetUtf16(&out_string, &out_string_size);
+    EXPECT_EQ(result, DAS_S_OK);
+    ASSERT_NE(out_string, nullptr);
+    EXPECT_EQ(out_string_size, 2u); // "测试" = 2 UTF-16 code units
+    EXPECT_EQ(out_string[out_string_size], u'\0');
+    p_string->Release();
+}
+
+TEST(ICUTest, GetUtf16_NullTermination_NullString)
+{
+    // NullStringImpl::GetUtf16 must return size 0 and buffer[0] == 0
+    IDasReadOnlyString* p_null = nullptr;
+    CreateNullDasString(&p_null);
+    ASSERT_NE(p_null, nullptr);
+    const char16_t* out_string = nullptr;
+    size_t          out_string_size = 42; // sentinel value
+    auto            result = p_null->GetUtf16(&out_string, &out_string_size);
+    EXPECT_EQ(result, DAS_S_OK);
+    EXPECT_EQ(out_string_size, 0u);
+    ASSERT_NE(out_string, nullptr);
+    EXPECT_EQ(out_string[0], u'\0');
+}
+
+TEST(ICUTest, GetUtf16_NullTermination_EmptyString)
+{
+    // DasStringCppImpl from empty string -> GetUtf16 returns size 0, buffer[0]
+    // == 0
+    auto* p_string = new DasStringCppImpl();
+    p_string->SetUtf8("");
+    const char16_t* out_string = nullptr;
+    size_t          out_string_size = 0;
+    auto            result = p_string->GetUtf16(&out_string, &out_string_size);
+    EXPECT_EQ(result, DAS_S_OK);
+    ASSERT_NE(out_string, nullptr);
+    EXPECT_EQ(out_string_size, 0u);
+    EXPECT_EQ(out_string[out_string_size], u'\0');
+    p_string->Release();
+}
