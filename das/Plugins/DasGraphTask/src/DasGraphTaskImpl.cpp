@@ -6,22 +6,6 @@
 #include <das/DasString.hpp>
 #include <das/Utils/CommonUtils.hpp>
 
-// IID for DasGraphTaskImpl — required by IDasTypeInfo::GetGuid.
-DAS_DEFINE_CLASS_GUID_HOLDER_IN_NAMESPACE(
-    Das::Plugins::DasGraphTask,
-    DasGraphTaskImpl,
-    0xF4A2C9D1,
-    0x7B3E,
-    0x4D8A,
-    0xA1,
-    0x5F,
-    0xC2,
-    0xE8,
-    0x6B,
-    0x4D,
-    0x91,
-    0xA3)
-
 namespace Das::Plugins::DasGraphTask
 {
 
