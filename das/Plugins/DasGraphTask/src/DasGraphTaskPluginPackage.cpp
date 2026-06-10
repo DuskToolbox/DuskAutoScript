@@ -7,10 +7,11 @@
 
 #include <new>
 
-// {E8D1A2B3-4C5F-6D7E-8A9B-0C1D2E3F4A5B}
+// Factory GUID: {E8D1A2B3-4C5F-6D7E-8A9B-0C1D2E3F4A5B}
+// Must match DasGraphTask.json taskComponents.factories for manifest lookup.
 DAS_DEFINE_CLASS_GUID_HOLDER_IN_NAMESPACE(
     Das::Plugins::DasGraphTask,
-    DasGraphTaskPluginPackage,
+    DasGraphTaskComponentFactory,
     0xE8D1A2B3,
     0x4C5F,
     0x6D7E,
@@ -23,32 +24,66 @@ DAS_DEFINE_CLASS_GUID_HOLDER_IN_NAMESPACE(
     0x4A,
     0x5B)
 
+// Package GUID: {A1B2C3D4-E5F6-4A7B-8C9D-0E1F2A3B4C5D}
+DAS_DEFINE_CLASS_GUID_HOLDER_IN_NAMESPACE(
+    Das::Plugins::DasGraphTask,
+    DasGraphTaskPluginPackage,
+    0xA1B2C3D4,
+    0xE5F6,
+    0x4A7B,
+    0x8C,
+    0x9D,
+    0x0E,
+    0x1F,
+    0x2A,
+    0x3B,
+    0x4C,
+    0x5D)
+
 namespace Das::Plugins::DasGraphTask
 {
 
-    DasResult DAS_STD_CALL
-    DasGraphTaskPluginPackage::QueryInterface(const DasGuid& iid, void** pp_out)
+    // === DasGraphTaskComponentFactory ===
+
+    DasResult DasGraphTaskComponentFactory::CreateComponent(
+        const DasGuid&                            component_guid,
+        Das::PluginInterface::IDasTaskComponent** pp_out_component)
     {
-        // Try base class QI first (handles IDasBase, IDasTypeInfo,
-        // IDasTaskComponentFactory)
-        DasResult result =
-            DasTaskComponentFactoryImplBase::QueryInterface(iid, pp_out);
-        if (DAS::IsOk(result))
+        if (pp_out_component == nullptr)
         {
-            return result;
+            return DAS_E_INVALID_POINTER;
+        }
+        *pp_out_component = nullptr;
+
+        const DasGuid graph_task_guid = DasIidOf<DasGraphTaskImpl>();
+        if (!(component_guid == graph_task_guid))
+        {
+            return DAS_E_NOT_FOUND;
         }
 
-        // Handle IDasPluginPackage (not known to the CRTP base)
-        if (iid == DasIidOf<Das::PluginInterface::IDasPluginPackage>())
+        try
         {
-            *pp_out =
-                static_cast<Das::PluginInterface::IDasPluginPackage*>(this);
-            AddRef();
+            auto* component = new DasGraphTaskImpl(host_.Get());
+            component->AddRef();
+            *pp_out_component =
+                static_cast<Das::PluginInterface::IDasTaskComponent*>(
+                    component);
             return DAS_S_OK;
         }
-
-        return DAS_E_NO_INTERFACE;
+        catch (const std::bad_alloc&)
+        {
+            return DAS_E_OUT_OF_MEMORY;
+        }
     }
+
+    DasResult DasGraphTaskComponentFactory::SetTaskComponentHost(
+        Das::PluginInterface::IDasTaskComponentHost* p_host)
+    {
+        host_ = DasPtr<Das::PluginInterface::IDasTaskComponentHost>(p_host);
+        return DAS_S_OK;
+    }
+
+    // === DasGraphTaskPluginPackage ===
 
     DasResult DasGraphTaskPluginPackage::EnumFeature(
         size_t                                  index,
@@ -82,10 +117,19 @@ namespace Das::Plugins::DasGraphTask
             return DAS_E_OUT_OF_RANGE;
         }
 
-        AddRef();
-        *pp_out_interface =
-            static_cast<Das::PluginInterface::IDasTaskComponentFactory*>(this);
-        return DAS_S_OK;
+        try
+        {
+            auto* factory = new DasGraphTaskComponentFactory{};
+            factory->AddRef();
+            *pp_out_interface =
+                static_cast<Das::PluginInterface::IDasTaskComponentFactory*>(
+                    factory);
+            return DAS_S_OK;
+        }
+        catch (const std::bad_alloc&)
+        {
+            return DAS_E_OUT_OF_MEMORY;
+        }
     }
 
     DasResult DasGraphTaskPluginPackage::CanUnloadNow(bool* p_can_unload)
@@ -95,44 +139,6 @@ namespace Das::Plugins::DasGraphTask
             return DAS_E_INVALID_POINTER;
         }
         *p_can_unload = true;
-        return DAS_S_OK;
-    }
-
-    DasResult DasGraphTaskPluginPackage::CreateComponent(
-        const DasGuid&                            component_guid,
-        Das::PluginInterface::IDasTaskComponent** pp_out_component)
-    {
-        if (pp_out_component == nullptr)
-        {
-            return DAS_E_INVALID_POINTER;
-        }
-        *pp_out_component = nullptr;
-
-        const DasGuid graph_task_guid = DasIidOf<DasGraphTaskImpl>();
-        if (!(component_guid == graph_task_guid))
-        {
-            return DAS_E_NOT_FOUND;
-        }
-
-        try
-        {
-            auto* component = new DasGraphTaskImpl(host_.Get());
-            component->AddRef();
-            *pp_out_component =
-                static_cast<Das::PluginInterface::IDasTaskComponent*>(
-                    component);
-            return DAS_S_OK;
-        }
-        catch (const std::bad_alloc&)
-        {
-            return DAS_E_OUT_OF_MEMORY;
-        }
-    }
-
-    DasResult DasGraphTaskPluginPackage::SetTaskComponentHost(
-        Das::PluginInterface::IDasTaskComponentHost* p_host)
-    {
-        host_ = DasPtr<Das::PluginInterface::IDasTaskComponentHost>(p_host);
         return DAS_S_OK;
     }
 
