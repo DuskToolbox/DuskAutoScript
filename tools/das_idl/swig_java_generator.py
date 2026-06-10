@@ -808,13 +808,27 @@ class JavaSwigGenerator(SwigLangGenerator):
         param_list_with_prefix = ", ".join(param_signatures_with_prefix)
         param_list_without_prefix = ", ".join(param_signatures_without_prefix)
 
-        result = f"""
+        # SWIG 4.4.1 workaround: 当方法参数含 IDasBase 时，
+        # %typemap(directorout) IDasBase ** 注册会污染类型表，
+        # 导致 %ignore 的参数类型匹配出错，生成 SetBase/SetComponent 重复定义。
+        # 此时使用仅方法名的 %ignore（不带参数签名）以避免类型匹配。
+        has_idasbase = any(
+            type_simple_name(p.type_info) == 'IDasBase'
+            for p in method.parameters
+        )
+        if has_idasbase:
+            result = f"""
+// 隐藏原始的 {method.name} 方法（仅方法名，避免 SWIG 4.4.1 IDasBase 类型污染）
+%ignore {qualified_interface}::{method.name};
+"""
+        else:
+            result = f"""
 // 隐藏原始的 {method.name} 方法（IDasReadOnlyString* 参数版本，带 :: 前缀）
 %ignore {qualified_interface}::{method.name}({param_list_with_prefix});
 """
-        # 如果两个签名不同，添加不带前缀的版本
-        if param_list_with_prefix != param_list_without_prefix:
-            result += f"""
+            # 如果两个签名不同，添加不带前缀的版本
+            if param_list_with_prefix != param_list_without_prefix:
+                result += f"""
 // 隐藏原始的 {method.name} 方法（IDasReadOnlyString* 参数版本，不带 :: 前缀）
 %ignore {qualified_interface}::{method.name}({param_list_without_prefix});
 """
@@ -2152,18 +2166,9 @@ struct {class_name} {{
                                              out_param: ParameterDef) -> str:
         """为 Director 生成 out 参数的完整 typemap 链（9 个）
 
-        使 SWIG 能正确处理接口指针类型的 [out] 参数，避免生成 SWIGTYPE_p_p_xxx：
-        1. jni/jtype/jstype — JNI/Java 类型映射（jlong/long）
-        2. in/javain — 普通 wrapper 的 JNI ↔ C++ 转换
-        3. directorin — Director upcall C++ → JNI（descriptor="J" 防止 Warning 824）
-        4. directorout — Director return JNI → C++ out 参数写入
-        5. javadirectorout — Director Java 返回值构建
-        6. javadirectorin — Director Java 参数接收
-
-        注意：[binary_buffer] 方法跳过此 typemap，因为：
-        1. getDataAsDirectBuffer() 已提供替代方案
-        2. unsigned char** 类型没有对应的 DasRetXxx 类
-        3. Director 不需要支持二进制缓冲区方法
+        使 SWIG 能正确处理接口指针类型的 [out] 参数，避免生成 SWIGTYPE_p_p_xxx。
+        所有 typemap 注册后在 .i 文件末尾由 _generate_clear_typemaps 清除，
+        防止 SWIG 4.4.1 跨文件 feature table 污染。
 
         Args:
             interface: 接口定义
@@ -2173,20 +2178,14 @@ struct {class_name} {{
         Returns:
             完整 typemap 链代码，或空字符串（如果跳过）
         """
-        # 跳过 [binary_buffer] 方法
         if self._is_binary_buffer_method(method):
             return ""
 
         out_type = type_simple_name(out_param.type_info)
-
-        # 跳过非接口指针类型（如 DasGuid*、uint64_t* 等值类型）
-        # 这些类型的 out 参数不需要完整的 director typemap 链，
-        # 因为 jstype="long" 会污染全局类型映射，影响 IID 常量 getter 等其他用途
         if out_param.type_info.type_kind != TypeKind.INTERFACE:
             return ""
         ret_class_name = self._get_ret_class_name(out_type)
 
-        # 构建完整的参数类型（包含 const、指针等修饰符）
         type_parts = []
         if out_param.type_info.is_const:
             type_parts.append('const')
@@ -2205,37 +2204,18 @@ struct {class_name} {{
         lines.append(f"// 必须包裹在 #ifdef SWIGJAVA 中，否则 C#/Python 编译会报错")
         lines.append("")
         lines.append("#ifdef SWIGJAVA")
-
-        # 1. jni typemap: C JNI 层类型 → jlong
         lines.append(f'%typemap(jni) {full_type} "jlong"')
-
-        # 2. jtype typemap: Java 中间类型 → long
         lines.append(f'%typemap(jtype) {full_type} "long"')
-
-        # 3. jstype typemap: Java 最终类型 → long
         lines.append(f'%typemap(jstype) {full_type} "long"')
-
-        # 4. in typemap: JNI → C++ 转换（jlong → 接口指针**）
         lines.append(f"%typemap(in) {full_type} (jlong in_jni_val) %{{ $1 = ({out_type}**)&in_jni_val; %}}")
-
-        # 5. javain typemap: Java → jni 参数传递
         lines.append(f'%typemap(javain) {full_type} "$javainput"')
-
-        # 6. directorin typemap: C++ → JNI（Director upcall 参数）
-        #    descriptor="J" 关键！缺了会产生 SWIG Warning 824
         lines.append(f'%typemap(directorin, descriptor="J") {full_type} $input (jlong dir_jni_val) %{{ dir_jni_val = (jlong)$1; %}}')
-
-        # 7. directorout typemap: JNI → C++（Director out 参数写入）
         lines.append(f"%typemap(directorout) {full_type} $input ({ret_class_name} temp) %{{")
         lines.append(f"    temp = *({ret_class_name}*)$1;")
         lines.append(f"    if ($input) *$input = temp.value;")
         lines.append(f"    $result = temp.error_code;")
         lines.append(f"%}}")
-
         lines.append("#endif // SWIGJAVA")
-
-        # 8. javadirectorout typemap: Java 返回值构建
-        #    名字中含 "java"，SWIG 自动忽略非 Java 编译
         lines.append(f"%typemap(javadirectorout) ({full_type} {out_param.name}) %{{    {ret_class_name} result = new {ret_class_name}();")
         lines.append(f"    result.error_code = $jniinput;")
         lines.append(f"    if (*$2 != null) {{")
@@ -2243,11 +2223,7 @@ struct {class_name} {{
         lines.append(f"    }}")
         lines.append(f"    return result;")
         lines.append(f"%}}")
-
-        # 9. javadirectorin typemap: Java → C++（Director 参数接收，scoped by param name）
-        #    SWIG docs 指定用 $jniinput 而非 $javainput
         lines.append(f'%typemap(javadirectorin) ({full_type} {out_param.name}) "$jniinput"')
-
         return "\n".join(lines)
     def _generate_interface_helper_methods(self, interface: InterfaceDef) -> str:
         """为接口生成 Java 辅助方法（castFrom 和 createFromPtr）

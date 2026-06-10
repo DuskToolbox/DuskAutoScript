@@ -666,27 +666,22 @@ class SwigCodeGenerator:
 
     def _generate_director_out_param_typemaps(self, interface: InterfaceDef) -> str:
         """为 Director 类生成所有 out 参数的 typemap
-        
+
         Director 类需要实现原始方法签名，但 Java 端需要将 out 参数转换为返回值。
         此方法生成所有带有单个 [out] 参数的方法的 javadirectorout typemap。
-        
+
         Args:
             interface: 接口定义
-            
+
         Returns:
             javadirectorout typemap 代码字符串
         """
         typemaps = []
-        
+
         for method in interface.methods:
-            # 查找带有单个 [out] 参数的方法
             out_params = [p for p in method.parameters if p.direction == ParamDirection.OUT]
-            
-            # 只处理有且仅有一个 [out] 参数的方法
             if len(out_params) == 1:
                 out_param = out_params[0]
-                
-                # 为每个语言生成器调用 _generate_director_out_param_typemap
                 for lang_generator in self.lang_generators:
                     if hasattr(lang_generator, '_generate_director_out_param_typemap'):
                         typemap = lang_generator._generate_director_out_param_typemap(
@@ -694,10 +689,10 @@ class SwigCodeGenerator:
                         )
                         if typemap:
                             typemaps.append(typemap)
-        
+
         return "\n".join(typemaps)
 
-    def _generate_clear_typemaps(self) -> str:
+    def _generate_clear_typemaps(self, interface=None) -> str:
         """检查是否有typemap需要清除
 
         不再在文件末尾生成%clear指令，因为typemap将统一在DasTypeMaps.i中定义。
@@ -1038,13 +1033,18 @@ class SwigCodeGenerator:
             else:
                 fqn = interface.name
 
+            # SWIG 4.4.1 bug: %feature("nodirector") SET/CLEAR on methods with INTERFACE**
+            # out-params pollutes the global feature table, corrupting %feature("director")
+            # and %ignore directives in later .i files within the same swig_all.i compilation.
+            # This causes methods (e.g. SetBase in derived interfaces) to get both
+            # director (SwigDirector_*) and non-director wrapper, creating Java compile errors.
+            # Workaround: skip all nodirector SET/CLEAR when out-type is any INTERFACE kind.
+            if out_params[0].type_info.type_kind == TypeKind.INTERFACE:
+                continue
+
             if clear:
                 lines.append(f'%feature("nodirector", "") {fqn}::{method.name}({params_str});')
             else:
-                # SWIG 4.4.1 的 nodirector SET 对 IDasBase** 存在 feature table 污染 bug
-                # skip instead of SET, rely on notabstract
-                if out_type == 'IDasBase':
-                    continue
                 lines.append(f'%feature("nodirector") {fqn}::{method.name}({params_str});')
 
         if lines:
