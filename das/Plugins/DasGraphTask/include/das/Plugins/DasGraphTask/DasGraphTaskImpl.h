@@ -56,11 +56,9 @@ namespace Das::Plugins::DasGraphTask
             Das::ExportInterface::IDasJson** pp_out_result_json) override;
 
         DAS_IMPL Do(
-            Das::PluginInterface::IDasStopToken* stop_token,
-            Das::ExportInterface::IDasJson*      p_environment_json,
-            Das::ExportInterface::IDasJson*      p_settings_json,
-            Das::ExportInterface::IDasJson*      p_input_json,
-            Das::ExportInterface::IDasJson**     pp_out_result_json) override;
+            Das::PluginInterface::IDasStopToken*       stop_token,
+            Das::ExportInterface::IDasReadOnlyPortMap* p_input_port_map,
+            Das::ExportInterface::IDasPortMap** pp_out_port_map) override;
     };
 
 } // namespace Das::Plugins::DasGraphTask

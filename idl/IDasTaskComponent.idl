@@ -1,5 +1,6 @@
 import "DasBasicTypes.idl";
 import "DasJson.idl";
+import "IDasPortMap.idl";
 import "IDasTypeInfo.idl";
 import "IDasTask.idl";
 
@@ -14,10 +15,8 @@ namespace Das::PluginInterface
             [out] Das::ExportInterface::IDasJson * *pp_out_result_json);
         DasResult Do(
             IDasStopToken * stop_token,
-            Das::ExportInterface::IDasJson * p_environment_json,
-            Das::ExportInterface::IDasJson * p_settings_json,
-            Das::ExportInterface::IDasJson * p_input_json,
-            [out] Das::ExportInterface::IDasJson * *pp_out_result_json);
+            Das::ExportInterface::IDasReadOnlyPortMap * p_input_port_map,
+            [out] Das::ExportInterface::IDasPortMap * *pp_out_port_map);
     }
 
     [uuid(

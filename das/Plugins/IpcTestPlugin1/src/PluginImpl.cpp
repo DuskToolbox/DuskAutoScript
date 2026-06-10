@@ -6,6 +6,8 @@
 #include <das/IDasBase.h>
 #include <das/Utils/DasJsonCore.h>
 #include <das/Utils/fmt.h>
+#include <das/_autogen/idl/abi/IDasPortMap.h>
+#include <das/_autogen/idl/header/IDasPortMap.generated.h>
 
 #include <array>
 #include <cstring>
@@ -501,29 +503,44 @@ DasResult IpcTaskComponentImpl::ApplySettingsChange(
 
 DasResult IpcTaskComponentImpl::Do(
     PluginInterface::IDasStopToken*,
-    ExportInterface::IDasJson*,
-    ExportInterface::IDasJson*,
-    ExportInterface::IDasJson*,
-    ExportInterface::IDasJson** pp_out_result_json)
+    ExportInterface::IDasReadOnlyPortMap*,
+    ExportInterface::IDasPortMap** pp_out_port_map)
 {
-    if (!pp_out_result_json)
+    if (!pp_out_port_map)
     {
         return DAS_E_INVALID_POINTER;
     }
 
-    auto result = Utils::MakeYyjsonObject();
-    auto obj = *result.as_object();
-    obj[std::string_view("status")] = "completed";
-    auto outputs = Utils::MakeYyjsonObject();
-    (*outputs.as_object())[std::string_view("ipcResult")] = "ok";
-    obj[std::string_view("outputs")] = std::move(outputs);
-    auto signals = Utils::MakeYyjsonArray();
-    signals.as_array()->emplace_back("next");
-    obj[std::string_view("signals")] = std::move(signals);
+    DAS::DasPtr<ExportInterface::IDasPortMap> output_map;
+    DasResult hr = CreateIDasPortMap(output_map.Put());
+    if (DAS::IsFailed(hr))
+    {
+        return hr;
+    }
 
-    auto wrapped = WrapJson(std::move(result));
-    *pp_out_result_json = wrapped.Get();
-    (*pp_out_result_json)->AddRef();
+    // Set status
+    {
+        DasReadOnlyString status_key{"status"};
+        DasReadOnlyString status_val{"completed"};
+        output_map->SetString(status_key.Get(), status_val.Get());
+    }
+
+    // Set outputs with ipcResult
+    {
+        DasReadOnlyString ipc_result_key{"ipcResult"};
+        DasReadOnlyString ipc_result_val{"ok"};
+        output_map->SetString(ipc_result_key.Get(), ipc_result_val.Get());
+    }
+
+    // Set signal
+    {
+        DasReadOnlyString signal_key{"signal"};
+        DasReadOnlyString signal_val{"next"};
+        output_map->SetString(signal_key.Get(), signal_val.Get());
+    }
+
+    *pp_out_port_map = output_map.Get();
+    output_map.Get()->AddRef();
     return DAS_S_OK;
 }
 

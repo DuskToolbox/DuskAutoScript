@@ -4,7 +4,6 @@
 #include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/Core/GraphRuntime/CompiledArtifact.h>
 #include <das/Core/GraphRuntime/DoAdapter.h>
-#include <das/Core/GraphRuntime/LegacyJsonAdapter.h>
 #include <das/Core/GraphRuntime/PortFrame.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/Core/Utils/DasJsonImpl.h>
@@ -357,7 +356,7 @@ DasResult GraphRuntime::Prepare() const
 }
 
 // ===========================================================================
-// ExecuteNodeWithComponent — PortMap ↔ JSON bridge for IDasTaskComponent::Do
+// ExecuteNodeWithComponent — direct PortMap call to IDasTaskComponent::Do
 // ===========================================================================
 
 DasResult GraphRuntime::ExecuteNodeWithComponent(
@@ -412,46 +411,12 @@ DasResult GraphRuntime::ExecuteNodeWithComponent(
             return hr;
     }
 
-    // 4. Convert input PortMap → JSON string → IDasJson
-    std::string input_json_str;
-    DasResult   hr = ConvertPortMapToJson(input_portmap.Get(), input_json_str);
-    if (DAS_S_OK != hr)
-    {
-        DAS_CORE_LOG_ERROR(
-            "ConvertPortMapToJson failed for node = {}: hr = {}",
-            node_id,
-            static_cast<int>(hr));
-        return hr;
-    }
-
-    auto p_input_json = DAS::DasPtr<Das::ExportInterface::IDasJson>(
-        new Das::Core::Utils::IDasJsonImpl(input_json_str.c_str()));
-
-    // 5. Create empty environment and settings JSON
-    //    v17 data-sep: settings already applied in Configure via
-    //    ApplySettingsChange, so p_settings_json is empty here.
-    auto        env_json = Das::Utils::MakeYyjsonObject();
-    auto        env_serialized = Das::Utils::SerializeYyjsonValue(env_json);
-    std::string env_str = env_serialized.value_or("{}");
-
-    auto p_env_json = DAS::DasPtr<Das::ExportInterface::IDasJson>(
-        new Das::Core::Utils::IDasJsonImpl(env_str.c_str()));
-
-    auto settings_json = Das::Utils::MakeYyjsonObject();
-    auto settings_serialized = Das::Utils::SerializeYyjsonValue(settings_json);
-    std::string settings_str = settings_serialized.value_or("{}");
-
-    auto p_settings_json = DAS::DasPtr<Das::ExportInterface::IDasJson>(
-        new Das::Core::Utils::IDasJsonImpl(settings_str.c_str()));
-
-    // 6. Call IDasTaskComponent::Do()
-    DAS::DasPtr<Das::ExportInterface::IDasJson> p_result_json;
-    hr = p_component->Do(
+    // 4. Call Do() directly with PortMap — no JSON conversion
+    DAS::DasPtr<IDasPortMap> output_portmap;
+    DasResult                hr = p_component->Do(
         p_stop_token,
-        p_env_json.Get(),
-        p_settings_json.Get(),
-        p_input_json.Get(),
-        p_result_json.Put());
+        input_portmap.Get(),
+        output_portmap.Put());
 
     if (DAS_S_OK != hr)
     {
@@ -462,57 +427,18 @@ DasResult GraphRuntime::ExecuteNodeWithComponent(
         return hr;
     }
 
-    // 7. Convert result JSON → PortMap → PortFrame
-    if (p_result_json.Get())
+    // 5. Extract output PortMap → PortFrame
+    if (output_portmap)
     {
-        // Serialize result IDasJson → string
-        DAS::DasPtr<IDasReadOnlyString> p_result_str;
-        hr = p_result_json->ToString(0, p_result_str.Put());
-        if (DAS_S_OK != hr || !p_result_str.Get())
+        auto guid = Das::Core::ForeignInterfaceHost::MakeDasGuid(node_id);
+        hr = ExtractOutputPortMap(output_portmap.Get(), guid, frame);
+        if (DAS_S_OK != hr)
         {
-            DAS_CORE_LOG_WARN(
-                "Failed to serialize result JSON for node = {}",
-                node_id);
-            return DAS_S_OK; // Non-fatal: empty output
-        }
-
-        const char* utf8 = nullptr;
-        p_result_str->GetUtf8(&utf8);
-        std::string result_str(utf8 ? utf8 : "");
-
-        if (!result_str.empty() && result_str != "{}")
-        {
-            // Convert JSON → PortMap
-            DAS::DasPtr<IDasPortMap> output_portmap;
-            hr = CreateIDasPortMap(output_portmap.Put());
-            if (DAS_S_OK != hr)
-                return hr;
-
-            std::string error_msg;
-            hr = ConvertJsonToPortMap(
-                result_str,
-                output_portmap.Get(),
-                &error_msg);
-            if (DAS_S_OK != hr)
-            {
-                DAS_CORE_LOG_WARN(
-                    "ConvertJsonToPortMap failed for node = {}: {}",
-                    node_id,
-                    error_msg);
-                return DAS_S_OK; // Non-fatal
-            }
-
-            // Extract PortMap → PortFrame
-            auto guid = Das::Core::ForeignInterfaceHost::MakeDasGuid(node_id);
-            hr = ExtractOutputPortMap(output_portmap.Get(), guid, frame);
-            if (DAS_S_OK != hr)
-            {
-                DAS_CORE_LOG_ERROR(
-                    "ExtractOutputPortMap failed for node = {}: hr = {}",
-                    node_id,
-                    static_cast<int>(hr));
-                return hr;
-            }
+            DAS_CORE_LOG_ERROR(
+                "ExtractOutputPortMap failed for node = {}: hr = {}",
+                node_id,
+                static_cast<int>(hr));
+            return hr;
         }
     }
 

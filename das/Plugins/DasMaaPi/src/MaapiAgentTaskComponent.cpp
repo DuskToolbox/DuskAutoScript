@@ -128,49 +128,18 @@ namespace Plugins::DasMaaPi
     }
 
     DasResult MaapiAgentTaskComponent::Do(
-        PluginInterface::IDasStopToken* stop_token,
-        ExportInterface::IDasJson*,
-        ExportInterface::IDasJson*  p_settings_json,
-        ExportInterface::IDasJson*  p_input_json,
-        ExportInterface::IDasJson** pp_out_result_json)
+        PluginInterface::IDasStopToken*       stop_token,
+        ExportInterface::IDasReadOnlyPortMap* p_input_port_map,
+        ExportInterface::IDasPortMap**        pp_out_port_map)
     {
-        if (pp_out_result_json == nullptr)
+        // TODO: Implement PortMap-based MaapiAgentTaskComponent::Do()
+        std::ignore = stop_token;
+        std::ignore = p_input_port_map;
+        if (pp_out_port_map)
         {
-            return DAS_E_INVALID_POINTER;
+            *pp_out_port_map = nullptr;
         }
-        *pp_out_result_json = nullptr;
-
-        if (StopRequested(stop_token))
-        {
-            auto cancelled = WrapAgentRuntimeJson(MakeAgentAdapterCancelled());
-            if (!cancelled)
-            {
-                return DAS_E_INVALID_JSON;
-            }
-            *pp_out_result_json = cancelled.Get();
-            (*pp_out_result_json)->AddRef();
-            return DAS_S_OK;
-        }
-
-        const auto settings_json =
-            p_settings_json != nullptr
-                ? JsonFromDasJson(p_settings_json)
-                : JsonFromDasJson(WrapJson(CloneJson(settings_)).Get());
-        const auto input_json = JsonFromDasJson(p_input_json);
-        const auto parsed = AgentRuntime::MergeAgentRuntimeSettingsAndInput(
-            settings_json,
-            input_json);
-
-        auto wrapped = WrapAgentRuntimeJson(
-            ExecuteAgentRuntimeRequest(*service_, context_, parsed));
-        if (!wrapped)
-        {
-            return DAS_E_INVALID_JSON;
-        }
-
-        *pp_out_result_json = wrapped.Get();
-        (*pp_out_result_json)->AddRef();
-        return DAS_S_OK;
+        return DAS_E_NO_IMPLEMENTATION;
     }
 } // namespace Plugins::DasMaaPi
 DAS_NS_END

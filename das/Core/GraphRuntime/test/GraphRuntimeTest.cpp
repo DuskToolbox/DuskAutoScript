@@ -273,55 +273,54 @@ namespace GraphRuntimeTestMock
         }
 
         DasResult Do(
-            IDasStopToken* p_stop_token,
-            IDasJson*      p_environment_json,
-            IDasJson*      p_settings_json,
-            IDasJson*      p_input_json,
-            IDasJson**     pp_out_result_json) override
+            IDasStopToken*                             p_stop_token,
+            Das::ExportInterface::IDasReadOnlyPortMap* p_input_port_map,
+            Das::ExportInterface::IDasPortMap**        pp_out_port_map) override
         {
             ++do_call_count;
-            if (p_input_json)
+
+            if (pp_out_port_map == nullptr)
             {
-                DAS::DasPtr<IDasReadOnlyString> p_str;
-                p_input_json->ToString(0, p_str.Put());
-                if (p_str.Get())
+                return DAS_E_INVALID_POINTER;
+            }
+
+            DAS::DasPtr<Das::ExportInterface::IDasPortMap> output_map;
+            DasResult hr = CreateIDasPortMap(output_map.Put());
+            if (DAS::IsFailed(hr))
+            {
+                return hr;
+            }
+
+            // Echo input ports to output if available
+            if (p_input_port_map)
+            {
+                DAS::DasPtr<Das::ExportInterface::IDasStringVector> keys;
+                hr = p_input_port_map->GetKeys(keys.Put());
+                if (DAS::IsOk(hr) && keys)
                 {
-                    const char* utf8 = nullptr;
-                    p_str->GetUtf8(&utf8);
-                    last_input_json = utf8 ? std::string{utf8} : std::string{};
+                    uint64_t count = 0;
+                    keys->Size(&count);
+                    for (uint64_t i = 0; i < count; ++i)
+                    {
+                        IDasReadOnlyString* p_key = nullptr;
+                        if (DAS::IsOk(keys->At(i, &p_key)) && p_key)
+                        {
+                            IDasReadOnlyString* p_val = nullptr;
+                            if (DAS::IsOk(
+                                    p_input_port_map->GetString(p_key, &p_val))
+                                && p_val)
+                            {
+                                output_map->SetString(p_key, p_val);
+                                p_val->Release();
+                            }
+                            p_key->Release();
+                        }
+                    }
                 }
             }
 
-            if (pp_out_result_json)
-            {
-                if (p_input_json)
-                {
-                    DAS::DasPtr<IDasReadOnlyString> p_str;
-                    p_input_json->ToString(0, p_str.Put());
-                    if (p_str.Get())
-                    {
-                        const char* utf8 = nullptr;
-                        p_str->GetUtf8(&utf8);
-                        std::string input_str(utf8 ? utf8 : "{}");
-                        *pp_out_result_json =
-                            new Das::Core::Utils::IDasJsonImpl(
-                                input_str.c_str());
-                        (*pp_out_result_json)->AddRef();
-                    }
-                    else
-                    {
-                        *pp_out_result_json =
-                            new Das::Core::Utils::IDasJsonImpl("{}");
-                        (*pp_out_result_json)->AddRef();
-                    }
-                }
-                else
-                {
-                    *pp_out_result_json =
-                        new Das::Core::Utils::IDasJsonImpl("{}");
-                    (*pp_out_result_json)->AddRef();
-                }
-            }
+            *pp_out_port_map = output_map.Get();
+            output_map.Get()->AddRef();
             return DAS_S_OK;
         }
 

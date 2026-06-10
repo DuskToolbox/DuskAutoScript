@@ -1,6 +1,8 @@
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
 #include <das/Plugins/DasGraphTask/DasGraphTaskImpl.h>
+#include <das/_autogen/idl/abi/IDasPortMap.h>
+#include <das/_autogen/idl/header/IDasPortMap.generated.h>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasStopToken.Implements.hpp>
 #include <gtest/gtest.h>
 
@@ -100,8 +102,8 @@ TEST(DasGraphTaskTest, DoReturnsErrorWhenHostIsNull)
     auto task = DasGraphTaskImpl::Make(nullptr);
     ASSERT_NE(task.Get(), nullptr);
 
-    DasPtr<Das::ExportInterface::IDasJson> result;
-    DasResult hr = task->Do(nullptr, nullptr, nullptr, nullptr, result.Put());
+    DasPtr<Das::ExportInterface::IDasPortMap> result;
+    DasResult hr = task->Do(nullptr, nullptr, result.Put());
     EXPECT_TRUE(DAS::IsFailed(hr));
 }
 
@@ -122,8 +124,8 @@ TEST(DasGraphTaskTest, DoWithMockHostReturnsSuccessOnEmptyPlan)
     auto task = DasGraphTaskImpl::Make(host.Get());
     ASSERT_NE(task.Get(), nullptr);
 
-    DasPtr<Das::ExportInterface::IDasJson> result;
-    DasResult hr = task->Do(nullptr, nullptr, nullptr, nullptr, result.Put());
+    DasPtr<Das::ExportInterface::IDasPortMap> result;
+    DasResult hr = task->Do(nullptr, nullptr, result.Put());
     // Empty plan runs without error (empty graph).
     EXPECT_TRUE(DAS::IsOk(hr));
 }
@@ -136,13 +138,8 @@ TEST(DasGraphTaskTest, DoStopTokenCancel)
     ASSERT_NE(task.Get(), nullptr);
 
     auto cancelled_token = MockStopTokenForTask::Make(true);
-    DasPtr<Das::ExportInterface::IDasJson> result;
-    DasResult                              hr = task->Do(
-        cancelled_token.Get(),
-        nullptr,
-        nullptr,
-        nullptr,
-        result.Put());
+    DasPtr<Das::ExportInterface::IDasPortMap> result;
+    DasResult hr = task->Do(cancelled_token.Get(), nullptr, result.Put());
     // RunWithHost should propagate cancellation.
     EXPECT_TRUE(DAS::IsFailed(hr));
 }

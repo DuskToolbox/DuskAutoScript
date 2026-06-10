@@ -243,11 +243,9 @@ public:
         ExportInterface::IDasJson*  p_request_json,
         ExportInterface::IDasJson** pp_out_result_json) override;
     DAS_IMPL Do(
-        PluginInterface::IDasStopToken* stop_token,
-        ExportInterface::IDasJson*      p_environment_json,
-        ExportInterface::IDasJson*      p_settings_json,
-        ExportInterface::IDasJson*      p_input_json,
-        ExportInterface::IDasJson**     pp_out_result_json) override;
+        PluginInterface::IDasStopToken*       stop_token,
+        ExportInterface::IDasReadOnlyPortMap* p_input_port_map,
+        ExportInterface::IDasPortMap**        pp_out_port_map) override;
 };
 
 class IpcTaskComponentFactoryImpl final

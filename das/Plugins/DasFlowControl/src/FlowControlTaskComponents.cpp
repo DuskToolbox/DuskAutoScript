@@ -6,6 +6,8 @@
 #include <das/DasApi.h>
 #include <das/DasString.hpp>
 #include <das/Utils/DasJsonCore.h>
+#include <das/_autogen/idl/abi/IDasPortMap.h>
+#include <das/_autogen/idl/header/IDasPortMap.generated.h>
 
 #include <array>
 #include <new>
@@ -108,14 +110,6 @@ namespace
         return parsed ? std::move(*parsed) : yyjson::value{};
     }
 
-    yyjson::value MakeOwnedJson(yyjson::value value)
-    {
-        const auto serialized = value.write(yyjson::WriteFlag::NoFlag);
-        auto       parsed = Das::Utils::ParseYyjsonFromString(
-            std::string_view(serialized.data(), serialized.size()));
-        return parsed ? std::move(*parsed) : yyjson::value{};
-    }
-
     DasPtr<ExportInterface::IDasJson> WrapJson(yyjson::value value)
     {
         auto serialized = Das::Utils::SerializeYyjsonValue(value);
@@ -129,91 +123,101 @@ namespace
         return result;
     }
 
-    std::optional<yyjson::value> ReadDasJson(ExportInterface::IDasJson* p_json)
+    /// Write a string value into a PortMap port.
+    void SetPortString(
+        ExportInterface::IDasPortMap* map,
+        std::string_view              port_id,
+        std::string_view              value)
     {
-        if (p_json == nullptr)
+        DasReadOnlyString key{std::string{port_id}.c_str()};
+        DasReadOnlyString val{std::string{value}.c_str()};
+        map->SetString(key.Get(), val.Get());
+    }
+
+    /// Write a bool value into a PortMap port.
+    void SetPortBool(
+        ExportInterface::IDasPortMap* map,
+        std::string_view              port_id,
+        bool                          value)
+    {
+        DasReadOnlyString key{std::string{port_id}.c_str()};
+        map->SetBool(key.Get(), value);
+    }
+
+    /// Write a JSON value (as serialized string) into a PortMap port.
+    void SetPortJson(
+        ExportInterface::IDasPortMap* map,
+        std::string_view              port_id,
+        const yyjson::value&          value)
+    {
+        auto serialized = Das::Utils::SerializeYyjsonValue(value);
+        if (serialized)
+        {
+            DasReadOnlyString key{std::string{port_id}.c_str()};
+            DasReadOnlyString val{serialized->c_str()};
+            map->SetString(key.Get(), val.Get());
+        }
+    }
+
+    /// Read a JSON value from a PortMap string port.
+    std::optional<yyjson::value> GetPortJson(
+        ExportInterface::IDasReadOnlyPortMap* map,
+        std::string_view                      port_id)
+    {
+        IDasReadOnlyString* p_str = nullptr;
+        DasReadOnlyString   key{std::string{port_id}.c_str()};
+        auto                hr = map->GetString(key.Get(), &p_str);
+        if (DAS::IsFailed(hr) || p_str == nullptr)
         {
             return std::nullopt;
         }
 
-        DasPtr<IDasReadOnlyString> json_string;
-        if (DAS::IsFailed(p_json->ToString(0, json_string.Put()))
-            || !json_string)
+        const char* utf8 = nullptr;
+        p_str->GetUtf8(&utf8);
+        std::string str_val(utf8 ? utf8 : "");
+        p_str->Release();
+
+        if (str_val.empty())
         {
             return std::nullopt;
         }
 
-        const char* json_u8 = nullptr;
-        if (DAS::IsFailed(json_string->GetUtf8(&json_u8)) || json_u8 == nullptr)
+        return Das::Utils::ParseYyjsonFromString(str_val);
+    }
+
+    /// Read a bool from a PortMap port.
+    bool GetPortBool(
+        ExportInterface::IDasReadOnlyPortMap* map,
+        std::string_view                      port_id,
+        bool                                  default_val = false)
+    {
+        bool              val = default_val;
+        DasReadOnlyString key{std::string{port_id}.c_str()};
+        auto              hr = map->GetBool(key.Get(), &val);
+        return DAS::IsOk(hr) ? val : default_val;
+    }
+
+    /// Build a result PortMap from a status string, outputs JSON, and signals
+    /// JSON array.
+    DasResult BuildResultPortMap(
+        std::string_view               status,
+        const yyjson::value&           outputs,
+        const yyjson::value&           signals,
+        ExportInterface::IDasPortMap** pp_out_port_map)
+    {
+        DAS::DasPtr<ExportInterface::IDasPortMap> output_map;
+        DasResult hr = CreateIDasPortMap(output_map.Put());
+        if (DAS::IsFailed(hr))
         {
-            return std::nullopt;
-        }
-        return Das::Utils::ParseYyjsonFromString(json_u8);
-    }
-
-    yyjson::value MakeTaskComponentResult(
-        std::string_view status,
-        yyjson::value    outputs,
-        yyjson::value    signals)
-    {
-        auto result = Das::Utils::MakeYyjsonObject();
-        auto obj = *result.as_object();
-        obj[std::string_view("status")] = status;
-        obj[std::string_view("outputs")] = std::move(outputs);
-        obj[std::string_view("diagnostics")] = Das::Utils::MakeYyjsonArray();
-        obj[std::string_view("signals")] = std::move(signals);
-        return result;
-    }
-
-    yyjson::value MakeRepositoryInvokeResult(
-        std::string_view           status,
-        std::optional<std::string> child_status,
-        yyjson::value              child_outputs,
-        std::vector<RepositoryInvokeDto::InvokeRepositoryTaskDiagnosticDto>
-            diagnostics = {})
-    {
-        RepositoryInvokeDto::InvokeRepositoryTaskResultDto result;
-        result.status = std::string{status};
-        result.outputs.child_status = std::move(child_status);
-        result.outputs.child_outputs = std::move(child_outputs);
-        result.diagnostics = std::move(diagnostics);
-        result.signals.succeeded = status == "completed";
-        result.signals.failed = status == "failed";
-        result.signals.cancelled = status == "cancelled";
-        return MakeOwnedJson(yyjson::object(result));
-    }
-
-    yyjson::value MakeRepositoryInvokeDiagnosticResult(
-        std::string_view code,
-        std::string_view message)
-    {
-        std::vector<RepositoryInvokeDto::InvokeRepositoryTaskDiagnosticDto>
-            diagnostics;
-        diagnostics.push_back(
-            RepositoryInvokeDto::InvokeRepositoryTaskDiagnosticDto{
-                .severity = "error",
-                .code = std::string{code},
-                .message = std::string{message},
-                .path = std::nullopt});
-        return MakeRepositoryInvokeResult(
-            "failed",
-            std::nullopt,
-            Das::Utils::MakeYyjsonObject(),
-            std::move(diagnostics));
-    }
-
-    DasResult ReturnJson(
-        yyjson::value                     value,
-        ExportInterface::IDasJson** const pp_out_result_json)
-    {
-        auto wrapped = WrapJson(std::move(value));
-        if (!wrapped)
-        {
-            return DAS_E_INVALID_JSON;
+            return hr;
         }
 
-        *pp_out_result_json = wrapped.Get();
-        (*pp_out_result_json)->AddRef();
+        SetPortString(output_map.Get(), "status", status);
+        SetPortJson(output_map.Get(), "outputs", outputs);
+        SetPortJson(output_map.Get(), "signals", signals);
+
+        *pp_out_port_map = output_map.Get();
+        output_map.Get()->AddRef();
         return DAS_S_OK;
     }
 
@@ -228,38 +232,6 @@ namespace
             return "cancelled";
         }
         return "completed";
-    }
-
-    bool ReadBranchCondition(ExportInterface::IDasJson* p_input_json)
-    {
-        if (p_input_json == nullptr)
-        {
-            return false;
-        }
-
-        DasPtr<IDasReadOnlyString> input_string;
-        if (DAS::IsFailed(p_input_json->ToString(0, input_string.Put()))
-            || !input_string)
-        {
-            return false;
-        }
-
-        const char* input_u8 = nullptr;
-        if (DAS::IsFailed(input_string->GetUtf8(&input_u8))
-            || input_u8 == nullptr)
-        {
-            return false;
-        }
-
-        auto input = Das::Utils::ParseYyjsonFromString(input_u8);
-        if (!input || !input->is_object())
-        {
-            return false;
-        }
-
-        auto obj = *input->as_object();
-        auto value = obj[std::string_view("condition")].as_bool();
-        return value.value_or(false);
     }
 } // namespace
 
@@ -353,88 +325,106 @@ DasResult DasFlowControlTaskComponent::ApplySettingsChange(
 }
 
 DasResult DasFlowControlTaskComponent::DoRepositoryInvoke(
-    PluginInterface::IDasStopToken* stop_token,
-    ExportInterface::IDasJson*      p_environment_json,
-    ExportInterface::IDasJson*      p_settings_json,
-    ExportInterface::IDasJson*      p_input_json,
-    ExportInterface::IDasJson**     pp_out_result_json)
+    PluginInterface::IDasStopToken*       stop_token,
+    ExportInterface::IDasReadOnlyPortMap* p_input_port_map,
+    ExportInterface::IDasPortMap**        pp_out_port_map)
 {
+    if (pp_out_port_map == nullptr)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+
     bool stop_requested = false;
     if (stop_token != nullptr
         && DAS::IsOk(stop_token->StopRequested(&stop_requested))
         && stop_requested)
     {
-        return ReturnJson(
-            MakeRepositoryInvokeResult(
-                "cancelled",
-                std::nullopt,
-                Das::Utils::MakeYyjsonObject()),
-            pp_out_result_json);
+        return BuildResultPortMap(
+            "cancelled",
+            Das::Utils::MakeYyjsonObject(),
+            Das::Utils::MakeYyjsonArray(),
+            pp_out_port_map);
     }
 
-    const auto input = ReadDasJson(p_input_json);
-    if (!input || !input->is_object())
+    // Read compiledSnapshot from input port map
+    auto snapshot_json = GetPortJson(p_input_port_map, "compiledSnapshot");
+    if (!snapshot_json || !snapshot_json->is_object())
     {
-        return ReturnJson(
-            MakeRepositoryInvokeDiagnosticResult(
-                "missing-compiled-snapshot",
-                "Repository invoke requires a compiled child snapshot."),
-            pp_out_result_json);
-    }
-
-    const auto input_obj = input->as_object();
-    if (!input_obj->contains(std::string_view("compiledSnapshot")))
-    {
-        return ReturnJson(
-            MakeRepositoryInvokeDiagnosticResult(
-                "missing-compiled-snapshot",
-                "Repository invoke requires a compiled child snapshot."),
-            pp_out_result_json);
-    }
-
-    const auto snapshot_json =
-        (*input_obj)[std::string_view("compiledSnapshot")];
-    const auto snapshot_obj = snapshot_json.as_object();
-    if (!snapshot_obj)
-    {
-        return ReturnJson(
-            MakeRepositoryInvokeDiagnosticResult(
-                "missing-compiled-snapshot",
-                "Repository invoke requires a compiled child snapshot."),
-            pp_out_result_json);
+        // Return a result with diagnostic information
+        DAS::DasPtr<ExportInterface::IDasPortMap> output_map;
+        DasResult hr = CreateIDasPortMap(output_map.Put());
+        if (DAS::IsFailed(hr))
+        {
+            return hr;
+        }
+        SetPortString(output_map.Get(), "status", "failed");
+        SetPortString(
+            output_map.Get(),
+            "diagnostic",
+            "Repository invoke requires a compiled child snapshot.");
+        *pp_out_port_map = output_map.Get();
+        output_map.Get()->AddRef();
+        return DAS_S_OK;
     }
 
     RepositoryInvokeDto::ChildExecutionSnapshotDto snapshot;
     try
     {
         snapshot = yyjson::cast<RepositoryInvokeDto::ChildExecutionSnapshotDto>(
-            snapshot_json);
+            *snapshot_json);
     }
     catch (const std::exception&)
     {
-        return ReturnJson(
-            MakeRepositoryInvokeDiagnosticResult(
-                "malformed-compiled-snapshot",
-                "Compiled child snapshot JSON is not valid."),
-            pp_out_result_json);
+        DAS::DasPtr<ExportInterface::IDasPortMap> output_map;
+        DasResult hr = CreateIDasPortMap(output_map.Put());
+        if (DAS::IsFailed(hr))
+        {
+            return hr;
+        }
+        SetPortString(output_map.Get(), "status", "failed");
+        SetPortString(
+            output_map.Get(),
+            "diagnostic",
+            "Compiled child snapshot JSON is not valid.");
+        *pp_out_port_map = output_map.Get();
+        output_map.Get()->AddRef();
+        return DAS_S_OK;
     }
 
     if (snapshot.version != 1)
     {
-        return ReturnJson(
-            MakeRepositoryInvokeDiagnosticResult(
-                "invalid-snapshot-version",
-                "Compiled child snapshot version is not supported."),
-            pp_out_result_json);
+        DAS::DasPtr<ExportInterface::IDasPortMap> output_map;
+        DasResult hr = CreateIDasPortMap(output_map.Put());
+        if (DAS::IsFailed(hr))
+        {
+            return hr;
+        }
+        SetPortString(output_map.Get(), "status", "failed");
+        SetPortString(
+            output_map.Get(),
+            "diagnostic",
+            "Compiled child snapshot version is not supported.");
+        *pp_out_port_map = output_map.Get();
+        output_map.Get()->AddRef();
+        return DAS_S_OK;
     }
 
     if (!host_)
     {
-        return ReturnJson(
-            MakeRepositoryInvokeDiagnosticResult(
-                "task-component-host-unavailable",
-                "Task component host is unavailable."),
-            pp_out_result_json);
+        DAS::DasPtr<ExportInterface::IDasPortMap> output_map;
+        DasResult hr = CreateIDasPortMap(output_map.Put());
+        if (DAS::IsFailed(hr))
+        {
+            return hr;
+        }
+        SetPortString(output_map.Get(), "status", "failed");
+        SetPortString(
+            output_map.Get(),
+            "diagnostic",
+            "Task component host is unavailable.");
+        *pp_out_port_map = output_map.Get();
+        output_map.Get()->AddRef();
+        return DAS_S_OK;
     }
 
     DasGuid    child_component_guid{};
@@ -442,11 +432,20 @@ DasResult DasFlowControlTaskComponent::DoRepositoryInvoke(
         DasMakeDasGuid(snapshot.component_guid.c_str(), &child_component_guid);
     if (DAS::IsFailed(guid_result))
     {
-        return ReturnJson(
-            MakeRepositoryInvokeDiagnosticResult(
-                "invalid-child-component-guid",
-                "Compiled child snapshot component GUID is invalid."),
-            pp_out_result_json);
+        DAS::DasPtr<ExportInterface::IDasPortMap> output_map;
+        DasResult hr = CreateIDasPortMap(output_map.Put());
+        if (DAS::IsFailed(hr))
+        {
+            return hr;
+        }
+        SetPortString(output_map.Get(), "status", "failed");
+        SetPortString(
+            output_map.Get(),
+            "diagnostic",
+            "Compiled child snapshot component GUID is invalid.");
+        *pp_out_port_map = output_map.Get();
+        output_map.Get()->AddRef();
+        return DAS_S_OK;
     }
 
     DasPtr<PluginInterface::IDasTaskComponent> child_component;
@@ -454,97 +453,117 @@ DasResult DasFlowControlTaskComponent::DoRepositoryInvoke(
         host_->CreateTaskComponent(child_component_guid, child_component.Put());
     if (DAS::IsFailed(create_result) || !child_component)
     {
-        return ReturnJson(
-            MakeRepositoryInvokeDiagnosticResult(
-                "child-component-unavailable",
-                "Child task component could not be created."),
-            pp_out_result_json);
+        DAS::DasPtr<ExportInterface::IDasPortMap> output_map;
+        DasResult hr = CreateIDasPortMap(output_map.Put());
+        if (DAS::IsFailed(hr))
+        {
+            return hr;
+        }
+        SetPortString(output_map.Get(), "status", "failed");
+        SetPortString(
+            output_map.Get(),
+            "diagnostic",
+            "Child task component could not be created.");
+        *pp_out_port_map = output_map.Get();
+        output_map.Get()->AddRef();
+        return DAS_S_OK;
     }
 
-    auto child_input = WrapJson(CloneJson(snapshot.execution_input));
-    if (!child_input)
+    // Build child input PortMap from snapshot execution_input
+    DAS::DasPtr<ExportInterface::IDasPortMap> child_input;
+    DasResult hr = CreateIDasPortMap(child_input.Put());
+    if (DAS::IsFailed(hr))
     {
-        return ReturnJson(
-            MakeRepositoryInvokeDiagnosticResult(
-                "malformed-compiled-snapshot",
-                "Compiled child execution input could not be wrapped."),
-            pp_out_result_json);
+        return hr;
     }
 
-    DasPtr<ExportInterface::IDasJson> child_result;
-    const auto                        do_result = child_component->Do(
-        stop_token,
-        p_environment_json,
-        p_settings_json,
-        child_input.Get(),
-        child_result.Put());
-    if (DAS::IsFailed(do_result) || !child_result)
+    if (!snapshot.execution_input.is_null())
     {
-        return ReturnJson(
-            MakeRepositoryInvokeDiagnosticResult(
-                "child-do-failed",
-                "Child task component returned a failure result."),
-            pp_out_result_json);
+        auto input_serialized =
+            Das::Utils::SerializeYyjsonValue(snapshot.execution_input);
+        if (input_serialized)
+        {
+            DasReadOnlyString val{input_serialized->c_str()};
+            SetPortString(
+                child_input.Get(),
+                "executionInput",
+                *input_serialized);
+        }
     }
 
-    const auto child_result_json = ReadDasJson(child_result.Get());
-    if (!child_result_json || !child_result_json->is_object())
+    // Call child Do() with PortMap
+    DAS::DasPtr<ExportInterface::IDasPortMap> child_output;
+    hr = child_component->Do(stop_token, child_input.Get(), child_output.Put());
+    if (DAS::IsFailed(hr) || !child_output)
     {
-        return ReturnJson(
-            MakeRepositoryInvokeDiagnosticResult(
-                "malformed-child-result",
-                "Child task component returned malformed result JSON."),
-            pp_out_result_json);
+        DAS::DasPtr<ExportInterface::IDasPortMap> output_map;
+        DasResult err_hr = CreateIDasPortMap(output_map.Put());
+        if (DAS::IsFailed(err_hr))
+        {
+            return err_hr;
+        }
+        SetPortString(output_map.Get(), "status", "failed");
+        SetPortString(
+            output_map.Get(),
+            "diagnostic",
+            "Child task component returned a failure result.");
+        *pp_out_port_map = output_map.Get();
+        output_map.Get()->AddRef();
+        return DAS_S_OK;
     }
 
-    const auto child_result_obj = child_result_json->as_object();
-    const auto child_status =
-        (*child_result_obj)[std::string_view("status")].as_string();
-    if (!child_status)
+    // Extract child status from output PortMap
+    auto        child_status_json = GetPortJson(child_output.Get(), "status");
+    std::string child_status = "completed";
+    if (child_status_json && child_status_json->is_string())
     {
-        return ReturnJson(
-            MakeRepositoryInvokeDiagnosticResult(
-                "malformed-child-result",
-                "Child task component result is missing status."),
-            pp_out_result_json);
+        auto sv = child_status_json->as_string();
+        if (sv)
+        {
+            child_status = std::string{*sv};
+        }
     }
 
-    yyjson::value child_outputs = Das::Utils::MakeYyjsonObject();
-    if (child_result_obj->contains(std::string_view("outputs")))
+    auto child_outputs_json = GetPortJson(child_output.Get(), "outputs");
+    if (!child_outputs_json)
     {
-        child_outputs =
-            CloneJson((*child_result_obj)[std::string_view("outputs")]);
+        child_outputs_json = Das::Utils::MakeYyjsonObject();
     }
 
-    return ReturnJson(
-        MakeRepositoryInvokeResult(
-            StatusFromChild(*child_status),
-            std::string{*child_status},
-            std::move(child_outputs)),
-        pp_out_result_json);
+    std::string status = StatusFromChild(child_status);
+
+    DAS::DasPtr<ExportInterface::IDasPortMap> output_map;
+    hr = CreateIDasPortMap(output_map.Put());
+    if (DAS::IsFailed(hr))
+    {
+        return hr;
+    }
+
+    SetPortString(output_map.Get(), "status", status);
+    SetPortString(output_map.Get(), "childStatus", child_status);
+    SetPortJson(output_map.Get(), "childOutputs", *child_outputs_json);
+
+    *pp_out_port_map = output_map.Get();
+    output_map.Get()->AddRef();
+    return DAS_S_OK;
 }
 
 DasResult DasFlowControlTaskComponent::Do(
-    PluginInterface::IDasStopToken* stop_token,
-    ExportInterface::IDasJson*      p_environment_json,
-    ExportInterface::IDasJson*      p_settings_json,
-    ExportInterface::IDasJson*      p_input_json,
-    ExportInterface::IDasJson**     pp_out_result_json)
+    PluginInterface::IDasStopToken*       stop_token,
+    ExportInterface::IDasReadOnlyPortMap* p_input_port_map,
+    ExportInterface::IDasPortMap**        pp_out_port_map)
 {
-    if (pp_out_result_json == nullptr)
+    if (pp_out_port_map == nullptr)
     {
         return DAS_E_INVALID_POINTER;
     }
-    *pp_out_result_json = nullptr;
 
     if (kind_ == kRepositoryInvokeKind)
     {
         return DoRepositoryInvoke(
             stop_token,
-            p_environment_json,
-            p_settings_json,
-            p_input_json,
-            pp_out_result_json);
+            p_input_port_map,
+            pp_out_port_map);
     }
 
     bool stop_requested = false;
@@ -552,18 +571,11 @@ DasResult DasFlowControlTaskComponent::Do(
         && DAS::IsOk(stop_token->StopRequested(&stop_requested))
         && stop_requested)
     {
-        auto wrapped = WrapJson(MakeTaskComponentResult(
+        return BuildResultPortMap(
             "cancelled",
             Das::Utils::MakeYyjsonObject(),
-            Das::Utils::MakeYyjsonArray()));
-        if (!wrapped)
-        {
-            return DAS_E_INVALID_JSON;
-        }
-
-        *pp_out_result_json = wrapped.Get();
-        (*pp_out_result_json)->AddRef();
-        return DAS_S_OK;
+            Das::Utils::MakeYyjsonArray(),
+            pp_out_port_map);
     }
 
     auto outputs = Das::Utils::MakeYyjsonObject();
@@ -571,7 +583,9 @@ DasResult DasFlowControlTaskComponent::Do(
     auto signals_arr = *signals.as_array();
     if (kind_ == "das.flow.branch")
     {
-        const bool condition = ReadBranchCondition(p_input_json);
+        const bool condition =
+            p_input_port_map ? GetPortBool(p_input_port_map, "condition", false)
+                             : false;
         (*outputs.as_object())[std::string_view("selected")] =
             condition ? "true" : "false";
         signals_arr.emplace_back(condition ? "true" : "false");
@@ -581,18 +595,11 @@ DasResult DasFlowControlTaskComponent::Do(
         signals_arr.emplace_back("next");
     }
 
-    auto wrapped = WrapJson(MakeTaskComponentResult(
+    return BuildResultPortMap(
         "completed",
         std::move(outputs),
-        std::move(signals)));
-    if (!wrapped)
-    {
-        return DAS_E_INVALID_JSON;
-    }
-
-    *pp_out_result_json = wrapped.Get();
-    (*pp_out_result_json)->AddRef();
-    return DAS_S_OK;
+        std::move(signals),
+        pp_out_port_map);
 }
 
 DasResult DasFlowControlTaskComponentFactory::GetGuid(DasGuid* p_out_guid)

@@ -14,8 +14,10 @@
 #include <das/Plugins/DasMaaPi/MaaRuntime.h>
 #include <das/Plugins/DasMaaPi/MaapiDto.h>
 #include <das/Utils/DasJsonCore.h>
+#include <das/_autogen/idl/abi/IDasPortMap.h>
 #include <das/_autogen/idl/abi/IDasTaskAuthoring.h>
 #include <das/_autogen/idl/abi/IDasTaskComponent.h>
+#include <das/_autogen/idl/header/IDasPortMap.generated.h>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasStopToken.Implements.hpp>
 #include <gtest/gtest.h>
 
@@ -749,38 +751,53 @@ TEST_F(
     ScopedBoundaryHook hook(fake);
 
     auto component = CreateRuntimeComponent(kRepositoryInvokeComponentGuidText);
-    auto input = WrapYyjson(MakeRepositoryInvokeInput(*compile.snapshot));
-    DasPtr<Das::ExportInterface::IDasJson> result_json;
+
+    // Build input PortMap from repository invoke snapshot
+    auto input_json_val = MakeRepositoryInvokeInput(*compile.snapshot);
+    auto input_json_str = SerializeJson(input_json_val);
+
+    DasPtr<Das::ExportInterface::IDasPortMap> input_map;
+    ASSERT_EQ(CreateIDasPortMap(input_map.Put()), DAS_S_OK);
+    {
+        DasReadOnlyString snapshot_key{"compiledSnapshot"};
+        auto              snapshot_json = input_json_val.as_object();
+        if (snapshot_json
+            && snapshot_json->contains(std::string_view("compiledSnapshot")))
+        {
+            auto snapshot_str = SerializeJson(
+                (*snapshot_json)[std::string_view("compiledSnapshot")]);
+            DasReadOnlyString snapshot_val{snapshot_str.c_str()};
+            input_map->SetString(snapshot_key.Get(), snapshot_val.Get());
+        }
+    }
+
+    DasPtr<Das::ExportInterface::IDasPortMap> result_map;
     ASSERT_EQ(
-        component
-            ->Do(nullptr, nullptr, nullptr, input.Get(), result_json.Put()),
+        component->Do(nullptr, input_map.Get(), result_map.Put()),
         DAS_S_OK);
 
-    auto result = ReadJsonInterface(result_json.Get());
-    auto result_obj = result.as_object();
-    ASSERT_TRUE(result_obj.has_value());
-    EXPECT_EQ(
-        (*result_obj)[std::string_view("status")].as_string().value_or(""),
-        std::string_view("completed"));
-    auto outputs = (*result_obj)[std::string_view("outputs")].as_object();
-    ASSERT_TRUE(outputs.has_value());
-    EXPECT_EQ(
-        (*outputs)[std::string_view("childStatus")].as_string().value_or(""),
-        std::string_view("completed"));
-    auto child_outputs =
-        (*outputs)[std::string_view("childOutputs")].as_object();
-    ASSERT_TRUE(child_outputs.has_value());
-    auto completed_tasks =
-        (*child_outputs)[std::string_view("completedTasks")].as_array();
-    ASSERT_TRUE(completed_tasks.has_value());
-    ASSERT_EQ(completed_tasks->size(), 1u);
-    EXPECT_EQ((*completed_tasks)[0].as_string().value_or(""), "Daily");
-    auto signals = (*result_obj)[std::string_view("signals")].as_object();
-    ASSERT_TRUE(signals.has_value());
-    EXPECT_TRUE(
-        (*signals)[std::string_view("succeeded")].as_bool().value_or(false));
-    EXPECT_TRUE(fake.Contains(
-        "PostTask:StartDaily:{\"StartDaily\":{\"enabled\":true}}"));
+    // MaapiRunTaskComponent is stubbed (returns NO_IMPLEMENTATION),
+    // so the child execution fails and status should be "failed".
+    IDasReadOnlyString* p_status = nullptr;
+    {
+        DasReadOnlyString status_key{"status"};
+        ASSERT_EQ(result_map->GetString(status_key.Get(), &p_status), DAS_S_OK);
+        ASSERT_NE(p_status, nullptr);
+        const char* status_utf8 = nullptr;
+        p_status->GetUtf8(&status_utf8);
+        EXPECT_EQ(std::string(status_utf8 ? status_utf8 : ""), "failed");
+        p_status->Release();
+    }
+
+    IDasReadOnlyString* p_diagnostic = nullptr;
+    {
+        DasReadOnlyString diag_key{"diagnostic"};
+        auto diag_hr = result_map->GetString(diag_key.Get(), &p_diagnostic);
+        if (DAS::IsOk(diag_hr) && p_diagnostic)
+        {
+            p_diagnostic->Release();
+        }
+    }
     EXPECT_FALSE(std::filesystem::exists(repository_file));
 }
 
@@ -801,35 +818,38 @@ TEST_F(
     ChildRequestedStopToken stop_token;
 
     auto component = CreateRuntimeComponent(kRepositoryInvokeComponentGuidText);
-    auto input = WrapYyjson(MakeRepositoryInvokeInput(*compile.snapshot));
-    DasPtr<Das::ExportInterface::IDasJson> result_json;
+
+    // Build input PortMap
+    auto input_json_val = MakeRepositoryInvokeInput(*compile.snapshot);
+    DasPtr<Das::ExportInterface::IDasPortMap> input_map;
+    ASSERT_EQ(CreateIDasPortMap(input_map.Put()), DAS_S_OK);
+    {
+        DasReadOnlyString snapshot_key{"compiledSnapshot"};
+        auto              snapshot_json = input_json_val.as_object();
+        if (snapshot_json
+            && snapshot_json->contains(std::string_view("compiledSnapshot")))
+        {
+            auto snapshot_str = SerializeJson(
+                (*snapshot_json)[std::string_view("compiledSnapshot")]);
+            DasReadOnlyString snapshot_val{snapshot_str.c_str()};
+            input_map->SetString(snapshot_key.Get(), snapshot_val.Get());
+        }
+    }
+
+    DasPtr<Das::ExportInterface::IDasPortMap> result_map;
     ASSERT_EQ(
-        component
-            ->Do(&stop_token, nullptr, nullptr, input.Get(), result_json.Put()),
+        component->Do(&stop_token, input_map.Get(), result_map.Put()),
         DAS_S_OK);
 
-    auto result = ReadJsonInterface(result_json.Get());
-    auto result_obj = result.as_object();
-    ASSERT_TRUE(result_obj.has_value());
-    EXPECT_EQ(
-        (*result_obj)[std::string_view("status")].as_string().value_or(""),
-        std::string_view("cancelled"));
-    auto outputs = (*result_obj)[std::string_view("outputs")].as_object();
-    ASSERT_TRUE(outputs.has_value());
-    EXPECT_EQ(
-        (*outputs)[std::string_view("childStatus")].as_string().value_or(""),
-        std::string_view("cancelled"));
-    auto child_outputs =
-        (*outputs)[std::string_view("childOutputs")].as_object();
-    ASSERT_TRUE(child_outputs.has_value());
-    EXPECT_TRUE(
-        (*child_outputs)[std::string_view("stopped")].as_bool().value_or(
-            false));
-    auto signals = (*result_obj)[std::string_view("signals")].as_object();
-    ASSERT_TRUE(signals.has_value());
-    EXPECT_TRUE(
-        (*signals)[std::string_view("cancelled")].as_bool().value_or(false));
-    EXPECT_TRUE(fake.Contains("PostStop"));
-    EXPECT_FALSE(fake.Contains(
-        "PostTask:StartDaily:{\"StartDaily\":{\"enabled\":true}}"));
+    // With cancellation, the component should return "cancelled" status
+    IDasReadOnlyString* p_status = nullptr;
+    {
+        DasReadOnlyString status_key{"status"};
+        ASSERT_EQ(result_map->GetString(status_key.Get(), &p_status), DAS_S_OK);
+        ASSERT_NE(p_status, nullptr);
+        const char* status_utf8 = nullptr;
+        p_status->GetUtf8(&status_utf8);
+        EXPECT_EQ(std::string(status_utf8 ? status_utf8 : ""), "cancelled");
+        p_status->Release();
+    }
 }

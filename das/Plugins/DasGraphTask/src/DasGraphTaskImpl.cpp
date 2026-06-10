@@ -5,6 +5,8 @@
 #include <das/DasGuidHolder.h>
 #include <das/DasString.hpp>
 #include <das/Utils/CommonUtils.hpp>
+#include <das/_autogen/idl/abi/IDasPortMap.h>
+#include <das/_autogen/idl/header/IDasPortMap.generated.h>
 
 namespace Das::Plugins::DasGraphTask
 {
@@ -51,20 +53,15 @@ namespace Das::Plugins::DasGraphTask
     }
 
     DasResult DasGraphTaskImpl::Do(
-        Das::PluginInterface::IDasStopToken* stop_token,
-        Das::ExportInterface::IDasJson*      p_environment_json,
-        Das::ExportInterface::IDasJson*      p_settings_json,
-        Das::ExportInterface::IDasJson*      p_input_json,
-        Das::ExportInterface::IDasJson**     pp_out_result_json)
+        Das::PluginInterface::IDasStopToken*       stop_token,
+        Das::ExportInterface::IDasReadOnlyPortMap* p_input_port_map,
+        Das::ExportInterface::IDasPortMap**        pp_out_port_map)
     {
-        std::ignore = p_environment_json;
-        std::ignore = p_input_json;
-
-        if (pp_out_result_json == nullptr)
+        if (pp_out_port_map == nullptr)
         {
             return DAS_E_INVALID_POINTER;
         }
-        *pp_out_result_json = nullptr;
+        *pp_out_port_map = nullptr;
 
         if (!host_)
         {
@@ -73,22 +70,21 @@ namespace Das::Plugins::DasGraphTask
             return DAS_E_INVALID_POINTER;
         }
 
-        // Serialize settings JSON to string for the Execute() call.
-        DAS::DasPtr<IDasReadOnlyString> p_settings_str;
-        if (p_settings_json != nullptr)
+        // Read compiled artifact string from "compiledPlan" port
+        DAS::DasPtr<IDasReadOnlyString> p_artifact;
+        DasResult                       hr = DAS_S_OK;
+        if (p_input_port_map != nullptr)
         {
-            DasResult hr = p_settings_json->ToString(0, p_settings_str.Put());
-            if (DAS::IsFailed(hr) || !p_settings_str.Get())
-            {
-                last_error_ = "Failed to serialize settings JSON";
-                DAS_LOG_ERROR(last_error_.c_str());
-                return DAS_E_INVALID_POINTER;
-            }
+            DasReadOnlyString compiled_plan_key{"compiledPlan"};
+            hr = p_input_port_map->GetString(
+                compiled_plan_key.Get(),
+                p_artifact.Put());
+            // It's OK if the port doesn't exist — we pass null artifact.
         }
 
         // Create GraphRuntime with host bound at construction.
         DAS::DasPtr<Das::ExportInterface::IDasGraphRuntime> runtime;
-        DasResult hr = CreateGraphRuntimeWithHost(host_.Get(), runtime.Put());
+        hr = CreateGraphRuntimeWithHost(host_.Get(), runtime.Put());
         if (DAS::IsFailed(hr))
         {
             last_error_ = "Failed to create GraphRuntime";
@@ -96,11 +92,9 @@ namespace Das::Plugins::DasGraphTask
             return hr;
         }
 
+        // Execute compiled artifact via GraphRuntime
         DAS::DasPtr<Das::ExportInterface::IDasJson> result_json;
-        hr = runtime->Execute(
-            p_settings_str.Get(),
-            stop_token,
-            result_json.Put());
+        hr = runtime->Execute(p_artifact.Get(), stop_token, result_json.Put());
 
         if (DAS::IsFailed(hr))
         {
@@ -122,10 +116,30 @@ namespace Das::Plugins::DasGraphTask
             return hr;
         }
 
-        *pp_out_result_json = result_json.Get();
+        // Serialize result JSON → string, put into output PortMap under
+        // "result" port.
+        DAS::DasPtr<Das::ExportInterface::IDasPortMap> output_map;
+        hr = CreateIDasPortMap(output_map.Put());
+        if (DAS::IsFailed(hr))
+        {
+            return hr;
+        }
+
         if (result_json.Get())
         {
-            result_json.Get()->AddRef();
+            DAS::DasPtr<IDasReadOnlyString> p_result_str;
+            hr = result_json->ToString(0, p_result_str.Put());
+            if (DAS::IsOk(hr) && p_result_str.Get())
+            {
+                DasReadOnlyString result_key{"result"};
+                output_map->SetString(result_key.Get(), p_result_str.Get());
+            }
+        }
+
+        *pp_out_port_map = output_map.Get();
+        if (output_map.Get())
+        {
+            output_map.Get()->AddRef();
         }
         return DAS_S_OK;
     }
