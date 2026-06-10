@@ -71,7 +71,7 @@ DasResult DasReadOnlyStringProxy::EnsureUtf16Loaded()
         return final_result;
     }
 
-    utf16_buffer_.resize(static_cast<size_t>(char_count));
+    utf16_buffer_.resize(static_cast<size_t>(char_count) + 1);
     if (char_count > 0)
     {
         const uint8_t* raw_ptr = nullptr;
@@ -89,6 +89,7 @@ DasResult DasReadOnlyStringProxy::EnsureUtf16Loaded()
             raw_ptr,
             static_cast<size_t>(char_count) * 2);
     }
+    utf16_buffer_[static_cast<size_t>(char_count)] = u'\0';
 
     utf16_ready_ = true;
     return DAS_S_OK;
@@ -101,10 +102,11 @@ DasResult DasReadOnlyStringProxy::EnsureUtf8Derived()
         return DAS_S_OK;
     }
 
-    // utf16_buffer_ must already be loaded
+    // utf16_buffer_ must already be loaded; size()-1 excludes the NUL
+    // terminator
     icu::UnicodeString icu_str(
         reinterpret_cast<const UChar*>(utf16_buffer_.data()),
-        static_cast<int32_t>(utf16_buffer_.size()));
+        static_cast<int32_t>(utf16_buffer_.size() - 1));
     utf8_buffer_.clear();
     icu_str.toUTF8String(utf8_buffer_);
 
@@ -121,7 +123,7 @@ DasResult DasReadOnlyStringProxy::EnsureUtf32Derived()
 
     icu::UnicodeString icu_str(
         reinterpret_cast<const UChar*>(utf16_buffer_.data()),
-        static_cast<int32_t>(utf16_buffer_.size()));
+        static_cast<int32_t>(utf16_buffer_.size() - 1));
 
     int32_t char_count = icu_str.countChar32();
     utf32_buffer_.resize(static_cast<size_t>(char_count) + 1); // +1 for null
@@ -186,7 +188,7 @@ DasResult DasReadOnlyStringProxy::GetUtf16(
     }
 
     *out_string = utf16_buffer_.data();
-    *out_string_size = utf16_buffer_.size();
+    *out_string_size = utf16_buffer_.size() - 1;
     return DAS_S_OK;
 }
 
