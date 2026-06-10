@@ -24,7 +24,10 @@ DasResult AiCpuImpl::CreateSession(
 
     try
     {
-        const auto model_path_ort = ToOrtPath(model_path);
+        // DasReadOnlyString by-value parameter holds a DasPtr reference count
+        // that keeps the underlying UTF-16 buffer alive through the borrow
+        // scope
+        DasReadOnlyString model_path_string(model_path);
 
         Ort::SessionOptions session_options;
         session_options.SetIntraOpNumThreads(1);
@@ -32,8 +35,10 @@ DasResult AiCpuImpl::CreateSession(
             GraphOptimizationLevel::ORT_ENABLE_ALL);
 
         // CPU EP is default — no explicit provider registration needed
-        auto session =
-            Ort::Session(GetEnv(), model_path_ort.c_str(), session_options);
+        auto session = Ort::Session(
+            GetEnv(),
+            BorrowOrtPath(model_path_string),
+            session_options);
 
         auto* impl = new IDasSessionImpl(std::move(session));
         impl->AddRef();
