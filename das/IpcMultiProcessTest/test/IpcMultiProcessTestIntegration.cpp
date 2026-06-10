@@ -2309,15 +2309,15 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_TaskComponentFactory)
     EXPECT_TRUE(settings_json.as_object()->contains(
         std::string_view("acceptedSettings")));
 
-    DAS::DasPtr<IDasJson> do_result;
-    ASSERT_EQ(
-        component->Do(nullptr, nullptr, nullptr, nullptr, do_result.Put()),
-        DAS_S_OK);
-    auto do_json = ToYyjson(do_result.Get());
-    EXPECT_EQ(
-        (*do_json.as_object())[std::string_view("status")].as_string().value_or(
-            ""),
-        std::string_view("completed"));
+    DAS::DasPtr<Das::ExportInterface::IDasPortMap> do_result;
+    ASSERT_EQ(component->Do(nullptr, nullptr, do_result.Put()), DAS_S_OK);
+    IDasReadOnlyString* status_str = nullptr;
+    DasReadOnlyString   status_key{"status"};
+    ASSERT_EQ(do_result->GetString(status_key.Get(), &status_str), DAS_S_OK);
+    const char* status_u8 = nullptr;
+    ASSERT_EQ(status_str->GetUtf8(&status_u8), DAS_S_OK);
+    EXPECT_EQ(std::string_view(status_u8 ? status_u8 : ""), "completed");
+    status_str->Release();
 }
 
 /**

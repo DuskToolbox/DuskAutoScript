@@ -202,10 +202,8 @@ namespace
 
         DasResult DAS_STD_CALL
         Do(IDasStopToken*,
-           Das::ExportInterface::IDasJson*,
-           Das::ExportInterface::IDasJson*,
-           Das::ExportInterface::IDasJson*,
-           Das::ExportInterface::IDasJson**) override
+           Das::ExportInterface::IDasReadOnlyPortMap*,
+           Das::ExportInterface::IDasPortMap**) override
         {
             return DAS_E_NO_IMPLEMENTATION;
         }

@@ -18,6 +18,7 @@
 #include <das/_autogen/idl/abi/IDasPluginPackage.h>
 #include <das/_autogen/idl/abi/IDasTask.h>
 #include <das/_autogen/idl/abi/IDasTaskAuthoring.h>
+#include <das/_autogen/idl/header/IDasPortMap.generated.h>
 #include <gtest/gtest.h>
 
 #include <algorithm>
@@ -2133,21 +2134,21 @@ public:
 
     DasResult Do(
         Das::PluginInterface::IDasStopToken*,
-        Das::ExportInterface::IDasJson*,
-        Das::ExportInterface::IDasJson*,
-        Das::ExportInterface::IDasJson*,
-        Das::ExportInterface::IDasJson** pp_out_result_json) override
+        Das::ExportInterface::IDasReadOnlyPortMap*,
+        Das::ExportInterface::IDasPortMap** pp_out_port_map) override
     {
-        if (!pp_out_result_json)
+        if (!pp_out_port_map)
         {
             return DAS_E_INVALID_POINTER;
         }
-        auto result_json = Das::Utils::MakeYyjsonObject();
-        (*result_json.as_object())[std::string_view("status")] = "completed";
-        auto result = Das::MakeDasPtr<Das::Core::Utils::IDasJsonImpl>(
-            std::move(result_json));
-        *pp_out_result_json = result.Get();
-        (*pp_out_result_json)->AddRef();
+        DAS::DasPtr<Das::ExportInterface::IDasPortMap> output_map;
+        DasResult hr = CreateIDasPortMap(output_map.Put());
+        if (DAS::IsFailed(hr))
+        {
+            return hr;
+        }
+        *pp_out_port_map = output_map.Get();
+        (*pp_out_port_map)->AddRef();
         return DAS_S_OK;
     }
 

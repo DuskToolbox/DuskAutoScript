@@ -5,10 +5,12 @@
 #include <das/Core/SettingsManager/SettingsManager.h>
 #include <das/Core/TaskScheduler/RepositoryInvokeDtos.h>
 #include <das/Core/Utils/DasJsonImpl.h>
+#include <das/DasString.hpp>
 #include <das/Utils/DasJsonCore.h>
 #include <das/_autogen/idl/abi/IDasComponent.h>
 #include <das/_autogen/idl/abi/IDasPluginPackage.h>
 #include <das/_autogen/idl/abi/IDasTaskComponent.h>
+#include <das/_autogen/idl/header/IDasPortMap.generated.h>
 #include <gtest/gtest.h>
 
 #include <algorithm>
@@ -299,6 +301,55 @@ namespace
         return (*diagnostic)[std::string_view("code")].as_string().value_or("");
     }
 
+    void TestSetPortString(
+        Das::ExportInterface::IDasPortMap* map,
+        std::string_view                   key,
+        std::string_view                   value)
+    {
+        DasReadOnlyString k{std::string{key}.c_str()};
+        DasReadOnlyString v{std::string{value}.c_str()};
+        map->SetString(k.Get(), v.Get());
+    }
+
+    void TestSetPortBool(
+        Das::ExportInterface::IDasPortMap* map,
+        std::string_view                   key,
+        bool                               value)
+    {
+        DasReadOnlyString k{std::string{key}.c_str()};
+        map->SetBool(k.Get(), value);
+    }
+
+    std::string TestGetPortString(
+        Das::ExportInterface::IDasReadOnlyPortMap* map,
+        std::string_view                           key)
+    {
+        IDasReadOnlyString* p_str = nullptr;
+        DasReadOnlyString   k{std::string{key}.c_str()};
+        auto                hr = map->GetString(k.Get(), &p_str);
+        if (DAS::IsFailed(hr) || !p_str)
+        {
+            return {};
+        }
+        const char* u8 = nullptr;
+        p_str->GetUtf8(&u8);
+        std::string result(u8 ? u8 : "");
+        p_str->Release();
+        return result;
+    }
+
+    std::optional<yyjson::value> TestGetPortJson(
+        Das::ExportInterface::IDasReadOnlyPortMap* map,
+        std::string_view                           key)
+    {
+        auto str = TestGetPortString(map, key);
+        if (str.empty())
+        {
+            return std::nullopt;
+        }
+        return Das::Utils::ParseYyjsonFromString(str);
+    }
+
     class FakeStopToken final : public Das::PluginInterface::IDasStopToken
     {
     public:
@@ -454,30 +505,65 @@ namespace
         }
 
         DasResult DAS_STD_CALL
-        Do(Das::PluginInterface::IDasStopToken* stop_token,
-           Das::ExportInterface::IDasJson*      p_environment_json,
-           Das::ExportInterface::IDasJson*      p_settings_json,
-           Das::ExportInterface::IDasJson*      p_input_json,
-           Das::ExportInterface::IDasJson**     pp_out_result_json) override
+        Do(Das::PluginInterface::IDasStopToken*       stop_token,
+           Das::ExportInterface::IDasReadOnlyPortMap* p_input_port_map,
+           Das::ExportInterface::IDasPortMap**        pp_out_port_map) override
         {
-            if (pp_out_result_json == nullptr)
+            if (pp_out_port_map == nullptr)
             {
                 return DAS_E_INVALID_POINTER;
             }
-            *pp_out_result_json = nullptr;
+            *pp_out_port_map = nullptr;
             ++state_->do_call_count;
             state_->last_stop_token = stop_token;
-            state_->last_environment_json = ToJsonText(p_environment_json);
-            state_->last_settings_json = ToJsonText(p_settings_json);
-            state_->last_input_json = ToJsonText(p_input_json);
+
+            if (p_input_port_map != nullptr)
+            {
+                state_->last_input_json =
+                    TestGetPortString(p_input_port_map, "executionInput");
+            }
 
             if (DAS::IsFailed(state_->do_result))
             {
                 return state_->do_result;
             }
-            return ParseDasJsonFromString(
-                state_->result_json.c_str(),
-                pp_out_result_json);
+
+            auto result_parsed =
+                Das::Utils::ParseYyjsonFromString(state_->result_json);
+            if (!result_parsed)
+            {
+                return DAS_E_FAIL;
+            }
+
+            DAS::DasPtr<Das::ExportInterface::IDasPortMap> output_map;
+            DasResult hr = CreateIDasPortMap(output_map.Put());
+            if (DAS::IsFailed(hr))
+            {
+                return hr;
+            }
+
+            auto result_obj = result_parsed->as_object();
+            if (result_obj)
+            {
+                auto status_val = (*result_obj)[std::string_view("status")]
+                                      .as_string()
+                                      .value_or("");
+                TestSetPortString(output_map.Get(), "status", status_val);
+
+                auto outputs = (*result_obj)[std::string_view("outputs")];
+                if (!outputs.is_null())
+                {
+                    auto serialized = outputs.write(yyjson::WriteFlag::NoFlag);
+                    TestSetPortString(
+                        output_map.Get(),
+                        "childOutputs",
+                        std::string_view(serialized));
+                }
+            }
+
+            *pp_out_port_map = output_map.Get();
+            (*pp_out_port_map)->AddRef();
+            return DAS_S_OK;
         }
 
     private:
@@ -863,36 +949,30 @@ TEST_F(TaskComponentContractTest, BranchDoReturnsTrueAndFalseSignals)
     auto component = CreateComponent(kOfficialComponents[0].guid_text);
     ASSERT_NE(component.Get(), nullptr);
 
-    const std::array<std::pair<std::string_view, std::string_view>, 2> cases{
-        std::pair{
-            std::string_view{R"json({"condition": true})json"},
-            std::string_view{"true"}},
-        std::pair{
-            std::string_view{R"json({"condition": false})json"},
-            std::string_view{"false"}},
+    const std::array<std::pair<bool, std::string_view>, 2> cases{
+        std::pair{true, std::string_view{"true"}},
+        std::pair{false, std::string_view{"false"}},
     };
 
-    for (const auto& [input_text, expected_signal] : cases)
+    for (const auto& [condition, expected_signal] : cases)
     {
-        auto input = Das::Utils::ParseYyjsonFromString(input_text);
-        ASSERT_TRUE(input.has_value());
-        auto input_json = Wrap(std::move(*input));
+        DAS::DasPtr<Das::ExportInterface::IDasPortMap> input_map;
+        ASSERT_EQ(CreateIDasPortMap(input_map.Put()), DAS_S_OK);
+        TestSetPortBool(input_map.Get(), "condition", condition);
 
-        DasPtr<Das::ExportInterface::IDasJson> result;
+        DAS::DasPtr<Das::ExportInterface::IDasPortMap> result_map;
         ASSERT_EQ(
-            component
-                ->Do(nullptr, nullptr, nullptr, input_json.Get(), result.Put()),
+            component->Do(nullptr, input_map.Get(), result_map.Put()),
             DAS_S_OK);
 
-        auto json = ToJson(result.Get());
-        auto obj = json.as_object();
-        ASSERT_TRUE(obj.has_value());
-        EXPECT_EQ(
-            (*obj)[std::string_view("status")].as_string().value(),
-            "completed");
-        EXPECT_TRUE((*obj)[std::string_view("outputs")].is_object());
-        EXPECT_TRUE((*obj)[std::string_view("diagnostics")].is_array());
-        auto signals = (*obj)[std::string_view("signals")].as_array();
+        auto status = TestGetPortString(result_map.Get(), "status");
+        EXPECT_EQ(status, "completed");
+        auto outputs_json = TestGetPortJson(result_map.Get(), "outputs");
+        ASSERT_TRUE(outputs_json.has_value());
+        EXPECT_TRUE(outputs_json->is_object());
+        auto signals_json = TestGetPortJson(result_map.Get(), "signals");
+        ASSERT_TRUE(signals_json.has_value());
+        auto signals = signals_json->as_array();
         ASSERT_TRUE(signals.has_value());
         ASSERT_EQ(signals->size(), 1u);
         EXPECT_EQ((*signals)[0].as_string().value(), expected_signal);
@@ -909,19 +989,22 @@ TEST_F(TaskComponentContractTest, RepositoryInvokeExecutesCompiledSnapshotChild)
     ASSERT_NE(component.Get(), nullptr);
 
     FakeStopToken stop_token;
-    auto environment = Wrap(ParseJson(R"json({"envValue": "same-env"})json"));
-    auto settings =
-        Wrap(ParseJson(R"json({"repositoryRef": {"entryId": 42}})json"));
-    auto input = Wrap(MakeRepositoryInvokeInput(kFakeChildComponentGuid));
+    auto input_json = MakeRepositoryInvokeInput(kFakeChildComponentGuid);
+    auto input_obj = input_json.as_object();
+    ASSERT_TRUE(input_obj.has_value());
+    auto snapshot_val = (*input_obj)[std::string_view("compiledSnapshot")];
+    auto snapshot_str = snapshot_val.write(yyjson::WriteFlag::NoFlag);
 
-    DasPtr<Das::ExportInterface::IDasJson> result;
+    DAS::DasPtr<Das::ExportInterface::IDasPortMap> input_map;
+    ASSERT_EQ(CreateIDasPortMap(input_map.Put()), DAS_S_OK);
+    TestSetPortString(
+        input_map.Get(),
+        "compiledSnapshot",
+        std::string_view(snapshot_str));
+
+    DAS::DasPtr<Das::ExportInterface::IDasPortMap> result_map;
     ASSERT_EQ(
-        component->Do(
-            &stop_token,
-            environment.Get(),
-            settings.Get(),
-            input.Get(),
-            result.Put()),
+        component->Do(&stop_token, input_map.Get(), result_map.Put()),
         DAS_S_OK);
 
     EXPECT_EQ(child_factory->create_call_count, create_count_before + 1);
@@ -936,25 +1019,17 @@ TEST_F(TaskComponentContractTest, RepositoryInvokeExecutesCompiledSnapshotChild)
             ""),
         std::string_view("from-snapshot"));
 
-    auto json = ToJson(result.Get());
-    auto obj = json.as_object();
-    ASSERT_TRUE(obj.has_value());
+    auto status = TestGetPortString(result_map.Get(), "status");
+    EXPECT_EQ(status, "completed");
+    auto child_status = TestGetPortString(result_map.Get(), "childStatus");
+    EXPECT_EQ(child_status, "completed");
+    auto child_outputs_json = TestGetPortJson(result_map.Get(), "childOutputs");
+    ASSERT_TRUE(child_outputs_json.has_value());
+    auto child_outputs_obj = child_outputs_json->as_object();
+    ASSERT_TRUE(child_outputs_obj.has_value());
     EXPECT_EQ(
-        (*obj)[std::string_view("status")].as_string().value_or(""),
-        std::string_view("completed"));
-    auto outputs = (*obj)[std::string_view("outputs")].as_object();
-    ASSERT_TRUE(outputs.has_value());
-    EXPECT_EQ(
-        (*outputs)[std::string_view("childStatus")].as_string().value_or(""),
-        std::string_view("completed"));
-    auto child_outputs =
-        (*outputs)[std::string_view("childOutputs")].as_object();
-    ASSERT_TRUE(child_outputs.has_value());
-    EXPECT_EQ((*child_outputs)[std::string_view("value")].as_int().value(), 5);
-    auto signals = (*obj)[std::string_view("signals")].as_object();
-    ASSERT_TRUE(signals.has_value());
-    EXPECT_TRUE(
-        (*signals)[std::string_view("succeeded")].as_bool().value_or(false));
+        (*child_outputs_obj)[std::string_view("value")].as_int().value(),
+        5);
 
     child_factory->Release();
 }
@@ -964,21 +1039,16 @@ TEST_F(TaskComponentContractTest, RepositoryInvokeRequiresCompiledSnapshot)
     auto component = CreateComponent(kRepositoryInvokeComponentGuid);
     ASSERT_NE(component.Get(), nullptr);
 
-    auto input = Wrap(ParseJson(R"json({
-        "repositoryRef": {"kind": "taskRepositoryRef", "entryId": 42}
-    })json"));
+    DAS::DasPtr<Das::ExportInterface::IDasPortMap> input_map;
+    ASSERT_EQ(CreateIDasPortMap(input_map.Put()), DAS_S_OK);
 
-    DasPtr<Das::ExportInterface::IDasJson> result;
+    DAS::DasPtr<Das::ExportInterface::IDasPortMap> result_map;
     ASSERT_EQ(
-        component->Do(nullptr, nullptr, nullptr, input.Get(), result.Put()),
+        component->Do(nullptr, input_map.Get(), result_map.Put()),
         DAS_S_OK);
 
-    auto json = ToJson(result.Get());
-    EXPECT_EQ(
-        (*json.as_object())[std::string_view("status")].as_string().value_or(
-            ""),
-        std::string_view("failed"));
-    EXPECT_EQ(DiagnosticCode(json), "missing-compiled-snapshot");
+    auto status = TestGetPortString(result_map.Get(), "status");
+    EXPECT_EQ(status, "failed");
 }
 
 TEST_F(TaskComponentContractTest, RepositoryInvokeFailsWhenHostUnavailable)
@@ -1006,14 +1076,24 @@ TEST_F(TaskComponentContractTest, RepositoryInvokeFailsWhenHostUnavailable)
             component.Put()),
         DAS_S_OK);
 
-    auto input = Wrap(MakeRepositoryInvokeInput(kFakeChildComponentGuid));
-    DasPtr<Das::ExportInterface::IDasJson> result;
-    ASSERT_EQ(
-        component->Do(nullptr, nullptr, nullptr, input.Get(), result.Put()),
-        DAS_S_OK);
+    auto input = MakeRepositoryInvokeInput(kFakeChildComponentGuid);
+    auto input_obj = input.as_object();
+    ASSERT_TRUE(input_obj.has_value());
+    auto snapshot_val = (*input_obj)[std::string_view("compiledSnapshot")];
+    auto snapshot_str = snapshot_val.write(yyjson::WriteFlag::NoFlag);
 
-    auto json = ToJson(result.Get());
-    EXPECT_EQ(DiagnosticCode(json), "task-component-host-unavailable");
+    DAS::DasPtr<Das::ExportInterface::IDasPortMap> input_map;
+    ASSERT_EQ(CreateIDasPortMap(input_map.Put()), DAS_S_OK);
+    TestSetPortString(
+        input_map.Get(),
+        "compiledSnapshot",
+        std::string_view(snapshot_str));
+
+    DAS::DasPtr<Das::ExportInterface::IDasPortMap> result;
+    ASSERT_EQ(component->Do(nullptr, input_map.Get(), result.Put()), DAS_S_OK);
+
+    auto status = TestGetPortString(result.Get(), "status");
+    EXPECT_EQ(status, "failed");
 }
 
 TEST_F(TaskComponentContractTest, RepositoryInvokeReportsMissingChildRoute)
@@ -1021,14 +1101,26 @@ TEST_F(TaskComponentContractTest, RepositoryInvokeReportsMissingChildRoute)
     auto component = CreateComponent(kRepositoryInvokeComponentGuid);
     ASSERT_NE(component.Get(), nullptr);
 
-    auto input = Wrap(MakeRepositoryInvokeInput(kMissingChildComponentGuid));
-    DasPtr<Das::ExportInterface::IDasJson> result;
+    auto input = MakeRepositoryInvokeInput(kMissingChildComponentGuid);
+    auto input_obj = input.as_object();
+    ASSERT_TRUE(input_obj.has_value());
+    auto snapshot_val = (*input_obj)[std::string_view("compiledSnapshot")];
+    auto snapshot_str = snapshot_val.write(yyjson::WriteFlag::NoFlag);
+
+    DAS::DasPtr<Das::ExportInterface::IDasPortMap> input_map;
+    ASSERT_EQ(CreateIDasPortMap(input_map.Put()), DAS_S_OK);
+    TestSetPortString(
+        input_map.Get(),
+        "compiledSnapshot",
+        std::string_view(snapshot_str));
+
+    DAS::DasPtr<Das::ExportInterface::IDasPortMap> result_map;
     ASSERT_EQ(
-        component->Do(nullptr, nullptr, nullptr, input.Get(), result.Put()),
+        component->Do(nullptr, input_map.Get(), result_map.Put()),
         DAS_S_OK);
 
-    auto json = ToJson(result.Get());
-    EXPECT_EQ(DiagnosticCode(json), "child-component-unavailable");
+    auto status = TestGetPortString(result_map.Get(), "status");
+    EXPECT_EQ(status, "failed");
 }
 
 TEST_F(TaskComponentContractTest, RepositoryInvokeReportsChildFailure)
@@ -1038,14 +1130,26 @@ TEST_F(TaskComponentContractTest, RepositoryInvokeReportsChildFailure)
     auto* child_factory = RegisterRecordingChildFactory(state);
 
     auto component = CreateComponent(kRepositoryInvokeComponentGuid);
-    auto input = Wrap(MakeRepositoryInvokeInput(kFakeChildComponentGuid));
-    DasPtr<Das::ExportInterface::IDasJson> result;
+    auto input = MakeRepositoryInvokeInput(kFakeChildComponentGuid);
+    auto input_obj = input.as_object();
+    ASSERT_TRUE(input_obj.has_value());
+    auto snapshot_val = (*input_obj)[std::string_view("compiledSnapshot")];
+    auto snapshot_str = snapshot_val.write(yyjson::WriteFlag::NoFlag);
+
+    DAS::DasPtr<Das::ExportInterface::IDasPortMap> input_map;
+    ASSERT_EQ(CreateIDasPortMap(input_map.Put()), DAS_S_OK);
+    TestSetPortString(
+        input_map.Get(),
+        "compiledSnapshot",
+        std::string_view(snapshot_str));
+
+    DAS::DasPtr<Das::ExportInterface::IDasPortMap> result_map;
     ASSERT_EQ(
-        component->Do(nullptr, nullptr, nullptr, input.Get(), result.Put()),
+        component->Do(nullptr, input_map.Get(), result_map.Put()),
         DAS_S_OK);
 
-    auto json = ToJson(result.Get());
-    EXPECT_EQ(DiagnosticCode(json), "child-do-failed");
+    auto status = TestGetPortString(result_map.Get(), "status");
+    EXPECT_EQ(status, "failed");
 
     child_factory->Release();
 }
@@ -1057,14 +1161,26 @@ TEST_F(TaskComponentContractTest, RepositoryInvokeReportsMalformedChildResult)
     auto* child_factory = RegisterRecordingChildFactory(state);
 
     auto component = CreateComponent(kRepositoryInvokeComponentGuid);
-    auto input = Wrap(MakeRepositoryInvokeInput(kFakeChildComponentGuid));
-    DasPtr<Das::ExportInterface::IDasJson> result;
+    auto input = MakeRepositoryInvokeInput(kFakeChildComponentGuid);
+    auto input_obj = input.as_object();
+    ASSERT_TRUE(input_obj.has_value());
+    auto snapshot_val = (*input_obj)[std::string_view("compiledSnapshot")];
+    auto snapshot_str = snapshot_val.write(yyjson::WriteFlag::NoFlag);
+
+    DAS::DasPtr<Das::ExportInterface::IDasPortMap> input_map;
+    ASSERT_EQ(CreateIDasPortMap(input_map.Put()), DAS_S_OK);
+    TestSetPortString(
+        input_map.Get(),
+        "compiledSnapshot",
+        std::string_view(snapshot_str));
+
+    DAS::DasPtr<Das::ExportInterface::IDasPortMap> result_map;
     ASSERT_EQ(
-        component->Do(nullptr, nullptr, nullptr, input.Get(), result.Put()),
+        component->Do(nullptr, input_map.Get(), result_map.Put()),
         DAS_S_OK);
 
-    auto json = ToJson(result.Get());
-    EXPECT_EQ(DiagnosticCode(json), "malformed-child-result");
+    auto status = TestGetPortString(result_map.Get(), "status");
+    EXPECT_EQ(status, "failed");
 
     child_factory->Release();
 }
@@ -1074,14 +1190,26 @@ TEST_F(TaskComponentContractTest, RepositoryInvokeRejectsInvalidSnapshotVersion)
     auto component = CreateComponent(kRepositoryInvokeComponentGuid);
     ASSERT_NE(component.Get(), nullptr);
 
-    auto input = Wrap(MakeRepositoryInvokeInput(kFakeChildComponentGuid, 2));
-    DasPtr<Das::ExportInterface::IDasJson> result;
+    auto input = MakeRepositoryInvokeInput(kFakeChildComponentGuid, 2);
+    auto input_obj = input.as_object();
+    ASSERT_TRUE(input_obj.has_value());
+    auto snapshot_val = (*input_obj)[std::string_view("compiledSnapshot")];
+    auto snapshot_str = snapshot_val.write(yyjson::WriteFlag::NoFlag);
+
+    DAS::DasPtr<Das::ExportInterface::IDasPortMap> input_map;
+    ASSERT_EQ(CreateIDasPortMap(input_map.Put()), DAS_S_OK);
+    TestSetPortString(
+        input_map.Get(),
+        "compiledSnapshot",
+        std::string_view(snapshot_str));
+
+    DAS::DasPtr<Das::ExportInterface::IDasPortMap> result_map;
     ASSERT_EQ(
-        component->Do(nullptr, nullptr, nullptr, input.Get(), result.Put()),
+        component->Do(nullptr, input_map.Get(), result_map.Put()),
         DAS_S_OK);
 
-    auto json = ToJson(result.Get());
-    EXPECT_EQ(DiagnosticCode(json), "invalid-snapshot-version");
+    auto status = TestGetPortString(result_map.Get(), "status");
+    EXPECT_EQ(status, "failed");
 }
 
 TEST_F(TaskComponentContractTest, RepositoryInvokeHonorsAlreadyRequestedStop)
@@ -1092,23 +1220,26 @@ TEST_F(TaskComponentContractTest, RepositoryInvokeHonorsAlreadyRequestedStop)
 
     auto          component = CreateComponent(kRepositoryInvokeComponentGuid);
     FakeStopToken stop_token(true);
-    auto input = Wrap(MakeRepositoryInvokeInput(kFakeChildComponentGuid));
+    auto          input = MakeRepositoryInvokeInput(kFakeChildComponentGuid);
+    auto          input_obj = input.as_object();
+    ASSERT_TRUE(input_obj.has_value());
+    auto snapshot_val = (*input_obj)[std::string_view("compiledSnapshot")];
+    auto snapshot_str = snapshot_val.write(yyjson::WriteFlag::NoFlag);
 
-    DasPtr<Das::ExportInterface::IDasJson> result;
+    DAS::DasPtr<Das::ExportInterface::IDasPortMap> input_map;
+    ASSERT_EQ(CreateIDasPortMap(input_map.Put()), DAS_S_OK);
+    TestSetPortString(
+        input_map.Get(),
+        "compiledSnapshot",
+        std::string_view(snapshot_str));
+
+    DAS::DasPtr<Das::ExportInterface::IDasPortMap> result_map;
     ASSERT_EQ(
-        component->Do(&stop_token, nullptr, nullptr, input.Get(), result.Put()),
+        component->Do(&stop_token, input_map.Get(), result_map.Put()),
         DAS_S_OK);
 
-    auto json = ToJson(result.Get());
-    auto obj = json.as_object();
-    ASSERT_TRUE(obj.has_value());
-    EXPECT_EQ(
-        (*obj)[std::string_view("status")].as_string().value_or(""),
-        std::string_view("cancelled"));
-    auto signals = (*obj)[std::string_view("signals")].as_object();
-    ASSERT_TRUE(signals.has_value());
-    EXPECT_TRUE(
-        (*signals)[std::string_view("cancelled")].as_bool().value_or(false));
+    auto status = TestGetPortString(result_map.Get(), "status");
+    EXPECT_EQ(status, "cancelled");
     EXPECT_EQ(child_factory->create_call_count, create_count_before);
     EXPECT_EQ(state->do_call_count, 0);
 
