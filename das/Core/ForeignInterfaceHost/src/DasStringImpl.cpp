@@ -292,7 +292,14 @@ DasResult DasStringCppImpl::GetUtf16(
         return DAS_E_INVALID_POINTER;
     }
 
-    *out_string = reinterpret_cast<const char16_t*>(impl_.getBuffer());
+    const auto* terminated =
+        reinterpret_cast<const char16_t*>(impl_.getTerminatedBuffer());
+    if (terminated == nullptr)
+    {
+        return DAS_E_OUT_OF_MEMORY;
+    }
+
+    *out_string = terminated;
     *out_string_size = static_cast<size_t>(impl_.length());
     return DAS_S_OK;
 }

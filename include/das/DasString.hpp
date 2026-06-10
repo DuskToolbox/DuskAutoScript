@@ -31,6 +31,17 @@ DAS_INTERFACE IDasReadOnlyString : public IDasBase
     // * Python
     DAS_METHOD GetUtf8(const char** out_string) = 0;
 #ifndef SWIG
+    /**
+     * @brief Borrow the UTF-16LE code units of this string.
+     *
+     * On return, out_string points to a buffer of at least out_string_size + 1
+     * char16_t elements, where out_string[0..out_string_size-1] contain the
+     * UTF-16LE code units of the string, and out_string[out_string_size] == 0.
+     * out_string_size does NOT include the null terminator.
+     *
+     * The borrowed pointer is valid only as long as this string object is alive
+     * and no mutator (SetUtf8, SetUtf16) is called.
+     */
     DAS_METHOD GetUtf16(
         const char16_t** out_string,
         size_t*          out_string_size) noexcept = 0;
