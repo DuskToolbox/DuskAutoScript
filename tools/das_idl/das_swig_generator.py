@@ -98,6 +98,8 @@ class SwigCodeGenerator:
     _global_ret_classes: dict[str, str] = {}
     _global_header_blocks: dict[str, str] = {}
     _global_typemaps_ignore: dict[str, str] = {}
+    _global_director_typemaps: dict[str, str] = {}
+    _global_nodirector_sets: dict[str, str] = {}
 
     def __init__(self, document: IdlDocument, idl_file_name: Optional[str] = None, idl_file_path: Optional[str] = None, lang_generators: Optional[List[SwigLangGenerator]] = None, debug: bool = False):
         self.document = document
@@ -131,7 +133,8 @@ class SwigCodeGenerator:
             global_ret_classes=self._global_ret_classes,
             global_typemaps=self._global_typemaps,
             global_header_blocks=self._global_header_blocks,
-            global_typemaps_ignore=self._global_typemaps_ignore
+            global_typemaps_ignore=self._global_typemaps_ignore,
+            global_director_typemaps=self._global_director_typemaps
         )
         for lang_generator in self.lang_generators:
             lang_generator.set_context(context)
@@ -1036,8 +1039,12 @@ class SwigCodeGenerator:
                 fqn = interface.name
 
             if clear:
-                lines.append(f'%feature("nodirector", "0") {fqn}::{method.name}({params_str});')
+                lines.append(f'%feature("nodirector", "") {fqn}::{method.name}({params_str});')
             else:
+                # SWIG 4.4.1 的 nodirector SET 对 IDasBase** 存在 feature table 污染 bug
+                # skip instead of SET, rely on notabstract
+                if out_type == 'IDasBase':
+                    continue
                 lines.append(f'%feature("nodirector") {fqn}::{method.name}({params_str});')
 
         if lines:
@@ -1745,6 +1752,22 @@ def generate_swig_files(document: IdlDocument, output_dir: str, base_name: str, 
                     }
                 }
 
+        director_typemaps_info = {}
+        if hasattr(generator, '_global_director_typemaps'):
+            for typ, code in generator._global_director_typemaps.items():
+                director_typemaps_info[typ] = {
+                    "code": code,
+                    "meta": {"full_type": typ, "origin": idl_file_name or "unknown"}
+                }
+
+        nodirector_sets_info = {}
+        if hasattr(generator, '_global_nodirector_sets'):
+            for key, directive in generator._global_nodirector_sets.items():
+                nodirector_sets_info[key] = {
+                    "code": directive,
+                    "meta": {"origin": idl_file_name or "unknown"}
+                }
+
         typemap_info = {
             "schema_version": "1.0",
             "generator": {
@@ -1753,6 +1776,8 @@ def generate_swig_files(document: IdlDocument, output_dir: str, base_name: str, 
             },
             "typemaps": typemaps_info,
             "typemaps_ignore": typemaps_ignore_info,
+            "director_typemaps": director_typemaps_info,
+            "nodirector_sets": nodirector_sets_info,
             "ret_classes": ret_classes_info,
             "header_blocks": header_blocks_info
         }

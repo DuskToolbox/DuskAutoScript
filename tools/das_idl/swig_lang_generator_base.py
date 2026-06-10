@@ -18,7 +18,7 @@ class SwigLangGeneratorContext:
     提供语言生成器需要的外部信息，如类型命名空间查找等
     """
     
-    def __init__(self, get_interface_namespace_func: Optional[Callable[[str], Optional[str]]] = None, get_interface_idl_file_func: Optional[Callable[[str], Optional[str]]] = None, get_enum_idl_file_func: Optional[Callable[[str], Optional[str]]] = None, global_ret_classes: Optional[dict] = None, global_typemaps: Optional[dict] = None, global_header_blocks: Optional[dict] = None, global_typemaps_ignore: Optional[dict] = None):
+    def __init__(self, get_interface_namespace_func: Optional[Callable[[str], Optional[str]]] = None, get_interface_idl_file_func: Optional[Callable[[str], Optional[str]]] = None, get_enum_idl_file_func: Optional[Callable[[str], Optional[str]]] = None, global_ret_classes: Optional[dict] = None, global_typemaps: Optional[dict] = None, global_header_blocks: Optional[dict] = None, global_typemaps_ignore: Optional[dict] = None, global_director_typemaps: Optional[dict] = None):
         self._get_interface_namespace = get_interface_namespace_func
         self._get_interface_idl_file = get_interface_idl_file_func
         self._get_enum_idl_file = get_enum_idl_file_func
@@ -26,6 +26,7 @@ class SwigLangGeneratorContext:
         self._global_typemaps = global_typemaps if global_typemaps is not None else {}
         self._global_header_blocks = global_header_blocks if global_header_blocks is not None else {}
         self._global_typemaps_ignore = global_typemaps_ignore if global_typemaps_ignore is not None else {}
+        self._global_director_typemaps = global_director_typemaps if global_director_typemaps is not None else {}
     
     def get_type_namespace(self, type_name: str) -> Optional[str]:
         """获取类型的命名空间
