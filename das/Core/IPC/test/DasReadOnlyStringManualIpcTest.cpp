@@ -14,6 +14,8 @@
 #include <das/DasString.hpp>
 #include <das/DasTypes.hpp>
 #include <gtest/gtest.h>
+#include <unicode/unistr.h>
+#include <unicode/utypes.h>
 
 #include <cstring>
 #include <limits>
@@ -143,4 +145,118 @@ TEST(ReadOnlyStringStubTest, WireProtocolLayout_ErrorResult_NoPayload)
     uint64_t actual_count = 0;
     std::memcpy(&actual_count, buf.data() + 4, sizeof(uint64_t));
     EXPECT_EQ(actual_count, 0u);
+}
+
+// ============================================================================
+// Test Suite 3: Null-termination buffer logic tests
+// ============================================================================
+
+// These tests verify the buffer management pattern that DasReadOnlyStringProxy
+// uses after the NUL-termination fix. They directly exercise the resize +
+// memcpy + NUL append logic to validate correctness without requiring a full
+// IPC runtime.
+
+TEST(ReadOnlyStringNullTerminationTest, WireProtocolBuffer_HasNulAfterData)
+{
+    // Simulate deserializing "Hello" (5 code units) from wire protocol.
+    // The proxy pattern: resize to char_count+1, memcpy data, write NUL at
+    // [char_count].
+    const char16_t   kData[] = u"Hello";
+    constexpr size_t kCount = 5;
+
+    std::u16string buffer;
+    buffer.resize(kCount + 1); // +1 for NUL
+    std::memcpy(buffer.data(), kData, kCount * sizeof(char16_t));
+    buffer[kCount] = u'\0';
+
+    // Verify NUL-termination contract
+    EXPECT_EQ(buffer.size(), kCount + 1);
+    EXPECT_EQ(buffer[kCount], u'\0');
+
+    // Verify data integrity
+    EXPECT_EQ(
+        std::char_traits<char16_t>::compare(buffer.data(), kData, kCount),
+        0);
+}
+
+TEST(ReadOnlyStringNullTerminationTest, WireProtocolBuffer_EmptyString)
+{
+    // Simulate char_count == 0: buffer should have NUL at position 0
+    constexpr size_t kCount = 0;
+
+    std::u16string buffer;
+    buffer.resize(kCount + 1); // resize to 1
+    buffer[kCount] = u'\0';
+
+    EXPECT_EQ(buffer.size(), 1u);
+    EXPECT_EQ(buffer[0], u'\0');
+}
+
+TEST(ReadOnlyStringNullTerminationTest, EnsureUtf8Derived_NoTrailingNul)
+{
+    // After the NUL append, constructing icu::UnicodeString with
+    // (data(), size()-1) should produce correct UTF-8 without trailing NUL.
+    const char16_t   kData[] = u"Hello";
+    constexpr size_t kCount = 5;
+
+    std::u16string buffer;
+    buffer.resize(kCount + 1);
+    std::memcpy(buffer.data(), kData, kCount * sizeof(char16_t));
+    buffer[kCount] = u'\0';
+
+    // Construct UnicodeString with size()-1 to exclude the NUL
+    icu::UnicodeString icu_str(
+        reinterpret_cast<const UChar*>(buffer.data()),
+        static_cast<int32_t>(buffer.size() - 1));
+
+    EXPECT_EQ(icu_str.length(), static_cast<int32_t>(kCount));
+
+    // Convert to UTF-8 and verify no NUL byte
+    std::string utf8_result;
+    icu_str.toUTF8String(utf8_result);
+    EXPECT_EQ(utf8_result, "Hello");
+    EXPECT_EQ(utf8_result.size(), 5u);
+    // Verify no embedded NUL anywhere
+    for (char c : utf8_result)
+    {
+        EXPECT_NE(c, '\0');
+    }
+}
+
+TEST(ReadOnlyStringNullTerminationTest, EnsureUtf32Derived_NoTrailingNul)
+{
+    // After the NUL append, constructing icu::UnicodeString with
+    // (data(), size()-1) and converting to UTF-32 should produce correct
+    // code points without an extra U+0000.
+    const char16_t   kData[] = u"Hello";
+    constexpr size_t kCount = 5;
+
+    std::u16string buffer;
+    buffer.resize(kCount + 1);
+    std::memcpy(buffer.data(), kData, kCount * sizeof(char16_t));
+    buffer[kCount] = u'\0';
+
+    icu::UnicodeString icu_str(
+        reinterpret_cast<const UChar*>(buffer.data()),
+        static_cast<int32_t>(buffer.size() - 1));
+
+    int32_t char_count = icu_str.countChar32();
+    EXPECT_EQ(char_count, static_cast<int32_t>(kCount));
+
+    // Convert to UTF-32
+    std::vector<UChar32> utf32_buffer(static_cast<size_t>(char_count) + 1);
+    UErrorCode           error_code = U_ZERO_ERROR;
+    icu_str.toUTF32(utf32_buffer.data(), char_count, error_code);
+    // toUTF32 returns U_STRING_NOT_TERMINATED_WARNING when destCapacity ==
+    // char_count (no room for NUL). This is expected; we write NUL manually.
+    ASSERT_TRUE(U_SUCCESS(error_code));
+
+    // Verify each code point matches expected, no extra U+0000
+    const UChar32 expected[] = {'H', 'e', 'l', 'l', 'o'};
+    for (int32_t i = 0; i < char_count; ++i)
+    {
+        EXPECT_EQ(utf32_buffer[i], expected[i]);
+    }
+    // The null terminator at position char_count
+    EXPECT_EQ(utf32_buffer[char_count], 0);
 }
