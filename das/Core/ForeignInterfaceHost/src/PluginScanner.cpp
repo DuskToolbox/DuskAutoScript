@@ -11,6 +11,154 @@
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 
+// ─── LocalFileProvider ────────────────────────────
+// Local filesystem implementation, visible only within this TU.
+
+class LocalFileProvider
+{
+    std::filesystem::path base_dir_;
+
+public:
+    explicit LocalFileProvider(std::filesystem::path base_dir)
+        : base_dir_(std::move(base_dir))
+    {
+    }
+
+    std::vector<FileEntry> ListDirectory(
+        const std::string& relative_path_u8,
+        bool               recursive)
+    {
+        std::filesystem::path target = base_dir_;
+        if (!relative_path_u8.empty())
+        {
+            target = base_dir_
+                     / std::filesystem::path(
+                         std::u8string_view(
+                             reinterpret_cast<const char8_t*>(
+                                 relative_path_u8.data()),
+                             relative_path_u8.size()));
+        }
+
+        std::vector<FileEntry> entries;
+        std::error_code        ec;
+
+        auto opts = std::filesystem::directory_options::skip_permission_denied;
+
+        if (recursive)
+        {
+            for (const auto& e : std::filesystem::recursive_directory_iterator(
+                     target,
+                     opts,
+                     ec))
+            {
+                if (ec)
+                {
+                    break;
+                }
+                auto u8name = e.path().filename().u8string();
+                auto u8abs = e.path().u8string();
+                entries.push_back({
+                    .name = std::string(
+                        reinterpret_cast<const char*>(u8name.data()),
+                        u8name.size()),
+                    .absolute_path = std::string(
+                        reinterpret_cast<const char*>(u8abs.data()),
+                        u8abs.size()),
+                    .is_directory = e.is_directory(),
+                });
+            }
+        }
+        else
+        {
+            for (const auto& e :
+                 std::filesystem::directory_iterator(target, opts, ec))
+            {
+                if (ec)
+                {
+                    break;
+                }
+                auto u8name = e.path().filename().u8string();
+                auto u8abs = e.path().u8string();
+                entries.push_back({
+                    .name = std::string(
+                        reinterpret_cast<const char*>(u8name.data()),
+                        u8name.size()),
+                    .absolute_path = std::string(
+                        reinterpret_cast<const char*>(u8abs.data()),
+                        u8abs.size()),
+                    .is_directory = e.is_directory(),
+                });
+            }
+        }
+
+        return entries;
+    }
+
+    std::string ReadFile(const std::string& relative_path_u8)
+    {
+        auto target =
+            base_dir_
+            / std::filesystem::path(
+                std::u8string_view(
+                    reinterpret_cast<const char8_t*>(relative_path_u8.data()),
+                    relative_path_u8.size()));
+
+        std::ifstream ifs(target, std::ios::binary);
+        if (!ifs)
+        {
+            return {};
+        }
+        return std::string(
+            (std::istreambuf_iterator<char>(ifs)),
+            std::istreambuf_iterator<char>());
+    }
+
+    std::string GetBasePath() const
+    {
+        auto u8 = base_dir_.u8string();
+        return std::string(reinterpret_cast<const char*>(u8.data()), u8.size());
+    }
+};
+
+// ─── Thin wrapper: ScanPlugins delegates to template ───
+
+std::vector<PluginPackageDesc> ScanPlugins(
+    const std::filesystem::path& plugin_dir)
+{
+    if (!std::filesystem::exists(plugin_dir))
+    {
+        return {};
+    }
+
+    LocalFileProvider provider(plugin_dir);
+    auto scanned = ScanPluginsWith(provider);
+
+    // Post-filter: flat-file mode requires companion plugin binary to exist.
+    std::vector<PluginPackageDesc> result;
+    for (auto& desc : scanned)
+    {
+        auto plugin_subdir = plugin_dir / desc.name;
+        if (std::filesystem::exists(plugin_subdir)
+            && std::filesystem::is_directory(plugin_subdir))
+        {
+            // Directory mode — no extra check needed
+            result.push_back(std::move(desc));
+        }
+        else
+        {
+            // Flat-file mode — verify companion plugin binary exists
+            auto plugin_file =
+                plugin_dir / (desc.name + "." + desc.plugin_filename_extension);
+            if (std::filesystem::exists(plugin_file))
+            {
+                result.push_back(std::move(desc));
+            }
+        }
+    }
+
+    return result;
+}
+
 std::filesystem::path FindManifest(
     const std::filesystem::path& plugin_dir_entry)
 {
@@ -29,156 +177,6 @@ std::filesystem::path FindManifest(
     }
 
     return {};
-}
-
-std::vector<PluginPackageDesc> ScanPlugins(
-    const std::filesystem::path& plugin_dir)
-{
-    std::vector<PluginPackageDesc> result;
-
-    if (!std::filesystem::exists(plugin_dir))
-    {
-        return result;
-    }
-
-    std::error_code ec;
-    auto            dir_iter = std::filesystem::directory_iterator(
-        plugin_dir,
-        std::filesystem::directory_options::skip_permission_denied,
-        ec);
-    if (ec)
-    {
-        DAS_CORE_LOG_WARN(
-            "Failed to iterate plugin directory {}: {}",
-            plugin_dir.string(),
-            ec.message());
-        return result;
-    }
-
-    for (const auto& entry : dir_iter)
-    {
-        if (entry.is_directory())
-        {
-            auto dirname = entry.path().filename().string();
-
-            // Skip temporary/transient states from concurrent installs
-            if (dirname.ends_with(".installing")
-                || dirname.ends_with(".willBeDelete")
-                || dirname.starts_with(".tmp_install_"))
-            {
-                continue;
-            }
-
-            auto marker = entry.path() / (dirname + ".willBeDelete");
-            if (std::filesystem::exists(marker))
-            {
-                continue;
-            }
-
-            auto manifest_path = FindManifest(entry.path());
-            if (manifest_path.empty())
-            {
-                continue;
-            }
-
-            try
-            {
-                std::ifstream ifs(manifest_path);
-                std::string   content(
-                    (std::istreambuf_iterator<char>(ifs)),
-                    std::istreambuf_iterator<char>());
-                auto parsed = Das::Utils::ParseYyjsonFromString(
-                    content,
-                    yyjson::ReadFlag::AllowComments
-                        | yyjson::ReadFlag::AllowTrailingCommas);
-                if (!parsed)
-                {
-                    DAS_CORE_LOG_WARN(
-                        "Failed to parse manifest {}",
-                        manifest_path.string());
-                    continue;
-                }
-                const auto& const_val = *parsed;
-                auto        obj = const_val.as_object();
-                if (!obj)
-                {
-                    DAS_CORE_LOG_WARN(
-                        "Failed to parse manifest {}: not an object",
-                        manifest_path.string());
-                    continue;
-                }
-                PluginPackageDesc desc;
-                ParsePluginPackageDescFromJson(*obj, desc);
-                result.push_back(std::move(desc));
-            }
-            catch (const std::exception& e)
-            {
-                DAS_CORE_LOG_WARN(
-                    "Failed to parse manifest {}: {}",
-                    manifest_path.string(),
-                    e.what());
-            }
-        }
-        else
-        {
-            // Flat-file mode: manifest .json at plugin_dir root
-            auto path = entry.path();
-            if (path.extension() != ".json")
-            {
-                continue;
-            }
-
-            auto stem = path.stem().string();
-
-            // Check for flat-file deletion marker
-            auto marker = plugin_dir / (stem + ".willBeDelete");
-            if (std::filesystem::exists(marker))
-            {
-                continue;
-            }
-
-            try
-            {
-                std::ifstream ifs(path);
-                std::string   content(
-                    (std::istreambuf_iterator<char>(ifs)),
-                    std::istreambuf_iterator<char>());
-                auto parsed = Das::Utils::ParseYyjsonFromString(
-                    content,
-                    yyjson::ReadFlag::AllowComments
-                        | yyjson::ReadFlag::AllowTrailingCommas);
-                if (!parsed)
-                {
-                    continue;
-                }
-                const auto& const_val = *parsed;
-                auto        obj = const_val.as_object();
-                if (!obj)
-                {
-                    continue;
-                }
-                PluginPackageDesc desc;
-                ParsePluginPackageDescFromJson(*obj, desc);
-
-                // Verify companion plugin binary exists
-                auto plugin_file =
-                    plugin_dir
-                    / (desc.name + "." + desc.plugin_filename_extension);
-                if (!std::filesystem::exists(plugin_file))
-                {
-                    continue;
-                }
-
-                result.push_back(std::move(desc));
-            }
-            catch (const std::exception&)
-            {
-                // Not a valid manifest — skip silently
-            }
-        }
-    }
-
-    return result;
 }
 
 void CleanupMarkedPlugins(const std::filesystem::path& plugin_dir)
