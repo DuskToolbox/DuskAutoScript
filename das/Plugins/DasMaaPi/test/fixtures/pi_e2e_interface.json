@@ -1,0 +1,77 @@
+{
+  "interface_version": 2,
+  "name": "E2ETestProject",
+  "version": "0.1.0",
+  "controller": [
+    {
+      "name": "E2EController",
+      "type": "Adb"
+    }
+  ],
+  "resource": [
+    {
+      "name": "E2EResource",
+      "path": ["resource/e2e"]
+    }
+  ],
+  "task": [
+    {
+      "name": "E2ETestTask",
+      "entry": "StartE2E",
+      "option": ["screenshot_mode", "enable_debug", "timeout_ms"]
+    }
+  ],
+  "option": {
+    "screenshot_mode": {
+      "type": "select",
+      "cases": [
+        {
+          "name": "case_a",
+          "pipeline_override": {
+            "Screenshot": {
+              "mode": "case_a"
+            }
+          }
+        },
+        {
+          "name": "case_b",
+          "pipeline_override": {
+            "Screenshot": {
+              "mode": "case_b"
+            }
+          }
+        }
+      ]
+    },
+    "enable_debug": {
+      "type": "switch",
+      "cases": [
+        {
+          "name": "on",
+          "pipeline_override": {
+            "Debug": {
+              "enabled": true
+            }
+          }
+        },
+        {
+          "name": "off"
+        }
+      ]
+    },
+    "timeout_ms": {
+      "type": "input",
+      "inputs": [
+        {
+          "name": "value",
+          "pipeline_type": "int"
+        }
+      ],
+      "pipeline_override": {
+        "Timeout": {
+          "ms": "{value}"
+        }
+      }
+    }
+  }
+}
