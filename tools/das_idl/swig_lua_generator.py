@@ -63,9 +63,8 @@ class LuaSwigGenerator(SwigLangGenerator):
         """将 IDL TypeInfo 映射为 sol2 绑定中使用的 C++ 参数类型。
 
         映射规则:
-          - DasGuid (BASIC) → const DasGuid&（内置原始类型，使用 const 引用传递）
           - INTERFACE → TypeName*（接口使用指针传递）
-          - BASIC → 直接使用 base_type（int32_t, float, DasBool, DasString 等）
+          - BASIC → 直接使用 base_type（int32_t, float, DasBool, DasGuid 等）
           - ENUM → 直接使用 base_type
           - STRUCT → 直接使用 base_type
           - UNKNOWN → 直接使用 base_type（兜底）
@@ -79,10 +78,9 @@ class LuaSwigGenerator(SwigLangGenerator):
         Returns:
             适合用于 sol2 函数参数声明的 C++ 类型字符串。
         """
-        # DasGuid 特殊处理：按值传递时使用 const 引用；带指针时走正常路径
-        if type_info.type_kind == TypeKind.BASIC and type_info.base_type == 'DasGuid':
-            if not type_info.is_pointer:
-                return "const DasGuid&"
+        # DasGuid 按值传递时保持与 ABI 一致（ABI 生成 DasGuid 而非 const DasGuid&）。
+        # Director override 的参数签名必须精确匹配 ABI 虚函数签名，否则 C3668。
+        # DasGuid 带指针时走正常路径。
 
         # 根据类型分类确定基础类型名（不加指针，统一由 pointer_level 控制）
         result = type_simple_name(type_info)
