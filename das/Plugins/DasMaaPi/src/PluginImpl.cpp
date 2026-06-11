@@ -2,6 +2,7 @@
 
 #include "PluginImpl.h"
 
+#include "MaaPiErrorLensRegistration.h"
 #include "MaapiAgentComponentFactory.h"
 #include "MaapiAuthoringSessionFactory.h"
 #include "MaapiRunTaskComponent.h"
@@ -26,7 +27,8 @@ namespace Plugins::DasMaaPi
             PluginInterface::DAS_PLUGIN_FEATURE_TASK,
             PluginInterface::DAS_PLUGIN_FEATURE_TASK_AUTHORING_FACTORY,
             PluginInterface::DAS_PLUGIN_FEATURE_COMPONENT_FACTORY,
-            PluginInterface::DAS_PLUGIN_FEATURE_TASK_COMPONENT_FACTORY};
+            PluginInterface::DAS_PLUGIN_FEATURE_TASK_COMPONENT_FACTORY,
+            PluginInterface::DAS_PLUGIN_FEATURE_ERROR_LENS};
         if (index >= features.size())
         {
             return DAS_E_OUT_OF_RANGE;
@@ -81,6 +83,17 @@ namespace Plugins::DasMaaPi
                     static_cast<PluginInterface::IDasTaskComponentFactory*>(
                         factory);
                 return DAS_S_OK;
+            }
+            if (index == 4)
+            {
+                auto lens = CreateRegisteredMaapiErrorLens();
+                if (!lens)
+                {
+                    return DAS_E_OUT_OF_MEMORY;
+                }
+                return lens->QueryInterface(
+                    DasIidOf<PluginInterface::IDasErrorLens>(),
+                    reinterpret_cast<void**>(pp_out_interface));
             }
         }
         catch (const std::bad_alloc&)
