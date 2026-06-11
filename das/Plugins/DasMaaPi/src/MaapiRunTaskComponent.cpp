@@ -147,7 +147,8 @@ namespace Plugins::DasMaaPi
         auto port_map_val = (*obj)["portMap"];
         if (port_map_val.is_object())
         {
-            for (auto&& [key, value] : *port_map_val.as_object())
+            auto port_map_obj = port_map_val.as_object();
+            for (auto&& [key, value] : *port_map_obj)
             {
                 auto pi_param = value.as_string();
                 if (pi_param)
@@ -204,13 +205,13 @@ namespace Plugins::DasMaaPi
                     {
                         IDasReadOnlyString* p_val = nullptr;
                         if (DAS::IsOk(p_input_port_map->GetString(
-                                DasReadOnlyString(key_str).Get(),
+                                DasReadOnlyString(key_str.c_str()).Get(),
                                 &p_val))
                             && p_val)
                         {
                             DasReadOnlyString val_reader(p_val);
                             auto arr = Das::Utils::MakeYyjsonArray();
-                            arr.as_array()->push_back(
+                            arr.as_array()->emplace_back(
                                 yyjson::value(val_reader.GetUtf8()));
                             input.inputs[key_str] = std::move(arr);
                             p_val->Release();
@@ -220,7 +221,7 @@ namespace Plugins::DasMaaPi
                     {
                         int64_t val = 0;
                         if (DAS::IsOk(p_input_port_map->GetInt(
-                                DasReadOnlyString(key_str).Get(),
+                                DasReadOnlyString(key_str.c_str()).Get(),
                                 &val)))
                         {
                             input.inputs[key_str] = yyjson::value(val);
@@ -230,7 +231,7 @@ namespace Plugins::DasMaaPi
                     {
                         bool val = false;
                         if (DAS::IsOk(p_input_port_map->GetBool(
-                                DasReadOnlyString(key_str).Get(),
+                                DasReadOnlyString(key_str.c_str()).Get(),
                                 &val)))
                         {
                             input.inputs[key_str] = yyjson::value(val);
@@ -240,7 +241,7 @@ namespace Plugins::DasMaaPi
                     {
                         double val = 0.0;
                         if (DAS::IsOk(p_input_port_map->GetFloat(
-                                DasReadOnlyString(key_str).Get(),
+                                DasReadOnlyString(key_str.c_str()).Get(),
                                 &val)))
                         {
                             input.inputs[key_str] = yyjson::value(val);
@@ -259,14 +260,14 @@ namespace Plugins::DasMaaPi
             auto arr = Das::Utils::MakeYyjsonArray();
             for (const auto& task : output.completed_tasks)
             {
-                arr.as_array()->push_back(yyjson::value(task));
+                arr.as_array()->emplace_back(yyjson::value(task));
             }
             auto serialized = Das::Utils::SerializeYyjsonValue(arr);
             if (serialized)
             {
                 output_map->SetString(
                     DasReadOnlyString("completedTasks").Get(),
-                    DasReadOnlyString(*serialized).Get());
+                    DasReadOnlyString(serialized->c_str()).Get());
             }
         }
         else
@@ -290,14 +291,14 @@ namespace Plugins::DasMaaPi
                 (*o)["severity"] = yyjson::value(d.severity);
                 (*o)["code"] = yyjson::value(d.code);
                 (*o)["message"] = yyjson::value(d.message);
-                diag_arr.as_array()->push_back(std::move(obj));
+                diag_arr.as_array()->emplace_back(std::move(obj));
             }
             auto serialized = Das::Utils::SerializeYyjsonValue(diag_arr);
             if (serialized)
             {
                 output_map->SetString(
                     DasReadOnlyString("diagnostics").Get(),
-                    DasReadOnlyString(*serialized).Get());
+                    DasReadOnlyString(serialized->c_str()).Get());
             }
         }
         else
@@ -313,8 +314,8 @@ namespace Plugins::DasMaaPi
             if (serialized)
             {
                 output_map->SetString(
-                    DasReadOnlyString(port_id).Get(),
-                    DasReadOnlyString(*serialized).Get());
+                    DasReadOnlyString(port_id.c_str()).Get(),
+                    DasReadOnlyString(serialized->c_str()).Get());
             }
         }
 
