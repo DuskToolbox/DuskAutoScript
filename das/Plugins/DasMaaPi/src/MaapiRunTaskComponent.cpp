@@ -258,7 +258,7 @@ namespace Plugins::DasMaaPi
             auto arr = Das::Utils::MakeYyjsonArray();
             for (const auto& task : output.completed_tasks)
             {
-                arr.as_array()->emplace_back(yyjson::value(task));
+                arr.as_array()->emplace_back(yyjson::value(std::string{task}));
             }
             auto serialized = Das::Utils::SerializeYyjsonValue(arr);
             if (serialized)
@@ -288,7 +288,7 @@ namespace Plugins::DasMaaPi
                 auto o = obj.as_object();
                 (*o)["severity"] = yyjson::value(d.severity);
                 (*o)["code"] = yyjson::value(d.code);
-                (*o)["message"] = yyjson::value(d.message);
+                (*o)["message"] = yyjson::value(std::string{d.message});
                 diag_arr.as_array()->emplace_back(std::move(obj));
             }
             auto serialized = Das::Utils::SerializeYyjsonValue(diag_arr);
