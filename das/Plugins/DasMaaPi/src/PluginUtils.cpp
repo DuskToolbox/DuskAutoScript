@@ -126,6 +126,192 @@ namespace Plugins::DasMaaPi
         return result;
     }
 
+    std::vector<Core::GraphRuntime::Dto::GraphPortDefinitionDto>
+    DerivePortDefinitions(
+        const PiCatalog&   catalog,
+        const std::string& task_name)
+    {
+        std::vector<Core::GraphRuntime::Dto::GraphPortDefinitionDto> ports;
+
+        // Find the task in catalog
+        const PiTask* task = nullptr;
+        for (const auto& t : catalog.tasks)
+        {
+            if (t.dto.name == task_name)
+            {
+                task = &t;
+                break;
+            }
+        }
+        if (!task)
+        {
+            return ports;
+        }
+
+        // Iterate over the task's option references
+        for (const auto& option_name : task->dto.option)
+        {
+            const PiOption* option = FindOption(catalog, option_name);
+            if (!option)
+            {
+                continue;
+            }
+
+            const auto& dto = option->dto;
+
+            // D-05 type mapping
+            auto map_port_type = [](const PiOptionDto& opt) -> std::string
+            {
+                if (opt.type == "select")
+                {
+                    return "string";
+                }
+                if (opt.type == "checkbox")
+                {
+                    return "array<string>";
+                }
+                if (opt.type == "switch")
+                {
+                    return "bool";
+                }
+                if (opt.type == "input")
+                {
+                    if (!opt.inputs.empty() && opt.inputs[0].pipeline_type)
+                    {
+                        const auto& pt = *opt.inputs[0].pipeline_type;
+                        if (pt == "int")
+                        {
+                            return "int";
+                        }
+                        if (pt == "bool")
+                        {
+                            return "bool";
+                        }
+                    }
+                    return "string";
+                }
+                // Unknown type — safe fallback (T-03-05-01)
+                return "string";
+            };
+
+            Core::GraphRuntime::Dto::GraphPortDefinitionDto port;
+            port.port_id = dto.name;
+            port.display_label = dto.label ? *dto.label : dto.name;
+            port.port_type = map_port_type(dto);
+            port.is_required = true;
+            port.default_value = Das::Utils::MakeYyjsonObject();
+
+            // Extract default_value
+            if (dto.type == "select" && !dto.default_cases.empty())
+            {
+                port.default_value = yyjson::value(dto.default_cases[0]);
+            }
+            else if (
+                dto.type == "input" && !dto.inputs.empty()
+                && dto.inputs[0].default_value)
+            {
+                port.default_value =
+                    yyjson::value(*dto.inputs[0].default_value);
+            }
+            else if (dto.type == "switch")
+            {
+                port.default_value = false;
+            }
+
+            ports.push_back(std::move(port));
+
+            // For select: generate child ports for each case
+            if (dto.type == "select")
+            {
+                for (const auto& case_item : dto.cases)
+                {
+                    Core::GraphRuntime::Dto::GraphPortDefinitionDto child_port;
+                    child_port.port_id = dto.name + "_" + case_item.name;
+                    child_port.display_label =
+                        case_item.label ? *case_item.label : case_item.name;
+                    child_port.port_type = "string";
+                    child_port.is_required = false;
+                    child_port.default_value = Das::Utils::MakeYyjsonObject();
+                    ports.push_back(std::move(child_port));
+                }
+            }
+        }
+
+        return ports;
+    }
+
+    std::map<std::string, std::string> DerivePortMap(
+        const PiCatalog&   catalog,
+        const std::string& task_name)
+    {
+        std::map<std::string, std::string> port_map;
+
+        const PiTask* task = nullptr;
+        for (const auto& t : catalog.tasks)
+        {
+            if (t.dto.name == task_name)
+            {
+                task = &t;
+                break;
+            }
+        }
+        if (!task)
+        {
+            return port_map;
+        }
+
+        for (const auto& option_name : task->dto.option)
+        {
+            const PiOption* option = FindOption(catalog, option_name);
+            if (!option)
+            {
+                continue;
+            }
+
+            port_map[option_name] = option_name;
+
+            if (option->dto.type == "select")
+            {
+                for (const auto& case_item : option->dto.cases)
+                {
+                    port_map[option_name + "_" + case_item.name] = option_name;
+                }
+            }
+        }
+
+        return port_map;
+    }
+
+    yyjson::value BuildPortDefinitionsJson(
+        const std::vector<Core::GraphRuntime::Dto::GraphPortDefinitionDto>&
+            ports)
+    {
+        yyjson::value arr(Das::Utils::MakeYyjsonArray());
+        auto          array = arr.as_array();
+
+        for (const auto& port : ports)
+        {
+            yyjson::value obj(Das::Utils::MakeYyjsonObject());
+            auto          o = obj.as_object();
+            (*o)[std::string_view("portId")] = yyjson::value(port.port_id);
+            (*o)[std::string_view("displayLabel")] =
+                yyjson::value(port.display_label);
+            (*o)[std::string_view("portType")] = yyjson::value(port.port_type);
+            (*o)[std::string_view("isRequired")] = port.is_required;
+
+            // default_value: copy as yyjson value
+            (*o)[std::string_view("defaultValue")] =
+                Das::Utils::CloneYyjsonValue(port.default_value);
+
+            yyjson::value tags(Das::Utils::MakeYyjsonArray());
+            (*o)[std::string_view("tags")] = std::move(tags);
+
+            array->emplace_back(std::move(obj));
+        }
+
+        return arr;
+    }
+
     yyjson::value MakeAdapterOnlyDocument()
     {
         yyjson::value document(Das::Utils::MakeYyjsonObject());
