@@ -17,8 +17,7 @@ namespace Das::Plugins::DasMaaPi
                 return false;
             }
             bool can_stop = false;
-            auto hr = stop_token->StopRequested(&can_stop);
-            return DAS::IsSucceeded(hr) && can_stop;
+            return DAS::IsOk(stop_token->StopRequested(&can_stop)) && can_stop;
         }
 
         MaapiPiOptionSettingsDto BuildOptionFromYyjson(
@@ -42,12 +41,12 @@ namespace Das::Plugins::DasMaaPi
                 auto arr = value.as_array();
                 if (arr)
                 {
-                    for (auto& elem : *arr)
+                    for (auto it = arr->begin(); it != arr->end(); ++it)
                     {
-                        if (elem.is_string())
+                        if (it->is_string())
                         {
                             option.selected_cases.emplace_back(
-                                elem.as_string().value_or(""));
+                                it->as_string().value_or(""));
                         }
                     }
                 }
@@ -67,11 +66,11 @@ namespace Das::Plugins::DasMaaPi
                 auto obj = value.as_object();
                 if (obj)
                 {
-                    for (auto& [key, val] : *obj)
+                    for (auto it = obj->begin(); it != obj->end(); ++it)
                     {
                         option.input_values.emplace(
-                            key,
-                            val.as_string().value_or(""));
+                            it->first,
+                            it->second.as_string().value_or(""));
                     }
                 }
                 return option;
@@ -83,7 +82,7 @@ namespace Das::Plugins::DasMaaPi
 
         AcceptedSettingsDto BuildMinimalSettings(
             const EngineInput& input,
-            const PiCatalog&   catalog)
+            const PiCatalog& /*catalog*/)
         {
             AcceptedSettingsDto settings;
 
@@ -98,10 +97,11 @@ namespace Das::Plugins::DasMaaPi
                 auto obj = input.options.as_object();
                 if (obj)
                 {
-                    for (auto& [key, val] : *obj)
+                    for (auto it = obj->begin(); it != obj->end(); ++it)
                     {
-                        task.options.emplace_back(
-                            BuildOptionFromYyjson(std::string(key), val));
+                        task.options.emplace_back(BuildOptionFromYyjson(
+                            std::string(it->first),
+                            it->second));
                     }
                 }
             }
@@ -154,10 +154,36 @@ namespace Das::Plugins::DasMaaPi
                         Das::Utils::ParseYyjsonFromString(*serialized);
                     if (parsed)
                     {
-                        pipeline_obj[pi_param_name] = std::move(*parsed);
+                        (*pipeline_obj)[pi_param_name] = std::move(*parsed);
                     }
                 }
             }
+        }
+
+        yyjson::value BuildCompletedTasksArray(
+            const std::vector<std::string>& completed_tasks)
+        {
+            std::string json = "[";
+            for (size_t i = 0; i < completed_tasks.size(); ++i)
+            {
+                if (i > 0)
+                {
+                    json += ",";
+                }
+                json += "\"";
+                for (char ch : completed_tasks[i])
+                {
+                    if (ch == '"' || ch == '\\')
+                    {
+                        json += '\\';
+                    }
+                    json += ch;
+                }
+                json += "\"";
+            }
+            json += "]";
+            auto parsed = Das::Utils::ParseYyjsonFromString(json);
+            return parsed ? std::move(*parsed) : Das::Utils::MakeYyjsonArray();
         }
 
     } // namespace
@@ -271,16 +297,8 @@ namespace Das::Plugins::DasMaaPi
         output.completed_tasks = std::move(runtime_result.completed_tasks);
         output.diagnostics = std::move(runtime_result.diagnostics);
 
-        auto completed_array = Das::Utils::MakeYyjsonArray();
-        auto arr = completed_array.as_array();
-        if (arr)
-        {
-            for (const auto& name : output.completed_tasks)
-            {
-                arr->push_back(yyjson::value(name));
-            }
-        }
-        output.outputs["completedTasks"] = std::move(completed_array);
+        output.outputs["completedTasks"] =
+            BuildCompletedTasksArray(output.completed_tasks);
 
         return output;
     }
