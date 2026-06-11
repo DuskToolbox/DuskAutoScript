@@ -3,6 +3,7 @@
 #include <cpp_yyjson.hpp>
 #include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/Core/Logger/Logger.h>
+#include <das/DasConfig.h>
 #include <das/Utils/DasJsonCore.h>
 
 #include <fstream>
@@ -364,99 +365,97 @@ yyjson::value PluginPackageDescToJson(const PluginPackageDesc& desc)
     return j;
 }
 
-namespace
+DAS_NS_ANONYMOUS_DETAILS_BEGIN
+
+yyjson::value PluginSettingDescToJson(const PluginSettingDesc& setting)
 {
-    yyjson::value PluginSettingDescToJson(const PluginSettingDesc& setting)
+    auto j = Das::Utils::MakeYyjsonObject();
+    auto obj = j.as_object();
+    if (!obj)
     {
-        auto j = Das::Utils::MakeYyjsonObject();
-        auto obj = j.as_object();
-        if (!obj)
-        {
-            return j;
-        }
-        (*obj)[std::string_view("name")] =
-            std::make_pair(std::string_view(setting.name), yyjson::copy_string);
-        (*obj)[std::string_view("type")] =
-            static_cast<std::int64_t>(setting.type);
-        (*obj)[std::string_view("required")] = setting.required;
-
-        if (setting.description.has_value())
-        {
-            (*obj)[std::string_view("description")] = std::make_pair(
-                std::string_view(setting.description.value()),
-                yyjson::copy_string);
-        }
-
-        if (setting.deprecation_message.has_value())
-        {
-            (*obj)[std::string_view("deprecationMessage")] = std::make_pair(
-                std::string_view(setting.deprecation_message.value()),
-                yyjson::copy_string);
-        }
-
-        if (setting.enum_values.has_value())
-        {
-            auto arr = Das::Utils::MakeYyjsonArray();
-            auto arr_ref = arr.as_array();
-            if (arr_ref)
-            {
-                for (const auto& v : setting.enum_values.value())
-                {
-                    arr_ref->emplace_back(std::string(v));
-                }
-            }
-            (*obj)[std::string_view("enumValues")] = std::move(arr);
-        }
-
-        if (setting.enum_descriptions.has_value())
-        {
-            auto arr = Das::Utils::MakeYyjsonArray();
-            auto arr_ref = arr.as_array();
-            if (arr_ref)
-            {
-                for (const auto& v : setting.enum_descriptions.value())
-                {
-                    arr_ref->emplace_back(std::string(v));
-                }
-            }
-            (*obj)[std::string_view("enumDescriptions")] = std::move(arr);
-        }
-
-        std::visit(
-            [&obj](const auto& val)
-            {
-                using T = std::decay_t<decltype(val)>;
-                if constexpr (std::is_same_v<T, std::monostate>)
-                {
-                    (*obj)[std::string_view("defaultValue")] =
-                        yyjson::value(nullptr);
-                }
-                else if constexpr (std::is_same_v<T, bool>)
-                {
-                    (*obj)[std::string_view("defaultValue")] = val;
-                }
-                else if constexpr (std::is_same_v<T, std::int64_t>)
-                {
-                    (*obj)[std::string_view("defaultValue")] = val;
-                }
-                else if constexpr (std::is_same_v<T, float>)
-                {
-                    (*obj)[std::string_view("defaultValue")] =
-                        static_cast<double>(val);
-                }
-                else if constexpr (std::is_same_v<T, std::string>)
-                {
-                    (*obj)[std::string_view("defaultValue")] = std::make_pair(
-                        std::string_view(val),
-                        yyjson::copy_string);
-                }
-            },
-            setting.default_value);
-
         return j;
     }
+    (*obj)[std::string_view("name")] =
+        std::make_pair(std::string_view(setting.name), yyjson::copy_string);
+    (*obj)[std::string_view("type")] = static_cast<std::int64_t>(setting.type);
+    (*obj)[std::string_view("required")] = setting.required;
 
-} // anonymous namespace
+    if (setting.description.has_value())
+    {
+        (*obj)[std::string_view("description")] = std::make_pair(
+            std::string_view(setting.description.value()),
+            yyjson::copy_string);
+    }
+
+    if (setting.deprecation_message.has_value())
+    {
+        (*obj)[std::string_view("deprecationMessage")] = std::make_pair(
+            std::string_view(setting.deprecation_message.value()),
+            yyjson::copy_string);
+    }
+
+    if (setting.enum_values.has_value())
+    {
+        auto arr = Das::Utils::MakeYyjsonArray();
+        auto arr_ref = arr.as_array();
+        if (arr_ref)
+        {
+            for (const auto& v : setting.enum_values.value())
+            {
+                arr_ref->emplace_back(std::string(v));
+            }
+        }
+        (*obj)[std::string_view("enumValues")] = std::move(arr);
+    }
+
+    if (setting.enum_descriptions.has_value())
+    {
+        auto arr = Das::Utils::MakeYyjsonArray();
+        auto arr_ref = arr.as_array();
+        if (arr_ref)
+        {
+            for (const auto& v : setting.enum_descriptions.value())
+            {
+                arr_ref->emplace_back(std::string(v));
+            }
+        }
+        (*obj)[std::string_view("enumDescriptions")] = std::move(arr);
+    }
+
+    std::visit(
+        [&obj](const auto& val)
+        {
+            using T = std::decay_t<decltype(val)>;
+            if constexpr (std::is_same_v<T, std::monostate>)
+            {
+                (*obj)[std::string_view("defaultValue")] =
+                    yyjson::value(nullptr);
+            }
+            else if constexpr (std::is_same_v<T, bool>)
+            {
+                (*obj)[std::string_view("defaultValue")] = val;
+            }
+            else if constexpr (std::is_same_v<T, std::int64_t>)
+            {
+                (*obj)[std::string_view("defaultValue")] = val;
+            }
+            else if constexpr (std::is_same_v<T, float>)
+            {
+                (*obj)[std::string_view("defaultValue")] =
+                    static_cast<double>(val);
+            }
+            else if constexpr (std::is_same_v<T, std::string>)
+            {
+                (*obj)[std::string_view("defaultValue")] =
+                    std::make_pair(std::string_view(val), yyjson::copy_string);
+            }
+        },
+        setting.default_value);
+
+    return j;
+}
+
+DAS_NS_ANONYMOUS_DETAILS_END
 
 yyjson::value PluginPackageDescDetailToJson(const PluginPackageDesc& desc)
 {
@@ -478,7 +477,7 @@ yyjson::value PluginPackageDescDetailToJson(const PluginPackageDesc& desc)
         {
             for (const auto& s : desc.settings_desc)
             {
-                arr_ref->emplace_back(PluginSettingDescToJson(s));
+                arr_ref->emplace_back(Details::PluginSettingDescToJson(s));
             }
         }
         (*obj)[std::string_view("settingsDesc")] = std::move(arr);
@@ -513,7 +512,8 @@ yyjson::value PluginPackageDescDetailToJson(const PluginPackageDesc& desc)
                     {
                         for (const auto& d : group.descriptors)
                         {
-                            d_arr_ref->emplace_back(PluginSettingDescToJson(d));
+                            d_arr_ref->emplace_back(
+                                Details::PluginSettingDescToJson(d));
                         }
                     }
                     (*group_ref)[std::string_view("descriptors")] =
@@ -566,7 +566,8 @@ yyjson::value PluginPackageDescDetailToJson(const PluginPackageDesc& desc)
                     {
                         for (const auto& d : task.descriptors)
                         {
-                            d_arr_ref->emplace_back(PluginSettingDescToJson(d));
+                            d_arr_ref->emplace_back(
+                                Details::PluginSettingDescToJson(d));
                         }
                     }
                     (*task_ref)[std::string_view("descriptors")] =

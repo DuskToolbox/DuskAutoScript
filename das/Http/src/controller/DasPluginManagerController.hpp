@@ -126,63 +126,6 @@ namespace Das::Http
             return Beast::HttpResponse::CreateSuccessResponse();
         }
 
-        // POST /plugin/{guid}/detail
-        Beast::HttpResponse GetPluginDetail(const Beast::HttpRequest& request)
-        {
-            auto guid_str = request.GetPathParameter("guid");
-            if (guid_str.empty())
-            {
-                return Beast::HttpResponse::CreateErrorResponse(
-                    DAS_E_INVALID_ARGUMENT,
-                    "Missing GUID path parameter");
-            }
-
-            DasGuid guid;
-            auto    guid_cr = DasMakeDasGuid(guid_str.c_str(), &guid);
-            if (DAS::IsFailed(guid_cr))
-            {
-                return Beast::HttpResponse::CreateErrorResponse(
-                    DAS_E_INVALID_ARGUMENT,
-                    "Invalid GUID format");
-            }
-
-            DasPtr<Das::ExportInterface::IDasJson> json;
-            auto result = plugin_manager_service_.GetPluginPackageDetail(
-                &guid,
-                json.Put());
-            if (DAS::IsFailed(result))
-            {
-                return Beast::HttpResponse::CreateErrorResponse(
-                    result,
-                    "Failed to get plugin detail");
-            }
-
-            DasPtr<IDasReadOnlyString> p_str;
-            auto to_str_result = json->ToString(-1, p_str.Put());
-            if (DAS::IsFailed(to_str_result))
-            {
-                return Beast::HttpResponse::CreateErrorResponse(
-                    to_str_result,
-                    "Failed to serialize plugin detail");
-            }
-            const char* c_str = nullptr;
-            auto        get_result = p_str->GetUtf8(&c_str);
-            if (DAS::IsFailed(get_result))
-            {
-                return Beast::HttpResponse::CreateErrorResponse(
-                    get_result,
-                    "Failed to get plugin detail string");
-            }
-            auto parsed = Das::Utils::ParseYyjsonFromString(c_str);
-            if (!parsed)
-            {
-                return Beast::HttpResponse::CreateErrorResponse(
-                    DAS_E_INVALID_JSON,
-                    "Failed to parse plugin detail JSON");
-            }
-            return Beast::HttpResponse::CreateSuccessResponse(parsed.value());
-        }
-
     private:
         IDasPluginManagerService& plugin_manager_service_;
     };

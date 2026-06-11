@@ -28,9 +28,6 @@ public:
     // IDasPluginManagerService
     DasResult ScanInstalledPlugins(
         Das::ExportInterface::IDasJson** pp_out_plugins) override;
-    DasResult GetPluginPackageDetail(
-        const DasGuid*                   p_package_guid,
-        Das::ExportInterface::IDasJson** pp_out_detail) override;
     DasResult InstallPluginPackage(IDasReadOnlyString* p_package_path) override;
     DasResult InstallPluginPackageData(
         const uint8_t* p_package_data,
