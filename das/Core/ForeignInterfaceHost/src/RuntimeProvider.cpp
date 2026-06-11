@@ -119,7 +119,11 @@ auto CreateRuntimeProvider(RuntimeProviderFactoryDesc desc)
     {
     case ForeignInterfaceLanguage::Cpp:
     case ForeignInterfaceLanguage::Python:
-        return CreateLocalRuntimeProvider(std::move(desc.local_runtime));
+    {
+        ForeignLanguageRuntimeFactoryDesc factory_desc{};
+        factory_desc.language = desc.language;
+        return CreateLocalRuntimeProvider(factory_desc);
+    }
     default:
         return CreateNativeIpcRuntimeProvider(
             std::move(desc.native_host_exe_path),

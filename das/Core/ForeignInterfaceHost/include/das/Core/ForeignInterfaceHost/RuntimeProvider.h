@@ -35,11 +35,10 @@ struct RuntimeLoadResult
 
 struct RuntimeProviderFactoryDesc
 {
-    ForeignInterfaceLanguage             language{};
-    LoadMode                             load_mode{LoadMode::InProcess};
-    DAS::DasPtr<IForeignLanguageRuntime> local_runtime;
-    std::filesystem::path                native_host_exe_path;
-    std::unique_ptr<IRemotePluginHost>   remote_plugin_host;
+    ForeignInterfaceLanguage           language{};
+    LoadMode                           load_mode{LoadMode::InProcess};
+    std::filesystem::path              native_host_exe_path;
+    std::unique_ptr<IRemotePluginHost> remote_plugin_host;
 };
 
 class IRuntimeProvider

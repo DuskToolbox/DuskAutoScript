@@ -23,10 +23,12 @@
 namespace Das::Plugins::DasMaaPi
 {
     std::vector<Core::GraphRuntime::Dto::GraphPortDefinitionDto>
-    DerivePortDefinitions(const PiCatalog& catalog, const std::string& task_name);
+    DerivePortDefinitions(
+        const PiCatalog&   catalog,
+        const std::string& task_name);
 
     std::map<std::string, std::string> DerivePortMap(
-        const PiCatalog& catalog,
+        const PiCatalog&   catalog,
         const std::string& task_name);
 
     yyjson::value BuildPortDefinitionsJson(
@@ -241,9 +243,7 @@ namespace
                 *settings_manager_,
                 Das::DasSharedRef<Das::Core::IPC::MainProcess::IIpcContext>(
                     ipc_sp));
-            auto runtime = CreateCppRuntime();
-            ASSERT_NE(runtime, nullptr);
-            ASSERT_EQ(plugin_manager_->Initialize(1, runtime), DAS_S_OK);
+            ASSERT_EQ(plugin_manager_->Initialize(1), DAS_S_OK);
             registry_ =
                 std::make_unique<Das::Core::IPC::RemoteObjectRegistry>();
             plugin_manager_->SetRegistry(*registry_);

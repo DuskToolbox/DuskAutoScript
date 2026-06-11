@@ -2776,16 +2776,8 @@ protected:
                 ipc_sp_));
 
         shared_state_ = std::make_shared<FactoryTaskSharedState>();
-        auto* raw_package = new FactoryTaskPluginPackage(shared_state_);
-        raw_package->AddRef();
-        DasPtr<Das::PluginInterface::IDasPluginPackage> package(raw_package);
 
-        auto* raw_runtime = new FakeFactoryRuntime(package.Get());
-        raw_runtime->AddRef();
-        DasPtr<DAS::Core::ForeignInterfaceHost::IForeignLanguageRuntime>
-            runtime(raw_runtime);
-
-        ASSERT_EQ(plugin_manager_->Initialize(1, runtime), DAS_S_OK);
+        ASSERT_EQ(plugin_manager_->Initialize(1), DAS_S_OK);
 
         io_thread_ = std::thread(
             [this]()

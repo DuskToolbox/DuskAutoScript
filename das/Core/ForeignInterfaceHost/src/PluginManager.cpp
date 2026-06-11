@@ -124,9 +124,7 @@ PluginManager::~PluginManager()
     ClearActiveErrorLensManager(&error_lens_mgr_);
 }
 
-DasResult PluginManager::Initialize(
-    uint16_t                        session_id,
-    DasPtr<IForeignLanguageRuntime> runtime)
+DasResult PluginManager::Initialize(uint16_t session_id)
 {
     std::lock_guard<std::mutex> lock(mutex_);
 
@@ -139,17 +137,6 @@ DasResult PluginManager::Initialize(
     }
 
     session_id_ = session_id;
-    if (runtime)
-    {
-        runtime_ = std::move(runtime);
-        auto provider = CreateLocalRuntimeProvider(runtime_);
-        if (!provider)
-        {
-            return provider.error();
-        }
-        runtime_provider_ = std::move(provider.value());
-        runtime_provider_override_ = false;
-    }
     SetActiveErrorLensManager(&error_lens_mgr_);
 
     DAS_CORE_LOG_INFO(
@@ -204,42 +191,11 @@ DasResult PluginManager::Shutdown()
     feature_type_index_.clear();
     path_to_guid_.clear();
     loaded_plugins_.clear();
-    runtime_.Reset();
     session_id_ = 0;
     ClearActiveErrorLensManager(&error_lens_mgr_);
 
     DAS_CORE_LOG_INFO("PluginManager shutdown complete");
     return DAS_S_OK;
-}
-
-DasResult PluginManager::SetRuntime(DasPtr<IForeignLanguageRuntime> runtime)
-{
-    std::lock_guard<std::mutex> lock(mutex_);
-    runtime_ = std::move(runtime);
-    if (runtime_)
-    {
-        auto provider = CreateLocalRuntimeProvider(runtime_);
-        if (!provider)
-        {
-            return provider.error();
-        }
-        runtime_provider_ = std::move(provider.value());
-        runtime_provider_override_ = false;
-    }
-    else
-    {
-        runtime_provider_.reset();
-        runtime_provider_override_ = false;
-    }
-    return DAS_S_OK;
-}
-
-void PluginManager::SetRuntimeProviderForTest(
-    std::unique_ptr<IRuntimeProvider> provider)
-{
-    std::lock_guard<std::mutex> lock(mutex_);
-    runtime_provider_ = std::move(provider);
-    runtime_provider_override_ = true;
 }
 
 void PluginManager::SetRemotePluginHostFactoryForTest(
@@ -276,12 +232,6 @@ DasResult PluginManager::LoadPlugin(
     DasResult                          manifest_parse_result = DAS_S_OK;
     {
         std::lock_guard<std::mutex> lock(mutex_);
-
-        if (!runtime_ && !runtime_provider_)
-        {
-            DAS_CORE_LOG_ERROR("No runtime set for loading plugins");
-            return DAS_E_OBJECT_NOT_INIT;
-        }
 
         normalized_path = NormalizePath(path);
         manifest_path = ResolveManifestPath(normalized_path);
@@ -372,16 +322,10 @@ DasResult PluginManager::LoadPlugin(
     std::unique_ptr<IRuntimeProvider> scoped_provider;
     IRuntimeProvider*                 provider = nullptr;
 
-    if (runtime_provider_override_)
-    {
-        provider = runtime_provider_.get();
-    }
-    else
     {
         RuntimeProviderFactoryDesc provider_desc{};
         provider_desc.language = desc->language;
         provider_desc.load_mode = desc->load_mode;
-        provider_desc.local_runtime = runtime_;
         provider_desc.native_host_exe_path = host_exe_path_;
         if (remote_plugin_host_factory_)
         {

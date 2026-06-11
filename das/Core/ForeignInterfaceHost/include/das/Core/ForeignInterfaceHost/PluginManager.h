@@ -6,7 +6,6 @@
 #include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/Core/ForeignInterfaceHost/ErrorLensManager.h>
 #include <das/Core/ForeignInterfaceHost/ForeignInterfaceHost.h>
-#include <das/Core/ForeignInterfaceHost/IForeignLanguageRuntime.h>
 #include <das/Core/ForeignInterfaceHost/RuntimeProvider.h>
 #include <das/Core/ForeignInterfaceHost/TaskComponentFactoryManager.h>
 #include <das/Core/IPC/HostLauncher.h>
@@ -99,27 +98,14 @@ public:
     /**
      * @brief 初始化插件管理器
      * @param session_id 当前会话 ID
-     * @param runtime 语言运行时（可选）
      * @return DAS_S_OK 成功
      */
-    DasResult Initialize(
-        uint16_t                        session_id,
-        DasPtr<IForeignLanguageRuntime> runtime = nullptr);
+    DasResult Initialize(uint16_t session_id);
 
     /**
      * @brief 关闭插件管理器，卸载所有插件
      */
     DasResult Shutdown();
-
-    /**
-     * @brief 设置语言运行时
-     */
-    DasResult SetRuntime(DasPtr<IForeignLanguageRuntime> runtime);
-
-    /**
-     * @brief Inject a runtime provider for focused PluginManager tests.
-     */
-    void SetRuntimeProviderForTest(std::unique_ptr<IRuntimeProvider> provider);
 
     /**
      * @brief Inject a remote host factory for focused runtime-provider tests.
@@ -323,15 +309,11 @@ private:
     Das::Core::SettingsManager::SettingsManager& settings_manager_;
     mutable std::mutex                           mutex_;
     uint16_t                                     session_id_ = 0;
-    DasPtr<IForeignLanguageRuntime>              runtime_;
-    std::unique_ptr<IRuntimeProvider>            runtime_provider_;
-    bool                                         runtime_provider_override_ =
-        false;
     std::function<std::unique_ptr<IRemotePluginHost>()>
-        remote_plugin_host_factory_;
-    Core::IPC::RemoteObjectRegistry*             registry_ = nullptr;
-    std::unordered_map<DasGuid, LoadedPlugin>    loaded_plugins_;
-    std::unordered_map<std::string, DasGuid>     path_to_guid_;
+                                              remote_plugin_host_factory_;
+    Core::IPC::RemoteObjectRegistry*          registry_ = nullptr;
+    std::unordered_map<DasGuid, LoadedPlugin> loaded_plugins_;
+    std::unordered_map<std::string, DasGuid>  path_to_guid_;
     std::unordered_map<
         Das::PluginInterface::DasPluginFeature,
         std::vector<FeatureInfo*>>

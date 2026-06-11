@@ -124,9 +124,7 @@ namespace
                 Das::DasSharedRef<Das::Core::IPC::MainProcess::IIpcContext>(
                     ipc_sp));
 
-            auto runtime = CreateCppRuntime();
-            ASSERT_NE(runtime, nullptr);
-            ASSERT_EQ(plugin_manager_->Initialize(1, runtime), DAS_S_OK);
+            ASSERT_EQ(plugin_manager_->Initialize(1), DAS_S_OK);
 
             registry_ =
                 std::make_unique<Das::Core::IPC::RemoteObjectRegistry>();

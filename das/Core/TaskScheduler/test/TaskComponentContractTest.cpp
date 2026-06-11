@@ -698,9 +698,7 @@ namespace
                 Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
                     ipc_sp_));
 
-            auto runtime = CreateCppRuntime();
-            ASSERT_NE(runtime, nullptr);
-            ASSERT_EQ(plugin_manager_->Initialize(1, runtime), DAS_S_OK);
+            ASSERT_EQ(plugin_manager_->Initialize(1), DAS_S_OK);
 
             manifest_path_ = FindDasFlowControlManifest();
             ASSERT_TRUE(std::filesystem::exists(manifest_path_))
