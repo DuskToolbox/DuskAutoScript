@@ -80,6 +80,33 @@ namespace Core
                         std::chrono::seconds(30)) = 0;
 
                 /**
+                 * @brief 异步加载插件到指定 session（直接指定
+                 * target_session_id，不需要 HostLauncher）
+                 *
+                 * 用于向已连接的远端 Host（如 WebSocket Host）发送加载请求。
+                 * 默认实现返回 DAS_E_NO_IMPLEMENTATION。
+                 *
+                 * @param target_session_id 目标 Host 的 session_id
+                 * @param u8_plugin_path 插件 manifest 路径 (UTF-8)
+                 * @param pp_out_operation 输出：异步操作对象
+                 * @param timeout 超时时间（默认30秒）
+                 * @return DasResult DAS_S_OK 成功创建操作
+                 */
+                virtual DasResult LoadPluginAsync(
+                    uint16_t                       target_session_id,
+                    const char*                    u8_plugin_path,
+                    IDasAsyncLoadPluginOperation** pp_out_operation,
+                    std::chrono::milliseconds      timeout =
+                        std::chrono::seconds(30))
+                {
+                    (void)target_session_id;
+                    (void)u8_plugin_path;
+                    (void)pp_out_operation;
+                    (void)timeout;
+                    return DAS_E_NO_IMPLEMENTATION;
+                }
+
+                /**
                  * @brief 将回调投递到 io_context 线程执行
                  *
                  * 使用 DasPtr 管理 callback 生命周期，保证在 post

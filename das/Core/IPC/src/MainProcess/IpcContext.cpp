@@ -528,6 +528,85 @@ namespace Core
                 return DAS_S_OK;
             }
 
+            DasResult IpcContext::LoadPluginAsync(
+                uint16_t                       target_session_id,
+                const char*                    u8_plugin_path,
+                IDasAsyncLoadPluginOperation** pp_out_operation,
+                std::chrono::milliseconds      timeout)
+            {
+                if (!u8_plugin_path || !pp_out_operation)
+                {
+                    return DAS_E_INVALID_ARGUMENT;
+                }
+                if (target_session_id == 0)
+                {
+                    DAS_CORE_LOG_ERROR(
+                        "LoadPluginAsync(session_id): invalid session_id = 0");
+                    return DAS_E_INVALID_ARGUMENT;
+                }
+                DAS::DasOutPtr<IDasAsyncLoadPluginOperation> out_op(
+                    pp_out_operation);
+
+                // Get Transport via ConnectionManager
+                if (!runloop_.connection_manager_)
+                {
+                    DAS_CORE_LOG_ERROR(
+                        "LoadPluginAsync(session_id): No ConnectionManager available");
+                    return DAS_E_IPC_NOT_INITIALIZED;
+                }
+
+                auto& conn_mgr = runloop_.GetConnectionManager();
+                auto [lookup_result, maybe_transport] =
+                    conn_mgr.FindManagedHostTransport(target_session_id);
+                if (DAS::IsFailed(lookup_result) || !maybe_transport)
+                {
+                    DAS_CORE_LOG_ERROR(
+                        "LoadPluginAsync(session_id): No Transport found for session_id = {}, result = {}",
+                        target_session_id,
+                        lookup_result);
+                    return DAS::IsFailed(lookup_result)
+                               ? lookup_result
+                               : DAS_E_IPC_OBJECT_NOT_FOUND;
+                }
+                AnyTransport& transport = maybe_transport->get();
+
+                // 构建 V1 payload: uint16_t path_len + char[] path
+                std::string plugin_path(u8_plugin_path);
+                uint16_t path_len = static_cast<uint16_t>(plugin_path.size());
+
+                std::vector<uint8_t> payload(sizeof(uint16_t) + path_len);
+                std::memcpy(payload.data(), &path_len, sizeof(uint16_t));
+                std::memcpy(
+                    payload.data() + sizeof(uint16_t),
+                    plugin_path.data(),
+                    path_len);
+
+                // 构建消息头
+                auto header = MakeBusinessControlRequest(
+                    IpcCommandType::LOAD_PLUGIN,
+                    static_cast<uint32_t>(payload.size()),
+                    target_session_id);
+
+                // 发送异步请求
+                auto sender = runloop_.SendMessageAsync(
+                    transport,
+                    header,
+                    payload.data(),
+                    payload.size(),
+                    timeout);
+
+                // 包装为 IDasAsyncLoadPluginOperation
+                auto op = MakeLoadPluginAsyncOperation(std::move(sender), this);
+
+                *out_op.Put() = op.Get();
+                if (out_op.Get())
+                {
+                    out_op->AddRef();
+                }
+                out_op.Keep();
+                return DAS_S_OK;
+            }
+
             DasResult IpcContext::Run()
             {
                 ScopedCurrentIpcContext scope(this);

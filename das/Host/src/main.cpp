@@ -192,7 +192,10 @@ int main(int argc, char* argv[])
             "connect-url",
             boost::program_options::value<std::string>(),
             "Main process WebSocket URL (enables HTTP transport mode). "
-            "Example: ws://localhost:9527");
+            "Example: ws://localhost:9527")(
+            "plugin-dir",
+            boost::program_options::value<std::string>(),
+            "Plugin directory path for remote Host mode (LIST_FILE/READ_FILE scoping)");
 
         boost::program_options::variables_map vm;
         boost::program_options::store(
@@ -350,6 +353,18 @@ int main(int argc, char* argv[])
 
         DAS::Core::IPC::Host::HostCommandHandlerOptions handler_options{};
         handler_options.load_plugin = LoadPluginWithNativeRuntime;
+
+        if (vm.count("plugin-dir"))
+        {
+            handler_options.plugin_dir =
+                std::filesystem::path(vm["plugin-dir"].as<std::string>());
+            DAS_LOG_INFO(
+                std::format(
+                    "Remote Host mode: plugin-dir={}",
+                    handler_options.plugin_dir.string())
+                    .c_str());
+        }
+
         const DasResult handler_result =
             DAS::Core::IPC::Host::RegisterHostCommandHandlers(
                 ctx.get(),

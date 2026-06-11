@@ -12,16 +12,17 @@ namespace Das::Core::IPC::Host
 {
     struct IIpcContext;
 
-    using HostPluginLoader = std::function<
-        DAS::Utils::Expected<DAS::DasPtr<IDasBase>>(
+    using HostPluginLoader =
+        std::function<DAS::Utils::Expected<DAS::DasPtr<IDasBase>>(
             const std::filesystem::path& manifest_path)>;
 
     struct HostCommandHandlerOptions
     {
-        HostPluginLoader load_plugin;
+        HostPluginLoader      load_plugin;
+        std::filesystem::path plugin_dir; // LIST_FILE/READ_FILE 的工作目录
     };
 
     DAS_API DasResult RegisterHostCommandHandlers(
-        IIpcContext*                ctx,
-        HostCommandHandlerOptions   options);
+        IIpcContext*              ctx,
+        HostCommandHandlerOptions options);
 } // namespace Das::Core::IPC::Host

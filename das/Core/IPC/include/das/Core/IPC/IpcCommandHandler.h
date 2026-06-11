@@ -41,6 +41,10 @@ enum class IpcCommandType : uint8_t
     // 查询命令
     GET_OBJECT_COUNT = 20, // 获取对象数量
 
+    // 远端文件访问 (50-59)
+    LIST_FILE = 50, // 列出远端 Host 工作目录下的文件/目录
+    READ_FILE = 51, // 读取远端 Host 工作目录下的文件内容
+
     // 接口查询 (120-129)
     QUERY_INTERFACE = 120, // 远程 QueryInterface 请求
 
