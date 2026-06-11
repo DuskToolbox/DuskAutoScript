@@ -218,11 +218,10 @@ namespace Das::Http
                     &init_options);
                 if (DAS::IsFailed(init_cv_result))
                 {
-                    DAS_LOG_ERROR(
-                        DAS_FMT_NS::format(
-                            "Failed to init CV services. result = {}",
-                            init_cv_result)
-                            .c_str());
+                    DAS_LOG_ERROR(DAS_FMT_NS::format(
+                                      "Failed to init CV services. result = {}",
+                                      init_cv_result)
+                                      .c_str());
                     return init_cv_result;
                 }
             }
@@ -309,6 +308,10 @@ namespace Das::Http
             DAS_HTTP_API_PREFIX "plugin/{guid}/delete",
             [plugin_controller](const Das::Http::Beast::HttpRequest& req)
             { return plugin_controller->DeletePlugin(req); });
+        components.router->Post(
+            DAS_HTTP_API_PREFIX "plugin/{guid}/detail",
+            [plugin_controller](const Das::Http::Beast::HttpRequest& req)
+            { return plugin_controller->GetPluginDetail(req); });
 
         // Settings
         components.router->Post(
@@ -386,8 +389,7 @@ namespace Das::Http
         components.router->Post(
             DAS_HTTP_API_PREFIX
             "scheduler/{profile}/{taskId}/internal/properties/update",
-            [scheduler_controller](const Das::Http::Beast::HttpRequest& req)
-            {
+            [scheduler_controller](const Das::Http::Beast::HttpRequest& req) {
                 return scheduler_controller->UpdateTaskInternalProperties(req);
             });
         components.router->Post(
@@ -482,11 +484,10 @@ namespace Das::Http
         const auto shutdown_result = components.core_services->Shutdown();
         if (DAS::IsFailed(shutdown_result))
         {
-            DAS_LOG_ERROR(
-                DAS_FMT_NS::format(
-                    "Failed to shutdown CoreServices. result = {}",
-                    shutdown_result)
-                    .c_str());
+            DAS_LOG_ERROR(DAS_FMT_NS::format(
+                              "Failed to shutdown CoreServices. result = {}",
+                              shutdown_result)
+                              .c_str());
         }
 
         // Shutdown IPC context

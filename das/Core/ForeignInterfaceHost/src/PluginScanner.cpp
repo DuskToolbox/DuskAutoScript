@@ -364,4 +364,325 @@ yyjson::value PluginPackageDescToJson(const PluginPackageDesc& desc)
     return j;
 }
 
+namespace
+{
+    yyjson::value PluginSettingDescToJson(const PluginSettingDesc& setting)
+    {
+        auto j = Das::Utils::MakeYyjsonObject();
+        auto obj = j.as_object();
+        if (!obj)
+        {
+            return j;
+        }
+        (*obj)[std::string_view("name")] =
+            std::make_pair(std::string_view(setting.name), yyjson::copy_string);
+        (*obj)[std::string_view("type")] =
+            static_cast<std::int64_t>(setting.type);
+        (*obj)[std::string_view("required")] = setting.required;
+
+        if (setting.description.has_value())
+        {
+            (*obj)[std::string_view("description")] = std::make_pair(
+                std::string_view(setting.description.value()),
+                yyjson::copy_string);
+        }
+
+        if (setting.deprecation_message.has_value())
+        {
+            (*obj)[std::string_view("deprecationMessage")] = std::make_pair(
+                std::string_view(setting.deprecation_message.value()),
+                yyjson::copy_string);
+        }
+
+        if (setting.enum_values.has_value())
+        {
+            auto arr = Das::Utils::MakeYyjsonArray();
+            auto arr_ref = arr.as_array();
+            if (arr_ref)
+            {
+                for (const auto& v : setting.enum_values.value())
+                {
+                    arr_ref->emplace_back(std::string(v));
+                }
+            }
+            (*obj)[std::string_view("enumValues")] = std::move(arr);
+        }
+
+        if (setting.enum_descriptions.has_value())
+        {
+            auto arr = Das::Utils::MakeYyjsonArray();
+            auto arr_ref = arr.as_array();
+            if (arr_ref)
+            {
+                for (const auto& v : setting.enum_descriptions.value())
+                {
+                    arr_ref->emplace_back(std::string(v));
+                }
+            }
+            (*obj)[std::string_view("enumDescriptions")] = std::move(arr);
+        }
+
+        std::visit(
+            [&obj](const auto& val)
+            {
+                using T = std::decay_t<decltype(val)>;
+                if constexpr (std::is_same_v<T, std::monostate>)
+                {
+                    (*obj)[std::string_view("defaultValue")] =
+                        yyjson::value(nullptr);
+                }
+                else if constexpr (std::is_same_v<T, bool>)
+                {
+                    (*obj)[std::string_view("defaultValue")] = val;
+                }
+                else if constexpr (std::is_same_v<T, std::int64_t>)
+                {
+                    (*obj)[std::string_view("defaultValue")] = val;
+                }
+                else if constexpr (std::is_same_v<T, float>)
+                {
+                    (*obj)[std::string_view("defaultValue")] =
+                        static_cast<double>(val);
+                }
+                else if constexpr (std::is_same_v<T, std::string>)
+                {
+                    (*obj)[std::string_view("defaultValue")] = std::make_pair(
+                        std::string_view(val),
+                        yyjson::copy_string);
+                }
+            },
+            setting.default_value);
+
+        return j;
+    }
+
+} // anonymous namespace
+
+yyjson::value PluginPackageDescDetailToJson(const PluginPackageDesc& desc)
+{
+    auto j = PluginPackageDescToJson(desc);
+    auto obj = j.as_object();
+    if (!obj)
+    {
+        return j;
+    }
+
+    (*obj)[std::string_view("loadMode")] =
+        static_cast<std::int64_t>(desc.load_mode);
+
+    if (!desc.settings_desc.empty())
+    {
+        auto arr = Das::Utils::MakeYyjsonArray();
+        auto arr_ref = arr.as_array();
+        if (arr_ref)
+        {
+            for (const auto& s : desc.settings_desc)
+            {
+                arr_ref->emplace_back(PluginSettingDescToJson(s));
+            }
+        }
+        (*obj)[std::string_view("settingsDesc")] = std::move(arr);
+    }
+
+    if (!desc.settings_groups.empty())
+    {
+        auto settings_obj = Das::Utils::MakeYyjsonObject();
+        auto settings_ref = settings_obj.as_object();
+        if (settings_ref)
+        {
+            for (const auto& [guid, group] : desc.settings_groups)
+            {
+                auto group_obj = Das::Utils::MakeYyjsonObject();
+                auto group_ref = group_obj.as_object();
+                if (!group_ref)
+                {
+                    continue;
+                }
+                (*group_ref)[std::string_view("name")] = std::make_pair(
+                    std::string_view(group.name),
+                    yyjson::copy_string);
+                (*group_ref)[std::string_view("description")] = std::make_pair(
+                    std::string_view(group.description),
+                    yyjson::copy_string);
+
+                if (!group.descriptors.empty())
+                {
+                    auto d_arr = Das::Utils::MakeYyjsonArray();
+                    auto d_arr_ref = d_arr.as_array();
+                    if (d_arr_ref)
+                    {
+                        for (const auto& d : group.descriptors)
+                        {
+                            d_arr_ref->emplace_back(PluginSettingDescToJson(d));
+                        }
+                    }
+                    (*group_ref)[std::string_view("descriptors")] =
+                        std::move(d_arr);
+                }
+
+                auto guid_str = DasGuidToStdString(guid);
+                (*settings_ref)[std::string_view(guid_str)] =
+                    std::move(group_obj);
+            }
+        }
+        (*obj)[std::string_view("settings")] = std::move(settings_obj);
+    }
+
+    if (!desc.task_descriptors.empty())
+    {
+        auto tasks_obj = Das::Utils::MakeYyjsonObject();
+        auto tasks_ref = tasks_obj.as_object();
+        if (tasks_ref)
+        {
+            for (const auto& [task_guid, task] : desc.task_descriptors)
+            {
+                auto task_obj = Das::Utils::MakeYyjsonObject();
+                auto task_ref = task_obj.as_object();
+                if (!task_ref)
+                {
+                    continue;
+                }
+                (*task_ref)[std::string_view("pluginGuid")] =
+                    DasGuidToStdString(task.plugin_guid);
+                (*task_ref)[std::string_view("name")] = std::make_pair(
+                    std::string_view(task.name),
+                    yyjson::copy_string);
+                (*task_ref)[std::string_view("description")] = std::make_pair(
+                    std::string_view(task.description),
+                    yyjson::copy_string);
+
+                if (task.game_name.has_value())
+                {
+                    (*task_ref)[std::string_view("gameName")] = std::make_pair(
+                        std::string_view(task.game_name.value()),
+                        yyjson::copy_string);
+                }
+
+                if (!task.descriptors.empty())
+                {
+                    auto d_arr = Das::Utils::MakeYyjsonArray();
+                    auto d_arr_ref = d_arr.as_array();
+                    if (d_arr_ref)
+                    {
+                        for (const auto& d : task.descriptors)
+                        {
+                            d_arr_ref->emplace_back(PluginSettingDescToJson(d));
+                        }
+                    }
+                    (*task_ref)[std::string_view("descriptors")] =
+                        std::move(d_arr);
+                }
+
+                if (task.authoring.has_value())
+                {
+                    auto auth_obj = Das::Utils::MakeYyjsonObject();
+                    auto auth_ref = auth_obj.as_object();
+                    if (auth_ref)
+                    {
+                        (*auth_ref)[std::string_view("factoryGuid")] =
+                            DasGuidToStdString(task.authoring->factory_guid);
+                        if (!task.authoring->supported_kinds.empty())
+                        {
+                            auto k_arr = Das::Utils::MakeYyjsonArray();
+                            auto k_arr_ref = k_arr.as_array();
+                            if (k_arr_ref)
+                            {
+                                for (const auto& kind :
+                                     task.authoring->supported_kinds)
+                                {
+                                    k_arr_ref->emplace_back(std::string(kind));
+                                }
+                            }
+                            (*auth_ref)[std::string_view("supportedKinds")] =
+                                std::move(k_arr);
+                        }
+                    }
+                    (*task_ref)[std::string_view("authoring")] =
+                        std::move(auth_obj);
+                }
+
+                if (task.execution_component.has_value())
+                {
+                    auto exec_obj = Das::Utils::MakeYyjsonObject();
+                    auto exec_ref = exec_obj.as_object();
+                    if (exec_ref)
+                    {
+                        (*exec_ref)[std::string_view("componentGuid")] =
+                            DasGuidToStdString(
+                                task.execution_component->component_guid);
+                    }
+                    (*task_ref)[std::string_view("executionComponent")] =
+                        std::move(exec_obj);
+                }
+
+                auto guid_str = DasGuidToStdString(task_guid);
+                (*tasks_ref)[std::string_view(guid_str)] = std::move(task_obj);
+            }
+        }
+        (*obj)[std::string_view("tasks")] = std::move(tasks_obj);
+    }
+
+    if (desc.task_components.has_value())
+    {
+        auto tc_obj = Das::Utils::MakeYyjsonObject();
+        auto tc_ref = tc_obj.as_object();
+        if (tc_ref)
+        {
+            if (desc.task_components->factories.has_value()
+                && !desc.task_components->factories->empty())
+            {
+                auto f_arr = Das::Utils::MakeYyjsonArray();
+                auto f_arr_ref = f_arr.as_array();
+                if (f_arr_ref)
+                {
+                    for (const auto& f :
+                         desc.task_components->factories.value())
+                    {
+                        f_arr_ref->emplace_back(std::string(f));
+                    }
+                }
+                (*tc_ref)[std::string_view("factories")] = std::move(f_arr);
+            }
+
+            if (desc.task_components->components.has_value()
+                && !desc.task_components->components->empty())
+            {
+                auto comp_obj = Das::Utils::MakeYyjsonObject();
+                auto comp_ref = comp_obj.as_object();
+                if (comp_ref)
+                {
+                    for (const auto& [key, entry] :
+                         desc.task_components->components.value())
+                    {
+                        auto entry_obj = Das::Utils::MakeYyjsonObject();
+                        auto entry_ref = entry_obj.as_object();
+                        if (entry_ref)
+                        {
+                            if (entry.factory_guid.has_value())
+                            {
+                                (*entry_ref)[std::string_view("factoryGuid")] =
+                                    std::make_pair(
+                                        std::string_view(
+                                            entry.factory_guid.value()),
+                                        yyjson::copy_string);
+                            }
+                            if (entry.definition.has_value())
+                            {
+                                (*entry_ref)[std::string_view("definition")] =
+                                    entry.definition.value();
+                            }
+                        }
+                        (*comp_ref)[std::string_view(key)] =
+                            std::move(entry_obj);
+                    }
+                }
+                (*tc_ref)[std::string_view("components")] = std::move(comp_obj);
+            }
+        }
+        (*obj)[std::string_view("taskComponents")] = std::move(tc_obj);
+    }
+
+    return j;
+}
+
 DAS_CORE_FOREIGNINTERFACEHOST_NS_END
