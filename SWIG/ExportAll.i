@@ -25,12 +25,6 @@
 // --- java: Director lifecycle helpers (prevent/release via JNI) ---
 %include "java/DirectorLifecycle.i"
 
-// --- csharp: IDasBase cscode ---
-%include "csharp/IDasBase.i"
-
-// --- csharp: Director lifecycle helpers (prevent/release via GCHandle) ---
-%include "csharp/DirectorLifecycle.i"
-
 // --- common: DasTypeMapsIgnore (%ignore 聚合，代码生成器产出) ---
 %include <DasTypeMapsIgnore.i>
 
@@ -43,17 +37,11 @@
 // --- java: DasException typemaps ---
 %include "java/DasException.i"
 
-// --- csharp: DasException csbase ---
-%include "csharp/DasException.i"
-
 // --- common: DasReadOnlyString ignore 注释 ---
 %include "common/DasReadOnlyStringIgnoreComment.i"
 
 // --- java: DasReadOnlyString ignore ---
 %include "java/DasReadOnlyStringIgnore.i"
-
-// --- csharp: IDasReadOnlyString* typemaps ---
-%include "csharp/IDasReadOnlyString.i"
 
 // --- python: IDasReadOnlyString* typemaps ---
 %include "python/IDasReadOnlyString.i"
