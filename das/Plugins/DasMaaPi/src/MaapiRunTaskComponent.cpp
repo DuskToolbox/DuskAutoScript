@@ -73,8 +73,25 @@ namespace Plugins::DasMaaPi
             auto parsed = ReadJson(p_request_json);
             if (parsed)
             {
-                settings_ = Das::Utils::CloneYyjsonValue(*parsed);
-                settings_applied_ = true;
+                // GraphRuntime::ApplyNodeSettings wraps the compiled_settings
+                // inside {"settings": <value>, "payload": <value>}.
+                // Extract the inner settings object when the wrapper is
+                // present.
+                auto obj = parsed->as_object();
+                if (obj && obj->contains(std::string_view("settings")))
+                {
+                    auto inner = (*obj)[std::string_view("settings")];
+                    if (!inner.is_null())
+                    {
+                        settings_ = Das::Utils::CloneYyjsonValue(inner);
+                        settings_applied_ = true;
+                    }
+                }
+                else
+                {
+                    settings_ = Das::Utils::CloneYyjsonValue(*parsed);
+                    settings_applied_ = true;
+                }
             }
         }
 
