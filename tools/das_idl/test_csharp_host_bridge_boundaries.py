@@ -94,6 +94,11 @@ class TestCSharpHostBridgeBoundaries(unittest.TestCase):
             (ROOT / "tools" / "das_idl" / "swig_csharp_generator.py").exists()
         )
 
+        self.assertFalse(
+            (ROOT / "SWIG" / "csharp").exists(),
+            "SWIG/csharp/ must not exist — C# SWIG .i files have been removed",
+        )
+
         forbidden = {
             "CSharpSwigGenerator": [
                 "tools/das_idl/test_csharp_batch_config.py",
@@ -387,10 +392,6 @@ class TestCSharpHostBridgeBoundaries(unittest.TestCase):
             "tools/das_idl/swig_lang_generator_base.py",
             "tools/das_idl/swig_java_generator.py",
             "SWIG/ExportAll.i",
-            "SWIG/csharp/DasException.i",
-            "SWIG/csharp/DirectorLifecycle.i",
-            "SWIG/csharp/IDasBase.i",
-            "SWIG/csharp/IDasReadOnlyString.i",
         }
         forbidden_tokens = {
             "CSharpSwigGenerator",
