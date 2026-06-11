@@ -30,8 +30,7 @@ DAS_API BusinessThread* GetCurrentBusinessThread() noexcept;
  * 从 inbound queue 取消息并 dispatch 到 handler。
  * 支持 PumpUntilResponse 用于嵌套 pump（Phase 24 Proxy 调用）。
  */
-class BusinessThread
-    : public std::enable_shared_from_this<BusinessThread>
+class BusinessThread : public std::enable_shared_from_this<BusinessThread>
 {
 public:
     /**
@@ -93,12 +92,12 @@ public:
      * @param is_done 轻量完成条件；必须只读取 atomic/已同步状态
      * @return DasResult DAS_S_OK predicate 完成，DAS_E_IPC_CANCELED 队列已关闭
      */
-    DasResult PumpUntilPredicate(
+    DAS_API DasResult PumpUntilPredicate(
         std::string_view             wait_reason,
         const std::function<bool()>& is_done);
 
     /// @brief 唤醒当前 BusinessThread 队列等待者重新检查外部 predicate
-    void NotifyWaiters();
+    DAS_API void NotifyWaiters();
 
     /**
      * @brief 检查业务线程是否正在运行
