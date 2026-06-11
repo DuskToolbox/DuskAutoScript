@@ -168,8 +168,8 @@ namespace Plugins::DasMaaPi
                 keys->Size(&count);
                 for (uint64_t i = 0; i < count; ++i)
                 {
-                    IDasReadOnlyString* p_key = nullptr;
-                    if (DAS::IsFailed(keys->At(i, &p_key)) || !p_key)
+                    DasPtr<IDasReadOnlyString> p_key;
+                    if (DAS::IsFailed(keys->At(i, p_key.Put())) || !p_key)
                     {
                         continue;
                     }
@@ -187,14 +187,12 @@ namespace Plugins::DasMaaPi
                     auto pm_it = input.port_map.find(key_str);
                     if (pm_it == input.port_map.end())
                     {
-                        p_key->Release();
                         continue;
                     }
 
                     ExportInterface::DasVariantType type =
                         ExportInterface::DAS_VARIANT_TYPE_NULL;
-                    hr = p_input_port_map->GetType(p_key, &type);
-                    p_key->Release();
+                    hr = p_input_port_map->GetType(p_key.Get(), &type);
 
                     if (DAS::IsFailed(hr))
                     {
@@ -203,18 +201,18 @@ namespace Plugins::DasMaaPi
 
                     if (type == ExportInterface::DAS_VARIANT_TYPE_STRING)
                     {
-                        IDasReadOnlyString* p_val = nullptr;
+                        DasPtr<IDasReadOnlyString> p_val;
                         if (DAS::IsOk(p_input_port_map->GetString(
                                 DasReadOnlyString(key_str.c_str()).Get(),
-                                &p_val))
+                                p_val.Put()))
                             && p_val)
                         {
-                            DasReadOnlyString val_reader(p_val);
+                            DasReadOnlyString val_reader{p_val.Get()};
                             auto arr = Das::Utils::MakeYyjsonArray();
                             arr.as_array()->emplace_back(
-                                yyjson::value(val_reader.GetUtf8()));
+                                yyjson::value(
+                                    std::string{val_reader.GetUtf8()}));
                             input.inputs[key_str] = std::move(arr);
-                            p_val->Release();
                         }
                     }
                     else if (type == ExportInterface::DAS_VARIANT_TYPE_INT)
@@ -279,7 +277,7 @@ namespace Plugins::DasMaaPi
 
         output_map->SetBool(
             DasReadOnlyString("stopped").Get(),
-            output.das_result != DAS_S_OK);
+            output.das_result == DAS_E_TIMEOUT);
 
         if (!output.diagnostics.empty())
         {

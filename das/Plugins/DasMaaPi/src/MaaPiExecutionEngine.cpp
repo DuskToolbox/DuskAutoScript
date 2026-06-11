@@ -143,19 +143,8 @@ namespace Das::Plugins::DasMaaPi
                     }
 
                     const auto& input_value = it->second;
-                    auto        serialized =
-                        Das::Utils::SerializeYyjsonValue(input_value);
-                    if (!serialized)
-                    {
-                        continue;
-                    }
-
-                    auto parsed =
-                        Das::Utils::ParseYyjsonFromString(*serialized);
-                    if (parsed)
-                    {
-                        (*pipeline_obj)[pi_param_name] = std::move(*parsed);
-                    }
+                    (*pipeline_obj)[pi_param_name] =
+                        Das::Utils::CloneYyjsonValue(input_value);
                 }
             }
         }
@@ -163,27 +152,12 @@ namespace Das::Plugins::DasMaaPi
         yyjson::value BuildCompletedTasksArray(
             const std::vector<std::string>& completed_tasks)
         {
-            std::string json = "[";
-            for (size_t i = 0; i < completed_tasks.size(); ++i)
+            auto arr = Das::Utils::MakeYyjsonArray();
+            for (const auto& task : completed_tasks)
             {
-                if (i > 0)
-                {
-                    json += ",";
-                }
-                json += "\"";
-                for (char ch : completed_tasks[i])
-                {
-                    if (ch == '"' || ch == '\\')
-                    {
-                        json += '\\';
-                    }
-                    json += ch;
-                }
-                json += "\"";
+                arr.as_array()->emplace_back(yyjson::value(std::string{task}));
             }
-            json += "]";
-            auto parsed = Das::Utils::ParseYyjsonFromString(json);
-            return parsed ? std::move(*parsed) : Das::Utils::MakeYyjsonArray();
+            return arr;
         }
 
     } // namespace
