@@ -357,9 +357,11 @@ namespace Das::Core::IPC::Host
                     uint8_t type =
                         entry.is_directory() ? uint8_t{1} : uint8_t{0};
                     entries_buf.push_back(type);
-                    SerializeString(
-                        entries_buf,
-                        entry.path().filename().string());
+                    auto        u8name = entry.path().filename().u8string();
+                    std::string name_u8(
+                        reinterpret_cast<const char*>(u8name.data()),
+                        u8name.size());
+                    SerializeString(entries_buf, name_u8);
                     auto        u8abs = entry.path().u8string();
                     std::string abs_u8(
                         reinterpret_cast<const char*>(u8abs.data()),
@@ -390,9 +392,11 @@ namespace Das::Core::IPC::Host
                     uint8_t type =
                         entry.is_directory() ? uint8_t{1} : uint8_t{0};
                     entries_buf.push_back(type);
-                    SerializeString(
-                        entries_buf,
-                        entry.path().filename().string());
+                    auto        u8name = entry.path().filename().u8string();
+                    std::string name_u8(
+                        reinterpret_cast<const char*>(u8name.data()),
+                        u8name.size());
+                    SerializeString(entries_buf, name_u8);
                     auto        u8abs = entry.path().u8string();
                     std::string abs_u8(
                         reinterpret_cast<const char*>(u8abs.data()),
