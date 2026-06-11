@@ -39,6 +39,11 @@ namespace Plugins::DasMaaPi
             return DAS_E_INVALID_POINTER;
         }
 
+        // Parse catalog once — shared across setValue/applyPreset and port
+        // derivation
+        std::vector<PiDiagnosticDto> diagnostics;
+        auto catalog = TryParseCatalog(settings_, diagnostics);
+
         if (auto request = ReadJson(p_request_json))
         {
             if (auto obj = request->as_object())
@@ -50,8 +55,6 @@ namespace Plugins::DasMaaPi
                         : std::string_view{};
                 if (kind == "setValue")
                 {
-                    std::vector<PiDiagnosticDto> diagnostics;
-                    auto catalog = TryParseCatalog(settings_, diagnostics);
                     ApplySetValueChange(
                         settings_,
                         *request,
@@ -59,8 +62,6 @@ namespace Plugins::DasMaaPi
                 }
                 else if (kind == "applyPreset")
                 {
-                    std::vector<PiDiagnosticDto> diagnostics;
-                    auto catalog = TryParseCatalog(settings_, diagnostics);
                     if (catalog && obj->contains(std::string_view("payload")))
                     {
                         if (auto payload =
@@ -83,7 +84,54 @@ namespace Plugins::DasMaaPi
         }
         ++revision_;
 
-        auto wrapped = WrapJson(BuildApplyResult(settings_, revision_, {}));
+        auto result_json = BuildApplyResult(settings_, revision_, {});
+
+        // Port derivation (D-05/D-06/D-07)
+        if (catalog && !settings_.pi.tasks.empty())
+        {
+            const auto& task_name = settings_.pi.tasks[0].task_name;
+            if (!task_name.empty())
+            {
+                auto port_definitions =
+                    DerivePortDefinitions(*catalog, task_name);
+                auto port_map = DerivePortMap(*catalog, task_name);
+
+                // Inject dynamic_ports into the result (D-07)
+                if (auto result_obj = result_json.as_object())
+                {
+                    (*result_obj)[std::string_view("dynamic_ports")] =
+                        BuildPortDefinitionsJson(port_definitions);
+
+                    // Inject portDefinitions and portMap into
+                    // acceptedProperties
+                    if (result_obj->contains(
+                            std::string_view("acceptedProperties")))
+                    {
+                        if (auto accepted =
+                                (*result_obj)[std::string_view(
+                                                  "acceptedProperties")]
+                                    .as_object())
+                        {
+                            (*accepted)[std::string_view("portDefinitions")] =
+                                BuildPortDefinitionsJson(port_definitions);
+
+                            yyjson::value port_map_json(
+                                Das::Utils::MakeYyjsonObject());
+                            auto pm_obj = port_map_json.as_object();
+                            for (const auto& [port_id, param_name] : port_map)
+                            {
+                                (*pm_obj)[std::string_view(port_id)] =
+                                    yyjson::value(param_name);
+                            }
+                            (*accepted)[std::string_view("portMap")] =
+                                std::move(port_map_json);
+                        }
+                    }
+                }
+            }
+        }
+
+        auto wrapped = WrapJson(std::move(result_json));
         *pp_out_result_json = wrapped.Get();
         (*pp_out_result_json)->AddRef();
         return DAS_S_OK;
