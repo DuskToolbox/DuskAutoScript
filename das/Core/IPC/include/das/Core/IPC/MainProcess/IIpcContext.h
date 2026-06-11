@@ -106,6 +106,41 @@ namespace Core
                     return DAS_E_NO_IMPLEMENTATION;
                 }
 
+                using FileListCallback =
+                    std::function<void(DasResult, const std::vector<uint8_t>&)>;
+                using FileContentCallback =
+                    std::function<void(DasResult, const std::vector<uint8_t>&)>;
+
+                virtual DasResult ListFilesAsync(
+                    uint16_t                  session_id,
+                    const char*               u8_relative_path,
+                    bool                      recursive,
+                    FileListCallback          callback,
+                    std::chrono::milliseconds timeout =
+                        std::chrono::seconds(10))
+                {
+                    (void)session_id;
+                    (void)u8_relative_path;
+                    (void)recursive;
+                    (void)callback;
+                    (void)timeout;
+                    return DAS_E_NO_IMPLEMENTATION;
+                }
+
+                virtual DasResult ReadFileAsync(
+                    uint16_t                  session_id,
+                    const char*               u8_relative_path,
+                    FileContentCallback       callback,
+                    std::chrono::milliseconds timeout =
+                        std::chrono::seconds(10))
+                {
+                    (void)session_id;
+                    (void)u8_relative_path;
+                    (void)callback;
+                    (void)timeout;
+                    return DAS_E_NO_IMPLEMENTATION;
+                }
+
                 /**
                  * @brief 将回调投递到 io_context 线程执行
                  *
@@ -279,6 +314,29 @@ namespace Core
              * @return IIpcContext* 上下文指针，失败返回 nullptr
              */
             DAS_API IIpcContext* CreateIpcContext(bool enable_heartbeat = true);
+
+            /**
+             * @brief WebSocket IPC 服务器配置
+             *
+             * 独立于 HttpIpcServer 的轻量配置结构，
+             * 避免在公共头文件中暴露 boost::beast 依赖。
+             */
+            struct WebSocketConfig
+            {
+                std::string listen_address = "127.0.0.1";
+                uint16_t    listen_port = 9527;
+            };
+
+            /**
+             * @brief 创建带 WebSocket 监听的主进程 IPC 上下文
+             *
+             * @param enable_heartbeat 是否启用心跳
+             * @param ws_config WebSocket 服务器配置
+             * @return IIpcContext* 上下文指针，失败返回 nullptr
+             */
+            DAS_API IIpcContext* CreateIpcContext(
+                bool            enable_heartbeat,
+                WebSocketConfig ws_config);
 
             /**
              * @brief 便捷创建函数（返回 unique_ptr）

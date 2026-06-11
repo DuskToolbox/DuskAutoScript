@@ -607,6 +607,144 @@ namespace Core
                 return DAS_S_OK;
             }
 
+            DasResult IpcContext::ListFilesAsync(
+                uint16_t                  session_id,
+                const char*               u8_relative_path,
+                bool                      recursive,
+                FileListCallback          callback,
+                std::chrono::milliseconds timeout)
+            {
+                if (!u8_relative_path || !callback)
+                {
+                    return DAS_E_INVALID_ARGUMENT;
+                }
+                if (session_id == 0)
+                {
+                    return DAS_E_INVALID_ARGUMENT;
+                }
+
+                if (!runloop_.connection_manager_)
+                {
+                    return DAS_E_IPC_NOT_INITIALIZED;
+                }
+
+                auto& conn_mgr = runloop_.GetConnectionManager();
+                auto [lookup_result, maybe_transport] =
+                    conn_mgr.FindManagedHostTransport(session_id);
+                if (DAS::IsFailed(lookup_result) || !maybe_transport)
+                {
+                    return DAS::IsFailed(lookup_result)
+                               ? lookup_result
+                               : DAS_E_IPC_OBJECT_NOT_FOUND;
+                }
+                AnyTransport& transport = maybe_transport->get();
+
+                std::string relative_path(u8_relative_path);
+                uint16_t path_len = static_cast<uint16_t>(relative_path.size());
+                uint8_t  recursive_flag = recursive ? 1 : 0;
+
+                std::vector<uint8_t> payload(
+                    sizeof(uint16_t) + path_len + sizeof(uint8_t));
+                std::memcpy(payload.data(), &path_len, sizeof(uint16_t));
+                std::memcpy(
+                    payload.data() + sizeof(uint16_t),
+                    relative_path.data(),
+                    path_len);
+                payload[sizeof(uint16_t) + path_len] = recursive_flag;
+
+                auto header = MakeBusinessControlRequest(
+                    IpcCommandType::LIST_FILE,
+                    static_cast<uint32_t>(payload.size()),
+                    session_id);
+
+                auto sender = runloop_.SendMessageAsync(
+                    transport,
+                    header,
+                    payload.data(),
+                    payload.size(),
+                    timeout);
+
+                auto cb = std::move(callback);
+                auto wait_result = DAS::Core::IPC::wait(std::move(sender));
+                if (!wait_result)
+                {
+                    cb(DAS_E_IPC_TIMEOUT, {});
+                    return DAS_S_OK;
+                }
+
+                auto [code, data, flags] = std::get<0>(*wait_result);
+                (void)flags;
+                cb(code, std::move(data));
+                return DAS_S_OK;
+            }
+
+            DasResult IpcContext::ReadFileAsync(
+                uint16_t                  session_id,
+                const char*               u8_relative_path,
+                FileContentCallback       callback,
+                std::chrono::milliseconds timeout)
+            {
+                if (!u8_relative_path || !callback)
+                {
+                    return DAS_E_INVALID_ARGUMENT;
+                }
+                if (session_id == 0)
+                {
+                    return DAS_E_INVALID_ARGUMENT;
+                }
+
+                if (!runloop_.connection_manager_)
+                {
+                    return DAS_E_IPC_NOT_INITIALIZED;
+                }
+
+                auto& conn_mgr = runloop_.GetConnectionManager();
+                auto [lookup_result, maybe_transport] =
+                    conn_mgr.FindManagedHostTransport(session_id);
+                if (DAS::IsFailed(lookup_result) || !maybe_transport)
+                {
+                    return DAS::IsFailed(lookup_result)
+                               ? lookup_result
+                               : DAS_E_IPC_OBJECT_NOT_FOUND;
+                }
+                AnyTransport& transport = maybe_transport->get();
+
+                std::string relative_path(u8_relative_path);
+                uint16_t path_len = static_cast<uint16_t>(relative_path.size());
+
+                std::vector<uint8_t> payload(sizeof(uint16_t) + path_len);
+                std::memcpy(payload.data(), &path_len, sizeof(uint16_t));
+                std::memcpy(
+                    payload.data() + sizeof(uint16_t),
+                    relative_path.data(),
+                    path_len);
+
+                auto header = MakeBusinessControlRequest(
+                    IpcCommandType::READ_FILE,
+                    static_cast<uint32_t>(payload.size()),
+                    session_id);
+
+                auto sender = runloop_.SendMessageAsync(
+                    transport,
+                    header,
+                    payload.data(),
+                    payload.size(),
+                    timeout);
+
+                auto cb = std::move(callback);
+                auto wait_result = DAS::Core::IPC::wait(std::move(sender));
+                if (!wait_result)
+                {
+                    cb(DAS_E_IPC_TIMEOUT, {});
+                    return DAS_S_OK;
+                }
+
+                auto [code, data, flags] = std::get<0>(*wait_result);
+                (void)flags;
+                cb(code, std::move(data));
+                return DAS_S_OK;
+            }
+
             DasResult IpcContext::Run()
             {
                 ScopedCurrentIpcContext scope(this);
@@ -677,6 +815,34 @@ namespace Core
                 {
                     DAS_CORE_LOG_ERROR(
                         "CreateIpcContext failed: unknown exception");
+                    return nullptr;
+                }
+            }
+
+            DAS_API IIpcContext* CreateIpcContext(
+                bool            enable_heartbeat,
+                WebSocketConfig ws_config)
+            {
+                try
+                {
+                    HttpIpcServer::Config http_config;
+                    http_config.listen_address = ws_config.listen_address;
+                    http_config.listen_port = ws_config.listen_port;
+                    auto* context{
+                        new IpcContext(enable_heartbeat, http_config)};
+                    return context;
+                }
+                catch (const std::exception& e)
+                {
+                    DAS_CORE_LOG_ERROR(
+                        "CreateIpcContext(WS) failed: {}",
+                        ToString(e.what()));
+                    return nullptr;
+                }
+                catch (...)
+                {
+                    DAS_CORE_LOG_ERROR(
+                        "CreateIpcContext(WS) failed: unknown exception");
                     return nullptr;
                 }
             }

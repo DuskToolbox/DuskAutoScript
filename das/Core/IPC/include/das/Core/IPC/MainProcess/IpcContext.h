@@ -84,6 +84,21 @@ namespace Core
                     std::chrono::milliseconds      timeout =
                         std::chrono::seconds(30)) override;
 
+                DasResult ListFilesAsync(
+                    uint16_t                  session_id,
+                    const char*               u8_relative_path,
+                    bool                      recursive,
+                    FileListCallback          callback,
+                    std::chrono::milliseconds timeout =
+                        std::chrono::seconds(10)) override;
+
+                DasResult ReadFileAsync(
+                    uint16_t                  session_id,
+                    const char*               u8_relative_path,
+                    FileContentCallback       callback,
+                    std::chrono::milliseconds timeout =
+                        std::chrono::seconds(10)) override;
+
                 void PostCallback(IDasAsyncCallback* callback) override;
 
                 void PostToBusinessThread(IDasAsyncCallback* callback) override;

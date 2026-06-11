@@ -21,7 +21,9 @@
 #include "./service/DasPluginManagerServiceImpl.h"
 #include "./service/DasProfileServiceImpl.h"
 #include <das/Core/IPC/CurrentIpcContextScope.h>
+#include <das/Core/IPC/HttpIpcServer.h>
 #include <das/Core/IPC/MainProcess/IpcContext.h>
+#include <das/Core/Logger/Logger.h>
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
 #include <das/_autogen/idl/abi/DasSettings.h>
@@ -71,8 +73,39 @@ namespace Das::Http
             return pd_cr;
         }
 
-        auto ipc_owner = DAS::Core::IPC::MainProcess::IpcContextPtr{
-            DAS::Core::IPC::MainProcess::CreateIpcContext(false)};
+        auto ipc_owner = [&]() -> DAS::Core::IPC::MainProcess::IpcContextPtr
+        {
+            const char* ws_port_env = std::getenv("DAS_IPC_WS_PORT");
+            if (ws_port_env && ws_port_env[0] != '\0')
+            {
+                try
+                {
+                    int port = std::stoi(ws_port_env);
+                    if (port <= 0 || port > 65535)
+                    {
+                        DAS_LOG_ERROR("DAS_IPC_WS_PORT out of range");
+                        return nullptr;
+                    }
+                    DAS::Core::IPC::MainProcess::WebSocketConfig ws_config;
+                    ws_config.listen_port = static_cast<uint16_t>(port);
+                    std::cout
+                        << "[DasHttp] DAS_IPC_WS_PORT set: creating WS-enabled IpcContext on port "
+                        << port << std::endl;
+                    return DAS::Core::IPC::MainProcess::IpcContextPtr{
+                        DAS::Core::IPC::MainProcess::CreateIpcContext(
+                            false,
+                            ws_config)};
+                }
+                catch (const std::exception& e)
+                {
+                    DAS_LOG_ERROR("Invalid DAS_IPC_WS_PORT value");
+                    return nullptr;
+                }
+            }
+            return DAS::Core::IPC::MainProcess::IpcContextPtr{
+                DAS::Core::IPC::MainProcess::CreateIpcContext(false)};
+        }();
+
         if (!ipc_owner)
         {
             DAS_LOG_ERROR("Failed to create IPC context");

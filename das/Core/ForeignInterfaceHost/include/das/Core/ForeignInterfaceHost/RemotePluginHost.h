@@ -3,13 +3,14 @@
 
 #include <das/Core/ForeignInterfaceHost/Config.h>
 #include <das/Core/ForeignInterfaceHost/RuntimeProvider.h>
-#include <das/Core/IPC/MainProcess/IIpcContext.h>
 #include <das/Core/IPC/MainProcess/IHostLauncher.h>
+#include <das/Core/IPC/MainProcess/IIpcContext.h>
 #include <das/DasSharedRef.hpp>
 
 #include <chrono>
 #include <filesystem>
 #include <functional>
+#include <optional>
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 
@@ -21,6 +22,9 @@ struct RemotePluginLoadRequest
     std::chrono::milliseconds      timeout{std::chrono::seconds{30}};
     std::function<void(uint16_t session_id, int exit_code)> on_process_exit;
     std::function<void(DasGuid guid)> on_heartbeat_timeout;
+
+    std::optional<uint16_t> target_session_id;
+    std::string             remote_manifest_path;
 };
 
 class IRemotePluginHost
