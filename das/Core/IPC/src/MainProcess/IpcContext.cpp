@@ -5,12 +5,14 @@
 #include <cassert>
 #include <cstring>
 #include <das/Core/ForeignInterfaceHost/DasGuid.h>
+#include <das/Core/ForeignInterfaceHost/PluginScanner.h>
 #include <das/Core/IPC/AsyncOperationImpl.h>
 #include <das/Core/IPC/ConnectionManager.h>
 #include <das/Core/IPC/CurrentIpcContextScope.h>
 #include <das/Core/IPC/DasAsyncSender.h>
 #include <das/Core/IPC/DasProxyBase.h>
 #include <das/Core/IPC/DistributedObjectManager.h>
+#include <das/Core/IPC/HandshakeSerialization.h>
 #include <das/Core/IPC/HostLauncher.h>
 #include <das/Core/IPC/HttpHost.h>
 #include <das/Core/IPC/HttpIpcTransport.h>
@@ -27,6 +29,7 @@
 #include <das/Core/Logger/Logger.h>
 #include <das/DasPtr.hpp>
 #include <das/IDasAsyncCallback.h>
+#include <das/Utils/DasJsonCore.h>
 #include <das/Utils/StringUtils.h>
 #include <das/Utils/fmt.h>
 
@@ -250,6 +253,23 @@ namespace Core
                                     "Host connected via HTTP: session_id={}, endpoint={}",
                                     session_id,
                                     endpoint_name);
+
+                                // Trigger remote plugin discovery
+                                // asynchronously
+                                boost::asio::post(
+                                    runloop_.GetIoContext(),
+                                    [this, session_id]()
+                                    {
+                                        auto result =
+                                            DiscoverRemotePlugins(session_id);
+                                        if (DAS::IsFailed(result))
+                                        {
+                                            DAS_CORE_LOG_WARN(
+                                                "DiscoverRemotePlugins failed for session_id={}, result={}",
+                                                session_id,
+                                                result);
+                                        }
+                                    });
                             },
                             boost::asio::detached);
                     }
@@ -1371,6 +1391,232 @@ namespace Core
                 // 3. Release from DistributedObjectManager
                 proxy_factory_->GetObjectManager().UnregisterObject(
                     info.object_id);
+                return DAS_S_OK;
+            }
+
+            bool IpcContext::IsWebSocketSession(uint16_t session_id) const
+            {
+                return http_session_ids_.count(session_id) > 0;
+            }
+
+            DasResult IpcContext::DiscoverRemotePlugins(uint16_t session_id)
+            {
+                if (!IsWebSocketSession(session_id))
+                {
+                    return DAS_S_OK;
+                }
+
+                DAS_CORE_LOG_INFO(
+                    "DiscoverRemotePlugins: starting for session_id={}",
+                    session_id);
+
+                // IpcFileProvider implements the duck-typed FileProvider
+                // interface required by ScanPluginsWith
+                class IpcFileProvider
+                {
+                    IpcContext& ctx_;
+                    uint16_t    session_id_;
+                    std::string base_path_u8_;
+
+                public:
+                    explicit IpcFileProvider(
+                        IpcContext& ctx,
+                        uint16_t    session_id)
+                        : ctx_(ctx), session_id_(session_id)
+                    {
+                    }
+
+                    std::vector<DAS::Core::ForeignInterfaceHost::FileEntry>
+                    ListDirectory(
+                        const std::string& relative_path_u8,
+                        bool               recursive)
+                    {
+                        std::vector<DAS::Core::ForeignInterfaceHost::FileEntry>
+                            result;
+
+                        std::vector<uint8_t> response_data;
+                        auto                 list_result = ctx_.ListFilesAsync(
+                            session_id_,
+                            relative_path_u8.c_str(),
+                            recursive,
+                            [&response_data](
+                                DasResult                   code,
+                                const std::vector<uint8_t>& data)
+                            {
+                                if (DAS::IsOk(code))
+                                {
+                                    response_data = data;
+                                }
+                            });
+
+                        if (DAS::IsFailed(list_result) || response_data.empty())
+                        {
+                            return result;
+                        }
+
+                        // Parse: SerializeString(working_path) + uint16_t
+                        // entry_count + [uint8_t type +
+                        // SerializeString(name) +
+                        // SerializeString(absolute_path)]
+                        size_t      offset = 0;
+                        std::string working_path;
+                        if (!DAS::Core::IPC::DeserializeString(
+                                response_data,
+                                offset,
+                                working_path,
+                                4096))
+                        {
+                            return result;
+                        }
+                        base_path_u8_ = working_path;
+
+                        uint16_t entry_count = 0;
+                        if (!DAS::Core::IPC::DeserializeValue(
+                                response_data,
+                                offset,
+                                entry_count))
+                        {
+                            return result;
+                        }
+
+                        for (uint16_t i = 0; i < entry_count; ++i)
+                        {
+                            uint8_t type = 0;
+                            if (!DAS::Core::IPC::DeserializeValue(
+                                    response_data,
+                                    offset,
+                                    type))
+                            {
+                                break;
+                            }
+                            std::string name;
+                            if (!DAS::Core::IPC::DeserializeString(
+                                    response_data,
+                                    offset,
+                                    name,
+                                    1024))
+                            {
+                                break;
+                            }
+                            std::string abs_path;
+                            if (!DAS::Core::IPC::DeserializeString(
+                                    response_data,
+                                    offset,
+                                    abs_path,
+                                    4096))
+                            {
+                                break;
+                            }
+
+                            result.push_back({
+                                .name = std::move(name),
+                                .absolute_path = std::move(abs_path),
+                                .is_directory = (type == 1),
+                            });
+                        }
+
+                        return result;
+                    }
+
+                    std::string ReadFile(const std::string& relative_path_u8)
+                    {
+                        std::string content;
+
+                        std::vector<uint8_t> response_data;
+                        auto                 read_result = ctx_.ReadFileAsync(
+                            session_id_,
+                            relative_path_u8.c_str(),
+                            [&response_data](
+                                DasResult                   code,
+                                const std::vector<uint8_t>& data)
+                            {
+                                if (DAS::IsOk(code))
+                                {
+                                    response_data = data;
+                                }
+                            });
+
+                        if (DAS::IsFailed(read_result)
+                            || response_data.size() < sizeof(uint32_t))
+                        {
+                            return content;
+                        }
+
+                        // Parse: uint32_t content_size + raw bytes
+                        uint32_t content_size = 0;
+                        std::memcpy(
+                            &content_size,
+                            response_data.data(),
+                            sizeof(uint32_t));
+                        if (response_data.size()
+                            < sizeof(uint32_t) + content_size)
+                        {
+                            return content;
+                        }
+
+                        content.assign(
+                            reinterpret_cast<const char*>(
+                                response_data.data() + sizeof(uint32_t)),
+                            content_size);
+                        return content;
+                    }
+
+                    std::string GetBasePath() const { return base_path_u8_; }
+                };
+
+                IpcFileProvider provider(*this, session_id);
+
+                auto descs =
+                    DAS::Core::ForeignInterfaceHost::ScanPluginsWith(provider);
+
+                DAS_CORE_LOG_INFO(
+                    "DiscoverRemotePlugins: found {} plugin(s) on session_id={}",
+                    descs.size(),
+                    session_id);
+
+                for (const auto& desc : descs)
+                {
+                    // Find the manifest absolute_path from the
+                    // ScanPluginsWith result. The manifest_path field is set
+                    // in ScanPluginsWith via absolute_path from FileEntry.
+                    std::string manifest_abs_path;
+                    // Re-discover the absolute path by scanning the entries
+                    // from the provider. For simplicity, look for the
+                    // manifest in the desc's name.
+                    if (manifest_abs_path.empty())
+                    {
+                        // Use the provider's base path + plugin directory
+                        // structure
+                        auto base = provider.GetBasePath();
+                        if (!base.empty())
+                        {
+                            // The ScanPluginsWith template populates
+                            // desc.manifest_path through FileEntry This is
+                            // the absolute path on the remote Host's
+                            // filesystem
+                        }
+                    }
+
+                    // Try to load the plugin via session-based LoadPluginAsync
+                    DAS::DasPtr<IDasAsyncLoadPluginOperation> op;
+                    // For remote discovery, we need the manifest absolute
+                    // path on the remote Host. ScanPluginsWith stores it via
+                    // FileEntry::absolute_path. Unfortunately the current
+                    // PluginPackageDesc doesn't store manifest_path as a
+                    // string field with the absolute path. We need to use
+                    // the provider to look it up again.
+                    //
+                    // Actually, looking at the ScanPluginsWith template code,
+                    // for directory mode it doesn't store manifest_path.
+                    // For now, we construct it from the provider's directory
+                    // listing.
+                    DAS_CORE_LOG_WARN(
+                        "DiscoverRemotePlugins: plugin '{}' found but "
+                        "auto-load not yet wired (needs manifest_path "
+                        "field)",
+                        desc.name);
+                }
+
                 return DAS_S_OK;
             }
 

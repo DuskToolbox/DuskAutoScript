@@ -212,6 +212,14 @@ namespace Core
                 DasResult ResolveMainProcessInterfaceByNameImpl(
                     const std::string& name,
                     IDasBase**         pp_out_object);
+
+                /// Check whether the given session_id is a WebSocket (HTTP)
+                /// session
+                bool IsWebSocketSession(uint16_t session_id) const;
+
+                /// Discover remote plugins on a WebSocket-connected Host
+                /// using LIST_FILE + READ_FILE + ScanPluginsWith
+                DasResult DiscoverRemotePlugins(uint16_t session_id);
             };
 
         } // namespace MainProcess
