@@ -258,22 +258,19 @@ namespace Das::Plugins::DasMaaPi
 
         auto runtime_result = MaaRuntime::Run(envelope, boundary, stop_token);
 
+        output.completed_tasks = std::move(runtime_result.completed_tasks);
+        output.diagnostics = std::move(runtime_result.diagnostics);
+        output.outputs["completedTasks"] =
+            BuildCompletedTasksArray(output.completed_tasks);
+
         if (runtime_result.das_result != DAS_S_OK)
         {
             output.das_result = DAS_E_MAAPI_EXECUTION_FAILED;
             output.error_message = "MaaFramework execution failed";
-            output.completed_tasks = std::move(runtime_result.completed_tasks);
-            output.diagnostics = std::move(runtime_result.diagnostics);
             return output;
         }
 
         output.das_result = DAS_S_OK;
-        output.completed_tasks = std::move(runtime_result.completed_tasks);
-        output.diagnostics = std::move(runtime_result.diagnostics);
-
-        output.outputs["completedTasks"] =
-            BuildCompletedTasksArray(output.completed_tasks);
-
         return output;
     }
 

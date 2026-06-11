@@ -253,28 +253,6 @@ namespace Plugins::DasMaaPi
         EngineOutput         output =
             engine.Execute(input, MaaApiBoundaryForRuntime(), stop_token);
 
-        if (!output.completed_tasks.empty())
-        {
-            auto arr = Das::Utils::MakeYyjsonArray();
-            for (const auto& task : output.completed_tasks)
-            {
-                arr.as_array()->emplace_back(yyjson::value(std::string{task}));
-            }
-            auto serialized = Das::Utils::SerializeYyjsonValue(arr);
-            if (serialized)
-            {
-                output_map->SetString(
-                    DasReadOnlyString("completedTasks").Get(),
-                    DasReadOnlyString(serialized->c_str()).Get());
-            }
-        }
-        else
-        {
-            output_map->SetString(
-                DasReadOnlyString("completedTasks").Get(),
-                DasReadOnlyString("[]").Get());
-        }
-
         output_map->SetBool(
             DasReadOnlyString("stopped").Get(),
             output.das_result == DAS_E_TIMEOUT);
