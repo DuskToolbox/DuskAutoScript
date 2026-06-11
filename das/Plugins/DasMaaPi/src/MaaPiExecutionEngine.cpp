@@ -265,8 +265,12 @@ namespace Das::Plugins::DasMaaPi
 
         if (runtime_result.das_result != DAS_S_OK)
         {
-            output.das_result = DAS_E_MAAPI_EXECUTION_FAILED;
-            output.error_message = "MaaFramework execution failed";
+            output.das_result = runtime_result.stopped
+                                    ? DAS_E_TIMEOUT
+                                    : DAS_E_MAAPI_EXECUTION_FAILED;
+            output.error_message = runtime_result.stopped
+                                       ? "Execution stopped"
+                                       : "MaaFramework execution failed";
             return output;
         }
 
