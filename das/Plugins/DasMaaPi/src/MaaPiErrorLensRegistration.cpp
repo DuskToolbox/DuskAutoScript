@@ -1,9 +1,10 @@
 #include "MaaPiErrorLensRegistration.h"
 
-#include <das/Core/Logger/Logger.h>
 #include <das/DasApi.h>
 #include <das/DasString.hpp>
 #include <das/Plugins/DasMaaPi/MaaPiErrorCodes.h>
+
+#include <spdlog/spdlog.h>
 
 DAS_NS_BEGIN
 
@@ -27,7 +28,7 @@ namespace Plugins::DasMaaPi
             if (DAS::IsFailed(result))
             {
                 // 记录注册失败的错误码，但继续注册剩余消息
-                DAS_CORE_LOG_ERROR(
+                SPDLOG_ERROR(
                     "MaaPi ErrorLens: failed to register error_code={}, "
                     "locale='{}', result={}",
                     error_code,
@@ -44,7 +45,7 @@ namespace Plugins::DasMaaPi
         const auto hr = CreateIDasBasicErrorLens(lens.Put());
         if (DAS::IsFailed(hr))
         {
-            DAS_CORE_LOG_ERROR(
+            SPDLOG_ERROR(
                 "MaaPi ErrorLens: CreateIDasBasicErrorLens failed, result={}",
                 hr);
             return nullptr;

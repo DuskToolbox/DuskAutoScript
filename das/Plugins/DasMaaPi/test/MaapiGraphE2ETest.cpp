@@ -86,10 +86,9 @@ namespace
                 return DAS_E_INVALID_POINTER;
             }
 
-            auto guid_str = Das::Core::ForeignInterfaceHost::DasGuidToStdString(
-                component_guid);
+            auto guid_str = DasGuidToString(component_guid);
 
-            if (guid_str != kMaapiRunTaskGuid)
+            if (guid_str.GetUtf8() != kMaapiRunTaskGuid)
             {
                 *pp_out_component = nullptr;
                 return DAS_E_NOT_FOUND;
