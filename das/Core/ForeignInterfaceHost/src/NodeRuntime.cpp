@@ -1,3 +1,5 @@
+#define _CRT_SECURE_NO_WARNINGS
+
 #include <das/Core/ForeignInterfaceHost/NodeRuntime.h>
 
 #include <das/DasApi.h>
@@ -8,21 +10,11 @@
 #include <tl/expected.hpp>
 #include <utility>
 
-#ifdef _WIN32
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#include <windows.h>
-#define DAS_NODE_RUNTIME_CURRENT_PROCESS_ID() GetCurrentProcessId()
-#else
-#include <unistd.h>
-#define DAS_NODE_RUNTIME_CURRENT_PROCESS_ID() getpid()
-#endif
-
 DAS_DISABLE_WARNING_BEGIN
 DAS_IGNORE_BOOST_PROCESS_WARNING
 
 #include <boost/process/v2/environment.hpp>
+#include <boost/process/v2/pid.hpp>
 
 DAS_DISABLE_WARNING_END
 
@@ -275,7 +267,7 @@ auto NodeRuntime::BuildHostLaunchDesc() const
         result.package_paths.host_script_path.string(),
         "--main-pid",
         std::to_string(
-            static_cast<uint32_t>(DAS_NODE_RUNTIME_CURRENT_PROCESS_ID())),
+            static_cast<uint32_t>(boost::process::v2::current_pid())),
         "--package-root",
         result.package_paths.package_root.string(),
         "--node-modules-root",

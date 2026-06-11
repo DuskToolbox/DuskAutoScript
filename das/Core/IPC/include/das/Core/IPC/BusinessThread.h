@@ -30,7 +30,7 @@ DAS_API BusinessThread* GetCurrentBusinessThread() noexcept;
  * 从 inbound queue 取消息并 dispatch 到 handler。
  * 支持 PumpUntilResponse 用于嵌套 pump（Phase 24 Proxy 调用）。
  */
-class DAS_API BusinessThread
+class BusinessThread
     : public std::enable_shared_from_this<BusinessThread>
 {
 public:

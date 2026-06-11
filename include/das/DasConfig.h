@@ -78,7 +78,7 @@
 
 #define DAS_IGNORE_BOOST_PROCESS_WARNING                                       \
     DAS_IGNORE_UNUSED_PARAMETER                                                \
-    DAS_PRAGMA(warning(disable : 4245))
+    DAS_PRAGMA(warning(disable : 4245 4456))
 
 #elif defined(__clang__)
 #define DAS_DISABLE_WARNING_BEGIN DAS_PRAGMA(clang diagnostic push)

@@ -2,8 +2,11 @@
  * @file HostLauncher.cpp
  * @brief Host 进程启动器实现
  */
+#define _CRT_SECURE_NO_WARNINGS
 
+#include <cassert>
 #include <cctype>
+#include <chrono>
 #include <das/Core/IPC/AsyncIpcTransport.h>
 #include <das/Core/IPC/Config.h>
 #include <das/Core/IPC/Handshake.h>
@@ -20,30 +23,11 @@
 #include <das/Utils/DasJsonCore.h>
 #include <das/Utils/StringUtils.h>
 #include <das/Utils/fmt.h>
+#include <filesystem>
+#include <limits>
 #include <map>
 #include <optional>
 #include <thread>
-
-// 获取当前进程 PID 的跨平台方法
-#ifdef _WIN32
-// 必须在 windows.h 之前定义，避免 WinSock 冲突
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#include <windows.h>
-#define GET_CURRENT_PID() GetCurrentProcessId()
-#else
-#include <unistd.h>
-#define GET_CURRENT_PID() getpid()
-#endif
-
-// Disable warnings from boost::process headers
-#ifdef _MSC_VER
-#pragma warning(push)
-#pragma warning(disable : 4100) // unreferenced formal parameter
-#pragma warning(disable : 4459) // declaration hides global declaration
-#pragma warning(disable : 4244) // conversion, possible loss of data
-#endif
 
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
@@ -52,23 +36,16 @@
 #include <boost/asio/steady_timer.hpp>
 #include <boost/asio/use_awaitable.hpp>
 #include <boost/asio/use_future.hpp>
-#include <boost/interprocess/exceptions.hpp>
-#include <boost/interprocess/ipc/message_queue.hpp>
+
+DAS_DISABLE_WARNING_BEGIN
+DAS_IGNORE_BOOST_PROCESS_WARNING
 #include <boost/process/v2/environment.hpp>
 #include <boost/process/v2/pid.hpp>
 #include <boost/process/v2/process.hpp>
 #include <boost/process/v2/start_dir.hpp>
 #include <boost/system/error_code.hpp>
+DAS_DISABLE_WARNING_END
 
-#ifdef _MSC_VER
-#pragma warning(pop)
-#endif
-
-#include <cassert>
-#include <chrono>
-#include <filesystem>
-#include <limits>
-#include <thread>
 DAS_CORE_IPC_NS_BEGIN
 
 /**
@@ -490,7 +467,8 @@ DasResult HostLauncher::Start(
     }
 
     // 获取当前进程 PID（主进程 PID）
-    uint32_t main_pid = static_cast<uint32_t>(GET_CURRENT_PID());
+    uint32_t main_pid =
+        static_cast<uint32_t>(boost::process::v2::current_pid());
 
     std::string pid_msg = DAS_FMT_NS::format(
         "HostLauncher::Start - Main process PID: {}",
@@ -1026,7 +1004,8 @@ DasResult HostLauncher::WaitForHostReady(uint32_t timeout_ms)
 
 DasResult HostLauncher::ConnectToHost(uint32_t timeout_ms)
 {
-    uint32_t main_pid = static_cast<uint32_t>(GET_CURRENT_PID());
+    uint32_t main_pid =
+        static_cast<uint32_t>(boost::process::v2::current_pid());
     uint32_t host_pid = impl_->pid;
 
     std::string host_to_plugin_pipe =
@@ -1155,7 +1134,7 @@ boost::asio::awaitable<DasResult> HostLauncher::SendHandshakeHelloAsync(
         co_return DAS_E_IPC_NOT_INITIALIZED;
     }
 
-    uint32_t my_pid = static_cast<uint32_t>(GET_CURRENT_PID());
+    uint32_t my_pid = static_cast<uint32_t>(boost::process::v2::current_pid());
 
     // session_id 已在构造时预分配
     uint16_t assigned_session_id = session_id_;
@@ -1607,7 +1586,8 @@ boost::asio::awaitable<DasResult> HostLauncher::WaitForHostReadyAsync(
 
 boost::asio::awaitable<DasResult> HostLauncher::ConnectToHostAsync()
 {
-    uint32_t main_pid = static_cast<uint32_t>(GET_CURRENT_PID());
+    uint32_t main_pid =
+        static_cast<uint32_t>(boost::process::v2::current_pid());
     uint32_t host_pid = impl_->pid;
 
     std::string host_to_plugin_pipe =
@@ -1695,7 +1675,8 @@ boost::asio::awaitable<void> HostLauncher::RunAsync(
             co_return;
         }
 
-        uint32_t main_pid = static_cast<uint32_t>(GET_CURRENT_PID());
+        uint32_t main_pid =
+            static_cast<uint32_t>(boost::process::v2::current_pid());
         std::vector<std::string> args;
         args.push_back("--main-pid");
         args.push_back(std::to_string(main_pid));
