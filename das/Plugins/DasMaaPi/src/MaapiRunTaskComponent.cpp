@@ -262,8 +262,8 @@ namespace Plugins::DasMaaPi
             auto diag_arr = Das::Utils::MakeYyjsonArray();
             for (const auto& d : output.diagnostics)
             {
-                auto obj = Das::Utils::MakeYyjsonObject();
-                auto o = obj.as_object();
+                auto diag_obj = Das::Utils::MakeYyjsonObject();
+                auto o = diag_obj.as_object();
                 (*o)[std::string_view("severity")] = std::make_pair(
                     std::string_view(d.severity),
                     yyjson::copy_string);
