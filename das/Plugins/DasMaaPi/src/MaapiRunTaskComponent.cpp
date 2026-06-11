@@ -264,9 +264,15 @@ namespace Plugins::DasMaaPi
             {
                 auto obj = Das::Utils::MakeYyjsonObject();
                 auto o = obj.as_object();
-                (*o)["severity"] = yyjson::value(d.severity);
-                (*o)["code"] = yyjson::value(d.code);
-                (*o)["message"] = yyjson::value(std::string{d.message});
+                (*o)[std::string_view("severity")] = std::make_pair(
+                    std::string_view(d.severity),
+                    yyjson::copy_string);
+                (*o)[std::string_view("code")] = std::make_pair(
+                    std::string_view(d.code),
+                    yyjson::copy_string);
+                (*o)[std::string_view("message")] = std::make_pair(
+                    std::string_view(d.message),
+                    yyjson::copy_string);
                 diag_arr.as_array()->emplace_back(std::move(obj));
             }
             auto serialized = Das::Utils::SerializeYyjsonValue(diag_arr);

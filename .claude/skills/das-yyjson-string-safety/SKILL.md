@@ -48,24 +48,28 @@ yyjson_mut_write_minify          →  reads freed memory → ASAN: heap-use-afte
 Zero extra heap allocations. `string_view` is a pointer+length pair (no heap), and `copy_string` triggers `yyjson_mut_strncpy` to copy directly into the yyjson document pool.
 
 ```cpp
-(*obj)[std::string_view("name")] =
+(*obj)["name"] =
     std::make_pair(std::string_view(desc.name), yyjson::copy_string);
 ```
 
 This uses the `pair_like` + `copy_string_t` overload in `mutable_value_base::operator=`, which calls `set_value(val, std::get<0>(pair), copy_string)` → `create_primitive(std::string_view, copy_string_t)` → `yyjson_mut_strncpy`.
+
+> **Note**: `const char*` implicitly converts to `std::string_view`, so `(*obj)["key"]` works identically to `(*obj)[std::string_view("key")]`. Use the shorter form.
+>
+> **Note**: This pattern only works for `operator=` on `mutable_value_base` (object key/value assignment). `mutable_array::emplace_back` does NOT have the `pair_like` overload — for arrays, use `emplace_back(yyjson::value(std::string{str}))` instead.
 
 ### Acceptable: `std::string(str)` temporary
 
 Constructs a temporary rvalue `std::string`, which triggers the rvalue path (`std::is_rvalue_reference_v<T&&> = true`) → `yyjson_mut_strncpy`. One extra heap allocation for the temporary, but correct.
 
 ```cpp
-(*obj)[std::string_view("name")] = std::string(desc.name);
+(*obj)["name"] = std::string(desc.name);
 ```
 
 ### Explicit `std::make_pair` (verbose but clear)
 
 ```cpp
-(*obj)[std::string_view("name")] =
+(*obj)["name"] =
     std::make_pair(std::string(desc.name), yyjson::copy_string);
 ```
 
@@ -79,14 +83,14 @@ MSVC cannot deduce the template parameter `T` from a braced-init-list for the `p
 
 ```cpp
 // ❌ MSVC: error C2679: no operator= accepts initializer list
-(*obj)[std::string_view("name")] = {desc.name, yyjson::copy_string};
+(*obj)["name"] = {desc.name, yyjson::copy_string};
 ```
 
 ### Direct lvalue assignment — heap-use-after-free
 
 ```cpp
 // ❌ Stores raw pointer — dangling after source string dies
-(*obj)[std::string_view("name")] = desc.name;
+(*obj)["name"] = desc.name;
 ```
 
 ## Safe Patterns (No Special Handling Needed)
