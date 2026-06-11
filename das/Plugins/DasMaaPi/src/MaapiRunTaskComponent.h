@@ -80,6 +80,9 @@ namespace Plugins::DasMaaPi
         : public PluginInterface::DasTaskComponentImplBase<
               MaapiRunTaskComponent>
     {
+        yyjson::value settings_;
+        bool          settings_applied_ = false;
+
     public:
         DAS_IMPL GetGuid(DasGuid* p_out_guid) override;
         DAS_IMPL GetRuntimeClassName(IDasReadOnlyString** pp_out_name) override;
