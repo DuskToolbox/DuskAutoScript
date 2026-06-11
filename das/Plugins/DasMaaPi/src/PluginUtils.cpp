@@ -293,10 +293,15 @@ namespace Plugins::DasMaaPi
         {
             yyjson::value obj(Das::Utils::MakeYyjsonObject());
             auto          o = obj.as_object();
-            (*o)[std::string_view("portId")] = yyjson::value(port.port_id);
-            (*o)[std::string_view("displayLabel")] =
-                yyjson::value(port.display_label);
-            (*o)[std::string_view("portType")] = yyjson::value(port.port_type);
+            (*o)[std::string_view("portId")] = std::make_pair(
+                std::string_view(port.port_id),
+                yyjson::copy_string);
+            (*o)[std::string_view("displayLabel")] = std::make_pair(
+                std::string_view(port.display_label),
+                yyjson::copy_string);
+            (*o)[std::string_view("portType")] = std::make_pair(
+                std::string_view(port.port_type),
+                yyjson::copy_string);
             (*o)[std::string_view("isRequired")] = port.is_required;
 
             // default_value: copy as yyjson value

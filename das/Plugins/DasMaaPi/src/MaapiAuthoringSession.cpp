@@ -121,7 +121,9 @@ namespace Plugins::DasMaaPi
                             for (const auto& [port_id, param_name] : port_map)
                             {
                                 (*pm_obj)[std::string_view(port_id)] =
-                                    yyjson::value(param_name);
+                                    std::make_pair(
+                                        std::string_view(param_name),
+                                        yyjson::copy_string);
                             }
                             (*accepted)[std::string_view("portMap")] =
                                 std::move(port_map_json);

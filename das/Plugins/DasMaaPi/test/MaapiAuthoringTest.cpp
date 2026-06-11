@@ -2,19 +2,37 @@
 #include <das/Core/ForeignInterfaceHost/ForeignInterfaceHost.h>
 #include <das/Core/ForeignInterfaceHost/IForeignLanguageRuntime.h>
 #include <das/Core/ForeignInterfaceHost/PluginManager.h>
+#include <das/Core/GraphRuntime/GraphDocument.h>
 #include <das/Core/IPC/MainProcess/IpcContext.h>
 #include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <das/Core/SettingsManager/SettingsManager.h>
 #include <das/DasApi.h>
 #include <das/Plugins/DasMaaPi/MaapiDto.h>
+#include <das/Plugins/DasMaaPi/PiCatalog.h>
 #include <das/Utils/DasJsonCore.h>
 #include <das/_autogen/idl/abi/IDasTaskAuthoring.h>
 #include <gtest/gtest.h>
 
 #include <chrono>
 #include <filesystem>
+#include <map>
 #include <memory>
 #include <string>
+
+// Forward declarations for PluginUtils functions (linked from PluginUtils.cpp)
+namespace Das::Plugins::DasMaaPi
+{
+    std::vector<Core::GraphRuntime::Dto::GraphPortDefinitionDto>
+    DerivePortDefinitions(const PiCatalog& catalog, const std::string& task_name);
+
+    std::map<std::string, std::string> DerivePortMap(
+        const PiCatalog& catalog,
+        const std::string& task_name);
+
+    yyjson::value BuildPortDefinitionsJson(
+        const std::vector<Core::GraphRuntime::Dto::GraphPortDefinitionDto>&
+            ports);
+} // namespace Das::Plugins::DasMaaPi
 
 namespace
 {
@@ -509,4 +527,253 @@ TEST_F(MaapiAuthoringFixture, PresetAndOrphansProjectIntoSettings)
     ASSERT_TRUE(orphans.has_value());
     ASSERT_EQ(orphans->size(), 1u);
     EXPECT_EQ((*orphans)[0].as_string().value_or(""), "pi.tasks:MissingTask");
+}
+
+// ---------------------------------------------------------------------------
+// Port derivation tests (D-05/D-06/D-07)
+// ---------------------------------------------------------------------------
+
+namespace
+{
+    using PortDefinition = Das::Core::GraphRuntime::Dto::GraphPortDefinitionDto;
+
+    PiOption MakeMockSelectOption(
+        const std::string&              name,
+        const std::vector<std::string>& case_names)
+    {
+        PiOption option;
+        option.dto.name = name;
+        option.dto.type = "select";
+        option.dto.label = name + "_label";
+        for (const auto& cn : case_names)
+        {
+            PiCaseDto c;
+            c.name = cn;
+            option.dto.cases.push_back(std::move(c));
+        }
+        return option;
+    }
+
+    PiOption MakeMockCheckboxOption(const std::string& name)
+    {
+        PiOption option;
+        option.dto.name = name;
+        option.dto.type = "checkbox";
+        option.dto.label = name + "_label";
+        return option;
+    }
+
+    PiOption MakeMockInputOption(
+        const std::string& name,
+        const std::string& pipeline_type)
+    {
+        PiOption option;
+        option.dto.name = name;
+        option.dto.type = "input";
+        option.dto.label = name + "_label";
+        PiInputDto input;
+        input.name = name + "_input";
+        input.pipeline_type = pipeline_type;
+        option.dto.inputs.push_back(std::move(input));
+        return option;
+    }
+
+    PiOption MakeMockSwitchOption(const std::string& name)
+    {
+        PiOption option;
+        option.dto.name = name;
+        option.dto.type = "switch";
+        option.dto.label = name + "_label";
+        return option;
+    }
+
+    PiCatalog MakeMockCatalog(
+        const std::string&          task_name,
+        const std::vector<PiOption> options)
+    {
+        PiCatalog catalog;
+        PiTask    task;
+        task.dto.name = task_name;
+        for (const auto& opt : options)
+        {
+            task.dto.option.push_back(opt.dto.name);
+        }
+        catalog.tasks.push_back(std::move(task));
+        catalog.options = std::move(options);
+        return catalog;
+    }
+
+    const PortDefinition* FindPort(
+        const std::vector<PortDefinition>& ports,
+        const std::string&                 port_id)
+    {
+        for (const auto& p : ports)
+        {
+            if (p.port_id == port_id)
+            {
+                return &p;
+            }
+        }
+        return nullptr;
+    }
+} // namespace
+
+TEST(PortDerivationTest, SelectOptionProducesStringPort)
+{
+    auto catalog = MakeMockCatalog(
+        "TestTask",
+        {MakeMockSelectOption("screenshot_mode", {"case_a", "case_b"})});
+
+    auto ports =
+        Das::Plugins::DasMaaPi::DerivePortDefinitions(catalog, "TestTask");
+
+    ASSERT_GE(ports.size(), 1u);
+
+    const auto* main_port = FindPort(ports, "screenshot_mode");
+    ASSERT_NE(main_port, nullptr);
+    EXPECT_EQ(main_port->port_type, "string");
+
+    const auto* child_a = FindPort(ports, "screenshot_mode_case_a");
+    ASSERT_NE(child_a, nullptr);
+    EXPECT_EQ(child_a->port_type, "string");
+
+    const auto* child_b = FindPort(ports, "screenshot_mode_case_b");
+    ASSERT_NE(child_b, nullptr);
+    EXPECT_EQ(child_b->port_type, "string");
+}
+
+TEST(PortDerivationTest, CheckboxProducesArrayStringPort)
+{
+    auto catalog =
+        MakeMockCatalog("TestTask", {MakeMockCheckboxOption("items")});
+
+    auto ports =
+        Das::Plugins::DasMaaPi::DerivePortDefinitions(catalog, "TestTask");
+
+    ASSERT_EQ(ports.size(), 1u);
+    EXPECT_EQ(ports[0].port_id, "items");
+    EXPECT_EQ(ports[0].port_type, "array<string>");
+}
+
+TEST(PortDerivationTest, InputIntProducesIntPort)
+{
+    auto catalog = MakeMockCatalog(
+        "TestTask",
+        {MakeMockInputOption("retry_count", "int")});
+
+    auto ports =
+        Das::Plugins::DasMaaPi::DerivePortDefinitions(catalog, "TestTask");
+
+    ASSERT_EQ(ports.size(), 1u);
+    EXPECT_EQ(ports[0].port_id, "retry_count");
+    EXPECT_EQ(ports[0].port_type, "int");
+}
+
+TEST(PortDerivationTest, InputStringProducesStringPort)
+{
+    auto catalog = MakeMockCatalog(
+        "TestTask",
+        {MakeMockInputOption("output_dir", "string")});
+
+    auto ports =
+        Das::Plugins::DasMaaPi::DerivePortDefinitions(catalog, "TestTask");
+
+    ASSERT_EQ(ports.size(), 1u);
+    EXPECT_EQ(ports[0].port_id, "output_dir");
+    EXPECT_EQ(ports[0].port_type, "string");
+}
+
+TEST(PortDerivationTest, SwitchProducesBoolPort)
+{
+    auto catalog =
+        MakeMockCatalog("TestTask", {MakeMockSwitchOption("notify")});
+
+    auto ports =
+        Das::Plugins::DasMaaPi::DerivePortDefinitions(catalog, "TestTask");
+
+    ASSERT_EQ(ports.size(), 1u);
+    EXPECT_EQ(ports[0].port_id, "notify");
+    EXPECT_EQ(ports[0].port_type, "bool");
+}
+
+TEST(PortDerivationTest, PortMapCreatesCorrectMapping)
+{
+    auto catalog = MakeMockCatalog(
+        "TestTask",
+        {MakeMockSelectOption("screenshot_mode", {"case_a", "case_b"})});
+
+    auto port_map = Das::Plugins::DasMaaPi::DerivePortMap(catalog, "TestTask");
+
+    EXPECT_EQ(port_map.count("screenshot_mode"), 1u);
+    EXPECT_EQ(port_map["screenshot_mode"], "screenshot_mode");
+
+    EXPECT_EQ(port_map.count("screenshot_mode_case_a"), 1u);
+    EXPECT_EQ(port_map["screenshot_mode_case_a"], "screenshot_mode");
+
+    EXPECT_EQ(port_map.count("screenshot_mode_case_b"), 1u);
+    EXPECT_EQ(port_map["screenshot_mode_case_b"], "screenshot_mode");
+}
+
+TEST(PortDerivationTest, BuildPortDefinitionsJsonProducesValidArray)
+{
+    PortDefinition port;
+    port.port_id = "test_port";
+    port.display_label = "Test Port";
+    port.port_type = "string";
+    port.is_required = true;
+    port.default_value = yyjson::value("default_val");
+
+    auto json = Das::Plugins::DasMaaPi::BuildPortDefinitionsJson({port});
+    auto arr = json.as_array();
+    ASSERT_TRUE(arr.has_value());
+    ASSERT_EQ(arr->size(), 1u);
+
+    auto first = (*arr)[0].as_object();
+    ASSERT_TRUE(first.has_value());
+    EXPECT_EQ(
+        (*first)[std::string_view("portId")].as_string().value_or(""),
+        "test_port");
+    EXPECT_EQ(
+        (*first)[std::string_view("displayLabel")].as_string().value_or(""),
+        "Test Port");
+    EXPECT_EQ(
+        (*first)[std::string_view("portType")].as_string().value_or(""),
+        "string");
+    EXPECT_TRUE(
+        (*first)[std::string_view("isRequired")].as_bool().value_or(false));
+}
+
+TEST_F(MaapiAuthoringFixture, ApplyChangeReturnsDynamicPortsInResultJson)
+{
+    auto interface_path =
+        FixturePath("interface_authoring.jsonc").generic_string();
+
+    // Apply interface path
+    auto session = CreateSession();
+    auto path_change = ParseDasJson(
+        "{\"baseRevision\":0,\"kind\":\"setValue\",\"payload\":{\"valuePath\":"
+        "\"adapter.interfacePath\",\"value\":\""
+        + interface_path + "\"}}");
+    DasPtr<Das::ExportInterface::IDasJson> result_json;
+    ASSERT_EQ(
+        session->ApplyChange(path_change.Get(), result_json.Put()),
+        DAS_S_OK);
+
+    // Apply a task selection
+    auto task_change = ParseDasJson(
+        "{\"baseRevision\":1,\"kind\":\"setValue\",\"payload\":{\"valuePath\":"
+        "\"pi.tasks\",\"value\":[{\"taskName\":\"DailyFarm\","
+        "\"enabled\":true}]}}");
+    ASSERT_EQ(
+        session->ApplyChange(task_change.Get(), result_json.Put()),
+        DAS_S_OK);
+
+    auto result = ReadJsonInterface(result_json.Get());
+    auto obj = result.as_object();
+    ASSERT_TRUE(obj.has_value());
+    EXPECT_TRUE(obj->contains(std::string_view("dynamic_ports")));
+
+    auto dynamic_ports = (*obj)[std::string_view("dynamic_ports")].as_array();
+    ASSERT_TRUE(dynamic_ports.has_value());
+    EXPECT_FALSE(dynamic_ports->empty());
 }

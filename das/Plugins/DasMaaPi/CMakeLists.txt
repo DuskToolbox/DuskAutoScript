@@ -79,6 +79,7 @@ if(DAS_BUILD_TEST)
     target_include_directories(DasMaaPiTest PRIVATE
         ${DAS_CORE_INCLUDE_DIRS}
         ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
         ${CMAKE_SOURCE_DIR}/das/Core/ForeignInterfaceHost/include)
 
     set_target_properties(DasMaaPiTest PROPERTIES
