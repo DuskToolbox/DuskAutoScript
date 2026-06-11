@@ -26,6 +26,9 @@ DAS_EXPORT std::filesystem::path FindManifest(
 
 DAS_EXPORT yyjson::value PluginPackageDescToJson(const PluginPackageDesc& desc);
 
+DAS_EXPORT yyjson::value PluginPackageDescDetailToJson(
+    const PluginPackageDesc& desc);
+
 DAS_CORE_FOREIGNINTERFACEHOST_NS_END
 
 #endif // DAS_CORE_FOREIGNINTERFACEHOST_PLUGINSCANNER_H

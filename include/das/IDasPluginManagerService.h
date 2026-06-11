@@ -50,6 +50,11 @@ DAS_INTERFACE IDasPluginManagerService : public IDasBase
         const DasGuid* p_component_iid,
         IDasBase**     pp_out_component) = 0;
 
+    // Get full detail of a plugin package by GUID (hides PluginPackageDesc)
+    DAS_METHOD GetPluginPackageDetail(
+        const DasGuid*                   p_package_guid,
+        Das::ExportInterface::IDasJson** pp_out_detail) = 0;
+
     // Get settings field names for a plugin (hides PluginPackageDesc)
     DAS_METHOD GetPluginSettingsFieldNames(
         const DasGuid*                           p_plugin_guid,

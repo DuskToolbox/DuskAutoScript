@@ -252,6 +252,34 @@ DasResult PluginManagerServiceImpl::ScanInstalledPlugins(
     return CreateDasJsonFromYyjson(arr, pp_out_plugins);
 }
 
+DasResult PluginManagerServiceImpl::GetPluginPackageDetail(
+    const DasGuid*                   p_package_guid,
+    Das::ExportInterface::IDasJson** pp_out_detail)
+{
+    DAS_UTILS_CHECK_POINTER(pp_out_detail)
+    DAS_UTILS_CHECK_POINTER(p_package_guid)
+
+    auto                     descs = ScanPlugins(plugin_dir_);
+    const PluginPackageDesc* found = nullptr;
+    for (const auto& desc : descs)
+    {
+        if (desc.guid == *p_package_guid)
+        {
+            found = &desc;
+            break;
+        }
+    }
+    if (!found)
+    {
+        return DAS_E_NOT_FOUND;
+    }
+
+    auto detail_json = PluginPackageDescDetailToJson(*found);
+
+    using Das::Core::Utils::CreateDasJsonFromYyjson;
+    return CreateDasJsonFromYyjson(detail_json, pp_out_detail);
+}
+
 DasResult PluginManagerServiceImpl::InstallPluginPackage(
     IDasReadOnlyString* p_package_path)
 {
@@ -292,9 +320,8 @@ DasResult PluginManagerServiceImpl::InstallPluginPackageData(
         plugin_name);
     if (DAS::IsFailed(meta_result))
     {
-        DAS_CORE_LOG_ERROR(
-            "InstallPluginPackageData: failed to read identity "
-            "from zip manifest");
+        DAS_CORE_LOG_ERROR("InstallPluginPackageData: failed to read identity "
+                           "from zip manifest");
         return meta_result;
     }
 
