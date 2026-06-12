@@ -122,8 +122,7 @@ public:
 
 // ─── Thin wrapper: ScanPlugins delegates to template ───
 
-std::vector<PluginPackageDesc> ScanPlugins(
-    const std::filesystem::path& plugin_dir)
+std::vector<ScanResult> ScanPlugins(const std::filesystem::path& plugin_dir)
 {
     if (!std::filesystem::exists(plugin_dir))
     {
@@ -131,27 +130,28 @@ std::vector<PluginPackageDesc> ScanPlugins(
     }
 
     LocalFileProvider provider(plugin_dir);
-    auto scanned = ScanPluginsWith(provider);
+    auto              scanned = ScanPluginsWith(provider);
 
     // Post-filter: flat-file mode requires companion plugin binary to exist.
-    std::vector<PluginPackageDesc> result;
-    for (auto& desc : scanned)
+    std::vector<ScanResult> result;
+    for (auto& sr : scanned)
     {
-        auto plugin_subdir = plugin_dir / desc.name;
+        auto plugin_subdir = plugin_dir / sr.desc.name;
         if (std::filesystem::exists(plugin_subdir)
             && std::filesystem::is_directory(plugin_subdir))
         {
             // Directory mode — no extra check needed
-            result.push_back(std::move(desc));
+            result.push_back(std::move(sr));
         }
         else
         {
             // Flat-file mode — verify companion plugin binary exists
             auto plugin_file =
-                plugin_dir / (desc.name + "." + desc.plugin_filename_extension);
+                plugin_dir
+                / (sr.desc.name + "." + sr.desc.plugin_filename_extension);
             if (std::filesystem::exists(plugin_file))
             {
-                result.push_back(std::move(desc));
+                result.push_back(std::move(sr));
             }
         }
     }
@@ -293,21 +293,21 @@ DasResult MarkForDeletion(
 {
     auto plugins = ScanPlugins(plugin_dir);
 
-    for (const auto& desc : plugins)
+    for (const auto& sr : plugins)
     {
-        if (desc.guid == guid)
+        if (sr.desc.guid == guid)
         {
             // Determine plugin mode: directory or flat-file
-            auto                  plugin_subdir = plugin_dir / desc.name;
+            auto                  plugin_subdir = plugin_dir / sr.desc.name;
             std::filesystem::path marker_path;
             if (std::filesystem::exists(plugin_subdir)
                 && std::filesystem::is_directory(plugin_subdir))
             {
-                marker_path = plugin_subdir / (desc.name + ".willBeDelete");
+                marker_path = plugin_subdir / (sr.desc.name + ".willBeDelete");
             }
             else
             {
-                marker_path = plugin_dir / (desc.name + ".willBeDelete");
+                marker_path = plugin_dir / (sr.desc.name + ".willBeDelete");
             }
 
             std::ofstream ofs(marker_path);

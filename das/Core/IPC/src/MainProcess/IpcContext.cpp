@@ -1588,36 +1588,36 @@ namespace Core
 
                 IpcFileProvider provider(runloop_, session_id);
 
-                auto descs =
+                auto scan_results =
                     DAS::Core::ForeignInterfaceHost::ScanPluginsWith(provider);
 
                 DAS_CORE_LOG_INFO(
                     "DiscoverRemotePlugins: found {} plugin(s) on session_id={}",
-                    descs.size(),
+                    scan_results.size(),
                     session_id);
 
-                for (const auto& desc : descs)
+                for (const auto& sr : scan_results)
                 {
-                    if (desc.manifest_abs_path.empty())
+                    if (sr.manifest_abs_path.empty())
                     {
                         DAS_CORE_LOG_WARN(
                             "DiscoverRemotePlugins: plugin '{}' has no "
                             "manifest_abs_path, skipping auto-load",
-                            desc.name);
+                            sr.desc.name);
                         continue;
                     }
 
                     DAS_CORE_LOG_INFO(
                         "DiscoverRemotePlugins: auto-loading plugin '{}' "
                         "from {} on session_id={}",
-                        desc.name,
-                        desc.manifest_abs_path,
+                        sr.desc.name,
+                        sr.manifest_abs_path,
                         session_id);
 
                     DAS::DasPtr<IDasAsyncLoadPluginOperation> op;
                     auto result = LoadPluginAsync(
                         session_id,
-                        desc.manifest_abs_path.c_str(),
+                        sr.manifest_abs_path.c_str(),
                         op.Put());
 
                     if (DAS::IsFailed(result))
@@ -1625,7 +1625,7 @@ namespace Core
                         DAS_CORE_LOG_WARN(
                             "DiscoverRemotePlugins: LoadPluginAsync failed "
                             "for '{}' on session_id={}, result={}",
-                            desc.name,
+                            sr.desc.name,
                             session_id,
                             result);
                         continue;
@@ -1641,7 +1641,7 @@ namespace Core
                         DAS_CORE_LOG_WARN(
                             "DiscoverRemotePlugins: timed out loading "
                             "'{}' on session_id={}",
-                            desc.name,
+                            sr.desc.name,
                             session_id);
                         continue;
                     }
@@ -1652,7 +1652,7 @@ namespace Core
                         DAS_CORE_LOG_WARN(
                             "DiscoverRemotePlugins: load failed for '{}' "
                             "on session_id={}, result={}",
-                            desc.name,
+                            sr.desc.name,
                             session_id,
                             ipc_result);
                         if (raw_proxy)
@@ -1667,7 +1667,7 @@ namespace Core
                     DAS_CORE_LOG_INFO(
                         "DiscoverRemotePlugins: successfully loaded '{}' "
                         "on session_id={}",
-                        desc.name,
+                        sr.desc.name,
                         session_id);
                 }
 

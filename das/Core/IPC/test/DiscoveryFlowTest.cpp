@@ -21,6 +21,7 @@ namespace
     using DAS::Core::ForeignInterfaceHost::FileEntry;
     using DAS::Core::ForeignInterfaceHost::PluginPackageDesc;
     using DAS::Core::ForeignInterfaceHost::ScanPluginsWith;
+    using DAS::Core::ForeignInterfaceHost::ScanResult;
 
     /**
      * @brief Mock FileProvider for testing ScanPluginsWith
@@ -134,7 +135,7 @@ namespace
         auto provider = CreateStandardProvider();
         auto descs = ScanPluginsWith(provider);
         ASSERT_FALSE(descs.empty());
-        EXPECT_EQ(descs[0].name, "TestPlugin");
+        EXPECT_EQ(descs[0].desc.name, "TestPlugin");
     }
 
     TEST(DiscoveryFlowTest, SkipInstallingDirectory)
@@ -149,7 +150,7 @@ namespace
         auto descs = ScanPluginsWith(provider);
         ASSERT_FALSE(descs.empty());
         EXPECT_EQ(descs.size(), size_t{1});
-        EXPECT_EQ(descs[0].name, "TestPlugin");
+        EXPECT_EQ(descs[0].desc.name, "TestPlugin");
     }
 
     TEST(DiscoveryFlowTest, SkipWillBeDeleteDirectory)
@@ -207,7 +208,7 @@ namespace
         auto descs = ScanPluginsWith(provider);
         ASSERT_FALSE(descs.empty());
         EXPECT_EQ(descs.size(), size_t{1});
-        EXPECT_EQ(descs[0].name, "TestPlugin");
+        EXPECT_EQ(descs[0].desc.name, "TestPlugin");
     }
 
     TEST(DiscoveryFlowTest, NoManifestInSubdir_SkipsDirectory)
@@ -271,7 +272,7 @@ namespace
 
         auto descs = ScanPluginsWith(provider);
         ASSERT_EQ(descs.size(), size_t{1});
-        EXPECT_EQ(descs[0].name, "StandalonePlugin");
+        EXPECT_EQ(descs[0].desc.name, "StandalonePlugin");
     }
 
     TEST(DiscoveryFlowTest, FlatFileWithDeletionMarker_Skipped)
@@ -460,7 +461,7 @@ namespace
 
         auto descs = ScanPluginsWith(provider);
         ASSERT_EQ(descs.size(), size_t{1});
-        EXPECT_EQ(descs[0].name, "GoodPlugin");
+        EXPECT_EQ(descs[0].desc.name, "GoodPlugin");
     }
 
     // ============================================================
@@ -520,7 +521,7 @@ namespace
 
         auto descs = ScanPluginsWith(provider);
         ASSERT_EQ(descs.size(), size_t{1});
-        EXPECT_EQ(descs[0].name, "PriorityPlugin");
+        EXPECT_EQ(descs[0].desc.name, "PriorityPlugin");
     }
 
 } // anonymous namespace

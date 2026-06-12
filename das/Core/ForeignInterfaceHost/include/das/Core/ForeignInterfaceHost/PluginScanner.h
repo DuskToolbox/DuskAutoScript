@@ -24,9 +24,16 @@ struct FileEntry
     bool is_directory = false; // true = directory, false = file
 };
 
+/// Unified scan result: plugin metadata + manifest absolute path.
+struct ScanResult
+{
+    PluginPackageDesc desc;
+    std::string       manifest_abs_path; // from FileEntry::absolute_path
+};
+
 // ─── Existing non-template API ───
 
-DAS_EXPORT std::vector<PluginPackageDesc> ScanPlugins(
+DAS_EXPORT std::vector<ScanResult> ScanPlugins(
     const std::filesystem::path& plugin_dir);
 
 DAS_EXPORT void CleanupMarkedPlugins(const std::filesystem::path& plugin_dir);
@@ -115,9 +122,9 @@ inline std::string FindManifestInEntries(
 // GetBasePath: return the provider's base working path.
 
 template <typename FileProvider>
-std::vector<PluginPackageDesc> ScanPluginsWith(FileProvider& provider)
+std::vector<ScanResult> ScanPluginsWith(FileProvider& provider)
 {
-    std::vector<PluginPackageDesc> result;
+    std::vector<ScanResult> result;
 
     // Layer 1: list root directory entries
     auto root_entries = provider.ListDirectory("", false);
@@ -192,9 +199,11 @@ std::vector<PluginPackageDesc> ScanPluginsWith(FileProvider& provider)
                 }
                 PluginPackageDesc desc;
                 ParsePluginPackageDescFromJson(*obj, desc);
-                desc.manifest_abs_path = std::move(manifest_abs_path);
 
-                result.push_back(std::move(desc));
+                ScanResult sr;
+                sr.desc = std::move(desc);
+                sr.manifest_abs_path = std::move(manifest_abs_path);
+                result.push_back(std::move(sr));
             }
             catch (const std::exception&)
             {
@@ -243,9 +252,11 @@ std::vector<PluginPackageDesc> ScanPluginsWith(FileProvider& provider)
                 }
                 PluginPackageDesc desc;
                 ParsePluginPackageDescFromJson(*obj, desc);
-                desc.manifest_abs_path = entry.absolute_path;
 
-                result.push_back(std::move(desc));
+                ScanResult sr;
+                sr.desc = std::move(desc);
+                sr.manifest_abs_path = entry.absolute_path;
+                result.push_back(std::move(sr));
             }
             catch (const std::exception&)
             {

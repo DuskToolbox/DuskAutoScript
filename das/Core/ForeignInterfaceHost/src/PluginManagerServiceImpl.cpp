@@ -236,15 +236,15 @@ DasResult PluginManagerServiceImpl::ScanInstalledPlugins(
 {
     DAS_UTILS_CHECK_POINTER(pp_out_plugins)
 
-    auto descs = ScanPlugins(plugin_dir_);
+    auto results = ScanPlugins(plugin_dir_);
 
     auto arr = Das::Utils::MakeYyjsonArray();
     auto arr_ref = arr.as_array();
-    for (const auto& desc : descs)
+    for (const auto& result : results)
     {
         if (arr_ref)
         {
-            arr_ref->emplace_back(PluginPackageDescDetailToJson(desc));
+            arr_ref->emplace_back(PluginPackageDescDetailToJson(result.desc));
         }
     }
 
@@ -334,11 +334,11 @@ DasResult PluginManagerServiceImpl::MarkPluginPackageForDeletion(
     // Resolve plugin name from scanning installed plugins
     std::string plugin_name;
     auto        installed = ScanPlugins(plugin_dir_);
-    for (const auto& info : installed)
+    for (const auto& sr : installed)
     {
-        if (info.guid == *p_package_guid)
+        if (sr.desc.guid == *p_package_guid)
         {
-            plugin_name = info.name;
+            plugin_name = sr.desc.name;
             break;
         }
     }
