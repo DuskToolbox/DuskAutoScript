@@ -106,41 +106,6 @@ namespace Core
                     return DAS_E_NO_IMPLEMENTATION;
                 }
 
-                using FileListCallback =
-                    std::function<void(DasResult, const std::vector<uint8_t>&)>;
-                using FileContentCallback =
-                    std::function<void(DasResult, const std::vector<uint8_t>&)>;
-
-                virtual DasResult ListFilesAsync(
-                    uint16_t                  session_id,
-                    const char*               u8_relative_path,
-                    bool                      recursive,
-                    FileListCallback          callback,
-                    std::chrono::milliseconds timeout =
-                        std::chrono::seconds(10))
-                {
-                    (void)session_id;
-                    (void)u8_relative_path;
-                    (void)recursive;
-                    (void)callback;
-                    (void)timeout;
-                    return DAS_E_NO_IMPLEMENTATION;
-                }
-
-                virtual DasResult ReadFileAsync(
-                    uint16_t                  session_id,
-                    const char*               u8_relative_path,
-                    FileContentCallback       callback,
-                    std::chrono::milliseconds timeout =
-                        std::chrono::seconds(10))
-                {
-                    (void)session_id;
-                    (void)u8_relative_path;
-                    (void)callback;
-                    (void)timeout;
-                    return DAS_E_NO_IMPLEMENTATION;
-                }
-
                 /**
                  * @brief 将回调投递到 io_context 线程执行
                  *

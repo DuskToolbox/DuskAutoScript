@@ -154,6 +154,17 @@ std::vector<PluginPackageDesc> ScanPluginsWith(FileProvider& provider)
                 continue;
             }
 
+            // Look up the absolute path from the subdirectory entries
+            std::string manifest_abs_path;
+            for (const auto& sub : subdir_entries)
+            {
+                if (!sub.is_directory && sub.name == manifest_name)
+                {
+                    manifest_abs_path = sub.absolute_path;
+                    break;
+                }
+            }
+
             // Read manifest content
             std::string relative_manifest = subdir_path + manifest_name;
             auto        content = provider.ReadFile(relative_manifest);
@@ -181,6 +192,7 @@ std::vector<PluginPackageDesc> ScanPluginsWith(FileProvider& provider)
                 }
                 PluginPackageDesc desc;
                 ParsePluginPackageDescFromJson(*obj, desc);
+                desc.manifest_abs_path = std::move(manifest_abs_path);
 
                 result.push_back(std::move(desc));
             }
@@ -231,6 +243,7 @@ std::vector<PluginPackageDesc> ScanPluginsWith(FileProvider& provider)
                 }
                 PluginPackageDesc desc;
                 ParsePluginPackageDescFromJson(*obj, desc);
+                desc.manifest_abs_path = entry.absolute_path;
 
                 result.push_back(std::move(desc));
             }

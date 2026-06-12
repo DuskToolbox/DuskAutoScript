@@ -255,9 +255,11 @@ namespace Core
                                     endpoint_name);
 
                                 // Trigger remote plugin discovery
-                                // asynchronously
-                                boost::asio::post(
-                                    runloop_.GetIoContext(),
+                                // on a dedicated thread to avoid
+                                // deadlocking the io_context (the
+                                // discovery uses blocking wait()
+                                // internally).
+                                std::thread(
                                     [this, session_id]()
                                     {
                                         auto result =
@@ -269,7 +271,8 @@ namespace Core
                                                 session_id,
                                                 result);
                                         }
-                                    });
+                                    })
+                                    .detach();
                             },
                             boost::asio::detached);
                     }
@@ -627,7 +630,18 @@ namespace Core
                 return DAS_S_OK;
             }
 
-            DasResult IpcContext::ListFilesAsync(
+            // ====== ListFiles / ReadFile utility functions ======
+            // Free functions (not on IIpcContext interface) used by
+            // DiscoverRemotePlugins to perform blocking IPC file
+            // operations on a dedicated thread.
+
+            using FileListCallback =
+                std::function<void(DasResult, const std::vector<uint8_t>&)>;
+            using FileContentCallback =
+                std::function<void(DasResult, const std::vector<uint8_t>&)>;
+
+            DasResult ListFilesSync(
+                IpcRunLoop&               runloop,
                 uint16_t                  session_id,
                 const char*               u8_relative_path,
                 bool                      recursive,
@@ -643,12 +657,12 @@ namespace Core
                     return DAS_E_INVALID_ARGUMENT;
                 }
 
-                if (!runloop_.connection_manager_)
+                if (!runloop.connection_manager_)
                 {
                     return DAS_E_IPC_NOT_INITIALIZED;
                 }
 
-                auto& conn_mgr = runloop_.GetConnectionManager();
+                auto& conn_mgr = runloop.GetConnectionManager();
                 auto [lookup_result, maybe_transport] =
                     conn_mgr.FindManagedHostTransport(session_id);
                 if (DAS::IsFailed(lookup_result) || !maybe_transport)
@@ -677,7 +691,7 @@ namespace Core
                     static_cast<uint32_t>(payload.size()),
                     session_id);
 
-                auto sender = runloop_.SendMessageAsync(
+                auto sender = runloop.SendMessageAsync(
                     transport,
                     header,
                     payload.data(),
@@ -698,7 +712,8 @@ namespace Core
                 return DAS_S_OK;
             }
 
-            DasResult IpcContext::ReadFileAsync(
+            DasResult ReadFileSync(
+                IpcRunLoop&               runloop,
                 uint16_t                  session_id,
                 const char*               u8_relative_path,
                 FileContentCallback       callback,
@@ -713,12 +728,12 @@ namespace Core
                     return DAS_E_INVALID_ARGUMENT;
                 }
 
-                if (!runloop_.connection_manager_)
+                if (!runloop.connection_manager_)
                 {
                     return DAS_E_IPC_NOT_INITIALIZED;
                 }
 
-                auto& conn_mgr = runloop_.GetConnectionManager();
+                auto& conn_mgr = runloop.GetConnectionManager();
                 auto [lookup_result, maybe_transport] =
                     conn_mgr.FindManagedHostTransport(session_id);
                 if (DAS::IsFailed(lookup_result) || !maybe_transport)
@@ -744,7 +759,7 @@ namespace Core
                     static_cast<uint32_t>(payload.size()),
                     session_id);
 
-                auto sender = runloop_.SendMessageAsync(
+                auto sender = runloop.SendMessageAsync(
                     transport,
                     header,
                     payload.data(),
@@ -1411,18 +1426,21 @@ namespace Core
                     session_id);
 
                 // IpcFileProvider implements the duck-typed FileProvider
-                // interface required by ScanPluginsWith
+                // interface required by ScanPluginsWith. Uses the
+                // ListFilesSync/ReadFileSync utility functions to send
+                // blocking IPC commands (safe because DiscoverRemotePlugins
+                // now runs on a dedicated thread, not the io_context).
                 class IpcFileProvider
                 {
-                    IpcContext& ctx_;
+                    IpcRunLoop& runloop_;
                     uint16_t    session_id_;
                     std::string base_path_u8_;
 
                 public:
                     explicit IpcFileProvider(
-                        IpcContext& ctx,
+                        IpcRunLoop& runloop,
                         uint16_t    session_id)
-                        : ctx_(ctx), session_id_(session_id)
+                        : runloop_(runloop), session_id_(session_id)
                     {
                     }
 
@@ -1435,7 +1453,8 @@ namespace Core
                             result;
 
                         std::vector<uint8_t> response_data;
-                        auto                 list_result = ctx_.ListFilesAsync(
+                        auto                 list_result = ListFilesSync(
+                            runloop_,
                             session_id_,
                             relative_path_u8.c_str(),
                             recursive,
@@ -1447,7 +1466,8 @@ namespace Core
                                 {
                                     response_data = data;
                                 }
-                            });
+                            },
+                            std::chrono::seconds(10));
 
                         if (DAS::IsFailed(list_result) || response_data.empty())
                         {
@@ -1523,7 +1543,8 @@ namespace Core
                         std::string content;
 
                         std::vector<uint8_t> response_data;
-                        auto                 read_result = ctx_.ReadFileAsync(
+                        auto                 read_result = ReadFileSync(
+                            runloop_,
                             session_id_,
                             relative_path_u8.c_str(),
                             [&response_data](
@@ -1534,7 +1555,8 @@ namespace Core
                                 {
                                     response_data = data;
                                 }
-                            });
+                            },
+                            std::chrono::seconds(10));
 
                         if (DAS::IsFailed(read_result)
                             || response_data.size() < sizeof(uint32_t))
@@ -1564,7 +1586,7 @@ namespace Core
                     std::string GetBasePath() const { return base_path_u8_; }
                 };
 
-                IpcFileProvider provider(*this, session_id);
+                IpcFileProvider provider(runloop_, session_id);
 
                 auto descs =
                     DAS::Core::ForeignInterfaceHost::ScanPluginsWith(provider);
@@ -1576,45 +1598,77 @@ namespace Core
 
                 for (const auto& desc : descs)
                 {
-                    // Find the manifest absolute_path from the
-                    // ScanPluginsWith result. The manifest_path field is set
-                    // in ScanPluginsWith via absolute_path from FileEntry.
-                    std::string manifest_abs_path;
-                    // Re-discover the absolute path by scanning the entries
-                    // from the provider. For simplicity, look for the
-                    // manifest in the desc's name.
-                    if (manifest_abs_path.empty())
+                    if (desc.manifest_abs_path.empty())
                     {
-                        // Use the provider's base path + plugin directory
-                        // structure
-                        auto base = provider.GetBasePath();
-                        if (!base.empty())
-                        {
-                            // The ScanPluginsWith template populates
-                            // desc.manifest_path through FileEntry This is
-                            // the absolute path on the remote Host's
-                            // filesystem
-                        }
+                        DAS_CORE_LOG_WARN(
+                            "DiscoverRemotePlugins: plugin '{}' has no "
+                            "manifest_abs_path, skipping auto-load",
+                            desc.name);
+                        continue;
                     }
 
-                    // Try to load the plugin via session-based LoadPluginAsync
+                    DAS_CORE_LOG_INFO(
+                        "DiscoverRemotePlugins: auto-loading plugin '{}' "
+                        "from {} on session_id={}",
+                        desc.name,
+                        desc.manifest_abs_path,
+                        session_id);
+
                     DAS::DasPtr<IDasAsyncLoadPluginOperation> op;
-                    // For remote discovery, we need the manifest absolute
-                    // path on the remote Host. ScanPluginsWith stores it via
-                    // FileEntry::absolute_path. Unfortunately the current
-                    // PluginPackageDesc doesn't store manifest_path as a
-                    // string field with the absolute path. We need to use
-                    // the provider to look it up again.
-                    //
-                    // Actually, looking at the ScanPluginsWith template code,
-                    // for directory mode it doesn't store manifest_path.
-                    // For now, we construct it from the provider's directory
-                    // listing.
-                    DAS_CORE_LOG_WARN(
-                        "DiscoverRemotePlugins: plugin '{}' found but "
-                        "auto-load not yet wired (needs manifest_path "
-                        "field)",
-                        desc.name);
+                    auto result = LoadPluginAsync(
+                        session_id,
+                        desc.manifest_abs_path.c_str(),
+                        op.Put());
+
+                    if (DAS::IsFailed(result))
+                    {
+                        DAS_CORE_LOG_WARN(
+                            "DiscoverRemotePlugins: LoadPluginAsync failed "
+                            "for '{}' on session_id={}, result={}",
+                            desc.name,
+                            session_id,
+                            result);
+                        continue;
+                    }
+
+                    auto sender =
+                        DAS::Core::IPC::async_op(*this, std::move(op));
+                    auto wait_result =
+                        DAS::Core::IPC::wait(*this, std::move(sender));
+
+                    if (!wait_result)
+                    {
+                        DAS_CORE_LOG_WARN(
+                            "DiscoverRemotePlugins: timed out loading "
+                            "'{}' on session_id={}",
+                            desc.name,
+                            session_id);
+                        continue;
+                    }
+
+                    auto [ipc_result, raw_proxy] = *wait_result;
+                    if (DAS::IsFailed(ipc_result) || !raw_proxy)
+                    {
+                        DAS_CORE_LOG_WARN(
+                            "DiscoverRemotePlugins: load failed for '{}' "
+                            "on session_id={}, result={}",
+                            desc.name,
+                            session_id,
+                            ipc_result);
+                        if (raw_proxy)
+                        {
+                            raw_proxy->Release();
+                        }
+                        continue;
+                    }
+
+                    raw_proxy->Release();
+
+                    DAS_CORE_LOG_INFO(
+                        "DiscoverRemotePlugins: successfully loaded '{}' "
+                        "on session_id={}",
+                        desc.name,
+                        session_id);
                 }
 
                 return DAS_S_OK;

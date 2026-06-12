@@ -171,6 +171,10 @@ struct PluginPackageDesc
     DasGuid                        guid;
     std::vector<PluginSettingDesc> settings_desc;
 
+    /// Absolute path of the manifest file (not serialized).
+    /// Set by ScanPluginsWith from FileEntry::absolute_path.
+    std::string manifest_abs_path;
+
     /// Plugin-GUID-keyed settings descriptor groups from manifest.
     std::unordered_map<DasGuid, PluginSettingsGroup> settings_groups;
     /// Task-GUID-keyed task descriptors from manifest.
