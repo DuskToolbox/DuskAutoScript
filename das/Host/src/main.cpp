@@ -358,9 +358,14 @@ int main(int argc, char* argv[])
         {
             handler_options.plugin_dir =
                 std::filesystem::path(vm["plugin-dir"].as<std::string>());
-            DAS_LOG_INFO(
+        }
+        else
+        {
+            handler_options.plugin_dir = std::filesystem::current_path();
+            DAS_LOG_WARNING(
                 std::format(
-                    "Remote Host mode: plugin-dir={}",
+                    "--plugin-dir not specified, falling back to working "
+                    "directory: {}",
                     handler_options.plugin_dir.string())
                     .c_str());
         }
