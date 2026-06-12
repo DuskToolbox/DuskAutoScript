@@ -1,3 +1,5 @@
+#ifdef DAS_EXPORT_CSHARP
+
 #include "../src/CSharpHostFxrBackend.h"
 #include "../src/CSharpNetFxBackend.h"
 
@@ -801,3 +803,5 @@ TEST(
     EXPECT_EQ(host_fxr_header.find("(*)"), std::string::npos);
     EXPECT_EQ(net_fx_header.find("(*)"), std::string::npos);
 }
+
+#endif // DAS_EXPORT_CSHARP

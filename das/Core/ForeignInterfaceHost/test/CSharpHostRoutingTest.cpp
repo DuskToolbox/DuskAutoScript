@@ -1,3 +1,5 @@
+#ifdef DAS_EXPORT_CSHARP
+
 #include "../src/CSharpHost.h"
 
 #include <gtest/gtest.h>
@@ -331,3 +333,5 @@ TEST(CSharpHostRouting, LoadPluginMapsUnavailableNetFxBackend)
     EXPECT_EQ(result.error(), DAS_E_CSHARP_NETFX_UNSUPPORTED_PLATFORM);
 #endif
 }
+
+#endif // DAS_EXPORT_CSHARP
