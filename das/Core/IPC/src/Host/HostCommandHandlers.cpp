@@ -67,7 +67,11 @@ namespace Das::Core::IPC::Host
                 DAS_FMT_NS::format("Loading plugin: {}", manifest_path)
                     .c_str());
 
-            auto result = load_plugin(std::filesystem::path{manifest_path});
+            auto result = load_plugin(
+                std::filesystem::path(
+                    std::u8string_view(
+                        reinterpret_cast<const char8_t*>(manifest_path.data()),
+                        manifest_path.size())));
             if (!result.has_value())
             {
                 DAS_LOG_ERROR(
@@ -221,11 +225,36 @@ namespace Das::Core::IPC::Host
             return DAS_S_OK;
         }
 
+        bool HasPathComponent(
+            const std::string& path,
+            const std::string& component)
+        {
+            // Check if any path segment exactly matches the given component.
+            size_t start = 0;
+            while (start < path.size())
+            {
+                size_t      sep = path.find_first_of("/\\", start);
+                std::string segment = (sep == std::string::npos)
+                                          ? path.substr(start)
+                                          : path.substr(start, sep - start);
+                if (segment == component)
+                {
+                    return true;
+                }
+                if (sep == std::string::npos)
+                {
+                    break;
+                }
+                start = sep + 1;
+            }
+            return false;
+        }
+
         std::filesystem::path ValidateRelativePath(
             const std::filesystem::path& base_dir,
             const std::string&           relative_path_u8)
         {
-            if (relative_path_u8.find("..") != std::string::npos)
+            if (HasPathComponent(relative_path_u8, ".."))
             {
                 return {};
             }

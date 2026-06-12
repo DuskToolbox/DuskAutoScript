@@ -56,9 +56,13 @@ auto IpcRemotePluginHost::LoadPlugin(const RemotePluginLoadRequest& request)
     if (request.target_session_id.has_value())
     {
         const uint16_t    session_id = request.target_session_id.value();
-        const std::string manifest_str = request.remote_manifest_path.empty()
-                                             ? request.manifest_path.string()
-                                             : request.remote_manifest_path;
+        auto              u8path = request.manifest_path.u8string();
+        const std::string manifest_str =
+            request.remote_manifest_path.empty()
+                ? std::string(
+                      reinterpret_cast<const char*>(u8path.data()),
+                      u8path.size())
+                : request.remote_manifest_path;
 
         DAS::DasPtr<IDasAsyncLoadPluginOperation> op;
         auto result = ipc_context_.get().LoadPluginAsync(
@@ -157,7 +161,10 @@ auto IpcRemotePluginHost::LoadPlugin(const RemotePluginLoadRequest& request)
     }
 
     DAS::DasPtr<IDasAsyncLoadPluginOperation> op;
-    const auto manifest_path = request.manifest_path.string();
+    auto        u8manifest = request.manifest_path.u8string();
+    std::string manifest_path(
+        reinterpret_cast<const char*>(u8manifest.data()),
+        u8manifest.size());
     result = ipc_context_.get().LoadPluginAsync(
         launcher.Get(),
         manifest_path.c_str(),
