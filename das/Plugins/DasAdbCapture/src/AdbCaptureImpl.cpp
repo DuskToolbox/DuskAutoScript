@@ -38,7 +38,6 @@ DAS_IGNORE_BOOST_PROCESS_WARNING
 #include <das/Utils/fmt.h>
 #include <das/_autogen/idl/abi/DasLogger.h>
 #include <das/_autogen/idl/abi/IDasImage.h>
-#include <fstream>
 #include <iterator>
 #include <limits>
 #include <sstream>
@@ -92,15 +91,15 @@ AdbCapture::AdbCapture(
     std::string_view             adb_device_serial)
     : capture_png_command_{DAS::fmt::format(
           "{} -s {} exec-out screencap -p",
-          adb_path.string(),
+          DAS::Utils::U8AsString(adb_path.u8string()),
           adb_device_serial)},
       capture_gzip_raw_command_{DAS::fmt::format(
           R"({} -s {} exec-out "screencap | gzip -1")",
-          adb_path.string(),
+          DAS::Utils::U8AsString(adb_path.u8string()),
           adb_device_serial)},
       get_screen_size_command_{DAS::fmt::format(
           R"({} -s {} shell dumpsys window displays | grep -o -E cur=+[^\\ ]+ | grep -o -E [0-9]+)",
-          adb_path.string(),
+          DAS::Utils::U8AsString(adb_path.u8string()),
           adb_device_serial)}
 {
 }
@@ -459,72 +458,53 @@ template <class Buffer>
 struct CommandExecutorContext : public DAS::Utils::NonCopyableAndNonMovable
 {
 private:
-    boost::asio::io_context              ioc_;
-    boost::asio::steady_timer            timeout_timer_;
-    boost::asio::cancellation_signal     sig_;
-    std::chrono::milliseconds            timeout_in_ms_;
-    boost::process::v2::filesystem::path stdout_file_path_;
-    std::string                          command_;
-    DasResult                            result_;
-    Buffer                               buffer_;
-
-    static boost::process::v2::filesystem::path MakeStdoutCapturePath()
-    {
-        static std::atomic_uint64_t counter{0};
-        const auto                  now =
-            std::chrono::steady_clock::now().time_since_epoch().count();
-
-        return boost::process::v2::filesystem::temp_directory_path()
-               / DAS::fmt::format(
-                   "das-adb-capture-{}-{}.stdout",
-                   now,
-                   counter.fetch_add(1, std::memory_order_relaxed));
-    }
-
-    DasResult LoadStdoutBuffer()
-    {
-        std::ifstream stdout_file{stdout_file_path_.string(), std::ios::binary};
-        if (!stdout_file)
-        {
-            const auto error_message = DAS::fmt::format(
-                "Failed to open stdout capture file for command {}.",
-                command_);
-            DAS_LOG_ERROR(error_message.c_str());
-            return DAS_E_INTERNAL_FATAL_ERROR;
-        }
-
-        buffer_.assign(
-            std::istreambuf_iterator<char>{stdout_file},
-            std::istreambuf_iterator<char>{});
-        if (stdout_file.bad())
-        {
-            const auto error_message = DAS::fmt::format(
-                "Failed to read stdout capture file for command {}.",
-                command_);
-            DAS_LOG_ERROR(error_message.c_str());
-            return DAS_E_INTERNAL_FATAL_ERROR;
-        }
-
-        return DAS_S_OK;
-    }
+    boost::asio::io_context          ioc_;
+    boost::asio::steady_timer        timeout_timer_;
+    boost::asio::cancellation_signal sig_;
+    std::chrono::milliseconds        timeout_in_ms_;
+    std::string                      command_;
+    DasResult                        result_;
+    Buffer                           buffer_;
+    boost::asio::readable_pipe       stdout_pipe_;
 
 public:
     CommandExecutorContext(
         std::string_view    command,
         const std::uint32_t timeout)
         : ioc_{}, timeout_timer_{ioc_, std::chrono::seconds(timeout)}, sig_{},
-          timeout_in_ms_{timeout * 1000},
-          stdout_file_path_{MakeStdoutCapturePath()}, command_{command},
-          result_{DAS_E_UNDEFINED_RETURN_VALUE}, buffer_{}
+          timeout_in_ms_{timeout * 1000}, command_{command},
+          result_{DAS_E_UNDEFINED_RETURN_VALUE}, buffer_{}, stdout_pipe_{ioc_}
     {
-        boost::process::v2::error_code remove_ec;
-        boost::process::v2::filesystem::remove(stdout_file_path_, remove_ec);
+        // Launch child process; pipe write end → child stdout, read end →
+        // stdout_pipe_
+        boost::process::v2::process child_process{
+            ioc_,
+            command_,
+            {},
+            boost::process::v2::process_stdio{{}, stdout_pipe_, {}}};
+
+        // Drain stdout into memory buffer via async_read
+        boost::asio::async_read(
+            stdout_pipe_,
+            boost::asio::dynamic_buffer(buffer_),
+            [this](
+                boost::system::error_code ec,
+                std::size_t /*bytes_transferred*/)
+            {
+                // EOF is the normal completion when the child closes stdout
+                if (ec && ec != boost::asio::error::eof)
+                {
+                    const auto error_message = DAS::fmt::format(
+                        "Error reading stdout pipe for command {}: {}.",
+                        command_,
+                        ec.message());
+                    DAS_LOG_ERROR(error_message.c_str());
+                }
+            });
+
+        // Wait for the child process to exit
         boost::process::v2::async_execute(
-            boost::process::v2::process{
-                ioc_,
-                command_,
-                {},
-                boost::process::v2::process_stdio{{}, stdout_file_path_, {}}},
+            std::move(child_process),
             boost::asio::bind_cancellation_slot(
                 sig_.slot(),
                 [this](boost::system::error_code ec, int exit_code)
@@ -551,7 +531,7 @@ public:
                         DAS_LOG_INFO(info.c_str());
                         if (result_ != DAS_E_TIMEOUT)
                         {
-                            result_ = LoadStdoutBuffer();
+                            result_ = DAS_S_OK;
                         }
                     }
 
@@ -594,11 +574,7 @@ public:
     const Buffer& GetBuffer() const { return buffer_; }
     Buffer&       GetBuffer() { return buffer_; }
 
-    ~CommandExecutorContext()
-    {
-        boost::process::v2::error_code remove_ec;
-        boost::process::v2::filesystem::remove(stdout_file_path_, remove_ec);
-    }
+    ~CommandExecutorContext() = default;
 };
 
 AdbCaptureHeader ResolveHeader(const char* p_header)

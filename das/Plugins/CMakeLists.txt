@@ -74,7 +74,7 @@ endif()
 target_link_libraries(DasAdbCapture PRIVATE zlib)
 
 if(WIN32)
-    target_link_libraries(DasAdbCapture PRIVATE Ws2_32)
+    target_link_libraries(DasAdbCapture PRIVATE Ws2_32 bcrypt)
     target_link_libraries(DasAdbTouch PRIVATE Ws2_32)
     target_link_libraries(DasWindowsCapture PRIVATE Ws2_32)
     
