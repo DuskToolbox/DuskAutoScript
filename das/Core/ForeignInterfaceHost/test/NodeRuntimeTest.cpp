@@ -302,6 +302,8 @@ namespace
         std::vector<std::string> args;
         std::string              working_directory;
         std::string              environment_config;
+        bool                     has_on_process_exit = false;
+        bool                     has_on_heartbeat_timeout = false;
     };
 
     class CapturingRemotePluginHost final : public IRemotePluginHost
@@ -327,6 +329,10 @@ namespace
             capture_.environment_config =
                 ReadUtf8(request.launch_desc.p_environment_config);
             capture_.args = ReadArgs(request.launch_desc);
+            capture_.has_on_process_exit =
+                static_cast<bool>(request.on_process_exit);
+            capture_.has_on_heartbeat_timeout =
+                static_cast<bool>(request.on_heartbeat_timeout);
 
             auto* object = new RemoteHostBaseObject();
             object->AddRef();
@@ -638,4 +644,33 @@ TEST(NodeRuntimeRemoteHost, LoadDelegatesToRemoteHostWithExplicitLaunchDesc)
     EXPECT_NE(
         capture.environment_config.find(DYNAMIC_LIBRARY_PATH_ENV),
         std::string::npos);
+}
+
+TEST(NodeRuntimeRemoteHost, LoadForwardsIpcLifecycleCallbacks)
+{
+    TempNodeRuntimeLayout layout;
+    layout.CreateRuntimePackageFiles();
+    ScopedEnvVar      env{NODE_HOST_EXECUTABLE_ENV, layout.FakeNode().string()};
+    RemoteHostCapture capture;
+
+    NodeRuntime runtime{
+        std::make_unique<CapturingRemotePluginHost>(capture, 82)};
+
+    RuntimeLoadRequest request{};
+    request.manifest_path = layout.ManifestPath();
+    request.runtime_path = layout.ManifestPath();
+    request.node_modules_root = layout.NodeModulesRoot();
+    request.plugin_guid.data1 = 0x75070004;
+    request.language = ForeignInterfaceLanguage::Node;
+    request.load_mode = LoadMode::Ipc;
+    request.main_process_owner_session_id = 1;
+    request.on_process_exit = [](uint16_t, int) {};
+    request.on_heartbeat_timeout = [](DasGuid) {};
+
+    auto result = runtime.LoadPlugin(request);
+
+    ASSERT_TRUE(result);
+    EXPECT_EQ(capture.load_count, 1);
+    EXPECT_TRUE(capture.has_on_process_exit);
+    EXPECT_TRUE(capture.has_on_heartbeat_timeout);
 }

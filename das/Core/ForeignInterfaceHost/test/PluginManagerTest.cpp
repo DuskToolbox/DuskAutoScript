@@ -2237,7 +2237,8 @@ TEST_F(PluginManagerGuidTest, OnHostProcessExit_CleansUpIndex)
 TEST_F(PluginManagerGuidTest, OnHeartbeatTimeout_CleansUpIndex)
 {
     // Manually set up internal state to simulate post-IPC-load state.
-    // Tests the CleanupPluginByGuid path used by heartbeat timeout callback.
+    // Drives the full heartbeat-timeout path: OnHeartbeatTimeout takes its own
+    // mutex lock and calls CleanupPluginByGuid internally.
     DasGuid test_guid{};
     test_guid.data1 = 0x000000AA;
 
@@ -2250,11 +2251,8 @@ TEST_F(PluginManagerGuidTest, OnHeartbeatTimeout_CleansUpIndex)
     EXPECT_TRUE(pm_->loaded_plugins_.contains(test_guid));
     EXPECT_TRUE(pm_->path_to_guid_.contains("/fake/heartbeat/plugin"));
 
-    // Directly call CleanupPluginByGuid (simulates heartbeat timeout callback)
-    {
-        std::lock_guard<std::mutex> lock(pm_->mutex_);
-        pm_->CleanupPluginByGuid(test_guid);
-    }
+    // Trigger the heartbeat timeout callback (full path, not direct cleanup)
+    pm_->OnHeartbeatTimeout(test_guid);
 
     // Verify all indexes are cleaned up
     EXPECT_FALSE(pm_->loaded_plugins_.contains(test_guid));

@@ -2,8 +2,8 @@
 #include <das/Core/ForeignInterfaceHost/RemotePluginHost.h>
 
 #include <boost/asio/io_context.hpp>
-#include <das/Core/IPC/MainProcess/IIpcContext.h>
 #include <das/Core/IPC/MainProcess/IHostLauncher.h>
+#include <das/Core/IPC/MainProcess/IIpcContext.h>
 #include <das/DasSharedRef.hpp>
 #include <das/DasString.hpp>
 #include <das/IDasAsyncLoadPluginOperation.h>
@@ -32,7 +32,9 @@ namespace
     DAS::DasPtr<IDasReadOnlyString> MakeReadOnlyString(const char* value)
     {
         DAS::DasPtr<IDasReadOnlyString> result;
-        EXPECT_EQ(CreateIDasReadOnlyStringFromUtf8(value, result.Put()), DAS_S_OK);
+        EXPECT_EQ(
+            CreateIDasReadOnlyStringFromUtf8(value, result.Put()),
+            DAS_S_OK);
         return result;
     }
 
@@ -157,10 +159,10 @@ namespace
         }
 
     private:
-        std::atomic<uint32_t> ref_count_{0};
-        int32_t               status_ = DAS_ASYNC_COMPLETED;
-        DasResult             result_ = DAS_S_OK;
-        DAS::DasPtr<IDasBase> object_;
+        std::atomic<uint32_t>                  ref_count_{0};
+        int32_t                                status_ = DAS_ASYNC_COMPLETED;
+        DasResult                              result_ = DAS_S_OK;
+        DAS::DasPtr<IDasBase>                  object_;
         DAS::DasPtr<IDasAsyncCompletedHandler> handler_;
     };
 
@@ -195,17 +197,13 @@ namespace
             return DAS_E_NO_INTERFACE;
         }
 
-        DasResult StartAsync(
-            const std::string&,
-            IDasAsyncHandshakeOperation**) override
+        DasResult StartAsync(const std::string&, IDasAsyncHandshakeOperation**)
+            override
         {
             return DAS_E_NO_IMPLEMENTATION;
         }
 
-        DasResult Start(
-            const std::string&,
-            uint16_t&,
-            uint32_t) override
+        DasResult Start(const std::string&, uint16_t&, uint32_t) override
         {
             return DAS_E_NO_IMPLEMENTATION;
         }
@@ -213,7 +211,7 @@ namespace
         DasResult StartWithDesc(
             const DAS::Core::IPC::HostLaunchDesc* p_desc,
             uint32_t                              timeout_ms,
-            uint16_t* p_out_session_id) override
+            uint16_t*                             p_out_session_id) override
         {
             ++start_with_desc_count;
             observed_timeout_ms = timeout_ms;
@@ -224,7 +222,8 @@ namespace
 
             const char* executable = nullptr;
             if (!p_desc->p_executable_path
-                || DAS::IsFailed(p_desc->p_executable_path->GetUtf8(&executable)))
+                || DAS::IsFailed(
+                    p_desc->p_executable_path->GetUtf8(&executable)))
             {
                 return DAS_E_INVALID_ARGUMENT;
             }
@@ -262,22 +261,21 @@ namespace
             return session_id;
         }
 
-        DasResult start_result = DAS_S_OK;
-        uint16_t  session_to_return = 77;
-        int       start_with_desc_count = 0;
-        int       stop_count = 0;
-        uint32_t  observed_timeout_ms = 0;
-        uint16_t  session_id = 0;
-        size_t    observed_arg_count = 0;
-        bool      running = false;
+        DasResult   start_result = DAS_S_OK;
+        uint16_t    session_to_return = 77;
+        int         start_with_desc_count = 0;
+        int         stop_count = 0;
+        uint32_t    observed_timeout_ms = 0;
+        uint16_t    session_id = 0;
+        size_t      observed_arg_count = 0;
+        bool        running = false;
         std::string observed_executable;
 
     private:
         std::atomic<uint32_t> ref_count_{0};
     };
 
-    class FakeIpcContext final
-        : public DAS::Core::IPC::MainProcess::IIpcContext
+    class FakeIpcContext final : public DAS::Core::IPC::MainProcess::IIpcContext
     {
     public:
         explicit FakeIpcContext(DAS::DasPtr<FakeHostLauncher> launcher)
@@ -310,7 +308,7 @@ namespace
             DAS::Core::IPC::IHostLauncher* host_launcher,
             const char*                    u8_plugin_path,
             IDasAsyncLoadPluginOperation** pp_out_operation,
-            std::chrono::milliseconds timeout =
+            std::chrono::milliseconds      timeout =
                 std::chrono::seconds(30)) override
         {
             ++load_async_count;
@@ -342,11 +340,11 @@ namespace
             }
         }
 
-        DasResult Run() override { return DAS_S_OK; }
-        void RequestStop() override {}
+        DasResult                Run() override { return DAS_S_OK; }
+        void                     RequestStop() override {}
         boost::asio::io_context& GetIoContext() override { return io_context_; }
-        uint16_t AllocateSessionId() override { return 2; }
-        void ReleaseSessionId(uint16_t) override {}
+        uint16_t                 AllocateSessionId() override { return 2; }
+        void                     ReleaseSessionId(uint16_t) override {}
 
         DasResult CreateRemoteProxy(
             DAS::Core::IPC::ObjectId,
@@ -356,9 +354,8 @@ namespace
             return DAS_E_NO_IMPLEMENTATION;
         }
 
-        DasResult ResolveMainProcessInterface(
-            const DasGuid&,
-            IDasBase**) override
+        DasResult ResolveMainProcessInterface(const DasGuid&, IDasBase**)
+            override
         {
             return DAS_E_NO_IMPLEMENTATION;
         }
@@ -373,17 +370,14 @@ namespace
             return DAS_E_NO_IMPLEMENTATION;
         }
 
-        DasResult ResolveMainProcessInterfaceByName(
-            const char*,
-            IDasBase**) override
+        DasResult ResolveMainProcessInterfaceByName(const char*, IDasBase**)
+            override
         {
             return DAS_E_NO_IMPLEMENTATION;
         }
 
-        DasResult RegisterServiceByName(
-            IDasBase*,
-            const DasGuid&,
-            const char*) override
+        DasResult RegisterServiceByName(IDasBase*, const DasGuid&, const char*)
+            override
         {
             return DAS_E_NO_IMPLEMENTATION;
         }
@@ -393,16 +387,16 @@ namespace
             return DAS_E_NO_IMPLEMENTATION;
         }
 
-        DAS::DasPtr<FakeHostLauncher> launcher_;
+        DAS::DasPtr<FakeHostLauncher>        launcher_;
         DAS::DasPtr<FakeLoadPluginOperation> load_operation_;
-        boost::asio::io_context io_context_;
-        DasResult create_launcher_result = DAS_S_OK;
-        DasResult load_async_result = DAS_S_OK;
-        int       create_launcher_count = 0;
-        int       load_async_count = 0;
-        DAS::Core::IPC::IHostLauncher* observed_launcher = nullptr;
-        std::string observed_plugin_path;
-        std::chrono::milliseconds observed_load_timeout{0};
+        boost::asio::io_context              io_context_;
+        DasResult                            create_launcher_result = DAS_S_OK;
+        DasResult                            load_async_result = DAS_S_OK;
+        int                                  create_launcher_count = 0;
+        int                                  load_async_count = 0;
+        DAS::Core::IPC::IHostLauncher*       observed_launcher = nullptr;
+        std::string                          observed_plugin_path;
+        std::chrono::milliseconds            observed_load_timeout{0};
     };
 
     RemotePluginLoadRequest MakeRequest(
@@ -445,6 +439,9 @@ namespace
                 request.launch_desc.pp_args[i]->GetUtf8(&arg);
                 observed_args.emplace_back(arg ? arg : "");
             }
+            has_on_process_exit = static_cast<bool>(request.on_process_exit);
+            has_on_heartbeat_timeout =
+                static_cast<bool>(request.on_heartbeat_timeout);
 
             if (DAS::IsFailed(load_error))
             {
@@ -459,15 +456,17 @@ namespace
             return result;
         }
 
-        int load_count = 0;
-        uint16_t owner_session_id = 88;
-        DasResult load_error = DAS_S_OK;
-        std::filesystem::path observed_manifest_path;
-        DasGuid observed_plugin_guid{};
+        int                       load_count = 0;
+        uint16_t                  owner_session_id = 88;
+        DasResult                 load_error = DAS_S_OK;
+        std::filesystem::path     observed_manifest_path;
+        DasGuid                   observed_plugin_guid{};
         std::chrono::milliseconds observed_timeout{0};
-        size_t observed_arg_count = 0;
-        std::string observed_executable;
-        std::vector<std::string> observed_args;
+        size_t                    observed_arg_count = 0;
+        std::string               observed_executable;
+        std::vector<std::string>  observed_args;
+        bool                      has_on_process_exit = false;
+        bool                      has_on_heartbeat_timeout = false;
     };
 } // namespace
 
@@ -525,14 +524,13 @@ TEST(IpcRemotePluginHostContract, LifecycleCallbacksAreOptionalHooks)
 
 TEST(IpcRemotePluginHostLifecycle, LoadStartsHostAndReturnsOwnerSession)
 {
-    auto launcher = DAS::DasPtr<FakeHostLauncher>(
-        new FakeHostLauncher());
+    auto launcher = DAS::DasPtr<FakeHostLauncher>(new FakeHostLauncher());
     auto context = std::make_shared<FakeIpcContext>(launcher);
     IpcRemotePluginHost host{
         DAS::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(context)};
 
     DAS::DasPtr<IDasReadOnlyString> executable;
-    auto request = MakeRequest(executable);
+    auto                            request = MakeRequest(executable);
 
     auto result = host.LoadPlugin(request);
 
@@ -554,15 +552,14 @@ TEST(IpcRemotePluginHostLifecycle, LoadStartsHostAndReturnsOwnerSession)
 
 TEST(IpcRemotePluginHostLifecycle, LoadFailureAfterStartStopsLauncher)
 {
-    auto launcher = DAS::DasPtr<FakeHostLauncher>(
-        new FakeHostLauncher());
+    auto launcher = DAS::DasPtr<FakeHostLauncher>(new FakeHostLauncher());
     auto context = std::make_shared<FakeIpcContext>(launcher);
     context->load_async_result = DAS_E_FILE_NOT_FOUND;
     IpcRemotePluginHost host{
         DAS::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(context)};
 
     DAS::DasPtr<IDasReadOnlyString> executable;
-    auto request = MakeRequest(executable);
+    auto                            request = MakeRequest(executable);
 
     auto result = host.LoadPlugin(request);
 
@@ -574,8 +571,8 @@ TEST(IpcRemotePluginHostLifecycle, LoadFailureAfterStartStopsLauncher)
 
 TEST(NativeIpcRuntime, DelegatesDasHostLaunchToRemotePluginHost)
 {
-    auto remote = std::make_unique<CapturingRemotePluginHost>();
-    auto* raw_remote = remote.get();
+    auto             remote = std::make_unique<CapturingRemotePluginHost>();
+    auto*            raw_remote = remote.get();
     NativeIpcRuntime runtime{
         std::filesystem::path{"DasHost.exe"},
         std::move(remote),
@@ -618,4 +615,27 @@ TEST(NativeIpcRuntime, FactoryCreatesNativeProvider)
 
     ASSERT_TRUE(result);
     EXPECT_EQ(result->owner_session_id, 88);
+}
+
+TEST(NativeIpcRuntime, LoadForwardsIpcLifecycleCallbacks)
+{
+    auto             remote = std::make_unique<CapturingRemotePluginHost>();
+    auto*            raw_remote = remote.get();
+    NativeIpcRuntime runtime{
+        std::filesystem::path{"DasHost.exe"},
+        std::move(remote),
+        std::chrono::milliseconds{2468}};
+
+    RuntimeLoadRequest request{};
+    request.manifest_path = std::filesystem::path{"plugins/Native.json"};
+    request.plugin_guid = MakeRemotePluginHostGuid(0x75050006);
+    request.on_process_exit = [](uint16_t, int) {};
+    request.on_heartbeat_timeout = [](DasGuid) {};
+
+    auto result = runtime.LoadPlugin(request);
+
+    ASSERT_TRUE(result);
+    EXPECT_EQ(raw_remote->load_count, 1);
+    EXPECT_TRUE(raw_remote->has_on_process_exit);
+    EXPECT_TRUE(raw_remote->has_on_heartbeat_timeout);
 }
