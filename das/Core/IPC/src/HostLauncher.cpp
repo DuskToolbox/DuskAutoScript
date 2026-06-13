@@ -434,9 +434,10 @@ namespace
         const auto parent = std::filesystem::path(exe_path).parent_path();
         if (!parent.empty())
         {
-            return parent.string();
+            return std::string{DAS::Utils::U8AsString(parent.u8string())};
         }
-        return std::filesystem::current_path().string();
+        return std::string{
+            DAS::Utils::U8AsString(std::filesystem::current_path().u8string())};
     }
 
 } // anonymous namespace

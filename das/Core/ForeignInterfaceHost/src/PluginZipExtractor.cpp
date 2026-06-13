@@ -5,6 +5,7 @@
 #include <das/Core/ForeignInterfaceHost/PluginScanner.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/Utils/DasJsonCore.h>
+#include <das/Utils/StringUtils.h>
 
 #include <algorithm>
 #include <cstring>
@@ -104,7 +105,7 @@ namespace
         }
 
         auto relative = canonical_entry.lexically_relative(canonical_target);
-        auto rel_str = relative.string();
+        auto rel_str = std::string{DAS::Utils::U8AsString(relative.u8string())};
         if (rel_str.size() >= 2 && rel_str.substr(0, 2) == "..")
         {
             return false;
@@ -251,7 +252,7 @@ namespace
             {
                 DAS_CORE_LOG_WARN(
                     "Failed to create directory: {}",
-                    target_path.string());
+                    DAS::Utils::U8AsString(target_path.u8string()));
                 return DAS_E_FAIL;
             }
             return DAS_S_OK;
@@ -268,7 +269,9 @@ namespace
         std::ofstream ofs(target_path, std::ios::binary | std::ios::trunc);
         if (!ofs)
         {
-            DAS_CORE_LOG_WARN("Failed to write file: {}", target_path.string());
+            DAS_CORE_LOG_WARN(
+                "Failed to write file: {}",
+                DAS::Utils::U8AsString(target_path.u8string()));
             return DAS_E_FAIL;
         }
 
@@ -343,7 +346,7 @@ namespace
         {
             DAS_CORE_LOG_WARN(
                 "Failed to write file data: {}",
-                target_path.string());
+                DAS::Utils::U8AsString(target_path.u8string()));
             return DAS_E_FAIL;
         }
 
@@ -370,7 +373,7 @@ namespace
 
         DAS_CORE_LOG_WARN(
             "Failed to create temp directory under {}",
-            parent.string());
+            DAS::Utils::U8AsString(parent.u8string()));
         return {};
     }
 
@@ -409,7 +412,7 @@ DasResult InstallPlugin(
         {
             DAS_CORE_LOG_WARN(
                 "Failed to create plugin directory: {}",
-                plugin_dir.string());
+                DAS::Utils::U8AsString(plugin_dir.u8string()));
             return DAS_E_FAIL;
         }
     }
@@ -575,7 +578,8 @@ DasResult InstallPlugin(
         if (!manifest.empty())
         {
             found_manifest = true;
-            plugin_name = entry.path().filename().string();
+            plugin_name = std::string{
+                DAS::Utils::U8AsString(entry.path().filename().u8string())};
             break;
         }
     }
@@ -599,7 +603,7 @@ DasResult InstallPlugin(
         {
             DAS_CORE_LOG_WARN(
                 "Failed to rename existing plugin: {}",
-                dst.string());
+                DAS::Utils::U8AsString(dst.u8string()));
             return DAS_E_FAIL;
         }
     }
@@ -610,8 +614,8 @@ DasResult InstallPlugin(
     {
         DAS_CORE_LOG_WARN(
             "Failed to install plugin: {} -> {}",
-            src.string(),
-            dst.string());
+            DAS::Utils::U8AsString(src.u8string()),
+            DAS::Utils::U8AsString(dst.u8string()));
         // Restore old plugin
         if (std::filesystem::exists(old))
         {

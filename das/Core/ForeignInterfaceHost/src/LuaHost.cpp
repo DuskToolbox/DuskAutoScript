@@ -18,6 +18,7 @@ DAS_DISABLE_WARNING_END
 #include <das/IDasBase.h>
 #include <das/Utils/CommonUtils.hpp>
 #include <das/Utils/DasJsonCore.h>
+#include <das/Utils/StringUtils.h>
 #include <filesystem>
 #include <fstream>
 #include <lauxlib.h>
@@ -29,7 +30,8 @@ DAS_DISABLE_WARNING_END
 #endif
 
 #ifndef DAS_LUA_OPEN_FUNCTION_NAME
-#error "DAS_LUA_OPEN_FUNCTION_NAME must be defined when DAS_EXPORT_LUA is enabled"
+#error                                                                         \
+    "DAS_LUA_OPEN_FUNCTION_NAME must be defined when DAS_EXPORT_LUA is enabled"
 #endif
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
@@ -162,13 +164,15 @@ auto LuaRuntime::LoadPlugin(const std::filesystem::path& path)
 {
     DAS_CORE_LOG_INFO(
         "[LuaRuntime::LoadPlugin] Starting load for manifest: {}",
-        path.string());
+        DAS::Utils::U8AsString(path.u8string()));
 
     // ── 1. Parse manifest.json ──────────────────────────────────────────
     std::ifstream file(path);
     if (!file.is_open())
     {
-        DAS_CORE_LOG_ERROR("Failed to open plugin manifest: {}", path.string());
+        DAS_CORE_LOG_ERROR(
+            "Failed to open plugin manifest: {}",
+            DAS::Utils::U8AsString(path.u8string()));
         return tl::make_unexpected(DAS_E_FILE_NOT_FOUND);
     }
 
@@ -183,7 +187,7 @@ auto LuaRuntime::LoadPlugin(const std::filesystem::path& path)
         {
             DAS_CORE_LOG_ERROR(
                 "Failed to parse plugin manifest: {}",
-                path.string());
+                DAS::Utils::U8AsString(path.u8string()));
             return tl::make_unexpected(DAS_E_FAIL);
         }
         auto manifest = std::move(*manifest_opt);
@@ -192,7 +196,7 @@ auto LuaRuntime::LoadPlugin(const std::filesystem::path& path)
         {
             DAS_CORE_LOG_ERROR(
                 "Plugin manifest is not a JSON object: {}",
-                path.string());
+                DAS::Utils::U8AsString(path.u8string()));
             return tl::make_unexpected(DAS_E_FAIL);
         }
 
@@ -203,7 +207,7 @@ auto LuaRuntime::LoadPlugin(const std::filesystem::path& path)
         {
             DAS_CORE_LOG_ERROR(
                 "Plugin manifest missing 'name' field: {}",
-                path.string());
+                DAS::Utils::U8AsString(path.u8string()));
             return tl::make_unexpected(DAS_E_FAIL);
         }
         plugin_name = std::string(*name_str);
@@ -215,7 +219,7 @@ auto LuaRuntime::LoadPlugin(const std::filesystem::path& path)
         {
             DAS_CORE_LOG_ERROR(
                 "Plugin manifest missing 'entryPoint' field: {}",
-                path.string());
+                DAS::Utils::U8AsString(path.u8string()));
             return tl::make_unexpected(DAS_E_FAIL);
         }
         entry_point = std::string(*ep_str);
@@ -232,7 +236,7 @@ auto LuaRuntime::LoadPlugin(const std::filesystem::path& path)
         auto export_dll_path = FindLuaExportDll(path);
         DAS_CORE_LOG_INFO(
             "[LuaRuntime::LoadPlugin] Loading Lua export DLL: {}",
-            export_dll_path.string());
+            DAS::Utils::U8AsString(export_dll_path.u8string()));
 
         // Add Lua DLL directory to Windows search path so
         // libDasCoreLuaExport.dll can find liblua.dll at runtime
@@ -254,7 +258,7 @@ auto LuaRuntime::LoadPlugin(const std::filesystem::path& path)
         {
             DAS_CORE_LOG_ERROR(
                 "Failed to load Lua export library: {}, error: {}",
-                export_dll_path.string(),
+                DAS::Utils::U8AsString(export_dll_path.u8string()),
                 ec.message());
             return tl::make_unexpected(DAS_E_INVALID_FILE);
         }
@@ -310,7 +314,8 @@ auto LuaRuntime::LoadPlugin(const std::filesystem::path& path)
 
     // ── 6. Add manifest directory to Lua package.path ───────────────────
     {
-        auto manifest_dir = path.parent_path().string();
+        auto manifest_dir =
+            std::string{DAS::Utils::U8AsString(path.parent_path().u8string())};
         // Convert backslashes to forward slashes for Lua compatibility
         std::replace(manifest_dir.begin(), manifest_dir.end(), '\\', '/');
 

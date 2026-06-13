@@ -1,5 +1,6 @@
 #include <das/Plugins/DasMaaPi/PiCompiler.h>
 #include <das/Utils/DasJsonCore.h>
+#include <das/Utils/StringUtils.h>
 
 #include <algorithm>
 #include <cstdint>
@@ -612,8 +613,8 @@ namespace Das::Plugins::DasMaaPi
     {
         CompileResultDto     result;
         ExecutionEnvelopeDto envelope;
-        envelope.maapi.interface_directory =
-            catalog.interface_directory.string();
+        envelope.maapi.interface_directory = std::string{
+            DAS::Utils::U8AsString(catalog.interface_directory.u8string())};
         envelope.maapi.fail_fast = settings.adapter.execution_policy.fail_fast;
         envelope.maapi.requires_agent_runtime = !catalog.raw_agent_json.empty();
         envelope.maapi.agents = NormalizeAgentSpecs(catalog.raw_agent_json);
@@ -667,7 +668,8 @@ namespace Das::Plugins::DasMaaPi
         envelope.maapi.resource_hash = resource->dto.hash;
         for (const auto& path : resource->resolved_paths)
         {
-            envelope.maapi.resource_paths.emplace_back(path.string());
+            envelope.maapi.resource_paths.emplace_back(
+                std::string{DAS::Utils::U8AsString(path.u8string())});
         }
         envelope.maapi.pi_env.controller_json = controller->raw.raw_json;
         envelope.maapi.pi_env.resource_json = resource->raw.raw_json;

@@ -9,6 +9,7 @@
 #include <das/DasString.hpp>
 #include <das/IDasBase.h>
 #include <das/Utils/DasJsonCore.h>
+#include <das/Utils/StringUtils.h>
 #include <das/_autogen/idl/abi/IDasPluginPackage.h>
 #include <das/_autogen/idl/abi/IDasTask.h>
 #include <das/_autogen/idl/abi/IDasTaskAuthoring.h>
@@ -973,7 +974,7 @@ namespace Das::Core::TaskScheduler
             DAS_CORE_LOG_WARN(
                 "SchedulerService::Initialize: failed to iterate "
                 "plugin directory {}: {}",
-                plugin_dir.string(),
+                DAS::Utils::U8AsString(plugin_dir.u8string()),
                 ec.message());
             return DAS_E_FAIL;
         }
@@ -990,7 +991,8 @@ namespace Das::Core::TaskScheduler
             std::filesystem::path manifest_path;
             if (entry.is_directory())
             {
-                auto dirname = entry.path().filename().string();
+                auto dirname = std::string{
+                    DAS::Utils::U8AsString(entry.path().filename().u8string())};
                 auto marker = entry.path() / (dirname + ".willBeDelete");
                 if (std::filesystem::exists(marker))
                 {
@@ -1038,7 +1040,7 @@ namespace Das::Core::TaskScheduler
                     DAS_CORE_LOG_WARN(
                         "SchedulerService::Initialize: failed to "
                         "parse manifest: {}",
-                        manifest_path.string());
+                        DAS::Utils::U8AsString(manifest_path.u8string()));
                     continue;
                 }
 
@@ -2511,9 +2513,10 @@ namespace Das::Core::TaskScheduler
                             {
                                 auto property = props_obj->operator[](
                                     std::string_view(desc.name));
-                                if constexpr (std::is_same_v<
-                                                  std::decay_t<decltype(val)>,
-                                                  std::string>)
+                                if constexpr (
+                                    std::is_same_v<
+                                        std::decay_t<decltype(val)>,
+                                        std::string>)
                                 {
                                     property = std::string(val);
                                 }

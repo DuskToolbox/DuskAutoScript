@@ -7,6 +7,7 @@
 #include <das/Core/IPC/MethodMetadata.h>
 #include <das/Core/IPC/ObjectId.h>
 #include <das/Core/Logger/Logger.h>
+#include <das/Utils/StringUtils.h>
 #include <das/Utils/fmt.h>
 
 #include <cstring>
@@ -302,9 +303,7 @@ namespace Das::Core::IPC::Host
                 return {};
             }
             auto        rel_str = rel.u8string();
-            std::string rel_u8(
-                reinterpret_cast<const char*>(rel_str.data()),
-                rel_str.size());
+            std::string rel_u8{DAS::Utils::U8AsString(rel_str)};
             if (!rel_u8.empty() && rel_u8.size() >= 2 && rel_u8[0] == '.'
                 && rel_u8[1] == '.')
             {
@@ -355,9 +354,7 @@ namespace Das::Core::IPC::Host
             response.response_data.clear();
 
             auto        u8base = plugin_dir.u8string();
-            std::string base_u8(
-                reinterpret_cast<const char*>(u8base.data()),
-                u8base.size());
+            std::string base_u8{DAS::Utils::U8AsString(u8base)};
             SerializeString(response.response_data, base_u8);
 
             std::vector<uint8_t> entries_buf;
@@ -387,14 +384,10 @@ namespace Das::Core::IPC::Host
                         entry.is_directory() ? uint8_t{1} : uint8_t{0};
                     entries_buf.push_back(type);
                     auto        u8name = entry.path().filename().u8string();
-                    std::string name_u8(
-                        reinterpret_cast<const char*>(u8name.data()),
-                        u8name.size());
+                    std::string name_u8{DAS::Utils::U8AsString(u8name)};
                     SerializeString(entries_buf, name_u8);
                     auto        u8abs = entry.path().u8string();
-                    std::string abs_u8(
-                        reinterpret_cast<const char*>(u8abs.data()),
-                        u8abs.size());
+                    std::string abs_u8{DAS::Utils::U8AsString(u8abs)};
                     SerializeString(entries_buf, abs_u8);
                     ++entry_count;
                 }
@@ -422,14 +415,10 @@ namespace Das::Core::IPC::Host
                         entry.is_directory() ? uint8_t{1} : uint8_t{0};
                     entries_buf.push_back(type);
                     auto        u8name = entry.path().filename().u8string();
-                    std::string name_u8(
-                        reinterpret_cast<const char*>(u8name.data()),
-                        u8name.size());
+                    std::string name_u8{DAS::Utils::U8AsString(u8name)};
                     SerializeString(entries_buf, name_u8);
                     auto        u8abs = entry.path().u8string();
-                    std::string abs_u8(
-                        reinterpret_cast<const char*>(u8abs.data()),
-                        u8abs.size());
+                    std::string abs_u8{DAS::Utils::U8AsString(u8abs)};
                     SerializeString(entries_buf, abs_u8);
                     ++entry_count;
                 }

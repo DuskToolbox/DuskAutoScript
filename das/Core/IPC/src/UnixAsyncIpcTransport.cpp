@@ -83,7 +83,7 @@ static std::string NormalizeUnixEndpoint(const std::string& endpoint)
     // Linux: /tmp/das_ipc_xxx_yyy
     // Windows: C:\\Users\\xxx\\AppData\\Local\\Temp\\das_ipc_xxx_yyy
     auto temp_dir = std::filesystem::temp_directory_path() / base;
-    return temp_dir.string();
+    return std::string{DAS::Utils::U8AsString(temp_dir.u8string())};
 }
 
 UnixAsyncIpcTransport::UnixAsyncIpcTransport(

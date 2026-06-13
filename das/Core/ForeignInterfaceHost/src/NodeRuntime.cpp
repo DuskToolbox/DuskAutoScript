@@ -2,6 +2,8 @@
 
 #include <das/Core/ForeignInterfaceHost/NodeRuntime.h>
 
+#include <das/Utils/StringUtils.h>
+
 #include <das/DasApi.h>
 
 #include <cstdlib>
@@ -97,7 +99,8 @@ namespace
     auto MakeEnvironmentConfig(const std::filesystem::path& app_root)
         -> DAS::Utils::Expected<DAS::DasPtr<IDasReadOnlyString>>
     {
-        const auto value = app_root.string();
+        const auto value =
+            std::string{DAS::Utils::U8AsString(app_root.u8string())};
         if (value.empty())
         {
             return tl::make_unexpected(DAS_E_INVALID_ARGUMENT);
@@ -255,8 +258,9 @@ auto NodeRuntime::BuildHostLaunchDesc() const
     result.resolved_node_executable = executable_path.value();
     result.package_paths = std::move(paths);
 
-    auto executable =
-        MakeReadOnlyString(result.resolved_node_executable.string());
+    auto executable = MakeReadOnlyString(
+        std::string{DAS::Utils::U8AsString(
+            result.resolved_node_executable.u8string())});
     if (!executable)
     {
         return tl::make_unexpected(executable.error());
@@ -264,14 +268,17 @@ auto NodeRuntime::BuildHostLaunchDesc() const
     result.executable = std::move(executable.value());
 
     const std::vector<std::string> args = {
-        result.package_paths.host_script_path.string(),
+        std::string{DAS::Utils::U8AsString(
+            result.package_paths.host_script_path.u8string())},
         "--main-pid",
         std::to_string(
             static_cast<uint32_t>(boost::process::v2::current_pid())),
         "--package-root",
-        result.package_paths.package_root.string(),
+        std::string{DAS::Utils::U8AsString(
+            result.package_paths.package_root.u8string())},
         "--node-modules-root",
-        result.package_paths.node_modules_root.string()};
+        std::string{DAS::Utils::U8AsString(
+            result.package_paths.node_modules_root.u8string())}};
 
     result.arg_storage.reserve(args.size());
     for (const auto& arg : args)
@@ -284,8 +291,9 @@ auto NodeRuntime::BuildHostLaunchDesc() const
         result.arg_storage.push_back(std::move(stored_arg.value()));
     }
 
-    auto working_directory =
-        MakeReadOnlyString(result.package_paths.package_root.string());
+    auto working_directory = MakeReadOnlyString(
+        std::string{DAS::Utils::U8AsString(
+            result.package_paths.package_root.u8string())});
     if (!working_directory)
     {
         return tl::make_unexpected(working_directory.error());

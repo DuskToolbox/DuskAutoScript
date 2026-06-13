@@ -179,7 +179,7 @@ DasResult LoadPluginConfig(
     {
         DAS_CORE_LOG_ERROR(
             "Failed to open plugin config: {}",
-            json_path.string());
+            DAS::Utils::U8AsString(json_path.u8string()));
         return DAS_E_FILE_NOT_FOUND;
     }
 
@@ -192,7 +192,7 @@ DasResult LoadPluginConfig(
         {
             DAS_CORE_LOG_ERROR(
                 "Failed to parse plugin config: {}",
-                json_path.string());
+                DAS::Utils::U8AsString(json_path.u8string()));
             return DAS_E_FAIL;
         }
         auto config = std::move(*config_opt);
@@ -201,7 +201,7 @@ DasResult LoadPluginConfig(
         {
             DAS_CORE_LOG_ERROR(
                 "Plugin config is not a JSON object: {}",
-                json_path.string());
+                DAS::Utils::U8AsString(json_path.u8string()));
             return DAS_E_FAIL;
         }
 
@@ -215,7 +215,7 @@ DasResult LoadPluginConfig(
         {
             DAS_CORE_LOG_ERROR(
                 "Plugin config missing 'entryPoint' field: {}",
-                json_path.string());
+                DAS::Utils::U8AsString(json_path.u8string()));
             return DAS_E_FAIL;
         }
 
@@ -466,7 +466,7 @@ bool PythonManager::Initialize()
                             PyList_Insert(path_list.Get(), 0, cwd_str.Get());
                             DAS_CORE_LOG_INFO(
                                 "Added current directory to sys.path: {}",
-                                cwd.string());
+                                DAS::Utils::U8AsString(cwd.u8string()));
                         }
                     }
                 }
@@ -650,7 +650,9 @@ auto PythonRuntime::LoadPlugin(const std::filesystem::path& path)
         // 3. 验证文件存在
         if (!std::filesystem::exists(path))
         {
-            DAS_CORE_LOG_ERROR("Plugin manifest not found: {}", path.string());
+            DAS_CORE_LOG_ERROR(
+                "Plugin manifest not found: {}",
+                DAS::Utils::U8AsString(path.u8string()));
             return tl::make_unexpected(DAS_E_FILE_NOT_FOUND);
         }
 

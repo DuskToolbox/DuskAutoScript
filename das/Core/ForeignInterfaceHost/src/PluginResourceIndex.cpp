@@ -7,6 +7,7 @@
 #include <das/Core/ForeignInterfaceHost/PluginScanner.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/Utils/DasJsonCore.h>
+#include <das/Utils/StringUtils.h>
 
 #include <fstream>
 #include <iterator>
@@ -28,7 +29,7 @@ void PluginResourceIndex::ConfigurePluginResourceScanRoot(
     {
         DAS_CORE_LOG_INFO(
             "PluginResourceIndex: scan root unchanged: {}",
-            scan_root.string());
+            DAS::Utils::U8AsString(scan_root.u8string()));
         return;
     }
 
@@ -38,7 +39,7 @@ void PluginResourceIndex::ConfigurePluginResourceScanRoot(
 
     DAS_CORE_LOG_INFO(
         "PluginResourceIndex: scan root configured: {}",
-        scan_root_.string());
+        DAS::Utils::U8AsString(scan_root_.u8string()));
 }
 
 DasResult PluginResourceIndex::ResolvePluginResourceEntryByGuid(
@@ -136,7 +137,7 @@ DasResult PluginResourceIndex::ResolveResourceFullPath(
     }
 
     auto relative = canonical_resolved.lexically_relative(canonical_root);
-    auto rel_str = relative.string();
+    auto rel_str = std::string{DAS::Utils::U8AsString(relative.u8string())};
     if (rel_str.empty())
     {
         DAS_CORE_LOG_WARN(
@@ -175,13 +176,13 @@ DasResult PluginResourceIndex::ScanAndPublish()
 
     DAS_CORE_LOG_INFO(
         "PluginResourceIndex: starting full scan of {}",
-        scan_root.string());
+        DAS::Utils::U8AsString(scan_root.u8string()));
 
     if (!std::filesystem::exists(scan_root))
     {
         DAS_CORE_LOG_WARN(
             "PluginResourceIndex: scan root does not exist: {}",
-            scan_root.string());
+            DAS::Utils::U8AsString(scan_root.u8string()));
         return DAS_E_NOT_FOUND;
     }
 
@@ -235,7 +236,7 @@ DasResult PluginResourceIndex::ScanAndPublish()
             {
                 DAS_CORE_LOG_WARN(
                     "PluginResourceIndex: failed to parse manifest {}",
-                    manifest_path.string());
+                    DAS::Utils::U8AsString(manifest_path.u8string()));
                 continue;
             }
         }
@@ -243,7 +244,7 @@ DasResult PluginResourceIndex::ScanAndPublish()
         {
             DAS_CORE_LOG_WARN(
                 "PluginResourceIndex: failed to parse manifest {}: {}",
-                manifest_path.string(),
+                DAS::Utils::U8AsString(manifest_path.u8string()),
                 e.what());
             continue;
         }
@@ -299,7 +300,7 @@ DasResult PluginResourceIndex::ScanAndPublish()
         DAS_CORE_LOG_INFO(
             "PluginResourceIndex: indexed plugin '{}' with resource_root={}",
             desc.name,
-            resource_root.string());
+            DAS::Utils::U8AsString(resource_root.u8string()));
     }
 
     size_t published_count = 0;
@@ -338,7 +339,7 @@ DasResult PluginResourceIndex::ValidateResourcePath(
         return DAS_E_INVALID_PATH;
     }
 
-    std::string rp_str = rp.string();
+    std::string rp_str{DAS::Utils::U8AsString(rp.u8string())};
     if (rp_str.find("..") != std::string::npos)
     {
         DAS_CORE_LOG_WARN(
@@ -367,7 +368,7 @@ DasResult PluginResourceIndex::ValidateResourcePath(
     }
 
     auto relative = canonical_resource.lexically_relative(canonical_root);
-    auto rel_str = relative.string();
+    auto rel_str = std::string{DAS::Utils::U8AsString(relative.u8string())};
     if (rel_str.empty())
     {
         DAS_CORE_LOG_WARN(

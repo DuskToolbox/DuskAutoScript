@@ -5,6 +5,7 @@
 #include <das/Core/Logger/Logger.h>
 #include <das/DasConfig.h>
 #include <das/Utils/DasJsonCore.h>
+#include <das/Utils/StringUtils.h>
 
 #include <fstream>
 #include <iterator>
@@ -58,12 +59,8 @@ public:
                 auto u8name = e.path().filename().u8string();
                 auto u8abs = e.path().u8string();
                 entries.push_back({
-                    .name = std::string(
-                        reinterpret_cast<const char*>(u8name.data()),
-                        u8name.size()),
-                    .absolute_path = std::string(
-                        reinterpret_cast<const char*>(u8abs.data()),
-                        u8abs.size()),
+                    .name = std::string{DAS::Utils::U8AsString(u8name)},
+                    .absolute_path = std::string{DAS::Utils::U8AsString(u8abs)},
                     .is_directory = e.is_directory(),
                 });
             }
@@ -80,12 +77,8 @@ public:
                 auto u8name = e.path().filename().u8string();
                 auto u8abs = e.path().u8string();
                 entries.push_back({
-                    .name = std::string(
-                        reinterpret_cast<const char*>(u8name.data()),
-                        u8name.size()),
-                    .absolute_path = std::string(
-                        reinterpret_cast<const char*>(u8abs.data()),
-                        u8abs.size()),
+                    .name = std::string{DAS::Utils::U8AsString(u8name)},
+                    .absolute_path = std::string{DAS::Utils::U8AsString(u8abs)},
                     .is_directory = e.is_directory(),
                 });
             }
@@ -116,7 +109,7 @@ public:
     std::string GetBasePath() const
     {
         auto u8 = base_dir_.u8string();
-        return std::string(reinterpret_cast<const char*>(u8.data()), u8.size());
+        return std::string{DAS::Utils::U8AsString(u8)};
     }
 };
 
@@ -162,7 +155,8 @@ std::vector<ScanResult> ScanPlugins(const std::filesystem::path& plugin_dir)
 std::filesystem::path FindManifest(
     const std::filesystem::path& plugin_dir_entry)
 {
-    auto dirname = plugin_dir_entry.filename().string();
+    auto dirname = std::string{
+        DAS::Utils::U8AsString(plugin_dir_entry.filename().u8string())};
 
     auto primary = plugin_dir_entry / (dirname + ".json");
     if (std::filesystem::exists(primary))
@@ -202,8 +196,10 @@ void CleanupMarkedPlugins(const std::filesystem::path& plugin_dir)
             {
                 if (sub.path().extension() == ".willBeDelete")
                 {
-                    auto plugin_name = sub.path().stem().string();
-                    auto parent_name = entry.path().filename().string();
+                    auto plugin_name = std::string{
+                        DAS::Utils::U8AsString(sub.path().stem().u8string())};
+                    auto parent_name = std::string{DAS::Utils::U8AsString(
+                        entry.path().filename().u8string())};
                     if (plugin_name != parent_name)
                     {
                         continue;
@@ -236,7 +232,8 @@ void CleanupMarkedPlugins(const std::filesystem::path& plugin_dir)
                 continue;
             }
 
-            auto plugin_name = entry.path().stem().string();
+            auto plugin_name = std::string{
+                DAS::Utils::U8AsString(entry.path().stem().u8string())};
             DAS_CORE_LOG_INFO(
                 "Cleaning up marked flat-file plugin: {}",
                 plugin_name);
@@ -315,7 +312,7 @@ DasResult MarkForDeletion(
             {
                 DAS_CORE_LOG_WARN(
                     "Failed to create deletion marker: {}",
-                    marker_path.string());
+                    DAS::Utils::U8AsString(marker_path.u8string()));
                 return DAS_E_FAIL;
             }
 

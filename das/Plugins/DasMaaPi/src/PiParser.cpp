@@ -1,5 +1,6 @@
 #include <das/Plugins/DasMaaPi/PiParser.h>
 #include <das/Utils/DasJsonCore.h>
+#include <das/Utils/StringUtils.h>
 
 #include <algorithm>
 #include <fstream>
@@ -396,7 +397,8 @@ namespace Das::Plugins::DasMaaPi
             diagnostic.severity = std::move(severity);
             diagnostic.code = std::move(code);
             diagnostic.message = std::move(message);
-            diagnostic.source = source.string();
+            diagnostic.source =
+                std::string{DAS::Utils::U8AsString(source.u8string())};
             catalog.diagnostics.emplace_back(std::move(diagnostic));
         }
 

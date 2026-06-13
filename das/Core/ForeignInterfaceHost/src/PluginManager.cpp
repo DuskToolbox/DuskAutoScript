@@ -8,6 +8,7 @@
 #include <das/Core/Logger/Logger.h>
 #include <das/DasPtr.hpp>
 #include <das/Utils/DasJsonCore.h>
+#include <das/Utils/StringUtils.h>
 #include <das/_autogen/idl/abi/IDasCapture.h>
 #include <das/_autogen/idl/abi/IDasComponent.h>
 #include <das/_autogen/idl/abi/IDasErrorLens.h>
@@ -72,8 +73,8 @@ namespace
             return true;
         }
 
-        return manifest_path.filename()
-               == manifest_path.parent_path().filename().string() + ".json";
+        return manifest_path.filename().u8string()
+               == manifest_path.parent_path().filename().u8string() + u8".json";
     }
 
     std::filesystem::path ResolveNodeModulesRoot(
@@ -237,7 +238,8 @@ DasResult PluginManager::LoadPlugin(
         manifest_path = ResolveManifestPath(normalized_path);
         identity_path = ResolveManifestIdentityPath(normalized_path);
         runtime_path = !manifest_path.empty() ? identity_path : normalized_path;
-        path_str = identity_path.string();
+        path_str =
+            std::string{DAS::Utils::U8AsString(identity_path.u8string())};
 
         // Canonical manifest path deduplication. Directory input is an alias
         // to the manifest it resolves to.
@@ -399,7 +401,8 @@ DasResult PluginManager::LoadPlugin(
         feature_info.feature_type = feature;
         feature_info.iid = GetIidForFeature(feature);
         feature_info.session_id = load_result->owner_session_id;
-        feature_info.plugin_name = identity_path.stem().string();
+        feature_info.plugin_name = std::string{
+            DAS::Utils::U8AsString(identity_path.stem().u8string())};
         feature_info.plugin_guid = desc->guid;
 
         DasPtr<IDasBase> p_interface = nullptr;
@@ -489,7 +492,8 @@ DasResult PluginManager::UnloadPlugin(const std::filesystem::path& path)
     std::unique_lock<std::mutex> lock(mutex_);
 
     auto normalized_path = NormalizePath(path);
-    auto path_str = ResolveManifestIdentityPath(normalized_path).string();
+    auto path_str = std::string{DAS::Utils::U8AsString(
+        ResolveManifestIdentityPath(normalized_path).u8string())};
 
     // 路径 -> GUID 查找
     auto path_it = path_to_guid_.find(path_str);
@@ -572,7 +576,8 @@ DasResult PluginManager::GetPlugin(
     std::lock_guard<std::mutex> lock(mutex_);
 
     auto normalized_path = NormalizePath(path);
-    auto path_str = ResolveManifestIdentityPath(normalized_path).string();
+    auto path_str = std::string{DAS::Utils::U8AsString(
+        ResolveManifestIdentityPath(normalized_path).u8string())};
 
     auto path_it = path_to_guid_.find(path_str);
     if (path_it == path_to_guid_.end())
@@ -617,7 +622,8 @@ DasResult PluginManager::RegisterPluginObjects(
     std::lock_guard<std::mutex> lock(mutex_);
 
     auto normalized_path = NormalizePath(path);
-    auto path_str = ResolveManifestIdentityPath(normalized_path).string();
+    auto path_str = std::string{DAS::Utils::U8AsString(
+        ResolveManifestIdentityPath(normalized_path).u8string())};
 
     auto path_it = path_to_guid_.find(path_str);
     if (path_it == path_to_guid_.end())
@@ -686,7 +692,8 @@ DasResult PluginManager::UnregisterPluginObjects(
     std::lock_guard<std::mutex> lock(mutex_);
 
     auto normalized_path = NormalizePath(path);
-    auto path_str = ResolveManifestIdentityPath(normalized_path).string();
+    auto path_str = std::string{DAS::Utils::U8AsString(
+        ResolveManifestIdentityPath(normalized_path).u8string())};
 
     auto path_it = path_to_guid_.find(path_str);
     if (path_it == path_to_guid_.end())
@@ -836,7 +843,8 @@ DasResult PluginManager::GetPluginFeatures(
     std::lock_guard<std::mutex> lock(mutex_);
 
     auto normalized_path = NormalizePath(path);
-    auto path_str = ResolveManifestIdentityPath(normalized_path).string();
+    auto path_str = std::string{DAS::Utils::U8AsString(
+        ResolveManifestIdentityPath(normalized_path).u8string())};
 
     auto path_it = path_to_guid_.find(path_str);
     if (path_it == path_to_guid_.end())
@@ -858,7 +866,8 @@ bool PluginManager::IsPluginLoaded(const std::filesystem::path& path) const
 {
     std::lock_guard<std::mutex> lock(mutex_);
     return path_to_guid_.contains(
-        ResolveManifestIdentityPath(NormalizePath(path)).string());
+        std::string{DAS::Utils::U8AsString(
+            ResolveManifestIdentityPath(NormalizePath(path)).u8string())});
 }
 
 size_t PluginManager::GetLoadedPluginCount() const
@@ -1007,7 +1016,8 @@ DasResult PluginManager::UnloadPluginIpc(
         error_lens_mgr_.OnPluginUnloading(guid);
         component_factory_mgr_.OnPluginUnloading(guid);
         task_component_factory_mgr_.OnPluginUnloading(guid);
-        path_to_guid_.erase(plugin.plugin_path.string());
+        path_to_guid_.erase(
+            std::string{DAS::Utils::U8AsString(plugin.plugin_path.u8string())});
         loaded_plugins_.erase(guid);
     }
 
@@ -1039,7 +1049,9 @@ void PluginManager::CleanupPluginByGuid(DasGuid plugin_guid)
         error_lens_mgr_.OnPluginUnloading(plugin_guid);
         component_factory_mgr_.OnPluginUnloading(plugin_guid);
         task_component_factory_mgr_.OnPluginUnloading(plugin_guid);
-        path_to_guid_.erase(plugin_it->second.plugin_path.string());
+        path_to_guid_.erase(
+            std::string{DAS::Utils::U8AsString(
+                plugin_it->second.plugin_path.u8string())});
         loaded_plugins_.erase(plugin_it);
     }
 

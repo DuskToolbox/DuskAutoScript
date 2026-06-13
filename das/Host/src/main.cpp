@@ -20,6 +20,7 @@
 #include <das/DasApi.h>
 #include <das/IDasBase.h>
 #include <das/Utils/DasJsonCore.h>
+#include <das/Utils/StringUtils.h>
 #include <das/Utils/fmt.h>
 #include <das/_autogen/idl/abi/IDasPluginPackage.h>
 #include <filesystem>
@@ -59,7 +60,7 @@ namespace
         {
             std::string msg = DAS_FMT_NS::format(
                 "无法打开 manifest 文件: {}",
-                manifest_path.string());
+                DAS::Utils::U8AsString(manifest_path.u8string()));
             DAS_LOG_ERROR(msg.c_str());
             return tl::make_unexpected(DAS_E_IPC_PLUGIN_LOAD_FAILED);
         }
@@ -73,7 +74,7 @@ namespace
         {
             std::string msg = DAS_FMT_NS::format(
                 "解析 manifest JSON 失败: {}",
-                manifest_path.string());
+                DAS::Utils::U8AsString(manifest_path.u8string()));
             DAS_LOG_ERROR(msg.c_str());
             return tl::make_unexpected(DAS_E_IPC_PLUGIN_LOAD_FAILED);
         }
@@ -165,7 +166,7 @@ namespace
         {
             std::string err_msg = DAS_FMT_NS::format(
                 "Plugin load failed: {}",
-                manifest_path.string());
+                DAS::Utils::U8AsString(manifest_path.u8string()));
             DAS_LOG_ERROR(err_msg.c_str());
             return tl::make_unexpected(DAS_E_IPC_PLUGIN_LOAD_FAILED);
         }
@@ -366,7 +367,8 @@ int main(int argc, char* argv[])
                 std::format(
                     "--plugin-dir not specified, falling back to working "
                     "directory: {}",
-                    handler_options.plugin_dir.string())
+                    DAS::Utils::U8AsString(
+                        handler_options.plugin_dir.u8string()))
                     .c_str());
         }
 

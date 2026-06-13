@@ -10,6 +10,7 @@
 #include <das/Utils/CommonUtils.hpp>
 #include <das/Utils/Expected.h>
 #include <das/Utils/StreamUtils.hpp>
+#include <das/Utils/StringUtils.h>
 
 DAS_DISABLE_WARNING_BEGIN
 
@@ -536,7 +537,9 @@ DasResult DasPluginLoadImageFromResource(
 
     if (!std::filesystem::exists(full_path))
     {
-        DAS_CORE_LOG_ERROR("file not found: {}", full_path.string());
+        DAS_CORE_LOG_ERROR(
+            "file not found: {}",
+            DAS::Utils::U8AsString(full_path.u8string()));
         return DAS_E_FILE_NOT_FOUND;
     }
 
@@ -547,7 +550,7 @@ DasResult DasPluginLoadImageFromResource(
         {
             DAS_CORE_LOG_ERROR(
                 "decoded image is empty for file: {}",
-                full_path.string());
+                DAS::Utils::U8AsString(full_path.u8string()));
             return DAS_E_OPENCV_ERROR;
         }
 

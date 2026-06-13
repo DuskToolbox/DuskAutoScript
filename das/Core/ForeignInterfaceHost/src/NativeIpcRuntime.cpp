@@ -2,6 +2,7 @@
 
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
+#include <das/Utils/StringUtils.h>
 
 #include <cstdint>
 #include <string>
@@ -28,7 +29,7 @@ namespace
         -> DAS::Utils::Expected<DAS::DasPtr<IDasReadOnlyString>>
     {
         DAS::DasPtr<IDasReadOnlyString> result;
-        const auto create_result =
+        const auto                      create_result =
             CreateIDasReadOnlyStringFromUtf8(value.c_str(), result.Put());
         if (DAS::IsFailed(create_result))
         {
@@ -59,15 +60,15 @@ auto NativeIpcRuntime::LoadPlugin(const RuntimeLoadRequest& request)
         return tl::make_unexpected(DAS_E_OBJECT_NOT_INIT);
     }
 
-    auto executable = MakeReadOnlyString(host_exe_path_.string());
+    auto executable = MakeReadOnlyString(
+        std::string{DAS::Utils::U8AsString(host_exe_path_.u8string())});
     if (!executable)
     {
         return tl::make_unexpected(executable.error());
     }
 
-    const auto main_pid =
-        static_cast<uint32_t>(DAS_CURRENT_PROCESS_ID());
-    auto arg_name = MakeReadOnlyString("--main-pid");
+    const auto main_pid = static_cast<uint32_t>(DAS_CURRENT_PROCESS_ID());
+    auto       arg_name = MakeReadOnlyString("--main-pid");
     if (!arg_name)
     {
         return tl::make_unexpected(arg_name.error());

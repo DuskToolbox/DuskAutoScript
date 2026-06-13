@@ -2,6 +2,7 @@
 #include <das/Core/SettingsManager/Config.h>
 #include <das/Core/SettingsManager/SettingsManager.h>
 #include <das/Utils/DasJsonCore.h>
+#include <das/Utils/StringUtils.h>
 
 #include <algorithm>
 #include <charconv>
@@ -374,7 +375,8 @@ std::string SettingsManager::GetProfileList()
         {
             if (entry.is_directory())
             {
-                auto filename = entry.path().filename().string();
+                auto filename = std::string{
+                    DAS::Utils::U8AsString(entry.path().filename().u8string())};
                 auto profile_str = "{\"profileId\":\"" + filename + "\"}";
                 auto parsed = Das::Utils::ParseYyjsonFromString(profile_str);
                 if (parsed)
@@ -575,7 +577,7 @@ SettingsManager::GetPluginSettingsWithStatus(
     {
         DAS_CORE_LOG_WARN(
             "Plugin settings file missing: {}, returning empty defaults",
-            path.string());
+            DAS::Utils::U8AsString(path.u8string()));
         auto defaults = Das::Utils::MakeYyjsonObject();
         // Persist empty defaults so future reads succeed
         WriteJsonFile(path, defaults);
@@ -611,7 +613,7 @@ SettingsManager::GetPluginSettingsWithStatus(
     // File is corrupt - rebuild with empty defaults
     DAS_CORE_LOG_WARN(
         "Plugin settings file corrupt: {}, restoring empty defaults",
-        path.string());
+        DAS::Utils::U8AsString(path.u8string()));
     auto defaults = Das::Utils::MakeYyjsonObject();
     WriteJsonFile(path, defaults);
     cell->snapshot = defaults;
@@ -947,7 +949,8 @@ yyjson::value SettingsManager::GetProfileListJson()
         {
             if (entry.is_directory())
             {
-                auto filename = entry.path().filename().string();
+                auto filename = std::string{
+                    DAS::Utils::U8AsString(entry.path().filename().u8string())};
                 auto profile_str = "{\"profileId\":\"" + filename + "\"}";
                 auto parsed = Das::Utils::ParseYyjsonFromString(profile_str);
                 if (parsed)
@@ -1253,8 +1256,9 @@ std::vector<int64_t> SettingsManager::ListTaskRepositoryEntryIds(
                 continue;
             }
 
-            auto id =
-                TryParseTaskRepositoryEntryId(entry.path().filename().string());
+            auto id = TryParseTaskRepositoryEntryId(
+                std::string{DAS::Utils::U8AsString(
+                    entry.path().filename().u8string())});
             if (id.has_value())
             {
                 ids.push_back(*id);

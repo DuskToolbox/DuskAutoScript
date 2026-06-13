@@ -5,6 +5,7 @@
 #include <das/Core/Logger/Logger.h>
 #include <das/DasApi.h>
 #include <das/Utils/DasJsonCore.h>
+#include <das/Utils/StringUtils.h>
 #include <filesystem>
 #include <fstream>
 
@@ -254,7 +255,7 @@ JavaVM* JvmManager::CreateJVM(
     {
         DAS_CORE_LOG_ERROR(
             "Failed to load JVM DLL: {} - {}",
-            jvm_dll_path.string(),
+            DAS::Utils::U8AsString(jvm_dll_path.u8string()),
             e.what());
         return nullptr;
     }
@@ -454,7 +455,7 @@ auto JavaRuntime::LoadPlugin(const std::filesystem::path& path)
         {
             DAS_CORE_LOG_ERROR(
                 "Plugin file not found: {}",
-                plugin_file_path_.string());
+                DAS::Utils::U8AsString(plugin_file_path_.u8string()));
             return tl::make_unexpected(DAS_E_FILE_NOT_FOUND);
         }
 
@@ -531,7 +532,7 @@ auto JavaRuntime::LoadPlugin(const std::filesystem::path& path)
             {
                 DAS_CORE_LOG_ERROR(
                     "Failed to create URL string for: {}",
-                    jar_paths[i].string());
+                    DAS::Utils::U8AsString(jar_paths[i].u8string()));
                 return tl::make_unexpected(DAS_E_OUT_OF_MEMORY);
             }
 
@@ -870,7 +871,7 @@ DasResult JavaRuntime::LoadPluginConfig(
     {
         DAS_CORE_LOG_ERROR(
             "Failed to open plugin config: {}",
-            json_path.string());
+            DAS::Utils::U8AsString(json_path.u8string()));
         return DAS_E_FILE_NOT_FOUND;
     }
     {
@@ -882,7 +883,7 @@ DasResult JavaRuntime::LoadPluginConfig(
         {
             DAS_CORE_LOG_ERROR(
                 "Failed to parse plugin config: {}",
-                json_path.string());
+                DAS::Utils::U8AsString(json_path.u8string()));
             return DAS_E_FAIL;
         }
         auto config = std::move(*config_opt);
@@ -891,7 +892,7 @@ DasResult JavaRuntime::LoadPluginConfig(
         {
             DAS_CORE_LOG_ERROR(
                 "Plugin config is not a JSON object: {}",
-                json_path.string());
+                DAS::Utils::U8AsString(json_path.u8string()));
             return DAS_E_FAIL;
         }
 
@@ -905,7 +906,7 @@ DasResult JavaRuntime::LoadPluginConfig(
         {
             DAS_CORE_LOG_ERROR(
                 "Plugin config missing 'entryPoint' field: {}",
-                json_path.string());
+                DAS::Utils::U8AsString(json_path.u8string()));
             return DAS_E_FAIL;
         }
 

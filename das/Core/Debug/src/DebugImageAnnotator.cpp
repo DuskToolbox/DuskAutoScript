@@ -5,6 +5,7 @@
 #include <das/Core/OcvWrapper/IImageBackend.h>
 #include <das/DasPtr.hpp>
 #include <das/Utils/DasJsonCore.h>
+#include <das/Utils/StringUtils.h>
 #include <das/_autogen/idl/abi/IDasBinaryBuffer.h>
 
 #include <algorithm>
@@ -374,7 +375,7 @@ namespace
             {
                 DAS_CORE_LOG_ERROR(
                     "Debug image directory creation failed for {}: {}",
-                    parent.string(),
+                    DAS::Utils::U8AsString(parent.u8string()),
                     ec.message());
                 return DAS_E_INVALID_PATH;
             }
@@ -384,7 +385,7 @@ namespace
         {
             DAS_CORE_LOG_ERROR(
                 "Debug image write failed for {}",
-                path.string());
+                DAS::Utils::U8AsString(path.u8string()));
             return DAS_E_INVALID_FILE;
         }
 
@@ -560,11 +561,12 @@ DebugImageWriteResult SaveOriginalAndAnnotated(
     DrawAnnotations(annotated, annotations);
 
     const auto img_dir = DebugRuntime::DebugDir() / "img";
-    EnqueueImageJob(ImageJob{
-        snapshot->bgr_image.clone(),
-        std::move(annotated),
-        img_dir / result.original_image_filename,
-        img_dir / result.image_filename});
+    EnqueueImageJob(
+        ImageJob{
+            snapshot->bgr_image.clone(),
+            std::move(annotated),
+            img_dir / result.original_image_filename,
+            img_dir / result.image_filename});
 
     return result;
 }

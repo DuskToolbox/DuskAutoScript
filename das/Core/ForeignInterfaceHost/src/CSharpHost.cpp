@@ -6,6 +6,7 @@
 
 #include <das/Core/Logger/Logger.h>
 #include <das/DasPtr.hpp>
+#include <das/Utils/StringUtils.h>
 
 #include <fstream>
 #include <iterator>
@@ -83,7 +84,7 @@ auto CSharpHost::LoadPlugin(const std::filesystem::path& manifest_path)
     {
         DAS_CORE_LOG_ERROR(
             "Failed to open C# plugin manifest: {}",
-            manifest_path.string());
+            DAS::Utils::U8AsString(manifest_path.u8string()));
         return tl::make_unexpected(DAS_E_FILE_NOT_FOUND);
     }
 
@@ -97,10 +98,12 @@ auto CSharpHost::LoadPlugin(const std::filesystem::path& manifest_path)
         return tl::make_unexpected(manifest.error());
     }
 
-    const auto manifest_path_storage = manifest->manifest_path.string();
-    const auto plugin_root_storage = manifest->package_root.string();
-    const auto plugin_binary_path_storage =
-        manifest->plugin_binary_path.string();
+    const auto manifest_path_storage =
+        std::string{DAS::Utils::U8AsString(manifest->manifest_path.u8string())};
+    const auto plugin_root_storage =
+        std::string{DAS::Utils::U8AsString(manifest->package_root.u8string())};
+    const auto plugin_binary_path_storage = std::string{
+        DAS::Utils::U8AsString(manifest->plugin_binary_path.u8string())};
 
     DasPtr<Das::PluginInterface::IDasPluginPackage> package;
     DasCSharpBootstrapArgsV1                        bootstrap_args{

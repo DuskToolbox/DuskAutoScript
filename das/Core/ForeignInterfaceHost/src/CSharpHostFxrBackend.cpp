@@ -3,6 +3,7 @@
 #include "CSharpHostFxrBackend.h"
 
 #include <das/DasPtr.hpp>
+#include <das/Utils/StringUtils.h>
 
 #include <cstdint>
 #include <memory>
@@ -42,7 +43,8 @@ namespace
     std::string BuildAssemblyQualifiedTypeName(const CSharpManifest& manifest)
     {
         return manifest.entry_point.type_name + ", "
-               + manifest.plugin_binary_path.stem().string();
+               + std::string{DAS::Utils::U8AsString(
+                   manifest.plugin_binary_path.stem().u8string())};
     }
 
     void ReleaseFailedPackage(DasCSharpBootstrapArgsV1& bootstrap_args)
@@ -65,7 +67,7 @@ namespace
 #ifdef _WIN32
         return path.wstring();
 #else
-        return path.string();
+        return std::string{DAS::Utils::U8AsString(path.u8string())};
 #endif
     }
 

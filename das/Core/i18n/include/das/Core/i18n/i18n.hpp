@@ -10,6 +10,7 @@
 #include <das/Utils/CommonUtils.hpp>
 #include <das/Utils/DasJsonCore.h>
 #include <das/Utils/StreamUtils.hpp>
+#include <das/Utils/StringUtils.h>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -125,7 +126,7 @@ public:
         {
             DAS_CORE_LOG_ERROR(
                 "Failed to parse i18n JSON: {}",
-                json_path.string());
+                DAS::Utils::U8AsString(json_path.u8string()));
             return;
         }
         ParseFromYyjsonValue(*parsed);

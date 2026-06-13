@@ -8,6 +8,7 @@
 #include <das/Utils/CommonUtils.hpp>
 #include <das/Utils/DasJsonCore.h>
 #include <das/Utils/Expected.h>
+#include <das/Utils/StringUtils.h>
 #include <filesystem>
 #include <fstream>
 
@@ -43,13 +44,13 @@ public:
     {
         DAS_CORE_LOG_INFO(
             "[CppRuntime::LoadPlugin] Starting load for manifest: {}",
-            path.string());
+            DAS::Utils::U8AsString(path.u8string()));
 
         if (path.extension() != ".json")
         {
             DAS_CORE_LOG_ERROR(
                 "CppRuntime::LoadPlugin requires a manifest .json path: {}",
-                path.string());
+                DAS::Utils::U8AsString(path.u8string()));
             return tl::make_unexpected(DAS_E_INVALID_ARGUMENT);
         }
 
@@ -59,7 +60,7 @@ public:
         {
             DAS_CORE_LOG_ERROR(
                 "Failed to open plugin manifest: {}",
-                path.string());
+                DAS::Utils::U8AsString(path.u8string()));
             return tl::make_unexpected(DAS_E_FILE_NOT_FOUND);
         }
 
@@ -75,7 +76,7 @@ public:
             {
                 DAS_CORE_LOG_ERROR(
                     "Failed to parse plugin manifest: {}",
-                    path.string());
+                    DAS::Utils::U8AsString(path.u8string()));
                 return tl::make_unexpected(DAS_E_FAIL);
             }
             auto manifest = std::move(*manifest_opt);
@@ -84,7 +85,7 @@ public:
             {
                 DAS_CORE_LOG_ERROR(
                     "Plugin manifest is not a JSON object: {}",
-                    path.string());
+                    DAS::Utils::U8AsString(path.u8string()));
                 return tl::make_unexpected(DAS_E_FAIL);
             }
 
@@ -94,7 +95,7 @@ public:
             {
                 DAS_CORE_LOG_ERROR(
                     "Plugin manifest missing 'name' field: {}",
-                    path.string());
+                    DAS::Utils::U8AsString(path.u8string()));
                 return tl::make_unexpected(DAS_E_FAIL);
             }
             plugin_name = std::string(*name_str);
@@ -105,7 +106,7 @@ public:
             {
                 DAS_CORE_LOG_ERROR(
                     "Plugin manifest missing 'pluginFilenameExtension' field: {}",
-                    path.string());
+                    DAS::Utils::U8AsString(path.u8string()));
                 return tl::make_unexpected(DAS_E_FAIL);
             }
             plugin_extension = std::string(*ext_str);
@@ -116,7 +117,7 @@ public:
             path.parent_path() / (plugin_name + "." + plugin_extension);
         DAS_CORE_LOG_INFO(
             "[CppRuntime::LoadPlugin] Constructed dll path: {}",
-            dll_path.string());
+            DAS::Utils::U8AsString(dll_path.u8string()));
 
         // 3. Load dll (existing logic)
         try
@@ -127,7 +128,7 @@ public:
             {
                 DAS_CORE_LOG_ERROR(
                     "Failed to load plugin library: {}, error: {}",
-                    dll_path.string(),
+                    DAS::Utils::U8AsString(dll_path.u8string()),
                     ec.message());
                 return tl::make_unexpected(DAS_E_INVALID_FILE);
             }
@@ -146,7 +147,7 @@ public:
                 DAS_CORE_LOG_ERROR(
                     "Failed to get export function '{}' from plugin: {}",
                     DAS_COCREATE_PLUGIN_NAME,
-                    dll_path.string());
+                    DAS::Utils::U8AsString(dll_path.u8string()));
                 return tl::make_unexpected(DAS_E_SYMBOL_NOT_FOUND);
             }
 
