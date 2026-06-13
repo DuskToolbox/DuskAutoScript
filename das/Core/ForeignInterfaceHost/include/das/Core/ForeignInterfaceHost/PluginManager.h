@@ -306,6 +306,13 @@ private:
      */
     void OnHostProcessExit(DasGuid plugin_guid, int exit_code);
 
+    /**
+     * @brief IPC 心跳超时回调
+     * @param plugin_guid 关联的插件 GUID
+     * @note 在 io_context 线程上执行，内部获取 mutex_ 保护
+     */
+    void OnHeartbeatTimeout(DasGuid plugin_guid);
+
     Das::Core::SettingsManager::SettingsManager& settings_manager_;
     mutable std::mutex                           mutex_;
     uint16_t                                     session_id_ = 0;

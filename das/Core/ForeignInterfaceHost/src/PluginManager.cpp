@@ -1072,4 +1072,13 @@ void PluginManager::OnHostProcessExit(DasGuid plugin_guid, int exit_code)
     CleanupPluginByGuid(plugin_guid);
 }
 
+void PluginManager::OnHeartbeatTimeout(DasGuid plugin_guid)
+{
+    // 此回调在 io_context 线程上执行（ConnectionManager heartbeat check）
+    DAS_CORE_LOG_WARN("Heartbeat timeout for plugin, cleaning up index");
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    CleanupPluginByGuid(plugin_guid);
+}
+
 DAS_CORE_FOREIGNINTERFACEHOST_NS_END
