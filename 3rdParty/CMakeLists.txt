@@ -503,12 +503,12 @@ if (NOT MSVC)
     endif ()
 endif ()
 
-# yyjson-cpp (replaces nlohmann/json) — per D-09/D-10
+# yyjson-cpp (replaces nlohmann/json)
 set(CPPYYJSON_PFR_TARGET Boost::headers CACHE STRING "Boost.PFR target for yyjson-cpp")
 FetchContent_Declare(
     cpp_yyjson
     GIT_REPOSITORY https://github.com/BombaxCeiba/yyjson-cpp
-    GIT_TAG        add02d6de0ee603939e15b71a0927db540dc7234
+    GIT_TAG        c00d344462d49579bdbf065f70fffa2b5866984b
     GIT_SHALLOW    TRUE
     GIT_SUBMODULES "" # Skip benchmark vendor submodules (simdjson, etc.) not needed for core library
 )
