@@ -1,4 +1,4 @@
-// Copyright 2026.
+#ifdef DAS_EXPORT_CSHARP
 
 #include <gtest/gtest.h>
 
@@ -463,3 +463,5 @@ TEST(CSharpHostManifest, CSharpBootstrapArgsValidateSizeVersionAndPackageOut)
         ValidateDasCSharpBootstrapArgsV1(&invalid),
         DAS_E_CSHARP_BOOTSTRAP_INVALID);
 }
+
+#endif // DAS_EXPORT_CSHARP
