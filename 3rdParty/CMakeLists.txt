@@ -102,7 +102,7 @@ function(_download_and_config_gtest)
     message(STATUS "Downloading and configuring google test. VERSION = ${DAS_GTESTS_VERSION}")
     FetchContent_Declare(
         googletest
-        GIT_REPOSITORY https://github.com/google/googletest.git
+        GIT_REPOSITORY ${GITHUB_MIRROR_URL}/google/googletest.git
         GIT_TAG 015950a936fc6b7cadca20eb0dbf6f054e6637fb
     )
 
@@ -120,7 +120,6 @@ message(STATUS "Downloading and collecting headers in tl::expected")
 FetchContent_Declare(
         tl_expected
         URL "${GITHUB_MIRROR_URL}/TartanLlama/expected/archive/refs/tags/v1.1.0.zip"
-        URL_HASH SHA256=4B2A347CF5450E99F7624247F7D78F86F3ADB5E6ACD33CE307094E9507615B78
 )
 
 if (NOT tl_expected_POPULATED)
@@ -509,7 +508,7 @@ set(CPPYYJSON_PFR_TARGET Boost::headers CACHE STRING "Boost.PFR target for yyjso
 FetchContent_Declare(
     cpp_yyjson
     GIT_REPOSITORY https://github.com/BombaxCeiba/yyjson-cpp
-    GIT_TAG        e8ea8f9bf876891f695a540145d9b9929e1c8201
+    GIT_TAG        add02d6de0ee603939e15b71a0927db540dc7234
     GIT_SHALLOW    TRUE
     GIT_SUBMODULES "" # Skip benchmark vendor submodules (simdjson, etc.) not needed for core library
 )
