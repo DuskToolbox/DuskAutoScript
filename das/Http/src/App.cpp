@@ -1,5 +1,6 @@
 #include <functional>
 #include <iostream>
+#include <optional>
 #include <string>
 
 #include "das/DasApi.h"
@@ -15,6 +16,7 @@
 #include "./controller/DasProfileController.hpp"
 #include "./controller/DasSchedulerController.hpp"
 #include "./controller/UISettingsController.hpp"
+#include <boost/asio/ip/address.hpp>
 #include <boost/program_options.hpp>
 #include <filesystem>
 
@@ -44,7 +46,9 @@ namespace Das::Http
 
     DasResult run(
         const std::filesystem::path& plugin_dir,
-        const std::filesystem::path& debug_dir)
+        const std::filesystem::path& debug_dir,
+        const std::optional<DAS::Core::IPC::MainProcess::WebSocketConfig>&
+            ws_config)
     {
         Das::Http::AppComponent components(plugin_dir);
 
@@ -75,32 +79,16 @@ namespace Das::Http
 
         auto ipc_owner = [&]() -> DAS::Core::IPC::MainProcess::IpcContextPtr
         {
-            const char* ws_port_env = std::getenv("DAS_IPC_WS_PORT");
-            if (ws_port_env && ws_port_env[0] != '\0')
+            if (ws_config)
             {
-                try
-                {
-                    int port = std::stoi(ws_port_env);
-                    if (port <= 0 || port > 65535)
-                    {
-                        DAS_LOG_ERROR("DAS_IPC_WS_PORT out of range");
-                        return nullptr;
-                    }
-                    DAS::Core::IPC::MainProcess::WebSocketConfig ws_config;
-                    ws_config.listen_port = static_cast<uint16_t>(port);
-                    std::cout
-                        << "[DasHttp] DAS_IPC_WS_PORT set: creating WS-enabled IpcContext on port "
-                        << port << std::endl;
-                    return DAS::Core::IPC::MainProcess::IpcContextPtr{
-                        DAS::Core::IPC::MainProcess::CreateIpcContext(
-                            false,
-                            ws_config)};
-                }
-                catch (const std::exception& e)
-                {
-                    DAS_LOG_ERROR("Invalid DAS_IPC_WS_PORT value");
-                    return nullptr;
-                }
+                std::cout
+                    << "[DasHttp] --ipc-ws: creating WS-enabled IpcContext on "
+                    << ws_config->listen_address << ":"
+                    << ws_config->listen_port << std::endl;
+                return DAS::Core::IPC::MainProcess::IpcContextPtr{
+                    DAS::Core::IPC::MainProcess::CreateIpcContext(
+                        false,
+                        *ws_config)};
             }
             return DAS::Core::IPC::MainProcess::IpcContextPtr{
                 DAS::Core::IPC::MainProcess::CreateIpcContext(false)};
@@ -550,7 +538,10 @@ int main(int argc, const char* argv[])
         "debug-dir",
         boost::program_options::value<std::string>()->default_value(
             "logs/debug"),
-        "Debug artifact directory path");
+        "Debug artifact directory path")(
+        "ipc-ws",
+        boost::program_options::value<std::string>(),
+        "Enable WebSocket IPC server (format: ip:port, e.g. 0.0.0.0:9527)");
 
     boost::program_options::variables_map vm;
     boost::program_options::store(
@@ -561,7 +552,47 @@ int main(int argc, const char* argv[])
     std::filesystem::path plugin_dir = vm["plugin-dir"].as<std::string>();
     std::filesystem::path debug_dir = vm["debug-dir"].as<std::string>();
 
-    const auto run_result = Das::Http::run(plugin_dir, debug_dir);
+    std::optional<DAS::Core::IPC::MainProcess::WebSocketConfig> ws_config;
+    if (vm.count("ipc-ws"))
+    {
+        const auto ws_value = vm["ipc-ws"].as<std::string>();
+        const auto colon_pos = ws_value.rfind(':');
+        if (colon_pos == std::string::npos || colon_pos == 0
+            || colon_pos == ws_value.size() - 1)
+        {
+            std::cerr << "[DasHttp] Invalid --ipc-ws format, expected ip:port"
+                      << std::endl;
+            return 1;
+        }
+        try
+        {
+            auto addr_str = ws_value.substr(0, colon_pos);
+            if (addr_str.size() >= 2 && addr_str.front() == '['
+                && addr_str.back() == ']')
+            {
+                addr_str = addr_str.substr(1, addr_str.size() - 2);
+            }
+            const auto addr = boost::asio::ip::make_address(addr_str);
+            int        port = std::stoi(ws_value.substr(colon_pos + 1));
+            if (port <= 0 || port > 65535)
+            {
+                std::cerr << "[DasHttp] --ipc-ws port out of range"
+                          << std::endl;
+                return 1;
+            }
+            ws_config.emplace();
+            ws_config->listen_address = addr.to_string();
+            ws_config->listen_port = static_cast<uint16_t>(port);
+        }
+        catch (const std::exception&)
+        {
+            std::cerr << "[DasHttp] Invalid --ipc-ws value: " << ws_value
+                      << std::endl;
+            return 1;
+        }
+    }
+
+    const auto run_result = Das::Http::run(plugin_dir, debug_dir, ws_config);
     if (DAS::IsFailed(run_result))
     {
         return run_result;
