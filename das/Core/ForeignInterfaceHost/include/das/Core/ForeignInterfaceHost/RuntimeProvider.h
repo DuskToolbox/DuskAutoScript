@@ -10,6 +10,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <memory>
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
@@ -25,6 +26,13 @@ struct RuntimeLoadRequest
     ForeignInterfaceLanguage language{};
     LoadMode                 load_mode{LoadMode::InProcess};
     uint16_t                 main_process_owner_session_id = 0;
+
+    // IPC lifecycle callbacks (set by PluginManager for IPC mode).
+    // on_process_exit fires on Host process termination (session_id +
+    // exit_code). on_heartbeat_timeout fires when IPC heartbeat times out
+    // (plugin guid).
+    std::function<void(uint16_t session_id, int exit_code)> on_process_exit;
+    std::function<void(DasGuid guid)> on_heartbeat_timeout;
 };
 
 struct RuntimeLoadResult
