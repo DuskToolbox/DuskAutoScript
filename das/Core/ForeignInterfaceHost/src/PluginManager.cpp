@@ -321,6 +321,19 @@ DasResult PluginManager::LoadPlugin(
             ResolveNodeModulesRoot(normalized_path, manifest_path);
     }
 
+    // IPC 模式下注入生命周期回调，使 Host 进程崩溃或心跳超时时
+    // PluginManager 能自动清理插件索引。
+    // guid 按值捕获（从 desc->guid 复制），保证 lambda 生命周期安全。
+    if (request.load_mode == LoadMode::Ipc)
+    {
+        const auto guid = desc->guid;
+        request.on_process_exit =
+            [this, guid](uint16_t /*session_id*/, int exit_code)
+        { OnHostProcessExit(guid, exit_code); };
+        request.on_heartbeat_timeout = [this, guid](DasGuid /*callback_guid*/)
+        { OnHeartbeatTimeout(guid); };
+    }
+
     std::unique_ptr<IRuntimeProvider> scoped_provider;
     IRuntimeProvider*                 provider = nullptr;
 
