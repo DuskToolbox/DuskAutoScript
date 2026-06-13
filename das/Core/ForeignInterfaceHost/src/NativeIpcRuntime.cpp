@@ -97,6 +97,8 @@ auto NativeIpcRuntime::LoadPlugin(const RuntimeLoadRequest& request)
     remote_request.manifest_path = request.manifest_path;
     remote_request.plugin_guid = request.plugin_guid;
     remote_request.timeout = timeout_;
+    remote_request.on_process_exit = request.on_process_exit;
+    remote_request.on_heartbeat_timeout = request.on_heartbeat_timeout;
 
     return remote_plugin_host_->LoadPlugin(remote_request);
 }
