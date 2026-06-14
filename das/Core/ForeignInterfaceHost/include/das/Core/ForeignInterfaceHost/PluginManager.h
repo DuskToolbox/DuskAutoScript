@@ -28,8 +28,8 @@
 #include <vector>
 
 // Forward declarations for test friend access
-class PluginManagerGuidTest_OnHostProcessExit_CleansUpIndex_Test;
-class PluginManagerGuidTest_OnHeartbeatTimeout_CleansUpIndex_Test;
+class PluginManagerGuidTest_OnHostProcessExit_DirectCall_CleansUpIndex_Test;
+class PluginManagerGuidTest_OnHeartbeatTimeout_DirectCall_CleansUpIndex_Test;
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 // Disable C4251 warning for DLL export with STL types
@@ -314,14 +314,21 @@ private:
      * @brief Host 进程退出回调
      * @param plugin_guid 关联的插件 GUID
      * @param exit_code 进程退出码
-     * @note 在 io_context 线程上执行，内部获取 mutex_ 保护
+     * @note 在 io_context 线程上执行（exit-watcher 协程 co_spawn 在
+     *       io_context 上），内部获取 mutex_ 保护。
+     *       锁序：callback_mutex_（HostLauncher exit-watcher slot）->
+     *       mutex_（INV-03）。与 OnHeartbeatTimeout 路径锁序对称。
      */
     void OnHostProcessExit(DasGuid plugin_guid, int exit_code);
 
     /**
      * @brief IPC 心跳超时回调
      * @param plugin_guid 关联的插件 GUID
-     * @note 在 io_context 线程上执行，内部获取 mutex_ 保护
+     * @note 在 ConnectionManager::heartbeat_thread_ 上执行（非 io_context
+     *       线程），内部获取 mutex_ 保护。
+     *       锁序：callback_mutex_（HostLauncher）-> mutex_（INV-03）。
+     *       heartbeat_thread_ 由 ConnectionManager 持有并 join（非
+     * io_context）。
      */
     void OnHeartbeatTimeout(DasGuid plugin_guid);
 
@@ -353,8 +360,14 @@ private:
 
     // Allow specific unit tests to access private members for index cleanup
     // verification. Forward declarations are at top of file (global namespace).
-    friend class ::PluginManagerGuidTest_OnHostProcessExit_CleansUpIndex_Test;
-    friend class ::PluginManagerGuidTest_OnHeartbeatTimeout_CleansUpIndex_Test;
+    // 测试名带 DirectCall 后缀反映其"同线程直调"语义（WR-04，plan 03 task 2a
+    // 重命名 OnHeartbeatTimeout_CleansUpIndex ->
+    // OnHeartbeatTimeout_DirectCall_CleansUpIndex 及 OnHostProcessExit
+    // 对称重命名）。
+    friend class ::
+        PluginManagerGuidTest_OnHostProcessExit_DirectCall_CleansUpIndex_Test;
+    friend class ::
+        PluginManagerGuidTest_OnHeartbeatTimeout_DirectCall_CleansUpIndex_Test;
 };
 
 #ifdef _MSC_VER

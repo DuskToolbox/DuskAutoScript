@@ -364,8 +364,8 @@ DasResult PluginManager::LoadPlugin(
         request.on_process_exit =
             [this, guid](uint16_t /*session_id*/, int exit_code)
         { OnHostProcessExit(guid, exit_code); };
-        request.on_heartbeat_timeout = [this, guid](DasGuid /*callback_guid*/)
-        { OnHeartbeatTimeout(guid); };
+        request.on_heartbeat_timeout = [this](DasGuid callback_guid)
+        { OnHeartbeatTimeout(callback_guid); };
     }
 
     std::unique_ptr<IRuntimeProvider> scoped_provider;
@@ -1110,7 +1110,9 @@ void PluginManager::CleanupPluginByGuid(DasGuid plugin_guid)
 
 void PluginManager::OnHostProcessExit(DasGuid plugin_guid, int exit_code)
 {
-    // 此回调在 io_context 线程上执行
+    // 此回调在 io_context 线程上执行（exit-watcher 协程 co_spawn 在 io_context
+    // 上），锁序：callback_mutex_（HostLauncher exit-watcher slot）-> mutex_
+    // （INV-03）。与 OnHeartbeatTimeout 路径锁序对称。
     DAS_CORE_LOG_WARN(
         "Host process exited unexpectedly: exit_code={}",
         exit_code);
@@ -1121,7 +1123,9 @@ void PluginManager::OnHostProcessExit(DasGuid plugin_guid, int exit_code)
 
 void PluginManager::OnHeartbeatTimeout(DasGuid plugin_guid)
 {
-    // 此回调在 io_context 线程上执行（ConnectionManager heartbeat check）
+    // 此回调在 ConnectionManager::heartbeat_thread_ 上执行（非 io_context
+    // 线程）， 锁序：callback_mutex_（HostLauncher）-> mutex_（INV-03）。
+    // heartbeat_thread_ 由 ConnectionManager 持有并在析构时 join。
     DAS_CORE_LOG_WARN("Heartbeat timeout for plugin, cleaning up index");
 
     std::lock_guard<std::mutex> lock(mutex_);

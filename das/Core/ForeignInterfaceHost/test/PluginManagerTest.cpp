@@ -2209,10 +2209,13 @@ TEST_F(PluginManagerGuidTest, SetHostExePath)
     pm_->SetHostExePath("/path/to/DasHost");
 }
 
-TEST_F(PluginManagerGuidTest, OnHostProcessExit_CleansUpIndex)
+TEST_F(PluginManagerGuidTest, OnHostProcessExit_DirectCall_CleansUpIndex)
 {
     // Manually set up internal state to simulate post-IPC-load state.
     // This test uses friend access to PluginManager private members.
+    // WR-04: test name reflects "同线程直调" (direct call) — bypasses the real
+    // cross-thread HostLauncher callback path (plan 03 adds the real-thread
+    // test).
     DasGuid test_guid{};
     test_guid.data1 = 0x00000099;
 
@@ -2234,11 +2237,14 @@ TEST_F(PluginManagerGuidTest, OnHostProcessExit_CleansUpIndex)
     EXPECT_FALSE(pm_->host_launchers_.contains(test_guid));
 }
 
-TEST_F(PluginManagerGuidTest, OnHeartbeatTimeout_CleansUpIndex)
+TEST_F(PluginManagerGuidTest, OnHeartbeatTimeout_DirectCall_CleansUpIndex)
 {
     // Manually set up internal state to simulate post-IPC-load state.
     // Drives the full heartbeat-timeout path: OnHeartbeatTimeout takes its own
     // mutex lock and calls CleanupPluginByGuid internally.
+    // WR-04: test name reflects "同线程直调" (direct call) — bypasses the real
+    // cross-thread HostLauncher callback path (plan 03 adds the real-thread
+    // test).
     DasGuid test_guid{};
     test_guid.data1 = 0x000000AA;
 
