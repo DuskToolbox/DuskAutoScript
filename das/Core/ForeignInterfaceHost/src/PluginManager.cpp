@@ -21,6 +21,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <vector>
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 
@@ -122,6 +123,12 @@ PluginManager::PluginManager(
 
 PluginManager::~PluginManager()
 {
+    // CR-02 析构路径 drain：必须先 drain 在途回调，再释放其它成员。
+    // Shutdown 会调用每个 launcher 的 ClearCallbacks（持 callback_mutex_ 等待
+    // 在途回调完成）+ 锁外 Stop，使心跳线程后续 Invoke 空转（callback_
+    // 已置空）， 不再回调已析构的 this。若用户已显式调过 Shutdown，二次调用幂等
+    // （host_launchers_ 已空，launchers_to_stop 为空，Stop 循环空转）。
+    Shutdown();
     ClearActiveErrorLensManager(&error_lens_mgr_);
 }
 
@@ -148,16 +155,68 @@ DasResult PluginManager::Initialize(uint16_t session_id)
 
 DasResult PluginManager::Shutdown()
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    // CR-03 / INV-03: Shutdown 采用方案 A 两阶段 —— 阶段 1 在 mutex_ 锁内
+    // 收集 launcher 的 DasPtr 副本 + 清空所有索引（这些操作不阻塞、不碰
+    // callback_mutex_，锁内安全）；阶段 2 在释放 mutex_ 后调用
+    // ClearCallbacks + Stop。锁序保持 callback_mutex_ -> mutex_ 正向，
+    // 消除旧版持 mutex_ 调 ClearCallbacks/Stop 的 AB-BA 死锁向量。
+    std::vector<DasPtr<DAS::Core::IPC::IHostLauncher>> launchers_to_stop;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
 
-    // 停止所有 HostLauncher
-    // 先清除进程退出回调，避免 Stop 触发回调
-    for (auto& [guid, launcher] : host_launchers_)
+        // 收集所有 launcher 的 DasPtr 副本（INV-04：双重 DasPtr 持有保证
+        // HostLauncher 不析构、callback_mutex_
+        // 不析构）。host_launchers_.clear() 后局部 launchers_to_stop
+        // 仍保活，阶段 2 可安全访问。
+        for (auto& [guid, launcher] : host_launchers_)
+        {
+            if (launcher)
+            {
+                launchers_to_stop.push_back(launcher);
+            }
+        }
+        host_launchers_.clear();
+
+        // 卸载所有插件
+        for (auto& [guid, plugin] : loaded_plugins_)
+        {
+            // 先注销对象
+            if (registry_)
+            {
+                for (auto& feature : plugin.features)
+                {
+                    registry_->UnregisterObject(feature.object_id);
+                }
+            }
+
+            // 通知 ComponentFactoryManager 释放工厂引用
+            error_lens_mgr_.OnPluginUnloading(guid);
+            component_factory_mgr_.OnPluginUnloading(guid);
+            task_component_factory_mgr_.OnPluginUnloading(guid);
+        }
+
+        feature_type_index_.clear();
+        path_to_guid_.clear();
+        loaded_plugins_.clear();
+        session_id_ = 0;
+        ClearActiveErrorLensManager(&error_lens_mgr_);
+    } // 释放 mutex_ —— 阶段 2 锁外调 ClearCallbacks/Stop（INV-03）
+
+    // 阶段 2：锁外 ClearCallbacks + Stop。
+    // ClearCallbacks 走 IHostConnection
+    // 接口（IHostConnection.h），host_launchers_ 存的是 IHostLauncher（无
+    // ClearCallbacks 虚方法），需经具体 HostLauncher 访问。Stop 走
+    // IHostLauncher 接口（无需下行）。两者均不持任何 mutex_，
+    // 与心跳路径锁序（callback_mutex_ -> mutex_）一致，无 AB-BA。
+    for (auto& launcher : launchers_to_stop)
     {
         if (launcher)
         {
+            // ClearCallbacks 持 callback_mutex_ drain 在途回调（CR-02 drain
+            // 屏障）。 先于 Stop 调用，避免 Stop 触发进程退出回调时回调仍指向
+            // this。
             auto* concrete =
-                static_cast<DAS::Core::IPC::HostLauncher*>(launcher.Get());
+                dynamic_cast<DAS::Core::IPC::HostLauncher*>(launcher.Get());
             if (concrete)
             {
                 concrete->ClearCallbacks();
@@ -169,31 +228,6 @@ DasResult PluginManager::Shutdown()
             }
         }
     }
-    host_launchers_.clear();
-
-    // 卸载所有插件
-    for (auto& [guid, plugin] : loaded_plugins_)
-    {
-        // 先注销对象
-        if (registry_)
-        {
-            for (auto& feature : plugin.features)
-            {
-                registry_->UnregisterObject(feature.object_id);
-            }
-        }
-
-        // 通知 ComponentFactoryManager 释放工厂引用
-        error_lens_mgr_.OnPluginUnloading(guid);
-        component_factory_mgr_.OnPluginUnloading(guid);
-        task_component_factory_mgr_.OnPluginUnloading(guid);
-    }
-
-    feature_type_index_.clear();
-    path_to_guid_.clear();
-    loaded_plugins_.clear();
-    session_id_ = 0;
-    ClearActiveErrorLensManager(&error_lens_mgr_);
 
     DAS_CORE_LOG_INFO("PluginManager shutdown complete");
     return DAS_S_OK;

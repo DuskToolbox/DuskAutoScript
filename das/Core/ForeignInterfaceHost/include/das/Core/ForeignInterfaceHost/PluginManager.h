@@ -104,6 +104,14 @@ public:
 
     /**
      * @brief 关闭插件管理器，卸载所有插件
+     *
+     * 方案 A 两阶段实现（CR-03 / INV-03 锁层级修复）：
+     * 阶段 1 在 mutex_ 锁内收集 launcher 的 DasPtr 副本 + 清空所有索引
+     * （这些操作不阻塞、不碰 callback_mutex_）；阶段 2 释放 mutex_ 后
+     * 调用 ClearCallbacks + Stop（可阻塞）。锁序保持 callback_mutex_ ->
+     * mutex_ 正向，消除旧版持 mutex_ 调 ClearCallbacks/Stop 的 AB-BA
+     * 死锁向量。该方法幂等：host_launchers_ 已空时二次调用空转安全
+     * （~PluginManager 会再次调用以 drain 在途回调）。
      */
     DasResult Shutdown();
 
@@ -295,6 +303,10 @@ private:
      * 清理 loaded_plugins_、path_to_guid_、host_launchers_ 三个索引。
      * 进程退出和心跳超时两条路径最终都调用此方法。
      * 调用方必须已持有 mutex_。
+     *
+     * INV-02: 本方法只 host_launchers_.erase()，不得调用 ClearCallbacks/Stop
+     * （会重入 callback_mutex_ 或违反锁层级 callback_mutex_ -> mutex_）。
+     * ClearCallbacks/Stop 只能在 Shutdown/UnloadPluginIpc 的锁外阶段调用。
      */
     void CleanupPluginByGuid(DasGuid plugin_guid);
 
@@ -331,6 +343,10 @@ private:
 
     // IPC 相关成员
     Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext> ipc_context_;
+    // INV-04: HostLauncher 被本表（按 GUID）+ ConnectionManager::hosts_
+    // （按 session_id）双重 DasPtr 持有。erase 本表一份后计数仍 >= 1，
+    // HostLauncher 不析构，callback_mutex_ 不析构。这是 ClearCallbacks
+    // drain 屏障成立的隐蔽依赖，明文化以保障后续维护不破坏该约束。
     std::unordered_map<DasGuid, DasPtr<DAS::Core::IPC::IHostLauncher>>
                 host_launchers_;
     std::string host_exe_path_;
