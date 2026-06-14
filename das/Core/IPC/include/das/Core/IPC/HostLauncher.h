@@ -14,6 +14,7 @@
 #include <das/IDasBase.h>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
@@ -30,6 +31,81 @@ namespace boost::asio
 }
 
 DAS_CORE_IPC_NS_BEGIN
+
+// 前向声明主模板
+template <typename Signature>
+class GuardedCallback;
+
+/**
+ * @brief 跨线程 callback 封装（private std::mutex + std::function）
+ *
+ * Phase 80.2 锁定方案 D-01/D-03/D-05/D-06 的载体：把 HostLauncher 的
+ * `on_process_exit_` / `on_heartbeat_timeout_` 裸 std::function
+ * 成员换成此封装， 让 CR-01（std::function 跨线程读写 UB）与
+ * CR-02（ClearCallbacks 持锁 = drain 在途回调的轻量等价）由一个类型统一承担。
+ *
+ * INV-01（回调内不得重入本 slot）：Invoke 持锁执行 callback_。非递归 std::mutex
+ *   保证回调内部若回头调用同一 slot 的 Set/Clear/Invoke 立即自死锁暴露 ——
+ *   recursive_mutex 救不了 Clear() 置空正在执行的 std::function（= 析构正在
+ *   执行的 this->callback_ = UB），故非递归锁比递归锁更安全。
+ *   当前 OnHeartbeatTimeout / OnHostProcessExit -> CleanupPluginByGuid 只 erase
+ *   索引，不触碰回调 slot，满足此约束。
+ */
+template <typename Ret, typename... Args>
+class GuardedCallback<Ret(Args...)>
+{
+public:
+    using Callback = std::function<Ret(Args...)>;
+
+    GuardedCallback() = default;
+    ~GuardedCallback() = default;
+
+    GuardedCallback(const GuardedCallback&) = delete;
+    GuardedCallback& operator=(const GuardedCallback&) = delete;
+    GuardedCallback(GuardedCallback&&) = delete;
+    GuardedCallback& operator=(GuardedCallback&&) = delete;
+
+    /// 持锁替换 callback_。调用方通常是 PluginManager / IPC setup 线程。
+    void Set(Callback cb)
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        callback_ = std::move(cb);
+    }
+
+    /// 持锁置空。析构 / Shutdown / Stop 路径调用。
+    /// 关键：持锁 = Invoke 若在执行则等待其完成（因为 Invoke 持同一把锁），
+    /// 这是 CR-02 "drain 轻量等价" 的实现机制。
+    void Clear()
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        callback_ = nullptr;
+    }
+
+    /**
+     * @brief 持锁执行 callback_（D-01 持锁调用，非取副本锁外调）
+     *
+     * INV-01: callback must NOT re-enter Set/Clear/Invoke of this slot.
+     *   - 非递归 std::mutex：重入立即死锁（同线程二次 lock）
+     *   - Clear() during in-flight 会析构正在执行的 std::function = UB
+     *   - 两者皆靠"持锁执行 + 非递归锁"让违反立即暴露
+     *
+     * 故意的"最小持锁原则"违反：取副本锁外调（写法 B）会让 ClearCallbacks
+     * 只等到"取副本完"，等不到"回调执行完"，CR-02 的 in-flight UAF 回来。
+     * 持锁执行是 ClearCallbacks 能 drain 在途回调的必要形态。
+     */
+    void Invoke(Args... args)
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (callback_)
+        {
+            callback_(args...);
+        }
+    }
+
+private:
+    std::mutex mutex_;
+    Callback   callback_;
+};
 
 class HostLauncher final : public IHostLauncher, public IHostConnection
 {
@@ -58,9 +134,12 @@ public:
 
     void ClearCallbacks() override
     {
+        // on_register_ 是单线程 Setup 路径成员，不在并发 scope，保留裸置空。
+        // on_process_exit_ / on_heartbeat_timeout_ 走 GuardedCallback 持锁
+        // Clear， 持锁语义 = drain 在途回调（CR-02 屏障）。
         on_register_ = nullptr;
-        on_process_exit_ = nullptr;
-        on_heartbeat_timeout_ = nullptr;
+        on_process_exit_slot_.Clear();
+        on_heartbeat_timeout_slot_.Clear();
     }
 
     /**
@@ -233,11 +312,20 @@ private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
 
-    uint16_t                   session_id_ = 0;
-    OnRegisterCallback         on_register_;
-    OnProcessExitCallback      on_process_exit_;
-    OnHeartbeatTimeoutCallback on_heartbeat_timeout_;
-    DasGuid                    associated_guid_{};
+    uint16_t           session_id_ = 0;
+    OnRegisterCallback on_register_;
+    // INV-04: HostLauncher 被 host_launchers_（PluginManager，按 GUID）+
+    //         ConnectionManager::hosts_（按 session_id）双重 DasPtr 持有。
+    //         erase 一份后计数仍 ≥1，HostLauncher 不析构，callback_mutex_
+    //         不析构。这是 ClearCallbacks 持锁 drain 在途回调成立的隐蔽依赖，
+    //         明文化后才有维护保障。
+    GuardedCallback<void(uint16_t, int)> on_process_exit_slot_;
+    GuardedCallback<void(DasGuid)>       on_heartbeat_timeout_slot_;
+    DasGuid                              associated_guid_{};
+    /// 保护 associated_guid_ 的并发读写（NotifyHeartbeatTimeout 读、
+    /// SetAssociatedGuid 写）。DasGuid 是 POD 无法 atomic，故用独立 mutex；
+    /// 维持单一锁职责，不让 slot 锁内嵌套 guid 锁。
+    mutable std::mutex associated_guid_mutex_;
 };
 DAS_CORE_IPC_NS_END
 

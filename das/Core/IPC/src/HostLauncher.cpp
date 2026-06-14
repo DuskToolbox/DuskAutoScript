@@ -619,18 +619,18 @@ DasResult HostLauncher::StartLaunchSequence(
         out_session_id);
     DAS_LOG_INFO(msg.c_str());
 
-    // 异步监控 Host 进程退出，触发回调通知 PluginManager 清理索引
-    if (impl_->process && on_process_exit_)
+    // 异步监控 Host 进程退出，触发回调通知 PluginManager 清理索引。
+    // 注意：不再取裸 std::function 副本（CR-01 数据竞争点）。exit-watcher 协程
+    // 触发时直接调 slot_.Invoke，持锁执行 callback（D-01）。slot 未 Set 时
+    // Invoke 内部判断空则空转，语义等价于旧版 `if (callback)` 判断。
+    if (impl_->process)
     {
-        auto callback = on_process_exit_;
         auto session_id = session_id_;
         auto process_ptr = impl_->process.get();
 
         boost::asio::co_spawn(
             impl_->io_ctx,
-            [process_ptr,
-             callback,
-             session_id]() -> boost::asio::awaitable<void>
+            [this, process_ptr, session_id]() -> boost::asio::awaitable<void>
             {
                 boost::system::error_code ec;
                 co_await process_ptr->async_wait(
@@ -638,10 +638,8 @@ DasResult HostLauncher::StartLaunchSequence(
                         boost::asio::use_awaitable,
                         ec));
                 int exit_code = ec ? -1 : process_ptr->exit_code();
-                if (callback)
-                {
-                    callback(session_id, exit_code);
-                }
+                // 持锁执行 callback（INV-01：回调内部不得重入本 slot）
+                on_process_exit_slot_.Invoke(session_id, exit_code);
                 co_return;
             },
             boost::asio::detached);
@@ -658,8 +656,11 @@ void HostLauncher::Stop()
         !impl_->io_ctx.get_executor().running_in_this_thread()
         && "Stop() must not be called from the io_context thread");
 
-    // 清除进程退出回调，避免 Stop() 主动关闭进程时触发回调
-    on_process_exit_ = nullptr;
+    // 全清心跳+退出 slot（Pitfall 6 修复：消除旧版只清 on_process_exit_
+    // 的不对称）。 ClearCallbacks 持锁 drain（CR-02），避免 Stop
+    // 主动关闭进程时残留 callback 被并发触发。心跳 slot 同清，避免 Stop
+    // 后心跳线程仍触发回调的窗口。
+    ClearCallbacks();
 
     // 先发送 GOODBYE 消息让 Host 进程优雅退出
     if (impl_->async_transport && impl_->is_running)
@@ -830,24 +831,36 @@ DasResult HostLauncher::StartAsync(
 
 void HostLauncher::SetOnProcessExit(OnProcessExitCallback callback)
 {
-    on_process_exit_ = std::move(callback);
+    on_process_exit_slot_.Set(std::move(callback));
 }
 
 void HostLauncher::SetOnHeartbeatTimeout(OnHeartbeatTimeoutCallback callback)
 {
-    on_heartbeat_timeout_ = std::move(callback);
+    on_heartbeat_timeout_slot_.Set(std::move(callback));
 }
 
-void HostLauncher::SetAssociatedGuid(DasGuid guid) { associated_guid_ = guid; }
+void HostLauncher::SetAssociatedGuid(DasGuid guid)
+{
+    std::lock_guard<std::mutex> lock(associated_guid_mutex_);
+    associated_guid_ = guid;
+}
 
-DasGuid HostLauncher::GetAssociatedGuid() const { return associated_guid_; }
+DasGuid HostLauncher::GetAssociatedGuid() const
+{
+    std::lock_guard<std::mutex> lock(associated_guid_mutex_);
+    return associated_guid_;
+}
 
 void HostLauncher::NotifyHeartbeatTimeout()
 {
-    if (on_heartbeat_timeout_)
+    // 先持 associated_guid_mutex_ 取 guid 副本后释放，再 Invoke（持 slot
+    // 锁执行）。 单一锁职责：slot 锁内不嵌套 guid 锁，避免锁层级耦合。
+    DasGuid guid_snapshot{};
     {
-        on_heartbeat_timeout_(associated_guid_);
+        std::lock_guard<std::mutex> lock(associated_guid_mutex_);
+        guid_snapshot = associated_guid_;
     }
+    on_heartbeat_timeout_slot_.Invoke(guid_snapshot);
 }
 
 void HostLauncher::TerminateIfRunning()
@@ -1768,17 +1781,18 @@ boost::asio::awaitable<void> HostLauncher::RunAsync(
             session_id);
         DAS_LOG_INFO(success_msg.c_str());
 
-        // 异步监控 Host 进程退出，触发回调通知 PluginManager 清理索引
-        if (impl_->process && on_process_exit_)
+        // 异步监控 Host 进程退出，触发回调通知 PluginManager 清理索引。
+        // 不取裸 std::function 副本（CR-01 数据竞争点），改为协程触发时持锁
+        // Invoke。
+        if (impl_->process)
         {
-            auto callback = on_process_exit_;
             auto cb_session_id = session_id;
             auto process_ptr = impl_->process.get();
 
             boost::asio::co_spawn(
                 impl_->io_ctx,
-                [process_ptr,
-                 callback,
+                [this,
+                 process_ptr,
                  cb_session_id]() -> boost::asio::awaitable<void>
                 {
                     boost::system::error_code ec;
@@ -1787,10 +1801,8 @@ boost::asio::awaitable<void> HostLauncher::RunAsync(
                             boost::asio::use_awaitable,
                             ec));
                     int exit_code = ec ? -1 : process_ptr->exit_code();
-                    if (callback)
-                    {
-                        callback(cb_session_id, exit_code);
-                    }
+                    // 持锁执行 callback（INV-01：回调内部不得重入本 slot）
+                    on_process_exit_slot_.Invoke(cb_session_id, exit_code);
                     co_return;
                 },
                 boost::asio::detached);
