@@ -27,6 +27,7 @@ DAS_DISABLE_WARNING_END
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -34,6 +35,7 @@ DAS_DISABLE_WARNING_END
 #include <mutex>
 #include <optional>
 #include <random>
+#include <thread>
 
 using namespace DAS::Core::ForeignInterfaceHost;
 using namespace DAS::Core::IPC;
