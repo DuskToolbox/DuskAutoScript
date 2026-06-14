@@ -37,6 +37,8 @@ DAS_DISABLE_WARNING_END
 #include <random>
 #include <thread>
 
+#include <boost/asio/io_context.hpp>
+
 using namespace DAS::Core::ForeignInterfaceHost;
 using namespace DAS::Core::IPC;
 using Das::DasPtr;
@@ -2266,6 +2268,165 @@ TEST_F(PluginManagerGuidTest, OnHeartbeatTimeout_DirectCall_CleansUpIndex)
     EXPECT_FALSE(pm_->loaded_plugins_.contains(test_guid));
     EXPECT_FALSE(pm_->path_to_guid_.contains("/fake/heartbeat/plugin"));
     EXPECT_FALSE(pm_->host_launchers_.contains(test_guid));
+}
+
+// ============================================================
+// Phase 80.2 Plan 03 Task 2b: 真实跨线程心跳回调验证（D-09）
+// Blocker #1: 强制真实 HostLauncher + NotifyHeartbeatTimeout 跨线程链
+// Blocker #2: Shutdown 测试必须有第二线程并发 NotifyHeartbeatTimeout 制造
+//             AB-BA 触发条件
+// BLOCKER-2 (DasPtr): 用 DasPtr<IHostLauncher>::Attach(launcher.release())
+//                      adopting 模式（禁两参 (T*, bool) 构造，DasPtr.hpp
+//                      无此重载）
+// ============================================================
+
+// Blocker #1 修复：必须驱动真实 HostLauncher + NotifyHeartbeatTimeout
+// 跨线程链。 禁止退化为 pm_->OnHeartbeatTimeout(test_guid) 同线程直调（绕过
+// callback_mutex_ 持锁路径，违反 D-09）。 构造真实 HostLauncher（仅需 io_ctx +
+// session_id，HostLauncher.h:129-132）， SetAssociatedGuid +
+// SetOnHeartbeatTimeout 注入回调，注入 pm_->host_launchers_， std::thread 调
+// launcher_ptr->NotifyHeartbeatTimeout() 驱动 GuardedCallback::Invoke 持
+// callback_mutex_ -> OnHeartbeatTimeout 持 mutex_ 的完整跨线程路径。
+TEST_F(PluginManagerGuidTest, HeartbeatTimeout_RealThread_CleansUpIndex)
+{
+    DasGuid test_guid{};
+    test_guid.data1 = 0x000000BB;
+
+    LoadedPlugin fake_plugin;
+    fake_plugin.plugin_path = "/fake/realthread/plugin";
+    pm_->loaded_plugins_[test_guid] = std::move(fake_plugin);
+    pm_->path_to_guid_["/fake/realthread/plugin"] = test_guid;
+
+    // 构造真实 HostLauncher（仅需 io_ctx + session_id，无需进程句柄/IPC
+    // context）
+    boost::asio::io_context io_ctx;
+    auto launcher = std::make_unique<HostLauncher>(io_ctx, /*session_id=*/1);
+    // borrowed raw 指针，生命周期由 pm_->host_launchers_ 的 DasPtr 全权管理
+    HostLauncher* launcher_ptr = launcher.get();
+    launcher_ptr->SetAssociatedGuid(test_guid);
+    launcher_ptr->SetOnHeartbeatTimeout(
+        [this](DasGuid callback_guid)
+        {
+            pm_->OnHeartbeatTimeout(
+                callback_guid); // plan 02 已改用 callback_guid
+        });
+
+    // BLOCKER-2 修复：DasPtr<T> 无 (T*, bool) 两参重载（DasPtr.hpp:59-67 只有
+    // DasPtr(T*) 调 AddRef）。正确方案：launcher.release() 让渡 unique_ptr
+    // 所有权，用静态 DasPtr<T>::Attach(T*)（DasPtr.hpp:201-206）= adopting 不
+    // AddRef，符合 das-dasptr skill 的 explicit ownership transfer 边界语义。
+    // Attach 后 launcher unique_ptr 已 release() 为空，禁用裸 launcher，
+    // 跨线程通过 launcher_ptr 副本访问。
+    pm_->host_launchers_[test_guid] =
+        DasPtr<IHostLauncher>::Attach(launcher.release());
+
+    // INV-04 双重持有模拟：真实运行时 HostLauncher 被 host_launchers_（按
+    // GUID）
+    // + ConnectionManager::hosts_（按 session_id）双重 DasPtr
+    // 持有，CleanupPluginByGuid erase host_launchers_ 一份后计数仍 >=
+    // 1，HostLauncher 不析构。单元测试未注入
+    // ConnectionManager::hosts_，需手动持有 keeper 副本模拟第二份持有，否则
+    // NotifyHeartbeatTimeout -> OnHeartbeatTimeout -> CleanupPluginByGuid ->
+    // erase 会让唯一持有者析构 = HostLauncher 在自身方法栈内自析构（UAF）。
+    DasPtr<IHostLauncher> keeper = pm_->host_launchers_[test_guid];
+
+    // 跨线程触发（强制真实 GuardedCallback::Invoke 持锁路径）
+    std::atomic<bool> done{false};
+    std::thread       heartbeat_thread(
+        [&]()
+        {
+            launcher_ptr
+                ->NotifyHeartbeatTimeout(); // 持 callback_mutex_ ->
+                                            // OnHeartbeatTimeout -> mutex_
+            done.store(true);
+        });
+
+    // 超时断言防 hang（5s = 100ms × 50 次）
+    for (int i = 0; i < 50; ++i)
+    {
+        if (done.load())
+        {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+    EXPECT_TRUE(done.load()) << "NotifyHeartbeatTimeout cross-thread should "
+                                "not hang (CR-03 锁层级正确)";
+    heartbeat_thread.join();
+
+    // 验证跨线程清理（OnHeartbeatTimeout -> CleanupPluginByGuid 已执行）
+    EXPECT_FALSE(pm_->loaded_plugins_.contains(test_guid));
+    EXPECT_FALSE(pm_->path_to_guid_.contains("/fake/realthread/plugin"));
+    EXPECT_FALSE(pm_->host_launchers_.contains(test_guid));
+}
+
+// Blocker #2 修复：必须有第二线程并发 NotifyHeartbeatTimeout 制造 AB-BA
+// 触发条件。禁单线程 smoke test（单线程无法触发 AB-BA，对 CR-03 验证无效）。
+// 线程 A 调 pm_->Shutdown()（方案 A 锁外 ClearCallbacks + Stop），
+// 线程 B 调 launcher_ptr->NotifyHeartbeatTimeout()（持 callback_mutex_ ->
+// OnHeartbeatTimeout -> 尝试 mutex_）。若 CR-03 未修复（Shutdown 持 mutex_ 调
+// Stop）= AB-BA 死锁 = 超时。plan 02 已修复 CR-03，此测试应绿（不 hang）。
+TEST_F(PluginManagerGuidTest, Shutdown_DoesNotHoldMutexDuringStop)
+{
+    DasGuid test_guid{};
+    test_guid.data1 = 0x000000CC;
+
+    LoadedPlugin fake_plugin;
+    fake_plugin.plugin_path = "/fake/shutdown/plugin";
+    pm_->loaded_plugins_[test_guid] = std::move(fake_plugin);
+    pm_->path_to_guid_["/fake/shutdown/plugin"] = test_guid;
+
+    boost::asio::io_context io_ctx;
+    auto launcher = std::make_unique<HostLauncher>(io_ctx, /*session_id=*/2);
+    HostLauncher* launcher_ptr = launcher.get();
+    launcher_ptr->SetAssociatedGuid(test_guid);
+    launcher_ptr->SetOnHeartbeatTimeout(
+        [this](DasGuid callback_guid)
+        { pm_->OnHeartbeatTimeout(callback_guid); });
+    // BLOCKER-2 修复：同上，用 DasPtr::Attach adopting launcher.release()
+    // 所有权
+    pm_->host_launchers_[test_guid] =
+        DasPtr<IHostLauncher>::Attach(launcher.release());
+
+    // INV-04 双重持有模拟（同 HeartbeatTimeout_RealThread 测试）：并发场景下
+    // NotifyHeartbeatTimeout -> OnHeartbeatTimeout -> CleanupPluginByGuid ->
+    // erase host_launchers_ 可能在 Shutdown 收集 launchers_to_stop 之前发生，
+    // 需 keeper 副本保活避免 HostLauncher 自析构。
+    DasPtr<IHostLauncher> keeper = pm_->host_launchers_[test_guid];
+
+    // 并发场景：制造 AB-BA 触发条件
+    std::atomic<bool> shutdown_done{false};
+    std::atomic<bool> notify_done{false};
+    std::thread       shutdown_thread(
+        [&]()
+        {
+            pm_->Shutdown(); // 方案 A 锁外 ClearCallbacks + Stop
+            shutdown_done.store(true);
+        });
+    std::thread notify_thread(
+        [&]()
+        {
+            launcher_ptr
+                ->NotifyHeartbeatTimeout(); // 持 callback_mutex_ ->
+                                            // OnHeartbeatTimeout -> mutex_
+            notify_done.store(true);
+        });
+
+    // 超时断言防 AB-BA hang（5s = 100ms × 50 次）
+    for (int i = 0; i < 50; ++i)
+    {
+        if (shutdown_done.load() && notify_done.load())
+        {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+    EXPECT_TRUE(shutdown_done.load())
+        << "Shutdown should not hang (CR-03 锁层级正确)";
+    EXPECT_TRUE(notify_done.load())
+        << "NotifyHeartbeatTimeout should not hang (AB-BA not triggered)";
+    shutdown_thread.join();
+    notify_thread.join();
 }
 
 // ============================================================

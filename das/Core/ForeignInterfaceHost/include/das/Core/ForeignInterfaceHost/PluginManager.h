@@ -30,6 +30,8 @@
 // Forward declarations for test friend access
 class PluginManagerGuidTest_OnHostProcessExit_DirectCall_CleansUpIndex_Test;
 class PluginManagerGuidTest_OnHeartbeatTimeout_DirectCall_CleansUpIndex_Test;
+class PluginManagerGuidTest_HeartbeatTimeout_RealThread_CleansUpIndex_Test;
+class PluginManagerGuidTest_Shutdown_DoesNotHoldMutexDuringStop_Test;
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 // Disable C4251 warning for DLL export with STL types
@@ -368,6 +370,13 @@ private:
         PluginManagerGuidTest_OnHostProcessExit_DirectCall_CleansUpIndex_Test;
     friend class ::
         PluginManagerGuidTest_OnHeartbeatTimeout_DirectCall_CleansUpIndex_Test;
+    // plan 03 task 2b：新增真实跨线程测试（HeartbeatTimeout_RealThread +
+    // Shutdown_DoesNotHoldMutexDuringStop），需访问 loaded_plugins_ /
+    // path_to_guid_ / host_launchers_ 私有成员注入测试状态。
+    friend class ::
+        PluginManagerGuidTest_HeartbeatTimeout_RealThread_CleansUpIndex_Test;
+    friend class ::
+        PluginManagerGuidTest_Shutdown_DoesNotHoldMutexDuringStop_Test;
 };
 
 #ifdef _MSC_VER
