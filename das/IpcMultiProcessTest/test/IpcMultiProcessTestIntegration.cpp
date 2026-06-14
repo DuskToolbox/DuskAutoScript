@@ -1582,6 +1582,58 @@ TEST_F(
         "Hello from heartbeat recovery");
 }
 
+// Phase 80.2 Plan 03 Task 3：phase gate 必跑项（Warning #4 负向 ASAN 断言）
+// 验证真实多进程心跳超时路径（ConnectionManager::heartbeat_thread_ ->
+// :613 NotifyHeartbeatTimeout -> :614 ClearCallbacks -> :615
+// TerminateIfRunning） 在 plan 01 GuardedCallback 封装 + plan 02 Shutdown 方案
+// A 落地后无 heap-use-after-free（ASAN 负向断言：无 UAF 报错即 PASS）。 若
+// DasHost.exe 缺失，GTEST_SKIP 范式（phase gate 多进程并发覆盖未验证， 需在具备
+// DasHost.exe 的环境补跑）。
+TEST_F(
+    IpcMultiProcessTestIntegration,
+    HeartbeatTimeout_CrossThreadDrainsInFlightCallback)
+{
+    if (!std::filesystem::exists(host_exe_path_))
+    {
+        GTEST_SKIP() << "DasHost.exe not found at: " << host_exe_path_
+                     << " — phase gate 多进程并发覆盖未验证，需在具备 "
+                        "DasHost.exe 的环境补跑";
+    }
+    ASSERT_FALSE(IpcTestConfig::ShouldDisableHeartbeat())
+        << "Heartbeat cross-thread drain test requires heartbeat to be enabled";
+
+    ScopedHostStop guard{launcher_};
+    ASSERT_EQ(StartHostAndSetupRunLoop(), DAS_S_OK);
+    ASSERT_TRUE(launcher_->IsRunning());
+
+    const uint32_t host_pid = launcher_->GetPid();
+    ASSERT_GT(host_pid, 0u);
+
+    // 挂起 Host 进程使其停止响应心跳，触发真实心跳超时路径：
+    // ConnectionManager::heartbeat_thread_ 检测超时 -> 阶段 2 锁外
+    // NotifyHeartbeatTimeout（持 callback_mutex_ 执行 OnHeartbeatTimeout 回调）
+    // -> ClearCallbacks（持同一把锁 drain）-> TerminateIfRunning。
+    // 这是 plan 01 封装 + plan 02 Shutdown 方案 A 的真实多进程验证。
+    {
+        auto suspended = SuspendProcessForTest(host_pid);
+        ASSERT_TRUE(suspended) << suspended.failure;
+        ScopedProcessResumeForTest resume_guard{suspended};
+
+        const bool terminated = WaitUntilForTest(
+            [this]() { return !launcher_->IsRunning(); },
+            HeartbeatTimeoutWindowForTest());
+        ASSERT_TRUE(terminated)
+            << "Suspended Host should be terminated by heartbeat timeout";
+
+        // 负向 ASAN 断言：若 plan 01 封装或 plan 02 Shutdown 有 UAF，
+        // ASAN 会在 NotifyHeartbeatTimeout/ClearCallbacks 并发执行时报
+        // heap-use-after-free（测试进程未崩溃即 PASS，无显式断言 ——
+        // ASAN 注入运行时检查）。
+    }
+
+    EXPECT_FALSE(launcher_->IsRunning());
+}
+
 TEST_F(IpcMultiProcessTestIntegration, NodeHostLauncherStart)
 {
     const auto node_executable = ResolveNodeExecutableForIntegration();
