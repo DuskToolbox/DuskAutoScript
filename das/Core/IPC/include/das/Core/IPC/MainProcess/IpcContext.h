@@ -122,6 +122,11 @@ namespace Core
 
                 DasResult UnregisterServiceByName(const char* name) override;
 
+                DasResult ResetHostLifecycleCallbacks() override;
+
+                DasResult UnregisterHostLauncherBySession(
+                    uint16_t session_id) override;
+
                 /// Internal registration method (called by HostLauncher after
                 /// Start succeeds)
                 DasResult InternalRegisterHostLauncher(uint16_t session_id);

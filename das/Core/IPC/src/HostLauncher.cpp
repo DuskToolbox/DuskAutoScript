@@ -863,6 +863,18 @@ void HostLauncher::NotifyHeartbeatTimeout()
     on_heartbeat_timeout_slot_.Invoke(guid_snapshot);
 }
 
+void HostLauncher::ResetHostLifecycleCallbacks()
+{
+    // 只清 Host 生命周期监护事件 slot（心跳超时 + 进程退出），保留 on_register_
+    // （握手/注册回调）。持锁 drain = 让心跳线程后续 Invoke 空转，碰不到
+    // 悬空 [this]（GuardedCallback::Clear 持
+    // callback_mutex_，会等在途回调完成）。 与 ClearCallbacks
+    // 职责区分：ClearCallbacks 全清三个 slot，由 IpcContext 析构用（~IpcContext
+    // 仍调 ClearCallbacks 做最终收尾）。
+    on_process_exit_slot_.Clear();
+    on_heartbeat_timeout_slot_.Clear();
+}
+
 void HostLauncher::TerminateIfRunning()
 {
     if (impl_->process)

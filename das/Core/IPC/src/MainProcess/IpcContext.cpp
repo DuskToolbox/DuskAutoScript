@@ -829,6 +829,86 @@ namespace Core
                 return runloop_.RegisterHostLauncher(it->second);
             }
 
+            DasResult IpcContext::ResetHostLifecycleCallbacks()
+            {
+                // 遍历 launchers_（DasPtr<HostLauncher>
+                // 具体类型，IpcContext.h:155） 调
+                // ResetHostLifecycleCallbacks（只清 on_process_exit_slot_ +
+                // on_heartbeat_timeout_slot_，保留 on_register_）。
+                //
+                // 与 ~IpcContext（IpcContext.cpp:327-333）调 ClearCallbacks
+                // 全清 三 slot 的区别：本方法只清生命周期监护
+                // slot（on_register_ 保留， 因 ~IpcContext
+                // 后续还要走握手收尾），ClearCallbacks 全清三 slot
+                // 是最终析构收尾用。
+                //
+                // 用于 PluginManager::Shutdown 析构 RAII drain（经 ipc_context_
+                // 接口转发，PluginManager 不直接持有 HostLauncher）。
+                for (auto& [sid, launcher] : launchers_)
+                {
+                    if (launcher)
+                    {
+                        launcher->ResetHostLifecycleCallbacks();
+                    }
+                }
+                return DAS_S_OK;
+            }
+
+            DasResult IpcContext::UnregisterHostLauncherBySession(
+                uint16_t session_id)
+            {
+                // 核实结论（已落实）：ConnectionManager::UnregisterHostLauncher
+                // (ConnectionManager.cpp:313-331) 只清索引（hosts_.erase +
+                // connections_.erase），不 Stop Host 进程。真实主动 Stop Host
+                // 进程 的代码路径是心跳超时阶段
+                // 2（ConnectionManager.cpp:609-616）调
+                // IHostConnection::NotifyHeartbeatTimeout + ClearCallbacks +
+                // TerminateIfRunning。因此运行时卸载不能只调
+                // UnregisterHostLauncher， 必须在 IpcContext override 内组合
+                // launchers_.find -> launcher->Stop() （HostLauncher
+                // 具体类型，IpcContext.h:155 launchers_ 是 DasPtr<
+                // HostLauncher>，可调 Stop()）+ runloop_.GetConnectionManager()
+                // .UnregisterHostLauncher。
+                //
+                // Stop() 内调 ClearCallbacks 持 callback_mutex_，不持
+                // PluginManager mutex_；UnregisterHostLauncher 持
+                // connections_mutex_ (ConnectionManager.cpp:315)，也不持
+                // PluginManager mutex_。 PluginManager::UnloadPluginIpc
+                // 调本方法时已在 mutex_ 锁外 (PluginManager.cpp:1069 `}`
+                // 结束内层 lock_guard 作用域)，故无 AB-BA。
+                //
+                // Stop() 在 UnregisterHostLauncher 之前调，保证 hosts_.erase 时
+                // Host 进程已停（避免后续 heartbeat_thread_ 对已 erase session
+                // 重入）。
+                if (session_id == 0)
+                {
+                    DAS_CORE_LOG_ERROR(
+                        "UnregisterHostLauncherBySession: invalid session_id=0");
+                    return DAS_E_INVALID_ARGUMENT;
+                }
+
+                auto it = launchers_.find(session_id);
+                if (it != launchers_.end() && it->second)
+                {
+                    // 主动 Stop Host 进程（HostLauncher 具体类型，Stop 内含
+                    // GOODBYE + 等待进程退出 + ClearCallbacks 全清三 slot），
+                    // 保留运行时卸载"主动 Stop Host 进程"语义，不退化。
+                    it->second->Stop();
+                }
+                // WebSocket Host 经 RegisterInternalHost 路径（无 HostLauncher
+                // 实体 in launchers_），session 不在 launchers_，直接清索引不调
+                // Stop （WebSocket Host 无 Host 进程可 Stop）。
+
+                if (!runloop_.connection_manager_)
+                {
+                    DAS_CORE_LOG_ERROR(
+                        "UnregisterHostLauncherBySession: ConnectionManager not initialized");
+                    return DAS_E_IPC_NOT_INITIALIZED;
+                }
+                return runloop_.GetConnectionManager().UnregisterHostLauncher(
+                    session_id);
+            }
+
             // ====== C API 实现 ======
 
             DAS_API IIpcContext* CreateIpcContext(bool enable_heartbeat)

@@ -107,6 +107,61 @@ namespace Core
                 }
 
                 /**
+                 * @brief 重置所有 HostLauncher 的 Host 生命周期监护事件回调
+                 *
+                 * 遍历本 context 拥有的所有 HostLauncher，清空其
+                 * on_process_exit_slot_ / on_heartbeat_timeout_slot_
+                 * （只清 Host 生命周期监护事件回调，保留 on_register_）。
+                 *
+                 * 用于 PluginManager::Shutdown 析构 RAII drain：经 ipc_context_
+                 * 接口转发，PluginManager 不直接持有
+                 * HostLauncher（ConnectionManager 唯一管 HostLauncher）。持锁
+                 * Clear 让心跳线程后续 Invoke 空转， 碰不到悬空 [this]。
+                 *
+                 * 默认实现返回 DAS_E_NO_IMPLEMENTATION，保证 ABI 安全
+                 * （旧实现 IIpcContext 的宿主不破坏，参照 LoadPluginAsync
+                 * 第二重载 IIpcContext.h:95-107 默认实现先例）。
+                 *
+                 * @return DasResult DAS_S_OK 成功，DAS_E_NO_IMPLEMENTATION
+                 *                   默认实现（接口未 override）
+                 */
+                virtual DasResult ResetHostLifecycleCallbacks()
+                {
+                    return DAS_E_NO_IMPLEMENTATION;
+                }
+
+                /**
+                 * @brief 按 session 主动停止 HostLauncher（停 Host 进程 + 清
+                 * ConnectionManager 索引）
+                 *
+                 * 用于 PluginManager::UnloadPluginIpc 运行时卸载（按
+                 * LoadedPlugin.session_id 主动 Stop Host 进程 + 清
+                 * hosts_/connections_ 索引）。IpcContext override 组合调用
+                 * launchers_.find -> launcher->Stop()（HostLauncher
+                 * 具体类型，含 GOODBYE + 等待进程退出
+                 * + ClearCallbacks 全清三 slot）+
+                 * runloop_.GetConnectionManager()
+                 * .UnregisterHostLauncher（清索引）。
+                 *
+                 * 与析构 drain（ResetHostLifecycleCallbacks）职责区分：本方法是
+                 * 按 session 单点停止（主动 Stop Host 进程 + 清索引），后者是
+                 * 遍历全部 launchers 只清回调不 Stop。
+                 *
+                 * 默认实现返回 DAS_E_NO_IMPLEMENTATION，保证 ABI 安全
+                 * （参照 LoadPluginAsync 第二重载默认实现先例）。
+                 *
+                 * @param session_id 目标 HostLauncher 的 session_id
+                 * @return DasResult DAS_S_OK 成功，DAS_E_NO_IMPLEMENTATION
+                 *                   默认实现（接口未 override）
+                 */
+                virtual DasResult UnregisterHostLauncherBySession(
+                    uint16_t session_id)
+                {
+                    (void)session_id;
+                    return DAS_E_NO_IMPLEMENTATION;
+                }
+
+                /**
                  * @brief 将回调投递到 io_context 线程执行
                  *
                  * 使用 DasPtr 管理 callback 生命周期，保证在 post

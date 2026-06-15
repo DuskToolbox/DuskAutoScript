@@ -143,6 +143,26 @@ public:
     }
 
     /**
+     * @brief 只清 Host 生命周期监护事件回调（心跳超时 + 进程退出），保留
+     * on_register_
+     *
+     * 与 ClearCallbacks（IHostConnection.h 虚方法 override）职责区分：
+     *  - ResetHostLifecycleCallbacks 只清 on_process_exit_slot_ +
+     *    on_heartbeat_timeout_slot_（Host 进程生命周期监护事件回调），
+     *    保留 on_register_（握手/注册回调，由 HostLauncher 自己 Setup
+     * 路径成员管理， 非 PluginManager 注册）。
+     *  - ClearCallbacks 全清三个 slot（含 on_register_），由 IpcContext 析构
+     *    (IpcContext.cpp:327-333) 用。
+     *
+     * 由 PluginManager::Shutdown 经 ipc_context_->ResetHostLifecycleCallbacks()
+     * 调用（RAII 析构 drain：~PluginManager -> Shutdown 经 ipc_context_
+     * 接口转发 到真实 launchers_）。持锁 Clear = 让心跳线程后续 Invoke
+     * 空转，碰不到 悬空 [this]（callback_mutex_ drain
+     * 在途回调，GuardedCallback::Clear 已实现）。
+     */
+    void ResetHostLifecycleCallbacks();
+
+    /**
      * @brief 设置 Host 进程退出回调
      * @param callback 进程退出时触发的回调（在 io_context 线程上执行）
      */
