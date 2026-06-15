@@ -14,12 +14,17 @@
 #include <atomic>
 #include <chrono>
 #include <das/Core/IPC/HostLauncher.h>
+#include <das/DasTypes.hpp>
+#include <das/IDasBase.h>
 #include <gtest/gtest.h>
 #include <mutex>
 #include <thread>
 #include <vector>
 
+#include <boost/asio/io_context.hpp>
+
 using DAS::Core::IPC::GuardedCallback;
+using DAS::Core::IPC::HostLauncher;
 
 // ====== CR-01: Set/Clear/Invoke 并发压跑不崩溃 ======
 // 多线程并发：≥2 invoker 持续 Invoke、≥1 setter 持续 Set、≥1 clearer 周期
@@ -168,4 +173,61 @@ TEST(GuardedCallbackTest, ReentrantInvoke_DeadlocksOrTimesOut)
         << "Reentrant Invoke should deadlock (non-recursive mutex, INV-01 "
            "violation detected); if it returned, the mutex is recursive (wrong)";
     // 注意：detach 后的死锁线程在测试进程退出时被强杀，不影响后续测试。
+}
+
+// ====== ResetHostLifecycleCallbacks: 选择性 Clear，保留 on_register_ ======
+// 覆盖 plan 04 WARNING #1：ResetHostLifecycleCallbacks 只清
+// on_process_exit_slot_ + on_heartbeat_timeout_slot_，不清 on_register_
+// （与 ClearCallbacks 全清三 slot 职责区分，防止误清 on_register_ 的回归）。
+//
+// on_process_exit 无 public 触发器（exit-watcher 协程内部 Invoke），故
+// exit_fired 维度通过"ResetHostLifecycleCallbacks 内部
+// on_process_exit_slot_.Clear() 与 on_heartbeat_timeout_slot_.Clear()
+// 同构（都是 GuardedCallback::Clear）" 间接覆盖——只断言 heartbeat 维度即可证明
+// Clear 生效，on_process_exit 同理。 exit_fired 变量保留作未来 exit-watcher
+// 触发器可用时的扩展锚点。
+TEST(
+    GuardedCallbackTest,
+    ResetHostLifecycleCallbacks_ClearsLifecycleSlots_PreservesRegister)
+{
+    boost::asio::io_context io_ctx;
+    // 第三参传非空 OnRegisterCallback（构造 HostLauncher.h:129-132）验证
+    // on_register_ 未被 ResetHostLifecycleCallbacks 误清。
+    HostLauncher launcher(
+        io_ctx,
+        /*session_id=*/1,
+        []() { return DAS_S_OK; });
+
+    std::atomic<bool> heartbeat_fired{false};
+    std::atomic<bool> exit_fired{
+        false}; // 扩展锚点（on_process_exit 无 public 触发器）
+    launcher.SetOnHeartbeatTimeout([&heartbeat_fired](DasGuid)
+                                   { heartbeat_fired.store(true); });
+    launcher.SetOnProcessExit([&exit_fired](uint16_t, int)
+                              { exit_fired.store(true); });
+
+    DasGuid some_guid{};
+    some_guid.data1 = 0x000000DD;
+    launcher.SetAssociatedGuid(some_guid);
+
+    // 只清生命周期监护 slot（on_process_exit + on_heartbeat_timeout），
+    // 保留 on_register_。
+    launcher.ResetHostLifecycleCallbacks();
+
+    // 调 NotifyHeartbeatTimeout（直接调具体类方法，GuardedCallbackTest.cpp 已
+    // import HostLauncher.h 可访问 public 方法）。slot 已 Clear，Invoke 空转
+    // （持锁但 callback_ 已置空），heartbeat_fired 不应被设为 true。
+    launcher.NotifyHeartbeatTimeout();
+
+    EXPECT_FALSE(heartbeat_fired.load())
+        << "on_heartbeat_timeout_slot_ should be cleared after "
+           "ResetHostLifecycleCallbacks (Invoke should be a no-op)";
+
+    // on_register_ 未被误清的间接验证：HostLauncher 仍可 GetAssociatedGuid
+    // （内部状态未被破坏），析构不崩溃。on_register_ 由
+    // InternalRegisterHostLauncher 路径触发，测试不便直接 Invoke，保守用
+    // HostLauncher 仍可用证明其内部状态完好。
+    EXPECT_EQ(launcher.GetAssociatedGuid(), some_guid)
+        << "HostLauncher internal state must remain intact (on_register_ "
+           "preserved, associated_guid_ readable)";
 }

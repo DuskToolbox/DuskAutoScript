@@ -198,7 +198,7 @@ DasResult PluginManager::Shutdown()
     // 死字段。ResetHostLifecycleCallbacks 内部调 GuardedCallback::Clear 持
     // callback_mutex_ drain 在途回调（CR-02 drain 屏障），让心跳线程后续 Invoke
     // 空转碰不到悬空 [this]。
-    ipc_context_->ResetHostLifecycleCallbacks();
+    ipc_context_.get().ResetHostLifecycleCallbacks();
 
     DAS_CORE_LOG_INFO("PluginManager shutdown complete");
     return DAS_S_OK;
@@ -1053,7 +1053,8 @@ DasResult PluginManager::UnloadPluginIpc(
     // ClearCallbacks 全清三 slot，保留运行时卸载"主动 Stop Host 进程"语义）+
     // runloop_.GetConnectionManager().UnregisterHostLauncher（清
     // hosts_/connections_ 索引）。
-    return ipc_context_->UnregisterHostLauncherBySession(plugin.session_id);
+    return ipc_context_.get().UnregisterHostLauncherBySession(
+        plugin.session_id);
 }
 
 void PluginManager::CleanupPluginByGuid(DasGuid plugin_guid)

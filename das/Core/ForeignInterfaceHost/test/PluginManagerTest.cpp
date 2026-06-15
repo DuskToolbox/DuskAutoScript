@@ -2235,10 +2235,11 @@ TEST_F(PluginManagerGuidTest, OnHostProcessExit_DirectCall_CleansUpIndex)
     // Trigger the disconnect callback (new GUID-first signature)
     pm_->OnHostProcessExit(test_guid, 1);
 
-    // Verify all indexes are cleaned up
+    // Verify all indexes are cleaned up (host_launchers_ field deleted in plan
+    // 04; HostLauncher cleanup now managed by IpcContext/ConnectionManager by
+    // session)
     EXPECT_FALSE(pm_->loaded_plugins_.contains(test_guid));
     EXPECT_FALSE(pm_->path_to_guid_.contains("/fake/ipc/plugin"));
-    EXPECT_FALSE(pm_->host_launchers_.contains(test_guid));
 }
 
 TEST_F(PluginManagerGuidTest, OnHeartbeatTimeout_DirectCall_CleansUpIndex)
@@ -2264,10 +2265,11 @@ TEST_F(PluginManagerGuidTest, OnHeartbeatTimeout_DirectCall_CleansUpIndex)
     // Trigger the heartbeat timeout callback (full path, not direct cleanup)
     pm_->OnHeartbeatTimeout(test_guid);
 
-    // Verify all indexes are cleaned up
+    // Verify all indexes are cleaned up (host_launchers_ field deleted in plan
+    // 04; HostLauncher cleanup now managed by IpcContext/ConnectionManager by
+    // session)
     EXPECT_FALSE(pm_->loaded_plugins_.contains(test_guid));
     EXPECT_FALSE(pm_->path_to_guid_.contains("/fake/heartbeat/plugin"));
-    EXPECT_FALSE(pm_->host_launchers_.contains(test_guid));
 }
 
 // ============================================================
@@ -2284,7 +2286,9 @@ TEST_F(PluginManagerGuidTest, OnHeartbeatTimeout_DirectCall_CleansUpIndex)
 // 跨线程链。 禁止退化为 pm_->OnHeartbeatTimeout(test_guid) 同线程直调（绕过
 // callback_mutex_ 持锁路径，违反 D-09）。 构造真实 HostLauncher（仅需 io_ctx +
 // session_id，HostLauncher.h:129-132）， SetAssociatedGuid +
-// SetOnHeartbeatTimeout 注入回调，注入 pm_->host_launchers_， std::thread 调
+// SetOnHeartbeatTimeout 注入回调，测试局部 DasPtr<HostLauncher> keeper
+// 全权管理生命周期（模拟生产中 IpcContext::launchers_ 持有，不再 friend 注入
+// host_launchers_ 死字段 —— plan 04 已删）， std::thread 调
 // launcher_ptr->NotifyHeartbeatTimeout() 驱动 GuardedCallback::Invoke 持
 // callback_mutex_ -> OnHeartbeatTimeout 持 mutex_ 的完整跨线程路径。
 TEST_F(PluginManagerGuidTest, HeartbeatTimeout_RealThread_CleansUpIndex)
@@ -2298,10 +2302,12 @@ TEST_F(PluginManagerGuidTest, HeartbeatTimeout_RealThread_CleansUpIndex)
     pm_->path_to_guid_["/fake/realthread/plugin"] = test_guid;
 
     // 构造真实 HostLauncher（仅需 io_ctx + session_id，无需进程句柄/IPC
-    // context）
+    // context）。测试局部 DasPtr<HostLauncher> keeper 全权管理生命周期
+    // （plan 04 删 host_launchers_ 后不再 friend 注入，OnHeartbeatTimeout ->
+    // CleanupPluginByGuid 只清 loaded_plugins_ / path_to_guid_ 索引）。
     boost::asio::io_context io_ctx;
     auto launcher = std::make_unique<HostLauncher>(io_ctx, /*session_id=*/1);
-    // borrowed raw 指针，生命周期由 pm_->host_launchers_ 的 DasPtr 全权管理
+    // borrowed raw 指针，生命周期由测试局部 keeper 全权管理
     HostLauncher* launcher_ptr = launcher.get();
     launcher_ptr->SetAssociatedGuid(test_guid);
     launcher_ptr->SetOnHeartbeatTimeout(
@@ -2311,24 +2317,13 @@ TEST_F(PluginManagerGuidTest, HeartbeatTimeout_RealThread_CleansUpIndex)
                 callback_guid); // plan 02 已改用 callback_guid
         });
 
-    // BLOCKER-2 修复：DasPtr<T> 无 (T*, bool) 两参重载（DasPtr.hpp:59-67 只有
-    // DasPtr(T*) 调 AddRef）。正确方案：launcher.release() 让渡 unique_ptr
-    // 所有权，用静态 DasPtr<T>::Attach(T*)（DasPtr.hpp:201-206）= adopting 不
-    // AddRef，符合 das-dasptr skill 的 explicit ownership transfer 边界语义。
-    // Attach 后 launcher unique_ptr 已 release() 为空，禁用裸 launcher，
-    // 跨线程通过 launcher_ptr 副本访问。
-    pm_->host_launchers_[test_guid] =
-        DasPtr<IHostLauncher>::Attach(launcher.release());
-
-    // INV-04 双重持有模拟：真实运行时 HostLauncher 被 host_launchers_（按
-    // GUID）
-    // + ConnectionManager::hosts_（按 session_id）双重 DasPtr
-    // 持有，CleanupPluginByGuid erase host_launchers_ 一份后计数仍 >=
-    // 1，HostLauncher 不析构。单元测试未注入
-    // ConnectionManager::hosts_，需手动持有 keeper 副本模拟第二份持有，否则
-    // NotifyHeartbeatTimeout -> OnHeartbeatTimeout -> CleanupPluginByGuid ->
-    // erase 会让唯一持有者析构 = HostLauncher 在自身方法栈内自析构（UAF）。
-    DasPtr<IHostLauncher> keeper = pm_->host_launchers_[test_guid];
+    // DasPtr<HostLauncher> keeper adopting unique_ptr 所有权（DasPtr::Attach
+    // 不 AddRef，DasPtr.hpp:201-206），keeper 出作用域自动
+    // Release（HostLauncher 析构）。launcher_ptr 作为 borrowed raw
+    // 跨线程访问，生命周期由 keeper 全权管理（模拟生产中 IpcContext::launchers_
+    // 持有）。
+    DasPtr<HostLauncher> keeper =
+        DasPtr<HostLauncher>::Attach(launcher.release());
 
     // 跨线程触发（强制真实 GuardedCallback::Invoke 持锁路径）
     std::atomic<bool> done{false};
@@ -2354,10 +2349,10 @@ TEST_F(PluginManagerGuidTest, HeartbeatTimeout_RealThread_CleansUpIndex)
                                 "not hang (CR-03 锁层级正确)";
     heartbeat_thread.join();
 
-    // 验证跨线程清理（OnHeartbeatTimeout -> CleanupPluginByGuid 已执行）
+    // 验证跨线程清理（OnHeartbeatTimeout -> CleanupPluginByGuid 已执行）。
+    // host_launchers_ 字段已删（plan 04），不再断言其清理。
     EXPECT_FALSE(pm_->loaded_plugins_.contains(test_guid));
     EXPECT_FALSE(pm_->path_to_guid_.contains("/fake/realthread/plugin"));
-    EXPECT_FALSE(pm_->host_launchers_.contains(test_guid));
 }
 
 // Blocker #2 修复：必须有第二线程并发 NotifyHeartbeatTimeout 制造 AB-BA
@@ -2383,24 +2378,25 @@ TEST_F(PluginManagerGuidTest, Shutdown_DoesNotHoldMutexDuringStop)
     launcher_ptr->SetOnHeartbeatTimeout(
         [this](DasGuid callback_guid)
         { pm_->OnHeartbeatTimeout(callback_guid); });
-    // BLOCKER-2 修复：同上，用 DasPtr::Attach adopting launcher.release()
-    // 所有权
-    pm_->host_launchers_[test_guid] =
-        DasPtr<IHostLauncher>::Attach(launcher.release());
+    // plan 04：测试局部 DasPtr<HostLauncher> keeper 全权持有（不再 friend
+    // 注入 host_launchers_ 死字段，已删）。
+    DasPtr<HostLauncher> keeper =
+        DasPtr<HostLauncher>::Attach(launcher.release());
 
-    // INV-04 双重持有模拟（同 HeartbeatTimeout_RealThread 测试）：并发场景下
-    // NotifyHeartbeatTimeout -> OnHeartbeatTimeout -> CleanupPluginByGuid ->
-    // erase host_launchers_ 可能在 Shutdown 收集 launchers_to_stop 之前发生，
-    // 需 keeper 副本保活避免 HostLauncher 自析构。
-    DasPtr<IHostLauncher> keeper = pm_->host_launchers_[test_guid];
-
-    // 并发场景：制造 AB-BA 触发条件
+    // 并发场景：制造 AB-BA 触发条件。
+    // 注意：Shutdown 现在调 ipc_context_->ResetHostLifecycleCallbacks()，而测试
+    // 局部 HostLauncher 未注册到 ipc_context_->launchers_（只由 keeper 持有），
+    // 故 Shutdown 的 ResetHostLifecycleCallbacks 不会 drain 测试 HostLauncher
+    // 的 slot。这没关系——测试目的是验证 Shutdown + 并发 NotifyHeartbeatTimeout
+    // 不 hang（CR-03 锁层级），不是验证 drain 真实生效（drain 真实性由 phase
+    // gate HeartbeatTimeout_CrossThreadDrainsInFlightCallback 在
+    // IpcMultiProcessTest 覆盖）。
     std::atomic<bool> shutdown_done{false};
     std::atomic<bool> notify_done{false};
     std::thread       shutdown_thread(
         [&]()
         {
-            pm_->Shutdown(); // 方案 A 锁外 ClearCallbacks + Stop
+            pm_->Shutdown(); // 方案 A 锁外 ResetHostLifecycleCallbacks
             shutdown_done.store(true);
         });
     std::thread notify_thread(
