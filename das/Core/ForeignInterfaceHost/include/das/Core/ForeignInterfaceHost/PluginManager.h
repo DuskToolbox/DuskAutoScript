@@ -63,6 +63,10 @@ struct LoadedPlugin
     DasPtr<Das::PluginInterface::IDasPluginPackage> package;
     std::shared_ptr<PluginPackageDesc>              desc;
     std::vector<FeatureInfo>                        features;
+    /// IPC 加载的 owner_session_id（运行时卸载/索引用），0 表示非 IPC 加载。
+    /// 区别于 FeatureInfo.session_id（feature 维度的 session 归属），
+    /// LoadedPlugin.session_id 是 plugin 维度的 IPC owner_session_id。
+    uint16_t session_id = 0;
 };
 
 /**
@@ -108,12 +112,13 @@ public:
      * @brief 关闭插件管理器，卸载所有插件
      *
      * 方案 A 两阶段实现（CR-03 / INV-03 锁层级修复）：
-     * 阶段 1 在 mutex_ 锁内收集 launcher 的 DasPtr 副本 + 清空所有索引
-     * （这些操作不阻塞、不碰 callback_mutex_）；阶段 2 释放 mutex_ 后
-     * 调用 ClearCallbacks + Stop（可阻塞）。锁序保持 callback_mutex_ ->
-     * mutex_ 正向，消除旧版持 mutex_ 调 ClearCallbacks/Stop 的 AB-BA
-     * 死锁向量。该方法幂等：host_launchers_ 已空时二次调用空转安全
-     * （~PluginManager 会再次调用以 drain 在途回调）。
+     * 阶段 1 在 mutex_ 锁内清空所有索引（这些操作不阻塞、不碰
+     * callback_mutex_）；阶段 2 释放 mutex_ 后调用
+     * ipc_context_->ResetHostLifecycleCallbacks()（经 IIpcContext 虚方法
+     * dispatch 到 IpcContext::ResetHostLifecycleCallbacks，遍历真实
+     * launchers_ 清空 on_process_exit_slot_ / on_heartbeat_timeout_slot_）。
+     * 纯 RAII 析构 drain（非两段式，语义像 ~ofstream 的 flush）。该方法
+     * 幂等：二次调用空转安全（~PluginManager 会再次调用以 drain 在途回调）。
      */
     DasResult Shutdown();
 
@@ -302,13 +307,15 @@ private:
      * @brief 统一按 GUID 清理插件索引
      * @param plugin_guid 插件 GUID
      *
-     * 清理 loaded_plugins_、path_to_guid_、host_launchers_ 三个索引。
+     * 清理 loaded_plugins_、path_to_guid_ 两个索引。
      * 进程退出和心跳超时两条路径最终都调用此方法。
      * 调用方必须已持有 mutex_。
      *
-     * INV-02: 本方法只 host_launchers_.erase()，不得调用 ClearCallbacks/Stop
+     * INV-02: 本方法只 erase 索引，不得调用 ClearCallbacks/Stop
      * （会重入 callback_mutex_ 或违反锁层级 callback_mutex_ -> mutex_）。
      * ClearCallbacks/Stop 只能在 Shutdown/UnloadPluginIpc 的锁外阶段调用。
+     * HostLauncher 清理由 IpcContext/ConnectionManager 按 session 自行管理，
+     * 本方法不再持有 launcher 索引。
      */
     void CleanupPluginByGuid(DasGuid plugin_guid);
 
@@ -352,13 +359,7 @@ private:
 
     // IPC 相关成员
     Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext> ipc_context_;
-    // INV-04: HostLauncher 被本表（按 GUID）+ ConnectionManager::hosts_
-    // （按 session_id）双重 DasPtr 持有。erase 本表一份后计数仍 >= 1，
-    // HostLauncher 不析构，callback_mutex_ 不析构。这是 ClearCallbacks
-    // drain 屏障成立的隐蔽依赖，明文化以保障后续维护不破坏该约束。
-    std::unordered_map<DasGuid, DasPtr<DAS::Core::IPC::IHostLauncher>>
-                host_launchers_;
-    std::string host_exe_path_;
+    std::string                                                 host_exe_path_;
 
     // Allow specific unit tests to access private members for index cleanup
     // verification. Forward declarations are at top of file (global namespace).
@@ -372,7 +373,7 @@ private:
         PluginManagerGuidTest_OnHeartbeatTimeout_DirectCall_CleansUpIndex_Test;
     // plan 03 task 2b：新增真实跨线程测试（HeartbeatTimeout_RealThread +
     // Shutdown_DoesNotHoldMutexDuringStop），需访问 loaded_plugins_ /
-    // path_to_guid_ / host_launchers_ 私有成员注入测试状态。
+    // path_to_guid_ 私有成员注入测试状态。
     friend class ::
         PluginManagerGuidTest_HeartbeatTimeout_RealThread_CleansUpIndex_Test;
     friend class ::

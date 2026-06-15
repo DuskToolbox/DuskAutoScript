@@ -124,10 +124,11 @@ PluginManager::PluginManager(
 PluginManager::~PluginManager()
 {
     // CR-02 析构路径 drain：必须先 drain 在途回调，再释放其它成员。
-    // Shutdown 会调用每个 launcher 的 ClearCallbacks（持 callback_mutex_ 等待
-    // 在途回调完成）+ 锁外 Stop，使心跳线程后续 Invoke 空转（callback_
-    // 已置空）， 不再回调已析构的 this。若用户已显式调过 Shutdown，二次调用幂等
-    // （host_launchers_ 已空，launchers_to_stop 为空，Stop 循环空转）。
+    // Shutdown 调 ipc_context_->ResetHostLifecycleCallbacks()（经 IIpcContext
+    // 虚方法 dispatch 到 IpcContext::ResetHostLifecycleCallbacks，遍历真实
+    // launchers_ 清空 on_process_exit_slot_ / on_heartbeat_timeout_slot_），
+    // 使心跳线程后续 Invoke 空转（callback_ 已置空），不再回调已析构的 this。
+    // 若用户已显式调过 Shutdown，二次调用幂等（索引已空，drain 空转安全）。
     Shutdown();
     ClearActiveErrorLensManager(&error_lens_mgr_);
 }
@@ -156,26 +157,15 @@ DasResult PluginManager::Initialize(uint16_t session_id)
 DasResult PluginManager::Shutdown()
 {
     // CR-03 / INV-03: Shutdown 采用方案 A 两阶段 —— 阶段 1 在 mutex_ 锁内
-    // 收集 launcher 的 DasPtr 副本 + 清空所有索引（这些操作不阻塞、不碰
-    // callback_mutex_，锁内安全）；阶段 2 在释放 mutex_ 后调用
-    // ClearCallbacks + Stop。锁序保持 callback_mutex_ -> mutex_ 正向，
-    // 消除旧版持 mutex_ 调 ClearCallbacks/Stop 的 AB-BA 死锁向量。
-    std::vector<DasPtr<DAS::Core::IPC::IHostLauncher>> launchers_to_stop;
+    // 清空所有索引（这些操作不阻塞、不碰 callback_mutex_，锁内安全）；阶段 2
+    // 在释放 mutex_ 后调用 ipc_context_->ResetHostLifecycleCallbacks()
+    // （经 IIpcContext 虚方法 dispatch 到
+    // IpcContext::ResetHostLifecycleCallbacks， 遍历真实 launchers_ 清空
+    // on_process_exit_slot_ / on_heartbeat_timeout_slot_）。锁序保持
+    // callback_mutex_ -> mutex_ 正向， 消除旧版持 mutex_ 调 ClearCallbacks/Stop
+    // 的 AB-BA 死锁向量。
     {
         std::lock_guard<std::mutex> lock(mutex_);
-
-        // 收集所有 launcher 的 DasPtr 副本（INV-04：双重 DasPtr 持有保证
-        // HostLauncher 不析构、callback_mutex_
-        // 不析构）。host_launchers_.clear() 后局部 launchers_to_stop
-        // 仍保活，阶段 2 可安全访问。
-        for (auto& [guid, launcher] : host_launchers_)
-        {
-            if (launcher)
-            {
-                launchers_to_stop.push_back(launcher);
-            }
-        }
-        host_launchers_.clear();
 
         // 卸载所有插件
         for (auto& [guid, plugin] : loaded_plugins_)
@@ -200,34 +190,15 @@ DasResult PluginManager::Shutdown()
         loaded_plugins_.clear();
         session_id_ = 0;
         ClearActiveErrorLensManager(&error_lens_mgr_);
-    } // 释放 mutex_ —— 阶段 2 锁外调 ClearCallbacks/Stop（INV-03）
+    } // 释放 mutex_ —— 阶段 2 锁外调 ResetHostLifecycleCallbacks（INV-03）
 
-    // 阶段 2：锁外 ClearCallbacks + Stop。
-    // ClearCallbacks 走 IHostConnection
-    // 接口（IHostConnection.h），host_launchers_ 存的是 IHostLauncher（无
-    // ClearCallbacks 虚方法），需经具体 HostLauncher 访问。Stop 走
-    // IHostLauncher 接口（无需下行）。两者均不持任何 mutex_，
-    // 与心跳路径锁序（callback_mutex_ -> mutex_）一致，无 AB-BA。
-    for (auto& launcher : launchers_to_stop)
-    {
-        if (launcher)
-        {
-            // ClearCallbacks 持 callback_mutex_ drain 在途回调（CR-02 drain
-            // 屏障）。 先于 Stop 调用，避免 Stop 触发进程退出回调时回调仍指向
-            // this。
-            auto* concrete =
-                dynamic_cast<DAS::Core::IPC::HostLauncher*>(launcher.Get());
-            if (concrete)
-            {
-                concrete->ClearCallbacks();
-            }
-            if (launcher->IsRunning())
-            {
-                DAS_CORE_LOG_INFO("Stopping Host launcher during shutdown");
-                launcher->Stop();
-            }
-        }
-    }
+    // 阶段 2：锁外 ResetHostLifecycleCallbacks（经 ipc_context_ 接口转发到
+    // 真实 launchers_，纯 RAII 析构 drain，非两段式，语义像 ~ofstream 的
+    // flush）。 不再依赖已删除的 host_launchers_
+    // 死字段。ResetHostLifecycleCallbacks 内部调 GuardedCallback::Clear 持
+    // callback_mutex_ drain 在途回调（CR-02 drain 屏障），让心跳线程后续 Invoke
+    // 空转碰不到悬空 [this]。
+    ipc_context_->ResetHostLifecycleCallbacks();
 
     DAS_CORE_LOG_INFO("PluginManager shutdown complete");
     return DAS_S_OK;
@@ -476,6 +447,11 @@ DasResult PluginManager::LoadPlugin(
         }
 
         const auto guid = desc->guid;
+        // 记录 IPC owner_session_id（RuntimeLoadResult.owner_session_id 已在
+        // IpcRemotePluginHost.cpp:112/208 设置），用于运行时卸载
+        // (UnloadPluginIpc 经 session_id 调 ipc_context_
+        // ->UnregisterHostLauncherBySession)。
+        plugin.session_id = load_result->owner_session_id;
         loaded_plugins_[guid] = std::move(plugin);
         path_to_guid_[path_str] = guid;
 
@@ -569,8 +545,8 @@ DasResult PluginManager::UnloadPlugin(const std::filesystem::path& path)
         }
     }
 
-    // 检查是否为 IPC 加载的插件
-    if (host_launchers_.contains(guid))
+    // 检查是否为 IPC 加载的插件（LoadedPlugin.session_id != 0 表示 IPC 加载）
+    if (plug_it->second.session_id != 0)
     {
         // 从 loaded_plugins_ 取出 plugin（UnloadPluginIpc 负责 erase）
         LoadedPlugin ipc_plugin = std::move(plug_it->second);
@@ -1068,21 +1044,16 @@ DasResult PluginManager::UnloadPluginIpc(
         loaded_plugins_.erase(guid);
     }
 
-    // 发送 GOODBYE 让 Host 优雅退出
-    // HostLauncher::Stop() 内部发送 GOODBYE + 等待进程退出
-    auto host_it = host_launchers_.find(guid);
-    if (host_it != host_launchers_.end())
-    {
-        auto launcher = host_it->second;
-        {
-            std::lock_guard<std::mutex> lock(mutex_);
-            host_launchers_.erase(host_it);
-        }
-        launcher->Stop();
-    }
-
-    DAS_CORE_LOG_INFO("Unloaded plugin via IPC");
-    return DAS_S_OK;
+    // 经 ipc_context_ 接口按 session 主动 Stop Host 进程 + 清 ConnectionManager
+    // 索引。 HostLauncher 所有权唯一归 IpcContext::launchers_ +
+    // ConnectionManager::hosts_ （PluginManager 不持有，host_launchers_
+    // 死字段已删）。本调用在 mutex_ 锁外 （上面内层 lock_guard
+    // 作用域已结束），满足 INV-03。UnregisterHostLauncherBySession 在
+    // IpcContext override 内组合 launcher->Stop()（含 GOODBYE + 等待进程退出 +
+    // ClearCallbacks 全清三 slot，保留运行时卸载"主动 Stop Host 进程"语义）+
+    // runloop_.GetConnectionManager().UnregisterHostLauncher（清
+    // hosts_/connections_ 索引）。
+    return ipc_context_->UnregisterHostLauncherBySession(plugin.session_id);
 }
 
 void PluginManager::CleanupPluginByGuid(DasGuid plugin_guid)
@@ -1102,8 +1073,10 @@ void PluginManager::CleanupPluginByGuid(DasGuid plugin_guid)
         loaded_plugins_.erase(plugin_it);
     }
 
-    // 清理 HostLauncher
-    host_launchers_.erase(plugin_guid);
+    // HostLauncher 清理由 IpcContext/ConnectionManager 按 session 自行管理，
+    // 本方法不再持有 launcher 索引（host_launchers_ 死字段已删）。满足
+    // INV-02（只清 loaded_plugins_ / path_to_guid_，不调
+    // ClearCallbacks/Stop）。
 
     DAS_CORE_LOG_INFO("Cleaned up plugin index by GUID");
 }
