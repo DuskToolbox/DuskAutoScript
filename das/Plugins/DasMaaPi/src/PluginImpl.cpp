@@ -104,14 +104,5 @@ namespace Plugins::DasMaaPi
         return DAS_E_OUT_OF_RANGE;
     }
 
-    DasResult DasMaaPiPlugin::CanUnloadNow(bool* p_can_unload)
-    {
-        if (!p_can_unload)
-        {
-            return DAS_E_INVALID_POINTER;
-        }
-        *p_can_unload = true;
-        return DAS_S_OK;
-    }
 } // namespace Plugins::DasMaaPi
 DAS_NS_END

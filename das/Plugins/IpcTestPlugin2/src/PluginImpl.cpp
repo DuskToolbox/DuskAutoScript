@@ -169,12 +169,4 @@ DasResult IpcTestPlugin2::CreateFeatureInterface(
     return DAS_E_OUT_OF_RANGE;
 }
 
-DasResult IpcTestPlugin2::CanUnloadNow(bool* p_can_unload)
-{
-    if (!p_can_unload)
-        return DAS_E_INVALID_ARGUMENT;
-    *p_can_unload = true;
-    return DAS_S_OK;
-}
-
 DAS_NS_END

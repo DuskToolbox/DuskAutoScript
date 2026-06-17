@@ -89,17 +89,6 @@ public class JavaTestPlugin extends ISwigDasPluginPackage {
         return result;
     }
 
-    /**
-     * 对照 C++ IpcTestPlugin2::CanUnloadNow
-     */
-    @Override
-    public DasRetBool CanUnloadNow() {
-        DasRetBool result = new DasRetBool();
-        result.setErrorCode(DuskAutoScriptConstants.DAS_S_OK);
-        result.setValue(true);
-        return result;
-    }
-
     // ==========================================================================
     // DasComponentImpl - 对应 C++ DasComponentImpl
     // ==========================================================================

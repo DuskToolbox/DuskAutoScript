@@ -58,16 +58,6 @@ DasResult WindowsCapturePlugin::CreateFeatureInterface(
 
 static std::atomic_int32_t g_ref_count;
 
-DasResult WindowsCapturePlugin::CanUnloadNow(bool* canUnloadNow)
-{
-    if (canUnloadNow == nullptr)
-    {
-        return DAS_E_INVALID_POINTER;
-    }
-    *canUnloadNow = g_ref_count == 0;
-    return DAS_S_OK;
-}
-
 void WindowsCaptureAddRef() { g_ref_count++; }
 
 void WindowsCaptureRelease() { g_ref_count--; }

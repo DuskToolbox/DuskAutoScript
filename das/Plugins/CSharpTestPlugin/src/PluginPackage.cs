@@ -50,11 +50,6 @@ public sealed class PluginPackage : IDasPluginPackage
         return (DasResult.DAS_S_OK, componentFactory);
     }
 
-    public override (DasResult Result, bool CanUnloadNow) CanUnloadNow()
-    {
-        return (DasResult.DAS_S_OK, component.ActiveLifecycleDirectorCount == 0);
-    }
-
     public override void Dispose()
     {
         component.Dispose();

@@ -36,7 +36,7 @@ DAS::DasPtr<IDasBase> factory_base(factory_base_raw); // Adds an extra ref.
 ```
 
 The bug pattern above leaks one reference. In IPC plugin tests it can keep
-remote objects alive and make `CanUnloadNow()` or lifecycle release checks fail.
+remote objects alive and make lifecycle release checks fail.
 
 ## QueryInterface And As
 
@@ -92,8 +92,7 @@ for that implementation pattern.
 
 After changing ownership around factories, QI, proxies, plugin loading, or
 lifecycle callbacks, run the focused IPC/plugin test that exercises release
-behavior. For plugin packages, include a `CanUnloadNow()` or lifecycle-release
-check when possible.
+behavior. For plugin packages, include a lifecycle-release check when possible.
 
 ## Maintenance
 

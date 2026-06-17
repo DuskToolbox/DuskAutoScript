@@ -35,7 +35,6 @@ public:
         PluginInterface::DasPluginFeature* p_out_feature) override;
     DAS_IMPL CreateFeatureInterface(size_t index, IDasBase** pp_out_interface)
         override;
-    DAS_IMPL CanUnloadNow(bool* p_can_unload) override;
 };
 
 void AdbCaptureAddRef();

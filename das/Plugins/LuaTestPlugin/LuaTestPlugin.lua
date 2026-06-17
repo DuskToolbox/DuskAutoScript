@@ -166,11 +166,6 @@ function LuaTestPlugin.createInstance()
             end
             return DAS_S_FALSE
         end,
-
-        CanUnloadNow = function()
-            -- 对照 Java: CanUnloadNow() → true
-            return DAS_S_OK, true  -- DAS_S_OK + [out] bool
-        end,
     })
     return package
 end

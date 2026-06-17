@@ -1385,14 +1385,7 @@ namespace
         factory.Reset();
         factory_base.Reset();
 
-        bool can_unload = false;
         ASSERT_NE(plugin_package.Get(), nullptr);
-        ASSERT_EQ(plugin_package->CanUnloadNow(&can_unload), DAS_S_OK)
-            << "Python package CanUnloadNow call failed after releasing "
-               "component and factory proxies";
-        EXPECT_TRUE(can_unload)
-            << "Python package should report unloadable after component and "
-               "factory proxies are released";
 
         plugin_package.Reset();
         raw_proxy.Reset();
@@ -1733,10 +1726,6 @@ TEST_F(IpcMultiProcessTestIntegration, NodeHostLoadPluginQueryInterface)
     DAS::PluginInterface::DasPluginPackage plugin_package;
     ASSERT_EQ(raw_proxy.As(plugin_package.Put()), DAS_S_OK)
         << "Node LOAD_PLUGIN proxy must QI to IDasPluginPackage";
-
-    bool can_unload = false;
-    EXPECT_EQ(plugin_package->CanUnloadNow(&can_unload), DAS_S_OK);
-    EXPECT_TRUE(can_unload);
 
     DAS::PluginInterface::DasPluginFeature feature{};
     EXPECT_EQ(plugin_package->EnumFeature(0, &feature), DAS_S_OK);

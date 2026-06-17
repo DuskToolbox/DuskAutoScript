@@ -198,7 +198,6 @@ def _phase79_director_contract_doc():
             interface IDasPluginPackage : IDasBase {
                 DasResult EnumFeature(uint64_t index, [out] DasPluginFeature* p_out_feature);
                 DasResult CreateFeatureInterface(uint64_t index, [out] IDasBase** pp_out_interface);
-                DasResult CanUnloadNow([out] bool* canUnloadNow);
             }
         }
         """

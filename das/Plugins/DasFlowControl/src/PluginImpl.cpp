@@ -55,15 +55,4 @@ DasResult DasFlowControlPlugin::CreateFeatureInterface(
     }
 }
 
-DasResult DasFlowControlPlugin::CanUnloadNow(bool* p_can_unload)
-{
-    if (p_can_unload == nullptr)
-    {
-        return DAS_E_INVALID_POINTER;
-    }
-
-    *p_can_unload = true;
-    return DAS_S_OK;
-}
-
 DAS_NS_END

@@ -534,17 +534,6 @@ DasResult PluginManager::UnloadPlugin(const std::filesystem::path& path)
         return DAS_E_NOT_FOUND;
     }
 
-    bool can_unload = false;
-    if (plug_it->second.package)
-    {
-        auto unload_result = plug_it->second.package->CanUnloadNow(&can_unload);
-        if (unload_result != DAS_S_OK || !can_unload)
-        {
-            DAS_CORE_LOG_WARN("Plugin cannot be unloaded now: {}", path_str);
-            return DAS_E_FAIL;
-        }
-    }
-
     // 是否经 IPC host 加载（加载来源判断，非 session 语义）。IPC host session
     // 由 AllocateSessionId 分配，恒 ≥2（reserved_session_ids_={0,1,0xFFFF}
     // 在分配时 跳过）；进程内插件携带主进程 session（未 Initialize 为
@@ -1026,18 +1015,6 @@ DasResult PluginManager::UnloadPluginIpc(
     const DasGuid& guid,
     LoadedPlugin&  plugin)
 {
-    // 通过 IPC proxy 调用 CanUnloadNow
-    if (plugin.package)
-    {
-        bool can_unload = false;
-        auto unload_result = plugin.package->CanUnloadNow(&can_unload);
-        if (unload_result != DAS_S_OK || !can_unload)
-        {
-            DAS_CORE_LOG_WARN("IPC plugin cannot be unloaded now");
-            return DAS_E_FAIL;
-        }
-    }
-
     // 从索引中移除（必须在 Stop 之前，Stop 可能触发断连回调）
     {
         std::lock_guard<std::mutex> lock(mutex_);

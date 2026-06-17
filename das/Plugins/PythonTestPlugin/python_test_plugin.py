@@ -433,13 +433,6 @@ class PythonTestPlugin(ISwigDasPluginPackage):
             result.error_code = DAS_E_OUT_OF_RANGE
         return result
 
-    def CanUnloadNow(self) -> DasRetBool:
-        """检查是否可以卸载"""
-        result = DasRetBool()
-        result.error_code = DAS_S_OK
-        result.value = self._factory is None or not self._factory.has_active_components()
-        return result
-
 
 # 模块级入口函数
 def create_plugin() -> DasRetBase:

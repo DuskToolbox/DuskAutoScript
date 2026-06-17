@@ -238,16 +238,6 @@ namespace
             return DAS_E_NOT_FOUND;
         }
 
-        DasResult DAS_STD_CALL CanUnloadNow(bool* can_unload_now) override
-        {
-            if (can_unload_now == nullptr)
-            {
-                return DAS_E_INVALID_POINTER;
-            }
-            *can_unload_now = true;
-            return DAS_S_OK;
-        }
-
     private:
         std::vector<DasPluginFeature> features_;
         std::atomic<uint32_t>         ref_count_{0};
@@ -821,16 +811,6 @@ namespace
             return DAS_S_OK;
         }
 
-        DasResult DAS_STD_CALL CanUnloadNow(bool* can_unload_now) override
-        {
-            if (can_unload_now == nullptr)
-            {
-                return DAS_E_INVALID_POINTER;
-            }
-            *can_unload_now = true;
-            return DAS_S_OK;
-        }
-
     private:
         DasGuid               factory_guid_;
         std::atomic<uint32_t> ref_count_{0};
@@ -1003,16 +983,6 @@ namespace
 
             auto* lens = PluginManagerErrorLens::MakeRaw(provider_guid_);
             *pp_out = static_cast<IDasBase*>(static_cast<IDasErrorLens*>(lens));
-            return DAS_S_OK;
-        }
-
-        DasResult DAS_STD_CALL CanUnloadNow(bool* can_unload_now) override
-        {
-            if (can_unload_now == nullptr)
-            {
-                return DAS_E_INVALID_POINTER;
-            }
-            *can_unload_now = true;
             return DAS_S_OK;
         }
 

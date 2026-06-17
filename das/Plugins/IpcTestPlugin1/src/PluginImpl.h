@@ -283,8 +283,6 @@ public:
 
     DAS_IMPL CreateFeatureInterface(size_t index, IDasBase** pp_out_interface)
         override;
-
-    DAS_IMPL CanUnloadNow(bool* p_can_unload) override;
 };
 
 DAS_NS_END

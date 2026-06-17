@@ -146,16 +146,6 @@ namespace
             return DAS_E_NOT_FOUND;
         }
 
-        DasResult DAS_STD_CALL CanUnloadNow(bool* can_unload_now) override
-        {
-            if (can_unload_now == nullptr)
-            {
-                return DAS_E_INVALID_POINTER;
-            }
-            *can_unload_now = true;
-            return DAS_S_OK;
-        }
-
     private:
         std::atomic<uint32_t> ref_count_{0};
     };

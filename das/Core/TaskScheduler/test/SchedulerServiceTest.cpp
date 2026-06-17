@@ -2416,16 +2416,6 @@ public:
         return DAS_E_OUT_OF_RANGE;
     }
 
-    DasResult CanUnloadNow(bool* can_unload_now) override
-    {
-        if (!can_unload_now)
-        {
-            return DAS_E_INVALID_POINTER;
-        }
-        *can_unload_now = true;
-        return DAS_S_OK;
-    }
-
 private:
     std::atomic<uint32_t>                   ref_count_{0};
     std::shared_ptr<FactoryTaskSharedState> state_;

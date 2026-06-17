@@ -41,8 +41,6 @@ namespace Das::Plugins::DasGraphTask
         DAS_IMPL CreateFeatureInterface(
             size_t     index,
             IDasBase** pp_out_interface) override;
-
-        DAS_IMPL CanUnloadNow(bool* p_can_unload) override;
     };
 
 } // namespace Das::Plugins::DasGraphTask

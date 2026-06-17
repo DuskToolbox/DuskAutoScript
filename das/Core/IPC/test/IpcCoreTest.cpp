@@ -137,16 +137,6 @@ namespace Das::IPC::Test
             return DAS_E_OUT_OF_RANGE;
         }
 
-        DasResult CanUnloadNow(bool* canUnloadNow) override
-        {
-            if (canUnloadNow == nullptr)
-            {
-                return DAS_E_INVALID_POINTER;
-            }
-            *canUnloadNow = true;
-            return DAS_S_OK;
-        }
-
     private:
         std::atomic<uint32_t> ref_count_{1};
     };

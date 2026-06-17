@@ -644,14 +644,4 @@ DasResult IpcTestPlugin1::CreateFeatureInterface(
     return DAS_S_OK;
 }
 
-DasResult IpcTestPlugin1::CanUnloadNow(bool* p_can_unload)
-{
-    if (!p_can_unload)
-    {
-        return DAS_E_INVALID_ARGUMENT;
-    }
-    *p_can_unload = true;
-    return DAS_S_OK;
-}
-
 DAS_NS_END
