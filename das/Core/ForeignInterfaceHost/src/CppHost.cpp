@@ -123,7 +123,14 @@ public:
         try
         {
             boost::system::error_code ec;
-            plugin_lib_.load(dll_path.wstring(), ec);
+            // load_with_altered_search_path 让依赖从 dll 所在目录（插件目录）
+            // 开始搜索，否则 C++ 插件的同目录依赖（如 MaaFramework/ORT 等
+            // 第三方 dll）因不在进程 exe 目录或 PATH 中而加载失败
+            // （ERROR_MOD_NOT_FOUND）。
+            plugin_lib_.load(
+                dll_path.wstring(),
+                boost::dll::load_mode::load_with_altered_search_path,
+                ec);
             if (ec)
             {
                 DAS_CORE_LOG_ERROR(
