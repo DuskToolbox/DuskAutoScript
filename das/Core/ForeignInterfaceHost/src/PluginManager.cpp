@@ -545,8 +545,13 @@ DasResult PluginManager::UnloadPlugin(const std::filesystem::path& path)
         }
     }
 
-    // 检查是否为 IPC 加载的插件（LoadedPlugin.session_id != 0 表示 IPC 加载）
-    if (plug_it->second.session_id != 0)
+    // 是否经 IPC host 加载（加载来源判断，非 session 语义）。IPC host session
+    // 由 AllocateSessionId 分配，恒 ≥2（reserved_session_ids_={0,1,0xFFFF}
+    // 在分配时 跳过）；进程内插件携带主进程 session（未 Initialize 为
+    // 0、Initialize(1) 为 1）， 均 ≤1。故 session_id>1 等价于「经 IPC host
+    // 加载」。注：此处借 session 编号 作加载来源代理，更彻底的做法是在
+    // LoadedPlugin 记录加载来源标记。
+    if (plug_it->second.session_id > 1)
     {
         // 从 loaded_plugins_ 取出 plugin（UnloadPluginIpc 负责 erase）
         LoadedPlugin ipc_plugin = std::move(plug_it->second);

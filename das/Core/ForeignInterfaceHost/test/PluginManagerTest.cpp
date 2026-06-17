@@ -1703,8 +1703,7 @@ TEST_F(PluginManagerGuidTest, LoadPlugin_NoHostPath_ReturnsError)
     auto manifest = Das::Utils::MakeYyjsonObject();
     {
         auto obj = *manifest.as_object();
-        obj[std::string_view("guid")] =
-            "{00000000-0000-0000-0000-000000000001}";
+        obj[std::string_view("guid")] = "00000000-0000-0000-0000-000000000001";
         obj[std::string_view("name")] = "TestCSharpPlugin";
         obj[std::string_view("language")] = "CSharp";
         obj[std::string_view("description")] = "test";
@@ -1744,8 +1743,7 @@ TEST_F(PluginManagerGuidTest, LoadPlugin_CppWithLoadModeIpc_GoesIpcPath)
     auto manifest = Das::Utils::MakeYyjsonObject();
     {
         auto obj = *manifest.as_object();
-        obj[std::string_view("guid")] =
-            "{00000000-0000-0000-0000-000000000010}";
+        obj[std::string_view("guid")] = "00000000-0000-0000-0000-000000000010";
         obj[std::string_view("name")] = "TestPluginCppIpc";
         obj[std::string_view("language")] = "Cpp";
         obj[std::string_view("loadMode")] = "ipc";
