@@ -958,6 +958,7 @@ class SwigCodeGenerator:
         其他 .i 文件中继承同一基类的接口。
         """
         lines = []
+        python_only_lines = []
 
         for method in interface.methods:
             out_params = [p for p in method.parameters if p.direction == ParamDirection.OUT]
@@ -1038,14 +1039,50 @@ class SwigCodeGenerator:
             # and %ignore directives in later .i files within the same swig_all.i compilation.
             # This causes methods (e.g. SetBase in derived interfaces) to get both
             # director (SwigDirector_*) and non-director wrapper, creating Java compile errors.
-            # Workaround: skip all nodirector SET/CLEAR when out-type is any INTERFACE kind.
+            #
+            # Java: has typemaps (directorin/directorout with jlong) that make the
+            #   SwigDirector 2-arg override work natively. Skip nodirector for Java.
+            # Python/Lua: Python has no such typemaps for INTERFACE** out-params, so
+            #   if nodirector is skipped, SWIG generates a SwigDirector 2-arg override
+            #   that throws DirectorPureVirtualException on every call (because Python
+            #   only overrides the 1-arg DasRetXxx version). Emit nodirector only when
+            #   compiling for SWIGPYTHON — Lua doesn't use SWIG directors at all, so
+            #   the directive is harmless under SWIGPYTHON guard and invisible to Java.
             if out_params[0].type_info.type_kind == TypeKind.INTERFACE:
+                if clear:
+                    python_only_lines.append(
+                        f'%feature("nodirector", "") {fqn}::{method.name}({params_str});')
+                else:
+                    python_only_lines.append(
+                        f'%feature("nodirector") {fqn}::{method.name}({params_str});')
                 continue
 
             if clear:
                 lines.append(f'%feature("nodirector", "") {fqn}::{method.name}({params_str});')
             else:
                 lines.append(f'%feature("nodirector") {fqn}::{method.name}({params_str});')
+
+        # Python-only nodirector directives for INTERFACE** out-params, guarded by
+        # #ifdef SWIGPYTHON so they don't pollute Java's feature table.
+        if python_only_lines:
+            if clear:
+                header = '// Clear base class nodirector features for Python (INTERFACE** out-params)'
+                python_block = (
+                    '#ifdef SWIGPYTHON\n'
+                    + header + '\n'
+                    + '\n'.join(python_only_lines) + '\n'
+                    + '#endif // SWIGPYTHON'
+                )
+                lines.insert(0, python_block)
+            else:
+                header = '// Disable director for base class INTERFACE** out-param methods (Python only)'
+                python_block = (
+                    '#ifdef SWIGPYTHON\n'
+                    + header + '\n'
+                    + '\n'.join(python_only_lines) + '\n'
+                    + '#endif // SWIGPYTHON'
+                )
+                lines.insert(0, python_block)
 
         if lines:
             if clear:
