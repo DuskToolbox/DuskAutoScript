@@ -461,7 +461,7 @@ namespace FakeMainProcess
             h2m_pipe);
 
         // 5. 创建 io_context 和工作线程（RAII 管理）
-        IoThreadGuard                         io_guard;
+        IoThreadGuard                               io_guard;
         std::optional<DAS::Core::IPC::AnyTransport> transport;
 
         try
@@ -539,6 +539,7 @@ namespace FakeMainProcess
                     .SetControlPlaneCommand(
                         DAS::Core::IPC::HandshakeInterfaceId::
                             HANDSHAKE_IFACE_HELLO)
+                    .SetSourceSessionId(hello.assigned_session_id)
                     .SetBodySize(sizeof(hello))
                     .SetCallId(1)
                     .Build();
@@ -623,6 +624,7 @@ namespace FakeMainProcess
                     .SetControlPlaneCommand(
                         DAS::Core::IPC::HandshakeInterfaceId::
                             HANDSHAKE_IFACE_READY)
+                    .SetSourceSessionId(ready.session_id)
                     .SetBodySize(sizeof(ready))
                     .SetCallId(2)
                     .Build();
