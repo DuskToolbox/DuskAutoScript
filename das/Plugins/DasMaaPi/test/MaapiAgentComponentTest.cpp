@@ -50,6 +50,7 @@ namespace
     using namespace Das::Plugins::DasMaaPi::AgentRuntime;
     using namespace Das::Plugins::DasMaaPi::Test;
     using Das::PluginInterface::DAS_PLUGIN_FEATURE_COMPONENT_FACTORY;
+    using Das::PluginInterface::DAS_PLUGIN_FEATURE_ERROR_LENS;
     using Das::PluginInterface::DAS_PLUGIN_FEATURE_TASK;
     using Das::PluginInterface::DAS_PLUGIN_FEATURE_TASK_AUTHORING_FACTORY;
     using Das::PluginInterface::DAS_PLUGIN_FEATURE_TASK_COMPONENT_FACTORY;
@@ -242,7 +243,8 @@ namespace
             DAS_PLUGIN_FEATURE_TASK,
             DAS_PLUGIN_FEATURE_TASK_AUTHORING_FACTORY,
             DAS_PLUGIN_FEATURE_COMPONENT_FACTORY,
-            DAS_PLUGIN_FEATURE_TASK_COMPONENT_FACTORY};
+            DAS_PLUGIN_FEATURE_TASK_COMPONENT_FACTORY,
+            DAS_PLUGIN_FEATURE_ERROR_LENS};
 
         for (std::size_t index = 0; index < expected.size(); ++index)
         {

@@ -1,0 +1,104 @@
+{
+  "name": "@CMAKE_SHARED_LIBRARY_PREFIX@SchedulerTestPlugin",
+  "author": "Tests",
+  "version": "1.0",
+  "guid": "12345678-9ABC-4DEF-8123-456789ABCDEF",
+  "description": "Factory-backed scheduler test plugin",
+  "supportedSystem": "Windows",
+  "language": "Cpp",
+  "pluginFilenameExtension": "dll",
+  "settings": {},
+  "taskComponents": {
+    "factories": [
+      "2B9CE776-E95F-47F1-BD31-180B9238A94C"
+    ],
+    "components": {
+      "68F10001-0000-4000-8000-000000000001": {
+        "factoryGuid": "2B9CE776-E95F-47F1-BD31-180B9238A94C",
+        "definition": {
+          "schemaVersion": 1,
+          "kind": "das.flow.branch",
+          "componentGuid": "68F10001-0000-4000-8000-000000000001",
+          "inputs": [],
+          "outputs": [],
+          "config": {},
+          "diagnostics": []
+        }
+      },
+      "68F10002-0000-4000-8000-000000000002": {
+        "factoryGuid": "2B9CE776-E95F-47F1-BD31-180B9238A94C",
+        "definition": {
+          "schemaVersion": 1,
+          "kind": "das.flow.sequence",
+          "componentGuid": "68F10002-0000-4000-8000-000000000002",
+          "inputs": [],
+          "outputs": [],
+          "config": {},
+          "diagnostics": []
+        }
+      },
+      "68F10003-0000-4000-8000-000000000003": {
+        "factoryGuid": "2B9CE776-E95F-47F1-BD31-180B9238A94C",
+        "definition": {
+          "schemaVersion": 1,
+          "kind": "das.flow.delay",
+          "componentGuid": "68F10003-0000-4000-8000-000000000003",
+          "inputs": [],
+          "outputs": [],
+          "config": {},
+          "diagnostics": []
+        }
+      },
+      "68F10004-0000-4000-8000-000000000004": {
+        "factoryGuid": "2B9CE776-E95F-47F1-BD31-180B9238A94C",
+        "definition": {
+          "schemaVersion": 1,
+          "kind": "das.flow.for",
+          "componentGuid": "68F10004-0000-4000-8000-000000000004",
+          "inputs": [],
+          "outputs": [],
+          "config": {},
+          "diagnostics": []
+        }
+      },
+      "68F10005-0000-4000-8000-000000000005": {
+        "factoryGuid": "2B9CE776-E95F-47F1-BD31-180B9238A94C",
+        "definition": {
+          "schemaVersion": 1,
+          "kind": "das.flow.while",
+          "componentGuid": "68F10005-0000-4000-8000-000000000005",
+          "inputs": [],
+          "outputs": [],
+          "config": {},
+          "diagnostics": []
+        }
+      },
+      "68F10006-0000-4000-8000-000000000006": {
+        "factoryGuid": "2B9CE776-E95F-47F1-BD31-180B9238A94C",
+        "definition": {
+          "schemaVersion": 1,
+          "kind": "das.flow.goto",
+          "componentGuid": "68F10006-0000-4000-8000-000000000006",
+          "inputs": [],
+          "outputs": [],
+          "config": {},
+          "diagnostics": []
+        }
+      }
+    }
+  },
+  "tasks": {
+    "87654321-CBA9-4FED-9123-FEDCBA987654": {
+      "pluginGuid": "12345678-9ABC-4DEF-8123-456789ABCDEF",
+      "name": "factoryTask",
+      "description": "Scheduler test task",
+      "authoring": {
+        "factoryGuid": "FECAC0D5-E038-4FDB-A6E9-EFCE10BCAE5A",
+        "supportedKinds": [
+          "formSequence"
+        ]
+      },
+      "descriptors": []
+    }
+  }
+}

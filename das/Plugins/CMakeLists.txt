@@ -28,6 +28,14 @@ if(TARGET TaskSchedulerTest)
     add_dependencies(TaskSchedulerTest DasFlowControl DasAutoCopyPluginMetadataFile)
 endif()
 
+# TaskSchedulerTest 需要先构建 SchedulerTestPlugin（SetUp 部署其 dll+json），
+# 并能 include 其共享头 SchedulerTestSharedState.h。
+if(TARGET TaskSchedulerTest)
+    add_dependencies(TaskSchedulerTest SchedulerTestPlugin)
+    target_include_directories(TaskSchedulerTest PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/SchedulerTestPlugin/include)
+endif()
+
 if(DAS_BUILD_TEST)
     # Java 测试插件（仅在启用 Java 导出时构建）
     if(EXPORT_JAVA)
@@ -58,6 +66,13 @@ endif()
 # IpcTestPlugin1 - IDasTouch Mock for IPC testing
 if(DAS_BUILD_TEST)
     das_add_plugin_library(IpcTestPlugin1 DAS_EX_PRIVATE_LIBS)
+endif()
+
+# SchedulerTestPlugin - 真实 InProcess Cpp 测试插件，替代死代码 FakeFactoryRuntime。
+# TaskSchedulerTest 的 SchedulerRuntimeBackedTest 经生产 CppHost 路径加载本 dll，
+# 通过 DasTestPlugin_SetSharedState 注入 exe 持有的 FactoryTaskSharedState 裸指针。
+if(DAS_BUILD_TEST)
+    das_add_plugin_library(SchedulerTestPlugin DAS_EX_PRIVATE_LIBS)
 endif()
 
 # IpcTestPlugin2 - IDasComponent + Factory for IPC testing

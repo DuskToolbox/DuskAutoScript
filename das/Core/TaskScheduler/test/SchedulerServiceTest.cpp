@@ -1,5 +1,7 @@
 #include "controller/DasProfileController.hpp"
 #include "controller/DasSchedulerController.hpp"
+#include <IpcTestConfig.h>
+#include <Windows.h>
 #include <das/Core/ForeignInterfaceHost/IForeignLanguageRuntime.h>
 #include <das/Core/ForeignInterfaceHost/PluginManager.h>
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
@@ -13,6 +15,7 @@
 #include <das/DasString.hpp>
 #include <das/IDasSchedulerService.h>
 #include <das/IDasSettingsService.h>
+#include <das/Plugins/SchedulerTestPlugin/SchedulerTestSharedState.h>
 #include <das/Utils/Expected.h>
 #include <das/_autogen/idl/abi/IDasGuidVector.h>
 #include <das/_autogen/idl/abi/IDasPluginPackage.h>
@@ -1419,64 +1422,13 @@ public:
     }
 };
 
-// {12345678-9ABC-4DEF-8123-456789ABCDEF}
-static constexpr DasGuid FactoryPluginGuid = {
-    0x12345678,
-    0x9ABC,
-    0x4DEF,
-    {0x81, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF}};
+// Factory 系列 guid 常量、FactoryTaskSharedState 及所有 Factory* 实现类已迁移至
+// 真实 InProcess 测试插件 SchedulerTestPlugin.dll。exe 与 dll 通过共享头
+// SchedulerTestSharedState.h 共享同一组 guid 与 FactoryTaskSharedState 布局，
+// dll 内对象通过裸指针（DasTestPlugin_SetSharedState 注入）观察 exe
+// 持有的状态。
+#include <das/Plugins/SchedulerTestPlugin/SchedulerTestSharedState.h>
 
-// {87654321-CBA9-4FED-9123-FEDCBA987654}
-static constexpr DasGuid FactoryTaskGuid = {
-    0x87654321,
-    0xCBA9,
-    0x4FED,
-    {0x91, 0x23, 0xFE, 0xDC, 0xBA, 0x98, 0x76, 0x54}};
-
-// {FECAC0D5-E038-4FDB-A6E9-EFCE10BCAE5A}
-static constexpr DasGuid FactoryAuthoringFactoryGuid = {
-    0xFECAC0D5,
-    0xE038,
-    0x4FDB,
-    {0xA6, 0xE9, 0xEF, 0xCE, 0x10, 0xBC, 0xAE, 0x5A}};
-
-// {B56D1081-6838-4251-8CBB-BB223012FEF2}
-static constexpr DasGuid DecoyAuthoringFactoryGuid = {
-    0xB56D1081,
-    0x6838,
-    0x4251,
-    {0x8C, 0xBB, 0xBB, 0x22, 0x30, 0x12, 0xFE, 0xF2}};
-
-// {2B9CE776-E95F-47F1-BD31-180B9238A94C}
-static constexpr DasGuid FactoryTaskComponentFactoryGuid = {
-    0x2B9CE776,
-    0xE95F,
-    0x47F1,
-    {0xBD, 0x31, 0x18, 0x0B, 0x92, 0x38, 0xA9, 0x4C}};
-
-// {97BA1BE0-A199-47CB-9604-440B8BBC6555}
-static constexpr DasGuid FactoryTaskComponentImplGuid = {
-    0x97BA1BE0,
-    0xA199,
-    0x47CB,
-    {0x96, 0x04, 0x44, 0x0B, 0x8B, 0xBC, 0x65, 0x55}};
-
-// {BBCAE0D0-5BC5-4B58-9FBD-585003B62B2D}
-static constexpr DasGuid FactoryAuthoringSessionGuid = {
-    0xBBCAE0D0,
-    0x5BC5,
-    0x4B58,
-    {0x9F, 0xBD, 0x58, 0x50, 0x03, 0xB6, 0x2B, 0x2D}};
-
-constexpr char FactoryPluginGuidString[] =
-    "12345678-9ABC-4DEF-8123-456789ABCDEF";
-constexpr char FactoryTaskGuidString[] = "87654321-CBA9-4FED-9123-FEDCBA987654";
-constexpr char FactoryAuthoringFactoryGuidString[] =
-    "FECAC0D5-E038-4FDB-A6E9-EFCE10BCAE5A";
-constexpr char FactoryTaskComponentFactoryGuidString[] =
-    "2B9CE776-E95F-47F1-BD31-180B9238A94C";
-constexpr char FactoryExecutionComponentGuidString[] =
-    "68F10001-0000-4000-8000-000000000001";
 constexpr char MissingPluginGuidString[] =
     "99999999-0000-4000-8000-000000000001";
 constexpr char BannedPluginGuidString[] =
@@ -1485,1004 +1437,6 @@ constexpr char LoadFailedPluginGuidString[] =
     "99999999-0000-4000-8000-000000000003";
 constexpr char MissingTaskTypeGuidString[] =
     "99999999-0000-4000-8000-000000000004";
-
-struct FactoryTaskSharedState
-{
-    std::mutex              mutex;
-    std::condition_variable cv;
-    int                     created_instance_count = 0;
-    std::vector<int>        executed_instance_ids;
-    int                     authoring_session_count = 0;
-    int                     get_document_count = 0;
-    int                     apply_change_count = 0;
-    int                     compile_count = 0;
-    int                     decoy_authoring_create_count = 0;
-    bool                    block_do = false;
-    bool                    do_entered = false;
-    bool                    unblock_do = false;
-    int64_t                 last_context_entry_id = -1;
-    int64_t                 last_context_task_id = -1;
-    bool                    last_context_had_task_id = false;
-    int64_t                 last_context_revision = -1;
-    std::string             last_props_key1_value;
-    std::string             last_compile_purpose;
-    bool                    apply_ok = true;
-    bool                    compile_ok = true;
-};
-
-class FactoryBackedTask final : public Das::PluginInterface::IDasTask
-{
-public:
-    explicit FactoryBackedTask(std::shared_ptr<FactoryTaskSharedState> state)
-        : state_(std::move(state))
-    {
-        std::lock_guard<std::mutex> lock(state_->mutex);
-        instance_id_ = ++state_->created_instance_count;
-    }
-
-    uint32_t AddRef() override { return ++ref_count_; }
-
-    uint32_t Release() override
-    {
-        auto count = --ref_count_;
-        if (count == 0)
-        {
-            delete this;
-        }
-        return count;
-    }
-
-    DasResult QueryInterface(const DasGuid& iid, void** pp) override
-    {
-        if (!pp)
-        {
-            return DAS_E_INVALID_POINTER;
-        }
-        if (iid == DasIidOf<IDasBase>())
-        {
-            *pp = static_cast<IDasBase*>(this);
-            AddRef();
-            return DAS_S_OK;
-        }
-        if (iid == DasIidOf<IDasTypeInfo>())
-        {
-            *pp = static_cast<IDasTypeInfo*>(this);
-            AddRef();
-            return DAS_S_OK;
-        }
-        if (iid == DasIidOf<Das::PluginInterface::IDasTask>())
-        {
-            *pp = static_cast<Das::PluginInterface::IDasTask*>(this);
-            AddRef();
-            return DAS_S_OK;
-        }
-        *pp = nullptr;
-        return DAS_E_NO_INTERFACE;
-    }
-
-    DasResult GetGuid(DasGuid* p_out_guid) override
-    {
-        if (!p_out_guid)
-        {
-            return DAS_E_INVALID_POINTER;
-        }
-        *p_out_guid = FactoryTaskGuid;
-        return DAS_S_OK;
-    }
-
-    DasResult GetRuntimeClassName(IDasReadOnlyString** pp) override
-    {
-        if (!pp)
-        {
-            return DAS_E_INVALID_POINTER;
-        }
-        return CreateIDasReadOnlyStringFromUtf8("FactoryBackedTask", pp);
-    }
-
-    DasResult Do(
-        Das::PluginInterface::IDasStopToken*,
-        Das::ExportInterface::IDasJson*,
-        Das::ExportInterface::IDasJson* p_task_settings_json) override
-    {
-        std::string key1_value;
-        if (p_task_settings_json != nullptr)
-        {
-            DasPtr<IDasReadOnlyString> key;
-            if (DAS_S_OK == CreateIDasReadOnlyStringFromUtf8("key1", key.Put())
-                && key)
-            {
-                DasPtr<IDasReadOnlyString> value;
-                if (DAS_S_OK
-                        == p_task_settings_json->GetStringByName(
-                            key.Get(),
-                            value.Put())
-                    && value)
-                {
-                    const char* raw = nullptr;
-                    if (DAS_S_OK == value->GetUtf8(&raw) && raw)
-                    {
-                        key1_value = raw;
-                    }
-                }
-            }
-        }
-        {
-            std::lock_guard<std::mutex> lock(state_->mutex);
-            state_->executed_instance_ids.push_back(instance_id_);
-            state_->last_props_key1_value = std::move(key1_value);
-            state_->do_entered = true;
-        }
-        state_->cv.notify_all();
-
-        std::unique_lock<std::mutex> lock(state_->mutex);
-        state_->cv.wait(
-            lock,
-            [this] { return !state_->block_do || state_->unblock_do; });
-        return DAS_S_OK;
-    }
-
-    DasResult GetNextExecutionTime(
-        Das::ExportInterface::DasDate* p_out_date) override
-    {
-        if (!p_out_date)
-        {
-            return DAS_E_INVALID_POINTER;
-        }
-
-        *p_out_date = {2030, 1, 1, 0, 0, static_cast<uint8_t>(instance_id_)};
-        return DAS_S_OK;
-    }
-
-private:
-    std::atomic<uint32_t>                   ref_count_{0};
-    std::shared_ptr<FactoryTaskSharedState> state_;
-    int                                     instance_id_ = 0;
-};
-
-class FakeAuthoringSession final
-    : public Das::PluginInterface::IDasTaskAuthoringSession
-{
-public:
-    explicit FakeAuthoringSession(std::shared_ptr<FactoryTaskSharedState> state)
-        : state_(std::move(state))
-    {
-    }
-
-    uint32_t AddRef() override { return ++ref_count_; }
-
-    uint32_t Release() override
-    {
-        auto count = --ref_count_;
-        if (count == 0)
-        {
-            delete this;
-        }
-        return count;
-    }
-
-    DasResult QueryInterface(const DasGuid& iid, void** pp) override
-    {
-        if (!pp)
-        {
-            return DAS_E_INVALID_POINTER;
-        }
-        if (iid == DasIidOf<IDasBase>())
-        {
-            *pp = static_cast<IDasBase*>(this);
-            AddRef();
-            return DAS_S_OK;
-        }
-        if (iid == DasIidOf<IDasTypeInfo>())
-        {
-            *pp = static_cast<IDasTypeInfo*>(this);
-            AddRef();
-            return DAS_S_OK;
-        }
-        if (iid == DasIidOf<Das::PluginInterface::IDasTaskAuthoringSession>())
-        {
-            *pp = static_cast<Das::PluginInterface::IDasTaskAuthoringSession*>(
-                this);
-            AddRef();
-            return DAS_S_OK;
-        }
-        *pp = nullptr;
-        return DAS_E_NO_INTERFACE;
-    }
-
-    DasResult GetGuid(DasGuid* p_out_guid) override
-    {
-        if (!p_out_guid)
-        {
-            return DAS_E_INVALID_POINTER;
-        }
-        *p_out_guid = FactoryAuthoringSessionGuid;
-        return DAS_S_OK;
-    }
-
-    DasResult GetRuntimeClassName(IDasReadOnlyString** pp) override
-    {
-        if (!pp)
-        {
-            return DAS_E_INVALID_POINTER;
-        }
-        return CreateIDasReadOnlyStringFromUtf8("FakeAuthoringSession", pp);
-    }
-
-    DasResult GetDocument(
-        Das::ExportInterface::IDasJson*,
-        Das::ExportInterface::IDasJson** pp_out_document_json) override
-    {
-        if (!pp_out_document_json)
-        {
-            return DAS_E_INVALID_POINTER;
-        }
-        {
-            std::lock_guard<std::mutex> lock(state_->mutex);
-            ++state_->get_document_count;
-        }
-
-        yyjson::value document(Das::Utils::MakeYyjsonObject());
-        auto          obj = document.as_object();
-        (*obj)[std::string_view("version")] = 1;
-        (*obj)[std::string_view("kind")] = "formSequence";
-        (*obj)[std::string_view("revision")] = 0;
-        (*obj)[std::string_view("values")] =
-            yyjson::value(Das::Utils::MakeYyjsonObject());
-        (*obj)[std::string_view("view")] =
-            yyjson::value(Das::Utils::MakeYyjsonObject());
-        (*obj)[std::string_view("schema")] =
-            yyjson::value(Das::Utils::MakeYyjsonObject());
-        {
-            yyjson::value catalog(Das::Utils::MakeYyjsonObject());
-            (*catalog.as_object())[std::string_view("providerField")] =
-                "preserved";
-            (*obj)[std::string_view("catalog")] = std::move(catalog);
-        }
-        (*obj)[std::string_view("state")] =
-            yyjson::value(Das::Utils::MakeYyjsonObject());
-        (*obj)[std::string_view("diagnostics")] =
-            yyjson::value(Das::Utils::MakeYyjsonArray());
-        (*obj)[std::string_view("migration")] =
-            yyjson::value(Das::Utils::MakeYyjsonObject());
-
-        auto wrapped = Das::MakeDasPtr<Das::Core::Utils::IDasJsonImpl>(
-            std::move(document));
-        *pp_out_document_json = wrapped.Get();
-        (*pp_out_document_json)->AddRef();
-        return DAS_S_OK;
-    }
-
-    DasResult ApplyChange(
-        Das::ExportInterface::IDasJson*,
-        Das::ExportInterface::IDasJson** pp_out_result_json) override
-    {
-        if (!pp_out_result_json)
-        {
-            return DAS_E_INVALID_POINTER;
-        }
-        {
-            std::lock_guard<std::mutex> lock(state_->mutex);
-            ++state_->apply_change_count;
-            if (!state_->apply_ok)
-            {
-                return DAS_E_FAIL;
-            }
-        }
-
-        yyjson::value result(Das::Utils::MakeYyjsonObject());
-        yyjson::value props(Das::Utils::MakeYyjsonObject());
-        (*props.as_object())[std::string_view("key1")] = "accepted";
-        (*result.as_object())[std::string_view("acceptedProperties")] =
-            std::move(props);
-        (*result.as_object())[std::string_view("sourceFingerprint")] =
-            "fake-source";
-        (*result.as_object())[std::string_view("migration")] =
-            yyjson::value(Das::Utils::MakeYyjsonObject());
-
-        auto wrapped =
-            Das::MakeDasPtr<Das::Core::Utils::IDasJsonImpl>(std::move(result));
-        *pp_out_result_json = wrapped.Get();
-        (*pp_out_result_json)->AddRef();
-        return DAS_S_OK;
-    }
-
-    DasResult Compile(
-        Das::ExportInterface::IDasJson*  p_request_json,
-        Das::ExportInterface::IDasJson** pp_out_result_json) override
-    {
-        if (!pp_out_result_json)
-        {
-            return DAS_E_INVALID_POINTER;
-        }
-        {
-            std::lock_guard<std::mutex> lock(state_->mutex);
-            ++state_->compile_count;
-            if (p_request_json)
-            {
-                DasPtr<IDasReadOnlyString> key;
-                if (DAS_S_OK
-                        == CreateIDasReadOnlyStringFromUtf8(
-                            "purpose",
-                            key.Put())
-                    && key)
-                {
-                    DasPtr<IDasReadOnlyString> purpose;
-                    if (DAS_S_OK
-                            == p_request_json->GetStringByName(
-                                key.Get(),
-                                purpose.Put())
-                        && purpose)
-                    {
-                        const char* raw = nullptr;
-                        if (DAS_S_OK == purpose->GetUtf8(&raw) && raw)
-                        {
-                            state_->last_compile_purpose = raw;
-                        }
-                    }
-                }
-            }
-        }
-        yyjson::value result(Das::Utils::MakeYyjsonObject());
-        yyjson::value execution_input(Das::Utils::MakeYyjsonObject());
-        (*execution_input.as_object())[std::string_view("key1")] = "compiled";
-        {
-            std::lock_guard<std::mutex> lock(state_->mutex);
-            (*result.as_object())[std::string_view("ok")] = state_->compile_ok;
-            (*result.as_object())[std::string_view("canExecute")] =
-                state_->compile_ok;
-        }
-        (*result.as_object())[std::string_view("executionInput")] =
-            std::move(execution_input);
-        {
-            yyjson::value summary(Das::Utils::MakeYyjsonObject());
-            yyjson::value task_names(Das::Utils::MakeYyjsonArray());
-            (*task_names.as_array()).emplace_back("factoryTask");
-            (*summary.as_object())[std::string_view("taskNames")] =
-                std::move(task_names);
-            (*summary.as_object())[std::string_view("requiresAgentRuntime")] =
-                false;
-            (*result.as_object())[std::string_view("summary")] =
-                std::move(summary);
-        }
-        {
-            yyjson::value diagnostics(Das::Utils::MakeYyjsonArray());
-            yyjson::value diagnostic(Das::Utils::MakeYyjsonObject());
-            (*diagnostic.as_object())[std::string_view("severity")] = "info";
-            (*diagnostic.as_object())[std::string_view("code")] =
-                "fake.compile";
-            (*diagnostic.as_object())[std::string_view("message")] =
-                "Fake compile completed";
-            (*diagnostics.as_array()).emplace_back(std::move(diagnostic));
-            (*result.as_object())[std::string_view("diagnostics")] =
-                std::move(diagnostics);
-        }
-        (*result.as_object())[std::string_view("providerDebug")] =
-            "internal-only";
-        auto wrapped =
-            Das::MakeDasPtr<Das::Core::Utils::IDasJsonImpl>(std::move(result));
-        *pp_out_result_json = wrapped.Get();
-        (*pp_out_result_json)->AddRef();
-        return DAS_S_OK;
-    }
-
-private:
-    std::atomic<uint32_t>                   ref_count_{0};
-    std::shared_ptr<FactoryTaskSharedState> state_;
-};
-
-class FakeAuthoringSessionFactory final
-    : public Das::PluginInterface::IDasTaskAuthoringSessionFactory
-{
-public:
-    explicit FakeAuthoringSessionFactory(
-        std::shared_ptr<FactoryTaskSharedState> state,
-        DasGuid                                 factory_guid,
-        bool                                    can_create_session)
-        : state_(std::move(state)), factory_guid_(factory_guid),
-          can_create_session_(can_create_session)
-    {
-    }
-
-    uint32_t AddRef() override { return ++ref_count_; }
-
-    uint32_t Release() override
-    {
-        auto count = --ref_count_;
-        if (count == 0)
-        {
-            delete this;
-        }
-        return count;
-    }
-
-    DasResult QueryInterface(const DasGuid& iid, void** pp) override
-    {
-        if (!pp)
-        {
-            return DAS_E_INVALID_POINTER;
-        }
-        if (iid == DasIidOf<IDasBase>())
-        {
-            *pp = static_cast<IDasBase*>(this);
-            AddRef();
-            return DAS_S_OK;
-        }
-        if (iid == DasIidOf<IDasTypeInfo>())
-        {
-            *pp = static_cast<IDasTypeInfo*>(this);
-            AddRef();
-            return DAS_S_OK;
-        }
-        if (iid
-            == DasIidOf<
-                Das::PluginInterface::IDasTaskAuthoringSessionFactory>())
-        {
-            *pp = static_cast<
-                Das::PluginInterface::IDasTaskAuthoringSessionFactory*>(this);
-            AddRef();
-            return DAS_S_OK;
-        }
-        *pp = nullptr;
-        return DAS_E_NO_INTERFACE;
-    }
-
-    DasResult GetGuid(DasGuid* p_out_guid) override
-    {
-        if (!p_out_guid)
-        {
-            return DAS_E_INVALID_POINTER;
-        }
-        *p_out_guid = factory_guid_;
-        return DAS_S_OK;
-    }
-
-    DasResult GetRuntimeClassName(IDasReadOnlyString** pp) override
-    {
-        if (!pp)
-        {
-            return DAS_E_INVALID_POINTER;
-        }
-        return CreateIDasReadOnlyStringFromUtf8(
-            "FakeAuthoringSessionFactory",
-            pp);
-    }
-
-    DasResult CreateSession(
-        const DasGuid&,
-        Das::ExportInterface::IDasJson*                  p_context_json,
-        Das::PluginInterface::IDasTaskAuthoringSession** pp_out_session)
-        override
-    {
-        if (!pp_out_session)
-        {
-            return DAS_E_INVALID_POINTER;
-        }
-        if (!can_create_session_)
-        {
-            std::lock_guard<std::mutex> lock(state_->mutex);
-            ++state_->decoy_authoring_create_count;
-            return DAS_E_FAIL;
-        }
-        int64_t     revision = -1;
-        int64_t     entry_id = -1;
-        int64_t     task_id = -1;
-        bool        had_task_id = false;
-        std::string key1_value;
-        if (p_context_json)
-        {
-            DasPtr<IDasReadOnlyString> key;
-            if (DAS_S_OK
-                    == CreateIDasReadOnlyStringFromUtf8("revision", key.Put())
-                && key)
-            {
-                p_context_json->GetIntByName(key.Get(), &revision);
-            }
-
-            key.Reset();
-            if (DAS_S_OK
-                    == CreateIDasReadOnlyStringFromUtf8("entryId", key.Put())
-                && key)
-            {
-                p_context_json->GetIntByName(key.Get(), &entry_id);
-            }
-
-            key.Reset();
-            if (DAS_S_OK
-                    == CreateIDasReadOnlyStringFromUtf8("taskId", key.Put())
-                && key)
-            {
-                had_task_id =
-                    DAS_S_OK
-                    == p_context_json->GetIntByName(key.Get(), &task_id);
-            }
-
-            key.Reset();
-            if (DAS_S_OK
-                    == CreateIDasReadOnlyStringFromUtf8("properties", key.Put())
-                && key)
-            {
-                DasPtr<Das::ExportInterface::IDasJson> properties;
-                if (DAS_S_OK
-                        == p_context_json->GetObjectRefByName(
-                            key.Get(),
-                            properties.Put())
-                    && properties)
-                {
-                    DasPtr<IDasReadOnlyString> prop_key;
-                    if (DAS_S_OK
-                            == CreateIDasReadOnlyStringFromUtf8(
-                                "key1",
-                                prop_key.Put())
-                        && prop_key)
-                    {
-                        DasPtr<IDasReadOnlyString> prop_value;
-                        if (DAS_S_OK
-                                == properties->GetStringByName(
-                                    prop_key.Get(),
-                                    prop_value.Put())
-                            && prop_value)
-                        {
-                            const char* raw = nullptr;
-                            if (DAS_S_OK == prop_value->GetUtf8(&raw) && raw)
-                            {
-                                key1_value = raw;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        {
-            std::lock_guard<std::mutex> lock(state_->mutex);
-            ++state_->authoring_session_count;
-            state_->last_context_entry_id = entry_id;
-            state_->last_context_task_id = task_id;
-            state_->last_context_had_task_id = had_task_id;
-            state_->last_context_revision = revision;
-            state_->last_props_key1_value = std::move(key1_value);
-        }
-
-        auto* session = new FakeAuthoringSession(state_);
-        session->AddRef();
-        *pp_out_session = session;
-        return DAS_S_OK;
-    }
-
-private:
-    std::atomic<uint32_t>                   ref_count_{0};
-    std::shared_ptr<FactoryTaskSharedState> state_;
-    DasGuid                                 factory_guid_{};
-    bool                                    can_create_session_ = true;
-};
-
-class FakeTaskComponent final : public Das::PluginInterface::IDasTaskComponent
-{
-public:
-    uint32_t AddRef() override { return ++ref_count_; }
-
-    uint32_t Release() override
-    {
-        auto count = --ref_count_;
-        if (count == 0)
-        {
-            delete this;
-        }
-        return count;
-    }
-
-    DasResult QueryInterface(const DasGuid& iid, void** pp) override
-    {
-        if (!pp)
-        {
-            return DAS_E_INVALID_POINTER;
-        }
-        if (iid == DasIidOf<IDasBase>())
-        {
-            *pp = static_cast<IDasBase*>(this);
-            AddRef();
-            return DAS_S_OK;
-        }
-        if (iid == DasIidOf<IDasTypeInfo>())
-        {
-            *pp = static_cast<IDasTypeInfo*>(this);
-            AddRef();
-            return DAS_S_OK;
-        }
-        if (iid == DasIidOf<Das::PluginInterface::IDasTaskComponent>())
-        {
-            *pp = static_cast<Das::PluginInterface::IDasTaskComponent*>(this);
-            AddRef();
-            return DAS_S_OK;
-        }
-        *pp = nullptr;
-        return DAS_E_NO_INTERFACE;
-    }
-
-    DasResult GetGuid(DasGuid* p_out_guid) override
-    {
-        if (!p_out_guid)
-        {
-            return DAS_E_INVALID_POINTER;
-        }
-        *p_out_guid = FactoryTaskComponentImplGuid;
-        return DAS_S_OK;
-    }
-
-    DasResult GetRuntimeClassName(IDasReadOnlyString** pp) override
-    {
-        if (!pp)
-        {
-            return DAS_E_INVALID_POINTER;
-        }
-        return CreateIDasReadOnlyStringFromUtf8("FakeTaskComponent", pp);
-    }
-
-    DasResult ApplySettingsChange(
-        Das::ExportInterface::IDasJson*,
-        Das::ExportInterface::IDasJson** pp_out_result_json) override
-    {
-        if (!pp_out_result_json)
-        {
-            return DAS_E_INVALID_POINTER;
-        }
-        auto result = Das::MakeDasPtr<Das::Core::Utils::IDasJsonImpl>(
-            Das::Utils::MakeYyjsonObject());
-        *pp_out_result_json = result.Get();
-        (*pp_out_result_json)->AddRef();
-        return DAS_S_OK;
-    }
-
-    DasResult Do(
-        Das::PluginInterface::IDasStopToken*,
-        Das::ExportInterface::IDasReadOnlyPortMap*,
-        Das::ExportInterface::IDasPortMap** pp_out_port_map) override
-    {
-        if (!pp_out_port_map)
-        {
-            return DAS_E_INVALID_POINTER;
-        }
-        DAS::DasPtr<Das::ExportInterface::IDasPortMap> output_map;
-        DasResult hr = CreateIDasPortMap(output_map.Put());
-        if (DAS::IsFailed(hr))
-        {
-            return hr;
-        }
-        *pp_out_port_map = output_map.Get();
-        (*pp_out_port_map)->AddRef();
-        return DAS_S_OK;
-    }
-
-private:
-    std::atomic<uint32_t> ref_count_{0};
-};
-
-class FakeTaskComponentFactory final
-    : public Das::PluginInterface::IDasTaskComponentFactory
-{
-public:
-    uint32_t AddRef() override { return ++ref_count_; }
-
-    uint32_t Release() override
-    {
-        auto count = --ref_count_;
-        if (count == 0)
-        {
-            delete this;
-        }
-        return count;
-    }
-
-    DasResult QueryInterface(const DasGuid& iid, void** pp) override
-    {
-        if (!pp)
-        {
-            return DAS_E_INVALID_POINTER;
-        }
-        if (iid == DasIidOf<IDasBase>())
-        {
-            *pp = static_cast<IDasBase*>(this);
-            AddRef();
-            return DAS_S_OK;
-        }
-        if (iid == DasIidOf<IDasTypeInfo>())
-        {
-            *pp = static_cast<IDasTypeInfo*>(this);
-            AddRef();
-            return DAS_S_OK;
-        }
-        if (iid == DasIidOf<Das::PluginInterface::IDasTaskComponentFactory>())
-        {
-            *pp = static_cast<Das::PluginInterface::IDasTaskComponentFactory*>(
-                this);
-            AddRef();
-            return DAS_S_OK;
-        }
-        *pp = nullptr;
-        return DAS_E_NO_INTERFACE;
-    }
-
-    DasResult GetGuid(DasGuid* p_out_guid) override
-    {
-        if (!p_out_guid)
-        {
-            return DAS_E_INVALID_POINTER;
-        }
-        *p_out_guid = FactoryTaskComponentFactoryGuid;
-        return DAS_S_OK;
-    }
-
-    DasResult GetRuntimeClassName(IDasReadOnlyString** pp) override
-    {
-        if (!pp)
-        {
-            return DAS_E_INVALID_POINTER;
-        }
-        return CreateIDasReadOnlyStringFromUtf8("FakeTaskComponentFactory", pp);
-    }
-
-    DasResult CreateComponent(
-        const DasGuid&                            component_guid,
-        Das::PluginInterface::IDasTaskComponent** pp_out_component) override
-    {
-        if (!pp_out_component)
-        {
-            return DAS_E_INVALID_POINTER;
-        }
-        *pp_out_component = nullptr;
-
-        static constexpr std::array kSupportedComponents{
-            DasGuid{
-                0x68F10001,
-                0x0000,
-                0x4000,
-                {0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01}},
-            DasGuid{
-                0x68F10002,
-                0x0000,
-                0x4000,
-                {0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02}},
-            DasGuid{
-                0x68F10003,
-                0x0000,
-                0x4000,
-                {0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03}},
-            DasGuid{
-                0x68F10004,
-                0x0000,
-                0x4000,
-                {0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04}},
-            DasGuid{
-                0x68F10005,
-                0x0000,
-                0x4000,
-                {0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05}},
-            DasGuid{
-                0x68F10006,
-                0x0000,
-                0x4000,
-                {0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x06}}};
-
-        const auto supported = std::any_of(
-            kSupportedComponents.begin(),
-            kSupportedComponents.end(),
-            [&component_guid](const DasGuid& supported_guid)
-            { return component_guid == supported_guid; });
-        if (!supported)
-        {
-            return DAS_E_NOT_FOUND;
-        }
-
-        auto* component = new FakeTaskComponent();
-        component->AddRef();
-        *pp_out_component = component;
-        return DAS_S_OK;
-    }
-
-    DasResult SetTaskComponentHost(
-        Das::PluginInterface::IDasTaskComponentHost* /*p_host*/) override
-    {
-        return DAS_S_OK;
-    }
-
-private:
-    std::atomic<uint32_t> ref_count_{0};
-};
-
-class FactoryTaskPluginPackage final
-    : public Das::PluginInterface::IDasPluginPackage
-{
-public:
-    explicit FactoryTaskPluginPackage(
-        std::shared_ptr<FactoryTaskSharedState> state)
-        : state_(std::move(state))
-    {
-    }
-
-    uint32_t AddRef() override { return ++ref_count_; }
-
-    uint32_t Release() override
-    {
-        auto count = --ref_count_;
-        if (count == 0)
-        {
-            delete this;
-        }
-        return count;
-    }
-
-    DasResult QueryInterface(const DasGuid& iid, void** pp_out) override
-    {
-        if (!pp_out)
-        {
-            return DAS_E_INVALID_POINTER;
-        }
-        if (iid == DasIidOf<IDasBase>())
-        {
-            *pp_out = static_cast<IDasBase*>(this);
-            AddRef();
-            return DAS_S_OK;
-        }
-        if (iid == DasIidOf<Das::PluginInterface::IDasPluginPackage>())
-        {
-            *pp_out =
-                static_cast<Das::PluginInterface::IDasPluginPackage*>(this);
-            AddRef();
-            return DAS_S_OK;
-        }
-        *pp_out = nullptr;
-        return DAS_E_NO_INTERFACE;
-    }
-
-    DasResult EnumFeature(
-        uint64_t                                index,
-        Das::PluginInterface::DasPluginFeature* p_out_feature) override
-    {
-        if (!p_out_feature)
-        {
-            return DAS_E_INVALID_POINTER;
-        }
-        if (index == 0)
-        {
-            *p_out_feature = Das::PluginInterface::DAS_PLUGIN_FEATURE_TASK;
-            return DAS_S_OK;
-        }
-        if (index == 1)
-        {
-            *p_out_feature =
-                Das::PluginInterface::DAS_PLUGIN_FEATURE_TASK_AUTHORING_FACTORY;
-            return DAS_S_OK;
-        }
-        if (index == 2)
-        {
-            *p_out_feature =
-                Das::PluginInterface::DAS_PLUGIN_FEATURE_TASK_AUTHORING_FACTORY;
-            return DAS_S_OK;
-        }
-        if (index == 3)
-        {
-            *p_out_feature =
-                Das::PluginInterface::DAS_PLUGIN_FEATURE_TASK_COMPONENT_FACTORY;
-            return DAS_S_OK;
-        }
-        return DAS_E_OUT_OF_RANGE;
-    }
-
-    DasResult CreateFeatureInterface(
-        uint64_t   index,
-        IDasBase** pp_out_interface) override
-    {
-        if (!pp_out_interface)
-        {
-            return DAS_E_INVALID_POINTER;
-        }
-        if (index == 0)
-        {
-            DasOutPtr<IDasBase> result(pp_out_interface);
-            auto*               task = new FactoryBackedTask(state_);
-            result.Set(task);
-            result.Keep();
-            return DAS_S_OK;
-        }
-        if (index == 1)
-        {
-            DasOutPtr<IDasBase> result(pp_out_interface);
-            auto*               factory = new FakeAuthoringSessionFactory(
-                state_,
-                DecoyAuthoringFactoryGuid,
-                false);
-            result.Set(factory);
-            result.Keep();
-            return DAS_S_OK;
-        }
-        if (index == 2)
-        {
-            DasOutPtr<IDasBase> result(pp_out_interface);
-            auto*               factory = new FakeAuthoringSessionFactory(
-                state_,
-                FactoryAuthoringFactoryGuid,
-                true);
-            result.Set(factory);
-            result.Keep();
-            return DAS_S_OK;
-        }
-        if (index == 3)
-        {
-            DasOutPtr<IDasBase> result(pp_out_interface);
-            auto*               factory = new FakeTaskComponentFactory();
-            result.Set(factory);
-            result.Keep();
-            return DAS_S_OK;
-        }
-        return DAS_E_OUT_OF_RANGE;
-    }
-
-private:
-    std::atomic<uint32_t>                   ref_count_{0};
-    std::shared_ptr<FactoryTaskSharedState> state_;
-};
-
-class FakeFactoryRuntime final
-    : public DAS::Core::ForeignInterfaceHost::IForeignLanguageRuntime
-{
-public:
-    explicit FakeFactoryRuntime(
-        Das::PluginInterface::IDasPluginPackage* package)
-        : package_(package)
-    {
-    }
-
-    uint32_t AddRef() override { return ++ref_count_; }
-
-    uint32_t Release() override
-    {
-        auto count = --ref_count_;
-        if (count == 0)
-        {
-            delete this;
-        }
-        return count;
-    }
-
-    DasResult QueryInterface(const DasGuid& iid, void** pp_out) override
-    {
-        if (!pp_out)
-        {
-            return DAS_E_INVALID_POINTER;
-        }
-        if (iid == DasIidOf<IDasBase>())
-        {
-            *pp_out = static_cast<IDasBase*>(this);
-            AddRef();
-            return DAS_S_OK;
-        }
-        *pp_out = nullptr;
-        return DAS_E_NO_INTERFACE;
-    }
-
-    auto LoadPlugin(const std::filesystem::path& path)
-        -> DAS::Utils::Expected<DasPtr<IDasBase>> override
-    {
-        if (!std::filesystem::exists(path))
-        {
-            return DAS::Utils::MakeUnexpected(DAS_E_FILE_NOT_FOUND);
-        }
-
-        DasPtr<IDasBase> package_base;
-        auto             result = package_->QueryInterface(
-            DasIidOf<IDasBase>(),
-            reinterpret_cast<void**>(package_base.Put()));
-        if (DAS::IsFailed(result))
-        {
-            return DAS::Utils::MakeUnexpected(result);
-        }
-
-        return package_base;
-    }
-
-private:
-    std::atomic<uint32_t>                           ref_count_{0};
-    DasPtr<Das::PluginInterface::IDasPluginPackage> package_;
-};
 
 void WriteFactoryPluginManifest(
     const std::filesystem::path& manifest_path,
@@ -2747,6 +1701,14 @@ protected:
         manifest_path_ = plugin_dir_ / "FactoryPlugin.json";
         WriteFactoryPluginManifest(manifest_path_);
 
+        // 先构造 shared_state_，再部署 dll 并注入裸指针：
+        // PluginManager::Initialize 扫描 plugin_dir_ 时会经生产 CppHost 路径
+        // 加载 FactoryPlugin.dll，DasCoCreatePlugin 创建的
+        // FactoryTaskPluginPackage 内部取用 dll 全局
+        // g_test_shared_state，必须在此之前被注入。
+        shared_state_ = std::make_shared<FactoryTaskSharedState>();
+        DeploySchedulerTestPlugin();
+
         settings_manager_ =
             std::make_unique<Das::Core::SettingsManager::SettingsManager>(
                 settings_dir_);
@@ -2765,8 +1727,6 @@ protected:
             Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
                 ipc_sp_));
 
-        shared_state_ = std::make_shared<FactoryTaskSharedState>();
-
         ASSERT_EQ(plugin_manager_->Initialize(1), DAS_S_OK);
 
         io_thread_ = std::thread(
@@ -2778,6 +1738,49 @@ protected:
                     work(io.get_executor());
                 io.run();
             });
+    }
+
+    // 部署真实 SchedulerTestPlugin：从构建目录加载 libSchedulerTestPlugin.dll，
+    // 注入 exe 持有的 FactoryTaskSharedState 裸指针，再以 FactoryPlugin.dll
+    // 之名 拷贝到 plugin_dir_，使 WriteFactoryPluginManifest 生成的
+    // FactoryPlugin.json (name=FactoryPlugin) 能找到该 dll。test_plugin_handle_
+    // 持有 LoadLibrary 句柄，必须在所有 dll 内对象释放后才可卸载（见 TearDown
+    // 顺序）。
+    void DeploySchedulerTestPlugin()
+    {
+        namespace fs = std::filesystem;
+        const fs::path build_plugin_dir{IpcTestConfig::GetPluginDir()};
+        const fs::path src_dll =
+            build_plugin_dir / "libSchedulerTestPlugin.dll";
+        ASSERT_TRUE(fs::exists(src_dll))
+            << "libSchedulerTestPlugin.dll not found at: " << src_dll.string();
+
+        // 先部署为 plugin_dir_/FactoryPlugin.dll（匹配 FactoryPlugin.json 的
+        // name=FactoryPlugin）。关键：必须加载与 PluginManager CppHost 同一路径
+        // 的 dll，Windows 按完整路径区分模块——同路径才共享 g_test_shared_state
+        // 全局，否则注入指针会写入一个独立模块实例，PluginManager 加载的模块
+        // 仍为 nullptr，导致 FactoryTaskPluginPackage 的 state_ 为空。
+        const fs::path dst_dll = plugin_dir_ / "FactoryPlugin.dll";
+        fs::copy_file(src_dll, dst_dll, fs::copy_options::overwrite_existing);
+
+        // 加载部署后的 dll（LOAD_WITH_ALTERED_SEARCH_PATH 让同目录依赖可被
+        // 找到），通过 GetProcAddress 取 DasTestPlugin_SetSharedState 注入
+        // shared_state_ 裸指针。后续 PluginManager 再加载同一 dll 路径会复用
+        // 同一模块，g_test_shared_state 全局在进程内共享。
+        test_plugin_handle_ = ::LoadLibraryExW(
+            dst_dll.wstring().c_str(),
+            nullptr,
+            LOAD_WITH_ALTERED_SEARCH_PATH);
+        ASSERT_NE(test_plugin_handle_, nullptr)
+            << "LoadLibraryExW failed: " << ::GetLastError();
+        using SetSharedStateFn = void (*)(FactoryTaskSharedState*);
+        auto set_state = reinterpret_cast<SetSharedStateFn>(::GetProcAddress(
+            test_plugin_handle_,
+            "DasTestPlugin_SetSharedState"));
+        ASSERT_NE(set_state, nullptr)
+            << "GetProcAddress(DasTestPlugin_SetSharedState) failed: "
+            << ::GetLastError();
+        set_state(shared_state_.get());
     }
 
     void TearDown() override
@@ -2793,6 +1796,10 @@ protected:
             io_thread_.join();
         }
 
+        // 释放顺序：先 scheduler_/plugin_manager_(释放 dll 内对象) ->
+        // 卸载 test_plugin_handle_(仅本 exe 的 LoadLibrary 句柄) ->
+        // 最后 shared_state_。PluginManager 持有的 dll 句柄在其 Shutdown
+        // 时释放。
         scheduler_.reset();
         if (plugin_manager_)
         {
@@ -2800,7 +1807,18 @@ protected:
         }
         plugin_manager_.reset();
         settings_manager_.reset();
-        std::filesystem::remove_all(test_dir_);
+        if (test_plugin_handle_ != nullptr)
+        {
+            ::FreeLibrary(test_plugin_handle_);
+            test_plugin_handle_ = nullptr;
+        }
+        shared_state_.reset();
+        // test_dir_ 内含 FactoryPlugin.dll，可能在 PluginManager/CppHost 的
+        // boost::dll 句柄延迟释放或 scheduler 异步路径下仍被映射，
+        // Windows 不允许删除被映射文件。用不抛异常的 remove_all 重载，
+        // 文件残留不影响测试断言（下一测试用新的 UniqueTestDir）。
+        std::error_code ec;
+        std::filesystem::remove_all(test_dir_, ec);
     }
 
     bool WaitForExecutions(
@@ -2831,6 +1849,7 @@ protected:
                                             plugin_manager_;
     std::unique_ptr<SchedulerService>       scheduler_;
     std::shared_ptr<FactoryTaskSharedState> shared_state_;
+    HMODULE                                 test_plugin_handle_ = nullptr;
     std::thread                             io_thread_;
 };
 
@@ -3499,6 +2518,14 @@ namespace
                 std::move(authoring);
         }
         (*entry.as_object())[std::string_view("acceptedProperties")] =
+            yyjson::value(Das::Utils::MakeYyjsonObject());
+        // RepositoryEntryDto 的 graph_document / compiled_artifact 是 required
+        // 字段，caster 反序列化时要求 key 存在；生产 CreateEntry 用默认（空）
+        // 值序列化，seed 同样补空对象，否则后续 ListEntries 反序列化抛
+        // "JSON object key not found: graphDocument"。
+        (*entry.as_object())[std::string_view("graphDocument")] =
+            yyjson::value(Das::Utils::MakeYyjsonObject());
+        (*entry.as_object())[std::string_view("compiledArtifact")] =
             yyjson::value(Das::Utils::MakeYyjsonObject());
         {
             yyjson::value availability(Das::Utils::MakeYyjsonObject());
