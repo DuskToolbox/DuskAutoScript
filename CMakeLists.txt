@@ -261,9 +261,6 @@ if(CMAKE_CONFIGURATION_TYPES)
     set(JAVATESTPLUGIN_CONFIG_OUTPUT_DIR "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/plugins")
 endif()
 
-if(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
-    add_compile_options(-Wno-unused-function -Wno-unused-variable)
-endif()
 add_subdirectory(das)
 
 #Configuration completed - output timestamp
