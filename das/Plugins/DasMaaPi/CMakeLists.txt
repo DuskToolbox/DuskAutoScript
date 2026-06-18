@@ -25,10 +25,20 @@ if(TARGET DasBundledMaaFrameworkDll)
     target_link_libraries(DasMaaPi PRIVATE "${_das_maapi_agent_client_implib}")
 endif()
 
-set_target_properties(DasMaaPi PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/plugins/DasMaaPi"
-    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/plugins/DasMaaPi"
-    ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib/$<CONFIG>/plugins/DasMaaPi")
+# DasMaaPi 需要独立子目录布局（与一堆 MaaFramework 第三方 dll 隔离在
+# plugins/DasMaaPi/ 下，由 CppHost 用 altered_search_path 从该目录加载依赖）。
+# 必须用 per-config 属性覆盖：父目录 das/Plugins/CMakeLists.txt 设了目录级
+# CMAKE_RUNTIME_OUTPUT_DIRECTORY_<CONFIG>=plugins，它会初始化 target 的
+# per-config 属性，而 per-config 属性优先级高于不带后缀的
+# RUNTIME_OUTPUT_DIRECTORY，因此只设不带后缀的属性会被压制、产物落回根目录。
+foreach(_das_maapi_cfg "DEBUG;Debug" "RELEASE;Release" "RELWITHDEBINFO;RelWithDebInfo" "MINSIZEREL;MinSizeRel")
+    list(GET _das_maapi_cfg 0 _das_maapi_suffix)
+    list(GET _das_maapi_cfg 1 _das_maapi_dir)
+    set_target_properties(DasMaaPi PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY_${_das_maapi_suffix} "${CMAKE_BINARY_DIR}/bin/${_das_maapi_dir}/plugins/DasMaaPi"
+        LIBRARY_OUTPUT_DIRECTORY_${_das_maapi_suffix} "${CMAKE_BINARY_DIR}/bin/${_das_maapi_dir}/plugins/DasMaaPi"
+        ARCHIVE_OUTPUT_DIRECTORY_${_das_maapi_suffix} "${CMAKE_BINARY_DIR}/lib/${_das_maapi_dir}/plugins/DasMaaPi")
+endforeach()
 
 configure_file(
     ${CMAKE_CURRENT_SOURCE_DIR}/DasMaaPi.json
