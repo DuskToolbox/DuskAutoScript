@@ -187,6 +187,28 @@ namespace
         return DAS::IsOk(hr) ? val : default_val;
     }
 
+    /// Read a raw string from a PortMap string port (no JSON parsing).
+    /// Use this for ports written via SetPortString (e.g. "status"), as
+    /// opposed to GetPortJson which assumes the port holds JSON text.
+    std::string GetPortString(
+        ExportInterface::IDasReadOnlyPortMap* map,
+        std::string_view                      port_id,
+        std::string_view                      default_val = {})
+    {
+        IDasReadOnlyString* p_str = nullptr;
+        DasReadOnlyString   key{std::string{port_id}.c_str()};
+        auto                hr = map->GetString(key.Get(), &p_str);
+        if (DAS::IsFailed(hr) || p_str == nullptr)
+        {
+            return std::string{default_val};
+        }
+        const char* utf8 = nullptr;
+        p_str->GetUtf8(&utf8);
+        std::string val(utf8 && *utf8 ? utf8 : std::string{default_val});
+        p_str->Release();
+        return val;
+    }
+
     /// Build a result PortMap from a status string, outputs JSON, and signals
     /// JSON array.
     DasResult BuildResultPortMap(
@@ -502,17 +524,12 @@ DasResult DasFlowControlTaskComponent::DoRepositoryInvoke(
         return DAS_S_OK;
     }
 
-    // Extract child status from output PortMap
-    auto        child_status_json = GetPortJson(child_output.Get(), "status");
-    std::string child_status = "completed";
-    if (child_status_json && child_status_json->is_string())
-    {
-        auto sv = child_status_json->as_string();
-        if (sv)
-        {
-            child_status = std::string{*sv};
-        }
-    }
+    // Extract child status from output PortMap. status 是 raw string port
+    // （component 用 SetPortString 写），用 GetPortString 直接读取，不能用
+    // GetPortJson（会把裸字符串当 JSON 解析而失败，导致 child 失败被误报成
+    // completed）。
+    std::string child_status =
+        GetPortString(child_output.Get(), "status", "completed");
 
     auto child_outputs_json = GetPortJson(child_output.Get(), "outputs");
     if (!child_outputs_json)

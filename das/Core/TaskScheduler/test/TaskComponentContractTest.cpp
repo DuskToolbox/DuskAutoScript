@@ -542,9 +542,9 @@ namespace
                 return hr;
             }
 
-            auto result_obj = result_parsed->as_object();
-            if (result_obj)
+            if (result_parsed->is_object())
             {
+                auto result_obj = result_parsed->as_object();
                 auto status_val = (*result_obj)[std::string_view("status")]
                                       .as_string()
                                       .value_or("");
@@ -556,9 +556,15 @@ namespace
                     auto serialized = outputs.write(yyjson::WriteFlag::NoFlag);
                     TestSetPortString(
                         output_map.Get(),
-                        "childOutputs",
+                        "outputs",
                         std::string_view(serialized));
                 }
+            }
+            else
+            {
+                // result_json 不是 object（例如 malformed 空数组）→ 模拟 child
+                // 自身报告失败，RepositoryInvoke 读到 status="failed" 后透传。
+                TestSetPortString(output_map.Get(), "status", "failed");
             }
 
             *pp_out_port_map = output_map.Get();
