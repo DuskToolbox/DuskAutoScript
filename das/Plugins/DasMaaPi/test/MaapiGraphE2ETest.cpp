@@ -28,9 +28,9 @@ namespace
 
     // ---- Constants ----
 
-    const std::string kMaapiRunTaskGuid =
-        "69F20008-0000-4000-8000-000000000001";
-    const std::string kNodeId = "30000000-0000-0000-0000-000000000001";
+    const std::string MAAPI_RUN_TASK_GUID =
+        "69f20008-0000-4000-8000-000000000001";
+    const std::string NODE_ID = "30000000-0000-0000-0000-000000000001";
 
     // ---- Fixture path helper ----
 
@@ -88,7 +88,7 @@ namespace
 
             auto guid_str = DasGuidToString(component_guid);
 
-            if (guid_str.GetUtf8() != kMaapiRunTaskGuid)
+            if (guid_str.GetUtf8() != MAAPI_RUN_TASK_GUID)
             {
                 *pp_out_component = nullptr;
                 return DAS_E_NOT_FOUND;
@@ -121,8 +121,8 @@ namespace
         plan.compiled_fingerprint = "compiled_fp_e2e";
 
         CompiledNodeSnapshotDto snap;
-        snap.node_id = kNodeId;
-        snap.component_guid = kMaapiRunTaskGuid;
+        snap.node_id = NODE_ID;
+        snap.component_guid = MAAPI_RUN_TASK_GUID;
 
         auto parsed = Utils::ParseYyjsonFromString(settings_json);
         if (parsed)
@@ -139,7 +139,7 @@ namespace
         };
 
         plan.node_snapshots.push_back(std::move(snap));
-        plan.execution_order.push_back(kNodeId);
+        plan.execution_order.push_back(NODE_ID);
         return plan;
     }
 
