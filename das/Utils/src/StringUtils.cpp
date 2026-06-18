@@ -73,4 +73,20 @@ std::size_t DasReadOnlyStringHash::operator()(
     return (*this)(p_impl);
 }
 
+bool DasReadOnlyStringEqual::operator()(
+    const DasPtr<IDasReadOnlyString>& lhs,
+    const DasPtr<IDasReadOnlyString>& rhs) const noexcept
+{
+    // 同指针（含两者皆 nullptr）为 true；仅一方为 nullptr 为 false。
+    if (lhs.Get() == rhs.Get())
+    {
+        return true;
+    }
+    if (!lhs || !rhs)
+    {
+        return false;
+    }
+    return lhs->Equals(rhs.Get());
+}
+
 DAS_UTILS_NS_END

@@ -55,6 +55,7 @@ public:
         size_t*          out_string_size) noexcept override;
     const int32_t* CBegin() override;
     const int32_t* CEnd() override;
+    DasBool        Equals(IDasReadOnlyString* other) noexcept override;
 
 private:
     /// @brief Fetch UTF-16 snapshot from remote (method_id=0). Idempotent.

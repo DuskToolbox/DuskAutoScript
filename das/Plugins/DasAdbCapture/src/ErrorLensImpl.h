@@ -20,7 +20,8 @@ class AdbCaptureErrorLens final
     using LocaleErrorCodeMap = std::unordered_map<
         DasPtr<IDasReadOnlyString>,
         ErrorCodeMap,
-        Utils::DasReadOnlyStringHash>;
+        Utils::DasReadOnlyStringHash,
+        Utils::DasReadOnlyStringEqual>;
     LocaleErrorCodeMap                          map_;
     DAS::Utils::RefCounter<AdbCaptureErrorLens> ref_counter_;
     std::vector<DasGuid>                        iids_;

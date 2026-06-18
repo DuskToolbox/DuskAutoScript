@@ -95,6 +95,18 @@ struct DasReadOnlyStringHash
 };
 
 /**
+ * @brief IDasReadOnlyString 内容相等谓词，配合 DasReadOnlyStringHash 用作
+ * unordered_map 的 KeyEqual。同指针（含两者皆 nullptr）为 true；仅一方为
+ * nullptr 为 false；否则调用 IDasReadOnlyString::Equals 比较内容。
+ */
+struct DasReadOnlyStringEqual
+{
+    bool operator()(
+        const DasPtr<IDasReadOnlyString>& lhs,
+        const DasPtr<IDasReadOnlyString>& rhs) const noexcept;
+};
+
+/**
  * @brief Extract std::string from IDasReadOnlyString*
  * Returns empty string on null pointer or failure.
  */

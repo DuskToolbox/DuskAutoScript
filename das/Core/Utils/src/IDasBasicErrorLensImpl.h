@@ -17,7 +17,8 @@ class DasBasicErrorLensImpl final
     using LocaleErrorCodeMap = std::unordered_map<
         DasPtr<IDasReadOnlyString>,
         ErrorCodeMap,
-        DasReadOnlyStringHash>;
+        DasReadOnlyStringHash,
+        DasReadOnlyStringEqual>;
 
     LocaleErrorCodeMap                      map_{};
     ForeignInterfaceHost::DasGuidVectorImpl suppored_guid_vector_{};

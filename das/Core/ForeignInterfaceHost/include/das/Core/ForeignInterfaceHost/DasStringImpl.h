@@ -238,6 +238,8 @@ public:
     DasResult GetUtf16(
         const char16_t** out_string,
         size_t*          out_string_size) noexcept override;
+    // * IDasReadOnlyString
+    DasBool Equals(IDasReadOnlyString* other) noexcept override;
     // * DasStringCppImpl
     DasResult GetImpl(ICUString** out_icu_string) noexcept;
     DasResult GetImpl(const ICUString** out_icu_string) const noexcept;

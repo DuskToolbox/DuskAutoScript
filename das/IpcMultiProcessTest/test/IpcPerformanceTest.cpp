@@ -284,6 +284,15 @@ namespace
         const int32_t* CBegin() override { return nullptr; }
         const int32_t* CEnd() override { return nullptr; }
 
+        DasBool DAS_STD_CALL Equals(IDasReadOnlyString* other) noexcept override
+        {
+            if (!target_)
+            {
+                return other == nullptr;
+            }
+            return target_->Equals(other);
+        }
+
         DasResult DAS_STD_CALL
         QueryInterface(const DasGuid& iid, void** pp_object) override
         {

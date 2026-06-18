@@ -192,6 +192,38 @@ DasResult DasReadOnlyStringProxy::GetUtf16(
     return DAS_S_OK;
 }
 
+DasBool DasReadOnlyStringProxy::Equals(IDasReadOnlyString* other) noexcept
+{
+    if (other == nullptr)
+    {
+        return false;
+    }
+    // proxy 不响应 DasStringCppImpl class guid（QI 会走远程查询失败），故不走
+    // QI 快速路径。直接用本地缓存的 utf16_buffer_ 比入参的 GetUtf16，不为
+    // 本次比较发起额外 RPC（utf16_buffer_ 之前 GetUtf16 已填充）。
+    if (EnsureUtf16Loaded() != DAS_S_OK)
+    {
+        return false;
+    }
+    const char16_t* other_utf16 = nullptr;
+    size_t          other_size = 0;
+    if (other->GetUtf16(&other_utf16, &other_size) != DAS_S_OK)
+    {
+        return false;
+    }
+    // utf16_buffer_ 含 null 终止（size = char_count + 1），比较时去掉。
+    const size_t my_size = utf16_buffer_.size() - 1;
+    if (my_size != other_size)
+    {
+        return false;
+    }
+    return std::memcmp(
+               utf16_buffer_.data(),
+               other_utf16,
+               my_size * sizeof(char16_t))
+           == 0;
+}
+
 const int32_t* DasReadOnlyStringProxy::CBegin()
 {
     DasResult result = EnsureUtf16Loaded();

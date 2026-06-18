@@ -134,6 +134,20 @@ public:
     }
     const int32_t* CBegin() override { return nullptr; }
     const int32_t* CEnd() override { return nullptr; }
+
+    DasBool Equals(IDasReadOnlyString* other) noexcept override
+    {
+        if (!other)
+        {
+            return false;
+        }
+        const char* other_utf8 = nullptr;
+        if (other->GetUtf8(&other_utf8) != DAS_S_OK || !other_utf8)
+        {
+            return false;
+        }
+        return std::string(u8string_) == other_utf8;
+    }
 };
 
 struct DasSourceLocationOnStack final : DAS::ExportInterface::IDasSourceLocation

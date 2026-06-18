@@ -45,6 +45,20 @@ DAS_INTERFACE IDasReadOnlyString : public IDasBase
     DAS_METHOD GetUtf16(
         const char16_t** out_string,
         size_t*          out_string_size) noexcept = 0;
+
+    /**
+     * @brief 内容相等比较（按 UTF-16 code unit）。
+     *
+     * 进程内实现走 QI 快速路径：把入参 QI 回具体实现类，直接比较双方的
+     * native 表示（ICU UnicodeString::operator==），避开 getTerminatedBuffer
+     * 的开销与编码转换。QI 不命中（如 IPC proxy、test mock）时退化为双方
+     * GetUtf16 比较（GetUtf16 对本地/proxy 都返回各自已有的 UTF-16 buffer，
+     * 同样零拷贝）。IPC proxy 用本地缓存的 UTF-16，不为本次比较发起额外 RPC。
+     *
+     * @param other 待比较的另一个字符串；为 nullptr 时返回 false。
+     * @return 内容相等为 true（非零），否则 false（0）。
+     */
+    DAS_BOOL_METHOD Equals(IDasReadOnlyString * other) noexcept = 0;
 #endif // SWIG
     // * C++
     virtual const int32_t* CBegin() = 0;
@@ -283,6 +297,11 @@ public:
     void BorrowUtf16(const char16_t** out_string, size_t* out_string_size) const
     {
         DAS_THROW_IF_FAILED(p_impl_->GetUtf16(out_string, out_string_size));
+    }
+
+    bool Equals(IDasReadOnlyString* other) const
+    {
+        return p_impl_->Equals(other);
     }
 #endif // SWIG
 };

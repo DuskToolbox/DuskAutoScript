@@ -57,6 +57,20 @@ namespace
         const int32_t* CBegin() override { return nullptr; }
         const int32_t* CEnd() override { return nullptr; }
 
+        DasBool DAS_STD_CALL Equals(IDasReadOnlyString* other) noexcept override
+        {
+            if (!other)
+            {
+                return false;
+            }
+            const char* other_utf8 = nullptr;
+            if (other->GetUtf8(&other_utf8) != DAS_S_OK || !other_utf8)
+            {
+                return false;
+            }
+            return str_ == other_utf8;
+        }
+
         // IDasBase
         DasResult DAS_STD_CALL QueryInterface(const DasGuid&, void**) override
         {

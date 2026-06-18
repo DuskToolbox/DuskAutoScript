@@ -209,6 +209,16 @@ DasResult DasStringCppImpl::QueryInterface(const DasGuid& iid, void** pp_object)
         return DAS_S_OK;
     }
 
+    // DasStringCppImpl class guid —— 供 Equals 走 QI 快速路径：直接拿到具体
+    // 实现类比较 native ICU UnicodeString，避开 GetUtf16 的 getTerminatedBuffer
+    // 开销与编码转换。仅同类实现命中，proxy/mock/null 不响应该 guid。
+    if (iid == DasIidOf<DasStringCppImpl>())
+    {
+        *pp_object = static_cast<DasStringCppImpl*>(this);
+        this->AddRef();
+        return DAS_S_OK;
+    }
+
     *pp_object = nullptr;
     return DAS_E_NO_INTERFACE;
 }
@@ -302,6 +312,43 @@ DasResult DasStringCppImpl::GetUtf16(
     *out_string = terminated;
     *out_string_size = static_cast<size_t>(impl_.length());
     return DAS_S_OK;
+}
+
+DasBool DasStringCppImpl::Equals(IDasReadOnlyString* other) noexcept
+{
+    if (other == nullptr)
+    {
+        return false;
+    }
+    // QI 快速路径：入参也是 DasStringCppImpl 时，直接比较 native ICU
+    // UnicodeString（UTF-16），避开 GetUtf16 的 getTerminatedBuffer 开销与
+    // 任何编码转换。
+    DasStringCppImpl* cpp_other = nullptr;
+    if (other->QueryInterface(
+            DasIidOf<DasStringCppImpl>(),
+            reinterpret_cast<void**>(&cpp_other))
+        == DAS_S_OK)
+    {
+        const auto equals = impl_ == cpp_other->impl_;
+        cpp_other->Release();
+        return equals;
+    }
+    // 退化路径：双方 GetUtf16 比较。GetUtf16 对本地/proxy 都返回各自已有的
+    // UTF-16 buffer（零拷贝、零转换），u_strCompare 逐 code unit 比较也不拷贝。
+    const char16_t* lhs_utf16 = nullptr;
+    const char16_t* rhs_utf16 = nullptr;
+    size_t          lhs_size = 0;
+    size_t          rhs_size = 0;
+    if (GetUtf16(&lhs_utf16, &lhs_size) != DAS_S_OK
+        || other->GetUtf16(&rhs_utf16, &rhs_size) != DAS_S_OK)
+    {
+        return false;
+    }
+    if (lhs_size != rhs_size)
+    {
+        return false;
+    }
+    return u_strCompare(lhs_utf16, lhs_size, rhs_utf16, rhs_size, false) == 0;
 }
 
 /**
@@ -551,6 +598,22 @@ namespace Details
 
         const UChar32* CBegin() override { return null_u32string_.data(); }
         const UChar32* CEnd() override { return null_u32string_.data(); }
+
+        // 空串仅与空串（长度 0）相等；other 为 nullptr 时不等。
+        DasBool Equals(IDasReadOnlyString* other) noexcept override
+        {
+            if (other == nullptr)
+            {
+                return false;
+            }
+            const char16_t* other_utf16 = nullptr;
+            size_t          other_size = 0;
+            if (other->GetUtf16(&other_utf16, &other_size) != DAS_S_OK)
+            {
+                return false;
+            }
+            return other_size == 0;
+        }
     };
 
     DAS_DEFINE_VARIABLE(NullStringImpl::null_u8string_){};

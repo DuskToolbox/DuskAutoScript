@@ -46,7 +46,7 @@ namespace
         const char* zh_cn_text;
     };
 
-    static constexpr ErrorEntry kErrorEntries[] = {
+    static constexpr ErrorEntry ERROR_ENTRIES[] = {
         {DAS_E_MAAPI_PI_MISSING,
          "PI file not found",
          "PI\xe6\x96\x87\xe4\xbb\xb6\xe7\xbc\xba\xe5\xa4\xb1"},
@@ -54,10 +54,10 @@ namespace
          "PI parse/catalog load failed",
          "PI\xe8\xa7\xa3\xe6\x9e\x90/\xe7\x9b\xae\xe5\xbd\x95\xe5\x8a\xa0\xe8\xbd\xbd\xe5\xa4\xb1\xe8\xb4\xa5"},
         {DAS_E_MAAPI_TASK_MISSING,
-         "task",
+         "Specified task not found in PI",
          "\xe6\x8c\x87\xe5\xae\x9Atask\xe5\x9c\xa8PI\xe4\xb8\xad\xe4\xb8\x8d\xe5\xad\x98\xe5\x9c\xa8"},
         {DAS_E_MAAPI_OPTION_PARSE_FAILED,
-         "Option parse failed",
+         "Option parse failed during compile",
          "\xe7\xbc\x96\xe8\xaf\x91\xe6\x97\xb6option\xe8\xa7\xa3\xe6\x9e\x90\xe5\xa4\xb1\xe8\xb4\xa5"},
         {DAS_E_MAAPI_EXECUTION_FAILED,
          "MaaFramework execution failed",
@@ -77,7 +77,7 @@ TEST(MaapiErrorLensTest, EnMessagesCorrect)
     auto lens = MakeRegisteredLens();
     ASSERT_TRUE(lens);
 
-    for (const auto& entry : kErrorEntries)
+    for (const auto& entry : ERROR_ENTRIES)
     {
         auto msg = GetUtf8Message(lens.Get(), "en", entry.code);
         EXPECT_EQ(msg, entry.en_keyword)
@@ -90,7 +90,7 @@ TEST(MaapiErrorLensTest, ZhCnMessagesCorrect)
     auto lens = MakeRegisteredLens();
     ASSERT_TRUE(lens);
 
-    for (const auto& entry : kErrorEntries)
+    for (const auto& entry : ERROR_ENTRIES)
     {
         auto msg = GetUtf8Message(lens.Get(), "zh-cn", entry.code);
         EXPECT_EQ(msg, entry.zh_cn_text)
