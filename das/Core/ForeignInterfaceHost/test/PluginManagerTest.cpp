@@ -1,6 +1,5 @@
 #include <IpcTestConfig.h>
 #include <das/Core/ForeignInterfaceHost/IForeignLanguageRuntime.h>
-#include <das/Core/ForeignInterfaceHost/PluginManager.h>
 #include <das/Core/ForeignInterfaceHost/PluginResourceIndex.h>
 #include <das/Core/ForeignInterfaceHost/RemotePluginHost.h>
 #include <das/Core/ForeignInterfaceHost/RuntimeProvider.h>
@@ -38,6 +37,13 @@ DAS_DISABLE_WARNING_END
 #include <thread>
 
 #include <boost/asio/io_context.hpp>
+
+// clang-format off
+// TestablePluginManager.h 必须在所有 STL/业务头之后 include：它内部
+// #define private protected 让 PluginManager 私有字段可被子类访问，
+// 若 STL 头未先 set include guard，MSVC xkeycheck.h 会拒绝 #define 关键字。
+#include "TestablePluginManager.h"
+// clang-format on
 
 using namespace DAS::Core::ForeignInterfaceHost;
 using namespace DAS::Core::IPC;
@@ -1062,7 +1068,7 @@ protected:
             std::make_unique<DAS::Core::SettingsManager::SettingsManager>(
                 settings_dir_);
         ipc_sp_ = DAS::Core::IPC::MainProcess::CreateIpcContextShared(false);
-        pm_ = std::make_unique<PluginManager>(
+        pm_ = std::make_unique<TestablePluginManager>(
             *settings_manager_,
             Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
                 ipc_sp_));
@@ -1078,7 +1084,7 @@ protected:
     std::unique_ptr<DAS::Core::SettingsManager::SettingsManager>
                                                               settings_manager_;
     std::shared_ptr<DAS::Core::IPC::MainProcess::IIpcContext> ipc_sp_;
-    std::unique_ptr<PluginManager>                            pm_;
+    std::unique_ptr<TestablePluginManager>                    pm_;
     std::filesystem::path                                     settings_dir_;
 };
 
@@ -1169,7 +1175,7 @@ protected:
             std::make_unique<DAS::Core::SettingsManager::SettingsManager>(
                 settings_dir_);
         ipc_sp_ = DAS::Core::IPC::MainProcess::CreateIpcContextShared(false);
-        pm_ = std::make_unique<PluginManager>(
+        pm_ = std::make_unique<TestablePluginManager>(
             *settings_manager_,
             Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
                 ipc_sp_));
@@ -1207,7 +1213,7 @@ protected:
     std::unique_ptr<DAS::Core::SettingsManager::SettingsManager>
                                                               settings_manager_;
     std::shared_ptr<DAS::Core::IPC::MainProcess::IIpcContext> ipc_sp_;
-    std::unique_ptr<PluginManager>                            pm_;
+    std::unique_ptr<TestablePluginManager>                    pm_;
     CapturingRuntime*               runtime_ = nullptr;
     DasPtr<IForeignLanguageRuntime> runtime_guard_;
 };
@@ -1303,7 +1309,7 @@ protected:
             std::make_unique<DAS::Core::SettingsManager::SettingsManager>(
                 settings_dir_);
         ipc_sp_ = DAS::Core::IPC::MainProcess::CreateIpcContextShared(false);
-        pm_ = std::make_unique<PluginManager>(
+        pm_ = std::make_unique<TestablePluginManager>(
             *settings_manager_,
             Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
                 ipc_sp_));
@@ -1337,7 +1343,7 @@ protected:
     std::unique_ptr<DAS::Core::SettingsManager::SettingsManager>
                                                               settings_manager_;
     std::shared_ptr<DAS::Core::IPC::MainProcess::IIpcContext> ipc_sp_;
-    std::unique_ptr<PluginManager>                            pm_;
+    std::unique_ptr<TestablePluginManager>                    pm_;
     DasPtr<IForeignLanguageRuntime>                           runtime_guard_;
     TaskComponentRuntime* runtime_ = nullptr;
     DasGuid               factory_guid_{};
@@ -1440,7 +1446,7 @@ protected:
                 settings_dir_);
         auto ipc_sp =
             DAS::Core::IPC::MainProcess::CreateIpcContextShared(false);
-        pm_ = std::make_unique<PluginManager>(
+        pm_ = std::make_unique<TestablePluginManager>(
             *settings_manager_,
             Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
                 ipc_sp));
@@ -1513,13 +1519,13 @@ protected:
 
     std::filesystem::path test_dir_;
     std::unique_ptr<DAS::Core::SettingsManager::SettingsManager>
-                                          settings_manager_;
-    std::unique_ptr<PluginManager>        pm_;
-    std::unique_ptr<RemoteObjectRegistry> registry_;
-    std::filesystem::path                 plugin_path_;
-    std::filesystem::path                 settings_dir_;
-    DasPtr<IForeignLanguageRuntime>       runtime_guard_;
-    bool                                  initialized_ = false;
+                                           settings_manager_;
+    std::unique_ptr<TestablePluginManager> pm_;
+    std::unique_ptr<RemoteObjectRegistry>  registry_;
+    std::filesystem::path                  plugin_path_;
+    std::filesystem::path                  settings_dir_;
+    DasPtr<IForeignLanguageRuntime>        runtime_guard_;
+    bool                                   initialized_ = false;
 };
 
 TEST_F(PluginManagerFeatureTest, GetFeaturesByTypeReturnsInputFactory)

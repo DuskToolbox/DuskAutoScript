@@ -3,7 +3,6 @@
 #include <das/Core/Debug/DebugRuntime.h>
 #include <das/Core/ForeignInterfaceHost/IDasCaptureManagerImpl.h>
 #include <das/Core/ForeignInterfaceHost/InputFactoryManager.h>
-#include <das/Core/ForeignInterfaceHost/PluginManager.h>
 #include <das/Core/ForeignInterfaceHost/PluginManagerServiceImpl.h>
 #include <das/Core/IPC/CurrentIpcContextScope.h>
 #include <das/Core/IPC/MainProcess/IpcContext.h>
@@ -42,6 +41,13 @@ DAS_DISABLE_WARNING_END
 #ifdef DAS_WINDOWS
 #include <stdlib.h>
 #endif
+
+// clang-format off
+// TestablePluginManager.h 必须在所有 STL/业务头之后 include：它内部
+// #define private protected 让 PluginManager 私有字段可被子类访问，
+// 若 STL 头未先 set include guard，MSVC xkeycheck.h 会拒绝 #define 关键字。
+#include "TestablePluginManager.h"
+// clang-format on
 
 DAS_DEFINE_CLASS_IN_NAMESPACE(
     Das::Core::Debug::Test::Detail,
@@ -550,7 +556,7 @@ namespace Das::Core::Debug::Test
                 std::filesystem::remove_all(settings_dir_);
             }
 
-            ForeignInterfaceHost::PluginManager& PluginManager()
+            ForeignInterfaceHost::TestablePluginManager& PluginManager()
             {
                 return plugin_manager_;
             }
@@ -559,7 +565,7 @@ namespace Das::Core::Debug::Test
             std::filesystem::path                       settings_dir_;
             DAS::Core::SettingsManager::SettingsManager settings_manager_;
             std::shared_ptr<DAS::Core::IPC::MainProcess::IIpcContext> ipc_sp_;
-            ForeignInterfaceHost::PluginManager plugin_manager_;
+            ForeignInterfaceHost::TestablePluginManager plugin_manager_;
         };
 
         class DebugIntegrationFixture : public ::testing::Test

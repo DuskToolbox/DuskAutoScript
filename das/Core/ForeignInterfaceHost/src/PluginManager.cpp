@@ -204,13 +204,6 @@ DasResult PluginManager::Shutdown()
     return DAS_S_OK;
 }
 
-void PluginManager::SetRemotePluginHostFactoryForTest(
-    std::function<std::unique_ptr<IRemotePluginHost>()> factory)
-{
-    std::lock_guard<std::mutex> lock(mutex_);
-    remote_plugin_host_factory_ = std::move(factory);
-}
-
 void PluginManager::SetRegistry(Core::IPC::RemoteObjectRegistry& registry)
 {
     registry_ = &registry;
@@ -1035,30 +1028,6 @@ TaskComponentFactoryManager& PluginManager::GetTaskComponentFactoryManager()
 ErrorLensManager& PluginManager::GetErrorLensManager()
 {
     return error_lens_mgr_;
-}
-
-void PluginManager::RegisterTestFeature(
-    Das::PluginInterface::DasPluginFeature type,
-    const DasGuid&                         plugin_guid,
-    IDasBase*                              interface_ptr)
-{
-    std::lock_guard<std::mutex> lock(mutex_);
-
-    // Allocate a stable FeatureInfo that persists until Shutdown
-    static std::vector<std::unique_ptr<FeatureInfo>> test_features;
-    auto fi = std::make_unique<FeatureInfo>();
-    fi->feature_index = 0;
-    fi->feature_type = type;
-    fi->iid = GetIidForFeature(type);
-    fi->interface_ptr = interface_ptr;
-    fi->plugin_guid = plugin_guid;
-    fi->plugin_name = "test_plugin";
-    fi->session_id = 0;
-
-    auto* raw = fi.get();
-    test_features.push_back(std::move(fi));
-
-    feature_type_index_[type].push_back(raw);
 }
 
 DasResult PluginManager::UnloadPluginIpc(

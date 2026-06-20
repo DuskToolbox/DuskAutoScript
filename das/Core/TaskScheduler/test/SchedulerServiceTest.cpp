@@ -3,7 +3,6 @@
 #include <IpcTestConfig.h>
 #include <Windows.h>
 #include <das/Core/ForeignInterfaceHost/IForeignLanguageRuntime.h>
-#include <das/Core/ForeignInterfaceHost/PluginManager.h>
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
 #include <das/Core/SettingsManager/SettingsManager.h>
 #include <das/Core/SettingsManager/SettingsServiceImpl.h>
@@ -35,6 +34,13 @@
 #include <string>
 #include <thread>
 #include <vector>
+
+// clang-format off
+// TestablePluginManager.h 必须在所有 STL/业务头之后 include：它内部
+// #define private protected 让 PluginManager 私有字段可被子类访问，
+// 若 STL 头未先 set include guard，MSVC xkeycheck.h 会拒绝 #define 关键字。
+#include "TestablePluginManager.h"
+// clang-format on
 
 using namespace Das::Core::TaskScheduler;
 using Das::DasOutPtr;
@@ -116,11 +122,11 @@ protected:
                 settings_dir_);
         auto ipc_sp =
             DAS::Core::IPC::MainProcess::CreateIpcContextShared(false);
-        plugin_manager_ =
-            std::make_unique<Das::Core::ForeignInterfaceHost::PluginManager>(
-                *settings_manager_,
-                Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
-                    ipc_sp));
+        plugin_manager_ = std::make_unique<
+            Das::Core::ForeignInterfaceHost::TestablePluginManager>(
+            *settings_manager_,
+            Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
+                ipc_sp));
         scheduler_ = std::make_unique<SchedulerService>(
             *plugin_manager_,
             Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
@@ -140,7 +146,7 @@ protected:
     std::filesystem::path plugin_dir_;
     std::unique_ptr<Das::Core::SettingsManager::SettingsManager>
         settings_manager_;
-    std::unique_ptr<Das::Core::ForeignInterfaceHost::PluginManager>
+    std::unique_ptr<Das::Core::ForeignInterfaceHost::TestablePluginManager>
                                       plugin_manager_;
     std::unique_ptr<SchedulerService> scheduler_;
 };
@@ -1103,11 +1109,11 @@ protected:
                 settings_dir_);
         auto ipc_sp =
             DAS::Core::IPC::MainProcess::CreateIpcContextShared(false);
-        plugin_manager_ =
-            std::make_unique<Das::Core::ForeignInterfaceHost::PluginManager>(
-                *settings_manager_,
-                Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
-                    ipc_sp));
+        plugin_manager_ = std::make_unique<
+            Das::Core::ForeignInterfaceHost::TestablePluginManager>(
+            *settings_manager_,
+            Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
+                ipc_sp));
         scheduler_ = std::make_unique<SchedulerService>(
             *plugin_manager_,
             Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
@@ -1135,7 +1141,7 @@ protected:
     std::filesystem::path plugin_dir_;
     std::unique_ptr<Das::Core::SettingsManager::SettingsManager>
         settings_manager_;
-    std::unique_ptr<Das::Core::ForeignInterfaceHost::PluginManager>
+    std::unique_ptr<Das::Core::ForeignInterfaceHost::TestablePluginManager>
                                       plugin_manager_;
     std::unique_ptr<SchedulerService> scheduler_;
     SchedulerServiceImpl*             impl_ = nullptr;
@@ -1577,10 +1583,10 @@ namespace
 {
 
     FakeTask* SetupSchedulerWithFakeTask(
-        SchedulerService&                               scheduler,
-        Das::Core::SettingsManager::SettingsManager&    sm,
-        const std::filesystem::path&                    plugin_dir,
-        Das::Core::ForeignInterfaceHost::PluginManager& pm)
+        SchedulerService&                                       scheduler,
+        Das::Core::SettingsManager::SettingsManager&            sm,
+        const std::filesystem::path&                            plugin_dir,
+        Das::Core::ForeignInterfaceHost::TestablePluginManager& pm)
     {
         // Create a fake task and inject it into PluginManager's features
         auto* fake_task = new FakeTask();
@@ -1637,11 +1643,11 @@ protected:
             std::make_unique<Das::Core::SettingsManager::SettingsManager>(
                 settings_dir_);
         ipc_sp_ = DAS::Core::IPC::MainProcess::CreateIpcContextShared(false);
-        plugin_manager_ =
-            std::make_unique<Das::Core::ForeignInterfaceHost::PluginManager>(
-                *settings_manager_,
-                Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
-                    ipc_sp_));
+        plugin_manager_ = std::make_unique<
+            Das::Core::ForeignInterfaceHost::TestablePluginManager>(
+            *settings_manager_,
+            Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
+                ipc_sp_));
         registry_ = std::make_unique<DAS::Core::IPC::RemoteObjectRegistry>();
         plugin_manager_->SetRegistry(*registry_);
         scheduler_ = std::make_unique<SchedulerService>(
@@ -1681,7 +1687,7 @@ protected:
                                                               settings_manager_;
     std::shared_ptr<DAS::Core::IPC::MainProcess::IIpcContext> ipc_sp_;
     std::unique_ptr<DAS::Core::IPC::RemoteObjectRegistry>     registry_;
-    std::unique_ptr<Das::Core::ForeignInterfaceHost::PluginManager>
+    std::unique_ptr<Das::Core::ForeignInterfaceHost::TestablePluginManager>
                                       plugin_manager_;
     std::unique_ptr<SchedulerService> scheduler_;
     std::thread                       io_thread_;
@@ -1715,11 +1721,11 @@ protected:
         settings_manager_->CreateProfile("0");
 
         ipc_sp_ = DAS::Core::IPC::MainProcess::CreateIpcContextShared(false);
-        plugin_manager_ =
-            std::make_unique<Das::Core::ForeignInterfaceHost::PluginManager>(
-                *settings_manager_,
-                Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
-                    ipc_sp_));
+        plugin_manager_ = std::make_unique<
+            Das::Core::ForeignInterfaceHost::TestablePluginManager>(
+            *settings_manager_,
+            Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
+                ipc_sp_));
         registry_ = std::make_unique<DAS::Core::IPC::RemoteObjectRegistry>();
         plugin_manager_->SetRegistry(*registry_);
         scheduler_ = std::make_unique<SchedulerService>(
@@ -1845,7 +1851,7 @@ protected:
                                                               settings_manager_;
     std::shared_ptr<DAS::Core::IPC::MainProcess::IIpcContext> ipc_sp_;
     std::unique_ptr<DAS::Core::IPC::RemoteObjectRegistry>     registry_;
-    std::unique_ptr<Das::Core::ForeignInterfaceHost::PluginManager>
+    std::unique_ptr<Das::Core::ForeignInterfaceHost::TestablePluginManager>
                                             plugin_manager_;
     std::unique_ptr<SchedulerService>       scheduler_;
     std::shared_ptr<FactoryTaskSharedState> shared_state_;
@@ -6048,11 +6054,11 @@ protected:
             std::make_unique<Das::Core::SettingsManager::SettingsManager>(
                 settings_dir_);
         ipc_sp_ = DAS::Core::IPC::MainProcess::CreateIpcContextShared(false);
-        plugin_manager_ =
-            std::make_unique<Das::Core::ForeignInterfaceHost::PluginManager>(
-                *settings_manager_,
-                Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
-                    ipc_sp_));
+        plugin_manager_ = std::make_unique<
+            Das::Core::ForeignInterfaceHost::TestablePluginManager>(
+            *settings_manager_,
+            Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
+                ipc_sp_));
         scheduler_ = std::make_unique<SchedulerService>(
             *plugin_manager_,
             Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
@@ -6075,7 +6081,7 @@ protected:
     std::unique_ptr<Das::Core::SettingsManager::SettingsManager>
                                                               settings_manager_;
     std::shared_ptr<DAS::Core::IPC::MainProcess::IIpcContext> ipc_sp_;
-    std::unique_ptr<Das::Core::ForeignInterfaceHost::PluginManager>
+    std::unique_ptr<Das::Core::ForeignInterfaceHost::TestablePluginManager>
                                       plugin_manager_;
     std::unique_ptr<SchedulerService> scheduler_;
 };
@@ -6424,11 +6430,11 @@ protected:
             std::make_unique<Das::Core::SettingsManager::SettingsManager>(
                 settings_dir_);
         ipc_sp_ = DAS::Core::IPC::MainProcess::CreateIpcContextShared(false);
-        plugin_manager_ =
-            std::make_unique<Das::Core::ForeignInterfaceHost::PluginManager>(
-                *settings_manager_,
-                Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
-                    ipc_sp_));
+        plugin_manager_ = std::make_unique<
+            Das::Core::ForeignInterfaceHost::TestablePluginManager>(
+            *settings_manager_,
+            Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
+                ipc_sp_));
         scheduler_ = std::make_unique<SchedulerService>(
             *plugin_manager_,
             Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
@@ -6451,7 +6457,7 @@ protected:
     std::unique_ptr<Das::Core::SettingsManager::SettingsManager>
                                                               settings_manager_;
     std::shared_ptr<DAS::Core::IPC::MainProcess::IIpcContext> ipc_sp_;
-    std::unique_ptr<Das::Core::ForeignInterfaceHost::PluginManager>
+    std::unique_ptr<Das::Core::ForeignInterfaceHost::TestablePluginManager>
                                       plugin_manager_;
     std::unique_ptr<SchedulerService> scheduler_;
 };

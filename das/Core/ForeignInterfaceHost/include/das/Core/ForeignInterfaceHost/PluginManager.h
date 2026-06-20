@@ -27,12 +27,6 @@
 #include <unordered_set>
 #include <vector>
 
-// Forward declarations for test friend access
-class PluginManagerGuidTest_OnHostProcessExit_DirectCall_CleansUpIndex_Test;
-class PluginManagerGuidTest_OnHeartbeatTimeout_DirectCall_CleansUpIndex_Test;
-class PluginManagerGuidTest_HeartbeatTimeout_RealThread_CleansUpIndex_Test;
-class PluginManagerGuidTest_Shutdown_DoesNotHoldMutexDuringStop_Test;
-
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 // Disable C4251 warning for DLL export with STL types
 #ifdef _MSC_VER
@@ -135,12 +129,6 @@ public:
      * 幂等：二次调用空转安全（~PluginManager 会再次调用以 drain 在途回调）。
      */
     DasResult Shutdown();
-
-    /**
-     * @brief Inject a remote host factory for focused runtime-provider tests.
-     */
-    void SetRemotePluginHostFactoryForTest(
-        std::function<std::unique_ptr<IRemotePluginHost>()> factory);
 
     /**
      * @brief 设置远程对象注册表引用
@@ -286,16 +274,6 @@ public:
 
     ErrorLensManager& GetErrorLensManager();
 
-    /**
-     * @brief Inject a feature directly into the type index for testing.
-     * Only for use in unit tests that need to simulate loaded features
-     * without a real plugin DLL.
-     */
-    void RegisterTestFeature(
-        Das::PluginInterface::DasPluginFeature type,
-        const DasGuid&                         plugin_guid,
-        IDasBase*                              interface_ptr);
-
 private:
     PluginManager(const PluginManager&) = delete;
     PluginManager& operator=(const PluginManager&) = delete;
@@ -345,6 +323,7 @@ private:
      */
     void CleanupPluginByGuid(DasGuid plugin_guid);
 
+protected:
     /**
      * @brief Host 进程退出回调
      * @param plugin_guid 关联的插件 GUID
@@ -353,6 +332,9 @@ private:
      *       io_context 上），内部获取 mutex_ 保护。
      *       锁序：callback_mutex_（HostLauncher exit-watcher slot）->
      *       mutex_（INV-03）。与 OnHeartbeatTimeout 路径锁序对称。
+     *
+     * 这两个回调方法以 protected 暴露，允许测试子类直接触发以验证索引
+     * 清理逻辑；生产子类（如果将来有）也可利用这两个 hook。
      */
     void OnHostProcessExit(DasGuid plugin_guid, int exit_code);
 
@@ -367,14 +349,10 @@ private:
      */
     void OnHeartbeatTimeout(DasGuid plugin_guid);
 
-    /**
-     * @brief 按 language/load_mode 查找已注册的第三方 runtime provider。
-     * @return 匹配的 provider（共享所有权），未匹配返回 nullptr。
-     */
-    std::shared_ptr<IRuntimeProvider> FindRegisteredRuntimeProvider(
-        ForeignInterfaceLanguage language,
-        LoadMode                 load_mode) const;
-
+    // ----- 子类扩展点：所有内部状态字段 -----
+    // 全部字段以 protected 暴露，允许子类（生产或测试）按需读写状态、
+    // 加锁调用回调方法、注入 factory 等。当前唯一子类是 TestablePluginManager
+    // (测试专用)，生产子类若将来加入可直接复用这些扩展点。
     Das::Core::SettingsManager::SettingsManager& settings_manager_;
     mutable std::mutex                           mutex_;
     uint16_t                                     session_id_ = 0;
@@ -400,23 +378,14 @@ private:
     // CreateRuntimeProvider。
     std::vector<RegisteredRuntimeProvider> registered_providers_;
 
-    // Allow specific unit tests to access private members for index cleanup
-    // verification. Forward declarations are at top of file (global namespace).
-    // 测试名带 DirectCall 后缀反映其"同线程直调"语义（WR-04，plan 03 task 2a
-    // 重命名 OnHeartbeatTimeout_CleansUpIndex ->
-    // OnHeartbeatTimeout_DirectCall_CleansUpIndex 及 OnHostProcessExit
-    // 对称重命名）。
-    friend class ::
-        PluginManagerGuidTest_OnHostProcessExit_DirectCall_CleansUpIndex_Test;
-    friend class ::
-        PluginManagerGuidTest_OnHeartbeatTimeout_DirectCall_CleansUpIndex_Test;
-    // plan 03 task 2b：新增真实跨线程测试（HeartbeatTimeout_RealThread +
-    // Shutdown_DoesNotHoldMutexDuringStop），需访问 loaded_plugins_ /
-    // path_to_guid_ 私有成员注入测试状态。
-    friend class ::
-        PluginManagerGuidTest_HeartbeatTimeout_RealThread_CleansUpIndex_Test;
-    friend class ::
-        PluginManagerGuidTest_Shutdown_DoesNotHoldMutexDuringStop_Test;
+private:
+    /**
+     * @brief 按 language/load_mode 查找已注册的第三方 runtime provider。
+     * @return 匹配的 provider（共享所有权），未匹配返回 nullptr。
+     */
+    std::shared_ptr<IRuntimeProvider> FindRegisteredRuntimeProvider(
+        ForeignInterfaceLanguage language,
+        LoadMode                 load_mode) const;
 };
 
 #ifdef _MSC_VER

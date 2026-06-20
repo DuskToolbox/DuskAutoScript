@@ -345,6 +345,14 @@ if(${DAS_BUILD_TEST})
     das_add_core_test(OrtWrapper)
     das_add_core_test(GraphRuntime)
 
+# ForeignInterfaceHost/test 暴露 TestablePluginManager.h 测试专用头，
+# 跨模块测试（TaskSchedulerTest / DebugTest 调用 RegisterTestFeature）
+# 通过 #include "TestablePluginManager.h" 引用。这里只在确实需要访问
+# 测试专用头的目标上加 include path，不污染 das_add_core_test 通用函数。
+    target_include_directories(ForeignInterfaceHostTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/ForeignInterfaceHost/test)
+    target_include_directories(TaskSchedulerTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/ForeignInterfaceHost/test)
+    target_include_directories(DebugTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/ForeignInterfaceHost/test)
+
 endif()
 
 # Python 绑定文件拷贝：DuskAutoScript.py 和 _DasCorePythonExport.pyd 必须与 DasCore.dll 在同一目录
