@@ -15,14 +15,17 @@ public:
     explicit NativeIpcRuntime(
         std::filesystem::path              host_exe_path,
         std::unique_ptr<IRemotePluginHost> remote_plugin_host,
-        std::chrono::milliseconds timeout = std::chrono::seconds{30});
+        RuntimeLifecycleCallbacks          callbacks,
+        std::chrono::milliseconds          timeout = std::chrono::seconds{30});
 
-    auto LoadPlugin(const RuntimeLoadRequest& request)
-        -> DAS::Utils::Expected<RuntimeLoadResult> override;
+    DasResult LoadPlugin(
+        const RuntimeLoadRequest& request,
+        RuntimeLoadResult*        out_result) override;
 
 private:
     std::filesystem::path              host_exe_path_;
     std::unique_ptr<IRemotePluginHost> remote_plugin_host_;
+    RuntimeLifecycleCallbacks          callbacks_;
     std::chrono::milliseconds          timeout_;
 };
 

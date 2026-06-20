@@ -451,7 +451,7 @@ namespace
             auto* object = new FakeBaseObject();
             object->AddRef();
             RuntimeLoadResult result{};
-            result.object = DAS::DasPtr<IDasBase>::Attach(object);
+            result.object = static_cast<IDasBase*>(object);
             result.owner_session_id = owner_session_id;
             return result;
         }
@@ -535,7 +535,7 @@ TEST(IpcRemotePluginHostLifecycle, LoadStartsHostAndReturnsOwnerSession)
     auto result = host.LoadPlugin(request);
 
     ASSERT_TRUE(result);
-    EXPECT_NE(result->object.Get(), nullptr);
+    EXPECT_NE(result->object, nullptr);
     EXPECT_EQ(result->owner_session_id, launcher->session_to_return);
     EXPECT_EQ(context->create_launcher_count, 1);
     EXPECT_EQ(launcher->start_with_desc_count, 1);
@@ -548,6 +548,10 @@ TEST(IpcRemotePluginHostLifecycle, LoadStartsHostAndReturnsOwnerSession)
         std::filesystem::path{"plugins/TestPlugin.json"}.string());
     EXPECT_EQ(context->observed_load_timeout, std::chrono::milliseconds{4321});
     EXPECT_EQ(launcher->stop_count, 0);
+    if (result->object != nullptr)
+    {
+        result->object->Release();
+    }
 }
 
 TEST(IpcRemotePluginHostLifecycle, LoadFailureAfterStartStopsLauncher)
@@ -576,17 +580,23 @@ TEST(NativeIpcRuntime, DelegatesDasHostLaunchToRemotePluginHost)
     NativeIpcRuntime runtime{
         std::filesystem::path{"DasHost.exe"},
         std::move(remote),
+        RuntimeLifecycleCallbacks{},
         std::chrono::milliseconds{2468}};
 
     RuntimeLoadRequest request{};
-    request.manifest_path = std::filesystem::path{"plugins/Native.json"};
+    request.manifest_path = "plugins/Native.json";
     request.plugin_guid = MakeRemotePluginHostGuid(0x75050004);
 
-    auto result = runtime.LoadPlugin(request);
+    RuntimeLoadResult result{};
+    const auto        hr = runtime.LoadPlugin(request, &result);
 
-    ASSERT_TRUE(result);
-    EXPECT_NE(result->object.Get(), nullptr);
-    EXPECT_EQ(result->owner_session_id, raw_remote->owner_session_id);
+    ASSERT_TRUE(DAS::IsOk(hr));
+    EXPECT_NE(result.object, nullptr);
+    if (result.object != nullptr)
+    {
+        result.object->Release();
+    }
+    EXPECT_EQ(result.owner_session_id, raw_remote->owner_session_id);
     EXPECT_EQ(raw_remote->load_count, 1);
     EXPECT_EQ(
         raw_remote->observed_manifest_path,
@@ -604,37 +614,51 @@ TEST(NativeIpcRuntime, FactoryCreatesNativeProvider)
     auto remote = std::make_unique<CapturingRemotePluginHost>();
     auto provider = CreateNativeIpcRuntimeProvider(
         std::filesystem::path{"DasHost.exe"},
-        std::move(remote));
+        std::move(remote),
+        RuntimeLifecycleCallbacks{});
 
     ASSERT_TRUE(provider);
     RuntimeLoadRequest request{};
-    request.manifest_path = std::filesystem::path{"plugins/Native.json"};
+    request.manifest_path = "plugins/Native.json";
     request.plugin_guid = MakeRemotePluginHostGuid(0x75050005);
 
-    auto result = provider.value()->LoadPlugin(request);
+    RuntimeLoadResult result{};
+    const auto        hr = provider.value()->LoadPlugin(request, &result);
 
-    ASSERT_TRUE(result);
-    EXPECT_EQ(result->owner_session_id, 88);
+    ASSERT_TRUE(DAS::IsOk(hr));
+    if (result.object != nullptr)
+    {
+        result.object->Release();
+    }
+    EXPECT_EQ(result.owner_session_id, 88);
 }
 
 TEST(NativeIpcRuntime, LoadForwardsIpcLifecycleCallbacks)
 {
-    auto             remote = std::make_unique<CapturingRemotePluginHost>();
-    auto*            raw_remote = remote.get();
+    auto  remote = std::make_unique<CapturingRemotePluginHost>();
+    auto* raw_remote = remote.get();
+
+    RuntimeLifecycleCallbacks callbacks{};
+    callbacks.on_process_exit = [](uint16_t, int) {};
+    callbacks.on_heartbeat_timeout = [](DasGuid) {};
     NativeIpcRuntime runtime{
         std::filesystem::path{"DasHost.exe"},
         std::move(remote),
+        std::move(callbacks),
         std::chrono::milliseconds{2468}};
 
     RuntimeLoadRequest request{};
-    request.manifest_path = std::filesystem::path{"plugins/Native.json"};
+    request.manifest_path = "plugins/Native.json";
     request.plugin_guid = MakeRemotePluginHostGuid(0x75050006);
-    request.on_process_exit = [](uint16_t, int) {};
-    request.on_heartbeat_timeout = [](DasGuid) {};
 
-    auto result = runtime.LoadPlugin(request);
+    RuntimeLoadResult result{};
+    const auto        hr = runtime.LoadPlugin(request, &result);
 
-    ASSERT_TRUE(result);
+    ASSERT_TRUE(DAS::IsOk(hr));
+    if (result.object != nullptr)
+    {
+        result.object->Release();
+    }
     EXPECT_EQ(raw_remote->load_count, 1);
     EXPECT_TRUE(raw_remote->has_on_process_exit);
     EXPECT_TRUE(raw_remote->has_on_heartbeat_timeout);

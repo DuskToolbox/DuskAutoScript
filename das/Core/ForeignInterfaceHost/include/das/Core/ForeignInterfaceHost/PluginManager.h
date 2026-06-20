@@ -55,6 +55,20 @@ struct FeatureInfo
 };
 
 /**
+ * @brief 外部注册的 runtime provider 条目（进程内注入扩展点）。
+ *
+ * LoadPlugin 选 provider 时按 language/load_mode 匹配注册表，命中优先于
+ * 内置 CreateRuntimeProvider。供测试注入 fake runtime（包成 IRuntimeProvider）
+ * 或未来第三方扩展使用。
+ */
+struct RegisteredRuntimeProvider
+{
+    ForeignInterfaceLanguage          language{};
+    LoadMode                          load_mode{LoadMode::InProcess};
+    std::shared_ptr<IRuntimeProvider> provider;
+};
+
+/**
  * @brief 已加载插件的信息
  */
 struct LoadedPlugin
@@ -138,6 +152,18 @@ public:
      * @param path DasHost 可执行文件路径
      */
     void SetHostExePath(const std::string& path);
+
+    /**
+     * @brief 注册外部 runtime provider（进程内注入扩展点）。
+     *
+     * LoadPlugin 选 provider 时先查注册表（按 language/load_mode 匹配），
+     * 命中优先使用注册的 provider，否则走内置 CreateRuntimeProvider。
+     * 供测试注入 fake runtime（包成 IRuntimeProvider）或未来第三方扩展。
+     */
+    void RegisterRuntimeProvider(
+        ForeignInterfaceLanguage          language,
+        LoadMode                          load_mode,
+        std::shared_ptr<IRuntimeProvider> provider);
 
     /**
      * @brief 加载插件
@@ -341,6 +367,14 @@ private:
      */
     void OnHeartbeatTimeout(DasGuid plugin_guid);
 
+    /**
+     * @brief 按 language/load_mode 查找已注册的第三方 runtime provider。
+     * @return 匹配的 provider（共享所有权），未匹配返回 nullptr。
+     */
+    std::shared_ptr<IRuntimeProvider> FindRegisteredRuntimeProvider(
+        ForeignInterfaceLanguage language,
+        LoadMode                 load_mode) const;
+
     Das::Core::SettingsManager::SettingsManager& settings_manager_;
     mutable std::mutex                           mutex_;
     uint16_t                                     session_id_ = 0;
@@ -360,6 +394,11 @@ private:
     // IPC 相关成员
     Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext> ipc_context_;
     std::string                                                 host_exe_path_;
+
+    // 外部注册的 runtime provider（进程内注入扩展点）。LoadPlugin 选 provider
+    // 时先查此表（language/load_mode 匹配），命中优先于内置
+    // CreateRuntimeProvider。
+    std::vector<RegisteredRuntimeProvider> registered_providers_;
 
     // Allow specific unit tests to access private members for index cleanup
     // verification. Forward declarations are at top of file (global namespace).

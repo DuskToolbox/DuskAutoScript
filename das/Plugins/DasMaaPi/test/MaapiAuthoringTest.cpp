@@ -18,6 +18,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <thread>
 
 // Forward declarations for PluginUtils functions (linked from PluginUtils.cpp)
 namespace Das::Plugins::DasMaaPi
@@ -237,13 +238,31 @@ namespace
             settings_manager_ =
                 std::make_unique<Das::Core::SettingsManager::SettingsManager>(
                     settings_dir_);
-            auto ipc_sp =
+            ipc_sp_ =
                 Das::Core::IPC::MainProcess::CreateIpcContextShared(false);
+            ipc_run_thread_ = std::thread([this]() { ipc_sp_->Run(); });
             plugin_manager_ = std::make_unique<PluginManager>(
                 *settings_manager_,
                 Das::DasSharedRef<Das::Core::IPC::MainProcess::IIpcContext>(
-                    ipc_sp));
+                    ipc_sp_));
             ASSERT_EQ(plugin_manager_->Initialize(1), DAS_S_OK);
+            // 模拟生产 DasHttp 启动设 host path（App.cpp:146），让 loadMode:ipc
+            // 的 DasMaaPi.json 能 spawn 真实 DasHost。host
+            // 未配置/不存在则跳过。
+            std::string das_host_path;
+            try
+            {
+                das_host_path = IpcTestConfig::GetDasHostPath();
+            }
+            catch (const std::exception& e)
+            {
+                GTEST_SKIP() << "DasHost path unavailable: " << e.what();
+            }
+            if (!std::filesystem::exists(das_host_path))
+            {
+                GTEST_SKIP() << "DasHost not found at: " << das_host_path;
+            }
+            plugin_manager_->SetHostExePath(das_host_path);
             registry_ =
                 std::make_unique<Das::Core::IPC::RemoteObjectRegistry>();
             plugin_manager_->SetRegistry(*registry_);
@@ -260,6 +279,14 @@ namespace
             if (plugin_manager_)
             {
                 plugin_manager_->Shutdown();
+            }
+            if (ipc_sp_)
+            {
+                ipc_sp_->RequestStop();
+            }
+            if (ipc_run_thread_.joinable())
+            {
+                ipc_run_thread_.join();
             }
             std::filesystem::remove_all(settings_dir_);
         }
@@ -294,6 +321,8 @@ namespace
                                                               settings_manager_;
         std::unique_ptr<Das::Core::IPC::RemoteObjectRegistry> registry_;
         std::unique_ptr<PluginManager>                        plugin_manager_;
+        std::shared_ptr<Das::Core::IPC::MainProcess::IIpcContext> ipc_sp_;
+        std::thread ipc_run_thread_;
     };
 } // namespace
 

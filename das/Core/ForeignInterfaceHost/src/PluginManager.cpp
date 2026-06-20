@@ -221,6 +221,34 @@ void PluginManager::SetHostExePath(const std::string& path)
     host_exe_path_ = path;
 }
 
+void PluginManager::RegisterRuntimeProvider(
+    ForeignInterfaceLanguage          language,
+    LoadMode                          load_mode,
+    std::shared_ptr<IRuntimeProvider> provider)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    registered_providers_.push_back(
+        RegisteredRuntimeProvider{language, load_mode, std::move(provider)});
+}
+
+std::shared_ptr<IRuntimeProvider> PluginManager::FindRegisteredRuntimeProvider(
+    ForeignInterfaceLanguage language,
+    LoadMode                 load_mode) const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    // 逆序遍历：后注册者优先（便于测试覆盖内置）。
+    for (auto it = registered_providers_.rbegin();
+         it != registered_providers_.rend();
+         ++it)
+    {
+        if (it->language == language && it->load_mode == load_mode)
+        {
+            return it->provider;
+        }
+    }
+    return nullptr;
+}
+
 DasResult PluginManager::LoadPlugin(
     const std::filesystem::path&              path,
     Das::PluginInterface::IDasPluginPackage** pp_out_package)
@@ -312,36 +340,53 @@ DasResult PluginManager::LoadPlugin(
         return manifest_parse_result;
     }
 
-    // 阶段2: 锁外执行加载，所有 runtime 都返回统一 load result
-    RuntimeLoadRequest request{};
-    request.manifest_path = manifest_path;
-    request.runtime_path = runtime_path;
-    request.plugin_guid = desc->guid;
-    request.language = desc->language;
-    request.load_mode = desc->load_mode;
-    request.main_process_owner_session_id = session_id_;
-    if (request.language == ForeignInterfaceLanguage::Node)
+    // 阶段2: 锁外执行加载。path 转 UTF-8 const char*（借用，存活到 LoadPlugin
+    // 返回）。
+    const std::string manifest_path_u8{
+        DAS::Utils::U8AsString(manifest_path.u8string())};
+    const std::string runtime_path_u8{
+        DAS::Utils::U8AsString(runtime_path.u8string())};
+    std::string node_modules_root_u8;
+    if (desc->language == ForeignInterfaceLanguage::Node)
     {
-        request.node_modules_root =
-            ResolveNodeModulesRoot(normalized_path, manifest_path);
+        node_modules_root_u8 = std::string{DAS::Utils::U8AsString(
+            ResolveNodeModulesRoot(normalized_path, manifest_path).u8string())};
     }
 
-    // IPC 模式下注入生命周期回调，使 Host 进程崩溃或心跳超时时
-    // PluginManager 能自动清理插件索引。
-    // guid 按值捕获（从 desc->guid 复制），保证 lambda 生命周期安全。
-    if (request.load_mode == LoadMode::Ipc)
+    RuntimeLoadRequest request{};
+    request.manifest_path = manifest_path_u8.c_str();
+    request.runtime_path = runtime_path_u8.c_str();
+    request.plugin_guid = desc->guid;
+    request.main_process_owner_session_id = session_id_;
+    request.node_modules_root =
+        node_modules_root_u8.empty() ? nullptr : node_modules_root_u8.c_str();
+
+    // IPC 生命周期回调（构造内置 provider 时传入；Host 崩溃/心跳超时触发，
+    // PluginManager 据此清理插件索引）。guid 按值捕获，lambda 生命周期安全。
+    RuntimeLifecycleCallbacks callbacks{};
+    if (desc->load_mode == LoadMode::Ipc)
     {
         const auto guid = desc->guid;
-        request.on_process_exit =
+        callbacks.on_process_exit =
             [this, guid](uint16_t /*session_id*/, int exit_code)
         { OnHostProcessExit(guid, exit_code); };
-        request.on_heartbeat_timeout = [this](DasGuid callback_guid)
+        callbacks.on_heartbeat_timeout = [this](DasGuid callback_guid)
         { OnHeartbeatTimeout(callback_guid); };
     }
 
-    std::unique_ptr<IRuntimeProvider> scoped_provider;
-    IRuntimeProvider*                 provider = nullptr;
+    // 选 provider：先查外部注册表（进程内注入扩展点），命中优先；
+    // 否则走内置 CreateRuntimeProvider。
+    std::unique_ptr<IRuntimeProvider> scoped_provider;     // 内置 provider 持有
+    std::shared_ptr<IRuntimeProvider> registered_provider; // 注册 provider 持有
+    registered_provider =
+        FindRegisteredRuntimeProvider(desc->language, desc->load_mode);
 
+    IRuntimeProvider* provider = nullptr;
+    if (registered_provider)
+    {
+        provider = registered_provider.get();
+    }
+    else
     {
         RuntimeProviderFactoryDesc provider_desc{};
         provider_desc.language = desc->language;
@@ -352,8 +397,9 @@ DasResult PluginManager::LoadPlugin(
             provider_desc.remote_plugin_host = remote_plugin_host_factory_();
         }
 
-        auto selected_provider =
-            CreateRuntimeProvider(std::move(provider_desc));
+        auto selected_provider = CreateRuntimeProvider(
+            std::move(provider_desc),
+            std::move(callbacks));
         if (!selected_provider)
         {
             if (selected_provider.error() == DAS_E_NO_IMPLEMENTATION)
@@ -368,30 +414,34 @@ DasResult PluginManager::LoadPlugin(
         provider = scoped_provider.get();
     }
 
-    if (!provider)
+    if (provider == nullptr)
     {
         return DAS_E_OBJECT_NOT_INIT;
     }
 
-    auto load_result = provider->LoadPlugin(request);
-    if (!load_result)
+    RuntimeLoadResult load_result{};
+    const auto        load_hr = provider->LoadPlugin(request, &load_result);
+    if (DAS::IsFailed(load_hr))
     {
         DAS_CORE_LOG_ERROR(
             "Failed to load plugin {}: error={}",
             path_str,
-            static_cast<int>(load_result.error()));
-        return load_result.error();
+            static_cast<int>(load_hr));
+        return load_hr;
     }
-    if (!load_result->object)
+    if (load_result.object == nullptr)
     {
         return DAS_E_INVALID_POINTER;
     }
+    // 接管 object（已 AddRef），析构时 Release。
+    DasPtr<IDasBase> object_owner =
+        DasPtr<IDasBase>::Attach(load_result.object);
 
     LoadedPlugin plugin;
     plugin.plugin_path = identity_path;
 
     DasPtr<Das::PluginInterface::IDasPluginPackage> package;
-    auto qi_result = load_result->object->QueryInterface(
+    auto qi_result = object_owner->QueryInterface(
         DAS_IID_PLUGIN_PACKAGE,
         reinterpret_cast<void**>(package.Put()));
     if (DAS::IsFailed(qi_result))
@@ -418,7 +468,7 @@ DasResult PluginManager::LoadPlugin(
         feature_info.feature_index = index;
         feature_info.feature_type = feature;
         feature_info.iid = GetIidForFeature(feature);
-        feature_info.session_id = load_result->owner_session_id;
+        feature_info.session_id = load_result.owner_session_id;
         feature_info.plugin_name = std::string{
             DAS::Utils::U8AsString(identity_path.stem().u8string())};
         feature_info.plugin_guid = desc->guid;
@@ -451,7 +501,7 @@ DasResult PluginManager::LoadPlugin(
         // IpcRemotePluginHost.cpp:112/208 设置），用于运行时卸载
         // (UnloadPluginIpc 经 session_id 调 ipc_context_
         // ->UnregisterHostLauncherBySession)。
-        plugin.session_id = load_result->owner_session_id;
+        plugin.session_id = load_result.owner_session_id;
         loaded_plugins_[guid] = std::move(plugin);
         path_to_guid_[path_str] = guid;
 

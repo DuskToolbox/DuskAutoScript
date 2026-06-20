@@ -2,6 +2,7 @@
 
 #include <das/Core/ForeignInterfaceHost/RemotePluginHost.h>
 #include <das/Core/IPC/MainProcess/IHostLauncher.h>
+#include <das/Utils/StringUtils.h>
 #include <gtest/gtest.h>
 
 #include <algorithm>
@@ -338,8 +339,7 @@ namespace
             object->AddRef();
 
             RuntimeLoadResult result{};
-            result.object =
-                DAS::DasPtr<IDasBase>::Attach(static_cast<IDasBase*>(object));
+            result.object = static_cast<IDasBase*>(object);
             result.owner_session_id = owner_session_id_;
             return result;
         }
@@ -567,17 +567,17 @@ TEST(NodeRuntimeRemoteHost, LoadPluginRejectsMissingManifestPath)
 {
     RemoteHostCapture capture;
     NodeRuntime       runtime{
-        std::make_unique<CapturingRemotePluginHost>(capture, 82)};
+        std::make_unique<CapturingRemotePluginHost>(capture, 82),
+        RuntimeLifecycleCallbacks{}};
 
     RuntimeLoadRequest request{};
     request.node_modules_root = "plugins/node_modules";
-    request.language = ForeignInterfaceLanguage::Node;
-    request.load_mode = LoadMode::Ipc;
 
-    auto result = runtime.LoadPlugin(request);
+    RuntimeLoadResult result{};
+    const auto        hr = runtime.LoadPlugin(request, &result);
 
-    ASSERT_FALSE(result);
-    EXPECT_EQ(result.error(), DAS_E_INVALID_ARGUMENT);
+    ASSERT_TRUE(DAS::IsFailed(hr));
+    EXPECT_EQ(hr, DAS_E_INVALID_ARGUMENT);
     EXPECT_EQ(capture.load_count, 0);
 }
 
@@ -588,17 +588,19 @@ TEST(NodeRuntimeRemoteHost, LoadPluginRejectsMissingNodeModulesRoot)
     ScopedEnvVar      env{NODE_HOST_EXECUTABLE_ENV, layout.FakeNode().string()};
     RemoteHostCapture capture;
     NodeRuntime       runtime{
-        std::make_unique<CapturingRemotePluginHost>(capture, 82)};
+        std::make_unique<CapturingRemotePluginHost>(capture, 82),
+        RuntimeLifecycleCallbacks{}};
 
+    const std::string manifest_u8{
+        DAS::Utils::U8AsString(layout.ManifestPath().u8string())};
     RuntimeLoadRequest request{};
-    request.manifest_path = layout.ManifestPath();
-    request.language = ForeignInterfaceLanguage::Node;
-    request.load_mode = LoadMode::Ipc;
+    request.manifest_path = manifest_u8.c_str();
 
-    auto result = runtime.LoadPlugin(request);
+    RuntimeLoadResult result{};
+    const auto        hr = runtime.LoadPlugin(request, &result);
 
-    ASSERT_FALSE(result);
-    EXPECT_EQ(result.error(), DAS_E_INVALID_ARGUMENT);
+    ASSERT_TRUE(DAS::IsFailed(hr));
+    EXPECT_EQ(hr, DAS_E_INVALID_ARGUMENT);
     EXPECT_EQ(capture.load_count, 0);
 }
 
@@ -610,22 +612,30 @@ TEST(NodeRuntimeRemoteHost, LoadDelegatesToRemoteHostWithExplicitLaunchDesc)
     RemoteHostCapture capture;
 
     NodeRuntime runtime{
-        std::make_unique<CapturingRemotePluginHost>(capture, 82)};
+        std::make_unique<CapturingRemotePluginHost>(capture, 82),
+        RuntimeLifecycleCallbacks{}};
 
+    const std::string manifest_u8{
+        DAS::Utils::U8AsString(layout.ManifestPath().u8string())};
+    const std::string node_modules_u8{
+        DAS::Utils::U8AsString(layout.NodeModulesRoot().u8string())};
     RuntimeLoadRequest request{};
-    request.manifest_path = layout.ManifestPath();
-    request.runtime_path = layout.ManifestPath();
-    request.node_modules_root = layout.NodeModulesRoot();
+    request.manifest_path = manifest_u8.c_str();
+    request.runtime_path = manifest_u8.c_str();
+    request.node_modules_root = node_modules_u8.c_str();
     request.plugin_guid.data1 = 0x75070003;
-    request.language = ForeignInterfaceLanguage::Node;
-    request.load_mode = LoadMode::Ipc;
     request.main_process_owner_session_id = 1;
 
-    auto result = runtime.LoadPlugin(request);
+    RuntimeLoadResult result{};
+    const auto        hr = runtime.LoadPlugin(request, &result);
 
-    ASSERT_TRUE(result);
-    EXPECT_EQ(result->owner_session_id, 82);
-    EXPECT_NE(result->object.Get(), nullptr);
+    ASSERT_TRUE(DAS::IsOk(hr));
+    EXPECT_EQ(result.owner_session_id, 82);
+    EXPECT_NE(result.object, nullptr);
+    if (result.object != nullptr)
+    {
+        result.object->Release();
+    }
     EXPECT_EQ(capture.load_count, 1);
     EXPECT_EQ(capture.manifest_path, layout.ManifestPath());
     EXPECT_EQ(capture.plugin_guid.data1, 0x75070003u);
@@ -653,23 +663,32 @@ TEST(NodeRuntimeRemoteHost, LoadForwardsIpcLifecycleCallbacks)
     ScopedEnvVar      env{NODE_HOST_EXECUTABLE_ENV, layout.FakeNode().string()};
     RemoteHostCapture capture;
 
+    RuntimeLifecycleCallbacks callbacks{};
+    callbacks.on_process_exit = [](uint16_t, int) {};
+    callbacks.on_heartbeat_timeout = [](DasGuid) {};
     NodeRuntime runtime{
-        std::make_unique<CapturingRemotePluginHost>(capture, 82)};
+        std::make_unique<CapturingRemotePluginHost>(capture, 82),
+        std::move(callbacks)};
 
+    const std::string manifest_u8{
+        DAS::Utils::U8AsString(layout.ManifestPath().u8string())};
+    const std::string node_modules_u8{
+        DAS::Utils::U8AsString(layout.NodeModulesRoot().u8string())};
     RuntimeLoadRequest request{};
-    request.manifest_path = layout.ManifestPath();
-    request.runtime_path = layout.ManifestPath();
-    request.node_modules_root = layout.NodeModulesRoot();
+    request.manifest_path = manifest_u8.c_str();
+    request.runtime_path = manifest_u8.c_str();
+    request.node_modules_root = node_modules_u8.c_str();
     request.plugin_guid.data1 = 0x75070004;
-    request.language = ForeignInterfaceLanguage::Node;
-    request.load_mode = LoadMode::Ipc;
     request.main_process_owner_session_id = 1;
-    request.on_process_exit = [](uint16_t, int) {};
-    request.on_heartbeat_timeout = [](DasGuid) {};
 
-    auto result = runtime.LoadPlugin(request);
+    RuntimeLoadResult result{};
+    const auto        hr = runtime.LoadPlugin(request, &result);
 
-    ASSERT_TRUE(result);
+    ASSERT_TRUE(DAS::IsOk(hr));
+    if (result.object != nullptr)
+    {
+        result.object->Release();
+    }
     EXPECT_EQ(capture.load_count, 1);
     EXPECT_TRUE(capture.has_on_process_exit);
     EXPECT_TRUE(capture.has_on_heartbeat_timeout);

@@ -21,24 +21,32 @@ namespace
         {
         }
 
-        auto LoadPlugin(const RuntimeLoadRequest& request)
-            -> DAS::Utils::Expected<RuntimeLoadResult> override
+        DasResult LoadPlugin(
+            const RuntimeLoadRequest& request,
+            RuntimeLoadResult*        out_result) override
         {
-            if (!runtime_)
+            if (!runtime_ || out_result == nullptr
+                || request.runtime_path == nullptr)
             {
-                return tl::make_unexpected(DAS_E_OBJECT_NOT_INIT);
+                return DAS_E_INVALID_POINTER;
             }
-
-            auto object = runtime_->LoadPlugin(request.runtime_path);
+            // const char* UTF-8 → std::filesystem::path
+            const std::filesystem::path runtime_path(
+                reinterpret_cast<const char8_t*>(request.runtime_path));
+            auto object = runtime_->LoadPlugin(runtime_path);
             if (!object)
             {
-                return tl::make_unexpected(object.error());
+                return object.error();
             }
-
-            RuntimeLoadResult result{};
-            result.object = std::move(object.value());
-            result.owner_session_id = request.main_process_owner_session_id;
-            return result;
+            // 转移所有权（COM out 约定：AddRef 后调用方 Release）
+            out_result->object = object->Get();
+            if (out_result->object != nullptr)
+            {
+                static_cast<void>(out_result->object->AddRef());
+            }
+            out_result->owner_session_id =
+                request.main_process_owner_session_id;
+            return DAS_S_OK;
         }
 
     private:
@@ -71,7 +79,8 @@ auto CreateLocalRuntimeProvider(const ForeignLanguageRuntimeFactoryDesc& desc)
 
 auto CreateNativeIpcRuntimeProvider(
     std::filesystem::path              host_exe_path,
-    std::unique_ptr<IRemotePluginHost> remote_plugin_host)
+    std::unique_ptr<IRemotePluginHost> remote_plugin_host,
+    RuntimeLifecycleCallbacks          callbacks)
     -> DAS::Utils::Expected<std::unique_ptr<IRuntimeProvider>>
 {
     if (host_exe_path.empty())
@@ -85,11 +94,13 @@ auto CreateNativeIpcRuntimeProvider(
 
     return std::make_unique<NativeIpcRuntime>(
         std::move(host_exe_path),
-        std::move(remote_plugin_host));
+        std::move(remote_plugin_host),
+        std::move(callbacks));
 }
 
 auto CreateNodeRuntimeProvider(
-    std::unique_ptr<IRemotePluginHost> remote_plugin_host)
+    std::unique_ptr<IRemotePluginHost> remote_plugin_host,
+    RuntimeLifecycleCallbacks          callbacks)
     -> DAS::Utils::Expected<std::unique_ptr<IRuntimeProvider>>
 {
     if (!remote_plugin_host)
@@ -97,22 +108,29 @@ auto CreateNodeRuntimeProvider(
         return tl::make_unexpected(DAS_E_INVALID_POINTER);
     }
 
-    return std::make_unique<NodeRuntime>(std::move(remote_plugin_host));
+    return std::make_unique<NodeRuntime>(
+        std::move(remote_plugin_host),
+        std::move(callbacks));
 }
 
-auto CreateRuntimeProvider(RuntimeProviderFactoryDesc desc)
+auto CreateRuntimeProvider(
+    RuntimeProviderFactoryDesc desc,
+    RuntimeLifecycleCallbacks  callbacks)
     -> DAS::Utils::Expected<std::unique_ptr<IRuntimeProvider>>
 {
     if (desc.language == ForeignInterfaceLanguage::Node)
     {
-        return CreateNodeRuntimeProvider(std::move(desc.remote_plugin_host));
+        return CreateNodeRuntimeProvider(
+            std::move(desc.remote_plugin_host),
+            std::move(callbacks));
     }
 
     if (desc.load_mode == LoadMode::Ipc)
     {
         return CreateNativeIpcRuntimeProvider(
             std::move(desc.native_host_exe_path),
-            std::move(desc.remote_plugin_host));
+            std::move(desc.remote_plugin_host),
+            std::move(callbacks));
     }
 
     switch (desc.language)
@@ -127,7 +145,8 @@ auto CreateRuntimeProvider(RuntimeProviderFactoryDesc desc)
     default:
         return CreateNativeIpcRuntimeProvider(
             std::move(desc.native_host_exe_path),
-            std::move(desc.remote_plugin_host));
+            std::move(desc.remote_plugin_host),
+            std::move(callbacks));
     }
 }
 

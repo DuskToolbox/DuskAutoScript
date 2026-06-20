@@ -187,8 +187,10 @@ NodeRuntime::NodeRuntime(
 
 NodeRuntime::NodeRuntime(
     std::unique_ptr<IRemotePluginHost> remote_plugin_host,
+    RuntimeLifecycleCallbacks          callbacks,
     std::chrono::milliseconds          timeout)
-    : remote_plugin_host_{std::move(remote_plugin_host)}, timeout_{timeout}
+    : remote_plugin_host_{std::move(remote_plugin_host)},
+      callbacks_{std::move(callbacks)}, timeout_{timeout}
 {
 }
 
@@ -316,41 +318,58 @@ auto NodeRuntime::BuildHostLaunchDesc() const
     return result;
 }
 
-auto NodeRuntime::LoadPlugin(const RuntimeLoadRequest& request)
-    -> DAS::Utils::Expected<RuntimeLoadResult>
+DasResult NodeRuntime::LoadPlugin(
+    const RuntimeLoadRequest& request,
+    RuntimeLoadResult*        out_result)
 {
+    if (out_result == nullptr)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
     if (!remote_plugin_host_)
     {
-        return tl::make_unexpected(DAS_E_OBJECT_NOT_INIT);
+        return DAS_E_OBJECT_NOT_INIT;
     }
-
-    if (request.manifest_path.empty() || request.node_modules_root.empty())
+    if (request.manifest_path == nullptr
+        || request.node_modules_root == nullptr)
     {
-        return tl::make_unexpected(DAS_E_INVALID_ARGUMENT);
+        return DAS_E_INVALID_ARGUMENT;
     }
 
-    const auto package_root = request.manifest_path.parent_path();
+    const std::filesystem::path manifest_path(
+        reinterpret_cast<const char8_t*>(request.manifest_path));
+    const std::filesystem::path node_modules_root(
+        reinterpret_cast<const char8_t*>(request.node_modules_root));
+
+    const auto package_root = manifest_path.parent_path();
     if (package_root.empty())
     {
-        return tl::make_unexpected(DAS_E_INVALID_ARGUMENT);
+        return DAS_E_INVALID_ARGUMENT;
     }
 
-    NodeRuntime resolver{package_root, request.node_modules_root};
+    NodeRuntime resolver{package_root, node_modules_root};
     auto        launch = resolver.BuildHostLaunchDesc();
     if (!launch)
     {
-        return tl::make_unexpected(launch.error());
+        return launch.error();
     }
 
     RemotePluginLoadRequest remote_request{};
     remote_request.launch_desc = launch->launch_desc;
-    remote_request.manifest_path = request.manifest_path;
+    remote_request.manifest_path = manifest_path;
     remote_request.plugin_guid = request.plugin_guid;
     remote_request.timeout = timeout_;
-    remote_request.on_process_exit = request.on_process_exit;
-    remote_request.on_heartbeat_timeout = request.on_heartbeat_timeout;
+    remote_request.on_process_exit = callbacks_.on_process_exit;
+    remote_request.on_heartbeat_timeout = callbacks_.on_heartbeat_timeout;
 
-    return remote_plugin_host_->LoadPlugin(remote_request);
+    auto load_result = remote_plugin_host_->LoadPlugin(remote_request);
+    if (!load_result)
+    {
+        return load_result.error();
+    }
+    out_result->object = load_result->object;
+    out_result->owner_session_id = load_result->owner_session_id;
+    return DAS_S_OK;
 }
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_END

@@ -42,41 +42,48 @@ namespace
 NativeIpcRuntime::NativeIpcRuntime(
     std::filesystem::path              host_exe_path,
     std::unique_ptr<IRemotePluginHost> remote_plugin_host,
+    RuntimeLifecycleCallbacks          callbacks,
     std::chrono::milliseconds          timeout)
     : host_exe_path_{std::move(host_exe_path)},
-      remote_plugin_host_{std::move(remote_plugin_host)}, timeout_{timeout}
+      remote_plugin_host_{std::move(remote_plugin_host)},
+      callbacks_{std::move(callbacks)}, timeout_{timeout}
 {
 }
 
-auto NativeIpcRuntime::LoadPlugin(const RuntimeLoadRequest& request)
-    -> DAS::Utils::Expected<RuntimeLoadResult>
+DasResult NativeIpcRuntime::LoadPlugin(
+    const RuntimeLoadRequest& request,
+    RuntimeLoadResult*        out_result)
 {
+    if (out_result == nullptr)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
     if (host_exe_path_.empty())
     {
-        return tl::make_unexpected(DAS_E_NO_IMPLEMENTATION);
+        return DAS_E_NO_IMPLEMENTATION;
     }
     if (!remote_plugin_host_)
     {
-        return tl::make_unexpected(DAS_E_OBJECT_NOT_INIT);
+        return DAS_E_OBJECT_NOT_INIT;
     }
 
     auto executable = MakeReadOnlyString(
         std::string{DAS::Utils::U8AsString(host_exe_path_.u8string())});
     if (!executable)
     {
-        return tl::make_unexpected(executable.error());
+        return executable.error();
     }
 
     const auto main_pid = static_cast<uint32_t>(DAS_CURRENT_PROCESS_ID());
     auto       arg_name = MakeReadOnlyString("--main-pid");
     if (!arg_name)
     {
-        return tl::make_unexpected(arg_name.error());
+        return arg_name.error();
     }
     auto arg_value = MakeReadOnlyString(std::to_string(main_pid));
     if (!arg_value)
     {
-        return tl::make_unexpected(arg_value.error());
+        return arg_value.error();
     }
 
     std::vector<DAS::DasPtr<IDasReadOnlyString>> arg_storage;
@@ -94,13 +101,22 @@ auto NativeIpcRuntime::LoadPlugin(const RuntimeLoadRequest& request)
     remote_request.launch_desc.p_executable_path = executable->Get();
     remote_request.launch_desc.pp_args = args.data();
     remote_request.launch_desc.arg_count = args.size();
-    remote_request.manifest_path = request.manifest_path;
+    remote_request.manifest_path = std::filesystem::path(
+        reinterpret_cast<const char8_t*>(request.manifest_path));
     remote_request.plugin_guid = request.plugin_guid;
     remote_request.timeout = timeout_;
-    remote_request.on_process_exit = request.on_process_exit;
-    remote_request.on_heartbeat_timeout = request.on_heartbeat_timeout;
+    remote_request.on_process_exit = callbacks_.on_process_exit;
+    remote_request.on_heartbeat_timeout = callbacks_.on_heartbeat_timeout;
 
-    return remote_plugin_host_->LoadPlugin(remote_request);
+    auto load_result = remote_plugin_host_->LoadPlugin(remote_request);
+    if (!load_result)
+    {
+        return load_result.error();
+    }
+    // RuntimeLoadResult.object 已由 IpcRemotePluginHost AddRef，直接转移给 out
+    out_result->object = load_result->object;
+    out_result->owner_session_id = load_result->owner_session_id;
+    return DAS_S_OK;
 }
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_END

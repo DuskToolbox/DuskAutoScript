@@ -308,19 +308,23 @@ namespace
         {
         }
 
-        auto LoadPlugin(const RuntimeLoadRequest& request)
-            -> DAS::Utils::Expected<RuntimeLoadResult> override
+        DasResult LoadPlugin(
+            const RuntimeLoadRequest& request,
+            RuntimeLoadResult*        out_result) override
         {
             requests.push_back(request);
+
+            if (out_result == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
 
             auto* package = new CapturingPluginPackage(features_);
             package->AddRef();
 
-            RuntimeLoadResult result{};
-            result.object =
-                DasPtr<IDasBase>::Attach(static_cast<IDasBase*>(package));
-            result.owner_session_id = owner_session_id_;
-            return result;
+            out_result->object = static_cast<IDasBase*>(package);
+            out_result->owner_session_id = owner_session_id_;
+            return DAS_S_OK;
         }
 
         std::vector<RuntimeLoadRequest> requests;
@@ -371,8 +375,7 @@ namespace
             package->AddRef();
 
             RuntimeLoadResult result{};
-            result.object =
-                DasPtr<IDasBase>::Attach(static_cast<IDasBase*>(package));
+            result.object = static_cast<IDasBase*>(package);
             result.owner_session_id = owner_session_id_;
             return result;
         }
@@ -1171,10 +1174,20 @@ protected:
             Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
                 ipc_sp_));
 
+        ASSERT_EQ(pm_->Initialize(1), DAS_S_OK);
+
+        // 注入 fake runtime：包成 IRuntimeProvider 注册，LoadPlugin 命中它而非
+        // 走内置 CppRuntime 加载虚构 dll（5de027aa 后 SetRuntime 已删）。
         runtime_ = new CapturingRuntime();
         runtime_->AddRef();
         runtime_guard_ = DasPtr<IForeignLanguageRuntime>::Attach(runtime_);
-        ASSERT_EQ(pm_->Initialize(1), DAS_S_OK);
+        auto manifest_provider = CreateLocalRuntimeProvider(runtime_guard_);
+        ASSERT_TRUE(manifest_provider);
+        pm_->RegisterRuntimeProvider(
+            ForeignInterfaceLanguage::Cpp,
+            LoadMode::InProcess,
+            std::shared_ptr<IRuntimeProvider>(
+                std::move(manifest_provider.value())));
     }
 
     void TearDown() override
@@ -1295,13 +1308,21 @@ protected:
             Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
                 ipc_sp_));
 
+        ASSERT_EQ(pm_->Initialize(1), DAS_S_OK);
+
         factory_guid_ = MakeTaskComponentTestGuid(0x68130002);
         auto* runtime = new TaskComponentRuntime(factory_guid_);
         runtime->AddRef();
         runtime_ = runtime;
         runtime_guard_ = DasPtr<IForeignLanguageRuntime>::Attach(runtime);
-
-        ASSERT_EQ(pm_->Initialize(1), DAS_S_OK);
+        // 注入 fake runtime（包成 IRuntimeProvider 注册）。
+        auto task_provider = CreateLocalRuntimeProvider(runtime_guard_);
+        ASSERT_TRUE(task_provider);
+        pm_->RegisterRuntimeProvider(
+            ForeignInterfaceLanguage::Cpp,
+            LoadMode::InProcess,
+            std::shared_ptr<IRuntimeProvider>(
+                std::move(task_provider.value())));
     }
 
     void TearDown() override
@@ -1453,10 +1474,19 @@ protected:
             return;
         }
 
+        ASSERT_EQ(pm_->Initialize(1), DAS_S_OK);
+
         auto* runtime = new ErrorLensRuntime(provider_guid);
         runtime->AddRef();
         runtime_guard_ = DasPtr<IForeignLanguageRuntime>::Attach(runtime);
-        ASSERT_EQ(pm_->Initialize(1), DAS_S_OK);
+        // 注入 fake runtime（包成 IRuntimeProvider 注册）。
+        auto error_lens_provider = CreateLocalRuntimeProvider(runtime_guard_);
+        ASSERT_TRUE(error_lens_provider);
+        pm_->RegisterRuntimeProvider(
+            ForeignInterfaceLanguage::Cpp,
+            LoadMode::InProcess,
+            std::shared_ptr<IRuntimeProvider>(
+                std::move(error_lens_provider.value())));
         initialized_ = true;
     }
 
@@ -2054,24 +2084,16 @@ TEST_F(PluginManagerGuidTest, LoadPlugin_LowercaseNodeManifestIsRejected)
 TEST_F(PluginManagerGuidTest, RuntimeLoadRequest_CarriesRoutingInputs)
 {
     RuntimeLoadRequest request{};
-    request.manifest_path = std::filesystem::path{"plugins/TestPlugin.json"};
-    request.runtime_path = std::filesystem::path{"plugins"};
+    request.manifest_path = "plugins/TestPlugin.json";
+    request.runtime_path = "plugins";
     request.plugin_guid = MakeTaskComponentTestGuid(0x75040001);
-    request.language = ForeignInterfaceLanguage::Cpp;
-    request.load_mode = LoadMode::Ipc;
-    request.node_modules_root = std::filesystem::path{"plugins/node_modules"};
+    request.node_modules_root = "plugins/node_modules";
     request.main_process_owner_session_id = 17;
 
-    EXPECT_EQ(
-        request.manifest_path,
-        std::filesystem::path{"plugins/TestPlugin.json"});
-    EXPECT_EQ(request.runtime_path, std::filesystem::path{"plugins"});
+    EXPECT_STREQ(request.manifest_path, "plugins/TestPlugin.json");
+    EXPECT_STREQ(request.runtime_path, "plugins");
     EXPECT_EQ(request.plugin_guid.data1, 0x75040001u);
-    EXPECT_EQ(request.language, ForeignInterfaceLanguage::Cpp);
-    EXPECT_EQ(request.load_mode, LoadMode::Ipc);
-    EXPECT_EQ(
-        request.node_modules_root,
-        std::filesystem::path{"plugins/node_modules"});
+    EXPECT_STREQ(request.node_modules_root, "plugins/node_modules");
     EXPECT_EQ(request.main_process_owner_session_id, 17);
 }
 
@@ -2116,11 +2138,15 @@ TEST_F(PluginManagerGuidTest, RuntimeLoadResult_CarriesObjectAndOwnerSession)
     package->AddRef();
 
     RuntimeLoadResult result{};
-    result.object = DasPtr<IDasBase>::Attach(static_cast<IDasBase*>(package));
+    result.object = static_cast<IDasBase*>(package);
     result.owner_session_id = 23;
 
-    EXPECT_NE(result.object.Get(), nullptr);
+    EXPECT_NE(result.object, nullptr);
     EXPECT_EQ(result.owner_session_id, 23);
+    if (result.object != nullptr)
+    {
+        result.object->Release();
+    }
 }
 
 TEST_F(PluginManagerGuidTest, LocalRuntimeProvider_LoadsViaRuntimePath)
@@ -2131,20 +2157,26 @@ TEST_F(PluginManagerGuidTest, LocalRuntimeProvider_LoadsViaRuntimePath)
     ASSERT_TRUE(provider);
 
     RuntimeLoadRequest request{};
-    request.manifest_path = std::filesystem::path{"plugins/TestPlugin.json"};
-    request.runtime_path = std::filesystem::path{"plugins"};
+    request.manifest_path = "plugins/TestPlugin.json";
+    request.runtime_path = "plugins";
     request.plugin_guid = MakeTaskComponentTestGuid(0x75040002);
-    request.language = ForeignInterfaceLanguage::Cpp;
-    request.load_mode = LoadMode::InProcess;
     request.main_process_owner_session_id = 41;
 
-    auto result = provider.value()->LoadPlugin(request);
+    RuntimeLoadResult result{};
+    const auto        hr = provider.value()->LoadPlugin(request, &result);
 
-    ASSERT_TRUE(result);
-    EXPECT_EQ(raw_runtime->loaded_paths.size(), 1u);
-    EXPECT_EQ(raw_runtime->loaded_paths.front(), request.runtime_path);
-    EXPECT_NE(result->object.Get(), nullptr);
-    EXPECT_EQ(result->owner_session_id, 41);
+    ASSERT_TRUE(DAS::IsOk(hr));
+    ASSERT_EQ(raw_runtime->loaded_paths.size(), 1u);
+    EXPECT_EQ(
+        raw_runtime->loaded_paths.front(),
+        std::filesystem::path{
+            reinterpret_cast<const char8_t*>(request.runtime_path)});
+    EXPECT_NE(result.object, nullptr);
+    if (result.object != nullptr)
+    {
+        result.object->Release();
+    }
+    EXPECT_EQ(result.owner_session_id, 41);
 }
 
 TEST_F(PluginManagerGuidTest, LocalRuntimeProvider_PropagatesRuntimeError)
@@ -2156,13 +2188,14 @@ TEST_F(PluginManagerGuidTest, LocalRuntimeProvider_PropagatesRuntimeError)
     ASSERT_TRUE(provider);
 
     RuntimeLoadRequest request{};
-    request.runtime_path = std::filesystem::path{"missing.json"};
+    request.runtime_path = "missing.json";
     request.main_process_owner_session_id = 41;
 
-    auto result = provider.value()->LoadPlugin(request);
+    RuntimeLoadResult result{};
+    const auto        hr = provider.value()->LoadPlugin(request, &result);
 
-    ASSERT_FALSE(result);
-    EXPECT_EQ(result.error(), DAS_E_FILE_NOT_FOUND);
+    ASSERT_TRUE(DAS::IsFailed(hr));
+    EXPECT_EQ(hr, DAS_E_FILE_NOT_FOUND);
 }
 
 TEST_F(PluginManagerGuidTest, LocalRuntimeProvider_NodeReturnsNoImplementation)

@@ -108,7 +108,7 @@ auto IpcRemotePluginHost::LoadPlugin(const RemotePluginLoadRequest& request)
         }
 
         RuntimeLoadResult load_result{};
-        load_result.object = DAS::DasPtr<IDasBase>::Attach(raw_proxy);
+        load_result.object = raw_proxy;
         load_result.owner_session_id = session_id;
         return load_result;
     }
@@ -204,7 +204,7 @@ auto IpcRemotePluginHost::LoadPlugin(const RemotePluginLoadRequest& request)
     }
 
     RuntimeLoadResult load_result{};
-    load_result.object = DAS::DasPtr<IDasBase>::Attach(raw_proxy);
+    load_result.object = raw_proxy;
     load_result.owner_session_id = owner_session_id;
     return load_result;
 }

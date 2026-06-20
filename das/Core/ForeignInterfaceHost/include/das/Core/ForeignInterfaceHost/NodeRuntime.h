@@ -57,6 +57,7 @@ public:
         std::filesystem::path node_modules_root);
     explicit NodeRuntime(
         std::unique_ptr<IRemotePluginHost> remote_plugin_host,
+        RuntimeLifecycleCallbacks          callbacks,
         std::chrono::milliseconds          timeout = std::chrono::seconds{30});
 
     static auto ResolveNodeExecutable()
@@ -70,13 +71,15 @@ public:
     auto BuildHostLaunchDesc() const
         -> DAS::Utils::Expected<NodeHostLaunchDesc>;
 
-    auto LoadPlugin(const RuntimeLoadRequest& request)
-        -> DAS::Utils::Expected<RuntimeLoadResult> override;
+    DasResult LoadPlugin(
+        const RuntimeLoadRequest& request,
+        RuntimeLoadResult*        out_result) override;
 
 private:
     std::filesystem::path              package_root_;
     std::filesystem::path              node_modules_root_;
     std::unique_ptr<IRemotePluginHost> remote_plugin_host_;
+    RuntimeLifecycleCallbacks          callbacks_;
     std::chrono::milliseconds          timeout_{std::chrono::seconds{30}};
 };
 
