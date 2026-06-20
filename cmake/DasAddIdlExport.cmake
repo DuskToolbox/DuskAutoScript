@@ -862,6 +862,9 @@ function(das_add_idl_export)
 
         add_library(${_NODE_LIB_NAME} MODULE "${_NODE_CPP_FILE}")
         add_dependencies(${_NODE_LIB_NAME} ${_GENERATED_TARGET})
+        if(MSVC)
+            target_compile_options(${_NODE_LIB_NAME} PRIVATE /bigobj)
+        endif()
 
         target_include_directories(${_NODE_LIB_NAME} PRIVATE
             "${CMAKE_SOURCE_DIR}/include"

@@ -348,7 +348,13 @@ DasBool DasStringCppImpl::Equals(IDasReadOnlyString* other) noexcept
     {
         return false;
     }
-    return u_strCompare(lhs_utf16, lhs_size, rhs_utf16, rhs_size, false) == 0;
+    return u_strCompare(
+               lhs_utf16,
+               static_cast<int32_t>(lhs_size),
+               rhs_utf16,
+               static_cast<int32_t>(rhs_size),
+               false)
+           == 0;
 }
 
 /**
