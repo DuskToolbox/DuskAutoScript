@@ -151,11 +151,37 @@ namespace
         const std::string& options_json,
         const std::string& port_map_json)
     {
-        std::string json = R"({"piPath":")" + pi_path + R"(",)"
-                           + R"("taskName":")" + task_name + R"(",)"
-                           + R"("options":)" + options_json + ","
-                           + R"("portMap":)" + port_map_json + "}";
-        return json;
+        // Build via yyjson so special characters in pi_path (e.g. Windows
+        // backslashes from FixturePath().string()) are properly escaped.
+        // Raw string concatenation would emit invalid JSON escapes such as
+        // "\s"/"\D", which ParseYyjsonFromString rejects, leaving
+        // compiled_settings null and causing Do() to return
+        // DAS_E_OBJECT_NOT_INIT.
+        auto root = Utils::MakeYyjsonObject();
+        auto obj = root.as_object();
+        (*obj)["piPath"] = yyjson::value(pi_path);
+        (*obj)["taskName"] = yyjson::value(task_name);
+
+        if (auto parsed = Utils::ParseYyjsonFromString(options_json); parsed)
+        {
+            (*obj)["options"] = Das::Utils::CloneYyjsonValue(*parsed);
+        }
+        else
+        {
+            (*obj)["options"] = Utils::MakeYyjsonObject();
+        }
+
+        if (auto parsed = Utils::ParseYyjsonFromString(port_map_json); parsed)
+        {
+            (*obj)["portMap"] = Das::Utils::CloneYyjsonValue(*parsed);
+        }
+        else
+        {
+            (*obj)["portMap"] = Utils::MakeYyjsonObject();
+        }
+
+        auto serialized = Utils::SerializeYyjsonValue(root);
+        return serialized.value_or("{}");
     }
 
 } // namespace
@@ -175,7 +201,7 @@ TEST(MaapiGraphE2ETest, MaaPiNodeExecutesSuccessfullyInGraphRuntime)
     ScopedBoundaryHook hook(fake);
 
     auto settings_json = MakeNodeSettingsJson(
-        FixturePath(".").string(),
+        FixturePath("pi_e2e_interface.json").string(),
         "E2ETestTask",
         R"({"screenshot_mode":"case_a","enable_debug":true,"timeout_ms":5000})",
         R"({"graph_debug":"enable_debug","graph_timeout":"timeout_ms"})");
@@ -232,7 +258,7 @@ TEST(MaapiGraphE2ETest, MaaPiNodePropagatesExecutionFailure)
     ScopedBoundaryHook hook(fake);
 
     auto settings_json = MakeNodeSettingsJson(
-        FixturePath(".").string(),
+        FixturePath("pi_e2e_interface.json").string(),
         "E2ETestTask",
         R"({"screenshot_mode":"case_a","enable_debug":false,"timeout_ms":3000})",
         R"({"graph_debug":"enable_debug","graph_timeout":"timeout_ms"})");
@@ -248,5 +274,5 @@ TEST(MaapiGraphE2ETest, MaaPiNodePropagatesExecutionFailure)
     EXPECT_EQ(hr, DAS_E_MAAPI_EXECUTION_FAILED);
 
     // Verify PostTask was still called (engine tried to execute)
-    EXPECT_TRUE(fake.Contains("PostTask:StartE2E:"));
+    EXPECT_TRUE(fake.ContainsSubstring("PostTask:StartE2E:"));
 }

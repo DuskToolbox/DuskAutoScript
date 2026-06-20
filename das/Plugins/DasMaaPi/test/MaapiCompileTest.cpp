@@ -204,6 +204,32 @@ namespace
                  "{\"optionName\":\"notify\",\"kind\":\"switch\","
                  "\"boolValue\":true}]}]}}";
     }
+
+    // Variant of CompileContext whose selected option names match the
+    // interface_v26_jsonc.jsonc fixture (stage / use-medicine /
+    // controller-mode), not interface_compile.jsonc (difficulty / medicine /
+    // inactive). Reusing CompileContext against the v26 fixture yields
+    // "missing-option" errors and canExecute=false.
+    std::string CompileContextV26(std::string_view path)
+    {
+        return "{\"adapter\":{\"interfacePath\":\"" + std::string(path)
+               + "\",\"executionPolicy\":{\"failFast\":true}},\"pi\":{"
+                 "\"controllerName\":\"Android\","
+                 "\"resourceName\":\"Official\","
+                 "\"globalOptions\":[{\"optionName\":\"stage\","
+                 "\"kind\":\"select\",\"selectedCases\":[\"1-1\"]}],"
+                 "\"resourceOptions\":[{\"optionName\":\"server\","
+                 "\"kind\":\"switch\",\"boolValue\":true}],"
+                 "\"controllerOptions\":[{\"optionName\":\"controller-mode\","
+                 "\"kind\":\"select\",\"selectedCases\":[\"safe\"]}],"
+                 "\"tasks\":[{\"taskName\":\"DailyFarm\",\"enabled\":true,"
+                 "\"options\":[{\"optionName\":\"retry\",\"kind\":\"input\","
+                 "\"inputValues\":{\"times\":\"7\"}},"
+                 "{\"optionName\":\"use-medicine\",\"kind\":\"checkbox\","
+                 "\"selectedCases\":[\"large\",\"small\"]},"
+                 "{\"optionName\":\"notify\",\"kind\":\"switch\","
+                 "\"boolValue\":true}]}]}}";
+    }
 } // namespace
 
 TEST_F(MaapiCompileFixture, CompilePreviewOmitsExecutionEnvelope)
@@ -305,7 +331,7 @@ TEST_F(MaapiCompileFixture, PipelineOverrideMergesOptions)
 TEST_F(MaapiCompileFixture, AgentBoundaryAllowsExecutionEnvelope)
 {
     auto result = Compile(
-        CompileContext(
+        CompileContextV26(
             FixturePath("interface_v26_jsonc.jsonc").generic_string()),
         "execution");
     auto obj = result.as_object();

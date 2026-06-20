@@ -245,6 +245,19 @@ namespace Das::Plugins::DasMaaPi::Test
                    != calls.end();
         }
 
+        // Substring match across recorded calls. PostTask calls carry a
+        // pipeline_override suffix (e.g. "PostTask:StartE2E:<json>"), so a
+        // prefix cannot be matched by Contains (which requires an exact
+        // whole-string match).
+        bool ContainsSubstring(std::string_view needle) const
+        {
+            return std::any_of(
+                calls.begin(),
+                calls.end(),
+                [&](const std::string& call)
+                { return call.find(needle) != std::string::npos; });
+        }
+
     private:
         MaaResourceHandle NextHandle() { return next_handle_++; }
         MaaAsyncId        NextId() { return next_id_++; }
