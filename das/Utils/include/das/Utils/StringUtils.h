@@ -126,7 +126,8 @@ inline std::string ToString(IDasReadOnlyString* p_str)
 }
 
 /**
- * @brief Zero-overhead reinterpret of std::u8string_view as std::string_view.
+ * @brief Borrowing overload: reinterprets an lvalue std::u8string's bytes as
+ *        a std::string_view without copying.
  *
  * Usage (read-only, no ownership):
  *   auto u8 = path.u8string();
@@ -134,11 +135,17 @@ inline std::string ToString(IDasReadOnlyString* p_str)
  *
  * The returned string_view borrows from the u8string argument.
  * The u8string must outlive the returned string_view.
+ *
+ * @note Deliberately takes `const std::u8string&` (not `std::u8string_view`)
+ *       so that passing a temporary or a dangling view is rejected at the
+ *       call site. Rvalue std::u8string (e.g. `path.u8string()`) is routed
+ *       to the owning overload defined after the U8String class below, which
+ *       moves the data into a U8String and prevents dangling references.
  */
 [[nodiscard]]
-inline std::string_view U8AsString(std::u8string_view sv) noexcept
+inline std::string_view U8AsString(const std::u8string& str) noexcept
 {
-    return {reinterpret_cast<const char*>(sv.data()), sv.size()};
+    return {reinterpret_cast<const char*>(str.data()), str.size()};
 }
 
 /**
@@ -221,6 +228,34 @@ private:
 
     std::u8string value_;
 };
+
+/**
+ * @brief Owning overload of U8AsString: moves an rvalue std::u8string into a
+ *        U8String and exposes it as a char-based view.
+ *
+ * Automatically selected for prvalue/xvalue arguments (e.g. `path.u8string()`,
+ * `std::move(u8str)`), eliminating the dangling-reference pitfall of passing
+ * temporaries to the borrowing overload above.
+ *
+ * Zero-overhead: the source std::u8string is moved (no copy) into the returned
+ * U8String, which itself exposes `operator std::string_view()` and a fmt
+ * formatter specialization, so it can be passed directly to fmt::format /
+ * DAS_CORE_LOG_* / std::string construction without any extra ceremony.
+ *
+ * Example:
+ *   DAS_CORE_LOG_ERROR("path: {}", DAS::Utils::U8AsString(path.u8string()));
+ *   // → U8String temporary owns the bytes for the duration of the full
+ *   //   expression; fmt consumes it via operator string_view(); no UB.
+ *
+ *   const std::string owned{DAS::Utils::U8AsString(path.u8string())};
+ *   // → U8String temporary feeds std::string constructor via
+ *   //   operator string_view(), then dies; owned has its own copy.
+ */
+[[nodiscard]]
+inline U8String U8AsString(std::u8string&& str) noexcept
+{
+    return U8String{std::move(str)};
+}
 
 DAS_UTILS_NS_END
 
