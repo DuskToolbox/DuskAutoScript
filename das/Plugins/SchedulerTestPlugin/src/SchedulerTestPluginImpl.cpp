@@ -113,14 +113,14 @@ DasResult FactoryBackedTask::Do(
         }
     }
     {
-        std::lock_guard<std::mutex> lock(state_->mutex);
-        state_->executed_instance_ids.push_back(instance_id_);
-        state_->last_props_key1_value = std::move(key1_value);
+        ipc_scoped_lock lock(state_->mutex);
+        state_->add_executed_id(instance_id_);
+        state_->set_last_props_key1_value(key1_value);
         state_->do_entered = true;
     }
     state_->cv.notify_all();
 
-    std::unique_lock<std::mutex> lock(state_->mutex);
+    ipc_scoped_lock lock(state_->mutex);
     state_->cv.wait(
         lock,
         [this] { return !state_->block_do || state_->unblock_do; });
@@ -198,7 +198,7 @@ DasResult FakeAuthoringSession::GetDocument(
         return DAS_E_INVALID_POINTER;
     }
     {
-        std::lock_guard<std::mutex> lock(state_->mutex);
+        ipc_scoped_lock lock(state_->mutex);
         ++state_->get_document_count;
     }
 
@@ -240,7 +240,7 @@ DasResult FakeAuthoringSession::ApplyChange(
         return DAS_E_INVALID_POINTER;
     }
     {
-        std::lock_guard<std::mutex> lock(state_->mutex);
+        ipc_scoped_lock lock(state_->mutex);
         ++state_->apply_change_count;
         if (!state_->apply_ok)
         {
@@ -273,7 +273,7 @@ DasResult FakeAuthoringSession::Compile(
         return DAS_E_INVALID_POINTER;
     }
     {
-        std::lock_guard<std::mutex> lock(state_->mutex);
+        ipc_scoped_lock lock(state_->mutex);
         ++state_->compile_count;
         if (p_request_json)
         {
@@ -292,7 +292,7 @@ DasResult FakeAuthoringSession::Compile(
                     const char* raw = nullptr;
                     if (DAS_S_OK == purpose->GetUtf8(&raw) && raw)
                     {
-                        state_->last_compile_purpose = raw;
+                        state_->set_last_compile_purpose(raw);
                     }
                 }
             }
@@ -302,7 +302,7 @@ DasResult FakeAuthoringSession::Compile(
     yyjson::value execution_input(Das::Utils::MakeYyjsonObject());
     (*execution_input.as_object())[std::string_view("key1")] = "compiled";
     {
-        std::lock_guard<std::mutex> lock(state_->mutex);
+        ipc_scoped_lock lock(state_->mutex);
         (*result.as_object())[std::string_view("ok")] = state_->compile_ok;
         (*result.as_object())[std::string_view("canExecute")] =
             state_->compile_ok;
@@ -403,7 +403,7 @@ DasResult FakeAuthoringSessionFactory::CreateSession(
     }
     if (!can_create_session_)
     {
-        std::lock_guard<std::mutex> lock(state_->mutex);
+        ipc_scoped_lock lock(state_->mutex);
         ++state_->decoy_authoring_create_count;
         return DAS_E_FAIL;
     }
@@ -473,13 +473,13 @@ DasResult FakeAuthoringSessionFactory::CreateSession(
         }
     }
     {
-        std::lock_guard<std::mutex> lock(state_->mutex);
+        ipc_scoped_lock lock(state_->mutex);
         ++state_->authoring_session_count;
         state_->last_context_entry_id = entry_id;
         state_->last_context_task_id = task_id;
         state_->last_context_had_task_id = had_task_id;
         state_->last_context_revision = revision;
-        state_->last_props_key1_value = std::move(key1_value);
+        state_->set_last_props_key1_value(key1_value);
     }
 
     auto* session = new FakeAuthoringSession(state_);

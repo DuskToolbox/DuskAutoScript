@@ -80,6 +80,9 @@
     DAS_IGNORE_UNUSED_PARAMETER                                                \
     DAS_PRAGMA(warning(disable : 4245 4456))
 
+#define DAS_IGNORE_BOOST_INTERPROCESS_WARNING                                  \
+    DAS_PRAGMA(warning(disable : 4459))
+
 #elif defined(__clang__)
 #define DAS_DISABLE_WARNING_BEGIN DAS_PRAGMA(clang diagnostic push)
 
@@ -95,6 +98,8 @@
     DAS_PRAGMA(clang diagnostic ignored "-Wdelete-abstract-non-virtual-dtor")
 
 #define DAS_IGNORE_BEAST_WARNING
+
+#define DAS_IGNORE_BOOST_INTERPROCESS_WARNING
 
 #define DAS_IGNORE_STDEXEC_PARAMETERS DAS_IGNORE_UNUSED_PARAMETER
 
@@ -115,6 +120,8 @@
     DAS_PRAGMA(GCC diagnostic ignored "-Wdelete-non-virtual-dtor")
 
 #define DAS_IGNORE_BEAST_WARNING
+
+#define DAS_IGNORE_BOOST_INTERPROCESS_WARNING
 
 #define DAS_IGNORE_STDEXEC_PARAMETERS                                          \
     DAS_IGNORE_UNUSED_PARAMETER DAS_PRAGMA(                                    \

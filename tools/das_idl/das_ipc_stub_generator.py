@@ -57,6 +57,9 @@ class IpcStubGenerator:
         # Fixed sizes for [out] parameter serialization
         # Interface pointers [out] = 12 bytes (session_id 2B + generation 2B + local_id 4B + interface_id 4B)
         self.FIXED_SIZES = {
+            'int8': 1, 'uint8': 1, 'int16': 2, 'uint16': 2,
+            'int32': 4, 'uint32': 4, 'int64': 8, 'uint64': 8,
+            'int': 4, 'uint': 4,
             'int8_t': 1, 'uint8_t': 1, 'int16_t': 2, 'uint16_t': 2,
             'int32_t': 4, 'uint32_t': 4, 'int64_t': 8, 'uint64_t': 8,
             'float': 4, 'double': 8,

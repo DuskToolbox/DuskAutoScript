@@ -1,5 +1,5 @@
 {
-  "name": "@CMAKE_SHARED_LIBRARY_PREFIX@DasMaaPi",
+  "name": "libDasMaaPi",
   "author": "Dusk",
   "version": "0.1",
   "guid": "69F20000-0000-4000-8000-000000000001",

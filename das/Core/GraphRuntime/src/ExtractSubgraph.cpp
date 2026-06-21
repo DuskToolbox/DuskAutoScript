@@ -192,7 +192,7 @@ ExtractResult ExtractSubgraph::Extract(
 
     // --- Create child entry via factory ---
     Das::Core::TaskScheduler::Repository::Dto::RepositoryEntryDto child_entry;
-    child_entry.graph_document = yyjson::object(child_doc);
+    child_entry.graph_document = yyjson::object(child_doc, yyjson::copy_string);
 
     result.child_entry_id = entry_factory(child_entry);
 
@@ -207,6 +207,12 @@ ExtractResult ExtractSubgraph::Extract(
     auto compiled_plan = compile_callback(result.child_entry_id);
     result.revision = 1;
     result.fingerprint = compiled_plan.compiled_fingerprint;
+
+    // Propagate the compiled fingerprint back into the child document so
+    // downstream consumers (e.g. SubgraphCompiler) see a consistent
+    // fingerprint between the ExtractResult and child_graph_document.
+    child_doc.fingerprint = compiled_plan.compiled_fingerprint;
+    result.child_graph_document = child_doc;
 
     DAS_CORE_LOG_INFO(
         "ExtractSubgraph: parent = {}, child = {}, "

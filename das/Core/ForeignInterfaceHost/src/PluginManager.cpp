@@ -721,7 +721,10 @@ DasResult PluginManager::RegisterPluginObjects(
             feature.iid,
             interface_id,
             session_id_,
-            GetFeatureName(feature.feature_type),
+            DAS::fmt::format(
+                "{}#{}",
+                GetFeatureName(feature.feature_type),
+                local_id),
             1);
 
         feature_type_index_[feature.feature_type].push_back(&feature);

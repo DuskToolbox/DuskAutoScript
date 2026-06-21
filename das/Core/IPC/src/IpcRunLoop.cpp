@@ -126,6 +126,15 @@ IpcRunLoop::~IpcRunLoop()
 
 void IpcRunLoop::RequestStop()
 {
+    // 无论 running_ 状态如何，先标记 io_context_ 已停止。
+    // 这处理 RequestStop() 与 Run() 启动并发执行、且观察到 running_==false
+    // 的竞态： 若不在此处 stop，后续 Run() 会因 work_guard_ 仍存在而永久阻塞在
+    // io_context_->run() 上。io_context::stop() 线程安全且幂等。
+    if (io_context_)
+    {
+        io_context_->stop();
+    }
+
     if (!running_.load())
     {
         return;
@@ -156,13 +165,8 @@ void IpcRunLoop::RequestStop()
         }
     }
 
-    // 3. 停止 io_context，强制所有异步操作取消
-    // 这是必要的，因为接收协程可能阻塞在 co_await transport->ReceiveCoroutine()
-    // 仅仅重置 work_guard 不足以让它退出
-    if (io_context_)
-    {
-        io_context_->stop();
-    }
+    // io_context_->stop() 已在函数入口执行，接收协程的 co_await
+    // transport->ReceiveCoroutine() 会因 operation_aborted 退出。
 }
 
 void IpcRunLoop::RegisterHandler(

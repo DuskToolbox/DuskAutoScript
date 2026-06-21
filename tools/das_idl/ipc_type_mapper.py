@@ -54,6 +54,10 @@ class IpcBaseTypeMapper:
         'int64': ('int64_t', 'WriteInt64', 'ReadInt64'),
         'int64_t': ('int64_t', 'WriteInt64', 'ReadInt64'),
         'int': ('int32_t', 'WriteInt32', 'ReadInt32'),
+        # _t 后缀的 8/16 位变体 — IDL 中 DasDate 等结构体直接使用 stdint 别名，
+        # proxy 与 stub 都需要识别，故放在基类而非子类
+        'int8_t': ('int8_t', 'WriteInt8', 'ReadInt8'),
+        'int16_t': ('int16_t', 'WriteInt16', 'ReadInt16'),
         # 无符号整数
         'uint8': ('uint8_t', 'WriteUInt8', 'ReadUInt8'),
         'uint16': ('uint16_t', 'WriteUInt16', 'ReadUInt16'),
@@ -62,6 +66,9 @@ class IpcBaseTypeMapper:
         'uint64': ('uint64_t', 'WriteUInt64', 'ReadUInt64'),
         'uint64_t': ('uint64_t', 'WriteUInt64', 'ReadUInt64'),
         'uint': ('uint32_t', 'WriteUInt32', 'ReadUInt32'),
+        # _t 后缀的 8/16 位变体 — 见上方 int8_t/int16_t 注释
+        'uint8_t': ('uint8_t', 'WriteUInt8', 'ReadUInt8'),
+        'uint16_t': ('uint16_t', 'WriteUInt16', 'ReadUInt16'),
         # 浮点数
         'float': ('float', 'WriteFloat', 'ReadFloat'),
         'double': ('double', 'WriteDouble', 'ReadDouble'),

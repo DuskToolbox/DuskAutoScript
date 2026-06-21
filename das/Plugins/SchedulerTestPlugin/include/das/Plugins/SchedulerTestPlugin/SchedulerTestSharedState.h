@@ -1,19 +1,30 @@
 #ifndef DAS_PLUGINS_SCHEDULERTESTPLUGIN_SCHEDULERTESTSHAREDSTATE_H
 #define DAS_PLUGINS_SCHEDULERTESTPLUGIN_SCHEDULERTESTSHAREDSTATE_H
 
-#include <condition_variable>
+#include <algorithm>
 #include <cstdint>
-#include <mutex>
-#include <string>
-#include <vector>
+#include <cstring>
+#include <string_view>
 
+#include <das/DasConfig.h>
 #include <das/DasExport.h>
 #include <das/IDasBase.h>
 
+DAS_DISABLE_WARNING_BEGIN
+DAS_IGNORE_BOOST_INTERPROCESS_WARNING
+#include <boost/interprocess/sync/interprocess_condition.hpp>
+#include <boost/interprocess/sync/interprocess_mutex.hpp>
+DAS_DISABLE_WARNING_END
+
 // GUID 常量：SchedulerTestPlugin 与 TaskScheduler 测试共享的唯一来源。
 // exe (TaskSchedulerTest) 与 dll (SchedulerTestPlugin) 通过此头共享同一组
-// GUID 与 FactoryTaskSharedState 布局，dll 内对象通过裸指针观察 exe 持有的
-// shared_state。
+// GUID 与 FactoryTaskSharedState 布局。
+//
+// 重构：原 std::mutex/std::condition_variable/std::vector/std::string 不能
+// 跨进程共享。改为 boost::interprocess 的进程间同步原语和固定大小 POD 容器。
+// exe 创建 managed_shared_memory 段，把 FactoryTaskSharedState 构造在其中，
+// dll 通过 DasTestPlugin_SetSharedMemoryName 打开同名段，取回指针。
+// 进程间共享 ⇒ 不再有 InProcess 模式下的双份 DasCore 全局状态 SEH 问题。
 
 // {12345678-9ABC-4DEF-8123-456789ABCDEF}
 inline constexpr DasGuid FactoryPluginGuid = {
@@ -78,34 +89,85 @@ inline constexpr char FactoryTaskComponentFactoryGuidString[] =
 inline constexpr char FactoryExecutionComponentGuidString[] =
     "68F10001-0000-4000-8000-000000000001";
 
+// Convenience aliases for interprocess-safe synchronization.
+// ipc_scoped_lock 同时满足 std::lock_guard 与 std::unique_lock 的用途：
+// 它在构造时加锁、析构时解锁，并支持 unlock()/lock() 复用，可直接替换
+// 原有的 std::lock_guard<std::mutex> 与 std::unique_lock<std::mutex>。
+using ipc_mutex = boost::interprocess::interprocess_mutex;
+using ipc_condition = boost::interprocess::interprocess_condition;
+using ipc_scoped_lock = boost::interprocess::scoped_lock<ipc_mutex>;
+
 struct FactoryTaskSharedState
 {
-    std::mutex              mutex;
-    std::condition_variable cv;
-    int                     created_instance_count = 0;
-    std::vector<int>        executed_instance_ids;
-    int                     authoring_session_count = 0;
-    int                     get_document_count = 0;
-    int                     apply_change_count = 0;
-    int                     compile_count = 0;
-    int                     decoy_authoring_create_count = 0;
-    bool                    block_do = false;
-    bool                    do_entered = false;
-    bool                    unblock_do = false;
-    int64_t                 last_context_entry_id = -1;
-    int64_t                 last_context_task_id = -1;
-    bool                    last_context_had_task_id = false;
-    int64_t                 last_context_revision = -1;
-    std::string             last_props_key1_value;
-    std::string             last_compile_purpose;
-    bool                    apply_ok = true;
-    bool                    compile_ok = true;
+    ipc_mutex     mutex;
+    ipc_condition cv;
+
+    int created_instance_count = 0;
+
+    // Fixed-size replacement for std::vector<int>.
+    static constexpr size_t MAX_EXECUTED_IDS = 32;
+    int                     executed_instance_ids[MAX_EXECUTED_IDS]{};
+    size_t                  executed_count = 0;
+
+    void add_executed_id(int id)
+    {
+        if (executed_count < MAX_EXECUTED_IDS)
+        {
+            executed_instance_ids[executed_count++] = id;
+        }
+    }
+
+    int     authoring_session_count = 0;
+    int     get_document_count = 0;
+    int     apply_change_count = 0;
+    int     compile_count = 0;
+    int     decoy_authoring_create_count = 0;
+    bool    block_do = false;
+    bool    do_entered = false;
+    bool    unblock_do = false;
+    int64_t last_context_entry_id = -1;
+    int64_t last_context_task_id = -1;
+    bool    last_context_had_task_id = false;
+    int64_t last_context_revision = -1;
+
+    // Fixed-size replacement for std::string.
+    static constexpr size_t MAX_STRING_LEN = 256;
+    char                    last_props_key1_value[MAX_STRING_LEN]{};
+    char                    last_compile_purpose[MAX_STRING_LEN]{};
+
+    bool apply_ok = true;
+    bool compile_ok = true;
+
+    void set_last_props_key1_value(std::string_view v)
+    {
+        auto len = std::min(v.size(), MAX_STRING_LEN - 1);
+        std::memcpy(last_props_key1_value, v.data(), len);
+        last_props_key1_value[len] = '\0';
+    }
+
+    void set_last_compile_purpose(std::string_view v)
+    {
+        auto len = std::min(v.size(), MAX_STRING_LEN - 1);
+        std::memcpy(last_compile_purpose, v.data(), len);
+        last_compile_purpose[len] = '\0';
+    }
+
+    std::string_view get_last_props_key1_value() const
+    {
+        return last_props_key1_value;
+    }
+
+    std::string_view get_last_compile_purpose() const
+    {
+        return last_compile_purpose;
+    }
 };
 
-// dll 导出注入函数：exe 在加载 dll 后立即调用，把 exe 持有的
-// FactoryTaskSharedState 裸指针注入 dll 的全局变量。dll 内所有对象通过此
-// 指针观察 exe 的状态，不拥有、不释放。
-extern "C" DAS_EXPORT void DasTestPlugin_SetSharedState(
-    FactoryTaskSharedState* p_shared_state);
+// dll 导出注入函数：exe 创建 managed_shared_memory 段后调用本函数，
+// 把段名传给 dll。dll 用 open_only 打开同名段并 find<FactoryTaskSharedState>
+// 取回指针。exe 与 dll 通过同一块共享内存观察同一对象。
+// 若 exe 未调用本函数（如某些调试场景），dll 会在 DasCoCreatePlugin 时
+// 回退到环境变量 DAS_SCHEDULER_TEST_SHM_NAME。
+extern "C" DAS_EXPORT void DasTestPlugin_SetSharedMemoryName(const char* name);
 
 #endif // DAS_PLUGINS_SCHEDULERTESTPLUGIN_SCHEDULERTESTSHAREDSTATE_H

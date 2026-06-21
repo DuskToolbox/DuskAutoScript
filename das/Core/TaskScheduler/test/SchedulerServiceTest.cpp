@@ -26,14 +26,23 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
-#include <condition_variable>
+#include <chrono>
+#include <cstdlib>
 #include <das/Utils/DasJsonCore.h>
 #include <filesystem>
 #include <fstream>
-#include <mutex>
+#include <memory>
 #include <string>
 #include <thread>
 #include <vector>
+
+#include <das/DasConfig.h>
+
+DAS_DISABLE_WARNING_BEGIN
+DAS_IGNORE_BOOST_INTERPROCESS_WARNING
+#include <boost/interprocess/managed_shared_memory.hpp>
+#include <boost/interprocess/shared_memory_object.hpp>
+DAS_DISABLE_WARNING_END
 
 // clang-format off
 // TestablePluginManager.h 必须在所有 STL/业务头之后 include：它内部
@@ -1463,6 +1472,10 @@ void WriteFactoryPluginManifest(
     (*manifest.as_object())[std::string_view("supportedSystem")] = "Windows";
     (*manifest.as_object())[std::string_view("language")] =
         std::string(language);
+    // IPC 模式：避免 InProcess 加载时 exe 与 dll 各持一份 DasCore 全局状态
+    // 导致 MSVC SEH 0xc0000005。插件在 DasHost.exe 子进程中加载，
+    // 经 boost::interprocess 共享内存与测试 exe 同步 FactoryTaskSharedState。
+    (*manifest.as_object())[std::string_view("loadMode")] = "ipc";
     (*manifest.as_object())[std::string_view("pluginFilenameExtension")] =
         "dll";
     (*manifest.as_object())[std::string_view("settings")] =
@@ -1707,12 +1720,12 @@ protected:
         manifest_path_ = plugin_dir_ / "FactoryPlugin.json";
         WriteFactoryPluginManifest(manifest_path_);
 
-        // 先构造 shared_state_，再部署 dll 并注入裸指针：
-        // PluginManager::Initialize 扫描 plugin_dir_ 时会经生产 CppHost 路径
-        // 加载 FactoryPlugin.dll，DasCoCreatePlugin 创建的
-        // FactoryTaskPluginPackage 内部取用 dll 全局
-        // g_test_shared_state，必须在此之前被注入。
-        shared_state_ = std::make_shared<FactoryTaskSharedState>();
+        // 先创建共享内存段并构造 FactoryTaskSharedState，
+        // 再设置 DAS_SCHEDULER_TEST_SHM_NAME 环境变量（被 DasHost.exe 子进程
+        // 通过 DasTestPlugin_SetSharedMemoryName 回退读取），
+        // 最后部署 dll。IPC 模式下 PluginManager spawn 的 DasHost.exe
+        // 会在 DasCoCreatePlugin 中读环境变量打开段，取回同一份 state。
+        CreateSharedStateSegment();
         DeploySchedulerTestPlugin();
 
         settings_manager_ =
@@ -1728,6 +1741,23 @@ protected:
                 ipc_sp_));
         registry_ = std::make_unique<DAS::Core::IPC::RemoteObjectRegistry>();
         plugin_manager_->SetRegistry(*registry_);
+
+        // IPC 模式下 PluginManager 需要 DasHost.exe 路径才能 spawn 子进程
+        // 加载 FactoryPlugin.dll。DAS_HOST_EXE_PATH 由 ctest 注入。
+        try
+        {
+            const auto host_path = IpcTestConfig::GetDasHostPath();
+            if (std::filesystem::exists(host_path))
+            {
+                plugin_manager_->SetHostExePath(host_path);
+            }
+        }
+        catch (const std::exception&)
+        {
+            // host 未配置时 PluginManager.Initialize 会因无法 spawn 而失败，
+            // 测试断言会暴露具体错误，这里不提前 fail。
+        }
+
         scheduler_ = std::make_unique<SchedulerService>(
             *plugin_manager_,
             Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
@@ -1735,58 +1765,71 @@ protected:
 
         ASSERT_EQ(plugin_manager_->Initialize(1), DAS_S_OK);
 
-        io_thread_ = std::thread(
-            [this]()
-            {
-                auto& io = ipc_sp_->GetIoContext();
-                boost::asio::executor_work_guard<
-                    boost::asio::io_context::executor_type>
-                    work(io.get_executor());
-                io.run();
-            });
+        // IpcContext::Run() 内部调用 IpcRunLoop::Run()，后者将 running_ 置 true
+        // 再阻塞在 io_context->run()。InternalHostReceiveLoop 的循环条件是
+        // while (running_.load())，若直接 io.run() 而不经 Run()，running_ 始终
+        // 为 false，接收协程刚 spawn 即退出，IPC 响应永远收不到。
+        io_thread_ = std::thread([this]() { ipc_sp_->Run(); });
     }
 
-    // 部署真实 SchedulerTestPlugin：从构建目录加载 libSchedulerTestPlugin.dll，
-    // 注入 exe 持有的 FactoryTaskSharedState 裸指针，再以 FactoryPlugin.dll
+    // 创建以 PID + 全局递增计数器命名的 managed_shared_memory 段，
+    // 并把 FactoryTaskSharedState POD 构造在段内（key 固定为 "state"）。
+    // 段名写入 DAS_SCHEDULER_TEST_SHM_NAME 环境变量，DasHost.exe 子进程
+    // 在 DasCoCreatePlugin 中通过 DasTestPlugin_SetSharedMemoryName
+    // 打开同一段。
+    void CreateSharedStateSegment()
+    {
+        const uint64_t pid =
+#ifdef _WIN32
+            static_cast<uint64_t>(::GetCurrentProcessId());
+#else
+            static_cast<uint64_t>(::getpid());
+#endif
+        const uint64_t counter = s_shm_counter.fetch_add(1);
+        shm_name_ = "DasSchedulerTest_" + std::to_string(pid) + "_"
+                    + std::to_string(counter);
+
+        // 段名全局唯一，但仍 remove 以防残留（极端竞态）。
+        boost::interprocess::shared_memory_object::remove(shm_name_.c_str());
+
+        const size_t kShmSize = sizeof(FactoryTaskSharedState) + 4096;
+        shm_segment_ =
+            std::make_unique<boost::interprocess::managed_shared_memory>(
+                boost::interprocess::create_only_t{},
+                shm_name_.c_str(),
+                kShmSize);
+
+        shared_state_ =
+            shm_segment_->construct<FactoryTaskSharedState>("state")();
+
+#ifdef _WIN32
+        _putenv_s("DAS_SCHEDULER_TEST_SHM_NAME", shm_name_.c_str());
+#else
+        setenv("DAS_SCHEDULER_TEST_SHM_NAME", shm_name_.c_str(), 1);
+#endif
+    }
+
+    // 部署真实 SchedulerTestPlugin：从构建目录加载由 CMake 提供的实际产物文件名
+    // （DAS_SCHEDULER_TEST_PLUGIN_FILENAME，跨平台），以 FactoryPlugin.dll
     // 之名 拷贝到 plugin_dir_，使 WriteFactoryPluginManifest 生成的
-    // FactoryPlugin.json (name=FactoryPlugin) 能找到该 dll。test_plugin_handle_
-    // 持有 LoadLibrary 句柄，必须在所有 dll 内对象释放后才可卸载（见 TearDown
-    // 顺序）。
+    // FactoryPlugin.json (name=FactoryPlugin) 能找到该 dll。
+    // IPC 模式下 PluginManager 通过 DasHost.exe 子进程加载该 dll，
+    // 不再需要 LoadLibrary 注入裸指针。
     void DeploySchedulerTestPlugin()
     {
         namespace fs = std::filesystem;
         const fs::path build_plugin_dir{IpcTestConfig::GetPluginDir()};
+#ifndef DAS_SCHEDULER_TEST_PLUGIN_FILENAME
+#error "DAS_SCHEDULER_TEST_PLUGIN_FILENAME must be defined via CMake"
+#endif
         const fs::path src_dll =
-            build_plugin_dir / "libSchedulerTestPlugin.dll";
+            build_plugin_dir / DAS_SCHEDULER_TEST_PLUGIN_FILENAME;
         ASSERT_TRUE(fs::exists(src_dll))
-            << "libSchedulerTestPlugin.dll not found at: " << src_dll.string();
+            << "SchedulerTestPlugin artifact not found at: "
+            << src_dll.string();
 
-        // 先部署为 plugin_dir_/FactoryPlugin.dll（匹配 FactoryPlugin.json 的
-        // name=FactoryPlugin）。关键：必须加载与 PluginManager CppHost 同一路径
-        // 的 dll，Windows 按完整路径区分模块——同路径才共享 g_test_shared_state
-        // 全局，否则注入指针会写入一个独立模块实例，PluginManager 加载的模块
-        // 仍为 nullptr，导致 FactoryTaskPluginPackage 的 state_ 为空。
         const fs::path dst_dll = plugin_dir_ / "FactoryPlugin.dll";
         fs::copy_file(src_dll, dst_dll, fs::copy_options::overwrite_existing);
-
-        // 加载部署后的 dll（LOAD_WITH_ALTERED_SEARCH_PATH 让同目录依赖可被
-        // 找到），通过 GetProcAddress 取 DasTestPlugin_SetSharedState 注入
-        // shared_state_ 裸指针。后续 PluginManager 再加载同一 dll 路径会复用
-        // 同一模块，g_test_shared_state 全局在进程内共享。
-        test_plugin_handle_ = ::LoadLibraryExW(
-            dst_dll.wstring().c_str(),
-            nullptr,
-            LOAD_WITH_ALTERED_SEARCH_PATH);
-        ASSERT_NE(test_plugin_handle_, nullptr)
-            << "LoadLibraryExW failed: " << ::GetLastError();
-        using SetSharedStateFn = void (*)(FactoryTaskSharedState*);
-        auto set_state = reinterpret_cast<SetSharedStateFn>(::GetProcAddress(
-            test_plugin_handle_,
-            "DasTestPlugin_SetSharedState"));
-        ASSERT_NE(set_state, nullptr)
-            << "GetProcAddress(DasTestPlugin_SetSharedState) failed: "
-            << ::GetLastError();
-        set_state(shared_state_.get());
     }
 
     void TearDown() override
@@ -1796,16 +1839,16 @@ protected:
             EXPECT_EQ(scheduler_->Disable(), DAS_S_OK);
         }
 
-        ipc_sp_->GetIoContext().stop();
+        // RequestStop 内部将 running_ 置 false 并 io_context->stop()，
+        // 使 Run() 返回，io_thread_ 随后 join。
+        ipc_sp_->RequestStop();
         if (io_thread_.joinable())
         {
             io_thread_.join();
         }
 
-        // 释放顺序：先 scheduler_/plugin_manager_(释放 dll 内对象) ->
-        // 卸载 test_plugin_handle_(仅本 exe 的 LoadLibrary 句柄) ->
-        // 最后 shared_state_。PluginManager 持有的 dll 句柄在其 Shutdown
-        // 时释放。
+        // 释放顺序：先 scheduler_/plugin_manager_(释放 IPC 句柄与子进程对象) ->
+        // 再清理共享内存段。
         scheduler_.reset();
         if (plugin_manager_)
         {
@@ -1813,12 +1856,16 @@ protected:
         }
         plugin_manager_.reset();
         settings_manager_.reset();
-        if (test_plugin_handle_ != nullptr)
+        if (shm_segment_)
         {
-            ::FreeLibrary(test_plugin_handle_);
-            test_plugin_handle_ = nullptr;
+            shm_segment_->destroy<FactoryTaskSharedState>("state");
+            shm_segment_.reset();
         }
-        shared_state_.reset();
+        if (!shm_name_.empty())
+        {
+            boost::interprocess::shared_memory_object::remove(
+                shm_name_.c_str());
+        }
         // test_dir_ 内含 FactoryPlugin.dll，可能在 PluginManager/CppHost 的
         // boost::dll 句柄延迟释放或 scheduler 异步路径下仍被映射，
         // Windows 不允许删除被映射文件。用不抛异常的 remove_all 重载，
@@ -1831,16 +1878,13 @@ protected:
         size_t                    expected_count,
         std::chrono::milliseconds timeout)
     {
-        auto deadline = std::chrono::steady_clock::now() + timeout;
-        std::unique_lock<std::mutex> lock(shared_state_->mutex);
+        auto            deadline = std::chrono::steady_clock::now() + timeout;
+        ipc_scoped_lock lock(shared_state_->mutex);
         return shared_state_->cv.wait_until(
             lock,
             deadline,
             [this, expected_count]()
-            {
-                return shared_state_->executed_instance_ids.size()
-                       >= expected_count;
-            });
+            { return shared_state_->executed_count >= expected_count; });
     }
 
     std::filesystem::path test_dir_;
@@ -1852,11 +1896,15 @@ protected:
     std::shared_ptr<DAS::Core::IPC::MainProcess::IIpcContext> ipc_sp_;
     std::unique_ptr<DAS::Core::IPC::RemoteObjectRegistry>     registry_;
     std::unique_ptr<Das::Core::ForeignInterfaceHost::TestablePluginManager>
-                                            plugin_manager_;
-    std::unique_ptr<SchedulerService>       scheduler_;
-    std::shared_ptr<FactoryTaskSharedState> shared_state_;
-    HMODULE                                 test_plugin_handle_ = nullptr;
-    std::thread                             io_thread_;
+                                      plugin_manager_;
+    std::unique_ptr<SchedulerService> scheduler_;
+    // 段内指针：生命周期由 shm_segment_ 管理，不可 free。
+    FactoryTaskSharedState* shared_state_ = nullptr;
+    std::unique_ptr<boost::interprocess::managed_shared_memory> shm_segment_;
+    std::string                                                 shm_name_;
+    std::thread                                                 io_thread_;
+
+    static inline std::atomic<uint64_t> s_shm_counter{0};
 };
 
 // ============================================================
@@ -2174,8 +2222,8 @@ TEST_F(SchedulerRuntimeBackedTest, AddTask_CreatesDistinctRuntimeInstances)
             .as_sint()
             .value());
 
-    std::lock_guard<std::mutex> lock(shared_state_->mutex);
-    EXPECT_EQ(shared_state_->executed_instance_ids.size(), 2u);
+    ipc_scoped_lock lock(shared_state_->mutex);
+    EXPECT_EQ(shared_state_->executed_count, 2u);
     EXPECT_NE(
         shared_state_->executed_instance_ids[0],
         shared_state_->executed_instance_ids[1]);
@@ -2239,7 +2287,7 @@ TEST_F(
     EXPECT_TRUE(has_component_kind("das.flow.while"));
     EXPECT_TRUE(has_component_kind("das.flow.goto"));
 
-    std::lock_guard<std::mutex> lock(shared_state_->mutex);
+    ipc_scoped_lock lock(shared_state_->mutex);
     EXPECT_EQ(shared_state_->authoring_session_count, 1);
     EXPECT_EQ(shared_state_->decoy_authoring_create_count, 0);
     EXPECT_EQ(shared_state_->get_document_count, 1);
@@ -2352,7 +2400,7 @@ TEST_F(SchedulerRuntimeBackedTest, SchedulerAuthoringRevisionConflict)
         (*obj)[std::string_view("currentRevision")].as_sint().value_or(-1),
         3);
 
-    std::lock_guard<std::mutex> lock(shared_state_->mutex);
+    ipc_scoped_lock lock(shared_state_->mutex);
     EXPECT_EQ(shared_state_->apply_change_count, 0);
 }
 
@@ -2418,12 +2466,12 @@ TEST_F(
     ASSERT_TRUE(WaitForExecutions(1, std::chrono::seconds(2)));
     ASSERT_EQ(scheduler_->Disable(), DAS_S_OK);
 
-    std::lock_guard<std::mutex> lock(shared_state_->mutex);
+    ipc_scoped_lock lock(shared_state_->mutex);
     EXPECT_EQ(shared_state_->apply_change_count, 1);
     EXPECT_GE(shared_state_->get_document_count, 1);
     EXPECT_EQ(shared_state_->compile_count, 1);
-    EXPECT_EQ(shared_state_->last_compile_purpose, "execution");
-    EXPECT_EQ(shared_state_->last_props_key1_value, "compiled");
+    EXPECT_EQ(shared_state_->get_last_compile_purpose(), "execution");
+    EXPECT_EQ(shared_state_->get_last_props_key1_value(), "compiled");
 }
 
 TEST_F(SchedulerRuntimeBackedTest, SchedulerAuthoringCompilePreviewOnly)
@@ -2447,9 +2495,9 @@ TEST_F(SchedulerRuntimeBackedTest, SchedulerAuthoringCompilePreviewOnly)
     ASSERT_TRUE(compile.has_value());
     EXPECT_TRUE((*compile)[std::string_view("ok")].as_bool().value_or(false));
 
-    std::lock_guard<std::mutex> lock(shared_state_->mutex);
+    ipc_scoped_lock lock(shared_state_->mutex);
     EXPECT_EQ(shared_state_->compile_count, 1);
-    EXPECT_TRUE(shared_state_->executed_instance_ids.empty());
+    EXPECT_TRUE((shared_state_->executed_count == 0));
 }
 
 namespace
@@ -2580,10 +2628,9 @@ namespace
         EXPECT_FALSE(message->empty());
     }
 
-    void ExpectNoRepositoryAuthoringProviderCalls(
-        const std::shared_ptr<FactoryTaskSharedState>& state)
+    void ExpectNoRepositoryAuthoringProviderCalls(FactoryTaskSharedState* state)
     {
-        std::lock_guard<std::mutex> lock(state->mutex);
+        ipc_scoped_lock lock(state->mutex);
         EXPECT_EQ(state->authoring_session_count, 0);
         EXPECT_EQ(state->get_document_count, 0);
         EXPECT_EQ(state->apply_change_count, 0);
@@ -2600,10 +2647,9 @@ namespace
         int decoy_authoring_create_count = 0;
     };
 
-    ProviderCallCounts SnapshotProviderCallCounts(
-        const std::shared_ptr<FactoryTaskSharedState>& state)
+    ProviderCallCounts SnapshotProviderCallCounts(FactoryTaskSharedState* state)
     {
-        std::lock_guard<std::mutex> lock(state->mutex);
+        ipc_scoped_lock lock(state->mutex);
         return ProviderCallCounts{
             state->authoring_session_count,
             state->get_document_count,
@@ -2613,10 +2659,10 @@ namespace
     }
 
     void ExpectProviderCallCountsUnchanged(
-        const std::shared_ptr<FactoryTaskSharedState>& state,
-        const ProviderCallCounts&                      before)
+        FactoryTaskSharedState*   state,
+        const ProviderCallCounts& before)
     {
-        std::lock_guard<std::mutex> lock(state->mutex);
+        ipc_scoped_lock lock(state->mutex);
         EXPECT_EQ(
             state->authoring_session_count,
             before.authoring_session_count);
@@ -2629,9 +2675,9 @@ namespace
     }
 
     void ExpectRepositoryAuthoringRejectedWithoutProviderCalls(
-        SchedulerService&                              scheduler,
-        const std::shared_ptr<FactoryTaskSharedState>& state,
-        std::string_view                               error_kind)
+        SchedulerService&       scheduler,
+        FactoryTaskSharedState* state,
+        std::string_view        error_kind)
     {
         auto before = SnapshotProviderCallCounts(state);
 
@@ -2658,9 +2704,9 @@ namespace
     }
 
     void ExpectRepositoryCompileRejectedWithoutProviderCalls(
-        SchedulerService&                              scheduler,
-        const std::shared_ptr<FactoryTaskSharedState>& state,
-        std::string_view                               error_kind)
+        SchedulerService&       scheduler,
+        FactoryTaskSharedState* state,
+        std::string_view        error_kind)
     {
         auto before = SnapshotProviderCallCounts(state);
 
@@ -2677,10 +2723,10 @@ namespace
     }
 
     void ExpectUnavailableRenameDeleteWithoutProviderCalls(
-        SchedulerService&                              scheduler,
-        const std::shared_ptr<FactoryTaskSharedState>& state,
-        const std::filesystem::path&                   settings_dir,
-        std::string_view                               reason)
+        SchedulerService&            scheduler,
+        FactoryTaskSharedState*      state,
+        const std::filesystem::path& settings_dir,
+        std::string_view             reason)
     {
         auto entry = SingleRepositoryEntry(scheduler.GetTaskRepository());
         ExpectRepositoryAvailability(entry, reason);
@@ -3201,13 +3247,13 @@ TEST_F(
     EXPECT_FALSE(obj->contains(std::string_view("compiledSnapshot")));
     EXPECT_FALSE(obj->contains(std::string_view("providerDebug")));
 
-    std::lock_guard<std::mutex> lock(shared_state_->mutex);
+    ipc_scoped_lock lock(shared_state_->mutex);
     EXPECT_EQ(shared_state_->compile_count, 1);
-    EXPECT_EQ(shared_state_->last_compile_purpose, "preview");
+    EXPECT_EQ(shared_state_->get_last_compile_purpose(), "preview");
     EXPECT_EQ(shared_state_->last_context_entry_id, 0);
     EXPECT_FALSE(shared_state_->last_context_had_task_id);
-    EXPECT_EQ(shared_state_->last_props_key1_value, "default");
-    EXPECT_TRUE(shared_state_->executed_instance_ids.empty());
+    EXPECT_EQ(shared_state_->get_last_props_key1_value(), "default");
+    EXPECT_TRUE((shared_state_->executed_count == 0));
 }
 
 TEST_F(
@@ -3291,12 +3337,12 @@ TEST_F(
         (*execution_input)[std::string_view("key1")].as_string().value_or(""),
         std::string_view("compiled"));
 
-    std::lock_guard<std::mutex> lock(shared_state_->mutex);
+    ipc_scoped_lock lock(shared_state_->mutex);
     EXPECT_EQ(shared_state_->compile_count, 1);
-    EXPECT_EQ(shared_state_->last_compile_purpose, "execution");
+    EXPECT_EQ(shared_state_->get_last_compile_purpose(), "execution");
     EXPECT_EQ(shared_state_->last_context_entry_id, 0);
     EXPECT_FALSE(shared_state_->last_context_had_task_id);
-    EXPECT_TRUE(shared_state_->executed_instance_ids.empty());
+    EXPECT_TRUE((shared_state_->executed_count == 0));
 }
 
 TEST_F(
@@ -3342,12 +3388,12 @@ TEST_F(
         (*execution_input)[std::string_view("key1")].as_string().value_or(""),
         std::string_view("compiled"));
 
-    std::lock_guard<std::mutex> lock(shared_state_->mutex);
+    ipc_scoped_lock lock(shared_state_->mutex);
     EXPECT_EQ(shared_state_->compile_count, 1);
-    EXPECT_EQ(shared_state_->last_compile_purpose, "execution");
+    EXPECT_EQ(shared_state_->get_last_compile_purpose(), "execution");
     EXPECT_EQ(shared_state_->last_context_entry_id, 0);
     EXPECT_FALSE(shared_state_->last_context_had_task_id);
-    EXPECT_TRUE(shared_state_->executed_instance_ids.empty());
+    EXPECT_TRUE((shared_state_->executed_count == 0));
 }
 
 TEST_F(
@@ -3475,7 +3521,7 @@ TEST_F(
             -1),
         0);
 
-    std::lock_guard<std::mutex> lock(shared_state_->mutex);
+    ipc_scoped_lock lock(shared_state_->mutex);
     EXPECT_EQ(shared_state_->authoring_session_count, 1);
     EXPECT_EQ(shared_state_->decoy_authoring_create_count, 0);
     EXPECT_EQ(shared_state_->get_document_count, 1);
@@ -3483,7 +3529,7 @@ TEST_F(
     EXPECT_FALSE(shared_state_->last_context_had_task_id);
     EXPECT_EQ(shared_state_->last_context_task_id, -1);
     EXPECT_EQ(shared_state_->last_context_revision, 0);
-    EXPECT_EQ(shared_state_->last_props_key1_value, "default");
+    EXPECT_EQ(shared_state_->get_last_props_key1_value(), "default");
 }
 
 TEST_F(
@@ -3546,7 +3592,7 @@ TEST_F(
             .value_or(""),
         std::string_view("fake-source"));
 
-    std::lock_guard<std::mutex> lock(shared_state_->mutex);
+    ipc_scoped_lock lock(shared_state_->mutex);
     EXPECT_EQ(shared_state_->apply_change_count, 1);
     EXPECT_GE(shared_state_->get_document_count, 1);
     EXPECT_EQ(shared_state_->last_context_entry_id, 0);
@@ -3624,7 +3670,7 @@ TEST_F(
             -1),
         0);
     {
-        std::lock_guard<std::mutex> lock(shared_state_->mutex);
+        ipc_scoped_lock lock(shared_state_->mutex);
         shared_state_->apply_ok = false;
     }
 
@@ -3651,7 +3697,7 @@ TEST_F(
         (*persisted_props)[std::string_view("key1")].as_string().value_or(""),
         std::string_view("default"));
 
-    std::lock_guard<std::mutex> lock(shared_state_->mutex);
+    ipc_scoped_lock lock(shared_state_->mutex);
     EXPECT_EQ(shared_state_->apply_change_count, 1);
 }
 
@@ -3679,7 +3725,7 @@ TEST_F(
         (*obj)[std::string_view("errorKind")].as_string().value_or(""),
         std::string_view("persistenceFailed"));
 
-    std::lock_guard<std::mutex> lock(shared_state_->mutex);
+    ipc_scoped_lock lock(shared_state_->mutex);
     EXPECT_EQ(shared_state_->apply_change_count, 1);
 }
 
@@ -3749,8 +3795,8 @@ TEST_F(
         0);
 
     EXPECT_EQ(scheduler_->Enable(), DAS_E_OBJECT_NOT_INIT);
-    std::lock_guard<std::mutex> lock(shared_state_->mutex);
-    EXPECT_TRUE(shared_state_->executed_instance_ids.empty());
+    ipc_scoped_lock lock(shared_state_->mutex);
+    EXPECT_TRUE((shared_state_->executed_count == 0));
     EXPECT_EQ(shared_state_->compile_count, 0);
 }
 
@@ -4416,12 +4462,12 @@ TEST_F(
         0);
 
     {
-        std::lock_guard<std::mutex> lock(shared_state_->mutex);
+        ipc_scoped_lock lock(shared_state_->mutex);
         shared_state_->block_do = true;
     }
     ASSERT_EQ(scheduler_->Enable(), DAS_S_OK);
     {
-        std::unique_lock<std::mutex> lock(shared_state_->mutex);
+        ipc_scoped_lock lock(shared_state_->mutex);
         ASSERT_TRUE(shared_state_->cv.wait_for(
             lock,
             std::chrono::seconds(2),
@@ -4436,7 +4482,7 @@ TEST_F(
         "taskWorking");
 
     {
-        std::lock_guard<std::mutex> lock(shared_state_->mutex);
+        ipc_scoped_lock lock(shared_state_->mutex);
         shared_state_->unblock_do = true;
     }
     shared_state_->cv.notify_all();
@@ -4468,12 +4514,12 @@ TEST_F(
         0);
 
     {
-        std::lock_guard<std::mutex> lock(shared_state_->mutex);
+        ipc_scoped_lock lock(shared_state_->mutex);
         shared_state_->block_do = true;
     }
     ASSERT_EQ(scheduler_->Enable(), DAS_S_OK);
     {
-        std::unique_lock<std::mutex> lock(shared_state_->mutex);
+        ipc_scoped_lock lock(shared_state_->mutex);
         ASSERT_TRUE(shared_state_->cv.wait_for(
             lock,
             std::chrono::seconds(2),
@@ -4488,7 +4534,7 @@ TEST_F(
         "taskWorking");
 
     {
-        std::lock_guard<std::mutex> lock(shared_state_->mutex);
+        ipc_scoped_lock lock(shared_state_->mutex);
         shared_state_->unblock_do = true;
     }
     shared_state_->cv.notify_all();
@@ -4654,7 +4700,7 @@ TEST_F(
     WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
 
     {
-        std::lock_guard<std::mutex> lock(shared_state_->mutex);
+        ipc_scoped_lock lock(shared_state_->mutex);
         shared_state_->compile_ok = false;
     }
 
@@ -4663,10 +4709,10 @@ TEST_F(
     std::this_thread::sleep_for(std::chrono::milliseconds(1500));
     ASSERT_EQ(scheduler_->Disable(), DAS_S_OK);
 
-    std::lock_guard<std::mutex> lock(shared_state_->mutex);
+    ipc_scoped_lock lock(shared_state_->mutex);
     EXPECT_EQ(shared_state_->compile_count, 1);
-    EXPECT_EQ(shared_state_->last_compile_purpose, "execution");
-    EXPECT_TRUE(shared_state_->executed_instance_ids.empty());
+    EXPECT_EQ(shared_state_->get_last_compile_purpose(), "execution");
+    EXPECT_TRUE((shared_state_->executed_count == 0));
 }
 
 // ============================================================

@@ -277,7 +277,8 @@ DeepCloneResult RefManager::DeepCloneEntryRef(
                     }
                 }
 
-                new_entry.graph_document = yyjson::object(graph_doc);
+                new_entry.graph_document =
+                    yyjson::object(graph_doc, yyjson::copy_string);
             }
             catch (const std::exception& e)
             {

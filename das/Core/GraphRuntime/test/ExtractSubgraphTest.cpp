@@ -499,18 +499,19 @@ namespace
     TEST_F(ExtractSubgraphTest, ExtractPortDefinitionTypePreservation)
     {
         // Inbound edge → child input port type matches the source edge's port
-        // type
+        // type. Port type is resolved from the selected node's dynamic_ports.
+        auto selected = MakeComponentRefNode("selected", "{g2}");
+        selected.dynamic_ports.push_back(MakePortDef("input_port", "number"));
+
         auto parent_doc = MakeGraphDocument(
             "parent_12",
-            {MakeComponentRefNode("outside", "{g1}"),
-             MakeComponentRefNode("selected", "{g2}")},
+            {MakeComponentRefNode("outside", "{g1}"), selected},
             {MakeEdge(
                 "e1",
                 "outside",
                 "output_port",
                 "selected",
-                "input_port")},
-            {MakePortDef("input_port", "number")}); // port type = "number"
+                "input_port")});
 
         auto result = extractor.Extract(
             1,

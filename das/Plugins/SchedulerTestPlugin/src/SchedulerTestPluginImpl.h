@@ -18,7 +18,7 @@ public:
     {
         if (state_)
         {
-            std::lock_guard<std::mutex> lock(state_->mutex);
+            ipc_scoped_lock lock(state_->mutex);
             instance_id_ = ++state_->created_instance_count;
         }
     }

@@ -108,12 +108,28 @@ namespace IpcTestConfig
     inline std::string GetPluginDir()
     {
         const char* plugin_dir = std::getenv("DAS_PLUGIN_DIR");
-        if (plugin_dir == nullptr || strlen(plugin_dir) == 0)
+        if (plugin_dir != nullptr && strlen(plugin_dir) > 0)
         {
-            throw std::runtime_error(
-                "DAS_PLUGIN_DIR environment variable is not set");
+            return plugin_dir;
         }
-        return plugin_dir;
+
+        // CMake 4.x gtest_discover_tests 序列化多变量 ENVIRONMENT list 时，
+        // set_tests_properties 会丢失第二个变量（DAS_PLUGIN_DIR）。
+        // 回退：从 DAS_HOST_EXE_PATH 推导——plugins/ 是 DasHost.exe
+        // 的同级子目录。
+        const char* host_path = std::getenv("DAS_HOST_EXE_PATH");
+        if (host_path != nullptr && strlen(host_path) > 0)
+        {
+            std::filesystem::path plugins_dir =
+                std::filesystem::path(host_path).parent_path() / "plugins";
+            if (std::filesystem::exists(plugins_dir))
+            {
+                return plugins_dir.string();
+            }
+        }
+
+        throw std::runtime_error(
+            "DAS_PLUGIN_DIR environment variable is not set");
     }
 
     /**

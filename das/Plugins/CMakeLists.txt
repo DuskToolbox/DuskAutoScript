@@ -34,6 +34,11 @@ if(TARGET TaskSchedulerTest)
     add_dependencies(TaskSchedulerTest SchedulerTestPlugin)
     target_include_directories(TaskSchedulerTest PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/SchedulerTestPlugin/include)
+    # 暴露 SchedulerTestPlugin 的实际产物文件名给测试源码：
+    # MSVC 产出 SchedulerTestPlugin.dll，MinGW/Linux 产出 libSchedulerTestPlugin.{dll,so}。
+    # $<TARGET_FILE_NAME:...> 在构建期求值，跨平台得到正确文件名。
+    target_compile_definitions(TaskSchedulerTest PRIVATE
+        DAS_SCHEDULER_TEST_PLUGIN_FILENAME="$<TARGET_FILE_NAME:SchedulerTestPlugin>")
 endif()
 
 if(DAS_BUILD_TEST)
@@ -66,6 +71,10 @@ endif()
 # IpcTestPlugin1 - IDasTouch Mock for IPC testing
 if(DAS_BUILD_TEST)
     das_add_plugin_library(IpcTestPlugin1 DAS_EX_PRIVATE_LIBS)
+    # 强制 lib 前缀，匹配 CppPluginLoadTest.IpcTestPlugin1ArtifactsUseLibPrefixedBinaryContract
+    # 的"artifacts always use lib prefix"契约。不设此项时 MSVC 产物为 IpcTestPlugin1.dll（无前缀），
+    # 违反契约。设置 PREFIX "lib" 后所有平台统一为 libIpcTestPlugin1.{dll|so}。
+    set_target_properties(IpcTestPlugin1 PROPERTIES PREFIX "lib")
 endif()
 
 # SchedulerTestPlugin - 真实 InProcess Cpp 测试插件，替代死代码 FakeFactoryRuntime。

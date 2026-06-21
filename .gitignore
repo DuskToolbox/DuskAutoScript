@@ -13,4 +13,10 @@ cmake-build-debug-visual-studio/
 .codex/
 __pycache__/
 .planning/
+.omo/
+.opencode/
+.codex/
+.pytest_cache/
+.VSCodeCounter/
+logs/
 CMakeUserPresets.json

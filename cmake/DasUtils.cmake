@@ -213,4 +213,13 @@ macro(das_add_auto_copy_dll_path DLL_PATH)
             POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different ${DLL_PATH} ${CMAKE_BINARY_DIR}/Test)
     endif()
+
+    # 同步拷贝到 plugins/ 子目录。插件 DLL 用 LOAD_WITH_ALTERED_SEARCH_PATH 加载，
+    # 该 flag 让 DLL 自身目录（plugins/）替换 EXE 目录成为依赖搜索起点。
+    # 若 DasCore.dll 不在 plugins/ 中，插件 DLL 加载时找不到依赖 → "module not found"。
+    add_custom_command(
+        TARGET DasAutoCopyDll
+        POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:DasCore>/plugins
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${DLL_PATH} $<TARGET_FILE_DIR:DasCore>/plugins)
 endmacro()

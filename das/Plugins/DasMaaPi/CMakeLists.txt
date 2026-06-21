@@ -1,6 +1,11 @@
 aux_source_directory(src DAS_MAAPI_SOURCES)
 
 add_library(DasMaaPi SHARED ${DAS_MAAPI_SOURCES})
+# 强制 lib 前缀，匹配 DasMaaPi 测试套件中 libDasMaaPi.dll 的预期
+# （MaapiPluginScaffoldTest.ArtifactsUseOfficialPluginContract、
+#  MaapiIntegrationFixture.SampleInterfaceAuthoringCompileRuntimeDryRun 等）。
+# MSVC 默认无前缀；设 PREFIX "lib" 后所有平台统一为 libDasMaaPi.{dll|so}。
+set_target_properties(DasMaaPi PROPERTIES PREFIX "lib")
 target_include_directories(DasMaaPi PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_options(DasMaaPi PRIVATE

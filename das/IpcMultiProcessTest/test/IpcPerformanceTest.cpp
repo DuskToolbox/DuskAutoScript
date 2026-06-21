@@ -1407,6 +1407,9 @@ TEST(IpcPerfColdStart, ColdStart_FirstCall)
         }
 
         // 6. Teardown
+        // launcher 必须在 ctx 之前析构：HostLauncher::Stop() 内部需要
+        // io_context 存活才能安全清理 boost::process 的 wait callback。
+        launcher.Reset();
         ctx->RequestStop();
         run_thread.join();
         ctx.reset();

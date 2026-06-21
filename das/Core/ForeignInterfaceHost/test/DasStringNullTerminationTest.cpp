@@ -99,8 +99,7 @@ TEST(DasStringNullTerminationTest, GetUtf16_StdU16StringInterop)
 TEST(DasStringNullTerminationTest, GetUtf16_MixedAsciiCjk)
 {
     auto* p_string = new DasStringCppImpl();
-    p_string->SetUtf8(
-        reinterpret_cast<const char*>(u8"model_\xE6\xA8\xA1\xE5\x9E\x8B_v2"));
+    p_string->SetUtf8(reinterpret_cast<const char*>(u8"model_模型_v2"));
     const char16_t* out_string = nullptr;
     size_t          out_string_size = 0;
     p_string->GetUtf16(&out_string, &out_string_size);

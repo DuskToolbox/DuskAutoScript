@@ -24,14 +24,18 @@
 #include <das/Utils/StringUtils.h>
 #include <das/Utils/fmt.h>
 #include <filesystem>
+#include <future>
 #include <limits>
 #include <map>
 #include <optional>
 #include <thread>
 
+#include <boost/asio/bind_cancellation_slot.hpp>
+#include <boost/asio/cancellation_signal.hpp>
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
 #include <boost/asio/io_context.hpp>
+#include <boost/asio/post.hpp>
 #include <boost/asio/redirect_error.hpp>
 #include <boost/asio/steady_timer.hpp>
 #include <boost/asio/use_awaitable.hpp>
@@ -60,8 +64,16 @@ struct HostLauncher::Impl
     boost::asio::io_context& io_ctx; // 引用，由外部管理生命周期
     std::unique_ptr<boost::process::v2::process> process;
     std::optional<AnyTransport>                  async_transport;
-    uint32_t                                     pid = 0;
-    uint16_t                                     session_id = 0;
+    // 用于取消 StartLaunchSequence 中 co_spawn 的 process-exit watcher 协程。
+    // Stop()/TerminateIfRunning() 在 process.reset() 前 emit 信号并 drain
+    // io_context，避免 io_context 线程在 freed handle 上执行 async_wait。
+    std::unique_ptr<boost::asio::cancellation_signal> process_exit_cancel;
+    // StartLaunchSequence 用 use_future 拉起的 exit-watcher 协程的 future。
+    // Stop() 在 process.reset() 前 wait()，确保 io_context 线程不再引用
+    // process handle，避免 heap-use-after-free。
+    std::future<void>     process_exit_future;
+    uint32_t              pid = 0;
+    uint16_t              session_id = 0;
     uint16_t              next_call_id = 1; // V3: 16-bit call_id
     bool                  is_running = false;
     std::atomic<uint32_t> ref_count{1}; // 引用计数，初始为 1（创建时持有）
@@ -628,7 +640,7 @@ DasResult HostLauncher::StartLaunchSequence(
         auto session_id = session_id_;
         auto process_ptr = impl_->process.get();
 
-        boost::asio::co_spawn(
+        impl_->process_exit_future = boost::asio::co_spawn(
             impl_->io_ctx,
             [this, process_ptr, session_id]() -> boost::asio::awaitable<void>
             {
@@ -642,7 +654,7 @@ DasResult HostLauncher::StartLaunchSequence(
                 on_process_exit_slot_.Invoke(session_id, exit_code);
                 co_return;
             },
-            boost::asio::detached);
+            boost::asio::use_future);
     }
 
     return DAS_S_OK;
@@ -757,9 +769,29 @@ void HostLauncher::Stop()
             impl_->process->terminate(ec);
         }
 
-        // 释放进程句柄所有权，避免析构函数中任何潜在的阻塞
-        // 注意：这会导致进程句柄泄漏，但避免了测试超时问题
-        (void)impl_->process.release();
+        // 等 StartLaunchSequence 的 process-exit watcher 协程跑完，
+        // 确保 io_context 线程不再引用 process handle。否则 process.reset()
+        // 释放 handle 时，io_context 线程可能仍在 async_wait completion 中
+        // → heap-use-after-free（test 1338）。
+        if (impl_->process_exit_future.valid())
+        {
+            try
+            {
+                impl_->process_exit_future.wait();
+            }
+            catch (...)
+            {
+                // coroutine 异常（如 process 已退出时的 error_code）忽略
+            }
+        }
+
+        // 等子进程真正退出后再析构（terminate 后 wait 瞬间返回），
+        // 缩小 io_context 线程处理 exit 事件与 reset() 的竞争窗口。
+        impl_->process->wait(ec);
+
+        // 正常析构：Windows 上 ~process() 会调 UnregisterWaitEx(NULL)，
+        // 同步等待已 pending 的 thread-pool wait callback 完成。
+        impl_->process.reset();
     }
 
     impl_->is_running = false;
@@ -892,7 +924,11 @@ void HostLauncher::TerminateIfRunning()
             impl_->process->terminate(ec);
         }
 
-        // 释放进程句柄所有权
+        // 心跳超时是错误恢复路径，从非 io_context 线程调用。
+        // 用 release() 而非 reset()：reset() 会触发析构 → UnregisterWaitEx，
+        // 但 io_context 线程可能还有 pending 的 async_wait completion，
+        // 导致 process handle UAF。release() 泄漏 handle 但避免竞争。
+        // 正常 Stop() 路径（从主线程调用、io_context 即将停止）用 reset()。
         (void)impl_->process.release();
     }
 

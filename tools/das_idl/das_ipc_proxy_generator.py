@@ -592,8 +592,8 @@ class IpcProxyGenerator:
     
     # 固定大小类型映射表（用于零堆分配栈上结构体）
     FIXED_SIZES = {
-        'int8': 1, 'uint8': 1,
-        'int16': 2, 'uint16': 2,
+        'int8': 1, 'uint8': 1, 'int8_t': 1, 'uint8_t': 1,
+        'int16': 2, 'uint16': 2, 'int16_t': 2, 'uint16_t': 2,
         'int32': 4, 'uint32': 4, 'int32_t': 4, 'uint32_t': 4,
         'int64': 8, 'uint64': 8, 'int64_t': 8, 'uint64_t': 8,
         'int': 4, 'uint': 4,

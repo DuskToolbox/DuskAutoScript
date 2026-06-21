@@ -72,10 +72,7 @@ def fnv1a_hash_guid(guid_str: str) -> int:
 
 
 def fnv1a_hash(data: str) -> int:
-    """Compute FNV-1a 32-bit hash of a UTF-8 encoded string.
-
-    Used to derive method IDs from ``"InterfaceName::MethodName"`` strings.
-    """
+    """Compute FNV-1a 32-bit hash of a UTF-8 encoded string."""
     hash_value = FNV_OFFSET_BASIS
     for byte in data.encode("utf-8"):
         hash_value ^= byte

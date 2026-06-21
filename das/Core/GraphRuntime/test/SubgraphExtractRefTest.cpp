@@ -658,13 +658,16 @@ namespace
     TEST_F(SubgraphExtractRefTest, PortProjectionThroughExtractAndCompile)
     {
         // Parent: outer_in → A(selected) → outer_out
-        // After extraction, the child subgraph should have matching ports
+        // After extraction, the child subgraph should have matching ports.
+        // Port type is resolved from the selected node's dynamic_ports.
+        auto selected = MakeComponentRefNode("selected", "{g-sel}");
+        selected.dynamic_ports.push_back(MakePortDef("in_port", "image"));
+
         auto parent = MakeGraphDocument(
             "parent_port",
-            {MakeComponentRefNode("outside", "{g-out}"),
-             MakeComponentRefNode("selected", "{g-sel}")},
+            {MakeComponentRefNode("outside", "{g-out}"), selected},
             {MakeEdge("e1", "outside", "out_port", "selected", "in_port")},
-            {MakePortDef("in_port", "image")},
+            {},
             {MakePortDef("out_port", "image")});
 
         // Extract "selected" into child
