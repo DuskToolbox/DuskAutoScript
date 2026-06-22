@@ -331,6 +331,18 @@ target_link_libraries(DasCore PRIVATE ${DAS_FOREIGN_LANGUAGE_LIB_LIST})
 
 if(${DAS_BUILD_TEST})
     das_add_core_test(ForeignInterfaceHost)
+
+    # 将 Node addon/package 名称传递给生产和测试目标，
+    # 替代各文件中硬编码的 das_core_napi / das-core-node 字符串
+    if(EXPORT_NODE AND NODE_ADDON_NAME)
+        target_compile_definitions(DasCoreObjects PRIVATE
+            DAS_NODE_ADDON_NAME="${NODE_ADDON_NAME}"
+            DAS_NODE_PACKAGE_NAME="${NODE_PACKAGE_NAME}")
+        target_compile_definitions(ForeignInterfaceHostTest PRIVATE
+            DAS_NODE_ADDON_NAME="${NODE_ADDON_NAME}"
+            DAS_NODE_PACKAGE_NAME="${NODE_PACKAGE_NAME}")
+    endif()
+
     das_add_core_test(i18n)
     das_add_core_test(Utils)
     das_add_core_test(SettingsManager)

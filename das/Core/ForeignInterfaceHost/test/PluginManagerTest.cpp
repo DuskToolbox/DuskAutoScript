@@ -38,6 +38,13 @@ DAS_DISABLE_WARNING_END
 
 #include <boost/asio/io_context.hpp>
 
+#ifndef DAS_NODE_PACKAGE_NAME
+#define DAS_NODE_PACKAGE_NAME "das-core-node"
+#endif
+#ifndef DAS_NODE_ADDON_NAME
+#define DAS_NODE_ADDON_NAME "das_core_napi"
+#endif
+
 // clang-format off
 // TestablePluginManager.h 必须在所有 STL/业务头之后 include：它内部
 // #define private protected 让 PluginManager 私有字段可被子类访问，
@@ -1972,16 +1979,18 @@ TEST_F(PluginManagerGuidTest, LoadPlugin_NodeManifestRoutesThroughNodeRuntime)
     const auto manifest_path = test_dir / "node_plugin.json";
     const auto node_exe_path = test_dir / "fake-node.exe";
     const auto node_modules_root = test_dir / "node_modules";
-    const auto runtime_root = node_modules_root / "das-core-node";
+    const auto runtime_root = node_modules_root / DAS_NODE_PACKAGE_NAME;
     {
         std::ofstream{node_exe_path} << "\n";
         std::filesystem::create_directories(runtime_root / "bin");
         std::filesystem::create_directories(runtime_root / "native");
         std::ofstream{runtime_root / "package.json"} << "\n";
         std::ofstream{runtime_root / "index.cjs"} << "\n";
-        std::ofstream{runtime_root / "das_core_napi_export.js"} << "\n";
+        std::ofstream{runtime_root / (DAS_NODE_ADDON_NAME "_export.js")}
+            << "\n";
         std::ofstream{runtime_root / "bin" / "das-node-host.cjs"} << "\n";
-        std::ofstream{runtime_root / "native" / "das_core_napi.node"} << "\n";
+        std::ofstream{runtime_root / "native" / (DAS_NODE_ADDON_NAME ".node")}
+            << "\n";
     }
 
     auto manifest = Das::Utils::MakeYyjsonObject();

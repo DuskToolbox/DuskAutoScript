@@ -21,6 +21,13 @@ if (${DAS_BUILD_TEST})
         target_compile_definitions(${IpcMultiProcessTest_NAME} PRIVATE WIN32_LEAN_AND_MEAN)
     endif()
 
+    # 传递 Node addon/package 名称，替代硬编码的 das_core_napi / das-core-node
+    if(NODE_ADDON_NAME)
+        target_compile_definitions(${IpcMultiProcessTest_NAME} PRIVATE
+            DAS_NODE_ADDON_NAME="${NODE_ADDON_NAME}"
+            DAS_NODE_PACKAGE_NAME="${NODE_PACKAGE_NAME}")
+    endif()
+
     # 添加包含目录 - IPC 核心头文件
     target_include_directories(${IpcMultiProcessTest_NAME} PRIVATE
         ${CMAKE_SOURCE_DIR}/das/Core/IPC/include

@@ -26,12 +26,18 @@ namespace
 {
     constexpr auto NODE_HOST_EXECUTABLE_ENV = "DAS_NODE_HOST_EXE_PATH";
     constexpr auto NODE_EXECUTABLE_NAME = "node";
-    constexpr auto RUNTIME_PACKAGE_NAME = "das-core-node";
+#ifndef DAS_NODE_PACKAGE_NAME
+#define DAS_NODE_PACKAGE_NAME "das-core-node"
+#endif
+#ifndef DAS_NODE_ADDON_NAME
+#define DAS_NODE_ADDON_NAME "das_core_napi"
+#endif
+    constexpr auto RUNTIME_PACKAGE_NAME = DAS_NODE_PACKAGE_NAME;
     constexpr auto PACKAGE_JSON_FILE_NAME = "package.json";
     constexpr auto PACKAGE_ENTRY_FILE_NAME = "index.cjs";
     constexpr auto HOST_SCRIPT_RELATIVE = "bin/das-node-host.cjs";
-    constexpr auto WRAPPER_FILE_NAME = "das_core_napi_export.js";
-    constexpr auto ADDON_RELATIVE = "native/das_core_napi.node";
+    constexpr auto WRAPPER_FILE_NAME = DAS_NODE_ADDON_NAME "_export.js";
+    constexpr auto ADDON_RELATIVE = "native/" DAS_NODE_ADDON_NAME ".node";
 
 #ifdef _WIN32
     constexpr auto DYNAMIC_LIBRARY_PATH_ENV = "PATH";

@@ -47,6 +47,13 @@
 #include <string_view>
 #include <vector>
 
+#ifndef DAS_NODE_PACKAGE_NAME
+#define DAS_NODE_PACKAGE_NAME "das-core-node"
+#endif
+#ifndef DAS_NODE_ADDON_NAME
+#define DAS_NODE_ADDON_NAME "das_core_napi"
+#endif
+
 DAS_DISABLE_WARNING_BEGIN
 DAS_IGNORE_BOOST_PROCESS_WARNING
 
@@ -602,10 +609,11 @@ namespace
         return std::filesystem::path{resolved.string()};
     }
 
-    constexpr auto NODE_RUNTIME_PACKAGE_NAME = "das-core-node";
+    constexpr auto NODE_RUNTIME_PACKAGE_NAME = DAS_NODE_PACKAGE_NAME;
     constexpr auto NODE_HOST_SCRIPT_RELATIVE = "bin/das-node-host.cjs";
-    constexpr auto NODE_RUNTIME_WRAPPER_FILE = "das_core_napi_export.js";
-    constexpr auto NODE_RUNTIME_ADDON_RELATIVE = "native/das_core_napi.node";
+    constexpr auto NODE_RUNTIME_WRAPPER_FILE = DAS_NODE_ADDON_NAME "_export.js";
+    constexpr auto NODE_RUNTIME_ADDON_RELATIVE =
+        "native/" DAS_NODE_ADDON_NAME ".node";
 
 #ifdef _WIN32
     constexpr auto DYNAMIC_LIBRARY_PATH_ENV = "PATH";
@@ -685,7 +693,7 @@ namespace
         const std::array<std::filesystem::path, 3> forbidden_files{
             "das-node-host.cjs",
             NODE_RUNTIME_WRAPPER_FILE,
-            "das_core_napi.node"};
+            DAS_NODE_ADDON_NAME ".node"};
 
         for (const auto& relative : forbidden_files)
         {

@@ -26,11 +26,17 @@ using namespace DAS::Core::ForeignInterfaceHost;
 namespace
 {
     constexpr auto NODE_HOST_EXECUTABLE_ENV = "DAS_NODE_HOST_EXE_PATH";
-    constexpr auto RUNTIME_PACKAGE_NAME = "das-core-node";
+#ifndef DAS_NODE_PACKAGE_NAME
+#define DAS_NODE_PACKAGE_NAME "das-core-node"
+#endif
+#ifndef DAS_NODE_ADDON_NAME
+#define DAS_NODE_ADDON_NAME "das_core_napi"
+#endif
+    constexpr auto RUNTIME_PACKAGE_NAME = DAS_NODE_PACKAGE_NAME;
     constexpr auto HOST_SCRIPT_RELATIVE = "bin/das-node-host.cjs";
     constexpr auto PACKAGE_ENTRY_RELATIVE = "index.cjs";
-    constexpr auto WRAPPER_RELATIVE = "das_core_napi_export.js";
-    constexpr auto ADDON_RELATIVE = "native/das_core_napi.node";
+    constexpr auto WRAPPER_RELATIVE = DAS_NODE_ADDON_NAME "_export.js";
+    constexpr auto ADDON_RELATIVE = "native/" DAS_NODE_ADDON_NAME ".node";
 
 #ifdef _WIN32
     constexpr auto DYNAMIC_LIBRARY_PATH_ENV = "PATH";
@@ -185,7 +191,7 @@ namespace
             CreatePackageFile(PACKAGE_ENTRY_RELATIVE);
             CreatePackageFile(WRAPPER_RELATIVE);
             CreatePackageFile("das-node-host.cjs");
-            CreatePackageFile("das_core_napi.node");
+            CreatePackageFile(DAS_NODE_ADDON_NAME ".node");
         }
 
         void RemoveRuntimeFile(std::string_view relative)
@@ -421,10 +427,10 @@ TEST(NodeRuntimePackage, ResolvesExplicitRuntimePackagePaths)
         layout.RuntimeRoot() / "bin" / "das-node-host.cjs");
     EXPECT_EQ(
         paths.wrapper_path,
-        layout.RuntimeRoot() / "das_core_napi_export.js");
+        layout.RuntimeRoot() / (DAS_NODE_ADDON_NAME "_export.js"));
     EXPECT_EQ(
         paths.addon_path,
-        layout.RuntimeRoot() / "native" / "das_core_napi.node");
+        layout.RuntimeRoot() / "native" / (DAS_NODE_ADDON_NAME ".node"));
     EXPECT_NE(paths.host_script_path.parent_path(), layout.PackageRoot());
 }
 
