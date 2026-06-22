@@ -59,6 +59,9 @@ if (${DAS_BUILD_TEST})
     if(TARGET PythonTestPluginCopy)
         add_dependencies(${IpcMultiProcessTest_NAME} PythonTestPluginCopy)
     endif()
+    if(TARGET NodeTestPluginCopy)
+        add_dependencies(${IpcMultiProcessTest_NAME} NodeTestPluginCopy)
+    endif()
     if(TARGET CSharpTestPluginModernIpcPackage)
         add_dependencies(
             ${IpcMultiProcessTest_NAME}
