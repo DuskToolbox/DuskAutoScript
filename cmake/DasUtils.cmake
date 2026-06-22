@@ -74,7 +74,7 @@ endfunction()
 
 function(das_get_test_runtime_environment out_var)
     set(_das_test_env_list
-        "DAS_HOST_EXE_PATH=${CMAKE_BINARY_DIR}/bin/$<CONFIG>/DasHost.exe"
+        "DAS_HOST_EXE_PATH=$<TARGET_FILE:DasHostX>"
         "DAS_PLUGIN_DIR=${CMAKE_BINARY_DIR}/bin/$<CONFIG>/plugins")
     list(JOIN _das_test_env_list "\\;" _das_test_env)
     set(${out_var} "${_das_test_env}" PARENT_SCOPE)
@@ -212,14 +212,13 @@ macro(das_add_auto_copy_dll_path DLL_PATH)
             TARGET DasAutoCopyDll
             POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different ${DLL_PATH} ${CMAKE_BINARY_DIR}/Test)
-    endif()
 
-    # 同步拷贝到 plugins/ 子目录。插件 DLL 用 LOAD_WITH_ALTERED_SEARCH_PATH 加载，
-    # 该 flag 让 DLL 自身目录（plugins/）替换 EXE 目录成为依赖搜索起点。
-    # 若 DasCore.dll 不在 plugins/ 中，插件 DLL 加载时找不到依赖 → "module not found"。
-    add_custom_command(
-        TARGET DasAutoCopyDll
-        POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:DasCore>/plugins
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${DLL_PATH} $<TARGET_FILE_DIR:DasCore>/plugins)
+        # 某些测试直接加载插件 DLL（不通过 DasHostX），需要 DasCore.dll 在 plugins/
+        # 中作为依赖。DasHostX 自身已从 bin/Debug/ 加载，重用已加载实例。
+        add_custom_command(
+            TARGET DasAutoCopyDll
+            POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:DasCore>/plugins
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${DLL_PATH} $<TARGET_FILE_DIR:DasCore>/plugins)
+    endif()
 endmacro()

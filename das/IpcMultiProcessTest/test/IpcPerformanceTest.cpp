@@ -904,7 +904,7 @@ TEST_F(IpcPerformanceTest, RoundTripLatency_Compute)
 {
     if (!std::filesystem::exists(host_exe_path_))
     {
-        GTEST_SKIP() << "DasHost.exe not found";
+        GTEST_SKIP() << "DasHostX.exe not found";
     }
 
     auto launcher = StartSingleHost();
@@ -983,7 +983,7 @@ TEST_F(IpcPerformanceTest, RoundTripLatency_Echo_SmallString)
 {
     if (!std::filesystem::exists(host_exe_path_))
     {
-        GTEST_SKIP() << "DasHost.exe not found";
+        GTEST_SKIP() << "DasHostX.exe not found";
     }
 
     auto launcher = StartSingleHost();
@@ -1062,7 +1062,7 @@ TEST_F(IpcPerformanceTest, RoundTripLatency_Echo_MediumString)
 {
     if (!std::filesystem::exists(host_exe_path_))
     {
-        GTEST_SKIP() << "DasHost.exe not found";
+        GTEST_SKIP() << "DasHostX.exe not found";
     }
 
     auto launcher = StartSingleHost();
@@ -1141,7 +1141,7 @@ TEST_F(IpcPerformanceTest, RoundTripLatency_Echo_LargePayload_32KB)
 {
     if (!std::filesystem::exists(host_exe_path_))
     {
-        GTEST_SKIP() << "DasHost.exe not found";
+        GTEST_SKIP() << "DasHostX.exe not found";
     }
 
     auto launcher = StartSingleHost();
@@ -1231,7 +1231,7 @@ TEST(IpcPerfColdStart, ColdStart_FirstCall)
 
     if (!std::filesystem::exists(host_exe_path))
     {
-        GTEST_SKIP() << "DasHost.exe not found";
+        GTEST_SKIP() << "DasHostX.exe not found";
     }
 
     constexpr size_t    kCycles = 10;
@@ -1480,7 +1480,7 @@ TEST_F(IpcPerformanceTest, Throughput_Sustained_10s)
 {
     if (!std::filesystem::exists(host_exe_path_))
     {
-        GTEST_SKIP() << "DasHost.exe not found";
+        GTEST_SKIP() << "DasHostX.exe not found";
     }
 
     auto launcher = StartSingleHost();
@@ -1619,7 +1619,7 @@ TEST_F(IpcPerformanceTest, ReverseIPC_QueryMainProcessString)
 {
     if (!std::filesystem::exists(host_exe_path_))
     {
-        GTEST_SKIP() << "DasHost.exe not found";
+        GTEST_SKIP() << "DasHostX.exe not found";
     }
 
     // 1. Register IDasReadOnlyString service in main process
@@ -1723,7 +1723,7 @@ TEST_F(IpcPerformanceTest, MixedTransport_HttpAndIpcHostToHostPerformance)
 {
     if (!std::filesystem::exists(host_exe_path_))
     {
-        GTEST_SKIP() << "DasHost.exe not found";
+        GTEST_SKIP() << "DasHostX.exe not found";
     }
 
     ASSERT_GT(http_port_, static_cast<uint16_t>(0))
@@ -1895,7 +1895,7 @@ TEST_F(IpcPerformanceTest, RemoteProxy_IsSupported_FirstCall)
 {
     if (!std::filesystem::exists(host_exe_path_))
     {
-        GTEST_SKIP() << "DasHost.exe not found";
+        GTEST_SKIP() << "DasHostX.exe not found";
     }
 
     auto launcher = StartSingleHost();
@@ -2034,7 +2034,7 @@ TEST_F(IpcPerformanceTest, Stress_HighFrequency_Dispatch)
 {
     if (!std::filesystem::exists(host_exe_path_))
     {
-        GTEST_SKIP() << "DasHost.exe not found";
+        GTEST_SKIP() << "DasHostX.exe not found";
     }
 
     auto launcher = StartSingleHost();
@@ -2127,7 +2127,7 @@ TEST_F(IpcPerformanceTest, DualHost_AlternatingCalls)
 {
     if (!std::filesystem::exists(host_exe_path_))
     {
-        GTEST_SKIP() << "DasHost.exe not found";
+        GTEST_SKIP() << "DasHostX.exe not found";
     }
 
     // 1. Start dual hosts

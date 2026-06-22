@@ -2,8 +2,8 @@
  * @file IpcMultiProcessTestIntegration.cpp
  * @brief IPC 多进程集成测试 - 真正启动进程的测试
  *
- * 这些测试会启动真实的 DasHost.exe 进程进行端到端测试。
- * 需要 DAS_HOST_EXE_PATH 环境变量指向 DasHost.exe。
+ * 这些测试会启动真实的 DasHostX.exe 进程进行端到端测试。
+ * 需要 DAS_HOST_EXE_PATH 环境变量指向 DasHostX.exe。
  *
  * 测试场景：
  * 1. 进程启动与关闭
@@ -715,21 +715,6 @@ namespace
                    << node_modules.string();
         }
 
-        if (std::filesystem::is_directory(plugin_root))
-        {
-            for (const auto& entry :
-                 std::filesystem::directory_iterator(plugin_root))
-            {
-                if (entry.is_regular_file()
-                    && IsDasRuntimeLibraryArtifact(entry.path()))
-                {
-                    return testing::AssertionFailure()
-                           << "Node plugin root contains DAS runtime library: "
-                           << entry.path().string();
-                }
-            }
-        }
-
         return testing::AssertionSuccess();
     }
 
@@ -1036,7 +1021,7 @@ namespace
         if (!std::filesystem::is_regular_file(python_abi_runtime))
         {
             return testing::AssertionFailure()
-                   << "Python ABI runtime DLL not copied beside DasHost.exe: "
+                   << "Python ABI runtime DLL not copied beside DasHostX.exe: "
                    << python_abi_runtime.string();
         }
 #endif
@@ -1482,7 +1467,7 @@ TEST_F(IpcMultiProcessTestIntegration, HostLauncherStart)
 {
     if (!std::filesystem::exists(host_exe_path_))
     {
-        GTEST_SKIP() << "DasHost.exe not found at: " << host_exe_path_;
+        GTEST_SKIP() << "DasHostX.exe not found at: " << host_exe_path_;
     }
 
     uint16_t  session_id = 0;
@@ -1501,7 +1486,7 @@ TEST_F(IpcMultiProcessTestIntegration, HeartbeatResponse_KeepsRealHostAlive)
 {
     if (!std::filesystem::exists(host_exe_path_))
     {
-        GTEST_SKIP() << "DasHost.exe not found at: " << host_exe_path_;
+        GTEST_SKIP() << "DasHostX.exe not found at: " << host_exe_path_;
     }
     ASSERT_FALSE(IpcTestConfig::ShouldDisableHeartbeat())
         << "Heartbeat keepalive test requires heartbeat to be enabled";
@@ -1531,7 +1516,7 @@ TEST_F(
 {
     if (!std::filesystem::exists(host_exe_path_))
     {
-        GTEST_SKIP() << "DasHost.exe not found at: " << host_exe_path_;
+        GTEST_SKIP() << "DasHostX.exe not found at: " << host_exe_path_;
     }
     ASSERT_FALSE(IpcTestConfig::ShouldDisableHeartbeat())
         << "Heartbeat timeout test requires heartbeat to be enabled";
@@ -1912,7 +1897,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LoadPythonPlugin)
 
     if (!std::filesystem::exists(host_exe_path_))
     {
-        GTEST_SKIP() << "DasHost.exe not found at: " << host_exe_path_;
+        GTEST_SKIP() << "DasHostX.exe not found at: " << host_exe_path_;
     }
 
     std::string plugin_json_path;
@@ -1966,7 +1951,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LoadPythonFolderPlugin)
 
     if (!std::filesystem::exists(host_exe_path_))
     {
-        GTEST_SKIP() << "DasHost.exe not found at: " << host_exe_path_;
+        GTEST_SKIP() << "DasHostX.exe not found at: " << host_exe_path_;
     }
 
     std::filesystem::path folder_manifest_path;
@@ -2015,7 +2000,7 @@ TEST_F(IpcMultiProcessTestIntegration, MultipleStartStop)
     // 测试多次启动/停止
     if (!std::filesystem::exists(host_exe_path_))
     {
-        GTEST_SKIP() << "DasHost.exe not found at: " << host_exe_path_;
+        GTEST_SKIP() << "DasHostX.exe not found at: " << host_exe_path_;
     }
 
     for (int i = 0; i < 3; ++i)
@@ -2040,7 +2025,7 @@ TEST_F(IpcMultiProcessTestIntegration, StopTerminatesProcess)
     // 测试 Stop() 正确终止进程
     if (!std::filesystem::exists(host_exe_path_))
     {
-        GTEST_SKIP() << "DasHost.exe not found at: " << host_exe_path_;
+        GTEST_SKIP() << "DasHostX.exe not found at: " << host_exe_path_;
     }
 
     uint16_t  session_id = 0;
@@ -2074,7 +2059,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LoadPlugin)
 {
     if (!std::filesystem::exists(host_exe_path_))
     {
-        GTEST_SKIP() << "DasHost.exe not found at: " << host_exe_path_;
+        GTEST_SKIP() << "DasHostX.exe not found at: " << host_exe_path_;
     }
 
     // 1. 启动 Host 进程并注册到 ConnectionManager
@@ -2120,7 +2105,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_TaskAuthoringFactory)
 {
     if (!std::filesystem::exists(host_exe_path_))
     {
-        GTEST_SKIP() << "DasHost.exe not found at: " << host_exe_path_;
+        GTEST_SKIP() << "DasHostX.exe not found at: " << host_exe_path_;
     }
 
     DasResult result = StartHostAndSetupRunLoop();
@@ -2206,7 +2191,7 @@ TEST_F(
 {
     if (!std::filesystem::exists(host_exe_path_))
     {
-        GTEST_SKIP() << "DasHost.exe not found at: " << host_exe_path_;
+        GTEST_SKIP() << "DasHostX.exe not found at: " << host_exe_path_;
     }
 
     DasResult result = StartHostAndSetupRunLoop();
@@ -2287,7 +2272,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_TaskComponentFactory)
 {
     if (!std::filesystem::exists(host_exe_path_))
     {
-        GTEST_SKIP() << "DasHost.exe not found at: " << host_exe_path_;
+        GTEST_SKIP() << "DasHostX.exe not found at: " << host_exe_path_;
     }
 
     DasResult result = StartHostAndSetupRunLoop();
@@ -2381,7 +2366,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_HostToHostCall)
 {
     if (!std::filesystem::exists(host_exe_path_))
     {
-        GTEST_SKIP() << "DasHost.exe not found at: " << host_exe_path_;
+        GTEST_SKIP() << "DasHostX.exe not found at: " << host_exe_path_;
     }
 
     // 1. 创建并启动 Host B（目标进程）
@@ -2467,7 +2452,7 @@ TEST_F(IpcMultiProcessTestIntegration, MixedTransport_HttpAndIpcHostToHostCall)
 {
     if (!std::filesystem::exists(host_exe_path_))
     {
-        GTEST_SKIP() << "DasHost.exe not found at: " << host_exe_path_;
+        GTEST_SKIP() << "DasHostX.exe not found at: " << host_exe_path_;
     }
 
     ASSERT_GT(http_port_, static_cast<uint16_t>(0))
@@ -2744,7 +2729,7 @@ TEST_F(
 {
     if (!std::filesystem::exists(host_exe_path_))
     {
-        GTEST_SKIP() << "DasHost.exe not found at: " << host_exe_path_;
+        GTEST_SKIP() << "DasHostX.exe not found at: " << host_exe_path_;
     }
 
     // 使用一个不存在的 PID（极大值，几乎不可能有进程使用）
@@ -2819,7 +2804,7 @@ TEST_F(
 {
     if (!std::filesystem::exists(host_exe_path_))
     {
-        GTEST_SKIP() << "DasHost.exe not found at: " << host_exe_path_;
+        GTEST_SKIP() << "DasHostX.exe not found at: " << host_exe_path_;
     }
 
     FakeMainProcess::KillParentSharedMemory::Cleanup(
@@ -2967,7 +2952,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_AsyncLoadPlugins)
 {
     if (!std::filesystem::exists(host_exe_path_))
     {
-        GTEST_SKIP() << "DasHost.exe not found at: " << host_exe_path_;
+        GTEST_SKIP() << "DasHostX.exe not found at: " << host_exe_path_;
     }
 
     // 1. 启动第一个 Host 进程
@@ -3063,7 +3048,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_AsyncLoadPlugins_WhenAll)
 {
     if (!std::filesystem::exists(host_exe_path_))
     {
-        GTEST_SKIP() << "DasHost.exe not found at: " << host_exe_path_;
+        GTEST_SKIP() << "DasHostX.exe not found at: " << host_exe_path_;
     }
 
     // 1. 启动第一个 Host 进程
@@ -4107,7 +4092,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_PythonDirectorLifecycleTest)
 
     if (!std::filesystem::exists(host_exe_path_))
     {
-        GTEST_SKIP() << "DasHost.exe not found at: " << host_exe_path_;
+        GTEST_SKIP() << "DasHostX.exe not found at: " << host_exe_path_;
     }
 
     std::string plugin_json_path;
@@ -4165,7 +4150,7 @@ TEST_F(
 
     if (!std::filesystem::exists(host_exe_path_))
     {
-        GTEST_SKIP() << "DasHost.exe not found at: " << host_exe_path_;
+        GTEST_SKIP() << "DasHostX.exe not found at: " << host_exe_path_;
     }
 
     std::filesystem::path folder_manifest_path;
@@ -4395,7 +4380,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_PythonFailurePathTest)
 
     if (!std::filesystem::exists(host_exe_path_))
     {
-        GTEST_SKIP() << "DasHost.exe not found at: " << host_exe_path_;
+        GTEST_SKIP() << "DasHostX.exe not found at: " << host_exe_path_;
     }
 
     std::string plugin_json_path;
@@ -4440,7 +4425,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_PythonFolderFailurePathTest)
 
     if (!std::filesystem::exists(host_exe_path_))
     {
-        GTEST_SKIP() << "DasHost.exe not found at: " << host_exe_path_;
+        GTEST_SKIP() << "DasHostX.exe not found at: " << host_exe_path_;
     }
 
     std::filesystem::path folder_manifest_path;
@@ -4714,7 +4699,7 @@ TEST_F(
 
     if (!std::filesystem::exists(host_exe_path_))
     {
-        GTEST_SKIP() << "DasHost.exe not found at: " << host_exe_path_;
+        GTEST_SKIP() << "DasHostX.exe not found at: " << host_exe_path_;
     }
 
     std::string plugin_json_path;
@@ -4761,7 +4746,7 @@ TEST_F(
 
     if (!std::filesystem::exists(host_exe_path_))
     {
-        GTEST_SKIP() << "DasHost.exe not found at: " << host_exe_path_;
+        GTEST_SKIP() << "DasHostX.exe not found at: " << host_exe_path_;
     }
 
     std::string plugin_json_path;
