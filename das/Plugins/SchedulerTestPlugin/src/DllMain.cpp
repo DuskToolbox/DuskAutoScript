@@ -69,10 +69,7 @@ static void TryResolveSharedStateFromEnv()
     {
         return;
     }
-    DAS_DISABLE_WARNING_BEGIN
-    DAS_PRAGMA(warning(disable : 4996))
     const char* name = std::getenv("DAS_SCHEDULER_TEST_SHM_NAME");
-    DAS_DISABLE_WARNING_END
     if (name != nullptr && name[0] != '\0')
     {
         DasTestPlugin_SetSharedMemoryName(name);
