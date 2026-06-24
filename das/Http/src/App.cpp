@@ -48,11 +48,11 @@ namespace Das::Http
         const std::filesystem::path& plugin_dir,
         const std::filesystem::path& debug_dir,
         const std::optional<DAS::Core::IPC::MainProcess::WebSocketConfig>&
-            ws_config)
+                           ws_config,
+        const std::string& listen_address,
+        int                listen_port)
     {
         Das::Http::AppComponent components(plugin_dir);
-
-        const auto port = DAS_HTTP_PORT;
 
         // Build settings_dir and plugin_dir as ABI-safe strings
         DasPtr<IDasReadOnlyString> p_settings_dir;
@@ -428,8 +428,8 @@ namespace Das::Http
 
         // Create and start server
         Das::Http::Beast::Server server(
-            "0.0.0.0",
-            port,
+            listen_address,
+            listen_port,
             components.router,
             g_server_condition.GetCondition());
 
@@ -495,7 +495,8 @@ namespace Das::Http
             },
             hub.get());
 
-        std::cout << "[DasHttp] Server running on port " << port << std::endl;
+        std::cout << "[DasHttp] Server listening on " << listen_address << ":"
+                  << listen_port << std::endl;
 
         server.Run();
 
@@ -523,6 +524,45 @@ namespace Das::Http
     }
 }
 
+namespace
+{
+    struct ListenEndpoint
+    {
+        std::string address;
+        int         port;
+    };
+
+    std::optional<ListenEndpoint> ParseListenEndpoint(const std::string& value)
+    {
+        const auto colon_pos = value.rfind(':');
+        if (colon_pos == std::string::npos || colon_pos == 0
+            || colon_pos == value.size() - 1)
+        {
+            return std::nullopt;
+        }
+        try
+        {
+            auto addr_str = value.substr(0, colon_pos);
+            if (addr_str.size() >= 2 && addr_str.front() == '['
+                && addr_str.back() == ']')
+            {
+                addr_str = addr_str.substr(1, addr_str.size() - 2);
+            }
+            const auto addr = boost::asio::ip::make_address(addr_str);
+            int        port = std::stoi(value.substr(colon_pos + 1));
+            if (port <= 0 || port > 65535)
+            {
+                return std::nullopt;
+            }
+            return ListenEndpoint{addr.to_string(), port};
+        }
+        catch (const std::exception&)
+        {
+            return std::nullopt;
+        }
+    }
+}
+
 int main(int argc, const char* argv[])
 {
     std::cout << "[DasHttp] " << (argv[0] ? argv[0] : "") << " is start"
@@ -541,7 +581,12 @@ int main(int argc, const char* argv[])
         "Debug artifact directory path")(
         "ipc-ws",
         boost::program_options::value<std::string>(),
-        "Enable WebSocket IPC server (format: ip:port, e.g. 0.0.0.0:9527)");
+        "Enable WebSocket IPC server (format: ip:port, e.g. 0.0.0.0:9527)")(
+        "listen",
+        boost::program_options::value<std::string>()->default_value(
+            "0.0.0.0:" + std::to_string(DAS_HTTP_PORT)),
+        "HTTP listen address (format: ip:port, e.g. 0.0.0.0:" DAS_STR(
+            DAS_HTTP_PORT) ")");
 
     boost::program_options::variables_map vm;
     boost::program_options::store(
@@ -556,43 +601,40 @@ int main(int argc, const char* argv[])
     if (vm.count("ipc-ws"))
     {
         const auto ws_value = vm["ipc-ws"].as<std::string>();
-        const auto colon_pos = ws_value.rfind(':');
-        if (colon_pos == std::string::npos || colon_pos == 0
-            || colon_pos == ws_value.size() - 1)
-        {
-            std::cerr << "[DasHttp] Invalid --ipc-ws format, expected ip:port"
-                      << std::endl;
-            return 1;
-        }
-        try
-        {
-            auto addr_str = ws_value.substr(0, colon_pos);
-            if (addr_str.size() >= 2 && addr_str.front() == '['
-                && addr_str.back() == ']')
-            {
-                addr_str = addr_str.substr(1, addr_str.size() - 2);
-            }
-            const auto addr = boost::asio::ip::make_address(addr_str);
-            int        port = std::stoi(ws_value.substr(colon_pos + 1));
-            if (port <= 0 || port > 65535)
-            {
-                std::cerr << "[DasHttp] --ipc-ws port out of range"
-                          << std::endl;
-                return 1;
-            }
-            ws_config.emplace();
-            ws_config->listen_address = addr.to_string();
-            ws_config->listen_port = static_cast<uint16_t>(port);
-        }
-        catch (const std::exception&)
+        auto       endpoint = ParseListenEndpoint(ws_value);
+        if (!endpoint)
         {
             std::cerr << "[DasHttp] Invalid --ipc-ws value: " << ws_value
                       << std::endl;
             return 1;
         }
+        ws_config.emplace();
+        ws_config->listen_address = endpoint->address;
+        ws_config->listen_port = static_cast<uint16_t>(endpoint->port);
     }
 
-    const auto run_result = Das::Http::run(plugin_dir, debug_dir, ws_config);
+    std::string listen_address = "0.0.0.0";
+    int         listen_port = DAS_HTTP_PORT;
+    if (vm.count("listen"))
+    {
+        const auto listen_value = vm["listen"].as<std::string>();
+        auto       endpoint = ParseListenEndpoint(listen_value);
+        if (!endpoint)
+        {
+            std::cerr << "[DasHttp] Invalid --listen value: " << listen_value
+                      << std::endl;
+            return 1;
+        }
+        listen_address = endpoint->address;
+        listen_port = endpoint->port;
+    }
+
+    const auto run_result = Das::Http::run(
+        plugin_dir,
+        debug_dir,
+        ws_config,
+        listen_address,
+        listen_port);
     if (DAS::IsFailed(run_result))
     {
         return run_result;

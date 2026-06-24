@@ -2,7 +2,7 @@
 #define DAS_HTTP_CONFIG_H
 
 #define DAS_HTTP_API_PREFIX "api/v1/"
-#define DAS_HTTP_PORT 8080
+#define DAS_HTTP_PORT 51121
 
 #include <atomic>
 #include <functional>
