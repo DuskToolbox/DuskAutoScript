@@ -1971,8 +1971,10 @@ TEST_F(PluginManagerGuidTest, LoadPlugin_CppWithLoadModeIpc_GoesIpcPath)
 TEST_F(PluginManagerGuidTest, LoadPlugin_NodeManifestRoutesThroughNodeRuntime)
 {
     constexpr auto NODE_HOST_ENV = "DAS_NODE_HOST_EXE_PATH";
-    auto           test_dir =
-        std::filesystem::current_path() / "test_plugin_node_runtime_route";
+    // 用 weakly_canonical 规范化，与 PluginManager::NormalizePath 同源，
+    // 避免 build 目录为路径别名(symlink/junction)时期望路径与实际路径字符串分歧。
+    auto test_dir = std::filesystem::weakly_canonical(
+        std::filesystem::current_path() / "test_plugin_node_runtime_route");
     std::filesystem::remove_all(test_dir);
     std::filesystem::create_directories(test_dir);
 
