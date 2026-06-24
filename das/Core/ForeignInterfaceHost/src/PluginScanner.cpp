@@ -450,6 +450,86 @@ yyjson::value PluginSettingDescToJson(const PluginSettingDesc& setting)
     return j;
 }
 
+// 将 PluginSettingDesc 转换为 NativeUI 动态表单消费的配置项结构
+// {name, description, valueType, inputType, defaultValue, options, required}。
+//
+// valueType 沿用 DasType 枚举值（0=INT,1=UINT,2=FLOAT,4=STRING,8=BOOL,
+// 16=JSON_OBJECT,32=JSON_ARRAY），与前端 profiles_store 的 valueType 完全一致。
+// inputType：enum_values 非空 → 1（单选），否则 0（自由文本输入）；
+//   多选(2)/长单行(3) 暂无 manifest 字段表达，保留为后续扩展点。
+// options 直接取自 enum_values，无枚举时输出空数组。
+yyjson::value NativeConfigItemFromSetting(const PluginSettingDesc& setting)
+{
+    auto j = Das::Utils::MakeYyjsonObject();
+    auto obj = j.as_object();
+    if (!obj)
+    {
+        return j;
+    }
+
+    (*obj)[std::string_view("name")] = std::make_pair(
+        std::string_view(setting.name),
+        yyjson::copy_string);
+
+    (*obj)[std::string_view("description")] = std::make_pair(
+        std::string_view(setting.description.value_or("")),
+        yyjson::copy_string);
+
+    (*obj)[std::string_view("valueType")] =
+        static_cast<std::int64_t>(setting.type);
+
+    const bool has_enum =
+        setting.enum_values.has_value() && !setting.enum_values->empty();
+    (*obj)[std::string_view("inputType")] =
+        static_cast<std::int64_t>(has_enum ? 1 : 0);
+
+    std::visit(
+        [&obj](const auto& val)
+        {
+            using T = std::decay_t<decltype(val)>;
+            if constexpr (std::is_same_v<T, std::monostate>)
+            {
+                (*obj)[std::string_view("defaultValue")] =
+                    yyjson::value(nullptr);
+            }
+            else if constexpr (std::is_same_v<T, bool>)
+            {
+                (*obj)[std::string_view("defaultValue")] = val;
+            }
+            else if constexpr (std::is_same_v<T, std::int64_t>)
+            {
+                (*obj)[std::string_view("defaultValue")] = val;
+            }
+            else if constexpr (std::is_same_v<T, float>)
+            {
+                (*obj)[std::string_view("defaultValue")] =
+                    static_cast<double>(val);
+            }
+            else if constexpr (std::is_same_v<T, std::string>)
+            {
+                (*obj)[std::string_view("defaultValue")] = std::make_pair(
+                    std::string_view(val),
+                    yyjson::copy_string);
+            }
+        },
+        setting.default_value);
+
+    auto opts_arr = Das::Utils::MakeYyjsonArray();
+    auto opts_ref = opts_arr.as_array();
+    if (opts_ref && has_enum)
+    {
+        for (const auto& v : setting.enum_values.value())
+        {
+            opts_ref->emplace_back(std::string(v));
+        }
+    }
+    (*obj)[std::string_view("options")] = std::move(opts_arr);
+
+    (*obj)[std::string_view("required")] = setting.required;
+
+    return j;
+}
+
 DAS_NS_ANONYMOUS_DETAILS_END
 
 yyjson::value PluginPackageDescDetailToJson(const PluginPackageDesc& desc)
@@ -676,6 +756,202 @@ yyjson::value PluginPackageDescDetailToJson(const PluginPackageDesc& desc)
             }
         }
         (*obj)[std::string_view("taskComponents")] = std::move(tc_obj);
+    }
+
+    // items[]：NativeUI 契约 —— 插件项列表，每项带 defaultConfigSchema。
+    // 数据源全部来自现有 PluginPackageDesc，无需扩展 manifest 或 IDL：
+    //   - 插件包级配置（settings_groups / settings_desc）→ 一个 type="plugin" 项
+    //   - 每个 task → 一个 type="tool" 项，defaultConfigSchema 由 task.descriptors 合成
+    // 仅在有可输出内容时才追加 items 字段，保持与现有 settings/tasks 条件输出风格一致。
+    const bool has_plugin_level_settings =
+        !desc.settings_groups.empty() || !desc.settings_desc.empty();
+    const bool has_task_items = !desc.task_descriptors.empty();
+    if (has_plugin_level_settings || has_task_items)
+    {
+        auto items_arr = Das::Utils::MakeYyjsonArray();
+        auto items_ref = items_arr.as_array();
+        if (items_ref)
+        {
+            // 插件包级配置 → type="plugin" 的 PluginItem
+            if (has_plugin_level_settings)
+            {
+                auto plugin_item = Das::Utils::MakeYyjsonObject();
+                auto plugin_ref = plugin_item.as_object();
+                if (plugin_ref)
+                {
+                    (*plugin_ref)[std::string_view("id")] =
+                        DasGuidToStdString(desc.guid);
+                    (*plugin_ref)[std::string_view("name")] = std::make_pair(
+                        std::string_view(desc.name),
+                        yyjson::copy_string);
+                    (*plugin_ref)[std::string_view("description")] =
+                        std::make_pair(
+                            std::string_view(desc.description),
+                            yyjson::copy_string);
+                    (*plugin_ref)[std::string_view("type")] = std::make_pair(
+                        std::string_view("plugin"),
+                        yyjson::copy_string);
+
+                    auto schema = Das::Utils::MakeYyjsonObject();
+                    auto schema_ref = schema.as_object();
+                    auto groups_arr = Das::Utils::MakeYyjsonArray();
+                    auto groups_ref = groups_arr.as_array();
+                    if (groups_ref)
+                    {
+                        // 每个 settings_group → 一个 group
+                        for (const auto& [guid, group] : desc.settings_groups)
+                        {
+                            auto g_obj = Das::Utils::MakeYyjsonObject();
+                            auto g_ref = g_obj.as_object();
+                            if (!g_ref)
+                            {
+                                continue;
+                            }
+                            (*g_ref)[std::string_view("groupId")] =
+                                DasGuidToStdString(guid);
+                            (*g_ref)[std::string_view("groupName")] =
+                                std::make_pair(
+                                    std::string_view(group.name),
+                                    yyjson::copy_string);
+
+                            auto g_items = Das::Utils::MakeYyjsonArray();
+                            auto g_items_ref = g_items.as_array();
+                            if (g_items_ref)
+                            {
+                                for (const auto& d : group.descriptors)
+                                {
+                                    g_items_ref->emplace_back(
+                                        Details::NativeConfigItemFromSetting(
+                                            d));
+                                }
+                            }
+                            (*g_ref)[std::string_view("items")] =
+                                std::move(g_items);
+
+                            groups_ref->emplace_back(std::move(g_obj));
+                        }
+
+                        // 顶层 settings_desc（无分组）归入 "general" 分组
+                        if (!desc.settings_desc.empty())
+                        {
+                            auto g_obj = Das::Utils::MakeYyjsonObject();
+                            auto g_ref = g_obj.as_object();
+                            if (g_ref)
+                            {
+                                (*g_ref)[std::string_view("groupId")] =
+                                    std::make_pair(
+                                        std::string_view("general"),
+                                        yyjson::copy_string);
+                                (*g_ref)[std::string_view("groupName")] =
+                                    std::make_pair(
+                                        std::string_view("General"),
+                                        yyjson::copy_string);
+
+                                auto g_items = Das::Utils::MakeYyjsonArray();
+                                auto g_items_ref = g_items.as_array();
+                                if (g_items_ref)
+                                {
+                                    for (const auto& d : desc.settings_desc)
+                                    {
+                                        g_items_ref->emplace_back(
+                                            Details::
+                                                NativeConfigItemFromSetting(
+                                                    d));
+                                    }
+                                }
+                                (*g_ref)[std::string_view("items")] =
+                                    std::move(g_items);
+
+                                groups_ref->emplace_back(std::move(g_obj));
+                            }
+                        }
+                    }
+
+                    if (schema_ref)
+                    {
+                        (*schema_ref)[std::string_view("groups")] =
+                            std::move(groups_arr);
+                    }
+                    (*plugin_ref)[std::string_view("defaultConfigSchema")] =
+                        std::move(schema);
+
+                    items_ref->emplace_back(std::move(plugin_item));
+                }
+            }
+
+            // 每个 task → type="tool" 的 PluginItem
+            for (const auto& [task_guid, task] : desc.task_descriptors)
+            {
+                auto task_item = Das::Utils::MakeYyjsonObject();
+                auto task_ref = task_item.as_object();
+                if (!task_ref)
+                {
+                    continue;
+                }
+
+                (*task_ref)[std::string_view("id")] =
+                    DasGuidToStdString(task_guid);
+                (*task_ref)[std::string_view("name")] = std::make_pair(
+                    std::string_view(task.name),
+                    yyjson::copy_string);
+                (*task_ref)[std::string_view("description")] = std::make_pair(
+                    std::string_view(task.description),
+                    yyjson::copy_string);
+                (*task_ref)[std::string_view("type")] = std::make_pair(
+                    std::string_view("tool"),
+                    yyjson::copy_string);
+
+                // defaultConfigSchema 由 task.descriptors 合成
+                if (!task.descriptors.empty())
+                {
+                    auto schema = Das::Utils::MakeYyjsonObject();
+                    auto schema_ref = schema.as_object();
+                    auto groups_arr = Das::Utils::MakeYyjsonArray();
+                    auto groups_ref = groups_arr.as_array();
+                    if (groups_ref)
+                    {
+                        auto g_obj = Das::Utils::MakeYyjsonObject();
+                        auto g_ref = g_obj.as_object();
+                        if (g_ref)
+                        {
+                            (*g_ref)[std::string_view("groupId")] =
+                                DasGuidToStdString(task_guid);
+                            (*g_ref)[std::string_view("groupName")] =
+                                std::make_pair(
+                                    std::string_view(task.name),
+                                    yyjson::copy_string);
+
+                            auto g_items = Das::Utils::MakeYyjsonArray();
+                            auto g_items_ref = g_items.as_array();
+                            if (g_items_ref)
+                            {
+                                for (const auto& d : task.descriptors)
+                                {
+                                    g_items_ref->emplace_back(
+                                        Details::NativeConfigItemFromSetting(
+                                            d));
+                                }
+                            }
+                            (*g_ref)[std::string_view("items")] =
+                                std::move(g_items);
+
+                            groups_ref->emplace_back(std::move(g_obj));
+                        }
+                    }
+
+                    if (schema_ref)
+                    {
+                        (*schema_ref)[std::string_view("groups")] =
+                            std::move(groups_arr);
+                    }
+                    (*task_ref)[std::string_view("defaultConfigSchema")] =
+                        std::move(schema);
+                }
+
+                items_ref->emplace_back(std::move(task_item));
+            }
+        }
+        (*obj)[std::string_view("items")] = std::move(items_arr);
     }
 
     return j;

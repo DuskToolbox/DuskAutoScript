@@ -1,6 +1,7 @@
 #include <cstring>
 #include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/Core/ForeignInterfaceHost/ForeignInterfaceHost.h>
+#include <das/Core/ForeignInterfaceHost/PluginScanner.h>
 #include <das/Utils/DasJsonCore.h>
 #include <gtest/gtest.h>
 #include <optional>
@@ -1147,4 +1148,105 @@ TEST(PluginPackageDescTest, SettingsAndTasksTogether)
     ASSERT_NE(it_t, desc.task_descriptors.end());
     EXPECT_EQ(it_t->second.name, "dailyLogin");
     EXPECT_EQ(it_t->second.game_name.value(), "TestGame");
+}
+
+// 验证 PluginPackageDescDetailToJson 输出 NativeUI 契约的 items[]/defaultConfigSchema。
+// 数据源：含 tasks.descriptors 的 manifest（模拟 IpcTestPlugin1）。
+// 断言每个 task 转为 type:"tool" 的 PluginItem，其 defaultConfigSchema 含
+// groups→items 结构，且配置项字段（valueType/inputType/defaultValue/options/required）
+// 严格匹配 issue DAS-25 约定。
+TEST(PluginPackageDescTest, ItemsAndDefaultConfigSchemaFromTaskDescriptors)
+{
+    constexpr auto test_string = R"(
+    {
+        "name": "IpcTestPlugin1",
+        "author": "Dusk",
+        "version": "0.1",
+        "guid": "2A3B4C5D-6E7F-4B5C-9D0E-1F2A3B4C5D6E",
+        "description": "IPC test plugin 1",
+        "supportedSystem": "Windows",
+        "language": "Cpp",
+        "pluginFilenameExtension": "dll",
+        "settings": {},
+        "tasks": {
+            "A1B2C3D4-E5F6-4A7B-8C9D-0E1F2A3B4C5D": {
+                "pluginGuid": "2A3B4C5D-6E7F-4B5C-9D0E-1F2A3B4C5D6E",
+                "name": "testTask",
+                "description": "A test task for IPC testing",
+                "descriptors": [
+                    {
+                        "name": "retryCount",
+                        "type": 0,
+                        "defaultValue": 3,
+                        "description": "Number of retries",
+                        "required": false
+                    }
+                ]
+            }
+        }
+    }
+    )";
+
+    const auto desc =
+        JsonToStruct<DAS::Core::ForeignInterfaceHost::PluginPackageDesc>(
+            test_string);
+    ASSERT_EQ(desc.task_descriptors.size(), 1u);
+
+    auto json_val =
+        DAS::Core::ForeignInterfaceHost::PluginPackageDescDetailToJson(desc);
+    const auto serialized = Das::Utils::SerializeYyjsonValue(json_val, true);
+    ASSERT_TRUE(serialized.has_value());
+    const auto& out = serialized.value();
+
+    SCOPED_TRACE(out);
+
+    // items[] 顶层字段输出
+    EXPECT_NE(out.find("\"items\""), std::string::npos);
+    // task → type:"tool" 的 PluginItem
+    EXPECT_NE(out.find("\"tool\""), std::string::npos);
+    EXPECT_NE(out.find("\"testTask\""), std::string::npos);
+    // defaultConfigSchema 与 groups→items 结构
+    EXPECT_NE(out.find("\"defaultConfigSchema\""), std::string::npos);
+    EXPECT_NE(out.find("\"groups\""), std::string::npos);
+    EXPECT_NE(out.find("\"groupId\""), std::string::npos);
+    EXPECT_NE(out.find("\"groupName\""), std::string::npos);
+    // 配置项字段（NativeUI 契约）
+    EXPECT_NE(out.find("\"valueType\""), std::string::npos);
+    EXPECT_NE(out.find("\"inputType\""), std::string::npos);
+    EXPECT_NE(out.find("\"defaultValue\""), std::string::npos);
+    EXPECT_NE(out.find("\"options\""), std::string::npos);
+    EXPECT_NE(out.find("\"required\""), std::string::npos);
+    // retryCount 配置项出现（type=0 → valueType=0 INT）
+    EXPECT_NE(out.find("\"retryCount\""), std::string::npos);
+}
+
+// 验证空配置插件（模拟 PythonTestPlugin，settings 为空、无 tasks）
+// 不应输出 items 字段（条件输出逻辑）。
+TEST(PluginPackageDescTest, NoItemsWhenSettingsAndTasksEmpty)
+{
+    constexpr auto test_string = R"(
+    {
+        "name": "PythonTestPlugin",
+        "author": "Dusk",
+        "version": "0.1",
+        "guid": "5E6F7081-9ABC-4E6F-B102-4C5D6E7F8091",
+        "description": "Python Test Plugin",
+        "supportedSystem": "Windows",
+        "language": "Python",
+        "pluginFilenameExtension": "py",
+        "settings": []
+    }
+    )";
+
+    const auto desc =
+        JsonToStruct<DAS::Core::ForeignInterfaceHost::PluginPackageDesc>(
+            test_string);
+
+    auto json_val =
+        DAS::Core::ForeignInterfaceHost::PluginPackageDescDetailToJson(desc);
+    const auto serialized = Das::Utils::SerializeYyjsonValue(json_val, true);
+    ASSERT_TRUE(serialized.has_value());
+
+    // 空配置插件不应输出 items 字段
+    EXPECT_EQ(serialized.value().find("\"items\""), std::string::npos);
 }
