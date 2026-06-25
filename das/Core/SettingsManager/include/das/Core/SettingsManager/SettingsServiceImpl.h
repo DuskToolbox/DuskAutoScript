@@ -26,8 +26,13 @@ public:
         Das::ExportInterface::IDasJson* p_data) override;
 
     DAS_IMPL GetProfileList(Das::ExportInterface::IDasJson** pp_out) override;
-    DAS_IMPL CreateProfile(IDasReadOnlyString* p_profile_id) override;
+    DAS_IMPL CreateProfile(
+        IDasReadOnlyString* p_profile_id,
+        IDasReadOnlyString* p_name) override;
     DAS_IMPL DeleteProfile(IDasReadOnlyString* p_profile_id) override;
+    DAS_IMPL RenameProfile(
+        IDasReadOnlyString* p_profile_id,
+        IDasReadOnlyString* p_name) override;
     DAS_IMPL GetProfile(
         IDasReadOnlyString*              p_profile_id,
         Das::ExportInterface::IDasJson** pp_out) override;

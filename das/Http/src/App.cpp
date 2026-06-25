@@ -306,6 +306,10 @@ namespace Das::Http
             [profile_controller](const Das::Http::Beast::HttpRequest& req)
             { return profile_controller->UpdateProfile(req); });
         components.router->Post(
+            DAS_HTTP_API_PREFIX "profile/{pid}/rename",
+            [profile_controller](const Das::Http::Beast::HttpRequest& req)
+            { return profile_controller->RenameProfile(req); });
+        components.router->Post(
             DAS_HTTP_API_PREFIX "profile/{pid}/{guid}/get",
             [profile_controller](const Das::Http::Beast::HttpRequest& req)
             { return profile_controller->GetPluginSettings(req); });

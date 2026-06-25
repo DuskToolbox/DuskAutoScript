@@ -96,7 +96,33 @@ namespace Das::Http
                     "Failed to create string");
             }
 
-            auto result = settings_service_.CreateProfile(p_pid.Get());
+            // name is optional; when absent it stays nullptr and the
+            // service applies its default.
+            DasPtr<IDasReadOnlyString> p_name;
+            {
+                auto name_val = body["name"];
+                if (name_val.is_string())
+                {
+                    auto name_opt = name_val.as_string();
+                    if (name_opt)
+                    {
+                        std::string name(name_opt.value());
+                        auto        name_cr =
+                            CreateIDasReadOnlyStringFromUtf8(
+                                name.c_str(),
+                                p_name.Put());
+                        if (DAS::IsFailed(name_cr))
+                        {
+                            return Beast::HttpResponse::CreateErrorResponse(
+                                name_cr,
+                                "Failed to create name string");
+                        }
+                    }
+                }
+            }
+
+            auto result =
+                settings_service_.CreateProfile(p_pid.Get(), p_name.Get());
             if (DAS::IsFailed(result))
             {
                 return Beast::HttpResponse::CreateErrorResponse(
@@ -230,6 +256,72 @@ namespace Das::Http
                 return Beast::HttpResponse::CreateErrorResponse(
                     result,
                     "Failed to update profile");
+            }
+            return Beast::HttpResponse::CreateSuccessResponse();
+        }
+
+        Beast::HttpResponse RenameProfile(const Beast::HttpRequest& request)
+        {
+            auto pid = request.GetPathParameter("pid");
+            if (pid != "0")
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_INVALID_ARGUMENT,
+                    "Profile ID must be 0 in v1.2");
+            }
+
+            const auto& body_raw = request.JsonBody();
+            auto        body_obj_opt = body_raw.as_object();
+            if (!body_obj_opt)
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_INVALID_ARGUMENT,
+                    "Request body must be a JSON object");
+            }
+            const auto& body = body_obj_opt.value();
+            if (body["name"].is_null() || !body["name"].is_string())
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_INVALID_ARGUMENT,
+                    "Missing or invalid 'name' field");
+            }
+
+            auto name_opt = body["name"].as_string();
+            if (!name_opt)
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_INVALID_ARGUMENT,
+                    "Missing or invalid 'name' field");
+            }
+
+            DasPtr<IDasReadOnlyString> p_pid;
+            auto                       pid_cr =
+                CreateIDasReadOnlyStringFromUtf8(pid.c_str(), p_pid.Put());
+            if (DAS::IsFailed(pid_cr))
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    pid_cr,
+                    "Failed to create string");
+            }
+
+            std::string                name(name_opt.value());
+            DasPtr<IDasReadOnlyString> p_name;
+            auto                       name_cr =
+                CreateIDasReadOnlyStringFromUtf8(name.c_str(), p_name.Put());
+            if (DAS::IsFailed(name_cr))
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    name_cr,
+                    "Failed to create name string");
+            }
+
+            auto result =
+                settings_service_.RenameProfile(p_pid.Get(), p_name.Get());
+            if (DAS::IsFailed(result))
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    result,
+                    "Failed to rename profile");
             }
             return Beast::HttpResponse::CreateSuccessResponse();
         }

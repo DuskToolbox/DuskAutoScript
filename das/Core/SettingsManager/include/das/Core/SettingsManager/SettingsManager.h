@@ -61,23 +61,21 @@ public:
     ~SettingsManager() = default;
 
     // Global Settings (settings/ui.json)
-    std::string   GetGlobalSettings();
     yyjson::value GetGlobalSettingsJson();
-    DasResult     UpdateGlobalSettings(const std::string& json_str);
     DasResult     UpdateGlobalSettingsJson(const yyjson::value& data);
 
     // Profile management (settings/${pid}/)
-    std::string   GetProfileList();
     yyjson::value GetProfileListJson();
-    DasResult     CreateProfile(const std::string& profile_id);
+    DasResult     CreateProfile(
+            const std::string& profile_id,
+            const std::string& name = "");
     DasResult     DeleteProfile(const std::string& profile_id);
+    DasResult     RenameProfile(
+        const std::string& profile_id,
+        const std::string& name);
 
     // Profile data (settings/${pid}/ui.json)
-    std::string   GetProfile(const std::string& profile_id);
     yyjson::value GetProfileJson(const std::string& profile_id);
-    DasResult     UpdateProfile(
-        const std::string& profile_id,
-        const std::string& json_str);
     DasResult UpdateProfileJson(
         const std::string&   profile_id,
         const yyjson::value& data);
@@ -174,6 +172,7 @@ public:
 private:
     std::filesystem::path GetProfileDir(const std::string& profile_id) const;
     std::filesystem::path GetProfileUiPath(const std::string& profile_id) const;
+    std::filesystem::path GetProfileMetaPath(const std::string& profile_id) const;
     std::filesystem::path GetPluginSettingsPath(
         const std::string& profile_id,
         const std::string& guid) const;

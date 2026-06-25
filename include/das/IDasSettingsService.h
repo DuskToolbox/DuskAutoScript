@@ -37,8 +37,13 @@ DAS_INTERFACE IDasSettingsService : public IDasBase
 
     // Profile management
     DAS_METHOD GetProfileList(Das::ExportInterface::IDasJson * *pp_out) = 0;
-    DAS_METHOD CreateProfile(IDasReadOnlyString * p_profile_id) = 0;
+    DAS_METHOD CreateProfile(
+        IDasReadOnlyString * p_profile_id,
+        IDasReadOnlyString * p_name) = 0;
     DAS_METHOD DeleteProfile(IDasReadOnlyString * p_profile_id) = 0;
+    DAS_METHOD RenameProfile(
+        IDasReadOnlyString * p_profile_id,
+        IDasReadOnlyString * p_name) = 0;
     DAS_METHOD GetProfile(
         IDasReadOnlyString * p_profile_id,
         Das::ExportInterface::IDasJson * *pp_out) = 0;
