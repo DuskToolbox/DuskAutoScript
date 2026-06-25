@@ -135,6 +135,58 @@ namespace
 
         return id;
     }
+
+    /// Build a {"profileId":..,"name":..} JSON object. The value owns deep
+    /// copies of the strings (round-tripped through parse) so it stays valid
+    /// after the caller's locals go out of scope.
+    yyjson::value MakeProfileMeta(
+        const std::string& profile_id,
+        const std::string& name)
+    {
+        auto escape = [](const std::string& s)
+        {
+            // JSON string escape. Required: '"' '\\' and ASCII control chars
+            // (< 0x20). UTF-8 multibyte bytes (>= 0x80) pass through verbatim
+            // so non-ASCII names survive the round-trip parse intact.
+            static constexpr char kHex[] = "0123456789abcdef";
+            std::string out;
+            out.reserve(s.size() + 2);
+            for (char c : s)
+            {
+                unsigned char ch = static_cast<unsigned char>(c);
+                switch (ch)
+                {
+                case '"':
+                case '\\':
+                    out.push_back('\\');
+                    out.push_back(static_cast<char>(ch));
+                    break;
+                case '\n': out += "\\n"; break;
+                case '\t': out += "\\t"; break;
+                case '\r': out += "\\r"; break;
+                case '\b': out += "\\b"; break;
+                case '\f': out += "\\f"; break;
+                default:
+                    if (ch < 0x20)
+                    {
+                        out += "\\u00";
+                        out.push_back(kHex[(ch >> 4) & 0xF]);
+                        out.push_back(kHex[ch & 0xF]);
+                    }
+                    else
+                    {
+                        out.push_back(static_cast<char>(ch));
+                    }
+                    break;
+                }
+            }
+            return out;
+        };
+        auto json = "{\"profileId\":\"" + escape(profile_id)
+                    + "\",\"name\":\"" + escape(name) + "\"}";
+        auto parsed = Das::Utils::ParseYyjsonFromString(json);
+        return parsed ? std::move(*parsed) : Das::Utils::MakeYyjsonObject();
+    }
 } // namespace
 
 SettingsKeyCell* SettingsManager::GetOrCreateCell(const std::string& key)
@@ -305,97 +357,9 @@ DasResult SettingsManager::WriteJsonFile(
     }
 }
 
-// --- String-based methods (legacy) ---
-
-std::string SettingsManager::GetGlobalSettings()
-{
-    auto* cell = GetOrCreateCell("global/ui");
-
-    // Fast path: shared_lock for concurrent read access
-    {
-        std::shared_lock lock(cell->mutex);
-        if (!cell->snapshot.is_null())
-        {
-            auto serialized =
-                Das::Utils::SerializeYyjsonValue(cell->snapshot, false);
-            return serialized ? *serialized : std::string{};
-        }
-    }
-
-    // Cache miss: acquire unique_lock for file read + snapshot fill
-    std::unique_lock<std::shared_mutex> lock(cell->mutex);
-    // Double-check after upgrade (another thread may have filled it)
-    if (!cell->snapshot.is_null())
-    {
-        auto serialized =
-            Das::Utils::SerializeYyjsonValue(cell->snapshot, false);
-        return serialized ? *serialized : std::string{};
-    }
-
-    auto content = ReadJsonFile(base_dir_ / "ui.json");
-    auto parsed = Das::Utils::ParseYyjsonFromString(content);
-    if (parsed)
-    {
-        cell->snapshot = std::move(*parsed);
-    }
-    return content;
-}
-
-DasResult SettingsManager::UpdateGlobalSettings(const std::string& json_str)
-{
-    auto parsed = Das::Utils::ParseYyjsonFromString(json_str);
-    if (!parsed)
-    {
-        return DAS_E_INVALID_JSON;
-    }
-
-    auto* cell = GetOrCreateCell("global/ui");
-
-    // Per-key mutex covers the entire write cycle:
-    // snapshot update + WriteJsonFile are both under this mutex
-    std::unique_lock<std::shared_mutex> cell_lock(cell->mutex);
-    cell->snapshot = *parsed;
-    return WriteJsonFile(base_dir_ / "ui.json", *parsed);
-}
-
-std::string SettingsManager::GetProfileList()
-{
-    // No lock needed for read-only directory traversal
-    auto profiles = Das::Utils::MakeYyjsonArray();
-
-    try
-    {
-        if (!std::filesystem::exists(base_dir_))
-        {
-            auto serialized = Das::Utils::SerializeYyjsonValue(profiles, false);
-            return serialized ? *serialized : std::string{};
-        }
-
-        for (const auto& entry : std::filesystem::directory_iterator(base_dir_))
-        {
-            if (entry.is_directory())
-            {
-                auto filename = std::string{
-                    DAS::Utils::U8AsString(entry.path().filename().u8string())};
-                auto profile_str = "{\"profileId\":\"" + filename + "\"}";
-                auto parsed = Das::Utils::ParseYyjsonFromString(profile_str);
-                if (parsed)
-                {
-                    profiles.as_array()->emplace_back(std::move(*parsed));
-                }
-            }
-        }
-    }
-    catch (const std::filesystem::filesystem_error& ex)
-    {
-        DAS_CORE_LOG_EXCEPTION(ex);
-    }
-
-    auto serialized = Das::Utils::SerializeYyjsonValue(profiles, false);
-    return serialized ? *serialized : std::string{};
-}
-
-DasResult SettingsManager::CreateProfile(const std::string& profile_id)
+DasResult SettingsManager::CreateProfile(
+    const std::string& profile_id,
+    const std::string& name)
 {
     try
     {
@@ -414,6 +378,13 @@ DasResult SettingsManager::CreateProfile(const std::string& profile_id)
             return DAS_E_INVALID_FILE;
         }
         ofs << "{}";
+
+        auto meta = MakeProfileMeta(profile_id, name);
+        auto meta_cr = WriteJsonFile(GetProfileMetaPath(profile_id), meta);
+        if (DAS::IsFailed(meta_cr))
+        {
+            return meta_cr;
+        }
 
         return DAS_S_OK;
     }
@@ -442,56 +413,6 @@ DasResult SettingsManager::DeleteProfile(const std::string& profile_id)
         DAS_CORE_LOG_EXCEPTION(ex);
         return DAS_E_INVALID_PATH;
     }
-}
-
-std::string SettingsManager::GetProfile(const std::string& profile_id)
-{
-    auto  key = profile_id + "/ui";
-    auto* cell = GetOrCreateCell(key);
-
-    {
-        std::shared_lock lock(cell->mutex);
-        if (!cell->snapshot.is_null())
-        {
-            auto serialized =
-                Das::Utils::SerializeYyjsonValue(cell->snapshot, false);
-            return serialized ? *serialized : std::string{};
-        }
-    }
-
-    std::unique_lock<std::shared_mutex> lock(cell->mutex);
-    if (!cell->snapshot.is_null())
-    {
-        auto serialized =
-            Das::Utils::SerializeYyjsonValue(cell->snapshot, false);
-        return serialized ? *serialized : std::string{};
-    }
-
-    auto content = ReadJsonFile(GetProfileUiPath(profile_id));
-    auto parsed = Das::Utils::ParseYyjsonFromString(content);
-    if (parsed)
-    {
-        cell->snapshot = std::move(*parsed);
-    }
-    return content;
-}
-
-DasResult SettingsManager::UpdateProfile(
-    const std::string& profile_id,
-    const std::string& json_str)
-{
-    auto parsed = Das::Utils::ParseYyjsonFromString(json_str);
-    if (!parsed)
-    {
-        return DAS_E_INVALID_JSON;
-    }
-
-    auto  key = profile_id + "/ui";
-    auto* cell = GetOrCreateCell(key);
-
-    std::unique_lock<std::shared_mutex> cell_lock(cell->mutex);
-    cell->snapshot = *parsed;
-    return WriteJsonFile(GetProfileUiPath(profile_id), *parsed);
 }
 
 // --- Plugin settings (split file: settings/${pid}/${pluginGuid}.json) ---
@@ -951,12 +872,41 @@ yyjson::value SettingsManager::GetProfileListJson()
             {
                 auto filename = std::string{
                     DAS::Utils::U8AsString(entry.path().filename().u8string())};
-                auto profile_str = "{\"profileId\":\"" + filename + "\"}";
-                auto parsed = Das::Utils::ParseYyjsonFromString(profile_str);
-                if (parsed)
+
+                // Read profile name from ${pid}/profile.json. Legacy profiles
+                // (no profile.json) fall back to a default display name so
+                // the UI never shows a blank entry.
+                std::string name;
+                auto        meta_path = GetProfileMetaPath(filename);
+                if (std::filesystem::exists(meta_path))
                 {
-                    profiles.as_array()->emplace_back(std::move(*parsed));
+                    auto content = ReadJsonFile(meta_path);
+                    auto parsed = Das::Utils::ParseYyjsonFromString(content);
+                    if (parsed && parsed->is_object())
+                    {
+                        auto obj_opt = parsed->as_object();
+                        if (obj_opt)
+                        {
+                            auto name_val =
+                                (*obj_opt)[std::string_view("name")];
+                            if (name_val.is_string())
+                            {
+                                auto name_opt = name_val.as_string();
+                                if (name_opt)
+                                {
+                                    name = std::string(name_opt.value());
+                                }
+                            }
+                        }
+                    }
                 }
+                else
+                {
+                    name = "默认配置";
+                }
+
+                profiles.as_array()->emplace_back(
+                    MakeProfileMeta(filename, name));
             }
         }
     }
@@ -966,6 +916,28 @@ yyjson::value SettingsManager::GetProfileListJson()
     }
 
     return profiles;
+}
+
+DasResult SettingsManager::RenameProfile(
+    const std::string& profile_id,
+    const std::string& name)
+{
+    try
+    {
+        auto profile_dir = GetProfileDir(profile_id);
+        if (!std::filesystem::exists(profile_dir))
+        {
+            return DAS_S_FALSE;
+        }
+
+        auto meta = MakeProfileMeta(profile_id, name);
+        return WriteJsonFile(GetProfileMetaPath(profile_id), meta);
+    }
+    catch (const std::filesystem::filesystem_error& ex)
+    {
+        DAS_CORE_LOG_EXCEPTION(ex);
+        return DAS_E_INVALID_PATH;
+    }
 }
 
 yyjson::value SettingsManager::GetProfileJson(const std::string& profile_id)
@@ -1303,6 +1275,12 @@ std::filesystem::path SettingsManager::GetProfileUiPath(
     const std::string& profile_id) const
 {
     return base_dir_ / profile_id / "ui.json";
+}
+
+std::filesystem::path SettingsManager::GetProfileMetaPath(
+    const std::string& profile_id) const
+{
+    return base_dir_ / profile_id / "profile.json";
 }
 
 std::filesystem::path SettingsManager::GetPluginSettingsPath(

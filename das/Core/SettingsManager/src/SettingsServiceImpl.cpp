@@ -161,16 +161,32 @@ DasResult SettingsServiceImpl::GetProfileList(
     return DAS_S_OK;
 }
 
-DasResult SettingsServiceImpl::CreateProfile(IDasReadOnlyString* p_profile_id)
+DasResult SettingsServiceImpl::CreateProfile(
+    IDasReadOnlyString* p_profile_id,
+    IDasReadOnlyString* p_name)
 {
     DAS_UTILS_CHECK_POINTER(p_profile_id)
-    return mgr_.CreateProfile(ToString(p_profile_id));
+    std::string name;
+    if (p_name != nullptr)
+    {
+        name = ToString(p_name);
+    }
+    return mgr_.CreateProfile(ToString(p_profile_id), name);
 }
 
 DasResult SettingsServiceImpl::DeleteProfile(IDasReadOnlyString* p_profile_id)
 {
     DAS_UTILS_CHECK_POINTER(p_profile_id)
     return mgr_.DeleteProfile(ToString(p_profile_id));
+}
+
+DasResult SettingsServiceImpl::RenameProfile(
+    IDasReadOnlyString* p_profile_id,
+    IDasReadOnlyString* p_name)
+{
+    DAS_UTILS_CHECK_POINTER(p_profile_id)
+    DAS_UTILS_CHECK_POINTER(p_name)
+    return mgr_.RenameProfile(ToString(p_profile_id), ToString(p_name));
 }
 
 DasResult SettingsServiceImpl::GetProfile(

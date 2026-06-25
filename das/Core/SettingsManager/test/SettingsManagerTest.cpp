@@ -46,14 +46,14 @@ namespace
         std::filesystem::path test_dir_;
     };
 
-    TEST_F(SettingsManagerTest, GetGlobalSettings_ReturnsEmptyObject_WhenNoFile)
+    TEST_F(SettingsManagerTest, GetGlobalSettingsJson_ReturnsEmptyObject_WhenNoFile)
     {
         Das::Core::SettingsManager::SettingsManager sm(test_dir_);
-        auto result = sm.GetGlobalSettings();
-        EXPECT_EQ(result, "{}");
+        auto result = sm.GetGlobalSettingsJson();
+        EXPECT_TRUE(result.is_object());
     }
 
-    TEST_F(SettingsManagerTest, UpdateGlobalSettings_PersistsToFile)
+    TEST_F(SettingsManagerTest, UpdateGlobalSettingsJson_PersistsToFile)
     {
         Das::Core::SettingsManager::SettingsManager sm(test_dir_);
         auto data = Das::Utils::MakeYyjsonObject();
@@ -63,25 +63,22 @@ namespace
             obj[std::string_view("language")] = "zh-CN";
         }
 
-        auto update_result = sm.UpdateGlobalSettings(
-            *Das::Utils::SerializeYyjsonValue(data, false));
+        auto update_result = sm.UpdateGlobalSettingsJson(data);
         EXPECT_EQ(update_result, DAS_S_OK);
 
         // Create a new instance from the same directory to verify persistence
         Das::Core::SettingsManager::SettingsManager sm2(test_dir_);
-        auto loaded = sm2.GetGlobalSettings();
-        auto loaded_json_opt = Das::Utils::ParseYyjsonFromString(loaded);
-        ASSERT_TRUE(loaded_json_opt.has_value());
-        auto& loaded_json = *loaded_json_opt;
+        auto loaded = sm2.GetGlobalSettingsJson();
         EXPECT_EQ(
-            std::string((*loaded_json.as_object())[std::string_view("theme")]
+            std::string((*loaded.as_object())[std::string_view("theme")]
                             .as_string()
                             .value()),
             "dark");
         EXPECT_EQ(
-            std::string((*loaded_json.as_object())[std::string_view("language")]
-                            .as_string()
-                            .value()),
+            std::string(
+                (*loaded.as_object())[std::string_view("language")]
+                    .as_string()
+                    .value()),
             "zh-CN");
     }
 
@@ -96,23 +93,128 @@ namespace
         EXPECT_TRUE(std::filesystem::is_directory(profile_dir));
     }
 
-    TEST_F(SettingsManagerTest, GetProfileList_ReturnsCreatedProfiles)
+    TEST_F(SettingsManagerTest, GetProfileListJson_ReturnsCreatedProfiles)
     {
         Das::Core::SettingsManager::SettingsManager sm(test_dir_);
         sm.CreateProfile("0");
 
-        auto result = sm.GetProfileList();
-        auto profiles_opt = Das::Utils::ParseYyjsonFromString(result);
-        ASSERT_TRUE(profiles_opt.has_value());
-        auto& profiles = *profiles_opt;
-        ASSERT_TRUE(profiles.is_array());
-        ASSERT_EQ(profiles.as_array()->size(), 1u);
+        auto result = sm.GetProfileListJson();
+        ASSERT_TRUE(result.is_array());
+        ASSERT_EQ(result.as_array()->size(), 1u);
+        auto entry = (*result.as_array())[0];
         EXPECT_EQ(
-            std::string((*(*profiles.as_array())[0]
-                              .as_object())[std::string_view("profileId")]
+            std::string((*entry.as_object())[std::string_view("profileId")]
                             .as_string()
                             .value()),
             "0");
+        // CreateProfile with default empty name -> profile.json has empty name.
+        EXPECT_EQ(
+            std::string((*entry.as_object())[std::string_view("name")]
+                            .as_string()
+                            .value()),
+            "");
+    }
+
+    TEST_F(SettingsManagerTest, CreateProfile_WithName_PersistsToProfileJson)
+    {
+        Das::Core::SettingsManager::SettingsManager sm(test_dir_);
+        auto result = sm.CreateProfile("0", "我的配置");
+        EXPECT_EQ(result, DAS_S_OK);
+
+        // profile.json should exist on disk with the given name
+        auto meta_file = test_dir_ / "0" / "profile.json";
+        EXPECT_TRUE(std::filesystem::exists(meta_file));
+
+        auto list = sm.GetProfileListJson();
+        ASSERT_EQ(list.as_array()->size(), 1u);
+        auto entry = (*list.as_array())[0];
+        EXPECT_EQ(
+            std::string((*entry.as_object())[std::string_view("profileId")]
+                            .as_string()
+                            .value()),
+            "0");
+        EXPECT_EQ(
+            std::string((*entry.as_object())[std::string_view("name")]
+                            .as_string()
+                            .value()),
+            "我的配置");
+    }
+
+    TEST_F(SettingsManagerTest, RenameProfile_UpdatesProfileJson)
+    {
+        Das::Core::SettingsManager::SettingsManager sm(test_dir_);
+        sm.CreateProfile("0", "旧名称");
+
+        auto rename_result = sm.RenameProfile("0", "新名称");
+        EXPECT_EQ(rename_result, DAS_S_OK);
+
+        auto list = sm.GetProfileListJson();
+        ASSERT_EQ(list.as_array()->size(), 1u);
+        auto entry = (*list.as_array())[0];
+        EXPECT_EQ(
+            std::string((*entry.as_object())[std::string_view("name")]
+                            .as_string()
+                            .value()),
+            "新名称");
+    }
+
+    TEST_F(
+        SettingsManagerTest,
+        GetProfileListJson_LegacyProfile_FallsBackToDefaultName)
+    {
+        // Simulate a legacy profile that predates profile.json: create the
+        // directory + ui.json manually without a profile.json.
+        auto profile_dir = test_dir_ / "0";
+        std::filesystem::create_directories(profile_dir);
+        {
+            std::ofstream ofs{profile_dir / "ui.json"};
+            ofs << "{}";
+        }
+
+        Das::Core::SettingsManager::SettingsManager sm(test_dir_);
+        auto list = sm.GetProfileListJson();
+        ASSERT_EQ(list.as_array()->size(), 1u);
+        auto entry = (*list.as_array())[0];
+        EXPECT_EQ(
+            std::string((*entry.as_object())[std::string_view("profileId")]
+                            .as_string()
+                            .value()),
+            "0");
+        EXPECT_EQ(
+            std::string((*entry.as_object())[std::string_view("name")]
+                            .as_string()
+                            .value()),
+            "默认配置");
+    }
+
+    TEST_F(SettingsManagerTest, RenameProfile_NonexistentProfile_ReturnsSFalse)
+    {
+        Das::Core::SettingsManager::SettingsManager sm(test_dir_);
+        auto result = sm.RenameProfile("missing", "whatever");
+        EXPECT_EQ(result, DAS_S_FALSE);
+    }
+
+    TEST_F(SettingsManagerTest, RenameProfile_ControlCharsInName_RoundTrips)
+    {
+        // A name carrying JSON-significant chars (", \) plus ASCII control
+        // chars (\n \t \r) and non-ASCII UTF-8 must survive the profile.json
+        // round-trip — this guards MakeProfileMeta's escape against emitting
+        // invalid JSON that would silently drop the name.
+        Das::Core::SettingsManager::SettingsManager sm(test_dir_);
+        sm.CreateProfile("0", "plain");
+
+        std::string name = "a\"b\\c\n\t\r渡边";
+        auto result = sm.RenameProfile("0", name);
+        EXPECT_EQ(result, DAS_S_OK);
+
+        auto list = sm.GetProfileListJson();
+        ASSERT_EQ(list.as_array()->size(), 1u);
+        auto entry = (*list.as_array())[0];
+        EXPECT_EQ(
+            std::string((*entry.as_object())[std::string_view("name")]
+                            .as_string()
+                            .value()),
+            name);
     }
 
     TEST_F(SettingsManagerTest, DeleteProfile_RemovesDirectory)
@@ -127,25 +229,20 @@ namespace
         EXPECT_FALSE(std::filesystem::exists(profile_dir));
     }
 
-    TEST_F(SettingsManagerTest, GetProfile_ReturnsData_AfterUpdate)
+    TEST_F(SettingsManagerTest, GetProfileJson_ReturnsData_AfterUpdate)
     {
         Das::Core::SettingsManager::SettingsManager sm(test_dir_);
         sm.CreateProfile("0");
 
         yyjson::value profile_data(Das::Utils::MakeYyjsonObject());
-        (*profile_data.as_object())[std::string_view("name")] = "test-profile";
+        (*profile_data.as_object())[std::string_view("theme")] = "test-profile";
         (*profile_data.as_object())[std::string_view("active")] = true;
-        auto update_result = sm.UpdateProfile(
-            "0",
-            *Das::Utils::SerializeYyjsonValue(profile_data, false));
+        auto update_result = sm.UpdateProfileJson("0", profile_data);
         EXPECT_EQ(update_result, DAS_S_OK);
 
-        auto result = sm.GetProfile("0");
-        auto loaded_opt = Das::Utils::ParseYyjsonFromString(result);
-        ASSERT_TRUE(loaded_opt.has_value());
-        auto& loaded = *loaded_opt;
+        auto loaded = sm.GetProfileJson("0");
         EXPECT_EQ(
-            std::string((*loaded.as_object())[std::string_view("name")]
+            std::string((*loaded.as_object())[std::string_view("theme")]
                             .as_string()
                             .value()),
             "test-profile");
@@ -204,8 +301,7 @@ namespace
                         yyjson::value data(Das::Utils::MakeYyjsonObject());
                         (*data.as_object())[std::string_view("writer")] = w;
                         (*data.as_object())[std::string_view("iteration")] = i;
-                        sm.UpdateGlobalSettings(
-                            *Das::Utils::SerializeYyjsonValue(data, false));
+                        sm.UpdateGlobalSettingsJson(data);
                     }
                 });
         }
@@ -218,12 +314,9 @@ namespace
                 {
                     for (int i = 0; i < num_iterations; ++i)
                     {
-                        auto result = sm.GetGlobalSettings();
-                        // Result must be valid JSON
-                        auto parsed_opt =
-                            Das::Utils::ParseYyjsonFromString(result);
-                        ASSERT_TRUE(parsed_opt.has_value());
-                        EXPECT_TRUE(parsed_opt->is_object());
+                        auto result = sm.GetGlobalSettingsJson();
+                        // Result must be a JSON object snapshot
+                        EXPECT_TRUE(result.is_object());
                     }
                 });
         }
@@ -233,16 +326,14 @@ namespace
             t.join();
         }
 
-        // Verify final state is valid JSON
-        auto final_result = sm.GetGlobalSettings();
-        auto final_json_opt = Das::Utils::ParseYyjsonFromString(final_result);
-        ASSERT_TRUE(final_json_opt.has_value());
-        auto& final_json = *final_json_opt;
-        EXPECT_TRUE(final_json.is_object());
+        // Verify final state is a valid JSON object with persisted fields
+        auto final_result = sm.GetGlobalSettingsJson();
+        ASSERT_TRUE(final_result.is_object());
         EXPECT_FALSE(
-            (*final_json.as_object())[std::string_view("writer")].is_null());
+            (*final_result.as_object())[std::string_view("writer")].is_null());
         EXPECT_FALSE(
-            (*final_json.as_object())[std::string_view("iteration")].is_null());
+            (*final_result.as_object())[std::string_view("iteration")]
+                .is_null());
     }
 
     // --- Split-file plugin settings tests ---
