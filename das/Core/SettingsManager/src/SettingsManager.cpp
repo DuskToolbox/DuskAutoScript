@@ -136,56 +136,21 @@ namespace
         return id;
     }
 
-    /// Build a {"profileId":..,"name":..} JSON object. The value owns deep
-    /// copies of the strings (round-tripped through parse) so it stays valid
-    /// after the caller's locals go out of scope.
+    /// Build a {"profileId":..,"name":..} JSON object. String values are
+    /// deep-copied into the yyjson document pool via copy_string, so the
+    /// returned value stays valid after the caller's locals go out of scope.
     yyjson::value MakeProfileMeta(
         const std::string& profile_id,
         const std::string& name)
     {
-        auto escape = [](const std::string& s)
-        {
-            // JSON string escape. Required: '"' '\\' and ASCII control chars
-            // (< 0x20). UTF-8 multibyte bytes (>= 0x80) pass through verbatim
-            // so non-ASCII names survive the round-trip parse intact.
-            static constexpr char kHex[] = "0123456789abcdef";
-            std::string out;
-            out.reserve(s.size() + 2);
-            for (char c : s)
-            {
-                unsigned char ch = static_cast<unsigned char>(c);
-                switch (ch)
-                {
-                case '"':
-                case '\\':
-                    out.push_back('\\');
-                    out.push_back(static_cast<char>(ch));
-                    break;
-                case '\n': out += "\\n"; break;
-                case '\t': out += "\\t"; break;
-                case '\r': out += "\\r"; break;
-                case '\b': out += "\\b"; break;
-                case '\f': out += "\\f"; break;
-                default:
-                    if (ch < 0x20)
-                    {
-                        out += "\\u00";
-                        out.push_back(kHex[(ch >> 4) & 0xF]);
-                        out.push_back(kHex[ch & 0xF]);
-                    }
-                    else
-                    {
-                        out.push_back(static_cast<char>(ch));
-                    }
-                    break;
-                }
-            }
-            return out;
-        };
-        auto json = "{\"profileId\":\"" + escape(profile_id)
-                    + "\",\"name\":\"" + escape(name) + "\"}";
-        auto parsed = Das::Utils::ParseYyjsonFromString(json);
-        return parsed ? std::move(*parsed) : Das::Utils::MakeYyjsonObject();
+        auto obj = Das::Utils::MakeYyjsonObject();
+        auto o = obj.as_object();
+        (*o)["profileId"] = std::make_pair(
+            std::string_view(profile_id),
+            yyjson::copy_string);
+        (*o)["name"] =
+            std::make_pair(std::string_view(name), yyjson::copy_string);
+        return obj;
     }
 } // namespace
 
