@@ -702,7 +702,10 @@ DasResult DasFlowControlTaskComponent::DoSequence(
     auto snapshots_json = GetPortJson(p_input_port_map, "compiledSnapshots");
     if (snapshots_json && snapshots_json->is_array())
     {
-        for (const auto& snap_json : *snapshots_json->as_array())
+        // 把 as_array() 的返回值先存到局部变量，避免 range-for 引用
+        // 临时对象触发 -Wdangling-gsl。
+        auto snapshots_view = snapshots_json->as_array();
+        for (const auto& snap_json : *snapshots_view)
         {
             // 每个 snapshot 执行前轮询 stop_token；一旦取消，保留已累积
             // 的子状态后立即返回 cancelled（不发 next）。
