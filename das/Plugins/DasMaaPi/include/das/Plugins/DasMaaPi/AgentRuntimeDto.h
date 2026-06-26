@@ -63,7 +63,7 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
         std::string                  operation;
         std::optional<RuntimeRefDto> runtime_ref;
         std::string                  interface_directory;
-        std::vector<AgentSpecDto>    agents;
+        std::vector<AgentSpecDto>    agent;
         PiEnvDto                     pi_env;
         std::vector<PiEnvVarDto>     extra_pi_env;
         std::optional<std::string>   session_id;
@@ -77,7 +77,7 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
         std::string                  operation;
         std::optional<RuntimeRefDto> runtime_ref;
         std::string                  interface_directory;
-        std::vector<AgentSpecDto>    agents;
+        std::vector<AgentSpecDto>    agent;
         PiEnvDto                     pi_env;
         std::vector<PiEnvVarDto>     extra_pi_env;
         AgentRuntimeOptionsDto       options;
@@ -124,7 +124,7 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
         int32_t                         version = 1;
         std::string                     status;
         std::optional<std::string>      session_id;
-        std::vector<AgentStateDto>      agents;
+        std::vector<AgentStateDto>      agent;
         AgentRuntimeOutputsDto          outputs;
         std::vector<AgentDiagnosticDto> diagnostics;
         AgentRuntimeSignalsDto          signals;

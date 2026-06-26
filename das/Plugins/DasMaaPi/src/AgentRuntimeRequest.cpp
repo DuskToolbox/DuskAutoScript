@@ -285,7 +285,7 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
                 auto agents = obj[std::string_view("agents")].as_array();
                 if (agents)
                 {
-                    ParseAgentArray(*agents, request.agents);
+                    ParseAgentArray(*agents, request.agent);
                 }
                 return;
             }
@@ -298,12 +298,12 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
             const auto& agent = obj[std::string_view("agent")];
             if (auto single = agent.as_object())
             {
-                request.agents.emplace_back(ParseAgentSpec(*single));
+                request.agent.emplace_back(ParseAgentSpec(*single));
                 return;
             }
             if (auto array = agent.as_array())
             {
-                ParseAgentArray(*array, request.agents);
+                ParseAgentArray(*array, request.agent);
             }
         }
 
@@ -475,7 +475,7 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
                         "start requires interfaceDirectory",
                         "interfaceDirectory");
                 }
-                if (result.request.agents.empty())
+                if (result.request.agent.empty())
                 {
                     AddDiagnostic(
                         result,
@@ -489,9 +489,9 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
             if (result.request.operation == "start"
                 || result.request.operation == "validate")
             {
-                for (std::size_t i = 0; i < result.request.agents.size(); ++i)
+                for (std::size_t i = 0; i < result.request.agent.size(); ++i)
                 {
-                    if (result.request.agents[i].child_exec.empty())
+                    if (result.request.agent[i].child_exec.empty())
                     {
                         AddDiagnostic(
                             result,
@@ -784,8 +784,8 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
             (*obj)[std::string_view("sessionId")] =
                 JsonString(*result.session_id);
         }
-        (*obj)[std::string_view("agents")] =
-            SerializeAgentStates(result.agents);
+        (*obj)[std::string_view("agent")] =
+            SerializeAgentStates(result.agent);
 
         auto outputs = Das::Utils::MakeYyjsonObject();
         auto outputs_obj = outputs.as_object();

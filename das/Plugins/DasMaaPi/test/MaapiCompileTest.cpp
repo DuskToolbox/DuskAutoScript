@@ -347,7 +347,7 @@ TEST_F(MaapiCompileFixture, AgentBoundaryAllowsExecutionEnvelope)
     ASSERT_TRUE(envelope.has_value());
     auto maapi = (*envelope)[std::string_view("maapi")].as_object();
     ASSERT_TRUE(maapi.has_value());
-    auto agents = (*maapi)[std::string_view("agents")].as_array();
+    auto agents = (*maapi)[std::string_view("agent")].as_array();
     ASSERT_TRUE(agents.has_value());
     ASSERT_EQ(agents->size(), 1u);
     auto agent = (*agents)[0].as_object();

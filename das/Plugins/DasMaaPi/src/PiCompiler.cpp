@@ -566,10 +566,10 @@ namespace Das::Plugins::DasMaaPi
                 envelope.maapi.fail_fast;
             (*maapi_obj)[std::string_view("requiresAgentRuntime")] =
                 envelope.maapi.requires_agent_runtime;
-            if (!envelope.maapi.agents.empty())
+            if (!envelope.maapi.agent.empty())
             {
-                (*maapi_obj)[std::string_view("agents")] =
-                    SerializeAgentSpecs(envelope.maapi.agents);
+                (*maapi_obj)[std::string_view("agent")] =
+                    SerializeAgentSpecs(envelope.maapi.agent);
             }
 
             yyjson::value env(Object());
@@ -617,7 +617,7 @@ namespace Das::Plugins::DasMaaPi
             DAS::Utils::U8AsString(catalog.interface_directory.u8string())};
         envelope.maapi.fail_fast = settings.adapter.execution_policy.fail_fast;
         envelope.maapi.requires_agent_runtime = !catalog.raw_agent_json.empty();
-        envelope.maapi.agents = NormalizeAgentSpecs(catalog.raw_agent_json);
+        envelope.maapi.agent = NormalizeAgentSpecs(catalog.raw_agent_json);
         envelope.maapi.pi_env.project_version = catalog.version;
         result.summary.requires_agent_runtime =
             envelope.maapi.requires_agent_runtime;
@@ -647,7 +647,7 @@ namespace Das::Plugins::DasMaaPi
                 "Selected resource is missing");
         }
         if (envelope.maapi.requires_agent_runtime
-            && envelope.maapi.agents.empty())
+            && envelope.maapi.agent.empty())
         {
             AddDiagnostic(
                 result,

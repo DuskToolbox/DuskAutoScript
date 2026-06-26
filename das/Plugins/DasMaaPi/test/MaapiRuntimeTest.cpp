@@ -79,7 +79,7 @@ namespace
             + std::string(requires_agent ? "true" : "false")
             + std::string(
                 requires_agent
-                    ? R"(,"agents":[{"childExec":"agent.exe","childArgs":["--serve"],"timeoutMs":1000}])"
+                    ? R"(,"agent":[{"childExec":"agent.exe","childArgs":["--serve"],"timeoutMs":1000}])"
                     : "")
             + R"(,"piEnv":{"controllerJson":)"
             + JsonStringLiteral(controller_json)

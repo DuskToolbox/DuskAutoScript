@@ -56,7 +56,7 @@ TEST(DasMaaPiAgentRuntimeDto, ParsesStartRequestFromLowerCamelJson)
             "sessionId": "runtime-1"
           },
           "interfaceDirectory": "E:/maa/project",
-          "agents": [
+          "agent": [
             {
               "childExec": "python",
               "childArgs": ["./agent/main.py"],
@@ -90,13 +90,13 @@ TEST(DasMaaPiAgentRuntimeDto, ParsesStartRequestFromLowerCamelJson)
     EXPECT_EQ(request.runtime_ref->kind, "maapiRuntimeSession");
     EXPECT_EQ(request.runtime_ref->session_id, "runtime-1");
     EXPECT_EQ(request.interface_directory, "E:/maa/project");
-    ASSERT_EQ(request.agents.size(), 1u);
-    EXPECT_EQ(request.agents[0].child_exec, "python");
+    ASSERT_EQ(request.agent.size(), 1u);
+    EXPECT_EQ(request.agent[0].child_exec, "python");
     EXPECT_EQ(
-        request.agents[0].child_args,
+        request.agent[0].child_args,
         (std::vector<std::string>{"./agent/main.py"}));
-    EXPECT_FALSE(request.agents[0].identifier.has_value());
-    EXPECT_EQ(request.agents[0].timeout_ms, 9000);
+    EXPECT_FALSE(request.agent[0].identifier.has_value());
+    EXPECT_EQ(request.agent[0].timeout_ms, 9000);
     EXPECT_EQ(request.pi_env.interface_version, "v2.6.0");
     EXPECT_EQ(request.pi_env.client_name, "DAS");
     EXPECT_EQ(request.pi_env.client_version, "0.1");
@@ -116,7 +116,7 @@ TEST(DasMaaPiAgentRuntimeDto, SerializesStructuredResultEnvelopeLowerCamel)
     AgentRuntimeResultDto result;
     result.status = "succeeded";
     result.session_id = "session-1";
-    result.agents.push_back(
+    result.agent.push_back(
         AgentStateDto{
             .agent_id = "agent-0",
             .state = "running",
@@ -138,7 +138,7 @@ TEST(DasMaaPiAgentRuntimeDto, SerializesStructuredResultEnvelopeLowerCamel)
         "session-1");
     EXPECT_FALSE(obj->contains(std::string_view("session_id")));
 
-    auto agents = (*obj)[std::string_view("agents")].as_array();
+    auto agents = (*obj)[std::string_view("agent")].as_array();
     ASSERT_TRUE(agents.has_value());
     ASSERT_EQ(agents->size(), 1u);
     auto agent = agents->begin()->as_object();
@@ -211,13 +211,13 @@ TEST(DasMaaPiAgentRuntimeDto, NormalizesSingleAgentObjectToAgentArray)
         })");
 
     ASSERT_TRUE(parsed.ok) << DiagnosticText(parsed.diagnostics);
-    ASSERT_EQ(parsed.request.agents.size(), 1u);
-    EXPECT_EQ(parsed.request.agents[0].child_exec, "./agent.exe");
+    ASSERT_EQ(parsed.request.agent.size(), 1u);
+    EXPECT_EQ(parsed.request.agent[0].child_exec, "./agent.exe");
     EXPECT_EQ(
-        parsed.request.agents[0].child_args,
+        parsed.request.agent[0].child_args,
         (std::vector<std::string>{"--verbose"}));
-    ASSERT_TRUE(parsed.request.agents[0].identifier.has_value());
-    EXPECT_EQ(*parsed.request.agents[0].identifier, "provided-id");
+    ASSERT_TRUE(parsed.request.agent[0].identifier.has_value());
+    EXPECT_EQ(*parsed.request.agent[0].identifier, "provided-id");
 }
 
 TEST(DasMaaPiAgentRuntimeDto, MergesSettingsDefaultsWithInputRequest)

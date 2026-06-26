@@ -41,7 +41,7 @@ namespace Das::Plugins::DasMaaPi
         std::optional<std::string>              resource_hash;
         bool                                    fail_fast = true;
         bool                                    requires_agent_runtime = false;
-        std::vector<AgentRuntime::AgentSpecDto> agents;
+        std::vector<AgentRuntime::AgentSpecDto> agent;
         PiEnvSnapshotDto                        pi_env;
         std::vector<MaaTaskExecutionDto>        tasks;
     };

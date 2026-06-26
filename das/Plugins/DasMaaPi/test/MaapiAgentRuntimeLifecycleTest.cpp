@@ -140,7 +140,7 @@ namespace
         AgentRuntimeRequestDto request;
         request.operation = "start";
         request.interface_directory = "C:/maa/project";
-        request.agents = std::move(agents);
+        request.agent = std::move(agents);
         request.pi_env.client_name = "DAS";
         request.pi_env.client_version = "0.1";
         request.pi_env.project_version = "project";
@@ -309,9 +309,9 @@ namespace
         ASSERT_TRUE(result.session_id.has_value());
         EXPECT_EQ(result.outputs.agent_session_id, result.session_id);
         EXPECT_EQ(result.outputs.running_agent_count, 1);
-        ASSERT_EQ(result.agents.size(), 1u);
-        EXPECT_EQ(result.agents[0].state, "running");
-        EXPECT_EQ(result.agents[0].identifier, "agent-client-id");
+        ASSERT_EQ(result.agent.size(), 1u);
+        EXPECT_EQ(result.agent[0].state, "running");
+        EXPECT_EQ(result.agent[0].identifier, "agent-client-id");
         ASSERT_EQ(runner.launches.size(), 1u);
         EXPECT_EQ(runner.launches[0].executable.generic_string(), "python");
         EXPECT_EQ(
@@ -458,9 +458,9 @@ namespace
         auto status = service.Status(*started.session_id);
 
         ASSERT_EQ(status.status, "succeeded");
-        ASSERT_EQ(status.agents.size(), 1u);
-        EXPECT_EQ(status.agents[0].stdout_tail, "6789");
-        EXPECT_EQ(status.agents[0].stderr_tail, "ghij");
+        ASSERT_EQ(status.agent.size(), 1u);
+        EXPECT_EQ(status.agent[0].stdout_tail, "6789");
+        EXPECT_EQ(status.agent[0].stderr_tail, "ghij");
     }
 
     TEST(DasMaaPiAgentRuntimeStatus, ReportsExitedProcessFromSessionTable)
@@ -478,10 +478,10 @@ namespace
         auto status = service.Status(*started.session_id);
 
         ASSERT_EQ(status.status, "succeeded");
-        ASSERT_EQ(status.agents.size(), 1u);
-        EXPECT_EQ(status.agents[0].state, "exited");
-        ASSERT_TRUE(status.agents[0].exit_code.has_value());
-        EXPECT_EQ(*status.agents[0].exit_code, 42);
+        ASSERT_EQ(status.agent.size(), 1u);
+        EXPECT_EQ(status.agent[0].state, "exited");
+        ASSERT_TRUE(status.agent[0].exit_code.has_value());
+        EXPECT_EQ(*status.agent[0].exit_code, 42);
     }
 
     TEST(DasMaaPiAgentRuntimeStop, TimeoutKillsProcessAndRecordsFinalState)
@@ -502,8 +502,8 @@ namespace
         ASSERT_EQ(runner.processes.size(), 1u);
         EXPECT_EQ(runner.processes[0]->terminate_calls, 1);
         EXPECT_TRUE(stopped.signals.timed_out);
-        ASSERT_EQ(stopped.agents.size(), 1u);
-        EXPECT_EQ(stopped.agents[0].state, "stopped");
+        ASSERT_EQ(stopped.agent.size(), 1u);
+        EXPECT_EQ(stopped.agent[0].state, "stopped");
         EXPECT_TRUE(HasCall(fake.calls, "DisconnectAgentClient:1"));
         EXPECT_TRUE(HasCall(fake.calls, "DestroyAgentClient:1"));
     }

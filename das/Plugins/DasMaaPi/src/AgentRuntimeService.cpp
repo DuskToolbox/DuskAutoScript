@@ -76,7 +76,7 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
             AgentRuntimeResultDto result;
             result.status = std::move(status);
             result.session_id = std::move(session_id);
-            result.agents = std::move(agents);
+            result.agent = std::move(agents);
             result.diagnostics = std::move(diagnostics);
             result.signals.succeeded = result.status == "succeeded";
             result.signals.failed = result.status != "succeeded";
@@ -84,8 +84,8 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
             result.outputs.agent_session_id = result.session_id;
             result.outputs.running_agent_count =
                 static_cast<int32_t>(std::count_if(
-                    result.agents.begin(),
-                    result.agents.end(),
+                    result.agent.begin(),
+                    result.agent.end(),
                     [](const AgentStateDto& agent)
                     { return agent.state == "running"; }));
             return result;
@@ -168,9 +168,9 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
                 "agent-session-" + std::to_string(next_session_id_++);
             const auto env = FilterLaunchEnvironment(request);
 
-            for (std::size_t index = 0; index < request.agents.size(); ++index)
+            for (std::size_t index = 0; index < request.agent.size(); ++index)
             {
-                const auto&  spec = request.agents[index];
+                const auto&  spec = request.agent[index];
                 SessionAgent agent;
                 agent.agent_id = "agent-" + std::to_string(index);
 

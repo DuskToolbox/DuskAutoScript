@@ -804,15 +804,6 @@ namespace Das::Plugins::DasMaaPi
             const ObjectRef&                         obj,
             std::vector<AgentRuntime::AgentSpecDto>& agents)
         {
-            if (obj.contains(std::string_view("agents")))
-            {
-                if (auto array = obj[std::string_view("agents")].as_array())
-                {
-                    AddAgentSpecsFromArray(*array, agents);
-                }
-                return;
-            }
-
             if (!obj.contains(std::string_view("agent")))
             {
                 return;
@@ -1052,7 +1043,7 @@ namespace Das::Plugins::DasMaaPi
             return DAS_E_INVALID_ARGUMENT;
         }
         if (envelope.maapi.requires_agent_runtime
-            && envelope.maapi.agents.empty())
+            && envelope.maapi.agent.empty())
         {
             return DAS_E_INVALID_ARGUMENT;
         }
