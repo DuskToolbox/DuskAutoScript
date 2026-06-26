@@ -127,7 +127,8 @@ namespace Das::Core::TaskScheduler
 
         for (const auto& inst : task_instances)
         {
-            if (inst.availability != TaskAvailability::Available
+            if (!inst.enabled
+                || inst.availability != TaskAvailability::Available
                 || !inst.task_instance)
             {
                 continue;
@@ -735,7 +736,8 @@ namespace Das::Core::TaskScheduler
 
         for (auto& inst : task_instances)
         {
-            if (inst.availability != TaskAvailability::Available
+            if (!inst.enabled
+                || inst.availability != TaskAvailability::Available
                 || !inst.task_instance)
             {
                 continue;
@@ -1285,6 +1287,11 @@ namespace Das::Core::TaskScheduler
                     }
                 }
 
+                // Parse enabled (defaults to true when absent for backward
+                // compatibility with persisted instances that predate the
+                // field). Never throws: a malformed value falls back to true.
+                rec.enabled = GetBoolField(instance_json, "enabled", true);
+
                 // Parse properties
                 auto props_key = std::string_view("properties");
                 if (inst_obj.contains(props_key)
@@ -1636,6 +1643,8 @@ namespace Das::Core::TaskScheduler
                 task_ref[std::string_view("unavailabilityReason")] =
                     yyjson::value(inst.unavailability_reason);
             }
+
+            task_ref[std::string_view("enabled")] = inst.enabled;
 
             if (inst.next_execution_time)
             {
@@ -2540,6 +2549,7 @@ namespace Das::Core::TaskScheduler
         inst_obj[std::string_view("pluginGuid")] =
             yyjson::value(GuidToString(rec.plugin_guid));
         inst_obj[std::string_view("nextExecutionTime")] = nullptr;
+        inst_obj[std::string_view("enabled")] = true;
 
         if (!rec.properties.is_null())
         {
@@ -2953,6 +2963,70 @@ namespace Das::Core::TaskScheduler
             if (inst)
             {
                 inst->next_execution_time = new_next_time;
+            }
+        }
+
+        return DAS_S_OK;
+    }
+
+    // ----------------------------------------------------------------
+    // SetTaskEnabled
+    // ----------------------------------------------------------------
+
+    DasResult SchedulerService::SetTaskEnabled(int64_t task_id, bool enabled)
+    {
+        // Phase 1: Short lock to validate existence and capture current value.
+        // No Running/Stopping guard: toggling enabled is a runtime-safe intent
+        // switch — the dispatch loop reads the flag on the next tick, so it is
+        // safe to flip while the scheduler is running (that is the feature's
+        // core value: pause/resume a single task without stopping the world).
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+
+            if (!initialized_)
+            {
+                return DAS_E_OBJECT_NOT_INIT;
+            }
+
+            auto* inst = FindTaskInstance(task_id);
+            if (!inst)
+            {
+                return DAS_E_NOT_FOUND;
+            }
+
+            if (inst->enabled == enabled)
+            {
+                // No-op: avoid a redundant persistence write.
+                return DAS_S_OK;
+            }
+        }
+
+        // Phase 2: Lock-free SettingsManager persistence. Read-modify-write
+        // the persisted instance so the toggle survives restart.
+        auto& settings = plugin_manager_.GetSettingsManager();
+        auto  instance_json = settings.GetTaskInstanceJson("0", task_id);
+        if (instance_json.is_null() || !instance_json.is_object())
+        {
+            instance_json = Das::Utils::MakeYyjsonObject();
+        }
+        {
+            auto inst_obj = instance_json.as_object();
+            inst_obj->operator[](std::string_view("enabled")) = enabled;
+        }
+        auto persist_result =
+            settings.UpdateTaskInstanceJson("0", task_id, instance_json);
+        if (IsFailed(persist_result))
+        {
+            return persist_result;
+        }
+
+        // Phase 3: Short lock to commit to runtime state.
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            auto*                       inst = FindTaskInstance(task_id);
+            if (inst)
+            {
+                inst->enabled = enabled;
             }
         }
 

@@ -4737,6 +4737,7 @@ namespace
         std::atomic<bool> delete_task_called{false};
         std::atomic<bool> update_props_called{false};
         std::atomic<bool> update_internal_props_called{false};
+        std::atomic<bool> set_enabled_called{false};
         std::atomic<bool> authoring_get_called{false};
         std::atomic<bool> authoring_apply_called{false};
         std::atomic<bool> authoring_compile_called{false};
@@ -4926,6 +4927,11 @@ namespace
             override
         {
             update_internal_props_called = true;
+            return next_result;
+        }
+        DasResult SetTaskEnabled(int64_t, DasBool) override
+        {
+            set_enabled_called = true;
             return next_result;
         }
         DasResult GetTaskAuthoringDocument(

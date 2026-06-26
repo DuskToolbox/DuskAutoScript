@@ -43,10 +43,10 @@ DAS_INTERFACE IDasSchedulerService : public IDasBase
     DAS_METHOD Stop() = 0;
     DAS_METHOD GetState(SchedulerState * p_out_state) const = 0;
     DAS_METHOD Get(IDasReadOnlyString * *pp_out_json) = 0;
-    DAS_METHOD GetTaskRepository(IDasReadOnlyString** pp_out_json) = 0;
+    DAS_METHOD GetTaskRepository(IDasReadOnlyString * *pp_out_json) = 0;
     DAS_METHOD CreateRepositoryEntry(
-        IDasReadOnlyString*  p_request_json,
-        IDasReadOnlyString** pp_out_json) = 0;
+        IDasReadOnlyString * p_request_json,
+        IDasReadOnlyString * *pp_out_json) = 0;
     DAS_METHOD DeleteRepositoryEntry(int64_t entry_id) = 0;
     DAS_METHOD RenameRepositoryEntry(
         int64_t              entry_id,
@@ -72,6 +72,7 @@ DAS_INTERFACE IDasSchedulerService : public IDasBase
     DAS_METHOD UpdateTaskInternalProperties(
         int64_t             task_id,
         IDasReadOnlyString* p_properties_json) = 0;
+    DAS_METHOD SetTaskEnabled(int64_t task_id, DasBool enabled) = 0;
     DAS_METHOD GetTaskAuthoringDocument(
         int64_t              task_id,
         IDasReadOnlyString*  p_request_json,

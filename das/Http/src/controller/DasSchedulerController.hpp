@@ -546,6 +546,62 @@ namespace Das::Http
             return Beast::HttpResponse::CreateSuccessResponse();
         }
 
+        // HTTP contract: per-instance enable switch.
+        // Method/path:
+        //   POST /api/v1/scheduler/{profile}/tasks/{taskId}/enable
+        //   POST /api/v1/scheduler/{profile}/tasks/{taskId}/disable
+        // request body: ignored.
+        // success response: standard empty success envelope.
+        // errorKind: taskNotFound (4xx) when taskId is unknown — same
+        // error-handling style as delete/properties update.
+        Beast::HttpResponse EnableTask(const Beast::HttpRequest& request)
+        {
+            return DispatchTaskEnabled(request, true);
+        }
+
+        Beast::HttpResponse DisableTask(const Beast::HttpRequest& request)
+        {
+            return DispatchTaskEnabled(request, false);
+        }
+
+        Beast::HttpResponse DispatchTaskEnabled(
+            const Beast::HttpRequest& request,
+            bool                      enabled)
+        {
+            auto profile = request.GetPathParameter("profile");
+            auto task_id_str = request.GetPathParameter("taskId");
+            if (profile != "0")
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_INVALID_ARGUMENT,
+                    "Profile ID must be 0 in v1.2");
+            }
+
+            int64_t task_id = 0;
+            try
+            {
+                task_id = std::stoll(task_id_str);
+            }
+            catch (const std::exception&)
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_INVALID_ARGUMENT,
+                    "Invalid task ID format");
+            }
+
+            auto result = scheduler_.SetTaskEnabled(
+                task_id,
+                enabled ? static_cast<DasBool>(1) : 0);
+            if (DAS::IsFailed(result))
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    result,
+                    enabled ? "Failed to enable task"
+                            : "Failed to disable task");
+            }
+            return Beast::HttpResponse::CreateSuccessResponse();
+        }
+
         // HTTP contract: task authoring endpoints.
         // Method/path:
         //   POST /api/v1/scheduler/{profile}/tasks/{taskId}/authoring/get

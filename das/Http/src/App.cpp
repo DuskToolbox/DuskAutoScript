@@ -415,6 +415,14 @@ namespace Das::Http
                 return scheduler_controller->UpdateTaskInternalProperties(req);
             });
         components.router->Post(
+            DAS_HTTP_API_PREFIX "scheduler/{profile}/{taskId}/enable",
+            [scheduler_controller](const Das::Http::Beast::HttpRequest& req)
+            { return scheduler_controller->EnableTask(req); });
+        components.router->Post(
+            DAS_HTTP_API_PREFIX "scheduler/{profile}/{taskId}/disable",
+            [scheduler_controller](const Das::Http::Beast::HttpRequest& req)
+            { return scheduler_controller->DisableTask(req); });
+        components.router->Post(
             DAS_HTTP_API_PREFIX
             "scheduler/{profile}/tasks/{taskId}/authoring/get",
             [scheduler_controller](const Das::Http::Beast::HttpRequest& req)

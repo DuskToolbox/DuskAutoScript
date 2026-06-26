@@ -346,6 +346,13 @@ namespace Das::Core::TaskScheduler
         return svc_.UpdateTaskInternalProperties(task_id, *props);
     }
 
+    DasResult SchedulerServiceImpl::SetTaskEnabled(
+        int64_t task_id,
+        DasBool enabled)
+    {
+        return svc_.SetTaskEnabled(task_id, enabled != 0);
+    }
+
     DasResult SchedulerServiceImpl::GetTaskAuthoringDocument(
         int64_t              task_id,
         IDasReadOnlyString*  p_request_json,

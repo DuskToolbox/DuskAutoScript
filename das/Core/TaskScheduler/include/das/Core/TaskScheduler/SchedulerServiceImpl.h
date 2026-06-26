@@ -57,6 +57,7 @@ namespace Das::Core::TaskScheduler
         DasResult UpdateTaskInternalProperties(
             int64_t             task_id,
             IDasReadOnlyString* p_properties_json) override;
+        DasResult SetTaskEnabled(int64_t task_id, DasBool enabled) override;
         DasResult GetTaskAuthoringDocument(
             int64_t              task_id,
             IDasReadOnlyString*  p_request_json,

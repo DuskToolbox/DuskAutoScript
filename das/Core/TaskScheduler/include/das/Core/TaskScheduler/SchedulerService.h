@@ -72,6 +72,11 @@ namespace Das::Core::TaskScheduler
         std::optional<int64_t> next_execution_time;
         yyjson::value          properties;
         yyjson::value          authoring;
+        // Per-instance enable switch. Defaults to true for backward
+        // compatibility with persisted instances that predate this field.
+        // When false the dispatch loop skips this instance without
+        // raising errors, but it remains in taskOrder.
+        bool enabled = true;
         // Pointer to the task type record if available
         TaskTypeRecord*                        task_type = nullptr;
         DasPtr<Das::PluginInterface::IDasTask> task_instance;
@@ -123,6 +128,11 @@ namespace Das::Core::TaskScheduler
         DasResult UpdateTaskInternalProperties(
             int64_t              task_id,
             const yyjson::value& internal_props);
+
+        /// Toggle the per-instance enable switch and persist it. Allowed in
+        /// any scheduler state so a running scheduler can skip/restore a
+        /// task without a full stop. Unknown task_id returns DAS_E_NOT_FOUND.
+        DasResult SetTaskEnabled(int64_t task_id, bool enabled);
 
         yyjson::value GetTaskAuthoringDocument(
             int64_t              task_id,
