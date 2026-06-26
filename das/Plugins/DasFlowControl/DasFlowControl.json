@@ -23,6 +23,14 @@
             {
               "id": "condition",
               "type": "bool"
+            },
+            {
+              "id": "compiledSnapshotTrue",
+              "type": "object"
+            },
+            {
+              "id": "compiledSnapshotFalse",
+              "type": "object"
             }
           ],
           "outputs": [
@@ -49,6 +57,10 @@
             {
               "id": "in",
               "type": "signal"
+            },
+            {
+              "id": "compiledSnapshots",
+              "type": "array"
             }
           ],
           "outputs": [
