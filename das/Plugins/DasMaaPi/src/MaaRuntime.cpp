@@ -597,7 +597,7 @@ namespace Das::Plugins::DasMaaPi
             AgentRuntime::AgentRuntimeRequestDto request;
             request.operation = "start";
             request.interface_directory = envelope.maapi.interface_directory;
-            request.agents = envelope.maapi.agents;
+            request.agent = envelope.maapi.agent;
             request.pi_env = ToAgentPiEnv(envelope.maapi.pi_env);
             return request;
         }
@@ -660,22 +660,6 @@ namespace Das::Plugins::DasMaaPi
                 return std::nullopt;
             }
             return std::string(obj[key].as_string().value_or(""));
-        }
-
-        template <typename ObjectRef>
-        std::optional<std::string> OptionalStringField(
-            const ObjectRef&                        obj,
-            std::initializer_list<std::string_view> keys)
-        {
-            for (const auto key : keys)
-            {
-                auto value = OptionalStringField(obj, key);
-                if (value)
-                {
-                    return value;
-                }
-            }
-            return std::nullopt;
         }
 
         template <typename ObjectRef>
@@ -758,21 +742,7 @@ namespace Das::Plugins::DasMaaPi
         template <typename ObjectRef>
         std::string ControllerConfigJson(const ObjectRef& obj)
         {
-            if (auto config_json =
-                    OptionalStringField(obj, {"configJson", "config_json"}))
-            {
-                return *config_json;
-            }
-            if (!obj.contains(std::string_view("config")))
-            {
-                return "{}";
-            }
-            const auto& config = obj[std::string_view("config")];
-            if (config.is_string())
-            {
-                return std::string(config.as_string().value_or("{}"));
-            }
-            return Das::Utils::SerializeYyjsonValue(config).value_or("{}");
+            return OptionalStringField(obj, "configJson").value_or("{}");
         }
 
         template <typename ObjectRef>
@@ -786,15 +756,12 @@ namespace Das::Plugins::DasMaaPi
                             .value_or(std::move(default_name));
             spec.type = OptionalStringField(obj, "type")
                             .value_or(std::move(default_type));
-            spec.read_path = OptionalStringField(obj, {"readPath", "read_path"})
-                                 .value_or("");
+            spec.read_path = OptionalStringField(obj, "readPath").value_or("");
             spec.address = OptionalStringField(obj, "address").value_or("");
-            spec.adb_path = OptionalStringField(obj, {"adbPath", "adb_path"})
-                                .value_or("adb");
+            spec.adb_path = OptionalStringField(obj, "adbPath").value_or("adb");
             spec.config_json = ControllerConfigJson(obj);
             spec.agent_path =
-                OptionalStringField(obj, {"agentPath", "agent_path"})
-                    .value_or("");
+                OptionalStringField(obj, "agentPath").value_or("");
             return spec;
         }
 
@@ -803,8 +770,7 @@ namespace Das::Plugins::DasMaaPi
         {
             AgentRuntime::AgentSpecDto spec;
             spec.child_exec =
-                OptionalStringField(obj, {"childExec", "child_exec"})
-                    .value_or("");
+                OptionalStringField(obj, "childExec").value_or("");
             spec.child_args = StringArrayField(obj, "childArgs");
             if (spec.child_args.empty())
             {
@@ -981,7 +947,7 @@ namespace Das::Plugins::DasMaaPi
         plan.fail_fast = BoolField(*maapi, "failFast", true);
         plan.requires_agent_runtime =
             BoolField(*maapi, "requiresAgentRuntime", false);
-        ReadAgentSpecs(*maapi, plan.agents);
+        ReadAgentSpecs(*maapi, plan.agent);
 
         if (maapi->contains(std::string_view("piEnv")))
         {

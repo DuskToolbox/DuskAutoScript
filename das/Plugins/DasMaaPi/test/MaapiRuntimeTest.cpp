@@ -263,7 +263,7 @@ TEST(DasMaaPiRuntime, RuntimePassesTypedAdbCamelCaseControllerFields)
             true,
             false,
             R"([{"taskName":"DailyFarm","entry":"StartDaily","pipelineOverride":{}}])",
-            R"({"name":"Android","type":"Adb","address":"127.0.0.1:5555","adbPath":"C:/tools/adb.exe","config":"{\"touch\":\"maatouch\"}","agentPath":"C:/maa/agent"})"),
+            R"({"name":"Android","type":"Adb","address":"127.0.0.1:5555","adbPath":"C:/tools/adb.exe","configJson":"{\"touch\":\"maatouch\"}","agentPath":"C:/maa/agent"})"),
         fake,
         nullptr);
 
@@ -279,7 +279,7 @@ TEST(DasMaaPiRuntime, RuntimePassesTypedAdbCamelCaseControllerFields)
     EXPECT_EQ(fake.last_controller_spec->agent_path, "C:/maa/agent");
 }
 
-TEST(DasMaaPiRuntime, RuntimePassesTypedAdbSnakeCaseControllerFields)
+TEST(DasMaaPiRuntime, RuntimeIgnoresSnakeCaseControllerFields)
 {
     FakeMaaApiBoundary fake;
     auto               result = MaaRuntime::Run(
@@ -287,16 +287,33 @@ TEST(DasMaaPiRuntime, RuntimePassesTypedAdbSnakeCaseControllerFields)
             true,
             false,
             R"([{"taskName":"DailyFarm","entry":"StartDaily","pipelineOverride":{}}])",
-            R"({"name":"Android","type":"Adb","address":"emulator-5554","adb_path":"adb-custom","config":"{}","agent_path":"relative/agent"})"),
+            R"({"name":"Android","type":"Adb","address":"emulator-5554","adb_path":"adb-custom","config":"{\"touch\":\"maatouch\"}","agent_path":"relative/agent"})"),
         fake,
         nullptr);
 
     EXPECT_EQ(result.das_result, DAS_S_OK);
     ASSERT_TRUE(fake.last_controller_spec.has_value());
     EXPECT_EQ(fake.last_controller_spec->address, "emulator-5554");
-    EXPECT_EQ(fake.last_controller_spec->adb_path, "adb-custom");
+    EXPECT_EQ(fake.last_controller_spec->adb_path, "adb");
     EXPECT_EQ(fake.last_controller_spec->config_json, "{}");
-    EXPECT_EQ(fake.last_controller_spec->agent_path, "relative/agent");
+    EXPECT_EQ(fake.last_controller_spec->agent_path, "");
+}
+
+TEST(DasMaaPiRuntime, RuntimeRejectsConfigObjectInput)
+{
+    FakeMaaApiBoundary fake;
+    auto               result = MaaRuntime::Run(
+        Envelope(
+            true,
+            false,
+            R"([{"taskName":"DailyFarm","entry":"StartDaily","pipelineOverride":{}}])",
+            R"({"name":"Android","type":"Adb","configJson":{"touch":"maatouch"}})"),
+        fake,
+        nullptr);
+
+    EXPECT_EQ(result.das_result, DAS_S_OK);
+    ASSERT_TRUE(fake.last_controller_spec.has_value());
+    EXPECT_EQ(fake.last_controller_spec->config_json, "{}");
 }
 
 TEST(DasMaaPiRuntime, RuntimePassesTypedDbgControllerReadPath)
