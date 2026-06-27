@@ -1,18 +1,19 @@
 #include "AgentRuntimeService.h"
 
-#include "AgentRuntimeRequest.h"
 #include "MaaHandle.h"
 
 #include <das/DasApi.h>
 #include <das/_autogen/idl/abi/DasLogger.h>
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <filesystem>
 #include <map>
 #include <mutex>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -44,6 +45,73 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
         bool StartsWithPi(std::string_view value)
         {
             return value.starts_with("PI_");
+        }
+
+        struct PiEnvKnownField
+        {
+            std::string_view env_key;
+            std::string_view camel_key;
+        };
+
+        constexpr std::array<PiEnvKnownField, 8> kKnownPiEnvFields{
+            PiEnvKnownField{"PI_INTERFACE_VERSION", "interfaceVersion"},
+            PiEnvKnownField{"PI_CLIENT_NAME", "clientName"},
+            PiEnvKnownField{"PI_CLIENT_VERSION", "clientVersion"},
+            PiEnvKnownField{"PI_CLIENT_LANGUAGE", "clientLanguage"},
+            PiEnvKnownField{"PI_CLIENT_MAAFW_VERSION", "clientMaafwVersion"},
+            PiEnvKnownField{"PI_VERSION", "projectVersion"},
+            PiEnvKnownField{"PI_CONTROLLER", "controllerJson"},
+            PiEnvKnownField{"PI_RESOURCE", "resourceJson"}};
+
+        bool IsKnownPiEnvKey(std::string_view key)
+        {
+            return std::any_of(
+                kKnownPiEnvFields.begin(),
+                kKnownPiEnvFields.end(),
+                [key](const PiEnvKnownField& field)
+                { return field.env_key == key || field.camel_key == key; });
+        }
+
+        void AppendEnv(
+            std::vector<PiEnvVarDto>& env,
+            std::string               key,
+            const std::string&        value)
+        {
+            if (!value.empty())
+            {
+                env.emplace_back(
+                    PiEnvVarDto{.key = std::move(key), .value = value});
+            }
+        }
+
+        // 构造传给 agent 子进程的 PI_* 环境变量。原属 AgentRuntimeRequest 的
+        // Dispatch 路径，但 Run 路径（FilterLaunchEnvironment）也依赖它，故随
+        // Dispatch 路径移除一并内联到此处。
+        std::vector<PiEnvVarDto> BuildLaunchEnvironment(
+            const AgentRuntimeRequestDto& request)
+        {
+            std::vector<PiEnvVarDto> result;
+            const auto&              env = request.pi_env;
+            AppendEnv(result, "PI_INTERFACE_VERSION", env.interface_version);
+            AppendEnv(result, "PI_CLIENT_NAME", env.client_name);
+            AppendEnv(result, "PI_CLIENT_VERSION", env.client_version);
+            AppendEnv(result, "PI_CLIENT_LANGUAGE", env.client_language);
+            AppendEnv(
+                result,
+                "PI_CLIENT_MAAFW_VERSION",
+                env.client_maafw_version);
+            AppendEnv(result, "PI_VERSION", env.project_version);
+            AppendEnv(result, "PI_CONTROLLER", env.controller_json);
+            AppendEnv(result, "PI_RESOURCE", env.resource_json);
+
+            for (const auto& item : request.extra_pi_env)
+            {
+                if (StartsWithPi(item.key) && !IsKnownPiEnvKey(item.key))
+                {
+                    result.emplace_back(item);
+                }
+            }
+            return result;
         }
 
         void LogError(std::string_view message)

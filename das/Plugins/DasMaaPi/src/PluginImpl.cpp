@@ -3,7 +3,6 @@
 #include "PluginImpl.h"
 
 #include "MaaPiErrorLensRegistration.h"
-#include "MaapiAgentComponentFactory.h"
 #include "MaapiAuthoringSessionFactory.h"
 #include "MaapiRunTaskComponent.h"
 #include "MaapiTask.h"
@@ -26,7 +25,6 @@ namespace Plugins::DasMaaPi
         static constexpr std::array features{
             PluginInterface::DAS_PLUGIN_FEATURE_TASK,
             PluginInterface::DAS_PLUGIN_FEATURE_TASK_AUTHORING_FACTORY,
-            PluginInterface::DAS_PLUGIN_FEATURE_COMPONENT_FACTORY,
             PluginInterface::DAS_PLUGIN_FEATURE_TASK_COMPONENT_FACTORY,
             PluginInterface::DAS_PLUGIN_FEATURE_ERROR_LENS};
         if (index >= features.size())
@@ -68,15 +66,6 @@ namespace Plugins::DasMaaPi
             }
             if (index == 2)
             {
-                auto* factory = new MaapiAgentComponentFactory();
-                factory->AddRef();
-                *pp_out_interface =
-                    static_cast<PluginInterface::IDasComponentFactory*>(
-                        factory);
-                return DAS_S_OK;
-            }
-            if (index == 3)
-            {
                 auto* factory = new MaapiRunTaskComponentFactory();
                 factory->AddRef();
                 *pp_out_interface =
@@ -84,7 +73,7 @@ namespace Plugins::DasMaaPi
                         factory);
                 return DAS_S_OK;
             }
-            if (index == 4)
+            if (index == 3)
             {
                 auto lens = CreateRegisteredMaapiErrorLens();
                 if (!lens)
