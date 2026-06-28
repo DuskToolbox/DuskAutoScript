@@ -125,28 +125,6 @@
           "diagnostics": []
         }
       },
-      "68F10006-0000-4000-8000-000000000006": {
-        "factoryGuid": "2C6DFCFA-F8B6-4272-8F28-1D31738BD0D4",
-        "definition": {
-          "schemaVersion": 1,
-          "kind": "das.flow.goto",
-          "componentGuid": "68F10006-0000-4000-8000-000000000006",
-          "inputs": [
-            {
-              "id": "target",
-              "type": "string"
-            }
-          ],
-          "outputs": [
-            {
-              "id": "next",
-              "type": "signal"
-            }
-          ],
-          "config": {},
-          "diagnostics": []
-        }
-      },
       "68F10007-0000-4000-8000-000000000007": {
         "factoryGuid": "2C6DFCFA-F8B6-4272-8F28-1D31738BD0D4",
         "definition": {

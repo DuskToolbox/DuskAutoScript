@@ -36,7 +36,7 @@ namespace
     constexpr std::string_view kWhileKind = "das.flow.while";
     constexpr std::string_view kMergeKind = "das.flow.merge";
 
-    constexpr std::array<ComponentSpec, 7> kComponents{
+    constexpr std::array<ComponentSpec, 6> kComponents{
         ComponentSpec{
             DasGuid{
                 0x68f10001,
@@ -69,14 +69,6 @@ namespace
                 {0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05}},
             "68F10005-0000-4000-8000-000000000005",
             "das.flow.while"},
-        ComponentSpec{
-            DasGuid{
-                0x68f10006,
-                0x0000,
-                0x4000,
-                {0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x06}},
-            "68F10006-0000-4000-8000-000000000006",
-            "das.flow.goto"},
         ComponentSpec{
             DasGuid{
                 0x68f10007,
@@ -934,7 +926,7 @@ DasResult DasFlowControlTaskComponent::Do(
             pp_out_port_map);
     }
 
-    // 剩余组件（delay / goto）只发 "next" 信号。
+    // delay 当前为桩：仅发 "next" 信号（真实可取消等待在 DAS-52 实现）。
     auto outputs = Das::Utils::MakeYyjsonObject();
     auto signals = Das::Utils::MakeYyjsonArray();
     auto signals_arr = *signals.as_array();
