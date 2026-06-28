@@ -75,7 +75,7 @@ namespace
         entry.display_name = "entry_" + std::to_string(entry_id);
         entry.plugin_guid = "{plugin-guid}";
         entry.task_type_guid = "{task-type-guid}";
-        entry.graph_document = yyjson::object(graph_doc);
+        entry.graph_document = yyjson::object(graph_doc, yyjson::copy_string);
         return entry;
     }
 
