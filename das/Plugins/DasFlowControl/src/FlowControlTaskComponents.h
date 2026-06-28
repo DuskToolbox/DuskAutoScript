@@ -72,12 +72,32 @@ private:
         ExportInterface::IDasReadOnlyPortMap* p_input_port_map,
         ExportInterface::IDasPortMap**        pp_out_port_map);
 
-    DasResult DoSequence(
+    // Pure signal routing: read `condition`, emit the `true`/`false` signal. The
+    // runtime gates the downstream branch on the emitted signal (DAS-60 Stage 4).
+    DasResult DoBranch(
         PluginInterface::IDasStopToken*       stop_token,
         ExportInterface::IDasReadOnlyPortMap* p_input_port_map,
         ExportInterface::IDasPortMap**        pp_out_port_map);
 
-    DasResult DoBranch(
+    // Counted loop head: maintains `loop_index_` across Do() calls. Each call
+    // writes the current `index` output and emits `continue`, or emits `break`
+    // when the range is exhausted. The body is a separate main-graph node
+    // re-activated by the runtime via the continue signal + back-edge.
+    DasResult DoFor(
+        PluginInterface::IDasStopToken*       stop_token,
+        ExportInterface::IDasReadOnlyPortMap* p_input_port_map,
+        ExportInterface::IDasPortMap**        pp_out_port_map);
+
+    // Condition loop head: reads `condition` each call and emits
+    // `continue`/`break`. No internal state.
+    DasResult DoWhile(
+        PluginInterface::IDasStopToken*       stop_token,
+        ExportInterface::IDasReadOnlyPortMap* p_input_port_map,
+        ExportInterface::IDasPortMap**        pp_out_port_map);
+
+    // φ-join: gated by in_true/in_false signals; copies whichever of
+    // value_true/value_false the taken branch produced into `result`.
+    DasResult DoMerge(
         PluginInterface::IDasStopToken*       stop_token,
         ExportInterface::IDasReadOnlyPortMap* p_input_port_map,
         ExportInterface::IDasPortMap**        pp_out_port_map);
@@ -85,6 +105,12 @@ private:
     std::string                                    kind_;
     yyjson::value                                  settings_;
     DasPtr<PluginInterface::IDasTaskComponentHost> host_;
+
+    // for-loop counter state. A fresh component instance is created per graph
+    // execution (GraphRuntime::Configure), so this naturally resets per run;
+    // it persists across the Do() calls of a single loop.
+    int64_t loop_index_ = 0;
+    bool    loop_started_ = false;
 };
 
 class DasFlowControlTaskComponentFactory final

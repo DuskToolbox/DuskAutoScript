@@ -31,9 +31,10 @@ namespace
     constexpr std::string_view kRepositoryInvokeKind =
         "das.flow.invokeRepository";
 
-    constexpr std::string_view kSequenceKind = "das.flow.sequence";
-
     constexpr std::string_view kBranchKind = "das.flow.branch";
+    constexpr std::string_view kForKind = "das.flow.for";
+    constexpr std::string_view kWhileKind = "das.flow.while";
+    constexpr std::string_view kMergeKind = "das.flow.merge";
 
     constexpr std::array<ComponentSpec, 7> kComponents{
         ComponentSpec{
@@ -44,14 +45,6 @@ namespace
                 {0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01}},
             "68F10001-0000-4000-8000-000000000001",
             "das.flow.branch"},
-        ComponentSpec{
-            DasGuid{
-                0x68f10002,
-                0x0000,
-                0x4000,
-                {0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02}},
-            "68F10002-0000-4000-8000-000000000002",
-            "das.flow.sequence"},
         ComponentSpec{
             DasGuid{
                 0x68f10003,
@@ -92,6 +85,14 @@ namespace
                 {0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x07}},
             "68F10007-0000-4000-8000-000000000007",
             "das.flow.invokeRepository"},
+        ComponentSpec{
+            DasGuid{
+                0x68f10008,
+                0x0000,
+                0x4000,
+                {0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x08}},
+            "68F10008-0000-4000-8000-000000000008",
+            "das.flow.merge"},
     };
 
     std::optional<ComponentSpec> FindSpec(const DasGuid& component_guid)
@@ -191,6 +192,116 @@ namespace
         return DAS::IsOk(hr) ? val : default_val;
     }
 
+    /// Read an int from a PortMap port.
+    int64_t GetPortInt(
+        ExportInterface::IDasReadOnlyPortMap* map,
+        std::string_view                      port_id,
+        int64_t                               default_val = 0)
+    {
+        int64_t           val = default_val;
+        DasReadOnlyString key{std::string{port_id}.c_str()};
+        auto              hr = map->GetInt(key.Get(), &val);
+        return DAS::IsOk(hr) ? val : default_val;
+    }
+
+    /// Write an int value into a PortMap port.
+    void SetPortInt(
+        ExportInterface::IDasPortMap* map,
+        std::string_view              port_id,
+        int64_t                       value)
+    {
+        DasReadOnlyString key{std::string{port_id}.c_str()};
+        map->SetInt(key.Get(), value);
+    }
+
+    /// Emit a single control-flow signal by listing its port id in the reserved
+    /// "signals" JSON string array. The runtime materialises each entry as a
+    /// PortValue::Signal() under (node_id, signal_port_id) and gates on it; the
+    /// component itself never reads signal values (DAS-60 Stage 3 contract).
+    void EmitSignal(
+        ExportInterface::IDasPortMap* map,
+        std::string_view              signal_port_id)
+    {
+        std::string json = std::string(R"([")") + std::string(signal_port_id)
+                           + R"("])";
+        SetPortString(map, "signals", json);
+    }
+
+    using DasVariantType = Das::ExportInterface::DasVariantType;
+    using Das::ExportInterface::DAS_VARIANT_TYPE_BOOL;
+    using Das::ExportInterface::DAS_VARIANT_TYPE_FLOAT;
+    using Das::ExportInterface::DAS_VARIANT_TYPE_INT;
+    using Das::ExportInterface::DAS_VARIANT_TYPE_NULL;
+    using Das::ExportInterface::DAS_VARIANT_TYPE_STRING;
+
+    /// Copy a typed value from @p src_port of @p src into @p dst_port of @p dst,
+    /// preserving its runtime variant kind. Returns false when the source port
+    /// is absent or null (used by merge to detect which branch produced a value).
+    /// Covers the scalar kinds the data plane carries end-to-end; object/image
+    /// kinds are not pass-through-able here.
+    bool CopyTypedPort(
+        ExportInterface::IDasReadOnlyPortMap* src,
+        std::string_view                      src_port,
+        ExportInterface::IDasPortMap*         dst,
+        std::string_view                      dst_port)
+    {
+        DasReadOnlyString key{std::string{src_port}.c_str()};
+        DasVariantType    kind = DAS_VARIANT_TYPE_NULL;
+        if (DAS::IsFailed(src->GetType(key.Get(), &kind)))
+        {
+            return false;
+        }
+        switch (kind)
+        {
+        case DAS_VARIANT_TYPE_INT:
+        {
+            int64_t v{};
+            if (DAS::IsOk(src->GetInt(key.Get(), &v)))
+            {
+                SetPortInt(dst, dst_port, v);
+                return true;
+            }
+            return false;
+        }
+        case DAS_VARIANT_TYPE_BOOL:
+        {
+            bool v{};
+            if (DAS::IsOk(src->GetBool(key.Get(), &v)))
+            {
+                DasReadOnlyString dkey{std::string{dst_port}.c_str()};
+                dst->SetBool(dkey.Get(), v);
+                return true;
+            }
+            return false;
+        }
+        case DAS_VARIANT_TYPE_FLOAT:
+        {
+            double v{};
+            if (DAS::IsOk(src->GetFloat(key.Get(), &v)))
+            {
+                DasReadOnlyString dkey{std::string{dst_port}.c_str()};
+                dst->SetFloat(dkey.Get(), v);
+                return true;
+            }
+            return false;
+        }
+        case DAS_VARIANT_TYPE_STRING:
+        {
+            IDasReadOnlyString* p_str = nullptr;
+            if (DAS::IsOk(src->GetString(key.Get(), &p_str)) && p_str != nullptr)
+            {
+                DasReadOnlyString dkey{std::string{dst_port}.c_str()};
+                dst->SetString(dkey.Get(), p_str);
+                p_str->Release();
+                return true;
+            }
+            return false;
+        }
+        default:
+            return false;
+        }
+    }
+
     /// Read a raw string from a PortMap string port (no JSON parsing).
     /// Use this for ports written via SetPortString (e.g. "status"), as
     /// opposed to GetPortJson which assumes the port holds JSON text.
@@ -250,105 +361,6 @@ namespace
         return "completed";
     }
 
-    /// Outcome of running a single compiled child snapshot.
-    ///
-    /// When `executed` is false the child never produced an output map:
-    /// `diagnostic` explains why, and `status`/`outputs` are not meaningful.
-    /// When `executed` is true the child ran to completion (in the component
-    /// sense); `status` is the mapped status (completed/failed/cancelled) and
-    /// `outputs` is the child's outputs JSON object.
-    struct ChildExecutionResult
-    {
-        bool          executed = false;
-        std::string   status = "failed";
-        yyjson::value outputs;
-        std::string   diagnostic;
-    };
-
-    /// Drive a single compiled child snapshot through the host, mirroring the
-    /// core of DoRepositoryInvoke. Reused by sequence so its loop body is a
-    /// single call instead of a duplicated ~130-line block. The caller owns
-    /// stop-token polling between snapshots; this function only forwards the
-    /// token into the child's Do().
-    void ExecuteChildSnapshot(
-        PluginInterface::IDasTaskComponentHost* host,
-        PluginInterface::IDasStopToken*         stop_token,
-        const RepositoryInvokeDto::ChildExecutionSnapshotDto& snapshot,
-        ChildExecutionResult&                   out)
-    {
-        out = ChildExecutionResult{};
-
-        if (host == nullptr)
-        {
-            out.diagnostic = "Task component host is unavailable.";
-            return;
-        }
-
-        DasGuid    child_component_guid{};
-        const auto guid_result =
-            DasMakeDasGuid(snapshot.component_guid.c_str(), &child_component_guid);
-        if (DAS::IsFailed(guid_result))
-        {
-            out.diagnostic =
-                "Compiled child snapshot component GUID is invalid.";
-            return;
-        }
-
-        DasPtr<PluginInterface::IDasTaskComponent> child_component;
-        const auto create_result = host->CreateTaskComponent(
-            child_component_guid, child_component.Put());
-        if (DAS::IsFailed(create_result) || !child_component)
-        {
-            out.diagnostic = "Child task component could not be created.";
-            return;
-        }
-
-        DAS::DasPtr<ExportInterface::IDasPortMap> child_input;
-        if (DAS::IsFailed(CreateIDasPortMap(child_input.Put())))
-        {
-            out.diagnostic = "Child input PortMap could not be created.";
-            return;
-        }
-
-        if (!snapshot.execution_input.is_null())
-        {
-            auto input_serialized =
-                Das::Utils::SerializeYyjsonValue(snapshot.execution_input);
-            if (input_serialized)
-            {
-                SetPortString(
-                    child_input.Get(),
-                    "executionInput",
-                    *input_serialized);
-            }
-        }
-
-        DAS::DasPtr<ExportInterface::IDasPortMap> child_output;
-        const auto hr = child_component->Do(
-            stop_token, child_input.Get(), child_output.Put());
-        if (DAS::IsFailed(hr) || !child_output)
-        {
-            out.diagnostic =
-                "Child task component returned a failure result.";
-            return;
-        }
-
-        // status 是 raw string port（component 用 SetPortString 写），用
-        // GetPortString 直接读取，不能用 GetPortJson（会把裸字符串当 JSON
-        // 解析而失败，导致 child 失败被误报成 completed）。
-        std::string child_status =
-            GetPortString(child_output.Get(), "status", "completed");
-
-        auto child_outputs_json = GetPortJson(child_output.Get(), "outputs");
-        if (!child_outputs_json)
-        {
-            child_outputs_json = Das::Utils::MakeYyjsonObject();
-        }
-
-        out.executed = true;
-        out.status = StatusFromChild(child_status);
-        out.outputs = std::move(*child_outputs_json);
-    }
 } // namespace
 
 DasFlowControlTaskComponent::DasFlowControlTaskComponent(
@@ -659,147 +671,6 @@ DasResult DasFlowControlTaskComponent::DoRepositoryInvoke(
     return DAS_S_OK;
 }
 
-DasResult DasFlowControlTaskComponent::DoSequence(
-    PluginInterface::IDasStopToken*       stop_token,
-    ExportInterface::IDasReadOnlyPortMap* p_input_port_map,
-    ExportInterface::IDasPortMap**        pp_out_port_map)
-{
-    if (pp_out_port_map == nullptr)
-    {
-        return DAS_E_INVALID_POINTER;
-    }
-
-    bool stop_requested = false;
-    if (stop_token != nullptr
-        && DAS::IsOk(stop_token->StopRequested(&stop_requested))
-        && stop_requested)
-    {
-        return BuildResultPortMap(
-            "cancelled",
-            Das::Utils::MakeYyjsonObject(),
-            Das::Utils::MakeYyjsonArray(),
-            pp_out_port_map);
-    }
-
-    auto children_statuses = Das::Utils::MakeYyjsonArray();
-    auto children_outputs  = Das::Utils::MakeYyjsonArray();
-    auto statuses_arr      = *children_statuses.as_array();
-    auto outputs_arr       = *children_outputs.as_array();
-
-    // 把截至目前累积的子状态/输出打包成 sequence 的 outputs object。失败/
-    // 取消路径都带上已执行部分，方便调用方定位中止位置。
-    auto make_outputs = [&]() {
-        auto o   = Das::Utils::MakeYyjsonObject();
-        auto obj = *o.as_object();
-        obj[std::string_view("childrenStatuses")] =
-            CloneJson(children_statuses);
-        obj[std::string_view("childrenOutputs")] =
-            CloneJson(children_outputs);
-        return o;
-    };
-
-    // compiledSnapshots 缺失或不是数组时按"空序列"处理：直接发 next。
-    auto snapshots_json = GetPortJson(p_input_port_map, "compiledSnapshots");
-    if (snapshots_json && snapshots_json->is_array())
-    {
-        // 把 as_array() 的返回值先存到局部变量，避免 range-for 引用
-        // 临时对象触发 -Wdangling-gsl。
-        auto snapshots_view = snapshots_json->as_array();
-        for (const auto& snap_json : *snapshots_view)
-        {
-            // 每个 snapshot 执行前轮询 stop_token；一旦取消，保留已累积
-            // 的子状态后立即返回 cancelled（不发 next）。
-            bool stop_now = false;
-            if (stop_token != nullptr
-                && DAS::IsOk(stop_token->StopRequested(&stop_now))
-                && stop_now)
-            {
-                return BuildResultPortMap(
-                    "cancelled",
-                    make_outputs(),
-                    Das::Utils::MakeYyjsonArray(),
-                    pp_out_port_map);
-            }
-
-            RepositoryInvokeDto::ChildExecutionSnapshotDto snapshot;
-            try
-            {
-                snapshot = yyjson::cast<
-                    RepositoryInvokeDto::ChildExecutionSnapshotDto>(snap_json);
-            }
-            catch (const std::exception&)
-            {
-                statuses_arr.emplace_back("failed");
-                auto diag = Das::Utils::MakeYyjsonObject();
-                (*diag.as_object())[std::string_view("diagnostic")] =
-                    "Compiled child snapshot JSON is not valid.";
-                outputs_arr.emplace_back(std::move(diag));
-                return BuildResultPortMap(
-                    "failed",
-                    make_outputs(),
-                    Das::Utils::MakeYyjsonArray(),
-                    pp_out_port_map);
-            }
-
-            if (snapshot.version != 1)
-            {
-                statuses_arr.emplace_back("failed");
-                auto diag = Das::Utils::MakeYyjsonObject();
-                (*diag.as_object())[std::string_view("diagnostic")] =
-                    "Compiled child snapshot version is not supported.";
-                outputs_arr.emplace_back(std::move(diag));
-                return BuildResultPortMap(
-                    "failed",
-                    make_outputs(),
-                    Das::Utils::MakeYyjsonArray(),
-                    pp_out_port_map);
-            }
-
-            ChildExecutionResult result;
-            ExecuteChildSnapshot(
-                host_.Get(), stop_token, snapshot, result);
-
-            statuses_arr.emplace_back(result.status);
-            if (result.executed)
-            {
-                outputs_arr.emplace_back(CloneJson(result.outputs));
-            }
-            else
-            {
-                auto diag = Das::Utils::MakeYyjsonObject();
-                (*diag.as_object())[std::string_view("diagnostic")] =
-                    result.diagnostic;
-                outputs_arr.emplace_back(std::move(diag));
-            }
-
-            if (result.status == "failed" || result.status == "cancelled")
-            {
-                return BuildResultPortMap(
-                    result.status,
-                    make_outputs(),
-                    Das::Utils::MakeYyjsonArray(),
-                    pp_out_port_map);
-            }
-        }
-    }
-
-    // 全部 completed（含空序列）：发 next，outputs 含每个子的状态/输出。
-    auto signals      = Das::Utils::MakeYyjsonArray();
-    auto signals_arr  = *signals.as_array();
-    signals_arr.emplace_back("next");
-
-    auto outputs = Das::Utils::MakeYyjsonObject();
-    auto obj     = *outputs.as_object();
-    obj[std::string_view("childrenStatuses")] = std::move(children_statuses);
-    obj[std::string_view("childrenOutputs")]  = std::move(children_outputs);
-
-    return BuildResultPortMap(
-        "completed",
-        std::move(outputs),
-        std::move(signals),
-        pp_out_port_map);
-}
-
 DasResult DasFlowControlTaskComponent::DoBranch(
     PluginInterface::IDasStopToken*       stop_token,
     ExportInterface::IDasReadOnlyPortMap* p_input_port_map,
@@ -822,87 +693,188 @@ DasResult DasFlowControlTaskComponent::DoBranch(
             pp_out_port_map);
     }
 
+    // 纯 signal 路由：读 condition → emit true/false。runtime 据 signal_routes
+    // gate 分支；组件不感知自己因哪个 signal 被激活（DAS-60 Stage 4）。
+    // 内嵌 compiledSnapshot 子图模型已移除，分支体是主图独立节点。
     const bool             condition =
         p_input_port_map ? GetPortBool(p_input_port_map, "condition", false)
                          : false;
     const std::string_view selected = condition ? "true" : "false";
 
-    // 兼容路径：在所有"未提供子快照 / 子快照无效 / 子组件无法执行"的
-    // 情况下退回到纯信号分发，保证未升级的调用方观察到的行为与改造前
-    // 完全一致。
-    auto dispatch_signal_only = [&]() -> DasResult {
-        auto outputs = Das::Utils::MakeYyjsonObject();
-        auto signals = Das::Utils::MakeYyjsonArray();
-        (*outputs.as_object())[std::string_view("selected")] = selected;
-        (*signals.as_array()).emplace_back(selected);
-        return BuildResultPortMap(
-            "completed",
-            std::move(outputs),
-            std::move(signals),
-            pp_out_port_map);
-    };
-
-    // 按 condition 选择对应的子快照端口。
-    const std::string snapshot_port_id =
-        condition ? "compiledSnapshotTrue" : "compiledSnapshotFalse";
-    auto snapshot_json = p_input_port_map
-        ? GetPortJson(p_input_port_map, snapshot_port_id)
-        : std::nullopt;
-
-    // 未提供子快照（或不是对象）→ 纯信号分发。
-    if (!snapshot_json || !snapshot_json->is_object())
-    {
-        return dispatch_signal_only();
-    }
-
-    // 解析子快照 DTO；解析失败按 issue 约束优雅回退。
-    RepositoryInvokeDto::ChildExecutionSnapshotDto snapshot;
-    try
-    {
-        snapshot = yyjson::cast<RepositoryInvokeDto::ChildExecutionSnapshotDto>(
-            *snapshot_json);
-    }
-    catch (const std::exception&)
-    {
-        return dispatch_signal_only();
-    }
-
-    if (snapshot.version != 1)
-    {
-        return dispatch_signal_only();
-    }
-
-    // 通过 host 驱动子图，复用与 DoRepositoryInvoke / DoSequence 相同的
-    // 执行路径，确保子图语义在三种调度入口一致。
-    ChildExecutionResult child;
-    ExecuteChildSnapshot(host_.Get(), stop_token, snapshot, child);
-    if (!child.executed)
-    {
-        // 子组件没有产出 outputs。按 issue 的 null-check 回退约束：不崩溃、
-        // 不上抛失败状态，退回信号分发，使下游绑定仍能被激活。
-        return dispatch_signal_only();
-    }
-
-    // 子图执行成功：保留 `selected` 字段和对应的路由信号以维持向后兼容，
-    // 同时附带 childStatus / childOutputs 暴露子图结果。
     auto outputs = Das::Utils::MakeYyjsonObject();
     (*outputs.as_object())[std::string_view("selected")] = selected;
-
     auto signals = Das::Utils::MakeYyjsonArray();
     (*signals.as_array()).emplace_back(selected);
 
+    return BuildResultPortMap(
+        "completed",
+        std::move(outputs),
+        std::move(signals),
+        pp_out_port_map);
+}
+
+DasResult DasFlowControlTaskComponent::DoFor(
+    PluginInterface::IDasStopToken*       stop_token,
+    ExportInterface::IDasReadOnlyPortMap* p_input_port_map,
+    ExportInterface::IDasPortMap**        pp_out_port_map)
+{
+    if (pp_out_port_map == nullptr)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+
+    bool stop_requested = false;
+    if (stop_token != nullptr
+        && DAS::IsOk(stop_token->StopRequested(&stop_requested))
+        && stop_requested)
+    {
+        DAS::DasPtr<ExportInterface::IDasPortMap> cancelled_map;
+        DasResult                                 hr =
+            CreateIDasPortMap(cancelled_map.Put());
+        if (DAS::IsFailed(hr))
+        {
+            return hr;
+        }
+        SetPortString(cancelled_map.Get(), "status", "cancelled");
+        *pp_out_port_map = cancelled_map.Get();
+        cancelled_map.Get()->AddRef();
+        return DAS_S_OK;
+    }
+
+    // 循环参数走 input port（binding 装配：settings 默认值或上游 data edge）。
+    const int64_t start = p_input_port_map
+        ? GetPortInt(p_input_port_map, "start", 0)
+        : 0;
+    const int64_t end = p_input_port_map
+        ? GetPortInt(p_input_port_map, "end", 0)
+        : 0;
+    int64_t       step = p_input_port_map
+        ? GetPortInt(p_input_port_map, "step", 1)
+        : 1;
+    if (step == 0)
+    {
+        step = 1; // 0 步长无意义且会死循环，兜底为 1。
+    }
+
+    // 首次进入初始化计数器；循环状态是组件成员，跨多次 Do() 保持。组件实例
+    // 每次 GraphRuntime::Configure 重建，自然按图执行重置（不进 PortFrame）。
+    if (!loop_started_)
+    {
+        loop_index_ = start;
+        loop_started_ = true;
+    }
+
     DAS::DasPtr<ExportInterface::IDasPortMap> output_map;
-    DasResult hr = CreateIDasPortMap(output_map.Put());
+    DasResult                                 hr = CreateIDasPortMap(output_map.Put());
     if (DAS::IsFailed(hr))
     {
         return hr;
     }
+    SetPortString(output_map.Get(), "status", "completed");
 
-    SetPortString(output_map.Get(), "status", child.status);
-    SetPortJson(output_map.Get(), "outputs", outputs);
-    SetPortJson(output_map.Get(), "signals", signals);
-    SetPortString(output_map.Get(), "childStatus", child.status);
-    SetPortJson(output_map.Get(), "childOutputs", child.outputs);
+    const bool in_range =
+        (step > 0) ? (loop_index_ < end) : (loop_index_ > end);
+    if (in_range)
+    {
+        // 写循环变量 index（data 输出端口，循环体经 binding 读取），emit
+        // continue 激活循环体；循环体完成后 back-edge 回到 for 重新 Do()。
+        SetPortInt(output_map.Get(), "index", loop_index_);
+        EmitSignal(output_map.Get(), "continue");
+        loop_index_ += step;
+    }
+    else
+    {
+        // 范围耗尽，emit break 退出循环（不再激活循环体）。
+        EmitSignal(output_map.Get(), "break");
+    }
+
+    *pp_out_port_map = output_map.Get();
+    output_map.Get()->AddRef();
+    return DAS_S_OK;
+}
+
+DasResult DasFlowControlTaskComponent::DoWhile(
+    PluginInterface::IDasStopToken*       stop_token,
+    ExportInterface::IDasReadOnlyPortMap* p_input_port_map,
+    ExportInterface::IDasPortMap**        pp_out_port_map)
+{
+    if (pp_out_port_map == nullptr)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+
+    bool stop_requested = false;
+    if (stop_token != nullptr
+        && DAS::IsOk(stop_token->StopRequested(&stop_requested))
+        && stop_requested)
+    {
+        DAS::DasPtr<ExportInterface::IDasPortMap> cancelled_map;
+        DasResult                                 hr =
+            CreateIDasPortMap(cancelled_map.Put());
+        if (DAS::IsFailed(hr))
+        {
+            return hr;
+        }
+        SetPortString(cancelled_map.Get(), "status", "cancelled");
+        *pp_out_port_map = cancelled_map.Get();
+        cancelled_map.Get()->AddRef();
+        return DAS_S_OK;
+    }
+
+    // 每轮读动态 condition（由循环体/外部每轮回边后重算并写入 PortFrame）。
+    const bool condition =
+        p_input_port_map ? GetPortBool(p_input_port_map, "condition", false)
+                         : false;
+
+    DAS::DasPtr<ExportInterface::IDasPortMap> output_map;
+    DasResult                                 hr = CreateIDasPortMap(output_map.Put());
+    if (DAS::IsFailed(hr))
+    {
+        return hr;
+    }
+    SetPortString(output_map.Get(), "status", "completed");
+    EmitSignal(output_map.Get(), condition ? "continue" : "break");
+
+    *pp_out_port_map = output_map.Get();
+    output_map.Get()->AddRef();
+    return DAS_S_OK;
+}
+
+DasResult DasFlowControlTaskComponent::DoMerge(
+    PluginInterface::IDasStopToken*       stop_token,
+    ExportInterface::IDasReadOnlyPortMap* p_input_port_map,
+    ExportInterface::IDasPortMap**        pp_out_port_map)
+{
+    if (pp_out_port_map == nullptr)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+
+    // merge 是纯数据汇合原语，无子调用，不轮询取消。
+    (void)stop_token;
+
+    DAS::DasPtr<ExportInterface::IDasPortMap> output_map;
+    DasResult                                 hr = CreateIDasPortMap(output_map.Put());
+    if (DAS::IsFailed(hr))
+    {
+        return hr;
+    }
+    SetPortString(output_map.Get(), "status", "completed");
+
+    // φ-join：merge 由 in_true/in_false signal gate 激活（runtime 保证只有命中
+    // 分支到达 merge）。被 gate 掉的分支不产出 → 其 value_* 在输入 PortMap 缺席。
+    // 取在场的那路 value 输出到 result；组件自身不读 signal（零感知）。
+    if (p_input_port_map == nullptr
+        || !CopyTypedPort(
+               p_input_port_map, "value_true", output_map.Get(), "result"))
+    {
+        // value_true 缺席（true 分支未命中）→ 尝试 value_false。
+        if (p_input_port_map != nullptr)
+        {
+            CopyTypedPort(
+                p_input_port_map, "value_false", output_map.Get(), "result");
+        }
+    }
 
     *pp_out_port_map = output_map.Get();
     output_map.Get()->AddRef();
@@ -927,20 +899,27 @@ DasResult DasFlowControlTaskComponent::Do(
             pp_out_port_map);
     }
 
-    if (kind_ == kSequenceKind)
-    {
-        return DoSequence(
-            stop_token,
-            p_input_port_map,
-            pp_out_port_map);
-    }
-
     if (kind_ == kBranchKind)
     {
         return DoBranch(
             stop_token,
             p_input_port_map,
             pp_out_port_map);
+    }
+
+    if (kind_ == kForKind)
+    {
+        return DoFor(stop_token, p_input_port_map, pp_out_port_map);
+    }
+
+    if (kind_ == kWhileKind)
+    {
+        return DoWhile(stop_token, p_input_port_map, pp_out_port_map);
+    }
+
+    if (kind_ == kMergeKind)
+    {
+        return DoMerge(stop_token, p_input_port_map, pp_out_port_map);
     }
 
     bool stop_requested = false;
@@ -955,7 +934,7 @@ DasResult DasFlowControlTaskComponent::Do(
             pp_out_port_map);
     }
 
-    // 剩余组件（delay / for / while / goto）只发 "next" 信号。
+    // 剩余组件（delay / goto）只发 "next" 信号。
     auto outputs = Das::Utils::MakeYyjsonObject();
     auto signals = Das::Utils::MakeYyjsonArray();
     auto signals_arr = *signals.as_array();

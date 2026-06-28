@@ -698,15 +698,12 @@ DasResult GraphRuntime::RunSignalGated(
     };
     auto should_skip = [&](const std::string& n) -> bool
     {
-        // skip-propagation: a data predecessor that was skipped starves this node
-        for (const auto& p : data_preds[n])
-        {
-            if (state[p] == NState::Skipped)
-            {
-                return true;
-            }
-        }
-        // gate: a gated node with no open incoming signal route is skipped
+        // Gate first. A node with incoming signal routes runs only when at least
+        // one fired: if none fired it is skipped (the untaken branch of an if);
+        // if one fired it is on a taken branch and must run even when a
+        // non-taken-branch data predecessor was skipped — that is a φ-join such
+        // as das.flow.merge, whose value_* inputs come from both branches but
+        // only the taken one produced a value (DAS-74).
         const auto& gr = gate_routes[n];
         if (!gr.empty())
         {
@@ -719,7 +716,13 @@ DasResult GraphRuntime::RunSignalGated(
                     break;
                 }
             }
-            if (!any_open)
+            return !any_open;
+        }
+        // No signal gate: skip-propagation — a data predecessor that was skipped
+        // starves this node.
+        for (const auto& p : data_preds[n])
+        {
+            if (state[p] == NState::Skipped)
             {
                 return true;
             }
