@@ -9,7 +9,11 @@
 #include <das/_autogen/idl/abi/IDasPortMap.h>
 #include <das/_autogen/idl/header/IDasPortMap.generated.h>
 
+#include <algorithm>
 #include <array>
+#include <chrono>
+#include <condition_variable>
+#include <mutex>
 #include <new>
 #include <optional>
 #include <utility>
@@ -32,6 +36,7 @@ namespace
         "das.flow.invokeRepository";
 
     constexpr std::string_view kBranchKind = "das.flow.branch";
+    constexpr std::string_view kDelayKind = "das.flow.delay";
     constexpr std::string_view kForKind = "das.flow.for";
     constexpr std::string_view kWhileKind = "das.flow.while";
     constexpr std::string_view kMergeKind = "das.flow.merge";
@@ -873,6 +878,89 @@ DasResult DasFlowControlTaskComponent::DoMerge(
     return DAS_S_OK;
 }
 
+DasResult DasFlowControlTaskComponent::DoDelay(
+    PluginInterface::IDasStopToken*       stop_token,
+    ExportInterface::IDasReadOnlyPortMap* /*p_input_port_map*/,
+    ExportInterface::IDasPortMap**        pp_out_port_map)
+{
+    if (pp_out_port_map == nullptr)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+
+    // delay_ms 来自 config（settings_）；缺省 0 → 不等待，立即发 next。
+    int64_t delay_ms = 0;
+    if (auto settings_obj = settings_.as_object())
+    {
+        if (const auto v =
+                (*settings_obj)[std::string_view("delay_ms")].as_int())
+        {
+            delay_ms = *v;
+        }
+    }
+
+    if (delay_ms > 0)
+    {
+        using clock = std::chrono::steady_clock;
+        const auto deadline =
+            clock::now() + std::chrono::milliseconds(delay_ms);
+
+        // stop_token 仅轮询接口（无回调），无法主动 notify，故以小时间片
+        // （50ms）在条件变量上等待、每片重查 stop——保证 stop 触发后约一片
+        // 内响应并返回 cancelled。runtime 当前无循环次数护栏，等待必须可取消。
+        std::mutex              wait_mutex;
+        std::condition_variable wait_cv;
+
+        std::unique_lock<std::mutex> lock(wait_mutex);
+        while (true)
+        {
+            bool stop_requested = false;
+            if (stop_token != nullptr
+                && DAS::IsOk(stop_token->StopRequested(&stop_requested))
+                && stop_requested)
+            {
+                return BuildResultPortMap(
+                    "cancelled",
+                    Das::Utils::MakeYyjsonObject(),
+                    Das::Utils::MakeYyjsonArray(),
+                    pp_out_port_map);
+            }
+
+            const auto now = clock::now();
+            if (now >= deadline)
+            {
+                break;
+            }
+
+            const auto remaining_ms = std::chrono::duration_cast<
+                std::chrono::milliseconds>(deadline - now);
+            const auto slice_ms = std::min<int64_t>(remaining_ms.count(), 50);
+            // wait_for 仅在谓词命中（stop 为真）时提前返回，否则等满该切片
+            // 超时后回到循环顶部重查 stop 与 deadline。
+            wait_cv.wait_for(
+                lock,
+                std::chrono::milliseconds(slice_ms),
+                [&stop_token]()
+                {
+                    bool stop = false;
+                    return stop_token != nullptr
+                           && DAS::IsOk(stop_token->StopRequested(&stop))
+                           && stop;
+                });
+        }
+    }
+
+    // 等待结束（或 delay_ms==0）→ 发 next。
+    auto outputs = Das::Utils::MakeYyjsonObject();
+    auto signals = Das::Utils::MakeYyjsonArray();
+    (*signals.as_array()).emplace_back("next");
+    return BuildResultPortMap(
+        "completed",
+        std::move(outputs),
+        std::move(signals),
+        pp_out_port_map);
+}
+
 DasResult DasFlowControlTaskComponent::Do(
     PluginInterface::IDasStopToken*       stop_token,
     ExportInterface::IDasReadOnlyPortMap* p_input_port_map,
@@ -914,6 +1002,11 @@ DasResult DasFlowControlTaskComponent::Do(
         return DoMerge(stop_token, p_input_port_map, pp_out_port_map);
     }
 
+    if (kind_ == kDelayKind)
+    {
+        return DoDelay(stop_token, p_input_port_map, pp_out_port_map);
+    }
+
     bool stop_requested = false;
     if (stop_token != nullptr
         && DAS::IsOk(stop_token->StopRequested(&stop_requested))
@@ -926,7 +1019,7 @@ DasResult DasFlowControlTaskComponent::Do(
             pp_out_port_map);
     }
 
-    // delay 当前为桩：仅发 "next" 信号（真实可取消等待在 DAS-52 实现）。
+    // 防御性兜底：未识别 kind 发 next（所有注册 kind 均已分发，正常不应到达）。
     auto outputs = Das::Utils::MakeYyjsonObject();
     auto signals = Das::Utils::MakeYyjsonArray();
     auto signals_arr = *signals.as_array();

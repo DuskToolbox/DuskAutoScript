@@ -57,7 +57,12 @@
               "type": "signal"
             }
           ],
-          "config": {},
+          "config": {
+            "delay_ms": {
+              "type": "int64",
+              "default": 1000
+            }
+          },
           "diagnostics": []
         }
       },

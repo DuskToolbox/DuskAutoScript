@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -23,6 +24,7 @@
 #include <random>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <unordered_map>
 
 namespace
@@ -71,6 +73,8 @@ namespace
 
     constexpr std::string_view kRepositoryInvokeComponentGuid =
         "68F10007-0000-4000-8000-000000000007";
+    constexpr std::string_view kDelayComponentGuid =
+        "68F10003-0000-4000-8000-000000000003";
     constexpr std::string_view kForComponentGuid =
         "68F10004-0000-4000-8000-000000000004";
     constexpr std::string_view kWhileComponentGuid =
@@ -386,7 +390,8 @@ namespace
     class FakeStopToken final : public Das::PluginInterface::IDasStopToken
     {
     public:
-        explicit FakeStopToken(bool requested = false) : requested_(requested)
+        explicit FakeStopToken(bool requested = false)
+            : requested_(requested)
         {
         }
 
@@ -432,12 +437,15 @@ namespace
             {
                 return DAS_E_INVALID_POINTER;
             }
-            *p_requested = requested_;
+            *p_requested = requested_.load(std::memory_order_acquire);
             return DAS_S_OK;
         }
 
+        // Thread-safe: a watchdog thread may flip stop mid-Do() (delay cancel).
+        void RequestStop() { requested_.store(true, std::memory_order_release); }
+
     private:
-        bool                  requested_ = false;
+        std::atomic<bool>     requested_{false};
         std::atomic<uint32_t> ref_count_{0};
     };
 
@@ -1374,4 +1382,115 @@ TEST_F(TaskComponentContractTest, MergeOutputsValueFromTakenBranch)
 
     EXPECT_EQ(run("value_true", 42), 42);   // true branch taken
     EXPECT_EQ(run("value_false", 7), 7);    // false branch taken
+}
+
+// DAS-52: delay_ms <= 0 emits "next" immediately without waiting.
+TEST_F(TaskComponentContractTest, DelayZeroMsEmitsNextImmediately)
+{
+    auto component = CreateComponent(kDelayComponentGuid);
+    ASSERT_NE(component.Get(), nullptr);
+
+    auto change = ParseJson(R"json({
+        "kind": "setValue",
+        "payload": {"path": "delay_ms", "value": 0}
+    })json");
+    auto request = Wrap(std::move(change));
+    DasPtr<Das::ExportInterface::IDasJson> settings_result;
+    ASSERT_EQ(
+        component->ApplySettingsChange(request.Get(), settings_result.Put()),
+        DAS_S_OK);
+
+    DAS::DasPtr<Das::ExportInterface::IDasPortMap> input_map;
+    ASSERT_EQ(CreateIDasPortMap(input_map.Put()), DAS_S_OK);
+
+    const auto start = std::chrono::steady_clock::now();
+    DAS::DasPtr<Das::ExportInterface::IDasPortMap> result_map;
+    ASSERT_EQ(
+        component->Do(nullptr, input_map.Get(), result_map.Put()),
+        DAS_S_OK);
+    const auto elapsed_ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - start)
+            .count();
+
+    EXPECT_EQ(TestGetPortString(result_map.Get(), "status"), "completed");
+    EXPECT_EQ(TestGetEmittedSignal(result_map.Get()), "next");
+    EXPECT_LT(elapsed_ms, 500); // no wait
+}
+
+// DAS-52: delay_ms > 0 actually waits (≈delay_ms), then emits "next".
+TEST_F(TaskComponentContractTest, DelayWaitsThenEmitsNext)
+{
+    auto component = CreateComponent(kDelayComponentGuid);
+    ASSERT_NE(component.Get(), nullptr);
+
+    auto change = ParseJson(R"json({
+        "kind": "setValue",
+        "payload": {"path": "delay_ms", "value": 150}
+    })json");
+    auto request = Wrap(std::move(change));
+    DasPtr<Das::ExportInterface::IDasJson> settings_result;
+    ASSERT_EQ(
+        component->ApplySettingsChange(request.Get(), settings_result.Put()),
+        DAS_S_OK);
+
+    DAS::DasPtr<Das::ExportInterface::IDasPortMap> input_map;
+    ASSERT_EQ(CreateIDasPortMap(input_map.Put()), DAS_S_OK);
+
+    const auto start = std::chrono::steady_clock::now();
+    DAS::DasPtr<Das::ExportInterface::IDasPortMap> result_map;
+    ASSERT_EQ(
+        component->Do(nullptr, input_map.Get(), result_map.Put()),
+        DAS_S_OK);
+    const auto elapsed_ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - start)
+            .count();
+
+    EXPECT_EQ(TestGetPortString(result_map.Get(), "status"), "completed");
+    EXPECT_EQ(TestGetEmittedSignal(result_map.Get()), "next");
+    EXPECT_GE(elapsed_ms, 100);  // actually waited (~150ms)
+    EXPECT_LT(elapsed_ms, 3000); // did not hang
+}
+
+// DAS-52: a stop requested during the wait returns "cancelled" promptly,
+// proving the wait is interruptible (not a blocking sleep_for).
+TEST_F(TaskComponentContractTest, DelayIsCancellableByStopToken)
+{
+    auto component = CreateComponent(kDelayComponentGuid);
+    ASSERT_NE(component.Get(), nullptr);
+
+    auto change = ParseJson(R"json({
+        "kind": "setValue",
+        "payload": {"path": "delay_ms", "value": 10000}
+    })json");
+    auto request = Wrap(std::move(change));
+    DasPtr<Das::ExportInterface::IDasJson> settings_result;
+    ASSERT_EQ(
+        component->ApplySettingsChange(request.Get(), settings_result.Put()),
+        DAS_S_OK);
+
+    DAS::DasPtr<Das::ExportInterface::IDasPortMap> input_map;
+    ASSERT_EQ(CreateIDasPortMap(input_map.Put()), DAS_S_OK);
+
+    FakeStopToken stop_token; // not stopped initially
+    // Watchdog flips stop mid-wait; the cancellable wait must observe it.
+    std::thread watchdog([&stop_token]() {
+        std::this_thread::sleep_for(std::chrono::milliseconds(40));
+        stop_token.RequestStop();
+    });
+
+    const auto start = std::chrono::steady_clock::now();
+    DAS::DasPtr<Das::ExportInterface::IDasPortMap> result_map;
+    ASSERT_EQ(
+        component->Do(&stop_token, input_map.Get(), result_map.Put()),
+        DAS_S_OK);
+    const auto elapsed_ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - start)
+            .count();
+    watchdog.join();
+
+    EXPECT_EQ(TestGetPortString(result_map.Get(), "status"), "cancelled");
+    EXPECT_LT(elapsed_ms, 3000); // far below the 10s delay → was interrupted
 }
