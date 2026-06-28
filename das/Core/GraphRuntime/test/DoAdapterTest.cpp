@@ -3,6 +3,7 @@
 #include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
+#include <das/Utils/DasJsonCore.h>
 #include <das/_autogen/idl/abi/IDasPortMap.h>
 #include <das/_autogen/idl/header/IDasPortMap.generated.h>
 #include <gtest/gtest.h>
@@ -45,6 +46,30 @@ namespace
     std::string GuidToString(DasGuid guid)
     {
         return Das::Core::ForeignInterfaceHost::DasGuidToStdString(guid);
+    }
+
+    // Broadcast (graph-input) binding: the source is the "$graph_input" sentinel
+    // rather than a real node, and the value comes from default_value. (DAS-75
+    // graph_inputs broadcast injection.)
+    Dto::PortBindingDto MakeBroadcastBinding(
+        const std::string& graph_input_port,
+        const std::string& tgt_port,
+        yyjson::value      default_value)
+    {
+        Dto::PortBindingDto b;
+        b.source_node_id = "$graph_input";
+        b.source_port_id = graph_input_port;
+        b.target_node_id = "22222222-2222-2222-2222-222222222222";
+        b.target_port_id = tgt_port;
+        b.expected_type = "";
+        b.default_value = std::move(default_value);
+        return b;
+    }
+
+    yyjson::value ParseJson(const std::string& json)
+    {
+        auto v = Das::Utils::ParseYyjsonFromString(json);
+        return v ? std::move(*v) : yyjson::value{};
     }
 
 } // namespace
@@ -237,6 +262,137 @@ TEST(DoAdapterTest, BuildInputPortMap_NullValueSkipped)
     bool              has{};
     ASSERT_EQ(map->Has(key.Get(), &has), DAS_S_OK);
     EXPECT_FALSE(has);
+}
+
+// ===========================================================================
+// BuildInputPortMap — broadcast (graph-input) bindings (DAS-75)
+//
+// A graph_inputs broadcast binding carries no upstream node; its default_value
+// must be materialised directly into the input PortMap so graph-level settings
+// reach the component (MAA global_option semantics).
+// ===========================================================================
+
+TEST(DoAdapterTest, BuildInputPortMap_BroadcastIntDefault)
+{
+    PortFrame frame; // intentionally empty — value comes from the default
+
+    auto bindings = {MakeBroadcastBinding("threshold", "in", ParseJson("42"))};
+
+    DAS::DasPtr<IDasPortMap> map;
+    ASSERT_EQ(BuildInputPortMap(frame, bindings, map.Put()), DAS_S_OK);
+
+    int64_t           val{};
+    DasReadOnlyString key{"in"};
+    ASSERT_EQ(map->GetInt(key.Get(), &val), DAS_S_OK);
+    EXPECT_EQ(val, 42);
+}
+
+TEST(DoAdapterTest, BuildInputPortMap_BroadcastBoolDefault)
+{
+    PortFrame frame;
+
+    auto bindings = {MakeBroadcastBinding("flag", "in", ParseJson("true"))};
+
+    DAS::DasPtr<IDasPortMap> map;
+    ASSERT_EQ(BuildInputPortMap(frame, bindings, map.Put()), DAS_S_OK);
+
+    bool              val{};
+    DasReadOnlyString key{"in"};
+    ASSERT_EQ(map->GetBool(key.Get(), &val), DAS_S_OK);
+    EXPECT_TRUE(val);
+}
+
+TEST(DoAdapterTest, BuildInputPortMap_BroadcastStringDefault)
+{
+    PortFrame frame;
+
+    auto bindings = {
+        MakeBroadcastBinding("name", "in", ParseJson(R"("greeting")"))};
+
+    DAS::DasPtr<IDasPortMap> map;
+    ASSERT_EQ(BuildInputPortMap(frame, bindings, map.Put()), DAS_S_OK);
+
+    IDasReadOnlyString* p_str = nullptr;
+    DasReadOnlyString   key{"in"};
+    ASSERT_EQ(map->GetString(key.Get(), &p_str), DAS_S_OK);
+    ASSERT_NE(p_str, nullptr);
+    const char* utf8 = nullptr;
+    p_str->GetUtf8(&utf8);
+    EXPECT_STREQ(utf8, "greeting");
+    p_str->Release();
+}
+
+TEST(DoAdapterTest, BuildInputPortMap_BroadcastFloatDefault)
+{
+    PortFrame frame;
+
+    auto bindings = {MakeBroadcastBinding("ratio", "in", ParseJson("3.14"))};
+
+    DAS::DasPtr<IDasPortMap> map;
+    ASSERT_EQ(BuildInputPortMap(frame, bindings, map.Put()), DAS_S_OK);
+
+    double            val{};
+    DasReadOnlyString key{"in"};
+    ASSERT_EQ(map->GetFloat(key.Get(), &val), DAS_S_OK);
+    EXPECT_DOUBLE_EQ(val, 3.14);
+}
+
+TEST(DoAdapterTest, BuildInputPortMap_BroadcastNullDefaultSkipped)
+{
+    PortFrame frame;
+
+    auto bindings = {MakeBroadcastBinding("opt", "in", ParseJson("null"))};
+
+    DAS::DasPtr<IDasPortMap> map;
+    ASSERT_EQ(BuildInputPortMap(frame, bindings, map.Put()), DAS_S_OK);
+
+    // null default → port left unset; the component keeps its own default.
+    DasReadOnlyString key{"in"};
+    bool              has{};
+    ASSERT_EQ(map->Has(key.Get(), &has), DAS_S_OK);
+    EXPECT_FALSE(has);
+}
+
+TEST(DoAdapterTest, BuildInputPortMap_BroadcastNonScalarSkipped)
+{
+    PortFrame frame;
+
+    // Object defaults are not scalar options — skipped with a warning.
+    auto bindings = {MakeBroadcastBinding("cfg", "in", ParseJson(R"({"a":1})"))};
+
+    DAS::DasPtr<IDasPortMap> map;
+    ASSERT_EQ(BuildInputPortMap(frame, bindings, map.Put()), DAS_S_OK);
+
+    DasReadOnlyString key{"in"};
+    bool              has{};
+    ASSERT_EQ(map->Has(key.Get(), &has), DAS_S_OK);
+    EXPECT_FALSE(has);
+}
+
+TEST(DoAdapterTest, BuildInputPortMap_BroadcastAndPointToPointCoexist)
+{
+    // A node may receive both a normal data edge and a graph-input broadcast;
+    // both must land in the input map.
+    PortFrame frame;
+    frame.Set(kSourceNode, "out", PortValue(int64_t{7}));
+
+    std::vector<Dto::PortBindingDto> bindings = {
+        MakeBinding(GuidToString(kSourceNode), "out", "in_data"),
+        MakeBroadcastBinding("threshold", "in_opt", ParseJson("99")),
+    };
+
+    DAS::DasPtr<IDasPortMap> map;
+    ASSERT_EQ(BuildInputPortMap(frame, bindings, map.Put()), DAS_S_OK);
+
+    int64_t           data_val{};
+    DasReadOnlyString data_key{"in_data"};
+    ASSERT_EQ(map->GetInt(data_key.Get(), &data_val), DAS_S_OK);
+    EXPECT_EQ(data_val, 7);
+
+    int64_t           opt_val{};
+    DasReadOnlyString opt_key{"in_opt"};
+    ASSERT_EQ(map->GetInt(opt_key.Get(), &opt_val), DAS_S_OK);
+    EXPECT_EQ(opt_val, 99);
 }
 
 // ===========================================================================

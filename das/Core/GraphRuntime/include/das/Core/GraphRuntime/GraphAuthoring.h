@@ -115,6 +115,34 @@ AuthoringResult ApplySettingsChange(
     Dto::GraphDocumentDto&      document,
     const GraphAuthoringChange& change);
 
+// ---------------------------------------------------------------------------
+// FromSequence lint — optional, non-blocking topology hints (DAS-75)
+// ---------------------------------------------------------------------------
+//
+// A fromsequence authoring doc is a linear signal-chain graph. The authoring
+// layer intentionally does NOT hard-validate linearity — that is a frontend
+// constraint (lenient validation). This lint is an OPTIONAL, non-blocking pass
+// that surfaces topology hints a UI may show as warnings.
+//
+// It only produces output when the document is tagged "fromsequence", and it
+// NEVER rejects a document (warnings only). It is NOT invoked by GraphCompiler
+// or GraphRuntime — those ignore the tag entirely.
+
+struct FromSequenceLintWarning
+{
+    std::string node_id; // empty for graph-level warnings
+    std::string message;
+};
+
+/// Optional, non-blocking lint for a fromsequence-tagged document.
+///
+/// Returns topology warnings when the signal edges do not form a single linear
+/// chain (a node that fans out / merges, or a topology that splits into
+/// multiple disconnected pieces). Returns an empty vector when the document is
+/// not tagged "fromsequence" or has nothing to warn about.
+std::vector<FromSequenceLintWarning> LintFromSequenceLinearity(
+    const Dto::GraphDocumentDto& document);
+
 DAS_CORE_GRAPHRUNTIME_NS_END
 
 #endif // DAS_CORE_GRAPHRUNTIME_GRAPHAUTHORING_H

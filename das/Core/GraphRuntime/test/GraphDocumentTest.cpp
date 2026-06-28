@@ -291,6 +291,9 @@ TEST(GraphDocumentDtoTest, GraphDocumentDtoRoundTrip)
             false,
             yyjson::value(),
             {}});
+    // Graph-level markers (e.g. "fromsequence") — the authoring-doc contract
+    // the frontend depends on (DAS-75).
+    doc.tags = {"fromsequence"};
 
     auto serialized = yyjson::object(doc);
 
@@ -301,6 +304,7 @@ TEST(GraphDocumentDtoTest, GraphDocumentDtoRoundTrip)
     EXPECT_TRUE(serialized.contains(std::string_view("edges")));
     EXPECT_TRUE(serialized.contains(std::string_view("graphInputs")));
     EXPECT_TRUE(serialized.contains(std::string_view("graphOutputs")));
+    EXPECT_TRUE(serialized.contains(std::string_view("tags")));
     EXPECT_FALSE(serialized.contains(std::string_view("document_id")));
     EXPECT_FALSE(serialized.contains(std::string_view("graph_inputs")));
 
@@ -318,6 +322,8 @@ TEST(GraphDocumentDtoTest, GraphDocumentDtoRoundTrip)
     EXPECT_EQ(round_tripped.graph_inputs[0].port_id, "graph_input");
     ASSERT_EQ(round_tripped.graph_outputs.size(), 1u);
     EXPECT_EQ(round_tripped.graph_outputs[0].port_id, "graph_output");
+    ASSERT_EQ(round_tripped.tags.size(), 1u);
+    EXPECT_EQ(round_tripped.tags[0], "fromsequence");
 }
 
 // ===========================================================================

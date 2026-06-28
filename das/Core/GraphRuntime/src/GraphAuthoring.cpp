@@ -1,7 +1,11 @@
 #include <das/Core/GraphRuntime/GraphAuthoring.h>
 
 #include <algorithm>
+#include <deque>
+#include <string>
 #include <string_view>
+#include <unordered_map>
+#include <unordered_set>
 
 DAS_CORE_GRAPHRUNTIME_NS_BEGIN
 
@@ -252,6 +256,141 @@ AuthoringResult ApplySettingsChange(
             }
         },
         change.payload);
+}
+
+// ---------------------------------------------------------------------------
+// LintFromSequenceLinearity — optional, non-blocking (DAS-75)
+// ---------------------------------------------------------------------------
+
+namespace
+{
+    bool HasFromSequenceTag(const Dto::GraphDocumentDto& doc)
+    {
+        for (const auto& tag : doc.tags)
+        {
+            if (tag == "fromsequence")
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+} // namespace
+
+std::vector<FromSequenceLintWarning> LintFromSequenceLinearity(
+    const Dto::GraphDocumentDto& document)
+{
+    std::vector<FromSequenceLintWarning> warnings;
+
+    // No tag → no opinion. The lint only applies to fromsequence authoring.
+    if (!HasFromSequenceTag(document) || document.nodes.empty())
+    {
+        return warnings;
+    }
+
+    // Signal-edge in/out degree per node (only signal edges define the chain).
+    std::unordered_map<std::string, int> signal_in;
+    std::unordered_map<std::string, int> signal_out;
+    for (const auto& node : document.nodes)
+    {
+        signal_in[node.node_id] = 0;
+        signal_out[node.node_id] = 0;
+    }
+    for (const auto& edge : document.edges)
+    {
+        if (edge.edge_type != "signal")
+        {
+            continue;
+        }
+        if (signal_in.count(edge.target_node_id) > 0)
+        {
+            signal_in[edge.target_node_id]++;
+        }
+        if (signal_out.count(edge.source_node_id) > 0)
+        {
+            signal_out[edge.source_node_id]++;
+        }
+    }
+
+    // A linear chain allows at most one signal in and one signal out per node.
+    for (const auto& node : document.nodes)
+    {
+        const auto& id = node.node_id;
+        if (signal_out[id] > 1)
+        {
+            warnings.push_back(
+                {id,
+                 "fans out via " + std::to_string(signal_out[id])
+                     + " signal edges — a fromsequence chain should be linear"});
+        }
+        if (signal_in[id] > 1)
+        {
+            warnings.push_back(
+                {id,
+                 "merges " + std::to_string(signal_in[id])
+                     + " signal edges — a fromsequence chain should be linear"});
+        }
+    }
+
+    // Connected components of the signal-edge subgraph (undirected). A node that
+    // touches no signal edge is isolated; multiple components (incl. isolated
+    // nodes) mean the topology is not a single chain.
+    std::unordered_map<std::string, std::vector<std::string>> signal_adj;
+    for (const auto& edge : document.edges)
+    {
+        if (edge.edge_type != "signal")
+        {
+            continue;
+        }
+        if (signal_in.count(edge.source_node_id) > 0
+            && signal_in.count(edge.target_node_id) > 0)
+        {
+            signal_adj[edge.source_node_id].push_back(edge.target_node_id);
+            signal_adj[edge.target_node_id].push_back(edge.source_node_id);
+        }
+    }
+
+    std::unordered_set<std::string> visited;
+    int                             components = 0;
+    for (const auto& node : document.nodes)
+    {
+        if (visited.count(node.node_id) > 0)
+        {
+            continue;
+        }
+        // An isolated node (no signal edge at all) is its own disconnected piece.
+        if (signal_in[node.node_id] == 0 && signal_out[node.node_id] == 0)
+        {
+            visited.insert(node.node_id);
+            ++components;
+            continue;
+        }
+        ++components;
+        std::deque<std::string> queue{node.node_id};
+        visited.insert(node.node_id);
+        while (!queue.empty())
+        {
+            std::string u = queue.front();
+            queue.pop_front();
+            for (const auto& v : signal_adj[u])
+            {
+                if (visited.insert(v).second)
+                {
+                    queue.push_back(v);
+                }
+            }
+        }
+    }
+
+    if (components > 1)
+    {
+        warnings.push_back(
+            {"",
+             "signal topology splits into " + std::to_string(components)
+                 + " disconnected pieces — expected a single linear chain"});
+    }
+
+    return warnings;
 }
 
 DAS_CORE_GRAPHRUNTIME_NS_END
