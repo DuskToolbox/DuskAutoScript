@@ -1150,3 +1150,50 @@ TEST(SignalAwareCompileTest, GraphInputsBroadcastToOneToManyNodes)
         EXPECT_EQ(binding.default_value.write(), std::string("7"));
     }
 }
+
+// A fromsequence authoring doc is a linear signal-chain graph tagged with
+// "fromsequence". The tag is a pure authoring/UI hint — the compiler must
+// produce identical topology with or without it (compiler ignores tags;
+// execution_order == chain order == node array order).
+TEST(SignalAwareCompileTest, FromSequenceLinearChainCompilesInArrayOrder)
+{
+    StubFactoryManager mgr;
+    auto task_def = MakeDefinition({{"in", "signal"}}, {{"out", "signal"}});
+    mgr.AddDefinition("AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA", task_def);
+    mgr.AddDefinition("BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB", task_def);
+    mgr.AddDefinition("CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC", task_def);
+
+    auto build_doc = [&]() {
+        GraphDocumentDto doc;
+        doc.nodes.push_back(
+            MakeComponentNode("t1", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"));
+        doc.nodes.push_back(
+            MakeComponentNode("t2", "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"));
+        doc.nodes.push_back(
+            MakeComponentNode("t3", "CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC"));
+        doc.edges.push_back(MakeSignalEdge("e1", "t1", "out", "t2", "in"));
+        doc.edges.push_back(MakeSignalEdge("e2", "t2", "out", "t3", "in"));
+        return doc;
+    };
+
+    GraphCompiler compiler;
+    compiler.SetFactoryManager(&mgr);
+
+    auto plan_plain = compiler.Compile(build_doc());
+
+    auto doc_tagged = build_doc();
+    doc_tagged.tags = {"fromsequence"};
+    auto plan_tagged = compiler.Compile(doc_tagged);
+
+    // Linear chain → array order, regardless of the tag.
+    ASSERT_EQ(plan_plain.execution_order.size(), 3u);
+    EXPECT_EQ(plan_plain.execution_order[0], "t1");
+    EXPECT_EQ(plan_plain.execution_order[1], "t2");
+    EXPECT_EQ(plan_plain.execution_order[2], "t3");
+    EXPECT_EQ(plan_plain.execution_order, plan_tagged.execution_order);
+
+    // Signal routes mirror the chain; no loops, no cycle diagnostic.
+    EXPECT_EQ(plan_tagged.signal_routes.size(), 2u);
+    EXPECT_TRUE(plan_tagged.back_edges.empty());
+    EXPECT_FALSE(HasCyclicEdgeGraphDiagnostic(plan_tagged));
+}

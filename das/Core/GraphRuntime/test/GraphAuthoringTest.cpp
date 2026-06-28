@@ -44,6 +44,34 @@ namespace
         return GraphEdgeDto{edge_id, src_node, src_port, tgt_node, tgt_port};
     }
 
+    GraphEdgeDto MakeSignalEdge(
+        const std::string& edge_id,
+        const std::string& src_node,
+        const std::string& src_port,
+        const std::string& tgt_node,
+        const std::string& tgt_port)
+    {
+        GraphEdgeDto edge{edge_id, src_node, src_port, tgt_node, tgt_port};
+        edge.edge_type = "signal";
+        return edge;
+    }
+
+    // Count lint warnings whose node_id matches (empty node_id = graph-level).
+    size_t CountWarningsFor(
+        const std::vector<FromSequenceLintWarning>& warnings,
+        const std::string&                          node_id)
+    {
+        size_t n = 0;
+        for (const auto& w : warnings)
+        {
+            if (w.node_id == node_id)
+            {
+                ++n;
+            }
+        }
+        return n;
+    }
+
     GraphDocumentDto MakeEmptyDocument()
     {
         GraphDocumentDto doc;
@@ -373,4 +401,99 @@ TEST(GraphAuthoringTest, CompositeScenario)
     }
     ASSERT_EQ(doc.nodes.size(), 1u);
     EXPECT_EQ(doc.nodes[0].node_id, "node_2");
+}
+
+// ===========================================================================
+// LintFromSequenceLinearity — optional, non-blocking (DAS-75)
+// ===========================================================================
+
+TEST(FromSequenceLintTest, NoOpinionWhenNotTagged)
+{
+    // Non-linear topology, but the document is not tagged "fromsequence" — the
+    // lint must stay silent (it only applies to fromsequence authoring).
+    auto doc = MakeEmptyDocument();
+    doc.nodes.push_back(MakeNode("a"));
+    doc.nodes.push_back(MakeNode("b"));
+    doc.nodes.push_back(MakeNode("c"));
+    doc.edges.push_back(MakeSignalEdge("e1", "a", "out", "b", "in"));
+    doc.edges.push_back(MakeSignalEdge("e2", "a", "out", "c", "in"));
+
+    EXPECT_TRUE(LintFromSequenceLinearity(doc).empty());
+}
+
+TEST(FromSequenceLintTest, CleanLinearChainHasNoWarnings)
+{
+    auto doc = MakeEmptyDocument();
+    doc.tags = {"fromsequence"};
+    doc.nodes.push_back(MakeNode("t1"));
+    doc.nodes.push_back(MakeNode("t2"));
+    doc.nodes.push_back(MakeNode("t3"));
+    doc.edges.push_back(MakeSignalEdge("e1", "t1", "out", "t2", "in"));
+    doc.edges.push_back(MakeSignalEdge("e2", "t2", "out", "t3", "in"));
+
+    EXPECT_TRUE(LintFromSequenceLinearity(doc).empty());
+}
+
+TEST(FromSequenceLintTest, WarnsOnFanOut)
+{
+    auto doc = MakeEmptyDocument();
+    doc.tags = {"fromsequence"};
+    doc.nodes.push_back(MakeNode("t1"));
+    doc.nodes.push_back(MakeNode("t2"));
+    doc.nodes.push_back(MakeNode("t3"));
+    doc.edges.push_back(MakeSignalEdge("e1", "t1", "out", "t2", "in"));
+    doc.edges.push_back(MakeSignalEdge("e2", "t1", "out", "t3", "in"));
+
+    auto warnings = LintFromSequenceLinearity(doc);
+    EXPECT_EQ(CountWarningsFor(warnings, "t1"), 1u);
+}
+
+TEST(FromSequenceLintTest, WarnsOnMerge)
+{
+    auto doc = MakeEmptyDocument();
+    doc.tags = {"fromsequence"};
+    doc.nodes.push_back(MakeNode("t1"));
+    doc.nodes.push_back(MakeNode("t2"));
+    doc.nodes.push_back(MakeNode("t3"));
+    doc.edges.push_back(MakeSignalEdge("e1", "t1", "out", "t3", "in"));
+    doc.edges.push_back(MakeSignalEdge("e2", "t2", "out", "t3", "in"));
+
+    auto warnings = LintFromSequenceLinearity(doc);
+    EXPECT_EQ(CountWarningsFor(warnings, "t3"), 1u);
+}
+
+TEST(FromSequenceLintTest, WarnsOnDisconnectedChains)
+{
+    auto doc = MakeEmptyDocument();
+    doc.tags = {"fromsequence"};
+    doc.nodes.push_back(MakeNode("t1"));
+    doc.nodes.push_back(MakeNode("t2"));
+    doc.nodes.push_back(MakeNode("t3"));
+    doc.nodes.push_back(MakeNode("t4"));
+    // Two separate linear chains, not connected.
+    doc.edges.push_back(MakeSignalEdge("e1", "t1", "out", "t2", "in"));
+    doc.edges.push_back(MakeSignalEdge("e2", "t3", "out", "t4", "in"));
+
+    auto warnings = LintFromSequenceLinearity(doc);
+    EXPECT_EQ(CountWarningsFor(warnings, ""), 1u); // graph-level warning
+}
+
+TEST(FromSequenceLintTest, NeverRejectsDocument)
+{
+    // The lint is advisory only — it returns warnings, never signals rejection.
+    // A wildly non-linear tagged doc still yields a vector (possibly non-empty),
+    // and the document itself is never modified.
+    auto doc = MakeEmptyDocument();
+    doc.tags = {"fromsequence"};
+    doc.nodes.push_back(MakeNode("t1"));
+    doc.nodes.push_back(MakeNode("t2"));
+    doc.edges.push_back(MakeSignalEdge("e1", "t1", "out", "t2", "in"));
+    doc.edges.push_back(MakeSignalEdge("e2", "t2", "out", "t1", "in"));
+
+    auto snapshot = doc;
+    auto warnings = LintFromSequenceLinearity(doc);
+
+    EXPECT_EQ(doc.nodes.size(), snapshot.nodes.size());
+    EXPECT_EQ(doc.edges.size(), snapshot.edges.size());
+    (void)warnings; // non-empty is fine; the point is it does not throw/reject
 }
