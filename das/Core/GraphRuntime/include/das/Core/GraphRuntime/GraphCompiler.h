@@ -100,7 +100,14 @@ public:
         const Dto::GraphDocumentDto& document);
 
     /// Compute topological order of nodes based on edge dependencies.
-    /// Uses Kahn's algorithm (BFS). Returns empty vector if cycle detected.
+    ///
+    /// Signal-aware (DAS-60): data edges and forward signal edges participate
+    /// in Kahn's algorithm; signal back-edges (a signal edge returning to a
+    /// topologically-earlier node, i.e. a loop head) are tolerated and excluded
+    /// from ordering. Only a cycle among **data** edges yields an empty result.
+    /// Ordering is deterministic: ties are broken by node order in the document
+    /// so signal chains/sequence graphs always produce a stable
+    /// execution_order.
     std::vector<std::string> ComputeExecutionOrder(
         const Dto::GraphDocumentDto& document);
 
@@ -120,6 +127,28 @@ public:
     /// ComputeExecutionOrder -> GeneratePortBindingPlan ->
     /// DetectCyclicEntryRefs -> generate compiled_fingerprint.
     Dto::CompiledGraphPlanDto Compile(const Dto::GraphDocumentDto& document);
+
+    // -----------------------------------------------------------------------
+    // Signal-aware topology analysis (DAS-60 Stage 2)
+    // -----------------------------------------------------------------------
+
+    /// Result of signal-aware topological analysis. Carries the deterministic
+    /// execution_order plus the signal_routes (every signal edge) and the
+    /// controlled back_edges (signal edges that close a loop). has_data_cycle
+    /// is set when a cycle survives among data edges — the only condition
+    /// that should reject the graph.
+    struct TopologyResult
+    {
+        std::vector<std::string>         execution_order;
+        std::vector<Dto::SignalRouteDto> signal_routes;
+        std::vector<Dto::BackEdgeDto>    back_edges;
+        bool                             has_data_cycle = false;
+    };
+
+    /// DFS back-edge classification + deterministic Kahn over (data edges ∪
+    /// forward signal edges). Signal back-edges are recorded (not ordered);
+    /// data back-edges flag a cycle.
+    TopologyResult ComputeTopology(const Dto::GraphDocumentDto& document);
 
 private:
     TaskComponentFactoryManager* factory_manager_ = nullptr;

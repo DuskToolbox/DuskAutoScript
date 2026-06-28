@@ -103,6 +103,56 @@ namespace
         return edge;
     }
 
+    GraphEdgeDto MakeSignalEdge(
+        const std::string& edge_id,
+        const std::string& src_node,
+        const std::string& src_port,
+        const std::string& tgt_node,
+        const std::string& tgt_port)
+    {
+        GraphEdgeDto edge =
+            MakeEdge(edge_id, src_node, src_port, tgt_node, tgt_port);
+        edge.edge_type = "signal";
+        return edge;
+    }
+
+    GraphPortDefinitionDto MakeGraphInput(
+        const std::string& port_id,
+        const std::string& port_type,
+        const std::string& default_json)
+    {
+        GraphPortDefinitionDto port;
+        port.port_id = port_id;
+        port.port_type = port_type;
+        auto parsed = Das::Utils::ParseYyjsonFromString(default_json);
+        if (parsed.has_value())
+        {
+            port.default_value = std::move(*parsed);
+        }
+        return port;
+    }
+
+    // CyclicEdgeGraph diagnostic kind serialised as a string of its enum int.
+    bool HasCyclicEdgeGraphDiagnostic(const Dto::CompiledGraphPlanDto& plan)
+    {
+        const std::string cyclic_kind = std::to_string(
+            static_cast<int>(CompileDiagnosticKind::CyclicEdgeGraph));
+        for (const auto& diag : plan.diagnostics)
+        {
+            auto obj = diag.as_object();
+            if (!obj.has_value())
+            {
+                continue;
+            }
+            auto kind = (*obj)[std::string_view("kind")].as_string();
+            if (kind.has_value() && *kind == cyclic_kind)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
     // ---------------------------------------------------------------
     // Stub TaskComponentFactoryManager for testing
     // Overrides EnumerateDefinitions to return injected test data
@@ -783,7 +833,7 @@ TEST(CyclicEntryRefTest, SelfReferenceCycle)
     doc.nodes.push_back(node);
 
     GraphCompiler compiler;
-    auto diagnostics = compiler.DetectCyclicEntryRefs(doc);
+    auto          diagnostics = compiler.DetectCyclicEntryRefs(doc);
     ASSERT_FALSE(diagnostics.empty());
     EXPECT_EQ(diagnostics[0].kind, CompileDiagnosticKind::CyclicEntryRef);
 }
@@ -886,4 +936,217 @@ TEST(CompileOrchestrationTest, CompiledFingerprint)
     auto plan = compiler.Compile(doc);
     EXPECT_FALSE(plan.compiled_fingerprint.empty());
     EXPECT_NE(plan.compiled_fingerprint, plan.source_fingerprint);
+}
+
+// ===================================================================
+// Test Suite 9: SignalAwareCompileTest (DAS-60 Stage 2)
+// ===================================================================
+
+TEST(SignalAwareCompileTest, SignalChainProducesDeterministicOrder)
+{
+    StubFactoryManager mgr;
+    auto node_def = MakeDefinition({{"in", "signal"}}, {{"out", "signal"}});
+    mgr.AddDefinition("AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA", node_def);
+    mgr.AddDefinition("BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB", node_def);
+    mgr.AddDefinition("CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC", node_def);
+
+    GraphCompiler compiler;
+    compiler.SetFactoryManager(&mgr);
+
+    GraphDocumentDto doc;
+    doc.nodes.push_back(
+        MakeComponentNode("A", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"));
+    doc.nodes.push_back(
+        MakeComponentNode("B", "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"));
+    doc.nodes.push_back(
+        MakeComponentNode("C", "CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC"));
+    doc.edges.push_back(MakeSignalEdge("e1", "A", "out", "B", "in"));
+    doc.edges.push_back(MakeSignalEdge("e2", "B", "out", "C", "in"));
+
+    auto topo = compiler.ComputeTopology(doc);
+    ASSERT_EQ(topo.execution_order.size(), 3u);
+    EXPECT_EQ(topo.execution_order[0], "A");
+    EXPECT_EQ(topo.execution_order[1], "B");
+    EXPECT_EQ(topo.execution_order[2], "C");
+    ASSERT_EQ(topo.signal_routes.size(), 2u);
+    EXPECT_EQ(topo.signal_routes[0].source_port_id, "out");
+    EXPECT_EQ(topo.signal_routes[0].target_node_id, "B");
+    EXPECT_EQ(topo.signal_routes[1].target_node_id, "C");
+    EXPECT_TRUE(topo.back_edges.empty());
+    EXPECT_FALSE(topo.has_data_cycle);
+}
+
+TEST(SignalAwareCompileTest, BranchSignalRoutesCaptureBothBranches)
+{
+    StubFactoryManager mgr;
+    auto               branch_def =
+        MakeDefinition({}, {{"true", "signal"}, {"false", "signal"}});
+    auto sink_def = MakeDefinition({{"in", "signal"}}, {});
+    mgr.AddDefinition("AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA", branch_def);
+    mgr.AddDefinition("BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB", sink_def);
+    mgr.AddDefinition("CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC", sink_def);
+
+    GraphCompiler compiler;
+    compiler.SetFactoryManager(&mgr);
+
+    GraphDocumentDto doc;
+    doc.nodes.push_back(
+        MakeComponentNode("branch", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"));
+    doc.nodes.push_back(MakeComponentNode(
+        "trueBranch",
+        "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"));
+    doc.nodes.push_back(MakeComponentNode(
+        "falseBranch",
+        "CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC"));
+    doc.edges.push_back(
+        MakeSignalEdge("e1", "branch", "true", "trueBranch", "in"));
+    doc.edges.push_back(
+        MakeSignalEdge("e2", "branch", "false", "falseBranch", "in"));
+
+    auto topo = compiler.ComputeTopology(doc);
+    // branch ordered before both branches (deterministic, document order)
+    ASSERT_EQ(topo.execution_order.size(), 3u);
+    EXPECT_EQ(topo.execution_order.front(), "branch");
+    EXPECT_EQ(topo.execution_order[1], "trueBranch");
+    EXPECT_EQ(topo.execution_order[2], "falseBranch");
+
+    // Each branch edge becomes a route keyed by its source signal port.
+    ASSERT_EQ(topo.signal_routes.size(), 2u);
+    EXPECT_EQ(topo.signal_routes[0].source_port_id, "true");
+    EXPECT_EQ(topo.signal_routes[0].target_node_id, "trueBranch");
+    EXPECT_EQ(topo.signal_routes[1].source_port_id, "false");
+    EXPECT_EQ(topo.signal_routes[1].target_node_id, "falseBranch");
+    for (const auto& route : topo.signal_routes)
+    {
+        auto cond = route.activation_condition.as_object();
+        ASSERT_TRUE(cond.has_value());
+        EXPECT_TRUE(cond->contains(std::string_view("signal")));
+    }
+    EXPECT_TRUE(topo.back_edges.empty());
+}
+
+TEST(SignalAwareCompileTest, ForWhileBackEdgeCompilesWithoutCycle)
+{
+    StubFactoryManager mgr;
+    auto               loop_head_def =
+        MakeDefinition({{"loop_in", "signal"}}, {{"continue", "signal"}});
+    auto body_def = MakeDefinition({{"in", "signal"}}, {{"done", "signal"}});
+    mgr.AddDefinition("AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA", loop_head_def);
+    mgr.AddDefinition("BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB", body_def);
+
+    GraphCompiler compiler;
+    compiler.SetFactoryManager(&mgr);
+
+    GraphDocumentDto doc;
+    doc.nodes.push_back(
+        MakeComponentNode("for", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"));
+    doc.nodes.push_back(
+        MakeComponentNode("body", "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"));
+    // forward: for.continue -> body.in ; back-edge: body.done -> for.loop_in
+    doc.edges.push_back(MakeSignalEdge("e1", "for", "continue", "body", "in"));
+    doc.edges.push_back(MakeSignalEdge("e2", "body", "done", "for", "loop_in"));
+
+    auto topo = compiler.ComputeTopology(doc);
+    // Back-edge tolerated: both nodes still ordered, no data cycle.
+    ASSERT_EQ(topo.execution_order.size(), 2u);
+    EXPECT_EQ(topo.execution_order[0], "for");
+    EXPECT_EQ(topo.execution_order[1], "body");
+    EXPECT_FALSE(topo.has_data_cycle);
+
+    // The back-edge is recorded with the loop head as its target.
+    ASSERT_EQ(topo.back_edges.size(), 1u);
+    EXPECT_EQ(topo.back_edges[0].edge_id, "e2");
+    EXPECT_EQ(topo.back_edges[0].source_node_id, "body");
+    EXPECT_EQ(topo.back_edges[0].target_node_id, "for");
+    EXPECT_EQ(topo.back_edges[0].loop_head_node_id, "for");
+
+    // Back-edge still carries a signal route (the loop-back signal).
+    ASSERT_EQ(topo.signal_routes.size(), 2u);
+}
+
+TEST(SignalAwareCompileTest, DataCycleStillRejectedAsCyclicEdgeGraph)
+{
+    StubFactoryManager mgr;
+    auto node_def = MakeDefinition({{"in", "int"}}, {{"out", "int"}});
+    mgr.AddDefinition("AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA", node_def);
+    mgr.AddDefinition("BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB", node_def);
+    mgr.AddDefinition("CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC", node_def);
+
+    GraphCompiler compiler;
+    compiler.SetFactoryManager(&mgr);
+
+    GraphDocumentDto doc;
+    doc.nodes.push_back(
+        MakeComponentNode("A", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"));
+    doc.nodes.push_back(
+        MakeComponentNode("B", "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"));
+    doc.nodes.push_back(
+        MakeComponentNode("C", "CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC"));
+    // All data edges (default edge_type) forming a cycle.
+    doc.edges.push_back(MakeEdge("e1", "A", "out", "B", "in"));
+    doc.edges.push_back(MakeEdge("e2", "B", "out", "C", "in"));
+    doc.edges.push_back(MakeEdge("e3", "C", "out", "A", "in"));
+
+    auto plan = compiler.Compile(doc);
+    EXPECT_TRUE(plan.execution_order.empty());
+    EXPECT_TRUE(HasCyclicEdgeGraphDiagnostic(plan));
+    EXPECT_TRUE(plan.back_edges.empty());
+}
+
+TEST(SignalAwareCompileTest, GraphInputsBroadcastBoundToMatchingPorts)
+{
+    StubFactoryManager mgr;
+    // Node declares an input whose port_id matches a graph_input ("threshold")
+    // and one that does not ("private").
+    auto node_def =
+        MakeDefinition({{"threshold", "int"}, {"private", "int"}}, {});
+    mgr.AddDefinition("AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA", node_def);
+
+    GraphCompiler compiler;
+    compiler.SetFactoryManager(&mgr);
+
+    GraphDocumentDto doc;
+    doc.nodes.push_back(
+        MakeComponentNode("N", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"));
+    doc.graph_inputs.push_back(MakeGraphInput("threshold", "int", "42"));
+
+    auto plan = compiler.GeneratePortBindingPlan(doc);
+    // Only the matching input port receives a broadcast binding.
+    ASSERT_EQ(plan.bindings.size(), 1u);
+    const auto& binding = plan.bindings[0];
+    EXPECT_EQ(binding.source_node_id, "$graph_input");
+    EXPECT_EQ(binding.source_port_id, "threshold");
+    EXPECT_EQ(binding.target_node_id, "N");
+    EXPECT_EQ(binding.target_port_id, "threshold");
+    EXPECT_EQ(binding.expected_type, "int");
+    EXPECT_EQ(binding.default_value.write(), std::string("42"));
+}
+
+TEST(SignalAwareCompileTest, GraphInputsBroadcastToOneToManyNodes)
+{
+    StubFactoryManager mgr;
+    auto               node_def = MakeDefinition({{"threshold", "int"}}, {});
+    mgr.AddDefinition("AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA", node_def);
+    mgr.AddDefinition("BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB", node_def);
+
+    GraphCompiler compiler;
+    compiler.SetFactoryManager(&mgr);
+
+    GraphDocumentDto doc;
+    doc.nodes.push_back(
+        MakeComponentNode("N1", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"));
+    doc.nodes.push_back(
+        MakeComponentNode("N2", "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"));
+    doc.graph_inputs.push_back(MakeGraphInput("threshold", "int", "7"));
+
+    auto plan = compiler.GeneratePortBindingPlan(doc);
+    // One graph input broadcast to two nodes (one-to-many).
+    ASSERT_EQ(plan.bindings.size(), 2u);
+    EXPECT_EQ(plan.bindings[0].target_node_id, "N1");
+    EXPECT_EQ(plan.bindings[1].target_node_id, "N2");
+    for (const auto& binding : plan.bindings)
+    {
+        EXPECT_EQ(binding.source_node_id, "$graph_input");
+        EXPECT_EQ(binding.default_value.write(), std::string("7"));
+    }
 }
