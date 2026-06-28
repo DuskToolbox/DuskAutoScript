@@ -102,6 +102,15 @@ private:
         ExportInterface::IDasReadOnlyPortMap* p_input_port_map,
         ExportInterface::IDasPortMap**        pp_out_port_map);
 
+    // Cancellable timed wait: blocks for `delay_ms` (config), then emits "next".
+    // stop_token is a poll-only interface with no callback, so the wait is sliced
+    // (~50ms) on a condition variable and re-polls stop each slice; a stop during
+    // the wait returns "cancelled" promptly. delay_ms <= 0 skips the wait.
+    DasResult DoDelay(
+        PluginInterface::IDasStopToken*       stop_token,
+        ExportInterface::IDasReadOnlyPortMap* p_input_port_map,
+        ExportInterface::IDasPortMap**        pp_out_port_map);
+
     std::string                                    kind_;
     yyjson::value                                  settings_;
     DasPtr<PluginInterface::IDasTaskComponentHost> host_;
