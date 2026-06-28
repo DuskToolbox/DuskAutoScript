@@ -48,10 +48,6 @@ namespace
             "das.flow.branch",
             "68F10001-0000-4000-8000-000000000001"},
         OfficialFlowComponent{
-            "sequence",
-            "das.flow.sequence",
-            "68F10002-0000-4000-8000-000000000002"},
-        OfficialFlowComponent{
             "delay",
             "das.flow.delay",
             "68F10003-0000-4000-8000-000000000003"},
@@ -71,10 +67,20 @@ namespace
             "repositoryInvoke",
             "das.flow.invokeRepository",
             "68F10007-0000-4000-8000-000000000007"},
+        OfficialFlowComponent{
+            "merge",
+            "das.flow.merge",
+            "68F10008-0000-4000-8000-000000000008"},
     };
 
     constexpr std::string_view kRepositoryInvokeComponentGuid =
         "68F10007-0000-4000-8000-000000000007";
+    constexpr std::string_view kForComponentGuid =
+        "68F10004-0000-4000-8000-000000000004";
+    constexpr std::string_view kWhileComponentGuid =
+        "68F10005-0000-4000-8000-000000000005";
+    constexpr std::string_view kMergeComponentGuid =
+        "68F10008-0000-4000-8000-000000000008";
     constexpr std::string_view kFakeChildPluginGuid =
         "68F19998-0000-4000-8000-000000000001";
     constexpr std::string_view kFakeChildFactoryGuid =
@@ -320,6 +326,25 @@ namespace
         map->SetBool(k.Get(), value);
     }
 
+    void TestSetPortInt(
+        Das::ExportInterface::IDasPortMap* map,
+        std::string_view                   key,
+        int64_t                            value)
+    {
+        DasReadOnlyString k{std::string{key}.c_str()};
+        map->SetInt(k.Get(), value);
+    }
+
+    int64_t TestGetPortInt(
+        Das::ExportInterface::IDasReadOnlyPortMap* map,
+        std::string_view                           key)
+    {
+        int64_t           v{};
+        DasReadOnlyString k{std::string{key}.c_str()};
+        map->GetInt(k.Get(), &v);
+        return v;
+    }
+
     std::string TestGetPortString(
         Das::ExportInterface::IDasReadOnlyPortMap* map,
         std::string_view                           key)
@@ -348,6 +373,18 @@ namespace
             return std::nullopt;
         }
         return Das::Utils::ParseYyjsonFromString(str);
+    }
+
+    // Read the single signal port id this component emitted (or "" for none).
+    std::string TestGetEmittedSignal(
+        Das::ExportInterface::IDasReadOnlyPortMap* map)
+    {
+        auto j = TestGetPortJson(map, "signals");
+        if (!j || !j->is_array() || j->as_array()->empty())
+        {
+            return {};
+        }
+        return std::string((*j->as_array())[0].as_string().value_or(""));
     }
 
     class FakeStopToken final : public Das::PluginInterface::IDasStopToken
@@ -1262,4 +1299,83 @@ TEST_F(TaskComponentContractTest, TaskComponentDoesNotExposeDynamicComponent)
             &out),
         DAS_E_NO_INTERFACE);
     EXPECT_EQ(out, nullptr);
+}
+
+// DAS-60 Stage 4: for is a counted loop head. It emits continue + the current
+// index while in range, then break when exhausted. The counter persists across
+// Do() calls on the same component instance.
+TEST_F(TaskComponentContractTest, ForEmitsContinueAndIndexThenBreak)
+{
+    auto component = CreateComponent(kForComponentGuid);
+    ASSERT_NE(component.Get(), nullptr);
+
+    auto make_input = [&]() {
+        DAS::DasPtr<Das::ExportInterface::IDasPortMap> input_map;
+        EXPECT_EQ(CreateIDasPortMap(input_map.Put()), DAS_S_OK);
+        TestSetPortInt(input_map.Get(), "start", 0);
+        TestSetPortInt(input_map.Get(), "end", 3);
+        TestSetPortInt(input_map.Get(), "step", 1);
+        return input_map;
+    };
+
+    // start=0, end=3, step=1 → continue with index 0,1,2.
+    const std::array<int64_t, 3> expected_indices{0, 1, 2};
+    for (auto idx : expected_indices)
+    {
+        auto in = make_input();
+        DAS::DasPtr<Das::ExportInterface::IDasPortMap> result_map;
+        ASSERT_EQ(component->Do(nullptr, in.Get(), result_map.Put()), DAS_S_OK);
+        EXPECT_EQ(TestGetPortString(result_map.Get(), "status"), "completed");
+        EXPECT_EQ(TestGetEmittedSignal(result_map.Get()), "continue");
+        EXPECT_EQ(TestGetPortInt(result_map.Get(), "index"), idx);
+    }
+
+    // 4th call: range exhausted → break, no index output.
+    auto in = make_input();
+    DAS::DasPtr<Das::ExportInterface::IDasPortMap> result_map;
+    ASSERT_EQ(component->Do(nullptr, in.Get(), result_map.Put()), DAS_S_OK);
+    EXPECT_EQ(TestGetEmittedSignal(result_map.Get()), "break");
+}
+
+// DAS-60 Stage 4: while emits continue/break by the dynamic condition each call.
+TEST_F(TaskComponentContractTest, WhileEmitsContinueOrBreakByCondition)
+{
+    auto component = CreateComponent(kWhileComponentGuid);
+    ASSERT_NE(component.Get(), nullptr);
+
+    auto run = [&](bool cond) {
+        DAS::DasPtr<Das::ExportInterface::IDasPortMap> input_map;
+        EXPECT_EQ(CreateIDasPortMap(input_map.Put()), DAS_S_OK);
+        TestSetPortBool(input_map.Get(), "condition", cond);
+        DAS::DasPtr<Das::ExportInterface::IDasPortMap> result_map;
+        EXPECT_EQ(
+            component->Do(nullptr, input_map.Get(), result_map.Put()),
+            DAS_S_OK);
+        return TestGetEmittedSignal(result_map.Get());
+    };
+
+    EXPECT_EQ(run(true), "continue");
+    EXPECT_EQ(run(false), "break");
+}
+
+// DAS-60 Stage 4: merge (φ-join) copies whichever branch value is present.
+// The runtime guarantees only the taken branch's value_* reaches merge.
+TEST_F(TaskComponentContractTest, MergeOutputsValueFromTakenBranch)
+{
+    auto component = CreateComponent(kMergeComponentGuid);
+    ASSERT_NE(component.Get(), nullptr);
+
+    auto run = [&](std::string_view set_port, int64_t value) {
+        DAS::DasPtr<Das::ExportInterface::IDasPortMap> input_map;
+        EXPECT_EQ(CreateIDasPortMap(input_map.Put()), DAS_S_OK);
+        TestSetPortInt(input_map.Get(), set_port, value);
+        DAS::DasPtr<Das::ExportInterface::IDasPortMap> result_map;
+        EXPECT_EQ(
+            component->Do(nullptr, input_map.Get(), result_map.Put()),
+            DAS_S_OK);
+        return TestGetPortInt(result_map.Get(), "result");
+    };
+
+    EXPECT_EQ(run("value_true", 42), 42);   // true branch taken
+    EXPECT_EQ(run("value_false", 7), 7);    // false branch taken
 }

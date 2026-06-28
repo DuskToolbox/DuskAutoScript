@@ -663,6 +663,7 @@ namespace SignalGatedTestMock
         std::string emit_signal;   // mode=emit: which signal port to fire
         int         loop_end = 0;  // mode=loop: iteration count
         int         counter = 0;   // mode=loop / alternate: persists across Do()
+        int64_t     picked_value = -1; // mode=merge: value copied to result
 
         uint32_t DAS_STD_CALL AddRef() override { return ++ref_count_; }
 
@@ -834,6 +835,29 @@ namespace SignalGatedTestMock
                     EmitSignal(output.Get(), emit_signal);
                 }
                 SetOutInt(output.Get(), "out", do_count.load());
+            }
+            else if (mode == "merge")
+            {
+                // φ-join: copy whichever of value_true / value_false the taken
+                // branch produced into result.
+                int64_t         v{};
+                DasReadOnlyString kt{"value_true"};
+                if (p_input_port_map != nullptr
+                    && DAS::IsOk(p_input_port_map->GetInt(kt.Get(), &v)))
+                {
+                    SetOutInt(output.Get(), "result", v);
+                    picked_value = v;
+                }
+                else
+                {
+                    DasReadOnlyString kf{"value_false"};
+                    if (p_input_port_map != nullptr
+                        && DAS::IsOk(p_input_port_map->GetInt(kf.Get(), &v)))
+                    {
+                        SetOutInt(output.Get(), "result", v);
+                        picked_value = v;
+                    }
+                }
             }
             else
             {
@@ -1132,4 +1156,59 @@ TEST(SignalGatedRuntimeTest, LoopWithInnerBranchHasNoCrossIterationResidue)
     EXPECT_EQ(h->components[2]->do_count.load(), 1); // sinkT only on iter 0 (true)
     EXPECT_EQ(h->components[3]->do_count.load(), 1); // sinkF only on iter 1 (false)
     EXPECT_EQ(h->components[4]->do_count.load(), 2); // term each iteration
+}
+
+// -------------------------------------------------------------------
+// φ-join (DAS-74 merge): a join node gated by the branch signal must RUN even
+// though its other-branch data predecessor was skipped, and pick up the taken
+// branch's value.
+//   branch --true-->  A --data--> merge.value_true
+//   branch --true-->  merge.in_true
+//   branch --false--> B (skipped) --data--> merge.value_false
+// -------------------------------------------------------------------
+TEST(SignalGatedRuntimeTest, MergeJoinRunsOnTakenBranch)
+{
+    using namespace SignalGatedTestMock;
+    const std::string branch{"10000000-0000-0000-0000-000000000051"};
+    const std::string a{"10000000-0000-0000-0000-000000000052"};
+    const std::string b{"10000000-0000-0000-0000-000000000053"};
+    const std::string mergeNode{"10000000-0000-0000-0000-000000000054"};
+
+    auto plan = MakeBasePlan();
+    plan.node_snapshots = {
+        MakeBehaviorSnapshot(branch, R"({"mode":"emit","signal":"true"})"),
+        MakeBehaviorSnapshot(a, R"({"mode":"record"})"),
+        MakeBehaviorSnapshot(b, R"({"mode":"record"})"),
+        MakeBehaviorSnapshot(mergeNode, R"({"mode":"merge"})"),
+    };
+    plan.execution_order = {branch, a, b, mergeNode};
+    plan.signal_routes = {
+        MakeSignalRoute(branch, "true", a, "in"),
+        MakeSignalRoute(branch, "false", b, "in"),
+        MakeSignalRoute(branch, "true", mergeNode, "in_true"),
+    };
+    plan.binding_plan.bindings = {
+        MakeBinding(branch, "true", a, "in", "signal"),
+        MakeBinding(branch, "false", b, "in", "signal"),
+        MakeBinding(branch, "true", mergeNode, "in_true", "signal"),
+        MakeBinding(a, "out", mergeNode, "value_true", "int"),
+        MakeBinding(b, "out", mergeNode, "value_false", "int"),
+    };
+
+    auto host = BehaviorHost::Make();
+    GraphRuntime rt;
+    Das::DasPtr<IDasStopToken> token =
+        Das::PluginInterface::DasStopTokenImplBase<MockStopToken>::Make();
+
+    auto hr = rt.RunWithHost(plan, "fp_v1", token.Get(), host.Get());
+    ASSERT_EQ(hr, DAS_S_OK);
+
+    auto* h = static_cast<BehaviorHost*>(host.Get());
+    ASSERT_EQ(h->components.size(), 4u);
+    EXPECT_EQ(h->components[0]->do_count.load(), 1); // branch
+    EXPECT_EQ(h->components[1]->do_count.load(), 1); // A (true branch) ran
+    EXPECT_EQ(h->components[2]->do_count.load(), 0); // B (false branch) skipped
+    EXPECT_EQ(h->components[3]->do_count.load(), 1); // merge ran despite B skipped
+    // merge picked A's value (A.out = do_count = 1 on its single run).
+    EXPECT_EQ(h->components[3]->picked_value, h->components[1]->do_count.load());
 }

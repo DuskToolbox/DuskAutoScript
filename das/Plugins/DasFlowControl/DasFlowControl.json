@@ -23,14 +23,6 @@
             {
               "id": "condition",
               "type": "bool"
-            },
-            {
-              "id": "compiledSnapshotTrue",
-              "type": "object"
-            },
-            {
-              "id": "compiledSnapshotFalse",
-              "type": "object"
             }
           ],
           "outputs": [
@@ -40,32 +32,6 @@
             },
             {
               "id": "false",
-              "type": "signal"
-            }
-          ],
-          "config": {},
-          "diagnostics": []
-        }
-      },
-      "68F10002-0000-4000-8000-000000000002": {
-        "factoryGuid": "2C6DFCFA-F8B6-4272-8F28-1D31738BD0D4",
-        "definition": {
-          "schemaVersion": 1,
-          "kind": "das.flow.sequence",
-          "componentGuid": "68F10002-0000-4000-8000-000000000002",
-          "inputs": [
-            {
-              "id": "in",
-              "type": "signal"
-            },
-            {
-              "id": "compiledSnapshots",
-              "type": "array"
-            }
-          ],
-          "outputs": [
-            {
-              "id": "next",
               "type": "signal"
             }
           ],
@@ -103,14 +69,30 @@
           "componentGuid": "68F10004-0000-4000-8000-000000000004",
           "inputs": [
             {
-              "id": "in",
-              "type": "signal"
+              "id": "start",
+              "type": "int"
+            },
+            {
+              "id": "end",
+              "type": "int"
+            },
+            {
+              "id": "step",
+              "type": "int"
             }
           ],
           "outputs": [
             {
-              "id": "next",
+              "id": "continue",
               "type": "signal"
+            },
+            {
+              "id": "break",
+              "type": "signal"
+            },
+            {
+              "id": "index",
+              "type": "int"
             }
           ],
           "config": {},
@@ -125,13 +107,17 @@
           "componentGuid": "68F10005-0000-4000-8000-000000000005",
           "inputs": [
             {
-              "id": "in",
-              "type": "signal"
+              "id": "condition",
+              "type": "bool"
             }
           ],
           "outputs": [
             {
-              "id": "next",
+              "id": "continue",
+              "type": "signal"
+            },
+            {
+              "id": "break",
               "type": "signal"
             }
           ],
@@ -188,6 +174,40 @@
               "type": "object"
             }
           },
+          "diagnostics": []
+        }
+      },
+      "68F10008-0000-4000-8000-000000000008": {
+        "factoryGuid": "2C6DFCFA-F8B6-4272-8F28-1D31738BD0D4",
+        "definition": {
+          "schemaVersion": 1,
+          "kind": "das.flow.merge",
+          "componentGuid": "68F10008-0000-4000-8000-000000000008",
+          "inputs": [
+            {
+              "id": "in_true",
+              "type": "signal"
+            },
+            {
+              "id": "in_false",
+              "type": "signal"
+            },
+            {
+              "id": "value_true",
+              "type": "object"
+            },
+            {
+              "id": "value_false",
+              "type": "object"
+            }
+          ],
+          "outputs": [
+            {
+              "id": "result",
+              "type": "object"
+            }
+          ],
+          "config": {},
           "diagnostics": []
         }
       }
