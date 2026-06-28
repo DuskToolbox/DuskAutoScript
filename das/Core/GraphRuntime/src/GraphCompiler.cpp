@@ -9,7 +9,19 @@
 #include <unordered_map>
 #include <unordered_set>
 
+#include <functional>
+
 DAS_CORE_GRAPHRUNTIME_NS_BEGIN
+
+// ---------------------------------------------------------------------------
+// Sentinel source_node_id marking a broadcast (graph-input) binding in the
+// port binding plan, as opposed to an ordinary point-to-point data edge.
+// (DAS-60 Stage 2 graph_inputs broadcast binding.)
+// ---------------------------------------------------------------------------
+namespace
+{
+    constexpr std::string_view kGraphInputBroadcastSource = "$graph_input";
+}
 
 // ---------------------------------------------------------------------------
 // Known port types for the DAS type system
@@ -504,23 +516,150 @@ GraphCompiler::BuildNodeIndex(const Dto::GraphDocumentDto& document)
 }
 
 // ---------------------------------------------------------------------------
-// ComputeExecutionOrder (Kahn's algorithm)
+// ComputeExecutionOrder (signal-aware, deterministic Kahn)
 // ---------------------------------------------------------------------------
 
 std::vector<std::string> GraphCompiler::ComputeExecutionOrder(
     const Dto::GraphDocumentDto& document)
 {
-    std::vector<std::string> execution_order;
+    return ComputeTopology(document).execution_order;
+}
+
+// ---------------------------------------------------------------------------
+// ComputeTopology — DFS back-edge classification + deterministic Kahn
+// ---------------------------------------------------------------------------
+
+GraphCompiler::TopologyResult GraphCompiler::ComputeTopology(
+    const Dto::GraphDocumentDto& document)
+{
+    TopologyResult result;
 
     if (document.nodes.empty())
     {
-        return execution_order;
+        return result;
     }
 
-    // Build adjacency list and in-degree map
-    std::unordered_map<std::string, std::vector<std::string>> adjacency;
-    std::unordered_map<std::string, int>                      in_degree;
+    // Stable per-node index → deterministic Kahn tie-breaking (signals the
+    // unordered_map nondeterminism called out in DAS-60 Stage 2).
+    std::unordered_map<std::string, std::size_t> node_index;
+    for (std::size_t i = 0; i < document.nodes.size(); ++i)
+    {
+        node_index[document.nodes[i].node_id] = i;
+    }
 
+    // Adjacency in document edge order (deterministic DFS traversal).
+    std::unordered_map<std::string, std::vector<const Dto::GraphEdgeDto*>>
+        adjacency;
+    for (const auto& edge : document.edges)
+    {
+        adjacency[edge.source_node_id].push_back(&edge);
+    }
+
+    // DFS back-edge classification. An edge to a node still on the recursion
+    // stack (an ancestor) is a back-edge. Removing every DFS back-edge always
+    // yields a DAG, so the Kahn run below is guaranteed to order every node.
+    enum class Color
+    {
+        White,
+        Gray,
+        Black
+    };
+    std::unordered_map<std::string, Color> color;
+    for (const auto& node : document.nodes)
+    {
+        color[node.node_id] = Color::White;
+    }
+
+    std::unordered_set<std::string> back_edge_ids;
+
+    std::function<void(const std::string&)> dfs = [&](const std::string& u)
+    {
+        color[u] = Color::Gray;
+
+        auto it = adjacency.find(u);
+        if (it != adjacency.end())
+        {
+            for (const Dto::GraphEdgeDto* edge : it->second)
+            {
+                const std::string& v = edge->target_node_id;
+                auto               cit = color.find(v);
+                if (cit == color.end())
+                {
+                    // Edge to a node outside the graph — ValidateEdgePorts
+                    // reports it; topology ignores it.
+                    continue;
+                }
+
+                if (cit->second == Color::Gray)
+                {
+                    // Back-edge: u -> ancestor v closes a cycle.
+                    back_edge_ids.insert(edge->edge_id);
+                    if (edge->edge_type == "signal")
+                    {
+                        Dto::BackEdgeDto back;
+                        back.edge_id = edge->edge_id;
+                        back.source_node_id = edge->source_node_id;
+                        back.source_port_id = edge->source_port_id;
+                        back.target_node_id = edge->target_node_id;
+                        back.target_port_id = edge->target_port_id;
+                        back.loop_head_node_id = edge->target_node_id;
+                        result.back_edges.push_back(std::move(back));
+                    }
+                    else
+                    {
+                        result.has_data_cycle = true;
+                    }
+                }
+                else if (cit->second == Color::White)
+                {
+                    dfs(v);
+                }
+                // Black: forward/cross edge — not a back-edge.
+            }
+        }
+
+        color[u] = Color::Black;
+    };
+
+    for (const auto& node : document.nodes)
+    {
+        if (color[node.node_id] == Color::White)
+        {
+            dfs(node.node_id);
+        }
+    }
+
+    // Signal routes: every signal edge becomes a route (forward + back).
+    // activation_condition names the source port whose emission fires the
+    // route; Stage 4 may refine it to a concrete signal value via manifest
+    // tags. Back-edges appear here too — they carry the loop-back signal.
+    for (const auto& edge : document.edges)
+    {
+        if (edge.edge_type != "signal")
+        {
+            continue;
+        }
+
+        Dto::SignalRouteDto route;
+        route.source_node_id = edge.source_node_id;
+        route.source_port_id = edge.source_port_id;
+        route.target_node_id = edge.target_node_id;
+        route.target_port_id = edge.target_port_id;
+
+        auto cond = Das::Utils::MakeYyjsonObject();
+        auto cond_obj = *cond.as_object();
+        cond_obj[std::string_view("signal")] = std::make_pair(
+            std::string_view(edge.source_port_id),
+            yyjson::copy_string);
+        route.activation_condition = std::move(cond);
+
+        result.signal_routes.push_back(std::move(route));
+    }
+
+    // Kahn over (data edges ∪ forward signal edges) — every back-edge removed
+    // so this subgraph is a DAG and all nodes get ordered.
+    std::unordered_map<std::string, std::vector<std::string>> forward_adj;
+    std::unordered_map<std::string, int>                      in_degree;
     for (const auto& node : document.nodes)
     {
         in_degree[node.node_id] = 0;
@@ -528,48 +667,59 @@ std::vector<std::string> GraphCompiler::ComputeExecutionOrder(
 
     for (const auto& edge : document.edges)
     {
-        adjacency[edge.source_node_id].push_back(edge.target_node_id);
+        if (back_edge_ids.count(edge.edge_id) > 0)
+        {
+            continue;
+        }
+        if (node_index.count(edge.source_node_id) == 0
+            || node_index.count(edge.target_node_id) == 0)
+        {
+            continue;
+        }
+        forward_adj[edge.source_node_id].push_back(edge.target_node_id);
         in_degree[edge.target_node_id]++;
     }
 
-    // Initialize queue with all zero in-degree nodes
-    std::queue<std::string> queue;
-    for (const auto& [node_id, degree] : in_degree)
+    auto cmp = [&](const std::string& a, const std::string& b)
+    { return node_index[a] > node_index[b]; };
+    std::priority_queue<std::string, std::vector<std::string>, decltype(cmp)>
+        heap(cmp);
+    for (const auto& node : document.nodes)
     {
-        if (degree == 0)
+        if (in_degree[node.node_id] == 0)
         {
-            queue.push(node_id);
+            heap.push(node.node_id);
         }
     }
 
-    // BFS
-    while (!queue.empty())
+    while (!heap.empty())
     {
-        std::string current = std::move(queue.front());
-        queue.pop();
-        execution_order.push_back(std::move(current));
+        std::string current = heap.top();
+        heap.pop();
+        result.execution_order.push_back(current);
 
-        auto it = adjacency.find(execution_order.back());
-        if (it != adjacency.end())
+        auto it = forward_adj.find(current);
+        if (it != forward_adj.end())
         {
             for (const auto& neighbor : it->second)
             {
-                in_degree[neighbor]--;
-                if (in_degree[neighbor] == 0)
+                if (--in_degree[neighbor] == 0)
                 {
-                    queue.push(neighbor);
+                    heap.push(neighbor);
                 }
             }
         }
     }
 
-    // Cycle detection: not all nodes visited
-    if (execution_order.size() != document.nodes.size())
+    // A cycle among data edges is the only legitimate reason to reject the
+    // graph; surface it as an empty execution_order so Compile() reports
+    // CyclicEdgeGraph. (Signal back-edges are tolerated, never fatal.)
+    if (result.has_data_cycle)
     {
-        return {};
+        result.execution_order.clear();
     }
 
-    return execution_order;
+    return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -640,6 +790,48 @@ Dto::PortBindingPlanDto GraphCompiler::GeneratePortBindingPlan(
         }
 
         plan.bindings.push_back(std::move(binding));
+    }
+
+    // Broadcast bindings: graph_inputs (graph-level settings, e.g. MAA
+    // global_option) are bound to every node input port that declares using
+    // them — by port_id name match. Unlike point-to-point data edges this is
+    // a one-to-many binding; its source_node_id is the sentinel
+    // kGraphInputBroadcastSource and it carries the graph input's default.
+    for (const auto& graph_input : document.graph_inputs)
+    {
+        for (const auto& node : document.nodes)
+        {
+            if (node.target.target_kind != "componentRef"
+                || !node.target.component_ref.has_value())
+            {
+                continue;
+            }
+
+            auto manifest = resolve_manifest(node);
+            if (!manifest.was_resolved)
+            {
+                continue;
+            }
+
+            for (const auto& in_port : manifest.inputs)
+            {
+                if (in_port.port_id != graph_input.port_id)
+                {
+                    continue;
+                }
+
+                Dto::PortBindingDto binding;
+                binding.source_node_id =
+                    std::string(kGraphInputBroadcastSource);
+                binding.source_port_id = graph_input.port_id;
+                binding.target_node_id = node.node_id;
+                binding.target_port_id = in_port.port_id;
+                binding.expected_type = graph_input.port_type;
+                binding.default_value =
+                    Das::Utils::CloneYyjsonValue(graph_input.default_value);
+                plan.bindings.push_back(std::move(binding));
+            }
+        }
     }
 
     return plan;
@@ -752,8 +944,12 @@ Dto::CompiledGraphPlanDto GraphCompiler::Compile(
         plan.diagnostics.push_back(DiagnosticToJson(d));
     }
 
-    // Phase 3: Topological sort
-    plan.execution_order = ComputeExecutionOrder(document);
+    // Phase 3: Signal-aware topological sort (single pass — also yields
+    // signal_routes and back_edges for the compiled plan).
+    auto topology = ComputeTopology(document);
+    plan.execution_order = std::move(topology.execution_order);
+    plan.signal_routes = std::move(topology.signal_routes);
+    plan.back_edges = std::move(topology.back_edges);
     if (plan.execution_order.empty() && !document.nodes.empty())
     {
         auto payload = Das::Utils::MakeYyjsonObject();
