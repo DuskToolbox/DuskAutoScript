@@ -178,6 +178,24 @@ bool PortFrame::Remove(const PortKey& key) { return entries_.erase(key) > 0; }
 
 void PortFrame::Clear() noexcept { entries_.clear(); }
 
+std::size_t PortFrame::ClearSignalsByNode(DasGuid node_id)
+{
+    std::size_t removed = 0;
+    for (auto it = entries_.begin(); it != entries_.end();)
+    {
+        if (it->first.node_id == node_id && it->second.IsSignal())
+        {
+            it = entries_.erase(it);
+            ++removed;
+        }
+        else
+        {
+            ++it;
+        }
+    }
+    return removed;
+}
+
 const PortValue* PortFrame::Find(const PortKey& key) const noexcept
 {
     auto it = entries_.find(key);

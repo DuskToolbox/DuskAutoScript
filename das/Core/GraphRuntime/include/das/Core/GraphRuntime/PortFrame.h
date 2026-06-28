@@ -188,6 +188,12 @@ public:
     bool Remove(const PortKey& key);
     void Clear() noexcept;
 
+    // Drop every Signal-typed entry owned by @p node_id. Used by the signal-gated
+    // runtime at loop iteration boundaries to clear stale control markers
+    // (e.g. a branch's true/false output from the previous iteration) so gates
+    // re-evaluate cleanly. Data entries are preserved. (DAS-60 Stage 3.)
+    std::size_t ClearSignalsByNode(DasGuid node_id);
+
     // -- Observers -----------------------------------------------------------
     [[nodiscard]]
     const PortValue* Find(const PortKey& key) const noexcept;

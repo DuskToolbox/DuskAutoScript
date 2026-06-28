@@ -17,8 +17,11 @@
 #include <das/_autogen/idl/header/IDasPortMap.generated.h>
 
 #include <algorithm>
+#include <deque>
 #include <string>
+#include <tuple>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 DAS_CORE_GRAPHRUNTIME_NS_BEGIN
@@ -446,6 +449,366 @@ DasResult GraphRuntime::ExecuteNodeWithComponent(
 }
 
 // ===========================================================================
+// RunSignalGated — signal-driven ready queue (DAS-60 Stage 3)
+// ===========================================================================
+//
+// Replaces the linear `for (node : execution_order)` walk with a scheduler
+// that activates a node only when:
+//   1. every data predecessor has resolved (Done or Skipped), AND
+//   2. its signal gate is open — i.e. it has no incoming signal routes, or at
+//      least one such route's source port currently holds a Signal.
+//
+// Gate, skip, and loop semantics:
+//   - gate:    a node whose gate is shut (source resolved but no signal fired)
+//              is marked Skipped, so only the taken branch of an if runs.
+//   - skip:    a Skipped node produces nothing, so any data successor that
+//              depends on it is also Skipped (propagated along data edges).
+//   - loop:    when a back-edge source (loop body terminal) fires its done
+//              signal, the loop head + body are re-pended for another pass and
+//              the loop SCC's stale Signal markers are cleared (iteration
+//              boundary), so gates re-decide without cross-iteration residue.
+//
+// ExecuteNodeWithComponent (input assembly / Do / output writeback) is reused
+// unchanged. No loop-limit guard: a component that never breaks loops forever
+// by design (user responsibility).
+
+namespace
+{
+    // Sentinel source marking a broadcast (graph-input) binding — not a real
+    // node, so it creates no data dependency. Must match GraphCompiler.
+    constexpr std::string_view kBroadcastSource = "$graph_input";
+
+    using EdgeKey =
+        std::tuple<std::string, std::string, std::string, std::string>;
+
+    struct EdgeKeyHash
+    {
+        std::size_t operator()(const EdgeKey& k) const noexcept
+        {
+            std::size_t seed = 0xcbf29ce484222325ULL;
+            auto mix = [&](const std::string& s)
+            {
+                seed ^=
+                    std::hash<std::string>{}(s) + 0x9e3779b9 + (seed << 6)
+                    + (seed >> 2);
+            };
+            mix(std::get<0>(k));
+            mix(std::get<1>(k));
+            mix(std::get<2>(k));
+            mix(std::get<3>(k));
+            return seed;
+        }
+    };
+
+    inline EdgeKey MakeEdgeKey(
+        const std::string& sn,
+        const std::string& sp,
+        const std::string& tn,
+        const std::string& tp)
+    {
+        return std::make_tuple(sn, sp, tn, tp);
+    }
+} // namespace
+
+DasResult GraphRuntime::RunSignalGated(
+    const Dto::CompiledGraphPlanDto&     plan,
+    Das::PluginInterface::IDasStopToken* p_stop_token,
+    PortFrame&                           frame)
+{
+    // -- edge classification: signal edges vs back edges (4-tuples) ----------
+    std::unordered_set<EdgeKey, EdgeKeyHash> signal_edge_keys;
+    std::unordered_set<EdgeKey, EdgeKeyHash> back_edge_keys;
+    for (const auto& r : plan.signal_routes)
+    {
+        signal_edge_keys.insert(MakeEdgeKey(
+            r.source_node_id, r.source_port_id, r.target_node_id, r.target_port_id));
+    }
+    for (const auto& be : plan.back_edges)
+    {
+        back_edge_keys.insert(MakeEdgeKey(
+            be.source_node_id,
+            be.source_port_id,
+            be.target_node_id,
+            be.target_port_id));
+    }
+
+    // -- data dependencies (point-to-point data edges only) -----------------
+    // Broadcast bindings and signal edges carry no node-level data dependency.
+    std::unordered_map<std::string, std::vector<std::string>> data_preds;
+    std::unordered_map<std::string, std::vector<std::string>> data_succ;
+    for (const auto& b : plan.binding_plan.bindings)
+    {
+        if (b.source_node_id == std::string(kBroadcastSource))
+        {
+            continue;
+        }
+        const auto key = MakeEdgeKey(
+            b.source_node_id, b.source_port_id, b.target_node_id, b.target_port_id);
+        if (signal_edge_keys.count(key) > 0)
+        {
+            continue;
+        }
+        data_preds[b.target_node_id].push_back(b.source_node_id);
+        data_succ[b.source_node_id].push_back(b.target_node_id);
+    }
+
+    // -- gate routes (non-back-edge signal routes) + signal fan-out ---------
+    std::unordered_map<std::string, std::vector<Dto::SignalRouteDto>> gate_routes;
+    std::unordered_map<std::string, std::vector<Dto::SignalRouteDto>> signal_out;
+    for (const auto& r : plan.signal_routes)
+    {
+        signal_out[r.source_node_id].push_back(r);
+        const auto key = MakeEdgeKey(
+            r.source_node_id, r.source_port_id, r.target_node_id, r.target_port_id);
+        // Back-edges re-activate the loop head via the pass restart below; they
+        // are NOT gates the head must wait on (the head runs first each pass).
+        if (back_edge_keys.count(key) > 0)
+        {
+            continue;
+        }
+        gate_routes[r.target_node_id].push_back(r);
+    }
+
+    // -- loop structure: back-edge sources + loop heads ---------------------
+    std::unordered_map<std::string, std::vector<Dto::BackEdgeDto>>
+                                        back_edges_by_source;
+    std::unordered_set<std::string>     loop_heads;
+    for (const auto& be : plan.back_edges)
+    {
+        loop_heads.insert(be.loop_head_node_id);
+        back_edges_by_source[be.source_node_id].push_back(be);
+    }
+
+    // -- unified adjacency (data + every signal route incl. back-edges) -----
+    std::unordered_map<std::string, std::vector<std::string>> fwd_adj;
+    std::unordered_map<std::string, std::vector<std::string>> bwd_adj;
+    auto link = [&](const std::string& from, const std::string& to)
+    {
+        fwd_adj[from].push_back(to);
+        bwd_adj[to].push_back(from);
+    };
+    for (const auto& [tgt, preds] : data_preds)
+    {
+        for (const auto& p : preds)
+        {
+            link(p, tgt);
+        }
+    }
+    for (const auto& r : plan.signal_routes)
+    {
+        link(r.source_node_id, r.target_node_id);
+    }
+
+    // Nodes that participate in this graph (for reachability scoping).
+    std::unordered_set<std::string> graph_nodes;
+    for (const auto& n : plan.execution_order)
+    {
+        graph_nodes.insert(n);
+    }
+
+    auto reach =
+        [&](const std::string& start,
+            const std::unordered_map<std::string, std::vector<std::string>>& adj)
+        -> std::unordered_set<std::string>
+    {
+        std::unordered_set<std::string> seen{start};
+        std::deque<std::string>        q{start};
+        while (!q.empty())
+        {
+            const std::string u = q.front();
+            q.pop_front();
+            auto it = adj.find(u);
+            if (it == adj.end())
+            {
+                continue;
+            }
+            for (const auto& v : it->second)
+            {
+                if (graph_nodes.count(v) == 0)
+                {
+                    continue;
+                }
+                if (seen.insert(v).second)
+                {
+                    q.push_back(v);
+                }
+            }
+        }
+        return seen;
+    };
+
+    // Per-loop-head reset set = the SCC containing the head
+    // (forward-reachable ∩ backward-reachable), whose Signal markers must be
+    // cleared at each iteration boundary.
+    std::unordered_map<std::string, std::vector<std::string>> loop_scc;
+    for (const auto& head : loop_heads)
+    {
+        const auto fr = reach(head, fwd_adj);
+        const auto br = reach(head, bwd_adj);
+        std::vector<std::string> scc;
+        for (const auto& n : fr)
+        {
+            if (br.count(n) > 0)
+            {
+                scc.push_back(n);
+            }
+        }
+        loop_scc[head] = std::move(scc);
+    }
+
+    // -- scheduling state ---------------------------------------------------
+    enum class NState
+    {
+        Pending,
+        Done,
+        Skipped
+    };
+    std::unordered_map<std::string, NState> state;
+    for (const auto& n : plan.execution_order)
+    {
+        state[n] = NState::Pending;
+    }
+
+    auto guid_of = [](const std::string& id)
+    {
+        return Das::Core::ForeignInterfaceHost::MakeDasGuid(id);
+    };
+    auto port_signaled = [&](const Dto::SignalRouteDto& r) -> bool
+    {
+        const auto* pv = frame.Find(PortKey{guid_of(r.source_node_id), r.source_port_id});
+        return pv != nullptr && pv->IsSignal();
+    };
+    auto can_decide = [&](const std::string& n) -> bool
+    {
+        for (const auto& p : data_preds[n])
+        {
+            if (state[p] == NState::Pending)
+            {
+                return false;
+            }
+        }
+        for (const auto& r : gate_routes[n])
+        {
+            if (state[r.source_node_id] == NState::Pending)
+            {
+                return false;
+            }
+        }
+        return true;
+    };
+    auto should_skip = [&](const std::string& n) -> bool
+    {
+        // skip-propagation: a data predecessor that was skipped starves this node
+        for (const auto& p : data_preds[n])
+        {
+            if (state[p] == NState::Skipped)
+            {
+                return true;
+            }
+        }
+        // gate: a gated node with no open incoming signal route is skipped
+        const auto& gr = gate_routes[n];
+        if (!gr.empty())
+        {
+            bool any_open = false;
+            for (const auto& r : gr)
+            {
+                if (port_signaled(r))
+                {
+                    any_open = true;
+                    break;
+                }
+            }
+            if (!any_open)
+            {
+                return true;
+            }
+        }
+        return false;
+    };
+
+    // -- multi-pass scheduling loop -----------------------------------------
+    // A single pass walks execution_order once, deciding every node that is
+    // ready. When a back-edge fires we restart the pass so the loop head
+    // re-runs in its proper position. The loop ends when a full pass makes no
+    // progress (every remaining node is waiting on something that will never
+    // resolve — those stay unexecuted).
+    bool progress = true;
+    while (progress)
+    {
+        progress = false;
+        for (const auto& n : plan.execution_order)
+        {
+            if (state[n] != NState::Pending || !can_decide(n))
+            {
+                continue;
+            }
+            progress = true;
+
+            if (should_skip(n))
+            {
+                state[n] = NState::Skipped;
+                continue;
+            }
+
+            DAS_CORE_LOG_INFO("Running node = {}", n);
+
+            DasResult hr = CheckStopToken(p_stop_token);
+            if (DAS_S_OK != hr)
+            {
+                SetError(
+                    hr,
+                    DAS_FMT_NS::format("Execution cancelled before node = {}", n));
+                return hr;
+            }
+
+            hr = ExecuteNodeWithComponent(n, p_stop_token, frame, plan);
+            if (DAS_S_OK != hr)
+            {
+                SetError(
+                    hr,
+                    DAS_FMT_NS::format(
+                        "Node '{}' execution failed: hr = {}",
+                        n,
+                        static_cast<int>(hr)));
+                return hr;
+            }
+            state[n] = NState::Done;
+
+            // back-edge firing? → loop iteration complete
+            std::string fired_head;
+            for (const auto& be : back_edges_by_source[n])
+            {
+                const auto* pv =
+                    frame.Find(PortKey{guid_of(n), be.source_port_id});
+                if (pv != nullptr && pv->IsSignal())
+                {
+                    fired_head = be.loop_head_node_id;
+                    break;
+                }
+            }
+            if (!fired_head.empty())
+            {
+                // iteration boundary: clear stale signals, then re-pend head + body
+                for (const auto& m : loop_scc[fired_head])
+                {
+                    frame.ClearSignalsByNode(guid_of(m));
+                }
+                state[fired_head] = NState::Pending;
+                for (const auto& m : loop_scc[fired_head])
+                {
+                    state[m] = NState::Pending;
+                }
+                break; // restart pass so the head re-runs in execution order
+            }
+        }
+    }
+
+    DAS_CORE_LOG_INFO("RunSignalGated complete");
+    return DAS_S_OK;
+}
+
+// ===========================================================================
 // RunWithHost
 // ===========================================================================
 
@@ -492,35 +855,48 @@ DasResult GraphRuntime::RunWithHost(
     // Phase 5: Create fresh PortFrame
     PortFrame frame;
 
-    // Phase 6: Per-node sequential execution using pre-configured components
-    for (const auto& node_id : plan.execution_order)
+    // Phase 6: Execute. Pure-data graphs (no signal routes, no back edges) use
+    // the original linear execution_order walk — unchanged behaviour. Graphs
+    // with control flow use the signal-driven ready queue (DAS-60 Stage 3).
+    if (plan.signal_routes.empty() && plan.back_edges.empty())
     {
-        DAS_CORE_LOG_INFO("Running node = {}", node_id);
+        for (const auto& node_id : plan.execution_order)
+        {
+            DAS_CORE_LOG_INFO("Running node = {}", node_id);
 
-        hr = CheckStopToken(p_stop_token);
+            hr = CheckStopToken(p_stop_token);
+            if (DAS_S_OK != hr)
+            {
+                SetError(
+                    hr,
+                    DAS_FMT_NS::format(
+                        "Execution cancelled before node = {}",
+                        node_id));
+                return hr;
+            }
+
+            hr = ExecuteNodeWithComponent(node_id, p_stop_token, frame, plan);
+            if (DAS_S_OK != hr)
+            {
+                SetError(
+                    hr,
+                    DAS_FMT_NS::format(
+                        "Node '{}' execution failed: hr = {}",
+                        node_id,
+                        static_cast<int>(hr)));
+                return hr;
+            }
+
+            DAS_CORE_LOG_TRACE("Node = {} completed successfully", node_id);
+        }
+    }
+    else
+    {
+        hr = RunSignalGated(plan, p_stop_token, frame);
         if (DAS_S_OK != hr)
         {
-            SetError(
-                hr,
-                DAS_FMT_NS::format(
-                    "Execution cancelled before node = {}",
-                    node_id));
             return hr;
         }
-
-        hr = ExecuteNodeWithComponent(node_id, p_stop_token, frame, plan);
-        if (DAS_S_OK != hr)
-        {
-            SetError(
-                hr,
-                DAS_FMT_NS::format(
-                    "Node '{}' execution failed: hr = {}",
-                    node_id,
-                    static_cast<int>(hr)));
-            return hr;
-        }
-
-        DAS_CORE_LOG_TRACE("Node = {} completed successfully", node_id);
     }
 
     // Phase 7: Final stop token check
