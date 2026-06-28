@@ -44,6 +44,32 @@ namespace Dto
         std::vector<GraphPortDefinitionDto> resolved_ports;
     };
 
+    // ---- signal activation route (DAS-60 signal-gated execution) ----
+    // Describes a signal edge that activates a target port when the
+    // activation_condition holds. Only the DTO shape + serialization is
+    // defined here; population happens in a later stage.
+    struct SignalRouteDto
+    {
+        std::string   source_node_id;
+        std::string   source_port_id;
+        std::string   target_node_id;
+        std::string   target_port_id;
+        yyjson::value activation_condition;
+    };
+
+    // ---- controlled back edge (DAS-60 signal-gated loop control) ----
+    // A back edge that closes a loop, plus the loop-head node it returns to.
+    // Only the DTO shape + serialization is defined here.
+    struct BackEdgeDto
+    {
+        std::string edge_id;
+        std::string source_node_id;
+        std::string source_port_id;
+        std::string target_node_id;
+        std::string target_port_id;
+        std::string loop_head_node_id;
+    };
+
     // ---- compiled plan for an entire graph ----
     struct CompiledGraphPlanDto
     {
@@ -55,6 +81,8 @@ namespace Dto
         PortBindingPlanDto                   binding_plan;
         std::vector<std::string>             execution_order;
         std::vector<yyjson::value>           diagnostics;
+        std::vector<SignalRouteDto>          signal_routes;
+        std::vector<BackEdgeDto>             back_edges;
     };
 
     // ---- port mapping across subgraph boundaries ----
@@ -130,6 +158,8 @@ DAS_CORE_GRAPHRUNTIME_NS_END
 DAS_GRAPHRUNTIME_DTO_CASTER(PortBindingDto);
 DAS_GRAPHRUNTIME_DTO_CASTER(PortBindingPlanDto);
 DAS_GRAPHRUNTIME_DTO_CASTER(CompiledNodeSnapshotDto);
+DAS_GRAPHRUNTIME_DTO_CASTER(SignalRouteDto);
+DAS_GRAPHRUNTIME_DTO_CASTER(BackEdgeDto);
 DAS_GRAPHRUNTIME_DTO_CASTER(CompiledGraphPlanDto);
 DAS_GRAPHRUNTIME_DTO_CASTER(PortMappingDto);
 DAS_GRAPHRUNTIME_DTO_CASTER(CompiledSubgraphSnapshotDto);
@@ -154,6 +184,18 @@ struct yyjson::field_name_rule<Das::Core::GraphRuntime::Dto::PortBindingPlanDto>
 template <>
 struct yyjson::field_name_rule<
     Das::Core::GraphRuntime::Dto::CompiledNodeSnapshotDto>
+{
+    using type = yyjson::snake_to_camel_transform;
+};
+
+template <>
+struct yyjson::field_name_rule<Das::Core::GraphRuntime::Dto::SignalRouteDto>
+{
+    using type = yyjson::snake_to_camel_transform;
+};
+
+template <>
+struct yyjson::field_name_rule<Das::Core::GraphRuntime::Dto::BackEdgeDto>
 {
     using type = yyjson::snake_to_camel_transform;
 };

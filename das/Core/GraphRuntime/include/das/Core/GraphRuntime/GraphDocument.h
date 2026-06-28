@@ -62,6 +62,9 @@ namespace Dto
         std::string source_port_id;
         std::string target_node_id;
         std::string target_port_id;
+        // "data" | "signal" — default "data" so pre-existing graphs keep
+        // behaving as pure data-flow edges (DAS-60 signal-gated execution).
+        std::string edge_type = "data";
     };
 
     struct GraphDocumentDto
@@ -73,6 +76,9 @@ namespace Dto
         std::vector<GraphEdgeDto>           edges;
         std::vector<GraphPortDefinitionDto> graph_inputs;
         std::vector<GraphPortDefinitionDto> graph_outputs;
+        // Graph-level markers (e.g. "fromsequence") mirroring the per-port
+        // GraphPortDefinitionDto::tags style.
+        std::vector<std::string> tags;
     };
 
     namespace Detail
