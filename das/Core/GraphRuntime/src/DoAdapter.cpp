@@ -2,6 +2,7 @@
 
 #include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/Core/Logger/Logger.h>
+#include <das/Core/Utils/DasJsonImpl.h>
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
 #include <das/_autogen/idl/abi/IDasPortMap.h>
@@ -235,6 +236,68 @@ namespace
         }
     }
 
+    // Reserved output key carrying the component's emitted signal list.
+    // A component fires its signal output ports by listing their port IDs in a
+    // JSON string array under this key (e.g. R"(["true"])"). The adapter turns
+    // each entry into a PortValue::Signal() in the frame so the runtime can gate
+    // on it — the component itself never sees signal values (zero-awareness).
+    // (DAS-60 Stage 3: signal emission → PortFrame materialisation.)
+    constexpr std::string_view kEmittedSignalsKey = "signals";
+
+    /// Read the reserved @p "signals" array from @p map and write a
+    /// PortValue::Signal() into @p frame for every listed port, under
+    /// (@p node_id, signal_port_id). Returns DAS_S_OK even when the key is
+    /// absent (no signals emitted is the common, non-control-flow case).
+    DasResult ExtractEmittedSignals(
+        Das::ExportInterface::IDasPortMap* map,
+        DasGuid                            node_id,
+        PortFrame&                         frame)
+    {
+        DasReadOnlyString  key{std::string{kEmittedSignalsKey}.c_str()};
+        IDasReadOnlyString* p_str = nullptr;
+        DasResult           result = map->GetString(key.Get(), &p_str);
+        if (DAS::IsFailed(result) || p_str == nullptr)
+        {
+            return DAS_S_OK;
+        }
+
+        const char* utf8 = nullptr;
+        p_str->GetUtf8(&utf8);
+        std::string json_text(utf8 ? utf8 : "");
+        p_str->Release();
+
+        if (json_text.empty())
+        {
+            return DAS_S_OK;
+        }
+
+        auto parsed = Das::Utils::ParseYyjsonFromString(json_text);
+        if (!parsed.has_value())
+        {
+            DAS_CORE_LOG_WARN(
+                "Emitted signals key held non-JSON text: '{}'.",
+                json_text);
+            return DAS_S_OK;
+        }
+
+        auto arr = parsed->as_array();
+        if (!arr.has_value())
+        {
+            return DAS_S_OK;
+        }
+
+        for (const auto& entry : *arr)
+        {
+            auto name = entry.as_string();
+            if (!name.has_value())
+            {
+                continue;
+            }
+            frame.Set(node_id, std::string(*name), PortValue::Signal());
+        }
+        return DAS_S_OK;
+    }
+
 } // namespace
 
 // ===========================================================================
@@ -335,6 +398,15 @@ DasResult ExtractOutputPortMap(
         const char* utf8 = nullptr;
         p_key->GetUtf8(&utf8);
         std::string port_id(utf8 ? utf8 : "");
+
+        // The reserved "signals" key is control-flow metadata, not a data
+        // port — materialise it as Signal markers and skip normal extraction.
+        if (port_id == std::string{kEmittedSignalsKey})
+        {
+            ExtractEmittedSignals(output_map, node_id, frame);
+            p_key->Release();
+            continue;
+        }
 
         result = PortMapEntryToPortValue(output_map, port_id, node_id, frame);
         if (DAS::IsFailed(result))

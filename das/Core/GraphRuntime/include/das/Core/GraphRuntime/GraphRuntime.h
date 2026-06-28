@@ -123,6 +123,16 @@ private:
         PortFrame&                           frame,
         const Dto::CompiledGraphPlanDto&     plan);
 
+    // Signal-driven ready-queue scheduler (DAS-60 Stage 3). Activates a node
+    // when its data predecessors are resolved AND its signal gate is open,
+    // propagates skip along data edges, and re-activates loop heads on
+    // back-edge firing. Used only when the plan carries signal routes or
+    // back edges; pure-data graphs keep the linear execution_order path.
+    DasResult RunSignalGated(
+        const Dto::CompiledGraphPlanDto&     plan,
+        Das::PluginInterface::IDasStopToken* p_stop_token,
+        PortFrame&                           frame);
+
     // Check stop token; returns DAS_E_FAIL if cancelled.
     static DasResult CheckStopToken(
         Das::PluginInterface::IDasStopToken* p_stop_token);
