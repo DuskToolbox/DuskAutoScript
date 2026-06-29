@@ -20,6 +20,74 @@
 #include <utility>
 #include <vector>
 
+// PI V2 协议 `agent: object | object[]` 的多态反序列化：单对象包成 1 元素
+// vector，数组直接成 vector。替换原手写 ReadAgentSpecs 的三形态识别；每个
+// 元素的字段解析委托 default_caster<AgentSpecDto>（field_name_rule =
+// snake_to_camel，读 camelCase），envelope 路径的 agent 始终由 PiCompiler
+// 产出为 camelCase。
+template <>
+struct yyjson::caster<
+    std::vector<Das::Plugins::DasMaaPi::AgentRuntime::AgentSpecDto>>
+{
+    using AgentSpecDto = Das::Plugins::DasMaaPi::AgentRuntime::AgentSpecDto;
+
+    template <yyjson::json_value Json>
+    static std::vector<AgentSpecDto> from_json(const Json& json)
+    {
+        // 手写 AgentSpecDto 字段读取：identifier 为 optional，缺失时须回退
+        // nullopt；default_caster 的聚合反射要求所有 key 存在，会因缺
+        // identifier 抛 bad_cast，故不能直接委托 default_caster。envelope
+        // 路径的 agent 由 PiCompiler 产出为 camelCase。
+        auto read_spec = [](const auto& obj) -> AgentSpecDto {
+            AgentSpecDto spec;
+            if (obj.contains(std::string_view("childExec")))
+            {
+                if (auto v = obj[std::string_view("childExec")].as_string())
+                    spec.child_exec = std::string(*v);
+            }
+            if (obj.contains(std::string_view("childArgs")))
+            {
+                if (auto arr = obj[std::string_view("childArgs")].as_array())
+                {
+                    for (auto it = arr->begin(); it != arr->end(); ++it)
+                    {
+                        if (auto s = it->as_string())
+                            spec.child_args.emplace_back(std::string(*s));
+                    }
+                }
+            }
+            if (obj.contains(std::string_view("identifier")))
+            {
+                if (auto v = obj[std::string_view("identifier")].as_string())
+                    spec.identifier = std::string(*v);
+            }
+            if (obj.contains(std::string_view("timeoutMs")))
+            {
+                if (auto v = obj[std::string_view("timeoutMs")].as_sint())
+                    spec.timeout_ms = static_cast<int32_t>(*v);
+            }
+            return spec;
+        };
+
+        std::vector<AgentSpecDto> result;
+        if (auto single = json.as_object())
+        {
+            result.emplace_back(read_spec(*single));
+            return result;
+        }
+        if (auto array = json.as_array())
+        {
+            for (auto it = array->begin(); it != array->end(); ++it)
+            {
+                if (auto elem = it->as_object())
+                    result.emplace_back(read_spec(*elem));
+            }
+            return result;
+        }
+        throw yyjson::bad_cast("agent must be an object or array");
+    }
+};
+
 namespace Das::Plugins::DasMaaPi
 {
     namespace
@@ -765,61 +833,6 @@ namespace Das::Plugins::DasMaaPi
             return spec;
         }
 
-        template <typename ObjectRef>
-        AgentRuntime::AgentSpecDto AgentSpecFromObject(const ObjectRef& obj)
-        {
-            AgentRuntime::AgentSpecDto spec;
-            spec.child_exec =
-                OptionalStringField(obj, "childExec").value_or("");
-            spec.child_args = StringArrayField(obj, "childArgs");
-            if (spec.child_args.empty())
-            {
-                spec.child_args = StringArrayField(obj, "child_args");
-            }
-            spec.identifier = OptionalStringField(obj, "identifier");
-            if (auto timeout =
-                    OptionalInt32Field(obj, {"timeoutMs", "timeout_ms"}))
-            {
-                spec.timeout_ms = *timeout;
-            }
-            return spec;
-        }
-
-        template <typename ArrayRef>
-        void AddAgentSpecsFromArray(
-            const ArrayRef&                          array,
-            std::vector<AgentRuntime::AgentSpecDto>& agents)
-        {
-            for (auto it = array.begin(); it != array.end(); ++it)
-            {
-                if (auto agent = it->as_object())
-                {
-                    agents.emplace_back(AgentSpecFromObject(*agent));
-                }
-            }
-        }
-
-        template <typename ObjectRef>
-        void ReadAgentSpecs(
-            const ObjectRef&                         obj,
-            std::vector<AgentRuntime::AgentSpecDto>& agents)
-        {
-            if (!obj.contains(std::string_view("agent")))
-            {
-                return;
-            }
-            const auto& agent = obj[std::string_view("agent")];
-            if (auto single = agent.as_object())
-            {
-                agents.emplace_back(AgentSpecFromObject(*single));
-                return;
-            }
-            if (auto array = agent.as_array())
-            {
-                AddAgentSpecsFromArray(*array, agents);
-            }
-        }
-
         ControllerSpec ControllerSpecFromRawJson(
             std::string      default_name,
             std::string_view controller_json)
@@ -938,7 +951,20 @@ namespace Das::Plugins::DasMaaPi
         plan.fail_fast = BoolField(*maapi, "failFast", true);
         plan.requires_agent_runtime =
             BoolField(*maapi, "requiresAgentRuntime", false);
-        ReadAgentSpecs(*maapi, plan.agent);
+        if (maapi->contains(std::string_view("agent")))
+        {
+            try
+            {
+                plan.agent = yyjson::cast<
+                    std::vector<AgentRuntime::AgentSpecDto>>(
+                    (*maapi)[std::string_view("agent")]);
+            }
+            catch (const yyjson::bad_cast&)
+            {
+                // 畸形 agent（非 object/array）留空，交由
+                // ValidateExecutionEnvelope 在 requires_agent_runtime 时兜底。
+            }
+        }
 
         if (maapi->contains(std::string_view("piEnv")))
         {

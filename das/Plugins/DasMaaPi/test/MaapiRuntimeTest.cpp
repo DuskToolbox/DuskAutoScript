@@ -66,7 +66,8 @@ namespace
           {"taskName":"DailyFarm","entry":"StartDaily","pipelineOverride":{"Stage":{"value":"one"}}},
           {"taskName":"Base","entry":"StartBase","pipelineOverride":{"Stage":{"value":"two"}}}
         ])",
-        std::string controller_json = R"({"name":"Android","type":"Adb"})")
+        std::string controller_json = R"({"name":"Android","type":"Adb"})",
+        std::string agent_json = {})
     {
         auto json =
             R"({"version":1,"pluginGuid":")" + plugin_guid
@@ -79,7 +80,9 @@ namespace
             + std::string(requires_agent ? "true" : "false")
             + std::string(
                 requires_agent
-                    ? R"(,"agent":[{"childExec":"agent.exe","childArgs":["--serve"],"timeoutMs":1000}])"
+                    ? (agent_json.empty()
+                           ? R"(,"agent":[{"childExec":"agent.exe","childArgs":["--serve"],"timeoutMs":1000}])"
+                           : ",\"agent\":" + agent_json)
                     : "")
             + R"(,"piEnv":{"controllerJson":)"
             + JsonStringLiteral(controller_json)
@@ -475,6 +478,50 @@ TEST(DasMaaPiRuntime, DoRunsAgentRequiredEnvelopeThroughSharedRuntime)
         fake.Contains("PostTask:StartDaily:{\"Stage\":{\"value\":\"one\"}}"));
     ASSERT_EQ(runner.processes.size(), 1u);
     EXPECT_GT(runner.processes[0]->wait_calls, 0);
+}
+
+TEST(DasMaaPiRuntime, ParseAcceptsAgentObjectAsSingleElement)
+{
+    // PI V2 `agent: object | object[]`：单对象形态经 custom caster 解析成 1 元素 vector。
+    auto value = EnvelopeValue(
+        true,
+        std::string(kPluginGuidText),
+        std::string(kTaskGuidText),
+        true,
+        R"([{"taskName":"DailyFarm","entry":"StartDaily","pipelineOverride":{}}])",
+        R"({"name":"Android","type":"Adb"})",
+        R"({"childExec":"agent.exe","childArgs":["--serve"],"timeoutMs":1000})");
+    auto parsed = ParseExecutionEnvelope(value);
+    ASSERT_EQ(parsed.result, DAS_S_OK);
+    ASSERT_EQ(parsed.envelope.maapi.agent.size(), 1u);
+    EXPECT_EQ(parsed.envelope.maapi.agent[0].child_exec, "agent.exe");
+    EXPECT_EQ(
+        parsed.envelope.maapi.agent[0].child_args,
+        (std::vector<std::string>{"--serve"}));
+    EXPECT_EQ(parsed.envelope.maapi.agent[0].timeout_ms, 1000);
+    EXPECT_FALSE(parsed.envelope.maapi.agent[0].identifier.has_value());
+}
+
+TEST(DasMaaPiRuntime, ParseAcceptsAgentArrayWithMultipleElements)
+{
+    // 数组形态解析成多元素 vector，并覆盖 optional identifier 字段。
+    auto value = EnvelopeValue(
+        true,
+        std::string(kPluginGuidText),
+        std::string(kTaskGuidText),
+        true,
+        R"([{"taskName":"DailyFarm","entry":"StartDaily","pipelineOverride":{}}])",
+        R"({"name":"Android","type":"Adb"})",
+        R"([{"childExec":"a.exe","childArgs":["--x"],"timeoutMs":500},)"
+        R"({"childExec":"b.exe","childArgs":["--y"],"identifier":"id1","timeoutMs":700}])");
+    auto parsed = ParseExecutionEnvelope(value);
+    ASSERT_EQ(parsed.result, DAS_S_OK);
+    ASSERT_EQ(parsed.envelope.maapi.agent.size(), 2u);
+    EXPECT_EQ(parsed.envelope.maapi.agent[0].child_exec, "a.exe");
+    EXPECT_EQ(parsed.envelope.maapi.agent[1].child_exec, "b.exe");
+    ASSERT_TRUE(parsed.envelope.maapi.agent[1].identifier.has_value());
+    EXPECT_EQ(*parsed.envelope.maapi.agent[1].identifier, "id1");
+    EXPECT_EQ(parsed.envelope.maapi.agent[1].timeout_ms, 700);
 }
 
 TEST(DasMaaPiRuntime, DoRunsValidNonAgentEnvelope)
