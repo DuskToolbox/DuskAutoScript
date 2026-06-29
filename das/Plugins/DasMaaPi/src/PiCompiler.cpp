@@ -15,11 +15,6 @@ namespace Das::Plugins::DasMaaPi
     namespace
     {
         yyjson::value Object() { return Das::Utils::MakeYyjsonObject(); }
-        yyjson::value Array() { return Das::Utils::MakeYyjsonArray(); }
-        yyjson::value JsonString(std::string_view value)
-        {
-            return yyjson::value(std::string(value));
-        }
 
         template <typename JsonValue>
         yyjson::value CopyJsonValue(const JsonValue& value)
@@ -463,147 +458,6 @@ namespace Das::Plugins::DasMaaPi
             return tasks;
         }
 
-        yyjson::value SerializeStringArray(
-            const std::vector<std::string>& values)
-        {
-            yyjson::value arr(Array());
-            for (const auto& value : values)
-            {
-                arr.as_array()->emplace_back(JsonString(value));
-            }
-            return arr;
-        }
-
-        yyjson::value SerializeControllerSpec(const ControllerSpec& spec)
-        {
-            yyjson::value controller(Object());
-            auto          obj = controller.as_object();
-            (*obj)[std::string_view("name")] = JsonString(spec.name);
-            (*obj)[std::string_view("type")] = JsonString(spec.type);
-            (*obj)[std::string_view("readPath")] = JsonString(spec.read_path);
-            (*obj)[std::string_view("address")] = JsonString(spec.address);
-            (*obj)[std::string_view("adbPath")] = JsonString(spec.adb_path);
-            (*obj)[std::string_view("configJson")] =
-                JsonString(spec.config_json);
-            (*obj)[std::string_view("agentPath")] = JsonString(spec.agent_path);
-            return controller;
-        }
-
-        yyjson::value SerializeAgentSpec(const AgentRuntime::AgentSpecDto& spec)
-        {
-            yyjson::value agent(Object());
-            auto          obj = agent.as_object();
-            (*obj)[std::string_view("childExec")] = JsonString(spec.child_exec);
-            (*obj)[std::string_view("childArgs")] =
-                SerializeStringArray(spec.child_args);
-            if (spec.identifier)
-            {
-                (*obj)[std::string_view("identifier")] =
-                    JsonString(*spec.identifier);
-            }
-            (*obj)[std::string_view("timeoutMs")] =
-                static_cast<int64_t>(spec.timeout_ms);
-            return agent;
-        }
-
-        yyjson::value SerializeAgentSpecs(
-            const std::vector<AgentRuntime::AgentSpecDto>& agents)
-        {
-            yyjson::value result(Array());
-            for (const auto& agent : agents)
-            {
-                result.as_array()->emplace_back(SerializeAgentSpec(agent));
-            }
-            return result;
-        }
-
-        yyjson::value SerializeDiagnostics(
-            const std::vector<PiDiagnosticDto>& diagnostics)
-        {
-            yyjson::value arr(Array());
-            for (const auto& diagnostic : diagnostics)
-            {
-                yyjson::value item(Object());
-                auto          obj = item.as_object();
-                (*obj)[std::string_view("severity")] =
-                    JsonString(diagnostic.severity);
-                (*obj)[std::string_view("code")] = JsonString(diagnostic.code);
-                (*obj)[std::string_view("message")] =
-                    JsonString(diagnostic.message);
-                arr.as_array()->emplace_back(std::move(item));
-            }
-            return arr;
-        }
-
-        yyjson::value SerializeEnvelope(const ExecutionEnvelopeDto& envelope)
-        {
-            yyjson::value root(Object());
-            auto          obj = root.as_object();
-            (*obj)[std::string_view("version")] = envelope.version;
-            (*obj)[std::string_view("pluginGuid")] =
-                JsonString(envelope.plugin_guid);
-            (*obj)[std::string_view("taskTypeGuid")] =
-                JsonString(envelope.task_type_guid);
-
-            yyjson::value maapi(Object());
-            auto          maapi_obj = maapi.as_object();
-            (*maapi_obj)[std::string_view("interfaceDirectory")] =
-                JsonString(envelope.maapi.interface_directory);
-            (*maapi_obj)[std::string_view("controllerName")] =
-                JsonString(envelope.maapi.controller_name);
-            (*maapi_obj)[std::string_view("controller")] =
-                SerializeControllerSpec(envelope.maapi.controller);
-            (*maapi_obj)[std::string_view("resourceName")] =
-                JsonString(envelope.maapi.resource_name);
-            (*maapi_obj)[std::string_view("resourcePaths")] =
-                SerializeStringArray(envelope.maapi.resource_paths);
-            if (envelope.maapi.resource_hash)
-            {
-                (*maapi_obj)[std::string_view("resourceHash")] =
-                    JsonString(*envelope.maapi.resource_hash);
-            }
-            (*maapi_obj)[std::string_view("failFast")] =
-                envelope.maapi.fail_fast;
-            (*maapi_obj)[std::string_view("requiresAgentRuntime")] =
-                envelope.maapi.requires_agent_runtime;
-            if (!envelope.maapi.agent.empty())
-            {
-                (*maapi_obj)[std::string_view("agent")] =
-                    SerializeAgentSpecs(envelope.maapi.agent);
-            }
-
-            yyjson::value env(Object());
-            auto          env_obj = env.as_object();
-            (*env_obj)[std::string_view("interfaceVersion")] =
-                JsonString(envelope.maapi.pi_env.interface_version);
-            (*env_obj)[std::string_view("clientName")] =
-                JsonString(envelope.maapi.pi_env.client_name);
-            (*env_obj)[std::string_view("clientLanguage")] =
-                JsonString(envelope.maapi.pi_env.client_language);
-            (*env_obj)[std::string_view("projectVersion")] =
-                JsonString(envelope.maapi.pi_env.project_version);
-            (*env_obj)[std::string_view("controllerJson")] =
-                JsonString(envelope.maapi.pi_env.controller_json);
-            (*env_obj)[std::string_view("resourceJson")] =
-                JsonString(envelope.maapi.pi_env.resource_json);
-            (*maapi_obj)[std::string_view("piEnv")] = std::move(env);
-
-            yyjson::value tasks(Array());
-            for (const auto& task : envelope.maapi.tasks)
-            {
-                yyjson::value item(Object());
-                auto          item_obj = item.as_object();
-                (*item_obj)[std::string_view("taskName")] =
-                    JsonString(task.task_name);
-                (*item_obj)[std::string_view("entry")] = JsonString(task.entry);
-                (*item_obj)[std::string_view("pipelineOverride")] =
-                    CopyJsonValue(task.pipeline_override);
-                tasks.as_array()->emplace_back(std::move(item));
-            }
-            (*maapi_obj)[std::string_view("tasks")] = std::move(tasks);
-            (*obj)[std::string_view("maapi")] = std::move(maapi);
-            return root;
-        }
     } // namespace
 
     CompileResultDto CompileMaapi(
@@ -755,37 +609,18 @@ namespace Das::Plugins::DasMaaPi
         const CompileResultDto& result,
         std::string_view        purpose)
     {
-        yyjson::value root(Object());
-        auto          obj = root.as_object();
-        (*obj)[std::string_view("ok")] = result.ok;
-        (*obj)[std::string_view("canExecute")] = result.can_execute;
-
-        yyjson::value summary(Object());
-        auto          summary_obj = summary.as_object();
-        (*summary_obj)[std::string_view("canExecute")] =
-            result.summary.can_execute;
-        if (result.summary.controller_name)
+        // default_caster 聚合 to_json 自动序列化全部字段（嵌套 summary /
+        // diagnostics / execution_input envelope + optional 字段输出 null）。
+        // purpose != "execution" 时清空 execution_input（序列化为 null，语义
+        // 等价于「不提供执行输入」），替代原手写的 purpose 条件输出。
+        CompileResultDto copy = result;
+        if (purpose != "execution")
         {
-            (*summary_obj)[std::string_view("controllerName")] =
-                JsonString(*result.summary.controller_name);
+            copy.execution_input.reset();
         }
-        if (result.summary.resource_name)
-        {
-            (*summary_obj)[std::string_view("resourceName")] =
-                JsonString(*result.summary.resource_name);
-        }
-        (*summary_obj)[std::string_view("taskNames")] =
-            SerializeStringArray(result.summary.task_names);
-        (*summary_obj)[std::string_view("requiresAgentRuntime")] =
-            result.summary.requires_agent_runtime;
-        (*obj)[std::string_view("summary")] = std::move(summary);
-        (*obj)[std::string_view("diagnostics")] =
-            SerializeDiagnostics(result.diagnostics);
-        if (purpose == "execution" && result.execution_input)
-        {
-            (*obj)[std::string_view("executionInput")] =
-                SerializeEnvelope(*result.execution_input);
-        }
-        return root;
+        yyjson::value wrapper = Das::Utils::MakeYyjsonObject();
+        (*wrapper.as_object())[std::string_view("r")] = copy;
+        return yyjson::value(
+            (*wrapper.as_object())[std::string_view("r")]);
     }
 } // namespace Das::Plugins::DasMaaPi
