@@ -1,3 +1,4 @@
+#include <das/Plugins/DasMaaPi/ExecutionEnvelope.h>
 #include <das/Plugins/DasMaaPi/MaaRuntime.h>
 #include <das/Utils/DasJsonCore.h>
 
@@ -56,183 +57,25 @@ struct yyjson::caster<
     }
 };
 
-// MaaExecutionPlanDto 的 custom caster：手写所有字段（含 optional resourceHash
-// 与嵌套 piEnv/tasks，default_caster 的聚合反射要求 key 全存在，会因 optional
-// 缺失抛 bad_cast，故不能委托）。controller 走两源 fallback：显式 controller
-// 对象优先，否则从 piEnv.controllerJson raw JSON 解析。必需字段缺失抛
-// bad_cast，由 ParseExecutionEnvelope 的 try/catch 映射为 DAS_E_INVALID_ARGUMENT。
+// MaaExecutionPlanDto：整体委托 default_caster 聚合反射（field_name_rule =
+// snake_to_camel）。controller 作为普通非 optional 字段直接读——PiCompiler 是
+// envelope 唯一生产者且总产出 controller 对象（PiCompiler.cpp:520），运行时无
+// 「无 controller → piEnv 兜底」路径，故移除两源 fallback（原 fallback 是死代码，
+// 仅合成测试覆盖）。缺 key 抛 std::out_of_range、类型错误抛 yyjson::bad_cast，
+// 由 ParseExecutionEnvelope 统一映射为 DAS_E_INVALID_ARGUMENT。
 template <>
 struct yyjson::caster<Das::Plugins::DasMaaPi::MaaExecutionPlanDto>
 {
-    using Plan = Das::Plugins::DasMaaPi::MaaExecutionPlanDto;
-    using ControllerSpec = Das::Plugins::DasMaaPi::ControllerSpec;
-    using AgentSpecDto = Das::Plugins::DasMaaPi::AgentRuntime::AgentSpecDto;
-    using Task = Das::Plugins::DasMaaPi::MaaTaskExecutionDto;
-
     template <yyjson::json_value Json>
-    static Plan from_json(const Json& json)
+    static Das::Plugins::DasMaaPi::MaaExecutionPlanDto from_json(const Json& json)
     {
         auto obj = json.as_object();
         if (!obj)
         {
             throw yyjson::bad_cast("maapi must be an object");
         }
-
-        auto req_str = [](const auto& o, std::string_view key) {
-            if (!o.contains(key) || !o[key].as_string())
-            {
-                throw yyjson::bad_cast(
-                    "Missing string field: " + std::string(key));
-            }
-            return std::string(*o[key].as_string());
-        };
-        auto opt_str = [](const auto& o,
-                          std::string_view key) -> std::optional<std::string> {
-            if (!o.contains(key)) return std::nullopt;
-            auto v = o[key].as_string();
-            return v ? std::optional<std::string>(std::string(*v)) : std::nullopt;
-        };
-        auto read_controller = [&opt_str](
-                                   const auto&        cobj,
-                                   std::string_view   default_name,
-                                   std::string_view   default_type) -> ControllerSpec {
-            ControllerSpec spec;
-            auto name_v = opt_str(cobj, "name");
-            spec.name = name_v ? *name_v : std::string(default_name);
-            spec.type = opt_str(cobj, "type").value_or(std::string(default_type));
-            spec.read_path = opt_str(cobj, "readPath").value_or("");
-            spec.address = opt_str(cobj, "address").value_or("");
-            spec.adb_path = opt_str(cobj, "adbPath").value_or("adb");
-            spec.config_json = opt_str(cobj, "configJson").value_or("{}");
-            spec.agent_path = opt_str(cobj, "agentPath").value_or("");
-            return spec;
-        };
-
-        Plan plan;
-        plan.interface_directory = req_str(*obj, "interfaceDirectory");
-        plan.controller_name = req_str(*obj, "controllerName");
-        plan.resource_name = req_str(*obj, "resourceName");
-
-        if (obj->contains(std::string_view("resourcePaths")))
-        {
-            if (auto arr = (*obj)[std::string_view("resourcePaths")].as_array())
-            {
-                for (auto it = arr->begin(); it != arr->end(); ++it)
-                {
-                    if (auto s = it->as_string())
-                        plan.resource_paths.emplace_back(std::string(*s));
-                }
-            }
-        }
-        plan.resource_hash = opt_str(*obj, "resourceHash");
-        if (obj->contains(std::string_view("failFast")))
-        {
-            if (auto b = (*obj)[std::string_view("failFast")].as_bool())
-                plan.fail_fast = *b;
-        }
-        if (obj->contains(std::string_view("requiresAgentRuntime")))
-        {
-            if (auto b = (*obj)[std::string_view("requiresAgentRuntime")]
-                                  .as_bool())
-                plan.requires_agent_runtime = *b;
-        }
-
-        if (obj->contains(std::string_view("agent")))
-        {
-            try
-            {
-                plan.agent = yyjson::cast<std::vector<AgentSpecDto>>(
-                    (*obj)[std::string_view("agent")]);
-            }
-            catch (const yyjson::bad_cast&)
-            {
-                // 畸形 agent 留空，交 ValidateExecutionEnvelope 兜底。
-            }
-        }
-
-        if (obj->contains(std::string_view("piEnv")))
-        {
-            if (auto env = (*obj)[std::string_view("piEnv")].as_object())
-            {
-                plan.pi_env.interface_version =
-                    opt_str(*env, "interfaceVersion").value_or("2");
-                plan.pi_env.client_name =
-                    opt_str(*env, "clientName").value_or("DAS");
-                plan.pi_env.client_language =
-                    opt_str(*env, "clientLanguage").value_or("cpp");
-                plan.pi_env.project_version =
-                    opt_str(*env, "projectVersion").value_or("");
-                plan.pi_env.controller_json =
-                    opt_str(*env, "controllerJson").value_or("");
-                plan.pi_env.resource_json =
-                    opt_str(*env, "resourceJson").value_or("");
-            }
-        }
-
-        // controller 两源 fallback：显式 controller 对象优先；否则从
-        // piEnv.controllerJson raw JSON 解析；都没有则只填 name。
-        if (obj->contains(std::string_view("controller")))
-        {
-            auto cobj = (*obj)[std::string_view("controller")].as_object();
-            if (!cobj)
-            {
-                throw yyjson::bad_cast("controller must be an object");
-            }
-            plan.controller =
-                read_controller(*cobj, plan.controller_name, "");
-        }
-        else if (!plan.pi_env.controller_json.empty())
-        {
-            auto raw = Das::Utils::ParseYyjsonFromString(
-                plan.pi_env.controller_json);
-            auto cobj = raw ? raw->as_object() : std::nullopt;
-            if (cobj)
-            {
-                plan.controller =
-                    read_controller(*cobj, plan.controller_name, "");
-            }
-            else
-            {
-                plan.controller.name = plan.controller_name;
-            }
-        }
-        else
-        {
-            plan.controller.name = plan.controller_name;
-        }
-
-        if (!obj->contains(std::string_view("tasks")))
-        {
-            throw yyjson::bad_cast("Missing task list");
-        }
-        auto tasks_arr = (*obj)[std::string_view("tasks")].as_array();
-        if (!tasks_arr)
-        {
-            throw yyjson::bad_cast("tasks must be an array");
-        }
-        for (auto it = tasks_arr->begin(); it != tasks_arr->end(); ++it)
-        {
-            auto tobj = it->as_object();
-            if (!tobj)
-            {
-                throw yyjson::bad_cast("task item must be an object");
-            }
-            Task task;
-            task.task_name = req_str(*tobj, "taskName");
-            task.entry = req_str(*tobj, "entry");
-            if (tobj->contains(std::string_view("pipelineOverride")))
-            {
-                task.pipeline_override = Das::Utils::CloneYyjsonValue(
-                    (*tobj)[std::string_view("pipelineOverride")]);
-            }
-            else
-            {
-                task.pipeline_override = Das::Utils::MakeYyjsonObject();
-            }
-            plan.tasks.emplace_back(std::move(task));
-        }
-
-        return plan;
+        return yyjson::detail::default_caster<
+            Das::Plugins::DasMaaPi::MaaExecutionPlanDto>::from_json(*obj);
     }
 };
 
