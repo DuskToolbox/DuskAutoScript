@@ -81,7 +81,7 @@ namespace
             + std::string(
                 requires_agent
                     ? (agent_json.empty()
-                           ? R"(,"agent":[{"childExec":"agent.exe","childArgs":["--serve"],"timeoutMs":1000}])"
+                           ? R"(,"agent":[{"childExec":"agent.exe","childArgs":["--serve"],"identifier":null,"timeoutMs":1000}])"
                            : ",\"agent\":" + agent_json)
                     : "")
             + R"(,"piEnv":{"controllerJson":)"
@@ -490,7 +490,7 @@ TEST(DasMaaPiRuntime, ParseAcceptsAgentObjectAsSingleElement)
         true,
         R"([{"taskName":"DailyFarm","entry":"StartDaily","pipelineOverride":{}}])",
         R"({"name":"Android","type":"Adb"})",
-        R"({"childExec":"agent.exe","childArgs":["--serve"],"timeoutMs":1000})");
+        R"({"childExec":"agent.exe","childArgs":["--serve"],"identifier":null,"timeoutMs":1000})");
     auto parsed = ParseExecutionEnvelope(value);
     ASSERT_EQ(parsed.result, DAS_S_OK);
     ASSERT_EQ(parsed.envelope.maapi.agent.size(), 1u);
@@ -512,7 +512,7 @@ TEST(DasMaaPiRuntime, ParseAcceptsAgentArrayWithMultipleElements)
         true,
         R"([{"taskName":"DailyFarm","entry":"StartDaily","pipelineOverride":{}}])",
         R"({"name":"Android","type":"Adb"})",
-        R"([{"childExec":"a.exe","childArgs":["--x"],"timeoutMs":500},)"
+        R"([{"childExec":"a.exe","childArgs":["--x"],"identifier":null,"timeoutMs":500},)"
         R"({"childExec":"b.exe","childArgs":["--y"],"identifier":"id1","timeoutMs":700}])");
     auto parsed = ParseExecutionEnvelope(value);
     ASSERT_EQ(parsed.result, DAS_S_OK);

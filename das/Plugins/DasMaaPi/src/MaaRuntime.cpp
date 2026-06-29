@@ -34,53 +34,21 @@ struct yyjson::caster<
     template <yyjson::json_value Json>
     static std::vector<AgentSpecDto> from_json(const Json& json)
     {
-        // 手写 AgentSpecDto 字段读取：identifier 为 optional，缺失时须回退
-        // nullopt；default_caster 的聚合反射要求所有 key 存在，会因缺
-        // identifier 抛 bad_cast，故不能直接委托 default_caster。envelope
-        // 路径的 agent 由 PiCompiler 产出为 camelCase。
-        auto read_spec = [](const auto& obj) -> AgentSpecDto {
-            AgentSpecDto spec;
-            if (obj.contains(std::string_view("childExec")))
-            {
-                if (auto v = obj[std::string_view("childExec")].as_string())
-                    spec.child_exec = std::string(*v);
-            }
-            if (obj.contains(std::string_view("childArgs")))
-            {
-                if (auto arr = obj[std::string_view("childArgs")].as_array())
-                {
-                    for (auto it = arr->begin(); it != arr->end(); ++it)
-                    {
-                        if (auto s = it->as_string())
-                            spec.child_args.emplace_back(std::string(*s));
-                    }
-                }
-            }
-            if (obj.contains(std::string_view("identifier")))
-            {
-                if (auto v = obj[std::string_view("identifier")].as_string())
-                    spec.identifier = std::string(*v);
-            }
-            if (obj.contains(std::string_view("timeoutMs")))
-            {
-                if (auto v = obj[std::string_view("timeoutMs")].as_sint())
-                    spec.timeout_ms = static_cast<int32_t>(*v);
-            }
-            return spec;
-        };
-
+        // 元素字段解析委托 default_caster<AgentSpecDto>（field_name_rule =
+        // snake_to_camel）。B′ 之后 envelope 由 PiCompiler 用 default_caster
+        // to_json 产出，optional identifier 以 null 存在，聚合反射 is_null
+        // 跳过即可处理；caster 只保留 object|array 多态分流。
         std::vector<AgentSpecDto> result;
         if (auto single = json.as_object())
         {
-            result.emplace_back(read_spec(*single));
+            result.emplace_back(yyjson::cast<AgentSpecDto>(json));
             return result;
         }
         if (auto array = json.as_array())
         {
             for (auto it = array->begin(); it != array->end(); ++it)
             {
-                if (auto elem = it->as_object())
-                    result.emplace_back(read_spec(*elem));
+                result.emplace_back(yyjson::cast<AgentSpecDto>(*it));
             }
             return result;
         }
