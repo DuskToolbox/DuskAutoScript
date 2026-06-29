@@ -66,25 +66,29 @@ namespace
           {"taskName":"DailyFarm","entry":"StartDaily","pipelineOverride":{"Stage":{"value":"one"}}},
           {"taskName":"Base","entry":"StartBase","pipelineOverride":{"Stage":{"value":"two"}}}
         ])",
-        std::string controller_json = R"({"name":"Android","type":"Adb"})",
+        std::string controller_json =
+            R"({"name":"Android","type":"Adb","readPath":"","address":"","adbPath":"adb","configJson":"{}","agentPath":""})",
         std::string agent_json = {})
     {
         auto json =
             R"({"version":1,"pluginGuid":")" + plugin_guid
             + R"(","taskTypeGuid":")" + task_guid
-            + R"(","maapi":{"interfaceDirectory":"C:/maa","controllerName":"Android","resourceName":"Official",)"
+            + R"(","maapi":{"interfaceDirectory":"C:/maa","controllerName":"Android","controller":)"
+            + controller_json
+            + R"(,"resourceName":"Official",)"
               R"("resourcePaths":["C:/maa/resource","C:/maa/attach"],"resourceHash":"hash-expected",)"
               R"("failFast":)"
             + std::string(fail_fast ? "true" : "false")
             + R"(,"requiresAgentRuntime":)"
             + std::string(requires_agent ? "true" : "false")
+            + R"(,"agent":)"
             + std::string(
                 requires_agent
                     ? (agent_json.empty()
-                           ? R"(,"agent":[{"childExec":"agent.exe","childArgs":["--serve"],"identifier":null,"timeoutMs":1000}])"
-                           : ",\"agent\":" + agent_json)
-                    : "")
-            + R"(,"piEnv":{"controllerJson":)"
+                           ? R"([{"childExec":"agent.exe","childArgs":["--serve"],"identifier":null,"timeoutMs":1000}])"
+                           : agent_json)
+                    : R"([])")
+            + R"(,"piEnv":{"interfaceVersion":"2","clientName":"DAS","clientLanguage":"cpp","projectVersion":"","controllerJson":)"
             + JsonStringLiteral(controller_json)
             + R"(,"resourceJson":"{\"name\":\"Official\"}"},"tasks":)" + tasks
             + "}}";
@@ -100,7 +104,7 @@ namespace
           {"taskName":"DailyFarm","entry":"StartDaily","pipelineOverride":{"Stage":{"value":"one"}}},
           {"taskName":"Base","entry":"StartBase","pipelineOverride":{"Stage":{"value":"two"}}}
         ])",
-        std::string controller_json = R"({"name":"Android","type":"Adb"})")
+        std::string controller_json = R"({"name":"Android","type":"Adb","readPath":"","address":"","adbPath":"adb","configJson":"{}","agentPath":""})")
     {
         auto parsed = ParseExecutionEnvelope(EnvelopeValue(
             fail_fast,
@@ -266,7 +270,7 @@ TEST(DasMaaPiRuntime, RuntimePassesTypedAdbCamelCaseControllerFields)
             true,
             false,
             R"([{"taskName":"DailyFarm","entry":"StartDaily","pipelineOverride":{}}])",
-            R"({"name":"Android","type":"Adb","address":"127.0.0.1:5555","adbPath":"C:/tools/adb.exe","configJson":"{\"touch\":\"maatouch\"}","agentPath":"C:/maa/agent"})"),
+            R"({"name":"Android","type":"Adb","readPath":"","address":"127.0.0.1:5555","adbPath":"C:/tools/adb.exe","configJson":"{\"touch\":\"maatouch\"}","agentPath":"C:/maa/agent"})"),
         fake,
         nullptr);
 
@@ -282,41 +286,35 @@ TEST(DasMaaPiRuntime, RuntimePassesTypedAdbCamelCaseControllerFields)
     EXPECT_EQ(fake.last_controller_spec->agent_path, "C:/maa/agent");
 }
 
-TEST(DasMaaPiRuntime, RuntimeIgnoresSnakeCaseControllerFields)
+TEST(DasMaaPiRuntime, RuntimeRejectsSnakeCaseControllerFields)
 {
-    FakeMaaApiBoundary fake;
-    auto               result = MaaRuntime::Run(
-        Envelope(
-            true,
-            false,
-            R"([{"taskName":"DailyFarm","entry":"StartDaily","pipelineOverride":{}}])",
-            R"({"name":"Android","type":"Adb","address":"emulator-5554","adb_path":"adb-custom","config":"{\"touch\":\"maatouch\"}","agent_path":"relative/agent"})"),
-        fake,
-        nullptr);
-
-    EXPECT_EQ(result.das_result, DAS_S_OK);
-    ASSERT_TRUE(fake.last_controller_spec.has_value());
-    EXPECT_EQ(fake.last_controller_spec->address, "emulator-5554");
-    EXPECT_EQ(fake.last_controller_spec->adb_path, "adb");
-    EXPECT_EQ(fake.last_controller_spec->config_json, "{}");
-    EXPECT_EQ(fake.last_controller_spec->agent_path, "");
+    // default_caster 要求 camelCase key（field_name_rule=snake_to_camel）；
+    // snake_case controller 字段（adb_path/config/agent_path）缺对应 camelCase
+    // key（adbPath/configJson/agentPath），聚合反射抛 → DAS_E_INVALID_ARGUMENT。
+    auto value = EnvelopeValue(
+        true,
+        std::string(kPluginGuidText),
+        std::string(kTaskGuidText),
+        false,
+        R"([{"taskName":"T","entry":"E","pipelineOverride":{}}])",
+        R"({"name":"Android","type":"Adb","readPath":"","address":"emulator-5554","adb_path":"adb-custom","config":"{}","agent_path":"x"})");
+    auto parsed = ParseExecutionEnvelope(value);
+    EXPECT_TRUE(DAS::IsFailed(parsed.result));
 }
 
 TEST(DasMaaPiRuntime, RuntimeRejectsConfigObjectInput)
 {
-    FakeMaaApiBoundary fake;
-    auto               result = MaaRuntime::Run(
-        Envelope(
-            true,
-            false,
-            R"([{"taskName":"DailyFarm","entry":"StartDaily","pipelineOverride":{}}])",
-            R"({"name":"Android","type":"Adb","configJson":{"touch":"maatouch"}})"),
-        fake,
-        nullptr);
-
-    EXPECT_EQ(result.das_result, DAS_S_OK);
-    ASSERT_TRUE(fake.last_controller_spec.has_value());
-    EXPECT_EQ(fake.last_controller_spec->config_json, "{}");
+    // default_caster 要求 ControllerSpec.config_json 为 string；configJson 是
+    // object 时类型不匹配，聚合反射抛 → DAS_E_INVALID_ARGUMENT。
+    auto value = EnvelopeValue(
+        true,
+        std::string(kPluginGuidText),
+        std::string(kTaskGuidText),
+        false,
+        R"([{"taskName":"T","entry":"E","pipelineOverride":{}}])",
+        R"({"name":"Android","type":"Adb","readPath":"","address":"","adbPath":"adb","configJson":{"touch":"maatouch"},"agentPath":""})");
+    auto parsed = ParseExecutionEnvelope(value);
+    EXPECT_TRUE(DAS::IsFailed(parsed.result));
 }
 
 TEST(DasMaaPiRuntime, RuntimePassesTypedDbgControllerReadPath)
@@ -327,7 +325,7 @@ TEST(DasMaaPiRuntime, RuntimePassesTypedDbgControllerReadPath)
             true,
             false,
             R"([{"taskName":"DailyFarm","entry":"StartDaily","pipelineOverride":{}}])",
-            R"({"name":"Debug","type":"Dbg","readPath":"C:/maa/debug"})"),
+            R"({"name":"Debug","type":"Dbg","readPath":"C:/maa/debug","address":"","adbPath":"adb","configJson":"{}","agentPath":""})"),
         fake,
         nullptr);
 
@@ -489,7 +487,7 @@ TEST(DasMaaPiRuntime, ParseAcceptsAgentObjectAsSingleElement)
         std::string(kTaskGuidText),
         true,
         R"([{"taskName":"DailyFarm","entry":"StartDaily","pipelineOverride":{}}])",
-        R"({"name":"Android","type":"Adb"})",
+        R"({"name":"Android","type":"Adb","readPath":"","address":"","adbPath":"adb","configJson":"{}","agentPath":""})",
         R"({"childExec":"agent.exe","childArgs":["--serve"],"identifier":null,"timeoutMs":1000})");
     auto parsed = ParseExecutionEnvelope(value);
     ASSERT_EQ(parsed.result, DAS_S_OK);
@@ -511,7 +509,7 @@ TEST(DasMaaPiRuntime, ParseAcceptsAgentArrayWithMultipleElements)
         std::string(kTaskGuidText),
         true,
         R"([{"taskName":"DailyFarm","entry":"StartDaily","pipelineOverride":{}}])",
-        R"({"name":"Android","type":"Adb"})",
+        R"({"name":"Android","type":"Adb","readPath":"","address":"","adbPath":"adb","configJson":"{}","agentPath":""})",
         R"([{"childExec":"a.exe","childArgs":["--x"],"identifier":null,"timeoutMs":500},)"
         R"({"childExec":"b.exe","childArgs":["--y"],"identifier":"id1","timeoutMs":700}])");
     auto parsed = ParseExecutionEnvelope(value);
@@ -524,42 +522,22 @@ TEST(DasMaaPiRuntime, ParseAcceptsAgentArrayWithMultipleElements)
     EXPECT_EQ(parsed.envelope.maapi.agent[1].timeout_ms, 700);
 }
 
-TEST(DasMaaPiRuntime, ParsePrefersExplicitControllerObjectOverPiEnvJson)
+TEST(DasMaaPiRuntime, ParseReadsControllerFromExplicitObject)
 {
-    // 两源 fallback 源1：显式 maapi.controller 对象优先于 piEnv.controllerJson。
-    auto json = Das::Utils::ParseYyjsonFromString(
-        R"({"version":1,"pluginGuid":")" + std::string(kPluginGuidText)
-        + R"(","taskTypeGuid":")" + std::string(kTaskGuidText)
-        + R"(","maapi":{"interfaceDirectory":"C:/maa","controllerName":"Android",)"
-          R"("resourceName":"Official","controller":{"name":"Explicit",)"
-          R"("type":"Adb","adbPath":"C:/explicit/adb.exe","agentPath":"explicit/agent"},)"
-          R"("piEnv":{"controllerJson":"{\"name\":\"FromRaw\"}","resourceJson":"{}"},)"
-          R"("tasks":[{"taskName":"T","entry":"E","pipelineOverride":{}}]}})");
-    ASSERT_TRUE(json.has_value());
-    auto parsed = ParseExecutionEnvelope(*json);
+    // controller 作为非 optional 字段，default_caster 直接读显式 controller 对象
+    // （PiCompiler 总产出 controller 对象，运行时无 fallback 路径）。
+    auto value = EnvelopeValue(
+        true,
+        std::string(kPluginGuidText),
+        std::string(kTaskGuidText),
+        false,
+        R"([{"taskName":"T","entry":"E","pipelineOverride":{}}])",
+        R"({"name":"Explicit","type":"Adb","readPath":"","address":"","adbPath":"C:/explicit/adb.exe","configJson":"{}","agentPath":"explicit/agent"})");
+    auto parsed = ParseExecutionEnvelope(value);
     ASSERT_EQ(parsed.result, DAS_S_OK);
     EXPECT_EQ(parsed.envelope.maapi.controller.name, "Explicit");
-    EXPECT_EQ(
-        parsed.envelope.maapi.controller.adb_path, "C:/explicit/adb.exe");
+    EXPECT_EQ(parsed.envelope.maapi.controller.adb_path, "C:/explicit/adb.exe");
     EXPECT_EQ(parsed.envelope.maapi.controller.agent_path, "explicit/agent");
-}
-
-TEST(DasMaaPiRuntime, ParseFallsBackToPiEnvControllerJson)
-{
-    // 两源 fallback 源2：无显式 controller 时，从 piEnv.controllerJson raw
-    // JSON 解析 ControllerSpec。
-    auto json = Das::Utils::ParseYyjsonFromString(
-        R"({"version":1,"pluginGuid":")" + std::string(kPluginGuidText)
-        + R"(","taskTypeGuid":")" + std::string(kTaskGuidText)
-        + R"(","maapi":{"interfaceDirectory":"C:/maa","controllerName":"Android",)"
-          R"("resourceName":"Official","piEnv":{"controllerJson":)"
-          R"("{\"name\":\"FromRaw\",\"type\":\"Adb\",\"adbPath\":\"raw/adb\"}","resourceJson":"{}"},)"
-          R"("tasks":[{"taskName":"T","entry":"E","pipelineOverride":{}}]}})");
-    ASSERT_TRUE(json.has_value());
-    auto parsed = ParseExecutionEnvelope(*json);
-    ASSERT_EQ(parsed.result, DAS_S_OK);
-    EXPECT_EQ(parsed.envelope.maapi.controller.name, "FromRaw");
-    EXPECT_EQ(parsed.envelope.maapi.controller.adb_path, "raw/adb");
 }
 
 TEST(DasMaaPiRuntime, DoRunsValidNonAgentEnvelope)
