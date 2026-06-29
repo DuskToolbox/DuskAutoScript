@@ -866,97 +866,10 @@ namespace Das::Plugins::DasMaaPi
             return serialized.value_or("{}");
         }
 
-        template <typename ObjectRef>
-        std::optional<std::string> OptionalStringField(
-            const ObjectRef& obj,
-            std::string_view key)
-        {
-            if (!obj.contains(key) || !obj[key].is_string())
-            {
-                return std::nullopt;
-            }
-            return std::string(obj[key].as_string().value_or(""));
-        }
-
-        template <typename ObjectRef>
-        std::optional<std::string> RequiredStringField(
-            const ObjectRef&         obj,
-            std::string_view         key,
-            ParsedExecutionEnvelope& parsed)
-        {
-            auto result = OptionalStringField(obj, key);
-            if (!result)
-            {
-                parsed.result = DAS_E_INVALID_ARGUMENT;
-                parsed.message = "Missing string field: " + std::string(key);
-            }
-            return result;
-        }
-
-        template <typename JsonValue>
-        yyjson::value CopyJsonValue(const JsonValue& value)
-        {
-            return yyjson::value(value);
-        }
-
-        template <typename ObjectRef>
-        std::vector<std::string> StringArrayField(
-            const ObjectRef& obj,
-            std::string_view key)
-        {
-            std::vector<std::string> result;
-            if (!obj.contains(key))
-            {
-                return result;
-            }
-            auto array = obj[key].as_array();
-            if (!array)
-            {
-                return result;
-            }
-            for (auto it = array->begin(); it != array->end(); ++it)
-            {
-                if (it->is_string())
-                {
-                    result.emplace_back(it->as_string().value_or(""));
-                }
-            }
-            return result;
-        }
-
-        template <typename ObjectRef>
-        bool BoolField(
-            const ObjectRef& obj,
-            std::string_view key,
-            bool             default_value)
-        {
-            return obj.contains(key) && obj[key].is_bool()
-                       ? obj[key].as_bool().value_or(default_value)
-                       : default_value;
-        }
-
-        template <typename ObjectRef>
-        std::optional<int32_t> OptionalInt32Field(
-            const ObjectRef&                        obj,
-            std::initializer_list<std::string_view> keys)
-        {
-            for (const auto key : keys)
-            {
-                if (!obj.contains(key))
-                {
-                    continue;
-                }
-                auto value = obj[key].as_sint();
-                if (value)
-                {
-                    return static_cast<int32_t>(*value);
-                }
-            }
-            return std::nullopt;
-        }
-
-        // ControllerSpecFromObject / ControllerSpecFromRawJson / ControllerConfigJson
-        // 已由 caster<MaaExecutionPlanDto> 的 controller 两源 fallback 取代。
+        // 手写 Field/FromObject helper（OptionalStringField / RequiredStringField /
+        // StringArrayField / BoolField / OptionalInt32Field / CopyJsonValue）已由
+        // default_caster + caster 特化全面取代并移除；SerializeJson 保留
+        // （MaaFW 边界 opaque JSON 透传，MaaRuntime::Run 在用）。
     } // namespace
 
     IMaaApiBoundary& DefaultMaaApiBoundary()
@@ -989,47 +902,21 @@ namespace Das::Plugins::DasMaaPi
     ParsedExecutionEnvelope ParseExecutionEnvelope(const yyjson::value& value)
     {
         ParsedExecutionEnvelope parsed;
-        auto                    root = value.as_object();
-        if (!root)
-        {
-            parsed.result = DAS_E_INVALID_JSON;
-            parsed.message = "Execution envelope must be a JSON object";
-            return parsed;
-        }
-
-        if (root->contains(std::string_view("version"))
-            && (*root)[std::string_view("version")].is_sint())
-        {
-            parsed.envelope.version = static_cast<int32_t>(
-                (*root)[std::string_view("version")].as_sint().value_or(1));
-        }
-        parsed.envelope.plugin_guid =
-            RequiredStringField(*root, "pluginGuid", parsed).value_or("");
-        if (DAS::IsFailed(parsed.result))
-        {
-            return parsed;
-        }
-        parsed.envelope.task_type_guid =
-            RequiredStringField(*root, "taskTypeGuid", parsed).value_or("");
-        if (DAS::IsFailed(parsed.result))
-        {
-            return parsed;
-        }
-
         try
         {
-            parsed.envelope.maapi = yyjson::cast<MaaExecutionPlanDto>(
-                (*root)[std::string_view("maapi")]);
+            // 整体委托 default_caster<ExecutionEnvelopeDto>：外层 version/
+            // pluginGuid/taskTypeGuid 自动反射，maapi 走 caster<
+            // MaaExecutionPlanDto>（controller 两源 fallback）。default_caster
+            // 聚合反射缺 key 抛 std::out_of_range，类型/结构错误抛
+            // yyjson::bad_cast（含 maapi caster 抛出的），统一映射为参数错误。
+            parsed.envelope = yyjson::cast<ExecutionEnvelopeDto>(value);
         }
-        catch (const yyjson::bad_cast& e)
+        catch (const std::exception& e)
         {
-            // plan 必需字段缺失 / 类型错误 / controller 非 object 等均映射为
-            // 参数错误，message 取自异常（如 "Missing string field: ..."）。
             parsed.result = DAS_E_INVALID_ARGUMENT;
             parsed.message = e.what();
             return parsed;
         }
-
         parsed.result = ValidateExecutionEnvelope(parsed.envelope);
         return parsed;
     }
