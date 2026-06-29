@@ -524,6 +524,44 @@ TEST(DasMaaPiRuntime, ParseAcceptsAgentArrayWithMultipleElements)
     EXPECT_EQ(parsed.envelope.maapi.agent[1].timeout_ms, 700);
 }
 
+TEST(DasMaaPiRuntime, ParsePrefersExplicitControllerObjectOverPiEnvJson)
+{
+    // 两源 fallback 源1：显式 maapi.controller 对象优先于 piEnv.controllerJson。
+    auto json = Das::Utils::ParseYyjsonFromString(
+        R"({"version":1,"pluginGuid":")" + std::string(kPluginGuidText)
+        + R"(","taskTypeGuid":")" + std::string(kTaskGuidText)
+        + R"(","maapi":{"interfaceDirectory":"C:/maa","controllerName":"Android",)"
+          R"("resourceName":"Official","controller":{"name":"Explicit",)"
+          R"("type":"Adb","adbPath":"C:/explicit/adb.exe","agentPath":"explicit/agent"},)"
+          R"("piEnv":{"controllerJson":"{\"name\":\"FromRaw\"}","resourceJson":"{}"},)"
+          R"("tasks":[{"taskName":"T","entry":"E","pipelineOverride":{}}]}})");
+    ASSERT_TRUE(json.has_value());
+    auto parsed = ParseExecutionEnvelope(*json);
+    ASSERT_EQ(parsed.result, DAS_S_OK);
+    EXPECT_EQ(parsed.envelope.maapi.controller.name, "Explicit");
+    EXPECT_EQ(
+        parsed.envelope.maapi.controller.adb_path, "C:/explicit/adb.exe");
+    EXPECT_EQ(parsed.envelope.maapi.controller.agent_path, "explicit/agent");
+}
+
+TEST(DasMaaPiRuntime, ParseFallsBackToPiEnvControllerJson)
+{
+    // 两源 fallback 源2：无显式 controller 时，从 piEnv.controllerJson raw
+    // JSON 解析 ControllerSpec。
+    auto json = Das::Utils::ParseYyjsonFromString(
+        R"({"version":1,"pluginGuid":")" + std::string(kPluginGuidText)
+        + R"(","taskTypeGuid":")" + std::string(kTaskGuidText)
+        + R"(","maapi":{"interfaceDirectory":"C:/maa","controllerName":"Android",)"
+          R"("resourceName":"Official","piEnv":{"controllerJson":)"
+          R"("{\"name\":\"FromRaw\",\"type\":\"Adb\",\"adbPath\":\"raw/adb\"}","resourceJson":"{}"},)"
+          R"("tasks":[{"taskName":"T","entry":"E","pipelineOverride":{}}]}})");
+    ASSERT_TRUE(json.has_value());
+    auto parsed = ParseExecutionEnvelope(*json);
+    ASSERT_EQ(parsed.result, DAS_S_OK);
+    EXPECT_EQ(parsed.envelope.maapi.controller.name, "FromRaw");
+    EXPECT_EQ(parsed.envelope.maapi.controller.adb_path, "raw/adb");
+}
+
 TEST(DasMaaPiRuntime, DoRunsValidNonAgentEnvelope)
 {
     FakeMaaApiBoundary fake;
