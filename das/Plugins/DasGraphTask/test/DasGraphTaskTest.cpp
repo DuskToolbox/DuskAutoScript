@@ -1,3 +1,5 @@
+#include <das/Core/GraphRuntime/GraphRuntimeFactory.h>
+#include <das/DasApi.h>
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
 #include <das/Plugins/DasGraphTask/DasGraphTaskImpl.h>
@@ -142,4 +144,39 @@ TEST(DasGraphTaskTest, DoStopTokenCancel)
     DasResult hr = task->Do(cancelled_token.Get(), nullptr, result.Put());
     // RunWithHost should propagate cancellation.
     EXPECT_TRUE(DAS::IsFailed(hr));
+}
+
+// Smoke: a plan produced by the authoring Compile path can be fed into
+// DasGraphTaskImpl::Do (compiledPlan port) and execute without error on an
+// empty graph. Validates the authoring→compile→Do handoff (DAS-77 Wave3 A1).
+TEST(DasGraphTaskTest, AuthoringCompilePlanFeedsIntoDo)
+{
+    // Compile an empty store via the Core authoring session C ABI.
+    GraphAuthoringSessionState* state = nullptr;
+    ASSERT_EQ(CreateGraphAuthoringSession(nullptr, &state), DAS_S_OK);
+    ASSERT_NE(state, nullptr);
+    DasPtr<Das::ExportInterface::IDasJson> plan_json;
+    ASSERT_EQ(GraphAuthoringSessionCompile(state, nullptr, plan_json.Put()), DAS_S_OK);
+    DestroyGraphAuthoringSession(state);
+    ASSERT_NE(plan_json.Get(), nullptr);
+
+    // Serialise the plan to the compiledPlan input port.
+    DasPtr<IDasReadOnlyString> plan_str;
+    ASSERT_EQ(plan_json->ToString(0, plan_str.Put()), DAS_S_OK);
+    ASSERT_NE(plan_str.Get(), nullptr);
+
+    DasPtr<Das::ExportInterface::IDasPortMap> input_map;
+    ASSERT_EQ(CreateIDasPortMap(input_map.Put()), DAS_S_OK);
+    DasReadOnlyString compiled_plan_key{"compiledPlan"};
+    ASSERT_EQ(input_map->SetString(compiled_plan_key.Get(), plan_str.Get()), DAS_S_OK);
+
+    // Feed the compiled plan into Do and confirm it runs (empty plan → OK).
+    auto host = DasPtr<Das::PluginInterface::IDasTaskComponentHost>(
+        new MockTaskComponentHost());
+    auto task = DasGraphTaskImpl::Make(host.Get());
+    ASSERT_NE(task.Get(), nullptr);
+
+    DasPtr<Das::ExportInterface::IDasPortMap> result;
+    DasResult hr = task->Do(nullptr, input_map.Get(), result.Put());
+    EXPECT_TRUE(DAS::IsOk(hr));
 }

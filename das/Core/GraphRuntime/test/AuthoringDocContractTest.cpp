@@ -189,9 +189,54 @@ namespace
         EXPECT_EQ(json.find("edgeType"), std::string::npos);
     }
 
+    // Comprehensive zero-leak guard: the contract output must NEVER carry any
+    // runtime-private field, regardless of mode or edge type. Covers edgeType,
+    // edgeId, dynamicPorts, and the signal/data edge-type tokens (which only
+    // exist on the internal GraphEdgeDto, never on the contract GraphConnection).
+    TEST(AuthoringDocContractTest, BothModes_NeverLeakRuntimePrivateFields)
+    {
+        // graph mode: a node with dynamic_ports + a data edge + a signal edge.
+        GraphDocumentDto g;
+        auto& n1 = g.nodes.emplace_back(MakeNode("n1", "{g1}", 0.0));
+        n1.dynamic_ports.push_back({.port_id = "dyn", .port_type = "data"});
+        g.nodes.push_back(MakeNode("n2", "{g2}", 0.0));
+        GraphEdgeDto data_edge = MakeSignalEdge("e-data", "n1", "n2");
+        data_edge.edge_type    = "data";
+        g.edges.push_back(data_edge);
+        GraphEdgeDto sig = MakeSignalEdge("e-sig", "n1", "n2");
+        g.edges.push_back(sig);
+
+        const auto graph_json = ToJson(g);
+        EXPECT_EQ(graph_json.find("edgeType"), std::string::npos);
+        EXPECT_EQ(graph_json.find("edgeId"), std::string::npos);
+        EXPECT_EQ(graph_json.find("dynamicPorts"), std::string::npos);
+        EXPECT_EQ(graph_json.find("\"signal\""), std::string::npos);
+        EXPECT_EQ(graph_json.find("\"data\""), std::string::npos);
+
+        // formSequence mode: project a sequence (signal edges auto-generated) +
+        // ensure the same fields are absent in the projected view.
+        FormSequenceDto seq;
+        seq.items.push_back({.item_id = "a",
+                             .target  = {.target_kind = "componentRef",
+                                         .component_ref = MakeCompRef("{ga}")},
+                             .settings = MakeSettings(1.0)});
+        seq.items.push_back({.item_id = "b",
+                             .target  = {.target_kind = "componentRef",
+                                         .component_ref = MakeCompRef("{gb}")},
+                             .settings = MakeSettings(2.0)});
+        auto fdoc = FormSequenceProjector::Project(seq);
+        fdoc.tags.emplace_back(kLinearTag);
+        const auto fs_json = ToJson(fdoc);
+        EXPECT_EQ(fs_json.find("edgeType"), std::string::npos);
+        EXPECT_EQ(fs_json.find("edgeId"), std::string::npos);
+        EXPECT_EQ(fs_json.find("dynamicPorts"), std::string::npos);
+        EXPECT_EQ(fs_json.find("\"signal\""), std::string::npos);
+    }
+
     // -----------------------------------------------------------------------
-    // Upgrade / downgrade — lossless on the store
+    // Upgrade — one-way, lossless on the store
     // -----------------------------------------------------------------------
+
 
     TEST(AuthoringDocContractTest, UpgradeToGraph_RemovesTagAndIsLossless)
     {
@@ -207,26 +252,26 @@ namespace
 
         ASSERT_TRUE(UpgradeToGraph(doc));
         EXPECT_FALSE(IsLinear(doc));
-        // Store untouched apart from the tag.
+        // Store untouched apart from the tag → lossless.
         EXPECT_EQ(doc.nodes.size(), nodes_before);
         EXPECT_EQ(doc.edges.size(), edges_before);
 
         // After upgrade, projection is graph mode.
         EXPECT_EQ(ToAuthoringDocument(doc).kind, Kind::Graph);
 
-        // Reversible: downgrade restores the formSequence view.
-        ASSERT_TRUE(DowngradeToFormSequence(doc));
-        EXPECT_TRUE(IsLinear(doc));
-        EXPECT_EQ(ToAuthoringDocument(doc).kind, Kind::FormSequence);
+        // One-way: re-applying UpgradeToGraph on an already-graph doc is a no-op
+        // (returns false), and there is intentionally no downgrade path.
+        EXPECT_FALSE(UpgradeToGraph(doc));
+        EXPECT_EQ(ToAuthoringDocument(doc).kind, Kind::Graph);
     }
 
-    TEST(AuthoringDocContractTest, Upgrade_IsIdempotentWhenNotLinear)
+    TEST(AuthoringDocContractTest, Upgrade_IsNoOpWhenNotLinear)
     {
-        GraphDocumentDto doc; // no tag
-        EXPECT_FALSE(UpgradeToGraph(doc));
-        EXPECT_FALSE(DowngradeToFormSequence(doc) == false); // first add succeeds
-        EXPECT_FALSE(DowngradeToFormSequence(doc));          // already linear
+        GraphDocumentDto doc; // no tag → already graph mode
+        EXPECT_FALSE(UpgradeToGraph(doc)); // nothing to remove
+        EXPECT_FALSE(IsLinear(doc));
     }
+
 
     TEST(AuthoringDocContractTest, IsLinear_RespectsOnlyCanonicalTag)
     {

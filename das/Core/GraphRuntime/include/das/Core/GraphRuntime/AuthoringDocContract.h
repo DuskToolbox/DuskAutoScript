@@ -124,18 +124,18 @@ namespace Contract
     AuthoringDocument ToAuthoringDocument(const Dto::GraphDocumentDto& document);
 
     // -----------------------------------------------------------------------
-    // Upgrade (formSequence → graph) — lossless, in-place on the store
+    // Upgrade (formSequence → graph) — one-way, lossless, in-place on the store
     // -----------------------------------------------------------------------
+    // Downgrade (graph → formSequence) is intentionally NOT supported: once a
+    // document uses non-linear graph features (branches / merges) it cannot be
+    // represented as a single linear chain, so the reverse direction is not a
+    // valid product operation (dusk.11th 2026-06-30 拍板).
 
     /// Remove the linear marker tag so the document projects to kind == Graph.
-    /// The store is otherwise untouched → the upgrade is lossless and
-    /// reversible (re-adding the tag restores the formSequence view). Returns
-    /// true if the tag was present and removed.
+    /// The store is otherwise untouched → the upgrade is lossless. One-way:
+    /// there is no DowngradeToFormSequence. Returns true if the tag was present
+    /// and removed.
     bool UpgradeToGraph(Dto::GraphDocumentDto& document) noexcept;
-
-    /// Re-add the linear marker tag (graph → formSequence downgrade). Returns
-    /// true if the tag was absent and added.
-    bool DowngradeToFormSequence(Dto::GraphDocumentDto& document) noexcept;
 
     // -----------------------------------------------------------------------
     // Serialization (contract -> yyjson), for the ABI boundary to wrap as JSON
