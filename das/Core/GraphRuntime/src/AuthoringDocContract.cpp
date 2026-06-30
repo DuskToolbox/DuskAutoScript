@@ -8,6 +8,8 @@
 #include <unordered_set>
 #include <vector>
 
+#include <das/Core/GraphRuntime/FormSequenceProjector.h>
+#include <das/Core/GraphRuntime/GraphAuthoring.h>
 #include <das/Utils/DasJsonCore.h>
 
 DAS_CORE_GRAPHRUNTIME_NS_BEGIN
@@ -317,6 +319,300 @@ namespace Contract
         shape.source_fingerprint = document.fingerprint;
         shape.graph              = MapGraphView(document);
         return yyjson::object(shape, yyjson::copy_string);
+    }
+
+    // -------------------------------------------------------------------
+    // Authoring change dispatch
+    // -------------------------------------------------------------------
+
+    namespace
+    {
+        using FormSeqDto  = Dto::FormSequenceDto;
+        using FormSeqItem = Dto::FormSequenceItemDto;
+
+        /// Ordered node ids of a linear signal chain (head → tail), then any
+        /// disconnected nodes in array order. Shared by the reverse projections.
+        std::vector<std::string> LinearOrder(const Dto::GraphDocumentDto& doc)
+        {
+            std::unordered_map<std::string, std::string> signal_next;
+            std::unordered_set<std::string>              signal_targets;
+            for (const auto& edge : doc.edges)
+            {
+                if (edge.edge_type != "signal")
+                {
+                    continue;
+                }
+                signal_next.emplace(edge.source_node_id, edge.target_node_id);
+                signal_targets.insert(edge.target_node_id);
+            }
+
+            std::string head;
+            bool        found_head = false;
+            for (const auto& node : doc.nodes)
+            {
+                if (signal_targets.count(node.node_id) == 0)
+                {
+                    head       = node.node_id;
+                    found_head = true;
+                    break;
+                }
+            }
+
+            std::vector<std::string>      order;
+            std::unordered_set<std::string> visited;
+            auto push = [&](const std::string& id)
+            {
+                order.push_back(id);
+                visited.insert(id);
+            };
+
+            if (found_head)
+            {
+                std::string cur = head;
+                while (!cur.empty() && visited.count(cur) == 0)
+                {
+                    push(cur);
+                    auto it = signal_next.find(cur);
+                    if (it == signal_next.end())
+                    {
+                        break;
+                    }
+                    cur = it->second;
+                }
+            }
+            for (const auto& node : doc.nodes)
+            {
+                if (visited.count(node.node_id) == 0)
+                {
+                    push(node.node_id);
+                }
+            }
+            return order;
+        }
+
+        /// Reverse-project the linear store onto a FormSequenceDto so the
+        /// existing FormSequenceProjector mutation logic can be reused.
+        FormSeqDto GraphToSequence(const Dto::GraphDocumentDto& doc)
+        {
+            FormSeqDto seq;
+            seq.document_id = doc.document_id;
+            seq.version     = doc.version;
+            seq.fingerprint = doc.fingerprint;
+
+            std::unordered_map<std::string, const Dto::GraphNodeDto*> by_id;
+            for (const auto& node : doc.nodes)
+            {
+                by_id.emplace(node.node_id, &node);
+            }
+            for (const auto& id : LinearOrder(doc))
+            {
+                auto it = by_id.find(id);
+                if (it == by_id.end())
+                {
+                    continue;
+                }
+                const auto& node = *it->second;
+                FormSeqItem item;
+                item.item_id = node.node_id;
+                item.target  = node.target;
+                item.settings = Das::Utils::CloneYyjsonValue(node.settings);
+                seq.items.push_back(std::move(item));
+            }
+            return seq;
+        }
+
+        ChangeErrorKind MapGraphError(AuthoringErrorKind k)
+        {
+            switch (k)
+            {
+                case AuthoringErrorKind::None:           return ChangeErrorKind::None;
+                case AuthoringErrorKind::NodeNotFound:   return ChangeErrorKind::NodeNotFound;
+                case AuthoringErrorKind::DuplicateNodeId:return ChangeErrorKind::DuplicateNodeId;
+                case AuthoringErrorKind::EmptyNodeId:    return ChangeErrorKind::EmptyNodeId;
+                case AuthoringErrorKind::InvalidEdge:    return ChangeErrorKind::InvalidEdge;
+                case AuthoringErrorKind::EdgeNotFound:   return ChangeErrorKind::EdgeNotFound;
+                default:                                 return ChangeErrorKind::InvalidEdge;
+            }
+        }
+
+        ChangeErrorKind MapSeqError(FormSequenceErrorKind k)
+        {
+            switch (k)
+            {
+                case FormSequenceErrorKind::None:            return ChangeErrorKind::None;
+                case FormSequenceErrorKind::EmptyItemId:     return ChangeErrorKind::EmptyNodeId;
+                case FormSequenceErrorKind::DuplicateItemId: return ChangeErrorKind::DuplicateNodeId;
+                case FormSequenceErrorKind::ItemNotFound:    return ChangeErrorKind::ItemNotFound;
+                case FormSequenceErrorKind::InvalidIndex:    return ChangeErrorKind::InvalidIndex;
+                case FormSequenceErrorKind::NoChange:        return ChangeErrorKind::NoChange;
+            }
+            return ChangeErrorKind::InvalidOp;
+        }
+
+        /// graph-mode dispatch: delegate to GraphAuthoring::ApplySettingsChange.
+        AuthoringChangeResult ApplyGraphChange(
+            Dto::GraphDocumentDto&  document,
+            const AuthoringChange&  change)
+        {
+            GraphAuthoringChange gac;
+            if (change.op == "addNode")
+            {
+                if (!change.node.has_value())
+                {
+                    return {ChangeErrorKind::InvalidOp, "addNode requires node"};
+                }
+                AddNodeChange c;
+                c.node.node_id = change.node->id;
+                c.node.settings = Das::Utils::CloneYyjsonValue(change.node->settings);
+                c.node.target.target_kind   = "componentRef";
+                c.node.target.component_ref =
+                    Dto::ComponentRefDto{"componentRef", change.node->component_guid, {}};
+                gac.payload = c;
+            }
+            else if (change.op == "removeNode")
+            {
+                gac.payload = RemoveNodeChange{change.node_id};
+            }
+            else if (change.op == "connectPorts")
+            {
+                if (!change.connection.has_value())
+                {
+                    return {ChangeErrorKind::InvalidOp, "connectPorts requires connection"};
+                }
+                const auto& conn = *change.connection;
+                ConnectPortsChange c;
+                c.edge.edge_id        = "edge::" + conn.from_node_id + "::"
+                                        + conn.from_port_id + "::" + conn.to_node_id
+                                        + "::" + conn.to_port_id;
+                c.edge.source_node_id = conn.from_node_id;
+                c.edge.source_port_id = conn.from_port_id;
+                c.edge.target_node_id = conn.to_node_id;
+                c.edge.target_port_id = conn.to_port_id;
+                c.edge.edge_type      = "data";
+                gac.payload = c;
+            }
+            else if (change.op == "disconnectPorts")
+            {
+                if (!change.connection.has_value())
+                {
+                    return {ChangeErrorKind::InvalidOp, "disconnectPorts requires connection"};
+                }
+                const auto& conn = *change.connection;
+                std::string edge_id;
+                for (const auto& edge : document.edges)
+                {
+                    if (edge.source_node_id == conn.from_node_id
+                        && edge.source_port_id == conn.from_port_id
+                        && edge.target_node_id == conn.to_node_id
+                        && edge.target_port_id == conn.to_port_id)
+                    {
+                        edge_id = edge.edge_id;
+                        break;
+                    }
+                }
+                if (edge_id.empty())
+                {
+                    return {ChangeErrorKind::EdgeNotFound,
+                            "no edge matches the given connection endpoints"};
+                }
+                gac.payload = DisconnectPortsChange{edge_id};
+            }
+            else if (change.op == "updateNodeConfig" || change.op == "setValue")
+            {
+                UpdateNodeConfigChange c;
+                c.node_id  = change.node_id;
+                c.settings = Das::Utils::CloneYyjsonValue(change.settings);
+                gac.payload = c;
+            }
+            else
+            {
+                return {ChangeErrorKind::InvalidOp,
+                        "op '" + change.op + "' is not a graph-mode op"};
+            }
+
+            auto r = ApplySettingsChange(document, gac);
+            if (!r.Ok())
+            {
+                return {MapGraphError(r.error_kind), std::move(r.message)};
+            }
+            return {ChangeErrorKind::None, ""};
+        }
+
+        /// linear-mode dispatch: reverse-project → FormSequenceProjector →
+        /// re-project, preserving store identity.
+        AuthoringChangeResult ApplyLinearChange(
+            Dto::GraphDocumentDto&  document,
+            const AuthoringChange&  change)
+        {
+            FormSequenceChange fc;
+            if (change.op == "addSequenceItem")
+            {
+                if (!change.item.has_value())
+                {
+                    return {ChangeErrorKind::InvalidOp, "addSequenceItem requires item"};
+                }
+                AppendSequenceItemChange c;
+                c.item.item_id = change.item->id;
+                c.item.target.target_kind   = "componentRef";
+                c.item.target.component_ref =
+                    Dto::ComponentRefDto{"componentRef", change.item->type, {}};
+                c.item.settings = Das::Utils::CloneYyjsonValue(change.item->settings);
+                fc.payload = c;
+            }
+            else if (change.op == "moveSequenceItem")
+            {
+                if (!change.from.has_value() || !change.to.has_value())
+                {
+                    return {ChangeErrorKind::InvalidOp, "moveSequenceItem requires from/to"};
+                }
+                fc.payload = MoveSequenceItemChange{*change.from, *change.to};
+            }
+            else if (change.op == "removeSequenceItem")
+            {
+                fc.payload = RemoveSequenceItemChange{change.node_id};
+            }
+            else if (change.op == "setValue")
+            {
+                SetSequenceItemValueChange c;
+                c.item_id  = change.node_id;
+                c.settings = Das::Utils::CloneYyjsonValue(change.settings);
+                fc.payload = c;
+            }
+            else
+            {
+                return {ChangeErrorKind::InvalidOp,
+                        "op '" + change.op + "' is not a linear-mode op"};
+            }
+
+            auto seq = GraphToSequence(document);
+            auto r   = FormSequenceProjector::ApplyChange(seq, fc);
+            if (!r.Ok())
+            {
+                return {MapSeqError(r.error_kind), std::move(r.message)};
+            }
+
+            // Re-project the mutated sequence back onto the store, preserving
+            // identity (tags / fingerprint). version is bumped by the caller.
+            auto rebuilt = FormSequenceProjector::Project(seq);
+            rebuilt.tags       = std::move(document.tags);
+            rebuilt.fingerprint = document.fingerprint;
+            document = std::move(rebuilt);
+            return {ChangeErrorKind::None, ""};
+        }
+    } // anonymous namespace
+
+    AuthoringChangeResult ApplyAuthoringChange(
+        Dto::GraphDocumentDto&  document,
+        const AuthoringChange&  change)
+    {
+        AuthoringChangeResult r = IsLinear(document)
+            ? ApplyLinearChange(document, change)
+            : ApplyGraphChange(document, change);
+        if (r.Ok())
+        {
+            ++document.version;
+        }
+        return r;
     }
 } // namespace Contract
 

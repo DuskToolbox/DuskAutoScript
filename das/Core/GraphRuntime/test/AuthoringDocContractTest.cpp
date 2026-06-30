@@ -217,5 +217,182 @@ namespace
         doc.tags.emplace_back(kLinearTag);
         EXPECT_TRUE(IsLinear(doc));
     }
+
+    // -----------------------------------------------------------------------
+    // ApplyAuthoringChange — graph mode (delegates to GraphAuthoring)
+    // -----------------------------------------------------------------------
+
+    TEST(AuthoringDocContractTest, GraphChange_AddNodeThenConnectPorts)
+    {
+        GraphDocumentDto doc; // graph mode (no tag)
+        doc.version = 0;
+
+        AuthoringChange add;
+        add.op   = "addNode";
+        add.node = GraphNode{"n1", "{g1}", MakeSettings(1.0)};
+        ASSERT_TRUE(ApplyAuthoringChange(doc, add).Ok());
+        ASSERT_EQ(doc.nodes.size(), 1u);
+        EXPECT_EQ(doc.version, 1);
+
+        AuthoringChange add2;
+        add2.op   = "addNode";
+        add2.node = GraphNode{"n2", "{g2}", MakeSettings(2.0)};
+        ASSERT_TRUE(ApplyAuthoringChange(doc, add2).Ok());
+
+        AuthoringChange conn;
+        conn.op         = "connectPorts";
+        conn.connection = GraphConnection{"n1", "out", "n2", "in"};
+        ASSERT_TRUE(ApplyAuthoringChange(doc, conn).Ok());
+        ASSERT_EQ(doc.edges.size(), 1u);
+        EXPECT_EQ(doc.edges[0].source_node_id, "n1");
+        EXPECT_EQ(doc.edges[0].edge_type, "data"); // graph-mode edges are data
+
+        // The public projection still hides edge_type / edge_id.
+        auto json = ToJson(doc);
+        EXPECT_EQ(json.find("edgeType"), std::string::npos);
+        EXPECT_EQ(json.find("edgeId"), std::string::npos);
+    }
+
+    TEST(AuthoringDocContractTest, GraphChange_RemoveNodeCascadesEdges)
+    {
+        GraphDocumentDto doc;
+        doc.nodes.push_back(MakeNode("n1", "{g1}", 0.0));
+        doc.nodes.push_back(MakeNode("n2", "{g2}", 0.0));
+        GraphEdgeDto e;
+        e.edge_id = "e1"; e.source_node_id = "n1"; e.source_port_id = "o";
+        e.target_node_id = "n2"; e.target_port_id = "i"; e.edge_type = "data";
+        doc.edges.push_back(e);
+
+        AuthoringChange rm;
+        rm.op = "removeNode";
+        rm.node_id = "n1";
+        ASSERT_TRUE(ApplyAuthoringChange(doc, rm).Ok());
+        ASSERT_EQ(doc.nodes.size(), 1u);
+        EXPECT_EQ(doc.nodes[0].node_id, "n2");
+        EXPECT_TRUE(doc.edges.empty()); // cascade
+    }
+
+    TEST(AuthoringDocContractTest, GraphChange_DisconnectByEndpoints)
+    {
+        GraphDocumentDto doc;
+        doc.nodes.push_back(MakeNode("n1", "{g1}", 0.0));
+        doc.nodes.push_back(MakeNode("n2", "{g2}", 0.0));
+        GraphEdgeDto e;
+        e.edge_id = "private"; e.source_node_id = "n1"; e.source_port_id = "o";
+        e.target_node_id = "n2"; e.target_port_id = "i"; e.edge_type = "data";
+        doc.edges.push_back(e);
+
+        AuthoringChange disc;
+        disc.op         = "disconnectPorts";
+        disc.connection = GraphConnection{"n1", "o", "n2", "i"};
+        ASSERT_TRUE(ApplyAuthoringChange(doc, disc).Ok());
+        EXPECT_TRUE(doc.edges.empty());
+    }
+
+    TEST(AuthoringDocContractTest, GraphChange_DuplicateNodeIsRejected)
+    {
+        GraphDocumentDto doc;
+        doc.nodes.push_back(MakeNode("n1", "{g1}", 0.0));
+        const auto before = doc.nodes.size();
+
+        AuthoringChange add;
+        add.op = "addNode";
+        add.node = GraphNode{"n1", "{g1}", MakeSettings(0.0)};
+        auto r = ApplyAuthoringChange(doc, add);
+        ASSERT_FALSE(r.Ok());
+        EXPECT_EQ(r.error_kind, ChangeErrorKind::DuplicateNodeId);
+        EXPECT_EQ(doc.nodes.size(), before); // unchanged
+    }
+
+    // -----------------------------------------------------------------------
+    // ApplyAuthoringChange — linear mode (reuses FormSequenceProjector)
+    // -----------------------------------------------------------------------
+
+    TEST(AuthoringDocContractTest, LinearChange_AddItemAppendsToChain)
+    {
+        // Seed a 2-item linear store via the projector + tag.
+        FormSequenceDto seq;
+        seq.items.push_back({.item_id = "a", .target = {.target_kind = "componentRef",
+                              .component_ref = MakeCompRef("{ga}")}, .settings = MakeSettings(1.0)});
+        seq.items.push_back({.item_id = "b", .target = {.target_kind = "componentRef",
+                              .component_ref = MakeCompRef("{gb}")}, .settings = MakeSettings(2.0)});
+        auto doc = FormSequenceProjector::Project(seq);
+        doc.tags.emplace_back(kLinearTag);
+        ASSERT_EQ(doc.edges.size(), 1u); // a->b signal
+
+        AuthoringChange add;
+        add.op   = "addSequenceItem";
+        add.item = SequenceItem{"c", "{gc}", MakeSettings(3.0)};
+        ASSERT_TRUE(ApplyAuthoringChange(doc, add).Ok());
+
+        // Chain extended: a->b->c (two signal edges), still linear.
+        ASSERT_EQ(doc.nodes.size(), 3u);
+        ASSERT_EQ(doc.edges.size(), 2u);
+        EXPECT_TRUE(IsLinear(doc));
+        EXPECT_EQ(doc.edges[0].edge_type, "signal");
+    }
+
+    TEST(AuthoringDocContractTest, LinearChange_RemoveItemReconnectsChain)
+    {
+        FormSequenceDto seq;
+        seq.items.push_back({.item_id = "a", .target = {.target_kind = "componentRef",
+                              .component_ref = MakeCompRef("{ga}")}});
+        seq.items.push_back({.item_id = "b", .target = {.target_kind = "componentRef",
+                              .component_ref = MakeCompRef("{gb}")}});
+        seq.items.push_back({.item_id = "c", .target = {.target_kind = "componentRef",
+                              .component_ref = MakeCompRef("{gc}")}});
+        auto doc = FormSequenceProjector::Project(seq);
+        doc.tags.emplace_back(kLinearTag);
+
+        AuthoringChange rm;
+        rm.op = "removeSequenceItem";
+        rm.node_id = "b";
+        ASSERT_TRUE(ApplyAuthoringChange(doc, rm).Ok());
+
+        // b gone; chain a->c reconnected (1 signal edge).
+        ASSERT_EQ(doc.nodes.size(), 2u);
+        ASSERT_EQ(doc.edges.size(), 1u);
+        EXPECT_EQ(doc.edges[0].source_node_id, "a");
+        EXPECT_EQ(doc.edges[0].target_node_id, "c");
+    }
+
+    TEST(AuthoringDocContractTest, LinearChange_MoveItemReordersChain)
+    {
+        FormSequenceDto seq;
+        for (char c : {'a', 'b', 'c'})
+        {
+            seq.items.push_back({.item_id = std::string(1, c),
+                                 .target = {.target_kind = "componentRef",
+                                            .component_ref = MakeCompRef("{g}")}});
+        }
+        auto doc = FormSequenceProjector::Project(seq);
+        doc.tags.emplace_back(kLinearTag);
+
+        AuthoringChange mv;
+        mv.op   = "moveSequenceItem";
+        mv.from = 0;
+        mv.to   = 2; // a moves to the end → b->c->a
+        ASSERT_TRUE(ApplyAuthoringChange(doc, mv).Ok());
+
+        // New head is b.
+        auto items = ToAuthoringDocument(doc).form_sequence->sequence;
+        ASSERT_EQ(items.size(), 3u);
+        EXPECT_EQ(items[0].id, "b");
+        EXPECT_EQ(items[1].id, "c");
+        EXPECT_EQ(items[2].id, "a");
+    }
+
+    TEST(AuthoringDocContractTest, LinearChange_RejectsGraphOp)
+    {
+        GraphDocumentDto doc;
+        doc.tags.emplace_back(kLinearTag);
+
+        AuthoringChange bad;
+        bad.op = "addNode";
+        bad.node = GraphNode{"x", "{g}", MakeSettings(0.0)};
+        auto r = ApplyAuthoringChange(doc, bad);
+        EXPECT_FALSE(r.Ok());
+        EXPECT_EQ(r.error_kind, ChangeErrorKind::InvalidOp);
+    }
 } // namespace
 

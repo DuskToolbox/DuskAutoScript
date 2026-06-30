@@ -151,6 +151,80 @@ namespace Contract
     /// the caller for writing. (Without copy_string yyjson would point at the
     /// std::string buffers of a local that dies on return → use-after-free.)
     yyjson::value SerializeDocument(const Dto::GraphDocumentDto& document);
+
+    // -----------------------------------------------------------------------
+    // Authoring change — dual-state dispatch on the authoritative store
+    // -----------------------------------------------------------------------
+    //
+    // Mirrors the schema-draft AuthoringChange (`op` + payload fields). The
+    // store's current mode decides how the change is applied:
+    //
+    //   - Graph mode (no linear tag): graph ops (addNode / removeNode /
+    //     connectPorts / disconnectPorts / updateNodeConfig) are delegated to
+    //     the GraphAuthoring engine (ApplySettingsChange) — the previously
+    //     dormant authoring library is enabled, NOT rewritten.
+    //   - Linear mode (formsequence tag): sequence ops (addSequenceItem /
+    //     moveSequenceItem / removeSequenceItem / setValue) are reverse-
+    //     projected onto a FormSequenceDto, applied via FormSequenceProjector
+    //     (reusing its tested mutation logic), then re-projected back onto the
+    //     GraphDocumentDto store (signal chain rebuilt). The store identity
+    //     (document_id / fingerprint / tags) is preserved; revision bumps on
+    //     success.
+    //
+    // `setValue` works in both modes (updates a node's settings by node_id).
+    // On failure the store is left unmodified.
+    // -----------------------------------------------------------------------
+
+    struct AuthoringChange
+    {
+        std::string op; // schema op name (see AuthoringChange.ops in the schema)
+        // addNode (graph)
+        std::optional<GraphNode> node;
+        // removeNode / updateNodeConfig / setValue / removeSequenceItem — id
+        std::string node_id;
+        // connectPorts (graph) — full connection; disconnectPorts — endpoints
+        std::optional<GraphConnection> connection;
+        // updateNodeConfig / setValue — new settings
+        yyjson::value settings;
+        // addSequenceItem / insertSequenceItem
+        std::optional<SequenceItem> item;
+        // moveSequenceItem
+        std::optional<std::size_t> from;
+        std::optional<std::size_t> to;
+    };
+
+    enum class ChangeErrorKind
+    {
+        None,
+        InvalidOp,
+        NodeNotFound,
+        DuplicateNodeId,
+        EmptyNodeId,
+        InvalidEdge,
+        EdgeNotFound,
+        ItemNotFound,
+        InvalidIndex,
+        NoChange,
+    };
+
+    struct AuthoringChangeResult
+    {
+        ChangeErrorKind error_kind = ChangeErrorKind::None;
+        std::string    message;
+
+        [[nodiscard]]
+        bool Ok() const noexcept
+        {
+            return error_kind == ChangeErrorKind::None;
+        }
+    };
+
+    /// Apply a contract change to the authoritative store in place. On success
+    /// bumps `document.version` and returns {None, ""}; on failure leaves the
+    /// store unmodified and returns the error.
+    AuthoringChangeResult ApplyAuthoringChange(
+        Dto::GraphDocumentDto&   document,
+        const AuthoringChange&   change);
 } // namespace Contract
 
 DAS_CORE_GRAPHRUNTIME_NS_END
