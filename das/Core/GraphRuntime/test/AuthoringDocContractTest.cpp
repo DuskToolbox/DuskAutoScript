@@ -115,6 +115,26 @@ namespace
         EXPECT_NE(json.find("\"connections\""), std::string::npos);
     }
 
+    // copy_string must deep-copy strings nested INSIDE yyjson::value settings
+    // subtrees too, not just top-level scalar members — otherwise the returned
+    // value dangles once the store is gone (das-yyjson-string-safety skill).
+    TEST(AuthoringDocContractTest, GraphMode_CopyStringDeepCopiesNestedStringSettings)
+    {
+        GraphDocumentDto doc;
+        // settings carries a string payload that would dangle if not copied.
+        auto payload = Das::Utils::MakeYyjsonObject();
+        auto sobj    = *payload.as_object();
+        sobj[std::string_view("name")]      = std::string("deep-string-payload");
+        sobj[std::string_view("threshold")] = 0.5;
+        doc.nodes.push_back(MakeNode("n1", "{g1}", 0.0));
+        doc.nodes.back().settings = payload;
+
+        auto json = ToJson(doc);
+        EXPECT_NE(json.find("deep-string-payload"), std::string::npos);
+        // Sanity: the nested object survived the cross-boundary return intact.
+        EXPECT_NE(json.find("\"threshold\":0.5"), std::string::npos);
+    }
+
     // -----------------------------------------------------------------------
     // ToAuthoringDocument — formSequence mode (linear tag)
     // -----------------------------------------------------------------------
