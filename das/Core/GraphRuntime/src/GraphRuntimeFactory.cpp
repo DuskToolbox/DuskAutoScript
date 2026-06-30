@@ -199,6 +199,24 @@ namespace
     // Context seeding
     // -------------------------------------------------------------------
 
+    template <typename Obj>
+    bool ReadStringField(
+        const Obj&           obj,
+        std::string_view     key,
+        std::string&         out)
+    {
+        if (!obj.contains(key))
+        {
+            return false;
+        }
+        if (auto v = obj[key].as_string())
+        {
+            out = std::string(*v);
+            return true;
+        }
+        return false;
+    }
+
     /// Read a GraphDocumentDto field-by-field from a JSON object (robust manual
     /// parse at the boundary; aggregate cast would also work but this avoids
     /// throwing on partial input).
@@ -274,6 +292,188 @@ namespace
         return true;
     }
 
+    // Reverse-map a contract authoring doc (the shape SerializeDocument emits,
+    // and the shape the scheduler persists in `properties`) back onto the
+    // authoritative GraphDocumentDto store. Also accepts a raw formSequence
+    // ({items}) or raw graph ({nodes,edges}) doc for direct callers/tests.
+    void SeedFromDocValue(GraphAuthoringSessionState& s, const yyjson::value& doc)
+    {
+        auto obj = doc.as_object();
+        if (!obj)
+        {
+            return;
+        }
+
+        // Resolve the kind. The contract doc carries {"kind": "formSequence" |
+        // "graph"}; a raw formSequence carries "items"; a raw graph "nodes".
+        std::string kind;
+        ReadStringField(*obj, std::string_view("kind"), kind);
+
+        const bool has_form_seq =
+            obj->contains(std::string_view("formSequence"));
+        const bool has_graph = obj->contains(std::string_view("graph"));
+
+        if (kind == "formSequence" || has_form_seq)
+        {
+            // Contract formSequence doc: formSequence.sequence:[{id,type,settings}].
+            FormSeqDto seq;
+            ReadStringField(*obj, std::string_view("sourceFingerprint"), seq.fingerprint);
+            yyjson::value seq_src = doc;
+            if (has_form_seq)
+            {
+                seq_src = (*obj)[std::string_view("formSequence")];
+            }
+            if (auto seq_obj = seq_src.as_object(); seq_obj && seq_obj->contains(std::string_view("sequence")))
+            {
+                if (auto arr = (*seq_obj)[std::string_view("sequence")].as_array())
+                {
+                    for (const auto& iv : *arr)
+                    {
+                        auto io = iv.as_object();
+                        if (!io)
+                        {
+                            continue;
+                        }
+                        Das::Core::GraphRuntime::Dto::FormSequenceItemDto item;
+                        if (auto v = (*io)[std::string_view("id")].as_string())
+                        {
+                            item.item_id = std::string(*v);
+                        }
+                        std::string type;
+                        ReadStringField(*io, std::string_view("type"), type);
+                        if (!type.empty())
+                        {
+                            item.target.target_kind   = "componentRef";
+                            item.target.component_ref =
+                                Das::Core::GraphRuntime::Dto::ComponentRefDto{
+                                    "componentRef", type, {}};
+                        }
+                        if (io->contains(std::string_view("settings")))
+                        {
+                            item.settings = Das::Utils::CloneYyjsonValue(
+                                (*io)[std::string_view("settings")]);
+                        }
+                        seq.items.push_back(std::move(item));
+                    }
+                }
+            }
+            s.document = GR::FormSequenceProjector::Project(seq);
+            s.document.tags.emplace_back(GR::Contract::kLinearTag);
+            return;
+        }
+
+        if (kind == "graph" || has_graph)
+        {
+            yyjson::value graph_src = doc;
+            if (has_graph)
+            {
+                graph_src = (*obj)[std::string_view("graph")];
+            }
+            if (auto gobj = graph_src.as_object())
+            {
+                ReadStringField(*obj, std::string_view("sourceFingerprint"), s.document.fingerprint);
+                if (gobj->contains(std::string_view("nodes")))
+                {
+                    if (auto arr = (*gobj)[std::string_view("nodes")].as_array())
+                    {
+                        for (const auto& nv : *arr)
+                        {
+                            auto no = nv.as_object();
+                            if (!no)
+                            {
+                                continue;
+                            }
+                            Das::Core::GraphRuntime::Dto::GraphNodeDto node;
+                            if (auto v = (*no)[std::string_view("id")].as_string())
+                            {
+                                node.node_id = std::string(*v);
+                            }
+                            std::string guid;
+                            ReadStringField(*no, std::string_view("componentGuid"), guid);
+                            if (!guid.empty())
+                            {
+                                node.target.target_kind   = "componentRef";
+                                node.target.component_ref =
+                                    Das::Core::GraphRuntime::Dto::ComponentRefDto{
+                                        "componentRef", guid, {}};
+                            }
+                            if (no->contains(std::string_view("settings")))
+                            {
+                                node.settings = Das::Utils::CloneYyjsonValue(
+                                    (*no)[std::string_view("settings")]);
+                            }
+                            s.document.nodes.push_back(std::move(node));
+                        }
+                    }
+                }
+                if (gobj->contains(std::string_view("connections")))
+                {
+                    if (auto arr = (*gobj)[std::string_view("connections")].as_array())
+                    {
+                        for (const auto& cv : *arr)
+                        {
+                            auto co = cv.as_object();
+                            if (!co)
+                            {
+                                continue;
+                            }
+                            Das::Core::GraphRuntime::Dto::GraphEdgeDto edge;
+                            std::string                               from_n, from_p, to_n, to_p;
+                            ReadStringField(*co, std::string_view("fromNodeId"), from_n);
+                            ReadStringField(*co, std::string_view("fromPortId"), from_p);
+                            ReadStringField(*co, std::string_view("toNodeId"), to_n);
+                            ReadStringField(*co, std::string_view("toPortId"), to_p);
+                            edge.edge_id        = "edge::" + from_n + "::" + to_n;
+                            edge.source_node_id = from_n;
+                            edge.source_port_id = from_p;
+                            edge.target_node_id = to_n;
+                            edge.target_port_id = to_p;
+                            edge.edge_type      = "data";
+                            s.document.edges.push_back(std::move(edge));
+                        }
+                    }
+                }
+            }
+            return;
+        }
+
+        // Raw formSequence ({items}) / raw graph ({nodes}) fallback.
+        if (obj->contains(std::string_view("items")))
+        {
+            FormSeqDto seq;
+            ReadStringField(*obj, std::string_view("documentId"), seq.document_id);
+            if (obj->contains(std::string_view("version")))
+            {
+                if (auto v = (*obj)[std::string_view("version")].as_int())
+                {
+                    seq.version = static_cast<int32_t>(*v);
+                }
+            }
+            ReadStringField(*obj, std::string_view("fingerprint"), seq.fingerprint);
+            if (auto items = (*obj)[std::string_view("items")].as_array())
+            {
+                for (const auto& iv : *items)
+                {
+                    try
+                    {
+                        seq.items.push_back(
+                            GR::Dto::Detail::CastDtoObject<
+                                Das::Core::GraphRuntime::Dto::FormSequenceItemDto>(iv));
+                    }
+                    catch (...)
+                    {
+                    }
+                }
+            }
+            s.document = GR::FormSequenceProjector::Project(seq);
+            s.document.tags.emplace_back(GR::Contract::kLinearTag);
+        }
+        else if (obj->contains(std::string_view("nodes")))
+        {
+            ParseGraphDoc(*obj, s.document);
+        }
+    }
+
     void SeedFromContext(GraphAuthoringSessionState& s, std::string_view json)
     {
         if (json.empty())
@@ -294,70 +494,29 @@ namespace
         {
             return;
         }
-        if (obj->contains(std::string_view("items")))
+
+        // Real scheduler context shape: {taskId, properties, revision, authoring}.
+        // The live store round-trips through `properties` as a contract authoring
+        // doc (what SerializeDocument emits and ApplyChange returns as
+        // acceptedProperties). Prefer `properties`; fall back to a raw/contract
+        // doc at top level for direct callers and tests.
+        if (obj->contains(std::string_view("properties")))
         {
-            // formSequence context → project to a linear GraphDocumentDto.
-            FormSeqDto seq;
-            if (auto v = (*obj)[std::string_view("documentId")].as_string())
-            {
-                seq.document_id = std::string(*v);
-            }
-            if (auto v = (*obj)[std::string_view("version")].as_int())
-            {
-                seq.version = static_cast<int32_t>(*v);
-            }
-            if (auto v = (*obj)[std::string_view("fingerprint")].as_string())
-            {
-                seq.fingerprint = std::string(*v);
-            }
-            auto items = (*obj)[std::string_view("items")].as_array();
-            if (items)
-            {
-                for (const auto& iv : *items)
-                {
-                    try
-                    {
-                        seq.items.push_back(
-                            GR::Dto::Detail::CastDtoObject<
-                                Das::Core::GraphRuntime::Dto::FormSequenceItemDto>(iv));
-                    }
-                    catch (...)
-                    {
-                    }
-                }
-            }
-            s.document = GR::FormSequenceProjector::Project(seq);
-            s.document.tags.emplace_back(GR::Contract::kLinearTag);
+            SeedFromDocValue(s, (*obj)[std::string_view("properties")]);
+            return;
         }
-        else if (obj->contains(std::string_view("nodes")))
+        if (obj->contains(std::string_view("kind"))
+            || obj->contains(std::string_view("items"))
+            || obj->contains(std::string_view("nodes")))
         {
-            // graph context → parse directly.
-            ParseGraphDoc(*obj, s.document);
+            SeedFromDocValue(s, root);
         }
-        // else: leave empty (graph-mode) store.
+        // else: empty (graph-mode) store.
     }
 
     // -------------------------------------------------------------------
     // Contract change parsing
     // -------------------------------------------------------------------
-
-    template <typename Obj>
-    bool ReadStringField(
-        const Obj&           obj,
-        std::string_view     key,
-        std::string&         out)
-    {
-        if (!obj.contains(key))
-        {
-            return false;
-        }
-        if (auto v = obj[key].as_string())
-        {
-            out = std::string(*v);
-            return true;
-        }
-        return false;
-    }
 
     template <typename Obj>
     std::optional<GR::Contract::GraphNode>
@@ -473,16 +632,37 @@ namespace
     /// Build the authoring-result JSON. Per das-yyjson-string-safety: string
     /// members are written with std::make_pair(string_view, copy_string) so the
     /// data is deep-copied into the document arena (no dangling on return).
+    /// Build the apply-result JSON. On success it conforms to the scheduler's
+    /// authoring provider contract: {acceptedProperties, document,
+    /// sourceFingerprint} (+ ok/revision for direct callers). The store round-
+    /// trips through acceptedProperties as the contract authoring doc that
+    /// SerializeDocument emits. Per das-yyjson-string-safety: assigning a
+    /// yyjson::value deep-copies the subtree (safe, unlike a string lvalue);
+    /// string scalars use std::make_pair(string_view, copy_string).
     yyjson::value BuildChangeResultJson(
         const GR::Contract::AuthoringChangeResult& r,
-        int32_t                                revision)
+        int32_t                                    revision,
+        const GraphDocDto&                         document)
     {
         auto root = Das::Utils::MakeYyjsonObject();
         auto obj  = root.as_object();
         (*obj)[std::string_view("ok")]       = r.Ok();
         (*obj)[std::string_view("revision")] = revision;
 
-        if (!r.Ok())
+        if (r.Ok())
+        {
+            // The contract authoring doc is the canonical persisted state
+            // (acceptedProperties) and the refreshed document the scheduler
+            // returns to the client.
+            (*obj)[std::string_view("acceptedProperties")] =
+                GR::Contract::SerializeDocument(document);
+            (*obj)[std::string_view("document")] =
+                GR::Contract::SerializeDocument(document);
+            (*obj)[std::string_view("sourceFingerprint")] =
+                std::make_pair(std::string_view(document.fingerprint),
+                               yyjson::copy_string);
+        }
+        else
         {
             std::string_view kind_sv = "InvalidOp";
             switch (r.error_kind)
@@ -598,7 +778,8 @@ DAS_C_API DasResult GraphAuthoringSessionApplyChange(
             auto r = WrapValue(
                 BuildChangeResultJson(
                     {GR::Contract::ChangeErrorKind::InvalidOp, "empty change request"},
-                    p->document.version),
+                    p->document.version,
+                    p->document),
                 pp_out_result_json);
             return r;
         }
@@ -609,12 +790,13 @@ DAS_C_API DasResult GraphAuthoringSessionApplyChange(
             return WrapValue(
                 BuildChangeResultJson(
                     {GR::Contract::ChangeErrorKind::InvalidOp, "malformed change request"},
-                    p->document.version),
+                    p->document.version,
+                    p->document),
                 pp_out_result_json);
         }
 
         auto          r = GR::Contract::ApplyAuthoringChange(p->document, change);
-        return WrapValue(BuildChangeResultJson(r, p->document.version),
+        return WrapValue(BuildChangeResultJson(r, p->document.version, p->document),
                          pp_out_result_json);
     }
     catch (const std::bad_alloc&)

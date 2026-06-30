@@ -8,6 +8,24 @@
   "language": "Cpp",
   "pluginFilenameExtension": "dll",
   "settings": {},
+  "tasks": {
+    "F4A2C9D1-7B3E-4D8A-A15F-C2E86B4D91A3": {
+      "pluginGuid": "C8A4B7D0-1E2F-3A5B-6C9D-7E8F0A1B2C3D",
+      "name": "das.graph",
+      "description": "GraphRuntime task with formSequence (linear) + graph (canvas) authoring",
+      "authoring": {
+        "factoryGuid": "EFC3D51E-B707-4702-97ED-8ADA923E2BF0",
+        "supportedKinds": [
+          "formSequence",
+          "graph"
+        ]
+      },
+      "executionComponent": {
+        "componentGuid": "F4A2C9D1-7B3E-4D8A-A15F-C2E86B4D91A3"
+      },
+      "descriptors": []
+    }
+  },
   "taskComponents": {
     "factories": [
       "E8D1A2B3-4C5F-6D7E-8A9B-0C1D2E3F4A5B"
