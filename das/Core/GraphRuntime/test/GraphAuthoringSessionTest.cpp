@@ -216,7 +216,7 @@ namespace
         EXPECT_NE(plan.find("executionOrder"), std::string::npos);
     }
 
-    TEST(GraphAuthoringSessionTest, E2E_UpgradeIsLosslessAndDowngradeTriggersLint)
+    TEST(GraphAuthoringSessionTest, E2E_UpgradeIsLossless)
     {
         // Seed linear, capture nodes, upgrade (lossless), downgrade, and check
         // the linearity lint fires on the resulting linear store.

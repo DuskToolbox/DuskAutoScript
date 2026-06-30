@@ -286,16 +286,6 @@ namespace Contract
         return true;
     }
 
-    bool DowngradeToFormSequence(Dto::GraphDocumentDto& document) noexcept
-    {
-        if (IsLinear(document))
-        {
-            return false;
-        }
-        document.tags.emplace_back(kLinearTag);
-        return true;
-    }
-
     yyjson::value SerializeDocument(const Dto::GraphDocumentDto& document)
     {
         // Build the serialisable shape and create the yyjson document with
@@ -593,6 +583,16 @@ namespace Contract
 
             // Re-project the mutated sequence back onto the store, preserving
             // identity (tags / fingerprint). version is bumped by the caller.
+            //
+            // PREMISE: a linear (formsequence) document is a single signal
+            // chain — it carries no non-signal structure. Project() rebuilds
+            // nodes + the linear signal edges from scratch, so any non-signal
+            // data edges that hypothetically existed on the store are dropped
+            // by this full rebuild. That is correct for the linear mode: a
+            // document that needed non-signal edges would not be linear and
+            // would be in graph mode (where GraphAuthoring mutates in place
+            // and never comes through this path). Do not route a non-linear
+            // document through linear-mode changes.
             auto rebuilt = FormSequenceProjector::Project(seq);
             rebuilt.tags       = std::move(document.tags);
             rebuilt.fingerprint = document.fingerprint;
