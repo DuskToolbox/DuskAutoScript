@@ -1,0 +1,435 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://das.local/schemas/task-authoring-http.schema.json",
+  "title": "DAS Task Authoring HTTP Contract",
+  "$comment": "DAS-81 finalized authoring document contract. Decisions: (1) id = in-document instance identity (opaque; GraphTask=node_id / MaaPI=task.name); two-layer identity — node_id (graph-local, all nodes) vs entry_id (cross-document, only entryRef subgraph nodes, carried in entryRef not id). (2) componentGuid = execution component type (opaque GUID; graph-view routing/icon only; MUST NOT be used for business discrimination; business via id+settings+fields[]); fields[] = data-driven render descriptors (editor's sole form source, reuses properties-mode PropertySchema format: valueType+inputType two-dimensional); type field renamed to componentGuid. (3) ordering via moveSequenceItem (existing op); per-item enabled (new) toggled via setValue(field=enabled). (DAS-81) entryRef added for subgraph nodes (container-produced, leaf plugins like MaaPI never produce). Persistence per D-41: acceptedProperties = plugin-owned source blob (persisted, fed to IDasTask::Do); document = regenerated UI view (not persisted). Implementation: GraphTask D-41 compliance + type->componentGuid rename + entryRef emit = DAS-77 follow-up; MaaPI projection restructure = DAS-78.",
+  "oneOf": [
+    { "$ref": "#/$defs/AuthoringGetRequest" },
+    { "$ref": "#/$defs/AuthoringApplyRequest" },
+    { "$ref": "#/$defs/AuthoringCompileRequest" },
+    { "$ref": "#/$defs/AuthoringGetSuccessResponse" },
+    { "$ref": "#/$defs/AuthoringApplySuccessResponse" },
+    { "$ref": "#/$defs/AuthoringCompileSuccessResponse" },
+    { "$ref": "#/$defs/AuthoringErrorResponse" }
+  ],
+  "$defs": {
+    "JsonValue": {
+      "oneOf": [
+        { "type": "null" },
+        { "type": "boolean" },
+        { "type": "number" },
+        { "type": "string" },
+        {
+          "type": "array",
+          "items": { "$ref": "#/$defs/JsonValue" }
+        },
+        {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/JsonValue" }
+        }
+      ]
+    },
+    "Endpoint": {
+      "type": "object",
+      "required": ["method", "path"],
+      "additionalProperties": false,
+      "properties": {
+        "method": { "const": "POST" },
+        "path": {
+          "type": "string",
+          "pattern": "^/api/v1/scheduler/[^/]+/tasks/[0-9]+/authoring/(get|apply|compile)$"
+        }
+      }
+    },
+    "Diagnostic": {
+      "type": "object",
+      "required": ["severity", "message"],
+      "additionalProperties": true,
+      "properties": {
+        "code": { "type": "string" },
+        "severity": {
+          "type": "string",
+          "enum": ["info", "warning", "error"]
+        },
+        "message": { "type": "string" },
+        "path": {
+          "oneOf": [
+            { "type": "string" },
+            {
+              "type": "array",
+              "items": {
+                "oneOf": [
+                  { "type": "string" },
+                  { "type": "integer", "minimum": 0 }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    },
+    "AuthoringDocument": {
+      "type": "object",
+      "required": ["contractVersion", "kind", "revision"],
+      "additionalProperties": true,
+      "properties": {
+        "contractVersion": { "type": "integer", "minimum": 1 },
+        "kind": {
+          "type": "string",
+          "enum": ["formSequence", "graph"],
+          "$comment": "Open enumeration: formSequence/graph are the two built-in kinds. Third-party plugins may define custom kinds (extensibility per DAS-81); consumers must ignore unknown kinds gracefully."
+        },
+        "revision": { "type": "integer", "minimum": 0 },
+        "sourceFingerprint": { "type": "string" },
+        "properties": { "$ref": "#/$defs/JsonValue" },
+        "diagnostics": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/Diagnostic" }
+        },
+        "formSequence": { "$ref": "#/$defs/FormSequenceDocument" },
+        "graph": { "$ref": "#/$defs/GraphDocument" },
+        "actionCatalog": { "$ref": "#/$defs/ActionCatalog" }
+      }
+    },
+    "FormSequenceDocument": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "fields": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/FieldDescriptor" },
+          "$comment": "Doc-level fields (legacy flat-field form shape; MaaPI pre-DAS-78). DAS-78 restructures MaaPI to task-item sequence with per-item fields[]."
+        },
+        "sequence": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/SequenceItem" }
+        }
+      }
+    },
+    "FieldDescriptor": {
+      "$comment": "Data-driven render descriptor, reuses properties-mode PropertySchema format (DAS-81). Two-dimensional typing: valueType = data type, inputType = UI control type. Editor renders solely from these descriptors (MakePropertyField), no componentGuid/type dispatch.",
+      "type": "object",
+      "required": ["name", "valueType"],
+      "additionalProperties": true,
+      "properties": {
+        "name": { "type": "string", "$comment": "Field key (setValue addressing)" },
+        "label": { "type": "string" },
+        "valueType": {
+          "type": "integer",
+          "$comment": "Data type: 0=int 1=uint 2=float 4=string 8=bool 16=jsonObject 32=jsonArray (matches existing ValueType codes)"
+        },
+        "inputType": {
+          "type": "integer",
+          "$comment": "UI control type: 0=plain 1=select(single) 2=multiselect 3=long-input 4=region-select(rect/roi, GraphTask) (extensible)"
+        },
+        "value": { "$ref": "#/$defs/JsonValue" },
+        "description": { "type": "string", "$comment": "tooltip/description" },
+        "required": { "type": "boolean" },
+        "readonly": { "type": "boolean" },
+        "candidates": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/JsonValue" },
+          "$comment": "select/multiselect options (MaaPI: catalog-derived, dynamic; properties-mode: static)"
+        },
+        "icon": { "type": "string", "$comment": "optional: field/node icon (extension)" },
+        "group": { "type": "string", "$comment": "optional: field grouping (extension)" },
+        "dependency": { "$ref": "#/$defs/JsonValue", "$comment": "optional: conditional display rule {field, equals} (extension)" },
+        "rules": { "$ref": "#/$defs/JsonValue", "$comment": "optional: validation {min,max,pattern,...} beyond required (extension)" },
+        "unit": { "type": "string", "$comment": "optional: display unit e.g. 'ms' (extension)" },
+        "placeholder": { "type": "string", "$comment": "optional: input placeholder (extension)" }
+      }
+    },
+    "EntryRef": {
+      "$comment": "Subgraph reference (DAS-81 entryRef). Only produced by container plugins (GraphTask); leaf executors (MaaPI) never produce entryRef. The referenced entry owns its own acceptedProperties (source) and its own regenerated document (accessed via drill-in by entryId).",
+      "type": "object",
+      "required": ["entryId"],
+      "additionalProperties": true,
+      "properties": {
+        "entryId": { "type": "integer", "minimum": 0, "$comment": "repository entry id (cross-document identity, distinct from node id)" },
+        "expectedRevision": { "type": "integer", "minimum": 0 },
+        "sourceFingerprint": { "type": "string" }
+      }
+    },
+    "SequenceItem": {
+      "$comment": "One step in a formSequence (DAS-81). id = in-document instance identity (opaque; GraphTask=node_id, MaaPI=task.name). componentGuid = execution component type (graph-view routing/icon only, NOT business discrimination). fields[] = data-driven render descriptors (editor's sole form source). enabled = per-item inclusion toggle (decision point 3). entryRef = subgraph reference (container-only, optional).",
+      "type": "object",
+      "required": ["id", "componentGuid"],
+      "additionalProperties": true,
+      "properties": {
+        "id": { "type": "string", "$comment": "in-document instance identity (opaque); change-op addressing + list key" },
+        "componentGuid": { "type": "string", "$comment": "execution component type GUID (opaque); graph-view routing/icon; NOT for business discrimination (renamed from 'type' per DAS-81 decision 2)" },
+        "targetKind": {
+          "type": "string",
+          "enum": ["componentRef", "entryRef"],
+          "$comment": "node target discriminator: componentRef=leaf executor, entryRef=subgraph reference"
+        },
+        "entryRef": { "$ref": "#/$defs/EntryRef", "$comment": "present only when targetKind=entryRef (subgraph node)" },
+        "fields": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/FieldDescriptor" },
+          "$comment": "data-driven render descriptors for this item's config (PropertySchema format)"
+        },
+        "settings": { "$ref": "#/$defs/JsonValue", "$comment": "instance config values" },
+        "enabled": { "type": "boolean", "$comment": "per-item inclusion toggle (decision point 3); toggled via setValue(field=enabled). MaaPI maps pi.tasks[].enabled" },
+        "children": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/SequenceItem" },
+          "$comment": "nested sub-sequence (breadcrumb drill-down within same doc)"
+        }
+      }
+    },
+    "GraphDocument": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "nodes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/GraphNode" }
+        },
+        "connections": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/GraphConnection" }
+        }
+      }
+    },
+    "GraphNode": {
+      "$comment": "One canvas node (graph mode, DAS-81). Same field semantics as SequenceItem: id=instance identity, componentGuid=execution component type (NOT business), fields[]=data-driven render, entryRef=subgraph reference (container-only).",
+      "type": "object",
+      "required": ["id", "componentGuid"],
+      "additionalProperties": true,
+      "properties": {
+        "id": { "type": "string", "$comment": "in-document instance identity (opaque); GraphTask=node_id" },
+        "componentGuid": { "type": "string", "$comment": "execution component type GUID (opaque); graph-view routing/icon; NOT for business discrimination" },
+        "targetKind": {
+          "type": "string",
+          "enum": ["componentRef", "entryRef"]
+        },
+        "entryRef": { "$ref": "#/$defs/EntryRef", "$comment": "present only when targetKind=entryRef (subgraph node)" },
+        "fields": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/FieldDescriptor" }
+        },
+        "settings": { "$ref": "#/$defs/JsonValue" }
+      }
+    },
+    "GraphConnection": {
+      "type": "object",
+      "required": ["fromNodeId", "fromPortId", "toNodeId", "toPortId"],
+      "additionalProperties": true,
+      "properties": {
+        "fromNodeId": { "type": "string" },
+        "fromPortId": { "type": "string" },
+        "toNodeId": { "type": "string" },
+        "toPortId": { "type": "string" },
+        "edgeType": { "type": "string", "enum": ["data", "signal"], "$comment": "data=data-flow edge, signal=execution-gating edge (DAS-60)" }
+      }
+    },
+    "ActionCatalog": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "actions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ActionCatalogEntry" }
+        }
+      }
+    },
+    "ActionCatalogEntry": {
+      "type": "object",
+      "required": ["componentGuid", "name"],
+      "additionalProperties": true,
+      "properties": {
+        "componentGuid": { "type": "string" },
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "category": { "type": "string" }
+      }
+    },
+    "AuthoringChange": {
+      "type": "object",
+      "required": ["op"],
+      "additionalProperties": true,
+      "properties": {
+        "op": {
+          "type": "string",
+          "enum": [
+            "setValue",
+            "applyPreset",
+            "addSequenceItem",
+            "moveSequenceItem",
+            "removeSequenceItem",
+            "addNode",
+            "removeNode",
+            "connectPorts",
+            "disconnectPorts",
+            "updateNodeConfig"
+          ]
+        },
+        "path": {
+          "oneOf": [
+            { "type": "string" },
+            {
+              "type": "array",
+              "items": {
+                "oneOf": [
+                  { "type": "string" },
+                  { "type": "integer", "minimum": 0 }
+                ]
+              }
+            }
+          ]
+        },
+        "value": { "$ref": "#/$defs/JsonValue" },
+        "nodeId": { "type": "string" },
+        "componentGuid": { "type": "string" },
+        "fromNodeId": { "type": "string" },
+        "fromPortId": { "type": "string" },
+        "toNodeId": { "type": "string" },
+        "toPortId": { "type": "string" }
+      }
+    },
+    "AuthoringGetRequest": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "endpoint": { "$ref": "#/$defs/Endpoint" },
+        "currentSettings": { "$ref": "#/$defs/JsonValue" }
+      }
+    },
+    "AuthoringApplyRequest": {
+      "type": "object",
+      "required": ["baseRevision", "change"],
+      "additionalProperties": true,
+      "properties": {
+        "endpoint": { "$ref": "#/$defs/Endpoint" },
+        "baseRevision": { "type": "integer", "minimum": 0 },
+        "change": { "$ref": "#/$defs/AuthoringChange" }
+      }
+    },
+    "AuthoringCompileRequest": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "endpoint": { "$ref": "#/$defs/Endpoint" },
+        "baseRevision": { "type": "integer", "minimum": 0 },
+        "properties": { "$ref": "#/$defs/JsonValue" },
+        "document": { "$ref": "#/$defs/AuthoringDocument" }
+      }
+    },
+    "HttpSuccessEnvelope": {
+      "type": "object",
+      "required": ["code", "message", "data"],
+      "additionalProperties": true,
+      "properties": {
+        "code": { "const": 0 },
+        "message": { "type": "string" },
+        "data": { "$ref": "#/$defs/JsonValue" }
+      }
+    },
+    "AuthoringGetSuccessResponse": {
+      "allOf": [
+        { "$ref": "#/$defs/HttpSuccessEnvelope" },
+        {
+          "type": "object",
+          "properties": {
+            "data": {
+              "type": "object",
+              "required": ["document"],
+              "additionalProperties": true,
+              "properties": {
+                "document": { "$ref": "#/$defs/AuthoringDocument" }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "AuthoringApplySuccessResponse": {
+      "allOf": [
+        { "$ref": "#/$defs/HttpSuccessEnvelope" },
+        {
+          "type": "object",
+          "properties": {
+            "data": {
+              "type": "object",
+              "required": ["revision", "properties", "document"],
+              "additionalProperties": true,
+              "properties": {
+                "revision": { "type": "integer", "minimum": 0 },
+                "properties": { "$ref": "#/$defs/JsonValue" },
+                "document": { "$ref": "#/$defs/AuthoringDocument" },
+                "diagnostics": {
+                  "type": "array",
+                  "items": { "$ref": "#/$defs/Diagnostic" }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "AuthoringCompileSuccessResponse": {
+      "allOf": [
+        { "$ref": "#/$defs/HttpSuccessEnvelope" },
+        {
+          "type": "object",
+          "properties": {
+            "data": {
+              "type": "object",
+              "required": ["ok"],
+              "additionalProperties": true,
+              "properties": {
+                "ok": { "type": "boolean" },
+                "runtimePreview": { "$ref": "#/$defs/JsonValue" },
+                "diagnostics": {
+                  "type": "array",
+                  "items": { "$ref": "#/$defs/Diagnostic" }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "AuthoringErrorKind": {
+      "type": "string",
+      "enum": [
+        "taskNotFound",
+        "taskUnavailable",
+        "capabilityMissing",
+        "revisionConflict",
+        "authoringValidationFailed",
+        "pluginFailure",
+        "componentFailure",
+        "persistenceFailure",
+        "invalidRequest"
+      ]
+    },
+    "AuthoringErrorResponse": {
+      "type": "object",
+      "required": ["code", "message", "data"],
+      "additionalProperties": true,
+      "properties": {
+        "code": {
+          "type": "integer",
+          "not": { "const": 0 }
+        },
+        "message": { "type": "string" },
+        "data": {
+          "type": "object",
+          "required": ["errorKind"],
+          "additionalProperties": true,
+          "properties": {
+            "errorKind": { "$ref": "#/$defs/AuthoringErrorKind" },
+            "diagnostics": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/Diagnostic" }
+            },
+            "baseRevision": { "type": "integer", "minimum": 0 },
+            "currentRevision": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    }
+  }
+}
