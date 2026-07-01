@@ -17,6 +17,7 @@
 #include <filesystem>
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <thread>
 
@@ -92,21 +93,21 @@ namespace
         return parsed ? std::move(*parsed) : Das::Utils::MakeYyjsonObject();
     }
 
-    bool ArrayHasFieldWithValuePath(
+    bool FormSequenceHasField(
         const yyjson::value& document,
-        std::string_view     value_path)
+        std::string_view     name)
     {
         auto obj = document.as_object();
-        if (!obj || !obj->contains(std::string_view("schema")))
+        if (!obj || !obj->contains(std::string_view("formSequence")))
         {
             return false;
         }
-        auto schema = (*obj)[std::string_view("schema")].as_object();
-        if (!schema || !schema->contains(std::string_view("fields")))
+        auto fs = (*obj)[std::string_view("formSequence")].as_object();
+        if (!fs || !fs->contains(std::string_view("fields")))
         {
             return false;
         }
-        auto fields = (*schema)[std::string_view("fields")].as_array();
+        auto fields = (*fs)[std::string_view("fields")].as_array();
         if (!fields)
         {
             return false;
@@ -114,10 +115,47 @@ namespace
         for (auto it = fields->begin(); it != fields->end(); ++it)
         {
             auto field = it->as_object();
-            if (field && field->contains(std::string_view("valuePath"))
-                && (*field)[std::string_view("valuePath")].as_string().value_or(
-                       "")
-                       == value_path)
+            if (field && field->contains(std::string_view("name"))
+                && (*field)[std::string_view("name")].as_string().value_or("")
+                       == name)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void CollectKeysRecursive(
+        const yyjson::value&   value,
+        std::set<std::string>& keys)
+    {
+        if (auto obj = value.as_object())
+        {
+            for (const auto& [key, val] : *obj)
+            {
+                keys.emplace(std::string(key));
+                CollectKeysRecursive(val, keys);
+            }
+            return;
+        }
+        if (auto arr = value.as_array())
+        {
+            for (auto it = arr->begin(); it != arr->end(); ++it)
+            {
+                CollectKeysRecursive(*it, keys);
+            }
+        }
+    }
+
+    bool ContainsAnyKey(
+        const yyjson::value&                    document,
+        std::initializer_list<std::string_view> keys)
+    {
+        std::set<std::string> all;
+        CollectKeysRecursive(document, all);
+        for (auto key : keys)
+        {
+            if (all.count(std::string(key)) != 0)
             {
                 return true;
             }
@@ -353,8 +391,8 @@ TEST_F(MaapiAuthoringFixture, ApplyPathFailurePersistsDiagnostics)
     EXPECT_FALSE(diagnostics->empty());
 
     auto document = (*obj)[std::string_view("document")];
-    EXPECT_TRUE(ArrayHasFieldWithValuePath(document, "adapter.interfacePath"));
-    EXPECT_FALSE(ArrayHasFieldWithValuePath(document, "pi.controllerName"));
+    EXPECT_TRUE(FormSequenceHasField(document, "adapter.interfacePath"));
+    EXPECT_FALSE(FormSequenceHasField(document, "pi.controllerName"));
 }
 
 TEST_F(MaapiAuthoringFixture, ApplyPathSuccessRefreshesDocument)
@@ -377,13 +415,24 @@ TEST_F(MaapiAuthoringFixture, ApplyPathSuccessRefreshesDocument)
         "AuthoringFixture:1.0");
 
     auto document = (*obj)[std::string_view("document")];
-    EXPECT_TRUE(ArrayHasFieldWithValuePath(document, "pi.controllerName"));
-    EXPECT_TRUE(ArrayHasFieldWithValuePath(document, "pi.resourceName"));
-    EXPECT_TRUE(ArrayHasFieldWithValuePath(document, "pi.options.stage"));
-    EXPECT_TRUE(ArrayHasFieldWithValuePath(document, "pi.options.retry"));
-    EXPECT_TRUE(
-        ArrayHasFieldWithValuePath(document, "pi.options.use-medicine"));
-    EXPECT_TRUE(ArrayHasFieldWithValuePath(document, "pi.options.notify"));
+    EXPECT_TRUE(FormSequenceHasField(document, "pi.controllerName"));
+    EXPECT_TRUE(FormSequenceHasField(document, "pi.resourceName"));
+    EXPECT_TRUE(FormSequenceHasField(document, "pi.options.stage"));
+    EXPECT_TRUE(FormSequenceHasField(document, "pi.options.retry"));
+    EXPECT_TRUE(FormSequenceHasField(document, "pi.options.use-medicine"));
+    EXPECT_TRUE(FormSequenceHasField(document, "pi.options.notify"));
+    auto doc_obj = document.as_object();
+    ASSERT_TRUE(doc_obj.has_value());
+    EXPECT_EQ(
+        (*doc_obj)[std::string_view("contractVersion")].as_int().value_or(0),
+        1);
+    EXPECT_FALSE((*doc_obj)[std::string_view("sourceFingerprint")]
+                     .as_string()
+                     .value_or("")
+                     .empty());
+    EXPECT_FALSE(ContainsAnyKey(
+        document,
+        {"valuePath", "sourceLevel", "piRef", "schema"}));
 }
 
 TEST_F(MaapiAuthoringFixture, PiValuePathsPersistTasksAndOptions)
@@ -556,6 +605,116 @@ TEST_F(MaapiAuthoringFixture, PresetAndOrphansProjectIntoSettings)
     ASSERT_TRUE(orphans.has_value());
     ASSERT_EQ(orphans->size(), 1u);
     EXPECT_EQ((*orphans)[0].as_string().value_or(""), "pi.tasks:MissingTask");
+}
+
+TEST_F(MaapiAuthoringFixture, ContractDocShapeHasFormSequenceAndNoPrivateFields)
+{
+    auto interface_path =
+        FixturePath("interface_authoring.jsonc").generic_string();
+    auto session = CreateSession(
+        "{\"adapter\":{\"interfacePath\":\"" + interface_path
+        + "\"},\"pi\":{\"tasks\":[{\"taskName\":\"DailyFarm\","
+          "\"enabled\":true}]}}");
+
+    DasPtr<Das::ExportInterface::IDasJson> result_json;
+    ASSERT_EQ(session->GetDocument({}, result_json.Put()), DAS_S_OK);
+    auto document = ReadJsonInterface(result_json.Get());
+    auto doc_obj = document.as_object();
+    ASSERT_TRUE(doc_obj.has_value());
+    EXPECT_EQ(
+        (*doc_obj)[std::string_view("contractVersion")].as_int().value_or(0),
+        1);
+    EXPECT_FALSE((*doc_obj)[std::string_view("sourceFingerprint")]
+                     .as_string()
+                     .value_or("")
+                     .empty());
+
+    auto fs = (*doc_obj)[std::string_view("formSequence")].as_object();
+    ASSERT_TRUE(fs.has_value());
+    EXPECT_TRUE(fs->contains(std::string_view("fields")));
+    auto sequence = (*fs)[std::string_view("sequence")].as_array();
+    ASSERT_TRUE(sequence.has_value());
+    ASSERT_FALSE(sequence->empty());
+
+    auto first = (*sequence)[0].as_object();
+    ASSERT_TRUE(first.has_value());
+    EXPECT_EQ(
+        (*first)[std::string_view("id")].as_string().value_or(""),
+        "DailyFarm");
+    EXPECT_EQ(
+        (*first)[std::string_view("componentGuid")].as_string().value_or(""),
+        "69f20008-0000-4000-8000-000000000001");
+    EXPECT_TRUE(first->contains(std::string_view("fields")));
+    EXPECT_TRUE(first->contains(std::string_view("settings")));
+    EXPECT_TRUE(first->contains(std::string_view("enabled")));
+
+    EXPECT_FALSE(ContainsAnyKey(
+        document,
+        {"valuePath", "sourceLevel", "piRef", "schema"}));
+}
+
+TEST_F(MaapiAuthoringFixture, ItemLevelSetValueTogglesTaskEnabled)
+{
+    auto interface_path =
+        FixturePath("interface_authoring.jsonc").generic_string();
+    auto session = CreateSession(
+        "{\"adapter\":{\"interfacePath\":\"" + interface_path
+        + "\"},\"pi\":{\"tasks\":[{\"taskName\":\"DailyFarm\","
+          "\"enabled\":true}]}}");
+
+    auto change = ParseDasJson(
+        "{\"baseRevision\":0,\"kind\":\"setValue\",\"payload\":{\"nodeId\":"
+        "\"DailyFarm\",\"field\":\"enabled\",\"value\":false}}");
+    DasPtr<Das::ExportInterface::IDasJson> result_json;
+    ASSERT_EQ(session->ApplyChange(change.Get(), result_json.Put()), DAS_S_OK);
+    auto result = ReadJsonInterface(result_json.Get());
+    auto accepted =
+        (*result.as_object())[std::string_view("acceptedProperties")]
+            .as_object();
+    ASSERT_TRUE(accepted.has_value());
+    auto pi = (*accepted)[std::string_view("pi")].as_object();
+    ASSERT_TRUE(pi.has_value());
+    auto tasks = (*pi)[std::string_view("tasks")].as_array();
+    ASSERT_TRUE(tasks.has_value());
+    ASSERT_EQ(tasks->size(), 1u);
+    EXPECT_FALSE((*tasks)[0]
+                     .as_object()
+                     ->operator[](std::string_view("enabled"))
+                     .as_bool()
+                     .value_or(true));
+}
+
+TEST_F(MaapiAuthoringFixture, RemoveSequenceItemDropsTaskFromPiTasks)
+{
+    auto interface_path =
+        FixturePath("interface_authoring.jsonc").generic_string();
+    auto session = CreateSession(
+        "{\"adapter\":{\"interfacePath\":\"" + interface_path
+        + "\"},\"pi\":{\"tasks\":[{\"taskName\":\"DailyFarm\","
+          "\"enabled\":true},{\"taskName\":\"Award\",\"enabled\":true}]}}");
+
+    auto change = ParseDasJson(
+        "{\"baseRevision\":0,\"kind\":\"removeSequenceItem\",\"payload\":{"
+        "\"nodeId\":\"DailyFarm\"}}");
+    DasPtr<Das::ExportInterface::IDasJson> result_json;
+    ASSERT_EQ(session->ApplyChange(change.Get(), result_json.Put()), DAS_S_OK);
+    auto result = ReadJsonInterface(result_json.Get());
+    auto accepted =
+        (*result.as_object())[std::string_view("acceptedProperties")]
+            .as_object();
+    ASSERT_TRUE(accepted.has_value());
+    auto pi = (*accepted)[std::string_view("pi")].as_object();
+    ASSERT_TRUE(pi.has_value());
+    auto tasks = (*pi)[std::string_view("tasks")].as_array();
+    ASSERT_TRUE(tasks.has_value());
+    ASSERT_EQ(tasks->size(), 1u);
+    EXPECT_EQ(
+        (*tasks)[0]
+            .as_object()
+            ->operator[](std::string_view("taskName"))
+            .as_string()
+            .value_or(""),
+        "Award");
 }
 
 // ---------------------------------------------------------------------------
