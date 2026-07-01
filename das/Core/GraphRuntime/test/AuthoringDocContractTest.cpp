@@ -401,14 +401,16 @@ namespace
 
         AuthoringChange add;
         add.op   = "addNode";
-        add.node = GraphNode{"n1", "{g1}", MakeSettings(1.0)};
+        add.node = GraphNode{.id = "n1", .component_guid = "{g1}",
+                             .settings = MakeSettings(1.0)};
         ASSERT_TRUE(ApplyAuthoringChange(doc, add).Ok());
         ASSERT_EQ(doc.nodes.size(), 1u);
         EXPECT_EQ(doc.version, 1);
 
         AuthoringChange add2;
         add2.op   = "addNode";
-        add2.node = GraphNode{"n2", "{g2}", MakeSettings(2.0)};
+        add2.node = GraphNode{.id = "n2", .component_guid = "{g2}",
+                              .settings = MakeSettings(2.0)};
         ASSERT_TRUE(ApplyAuthoringChange(doc, add2).Ok());
 
         AuthoringChange conn;
@@ -469,7 +471,8 @@ namespace
 
         AuthoringChange add;
         add.op = "addNode";
-        add.node = GraphNode{"n1", "{g1}", MakeSettings(0.0)};
+        add.node = GraphNode{.id = "n1", .component_guid = "{g1}",
+                             .settings = MakeSettings(0.0)};
         auto r = ApplyAuthoringChange(doc, add);
         ASSERT_FALSE(r.Ok());
         EXPECT_EQ(r.error_kind, ChangeErrorKind::DuplicateNodeId);
@@ -494,7 +497,8 @@ namespace
 
         AuthoringChange add;
         add.op   = "addSequenceItem";
-        add.item = SequenceItem{"c", "{gc}", MakeSettings(3.0)};
+        add.item = SequenceItem{.id = "c", .component_guid = "{gc}",
+                                .settings = MakeSettings(3.0)};
         ASSERT_TRUE(ApplyAuthoringChange(doc, add).Ok());
 
         // Chain extended: a->b->c (two signal edges), still linear.
@@ -561,7 +565,8 @@ namespace
 
         AuthoringChange bad;
         bad.op = "addNode";
-        bad.node = GraphNode{"x", "{g}", MakeSettings(0.0)};
+        bad.node = GraphNode{.id = "x", .component_guid = "{g}",
+                             .settings = MakeSettings(0.0)};
         auto r = ApplyAuthoringChange(doc, bad);
         EXPECT_FALSE(r.Ok());
         EXPECT_EQ(r.error_kind, ChangeErrorKind::InvalidOp);
