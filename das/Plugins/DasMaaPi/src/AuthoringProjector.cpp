@@ -1114,6 +1114,64 @@ namespace Das::Plugins::DasMaaPi
         {
             return;
         }
+        const auto node_id = OptionalString(*payload, "nodeId");
+        const auto field = OptionalString(*payload, "field");
+        if (node_id && field && payload->contains(std::string_view("value")))
+        {
+            const auto& item_value = (*payload)[std::string_view("value")];
+            const std::string task_name = *node_id;
+            auto              ensure_task = [&]() -> MaapiPiTaskSettingsDto*
+            {
+                auto* existing = FindSelectedTask(settings, task_name);
+                if (existing)
+                {
+                    return existing;
+                }
+                if (catalog && HasTask(*catalog, task_name))
+                {
+                    MaapiPiTaskSettingsDto selected;
+                    selected.task_name = task_name;
+                    settings.pi.tasks.emplace_back(std::move(selected));
+                    return &settings.pi.tasks.back();
+                }
+                return nullptr;
+            };
+            if (*field == "enabled")
+            {
+                if (item_value.is_bool())
+                {
+                    if (auto* task = ensure_task())
+                    {
+                        task->enabled = item_value.as_bool().value_or(true);
+                    }
+                }
+                return;
+            }
+            constexpr std::string_view kOptionFieldPrefix = "options.";
+            if (field->starts_with(kOptionFieldPrefix) && catalog)
+            {
+                auto option_name = field->substr(kOptionFieldPrefix.size());
+                if (auto* task = ensure_task())
+                {
+                    if (item_value.is_null())
+                    {
+                        RemoveOption(task->options, option_name);
+                        return;
+                    }
+                    if (const auto* option = FindOption(*catalog, option_name))
+                    {
+                        auto parsed = ParseOptionValue(*option, item_value);
+                        if (parsed)
+                        {
+                            RemoveOption(task->options, option_name);
+                            UpsertOption(task->options, std::move(*parsed));
+                        }
+                    }
+                }
+                return;
+            }
+            return;
+        }
         auto path_opt = OptionalString(*payload, "valuePath");
         if (!path_opt)
         {
