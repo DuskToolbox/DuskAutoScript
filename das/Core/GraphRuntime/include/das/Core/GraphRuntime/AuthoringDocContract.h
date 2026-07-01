@@ -62,17 +62,30 @@ namespace Contract
         std::optional<std::string>  source_fingerprint;
     };
 
-    /// Data-driven render descriptor (DAS-81 FieldDescriptor, reuses the
-    /// properties-mode PropertySchema format). Two-dimensional typing:
-    /// value_type = data type, input_type = UI control type. Projected from
-    /// the node's settings so the editor can render the config form solely
-    /// from these descriptors.
+    /// Data-driven render descriptor (DAS-81 FieldDescriptor). Reuses the
+    /// properties-mode PropertySchema *field format* so the editor's single
+    /// MakePropertyField rendering covers both properties and authoring modes:
+    /// two-dimensional typing (value_type = data type, input_type = UI control
+    /// type) plus label/description/required/readonly/candidates.
+    ///
+    /// Source is dynamic: the authoring session regenerates these from the
+    /// store on each GetDocument/ApplyChange (it does NOT read static manifest
+    /// schema). The dynamically-derivable parts (name/valueType/inputType/
+    /// value) are filled from the node's current settings; metadata
+    /// (label/description/required/readonly/candidates) has no dynamic source
+    /// in the authoring session and defaults to empty/false until a dynamic
+    /// provider exists.
     struct FieldDescriptor
     {
-        std::string   name;
-        int32_t       value_type = 0;
-        int32_t       input_type = 0;
-        yyjson::value value;
+        std::string                   name;
+        std::string                   label;
+        int32_t                       value_type = 0;
+        int32_t                       input_type = 0;
+        yyjson::value                 value;
+        std::string                   description;
+        bool                          required = false;
+        bool                          readonly = false;
+        std::vector<yyjson::value>    candidates;
     };
 
     /// One canvas node in the public contract. componentGuid is sourced from

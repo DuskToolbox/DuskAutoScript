@@ -301,11 +301,29 @@ namespace
         const auto& fields = out.graph->nodes[0].fields;
         ASSERT_EQ(fields.size(), 4u);
 
+        // Dynamically-fillable parts come from the live settings.
+        EXPECT_EQ(fields[0].name, "threshold");
+        // Metadata hints carry schema-valid defaults (no dynamic source).
+        for (const auto& f : fields)
+        {
+            EXPECT_TRUE(f.label.empty());        // no dynamic label source
+            EXPECT_TRUE(f.description.empty());  // no dynamic description source
+            EXPECT_FALSE(f.required);            // default false
+            EXPECT_FALSE(f.readonly);            // default false
+            EXPECT_TRUE(f.candidates.empty());   // no enum source
+        }
+
         auto json = ToJson(doc);
         EXPECT_NE(json.find("\"fields\""), std::string::npos);
         EXPECT_NE(json.find("\"valueType\":2"), std::string::npos);
         EXPECT_NE(json.find("\"valueType\":0"), std::string::npos);
         EXPECT_NE(json.find("\"inputType\":0"), std::string::npos);
+        // The properties-mode PropertySchema shape keys are all emitted.
+        EXPECT_NE(json.find("\"label\""), std::string::npos);
+        EXPECT_NE(json.find("\"description\""), std::string::npos);
+        EXPECT_NE(json.find("\"required\""), std::string::npos);
+        EXPECT_NE(json.find("\"readonly\""), std::string::npos);
+        EXPECT_NE(json.find("\"candidates\""), std::string::npos);
     }
 
     TEST(AuthoringDocContractTest, SerializeSource_PersistsFullGraphDocumentDto)
