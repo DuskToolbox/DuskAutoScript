@@ -249,26 +249,131 @@ namespace Das::Plugins::DasMaaPi
             return arr;
         }
 
-        yyjson::value MakeField(
-            std::string_view id,
-            std::string_view kind,
-            std::string_view label,
-            std::string_view value_path,
-            std::string_view source_level,
-            std::string_view pi_ref = {})
+        yyjson::value MakePropertyField(
+            std::string_view     name,
+            std::string_view     label,
+            int                  value_type,
+            int                  input_type,
+            const yyjson::value& value,
+            const yyjson::value* candidates = nullptr)
         {
             yyjson::value field(Object());
             auto          obj = field.as_object();
-            (*obj)[std::string_view("id")] = JsonString(id);
-            (*obj)[std::string_view("kind")] = JsonString(kind);
+            (*obj)[std::string_view("name")] = JsonString(name);
             (*obj)[std::string_view("label")] = JsonString(label);
-            (*obj)[std::string_view("valuePath")] = JsonString(value_path);
-            (*obj)[std::string_view("sourceLevel")] = JsonString(source_level);
-            if (!pi_ref.empty())
+            (*obj)[std::string_view("valueType")] = value_type;
+            (*obj)[std::string_view("inputType")] = input_type;
+            (*obj)[std::string_view("value")] =
+                Das::Utils::CloneYyjsonValue(value);
+            if (candidates != nullptr)
             {
-                (*obj)[std::string_view("piRef")] = JsonString(pi_ref);
+                (*obj)[std::string_view("candidates")] =
+                    Das::Utils::CloneYyjsonValue(*candidates);
             }
             return field;
+        }
+
+        // PropertySchema valueType/inputType mapping from PiOption.dto.type.
+        // select→(4,1); checkbox→(32,2); switch→(8,0); input→pipeline_type
+        // int→(0,0)/float|double→(2,0)/else→(4,0); fallback→(4,0).
+        struct PropertyTypeMapping
+        {
+            int value_type;
+            int input_type;
+        };
+
+        PropertyTypeMapping MapOptionType(const PiOptionDto& dto)
+        {
+            if (dto.type == "select")
+            {
+                return {4, 1};
+            }
+            if (dto.type == "checkbox")
+            {
+                return {32, 2};
+            }
+            if (dto.type == "switch")
+            {
+                return {8, 0};
+            }
+            if (dto.type == "input" && !dto.inputs.empty()
+                && dto.inputs.front().pipeline_type)
+            {
+                const auto& pt = *dto.inputs.front().pipeline_type;
+                if (pt == "int")
+                {
+                    return {0, 0};
+                }
+                if (pt == "float" || pt == "double")
+                {
+                    return {2, 0};
+                }
+            }
+            return {4, 0};
+        }
+
+        yyjson::value OptionCandidates(const PiOptionDto& dto)
+        {
+            yyjson::value arr(Array());
+            for (const auto& item : dto.cases)
+            {
+                yyjson::value candidate(Object());
+                auto          obj = candidate.as_object();
+                (*obj)[std::string_view("name")] = JsonString(item.name);
+                if (item.label)
+                {
+                    (*obj)[std::string_view("label")] = JsonString(*item.label);
+                }
+                arr.as_array()->emplace_back(std::move(candidate));
+            }
+            return arr;
+        }
+
+        // Build a PropertySchema field for a pi option, projecting from catalog
+        // dto and seeding value from the current option settings (if any).
+        yyjson::value MakeOptionPropertyField(
+            std::string_view                field_name,
+            const PiOptionDto&              dto,
+            const MaapiPiOptionSettingsDto* current)
+        {
+            auto          mapping = MapOptionType(dto);
+            yyjson::value value(Das::Utils::MakeYyjsonObject());
+            auto          vobj = value.as_object();
+            if (current)
+            {
+                yyjson::value cases(Array());
+                for (const auto& selected_case : current->selected_cases)
+                {
+                    cases.as_array()->emplace_back(JsonString(selected_case));
+                }
+                (*vobj)[std::string_view("selectedCases")] = std::move(cases);
+                if (current->bool_value)
+                {
+                    (*vobj)[std::string_view("boolValue")] =
+                        *current->bool_value;
+                }
+                yyjson::value inputs(Object());
+                for (const auto& [key, input_value] : current->input_values)
+                {
+                    (*inputs.as_object())[std::string_view(key)] =
+                        JsonString(input_value);
+                }
+                (*vobj)[std::string_view("inputValues")] = std::move(inputs);
+            }
+            yyjson::value  candidates;
+            yyjson::value* candidates_ptr = nullptr;
+            if (mapping.input_type == 1 || mapping.input_type == 2)
+            {
+                candidates = OptionCandidates(dto);
+                candidates_ptr = &candidates;
+            }
+            return MakePropertyField(
+                field_name,
+                dto.label.value_or(dto.name),
+                mapping.value_type,
+                mapping.input_type,
+                value,
+                candidates_ptr);
         }
 
         yyjson::value TaskSettingsArray(
@@ -442,6 +547,50 @@ namespace Das::Plugins::DasMaaPi
             selected.task_name = catalog_task->dto.name;
             settings.pi.tasks.emplace_back(std::move(selected));
             return &settings.pi.tasks.back().options;
+        }
+
+        const MaapiPiOptionSettingsDto* FindOptionSettings(
+            const std::vector<MaapiPiOptionSettingsDto>& options,
+            std::string_view                             option_name)
+        {
+            auto it = std::find_if(
+                options.begin(),
+                options.end(),
+                [&](const MaapiPiOptionSettingsDto& item)
+                { return item.option_name == option_name; });
+            return it == options.end() ? nullptr : &*it;
+        }
+
+        const MaapiPiOptionSettingsDto* FindOptionSettingsEverywhere(
+            const AcceptedSettingsDto& settings,
+            std::string_view           option_name)
+        {
+            if (const auto* o =
+                    FindOptionSettings(settings.pi.global_options, option_name))
+            {
+                return o;
+            }
+            if (const auto* o = FindOptionSettings(
+                    settings.pi.resource_options,
+                    option_name))
+            {
+                return o;
+            }
+            if (const auto* o = FindOptionSettings(
+                    settings.pi.controller_options,
+                    option_name))
+            {
+                return o;
+            }
+            for (const auto& task : settings.pi.tasks)
+            {
+                if (const auto* o =
+                        FindOptionSettings(task.options, option_name))
+                {
+                    return o;
+                }
+            }
+            return nullptr;
         }
 
         void RemoveOption(
@@ -763,9 +912,133 @@ namespace Das::Plugins::DasMaaPi
     {
         yyjson::value document(Object());
         auto          obj = document.as_object();
-        (*obj)[std::string_view("version")] = 1;
+        (*obj)[std::string_view("contractVersion")] = 1;
         (*obj)[std::string_view("kind")] = "formSequence";
         (*obj)[std::string_view("revision")] = revision;
+
+        std::string fingerprint = "maapi-unparsed";
+        if (catalog)
+        {
+            fingerprint = catalog->name + ":" + catalog->version;
+        }
+        else if (settings.adapter.source_fingerprint)
+        {
+            fingerprint = *settings.adapter.source_fingerprint;
+        }
+        (*obj)[std::string_view("sourceFingerprint")] = JsonString(fingerprint);
+
+        yyjson::value form_sequence(Object());
+        auto          fs_obj = form_sequence.as_object();
+
+        yyjson::value fields(Array());
+
+        fields.as_array()->emplace_back(MakePropertyField(
+            "adapter.interfacePath",
+            "ProjectInterface path",
+            4,
+            0,
+            settings.adapter.interface_path
+                ? yyjson::value(*settings.adapter.interface_path)
+                : yyjson::value(std::string{})));
+        fields.as_array()->emplace_back(MakePropertyField(
+            "adapter.executionPolicy.failFast",
+            "Fail fast",
+            8,
+            0,
+            yyjson::value(settings.adapter.execution_policy.fail_fast)));
+
+        if (catalog)
+        {
+            auto controller_candidates = CandidateArray(catalog->controllers);
+            fields.as_array()->emplace_back(MakePropertyField(
+                "pi.controllerName",
+                "Controller",
+                4,
+                1,
+                settings.pi.controller_name
+                    ? yyjson::value(*settings.pi.controller_name)
+                    : yyjson::value(std::string{}),
+                &controller_candidates));
+            auto resource_candidates = CandidateArray(catalog->resources);
+            fields.as_array()->emplace_back(MakePropertyField(
+                "pi.resourceName",
+                "Resource",
+                4,
+                1,
+                settings.pi.resource_name
+                    ? yyjson::value(*settings.pi.resource_name)
+                    : yyjson::value(std::string{}),
+                &resource_candidates));
+            auto preset_candidates = CandidateArray(catalog->presets);
+            fields.as_array()->emplace_back(MakePropertyField(
+                "pi.presetName",
+                "Preset",
+                4,
+                1,
+                settings.pi.preset_name
+                    ? yyjson::value(*settings.pi.preset_name)
+                    : yyjson::value(std::string{}),
+                &preset_candidates));
+
+            for (const auto& option : catalog->options)
+            {
+                const auto* current =
+                    FindOptionSettingsEverywhere(settings, option.dto.name);
+                fields.as_array()->emplace_back(MakeOptionPropertyField(
+                    std::string{"pi.options." + option.dto.name},
+                    option.dto,
+                    current));
+            }
+        }
+        (*fs_obj)[std::string_view("fields")] = std::move(fields);
+
+        yyjson::value sequence(Array());
+        for (const auto& task : settings.pi.tasks)
+        {
+            yyjson::value item(Object());
+            auto          item_obj = item.as_object();
+            (*item_obj)[std::string_view("id")] = JsonString(task.task_name);
+            (*item_obj)[std::string_view("componentGuid")] =
+                JsonString("69f20008-0000-4000-8000-000000000001");
+
+            yyjson::value item_fields(Array());
+            if (catalog)
+            {
+                const auto* catalog_task = FindTask(*catalog, task.task_name);
+                if (catalog_task)
+                {
+                    for (const auto& option_name : catalog_task->dto.option)
+                    {
+                        const auto* option = FindOption(*catalog, option_name);
+                        if (!option)
+                        {
+                            continue;
+                        }
+                        const auto* current =
+                            FindOptionSettings(task.options, option_name);
+                        item_fields.as_array()->emplace_back(
+                            MakeOptionPropertyField(
+                                std::string{"options." + option_name},
+                                option->dto,
+                                current));
+                    }
+                }
+            }
+            (*item_obj)[std::string_view("fields")] = std::move(item_fields);
+
+            yyjson::value item_settings(Object());
+            auto          s_obj = item_settings.as_object();
+            (*s_obj)[std::string_view("enabled")] = task.enabled;
+            (*s_obj)[std::string_view("options")] =
+                OptionSettingsArray(task.options);
+            (*item_obj)[std::string_view("settings")] =
+                std::move(item_settings);
+            (*item_obj)[std::string_view("enabled")] = task.enabled;
+
+            sequence.as_array()->emplace_back(std::move(item));
+        }
+        (*fs_obj)[std::string_view("sequence")] = std::move(sequence);
+        (*obj)[std::string_view("formSequence")] = std::move(form_sequence);
 
         yyjson::value values(Object());
         auto          values_obj = values.as_object();
@@ -779,29 +1052,6 @@ namespace Das::Plugins::DasMaaPi
                 (*accepted_obj)[std::string_view("pi")];
         }
         (*obj)[std::string_view("values")] = std::move(values);
-
-        yyjson::value form_sequence(Array());
-        form_sequence.as_array()->emplace_back(MakeField(
-            "adapter.interfacePath",
-            "path",
-            "ProjectInterface path",
-            "adapter.interfacePath",
-            "adapter"));
-        form_sequence.as_array()->emplace_back(MakeField(
-            "adapter.executionPolicy.failFast",
-            "switch",
-            "Fail fast",
-            "adapter.executionPolicy.failFast",
-            "adapter"));
-
-        yyjson::value schema(Object());
-        yyjson::value fields(Array());
-        fields.as_array()->emplace_back(MakeField(
-            "adapter.interfacePath",
-            "path",
-            "ProjectInterface path",
-            "adapter.interfacePath",
-            "adapter"));
 
         yyjson::value catalog_json(Object());
         if (catalog)
@@ -817,85 +1067,7 @@ namespace Das::Plugins::DasMaaPi
                 CandidateArray(catalog->presets);
             (*catalog_obj)[std::string_view("groups")] =
                 CandidateArray(catalog->groups);
-
-            auto controller = MakeField(
-                "pi.controllerName",
-                "select",
-                "Controller",
-                "pi.controllerName",
-                "pi",
-                "controller");
-            (*controller.as_object())[std::string_view("candidates")] =
-                CandidateArray(catalog->controllers);
-            fields.as_array()->emplace_back(std::move(controller));
-            form_sequence.as_array()->emplace_back(MakeField(
-                "pi.controllerName",
-                "select",
-                "Controller",
-                "pi.controllerName",
-                "pi",
-                "controller"));
-
-            auto resource = MakeField(
-                "pi.resourceName",
-                "select",
-                "Resource",
-                "pi.resourceName",
-                "pi",
-                "resource");
-            (*resource.as_object())[std::string_view("candidates")] =
-                CandidateArray(catalog->resources);
-            fields.as_array()->emplace_back(std::move(resource));
-            form_sequence.as_array()->emplace_back(MakeField(
-                "pi.resourceName",
-                "select",
-                "Resource",
-                "pi.resourceName",
-                "pi",
-                "resource"));
-
-            auto preset = MakeField(
-                "pi.presetName",
-                "select",
-                "Preset",
-                "pi.presetName",
-                "preset",
-                "preset");
-            (*preset.as_object())[std::string_view("candidates")] =
-                CandidateArray(catalog->presets);
-            fields.as_array()->emplace_back(std::move(preset));
-
-            for (const auto& option : catalog->options)
-            {
-                auto field = MakeField(
-                    std::string{"pi.options." + option.dto.name},
-                    option.dto.type,
-                    option.dto.label.value_or(option.dto.name),
-                    std::string{"pi.options." + option.dto.name},
-                    "pi",
-                    std::string{"option:" + option.dto.name});
-                auto field_obj = field.as_object();
-                (*field_obj)[std::string_view("optionName")] =
-                    JsonString(option.dto.name);
-                (*field_obj)[std::string_view("sourceLevel")] =
-                    std::find_if(
-                        catalog->global_options.begin(),
-                        catalog->global_options.end(),
-                        [&](const PiOption& item)
-                        { return item.dto.name == option.dto.name; })
-                            == catalog->global_options.end()
-                        ? "task"
-                        : "global";
-                fields.as_array()->emplace_back(std::move(field));
-            }
         }
-        (*schema.as_object())[std::string_view("fields")] = std::move(fields);
-        (*obj)[std::string_view("schema")] = std::move(schema);
-
-        yyjson::value view(Object());
-        (*view.as_object())[std::string_view("formSequence")] =
-            std::move(form_sequence);
-        (*obj)[std::string_view("view")] = std::move(view);
         (*obj)[std::string_view("catalog")] = std::move(catalog_json);
         (*obj)[std::string_view("state")] = Object();
 
