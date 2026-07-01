@@ -169,7 +169,7 @@ namespace
         const auto& items = out.form_sequence->sequence;
         ASSERT_EQ(items.size(), 3u);
         EXPECT_EQ(items[0].id, "a");
-        EXPECT_EQ(items[0].type, "{ga}");
+        EXPECT_EQ(items[0].component_guid, "{ga}");
         EXPECT_EQ(items[1].id, "b");
         EXPECT_EQ(items[2].id, "c");
     }
@@ -231,6 +231,113 @@ namespace
         EXPECT_EQ(fs_json.find("edgeId"), std::string::npos);
         EXPECT_EQ(fs_json.find("dynamicPorts"), std::string::npos);
         EXPECT_EQ(fs_json.find("\"signal\""), std::string::npos);
+    }
+
+    // -----------------------------------------------------------------------
+    // DAS-81 compliance: componentGuid (no `type`), entryRef emit, fields[]
+    // -----------------------------------------------------------------------
+
+    GraphNodeDto MakeEntryRefNode(
+        std::string_view id,
+        int64_t          entry_id,
+        int64_t          expected_rev,
+        std::string_view fingerprint)
+    {
+        GraphNodeDto node;
+        node.node_id          = std::string(id);
+        node.target.target_kind = "entryRef";
+        node.target.entry_ref =
+            EntryRefDto{"entryRef", entry_id, expected_rev, std::string(fingerprint)};
+        return node;
+    }
+
+    TEST(AuthoringDocContractTest, GraphMode_EmitsComponentGuidAndNotType)
+    {
+        GraphDocumentDto doc;
+        doc.nodes.push_back(MakeNode("n1", "{g1}", 0.0));
+        auto json = ToJson(doc);
+        // DAS-81 rename: componentGuid present, legacy `type` absent.
+        EXPECT_NE(json.find("\"componentGuid\":\"{g1}\""), std::string::npos);
+        EXPECT_EQ(json.find("\"type\":\"{g1}\""), std::string::npos);
+    }
+
+    TEST(AuthoringDocContractTest, GraphMode_EntryRefEmittedForSubgraphNode)
+    {
+        GraphDocumentDto doc;
+        doc.nodes.push_back(MakeEntryRefNode("sub", 42, 3, "fp-sub"));
+        auto out = ToAuthoringDocument(doc);
+        ASSERT_TRUE(out.graph.has_value());
+        ASSERT_EQ(out.graph->nodes.size(), 1u);
+        const auto& n = out.graph->nodes[0];
+        EXPECT_EQ(n.target_kind, "entryRef");
+        ASSERT_TRUE(n.entry_ref.has_value());
+        EXPECT_EQ(n.entry_ref->entry_id, 42);
+        ASSERT_TRUE(n.entry_ref->expected_revision.has_value());
+        EXPECT_EQ(*n.entry_ref->expected_revision, 3);
+        ASSERT_TRUE(n.entry_ref->source_fingerprint.has_value());
+        EXPECT_EQ(*n.entry_ref->source_fingerprint, "fp-sub");
+
+        auto json = ToJson(doc);
+        EXPECT_NE(json.find("\"entryId\":42"), std::string::npos);
+        EXPECT_NE(json.find("\"expectedRevision\":3"), std::string::npos);
+        EXPECT_NE(json.find("\"sourceFingerprint\":\"fp-sub\""), std::string::npos);
+    }
+
+    TEST(AuthoringDocContractTest, GraphMode_FieldsProjectedFromSettings)
+    {
+        GraphDocumentDto doc;
+        auto& n = doc.nodes.emplace_back(MakeNode("n1", "{g1}", 0.0));
+        auto payload = Das::Utils::MakeYyjsonObject();
+        auto sobj    = *payload.as_object();
+        sobj[std::string_view("threshold")] = 0.5;   // float -> valueType 2
+        sobj[std::string_view("count")]     = 3;     // int -> valueType 0
+        sobj[std::string_view("name")]      = std::string("x"); // string -> 4
+        sobj[std::string_view("enabled")]   = true;  // bool -> 8
+        n.settings = payload;
+
+        auto out = ToAuthoringDocument(doc);
+        ASSERT_TRUE(out.graph.has_value());
+        ASSERT_EQ(out.graph->nodes.size(), 1u);
+        const auto& fields = out.graph->nodes[0].fields;
+        ASSERT_EQ(fields.size(), 4u);
+
+        auto json = ToJson(doc);
+        EXPECT_NE(json.find("\"fields\""), std::string::npos);
+        EXPECT_NE(json.find("\"valueType\":2"), std::string::npos);
+        EXPECT_NE(json.find("\"valueType\":0"), std::string::npos);
+        EXPECT_NE(json.find("\"inputType\":0"), std::string::npos);
+    }
+
+    TEST(AuthoringDocContractTest, SerializeSource_PersistsFullGraphDocumentDto)
+    {
+        // D-41: acceptedProperties = source (full GraphDocumentDto). It MUST
+        // carry the internal-only fields (edgeId/edgeType/dynamicPorts) that
+        // the regenerated document view deliberately drops — proving source and
+        // view are now distinct blobs.
+        GraphDocumentDto doc;
+        doc.version     = 5;
+        doc.fingerprint = "fp";
+        auto& n1 = doc.nodes.emplace_back(MakeNode("n1", "{g1}", 0.0));
+        n1.dynamic_ports.push_back({.port_id = "dyn", .port_type = "data"});
+        doc.nodes.push_back(MakeNode("n2", "{g2}", 0.0));
+        GraphEdgeDto e;
+        e.edge_id = "e1"; e.source_node_id = "n1"; e.source_port_id = "o";
+        e.target_node_id = "n2"; e.target_port_id = "i"; e.edge_type = "data";
+        doc.edges.push_back(e);
+
+        auto src = Contract::SerializeSource(doc);
+        auto src_str = Das::Utils::SerializeYyjsonValue(src).value_or(std::string{});
+        // Source keeps internal-only fields...
+        EXPECT_NE(src_str.find("\"edgeId\""), std::string::npos);
+        EXPECT_NE(src_str.find("\"edgeType\""), std::string::npos);
+        EXPECT_NE(src_str.find("\"dynamicPorts\""), std::string::npos);
+        EXPECT_NE(src_str.find("\"nodes\""), std::string::npos);
+
+        // ...while the document view still strips them.
+        auto view_str = ToJson(doc);
+        EXPECT_EQ(view_str.find("edgeId"), std::string::npos);
+        EXPECT_EQ(view_str.find("edgeType"), std::string::npos);
+        EXPECT_EQ(view_str.find("dynamicPorts"), std::string::npos);
     }
 
     // -----------------------------------------------------------------------

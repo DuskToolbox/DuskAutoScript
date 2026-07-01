@@ -146,7 +146,7 @@ namespace
             R"({"itemId":"a","target":{"targetKind":"componentRef","componentRef":{"kind":"componentRef","componentGuid":"{ga}","pluginGuid":"{p}"}},"settings":{}})";
         SessionHandle s{
             std::string(R"({"items":[)") + std::string(item_a) + "]}"};
-        auto r = ApplyChange(s.p, R"({"op":"addSequenceItem","item":{"id":"b","type":"{gb}"}})");
+        auto r = ApplyChange(s.p, R"({"op":"addSequenceItem","item":{"id":"b","componentGuid":"{gb}"}})");
         EXPECT_NE(Compact(JsonToUtf8(r.Get())).find("\"ok\":true"), std::string::npos);
 
         auto doc = Compact(JsonToUtf8(GetDocument(s.p).Get()));

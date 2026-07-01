@@ -28,7 +28,13 @@ DAS_CORE_GRAPHRUNTIME_NS_BEGIN
 //   - GraphEdgeDto::edge_id        (not in GraphConnection)
 //   - GraphEdgeDto::edge_type      (signal/data is a runtime concern)
 //   - GraphNodeDto::dynamic_ports  (runtime port binding)
-//   - GraphNodeDto::target_kind / entry_ref internals (componentGuid only)
+//
+// DAS-81 compliance (DAS-82): each node/item carries `componentGuid` (renamed
+// from `type`), `targetKind` + conditional `entryRef` (subgraph reference,
+// emitted for entryRef nodes), and `fields[]` (data-driven render descriptors
+// projected from the node's settings). Per D-41 the persisted source is the
+// full GraphDocumentDto (acceptedProperties); this contract document is the
+// regenerated UI view (not persisted).
 //
 // kind dispatch:
 //   - kind == FormSequence  ⇔  the GraphDocumentDto carries the linear marker
@@ -46,14 +52,41 @@ namespace Contract
     /// this tag projects to kind == FormSequence; without it, kind == Graph.
     inline constexpr std::string_view kLinearTag = "formsequence";
 
+    /// Subgraph reference carried by entryRef nodes (DAS-81). Mirrors the
+    /// schema EntryRef shape: entryId (repository entry), expectedRevision,
+    /// sourceFingerprint. Only container-produced (subgraph) nodes carry one.
+    struct EntryRef
+    {
+        int64_t                     entry_id = 0;
+        std::optional<int64_t>      expected_revision;
+        std::optional<std::string>  source_fingerprint;
+    };
+
+    /// Data-driven render descriptor (DAS-81 FieldDescriptor, reuses the
+    /// properties-mode PropertySchema format). Two-dimensional typing:
+    /// value_type = data type, input_type = UI control type. Projected from
+    /// the node's settings so the editor can render the config form solely
+    /// from these descriptors.
+    struct FieldDescriptor
+    {
+        std::string   name;
+        int32_t       value_type = 0;
+        int32_t       input_type = 0;
+        yyjson::value value;
+    };
+
     /// One canvas node in the public contract. componentGuid is sourced from
-    /// the internal target.component_ref.component_guid; dynamic_ports and
-    /// target internals are dropped.
+    /// the internal target.component_ref.component_guid; dynamic_ports are
+    /// dropped. targetKind/entryRef carry the subgraph reference when the node
+    /// targets an entry (DAS-81). fields[] projects the editable config.
     struct GraphNode
     {
-        std::string   id;
-        std::string   component_guid;
-        yyjson::value settings;
+        std::string                 id;
+        std::string                 component_guid;
+        std::string                 target_kind{"componentRef"};
+        std::optional<EntryRef>     entry_ref;
+        std::vector<FieldDescriptor> fields;
+        yyjson::value               settings;
     };
 
     /// One canvas connection in the public contract. edge_id and edge_type are
@@ -66,15 +99,19 @@ namespace Contract
         std::string to_port_id;
     };
 
-    /// One step in a linear formSequence view. `type` is the component kind
-    /// (component_guid / entry kind) — a UI-facing label, not a runtime field.
+    /// One step in a linear formSequence view. componentGuid is the execution
+    /// component type (renamed from `type` per DAS-81 decision 2). Same
+    /// targetKind/entryRef/fields semantics as GraphNode.
     /// (Nested `children` from the schema draft is intentionally omitted for
     /// the flat linear projection; it can be added when nesting is needed.)
     struct SequenceItem
     {
-        std::string   id;
-        std::string   type;
-        yyjson::value settings;
+        std::string                 id;
+        std::string                 component_guid;
+        std::string                 target_kind{"componentRef"};
+        std::optional<EntryRef>     entry_ref;
+        std::vector<FieldDescriptor> fields;
+        yyjson::value               settings;
     };
 
     /// The formSequence projection of a linear GraphDocumentDto.
@@ -151,6 +188,14 @@ namespace Contract
     /// the caller for writing. (Without copy_string yyjson would point at the
     /// std::string buffers of a local that dies on return → use-after-free.)
     yyjson::value SerializeDocument(const Dto::GraphDocumentDto& document);
+
+    /// Serialize the authoritative store as the D-41 *source* blob
+    /// (acceptedProperties). This is the full GraphDocumentDto — the persisted
+    /// truth fed to compilation/execution. It is distinct from
+    /// SerializeDocument, which emits the regenerated UI view (the contract
+    /// document). Built with `yyjson::copy_string` so the returned value is
+    /// self-contained.
+    yyjson::value SerializeSource(const Dto::GraphDocumentDto& document);
 
     // -----------------------------------------------------------------------
     // Authoring change — dual-state dispatch on the authoritative store
@@ -263,6 +308,17 @@ DAS_GRAPHRUNTIME_CONTRACT_CASTER(GraphView);
 
 template <>
 struct yyjson::field_name_rule<Das::Core::GraphRuntime::Contract::GraphNode>
+{
+    using type = yyjson::snake_to_camel_transform;
+};
+template <>
+struct yyjson::field_name_rule<Das::Core::GraphRuntime::Contract::EntryRef>
+{
+    using type = yyjson::snake_to_camel_transform;
+};
+template <>
+struct yyjson::field_name_rule<
+    Das::Core::GraphRuntime::Contract::FieldDescriptor>
 {
     using type = yyjson::snake_to_camel_transform;
 };

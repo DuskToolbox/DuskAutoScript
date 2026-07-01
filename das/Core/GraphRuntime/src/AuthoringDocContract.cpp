@@ -58,6 +58,97 @@ namespace Contract
         }
 
         // -------------------------------------------------------------------
+        // entryRef extraction (DAS-81): subgraph reference carried by entryRef
+        // nodes. Returns engaged only when the node targets an entry.
+        // -------------------------------------------------------------------
+
+        std::optional<EntryRef> EntryRefOf(const Dto::GraphNodeDto& node)
+        {
+            if (!node.target.entry_ref.has_value())
+            {
+                return std::nullopt;
+            }
+            const auto& src = *node.target.entry_ref;
+            EntryRef out;
+            out.entry_id = src.entry_id;
+            out.expected_revision  = src.expected_revision;
+            out.source_fingerprint = src.source_fingerprint;
+            return out;
+        }
+
+        /// Resolve the public targetKind discriminator from the internal node
+        /// target. Defaults to "componentRef" when unset.
+        std::string TargetKindOf(const Dto::GraphNodeDto& node)
+        {
+            if (!node.target.target_kind.empty())
+            {
+                return node.target.target_kind;
+            }
+            return "componentRef";
+        }
+
+        // -------------------------------------------------------------------
+        // fields[] projection (DAS-81): derive data-driven render descriptors
+        // from the node's current settings values. Each settings key becomes a
+        // FieldDescriptor whose valueType is inferred from the JSON value type
+        // (0=int 2=float 4=string 8=bool 16=object 32=array) and inputType is
+        // plain (0). A dedicated settings-schema registry does not yet exist
+        // for GraphTask nodes, so the live settings are the available source.
+        // -------------------------------------------------------------------
+
+        std::vector<FieldDescriptor> ProjectFields(const yyjson::value& settings)
+        {
+            std::vector<FieldDescriptor> out;
+            auto obj = settings.as_object();
+            if (!obj.has_value())
+            {
+                return out;
+            }
+            for (const auto& kv : *obj)
+            {
+                const auto& v = kv.second;
+                if (v.is_null())
+                {
+                    continue;
+                }
+                FieldDescriptor f;
+                f.name       = std::string(kv.first);
+                f.input_type = 0;
+                if (v.is_bool())
+                {
+                    f.value_type = 8;
+                }
+                else if (v.is_int())
+                {
+                    f.value_type = 0;
+                }
+                else if (v.is_real())
+                {
+                    f.value_type = 2;
+                }
+                else if (v.is_string())
+                {
+                    f.value_type = 4;
+                }
+                else if (v.is_object())
+                {
+                    f.value_type = 16;
+                }
+                else if (v.is_array())
+                {
+                    f.value_type = 32;
+                }
+                else
+                {
+                    continue;
+                }
+                f.value = Das::Utils::CloneYyjsonValue(v);
+                out.push_back(std::move(f));
+            }
+            return out;
+        }
+
+        // -------------------------------------------------------------------
         // Reverse projection: linear signal chain -> SequenceItem[]
         // -------------------------------------------------------------------
         //
@@ -114,9 +205,12 @@ namespace Contract
             auto build_item = [&](const Dto::GraphNodeDto& node)
             {
                 SequenceItem item;
-                item.id       = node.node_id;
-                item.type     = ComponentGuidOf(node);
-                item.settings = Das::Utils::CloneYyjsonValue(node.settings);
+                item.id             = node.node_id;
+                item.component_guid = ComponentGuidOf(node);
+                item.target_kind    = TargetKindOf(node);
+                item.entry_ref      = EntryRefOf(node);
+                item.fields         = ProjectFields(node.settings);
+                item.settings       = Das::Utils::CloneYyjsonValue(node.settings);
                 items.push_back(std::move(item));
                 visited.insert(node.node_id);
             };
@@ -179,6 +273,9 @@ namespace Contract
                 GraphNode out;
                 out.id              = node.node_id;
                 out.component_guid  = ComponentGuidOf(node);
+                out.target_kind     = TargetKindOf(node);
+                out.entry_ref       = EntryRefOf(node);
+                out.fields          = ProjectFields(node.settings);
                 out.settings        = Das::Utils::CloneYyjsonValue(node.settings);
                 view.nodes.push_back(std::move(out));
             }
@@ -309,6 +406,15 @@ namespace Contract
         shape.source_fingerprint = document.fingerprint;
         shape.graph              = MapGraphView(document);
         return yyjson::object(shape, yyjson::copy_string);
+    }
+
+    yyjson::value SerializeSource(const Dto::GraphDocumentDto& document)
+    {
+        // The D-41 source blob: the full GraphDocumentDto (the persisted truth
+        // fed to compilation/execution). copy_string deep-copies every string
+        // payload into the document arena so the returned value is
+        // self-contained and safe to hand across the boundary.
+        return yyjson::object(document, yyjson::copy_string);
     }
 
     // -------------------------------------------------------------------
@@ -545,7 +651,7 @@ namespace Contract
                 c.item.item_id = change.item->id;
                 c.item.target.target_kind   = "componentRef";
                 c.item.target.component_ref =
-                    Dto::ComponentRefDto{"componentRef", change.item->type, {}};
+                    Dto::ComponentRefDto{"componentRef", change.item->component_guid, {}};
                 c.item.settings = Das::Utils::CloneYyjsonValue(change.item->settings);
                 fc.payload = c;
             }

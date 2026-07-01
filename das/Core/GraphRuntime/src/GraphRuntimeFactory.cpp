@@ -339,14 +339,19 @@ namespace
                         {
                             item.item_id = std::string(*v);
                         }
-                        std::string type;
-                        ReadStringField(*io, std::string_view("type"), type);
-                        if (!type.empty())
+                        std::string guid;
+                        // DAS-81: componentGuid (renamed from type). Accept
+                        // both for backward compat with persisted contract docs.
+                        if (!ReadStringField(*io, std::string_view("componentGuid"), guid))
+                        {
+                            ReadStringField(*io, std::string_view("type"), guid);
+                        }
+                        if (!guid.empty())
                         {
                             item.target.target_kind   = "componentRef";
                             item.target.component_ref =
                                 Das::Core::GraphRuntime::Dto::ComponentRefDto{
-                                    "componentRef", type, {}};
+                                    "componentRef", guid, {}};
                         }
                         if (io->contains(std::string_view("settings")))
                         {
@@ -563,7 +568,13 @@ namespace
         {
             return std::nullopt;
         }
-        ReadStringField(obj, std::string_view("type"), item.type);
+        // DAS-81 renamed `type` -> `componentGuid`. Accept the new key first;
+        // fall back to the legacy `type` for already-persisted contract docs.
+        if (!ReadStringField(
+                obj, std::string_view("componentGuid"), item.component_guid))
+        {
+            ReadStringField(obj, std::string_view("type"), item.component_guid);
+        }
         if (obj.contains(std::string_view("settings")))
         {
             item.settings =
@@ -634,11 +645,14 @@ namespace
     /// data is deep-copied into the document arena (no dangling on return).
     /// Build the apply-result JSON. On success it conforms to the scheduler's
     /// authoring provider contract: {acceptedProperties, document,
-    /// sourceFingerprint} (+ ok/revision for direct callers). The store round-
-    /// trips through acceptedProperties as the contract authoring doc that
-    /// SerializeDocument emits. Per das-yyjson-string-safety: assigning a
-    /// yyjson::value deep-copies the subtree (safe, unlike a string lvalue);
-    /// string scalars use std::make_pair(string_view, copy_string).
+    /// sourceFingerprint} (+ ok/revision for direct callers). Per D-41:
+    /// acceptedProperties is the persisted *source* blob (the full
+    /// GraphDocumentDto — SerializeSource), and document is the regenerated UI
+    /// view (SerializeDocument). The two are no longer the same blob (the
+    /// former DAS-77 "doc double-stuff" is removed). Per
+    /// das-yyjson-string-safety: assigning a yyjson::value deep-copies the
+    /// subtree (safe, unlike a string lvalue); string scalars use
+    /// std::make_pair(string_view, copy_string).
     yyjson::value BuildChangeResultJson(
         const GR::Contract::AuthoringChangeResult& r,
         int32_t                                    revision,
@@ -651,11 +665,10 @@ namespace
 
         if (r.Ok())
         {
-            // The contract authoring doc is the canonical persisted state
-            // (acceptedProperties) and the refreshed document the scheduler
-            // returns to the client.
+            // D-41: acceptedProperties = source (persisted GraphDocumentDto);
+            // document = regenerated UI view. Distinct blobs — no double-stuff.
             (*obj)[std::string_view("acceptedProperties")] =
-                GR::Contract::SerializeDocument(document);
+                GR::Contract::SerializeSource(document);
             (*obj)[std::string_view("document")] =
                 GR::Contract::SerializeDocument(document);
             (*obj)[std::string_view("sourceFingerprint")] =
