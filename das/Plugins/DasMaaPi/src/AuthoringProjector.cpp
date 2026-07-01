@@ -1293,6 +1293,63 @@ namespace Das::Plugins::DasMaaPi
         }
     }
 
+    void ApplyAddSequenceItem(
+        AcceptedSettingsDto& settings,
+        const PiCatalog*     catalog,
+        std::string_view     task_name,
+        bool                 enabled)
+    {
+        if (task_name.empty())
+        {
+            return;
+        }
+        if (FindSelectedTask(settings, task_name) != nullptr)
+        {
+            return;
+        }
+        if (catalog && HasTask(*catalog, task_name))
+        {
+            MaapiPiTaskSettingsDto selected;
+            selected.task_name = std::string(task_name);
+            selected.enabled = enabled;
+            settings.pi.tasks.emplace_back(std::move(selected));
+            RemoveOrphanPath(
+                settings,
+                std::string{"pi.tasks:"} + std::string{task_name});
+            return;
+        }
+        settings.pi.orphan_paths.emplace_back(
+            std::string{"pi.tasks:"} + std::string{task_name});
+    }
+
+    void ApplyMoveSequenceItem(AcceptedSettingsDto& settings, int from, int to)
+    {
+        const auto size = static_cast<int>(settings.pi.tasks.size());
+        if (from < 0 || from >= size || to < 0 || to >= size || from == to)
+        {
+            return;
+        }
+        auto item = std::move(settings.pi.tasks[from]);
+        settings.pi.tasks.erase(settings.pi.tasks.begin() + from);
+        settings.pi.tasks.insert(
+            settings.pi.tasks.begin() + to,
+            std::move(item));
+    }
+
+    void ApplyRemoveSequenceItem(
+        AcceptedSettingsDto& settings,
+        std::string_view     task_name)
+    {
+        if (task_name.empty())
+        {
+            return;
+        }
+        std::erase_if(
+            settings.pi.tasks,
+            [&](const MaapiPiTaskSettingsDto& item)
+            { return item.task_name == task_name; });
+    }
+
     void ApplyPreset(
         AcceptedSettingsDto& settings,
         const PiCatalog&     catalog,

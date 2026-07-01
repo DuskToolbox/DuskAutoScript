@@ -9,6 +9,41 @@
 DAS_NS_BEGIN
 namespace Plugins::DasMaaPi
 {
+    namespace
+    {
+        template <typename TObject>
+        std::optional<std::string> PayloadString(
+            const TObject&   obj,
+            std::string_view key)
+        {
+            if (!obj.contains(key) || !obj[key].is_string())
+            {
+                return std::nullopt;
+            }
+            return std::string(obj[key].as_string().value_or(""));
+        }
+
+        template <typename TObject>
+        bool
+        PayloadBool(const TObject& obj, std::string_view key, bool fallback)
+        {
+            if (!obj.contains(key) || !obj[key].is_bool())
+            {
+                return fallback;
+            }
+            return obj[key].as_bool().value_or(fallback);
+        }
+
+        int PayloadInt(const auto& obj, std::string_view key, int fallback)
+        {
+            if (!obj.contains(key) || !obj[key].is_int())
+            {
+                return fallback;
+            }
+            return static_cast<int>(obj[key].as_int().value_or(fallback));
+        }
+    } // namespace
+
     MaapiAuthoringSession::MaapiAuthoringSession(AcceptedSettingsDto settings)
         : settings_(std::move(settings))
     {
@@ -78,6 +113,55 @@ namespace Plugins::DasMaaPi
                                         .value_or(""));
                             }
                         }
+                    }
+                }
+                else if (
+                    kind == "addSequenceItem"
+                    && obj->contains(std::string_view("payload")))
+                {
+                    if (auto payload =
+                            (*obj)[std::string_view("payload")].as_object())
+                    {
+                        if (payload->contains(std::string_view("item")))
+                        {
+                            if (auto item = (*payload)[std::string_view("item")]
+                                                .as_object())
+                            {
+                                const auto task_name =
+                                    PayloadString(*item, "id").value_or("");
+                                const auto enabled =
+                                    PayloadBool(*item, "enabled", true);
+                                ApplyAddSequenceItem(
+                                    settings_,
+                                    catalog ? &*catalog : nullptr,
+                                    task_name,
+                                    enabled);
+                            }
+                        }
+                    }
+                }
+                else if (
+                    kind == "moveSequenceItem"
+                    && obj->contains(std::string_view("payload")))
+                {
+                    if (auto payload =
+                            (*obj)[std::string_view("payload")].as_object())
+                    {
+                        const auto from = PayloadInt(*payload, "from", -1);
+                        const auto to = PayloadInt(*payload, "to", -1);
+                        ApplyMoveSequenceItem(settings_, from, to);
+                    }
+                }
+                else if (
+                    kind == "removeSequenceItem"
+                    && obj->contains(std::string_view("payload")))
+                {
+                    if (auto payload =
+                            (*obj)[std::string_view("payload")].as_object())
+                    {
+                        const auto task_name =
+                            PayloadString(*payload, "nodeId").value_or("");
+                        ApplyRemoveSequenceItem(settings_, task_name);
                     }
                 }
             }

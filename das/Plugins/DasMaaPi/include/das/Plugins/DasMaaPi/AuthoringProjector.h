@@ -22,6 +22,18 @@ namespace Das::Plugins::DasMaaPi
         const yyjson::value& change,
         const PiCatalog*     catalog = nullptr);
 
+    void ApplyAddSequenceItem(
+        AcceptedSettingsDto& settings,
+        const PiCatalog*     catalog,
+        std::string_view     task_name,
+        bool                 enabled = true);
+
+    void ApplyMoveSequenceItem(AcceptedSettingsDto& settings, int from, int to);
+
+    void ApplyRemoveSequenceItem(
+        AcceptedSettingsDto& settings,
+        std::string_view     task_name);
+
     void ApplyPreset(
         AcceptedSettingsDto& settings,
         const PiCatalog&     catalog,
