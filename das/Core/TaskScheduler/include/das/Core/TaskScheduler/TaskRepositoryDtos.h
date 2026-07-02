@@ -108,21 +108,6 @@ namespace Das::Core::TaskScheduler::Repository::Dto
     } // namespace Detail
 } // namespace Das::Core::TaskScheduler::Repository::Dto
 
-#ifndef DAS_YYJSON_VALUE_CASTER_DEFINED
-#define DAS_YYJSON_VALUE_CASTER_DEFINED
-
-template <>
-struct yyjson::caster<yyjson::value>
-{
-    template <yyjson::json_value Json>
-    static yyjson::value from_json(const Json& json)
-    {
-        return Das::Utils::CloneYyjsonValue(json);
-    }
-};
-
-#endif // DAS_YYJSON_VALUE_CASTER_DEFINED
-
 #define DAS_TASK_REPOSITORY_DTO_CASTER(DtoType)                                \
     template <>                                                                \
     struct yyjson::caster<Das::Core::TaskScheduler::Repository::Dto::DtoType>  \

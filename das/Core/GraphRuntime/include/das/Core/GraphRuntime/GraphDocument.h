@@ -101,22 +101,6 @@ namespace Dto
 
 DAS_CORE_GRAPHRUNTIME_NS_END
 
-// Guard against duplicate definition if TaskRepositoryDtos.h is included first.
-#ifndef DAS_YYJSON_VALUE_CASTER_DEFINED
-#define DAS_YYJSON_VALUE_CASTER_DEFINED
-
-template <>
-struct yyjson::caster<yyjson::value>
-{
-    template <yyjson::json_value Json>
-    static yyjson::value from_json(const Json& json)
-    {
-        return Das::Utils::CloneYyjsonValue(json);
-    }
-};
-
-#endif // DAS_YYJSON_VALUE_CASTER_DEFINED
-
 // Macro-based caster: provides from_json via Detail::CastDtoObject.
 // GraphNodeTargetDto is handled separately below because its
 // std::optional<ComponentRefDto> / std::optional<EntryRefDto> fields need

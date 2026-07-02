@@ -170,10 +170,9 @@ DAS_CORE_GRAPHRUNTIME_NS_END
 // ---------------------------------------------------------------------------
 // yyjson (de)serialization support for the formSequence DTOs
 // ---------------------------------------------------------------------------
-// caster<yyjson::value> is defined in GraphDocument.h (guarded). The aggregate
-// default_caster handles FormSequenceItemDto / FormSequenceDto once a
-// DAS_GRAPHRUNTIME_DTO_CASTER specialisation is registered; GraphNodeTargetDto
-// already has its custom caster from GraphDocument.h.
+// The aggregate default_caster handles FormSequenceItemDto / FormSequenceDto
+// once a DAS_GRAPHRUNTIME_DTO_CASTER specialisation is registered;
+// GraphNodeTargetDto already has its custom caster from GraphDocument.h.
 #ifndef DAS_GRAPHRUNTIME_DTO_CASTER
 #define DAS_GRAPHRUNTIME_DTO_CASTER(DtoType)                                   \
     template <>                                                                \

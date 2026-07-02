@@ -139,11 +139,6 @@ namespace Dto
 
 DAS_CORE_GRAPHRUNTIME_NS_END
 
-// ---------------------------------------------------------------------------
-// yyjson caster<yyjson::value> is already defined in GraphDocument.h
-// (guarded by DAS_YYJSON_VALUE_CASTER_DEFINED).  Do not redefine here.
-// ---------------------------------------------------------------------------
-
 // Macro-based caster: provides from_json via Detail::CastDtoObject.
 // Re-defined here because GraphDocument.h #undef'd it after its own usage.
 #define DAS_GRAPHRUNTIME_DTO_CASTER(DtoType)                                   \
