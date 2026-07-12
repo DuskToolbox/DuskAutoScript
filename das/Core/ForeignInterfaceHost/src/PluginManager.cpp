@@ -170,15 +170,6 @@ DasResult PluginManager::Shutdown()
         // 卸载所有插件
         for (auto& [guid, plugin] : loaded_plugins_)
         {
-            // 先注销对象
-            if (registry_)
-            {
-                for (auto& feature : plugin.features)
-                {
-                    registry_->UnregisterObject(feature.object_id);
-                }
-            }
-
             // 通知 ComponentFactoryManager 释放工厂引用
             error_lens_mgr_.OnPluginUnloading(guid);
             component_factory_mgr_.OnPluginUnloading(guid);
@@ -202,11 +193,6 @@ DasResult PluginManager::Shutdown()
 
     DAS_CORE_LOG_INFO("PluginManager shutdown complete");
     return DAS_S_OK;
-}
-
-void PluginManager::SetRegistry(Core::IPC::RemoteObjectRegistry& registry)
-{
-    registry_ = &registry;
 }
 
 void PluginManager::SetHostExePath(const std::string& path)
@@ -543,6 +529,15 @@ DasResult PluginManager::LoadPlugin(
             return task_component_registration_result;
         }
 
+        // 建立 feature 类型本地索引（GetObjectByFeature/GetFeaturesByType
+        // 依赖）。此处插件已确定注册成功且 FeatureInfo 地址稳定，须晚于上方
+        // 所有可能 loaded_plugins_.erase(guid) 的错误路径，否则 erase 会留下
+        // 悬空 FeatureInfo*。
+        for (auto& feature : loaded_plugins_[guid].features)
+        {
+            feature_type_index_[feature.feature_type].push_back(&feature);
+        }
+
         if (pp_out_package && loaded_plugins_[guid].package)
         {
             out_package.Set(loaded_plugins_[guid].package.Get());
@@ -609,15 +604,6 @@ DasResult PluginManager::UnloadPlugin(const std::filesystem::path& path)
         }
     }
 
-    // 注销对象
-    for (auto& feature : plug_it->second.features)
-    {
-        if (!Core::IPC::IsNullObjectId(feature.object_id))
-        {
-            registry_->UnregisterObject(feature.object_id);
-        }
-    }
-
     loaded_plugins_.erase(plug_it);
     path_to_guid_.erase(path_it);
 
@@ -674,122 +660,6 @@ std::vector<std::filesystem::path> PluginManager::GetLoadedPluginPaths() const
     }
 
     return paths;
-}
-
-DasResult PluginManager::RegisterPluginObjects(
-    const std::filesystem::path& path)
-{
-    std::lock_guard<std::mutex> lock(mutex_);
-
-    auto normalized_path = NormalizePath(path);
-    auto path_str = std::string{DAS::Utils::U8AsString(
-        ResolveManifestIdentityPath(normalized_path).u8string())};
-
-    auto path_it = path_to_guid_.find(path_str);
-    if (path_it == path_to_guid_.end())
-    {
-        DAS_CORE_LOG_WARN("Plugin not loaded: {}", path_str);
-        return DAS_E_NOT_FOUND;
-    }
-
-    auto it = loaded_plugins_.find(path_it->second);
-    if (it == loaded_plugins_.end())
-    {
-        DAS_CORE_LOG_WARN("Plugin not loaded: {}", path_str);
-        return DAS_E_NOT_FOUND;
-    }
-
-    auto&    registry = *registry_;
-    uint32_t local_id = 1;
-
-    for (auto& feature : it->second.features)
-    {
-        if (!feature.interface_ptr)
-        {
-            continue;
-        }
-
-        // 创建 ObjectId
-        Core::IPC::ObjectId obj_id{};
-        obj_id.session_id = session_id_;
-        obj_id.generation = 1;
-        obj_id.local_id = local_id++;
-
-        uint32_t interface_id = registry.ComputeInterfaceId(feature.iid);
-        auto     register_result = registry.RegisterObject(
-            obj_id,
-            feature.iid,
-            interface_id,
-            session_id_,
-            DAS::fmt::format(
-                "{}#{}",
-                GetFeatureName(feature.feature_type),
-                local_id),
-            1);
-
-        feature_type_index_[feature.feature_type].push_back(&feature);
-
-        if (register_result == DAS_S_OK)
-        {
-            feature.object_id = obj_id;
-
-            DAS_CORE_LOG_INFO(
-                "Registered feature {}",
-                GetFeatureName(feature.feature_type));
-        }
-        else
-        {
-            DAS_CORE_LOG_WARN(
-                "Failed to register feature {}: error={}",
-                GetFeatureName(feature.feature_type),
-                static_cast<int>(register_result));
-        }
-    }
-
-    return DAS_S_OK;
-}
-
-DasResult PluginManager::UnregisterPluginObjects(
-    const std::filesystem::path& path)
-{
-    std::lock_guard<std::mutex> lock(mutex_);
-
-    auto normalized_path = NormalizePath(path);
-    auto path_str = std::string{DAS::Utils::U8AsString(
-        ResolveManifestIdentityPath(normalized_path).u8string())};
-
-    auto path_it = path_to_guid_.find(path_str);
-    if (path_it == path_to_guid_.end())
-    {
-        return DAS_E_NOT_FOUND;
-    }
-
-    auto it = loaded_plugins_.find(path_it->second);
-    if (it == loaded_plugins_.end())
-    {
-        return DAS_E_NOT_FOUND;
-    }
-
-    auto& registry = *registry_;
-
-    for (auto& feature : it->second.features)
-    {
-        if (!Core::IPC::IsNullObjectId(feature.object_id))
-        {
-            registry.UnregisterObject(feature.object_id);
-            feature.object_id = Core::IPC::ObjectId{};
-        }
-
-        // 从 feature_type_index_ 中移除
-        auto type_it = feature_type_index_.find(feature.feature_type);
-        if (type_it != feature_type_index_.end())
-        {
-            auto& vec = type_it->second;
-            vec.erase(std::remove(vec.begin(), vec.end(), &feature), vec.end());
-        }
-    }
-
-    return DAS_S_OK;
 }
 
 DasResult PluginManager::GetObjectByFeature(

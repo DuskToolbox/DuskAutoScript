@@ -4,7 +4,6 @@
 #include <das/Core/ForeignInterfaceHost/RemotePluginHost.h>
 #include <das/Core/ForeignInterfaceHost/RuntimeProvider.h>
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
-#include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/Core/SettingsManager/SettingsManager.h>
 #include <das/DasApi.h>
@@ -1457,9 +1456,6 @@ protected:
             *settings_manager_,
             Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
                 ipc_sp));
-
-        registry_ = std::make_unique<RemoteObjectRegistry>();
-        pm_->SetRegistry(*registry_);
     }
 
     void TearDown() override
@@ -1517,18 +1513,12 @@ protected:
         plugin_path_ = plugin_path;
     }
 
-    void RegisterObjects()
-    {
-        LoadIpcTestPlugin();
-        ASSERT_EQ(pm_->RegisterPluginObjects(plugin_path_), DAS_S_OK)
-            << "RegisterPluginObjects failed";
-    }
+    void RegisterObjects() { LoadIpcTestPlugin(); }
 
     std::filesystem::path test_dir_;
     std::unique_ptr<DAS::Core::SettingsManager::SettingsManager>
                                            settings_manager_;
     std::unique_ptr<TestablePluginManager> pm_;
-    std::unique_ptr<RemoteObjectRegistry>  registry_;
     std::filesystem::path                  plugin_path_;
     std::filesystem::path                  settings_dir_;
     DasPtr<IForeignLanguageRuntime>        runtime_guard_;
@@ -1557,8 +1547,8 @@ TEST_F(PluginManagerFeatureTest, GetFeaturesByTypeReturnsComponentFactory)
 TEST_F(PluginManagerFeatureTest, GetFeaturesByTypeEmptyForUnregistered)
 {
     // IpcTestPlugin1 does not provide DAS_PLUGIN_FEATURE_CAPTURE_FACTORY,
-    // and we have NOT called RegisterPluginObjects, so the feature_type_index_
-    // should be empty for all types.
+    // and no plugin is loaded here, so the feature_type_index_ should be
+    // empty for all types.
     auto span = pm_->GetFeaturesByType(DAS_PLUGIN_FEATURE_CAPTURE_FACTORY);
     EXPECT_EQ(span.size(), 0u) << "Expected empty span for unregistered type";
 }
@@ -1972,7 +1962,8 @@ TEST_F(PluginManagerGuidTest, LoadPlugin_NodeManifestRoutesThroughNodeRuntime)
 {
     constexpr auto NODE_HOST_ENV = "DAS_NODE_HOST_EXE_PATH";
     // 用 weakly_canonical 规范化，与 PluginManager::NormalizePath 同源，
-    // 避免 build 目录为路径别名(symlink/junction)时期望路径与实际路径字符串分歧。
+    // 避免 build
+    // 目录为路径别名(symlink/junction)时期望路径与实际路径字符串分歧。
     auto test_dir = std::filesystem::weakly_canonical(
         std::filesystem::current_path() / "test_plugin_node_runtime_route");
     std::filesystem::remove_all(test_dir);

@@ -10,8 +10,6 @@
 #include <das/Core/ForeignInterfaceHost/TaskComponentFactoryManager.h>
 #include <das/Core/IPC/HostLauncher.h>
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
-#include <das/Core/IPC/ObjectId.h>
-#include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <das/Core/SettingsManager/SettingsManager.h>
 #include <das/DasPtr.hpp>
 #include <das/DasSharedRef.hpp>
@@ -39,13 +37,12 @@ DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 struct FeatureInfo
 {
     uint64_t                               feature_index = 0;
-    Das::PluginInterface::DasPluginFeature feature_type;  // Feature 类型枚举
-    DasGuid                                iid;           // 对应的接口 IID
-    DasPtr<IDasBase>                       interface_ptr; // 创建的接口指针
-    Core::IPC::ObjectId object_id{};    // 在 RemoteObjectRegistry 中的对象 ID
-    uint16_t            session_id = 0; // 所属会话 ID
-    std::string         plugin_name;    // 所属插件名称
-    DasGuid             plugin_guid;    // 所属插件 GUID
+    Das::PluginInterface::DasPluginFeature feature_type;   // Feature 类型枚举
+    DasGuid                                iid;            // 对应的接口 IID
+    DasPtr<IDasBase>                       interface_ptr;  // 创建的接口指针
+    uint16_t                               session_id = 0; // 所属会话 ID
+    std::string                            plugin_name;    // 所属插件名称
+    DasGuid                                plugin_guid;    // 所属插件 GUID
 };
 
 /**
@@ -83,7 +80,6 @@ struct LoadedPlugin
  * 负责：
  * - 加载/卸载插件
  * - 枚举插件的 Features
- * - 将插件对象注册到 RemoteObjectRegistry
  * - 通过 GUID 主索引和 Feature-type 索引查找对象
  */
 class PluginManager
@@ -129,11 +125,6 @@ public:
      * 幂等：二次调用空转安全（~PluginManager 会再次调用以 drain 在途回调）。
      */
     DasResult Shutdown();
-
-    /**
-     * @brief 设置远程对象注册表引用
-     */
-    void SetRegistry(Core::IPC::RemoteObjectRegistry& registry);
 
     /**
      * @brief 设置 Host 可执行文件路径
@@ -184,20 +175,6 @@ public:
      * @brief 获取所有已加载的插件路径
      */
     std::vector<std::filesystem::path> GetLoadedPluginPaths() const;
-
-    /**
-     * @brief 注册插件的所有对象到 RemoteObjectRegistry
-     * @param path 插件路径
-     * @return DAS_S_OK 成功
-     */
-    DasResult RegisterPluginObjects(const std::filesystem::path& path);
-
-    /**
-     * @brief 注销插件的所有对象
-     * @param path 插件路径
-     * @return DAS_S_OK 成功
-     */
-    DasResult UnregisterPluginObjects(const std::filesystem::path& path);
 
     /**
      * @brief 通过 Feature 类型获取对象接口
@@ -358,7 +335,6 @@ protected:
     uint16_t                                     session_id_ = 0;
     std::function<std::unique_ptr<IRemotePluginHost>()>
                                               remote_plugin_host_factory_;
-    Core::IPC::RemoteObjectRegistry*          registry_ = nullptr;
     std::unordered_map<DasGuid, LoadedPlugin> loaded_plugins_;
     std::unordered_map<std::string, DasGuid>  path_to_guid_;
     std::unordered_map<

@@ -1661,8 +1661,6 @@ protected:
             *settings_manager_,
             Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
                 ipc_sp_));
-        registry_ = std::make_unique<DAS::Core::IPC::RemoteObjectRegistry>();
-        plugin_manager_->SetRegistry(*registry_);
         scheduler_ = std::make_unique<SchedulerService>(
             *plugin_manager_,
             Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
@@ -1699,7 +1697,6 @@ protected:
     std::unique_ptr<Das::Core::SettingsManager::SettingsManager>
                                                               settings_manager_;
     std::shared_ptr<DAS::Core::IPC::MainProcess::IIpcContext> ipc_sp_;
-    std::unique_ptr<DAS::Core::IPC::RemoteObjectRegistry>     registry_;
     std::unique_ptr<Das::Core::ForeignInterfaceHost::TestablePluginManager>
                                       plugin_manager_;
     std::unique_ptr<SchedulerService> scheduler_;
@@ -1739,9 +1736,6 @@ protected:
             *settings_manager_,
             Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
                 ipc_sp_));
-        registry_ = std::make_unique<DAS::Core::IPC::RemoteObjectRegistry>();
-        plugin_manager_->SetRegistry(*registry_);
-
         // IPC 模式下 PluginManager 需要 DasHost.exe 路径才能 spawn 子进程
         // 加载 FactoryPlugin.dll。DAS_HOST_EXE_PATH 由 ctest 注入。
         try
@@ -1894,7 +1888,6 @@ protected:
     std::unique_ptr<Das::Core::SettingsManager::SettingsManager>
                                                               settings_manager_;
     std::shared_ptr<DAS::Core::IPC::MainProcess::IIpcContext> ipc_sp_;
-    std::unique_ptr<DAS::Core::IPC::RemoteObjectRegistry>     registry_;
     std::unique_ptr<Das::Core::ForeignInterfaceHost::TestablePluginManager>
                                       plugin_manager_;
     std::unique_ptr<SchedulerService> scheduler_;

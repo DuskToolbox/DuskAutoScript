@@ -3,7 +3,6 @@
 #include <das/Core/ForeignInterfaceHost/IForeignLanguageRuntime.h>
 #include <das/Core/ForeignInterfaceHost/PluginManager.h>
 #include <das/Core/IPC/MainProcess/IpcContext.h>
-#include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <das/Core/SettingsManager/SettingsManager.h>
 #include <das/Plugins/DasMaaPi/MaapiDto.h>
 #include <das/Utils/DasJsonCore.h>
@@ -145,10 +144,6 @@ namespace
                 GTEST_SKIP() << "DasHost not found at: " << das_host_path;
             }
             plugin_manager_->SetHostExePath(das_host_path);
-
-            registry_ =
-                std::make_unique<Das::Core::IPC::RemoteObjectRegistry>();
-            plugin_manager_->SetRegistry(*registry_);
         }
 
         void TearDown() override
@@ -170,9 +165,8 @@ namespace
 
         std::filesystem::path settings_dir_;
         std::unique_ptr<Das::Core::SettingsManager::SettingsManager>
-                                                              settings_manager_;
-        std::unique_ptr<Das::Core::IPC::RemoteObjectRegistry> registry_;
-        std::unique_ptr<PluginManager>                        plugin_manager_;
+                                       settings_manager_;
+        std::unique_ptr<PluginManager> plugin_manager_;
         std::shared_ptr<Das::Core::IPC::MainProcess::IIpcContext> ipc_sp_;
         std::thread ipc_run_thread_;
     };
@@ -203,9 +197,6 @@ TEST_F(
     PluginManagerLoadsTaskAndAuthoringFactoryFeatures)
 {
     ASSERT_EQ(plugin_manager_->LoadPlugin(PluginPackageDir()), DAS_S_OK);
-    ASSERT_EQ(
-        plugin_manager_->RegisterPluginObjects(PluginPackageDir()),
-        DAS_S_OK);
 
     const auto plugin_guid = MakeDasGuid(std::string(kPluginGuidText));
     auto*      package = plugin_manager_->FindPluginPackageByGuid(plugin_guid);
@@ -253,9 +244,6 @@ TEST_F(
     ManifestExposesRunTaskComponentAndExecutionLink)
 {
     ASSERT_EQ(plugin_manager_->LoadPlugin(PluginPackageDir()), DAS_S_OK);
-    ASSERT_EQ(
-        plugin_manager_->RegisterPluginObjects(PluginPackageDir()),
-        DAS_S_OK);
 
     const auto plugin_guid = MakeDasGuid(std::string(kPluginGuidText));
     auto*      package = plugin_manager_->FindPluginPackageByGuid(plugin_guid);
@@ -312,9 +300,6 @@ TEST_F(
 TEST_F(MaapiPluginScaffoldFixture, TaskComponentFactoryCreatesRunComponent)
 {
     ASSERT_EQ(plugin_manager_->LoadPlugin(PluginPackageDir()), DAS_S_OK);
-    ASSERT_EQ(
-        plugin_manager_->RegisterPluginObjects(PluginPackageDir()),
-        DAS_S_OK);
 
     auto factories = plugin_manager_->GetFeaturesByType(
         DAS_PLUGIN_FEATURE_TASK_COMPONENT_FACTORY);
@@ -344,9 +329,6 @@ TEST_F(MaapiPluginScaffoldFixture, TaskComponentFactoryCreatesRunComponent)
 TEST_F(MaapiPluginScaffoldFixture, AdapterOnlyDocumentBeforeProjectSelection)
 {
     ASSERT_EQ(plugin_manager_->LoadPlugin(PluginPackageDir()), DAS_S_OK);
-    ASSERT_EQ(
-        plugin_manager_->RegisterPluginObjects(PluginPackageDir()),
-        DAS_S_OK);
 
     auto authoring_features = plugin_manager_->GetFeaturesByType(
         DAS_PLUGIN_FEATURE_TASK_AUTHORING_FACTORY);

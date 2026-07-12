@@ -1079,23 +1079,6 @@ namespace Das::Core::TaskScheduler
                     continue;
                 }
 
-                auto register_result =
-                    plugin_manager_.RegisterPluginObjects(manifest_path);
-                if (DAS::IsFailed(register_result))
-                {
-                    temp_repository_plugin_availability[desc.guid] = {
-                        "pluginLoadFailed",
-                        "Plugin package failed to register during scheduler "
-                        "initialize"};
-                    DAS_CORE_LOG_WARN(
-                        "SchedulerService::Initialize: failed to register "
-                        "plugin objects for {}, result={}",
-                        desc.name,
-                        register_result);
-                    plugin_manager_.UnloadPlugin(manifest_path);
-                    continue;
-                }
-
                 temp_paths.push_back(manifest_path);
             }
             catch (const std::exception& e)
