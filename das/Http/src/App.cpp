@@ -142,13 +142,41 @@ namespace Das::Http
             return sc_result;
         }
 
-        // Set host exe path through service interface (not concrete class)
-        const char* host_exe = std::getenv("DAS_HOST_EXE_PATH");
-        if (host_exe && strlen(host_exe) > 0)
+        // 解析 IPC plugin host 子进程（DasHostX）路径：优先环境变量
+        // DAS_HOST_EXE_PATH（ctest 测试注入），缺失则兜底为 cwd 下的
+        // DasHostX。DasHttp 依赖 DasHostX 才能加载 loadMode=ipc 的插件，
+        // 这是 DAS 自身的配置，路径解析由 DasHttp 兜底，不要求调用方
+        // 注入环境变量。cwd 兜底与 DasHostX main.cpp 用 current_path()
+        // 解析 plugin_dir 的约定一致；调用方启动 DasHttp 时 cwd 即其
+        // 部署目录，二者同目录部署。
+        const char*   env_host_exe = std::getenv("DAS_HOST_EXE_PATH");
+        std::u8string host_exe_fallback_u8;
+        if (!env_host_exe || strlen(env_host_exe) == 0)
+        {
+#if defined(_WIN32)
+            constexpr auto HOST_EXECUTABLE_NAME = "DasHostX.exe";
+#else
+            constexpr auto HOST_EXECUTABLE_NAME = "DasHostX";
+#endif
+            host_exe_fallback_u8 =
+                (std::filesystem::current_path() / HOST_EXECUTABLE_NAME)
+                    .u8string();
+            std::cout << "[DasHttp] DAS_HOST_EXE_PATH not set; falling back to "
+                      << reinterpret_cast<const char*>(
+                             host_exe_fallback_u8.c_str())
+                      << std::endl;
+        }
+
+        const char* host_exe_utf8 =
+            (env_host_exe && strlen(env_host_exe) > 0)
+                ? env_host_exe
+                : reinterpret_cast<const char*>(host_exe_fallback_u8.c_str());
+        if (host_exe_utf8 && strlen(host_exe_utf8) > 0)
         {
             DasPtr<IDasReadOnlyString> p_host_path;
-            auto                       hp_cr =
-                CreateIDasReadOnlyStringFromUtf8(host_exe, p_host_path.Put());
+            auto                       hp_cr = CreateIDasReadOnlyStringFromUtf8(
+                host_exe_utf8,
+                p_host_path.Put());
             if (DAS::IsOk(hp_cr))
             {
                 components.plugin_mgr_service->SetHostExePath(
