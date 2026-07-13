@@ -72,7 +72,12 @@ namespace Details
 
         T* DiscardAndGetNullTerminateBufferPointer(std::size_t new_size)
         {
-            if (new_size > size_)
+            // 用 >= 而非 >：size_ 在分配分支被赋成容量（new_size+1），
+            // 若用 >，new_size==size_（==容量）时会落进 else 写 [容量]
+            // 越界；首次 up_data_ 为 nullptr 且 new_size==0 时同样击穿
+            // else 写 nullptr[0]。>= 让 new_size==size_ 也重新分配，
+            // else 内 new_size 永远 < size_（在容量内），首次也被强制分配。
+            if (new_size >= size_)
             {
                 const auto size_with_null_character = new_size + 1;
                 up_data_ = std::make_unique<T[]>(size_with_null_character);
