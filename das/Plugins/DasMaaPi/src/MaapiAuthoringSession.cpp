@@ -44,8 +44,10 @@ namespace Plugins::DasMaaPi
         }
     } // namespace
 
-    MaapiAuthoringSession::MaapiAuthoringSession(AcceptedSettingsDto settings)
-        : settings_(std::move(settings))
+    MaapiAuthoringSession::MaapiAuthoringSession(
+        AcceptedSettingsDto settings,
+        int64_t             revision)
+        : settings_(std::move(settings)), revision_(revision)
     {
     }
 

@@ -28,7 +28,9 @@ namespace Plugins::DasMaaPi
     {
     public:
         MaapiAuthoringSession() = default;
-        explicit MaapiAuthoringSession(AcceptedSettingsDto settings);
+        explicit MaapiAuthoringSession(
+            AcceptedSettingsDto settings,
+            int64_t             revision = 0);
 
         DAS_IMPL GetDocument(
             ExportInterface::IDasJson*  p_request_json,
