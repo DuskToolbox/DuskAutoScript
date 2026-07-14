@@ -1,10 +1,14 @@
 #include <das/Plugins/DasGraphTask/DasGraphTaskPluginPackage.h>
 
+#include "DasGraphTaskAuthoringSessionFactory.h"
+
 #include <das/DasApi.h>
 #include <das/DasGuidHolder.h>
+#include <das/Plugins/DasGraphTask/DasGraphTaskAdapter.h>
 #include <das/Plugins/DasGraphTask/DasGraphTaskImpl.h>
 #include <das/Utils/CommonUtils.hpp>
 
+#include <array>
 #include <new>
 
 // Factory GUID: {E8D1A2B3-4C5F-6D7E-8A9B-0C1D2E3F4A5B}
@@ -93,13 +97,22 @@ namespace Das::Plugins::DasGraphTask
         {
             return DAS_E_INVALID_POINTER;
         }
-        if (index != 0)
+
+        // Mirrors DasMaaPi: TASK (IDasTask entry) + AUTHORING_FACTORY +
+        // COMPONENT_FACTORY (graph-node path). Index order must stay aligned
+        // with CreateFeatureInterface below.
+        static constexpr std::array<Das::PluginInterface::DasPluginFeature, 3>
+            features{
+                Das::PluginInterface::DAS_PLUGIN_FEATURE_TASK,
+                Das::PluginInterface::DAS_PLUGIN_FEATURE_TASK_AUTHORING_FACTORY,
+                Das::PluginInterface::
+                    DAS_PLUGIN_FEATURE_TASK_COMPONENT_FACTORY};
+        if (index >= features.size())
         {
             return DAS_E_OUT_OF_RANGE;
         }
 
-        *p_out_feature =
-            Das::PluginInterface::DAS_PLUGIN_FEATURE_TASK_COMPONENT_FACTORY;
+        *p_out_feature = features[index];
         return DAS_S_OK;
     }
 
@@ -112,24 +125,48 @@ namespace Das::Plugins::DasGraphTask
             return DAS_E_INVALID_POINTER;
         }
         *pp_out_interface = nullptr;
-        if (index != 0)
-        {
-            return DAS_E_OUT_OF_RANGE;
-        }
 
         try
         {
-            auto* factory = new DasGraphTaskComponentFactory{};
-            factory->AddRef();
-            *pp_out_interface =
-                static_cast<Das::PluginInterface::IDasTaskComponentFactory*>(
+            if (index == 0)
+            {
+                // TASK -> IDasTask: the Scheduler top-level executor and the
+                // entry by which das.graph appears in availableTaskTypes.
+                auto* task = new DasGraphTaskAdapter{};
+                task->AddRef();
+                *pp_out_interface =
+                    static_cast<Das::PluginInterface::IDasTask*>(task);
+                return DAS_S_OK;
+            }
+            if (index == 1)
+            {
+                // TASK_AUTHORING_FACTORY: wires up the pre-existing
+                // DasGraphTaskAuthoringSessionFactory (GUID EFC3D51E), which
+                // was implemented but never registered (dead code) before this.
+                auto* factory = new DasGraphTaskAuthoringSessionFactory{};
+                factory->AddRef();
+                *pp_out_interface = static_cast<
+                    Das::PluginInterface::IDasTaskAuthoringSessionFactory*>(
                     factory);
-            return DAS_S_OK;
+                return DAS_S_OK;
+            }
+            if (index == 2)
+            {
+                // TASK_COMPONENT_FACTORY: existing graph-node component path,
+                // unchanged.
+                auto* factory = new DasGraphTaskComponentFactory{};
+                factory->AddRef();
+                *pp_out_interface = static_cast<
+                    Das::PluginInterface::IDasTaskComponentFactory*>(factory);
+                return DAS_S_OK;
+            }
         }
         catch (const std::bad_alloc&)
         {
             return DAS_E_OUT_OF_MEMORY;
         }
+
+        return DAS_E_OUT_OF_RANGE;
     }
 
 } // namespace Das::Plugins::DasGraphTask
