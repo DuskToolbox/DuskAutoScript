@@ -54,7 +54,8 @@ public:
         const std::string&                  read_endpoint,
         const std::string&                  write_endpoint,
         bool                                is_server,
-        size_t                              max_message_size = 65536);
+        size_t                              max_message_size = 65536,
+        SharedMemoryPool*                  pool = nullptr);
 
     static AnyTransport CreateUninitialized(
         boost::asio::io_context& io_context DAS_LIFETIMEBOUND);
@@ -63,7 +64,8 @@ public:
         const std::string& read_endpoint,
         const std::string& write_endpoint,
         bool               is_server,
-        size_t             max_message_size = 65536);
+        size_t             max_message_size = 65536,
+        SharedMemoryPool* pool = nullptr);
 
     ~AnyTransport();
     AnyTransport(AnyTransport&&) noexcept;

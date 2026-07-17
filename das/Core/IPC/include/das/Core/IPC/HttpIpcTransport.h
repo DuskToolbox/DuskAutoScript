@@ -95,21 +95,19 @@ public:
     boost::asio::io_context& GetIoContext();
 
     /**
-     * @brief 设置共享内存池（HTTP 模式下为 no-op）
-     * @note HTTP 传输不使用共享内存，大消息直接通过 WebSocket 帧传输
-     *
-     * TODO(RAII): SetSharedMemoryPool 是两阶段初始化的反模式。
-     * SharedMemoryPool 应通过构造函数注入。当前保留此方法是因为
-     * AnyTransport 包装器需要统一的 SetXxx 接口。
-     * 修复需要重构整个传输层接口层次。
-     */
-    void SetSharedMemoryPool(SharedMemoryPool* pool);
-
-    /**
      * @brief 获取远端端点名称
      */
     [[nodiscard]]
     std::string GetEndpointName() const;
+
+    /**
+     * @brief 设置共享内存池（HTTP 模式 no-op）
+     * @note HTTP transport 不使用共享内存（大消息直接走完整 WebSocket 帧）。
+     *       保留此方法仅为让 AnyTransport::SetSharedMemoryPool 的 std::visit
+     *       对所有 transport 类型可编译；pool 注入的实际路径是
+     *       InitializeAsync。deprecated，待 IpcContext 调用点迁移后统一移除。
+     */
+    void SetSharedMemoryPool(SharedMemoryPool* pool);
 
     /**
      * @brief 关闭连接并释放资源

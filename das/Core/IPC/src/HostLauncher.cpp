@@ -64,6 +64,7 @@ struct HostLauncher::Impl
     boost::asio::io_context& io_ctx; // 引用，由外部管理生命周期
     std::unique_ptr<boost::process::v2::process> process;
     std::optional<AnyTransport>                  async_transport;
+    std::unique_ptr<SharedMemoryPool>            pool_;
     // 用于取消 StartLaunchSequence 中 co_spawn 的 process-exit watcher 协程。
     // Stop()/TerminateIfRunning() 在 process.reset() 前 emit 信号并 drain
     // io_context，避免 io_context 线程在 freed handle 上执行 async_wait。
@@ -752,6 +753,9 @@ void HostLauncher::Stop()
 
     CleanupTransport(impl_->async_transport);
 
+    // 清理 SharedMemoryPool（transport 清理后，确保无悬空引用）
+    impl_->pool_.reset();
+
     if (impl_->process)
     {
         boost::system::error_code ec;
@@ -934,6 +938,9 @@ void HostLauncher::TerminateIfRunning()
 
     CleanupTransport(impl_->async_transport);
 
+    // 清理 SharedMemoryPool（错误恢复路径）
+    impl_->pool_.reset();
+
     impl_->is_running = false;
     impl_->session_id = 0;
     impl_->pid = 0;
@@ -1081,6 +1088,28 @@ DasResult HostLauncher::ConnectToHost(uint32_t timeout_ms)
         plugin_to_host_pipe);
     DAS_LOG_INFO(msg.c_str());
 
+    // 创建 SharedMemoryPool（MainProcess 端使用 Create 模式）
+    std::string shm_name = Host::MakeSharedMemoryName(main_pid, host_pid);
+    try
+    {
+        impl_->pool_ = std::make_unique<SharedMemoryPool>(
+            shm_name,
+            Host::DEFAULT_SHARED_MEMORY_SIZE);
+        DAS_LOG_INFO(
+            DAS_FMT_NS::format(
+                "HostLauncher: Created SHM pool: {}, size={}",
+                shm_name,
+                Host::DEFAULT_SHARED_MEMORY_SIZE)
+                .c_str());
+    }
+    catch (const std::exception& e)
+    {
+        DAS_CORE_LOG_ERROR(
+            "HostLauncher: Failed to create SHM pool: {}",
+            e.what());
+        return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
+    }
+
     // MainProcess 是服务端：使用 CreateAsync 异步创建管道
     // 通过 co_spawn + use_future 在 io_context 上运行协程
     try
@@ -1098,7 +1127,8 @@ DasResult HostLauncher::ConnectToHost(uint32_t timeout_ms)
                 plugin_to_host_pipe,
                 true, // is_server = true (MainProcess creates pipes and waits
                       // for Host)
-                65536),
+                65536,
+                impl_->pool_.get()),
             boost::asio::use_future);
 
         auto status = future.wait_for(duration);
@@ -1663,6 +1693,28 @@ boost::asio::awaitable<DasResult> HostLauncher::ConnectToHostAsync()
         plugin_to_host_pipe);
     DAS_LOG_INFO(msg.c_str());
 
+    // 创建 SharedMemoryPool（MainProcess 端使用 Create 模式）
+    std::string shm_name = Host::MakeSharedMemoryName(main_pid, host_pid);
+    try
+    {
+        impl_->pool_ = std::make_unique<SharedMemoryPool>(
+            shm_name,
+            Host::DEFAULT_SHARED_MEMORY_SIZE);
+        DAS_LOG_INFO(
+            DAS_FMT_NS::format(
+                "HostLauncher: Created SHM pool: {}, size={}",
+                shm_name,
+                Host::DEFAULT_SHARED_MEMORY_SIZE)
+                .c_str());
+    }
+    catch (const std::exception& e)
+    {
+        DAS_CORE_LOG_ERROR(
+            "HostLauncher: Failed to create SHM pool: {}",
+            e.what());
+        co_return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
+    }
+
     try
     {
         auto [transport_result, maybe_transport] =
@@ -1671,7 +1723,8 @@ boost::asio::awaitable<DasResult> HostLauncher::ConnectToHostAsync()
                 host_to_plugin_pipe,
                 plugin_to_host_pipe,
                 true, // is_server = true (MainProcess creates pipes)
-                65536);
+                65536,
+                impl_->pool_.get());
 
         if (DAS::IsFailed(transport_result) || !maybe_transport)
         {

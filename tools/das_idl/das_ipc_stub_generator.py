@@ -949,9 +949,8 @@ class IpcStubGenerator:
     def _generate_binary_buffer_response(self, interface: InterfaceDef, method: MethodDef, out_params, has_return: bool, indent: str) -> List[str]:
         """Generate response body for [binary_buffer] methods.
 
-        Wire format (pipe path): int32_t remote_result | uint64_t data_size (via WriteBytes) | uint8_t data[data_size]
-        Wire format (SHM path):  int32_t remote_result | uint64_t shm_handle | uint64_t data_size
-        LARGE_MESSAGE_THRESHOLD determines which path is used.
+        Wire format: int32_t remote_result | uint64_t data_size (via WriteBytes) | uint8_t data[data_size]
+        Data is always sent via pipe; large messages are handled by transport layer SHM.
         """
         lines = []
 
@@ -984,51 +983,14 @@ class IpcStubGenerator:
 
         data_local_name = f"arg_{data_param.name}" if data_param.name in handle_param_names else data_param.name
 
-        # Step 3: SHM path for large buffers (only when call_result is OK)
-        lines.append(f"{indent}// SHM path: allocate shared memory block for large buffers")
-        lines.append(f"{indent}if (DAS::IsOk(call_result) && binary_data_size >= Das::Core::IPC::LARGE_MESSAGE_THRESHOLD)")
-        lines.append(f"{indent}{{")
-        lines.append(f"{indent}    auto& conn_mgr = ctx.run_loop.GetConnectionManager();")
-        lines.append(f"{indent}    {{")
-        lines.append(f"{indent}        Das::Core::IPC::ConnectionInfo conn_info;")
-        lines.append(f"{indent}        if (DAS::IsOk(conn_mgr.GetConnection(ctx.header.GetSourceSessionId(), conn_info))")
-        lines.append(f"{indent}            && conn_info.shm_pool != nullptr)")
-        lines.append(f"{indent}        {{")
-        lines.append(f"{indent}            Das::Core::IPC::SharedMemoryBlock shm_block;")
-        lines.append(f"{indent}            if (DAS::IsOk(conn_info.shm_pool->Allocate(")
-        lines.append(f"{indent}                    static_cast<size_t>(binary_data_size), shm_block)))")
-        lines.append(f"{indent}            {{")
-        lines.append(f"{indent}                std::memcpy(shm_block.data, {data_local_name}, static_cast<size_t>(binary_data_size));")
-        lines.append(f"{indent}                Das::Core::IPC::MemorySerializerWriter shm_writer;")
-        lines.append(f"{indent}                shm_writer.Reserve(4 + 8 + 8);")
-        if has_return:
-            lines.append(f"{indent}                shm_writer.WriteInt32(static_cast<int32_t>(call_result));")
-        else:
-            lines.append(f"{indent}                shm_writer.WriteInt32(static_cast<int32_t>(DAS_S_OK));")
-        lines.append(f"{indent}                shm_writer.WriteUInt64(shm_block.handle);")
-        lines.append(f"{indent}                shm_writer.WriteUInt64(binary_data_size);")
-        lines.append(f"{indent}                out_response = shm_writer.GetBuffer();")
-        lines.append(f"{indent}                ctx.response_flags = Das::Core::IPC::MessageFlags::SHM_RESPONSE;")
-        lines.append(f"{indent}                return DAS_S_OK;")
-        lines.append(f"{indent}            }}")
-        lines.append(f'{indent}            DAS_CORE_LOG_WARN("Stub: SHM Allocate failed, falling back to pipe (size={{}})", binary_data_size);')
-        lines.append(f"{indent}        }}")
-        lines.append(f'{indent}        else')
-        lines.append(f'{indent}        {{')
-        lines.append(f'{indent}            DAS_CORE_LOG_WARN("Stub: SHM connection not found for source_session={{}}, falling back to pipe", ctx.header.GetSourceSessionId());')
-        lines.append(f'{indent}        }}')
-        lines.append(f"{indent}    }}")
-        lines.append(f"{indent}}}")
-        lines.append("")
-
-        # Step 4: Pipe path (small buffer or SHM fallback)
+        # Step 3: Pipe path - serialize data directly in response body
         lines.append(f"{indent}// Pipe path: serialize data directly in response body")
         lines.append(f"{indent}const size_t total_response_size = 4 + 8 + static_cast<size_t>(binary_data_size);")
         lines.append(f"{indent}Das::Core::IPC::MemorySerializerWriter writer;")
         lines.append(f"{indent}writer.Reserve(total_response_size);")
         lines.append("")
 
-        # Step 5: Write remote_result (reuse serial_result from function scope)
+        # Step 4: Write remote_result (reuse serial_result from function scope)
         if has_return:
             lines.append(f"{indent}serial_result = writer.WriteInt32(static_cast<int32_t>(call_result));")
         else:
@@ -1038,7 +1000,7 @@ class IpcStubGenerator:
         lines.append(f"{indent}    return serial_result;")
         lines.append(f"{indent}}}")
 
-        # Step 6: Write binary data (WriteBytes includes uint64 size prefix)
+        # Step 5: Write binary data (WriteBytes includes uint64 size prefix)
         lines.append(f"{indent}if (DAS::IsOk(call_result) && {data_local_name} != nullptr)")
         lines.append(f"{indent}{{")
         lines.append(f"{indent}    serial_result = writer.WriteBytes(reinterpret_cast<const uint8_t*>({data_local_name}), static_cast<size_t>(binary_data_size));")

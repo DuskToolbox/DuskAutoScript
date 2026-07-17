@@ -21,6 +21,10 @@ namespace HeaderFlags
     /// 业务事件消息标志（手写 proxy/stub 的按值序列化路径）
     /// 使用 bit2 避免与 CONTROL_PLANE(bit0) 冲突，确保消息走 BusinessThread
     constexpr uint8_t BUSINESS_EVENT = 0x04;
+    /// transport 层透明 SHM 分流标志（bit3）
+    /// body 存的是 8 字节 shm handle，真实数据在共享内存块
+    /// （块首 8 字节 in-band 存 size，其后是数据）
+    constexpr uint8_t LARGE_MESSAGE_VIA_SHM = 0x08;
 } // namespace HeaderFlags
 
 /// @brief 消息标志 (IPCMessageHeader.flags 字段)

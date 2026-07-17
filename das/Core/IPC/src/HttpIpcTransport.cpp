@@ -265,11 +265,6 @@ boost::asio::io_context& HttpIpcTransport::GetIoContext()
         impl_->ws_.get_executor().context());
 }
 
-void HttpIpcTransport::SetSharedMemoryPool(SharedMemoryPool* /*pool*/)
-{
-    // HTTP 模式不使用共享内存，大消息直接通过 WebSocket 帧传输
-}
-
 std::string HttpIpcTransport::GetEndpointName() const
 {
     if (!impl_ || !impl_->is_connected)
@@ -285,6 +280,12 @@ std::string HttpIpcTransport::GetEndpointName() const
     }
 
     return DAS_FMT_NS::format("{}:{}", ep.address().to_string(), ep.port());
+}
+
+void HttpIpcTransport::SetSharedMemoryPool(SharedMemoryPool* /*pool*/)
+{
+    // HTTP transport 不使用共享内存（大消息直接作为完整 WebSocket 帧发送）。
+    // 保留 no-op 仅为让 AnyTransport::SetSharedMemoryPool 的 std::visit 可编译。
 }
 
 void HttpIpcTransport::Cleanup()

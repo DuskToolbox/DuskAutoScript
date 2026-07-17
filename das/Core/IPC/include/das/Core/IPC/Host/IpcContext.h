@@ -178,8 +178,8 @@ namespace Core
                 DasPtr<IpcCommandHandler> command_handler_;
                 DasPtr<HandshakeHandler>  handshake_handler_;
 
-                /// 共享内存池（optional，因为 shm_name 在构造函数体中计算）
-                std::optional<SharedMemoryPool> shared_memory_;
+                /// 共享内存池（Open 模式，unique_ptr 由 Open 工厂返回）
+                std::unique_ptr<SharedMemoryPool> shared_memory_;
 
                 /// HTTP/WebSocket 客户端（HTTP 传输模式，仅连接阶段使用）
                 std::unique_ptr<HttpIpcClient> http_client_;

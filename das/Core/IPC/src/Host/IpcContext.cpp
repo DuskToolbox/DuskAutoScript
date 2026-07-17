@@ -164,8 +164,8 @@ namespace Core
                     shm_name);
                 DAS_LOG_INFO(msg.c_str());
 
-                // 初始化 SharedMemoryPool（optional，因为 shm_name 在此处计算）
-                shared_memory_.emplace(shm_name, DEFAULT_SHARED_MEMORY_SIZE);
+                // 初始化 SharedMemoryPool（Open 模式，MainProcess 先 Create）
+                // 延迟到 ConnectHttp/NamedPipe 时打开，加入重试机制
 
                 proxy_factory_->GetObjectManager().SetSessionId(session_id_);
                 run_loop_.SetSessionId(session_id_);
@@ -348,7 +348,7 @@ namespace Core
                 //    注意：必须确保 run_loop_ 先析构，这样 handlers_ 中的
                 //    DasPtr 会先释放
 
-                // 7. 关闭 SharedMemoryPool（optional，reset 清除）
+                // 7. 关闭 SharedMemoryPool（unique_ptr，reset 清除）
                 shared_memory_.reset();
 
                 // 8. proxy_factory_ 是 optional 值成员，自动析构
@@ -489,18 +489,58 @@ namespace Core
                                             "  write: {}",
                                             host_write_queue_);
 
+                                        // 0. 打开 SharedMemoryPool（MainProcess 已 Create）
+                                        std::string shm_name =
+                                            MakeSharedMemoryName(main_pid_, host_pid_);
+                                        constexpr int MAX_OPEN_RETRIES = 50;
+                                        for (int i = 0; i < MAX_OPEN_RETRIES; ++i)
+                                        {
+                                            try
+                                            {
+                                                shared_memory_ =
+                                                    SharedMemoryPool::Open(shm_name);
+                                                DAS_CORE_LOG_INFO(
+                                                    "Host: Opened SHM pool: {}",
+                                                    shm_name);
+                                                break;
+                                            }
+                                            catch (const std::exception& e)
+                                            {
+                                                if (i == MAX_OPEN_RETRIES - 1)
+                                                {
+                                                    DAS_CORE_LOG_ERROR(
+                                                        "Host: Failed to open SHM pool after {} retries: {}",
+                                                        MAX_OPEN_RETRIES,
+                                                        e.what());
+                                                    run_loop_.RequestStop();
+                                                    co_return;
+                                                }
+                                                DAS_CORE_LOG_DEBUG(
+                                                    "Host: SHM pool not ready, retry {}/{}: {}",
+                                                    i + 1,
+                                                    MAX_OPEN_RETRIES,
+                                                    e.what());
+                                            }
+                                            // 重试等待移出 catch（co_await 不能在异常 handler 内）
+                                            auto timer = boost::asio::steady_timer(
+                                                run_loop_.GetIoContext(),
+                                                std::chrono::milliseconds(100));
+                                            co_await timer.async_wait(
+                                                boost::asio::use_awaitable);
+                                        }
+
                                         // 1. 创建并异步连接 transport
                                         auto pipe_transport =
                                             AnyTransport::CreateUninitialized(
                                                 run_loop_.GetIoContext());
-                                        pipe_transport.SetSharedMemoryPool(
-                                            &*shared_memory_);
 
                                         auto result = co_await pipe_transport
                                                           .InitializeAsync(
                                                               host_read_queue_,
                                                               host_write_queue_,
-                                                              host_is_server_);
+                                                              host_is_server_,
+                                                              65536,
+                                                              &*shared_memory_);
 
                                         if (DAS::IsFailed(result))
                                         {
@@ -646,6 +686,46 @@ namespace Core
                         "Host: HTTP connecting to {}:{}",
                         http_host_,
                         http_port_);
+
+                    // 打开 SharedMemoryPool（MainProcess 已 Create）
+                    std::string shm_name =
+                        MakeSharedMemoryName(main_pid_, host_pid_);
+                    constexpr int MAX_OPEN_RETRIES = 50;
+                    for (int i = 0; i < MAX_OPEN_RETRIES; ++i)
+                    {
+                        try
+                        {
+                            shared_memory_ =
+                                SharedMemoryPool::Open(shm_name);
+                            DAS_CORE_LOG_INFO(
+                                "Host: Opened SHM pool: {}",
+                                shm_name);
+                            break;
+                        }
+                        catch (const std::exception& e)
+                        {
+                            if (i == MAX_OPEN_RETRIES - 1)
+                            {
+                                DAS_CORE_LOG_ERROR(
+                                    "Host: Failed to open SHM pool after {} retries: {}",
+                                    MAX_OPEN_RETRIES,
+                                    e.what());
+                                run_loop_.RequestStop();
+                                co_return;
+                            }
+                            DAS_CORE_LOG_DEBUG(
+                                "Host: SHM pool not ready, retry {}/{}: {}",
+                                i + 1,
+                                MAX_OPEN_RETRIES,
+                                e.what());
+                        }
+                        // 重试等待移出 catch（co_await 不能在异常 handler 内）
+                        auto timer = boost::asio::steady_timer(
+                            run_loop_.GetIoContext(),
+                            std::chrono::milliseconds(100));
+                        co_await timer.async_wait(
+                            boost::asio::use_awaitable);
+                    }
 
                     auto connect_result = co_await HttpIpcClient::Connect(
                         run_loop_.GetIoContext(),

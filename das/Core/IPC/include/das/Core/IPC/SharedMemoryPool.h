@@ -36,6 +36,49 @@ struct SharedMemoryBlock
     uint64_t handle; ///< 跨进程稳定的偏移量（用于 IPC 传递）
 };
 
+class SharedMemoryPool;
+
+/**
+ * @brief RAII 共享内存块守护者
+ *
+ * 所有权语义：
+ * - move-only，禁拷贝
+ * - 析构时自动调用 pool_->Deallocate(handle_)
+ * - Attach: 从 handle 接管所有权（reader 侧，跨进程用 GetAddressByHandle）
+ * - Disown: 放弃所有权，返回 SharedMemoryBlock 给调用方（sender 侧上线）
+ * - 空构造的 guard 不拥有任何块（operator bool 返回 false）
+ */
+class ShmBlockGuard
+{
+public:
+    ShmBlockGuard() = default;
+    ShmBlockGuard(SharedMemoryPool* pool, void* data, size_t size, uint64_t handle) noexcept
+        : pool_(pool), data_(data), size_(size), handle_(handle)
+    {}
+    ~ShmBlockGuard();
+
+    ShmBlockGuard(const ShmBlockGuard&) = delete;
+    ShmBlockGuard& operator=(const ShmBlockGuard&) = delete;
+    ShmBlockGuard(ShmBlockGuard&& other) noexcept;
+    ShmBlockGuard& operator=(ShmBlockGuard&& other) noexcept;
+
+    static ShmBlockGuard Attach(SharedMemoryPool* pool, uint64_t handle, size_t size);
+    SharedMemoryBlock Disown() noexcept;
+
+    void*    Data() const noexcept { return data_; }
+    size_t   Size() const noexcept { return size_; }
+    uint64_t Handle() const noexcept { return handle_; }
+    explicit operator bool() const noexcept { return pool_ != nullptr && handle_ != 0; }
+
+private:
+    void Reset() noexcept;
+
+    SharedMemoryPool* pool_ = nullptr;
+    void*             data_ = nullptr;
+    size_t            size_  = 0;
+    uint64_t          handle_ = 0;
+};
+
 /**
  * @brief 共享内存池创建模式
  *
@@ -93,6 +136,7 @@ public:
     DasResult Allocate(size_t size, SharedMemoryBlock& block);
     DasResult Deallocate(uint64_t handle);
     DasResult GetBlockByHandle(uint64_t handle, SharedMemoryBlock& block);
+    DasResult GetAddressByHandle(uint64_t handle, void*& out);
 
     DasResult CleanupStaleBlocks();
 

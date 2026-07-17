@@ -9,7 +9,9 @@
 #include <boost/asio/write.hpp>
 #include <chrono>
 #include <cstring>
+#include <das/Core/IPC/AsyncIpcTransport.h>
 #include <das/Core/IPC/IpcErrors.h>
+#include <das/Core/IPC/IpcMessageHeaderBuilder.h>
 #include <das/Core/IPC/SharedMemoryPool.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/DasApi.h>
@@ -25,7 +27,6 @@
 
 DAS_CORE_IPC_NS_BEGIN
 
-inline constexpr uint16_t         FLAG_LARGE_MESSAGE = 0x01;
 inline constexpr std::string_view PIPE_PREFIX = R"(\\.\pipe\)";
 
 namespace
@@ -504,7 +505,8 @@ boost::asio::awaitable<DasResult> Win32AsyncIpcTransport::InitializeAsync(
     const std::string& read_endpoint,
     const std::string& write_endpoint,
     bool               is_server,
-    size_t             max_message_size)
+    size_t             max_message_size,
+    SharedMemoryPool* pool)
 {
     auto state = state_;
     if (!state)
@@ -513,6 +515,7 @@ boost::asio::awaitable<DasResult> Win32AsyncIpcTransport::InitializeAsync(
     }
 
     state->max_message_size = max_message_size;
+    state->shared_memory_pool = pool;
 
     if (is_server)
     {
@@ -697,7 +700,7 @@ Win32AsyncIpcTransport::ReceiveCoroutine()
             boost::asio::use_awaitable);
     }
 
-    if (header.Raw().flags & FLAG_LARGE_MESSAGE)
+    if (header.Raw().header_flags & HeaderFlags::LARGE_MESSAGE_VIA_SHM)
     {
         if (state->shared_memory_pool == nullptr)
         {
@@ -715,25 +718,38 @@ Win32AsyncIpcTransport::ReceiveCoroutine()
         uint64_t handle;
         std::memcpy(&handle, body_buffer.data(), sizeof(uint64_t));
 
-        SharedMemoryBlock shm_block;
-        const auto        result =
-            state->shared_memory_pool->GetBlockByHandle(handle, shm_block);
-        if (result != DAS_S_OK)
+        ShmBlockGuard guard = ShmBlockGuard::Attach(state->shared_memory_pool, handle, 0);
+        if (!guard)
         {
             DAS_LOG_ERROR(
                 DAS_FMT_NS::format(
-                    "Failed to get shared memory block for handle = {}",
+                    "Failed to attach shared memory block for handle = {}",
                     handle)
                     .c_str());
             co_return DAS_E_IPC_INVALID_MESSAGE;
         }
 
-        std::vector<uint8_t> large_body(shm_block.size);
-        std::memcpy(large_body.data(), shm_block.data, shm_block.size);
+        uint64_t real_size = *static_cast<uint64_t*>(guard.Data());
+        std::vector<uint8_t> large_body(real_size);
+        std::memcpy(large_body.data(), static_cast<uint8_t*>(guard.Data()) + 8, real_size);
+        // guard 出作用域析构释放
 
-        state->shared_memory_pool->Deallocate(handle);
+        // 重组返回的 header 要恢复真实 body_size，清掉 LARGE_MESSAGE_VIA_SHM 位
+        auto orig = header.Raw();
+        auto restored_header =
+            IPCMessageHeaderBuilder()
+                .SetMessageType(static_cast<MessageType>(orig.message_type))
+                .SetHeaderFlags(orig.header_flags & ~HeaderFlags::LARGE_MESSAGE_VIA_SHM)
+                .SetCallId(orig.call_id)
+                .SetSourceSessionId(orig.source_session_id)
+                .SetTargetSessionId(orig.target_session_id)
+                .SetFlags(orig.flags)
+                .SetInterfaceId(orig.interface_id)
+                .SetErrorCode(orig.error_code)
+                .SetBodySize(static_cast<uint32_t>(real_size))
+                .Build();
 
-        co_return AsyncIpcMessage{header, std::move(large_body)};
+        co_return AsyncIpcMessage{restored_header, std::move(large_body)};
     }
 
     co_return AsyncIpcMessage{header, std::move(body_buffer)};
@@ -757,13 +773,83 @@ boost::asio::awaitable<DasResult> Win32AsyncIpcTransport::SendCoroutine(
         co_return DAS_E_IPC_CONNECTION_LOST; // 不访问任何 transport 成员
     }
 
-    // scatter-gather: 零拷贝，header 和 body 分开传递
+    DasResult result = DAS_S_OK;
+
+    // SHM 分流路径：大消息必须走 SHM；无 pool 或 Allocate 失败则拒绝（不降级直写——
+    // 直写超大 body 会被对端 64KB 上限拒绝，或阻塞管道）
+    if (body_size >= LARGE_MESSAGE_THRESHOLD)
+    {
+        if (state->shared_memory_pool == nullptr)
+        {
+            DAS_CORE_LOG_WARN(
+                "SendCoroutine: large message (size={}) but no SHM pool set; rejecting",
+                body_size);
+            state->send_mutex.Unlock();
+            co_return DAS_E_IPC_MESSAGE_TOO_LARGE;
+        }
+        SharedMemoryBlock blk{};
+        if (DAS::IsOk(state->shared_memory_pool->Allocate(body_size + 8, blk)))
+        {
+            ShmBlockGuard guard(state->shared_memory_pool, blk.data, blk.size, blk.handle);
+            uint64_t real_size = static_cast<uint64_t>(body_size);
+            std::memcpy(guard.Data(), &real_size, 8);                      // 块首 8B in-band size
+            std::memcpy(static_cast<uint8_t*>(guard.Data()) + 8, body, body_size);
+
+            // 重建 header：header_flags |= LARGE_MESSAGE_VIA_SHM, body_size = 8
+            auto orig = header.Raw();
+            auto validated_shm_header =
+                IPCMessageHeaderBuilder()
+                    .SetMessageType(static_cast<MessageType>(orig.message_type))
+                    .SetHeaderFlags(orig.header_flags | HeaderFlags::LARGE_MESSAGE_VIA_SHM)
+                    .SetCallId(orig.call_id)
+                    .SetSourceSessionId(orig.source_session_id)
+                    .SetTargetSessionId(orig.target_session_id)
+                    .SetFlags(orig.flags)
+                    .SetInterfaceId(orig.interface_id)
+                    .SetErrorCode(orig.error_code)
+                    .SetBodySize(sizeof(uint64_t))
+                    .Build();
+
+            uint64_t net_handle = guard.Handle();
+            std::array<boost::asio::const_buffer, 2> shm_buffers = {
+                boost::asio::const_buffer{static_cast<const IPCMessageHeader*>(validated_shm_header), sizeof(IPCMessageHeader)},
+                boost::asio::const_buffer{&net_handle, sizeof(uint64_t)}
+            };
+
+            try
+            {
+                co_await boost::asio::async_write(
+                    state->write_pipe,
+                    shm_buffers,
+                    boost::asio::use_awaitable);
+                guard.Disown();  // 成功：转移所有权给 reader（经 wire 的 handle）
+                state->send_mutex.Unlock();
+                co_return DAS_S_OK;
+            }
+            catch (const std::exception& e)
+            {
+                DAS_CORE_LOG_ERROR(
+                    "SendCoroutine: SHM async_write failed: {}",
+                    ToString(e.what()));
+                // guard 析构自动 Deallocate
+                state->send_mutex.Unlock();
+                co_return DAS_E_IPC_SEND_FAILED;
+            }
+        }
+        // Allocate 失败：拒绝（不降级直写，否则超大 body 会撞对端 64KB 上限）
+        DAS_CORE_LOG_WARN(
+            "SendCoroutine: SHM allocation failed for large message (size={}); rejecting",
+            body_size);
+        state->send_mutex.Unlock();
+        co_return DAS_E_IPC_MESSAGE_TOO_LARGE;
+    }
+
+    // 直写路径（小消息 / pool 空 / Allocate 失败）：scatter-gather
     const auto* raw_header = static_cast<const IPCMessageHeader*>(header);
     std::array<boost::asio::const_buffer, 2> buffers = {
         boost::asio::const_buffer{raw_header, sizeof(IPCMessageHeader)},
         boost::asio::const_buffer{body, body_size}};
 
-    DasResult result = DAS_S_OK;
     try
     {
         co_await boost::asio::async_write(

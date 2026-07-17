@@ -69,7 +69,8 @@ namespace
         const std::string& read_endpoint,
         const std::string& write_endpoint,
         bool               is_server,
-        size_t             max_message_size)
+        size_t             max_message_size,
+        SharedMemoryPool* pool)
     {
         using TransportType = std::decay_t<Transport>;
 
@@ -88,7 +89,8 @@ namespace
                 read_endpoint,
                 write_endpoint,
                 is_server,
-                max_message_size);
+                max_message_size,
+                pool);
         }
     }
 
@@ -146,7 +148,8 @@ AnyTransport::CreateAsync(
     const std::string&       read_endpoint,
     const std::string&       write_endpoint,
     bool                     is_server,
-    size_t                   max_message_size)
+    size_t                   max_message_size,
+    SharedMemoryPool*       pool)
 {
     const auto selected_kind = SelectRuntimeTransportKind();
 
@@ -157,7 +160,8 @@ AnyTransport::CreateAsync(
             read_endpoint,
             write_endpoint,
             is_server,
-            max_message_size);
+            max_message_size,
+            pool);
 
         if (result != DAS_S_OK)
         {
@@ -199,7 +203,8 @@ boost::asio::awaitable<DasResult> AnyTransport::InitializeAsync(
     const std::string& read_endpoint,
     const std::string& write_endpoint,
     bool               is_server,
-    size_t             max_message_size)
+    size_t             max_message_size,
+    SharedMemoryPool* pool)
 {
     const std::string read_endpoint_copy = read_endpoint;
     const std::string write_endpoint_copy = write_endpoint;
@@ -212,7 +217,8 @@ boost::asio::awaitable<DasResult> AnyTransport::InitializeAsync(
                 read_endpoint_copy,
                 write_endpoint_copy,
                 is_server,
-                max_message_size);
+                max_message_size,
+                pool);
         },
         transport_);
 }
