@@ -9,18 +9,21 @@ namespace Das::Core::TaskScheduler
 {
     namespace
     {
-        constexpr std::array<std::string_view, 2> kDocumentKinds{
+        constexpr std::array<std::string_view, 2> DOCUMENT_KINDS{
             "formSequence",
             "graph"};
 
-        constexpr std::array<std::string_view, 7> kChangeKinds{
+        constexpr std::array<std::string_view, 10> CHANGE_KINDS{
             "setValue",
             "applyPreset",
             "addSequenceItem",
             "moveSequenceItem",
             "addNode",
             "connectPorts",
-            "updateNodeConfig"};
+            "updateNodeConfig",
+            "removeNode",
+            "disconnectPorts",
+            "removeSequenceItem"};
 
         bool IsOneOf(
             std::string_view value,
@@ -86,7 +89,7 @@ namespace Das::Core::TaskScheduler
             return Fail("missingField", "AuthoringDocument.kind required");
         }
         auto kind = obj["kind"].as_string().value();
-        if (!IsOneOf(kind, kDocumentKinds))
+        if (!IsOneOf(kind, DOCUMENT_KINDS))
         {
             return Fail(
                 "unsupportedKind",
@@ -152,7 +155,7 @@ namespace Das::Core::TaskScheduler
         }
 
         auto kind = obj["kind"].as_string().value();
-        if (!IsOneOf(kind, kChangeKinds))
+        if (!IsOneOf(kind, CHANGE_KINDS))
         {
             return Fail(
                 "unsupportedChange",

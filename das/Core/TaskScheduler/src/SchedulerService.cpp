@@ -3,6 +3,7 @@
 #include <das/Core/ForeignInterfaceHost/PluginScanner.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/Core/TaskScheduler/SchedulerService.h>
+#include <das/Core/TaskScheduler/TaskAuthoringContract.h>
 #include <das/Core/Utils/DasJsonImpl.h>
 #include <das/DasApi.h>
 #include <das/DasPtr.hpp>
@@ -3138,6 +3139,16 @@ namespace Das::Core::TaskScheduler
             return MakeAuthoringResponseError(
                 "notFound",
                 "Task instance file was not found");
+        }
+
+        // Envelope guard: the contract requires the server to validate the
+        // {kind, payload} envelope before passing it to plugin authoring code.
+        auto validation = ValidateAuthoringChange(change);
+        if (!validation.valid)
+        {
+            return MakeAuthoringResponseError(
+                validation.error_kind,
+                validation.message);
         }
 
         const int64_t current_revision = GetAuthoringRevision(task_json);

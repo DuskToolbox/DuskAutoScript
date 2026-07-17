@@ -119,7 +119,10 @@ TEST(TaskAuthoringContractTest, SupportedChangeKindsPass)
         "moveSequenceItem",
         "addNode",
         "connectPorts",
-        "updateNodeConfig"};
+        "updateNodeConfig",
+        "removeNode",
+        "disconnectPorts",
+        "removeSequenceItem"};
 
     for (auto kind : kKinds)
     {

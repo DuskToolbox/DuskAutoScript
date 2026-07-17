@@ -25,7 +25,8 @@ namespace
             return {};
         }
         DasPtr<IDasReadOnlyString> text;
-        if (DAS::IsFailed(json->ToString(0, text.Put())) || text.Get() == nullptr)
+        if (DAS::IsFailed(json->ToString(0, text.Put()))
+            || text.Get() == nullptr)
         {
             return {};
         }
@@ -62,22 +63,24 @@ namespace
             CreateGraphAuthoringSession(s.Get(), &p);
         }
         ~SessionHandle() { DestroyGraphAuthoringSession(p); }
-        SessionHandle(const SessionHandle&)            = delete;
+        SessionHandle(const SessionHandle&) = delete;
         SessionHandle& operator=(const SessionHandle&) = delete;
     };
 
-    DasPtr<Das::ExportInterface::IDasJson> GetDocument(GraphAuthoringSessionState* p)
+    DasPtr<Das::ExportInterface::IDasJson> GetDocument(
+        GraphAuthoringSessionState* p)
     {
         DasPtr<Das::ExportInterface::IDasJson> out;
         GraphAuthoringSessionGetDocument(p, nullptr, out.Put());
         return out;
     }
 
-    DasPtr<Das::ExportInterface::IDasJson>
-    ApplyChange(GraphAuthoringSessionState* p, const std::string& change)
+    DasPtr<Das::ExportInterface::IDasJson> ApplyChange(
+        GraphAuthoringSessionState* p,
+        const std::string&          change)
     {
         DasPtr<Das::ExportInterface::IDasJson> out;
-        auto s = MakeStr(change);
+        auto                                   s = MakeStr(change);
         GraphAuthoringSessionApplyChange(p, s.Get(), out.Put());
         return out;
     }
@@ -85,21 +88,22 @@ namespace
     TEST(GraphAuthoringSessionTest, EmptyStoreProjectsAsGraph)
     {
         SessionHandle s{""};
-        auto json = Compact(JsonToUtf8(GetDocument(s.p).Get()));
+        auto          json = Compact(JsonToUtf8(GetDocument(s.p).Get()));
         // No formline tag on an empty store -> graph mode.
         EXPECT_NE(json.find("\"kind\":\"graph\""), std::string::npos);
     }
 
     TEST(GraphAuthoringSessionTest, FormSequenceSeedProjectsAsFormSequence)
     {
-        // A 2-item formSequence context (full target so the DTO caster accepts it).
+        // A 2-item formSequence context (full target so the DTO caster accepts
+        // it).
         constexpr std::string_view item_a =
             R"({"itemId":"a","target":{"targetKind":"componentRef","componentRef":{"kind":"componentRef","componentGuid":"{ga}","pluginGuid":"{p}"}},"settings":{}})";
         constexpr std::string_view item_b =
             R"({"itemId":"b","target":{"targetKind":"componentRef","componentRef":{"kind":"componentRef","componentGuid":"{gb}","pluginGuid":"{p}"}},"settings":{}})";
         SessionHandle s{
-            std::string(R"({"documentId":"d1","version":0,"items":[)") + std::string(item_a)
-                + "," + std::string(item_b) + "]}"};
+            std::string(R"({"documentId":"d1","version":0,"items":[)")
+            + std::string(item_a) + "," + std::string(item_b) + "]}"};
         auto json = Compact(JsonToUtf8(GetDocument(s.p).Get()));
         EXPECT_NE(json.find("\"kind\":\"formSequence\""), std::string::npos);
         // Reverse-projected sequence preserves order.
@@ -112,13 +116,32 @@ namespace
     TEST(GraphAuthoringSessionTest, GraphModeApplyChangeAddNode)
     {
         SessionHandle s{""}; // graph mode
-        auto r = ApplyChange(s.p, R"({"op":"addNode","node":{"id":"n1","componentGuid":"{g1}","settings":{"x":1}}})");
+        auto          r = ApplyChange(
+            s.p,
+            R"({"kind":"addNode","payload":{"node":{"id":"n1","componentGuid":"{g1}","settings":{"x":1}}}})");
         const auto result = Compact(JsonToUtf8(r.Get()));
         EXPECT_NE(result.find("\"ok\":true"), std::string::npos);
 
         auto doc = Compact(JsonToUtf8(GetDocument(s.p).Get()));
         EXPECT_NE(doc.find("\"id\":\"n1\""), std::string::npos);
         EXPECT_NE(doc.find("\"componentGuid\":\"{g1}\""), std::string::npos);
+    }
+
+    TEST(GraphAuthoringSessionTest, LegacyFlatOpFormatIsRejected)
+    {
+        // Only the unified {kind, payload} envelope is accepted; the legacy
+        // {op, flat} shape is rejected as malformed.
+        SessionHandle s{""};
+        auto          r = ApplyChange(
+            s.p,
+            R"({"op":"addNode","node":{"id":"x","componentGuid":"{g1}","settings":{}}})");
+        const auto result = Compact(JsonToUtf8(r.Get()));
+        EXPECT_NE(result.find("\"ok\":false"), std::string::npos);
+        // Compact() strips whitespace, so assert the space-independent token.
+        EXPECT_NE(result.find("malformed"), std::string::npos);
+        EXPECT_NE(
+            result.find("\"errorKind\":\"InvalidOp\""),
+            std::string::npos);
     }
 
     TEST(GraphAuthoringSessionTest, UpgradeFlipsKindFromFormSequenceToGraph)
@@ -128,9 +151,12 @@ namespace
         constexpr std::string_view item_b =
             R"({"itemId":"b","target":{"targetKind":"componentRef","componentRef":{"kind":"componentRef","componentGuid":"{gb}","pluginGuid":"{p}"}},"settings":{}})";
         SessionHandle s{
-            std::string(R"({"items":[)") + std::string(item_a) + "," + std::string(item_b) + "]}"};
-        EXPECT_NE(Compact(JsonToUtf8(GetDocument(s.p).Get())).find("\"kind\":\"formSequence\""),
-                  std::string::npos);
+            std::string(R"({"items":[)") + std::string(item_a) + ","
+            + std::string(item_b) + "]}"};
+        EXPECT_NE(
+            Compact(JsonToUtf8(GetDocument(s.p).Get()))
+                .find("\"kind\":\"formSequence\""),
+            std::string::npos);
 
         EXPECT_EQ(GraphAuthoringSessionUpgradeToGraph(s.p), DAS_S_OK);
         auto after = Compact(JsonToUtf8(GetDocument(s.p).Get()));
@@ -146,8 +172,12 @@ namespace
             R"({"itemId":"a","target":{"targetKind":"componentRef","componentRef":{"kind":"componentRef","componentGuid":"{ga}","pluginGuid":"{p}"}},"settings":{}})";
         SessionHandle s{
             std::string(R"({"items":[)") + std::string(item_a) + "]}"};
-        auto r = ApplyChange(s.p, R"({"op":"addSequenceItem","item":{"id":"b","componentGuid":"{gb}"}})");
-        EXPECT_NE(Compact(JsonToUtf8(r.Get())).find("\"ok\":true"), std::string::npos);
+        auto r = ApplyChange(
+            s.p,
+            R"({"kind":"addSequenceItem","payload":{"item":{"id":"b","componentGuid":"{gb}"}}})");
+        EXPECT_NE(
+            Compact(JsonToUtf8(r.Get())).find("\"ok\":true"),
+            std::string::npos);
 
         auto doc = Compact(JsonToUtf8(GetDocument(s.p).Get()));
         EXPECT_NE(doc.find("\"id\":\"a\""), std::string::npos);
@@ -163,7 +193,7 @@ namespace
     std::string ExtractAcceptedProperties(Das::ExportInterface::IDasJson* r)
     {
         auto full = JsonToUtf8(r);
-        auto obj  = yyjson::read(full).as_object();
+        auto obj = yyjson::read(full).as_object();
         if (!obj || !obj->contains(std::string_view("acceptedProperties")))
         {
             return {};
@@ -179,21 +209,29 @@ namespace
         // scheduler would persist, and re-seed a fresh session from it — the
         // node must survive the round-trip.
         SessionHandle s1{""};
-        ASSERT_TRUE(Compact(JsonToUtf8(ApplyChange(s1.p,
-            R"({"op":"addNode","node":{"id":"n1","componentGuid":"{g1}","settings":{}}})").Get()))
-            .find("\"ok\":true") != std::string::npos);
+        ASSERT_TRUE(
+            Compact(
+                JsonToUtf8(
+                    ApplyChange(
+                        s1.p,
+                        R"({"kind":"addNode","payload":{"node":{"id":"n1","componentGuid":"{g1}","settings":{}}}})")
+                        .Get()))
+                .find("\"ok\":true")
+            != std::string::npos);
 
         const auto persisted = ExtractAcceptedProperties(
-            ApplyChange(s1.p,
-                R"({"op":"addNode","node":{"id":"n2","componentGuid":"{g2}","settings":{}}})")
+            ApplyChange(
+                s1.p,
+                R"({"kind":"addNode","payload":{"node":{"id":"n2","componentGuid":"{g2}","settings":{}}}})")
                 .Get());
         ASSERT_FALSE(persisted.empty());
 
-        // Re-seed from the persisted contract doc (wrapped as scheduler context).
+        // Re-seed from the persisted contract doc (wrapped as scheduler
+        // context).
         const std::string ctx =
             std::string(R"({"properties":)") + persisted + "}";
         SessionHandle s2{ctx};
-        const auto doc = Compact(JsonToUtf8(GetDocument(s2.p).Get()));
+        const auto    doc = Compact(JsonToUtf8(GetDocument(s2.p).Get()));
         EXPECT_NE(doc.find("\"id\":\"n1\""), std::string::npos);
         EXPECT_NE(doc.find("\"id\":\"n2\""), std::string::npos);
         EXPECT_NE(doc.find("\"kind\":\"graph\""), std::string::npos);
@@ -205,11 +243,14 @@ namespace
         // (object with the compiled-plan shape; execution itself is exercised
         // by DasGraphTaskTest / GraphRuntimeTest).
         SessionHandle s{""};
-        ApplyChange(s.p,
-            R"({"op":"addNode","node":{"id":"n1","componentGuid":"{g1}","settings":{}}})");
+        ApplyChange(
+            s.p,
+            R"({"kind":"addNode","payload":{"node":{"id":"n1","componentGuid":"{g1}","settings":{}}}})");
 
         DasPtr<Das::ExportInterface::IDasJson> plan_json;
-        ASSERT_EQ(GraphAuthoringSessionCompile(s.p, nullptr, plan_json.Put()), DAS_S_OK);
+        ASSERT_EQ(
+            GraphAuthoringSessionCompile(s.p, nullptr, plan_json.Put()),
+            DAS_S_OK);
         ASSERT_NE(plan_json.Get(), nullptr);
         const auto plan = Compact(JsonToUtf8(plan_json.Get()));
         // CompiledGraphPlanDto serialises with these keys.
@@ -225,12 +266,15 @@ namespace
         constexpr std::string_view item_b =
             R"({"itemId":"b","target":{"targetKind":"componentRef","componentRef":{"kind":"componentRef","componentGuid":"{gb}","pluginGuid":"{p}"}},"settings":{}})";
         SessionHandle s{
-            std::string(R"({"items":[)") + std::string(item_a) + "," + std::string(item_b) + "]}"};
+            std::string(R"({"items":[)") + std::string(item_a) + ","
+            + std::string(item_b) + "]}"};
 
         // Lossless upgrade: kind flips to graph, nodes preserved.
         ASSERT_EQ(GraphAuthoringSessionUpgradeToGraph(s.p), DAS_S_OK);
         const auto after_upgrade = Compact(JsonToUtf8(GetDocument(s.p).Get()));
-        EXPECT_EQ(after_upgrade.find("\"kind\":\"formSequence\""), std::string::npos);
+        EXPECT_EQ(
+            after_upgrade.find("\"kind\":\"formSequence\""),
+            std::string::npos);
         EXPECT_NE(after_upgrade.find("\"kind\":\"graph\""), std::string::npos);
         EXPECT_NE(after_upgrade.find("\"id\":\"a\""), std::string::npos);
         EXPECT_NE(after_upgrade.find("\"id\":\"b\""), std::string::npos);
