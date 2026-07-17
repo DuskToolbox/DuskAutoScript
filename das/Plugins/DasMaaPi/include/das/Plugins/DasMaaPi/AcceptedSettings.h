@@ -45,6 +45,7 @@ namespace Das::Plugins::DasMaaPi
         std::optional<std::string>            controller_name;
         std::optional<std::string>            resource_name;
         std::optional<std::string>            preset_name;
+        std::optional<std::string>            language;
         std::vector<MaapiPiOptionSettingsDto> global_options;
         std::vector<MaapiPiOptionSettingsDto> resource_options;
         std::vector<MaapiPiOptionSettingsDto> controller_options;

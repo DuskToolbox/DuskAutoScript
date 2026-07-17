@@ -15,6 +15,40 @@ namespace Das::Plugins::DasMaaPi
             return yyjson::value(std::string(value));
         }
 
+        std::string_view ResolveI18n(
+            std::string_view text,
+            const PiCatalog& catalog,
+            std::string_view lang)
+        {
+            if (text.empty())
+            {
+                return "";
+            }
+            if (!text.starts_with('$'))
+            {
+                return text;
+            }
+            std::string_view key = text.substr(1);
+            auto lang_it = catalog.translations.find(std::string(lang));
+            if (lang_it == catalog.translations.end())
+            {
+                if (!catalog.translations.empty())
+                {
+                    lang_it = catalog.translations.begin();
+                }
+                else
+                {
+                    return key;
+                }
+            }
+            auto key_it = lang_it->second.find(std::string(key));
+            if (key_it != lang_it->second.end())
+            {
+                return std::string_view(key_it->second);
+            }
+            return key;
+        }
+
         template <typename TObject>
         std::optional<std::string> OptionalString(
             const TObject&   obj,
@@ -200,6 +234,7 @@ namespace Das::Plugins::DasMaaPi
                     settings.pi.resource_name =
                         OptionalString(*pi, "resourceName");
                     settings.pi.preset_name = OptionalString(*pi, "presetName");
+                    settings.pi.language = OptionalString(*pi, "language");
                     settings.pi.orphan_paths = StringArray(*pi, "orphanPaths");
                     settings.pi.global_options =
                         ParseOptionSettingsArray(*pi, "globalOptions");
@@ -231,7 +266,10 @@ namespace Das::Plugins::DasMaaPi
             arr.as_array()->emplace_back(std::move(diag));
         }
 
-        yyjson::value CandidateArray(const auto& items)
+        yyjson::value CandidateArray(
+            const auto&      items,
+            const PiCatalog*  catalog,
+            std::string_view language)
         {
             yyjson::value arr(Array());
             for (const auto& item : items)
@@ -241,8 +279,9 @@ namespace Das::Plugins::DasMaaPi
                 (*obj)[std::string_view("name")] = JsonString(item.dto.name);
                 if (item.dto.label)
                 {
-                    (*obj)[std::string_view("label")] =
-                        JsonString(*item.dto.label);
+                    std::string_view resolved =
+                        ResolveI18n(*item.dto.label, *catalog, language);
+                    (*obj)[std::string_view("label")] = JsonString(resolved);
                 }
                 arr.as_array()->emplace_back(std::move(candidate));
             }
@@ -312,7 +351,10 @@ namespace Das::Plugins::DasMaaPi
             return {4, 0};
         }
 
-        yyjson::value OptionCandidates(const PiOptionDto& dto)
+        yyjson::value OptionCandidates(
+            const PiOptionDto& dto,
+            const PiCatalog*   catalog,
+            std::string_view   language)
         {
             yyjson::value arr(Array());
             for (const auto& item : dto.cases)
@@ -322,7 +364,9 @@ namespace Das::Plugins::DasMaaPi
                 (*obj)[std::string_view("name")] = JsonString(item.name);
                 if (item.label)
                 {
-                    (*obj)[std::string_view("label")] = JsonString(*item.label);
+                    std::string_view resolved =
+                        ResolveI18n(*item.label, *catalog, language);
+                    (*obj)[std::string_view("label")] = JsonString(resolved);
                 }
                 arr.as_array()->emplace_back(std::move(candidate));
             }
@@ -334,7 +378,9 @@ namespace Das::Plugins::DasMaaPi
         yyjson::value MakeOptionPropertyField(
             std::string_view                field_name,
             const PiOptionDto&              dto,
-            const MaapiPiOptionSettingsDto* current)
+            const MaapiPiOptionSettingsDto* current,
+            const PiCatalog*                catalog,
+            std::string_view                language)
         {
             auto          mapping = MapOptionType(dto);
             yyjson::value value(Das::Utils::MakeYyjsonObject());
@@ -364,12 +410,15 @@ namespace Das::Plugins::DasMaaPi
             yyjson::value* candidates_ptr = nullptr;
             if (mapping.input_type == 1 || mapping.input_type == 2)
             {
-                candidates = OptionCandidates(dto);
+                candidates = OptionCandidates(dto, catalog, language);
                 candidates_ptr = &candidates;
             }
+            std::string_view label = dto.label ? *dto.label : std::string_view(dto.name);
+            std::string_view resolved_label =
+                ResolveI18n(label, *catalog, language);
             return MakePropertyField(
                 field_name,
-                dto.label.value_or(dto.name),
+                resolved_label,
                 mapping.value_type,
                 mapping.input_type,
                 value,
@@ -886,6 +935,11 @@ namespace Das::Plugins::DasMaaPi
             (*pi_obj)[std::string_view("presetName")] =
                 JsonString(*settings.pi.preset_name);
         }
+        if (settings.pi.language)
+        {
+            (*pi_obj)[std::string_view("language")] =
+                JsonString(*settings.pi.language);
+        }
         (*pi_obj)[std::string_view("globalOptions")] =
             OptionSettingsArray(settings.pi.global_options);
         (*pi_obj)[std::string_view("resourceOptions")] =
@@ -947,9 +1001,25 @@ namespace Das::Plugins::DasMaaPi
             0,
             yyjson::value(settings.adapter.execution_policy.fail_fast)));
 
+        std::string current_language;
         if (catalog)
         {
-            auto controller_candidates = CandidateArray(catalog->controllers);
+            current_language = settings.pi.language.value_or("");
+            if (current_language.empty())
+            {
+                auto zh_cn_it = catalog->translations.find("zh_cn");
+                if (zh_cn_it != catalog->translations.end())
+                {
+                    current_language = "zh_cn";
+                }
+                else if (!catalog->translations.empty())
+                {
+                    current_language = catalog->translations.begin()->first;
+                }
+            }
+
+            auto controller_candidates =
+                CandidateArray(catalog->controllers, catalog, current_language);
             fields.as_array()->emplace_back(MakePropertyField(
                 "pi.controllerName",
                 "Controller",
@@ -959,7 +1029,8 @@ namespace Das::Plugins::DasMaaPi
                     ? yyjson::value(*settings.pi.controller_name)
                     : yyjson::value(std::string{}),
                 &controller_candidates));
-            auto resource_candidates = CandidateArray(catalog->resources);
+            auto resource_candidates =
+                CandidateArray(catalog->resources, catalog, current_language);
             fields.as_array()->emplace_back(MakePropertyField(
                 "pi.resourceName",
                 "Resource",
@@ -969,7 +1040,8 @@ namespace Das::Plugins::DasMaaPi
                     ? yyjson::value(*settings.pi.resource_name)
                     : yyjson::value(std::string{}),
                 &resource_candidates));
-            auto preset_candidates = CandidateArray(catalog->presets);
+            auto preset_candidates =
+                CandidateArray(catalog->presets, catalog, current_language);
             fields.as_array()->emplace_back(MakePropertyField(
                 "pi.presetName",
                 "Preset",
@@ -980,6 +1052,23 @@ namespace Das::Plugins::DasMaaPi
                     : yyjson::value(std::string{}),
                 &preset_candidates));
 
+            yyjson::value language_candidates(Array());
+            for (const auto& [lang_code, _] : catalog->translations)
+            {
+                yyjson::value candidate(Object());
+                auto          lang_obj = candidate.as_object();
+                (*lang_obj)[std::string_view("name")] = JsonString(lang_code);
+                (*lang_obj)[std::string_view("label")] = JsonString(lang_code);
+                language_candidates.as_array()->emplace_back(std::move(candidate));
+            }
+            fields.as_array()->emplace_back(MakePropertyField(
+                "pi.language",
+                "Language",
+                4,
+                1,
+                yyjson::value(current_language),
+                &language_candidates));
+
             for (const auto& option : catalog->options)
             {
                 const auto* current =
@@ -987,7 +1076,9 @@ namespace Das::Plugins::DasMaaPi
                 fields.as_array()->emplace_back(MakeOptionPropertyField(
                     std::string{"pi.options." + option.dto.name},
                     option.dto,
-                    current));
+                    current,
+                    catalog,
+                    current_language));
             }
         }
         (*fs_obj)[std::string_view("fields")] = std::move(fields);
@@ -1007,6 +1098,14 @@ namespace Das::Plugins::DasMaaPi
                 const auto* catalog_task = FindTask(*catalog, task.task_name);
                 if (catalog_task)
                 {
+                    std::string_view task_label = task.task_name;
+                    if (catalog_task->dto.label)
+                    {
+                        task_label = ResolveI18n(
+                            *catalog_task->dto.label, *catalog, current_language);
+                    }
+                    (*item_obj)[std::string_view("label")] = JsonString(task_label);
+
                     for (const auto& option_name : catalog_task->dto.option)
                     {
                         const auto* option = FindOption(*catalog, option_name);
@@ -1020,7 +1119,9 @@ namespace Das::Plugins::DasMaaPi
                             MakeOptionPropertyField(
                                 std::string{"options." + option_name},
                                 option->dto,
-                                current));
+                                current,
+                                catalog,
+                                current_language));
                     }
                 }
             }
@@ -1058,15 +1159,15 @@ namespace Das::Plugins::DasMaaPi
         {
             auto catalog_obj = catalog_json.as_object();
             (*catalog_obj)[std::string_view("controllers")] =
-                CandidateArray(catalog->controllers);
+                CandidateArray(catalog->controllers, catalog, current_language);
             (*catalog_obj)[std::string_view("resources")] =
-                CandidateArray(catalog->resources);
+                CandidateArray(catalog->resources, catalog, current_language);
             (*catalog_obj)[std::string_view("tasks")] =
-                CandidateArray(catalog->tasks);
+                CandidateArray(catalog->tasks, catalog, current_language);
             (*catalog_obj)[std::string_view("presets")] =
-                CandidateArray(catalog->presets);
+                CandidateArray(catalog->presets, catalog, current_language);
             (*catalog_obj)[std::string_view("groups")] =
-                CandidateArray(catalog->groups);
+                CandidateArray(catalog->groups, catalog, current_language);
         }
         (*obj)[std::string_view("catalog")] = std::move(catalog_json);
         (*obj)[std::string_view("state")] = Object();
@@ -1210,6 +1311,12 @@ namespace Das::Plugins::DasMaaPi
         if (path == "pi.presetName" && value.is_string())
         {
             settings.pi.preset_name =
+                std::string(value.as_string().value_or(""));
+            return;
+        }
+        if (path == "pi.language" && value.is_string())
+        {
+            settings.pi.language =
                 std::string(value.as_string().value_or(""));
             return;
         }

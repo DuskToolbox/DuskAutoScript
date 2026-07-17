@@ -6,6 +6,8 @@
 #include <das/Core/IPC/MainProcess/IpcContext.h>
 #include <das/Core/SettingsManager/SettingsManager.h>
 #include <das/DasApi.h>
+#include <das/Plugins/DasMaaPi/AcceptedSettings.h>
+#include <das/Plugins/DasMaaPi/AuthoringProjector.h>
 #include <das/Plugins/DasMaaPi/MaapiDto.h>
 #include <das/Plugins/DasMaaPi/PiCatalog.h>
 #include <das/Utils/DasJsonCore.h>
@@ -956,4 +958,386 @@ TEST_F(MaapiAuthoringFixture, ApplyChangeReturnsDynamicPortsInResultJson)
     auto dynamic_ports = (*obj)[std::string_view("dynamic_ports")].as_array();
     ASSERT_TRUE(dynamic_ports.has_value());
     EXPECT_FALSE(dynamic_ports->empty());
+}
+
+// ---------------------------------------------------------------------------
+// I18n $ resolution tests
+// ---------------------------------------------------------------------------
+
+namespace
+{
+    PiCatalog MakeI18nMockCatalog()
+    {
+        PiCatalog catalog;
+        catalog.name = "TestI18n";
+        catalog.version = "1.0";
+
+        catalog.translations["zh_cn"] = {
+            {"controller.android", "安卓端"},
+            {"resource.official", "官服资源"},
+            {"task.dailyfarm", "日常任务"},
+            {"option.stage", "关卡"},
+            {"option.case.1-1", "1-1关"},
+            {"option.retry", "重试"},
+            {"option.times", "次数"},
+            {"option.notify", "通知"}};
+        catalog.translations["en"] = {
+            {"controller.android", "Android"},
+            {"resource.official", "Official Resource"},
+            {"task.dailyfarm", "Daily Farm"},
+            {"option.stage", "Stage"},
+            {"option.case.1-1", "Stage 1-1"},
+            {"option.retry", "Retry"},
+            {"option.times", "Times"},
+            {"option.notify", "Notify"}};
+
+        PiController controller;
+        controller.dto.name = "Android";
+        controller.dto.type = "Adb";
+        controller.dto.label = "$controller.android";
+        catalog.controllers.push_back(std::move(controller));
+
+        PiResource resource;
+        resource.dto.name = "Official";
+        resource.dto.path = {"resource"};
+        resource.dto.label = "$resource.official";
+        catalog.resources.push_back(std::move(resource));
+
+        PiTask task;
+        task.dto.name = "DailyFarm";
+        task.dto.entry = "StartDaily";
+        task.dto.label = "$task.dailyfarm";
+        task.dto.option = {"stage", "retry", "notify"};
+        catalog.tasks.push_back(std::move(task));
+
+        PiOption stage_option;
+        stage_option.dto.name = "stage";
+        stage_option.dto.type = "select";
+        stage_option.dto.label = "$option.stage";
+        PiCaseDto stage_case;
+        stage_case.name = "1-1";
+        stage_case.label = "$option.case.1-1";
+        stage_option.dto.cases.push_back(std::move(stage_case));
+        catalog.options.push_back(std::move(stage_option));
+
+        PiOption retry_option;
+        retry_option.dto.name = "retry";
+        retry_option.dto.type = "input";
+        retry_option.dto.label = "$option.retry";
+        PiInputDto retry_input;
+        retry_input.name = "times";
+        retry_input.label = "$option.times";
+        retry_option.dto.inputs.push_back(std::move(retry_input));
+        catalog.options.push_back(std::move(retry_option));
+
+        PiOption notify_option;
+        notify_option.dto.name = "notify";
+        notify_option.dto.type = "switch";
+        notify_option.dto.label = "$option.notify";
+        catalog.options.push_back(std::move(notify_option));
+
+        return catalog;
+    }
+
+    std::string GetLabelFromCandidateArray(
+        const yyjson::value& arr,
+        std::string_view     name)
+    {
+        auto arr_ptr = arr.as_array();
+        if (!arr_ptr)
+        {
+            return "";
+        }
+        for (auto it = arr_ptr->begin(); it != arr_ptr->end(); ++it)
+        {
+            auto obj = it->as_object();
+            if (!obj)
+            {
+                continue;
+            }
+            auto name_val = (*obj)[std::string_view("name")].as_string();
+            if (name_val.value_or("") == name)
+            {
+                auto label_val = (*obj)[std::string_view("label")].as_string();
+                if (label_val)
+                {
+                    return std::string(*label_val);
+                }
+            }
+        }
+        return "";
+    }
+
+    std::string GetFieldLabel(
+        const yyjson::value& document,
+        std::string_view     field_name)
+    {
+        auto obj = document.as_object();
+        if (!obj || !obj->contains(std::string_view("formSequence")))
+        {
+            return "";
+        }
+        auto fs = (*obj)[std::string_view("formSequence")].as_object();
+        if (!fs || !fs->contains(std::string_view("fields")))
+        {
+            return "";
+        }
+        auto fields = (*fs)[std::string_view("fields")].as_array();
+        if (!fields)
+        {
+            return "";
+        }
+        for (auto it = fields->begin(); it != fields->end(); ++it)
+        {
+            auto field = it->as_object();
+            if (!field)
+            {
+                continue;
+            }
+            auto name_val = (*field)[std::string_view("name")].as_string();
+            if (name_val.value_or("") == field_name)
+            {
+                auto label_val = (*field)[std::string_view("label")].as_string();
+                if (label_val)
+                {
+                    return std::string(*label_val);
+                }
+            }
+        }
+        return "";
+    }
+} // namespace
+
+TEST(I18nTest, ResolveI18nResolvesDollarPrefixKeys)
+{
+    auto catalog = MakeI18nMockCatalog();
+    Das::Plugins::DasMaaPi::AcceptedSettingsDto settings;
+    settings.pi.language = "zh_cn";
+
+    auto document = Das::Plugins::DasMaaPi::ProjectAuthoringDocument(
+        settings,
+        &catalog,
+        {},
+        0);
+
+    auto doc_obj = document.as_object();
+    ASSERT_TRUE(doc_obj.has_value());
+
+    auto catalog_val = (*doc_obj)[std::string_view("catalog")].as_object();
+    ASSERT_TRUE(catalog_val.has_value());
+
+    auto controllers_arr =
+        (*catalog_val)[std::string_view("controllers")].as_array();
+    ASSERT_TRUE(controllers_arr.has_value());
+    EXPECT_EQ(
+        GetLabelFromCandidateArray(*controllers_arr, "Android"),
+        "安卓端");
+
+    auto resources_arr =
+        (*catalog_val)[std::string_view("resources")].as_array();
+    ASSERT_TRUE(resources_arr.has_value());
+    EXPECT_EQ(
+        GetLabelFromCandidateArray(*resources_arr, "Official"),
+        "官服资源");
+
+    auto tasks_arr = (*catalog_val)[std::string_view("tasks")].as_array();
+    ASSERT_TRUE(tasks_arr.has_value());
+    EXPECT_EQ(GetLabelFromCandidateArray(*tasks_arr, "DailyFarm"), "日常任务");
+}
+
+TEST(I18nTest, ResolveI18nSwitchesLanguageCorrectly)
+{
+    auto catalog = MakeI18nMockCatalog();
+
+    AcceptedSettingsDto settings_zh;
+    settings_zh.pi.language = "zh_cn";
+
+    auto document_zh = ProjectAuthoringDocument(
+        settings_zh,
+        &catalog,
+        {},
+        0);
+
+    auto doc_obj_zh = document_zh.as_object();
+    ASSERT_TRUE(doc_obj_zh.has_value());
+    auto catalog_val_zh =
+        (*doc_obj_zh)[std::string_view("catalog")].as_object();
+    ASSERT_TRUE(catalog_val_zh.has_value());
+    auto controllers_zh =
+        (*catalog_val_zh)[std::string_view("controllers")].as_array();
+    ASSERT_TRUE(controllers_zh.has_value());
+    EXPECT_EQ(
+        GetLabelFromCandidateArray(*controllers_zh, "Android"),
+        "安卓端");
+
+    AcceptedSettingsDto settings_en;
+    settings_en.pi.language = "en";
+
+    auto document_en = ProjectAuthoringDocument(
+        settings_en,
+        &catalog,
+        {},
+        0);
+
+    auto doc_obj_en = document_en.as_object();
+    ASSERT_TRUE(doc_obj_en.has_value());
+    auto catalog_val_en =
+        (*doc_obj_en)[std::string_view("catalog")].as_object();
+    ASSERT_TRUE(catalog_val_en.has_value());
+    auto controllers_en =
+        (*catalog_val_en)[std::string_view("controllers")].as_array();
+    ASSERT_TRUE(controllers_en.has_value());
+    EXPECT_EQ(
+        GetLabelFromCandidateArray(*controllers_en, "Android"),
+        "Android");
+}
+
+TEST(I18nTest, ResolveI18nFallsBackToKeyWhenTranslationNotFound)
+{
+    auto catalog = MakeI18nMockCatalog();
+
+    catalog.translations["zh_cn"].erase("controller.android");
+
+    Das::Plugins::DasMaaPi::AcceptedSettingsDto settings;
+    settings.pi.language = "zh_cn";
+
+    auto document = Das::Plugins::DasMaaPi::ProjectAuthoringDocument(
+        settings,
+        &catalog,
+        {},
+        0);
+
+    auto doc_obj = document.as_object();
+    ASSERT_TRUE(doc_obj.has_value());
+    auto catalog_val = (*doc_obj)[std::string_view("catalog")].as_object();
+    ASSERT_TRUE(catalog_val.has_value());
+    auto controllers_arr =
+        (*catalog_val)[std::string_view("controllers")].as_array();
+    ASSERT_TRUE(controllers_arr.has_value());
+    EXPECT_EQ(
+        GetLabelFromCandidateArray(*controllers_arr, "Android"),
+        "controller.android");
+}
+
+TEST(I18nTest, ResolveI18nReturnsOriginalTextWhenNotDollarPrefixed)
+{
+    auto catalog = MakeI18nMockCatalog();
+
+    PiController raw_controller;
+    raw_controller.dto.name = "RawTest";
+    raw_controller.dto.type = "Adb";
+    raw_controller.dto.label = "RawLabel";
+    catalog.controllers.push_back(std::move(raw_controller));
+
+    Das::Plugins::DasMaaPi::AcceptedSettingsDto settings;
+    settings.pi.language = "zh_cn";
+
+    auto document = Das::Plugins::DasMaaPi::ProjectAuthoringDocument(
+        settings,
+        &catalog,
+        {},
+        0);
+
+    auto doc_obj = document.as_object();
+    ASSERT_TRUE(doc_obj.has_value());
+    auto catalog_val = (*doc_obj)[std::string_view("catalog")].as_object();
+    ASSERT_TRUE(catalog_val.has_value());
+    auto controllers_arr =
+        (*catalog_val)[std::string_view("controllers")].as_array();
+    ASSERT_TRUE(controllers_arr.has_value());
+    EXPECT_EQ(
+        GetLabelFromCandidateArray(*controllers_arr, "RawTest"),
+        "RawLabel");
+}
+
+TEST(I18nTest, LanguageFieldPersistsInAcceptedSettings)
+{
+    Das::Plugins::DasMaaPi::AcceptedSettingsDto settings;
+    settings.pi.language = "en";
+
+    auto serialized =
+        Das::Plugins::DasMaaPi::SerializeAcceptedSettings(settings);
+    auto obj = serialized.as_object();
+    ASSERT_TRUE(obj.has_value());
+    auto pi = (*obj)[std::string_view("pi")].as_object();
+    ASSERT_TRUE(pi.has_value());
+    auto lang = (*pi)[std::string_view("language")].as_string();
+    ASSERT_TRUE(lang.has_value());
+    EXPECT_EQ(*lang, "en");
+}
+
+TEST(I18nTest, LanguageFieldCanBeSetViaApplySetValueChange)
+{
+    auto catalog = MakeI18nMockCatalog();
+    Das::Plugins::DasMaaPi::AcceptedSettingsDto settings;
+
+    auto change = Das::Utils::ParseYyjsonFromString(
+        "{\"baseRevision\":0,\"kind\":\"setValue\",\"payload\":{\"valuePath\":"
+        "\"pi.language\",\"value\":\"en\"}}");
+    ASSERT_TRUE(change.has_value());
+
+    Das::Plugins::DasMaaPi::ApplySetValueChange(
+        settings, *change, &catalog);
+
+    ASSERT_TRUE(settings.pi.language.has_value());
+    EXPECT_EQ(*settings.pi.language, "en");
+}
+
+TEST(I18nTest, DefaultLanguageIsZhCnWhenAvailable)
+{
+    auto catalog = MakeI18nMockCatalog();
+    Das::Plugins::DasMaaPi::AcceptedSettingsDto settings;
+
+    auto document = Das::Plugins::DasMaaPi::ProjectAuthoringDocument(
+        settings,
+        &catalog,
+        {},
+        0);
+
+    auto doc_obj = document.as_object();
+    ASSERT_TRUE(doc_obj.has_value());
+    auto fs = (*doc_obj)[std::string_view("formSequence")].as_object();
+    ASSERT_TRUE(fs.has_value());
+    auto fields = (*fs)[std::string_view("fields")].as_array();
+    ASSERT_TRUE(fields.has_value());
+
+    bool found_language_field = false;
+    for (auto it = fields->begin(); it != fields->end(); ++it)
+    {
+        auto field = it->as_object();
+        if (!field)
+        {
+            continue;
+        }
+        auto name_val = (*field)[std::string_view("name")].as_string();
+        if (name_val.value_or("") == "pi.language")
+        {
+            found_language_field = true;
+            auto value_val = (*field)[std::string_view("value")].as_string();
+            ASSERT_TRUE(value_val.has_value());
+            EXPECT_EQ(*value_val, "zh_cn");
+            break;
+        }
+    }
+    EXPECT_TRUE(found_language_field);
+}
+
+TEST(I18nTest, OptionFieldLabelsAreResolved)
+{
+    auto catalog = MakeI18nMockCatalog();
+    Das::Plugins::DasMaaPi::AcceptedSettingsDto settings;
+    settings.pi.language = "zh_cn";
+
+    auto document = Das::Plugins::DasMaaPi::ProjectAuthoringDocument(
+        settings,
+        &catalog,
+        {},
+        0);
+
+    auto doc_obj = document.as_object();
+    ASSERT_TRUE(doc_obj.has_value());
+
+    EXPECT_EQ(GetFieldLabel(document, "pi.options.stage"), "关卡");
+    EXPECT_EQ(GetFieldLabel(document, "pi.options.retry"), "重试");
+    EXPECT_EQ(GetFieldLabel(document, "pi.options.notify"), "通知");
 }
