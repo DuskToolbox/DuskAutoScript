@@ -1341,3 +1341,388 @@ TEST(I18nTest, OptionFieldLabelsAreResolved)
     EXPECT_EQ(GetFieldLabel(document, "pi.options.retry"), "重试");
     EXPECT_EQ(GetFieldLabel(document, "pi.options.notify"), "通知");
 }
+
+// ---------------------------------------------------------------------------
+// Preset 展开测试（批次 3） - 单元测试（不依赖 IPC）
+// ---------------------------------------------------------------------------
+
+namespace
+{
+    PiCatalog MakePresetMockCatalog()
+    {
+        PiCatalog catalog;
+        catalog.name = "TestPreset";
+        catalog.version = "1.0";
+
+        PiTask task;
+        task.dto.name = "DailyFarm";
+        task.dto.entry = "StartDaily";
+        task.dto.default_check = true;
+        task.dto.option = {"stage", "retry", "use-medicine", "notify"};
+        catalog.tasks.push_back(std::move(task));
+
+        PiOption stage_option;
+        stage_option.dto.name = "stage";
+        stage_option.dto.type = "select";
+        PiCaseDto case_1_1;
+        case_1_1.name = "1-1";
+        stage_option.dto.cases.push_back(std::move(case_1_1));
+        catalog.options.push_back(std::move(stage_option));
+
+        PiOption retry_option;
+        retry_option.dto.name = "retry";
+        retry_option.dto.type = "input";
+        PiInputDto retry_input;
+        retry_input.name = "times";
+        retry_input.default_value = "3";
+        retry_input.pipeline_type = "int";
+        retry_option.dto.inputs.push_back(std::move(retry_input));
+        catalog.options.push_back(std::move(retry_option));
+
+        PiOption use_medicine_option;
+        use_medicine_option.dto.name = "use-medicine";
+        use_medicine_option.dto.type = "checkbox";
+        PiCaseDto small_case;
+        small_case.name = "small";
+        PiCaseDto large_case;
+        large_case.name = "large";
+        use_medicine_option.dto.cases.push_back(std::move(small_case));
+        use_medicine_option.dto.cases.push_back(std::move(large_case));
+        catalog.options.push_back(std::move(use_medicine_option));
+
+        PiOption notify_option;
+        notify_option.dto.name = "notify";
+        notify_option.dto.type = "switch";
+        catalog.options.push_back(std::move(notify_option));
+
+        PiPreset preset;
+        preset.dto.name = "DailyPreset";
+        PiPresetTaskDto preset_task;
+        preset_task.name = "DailyFarm";
+        preset_task.enabled = true;
+        preset_task.option_values["stage"] = yyjson::value(std::string("1-1"));
+        preset.dto.task.push_back(std::move(preset_task));
+        catalog.presets.push_back(std::move(preset));
+
+        return catalog;
+    }
+}
+
+TEST(PresetTest, PresetNameSetValueTriggersTaskExpansion)
+{
+    auto catalog = MakePresetMockCatalog();
+    Das::Plugins::DasMaaPi::AcceptedSettingsDto settings;
+
+    auto change = Das::Utils::ParseYyjsonFromString(
+        "{\"baseRevision\":0,\"kind\":\"setValue\",\"payload\":{\"valuePath\":"
+        "\"pi.presetName\",\"value\":\"DailyPreset\"}}");
+    ASSERT_TRUE(change.has_value());
+
+    Das::Plugins::DasMaaPi::ApplySetValueChange(
+        settings, *change, &catalog);
+
+    ASSERT_TRUE(settings.pi.preset_name.has_value());
+    EXPECT_EQ(*settings.pi.preset_name, "DailyPreset");
+
+    ASSERT_EQ(settings.pi.tasks.size(), 1u);
+    EXPECT_EQ(settings.pi.tasks[0].task_name, "DailyFarm");
+    EXPECT_TRUE(settings.pi.tasks[0].enabled);
+
+    bool found_stage = false;
+    for (const auto& option : settings.pi.tasks[0].options)
+    {
+        if (option.option_name == "stage")
+        {
+            found_stage = true;
+            ASSERT_EQ(option.selected_cases.size(), 1u);
+            EXPECT_EQ(option.selected_cases[0], "1-1");
+        }
+    }
+    EXPECT_TRUE(found_stage);
+}
+
+TEST(PresetTest, ApplyPresetExpandsTasksAndRestoresOptionValues)
+{
+    auto catalog = MakePresetMockCatalog();
+    Das::Plugins::DasMaaPi::AcceptedSettingsDto settings;
+
+    Das::Plugins::DasMaaPi::ApplyPreset(settings, catalog, "DailyPreset");
+
+    ASSERT_TRUE(settings.pi.preset_name.has_value());
+    EXPECT_EQ(*settings.pi.preset_name, "DailyPreset");
+
+    ASSERT_EQ(settings.pi.tasks.size(), 1u);
+    EXPECT_EQ(settings.pi.tasks[0].task_name, "DailyFarm");
+    EXPECT_TRUE(settings.pi.tasks[0].enabled);
+
+    bool found_stage = false;
+    bool found_retry = false;
+    for (const auto& option : settings.pi.tasks[0].options)
+    {
+        if (option.option_name == "stage")
+        {
+            found_stage = true;
+            ASSERT_EQ(option.selected_cases.size(), 1u);
+            EXPECT_EQ(option.selected_cases[0], "1-1");
+        }
+        if (option.option_name == "retry")
+        {
+            found_retry = true;
+            auto it = option.input_values.find("times");
+            ASSERT_TRUE(it != option.input_values.end());
+            EXPECT_EQ(it->second, "3");
+        }
+    }
+    EXPECT_TRUE(found_stage);
+    EXPECT_TRUE(found_retry);
+}
+
+TEST(PresetTest, InvalidPresetNameWritesOrphanPath)
+{
+    auto catalog = MakePresetMockCatalog();
+    Das::Plugins::DasMaaPi::AcceptedSettingsDto settings;
+
+    Das::Plugins::DasMaaPi::ApplyPreset(settings, catalog, "NonExistentPreset");
+
+    EXPECT_FALSE(settings.pi.preset_name.has_value());
+
+    ASSERT_EQ(settings.pi.orphan_paths.size(), 1u);
+    EXPECT_EQ(settings.pi.orphan_paths[0], "pi.presetName:NonExistentPreset");
+}
+
+TEST(PresetTest, NestedOptionsAreInitializedFromPreset)
+{
+    auto catalog = MakePresetMockCatalog();
+
+    PiOption select_with_nested;
+    select_with_nested.dto.name = "screenshot_mode";
+    select_with_nested.dto.type = "select";
+    PiCaseDto case_a;
+    case_a.name = "case_a";
+    case_a.option = {"nested_option"};
+    select_with_nested.dto.cases.push_back(std::move(case_a));
+    catalog.options.push_back(std::move(select_with_nested));
+
+    PiOption nested_option;
+    nested_option.dto.name = "nested_option";
+    nested_option.dto.type = "switch";
+    catalog.options.push_back(std::move(nested_option));
+
+    PiTask task_with_nested;
+    task_with_nested.dto.name = "TaskWithNested";
+    task_with_nested.dto.entry = "StartNested";
+    task_with_nested.dto.option = {"screenshot_mode"};
+    catalog.tasks.push_back(std::move(task_with_nested));
+
+    PiPreset preset_with_nested;
+    preset_with_nested.dto.name = "NestedPreset";
+    PiPresetTaskDto nested_preset_task;
+    nested_preset_task.name = "TaskWithNested";
+    nested_preset_task.enabled = true;
+    nested_preset_task.option_values["screenshot_mode"] =
+        yyjson::value(std::string("case_a"));
+    preset_with_nested.dto.task.push_back(std::move(nested_preset_task));
+    catalog.presets.push_back(std::move(preset_with_nested));
+
+    Das::Plugins::DasMaaPi::AcceptedSettingsDto settings;
+
+    Das::Plugins::DasMaaPi::ApplyPreset(settings, catalog, "NestedPreset");
+
+    ASSERT_EQ(settings.pi.tasks.size(), 1u);
+    EXPECT_EQ(settings.pi.tasks[0].task_name, "TaskWithNested");
+
+    bool found_screenshot_mode = false;
+    bool found_nested = false;
+    for (const auto& option : settings.pi.tasks[0].options)
+    {
+        if (option.option_name == "screenshot_mode")
+        {
+            found_screenshot_mode = true;
+            ASSERT_EQ(option.selected_cases.size(), 1u);
+            EXPECT_EQ(option.selected_cases[0], "case_a");
+        }
+        if (option.option_name == "nested_option")
+        {
+            found_nested = true;
+            EXPECT_TRUE(option.bool_value.has_value());
+            EXPECT_TRUE(*option.bool_value);
+        }
+    }
+    EXPECT_TRUE(found_screenshot_mode);
+    EXPECT_TRUE(found_nested);
+}
+
+// ---------------------------------------------------------------------------
+// Preset 展开测试（批次 3）
+// ---------------------------------------------------------------------------
+
+TEST_F(MaapiAuthoringFixture, PresetNameSetValueTriggersTaskExpansion)
+{
+    auto interface_path =
+        FixturePath("interface_authoring.jsonc").generic_string();
+    auto session = CreateSession(
+        "{\"adapter\":{\"interfacePath\":\"" + interface_path + "\"}}");
+
+    DasPtr<Das::ExportInterface::IDasJson> result_json;
+    auto preset_change = ParseDasJson(
+        "{\"baseRevision\":0,\"kind\":\"setValue\",\"payload\":{\"valuePath\":"
+        "\"pi.presetName\",\"value\":\"DailyPreset\"}}");
+    ASSERT_EQ(
+        session->ApplyChange(preset_change.Get(), result_json.Put()),
+        DAS_S_OK);
+
+    auto result = ReadJsonInterface(result_json.Get());
+    auto accepted =
+        (*result.as_object())[std::string_view("acceptedProperties")]
+            .as_object();
+    ASSERT_TRUE(accepted.has_value());
+    auto pi = (*accepted)[std::string_view("pi")].as_object();
+    ASSERT_TRUE(pi.has_value());
+
+    EXPECT_EQ(
+        (*pi)[std::string_view("presetName")].as_string().value_or(""),
+        "DailyPreset");
+
+    auto tasks = (*pi)[std::string_view("tasks")].as_array();
+    ASSERT_TRUE(tasks.has_value());
+    ASSERT_EQ(tasks->size(), 1u);
+    auto task = (*tasks)[0].as_object();
+    ASSERT_TRUE(task.has_value());
+    EXPECT_EQ(
+        (*task)[std::string_view("taskName")].as_string().value_or(""),
+        "DailyFarm");
+    EXPECT_TRUE(
+        (*task)[std::string_view("enabled")].as_bool().value_or(false));
+
+    auto options = (*task)[std::string_view("options")].as_array();
+    ASSERT_TRUE(options.has_value());
+    bool found_stage = false;
+    for (auto it = options->begin(); it != options->end(); ++it)
+    {
+        auto opt = it->as_object();
+        if (!opt)
+        {
+            continue;
+        }
+        auto name = (*opt)[std::string_view("optionName")].as_string();
+        if (name.value_or("") == "stage")
+        {
+            found_stage = true;
+            auto selected_cases =
+                (*opt)[std::string_view("selectedCases")].as_array();
+            ASSERT_TRUE(selected_cases.has_value());
+            ASSERT_EQ(selected_cases->size(), 1u);
+            EXPECT_EQ(
+                (*selected_cases)[0].as_string().value_or(""),
+                "1-1");
+        }
+    }
+    EXPECT_TRUE(found_stage);
+}
+
+TEST_F(MaapiAuthoringFixture, ApplyPresetExpandsTasksAndRestoresOptionValues)
+{
+    auto interface_path =
+        FixturePath("interface_authoring.jsonc").generic_string();
+    auto session = CreateSession(
+        "{\"adapter\":{\"interfacePath\":\"" + interface_path + "\"}}");
+
+    DasPtr<Das::ExportInterface::IDasJson> result_json;
+    auto preset_change = ParseDasJson(
+        "{\"baseRevision\":0,\"kind\":\"applyPreset\",\"payload\":{"
+        "\"presetName\":\"DailyPreset\"}}");
+    ASSERT_EQ(
+        session->ApplyChange(preset_change.Get(), result_json.Put()),
+        DAS_S_OK);
+
+    auto result = ReadJsonInterface(result_json.Get());
+    auto accepted =
+        (*result.as_object())[std::string_view("acceptedProperties")]
+            .as_object();
+    ASSERT_TRUE(accepted.has_value());
+    auto pi = (*accepted)[std::string_view("pi")].as_object();
+    ASSERT_TRUE(pi.has_value());
+
+    auto tasks = (*pi)[std::string_view("tasks")].as_array();
+    ASSERT_TRUE(tasks.has_value());
+    ASSERT_EQ(tasks->size(), 1u);
+    auto task = (*tasks)[0].as_object();
+    ASSERT_TRUE(task.has_value());
+    EXPECT_EQ(
+        (*task)[std::string_view("taskName")].as_string().value_or(""),
+        "DailyFarm");
+
+    auto options = (*task)[std::string_view("options")].as_array();
+    ASSERT_TRUE(options.has_value());
+
+    bool found_stage = false;
+    bool found_retry = false;
+    for (auto it = options->begin(); it != options->end(); ++it)
+    {
+        auto opt = it->as_object();
+        if (!opt)
+        {
+            continue;
+        }
+        auto name = (*opt)[std::string_view("optionName")].as_string();
+        if (name.value_or("") == "stage")
+        {
+            found_stage = true;
+            auto selected_cases =
+                (*opt)[std::string_view("selectedCases")].as_array();
+            ASSERT_TRUE(selected_cases.has_value());
+            ASSERT_EQ(selected_cases->size(), 1u);
+            EXPECT_EQ(
+                (*selected_cases)[0].as_string().value_or(""),
+                "1-1");
+        }
+        if (name.value_or("") == "retry")
+        {
+            found_retry = true;
+            auto input_values =
+                (*opt)[std::string_view("inputValues")].as_object();
+            ASSERT_TRUE(input_values.has_value());
+            auto times =
+                (*input_values)[std::string_view("times")].as_string();
+            ASSERT_TRUE(times.has_value());
+            EXPECT_EQ(*times, "3");
+        }
+    }
+    EXPECT_TRUE(found_stage);
+    EXPECT_TRUE(found_retry);
+}
+
+TEST_F(MaapiAuthoringFixture, InvalidPresetNameWritesOrphanPath)
+{
+    auto interface_path =
+        FixturePath("interface_authoring.jsonc").generic_string();
+    auto session = CreateSession(
+        "{\"adapter\":{\"interfacePath\":\"" + interface_path + "\"}}");
+
+    DasPtr<Das::ExportInterface::IDasJson> result_json;
+    auto preset_change = ParseDasJson(
+        "{\"baseRevision\":0,\"kind\":\"setValue\",\"payload\":{\"valuePath\":"
+        "\"pi.presetName\",\"value\":\"NonExistentPreset\"}}");
+    ASSERT_EQ(
+        session->ApplyChange(preset_change.Get(), result_json.Put()),
+        DAS_S_OK);
+
+    auto result = ReadJsonInterface(result_json.Get());
+    auto accepted =
+        (*result.as_object())[std::string_view("acceptedProperties")]
+            .as_object();
+    ASSERT_TRUE(accepted.has_value());
+    auto pi = (*accepted)[std::string_view("pi")].as_object();
+    ASSERT_TRUE(pi.has_value());
+
+    EXPECT_EQ(
+        (*pi)[std::string_view("presetName")].as_string().value_or(""),
+        "NonExistentPreset");
+
+    auto orphan_paths = (*pi)[std::string_view("orphanPaths")].as_array();
+    ASSERT_TRUE(orphan_paths.has_value());
+    ASSERT_EQ(orphan_paths->size(), 1u);
+    EXPECT_EQ(
+        (*orphan_paths)[0].as_string().value_or(""),
+        "pi.presetName:NonExistentPreset");
+}

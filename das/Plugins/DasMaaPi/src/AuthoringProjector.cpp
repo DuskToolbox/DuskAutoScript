@@ -701,6 +701,176 @@ namespace Das::Plugins::DasMaaPi
             *it = std::move(option);
         }
 
+        // 初始化单个 option 的默认值（包括嵌套 option）
+        void InitializeOptionDefaults(
+            std::vector<MaapiPiOptionSettingsDto>& result_options,
+            const std::vector<std::string>&        option_names,
+            const PiCatalog&                       catalog)
+        {
+            for (const auto& option_name : option_names)
+            {
+                const auto* option = FindOption(catalog, option_name);
+                if (!option)
+                {
+                    continue;
+                }
+                MaapiPiOptionSettingsDto opt_setting;
+                opt_setting.option_name = option->dto.name;
+                opt_setting.kind = option->dto.type;
+
+                if (option->dto.type == "select")
+                {
+                    if (!option->dto.default_cases.empty())
+                    {
+                        opt_setting.selected_cases = option->dto.default_cases;
+                    }
+                    else if (!option->dto.cases.empty())
+                    {
+                        opt_setting.selected_cases.emplace_back(
+                            option->dto.cases.front().name);
+                    }
+
+                    for (const auto& selected_case : opt_setting.selected_cases)
+                    {
+                        auto case_it = std::find_if(
+                            option->dto.cases.begin(),
+                            option->dto.cases.end(),
+                            [&](const PiCaseDto& c) { return c.name == selected_case; });
+                        if (case_it != option->dto.cases.end())
+                        {
+                            InitializeOptionDefaults(
+                                result_options,
+                                case_it->option,
+                                catalog);
+                        }
+                    }
+                }
+                else if (option->dto.type == "checkbox")
+                {
+                    opt_setting.selected_cases = option->dto.default_cases;
+                }
+                else if (option->dto.type == "switch")
+                {
+                    opt_setting.bool_value = true;
+                }
+                else if (option->dto.type == "input")
+                {
+                    for (const auto& input : option->dto.inputs)
+                    {
+                        if (input.default_value)
+                        {
+                            opt_setting.input_values.emplace(
+                                input.name, *input.default_value);
+                        }
+                    }
+                }
+                result_options.emplace_back(std::move(opt_setting));
+            }
+        }
+
+        // 按 option type 转换 preset 值
+        std::optional<MaapiPiOptionSettingsDto> ConvertPresetOptionValue(
+            const std::string&                          option_name,
+            const yyjson::value&                        preset_value,
+            const PiCatalog&                            catalog,
+            std::vector<MaapiPiOptionSettingsDto>&     result_options)
+        {
+            const auto* option = FindOption(catalog, option_name);
+            if (!option)
+            {
+                return std::nullopt;
+            }
+
+            MaapiPiOptionSettingsDto result;
+            result.option_name = option->dto.name;
+            result.kind = option->dto.type;
+
+            if (option->dto.type == "switch")
+            {
+                if (preset_value.is_string())
+                {
+                    const auto str_val =
+                        std::string(preset_value.as_string().value_or(""));
+                    result.bool_value =
+                        (str_val == "Yes" || str_val == "yes" || str_val == "Y"
+                         || str_val == "y");
+                }
+                else if (preset_value.is_bool())
+                {
+                    result.bool_value = preset_value.as_bool().value_or(false);
+                }
+                return result;
+            }
+
+            if (option->dto.type == "checkbox")
+            {
+                if (preset_value.is_array())
+                {
+                    auto arr = preset_value.as_array();
+                    for (auto it = arr->begin(); it != arr->end(); ++it)
+                    {
+                        if (it->is_string())
+                        {
+                            const auto case_name =
+                                std::string(it->as_string().value_or(""));
+                            if (std::any_of(
+                                    option->dto.cases.begin(),
+                                    option->dto.cases.end(),
+                                    [&](const PiCaseDto& c)
+                                    { return c.name == case_name; }))
+                            {
+                                result.selected_cases.emplace_back(case_name);
+                            }
+                        }
+                    }
+                }
+                return result;
+            }
+
+            if (option->dto.type == "input")
+            {
+                if (auto obj = preset_value.as_object())
+                {
+                    for (auto input_it = obj->begin(); input_it != obj->end();
+                         ++input_it)
+                    {
+                        if (input_it->second.is_string())
+                        {
+                            result.input_values.emplace(
+                                input_it->first,
+                                input_it->second.as_string().value_or(""));
+                        }
+                    }
+                }
+                return result;
+            }
+
+            if (option->dto.type == "select" || option->dto.type.empty())
+            {
+                if (preset_value.is_string())
+                {
+                    const auto case_name =
+                        std::string(preset_value.as_string().value_or(""));
+                    result.selected_cases.emplace_back(case_name);
+
+                    auto case_it = std::find_if(
+                        option->dto.cases.begin(),
+                        option->dto.cases.end(),
+                        [&](const PiCaseDto& c) { return c.name == case_name; });
+                    if (case_it != option->dto.cases.end())
+                    {
+                        InitializeOptionDefaults(
+                            result_options,
+                            case_it->option,
+                            catalog);
+                    }
+                }
+                return result;
+            }
+
+            return result;
+        }
+
         std::optional<MaapiPiOptionSettingsDto> ParseOptionValue(
             const PiOption&      option,
             const yyjson::value& value)
@@ -1310,8 +1480,15 @@ namespace Das::Plugins::DasMaaPi
         }
         if (path == "pi.presetName" && value.is_string())
         {
-            settings.pi.preset_name =
-                std::string(value.as_string().value_or(""));
+            const auto name = std::string(value.as_string().value_or(""));
+            if (catalog && !name.empty())
+            {
+                ApplyPreset(settings, *catalog, name);
+            }
+            else
+            {
+                settings.pi.preset_name = name;
+            }
             return;
         }
         if (path == "pi.language" && value.is_string())
@@ -1482,9 +1659,34 @@ namespace Das::Plugins::DasMaaPi
                     std::string{"pi.tasks:"} + task.name);
                 continue;
             }
+            const auto* catalog_task = FindTask(catalog, task.name);
+            if (!catalog_task)
+            {
+                continue;
+            }
+
             MaapiPiTaskSettingsDto task_settings;
             task_settings.task_name = task.name;
             task_settings.enabled = task.enabled;
+
+            InitializeOptionDefaults(
+                task_settings.options,
+                catalog_task->dto.option,
+                catalog);
+
+            for (const auto& [option_key, preset_value] : task.option_values)
+            {
+                auto converted = ConvertPresetOptionValue(
+                    option_key,
+                    preset_value,
+                    catalog,
+                    task_settings.options);
+                if (converted)
+                {
+                    UpsertOption(task_settings.options, std::move(*converted));
+                }
+            }
+
             settings.pi.tasks.push_back(std::move(task_settings));
         }
     }

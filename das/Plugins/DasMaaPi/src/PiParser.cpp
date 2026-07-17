@@ -373,6 +373,9 @@ namespace Das::Plugins::DasMaaPi
                                     {
                                         task.option_names.emplace_back(
                                             option_it->first);
+                                        task.option_values.emplace(
+                                            option_it->first,
+                                            Das::Utils::CloneYyjsonValue(option_it->second));
                                     }
                                 }
                             }

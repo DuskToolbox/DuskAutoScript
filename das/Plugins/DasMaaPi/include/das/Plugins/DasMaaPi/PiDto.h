@@ -87,9 +87,10 @@ namespace Das::Plugins::DasMaaPi
 
     struct PiPresetTaskDto
     {
-        std::string              name;
-        bool                     enabled = true;
-        std::vector<std::string> option_names;
+        std::string                              name;
+        bool                                     enabled = true;
+        std::vector<std::string>                option_names;
+        std::map<std::string, yyjson::value>    option_values;
     };
 
     struct PiPresetDto : PiNamedDto
