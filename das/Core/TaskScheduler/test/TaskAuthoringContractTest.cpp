@@ -18,16 +18,10 @@ namespace
 TEST(TaskAuthoringContractTest, ValidFormSequenceDocumentPasses)
 {
     auto document = ParseJson(R"json({
-        "version": 1,
+        "contractVersion": 1,
         "kind": "formSequence",
         "revision": 7,
-        "values": {"projectFolder": "C:/maa"},
-        "view": {"sections": []},
-        "schema": {"fields": []},
-        "catalog": {"actions": []},
-        "state": {"dirty": false},
-        "diagnostics": [],
-        "migration": {"schemaVersion": 1}
+        "formSequence": {"fields": [], "sequence": []}
     })json");
 
     auto result = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
@@ -39,16 +33,10 @@ TEST(TaskAuthoringContractTest, ValidFormSequenceDocumentPasses)
 TEST(TaskAuthoringContractTest, ValidGraphDocumentPasses)
 {
     auto document = ParseJson(R"json({
-        "version": 1,
+        "contractVersion": 1,
         "kind": "graph",
         "revision": 2,
-        "values": {},
-        "view": {"nodes": [], "connections": []},
-        "schema": {"ports": []},
-        "catalog": {"actions": [], "components": []},
-        "state": {"selection": []},
-        "diagnostics": [],
-        "migration": {"orphanedNodes": []}
+        "graph": {"nodes": [], "connections": []}
     })json");
 
     auto result = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
@@ -56,18 +44,24 @@ TEST(TaskAuthoringContractTest, ValidGraphDocumentPasses)
     EXPECT_TRUE(result.valid);
 }
 
+TEST(TaskAuthoringContractTest, MissingContractVersionFails)
+{
+    auto document = ParseJson(R"json({
+        "kind": "formSequence",
+        "revision": 1
+    })json");
+
+    auto result = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+
+    EXPECT_FALSE(result.valid);
+    EXPECT_EQ(result.error_kind, "missingField");
+}
+
 TEST(TaskAuthoringContractTest, MissingRevisionFails)
 {
     auto document = ParseJson(R"json({
-        "version": 1,
-        "kind": "formSequence",
-        "values": {},
-        "view": {},
-        "schema": {},
-        "catalog": {},
-        "state": {},
-        "diagnostics": [],
-        "migration": {}
+        "contractVersion": 1,
+        "kind": "formSequence"
     })json");
 
     auto result = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
@@ -79,14 +73,26 @@ TEST(TaskAuthoringContractTest, MissingRevisionFails)
 TEST(TaskAuthoringContractTest, CustomWebDocumentFails)
 {
     auto document = ParseJson(R"json({
-        "version": 1,
+        "contractVersion": 1,
         "kind": "customWeb",
+        "revision": 1
+    })json");
+
+    auto result = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+
+    EXPECT_FALSE(result.valid);
+    EXPECT_EQ(result.error_kind, "unsupportedKind");
+}
+
+TEST(TaskAuthoringContractTest, LegacyFieldSetFails)
+{
+    auto document = ParseJson(R"json({
+        "version": 1,
+        "kind": "formSequence",
         "revision": 1,
-        "values": {},
         "view": {},
         "schema": {},
         "catalog": {},
-        "state": {},
         "diagnostics": [],
         "migration": {}
     })json");
@@ -94,7 +100,7 @@ TEST(TaskAuthoringContractTest, CustomWebDocumentFails)
     auto result = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
 
     EXPECT_FALSE(result.valid);
-    EXPECT_EQ(result.error_kind, "unsupportedKind");
+    EXPECT_EQ(result.error_kind, "missingField");
 }
 
 TEST(TaskAuthoringContractTest, ChangeRequiresBaseRevision)

@@ -405,11 +405,9 @@ DasResult IpcTaskAuthoringSessionImpl::GetDocument(
     obj[std::string_view("version")] = 1;
     obj[std::string_view("kind")] = "formSequence";
     obj[std::string_view("revision")] = 0;
-    obj[std::string_view("values")] = Utils::MakeYyjsonObject();
     obj[std::string_view("view")] = Utils::MakeYyjsonObject();
     obj[std::string_view("schema")] = Utils::MakeYyjsonObject();
     obj[std::string_view("catalog")] = Utils::MakeYyjsonObject();
-    obj[std::string_view("state")] = Utils::MakeYyjsonObject();
     obj[std::string_view("diagnostics")] = Utils::MakeYyjsonArray();
     obj[std::string_view("migration")] = Utils::MakeYyjsonObject();
 

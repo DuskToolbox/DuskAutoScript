@@ -204,11 +204,13 @@ DasResult FakeAuthoringSession::GetDocument(
 
     yyjson::value document(Das::Utils::MakeYyjsonObject());
     auto          obj = document.as_object();
+    // DAS-81 schema 要求 contractVersion/kind/revision 三件套；
+    // 旧字段（version/view/schema/catalog/migration）保留以维持
+    // 现有测试断言（schema 允许 additionalProperties）。
+    (*obj)[std::string_view("contractVersion")] = 1;
     (*obj)[std::string_view("version")] = 1;
     (*obj)[std::string_view("kind")] = "formSequence";
     (*obj)[std::string_view("revision")] = 0;
-    (*obj)[std::string_view("values")] =
-        yyjson::value(Das::Utils::MakeYyjsonObject());
     (*obj)[std::string_view("view")] =
         yyjson::value(Das::Utils::MakeYyjsonObject());
     (*obj)[std::string_view("schema")] =
@@ -218,8 +220,6 @@ DasResult FakeAuthoringSession::GetDocument(
         (*catalog.as_object())[std::string_view("providerField")] = "preserved";
         (*obj)[std::string_view("catalog")] = std::move(catalog);
     }
-    (*obj)[std::string_view("state")] =
-        yyjson::value(Das::Utils::MakeYyjsonObject());
     (*obj)[std::string_view("diagnostics")] =
         yyjson::value(Das::Utils::MakeYyjsonArray());
     (*obj)[std::string_view("migration")] =

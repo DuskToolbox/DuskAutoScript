@@ -1,3 +1,4 @@
+#define _CRT_SECURE_NO_WARNINGS
 #define DAS_BUILD_SHARED
 
 #include "SchedulerTestPluginImpl.h"

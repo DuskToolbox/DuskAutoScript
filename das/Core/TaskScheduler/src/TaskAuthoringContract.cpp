@@ -80,9 +80,11 @@ namespace Das::Core::TaskScheduler
         }
 
         const auto& obj = obj_opt.value();
-        if (!HasIntegerField(obj, "version"))
+        if (!HasIntegerField(obj, "contractVersion"))
         {
-            return Fail("missingField", "AuthoringDocument.version required");
+            return Fail(
+                "missingField",
+                "AuthoringDocument.contractVersion required");
         }
         if (!HasStringField(obj, "kind"))
         {
@@ -98,36 +100,6 @@ namespace Das::Core::TaskScheduler
         if (!HasIntegerField(obj, "revision"))
         {
             return Fail("missingField", "AuthoringDocument.revision required");
-        }
-        if (!HasObjectField(obj, "values"))
-        {
-            return Fail("missingField", "AuthoringDocument.values required");
-        }
-        if (!HasObjectField(obj, "view"))
-        {
-            return Fail("missingField", "AuthoringDocument.view required");
-        }
-        if (!HasObjectField(obj, "schema"))
-        {
-            return Fail("missingField", "AuthoringDocument.schema required");
-        }
-        if (!HasObjectField(obj, "catalog"))
-        {
-            return Fail("missingField", "AuthoringDocument.catalog required");
-        }
-        if (!HasObjectField(obj, "state"))
-        {
-            return Fail("missingField", "AuthoringDocument.state required");
-        }
-        if (!HasArrayField(obj, "diagnostics"))
-        {
-            return Fail(
-                "missingField",
-                "AuthoringDocument.diagnostics required");
-        }
-        if (!HasObjectField(obj, "migration"))
-        {
-            return Fail("missingField", "AuthoringDocument.migration required");
         }
 
         return Pass();

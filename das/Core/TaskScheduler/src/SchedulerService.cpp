@@ -1935,6 +1935,13 @@ namespace Das::Core::TaskScheduler
             (*entry_json.as_object())[std::string_view("authoring")]);
         auto document = ReadJsonInterface(document_json.Get());
         MergeTaskComponentCatalog(plugin_manager_, document);
+        auto document_validation = ValidateAuthoringDocument(document);
+        if (!document_validation.valid)
+        {
+            return MakeRepositoryResponseError(
+                document_validation.error_kind,
+                document_validation.message);
+        }
         (*obj)[std::string_view("document")] = std::move(document);
         return result;
     }
@@ -2147,6 +2154,13 @@ namespace Das::Core::TaskScheduler
             document = ReadJsonInterface(document_json.Get());
         }
         MergeTaskComponentCatalog(plugin_manager_, document);
+        auto document_validation = ValidateAuthoringDocument(document);
+        if (!document_validation.valid)
+        {
+            return MakeRepositoryResponseError(
+                document_validation.error_kind,
+                document_validation.message);
+        }
 
         yyjson::value result(Das::Utils::MakeYyjsonObject());
         auto          result_obj = result.as_object();
@@ -2240,6 +2254,25 @@ namespace Das::Core::TaskScheduler
                     "capability");
             }
             capability = *authoring;
+        }
+
+        // Per DAS-81 schema, AuthoringCompileRequest may carry a `document`
+        // for validation. Reject early if it is structurally malformed so the
+        // plugin never sees an invalid doc. Symmetric with task-level
+        // CompileTaskAuthoring input validation.
+        if (auto req_obj = request.as_object(); req_obj && req_obj->contains(std::string_view("document")))
+        {
+            const auto& doc = (*req_obj)[std::string_view("document")];
+            if (doc.is_object())
+            {
+                auto doc_validation = ValidateAuthoringDocument(doc);
+                if (!doc_validation.valid)
+                {
+                    return MakeRepositoryResponseError(
+                        doc_validation.error_kind,
+                        doc_validation.message);
+                }
+            }
         }
 
         auto provider_compile = CompileRepositoryEntryProvider(
@@ -3087,6 +3120,13 @@ namespace Das::Core::TaskScheduler
         (*obj)[std::string_view("taskGuid")] = GuidToString(task_guid);
         auto document = ReadJsonInterface(document_json.Get());
         MergeTaskComponentCatalog(plugin_manager_, document);
+        auto document_validation = ValidateAuthoringDocument(document);
+        if (!document_validation.valid)
+        {
+            return MakeAuthoringResponseError(
+                document_validation.error_kind,
+                document_validation.message);
+        }
         (*obj)[std::string_view("document")] = std::move(document);
         return result;
     }
@@ -3283,6 +3323,13 @@ namespace Das::Core::TaskScheduler
             document = ReadJsonInterface(document_json.Get());
         }
         MergeTaskComponentCatalog(plugin_manager_, document);
+        auto document_validation = ValidateAuthoringDocument(document);
+        if (!document_validation.valid)
+        {
+            return MakeAuthoringResponseError(
+                document_validation.error_kind,
+                document_validation.message);
+        }
 
         yyjson::value result(Das::Utils::MakeYyjsonObject());
         auto          result_obj = result.as_object();
@@ -3326,6 +3373,24 @@ namespace Das::Core::TaskScheduler
 
         auto& settings = plugin_manager_.GetSettingsManager();
         auto  task_json = settings.GetTaskInstanceJson("0", task_id);
+
+        // Per DAS-81 schema, AuthoringCompileRequest may carry a `document`
+        // for validation. Reject early if it is structurally malformed so the
+        // plugin never sees an invalid doc.
+        if (auto req_obj = request.as_object(); req_obj && req_obj->contains(std::string_view("document")))
+        {
+            const auto& doc = (*req_obj)[std::string_view("document")];
+            if (doc.is_object())
+            {
+                auto doc_validation = ValidateAuthoringDocument(doc);
+                if (!doc_validation.valid)
+                {
+                    return MakeAuthoringResponseError(
+                        doc_validation.error_kind,
+                        doc_validation.message);
+                }
+            }
+        }
 
         DasPtr<Das::PluginInterface::IDasTaskAuthoringSession> session;
         auto session_result = CreateAuthoringSession(
