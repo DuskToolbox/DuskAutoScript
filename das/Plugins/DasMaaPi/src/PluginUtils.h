@@ -33,8 +33,6 @@ namespace Plugins::DasMaaPi
         int64_t                      revision,
         std::vector<PiDiagnosticDto> diagnostics);
 
-    yyjson::value MakeAdapterOnlyDocument();
-
     // Port derivation utilities (D-05/D-06/D-07)
 
     /// Derive graph port definitions from PI catalog for a given task (D-05).

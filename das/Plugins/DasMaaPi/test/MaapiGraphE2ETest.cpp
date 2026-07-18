@@ -29,7 +29,7 @@ namespace
     // ---- Constants ----
 
     const std::string MAAPI_RUN_TASK_GUID =
-        "69f20008-0000-4000-8000-000000000001";
+        "69F20008-0000-4000-8000-000000000001";
     const std::string NODE_ID = "30000000-0000-0000-0000-000000000001";
 
     // ---- Fixture path helper ----

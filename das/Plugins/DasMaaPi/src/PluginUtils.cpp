@@ -317,55 +317,5 @@ namespace Plugins::DasMaaPi
         return arr;
     }
 
-    yyjson::value MakeAdapterOnlyDocument()
-    {
-        yyjson::value document(Das::Utils::MakeYyjsonObject());
-        auto          obj = document.as_object();
-        (*obj)[std::string_view("version")] = 1;
-        (*obj)[std::string_view("kind")] = "formSequence";
-        (*obj)[std::string_view("revision")] = 0;
-
-        yyjson::value values(Das::Utils::MakeYyjsonObject());
-        yyjson::value adapter(Das::Utils::MakeYyjsonObject());
-        yyjson::value execution_policy(Das::Utils::MakeYyjsonObject());
-        (*execution_policy.as_object())[std::string_view("failFast")] = true;
-        (*adapter.as_object())[std::string_view("executionPolicy")] =
-            std::move(execution_policy);
-        (*values.as_object())[std::string_view("adapter")] = std::move(adapter);
-        (*obj)[std::string_view("values")] = std::move(values);
-
-        yyjson::value view(Das::Utils::MakeYyjsonObject());
-        yyjson::value form_sequence(Das::Utils::MakeYyjsonArray());
-
-        yyjson::value project_path(Das::Utils::MakeYyjsonObject());
-        auto          project_path_obj = project_path.as_object();
-        (*project_path_obj)[std::string_view("id")] = "adapter.projectPath";
-        (*project_path_obj)[std::string_view("kind")] = "path";
-        (*project_path_obj)[std::string_view("label")] =
-            "MaaFramework project path";
-        (*project_path_obj)[std::string_view("required")] = true;
-        form_sequence.as_array()->emplace_back(std::move(project_path));
-
-        yyjson::value fail_fast(Das::Utils::MakeYyjsonObject());
-        auto          fail_fast_obj = fail_fast.as_object();
-        (*fail_fast_obj)[std::string_view("id")] =
-            "adapter.executionPolicy.failFast";
-        (*fail_fast_obj)[std::string_view("kind")] = "switch";
-        (*fail_fast_obj)[std::string_view("label")] = "Fail fast";
-        form_sequence.as_array()->emplace_back(std::move(fail_fast));
-
-        (*view.as_object())[std::string_view("formSequence")] =
-            std::move(form_sequence);
-        (*obj)[std::string_view("view")] = std::move(view);
-
-        yyjson::value schema(Das::Utils::MakeYyjsonObject());
-        (*schema.as_object())[std::string_view("acceptedSettingsVersion")] = 1;
-        (*obj)[std::string_view("schema")] = std::move(schema);
-        (*obj)[std::string_view("catalog")] = Das::Utils::MakeYyjsonObject();
-        (*obj)[std::string_view("state")] = Das::Utils::MakeYyjsonObject();
-        (*obj)[std::string_view("diagnostics")] = Das::Utils::MakeYyjsonArray();
-        (*obj)[std::string_view("migration")] = Das::Utils::MakeYyjsonObject();
-        return document;
-    }
 } // namespace Plugins::DasMaaPi
 DAS_NS_END

@@ -358,17 +358,6 @@ TEST_F(MaapiPluginScaffoldFixture, AdapterOnlyDocumentBeforeProjectSelection)
         (*obj)[std::string_view("kind")].as_string().value_or(""),
         std::string_view("formSequence"));
 
-    auto values = (*obj)[std::string_view("values")].as_object();
-    ASSERT_TRUE(values.has_value());
-    auto adapter = (*values)[std::string_view("adapter")].as_object();
-    ASSERT_TRUE(adapter.has_value());
-    auto execution_policy =
-        (*adapter)[std::string_view("executionPolicy")].as_object();
-    ASSERT_TRUE(execution_policy.has_value());
-    EXPECT_TRUE(
-        (*execution_policy)[std::string_view("failFast")].as_bool().value_or(
-            false));
-
     const auto        serialized = document.write(yyjson::WriteFlag::NoFlag);
     const std::string text(serialized.data(), serialized.size());
     EXPECT_EQ(text.find("controller"), std::string::npos);

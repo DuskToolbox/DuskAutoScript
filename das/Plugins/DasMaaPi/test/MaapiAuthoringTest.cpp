@@ -386,7 +386,7 @@ TEST_F(MaapiAuthoringFixture, ApplyPathFailurePersistsDiagnostics)
 
     auto document = (*obj)[std::string_view("document")];
     EXPECT_TRUE(FormSequenceHasField(document, "adapter.interfacePath"));
-    EXPECT_FALSE(FormSequenceHasField(document, "pi.controllerName"));
+    EXPECT_FALSE(FormSequenceHasField(document, "controllerName"));
 }
 
 TEST_F(MaapiAuthoringFixture, ApplyPathSuccessRefreshesDocument)
@@ -409,12 +409,12 @@ TEST_F(MaapiAuthoringFixture, ApplyPathSuccessRefreshesDocument)
         "AuthoringFixture:1.0");
 
     auto document = (*obj)[std::string_view("document")];
-    EXPECT_TRUE(FormSequenceHasField(document, "pi.controllerName"));
-    EXPECT_TRUE(FormSequenceHasField(document, "pi.resourceName"));
-    EXPECT_TRUE(FormSequenceHasField(document, "pi.options.stage"));
-    EXPECT_TRUE(FormSequenceHasField(document, "pi.options.retry"));
-    EXPECT_TRUE(FormSequenceHasField(document, "pi.options.use-medicine"));
-    EXPECT_TRUE(FormSequenceHasField(document, "pi.options.notify"));
+    EXPECT_TRUE(FormSequenceHasField(document, "controllerName"));
+    EXPECT_TRUE(FormSequenceHasField(document, "resourceName"));
+    EXPECT_TRUE(FormSequenceHasField(document, "options.stage"));
+    EXPECT_FALSE(FormSequenceHasField(document, "options.retry"));
+    EXPECT_FALSE(FormSequenceHasField(document, "options.use-medicine"));
+    EXPECT_FALSE(FormSequenceHasField(document, "options.notify"));
     auto doc_obj = document.as_object();
     ASSERT_TRUE(doc_obj.has_value());
     EXPECT_EQ(
@@ -447,28 +447,28 @@ TEST_F(MaapiAuthoringFixture, PiValuePathsPersistTasksAndOptions)
 
     auto stage_change = ParseDasJson(
         "{\"baseRevision\":1,\"kind\":\"setValue\",\"payload\":{\"valuePath\":"
-        "\"pi.options.stage\",\"value\":{\"selectedCases\":[\"1-1\"]}}}");
+        "\"options.stage\",\"value\":\"1-1\"}}");
     ASSERT_EQ(
         session->ApplyChange(stage_change.Get(), result_json.Put()),
         DAS_S_OK);
 
     auto retry_change = ParseDasJson(
         "{\"baseRevision\":2,\"kind\":\"setValue\",\"payload\":{\"valuePath\":"
-        "\"pi.options.retry\",\"value\":{\"inputValues\":{\"times\":\"9\"}}}}");
+        "\"options.retry\",\"value\":\"9\"}}");
     ASSERT_EQ(
         session->ApplyChange(retry_change.Get(), result_json.Put()),
         DAS_S_OK);
 
     auto medicine_change = ParseDasJson(
         "{\"baseRevision\":3,\"kind\":\"setValue\",\"payload\":{\"valuePath\":"
-        "\"pi.options.use-medicine\",\"value\":[\"small\",\"large\"]}}");
+        "\"options.use-medicine\",\"value\":[\"small\",\"large\"]}}");
     ASSERT_EQ(
         session->ApplyChange(medicine_change.Get(), result_json.Put()),
         DAS_S_OK);
 
     auto notify_change = ParseDasJson(
         "{\"baseRevision\":4,\"kind\":\"setValue\",\"payload\":{\"valuePath\":"
-        "\"pi.options.notify\",\"value\":true}}");
+        "\"options.notify\",\"value\":true}}");
     ASSERT_EQ(
         session->ApplyChange(notify_change.Get(), result_json.Put()),
         DAS_S_OK);
@@ -499,7 +499,7 @@ TEST_F(MaapiAuthoringFixture, PiValuePathsPersistTasksAndOptions)
 
     auto delete_retry = ParseDasJson(
         "{\"baseRevision\":5,\"kind\":\"setValue\",\"payload\":{\"valuePath\":"
-        "\"pi.options.retry\",\"value\":null}}");
+        "\"options.retry\",\"value\":null}}");
     ASSERT_EQ(
         session->ApplyChange(delete_retry.Get(), result_json.Put()),
         DAS_S_OK);
@@ -520,7 +520,7 @@ TEST_F(MaapiAuthoringFixture, PiValuePathCleanupRemovesOrphans)
         FixturePath("interface_authoring.jsonc").generic_string();
     auto session = CreateSession(
         "{\"adapter\":{\"interfacePath\":\"" + interface_path
-        + "\"},\"pi\":{\"orphanPaths\":[\"pi.options:legacy\","
+        + "\"},\"pi\":{\"orphanPaths\":[\"options:legacy\","
           "\"pi.tasks:MissingTask\"],\"globalOptions\":[{\"optionName\":"
           "\"legacy\",\"kind\":\"select\",\"selectedCases\":[\"old\"]}],"
           "\"tasks\":[{\"taskName\":\"MissingTask\",\"enabled\":true}]}}");
@@ -528,7 +528,7 @@ TEST_F(MaapiAuthoringFixture, PiValuePathCleanupRemovesOrphans)
     DasPtr<Das::ExportInterface::IDasJson> result_json;
     auto                                   delete_option = ParseDasJson(
         "{\"baseRevision\":0,\"kind\":\"setValue\",\"payload\":{\"valuePath\":"
-        "\"pi.options.legacy\",\"value\":null}}");
+        "\"options.legacy\",\"value\":null}}");
     ASSERT_EQ(
         session->ApplyChange(delete_option.Get(), result_json.Put()),
         DAS_S_OK);
@@ -637,7 +637,7 @@ TEST_F(MaapiAuthoringFixture, ContractDocShapeHasFormSequenceAndNoPrivateFields)
         "DailyFarm");
     EXPECT_EQ(
         (*first)[std::string_view("componentGuid")].as_string().value_or(""),
-        "69f20008-0000-4000-8000-000000000001");
+        "69F20008-0000-4000-8000-000000000001");
     EXPECT_TRUE(first->contains(std::string_view("fields")));
     EXPECT_TRUE(first->contains(std::string_view("settings")));
     EXPECT_TRUE(first->contains(std::string_view("enabled")));
@@ -1036,6 +1036,18 @@ namespace
         notify_option.dto.label = "$option.notify";
         catalog.options.push_back(std::move(notify_option));
 
+        // stage 是 global_option（对齐 interface_authoring.jsonc 的语义），
+        // 既出现在 catalog.options 也出现在 catalog.global_options —— parser
+        // 解析 global_option 时按名复制，两份都保留。
+        for (const auto& opt : catalog.options)
+        {
+            if (opt.dto.name == "stage")
+            {
+                catalog.global_options.push_back(opt);
+                break;
+            }
+        }
+
         return catalog;
     }
 
@@ -1101,6 +1113,67 @@ namespace
                 if (label_val)
                 {
                     return std::string(*label_val);
+                }
+            }
+        }
+        return "";
+    }
+
+    std::string GetSequenceItemFieldLabel(
+        const yyjson::value& document,
+        std::string_view     item_id,
+        std::string_view     field_name)
+    {
+        auto obj = document.as_object();
+        if (!obj || !obj->contains(std::string_view("formSequence")))
+        {
+            return "";
+        }
+        auto fs = (*obj)[std::string_view("formSequence")].as_object();
+        if (!fs || !fs->contains(std::string_view("sequence")))
+        {
+            return "";
+        }
+        auto sequence = (*fs)[std::string_view("sequence")].as_array();
+        if (!sequence)
+        {
+            return "";
+        }
+        for (auto it = sequence->begin(); it != sequence->end(); ++it)
+        {
+            auto item = it->as_object();
+            if (!item)
+            {
+                continue;
+            }
+            auto id_val = (*item)[std::string_view("id")].as_string();
+            if (id_val.value_or("") != item_id)
+            {
+                continue;
+            }
+            auto item_fields = (*item)[std::string_view("fields")].as_array();
+            if (!item_fields)
+            {
+                return "";
+            }
+            for (auto fit = item_fields->begin(); fit != item_fields->end();
+                 ++fit)
+            {
+                auto field = fit->as_object();
+                if (!field)
+                {
+                    continue;
+                }
+                auto name_val =
+                    (*field)[std::string_view("name")].as_string();
+                if (name_val.value_or("") == field_name)
+                {
+                    auto label_val =
+                        (*field)[std::string_view("label")].as_string();
+                    if (label_val)
+                    {
+                        return std::string(*label_val);
+                    }
                 }
             }
         }
@@ -1273,7 +1346,7 @@ TEST(I18nTest, LanguageFieldCanBeSetViaApplySetValueChange)
 
     auto change = Das::Utils::ParseYyjsonFromString(
         "{\"baseRevision\":0,\"kind\":\"setValue\",\"payload\":{\"valuePath\":"
-        "\"pi.language\",\"value\":\"en\"}}");
+        "\"language\",\"value\":\"en\"}}");
     ASSERT_TRUE(change.has_value());
 
     Das::Plugins::DasMaaPi::ApplySetValueChange(
@@ -1310,7 +1383,7 @@ TEST(I18nTest, DefaultLanguageIsZhCnWhenAvailable)
             continue;
         }
         auto name_val = (*field)[std::string_view("name")].as_string();
-        if (name_val.value_or("") == "pi.language")
+        if (name_val.value_or("") == "language")
         {
             found_language_field = true;
             auto value_val = (*field)[std::string_view("value")].as_string();
@@ -1327,6 +1400,12 @@ TEST(I18nTest, OptionFieldLabelsAreResolved)
     auto catalog = MakeI18nMockCatalog();
     Das::Plugins::DasMaaPi::AcceptedSettingsDto settings;
     settings.pi.language = "zh_cn";
+    // sequence[].fields[] 只投影用户已选的 task，故需要把 DailyFarm 选上，
+    // 任务级 option（retry/notify）才会出现在 sequence 项里。
+    Das::Plugins::DasMaaPi::MaapiPiTaskSettingsDto daily_farm;
+    daily_farm.task_name = "DailyFarm";
+    daily_farm.enabled = true;
+    settings.pi.tasks.push_back(std::move(daily_farm));
 
     auto document = Das::Plugins::DasMaaPi::ProjectAuthoringDocument(
         settings,
@@ -1337,9 +1416,443 @@ TEST(I18nTest, OptionFieldLabelsAreResolved)
     auto doc_obj = document.as_object();
     ASSERT_TRUE(doc_obj.has_value());
 
-    EXPECT_EQ(GetFieldLabel(document, "pi.options.stage"), "关卡");
-    EXPECT_EQ(GetFieldLabel(document, "pi.options.retry"), "重试");
-    EXPECT_EQ(GetFieldLabel(document, "pi.options.notify"), "通知");
+    EXPECT_EQ(GetFieldLabel(document, "options.stage"), "关卡");
+    // retry/notify 是 task 级 option（在 catalog.options，不在 global_options），
+    // DAS-78 后归位到 sequence[].fields[]，不再出现在项目级 fields[]。
+    EXPECT_EQ(GetSequenceItemFieldLabel(document, "DailyFarm", "options.retry"), "重试");
+    EXPECT_EQ(GetSequenceItemFieldLabel(document, "DailyFarm", "options.notify"), "通知");
+}
+
+// ---------------------------------------------------------------------------
+// DAS-95 方向 A：option value IR 化测试
+// 验证 emit 产出的 value 按 dto.type 翻译成标量（不再泄漏 MAAPI DTO
+// {selectedCases, boolValue, inputValues}），并验证 apply 端能 round-trip
+// 把标量还原回内部 DTO。
+// ---------------------------------------------------------------------------
+
+namespace
+{
+    // 在 document 的 formSequence.fields[] 里按 name 找 field，返回其 value。
+    yyjson::value FindProjectFieldValue(
+        const yyjson::value& document,
+        std::string_view     field_name)
+    {
+        auto obj = document.as_object();
+        if (!obj)
+        {
+            return yyjson::value(nullptr);
+        }
+        auto fs = (*obj)[std::string_view("formSequence")].as_object();
+        if (!fs)
+        {
+            return yyjson::value(nullptr);
+        }
+        auto fields = (*fs)[std::string_view("fields")].as_array();
+        if (!fields)
+        {
+            return yyjson::value(nullptr);
+        }
+        for (auto it = fields->begin(); it != fields->end(); ++it)
+        {
+            auto field = it->as_object();
+            if (!field)
+            {
+                continue;
+            }
+            if ((*field)[std::string_view("name")].as_string().value_or("")
+                == field_name)
+            {
+                return Das::Utils::CloneYyjsonValue(
+                    (*field)[std::string_view("value")]);
+            }
+        }
+        return yyjson::value(nullptr);
+    }
+
+    // 在 document 的 formSequence.sequence[item_id].fields[] 里找 field value。
+    yyjson::value FindSequenceItemFieldValue(
+        const yyjson::value& document,
+        std::string_view     item_id,
+        std::string_view     field_name)
+    {
+        auto obj = document.as_object();
+        if (!obj)
+        {
+            return yyjson::value(nullptr);
+        }
+        auto fs = (*obj)[std::string_view("formSequence")].as_object();
+        if (!fs)
+        {
+            return yyjson::value(nullptr);
+        }
+        auto sequence = (*fs)[std::string_view("sequence")].as_array();
+        if (!sequence)
+        {
+            return yyjson::value(nullptr);
+        }
+        for (auto it = sequence->begin(); it != sequence->end(); ++it)
+        {
+            auto item = it->as_object();
+            if (!item)
+            {
+                continue;
+            }
+            if ((*item)[std::string_view("id")].as_string().value_or("")
+                != item_id)
+            {
+                continue;
+            }
+            auto item_fields =
+                (*item)[std::string_view("fields")].as_array();
+            if (!item_fields)
+            {
+                return yyjson::value(nullptr);
+            }
+            for (auto fit = item_fields->begin();
+                 fit != item_fields->end();
+                 ++fit)
+            {
+                auto field = fit->as_object();
+                if (!field)
+                {
+                    continue;
+                }
+                if ((*field)[std::string_view("name")].as_string().value_or("")
+                    == field_name)
+                {
+                    return Das::Utils::CloneYyjsonValue(
+                        (*field)[std::string_view("value")]);
+                }
+            }
+        }
+        return yyjson::value(nullptr);
+    }
+
+    // 构造覆盖所有 option 类型的 catalog：
+    //   select / input 单字段 string / input 单字段 int / input 多字段 /
+    //   checkbox / switch
+    PiCatalog MakeOptionIrMockCatalog()
+    {
+        using namespace Das::Plugins::DasMaaPi;
+
+        PiCatalog catalog;
+
+        PiTask task;
+        task.dto.name    = "T";
+        task.dto.entry   = "StartT";
+        task.dto.option  = {
+            "stage", "retry_text", "retry_count",
+            "coord", "tags", "notify"};
+        catalog.tasks.push_back(std::move(task));
+
+        auto make_select = [](std::string name, std::string case_name)
+        {
+            PiOption o;
+            o.dto.name = std::move(name);
+            o.dto.type = "select";
+            PiCaseDto c;
+            c.name = std::move(case_name);
+            o.dto.cases.push_back(std::move(c));
+            return o;
+        };
+
+        auto make_input_string = [](std::string name)
+        {
+            PiOption o;
+            o.dto.name = std::move(name);
+            o.dto.type = "input";
+            PiInputDto i;
+            i.name = "value";
+            o.dto.inputs.push_back(std::move(i));
+            return o;
+        };
+
+        auto make_input_int = [](std::string name)
+        {
+            PiOption o;
+            o.dto.name = std::move(name);
+            o.dto.type = "input";
+            PiInputDto i;
+            i.name          = "value";
+            i.pipeline_type = "int";
+            o.dto.inputs.push_back(std::move(i));
+            return o;
+        };
+
+        auto make_input_multi = [](std::string name)
+        {
+            PiOption o;
+            o.dto.name = std::move(name);
+            o.dto.type = "input";
+            PiInputDto a;
+            a.name = "x";
+            PiInputDto b;
+            b.name = "y";
+            o.dto.inputs.push_back(std::move(a));
+            o.dto.inputs.push_back(std::move(b));
+            return o;
+        };
+
+        auto make_checkbox = [](std::string name)
+        {
+            PiOption o;
+            o.dto.name = std::move(name);
+            o.dto.type = "checkbox";
+            PiCaseDto c1;
+            c1.name = "small";
+            PiCaseDto c2;
+            c2.name = "large";
+            o.dto.cases.push_back(std::move(c1));
+            o.dto.cases.push_back(std::move(c2));
+            return o;
+        };
+
+        auto make_switch = [](std::string name)
+        {
+            PiOption o;
+            o.dto.name = std::move(name);
+            o.dto.type = "switch";
+            return o;
+        };
+
+        catalog.options.push_back(make_select("stage", "1-1"));
+        catalog.options.push_back(make_input_string("retry_text"));
+        catalog.options.push_back(make_input_int("retry_count"));
+        catalog.options.push_back(make_input_multi("coord"));
+        catalog.options.push_back(make_checkbox("tags"));
+        catalog.options.push_back(make_switch("notify"));
+        return catalog;
+    }
+} // namespace
+
+TEST(OptionValueIrTest, EmitProducesScalarValuesMatchingValueType)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto catalog = MakeOptionIrMockCatalog();
+
+    AcceptedSettingsDto settings;
+    MaapiPiTaskSettingsDto task;
+    task.task_name = "T";
+    task.enabled   = true;
+
+    auto make_option = [](std::string                                name,
+                          std::string                                kind,
+                          std::vector<std::string>                   cases,
+                          std::optional<bool>                        b,
+                          std::map<std::string, std::string>         inputs)
+    {
+        MaapiPiOptionSettingsDto o;
+        o.option_name    = std::move(name);
+        o.kind           = std::move(kind);
+        o.selected_cases = std::move(cases);
+        o.bool_value     = b;
+        o.input_values   = std::move(inputs);
+        return o;
+    };
+
+    task.options.push_back(make_option(
+        "stage", "select", {"1-1"}, std::nullopt, {}));
+    task.options.push_back(make_option(
+        "retry_text", "input", {}, std::nullopt, {{"value", "9"}}));
+    task.options.push_back(make_option(
+        "retry_count", "input", {}, std::nullopt, {{"value", "7"}}));
+    task.options.push_back(make_option(
+        "coord", "input", {}, std::nullopt, {{"x", "10"}, {"y", "20"}}));
+    task.options.push_back(make_option(
+        "tags", "checkbox", {"small", "large"}, std::nullopt, {}));
+    task.options.push_back(make_option(
+        "notify", "switch", {}, true, {}));
+    settings.pi.tasks.push_back(std::move(task));
+
+    auto document = ProjectAuthoringDocument(settings, &catalog, {}, 0);
+
+    // select → string 标量
+    auto stage_val = FindSequenceItemFieldValue(document, "T", "options.stage");
+    ASSERT_TRUE(stage_val.is_string());
+    EXPECT_EQ(stage_val.as_string().value_or(""), "1-1");
+
+    // input 单字段 string → string 标量
+    auto retry_text_val =
+        FindSequenceItemFieldValue(document, "T", "options.retry_text");
+    ASSERT_TRUE(retry_text_val.is_string());
+    EXPECT_EQ(retry_text_val.as_string().value_or(""), "9");
+
+    // input 单字段 int → int 标量
+    auto retry_count_val =
+        FindSequenceItemFieldValue(document, "T", "options.retry_count");
+    ASSERT_TRUE(retry_count_val.is_sint());
+    EXPECT_EQ(retry_count_val.as_sint().value_or(0), 7);
+
+    // input 多字段 → jsonObject {name: value}
+    auto coord_val =
+        FindSequenceItemFieldValue(document, "T", "options.coord");
+    ASSERT_TRUE(coord_val.is_object());
+    {
+        auto coord_obj = coord_val.as_object();
+        ASSERT_TRUE(coord_obj.has_value());
+        ASSERT_TRUE(coord_obj->contains(std::string_view("x")));
+        EXPECT_EQ(
+            (*coord_obj)[std::string_view("x")].as_string().value_or(""),
+            "10");
+        ASSERT_TRUE(coord_obj->contains(std::string_view("y")));
+        EXPECT_EQ(
+            (*coord_obj)[std::string_view("y")].as_string().value_or(""),
+            "20");
+    }
+
+    // checkbox → jsonArray[string]
+    auto tags_val = FindSequenceItemFieldValue(document, "T", "options.tags");
+    ASSERT_TRUE(tags_val.is_array());
+    {
+        auto tags_arr = tags_val.as_array();
+        ASSERT_TRUE(tags_arr.has_value());
+        ASSERT_EQ(tags_arr->size(), 2u);
+        EXPECT_EQ((*tags_arr)[0].as_string().value_or(""), "small");
+        EXPECT_EQ((*tags_arr)[1].as_string().value_or(""), "large");
+    }
+
+    // switch → bool 标量
+    auto notify_val =
+        FindSequenceItemFieldValue(document, "T", "options.notify");
+    ASSERT_TRUE(notify_val.is_bool());
+    EXPECT_TRUE(notify_val.as_bool().value_or(false));
+}
+
+TEST(OptionValueIrTest, ApplyRoundTripsScalarValuesBackToDto)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto catalog = MakeOptionIrMockCatalog();
+
+    // 通过 ApplySetValueChange 把 IR 标量回灌到 settings，验证 apply 端
+    // 能把每种标量形态还原成 acceptedProperties 里的 MaapiPiOptionSettingsDto。
+    AcceptedSettingsDto settings;
+    MaapiPiTaskSettingsDto task;
+    task.task_name = "T";
+    task.enabled   = true;
+    settings.pi.tasks.push_back(std::move(task));
+
+    auto apply = [&](std::string value_path, std::string value_json_literal)
+    {
+        const std::string json =
+            std::string{"{\"baseRevision\":0,\"kind\":\"setValue\","
+                        "\"payload\":{\"valuePath\":\""}
+            + value_path + "\",\"value\":" + value_json_literal + "}}";
+        auto change = Das::Utils::ParseYyjsonFromString(json);
+        ASSERT_TRUE(change.has_value());
+        ApplySetValueChange(settings, *change, &catalog);
+    };
+
+    apply("options.stage",       "\"1-1\"");                         // select string
+    apply("options.retry_text",  "\"hello\"");                       // input 单字段 string
+    apply("options.retry_count", "42");                              // input 单字段 int
+    apply("options.coord",       "{\"x\":\"100\",\"y\":\"200\"}");   // input 多字段 obj
+    apply("options.tags",        "[\"small\"]");                     // checkbox jsonArray
+    apply("options.notify",      "true");                            // switch bool
+
+    // 把 acceptedProperties 序列化出来，对照每个 option 的内部 DTO 字段。
+    auto serialized = SerializeAcceptedSettings(settings);
+    auto s_obj = serialized.as_object();
+    ASSERT_TRUE(s_obj.has_value());
+    auto pi = (*s_obj)[std::string_view("pi")].as_object();
+    ASSERT_TRUE(pi.has_value());
+    auto tasks = (*pi)[std::string_view("tasks")].as_array();
+    ASSERT_TRUE(tasks.has_value());
+    ASSERT_EQ(tasks->size(), 1u);
+    auto serialized_task = (*tasks)[0].as_object();
+    ASSERT_TRUE(serialized_task.has_value());
+    auto options = (*serialized_task)[std::string_view("options")].as_array();
+    ASSERT_TRUE(options.has_value());
+
+    auto find_option = [&](std::string_view opt_name)
+        -> std::optional<yyjson::value>
+    {
+        for (auto it = options->begin(); it != options->end(); ++it)
+        {
+            auto o = it->as_object();
+            if (o && (*o)[std::string_view("optionName")].as_string()
+                         .value_or("")
+                     == opt_name)
+            {
+                return Das::Utils::CloneYyjsonValue(*it);
+            }
+        }
+        return std::nullopt;
+    };
+
+    {
+        auto stage = find_option("stage");
+        ASSERT_TRUE(stage.has_value());
+        auto stage_obj = stage->as_object();
+        ASSERT_TRUE(stage_obj.has_value());
+        auto arr = (*stage_obj)[std::string_view("selectedCases")].as_array();
+        ASSERT_TRUE(arr.has_value());
+        ASSERT_EQ(arr->size(), 1u);
+        EXPECT_EQ((*arr)[0].as_string().value_or(""), "1-1");
+    }
+    {
+        auto retry_text = find_option("retry_text");
+        ASSERT_TRUE(retry_text.has_value());
+        auto rt_obj = retry_text->as_object();
+        ASSERT_TRUE(rt_obj.has_value());
+        ASSERT_TRUE(rt_obj->contains(std::string_view("inputValues")));
+        auto iv_obj =
+            (*rt_obj)[std::string_view("inputValues")].as_object();
+        ASSERT_TRUE(iv_obj.has_value());
+        ASSERT_TRUE(iv_obj->contains(std::string_view("value")));
+        EXPECT_EQ(
+            (*iv_obj)[std::string_view("value")].as_string().value_or(""),
+            "hello");
+    }
+    {
+        auto retry_count = find_option("retry_count");
+        ASSERT_TRUE(retry_count.has_value());
+        auto rc_obj = retry_count->as_object();
+        ASSERT_TRUE(rc_obj.has_value());
+        ASSERT_TRUE(rc_obj->contains(std::string_view("inputValues")));
+        auto iv_obj =
+            (*rc_obj)[std::string_view("inputValues")].as_object();
+        ASSERT_TRUE(iv_obj.has_value());
+        ASSERT_TRUE(iv_obj->contains(std::string_view("value")));
+        EXPECT_EQ(
+            (*iv_obj)[std::string_view("value")].as_string().value_or(""),
+            "42");
+    }
+    {
+        auto coord = find_option("coord");
+        ASSERT_TRUE(coord.has_value());
+        auto co_obj = coord->as_object();
+        ASSERT_TRUE(co_obj.has_value());
+        ASSERT_TRUE(co_obj->contains(std::string_view("inputValues")));
+        auto iv_obj = (*co_obj)[std::string_view("inputValues")].as_object();
+        ASSERT_TRUE(iv_obj.has_value());
+        EXPECT_EQ(iv_obj->size(), 2u);
+        EXPECT_EQ(
+            (*iv_obj)[std::string_view("x")].as_string().value_or(""), "100");
+        EXPECT_EQ(
+            (*iv_obj)[std::string_view("y")].as_string().value_or(""), "200");
+    }
+    {
+        auto tags = find_option("tags");
+        ASSERT_TRUE(tags.has_value());
+        auto tg_obj = tags->as_object();
+        ASSERT_TRUE(tg_obj.has_value());
+        auto arr = (*tg_obj)[std::string_view("selectedCases")].as_array();
+        ASSERT_TRUE(arr.has_value());
+        ASSERT_EQ(arr->size(), 1u);
+        EXPECT_EQ((*arr)[0].as_string().value_or(""), "small");
+    }
+    {
+        auto notify = find_option("notify");
+        ASSERT_TRUE(notify.has_value());
+        auto nf_obj = notify->as_object();
+        ASSERT_TRUE(nf_obj.has_value());
+        ASSERT_TRUE(nf_obj->contains(std::string_view("boolValue")));
+        EXPECT_TRUE((*nf_obj)[std::string_view("boolValue")]
+                        .as_bool()
+                        .value_or(false));
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1415,7 +1928,7 @@ TEST(PresetTest, PresetNameSetValueTriggersTaskExpansion)
 
     auto change = Das::Utils::ParseYyjsonFromString(
         "{\"baseRevision\":0,\"kind\":\"setValue\",\"payload\":{\"valuePath\":"
-        "\"pi.presetName\",\"value\":\"DailyPreset\"}}");
+        "\"presetName\",\"value\":\"DailyPreset\"}}");
     ASSERT_TRUE(change.has_value());
 
     Das::Plugins::DasMaaPi::ApplySetValueChange(
@@ -1487,7 +2000,7 @@ TEST(PresetTest, InvalidPresetNameWritesOrphanPath)
     EXPECT_FALSE(settings.pi.preset_name.has_value());
 
     ASSERT_EQ(settings.pi.orphan_paths.size(), 1u);
-    EXPECT_EQ(settings.pi.orphan_paths[0], "pi.presetName:NonExistentPreset");
+    EXPECT_EQ(settings.pi.orphan_paths[0], "presetName:NonExistentPreset");
 }
 
 TEST(PresetTest, NestedOptionsAreInitializedFromPreset)
@@ -1566,7 +2079,7 @@ TEST_F(MaapiAuthoringFixture, PresetNameSetValueTriggersTaskExpansion)
     DasPtr<Das::ExportInterface::IDasJson> result_json;
     auto preset_change = ParseDasJson(
         "{\"baseRevision\":0,\"kind\":\"setValue\",\"payload\":{\"valuePath\":"
-        "\"pi.presetName\",\"value\":\"DailyPreset\"}}");
+        "\"presetName\",\"value\":\"DailyPreset\"}}");
     ASSERT_EQ(
         session->ApplyChange(preset_change.Get(), result_json.Put()),
         DAS_S_OK);
@@ -1702,7 +2215,7 @@ TEST_F(MaapiAuthoringFixture, InvalidPresetNameWritesOrphanPath)
     DasPtr<Das::ExportInterface::IDasJson> result_json;
     auto preset_change = ParseDasJson(
         "{\"baseRevision\":0,\"kind\":\"setValue\",\"payload\":{\"valuePath\":"
-        "\"pi.presetName\",\"value\":\"NonExistentPreset\"}}");
+        "\"presetName\",\"value\":\"NonExistentPreset\"}}");
     ASSERT_EQ(
         session->ApplyChange(preset_change.Get(), result_json.Put()),
         DAS_S_OK);
@@ -1724,5 +2237,5 @@ TEST_F(MaapiAuthoringFixture, InvalidPresetNameWritesOrphanPath)
     ASSERT_EQ(orphan_paths->size(), 1u);
     EXPECT_EQ(
         (*orphan_paths)[0].as_string().value_or(""),
-        "pi.presetName:NonExistentPreset");
+        "presetName:NonExistentPreset");
 }

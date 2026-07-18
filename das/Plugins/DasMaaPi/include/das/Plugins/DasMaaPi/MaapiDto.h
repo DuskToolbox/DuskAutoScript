@@ -44,8 +44,6 @@ namespace Das::Plugins::DasMaaPi
     {
         MaapiAdapterValuesDto adapter{};
     };
-
-    yyjson::value MakeAdapterOnlyDocument();
 } // namespace Das::Plugins::DasMaaPi
 
 template <>

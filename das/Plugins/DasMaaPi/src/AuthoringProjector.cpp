@@ -315,6 +315,8 @@ namespace Das::Plugins::DasMaaPi
         // PropertySchema valueType/inputType mapping from PiOption.dto.type.
         // select→(4,1); checkbox→(32,2); switch→(8,0); input→pipeline_type
         // int→(0,0)/float|double→(2,0)/else→(4,0); fallback→(4,0).
+        // input 多字段 → (16,0) jsonObject：单标量装不下 N 个命名值，
+        // value 形态为 {inputName: value} 对象（DAS-95 方向 A）。
         struct PropertyTypeMapping
         {
             int value_type;
@@ -335,17 +337,24 @@ namespace Das::Plugins::DasMaaPi
             {
                 return {8, 0};
             }
-            if (dto.type == "input" && !dto.inputs.empty()
-                && dto.inputs.front().pipeline_type)
+            if (dto.type == "input")
             {
-                const auto& pt = *dto.inputs.front().pipeline_type;
-                if (pt == "int")
+                if (dto.inputs.size() > 1)
                 {
-                    return {0, 0};
+                    return {16, 0};
                 }
-                if (pt == "float" || pt == "double")
+                if (!dto.inputs.empty()
+                    && dto.inputs.front().pipeline_type)
                 {
-                    return {2, 0};
+                    const auto& pt = *dto.inputs.front().pipeline_type;
+                    if (pt == "int")
+                    {
+                        return {0, 0};
+                    }
+                    if (pt == "float" || pt == "double")
+                    {
+                        return {2, 0};
+                    }
                 }
             }
             return {4, 0};
@@ -375,6 +384,14 @@ namespace Das::Plugins::DasMaaPi
 
         // Build a PropertySchema field for a pi option, projecting from catalog
         // dto and seeding value from the current option settings (if any).
+        //
+        // DAS-95 方向 A：value 按 dto.type 翻译成 IR 标量（对齐 valueType 声明），
+        // 不再泄漏 MAAPI 内部 DTO {selectedCases, boolValue, inputValues}。
+        // - switch    → bool
+        // - select    → string（取 selected_cases[0]，MAPI select 单选）
+        // - checkbox  → jsonArray[string]
+        // - input 单字段 → 按 pipeline_type 转 int/float/string 标量
+        // - input 多字段 → jsonObject{inputName: value}
         yyjson::value MakeOptionPropertyField(
             std::string_view                field_name,
             const PiOptionDto&              dto,
@@ -382,30 +399,104 @@ namespace Das::Plugins::DasMaaPi
             const PiCatalog*                catalog,
             std::string_view                language)
         {
-            auto          mapping = MapOptionType(dto);
-            yyjson::value value(Das::Utils::MakeYyjsonObject());
-            auto          vobj = value.as_object();
-            if (current)
+            auto mapping = MapOptionType(dto);
+
+            yyjson::value value = [&]() -> yyjson::value
             {
-                yyjson::value cases(Array());
-                for (const auto& selected_case : current->selected_cases)
+                if (dto.type == "switch")
                 {
-                    cases.as_array()->emplace_back(JsonString(selected_case));
+                    return yyjson::value(
+                        current && current->bool_value
+                            ? *current->bool_value
+                            : false);
                 }
-                (*vobj)[std::string_view("selectedCases")] = std::move(cases);
-                if (current->bool_value)
+                if (dto.type == "select" || dto.type.empty())
                 {
-                    (*vobj)[std::string_view("boolValue")] =
-                        *current->bool_value;
+                    if (current && !current->selected_cases.empty())
+                    {
+                        return JsonString(current->selected_cases.front());
+                    }
+                    return JsonString(std::string_view{});
                 }
-                yyjson::value inputs(Object());
-                for (const auto& [key, input_value] : current->input_values)
+                if (dto.type == "checkbox")
                 {
-                    (*inputs.as_object())[std::string_view(key)] =
-                        JsonString(input_value);
+                    yyjson::value arr(Array());
+                    if (current)
+                    {
+                        for (const auto& selected_case : current->selected_cases)
+                        {
+                            arr.as_array()->emplace_back(
+                                JsonString(selected_case));
+                        }
+                    }
+                    return arr;
                 }
-                (*vobj)[std::string_view("inputValues")] = std::move(inputs);
-            }
+                if (dto.type == "input")
+                {
+                    if (dto.inputs.size() > 1)
+                    {
+                        yyjson::value obj(Object());
+                        auto          o = obj.as_object();
+                        if (current)
+                        {
+                            for (const auto& [key, input_value] :
+                                 current->input_values)
+                            {
+                                (*o)[std::string_view(key)] =
+                                    JsonString(input_value);
+                            }
+                        }
+                        return obj;
+                    }
+                    const std::string input_name =
+                        dto.inputs.empty() ? std::string{}
+                                           : dto.inputs.front().name;
+                    std::string raw;
+                    if (current)
+                    {
+                        auto it = current->input_values.find(input_name);
+                        if (it != current->input_values.end())
+                        {
+                            raw = it->second;
+                        }
+                    }
+                    if (raw.empty() && !dto.inputs.empty()
+                        && dto.inputs.front().default_value)
+                    {
+                        raw = *dto.inputs.front().default_value;
+                    }
+                    const std::string pt =
+                        (!dto.inputs.empty() && dto.inputs.front().pipeline_type)
+                            ? *dto.inputs.front().pipeline_type
+                            : std::string{};
+                    if (pt == "int")
+                    {
+                        try
+                        {
+                            return yyjson::value(
+                                static_cast<std::int64_t>(std::stoll(raw)));
+                        }
+                        catch (...)
+                        {
+                            return yyjson::value(static_cast<std::int64_t>(0));
+                        }
+                    }
+                    if (pt == "float" || pt == "double")
+                    {
+                        try
+                        {
+                            return yyjson::value(std::stod(raw));
+                        }
+                        catch (...)
+                        {
+                            return yyjson::value(0.0);
+                        }
+                    }
+                    return JsonString(raw);
+                }
+                return yyjson::value(nullptr);
+            }();
+
             yyjson::value  candidates;
             yyjson::value* candidates_ptr = nullptr;
             if (mapping.input_type == 1 || mapping.input_type == 2)
@@ -608,38 +699,6 @@ namespace Das::Plugins::DasMaaPi
                 [&](const MaapiPiOptionSettingsDto& item)
                 { return item.option_name == option_name; });
             return it == options.end() ? nullptr : &*it;
-        }
-
-        const MaapiPiOptionSettingsDto* FindOptionSettingsEverywhere(
-            const AcceptedSettingsDto& settings,
-            std::string_view           option_name)
-        {
-            if (const auto* o =
-                    FindOptionSettings(settings.pi.global_options, option_name))
-            {
-                return o;
-            }
-            if (const auto* o = FindOptionSettings(
-                    settings.pi.resource_options,
-                    option_name))
-            {
-                return o;
-            }
-            if (const auto* o = FindOptionSettings(
-                    settings.pi.controller_options,
-                    option_name))
-            {
-                return o;
-            }
-            for (const auto& task : settings.pi.tasks)
-            {
-                if (const auto* o =
-                        FindOptionSettings(task.options, option_name))
-                {
-                    return o;
-                }
-            }
-            return nullptr;
         }
 
         void RemoveOption(
@@ -884,45 +943,36 @@ namespace Das::Plugins::DasMaaPi
             result.option_name = option.dto.name;
             result.kind = option.dto.type;
 
-            if (auto obj = value.as_object())
-            {
-                result.kind =
-                    OptionalString(*obj, "kind").value_or(result.kind);
-                result.selected_cases = StringArray(*obj, "selectedCases");
-                if (obj->contains(std::string_view("boolValue"))
-                    && (*obj)[std::string_view("boolValue")].is_bool())
-                {
-                    result.bool_value = (*obj)[std::string_view("boolValue")]
-                                            .as_bool()
-                                            .value_or(false);
-                }
-                if (obj->contains(std::string_view("inputValues")))
-                {
-                    if (auto inputs =
-                            (*obj)[std::string_view("inputValues")].as_object())
-                    {
-                        for (auto input_it = inputs->begin();
-                             input_it != inputs->end();
-                             ++input_it)
-                        {
-                            if (input_it->second.is_string())
-                            {
-                                result.input_values.emplace(
-                                    input_it->first,
-                                    input_it->second.as_string().value_or(""));
-                            }
-                        }
-                    }
-                }
-                return result;
-            }
-
+            // IR 标量形态（DAS-95 方向 A emit 产出）：
             if (value.is_bool())
             {
                 result.bool_value = value.as_bool().value_or(false);
                 return result;
             }
-
+            if (value.is_sint() || value.is_uint())
+            {
+                if (option.dto.type == "input" && !option.dto.inputs.empty())
+                {
+                    const auto n = value.is_sint()
+                                       ? value.as_sint().value_or(0)
+                                       : static_cast<std::int64_t>(
+                                           value.as_uint().value_or(0));
+                    result.input_values.emplace(
+                        option.dto.inputs.front().name,
+                        std::to_string(n));
+                }
+                return result;
+            }
+            if (value.is_real())
+            {
+                if (option.dto.type == "input" && !option.dto.inputs.empty())
+                {
+                    result.input_values.emplace(
+                        option.dto.inputs.front().name,
+                        std::to_string(value.as_real().value_or(0.0)));
+                }
+                return result;
+            }
             if (value.is_string())
             {
                 const auto text = std::string(value.as_string().value_or(""));
@@ -938,7 +988,6 @@ namespace Das::Plugins::DasMaaPi
                 }
                 return result;
             }
-
             if (auto arr = value.as_array())
             {
                 for (auto it = arr->begin(); it != arr->end(); ++it)
@@ -947,6 +996,25 @@ namespace Das::Plugins::DasMaaPi
                     {
                         result.selected_cases.emplace_back(
                             it->as_string().value_or(""));
+                    }
+                }
+                return result;
+            }
+            if (auto obj = value.as_object())
+            {
+                // IR 标量方向 A：对象形态仅 input 多字段合法（{inputName: value}）。
+                // 其它 option 类型收到对象 = 非法 IR 输入，返回空 result。
+                if (option.dto.type == "input"
+                    && option.dto.inputs.size() > 1)
+                {
+                    for (auto it = obj->begin(); it != obj->end(); ++it)
+                    {
+                        if (it->second.is_string())
+                        {
+                            result.input_values.emplace(
+                                it->first,
+                                it->second.as_string().value_or(""));
+                        }
                     }
                 }
                 return result;
@@ -969,23 +1037,23 @@ namespace Das::Plugins::DasMaaPi
                     RemoveOptionEverywhere(settings, option_name);
                     RemoveOrphanPath(
                         settings,
-                        std::string{"pi.options:"} + std::string{option_name});
+                        std::string{"options:"} + std::string{option_name});
                     RemoveOrphanPath(
                         settings,
-                        std::string{"pi.options."} + std::string{option_name});
+                        std::string{"options."} + std::string{option_name});
                     return;
                 }
                 settings.pi.orphan_paths.emplace_back(
-                    std::string{"pi.options:"} + std::string{option_name});
+                    std::string{"options:"} + std::string{option_name});
                 return;
             }
 
             RemoveOrphanPath(
                 settings,
-                std::string{"pi.options:"} + std::string{option_name});
+                std::string{"options:"} + std::string{option_name});
             RemoveOrphanPath(
                 settings,
-                std::string{"pi.options."} + std::string{option_name});
+                std::string{"options."} + std::string{option_name});
             if (value.is_null())
             {
                 RemoveOptionEverywhere(settings, option_name);
@@ -1191,7 +1259,7 @@ namespace Das::Plugins::DasMaaPi
             auto controller_candidates =
                 CandidateArray(catalog->controllers, catalog, current_language);
             fields.as_array()->emplace_back(MakePropertyField(
-                "pi.controllerName",
+                "controllerName",
                 "Controller",
                 4,
                 1,
@@ -1202,7 +1270,7 @@ namespace Das::Plugins::DasMaaPi
             auto resource_candidates =
                 CandidateArray(catalog->resources, catalog, current_language);
             fields.as_array()->emplace_back(MakePropertyField(
-                "pi.resourceName",
+                "resourceName",
                 "Resource",
                 4,
                 1,
@@ -1213,7 +1281,7 @@ namespace Das::Plugins::DasMaaPi
             auto preset_candidates =
                 CandidateArray(catalog->presets, catalog, current_language);
             fields.as_array()->emplace_back(MakePropertyField(
-                "pi.presetName",
+                "presetName",
                 "Preset",
                 4,
                 1,
@@ -1232,19 +1300,19 @@ namespace Das::Plugins::DasMaaPi
                 language_candidates.as_array()->emplace_back(std::move(candidate));
             }
             fields.as_array()->emplace_back(MakePropertyField(
-                "pi.language",
+                "language",
                 "Language",
                 4,
                 1,
                 yyjson::value(current_language),
                 &language_candidates));
 
-            for (const auto& option : catalog->options)
+            for (const auto& option : catalog->global_options)
             {
                 const auto* current =
-                    FindOptionSettingsEverywhere(settings, option.dto.name);
+                    FindOptionSettings(settings.pi.global_options, option.dto.name);
                 fields.as_array()->emplace_back(MakeOptionPropertyField(
-                    std::string{"pi.options." + option.dto.name},
+                    std::string{"options." + option.dto.name},
                     option.dto,
                     current,
                     catalog,
@@ -1260,7 +1328,7 @@ namespace Das::Plugins::DasMaaPi
             auto          item_obj = item.as_object();
             (*item_obj)[std::string_view("id")] = JsonString(task.task_name);
             (*item_obj)[std::string_view("componentGuid")] =
-                JsonString("69f20008-0000-4000-8000-000000000001");
+                JsonString("69F20008-0000-4000-8000-000000000001");
 
             yyjson::value item_fields(Array());
             if (catalog)
@@ -1311,19 +1379,6 @@ namespace Das::Plugins::DasMaaPi
         (*fs_obj)[std::string_view("sequence")] = std::move(sequence);
         (*obj)[std::string_view("formSequence")] = std::move(form_sequence);
 
-        yyjson::value values(Object());
-        auto          values_obj = values.as_object();
-        auto          accepted = SerializeAcceptedSettings(settings);
-        auto          accepted_obj = accepted.as_object();
-        (*values_obj)[std::string_view("adapter")] =
-            (*accepted_obj)[std::string_view("adapter")];
-        if (catalog)
-        {
-            (*values_obj)[std::string_view("pi")] =
-                (*accepted_obj)[std::string_view("pi")];
-        }
-        (*obj)[std::string_view("values")] = std::move(values);
-
         yyjson::value catalog_json(Object());
         if (catalog)
         {
@@ -1340,7 +1395,6 @@ namespace Das::Plugins::DasMaaPi
                 CandidateArray(catalog->groups, catalog, current_language);
         }
         (*obj)[std::string_view("catalog")] = std::move(catalog_json);
-        (*obj)[std::string_view("state")] = Object();
 
         yyjson::value diagnostics_json(Array());
         for (const auto& diagnostic : diagnostics)
@@ -1466,19 +1520,19 @@ namespace Das::Plugins::DasMaaPi
                 value.as_bool().value_or(true);
             return;
         }
-        if (path == "pi.controllerName" && value.is_string())
+        if (path == "controllerName" && value.is_string())
         {
             settings.pi.controller_name =
                 std::string(value.as_string().value_or(""));
             return;
         }
-        if (path == "pi.resourceName" && value.is_string())
+        if (path == "resourceName" && value.is_string())
         {
             settings.pi.resource_name =
                 std::string(value.as_string().value_or(""));
             return;
         }
-        if (path == "pi.presetName" && value.is_string())
+        if (path == "presetName" && value.is_string())
         {
             const auto name = std::string(value.as_string().value_or(""));
             if (catalog && !name.empty())
@@ -1491,7 +1545,7 @@ namespace Das::Plugins::DasMaaPi
             }
             return;
         }
-        if (path == "pi.language" && value.is_string())
+        if (path == "language" && value.is_string())
         {
             settings.pi.language =
                 std::string(value.as_string().value_or(""));
@@ -1506,7 +1560,7 @@ namespace Das::Plugins::DasMaaPi
             RemoveOrphanPrefix(settings, "pi.tasks:");
             return;
         }
-        constexpr std::string_view kOptionPrefix = "pi.options.";
+        constexpr std::string_view kOptionPrefix = "options.";
         if (path.starts_with(kOptionPrefix) && catalog)
         {
             ApplyOptionValueChange(
@@ -1645,9 +1699,9 @@ namespace Das::Plugins::DasMaaPi
             [&](const PiPreset& item) { return item.dto.name == preset_name; });
         if (preset == catalog.presets.end())
         {
-            settings.pi.orphan_paths.emplace_back(
-                std::string{"pi.presetName:"} + std::string{preset_name});
-            return;
+                settings.pi.orphan_paths.emplace_back(
+                    std::string{"presetName:"} + std::string{preset_name});
+                return;
         }
         settings.pi.preset_name = std::string(preset_name);
         settings.pi.tasks.clear();
