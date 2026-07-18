@@ -111,7 +111,7 @@ DasGuid MakeDasGuid(const std::string_view guid_string)
 std::string DasGuidToStdString(const DasGuid& guid)
 {
     constexpr auto template_string =
-        "{:08x}-{:04x}-{:04x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}";
+        "{:08X}-{:04X}-{:04X}-{:02X}{:02X}-{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}";
     return DAS::fmt::format(
         template_string,
         guid.data1,
