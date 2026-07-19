@@ -332,6 +332,14 @@ namespace Core
                     }
                 }
 
+                // HostLauncher 的 drain 已在 RequestStop() 完成（run loop 还
+                // 活着时走 GOODBYE → 等 → 强杀 → process.reset → drain TP
+                // wait）。 到这里 process 已 drain，无残留
+                // wait_callback，无需再处理。 （HostLauncher 对象本身随
+                // launchers_ + ConnectionManager::hosts_ 的 DasPtr
+                // 释放而析构，~HostLauncher→Stop 此时 process==nullptr
+                // 直接跳过。）
+
                 // 关闭顺序：inbound_queue -> business_thread -> io_context
                 // 1. 关闭入站队列，让业务线程的 Pop() 返回 nullopt
                 inbound_queue_.Uninitialize();
@@ -804,6 +812,25 @@ namespace Core
                 {
                     proxy_factory_->BeginShutdown();
                 }
+
+                // 在停 io_context run loop 之前，按标准流程 Stop 所有
+                // HostLauncher（GOODBYE → 等待退出 → 超时强杀 → process.reset
+                // → close → UnregisterWaitEx 同步 drain TP wait）。必须在
+                // runloop_.RequestStop() 之前：Stop() 的 GOODBYE 协程与
+                // process_exit_future 靠 co_spawn+future 阻塞等 io_context 处理
+                // 完成，要求 run loop 活着（由独立 ipc 线程驱动）。否则
+                // HostLauncher 会因被 ConnectionManager::hosts_ 持引用而推迟到
+                // ~IpcContext（io_context 已死）才析构，残留 TP wait callback
+                // 在 service 析构后触发 UAF。调用方须在非 io_context 线程调本
+                // 方法（HostLauncher::Stop 的 assert 保证）。
+                for (auto& [sid, launcher] : launchers_)
+                {
+                    if (launcher)
+                    {
+                        launcher->Stop();
+                    }
+                }
+
                 runloop_.RequestStop();
             }
 
