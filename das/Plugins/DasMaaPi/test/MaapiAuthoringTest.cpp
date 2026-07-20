@@ -2996,17 +2996,17 @@ TEST(MaapiProjectionTest, DocumentPassesStrictContractValidator)
 }
 
 // Tracer 2: multi-input 拆分。D-84-17: PI 多字段 input 投影为一个纵向
-// FieldSectionDescriptor 加多个独立 FieldDescriptor，禁止压成 jsonObject 文本框。
-// 这里验证 coord (x,y) 被拆为 options.coord.x / options.coord.y 两个独立字段，
-// 通过 fieldLayout 的 section 引用，且 apply 端 setValue{options.coord.x} 能
-// 正确写回 acceptedProperties。
+// FieldSectionDescriptor 加多个独立 FieldDescriptor，禁止压成 jsonObject
+// 文本框。 这里验证 coord (x,y) 被拆为 options.coord.x / options.coord.y
+// 两个独立字段， 通过 fieldLayout 的 section 引用，且 apply 端
+// setValue{options.coord.x} 能 正确写回 acceptedProperties。
 TEST(MaapiProjectionTest, MultiInputOptionSplitsIntoIndependentFields)
 {
     using namespace Das::Plugins::DasMaaPi;
 
     auto catalog = MakeStrictProjectionMockCatalog();
 
-    AcceptedSettingsDto    settings;
+    AcceptedSettingsDto settings;
     settings.pi.language = "zh_cn";
     MaapiPiTaskSettingsDto task;
     task.item_id = "item_multi";
@@ -3046,8 +3046,9 @@ TEST(MaapiProjectionTest, MultiInputOptionSplitsIntoIndependentFields)
     {
         auto field = it->as_object();
         ASSERT_TRUE(field.has_value());
-        item_field_names.emplace(std::string(
-            (*field)[std::string_view("name")].as_string().value_or("")));
+        item_field_names.emplace(
+            std::string(
+                (*field)[std::string_view("name")].as_string().value_or("")));
     }
 
     // 多字段 input 被拆为独立字段；不再有 jsonObject 形态的 options.coord。
@@ -3073,17 +3074,22 @@ TEST(MaapiProjectionTest, MultiInputOptionSplitsIntoIndependentFields)
     auto x_field = find_field("options.coord.x");
     ASSERT_TRUE(x_field.is_object());
     EXPECT_EQ(
-        x_field.as_object().value()[std::string_view("label")].as_string().value_or(
-            ""),
+        x_field.as_object()
+            .value()[std::string_view("label")]
+            .as_string()
+            .value_or(""),
         "X 坐标");
     EXPECT_EQ(
-        x_field.as_object().value()[std::string_view("valueType")]
+        x_field.as_object()
+            .value()[std::string_view("valueType")]
             .as_sint()
             .value_or(-1),
         0); // int
     EXPECT_EQ(
-        x_field.as_object().value()[std::string_view("value")].as_sint().value_or(
-            -1),
+        x_field.as_object()
+            .value()[std::string_view("value")]
+            .as_sint()
+            .value_or(-1),
         10);
 
     // fieldLayout 必须存在，且包含一个 section 引用 x 与 y。
@@ -3111,10 +3117,13 @@ TEST(MaapiProjectionTest, MultiInputOptionSplitsIntoIndependentFields)
             {
                 continue;
             }
-            leaf_names.emplace(std::string(
-                (*leaf)[std::string_view("fieldName")].as_string().value_or("")));
+            leaf_names.emplace(
+                std::string(
+                    (*leaf)[std::string_view("fieldName")].as_string().value_or(
+                        "")));
         }
-        if (leaf_names.count("options.coord.x") && leaf_names.count("options.coord.y"))
+        if (leaf_names.count("options.coord.x")
+            && leaf_names.count("options.coord.y"))
         {
             found_coord_section = true;
             EXPECT_FALSE((*node)[std::string_view("label")]
@@ -3129,7 +3138,9 @@ TEST(MaapiProjectionTest, MultiInputOptionSplitsIntoIndependentFields)
 // Tracer 2: Apply 端 setValue{options.coord.x} 能写回 acceptedProperties 的
 // input_values["x"]。这是 Rule 3 (blocking issue) 自动修复：multi-input 拆分
 // 后，UI 编辑 sub-field 时需要新的 apply 路径处理 options.{name}.{input}。
-TEST(MaapiProjectionTest, ApplySetValueOnMultiInputSubfieldWritesBackToInputValues)
+TEST(
+    MaapiProjectionTest,
+    ApplySetValueOnMultiInputSubfieldWritesBackToInputValues)
 {
     using namespace Das::Plugins::DasMaaPi;
 
@@ -3182,7 +3193,7 @@ TEST(MaapiProjectionTest, ApplySetValueOnMultiInputSubfieldWritesBackToInputValu
                 == name)
             {
                 std::map<std::string, std::string> result;
-                auto inputs_obj =
+                auto                               inputs_obj =
                     (*opt)[std::string_view("inputValues")].as_object();
                 if (inputs_obj)
                 {
@@ -3222,7 +3233,7 @@ TEST(MaapiProjectionTest, InputVerifyAndPatternMsgMapToValidation)
 
     auto catalog = MakeStrictProjectionMockCatalog();
 
-    AcceptedSettingsDto    settings;
+    AcceptedSettingsDto settings;
     settings.pi.language = "zh_cn";
     MaapiPiTaskSettingsDto task;
     task.item_id = "item_verify";
@@ -3268,8 +3279,7 @@ TEST(MaapiProjectionTest, InputVerifyAndPatternMsgMapToValidation)
     auto retry_obj = retry_field->as_object();
     ASSERT_TRUE(retry_obj.has_value());
     ASSERT_TRUE(retry_obj->contains(std::string_view("validation")));
-    auto validation =
-        (*retry_obj)[std::string_view("validation")].as_object();
+    auto validation = (*retry_obj)[std::string_view("validation")].as_object();
     ASSERT_TRUE(validation.has_value());
     // pattern = PI input.verify 原文。
     EXPECT_EQ(
@@ -3280,5 +3290,3 @@ TEST(MaapiProjectionTest, InputVerifyAndPatternMsgMapToValidation)
         (*validation)[std::string_view("message")].as_string().value_or(""),
         "请输入正整数");
 }
-
-

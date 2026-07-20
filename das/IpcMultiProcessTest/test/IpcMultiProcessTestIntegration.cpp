@@ -2263,9 +2263,11 @@ TEST_F(
     auto json = ToYyjson(document.Get());
     auto obj = json.as_object();
     ASSERT_TRUE(obj.has_value());
+    // D-84-02: Phase 84 严格 wire 使用 viewKind 而不是 kind。
     EXPECT_EQ(
-        (*obj)[std::string_view("kind")].as_string().value_or(""),
+        (*obj)[std::string_view("viewKind")].as_string().value_or(""),
         std::string_view("formSequence"));
+    EXPECT_FALSE(obj->contains(std::string_view("kind")));
 }
 
 TEST_F(IpcMultiProcessTestIntegration, CrossProcess_TaskComponentFactory)

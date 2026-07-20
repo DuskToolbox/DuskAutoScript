@@ -558,29 +558,54 @@ namespace Das::Plugins::DasMaaPi
                 dto.label ? *dto.label : std::string_view(dto.name);
             std::string_view resolved_label =
                 ResolveI18n(label, *catalog, language);
-            return MakePropertyField(
+            yyjson::value field = MakePropertyField(
                 field_name,
                 resolved_label,
                 mapping.value_type,
                 mapping.input_type,
                 value,
                 candidates_ptr);
+            // D-84-22/23: 单字段 input 也会投影 validation。PI input.verify →
+            // validation.pattern；input.pattern_msg 经 i18n 解析为当前 language
+            // 文本 → validation.message。两者都非空才输出 validation。
+            if (dto.type == "input" && dto.inputs.size() == 1)
+            {
+                const auto& input = dto.inputs.front();
+                if (input.verify && !input.verify->empty() && input.pattern_msg)
+                {
+                    std::string_view resolved_msg =
+                        ResolveI18n(*input.pattern_msg, *catalog, language);
+                    if (!resolved_msg.empty())
+                    {
+                        yyjson::value validation(Object());
+                        auto          v_obj = validation.as_object();
+                        (*v_obj)[std::string_view("pattern")] =
+                            JsonString(*input.verify);
+                        (*v_obj)[std::string_view("message")] =
+                            JsonString(resolved_msg);
+                        (*field.as_object())[std::string_view("validation")] =
+                            std::move(validation);
+                    }
+                }
+            }
+            return field;
         }
 
-        // D-84-17: 为 multi-input option 的单个 input 构造独立 FieldDescriptor。
-        // 不再压成 jsonObject 文本框；每个 input 有自己的 name/label/valueType
-        // /value，setValue 通过 options.{optionName}.{inputName} 寻址。
-        // valueType 按 input.pipeline_type 派生（int→0, float/double→2, else→4）；
+        // D-84-17: 为 multi-input option 的单个 input 构造独立
+        // FieldDescriptor。 不再压成 jsonObject 文本框；每个 input 有自己的
+        // name/label/valueType /value，setValue 通过
+        // options.{optionName}.{inputName} 寻址。 valueType 按
+        // input.pipeline_type 派生（int→0, float/double→2, else→4）；
         // inputType=0（普通文本/数字输入）。
         yyjson::value MakeInputSubField(
-            std::string_view     field_name,
-            const PiInputDto&    input,
-            std::string_view     raw_value,
-            const PiCatalog*     catalog,
-            std::string_view     language)
+            std::string_view  field_name,
+            const PiInputDto& input,
+            std::string_view  raw_value,
+            const PiCatalog*  catalog,
+            std::string_view  language)
         {
-            const std::string& pt = input.pipeline_type ? *input.pipeline_type
-                                                        : std::string{};
+            const std::string& pt =
+                input.pipeline_type ? *input.pipeline_type : std::string{};
             int value_type = 4; // string default
             // std::stoll/stod 不接受 string_view；先转 std::string。
             const std::string raw_string(raw_value);
@@ -625,6 +650,26 @@ namespace Das::Plugins::DasMaaPi
             (*obj)[std::string_view("valueType")] = value_type;
             (*obj)[std::string_view("inputType")] = 0;
             (*obj)[std::string_view("value")] = std::move(value);
+            // D-84-22/23: PI input.verify → validation.pattern；
+            // input.pattern_msg 经 i18n 解析为当前 language 文本 →
+            // validation.message。 两者都非空才输出 validation（严格
+            // {pattern,message} 形态）。
+            if (input.verify && !input.verify->empty() && input.pattern_msg)
+            {
+                std::string_view resolved_msg =
+                    ResolveI18n(*input.pattern_msg, *catalog, language);
+                if (!resolved_msg.empty())
+                {
+                    yyjson::value validation(Object());
+                    auto          v_obj = validation.as_object();
+                    (*v_obj)[std::string_view("pattern")] =
+                        JsonString(*input.verify);
+                    (*v_obj)[std::string_view("message")] =
+                        JsonString(resolved_msg);
+                    (*obj)[std::string_view("validation")] =
+                        std::move(validation);
+                }
+            }
             return field;
         }
 
@@ -1864,8 +1909,7 @@ namespace Das::Plugins::DasMaaPi
                         }
                         const auto* current =
                             FindOptionSettings(task.options, option_name);
-                        const std::string field_name =
-                            "options." + option_name;
+                        const std::string field_name = "options." + option_name;
 
                         if (option->dto.type == "input"
                             && option->dto.inputs.size() > 1)
@@ -1898,8 +1942,8 @@ namespace Das::Plugins::DasMaaPi
                                         catalog,
                                         current_language));
                                 yyjson::value leaf(Object());
-                                (*leaf.as_object())[std::string_view("fieldName")] =
-                                    JsonString(sub_name);
+                                (*leaf.as_object())[std::string_view(
+                                    "fieldName")] = JsonString(sub_name);
                                 section_entries.as_array()->emplace_back(
                                     std::move(leaf));
                             }
@@ -1939,7 +1983,8 @@ namespace Das::Plugins::DasMaaPi
                             yyjson::value leaf(Object());
                             (*leaf.as_object())[std::string_view("fieldName")] =
                                 JsonString(field_name);
-                            item_layout.as_array()->emplace_back(std::move(leaf));
+                            item_layout.as_array()->emplace_back(
+                                std::move(leaf));
                         }
                     }
                 }
@@ -2229,8 +2274,8 @@ namespace Das::Plugins::DasMaaPi
             const auto sub_dot = option_tail.find('.');
             if (sub_dot != std::string_view::npos)
             {
-                const auto option_name = option_tail.substr(0, sub_dot);
-                const auto input_name = option_tail.substr(sub_dot + 1);
+                const auto  option_name = option_tail.substr(0, sub_dot);
+                const auto  input_name = option_tail.substr(sub_dot + 1);
                 const auto* option = FindOption(*catalog, option_name);
                 if (option && option->dto.type == "input"
                     && option->dto.inputs.size() > 1)
@@ -2264,10 +2309,11 @@ namespace Das::Plugins::DasMaaPi
                             }
                             else if (value.is_sint() || value.is_uint())
                             {
-                                const auto n = value.is_sint()
-                                                   ? value.as_sint().value_or(0)
-                                                   : static_cast<std::int64_t>(
-                                                         value.as_uint().value_or(0));
+                                const auto n =
+                                    value.is_sint()
+                                        ? value.as_sint().value_or(0)
+                                        : static_cast<std::int64_t>(
+                                              value.as_uint().value_or(0));
                                 str_value = std::to_string(n);
                             }
                             else if (value.is_real())
@@ -2281,12 +2327,14 @@ namespace Das::Plugins::DasMaaPi
                                 fresh.option_name = std::string(option_name);
                                 fresh.kind = option->dto.type;
                                 fresh.input_values.emplace(
-                                    std::string(input_name), str_value);
+                                    std::string(input_name),
+                                    str_value);
                                 task_options->emplace_back(std::move(fresh));
                             }
                             else
                             {
-                                existing->input_values[std::string(input_name)] =
+                                existing
+                                    ->input_values[std::string(input_name)] =
                                     str_value;
                             }
                             SyncCurrentConfigFromActive(settings);
@@ -2295,11 +2343,7 @@ namespace Das::Plugins::DasMaaPi
                     }
                 }
             }
-            ApplyOptionValueChange(
-                settings,
-                *catalog,
-                option_tail,
-                value);
+            ApplyOptionValueChange(settings, *catalog, option_tail, value);
             return;
         }
         constexpr std::string_view kTaskPrefix = "pi.tasks.";
