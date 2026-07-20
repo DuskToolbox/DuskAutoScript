@@ -6,6 +6,8 @@
 
 #include <das/Plugins/DasMaaPi/PiCompiler.h>
 
+#include <iostream>
+
 DAS_NS_BEGIN
 namespace Plugins::DasMaaPi
 {
@@ -166,13 +168,34 @@ namespace Plugins::DasMaaPi
                         ApplyRemoveSequenceItem(settings_, task_name);
                     }
                 }
+                else if (
+                    kind == "invokeCommand"
+                    && obj->contains(std::string_view("payload")))
+                {
+                    // D-84-28/42: invokeCommand 分派。84-05 只识别
+                    // newConfiguration / copyConfiguration；未知 commandId 静默
+                    // 忽略 (84-07 owns full Apply cutover)。
+                    if (auto payload =
+                            (*obj)[std::string_view("payload")].as_object())
+                    {
+                        const auto command_id =
+                            PayloadString(*payload, "commandId").value_or("");
+                        if (!command_id.empty())
+                        {
+                            ApplyInvokeCommand(settings_, command_id);
+                        }
+                    }
+                }
             }
         }
         ++revision_;
 
         auto result_json = BuildApplyResult(settings_, revision_, {});
 
-        // Port derivation (D-05/D-06/D-07)
+        // Port derivation (D-05/D-06/D-07)。post-84 多配置权威下，flat
+        // settings_.pi.tasks 由 SyncActiveFromCurrentConfig 维护为当前选中
+        // 配置的视图，因此继续从 flat 读取 task_name 即可同时覆盖 legacy 与
+        // post-84 输入。
         if (catalog && !settings_.pi.tasks.empty())
         {
             const auto& task_name = settings_.pi.tasks[0].task_name;

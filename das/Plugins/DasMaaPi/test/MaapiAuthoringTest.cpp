@@ -593,12 +593,15 @@ TEST_F(MaapiAuthoringFixture, PresetAndOrphansProjectIntoSettings)
 
     auto document = (*obj)[std::string_view("document")].as_object();
     ASSERT_TRUE(document.has_value());
-    auto migration = (*document)[std::string_view("migration")].as_object();
-    ASSERT_TRUE(migration.has_value());
-    auto orphans = (*migration)[std::string_view("orphanPaths")].as_array();
-    ASSERT_TRUE(orphans.has_value());
-    ASSERT_EQ(orphans->size(), 1u);
-    EXPECT_EQ((*orphans)[0].as_string().value_or(""), "pi.tasks:MissingTask");
+    // D-84-04: document.migration 已删除；orphanPaths 仅作为 Provider 私有
+    // 字段保留在 acceptedProperties.pi 中，不再投影到 document UI IR。
+    EXPECT_FALSE(document->contains(std::string_view("migration")));
+    auto pi_orphans = (*pi)[std::string_view("orphanPaths")].as_array();
+    ASSERT_TRUE(pi_orphans.has_value());
+    ASSERT_EQ(pi_orphans->size(), 1u);
+    EXPECT_EQ(
+        (*pi_orphans)[0].as_string().value_or(""),
+        "pi.tasks:MissingTask");
 }
 
 TEST_F(MaapiAuthoringFixture, ContractDocShapeHasFormSequenceAndNoPrivateFields)
