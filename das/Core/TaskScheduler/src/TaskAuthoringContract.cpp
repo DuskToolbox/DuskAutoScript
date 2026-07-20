@@ -141,6 +141,31 @@ namespace Das::Core::TaskScheduler
         return Pass();
     }
 
+    AuthoringValidationResult ValidateAuthoringGetResult(
+        const yyjson::value& /*result*/)
+    {
+        return Fail(
+            "notImplemented",
+            "ValidateAuthoringGetResult not yet implemented");
+    }
+
+    AuthoringValidationResult ValidateAuthoringApplyResult(
+        const yyjson::value& /*result*/,
+        int64_t /*baseRevision*/)
+    {
+        return Fail(
+            "notImplemented",
+            "ValidateAuthoringApplyResult not yet implemented");
+    }
+
+    AuthoringValidationResult ValidateAuthoringCompileResult(
+        const yyjson::value& /*result*/)
+    {
+        return Fail(
+            "notImplemented",
+            "ValidateAuthoringCompileResult not yet implemented");
+    }
+
     yyjson::value MakeAuthoringError(
         std::string_view error_kind,
         std::string_view message)

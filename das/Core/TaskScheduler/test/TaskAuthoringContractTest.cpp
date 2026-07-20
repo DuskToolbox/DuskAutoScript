@@ -156,3 +156,191 @@ TEST(TaskAuthoringContractTest, AuthoringErrorUsesLowerCamelCase)
         "invalidRevision");
     EXPECT_EQ((*obj)[std::string_view("message")].as_string().value(), "stale");
 }
+
+// =============================================================================
+// Tracer 1: Provider Get/Apply/Compile result envelopes
+// (D-84-08/D-84-10/D-84-11)
+// =============================================================================
+
+TEST(TaskAuthoringContractTest, GetResultWithDocumentAndDiagnosticsPasses)
+{
+    auto result = ParseJson(R"json({
+        "document": {
+            "contractVersion": 1,
+            "viewKind": "formSequence",
+            "revision": 4
+        },
+        "diagnostics": []
+    })json");
+
+    auto r = Das::Core::TaskScheduler::ValidateAuthoringGetResult(result);
+    EXPECT_TRUE(r.valid);
+    EXPECT_TRUE(r.error_kind.empty()) << r.message;
+}
+
+TEST(TaskAuthoringContractTest, GetResultDiagnosticsOnlyPasses)
+{
+    auto result = ParseJson(R"json({
+        "diagnostics": [
+            {"severity": "error", "message": "provider broken"}
+        ]
+    })json");
+
+    auto r = Das::Core::TaskScheduler::ValidateAuthoringGetResult(result);
+    EXPECT_TRUE(r.valid);
+    EXPECT_TRUE(r.error_kind.empty()) << r.message;
+}
+
+TEST(TaskAuthoringContractTest, GetResultRejectsMissingDiagnostics)
+{
+    auto result = ParseJson(R"json({
+        "document": {
+            "contractVersion": 1,
+            "viewKind": "formSequence",
+            "revision": 0
+        }
+    })json");
+
+    auto r = Das::Core::TaskScheduler::ValidateAuthoringGetResult(result);
+    EXPECT_FALSE(r.valid);
+    EXPECT_EQ(r.error_kind, "missingField");
+}
+
+TEST(TaskAuthoringContractTest, GetResultRejectsUnknownTopLevelField)
+{
+    auto result = ParseJson(R"json({
+        "diagnostics": [],
+        "migration": {}
+    })json");
+
+    auto r = Das::Core::TaskScheduler::ValidateAuthoringGetResult(result);
+    EXPECT_FALSE(r.valid);
+    EXPECT_EQ(r.error_kind, "unknownField");
+}
+
+TEST(TaskAuthoringContractTest, GetResultRejectsDiagnosticWithSourceField)
+{
+    auto result = ParseJson(R"json({
+        "diagnostics": [
+            {"severity": "error", "message": "x", "source": "compiler"}
+        ]
+    })json");
+
+    auto r = Das::Core::TaskScheduler::ValidateAuthoringGetResult(result);
+    EXPECT_FALSE(r.valid);
+    EXPECT_EQ(r.error_kind, "unknownDiagnosticField");
+}
+
+TEST(TaskAuthoringContractTest, GetResultRejectsStringDiagnosticCode)
+{
+    auto result = ParseJson(R"json({
+        "diagnostics": [
+            {"severity": "error", "message": "x", "code": "E1"}
+        ]
+    })json");
+
+    auto r = Das::Core::TaskScheduler::ValidateAuthoringGetResult(result);
+    EXPECT_FALSE(r.valid);
+    EXPECT_EQ(r.error_kind, "invalidDiagnosticCode");
+}
+
+TEST(TaskAuthoringContractTest, GetResultRejectsInvalidSeverity)
+{
+    auto result = ParseJson(R"json({
+        "diagnostics": [
+            {"severity": "critical", "message": "x"}
+        ]
+    })json");
+
+    auto r = Das::Core::TaskScheduler::ValidateAuthoringGetResult(result);
+    EXPECT_FALSE(r.valid);
+    EXPECT_EQ(r.error_kind, "invalidDiagnosticSeverity");
+}
+
+TEST(TaskAuthoringContractTest, GetResultRejectsEmptyDiagnosticMessage)
+{
+    auto result = ParseJson(R"json({
+        "diagnostics": [
+            {"severity": "info", "message": ""}
+        ]
+    })json");
+
+    auto r = Das::Core::TaskScheduler::ValidateAuthoringGetResult(result);
+    EXPECT_FALSE(r.valid);
+    EXPECT_EQ(r.error_kind, "invalidDiagnosticMessage");
+}
+
+TEST(
+    TaskAuthoringContractTest,
+    ApplyResultPassesWhenDocumentRevisionIsBasePlusOne)
+{
+    auto result = ParseJson(R"json({
+        "acceptedProperties": {},
+        "document": {
+            "contractVersion": 1,
+            "viewKind": "formSequence",
+            "revision": 5
+        },
+        "diagnostics": []
+    })json");
+
+    auto r = Das::Core::TaskScheduler::ValidateAuthoringApplyResult(result, 4);
+    EXPECT_TRUE(r.valid);
+    EXPECT_TRUE(r.error_kind.empty()) << r.message;
+}
+
+TEST(TaskAuthoringContractTest, ApplyResultFailsWhenRevisionIsNotBasePlusOne)
+{
+    auto result = ParseJson(R"json({
+        "acceptedProperties": {},
+        "document": {
+            "contractVersion": 1,
+            "viewKind": "formSequence",
+            "revision": 4
+        },
+        "diagnostics": []
+    })json");
+
+    auto r = Das::Core::TaskScheduler::ValidateAuthoringApplyResult(result, 4);
+    EXPECT_FALSE(r.valid);
+    EXPECT_EQ(r.error_kind, "revisionMismatch");
+}
+
+TEST(TaskAuthoringContractTest, ApplyResultRequiresAcceptedProperties)
+{
+    auto result = ParseJson(R"json({
+        "document": {
+            "contractVersion": 1,
+            "viewKind": "formSequence",
+            "revision": 5
+        },
+        "diagnostics": []
+    })json");
+
+    auto r = Das::Core::TaskScheduler::ValidateAuthoringApplyResult(result, 4);
+    EXPECT_FALSE(r.valid);
+    EXPECT_EQ(r.error_kind, "missingField");
+}
+
+TEST(TaskAuthoringContractTest, CompileResultRequiresCompileAndDiagnostics)
+{
+    auto ok = ParseJson(R"json({
+        "compile": {},
+        "diagnostics": []
+    })json");
+    auto r_ok = Das::Core::TaskScheduler::ValidateAuthoringCompileResult(ok);
+    EXPECT_TRUE(r_ok.valid);
+    EXPECT_TRUE(r_ok.error_kind.empty()) << r_ok.message;
+
+    auto no_compile = ParseJson(R"json({"diagnostics": []})json");
+    auto r_no_compile =
+        Das::Core::TaskScheduler::ValidateAuthoringCompileResult(no_compile);
+    EXPECT_FALSE(r_no_compile.valid);
+    EXPECT_EQ(r_no_compile.error_kind, "missingField");
+
+    auto no_diag = ParseJson(R"json({"compile": {}})json");
+    auto r_no_diag =
+        Das::Core::TaskScheduler::ValidateAuthoringCompileResult(no_diag);
+    EXPECT_FALSE(r_no_diag.valid);
+    EXPECT_EQ(r_no_diag.error_kind, "missingField");
+}
