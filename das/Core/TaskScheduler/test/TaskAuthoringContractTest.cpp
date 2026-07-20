@@ -19,35 +19,36 @@ TEST(TaskAuthoringContractTest, ValidFormSequenceDocumentPasses)
 {
     auto document = ParseJson(R"json({
         "contractVersion": 1,
-        "kind": "formSequence",
+        "viewKind": "formSequence",
         "revision": 7,
-        "formSequence": {"fields": [], "sequence": []}
+        "formSequence": {"items": []}
     })json");
 
     auto result = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
 
     EXPECT_TRUE(result.valid);
-    EXPECT_TRUE(result.error_kind.empty());
+    EXPECT_TRUE(result.error_kind.empty()) << result.message;
 }
 
 TEST(TaskAuthoringContractTest, ValidGraphDocumentPasses)
 {
     auto document = ParseJson(R"json({
         "contractVersion": 1,
-        "kind": "graph",
+        "viewKind": "graph",
         "revision": 2,
-        "graph": {"nodes": [], "connections": []}
+        "graph": {"nodes": []}
     })json");
 
     auto result = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
 
     EXPECT_TRUE(result.valid);
+    EXPECT_TRUE(result.error_kind.empty()) << result.message;
 }
 
 TEST(TaskAuthoringContractTest, MissingContractVersionFails)
 {
     auto document = ParseJson(R"json({
-        "kind": "formSequence",
+        "viewKind": "formSequence",
         "revision": 1
     })json");
 
@@ -61,7 +62,7 @@ TEST(TaskAuthoringContractTest, MissingRevisionFails)
 {
     auto document = ParseJson(R"json({
         "contractVersion": 1,
-        "kind": "formSequence"
+        "viewKind": "formSequence"
     })json");
 
     auto result = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
@@ -74,14 +75,14 @@ TEST(TaskAuthoringContractTest, CustomWebDocumentFails)
 {
     auto document = ParseJson(R"json({
         "contractVersion": 1,
-        "kind": "customWeb",
+        "viewKind": "customWeb",
         "revision": 1
     })json");
 
     auto result = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
 
     EXPECT_FALSE(result.valid);
-    EXPECT_EQ(result.error_kind, "unsupportedKind");
+    EXPECT_EQ(result.error_kind, "unsupportedViewKind");
 }
 
 TEST(TaskAuthoringContractTest, LegacyFieldSetFails)
@@ -101,6 +102,491 @@ TEST(TaskAuthoringContractTest, LegacyFieldSetFails)
 
     EXPECT_FALSE(result.valid);
     EXPECT_EQ(result.error_kind, "missingField");
+}
+
+TEST(TaskAuthoringContractTest, DocumentRejectsLegacyKindAlias)
+{
+    auto document = ParseJson(R"json({
+        "contractVersion": 1,
+        "kind": "formSequence",
+        "revision": 1
+    })json");
+
+    auto result = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+
+    EXPECT_FALSE(result.valid);
+    EXPECT_EQ(result.error_kind, "missingField");
+}
+
+TEST(TaskAuthoringContractTest, DocumentRejectsUnknownTopLevelField)
+{
+    auto document = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 1,
+        "properties": {}
+    })json");
+
+    auto result = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+
+    EXPECT_FALSE(result.valid);
+    EXPECT_EQ(result.error_kind, "unknownField");
+}
+
+TEST(TaskAuthoringContractTest, DocumentRejectsLegacyMigrationField)
+{
+    auto document = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 1,
+        "migration": {}
+    })json");
+
+    auto result = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+
+    EXPECT_FALSE(result.valid);
+    EXPECT_EQ(result.error_kind, "unknownField");
+}
+
+TEST(TaskAuthoringContractTest, DocumentWithRootFieldsPasses)
+{
+    auto document = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "fields": [
+            {
+                "name": "interface",
+                "label": "接口路径",
+                "valueType": 4,
+                "inputType": 5,
+                "value": "C:/interface.json"
+            }
+        ]
+    })json");
+
+    auto result = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+
+    EXPECT_TRUE(result.valid);
+    EXPECT_TRUE(result.error_kind.empty()) << result.message;
+}
+
+TEST(TaskAuthoringContractTest, FormSequenceUsesItemsNotSequence)
+{
+    auto legacy = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "formSequence": {"sequence": []}
+    })json");
+    auto legacy_r = Das::Core::TaskScheduler::ValidateAuthoringDocument(legacy);
+    EXPECT_FALSE(legacy_r.valid);
+    EXPECT_EQ(legacy_r.error_kind, "unknownField");
+
+    auto modern = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "formSequence": {"items": []}
+    })json");
+    auto modern_r = Das::Core::TaskScheduler::ValidateAuthoringDocument(modern);
+    EXPECT_TRUE(modern_r.valid);
+    EXPECT_TRUE(modern_r.error_kind.empty()) << modern_r.message;
+}
+
+TEST(TaskAuthoringContractTest, FieldDescriptorRejectsLegacyExtensions)
+{
+    auto document = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "fields": [
+            {
+                "name": "x",
+                "label": "X",
+                "valueType": 4,
+                "inputType": 0,
+                "value": "",
+                "group": "main",
+                "dependency": {},
+                "rules": {},
+                "unit": "ms",
+                "placeholder": "..."
+            }
+        ]
+    })json");
+
+    auto result = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+
+    EXPECT_FALSE(result.valid);
+    EXPECT_EQ(result.error_kind, "unknownField");
+}
+
+TEST(TaskAuthoringContractTest, CandidatesAllowedOnlyForSelectInputTypes)
+{
+    auto on_select = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "fields": [{
+            "name": "lang", "label": "L", "valueType": 4, "inputType": 1,
+            "value": "zh",
+            "candidates": [{"value": "zh", "label": "中文"}]
+        }]
+    })json");
+    auto r_ok = Das::Core::TaskScheduler::ValidateAuthoringDocument(on_select);
+    EXPECT_TRUE(r_ok.valid) << r_ok.message;
+
+    auto on_plain = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "fields": [{
+            "name": "path", "label": "P", "valueType": 4, "inputType": 0,
+            "value": "",
+            "candidates": [{"value": "x", "label": "X"}]
+        }]
+    })json");
+    auto r_bad = Das::Core::TaskScheduler::ValidateAuthoringDocument(on_plain);
+    EXPECT_FALSE(r_bad.valid);
+    EXPECT_EQ(r_bad.error_kind, "candidatesRequireSelect");
+}
+
+TEST(TaskAuthoringContractTest, CandidateDescriptorStrictShape)
+{
+    auto legacy = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "fields": [{
+            "name": "lang", "label": "L", "valueType": 4, "inputType": 1,
+            "value": "zh",
+            "candidates": [{"name": "zh", "label": "中文"}]
+        }]
+    })json");
+    auto legacy_r = Das::Core::TaskScheduler::ValidateAuthoringDocument(legacy);
+    EXPECT_FALSE(legacy_r.valid);
+    EXPECT_EQ(legacy_r.error_kind, "missingField");
+
+    auto null_value = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "fields": [{
+            "name": "lang", "label": "L", "valueType": 4, "inputType": 1,
+            "value": "zh",
+            "candidates": [{"value": null, "label": "空"}]
+        }]
+    })json");
+    auto null_r =
+        Das::Core::TaskScheduler::ValidateAuthoringDocument(null_value);
+    EXPECT_FALSE(null_r.valid);
+    EXPECT_EQ(null_r.error_kind, "invalidCandidateValue");
+}
+
+TEST(TaskAuthoringContractTest, FieldValidationShapeIsStrict)
+{
+    auto with_extra = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "fields": [{
+            "name": "x", "label": "X", "valueType": 4, "inputType": 0, "value": "",
+            "validation": {"pattern": "[0-9]+", "message": "digits", "extra": true}
+        }]
+    })json");
+    auto r = Das::Core::TaskScheduler::ValidateAuthoringDocument(with_extra);
+    EXPECT_FALSE(r.valid);
+    EXPECT_EQ(r.error_kind, "unknownField");
+}
+
+TEST(TaskAuthoringContractTest, IconMustBeAbsolutePathOrHttpUrl)
+{
+    auto accept_absolute = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "fields": [{
+            "name": "x", "label": "X", "valueType": 4, "inputType": 0, "value": "",
+            "icon": "E:/icons/x.png"
+        }]
+    })json");
+    auto r1 =
+        Das::Core::TaskScheduler::ValidateAuthoringDocument(accept_absolute);
+    EXPECT_TRUE(r1.valid) << r1.message;
+
+    auto accept_http = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "fields": [{
+            "name": "x", "label": "X", "valueType": 4, "inputType": 0, "value": "",
+            "icon": "https://example.com/icon.png"
+        }]
+    })json");
+    auto r2 = Das::Core::TaskScheduler::ValidateAuthoringDocument(accept_http);
+    EXPECT_TRUE(r2.valid) << r2.message;
+
+    auto reject_relative = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "fields": [{
+            "name": "x", "label": "X", "valueType": 4, "inputType": 0, "value": "",
+            "icon": "icons/x.png"
+        }]
+    })json");
+    auto r3 =
+        Das::Core::TaskScheduler::ValidateAuthoringDocument(reject_relative);
+    EXPECT_FALSE(r3.valid);
+    EXPECT_EQ(r3.error_kind, "invalidIcon");
+
+    auto reject_data = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "fields": [{
+            "name": "x", "label": "X", "valueType": 4, "inputType": 0, "value": "",
+            "icon": "data:image/png;base64,AAAA"
+        }]
+    })json");
+    auto r4 = Das::Core::TaskScheduler::ValidateAuthoringDocument(reject_data);
+    EXPECT_FALSE(r4.valid);
+    EXPECT_EQ(r4.error_kind, "invalidIcon");
+}
+
+TEST(TaskAuthoringContractTest, FieldLayoutLeafMustReferenceExistingField)
+{
+    auto document = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "fields": [
+            {"name": "a", "label": "A", "valueType": 4, "inputType": 0, "value": ""}
+        ],
+        "fieldLayout": [
+            {"fieldName": "missing"}
+        ]
+    })json");
+
+    auto r = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+    EXPECT_FALSE(r.valid);
+    EXPECT_EQ(r.error_kind, "layoutFieldNotInContainer");
+}
+
+TEST(TaskAuthoringContractTest, FieldLayoutExactCoverageRequired)
+{
+    auto duplicate = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "fields": [
+            {"name": "a", "label": "A", "valueType": 4, "inputType": 0, "value": ""}
+        ],
+        "fieldLayout": [
+            {"fieldName": "a"},
+            {"fieldName": "a"}
+        ]
+    })json");
+    auto r1 = Das::Core::TaskScheduler::ValidateAuthoringDocument(duplicate);
+    EXPECT_FALSE(r1.valid);
+    EXPECT_EQ(r1.error_kind, "layoutDuplicateFieldRef");
+
+    auto missing = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "fields": [
+            {"name": "a", "label": "A", "valueType": 4, "inputType": 0, "value": ""},
+            {"name": "b", "label": "B", "valueType": 4, "inputType": 0, "value": ""}
+        ],
+        "fieldLayout": [
+            {"fieldName": "a"}
+        ]
+    })json");
+    auto r2 = Das::Core::TaskScheduler::ValidateAuthoringDocument(missing);
+    EXPECT_FALSE(r2.valid);
+    EXPECT_EQ(r2.error_kind, "layoutMissingField");
+}
+
+TEST(TaskAuthoringContractTest, FieldLayoutSectionRecursiveCoverage)
+{
+    auto document = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "fields": [
+            {"name": "a", "label": "A", "valueType": 4, "inputType": 0, "value": ""},
+            {"name": "b", "label": "B", "valueType": 4, "inputType": 0, "value": ""}
+        ],
+        "fieldLayout": [
+            {
+                "id": "section-1",
+                "label": "Section",
+                "entries": [
+                    {"fieldName": "a"},
+                    {"fieldName": "b"}
+                ]
+            }
+        ]
+    })json");
+
+    auto r = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+    EXPECT_TRUE(r.valid) << r.message;
+}
+
+TEST(TaskAuthoringContractTest, FormSequenceItemStrictShape)
+{
+    auto valid = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "formSequence": {
+            "items": [
+                {
+                    "id": "task-1",
+                    "componentGuid": "00000000-0000-0000-0000-000000000001",
+                    "fields": [],
+                    "enabled": true,
+                    "debugInfo": {"any": "opaque"}
+                }
+            ]
+        }
+    })json");
+    auto r1 = Das::Core::TaskScheduler::ValidateAuthoringDocument(valid);
+    EXPECT_TRUE(r1.valid) << r1.message;
+
+    auto with_settings = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "formSequence": {
+            "items": [{"id": "x", "settings": {}}]
+        }
+    })json");
+    auto r2 =
+        Das::Core::TaskScheduler::ValidateAuthoringDocument(with_settings);
+    EXPECT_FALSE(r2.valid);
+    EXPECT_EQ(r2.error_kind, "unknownField");
+
+    auto with_children = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "formSequence": {
+            "items": [{"id": "x", "children": []}]
+        }
+    })json");
+    auto r3 =
+        Das::Core::TaskScheduler::ValidateAuthoringDocument(with_children);
+    EXPECT_FALSE(r3.valid);
+    EXPECT_EQ(r3.error_kind, "unknownField");
+}
+
+TEST(TaskAuthoringContractTest, GraphNodeStrictShape)
+{
+    auto valid = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "graph",
+        "revision": 0,
+        "graph": {
+            "nodes": [
+                {
+                    "id": "node-1",
+                    "componentGuid": "00000000-0000-0000-0000-000000000002",
+                    "fields": [],
+                    "debugInfo": {}
+                }
+            ]
+        }
+    })json");
+    auto r1 = Das::Core::TaskScheduler::ValidateAuthoringDocument(valid);
+    EXPECT_TRUE(r1.valid) << r1.message;
+
+    auto with_settings = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "graph",
+        "revision": 0,
+        "graph": {"nodes": [{"id": "n", "settings": {}}]}
+    })json");
+    auto r2 =
+        Das::Core::TaskScheduler::ValidateAuthoringDocument(with_settings);
+    EXPECT_FALSE(r2.valid);
+    EXPECT_EQ(r2.error_kind, "unknownField");
+}
+
+TEST(TaskAuthoringContractTest, EntryRefOnlyEntryIdAllowed)
+{
+    auto valid = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "graph",
+        "revision": 0,
+        "graph": {"nodes": [{"id": "n", "targetKind": "entryRef", "entryRef": {"entryId": 5}}]}
+    })json");
+    auto r1 = Das::Core::TaskScheduler::ValidateAuthoringDocument(valid);
+    EXPECT_TRUE(r1.valid) << r1.message;
+
+    auto legacy = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "graph",
+        "revision": 0,
+        "graph": {"nodes": [{"id": "n", "targetKind": "entryRef", "entryRef": {
+            "entryId": 5, "expectedRevision": 1, "sourceFingerprint": "abc"
+        }}]}
+    })json");
+    auto r2 = Das::Core::TaskScheduler::ValidateAuthoringDocument(legacy);
+    EXPECT_FALSE(r2.valid);
+    EXPECT_EQ(r2.error_kind, "unknownField");
+}
+
+TEST(TaskAuthoringContractTest, ActionCatalogStrictShape)
+{
+    auto valid = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "actionCatalog": {
+            "entries": [
+                {"actionId": "A", "label": "Alpha"},
+                {"actionId": "B", "label": "Beta", "description": "d", "icon": "https://x/y.png"}
+            ],
+            "groups": [
+                {"id": "g1", "label": "Group", "actionIds": ["A", "B"]}
+            ]
+        }
+    })json");
+    auto r1 = Das::Core::TaskScheduler::ValidateAuthoringDocument(valid);
+    EXPECT_TRUE(r1.valid) << r1.message;
+
+    auto duplicate_action = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "actionCatalog": {
+            "entries": [
+                {"actionId": "A", "label": "Alpha"},
+                {"actionId": "A", "label": "Alpha again"}
+            ]
+        }
+    })json");
+    auto r2 =
+        Das::Core::TaskScheduler::ValidateAuthoringDocument(duplicate_action);
+    EXPECT_FALSE(r2.valid);
+    EXPECT_EQ(r2.error_kind, "duplicateActionId");
+
+    auto group_unknown_action = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "actionCatalog": {
+            "entries": [{"actionId": "A", "label": "Alpha"}],
+            "groups": [{"id": "g", "label": "G", "actionIds": ["A", "MISSING"]}]
+        }
+    })json");
+    auto r3 = Das::Core::TaskScheduler::ValidateAuthoringDocument(
+        group_unknown_action);
+    EXPECT_FALSE(r3.valid);
+    EXPECT_EQ(r3.error_kind, "groupActionIdNotFound");
 }
 
 TEST(TaskAuthoringContractTest, ChangeRequiresBaseRevision)
