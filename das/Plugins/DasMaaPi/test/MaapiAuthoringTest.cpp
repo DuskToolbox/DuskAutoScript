@@ -1109,7 +1109,8 @@ namespace
             auto name_val = (*field)[std::string_view("name")].as_string();
             if (name_val.value_or("") == field_name)
             {
-                auto label_val = (*field)[std::string_view("label")].as_string();
+                auto label_val =
+                    (*field)[std::string_view("label")].as_string();
                 if (label_val)
                 {
                     return std::string(*label_val);
@@ -1164,8 +1165,7 @@ namespace
                 {
                     continue;
                 }
-                auto name_val =
-                    (*field)[std::string_view("name")].as_string();
+                auto name_val = (*field)[std::string_view("name")].as_string();
                 if (name_val.value_or("") == field_name)
                 {
                     auto label_val =
@@ -1183,7 +1183,7 @@ namespace
 
 TEST(I18nTest, ResolveI18nResolvesDollarPrefixKeys)
 {
-    auto catalog = MakeI18nMockCatalog();
+    auto                                        catalog = MakeI18nMockCatalog();
     Das::Plugins::DasMaaPi::AcceptedSettingsDto settings;
     settings.pi.language = "zh_cn";
 
@@ -1225,11 +1225,7 @@ TEST(I18nTest, ResolveI18nSwitchesLanguageCorrectly)
     AcceptedSettingsDto settings_zh;
     settings_zh.pi.language = "zh_cn";
 
-    auto document_zh = ProjectAuthoringDocument(
-        settings_zh,
-        &catalog,
-        {},
-        0);
+    auto document_zh = ProjectAuthoringDocument(settings_zh, &catalog, {}, 0);
 
     auto doc_obj_zh = document_zh.as_object();
     ASSERT_TRUE(doc_obj_zh.has_value());
@@ -1239,18 +1235,12 @@ TEST(I18nTest, ResolveI18nSwitchesLanguageCorrectly)
     auto controllers_zh =
         (*catalog_val_zh)[std::string_view("controllers")].as_array();
     ASSERT_TRUE(controllers_zh.has_value());
-    EXPECT_EQ(
-        GetLabelFromCandidateArray(*controllers_zh, "Android"),
-        "安卓端");
+    EXPECT_EQ(GetLabelFromCandidateArray(*controllers_zh, "Android"), "安卓端");
 
     AcceptedSettingsDto settings_en;
     settings_en.pi.language = "en";
 
-    auto document_en = ProjectAuthoringDocument(
-        settings_en,
-        &catalog,
-        {},
-        0);
+    auto document_en = ProjectAuthoringDocument(settings_en, &catalog, {}, 0);
 
     auto doc_obj_en = document_en.as_object();
     ASSERT_TRUE(doc_obj_en.has_value());
@@ -1341,7 +1331,7 @@ TEST(I18nTest, LanguageFieldPersistsInAcceptedSettings)
 
 TEST(I18nTest, LanguageFieldCanBeSetViaApplySetValueChange)
 {
-    auto catalog = MakeI18nMockCatalog();
+    auto                                        catalog = MakeI18nMockCatalog();
     Das::Plugins::DasMaaPi::AcceptedSettingsDto settings;
 
     auto change = Das::Utils::ParseYyjsonFromString(
@@ -1349,8 +1339,7 @@ TEST(I18nTest, LanguageFieldCanBeSetViaApplySetValueChange)
         "\"language\",\"value\":\"en\"}}");
     ASSERT_TRUE(change.has_value());
 
-    Das::Plugins::DasMaaPi::ApplySetValueChange(
-        settings, *change, &catalog);
+    Das::Plugins::DasMaaPi::ApplySetValueChange(settings, *change, &catalog);
 
     ASSERT_TRUE(settings.pi.language.has_value());
     EXPECT_EQ(*settings.pi.language, "en");
@@ -1358,7 +1347,7 @@ TEST(I18nTest, LanguageFieldCanBeSetViaApplySetValueChange)
 
 TEST(I18nTest, DefaultLanguageIsZhCnWhenAvailable)
 {
-    auto catalog = MakeI18nMockCatalog();
+    auto                                        catalog = MakeI18nMockCatalog();
     Das::Plugins::DasMaaPi::AcceptedSettingsDto settings;
 
     auto document = Das::Plugins::DasMaaPi::ProjectAuthoringDocument(
@@ -1397,7 +1386,7 @@ TEST(I18nTest, DefaultLanguageIsZhCnWhenAvailable)
 
 TEST(I18nTest, OptionFieldLabelsAreResolved)
 {
-    auto catalog = MakeI18nMockCatalog();
+    auto                                        catalog = MakeI18nMockCatalog();
     Das::Plugins::DasMaaPi::AcceptedSettingsDto settings;
     settings.pi.language = "zh_cn";
     // sequence[].fields[] 只投影用户已选的 task，故需要把 DailyFarm 选上，
@@ -1417,10 +1406,15 @@ TEST(I18nTest, OptionFieldLabelsAreResolved)
     ASSERT_TRUE(doc_obj.has_value());
 
     EXPECT_EQ(GetFieldLabel(document, "options.stage"), "关卡");
-    // retry/notify 是 task 级 option（在 catalog.options，不在 global_options），
-    // DAS-78 后归位到 sequence[].fields[]，不再出现在项目级 fields[]。
-    EXPECT_EQ(GetSequenceItemFieldLabel(document, "DailyFarm", "options.retry"), "重试");
-    EXPECT_EQ(GetSequenceItemFieldLabel(document, "DailyFarm", "options.notify"), "通知");
+    // retry/notify 是 task 级 option（在 catalog.options，不在
+    // global_options）， DAS-78 后归位到 sequence[].fields[]，不再出现在项目级
+    // fields[]。
+    EXPECT_EQ(
+        GetSequenceItemFieldLabel(document, "DailyFarm", "options.retry"),
+        "重试");
+    EXPECT_EQ(
+        GetSequenceItemFieldLabel(document, "DailyFarm", "options.notify"),
+        "通知");
 }
 
 // ---------------------------------------------------------------------------
@@ -1502,14 +1496,12 @@ namespace
             {
                 continue;
             }
-            auto item_fields =
-                (*item)[std::string_view("fields")].as_array();
+            auto item_fields = (*item)[std::string_view("fields")].as_array();
             if (!item_fields)
             {
                 return yyjson::value(nullptr);
             }
-            for (auto fit = item_fields->begin();
-                 fit != item_fields->end();
+            for (auto fit = item_fields->begin(); fit != item_fields->end();
                  ++fit)
             {
                 auto field = fit->as_object();
@@ -1538,11 +1530,10 @@ namespace
         PiCatalog catalog;
 
         PiTask task;
-        task.dto.name    = "T";
-        task.dto.entry   = "StartT";
-        task.dto.option  = {
-            "stage", "retry_text", "retry_count",
-            "coord", "tags", "notify"};
+        task.dto.name = "T";
+        task.dto.entry = "StartT";
+        task.dto.option =
+            {"stage", "retry_text", "retry_count", "coord", "tags", "notify"};
         catalog.tasks.push_back(std::move(task));
 
         auto make_select = [](std::string name, std::string case_name)
@@ -1573,7 +1564,7 @@ namespace
             o.dto.name = std::move(name);
             o.dto.type = "input";
             PiInputDto i;
-            i.name          = "value";
+            i.name = "value";
             i.pipeline_type = "int";
             o.dto.inputs.push_back(std::move(i));
             return o;
@@ -1631,38 +1622,45 @@ TEST(OptionValueIrTest, EmitProducesScalarValuesMatchingValueType)
 
     auto catalog = MakeOptionIrMockCatalog();
 
-    AcceptedSettingsDto settings;
+    AcceptedSettingsDto    settings;
     MaapiPiTaskSettingsDto task;
     task.task_name = "T";
-    task.enabled   = true;
+    task.enabled = true;
 
-    auto make_option = [](std::string                                name,
-                          std::string                                kind,
-                          std::vector<std::string>                   cases,
-                          std::optional<bool>                        b,
-                          std::map<std::string, std::string>         inputs)
+    auto make_option = [](std::string                        name,
+                          std::string                        kind,
+                          std::vector<std::string>           cases,
+                          std::optional<bool>                b,
+                          std::map<std::string, std::string> inputs)
     {
         MaapiPiOptionSettingsDto o;
-        o.option_name    = std::move(name);
-        o.kind           = std::move(kind);
+        o.option_name = std::move(name);
+        o.kind = std::move(kind);
         o.selected_cases = std::move(cases);
-        o.bool_value     = b;
-        o.input_values   = std::move(inputs);
+        o.bool_value = b;
+        o.input_values = std::move(inputs);
         return o;
     };
 
+    task.options.push_back(
+        make_option("stage", "select", {"1-1"}, std::nullopt, {}));
+    task.options.push_back(
+        make_option("retry_text", "input", {}, std::nullopt, {{"value", "9"}}));
     task.options.push_back(make_option(
-        "stage", "select", {"1-1"}, std::nullopt, {}));
+        "retry_count",
+        "input",
+        {},
+        std::nullopt,
+        {{"value", "7"}}));
     task.options.push_back(make_option(
-        "retry_text", "input", {}, std::nullopt, {{"value", "9"}}));
-    task.options.push_back(make_option(
-        "retry_count", "input", {}, std::nullopt, {{"value", "7"}}));
-    task.options.push_back(make_option(
-        "coord", "input", {}, std::nullopt, {{"x", "10"}, {"y", "20"}}));
-    task.options.push_back(make_option(
-        "tags", "checkbox", {"small", "large"}, std::nullopt, {}));
-    task.options.push_back(make_option(
-        "notify", "switch", {}, true, {}));
+        "coord",
+        "input",
+        {},
+        std::nullopt,
+        {{"x", "10"}, {"y", "20"}}));
+    task.options.push_back(
+        make_option("tags", "checkbox", {"small", "large"}, std::nullopt, {}));
+    task.options.push_back(make_option("notify", "switch", {}, true, {}));
     settings.pi.tasks.push_back(std::move(task));
 
     auto document = ProjectAuthoringDocument(settings, &catalog, {}, 0);
@@ -1685,8 +1683,7 @@ TEST(OptionValueIrTest, EmitProducesScalarValuesMatchingValueType)
     EXPECT_EQ(retry_count_val.as_sint().value_or(0), 7);
 
     // input 多字段 → jsonObject {name: value}
-    auto coord_val =
-        FindSequenceItemFieldValue(document, "T", "options.coord");
+    auto coord_val = FindSequenceItemFieldValue(document, "T", "options.coord");
     ASSERT_TRUE(coord_val.is_object());
     {
         auto coord_obj = coord_val.as_object();
@@ -1727,10 +1724,10 @@ TEST(OptionValueIrTest, ApplyRoundTripsScalarValuesBackToDto)
 
     // 通过 ApplySetValueChange 把 IR 标量回灌到 settings，验证 apply 端
     // 能把每种标量形态还原成 acceptedProperties 里的 MaapiPiOptionSettingsDto。
-    AcceptedSettingsDto settings;
+    AcceptedSettingsDto    settings;
     MaapiPiTaskSettingsDto task;
     task.task_name = "T";
-    task.enabled   = true;
+    task.enabled = true;
     settings.pi.tasks.push_back(std::move(task));
 
     auto apply = [&](std::string value_path, std::string value_json_literal)
@@ -1744,12 +1741,12 @@ TEST(OptionValueIrTest, ApplyRoundTripsScalarValuesBackToDto)
         ApplySetValueChange(settings, *change, &catalog);
     };
 
-    apply("options.stage",       "\"1-1\"");                         // select string
-    apply("options.retry_text",  "\"hello\"");                       // input 单字段 string
-    apply("options.retry_count", "42");                              // input 单字段 int
-    apply("options.coord",       "{\"x\":\"100\",\"y\":\"200\"}");   // input 多字段 obj
-    apply("options.tags",        "[\"small\"]");                     // checkbox jsonArray
-    apply("options.notify",      "true");                            // switch bool
+    apply("options.stage", "\"1-1\"");        // select string
+    apply("options.retry_text", "\"hello\""); // input 单字段 string
+    apply("options.retry_count", "42");       // input 单字段 int
+    apply("options.coord", "{\"x\":\"100\",\"y\":\"200\"}"); // input 多字段 obj
+    apply("options.tags", "[\"small\"]"); // checkbox jsonArray
+    apply("options.notify", "true");      // switch bool
 
     // 把 acceptedProperties 序列化出来，对照每个 option 的内部 DTO 字段。
     auto serialized = SerializeAcceptedSettings(settings);
@@ -1765,15 +1762,15 @@ TEST(OptionValueIrTest, ApplyRoundTripsScalarValuesBackToDto)
     auto options = (*serialized_task)[std::string_view("options")].as_array();
     ASSERT_TRUE(options.has_value());
 
-    auto find_option = [&](std::string_view opt_name)
-        -> std::optional<yyjson::value>
+    auto find_option =
+        [&](std::string_view opt_name) -> std::optional<yyjson::value>
     {
         for (auto it = options->begin(); it != options->end(); ++it)
         {
             auto o = it->as_object();
-            if (o && (*o)[std::string_view("optionName")].as_string()
-                         .value_or("")
-                     == opt_name)
+            if (o
+                && (*o)[std::string_view("optionName")].as_string().value_or("")
+                       == opt_name)
             {
                 return Das::Utils::CloneYyjsonValue(*it);
             }
@@ -1797,8 +1794,7 @@ TEST(OptionValueIrTest, ApplyRoundTripsScalarValuesBackToDto)
         auto rt_obj = retry_text->as_object();
         ASSERT_TRUE(rt_obj.has_value());
         ASSERT_TRUE(rt_obj->contains(std::string_view("inputValues")));
-        auto iv_obj =
-            (*rt_obj)[std::string_view("inputValues")].as_object();
+        auto iv_obj = (*rt_obj)[std::string_view("inputValues")].as_object();
         ASSERT_TRUE(iv_obj.has_value());
         ASSERT_TRUE(iv_obj->contains(std::string_view("value")));
         EXPECT_EQ(
@@ -1811,8 +1807,7 @@ TEST(OptionValueIrTest, ApplyRoundTripsScalarValuesBackToDto)
         auto rc_obj = retry_count->as_object();
         ASSERT_TRUE(rc_obj.has_value());
         ASSERT_TRUE(rc_obj->contains(std::string_view("inputValues")));
-        auto iv_obj =
-            (*rc_obj)[std::string_view("inputValues")].as_object();
+        auto iv_obj = (*rc_obj)[std::string_view("inputValues")].as_object();
         ASSERT_TRUE(iv_obj.has_value());
         ASSERT_TRUE(iv_obj->contains(std::string_view("value")));
         EXPECT_EQ(
@@ -1829,9 +1824,11 @@ TEST(OptionValueIrTest, ApplyRoundTripsScalarValuesBackToDto)
         ASSERT_TRUE(iv_obj.has_value());
         EXPECT_EQ(iv_obj->size(), 2u);
         EXPECT_EQ(
-            (*iv_obj)[std::string_view("x")].as_string().value_or(""), "100");
+            (*iv_obj)[std::string_view("x")].as_string().value_or(""),
+            "100");
         EXPECT_EQ(
-            (*iv_obj)[std::string_view("y")].as_string().value_or(""), "200");
+            (*iv_obj)[std::string_view("y")].as_string().value_or(""),
+            "200");
     }
     {
         auto tags = find_option("tags");
@@ -1849,9 +1846,8 @@ TEST(OptionValueIrTest, ApplyRoundTripsScalarValuesBackToDto)
         auto nf_obj = notify->as_object();
         ASSERT_TRUE(nf_obj.has_value());
         ASSERT_TRUE(nf_obj->contains(std::string_view("boolValue")));
-        EXPECT_TRUE((*nf_obj)[std::string_view("boolValue")]
-                        .as_bool()
-                        .value_or(false));
+        EXPECT_TRUE(
+            (*nf_obj)[std::string_view("boolValue")].as_bool().value_or(false));
     }
 }
 
@@ -1931,8 +1927,7 @@ TEST(PresetTest, PresetNameSetValueTriggersTaskExpansion)
         "\"presetName\",\"value\":\"DailyPreset\"}}");
     ASSERT_TRUE(change.has_value());
 
-    Das::Plugins::DasMaaPi::ApplySetValueChange(
-        settings, *change, &catalog);
+    Das::Plugins::DasMaaPi::ApplySetValueChange(settings, *change, &catalog);
 
     ASSERT_TRUE(settings.pi.preset_name.has_value());
     EXPECT_EQ(*settings.pi.preset_name, "DailyPreset");
@@ -2077,7 +2072,7 @@ TEST_F(MaapiAuthoringFixture, PresetNameSetValueTriggersTaskExpansion)
         "{\"adapter\":{\"interfacePath\":\"" + interface_path + "\"}}");
 
     DasPtr<Das::ExportInterface::IDasJson> result_json;
-    auto preset_change = ParseDasJson(
+    auto                                   preset_change = ParseDasJson(
         "{\"baseRevision\":0,\"kind\":\"setValue\",\"payload\":{\"valuePath\":"
         "\"presetName\",\"value\":\"DailyPreset\"}}");
     ASSERT_EQ(
@@ -2104,8 +2099,7 @@ TEST_F(MaapiAuthoringFixture, PresetNameSetValueTriggersTaskExpansion)
     EXPECT_EQ(
         (*task)[std::string_view("taskName")].as_string().value_or(""),
         "DailyFarm");
-    EXPECT_TRUE(
-        (*task)[std::string_view("enabled")].as_bool().value_or(false));
+    EXPECT_TRUE((*task)[std::string_view("enabled")].as_bool().value_or(false));
 
     auto options = (*task)[std::string_view("options")].as_array();
     ASSERT_TRUE(options.has_value());
@@ -2125,9 +2119,7 @@ TEST_F(MaapiAuthoringFixture, PresetNameSetValueTriggersTaskExpansion)
                 (*opt)[std::string_view("selectedCases")].as_array();
             ASSERT_TRUE(selected_cases.has_value());
             ASSERT_EQ(selected_cases->size(), 1u);
-            EXPECT_EQ(
-                (*selected_cases)[0].as_string().value_or(""),
-                "1-1");
+            EXPECT_EQ((*selected_cases)[0].as_string().value_or(""), "1-1");
         }
     }
     EXPECT_TRUE(found_stage);
@@ -2141,7 +2133,7 @@ TEST_F(MaapiAuthoringFixture, ApplyPresetExpandsTasksAndRestoresOptionValues)
         "{\"adapter\":{\"interfacePath\":\"" + interface_path + "\"}}");
 
     DasPtr<Das::ExportInterface::IDasJson> result_json;
-    auto preset_change = ParseDasJson(
+    auto                                   preset_change = ParseDasJson(
         "{\"baseRevision\":0,\"kind\":\"applyPreset\",\"payload\":{"
         "\"presetName\":\"DailyPreset\"}}");
     ASSERT_EQ(
@@ -2185,9 +2177,7 @@ TEST_F(MaapiAuthoringFixture, ApplyPresetExpandsTasksAndRestoresOptionValues)
                 (*opt)[std::string_view("selectedCases")].as_array();
             ASSERT_TRUE(selected_cases.has_value());
             ASSERT_EQ(selected_cases->size(), 1u);
-            EXPECT_EQ(
-                (*selected_cases)[0].as_string().value_or(""),
-                "1-1");
+            EXPECT_EQ((*selected_cases)[0].as_string().value_or(""), "1-1");
         }
         if (name.value_or("") == "retry")
         {
@@ -2195,8 +2185,7 @@ TEST_F(MaapiAuthoringFixture, ApplyPresetExpandsTasksAndRestoresOptionValues)
             auto input_values =
                 (*opt)[std::string_view("inputValues")].as_object();
             ASSERT_TRUE(input_values.has_value());
-            auto times =
-                (*input_values)[std::string_view("times")].as_string();
+            auto times = (*input_values)[std::string_view("times")].as_string();
             ASSERT_TRUE(times.has_value());
             EXPECT_EQ(*times, "3");
         }
@@ -2213,7 +2202,7 @@ TEST_F(MaapiAuthoringFixture, InvalidPresetNameWritesOrphanPath)
         "{\"adapter\":{\"interfacePath\":\"" + interface_path + "\"}}");
 
     DasPtr<Das::ExportInterface::IDasJson> result_json;
-    auto preset_change = ParseDasJson(
+    auto                                   preset_change = ParseDasJson(
         "{\"baseRevision\":0,\"kind\":\"setValue\",\"payload\":{\"valuePath\":"
         "\"presetName\",\"value\":\"NonExistentPreset\"}}");
     ASSERT_EQ(
@@ -2238,4 +2227,391 @@ TEST_F(MaapiAuthoringFixture, InvalidPresetNameWritesOrphanPath)
     EXPECT_EQ(
         (*orphan_paths)[0].as_string().value_or(""),
         "presetName:NonExistentPreset");
+}
+
+// ---------------------------------------------------------------------------
+// D-84-05 / D-84-40 / D-84-41 / D-84-42: MaaPI 配置权威 + 稳定 itemId
+// 后 4 个测试覆盖：
+//   1. 两个相同 taskName 的 task 实例 round-trip 出两个不同的非空 itemId
+//   2. newConfiguration 命令创建空配置 + 新身份/名称，不动 PI preset 源
+//   3. copyConfiguration 命令创建新配置 + 重新生成的配置/task 身份
+//   4. 选择配置改变当前权威；portDefinitions/portMap + pi.orphanPaths 保持私有
+// 所有测试经公共 MaaPI authoring 缝 (ParseAcceptedSettings /
+// SerializeAcceptedSettings / session Apply) 观察，不测私有 helper。
+// ---------------------------------------------------------------------------
+
+namespace
+{
+    // 在 acceptedProperties.pi.configurations[] 中按 id 查找配置，返回克隆。
+    std::optional<yyjson::value> FindConfigurationById(
+        const yyjson::value& pi,
+        std::string_view     id)
+    {
+        auto pi_obj = pi.as_object();
+        if (!pi_obj || !pi_obj->contains(std::string_view("configurations")))
+        {
+            return std::nullopt;
+        }
+        auto arr = (*pi_obj)[std::string_view("configurations")].as_array();
+        if (!arr)
+        {
+            return std::nullopt;
+        }
+        for (auto it = arr->begin(); it != arr->end(); ++it)
+        {
+            auto obj = it->as_object();
+            if (obj
+                && (*obj)[std::string_view("id")].as_string().value_or("")
+                       == id)
+            {
+                return Das::Utils::CloneYyjsonValue(*it);
+            }
+        }
+        return std::nullopt;
+    }
+
+    // 读取当前 selected 配置的克隆；selectedConfigurationId 缺失则 nullopt。
+    std::optional<yyjson::value> FindSelectedConfiguration(
+        const yyjson::value& pi)
+    {
+        auto pi_obj = pi.as_object();
+        if (!pi_obj)
+        {
+            return std::nullopt;
+        }
+        auto id =
+            (*pi_obj)[std::string_view("selectedConfigurationId")].as_string();
+        if (!id.has_value())
+        {
+            return std::nullopt;
+        }
+        return FindConfigurationById(pi, *id);
+    }
+
+    // 收集一个 configuration 对象内所有 task 的 itemId。
+    std::vector<std::string> CollectItemIds(const yyjson::value& config)
+    {
+        std::vector<std::string> ids;
+        auto                     obj = config.as_object();
+        if (!obj || !obj->contains(std::string_view("tasks")))
+        {
+            return ids;
+        }
+        auto arr = (*obj)[std::string_view("tasks")].as_array();
+        if (!arr)
+        {
+            return ids;
+        }
+        for (auto it = arr->begin(); it != arr->end(); ++it)
+        {
+            auto task = it->as_object();
+            if (!task)
+            {
+                continue;
+            }
+            ids.emplace_back(
+                (*task)[std::string_view("itemId")].as_string().value_or(""));
+        }
+        return ids;
+    }
+} // namespace
+
+// Behavior 1: 两个相同 taskName 的 task 实例 round-trip 出两个不同的非空
+// itemId。
+TEST(MaapiConfigurationTest, RoundTripsTwoTasksWithSameNameAndDistinctItemIds)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto input = Das::Utils::ParseYyjsonFromString(R"({
+        "pi": {
+            "selectedConfigurationId": "cfg_alpha",
+            "configurations": [{
+                "id": "cfg_alpha",
+                "name": "Primary",
+                "tasks": [
+                    {"itemId": "item_a", "taskName": "DailyFarm", "enabled": true},
+                    {"itemId": "item_b", "taskName": "DailyFarm", "enabled": false}
+                ]
+            }]
+        }
+    })");
+    ASSERT_TRUE(input.has_value());
+
+    auto settings = ParseAcceptedSettings(*input);
+    auto serialized = SerializeAcceptedSettings(settings);
+    auto s_obj = serialized.as_object();
+    ASSERT_TRUE(s_obj.has_value());
+    auto pi = (*s_obj)[std::string_view("pi")].as_object();
+    ASSERT_TRUE(pi.has_value());
+
+    auto active = FindSelectedConfiguration(*pi);
+    ASSERT_TRUE(active.has_value());
+    auto tasks = (*active->as_object())[std::string_view("tasks")].as_array();
+    ASSERT_TRUE(tasks.has_value());
+    ASSERT_EQ(tasks->size(), 2u);
+
+    auto first_id = (*tasks)[0]
+                        .as_object()
+                        ->operator[](std::string_view("itemId"))
+                        .as_string()
+                        .value_or("");
+    auto second_id = (*tasks)[1]
+                         .as_object()
+                         ->operator[](std::string_view("itemId"))
+                         .as_string()
+                         .value_or("");
+    EXPECT_FALSE(first_id.empty());
+    EXPECT_FALSE(second_id.empty());
+    EXPECT_NE(first_id, second_id);
+
+    // 业务类型 taskName 仍可重复， itemId 才是实例身份。
+    EXPECT_EQ(
+        (*tasks)[0]
+            .as_object()
+            ->operator[](std::string_view("taskName"))
+            .as_string()
+            .value_or(""),
+        "DailyFarm");
+    EXPECT_EQ(
+        (*tasks)[1]
+            .as_object()
+            ->operator[](std::string_view("taskName"))
+            .as_string()
+            .value_or(""),
+        "DailyFarm");
+}
+
+// Behavior 2: newConfiguration 创建空配置 + 新身份/名称，不动 PI preset 源。
+TEST_F(MaapiAuthoringFixture, NewConfigurationCreatesEmptyAndSelectsIt)
+{
+    auto interface_path =
+        FixturePath("interface_authoring.jsonc").generic_string();
+    // 起始状态：一个非空配置 + 一个 PI preset 模板引用，验证 new 不污染
+    // preset。
+    auto session = CreateSession(
+        "{\"adapter\":{\"interfacePath\":\"" + interface_path
+        + "\"},"
+          "\"pi\":{\"selectedConfigurationId\":\"cfg_seed\",\"configurations\":[{"
+          "\"id\":\"cfg_seed\",\"name\":\"Seed\","
+          "\"tasks\":[{\"itemId\":\"seed_t1\",\"taskName\":\"DailyFarm\","
+          "\"enabled\":true}]}],\"presetName\":\"DailyPreset\"}}");
+
+    DasPtr<Das::ExportInterface::IDasJson> result_json;
+    auto                                   change = ParseDasJson(
+        "{\"baseRevision\":0,\"kind\":\"invokeCommand\","
+        "\"payload\":{\"commandId\":\"newConfiguration\"}}");
+    ASSERT_EQ(session->ApplyChange(change.Get(), result_json.Put()), DAS_S_OK);
+
+    auto result = ReadJsonInterface(result_json.Get());
+    auto obj = result.as_object();
+    ASSERT_TRUE(obj.has_value());
+    auto accepted = (*obj)[std::string_view("acceptedProperties")].as_object();
+    ASSERT_TRUE(accepted.has_value());
+    auto pi = (*accepted)[std::string_view("pi")].as_object();
+    ASSERT_TRUE(pi.has_value());
+
+    // 新配置必须被选中；其 tasks 必须为空；其 id/name 必须与原配置不同。
+    auto active = FindSelectedConfiguration(*pi);
+    ASSERT_TRUE(active.has_value());
+    auto active_obj = active->as_object();
+    ASSERT_TRUE(active_obj.has_value());
+    auto active_id =
+        (*active_obj)[std::string_view("id")].as_string().value_or("");
+    auto active_name =
+        (*active_obj)[std::string_view("name")].as_string().value_or("");
+    EXPECT_NE(active_id, "cfg_seed");
+    EXPECT_FALSE(active_id.empty());
+    EXPECT_FALSE(active_name.empty());
+
+    auto active_tasks = (*active_obj)[std::string_view("tasks")].as_array();
+    ASSERT_TRUE(active_tasks.has_value());
+    EXPECT_TRUE(active_tasks->empty());
+
+    // 原配置仍在，未被破坏。
+    auto seed = FindConfigurationById(*pi, "cfg_seed");
+    ASSERT_TRUE(seed.has_value());
+    auto seed_tasks =
+        (*seed->as_object())[std::string_view("tasks")].as_array();
+    ASSERT_TRUE(seed_tasks.has_value());
+    EXPECT_EQ(seed_tasks->size(), 1u);
+
+    // preset 模板引用保持不变 —— PI 官方 preset 是只读模板。
+    EXPECT_EQ(
+        (*pi)[std::string_view("presetName")].as_string().value_or(""),
+        "DailyPreset");
+}
+
+// Behavior 3: copyConfiguration 拷贝当前配置，并重新生成配置+task 身份，
+// 保留用户值和顺序。
+TEST_F(MaapiAuthoringFixture, CopyConfigurationRegeneratesIdentities)
+{
+    auto interface_path =
+        FixturePath("interface_authoring.jsonc").generic_string();
+    auto session = CreateSession(
+        "{\"adapter\":{\"interfacePath\":\"" + interface_path
+        + "\"},"
+          "\"pi\":{\"selectedConfigurationId\":\"cfg_orig\",\"configurations\":[{"
+          "\"id\":\"cfg_orig\",\"name\":\"Original\","
+          "\"controllerName\":\"Android\",\"resourceName\":\"Official\","
+          "\"language\":\"zh_cn\","
+          "\"tasks\":["
+          "{\"itemId\":\"orig_t1\",\"taskName\":\"DailyFarm\",\"enabled\":true},"
+          "{\"itemId\":\"orig_t2\",\"taskName\":\"DailyFarm\",\"enabled\":false}"
+          "]}]}}");
+
+    DasPtr<Das::ExportInterface::IDasJson> result_json;
+    auto                                   change = ParseDasJson(
+        "{\"baseRevision\":0,\"kind\":\"invokeCommand\","
+        "\"payload\":{\"commandId\":\"copyConfiguration\"}}");
+    ASSERT_EQ(session->ApplyChange(change.Get(), result_json.Put()), DAS_S_OK);
+
+    auto result = ReadJsonInterface(result_json.Get());
+    auto obj = result.as_object();
+    ASSERT_TRUE(obj.has_value());
+    auto accepted = (*obj)[std::string_view("acceptedProperties")].as_object();
+    ASSERT_TRUE(accepted.has_value());
+    auto pi = (*accepted)[std::string_view("pi")].as_object();
+    ASSERT_TRUE(pi.has_value());
+
+    // 必须切换到新配置。
+    auto active = FindSelectedConfiguration(*pi);
+    ASSERT_TRUE(active.has_value());
+    auto active_obj = active->as_object();
+    auto active_id =
+        (*active_obj)[std::string_view("id")].as_string().value_or("");
+    auto active_name =
+        (*active_obj)[std::string_view("name")].as_string().value_or("");
+    EXPECT_NE(active_id, "cfg_orig");
+    EXPECT_FALSE(active_id.empty());
+    EXPECT_NE(active_name, "Original");
+    EXPECT_FALSE(active_name.empty());
+
+    // 用户值/顺序保留：两个 DailyFarm 仍按原顺序，enabled 状态保留。
+    auto active_tasks = (*active_obj)[std::string_view("tasks")].as_array();
+    ASSERT_TRUE(active_tasks.has_value());
+    ASSERT_EQ(active_tasks->size(), 2u);
+    EXPECT_EQ(
+        (*active_tasks)[0]
+            .as_object()
+            ->operator[](std::string_view("taskName"))
+            .as_string()
+            .value_or(""),
+        "DailyFarm");
+    EXPECT_EQ(
+        (*active_tasks)[1]
+            .as_object()
+            ->operator[](std::string_view("taskName"))
+            .as_string()
+            .value_or(""),
+        "DailyFarm");
+    EXPECT_TRUE((*active_tasks)[0]
+                    .as_object()
+                    ->operator[](std::string_view("enabled"))
+                    .as_bool()
+                    .value_or(false));
+    EXPECT_FALSE((*active_tasks)[1]
+                     .as_object()
+                     ->operator[](std::string_view("enabled"))
+                     .as_bool()
+                     .value_or(true));
+
+    // 身份重新生成：两个新 itemId 都非空，且都不同于原 itemId，且互不相同。
+    auto new_ids = CollectItemIds(*active);
+    ASSERT_EQ(new_ids.size(), 2u);
+    EXPECT_FALSE(new_ids[0].empty());
+    EXPECT_FALSE(new_ids[1].empty());
+    EXPECT_NE(new_ids[0], new_ids[1]);
+    EXPECT_NE(new_ids[0], "orig_t1");
+    EXPECT_NE(new_ids[0], "orig_t2");
+    EXPECT_NE(new_ids[1], "orig_t1");
+    EXPECT_NE(new_ids[1], "orig_t2");
+
+    // 原配置保留原 itemId，未被身份污染。
+    auto orig = FindConfigurationById(*pi, "cfg_orig");
+    ASSERT_TRUE(orig.has_value());
+    auto orig_ids = CollectItemIds(*orig);
+    ASSERT_EQ(orig_ids.size(), 2u);
+    EXPECT_EQ(orig_ids[0], "orig_t1");
+    EXPECT_EQ(orig_ids[1], "orig_t2");
+
+    // 用户值拷贝：controller/resource/language 与原一致。
+    EXPECT_EQ(
+        (*active_obj)[std::string_view("controllerName")].as_string().value_or(
+            ""),
+        "Android");
+    EXPECT_EQ(
+        (*active_obj)[std::string_view("resourceName")].as_string().value_or(
+            ""),
+        "Official");
+    EXPECT_EQ(
+        (*active_obj)[std::string_view("language")].as_string().value_or(""),
+        "zh_cn");
+}
+
+// Behavior 4: 选择配置改变当前权威；portDefinitions/portMap + pi.orphanPaths
+// 保持 Provider 私有，不进入共享 UI IR。
+TEST_F(MaapiAuthoringFixture, SelectConfigurationSwitchesAuthority)
+{
+    auto interface_path =
+        FixturePath("interface_authoring.jsonc").generic_string();
+    auto session = CreateSession(
+        "{\"adapter\":{\"interfacePath\":\"" + interface_path
+        + "\"},"
+          "\"pi\":{\"selectedConfigurationId\":\"cfg_a\",\"configurations\":[{"
+          "\"id\":\"cfg_a\",\"name\":\"Alpha\","
+          "\"tasks\":[{\"itemId\":\"a_t1\",\"taskName\":\"DailyFarm\","
+          "\"enabled\":true}]},"
+          "{\"id\":\"cfg_b\",\"name\":\"Beta\","
+          "\"tasks\":[{\"itemId\":\"b_t1\",\"taskName\":\"DailyFarm\","
+          "\"enabled\":true},{\"itemId\":\"b_t2\",\"taskName\":\"DailyFarm\","
+          "\"enabled\":false}]}],"
+          "\"orphanPaths\":[\"presetName:StalePreset\"]}}");
+
+    // 切换到 cfg_b
+    DasPtr<Das::ExportInterface::IDasJson> result_json;
+    auto                                   change = ParseDasJson(
+        "{\"baseRevision\":0,\"kind\":\"setValue\",\"payload\":{\"valuePath\":"
+        "\"configurationId\",\"value\":\"cfg_b\"}}");
+    ASSERT_EQ(session->ApplyChange(change.Get(), result_json.Put()), DAS_S_OK);
+
+    auto result = ReadJsonInterface(result_json.Get());
+    auto obj = result.as_object();
+    ASSERT_TRUE(obj.has_value());
+    auto accepted = (*obj)[std::string_view("acceptedProperties")].as_object();
+    ASSERT_TRUE(accepted.has_value());
+    auto pi = (*accepted)[std::string_view("pi")].as_object();
+    ASSERT_TRUE(pi.has_value());
+
+    // 切换后选中 cfg_b。
+    EXPECT_EQ(
+        (*pi)[std::string_view("selectedConfigurationId")].as_string().value_or(
+            ""),
+        "cfg_b");
+    auto active = FindSelectedConfiguration(*pi);
+    ASSERT_TRUE(active.has_value());
+    auto active_tasks =
+        (*active->as_object())[std::string_view("tasks")].as_array();
+    ASSERT_TRUE(active_tasks.has_value());
+    EXPECT_EQ(active_tasks->size(), 2u);
+
+    // cfg_a 仍在，未被破坏。
+    auto alpha = FindConfigurationById(*pi, "cfg_a");
+    ASSERT_TRUE(alpha.has_value());
+
+    // portDefinitions/portMap 仍写入 acceptedProperties（Provider
+    // 私有运行期派生）。
+    ASSERT_TRUE(accepted->contains(std::string_view("portDefinitions")));
+    ASSERT_TRUE(accepted->contains(std::string_view("portMap")));
+
+    // orphanPaths 保留在 pi 层（Provider 私有），不在 document UI IR 中。
+    auto orphans = (*pi)[std::string_view("orphanPaths")].as_array();
+    ASSERT_TRUE(orphans.has_value());
+    ASSERT_EQ(orphans->size(), 1u);
+    EXPECT_EQ((*orphans)[0].as_string().value_or(""), "presetName:StalePreset");
+
+    // 文档中不出现私有字段（portDefinitions/portMap/orphanPaths）。
+    auto document = (*obj)[std::string_view("document")];
+    EXPECT_FALSE(ContainsAnyKey(
+        document,
+        {"portDefinitions", "portMap", "orphanPaths"}));
 }
