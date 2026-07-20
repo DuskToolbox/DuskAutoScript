@@ -2996,3 +2996,221 @@ TEST(MaapiProjectionTest, DocumentPassesStrictContractValidator)
     // D-84-45: 不把 PI task name / componentGuid 当 label 回退；label 走 i18n。
     EXPECT_FALSE(item_obj->contains(std::string_view("label")));
 }
+
+// Tracer 2: multi-input 拆分。D-84-17: PI 多字段 input 投影为一个纵向
+// FieldSectionDescriptor 加多个独立 FieldDescriptor，禁止压成 jsonObject 文本框。
+// 这里验证 coord (x,y) 被拆为 options.coord.x / options.coord.y 两个独立字段，
+// 通过 fieldLayout 的 section 引用，且 apply 端 setValue{options.coord.x} 能
+// 正确写回 acceptedProperties。
+TEST(MaapiProjectionTest, MultiInputOptionSplitsIntoIndependentFields)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto catalog = MakeStrictProjectionMockCatalog();
+
+    AcceptedSettingsDto    settings;
+    settings.pi.language = "zh_cn";
+    MaapiPiTaskSettingsDto task;
+    task.item_id = "item_multi";
+    task.task_name = "DailyFarm";
+    task.enabled = true;
+    MaapiPiOptionSettingsDto coord;
+    coord.option_name = "coord";
+    coord.kind = "input";
+    coord.input_values.emplace("x", "10");
+    coord.input_values.emplace("y", "20");
+    task.options.push_back(std::move(coord));
+    settings.pi.tasks.push_back(std::move(task));
+
+    auto document = ProjectAuthoringDocument(settings, &catalog, {}, 0);
+
+    auto result = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+    EXPECT_TRUE(result.valid)
+        << "error_kind=" << result.error_kind << " message=" << result.message;
+
+    // 取 formSequence.items[0] 的 fields 与 fieldLayout。
+    auto obj = document.as_object();
+    ASSERT_TRUE(obj.has_value());
+    auto fs = (*obj)[std::string_view("formSequence")].as_object();
+    ASSERT_TRUE(fs.has_value());
+    auto items = (*fs)[std::string_view("items")].as_array();
+    ASSERT_TRUE(items.has_value());
+    ASSERT_EQ(items->size(), 1u);
+    auto item_obj = (*items)[0].as_object();
+    ASSERT_TRUE(item_obj.has_value());
+
+    auto item_fields = (*item_obj)[std::string_view("fields")].as_array();
+    ASSERT_TRUE(item_fields.has_value());
+
+    // 收集所有 item 字段 name。
+    std::set<std::string> item_field_names;
+    for (auto it = item_fields->begin(); it != item_fields->end(); ++it)
+    {
+        auto field = it->as_object();
+        ASSERT_TRUE(field.has_value());
+        item_field_names.emplace(std::string(
+            (*field)[std::string_view("name")].as_string().value_or("")));
+    }
+
+    // 多字段 input 被拆为独立字段；不再有 jsonObject 形态的 options.coord。
+    EXPECT_EQ(item_field_names.count("options.coord"), 0u);
+    EXPECT_EQ(item_field_names.count("options.coord.x"), 1u);
+    EXPECT_EQ(item_field_names.count("options.coord.y"), 1u);
+
+    // 验证 sub-field 的 label 经 i18n 解析为本地化文本。
+    auto find_field = [&](std::string_view name) -> yyjson::value
+    {
+        for (auto it = item_fields->begin(); it != item_fields->end(); ++it)
+        {
+            auto field = it->as_object();
+            if (field
+                && (*field)[std::string_view("name")].as_string().value_or("")
+                       == name)
+            {
+                return Das::Utils::CloneYyjsonValue(*it);
+            }
+        }
+        return yyjson::value(nullptr);
+    };
+    auto x_field = find_field("options.coord.x");
+    ASSERT_TRUE(x_field.is_object());
+    EXPECT_EQ(
+        x_field.as_object().value()[std::string_view("label")].as_string().value_or(
+            ""),
+        "X 坐标");
+    EXPECT_EQ(
+        x_field.as_object().value()[std::string_view("valueType")]
+            .as_sint()
+            .value_or(-1),
+        0); // int
+    EXPECT_EQ(
+        x_field.as_object().value()[std::string_view("value")].as_sint().value_or(
+            -1),
+        10);
+
+    // fieldLayout 必须存在，且包含一个 section 引用 x 与 y。
+    ASSERT_TRUE(item_obj->contains(std::string_view("fieldLayout")));
+    auto layout = (*item_obj)[std::string_view("fieldLayout")].as_array();
+    ASSERT_TRUE(layout.has_value());
+    bool found_coord_section = false;
+    for (auto it = layout->begin(); it != layout->end(); ++it)
+    {
+        auto node = it->as_object();
+        if (!node || !node->contains(std::string_view("entries")))
+        {
+            continue;
+        }
+        auto entries = (*node)[std::string_view("entries")].as_array();
+        if (!entries)
+        {
+            continue;
+        }
+        std::set<std::string> leaf_names;
+        for (auto eit = entries->begin(); eit != entries->end(); ++eit)
+        {
+            auto leaf = eit->as_object();
+            if (!leaf)
+            {
+                continue;
+            }
+            leaf_names.emplace(std::string(
+                (*leaf)[std::string_view("fieldName")].as_string().value_or("")));
+        }
+        if (leaf_names.count("options.coord.x") && leaf_names.count("options.coord.y"))
+        {
+            found_coord_section = true;
+            EXPECT_FALSE((*node)[std::string_view("label")]
+                             .as_string()
+                             .value_or("")
+                             .empty());
+        }
+    }
+    EXPECT_TRUE(found_coord_section);
+}
+
+// Tracer 2: Apply 端 setValue{options.coord.x} 能写回 acceptedProperties 的
+// input_values["x"]。这是 Rule 3 (blocking issue) 自动修复：multi-input 拆分
+// 后，UI 编辑 sub-field 时需要新的 apply 路径处理 options.{name}.{input}。
+TEST(MaapiProjectionTest, ApplySetValueOnMultiInputSubfieldWritesBackToInputValues)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto catalog = MakeStrictProjectionMockCatalog();
+
+    AcceptedSettingsDto    settings;
+    MaapiPiTaskSettingsDto task;
+    task.item_id = "item_apply";
+    task.task_name = "DailyFarm";
+    MaapiPiOptionSettingsDto coord;
+    coord.option_name = "coord";
+    coord.kind = "input";
+    coord.input_values.emplace("x", "0");
+    coord.input_values.emplace("y", "0");
+    task.options.push_back(std::move(coord));
+    settings.pi.tasks.push_back(std::move(task));
+
+    // setValue{path:"options.coord.x", value:"42"} — 新路径。
+    auto change = Das::Utils::ParseYyjsonFromString(
+        "{\"baseRevision\":0,\"kind\":\"setValue\",\"payload\":{\"valuePath\":"
+        "\"options.coord.x\",\"value\":\"42\"}}");
+    ASSERT_TRUE(change.has_value());
+    ApplySetValueChange(settings, *change, &catalog);
+
+    // 通过 SerializeAcceptedSettings 观察结果（不引用私有 helper）。
+    auto serialized = SerializeAcceptedSettings(settings);
+    auto s_obj = serialized.as_object();
+    ASSERT_TRUE(s_obj.has_value());
+    auto pi = (*s_obj)[std::string_view("pi")].as_object();
+    ASSERT_TRUE(pi.has_value());
+    auto tasks = (*pi)[std::string_view("tasks")].as_array();
+    ASSERT_TRUE(tasks.has_value());
+    ASSERT_EQ(tasks->size(), 1u);
+    auto task_obj = (*tasks)[0].as_object();
+    ASSERT_TRUE(task_obj.has_value());
+    auto options = (*task_obj)[std::string_view("options")].as_array();
+    ASSERT_TRUE(options.has_value());
+
+    auto find_option_inputs =
+        [&](std::string_view name) -> std::map<std::string, std::string>
+    {
+        for (auto it = options->begin(); it != options->end(); ++it)
+        {
+            auto opt = it->as_object();
+            if (!opt)
+            {
+                continue;
+            }
+            if ((*opt)[std::string_view("optionName")].as_string().value_or("")
+                == name)
+            {
+                std::map<std::string, std::string> result;
+                auto inputs_obj =
+                    (*opt)[std::string_view("inputValues")].as_object();
+                if (inputs_obj)
+                {
+                    for (auto iit = inputs_obj->begin();
+                         iit != inputs_obj->end();
+                         ++iit)
+                    {
+                        if (iit->second.is_string())
+                        {
+                            result.emplace(
+                                iit->first,
+                                iit->second.as_string().value_or(""));
+                        }
+                    }
+                }
+                return result;
+            }
+        }
+        return {};
+    };
+
+    auto coord_inputs = find_option_inputs("coord");
+    EXPECT_EQ(coord_inputs.count("x"), 1u);
+    EXPECT_EQ(coord_inputs.at("x"), "42");
+    // y 不变。
+    EXPECT_EQ(coord_inputs.count("y"), 1u);
+    EXPECT_EQ(coord_inputs.at("y"), "0");
+}
+
