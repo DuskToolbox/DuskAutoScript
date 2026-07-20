@@ -593,7 +593,11 @@ TEST(TaskAuthoringContractTest, ChangeRequiresBaseRevision)
 {
     auto change = ParseJson(R"json({
         "kind": "setValue",
-        "payload": {"path": "projectFolder", "value": "C:/maa"}
+        "payload": {
+            "target": {"kind": "document"},
+            "fieldName": "projectFolder",
+            "value": "C:/maa"
+        }
     })json");
 
     auto result = Das::Core::TaskScheduler::ValidateAuthoringChange(change);
@@ -604,19 +608,55 @@ TEST(TaskAuthoringContractTest, ChangeRequiresBaseRevision)
 
 TEST(TaskAuthoringContractTest, SupportedChangeKindsPass)
 {
-    constexpr std::string_view kKinds[] = {
-        "setValue",
+    struct Case
+    {
+        std::string_view kind;
+        std::string_view payload;
+    };
+    constexpr Case kCases[] = {
+        {"setValue",
+         R"({"target":{"kind":"document"},"fieldName":"x","value":null})"},
+        {"invokeCommand", R"({"commandId":"do-thing"})"},
+        {"convertView", R"({"targetViewKind":"graph"})"},
+        {"addFormSequenceItem", R"({"actionId":"A"})"},
+        {"addFormSequenceItem", R"({"actionId":"A","insertionIndex":0})"},
+        {"moveFormSequenceItem",
+         R"({"formSequenceItemId":"item-1","destinationIndex":2})"},
+        {"removeFormSequenceItem", R"({"formSequenceItemId":"item-1"})"},
+        {"addGraphNode", R"({"actionId":"A"})"},
+        {"removeGraphNode", R"({"nodeId":"n-1"})"},
+        {"connectGraphPorts",
+         R"({"fromNodeId":"a","fromPortId":"p1","toNodeId":"b","toPortId":"p2"})"},
+        {"disconnectGraphPorts",
+         R"({"fromNodeId":"a","fromPortId":"p1","toNodeId":"b","toPortId":"p2"})"},
+    };
+
+    for (const auto& c : kCases)
+    {
+        auto change = ParseJson(
+            std::string{"{\"baseRevision\":1,\"kind\":\""} + std::string{c.kind}
+            + "\",\"payload\":" + std::string{c.payload} + "}");
+
+        auto result = Das::Core::TaskScheduler::ValidateAuthoringChange(change);
+
+        EXPECT_TRUE(result.valid) << c.kind << ": " << result.message;
+    }
+}
+
+TEST(TaskAuthoringContractTest, ChangeRejectsOldKindAliases)
+{
+    constexpr std::string_view kLegacy[] = {
         "applyPreset",
         "addSequenceItem",
         "moveSequenceItem",
+        "removeSequenceItem",
         "addNode",
-        "connectPorts",
-        "updateNodeConfig",
         "removeNode",
+        "connectPorts",
         "disconnectPorts",
-        "removeSequenceItem"};
+        "updateNodeConfig"};
 
-    for (auto kind : kKinds)
+    for (auto kind : kLegacy)
     {
         auto change = ParseJson(
             std::string{"{\"baseRevision\":1,\"kind\":\""} + std::string{kind}
@@ -624,8 +664,232 @@ TEST(TaskAuthoringContractTest, SupportedChangeKindsPass)
 
         auto result = Das::Core::TaskScheduler::ValidateAuthoringChange(change);
 
-        EXPECT_TRUE(result.valid) << kind;
+        EXPECT_FALSE(result.valid) << kind;
+        EXPECT_EQ(result.error_kind, "unsupportedChange") << kind;
     }
+}
+
+TEST(TaskAuthoringContractTest, SetValueTargetVariants)
+{
+    constexpr std::string_view kTargets[] = {
+        R"({"kind":"document"})",
+        R"({"kind":"formSequenceItem","id":"item-1"})",
+        R"({"kind":"graphNode","id":"node-1"})"};
+
+    for (auto target : kTargets)
+    {
+        auto change = ParseJson(
+            std::string{
+                "{\"baseRevision\":1,\"kind\":\"setValue\",\"payload\":"}
+            + "{\"target\":" + std::string{target}
+            + ",\"fieldName\":\"x\",\"value\":null}}");
+
+        auto result = Das::Core::TaskScheduler::ValidateAuthoringChange(change);
+
+        EXPECT_TRUE(result.valid) << target << ": " << result.message;
+    }
+}
+
+TEST(TaskAuthoringContractTest, SetValueRejectsInvalidTargetKind)
+{
+    auto change = ParseJson(R"json({
+        "baseRevision": 1,
+        "kind": "setValue",
+        "payload": {
+            "target": {"kind": "section", "id": "x"},
+            "fieldName": "f",
+            "value": null
+        }
+    })json");
+
+    auto r = Das::Core::TaskScheduler::ValidateAuthoringChange(change);
+    EXPECT_FALSE(r.valid);
+    EXPECT_EQ(r.error_kind, "invalidTargetKind");
+}
+
+TEST(TaskAuthoringContractTest, SetValueTargetRequiresIdForItemKind)
+{
+    auto missing_id = ParseJson(R"json({
+        "baseRevision": 1,
+        "kind": "setValue",
+        "payload": {
+            "target": {"kind": "formSequenceItem"},
+            "fieldName": "f",
+            "value": null
+        }
+    })json");
+    auto r1 = Das::Core::TaskScheduler::ValidateAuthoringChange(missing_id);
+    EXPECT_FALSE(r1.valid);
+    EXPECT_EQ(r1.error_kind, "missingField");
+
+    auto with_extra = ParseJson(R"json({
+        "baseRevision": 1,
+        "kind": "setValue",
+        "payload": {
+            "target": {"kind": "document", "id": "should-not-be-here"},
+            "fieldName": "f",
+            "value": null
+        }
+    })json");
+    auto r2 = Das::Core::TaskScheduler::ValidateAuthoringChange(with_extra);
+    EXPECT_FALSE(r2.valid);
+    EXPECT_EQ(r2.error_kind, "unknownField");
+}
+
+TEST(TaskAuthoringContractTest, SetValueRejectsExtraPayloadField)
+{
+    auto change = ParseJson(R"json({
+        "baseRevision": 1,
+        "kind": "setValue",
+        "payload": {
+            "target": {"kind": "document"},
+            "fieldName": "f",
+            "value": null,
+            "path": "legacy"
+        }
+    })json");
+
+    auto r = Das::Core::TaskScheduler::ValidateAuthoringChange(change);
+    EXPECT_FALSE(r.valid);
+    EXPECT_EQ(r.error_kind, "unknownField");
+}
+
+TEST(TaskAuthoringContractTest, InvokeCommandPayloadStrict)
+{
+    auto ok = ParseJson(R"json({
+        "baseRevision": 1,
+        "kind": "invokeCommand",
+        "payload": {"commandId": "new-config"}
+    })json");
+    auto r_ok = Das::Core::TaskScheduler::ValidateAuthoringChange(ok);
+    EXPECT_TRUE(r_ok.valid) << r_ok.message;
+
+    auto empty = ParseJson(R"json({
+        "baseRevision": 1,
+        "kind": "invokeCommand",
+        "payload": {"commandId": ""}
+    })json");
+    auto r_empty = Das::Core::TaskScheduler::ValidateAuthoringChange(empty);
+    EXPECT_FALSE(r_empty.valid);
+    EXPECT_EQ(r_empty.error_kind, "invalidCommandId");
+
+    auto extra = ParseJson(R"json({
+        "baseRevision": 1,
+        "kind": "invokeCommand",
+        "payload": {"commandId": "x", "args": {}}
+    })json");
+    auto r_extra = Das::Core::TaskScheduler::ValidateAuthoringChange(extra);
+    EXPECT_FALSE(r_extra.valid);
+    EXPECT_EQ(r_extra.error_kind, "unknownField");
+}
+
+TEST(TaskAuthoringContractTest, ConvertViewPayloadStrict)
+{
+    auto ok = ParseJson(R"json({
+        "baseRevision": 1,
+        "kind": "convertView",
+        "payload": {"targetViewKind": "graph"}
+    })json");
+    auto r_ok = Das::Core::TaskScheduler::ValidateAuthoringChange(ok);
+    EXPECT_TRUE(r_ok.valid) << r_ok.message;
+
+    auto bad = ParseJson(R"json({
+        "baseRevision": 1,
+        "kind": "convertView",
+        "payload": {"targetViewKind": "custom"}
+    })json");
+    auto r_bad = Das::Core::TaskScheduler::ValidateAuthoringChange(bad);
+    EXPECT_FALSE(r_bad.valid);
+    EXPECT_EQ(r_bad.error_kind, "unsupportedViewKind");
+}
+
+TEST(TaskAuthoringContractTest, FormSequenceItemChangePayloadsStrict)
+{
+    auto add_with_index = ParseJson(R"json({
+        "baseRevision": 1,
+        "kind": "addFormSequenceItem",
+        "payload": {"actionId": "A", "insertionIndex": 3}
+    })json");
+    auto r1 = Das::Core::TaskScheduler::ValidateAuthoringChange(add_with_index);
+    EXPECT_TRUE(r1.valid) << r1.message;
+
+    auto move = ParseJson(R"json({
+        "baseRevision": 1,
+        "kind": "moveFormSequenceItem",
+        "payload": {"formSequenceItemId": "i-1", "destinationIndex": 0}
+    })json");
+    auto r2 = Das::Core::TaskScheduler::ValidateAuthoringChange(move);
+    EXPECT_TRUE(r2.valid) << r2.message;
+
+    auto remove = ParseJson(R"json({
+        "baseRevision": 1,
+        "kind": "removeFormSequenceItem",
+        "payload": {"formSequenceItemId": "i-1"}
+    })json");
+    auto r3 = Das::Core::TaskScheduler::ValidateAuthoringChange(remove);
+    EXPECT_TRUE(r3.valid) << r3.message;
+
+    auto add_extra = ParseJson(R"json({
+        "baseRevision": 1,
+        "kind": "addFormSequenceItem",
+        "payload": {"actionId": "A", "itemId": "legacy"}
+    })json");
+    auto r4 = Das::Core::TaskScheduler::ValidateAuthoringChange(add_extra);
+    EXPECT_FALSE(r4.valid);
+    EXPECT_EQ(r4.error_kind, "unknownField");
+}
+
+TEST(TaskAuthoringContractTest, GraphNodeChangePayloadsStrict)
+{
+    auto add = ParseJson(R"json({
+        "baseRevision": 1,
+        "kind": "addGraphNode",
+        "payload": {"actionId": "A"}
+    })json");
+    auto r1 = Das::Core::TaskScheduler::ValidateAuthoringChange(add);
+    EXPECT_TRUE(r1.valid) << r1.message;
+
+    auto remove = ParseJson(R"json({
+        "baseRevision": 1,
+        "kind": "removeGraphNode",
+        "payload": {"nodeId": "n-1"}
+    })json");
+    auto r2 = Das::Core::TaskScheduler::ValidateAuthoringChange(remove);
+    EXPECT_TRUE(r2.valid) << r2.message;
+
+    auto connect = ParseJson(R"json({
+        "baseRevision": 1,
+        "kind": "connectGraphPorts",
+        "payload": {
+            "fromNodeId": "a", "fromPortId": "p1",
+            "toNodeId": "b", "toPortId": "p2"
+        }
+    })json");
+    auto r3 = Das::Core::TaskScheduler::ValidateAuthoringChange(connect);
+    EXPECT_TRUE(r3.valid) << r3.message;
+
+    auto disconnect = ParseJson(R"json({
+        "baseRevision": 1,
+        "kind": "disconnectGraphPorts",
+        "payload": {
+            "fromNodeId": "a", "fromPortId": "p1",
+            "toNodeId": "b", "toPortId": "p2"
+        }
+    })json");
+    auto r4 = Das::Core::TaskScheduler::ValidateAuthoringChange(disconnect);
+    EXPECT_TRUE(r4.valid) << r4.message;
+}
+
+TEST(TaskAuthoringContractTest, ChangeRejectsOpWrapper)
+{
+    auto change = ParseJson(R"json({
+        "baseRevision": 1,
+        "change": {"op": "setValue", "path": "x"}
+    })json");
+
+    auto r = Das::Core::TaskScheduler::ValidateAuthoringChange(change);
+    EXPECT_FALSE(r.valid);
+    EXPECT_EQ(r.error_kind, "missingField");
 }
 
 TEST(TaskAuthoringContractTest, AuthoringErrorUsesLowerCamelCase)
