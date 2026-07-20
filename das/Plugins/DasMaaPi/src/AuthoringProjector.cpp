@@ -3,7 +3,6 @@
 
 #include <algorithm>
 #include <atomic>
-#include <iostream>
 #include <set>
 #include <string_view>
 
@@ -2092,22 +2091,16 @@ namespace Das::Plugins::DasMaaPi
         const PiCatalog&     catalog,
         std::string_view     preset_name)
     {
-        std::cerr << "[DEBUG ApplyPreset] preset_name='" << preset_name
-                  << "' catalog.presets.size=" << catalog.presets.size()
-                  << " configurations.size="
-                  << settings.pi.configurations.size() << "\n";
         const auto preset = std::find_if(
             catalog.presets.begin(),
             catalog.presets.end(),
             [&](const PiPreset& item) { return item.dto.name == preset_name; });
         if (preset == catalog.presets.end())
         {
-            std::cerr << "[DEBUG ApplyPreset] preset NOT found\n";
             settings.pi.orphan_paths.emplace_back(
                 std::string{"presetName:"} + std::string{preset_name});
             return;
         }
-        std::cerr << "[DEBUG ApplyPreset] preset FOUND, setting preset_name\n";
         settings.pi.preset_name = std::string(preset_name);
         settings.pi.tasks.clear();
         for (const auto& task : preset->dto.task)
