@@ -3290,3 +3290,55 @@ TEST(MaapiProjectionTest, InputVerifyAndPatternMsgMapToValidation)
         (*validation)[std::string_view("message")].as_string().value_or(""),
         "请输入正整数");
 }
+
+// Tracer 4: 缺译文不泄漏 $key/machine name；envelope 报告 diagnostic。
+// D-84-23: Provider 必须用本地化通用文本替代缺译标签，并通过 envelope
+// diagnostics 报告。$key/machine name 不能直接出现在 UI。
+TEST(MaapiProjectionTest, MissingTranslationYieldsGenericFallbackAndDiagnostic)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto catalog = MakeStrictProjectionMockCatalog();
+    // 删除 zh_cn 下 controller.android 的翻译，模拟缺译。
+    catalog.translations["zh_cn"].erase("controller.android");
+
+    AcceptedSettingsDto settings;
+    settings.pi.language = "zh_cn";
+
+    std::vector<PiDiagnosticDto> projection_diagnostics;
+    auto document = ProjectAuthoringDocument(
+        settings,
+        &catalog,
+        {},
+        0,
+        &projection_diagnostics);
+
+    auto result = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+    EXPECT_TRUE(result.valid)
+        << "error_kind=" << result.error_kind << " message=" << result.message;
+
+    // Controller label 必须不是 $key / machine name。$key 形态是
+    // "controller.android"（去掉 $ 前缀），缺译回退不能等于它。
+    const auto label =
+        CandidateLabel(document, "controllerName", "Android");
+    EXPECT_FALSE(label.empty());
+    EXPECT_NE(label, "controller.android");
+    EXPECT_NE(label, "$controller.android");
+
+    // 必须有至少一条缺译 diagnostic，severity=warning，message 非空。
+    ASSERT_FALSE(projection_diagnostics.empty());
+    bool found_missing = false;
+    for (const auto& diag : projection_diagnostics)
+    {
+        if (diag.severity == "warning" && !diag.message.empty())
+        {
+            found_missing = true;
+            // message 提及缺失的 key 与 language，方便开发者定位。
+            EXPECT_NE(diag.message.find("controller.android"),
+                      std::string::npos);
+            break;
+        }
+    }
+    EXPECT_TRUE(found_missing);
+}
+

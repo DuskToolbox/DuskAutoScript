@@ -15,7 +15,8 @@ namespace Das::Plugins::DasMaaPi
         const AcceptedSettingsDto&          settings,
         const PiCatalog*                    catalog,
         const std::vector<PiDiagnosticDto>& diagnostics,
-        int64_t                             revision);
+        int64_t                             revision,
+        std::vector<PiDiagnosticDto>* projection_diagnostics = nullptr);
 
     void ApplySetValueChange(
         AcceptedSettingsDto& settings,

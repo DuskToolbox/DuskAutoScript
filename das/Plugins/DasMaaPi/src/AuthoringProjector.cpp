@@ -1710,7 +1710,8 @@ namespace Das::Plugins::DasMaaPi
         const AcceptedSettingsDto&          settings,
         const PiCatalog*                    catalog,
         const std::vector<PiDiagnosticDto>& diagnostics,
-        int64_t                             revision)
+        int64_t                             revision,
+        std::vector<PiDiagnosticDto>* projection_diagnostics)
     {
         yyjson::value document(Object());
         auto          obj = document.as_object();
@@ -2075,6 +2076,7 @@ namespace Das::Plugins::DasMaaPi
         // 和 document 同级)。这里不投影；envelope 由 BuildApplyResult 等调用
         // 方负责。
         (void)diagnostics;
+        (void)projection_diagnostics;
         return document;
     }
 
