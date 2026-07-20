@@ -2232,9 +2232,12 @@ TEST_F(MaapiAuthoringFixture, InvalidPresetNameWritesOrphanPath)
     auto pi = (*accepted)[std::string_view("pi")].as_object();
     ASSERT_TRUE(pi.has_value());
 
-    EXPECT_EQ(
-        (*pi)[std::string_view("presetName")].as_string().value_or(""),
-        "NonExistentPreset");
+    // Per D-84-04, an invalid preset name must NOT be stored as preset_name
+    // (which would imply a successful preset application). The projector only
+    // records it as an orphan path on acceptedProperties.pi. The unit-test
+    // twin PresetTest.InvalidPresetNameWritesOrphanPath locks the same
+    // behavior at the DTO level (preset_name remains unset).
+    EXPECT_FALSE((*pi)[std::string_view("presetName")].as_string().has_value());
 
     auto orphan_paths = (*pi)[std::string_view("orphanPaths")].as_array();
     ASSERT_TRUE(orphan_paths.has_value());
