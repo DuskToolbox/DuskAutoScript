@@ -567,6 +567,67 @@ namespace Das::Plugins::DasMaaPi
                 candidates_ptr);
         }
 
+        // D-84-17: 为 multi-input option 的单个 input 构造独立 FieldDescriptor。
+        // 不再压成 jsonObject 文本框；每个 input 有自己的 name/label/valueType
+        // /value，setValue 通过 options.{optionName}.{inputName} 寻址。
+        // valueType 按 input.pipeline_type 派生（int→0, float/double→2, else→4）；
+        // inputType=0（普通文本/数字输入）。
+        yyjson::value MakeInputSubField(
+            std::string_view     field_name,
+            const PiInputDto&    input,
+            std::string_view     raw_value,
+            const PiCatalog*     catalog,
+            std::string_view     language)
+        {
+            const std::string& pt = input.pipeline_type ? *input.pipeline_type
+                                                        : std::string{};
+            int value_type = 4; // string default
+            // std::stoll/stod 不接受 string_view；先转 std::string。
+            const std::string raw_string(raw_value);
+            auto              value = [&]() -> yyjson::value
+            {
+                if (pt == "int")
+                {
+                    value_type = 0;
+                    try
+                    {
+                        return yyjson::value(
+                            static_cast<std::int64_t>(std::stoll(raw_string)));
+                    }
+                    catch (...)
+                    {
+                        return yyjson::value(static_cast<std::int64_t>(0));
+                    }
+                }
+                if (pt == "float" || pt == "double")
+                {
+                    value_type = 2;
+                    try
+                    {
+                        return yyjson::value(std::stod(raw_string));
+                    }
+                    catch (...)
+                    {
+                        return yyjson::value(0.0);
+                    }
+                }
+                return JsonString(raw_value);
+            }();
+
+            std::string_view label =
+                input.label ? *input.label : std::string_view(input.name);
+            std::string_view resolved_label =
+                ResolveI18n(label, *catalog, language);
+            yyjson::value field(Object());
+            auto          obj = field.as_object();
+            (*obj)[std::string_view("name")] = JsonString(field_name);
+            (*obj)[std::string_view("label")] = JsonString(resolved_label);
+            (*obj)[std::string_view("valueType")] = value_type;
+            (*obj)[std::string_view("inputType")] = 0;
+            (*obj)[std::string_view("value")] = std::move(value);
+            return field;
+        }
+
         yyjson::value TaskSettingsArray(
             const std::vector<MaapiPiTaskSettingsDto>& tasks)
         {
@@ -1764,6 +1825,31 @@ namespace Das::Plugins::DasMaaPi
                 JsonString("componentRef");
 
             yyjson::value item_fields(Array());
+            // D-84-17: 当 item 含 multi-input option 时，必须 emit fieldLayout
+            // 覆盖全部字段，并在 multi-input 处用纵向 FieldSectionDescriptor
+            // 把每个 input 子字段聚集。否则 84-01 验证器要求 fieldLayout 必须
+            // 恰好引用 fields[] 全部字段一次。先扫描是否含 multi-input，再
+            // 决定是否 emit layout。
+            bool emit_layout = false;
+            if (catalog)
+            {
+                const auto* catalog_task = FindTask(*catalog, task.task_name);
+                if (catalog_task)
+                {
+                    for (const auto& option_name : catalog_task->dto.option)
+                    {
+                        const auto* option = FindOption(*catalog, option_name);
+                        if (option && option->dto.type == "input"
+                            && option->dto.inputs.size() > 1)
+                        {
+                            emit_layout = true;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            yyjson::value item_layout(Array());
             if (catalog)
             {
                 const auto* catalog_task = FindTask(*catalog, task.task_name);
@@ -1778,17 +1864,92 @@ namespace Das::Plugins::DasMaaPi
                         }
                         const auto* current =
                             FindOptionSettings(task.options, option_name);
+                        const std::string field_name =
+                            "options." + option_name;
+
+                        if (option->dto.type == "input"
+                            && option->dto.inputs.size() > 1)
+                        {
+                            // D-84-17: multi-input 拆为 N 个独立子字段。
+                            yyjson::value section_entries(Array());
+                            for (const auto& input : option->dto.inputs)
+                            {
+                                const std::string sub_name =
+                                    field_name + "." + input.name;
+                                std::string raw;
+                                if (current)
+                                {
+                                    auto it =
+                                        current->input_values.find(input.name);
+                                    if (it != current->input_values.end())
+                                    {
+                                        raw = it->second;
+                                    }
+                                }
+                                if (raw.empty() && input.default_value)
+                                {
+                                    raw = *input.default_value;
+                                }
+                                item_fields.as_array()->emplace_back(
+                                    MakeInputSubField(
+                                        sub_name,
+                                        input,
+                                        raw,
+                                        catalog,
+                                        current_language));
+                                yyjson::value leaf(Object());
+                                (*leaf.as_object())[std::string_view("fieldName")] =
+                                    JsonString(sub_name);
+                                section_entries.as_array()->emplace_back(
+                                    std::move(leaf));
+                            }
+                            // Section 节点：id 稳定（基于 optionName，单一
+                            // 容器内唯一），label 经 i18n 解析。
+                            std::string_view section_label =
+                                option->dto.label
+                                    ? *option->dto.label
+                                    : std::string_view(option->dto.name);
+                            std::string_view resolved_section_label =
+                                ResolveI18n(
+                                    section_label,
+                                    *catalog,
+                                    current_language);
+                            yyjson::value section(Object());
+                            auto          s_obj = section.as_object();
+                            (*s_obj)[std::string_view("id")] =
+                                JsonString("section_" + option_name);
+                            (*s_obj)[std::string_view("label")] =
+                                JsonString(resolved_section_label);
+                            (*s_obj)[std::string_view("entries")] =
+                                std::move(section_entries);
+                            item_layout.as_array()->emplace_back(
+                                std::move(section));
+                            continue;
+                        }
+
                         item_fields.as_array()->emplace_back(
                             MakeOptionPropertyField(
-                                std::string{"options." + option_name},
+                                field_name,
                                 option->dto,
                                 current,
                                 catalog,
                                 current_language));
+                        if (emit_layout)
+                        {
+                            yyjson::value leaf(Object());
+                            (*leaf.as_object())[std::string_view("fieldName")] =
+                                JsonString(field_name);
+                            item_layout.as_array()->emplace_back(std::move(leaf));
+                        }
                     }
                 }
             }
             (*item_obj)[std::string_view("fields")] = std::move(item_fields);
+            if (emit_layout)
+            {
+                (*item_obj)[std::string_view("fieldLayout")] =
+                    std::move(item_layout);
+            }
             (*item_obj)[std::string_view("enabled")] = task.enabled;
 
             items.as_array()->emplace_back(std::move(item));
@@ -2056,10 +2217,88 @@ namespace Das::Plugins::DasMaaPi
         constexpr std::string_view kOptionPrefix = "options.";
         if (path.starts_with(kOptionPrefix) && catalog)
         {
+            const auto option_tail =
+                std::string_view(path).substr(kOptionPrefix.size());
+            // D-84-17: multi-input 拆分后 sub-field 寻址形如
+            // options.{optionName}.{inputName}。找到第一个 '.' 之后，若余下
+            // 部分仍是 multi-input option 的 input name，则把值写入对应
+            // task option 的 input_values[inputName]。84-07 的严格 setValue
+            // payload 还会带 target{kind:formSequenceItem,id,fieldName}，
+            // 这里保持 legacy valuePath 兼容路径，让既有 session dispatch
+            // 也能在多配置/单配置场景下写回正确实例。
+            const auto sub_dot = option_tail.find('.');
+            if (sub_dot != std::string_view::npos)
+            {
+                const auto option_name = option_tail.substr(0, sub_dot);
+                const auto input_name = option_tail.substr(sub_dot + 1);
+                const auto* option = FindOption(*catalog, option_name);
+                if (option && option->dto.type == "input"
+                    && option->dto.inputs.size() > 1)
+                {
+                    const bool input_known = std::any_of(
+                        option->dto.inputs.begin(),
+                        option->dto.inputs.end(),
+                        [&](const PiInputDto& inp)
+                        { return inp.name == input_name; });
+                    if (input_known)
+                    {
+                        // 单实例 task 找到包含该 option 的 task；找不到则按
+                        // catalog 注册的新 task。multi-input sub-field 的 value
+                        // 是标量（int/float/string）。
+                        auto* task_options = FindTaskOptionContainer(
+                            settings,
+                            *catalog,
+                            option_name);
+                        if (task_options)
+                        {
+                            auto existing = std::find_if(
+                                task_options->begin(),
+                                task_options->end(),
+                                [&](const MaapiPiOptionSettingsDto& o)
+                                { return o.option_name == option_name; });
+                            std::string str_value;
+                            if (value.is_string())
+                            {
+                                str_value =
+                                    std::string(value.as_string().value_or(""));
+                            }
+                            else if (value.is_sint() || value.is_uint())
+                            {
+                                const auto n = value.is_sint()
+                                                   ? value.as_sint().value_or(0)
+                                                   : static_cast<std::int64_t>(
+                                                         value.as_uint().value_or(0));
+                                str_value = std::to_string(n);
+                            }
+                            else if (value.is_real())
+                            {
+                                str_value = std::to_string(
+                                    value.as_real().value_or(0.0));
+                            }
+                            if (existing == task_options->end())
+                            {
+                                MaapiPiOptionSettingsDto fresh;
+                                fresh.option_name = std::string(option_name);
+                                fresh.kind = option->dto.type;
+                                fresh.input_values.emplace(
+                                    std::string(input_name), str_value);
+                                task_options->emplace_back(std::move(fresh));
+                            }
+                            else
+                            {
+                                existing->input_values[std::string(input_name)] =
+                                    str_value;
+                            }
+                            SyncCurrentConfigFromActive(settings);
+                        }
+                        return;
+                    }
+                }
+            }
             ApplyOptionValueChange(
                 settings,
                 *catalog,
-                std::string_view(path).substr(kOptionPrefix.size()),
+                option_tail,
                 value);
             return;
         }

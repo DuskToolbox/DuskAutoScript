@@ -1788,21 +1788,17 @@ TEST(OptionValueIrTest, EmitProducesScalarValuesMatchingValueType)
     ASSERT_TRUE(retry_count_val.is_sint());
     EXPECT_EQ(retry_count_val.as_sint().value_or(0), 7);
 
-    // input 多字段 → jsonObject {name: value}
-    auto coord_val = FindSequenceItemFieldValue(document, "T", "options.coord");
-    ASSERT_TRUE(coord_val.is_object());
-    {
-        auto coord_obj = coord_val.as_object();
-        ASSERT_TRUE(coord_obj.has_value());
-        ASSERT_TRUE(coord_obj->contains(std::string_view("x")));
-        EXPECT_EQ(
-            (*coord_obj)[std::string_view("x")].as_string().value_or(""),
-            "10");
-        ASSERT_TRUE(coord_obj->contains(std::string_view("y")));
-        EXPECT_EQ(
-            (*coord_obj)[std::string_view("y")].as_string().value_or(""),
-            "20");
-    }
+    // D-84-17: input 多字段不再压成 jsonObject 文本框；每个 input 拆为
+    // 独立字段 options.coord.x / options.coord.y，按 input.pipeline_type
+    // 决定 valueType（int → 标量 int）。
+    auto coord_x_val =
+        FindSequenceItemFieldValue(document, "T", "options.coord.x");
+    ASSERT_TRUE(coord_x_val.is_sint());
+    EXPECT_EQ(coord_x_val.as_sint().value_or(0), 10);
+    auto coord_y_val =
+        FindSequenceItemFieldValue(document, "T", "options.coord.y");
+    ASSERT_TRUE(coord_y_val.is_sint());
+    EXPECT_EQ(coord_y_val.as_sint().value_or(0), 20);
 
     // checkbox → jsonArray[string]
     auto tags_val = FindSequenceItemFieldValue(document, "T", "options.tags");
