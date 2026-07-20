@@ -3,6 +3,7 @@
 #include <das/Core/ForeignInterfaceHost/ForeignInterfaceHost.h>
 #include <das/Core/ForeignInterfaceHost/PluginScanner.h>
 #include <das/Utils/DasJsonCore.h>
+#include <das/Utils/fmt.h>
 #include <gtest/gtest.h>
 #include <optional>
 #include <stdexcept>
@@ -269,8 +270,7 @@ TEST(PluginPackageDescTest, Language_LowercaseNodeFails)
 {
     try
     {
-        (void)JsonToStruct<
-            DAS::Core::ForeignInterfaceHost::PluginPackageDesc>(
+        (void)JsonToStruct<DAS::Core::ForeignInterfaceHost::PluginPackageDesc>(
             BasicPluginJsonWithLanguage("node"));
         FAIL() << "Lowercase node language should fail";
     }
@@ -1150,10 +1150,11 @@ TEST(PluginPackageDescTest, SettingsAndTasksTogether)
     EXPECT_EQ(it_t->second.game_name.value(), "TestGame");
 }
 
-// 验证 PluginPackageDescDetailToJson 输出 NativeUI 契约的 items[]/defaultConfigSchema。
-// 数据源：含 tasks.descriptors 的 manifest（模拟 IpcTestPlugin1）。
-// 断言每个 task 转为 type:"tool" 的 PluginItem，其 defaultConfigSchema 含
-// groups→items 结构，且配置项字段（valueType/inputType/defaultValue/options/required）
+// 验证 PluginPackageDescDetailToJson 输出 NativeUI 契约的
+// items[]/defaultConfigSchema。 数据源：含 tasks.descriptors 的 manifest（模拟
+// IpcTestPlugin1）。 断言每个 task 转为 type:"tool" 的 PluginItem，其
+// defaultConfigSchema 含 groups→items
+// 结构，且配置项字段（valueType/inputType/defaultValue/options/required）
 // 严格匹配 issue DAS-25 约定。
 TEST(PluginPackageDescTest, ItemsAndDefaultConfigSchemaFromTaskDescriptors)
 {
@@ -1249,4 +1250,401 @@ TEST(PluginPackageDescTest, NoItemsWhenSettingsAndTasksEmpty)
 
     // 空配置插件不应输出 items 字段
     EXPECT_EQ(serialized.value().find("\"items\""), std::string::npos);
+}
+
+// ─── Phase 84-04: PropertySchema normalization at the public seam ───
+//
+// 第 8 条已确认 TDD 公共缝 PluginPackageDescDetailToJson（PluginScanner.h，
+// DAS_EXPORT）。下面所有断言都只通过该公共符号观察 manifest → 运行时
+// PropertySchema 的投影形态，绝不直接测试 PluginScanner.cpp 匿名命名空间内的
+// NativeConfigItemFromSetting 私有助手。期望值均为手写 JSON literal，且通过
+// 递归比较函数按 object key 无序、array 有序方式比对，独立于生产序列化器的
+// 字段输出顺序。
+
+namespace
+{
+    // 递归结构对比：object key 顺序无关，array 元素顺序敏感。
+    // 返回空字符串表示相等；非空字符串描述第一处不匹配。
+    // 模板化以同时支持 yyjson::value（mutable_value_base<mutable_document>）
+    // 与 yyjson::writer::const_value_ref（const_value_base<const
+    // mutable_document&>）：两者通过不同 DocType 模板参数特化，C++ 类型不同，
+    // 但都提供 is_object/as_object/operator[]/size 等只读接口；递归调用内部
+    // 经 as_object/as_array/operator[] 后取到的子节点统一是 const_*_ref 类型。
+    template <typename A, typename B>
+    std::string
+    DescribeJsonMismatch(const A& a, const B& b, const std::string& path)
+    {
+        const auto a_is_obj = a.is_object();
+        const auto b_is_obj = b.is_object();
+        const auto a_is_arr = a.is_array();
+        const auto b_is_arr = b.is_array();
+        if (a_is_obj != b_is_obj || a_is_arr != b_is_arr)
+        {
+            return DAS_FMT_NS::format(
+                "type mismatch at '{}'",
+                path.empty() ? std::string{"<root>"} : path);
+        }
+
+        if (a_is_obj)
+        {
+            const auto a_obj_opt = a.as_object();
+            const auto b_obj_opt = b.as_object();
+            if (!a_obj_opt || !b_obj_opt)
+            {
+                return DAS_FMT_NS::format(
+                    "object ref failed at '{}'",
+                    path.empty() ? std::string{"<root>"} : path);
+            }
+            const auto& a_obj = *a_obj_opt;
+            const auto& b_obj = *b_obj_opt;
+            if (a_obj.size() != b_obj.size())
+            {
+                return DAS_FMT_NS::format(
+                    "object size mismatch at '{}': {} vs {}",
+                    path.empty() ? std::string{"<root>"} : path,
+                    a_obj.size(),
+                    b_obj.size());
+            }
+            for (const auto& [key, value] : a_obj)
+            {
+                const auto key_sv = std::string_view(key);
+                if (!b_obj.contains(key_sv))
+                {
+                    return DAS_FMT_NS::format(
+                        "missing key '{}' at '{}'",
+                        std::string{key_sv},
+                        path.empty() ? std::string{"<root>"} : path);
+                }
+                const auto sub = DescribeJsonMismatch(
+                    value,
+                    b_obj[key_sv],
+                    path + "." + std::string{key_sv});
+                if (!sub.empty())
+                {
+                    return sub;
+                }
+            }
+            return {};
+        }
+
+        if (a_is_arr)
+        {
+            const auto a_arr_opt = a.as_array();
+            const auto b_arr_opt = b.as_array();
+            if (!a_arr_opt || !b_arr_opt)
+            {
+                return DAS_FMT_NS::format(
+                    "array ref failed at '{}'",
+                    path.empty() ? std::string{"<root>"} : path);
+            }
+            const auto& a_arr = *a_arr_opt;
+            const auto& b_arr = *b_arr_opt;
+            if (a_arr.size() != b_arr.size())
+            {
+                return DAS_FMT_NS::format(
+                    "array size mismatch at '{}': {} vs {}",
+                    path.empty() ? std::string{"<root>"} : path,
+                    a_arr.size(),
+                    b_arr.size());
+            }
+            for (std::size_t i = 0; i < a_arr.size(); ++i)
+            {
+                const auto sub = DescribeJsonMismatch(
+                    a_arr[i],
+                    b_arr[i],
+                    DAS_FMT_NS::format("{}[{}]", path, i));
+                if (!sub.empty())
+                {
+                    return sub;
+                }
+            }
+            return {};
+        }
+
+        const auto sa = Das::Utils::SerializeYyjsonValue(a, false);
+        const auto sb = Das::Utils::SerializeYyjsonValue(b, false);
+        if (!sa.has_value() || !sb.has_value() || *sa != *sb)
+        {
+            return DAS_FMT_NS::format(
+                "scalar mismatch at '{}': {} vs {}",
+                path.empty() ? std::string{"<root>"} : path,
+                sa.value_or("<err>"),
+                sb.value_or("<err>"));
+        }
+        return {};
+    }
+
+    // 在 PluginPackageDescDetailToJson 输出里定位首个 PropertySchema 节点：
+    //   items[0].defaultConfigSchema.groups[0].items[0]
+    // 失败返回 std::nullopt。
+    std::optional<yyjson::writer::const_value_ref> FindFirstPropertySchema(
+        const yyjson::value& detail_json)
+    {
+        const auto root_obj_opt = detail_json.as_object();
+        if (!root_obj_opt || !root_obj_opt->contains(std::string_view("items")))
+        {
+            return std::nullopt;
+        }
+        const auto items_val = (*root_obj_opt)[std::string_view("items")];
+        const auto items_arr_opt = items_val.as_array();
+        if (!items_arr_opt || items_arr_opt->size() == 0)
+        {
+            return std::nullopt;
+        }
+        const auto first_item = (*items_arr_opt)[0];
+        const auto first_obj_opt = first_item.as_object();
+        if (!first_obj_opt
+            || !first_obj_opt->contains(
+                std::string_view("defaultConfigSchema")))
+        {
+            return std::nullopt;
+        }
+        const auto schema_val =
+            (*first_obj_opt)[std::string_view("defaultConfigSchema")];
+        const auto schema_obj_opt = schema_val.as_object();
+        if (!schema_obj_opt
+            || !schema_obj_opt->contains(std::string_view("groups")))
+        {
+            return std::nullopt;
+        }
+        const auto groups_val = (*schema_obj_opt)[std::string_view("groups")];
+        const auto groups_arr_opt = groups_val.as_array();
+        if (!groups_arr_opt || groups_arr_opt->size() == 0)
+        {
+            return std::nullopt;
+        }
+        const auto group0 = (*groups_arr_opt)[0];
+        const auto group0_obj_opt = group0.as_object();
+        if (!group0_obj_opt
+            || !group0_obj_opt->contains(std::string_view("items")))
+        {
+            return std::nullopt;
+        }
+        const auto group_items_val =
+            (*group0_obj_opt)[std::string_view("items")];
+        const auto group_items_arr_opt = group_items_val.as_array();
+        if (!group_items_arr_opt || group_items_arr_opt->size() == 0)
+        {
+            return std::nullopt;
+        }
+        return (*group_items_arr_opt)[0];
+    }
+
+    // 构造仅含一个顶层 PluginSettingDesc 的最小 PluginPackageDesc，专供
+    // PropertySchema 投影断言使用。settings_groups / task_descriptors 均空，
+    // 因此 items[0].defaultConfigSchema.groups[0] 必然是 "general" 分组。
+    DAS::Core::ForeignInterfaceHost::PluginPackageDesc
+    BuildDescWithSingleTopLevelSetting(
+        const DAS::Core::ForeignInterfaceHost::PluginSettingDesc& setting)
+    {
+        DAS::Core::ForeignInterfaceHost::PluginPackageDesc desc{};
+        desc.name = "PropertySchemaTestPlugin";
+        desc.author = "test";
+        desc.version = "0.1";
+        desc.description = "Property schema test fixture";
+        desc.supported_system = "Windows";
+        desc.language =
+            DAS::Core::ForeignInterfaceHost::ForeignInterfaceLanguage::Cpp;
+        desc.plugin_filename_extension = "dll";
+        desc.guid = DAS::Core::ForeignInterfaceHost::MakeDasGuid(
+            "12345678-1234-1234-1234-123456789ABC");
+        desc.settings_desc.push_back(setting);
+        return desc;
+    }
+
+    // 解析手写 JSON literal 到 yyjson::value；失败时抛异常，由调用方在
+    // ASSERT_NO_FATAL_FATAL_FAILURE / ADD_FAILURE 中处理。返回值语义干净，
+    // 避免在非 void 函数里使用 gtest 的 FAIL() 宏（其内部返回 void）。
+    yyjson::value ParseExpectedJson(std::string_view literal)
+    {
+        auto parsed = Das::Utils::ParseYyjsonFromString(literal);
+        if (!parsed)
+        {
+            throw std::runtime_error(
+                "Failed to parse expected JSON literal: "
+                + std::string{literal});
+        }
+        return std::move(*parsed);
+    }
+
+    // 在 PluginPackageDescDetailToJson 公共缝上断言首个 PropertySchema 节点
+    // 与手写 JSON literal 结构相等（object key 顺序无关）。
+    void ExpectFirstPropertySchemaEquals(
+        const DAS::Core::ForeignInterfaceHost::PluginPackageDesc& desc,
+        std::string_view expected_literal)
+    {
+        auto detail_json =
+            DAS::Core::ForeignInterfaceHost::PluginPackageDescDetailToJson(
+                desc);
+        const auto actual_opt = FindFirstPropertySchema(detail_json);
+        ASSERT_TRUE(actual_opt.has_value())
+            << "PropertySchema node not found at items[0].defaultConfigSchema."
+            << "groups[0].items[0]";
+
+        auto       expected_json = ParseExpectedJson(expected_literal);
+        const auto serialized_actual =
+            Das::Utils::SerializeYyjsonValue(*actual_opt, true);
+        const auto serialized_expected =
+            Das::Utils::SerializeYyjsonValue(expected_json, true);
+        SCOPED_TRACE(
+            "actual:   " + serialized_actual.value_or("<serialize-failed>")
+            + "\nexpected: "
+            + serialized_expected.value_or("<serialize-failed>"));
+
+        const auto mismatch =
+            DescribeJsonMismatch(*actual_opt, expected_json, "");
+        EXPECT_TRUE(mismatch.empty())
+            << "PropertySchema mismatch: " << mismatch;
+    }
+} // anonymous namespace
+
+// RED 1: 简单 PluginSettingDesc 投影到 PropertySchema 必须包含
+//        name/label/valueType/inputType，且确定性 label 规则是 `label =
+//        setting.name`，description 作为 help text 保留；空 enum 时 inputType=0
+//        (plain)，无机器回退、无 options 字段。
+TEST(PluginPackageDescTest, PropertySchemaDeterministicLabelFromName)
+{
+    DAS::Core::ForeignInterfaceHost::PluginSettingDesc setting{};
+    setting.name = "foo";
+    setting.type = Das::ExportInterface::DAS_TYPE_STRING;
+    setting.required = false;
+    setting.description = "bar";
+
+    const auto desc = BuildDescWithSingleTopLevelSetting(setting);
+
+    ExpectFirstPropertySchemaEquals(
+        desc,
+        R"({
+            "name": "foo",
+            "label": "foo",
+            "description": "bar",
+            "valueType": 4,
+            "inputType": 0,
+            "defaultValue": null,
+            "required": false
+        })");
+}
+
+// RED 2: enum_values + enum_descriptions 投影为 inputType=1 (select) 加
+//        CandidateDescriptor{value,label} 数组，按 enum 声明顺序排列。
+//        value 是 setValue 使用的 enum 字符串，label 取自 enum_descriptions
+//        （已本地化的显示文本）；缺 enum_descriptions 时 label 回退为 enum
+//        value 本身。
+TEST(PluginPackageDescTest, PropertySchemaEnumProjectsToSelectCandidates)
+{
+    DAS::Core::ForeignInterfaceHost::PluginSettingDesc setting{};
+    setting.name = "color";
+    setting.type = Das::ExportInterface::DAS_TYPE_STRING;
+    setting.required = false;
+    setting.description = "Pick a color";
+    setting.enum_values = std::vector<std::string>{"red", "green", "blue"};
+    setting.enum_descriptions =
+        std::vector<std::string>{"Red", "Green", "Blue"};
+
+    const auto desc = BuildDescWithSingleTopLevelSetting(setting);
+
+    ExpectFirstPropertySchemaEquals(
+        desc,
+        R"({
+            "name": "color",
+            "label": "color",
+            "description": "Pick a color",
+            "valueType": 4,
+            "inputType": 1,
+            "defaultValue": null,
+            "candidates": [
+                {"value": "red",   "label": "Red"},
+                {"value": "green", "label": "Green"},
+                {"value": "blue",  "label": "Blue"}
+            ],
+            "required": false
+        })");
+}
+
+// RED 2b: enum_values 没有 enum_descriptions 时，CandidateDescriptor.label
+//         回退为 enum value 本身（manifest 级确定性回退，不是机器 name 暴露
+//         给用户——Wave 6 的 MaaPI Provider 会通过 PI case label 提供真正本地
+//         化文本）。
+TEST(PluginPackageDescTest, PropertySchemaEnumCandidatesFallbackToValueLabel)
+{
+    DAS::Core::ForeignInterfaceHost::PluginSettingDesc setting{};
+    setting.name = "mode";
+    setting.type = Das::ExportInterface::DAS_TYPE_STRING;
+    setting.required = false;
+    setting.description = "Run mode";
+    setting.enum_values = std::vector<std::string>{"fast", "slow"};
+
+    const auto desc = BuildDescWithSingleTopLevelSetting(setting);
+
+    ExpectFirstPropertySchemaEquals(
+        desc,
+        R"({
+            "name": "mode",
+            "label": "mode",
+            "description": "Run mode",
+            "valueType": 4,
+            "inputType": 1,
+            "defaultValue": null,
+            "candidates": [
+                {"value": "fast", "label": "fast"},
+                {"value": "slow", "label": "slow"}
+            ],
+            "required": false
+        })");
+}
+
+// RED 3: 手写 manifest 当前不会输出 Phase 84 已删除的运行时旧字段
+//        group/dependency/rules/unit/placeholder/deprecationMessage 以及 legacy
+//        options 数组（被 CandidateDescriptor.candidates 替换）。即使
+//        PluginSettingDesc 携带 deprecation_message，规范化结果也不得把它
+//        暴露成运行时字段——manifest 源格式不变，但运行时 PropertySchema 只
+//        表达 D-84-18 允许的字段。
+TEST(PluginPackageDescTest, PropertySchemaExcludesLegacyRuntimeKeys)
+{
+    DAS::Core::ForeignInterfaceHost::PluginSettingDesc setting{};
+    setting.name = "legacy";
+    setting.type = Das::ExportInterface::DAS_TYPE_INT;
+    setting.required = true;
+    setting.description = "legacy field with deprecation";
+    setting.default_value = std::int64_t{42};
+    setting.deprecation_message = std::string{"deprecated, do not show"};
+
+    const auto desc = BuildDescWithSingleTopLevelSetting(setting);
+
+    auto detail_json =
+        DAS::Core::ForeignInterfaceHost::PluginPackageDescDetailToJson(desc);
+    const auto schema_opt = FindFirstPropertySchema(detail_json);
+    ASSERT_TRUE(schema_opt.has_value());
+
+    const auto schema_obj_opt = schema_opt->as_object();
+    ASSERT_TRUE(schema_obj_opt.has_value());
+    const auto& schema_obj = *schema_obj_opt;
+
+    static constexpr std::string_view kLegacyKeys[] = {
+        "group",
+        "dependency",
+        "rules",
+        "unit",
+        "placeholder",
+        "deprecationMessage",
+        "options",
+    };
+    for (const auto& legacy_key : kLegacyKeys)
+    {
+        EXPECT_FALSE(schema_obj.contains(legacy_key))
+            << "legacy runtime key '" << legacy_key
+            << "' must be absent from normalized PropertySchema";
+    }
+
+    // 已批准字段仍然存在并保持语义。
+    EXPECT_TRUE(schema_obj.contains(std::string_view("name")));
+    EXPECT_TRUE(schema_obj.contains(std::string_view("label")));
+    EXPECT_TRUE(schema_obj.contains(std::string_view("valueType")));
+    EXPECT_TRUE(schema_obj.contains(std::string_view("inputType")));
+    EXPECT_TRUE(schema_obj.contains(std::string_view("required")));
+    EXPECT_TRUE(schema_obj.contains(std::string_view("defaultValue")));
+    // label = setting.name 确定性规则
+    EXPECT_EQ(
+        std::string{schema_obj[std::string_view("label")].as_string().value()},
+        "legacy");
 }
