@@ -7323,3 +7323,102 @@ TEST_F(SchedulerUnavailableTest, MixedAvailableAndUnavailable_OnlyAvailableRuns)
 
     fake->Release();
 }
+
+// ===========================================================================
+// Phase 84-08: Backend end-to-end regression
+//
+// Prove that the strict Phase 84 wire holds across the full
+// Provider → Scheduler → persisted store → new Provider session → Get
+// cycle. The existing 84-03 tests cover each step in isolation; this test
+// chains Get → Apply → Get to assert the new revision is observable on a
+// follow-up Get. The fake SchedulerTestPlugin speaks the strict wire so the
+// assertion exercises the real Scheduler atomic apply + validate-before-
+// persist ordering without depending on the MaaPI plugin. The MaaPI fixture
+// pair (interface_authoring_v28.jsonc + post84_accepted_properties.json)
+// covers the same cycle on the real Provider in
+// MaapiAuthoringTest.Post84DisposableStateRoundTripsProviderGetApplyGet.
+// ===========================================================================
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerAuthoringGetApplyGetCyclePreservesStrictEnvelope)
+{
+    SeedEmptyAuthoringTask(*settings_manager_, 0, 0, "initial");
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+    EnableStrictAuthoringWire(*shared_state_);
+
+    // Get #1: initial revision is 0.
+    {
+        yyjson::value request(Das::Utils::MakeYyjsonObject());
+        auto          result = scheduler_->GetTaskAuthoringDocument(0, request);
+        auto          obj = result.as_object();
+        ASSERT_TRUE(obj.has_value());
+        ASSERT_TRUE(obj->contains(std::string_view("document")));
+        auto document = (*obj)[std::string_view("document")].as_object();
+        ASSERT_TRUE(document.has_value());
+        EXPECT_EQ(
+            (*document)[std::string_view("revision")].as_sint().value_or(-1),
+            0);
+        EXPECT_EQ(
+            (*document)[std::string_view("viewKind")].as_string().value_or(""),
+            std::string_view("formSequence"));
+    }
+
+    // Apply: bumps revision 0 → 1 and persists acceptedProperties.
+    {
+        auto change = MakeStrictAuthoringChange(0);
+        auto result = scheduler_->ApplyTaskAuthoringChange(0, change);
+        auto obj = result.as_object();
+        ASSERT_TRUE(obj.has_value());
+        EXPECT_TRUE((*obj)[std::string_view("ok")].as_bool().value_or(false));
+        auto document = (*obj)[std::string_view("document")].as_object();
+        ASSERT_TRUE(document.has_value());
+        EXPECT_EQ(
+            (*document)[std::string_view("revision")].as_sint().value_or(-1),
+            1);
+    }
+
+    // Get #2: follow-up Get observes the new persisted revision. Proves the
+    // Scheduler wrote the metadata before the second Provider session was
+    // created, and that the new session received that revision via the
+    // context (SchedulerService::MakeAuthoringContextJson).
+    {
+        yyjson::value request(Das::Utils::MakeYyjsonObject());
+        auto          result = scheduler_->GetTaskAuthoringDocument(0, request);
+        auto          obj = result.as_object();
+        ASSERT_TRUE(obj.has_value());
+        ASSERT_TRUE(obj->contains(std::string_view("document")));
+        auto document = (*obj)[std::string_view("document")].as_object();
+        ASSERT_TRUE(document.has_value());
+        EXPECT_EQ(
+            (*document)[std::string_view("revision")].as_sint().value_or(-1),
+            1);
+        EXPECT_EQ(
+            (*document)[std::string_view("viewKind")].as_string().value_or(""),
+            std::string_view("formSequence"));
+    }
+
+    // Persisted metadata reflects revision 1 + lastChangeKind=setValue.
+    {
+        auto persisted = settings_manager_->GetTaskInstanceJson("0", 0);
+        auto persisted_obj = persisted.as_object();
+        ASSERT_TRUE(persisted_obj.has_value());
+        auto persisted_authoring =
+            (*persisted_obj)[std::string_view("authoring")].as_object();
+        ASSERT_TRUE(persisted_authoring.has_value());
+        EXPECT_EQ(
+            (*persisted_authoring)[std::string_view("revision")]
+                .as_sint()
+                .value_or(-1),
+            1);
+        EXPECT_EQ(
+            (*persisted_authoring)[std::string_view("lastChangeKind")]
+                .as_string()
+                .value_or(""),
+            std::string_view("setValue"));
+    }
+
+    ipc_scoped_lock lock(shared_state_->mutex);
+    EXPECT_EQ(shared_state_->get_document_count, 2);
+    EXPECT_EQ(shared_state_->apply_change_count, 1);
+}

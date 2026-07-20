@@ -1,0 +1,126 @@
+// Independent PI 2.8 authoring fixture for Phase 84-08 end-to-end regression.
+// Excludes the deferred hotkey option (D-84 defers PI 2.8 hotkey to a later
+// dedicated phase). Exercises: duplicate task types (D-84-40 same actionId
+// can be added multiple times), multi-input option with verify + pattern_msg
+// (D-84-17/22/23), multiple groups (D-84-33), enum candidates with labels
+// (D-84-21), and i18n $keys resolved through languages/zh_cn.json.
+//
+// Translations reuse the four keys already present in zh_cn.json
+// (controller.android, resource.official, task.daily, group.daily); other
+// $keys intentionally miss so the D-84-23 identifier-fallback + diagnostic
+// path is also exercised by the regression.
+{
+  "interface_version": 2,
+  "languages": {
+    "zh_cn": "languages/zh_cn.json"
+  },
+  "name": "V28AuthoringFixture",
+  "version": "2.8.0",
+  "controller": [
+    {
+      "name": "Android",
+      "label": "$controller.android",
+      "type": "Adb"
+    },
+    {
+      "name": "Desktop",
+      "type": "Win32"
+    }
+  ],
+  "resource": [
+    {
+      "name": "Official",
+      "label": "$resource.official",
+      "path": ["resource/base"]
+    }
+  ],
+  "group": [
+    {
+      "name": "Daily",
+      "label": "$group.daily",
+      "default_expand": true
+    },
+    {
+      "name": "Extra",
+      "default_expand": false
+    }
+  ],
+  "task": [
+    {
+      "name": "DailyFarm",
+      "label": "$task.daily",
+      "entry": "StartDaily",
+      "default_check": true,
+      "group": ["Daily"],
+      "option": ["stage", "retry", "use-medicine"]
+    },
+    {
+      "name": "DailyFarmBonus",
+      "entry": "StartDailyBonus",
+      "default_check": false,
+      "group": ["Daily", "Extra"],
+      "option": ["stage", "retry"]
+    }
+  ],
+  "global_option": ["stage"],
+  "option": {
+    "stage": {
+      "type": "select",
+      "cases": [
+        {
+          "name": "1-1"
+        },
+        {
+          "name": "1-2"
+        }
+      ]
+    },
+    "retry": {
+      "type": "input",
+      "inputs": [
+        {
+          "name": "times",
+          "default": "3",
+          "pipeline_type": "int",
+          "verify": "^\\d+$",
+          "pattern_msg": "$validation.retry.times.pattern"
+        },
+        {
+          "name": "unit",
+          "default": "second",
+          "pipeline_type": "string"
+        }
+      ]
+    },
+    "use-medicine": {
+      "type": "checkbox",
+      "cases": [
+        {
+          "name": "small"
+        },
+        {
+          "name": "large"
+        }
+      ]
+    }
+  },
+  "preset": [
+    {
+      "name": "DailyPreset",
+      "task": [
+        {
+          "name": "DailyFarm",
+          "enabled": true,
+          "option": {
+            "stage": "1-1",
+            "retry": {
+              "times": "5",
+              "unit": "minute"
+            },
+            "use-medicine": ["small"]
+          }
+        }
+      ]
+    }
+  ]
+}

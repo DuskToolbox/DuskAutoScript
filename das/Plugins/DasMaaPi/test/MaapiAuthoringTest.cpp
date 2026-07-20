@@ -15,11 +15,17 @@
 #include <das/_autogen/idl/abi/IDasTaskAuthoring.h>
 #include <gtest/gtest.h>
 
+#include <array>
 #include <chrono>
+#include <cstdint>
+#include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
+#include <sstream>
 #include <string>
 #include <thread>
 
@@ -4227,4 +4233,1012 @@ TEST(MaapiApplyResultTest, SuccessfulApplyEnvelopePassesStrictValidator)
     EXPECT_FALSE(obj->contains(std::string_view("sourceFingerprint")));
     EXPECT_FALSE(obj->contains(std::string_view("migration")));
     EXPECT_FALSE(obj->contains(std::string_view("dynamic_ports")));
+}
+
+// ============================================================================
+// Phase 84-08 — Backend end-to-end regression on disposable post-84 state.
+//
+// Tests in this section prove the completed backend cutover (84-01 strict
+// validators + 84-02 GraphRuntime registry actionCatalog + 84-03 Scheduler
+// transparent coordinator + 84-04 manifest PropertySchema + 84-05 MaaPI
+// configuration authority + 84-06 MaaPI strict Get projection + 84-07 MaaPI
+// strict Apply/Compile dispatch) mutually agree on the wire format end to
+// end. They drive the public MaaPI session seam with INDEPENDENT LITERAL
+// fixtures (interface_authoring_v28.jsonc and post84_accepted_properties.json)
+// — never with expected data produced by the production serializer — and
+// cross-check every envelope against the 84-01 strict validators.
+//
+// They also lock the read-only boundary around the gitignored live legacy
+// sample build/mingw-debug/bin/Debug/settings/0/taskId7.json. That file
+// predates stable itemId and is owned by Phase 84.1. The gate is a pre/post
+// SHA-256 comparison of the on-disk bytes, NOT `git diff --exit-code`, because
+// the path is gitignored and `git diff --exit-code` would always report
+// "no diff" — even after mutation. The SHA-256 implementation is inline
+// (public domain, Brad Conte sha-256) so the test does not depend on a
+// crypto library that is not otherwise part of the project.
+// ============================================================================
+
+namespace
+{
+    // Minimal SHA-256 (public domain, Brad Conte). One-shot interface; this
+    // is a forensic-equality gate, not a hardened crypto boundary, but we use
+    // the real algorithm so a third party can independently recompute hashes
+    // from `sha256sum build/.../taskId7.json` and compare against the values
+    // the test logs.
+    class Sha256
+    {
+    public:
+        Sha256() = default;
+
+        explicit Sha256(std::string_view data)
+        {
+            Update(data);
+            Finalize();
+        }
+
+        void Update(std::string_view data)
+        {
+            for (std::size_t i = 0; i < data.size(); ++i)
+            {
+                data_[datalen_++] = static_cast<std::uint8_t>(data[i]);
+                if (datalen_ == 64)
+                {
+                    Transform();
+                    bitlen_ += 512;
+                    datalen_ = 0;
+                }
+            }
+        }
+
+        void Finalize()
+        {
+            std::uint64_t i = datalen_;
+            // Pad whatever data is left in the buffer.
+            if (datalen_ < 56)
+            {
+                data_[i++] = 0x80;
+                while (i < 56)
+                {
+                    data_[i++] = 0x00;
+                }
+            }
+            else
+            {
+                data_[i++] = 0x80;
+                while (i < 64)
+                {
+                    data_[i++] = 0x00;
+                }
+                Transform();
+                std::memset(data_.data(), 0, 56);
+            }
+            bitlen_ += static_cast<std::uint64_t>(datalen_) * 8;
+            data_[63] = static_cast<std::uint8_t>(bitlen_);
+            data_[62] = static_cast<std::uint8_t>(bitlen_ >> 8);
+            data_[61] = static_cast<std::uint8_t>(bitlen_ >> 16);
+            data_[60] = static_cast<std::uint8_t>(bitlen_ >> 24);
+            data_[59] = static_cast<std::uint8_t>(bitlen_ >> 32);
+            data_[58] = static_cast<std::uint8_t>(bitlen_ >> 40);
+            data_[57] = static_cast<std::uint8_t>(bitlen_ >> 48);
+            data_[56] = static_cast<std::uint8_t>(bitlen_ >> 56);
+            Transform();
+        }
+
+        std::array<std::uint8_t, 32> Digest() const
+        {
+            std::array<std::uint8_t, 32> out{};
+            for (std::size_t i = 0; i < 4; ++i)
+            {
+                out[i] = static_cast<std::uint8_t>(
+                    (state_[0] >> (24 - i * 8)) & 0xff);
+                out[i + 4] = static_cast<std::uint8_t>(
+                    (state_[1] >> (24 - i * 8)) & 0xff);
+                out[i + 8] = static_cast<std::uint8_t>(
+                    (state_[2] >> (24 - i * 8)) & 0xff);
+                out[i + 12] = static_cast<std::uint8_t>(
+                    (state_[3] >> (24 - i * 8)) & 0xff);
+                out[i + 16] = static_cast<std::uint8_t>(
+                    (state_[4] >> (24 - i * 8)) & 0xff);
+                out[i + 20] = static_cast<std::uint8_t>(
+                    (state_[5] >> (24 - i * 8)) & 0xff);
+                out[i + 24] = static_cast<std::uint8_t>(
+                    (state_[6] >> (24 - i * 8)) & 0xff);
+                out[i + 28] = static_cast<std::uint8_t>(
+                    (state_[7] >> (24 - i * 8)) & 0xff);
+            }
+            return out;
+        }
+
+        std::string Hex() const
+        {
+            static constexpr char kHex[] = "0123456789abcdef";
+            auto                  d = Digest();
+            std::string           s(d.size() * 2, '0');
+            for (std::size_t i = 0; i < d.size(); ++i)
+            {
+                s[i * 2] = kHex[(d[i] >> 4) & 0xf];
+                s[i * 2 + 1] = kHex[d[i] & 0xf];
+            }
+            return s;
+        }
+
+    private:
+        static constexpr std::uint32_t K0 = 0x428a2f98;
+        static constexpr std::uint32_t K1 = 0x71374491;
+        static constexpr std::uint32_t K2 = 0xb5c0fbcf;
+        static constexpr std::uint32_t K3 = 0xe9b5dba5;
+        static constexpr std::uint32_t K4 = 0x3956c25b;
+        static constexpr std::uint32_t K5 = 0x59f111f1;
+        static constexpr std::uint32_t K6 = 0x923f82a4;
+        static constexpr std::uint32_t K7 = 0xab1c5ed5;
+        static constexpr std::uint32_t K8 = 0xd807aa98;
+        static constexpr std::uint32_t K9 = 0x12835b01;
+        static constexpr std::uint32_t K10 = 0x243185be;
+        static constexpr std::uint32_t K11 = 0x550c7dc3;
+        static constexpr std::uint32_t K12 = 0x72be5d74;
+        static constexpr std::uint32_t K13 = 0x80deb1fe;
+        static constexpr std::uint32_t K14 = 0x9bdc06a7;
+        static constexpr std::uint32_t K15 = 0xc19bf174;
+        static constexpr std::uint32_t K16 = 0xe49b69c1;
+        static constexpr std::uint32_t K17 = 0xefbe4786;
+        static constexpr std::uint32_t K18 = 0x0fc19dc6;
+        static constexpr std::uint32_t K19 = 0x240ca1cc;
+        static constexpr std::uint32_t K20 = 0x2de92c6f;
+        static constexpr std::uint32_t K21 = 0x4a7484aa;
+        static constexpr std::uint32_t K22 = 0x5cb0a9dc;
+        static constexpr std::uint32_t K23 = 0x76f988da;
+        static constexpr std::uint32_t K24 = 0x983e5152;
+        static constexpr std::uint32_t K25 = 0xa831c66d;
+        static constexpr std::uint32_t K26 = 0xb00327c8;
+        static constexpr std::uint32_t K27 = 0xbf597fc7;
+        static constexpr std::uint32_t K28 = 0xc6e00bf3;
+        static constexpr std::uint32_t K29 = 0xd5a79147;
+        static constexpr std::uint32_t K30 = 0x06ca6351;
+        static constexpr std::uint32_t K31 = 0x14292967;
+        static constexpr std::uint32_t K32 = 0x27b70a85;
+        static constexpr std::uint32_t K33 = 0x2e1b2138;
+        static constexpr std::uint32_t K34 = 0x4d2c6dfc;
+        static constexpr std::uint32_t K35 = 0x53380d13;
+        static constexpr std::uint32_t K36 = 0x650a7354;
+        static constexpr std::uint32_t K37 = 0x766a0abb;
+        static constexpr std::uint32_t K38 = 0x81c2c92e;
+        static constexpr std::uint32_t K39 = 0x92722c85;
+        static constexpr std::uint32_t K40 = 0xa2bfe8a1;
+        static constexpr std::uint32_t K41 = 0xa81a664b;
+        static constexpr std::uint32_t K42 = 0xc24b8b70;
+        static constexpr std::uint32_t K43 = 0xc76c51a3;
+        static constexpr std::uint32_t K44 = 0xd192e819;
+        static constexpr std::uint32_t K45 = 0xd6990624;
+        static constexpr std::uint32_t K46 = 0xf40e3585;
+        static constexpr std::uint32_t K47 = 0x106aa070;
+        static constexpr std::uint32_t K48 = 0x19a4c116;
+        static constexpr std::uint32_t K49 = 0x1e376c08;
+        static constexpr std::uint32_t K50 = 0x2748774c;
+        static constexpr std::uint32_t K51 = 0x34b0bcb5;
+        static constexpr std::uint32_t K52 = 0x391c0cb3;
+        static constexpr std::uint32_t K53 = 0x4ed8aa4a;
+        static constexpr std::uint32_t K54 = 0x5b9cca4f;
+        static constexpr std::uint32_t K55 = 0x682e6ff3;
+        static constexpr std::uint32_t K56 = 0x748f82ee;
+        static constexpr std::uint32_t K57 = 0x78a5636f;
+        static constexpr std::uint32_t K58 = 0x84c87814;
+        static constexpr std::uint32_t K59 = 0x8cc70208;
+        static constexpr std::uint32_t K60 = 0x90befffa;
+        static constexpr std::uint32_t K61 = 0xa4506ceb;
+        static constexpr std::uint32_t K62 = 0xbef9a3f7;
+        static constexpr std::uint32_t K63 = 0xc67178f2;
+
+        static std::uint32_t Rotr(std::uint32_t x, std::uint32_t n)
+        {
+            return (x >> n) | (x << (32 - n));
+        }
+        static std::uint32_t Sigma0(std::uint32_t x)
+        {
+            return Rotr(x, 7) ^ Rotr(x, 18) ^ (x >> 3);
+        }
+        static std::uint32_t Sigma1(std::uint32_t x)
+        {
+            return Rotr(x, 17) ^ Rotr(x, 19) ^ (x >> 10);
+        }
+        static std::uint32_t BigSigma0(std::uint32_t x)
+        {
+            return Rotr(x, 2) ^ Rotr(x, 13) ^ Rotr(x, 22);
+        }
+        static std::uint32_t BigSigma1(std::uint32_t x)
+        {
+            return Rotr(x, 6) ^ Rotr(x, 11) ^ Rotr(x, 25);
+        }
+        static std::uint32_t Ch(
+            std::uint32_t x,
+            std::uint32_t y,
+            std::uint32_t z)
+        {
+            return (x & y) ^ (~x & z);
+        }
+        static std::uint32_t Maj(
+            std::uint32_t x,
+            std::uint32_t y,
+            std::uint32_t z)
+        {
+            return (x & y) ^ (x & z) ^ (y & z);
+        }
+
+        void Transform()
+        {
+            std::uint32_t m[64];
+            for (std::size_t i = 0, j = 0; i < 16; ++i, j += 4)
+            {
+                m[i] = (static_cast<std::uint32_t>(data_[j]) << 24)
+                       | (static_cast<std::uint32_t>(data_[j + 1]) << 16)
+                       | (static_cast<std::uint32_t>(data_[j + 2]) << 8)
+                       | (static_cast<std::uint32_t>(data_[j + 3]));
+            }
+            for (std::size_t i = 16; i < 64; ++i)
+            {
+                m[i] =
+                    Sigma1(m[i - 2]) + m[i - 7] + Sigma0(m[i - 15]) + m[i - 16];
+            }
+            std::uint32_t                  a = state_[0];
+            std::uint32_t                  b = state_[1];
+            std::uint32_t                  c = state_[2];
+            std::uint32_t                  d = state_[3];
+            std::uint32_t                  e = state_[4];
+            std::uint32_t                  f = state_[5];
+            std::uint32_t                  g = state_[6];
+            std::uint32_t                  h = state_[7];
+            static constexpr std::uint32_t k[64] = {
+                K0,  K1,  K2,  K3,  K4,  K5,  K6,  K7,  K8,  K9,  K10, K11, K12,
+                K13, K14, K15, K16, K17, K18, K19, K20, K21, K22, K23, K24, K25,
+                K26, K27, K28, K29, K30, K31, K32, K33, K34, K35, K36, K37, K38,
+                K39, K40, K41, K42, K43, K44, K45, K46, K47, K48, K49, K50, K51,
+                K52, K53, K54, K55, K56, K57, K58, K59, K60, K61, K62, K63};
+            for (std::size_t i = 0; i < 64; ++i)
+            {
+                std::uint32_t t1 = h + BigSigma1(e) + Ch(e, f, g) + k[i] + m[i];
+                std::uint32_t t2 = BigSigma0(a) + Maj(a, b, c);
+                h = g;
+                g = f;
+                f = e;
+                e = d + t1;
+                d = c;
+                c = b;
+                b = a;
+                a = t1 + t2;
+            }
+            state_[0] += a;
+            state_[1] += b;
+            state_[2] += c;
+            state_[3] += d;
+            state_[4] += e;
+            state_[5] += f;
+            state_[6] += g;
+            state_[7] += h;
+        }
+
+        std::array<std::uint8_t, 64> data_{};
+        std::uint64_t                datalen_{0};
+        std::uint64_t                bitlen_{0};
+        std::array<std::uint32_t, 8> state_{
+            0x6a09e667,
+            0xbb67ae85,
+            0x3c6ef372,
+            0xa54ff53a,
+            0x510e527f,
+            0x9b05688c,
+            0x1f83d9ab,
+            0x5be0cd19};
+    };
+
+    // 读 fixtures 字面量为 std::string，避免测试依赖生产 serializer 生成期望。
+    std::optional<std::string> ReadFixtureText(std::string_view relative)
+    {
+        std::ifstream ifs(FixturePath(std::string(relative)), std::ios::binary);
+        if (!ifs.is_open())
+        {
+            return std::nullopt;
+        }
+        std::ostringstream oss;
+        oss << ifs.rdbuf();
+        return oss.str();
+    }
+
+    // 将 fixture 文本（带可选 JSONC // 注释）剥成纯 JSON 文本。仅剔除整行
+    // // 注释，不改变 token 边界，足够满足现有 fixtures 的格式。
+    std::string StripJsoncLineComments(std::string_view text)
+    {
+        std::string out;
+        out.reserve(text.size());
+        std::size_t i = 0;
+        while (i < text.size())
+        {
+            // 行内 // 注释（不识别字符串字面量内部的 //，因为现有 fixtures
+            // 不包含这样的字符串）。
+            if (i + 1 < text.size() && text[i] == '/' && text[i + 1] == '/')
+            {
+                while (i < text.size() && text[i] != '\n')
+                {
+                    ++i;
+                }
+                continue;
+            }
+            out.push_back(text[i]);
+            ++i;
+        }
+        return out;
+    }
+
+    std::optional<yyjson::value> ParseJsonFromStringStrict(
+        std::string_view text)
+    {
+        auto stripped = StripJsoncLineComments(text);
+        auto parsed = Das::Utils::ParseYyjsonFromString(stripped);
+        if (!parsed)
+        {
+            return std::nullopt;
+        }
+        return std::move(*parsed);
+    }
+
+    // 构造一份 literal context：把 fixture 内 adapter + pi 字段直接装进
+    // session context JSON（顶层）。等价于 SchedulerService 把
+    // acceptedProperties 摊平到 context 的形态，避免测试依赖 scheduler。
+    std::string BuildSessionContextFromFixture(std::string_view fixture_text)
+    {
+        auto parsed = ParseJsonFromStringStrict(fixture_text);
+        if (!parsed)
+        {
+            return "{}";
+        }
+        auto obj = parsed->as_object();
+        if (!obj)
+        {
+            return "{}";
+        }
+        // 取 adapter 与 pi（可选）。
+        std::string context = "{";
+        if (obj->contains(std::string_view("adapter")))
+        {
+            auto adapter = (*obj)[std::string_view("adapter")];
+            // Use yyjson serialization to avoid manual escaping.
+            auto adapter_str =
+                Das::Utils::SerializeYyjsonValue(adapter, /*pretty=*/false);
+            context += "\"adapter\":";
+            context += adapter_str.value_or("{}");
+        }
+        if (obj->contains(std::string_view("pi")))
+        {
+            auto pi = (*obj)[std::string_view("pi")];
+            if (obj->contains(std::string_view("adapter")))
+            {
+                context += ",";
+            }
+            auto pi_str =
+                Das::Utils::SerializeYyjsonValue(pi, /*pretty=*/false);
+            context += "\"pi\":";
+            context += pi_str.value_or("{}");
+        }
+        context += "}";
+        return context;
+    }
+
+    // 把 yyjson value 序列化成 JSON 文本。失败返回 "{}"，避免测试因序列化
+    // 异常崩溃。
+    std::string SerializeOrEmpty(const yyjson::value& v)
+    {
+        auto s = Das::Utils::SerializeYyjsonValue(v, /*pretty=*/false);
+        return s.value_or("{}");
+    }
+
+    // 从 document.formSequence.items[] 收集所有 id（FormSequenceItem.id =
+    // itemId）。
+    std::vector<std::string> CollectFormItemIds(const yyjson::value& document)
+    {
+        std::vector<std::string> ids;
+        auto                     obj = document.as_object();
+        if (!obj || !obj->contains(std::string_view("formSequence")))
+        {
+            return ids;
+        }
+        auto fs = (*obj)[std::string_view("formSequence")].as_object();
+        if (!fs || !fs->contains(std::string_view("items")))
+        {
+            return ids;
+        }
+        auto items = (*fs)[std::string_view("items")].as_array();
+        if (!items)
+        {
+            return ids;
+        }
+        for (auto it = items->begin(); it != items->end(); ++it)
+        {
+            auto item = it->as_object();
+            if (!item || !item->contains(std::string_view("id")))
+            {
+                continue;
+            }
+            ids.emplace_back(
+                (*item)[std::string_view("id")].as_string().value_or(""));
+        }
+        return ids;
+    }
+
+    // 从 document.actionCatalog.entries[] 收集 actionId 集合。
+    std::vector<std::string> CollectActionIds(const yyjson::value& document)
+    {
+        std::vector<std::string> ids;
+        auto                     obj = document.as_object();
+        if (!obj || !obj->contains(std::string_view("actionCatalog")))
+        {
+            return ids;
+        }
+        auto ac = (*obj)[std::string_view("actionCatalog")].as_object();
+        if (!ac || !ac->contains(std::string_view("entries")))
+        {
+            return ids;
+        }
+        auto entries = (*ac)[std::string_view("entries")].as_array();
+        if (!entries)
+        {
+            return ids;
+        }
+        for (auto it = entries->begin(); it != entries->end(); ++it)
+        {
+            auto entry = it->as_object();
+            if (!entry || !entry->contains(std::string_view("actionId")))
+            {
+                continue;
+            }
+            ids.emplace_back(
+                (*entry)[std::string_view("actionId")].as_string().value_or(
+                    ""));
+        }
+        return ids;
+    }
+
+    // 取 document.revision。
+    int64_t DocumentRevision(const yyjson::value& document)
+    {
+        auto obj = document.as_object();
+        if (!obj || !obj->contains(std::string_view("revision")))
+        {
+            return -1;
+        }
+        return (*obj)[std::string_view("revision")].as_int().value_or(-1);
+    }
+
+    // 从 Apply result envelope 取出 document 字段（独立 value，安全）。
+    yyjson::value DocumentFromApplyResult(const yyjson::value& result)
+    {
+        auto obj = result.as_object();
+        if (!obj || !obj->contains(std::string_view("document")))
+        {
+            return Das::Utils::MakeYyjsonObject();
+        }
+        return Das::Utils::CloneYyjsonValue(
+            (*obj)[std::string_view("document")]);
+    }
+
+    // 计算 taskId7.json 工作目录相对路径（ctest 工作目录是
+    // ${CMAKE_BINARY_DIR}/Test；live 文件在
+    // ${CMAKE_BINARY_DIR}/bin/$<CONFIG>/settings/0/taskId7.json）。
+    std::filesystem::path LegacyTaskId7Path()
+    {
+        return std::filesystem::current_path() / ".." / "bin" / "Debug"
+               / "settings" / "0" / "taskId7.json";
+    }
+
+    // 读任意文件（二进制）为 std::string。
+    std::optional<std::string> ReadFileBytes(const std::filesystem::path& path)
+    {
+        std::error_code ec;
+        if (!std::filesystem::exists(path, ec))
+        {
+            return std::nullopt;
+        }
+        std::ifstream ifs(path, std::ios::binary);
+        if (!ifs.is_open())
+        {
+            return std::nullopt;
+        }
+        std::ostringstream oss;
+        oss << ifs.rdbuf();
+        return oss.str();
+    }
+} // namespace
+
+// Tracer 1 RED: 字面量 v28 PI → MaaPI Provider Get → 严格 84-01 Get validator
+// 通过。 actionCatalog 必须同时包含可重复的 PI task 类型（D-84-40 同 actionId
+// 可多次添加）。 formSequence.items 为空（fresh state）但 form view 已经定形。
+TEST_F(MaapiAuthoringFixture, LiteralV28InterfaceProjectsStrictWire)
+{
+    auto fixture_text = ReadFixtureText("interface_authoring_v28.jsonc");
+    ASSERT_TRUE(fixture_text.has_value()) << "fixture missing";
+    auto interface_path =
+        FixturePath("interface_authoring_v28.jsonc").generic_string();
+    auto session = CreateSession(
+        "{\"adapter\":{\"interfacePath\":\"" + interface_path + "\"}}");
+
+    DasPtr<Das::ExportInterface::IDasJson> get_json;
+    ASSERT_EQ(session->GetDocument({}, get_json.Put()), DAS_S_OK);
+    // Build a {document, diagnostics} envelope so 84-01 Get validator runs.
+    auto document = ReadJsonInterface(get_json.Get());
+
+    yyjson::value envelope(Das::Utils::MakeYyjsonObject());
+    {
+        auto env_obj = envelope.as_object();
+        (*env_obj)[std::string_view("document")] =
+            Das::Utils::CloneYyjsonValue(document);
+        (*env_obj)[std::string_view("diagnostics")] =
+            Das::Utils::MakeYyjsonArray();
+    }
+
+    auto get_valid =
+        Das::Core::TaskScheduler::ValidateAuthoringGetResult(envelope);
+    EXPECT_TRUE(get_valid.valid) << "error_kind=" << get_valid.error_kind
+                                 << " message=" << get_valid.message;
+
+    auto doc_obj = document.as_object();
+    ASSERT_TRUE(doc_obj.has_value());
+    EXPECT_EQ(
+        (*doc_obj)[std::string_view("viewKind")].as_string().value_or(""),
+        "formSequence");
+    EXPECT_EQ(
+        (*doc_obj)[std::string_view("contractVersion")].as_int().value_or(0),
+        1);
+    EXPECT_FALSE(doc_obj->contains(std::string_view("kind")));
+    EXPECT_FALSE(doc_obj->contains(std::string_view("catalog")));
+    EXPECT_FALSE(doc_obj->contains(std::string_view("sourceFingerprint")));
+
+    // actionCatalog 必须暴露两个可创建的 PI task 类型。
+    auto action_ids = CollectActionIds(document);
+    EXPECT_EQ(action_ids.size(), 2u);
+    bool has_daily_farm = false;
+    bool has_bonus_task = false;
+    for (const auto& id : action_ids)
+    {
+        if (id == "DailyFarm")
+        {
+            has_daily_farm = true;
+        }
+        if (id == "DailyFarmBonus")
+        {
+            has_bonus_task = true;
+        }
+    }
+    EXPECT_TRUE(has_daily_farm);
+    EXPECT_TRUE(has_bonus_task);
+
+    // 预期一次性字段：retry.times 与 retry.unit（D-84-17 multi-input 拆分）。
+    // 在 fresh state（空 acceptedProperties.pi.tasks）下 formSequence.items
+    // 为空。
+    auto item_ids = CollectFormItemIds(document);
+    EXPECT_EQ(item_ids.size(), 0u);
+}
+
+// Tracer 1 RED: 字面量 post-84 state → Get→Apply→new-session Get 全链路
+// 在 84-01 validator 下通过，itemId 稳定。证明 Provider → 投影 端到端正确。
+TEST_F(MaapiAuthoringFixture, LiteralPost84StateRoundTripsProviderGetApplyGet)
+{
+    auto fixture_text = ReadFixtureText("post84_accepted_properties.json");
+    ASSERT_TRUE(fixture_text.has_value()) << "fixture missing";
+    auto interface_path =
+        FixturePath("interface_authoring_v28.jsonc").generic_string();
+
+    // 把字面量 fixture 装进 session context。interfacePath 用 v28 fixture
+    // 的绝对路径覆盖（fixture 内的相对值只是占位）。
+    auto parsed = ParseJsonFromStringStrict(*fixture_text);
+    ASSERT_TRUE(parsed.has_value());
+    auto root_obj = parsed->as_object();
+    ASSERT_TRUE(root_obj.has_value());
+    auto pi_obj = (*root_obj)[std::string_view("pi")].as_object();
+    ASSERT_TRUE(pi_obj.has_value());
+
+    std::ostringstream context_buf;
+    context_buf << "{\"adapter\":{\"interfacePath\":\"" << interface_path
+                << "\"},\"pi\":";
+    context_buf << SerializeOrEmpty((*root_obj)[std::string_view("pi")]);
+    context_buf << "}";
+    auto session = CreateSession(context_buf.str());
+
+    // Get #1: 必须看见 cfg_a 的两个 DailyFarm item。
+    DasPtr<Das::ExportInterface::IDasJson> get_json;
+    ASSERT_EQ(session->GetDocument({}, get_json.Put()), DAS_S_OK);
+    auto document1 = ReadJsonInterface(get_json.Get());
+
+    yyjson::value envelope1(Das::Utils::MakeYyjsonObject());
+    {
+        auto env_obj = envelope1.as_object();
+        (*env_obj)[std::string_view("document")] =
+            Das::Utils::CloneYyjsonValue(document1);
+        (*env_obj)[std::string_view("diagnostics")] =
+            Das::Utils::MakeYyjsonArray();
+    }
+    auto get_valid1 =
+        Das::Core::TaskScheduler::ValidateAuthoringGetResult(envelope1);
+    EXPECT_TRUE(get_valid1.valid) << "error_kind=" << get_valid1.error_kind
+                                  << " message=" << get_valid1.message;
+
+    auto ids1 = CollectFormItemIds(document1);
+    ASSERT_EQ(ids1.size(), 2u);
+    EXPECT_EQ(ids1[0], "item_daily_farm_a1");
+    EXPECT_EQ(ids1[1], "item_daily_farm_a2");
+
+    // Apply #1: 关闭 item_daily_farm_a2 的 enabled。
+    DasPtr<Das::ExportInterface::IDasJson> apply_json;
+    auto                                   change1 = ParseDasJson(
+        "{\"baseRevision\":0,\"kind\":\"setValue\",\"payload\":{"
+        "\"target\":{\"kind\":\"formSequenceItem\",\"id\":\"item_daily_farm_"
+        "a2\"},"
+        "\"fieldName\":\"enabled\",\"value\":false}}");
+    ASSERT_EQ(session->ApplyChange(change1.Get(), apply_json.Put()), DAS_S_OK);
+    auto apply1 = ReadJsonInterface(apply_json.Get());
+    auto apply_valid1 =
+        Das::Core::TaskScheduler::ValidateAuthoringApplyResult(apply1, 0);
+    EXPECT_TRUE(apply_valid1.valid) << "error_kind=" << apply_valid1.error_kind
+                                    << " message=" << apply_valid1.message;
+    EXPECT_EQ(DocumentRevisionFromApplyResult(apply1), 1);
+
+    auto apply1_doc = DocumentFromApplyResult(apply1);
+    auto ids_after_apply1 = CollectFormItemIds(apply1_doc);
+    ASSERT_EQ(ids_after_apply1.size(), 2u);
+    EXPECT_EQ(ids_after_apply1[0], "item_daily_farm_a1");
+    EXPECT_EQ(ids_after_apply1[1], "item_daily_farm_a2");
+
+    // Apply #2: 修改 configurationId 切到 cfg_b。
+    DasPtr<Das::ExportInterface::IDasJson> apply2_json;
+    auto                                   change2 = ParseDasJson(
+        "{\"baseRevision\":1,\"kind\":\"setValue\",\"payload\":{"
+        "\"target\":{\"kind\":\"document\"},\"fieldName\":\"configurationId\","
+        "\"value\":\"cfg_b\"}}");
+    ASSERT_EQ(session->ApplyChange(change2.Get(), apply2_json.Put()), DAS_S_OK);
+    auto apply2 = ReadJsonInterface(apply2_json.Get());
+    auto apply_valid2 =
+        Das::Core::TaskScheduler::ValidateAuthoringApplyResult(apply2, 1);
+    EXPECT_TRUE(apply_valid2.valid) << "error_kind=" << apply_valid2.error_kind
+                                    << " message=" << apply_valid2.message;
+    EXPECT_EQ(DocumentRevisionFromApplyResult(apply2), 2);
+
+    // 切到 cfg_b 后 formSequence 反映 cfg_b 的 task。
+    auto apply2_doc = DocumentFromApplyResult(apply2);
+    auto ids_after_apply2 = CollectFormItemIds(apply2_doc);
+    ASSERT_EQ(ids_after_apply2.size(), 1u);
+    EXPECT_EQ(ids_after_apply2[0], "item_daily_farm_bonus_b1");
+
+    // 新 session 从同一字面量重启（模拟 reload）。Get 应该和首次 Get 一致，
+    // 证明 Get 投影稳定，不依赖 session 之间的内部状态。
+    auto session2 = CreateSession(context_buf.str());
+    DasPtr<Das::ExportInterface::IDasJson> get2_json;
+    ASSERT_EQ(session2->GetDocument({}, get2_json.Put()), DAS_S_OK);
+    auto document2 = ReadJsonInterface(get2_json.Get());
+    auto ids2 = CollectFormItemIds(document2);
+    ASSERT_EQ(ids2.size(), 2u);
+    EXPECT_EQ(ids2[0], "item_daily_farm_a1");
+    EXPECT_EQ(ids2[1], "item_daily_farm_a2");
+}
+
+// Tracer 2 RED: 字面量 post-84 state 支持完整编辑生命周期，且每个阶段都
+// 通过 84-01 validator。覆盖：duplicate actionId add、setValue/enabled、
+// move、remove、newConfiguration、copyConfiguration、select configuration、
+// Compile。
+TEST_F(MaapiAuthoringFixture, LiteralPost84StateFullLifecyclePreservesAuthority)
+{
+    auto fixture_text = ReadFixtureText("post84_accepted_properties.json");
+    ASSERT_TRUE(fixture_text.has_value()) << "fixture missing";
+    auto interface_path =
+        FixturePath("interface_authoring_v28.jsonc").generic_string();
+
+    std::ostringstream context_buf;
+    context_buf << "{\"adapter\":{\"interfacePath\":\"" << interface_path
+                << "\"},\"pi\":";
+    auto parsed = ParseJsonFromStringStrict(*fixture_text);
+    ASSERT_TRUE(parsed.has_value());
+    auto root_obj = parsed->as_object();
+    ASSERT_TRUE(root_obj.has_value());
+    context_buf << SerializeOrEmpty((*root_obj)[std::string_view("pi")]);
+    context_buf << "}";
+    auto session = CreateSession(context_buf.str());
+
+    int64_t expected_revision = 0;
+
+    auto expect_apply_ok = [&](Das::ExportInterface::IDasJson*  change,
+                               Das::ExportInterface::IDasJson** out_result)
+    {
+        DasPtr<Das::ExportInterface::IDasJson> result_json;
+        ASSERT_EQ(session->ApplyChange(change, result_json.Put()), DAS_S_OK);
+        auto result = ReadJsonInterface(result_json.Get());
+        auto base = expected_revision;
+        auto v = Das::Core::TaskScheduler::ValidateAuthoringApplyResult(
+            result,
+            base);
+        EXPECT_TRUE(v.valid)
+            << "error_kind=" << v.error_kind << " message=" << v.message;
+        EXPECT_EQ(DocumentRevisionFromApplyResult(result), base + 1);
+        EXPECT_EQ(CountDiagnosticsBySeverity(result, "error"), 0u);
+        ++expected_revision;
+        if (out_result)
+        {
+            *out_result = result_json.Get();
+            if (*out_result)
+            {
+                (*out_result)->AddRef();
+            }
+        }
+    };
+
+    // 1) Duplicate actionId add：再添加一个 DailyFarm。
+    {
+        auto change = ParseDasJson(
+            "{\"baseRevision\":0,\"kind\":\"addFormSequenceItem\",\"payload\":{"
+            "\"actionId\":\"DailyFarm\"}}");
+        expect_apply_ok(change.Get(), nullptr);
+    }
+
+    // 2) setValue formSequenceItem enabled toggle。
+    {
+        auto change = ParseDasJson(
+            "{\"baseRevision\":1,\"kind\":\"setValue\",\"payload\":{"
+            "\"target\":{\"kind\":\"formSequenceItem\",\"id\":\"item_daily_farm_"
+            "a1\"},"
+            "\"fieldName\":\"enabled\",\"value\":false}}");
+        expect_apply_ok(change.Get(), nullptr);
+    }
+
+    // 3) moveFormSequenceItem: 0 → 1.
+    {
+        auto change = ParseDasJson(
+            "{\"baseRevision\":2,\"kind\":\"moveFormSequenceItem\",\"payload\":{"
+            "\"formSequenceItemId\":\"item_daily_farm_a1\","
+            "\"destinationIndex\":1}}");
+        expect_apply_ok(change.Get(), nullptr);
+    }
+
+    // 4) removeFormSequenceItem.
+    {
+        auto change = ParseDasJson(
+            "{\"baseRevision\":3,\"kind\":\"removeFormSequenceItem\","
+            "\"payload\":{\"formSequenceItemId\":\"item_daily_farm_a2\"}}");
+        expect_apply_ok(change.Get(), nullptr);
+    }
+
+    // 5) newConfiguration via invokeCommand.
+    {
+        auto change = ParseDasJson(
+            "{\"baseRevision\":4,\"kind\":\"invokeCommand\",\"payload\":{"
+            "\"commandId\":\"newConfiguration\"}}");
+        expect_apply_ok(change.Get(), nullptr);
+    }
+
+    // 6) copyConfiguration via invokeCommand.
+    {
+        auto change = ParseDasJson(
+            "{\"baseRevision\":5,\"kind\":\"invokeCommand\",\"payload\":{"
+            "\"commandId\":\"copyConfiguration\"}}");
+        expect_apply_ok(change.Get(), nullptr);
+    }
+
+    // 7) Compile：严格 envelope 通过 validator。
+    {
+        DasPtr<Das::ExportInterface::IDasJson> compile_json;
+        ASSERT_EQ(session->Compile({}, compile_json.Put()), DAS_S_OK);
+        auto compile = ReadJsonInterface(compile_json.Get());
+        auto v =
+            Das::Core::TaskScheduler::ValidateAuthoringCompileResult(compile);
+        EXPECT_TRUE(v.valid)
+            << "error_kind=" << v.error_kind << " message=" << v.message;
+        auto obj = compile.as_object();
+        ASSERT_TRUE(obj.has_value());
+        EXPECT_TRUE(obj->contains(std::string_view("compile")));
+        EXPECT_TRUE(obj->contains(std::string_view("diagnostics")));
+    }
+}
+
+// Tracer 3 RED: malformed Provider Apply result 留下 disposable 持久状态不变。
+// 通过 public session seam 发送 legacy valuePath payload（84-07 拒绝为
+// unsupportedChange），断言 revision/acceptedProperties 不变。
+TEST_F(MaapiAuthoringFixture, MalformedChangeLeavesDisposableStateUnchanged)
+{
+    auto fixture_text = ReadFixtureText("post84_accepted_properties.json");
+    ASSERT_TRUE(fixture_text.has_value()) << "fixture missing";
+    auto interface_path =
+        FixturePath("interface_authoring_v28.jsonc").generic_string();
+    auto parsed = ParseJsonFromStringStrict(*fixture_text);
+    ASSERT_TRUE(parsed.has_value());
+    auto root_obj = parsed->as_object();
+    ASSERT_TRUE(root_obj.has_value());
+
+    std::ostringstream context_buf;
+    context_buf << "{\"adapter\":{\"interfacePath\":\"" << interface_path
+                << "\"},\"pi\":";
+    context_buf << SerializeOrEmpty((*root_obj)[std::string_view("pi")]);
+    context_buf << "}";
+    auto session = CreateSession(context_buf.str());
+
+    // 记录初始 acceptedProperties 的 normalized 文本，作为 disposable state
+    // baseline。每个 Apply 失败之后必须等于这个 baseline。
+    DasPtr<Das::ExportInterface::IDasJson> get_json;
+    ASSERT_EQ(session->GetDocument({}, get_json.Put()), DAS_S_OK);
+    auto initial_doc = ReadJsonInterface(get_json.Get());
+    EXPECT_EQ(DocumentRevision(initial_doc), 0);
+
+    // 失败 #1: legacy valuePath payload → 84-07 unsupportedChange。
+    {
+        DasPtr<Das::ExportInterface::IDasJson> apply_json;
+        auto                                   change = ParseDasJson(
+            "{\"baseRevision\":0,\"kind\":\"setValue\",\"payload\":{"
+            "\"valuePath\":\"controllerName\",\"value\":\"Desktop\"}}");
+        ASSERT_EQ(
+            session->ApplyChange(change.Get(), apply_json.Put()),
+            DAS_S_OK);
+        auto result = ReadJsonInterface(apply_json.Get());
+        // 严格 Apply envelope 仍要满足 84-01 schema（即便携带 error 诊断）。
+        // document.revision 必须 == baseRevision（语义失败不递增）。
+        EXPECT_EQ(DocumentRevisionFromApplyResult(result), 0);
+        EXPECT_GE(CountDiagnosticsBySeverity(result, "error"), 1u);
+    }
+
+    // 失败 #2: legacy applyPreset kind → unsupportedChange。
+    {
+        DasPtr<Das::ExportInterface::IDasJson> apply_json;
+        auto                                   change = ParseDasJson(
+            "{\"baseRevision\":0,\"kind\":\"applyPreset\",\"payload\":{"
+            "\"presetName\":\"DailyPreset\"}}");
+        ASSERT_EQ(
+            session->ApplyChange(change.Get(), apply_json.Put()),
+            DAS_S_OK);
+        auto result = ReadJsonInterface(apply_json.Get());
+        EXPECT_EQ(DocumentRevisionFromApplyResult(result), 0);
+        EXPECT_GE(CountDiagnosticsBySeverity(result, "error"), 1u);
+    }
+
+    // 失败 #3: baseRevision mismatch → 不递增、不写入。
+    {
+        DasPtr<Das::ExportInterface::IDasJson> apply_json;
+        auto                                   change = ParseDasJson(
+            "{\"baseRevision\":42,\"kind\":\"setValue\",\"payload\":{"
+            "\"target\":{\"kind\":\"document\"},\"fieldName\":\"controllerName\","
+            "\"value\":\"Desktop\"}}");
+        ASSERT_EQ(
+            session->ApplyChange(change.Get(), apply_json.Put()),
+            DAS_S_OK);
+        auto result = ReadJsonInterface(apply_json.Get());
+        EXPECT_EQ(DocumentRevisionFromApplyResult(result), 0);
+        EXPECT_GE(CountDiagnosticsBySeverity(result, "error"), 1u);
+    }
+
+    // 重新 Get：document 仍是初始状态，revision 仍是 0。
+    DasPtr<Das::ExportInterface::IDasJson> post_get_json;
+    ASSERT_EQ(session->GetDocument({}, post_get_json.Put()), DAS_S_OK);
+    auto post_doc = ReadJsonInterface(post_get_json.Get());
+    EXPECT_EQ(DocumentRevision(post_doc), 0);
+    auto post_ids = CollectFormItemIds(post_doc);
+    ASSERT_EQ(post_ids.size(), 2u);
+    EXPECT_EQ(post_ids[0], "item_daily_farm_a1");
+    EXPECT_EQ(post_ids[1], "item_daily_farm_a2");
+}
+
+// Tracer 4 RED: legacy taskId7 只读边界。pre/post SHA-256 必须相等，
+// 且 session 读取 legacy（无 itemId、含 authoring.kind/migration）的内容时
+// Provider 不会崩溃：document 可以生产（NormalizeItemIds 在 parse 时一次性
+// 分配稳定 itemId），acceptedProperties 不会回写到磁盘文件。
+//
+// gate 是 SHA-256 hash 相等，不是 `git diff --exit-code`（gitignored 路径
+// 永远 report no diff）。
+TEST_F(MaapiAuthoringFixture, LegacyTaskId7BoundaryPreservedReadOnlyWithSha256)
+{
+    const auto legacy_path = LegacyTaskId7Path();
+    const auto pre_bytes_opt = ReadFileBytes(legacy_path);
+    if (!pre_bytes_opt.has_value())
+    {
+        GTEST_SKIP() << "taskId7.json not present at " << legacy_path
+                     << " (CI / fresh clone); skip legacy boundary test";
+    }
+    const auto& pre_bytes = *pre_bytes_opt;
+    const auto  pre_hash = Sha256(pre_bytes).Hex();
+
+    // 把 legacy content 摊平成 context。properties.pi → context.pi；
+    // adapter.interfacePath 重定向到 v28 fixture（原路径是用户的真实路径）。
+    auto parsed = ParseJsonFromStringStrict(pre_bytes);
+    ASSERT_TRUE(parsed.has_value()) << "taskId7.json is not valid JSON";
+    auto root_obj = parsed->as_object();
+    ASSERT_TRUE(root_obj.has_value());
+    ASSERT_TRUE(root_obj->contains(std::string_view("properties")));
+    auto props = (*root_obj)[std::string_view("properties")].as_object();
+    ASSERT_TRUE(props.has_value());
+    ASSERT_TRUE(props->contains(std::string_view("pi")));
+
+    auto interface_path =
+        FixturePath("interface_authoring_v28.jsonc").generic_string();
+    std::ostringstream context_buf;
+    context_buf << "{\"adapter\":{\"interfacePath\":\"" << interface_path
+                << "\"},\"pi\":";
+    context_buf << SerializeOrEmpty((*props)[std::string_view("pi")]);
+    context_buf << "}";
+    auto session = CreateSession(context_buf.str());
+
+    // Get：document 必须能生产；legacy 缺 itemId 由 NormalizeItemIds 分配。
+    DasPtr<Das::ExportInterface::IDasJson> get_json;
+    ASSERT_EQ(session->GetDocument({}, get_json.Put()), DAS_S_OK);
+    auto document = ReadJsonInterface(get_json.Get());
+
+    // document 通过 84-01 ApplyResult validator 的 document 子校验
+    // （嵌套 ValidateAuthoringDocument）。
+    {
+        yyjson::value envelope(Das::Utils::MakeYyjsonObject());
+        auto          env_obj = envelope.as_object();
+        (*env_obj)[std::string_view("document")] =
+            Das::Utils::CloneYyjsonValue(document);
+        (*env_obj)[std::string_view("diagnostics")] =
+            Das::Utils::MakeYyjsonArray();
+        auto get_valid =
+            Das::Core::TaskScheduler::ValidateAuthoringGetResult(envelope);
+        EXPECT_TRUE(get_valid.valid) << "error_kind=" << get_valid.error_kind
+                                     << " message=" << get_valid.message;
+    }
+
+    // formSequence.items[] 必须全部有非空 id（legacy 没 itemId，
+    // NormalizeItemIds 必须补齐）。
+    auto item_ids = CollectFormItemIds(document);
+    ASSERT_FALSE(item_ids.empty());
+    for (const auto& id : item_ids)
+    {
+        EXPECT_FALSE(id.empty());
+    }
+
+    // 重新读 taskId7.json 的字节，SHA-256 必须与 pre 完全一致。
+    // gate = SHA-256 hash 相等（不是 git diff --exit-code）。
+    const auto post_bytes_opt = ReadFileBytes(legacy_path);
+    ASSERT_TRUE(post_bytes_opt.has_value());
+    const auto& post_bytes = *post_bytes_opt;
+    const auto  post_hash = Sha256(post_bytes).Hex();
+    EXPECT_EQ(pre_hash, post_hash)
+        << "taskId7.json mutated by Phase 84-08 test; pre=" << pre_hash
+        << " post=" << post_hash;
+    EXPECT_EQ(pre_bytes, post_bytes) << "taskId7.json byte content changed";
+}
+
+// Tracer 4 RED (DTO 级): 字面量 legacy pre-84 pi（taskId7 的形态）→
+// ParseAcceptedSettings 不崩溃；acceptedProperties 持久化 schema 不含
+// authoring.kind / authoring.migration / acceptedProperties.migration。
+TEST(MaapiLegacyBoundaryTest, LegacyPre84ParseDoesNotEmitAuthoringLegacyFields)
+{
+    // 字面量构造 pre-84 形态（与 taskId7.json 同结构），不读 live 文件本身。
+    // ParseAcceptedSettings 期望 acceptedProperties envelope shape（含 `pi`
+    // 顶层字段），与 taskId7.json 的 properties.pi 形态一致。
+    static constexpr std::string_view kLegacyAccepted = R"({
+      "version": 1,
+      "adapter": {"interfacePath": "D:/softwares/green/MaaEnd-win/interface.json"},
+      "pi": {
+        "controllerName": "Win32-Front",
+        "resourceName": "Official",
+        "presetName": "QuickDaily",
+        "language": "zh_cn",
+        "globalOptions": [],
+        "resourceOptions": [],
+        "controllerOptions": [],
+        "tasks": [
+          {"taskName": "VisitFriends", "enabled": true, "options": []},
+          {"taskName": "VisitFriends", "enabled": false, "options": []}
+        ],
+        "orphanPaths": []
+      }
+    })";
+    auto parsed = Das::Utils::ParseYyjsonFromString(kLegacyAccepted);
+    ASSERT_TRUE(parsed.has_value());
+    auto settings = Das::Plugins::DasMaaPi::ParseAcceptedSettings(*parsed);
+
+    // 两个同名 VisitFriends task 必须拿到不同的 itemId (NormalizeItemIds 在
+    // parse 时一次性分配稳定 itemId，确保 Get 投影幂等)。
+    ASSERT_EQ(settings.pi.tasks.size(), 2u);
+    EXPECT_FALSE(settings.pi.tasks[0].item_id.empty());
+    EXPECT_FALSE(settings.pi.tasks[1].item_id.empty());
+    EXPECT_NE(settings.pi.tasks[0].item_id, settings.pi.tasks[1].item_id);
+
+    // 重新序列化后的 acceptedProperties 不应携带 migration 字段。
+    auto serialized =
+        Das::Plugins::DasMaaPi::SerializeAcceptedSettings(settings);
+    auto serialized_obj = serialized.as_object();
+    ASSERT_TRUE(serialized_obj.has_value());
+    EXPECT_FALSE(serialized_obj->contains(std::string_view("migration")));
+    EXPECT_FALSE(
+        serialized_obj->contains(std::string_view("sourceFingerprint")));
 }
