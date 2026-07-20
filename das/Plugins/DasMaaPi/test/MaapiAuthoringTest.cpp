@@ -473,29 +473,38 @@ TEST_F(MaapiAuthoringFixture, PiValuePathsPersistTasksAndOptions)
         session->ApplyChange(notify_change.Get(), result_json.Put()),
         DAS_S_OK);
 
-    auto result = ReadJsonInterface(result_json.Get());
-    auto accepted =
-        (*result.as_object())[std::string_view("acceptedProperties")]
-            .as_object();
-    ASSERT_TRUE(accepted.has_value());
-    auto pi = (*accepted)[std::string_view("pi")];
-    ASSERT_TRUE(OptionArrayContains(pi, "globalOptions", "stage"));
+    // NOTE: yyjson owning values (result/accepted/pi/tasks) cannot be
+    // reassigned once their underlying mutable_document is released. Each
+    // block scope keeps one contiguous lifecycle so the
+    // optional<mutable_object_base> releases its val_ before the owning
+    // result's mut_doc is freed. Reassigning them across reads triggers
+    // heap-use-after-free in cpp_yyjson set_value (mutable_value_base::
+    // operator= reads moved-from val_ after the source doc is released).
+    {
+        auto result = ReadJsonInterface(result_json.Get());
+        auto accepted =
+            (*result.as_object())[std::string_view("acceptedProperties")]
+                .as_object();
+        ASSERT_TRUE(accepted.has_value());
+        auto pi = (*accepted)[std::string_view("pi")];
+        ASSERT_TRUE(OptionArrayContains(pi, "globalOptions", "stage"));
 
-    auto pi_obj = pi.as_object();
-    ASSERT_TRUE(pi_obj.has_value());
-    auto tasks = (*pi_obj)[std::string_view("tasks")].as_array();
-    ASSERT_TRUE(tasks.has_value());
-    ASSERT_EQ(tasks->size(), 1u);
-    auto task = (*tasks)[0].as_object();
-    ASSERT_TRUE(task.has_value());
-    EXPECT_EQ(
-        (*task)[std::string_view("taskName")].as_string().value_or(""),
-        "DailyFarm");
+        auto pi_obj = pi.as_object();
+        ASSERT_TRUE(pi_obj.has_value());
+        auto tasks = (*pi_obj)[std::string_view("tasks")].as_array();
+        ASSERT_TRUE(tasks.has_value());
+        ASSERT_EQ(tasks->size(), 1u);
+        auto task = (*tasks)[0].as_object();
+        ASSERT_TRUE(task.has_value());
+        EXPECT_EQ(
+            (*task)[std::string_view("taskName")].as_string().value_or(""),
+            "DailyFarm");
 
-    EXPECT_TRUE(TaskHasOption((*tasks)[0], "retry"));
-    EXPECT_EQ(TaskOptionInputValue((*tasks)[0], "retry", "times"), "9");
-    EXPECT_TRUE(TaskHasOption((*tasks)[0], "use-medicine"));
-    EXPECT_TRUE(TaskHasOption((*tasks)[0], "notify"));
+        EXPECT_TRUE(TaskHasOption((*tasks)[0], "retry"));
+        EXPECT_EQ(TaskOptionInputValue((*tasks)[0], "retry", "times"), "9");
+        EXPECT_TRUE(TaskHasOption((*tasks)[0], "use-medicine"));
+        EXPECT_TRUE(TaskHasOption((*tasks)[0], "notify"));
+    }
 
     auto delete_retry = ParseDasJson(
         "{\"baseRevision\":5,\"kind\":\"setValue\",\"payload\":{\"valuePath\":"
@@ -503,15 +512,18 @@ TEST_F(MaapiAuthoringFixture, PiValuePathsPersistTasksAndOptions)
     ASSERT_EQ(
         session->ApplyChange(delete_retry.Get(), result_json.Put()),
         DAS_S_OK);
-    result = ReadJsonInterface(result_json.Get());
-    accepted = (*result.as_object())[std::string_view("acceptedProperties")]
-                   .as_object();
-    ASSERT_TRUE(accepted.has_value());
-    pi = (*accepted)[std::string_view("pi")];
-    tasks = (*pi.as_object())[std::string_view("tasks")].as_array();
-    ASSERT_TRUE(tasks.has_value());
-    ASSERT_EQ(tasks->size(), 1u);
-    EXPECT_FALSE(TaskHasOption((*tasks)[0], "retry"));
+    {
+        auto result = ReadJsonInterface(result_json.Get());
+        auto accepted =
+            (*result.as_object())[std::string_view("acceptedProperties")]
+                .as_object();
+        ASSERT_TRUE(accepted.has_value());
+        auto pi = (*accepted)[std::string_view("pi")];
+        auto tasks = (*pi.as_object())[std::string_view("tasks")].as_array();
+        ASSERT_TRUE(tasks.has_value());
+        ASSERT_EQ(tasks->size(), 1u);
+        EXPECT_FALSE(TaskHasOption((*tasks)[0], "retry"));
+    }
 }
 
 TEST_F(MaapiAuthoringFixture, PiValuePathCleanupRemovesOrphans)
