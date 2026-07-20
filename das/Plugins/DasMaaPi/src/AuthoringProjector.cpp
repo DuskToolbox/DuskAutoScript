@@ -211,6 +211,10 @@ namespace Das::Plugins::DasMaaPi
         std::vector<MaapiConfigurationDto> ParseConfigurationArray(
             const TObject&   obj,
             std::string_view key);
+        // D-84-40: 在 parse 完成后补齐 legacy task 的 itemId。定义在
+        // AllocateIdWithPrefix / CollectUsedItemIds 之后；ParseAcceptedObject
+        // 在前面引用需前向声明。
+        void NormalizeItemIds(AcceptedSettingsDto& settings);
 
         template <typename TObject>
         AcceptedSettingsDto ParseAcceptedObject(const TObject& obj)
@@ -271,9 +275,18 @@ namespace Das::Plugins::DasMaaPi
                     SyncActiveFromCurrentConfig(settings);
                 }
             }
+            // D-84-40: 任何 legacy task (pre-84 输入或 ApplyAddSequenceItem
+            // 创建后未补 itemId 的情况) 在 parse 完成后获得稳定 itemId，
+            // 保证 Get 投影不需要在每次调用时分配身份（Get idempotent）。
+            NormalizeItemIds(settings);
             return settings;
         }
 
+        // Tracer 4 会重新启用对 envelope diagnostics 的 orphan_paths / 缺译
+        // 警告投影；在此之前 ProjectAuthoringDocument 不再向 document 输出
+        // 任何 diagnostics（D-84-11：diagnostics 与 document 同级，位于
+        // envelope）。保留 helper 以便后续 tracer 直接复用。
+        [[maybe_unused]]
         void AddDiagnosticJson(yyjson::value& arr, const PiDiagnosticDto& item)
         {
             yyjson::value diag(Object());
@@ -302,13 +315,18 @@ namespace Das::Plugins::DasMaaPi
             {
                 yyjson::value candidate(Object());
                 auto          obj = candidate.as_object();
-                (*obj)[std::string_view("name")] = JsonString(item.dto.name);
+                // D-84-21: CandidateDescriptor 严格 {value, label, icon?}。
+                // value 是 setValue 写回时使用的非 null 标量；label 是
+                // Provider 已本地化的显示文本。candidate.value 取
+                // controller/resource/preset 的 dto.name (PI 唯一标识)，
+                // candidate.label 取 i18n 解析后的本地化名称。
+                (*obj)[std::string_view("value")] = JsonString(item.dto.name);
+                std::string_view label = item.dto.name;
                 if (item.dto.label)
                 {
-                    std::string_view resolved =
-                        ResolveI18n(*item.dto.label, *catalog, language);
-                    (*obj)[std::string_view("label")] = JsonString(resolved);
+                    label = ResolveI18n(*item.dto.label, *catalog, language);
                 }
+                (*obj)[std::string_view("label")] = JsonString(label);
                 arr.as_array()->emplace_back(std::move(candidate));
             }
             return arr;
@@ -395,13 +413,18 @@ namespace Das::Plugins::DasMaaPi
             {
                 yyjson::value candidate(Object());
                 auto          obj = candidate.as_object();
-                (*obj)[std::string_view("name")] = JsonString(item.name);
+                // D-84-21: CandidateDescriptor 严格 {value, label, icon?}。
+                // value 是 PI case 的 dto.name (setValue 写回值)，label 经
+                // i18n 解析；缺 label 时回退到 case.name 本身（case.name
+                // 是 PI 协议标识，不是机器回退 — 它已经是用户可读的最终值
+                // 之一，与 controller/resource 的回退同构）。
+                (*obj)[std::string_view("value")] = JsonString(item.name);
+                std::string_view label = item.name;
                 if (item.label)
                 {
-                    std::string_view resolved =
-                        ResolveI18n(*item.label, *catalog, language);
-                    (*obj)[std::string_view("label")] = JsonString(resolved);
+                    label = ResolveI18n(*item.label, *catalog, language);
                 }
+                (*obj)[std::string_view("label")] = JsonString(label);
                 arr.as_array()->emplace_back(std::move(candidate));
             }
             return arr;
@@ -1300,6 +1323,34 @@ namespace Das::Plugins::DasMaaPi
             const auto next = counter.fetch_add(1);
             return std::string(prefix) + std::to_string(next) + "_x";
         }
+
+        // D-84-40: 在 parse 完成后为任何缺失 itemId 的 task 实例分配稳定身份。
+        // 只对空 itemId 补齐，已有 itemId 原样保留 —— 保证 round-trip 测试
+        // RoundTripsTwoTasksWithSameNameAndDistinctItemIds 等不依赖原子计数器
+        // 的具体值。同时刷新 configurations[*].tasks 内的空 itemId，让
+        // post-84 多配置权威在首次 parse 后立即满足 "每个 task 实例都有
+        // Provider 颁发 itemId" 的不变量，从而 Get 投影不需要在每次调用时
+        // 重新分配（保持 idempotent）。
+        void NormalizeItemIds(AcceptedSettingsDto& settings)
+        {
+            auto used = CollectUsedItemIds(settings);
+            auto ensure = [&used](std::vector<MaapiPiTaskSettingsDto>& tasks)
+            {
+                for (auto& task : tasks)
+                {
+                    if (task.item_id.empty())
+                    {
+                        task.item_id = AllocateIdWithPrefix("item_", used);
+                        used.emplace(task.item_id);
+                    }
+                }
+            };
+            ensure(settings.pi.tasks);
+            for (auto& config : settings.pi.configurations)
+            {
+                ensure(config.tasks);
+            }
+        }
     } // namespace
 
     MaapiConfigurationDto* GetCurrentConfiguration(
@@ -1557,41 +1608,15 @@ namespace Das::Plugins::DasMaaPi
     {
         yyjson::value document(Object());
         auto          obj = document.as_object();
+        // D-84-02/13: document 携带 viewKind 而不是 kind；contractVersion /
+        // viewKind / revision 是必需字段；不再泄漏 sourceFingerprint / catalog
+        // / kind / diagnostics 等 MaaPI 私有或 legacy 字段。
         (*obj)[std::string_view("contractVersion")] = 1;
-        (*obj)[std::string_view("kind")] = "formSequence";
+        (*obj)[std::string_view("viewKind")] = "formSequence";
         (*obj)[std::string_view("revision")] = revision;
 
-        std::string fingerprint = "maapi-unparsed";
-        if (catalog)
-        {
-            fingerprint = catalog->name + ":" + catalog->version;
-        }
-        else if (settings.adapter.source_fingerprint)
-        {
-            fingerprint = *settings.adapter.source_fingerprint;
-        }
-        (*obj)[std::string_view("sourceFingerprint")] = JsonString(fingerprint);
-
-        yyjson::value form_sequence(Object());
-        auto          fs_obj = form_sequence.as_object();
-
-        yyjson::value fields(Array());
-
-        fields.as_array()->emplace_back(MakePropertyField(
-            "adapter.interfacePath",
-            "ProjectInterface path",
-            4,
-            0,
-            settings.adapter.interface_path
-                ? yyjson::value(*settings.adapter.interface_path)
-                : yyjson::value(std::string{})));
-        fields.as_array()->emplace_back(MakePropertyField(
-            "adapter.executionPolicy.failFast",
-            "Fail fast",
-            8,
-            0,
-            yyjson::value(settings.adapter.execution_policy.fail_fast)));
-
+        // 当前 PI language：优先 settings.pi.language；缺省时按
+        // zh_cn → 首个可用 language 的顺序兜底。所有 i18n 解析共用此值。
         std::string current_language;
         if (catalog)
         {
@@ -1608,7 +1633,29 @@ namespace Das::Plugins::DasMaaPi
                     current_language = catalog->translations.begin()->first;
                 }
             }
+        }
 
+        // D-84-13: 根字段直接挂在 document 上。adapter / executionPolicy 是
+        // MaaPI 适配层字段，controllerName / resourceName / presetName /
+        // language / configurationId 是 PI 配置字段，全部本地化 label。
+        yyjson::value fields(Array());
+        fields.as_array()->emplace_back(MakePropertyField(
+            "adapter.interfacePath",
+            "ProjectInterface path",
+            4,
+            0,
+            settings.adapter.interface_path
+                ? yyjson::value(*settings.adapter.interface_path)
+                : yyjson::value(std::string{})));
+        fields.as_array()->emplace_back(MakePropertyField(
+            "adapter.executionPolicy.failFast",
+            "Fail fast",
+            8,
+            0,
+            yyjson::value(settings.adapter.execution_policy.fail_fast)));
+
+        if (catalog)
+        {
             auto controller_candidates =
                 CandidateArray(catalog->controllers, catalog, current_language);
             fields.as_array()->emplace_back(MakePropertyField(
@@ -1643,12 +1690,37 @@ namespace Das::Plugins::DasMaaPi
                     : yyjson::value(std::string{}),
                 &preset_candidates));
 
+            // D-84-41/42: 配置切换字段。post-84 多配置权威存在时，UI 通过
+            // 这个 select 在 configurations[] 间切换；legacy fixture 没有
+            // configurations[]，该字段不出现。
+            if (!settings.pi.configurations.empty())
+            {
+                yyjson::value config_candidates(Array());
+                for (const auto& config : settings.pi.configurations)
+                {
+                    yyjson::value candidate(Object());
+                    auto          c_obj = candidate.as_object();
+                    (*c_obj)[std::string_view("value")] = JsonString(config.id);
+                    (*c_obj)[std::string_view("label")] =
+                        JsonString(config.name);
+                    config_candidates.as_array()->emplace_back(
+                        std::move(candidate));
+                }
+                fields.as_array()->emplace_back(MakePropertyField(
+                    "configurationId",
+                    "Configuration",
+                    4,
+                    1,
+                    yyjson::value(settings.pi.selected_configuration_id),
+                    &config_candidates));
+            }
+
             yyjson::value language_candidates(Array());
             for (const auto& [lang_code, _] : catalog->translations)
             {
                 yyjson::value candidate(Object());
                 auto          lang_obj = candidate.as_object();
-                (*lang_obj)[std::string_view("name")] = JsonString(lang_code);
+                (*lang_obj)[std::string_view("value")] = JsonString(lang_code);
                 (*lang_obj)[std::string_view("label")] = JsonString(lang_code);
                 language_candidates.as_array()->emplace_back(
                     std::move(candidate));
@@ -1674,16 +1746,22 @@ namespace Das::Plugins::DasMaaPi
                     current_language));
             }
         }
-        (*fs_obj)[std::string_view("fields")] = std::move(fields);
+        (*obj)[std::string_view("fields")] = std::move(fields);
 
-        yyjson::value sequence(Array());
+        // D-84-13: formSequence 只承载 items[]；不再有根级 fields/sequence。
+        // D-84-40: FormSequenceItem.id = Provider 颁发的 itemId，绝不回退到
+        // taskName/actionId/index。D-84-07: settings 已删除，可编辑值只在
+        // fields[]。
+        yyjson::value items(Array());
         for (const auto& task : settings.pi.tasks)
         {
             yyjson::value item(Object());
             auto          item_obj = item.as_object();
-            (*item_obj)[std::string_view("id")] = JsonString(task.task_name);
+            (*item_obj)[std::string_view("id")] = JsonString(task.item_id);
             (*item_obj)[std::string_view("componentGuid")] =
                 JsonString("69F20008-0000-4000-8000-000000000001");
+            (*item_obj)[std::string_view("targetKind")] =
+                JsonString("componentRef");
 
             yyjson::value item_fields(Array());
             if (catalog)
@@ -1691,17 +1769,6 @@ namespace Das::Plugins::DasMaaPi
                 const auto* catalog_task = FindTask(*catalog, task.task_name);
                 if (catalog_task)
                 {
-                    std::string_view task_label = task.task_name;
-                    if (catalog_task->dto.label)
-                    {
-                        task_label = ResolveI18n(
-                            *catalog_task->dto.label,
-                            *catalog,
-                            current_language);
-                    }
-                    (*item_obj)[std::string_view("label")] =
-                        JsonString(task_label);
-
                     for (const auto& option_name : catalog_task->dto.option)
                     {
                         const auto* option = FindOption(*catalog, option_name);
@@ -1722,58 +1789,86 @@ namespace Das::Plugins::DasMaaPi
                 }
             }
             (*item_obj)[std::string_view("fields")] = std::move(item_fields);
-
-            yyjson::value item_settings(Object());
-            auto          s_obj = item_settings.as_object();
-            (*s_obj)[std::string_view("enabled")] = task.enabled;
-            (*s_obj)[std::string_view("options")] =
-                OptionSettingsArray(task.options);
-            (*item_obj)[std::string_view("settings")] =
-                std::move(item_settings);
             (*item_obj)[std::string_view("enabled")] = task.enabled;
 
-            sequence.as_array()->emplace_back(std::move(item));
+            items.as_array()->emplace_back(std::move(item));
         }
-        (*fs_obj)[std::string_view("sequence")] = std::move(sequence);
+        yyjson::value form_sequence(Object());
+        (*form_sequence.as_object())[std::string_view("items")] =
+            std::move(items);
         (*obj)[std::string_view("formSequence")] = std::move(form_sequence);
 
-        yyjson::value catalog_json(Object());
+        // D-84-31/32/33: actionCatalog 总是出现，便于 UI 在任何状态下都
+        // 可以呈现 "添加任务"。Tracer 5 会填入 PI tasks/groups；此处先
+        // 给出最小有效结构。entries[] / groups[] 的 label 在 Tracer 5 中
+        // 经 i18n 解析。
+        yyjson::value action_catalog(Object());
+        auto          ac_obj = action_catalog.as_object();
+        yyjson::value entries(Array());
+        yyjson::value groups(Array());
         if (catalog)
         {
-            auto catalog_obj = catalog_json.as_object();
-            (*catalog_obj)[std::string_view("controllers")] =
-                CandidateArray(catalog->controllers, catalog, current_language);
-            (*catalog_obj)[std::string_view("resources")] =
-                CandidateArray(catalog->resources, catalog, current_language);
-            (*catalog_obj)[std::string_view("tasks")] =
-                CandidateArray(catalog->tasks, catalog, current_language);
-            (*catalog_obj)[std::string_view("presets")] =
-                CandidateArray(catalog->presets, catalog, current_language);
-            (*catalog_obj)[std::string_view("groups")] =
-                CandidateArray(catalog->groups, catalog, current_language);
+            for (const auto& task : catalog->tasks)
+            {
+                yyjson::value entry(Object());
+                auto          e_obj = entry.as_object();
+                (*e_obj)[std::string_view("actionId")] =
+                    JsonString(task.dto.name);
+                std::string_view label = task.dto.name;
+                if (task.dto.label)
+                {
+                    label = ResolveI18n(
+                        *task.dto.label,
+                        *catalog,
+                        current_language);
+                }
+                (*e_obj)[std::string_view("label")] = JsonString(label);
+                if (task.dto.description)
+                {
+                    std::string_view desc = ResolveI18n(
+                        *task.dto.description,
+                        *catalog,
+                        current_language);
+                    (*e_obj)[std::string_view("description")] =
+                        JsonString(desc);
+                }
+                entries.as_array()->emplace_back(std::move(entry));
+            }
+            for (const auto& group : catalog->groups)
+            {
+                yyjson::value g(Object());
+                auto          g_obj = g.as_object();
+                (*g_obj)[std::string_view("id")] = JsonString(group.dto.name);
+                std::string_view label = group.dto.name;
+                if (group.dto.label)
+                {
+                    label = ResolveI18n(
+                        *group.dto.label,
+                        *catalog,
+                        current_language);
+                }
+                (*g_obj)[std::string_view("label")] = JsonString(label);
+                yyjson::value action_ids(Array());
+                for (const auto& task_name : catalog->tasks)
+                {
+                    if (ContainsName(task_name.dto.group, group.dto.name))
+                    {
+                        action_ids.as_array()->emplace_back(
+                            JsonString(task_name.dto.name));
+                    }
+                }
+                (*g_obj)[std::string_view("actionIds")] = std::move(action_ids);
+                groups.as_array()->emplace_back(std::move(g));
+            }
         }
-        (*obj)[std::string_view("catalog")] = std::move(catalog_json);
+        (*ac_obj)[std::string_view("entries")] = std::move(entries);
+        (*ac_obj)[std::string_view("groups")] = std::move(groups);
+        (*obj)[std::string_view("actionCatalog")] = std::move(action_catalog);
 
-        yyjson::value diagnostics_json(Array());
-        for (const auto& diagnostic : diagnostics)
-        {
-            AddDiagnosticJson(diagnostics_json, diagnostic);
-        }
-        for (const auto& orphan : settings.pi.orphan_paths)
-        {
-            PiDiagnosticDto diagnostic;
-            diagnostic.severity = "warning";
-            diagnostic.code = "orphan";
-            diagnostic.message = "Accepted setting references missing PI data";
-            diagnostic.path = orphan;
-            AddDiagnosticJson(diagnostics_json, diagnostic);
-        }
-        (*obj)[std::string_view("diagnostics")] = std::move(diagnostics_json);
-
-        // D-84-04: document.migration 已删除。orphanPaths 仅作为 Provider 私有
-        // 字段保留在 acceptedProperties.pi 中，不再投影到 document UI IR，
-        // SelectConfigurationSwitchesAuthority 通过 ContainsAnyKey 检查这一
-        // 不变量。
+        // diagnostics 不在 document 上 (D-84-11：diagnostics 位于 envelope，
+        // 和 document 同级)。这里不投影；envelope 由 BuildApplyResult 等调用
+        // 方负责。
+        (void)diagnostics;
         return document;
     }
 

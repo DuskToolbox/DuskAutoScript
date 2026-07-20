@@ -354,8 +354,9 @@ TEST_F(MaapiPluginScaffoldFixture, AdapterOnlyDocumentBeforeProjectSelection)
     auto document = ReadJsonInterface(document_json.Get());
     auto obj = document.as_object();
     ASSERT_TRUE(obj.has_value());
+    // D-84-02/13: 严格 IR 下 document 用 viewKind 而不是 kind。
     EXPECT_EQ(
-        (*obj)[std::string_view("kind")].as_string().value_or(""),
+        (*obj)[std::string_view("viewKind")].as_string().value_or(""),
         std::string_view("formSequence"));
 
     const auto        serialized = document.write(yyjson::WriteFlag::NoFlag);

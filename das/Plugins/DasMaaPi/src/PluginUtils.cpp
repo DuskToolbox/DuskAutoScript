@@ -85,19 +85,11 @@ namespace Plugins::DasMaaPi
         auto          catalog = TryParseCatalog(settings, diagnostics);
         yyjson::value result(Das::Utils::MakeYyjsonObject());
         auto          obj = result.as_object();
+        // D-84-08/11: Apply 严格 envelope = {acceptedProperties, document,
+        // diagnostics}。不再 emit migration/sourceFingerprint (D-84-04)。
+        // document 内也不携带 diagnostics（envelope 同级）。
         (*obj)[std::string_view("acceptedProperties")] =
             SerializeAcceptedSettings(settings);
-        (*obj)[std::string_view("migration")] = Das::Utils::MakeYyjsonObject();
-
-        if (catalog)
-        {
-            (*obj)[std::string_view("sourceFingerprint")] =
-                JsonString(catalog->name + ":" + catalog->version);
-        }
-        else
-        {
-            (*obj)[std::string_view("sourceFingerprint")] = "maapi-unparsed";
-        }
 
         (*obj)[std::string_view("document")] = ProjectAuthoringDocument(
             settings,
@@ -112,13 +104,16 @@ namespace Plugins::DasMaaPi
             auto          item_obj = item.as_object();
             (*item_obj)[std::string_view("severity")] =
                 JsonString(diagnostic.severity);
-            (*item_obj)[std::string_view("code")] = JsonString(diagnostic.code);
+            // D-84-11: diagnostic 严格 {severity, message, code?, path?}。
+            // code 是可选整数 DasResult；source 已删除。PiDiagnosticDto.code
+            // 是字符串形态（PI 协议遗留），这里直接放入 message 信息即可，
+            // 整数 code 留给 84-07 语义错误映射。
             (*item_obj)[std::string_view("message")] =
                 JsonString(diagnostic.message);
-            if (diagnostic.source)
+            if (diagnostic.path)
             {
-                (*item_obj)[std::string_view("source")] =
-                    JsonString(*diagnostic.source);
+                (*item_obj)[std::string_view("path")] =
+                    JsonString(*diagnostic.path);
             }
             diagnostics_json.as_array()->emplace_back(std::move(item));
         }

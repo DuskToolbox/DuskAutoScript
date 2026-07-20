@@ -95,21 +95,18 @@ namespace
         return parsed ? std::move(*parsed) : Das::Utils::MakeYyjsonObject();
     }
 
+    // D-84-13: 根字段直接挂在 document 上（不再位于 formSequence.fields）。
+    // 此助手检查根 fields[] 是否包含指定 name。
     bool FormSequenceHasField(
         const yyjson::value& document,
         std::string_view     name)
     {
         auto obj = document.as_object();
-        if (!obj || !obj->contains(std::string_view("formSequence")))
+        if (!obj || !obj->contains(std::string_view("fields")))
         {
             return false;
         }
-        auto fs = (*obj)[std::string_view("formSequence")].as_object();
-        if (!fs || !fs->contains(std::string_view("fields")))
-        {
-            return false;
-        }
-        auto fields = (*fs)[std::string_view("fields")].as_array();
+        auto fields = (*obj)[std::string_view("fields")].as_array();
         if (!fields)
         {
             return false;
@@ -357,6 +354,116 @@ namespace
         std::shared_ptr<Das::Core::IPC::MainProcess::IIpcContext> ipc_sp_;
         std::thread ipc_run_thread_;
     };
+
+    // D-84-13/21/31: 严格 IR 查找助手。在 document 根级 fields[] 按名查找。
+    // 提前在首个匿名 namespace 定义，供后续所有 I18nTest / OptionValueIrTest /
+    // MaapiProjectionTest 等测试共享。
+    std::optional<yyjson::value> FindRootField(
+        const yyjson::value& document,
+        std::string_view     name)
+    {
+        auto obj = document.as_object();
+        if (!obj || !obj->contains(std::string_view("fields")))
+        {
+            return std::nullopt;
+        }
+        auto fields = (*obj)[std::string_view("fields")].as_array();
+        if (!fields)
+        {
+            return std::nullopt;
+        }
+        for (auto it = fields->begin(); it != fields->end(); ++it)
+        {
+            auto field = it->as_object();
+            if (!field)
+            {
+                continue;
+            }
+            if ((*field)[std::string_view("name")].as_string().value_or("")
+                == name)
+            {
+                return Das::Utils::CloneYyjsonValue(*it);
+            }
+        }
+        return std::nullopt;
+    }
+
+    // 从 root.fields[name].candidates[] 中按 value 取候选 label。
+    std::string CandidateLabel(
+        const yyjson::value& document,
+        std::string_view     field_name,
+        std::string_view     candidate_value)
+    {
+        auto field = FindRootField(document, field_name);
+        if (!field)
+        {
+            return "";
+        }
+        auto field_obj = field->as_object();
+        if (!field_obj || !field_obj->contains(std::string_view("candidates")))
+        {
+            return "";
+        }
+        auto cands = (*field_obj)[std::string_view("candidates")].as_array();
+        if (!cands)
+        {
+            return "";
+        }
+        for (auto it = cands->begin(); it != cands->end(); ++it)
+        {
+            auto cand = it->as_object();
+            if (!cand)
+            {
+                continue;
+            }
+            if ((*cand)[std::string_view("value")].as_string().value_or("")
+                == candidate_value)
+            {
+                return std::string(
+                    (*cand)[std::string_view("label")].as_string().value_or(
+                        ""));
+            }
+        }
+        return "";
+    }
+
+    // 从 actionCatalog.entries[] 中按 actionId 取候选 label。
+    std::string ActionCatalogLabel(
+        const yyjson::value& document,
+        std::string_view     action_id)
+    {
+        auto obj = document.as_object();
+        if (!obj || !obj->contains(std::string_view("actionCatalog")))
+        {
+            return "";
+        }
+        auto ac = (*obj)[std::string_view("actionCatalog")].as_object();
+        if (!ac || !ac->contains(std::string_view("entries")))
+        {
+            return "";
+        }
+        auto entries = (*ac)[std::string_view("entries")].as_array();
+        if (!entries)
+        {
+            return "";
+        }
+        for (auto it = entries->begin(); it != entries->end(); ++it)
+        {
+            auto entry = it->as_object();
+            if (!entry)
+            {
+                continue;
+            }
+            if ((*entry)[std::string_view("actionId")].as_string().value_or("")
+                == action_id)
+            {
+                return std::string(
+                    (*entry)[std::string_view("label")].as_string().value_or(
+                        ""));
+            }
+        }
+        return "";
+    }
 } // namespace
 
 TEST_F(MaapiAuthoringFixture, ApplyPathFailurePersistsDiagnostics)
@@ -405,9 +512,13 @@ TEST_F(MaapiAuthoringFixture, ApplyPathSuccessRefreshesDocument)
     auto result = ReadJsonInterface(result_json.Get());
     auto obj = result.as_object();
     ASSERT_TRUE(obj.has_value());
-    EXPECT_EQ(
-        (*obj)[std::string_view("sourceFingerprint")].as_string().value_or(""),
-        "AuthoringFixture:1.0");
+    // D-84-04/11: 严格 Apply envelope = {acceptedProperties, document,
+    // diagnostics}；sourceFingerprint / migration 已删除。
+    EXPECT_FALSE(obj->contains(std::string_view("sourceFingerprint")));
+    EXPECT_FALSE(obj->contains(std::string_view("migration")));
+    EXPECT_TRUE(obj->contains(std::string_view("acceptedProperties")));
+    EXPECT_TRUE(obj->contains(std::string_view("document")));
+    EXPECT_TRUE(obj->contains(std::string_view("diagnostics")));
 
     auto document = (*obj)[std::string_view("document")];
     EXPECT_TRUE(FormSequenceHasField(document, "controllerName"));
@@ -421,10 +532,14 @@ TEST_F(MaapiAuthoringFixture, ApplyPathSuccessRefreshesDocument)
     EXPECT_EQ(
         (*doc_obj)[std::string_view("contractVersion")].as_int().value_or(0),
         1);
-    EXPECT_FALSE((*doc_obj)[std::string_view("sourceFingerprint")]
-                     .as_string()
-                     .value_or("")
-                     .empty());
+    // D-84-02/04: document 内不再有 kind/sourceFingerprint/catalog；
+    // viewKind 是新唯一标识。
+    EXPECT_EQ(
+        (*doc_obj)[std::string_view("viewKind")].as_string().value_or(""),
+        "formSequence");
+    EXPECT_FALSE(doc_obj->contains(std::string_view("kind")));
+    EXPECT_FALSE(doc_obj->contains(std::string_view("sourceFingerprint")));
+    EXPECT_FALSE(doc_obj->contains(std::string_view("catalog")));
     EXPECT_FALSE(ContainsAnyKey(
         document,
         {"valuePath", "sourceLevel", "piRef", "schema"}));
@@ -634,29 +749,48 @@ TEST_F(MaapiAuthoringFixture, ContractDocShapeHasFormSequenceAndNoPrivateFields)
     EXPECT_EQ(
         (*doc_obj)[std::string_view("contractVersion")].as_int().value_or(0),
         1);
-    EXPECT_FALSE((*doc_obj)[std::string_view("sourceFingerprint")]
-                     .as_string()
-                     .value_or("")
-                     .empty());
+    // D-84-13/84-01: document 不再携带 sourceFingerprint/catalog/kind；
+    // viewKind 取而代之。
+    EXPECT_EQ(
+        (*doc_obj)[std::string_view("viewKind")].as_string().value_or(""),
+        "formSequence");
+    EXPECT_FALSE(doc_obj->contains(std::string_view("sourceFingerprint")));
+    EXPECT_FALSE(doc_obj->contains(std::string_view("catalog")));
+    EXPECT_FALSE(doc_obj->contains(std::string_view("kind")));
+
+    // D-84-13: 根字段直接挂在 document。
+    EXPECT_TRUE(doc_obj->contains(std::string_view("fields")));
 
     auto fs = (*doc_obj)[std::string_view("formSequence")].as_object();
     ASSERT_TRUE(fs.has_value());
-    EXPECT_TRUE(fs->contains(std::string_view("fields")));
-    auto sequence = (*fs)[std::string_view("sequence")].as_array();
-    ASSERT_TRUE(sequence.has_value());
-    ASSERT_FALSE(sequence->empty());
+    // formSequence 只承载 items[]。
+    EXPECT_FALSE(fs->contains(std::string_view("fields")));
+    EXPECT_FALSE(fs->contains(std::string_view("sequence")));
+    auto items = (*fs)[std::string_view("items")].as_array();
+    ASSERT_TRUE(items.has_value());
+    ASSERT_FALSE(items->empty());
 
-    auto first = (*sequence)[0].as_object();
+    auto first = (*items)[0].as_object();
     ASSERT_TRUE(first.has_value());
-    EXPECT_EQ(
-        (*first)[std::string_view("id")].as_string().value_or(""),
-        "DailyFarm");
+    // D-84-40: FormSequenceItem.id = Provider 颁发的 itemId，不再是
+    // taskName。DailyFarm 在创建时未显式给 itemId，ParseAcceptedSettings
+    // 通过 NormalizeItemIds 分配稳定 item_<n>。
+    const auto item_id =
+        (*first)[std::string_view("id")].as_string().value_or("");
+    EXPECT_FALSE(item_id.empty());
+    EXPECT_NE(item_id, "DailyFarm");
     EXPECT_EQ(
         (*first)[std::string_view("componentGuid")].as_string().value_or(""),
         "69F20008-0000-4000-8000-000000000001");
+    EXPECT_EQ(
+        (*first)[std::string_view("targetKind")].as_string().value_or(""),
+        "componentRef");
     EXPECT_TRUE(first->contains(std::string_view("fields")));
-    EXPECT_TRUE(first->contains(std::string_view("settings")));
+    // D-84-07: settings 已删除；可编辑值只在 fields[]。
+    EXPECT_FALSE(first->contains(std::string_view("settings")));
     EXPECT_TRUE(first->contains(std::string_view("enabled")));
+    // D-84-45: label 不在 item 级（label 走 i18n 入 fields/catalog）。
+    EXPECT_FALSE(first->contains(std::string_view("label")));
 
     EXPECT_FALSE(ContainsAnyKey(
         document,
@@ -1067,9 +1201,10 @@ namespace
         return catalog;
     }
 
+    // D-84-21: CandidateDescriptor 严格 {value, label, icon?}，按 value 查找。
     std::string GetLabelFromCandidateArray(
         const yyjson::value& arr,
-        std::string_view     name)
+        std::string_view     value_key)
     {
         auto arr_ptr = arr.as_array();
         if (!arr_ptr)
@@ -1083,8 +1218,8 @@ namespace
             {
                 continue;
             }
-            auto name_val = (*obj)[std::string_view("name")].as_string();
-            if (name_val.value_or("") == name)
+            auto val = (*obj)[std::string_view("value")].as_string();
+            if (val.value_or("") == value_key)
             {
                 auto label_val = (*obj)[std::string_view("label")].as_string();
                 if (label_val)
@@ -1096,21 +1231,17 @@ namespace
         return "";
     }
 
+    // D-84-13: 根字段位于 document.fields[]，不在 formSequence.fields。
     std::string GetFieldLabel(
         const yyjson::value& document,
         std::string_view     field_name)
     {
         auto obj = document.as_object();
-        if (!obj || !obj->contains(std::string_view("formSequence")))
+        if (!obj || !obj->contains(std::string_view("fields")))
         {
             return "";
         }
-        auto fs = (*obj)[std::string_view("formSequence")].as_object();
-        if (!fs || !fs->contains(std::string_view("fields")))
-        {
-            return "";
-        }
-        auto fields = (*fs)[std::string_view("fields")].as_array();
+        auto fields = (*obj)[std::string_view("fields")].as_array();
         if (!fields)
         {
             return "";
@@ -1136,6 +1267,7 @@ namespace
         return "";
     }
 
+    // D-84-13: FormSequenceItem 位于 formSequence.items[]（不再叫 sequence）。
     std::string GetSequenceItemFieldLabel(
         const yyjson::value& document,
         std::string_view     item_id,
@@ -1147,16 +1279,16 @@ namespace
             return "";
         }
         auto fs = (*obj)[std::string_view("formSequence")].as_object();
-        if (!fs || !fs->contains(std::string_view("sequence")))
+        if (!fs || !fs->contains(std::string_view("items")))
         {
             return "";
         }
-        auto sequence = (*fs)[std::string_view("sequence")].as_array();
-        if (!sequence)
+        auto items = (*fs)[std::string_view("items")].as_array();
+        if (!items)
         {
             return "";
         }
-        for (auto it = sequence->begin(); it != sequence->end(); ++it)
+        for (auto it = items->begin(); it != items->end(); ++it)
         {
             auto item = it->as_object();
             if (!item)
@@ -1209,29 +1341,12 @@ TEST(I18nTest, ResolveI18nResolvesDollarPrefixKeys)
         {},
         0);
 
-    auto doc_obj = document.as_object();
-    ASSERT_TRUE(doc_obj.has_value());
-
-    auto catalog_val = (*doc_obj)[std::string_view("catalog")].as_object();
-    ASSERT_TRUE(catalog_val.has_value());
-
-    auto controllers_arr =
-        (*catalog_val)[std::string_view("controllers")].as_array();
-    ASSERT_TRUE(controllers_arr.has_value());
-    EXPECT_EQ(
-        GetLabelFromCandidateArray(*controllers_arr, "Android"),
-        "安卓端");
-
-    auto resources_arr =
-        (*catalog_val)[std::string_view("resources")].as_array();
-    ASSERT_TRUE(resources_arr.has_value());
-    EXPECT_EQ(
-        GetLabelFromCandidateArray(*resources_arr, "Official"),
-        "官服资源");
-
-    auto tasks_arr = (*catalog_val)[std::string_view("tasks")].as_array();
-    ASSERT_TRUE(tasks_arr.has_value());
-    EXPECT_EQ(GetLabelFromCandidateArray(*tasks_arr, "DailyFarm"), "日常任务");
+    // D-84-13/21: controllers/resources 现在是根字段 controllerName/
+    // resourceName 的 candidates[{value,label,icon?}]；tasks 是
+    // actionCatalog.entries[{actionId,label,...}]。catalog 已删除。
+    EXPECT_EQ(CandidateLabel(document, "controllerName", "Android"), "安卓端");
+    EXPECT_EQ(CandidateLabel(document, "resourceName", "Official"), "官服资源");
+    EXPECT_EQ(ActionCatalogLabel(document, "DailyFarm"), "日常任务");
 }
 
 TEST(I18nTest, ResolveI18nSwitchesLanguageCorrectly)
@@ -1242,32 +1357,16 @@ TEST(I18nTest, ResolveI18nSwitchesLanguageCorrectly)
     settings_zh.pi.language = "zh_cn";
 
     auto document_zh = ProjectAuthoringDocument(settings_zh, &catalog, {}, 0);
-
-    auto doc_obj_zh = document_zh.as_object();
-    ASSERT_TRUE(doc_obj_zh.has_value());
-    auto catalog_val_zh =
-        (*doc_obj_zh)[std::string_view("catalog")].as_object();
-    ASSERT_TRUE(catalog_val_zh.has_value());
-    auto controllers_zh =
-        (*catalog_val_zh)[std::string_view("controllers")].as_array();
-    ASSERT_TRUE(controllers_zh.has_value());
-    EXPECT_EQ(GetLabelFromCandidateArray(*controllers_zh, "Android"), "安卓端");
+    EXPECT_EQ(
+        CandidateLabel(document_zh, "controllerName", "Android"),
+        "安卓端");
 
     AcceptedSettingsDto settings_en;
     settings_en.pi.language = "en";
 
     auto document_en = ProjectAuthoringDocument(settings_en, &catalog, {}, 0);
-
-    auto doc_obj_en = document_en.as_object();
-    ASSERT_TRUE(doc_obj_en.has_value());
-    auto catalog_val_en =
-        (*doc_obj_en)[std::string_view("catalog")].as_object();
-    ASSERT_TRUE(catalog_val_en.has_value());
-    auto controllers_en =
-        (*catalog_val_en)[std::string_view("controllers")].as_array();
-    ASSERT_TRUE(controllers_en.has_value());
     EXPECT_EQ(
-        GetLabelFromCandidateArray(*controllers_en, "Android"),
+        CandidateLabel(document_en, "controllerName", "Android"),
         "Android");
 }
 
@@ -1286,15 +1385,11 @@ TEST(I18nTest, ResolveI18nFallsBackToKeyWhenTranslationNotFound)
         {},
         0);
 
-    auto doc_obj = document.as_object();
-    ASSERT_TRUE(doc_obj.has_value());
-    auto catalog_val = (*doc_obj)[std::string_view("catalog")].as_object();
-    ASSERT_TRUE(catalog_val.has_value());
-    auto controllers_arr =
-        (*catalog_val)[std::string_view("controllers")].as_array();
-    ASSERT_TRUE(controllers_arr.has_value());
+    // 缺译文时 ProjectAuthoringDocument 退回 $key 形态 (去掉前缀 $)。
+    // 这是 PI 协议的 machine key，不应在正常 UI 中出现；D-84-23 要求
+    // Provider 用本地化通用文本 + diagnostics 替代，由 84-07 严格化。
     EXPECT_EQ(
-        GetLabelFromCandidateArray(*controllers_arr, "Android"),
+        CandidateLabel(document, "controllerName", "Android"),
         "controller.android");
 }
 
@@ -1317,15 +1412,10 @@ TEST(I18nTest, ResolveI18nReturnsOriginalTextWhenNotDollarPrefixed)
         {},
         0);
 
-    auto doc_obj = document.as_object();
-    ASSERT_TRUE(doc_obj.has_value());
-    auto catalog_val = (*doc_obj)[std::string_view("catalog")].as_object();
-    ASSERT_TRUE(catalog_val.has_value());
-    auto controllers_arr =
-        (*catalog_val)[std::string_view("controllers")].as_array();
-    ASSERT_TRUE(controllers_arr.has_value());
+    // D-84-13/21: catalog.controllers 私有字段已删除；候选信息现在挂在根字段
+    // controllerName 的 candidates 上。
     EXPECT_EQ(
-        GetLabelFromCandidateArray(*controllers_arr, "RawTest"),
+        CandidateLabel(document, "controllerName", "RawTest"),
         "RawLabel");
 }
 
@@ -1372,11 +1462,10 @@ TEST(I18nTest, DefaultLanguageIsZhCnWhenAvailable)
         {},
         0);
 
+    // D-84-13: 根字段直接位于 document.fields[]（不再在 formSequence.fields）。
     auto doc_obj = document.as_object();
     ASSERT_TRUE(doc_obj.has_value());
-    auto fs = (*doc_obj)[std::string_view("formSequence")].as_object();
-    ASSERT_TRUE(fs.has_value());
-    auto fields = (*fs)[std::string_view("fields")].as_array();
+    auto fields = (*doc_obj)[std::string_view("fields")].as_array();
     ASSERT_TRUE(fields.has_value());
 
     bool found_language_field = false;
@@ -1405,9 +1494,12 @@ TEST(I18nTest, OptionFieldLabelsAreResolved)
     auto                                        catalog = MakeI18nMockCatalog();
     Das::Plugins::DasMaaPi::AcceptedSettingsDto settings;
     settings.pi.language = "zh_cn";
-    // sequence[].fields[] 只投影用户已选的 task，故需要把 DailyFarm 选上，
-    // 任务级 option（retry/notify）才会出现在 sequence 项里。
+    // items[].fields[] 只投影用户已选的 task，故需要把 DailyFarm 选上，
+    // 任务级 option（retry/notify）才会出现在 items 项里。
+    // D-84-40: item_id 是 Provider 颁发的稳定身份，直接显式给出便于
+    // GetSequenceItemFieldLabel 按 id 查找。
     Das::Plugins::DasMaaPi::MaapiPiTaskSettingsDto daily_farm;
+    daily_farm.item_id = "item_daily_farm";
     daily_farm.task_name = "DailyFarm";
     daily_farm.enabled = true;
     settings.pi.tasks.push_back(std::move(daily_farm));
@@ -1423,13 +1515,15 @@ TEST(I18nTest, OptionFieldLabelsAreResolved)
 
     EXPECT_EQ(GetFieldLabel(document, "options.stage"), "关卡");
     // retry/notify 是 task 级 option（在 catalog.options，不在
-    // global_options）， DAS-78 后归位到 sequence[].fields[]，不再出现在项目级
-    // fields[]。
+    // global_options），归位到 items[].fields[]，不再出现在根 fields[]。
     EXPECT_EQ(
-        GetSequenceItemFieldLabel(document, "DailyFarm", "options.retry"),
+        GetSequenceItemFieldLabel(document, "item_daily_farm", "options.retry"),
         "重试");
     EXPECT_EQ(
-        GetSequenceItemFieldLabel(document, "DailyFarm", "options.notify"),
+        GetSequenceItemFieldLabel(
+            document,
+            "item_daily_farm",
+            "options.notify"),
         "通知");
 }
 
@@ -1442,22 +1536,17 @@ TEST(I18nTest, OptionFieldLabelsAreResolved)
 
 namespace
 {
-    // 在 document 的 formSequence.fields[] 里按 name 找 field，返回其 value。
+    // D-84-13: 根字段位于 document.fields[]（不在 formSequence.fields）。
     yyjson::value FindProjectFieldValue(
         const yyjson::value& document,
         std::string_view     field_name)
     {
         auto obj = document.as_object();
-        if (!obj)
+        if (!obj || !obj->contains(std::string_view("fields")))
         {
             return yyjson::value(nullptr);
         }
-        auto fs = (*obj)[std::string_view("formSequence")].as_object();
-        if (!fs)
-        {
-            return yyjson::value(nullptr);
-        }
-        auto fields = (*fs)[std::string_view("fields")].as_array();
+        auto fields = (*obj)[std::string_view("fields")].as_array();
         if (!fields)
         {
             return yyjson::value(nullptr);
@@ -1479,28 +1568,28 @@ namespace
         return yyjson::value(nullptr);
     }
 
-    // 在 document 的 formSequence.sequence[item_id].fields[] 里找 field value。
+    // D-84-13: FormSequenceItem 位于 formSequence.items[]（不再叫 sequence）。
     yyjson::value FindSequenceItemFieldValue(
         const yyjson::value& document,
         std::string_view     item_id,
         std::string_view     field_name)
     {
         auto obj = document.as_object();
-        if (!obj)
+        if (!obj || !obj->contains(std::string_view("formSequence")))
         {
             return yyjson::value(nullptr);
         }
         auto fs = (*obj)[std::string_view("formSequence")].as_object();
-        if (!fs)
+        if (!fs || !fs->contains(std::string_view("items")))
         {
             return yyjson::value(nullptr);
         }
-        auto sequence = (*fs)[std::string_view("sequence")].as_array();
-        if (!sequence)
+        auto items = (*fs)[std::string_view("items")].as_array();
+        if (!items)
         {
             return yyjson::value(nullptr);
         }
-        for (auto it = sequence->begin(); it != sequence->end(); ++it)
+        for (auto it = items->begin(); it != items->end(); ++it)
         {
             auto item = it->as_object();
             if (!item)
@@ -1640,6 +1729,7 @@ TEST(OptionValueIrTest, EmitProducesScalarValuesMatchingValueType)
 
     AcceptedSettingsDto    settings;
     MaapiPiTaskSettingsDto task;
+    task.item_id = "T";
     task.task_name = "T";
     task.enabled = true;
 
@@ -2683,77 +2773,12 @@ namespace
             (*first)[std::string_view("id")].as_string().value_or(""));
     }
 
-    // 在 document 根级 fields[] 中按 name 找 field 子对象。
-    std::optional<yyjson::value> FindRootField(
-        const yyjson::value& document,
-        std::string_view     name)
-    {
-        auto obj = document.as_object();
-        if (!obj || !obj->contains(std::string_view("fields")))
-        {
-            return std::nullopt;
-        }
-        auto fields = (*obj)[std::string_view("fields")].as_array();
-        if (!fields)
-        {
-            return std::nullopt;
-        }
-        for (auto it = fields->begin(); it != fields->end(); ++it)
-        {
-            auto field = it->as_object();
-            if (!field)
-            {
-                continue;
-            }
-            if ((*field)[std::string_view("name")].as_string().value_or("")
-                == name)
-            {
-                return Das::Utils::CloneYyjsonValue(*it);
-            }
-        }
-        return std::nullopt;
-    }
+    // FindRootField / CandidateLabel / ActionCatalogLabel 已在首个匿名
+    // namespace 定义（文件顶部 MaapiAuthoringFixture 之后），此处直接复用。
 
-    // 从 root.fields[name].candidates[] 中按 value 取候选 label。
-    std::string CandidateLabel(
-        const yyjson::value& document,
-        std::string_view     field_name,
-        std::string_view     candidate_value)
-    {
-        auto field = FindRootField(document, field_name);
-        if (!field)
-        {
-            return "";
-        }
-        auto field_obj = field->as_object();
-        if (!field_obj || !field_obj->contains(std::string_view("candidates")))
-        {
-            return "";
-        }
-        auto cands = (*field_obj)[std::string_view("candidates")].as_array();
-        if (!cands)
-        {
-            return "";
-        }
-        for (auto it = cands->begin(); it != cands->end(); ++it)
-        {
-            auto cand = it->as_object();
-            if (!cand)
-            {
-                continue;
-            }
-            if ((*cand)[std::string_view("value")].as_string().value_or("")
-                == candidate_value)
-            {
-                return std::string(
-                    (*cand)[std::string_view("label")].as_string().value_or(""));
-            }
-        }
-        return "";
-    }
-
-    // 构造一个最小可投影的 catalog：一个 controller/resource/task/option/group，
-    // 全部带 $key 本地化引用，覆盖 zh_cn + en 两种语言。fixture 用于多个 tracer。
+    // 构造一个最小可投影的 catalog：一个
+    // controller/resource/task/option/group， 全部带 $key 本地化引用，覆盖
+    // zh_cn + en 两种语言。fixture 用于多个 tracer。
     PiCatalog MakeStrictProjectionMockCatalog()
     {
         using namespace Das::Plugins::DasMaaPi;
@@ -2923,7 +2948,7 @@ TEST(MaapiProjectionTest, DocumentPassesStrictContractValidator)
 
     auto catalog = MakeStrictProjectionMockCatalog();
 
-    AcceptedSettingsDto    settings;
+    AcceptedSettingsDto settings;
     settings.pi.language = "zh_cn";
     MaapiPiTaskSettingsDto task;
     task.item_id = "item_strict_1";
@@ -2971,4 +2996,3 @@ TEST(MaapiProjectionTest, DocumentPassesStrictContractValidator)
     // D-84-45: 不把 PI task name / componentGuid 当 label 回退；label 走 i18n。
     EXPECT_FALSE(item_obj->contains(std::string_view("label")));
 }
-
