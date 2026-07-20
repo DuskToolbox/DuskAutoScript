@@ -450,14 +450,28 @@ yyjson::value PluginSettingDescToJson(const PluginSettingDesc& setting)
     return j;
 }
 
-// 将 PluginSettingDesc 转换为 NativeUI 动态表单消费的配置项结构
-// {name, description, valueType, inputType, defaultValue, options, required}。
+// 将 PluginSettingDesc 规范化为 Phase 84 共享运行时 PropertySchema 形态：
+//   {name,label,description?,valueType,inputType,defaultValue?,candidates?,required}
+// 输入仍是手写 manifest 的 PluginSettingDesc；本函数是 manifest → 运行时
+// PropertySchema 的唯一投影点（公共 DAS_EXPORT 符号
+// PluginPackageDescDetailToJson 的内部步骤），手写 manifest 源格式保持不变。
 //
-// valueType 沿用 DasType 枚举值（0=INT,1=UINT,2=FLOAT,4=STRING,8=BOOL,
-// 16=JSON_OBJECT,32=JSON_ARRAY），与前端 profiles_store 的 valueType 完全一致。
-// inputType：enum_values 非空 → 1（单选），否则 0（自由文本输入）；
-//   多选(2)/长单行(3) 暂无 manifest 字段表达，保留为后续扩展点。
-// options 直接取自 enum_values，无枚举时输出空数组。
+// Phase 84 D-84-18/D-84-19/D-84-21 确定性规则：
+// - label = setting.name（manifest 自身没有独立本地化 label，运行时 label 直接
+//   取自 name；Authoring Provider 后续通过真正的 i18n 覆盖）。
+// - description 保留为 help text，无值时省略字段（而非输出空字符串）。
+// - valueType 沿用 DasType 枚举值（0=INT,1=UINT,2=FLOAT,4=STRING,8=BOOL,
+//   16=JSON_OBJECT,32=JSON_ARRAY）。
+// - inputType：enum_values 非空 → 1（select），否则 0（plain）。多选(2)/
+//   长单行(3)/region-select(4)/filePath(5)/directoryPath(6) 是 Phase 84
+//   保留 inputType 码，manifest 当前不表达它们；本函数只输出 0/1。
+// - candidates 仅在 inputType=select 时输出，每项是 CandidateDescriptor
+//   {value,label}：value 取自 enum_values[i]，label 取自 enum_descriptions[i]
+//   （若声明），否则回退为 enum_values[i] 本身。candidate 不携带 icon，因
+//   为 manifest 当前不提供 enum 级 icon。
+// - 不输出 Phase 84 已删除的 legacy 字段（group/dependency/rules/unit/
+//   placeholder/deprecationMessage/options），即便 PluginSettingDesc 自身
+//   携带 deprecation_message。
 yyjson::value NativeConfigItemFromSetting(const PluginSettingDesc& setting)
 {
     auto j = Das::Utils::MakeYyjsonObject();
@@ -467,13 +481,20 @@ yyjson::value NativeConfigItemFromSetting(const PluginSettingDesc& setting)
         return j;
     }
 
-    (*obj)[std::string_view("name")] = std::make_pair(
-        std::string_view(setting.name),
-        yyjson::copy_string);
+    (*obj)[std::string_view("name")] =
+        std::make_pair(std::string_view(setting.name), yyjson::copy_string);
 
-    (*obj)[std::string_view("description")] = std::make_pair(
-        std::string_view(setting.description.value_or("")),
-        yyjson::copy_string);
+    // 确定性 label 规则：label = setting.name。copy_string 避免 name 析构后
+    // 出现悬空字符串视图（das-yyjson-string-safety）。
+    (*obj)[std::string_view("label")] =
+        std::make_pair(std::string_view(setting.name), yyjson::copy_string);
+
+    if (setting.description.has_value() && !setting.description->empty())
+    {
+        (*obj)[std::string_view("description")] = std::make_pair(
+            std::string_view(setting.description.value()),
+            yyjson::copy_string);
+    }
 
     (*obj)[std::string_view("valueType")] =
         static_cast<std::int64_t>(setting.type);
@@ -507,23 +528,47 @@ yyjson::value NativeConfigItemFromSetting(const PluginSettingDesc& setting)
             }
             else if constexpr (std::is_same_v<T, std::string>)
             {
-                (*obj)[std::string_view("defaultValue")] = std::make_pair(
-                    std::string_view(val),
-                    yyjson::copy_string);
+                (*obj)[std::string_view("defaultValue")] =
+                    std::make_pair(std::string_view(val), yyjson::copy_string);
             }
         },
         setting.default_value);
 
-    auto opts_arr = Das::Utils::MakeYyjsonArray();
-    auto opts_ref = opts_arr.as_array();
-    if (opts_ref && has_enum)
+    if (has_enum)
     {
-        for (const auto& v : setting.enum_values.value())
+        const auto& values = setting.enum_values.value();
+        const auto& descriptions =
+            setting.enum_descriptions.value_or(std::vector<std::string>{});
+
+        auto cand_arr = Das::Utils::MakeYyjsonArray();
+        auto cand_ref = cand_arr.as_array();
+        if (cand_ref)
         {
-            opts_ref->emplace_back(std::string(v));
+            for (std::size_t i = 0; i < values.size(); ++i)
+            {
+                auto cand = Das::Utils::MakeYyjsonObject();
+                auto cand_obj = cand.as_object();
+                if (!cand_obj)
+                {
+                    continue;
+                }
+                // value 是 setValue 使用的非 null JSON 标量。
+                (*cand_obj)[std::string_view("value")] = std::make_pair(
+                    std::string_view(values[i]),
+                    yyjson::copy_string);
+                // label 优先取 enum_descriptions[i]，缺则回退为 enum_values[i]
+                // 本身（manifest 级确定性回退；MaaPI Provider 在 Wave 6 通过
+                // PI case label 提供真正本地化文本）。
+                const bool has_desc = i < descriptions.size();
+                (*cand_obj)[std::string_view("label")] = std::make_pair(
+                    std::string_view(has_desc ? descriptions[i] : values[i]),
+                    yyjson::copy_string);
+
+                cand_ref->emplace_back(std::move(cand));
+            }
         }
+        (*obj)[std::string_view("candidates")] = std::move(cand_arr);
     }
-    (*obj)[std::string_view("options")] = std::move(opts_arr);
 
     (*obj)[std::string_view("required")] = setting.required;
 
@@ -760,9 +805,12 @@ yyjson::value PluginPackageDescDetailToJson(const PluginPackageDesc& desc)
 
     // items[]：NativeUI 契约 —— 插件项列表，每项带 defaultConfigSchema。
     // 数据源全部来自现有 PluginPackageDesc，无需扩展 manifest 或 IDL：
-    //   - 插件包级配置（settings_groups / settings_desc）→ 一个 type="plugin" 项
-    //   - 每个 task → 一个 type="tool" 项，defaultConfigSchema 由 task.descriptors 合成
-    // 仅在有可输出内容时才追加 items 字段，保持与现有 settings/tasks 条件输出风格一致。
+    //   - 插件包级配置（settings_groups / settings_desc）→ 一个 type="plugin"
+    //   项
+    //   - 每个 task → 一个 type="tool" 项，defaultConfigSchema 由
+    //   task.descriptors 合成
+    // 仅在有可输出内容时才追加 items 字段，保持与现有 settings/tasks
+    // 条件输出风格一致。
     const bool has_plugin_level_settings =
         !desc.settings_groups.empty() || !desc.settings_desc.empty();
     const bool has_task_items = !desc.task_descriptors.empty();
@@ -855,8 +903,7 @@ yyjson::value PluginPackageDescDetailToJson(const PluginPackageDesc& desc)
                                     {
                                         g_items_ref->emplace_back(
                                             Details::
-                                                NativeConfigItemFromSetting(
-                                                    d));
+                                                NativeConfigItemFromSetting(d));
                                     }
                                 }
                                 (*g_ref)[std::string_view("items")] =

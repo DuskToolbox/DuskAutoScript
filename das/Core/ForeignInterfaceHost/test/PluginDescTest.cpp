@@ -1211,11 +1211,14 @@ TEST(PluginPackageDescTest, ItemsAndDefaultConfigSchemaFromTaskDescriptors)
     EXPECT_NE(out.find("\"groups\""), std::string::npos);
     EXPECT_NE(out.find("\"groupId\""), std::string::npos);
     EXPECT_NE(out.find("\"groupName\""), std::string::npos);
-    // 配置项字段（NativeUI 契约）
+    // 配置项字段（Phase 84 共享运行时 PropertySchema 契约）
     EXPECT_NE(out.find("\"valueType\""), std::string::npos);
     EXPECT_NE(out.find("\"inputType\""), std::string::npos);
     EXPECT_NE(out.find("\"defaultValue\""), std::string::npos);
-    EXPECT_NE(out.find("\"options\""), std::string::npos);
+    // Phase 84 D-84-19：旧 options 字段已删除；D-84-18 新增 label 字段，D-84-21
+    // 新增 candidates CandidateDescriptor 数组（仅 select/multiselect 输出）。
+    EXPECT_EQ(out.find("\"options\""), std::string::npos);
+    EXPECT_NE(out.find("\"label\""), std::string::npos);
     EXPECT_NE(out.find("\"required\""), std::string::npos);
     // retryCount 配置项出现（type=0 → valueType=0 INT）
     EXPECT_NE(out.find("\"retryCount\""), std::string::npos);
