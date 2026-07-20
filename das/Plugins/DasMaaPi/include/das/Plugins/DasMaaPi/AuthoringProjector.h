@@ -16,7 +16,7 @@ namespace Das::Plugins::DasMaaPi
         const PiCatalog*                    catalog,
         const std::vector<PiDiagnosticDto>& diagnostics,
         int64_t                             revision,
-        std::vector<PiDiagnosticDto>* projection_diagnostics = nullptr);
+        std::vector<PiDiagnosticDto>*       projection_diagnostics = nullptr);
 
     void ApplySetValueChange(
         AcceptedSettingsDto& settings,
@@ -34,6 +34,47 @@ namespace Das::Plugins::DasMaaPi
     void ApplyRemoveSequenceItem(
         AcceptedSettingsDto& settings,
         std::string_view     task_name);
+
+    // D-84-07: 严格 Phase 84 change dispatch。每个 handler 严格校验 payload，
+    // 成功时修改 settings 并返回 true；失败时向 diagnostics 追加一条
+    // {severity:"error", int_code?, message, path?} 诊断并返回 false（调用
+    // 方据此放弃 candidate、不递增 revision）。payload 是 change 的 payload
+    // 对象（不含 baseRevision/kind 外层）。
+    bool ApplyStrictSetValueChange(
+        AcceptedSettingsDto&          settings,
+        const yyjson::value&          payload,
+        const PiCatalog*              catalog,
+        std::vector<PiDiagnosticDto>& diagnostics);
+
+    bool ApplyAddFormSequenceItem(
+        AcceptedSettingsDto&          settings,
+        const PiCatalog*              catalog,
+        const yyjson::value&          payload,
+        std::vector<PiDiagnosticDto>& diagnostics);
+
+    bool ApplyMoveFormSequenceItem(
+        AcceptedSettingsDto&          settings,
+        const yyjson::value&          payload,
+        std::vector<PiDiagnosticDto>& diagnostics);
+
+    bool ApplyRemoveFormSequenceItem(
+        AcceptedSettingsDto&          settings,
+        const yyjson::value&          payload,
+        std::vector<PiDiagnosticDto>& diagnostics);
+
+    // D-84-28: invokeCommand 严格 dispatch。已知 commandId：
+    //   - "newConfiguration" / "copyConfiguration"（84-05 已实现）
+    // 未知 commandId 返回 false 并 emit error 诊断。
+    bool ApplyInvokeCommandChange(
+        AcceptedSettingsDto&          settings,
+        const yyjson::value&          payload,
+        std::vector<PiDiagnosticDto>& diagnostics);
+
+    // D-84-29: convertView 在 MaaPI 一律拒绝（MaaPI 只支持 formSequence）。
+    // payload 严格 {targetViewKind}；返回 false 并 emit error 诊断。
+    bool ApplyConvertViewChange(
+        const yyjson::value&          payload,
+        std::vector<PiDiagnosticDto>& diagnostics);
 
     void ApplyPreset(
         AcceptedSettingsDto& settings,

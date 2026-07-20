@@ -241,8 +241,9 @@ TEST_F(MaapiIntegrationFixture, SampleInterfaceAuthoringCompileRuntimeDryRun)
     auto interface_path =
         FixturePath("sample_interface.jsonc").generic_string();
     auto change = ParseDasJson(
-        "{\"baseRevision\":0,\"kind\":\"setValue\",\"payload\":{\"valuePath\":"
-        "\"adapter.interfacePath\",\"value\":\""
+        "{\"baseRevision\":0,\"kind\":\"setValue\",\"payload\":{\"target\":{"
+        "\"kind\":\"document\"},\"fieldName\":\"adapter.interfacePath\","
+        "\"value\":\""
         + interface_path + "\"}}");
     DasPtr<Das::ExportInterface::IDasJson> apply_json;
     ASSERT_EQ(session->ApplyChange(change.Get(), apply_json.Put()), DAS_S_OK);
@@ -294,26 +295,41 @@ TEST_F(MaapiIntegrationFixture, SampleInterfaceAuthoringCompileRuntimeDryRun)
     }
     EXPECT_TRUE(found_daily_action);
 
+    // D-84-08: Compile 严格 envelope = {compile, diagnostics[]}。PiCompiler
+    // 的 ok/canExecute/executionInput 位于 compile 子对象；测试 unwrap 后
+    // 断言。
     auto preview_request = ParseDasJson(R"({"purpose":"preview"})");
     DasPtr<Das::ExportInterface::IDasJson> preview_json;
     ASSERT_EQ(
         session->Compile(preview_request.Get(), preview_json.Put()),
         DAS_S_OK);
-    auto preview = ReadJsonInterface(preview_json.Get());
-    EXPECT_TRUE((*preview.as_object())[std::string_view("canExecute")]
-                    .as_bool()
-                    .value_or(false));
-    EXPECT_FALSE(
-        preview.as_object()->contains(std::string_view("executionInput")));
+    auto preview_env = ReadJsonInterface(preview_json.Get());
+    auto preview_env_obj = preview_env.as_object();
+    ASSERT_TRUE(preview_env_obj.has_value());
+    ASSERT_TRUE(preview_env_obj->contains(std::string_view("compile")));
+    auto preview_opt =
+        (*preview_env_obj)[std::string_view("compile")].as_object();
+    ASSERT_TRUE(preview_opt.has_value());
+    auto preview = *preview_opt;
+    EXPECT_TRUE(
+        preview[std::string_view("canExecute")].as_bool().value_or(false));
+    EXPECT_FALSE(preview.contains(std::string_view("executionInput")));
 
     auto execution_request = ParseDasJson(R"({"purpose":"execution"})");
     DasPtr<Das::ExportInterface::IDasJson> execution_json;
     ASSERT_EQ(
         session->Compile(execution_request.Get(), execution_json.Put()),
         DAS_S_OK);
-    auto execution = ReadJsonInterface(execution_json.Get());
-    auto envelope_value =
-        (*execution.as_object())[std::string_view("executionInput")];
+    auto execution_env = ReadJsonInterface(execution_json.Get());
+    auto execution_env_obj = execution_env.as_object();
+    ASSERT_TRUE(execution_env_obj.has_value());
+    ASSERT_TRUE(execution_env_obj->contains(std::string_view("compile")));
+    auto execution_compile_opt =
+        (*execution_env_obj)[std::string_view("compile")].as_object();
+    ASSERT_TRUE(execution_compile_opt.has_value());
+    auto execution_compile = *execution_compile_opt;
+    ASSERT_TRUE(execution_compile.contains(std::string_view("executionInput")));
+    auto envelope_value = execution_compile[std::string_view("executionInput")];
     auto parsed = ParseExecutionEnvelope(envelope_value);
     ASSERT_EQ(parsed.result, DAS_S_OK);
     ASSERT_EQ(parsed.envelope.maapi.tasks.size(), 1u);

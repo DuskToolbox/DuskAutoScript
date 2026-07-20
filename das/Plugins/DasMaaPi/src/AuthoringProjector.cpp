@@ -60,19 +60,19 @@ namespace Das::Plugins::DasMaaPi
         // diagnostics 输出一条 warning。fallback 必须非空，保证 84-01 严格
         // FieldDescriptor/CandidateDescriptor label 校验通过。
         std::string_view ResolveI18nOrDiag(
-            std::string_view                 text,
-            const PiCatalog&                 catalog,
-            std::string_view                 lang,
-            std::string_view                 fallback,
-            std::vector<PiDiagnosticDto>*    projection_diagnostics,
-            std::string_view                 context_path)
+            std::string_view              text,
+            const PiCatalog&              catalog,
+            std::string_view              lang,
+            std::string_view              fallback,
+            std::vector<PiDiagnosticDto>* projection_diagnostics,
+            std::string_view              context_path)
         {
             if (text.empty() || !text.starts_with('$'))
             {
                 return text.empty() ? fallback : text;
             }
             const std::string_view key = text.substr(1);
-            auto                    lang_it = catalog.translations.find(std::string(lang));
+            auto lang_it = catalog.translations.find(std::string(lang));
             if (lang_it != catalog.translations.end())
             {
                 auto key_it = lang_it->second.find(std::string(key));
@@ -82,13 +82,15 @@ namespace Das::Plugins::DasMaaPi
                 }
             }
             // 缺译：emit diagnostic + 返回 fallback。fallback 是 caller 提供
-            // 的 PI 用户可见标识（value / dto.name），不是 $key 也不是协议英文。
+            // 的 PI 用户可见标识（value / dto.name），不是 $key
+            // 也不是协议英文。
             if (projection_diagnostics != nullptr)
             {
                 PiDiagnosticDto diag;
                 diag.severity = "warning";
-                diag.message = "Missing translation for key '" + std::string(key)
-                             + "' in language '" + std::string(lang) + "'";
+                diag.message = "Missing translation for key '"
+                               + std::string(key) + "' in language '"
+                               + std::string(lang) + "'";
                 if (!context_path.empty())
                 {
                     diag.path = std::string(context_path);
@@ -115,9 +117,7 @@ namespace Das::Plugins::DasMaaPi
         // 保留；相对路径基于 catalog.interface_directory 解析为绝对路径；
         // data: URI 与空字符串原样返回（caller 决定是否 emit；84-01 验证器
         // 会拒绝 data:，故 caller 应仅在合法形态下 emit icon）。
-        std::string ResolveIcon(
-            std::string_view icon,
-            const PiCatalog* catalog)
+        std::string ResolveIcon(std::string_view icon, const PiCatalog* catalog)
         {
             if (icon.empty())
             {
@@ -144,7 +144,7 @@ namespace Das::Plugins::DasMaaPi
             {
                 std::filesystem::path base(catalog->interface_directory);
                 std::filesystem::path leaf(icon);
-                auto combined = base / leaf;
+                auto                  combined = base / leaf;
                 return combined.generic_string();
             }
             return std::string(icon);
@@ -393,10 +393,10 @@ namespace Das::Plugins::DasMaaPi
         }
 
         yyjson::value CandidateArray(
-            const auto&                       items,
-            const PiCatalog*                  catalog,
-            std::string_view                  language,
-            std::vector<PiDiagnosticDto>*     projection_diagnostics)
+            const auto&                   items,
+            const PiCatalog*              catalog,
+            std::string_view              language,
+            std::vector<PiDiagnosticDto>* projection_diagnostics)
         {
             yyjson::value arr(Array());
             for (const auto& item : items)
@@ -424,7 +424,8 @@ namespace Das::Plugins::DasMaaPi
                         item.dto.name);
                 }
                 (*obj)[std::string_view("label")] = JsonString(label);
-                // D-84-47: 候选 icon 解析为绝对路径或 http(s)；不合法则不 emit。
+                // D-84-47: 候选 icon 解析为绝对路径或 http(s)；不合法则不
+                // emit。
                 if (item.dto.icon)
                 {
                     auto resolved = ResolveIcon(*item.dto.icon, catalog);
@@ -1835,7 +1836,7 @@ namespace Das::Plugins::DasMaaPi
         const PiCatalog*                    catalog,
         const std::vector<PiDiagnosticDto>& diagnostics,
         int64_t                             revision,
-        std::vector<PiDiagnosticDto>* projection_diagnostics)
+        std::vector<PiDiagnosticDto>*       projection_diagnostics)
     {
         yyjson::value document(Object());
         auto          obj = document.as_object();
@@ -2257,7 +2258,8 @@ namespace Das::Plugins::DasMaaPi
                 (*c_obj)[std::string_view("label")] = JsonString(label_text);
                 yyjson::value apply(Object());
                 auto          a_obj = apply.as_object();
-                (*a_obj)[std::string_view("kind")] = JsonString("invokeCommand");
+                (*a_obj)[std::string_view("kind")] =
+                    JsonString("invokeCommand");
                 yyjson::value payload(Object());
                 (*payload.as_object())[std::string_view("commandId")] =
                     JsonString(command_id);
@@ -2718,5 +2720,873 @@ namespace Das::Plugins::DasMaaPi
 
             settings.pi.tasks.push_back(std::move(task_settings));
         }
+    }
+
+    // ---------------------------------------------------------------------------
+    // D-84-07: Strict Phase 84 change dispatch helpers.
+    //
+    // 每个 handler 严格校验 change payload，在语义成功时修改 settings 并返回
+    // true；失败时向 diagnostics 追加一条严格 {severity, message, int_code?,
+    // path?} 诊断并返回 false，让 session 放弃 candidate、不递增 revision。
+    // ---------------------------------------------------------------------------
+
+    namespace
+    {
+        void EmitDiagnostic(
+            std::vector<PiDiagnosticDto>& diagnostics,
+            std::string_view              severity,
+            std::string_view              message,
+            std::optional<std::int64_t>   int_code = std::nullopt,
+            std::string_view              path = {})
+        {
+            PiDiagnosticDto diag;
+            diag.severity = std::string(severity);
+            diag.message = std::string(message);
+            if (int_code)
+            {
+                diag.int_code = int_code;
+            }
+            if (!path.empty())
+            {
+                diag.path = std::string(path);
+            }
+            diagnostics.push_back(std::move(diag));
+        }
+
+        // 报告 payload 含有未知字段（actual != expected）。返回 true 当且仅当
+        // actual 集合等于 expected 集合。
+        bool OnlyKeysExact(
+            const yyjson::value&          payload,
+            std::string_view              context,
+            std::vector<std::string>      allowed,
+            std::vector<PiDiagnosticDto>& diagnostics)
+        {
+            auto obj_opt = payload.as_object();
+            if (!obj_opt)
+            {
+                EmitDiagnostic(
+                    diagnostics,
+                    "error",
+                    std::string(context) + ": payload must be object",
+                    DAS_E_INVALID_JSON);
+                return false;
+            }
+            std::set<std::string> actual;
+            for (const auto& [key, _] : *obj_opt)
+            {
+                actual.emplace(std::string(key));
+            }
+            std::set<std::string> expected(allowed.begin(), allowed.end());
+            if (actual == expected)
+            {
+                return true;
+            }
+            std::string allowed_list;
+            for (std::size_t i = 0; i < allowed.size(); ++i)
+            {
+                if (i > 0)
+                {
+                    allowed_list += ", ";
+                }
+                allowed_list += allowed[i];
+            }
+            EmitDiagnostic(
+                diagnostics,
+                "error",
+                std::string(context) + ": payload must have exactly {"
+                    + allowed_list + "}",
+                DAS_E_INVALID_ARGUMENT);
+            return false;
+        }
+
+        // 在 object 内取字符串字段；缺失或类型不符返回 nullopt。
+        // 接受任意 *_object_base 视图（writer::object_ref /
+        // const_object_ref）。
+        template <typename TObjectView>
+        std::optional<std::string> ObjectStringField(
+            const TObjectView& obj,
+            std::string_view   key)
+        {
+            if (!obj.contains(key) || !obj[key].is_string())
+            {
+                return std::nullopt;
+            }
+            return std::string(obj[key].as_string().value_or(""));
+        }
+
+        MaapiPiTaskSettingsDto* FindTaskByItemId(
+            AcceptedSettingsDto& settings,
+            std::string_view     item_id)
+        {
+            auto it = std::find_if(
+                settings.pi.tasks.begin(),
+                settings.pi.tasks.end(),
+                [&](const MaapiPiTaskSettingsDto& task)
+                { return task.item_id == item_id; });
+            return it == settings.pi.tasks.end() ? nullptr : &*it;
+        }
+
+        // D-84-24: setValue 严格 target.kind=document 路径。
+        // MaaPI root fields: adapter.interfacePath /
+        // adapter.executionPolicy.failFast / controllerName / resourceName /
+        // presetName / language / configurationId / options.{name}。
+        bool ApplyDocumentSetValue(
+            AcceptedSettingsDto&          settings,
+            std::string_view              field_name,
+            const yyjson::value&          value,
+            const PiCatalog*              catalog,
+            std::vector<PiDiagnosticDto>& diagnostics)
+        {
+            const std::string field(field_name);
+            if (field == "adapter.interfacePath")
+            {
+                if (!value.is_string())
+                {
+                    EmitDiagnostic(
+                        diagnostics,
+                        "error",
+                        "adapter.interfacePath value must be string",
+                        DAS_E_INVALID_ARGUMENT,
+                        field);
+                    return false;
+                }
+                settings.adapter.interface_path =
+                    std::string(value.as_string().value_or(""));
+                return true;
+            }
+            if (field == "adapter.executionPolicy.failFast")
+            {
+                if (!value.is_bool())
+                {
+                    EmitDiagnostic(
+                        diagnostics,
+                        "error",
+                        "adapter.executionPolicy.failFast value must be bool",
+                        DAS_E_INVALID_ARGUMENT,
+                        field);
+                    return false;
+                }
+                settings.adapter.execution_policy.fail_fast =
+                    value.as_bool().value_or(true);
+                return true;
+            }
+            if (field == "controllerName")
+            {
+                if (!value.is_string())
+                {
+                    EmitDiagnostic(
+                        diagnostics,
+                        "error",
+                        "controllerName value must be string",
+                        DAS_E_INVALID_ARGUMENT,
+                        field);
+                    return false;
+                }
+                settings.pi.controller_name =
+                    std::string(value.as_string().value_or(""));
+                SyncCurrentConfigFromActive(settings);
+                return true;
+            }
+            if (field == "resourceName")
+            {
+                if (!value.is_string())
+                {
+                    EmitDiagnostic(
+                        diagnostics,
+                        "error",
+                        "resourceName value must be string",
+                        DAS_E_INVALID_ARGUMENT,
+                        field);
+                    return false;
+                }
+                settings.pi.resource_name =
+                    std::string(value.as_string().value_or(""));
+                SyncCurrentConfigFromActive(settings);
+                return true;
+            }
+            if (field == "language")
+            {
+                if (!value.is_string())
+                {
+                    EmitDiagnostic(
+                        diagnostics,
+                        "error",
+                        "language value must be string",
+                        DAS_E_INVALID_ARGUMENT,
+                        field);
+                    return false;
+                }
+                settings.pi.language =
+                    std::string(value.as_string().value_or(""));
+                SyncCurrentConfigFromActive(settings);
+                return true;
+            }
+            if (field == "presetName")
+            {
+                if (!value.is_string())
+                {
+                    EmitDiagnostic(
+                        diagnostics,
+                        "error",
+                        "presetName value must be string",
+                        DAS_E_INVALID_ARGUMENT,
+                        field);
+                    return false;
+                }
+                const auto name = std::string(value.as_string().value_or(""));
+                if (catalog == nullptr || name.empty())
+                {
+                    // catalog 缺失时不能验证 preset；视为语义失败。
+                    EmitDiagnostic(
+                        diagnostics,
+                        "error",
+                        "presetName requires a parsed PI catalog",
+                        DAS_E_FAIL,
+                        field);
+                    return false;
+                }
+                const auto preset_it = std::find_if(
+                    catalog->presets.begin(),
+                    catalog->presets.end(),
+                    [&](const PiPreset& item)
+                    { return item.dto.name == name; });
+                if (preset_it == catalog->presets.end())
+                {
+                    // D-84-10: 未知 preset 是语义失败。session 据此不递增
+                    // revision、不修改 acceptedProperties；envelope 携带 error
+                    // 诊断。ApplyPreset helper（仍供旧单元测试调用）会写
+                    // `presetName:<name>` orphan，但严格 session 路径不走它。
+                    EmitDiagnostic(
+                        diagnostics,
+                        "error",
+                        "Unknown preset name: " + name,
+                        DAS_E_NOT_FOUND,
+                        field);
+                    return false;
+                }
+                ApplyPreset(settings, *catalog, name);
+                SyncCurrentConfigFromActive(settings);
+                return true;
+            }
+            if (field == "configurationId")
+            {
+                if (!value.is_string())
+                {
+                    EmitDiagnostic(
+                        diagnostics,
+                        "error",
+                        "configurationId value must be string",
+                        DAS_E_INVALID_ARGUMENT,
+                        field);
+                    return false;
+                }
+                const auto target_id =
+                    std::string(value.as_string().value_or(""));
+                if (target_id.empty())
+                {
+                    EmitDiagnostic(
+                        diagnostics,
+                        "error",
+                        "configurationId value must be non-empty",
+                        DAS_E_INVALID_ARGUMENT,
+                        field);
+                    return false;
+                }
+                const auto it = std::find_if(
+                    settings.pi.configurations.begin(),
+                    settings.pi.configurations.end(),
+                    [&](const MaapiConfigurationDto& c)
+                    { return c.id == target_id; });
+                if (it == settings.pi.configurations.end())
+                {
+                    EmitDiagnostic(
+                        diagnostics,
+                        "error",
+                        "configurationId not found",
+                        DAS_E_NOT_FOUND,
+                        field);
+                    return false;
+                }
+                SyncCurrentConfigFromActive(settings);
+                settings.pi.selected_configuration_id = target_id;
+                SyncActiveFromCurrentConfig(settings);
+                return true;
+            }
+            // options.{name} 或 options.{name}.{input}（多字段 input 子字段）。
+            // 委托给既有 ApplyOptionValueChange / 多字段路径处理。
+            constexpr std::string_view kOptionPrefix = "options.";
+            if (field.starts_with(kOptionPrefix) && catalog)
+            {
+                ApplyOptionValueChange(
+                    settings,
+                    *catalog,
+                    std::string_view(field).substr(kOptionPrefix.size()),
+                    value);
+                SyncCurrentConfigFromActive(settings);
+                return true;
+            }
+            EmitDiagnostic(
+                diagnostics,
+                "error",
+                "setValue field unknown for document target",
+                DAS_E_INVALID_ARGUMENT,
+                field);
+            return false;
+        }
+
+        // D-84-24/25: setValue 严格 target.kind=formSequenceItem 路径。
+        // 内建 fieldName=enabled，或 task 级 options.{name}（按 itemId 找
+        // task）。
+        bool ApplyFormSequenceItemSetValue(
+            AcceptedSettingsDto&          settings,
+            std::string_view              item_id,
+            std::string_view              field_name,
+            const yyjson::value&          value,
+            const PiCatalog*              catalog,
+            std::vector<PiDiagnosticDto>& diagnostics)
+        {
+            auto* task = FindTaskByItemId(settings, item_id);
+            if (!task)
+            {
+                EmitDiagnostic(
+                    diagnostics,
+                    "error",
+                    "setValue target id not found",
+                    DAS_E_NOT_FOUND,
+                    "target.id");
+                return false;
+            }
+            const std::string field(field_name);
+            if (field == "enabled")
+            {
+                if (!value.is_bool())
+                {
+                    EmitDiagnostic(
+                        diagnostics,
+                        "error",
+                        "enabled value must be bool",
+                        DAS_E_INVALID_ARGUMENT,
+                        field);
+                    return false;
+                }
+                task->enabled = value.as_bool().value_or(true);
+                SyncCurrentConfigFromActive(settings);
+                return true;
+            }
+            constexpr std::string_view kOptionPrefix = "options.";
+            if (field.starts_with(kOptionPrefix) && catalog)
+            {
+                const auto option_tail =
+                    std::string_view(field).substr(kOptionPrefix.size());
+                const auto* catalog_task = FindTask(*catalog, task->task_name);
+                if (!catalog_task
+                    || !ContainsName(catalog_task->dto.option, option_tail))
+                {
+                    EmitDiagnostic(
+                        diagnostics,
+                        "error",
+                        "setValue field not declared on this task",
+                        DAS_E_INVALID_ARGUMENT,
+                        field);
+                    return false;
+                }
+                const auto* option = FindOption(*catalog, option_tail);
+                if (!option)
+                {
+                    EmitDiagnostic(
+                        diagnostics,
+                        "error",
+                        "setValue field references unknown option",
+                        DAS_E_INVALID_ARGUMENT,
+                        field);
+                    return false;
+                }
+                if (value.is_null())
+                {
+                    RemoveOption(task->options, option_tail);
+                    SyncCurrentConfigFromActive(settings);
+                    return true;
+                }
+                auto parsed = ParseOptionValue(*option, value);
+                if (!parsed)
+                {
+                    EmitDiagnostic(
+                        diagnostics,
+                        "error",
+                        "setValue value type incompatible with option",
+                        DAS_E_INVALID_ARGUMENT,
+                        field);
+                    return false;
+                }
+                RemoveOption(task->options, option_tail);
+                UpsertOption(task->options, std::move(*parsed));
+                SyncCurrentConfigFromActive(settings);
+                return true;
+            }
+            EmitDiagnostic(
+                diagnostics,
+                "error",
+                "setValue field unknown for formSequenceItem target",
+                DAS_E_INVALID_ARGUMENT,
+                field);
+            return false;
+        }
+    } // namespace
+
+    bool ApplyStrictSetValueChange(
+        AcceptedSettingsDto&          settings,
+        const yyjson::value&          payload,
+        const PiCatalog*              catalog,
+        std::vector<PiDiagnosticDto>& diagnostics)
+    {
+        if (!OnlyKeysExact(
+                payload,
+                "setValue",
+                {"target", "fieldName", "value"},
+                diagnostics))
+        {
+            return false;
+        }
+        auto payload_obj_opt = payload.as_object();
+        auto payload_obj = *payload_obj_opt;
+        // target
+        const auto& target_value = payload_obj[std::string_view("target")];
+        auto        target_obj_opt = target_value.as_object();
+        if (!target_obj_opt
+            || !target_obj_opt->contains(std::string_view("kind"))
+            || !(*target_obj_opt)[std::string_view("kind")].is_string())
+        {
+            EmitDiagnostic(
+                diagnostics,
+                "error",
+                "setValue.target.kind required string",
+                DAS_E_INVALID_ARGUMENT,
+                "target.kind");
+            return false;
+        }
+        auto       target_obj = *target_obj_opt;
+        const auto target_kind = std::string(
+            target_obj[std::string_view("kind")].as_string().value_or(""));
+        if (target_kind != "document" && target_kind != "formSequenceItem"
+            && target_kind != "graphNode")
+        {
+            EmitDiagnostic(
+                diagnostics,
+                "error",
+                "setValue.target.kind unsupported",
+                DAS_E_INVALID_ARGUMENT,
+                "target.kind");
+            return false;
+        }
+        std::string              target_id;
+        std::vector<std::string> allowed_target_keys = {"kind"};
+        if (target_kind == "formSequenceItem" || target_kind == "graphNode")
+        {
+            allowed_target_keys.emplace_back("id");
+            std::set<std::string> actual;
+            for (const auto& [k, _] : target_obj)
+            {
+                actual.emplace(std::string(k));
+            }
+            if (actual != std::set<std::string>{"kind", "id"})
+            {
+                EmitDiagnostic(
+                    diagnostics,
+                    "error",
+                    target_kind + " target must have exactly {kind, id}",
+                    DAS_E_INVALID_ARGUMENT,
+                    "target");
+                return false;
+            }
+            if (!target_obj[std::string_view("id")].is_string())
+            {
+                EmitDiagnostic(
+                    diagnostics,
+                    "error",
+                    "target.id must be string",
+                    DAS_E_INVALID_ARGUMENT,
+                    "target.id");
+                return false;
+            }
+            target_id = std::string(
+                target_obj[std::string_view("id")].as_string().value_or(""));
+        }
+        else
+        {
+            std::set<std::string> actual;
+            for (const auto& [k, _] : target_obj)
+            {
+                actual.emplace(std::string(k));
+            }
+            if (actual != std::set<std::string>{"kind"})
+            {
+                EmitDiagnostic(
+                    diagnostics,
+                    "error",
+                    "document target must have exactly {kind}",
+                    DAS_E_INVALID_ARGUMENT,
+                    "target");
+                return false;
+            }
+        }
+        // graphNode: MaaPI 没有 graph view，一律拒绝。
+        if (target_kind == "graphNode")
+        {
+            EmitDiagnostic(
+                diagnostics,
+                "error",
+                "graphNode target unsupported in MaaPI formSequence view",
+                DAS_E_INVALID_ARGUMENT,
+                "target.kind");
+            return false;
+        }
+        // fieldName
+        auto field_name = ObjectStringField(payload_obj, "fieldName");
+        if (!field_name || field_name->empty())
+        {
+            EmitDiagnostic(
+                diagnostics,
+                "error",
+                "setValue.fieldName required and non-empty",
+                DAS_E_INVALID_ARGUMENT,
+                "fieldName");
+            return false;
+        }
+        // value
+        const auto& value = payload_obj[std::string_view("value")];
+        if (target_kind == "document")
+        {
+            return ApplyDocumentSetValue(
+                settings,
+                *field_name,
+                value,
+                catalog,
+                diagnostics);
+        }
+        return ApplyFormSequenceItemSetValue(
+            settings,
+            target_id,
+            *field_name,
+            value,
+            catalog,
+            diagnostics);
+    }
+
+    bool ApplyAddFormSequenceItem(
+        AcceptedSettingsDto&          settings,
+        const PiCatalog*              catalog,
+        const yyjson::value&          payload,
+        std::vector<PiDiagnosticDto>& diagnostics)
+    {
+        auto payload_obj_opt = payload.as_object();
+        if (!payload_obj_opt)
+        {
+            EmitDiagnostic(
+                diagnostics,
+                "error",
+                "addFormSequenceItem payload must be object",
+                DAS_E_INVALID_JSON);
+            return false;
+        }
+        auto payload_obj = *payload_obj_opt;
+        // 允许 {actionId} 或 {actionId, insertionIndex}。
+        std::set<std::string> actual;
+        for (const auto& [k, _] : payload_obj)
+        {
+            actual.emplace(std::string(k));
+        }
+        const std::set<std::string> allowed_no_index{"actionId"};
+        const std::set<std::string> allowed_with_index{
+            "actionId",
+            "insertionIndex"};
+        if (actual != allowed_no_index && actual != allowed_with_index)
+        {
+            EmitDiagnostic(
+                diagnostics,
+                "error",
+                "addFormSequenceItem payload must have exactly {actionId} or "
+                "{actionId, insertionIndex}",
+                DAS_E_INVALID_ARGUMENT);
+            return false;
+        }
+        auto action_id = ObjectStringField(payload_obj, "actionId");
+        if (!action_id || action_id->empty())
+        {
+            EmitDiagnostic(
+                diagnostics,
+                "error",
+                "addFormSequenceItem.actionId required and non-empty",
+                DAS_E_INVALID_ARGUMENT,
+                "actionId");
+            return false;
+        }
+        std::optional<int> insertion_index;
+        if (actual == allowed_with_index)
+        {
+            const auto& idx_val =
+                payload_obj[std::string_view("insertionIndex")];
+            if (!idx_val.is_sint() && !idx_val.is_uint())
+            {
+                EmitDiagnostic(
+                    diagnostics,
+                    "error",
+                    "insertionIndex must be integer",
+                    DAS_E_INVALID_ARGUMENT,
+                    "insertionIndex");
+                return false;
+            }
+            insertion_index = static_cast<int>(
+                idx_val.is_sint()
+                    ? idx_val.as_sint().value_or(0)
+                    : static_cast<std::int64_t>(idx_val.as_uint().value_or(0)));
+        }
+        // actionId 必须在 catalog 已注册。
+        if (!catalog || !HasTask(*catalog, *action_id))
+        {
+            EmitDiagnostic(
+                diagnostics,
+                "error",
+                "addFormSequenceItem actionId not registered",
+                DAS_E_NOT_FOUND,
+                "actionId");
+            return false;
+        }
+        // D-84-34/40: Provider 校验目录、分配实例 ID、生成默认字段。允许同一
+        // actionId 被添加多次（不同 itemId）。
+        MaapiPiTaskSettingsDto new_task;
+        new_task.item_id = AllocateItemId(settings);
+        new_task.task_name = std::string(*action_id);
+        new_task.enabled = true;
+        const auto* catalog_task = FindTask(*catalog, *action_id);
+        if (catalog_task)
+        {
+            InitializeOptionDefaults(
+                new_task.options,
+                catalog_task->dto.option,
+                *catalog);
+        }
+        RemoveOrphanPath(
+            settings,
+            std::string{"pi.tasks:"} + std::string{*action_id});
+        const auto size = static_cast<int>(settings.pi.tasks.size());
+        if (!insertion_index.has_value() || *insertion_index < 0
+            || *insertion_index >= size)
+        {
+            settings.pi.tasks.emplace_back(std::move(new_task));
+        }
+        else
+        {
+            settings.pi.tasks.insert(
+                settings.pi.tasks.begin() + *insertion_index,
+                std::move(new_task));
+        }
+        SyncCurrentConfigFromActive(settings);
+        return true;
+    }
+
+    bool ApplyMoveFormSequenceItem(
+        AcceptedSettingsDto&          settings,
+        const yyjson::value&          payload,
+        std::vector<PiDiagnosticDto>& diagnostics)
+    {
+        if (!OnlyKeysExact(
+                payload,
+                "moveFormSequenceItem",
+                {"formSequenceItemId", "destinationIndex"},
+                diagnostics))
+        {
+            return false;
+        }
+        auto payload_obj = *payload.as_object();
+        auto item_id = ObjectStringField(payload_obj, "formSequenceItemId");
+        if (!item_id || item_id->empty())
+        {
+            EmitDiagnostic(
+                diagnostics,
+                "error",
+                "moveFormSequenceItem.formSequenceItemId required",
+                DAS_E_INVALID_ARGUMENT,
+                "formSequenceItemId");
+            return false;
+        }
+        const auto& idx_val = payload_obj[std::string_view("destinationIndex")];
+        if (!idx_val.is_sint() && !idx_val.is_uint())
+        {
+            EmitDiagnostic(
+                diagnostics,
+                "error",
+                "destinationIndex must be integer",
+                DAS_E_INVALID_ARGUMENT,
+                "destinationIndex");
+            return false;
+        }
+        const auto destination = static_cast<int>(
+            idx_val.is_sint()
+                ? idx_val.as_sint().value_or(0)
+                : static_cast<std::int64_t>(idx_val.as_uint().value_or(0)));
+        const auto size = static_cast<int>(settings.pi.tasks.size());
+        int        from = -1;
+        for (int i = 0; i < size; ++i)
+        {
+            if (settings.pi.tasks[i].item_id == *item_id)
+            {
+                from = i;
+                break;
+            }
+        }
+        if (from < 0)
+        {
+            EmitDiagnostic(
+                diagnostics,
+                "error",
+                "moveFormSequenceItem id not found",
+                DAS_E_NOT_FOUND,
+                "formSequenceItemId");
+            return false;
+        }
+        if (destination < 0 || destination >= size)
+        {
+            EmitDiagnostic(
+                diagnostics,
+                "error",
+                "destinationIndex out of range",
+                DAS_E_OUT_OF_RANGE,
+                "destinationIndex");
+            return false;
+        }
+        if (from == destination)
+        {
+            return true;
+        }
+        auto moved = std::move(settings.pi.tasks[from]);
+        settings.pi.tasks.erase(settings.pi.tasks.begin() + from);
+        int adjusted = destination;
+        if (from < destination)
+        {
+            adjusted = destination - 1;
+        }
+        settings.pi.tasks.insert(
+            settings.pi.tasks.begin() + adjusted,
+            std::move(moved));
+        SyncCurrentConfigFromActive(settings);
+        return true;
+    }
+
+    bool ApplyRemoveFormSequenceItem(
+        AcceptedSettingsDto&          settings,
+        const yyjson::value&          payload,
+        std::vector<PiDiagnosticDto>& diagnostics)
+    {
+        if (!OnlyKeysExact(
+                payload,
+                "removeFormSequenceItem",
+                {"formSequenceItemId"},
+                diagnostics))
+        {
+            return false;
+        }
+        auto payload_obj = *payload.as_object();
+        auto item_id = ObjectStringField(payload_obj, "formSequenceItemId");
+        if (!item_id || item_id->empty())
+        {
+            EmitDiagnostic(
+                diagnostics,
+                "error",
+                "removeFormSequenceItem.formSequenceItemId required",
+                DAS_E_INVALID_ARGUMENT,
+                "formSequenceItemId");
+            return false;
+        }
+        const auto it = std::find_if(
+            settings.pi.tasks.begin(),
+            settings.pi.tasks.end(),
+            [&](const MaapiPiTaskSettingsDto& t)
+            { return t.item_id == *item_id; });
+        if (it == settings.pi.tasks.end())
+        {
+            EmitDiagnostic(
+                diagnostics,
+                "error",
+                "removeFormSequenceItem id not found",
+                DAS_E_NOT_FOUND,
+                "formSequenceItemId");
+            return false;
+        }
+        // D-84-35: 真实 Provider mutation；按 itemId 精确删除，duplicate task
+        // 类型独立保留。同时清理以 `pi.tasks:<taskName>` 形式残留的 orphan
+        // path（task 实例不再存在时该 orphan 无意义）。
+        const auto removed_task_name = it->task_name;
+        settings.pi.tasks.erase(it);
+        if (!removed_task_name.empty())
+        {
+            RemoveOrphanPath(
+                settings,
+                std::string{"pi.tasks:"} + removed_task_name);
+        }
+        SyncCurrentConfigFromActive(settings);
+        return true;
+    }
+
+    bool ApplyInvokeCommandChange(
+        AcceptedSettingsDto&          settings,
+        const yyjson::value&          payload,
+        std::vector<PiDiagnosticDto>& diagnostics)
+    {
+        if (!OnlyKeysExact(
+                payload,
+                "invokeCommand",
+                {"commandId"},
+                diagnostics))
+        {
+            return false;
+        }
+        auto payload_obj = *payload.as_object();
+        auto command_id = ObjectStringField(payload_obj, "commandId");
+        if (!command_id || command_id->empty())
+        {
+            EmitDiagnostic(
+                diagnostics,
+                "error",
+                "invokeCommand.commandId required and non-empty",
+                DAS_E_INVALID_ARGUMENT,
+                "commandId");
+            return false;
+        }
+        // D-84-28/42: 已知 commandId 委托 ApplyInvokeCommand（84-05 实现）。
+        if (*command_id == "newConfiguration"
+            || *command_id == "copyConfiguration")
+        {
+            ApplyInvokeCommand(settings, *command_id);
+            return true;
+        }
+        EmitDiagnostic(
+            diagnostics,
+            "error",
+            "invokeCommand commandId not registered",
+            DAS_E_NOT_FOUND,
+            "commandId");
+        return false;
+    }
+
+    // D-84-29: MaaPI 只支持 formSequence；convertView 一律拒绝。
+    bool ApplyConvertViewChange(
+        const yyjson::value&          payload,
+        std::vector<PiDiagnosticDto>& diagnostics)
+    {
+        if (!OnlyKeysExact(
+                payload,
+                "convertView",
+                {"targetViewKind"},
+                diagnostics))
+        {
+            return false;
+        }
+        EmitDiagnostic(
+            diagnostics,
+            "error",
+            "convertView unsupported by MaaPI",
+            DAS_E_INVALID_ARGUMENT,
+            "targetViewKind");
+        return false;
     }
 } // namespace Das::Plugins::DasMaaPi

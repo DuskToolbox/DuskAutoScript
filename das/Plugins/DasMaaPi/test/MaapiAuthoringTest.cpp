@@ -39,7 +39,8 @@ namespace Das::Plugins::DasMaaPi
         const std::vector<Core::GraphRuntime::Dto::GraphPortDefinitionDto>&
             ports);
 
-    // D-84-07: 暴露 BuildApplyResult 给 session-level 测试做严格 envelope 校验。
+    // D-84-07: 暴露 BuildApplyResult 给 session-level 测试做严格 envelope
+    // 校验。
     yyjson::value BuildApplyResult(
         const AcceptedSettingsDto&   settings,
         int64_t                      revision,
@@ -477,8 +478,9 @@ TEST_F(MaapiAuthoringFixture, ApplyPathFailurePersistsDiagnostics)
     auto session = CreateSession();
     auto missing_path = FixturePath("missing.jsonc").generic_string();
     auto change = ParseDasJson(
-        "{\"baseRevision\":0,\"kind\":\"setValue\",\"payload\":{\"valuePath\":"
-        "\"adapter.interfacePath\",\"value\":\""
+        "{\"baseRevision\":0,\"kind\":\"setValue\",\"payload\":{\"target\":{"
+        "\"kind\":\"document\"},\"fieldName\":\"adapter.interfacePath\","
+        "\"value\":\""
         + missing_path + "\"}}");
 
     DasPtr<Das::ExportInterface::IDasJson> result_json;
@@ -509,8 +511,9 @@ TEST_F(MaapiAuthoringFixture, ApplyPathSuccessRefreshesDocument)
     auto interface_path =
         FixturePath("interface_authoring.jsonc").generic_string();
     auto change = ParseDasJson(
-        "{\"baseRevision\":0,\"kind\":\"setValue\",\"payload\":{\"valuePath\":"
-        "\"adapter.interfacePath\",\"value\":\""
+        "{\"baseRevision\":0,\"kind\":\"setValue\",\"payload\":{\"target\":{"
+        "\"kind\":\"document\"},\"fieldName\":\"adapter.interfacePath\","
+        "\"value\":\""
         + interface_path + "\"}}");
 
     DasPtr<Das::ExportInterface::IDasJson> result_json;
@@ -555,42 +558,46 @@ TEST_F(MaapiAuthoringFixture, PiValuePathsPersistTasksAndOptions)
 {
     auto interface_path =
         FixturePath("interface_authoring.jsonc").generic_string();
+    // D-84-34/40: 严格 contract 不再支持 pi.tasks 批量替换；初始状态直接通过
+    // session context 注入一个 DailyFarm 实例（带显式 itemId 方便后续
+    // formSequenceItem-targeted setValue 寻址）。
     auto session = CreateSession(
-        "{\"adapter\":{\"interfacePath\":\"" + interface_path + "\"}}");
+        "{\"adapter\":{\"interfacePath\":\"" + interface_path
+        + "\"},\"pi\":{\"tasks\":[{\"itemId\":\"item_daily_farm\","
+          "\"taskName\":\"DailyFarm\",\"enabled\":true}]}}");
 
     DasPtr<Das::ExportInterface::IDasJson> result_json;
-    auto                                   tasks_change = ParseDasJson(
-        "{\"baseRevision\":0,\"kind\":\"setValue\",\"payload\":{\"valuePath\":"
-        "\"pi.tasks\",\"value\":[{\"taskName\":\"DailyFarm\","
-        "\"enabled\":true}]}}");
-    ASSERT_EQ(
-        session->ApplyChange(tasks_change.Get(), result_json.Put()),
-        DAS_S_OK);
-
+    // 全局 option stage（target=document，根字段）。
     auto stage_change = ParseDasJson(
-        "{\"baseRevision\":1,\"kind\":\"setValue\",\"payload\":{\"valuePath\":"
-        "\"options.stage\",\"value\":\"1-1\"}}");
+        "{\"baseRevision\":0,\"kind\":\"setValue\",\"payload\":{\"target\":{"
+        "\"kind\":\"document\"},\"fieldName\":\"options.stage\","
+        "\"value\":\"1-1\"}}");
     ASSERT_EQ(
         session->ApplyChange(stage_change.Get(), result_json.Put()),
         DAS_S_OK);
 
+    // task 级 retry（target=formSequenceItem 携带 itemId）。
     auto retry_change = ParseDasJson(
-        "{\"baseRevision\":2,\"kind\":\"setValue\",\"payload\":{\"valuePath\":"
-        "\"options.retry\",\"value\":\"9\"}}");
+        "{\"baseRevision\":1,\"kind\":\"setValue\",\"payload\":{\"target\":{"
+        "\"kind\":\"formSequenceItem\",\"id\":\"item_daily_farm\"},"
+        "\"fieldName\":\"options.retry\",\"value\":\"9\"}}");
     ASSERT_EQ(
         session->ApplyChange(retry_change.Get(), result_json.Put()),
         DAS_S_OK);
 
     auto medicine_change = ParseDasJson(
-        "{\"baseRevision\":3,\"kind\":\"setValue\",\"payload\":{\"valuePath\":"
-        "\"options.use-medicine\",\"value\":[\"small\",\"large\"]}}");
+        "{\"baseRevision\":2,\"kind\":\"setValue\",\"payload\":{\"target\":{"
+        "\"kind\":\"formSequenceItem\",\"id\":\"item_daily_farm\"},"
+        "\"fieldName\":\"options.use-medicine\",\"value\":[\"small\","
+        "\"large\"]}}");
     ASSERT_EQ(
         session->ApplyChange(medicine_change.Get(), result_json.Put()),
         DAS_S_OK);
 
     auto notify_change = ParseDasJson(
-        "{\"baseRevision\":4,\"kind\":\"setValue\",\"payload\":{\"valuePath\":"
-        "\"options.notify\",\"value\":true}}");
+        "{\"baseRevision\":3,\"kind\":\"setValue\",\"payload\":{\"target\":{"
+        "\"kind\":\"formSequenceItem\",\"id\":\"item_daily_farm\"},"
+        "\"fieldName\":\"options.notify\",\"value\":true}}");
     ASSERT_EQ(
         session->ApplyChange(notify_change.Get(), result_json.Put()),
         DAS_S_OK);
@@ -609,6 +616,7 @@ TEST_F(MaapiAuthoringFixture, PiValuePathsPersistTasksAndOptions)
                 .as_object();
         ASSERT_TRUE(accepted.has_value());
         auto pi = (*accepted)[std::string_view("pi")];
+        // stage 是 global option，写入 globalOptions。
         ASSERT_TRUE(OptionArrayContains(pi, "globalOptions", "stage"));
 
         auto pi_obj = pi.as_object();
@@ -629,8 +637,9 @@ TEST_F(MaapiAuthoringFixture, PiValuePathsPersistTasksAndOptions)
     }
 
     auto delete_retry = ParseDasJson(
-        "{\"baseRevision\":5,\"kind\":\"setValue\",\"payload\":{\"valuePath\":"
-        "\"options.retry\",\"value\":null}}");
+        "{\"baseRevision\":4,\"kind\":\"setValue\",\"payload\":{\"target\":{"
+        "\"kind\":\"formSequenceItem\",\"id\":\"item_daily_farm\"},"
+        "\"fieldName\":\"options.retry\",\"value\":null}}");
     ASSERT_EQ(
         session->ApplyChange(delete_retry.Get(), result_json.Put()),
         DAS_S_OK);
@@ -657,21 +666,25 @@ TEST_F(MaapiAuthoringFixture, PiValuePathCleanupRemovesOrphans)
         + "\"},\"pi\":{\"orphanPaths\":[\"options:legacy\","
           "\"pi.tasks:MissingTask\"],\"globalOptions\":[{\"optionName\":"
           "\"legacy\",\"kind\":\"select\",\"selectedCases\":[\"old\"]}],"
-          "\"tasks\":[{\"taskName\":\"MissingTask\",\"enabled\":true}]}}");
+          "\"tasks\":[{\"itemId\":\"item_missing\",\"taskName\":"
+          "\"MissingTask\",\"enabled\":true}]}}");
 
     DasPtr<Das::ExportInterface::IDasJson> result_json;
-    auto                                   delete_option = ParseDasJson(
-        "{\"baseRevision\":0,\"kind\":\"setValue\",\"payload\":{\"valuePath\":"
-        "\"options.legacy\",\"value\":null}}");
+    // D-84-24: 严格 setValue target=document，fieldName=options.legacy。
+    auto delete_option = ParseDasJson(
+        "{\"baseRevision\":0,\"kind\":\"setValue\",\"payload\":{\"target\":{"
+        "\"kind\":\"document\"},\"fieldName\":\"options.legacy\","
+        "\"value\":null}}");
     ASSERT_EQ(
         session->ApplyChange(delete_option.Get(), result_json.Put()),
         DAS_S_OK);
 
-    auto replace_tasks = ParseDasJson(
-        "{\"baseRevision\":1,\"kind\":\"setValue\",\"payload\":{\"valuePath\":"
-        "\"pi.tasks\",\"value\":[]}}");
+    // D-84-35: 严格 removeFormSequenceItem 携带 itemId。
+    auto remove_task = ParseDasJson(
+        "{\"baseRevision\":1,\"kind\":\"removeFormSequenceItem\","
+        "\"payload\":{\"formSequenceItemId\":\"item_missing\"}}");
     ASSERT_EQ(
-        session->ApplyChange(replace_tasks.Get(), result_json.Put()),
+        session->ApplyChange(remove_task.Get(), result_json.Put()),
         DAS_S_OK);
 
     auto result = ReadJsonInterface(result_json.Get());
@@ -700,9 +713,13 @@ TEST_F(MaapiAuthoringFixture, PresetAndOrphansProjectIntoSettings)
         "{\"adapter\":{\"interfacePath\":\"" + interface_path
         + "\"},\"pi\":{\"orphanPaths\":[\"pi.tasks:MissingTask\"]}}");
 
+    // D-84-37/42: applyPreset 已删除；选择 preset 走 setValue fieldName=
+    // presetName，Provider 在 ApplyDocumentSetValue 内部触发 ApplyPreset
+    // 展开 task/option 默认值。
     auto preset = ParseDasJson(
-        "{\"baseRevision\":0,\"kind\":\"applyPreset\",\"payload\":{"
-        "\"presetName\":\"DailyPreset\"}}");
+        "{\"baseRevision\":0,\"kind\":\"setValue\",\"payload\":{\"target\":{"
+        "\"kind\":\"document\"},\"fieldName\":\"presetName\","
+        "\"value\":\"DailyPreset\"}}");
     DasPtr<Das::ExportInterface::IDasJson> result_json;
     ASSERT_EQ(session->ApplyChange(preset.Get(), result_json.Put()), DAS_S_OK);
     auto result = ReadJsonInterface(result_json.Get());
@@ -809,12 +826,14 @@ TEST_F(MaapiAuthoringFixture, ItemLevelSetValueTogglesTaskEnabled)
         FixturePath("interface_authoring.jsonc").generic_string();
     auto session = CreateSession(
         "{\"adapter\":{\"interfacePath\":\"" + interface_path
-        + "\"},\"pi\":{\"tasks\":[{\"taskName\":\"DailyFarm\","
-          "\"enabled\":true}]}}");
+        + "\"},\"pi\":{\"tasks\":[{\"itemId\":\"item_daily_farm\","
+          "\"taskName\":\"DailyFarm\",\"enabled\":true}]}}");
 
+    // D-84-24: 严格 target=formSequenceItem，按 itemId 寻址。
     auto change = ParseDasJson(
-        "{\"baseRevision\":0,\"kind\":\"setValue\",\"payload\":{\"nodeId\":"
-        "\"DailyFarm\",\"field\":\"enabled\",\"value\":false}}");
+        "{\"baseRevision\":0,\"kind\":\"setValue\",\"payload\":{\"target\":{"
+        "\"kind\":\"formSequenceItem\",\"id\":\"item_daily_farm\"},"
+        "\"fieldName\":\"enabled\",\"value\":false}}");
     DasPtr<Das::ExportInterface::IDasJson> result_json;
     ASSERT_EQ(session->ApplyChange(change.Get(), result_json.Put()), DAS_S_OK);
     auto result = ReadJsonInterface(result_json.Get());
@@ -840,12 +859,14 @@ TEST_F(MaapiAuthoringFixture, RemoveSequenceItemDropsTaskFromPiTasks)
         FixturePath("interface_authoring.jsonc").generic_string();
     auto session = CreateSession(
         "{\"adapter\":{\"interfacePath\":\"" + interface_path
-        + "\"},\"pi\":{\"tasks\":[{\"taskName\":\"DailyFarm\","
-          "\"enabled\":true},{\"taskName\":\"Award\",\"enabled\":true}]}}");
+        + "\"},\"pi\":{\"tasks\":[{\"itemId\":\"item_daily_farm\","
+          "\"taskName\":\"DailyFarm\",\"enabled\":true},{\"itemId\":"
+          "\"item_award\",\"taskName\":\"Award\",\"enabled\":true}]}}");
 
+    // D-84-35: 严格 removeFormSequenceItem 按 itemId 寻址。
     auto change = ParseDasJson(
-        "{\"baseRevision\":0,\"kind\":\"removeSequenceItem\",\"payload\":{"
-        "\"nodeId\":\"DailyFarm\"}}");
+        "{\"baseRevision\":0,\"kind\":\"removeFormSequenceItem\","
+        "\"payload\":{\"formSequenceItemId\":\"item_daily_farm\"}}");
     DasPtr<Das::ExportInterface::IDasJson> result_json;
     ASSERT_EQ(session->ApplyChange(change.Get(), result_json.Put()), DAS_S_OK);
     auto result = ReadJsonInterface(result_json.Get());
@@ -1086,34 +1107,43 @@ TEST_F(MaapiAuthoringFixture, ApplyChangeReturnsDynamicPortsInResultJson)
     auto interface_path =
         FixturePath("interface_authoring.jsonc").generic_string();
 
-    // Apply interface path
-    auto session = CreateSession();
-    auto path_change = ParseDasJson(
-        "{\"baseRevision\":0,\"kind\":\"setValue\",\"payload\":{\"valuePath\":"
-        "\"adapter.interfacePath\",\"value\":\""
-        + interface_path + "\"}}");
+    // 起始 session 已注入 DailyFarm 实例（带 itemId），避免依赖已删除的
+    // pi.tasks 批量替换入口。
+    auto session = CreateSession(
+        "{\"adapter\":{\"interfacePath\":\"" + interface_path
+        + "\"},\"pi\":{\"tasks\":[{\"itemId\":\"item_daily_farm\","
+          "\"taskName\":\"DailyFarm\",\"enabled\":true}]}}");
     DasPtr<Das::ExportInterface::IDasJson> result_json;
+    // D-84-24: 严格 setValue target=document。
+    auto path_change = ParseDasJson(
+        "{\"baseRevision\":0,\"kind\":\"setValue\",\"payload\":{\"target\":{"
+        "\"kind\":\"document\"},\"fieldName\":\"controllerName\","
+        "\"value\":\"Android\"}}");
     ASSERT_EQ(
         session->ApplyChange(path_change.Get(), result_json.Put()),
-        DAS_S_OK);
-
-    // Apply a task selection
-    auto task_change = ParseDasJson(
-        "{\"baseRevision\":1,\"kind\":\"setValue\",\"payload\":{\"valuePath\":"
-        "\"pi.tasks\",\"value\":[{\"taskName\":\"DailyFarm\","
-        "\"enabled\":true}]}}");
-    ASSERT_EQ(
-        session->ApplyChange(task_change.Get(), result_json.Put()),
         DAS_S_OK);
 
     auto result = ReadJsonInterface(result_json.Get());
     auto obj = result.as_object();
     ASSERT_TRUE(obj.has_value());
-    EXPECT_TRUE(obj->contains(std::string_view("dynamic_ports")));
+    // D-84-08/11: 严格 Apply envelope = {acceptedProperties, document,
+    // diagnostics}；dynamic_ports 不再出现在 envelope 根（违反 84-01 strict
+    // ApplyResult schema）。portDefinitions/portMap 作为 Provider 私有运行期
+    // 派生写入 acceptedProperties。
+    EXPECT_FALSE(obj->contains(std::string_view("dynamic_ports")));
 
-    auto dynamic_ports = (*obj)[std::string_view("dynamic_ports")].as_array();
-    ASSERT_TRUE(dynamic_ports.has_value());
-    EXPECT_FALSE(dynamic_ports->empty());
+    auto accepted = (*obj)[std::string_view("acceptedProperties")].as_object();
+    ASSERT_TRUE(accepted.has_value());
+    ASSERT_TRUE(accepted->contains(std::string_view("portDefinitions")));
+    auto port_definitions =
+        (*accepted)[std::string_view("portDefinitions")].as_array();
+    ASSERT_TRUE(port_definitions.has_value());
+    EXPECT_FALSE(port_definitions->empty());
+
+    ASSERT_TRUE(accepted->contains(std::string_view("portMap")));
+    auto port_map = (*accepted)[std::string_view("portMap")].as_object();
+    ASSERT_TRUE(port_map.has_value());
+    EXPECT_FALSE(port_map->empty());
 }
 
 // ---------------------------------------------------------------------------
@@ -2198,9 +2228,13 @@ TEST_F(MaapiAuthoringFixture, PresetNameSetValueTriggersTaskExpansion)
         "{\"adapter\":{\"interfacePath\":\"" + interface_path + "\"}}");
 
     DasPtr<Das::ExportInterface::IDasJson> result_json;
-    auto                                   preset_change = ParseDasJson(
-        "{\"baseRevision\":0,\"kind\":\"setValue\",\"payload\":{\"valuePath\":"
-        "\"presetName\",\"value\":\"DailyPreset\"}}");
+    // D-84-37/42: applyPreset 已删除；preset 选择通过 setValue target=document
+    // fieldName=presetName，Provider 在 ApplyDocumentSetValue 中调用
+    // ApplyPreset 展开 task/option 默认值。
+    auto preset_change = ParseDasJson(
+        "{\"baseRevision\":0,\"kind\":\"setValue\",\"payload\":{\"target\":{"
+        "\"kind\":\"document\"},\"fieldName\":\"presetName\","
+        "\"value\":\"DailyPreset\"}}");
     ASSERT_EQ(
         session->ApplyChange(preset_change.Get(), result_json.Put()),
         DAS_S_OK);
@@ -2259,9 +2293,13 @@ TEST_F(MaapiAuthoringFixture, ApplyPresetExpandsTasksAndRestoresOptionValues)
         "{\"adapter\":{\"interfacePath\":\"" + interface_path + "\"}}");
 
     DasPtr<Das::ExportInterface::IDasJson> result_json;
-    auto                                   preset_change = ParseDasJson(
-        "{\"baseRevision\":0,\"kind\":\"applyPreset\",\"payload\":{"
-        "\"presetName\":\"DailyPreset\"}}");
+    // D-84-37/42: applyPreset 已删除；preset 选择通过 setValue target=document
+    // fieldName=presetName 实现。Provider 在 ApplyDocumentSetValue 中触发
+    // ApplyPreset 展开 DailyFarm + 默认 option 值。
+    auto preset_change = ParseDasJson(
+        "{\"baseRevision\":0,\"kind\":\"setValue\",\"payload\":{\"target\":{"
+        "\"kind\":\"document\"},\"fieldName\":\"presetName\","
+        "\"value\":\"DailyPreset\"}}");
     ASSERT_EQ(
         session->ApplyChange(preset_change.Get(), result_json.Put()),
         DAS_S_OK);
@@ -2328,34 +2366,51 @@ TEST_F(MaapiAuthoringFixture, InvalidPresetNameWritesOrphanPath)
         "{\"adapter\":{\"interfacePath\":\"" + interface_path + "\"}}");
 
     DasPtr<Das::ExportInterface::IDasJson> result_json;
-    auto                                   preset_change = ParseDasJson(
-        "{\"baseRevision\":0,\"kind\":\"setValue\",\"payload\":{\"valuePath\":"
-        "\"presetName\",\"value\":\"NonExistentPreset\"}}");
+    // D-84-24: 严格 setValue target=document fieldName=presetName。未知
+    // preset name 触发 Provider 语义失败：ApplyDocumentSetValue emit error
+    // 诊断并返回 false，session 不递增 revision，preset_name 保持 unset。
+    // orphan path 在 PiCompiler 内部仍可能写入，但严格 Apply envelope 只
+    // 关心 diagnostics + 未变更的 acceptedProperties。
+    auto preset_change = ParseDasJson(
+        "{\"baseRevision\":0,\"kind\":\"setValue\",\"payload\":{\"target\":{"
+        "\"kind\":\"document\"},\"fieldName\":\"presetName\","
+        "\"value\":\"NonExistentPreset\"}}");
     ASSERT_EQ(
         session->ApplyChange(preset_change.Get(), result_json.Put()),
         DAS_S_OK);
 
     auto result = ReadJsonInterface(result_json.Get());
-    auto accepted =
-        (*result.as_object())[std::string_view("acceptedProperties")]
-            .as_object();
+    auto obj = result.as_object();
+    ASSERT_TRUE(obj.has_value());
+    auto accepted = (*obj)[std::string_view("acceptedProperties")].as_object();
     ASSERT_TRUE(accepted.has_value());
     auto pi = (*accepted)[std::string_view("pi")].as_object();
     ASSERT_TRUE(pi.has_value());
 
-    // Per D-84-04, an invalid preset name must NOT be stored as preset_name
-    // (which would imply a successful preset application). The projector only
-    // records it as an orphan path on acceptedProperties.pi. The unit-test
-    // twin PresetTest.InvalidPresetNameWritesOrphanPath locks the same
-    // behavior at the DTO level (preset_name remains unset).
+    // Per D-84-04/10: 未知 preset 是语义失败。preset_name 不被写入；
+    // document.revision 保持 baseRevision（无递增）；envelope 携带 error
+    // severity 诊断。
     EXPECT_FALSE((*pi)[std::string_view("presetName")].as_string().has_value());
-
-    auto orphan_paths = (*pi)[std::string_view("orphanPaths")].as_array();
-    ASSERT_TRUE(orphan_paths.has_value());
-    ASSERT_EQ(orphan_paths->size(), 1u);
+    auto document = (*obj)[std::string_view("document")].as_object();
+    ASSERT_TRUE(document.has_value());
     EXPECT_EQ(
-        (*orphan_paths)[0].as_string().value_or(""),
-        "presetName:NonExistentPreset");
+        (*document)[std::string_view("revision")].as_int().value_or(-1),
+        0);
+    auto diagnostics = (*obj)[std::string_view("diagnostics")].as_array();
+    ASSERT_TRUE(diagnostics.has_value());
+    bool has_error = false;
+    for (auto it = diagnostics->begin(); it != diagnostics->end(); ++it)
+    {
+        auto diag = it->as_object();
+        if (diag
+            && (*diag)[std::string_view("severity")].as_string().value_or("")
+                   == "error")
+        {
+            has_error = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(has_error);
 }
 
 // ---------------------------------------------------------------------------
@@ -2699,8 +2754,9 @@ TEST_F(MaapiAuthoringFixture, SelectConfigurationSwitchesAuthority)
     // 切换到 cfg_b
     DasPtr<Das::ExportInterface::IDasJson> result_json;
     auto                                   change = ParseDasJson(
-        "{\"baseRevision\":0,\"kind\":\"setValue\",\"payload\":{\"valuePath\":"
-        "\"configurationId\",\"value\":\"cfg_b\"}}");
+        "{\"baseRevision\":0,\"kind\":\"setValue\",\"payload\":{\"target\":{"
+        "\"kind\":\"document\"},\"fieldName\":\"configurationId\","
+        "\"value\":\"cfg_b\"}}");
     ASSERT_EQ(session->ApplyChange(change.Get(), result_json.Put()), DAS_S_OK);
 
     auto result = ReadJsonInterface(result_json.Get());
@@ -3890,7 +3946,7 @@ TEST_F(MaapiAuthoringFixture, AddFormSequenceItemRegistersTaskInstance)
 
     // acceptedProperties.pi.tasks 已加入 DailyFarm 实例，带 Provider 颁发的
     // 非空 itemId。
-    auto pi     = AcceptedPiFromApplyResult(result);
+    auto pi = AcceptedPiFromApplyResult(result);
     auto pi_obj = pi.as_object();
     ASSERT_TRUE(pi_obj.has_value());
     auto tasks = (*pi_obj)[std::string_view("tasks")].as_array();
@@ -3925,7 +3981,7 @@ TEST_F(MaapiAuthoringFixture, AddFormSequenceItemRejectsUnknownActionId)
     EXPECT_GE(CountDiagnosticsBySeverity(result, "error"), 1u);
     EXPECT_EQ(DocumentRevisionFromApplyResult(result), 0);
 
-    auto pi     = AcceptedPiFromApplyResult(result);
+    auto pi = AcceptedPiFromApplyResult(result);
     auto pi_obj = pi.as_object();
     ASSERT_TRUE(pi_obj.has_value());
     auto tasks = (*pi_obj)[std::string_view("tasks")].as_array();
@@ -3956,7 +4012,7 @@ TEST_F(MaapiAuthoringFixture, RemoveFormSequenceItemDropsTaskByItemId)
     EXPECT_EQ(DocumentRevisionFromApplyResult(result), 1);
     EXPECT_EQ(CountDiagnosticsBySeverity(result, "error"), 0u);
 
-    auto pi     = AcceptedPiFromApplyResult(result);
+    auto pi = AcceptedPiFromApplyResult(result);
     auto pi_obj = pi.as_object();
     ASSERT_TRUE(pi_obj.has_value());
     auto tasks = (*pi_obj)[std::string_view("tasks")].as_array();
@@ -3990,7 +4046,7 @@ TEST_F(MaapiAuthoringFixture, RemoveFormSequenceItemRejectsUnknownId)
     EXPECT_GE(CountDiagnosticsBySeverity(result, "error"), 1u);
     EXPECT_EQ(DocumentRevisionFromApplyResult(result), 0);
 
-    auto pi     = AcceptedPiFromApplyResult(result);
+    auto pi = AcceptedPiFromApplyResult(result);
     auto pi_obj = pi.as_object();
     ASSERT_TRUE(pi_obj.has_value());
     auto tasks = (*pi_obj)[std::string_view("tasks")].as_array();
@@ -4022,7 +4078,7 @@ TEST_F(MaapiAuthoringFixture, MoveFormSequenceItemReordersByItemId)
     EXPECT_EQ(DocumentRevisionFromApplyResult(result), 1);
     EXPECT_EQ(CountDiagnosticsBySeverity(result, "error"), 0u);
 
-    auto pi     = AcceptedPiFromApplyResult(result);
+    auto pi = AcceptedPiFromApplyResult(result);
     auto pi_obj = pi.as_object();
     ASSERT_TRUE(pi_obj.has_value());
     auto tasks = (*pi_obj)[std::string_view("tasks")].as_array();
@@ -4086,16 +4142,24 @@ TEST_F(MaapiAuthoringFixture, LegacyKindsRejectedAsUnsupportedChange)
         "{\"adapter\":{\"interfacePath\":\"" + interface_path + "\"}}");
 
     for (const auto* kind_str :
-         {"applyPreset", "addSequenceItem", "moveSequenceItem",
-          "removeSequenceItem", "addNode", "removeNode", "connectPorts",
-          "disconnectPorts", "updateNodeConfig"})
+         {"applyPreset",
+          "addSequenceItem",
+          "moveSequenceItem",
+          "removeSequenceItem",
+          "addNode",
+          "removeNode",
+          "connectPorts",
+          "disconnectPorts",
+          "updateNodeConfig"})
     {
         DasPtr<Das::ExportInterface::IDasJson> result_json;
-        const std::string change_json =
-            std::string("{\"baseRevision\":0,\"kind\":\"")
-            + kind_str + "\",\"payload\":{}}";
+        const std::string                      change_json =
+            std::string("{\"baseRevision\":0,\"kind\":\"") + kind_str
+            + "\",\"payload\":{}}";
         auto change = ParseDasJson(change_json);
-        ASSERT_EQ(session->ApplyChange(change.Get(), result_json.Put()), DAS_S_OK);
+        ASSERT_EQ(
+            session->ApplyChange(change.Get(), result_json.Put()),
+            DAS_S_OK);
         auto result = ReadJsonInterface(result_json.Get());
         EXPECT_GE(CountDiagnosticsBySeverity(result, "error"), 1u)
             << "kind=" << kind_str;
@@ -4120,8 +4184,9 @@ TEST_F(MaapiAuthoringFixture, CompileEmptyRequestReturnsStrictEnvelope)
     // 严格 Compile envelope 校验。
     auto compile_valid =
         Das::Core::TaskScheduler::ValidateAuthoringCompileResult(result);
-    EXPECT_TRUE(compile_valid.valid) << "error_kind=" << compile_valid.error_kind
-                                     << " message=" << compile_valid.message;
+    EXPECT_TRUE(compile_valid.valid)
+        << "error_kind=" << compile_valid.error_kind
+        << " message=" << compile_valid.message;
 }
 
 // Tracer 4 RED: 成功 Apply envelope 通过 84-01 validator。

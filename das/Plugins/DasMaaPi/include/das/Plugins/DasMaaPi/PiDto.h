@@ -18,6 +18,11 @@ namespace Das::Plugins::DasMaaPi
         std::string                message;
         std::optional<std::string> path;
         std::optional<std::string> source;
+        // D-84-11: 严格 diagnostic 允许可选整数 DasResult
+        // code。PiDiagnosticDto.code 是 PI 协议遗留的字符串形态（不在 84-01
+        // 严格 wire 中输出）； int_code 是 Phase 84 Authoring envelope 的整数
+        // code。
+        std::optional<std::int64_t> int_code;
     };
 
     struct PiNamedDto
@@ -87,10 +92,10 @@ namespace Das::Plugins::DasMaaPi
 
     struct PiPresetTaskDto
     {
-        std::string                              name;
-        bool                                     enabled = true;
-        std::vector<std::string>                option_names;
-        std::map<std::string, yyjson::value>    option_values;
+        std::string                          name;
+        bool                                 enabled = true;
+        std::vector<std::string>             option_names;
+        std::map<std::string, yyjson::value> option_values;
     };
 
     struct PiPresetDto : PiNamedDto

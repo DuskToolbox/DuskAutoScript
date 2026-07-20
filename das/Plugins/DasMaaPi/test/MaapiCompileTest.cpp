@@ -158,12 +158,27 @@ namespace
         yyjson::value Compile(std::string context, std::string purpose)
         {
             auto session = CreateSession(std::move(context));
+            // D-84-08: Compile 严格 envelope = {compile, diagnostics}。purpose
+            // 是 Provider 私有 preview/execution 模式标志，PiCompiler 读取后
+            // 决定是否 emit executionInput。测试断言历来读 PiCompiler 输出
+            // （ok/canExecute/executionInput/...），故这里 unwrap compile
+            // 字段。
             auto request = ParseDasJson("{\"purpose\":\"" + purpose + "\"}");
             DasPtr<Das::ExportInterface::IDasJson> result_json;
             EXPECT_EQ(
                 session->Compile(request.Get(), result_json.Put()),
                 DAS_S_OK);
-            return ReadJsonInterface(result_json.Get());
+            auto envelope = ReadJsonInterface(result_json.Get());
+            // 84-07 严格 envelope = {compile, diagnostics}；测试历史断言直接
+            // 针对 PiCompiler 输出（ok/canExecute/executionInput/...），故
+            // 这里 unwrap compile 字段。
+            auto env_obj = envelope.as_object();
+            if (env_obj && env_obj->contains(std::string_view("compile")))
+            {
+                return Das::Utils::CloneYyjsonValue(
+                    (*env_obj)[std::string_view("compile")]);
+            }
+            return envelope;
         }
 
         std::filesystem::path settings_dir_;

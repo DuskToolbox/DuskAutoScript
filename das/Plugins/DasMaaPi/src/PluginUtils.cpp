@@ -106,10 +106,14 @@ namespace Plugins::DasMaaPi
                 JsonString(diagnostic.severity);
             // D-84-11: diagnostic 严格 {severity, message, code?, path?}。
             // code 是可选整数 DasResult；source 已删除。PiDiagnosticDto.code
-            // 是字符串形态（PI 协议遗留），这里直接放入 message 信息即可，
-            // 整数 code 留给 84-07 语义错误映射。
+            // 是字符串形态（PI 协议遗留），仅用于 Provider 内部记录；int_code
+            // 才是 84-07 严格 wire 的整数 code。
             (*item_obj)[std::string_view("message")] =
                 JsonString(diagnostic.message);
+            if (diagnostic.int_code)
+            {
+                (*item_obj)[std::string_view("code")] = *diagnostic.int_code;
+            }
             if (diagnostic.path)
             {
                 (*item_obj)[std::string_view("path")] =
