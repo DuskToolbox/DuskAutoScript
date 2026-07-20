@@ -38,6 +38,12 @@ namespace Das::Plugins::DasMaaPi
     yyjson::value BuildPortDefinitionsJson(
         const std::vector<Core::GraphRuntime::Dto::GraphPortDefinitionDto>&
             ports);
+
+    // D-84-07: 暴露 BuildApplyResult 给 session-level 测试做严格 envelope 校验。
+    yyjson::value BuildApplyResult(
+        const AcceptedSettingsDto&   settings,
+        int64_t                      revision,
+        std::vector<PiDiagnosticDto> diagnostics);
 } // namespace Das::Plugins::DasMaaPi
 
 namespace
@@ -1389,8 +1395,7 @@ TEST(I18nTest, ResolveI18nFallsBackToKeyWhenTranslationNotFound)
 
     // D-84-23: 缺译时不再泄漏 $key/protocol English；Provider 回退到 PI
     // 用户可见标识（dto.name）并向 projection_diagnostics 报告 warning。
-    const auto label =
-        CandidateLabel(document, "controllerName", "Android");
+    const auto label = CandidateLabel(document, "controllerName", "Android");
     EXPECT_FALSE(label.empty());
     EXPECT_NE(label, "controller.android");
     EXPECT_NE(label, "$controller.android");
@@ -3323,7 +3328,7 @@ TEST(MaapiProjectionTest, MissingTranslationYieldsGenericFallbackAndDiagnostic)
     settings.pi.language = "zh_cn";
 
     std::vector<PiDiagnosticDto> projection_diagnostics;
-    auto document = ProjectAuthoringDocument(
+    auto                         document = ProjectAuthoringDocument(
         settings,
         &catalog,
         {},
@@ -3336,8 +3341,7 @@ TEST(MaapiProjectionTest, MissingTranslationYieldsGenericFallbackAndDiagnostic)
 
     // Controller label 必须不是 $key / machine name。$key 形态是
     // "controller.android"（去掉 $ 前缀），缺译回退不能等于它。
-    const auto label =
-        CandidateLabel(document, "controllerName", "Android");
+    const auto label = CandidateLabel(document, "controllerName", "Android");
     EXPECT_FALSE(label.empty());
     EXPECT_NE(label, "controller.android");
     EXPECT_NE(label, "$controller.android");
@@ -3351,8 +3355,9 @@ TEST(MaapiProjectionTest, MissingTranslationYieldsGenericFallbackAndDiagnostic)
         {
             found_missing = true;
             // message 提及缺失的 key 与 language，方便开发者定位。
-            EXPECT_NE(diag.message.find("controller.android"),
-                      std::string::npos);
+            EXPECT_NE(
+                diag.message.find("controller.android"),
+                std::string::npos);
             break;
         }
     }
@@ -3366,7 +3371,7 @@ TEST(MaapiProjectionTest, RootCommandsAndItemDebugInfoProjected)
 
     auto catalog = MakeStrictProjectionMockCatalog();
 
-    AcceptedSettingsDto    settings;
+    AcceptedSettingsDto settings;
     settings.pi.language = "zh_cn";
     MaapiPiTaskSettingsDto task;
     task.item_id = "item_debug";
@@ -3396,8 +3401,7 @@ TEST(MaapiProjectionTest, RootCommandsAndItemDebugInfoProjected)
     {
         auto cmd = it->as_object();
         ASSERT_TRUE(cmd.has_value());
-        auto id_opt =
-            (*cmd)[std::string_view("id")].as_string().value_or("");
+        auto id_opt = (*cmd)[std::string_view("id")].as_string().value_or("");
         auto label_opt =
             (*cmd)[std::string_view("label")].as_string().value_or("");
         EXPECT_FALSE(id_opt.empty());
@@ -3422,8 +3426,7 @@ TEST(MaapiProjectionTest, RootCommandsAndItemDebugInfoProjected)
     auto item_obj = (*items)[0].as_object();
     ASSERT_TRUE(item_obj.has_value());
     ASSERT_TRUE(item_obj->contains(std::string_view("debugInfo")));
-    auto debug_info =
-        (*item_obj)[std::string_view("debugInfo")].as_object();
+    auto debug_info = (*item_obj)[std::string_view("debugInfo")].as_object();
     ASSERT_TRUE(debug_info.has_value());
     EXPECT_EQ(
         (*debug_info)[std::string_view("piTaskName")].as_string().value_or(""),
@@ -3458,7 +3461,7 @@ TEST(MaapiProjectionTest, IconsResolvedToAbsoluteOrHttps)
         }
     }
 
-    AcceptedSettingsDto    settings;
+    AcceptedSettingsDto settings;
     settings.pi.language = "zh_cn";
     MaapiPiTaskSettingsDto task;
     task.item_id = "item_icon";
@@ -3531,8 +3534,7 @@ TEST(MaapiProjectionTest, IconsResolvedToAbsoluteOrHttps)
         {
             stage_icon = std::string(
                 (*field)[std::string_view("icon")].as_string().value_or(""));
-            auto cands =
-                (*field)[std::string_view("candidates")].as_array();
+            auto cands = (*field)[std::string_view("candidates")].as_array();
             if (cands)
             {
                 for (auto cit = cands->begin(); cit != cands->end(); ++cit)
@@ -3545,9 +3547,8 @@ TEST(MaapiProjectionTest, IconsResolvedToAbsoluteOrHttps)
                         && c->contains(std::string_view("icon")))
                     {
                         case_icon = std::string(
-                            (*c)[std::string_view("icon")]
-                                .as_string()
-                                .value_or(""));
+                            (*c)[std::string_view("icon")].as_string().value_or(
+                                ""));
                     }
                 }
             }
@@ -3558,3 +3559,351 @@ TEST(MaapiProjectionTest, IconsResolvedToAbsoluteOrHttps)
     EXPECT_EQ(case_icon, "https://cdn.example.com/1-1.png");
 }
 
+// ---------------------------------------------------------------------------
+// Phase 84-07: 严格 Apply dispatch + accepted-result 语义 + Compile 精确化
+//
+// 这一组测试锁定 D-84-08/10/11/22/24/25/28/30/34/35/36/40 在 MaaPI Apply
+// 上的最终严格 contract：
+//   - setValue 严格 {target, fieldName, value}；旧 valuePath/nodeId+field 拒绝
+//   - add/move/removeFormSequenceItem 按 itemId 寻址，duplicate task 类型独立
+//   - invokeCommand 执行 new/copy；unknown command 返回诊断；无 revision 变化
+//   - convertView 拒绝（MaaPI 只支持 formSequence）
+//   - 成功 Apply 返回 {acceptedProperties, document, diagnostics}，
+//     document.revision == baseRevision + 1
+//   - 失败 Apply 不修改 acceptedProperties，revision 不变，仅 diagnostics
+//   - Compile({}) 返回 {compile, diagnostics}，不持久化
+//   - 旧
+//   kind（applyPreset/addSequenceItem/moveSequenceItem/removeSequenceItem）
+//     一律 unsupportedChange 拒绝
+//   - 输出通过 84-01 ValidateAuthoringApplyResult /
+//   ValidateAuthoringCompileResult
+//
+// 测试经公共 IDasTaskAuthoringSession 缝观察，literal JSON；不引用私有 helper。
+// ---------------------------------------------------------------------------
+
+// Helper: 取 Apply result envelope 的 acceptedProperties.pi 字段。
+// 失败时返回空对象，便于 ASSERT 张口即停。
+yyjson::value AcceptedPiFromApplyResult(const yyjson::value& result)
+{
+    auto obj = result.as_object();
+    if (!obj)
+    {
+        return Das::Utils::MakeYyjsonObject();
+    }
+    auto accepted = (*obj)[std::string_view("acceptedProperties")].as_object();
+    if (!accepted)
+    {
+        return Das::Utils::MakeYyjsonObject();
+    }
+    auto pi = (*accepted)[std::string_view("pi")];
+    return Das::Utils::CloneYyjsonValue(pi);
+}
+
+// Helper: 取 Apply result 的 revision（位于 document.revision）。
+int64_t DocumentRevisionFromApplyResult(const yyjson::value& result)
+{
+    auto obj = result.as_object();
+    if (!obj)
+    {
+        return -1;
+    }
+    if (!obj->contains(std::string_view("document")))
+    {
+        return -1;
+    }
+    auto document = (*obj)[std::string_view("document")].as_object();
+    if (!document)
+    {
+        return -1;
+    }
+    return (*document)[std::string_view("revision")].as_int().value_or(-1);
+}
+
+// Helper: 统计 diagnostics 数组中给定 severity 的条数。
+std::size_t CountDiagnosticsBySeverity(
+    const yyjson::value& result,
+    std::string_view     severity)
+{
+    auto obj = result.as_object();
+    if (!obj || !obj->contains(std::string_view("diagnostics")))
+    {
+        return 0u;
+    }
+    auto arr = (*obj)[std::string_view("diagnostics")].as_array();
+    if (!arr)
+    {
+        return 0u;
+    }
+    std::size_t count = 0u;
+    for (auto it = arr->begin(); it != arr->end(); ++it)
+    {
+        auto diag = it->as_object();
+        if (diag
+            && (*diag)[std::string_view("severity")].as_string().value_or("")
+                   == severity)
+        {
+            ++count;
+        }
+    }
+    return count;
+}
+
+// Tracer 1 RED: setValue 严格 {target, fieldName, value} 形态。
+// document 级 target 更新 controllerName 成功；revision 0 → 1。
+TEST_F(MaapiAuthoringFixture, SetValueDocumentTargetControllerNameSucceeds)
+{
+    auto interface_path =
+        FixturePath("interface_authoring.jsonc").generic_string();
+    auto session = CreateSession(
+        "{\"adapter\":{\"interfacePath\":\"" + interface_path + "\"}}");
+
+    DasPtr<Das::ExportInterface::IDasJson> result_json;
+    auto                                   change = ParseDasJson(
+        "{\"baseRevision\":0,\"kind\":\"setValue\",\"payload\":{"
+        "\"target\":{\"kind\":\"document\"},\"fieldName\":\"controllerName\","
+        "\"value\":\"Android\"}}");
+    ASSERT_EQ(session->ApplyChange(change.Get(), result_json.Put()), DAS_S_OK);
+    auto result = ReadJsonInterface(result_json.Get());
+    auto obj = result.as_object();
+    ASSERT_TRUE(obj.has_value());
+
+    // 严格 envelope 校验：通过 84-01 validator。
+    auto apply_valid =
+        Das::Core::TaskScheduler::ValidateAuthoringApplyResult(result, 0);
+    EXPECT_TRUE(apply_valid.valid) << "error_kind=" << apply_valid.error_kind
+                                   << " message=" << apply_valid.message;
+
+    // controllerName 已写入 acceptedProperties。
+    auto pi = AcceptedPiFromApplyResult(result);
+    auto pi_obj = pi.as_object();
+    ASSERT_TRUE(pi_obj.has_value());
+    EXPECT_EQ(
+        (*pi_obj)[std::string_view("controllerName")].as_string().value_or(""),
+        "Android");
+
+    // 成功 Apply 必须 document.revision == baseRevision + 1。
+    EXPECT_EQ(DocumentRevisionFromApplyResult(result), 1);
+    // 无 error severity 诊断。
+    EXPECT_EQ(CountDiagnosticsBySeverity(result, "error"), 0u);
+}
+
+// Tracer 1 RED: setValue 严格 target=document 拒绝未知 fieldName。
+// 不修改 acceptedProperties，不递增 revision。
+TEST_F(MaapiAuthoringFixture, SetValueDocumentTargetRejectsUnknownField)
+{
+    auto interface_path =
+        FixturePath("interface_authoring.jsonc").generic_string();
+    auto session = CreateSession(
+        "{\"adapter\":{\"interfacePath\":\"" + interface_path + "\"}}");
+
+    // 先 Get 一份初始 document，记录 revision 0。
+    DasPtr<Das::ExportInterface::IDasJson> get_json;
+    ASSERT_EQ(session->GetDocument({}, get_json.Put()), DAS_S_OK);
+    auto initial_doc = ReadJsonInterface(get_json.Get());
+
+    DasPtr<Das::ExportInterface::IDasJson> result_json;
+    auto                                   change = ParseDasJson(
+        "{\"baseRevision\":0,\"kind\":\"setValue\",\"payload\":{"
+        "\"target\":{\"kind\":\"document\"},\"fieldName\":\"bogusField\","
+        "\"value\":\"x\"}}");
+    ASSERT_EQ(session->ApplyChange(change.Get(), result_json.Put()), DAS_S_OK);
+    auto result = ReadJsonInterface(result_json.Get());
+    auto obj = result.as_object();
+    ASSERT_TRUE(obj.has_value());
+
+    // 必须有 error severity 诊断。
+    EXPECT_GE(CountDiagnosticsBySeverity(result, "error"), 1u);
+
+    // revision 未递增：document.revision 仍是 0（保持 baseRevision）。
+    EXPECT_EQ(DocumentRevisionFromApplyResult(result), 0);
+
+    // acceptedProperties 不变（没有 bogus 字段被写入）。
+    auto pi = AcceptedPiFromApplyResult(result);
+    auto pi_obj = pi.as_object();
+    ASSERT_TRUE(pi_obj.has_value());
+    EXPECT_FALSE(pi_obj->contains(std::string_view("bogusField")));
+}
+
+// Tracer 1 RED: setValue 严格 target=formSequenceItem 更新 enabled。
+TEST_F(MaapiAuthoringFixture, SetValueFormSequenceItemTargetUpdatesEnabled)
+{
+    auto interface_path =
+        FixturePath("interface_authoring.jsonc").generic_string();
+    auto session = CreateSession(
+        "{\"adapter\":{\"interfacePath\":\"" + interface_path
+        + "\"},\"pi\":{\"tasks\":[{\"itemId\":\"item_a\","
+          "\"taskName\":\"DailyFarm\",\"enabled\":true}]}}");
+
+    DasPtr<Das::ExportInterface::IDasJson> result_json;
+    auto                                   change = ParseDasJson(
+        "{\"baseRevision\":0,\"kind\":\"setValue\",\"payload\":{"
+        "\"target\":{\"kind\":\"formSequenceItem\",\"id\":\"item_a\"},"
+        "\"fieldName\":\"enabled\",\"value\":false}}");
+    ASSERT_EQ(session->ApplyChange(change.Get(), result_json.Put()), DAS_S_OK);
+    auto result = ReadJsonInterface(result_json.Get());
+
+    auto pi = AcceptedPiFromApplyResult(result);
+    auto pi_obj = pi.as_object();
+    ASSERT_TRUE(pi_obj.has_value());
+    auto tasks = (*pi_obj)[std::string_view("tasks")].as_array();
+    ASSERT_TRUE(tasks.has_value());
+    ASSERT_EQ(tasks->size(), 1u);
+    auto task = (*tasks)[0].as_object();
+    ASSERT_TRUE(task.has_value());
+    EXPECT_FALSE((*task)[std::string_view("enabled")].as_bool().value_or(true));
+    // 成功 Apply 必须 document.revision == baseRevision + 1。
+    EXPECT_EQ(DocumentRevisionFromApplyResult(result), 1);
+    EXPECT_EQ(CountDiagnosticsBySeverity(result, "error"), 0u);
+}
+
+// Tracer 1 RED: setValue target=formSequenceItem 拒绝未知 id。
+TEST_F(MaapiAuthoringFixture, SetValueFormSequenceItemTargetRejectsUnknownId)
+{
+    auto interface_path =
+        FixturePath("interface_authoring.jsonc").generic_string();
+    auto session = CreateSession(
+        "{\"adapter\":{\"interfacePath\":\"" + interface_path
+        + "\"},\"pi\":{\"tasks\":[{\"itemId\":\"item_a\","
+          "\"taskName\":\"DailyFarm\",\"enabled\":true}]}}");
+
+    DasPtr<Das::ExportInterface::IDasJson> result_json;
+    auto                                   change = ParseDasJson(
+        "{\"baseRevision\":0,\"kind\":\"setValue\",\"payload\":{"
+        "\"target\":{\"kind\":\"formSequenceItem\",\"id\":\"missing\"},"
+        "\"fieldName\":\"enabled\",\"value\":false}}");
+    ASSERT_EQ(session->ApplyChange(change.Get(), result_json.Put()), DAS_S_OK);
+    auto result = ReadJsonInterface(result_json.Get());
+
+    // 必须有 error 诊断；revision 不变。
+    EXPECT_GE(CountDiagnosticsBySeverity(result, "error"), 1u);
+    EXPECT_EQ(DocumentRevisionFromApplyResult(result), 0);
+
+    // acceptedProperties 未变：item_a 仍 enabled=true。
+    auto pi = AcceptedPiFromApplyResult(result);
+    auto pi_obj = pi.as_object();
+    ASSERT_TRUE(pi_obj.has_value());
+    auto tasks = (*pi_obj)[std::string_view("tasks")].as_array();
+    ASSERT_TRUE(tasks.has_value());
+    ASSERT_EQ(tasks->size(), 1u);
+    auto task = (*tasks)[0].as_object();
+    ASSERT_TRUE(task.has_value());
+    EXPECT_TRUE((*task)[std::string_view("enabled")].as_bool().value_or(false));
+}
+
+// Tracer 1 RED: setValue 拒绝 legacy valuePath payload（unsupportedChange）。
+TEST_F(MaapiAuthoringFixture, SetValueRejectsLegacyValuePathPayload)
+{
+    auto interface_path =
+        FixturePath("interface_authoring.jsonc").generic_string();
+    auto session = CreateSession(
+        "{\"adapter\":{\"interfacePath\":\"" + interface_path + "\"}}");
+
+    DasPtr<Das::ExportInterface::IDasJson> result_json;
+    auto                                   change = ParseDasJson(
+        "{\"baseRevision\":0,\"kind\":\"setValue\",\"payload\":{"
+        "\"valuePath\":\"controllerName\",\"value\":\"Android\"}}");
+    ASSERT_EQ(session->ApplyChange(change.Get(), result_json.Put()), DAS_S_OK);
+    auto result = ReadJsonInterface(result_json.Get());
+
+    // 旧 payload 必须被拒绝（error 诊断）。
+    EXPECT_GE(CountDiagnosticsBySeverity(result, "error"), 1u);
+    EXPECT_EQ(DocumentRevisionFromApplyResult(result), 0);
+
+    // acceptedProperties 未被修改。
+    auto pi = AcceptedPiFromApplyResult(result);
+    auto pi_obj = pi.as_object();
+    ASSERT_TRUE(pi_obj.has_value());
+    EXPECT_FALSE(pi_obj->contains(std::string_view("controllerName")));
+}
+
+// Tracer 1 RED: setValue 拒绝 legacy nodeId+field
+// payload（unsupportedChange）。
+TEST_F(MaapiAuthoringFixture, SetValueRejectsLegacyNodeIdFieldPayload)
+{
+    auto interface_path =
+        FixturePath("interface_authoring.jsonc").generic_string();
+    auto session = CreateSession(
+        "{\"adapter\":{\"interfacePath\":\"" + interface_path
+        + "\"},\"pi\":{\"tasks\":[{\"itemId\":\"item_a\","
+          "\"taskName\":\"DailyFarm\",\"enabled\":true}]}}");
+
+    DasPtr<Das::ExportInterface::IDasJson> result_json;
+    auto                                   change = ParseDasJson(
+        "{\"baseRevision\":0,\"kind\":\"setValue\",\"payload\":{"
+        "\"nodeId\":\"DailyFarm\",\"field\":\"enabled\",\"value\":false}}");
+    ASSERT_EQ(session->ApplyChange(change.Get(), result_json.Put()), DAS_S_OK);
+    auto result = ReadJsonInterface(result_json.Get());
+
+    EXPECT_GE(CountDiagnosticsBySeverity(result, "error"), 1u);
+    EXPECT_EQ(DocumentRevisionFromApplyResult(result), 0);
+
+    // acceptedProperties 未被修改：item_a 仍 enabled=true。
+    auto pi = AcceptedPiFromApplyResult(result);
+    auto pi_obj = pi.as_object();
+    ASSERT_TRUE(pi_obj.has_value());
+    auto tasks = (*pi_obj)[std::string_view("tasks")].as_array();
+    ASSERT_TRUE(tasks.has_value());
+    auto task = (*tasks)[0].as_object();
+    ASSERT_TRUE(task.has_value());
+    EXPECT_TRUE((*task)[std::string_view("enabled")].as_bool().value_or(false));
+}
+
+// Tracer 1 RED: setValue payload 出现额外字段时拒绝。
+TEST_F(MaapiAuthoringFixture, SetValueRejectsExtraPayloadMember)
+{
+    auto interface_path =
+        FixturePath("interface_authoring.jsonc").generic_string();
+    auto session = CreateSession(
+        "{\"adapter\":{\"interfacePath\":\"" + interface_path + "\"}}");
+
+    DasPtr<Das::ExportInterface::IDasJson> result_json;
+    auto                                   change = ParseDasJson(
+        "{\"baseRevision\":0,\"kind\":\"setValue\",\"payload\":{"
+        "\"target\":{\"kind\":\"document\"},\"fieldName\":\"controllerName\","
+        "\"value\":\"Android\",\"extra\":\"nope\"}}");
+    ASSERT_EQ(session->ApplyChange(change.Get(), result_json.Put()), DAS_S_OK);
+    auto result = ReadJsonInterface(result_json.Get());
+
+    EXPECT_GE(CountDiagnosticsBySeverity(result, "error"), 1u);
+    EXPECT_EQ(DocumentRevisionFromApplyResult(result), 0);
+}
+
+// Tracer 4 RED: 成功 Apply envelope 通过 84-01 validator。
+TEST(MaapiApplyResultTest, SuccessfulApplyEnvelopePassesStrictValidator)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto catalog = MakeStrictProjectionMockCatalog();
+
+    AcceptedSettingsDto settings;
+    settings.pi.language = "zh_cn";
+    MaapiConfigurationDto config;
+    config.id = "cfg_apply";
+    config.name = "Apply";
+    settings.pi.configurations.push_back(std::move(config));
+    settings.pi.selected_configuration_id = "cfg_apply";
+
+    // 通过 ApplyInvokeCommand 创建新配置触发一次成功 mutation。
+    AcceptedSettingsDto candidate = settings;
+    ApplyInvokeCommand(candidate, "newConfiguration");
+
+    std::vector<PiDiagnosticDto> diagnostics;
+    auto result = Das::Plugins::DasMaaPi::BuildApplyResult(
+        candidate,
+        /*revision=*/1,
+        diagnostics);
+
+    auto apply_valid =
+        Das::Core::TaskScheduler::ValidateAuthoringApplyResult(result, 0);
+    EXPECT_TRUE(apply_valid.valid) << "error_kind=" << apply_valid.error_kind
+                                   << " message=" << apply_valid.message;
+
+    auto obj = result.as_object();
+    ASSERT_TRUE(obj.has_value());
+    EXPECT_TRUE(obj->contains(std::string_view("acceptedProperties")));
+    EXPECT_TRUE(obj->contains(std::string_view("document")));
+    EXPECT_TRUE(obj->contains(std::string_view("diagnostics")));
+    EXPECT_FALSE(obj->contains(std::string_view("sourceFingerprint")));
+    EXPECT_FALSE(obj->contains(std::string_view("migration")));
+    EXPECT_FALSE(obj->contains(std::string_view("dynamic_ports")));
+}
