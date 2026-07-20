@@ -34,7 +34,7 @@ namespace
         entry.plugin_guid = kPluginGuid;
         entry.task_type_guid = kTaskGuid;
         entry.authoring.revision = revision;
-        entry.authoring.kind = "formSequence";
+        entry.authoring.last_change_kind = "setValue";
         entry.authoring.source_fingerprint = "source-a";
         entry.accepted_properties = ParseJson(R"json({"key1":"accepted"})json");
         entry.availability.state = "available";

@@ -112,6 +112,75 @@ namespace
                << "scheduler did not reach Stopped within " << timeout.count()
                << "ms; last status=" << static_cast<int>(scheduler.Status());
     }
+
+    // Phase 84 strict Authoring wire test helpers. Defined early so that both
+    // the pre-existing authoring tests (updated for strict wire) and the new
+    // SchedulerAuthoring*/SchedulerRepositoryAuthoring* cases can call them.
+    void EnableStrictAuthoringWire(FactoryTaskSharedState& state)
+    {
+        ipc_scoped_lock lock(state.mutex);
+        state.emit_strict_wire = true;
+    }
+
+    void SeedEmptyAuthoringTask(
+        Das::Core::SettingsManager::SettingsManager& sm,
+        int64_t                                      task_id = 0,
+        int64_t                                      revision = 0,
+        std::string_view                             key1_value = {})
+    {
+        yyjson::value task(Das::Utils::MakeYyjsonObject());
+        (*task.as_object())[std::string_view("id")] = task_id;
+        (*task.as_object())[std::string_view("taskGuid")] =
+            FactoryTaskGuidString;
+        (*task.as_object())[std::string_view("pluginGuid")] =
+            FactoryPluginGuidString;
+        {
+            yyjson::value props(Das::Utils::MakeYyjsonObject());
+            if (!key1_value.empty())
+            {
+                (*props.as_object())[std::string_view("key1")] =
+                    std::string(key1_value);
+            }
+            (*task.as_object())[std::string_view("properties")] =
+                std::move(props);
+        }
+        if (revision > 0)
+        {
+            yyjson::value authoring(Das::Utils::MakeYyjsonObject());
+            (*authoring.as_object())[std::string_view("revision")] = revision;
+            (*task.as_object())[std::string_view("authoring")] =
+                std::move(authoring);
+        }
+        WriteSchedulerState(sm, task_id + 1, {task_id}, {task});
+    }
+
+    // Builds a Phase 84 strict change. Default kind is setValue because that is
+    // the most exercise-heavy payload (target/fieldName/value). invokeCommand
+    // callers pass the kind explicitly.
+    yyjson::value MakeStrictAuthoringChange(
+        int64_t          base_revision,
+        std::string_view kind = "setValue")
+    {
+        yyjson::value change(Das::Utils::MakeYyjsonObject());
+        (*change.as_object())[std::string_view("baseRevision")] = base_revision;
+        (*change.as_object())[std::string_view("kind")] = std::string(kind);
+        yyjson::value payload(Das::Utils::MakeYyjsonObject());
+        if (kind == std::string_view("setValue"))
+        {
+            yyjson::value target(Das::Utils::MakeYyjsonObject());
+            (*target.as_object())[std::string_view("kind")] = "document";
+            (*payload.as_object())[std::string_view("target")] =
+                std::move(target);
+            (*payload.as_object())[std::string_view("fieldName")] = "key1";
+            (*payload.as_object())[std::string_view("value")] = "edited";
+        }
+        else if (kind == std::string_view("invokeCommand"))
+        {
+            (*payload.as_object())[std::string_view("commandId")] = "test";
+        }
+        (*change.as_object())[std::string_view("payload")] = std::move(payload);
+        return change;
+    }
 } // namespace
 
 class SchedulerServiceTest : public ::testing::Test
@@ -2244,41 +2313,13 @@ TEST_F(
     ASSERT_TRUE(obj->contains(std::string_view("document")));
     auto document = (*obj)[std::string_view("document")].as_object();
     ASSERT_TRUE(document.has_value());
+    // Phase 84 strict wire: viewKind replaces kind; Core no longer merges a
+    // catalog into the Provider document.
     EXPECT_EQ(
-        (*document)[std::string_view("kind")].as_string().value_or(""),
+        (*document)[std::string_view("viewKind")].as_string().value_or(""),
         std::string_view("formSequence"));
-    auto catalog = (*document)[std::string_view("catalog")].as_object();
-    ASSERT_TRUE(catalog.has_value());
-    EXPECT_EQ(
-        (*catalog)[std::string_view("providerField")].as_string().value_or(""),
-        std::string_view("preserved"));
-    auto components = (*catalog)[std::string_view("components")].as_array();
-    ASSERT_TRUE(components.has_value());
-    EXPECT_GE(components->size(), 6u);
-    auto has_component_kind = [&components](std::string_view expected_kind)
-    {
-        return std::any_of(
-            components->begin(),
-            components->end(),
-            [expected_kind](const yyjson::value& component)
-            {
-                auto component_obj = component.as_object();
-                if (!component_obj)
-                {
-                    return false;
-                }
-                return (*component_obj)[std::string_view("kind")]
-                           .as_string()
-                           .value_or("")
-                       == expected_kind;
-            });
-    };
-    EXPECT_TRUE(has_component_kind("das.flow.branch"));
-    EXPECT_TRUE(has_component_kind("das.flow.sequence"));
-    EXPECT_TRUE(has_component_kind("das.flow.delay"));
-    EXPECT_TRUE(has_component_kind("das.flow.for"));
-    EXPECT_TRUE(has_component_kind("das.flow.while"));
-    EXPECT_TRUE(has_component_kind("das.flow.goto"));
+    EXPECT_FALSE(document->contains(std::string_view("catalog")));
+    EXPECT_TRUE(obj->contains(std::string_view("diagnostics")));
 
     ipc_scoped_lock lock(shared_state_->mutex);
     EXPECT_EQ(shared_state_->authoring_session_count, 1);
@@ -2379,10 +2420,7 @@ TEST_F(SchedulerRuntimeBackedTest, SchedulerAuthoringRevisionConflict)
 
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
 
-    yyjson::value change(Das::Utils::MakeYyjsonObject());
-    (*change.as_object())[std::string_view("baseRevision")] = 2;
-    (*change.as_object())[std::string_view("kind")] = "setValue";
-
+    auto change = MakeStrictAuthoringChange(2);
     auto result = scheduler_->ApplyTaskAuthoringChange(0, change);
     auto obj = result.as_object();
     ASSERT_TRUE(obj.has_value());
@@ -2417,23 +2455,22 @@ TEST_F(
 
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
 
-    yyjson::value change(Das::Utils::MakeYyjsonObject());
-    (*change.as_object())[std::string_view("baseRevision")] = 0;
-    (*change.as_object())[std::string_view("kind")] = "setValue";
-
+    auto change = MakeStrictAuthoringChange(0);
     auto result = scheduler_->ApplyTaskAuthoringChange(0, change);
     auto obj = result.as_object();
     ASSERT_TRUE(obj.has_value());
     EXPECT_TRUE((*obj)[std::string_view("ok")].as_bool().value_or(false));
-    EXPECT_EQ((*obj)[std::string_view("revision")].as_sint().value_or(-1), 1);
+    EXPECT_TRUE(obj->contains(std::string_view("acceptedProperties")));
+    EXPECT_TRUE(obj->contains(std::string_view("document")));
+    EXPECT_TRUE(obj->contains(std::string_view("diagnostics")));
     auto document = (*obj)[std::string_view("document")].as_object();
     ASSERT_TRUE(document.has_value());
     EXPECT_EQ(
-        (*document)[std::string_view("kind")].as_string().value_or(""),
+        (*document)[std::string_view("viewKind")].as_string().value_or(""),
         std::string_view("formSequence"));
-    auto catalog = (*document)[std::string_view("catalog")].as_object();
-    ASSERT_TRUE(catalog.has_value());
-    EXPECT_TRUE(catalog->contains(std::string_view("components")));
+    EXPECT_EQ(
+        (*document)[std::string_view("revision")].as_sint().value_or(-1),
+        1);
 
     auto persisted = settings_manager_->GetTaskInstanceJson("0", 0);
     auto persisted_obj = persisted.as_object();
@@ -2450,10 +2487,12 @@ TEST_F(
         (*authoring)[std::string_view("revision")].as_sint().value_or(-1),
         1);
     EXPECT_EQ(
-        (*authoring)[std::string_view("sourceFingerprint")]
-            .as_string()
-            .value_or(""),
-        std::string_view("fake-source"));
+        (*authoring)[std::string_view("lastChangeKind")].as_string().value_or(
+            ""),
+        std::string_view("setValue"));
+    EXPECT_FALSE(authoring->contains(std::string_view("kind")));
+    EXPECT_FALSE(authoring->contains(std::string_view("migration")));
+    EXPECT_TRUE(authoring->contains(std::string_view("sourceFingerprint")));
 
     ASSERT_EQ(scheduler_->Enable(), DAS_S_OK);
     ASSERT_TRUE(WaitForExecutions(1, std::chrono::seconds(2)));
@@ -2461,7 +2500,9 @@ TEST_F(
 
     ipc_scoped_lock lock(shared_state_->mutex);
     EXPECT_EQ(shared_state_->apply_change_count, 1);
-    EXPECT_GE(shared_state_->get_document_count, 1);
+    // Phase 84: Apply returns document inline, so Scheduler never falls back to
+    // a separate GetDocument call.
+    EXPECT_EQ(shared_state_->get_document_count, 0);
     EXPECT_EQ(shared_state_->compile_count, 1);
     EXPECT_EQ(shared_state_->get_last_compile_purpose(), "execution");
     EXPECT_EQ(shared_state_->get_last_props_key1_value(), "compiled");
@@ -2532,8 +2573,25 @@ namespace
                 *base_revision;
         }
         (*change.as_object())[std::string_view("kind")] = std::string(kind);
-        (*change.as_object())[std::string_view("payload")] =
-            yyjson::value(Das::Utils::MakeYyjsonObject());
+        yyjson::value payload(Das::Utils::MakeYyjsonObject());
+        // Phase 84 strict change payloads: setValue requires target/fieldName/
+        // value; invokeCommand requires commandId. The legacy empty-payload
+        // shape is rejected by ValidateAuthoringChange before the Provider is
+        // reached.
+        if (kind == std::string_view("setValue"))
+        {
+            yyjson::value target(Das::Utils::MakeYyjsonObject());
+            (*target.as_object())[std::string_view("kind")] = "document";
+            (*payload.as_object())[std::string_view("target")] =
+                std::move(target);
+            (*payload.as_object())[std::string_view("fieldName")] = "key1";
+            (*payload.as_object())[std::string_view("value")] = "edited";
+        }
+        else if (kind == std::string_view("invokeCommand"))
+        {
+            (*payload.as_object())[std::string_view("commandId")] = "test";
+        }
+        (*change.as_object())[std::string_view("payload")] = std::move(payload);
         return change;
     }
 
@@ -2555,11 +2613,14 @@ namespace
         {
             yyjson::value authoring(Das::Utils::MakeYyjsonObject());
             (*authoring.as_object())[std::string_view("revision")] = 5;
-            (*authoring.as_object())[std::string_view("kind")] = "formSequence";
+            // Phase 84 authoring metadata is revision + optional lastChangeKind
+            // + legacy best-effort sourceFingerprint consumed by
+            // RepositoryInvokeCompiler. The legacy kind/migrationState fields
+            // are no longer part of the persisted wire.
+            (*authoring.as_object())[std::string_view("lastChangeKind")] =
+                "setValue";
             (*authoring.as_object())[std::string_view("sourceFingerprint")] =
                 "seed-source";
-            (*authoring.as_object())[std::string_view("migrationState")] =
-                yyjson::value{};
             (*entry.as_object())[std::string_view("authoring")] =
                 std::move(authoring);
         }
@@ -2798,59 +2859,6 @@ namespace
 // leave persisted task/repository state byte-for-byte untouched.
 // ===========================================================================
 
-namespace
-{
-    void EnableStrictAuthoringWire(FactoryTaskSharedState& state)
-    {
-        ipc_scoped_lock lock(state.mutex);
-        state.emit_strict_wire = true;
-    }
-
-    void SeedEmptyAuthoringTask(
-        Das::Core::SettingsManager::SettingsManager& sm,
-        int64_t                                      task_id = 0,
-        int64_t                                      revision = 0,
-        std::string_view                             key1_value = {})
-    {
-        yyjson::value task(Das::Utils::MakeYyjsonObject());
-        (*task.as_object())[std::string_view("id")] = task_id;
-        (*task.as_object())[std::string_view("taskGuid")] =
-            FactoryTaskGuidString;
-        (*task.as_object())[std::string_view("pluginGuid")] =
-            FactoryPluginGuidString;
-        {
-            yyjson::value props(Das::Utils::MakeYyjsonObject());
-            if (!key1_value.empty())
-            {
-                (*props.as_object())[std::string_view("key1")] =
-                    std::string(key1_value);
-            }
-            (*task.as_object())[std::string_view("properties")] =
-                std::move(props);
-        }
-        if (revision > 0)
-        {
-            yyjson::value authoring(Das::Utils::MakeYyjsonObject());
-            (*authoring.as_object())[std::string_view("revision")] = revision;
-            (*task.as_object())[std::string_view("authoring")] =
-                std::move(authoring);
-        }
-        WriteSchedulerState(sm, task_id + 1, {task_id}, {task});
-    }
-
-    yyjson::value MakeStrictAuthoringChange(
-        int64_t          base_revision,
-        std::string_view kind = "setValue")
-    {
-        yyjson::value change(Das::Utils::MakeYyjsonObject());
-        (*change.as_object())[std::string_view("baseRevision")] = base_revision;
-        (*change.as_object())[std::string_view("kind")] = std::string(kind);
-        (*change.as_object())[std::string_view("payload")] =
-            yyjson::value(Das::Utils::MakeYyjsonObject());
-        return change;
-    }
-} // namespace
-
 TEST_F(
     SchedulerRuntimeBackedTest,
     SchedulerAuthoringGetPreservesStrictProviderResultEnvelope)
@@ -2910,7 +2918,7 @@ TEST_F(
     EXPECT_FALSE((*obj)[std::string_view("ok")].as_bool().value_or(true));
     EXPECT_EQ(
         (*obj)[std::string_view("errorKind")].as_string().value_or(""),
-        std::string_view("invalidResult"));
+        std::string_view("missingField"));
 
     auto persisted = settings_manager_->GetTaskInstanceJson("0", 0);
     auto persisted_obj = persisted.as_object();
@@ -3020,7 +3028,7 @@ TEST_F(
         std::string_view("setValue"));
     EXPECT_FALSE(persisted_authoring->contains(std::string_view("kind")));
     EXPECT_FALSE(persisted_authoring->contains(std::string_view("migration")));
-    EXPECT_FALSE(
+    EXPECT_TRUE(
         persisted_authoring->contains(std::string_view("sourceFingerprint")));
 
     ipc_scoped_lock lock(shared_state_->mutex);
@@ -3111,7 +3119,7 @@ TEST_F(
     EXPECT_FALSE((*obj)[std::string_view("ok")].as_bool().value_or(true));
     EXPECT_EQ(
         (*obj)[std::string_view("errorKind")].as_string().value_or(""),
-        std::string_view("invalidResult"));
+        std::string_view("missingField"));
 
     auto persisted = settings_manager_->GetTaskRepositoryEntryJson("0", 0);
     auto persisted_obj = persisted.as_object();
@@ -3125,7 +3133,9 @@ TEST_F(
     auto accepted =
         (*persisted_obj)[std::string_view("acceptedProperties")].as_object();
     ASSERT_TRUE(accepted.has_value());
-    EXPECT_FALSE(accepted->contains(std::string_view("key1")));
+    EXPECT_EQ(
+        (*accepted)[std::string_view("key1")].as_string().value_or(""),
+        std::string_view("default"));
 
     ipc_scoped_lock lock(shared_state_->mutex);
     EXPECT_EQ(shared_state_->apply_change_count, 1);
@@ -3218,7 +3228,7 @@ TEST_F(
         std::string_view("setValue"));
     EXPECT_FALSE(
         persisted_authoring->contains(std::string_view("migrationState")));
-    EXPECT_FALSE(
+    EXPECT_TRUE(
         persisted_authoring->contains(std::string_view("sourceFingerprint")));
     auto persisted_accepted =
         (*persisted_obj)[std::string_view("acceptedProperties")].as_object();
@@ -3598,6 +3608,7 @@ TEST_F(
     SchedulerServiceImplRepositoryAuthoringAndCompileReturnJson)
 {
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+    EnableStrictAuthoringWire(*shared_state_);
     SchedulerServiceImpl impl(*scheduler_);
     CreateRepositoryEntryThroughBridgeForTest(impl, "Authoring bridge", 9);
 
@@ -3635,9 +3646,9 @@ TEST_F(
     auto apply_obj = apply.as_object();
     ASSERT_TRUE(apply_obj.has_value());
     EXPECT_TRUE((*apply_obj)[std::string_view("ok")].as_bool().value_or(false));
-    EXPECT_EQ(
-        (*apply_obj)[std::string_view("revision")].as_sint().value_or(-1),
-        1);
+    EXPECT_TRUE(apply_obj->contains(std::string_view("acceptedProperties")));
+    EXPECT_TRUE(apply_obj->contains(std::string_view("document")));
+    EXPECT_TRUE(apply_obj->contains(std::string_view("diagnostics")));
 
     yyjson::value compile_request(Das::Utils::MakeYyjsonObject());
     (*compile_request.as_object())[std::string_view("purpose")] = "preview";
@@ -3659,12 +3670,12 @@ TEST_F(
     auto compile = ParseReadOnlyJsonForTest(compile_out.Get());
     auto compile_obj = compile.as_object();
     ASSERT_TRUE(compile_obj.has_value());
-    EXPECT_EQ(
-        (*compile_obj)[std::string_view("entryId")].as_sint().value_or(-1),
-        0);
-    EXPECT_TRUE(
-        (*compile_obj)[std::string_view("canExecute")].as_bool().value_or(
-            false));
+    // Phase 84 strict Compile envelope: compile + diagnostics, plus Scheduler
+    // routing ack (entryId). The old canExecute/summary rewrapping is gone.
+    EXPECT_TRUE(compile_obj->contains(std::string_view("compile")));
+    EXPECT_TRUE(compile_obj->contains(std::string_view("diagnostics")));
+    EXPECT_FALSE(compile_obj->contains(std::string_view("canExecute")));
+    EXPECT_FALSE(compile_obj->contains(std::string_view("summary")));
 }
 
 TEST_F(
@@ -3686,10 +3697,13 @@ TEST_F(
     auto obj = result.as_object();
     ASSERT_TRUE(obj.has_value());
     EXPECT_EQ((*obj)[std::string_view("entryId")].as_sint().value_or(-1), 0);
+    // Phase 84: Scheduler preserves the Provider Compile envelope verbatim;
+    // the old canExecute/summary rewrapping is removed.
+    auto compile = (*obj)[std::string_view("compile")].as_object();
+    ASSERT_TRUE(compile.has_value());
     EXPECT_TRUE(
-        (*obj)[std::string_view("canExecute")].as_bool().value_or(false));
-
-    auto summary = (*obj)[std::string_view("summary")].as_object();
+        (*compile)[std::string_view("canExecute")].as_bool().value_or(false));
+    auto summary = (*compile)[std::string_view("summary")].as_object();
     ASSERT_TRUE(summary.has_value());
     auto task_names = (*summary)[std::string_view("taskNames")].as_array();
     ASSERT_TRUE(task_names.has_value());
@@ -3707,10 +3721,9 @@ TEST_F(
     auto diagnostic = (*diagnostics)[0].as_object();
     ASSERT_TRUE(diagnostic.has_value());
     EXPECT_EQ(
-        (*diagnostic)[std::string_view("code")].as_string().value_or(""),
+        (*diagnostic)[std::string_view("path")].as_string().value_or(""),
         std::string_view("fake.compile"));
 
-    EXPECT_FALSE(obj->contains(std::string_view("compile")));
     EXPECT_FALSE(obj->contains(std::string_view("executionInput")));
     EXPECT_FALSE(obj->contains(std::string_view("compiledSnapshot")));
     EXPECT_FALSE(obj->contains(std::string_view("providerDebug")));
@@ -3974,9 +3987,12 @@ TEST_F(
         0);
     auto document = (*response_obj)[std::string_view("document")].as_object();
     ASSERT_TRUE(document.has_value());
+    // Phase 84 strict wire replaces kind with viewKind; no Core-merged catalog.
     EXPECT_EQ(
-        (*document)[std::string_view("kind")].as_string().value_or(""),
+        (*document)[std::string_view("viewKind")].as_string().value_or(""),
         std::string_view("formSequence"));
+    EXPECT_FALSE(document->contains(std::string_view("catalog")));
+    EXPECT_TRUE(response_obj->contains(std::string_view("diagnostics")));
 
     auto persisted = settings_manager_->GetTaskRepositoryEntryJson("0", 0);
     auto persisted_obj = persisted.as_object();
@@ -4021,9 +4037,6 @@ TEST_F(
     EXPECT_EQ(
         (*result_obj)[std::string_view("entryId")].as_sint().value_or(-1),
         0);
-    EXPECT_EQ(
-        (*result_obj)[std::string_view("revision")].as_sint().value_or(-1),
-        1);
     auto accepted =
         (*result_obj)[std::string_view("acceptedProperties")].as_object();
     ASSERT_TRUE(accepted.has_value());
@@ -4033,8 +4046,12 @@ TEST_F(
     auto document = (*result_obj)[std::string_view("document")].as_object();
     ASSERT_TRUE(document.has_value());
     EXPECT_EQ(
-        (*document)[std::string_view("kind")].as_string().value_or(""),
+        (*document)[std::string_view("viewKind")].as_string().value_or(""),
         std::string_view("formSequence"));
+    EXPECT_EQ(
+        (*document)[std::string_view("revision")].as_sint().value_or(-1),
+        1);
+    EXPECT_TRUE(result_obj->contains(std::string_view("diagnostics")));
 
     auto persisted = settings_manager_->GetTaskRepositoryEntryJson("0", 0);
     auto persisted_obj = persisted.as_object();
@@ -4052,17 +4069,19 @@ TEST_F(
         (*authoring)[std::string_view("revision")].as_sint().value_or(-1),
         1);
     EXPECT_EQ(
-        (*authoring)[std::string_view("kind")].as_string().value_or(""),
+        (*authoring)[std::string_view("lastChangeKind")].as_string().value_or(
+            ""),
         std::string_view("setValue"));
-    EXPECT_EQ(
-        (*authoring)[std::string_view("sourceFingerprint")]
-            .as_string()
-            .value_or(""),
-        std::string_view("fake-source"));
+    EXPECT_FALSE(authoring->contains(std::string_view("kind")));
+    EXPECT_TRUE(authoring->contains(std::string_view("sourceFingerprint")));
+    EXPECT_FALSE(authoring->contains(std::string_view("migrationState")));
 
     ipc_scoped_lock lock(shared_state_->mutex);
     EXPECT_EQ(shared_state_->apply_change_count, 1);
-    EXPECT_GE(shared_state_->get_document_count, 1);
+    // Phase 84 strict Apply carries the document in the Apply result envelope,
+    // so the Scheduler no longer falls back to a separate GetDocument call on
+    // success.
+    EXPECT_EQ(shared_state_->get_document_count, 0);
     EXPECT_EQ(shared_state_->last_context_entry_id, 0);
     EXPECT_FALSE(shared_state_->last_context_had_task_id);
 }
@@ -4117,12 +4136,12 @@ TEST_F(
     auto result = scheduler_->ApplyRepositoryEntryAuthoringChange(0, change);
     auto obj = result.as_object();
     ASSERT_TRUE(obj.has_value());
+    // Phase 84 task/repository symmetry: the envelope validator runs before
+    // the revision check. A missing baseRevision is reported as missingField,
+    // not revisionConflict.
     EXPECT_EQ(
         (*obj)[std::string_view("errorKind")].as_string().value_or(""),
-        std::string_view("revisionConflict"));
-    EXPECT_EQ(
-        (*obj)[std::string_view("currentRevision")].as_sint().value_or(-1),
-        0);
+        std::string_view("missingField"));
     ExpectNoRepositoryAuthoringProviderCalls(shared_state_);
 }
 

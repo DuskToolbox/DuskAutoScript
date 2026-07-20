@@ -327,10 +327,70 @@ namespace Das::Core::TaskScheduler
         return revision ? *revision : 0;
     }
 
+    // Phase 84 registry-driven actionCatalog injection (D-84-31/32/33).
+    // Scheduler holds PluginManager by reference and is the natural owner of
+    // the registered IDasTaskComponent component_guid snapshot. It injects the
+    // catalog as a top-level `actionCatalog` JSON array of guid strings inside
+    // every authoring session context. Plugins that participate in the
+    // Add-Task affordance (DasGraphTask) read this array and forward it to the
+    // Core via GraphAuthoringSessionSetActionCatalog; plugins that do not
+    // simply ignore it. The array is sorted lexically for deterministic
+    // ordering.
+    static yyjson::value BuildActionCatalogFromRegistry(
+        Das::Core::ForeignInterfaceHost::PluginManager& plugin_manager)
+    {
+        auto definitions = plugin_manager.GetTaskComponentFactoryManager()
+                               .EnumerateDefinitions();
+        if (definitions.empty())
+        {
+            return yyjson::value(Das::Utils::MakeYyjsonArray());
+        }
+
+        std::vector<std::size_t> order;
+        order.reserve(definitions.size());
+        for (std::size_t i = 0; i < definitions.size(); ++i)
+        {
+            order.push_back(i);
+        }
+        std::sort(
+            order.begin(),
+            order.end(),
+            [&definitions](std::size_t lhs, std::size_t rhs)
+            {
+                return GuidToString(definitions[lhs].component_guid)
+                       < GuidToString(definitions[rhs].component_guid);
+            });
+
+        // Build a flat JSON array of guid strings. Per das-yyjson-string-safety
+        // mutable arrays do not accept the (string_view, copy_string) pair
+        // overload; we serialise the array via a small JSON literal reader so
+        // every guid is deep-copied into the document arena.
+        std::string literal = "[";
+        for (std::size_t i = 0; i < order.size(); ++i)
+        {
+            if (i != 0)
+            {
+                literal += ',';
+            }
+            literal += '"';
+            literal += GuidToString(definitions[order[i]].component_guid);
+            literal += '"';
+        }
+        literal += ']';
+
+        auto parsed = Das::Utils::ParseYyjsonFromString(literal);
+        if (!parsed)
+        {
+            return yyjson::value(Das::Utils::MakeYyjsonArray());
+        }
+        return std::move(*parsed);
+    }
+
     static yyjson::value MakeAuthoringContextJson(
-        int64_t              task_id,
-        const yyjson::value& properties,
-        const yyjson::value& task_json)
+        Das::Core::ForeignInterfaceHost::PluginManager& plugin_manager,
+        int64_t                                         task_id,
+        const yyjson::value&                            properties,
+        const yyjson::value&                            task_json)
     {
         yyjson::value context(Das::Utils::MakeYyjsonObject());
         auto          obj = context.as_object();
@@ -344,13 +404,16 @@ namespace Das::Core::TaskScheduler
             (*obj)[std::string_view("authoring")] =
                 CloneJsonValue((*task_obj)[std::string_view("authoring")]);
         }
+        (*obj)[std::string_view("actionCatalog")] =
+            BuildActionCatalogFromRegistry(plugin_manager);
         return context;
     }
 
     static yyjson::value MakeRepositoryAuthoringContextJson(
-        int64_t              entry_id,
-        const yyjson::value& properties,
-        const yyjson::value& entry_json)
+        Das::Core::ForeignInterfaceHost::PluginManager& plugin_manager,
+        int64_t                                         entry_id,
+        const yyjson::value&                            properties,
+        const yyjson::value&                            entry_json)
     {
         yyjson::value context(Das::Utils::MakeYyjsonObject());
         auto          obj = context.as_object();
@@ -364,6 +427,8 @@ namespace Das::Core::TaskScheduler
             (*obj)[std::string_view("authoring")] =
                 CloneJsonValue((*entry_obj)[std::string_view("authoring")]);
         }
+        (*obj)[std::string_view("actionCatalog")] =
+            BuildActionCatalogFromRegistry(plugin_manager);
         return context;
     }
 
@@ -421,85 +486,180 @@ namespace Das::Core::TaskScheduler
         return bool_value ? *bool_value : fallback;
     }
 
-    static std::vector<std::string> GetStringArrayField(
-        const yyjson::value& value,
-        std::string_view     key)
+    // ===================================================================
+    // Phase 84 shared Authoring result validation/persistence helpers
+    // -------------------------------------------------------------------
+    // D-84-08/09/10/11: Scheduler is a transparent validator that preserves
+    // the Provider result envelope. taskId and repository entryId adapters
+    // share the same parsing, diagnostic validation, returned-revision
+    // assertion, and prepare-then-write order; they differ only in the
+    // target lookup and store adapters.
+    // ===================================================================
+
+    struct AuthoringProviderGet
     {
-        std::vector<std::string> result;
-        auto                     obj = value.as_object();
-        if (!obj || !obj->contains(key))
+        yyjson::value document;
+        yyjson::value diagnostics;
+        bool          has_document = false;
+        std::string   error_kind;
+        std::string   error_message;
+    };
+
+    static AuthoringProviderGet ParseAuthoringProviderGet(
+        const yyjson::value& provider_result)
+    {
+        AuthoringProviderGet outcome;
+        auto validation = ValidateAuthoringGetResult(provider_result);
+        if (!validation.valid)
         {
-            return result;
+            outcome.error_kind = validation.error_kind;
+            outcome.error_message = validation.message;
+            return outcome;
         }
 
-        auto array = (*obj)[key].as_array();
-        if (!array)
+        auto obj = provider_result.as_object();
+        if (obj && obj->contains(std::string_view("document")))
         {
-            return result;
-        }
-
-        result.reserve(array->size());
-        for (const auto& item : *array)
-        {
-            auto text = item.as_string();
-            if (text)
+            outcome.document =
+                CloneJsonValue((*obj)[std::string_view("document")]);
+            outcome.has_document = true;
+            auto document_validation =
+                ValidateAuthoringDocument(outcome.document);
+            if (!document_validation.valid)
             {
-                result.emplace_back(*text);
+                outcome.error_kind = document_validation.error_kind;
+                outcome.error_message = document_validation.message;
+                return outcome;
             }
         }
-        return result;
+        outcome.diagnostics =
+            CloneJsonValue((*obj)[std::string_view("diagnostics")]);
+        return outcome;
     }
 
-    static yyjson::value ProjectRepositoryCompilePreview(
-        int64_t              entry_id,
-        const yyjson::value& provider_compile)
+    struct AuthoringProviderApply
     {
-        const bool can_execute = GetBoolField(
-            provider_compile,
-            "canExecute",
-            GetBoolField(provider_compile, "ok", false));
+        yyjson::value accepted_properties;
+        yyjson::value document;
+        yyjson::value diagnostics;
+        int64_t       returned_revision = 0;
+        std::string   error_kind;
+        std::string   error_message;
+    };
 
-        Repository::Dto::RepositoryCompileSummaryDto summary;
-        summary.can_execute = can_execute;
-        auto provider_obj = provider_compile.as_object();
-        if (provider_obj && provider_obj->contains(std::string_view("summary")))
+    static AuthoringProviderApply ParseAuthoringProviderApply(
+        const yyjson::value& provider_result,
+        int64_t              base_revision)
+    {
+        AuthoringProviderApply outcome;
+        auto                   validation =
+            ValidateAuthoringApplyResult(provider_result, base_revision);
+        if (!validation.valid)
         {
-            auto provider_summary =
-                (*provider_obj)[std::string_view("summary")];
-            summary.can_execute = GetBoolField(
-                provider_summary,
-                "canExecute",
-                summary.can_execute);
-            summary.task_names =
-                GetStringArrayField(provider_summary, "taskNames");
-            summary.requires_agent_runtime =
-                GetBoolField(provider_summary, "requiresAgentRuntime", false);
+            outcome.error_kind = validation.error_kind;
+            outcome.error_message = validation.message;
+            return outcome;
         }
 
-        yyjson::value result(Das::Utils::MakeYyjsonObject());
-        auto          result_obj = result.as_object();
-        (*result_obj)[std::string_view("entryId")] = entry_id;
-        (*result_obj)[std::string_view("canExecute")] = can_execute;
-        (*result_obj)[std::string_view("summary")] =
-            CloneJsonValue(yyjson::object(summary));
+        auto obj = provider_result.as_object();
+        outcome.accepted_properties =
+            CloneJsonValue((*obj)[std::string_view("acceptedProperties")]);
+        outcome.document = CloneJsonValue((*obj)[std::string_view("document")]);
+        outcome.diagnostics =
+            CloneJsonValue((*obj)[std::string_view("diagnostics")]);
 
-        yyjson::value diagnostics(Das::Utils::MakeYyjsonArray());
-        auto          diagnostics_array = diagnostics.as_array();
-        if (provider_obj
-            && provider_obj->contains(std::string_view("diagnostics")))
+        auto       doc_obj = outcome.document.as_object();
+        const auto revision_view = (*doc_obj)[std::string_view("revision")];
+        outcome.returned_revision =
+            revision_view.is_sint()
+                ? revision_view.as_sint().value()
+                : static_cast<int64_t>(revision_view.as_uint().value());
+
+        auto document_validation = ValidateAuthoringDocument(outcome.document);
+        if (!document_validation.valid)
         {
-            auto provider_diagnostics =
-                (*provider_obj)[std::string_view("diagnostics")].as_array();
-            if (provider_diagnostics)
-            {
-                for (const auto& diagnostic : *provider_diagnostics)
-                {
-                    diagnostics_array->emplace_back(CloneJsonValue(diagnostic));
-                }
-            }
+            outcome.error_kind = document_validation.error_kind;
+            outcome.error_message = document_validation.message;
+            return outcome;
         }
-        (*result_obj)[std::string_view("diagnostics")] = std::move(diagnostics);
-        return result;
+        return outcome;
+    }
+
+    struct AuthoringProviderCompile
+    {
+        yyjson::value compile;
+        yyjson::value diagnostics;
+        std::string   error_kind;
+        std::string   error_message;
+    };
+
+    static AuthoringProviderCompile ParseAuthoringProviderCompile(
+        const yyjson::value& provider_result)
+    {
+        AuthoringProviderCompile outcome;
+        auto validation = ValidateAuthoringCompileResult(provider_result);
+        if (!validation.valid)
+        {
+            outcome.error_kind = validation.error_kind;
+            outcome.error_message = validation.message;
+            return outcome;
+        }
+
+        auto obj = provider_result.as_object();
+        outcome.compile = CloneJsonValue((*obj)[std::string_view("compile")]);
+        outcome.diagnostics =
+            CloneJsonValue((*obj)[std::string_view("diagnostics")]);
+        return outcome;
+    }
+
+    // Builds the persisted authoring metadata object. Per D-84-02/D-84-04 the
+    // metadata records only revision and an optional lastChangeKind; migration
+    // and migrationState are removed from the authority. sourceFingerprint is
+    // preserved best-effort because the RepositoryInvokeCompiler still consumes
+    // it as an entry-identity guard, and RepositoryAuthoringMetadataDto still
+    // requires the key when reading older entries.
+    static yyjson::value MakePersistedAuthoringMetadata(
+        int64_t              revision,
+        std::string_view     last_change_kind,
+        const yyjson::value& existing_authoring)
+    {
+        yyjson::value authoring(Das::Utils::MakeYyjsonObject());
+        auto          obj = authoring.as_object();
+        (*obj)[std::string_view("revision")] = revision;
+        if (!last_change_kind.empty())
+        {
+            (*obj)[std::string_view("lastChangeKind")] =
+                std::string(last_change_kind);
+        }
+        else if (
+            auto prev = existing_authoring.as_object();
+            prev && prev->contains(std::string_view("lastChangeKind")))
+        {
+            (*obj)[std::string_view("lastChangeKind")] =
+                CloneJsonValue((*prev)[std::string_view("lastChangeKind")]);
+        }
+        if (auto prev = existing_authoring.as_object();
+            prev && prev->contains(std::string_view("sourceFingerprint")))
+        {
+            (*obj)[std::string_view("sourceFingerprint")] =
+                CloneJsonValue((*prev)[std::string_view("sourceFingerprint")]);
+        }
+        else
+        {
+            (*obj)[std::string_view("sourceFingerprint")] = std::string("");
+        }
+        return authoring;
+    }
+
+    static yyjson::value ExtractProviderExecutionInput(
+        const yyjson::value& compile)
+    {
+        auto obj = compile.as_object();
+        if (obj && obj->contains(std::string_view("executionInput")))
+        {
+            return CloneJsonValue((*obj)[std::string_view("executionInput")]);
+        }
+        return yyjson::value{};
     }
 
     static yyjson::value MakeExecutionCompileRequest()
@@ -508,17 +668,6 @@ namespace Das::Core::TaskScheduler
         auto          obj = request.as_object();
         (*obj)[std::string_view("purpose")] = "execution";
         return request;
-    }
-
-    static yyjson::value ExtractExecutionInput(
-        const yyjson::value& compile_result)
-    {
-        auto obj = compile_result.as_object();
-        if (obj && obj->contains(std::string_view("executionInput")))
-        {
-            return CloneJsonValue((*obj)[std::string_view("executionInput")]);
-        }
-        return CloneJsonValue(compile_result);
     }
 
     static DasResult CreateAuthoringSessionWithContext(
@@ -587,7 +736,11 @@ namespace Das::Core::TaskScheduler
         return CreateAuthoringSessionWithContext(
             plugin_manager,
             capability,
-            MakeAuthoringContextJson(task_id, properties, task_json),
+            MakeAuthoringContextJson(
+                plugin_manager,
+                task_id,
+                properties,
+                task_json),
             session);
     }
 
@@ -613,6 +766,7 @@ namespace Das::Core::TaskScheduler
             plugin_manager,
             capability,
             MakeRepositoryAuthoringContextJson(
+                plugin_manager,
                 entry_id,
                 entry.accepted_properties,
                 entry_json),
@@ -638,93 +792,6 @@ namespace Das::Core::TaskScheduler
         }
 
         return {ReadJsonInterface(compile_json.Get()), {}, {}};
-    }
-
-    static void MergeTaskComponentCatalog(
-        Das::Core::ForeignInterfaceHost::PluginManager& plugin_manager,
-        yyjson::value&                                  document)
-    {
-        auto definitions = plugin_manager.GetTaskComponentFactoryManager()
-                               .EnumerateDefinitions();
-        if (definitions.empty())
-        {
-            return;
-        }
-
-        std::vector<std::size_t> definition_order;
-        definition_order.reserve(definitions.size());
-        for (std::size_t index = 0; index < definitions.size(); ++index)
-        {
-            definition_order.push_back(index);
-        }
-        std::sort(
-            definition_order.begin(),
-            definition_order.end(),
-            [&definitions](std::size_t lhs, std::size_t rhs)
-            {
-                return GuidToString(definitions[lhs].component_guid)
-                       < GuidToString(definitions[rhs].component_guid);
-            });
-
-        auto document_obj = document.as_object();
-        if (!document_obj)
-        {
-            return;
-        }
-
-        if (!(*document_obj)[std::string_view("catalog")].is_object())
-        {
-            (*document_obj)[std::string_view("catalog")] =
-                Das::Utils::MakeYyjsonObject();
-        }
-
-        auto catalog_obj =
-            (*document_obj)[std::string_view("catalog")].as_object();
-        if (!catalog_obj)
-        {
-            return;
-        }
-
-        if (!(*catalog_obj)[std::string_view("components")].is_array())
-        {
-            (*catalog_obj)[std::string_view("components")] =
-                Das::Utils::MakeYyjsonArray();
-        }
-
-        auto components =
-            (*catalog_obj)[std::string_view("components")].as_array();
-        if (!components)
-        {
-            return;
-        }
-
-        std::unordered_set<std::string> existing_component_guids;
-        for (const auto& component : *components)
-        {
-            auto component_obj = component.as_object();
-            if (!component_obj)
-            {
-                continue;
-            }
-            auto guid_text =
-                (*component_obj)[std::string_view("componentGuid")].as_string();
-            if (guid_text)
-            {
-                existing_component_guids.emplace(*guid_text);
-            }
-        }
-
-        for (const auto definition_index : definition_order)
-        {
-            const auto& definition = definitions[definition_index];
-            auto component_guid_text = GuidToString(definition.component_guid);
-            if (!existing_component_guids.insert(component_guid_text).second)
-            {
-                continue;
-            }
-
-            components->emplace_back(CloneJsonValue(definition.definition));
-        }
     }
 
     static TaskInstanceRecord* FindNextRunnableTask(
@@ -1854,7 +1921,7 @@ namespace Das::Core::TaskScheduler
             entry =
                 yyjson::cast<Repository::Dto::RepositoryEntryDto>(entry_json);
         }
-        catch (const yyjson::bad_cast&)
+        catch (const std::exception&)
         {
             return MakeRepositoryResponseError(
                 "invalidJson",
@@ -1903,6 +1970,7 @@ namespace Das::Core::TaskScheduler
             plugin_manager_,
             capability,
             MakeRepositoryAuthoringContextJson(
+                plugin_manager_,
                 entry_id,
                 entry.accepted_properties,
                 entry_json),
@@ -1925,24 +1993,27 @@ namespace Das::Core::TaskScheduler
                 "Repository authoring provider failed to create document");
         }
 
+        // Phase 84: Scheduler preserves the Provider Get envelope verbatim.
+        auto provider_result = ReadJsonInterface(document_json.Get());
+        auto parsed = ParseAuthoringProviderGet(provider_result);
+        if (!parsed.error_kind.empty())
+        {
+            return MakeRepositoryResponseError(
+                parsed.error_kind,
+                parsed.error_message);
+        }
+
         yyjson::value result(Das::Utils::MakeYyjsonObject());
         auto          obj = result.as_object();
         (*obj)[std::string_view("entryId")] = entry_id;
         (*obj)[std::string_view("taskTypeGuid")] =
             std::string(entry.task_type_guid);
         (*obj)[std::string_view("revision")] = entry.authoring.revision;
-        (*obj)[std::string_view("authoring")] = CloneJsonValue(
-            (*entry_json.as_object())[std::string_view("authoring")]);
-        auto document = ReadJsonInterface(document_json.Get());
-        MergeTaskComponentCatalog(plugin_manager_, document);
-        auto document_validation = ValidateAuthoringDocument(document);
-        if (!document_validation.valid)
+        if (parsed.has_document)
         {
-            return MakeRepositoryResponseError(
-                document_validation.error_kind,
-                document_validation.message);
+            (*obj)[std::string_view("document")] = std::move(parsed.document);
         }
-        (*obj)[std::string_view("document")] = std::move(document);
+        (*obj)[std::string_view("diagnostics")] = std::move(parsed.diagnostics);
         return result;
     }
 
@@ -1985,7 +2056,7 @@ namespace Das::Core::TaskScheduler
             entry =
                 yyjson::cast<Repository::Dto::RepositoryEntryDto>(entry_json);
         }
-        catch (const yyjson::bad_cast&)
+        catch (const std::exception&)
         {
             return MakeRepositoryResponseError(
                 "invalidJson",
@@ -2029,6 +2100,18 @@ namespace Das::Core::TaskScheduler
             capability = *authoring;
         }
 
+        // Envelope guard: Phase 84 task/repository symmetry requires the
+        // server to validate the {kind, payload} envelope before invoking
+        // the Provider on both routes. A structurally invalid change never
+        // reaches the plugin.
+        auto validation = ValidateAuthoringChange(change);
+        if (!validation.valid)
+        {
+            return MakeRepositoryResponseError(
+                validation.error_kind,
+                validation.message);
+        }
+
         const int64_t current_revision = GetAuthoringRevision(entry_json);
         auto          base_revision = GetBaseRevision(change);
         if (!base_revision || *base_revision != current_revision)
@@ -2046,6 +2129,7 @@ namespace Das::Core::TaskScheduler
             plugin_manager_,
             capability,
             MakeRepositoryAuthoringContextJson(
+                plugin_manager_,
                 entry_id,
                 entry.accepted_properties,
                 entry_json),
@@ -2068,41 +2152,36 @@ namespace Das::Core::TaskScheduler
                 "Repository authoring provider rejected change");
         }
 
-        auto accepted = ReadJsonInterface(apply_result_json.Get());
-        auto accepted_obj = accepted.as_object();
-        if (!accepted_obj
-            || !accepted_obj->contains(std::string_view("acceptedProperties")))
+        // Phase 84 atomic ordering: validate the full Provider Apply result
+        // before any persistence. Malformed output never reaches the store.
+        auto provider_result = ReadJsonInterface(apply_result_json.Get());
+        auto parsed =
+            ParseAuthoringProviderApply(provider_result, current_revision);
+        if (!parsed.error_kind.empty())
         {
             return MakeRepositoryResponseError(
-                "providerFailed",
-                "Repository authoring provider did not return "
-                "acceptedProperties");
+                parsed.error_kind,
+                parsed.error_message);
         }
 
-        const auto    next_revision = current_revision + 1;
-        yyjson::value authoring(Das::Utils::MakeYyjsonObject());
-        auto          authoring_obj = authoring.as_object();
-        (*authoring_obj)[std::string_view("revision")] = next_revision;
-        (*authoring_obj)[std::string_view("kind")] =
-            GetStringField(change, "kind", "unknown");
-        (*authoring_obj)[std::string_view("sourceFingerprint")] =
-            GetStringField(accepted, "sourceFingerprint", "");
-        auto migration_state = GetStringField(accepted, "migrationState", "");
-        if (!migration_state.empty())
+        const auto    next_revision = parsed.returned_revision;
+        const auto    change_kind = GetStringField(change, "kind", "");
+        yyjson::value previous_authoring;
+        if (auto prev_obj = entry_json.as_object();
+            prev_obj && prev_obj->contains(std::string_view("authoring")))
         {
-            (*authoring_obj)[std::string_view("migrationState")] =
-                std::move(migration_state);
+            previous_authoring =
+                CloneJsonValue((*prev_obj)[std::string_view("authoring")]);
         }
-        else
-        {
-            (*authoring_obj)[std::string_view("migrationState")] =
-                yyjson::value{};
-        }
+        yyjson::value authoring = MakePersistedAuthoringMetadata(
+            next_revision,
+            change_kind,
+            previous_authoring);
 
         yyjson::value updated_entry_json;
         auto          persist_result = store->UpdateAuthoring(
             entry_id,
-            (*accepted_obj)[std::string_view("acceptedProperties")],
+            parsed.accepted_properties,
             authoring,
             updated_entry_json);
         if (DAS::IsFailed(persist_result))
@@ -2112,66 +2191,17 @@ namespace Das::Core::TaskScheduler
                 "Failed to persist accepted repository authoring change");
         }
 
-        auto          updated_obj = updated_entry_json.as_object();
-        yyjson::value document;
-        if (accepted_obj->contains(std::string_view("document"))
-            && (*accepted_obj)[std::string_view("document")].is_object())
-        {
-            document =
-                CloneJsonValue((*accepted_obj)[std::string_view("document")]);
-        }
-        else
-        {
-            DasPtr<Das::PluginInterface::IDasTaskAuthoringSession>
-                 refreshed_session;
-            auto refreshed_session_result = CreateAuthoringSessionWithContext(
-                plugin_manager_,
-                capability,
-                MakeRepositoryAuthoringContextJson(
-                    entry_id,
-                    (*updated_obj)[std::string_view("acceptedProperties")],
-                    updated_entry_json),
-                refreshed_session);
-            if (DAS::IsFailed(refreshed_session_result) || !refreshed_session)
-            {
-                return MakeRepositoryResponseError(
-                    "sessionCreateFailed",
-                    "Failed to refresh repository authoring session");
-            }
-
-            auto refreshed_request = WrapJsonValue(CloneJsonValue(change));
-            DasPtr<Das::ExportInterface::IDasJson> document_json;
-            auto document_result = refreshed_session->GetDocument(
-                refreshed_request.Get(),
-                document_json.Put());
-            if (DAS::IsFailed(document_result) || !document_json)
-            {
-                return MakeRepositoryResponseError(
-                    "providerFailed",
-                    "Repository authoring provider failed to refresh "
-                    "document");
-            }
-            document = ReadJsonInterface(document_json.Get());
-        }
-        MergeTaskComponentCatalog(plugin_manager_, document);
-        auto document_validation = ValidateAuthoringDocument(document);
-        if (!document_validation.valid)
-        {
-            return MakeRepositoryResponseError(
-                document_validation.error_kind,
-                document_validation.message);
-        }
-
         yyjson::value result(Das::Utils::MakeYyjsonObject());
         auto          result_obj = result.as_object();
         (*result_obj)[std::string_view("ok")] = true;
         (*result_obj)[std::string_view("entryId")] = entry_id;
         (*result_obj)[std::string_view("revision")] = next_revision;
-        (*result_obj)[std::string_view("acceptedProperties")] = CloneJsonValue(
-            (*updated_obj)[std::string_view("acceptedProperties")]);
-        (*result_obj)[std::string_view("authoring")] =
-            CloneJsonValue((*updated_obj)[std::string_view("authoring")]);
-        (*result_obj)[std::string_view("document")] = std::move(document);
+        (*result_obj)[std::string_view("acceptedProperties")] =
+            std::move(parsed.accepted_properties);
+        (*result_obj)[std::string_view("document")] =
+            std::move(parsed.document);
+        (*result_obj)[std::string_view("diagnostics")] =
+            std::move(parsed.diagnostics);
         return result;
     }
 
@@ -2212,7 +2242,7 @@ namespace Das::Core::TaskScheduler
             entry =
                 yyjson::cast<Repository::Dto::RepositoryEntryDto>(entry_json);
         }
-        catch (const yyjson::bad_cast&)
+        catch (const std::exception&)
         {
             return MakeRepositoryResponseError(
                 "invalidJson",
@@ -2256,25 +2286,9 @@ namespace Das::Core::TaskScheduler
             capability = *authoring;
         }
 
-        // Per DAS-81 schema, AuthoringCompileRequest may carry a `document`
-        // for validation. Reject early if it is structurally malformed so the
-        // plugin never sees an invalid doc. Symmetric with task-level
-        // CompileTaskAuthoring input validation.
-        if (auto req_obj = request.as_object(); req_obj && req_obj->contains(std::string_view("document")))
-        {
-            const auto& doc = (*req_obj)[std::string_view("document")];
-            if (doc.is_object())
-            {
-                auto doc_validation = ValidateAuthoringDocument(doc);
-                if (!doc_validation.valid)
-                {
-                    return MakeRepositoryResponseError(
-                        doc_validation.error_kind,
-                        doc_validation.message);
-                }
-            }
-        }
-
+        // Phase 84: Compile sends {} to Provider and returns {compile,
+        // diagnostics}; Scheduler does not rewrap, project, or accept a client
+        // document. D-84-09 forbids client properties/document in Compile.
         auto provider_compile = CompileRepositoryEntryProvider(
             plugin_manager_,
             capability,
@@ -2289,9 +2303,23 @@ namespace Das::Core::TaskScheduler
                 provider_compile.message);
         }
 
-        return ProjectRepositoryCompilePreview(
-            entry_id,
-            provider_compile.compile);
+        auto parsed = ParseAuthoringProviderCompile(provider_compile.compile);
+        if (!parsed.error_kind.empty())
+        {
+            return MakeRepositoryResponseError(
+                parsed.error_kind,
+                parsed.error_message);
+        }
+
+        // D-84-08/09: Compile response preserves the Provider envelope
+        // `{compile, diagnostics}`. canExecute/summary rewrapping was removed;
+        // entryId is echoed purely as a routing ack, matching Get/Apply.
+        yyjson::value result(Das::Utils::MakeYyjsonObject());
+        auto          obj = result.as_object();
+        (*obj)[std::string_view("entryId")] = entry_id;
+        (*obj)[std::string_view("compile")] = std::move(parsed.compile);
+        (*obj)[std::string_view("diagnostics")] = std::move(parsed.diagnostics);
+        return result;
     }
 
     RepositoryInvoke::RepositoryInvokeCompileResult
@@ -2354,7 +2382,7 @@ namespace Das::Core::TaskScheduler
                 entry = yyjson::cast<Repository::Dto::RepositoryEntryDto>(
                     entry_json);
             }
-            catch (const yyjson::bad_cast&)
+            catch (const std::exception&)
             {
                 return std::nullopt;
             }
@@ -2431,14 +2459,31 @@ namespace Das::Core::TaskScheduler
 
             RepositoryInvoke::RepositoryInvokeProviderCompileResult result;
             result.ok = provider_compile.Succeeded();
-            result.compile_result = std::move(provider_compile.compile);
             if (!result.ok)
             {
                 RepositoryInvoke::RepositoryInvokeCompileDiagnostic diagnostic;
                 diagnostic.code = "provider-compile-failed";
                 diagnostic.message = provider_compile.message;
                 result.diagnostics.push_back(std::move(diagnostic));
+                return result;
             }
+
+            // Phase 84 strict Compile result envelope is `{compile,
+            // diagnostics}`. RepositoryInvokeCompiler consumes the inner
+            // compile payload, so unwrap the validated envelope here rather
+            // than asking every downstream consumer to understand the new wire.
+            auto parsed =
+                ParseAuthoringProviderCompile(provider_compile.compile);
+            if (!parsed.error_kind.empty())
+            {
+                result.ok = false;
+                RepositoryInvoke::RepositoryInvokeCompileDiagnostic diagnostic;
+                diagnostic.code = "provider-compile-failed";
+                diagnostic.message = parsed.error_message;
+                result.diagnostics.push_back(std::move(diagnostic));
+                return result;
+            }
+            result.compile_result = std::move(parsed.compile);
             return result;
         };
 
@@ -3114,20 +3159,27 @@ namespace Das::Core::TaskScheduler
                 "Task authoring provider failed to create document");
         }
 
+        // Phase 84: Scheduler preserves the Provider Get envelope verbatim.
+        // It does not merge a Core catalog, rewrap the result, or regenerate
+        // a document when the Provider omits one.
+        auto provider_result = ReadJsonInterface(document_json.Get());
+        auto parsed = ParseAuthoringProviderGet(provider_result);
+        if (!parsed.error_kind.empty())
+        {
+            return MakeAuthoringResponseError(
+                parsed.error_kind,
+                parsed.error_message);
+        }
+
         yyjson::value result(Das::Utils::MakeYyjsonObject());
         auto          obj = result.as_object();
         (*obj)[std::string_view("taskId")] = task_id;
         (*obj)[std::string_view("taskGuid")] = GuidToString(task_guid);
-        auto document = ReadJsonInterface(document_json.Get());
-        MergeTaskComponentCatalog(plugin_manager_, document);
-        auto document_validation = ValidateAuthoringDocument(document);
-        if (!document_validation.valid)
+        if (parsed.has_document)
         {
-            return MakeAuthoringResponseError(
-                document_validation.error_kind,
-                document_validation.message);
+            (*obj)[std::string_view("document")] = std::move(parsed.document);
         }
-        (*obj)[std::string_view("document")] = std::move(document);
+        (*obj)[std::string_view("diagnostics")] = std::move(parsed.diagnostics);
         return result;
     }
 
@@ -3229,39 +3281,35 @@ namespace Das::Core::TaskScheduler
                 "Task authoring provider rejected change");
         }
 
-        auto accepted = ReadJsonInterface(apply_result_json.Get());
-        auto accepted_obj = accepted.as_object();
-        if (!accepted_obj
-            || !accepted_obj->contains(std::string_view("acceptedProperties")))
+        // Phase 84 atomic ordering: validate the full Provider Apply result
+        // (envelope + embedded document + baseRevision+1 invariant) before
+        // any persistence. A malformed result never reaches the authority.
+        auto provider_result = ReadJsonInterface(apply_result_json.Get());
+        auto parsed =
+            ParseAuthoringProviderApply(provider_result, current_revision);
+        if (!parsed.error_kind.empty())
         {
             return MakeAuthoringResponseError(
-                "providerFailed",
-                "Task authoring provider did not return acceptedProperties");
+                parsed.error_kind,
+                parsed.error_message);
         }
 
-        const auto next_revision = current_revision + 1;
-        auto       task_obj = task_json.as_object();
-        (*task_obj)[std::string_view("properties")] = CloneJsonValue(
-            (*accepted_obj)[std::string_view("acceptedProperties")]);
-
-        yyjson::value authoring(Das::Utils::MakeYyjsonObject());
-        auto          authoring_obj = authoring.as_object();
-        (*authoring_obj)[std::string_view("revision")] = next_revision;
-        (*authoring_obj)[std::string_view("kind")] =
-            GetStringField(change, "kind", "unknown");
-        (*authoring_obj)[std::string_view("sourceFingerprint")] =
-            GetStringField(accepted, "sourceFingerprint", "");
-        if (accepted_obj->contains(std::string_view("migration")))
+        const auto    next_revision = parsed.returned_revision;
+        const auto    change_kind = GetStringField(change, "kind", "");
+        auto          task_obj = task_json.as_object();
+        yyjson::value previous_authoring;
+        if (task_obj && task_obj->contains(std::string_view("authoring")))
         {
-            (*authoring_obj)[std::string_view("migration")] =
-                CloneJsonValue((*accepted_obj)[std::string_view("migration")]);
+            previous_authoring =
+                CloneJsonValue((*task_obj)[std::string_view("authoring")]);
         }
-        else
-        {
-            (*authoring_obj)[std::string_view("migration")] =
-                Das::Utils::MakeYyjsonObject();
-        }
-        (*task_obj)[std::string_view("authoring")] = std::move(authoring);
+        yyjson::value authoring = MakePersistedAuthoringMetadata(
+            next_revision,
+            change_kind,
+            previous_authoring);
+        (*task_obj)[std::string_view("properties")] =
+            CloneJsonValue(parsed.accepted_properties);
+        (*task_obj)[std::string_view("authoring")] = CloneJsonValue(authoring);
 
         auto persist_result =
             settings.UpdateTaskInstanceJson("0", task_id, task_json);
@@ -3277,58 +3325,9 @@ namespace Das::Core::TaskScheduler
             auto*                       inst = FindTaskInstance(task_id);
             if (inst)
             {
-                inst->properties =
-                    CloneJsonValue((*task_obj)[std::string_view("properties")]);
-                inst->authoring =
-                    CloneJsonValue((*task_obj)[std::string_view("authoring")]);
+                inst->properties = CloneJsonValue(parsed.accepted_properties);
+                inst->authoring = CloneJsonValue(authoring);
             }
-        }
-
-        yyjson::value document;
-        if (accepted_obj->contains(std::string_view("document"))
-            && (*accepted_obj)[std::string_view("document")].is_object())
-        {
-            document =
-                CloneJsonValue((*accepted_obj)[std::string_view("document")]);
-        }
-        else
-        {
-            DasPtr<Das::PluginInterface::IDasTaskAuthoringSession>
-                 refreshed_session;
-            auto refreshed_session_result = CreateAuthoringSession(
-                plugin_manager_,
-                capability,
-                task_id,
-                (*task_obj)[std::string_view("properties")],
-                task_json,
-                refreshed_session);
-            if (DAS::IsFailed(refreshed_session_result) || !refreshed_session)
-            {
-                return MakeAuthoringResponseError(
-                    "sessionCreateFailed",
-                    "Failed to refresh task authoring session");
-            }
-
-            auto refreshed_request = WrapJsonValue(CloneJsonValue(change));
-            DasPtr<Das::ExportInterface::IDasJson> document_json;
-            auto document_result = refreshed_session->GetDocument(
-                refreshed_request.Get(),
-                document_json.Put());
-            if (DAS::IsFailed(document_result) || !document_json)
-            {
-                return MakeAuthoringResponseError(
-                    "providerFailed",
-                    "Task authoring provider failed to refresh document");
-            }
-            document = ReadJsonInterface(document_json.Get());
-        }
-        MergeTaskComponentCatalog(plugin_manager_, document);
-        auto document_validation = ValidateAuthoringDocument(document);
-        if (!document_validation.valid)
-        {
-            return MakeAuthoringResponseError(
-                document_validation.error_kind,
-                document_validation.message);
         }
 
         yyjson::value result(Das::Utils::MakeYyjsonObject());
@@ -3337,10 +3336,11 @@ namespace Das::Core::TaskScheduler
         (*result_obj)[std::string_view("taskId")] = task_id;
         (*result_obj)[std::string_view("revision")] = next_revision;
         (*result_obj)[std::string_view("acceptedProperties")] =
-            CloneJsonValue((*task_obj)[std::string_view("properties")]);
-        (*result_obj)[std::string_view("authoring")] =
-            CloneJsonValue((*task_obj)[std::string_view("authoring")]);
-        (*result_obj)[std::string_view("document")] = std::move(document);
+            std::move(parsed.accepted_properties);
+        (*result_obj)[std::string_view("document")] =
+            std::move(parsed.document);
+        (*result_obj)[std::string_view("diagnostics")] =
+            std::move(parsed.diagnostics);
         return result;
     }
 
@@ -3374,24 +3374,6 @@ namespace Das::Core::TaskScheduler
         auto& settings = plugin_manager_.GetSettingsManager();
         auto  task_json = settings.GetTaskInstanceJson("0", task_id);
 
-        // Per DAS-81 schema, AuthoringCompileRequest may carry a `document`
-        // for validation. Reject early if it is structurally malformed so the
-        // plugin never sees an invalid doc.
-        if (auto req_obj = request.as_object(); req_obj && req_obj->contains(std::string_view("document")))
-        {
-            const auto& doc = (*req_obj)[std::string_view("document")];
-            if (doc.is_object())
-            {
-                auto doc_validation = ValidateAuthoringDocument(doc);
-                if (!doc_validation.valid)
-                {
-                    return MakeAuthoringResponseError(
-                        doc_validation.error_kind,
-                        doc_validation.message);
-                }
-            }
-        }
-
         DasPtr<Das::PluginInterface::IDasTaskAuthoringSession> session;
         auto session_result = CreateAuthoringSession(
             plugin_manager_,
@@ -3418,11 +3400,20 @@ namespace Das::Core::TaskScheduler
                 "Task authoring provider failed to compile document");
         }
 
+        auto provider_result = ReadJsonInterface(compile_json.Get());
+        auto parsed = ParseAuthoringProviderCompile(provider_result);
+        if (!parsed.error_kind.empty())
+        {
+            return MakeAuthoringResponseError(
+                parsed.error_kind,
+                parsed.error_message);
+        }
+
         yyjson::value result(Das::Utils::MakeYyjsonObject());
         auto          obj = result.as_object();
         (*obj)[std::string_view("taskId")] = task_id;
-        (*obj)[std::string_view("compile")] =
-            ReadJsonInterface(compile_json.Get());
+        (*obj)[std::string_view("compile")] = std::move(parsed.compile);
+        (*obj)[std::string_view("diagnostics")] = std::move(parsed.diagnostics);
         return result;
     }
 
@@ -3560,10 +3551,22 @@ namespace Das::Core::TaskScheduler
                 else
                 {
                     auto compiled = ReadJsonInterface(compile_json.Get());
-                    auto compiled_obj = compiled.as_object();
-                    if (compiled_obj
+                    auto parsed_compile =
+                        ParseAuthoringProviderCompile(compiled);
+                    if (!parsed_compile.error_kind.empty())
+                    {
+                        compile_failed = true;
+                        DAS_CORE_LOG_WARN(
+                            "SchedulerService::OnTick: task {} authoring "
+                            "compile result rejected: {}",
+                            selected_id,
+                            parsed_compile.error_kind);
+                    }
+                    else if (
+                        auto compile_obj = parsed_compile.compile.as_object();
+                        compile_obj
                         && IsExplicitFalse(
-                            (*compiled_obj)[std::string_view("ok")]))
+                            (*compile_obj)[std::string_view("ok")]))
                     {
                         compile_failed = true;
                         DAS_CORE_LOG_WARN(
@@ -3577,7 +3580,8 @@ namespace Das::Core::TaskScheduler
                         {
                             p_props_json =
                                 Das::MakeDasPtr<Das::Core::Utils::IDasJsonImpl>(
-                                    ExtractExecutionInput(compiled));
+                                    ExtractProviderExecutionInput(
+                                        parsed_compile.compile));
                         }
                         catch (const std::bad_alloc&)
                         {

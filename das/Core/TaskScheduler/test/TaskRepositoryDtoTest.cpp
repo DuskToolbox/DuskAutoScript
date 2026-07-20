@@ -29,8 +29,7 @@ TEST(
     entry.plugin_guid = "plugin-guid";
     entry.task_type_guid = "task-type-guid";
     entry.authoring.revision = 7;
-    entry.authoring.kind = "formSequence";
-    entry.authoring.source_fingerprint = "source-hash";
+    entry.authoring.last_change_kind = "setValue";
     entry.accepted_properties = MakePayload();
     entry.availability.state = "available";
 
@@ -48,7 +47,16 @@ TEST(
         serialized[std::string_view("authoring")].as_object();
     ASSERT_TRUE(authoring_metadata.has_value());
     EXPECT_TRUE(
+        authoring_metadata->contains(std::string_view("lastChangeKind")));
+    // Phase 84 D-84-02/04: kind/migrationState are removed from the public
+    // Apply wire. sourceFingerprint remains on the persisted metadata because
+    // the RepositoryInvokeCompiler still consumes it as an entry-identity
+    // guard.
+    EXPECT_TRUE(
         authoring_metadata->contains(std::string_view("sourceFingerprint")));
+    EXPECT_FALSE(authoring_metadata->contains(std::string_view("kind")));
+    EXPECT_FALSE(
+        authoring_metadata->contains(std::string_view("migrationState")));
 
     auto accepted =
         serialized[std::string_view("acceptedProperties")].as_object();
@@ -81,7 +89,10 @@ TEST(
     EXPECT_EQ(round_tripped.plugin_guid, "plugin-guid");
     EXPECT_EQ(round_tripped.task_type_guid, "task-type-guid");
     EXPECT_EQ(round_tripped.authoring.revision, 7);
-    EXPECT_EQ(round_tripped.authoring.source_fingerprint, "source-hash");
+    ASSERT_TRUE(round_tripped.authoring.last_change_kind.has_value());
+    EXPECT_EQ(
+        *round_tripped.authoring.last_change_kind,
+        std::string("setValue"));
 
     auto raw_payload = round_tripped.accepted_properties.as_object();
     ASSERT_TRUE(raw_payload.has_value());

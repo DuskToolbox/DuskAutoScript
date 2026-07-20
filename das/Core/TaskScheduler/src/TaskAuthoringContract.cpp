@@ -1998,12 +1998,18 @@ namespace Das::Core::TaskScheduler
                 "missingField",
                 "AuthoringApplyResult.acceptedProperties required");
         }
-        auto doc_opt = obj["document"].as_object();
-        if (!doc_opt)
+        if (!obj.contains("document") || obj["document"].is_null())
         {
             return Fail(
                 "missingField",
                 "AuthoringApplyResult.document required");
+        }
+        auto doc_opt = obj["document"].as_object();
+        if (!doc_opt)
+        {
+            return Fail(
+                "invalidDocument",
+                "AuthoringApplyResult.document must be object");
         }
         if (!HasArrayField(obj, "diagnostics"))
         {

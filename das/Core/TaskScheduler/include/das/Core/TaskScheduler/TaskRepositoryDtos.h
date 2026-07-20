@@ -15,9 +15,12 @@ namespace Das::Core::TaskScheduler::Repository::Dto
     struct RepositoryAuthoringMetadataDto
     {
         int64_t                    revision = 0;
-        std::string                kind;
-        std::string                source_fingerprint;
-        std::optional<std::string> migration_state;
+        std::optional<std::string> last_change_kind;
+        // Legacy source-fingerprint used by RepositoryInvokeCompiler for entry
+        // identity verification. Phase 84 removed it from the public Apply
+        // wire; the RepositoryInvokeCompiler still consumes any value the
+        // persisted entry happens to carry, treating it as best-effort.
+        std::string source_fingerprint;
     };
 
     struct RepositoryAvailabilityDto

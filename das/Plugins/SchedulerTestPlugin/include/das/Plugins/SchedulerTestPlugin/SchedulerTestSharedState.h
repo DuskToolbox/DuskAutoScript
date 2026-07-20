@@ -138,13 +138,12 @@ struct FactoryTaskSharedState
     bool apply_ok = true;
     bool compile_ok = true;
 
-    // Phase 84 strict Authoring wire controls. When emit_strict_wire is true,
-    // GetDocument/ApplyChange/Compile emit the strict Provider result
-    // envelopes {document?,diagnostics[]}, {acceptedProperties,document,
-    // diagnostics[]} and {compile,diagnostics[]} respectively. The remaining
-    // flags inject malformed variants so SchedulerService tests can prove
-    // validate-before-persist ordering.
-    bool    emit_strict_wire = false;
+    // Phase 84 strict Authoring wire controls. The fake session always emits
+    // the strict Provider result envelopes {document?,diagnostics[]},
+    // {acceptedProperties,document,diagnostics[]} and {compile,diagnostics[]}.
+    // The remaining flags inject malformed variants so SchedulerService tests
+    // can prove validate-before-persist ordering.
+    bool    emit_strict_wire = true;
     bool    apply_omit_document = false;
     int64_t apply_document_revision_delta = 0;
     bool    compile_omit_compile = false;
