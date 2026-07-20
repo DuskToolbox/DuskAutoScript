@@ -191,6 +191,45 @@ DasResult SharedMemoryPool::Deallocate(uint64_t handle)
                 handle);
         void* ptr = impl_->segment_->get_address_from_handle(managed_handle);
 
+        // 段范围 + 对齐校验：拒绝越界或未对齐的 handle，避免 boost 内部
+        // deallocate 解引用段外非法指针触发 ASAN access-violation。
+        // 不依赖本地 block_metadata_：跨进程场景下接收方/远端 Deallocate
+        // 对端分配的 handle 时本地无 metadata，但共享段是同一物理段，
+        // 范围校验对合法跨进程 handle 仍然成立。
+        char*  seg_base = static_cast<char*>(impl_->segment_->get_address());
+        size_t seg_size = impl_->segment_->get_size();
+        if (seg_base == nullptr || seg_size == 0)
+        {
+            DAS_CORE_LOG_ERROR(
+                "Deallocate: invalid segment state (base={}, size={})",
+                static_cast<void*>(seg_base),
+                seg_size);
+            return DAS_E_IPC_SHM_FAILED;
+        }
+
+        const auto ptr_val = reinterpret_cast<uintptr_t>(ptr);
+        const auto base_val = reinterpret_cast<uintptr_t>(seg_base);
+        if (ptr_val < base_val || ptr_val >= base_val + seg_size)
+        {
+            DAS_CORE_LOG_WARN(
+                "Deallocate: handle {} out of segment range (base={}, size={})",
+                handle,
+                base_val,
+                seg_size);
+            return DAS_E_IPC_OBJECT_NOT_FOUND;
+        }
+
+        // boost managed_shared_memory 的内部分配按至少 sizeof(void*) 对齐
+        constexpr uintptr_t kMinAlignment = sizeof(void*);
+        if (ptr_val % kMinAlignment != 0)
+        {
+            DAS_CORE_LOG_WARN(
+                "Deallocate: handle {} misaligned (ptr={})",
+                handle,
+                ptr_val);
+            return DAS_E_IPC_OBJECT_NOT_FOUND;
+        }
+
         impl_->segment_->deallocate(ptr);
 
         // Best-effort: 尝试从 metadata 中移除并回扣 used_size
@@ -254,7 +293,8 @@ DasResult SharedMemoryPool::CleanupStaleBlocks()
 {
     // 注意：跨进程场景下此函数仅能清理"本进程 metadata 记录的块"。
     // 真正的大消息块由接收方通过 ShmBlockGuard 析构释放。
-    // 崩溃兜底：随连接销毁 + 进程重启时 shared_memory_object::remove（见 Create 分支）。
+    // 崩溃兜底：随连接销毁 + 进程重启时 shared_memory_object::remove（见 Create
+    // 分支）。
     std::lock_guard<std::mutex> lock(impl_->mutex_);
 
     if (!impl_->segment_)
@@ -382,20 +422,15 @@ std::string SharedMemoryManager::MakePoolName(
 // ShmBlockGuard Implementation
 // ============================================================================
 
-ShmBlockGuard::~ShmBlockGuard()
-{
-    Reset();
-}
+ShmBlockGuard::~ShmBlockGuard() { Reset(); }
 
 ShmBlockGuard::ShmBlockGuard(ShmBlockGuard&& other) noexcept
-    : pool_(other.pool_)
-    , data_(other.data_)
-    , size_(other.size_)
-    , handle_(other.handle_)
+    : pool_(other.pool_), data_(other.data_), size_(other.size_),
+      handle_(other.handle_)
 {
-    other.pool_   = nullptr;
-    other.data_   = nullptr;
-    other.size_   = 0;
+    other.pool_ = nullptr;
+    other.data_ = nullptr;
+    other.size_ = 0;
     other.handle_ = 0;
 }
 
@@ -404,14 +439,14 @@ ShmBlockGuard& ShmBlockGuard::operator=(ShmBlockGuard&& other) noexcept
     if (this != &other)
     {
         Reset();
-        pool_          = other.pool_;
-        data_          = other.data_;
-        size_          = other.size_;
-        handle_        = other.handle_;
-        other.pool_    = nullptr;
-        other.data_    = nullptr;
-        other.size_    = 0;
-        other.handle_  = 0;
+        pool_ = other.pool_;
+        data_ = other.data_;
+        size_ = other.size_;
+        handle_ = other.handle_;
+        other.pool_ = nullptr;
+        other.data_ = nullptr;
+        other.size_ = 0;
+        other.handle_ = 0;
     }
     return *this;
 }
@@ -427,7 +462,7 @@ ShmBlockGuard ShmBlockGuard::Attach(
     }
 
     void* data = nullptr;
-    auto hr    = pool->GetAddressByHandle(handle, data);
+    auto  hr = pool->GetAddressByHandle(handle, data);
     if (DAS::IsFailed(hr) || !data)
     {
         return ShmBlockGuard();
@@ -439,10 +474,10 @@ ShmBlockGuard ShmBlockGuard::Attach(
 SharedMemoryBlock ShmBlockGuard::Disown() noexcept
 {
     SharedMemoryBlock block{data_, size_, handle_};
-    pool_    = nullptr;
-    data_    = nullptr;
-    size_    = 0;
-    handle_  = 0;
+    pool_ = nullptr;
+    data_ = nullptr;
+    size_ = 0;
+    handle_ = 0;
     return block;
 }
 
@@ -450,13 +485,14 @@ void ShmBlockGuard::Reset() noexcept
 {
     if (pool_ && handle_)
     {
-        [[maybe_unused]] auto hr = pool_->Deallocate(handle_);
+        [[maybe_unused]]
+        auto hr = pool_->Deallocate(handle_);
         (void)hr; // Explicitly ignore result in release builds
     }
-    pool_    = nullptr;
-    data_    = nullptr;
-    size_    = 0;
-    handle_  = 0;
+    pool_ = nullptr;
+    data_ = nullptr;
+    size_ = 0;
+    handle_ = 0;
 }
 
 DAS_CORE_IPC_NS_END
