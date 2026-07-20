@@ -1,3 +1,4 @@
+#include <das/DasApi.h>
 #include <das/Plugins/DasMaaPi/PiCompiler.h>
 #include <das/Utils/DasJsonCore.h>
 #include <das/Utils/StringUtils.h>
@@ -605,22 +606,48 @@ namespace Das::Plugins::DasMaaPi
         return result;
     }
 
-    yyjson::value SerializeCompileResult(
+    Das::DasPtr<Das::ExportInterface::IDasJson> SerializeCompileResult(
         const CompileResultDto& result,
         std::string_view        purpose)
     {
-        // default_caster 聚合 to_json 自动序列化全部字段（嵌套 summary /
-        // diagnostics / execution_input envelope + optional 字段输出 null）。
-        // purpose != "execution" 时清空 execution_input（序列化为 null，语义
-        // 等价于「不提供执行输入」），替代原手写的 purpose 条件输出。
-        CompileResultDto copy = result;
-        if (purpose != "execution")
+        // 手动按字段构造 owning yyjson::value：preview 路径不写入
+        // executionInput 字段（保持 caller 期望的「字段缺失」语义，而不是
+        // default_caster 对 optional<nullopt> 默认的 null 输出）。
+        // 同时所有 owning value 操作都在本函数内完成并立即序列化为字符串，
+        // 避免 owning yyjson::value 跨函数 move 损坏 mut_doc（参见
+        // cpp_yyjson-value-moved-from-null-deref.md）。
+        yyjson::value compiled_json(Das::Utils::MakeYyjsonObject());
+        auto          obj = compiled_json.as_object();
+        (*obj)[std::string_view("ok")] = result.ok;
+        (*obj)[std::string_view("canExecute")] = result.can_execute;
+        (*obj)[std::string_view("summary")] = result.summary;
+        yyjson::value diagnostics_json(Das::Utils::MakeYyjsonArray());
+        for (const auto& diagnostic : result.diagnostics)
         {
-            copy.execution_input.reset();
+            yyjson::value item(Das::Utils::MakeYyjsonObject());
+            auto          item_obj = item.as_object();
+            (*item_obj)[std::string_view("severity")] =
+                yyjson::value(std::string(diagnostic.severity));
+            (*item_obj)[std::string_view("code")] =
+                yyjson::value(std::string(diagnostic.code));
+            (*item_obj)[std::string_view("message")] =
+                yyjson::value(std::string(diagnostic.message));
+            diagnostics_json.as_array()->emplace_back(std::move(item));
         }
-        yyjson::value wrapper = Das::Utils::MakeYyjsonObject();
-        (*wrapper.as_object())[std::string_view("r")] = copy;
-        return yyjson::value(
-            (*wrapper.as_object())[std::string_view("r")]);
+        (*obj)[std::string_view("diagnostics")] = std::move(diagnostics_json);
+        if (purpose == "execution" && result.execution_input)
+        {
+            (*obj)[std::string_view("executionInput")] =
+                *result.execution_input;
+        }
+
+        auto serialized = Utils::SerializeYyjsonValue(compiled_json);
+        if (!serialized)
+        {
+            return {};
+        }
+        Das::DasPtr<Das::ExportInterface::IDasJson> out;
+        ParseDasJsonFromString(serialized->c_str(), out.Put());
+        return out;
     }
 } // namespace Das::Plugins::DasMaaPi

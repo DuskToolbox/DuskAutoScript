@@ -269,11 +269,16 @@ namespace Plugins::DasMaaPi
         }
 
         std::vector<PiDiagnosticDto> diagnostics;
-        auto          catalog = TryParseCatalog(settings_, diagnostics);
-        yyjson::value result(Das::Utils::MakeYyjsonObject());
+        auto catalog = TryParseCatalog(settings_, diagnostics);
+        // Compile 在 catalog 不可解析时构造纯 yyjson 失败 envelope，否则走
+        // PiCompiler 的 SerializeCompileResult。两条路径都直接生成 IDasJson
+        // 句柄，避免 owning yyjson::value 跨函数 move 损坏 mut_doc（参见
+        // cpp_yyjson-value-moved-from-null-deref.md）。
+        DasPtr<ExportInterface::IDasJson> compiled;
         if (!catalog)
         {
-            auto obj = result.as_object();
+            yyjson::value empty(Das::Utils::MakeYyjsonObject());
+            auto          obj = empty.as_object();
             (*obj)[std::string_view("ok")] = false;
             (*obj)[std::string_view("canExecute")] = false;
             (*obj)[std::string_view("summary")] =
@@ -293,16 +298,20 @@ namespace Plugins::DasMaaPi
             }
             (*obj)[std::string_view("diagnostics")] =
                 std::move(diagnostics_json);
+            compiled = WrapJson(std::move(empty));
         }
         else
         {
-            result = SerializeCompileResult(
+            compiled = SerializeCompileResult(
                 CompileMaapi(settings_, *catalog, purpose),
                 purpose);
         }
 
-        auto wrapped = WrapJson(std::move(result));
-        *pp_out_result_json = wrapped.Get();
+        *pp_out_result_json = compiled.Get();
+        if (*pp_out_result_json == nullptr)
+        {
+            return DAS_E_FAIL;
+        }
         (*pp_out_result_json)->AddRef();
         return DAS_S_OK;
     }
