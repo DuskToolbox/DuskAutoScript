@@ -1210,7 +1210,21 @@ namespace Das::Core::TaskScheduler
                     }
                 }
             }
-            if (!OnlyKeys(obj, {"nodes"}))
+            // D-84-37: graph carries nodes[] and connections[]; the
+            // connectGraphPorts/disconnectGraphPorts change kinds operate on
+            // connection endpoints, so connections must survive across the
+            // boundary. The connection shape is intentionally permissive here
+            // (full endpoint validation lives in the change payload validator).
+            if (obj.contains("connections"))
+            {
+                if (!obj["connections"].is_array())
+                {
+                    return Fail(
+                        "invalidConnections",
+                        "graph.connections must be array");
+                }
+            }
+            if (!OnlyKeys(obj, {"nodes", "connections"}))
             {
                 return Fail("unknownField", "graph rejects unknown field");
             }

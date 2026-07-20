@@ -807,54 +807,14 @@ namespace
         }
         else
         {
-            std::string_view kind_sv = "InvalidOp";
-            switch (r.error_kind)
-            {
-            case GR::Contract::ChangeErrorKind::InvalidOp:
-                kind_sv = "InvalidOp";
-                break;
-            case GR::Contract::ChangeErrorKind::NodeNotFound:
-                kind_sv = "NodeNotFound";
-                break;
-            case GR::Contract::ChangeErrorKind::DuplicateNodeId:
-                kind_sv = "DuplicateNodeId";
-                break;
-            case GR::Contract::ChangeErrorKind::EmptyNodeId:
-                kind_sv = "EmptyNodeId";
-                break;
-            case GR::Contract::ChangeErrorKind::InvalidEdge:
-                kind_sv = "InvalidEdge";
-                break;
-            case GR::Contract::ChangeErrorKind::EdgeNotFound:
-                kind_sv = "EdgeNotFound";
-                break;
-            case GR::Contract::ChangeErrorKind::ItemNotFound:
-                kind_sv = "ItemNotFound";
-                break;
-            case GR::Contract::ChangeErrorKind::InvalidIndex:
-                kind_sv = "InvalidIndex";
-                break;
-            case GR::Contract::ChangeErrorKind::NoChange:
-                kind_sv = "NoChange";
-                break;
-            case GR::Contract::ChangeErrorKind::UnknownActionId:
-                kind_sv = "UnknownActionId";
-                break;
-            case GR::Contract::ChangeErrorKind::UnsupportedView:
-                kind_sv = "UnsupportedView";
-                break;
-            case GR::Contract::ChangeErrorKind::None:
-                break;
-            }
-            (*obj)[std::string_view("errorKind")] =
-                std::make_pair(kind_sv, yyjson::copy_string);
-            (*obj)[std::string_view("message")] = std::make_pair(
-                std::string_view(r.message),
-                yyjson::copy_string);
-
-            // Surface the error as a strict Phase 84 diagnostic so the caller
-            // (Scheduler) can pass it through to the client even when the
-            // apply did not produce a fresh document.
+            // Strict Phase 84 ApplyResult envelope is {acceptedProperties,
+            // document, diagnostics[]} — no top-level errorKind/message. The
+            // error is surfaced as a diagnostic with severity:error so the
+            // Scheduler can pass it through to the client. An optional integer
+            // DasResult code is attached when the caller mapped the error kind
+            // to a stable DasResult value; the strict validator allows code on
+            // Diagnostic. Here we keep code absent and rely on the message
+            // alone — GraphRuntime-local errors are not DasResult-coded.
             auto diag_obj = Das::Utils::MakeYyjsonObject();
             auto d_o = diag_obj.as_object();
             if (d_o)
@@ -888,16 +848,14 @@ namespace
         }
         (*obj)[std::string_view("diagnostics")] = std::move(diag_arr);
 
-        // `allocatedId` is surfaced outside this helper (via the session
-        // caller) when the change was an addGraphNode/addFormSequenceItem that
-        // minted a fresh stable id. The Provider owns the allocation; the
-        // scheduler persists it inside the returned acceptedProperties.
-        if (r.allocated_id.has_value())
-        {
-            (*obj)[std::string_view("allocatedId")] = std::make_pair(
-                std::string_view(*r.allocated_id),
-                yyjson::copy_string);
-        }
+        // The allocated id (D-84-38) is NOT emitted as a separate envelope
+        // field — the strict Phase 84 Apply result validator
+        // (ValidateAuthoringApplyResult) rejects unknown fields. Callers read
+        // the freshly-allocated id from the returned document's nodes[]/items[]
+        // instead. Failure-path diagnostics surface errorKind/message only via
+        // the diagnostics[] array (no top-level errorKind field on the
+        // envelope).
+        std::ignore = r.allocated_id;
         return root;
     }
 } // anonymous namespace

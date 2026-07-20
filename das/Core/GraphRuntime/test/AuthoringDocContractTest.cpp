@@ -334,13 +334,14 @@ namespace
         EXPECT_NE(json.find("\"valueType\":2"), std::string::npos);
         EXPECT_NE(json.find("\"valueType\":0"), std::string::npos);
         EXPECT_NE(json.find("\"inputType\":0"), std::string::npos);
-        // The properties-mode PropertySchema shape keys are all emitted.
+        // The properties-mode PropertySchema shape keys are all emitted when
+        // engaged. Per strict Phase 84 semantics, optional fields are omitted
+        // when absent (description / candidates absent here).
         EXPECT_NE(json.find("\"label\""), std::string::npos);
-        // The public wire dropped `description` when it is absent (Phase 84
-        // optional-only fields are omitted, not defaulted to null).
         EXPECT_NE(json.find("\"required\""), std::string::npos);
         EXPECT_NE(json.find("\"readonly\""), std::string::npos);
-        EXPECT_NE(json.find("\"candidates\""), std::string::npos);
+        EXPECT_EQ(json.find("\"description\""), std::string::npos);
+        EXPECT_EQ(json.find("\"candidates\""), std::string::npos);
     }
 
     TEST(AuthoringDocContractTest, SerializeSource_PersistsFullGraphDocumentDto)

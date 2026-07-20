@@ -45,6 +45,29 @@ TEST(TaskAuthoringContractTest, ValidGraphDocumentPasses)
     EXPECT_TRUE(result.error_kind.empty()) << result.message;
 }
 
+TEST(TaskAuthoringContractTest, ValidGraphDocumentWithConnectionsPasses)
+{
+    // D-84-37: graph.connections is part of the strict wire — without it,
+    // connectGraphPorts/disconnectGraphPorts change kinds could not round-trip
+    // real graph topology.
+    auto document = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "graph",
+        "revision": 2,
+        "graph": {
+            "nodes": [],
+            "connections": [
+                {"fromNodeId":"a","fromPortId":"o","toNodeId":"b","toPortId":"i"}
+            ]
+        }
+    })json");
+
+    auto result = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+
+    EXPECT_TRUE(result.valid);
+    EXPECT_TRUE(result.error_kind.empty()) << result.message;
+}
+
 TEST(TaskAuthoringContractTest, MissingContractVersionFails)
 {
     auto document = ParseJson(R"json({

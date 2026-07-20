@@ -355,6 +355,138 @@ namespace Contract
 
     namespace
     {
+        // Manual strict-wire serializer helpers. The earlier shape-based
+        // yyjson::object(shape, copy_string) approach emitted every optional
+        // field as null, which violates the Phase 84 validator (Optionals must
+        // be omitted, not null). These helpers emit only engaged fields, with
+        // per das-yyjson-string-safety every std::string payload deep-copied
+        // into the document arena via std::make_pair(string_view, copy_string).
+
+        // Build a FieldDescriptor array as a standalone yyjson::value.
+        yyjson::value BuildFieldsValue(
+            const std::vector<FieldDescriptor>& fields)
+        {
+            auto root = Das::Utils::MakeYyjsonArray();
+            auto arr_o = root.as_array();
+            if (!arr_o)
+            {
+                return root;
+            }
+            auto& arr = *arr_o;
+            for (const auto& f : fields)
+            {
+                auto f_v = Das::Utils::MakeYyjsonObject();
+                auto f_o = f_v.as_object();
+                if (!f_o)
+                {
+                    continue;
+                }
+                auto fo = *f_o;
+                fo["name"] = std::make_pair(
+                    std::string_view(f.name),
+                    yyjson::copy_string);
+                fo["label"] = std::make_pair(
+                    std::string_view(f.label),
+                    yyjson::copy_string);
+                fo["valueType"] = f.value_type;
+                fo["inputType"] = f.input_type;
+                fo["value"] = Das::Utils::CloneYyjsonValue(f.value);
+                if (f.description.has_value())
+                {
+                    fo["description"] = std::make_pair(
+                        std::string_view(*f.description),
+                        yyjson::copy_string);
+                }
+                fo["required"] = f.required;
+                fo["readonly"] = f.readonly;
+                arr.emplace_back(std::move(f_v));
+            }
+            return root;
+        }
+
+        yyjson::value BuildEntryRefValue(
+            const std::optional<EntryRef>& entry_ref)
+        {
+            auto root = Das::Utils::MakeYyjsonObject();
+            if (!entry_ref.has_value())
+            {
+                return root;
+            }
+            auto obj_o = root.as_object();
+            if (!obj_o)
+            {
+                return root;
+            }
+            (*obj_o)["entryId"] = entry_ref->entry_id;
+            return root;
+        }
+
+        yyjson::value BuildItemValue(const FormSequenceItem& item)
+        {
+            auto root = Das::Utils::MakeYyjsonObject();
+            auto obj_o = root.as_object();
+            if (!obj_o)
+            {
+                return root;
+            }
+            auto obj = *obj_o;
+            obj["id"] =
+                std::make_pair(std::string_view(item.id), yyjson::copy_string);
+            if (!item.component_guid.empty())
+            {
+                obj["componentGuid"] = std::make_pair(
+                    std::string_view(item.component_guid),
+                    yyjson::copy_string);
+            }
+            obj["targetKind"] = std::make_pair(
+                std::string_view(item.target_kind),
+                yyjson::copy_string);
+            if (item.entry_ref.has_value())
+            {
+                obj["entryRef"] = BuildEntryRefValue(item.entry_ref);
+            }
+            if (!item.fields.empty())
+            {
+                obj["fields"] = BuildFieldsValue(item.fields);
+            }
+            if (item.enabled.has_value())
+            {
+                obj["enabled"] = *item.enabled;
+            }
+            return root;
+        }
+
+        yyjson::value BuildNodeValue(const GraphNode& node)
+        {
+            auto root = Das::Utils::MakeYyjsonObject();
+            auto obj_o = root.as_object();
+            if (!obj_o)
+            {
+                return root;
+            }
+            auto obj = *obj_o;
+            obj["id"] =
+                std::make_pair(std::string_view(node.id), yyjson::copy_string);
+            if (!node.component_guid.empty())
+            {
+                obj["componentGuid"] = std::make_pair(
+                    std::string_view(node.component_guid),
+                    yyjson::copy_string);
+            }
+            obj["targetKind"] = std::make_pair(
+                std::string_view(node.target_kind),
+                yyjson::copy_string);
+            if (node.entry_ref.has_value())
+            {
+                obj["entryRef"] = BuildEntryRefValue(node.entry_ref);
+            }
+            if (!node.fields.empty())
+            {
+                obj["fields"] = BuildFieldsValue(node.fields);
+            }
+            return root;
+        }
+
         // Build the actionCatalog as a standalone yyjson::value subtree. Per
         // das-yyjson-string-safety: every std::string payload is written via
         // std::make_pair(string_view, yyjson::copy_string) so the data is
@@ -484,36 +616,110 @@ namespace Contract
         const Dto::GraphDocumentDto&        document,
         const std::optional<ActionCatalog>& action_catalog)
     {
-        // Build the serialisable shape and create the yyjson document with
-        // yyjson::copy_string: string payloads are deep-copied into the
-        // document's own arena, so the returned value is self-contained and
-        // safe to return / write after the local shape is gone.
-        yyjson::value root;
+        // Build the strict Phase 84 wire by hand. Earlier shape-based
+        // yyjson::object(shape, copy_string) emitted every optional as null;
+        // the strict validator rejects null for absent optionals, so we emit
+        // only engaged fields here. Per das-yyjson-string-safety: every
+        // std::string payload is deep-copied into the document arena via
+        // std::make_pair(string_view, copy_string), and the resulting value
+        // is self-contained.
+        auto root = Das::Utils::MakeYyjsonObject();
+        auto root_obj_o = root.as_object();
+        if (!root_obj_o)
+        {
+            return root;
+        }
+        auto root_obj = *root_obj_o;
+        root_obj["contractVersion"] = 1;
+        root_obj["revision"] = document.version;
         if (IsLinear(document))
         {
-            FormSequenceDocShape shape;
-            shape.contract_version = 1;
-            shape.revision = document.version;
-            shape.form_sequence.items = ReverseProjectSequence(document);
-            root = yyjson::object(shape, yyjson::copy_string);
+            root_obj["viewKind"] = std::make_pair(
+                std::string_view("formSequence"),
+                yyjson::copy_string);
+            // Build formSequence.items[] manually to honor optional<enabled>
+            // (omit when disengaged) per D-84-25.
+            auto fs_v = Das::Utils::MakeYyjsonObject();
+            auto fs_o = fs_v.as_object();
+            if (fs_o)
+            {
+                auto fs = *fs_o;
+                auto items_a = Das::Utils::MakeYyjsonArray();
+                auto items_o = items_a.as_array();
+                if (items_o)
+                {
+                    auto& items_arr = *items_o;
+                    for (const auto& item : ReverseProjectSequence(document))
+                    {
+                        items_arr.emplace_back(BuildItemValue(item));
+                    }
+                }
+                fs["items"] = std::move(items_a);
+            }
+            root_obj["formSequence"] = std::move(fs_v);
         }
         else
         {
-            GraphDocShape shape;
-            shape.contract_version = 1;
-            shape.revision = document.version;
-            shape.graph = MapGraphView(document);
-            root = yyjson::object(shape, yyjson::copy_string);
+            root_obj["viewKind"] =
+                std::make_pair(std::string_view("graph"), yyjson::copy_string);
+            const auto view = MapGraphView(document);
+            auto       g_v = Das::Utils::MakeYyjsonObject();
+            auto       g_o = g_v.as_object();
+            if (g_o)
+            {
+                auto g = *g_o;
+                auto nodes_a = Das::Utils::MakeYyjsonArray();
+                auto nodes_o = nodes_a.as_array();
+                if (nodes_o)
+                {
+                    auto& nodes_arr = *nodes_o;
+                    for (const auto& node : view.nodes)
+                    {
+                        nodes_arr.emplace_back(BuildNodeValue(node));
+                    }
+                }
+                g["nodes"] = std::move(nodes_a);
+                if (!view.connections.empty())
+                {
+                    auto conns_a = Das::Utils::MakeYyjsonArray();
+                    auto conns_o = conns_a.as_array();
+                    if (conns_o)
+                    {
+                        auto& conns_arr = *conns_o;
+                        for (const auto& c : view.connections)
+                        {
+                            auto c_v = Das::Utils::MakeYyjsonObject();
+                            auto c_o = c_v.as_object();
+                            if (!c_o)
+                            {
+                                continue;
+                            }
+                            auto co = *c_o;
+                            co["fromNodeId"] = std::make_pair(
+                                std::string_view(c.from_node_id),
+                                yyjson::copy_string);
+                            co["fromPortId"] = std::make_pair(
+                                std::string_view(c.from_port_id),
+                                yyjson::copy_string);
+                            co["toNodeId"] = std::make_pair(
+                                std::string_view(c.to_node_id),
+                                yyjson::copy_string);
+                            co["toPortId"] = std::make_pair(
+                                std::string_view(c.to_port_id),
+                                yyjson::copy_string);
+                            conns_arr.emplace_back(std::move(c_v));
+                        }
+                    }
+                    g["connections"] = std::move(conns_a);
+                }
+            }
+            root_obj["graph"] = std::move(g_v);
         }
 
         if (action_catalog.has_value())
         {
-            auto obj = root.as_object();
-            if (obj)
-            {
-                (*obj)[std::string_view("actionCatalog")] =
-                    BuildActionCatalogValue(*action_catalog);
-            }
+            root_obj["actionCatalog"] =
+                BuildActionCatalogValue(*action_catalog);
         }
         return root;
     }

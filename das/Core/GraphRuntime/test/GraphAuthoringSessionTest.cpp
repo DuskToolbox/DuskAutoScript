@@ -1,4 +1,5 @@
 #include <das/Core/GraphRuntime/GraphRuntimeFactory.h>
+#include <das/Core/TaskScheduler/TaskAuthoringContract.h>
 #include <das/DasApi.h>
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
@@ -322,5 +323,49 @@ namespace
             std::string::npos);
         EXPECT_NE(after_upgrade.find("\"id\":\"a\""), std::string::npos);
         EXPECT_NE(after_upgrade.find("\"id\":\"b\""), std::string::npos);
+    }
+
+    // -----------------------------------------------------------------------
+    // Plan 01 validator cross-check: the public GraphRuntime wire must satisfy
+    // the strict TaskScheduler AuthoringDocument validator.
+    // -----------------------------------------------------------------------
+
+    TEST(GraphAuthoringSessionTest, ValidatorAccepts_FormSequenceOutput)
+    {
+        constexpr std::string_view item_a =
+            R"({"itemId":"a","target":{"targetKind":"componentRef","componentRef":{"kind":"componentRef","componentGuid":"{ga}","pluginGuid":"{p}"}},"settings":{}})";
+        SessionHandle s{
+            std::string(R"({"items":[)") + std::string(item_a) + "]}"};
+        const auto doc_json = JsonToUtf8(GetDocument(s.p).Get());
+        auto        parsed  = yyjson::read(doc_json);
+        auto        result  = Das::Core::TaskScheduler::ValidateAuthoringDocument(parsed);
+        EXPECT_TRUE(result.valid) << result.error_kind << ": " << result.message;
+    }
+
+    TEST(GraphAuthoringSessionTest, ValidatorAccepts_GraphOutput)
+    {
+        SessionHandle s{""};
+        SetActionCatalog(s.p, R"(["{g1}"])");
+        ApplyChange(
+            s.p,
+            WrapEnvelope("addGraphNode", R"({"actionId":"{g1}"})"));
+        const auto doc_json = JsonToUtf8(GetDocument(s.p).Get());
+        auto        parsed  = yyjson::read(doc_json);
+        auto        result  = Das::Core::TaskScheduler::ValidateAuthoringDocument(parsed);
+        EXPECT_TRUE(result.valid) << result.error_kind << ": " << result.message;
+    }
+
+    TEST(GraphAuthoringSessionTest, ValidatorAccepts_ApplyResultEnvelope)
+    {
+        SessionHandle s{""};
+        SetActionCatalog(s.p, R"(["{g1}"])");
+        auto apply_json = JsonToUtf8(ApplyChange(
+            s.p,
+            WrapEnvelope("addGraphNode", R"({"actionId":"{g1}"})")).Get());
+        auto parsed = yyjson::read(apply_json);
+        // baseRevision == 0, so success document.revision must equal 1.
+        auto result = Das::Core::TaskScheduler::ValidateAuthoringApplyResult(
+            parsed, /*baseRevision=*/0);
+        EXPECT_TRUE(result.valid) << result.error_kind << ": " << result.message;
     }
 } // namespace
