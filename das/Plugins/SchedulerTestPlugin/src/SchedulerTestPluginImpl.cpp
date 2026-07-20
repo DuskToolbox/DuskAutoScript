@@ -189,6 +189,27 @@ DasResult FakeAuthoringSession::GetRuntimeClassName(IDasReadOnlyString** pp)
     return CreateIDasReadOnlyStringFromUtf8("FakeAuthoringSession", pp);
 }
 
+namespace
+{
+    // Builds a minimal strict-Authoring document for the fake session. Both
+    // Get and Apply paths reuse this so the document shape stays consistent
+    // with the strict Phase 84 validator (contractVersion/viewKind/revision).
+    yyjson::value MakeStrictAuthoringDocument(int64_t revision)
+    {
+        yyjson::value document(Das::Utils::MakeYyjsonObject());
+        auto          obj = document.as_object();
+        (*obj)[std::string_view("contractVersion")] = static_cast<int64_t>(1);
+        (*obj)[std::string_view("viewKind")] = "formSequence";
+        (*obj)[std::string_view("revision")] = revision;
+        return document;
+    }
+
+    yyjson::value MakeStrictDiagnostics()
+    {
+        return yyjson::value(Das::Utils::MakeYyjsonArray());
+    }
+} // namespace
+
 DasResult FakeAuthoringSession::GetDocument(
     Das::ExportInterface::IDasJson*,
     Das::ExportInterface::IDasJson** pp_out_document_json)
@@ -197,9 +218,26 @@ DasResult FakeAuthoringSession::GetDocument(
     {
         return DAS_E_INVALID_POINTER;
     }
+    int64_t session_revision = 0;
+    bool    emit_strict = false;
     {
         ipc_scoped_lock lock(state_->mutex);
         ++state_->get_document_count;
+        session_revision = state_->last_context_revision;
+        emit_strict = state_->emit_strict_wire;
+    }
+
+    if (emit_strict)
+    {
+        yyjson::value result(Das::Utils::MakeYyjsonObject());
+        auto          obj = result.as_object();
+        (*obj)[std::string_view("document")] =
+            MakeStrictAuthoringDocument(session_revision);
+        (*obj)[std::string_view("diagnostics")] = MakeStrictDiagnostics();
+        auto wrapped = WrapJson(std::move(result));
+        *pp_out_document_json = wrapped.Get();
+        (*pp_out_document_json)->AddRef();
+        return DAS_S_OK;
     }
 
     yyjson::value document(Das::Utils::MakeYyjsonObject());
@@ -232,13 +270,17 @@ DasResult FakeAuthoringSession::GetDocument(
 }
 
 DasResult FakeAuthoringSession::ApplyChange(
-    Das::ExportInterface::IDasJson*,
+    Das::ExportInterface::IDasJson*  p_change_json,
     Das::ExportInterface::IDasJson** pp_out_result_json)
 {
     if (!pp_out_result_json)
     {
         return DAS_E_INVALID_POINTER;
     }
+    bool    emit_strict = false;
+    bool    omit_document = false;
+    int64_t revision_delta = 0;
+    int64_t session_revision = 0;
     {
         ipc_scoped_lock lock(state_->mutex);
         ++state_->apply_change_count;
@@ -246,6 +288,45 @@ DasResult FakeAuthoringSession::ApplyChange(
         {
             return DAS_E_FAIL;
         }
+        emit_strict = state_->emit_strict_wire;
+        omit_document = state_->apply_omit_document;
+        revision_delta = state_->apply_document_revision_delta;
+        session_revision = state_->last_context_revision;
+    }
+
+    int64_t base_revision = session_revision;
+    if (emit_strict && p_change_json)
+    {
+        DasPtr<IDasReadOnlyString> key;
+        if (DAS_S_OK
+                == CreateIDasReadOnlyStringFromUtf8("baseRevision", key.Put())
+            && key)
+        {
+            int64_t parsed = base_revision;
+            if (DAS_S_OK == p_change_json->GetIntByName(key.Get(), &parsed))
+            {
+                base_revision = parsed;
+            }
+        }
+    }
+
+    if (emit_strict)
+    {
+        yyjson::value result(Das::Utils::MakeYyjsonObject());
+        auto          obj = result.as_object();
+        yyjson::value props(Das::Utils::MakeYyjsonObject());
+        (*props.as_object())[std::string_view("key1")] = "accepted";
+        (*obj)[std::string_view("acceptedProperties")] = std::move(props);
+        if (!omit_document)
+        {
+            (*obj)[std::string_view("document")] =
+                MakeStrictAuthoringDocument(base_revision + 1 + revision_delta);
+        }
+        (*obj)[std::string_view("diagnostics")] = MakeStrictDiagnostics();
+        auto wrapped = WrapJson(std::move(result));
+        *pp_out_result_json = wrapped.Get();
+        (*pp_out_result_json)->AddRef();
+        return DAS_S_OK;
     }
 
     yyjson::value result(Das::Utils::MakeYyjsonObject());
@@ -272,6 +353,8 @@ DasResult FakeAuthoringSession::Compile(
     {
         return DAS_E_INVALID_POINTER;
     }
+    bool emit_strict = false;
+    bool omit_compile = false;
     {
         ipc_scoped_lock lock(state_->mutex);
         ++state_->compile_count;
@@ -297,7 +380,64 @@ DasResult FakeAuthoringSession::Compile(
                 }
             }
         }
+        emit_strict = state_->emit_strict_wire;
+        omit_compile = state_->compile_omit_compile;
     }
+
+    auto build_compile_payload = [&]() -> yyjson::value
+    {
+        yyjson::value compile(Das::Utils::MakeYyjsonObject());
+        yyjson::value execution_input(Das::Utils::MakeYyjsonObject());
+        (*execution_input.as_object())[std::string_view("key1")] = "compiled";
+        {
+            ipc_scoped_lock lock(state_->mutex);
+            (*compile.as_object())[std::string_view("ok")] = state_->compile_ok;
+            (*compile.as_object())[std::string_view("canExecute")] =
+                state_->compile_ok;
+        }
+        (*compile.as_object())[std::string_view("executionInput")] =
+            std::move(execution_input);
+        {
+            yyjson::value summary(Das::Utils::MakeYyjsonObject());
+            yyjson::value task_names(Das::Utils::MakeYyjsonArray());
+            (*task_names.as_array()).emplace_back("factoryTask");
+            (*summary.as_object())[std::string_view("taskNames")] =
+                std::move(task_names);
+            (*summary.as_object())[std::string_view("requiresAgentRuntime")] =
+                false;
+            (*compile.as_object())[std::string_view("summary")] =
+                std::move(summary);
+        }
+        return compile;
+    };
+
+    auto build_strict_diagnostics = []() -> yyjson::value
+    {
+        yyjson::value diagnostics(Das::Utils::MakeYyjsonArray());
+        yyjson::value diagnostic(Das::Utils::MakeYyjsonObject());
+        (*diagnostic.as_object())[std::string_view("severity")] = "info";
+        (*diagnostic.as_object())[std::string_view("path")] = "fake.compile";
+        (*diagnostic.as_object())[std::string_view("message")] =
+            "Fake compile completed";
+        diagnostics.as_array()->emplace_back(std::move(diagnostic));
+        return diagnostics;
+    };
+
+    if (emit_strict)
+    {
+        yyjson::value result(Das::Utils::MakeYyjsonObject());
+        auto          obj = result.as_object();
+        if (!omit_compile)
+        {
+            (*obj)[std::string_view("compile")] = build_compile_payload();
+        }
+        (*obj)[std::string_view("diagnostics")] = build_strict_diagnostics();
+        auto wrapped = WrapJson(std::move(result));
+        *pp_out_result_json = wrapped.Get();
+        (*pp_out_result_json)->AddRef();
+        return DAS_S_OK;
+    }
+
     yyjson::value result(Das::Utils::MakeYyjsonObject());
     yyjson::value execution_input(Das::Utils::MakeYyjsonObject());
     (*execution_input.as_object())[std::string_view("key1")] = "compiled";

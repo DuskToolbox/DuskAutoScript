@@ -2492,7 +2492,6 @@ TEST_F(SchedulerRuntimeBackedTest, SchedulerAuthoringCompilePreviewOnly)
     EXPECT_EQ(shared_state_->compile_count, 1);
     EXPECT_TRUE((shared_state_->executed_count == 0));
 }
-
 namespace
 {
     yyjson::value MakeRepositoryCreateRequest(
@@ -2789,6 +2788,482 @@ namespace
             DAS_S_OK);
     }
 } // namespace
+// ===========================================================================
+// Phase 84 Wave 03 — strict Authoring wire (D-84-04/05/06/08/09/10/11/32)
+// ---------------------------------------------------------------------------
+// These fixtures flip the test plugin into strict Provider-result mode and
+// assert that SchedulerService preserves the Provider envelope, validates
+// Apply output before any persistence, and never merges a Core-authored
+// catalog. The malicious-output variants prove that invalid Apply results
+// leave persisted task/repository state byte-for-byte untouched.
+// ===========================================================================
+
+namespace
+{
+    void EnableStrictAuthoringWire(FactoryTaskSharedState& state)
+    {
+        ipc_scoped_lock lock(state.mutex);
+        state.emit_strict_wire = true;
+    }
+
+    void SeedEmptyAuthoringTask(
+        Das::Core::SettingsManager::SettingsManager& sm,
+        int64_t                                      task_id = 0,
+        int64_t                                      revision = 0,
+        std::string_view                             key1_value = {})
+    {
+        yyjson::value task(Das::Utils::MakeYyjsonObject());
+        (*task.as_object())[std::string_view("id")] = task_id;
+        (*task.as_object())[std::string_view("taskGuid")] =
+            FactoryTaskGuidString;
+        (*task.as_object())[std::string_view("pluginGuid")] =
+            FactoryPluginGuidString;
+        {
+            yyjson::value props(Das::Utils::MakeYyjsonObject());
+            if (!key1_value.empty())
+            {
+                (*props.as_object())[std::string_view("key1")] =
+                    std::string(key1_value);
+            }
+            (*task.as_object())[std::string_view("properties")] =
+                std::move(props);
+        }
+        if (revision > 0)
+        {
+            yyjson::value authoring(Das::Utils::MakeYyjsonObject());
+            (*authoring.as_object())[std::string_view("revision")] = revision;
+            (*task.as_object())[std::string_view("authoring")] =
+                std::move(authoring);
+        }
+        WriteSchedulerState(sm, task_id + 1, {task_id}, {task});
+    }
+
+    yyjson::value MakeStrictAuthoringChange(
+        int64_t          base_revision,
+        std::string_view kind = "setValue")
+    {
+        yyjson::value change(Das::Utils::MakeYyjsonObject());
+        (*change.as_object())[std::string_view("baseRevision")] = base_revision;
+        (*change.as_object())[std::string_view("kind")] = std::string(kind);
+        (*change.as_object())[std::string_view("payload")] =
+            yyjson::value(Das::Utils::MakeYyjsonObject());
+        return change;
+    }
+} // namespace
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerAuthoringGetPreservesStrictProviderResultEnvelope)
+{
+    SeedEmptyAuthoringTask(*settings_manager_, 0, 0);
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+    EnableStrictAuthoringWire(*shared_state_);
+
+    yyjson::value request(Das::Utils::MakeYyjsonObject());
+    auto          result = scheduler_->GetTaskAuthoringDocument(0, request);
+    auto          obj = result.as_object();
+    ASSERT_TRUE(obj.has_value());
+    EXPECT_EQ((*obj)[std::string_view("taskId")].as_sint().value_or(-1), 0);
+    EXPECT_TRUE(obj->contains(std::string_view("document")));
+    EXPECT_TRUE(obj->contains(std::string_view("diagnostics")));
+    auto document = (*obj)[std::string_view("document")].as_object();
+    ASSERT_TRUE(document.has_value());
+    EXPECT_EQ(
+        (*document)[std::string_view("viewKind")].as_string().value_or(""),
+        std::string_view("formSequence"));
+    EXPECT_EQ(
+        (*document)[std::string_view("contractVersion")].as_sint().value_or(-1),
+        1);
+    EXPECT_EQ(
+        (*document)[std::string_view("revision")].as_sint().value_or(-1),
+        0);
+    // Scheduler must not synthesise a kind/catalog/migration on top of the
+    // Provider envelope.
+    EXPECT_FALSE(document->contains(std::string_view("kind")));
+    EXPECT_FALSE(document->contains(std::string_view("catalog")));
+    EXPECT_FALSE(document->contains(std::string_view("migration")));
+    EXPECT_FALSE(document->contains(std::string_view("sourceFingerprint")));
+    auto diagnostics = (*obj)[std::string_view("diagnostics")].as_array();
+    ASSERT_TRUE(diagnostics.has_value());
+
+    ipc_scoped_lock lock(shared_state_->mutex);
+    EXPECT_EQ(shared_state_->authoring_session_count, 1);
+    EXPECT_EQ(shared_state_->get_document_count, 1);
+}
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerAuthoringApplyValidatesResultBeforePersisting)
+{
+    SeedEmptyAuthoringTask(*settings_manager_, 0, 0, "initial");
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+    EnableStrictAuthoringWire(*shared_state_);
+    {
+        ipc_scoped_lock lock(shared_state_->mutex);
+        shared_state_->apply_omit_document = true;
+    }
+
+    auto change = MakeStrictAuthoringChange(0);
+    auto result = scheduler_->ApplyTaskAuthoringChange(0, change);
+    auto obj = result.as_object();
+    ASSERT_TRUE(obj.has_value());
+    EXPECT_FALSE((*obj)[std::string_view("ok")].as_bool().value_or(true));
+    EXPECT_EQ(
+        (*obj)[std::string_view("errorKind")].as_string().value_or(""),
+        std::string_view("invalidResult"));
+
+    auto persisted = settings_manager_->GetTaskInstanceJson("0", 0);
+    auto persisted_obj = persisted.as_object();
+    ASSERT_TRUE(persisted_obj.has_value());
+    auto props = (*persisted_obj)[std::string_view("properties")].as_object();
+    ASSERT_TRUE(props.has_value());
+    EXPECT_EQ(
+        (*props)[std::string_view("key1")].as_string().value_or(""),
+        std::string_view("initial"));
+    auto authoring =
+        (*persisted_obj)[std::string_view("authoring")].as_object();
+    if (authoring.has_value())
+    {
+        EXPECT_EQ(
+            (*authoring)[std::string_view("revision")].as_sint().value_or(-1),
+            0);
+    }
+
+    ipc_scoped_lock lock(shared_state_->mutex);
+    EXPECT_EQ(shared_state_->apply_change_count, 1);
+}
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerAuthoringApplyRejectsWrongDocumentRevisionWithoutPersisting)
+{
+    SeedEmptyAuthoringTask(*settings_manager_, 0, 0, "initial");
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+    EnableStrictAuthoringWire(*shared_state_);
+    {
+        ipc_scoped_lock lock(shared_state_->mutex);
+        shared_state_->apply_document_revision_delta = 1;
+    }
+
+    auto change = MakeStrictAuthoringChange(0);
+    auto result = scheduler_->ApplyTaskAuthoringChange(0, change);
+    auto obj = result.as_object();
+    ASSERT_TRUE(obj.has_value());
+    EXPECT_FALSE((*obj)[std::string_view("ok")].as_bool().value_or(true));
+    EXPECT_EQ(
+        (*obj)[std::string_view("errorKind")].as_string().value_or(""),
+        std::string_view("revisionMismatch"));
+
+    auto persisted = settings_manager_->GetTaskInstanceJson("0", 0);
+    auto persisted_obj = persisted.as_object();
+    ASSERT_TRUE(persisted_obj.has_value());
+    auto props = (*persisted_obj)[std::string_view("properties")].as_object();
+    ASSERT_TRUE(props.has_value());
+    EXPECT_EQ(
+        (*props)[std::string_view("key1")].as_string().value_or(""),
+        std::string_view("initial"));
+
+    ipc_scoped_lock lock(shared_state_->mutex);
+    EXPECT_EQ(shared_state_->apply_change_count, 1);
+}
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerAuthoringApplyPersistsStrictProviderResult)
+{
+    SeedEmptyAuthoringTask(*settings_manager_, 0, 0, "initial");
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+    EnableStrictAuthoringWire(*shared_state_);
+
+    auto change = MakeStrictAuthoringChange(0);
+    auto result = scheduler_->ApplyTaskAuthoringChange(0, change);
+    auto obj = result.as_object();
+    ASSERT_TRUE(obj.has_value());
+    EXPECT_TRUE((*obj)[std::string_view("ok")].as_bool().value_or(false));
+    EXPECT_TRUE(obj->contains(std::string_view("acceptedProperties")));
+    EXPECT_TRUE(obj->contains(std::string_view("document")));
+    EXPECT_TRUE(obj->contains(std::string_view("diagnostics")));
+    auto document = (*obj)[std::string_view("document")].as_object();
+    ASSERT_TRUE(document.has_value());
+    EXPECT_EQ(
+        (*document)[std::string_view("viewKind")].as_string().value_or(""),
+        std::string_view("formSequence"));
+    EXPECT_EQ(
+        (*document)[std::string_view("revision")].as_sint().value_or(-1),
+        1);
+    auto accepted = (*obj)[std::string_view("acceptedProperties")].as_object();
+    ASSERT_TRUE(accepted.has_value());
+    EXPECT_EQ(
+        (*accepted)[std::string_view("key1")].as_string().value_or(""),
+        std::string_view("accepted"));
+
+    auto persisted = settings_manager_->GetTaskInstanceJson("0", 0);
+    auto persisted_obj = persisted.as_object();
+    ASSERT_TRUE(persisted_obj.has_value());
+    auto persisted_props =
+        (*persisted_obj)[std::string_view("properties")].as_object();
+    ASSERT_TRUE(persisted_props.has_value());
+    EXPECT_EQ(
+        (*persisted_props)[std::string_view("key1")].as_string().value_or(""),
+        std::string_view("accepted"));
+    auto persisted_authoring =
+        (*persisted_obj)[std::string_view("authoring")].as_object();
+    ASSERT_TRUE(persisted_authoring.has_value());
+    EXPECT_EQ(
+        (*persisted_authoring)[std::string_view("revision")].as_sint().value_or(
+            -1),
+        1);
+    EXPECT_EQ(
+        (*persisted_authoring)[std::string_view("lastChangeKind")]
+            .as_string()
+            .value_or(""),
+        std::string_view("setValue"));
+    EXPECT_FALSE(persisted_authoring->contains(std::string_view("kind")));
+    EXPECT_FALSE(persisted_authoring->contains(std::string_view("migration")));
+    EXPECT_FALSE(
+        persisted_authoring->contains(std::string_view("sourceFingerprint")));
+
+    ipc_scoped_lock lock(shared_state_->mutex);
+    EXPECT_EQ(shared_state_->apply_change_count, 1);
+}
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerAuthoringCompilePreservesStrictProviderResult)
+{
+    SeedEmptyAuthoringTask(*settings_manager_, 0, 0);
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+    EnableStrictAuthoringWire(*shared_state_);
+
+    yyjson::value request(Das::Utils::MakeYyjsonObject());
+    auto          result = scheduler_->CompileTaskAuthoring(0, request);
+    auto          obj = result.as_object();
+    ASSERT_TRUE(obj.has_value());
+    EXPECT_TRUE(obj->contains(std::string_view("compile")));
+    EXPECT_TRUE(obj->contains(std::string_view("diagnostics")));
+    auto compile = (*obj)[std::string_view("compile")].as_object();
+    ASSERT_TRUE(compile.has_value());
+    EXPECT_TRUE((*compile)[std::string_view("ok")].as_bool().value_or(false));
+    EXPECT_TRUE(compile->contains(std::string_view("executionInput")));
+    EXPECT_FALSE(obj->contains(std::string_view("providerDebug")));
+    auto diagnostics = (*obj)[std::string_view("diagnostics")].as_array();
+    ASSERT_TRUE(diagnostics.has_value());
+    ASSERT_EQ(diagnostics->size(), 1u);
+
+    ipc_scoped_lock lock(shared_state_->mutex);
+    EXPECT_EQ(shared_state_->compile_count, 1);
+}
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerRepositoryAuthoringGetPreservesStrictProviderResultEnvelope)
+{
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+    EnableStrictAuthoringWire(*shared_state_);
+
+    auto created = scheduler_->CreateRepositoryEntry(
+        MakeRepositoryCreateRequest("Strict repository entry", 8));
+    ASSERT_EQ(
+        (*created.as_object())[std::string_view("entryId")].as_sint().value_or(
+            -1),
+        0);
+
+    yyjson::value request(Das::Utils::MakeYyjsonObject());
+    auto result = scheduler_->GetRepositoryEntryAuthoringDocument(0, request);
+    auto obj = result.as_object();
+    ASSERT_TRUE(obj.has_value());
+    EXPECT_EQ((*obj)[std::string_view("entryId")].as_sint().value_or(-1), 0);
+    EXPECT_TRUE(obj->contains(std::string_view("document")));
+    EXPECT_TRUE(obj->contains(std::string_view("diagnostics")));
+    auto document = (*obj)[std::string_view("document")].as_object();
+    ASSERT_TRUE(document.has_value());
+    EXPECT_EQ(
+        (*document)[std::string_view("viewKind")].as_string().value_or(""),
+        std::string_view("formSequence"));
+    EXPECT_FALSE(document->contains(std::string_view("kind")));
+    EXPECT_FALSE(document->contains(std::string_view("catalog")));
+
+    ipc_scoped_lock lock(shared_state_->mutex);
+    EXPECT_EQ(shared_state_->get_document_count, 1);
+}
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerRepositoryAuthoringApplyValidatesResultBeforePersisting)
+{
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+    EnableStrictAuthoringWire(*shared_state_);
+    auto created = scheduler_->CreateRepositoryEntry(
+        MakeRepositoryCreateRequest("Strict apply entry", 8));
+    ASSERT_EQ(
+        (*created.as_object())[std::string_view("entryId")].as_sint().value_or(
+            -1),
+        0);
+    {
+        ipc_scoped_lock lock(shared_state_->mutex);
+        shared_state_->apply_omit_document = true;
+    }
+
+    auto change = MakeStrictAuthoringChange(0);
+    auto result = scheduler_->ApplyRepositoryEntryAuthoringChange(0, change);
+    auto obj = result.as_object();
+    ASSERT_TRUE(obj.has_value());
+    EXPECT_FALSE((*obj)[std::string_view("ok")].as_bool().value_or(true));
+    EXPECT_EQ(
+        (*obj)[std::string_view("errorKind")].as_string().value_or(""),
+        std::string_view("invalidResult"));
+
+    auto persisted = settings_manager_->GetTaskRepositoryEntryJson("0", 0);
+    auto persisted_obj = persisted.as_object();
+    ASSERT_TRUE(persisted_obj.has_value());
+    auto authoring =
+        (*persisted_obj)[std::string_view("authoring")].as_object();
+    ASSERT_TRUE(authoring.has_value());
+    EXPECT_EQ(
+        (*authoring)[std::string_view("revision")].as_sint().value_or(-1),
+        0);
+    auto accepted =
+        (*persisted_obj)[std::string_view("acceptedProperties")].as_object();
+    ASSERT_TRUE(accepted.has_value());
+    EXPECT_FALSE(accepted->contains(std::string_view("key1")));
+
+    ipc_scoped_lock lock(shared_state_->mutex);
+    EXPECT_EQ(shared_state_->apply_change_count, 1);
+}
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerRepositoryAuthoringApplyRejectsWrongDocumentRevisionWithoutPersisting)
+{
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+    EnableStrictAuthoringWire(*shared_state_);
+    auto created = scheduler_->CreateRepositoryEntry(
+        MakeRepositoryCreateRequest("Strict apply revision entry", 8));
+    ASSERT_EQ(
+        (*created.as_object())[std::string_view("entryId")].as_sint().value_or(
+            -1),
+        0);
+    {
+        ipc_scoped_lock lock(shared_state_->mutex);
+        shared_state_->apply_document_revision_delta = 1;
+    }
+
+    auto change = MakeStrictAuthoringChange(0);
+    auto result = scheduler_->ApplyRepositoryEntryAuthoringChange(0, change);
+    auto obj = result.as_object();
+    ASSERT_TRUE(obj.has_value());
+    EXPECT_FALSE((*obj)[std::string_view("ok")].as_bool().value_or(true));
+    EXPECT_EQ(
+        (*obj)[std::string_view("errorKind")].as_string().value_or(""),
+        std::string_view("revisionMismatch"));
+
+    auto persisted = settings_manager_->GetTaskRepositoryEntryJson("0", 0);
+    auto persisted_obj = persisted.as_object();
+    ASSERT_TRUE(persisted_obj.has_value());
+    auto authoring =
+        (*persisted_obj)[std::string_view("authoring")].as_object();
+    ASSERT_TRUE(authoring.has_value());
+    EXPECT_EQ(
+        (*authoring)[std::string_view("revision")].as_sint().value_or(-1),
+        0);
+
+    ipc_scoped_lock lock(shared_state_->mutex);
+    EXPECT_EQ(shared_state_->apply_change_count, 1);
+}
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerRepositoryAuthoringApplyPersistsStrictProviderResult)
+{
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+    EnableStrictAuthoringWire(*shared_state_);
+    auto created = scheduler_->CreateRepositoryEntry(
+        MakeRepositoryCreateRequest("Strict apply success entry", 8));
+    ASSERT_EQ(
+        (*created.as_object())[std::string_view("entryId")].as_sint().value_or(
+            -1),
+        0);
+
+    auto change = MakeStrictAuthoringChange(0);
+    auto result = scheduler_->ApplyRepositoryEntryAuthoringChange(0, change);
+    auto obj = result.as_object();
+    ASSERT_TRUE(obj.has_value());
+    EXPECT_TRUE((*obj)[std::string_view("ok")].as_bool().value_or(false));
+    EXPECT_TRUE(obj->contains(std::string_view("acceptedProperties")));
+    EXPECT_TRUE(obj->contains(std::string_view("document")));
+    EXPECT_TRUE(obj->contains(std::string_view("diagnostics")));
+    auto document = (*obj)[std::string_view("document")].as_object();
+    ASSERT_TRUE(document.has_value());
+    EXPECT_EQ(
+        (*document)[std::string_view("viewKind")].as_string().value_or(""),
+        std::string_view("formSequence"));
+    EXPECT_EQ(
+        (*document)[std::string_view("revision")].as_sint().value_or(-1),
+        1);
+
+    auto persisted = settings_manager_->GetTaskRepositoryEntryJson("0", 0);
+    auto persisted_obj = persisted.as_object();
+    ASSERT_TRUE(persisted_obj.has_value());
+    auto persisted_authoring =
+        (*persisted_obj)[std::string_view("authoring")].as_object();
+    ASSERT_TRUE(persisted_authoring.has_value());
+    EXPECT_EQ(
+        (*persisted_authoring)[std::string_view("revision")].as_sint().value_or(
+            -1),
+        1);
+    EXPECT_EQ(
+        (*persisted_authoring)[std::string_view("lastChangeKind")]
+            .as_string()
+            .value_or(""),
+        std::string_view("setValue"));
+    EXPECT_FALSE(
+        persisted_authoring->contains(std::string_view("migrationState")));
+    EXPECT_FALSE(
+        persisted_authoring->contains(std::string_view("sourceFingerprint")));
+    auto persisted_accepted =
+        (*persisted_obj)[std::string_view("acceptedProperties")].as_object();
+    ASSERT_TRUE(persisted_accepted.has_value());
+    EXPECT_EQ(
+        (*persisted_accepted)[std::string_view("key1")].as_string().value_or(
+            ""),
+        std::string_view("accepted"));
+
+    ipc_scoped_lock lock(shared_state_->mutex);
+    EXPECT_EQ(shared_state_->apply_change_count, 1);
+}
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerRepositoryCompilePreservesStrictProviderResult)
+{
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+    EnableStrictAuthoringWire(*shared_state_);
+    auto created = scheduler_->CreateRepositoryEntry(
+        MakeRepositoryCreateRequest("Strict compile entry", 8));
+    ASSERT_EQ(
+        (*created.as_object())[std::string_view("entryId")].as_sint().value_or(
+            -1),
+        0);
+
+    yyjson::value request(Das::Utils::MakeYyjsonObject());
+    (*request.as_object())[std::string_view("purpose")] = "preview";
+    auto result = scheduler_->CompileRepositoryEntryAuthoring(0, request);
+    auto obj = result.as_object();
+    ASSERT_TRUE(obj.has_value());
+    EXPECT_EQ((*obj)[std::string_view("entryId")].as_sint().value_or(-1), 0);
+    EXPECT_TRUE(obj->contains(std::string_view("compile")));
+    EXPECT_TRUE(obj->contains(std::string_view("diagnostics")));
+    auto compile = (*obj)[std::string_view("compile")].as_object();
+    ASSERT_TRUE(compile.has_value());
+    EXPECT_TRUE(compile->contains(std::string_view("executionInput")));
+    EXPECT_FALSE(obj->contains(std::string_view("providerDebug")));
+    EXPECT_FALSE(obj->contains(std::string_view("summary")));
+    EXPECT_FALSE(obj->contains(std::string_view("canExecute")));
+
+    ipc_scoped_lock lock(shared_state_->mutex);
+    EXPECT_EQ(shared_state_->compile_count, 1);
+    EXPECT_EQ(shared_state_->get_last_compile_purpose(), "preview");
+}
 
 TEST_F(
     SchedulerServiceImplTest,
