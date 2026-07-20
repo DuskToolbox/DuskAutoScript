@@ -186,6 +186,12 @@ namespace Das::Core::TaskScheduler
             return true;
         }
 
+        // Forward declarations — defined after the structural helpers but
+        // referenced by FieldDescriptor/FieldContainer because commands[] can
+        // appear at every FieldContainer level (D-84-14/D-84-26).
+        AuthoringValidationResult ValidateCommandDescriptorArray(
+            const yyjson::value& arr);
+
         // D-84-11 strict Diagnostic: required severity/message, optional
         // integer code, optional string path, no other fields.
         AuthoringValidationResult ValidateDiagnostic(const yyjson::value& diag)
@@ -484,9 +490,13 @@ namespace Das::Core::TaskScheduler
                 return r;
             }
 
-            if (obj.contains("commands") && !obj["commands"].is_array())
+            if (obj.contains("commands"))
             {
-                return Fail("invalidCommands", "commands must be array");
+                if (auto r = ValidateCommandDescriptorArray(obj["commands"]);
+                    !r.valid)
+                {
+                    return r;
+                }
             }
 
             if (!OnlyKeys(
@@ -699,6 +709,190 @@ namespace Das::Core::TaskScheduler
             return Pass();
         }
 
+        // Validate the apply template portion of a CommandDescriptor. The
+        // template has the same {kind, payload} shape as AuthoringChange but
+        // must NOT carry baseRevision; the caller injects the current
+        // revision at submit time.
+        AuthoringValidationResult ValidateCommandApplyTemplate(
+            const yyjson::value& apply)
+        {
+            auto obj_opt = apply.as_object();
+            if (!obj_opt)
+            {
+                return Fail("invalidApplyTemplate", "apply must be object");
+            }
+            const auto& obj = obj_opt.value();
+            if (obj.contains("baseRevision"))
+            {
+                return Fail(
+                    "applyTemplateHasBaseRevision",
+                    "apply template must not contain baseRevision");
+            }
+            if (!HasStringField(obj, "kind"))
+            {
+                return Fail("missingField", "apply.kind required");
+            }
+            if (!HasObjectField(obj, "payload"))
+            {
+                return Fail("missingField", "apply.payload required");
+            }
+            if (!OnlyKeys(obj, {"kind", "payload"}))
+            {
+                return Fail(
+                    "unknownField",
+                    "apply template rejects unknown field");
+            }
+            return Pass();
+        }
+
+        // D-84-26/D-84-27: CommandDescriptor strict shape. Must contain
+        // exactly one of apply|openView; optional confirmation only allowed
+        // with apply; openView restricted to the built-in actionCatalog
+        // enumeration for Phase 84.
+        AuthoringValidationResult ValidateCommandDescriptor(
+            const yyjson::value&   cmd,
+            std::set<std::string>& seen_ids)
+        {
+            auto obj_opt = cmd.as_object();
+            if (!obj_opt)
+            {
+                return Fail(
+                    "invalidCommand",
+                    "CommandDescriptor must be object");
+            }
+            const auto& obj = obj_opt.value();
+
+            if (!HasStringField(obj, "id"))
+            {
+                return Fail("missingField", "CommandDescriptor.id required");
+            }
+            const auto id = obj["id"].as_string().value();
+            if (id.empty())
+            {
+                return Fail(
+                    "invalidCommandId",
+                    "CommandDescriptor.id must be non-empty");
+            }
+            if (!seen_ids.insert(std::string(id)).second)
+            {
+                return Fail(
+                    "duplicateCommandId",
+                    "CommandDescriptor.id duplicate within container");
+            }
+
+            if (!HasStringField(obj, "label"))
+            {
+                return Fail("missingField", "CommandDescriptor.label required");
+            }
+            if (obj["label"].as_string().value().empty())
+            {
+                return Fail(
+                    "invalidCommandLabel",
+                    "CommandDescriptor.label must be non-empty");
+            }
+
+            if (obj.contains("description") && !obj["description"].is_string())
+            {
+                return Fail(
+                    "invalidDescription",
+                    "CommandDescriptor.description must be string");
+            }
+
+            if (auto r = ValidateOptionalIcon(obj, "icon"); !r.valid)
+            {
+                return r;
+            }
+
+            const bool has_apply = obj.contains("apply");
+            const bool has_open_view = obj.contains("openView");
+            if (has_apply == has_open_view)
+            {
+                return Fail(
+                    "commandActionXorRequired",
+                    "CommandDescriptor must have exactly one of apply|openView");
+            }
+
+            if (obj.contains("confirmation"))
+            {
+                if (!has_apply)
+                {
+                    return Fail(
+                        "confirmationRequiresApply",
+                        "confirmation only allowed with apply");
+                }
+                if (!HasStringField(obj, "confirmation"))
+                {
+                    return Fail(
+                        "invalidConfirmation",
+                        "confirmation must be string");
+                }
+                if (obj["confirmation"].as_string().value().empty())
+                {
+                    return Fail(
+                        "invalidConfirmation",
+                        "confirmation must be non-empty");
+                }
+            }
+
+            if (has_apply)
+            {
+                if (auto r = ValidateCommandApplyTemplate(obj["apply"]);
+                    !r.valid)
+                {
+                    return r;
+                }
+            }
+            else
+            {
+                if (!HasStringField(obj, "openView"))
+                {
+                    return Fail("invalidOpenView", "openView must be string");
+                }
+                const auto ov = obj["openView"].as_string().value();
+                if (ov != std::string_view("actionCatalog"))
+                {
+                    return Fail(
+                        "unsupportedOpenView",
+                        "openView must be actionCatalog");
+                }
+            }
+
+            if (!OnlyKeys(
+                    obj,
+                    {"id",
+                     "label",
+                     "description",
+                     "icon",
+                     "confirmation",
+                     "apply",
+                     "openView"}))
+            {
+                return Fail(
+                    "unknownField",
+                    "CommandDescriptor rejects unknown field");
+            }
+            return Pass();
+        }
+
+        AuthoringValidationResult ValidateCommandDescriptorArray(
+            const yyjson::value& arr)
+        {
+            auto arr_opt = arr.as_array();
+            if (!arr_opt)
+            {
+                return Fail("invalidCommands", "commands must be array");
+            }
+            std::set<std::string> seen_ids;
+            for (const auto& cmd : arr_opt.value())
+            {
+                if (auto r = ValidateCommandDescriptor(cmd, seen_ids); !r.valid)
+                {
+                    return r;
+                }
+            }
+            return Pass();
+        }
+
         // Validate a FieldContainer (document root, FormSequenceItem, or
         // GraphNode): fields[], fieldLayout[], commands[]. Fills field_names
         // so the caller can apply additional constraints (e.g. enabled
@@ -726,9 +920,13 @@ namespace Das::Core::TaskScheduler
                     return r;
                 }
             }
-            if (obj.contains("commands") && !obj["commands"].is_array())
+            if (obj.contains("commands"))
             {
-                return Fail("invalidCommands", "commands must be array");
+                if (auto r = ValidateCommandDescriptorArray(obj["commands"]);
+                    !r.valid)
+                {
+                    return r;
+                }
             }
             return Pass();
         }
