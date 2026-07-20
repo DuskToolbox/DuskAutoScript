@@ -3359,3 +3359,202 @@ TEST(MaapiProjectionTest, MissingTranslationYieldsGenericFallbackAndDiagnostic)
     EXPECT_TRUE(found_missing);
 }
 
+// Tracer 5: 根级 commands + item debugInfo。D-84-26/27/28/46.
+TEST(MaapiProjectionTest, RootCommandsAndItemDebugInfoProjected)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto catalog = MakeStrictProjectionMockCatalog();
+
+    AcceptedSettingsDto    settings;
+    settings.pi.language = "zh_cn";
+    MaapiPiTaskSettingsDto task;
+    task.item_id = "item_debug";
+    task.task_name = "DailyFarm";
+    task.enabled = true;
+    settings.pi.tasks.push_back(std::move(task));
+    MaapiConfigurationDto config;
+    config.id = "cfg_existing";
+    config.name = "Existing";
+    settings.pi.configurations.push_back(std::move(config));
+    settings.pi.selected_configuration_id = "cfg_existing";
+
+    auto document = ProjectAuthoringDocument(settings, &catalog, {}, 0);
+
+    auto result = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+    EXPECT_TRUE(result.valid)
+        << "error_kind=" << result.error_kind << " message=" << result.message;
+
+    auto obj = document.as_object();
+    ASSERT_TRUE(obj.has_value());
+
+    ASSERT_TRUE(obj->contains(std::string_view("commands")));
+    auto commands = (*obj)[std::string_view("commands")].as_array();
+    ASSERT_TRUE(commands.has_value());
+    std::set<std::string> command_ids;
+    for (auto it = commands->begin(); it != commands->end(); ++it)
+    {
+        auto cmd = it->as_object();
+        ASSERT_TRUE(cmd.has_value());
+        auto id_opt =
+            (*cmd)[std::string_view("id")].as_string().value_or("");
+        auto label_opt =
+            (*cmd)[std::string_view("label")].as_string().value_or("");
+        EXPECT_FALSE(id_opt.empty());
+        EXPECT_FALSE(label_opt.empty());
+        command_ids.emplace(std::string(id_opt));
+        ASSERT_TRUE(cmd->contains(std::string_view("apply")));
+        auto apply = (*cmd)[std::string_view("apply")].as_object();
+        ASSERT_TRUE(apply.has_value());
+        EXPECT_FALSE(apply->contains(std::string_view("baseRevision")));
+        EXPECT_EQ(
+            (*apply)[std::string_view("kind")].as_string().value_or(""),
+            "invokeCommand");
+    }
+    EXPECT_EQ(command_ids.count("newConfiguration"), 1u);
+    EXPECT_EQ(command_ids.count("copyConfiguration"), 1u);
+
+    auto fs = (*obj)[std::string_view("formSequence")].as_object();
+    ASSERT_TRUE(fs.has_value());
+    auto items = (*fs)[std::string_view("items")].as_array();
+    ASSERT_TRUE(items.has_value());
+    ASSERT_EQ(items->size(), 1u);
+    auto item_obj = (*items)[0].as_object();
+    ASSERT_TRUE(item_obj.has_value());
+    ASSERT_TRUE(item_obj->contains(std::string_view("debugInfo")));
+    auto debug_info =
+        (*item_obj)[std::string_view("debugInfo")].as_object();
+    ASSERT_TRUE(debug_info.has_value());
+    EXPECT_EQ(
+        (*debug_info)[std::string_view("piTaskName")].as_string().value_or(""),
+        "DailyFarm");
+    EXPECT_EQ(
+        (*debug_info)[std::string_view("piEntry")].as_string().value_or(""),
+        "StartDaily");
+    EXPECT_FALSE(item_obj->contains(std::string_view("label")));
+}
+
+// Tracer 6: icon 解析为绝对本地路径或 http(s)。
+TEST(MaapiProjectionTest, IconsResolvedToAbsoluteOrHttps)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto catalog = MakeStrictProjectionMockCatalog();
+    catalog.interface_directory = "C:/maapi/strict";
+    catalog.controllers.front().dto.icon = "https://example.com/android.png";
+    catalog.tasks.front().dto.icon = "C:/maapi/icons/daily.png";
+    for (auto& opt : catalog.options)
+    {
+        if (opt.dto.name == "stage")
+        {
+            opt.dto.icon = "icons/stage.png";
+            for (auto& c : opt.dto.cases)
+            {
+                if (c.name == "1-1")
+                {
+                    c.icon = "https://cdn.example.com/1-1.png";
+                }
+            }
+        }
+    }
+
+    AcceptedSettingsDto    settings;
+    settings.pi.language = "zh_cn";
+    MaapiPiTaskSettingsDto task;
+    task.item_id = "item_icon";
+    task.task_name = "DailyFarm";
+    settings.pi.tasks.push_back(std::move(task));
+
+    auto document = ProjectAuthoringDocument(settings, &catalog, {}, 0);
+
+    auto result = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+    EXPECT_TRUE(result.valid)
+        << "error_kind=" << result.error_kind << " message=" << result.message;
+
+    auto obj = document.as_object();
+    ASSERT_TRUE(obj.has_value());
+
+    auto controller_field = FindRootField(document, "controllerName");
+    ASSERT_TRUE(controller_field.has_value());
+    {
+        auto cands = controller_field->as_object()
+                         .value()[std::string_view("candidates")]
+                         .as_array();
+        ASSERT_TRUE(cands.has_value());
+        ASSERT_FALSE(cands->empty());
+        auto first_cand = (*cands)[0].as_object();
+        ASSERT_TRUE(first_cand.has_value());
+        ASSERT_TRUE(first_cand->contains(std::string_view("icon")));
+        EXPECT_EQ(
+            (*first_cand)[std::string_view("icon")].as_string().value_or(""),
+            "https://example.com/android.png");
+    }
+
+    auto ac = (*obj)[std::string_view("actionCatalog")].as_object();
+    ASSERT_TRUE(ac.has_value());
+    auto entries = (*ac)[std::string_view("entries")].as_array();
+    ASSERT_TRUE(entries.has_value());
+    std::string task_icon;
+    for (auto it = entries->begin(); it != entries->end(); ++it)
+    {
+        auto entry = it->as_object();
+        if (entry
+            && (*entry)[std::string_view("actionId")].as_string().value_or("")
+                   == "DailyFarm")
+        {
+            task_icon = std::string(
+                (*entry)[std::string_view("icon")].as_string().value_or(""));
+            break;
+        }
+    }
+    EXPECT_EQ(task_icon, "C:/maapi/icons/daily.png");
+
+    auto fs = (*obj)[std::string_view("formSequence")].as_object();
+    ASSERT_TRUE(fs.has_value());
+    auto items = (*fs)[std::string_view("items")].as_array();
+    ASSERT_TRUE(items.has_value());
+    auto item_obj = (*items)[0].as_object();
+    ASSERT_TRUE(item_obj.has_value());
+    auto item_fields = (*item_obj)[std::string_view("fields")].as_array();
+    ASSERT_TRUE(item_fields.has_value());
+    std::string stage_icon;
+    std::string case_icon;
+    for (auto it = item_fields->begin(); it != item_fields->end(); ++it)
+    {
+        auto field = it->as_object();
+        if (!field)
+        {
+            continue;
+        }
+        if ((*field)[std::string_view("name")].as_string().value_or("")
+            == "options.stage")
+        {
+            stage_icon = std::string(
+                (*field)[std::string_view("icon")].as_string().value_or(""));
+            auto cands =
+                (*field)[std::string_view("candidates")].as_array();
+            if (cands)
+            {
+                for (auto cit = cands->begin(); cit != cands->end(); ++cit)
+                {
+                    auto c = cit->as_object();
+                    if (c
+                        && (*c)[std::string_view("value")].as_string().value_or(
+                               "")
+                               == "1-1"
+                        && c->contains(std::string_view("icon")))
+                    {
+                        case_icon = std::string(
+                            (*c)[std::string_view("icon")]
+                                .as_string()
+                                .value_or(""));
+                    }
+                }
+            }
+            break;
+        }
+    }
+    EXPECT_EQ(stage_icon, "C:/maapi/strict/icons/stage.png");
+    EXPECT_EQ(case_icon, "https://cdn.example.com/1-1.png");
+}
+
