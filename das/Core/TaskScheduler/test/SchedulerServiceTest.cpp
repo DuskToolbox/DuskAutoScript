@@ -1897,14 +1897,26 @@ protected:
 
     void TearDown() override
     {
+        // SetUp 可能在多个早期步骤（CreateSharedStateSegment、
+        // DeploySchedulerTestPlugin 的 GetPluginDir/GetDasHostPath 抛
+        // std::runtime_error、settings_manager_/ipc_sp_/plugin_manager_/
+        // scheduler_ 构造抛 bad_alloc 等）抛异常退出，此时部分成员仍是
+        // 默认构造的空指针。gtest 在 --gtest_catch_exceptions=0 下不再吞
+        // 异常，TearDown 仍被调用，必须对每个成员独立判空才能避免在半
+        // 初始化状态上解引用 nullptr 触发 ASAN access-violation。
+
         if (scheduler_ && scheduler_->Status() == SchedulerState::Running)
         {
             EXPECT_EQ(scheduler_->Disable(), DAS_S_OK);
         }
 
         // RequestStop 内部将 running_ 置 false 并 io_context->stop()，
-        // 使 Run() 返回，io_thread_ 随后 join。
-        ipc_sp_->RequestStop();
+        // 使 Run() 返回，io_thread_ 随后 join。仅当 IpcContext 已成功
+        // 创建时才需要通知它退出；SetUp 早期失败时 ipc_sp_ 是 nullptr。
+        if (ipc_sp_)
+        {
+            ipc_sp_->RequestStop();
+        }
         if (io_thread_.joinable())
         {
             io_thread_.join();
