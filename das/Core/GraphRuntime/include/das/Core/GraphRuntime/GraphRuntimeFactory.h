@@ -53,8 +53,8 @@ DAS_C_API DasResult CreateGraphRuntimeWithHost(
 // The authoritative store (GraphDocumentDto) lives in Core behind an opaque
 // handle; plugins (which only link the stable C ABI) hold the handle and call
 // these per GetDocument / ApplyChange / Compile. The store's public projection
-// is the schema-contract authoring doc (AuthoringDocContract) — GraphDocumentDto
-// never crosses the boundary.
+// is the schema-contract authoring doc (AuthoringDocContract) —
+// GraphDocumentDto never crosses the boundary.
 //
 // Inputs are UTF-8 JSON strings (IDasReadOnlyString); outputs are IDasJson.
 // ---------------------------------------------------------------------------
@@ -68,8 +68,8 @@ struct GraphAuthoringSessionState;
 ///   - a graph document ({ "nodes": [...], "edges": [...] }) → parsed directly;
 ///   - anything else / null → an empty (graph-mode) store.
 DAS_C_API DasResult CreateGraphAuthoringSession(
-    IDasReadOnlyString*             p_context_json,
-    GraphAuthoringSessionState**    pp_out);
+    IDasReadOnlyString*          p_context_json,
+    GraphAuthoringSessionState** pp_out);
 
 /// Destroy a session and release its store. Safe on null.
 DAS_C_API void DestroyGraphAuthoringSession(GraphAuthoringSessionState* p);
@@ -78,31 +78,39 @@ DAS_C_API void DestroyGraphAuthoringSession(GraphAuthoringSessionState* p);
 /// (formSequence view when linear-tagged, graph view otherwise). The runtime
 /// GraphDocumentDto never leaks.
 DAS_C_API DasResult GraphAuthoringSessionGetDocument(
-    GraphAuthoringSessionState*         p,
-    IDasReadOnlyString*                 p_request_json,
-    Das::ExportInterface::IDasJson**    pp_out_document_json);
+    GraphAuthoringSessionState*      p,
+    IDasReadOnlyString*              p_request_json,
+    Das::ExportInterface::IDasJson** pp_out_document_json);
 
 /// ApplyChange: parse a contract change JSON, dispatch the dual-state
 /// ApplyAuthoringChange on the store, and return an authoring-result JSON
 /// ({ "ok":bool, "revision":int, "errorKind"?:string, "message"?:string }).
 DAS_C_API DasResult GraphAuthoringSessionApplyChange(
-    GraphAuthoringSessionState*         p,
-    IDasReadOnlyString*                 p_change_json,
-    Das::ExportInterface::IDasJson**    pp_out_result_json);
+    GraphAuthoringSessionState*      p,
+    IDasReadOnlyString*              p_change_json,
+    Das::ExportInterface::IDasJson** pp_out_result_json);
 
 /// Compile: compile the store into a CompiledGraphPlanDto JSON — the execution
 /// artifact consumed by DasGraphTaskImpl::Do() / IDasGraphRuntime::Execute().
 /// Port validation is skipped at the authoring boundary (no factory manager
 /// bound); acceptable for authoring preview.
 DAS_C_API DasResult GraphAuthoringSessionCompile(
-    GraphAuthoringSessionState*         p,
-    IDasReadOnlyString*                 p_request_json,
-    Das::ExportInterface::IDasJson**    pp_out_compiled_plan_json);
+    GraphAuthoringSessionState*      p,
+    IDasReadOnlyString*              p_request_json,
+    Das::ExportInterface::IDasJson** pp_out_compiled_plan_json);
 
 /// Upgrade the store from formSequence (linear) to graph (canvas) view —
 /// lossless (only the linear tag is removed). Returns DAS_E_FAIL if the store
 /// is not in linear mode.
-DAS_C_API DasResult GraphAuthoringSessionUpgradeToGraph(
-    GraphAuthoringSessionState* p);
+DAS_C_API DasResult
+GraphAuthoringSessionUpgradeToGraph(GraphAuthoringSessionState* p);
+
+/// Set the registered actionIds (D-84-31/32/33) the session will accept on
+/// addGraphNode / addFormSequenceItem and emit as actionCatalog entries on
+/// GetDocument. `p_action_ids_json` is a JSON array of strings (each is a
+/// registered IDasTaskComponent component_guid); pass null to clear.
+DAS_C_API DasResult GraphAuthoringSessionSetActionCatalog(
+    GraphAuthoringSessionState* p,
+    IDasReadOnlyString*         p_action_ids_json);
 
 #endif // DAS_CORE_GRAPHRUNTIME_GRAPHRUNTIMEFACTORY_H

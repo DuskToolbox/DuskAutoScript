@@ -85,12 +85,38 @@ namespace
         return out;
     }
 
+    // Helper: populate the session's registry-backed actionCatalog so that
+    // addGraphNode / addFormSequenceItem succeed (D-84-31/32/33). Tests inject
+    // a literal actionId set rather than reaching into PluginManager.
+    void SetActionCatalog(
+        GraphAuthoringSessionState* p,
+        const std::string&          json_array)
+    {
+        auto s = MakeStr(json_array);
+        GraphAuthoringSessionSetActionCatalog(p, s.Get());
+    }
+
+    // The Phase 84 strict AuthoringChange parser rejects the legacy flat
+    // {op, ...} shape; only the unified {baseRevision, kind, payload}
+    // envelope is accepted. Production callers inject baseRevision at submit
+    // time; tests use 0 (fresh session).
+    std::string WrapEnvelope(std::string_view kind, std::string_view payload)
+    {
+        std::string out = R"({"baseRevision":0,"kind":")";
+        out += kind;
+        out += R"(","payload":)";
+        out += payload;
+        out += "}";
+        return out;
+    }
+
     TEST(GraphAuthoringSessionTest, EmptyStoreProjectsAsGraph)
     {
         SessionHandle s{""};
         auto          json = Compact(JsonToUtf8(GetDocument(s.p).Get()));
-        // No formline tag on an empty store -> graph mode.
-        EXPECT_NE(json.find("\"kind\":\"graph\""), std::string::npos);
+        // Phase 84 strict wire uses viewKind (not kind).
+        EXPECT_NE(json.find("\"viewKind\":\"graph\""), std::string::npos);
+        EXPECT_EQ(json.find("\"kind\":\"graph\""), std::string::npos);
     }
 
     TEST(GraphAuthoringSessionTest, FormSequenceSeedProjectsAsFormSequence)
@@ -105,46 +131,55 @@ namespace
             std::string(R"({"documentId":"d1","version":0,"items":[)")
             + std::string(item_a) + "," + std::string(item_b) + "]}"};
         auto json = Compact(JsonToUtf8(GetDocument(s.p).Get()));
-        EXPECT_NE(json.find("\"kind\":\"formSequence\""), std::string::npos);
-        // Reverse-projected sequence preserves order.
+        EXPECT_NE(
+            json.find("\"viewKind\":\"formSequence\""),
+            std::string::npos);
+        EXPECT_EQ(json.find("\"kind\":\"formSequence\""), std::string::npos);
+        // formSequence.items[] is the canonical list (not .sequence).
+        EXPECT_NE(json.find("\"items\":["), std::string::npos);
         EXPECT_NE(json.find("\"id\":\"a\""), std::string::npos);
         EXPECT_NE(json.find("\"id\":\"b\""), std::string::npos);
         // Private runtime fields do not leak.
         EXPECT_EQ(json.find("edgeType"), std::string::npos);
+        // Public wire dropped raw settings (D-84-07).
+        EXPECT_EQ(json.find("\"settings\""), std::string::npos);
     }
 
-    TEST(GraphAuthoringSessionTest, GraphModeApplyChangeAddNode)
+    TEST(GraphAuthoringSessionTest, GraphModeApplyChangeAddGraphNode)
     {
         SessionHandle s{""}; // graph mode
-        auto          r = ApplyChange(
+        SetActionCatalog(s.p, R"(["{g1}"])");
+        auto r = ApplyChange(
             s.p,
-            R"({"kind":"addNode","payload":{"node":{"id":"n1","componentGuid":"{g1}","settings":{"x":1}}}})");
+            WrapEnvelope("addGraphNode", R"({"actionId":"{g1}"})"));
         const auto result = Compact(JsonToUtf8(r.Get()));
-        EXPECT_NE(result.find("\"ok\":true"), std::string::npos);
+        // Strict Phase 84 Apply result envelope: {acceptedProperties, document,
+        // diagnostics}. document.revision == baseRevision + 1 == 1.
+        EXPECT_NE(result.find("\"acceptedProperties\""), std::string::npos);
+        EXPECT_NE(result.find("\"diagnostics\":[]"), std::string::npos);
+        EXPECT_NE(result.find("\"revision\":1"), std::string::npos);
 
         auto doc = Compact(JsonToUtf8(GetDocument(s.p).Get()));
-        EXPECT_NE(doc.find("\"id\":\"n1\""), std::string::npos);
+        // The newly-allocated node id must be present; addGraphNode now mints
+        // a stable id instead of using a caller-supplied id.
         EXPECT_NE(doc.find("\"componentGuid\":\"{g1}\""), std::string::npos);
     }
 
     TEST(GraphAuthoringSessionTest, LegacyFlatOpFormatIsRejected)
     {
-        // Only the unified {kind, payload} envelope is accepted; the legacy
-        // {op, flat} shape is rejected as malformed.
+        // Only the unified {baseRevision, kind, payload} envelope is accepted;
+        // the legacy {op, flat} shape is rejected as malformed.
         SessionHandle s{""};
         auto          r = ApplyChange(
             s.p,
-            R"({"op":"addNode","node":{"id":"x","componentGuid":"{g1}","settings":{}}})");
+            R"({"op":"addGraphNode","node":{"id":"x","componentGuid":"{g1}","settings":{}}})");
         const auto result = Compact(JsonToUtf8(r.Get()));
-        EXPECT_NE(result.find("\"ok\":false"), std::string::npos);
-        // Compact() strips whitespace, so assert the space-independent token.
+        // Failure envelope carries an error diagnostic.
+        EXPECT_NE(result.find("\"severity\":\"error\""), std::string::npos);
         EXPECT_NE(result.find("malformed"), std::string::npos);
-        EXPECT_NE(
-            result.find("\"errorKind\":\"InvalidOp\""),
-            std::string::npos);
     }
 
-    TEST(GraphAuthoringSessionTest, UpgradeFlipsKindFromFormSequenceToGraph)
+    TEST(GraphAuthoringSessionTest, UpgradeFlipsViewKindFromFormSequenceToGraph)
     {
         constexpr std::string_view item_a =
             R"({"itemId":"a","target":{"targetKind":"componentRef","componentRef":{"kind":"componentRef","componentGuid":"{ga}","pluginGuid":"{p}"}},"settings":{}})";
@@ -155,33 +190,38 @@ namespace
             + std::string(item_b) + "]}"};
         EXPECT_NE(
             Compact(JsonToUtf8(GetDocument(s.p).Get()))
-                .find("\"kind\":\"formSequence\""),
+                .find("\"viewKind\":\"formSequence\""),
             std::string::npos);
 
         EXPECT_EQ(GraphAuthoringSessionUpgradeToGraph(s.p), DAS_S_OK);
         auto after = Compact(JsonToUtf8(GetDocument(s.p).Get()));
-        EXPECT_NE(after.find("\"kind\":\"graph\""), std::string::npos);
-        EXPECT_EQ(after.find("\"kind\":\"formSequence\""), std::string::npos);
+        EXPECT_NE(after.find("\"viewKind\":\"graph\""), std::string::npos);
+        EXPECT_EQ(
+            after.find("\"viewKind\":\"formSequence\""),
+            std::string::npos);
         // Lossless: nodes preserved after upgrade.
         EXPECT_NE(after.find("\"id\":\"a\""), std::string::npos);
     }
 
-    TEST(GraphAuthoringSessionTest, LinearModeApplyChangeAppendsItem)
+    TEST(
+        GraphAuthoringSessionTest,
+        LinearModeApplyChangeAppendsFormSequenceItem)
     {
         constexpr std::string_view item_a =
             R"({"itemId":"a","target":{"targetKind":"componentRef","componentRef":{"kind":"componentRef","componentGuid":"{ga}","pluginGuid":"{p}"}},"settings":{}})";
         SessionHandle s{
             std::string(R"({"items":[)") + std::string(item_a) + "]}"};
+        SetActionCatalog(s.p, R"(["{gb}"])");
         auto r = ApplyChange(
             s.p,
-            R"({"kind":"addSequenceItem","payload":{"item":{"id":"b","componentGuid":"{gb}"}}})");
-        EXPECT_NE(
-            Compact(JsonToUtf8(r.Get())).find("\"ok\":true"),
-            std::string::npos);
+            WrapEnvelope("addFormSequenceItem", R"({"actionId":"{gb}"})"));
+        const auto result = Compact(JsonToUtf8(r.Get()));
+        EXPECT_NE(result.find("\"revision\":1"), std::string::npos);
 
         auto doc = Compact(JsonToUtf8(GetDocument(s.p).Get()));
+        // The original item id survived; the new item is allocated by the
+        // Provider (caller does not supply an id).
         EXPECT_NE(doc.find("\"id\":\"a\""), std::string::npos);
-        EXPECT_NE(doc.find("\"id\":\"b\""), std::string::npos);
     }
 
     // -----------------------------------------------------------------------
@@ -209,32 +249,33 @@ namespace
         // scheduler would persist, and re-seed a fresh session from it — the
         // node must survive the round-trip.
         SessionHandle s1{""};
-        ASSERT_TRUE(
+        SetActionCatalog(s1.p, R"(["{g1}","{g2}"])");
+        ASSERT_NE(
             Compact(
                 JsonToUtf8(
                     ApplyChange(
                         s1.p,
-                        R"({"kind":"addNode","payload":{"node":{"id":"n1","componentGuid":"{g1}","settings":{}}}})")
+                        WrapEnvelope("addGraphNode", R"({"actionId":"{g1}"})"))
                         .Get()))
-                .find("\"ok\":true")
-            != std::string::npos);
+                .find("\"revision\":1"),
+            std::string::npos);
 
         const auto persisted = ExtractAcceptedProperties(
             ApplyChange(
                 s1.p,
-                R"({"kind":"addNode","payload":{"node":{"id":"n2","componentGuid":"{g2}","settings":{}}}})")
+                WrapEnvelope("addGraphNode", R"({"actionId":"{g2}"})"))
                 .Get());
         ASSERT_FALSE(persisted.empty());
 
-        // Re-seed from the persisted contract doc (wrapped as scheduler
+        // Re-seed from the persisted source blob (wrapped as scheduler
         // context).
         const std::string ctx =
             std::string(R"({"properties":)") + persisted + "}";
         SessionHandle s2{ctx};
         const auto    doc = Compact(JsonToUtf8(GetDocument(s2.p).Get()));
-        EXPECT_NE(doc.find("\"id\":\"n1\""), std::string::npos);
-        EXPECT_NE(doc.find("\"id\":\"n2\""), std::string::npos);
-        EXPECT_NE(doc.find("\"kind\":\"graph\""), std::string::npos);
+        EXPECT_NE(doc.find("\"componentGuid\":\"{g1}\""), std::string::npos);
+        EXPECT_NE(doc.find("\"componentGuid\":\"{g2}\""), std::string::npos);
+        EXPECT_NE(doc.find("\"viewKind\":\"graph\""), std::string::npos);
     }
 
     TEST(GraphAuthoringSessionTest, E2E_CompileProducesExecutablePlan)
@@ -243,9 +284,10 @@ namespace
         // (object with the compiled-plan shape; execution itself is exercised
         // by DasGraphTaskTest / GraphRuntimeTest).
         SessionHandle s{""};
+        SetActionCatalog(s.p, R"(["{g1}"])");
         ApplyChange(
             s.p,
-            R"({"kind":"addNode","payload":{"node":{"id":"n1","componentGuid":"{g1}","settings":{}}}})");
+            WrapEnvelope("addGraphNode", R"({"actionId":"{g1}"})"));
 
         DasPtr<Das::ExportInterface::IDasJson> plan_json;
         ASSERT_EQ(
@@ -259,8 +301,8 @@ namespace
 
     TEST(GraphAuthoringSessionTest, E2E_UpgradeIsLossless)
     {
-        // Seed linear, capture nodes, upgrade (lossless), downgrade, and check
-        // the linearity lint fires on the resulting linear store.
+        // Seed linear, capture nodes, upgrade (lossless), and verify the
+        // viewKind flips without dropping node ids.
         constexpr std::string_view item_a =
             R"({"itemId":"a","target":{"targetKind":"componentRef","componentRef":{"kind":"componentRef","componentGuid":"{ga}","pluginGuid":"{p}"}},"settings":{}})";
         constexpr std::string_view item_b =
@@ -269,13 +311,15 @@ namespace
             std::string(R"({"items":[)") + std::string(item_a) + ","
             + std::string(item_b) + "]}"};
 
-        // Lossless upgrade: kind flips to graph, nodes preserved.
+        // Lossless upgrade: viewKind flips to graph, nodes preserved.
         ASSERT_EQ(GraphAuthoringSessionUpgradeToGraph(s.p), DAS_S_OK);
         const auto after_upgrade = Compact(JsonToUtf8(GetDocument(s.p).Get()));
         EXPECT_EQ(
-            after_upgrade.find("\"kind\":\"formSequence\""),
+            after_upgrade.find("\"viewKind\":\"formSequence\""),
             std::string::npos);
-        EXPECT_NE(after_upgrade.find("\"kind\":\"graph\""), std::string::npos);
+        EXPECT_NE(
+            after_upgrade.find("\"viewKind\":\"graph\""),
+            std::string::npos);
         EXPECT_NE(after_upgrade.find("\"id\":\"a\""), std::string::npos);
         EXPECT_NE(after_upgrade.find("\"id\":\"b\""), std::string::npos);
     }

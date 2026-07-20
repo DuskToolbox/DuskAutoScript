@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <random>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -45,7 +46,7 @@ namespace Contract
         }
 
         // -------------------------------------------------------------------
-        // componentGuid extraction from a node target
+        // componentGuid / entryRef / targetKind extraction
         // -------------------------------------------------------------------
 
         std::string ComponentGuidOf(const Dto::GraphNodeDto& node)
@@ -57,27 +58,17 @@ namespace Contract
             return {};
         }
 
-        // -------------------------------------------------------------------
-        // entryRef extraction (DAS-81): subgraph reference carried by entryRef
-        // nodes. Returns engaged only when the node targets an entry.
-        // -------------------------------------------------------------------
-
+        // D-84-39: only entryId crosses the boundary. The internal
+        // expected_revision/source_fingerprint stay inside GraphDocumentDto.
         std::optional<EntryRef> EntryRefOf(const Dto::GraphNodeDto& node)
         {
             if (!node.target.entry_ref.has_value())
             {
                 return std::nullopt;
             }
-            const auto& src = *node.target.entry_ref;
-            EntryRef out;
-            out.entry_id = src.entry_id;
-            out.expected_revision  = src.expected_revision;
-            out.source_fingerprint = src.source_fingerprint;
-            return out;
+            return EntryRef{node.target.entry_ref->entry_id};
         }
 
-        /// Resolve the public targetKind discriminator from the internal node
-        /// target. Defaults to "componentRef" when unset.
         std::string TargetKindOf(const Dto::GraphNodeDto& node)
         {
             if (!node.target.target_kind.empty())
@@ -88,7 +79,7 @@ namespace Contract
         }
 
         // -------------------------------------------------------------------
-        // fields[] projection (DAS-81): derive data-driven render descriptors
+        // fields[] projection (D-84-18): derive data-driven render descriptors
         // from the node's current settings values. Each settings key becomes a
         // FieldDescriptor whose valueType is inferred from the JSON value type
         // (0=int 2=float 4=string 8=bool 16=object 32=array) and inputType is
@@ -96,10 +87,11 @@ namespace Contract
         // for GraphTask nodes, so the live settings are the available source.
         // -------------------------------------------------------------------
 
-        std::vector<FieldDescriptor> ProjectFields(const yyjson::value& settings)
+        std::vector<FieldDescriptor> ProjectFields(
+            const yyjson::value& settings)
         {
             std::vector<FieldDescriptor> out;
-            auto obj = settings.as_object();
+            auto                         obj = settings.as_object();
             if (!obj.has_value())
             {
                 return out;
@@ -112,7 +104,7 @@ namespace Contract
                     continue;
                 }
                 FieldDescriptor f;
-                f.name       = std::string(kv.first);
+                f.name = std::string(kv.first);
                 f.input_type = 0;
                 if (v.is_bool())
                 {
@@ -149,43 +141,29 @@ namespace Contract
         }
 
         // -------------------------------------------------------------------
-        // Reverse projection: linear signal chain -> SequenceItem[]
-        // -------------------------------------------------------------------
-        //
-        // The linear state is a single signal chain. We recover its order by
-        // walking signal edges: find the head (the node with no incoming
-        // signal edge), then follow signal_out -> signal_in. Non-signal edges
-        // and disconnected nodes are ignored for the sequence ordering; every
-        // node still appears (disconnected ones appended at the tail in array
-        // order so nothing is dropped).
+        // Reverse projection: linear signal chain -> FormSequenceItem[]
         // -------------------------------------------------------------------
 
-        std::vector<SequenceItem> ReverseProjectSequence(
+        std::vector<FormSequenceItem> ReverseProjectSequence(
             const Dto::GraphDocumentDto& doc)
         {
             std::unordered_map<std::string, std::string> signal_next;
-            std::unordered_set<std::string>              has_incoming;
-
+            std::unordered_set<std::string>              signal_targets;
             for (const auto& node : doc.nodes)
             {
-                has_incoming.insert(node.node_id);
+                signal_next.emplace(node.node_id, std::string{});
             }
-            // has_incoming starts as "all nodes"; we remove heads below by
-            // flagging nodes that ARE signal targets.
-            std::unordered_set<std::string> signal_targets;
             for (const auto& edge : doc.edges)
             {
                 if (edge.edge_type != "signal")
                 {
                     continue;
                 }
-                // First signal edge out of a node wins; the formSequence
-                // projection produces exactly one out per node.
                 signal_next.emplace(edge.source_node_id, edge.target_node_id);
                 signal_targets.insert(edge.target_node_id);
             }
 
-            std::vector<SequenceItem> items;
+            std::vector<FormSequenceItem> items;
             items.reserve(doc.nodes.size());
 
             // Head = a node that is never a signal target.
@@ -195,7 +173,7 @@ namespace Contract
             {
                 if (signal_targets.count(node.node_id) == 0)
                 {
-                    head       = node.node_id;
+                    head = node.node_id;
                     found_head = true;
                     break;
                 }
@@ -204,13 +182,12 @@ namespace Contract
             std::unordered_set<std::string> visited;
             auto build_item = [&](const Dto::GraphNodeDto& node)
             {
-                SequenceItem item;
-                item.id             = node.node_id;
+                FormSequenceItem item;
+                item.id = node.node_id;
                 item.component_guid = ComponentGuidOf(node);
-                item.target_kind    = TargetKindOf(node);
-                item.entry_ref      = EntryRefOf(node);
-                item.fields         = ProjectFields(node.settings);
-                item.settings       = Das::Utils::CloneYyjsonValue(node.settings);
+                item.target_kind = TargetKindOf(node);
+                item.entry_ref = EntryRefOf(node);
+                item.fields = ProjectFields(node.settings);
                 items.push_back(std::move(item));
                 visited.insert(node.node_id);
             };
@@ -230,7 +207,7 @@ namespace Contract
                 {
                     build_item(*cur);
                     auto it = signal_next.find(cur->node_id);
-                    if (it == signal_next.end())
+                    if (it == signal_next.end() || it->second.empty())
                     {
                         break;
                     }
@@ -247,8 +224,6 @@ namespace Contract
                 }
             }
 
-            // Append any nodes not reachable along the chain (preserves all
-            // nodes so the projection is total — matches Project()'s totality).
             for (const auto& node : doc.nodes)
             {
                 if (visited.count(node.node_id) == 0)
@@ -271,12 +246,11 @@ namespace Contract
             for (const auto& node : doc.nodes)
             {
                 GraphNode out;
-                out.id              = node.node_id;
-                out.component_guid  = ComponentGuidOf(node);
-                out.target_kind     = TargetKindOf(node);
-                out.entry_ref       = EntryRefOf(node);
-                out.fields          = ProjectFields(node.settings);
-                out.settings        = Das::Utils::CloneYyjsonValue(node.settings);
+                out.id = node.node_id;
+                out.component_guid = ComponentGuidOf(node);
+                out.target_kind = TargetKindOf(node);
+                out.entry_ref = EntryRefOf(node);
+                out.fields = ProjectFields(node.settings);
                 view.nodes.push_back(std::move(out));
             }
 
@@ -286,8 +260,8 @@ namespace Contract
                 GraphConnection out;
                 out.from_node_id = edge.source_node_id;
                 out.from_port_id = edge.source_port_id;
-                out.to_node_id   = edge.target_node_id;
-                out.to_port_id   = edge.target_port_id;
+                out.to_node_id = edge.target_node_id;
+                out.to_port_id = edge.target_port_id;
                 // edge_id and edge_type are deliberately dropped — they are
                 // runtime-private and must NOT leak across the ABI boundary.
                 view.connections.push_back(std::move(out));
@@ -299,25 +273,23 @@ namespace Contract
     // -------------------------------------------------------------------
     // Serializable JSON-shape aggregates. Declared at Contract namespace scope
     // (NOT anonymous) because boost::pfr aggregate reflection rejects
-    // local/anonymous-namespace types. camelCase member names emit the
-    // schema-draft keys directly via yyjson reflection; no field_name_rule.
+    // local/anonymous-namespace types. camelCase member names emit the strict
+    // Phase 84 keys directly via yyjson reflection; no field_name_rule.
     // -------------------------------------------------------------------
 
     struct FormSequenceDocShape
     {
         int32_t          contract_version = 1;
-        std::string      kind{"formSequence"};
+        std::string      view_kind{"formSequence"};
         int32_t          revision = 0;
-        std::string      source_fingerprint;
         FormSequenceView form_sequence;
     };
 
     struct GraphDocShape
     {
         int32_t     contract_version = 1;
-        std::string kind{"graph"};
+        std::string view_kind{"graph"};
         int32_t     revision = 0;
-        std::string source_fingerprint;
         GraphView   graph;
     };
 
@@ -333,8 +305,7 @@ struct yyjson::field_name_rule<
     using type = yyjson::snake_to_camel_transform;
 };
 template <>
-struct yyjson::field_name_rule<
-    Das::Core::GraphRuntime::Contract::GraphDocShape>
+struct yyjson::field_name_rule<Das::Core::GraphRuntime::Contract::GraphDocShape>
 {
     using type = yyjson::snake_to_camel_transform;
 };
@@ -355,19 +326,18 @@ namespace Contract
     AuthoringDocument ToAuthoringDocument(const Dto::GraphDocumentDto& document)
     {
         AuthoringDocument out;
-        out.revision          = document.version;
-        out.source_fingerprint = document.fingerprint;
+        out.revision = document.version;
 
         if (IsLinear(document))
         {
-            out.kind = Kind::FormSequence;
+            out.view_kind = ViewKind::FormSequence;
             FormSequenceView view;
-            view.sequence = ReverseProjectSequence(document);
+            view.items = ReverseProjectSequence(document);
             out.form_sequence = std::move(view);
         }
         else
         {
-            out.kind = Kind::Graph;
+            out.view_kind = ViewKind::Graph;
             out.graph = MapGraphView(document);
         }
         return out;
@@ -383,29 +353,169 @@ namespace Contract
         return true;
     }
 
-    yyjson::value SerializeDocument(const Dto::GraphDocumentDto& document)
+    namespace
+    {
+        // Build the actionCatalog as a standalone yyjson::value subtree. Per
+        // das-yyjson-string-safety: every std::string payload is written via
+        // std::make_pair(string_view, yyjson::copy_string) so the data is
+        // deep-copied into the document arena. The caller attaches the
+        // returned value to the serialized document root.
+        yyjson::value BuildActionCatalogValue(const ActionCatalog& catalog)
+        {
+            auto root = Das::Utils::MakeYyjsonObject();
+            auto root_obj_o = root.as_object();
+            if (!root_obj_o)
+            {
+                return root;
+            }
+            auto root_obj = *root_obj_o;
+
+            // entries[]
+            root_obj[std::string_view("entries")] =
+                Das::Utils::MakeYyjsonArray();
+            auto entries_arr_o =
+                root_obj[std::string_view("entries")].as_array();
+            if (entries_arr_o)
+            {
+                auto& entries_arr = *entries_arr_o;
+                for (const auto& entry : catalog.entries)
+                {
+                    auto entry_v = Das::Utils::MakeYyjsonObject();
+                    auto eo_o = entry_v.as_object();
+                    if (!eo_o)
+                    {
+                        continue;
+                    }
+                    auto eo = *eo_o;
+                    eo[std::string_view("actionId")] = std::make_pair(
+                        std::string_view(entry.action_id),
+                        yyjson::copy_string);
+                    eo[std::string_view("label")] = std::make_pair(
+                        std::string_view(entry.label),
+                        yyjson::copy_string);
+                    if (entry.description.has_value())
+                    {
+                        eo[std::string_view("description")] = std::make_pair(
+                            std::string_view(*entry.description),
+                            yyjson::copy_string);
+                    }
+                    if (entry.icon.has_value())
+                    {
+                        eo[std::string_view("icon")] = std::make_pair(
+                            std::string_view(*entry.icon),
+                            yyjson::copy_string);
+                    }
+                    entries_arr.emplace_back(std::move(entry_v));
+                }
+            }
+
+            // groups[] (optional). Built via the same copy_string pair pattern
+            // for object keys; each group's actionIds[] is emitted as a JSON
+            // array value constructed standalone (per das-yyjson-string-safety:
+            // mutable_array::emplace_back has no pair_like overload, so we
+            // build the string values explicitly via yyjson::value).
+            if (!catalog.groups.empty())
+            {
+                root_obj[std::string_view("groups")] =
+                    Das::Utils::MakeYyjsonArray();
+                auto groups_arr_o =
+                    root_obj[std::string_view("groups")].as_array();
+                if (groups_arr_o)
+                {
+                    auto& groups_arr = *groups_arr_o;
+                    for (const auto& group : catalog.groups)
+                    {
+                        auto group_v = Das::Utils::MakeYyjsonObject();
+                        auto go_o = group_v.as_object();
+                        if (!go_o)
+                        {
+                            continue;
+                        }
+                        auto go = *go_o;
+                        go[std::string_view("id")] = std::make_pair(
+                            std::string_view(group.id),
+                            yyjson::copy_string);
+                        go[std::string_view("label")] = std::make_pair(
+                            std::string_view(group.label),
+                            yyjson::copy_string);
+                        if (group.description.has_value())
+                        {
+                            go[std::string_view("description")] =
+                                std::make_pair(
+                                    std::string_view(*group.description),
+                                    yyjson::copy_string);
+                        }
+                        if (group.icon.has_value())
+                        {
+                            go[std::string_view("icon")] = std::make_pair(
+                                std::string_view(*group.icon),
+                                yyjson::copy_string);
+                        }
+                        // Build actionIds[] as a JSON-encoded string value:
+                        // per the yyjson skill, mutable arrays do not accept
+                        // pair_like, so we construct the entire array value via
+                        // yyjson::read on a JSON literal and assign directly.
+                        // This is a rare path (groups are Provider-authored,
+                        // not hot).
+                        std::string aids_json = "[";
+                        for (std::size_t k = 0; k < group.action_ids.size();
+                             ++k)
+                        {
+                            if (k != 0)
+                            {
+                                aids_json += ',';
+                            }
+                            aids_json += '"';
+                            aids_json += group.action_ids[k];
+                            aids_json += '"';
+                        }
+                        aids_json += "]";
+                        auto aids_value = yyjson::read(aids_json);
+                        go[std::string_view("actionIds")] = aids_value;
+                        groups_arr.emplace_back(std::move(group_v));
+                    }
+                }
+            }
+            return root;
+        }
+    } // anonymous namespace
+
+    yyjson::value SerializeDocument(
+        const Dto::GraphDocumentDto&        document,
+        const std::optional<ActionCatalog>& action_catalog)
     {
         // Build the serialisable shape and create the yyjson document with
         // yyjson::copy_string: string payloads are deep-copied into the
         // document's own arena, so the returned value is self-contained and
-        // safe to return / write after the local shape is gone. (Without
-        // copy_string yyjson would reference the std::string buffers of the
-        // local shape → use-after-free on write.)
+        // safe to return / write after the local shape is gone.
+        yyjson::value root;
         if (IsLinear(document))
         {
             FormSequenceDocShape shape;
-            shape.contract_version   = 1;
-            shape.revision           = document.version;
-            shape.source_fingerprint = document.fingerprint;
-            shape.form_sequence.sequence = ReverseProjectSequence(document);
-            return yyjson::object(shape, yyjson::copy_string);
+            shape.contract_version = 1;
+            shape.revision = document.version;
+            shape.form_sequence.items = ReverseProjectSequence(document);
+            root = yyjson::object(shape, yyjson::copy_string);
         }
-        GraphDocShape shape;
-        shape.contract_version   = 1;
-        shape.revision           = document.version;
-        shape.source_fingerprint = document.fingerprint;
-        shape.graph              = MapGraphView(document);
-        return yyjson::object(shape, yyjson::copy_string);
+        else
+        {
+            GraphDocShape shape;
+            shape.contract_version = 1;
+            shape.revision = document.version;
+            shape.graph = MapGraphView(document);
+            root = yyjson::object(shape, yyjson::copy_string);
+        }
+
+        if (action_catalog.has_value())
+        {
+            auto obj = root.as_object();
+            if (obj)
+            {
+                (*obj)[std::string_view("actionCatalog")] =
+                    BuildActionCatalogValue(*action_catalog);
+            }
+        }
+        return root;
     }
 
     yyjson::value SerializeSource(const Dto::GraphDocumentDto& document)
@@ -418,16 +528,22 @@ namespace Contract
     }
 
     // -------------------------------------------------------------------
-    // Authoring change dispatch
+    // Authoring change dispatch (strict Phase 84 kinds)
     // -------------------------------------------------------------------
 
     namespace
     {
-        using FormSeqDto  = Dto::FormSequenceDto;
+        using FormSeqDto = Dto::FormSequenceDto;
         using FormSeqItem = Dto::FormSequenceItemDto;
 
+        bool IsLinearMode(const Dto::GraphDocumentDto& doc) noexcept
+        {
+            return IsLinear(doc);
+        }
+
         /// Ordered node ids of a linear signal chain (head → tail), then any
-        /// disconnected nodes in array order. Shared by the reverse projections.
+        /// disconnected nodes in array order. Shared by the reverse
+        /// projections.
         std::vector<std::string> LinearOrder(const Dto::GraphDocumentDto& doc)
         {
             std::unordered_map<std::string, std::string> signal_next;
@@ -448,15 +564,15 @@ namespace Contract
             {
                 if (signal_targets.count(node.node_id) == 0)
                 {
-                    head       = node.node_id;
+                    head = node.node_id;
                     found_head = true;
                     break;
                 }
             }
 
-            std::vector<std::string>      order;
+            std::vector<std::string>        order;
             std::unordered_set<std::string> visited;
-            auto push = [&](const std::string& id)
+            auto                            push = [&](const std::string& id)
             {
                 order.push_back(id);
                 visited.insert(id);
@@ -492,7 +608,7 @@ namespace Contract
         {
             FormSeqDto seq;
             seq.document_id = doc.document_id;
-            seq.version     = doc.version;
+            seq.version = doc.version;
             seq.fingerprint = doc.fingerprint;
 
             std::unordered_map<std::string, const Dto::GraphNodeDto*> by_id;
@@ -510,7 +626,7 @@ namespace Contract
                 const auto& node = *it->second;
                 FormSeqItem item;
                 item.item_id = node.node_id;
-                item.target  = node.target;
+                item.target = node.target;
                 item.settings = Das::Utils::CloneYyjsonValue(node.settings);
                 seq.items.push_back(std::move(item));
             }
@@ -521,13 +637,20 @@ namespace Contract
         {
             switch (k)
             {
-                case AuthoringErrorKind::None:           return ChangeErrorKind::None;
-                case AuthoringErrorKind::NodeNotFound:   return ChangeErrorKind::NodeNotFound;
-                case AuthoringErrorKind::DuplicateNodeId:return ChangeErrorKind::DuplicateNodeId;
-                case AuthoringErrorKind::EmptyNodeId:    return ChangeErrorKind::EmptyNodeId;
-                case AuthoringErrorKind::InvalidEdge:    return ChangeErrorKind::InvalidEdge;
-                case AuthoringErrorKind::EdgeNotFound:   return ChangeErrorKind::EdgeNotFound;
-                default:                                 return ChangeErrorKind::InvalidEdge;
+            case AuthoringErrorKind::None:
+                return ChangeErrorKind::None;
+            case AuthoringErrorKind::NodeNotFound:
+                return ChangeErrorKind::NodeNotFound;
+            case AuthoringErrorKind::DuplicateNodeId:
+                return ChangeErrorKind::DuplicateNodeId;
+            case AuthoringErrorKind::EmptyNodeId:
+                return ChangeErrorKind::EmptyNodeId;
+            case AuthoringErrorKind::InvalidEdge:
+                return ChangeErrorKind::InvalidEdge;
+            case AuthoringErrorKind::EdgeNotFound:
+                return ChangeErrorKind::EdgeNotFound;
+            default:
+                return ChangeErrorKind::InvalidEdge;
             }
         }
 
@@ -535,63 +658,435 @@ namespace Contract
         {
             switch (k)
             {
-                case FormSequenceErrorKind::None:            return ChangeErrorKind::None;
-                case FormSequenceErrorKind::EmptyItemId:     return ChangeErrorKind::EmptyNodeId;
-                case FormSequenceErrorKind::DuplicateItemId: return ChangeErrorKind::DuplicateNodeId;
-                case FormSequenceErrorKind::ItemNotFound:    return ChangeErrorKind::ItemNotFound;
-                case FormSequenceErrorKind::InvalidIndex:    return ChangeErrorKind::InvalidIndex;
-                case FormSequenceErrorKind::NoChange:        return ChangeErrorKind::NoChange;
+            case FormSequenceErrorKind::None:
+                return ChangeErrorKind::None;
+            case FormSequenceErrorKind::EmptyItemId:
+                return ChangeErrorKind::EmptyNodeId;
+            case FormSequenceErrorKind::DuplicateItemId:
+                return ChangeErrorKind::DuplicateNodeId;
+            case FormSequenceErrorKind::ItemNotFound:
+                return ChangeErrorKind::ItemNotFound;
+            case FormSequenceErrorKind::InvalidIndex:
+                return ChangeErrorKind::InvalidIndex;
+            case FormSequenceErrorKind::NoChange:
+                return ChangeErrorKind::NoChange;
             }
             return ChangeErrorKind::InvalidOp;
         }
 
-        /// graph-mode dispatch: delegate to GraphAuthoring::ApplySettingsChange.
+        bool ActionIdIsRegistered(
+            const std::vector<std::string>& valid_action_ids,
+            std::string_view                action_id)
+        {
+            for (const auto& candidate : valid_action_ids)
+            {
+                if (candidate == action_id)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /// Allocate a fresh stable node/item id that does not collide with any
+        /// id already present on the store. The id is opaque and stable across
+        /// formSequence/graph projection (D-84-38) because it lives on the
+        /// shared GraphDocumentDto node_id and the linear projection copies it
+        /// verbatim into FormSequenceItem.id.
+        std::string AllocateStableNodeId(const Dto::GraphDocumentDto& doc)
+        {
+            std::unordered_set<std::string> existing;
+            for (const auto& node : doc.nodes)
+            {
+                existing.insert(node.node_id);
+            }
+            // Counter-based id; deterministic within a session and unique
+            // because it scans the live store.
+            std::size_t counter = existing.size();
+            std::string candidate;
+            do
+            {
+                candidate = "n_" + std::to_string(counter);
+                ++counter;
+            } while (existing.count(candidate) != 0);
+            return candidate;
+        }
+
+        // -----------------------------------------------------------------
+        // Linear-mode dispatch (D-84-35): setValue/addFormSequenceItem/
+        // moveFormSequenceItem/removeFormSequenceItem/convertView.
+        // -----------------------------------------------------------------
+
+        AuthoringChangeResult ApplyLinearChange(
+            Dto::GraphDocumentDto&          document,
+            const AuthoringChange&          change,
+            const std::vector<std::string>& valid_action_ids)
+        {
+            FormSequenceChange fc;
+            if (change.kind == "addFormSequenceItem")
+            {
+                if (!change.action_id.has_value() || change.action_id->empty())
+                {
+                    return {
+                        ChangeErrorKind::InvalidOp,
+                        "addFormSequenceItem.actionId required",
+                        {},
+                        std::nullopt};
+                }
+                if (!ActionIdIsRegistered(valid_action_ids, *change.action_id))
+                {
+                    return {
+                        ChangeErrorKind::UnknownActionId,
+                        "addFormSequenceItem.actionId not registered",
+                        {{"error",
+                          "addFormSequenceItem.actionId not registered",
+                          std::nullopt,
+                          "addFormSequenceItem.actionId"}},
+                        std::nullopt};
+                }
+                const auto new_id = AllocateStableNodeId(document);
+                AppendSequenceItemChange c;
+                c.item.item_id = new_id;
+                c.item.target.target_kind = "componentRef";
+                c.item.target.component_ref =
+                    Dto::ComponentRefDto{"componentRef", *change.action_id, {}};
+                // Default fields: empty settings blob. Provider may refine via
+                // future manifest descriptor projection.
+                fc.payload = c;
+
+                auto seq = GraphToSequence(document);
+                if (change.insertion_index.has_value())
+                {
+                    // Honour the caller's insertionIndex by using
+                    // InsertSequenceItem semantics when given. The fc payload
+                    // already encodes Append; if the caller wants an insert,
+                    // rebuild as Insert.
+                    std::size_t index =
+                        static_cast<std::size_t>(*change.insertion_index);
+                    if (index > seq.items.size())
+                    {
+                        index = seq.items.size();
+                    }
+                    InsertSequenceItemChange ic;
+                    ic.index = index;
+                    ic.item = std::move(c.item);
+                    fc.payload = ic;
+                }
+
+                auto r = FormSequenceProjector::ApplyChange(seq, fc);
+                if (!r.Ok())
+                {
+                    return {
+                        MapSeqError(r.error_kind),
+                        std::move(r.message),
+                        {},
+                        std::nullopt};
+                }
+                auto rebuilt = FormSequenceProjector::Project(seq);
+                rebuilt.tags = std::move(document.tags);
+                rebuilt.fingerprint = document.fingerprint;
+                document = std::move(rebuilt);
+                return {
+                    ChangeErrorKind::None,
+                    "",
+                    {},
+                    std::optional<std::string>{new_id}};
+            }
+            if (change.kind == "moveFormSequenceItem")
+            {
+                if (!change.form_sequence_item_id.has_value()
+                    || change.form_sequence_item_id->empty()
+                    || !change.destination_index.has_value())
+                {
+                    return {
+                        ChangeErrorKind::InvalidOp,
+                        "moveFormSequenceItem requires formSequenceItemId "
+                        "and destinationIndex",
+                        {},
+                        std::nullopt};
+                }
+                auto        seq = GraphToSequence(document);
+                std::size_t from = 0;
+                bool        found = false;
+                for (std::size_t i = 0; i < seq.items.size(); ++i)
+                {
+                    if (seq.items[i].item_id == *change.form_sequence_item_id)
+                    {
+                        from = i;
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found)
+                {
+                    return {
+                        ChangeErrorKind::ItemNotFound,
+                        "moveFormSequenceItem.formSequenceItemId not found",
+                        {},
+                        std::nullopt};
+                }
+                std::size_t to =
+                    static_cast<std::size_t>(*change.destination_index);
+                if (to >= seq.items.size())
+                {
+                    return {
+                        ChangeErrorKind::InvalidIndex,
+                        "moveFormSequenceItem.destinationIndex out of range",
+                        {},
+                        std::nullopt};
+                }
+                fc.payload = MoveSequenceItemChange{from, to};
+                auto r = FormSequenceProjector::ApplyChange(seq, fc);
+                if (!r.Ok())
+                {
+                    return {
+                        MapSeqError(r.error_kind),
+                        std::move(r.message),
+                        {},
+                        std::nullopt};
+                }
+                auto rebuilt = FormSequenceProjector::Project(seq);
+                rebuilt.tags = std::move(document.tags);
+                rebuilt.fingerprint = document.fingerprint;
+                document = std::move(rebuilt);
+                return {ChangeErrorKind::None, "", {}, std::nullopt};
+            }
+            if (change.kind == "removeFormSequenceItem")
+            {
+                if (!change.item_or_node_id.has_value()
+                    || change.item_or_node_id->empty())
+                {
+                    return {
+                        ChangeErrorKind::InvalidOp,
+                        "removeFormSequenceItem.formSequenceItemId required",
+                        {},
+                        std::nullopt};
+                }
+                fc.payload = RemoveSequenceItemChange{*change.item_or_node_id};
+                auto seq = GraphToSequence(document);
+                auto r = FormSequenceProjector::ApplyChange(seq, fc);
+                if (!r.Ok())
+                {
+                    return {
+                        MapSeqError(r.error_kind),
+                        std::move(r.message),
+                        {},
+                        std::nullopt};
+                }
+                auto rebuilt = FormSequenceProjector::Project(seq);
+                rebuilt.tags = std::move(document.tags);
+                rebuilt.fingerprint = document.fingerprint;
+                document = std::move(rebuilt);
+                return {ChangeErrorKind::None, "", {}, std::nullopt};
+            }
+            if (change.kind == "setValue")
+            {
+                if (!change.target.has_value())
+                {
+                    return {
+                        ChangeErrorKind::InvalidOp,
+                        "setValue.target required",
+                        {},
+                        std::nullopt};
+                }
+                if (change.target->kind == "document")
+                {
+                    return {
+                        ChangeErrorKind::InvalidOp,
+                        "setValue document-level not implemented for linear mode",
+                        {},
+                        std::nullopt};
+                }
+                if (change.target->kind != "formSequenceItem")
+                {
+                    return {
+                        ChangeErrorKind::InvalidOp,
+                        "setValue.target.kind must be formSequenceItem in linear mode",
+                        {},
+                        std::nullopt};
+                }
+                if (!change.target->id.has_value()
+                    || change.target->id->empty())
+                {
+                    return {
+                        ChangeErrorKind::EmptyNodeId,
+                        "setValue.target.id required",
+                        {},
+                        std::nullopt};
+                }
+                // Build the new settings blob by replacing the named field on
+                // the matched item's settings.
+                if (!change.field_name.has_value()
+                    || change.field_name->empty())
+                {
+                    return {
+                        ChangeErrorKind::InvalidOp,
+                        "setValue.fieldName required",
+                        {},
+                        std::nullopt};
+                }
+                auto seq = GraphToSequence(document);
+                bool found = false;
+                for (auto& item : seq.items)
+                {
+                    if (item.item_id == *change.target->id)
+                    {
+                        auto settings_obj = item.settings.as_object();
+                        if (!settings_obj)
+                        {
+                            item.settings = Das::Utils::MakeYyjsonObject();
+                            settings_obj = item.settings.as_object();
+                        }
+                        (*settings_obj)[std::string_view(*change.field_name)] =
+                            Das::Utils::CloneYyjsonValue(change.value);
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found)
+                {
+                    return {
+                        ChangeErrorKind::ItemNotFound,
+                        "setValue.target.id not found",
+                        {},
+                        std::nullopt};
+                }
+                auto rebuilt = FormSequenceProjector::Project(seq);
+                rebuilt.tags = std::move(document.tags);
+                rebuilt.fingerprint = document.fingerprint;
+                document = std::move(rebuilt);
+                return {ChangeErrorKind::None, "", {}, std::nullopt};
+            }
+            if (change.kind == "convertView")
+            {
+                if (!change.target_view_kind.has_value())
+                {
+                    return {
+                        ChangeErrorKind::InvalidOp,
+                        "convertView.targetViewKind required",
+                        {},
+                        std::nullopt};
+                }
+                if (*change.target_view_kind != "graph")
+                {
+                    return {
+                        ChangeErrorKind::UnsupportedView,
+                        "linear mode can only convert to graph",
+                        {},
+                        std::nullopt};
+                }
+                // RemoveTag is lossless. D-84-38: ids are stable because the
+                // store carries them verbatim and the projection copies them.
+                RemoveTag(document, kLinearTag);
+                return {ChangeErrorKind::None, "", {}, std::nullopt};
+            }
+            return {
+                ChangeErrorKind::InvalidOp,
+                "kind '" + change.kind + "' is not a linear-mode op",
+                {},
+                std::nullopt};
+        }
+
+        // -----------------------------------------------------------------
+        // Graph-mode dispatch (D-84-37): addGraphNode/removeGraphNode/
+        // connectGraphPorts/disconnectGraphPorts/setValue/convertView.
+        // -----------------------------------------------------------------
+
         AuthoringChangeResult ApplyGraphChange(
-            Dto::GraphDocumentDto&  document,
-            const AuthoringChange&  change)
+            Dto::GraphDocumentDto&          document,
+            const AuthoringChange&          change,
+            const std::vector<std::string>& valid_action_ids)
         {
             GraphAuthoringChange gac;
-            if (change.op == "addNode")
+            if (change.kind == "addGraphNode")
             {
-                if (!change.node.has_value())
+                if (!change.action_id.has_value() || change.action_id->empty())
                 {
-                    return {ChangeErrorKind::InvalidOp, "addNode requires node"};
+                    return {
+                        ChangeErrorKind::InvalidOp,
+                        "addGraphNode.actionId required",
+                        {},
+                        std::nullopt};
                 }
+                if (!ActionIdIsRegistered(valid_action_ids, *change.action_id))
+                {
+                    return {
+                        ChangeErrorKind::UnknownActionId,
+                        "addGraphNode.actionId not registered",
+                        {{"error",
+                          "addGraphNode.actionId not registered",
+                          std::nullopt,
+                          "addGraphNode.actionId"}},
+                        std::nullopt};
+                }
+                const auto    new_id = AllocateStableNodeId(document);
                 AddNodeChange c;
-                c.node.node_id = change.node->id;
-                c.node.settings = Das::Utils::CloneYyjsonValue(change.node->settings);
-                c.node.target.target_kind   = "componentRef";
+                c.node.node_id = new_id;
+                c.node.target.target_kind = "componentRef";
                 c.node.target.component_ref =
-                    Dto::ComponentRefDto{"componentRef", change.node->component_guid, {}};
+                    Dto::ComponentRefDto{"componentRef", *change.action_id, {}};
+                c.node.settings = Das::Utils::MakeYyjsonObject();
                 gac.payload = c;
+
+                auto r = ApplySettingsChange(document, gac);
+                if (!r.Ok())
+                {
+                    return {
+                        MapGraphError(r.error_kind),
+                        std::move(r.message),
+                        {},
+                        std::nullopt};
+                }
+                return {
+                    ChangeErrorKind::None,
+                    "",
+                    {},
+                    std::optional<std::string>{new_id}};
             }
-            else if (change.op == "removeNode")
+            if (change.kind == "removeGraphNode")
             {
-                gac.payload = RemoveNodeChange{change.node_id};
+                if (!change.item_or_node_id.has_value()
+                    || change.item_or_node_id->empty())
+                {
+                    return {
+                        ChangeErrorKind::InvalidOp,
+                        "removeGraphNode.nodeId required",
+                        {},
+                        std::nullopt};
+                }
+                gac.payload = RemoveNodeChange{*change.item_or_node_id};
             }
-            else if (change.op == "connectPorts")
+            else if (change.kind == "connectGraphPorts")
             {
                 if (!change.connection.has_value())
                 {
-                    return {ChangeErrorKind::InvalidOp, "connectPorts requires connection"};
+                    return {
+                        ChangeErrorKind::InvalidOp,
+                        "connectGraphPorts requires fromNodeId/fromPortId/toNodeId/toPortId",
+                        {},
+                        std::nullopt};
                 }
-                const auto& conn = *change.connection;
+                const auto&        conn = *change.connection;
                 ConnectPortsChange c;
-                c.edge.edge_id        = "edge::" + conn.from_node_id + "::"
-                                        + conn.from_port_id + "::" + conn.to_node_id
-                                        + "::" + conn.to_port_id;
+                c.edge.edge_id =
+                    "edge::" + conn.from_node_id + "::" + conn.from_port_id
+                    + "::" + conn.to_node_id + "::" + conn.to_port_id;
                 c.edge.source_node_id = conn.from_node_id;
                 c.edge.source_port_id = conn.from_port_id;
                 c.edge.target_node_id = conn.to_node_id;
                 c.edge.target_port_id = conn.to_port_id;
-                c.edge.edge_type      = "data";
+                c.edge.edge_type = "data";
                 gac.payload = c;
             }
-            else if (change.op == "disconnectPorts")
+            else if (change.kind == "disconnectGraphPorts")
             {
                 if (!change.connection.has_value())
                 {
-                    return {ChangeErrorKind::InvalidOp, "disconnectPorts requires connection"};
+                    return {
+                        ChangeErrorKind::InvalidOp,
+                        "disconnectGraphPorts requires fromNodeId/fromPortId/toNodeId/toPortId",
+                        {},
+                        std::nullopt};
                 }
                 const auto& conn = *change.connection;
                 std::string edge_id;
@@ -608,112 +1103,133 @@ namespace Contract
                 }
                 if (edge_id.empty())
                 {
-                    return {ChangeErrorKind::EdgeNotFound,
-                            "no edge matches the given connection endpoints"};
+                    return {
+                        ChangeErrorKind::EdgeNotFound,
+                        "no edge matches the given connection endpoints",
+                        {},
+                        std::nullopt};
                 }
                 gac.payload = DisconnectPortsChange{edge_id};
             }
-            else if (change.op == "updateNodeConfig" || change.op == "setValue")
+            else if (change.kind == "setValue")
             {
-                UpdateNodeConfigChange c;
-                c.node_id  = change.node_id;
-                c.settings = Das::Utils::CloneYyjsonValue(change.settings);
-                gac.payload = c;
+                if (!change.target.has_value())
+                {
+                    return {
+                        ChangeErrorKind::InvalidOp,
+                        "setValue.target required",
+                        {},
+                        std::nullopt};
+                }
+                if (change.target->kind == "document")
+                {
+                    return {
+                        ChangeErrorKind::InvalidOp,
+                        "setValue document-level not implemented for graph mode",
+                        {},
+                        std::nullopt};
+                }
+                if (change.target->kind != "graphNode")
+                {
+                    return {
+                        ChangeErrorKind::InvalidOp,
+                        "setValue.target.kind must be graphNode in graph mode",
+                        {},
+                        std::nullopt};
+                }
+                if (!change.target->id.has_value() || change.target->id->empty()
+                    || !change.field_name.has_value()
+                    || change.field_name->empty())
+                {
+                    return {
+                        ChangeErrorKind::InvalidOp,
+                        "setValue.target.id and fieldName required",
+                        {},
+                        std::nullopt};
+                }
+                bool found = false;
+                for (auto& node : document.nodes)
+                {
+                    if (node.node_id == *change.target->id)
+                    {
+                        auto settings_obj = node.settings.as_object();
+                        if (!settings_obj)
+                        {
+                            node.settings = Das::Utils::MakeYyjsonObject();
+                            settings_obj = node.settings.as_object();
+                        }
+                        (*settings_obj)[std::string_view(*change.field_name)] =
+                            Das::Utils::CloneYyjsonValue(change.value);
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found)
+                {
+                    return {
+                        ChangeErrorKind::NodeNotFound,
+                        "setValue.target.id not found",
+                        {},
+                        std::nullopt};
+                }
+                return {ChangeErrorKind::None, "", {}, std::nullopt};
+            }
+            else if (change.kind == "convertView")
+            {
+                if (!change.target_view_kind.has_value())
+                {
+                    return {
+                        ChangeErrorKind::InvalidOp,
+                        "convertView.targetViewKind required",
+                        {},
+                        std::nullopt};
+                }
+                if (*change.target_view_kind != "formSequence")
+                {
+                    return {
+                        ChangeErrorKind::UnsupportedView,
+                        "graph mode can only convert to formSequence if the topology is linear",
+                        {},
+                        std::nullopt};
+                }
+                // Best-effort one-way conversion: tag the document so the
+                // projection treats it as linear. Real graph→formSequence is
+                // only valid when the topology is a single signal chain; that
+                // invariant is the Provider's responsibility (D-84-29).
+                document.tags.emplace_back(std::string{kLinearTag});
+                return {ChangeErrorKind::None, "", {}, std::nullopt};
             }
             else
             {
-                return {ChangeErrorKind::InvalidOp,
-                        "op '" + change.op + "' is not a graph-mode op"};
+                return {
+                    ChangeErrorKind::InvalidOp,
+                    "kind '" + change.kind + "' is not a graph-mode op",
+                    {},
+                    std::nullopt};
             }
 
             auto r = ApplySettingsChange(document, gac);
             if (!r.Ok())
             {
-                return {MapGraphError(r.error_kind), std::move(r.message)};
+                return {
+                    MapGraphError(r.error_kind),
+                    std::move(r.message),
+                    {},
+                    std::nullopt};
             }
-            return {ChangeErrorKind::None, ""};
-        }
-
-        /// linear-mode dispatch: reverse-project → FormSequenceProjector →
-        /// re-project, preserving store identity.
-        AuthoringChangeResult ApplyLinearChange(
-            Dto::GraphDocumentDto&  document,
-            const AuthoringChange&  change)
-        {
-            FormSequenceChange fc;
-            if (change.op == "addSequenceItem")
-            {
-                if (!change.item.has_value())
-                {
-                    return {ChangeErrorKind::InvalidOp, "addSequenceItem requires item"};
-                }
-                AppendSequenceItemChange c;
-                c.item.item_id = change.item->id;
-                c.item.target.target_kind   = "componentRef";
-                c.item.target.component_ref =
-                    Dto::ComponentRefDto{"componentRef", change.item->component_guid, {}};
-                c.item.settings = Das::Utils::CloneYyjsonValue(change.item->settings);
-                fc.payload = c;
-            }
-            else if (change.op == "moveSequenceItem")
-            {
-                if (!change.from.has_value() || !change.to.has_value())
-                {
-                    return {ChangeErrorKind::InvalidOp, "moveSequenceItem requires from/to"};
-                }
-                fc.payload = MoveSequenceItemChange{*change.from, *change.to};
-            }
-            else if (change.op == "removeSequenceItem")
-            {
-                fc.payload = RemoveSequenceItemChange{change.node_id};
-            }
-            else if (change.op == "setValue")
-            {
-                SetSequenceItemValueChange c;
-                c.item_id  = change.node_id;
-                c.settings = Das::Utils::CloneYyjsonValue(change.settings);
-                fc.payload = c;
-            }
-            else
-            {
-                return {ChangeErrorKind::InvalidOp,
-                        "op '" + change.op + "' is not a linear-mode op"};
-            }
-
-            auto seq = GraphToSequence(document);
-            auto r   = FormSequenceProjector::ApplyChange(seq, fc);
-            if (!r.Ok())
-            {
-                return {MapSeqError(r.error_kind), std::move(r.message)};
-            }
-
-            // Re-project the mutated sequence back onto the store, preserving
-            // identity (tags / fingerprint). version is bumped by the caller.
-            //
-            // PREMISE: a linear (formsequence) document is a single signal
-            // chain — it carries no non-signal structure. Project() rebuilds
-            // nodes + the linear signal edges from scratch, so any non-signal
-            // data edges that hypothetically existed on the store are dropped
-            // by this full rebuild. That is correct for the linear mode: a
-            // document that needed non-signal edges would not be linear and
-            // would be in graph mode (where GraphAuthoring mutates in place
-            // and never comes through this path). Do not route a non-linear
-            // document through linear-mode changes.
-            auto rebuilt = FormSequenceProjector::Project(seq);
-            rebuilt.tags       = std::move(document.tags);
-            rebuilt.fingerprint = document.fingerprint;
-            document = std::move(rebuilt);
-            return {ChangeErrorKind::None, ""};
+            return {ChangeErrorKind::None, "", {}, std::nullopt};
         }
     } // anonymous namespace
 
     AuthoringChangeResult ApplyAuthoringChange(
-        Dto::GraphDocumentDto&  document,
-        const AuthoringChange&  change)
+        Dto::GraphDocumentDto&          document,
+        const AuthoringChange&          change,
+        const std::vector<std::string>& valid_action_ids)
     {
-        AuthoringChangeResult r = IsLinear(document)
-            ? ApplyLinearChange(document, change)
-            : ApplyGraphChange(document, change);
+        AuthoringChangeResult r =
+            IsLinearMode(document)
+                ? ApplyLinearChange(document, change, valid_action_ids)
+                : ApplyGraphChange(document, change, valid_action_ids);
         if (r.Ok())
         {
             ++document.version;

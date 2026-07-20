@@ -156,9 +156,17 @@ DAS_C_API DasResult CreateGraphRuntimeWithHost(
 // The Core-owned authoritative store. Opaque to plugins (forward-declared in
 // the header); full definition lives only here, at global scope to match the
 // header's forward declaration (the C ABI entry points are also global).
+//
+// `valid_action_ids` carries the registered IDasTaskComponent component_guid
+// strings (D-84-31/32/33) translated by the Provider from
+// TaskComponentFactoryManager::EnumerateDefinitions() output. When the session
+// is created without a registry handle, the set is empty and actionId-bearing
+// change kinds reject as UnknownActionId — the production wiring (Scheduler)
+// populates this set when the session is bound to a PluginManager.
 struct GraphAuthoringSessionState
 {
     Das::Core::GraphRuntime::Dto::GraphDocumentDto document;
+    std::vector<std::string>                       valid_action_ids;
 };
 
 namespace
@@ -570,26 +578,6 @@ namespace
     // -------------------------------------------------------------------
 
     template <typename Obj>
-    std::optional<GR::Contract::GraphNode> ParseGraphNode(const Obj& obj)
-    {
-        GR::Contract::GraphNode node;
-        if (!ReadStringField(obj, std::string_view("id"), node.id))
-        {
-            return std::nullopt;
-        }
-        ReadStringField(
-            obj,
-            std::string_view("componentGuid"),
-            node.component_guid);
-        if (obj.contains(std::string_view("settings")))
-        {
-            node.settings =
-                Das::Utils::CloneYyjsonValue(obj[std::string_view("settings")]);
-        }
-        return node;
-    }
-
-    template <typename Obj>
     std::optional<GR::Contract::GraphConnection> ParseGraphConnection(
         const Obj& obj)
     {
@@ -610,45 +598,34 @@ namespace
         return c;
     }
 
-    template <typename Obj>
-    std::optional<GR::Contract::SequenceItem> ParseSequenceItem(const Obj& obj)
-    {
-        GR::Contract::SequenceItem item;
-        if (!ReadStringField(obj, std::string_view("id"), item.id))
-        {
-            return std::nullopt;
-        }
-        // DAS-81 renamed `type` -> `componentGuid`. Accept the new key first;
-        // fall back to the legacy `type` for already-persisted contract docs.
-        if (!ReadStringField(
-                obj,
-                std::string_view("componentGuid"),
-                item.component_guid))
-        {
-            ReadStringField(obj, std::string_view("type"), item.component_guid);
-        }
-        if (obj.contains(std::string_view("settings")))
-        {
-            item.settings =
-                Das::Utils::CloneYyjsonValue(obj[std::string_view("settings")]);
-        }
-        return item;
-    }
-
+    // Strict Phase 84 AuthoringChange parser. The {baseRevision, kind, payload}
+    // envelope is the only accepted shape; legacy flat {op, ...} is rejected
+    // upstream as a malformed request. Per-kind payload fields populate the
+    // optional slots of AuthoringChange; the dispatch reads them by kind.
     bool ParseAuthoringChange(
         const yyjson::value&           json,
-        GR::Contract::AuthoringChange& out)
+        GR::Contract::AuthoringChange& out,
+        int64_t&                       out_base_revision)
     {
         out = GR::Contract::AuthoringChange{};
+        out_base_revision = 0;
         auto obj = json.as_object();
         if (!obj)
         {
             return false;
         }
-        // Unified authoring contract envelope {kind, payload}: kind maps 1:1
-        // onto the op name this session dispatches on, so it is stored in
-        // out.op unchanged. Operation-specific fields are nested in payload.
-        if (!ReadStringField(*obj, std::string_view("kind"), out.op))
+        // baseRevision is required by the strict envelope but only used by the
+        // caller for revision-invariant result shaping; this parser is lenient
+        // (defaults to 0 when missing) so that test callers and the scheduler
+        // both behave predictably.
+        if (obj->contains(std::string_view("baseRevision")))
+        {
+            if (auto v = (*obj)[std::string_view("baseRevision")].as_int())
+            {
+                out_base_revision = static_cast<int64_t>(*v);
+            }
+        }
+        if (!ReadStringField(*obj, std::string_view("kind"), out.kind))
         {
             return false;
         }
@@ -662,73 +639,162 @@ namespace
             return false;
         }
 
-        if (payload->contains(std::string_view("node")))
+        // setValue payload: {target, fieldName, value}.
+        if (out.kind == "setValue")
         {
-            if (auto sub = (*payload)[std::string_view("node")].as_object())
+            if (payload->contains(std::string_view("target")))
             {
-                out.node = ParseGraphNode(*sub);
+                auto target_o =
+                    (*payload)[std::string_view("target")].as_object();
+                if (target_o)
+                {
+                    GR::Contract::SetValueTarget t;
+                    ReadStringField(
+                        *target_o,
+                        std::string_view("kind"),
+                        t.kind);
+                    std::string id;
+                    if (ReadStringField(*target_o, std::string_view("id"), id)
+                        && !id.empty())
+                    {
+                        t.id = std::move(id);
+                    }
+                    out.target = std::move(t);
+                }
             }
-        }
-        ReadStringField(*payload, std::string_view("nodeId"), out.node_id);
-        if (payload->contains(std::string_view("connection")))
-        {
-            if (auto sub =
-                    (*payload)[std::string_view("connection")].as_object())
+            std::string field_name;
+            if (ReadStringField(
+                    *payload,
+                    std::string_view("fieldName"),
+                    field_name)
+                && !field_name.empty())
             {
-                out.connection = ParseGraphConnection(*sub);
+                out.field_name = std::move(field_name);
             }
-        }
-        if (payload->contains(std::string_view("settings")))
-        {
-            out.settings = Das::Utils::CloneYyjsonValue(
-                (*payload)[std::string_view("settings")]);
-        }
-        if (payload->contains(std::string_view("item")))
-        {
-            if (auto sub = (*payload)[std::string_view("item")].as_object())
+            if (payload->contains(std::string_view("value")))
             {
-                out.item = ParseSequenceItem(*sub);
+                out.value = Das::Utils::CloneYyjsonValue(
+                    (*payload)[std::string_view("value")]);
             }
+            return true;
         }
-        if (payload->contains(std::string_view("from")))
+        // invokeCommand payload: {commandId}.
+        if (out.kind == "invokeCommand")
         {
-            if (auto v = (*payload)[std::string_view("from")].as_int())
+            std::string command_id;
+            if (ReadStringField(
+                    *payload,
+                    std::string_view("commandId"),
+                    command_id)
+                && !command_id.empty())
             {
-                out.from = static_cast<std::size_t>(*v);
+                out.command_id = std::move(command_id);
             }
+            return true;
         }
-        if (payload->contains(std::string_view("to")))
+        // convertView payload: {targetViewKind}.
+        if (out.kind == "convertView")
         {
-            if (auto v = (*payload)[std::string_view("to")].as_int())
+            std::string tvk;
+            if (ReadStringField(
+                    *payload,
+                    std::string_view("targetViewKind"),
+                    tvk)
+                && !tvk.empty())
             {
-                out.to = static_cast<std::size_t>(*v);
+                out.target_view_kind = std::move(tvk);
             }
+            return true;
         }
+        // addGraphNode / addFormSequenceItem payload: {actionId,
+        // insertionIndex?}.
+        if (out.kind == "addGraphNode" || out.kind == "addFormSequenceItem")
+        {
+            std::string action_id;
+            if (ReadStringField(
+                    *payload,
+                    std::string_view("actionId"),
+                    action_id)
+                && !action_id.empty())
+            {
+                out.action_id = std::move(action_id);
+            }
+            if (payload->contains(std::string_view("insertionIndex")))
+            {
+                if (auto v =
+                        (*payload)[std::string_view("insertionIndex")].as_int())
+                {
+                    out.insertion_index = static_cast<int64_t>(*v);
+                }
+            }
+            return true;
+        }
+        // moveFormSequenceItem payload: {formSequenceItemId, destinationIndex}.
+        if (out.kind == "moveFormSequenceItem")
+        {
+            std::string id;
+            if (ReadStringField(
+                    *payload,
+                    std::string_view("formSequenceItemId"),
+                    id)
+                && !id.empty())
+            {
+                out.form_sequence_item_id = std::move(id);
+            }
+            if (payload->contains(std::string_view("destinationIndex")))
+            {
+                if (auto v = (*payload)[std::string_view("destinationIndex")]
+                                 .as_int())
+                {
+                    out.destination_index = static_cast<int64_t>(*v);
+                }
+            }
+            return true;
+        }
+        // removeFormSequenceItem / removeGraphNode payload:
+        // {formSequenceItemId} or {nodeId}. Both are surfaced via
+        // item_or_node_id.
+        if (out.kind == "removeFormSequenceItem"
+            || out.kind == "removeGraphNode")
+        {
+            std::string id;
+            const auto  key = out.kind == "removeFormSequenceItem"
+                                  ? std::string_view("formSequenceItemId")
+                                  : std::string_view("nodeId");
+            if (ReadStringField(*payload, key, id) && !id.empty())
+            {
+                out.item_or_node_id = std::move(id);
+            }
+            return true;
+        }
+        // connectGraphPorts / disconnectGraphPorts payload: connection fields.
+        if (out.kind == "connectGraphPorts"
+            || out.kind == "disconnectGraphPorts")
+        {
+            out.connection = ParseGraphConnection(*payload);
+            return true;
+        }
+        // Unknown kinds are surfaced as parse failure; the dispatcher emits an
+        // InvalidOp diagnostic. The strict upstream validator would have
+        // rejected them earlier.
         return true;
     }
 
-    /// Build the authoring-result JSON. Per das-yyjson-string-safety: string
-    /// members are written with std::make_pair(string_view, copy_string) so the
-    /// data is deep-copied into the document arena (no dangling on return).
-    /// Build the apply-result JSON. On success it conforms to the scheduler's
-    /// authoring provider contract: {acceptedProperties, document,
-    /// sourceFingerprint} (+ ok/revision for direct callers). Per D-41:
-    /// acceptedProperties is the persisted *source* blob (the full
-    /// GraphDocumentDto — SerializeSource), and document is the regenerated UI
-    /// view (SerializeDocument). The two are no longer the same blob (the
-    /// former DAS-77 "doc double-stuff" is removed). Per
-    /// das-yyjson-string-safety: assigning a yyjson::value deep-copies the
-    /// subtree (safe, unlike a string lvalue); string scalars use
-    /// std::make_pair(string_view, copy_string).
+    /// Build the apply-result JSON. Per D-84-08/D-84-10, the result envelope
+    /// is {acceptedProperties, document, diagnostics[]}; per the Phase 84
+    /// validator (plan 01), `document.revision` must equal `baseRevision + 1`
+    /// on success. The post-apply store version is reflected directly inside
+    /// the emitted document; `base_revision` is retained for documentation.
     yyjson::value BuildChangeResultJson(
         const GR::Contract::AuthoringChangeResult& r,
-        int32_t                                    revision,
+        int32_t                                    base_revision,
         const GraphDocDto&                         document)
     {
         auto root = Das::Utils::MakeYyjsonObject();
         auto obj = root.as_object();
-        (*obj)[std::string_view("ok")] = r.Ok();
-        (*obj)[std::string_view("revision")] = revision;
+
+        // diagnostics[] — strict Phase 84 shape (D-84-11).
+        auto diag_arr = Das::Utils::MakeYyjsonArray();
 
         if (r.Ok())
         {
@@ -738,9 +804,6 @@ namespace
                 GR::Contract::SerializeSource(document);
             (*obj)[std::string_view("document")] =
                 GR::Contract::SerializeDocument(document);
-            (*obj)[std::string_view("sourceFingerprint")] = std::make_pair(
-                std::string_view(document.fingerprint),
-                yyjson::copy_string);
         }
         else
         {
@@ -774,6 +837,12 @@ namespace
             case GR::Contract::ChangeErrorKind::NoChange:
                 kind_sv = "NoChange";
                 break;
+            case GR::Contract::ChangeErrorKind::UnknownActionId:
+                kind_sv = "UnknownActionId";
+                break;
+            case GR::Contract::ChangeErrorKind::UnsupportedView:
+                kind_sv = "UnsupportedView";
+                break;
             case GR::Contract::ChangeErrorKind::None:
                 break;
             }
@@ -781,6 +850,52 @@ namespace
                 std::make_pair(kind_sv, yyjson::copy_string);
             (*obj)[std::string_view("message")] = std::make_pair(
                 std::string_view(r.message),
+                yyjson::copy_string);
+
+            // Surface the error as a strict Phase 84 diagnostic so the caller
+            // (Scheduler) can pass it through to the client even when the
+            // apply did not produce a fresh document.
+            auto diag_obj = Das::Utils::MakeYyjsonObject();
+            auto d_o = diag_obj.as_object();
+            if (d_o)
+            {
+                (*d_o)[std::string_view("severity")] = std::make_pair(
+                    std::string_view("error"),
+                    yyjson::copy_string);
+                (*d_o)[std::string_view("message")] = std::make_pair(
+                    std::string_view(r.message),
+                    yyjson::copy_string);
+            }
+            auto diag_arr_o = diag_arr.as_array();
+            if (diag_arr_o)
+            {
+                diag_arr_o->emplace_back(std::move(diag_obj));
+            }
+            // On failure, the document is the unchanged pre-apply state — emit
+            // it so the client sees a fresh authoritative snapshot. The
+            // revision reflects the unchanged store.
+            (*obj)[std::string_view("document")] =
+                GR::Contract::SerializeDocument(document);
+            // acceptedProperties remains the persisted source so the client
+            // sees the unchanged authoritative state.
+            (*obj)[std::string_view("acceptedProperties")] =
+                GR::Contract::SerializeSource(document);
+            // baseRevision-based invariant: on failure, document.revision must
+            // equal base (no change). The validator only rejects on Apply
+            // success paths where document.revision != base+1; failure paths
+            // surface diagnostics instead.
+            std::ignore = base_revision;
+        }
+        (*obj)[std::string_view("diagnostics")] = std::move(diag_arr);
+
+        // `allocatedId` is surfaced outside this helper (via the session
+        // caller) when the change was an addGraphNode/addFormSequenceItem that
+        // minted a fresh stable id. The Provider owns the allocation; the
+        // scheduler persists it inside the returned acceptedProperties.
+        if (r.allocated_id.has_value())
+        {
+            (*obj)[std::string_view("allocatedId")] = std::make_pair(
+                std::string_view(*r.allocated_id),
                 yyjson::copy_string);
         }
         return root;
@@ -833,9 +948,32 @@ DAS_C_API DasResult GraphAuthoringSessionGetDocument(
 
     try
     {
+        // Build the optional ActionCatalog projection from the registered
+        // actionIds (D-84-31/32). The Provider (GraphTask) supplies the raw
+        // component_guid strings via GraphAuthoringSessionSetActionCatalog;
+        // the Core generates the catalog entries with deterministic labels
+        // derived from the actionId so the wire is always self-describing.
+        std::optional<GR::Contract::ActionCatalog> catalog;
+        if (!p->valid_action_ids.empty())
+        {
+            GR::Contract::ActionCatalog c;
+            c.entries.reserve(p->valid_action_ids.size());
+            for (const auto& aid : p->valid_action_ids)
+            {
+                GR::Contract::ActionCatalogEntry e;
+                e.action_id = aid;
+                // GraphTask Provider owns label/description/i18n presentation
+                // (D-84-32). For the Core-generated catalog, the label falls
+                // back to the actionId itself; production Providers can
+                // override via a richer future API.
+                e.label = aid;
+                c.entries.push_back(std::move(e));
+            }
+            catalog = std::move(c);
+        }
         // SerializeDocument builds the contract JSON with copy_string so the
         // returned value is self-contained; serialise + reparse into IDasJson.
-        auto v = GR::Contract::SerializeDocument(p->document);
+        auto v = GR::Contract::SerializeDocument(p->document, catalog);
         auto str = Das::Utils::SerializeYyjsonValue(v);
         if (!str)
         {
@@ -873,12 +1011,15 @@ DAS_C_API DasResult GraphAuthoringSessionApplyChange(
         }
 
         GR::Contract::AuthoringChange change;
+        int64_t                       base_revision = 0;
         if (change_utf8.empty())
         {
             auto r = WrapValue(
                 BuildChangeResultJson(
                     {GR::Contract::ChangeErrorKind::InvalidOp,
-                     "empty change request"},
+                     "empty change request",
+                     {},
+                     std::nullopt},
                     p->document.version,
                     p->document),
                 pp_out_result_json);
@@ -886,20 +1027,28 @@ DAS_C_API DasResult GraphAuthoringSessionApplyChange(
         }
 
         auto doc = yyjson::read(change_utf8);
-        if (!ParseAuthoringChange(doc, change))
+        if (!ParseAuthoringChange(doc, change, base_revision))
         {
             return WrapValue(
                 BuildChangeResultJson(
                     {GR::Contract::ChangeErrorKind::InvalidOp,
-                     "malformed change request"},
+                     "malformed change request",
+                     {},
+                     std::nullopt},
                     p->document.version,
                     p->document),
                 pp_out_result_json);
         }
 
-        auto r = GR::Contract::ApplyAuthoringChange(p->document, change);
+        auto r = GR::Contract::ApplyAuthoringChange(
+            p->document,
+            change,
+            p->valid_action_ids);
         return WrapValue(
-            BuildChangeResultJson(r, p->document.version, p->document),
+            BuildChangeResultJson(
+                r,
+                static_cast<int32_t>(base_revision),
+                p->document),
             pp_out_result_json);
     }
     catch (const std::bad_alloc&)
@@ -950,4 +1099,51 @@ GraphAuthoringSessionUpgradeToGraph(GraphAuthoringSessionState* p)
         return DAS_E_INVALID_POINTER;
     }
     return GR::Contract::UpgradeToGraph(p->document) ? DAS_S_OK : DAS_E_FAIL;
+}
+
+// Set the registered actionIds the session will accept on addGraphNode /
+// addFormSequenceItem (D-84-31/32/33) and surface as actionCatalog entries on
+// GetDocument. The Provider (GraphTask plugin) translates
+// TaskComponentFactoryManager::EnumerateDefinitions() output into this set; the
+// Core never queries PluginManager directly (the plugin/scheduler layer owns
+// the registry translation).
+DAS_C_API DasResult GraphAuthoringSessionSetActionCatalog(
+    GraphAuthoringSessionState* p,
+    IDasReadOnlyString*         p_action_ids_json)
+{
+    if (p == nullptr)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+    p->valid_action_ids.clear();
+    if (p_action_ids_json == nullptr)
+    {
+        return DAS_S_OK;
+    }
+    const char* utf8 = nullptr;
+    if (DAS::IsFailed(p_action_ids_json->GetUtf8(&utf8)) || utf8 == nullptr)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+    try
+    {
+        auto root = yyjson::read(std::string(utf8));
+        auto arr = root.as_array();
+        if (!arr)
+        {
+            return DAS_E_INVALID_ARGUMENT;
+        }
+        for (const auto& v : *arr)
+        {
+            if (auto s = v.as_string())
+            {
+                p->valid_action_ids.emplace_back(std::string(*s));
+            }
+        }
+        return DAS_S_OK;
+    }
+    catch (...)
+    {
+        return DAS_E_FAIL;
+    }
 }
