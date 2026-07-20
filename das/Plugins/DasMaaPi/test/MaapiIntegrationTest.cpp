@@ -229,11 +229,14 @@ TEST_F(MaapiIntegrationFixture, SampleInterfaceAuthoringCompileRuntimeDryRun)
         session->GetDocument(nullptr, initial_document_json.Put()),
         DAS_S_OK);
     auto initial_document = ReadJsonInterface(initial_document_json.Get());
+    // D-84-02: 严格 wire 下 document 用 viewKind 而不是 kind。
     EXPECT_EQ(
-        (*initial_document.as_object())[std::string_view("kind")]
+        (*initial_document.as_object())[std::string_view("viewKind")]
             .as_string()
             .value_or(""),
         std::string_view("formSequence"));
+    EXPECT_FALSE(
+        initial_document.as_object()->contains(std::string_view("kind")));
 
     auto interface_path =
         FixturePath("sample_interface.jsonc").generic_string();
@@ -246,15 +249,50 @@ TEST_F(MaapiIntegrationFixture, SampleInterfaceAuthoringCompileRuntimeDryRun)
     auto apply = ReadJsonInterface(apply_json.Get());
     auto apply_obj = apply.as_object();
     ASSERT_TRUE(apply_obj.has_value());
+    // D-84-04/08: 严格 Apply envelope = {acceptedProperties, document,
+    // diagnostics}。84-06 删除了 ProjectAuthoringDocument 从 catalog 派生
+    // sourceFingerprint 的逻辑，envelope 根不再携带 sourceFingerprint /
+    // migration；acceptedProperties.adapter.sourceFingerprint 只反映 input
+    // 端写入值，interfacePath setValue 不再回灌指纹。验证 apply 拾取新接口
+    // 的可观测信号转为：acceptedProperties.adapter.interfacePath 与
+    // document.actionCatalog.entries[]。
+    EXPECT_FALSE(apply_obj->contains(std::string_view("sourceFingerprint")));
+    EXPECT_FALSE(apply_obj->contains(std::string_view("migration")));
+    auto accepted =
+        (*apply_obj)[std::string_view("acceptedProperties")].as_object();
+    ASSERT_TRUE(accepted.has_value());
+    auto adapter = (*accepted)[std::string_view("adapter")].as_object();
+    ASSERT_TRUE(adapter.has_value());
     EXPECT_EQ(
-        (*apply_obj)[std::string_view("sourceFingerprint")]
-            .as_string()
-            .value_or(""),
-        std::string_view("SampleInterface:1.0.0"));
+        (*adapter)[std::string_view("interfacePath")].as_string().value_or(""),
+        interface_path);
     auto document = (*apply_obj)[std::string_view("document")].as_object();
     ASSERT_TRUE(document.has_value());
-    auto catalog = (*document)[std::string_view("catalog")].as_object();
-    ASSERT_TRUE(catalog.has_value());
+    // D-84-02/13/31: catalog 不再位于 document 根（MaaPI 私有候选 dump
+    // 已删除）。新 IR 把 PI tasks 投影到 actionCatalog.entries[]，
+    // actionId = task.dto.name；sample_interface.jsonc 的 task name=Daily。
+    ASSERT_FALSE(document->contains(std::string_view("catalog")));
+    auto action_catalog =
+        (*document)[std::string_view("actionCatalog")].as_object();
+    ASSERT_TRUE(action_catalog.has_value());
+    auto entries = (*action_catalog)[std::string_view("entries")].as_array();
+    ASSERT_TRUE(entries.has_value());
+    bool found_daily_action = false;
+    for (auto it = entries->begin(); it != entries->end(); ++it)
+    {
+        auto entry = it->as_object();
+        if (!entry)
+        {
+            continue;
+        }
+        if ((*entry)[std::string_view("actionId")].as_string().value_or("")
+            == "Daily")
+        {
+            found_daily_action = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(found_daily_action);
 
     auto preview_request = ParseDasJson(R"({"purpose":"preview"})");
     DasPtr<Das::ExportInterface::IDasJson> preview_json;
