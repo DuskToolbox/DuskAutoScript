@@ -1682,8 +1682,10 @@ namespace
             o.dto.type = "input";
             PiInputDto a;
             a.name = "x";
+            a.pipeline_type = "int";
             PiInputDto b;
             b.name = "y";
+            b.pipeline_type = "int";
             o.dto.inputs.push_back(std::move(a));
             o.dto.inputs.push_back(std::move(b));
             return o;
@@ -3209,4 +3211,74 @@ TEST(MaapiProjectionTest, ApplySetValueOnMultiInputSubfieldWritesBackToInputValu
     EXPECT_EQ(coord_inputs.count("y"), 1u);
     EXPECT_EQ(coord_inputs.at("y"), "0");
 }
+
+// Tracer 3: input verify + pattern_msg → FieldDescriptor.validation{pattern,
+// message}。D-84-22/23: PI input.verify regex 映射到 validation.pattern；
+// pattern_msg 经当前 language/i18n 解析成最终 message。field 仍由
+// MakeInputSubField 产出（retry 是单字段 input，pipeline_type=int）。
+TEST(MaapiProjectionTest, InputVerifyAndPatternMsgMapToValidation)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto catalog = MakeStrictProjectionMockCatalog();
+
+    AcceptedSettingsDto    settings;
+    settings.pi.language = "zh_cn";
+    MaapiPiTaskSettingsDto task;
+    task.item_id = "item_verify";
+    task.task_name = "DailyFarm";
+    MaapiPiOptionSettingsDto retry;
+    retry.option_name = "retry";
+    retry.kind = "input";
+    retry.input_values.emplace("times", "5");
+    task.options.push_back(std::move(retry));
+    settings.pi.tasks.push_back(std::move(task));
+
+    auto document = ProjectAuthoringDocument(settings, &catalog, {}, 0);
+
+    auto result = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+    EXPECT_TRUE(result.valid)
+        << "error_kind=" << result.error_kind << " message=" << result.message;
+
+    // 在 formSequence.items[0].fields[] 中找 options.retry 字段。
+    auto obj = document.as_object();
+    ASSERT_TRUE(obj.has_value());
+    auto fs = (*obj)[std::string_view("formSequence")].as_object();
+    ASSERT_TRUE(fs.has_value());
+    auto items = (*fs)[std::string_view("items")].as_array();
+    ASSERT_TRUE(items.has_value());
+    auto item_obj = (*items)[0].as_object();
+    ASSERT_TRUE(item_obj.has_value());
+    auto item_fields = (*item_obj)[std::string_view("fields")].as_array();
+    ASSERT_TRUE(item_fields.has_value());
+
+    std::optional<yyjson::value> retry_field;
+    for (auto it = item_fields->begin(); it != item_fields->end(); ++it)
+    {
+        auto field = it->as_object();
+        if (field
+            && (*field)[std::string_view("name")].as_string().value_or("")
+                   == "options.retry")
+        {
+            retry_field = Das::Utils::CloneYyjsonValue(*it);
+            break;
+        }
+    }
+    ASSERT_TRUE(retry_field.has_value());
+    auto retry_obj = retry_field->as_object();
+    ASSERT_TRUE(retry_obj.has_value());
+    ASSERT_TRUE(retry_obj->contains(std::string_view("validation")));
+    auto validation =
+        (*retry_obj)[std::string_view("validation")].as_object();
+    ASSERT_TRUE(validation.has_value());
+    // pattern = PI input.verify 原文。
+    EXPECT_EQ(
+        (*validation)[std::string_view("pattern")].as_string().value_or(""),
+        "^[1-9][0-9]*$");
+    // message = pattern_msg 经 i18n 解析为当前 language 文本。
+    EXPECT_EQ(
+        (*validation)[std::string_view("message")].as_string().value_or(""),
+        "请输入正整数");
+}
+
 
