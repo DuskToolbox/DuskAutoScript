@@ -3868,6 +3868,262 @@ TEST_F(MaapiAuthoringFixture, SetValueRejectsExtraPayloadMember)
     EXPECT_EQ(DocumentRevisionFromApplyResult(result), 0);
 }
 
+// Tracer 2 RED: addFormSequenceItem 接受已注册 actionId，分配 itemId 与默认
+// 字段；duplicate task 类型实例独立。document.revision == baseRevision + 1。
+TEST_F(MaapiAuthoringFixture, AddFormSequenceItemRegistersTaskInstance)
+{
+    auto interface_path =
+        FixturePath("interface_authoring.jsonc").generic_string();
+    auto session = CreateSession(
+        "{\"adapter\":{\"interfacePath\":\"" + interface_path + "\"}}");
+
+    DasPtr<Das::ExportInterface::IDasJson> result_json;
+    auto                                   change = ParseDasJson(
+        "{\"baseRevision\":0,\"kind\":\"addFormSequenceItem\","
+        "\"payload\":{\"actionId\":\"DailyFarm\"}}");
+    ASSERT_EQ(session->ApplyChange(change.Get(), result_json.Put()), DAS_S_OK);
+    auto result = ReadJsonInterface(result_json.Get());
+
+    // 成功 mutation：revision 1，无 error 诊断。
+    EXPECT_EQ(DocumentRevisionFromApplyResult(result), 1);
+    EXPECT_EQ(CountDiagnosticsBySeverity(result, "error"), 0u);
+
+    // acceptedProperties.pi.tasks 已加入 DailyFarm 实例，带 Provider 颁发的
+    // 非空 itemId。
+    auto pi     = AcceptedPiFromApplyResult(result);
+    auto pi_obj = pi.as_object();
+    ASSERT_TRUE(pi_obj.has_value());
+    auto tasks = (*pi_obj)[std::string_view("tasks")].as_array();
+    ASSERT_TRUE(tasks.has_value());
+    ASSERT_EQ(tasks->size(), 1u);
+    auto task_obj = (*tasks)[0].as_object();
+    ASSERT_TRUE(task_obj.has_value());
+    EXPECT_EQ(
+        (*task_obj)[std::string_view("taskName")].as_string().value_or(""),
+        "DailyFarm");
+    auto item_id =
+        (*task_obj)[std::string_view("itemId")].as_string().value_or("");
+    EXPECT_FALSE(item_id.empty());
+}
+
+// Tracer 2 RED: addFormSequenceItem 拒绝未注册的 actionId，不修改
+// acceptedProperties，不递增 revision。
+TEST_F(MaapiAuthoringFixture, AddFormSequenceItemRejectsUnknownActionId)
+{
+    auto interface_path =
+        FixturePath("interface_authoring.jsonc").generic_string();
+    auto session = CreateSession(
+        "{\"adapter\":{\"interfacePath\":\"" + interface_path + "\"}}");
+
+    DasPtr<Das::ExportInterface::IDasJson> result_json;
+    auto                                   change = ParseDasJson(
+        "{\"baseRevision\":0,\"kind\":\"addFormSequenceItem\","
+        "\"payload\":{\"actionId\":\"NoSuchTask\"}}");
+    ASSERT_EQ(session->ApplyChange(change.Get(), result_json.Put()), DAS_S_OK);
+    auto result = ReadJsonInterface(result_json.Get());
+
+    EXPECT_GE(CountDiagnosticsBySeverity(result, "error"), 1u);
+    EXPECT_EQ(DocumentRevisionFromApplyResult(result), 0);
+
+    auto pi     = AcceptedPiFromApplyResult(result);
+    auto pi_obj = pi.as_object();
+    ASSERT_TRUE(pi_obj.has_value());
+    auto tasks = (*pi_obj)[std::string_view("tasks")].as_array();
+    ASSERT_TRUE(tasks.has_value());
+    EXPECT_TRUE(tasks->empty());
+}
+
+// Tracer 2 RED: removeFormSequenceItem 通过 itemId 删除任务实例；同类型的
+// 其它实例不受影响。
+TEST_F(MaapiAuthoringFixture, RemoveFormSequenceItemDropsTaskByItemId)
+{
+    auto interface_path =
+        FixturePath("interface_authoring.jsonc").generic_string();
+    auto session = CreateSession(
+        "{\"adapter\":{\"interfacePath\":\"" + interface_path
+        + "\"},\"pi\":{\"tasks\":["
+          "{\"itemId\":\"item_a\",\"taskName\":\"DailyFarm\",\"enabled\":true},"
+          "{\"itemId\":\"item_b\",\"taskName\":\"DailyFarm\",\"enabled\":true}]"
+          "}}");
+
+    DasPtr<Das::ExportInterface::IDasJson> result_json;
+    auto                                   change = ParseDasJson(
+        "{\"baseRevision\":0,\"kind\":\"removeFormSequenceItem\","
+        "\"payload\":{\"formSequenceItemId\":\"item_a\"}}");
+    ASSERT_EQ(session->ApplyChange(change.Get(), result_json.Put()), DAS_S_OK);
+    auto result = ReadJsonInterface(result_json.Get());
+
+    EXPECT_EQ(DocumentRevisionFromApplyResult(result), 1);
+    EXPECT_EQ(CountDiagnosticsBySeverity(result, "error"), 0u);
+
+    auto pi     = AcceptedPiFromApplyResult(result);
+    auto pi_obj = pi.as_object();
+    ASSERT_TRUE(pi_obj.has_value());
+    auto tasks = (*pi_obj)[std::string_view("tasks")].as_array();
+    ASSERT_TRUE(tasks.has_value());
+    ASSERT_EQ(tasks->size(), 1u);
+    auto remaining = (*tasks)[0].as_object();
+    ASSERT_TRUE(remaining.has_value());
+    EXPECT_EQ(
+        (*remaining)[std::string_view("itemId")].as_string().value_or(""),
+        "item_b");
+}
+
+// Tracer 2 RED: removeFormSequenceItem 拒绝未知 itemId，不递增 revision。
+TEST_F(MaapiAuthoringFixture, RemoveFormSequenceItemRejectsUnknownId)
+{
+    auto interface_path =
+        FixturePath("interface_authoring.jsonc").generic_string();
+    auto session = CreateSession(
+        "{\"adapter\":{\"interfacePath\":\"" + interface_path
+        + "\"},\"pi\":{\"tasks\":["
+          "{\"itemId\":\"item_a\",\"taskName\":\"DailyFarm\",\"enabled\":true}]"
+          "}}");
+
+    DasPtr<Das::ExportInterface::IDasJson> result_json;
+    auto                                   change = ParseDasJson(
+        "{\"baseRevision\":0,\"kind\":\"removeFormSequenceItem\","
+        "\"payload\":{\"formSequenceItemId\":\"missing\"}}");
+    ASSERT_EQ(session->ApplyChange(change.Get(), result_json.Put()), DAS_S_OK);
+    auto result = ReadJsonInterface(result_json.Get());
+
+    EXPECT_GE(CountDiagnosticsBySeverity(result, "error"), 1u);
+    EXPECT_EQ(DocumentRevisionFromApplyResult(result), 0);
+
+    auto pi     = AcceptedPiFromApplyResult(result);
+    auto pi_obj = pi.as_object();
+    ASSERT_TRUE(pi_obj.has_value());
+    auto tasks = (*pi_obj)[std::string_view("tasks")].as_array();
+    ASSERT_TRUE(tasks.has_value());
+    ASSERT_EQ(tasks->size(), 1u);
+}
+
+// Tracer 2 RED: moveFormSequenceItem 通过 itemId + destinationIndex 移动。
+TEST_F(MaapiAuthoringFixture, MoveFormSequenceItemReordersByItemId)
+{
+    auto interface_path =
+        FixturePath("interface_authoring.jsonc").generic_string();
+    auto session = CreateSession(
+        "{\"adapter\":{\"interfacePath\":\"" + interface_path
+        + "\"},\"pi\":{\"tasks\":["
+          "{\"itemId\":\"item_a\",\"taskName\":\"DailyFarm\",\"enabled\":true},"
+          "{\"itemId\":\"item_b\",\"taskName\":\"DailyFarm\",\"enabled\":true},"
+          "{\"itemId\":\"item_c\",\"taskName\":\"DailyFarm\",\"enabled\":true}]"
+          "}}");
+
+    DasPtr<Das::ExportInterface::IDasJson> result_json;
+    auto                                   change = ParseDasJson(
+        "{\"baseRevision\":0,\"kind\":\"moveFormSequenceItem\","
+        "\"payload\":{\"formSequenceItemId\":\"item_c\","
+        "\"destinationIndex\":0}}");
+    ASSERT_EQ(session->ApplyChange(change.Get(), result_json.Put()), DAS_S_OK);
+    auto result = ReadJsonInterface(result_json.Get());
+
+    EXPECT_EQ(DocumentRevisionFromApplyResult(result), 1);
+    EXPECT_EQ(CountDiagnosticsBySeverity(result, "error"), 0u);
+
+    auto pi     = AcceptedPiFromApplyResult(result);
+    auto pi_obj = pi.as_object();
+    ASSERT_TRUE(pi_obj.has_value());
+    auto tasks = (*pi_obj)[std::string_view("tasks")].as_array();
+    ASSERT_TRUE(tasks.has_value());
+    ASSERT_EQ(tasks->size(), 3u);
+    auto first = (*tasks)[0].as_object();
+    ASSERT_TRUE(first.has_value());
+    EXPECT_EQ(
+        (*first)[std::string_view("itemId")].as_string().value_or(""),
+        "item_c");
+}
+
+// Tracer 3 RED: invokeCommand 未知 commandId 必须拒绝，不递增 revision，
+// 携带 error 诊断。
+TEST_F(MaapiAuthoringFixture, InvokeCommandRejectsUnknownCommandId)
+{
+    auto interface_path =
+        FixturePath("interface_authoring.jsonc").generic_string();
+    auto session = CreateSession(
+        "{\"adapter\":{\"interfacePath\":\"" + interface_path
+        + "\"},\"pi\":{\"selectedConfigurationId\":\"cfg_a\","
+          "\"configurations\":[{\"id\":\"cfg_a\",\"name\":\"A\"}]}}");
+
+    DasPtr<Das::ExportInterface::IDasJson> result_json;
+    auto                                   change = ParseDasJson(
+        "{\"baseRevision\":0,\"kind\":\"invokeCommand\","
+        "\"payload\":{\"commandId\":\"noSuchCommand\"}}");
+    ASSERT_EQ(session->ApplyChange(change.Get(), result_json.Put()), DAS_S_OK);
+    auto result = ReadJsonInterface(result_json.Get());
+
+    EXPECT_GE(CountDiagnosticsBySeverity(result, "error"), 1u);
+    EXPECT_EQ(DocumentRevisionFromApplyResult(result), 0);
+}
+
+// Tracer 3 RED: convertView 在 MaaPI 必须拒绝（MaaPI 只支持 formSequence）。
+TEST_F(MaapiAuthoringFixture, ConvertViewRejectedByMaapi)
+{
+    auto interface_path =
+        FixturePath("interface_authoring.jsonc").generic_string();
+    auto session = CreateSession(
+        "{\"adapter\":{\"interfacePath\":\"" + interface_path + "\"}}");
+
+    DasPtr<Das::ExportInterface::IDasJson> result_json;
+    auto                                   change = ParseDasJson(
+        "{\"baseRevision\":0,\"kind\":\"convertView\","
+        "\"payload\":{\"targetViewKind\":\"graph\"}}");
+    ASSERT_EQ(session->ApplyChange(change.Get(), result_json.Put()), DAS_S_OK);
+    auto result = ReadJsonInterface(result_json.Get());
+
+    EXPECT_GE(CountDiagnosticsBySeverity(result, "error"), 1u);
+    EXPECT_EQ(DocumentRevisionFromApplyResult(result), 0);
+}
+
+// Tracer 3 RED: legacy kinds（applyPreset / addSequenceItem /
+// removeSequenceItem）一律 unsupportedChange 拒绝，不递增 revision。
+TEST_F(MaapiAuthoringFixture, LegacyKindsRejectedAsUnsupportedChange)
+{
+    auto interface_path =
+        FixturePath("interface_authoring.jsonc").generic_string();
+    auto session = CreateSession(
+        "{\"adapter\":{\"interfacePath\":\"" + interface_path + "\"}}");
+
+    for (const auto* kind_str :
+         {"applyPreset", "addSequenceItem", "moveSequenceItem",
+          "removeSequenceItem", "addNode", "removeNode", "connectPorts",
+          "disconnectPorts", "updateNodeConfig"})
+    {
+        DasPtr<Das::ExportInterface::IDasJson> result_json;
+        const std::string change_json =
+            std::string("{\"baseRevision\":0,\"kind\":\"")
+            + kind_str + "\",\"payload\":{}}";
+        auto change = ParseDasJson(change_json);
+        ASSERT_EQ(session->ApplyChange(change.Get(), result_json.Put()), DAS_S_OK);
+        auto result = ReadJsonInterface(result_json.Get());
+        EXPECT_GE(CountDiagnosticsBySeverity(result, "error"), 1u)
+            << "kind=" << kind_str;
+        EXPECT_EQ(DocumentRevisionFromApplyResult(result), 0)
+            << "kind=" << kind_str;
+    }
+}
+
+// Tracer 4 RED: Compile({}) 返回严格 {compile, diagnostics} envelope，通过
+// 84-01 ValidateAuthoringCompileResult 校验，不持久化。
+TEST_F(MaapiAuthoringFixture, CompileEmptyRequestReturnsStrictEnvelope)
+{
+    auto interface_path =
+        FixturePath("interface_authoring.jsonc").generic_string();
+    auto session = CreateSession(
+        "{\"adapter\":{\"interfacePath\":\"" + interface_path + "\"}}");
+
+    DasPtr<Das::ExportInterface::IDasJson> result_json;
+    ASSERT_EQ(session->Compile({}, result_json.Put()), DAS_S_OK);
+    auto result = ReadJsonInterface(result_json.Get());
+
+    // 严格 Compile envelope 校验。
+    auto compile_valid =
+        Das::Core::TaskScheduler::ValidateAuthoringCompileResult(result);
+    EXPECT_TRUE(compile_valid.valid) << "error_kind=" << compile_valid.error_kind
+                                     << " message=" << compile_valid.message;
+}
+
 // Tracer 4 RED: 成功 Apply envelope 通过 84-01 validator。
 TEST(MaapiApplyResultTest, SuccessfulApplyEnvelopePassesStrictValidator)
 {
