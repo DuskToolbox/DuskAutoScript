@@ -1379,18 +1379,35 @@ TEST(I18nTest, ResolveI18nFallsBackToKeyWhenTranslationNotFound)
     Das::Plugins::DasMaaPi::AcceptedSettingsDto settings;
     settings.pi.language = "zh_cn";
 
+    std::vector<Das::Plugins::DasMaaPi::PiDiagnosticDto> diags;
     auto document = Das::Plugins::DasMaaPi::ProjectAuthoringDocument(
         settings,
         &catalog,
         {},
-        0);
+        0,
+        &diags);
 
-    // 缺译文时 ProjectAuthoringDocument 退回 $key 形态 (去掉前缀 $)。
-    // 这是 PI 协议的 machine key，不应在正常 UI 中出现；D-84-23 要求
-    // Provider 用本地化通用文本 + diagnostics 替代，由 84-07 严格化。
-    EXPECT_EQ(
-        CandidateLabel(document, "controllerName", "Android"),
-        "controller.android");
+    // D-84-23: 缺译时不再泄漏 $key/protocol English；Provider 回退到 PI
+    // 用户可见标识（dto.name）并向 projection_diagnostics 报告 warning。
+    const auto label =
+        CandidateLabel(document, "controllerName", "Android");
+    EXPECT_FALSE(label.empty());
+    EXPECT_NE(label, "controller.android");
+    EXPECT_NE(label, "$controller.android");
+    // dto.name 作为最终 fallback，是 PI 协议层面的用户可见标识。
+    EXPECT_EQ(label, "Android");
+    ASSERT_FALSE(diags.empty());
+    bool found_missing = false;
+    for (const auto& d : diags)
+    {
+        if (d.severity == "warning"
+            && d.message.find("controller.android") != std::string::npos)
+        {
+            found_missing = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(found_missing);
 }
 
 TEST(I18nTest, ResolveI18nReturnsOriginalTextWhenNotDollarPrefixed)

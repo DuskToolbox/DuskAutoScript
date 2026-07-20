@@ -51,6 +51,51 @@ namespace Das::Plugins::DasMaaPi
             return key;
         }
 
+        // D-84-23: ResolveI18n 的严格化变体。当 $key 在当前 language 找不到
+        // 翻译时，返回调用方提供的 fallback（通常是 PI 协议层面的用户可见
+        // 标识，如 candidate.value 或 option.dto.name，而不是 $key / 机器
+        // name / 'Language/Preset/Resource' 等协议英文），并向 projection
+        // diagnostics 输出一条 warning。fallback 必须非空，保证 84-01 严格
+        // FieldDescriptor/CandidateDescriptor label 校验通过。
+        std::string_view ResolveI18nOrDiag(
+            std::string_view                 text,
+            const PiCatalog&                 catalog,
+            std::string_view                 lang,
+            std::string_view                 fallback,
+            std::vector<PiDiagnosticDto>*    projection_diagnostics,
+            std::string_view                 context_path)
+        {
+            if (text.empty() || !text.starts_with('$'))
+            {
+                return text.empty() ? fallback : text;
+            }
+            const std::string_view key = text.substr(1);
+            auto                    lang_it = catalog.translations.find(std::string(lang));
+            if (lang_it != catalog.translations.end())
+            {
+                auto key_it = lang_it->second.find(std::string(key));
+                if (key_it != lang_it->second.end())
+                {
+                    return std::string_view(key_it->second);
+                }
+            }
+            // 缺译：emit diagnostic + 返回 fallback。fallback 是 caller 提供
+            // 的 PI 用户可见标识（value / dto.name），不是 $key 也不是协议英文。
+            if (projection_diagnostics != nullptr)
+            {
+                PiDiagnosticDto diag;
+                diag.severity = "warning";
+                diag.message = "Missing translation for key '" + std::string(key)
+                             + "' in language '" + std::string(lang) + "'";
+                if (!context_path.empty())
+                {
+                    diag.path = std::string(context_path);
+                }
+                projection_diagnostics->push_back(std::move(diag));
+            }
+            return fallback;
+        }
+
         template <typename TObject>
         std::optional<std::string> OptionalString(
             const TObject&   obj,
@@ -306,9 +351,10 @@ namespace Das::Plugins::DasMaaPi
         }
 
         yyjson::value CandidateArray(
-            const auto&      items,
-            const PiCatalog* catalog,
-            std::string_view language)
+            const auto&                       items,
+            const PiCatalog*                  catalog,
+            std::string_view                  language,
+            std::vector<PiDiagnosticDto>*     projection_diagnostics)
         {
             yyjson::value arr(Array());
             for (const auto& item : items)
@@ -324,7 +370,16 @@ namespace Das::Plugins::DasMaaPi
                 std::string_view label = item.dto.name;
                 if (item.dto.label)
                 {
-                    label = ResolveI18n(*item.dto.label, *catalog, language);
+                    // D-84-23: 缺译时回退到 dto.name（PI 用户可见标识），
+                    // 不泄漏 $key / 协议英文；同时向 projection_diagnostics
+                    // 报告 warning 便于开发者补译。
+                    label = ResolveI18nOrDiag(
+                        *item.dto.label,
+                        *catalog,
+                        language,
+                        item.dto.name,
+                        projection_diagnostics,
+                        item.dto.name);
                 }
                 (*obj)[std::string_view("label")] = JsonString(label);
                 arr.as_array()->emplace_back(std::move(candidate));
@@ -1763,8 +1818,11 @@ namespace Das::Plugins::DasMaaPi
 
         if (catalog)
         {
-            auto controller_candidates =
-                CandidateArray(catalog->controllers, catalog, current_language);
+            auto controller_candidates = CandidateArray(
+                catalog->controllers,
+                catalog,
+                current_language,
+                projection_diagnostics);
             fields.as_array()->emplace_back(MakePropertyField(
                 "controllerName",
                 "Controller",
@@ -1774,8 +1832,11 @@ namespace Das::Plugins::DasMaaPi
                     ? yyjson::value(*settings.pi.controller_name)
                     : yyjson::value(std::string{}),
                 &controller_candidates));
-            auto resource_candidates =
-                CandidateArray(catalog->resources, catalog, current_language);
+            auto resource_candidates = CandidateArray(
+                catalog->resources,
+                catalog,
+                current_language,
+                projection_diagnostics);
             fields.as_array()->emplace_back(MakePropertyField(
                 "resourceName",
                 "Resource",
@@ -1785,8 +1846,11 @@ namespace Das::Plugins::DasMaaPi
                     ? yyjson::value(*settings.pi.resource_name)
                     : yyjson::value(std::string{}),
                 &resource_candidates));
-            auto preset_candidates =
-                CandidateArray(catalog->presets, catalog, current_language);
+            auto preset_candidates = CandidateArray(
+                catalog->presets,
+                catalog,
+                current_language,
+                projection_diagnostics);
             fields.as_array()->emplace_back(MakePropertyField(
                 "presetName",
                 "Preset",
@@ -2076,7 +2140,6 @@ namespace Das::Plugins::DasMaaPi
         // 和 document 同级)。这里不投影；envelope 由 BuildApplyResult 等调用
         // 方负责。
         (void)diagnostics;
-        (void)projection_diagnostics;
         return document;
     }
 
