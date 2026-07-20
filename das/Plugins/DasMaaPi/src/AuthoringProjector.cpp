@@ -3,6 +3,8 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cctype>
+#include <filesystem>
 #include <set>
 #include <string_view>
 
@@ -106,6 +108,46 @@ namespace Das::Plugins::DasMaaPi
                 return std::nullopt;
             }
             return std::string(obj[key].as_string().value_or(""));
+        }
+
+        // D-84-47: 把 PI descriptor.icon 解析成 84-01 严格 IconString 形态。
+        // 接受 http(s):// 与绝对本地路径（Windows 盘符 / POSIX / UNC）原样
+        // 保留；相对路径基于 catalog.interface_directory 解析为绝对路径；
+        // data: URI 与空字符串原样返回（caller 决定是否 emit；84-01 验证器
+        // 会拒绝 data:，故 caller 应仅在合法形态下 emit icon）。
+        std::string ResolveIcon(
+            std::string_view icon,
+            const PiCatalog* catalog)
+        {
+            if (icon.empty())
+            {
+                return {};
+            }
+            if (icon.starts_with("http://") || icon.starts_with("https://"))
+            {
+                return std::string(icon);
+            }
+            if (icon.starts_with("data:"))
+            {
+                return {};
+            }
+            const bool is_absolute =
+                (icon.size() >= 3
+                 && std::isalpha(static_cast<unsigned char>(icon[0])) != 0
+                 && icon[1] == ':' && (icon[2] == '/' || icon[2] == '\\'))
+                || icon.starts_with('/') || icon.starts_with("\\\\");
+            if (is_absolute)
+            {
+                return std::string(icon);
+            }
+            if (catalog && !catalog->interface_directory.empty())
+            {
+                std::filesystem::path base(catalog->interface_directory);
+                std::filesystem::path leaf(icon);
+                auto combined = base / leaf;
+                return combined.generic_string();
+            }
+            return std::string(icon);
         }
 
         template <typename TObject>
@@ -382,6 +424,15 @@ namespace Das::Plugins::DasMaaPi
                         item.dto.name);
                 }
                 (*obj)[std::string_view("label")] = JsonString(label);
+                // D-84-47: 候选 icon 解析为绝对路径或 http(s)；不合法则不 emit。
+                if (item.dto.icon)
+                {
+                    auto resolved = ResolveIcon(*item.dto.icon, catalog);
+                    if (!resolved.empty())
+                    {
+                        (*obj)[std::string_view("icon")] = JsonString(resolved);
+                    }
+                }
                 arr.as_array()->emplace_back(std::move(candidate));
             }
             return arr;
@@ -480,6 +531,14 @@ namespace Das::Plugins::DasMaaPi
                     label = ResolveI18n(*item.label, *catalog, language);
                 }
                 (*obj)[std::string_view("label")] = JsonString(label);
+                if (item.icon)
+                {
+                    auto resolved = ResolveIcon(*item.icon, catalog);
+                    if (!resolved.empty())
+                    {
+                        (*obj)[std::string_view("icon")] = JsonString(resolved);
+                    }
+                }
                 arr.as_array()->emplace_back(std::move(candidate));
             }
             return arr;
@@ -641,6 +700,16 @@ namespace Das::Plugins::DasMaaPi
                         (*field.as_object())[std::string_view("validation")] =
                             std::move(validation);
                     }
+                }
+            }
+            // D-84-47: option 级别 icon 解析。
+            if (dto.icon)
+            {
+                auto resolved = ResolveIcon(*dto.icon, catalog);
+                if (!resolved.empty())
+                {
+                    (*field.as_object())[std::string_view("icon")] =
+                        JsonString(resolved);
                 }
             }
             return field;
@@ -2061,6 +2130,23 @@ namespace Das::Plugins::DasMaaPi
                     std::move(item_layout);
             }
             (*item_obj)[std::string_view("enabled")] = task.enabled;
+            // D-84-46: item.debugInfo 是 opaque object，携带 PI task 元数据
+            // 便于开发者调试。taskName/entry 不在 label/可见 UI（D-84-45）。
+            if (catalog)
+            {
+                const auto* catalog_task = FindTask(*catalog, task.task_name);
+                if (catalog_task)
+                {
+                    yyjson::value debug_info(Object());
+                    auto          d_obj = debug_info.as_object();
+                    (*d_obj)[std::string_view("piTaskName")] =
+                        JsonString(task.task_name);
+                    (*d_obj)[std::string_view("piEntry")] =
+                        JsonString(catalog_task->dto.entry);
+                    (*item_obj)[std::string_view("debugInfo")] =
+                        std::move(debug_info);
+                }
+            }
 
             items.as_array()->emplace_back(std::move(item));
         }
@@ -2103,6 +2189,15 @@ namespace Das::Plugins::DasMaaPi
                     (*e_obj)[std::string_view("description")] =
                         JsonString(desc);
                 }
+                if (task.dto.icon)
+                {
+                    auto resolved = ResolveIcon(*task.dto.icon, catalog);
+                    if (!resolved.empty())
+                    {
+                        (*e_obj)[std::string_view("icon")] =
+                            JsonString(resolved);
+                    }
+                }
                 entries.as_array()->emplace_back(std::move(entry));
             }
             for (const auto& group : catalog->groups)
@@ -2119,6 +2214,15 @@ namespace Das::Plugins::DasMaaPi
                         current_language);
                 }
                 (*g_obj)[std::string_view("label")] = JsonString(label);
+                if (group.dto.icon)
+                {
+                    auto resolved = ResolveIcon(*group.dto.icon, catalog);
+                    if (!resolved.empty())
+                    {
+                        (*g_obj)[std::string_view("icon")] =
+                            JsonString(resolved);
+                    }
+                }
                 yyjson::value action_ids(Array());
                 for (const auto& task_name : catalog->tasks)
                 {
@@ -2135,6 +2239,36 @@ namespace Das::Plugins::DasMaaPi
         (*ac_obj)[std::string_view("entries")] = std::move(entries);
         (*ac_obj)[std::string_view("groups")] = std::move(groups);
         (*obj)[std::string_view("actionCatalog")] = std::move(action_catalog);
+
+        // D-84-26/27/28: 根级 commands。newConfiguration / copyConfiguration
+        // 是 MaaPI 已识别的 invokeCommand（84-05），通过通用 apply 模板暴露
+        // 给 UI；UI 触发时由 84-07 注入当前 baseRevision。仅当存在
+        // configurations[]（post-84 权威）时才输出，避免 legacy fixture
+        // 暴露 Provider 不再支持的入口。
+        if (!settings.pi.configurations.empty())
+        {
+            yyjson::value commands(Array());
+            auto          emit_command =
+                [&](std::string_view command_id, std::string_view label_text)
+            {
+                yyjson::value cmd(Object());
+                auto          c_obj = cmd.as_object();
+                (*c_obj)[std::string_view("id")] = JsonString(command_id);
+                (*c_obj)[std::string_view("label")] = JsonString(label_text);
+                yyjson::value apply(Object());
+                auto          a_obj = apply.as_object();
+                (*a_obj)[std::string_view("kind")] = JsonString("invokeCommand");
+                yyjson::value payload(Object());
+                (*payload.as_object())[std::string_view("commandId")] =
+                    JsonString(command_id);
+                (*a_obj)[std::string_view("payload")] = std::move(payload);
+                (*c_obj)[std::string_view("apply")] = std::move(apply);
+                commands.as_array()->emplace_back(std::move(cmd));
+            };
+            emit_command("newConfiguration", "New Configuration");
+            emit_command("copyConfiguration", "Copy Configuration");
+            (*obj)[std::string_view("commands")] = std::move(commands);
+        }
 
         // diagnostics 不在 document 上 (D-84-11：diagnostics 位于 envelope，
         // 和 document 同级)。这里不投影；envelope 由 BuildApplyResult 等调用
