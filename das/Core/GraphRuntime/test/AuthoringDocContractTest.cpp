@@ -589,5 +589,62 @@ namespace
         EXPECT_FALSE(r.Ok());
         EXPECT_EQ(r.error_kind, ChangeErrorKind::InvalidOp);
     }
+
+    // -----------------------------------------------------------------------
+    // Phase 84 strict wire (D-84-02/07/13/38/39) — viewKind, items[], no
+    // public settings/sourceFingerprint, EntryRef={entryId} only.
+    // -----------------------------------------------------------------------
+
+    TEST(AuthoringDocContractTest, NewWire_EmitsViewKindAndItemsNotLegacyAliases)
+    {
+        GraphDocumentDto doc;
+        doc.nodes.push_back(MakeNode("n1", "{g1}", 0.0));
+        doc.tags.emplace_back(kLinearTag);
+
+        const auto json = ToJson(doc);
+        // New strict wire uses viewKind (not kind) and formSequence.items
+        // (not formSequence.sequence).
+        EXPECT_NE(json.find("\"viewKind\":\"formSequence\""), std::string::npos);
+        EXPECT_EQ(json.find("\"kind\":\"formSequence\""), std::string::npos);
+        EXPECT_NE(json.find("\"items\":["), std::string::npos);
+        EXPECT_EQ(json.find("\"sequence\":["), std::string::npos);
+    }
+
+    TEST(AuthoringDocContractTest, NewWire_GraphModeAlsoUsesViewKind)
+    {
+        GraphDocumentDto doc;
+        doc.nodes.push_back(MakeNode("n1", "{g1}", 0.0));
+
+        const auto json = ToJson(doc);
+        EXPECT_NE(json.find("\"viewKind\":\"graph\""), std::string::npos);
+        EXPECT_EQ(json.find("\"kind\":\"graph\""), std::string::npos);
+    }
+
+    TEST(AuthoringDocContractTest, NewWire_DropsPublicSettingsAndSourceFingerprint)
+    {
+        GraphDocumentDto doc;
+        doc.nodes.push_back(MakeNode("n1", "{g1}", 0.0));
+        doc.fingerprint = "should-not-leak";
+        doc.tags.emplace_back(kLinearTag);
+
+        const auto json = ToJson(doc);
+        // Public wire drops business settings (D-84-07) and the document-level
+        // sourceFingerprint (D-84-04).
+        EXPECT_EQ(json.find("\"settings\""), std::string::npos);
+        EXPECT_EQ(json.find("\"sourceFingerprint\""), std::string::npos);
+    }
+
+    TEST(AuthoringDocContractTest, NewWire_EntryRefCarriesOnlyEntryId)
+    {
+        GraphDocumentDto doc;
+        doc.nodes.push_back(MakeEntryRefNode("sub", 42, 3, "fp-sub"));
+
+        const auto json = ToJson(doc);
+        EXPECT_NE(json.find("\"entryId\":42"), std::string::npos);
+        // D-84-39: expectedRevision and sourceFingerprint are removed from the
+        // public entryRef. They remain internal to GraphDocumentDto.
+        EXPECT_EQ(json.find("\"expectedRevision\""), std::string::npos);
+        EXPECT_EQ(json.find("\"sourceFingerprint\""), std::string::npos);
+    }
 } // namespace
 
