@@ -21,15 +21,15 @@ namespace Das::Core::TaskScheduler
 
         constexpr std::array<std::string_view, 10> CHANGE_KINDS{
             "setValue",
-            "applyPreset",
-            "addSequenceItem",
-            "moveSequenceItem",
-            "addNode",
-            "connectPorts",
-            "updateNodeConfig",
-            "removeNode",
-            "disconnectPorts",
-            "removeSequenceItem"};
+            "invokeCommand",
+            "convertView",
+            "addFormSequenceItem",
+            "moveFormSequenceItem",
+            "removeFormSequenceItem",
+            "addGraphNode",
+            "removeGraphNode",
+            "connectGraphPorts",
+            "disconnectGraphPorts"};
 
         constexpr std::array<int, 7> VALUE_TYPES{0, 1, 2, 4, 8, 16, 32};
 
@@ -1389,6 +1389,415 @@ namespace Das::Core::TaskScheduler
             }
             return Pass();
         }
+
+        AuthoringValidationResult ValidateSetValueTarget(
+            const yyjson::value& target)
+        {
+            auto t_opt = target.as_object();
+            if (!t_opt)
+            {
+                return Fail("invalidTarget", "target must be object");
+            }
+            const auto& t = t_opt.value();
+            if (!HasStringField(t, "kind"))
+            {
+                return Fail("invalidTargetKind", "target.kind required");
+            }
+            const auto tkind = t["kind"].as_string().value();
+            if (tkind == std::string_view("document"))
+            {
+                if (!OnlyKeys(t, {"kind"}))
+                {
+                    return Fail(
+                        "unknownField",
+                        "document target rejects unknown field");
+                }
+                return Pass();
+            }
+            if (tkind == std::string_view("formSequenceItem")
+                || tkind == std::string_view("graphNode"))
+            {
+                if (!HasStringField(t, "id"))
+                {
+                    return Fail(
+                        "missingField",
+                        "target.id required for formSequenceItem/graphNode");
+                }
+                if (t["id"].as_string().value().empty())
+                {
+                    return Fail(
+                        "invalidTargetId",
+                        "target.id must be non-empty");
+                }
+                if (!OnlyKeys(t, {"kind", "id"}))
+                {
+                    return Fail("unknownField", "target rejects unknown field");
+                }
+                return Pass();
+            }
+            return Fail(
+                "invalidTargetKind",
+                "target.kind must be document|formSequenceItem|graphNode");
+        }
+
+        AuthoringValidationResult RequireNonEmptyString(
+            const auto&      obj,
+            std::string_view key,
+            std::string_view error_kind,
+            std::string_view message)
+        {
+            if (!HasStringField(obj, key))
+            {
+                return Fail("missingField", std::string{message});
+            }
+            if (obj[key].as_string().value().empty())
+            {
+                return Fail(std::string{error_kind}, std::string{message});
+            }
+            return Pass();
+        }
+
+        AuthoringValidationResult ValidateSetValuePayload(
+            const yyjson::value& payload)
+        {
+            auto obj_opt = payload.as_object();
+            if (!obj_opt)
+            {
+                return Fail("invalidPayload", "payload must be object");
+            }
+            const auto& obj = obj_opt.value();
+            if (!HasObjectField(obj, "target"))
+            {
+                return Fail("missingField", "setValue.target required");
+            }
+            if (auto r = ValidateSetValueTarget(obj["target"]); !r.valid)
+            {
+                return r;
+            }
+            if (auto r = RequireNonEmptyString(
+                    obj,
+                    "fieldName",
+                    "invalidFieldName",
+                    "setValue.fieldName required and non-empty");
+                !r.valid)
+            {
+                return r;
+            }
+            if (!obj.contains("value"))
+            {
+                return Fail("missingField", "setValue.value required");
+            }
+            if (!OnlyKeys(obj, {"target", "fieldName", "value"}))
+            {
+                return Fail(
+                    "unknownField",
+                    "setValue payload rejects unknown field");
+            }
+            return Pass();
+        }
+
+        AuthoringValidationResult ValidateInvokeCommandPayload(
+            const yyjson::value& payload)
+        {
+            auto obj_opt = payload.as_object();
+            if (!obj_opt)
+            {
+                return Fail("invalidPayload", "payload must be object");
+            }
+            const auto& obj = obj_opt.value();
+            if (auto r = RequireNonEmptyString(
+                    obj,
+                    "commandId",
+                    "invalidCommandId",
+                    "invokeCommand.commandId required and non-empty");
+                !r.valid)
+            {
+                return r;
+            }
+            if (!OnlyKeys(obj, {"commandId"}))
+            {
+                return Fail(
+                    "unknownField",
+                    "invokeCommand rejects unknown field");
+            }
+            return Pass();
+        }
+
+        AuthoringValidationResult ValidateConvertViewPayload(
+            const yyjson::value& payload)
+        {
+            auto obj_opt = payload.as_object();
+            if (!obj_opt)
+            {
+                return Fail("invalidPayload", "payload must be object");
+            }
+            const auto& obj = obj_opt.value();
+            if (!HasStringField(obj, "targetViewKind"))
+            {
+                return Fail(
+                    "missingField",
+                    "convertView.targetViewKind required");
+            }
+            const auto tvk = obj["targetViewKind"].as_string().value();
+            if (!IsOneOf(tvk, DOCUMENT_KINDS))
+            {
+                return Fail(
+                    "unsupportedViewKind",
+                    "convertView.targetViewKind unsupported");
+            }
+            if (!OnlyKeys(obj, {"targetViewKind"}))
+            {
+                return Fail(
+                    "unknownField",
+                    "convertView rejects unknown field");
+            }
+            return Pass();
+        }
+
+        AuthoringValidationResult ValidateAddFormSequenceItemPayload(
+            const yyjson::value& payload)
+        {
+            auto obj_opt = payload.as_object();
+            if (!obj_opt)
+            {
+                return Fail("invalidPayload", "payload must be object");
+            }
+            const auto& obj = obj_opt.value();
+            if (auto r = RequireNonEmptyString(
+                    obj,
+                    "actionId",
+                    "invalidActionId",
+                    "addFormSequenceItem.actionId required and non-empty");
+                !r.valid)
+            {
+                return r;
+            }
+            if (obj.contains("insertionIndex")
+                && !HasIntegerField(obj, "insertionIndex"))
+            {
+                return Fail(
+                    "invalidInsertionIndex",
+                    "insertionIndex must be integer");
+            }
+            const bool has_index = obj.contains("insertionIndex");
+            if (has_index)
+            {
+                if (!OnlyKeys(obj, {"actionId", "insertionIndex"}))
+                {
+                    return Fail(
+                        "unknownField",
+                        "addFormSequenceItem rejects unknown field");
+                }
+            }
+            else
+            {
+                if (!OnlyKeys(obj, {"actionId"}))
+                {
+                    return Fail(
+                        "unknownField",
+                        "addFormSequenceItem rejects unknown field");
+                }
+            }
+            return Pass();
+        }
+
+        AuthoringValidationResult ValidateMoveFormSequenceItemPayload(
+            const yyjson::value& payload)
+        {
+            auto obj_opt = payload.as_object();
+            if (!obj_opt)
+            {
+                return Fail("invalidPayload", "payload must be object");
+            }
+            const auto& obj = obj_opt.value();
+            if (auto r = RequireNonEmptyString(
+                    obj,
+                    "formSequenceItemId",
+                    "invalidFormSequenceItemId",
+                    "moveFormSequenceItem.formSequenceItemId required");
+                !r.valid)
+            {
+                return r;
+            }
+            if (!HasIntegerField(obj, "destinationIndex"))
+            {
+                return Fail(
+                    "missingField",
+                    "moveFormSequenceItem.destinationIndex required");
+            }
+            if (!OnlyKeys(obj, {"formSequenceItemId", "destinationIndex"}))
+            {
+                return Fail(
+                    "unknownField",
+                    "moveFormSequenceItem rejects unknown field");
+            }
+            return Pass();
+        }
+
+        AuthoringValidationResult ValidateRemoveFormSequenceItemPayload(
+            const yyjson::value& payload)
+        {
+            auto obj_opt = payload.as_object();
+            if (!obj_opt)
+            {
+                return Fail("invalidPayload", "payload must be object");
+            }
+            const auto& obj = obj_opt.value();
+            if (auto r = RequireNonEmptyString(
+                    obj,
+                    "formSequenceItemId",
+                    "invalidFormSequenceItemId",
+                    "removeFormSequenceItem.formSequenceItemId required");
+                !r.valid)
+            {
+                return r;
+            }
+            if (!OnlyKeys(obj, {"formSequenceItemId"}))
+            {
+                return Fail(
+                    "unknownField",
+                    "removeFormSequenceItem rejects unknown field");
+            }
+            return Pass();
+        }
+
+        AuthoringValidationResult ValidateAddGraphNodePayload(
+            const yyjson::value& payload)
+        {
+            auto obj_opt = payload.as_object();
+            if (!obj_opt)
+            {
+                return Fail("invalidPayload", "payload must be object");
+            }
+            const auto& obj = obj_opt.value();
+            if (auto r = RequireNonEmptyString(
+                    obj,
+                    "actionId",
+                    "invalidActionId",
+                    "addGraphNode.actionId required and non-empty");
+                !r.valid)
+            {
+                return r;
+            }
+            if (!OnlyKeys(obj, {"actionId"}))
+            {
+                return Fail(
+                    "unknownField",
+                    "addGraphNode rejects unknown field");
+            }
+            return Pass();
+        }
+
+        AuthoringValidationResult ValidateRemoveGraphNodePayload(
+            const yyjson::value& payload)
+        {
+            auto obj_opt = payload.as_object();
+            if (!obj_opt)
+            {
+                return Fail("invalidPayload", "payload must be object");
+            }
+            const auto& obj = obj_opt.value();
+            if (auto r = RequireNonEmptyString(
+                    obj,
+                    "nodeId",
+                    "invalidNodeId",
+                    "removeGraphNode.nodeId required and non-empty");
+                !r.valid)
+            {
+                return r;
+            }
+            if (!OnlyKeys(obj, {"nodeId"}))
+            {
+                return Fail(
+                    "unknownField",
+                    "removeGraphNode rejects unknown field");
+            }
+            return Pass();
+        }
+
+        AuthoringValidationResult ValidateGraphPortsPayload(
+            const yyjson::value& payload,
+            std::string_view     kind)
+        {
+            auto obj_opt = payload.as_object();
+            if (!obj_opt)
+            {
+                return Fail("invalidPayload", "payload must be object");
+            }
+            const auto&                       obj = obj_opt.value();
+            static constexpr std::string_view kFields[] =
+                {"fromNodeId", "fromPortId", "toNodeId", "toPortId"};
+            for (auto f : kFields)
+            {
+                if (!HasStringField(obj, f)
+                    || obj[f].as_string().value().empty())
+                {
+                    return Fail(
+                        "missingField",
+                        std::string{kind} + "." + std::string{f}
+                            + " required and non-empty");
+                }
+            }
+            if (!OnlyKeys(
+                    obj,
+                    {"fromNodeId", "fromPortId", "toNodeId", "toPortId"}))
+            {
+                return Fail(
+                    "unknownField",
+                    std::string{kind} + " rejects unknown field");
+            }
+            return Pass();
+        }
+
+        AuthoringValidationResult ValidateChangePayload(
+            std::string_view     kind,
+            const yyjson::value& payload)
+        {
+            if (kind == std::string_view("setValue"))
+            {
+                return ValidateSetValuePayload(payload);
+            }
+            if (kind == std::string_view("invokeCommand"))
+            {
+                return ValidateInvokeCommandPayload(payload);
+            }
+            if (kind == std::string_view("convertView"))
+            {
+                return ValidateConvertViewPayload(payload);
+            }
+            if (kind == std::string_view("addFormSequenceItem"))
+            {
+                return ValidateAddFormSequenceItemPayload(payload);
+            }
+            if (kind == std::string_view("moveFormSequenceItem"))
+            {
+                return ValidateMoveFormSequenceItemPayload(payload);
+            }
+            if (kind == std::string_view("removeFormSequenceItem"))
+            {
+                return ValidateRemoveFormSequenceItemPayload(payload);
+            }
+            if (kind == std::string_view("addGraphNode"))
+            {
+                return ValidateAddGraphNodePayload(payload);
+            }
+            if (kind == std::string_view("removeGraphNode"))
+            {
+                return ValidateRemoveGraphNodePayload(payload);
+            }
+            if (kind == std::string_view("connectGraphPorts"))
+            {
+                return ValidateGraphPortsPayload(payload, "connectGraphPorts");
+            }
+            if (kind == std::string_view("disconnectGraphPorts"))
+            {
+                return ValidateGraphPortsPayload(
+                    payload,
+                    "disconnectGraphPorts");
+            }
+            // Unknown kinds are rejected by the caller before dispatch.
+            return Pass();
+        }
     } // namespace
 
     AuthoringValidationResult ValidateAuthoringDocument(
@@ -1503,6 +1912,17 @@ namespace Das::Core::TaskScheduler
             return Fail("missingField", "AuthoringChange.payload required");
         }
 
+        if (auto r = ValidateChangePayload(kind, obj["payload"]); !r.valid)
+        {
+            return r;
+        }
+
+        if (!OnlyKeys(obj, {"baseRevision", "kind", "payload"}))
+        {
+            return Fail(
+                "unknownField",
+                "AuthoringChange rejects unknown field");
+        }
         return Pass();
     }
 
