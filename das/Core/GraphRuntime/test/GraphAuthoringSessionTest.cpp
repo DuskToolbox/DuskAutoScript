@@ -337,9 +337,11 @@ namespace
         SessionHandle s{
             std::string(R"({"items":[)") + std::string(item_a) + "]}"};
         const auto doc_json = JsonToUtf8(GetDocument(s.p).Get());
-        auto        parsed  = yyjson::read(doc_json);
-        auto        result  = Das::Core::TaskScheduler::ValidateAuthoringDocument(parsed);
-        EXPECT_TRUE(result.valid) << result.error_kind << ": " << result.message;
+        auto       parsed = yyjson::read(doc_json);
+        auto       result =
+            Das::Core::TaskScheduler::ValidateAuthoringDocument(parsed);
+        EXPECT_TRUE(result.valid)
+            << result.error_kind << ": " << result.message;
     }
 
     TEST(GraphAuthoringSessionTest, ValidatorAccepts_GraphOutput)
@@ -350,22 +352,28 @@ namespace
             s.p,
             WrapEnvelope("addGraphNode", R"({"actionId":"{g1}"})"));
         const auto doc_json = JsonToUtf8(GetDocument(s.p).Get());
-        auto        parsed  = yyjson::read(doc_json);
-        auto        result  = Das::Core::TaskScheduler::ValidateAuthoringDocument(parsed);
-        EXPECT_TRUE(result.valid) << result.error_kind << ": " << result.message;
+        auto       parsed = yyjson::read(doc_json);
+        auto       result =
+            Das::Core::TaskScheduler::ValidateAuthoringDocument(parsed);
+        EXPECT_TRUE(result.valid)
+            << result.error_kind << ": " << result.message;
     }
 
     TEST(GraphAuthoringSessionTest, ValidatorAccepts_ApplyResultEnvelope)
     {
         SessionHandle s{""};
         SetActionCatalog(s.p, R"(["{g1}"])");
-        auto apply_json = JsonToUtf8(ApplyChange(
-            s.p,
-            WrapEnvelope("addGraphNode", R"({"actionId":"{g1}"})")).Get());
+        auto apply_json = JsonToUtf8(
+            ApplyChange(
+                s.p,
+                WrapEnvelope("addGraphNode", R"({"actionId":"{g1}"})"))
+                .Get());
         auto parsed = yyjson::read(apply_json);
         // baseRevision == 0, so success document.revision must equal 1.
         auto result = Das::Core::TaskScheduler::ValidateAuthoringApplyResult(
-            parsed, /*baseRevision=*/0);
-        EXPECT_TRUE(result.valid) << result.error_kind << ": " << result.message;
+            parsed,
+            /*baseRevision=*/0);
+        EXPECT_TRUE(result.valid)
+            << result.error_kind << ": " << result.message;
     }
 } // namespace
