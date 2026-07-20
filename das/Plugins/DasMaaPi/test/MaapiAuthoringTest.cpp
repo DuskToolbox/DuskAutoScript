@@ -5,6 +5,7 @@
 #include <das/Core/GraphRuntime/GraphDocument.h>
 #include <das/Core/IPC/MainProcess/IpcContext.h>
 #include <das/Core/SettingsManager/SettingsManager.h>
+#include <das/Core/TaskScheduler/TaskAuthoringContract.h>
 #include <das/DasApi.h>
 #include <das/Plugins/DasMaaPi/AcceptedSettings.h>
 #include <das/Plugins/DasMaaPi/AuthoringProjector.h>
@@ -2633,3 +2634,341 @@ TEST_F(MaapiAuthoringFixture, SelectConfigurationSwitchesAuthority)
         document,
         {"portDefinitions", "portMap", "orphanPaths"}));
 }
+
+// ---------------------------------------------------------------------------
+// Phase 84-06: 严格 Authoring IR 投影（Get 投影重写）
+//
+// 这一组测试锁定 D-84-07/13/14/21/23/26/27/31/40/45/46/47 在 MaaPI Get 投影
+// 上的最终业务中立 IR 契约：
+//   - document 通过 84-01 共享严格 validator
+//   - 根字段直接挂在 document，formSequence 只承载 items[]
+//   - FormSequenceItem.id = Provider 颁发的 itemId（不接受 taskName 回退）
+//   - 不复活 MaaPI 私有字段（catalog/settings/sequence/sourceFingerprint）
+//   - valueType/inputType/candidates 严格映射，multi-input 拆为独立字段
+//   - validation 从 PI verify/pattern_msg 派生
+//   - 所有可见 label 已本地化，缺失翻译产生 diagnostics（不泄漏 $key/英文）
+//   - actionCatalog 按 PI task/group 投影；root commands + item debugInfo 到位
+//   - icon 仅允许绝对本地路径或 http(s)
+//
+// 测试经公共 ProjectAuthoringDocument 与 IDasTaskAuthoringSession::GetDocument
+// 缝观察，独立手写 literal 期望，绝不引用私有 helper。
+// ---------------------------------------------------------------------------
+
+namespace
+{
+    // 在严格 document 上递归找出第一个 formSequence.items[*] 的 id 值。
+    std::string FirstItemId(const yyjson::value& document)
+    {
+        auto obj = document.as_object();
+        if (!obj || !obj->contains(std::string_view("formSequence")))
+        {
+            return "";
+        }
+        auto fs = (*obj)[std::string_view("formSequence")].as_object();
+        if (!fs || !fs->contains(std::string_view("items")))
+        {
+            return "";
+        }
+        auto items = (*fs)[std::string_view("items")].as_array();
+        if (!items || items->empty())
+        {
+            return "";
+        }
+        auto first = (*items)[0].as_object();
+        if (!first || !first->contains(std::string_view("id")))
+        {
+            return "";
+        }
+        return std::string(
+            (*first)[std::string_view("id")].as_string().value_or(""));
+    }
+
+    // 在 document 根级 fields[] 中按 name 找 field 子对象。
+    std::optional<yyjson::value> FindRootField(
+        const yyjson::value& document,
+        std::string_view     name)
+    {
+        auto obj = document.as_object();
+        if (!obj || !obj->contains(std::string_view("fields")))
+        {
+            return std::nullopt;
+        }
+        auto fields = (*obj)[std::string_view("fields")].as_array();
+        if (!fields)
+        {
+            return std::nullopt;
+        }
+        for (auto it = fields->begin(); it != fields->end(); ++it)
+        {
+            auto field = it->as_object();
+            if (!field)
+            {
+                continue;
+            }
+            if ((*field)[std::string_view("name")].as_string().value_or("")
+                == name)
+            {
+                return Das::Utils::CloneYyjsonValue(*it);
+            }
+        }
+        return std::nullopt;
+    }
+
+    // 从 root.fields[name].candidates[] 中按 value 取候选 label。
+    std::string CandidateLabel(
+        const yyjson::value& document,
+        std::string_view     field_name,
+        std::string_view     candidate_value)
+    {
+        auto field = FindRootField(document, field_name);
+        if (!field)
+        {
+            return "";
+        }
+        auto field_obj = field->as_object();
+        if (!field_obj || !field_obj->contains(std::string_view("candidates")))
+        {
+            return "";
+        }
+        auto cands = (*field_obj)[std::string_view("candidates")].as_array();
+        if (!cands)
+        {
+            return "";
+        }
+        for (auto it = cands->begin(); it != cands->end(); ++it)
+        {
+            auto cand = it->as_object();
+            if (!cand)
+            {
+                continue;
+            }
+            if ((*cand)[std::string_view("value")].as_string().value_or("")
+                == candidate_value)
+            {
+                return std::string(
+                    (*cand)[std::string_view("label")].as_string().value_or(""));
+            }
+        }
+        return "";
+    }
+
+    // 构造一个最小可投影的 catalog：一个 controller/resource/task/option/group，
+    // 全部带 $key 本地化引用，覆盖 zh_cn + en 两种语言。fixture 用于多个 tracer。
+    PiCatalog MakeStrictProjectionMockCatalog()
+    {
+        using namespace Das::Plugins::DasMaaPi;
+
+        PiCatalog catalog;
+        catalog.name = "StrictFixture";
+        catalog.version = "1.0";
+        catalog.translations["zh_cn"] = {
+            {"controller.android", "安卓端"},
+            {"resource.official", "官服资源"},
+            {"task.dailyfarm", "日常任务"},
+            {"task.dailyfarm.desc", "日常刷材料"},
+            {"group.daily", "日常组"},
+            {"option.stage", "关卡"},
+            {"option.stage.desc", "选择关卡"},
+            {"option.case.1-1", "1-1关"},
+            {"option.case.1-2", "1-2关"},
+            {"option.coord", "坐标"},
+            {"option.coord.x", "X 坐标"},
+            {"option.coord.y", "Y 坐标"},
+            {"option.notify", "通知"},
+            {"option.tags", "标签"},
+            {"option.tags.small", "小瓶"},
+            {"option.tags.large", "大瓶"},
+            {"option.retry", "重试次数"},
+            {"option.retry.msg", "请输入正整数"}};
+        catalog.translations["en"] = {
+            {"controller.android", "Android"},
+            {"resource.official", "Official Resource"},
+            {"task.dailyfarm", "Daily Farm"},
+            {"task.dailyfarm.desc", "Daily material farming"},
+            {"group.daily", "Daily Group"},
+            {"option.stage", "Stage"},
+            {"option.stage.desc", "Choose a stage"},
+            {"option.case.1-1", "Stage 1-1"},
+            {"option.case.1-2", "Stage 1-2"},
+            {"option.coord", "Coordinate"},
+            {"option.coord.x", "X"},
+            {"option.coord.y", "Y"},
+            {"option.notify", "Notify"},
+            {"option.tags", "Tags"},
+            {"option.tags.small", "Small"},
+            {"option.tags.large", "Large"},
+            {"option.retry", "Retry Count"},
+            {"option.retry.msg", "Must be a positive integer"}};
+
+        PiController controller;
+        controller.dto.name = "Android";
+        controller.dto.type = "Adb";
+        controller.dto.label = "$controller.android";
+        catalog.controllers.push_back(std::move(controller));
+
+        PiResource resource;
+        resource.dto.name = "Official";
+        resource.dto.path = {"resource"};
+        resource.dto.label = "$resource.official";
+        catalog.resources.push_back(std::move(resource));
+
+        PiGroup group;
+        group.dto.name = "daily";
+        group.dto.label = "$group.daily";
+        group.dto.default_expand = true;
+        catalog.groups.push_back(std::move(group));
+
+        PiTask task;
+        task.dto.name = "DailyFarm";
+        task.dto.entry = "StartDaily";
+        task.dto.label = "$task.dailyfarm";
+        task.dto.description = "$task.dailyfarm.desc";
+        task.dto.group = {"daily"};
+        task.dto.option = {"stage", "coord", "tags", "notify", "retry"};
+        catalog.tasks.push_back(std::move(task));
+
+        auto make_select = []() -> PiOption
+        {
+            PiOption o;
+            o.dto.name = "stage";
+            o.dto.type = "select";
+            o.dto.label = "$option.stage";
+            o.dto.description = "$option.stage.desc";
+            PiCaseDto c1;
+            c1.name = "1-1";
+            c1.label = "$option.case.1-1";
+            PiCaseDto c2;
+            c2.name = "1-2";
+            c2.label = "$option.case.1-2";
+            o.dto.cases.push_back(std::move(c1));
+            o.dto.cases.push_back(std::move(c2));
+            return o;
+        };
+
+        auto make_multi_input = []() -> PiOption
+        {
+            PiOption o;
+            o.dto.name = "coord";
+            o.dto.type = "input";
+            o.dto.label = "$option.coord";
+            PiInputDto x;
+            x.name = "x";
+            x.label = "$option.coord.x";
+            x.pipeline_type = "int";
+            PiInputDto y;
+            y.name = "y";
+            y.label = "$option.coord.y";
+            y.pipeline_type = "int";
+            o.dto.inputs.push_back(std::move(x));
+            o.dto.inputs.push_back(std::move(y));
+            return o;
+        };
+
+        auto make_checkbox = []() -> PiOption
+        {
+            PiOption o;
+            o.dto.name = "tags";
+            o.dto.type = "checkbox";
+            o.dto.label = "$option.tags";
+            PiCaseDto small;
+            small.name = "small";
+            small.label = "$option.tags.small";
+            PiCaseDto large;
+            large.name = "large";
+            large.label = "$option.tags.large";
+            o.dto.cases.push_back(std::move(small));
+            o.dto.cases.push_back(std::move(large));
+            return o;
+        };
+
+        auto make_switch = []() -> PiOption
+        {
+            PiOption o;
+            o.dto.name = "notify";
+            o.dto.type = "switch";
+            o.dto.label = "$option.notify";
+            return o;
+        };
+
+        auto make_input_int_verified = []() -> PiOption
+        {
+            PiOption o;
+            o.dto.name = "retry";
+            o.dto.type = "input";
+            o.dto.label = "$option.retry";
+            PiInputDto i;
+            i.name = "times";
+            i.pipeline_type = "int";
+            i.verify = "^[1-9][0-9]*$";
+            i.pattern_msg = "$option.retry.msg";
+            o.dto.inputs.push_back(std::move(i));
+            return o;
+        };
+
+        catalog.options.push_back(make_select());
+        catalog.options.push_back(make_multi_input());
+        catalog.options.push_back(make_checkbox());
+        catalog.options.push_back(make_switch());
+        catalog.options.push_back(make_input_int_verified());
+        return catalog;
+    }
+} // namespace
+
+// Tracer 1: 严格 IR 形态。document 通过 84-01 ValidateAuthoringDocument，
+// FormSequenceItem.id = Provider 颁发的 itemId（不接受 taskName 回退），
+// document 不复活 catalog/sourceFingerprint/settings/sequence 私有字段。
+TEST(MaapiProjectionTest, DocumentPassesStrictContractValidator)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto catalog = MakeStrictProjectionMockCatalog();
+
+    AcceptedSettingsDto    settings;
+    settings.pi.language = "zh_cn";
+    MaapiPiTaskSettingsDto task;
+    task.item_id = "item_strict_1";
+    task.task_name = "DailyFarm";
+    task.enabled = true;
+    settings.pi.tasks.push_back(std::move(task));
+
+    auto document =
+        ProjectAuthoringDocument(settings, &catalog, {}, /*revision=*/7);
+
+    auto result = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+    EXPECT_TRUE(result.valid)
+        << "error_kind=" << result.error_kind << " message=" << result.message;
+
+    // 形态不变量：根字段直接挂在 document，formSequence 只承载 items[]。
+    auto obj = document.as_object();
+    ASSERT_TRUE(obj.has_value());
+    EXPECT_EQ(
+        (*obj)[std::string_view("viewKind")].as_string().value_or(""),
+        "formSequence");
+    EXPECT_FALSE(obj->contains(std::string_view("kind")));
+    EXPECT_FALSE(obj->contains(std::string_view("catalog")));
+    EXPECT_FALSE(obj->contains(std::string_view("sourceFingerprint")));
+    EXPECT_FALSE(obj->contains(std::string_view("diagnostics")));
+    EXPECT_TRUE(obj->contains(std::string_view("fields")));
+    EXPECT_TRUE(obj->contains(std::string_view("actionCatalog")));
+
+    auto fs = (*obj)[std::string_view("formSequence")].as_object();
+    ASSERT_TRUE(fs.has_value());
+    EXPECT_FALSE(fs->contains(std::string_view("sequence")));
+    EXPECT_FALSE(fs->contains(std::string_view("fields")));
+    EXPECT_TRUE(fs->contains(std::string_view("items")));
+
+    auto items = (*fs)[std::string_view("items")].as_array();
+    ASSERT_TRUE(items.has_value());
+    ASSERT_EQ(items->size(), 1u);
+    auto item_obj = (*items)[0].as_object();
+    ASSERT_TRUE(item_obj.has_value());
+    // D-84-40: FormSequenceItem.id = Provider 颁发的 itemId。
+    EXPECT_EQ(
+        (*item_obj)[std::string_view("id")].as_string().value_or(""),
+        "item_strict_1");
+    // D-84-07: FormSequenceItem.settings 已删除。
+    EXPECT_FALSE(item_obj->contains(std::string_view("settings")));
+    // D-84-45: 不把 PI task name / componentGuid 当 label 回退；label 走 i18n。
+    EXPECT_FALSE(item_obj->contains(std::string_view("label")));
+}
+
