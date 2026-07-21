@@ -507,8 +507,8 @@ endif ()
 set(CPPYYJSON_PFR_TARGET Boost::headers CACHE STRING "Boost.PFR target for yyjson-cpp")
 FetchContent_Declare(
     cpp_yyjson
-    GIT_REPOSITORY https://github.com/BombaxCeiba/yyjson-cpp
-    GIT_TAG        64b6c9c7ea26f496f31815c06069a7922a51a850
+    GIT_REPOSITORY ${GITHUB_MIRROR_URL}/BombaxCeiba/yyjson-cpp.git
+    GIT_TAG        2ed9d20e485a5040e64165b8990ed0682dce458c
     GIT_SHALLOW    TRUE
     GIT_SUBMODULES "" # Skip benchmark vendor submodules (simdjson, etc.) not needed for core library
 )
@@ -666,7 +666,7 @@ function(_download_and_config_maaframework)
     message(STATUS "Downloading prebuilt MaaFramework binary (VERSION = ${DAS_MAAFRAMEWORK_BINARY_VERSION})...")
     FetchContent_Declare(
         maaframework_binary
-        URL "https://github.com/MaaXYZ/MaaFramework/releases/download/v${DAS_MAAFRAMEWORK_BINARY_VERSION}/MAA-win-x86_64-v${DAS_MAAFRAMEWORK_BINARY_VERSION}.zip"
+        URL "${GITHUB_MIRROR_URL}/MaaXYZ/MaaFramework/releases/download/v${DAS_MAAFRAMEWORK_BINARY_VERSION}/MAA-win-x86_64-v${DAS_MAAFRAMEWORK_BINARY_VERSION}.zip"
         CONFIGURE_COMMAND ""
         BUILD_COMMAND ""
         INSTALL_COMMAND "")
