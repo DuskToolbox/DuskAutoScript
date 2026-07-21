@@ -744,6 +744,104 @@ namespace Das::Core::TaskScheduler
             session);
     }
 
+    // Structured result of the shared Apply pipeline. The caller owns response
+    // construction (taskId vs entryId) and path-specific error message wording
+    // for revisionConflict / sessionCreateFailed / providerFailed kinds.
+    struct AuthoringApplyPipelineResult
+    {
+        bool                   ok = false;
+        std::string            error_kind;
+        std::string            error_message;
+        int64_t                current_revision = 0;
+        int64_t                next_revision = 0;
+        AuthoringProviderApply parsed;
+        yyjson::value          authoring;
+    };
+
+    // Shared Apply pipeline (envelope guard -> revision check -> session create
+    // -> Provider ApplyChange -> parse -> persisted metadata). Session is
+    // created only after ③④ pass, preserving byte-level invariance: envelope
+    // failures do not increment the plugin's authoring_session_count.
+    static AuthoringApplyPipelineResult RunAuthoringApplyPipeline(
+        Das::Core::ForeignInterfaceHost::PluginManager& plugin_manager,
+        const TaskAuthoringCapability&                  capability,
+        yyjson::value                                   context_json,
+        const yyjson::value&                            change,
+        const yyjson::value&                            source_json)
+    {
+        AuthoringApplyPipelineResult result;
+        result.current_revision = GetAuthoringRevision(source_json);
+
+        auto validation = ValidateAuthoringChange(change);
+        if (!validation.valid)
+        {
+            result.error_kind = validation.error_kind;
+            result.error_message = validation.message;
+            return result;
+        }
+
+        auto base_revision = GetBaseRevision(change);
+        if (!base_revision || *base_revision != result.current_revision)
+        {
+            result.error_kind = "revisionConflict";
+            result.error_message = "Authoring change baseRevision is stale";
+            return result;
+        }
+
+        DasPtr<Das::PluginInterface::IDasTaskAuthoringSession> session;
+        auto session_result = CreateAuthoringSessionWithContext(
+            plugin_manager,
+            capability,
+            std::move(context_json),
+            session);
+        if (DAS::IsFailed(session_result) || !session)
+        {
+            result.error_kind = "sessionCreateFailed";
+            result.error_message = "Failed to create authoring session";
+            return result;
+        }
+
+        auto change_json = WrapJsonValue(CloneJsonValue(change));
+        DasPtr<Das::ExportInterface::IDasJson> apply_result_json;
+        auto                                   apply_result =
+            session->ApplyChange(change_json.Get(), apply_result_json.Put());
+        if (DAS::IsFailed(apply_result) || !apply_result_json)
+        {
+            result.error_kind = "providerFailed";
+            result.error_message = "Authoring provider rejected change";
+            return result;
+        }
+
+        auto provider_result = ReadJsonInterface(apply_result_json.Get());
+        auto parsed = ParseAuthoringProviderApply(
+            provider_result,
+            result.current_revision);
+        if (!parsed.error_kind.empty())
+        {
+            result.error_kind = parsed.error_kind;
+            result.error_message = parsed.error_message;
+            return result;
+        }
+        result.parsed = std::move(parsed);
+        result.next_revision = result.parsed.returned_revision;
+
+        const auto    change_kind = GetStringField(change, "kind", "");
+        yyjson::value previous_authoring;
+        if (auto src_obj = source_json.as_object();
+            src_obj && src_obj->contains(std::string_view("authoring")))
+        {
+            previous_authoring =
+                CloneJsonValue((*src_obj)[std::string_view("authoring")]);
+        }
+        result.authoring = MakePersistedAuthoringMetadata(
+            result.next_revision,
+            change_kind,
+            previous_authoring);
+
+        result.ok = true;
+        return result;
+    }
+
     struct RepositoryProviderCompileResult
     {
         yyjson::value compile;
@@ -2131,32 +2229,13 @@ namespace Das::Core::TaskScheduler
             }
         }
 
-        // Envelope guard: Phase 84 task/repository symmetry requires the
-        // server to validate the {kind, payload} envelope before invoking
-        // the Provider on both routes. A structurally invalid change never
-        // reaches the plugin.
-        auto validation = ValidateAuthoringChange(change);
-        if (!validation.valid)
-        {
-            return MakeRepositoryResponseError(
-                validation.error_kind,
-                validation.message);
-        }
-
-        const int64_t current_revision = GetAuthoringRevision(entry_json);
-        auto          base_revision = GetBaseRevision(change);
-        if (!base_revision || *base_revision != current_revision)
-        {
-            yyjson::value result = MakeRepositoryResponseError(
-                "revisionConflict",
-                "Repository authoring change baseRevision is stale");
-            (*result.as_object())[std::string_view("currentRevision")] =
-                current_revision;
-            return result;
-        }
-
-        DasPtr<Das::PluginInterface::IDasTaskAuthoringSession> session;
-        auto session_result = CreateAuthoringSessionWithContext(
+        // Envelope guard: the contract requires the server to validate the
+        // {kind, payload} envelope before invoking the Provider. A structurally
+        // invalid change never reaches the plugin. The shared Apply pipeline
+        // owns ③④(envelope + revision) -> ⑤ session -> ⑥⑦⑧(Apply + parse +
+        // persisted metadata); this caller owns ①② locks/IO, ⑨ store
+        // persistence, and ⑩ entryId response assembly.
+        auto pipeline = RunAuthoringApplyPipeline(
             plugin_manager_,
             capability,
             MakeRepositoryAuthoringContextJson(
@@ -2164,56 +2243,38 @@ namespace Das::Core::TaskScheduler
                 entry_id,
                 entry.accepted_properties,
                 entry_json),
-            session);
-        if (DAS::IsFailed(session_result) || !session)
+            change,
+            entry_json);
+        if (!pipeline.ok)
         {
-            return MakeRepositoryResponseError(
-                "sessionCreateFailed",
-                "Failed to create repository authoring session");
+            std::string message = std::move(pipeline.error_message);
+            if (pipeline.error_kind == "revisionConflict")
+            {
+                message = "Repository authoring change baseRevision is stale";
+            }
+            else if (pipeline.error_kind == "sessionCreateFailed")
+            {
+                message = "Failed to create repository authoring session";
+            }
+            else if (pipeline.error_kind == "providerFailed")
+            {
+                message = "Repository authoring provider rejected change";
+            }
+            yyjson::value err =
+                MakeRepositoryResponseError(pipeline.error_kind, message);
+            if (pipeline.error_kind == "revisionConflict")
+            {
+                (*err.as_object())[std::string_view("currentRevision")] =
+                    pipeline.current_revision;
+            }
+            return err;
         }
-
-        auto change_json = WrapJsonValue(CloneJsonValue(change));
-        DasPtr<Das::ExportInterface::IDasJson> apply_result_json;
-        auto                                   apply_result =
-            session->ApplyChange(change_json.Get(), apply_result_json.Put());
-        if (DAS::IsFailed(apply_result) || !apply_result_json)
-        {
-            return MakeRepositoryResponseError(
-                "providerFailed",
-                "Repository authoring provider rejected change");
-        }
-
-        // Phase 84 atomic ordering: validate the full Provider Apply result
-        // before any persistence. Malformed output never reaches the store.
-        auto provider_result = ReadJsonInterface(apply_result_json.Get());
-        auto parsed =
-            ParseAuthoringProviderApply(provider_result, current_revision);
-        if (!parsed.error_kind.empty())
-        {
-            return MakeRepositoryResponseError(
-                parsed.error_kind,
-                parsed.error_message);
-        }
-
-        const auto    next_revision = parsed.returned_revision;
-        const auto    change_kind = GetStringField(change, "kind", "");
-        yyjson::value previous_authoring;
-        if (auto prev_obj = entry_json.as_object();
-            prev_obj && prev_obj->contains(std::string_view("authoring")))
-        {
-            previous_authoring =
-                CloneJsonValue((*prev_obj)[std::string_view("authoring")]);
-        }
-        yyjson::value authoring = MakePersistedAuthoringMetadata(
-            next_revision,
-            change_kind,
-            previous_authoring);
 
         yyjson::value updated_entry_json;
         auto          persist_result = store->UpdateAuthoring(
             entry_id,
-            parsed.accepted_properties,
-            authoring,
+            pipeline.parsed.accepted_properties,
+            pipeline.authoring,
             updated_entry_json);
         if (DAS::IsFailed(persist_result))
         {
@@ -2226,13 +2287,13 @@ namespace Das::Core::TaskScheduler
         auto          result_obj = result.as_object();
         (*result_obj)[std::string_view("ok")] = true;
         (*result_obj)[std::string_view("entryId")] = entry_id;
-        (*result_obj)[std::string_view("revision")] = next_revision;
+        (*result_obj)[std::string_view("revision")] = pipeline.next_revision;
         (*result_obj)[std::string_view("acceptedProperties")] =
-            std::move(parsed.accepted_properties);
+            std::move(pipeline.parsed.accepted_properties);
         (*result_obj)[std::string_view("document")] =
-            std::move(parsed.document);
+            std::move(pipeline.parsed.document);
         (*result_obj)[std::string_view("diagnostics")] =
-            std::move(parsed.diagnostics);
+            std::move(pipeline.parsed.diagnostics);
         return result;
     }
 
@@ -3265,81 +3326,48 @@ namespace Das::Core::TaskScheduler
 
         // Envelope guard: the contract requires the server to validate the
         // {kind, payload} envelope before passing it to plugin authoring code.
-        auto validation = ValidateAuthoringChange(change);
-        if (!validation.valid)
-        {
-            return MakeAuthoringResponseError(
-                validation.error_kind,
-                validation.message);
-        }
-
-        const int64_t current_revision = GetAuthoringRevision(task_json);
-        auto          base_revision = GetBaseRevision(change);
-        if (!base_revision || *base_revision != current_revision)
-        {
-            yyjson::value result = MakeAuthoringResponseError(
-                "revisionConflict",
-                "Authoring change baseRevision is stale");
-            (*result.as_object())[std::string_view("currentRevision")] =
-                current_revision;
-            return result;
-        }
-
-        DasPtr<Das::PluginInterface::IDasTaskAuthoringSession> session;
-        auto session_result = CreateAuthoringSession(
+        // The shared Apply pipeline owns ③④(envelope + revision) -> ⑤ session
+        // -> ⑥⑦⑧(Apply + parse + persisted metadata); this caller owns ①②
+        // lock/IO, ⑨ settings persistence + in-memory inst sync, and ⑩ taskId
+        // response assembly.
+        auto pipeline = RunAuthoringApplyPipeline(
             plugin_manager_,
             capability,
-            task_id,
-            properties,
-            task_json,
-            session);
-        if (DAS::IsFailed(session_result) || !session)
+            MakeAuthoringContextJson(
+                plugin_manager_,
+                task_id,
+                properties,
+                task_json),
+            change,
+            task_json);
+        if (!pipeline.ok)
         {
-            return MakeAuthoringResponseError(
-                "sessionCreateFailed",
-                "Failed to create task authoring session");
+            std::string message = std::move(pipeline.error_message);
+            if (pipeline.error_kind == "providerFailed")
+            {
+                message = "Task authoring provider rejected change";
+            }
+            else if (pipeline.error_kind == "sessionCreateFailed")
+            {
+                message = "Failed to create task authoring session";
+            }
+            // revisionConflict: pipeline default ("Authoring change
+            // baseRevision is stale") matches the Task path verbatim.
+            yyjson::value err =
+                MakeAuthoringResponseError(pipeline.error_kind, message);
+            if (pipeline.error_kind == "revisionConflict")
+            {
+                (*err.as_object())[std::string_view("currentRevision")] =
+                    pipeline.current_revision;
+            }
+            return err;
         }
 
-        auto change_json = WrapJsonValue(CloneJsonValue(change));
-        DasPtr<Das::ExportInterface::IDasJson> apply_result_json;
-        auto                                   apply_result =
-            session->ApplyChange(change_json.Get(), apply_result_json.Put());
-        if (DAS::IsFailed(apply_result) || !apply_result_json)
-        {
-            return MakeAuthoringResponseError(
-                "providerFailed",
-                "Task authoring provider rejected change");
-        }
-
-        // Phase 84 atomic ordering: validate the full Provider Apply result
-        // (envelope + embedded document + baseRevision+1 invariant) before
-        // any persistence. A malformed result never reaches the authority.
-        auto provider_result = ReadJsonInterface(apply_result_json.Get());
-        auto parsed =
-            ParseAuthoringProviderApply(provider_result, current_revision);
-        if (!parsed.error_kind.empty())
-        {
-            return MakeAuthoringResponseError(
-                parsed.error_kind,
-                parsed.error_message);
-        }
-
-        const auto    next_revision = parsed.returned_revision;
-        const auto    change_kind = GetStringField(change, "kind", "");
-        auto          task_obj = task_json.as_object();
-        yyjson::value previous_authoring;
-        if (task_obj && task_obj->contains(std::string_view("authoring")))
-        {
-            previous_authoring =
-                CloneJsonValue((*task_obj)[std::string_view("authoring")]);
-        }
-        yyjson::value authoring = MakePersistedAuthoringMetadata(
-            next_revision,
-            change_kind,
-            previous_authoring);
+        auto task_obj = task_json.as_object();
         (*task_obj)[std::string_view("properties")] =
-            CloneJsonValue(parsed.accepted_properties);
-        (*task_obj)[std::string_view("authoring")] = CloneJsonValue(authoring);
+            CloneJsonValue(pipeline.parsed.accepted_properties);
+        (*task_obj)[std::string_view("authoring")] =
+            CloneJsonValue(pipeline.authoring);
 
         auto persist_result =
             settings.UpdateTaskInstanceJson("0", task_id, task_json);
@@ -3355,8 +3383,9 @@ namespace Das::Core::TaskScheduler
             auto*                       inst = FindTaskInstance(task_id);
             if (inst)
             {
-                inst->properties = CloneJsonValue(parsed.accepted_properties);
-                inst->authoring = CloneJsonValue(authoring);
+                inst->properties =
+                    CloneJsonValue(pipeline.parsed.accepted_properties);
+                inst->authoring = CloneJsonValue(pipeline.authoring);
             }
         }
 
@@ -3364,13 +3393,13 @@ namespace Das::Core::TaskScheduler
         auto          result_obj = result.as_object();
         (*result_obj)[std::string_view("ok")] = true;
         (*result_obj)[std::string_view("taskId")] = task_id;
-        (*result_obj)[std::string_view("revision")] = next_revision;
+        (*result_obj)[std::string_view("revision")] = pipeline.next_revision;
         (*result_obj)[std::string_view("acceptedProperties")] =
-            std::move(parsed.accepted_properties);
+            std::move(pipeline.parsed.accepted_properties);
         (*result_obj)[std::string_view("document")] =
-            std::move(parsed.document);
+            std::move(pipeline.parsed.document);
         (*result_obj)[std::string_view("diagnostics")] =
-            std::move(parsed.diagnostics);
+            std::move(pipeline.parsed.diagnostics);
         return result;
     }
 
