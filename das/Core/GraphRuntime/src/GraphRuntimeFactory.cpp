@@ -929,10 +929,19 @@ DAS_C_API DasResult GraphAuthoringSessionGetDocument(
             }
             catalog = std::move(c);
         }
-        // SerializeDocument builds the contract JSON with copy_string so the
-        // returned value is self-contained; serialise + reparse into IDasJson.
-        auto v = GR::Contract::SerializeDocument(p->document, catalog);
-        auto str = Das::Utils::SerializeYyjsonValue(v);
+        // D-84-08: 严格 Get envelope = {document, diagnostics}。
+        // SchedulerService ValidateAuthoringGetResult 要求 top-level
+        // diagnostics 数组（即使空）。Core authoring 没有 PiDiagnostic 来源，
+        // diagnostics 永远为空数组（满足 validator required 约束）。
+        auto document = GR::Contract::SerializeDocument(p->document, catalog);
+
+        yyjson::value envelope(Das::Utils::MakeYyjsonObject());
+        auto          env_obj = envelope.as_object();
+        (*env_obj)[std::string_view("document")] = std::move(document);
+        (*env_obj)[std::string_view("diagnostics")] =
+            Das::Utils::MakeYyjsonArray();
+
+        auto str = Das::Utils::SerializeYyjsonValue(envelope);
         if (!str)
         {
             return DAS_E_FAIL;

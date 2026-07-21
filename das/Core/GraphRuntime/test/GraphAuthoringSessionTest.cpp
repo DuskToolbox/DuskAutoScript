@@ -68,12 +68,31 @@ namespace
         SessionHandle& operator=(const SessionHandle&) = delete;
     };
 
+    // GraphAuthoringSessionGetDocument returns the strict Phase 84 envelope
+    // {document, diagnostics}. The full envelope is needed for validator
+    // cross-checks; field-level assertions unwrap the document payload.
     DasPtr<Das::ExportInterface::IDasJson> GetDocument(
         GraphAuthoringSessionState* p)
     {
         DasPtr<Das::ExportInterface::IDasJson> out;
         GraphAuthoringSessionGetDocument(p, nullptr, out.Put());
         return out;
+    }
+
+    // Extract the nested `document` value from the Get envelope. Field-level
+    // assertions read from here; validator-level assertions use the full
+    // envelope returned by GetDocument.
+    yyjson::value DocumentOf(GraphAuthoringSessionState* p)
+    {
+        auto json = JsonToUtf8(GetDocument(p).Get());
+        auto root = yyjson::read(json);
+        auto obj = root.as_object();
+        if (!obj || !obj->contains(std::string_view("document")))
+        {
+            return Das::Utils::MakeYyjsonObject();
+        }
+        return Das::Utils::CloneYyjsonValue(
+            (*obj)[std::string_view("document")]);
     }
 
     DasPtr<Das::ExportInterface::IDasJson> ApplyChange(
@@ -114,7 +133,8 @@ namespace
     TEST(GraphAuthoringSessionTest, EmptyStoreProjectsAsGraph)
     {
         SessionHandle s{""};
-        auto          json = Compact(JsonToUtf8(GetDocument(s.p).Get()));
+        auto          json = Compact(
+            Das::Utils::SerializeYyjsonValue(DocumentOf(s.p)).value_or(""));
         // Phase 84 strict wire uses viewKind (not kind).
         EXPECT_NE(json.find("\"viewKind\":\"graph\""), std::string::npos);
         EXPECT_EQ(json.find("\"kind\":\"graph\""), std::string::npos);
@@ -131,7 +151,8 @@ namespace
         SessionHandle s{
             std::string(R"({"documentId":"d1","version":0,"items":[)")
             + std::string(item_a) + "," + std::string(item_b) + "]}"};
-        auto json = Compact(JsonToUtf8(GetDocument(s.p).Get()));
+        auto json = Compact(
+            Das::Utils::SerializeYyjsonValue(DocumentOf(s.p)).value_or(""));
         EXPECT_NE(
             json.find("\"viewKind\":\"formSequence\""),
             std::string::npos);
@@ -160,7 +181,8 @@ namespace
         EXPECT_NE(result.find("\"diagnostics\":[]"), std::string::npos);
         EXPECT_NE(result.find("\"revision\":1"), std::string::npos);
 
-        auto doc = Compact(JsonToUtf8(GetDocument(s.p).Get()));
+        auto doc = Compact(
+            Das::Utils::SerializeYyjsonValue(DocumentOf(s.p)).value_or(""));
         // The newly-allocated node id must be present; addGraphNode now mints
         // a stable id instead of using a caller-supplied id.
         EXPECT_NE(doc.find("\"componentGuid\":\"{g1}\""), std::string::npos);
@@ -190,12 +212,14 @@ namespace
             std::string(R"({"items":[)") + std::string(item_a) + ","
             + std::string(item_b) + "]}"};
         EXPECT_NE(
-            Compact(JsonToUtf8(GetDocument(s.p).Get()))
+            Compact(
+                Das::Utils::SerializeYyjsonValue(DocumentOf(s.p)).value_or(""))
                 .find("\"viewKind\":\"formSequence\""),
             std::string::npos);
 
         EXPECT_EQ(GraphAuthoringSessionUpgradeToGraph(s.p), DAS_S_OK);
-        auto after = Compact(JsonToUtf8(GetDocument(s.p).Get()));
+        auto after = Compact(
+            Das::Utils::SerializeYyjsonValue(DocumentOf(s.p)).value_or(""));
         EXPECT_NE(after.find("\"viewKind\":\"graph\""), std::string::npos);
         EXPECT_EQ(
             after.find("\"viewKind\":\"formSequence\""),
@@ -219,7 +243,8 @@ namespace
         const auto result = Compact(JsonToUtf8(r.Get()));
         EXPECT_NE(result.find("\"revision\":1"), std::string::npos);
 
-        auto doc = Compact(JsonToUtf8(GetDocument(s.p).Get()));
+        auto doc = Compact(
+            Das::Utils::SerializeYyjsonValue(DocumentOf(s.p)).value_or(""));
         // The original item id survived; the new item is allocated by the
         // Provider (caller does not supply an id).
         EXPECT_NE(doc.find("\"id\":\"a\""), std::string::npos);
@@ -273,7 +298,8 @@ namespace
         const std::string ctx =
             std::string(R"({"properties":)") + persisted + "}";
         SessionHandle s2{ctx};
-        const auto    doc = Compact(JsonToUtf8(GetDocument(s2.p).Get()));
+        const auto    doc = Compact(
+            Das::Utils::SerializeYyjsonValue(DocumentOf(s2.p)).value_or(""));
         EXPECT_NE(doc.find("\"componentGuid\":\"{g1}\""), std::string::npos);
         EXPECT_NE(doc.find("\"componentGuid\":\"{g2}\""), std::string::npos);
         EXPECT_NE(doc.find("\"viewKind\":\"graph\""), std::string::npos);
@@ -314,7 +340,8 @@ namespace
 
         // Lossless upgrade: viewKind flips to graph, nodes preserved.
         ASSERT_EQ(GraphAuthoringSessionUpgradeToGraph(s.p), DAS_S_OK);
-        const auto after_upgrade = Compact(JsonToUtf8(GetDocument(s.p).Get()));
+        const auto after_upgrade = Compact(
+            Das::Utils::SerializeYyjsonValue(DocumentOf(s.p)).value_or(""));
         EXPECT_EQ(
             after_upgrade.find("\"viewKind\":\"formSequence\""),
             std::string::npos);
@@ -330,18 +357,29 @@ namespace
     // the strict TaskScheduler AuthoringDocument validator.
     // -----------------------------------------------------------------------
 
+    // Production-path regression: GraphAuthoringSessionGetDocument now emits
+    // the strict Phase 84 envelope {document, diagnostics}. The envelope must
+    // pass ValidateAuthoringGetResult (which requires top-level diagnostics
+    // array) AND the nested document must still satisfy the document
+    // validator. This locks the wire shape that SchedulerService relies on —
+    // a previous regression returned a bare document and the scheduler failed
+    // with "AuthoringGetResult.diagnostics required".
     TEST(GraphAuthoringSessionTest, ValidatorAccepts_FormSequenceOutput)
     {
         constexpr std::string_view item_a =
             R"({"itemId":"a","target":{"targetKind":"componentRef","componentRef":{"kind":"componentRef","componentGuid":"{ga}","pluginGuid":"{p}"}},"settings":{}})";
         SessionHandle s{
             std::string(R"({"items":[)") + std::string(item_a) + "]}"};
-        const auto doc_json = JsonToUtf8(GetDocument(s.p).Get());
-        auto       parsed = yyjson::read(doc_json);
-        auto       result =
-            Das::Core::TaskScheduler::ValidateAuthoringDocument(parsed);
-        EXPECT_TRUE(result.valid)
-            << result.error_kind << ": " << result.message;
+        const auto envelope_json = JsonToUtf8(GetDocument(s.p).Get());
+        auto       parsed = yyjson::read(envelope_json);
+        auto       envelope_result =
+            Das::Core::TaskScheduler::ValidateAuthoringGetResult(parsed);
+        EXPECT_TRUE(envelope_result.valid)
+            << envelope_result.error_kind << ": " << envelope_result.message;
+        auto doc_result = Das::Core::TaskScheduler::ValidateAuthoringDocument(
+            DocumentOf(s.p));
+        EXPECT_TRUE(doc_result.valid)
+            << doc_result.error_kind << ": " << doc_result.message;
     }
 
     TEST(GraphAuthoringSessionTest, ValidatorAccepts_GraphOutput)
@@ -351,12 +389,16 @@ namespace
         ApplyChange(
             s.p,
             WrapEnvelope("addGraphNode", R"({"actionId":"{g1}"})"));
-        const auto doc_json = JsonToUtf8(GetDocument(s.p).Get());
-        auto       parsed = yyjson::read(doc_json);
-        auto       result =
-            Das::Core::TaskScheduler::ValidateAuthoringDocument(parsed);
-        EXPECT_TRUE(result.valid)
-            << result.error_kind << ": " << result.message;
+        const auto envelope_json = JsonToUtf8(GetDocument(s.p).Get());
+        auto       parsed = yyjson::read(envelope_json);
+        auto       envelope_result =
+            Das::Core::TaskScheduler::ValidateAuthoringGetResult(parsed);
+        EXPECT_TRUE(envelope_result.valid)
+            << envelope_result.error_kind << ": " << envelope_result.message;
+        auto doc_result = Das::Core::TaskScheduler::ValidateAuthoringDocument(
+            DocumentOf(s.p));
+        EXPECT_TRUE(doc_result.valid)
+            << doc_result.error_kind << ": " << doc_result.message;
     }
 
     TEST(GraphAuthoringSessionTest, ValidatorAccepts_ApplyResultEnvelope)
