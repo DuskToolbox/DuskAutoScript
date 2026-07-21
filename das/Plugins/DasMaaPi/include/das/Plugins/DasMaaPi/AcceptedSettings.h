@@ -46,6 +46,24 @@ namespace Das::Plugins::DasMaaPi
         std::vector<MaapiPiOptionSettingsDto> options;
     };
 
+    // D-84.2-04: Provider 私有 preset 快照。newPreset invokeCommand 把当前
+    // flat pi 字段镜像为一个 snapshot，追加到 pi.custom_presets。这是 MaaPI
+    // 私有存储，不进入 document UI IR（FormSequenceItem.id / FieldDescriptor
+    // 不读 customPresets）；投影层只把 id/name 合并到 presetName select
+    // candidates 作为 {value,label}。
+    struct MaapiPresetSnapshotDto
+    {
+        std::string                           id;
+        std::string                           name;
+        std::optional<std::string>            controller_name;
+        std::optional<std::string>            resource_name;
+        std::optional<std::string>            language;
+        std::vector<MaapiPiOptionSettingsDto> global_options;
+        std::vector<MaapiPiOptionSettingsDto> resource_options;
+        std::vector<MaapiPiOptionSettingsDto> controller_options;
+        std::vector<MaapiPiTaskSettingsDto>   tasks;
+    };
+
     // 用户配置实例快照 (D-84-41/42)。
     // 每个 configuration 独立持有 controller/resource/language/options/tasks，
     // 是 acceptedProperties 中完整的可编辑权威。PI 官方 preset 是只读模板，
@@ -89,6 +107,11 @@ namespace Das::Plugins::DasMaaPi
         std::string                        selected_configuration_id;
         std::vector<MaapiConfigurationDto> configurations;
 
+        // D-84.2-04: Provider 私有 preset 快照存储。newPreset invokeCommand
+        // 追加当前 flat pi 字段的镜像到此数组；投影层把 id/name 合并到
+        // presetName select candidates。customPresets 不进入 document UI IR。
+        std::vector<MaapiPresetSnapshotDto> custom_presets;
+
         std::vector<std::string> orphan_paths;
     };
 
@@ -121,6 +144,12 @@ struct yyjson::field_name_rule<Das::Plugins::DasMaaPi::MaapiPiOptionSettingsDto>
 
 template <>
 struct yyjson::field_name_rule<Das::Plugins::DasMaaPi::MaapiPiTaskSettingsDto>
+{
+    using type = yyjson::snake_to_camel_transform;
+};
+
+template <>
+struct yyjson::field_name_rule<Das::Plugins::DasMaaPi::MaapiPresetSnapshotDto>
 {
     using type = yyjson::snake_to_camel_transform;
 };

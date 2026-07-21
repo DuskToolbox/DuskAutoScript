@@ -927,6 +927,47 @@ namespace Das::Plugins::DasMaaPi
             return arr;
         }
 
+        // D-84.2-04: 序列化 pi.customPresets[]（Provider 私有 preset 快照）。
+        // 形态镜像 ConfigurationObject：id/name + 可选 controller/resource/
+        // language + options 子数组 + tasks 子数组。
+        yyjson::value CustomPresetsArray(
+            const std::vector<MaapiPresetSnapshotDto>& presets)
+        {
+            yyjson::value arr(Array());
+            for (const auto& preset : presets)
+            {
+                yyjson::value value(Object());
+                auto          obj = value.as_object();
+                (*obj)[std::string_view("id")] = JsonString(preset.id);
+                (*obj)[std::string_view("name")] = JsonString(preset.name);
+                if (preset.controller_name)
+                {
+                    (*obj)[std::string_view("controllerName")] =
+                        JsonString(*preset.controller_name);
+                }
+                if (preset.resource_name)
+                {
+                    (*obj)[std::string_view("resourceName")] =
+                        JsonString(*preset.resource_name);
+                }
+                if (preset.language)
+                {
+                    (*obj)[std::string_view("language")] =
+                        JsonString(*preset.language);
+                }
+                (*obj)[std::string_view("globalOptions")] =
+                    OptionSettingsArray(preset.global_options);
+                (*obj)[std::string_view("resourceOptions")] =
+                    OptionSettingsArray(preset.resource_options);
+                (*obj)[std::string_view("controllerOptions")] =
+                    OptionSettingsArray(preset.controller_options);
+                (*obj)[std::string_view("tasks")] =
+                    TaskSettingsArray(preset.tasks);
+                arr.as_array()->emplace_back(std::move(value));
+            }
+            return arr;
+        }
+
         // D-84-41/42: 解析 pi.configurations[] 数组。
         std::vector<MaapiConfigurationDto> ParseConfigurationArray(
             const auto&      obj,
@@ -1565,6 +1606,23 @@ namespace Das::Plugins::DasMaaPi
             return ids;
         }
 
+        // D-84.2-04: 收集 settings.pi.custom_presets 内所有已使用 presetId，
+        // 供 AllocatePresetId 避免与既有 snapshot id 冲突。customPresets 为空
+        // 时返回空集。
+        std::set<std::string> CollectUsedPresetIds(
+            const AcceptedSettingsDto& settings)
+        {
+            std::set<std::string> ids;
+            for (const auto& preset : settings.pi.custom_presets)
+            {
+                if (!preset.id.empty())
+                {
+                    ids.emplace(preset.id);
+                }
+            }
+            return ids;
+        }
+
         // 全进程 atomic 计数器，保证同一进程内分配的 id 单调递增且唯一。
         // 跨进程持久化层另有 taskId*.json 的 revision 保证；这里只需
         // 同一会话内 id 不冲突即可。坚持不从 taskName/actionId/index 派生，
@@ -1722,6 +1780,33 @@ namespace Das::Plugins::DasMaaPi
         return "Configuration " + std::to_string(index);
     }
 
+    // D-84.2-04: 为新 preset snapshot 分配 Provider 颁发的稳定 presetId。
+    // 基于 atomic counter 生成 "preset_<n>" 形式，避免与既有 snapshot id 冲突。
+    std::string AllocatePresetId(const AcceptedSettingsDto& settings)
+    {
+        return AllocateIdWithPrefix("preset_", CollectUsedPresetIds(settings));
+    }
+
+    // D-84.2-04: newPreset invokeCommand 实现。把当前 flat pi 字段镜像为一个
+    // snapshot，追加到 pi.custom_presets。snapshot.id 由 AllocatePresetId
+    // 颁发； name 自动生成；controller/resource/language/options/tasks 从 flat
+    // pi 字段 拷贝。presetName（PI 官方 preset 引用）保持不变。
+    void ApplyNewPreset(AcceptedSettingsDto& settings)
+    {
+        MaapiPresetSnapshotDto snapshot;
+        snapshot.id = AllocatePresetId(settings);
+        snapshot.name =
+            "Preset " + std::to_string(settings.pi.custom_presets.size() + 1);
+        snapshot.controller_name = settings.pi.controller_name;
+        snapshot.resource_name = settings.pi.resource_name;
+        snapshot.language = settings.pi.language;
+        snapshot.global_options = settings.pi.global_options;
+        snapshot.resource_options = settings.pi.resource_options;
+        snapshot.controller_options = settings.pi.controller_options;
+        snapshot.tasks = settings.pi.tasks;
+        settings.pi.custom_presets.emplace_back(std::move(snapshot));
+    }
+
     void ApplyInvokeCommand(
         AcceptedSettingsDto& settings,
         std::string_view     command_id)
@@ -1861,6 +1946,13 @@ namespace Das::Plugins::DasMaaPi
             (*pi_obj)[std::string_view("configurations")] =
                 ConfigurationArray(settings.pi.configurations);
         }
+        // D-84.2-04: customPresets 是 Provider 私有 preset 快照存储。
+        // 仅在非空时输出，避免 legacy fixture 出现空数组。
+        if (!settings.pi.custom_presets.empty())
+        {
+            (*pi_obj)[std::string_view("customPresets")] =
+                CustomPresetsArray(settings.pi.custom_presets);
+        }
         yyjson::value orphans(Array());
         for (const auto& path : settings.pi.orphan_paths)
         {
@@ -1988,6 +2080,18 @@ namespace Das::Plugins::DasMaaPi
                 catalog,
                 current_language,
                 projection_diagnostics);
+            // D-84.2-04: 把 Provider 私有 customPresets 合并到 presetName
+            // select candidates 作为 {value,label}，与 PI 官方 preset 候选
+            // 同形态。customPresets 内容不进入 document 其他 IR。
+            for (const auto& custom : settings.pi.custom_presets)
+            {
+                yyjson::value candidate(Object());
+                auto          c_obj = candidate.as_object();
+                (*c_obj)[std::string_view("value")] = JsonString(custom.id);
+                (*c_obj)[std::string_view("label")] = JsonString(custom.name);
+                preset_candidates.as_array()->emplace_back(
+                    std::move(candidate));
+            }
             fields.as_array()->emplace_back(MakePropertyField(
                 "presetName",
                 ResolveI18nOrDiag(
@@ -2369,12 +2473,11 @@ namespace Das::Plugins::DasMaaPi
         (*ac_obj)[std::string_view("groups")] = std::move(groups);
         (*obj)[std::string_view("actionCatalog")] = std::move(action_catalog);
 
-        // D-84-26/27/28: 根级 commands。newConfiguration / copyConfiguration
-        // 是 MaaPI 已识别的 invokeCommand（84-05），通过通用 apply 模板暴露
-        // 给 UI；UI 触发时由 84-07 注入当前 baseRevision。仅当存在
-        // configurations[]（post-84 权威）时才输出，避免 legacy fixture
-        // 暴露 Provider 不再支持的入口。
-        if (!settings.pi.configurations.empty())
+        // D-84.2-04: 根级 commands。newPreset 是 D-84-28 通用 invokeCommand
+        // 在 MaaPI 的落地（无条件 emit —— preset 创建入口不依赖
+        // configurations[]）。newConfiguration / copyConfiguration（84-05）
+        // 仅当存在 configurations[]（post-84 权威）时才追加，保留既有兼容。
+        // UI 触发时由 84-07 注入当前 baseRevision。
         {
             yyjson::value commands(Array());
             auto          emit_command =
@@ -2395,8 +2498,12 @@ namespace Das::Plugins::DasMaaPi
                 (*c_obj)[std::string_view("apply")] = std::move(apply);
                 commands.as_array()->emplace_back(std::move(cmd));
             };
-            emit_command("newConfiguration", "New Configuration");
-            emit_command("copyConfiguration", "Copy Configuration");
+            emit_command("newPreset", "New Preset");
+            if (!settings.pi.configurations.empty())
+            {
+                emit_command("newConfiguration", "New Configuration");
+                emit_command("copyConfiguration", "Copy Configuration");
+            }
             (*obj)[std::string_view("commands")] = std::move(commands);
         }
 
@@ -3693,6 +3800,13 @@ namespace Das::Plugins::DasMaaPi
                 DAS_E_INVALID_ARGUMENT,
                 "commandId");
             return false;
+        }
+        // D-84.2-04: newPreset 是 D-84-28 通用 invokeCommand 在 MaaPI 的落地。
+        // 把当前 flat pi 字段镜像为 snapshot 追加到 pi.custom_presets。
+        if (*command_id == "newPreset")
+        {
+            ApplyNewPreset(settings);
+            return true;
         }
         // D-84-28/42: 已知 commandId 委托 ApplyInvokeCommand（84-05 实现）。
         if (*command_id == "newConfiguration"
