@@ -842,6 +842,67 @@ namespace Das::Core::TaskScheduler
         return result;
     }
 
+    // Structured result of the shared Get pipeline. The caller owns response
+    // construction (taskId vs entryId/taskTypeGuid/revision) and path-specific
+    // error message wording for sessionCreateFailed / providerFailed kinds.
+    struct AuthoringGetPipelineResult
+    {
+        bool                 ok = false;
+        std::string          error_kind;
+        std::string          error_message;
+        AuthoringProviderGet parsed;
+    };
+
+    // Shared Get pipeline (session create -> Provider GetDocument -> parse).
+    // Caller owns ①② locks/IO/context-build; pipeline owns ⑤⑥⑦. Session is
+    // created inside the pipeline, mirroring the Apply pipeline's ordering.
+    static AuthoringGetPipelineResult RunAuthoringGetPipeline(
+        Das::Core::ForeignInterfaceHost::PluginManager& plugin_manager,
+        const TaskAuthoringCapability&                  capability,
+        yyjson::value                                   context_json,
+        const yyjson::value&                            request)
+    {
+        AuthoringGetPipelineResult result;
+
+        DasPtr<Das::PluginInterface::IDasTaskAuthoringSession> session;
+        auto session_result = CreateAuthoringSessionWithContext(
+            plugin_manager,
+            capability,
+            std::move(context_json),
+            session);
+        if (DAS::IsFailed(session_result) || !session)
+        {
+            result.error_kind = "sessionCreateFailed";
+            result.error_message = "Failed to create authoring session";
+            return result;
+        }
+
+        auto request_json = WrapJsonValue(CloneJsonValue(request));
+        DasPtr<Das::ExportInterface::IDasJson> document_json;
+        auto                                   document_result =
+            session->GetDocument(request_json.Get(), document_json.Put());
+        if (DAS::IsFailed(document_result) || !document_json)
+        {
+            result.error_kind = "providerFailed";
+            result.error_message =
+                "Authoring provider failed to create document";
+            return result;
+        }
+
+        auto provider_result = ReadJsonInterface(document_json.Get());
+        auto parsed = ParseAuthoringProviderGet(provider_result);
+        if (!parsed.error_kind.empty())
+        {
+            result.error_kind = parsed.error_kind;
+            result.error_message = parsed.error_message;
+            return result;
+        }
+        result.parsed = std::move(parsed);
+
+        result.ok = true;
+        return result;
+    }
+
     struct RepositoryProviderCompileResult
     {
         yyjson::value compile;
@@ -2019,12 +2080,12 @@ namespace Das::Core::TaskScheduler
         Repository::Dto::RepositoryAvailabilityDto availability;
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            if (state_.load() == SchedulerState::Running
-                || state_.load() == SchedulerState::Stopping)
+            auto                        idle_guard = CheckSchedulerIdleLocked();
+            if (idle_guard)
             {
                 return MakeRepositoryResponseError(
-                    "taskWorking",
-                    "Scheduler is running or stopping");
+                    idle_guard->error_kind,
+                    idle_guard->message);
             }
             if (!initialized_ || !task_repository_store_)
             {
@@ -2081,19 +2142,25 @@ namespace Das::Core::TaskScheduler
                         : availability.message);
             }
 
-            auto* authoring = capability_registry_.FindAuthoring(task_guid);
-            if (!authoring)
+            auto capability_guard =
+                ResolveAuthoringCapabilityLocked(task_guid, capability);
+            if (capability_guard)
             {
+                // Repository-side capability message preserved byte-level
+                // (Task path uses the helper's generic message verbatim).
                 return MakeRepositoryResponseError(
-                    "capabilityMissing",
+                    capability_guard->error_kind,
                     "Repository entry task type does not declare authoring "
                     "capability");
             }
-            capability = *authoring;
         }
 
-        DasPtr<Das::PluginInterface::IDasTaskAuthoringSession> session;
-        auto session_result = CreateAuthoringSessionWithContext(
+        // Envelope guard: the contract requires the server to validate the
+        // {kind, payload} envelope before invoking the Provider. The shared
+        // Get pipeline owns ⑤ session -> ⑥⑦(GetDocument + parse); this caller
+        // owns ①② locks/IO, and ⑩ entryId/taskTypeGuid/revision response
+        // assembly.
+        auto pipeline = RunAuthoringGetPipeline(
             plugin_manager_,
             capability,
             MakeRepositoryAuthoringContextJson(
@@ -2101,33 +2168,20 @@ namespace Das::Core::TaskScheduler
                 entry_id,
                 entry.accepted_properties,
                 entry_json),
-            session);
-        if (DAS::IsFailed(session_result) || !session)
+            request);
+        if (!pipeline.ok)
         {
-            return MakeRepositoryResponseError(
-                "sessionCreateFailed",
-                "Failed to create repository authoring session");
-        }
-
-        auto request_json = WrapJsonValue(CloneJsonValue(request));
-        DasPtr<Das::ExportInterface::IDasJson> document_json;
-        auto                                   document_result =
-            session->GetDocument(request_json.Get(), document_json.Put());
-        if (DAS::IsFailed(document_result) || !document_json)
-        {
-            return MakeRepositoryResponseError(
-                "providerFailed",
-                "Repository authoring provider failed to create document");
-        }
-
-        // Phase 84: Scheduler preserves the Provider Get envelope verbatim.
-        auto provider_result = ReadJsonInterface(document_json.Get());
-        auto parsed = ParseAuthoringProviderGet(provider_result);
-        if (!parsed.error_kind.empty())
-        {
-            return MakeRepositoryResponseError(
-                parsed.error_kind,
-                parsed.error_message);
+            std::string message = std::move(pipeline.error_message);
+            if (pipeline.error_kind == "sessionCreateFailed")
+            {
+                message = "Failed to create repository authoring session";
+            }
+            else if (pipeline.error_kind == "providerFailed")
+            {
+                message =
+                    "Repository authoring provider failed to create document";
+            }
+            return MakeRepositoryResponseError(pipeline.error_kind, message);
         }
 
         yyjson::value result(Das::Utils::MakeYyjsonObject());
@@ -2136,11 +2190,13 @@ namespace Das::Core::TaskScheduler
         (*obj)[std::string_view("taskTypeGuid")] =
             std::string(entry.task_type_guid);
         (*obj)[std::string_view("revision")] = entry.authoring.revision;
-        if (parsed.has_document)
+        if (pipeline.parsed.has_document)
         {
-            (*obj)[std::string_view("document")] = std::move(parsed.document);
+            (*obj)[std::string_view("document")] =
+                std::move(pipeline.parsed.document);
         }
-        (*obj)[std::string_view("diagnostics")] = std::move(parsed.diagnostics);
+        (*obj)[std::string_view("diagnostics")] =
+            std::move(pipeline.parsed.diagnostics);
         return result;
     }
 
@@ -3209,15 +3265,14 @@ namespace Das::Core::TaskScheduler
                     "unavailable",
                     "Task instance is unavailable");
             }
-            auto* authoring =
-                capability_registry_.FindAuthoring(inst->task_guid);
-            if (!authoring)
+            auto capability_guard =
+                ResolveAuthoringCapabilityLocked(inst->task_guid, capability);
+            if (capability_guard)
             {
                 return MakeAuthoringResponseError(
-                    "capabilityMissing",
-                    "Task does not declare authoring capability");
+                    capability_guard->error_kind,
+                    capability_guard->message);
             }
-            capability = *authoring;
             task_guid = inst->task_guid;
             properties = CloneJsonValue(inst->properties);
         }
@@ -3225,53 +3280,44 @@ namespace Das::Core::TaskScheduler
         auto& settings = plugin_manager_.GetSettingsManager();
         auto  task_json = settings.GetTaskInstanceJson("0", task_id);
 
-        DasPtr<Das::PluginInterface::IDasTaskAuthoringSession> session;
-        auto session_result = CreateAuthoringSession(
+        // Envelope guard: the contract requires the server to validate the
+        // {kind, payload} envelope before invoking the Provider. The shared
+        // Get pipeline owns ⑤ session -> ⑥⑦(GetDocument + parse); this caller
+        // owns ①② lock/IO, and ⑩ taskId response assembly.
+        auto pipeline = RunAuthoringGetPipeline(
             plugin_manager_,
             capability,
-            task_id,
-            properties,
-            task_json,
-            session);
-        if (DAS::IsFailed(session_result) || !session)
+            MakeAuthoringContextJson(
+                plugin_manager_,
+                task_id,
+                properties,
+                task_json),
+            request);
+        if (!pipeline.ok)
         {
-            return MakeAuthoringResponseError(
-                "sessionCreateFailed",
-                "Failed to create task authoring session");
-        }
-
-        auto request_json = WrapJsonValue(CloneJsonValue(request));
-        DasPtr<Das::ExportInterface::IDasJson> document_json;
-        auto                                   document_result =
-            session->GetDocument(request_json.Get(), document_json.Put());
-        if (DAS::IsFailed(document_result) || !document_json)
-        {
-            return MakeAuthoringResponseError(
-                "providerFailed",
-                "Task authoring provider failed to create document");
-        }
-
-        // Phase 84: Scheduler preserves the Provider Get envelope verbatim.
-        // It does not merge a Core catalog, rewrap the result, or regenerate
-        // a document when the Provider omits one.
-        auto provider_result = ReadJsonInterface(document_json.Get());
-        auto parsed = ParseAuthoringProviderGet(provider_result);
-        if (!parsed.error_kind.empty())
-        {
-            return MakeAuthoringResponseError(
-                parsed.error_kind,
-                parsed.error_message);
+            std::string message = std::move(pipeline.error_message);
+            if (pipeline.error_kind == "sessionCreateFailed")
+            {
+                message = "Failed to create task authoring session";
+            }
+            else if (pipeline.error_kind == "providerFailed")
+            {
+                message = "Task authoring provider failed to create document";
+            }
+            return MakeAuthoringResponseError(pipeline.error_kind, message);
         }
 
         yyjson::value result(Das::Utils::MakeYyjsonObject());
         auto          obj = result.as_object();
         (*obj)[std::string_view("taskId")] = task_id;
         (*obj)[std::string_view("taskGuid")] = GuidToString(task_guid);
-        if (parsed.has_document)
+        if (pipeline.parsed.has_document)
         {
-            (*obj)[std::string_view("document")] = std::move(parsed.document);
+            (*obj)[std::string_view("document")] =
+                std::move(pipeline.parsed.document);
         }
-        (*obj)[std::string_view("diagnostics")] = std::move(parsed.diagnostics);
+        (*obj)[std::string_view("diagnostics")] =
+            std::move(pipeline.parsed.diagnostics);
         return result;
     }
 
