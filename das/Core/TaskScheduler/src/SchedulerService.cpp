@@ -927,7 +927,7 @@ namespace Das::Core::TaskScheduler
         if (capability_registry_.FindAuthoring(task_guid) == nullptr)
         {
             availability.state = "unavailable";
-            availability.reason = "authoringCapabilityMissing";
+            availability.reason = "capabilityMissing";
             availability.message =
                 "Task type does not declare an authoring capability";
             return availability;
@@ -1958,7 +1958,7 @@ namespace Das::Core::TaskScheduler
             if (!authoring)
             {
                 return MakeRepositoryResponseError(
-                    "authoringCapabilityMissing",
+                    "capabilityMissing",
                     "Repository entry task type does not declare authoring "
                     "capability");
             }
@@ -2093,7 +2093,7 @@ namespace Das::Core::TaskScheduler
             if (!authoring)
             {
                 return MakeRepositoryResponseError(
-                    "authoringCapabilityMissing",
+                    "capabilityMissing",
                     "Repository entry task type does not declare authoring "
                     "capability");
             }
@@ -2279,7 +2279,7 @@ namespace Das::Core::TaskScheduler
             if (!authoring)
             {
                 return MakeRepositoryResponseError(
-                    "authoringCapabilityMissing",
+                    "capabilityMissing",
                     "Repository entry task type does not declare authoring "
                     "capability");
             }
