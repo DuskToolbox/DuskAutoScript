@@ -5672,3 +5672,150 @@ TEST(MaapiProjectionTest, TaskSwitchOptionFallsBackToPiDefaultWhenMissing)
     ASSERT_TRUE(stage_val.is_string());
     EXPECT_EQ(stage_val.as_string().value_or(""), "1-1");
 }
+
+// ---------------------------------------------------------------------------
+// itemId 偶现 bug 回归 (FormSequenceItem.id must be non-empty)
+//
+// 背景：前端 DasNativeUI 编辑 MaaPI formSequence 任务时偶发
+// "FormSequenceItem.id must be non-empty"。根因是若干 apply 路径在
+// settings.pi.tasks 里引入了空 item_id 的 task 实例：
+//   1) ApplyPreset 清空 tasks 后按 preset 重建，重建过程不分配 itemId。
+//   2) FindTaskOptionContainer（task 级 option 的 document-targeted setValue）
+//      找不到现有 task 时按 catalog 注册新建一个，不分配 itemId。
+// TaskSettingsArray 序列化对空 item_id 跳过，持久化丢失；ParseAcceptedSettings
+// 仅在 parse 时兜底（session long-lived，apply 后不 normalize），故偶现。
+//
+// 这些测试构造可复现路径，断言 Get/Apply 投影后 formSequence.items[*].id 全部
+// 非空且唯一。修复前为 RED。
+// ---------------------------------------------------------------------------
+
+// 断言 document.formSequence.items[*].id 全部非空、唯一。
+::testing::AssertionResult AllItemIdsNonEmptyAndUnique(
+    const yyjson::value& document)
+{
+    auto ids = CollectFormItemIds(document);
+    if (ids.empty())
+    {
+        return ::testing::AssertionFailure()
+               << "no formSequence items found in document";
+    }
+    std::set<std::string> seen;
+    for (const auto& id : ids)
+    {
+        if (id.empty())
+        {
+            return ::testing::AssertionFailure()
+                   << "formSequence item has empty id";
+        }
+        if (!seen.insert(id).second)
+        {
+            return ::testing::AssertionFailure()
+                   << "duplicate formSequence item id: " << id;
+        }
+    }
+    return ::testing::AssertionSuccess();
+}
+
+// RED-1: ApplyPreset 经 session ApplyChange 触发，重建 tasks 必须给每个实例
+// 分配稳定 itemId。修复前 ApplyPreset 不分配，document.formSequence.items[0].id
+// 为空，frontend 报 "FormSequenceItem.id must be non-empty"。
+TEST_F(MaapiAuthoringFixture, PresetExpansionAssignsStableItemIds)
+{
+    auto interface_path =
+        FixturePath("interface_authoring.jsonc").generic_string();
+    auto session = CreateSession(
+        "{\"adapter\":{\"interfacePath\":\"" + interface_path + "\"}}");
+
+    DasPtr<Das::ExportInterface::IDasJson> result_json;
+    auto                                   preset_change = ParseDasJson(
+        "{\"baseRevision\":0,\"kind\":\"setValue\",\"payload\":{\"target\":{"
+        "\"kind\":\"document\"},\"fieldName\":\"presetName\","
+        "\"value\":\"DailyPreset\"}}");
+    ASSERT_EQ(
+        session->ApplyChange(preset_change.Get(), result_json.Put()),
+        DAS_S_OK);
+
+    auto result = ReadJsonInterface(result_json.Get());
+    auto apply_valid =
+        Das::Core::TaskScheduler::ValidateAuthoringApplyResult(result, 0);
+    EXPECT_TRUE(apply_valid.valid) << "error_kind=" << apply_valid.error_kind
+                                   << " message=" << apply_valid.message;
+
+    auto document = DocumentFromApplyResult(result);
+    EXPECT_TRUE(AllItemIdsNonEmptyAndUnique(document));
+
+    // Get 再次投影：id 必须稳定（与 Apply 结果一致，幂等）。
+    DasPtr<Das::ExportInterface::IDasJson> get_json;
+    ASSERT_EQ(session->GetDocument({}, get_json.Put()), DAS_S_OK);
+    auto get_document = DocumentOfGet(get_json.Get());
+    EXPECT_TRUE(AllItemIdsNonEmptyAndUnique(get_document));
+
+    auto apply_ids = CollectFormItemIds(document);
+    auto get_ids = CollectFormItemIds(get_document);
+    ASSERT_EQ(apply_ids.size(), get_ids.size());
+    for (std::size_t i = 0; i < apply_ids.size(); ++i)
+    {
+        EXPECT_EQ(apply_ids[i], get_ids[i])
+            << "item id unstable between Apply and Get at index " << i;
+    }
+}
+
+// RED-2: setValue target=document 对 task 级 option（notify 不在 global_option
+// 列表，是 DailyFarm 私有）触发 FindTaskOptionContainer 新建 task 实例。
+// 修复前该路径不分配 itemId，doc.item.id 为空。
+TEST_F(
+    MaapiAuthoringFixture,
+    DocumentTargetSetValueOnTaskScopedOptionAssignsItemId)
+{
+    auto interface_path =
+        FixturePath("interface_authoring.jsonc").generic_string();
+    auto session = CreateSession(
+        "{\"adapter\":{\"interfacePath\":\"" + interface_path + "\"}}");
+
+    DasPtr<Das::ExportInterface::IDasJson> result_json;
+    // notify 是 DailyFarm 的 task 级 switch option；target=document 触发
+    // ApplyOptionValueChange → FindTaskOptionContainer 新建 DailyFarm 实例。
+    auto change = ParseDasJson(
+        "{\"baseRevision\":0,\"kind\":\"setValue\",\"payload\":{\"target\":{"
+        "\"kind\":\"document\"},\"fieldName\":\"options.notify\","
+        "\"value\":true}}");
+    ASSERT_EQ(session->ApplyChange(change.Get(), result_json.Put()), DAS_S_OK);
+
+    auto result = ReadJsonInterface(result_json.Get());
+    auto document = DocumentFromApplyResult(result);
+    EXPECT_TRUE(AllItemIdsNonEmptyAndUnique(document));
+
+    auto ids = CollectFormItemIds(document);
+    ASSERT_EQ(ids.size(), 1u);
+    EXPECT_FALSE(ids[0].empty());
+}
+
+// RED-3: 单元级 —— 直接构造带空 item_id 的 settings，投影必须保证
+// formSequence.items[*].id 非空（投影层兜底）。修复前投影原样输出空字符串。
+TEST(MaapiItemIdSafetyNetTest, ProjectAuthoringDocumentFillsEmptyItemId)
+{
+    using namespace Das::Plugins::DasMaaPi;
+    PiCatalog catalog;
+    catalog.name = "ItemIdSafetyNet";
+    catalog.version = "1.0";
+
+    PiTask task;
+    task.dto.name = "DailyFarm";
+    task.dto.entry = "StartDaily";
+    catalog.tasks.push_back(std::move(task));
+
+    AcceptedSettingsDto    settings;
+    MaapiPiTaskSettingsDto t1;
+    t1.task_name = "DailyFarm";
+    t1.enabled = true;
+    // 故意留空 item_id —— 模拟漏分配的 apply 路径产生的脏状态。
+    settings.pi.tasks.push_back(std::move(t1));
+
+    auto document = ProjectAuthoringDocument(settings, &catalog, {}, 0);
+    EXPECT_TRUE(AllItemIdsNonEmptyAndUnique(document));
+
+    // 第二次投影同一 settings：id 应保持稳定（Layer 2 已在 apply 层补 id；
+    // 单元测试直接验证 Layer 1 投影兜底也能给出非空 id）。
+    auto document_again = ProjectAuthoringDocument(settings, &catalog, {}, 0);
+    EXPECT_TRUE(AllItemIdsNonEmptyAndUnique(document_again));
+}

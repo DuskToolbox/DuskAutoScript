@@ -298,10 +298,10 @@ namespace Das::Plugins::DasMaaPi
         std::vector<MaapiConfigurationDto> ParseConfigurationArray(
             const TObject&   obj,
             std::string_view key);
-        // D-84-40: 在 parse 完成后补齐 legacy task 的 itemId。定义在
-        // AllocateIdWithPrefix / CollectUsedItemIds 之后；ParseAcceptedObject
-        // 在前面引用需前向声明。
-        void NormalizeItemIds(AcceptedSettingsDto& settings);
+        // D-84-40: NormalizeItemIds 现已移出匿名 namespace（在 header 公开
+        // 声明，实现在本文件公共 namespace 段），供 ProjectAuthoringDocument
+        // 与 apply 路径作为不变量兜底。ParseAcceptedObject 经由 header 声明
+        // 直接调用公共符号，不再需要此处前向声明。
 
         template <typename TObject>
         AcceptedSettingsDto ParseAcceptedObject(const TObject& obj)
@@ -1092,6 +1092,10 @@ namespace Das::Plugins::DasMaaPi
 
             MaapiPiTaskSettingsDto selected;
             selected.task_name = catalog_task->dto.name;
+            // itemId 偶现 bug Layer 2：apply 路径新建 task 实例时必须分配
+            // Provider 颁发的稳定 item_id；否则 doc.item.id 投影为空，前端
+            // 报 "FormSequenceItem.id must be non-empty"。
+            selected.item_id = AllocateItemId(settings);
             settings.pi.tasks.emplace_back(std::move(selected));
             return &settings.pi.tasks.back().options;
         }
@@ -1592,27 +1596,33 @@ namespace Das::Plugins::DasMaaPi
         // post-84 多配置权威在首次 parse 后立即满足 "每个 task 实例都有
         // Provider 颁发 itemId" 的不变量，从而 Get 投影不需要在每次调用时
         // 重新分配（保持 idempotent）。
-        void NormalizeItemIds(AcceptedSettingsDto& settings)
-        {
-            auto used = CollectUsedItemIds(settings);
-            auto ensure = [&used](std::vector<MaapiPiTaskSettingsDto>& tasks)
-            {
-                for (auto& task : tasks)
-                {
-                    if (task.item_id.empty())
-                    {
-                        task.item_id = AllocateIdWithPrefix("item_", used);
-                        used.emplace(task.item_id);
-                    }
-                }
-            };
-            ensure(settings.pi.tasks);
-            for (auto& config : settings.pi.configurations)
-            {
-                ensure(config.tasks);
-            }
-        }
+        // 公共包装 NormalizeItemIds（声明在 header）在匿名 namespace 外提供，
+        // 供 ProjectAuthoringDocument / Apply* 路径作为不变量兜底。
     } // namespace
+
+    // D-84-40 + itemId 偶现 bug 修复：为 settings 内所有空 item_id 的 task
+    // 实例补齐稳定 item_id。仅补空，已有 item_id 原样保留；覆盖 flat pi.tasks
+    // 与 configurations[*].tasks。调用幂等。
+    void NormalizeItemIds(AcceptedSettingsDto& settings)
+    {
+        auto used = CollectUsedItemIds(settings);
+        auto ensure = [&used](std::vector<MaapiPiTaskSettingsDto>& tasks)
+        {
+            for (auto& task : tasks)
+            {
+                if (task.item_id.empty())
+                {
+                    task.item_id = AllocateIdWithPrefix("item_", used);
+                    used.emplace(task.item_id);
+                }
+            }
+        };
+        ensure(settings.pi.tasks);
+        for (auto& config : settings.pi.configurations)
+        {
+            ensure(config.tasks);
+        }
+    }
 
     MaapiConfigurationDto* GetCurrentConfiguration(
         AcceptedSettingsDto& settings)
@@ -1862,12 +1872,21 @@ namespace Das::Plugins::DasMaaPi
     }
 
     yyjson::value ProjectAuthoringDocument(
-        const AcceptedSettingsDto&          settings,
+        const AcceptedSettingsDto&          settings_in,
         const PiCatalog*                    catalog,
         const std::vector<PiDiagnosticDto>& diagnostics,
         int64_t                             revision,
         std::vector<PiDiagnosticDto>*       projection_diagnostics)
     {
+        // itemId 偶现 bug 投影层兜底：不管哪个 apply 路径漏分配 item_id，
+        // Get 投影出 doc.item.id 必须永不空、永唯一。这里在投影前对一份
+        // mutable 拷贝做 NormalizeItemIds 兜底，不污染 caller 的 settings
+        // 状态。Layer 2 (apply 层 AllocateItemId) 正常工作时此 normalize
+        // 是 no-op，幂等；若 Layer 2 漏调则由此保证 doc 仍可消费 (虽然跨
+        // Get 的 id 仍依赖 caller 状态修复才稳定)。
+        AcceptedSettingsDto settings = settings_in;
+        NormalizeItemIds(settings);
+
         yyjson::value document(Object());
         auto          obj = document.as_object();
         // D-84-02/13: document 携带 viewKind 而不是 kind；contractVersion /
@@ -2371,6 +2390,8 @@ namespace Das::Plugins::DasMaaPi
                 {
                     MaapiPiTaskSettingsDto selected;
                     selected.task_name = task_name;
+                    // itemId 偶现 bug Layer 2：legacy path 也补 id。
+                    selected.item_id = AllocateItemId(settings);
                     settings.pi.tasks.emplace_back(std::move(selected));
                     return &settings.pi.tasks.back();
                 }
@@ -2623,6 +2644,8 @@ namespace Das::Plugins::DasMaaPi
                 {
                     MaapiPiTaskSettingsDto selected;
                     selected.task_name = std::string(task_name);
+                    // itemId 偶现 bug Layer 2：legacy path 也补 id。
+                    selected.item_id = AllocateItemId(settings);
                     settings.pi.tasks.emplace_back(std::move(selected));
                     task = &settings.pi.tasks.back();
                 }
@@ -2656,6 +2679,8 @@ namespace Das::Plugins::DasMaaPi
                 {
                     MaapiPiTaskSettingsDto selected;
                     selected.task_name = std::string(task_name);
+                    // itemId 偶现 bug Layer 2：legacy path 也补 id。
+                    selected.item_id = AllocateItemId(settings);
                     settings.pi.tasks.emplace_back(std::move(selected));
                     task = &settings.pi.tasks.back();
                 }
@@ -2687,6 +2712,8 @@ namespace Das::Plugins::DasMaaPi
             MaapiPiTaskSettingsDto selected;
             selected.task_name = std::string(task_name);
             selected.enabled = enabled;
+            // itemId 偶现 bug Layer 2：legacy ApplyAddSequenceItem 也补 id。
+            selected.item_id = AllocateItemId(settings);
             settings.pi.tasks.emplace_back(std::move(selected));
             RemoveOrphanPath(
                 settings,
@@ -2759,6 +2786,12 @@ namespace Das::Plugins::DasMaaPi
             MaapiPiTaskSettingsDto task_settings;
             task_settings.task_name = task.name;
             task_settings.enabled = task.enabled;
+            // itemId 偶现 bug Layer 2：preset 展开重建 tasks 时必须为每个
+            // 实例分配稳定 item_id，否则投影 doc.item.id 为空，前端报
+            // "FormSequenceItem.id must be non-empty"。AllocateItemId 基于
+            // settings 当前已用 id 集合分配，避免冲突；preset 展开前的
+            // tasks 已被 clear()，故每个实例都拿到全新 id。
+            task_settings.item_id = AllocateItemId(settings);
 
             InitializeOptionDefaults(
                 task_settings.options,
