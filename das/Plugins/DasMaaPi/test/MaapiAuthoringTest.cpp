@@ -1461,12 +1461,16 @@ TEST(I18nTest, RootFieldLabelsAreLocalizedViaDollarPrefixKeys)
     EXPECT_EQ(RootFieldLabel(document_en, "language"), "Language");
 }
 
-// 根字段 label 缺译时回退到英文字段名（最后兜底），并向 projection_diagnostics
-// 报告 warning，便于开发者补译。
-TEST(I18nTest, RootFieldLabelFallsBackToEnglishWhenTranslationMissing)
+// 根字段 label 缺译时回退到 MaaPI 内置中文默认（不依赖 PI i18n，因为这 4 个
+// 固定字段的 UI label 在 MaaPI 层面是固定的），并向 projection_diagnostics
+// 报告 warning 便于开发者补译。PI i18n 有翻译时优先用 PI 翻译。
+TEST(I18nTest, RootFieldLabelFallsBackToChineseDefaultWhenTranslationMissing)
 {
     auto catalog = MakeI18nMockCatalog();
     catalog.translations["zh_cn"].erase("field.controller");
+    catalog.translations["zh_cn"].erase("field.resource");
+    catalog.translations["zh_cn"].erase("field.preset");
+    catalog.translations["zh_cn"].erase("field.language");
 
     AcceptedSettingsDto settings;
     settings.pi.language = "zh_cn";
@@ -1474,18 +1478,54 @@ TEST(I18nTest, RootFieldLabelFallsBackToEnglishWhenTranslationMissing)
     std::vector<PiDiagnosticDto> diags;
     auto document = ProjectAuthoringDocument(settings, &catalog, {}, 0, &diags);
 
-    EXPECT_EQ(RootFieldLabel(document, "controllerName"), "Controller");
-    bool found_missing = false;
+    // 4 个固定字段均回退到 MaaPI 内置中文默认，不泄漏英文字段名。
+    EXPECT_EQ(RootFieldLabel(document, "controllerName"), "控制器");
+    EXPECT_EQ(RootFieldLabel(document, "resourceName"), "资源");
+    EXPECT_EQ(RootFieldLabel(document, "presetName"), "预设");
+    EXPECT_EQ(RootFieldLabel(document, "language"), "语言");
+    // 英文字段名不应出现（PI i18n 缺译时不再 fallback 到英文）。
+    EXPECT_NE(RootFieldLabel(document, "controllerName"), "Controller");
+    EXPECT_NE(RootFieldLabel(document, "resourceName"), "Resource");
+    EXPECT_NE(RootFieldLabel(document, "presetName"), "Preset");
+    EXPECT_NE(RootFieldLabel(document, "language"), "Language");
+
+    // 4 个字段都应 emit 缺译 diagnostic。
+    int missing_count = 0;
     for (const auto& d : diags)
     {
-        if (d.severity == "warning"
-            && d.message.find("field.controller") != std::string::npos)
+        if (d.severity == "warning")
         {
-            found_missing = true;
-            break;
+            for (const auto* key :
+                 {"field.controller",
+                  "field.resource",
+                  "field.preset",
+                  "field.language"})
+            {
+                if (d.message.find(key) != std::string::npos)
+                {
+                    ++missing_count;
+                    break;
+                }
+            }
         }
     }
-    EXPECT_TRUE(found_missing);
+    EXPECT_EQ(missing_count, 4);
+}
+
+// 即便 language=en，PI i18n 缺译时也用 MaaPI 内置中文默认（fallback 与
+// language 无关，因为内置默认是固定中文 label）。
+TEST(I18nTest, RootFieldLabelFallsBackToChineseDefaultEvenForEnglishLanguage)
+{
+    auto catalog = MakeI18nMockCatalog();
+    catalog.translations["en"].erase("field.controller");
+
+    AcceptedSettingsDto settings;
+    settings.pi.language = "en";
+
+    std::vector<PiDiagnosticDto> diags;
+    auto document = ProjectAuthoringDocument(settings, &catalog, {}, 0, &diags);
+
+    EXPECT_EQ(RootFieldLabel(document, "controllerName"), "控制器");
 }
 
 TEST(I18nTest, ResolveI18nSwitchesLanguageCorrectly)

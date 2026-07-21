@@ -1918,8 +1918,12 @@ namespace Das::Plugins::DasMaaPi
 
         if (catalog)
         {
-            // 根字段 label 走 PI i18n 解析；缺译时回退到英文字段名（协议层
-            // 概念）并向 projection_diagnostics 报告 warning，便于开发者补译。
+            // controller/resource/preset/language 是 MaaPI adapter
+            // 固定字段（select PI controller/resource/preset/language
+            // 实例），label 走 PI i18n 解析； 缺译时回退到 MaaPI
+            // 内置中文默认（不依赖 PI i18n，因为这些字段的 UI label 在 MaaPI
+            // 层面是固定的），并向 projection_diagnostics 报告 warning
+            // 便于开发者补译。
             auto controller_candidates = CandidateArray(
                 catalog->controllers,
                 catalog,
@@ -1931,7 +1935,7 @@ namespace Das::Plugins::DasMaaPi
                     "$field.controller",
                     *catalog,
                     current_language,
-                    "Controller",
+                    "控制器",
                     projection_diagnostics,
                     "fields.controllerName.label"),
                 4,
@@ -1951,7 +1955,7 @@ namespace Das::Plugins::DasMaaPi
                     "$field.resource",
                     *catalog,
                     current_language,
-                    "Resource",
+                    "资源",
                     projection_diagnostics,
                     "fields.resourceName.label"),
                 4,
@@ -1971,7 +1975,7 @@ namespace Das::Plugins::DasMaaPi
                     "$field.preset",
                     *catalog,
                     current_language,
-                    "Preset",
+                    "预设",
                     projection_diagnostics,
                     "fields.presetName.label"),
                 4,
@@ -2022,7 +2026,7 @@ namespace Das::Plugins::DasMaaPi
                     "$field.language",
                     *catalog,
                     current_language,
-                    "Language",
+                    "语言",
                     projection_diagnostics,
                     "fields.language.label"),
                 4,
