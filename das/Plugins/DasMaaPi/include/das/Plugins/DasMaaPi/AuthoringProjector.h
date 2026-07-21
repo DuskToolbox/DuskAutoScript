@@ -63,7 +63,7 @@ namespace Das::Plugins::DasMaaPi
         std::vector<PiDiagnosticDto>& diagnostics);
 
     // D-84-28: invokeCommand 严格 dispatch。已知 commandId：
-    //   - "newConfiguration" / "copyConfiguration"（84-05 已实现）
+    //   - "newPreset"（D-84.2-04 通用 invokeCommand 落地）
     // 未知 commandId 返回 false 并 emit error 诊断。
     bool ApplyInvokeCommandChange(
         AcceptedSettingsDto&          settings,
@@ -81,45 +81,16 @@ namespace Das::Plugins::DasMaaPi
         const PiCatalog&     catalog,
         std::string_view     preset_name);
 
-    // D-84-28/42: invokeCommand 分派。已知 commandId：
-    //   - "newConfiguration":  创建空 configuration + 新 id/name，切为选中
-    //   - "copyConfiguration": 拷贝当前选中 configuration，重新生成配置与
-    //                          每个 task 的 item_id，保留用户值/顺序，切为选中
-    // 未知 commandId 静默忽略 (84-07 owns full Apply cutover)。
-    void ApplyInvokeCommand(
-        AcceptedSettingsDto& settings,
-        std::string_view     command_id);
-
     // D-84-40: 为新 task 实例分配 Provider 颁发的稳定 item_id。
     // 基于 atomic counter 生成 "item_<n>" 形式，避免与已存在 id 冲突。
     // 不从 taskName/actionId/index/label 派生，避免同 task 类型撞 id。
     std::string AllocateItemId(const AcceptedSettingsDto& settings);
 
     // 为 settings 内所有空 item_id 的 task 实例补齐稳定 item_id。仅补空，
-    // 已有 item_id 原样保留。覆盖 flat pi.tasks 与 configurations[*].tasks。
-    // 调用幂等：同一 settings 多次调用结果稳定。
+    // 已有 item_id 原样保留。覆盖 flat pi.tasks。调用幂等：同一 settings
+    // 多次调用结果稳定。
     // 用途：parse 后兜底 (legacy pre-84 输入) + apply 路径兜底 (避免任何
     // apply mutation 留下空 item_id 导致投影层 emit 空 id，触发前端
     // "FormSequenceItem.id must be non-empty")。
     void NormalizeItemIds(AcceptedSettingsDto& settings);
-
-    // D-84-42: 为新 configuration 实例分配稳定 id 与本地化名称。
-    // id 基于 atomic counter 生成 "cfg_<n>"；name 自动生成 (命令无参数)。
-    std::string AllocateConfigurationId(const AcceptedSettingsDto& settings);
-    std::string AllocateConfigurationName(const AcceptedSettingsDto& settings);
-
-    // 取当前选中 configuration 的可变 / 只读指针。
-    // 若 configurations[] 为空或 selected_configuration_id 不匹配，返回
-    // nullptr，调用方应回退到 flat 字段 (legacy 兼容路径)。
-    MaapiConfigurationDto* GetCurrentConfiguration(
-        AcceptedSettingsDto& settings);
-    const MaapiConfigurationDto* GetCurrentConfiguration(
-        const AcceptedSettingsDto& settings);
-
-    // D-84-41/42: flat pi 字段与 configurations[selected] 双向同步。
-    // Apply 修改 flat 字段后，调用 SyncCurrentConfigFromActive 把 flat 写回
-    // configurations[selected]，再调用 SerializeAcceptedSettings 即可输出
-    // 一致的 configurations[]。配置为空 (legacy fixture) 时是 no-op。
-    void SyncCurrentConfigFromActive(AcceptedSettingsDto& settings);
-    void SyncActiveFromCurrentConfig(AcceptedSettingsDto& settings);
 } // namespace Das::Plugins::DasMaaPi

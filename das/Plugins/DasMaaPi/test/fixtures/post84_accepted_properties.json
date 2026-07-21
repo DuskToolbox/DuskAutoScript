@@ -3,8 +3,9 @@
 // session context, mutate through public Apply APIs, and never persist back
 // to this file (or to the live gitignored build/.../settings/0/taskId7.json
 // legacy sample). Stable Provider-issued itemId values exercise D-84-40
-// (duplicate actionId with distinct identities) and D-84-41/42 (multiple
-// configurations for select/copy/new). Excludes hotkey per the v28 fixture.
+// (duplicate actionId with distinct identities) + D-84-41 (presetName select
+// + setValue). D-84.2-01 removed configurations[]; the flat pi.tasks[] shape
+// is now the sole authority. Excludes hotkey per the v28 fixture.
 {
   "adapter": {
     "interfacePath": "interface_authoring_v28.jsonc",
@@ -21,96 +22,6 @@
     "resourceOptions": [],
     "controllerOptions": [],
     "orphanPaths": [],
-    "selectedConfigurationId": "cfg_a",
-    "configurations": [
-      {
-        "id": "cfg_a",
-        "name": "Primary",
-        "controllerName": "Android",
-        "resourceName": "Official",
-        "language": "zh_cn",
-        "globalOptions": [],
-        "resourceOptions": [],
-        "controllerOptions": [],
-        "tasks": [
-          {
-            "itemId": "item_daily_farm_a1",
-            "taskName": "DailyFarm",
-            "enabled": true,
-            "options": [
-              {
-                "optionName": "stage",
-                "kind": "select",
-                "selectedCases": ["1-1"],
-                "inputValues": {}
-              },
-              {
-                "optionName": "retry",
-                "kind": "input",
-                "selectedCases": [],
-                "inputValues": {
-                  "times": "5",
-                  "unit": "minute"
-                }
-              },
-              {
-                "optionName": "use-medicine",
-                "kind": "checkbox",
-                "selectedCases": ["small"],
-                "inputValues": {}
-              }
-            ]
-          },
-          {
-            "itemId": "item_daily_farm_a2",
-            "taskName": "DailyFarm",
-            "enabled": false,
-            "options": [
-              {
-                "optionName": "stage",
-                "kind": "select",
-                "selectedCases": ["1-2"],
-                "inputValues": {}
-              }
-            ]
-          }
-        ]
-      },
-      {
-        "id": "cfg_b",
-        "name": "Secondary",
-        "controllerName": "Desktop",
-        "resourceName": "Official",
-        "language": "zh_cn",
-        "globalOptions": [],
-        "resourceOptions": [],
-        "controllerOptions": [],
-        "tasks": [
-          {
-            "itemId": "item_daily_farm_bonus_b1",
-            "taskName": "DailyFarmBonus",
-            "enabled": true,
-            "options": [
-              {
-                "optionName": "stage",
-                "kind": "select",
-                "selectedCases": ["1-1"],
-                "inputValues": {}
-              },
-              {
-                "optionName": "retry",
-                "kind": "input",
-                "selectedCases": [],
-                "inputValues": {
-                  "times": "2",
-                  "unit": "second"
-                }
-              }
-            ]
-          }
-        ]
-      }
-    ],
     "tasks": [
       {
         "itemId": "item_daily_farm_a1",

@@ -288,14 +288,12 @@ namespace Das::Plugins::DasMaaPi
             return result;
         }
 
-        // D-84-40/41/42 前向声明：本匿名命名空间内使用的辅助。
-        // SyncActiveFromCurrentConfig / SyncCurrentConfigFromActive /
-        // GetCurrentConfiguration 已在公共头 AuthoringProjector.h 声明，
-        // 不在此重复声明 (匿名 namespace + 公共 namespace 重载会引发歧义)。
+        // D-84-40 前向声明：本匿名命名空间内使用的序列化辅助。
         yyjson::value OptionSettingsArray(
             const std::vector<MaapiPiOptionSettingsDto>& options);
+        // D-84.2-04: customPresets parse 辅助前向声明（定义在本命名空间后段）。
         template <typename TObject>
-        std::vector<MaapiConfigurationDto> ParseConfigurationArray(
+        std::vector<MaapiPresetSnapshotDto> ParseCustomPresetsArray(
             const TObject&   obj,
             std::string_view key);
         // D-84-40: NormalizeItemIds 现已移出匿名 namespace（在 header 公开
@@ -348,18 +346,10 @@ namespace Das::Plugins::DasMaaPi
                     settings.pi.controller_options =
                         ParseOptionSettingsArray(*pi, "controllerOptions");
                     settings.pi.tasks = ParseTaskSettingsArray(*pi, "tasks");
-                    // D-84-41/42: post-84 多配置权威。selected_configuration_id
-                    // 与 configurations[] 同时存在时，把当前选中 configuration
-                    // 的字段同步到 flat pi 字段，让既有消费者 (PiCompiler /
-                    // MaaPiExecutionEngine / Projector) 继续从 flat 读出当前
-                    // 权威。配置缺失或 selected 不命中则保留 flat 字段不动
-                    // (legacy 路径)。
-                    settings.pi.selected_configuration_id =
-                        OptionalString(*pi, "selectedConfigurationId")
-                            .value_or("");
-                    settings.pi.configurations =
-                        ParseConfigurationArray(*pi, "configurations");
-                    SyncActiveFromCurrentConfig(settings);
+                    // D-84.2-04: customPresets 是 Provider 私有 preset 快照
+                    // 存储。缺失时返回空 vector（flat pi 形态）。
+                    settings.pi.custom_presets =
+                        ParseCustomPresetsArray(*pi, "customPresets");
                 }
             }
             // D-84-40: 任何 legacy task (pre-84 输入或 ApplyAddSequenceItem
@@ -882,54 +872,10 @@ namespace Das::Plugins::DasMaaPi
             return arr;
         }
 
-        // 投影单个 configuration 的完整对象（D-84-41/42）。
-        // 与 SerializeAcceptedSettings 的 pi flat 字段共享 OptionSettingsArray
-        // 与 TaskSettingsArray 序列化器，保证两路输出形态一致。
-        yyjson::value ConfigurationObject(const MaapiConfigurationDto& config)
-        {
-            yyjson::value value(Object());
-            auto          obj = value.as_object();
-            (*obj)[std::string_view("id")] = JsonString(config.id);
-            (*obj)[std::string_view("name")] = JsonString(config.name);
-            if (config.controller_name)
-            {
-                (*obj)[std::string_view("controllerName")] =
-                    JsonString(*config.controller_name);
-            }
-            if (config.resource_name)
-            {
-                (*obj)[std::string_view("resourceName")] =
-                    JsonString(*config.resource_name);
-            }
-            if (config.language)
-            {
-                (*obj)[std::string_view("language")] =
-                    JsonString(*config.language);
-            }
-            (*obj)[std::string_view("globalOptions")] =
-                OptionSettingsArray(config.global_options);
-            (*obj)[std::string_view("resourceOptions")] =
-                OptionSettingsArray(config.resource_options);
-            (*obj)[std::string_view("controllerOptions")] =
-                OptionSettingsArray(config.controller_options);
-            (*obj)[std::string_view("tasks")] = TaskSettingsArray(config.tasks);
-            return value;
-        }
-
-        yyjson::value ConfigurationArray(
-            const std::vector<MaapiConfigurationDto>& configurations)
-        {
-            yyjson::value arr(Array());
-            for (const auto& config : configurations)
-            {
-                arr.as_array()->emplace_back(ConfigurationObject(config));
-            }
-            return arr;
-        }
-
         // D-84.2-04: 序列化 pi.customPresets[]（Provider 私有 preset 快照）。
-        // 形态镜像 ConfigurationObject：id/name + 可选 controller/resource/
-        // language + options 子数组 + tasks 子数组。
+        // 形态：id/name + 可选 controller/resource/language + options 子数组 +
+        // tasks 子数组。customPresets 不进入 document UI IR，只在
+        // acceptedProperties.pi 序列化时输出。
         yyjson::value CustomPresetsArray(
             const std::vector<MaapiPresetSnapshotDto>& presets)
         {
@@ -968,12 +914,13 @@ namespace Das::Plugins::DasMaaPi
             return arr;
         }
 
-        // D-84-41/42: 解析 pi.configurations[] 数组。
-        std::vector<MaapiConfigurationDto> ParseConfigurationArray(
+        // D-84.2-04: 解析 pi.customPresets[] 数组（Provider 私有 preset
+        // 快照）。缺失时返回空 vector。跳过空 id 条目。
+        std::vector<MaapiPresetSnapshotDto> ParseCustomPresetsArray(
             const auto&      obj,
             std::string_view key)
         {
-            std::vector<MaapiConfigurationDto> result;
+            std::vector<MaapiPresetSnapshotDto> result;
             if (!obj.contains(key))
             {
                 return result;
@@ -985,29 +932,29 @@ namespace Das::Plugins::DasMaaPi
             }
             for (auto it = arr->begin(); it != arr->end(); ++it)
             {
-                auto config_obj = it->as_object();
-                if (!config_obj)
+                auto preset_obj = it->as_object();
+                if (!preset_obj)
                 {
                     continue;
                 }
-                MaapiConfigurationDto config;
-                config.id = OptionalString(*config_obj, "id").value_or("");
-                config.name = OptionalString(*config_obj, "name").value_or("");
-                config.controller_name =
-                    OptionalString(*config_obj, "controllerName");
-                config.resource_name =
-                    OptionalString(*config_obj, "resourceName");
-                config.language = OptionalString(*config_obj, "language");
-                config.global_options =
-                    ParseOptionSettingsArray(*config_obj, "globalOptions");
-                config.resource_options =
-                    ParseOptionSettingsArray(*config_obj, "resourceOptions");
-                config.controller_options =
-                    ParseOptionSettingsArray(*config_obj, "controllerOptions");
-                config.tasks = ParseTaskSettingsArray(*config_obj, "tasks");
-                if (!config.id.empty())
+                MaapiPresetSnapshotDto preset;
+                preset.id = OptionalString(*preset_obj, "id").value_or("");
+                preset.name = OptionalString(*preset_obj, "name").value_or("");
+                preset.controller_name =
+                    OptionalString(*preset_obj, "controllerName");
+                preset.resource_name =
+                    OptionalString(*preset_obj, "resourceName");
+                preset.language = OptionalString(*preset_obj, "language");
+                preset.global_options =
+                    ParseOptionSettingsArray(*preset_obj, "globalOptions");
+                preset.resource_options =
+                    ParseOptionSettingsArray(*preset_obj, "resourceOptions");
+                preset.controller_options =
+                    ParseOptionSettingsArray(*preset_obj, "controllerOptions");
+                preset.tasks = ParseTaskSettingsArray(*preset_obj, "tasks");
+                if (!preset.id.empty())
                 {
-                    result.emplace_back(std::move(config));
+                    result.emplace_back(std::move(preset));
                 }
             }
             return result;
@@ -1564,11 +1511,10 @@ namespace Das::Plugins::DasMaaPi
             }
         }
 
-        // D-84-40/41/42: post-84 多配置权威同步辅助 (内部实现)。
-        // 公共 API 在 Das::Plugins::DasMaaPi 命名空间下声明；这里在匿名
-        // namespace 提供 CollectUsed* 辅助，避免暴露 std::set 头依赖。
-        // configurations[] 为空 (legacy fixture) 时 sync helper 是 no-op。
-        // 收集 settings 内所有已使用 itemId（含 configurations 与 flat）。
+        // D-84-40: itemId 分配辅助 (内部实现)。公共 API 在
+        // Das::Plugins::DasMaaPi 命名空间下声明；这里在匿名 namespace 提供
+        // CollectUsed* 辅助，避免暴露 std::set 头依赖。
+        // 收集 settings 内所有已使用 itemId（flat pi.tasks）。
         std::set<std::string> CollectUsedItemIds(
             const AcceptedSettingsDto& settings)
         {
@@ -1585,24 +1531,6 @@ namespace Das::Plugins::DasMaaPi
                 }
             };
             collect_from(settings.pi.tasks);
-            for (const auto& config : settings.pi.configurations)
-            {
-                collect_from(config.tasks);
-            }
-            return ids;
-        }
-
-        std::set<std::string> CollectUsedConfigurationIds(
-            const AcceptedSettingsDto& settings)
-        {
-            std::set<std::string> ids;
-            for (const auto& config : settings.pi.configurations)
-            {
-                if (!config.id.empty())
-                {
-                    ids.emplace(config.id);
-                }
-            }
             return ids;
         }
 
@@ -1650,17 +1578,14 @@ namespace Das::Plugins::DasMaaPi
         // D-84-40: 在 parse 完成后为任何缺失 itemId 的 task 实例分配稳定身份。
         // 只对空 itemId 补齐，已有 itemId 原样保留 —— 保证 round-trip 测试
         // RoundTripsTwoTasksWithSameNameAndDistinctItemIds 等不依赖原子计数器
-        // 的具体值。同时刷新 configurations[*].tasks 内的空 itemId，让
-        // post-84 多配置权威在首次 parse 后立即满足 "每个 task 实例都有
-        // Provider 颁发 itemId" 的不变量，从而 Get 投影不需要在每次调用时
-        // 重新分配（保持 idempotent）。
+        // 的具体值。
         // 公共包装 NormalizeItemIds（声明在 header）在匿名 namespace 外提供，
         // 供 ProjectAuthoringDocument / Apply* 路径作为不变量兜底。
     } // namespace
 
     // D-84-40 + itemId 偶现 bug 修复：为 settings 内所有空 item_id 的 task
-    // 实例补齐稳定 item_id。仅补空，已有 item_id 原样保留；覆盖 flat pi.tasks
-    // 与 configurations[*].tasks。调用幂等。
+    // 实例补齐稳定 item_id。仅补空，已有 item_id 原样保留；覆盖 flat pi.tasks。
+    // 调用幂等。
     void NormalizeItemIds(AcceptedSettingsDto& settings)
     {
         auto used = CollectUsedItemIds(settings);
@@ -1676,108 +1601,11 @@ namespace Das::Plugins::DasMaaPi
             }
         };
         ensure(settings.pi.tasks);
-        for (auto& config : settings.pi.configurations)
-        {
-            ensure(config.tasks);
-        }
-    }
-
-    MaapiConfigurationDto* GetCurrentConfiguration(
-        AcceptedSettingsDto& settings)
-    {
-        if (settings.pi.configurations.empty())
-        {
-            return nullptr;
-        }
-        if (settings.pi.selected_configuration_id.empty())
-        {
-            return &settings.pi.configurations.front();
-        }
-        auto it = std::find_if(
-            settings.pi.configurations.begin(),
-            settings.pi.configurations.end(),
-            [&](const MaapiConfigurationDto& config)
-            { return config.id == settings.pi.selected_configuration_id; });
-        if (it == settings.pi.configurations.end())
-        {
-            return nullptr;
-        }
-        return &*it;
-    }
-
-    const MaapiConfigurationDto* GetCurrentConfiguration(
-        const AcceptedSettingsDto& settings)
-    {
-        if (settings.pi.configurations.empty())
-        {
-            return nullptr;
-        }
-        if (settings.pi.selected_configuration_id.empty())
-        {
-            return &settings.pi.configurations.front();
-        }
-        auto it = std::find_if(
-            settings.pi.configurations.begin(),
-            settings.pi.configurations.end(),
-            [&](const MaapiConfigurationDto& config)
-            { return config.id == settings.pi.selected_configuration_id; });
-        if (it == settings.pi.configurations.end())
-        {
-            return nullptr;
-        }
-        return &*it;
-    }
-
-    void SyncActiveFromCurrentConfig(AcceptedSettingsDto& settings)
-    {
-        auto* current = GetCurrentConfiguration(settings);
-        if (current == nullptr)
-        {
-            return;
-        }
-        settings.pi.controller_name = current->controller_name;
-        settings.pi.resource_name = current->resource_name;
-        settings.pi.language = current->language;
-        settings.pi.global_options = current->global_options;
-        settings.pi.resource_options = current->resource_options;
-        settings.pi.controller_options = current->controller_options;
-        settings.pi.tasks = current->tasks;
-    }
-
-    void SyncCurrentConfigFromActive(AcceptedSettingsDto& settings)
-    {
-        auto* current = GetCurrentConfiguration(settings);
-        if (current == nullptr)
-        {
-            return;
-        }
-        current->controller_name = settings.pi.controller_name;
-        current->resource_name = settings.pi.resource_name;
-        current->language = settings.pi.language;
-        current->global_options = settings.pi.global_options;
-        current->resource_options = settings.pi.resource_options;
-        current->controller_options = settings.pi.controller_options;
-        current->tasks = settings.pi.tasks;
     }
 
     std::string AllocateItemId(const AcceptedSettingsDto& settings)
     {
         return AllocateIdWithPrefix("item_", CollectUsedItemIds(settings));
-    }
-
-    std::string AllocateConfigurationId(const AcceptedSettingsDto& settings)
-    {
-        return AllocateIdWithPrefix(
-            "cfg_",
-            CollectUsedConfigurationIds(settings));
-    }
-
-    std::string AllocateConfigurationName(const AcceptedSettingsDto& settings)
-    {
-        // Phase 84 命令无输入参数，名称由 Provider 自动生成 (D-84-42)。
-        // 使用现有 configuration 数量 + 1 作为可读序号，避免泄漏机器 id。
-        const auto index = settings.pi.configurations.size() + 1;
-        return "Configuration " + std::to_string(index);
     }
 
     // D-84.2-04: 为新 preset snapshot 分配 Provider 颁发的稳定 presetId。
@@ -1805,56 +1633,6 @@ namespace Das::Plugins::DasMaaPi
         snapshot.controller_options = settings.pi.controller_options;
         snapshot.tasks = settings.pi.tasks;
         settings.pi.custom_presets.emplace_back(std::move(snapshot));
-    }
-
-    void ApplyInvokeCommand(
-        AcceptedSettingsDto& settings,
-        std::string_view     command_id)
-    {
-        if (command_id == "newConfiguration")
-        {
-            MaapiConfigurationDto fresh;
-            fresh.id = AllocateConfigurationId(settings);
-            fresh.name = AllocateConfigurationName(settings);
-            settings.pi.configurations.emplace_back(std::move(fresh));
-            settings.pi.selected_configuration_id =
-                settings.pi.configurations.back().id;
-            // flat 字段清空，反映新空配置。
-            settings.pi.controller_name.reset();
-            settings.pi.resource_name.reset();
-            settings.pi.language.reset();
-            settings.pi.global_options.clear();
-            settings.pi.resource_options.clear();
-            settings.pi.controller_options.clear();
-            settings.pi.tasks.clear();
-            return;
-        }
-        if (command_id == "copyConfiguration")
-        {
-            // 先把 flat 字段写回当前 configuration (保证拷贝的是最新状态)。
-            SyncCurrentConfigFromActive(settings);
-            const auto* current = GetCurrentConfiguration(settings);
-            if (current == nullptr)
-            {
-                return;
-            }
-            MaapiConfigurationDto copy = *current;
-            copy.id = AllocateConfigurationId(settings);
-            copy.name = AllocateConfigurationName(settings);
-            // 重新生成每个 task 的 itemId —— 不复制实例身份 (D-84-42)。
-            // taskName/options 等 user values 原样保留，顺序不变。
-            for (auto& task : copy.tasks)
-            {
-                task.item_id = AllocateItemId(settings);
-            }
-            settings.pi.configurations.emplace_back(std::move(copy));
-            settings.pi.selected_configuration_id =
-                settings.pi.configurations.back().id;
-            // flat 字段同步到新拷贝 (也是当前权威)。
-            SyncActiveFromCurrentConfig(settings);
-            return;
-        }
-        // 未知 commandId 由 84-07 严格 dispatch 处理，这里静默忽略。
     }
 
     AcceptedSettingsDto ParseAcceptedSettings(const yyjson::value& value)
@@ -1933,19 +1711,6 @@ namespace Das::Plugins::DasMaaPi
             OptionSettingsArray(settings.pi.controller_options);
         (*pi_obj)[std::string_view("tasks")] =
             TaskSettingsArray(settings.pi.tasks);
-        // D-84-41/42: configurations[] + selectedConfigurationId 是 post-84
-        // 多配置权威。flat 字段保留输出 (兼容既有消费者)；configurations[]
-        // 仅在非空时输出，避免 legacy fixture 出现空 configurations 数组。
-        // 调用方 (MaapiAuthoringSession::ApplyChange) 在 Apply* 修改 flat 字段
-        // 后，必须先 SyncCurrentConfigFromActive 再 BuildApplyResult，保证
-        // flat 与 configurations[selected] 一致。
-        if (!settings.pi.configurations.empty())
-        {
-            (*pi_obj)[std::string_view("selectedConfigurationId")] =
-                JsonString(settings.pi.selected_configuration_id);
-            (*pi_obj)[std::string_view("configurations")] =
-                ConfigurationArray(settings.pi.configurations);
-        }
         // D-84.2-04: customPresets 是 Provider 私有 preset 快照存储。
         // 仅在非空时输出，避免 legacy fixture 出现空数组。
         if (!settings.pi.custom_presets.empty())
@@ -2010,7 +1775,7 @@ namespace Das::Plugins::DasMaaPi
 
         // D-84-13: 根字段直接挂在 document 上。adapter / executionPolicy 是
         // MaaPI 适配层字段，controllerName / resourceName / presetName /
-        // language / configurationId 是 PI 配置字段，全部本地化 label。
+        // language 是 PI 配置字段，全部本地化 label。
         yyjson::value fields(Array());
         fields.as_array()->emplace_back(MakePropertyField(
             "adapter.interfacePath",
@@ -2107,31 +1872,6 @@ namespace Das::Plugins::DasMaaPi
                     ? yyjson::value(*settings.pi.preset_name)
                     : yyjson::value(std::string{}),
                 &preset_candidates));
-
-            // D-84-41/42: 配置切换字段。post-84 多配置权威存在时，UI 通过
-            // 这个 select 在 configurations[] 间切换；legacy fixture 没有
-            // configurations[]，该字段不出现。
-            if (!settings.pi.configurations.empty())
-            {
-                yyjson::value config_candidates(Array());
-                for (const auto& config : settings.pi.configurations)
-                {
-                    yyjson::value candidate(Object());
-                    auto          c_obj = candidate.as_object();
-                    (*c_obj)[std::string_view("value")] = JsonString(config.id);
-                    (*c_obj)[std::string_view("label")] =
-                        JsonString(config.name);
-                    config_candidates.as_array()->emplace_back(
-                        std::move(candidate));
-                }
-                fields.as_array()->emplace_back(MakePropertyField(
-                    "configurationId",
-                    "Configuration",
-                    4,
-                    1,
-                    yyjson::value(settings.pi.selected_configuration_id),
-                    &config_candidates));
-            }
 
             yyjson::value language_candidates(Array());
             for (const auto& [lang_code, _] : catalog->translations)
@@ -2474,10 +2214,8 @@ namespace Das::Plugins::DasMaaPi
         (*obj)[std::string_view("actionCatalog")] = std::move(action_catalog);
 
         // D-84.2-04: 根级 commands。newPreset 是 D-84-28 通用 invokeCommand
-        // 在 MaaPI 的落地（无条件 emit —— preset 创建入口不依赖
-        // configurations[]）。newConfiguration / copyConfiguration（84-05）
-        // 仅当存在 configurations[]（post-84 权威）时才追加，保留既有兼容。
-        // UI 触发时由 84-07 注入当前 baseRevision。
+        // 在 MaaPI 的落地（无条件 emit —— preset 创建入口）。UI 触发时由
+        // 84-07 注入当前 baseRevision。
         {
             yyjson::value commands(Array());
             auto          emit_command =
@@ -2499,11 +2237,6 @@ namespace Das::Plugins::DasMaaPi
                 commands.as_array()->emplace_back(std::move(cmd));
             };
             emit_command("newPreset", "New Preset");
-            if (!settings.pi.configurations.empty())
-            {
-                emit_command("newConfiguration", "New Configuration");
-                emit_command("copyConfiguration", "Copy Configuration");
-            }
             (*obj)[std::string_view("commands")] = std::move(commands);
         }
 
@@ -2616,33 +2349,12 @@ namespace Das::Plugins::DasMaaPi
         {
             settings.pi.controller_name =
                 std::string(value.as_string().value_or(""));
-            SyncCurrentConfigFromActive(settings);
             return;
         }
         if (path == "resourceName" && value.is_string())
         {
             settings.pi.resource_name =
                 std::string(value.as_string().value_or(""));
-            SyncCurrentConfigFromActive(settings);
-            return;
-        }
-        if (path == "configurationId" && value.is_string())
-        {
-            // D-84-41: select configuration。切换 selected_configuration_id
-            // 并把 flat pi 字段同步到新选中配置，整份 document 在下一次
-            // Get/Apply 时按新权威重建。configurationId 缺失或 unknown
-            // 时静默忽略， 由 84-07 严格 dispatch 决定错误语义。
-            const auto target_id = std::string(value.as_string().value_or(""));
-            const auto it = std::find_if(
-                settings.pi.configurations.begin(),
-                settings.pi.configurations.end(),
-                [&](const MaapiConfigurationDto& c)
-                { return c.id == target_id; });
-            if (it != settings.pi.configurations.end())
-            {
-                settings.pi.selected_configuration_id = target_id;
-                SyncActiveFromCurrentConfig(settings);
-            }
             return;
         }
         if (path == "presetName" && value.is_string())
@@ -2661,31 +2373,6 @@ namespace Das::Plugins::DasMaaPi
         if (path == "language" && value.is_string())
         {
             settings.pi.language = std::string(value.as_string().value_or(""));
-            return;
-        }
-        // D-84-41: 选择配置切换权威。仅当 configurations[] 非空且目标 id 存在
-        // 时生效；切换后把 flat 字段同步到新选中配置。legacy fixture
-        // (configurations 为空) 此 path 是 no-op。
-        if (path == "configurationId" && value.is_string())
-        {
-            const auto target_id = std::string(value.as_string().value_or(""));
-            if (target_id.empty())
-            {
-                return;
-            }
-            auto it = std::find_if(
-                settings.pi.configurations.begin(),
-                settings.pi.configurations.end(),
-                [&](const MaapiConfigurationDto& config)
-                { return config.id == target_id; });
-            if (it == settings.pi.configurations.end())
-            {
-                return;
-            }
-            // 先把当前 flat 写回当前 configuration，再切换并同步。
-            SyncCurrentConfigFromActive(settings);
-            settings.pi.selected_configuration_id = target_id;
-            SyncActiveFromCurrentConfig(settings);
             return;
         }
         if (path == "pi.tasks")
@@ -2775,7 +2462,6 @@ namespace Das::Plugins::DasMaaPi
                                     ->input_values[std::string(input_name)] =
                                     str_value;
                             }
-                            SyncCurrentConfigFromActive(settings);
                         }
                         return;
                     }
@@ -3078,7 +2764,7 @@ namespace Das::Plugins::DasMaaPi
         // D-84-24: setValue 严格 target.kind=document 路径。
         // MaaPI root fields: adapter.interfacePath /
         // adapter.executionPolicy.failFast / controllerName / resourceName /
-        // presetName / language / configurationId / options.{name}。
+        // presetName / language / options.{name}。
         bool ApplyDocumentSetValue(
             AcceptedSettingsDto&          settings,
             std::string_view              field_name,
@@ -3133,7 +2819,6 @@ namespace Das::Plugins::DasMaaPi
                 }
                 settings.pi.controller_name =
                     std::string(value.as_string().value_or(""));
-                SyncCurrentConfigFromActive(settings);
                 return true;
             }
             if (field == "resourceName")
@@ -3150,7 +2835,6 @@ namespace Das::Plugins::DasMaaPi
                 }
                 settings.pi.resource_name =
                     std::string(value.as_string().value_or(""));
-                SyncCurrentConfigFromActive(settings);
                 return true;
             }
             if (field == "language")
@@ -3167,7 +2851,6 @@ namespace Das::Plugins::DasMaaPi
                 }
                 settings.pi.language =
                     std::string(value.as_string().value_or(""));
-                SyncCurrentConfigFromActive(settings);
                 return true;
             }
             if (field == "presetName")
@@ -3214,51 +2897,6 @@ namespace Das::Plugins::DasMaaPi
                     return false;
                 }
                 ApplyPreset(settings, *catalog, name);
-                SyncCurrentConfigFromActive(settings);
-                return true;
-            }
-            if (field == "configurationId")
-            {
-                if (!value.is_string())
-                {
-                    EmitDiagnostic(
-                        diagnostics,
-                        "error",
-                        "configurationId value must be string",
-                        DAS_E_INVALID_ARGUMENT,
-                        field);
-                    return false;
-                }
-                const auto target_id =
-                    std::string(value.as_string().value_or(""));
-                if (target_id.empty())
-                {
-                    EmitDiagnostic(
-                        diagnostics,
-                        "error",
-                        "configurationId value must be non-empty",
-                        DAS_E_INVALID_ARGUMENT,
-                        field);
-                    return false;
-                }
-                const auto it = std::find_if(
-                    settings.pi.configurations.begin(),
-                    settings.pi.configurations.end(),
-                    [&](const MaapiConfigurationDto& c)
-                    { return c.id == target_id; });
-                if (it == settings.pi.configurations.end())
-                {
-                    EmitDiagnostic(
-                        diagnostics,
-                        "error",
-                        "configurationId not found",
-                        DAS_E_NOT_FOUND,
-                        field);
-                    return false;
-                }
-                SyncCurrentConfigFromActive(settings);
-                settings.pi.selected_configuration_id = target_id;
-                SyncActiveFromCurrentConfig(settings);
                 return true;
             }
             // options.{name} 或 options.{name}.{input}（多字段 input 子字段）。
@@ -3271,7 +2909,6 @@ namespace Das::Plugins::DasMaaPi
                     *catalog,
                     std::string_view(field).substr(kOptionPrefix.size()),
                     value);
-                SyncCurrentConfigFromActive(settings);
                 return true;
             }
             EmitDiagnostic(
@@ -3319,7 +2956,6 @@ namespace Das::Plugins::DasMaaPi
                     return false;
                 }
                 task->enabled = value.as_bool().value_or(true);
-                SyncCurrentConfigFromActive(settings);
                 return true;
             }
             constexpr std::string_view kOptionPrefix = "options.";
@@ -3353,7 +2989,6 @@ namespace Das::Plugins::DasMaaPi
                 if (value.is_null())
                 {
                     RemoveOption(task->options, option_tail);
-                    SyncCurrentConfigFromActive(settings);
                     return true;
                 }
                 auto parsed = ParseOptionValue(*option, value);
@@ -3369,7 +3004,6 @@ namespace Das::Plugins::DasMaaPi
                 }
                 RemoveOption(task->options, option_tail);
                 UpsertOption(task->options, std::move(*parsed));
-                SyncCurrentConfigFromActive(settings);
                 return true;
             }
             EmitDiagnostic(
@@ -3629,7 +3263,6 @@ namespace Das::Plugins::DasMaaPi
                 settings.pi.tasks.begin() + *insertion_index,
                 std::move(new_task));
         }
-        SyncCurrentConfigFromActive(settings);
         return true;
     }
 
@@ -3717,7 +3350,6 @@ namespace Das::Plugins::DasMaaPi
         settings.pi.tasks.insert(
             settings.pi.tasks.begin() + adjusted,
             std::move(moved));
-        SyncCurrentConfigFromActive(settings);
         return true;
     }
 
@@ -3772,7 +3404,6 @@ namespace Das::Plugins::DasMaaPi
                 settings,
                 std::string{"pi.tasks:"} + removed_task_name);
         }
-        SyncCurrentConfigFromActive(settings);
         return true;
     }
 
@@ -3806,13 +3437,6 @@ namespace Das::Plugins::DasMaaPi
         if (*command_id == "newPreset")
         {
             ApplyNewPreset(settings);
-            return true;
-        }
-        // D-84-28/42: 已知 commandId 委托 ApplyInvokeCommand（84-05 实现）。
-        if (*command_id == "newConfiguration"
-            || *command_id == "copyConfiguration")
-        {
-            ApplyInvokeCommand(settings, *command_id);
             return true;
         }
         EmitDiagnostic(
