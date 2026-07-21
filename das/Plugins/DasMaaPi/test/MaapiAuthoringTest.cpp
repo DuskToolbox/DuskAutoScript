@@ -4826,6 +4826,94 @@ TEST_F(MaapiAuthoringFixture, LiteralV28InterfaceProjectsStrictWire)
     EXPECT_EQ(item_ids.size(), 0u);
 }
 
+// UAT 端到端回归：用户在 UI 创建 MaaPI 任务（fresh session，空
+// acceptedProperties.pi.global_options）→ GetDocument → document.fields[]
+// 必须含 PI 接口定义的默认静态设置。stage 在 v28 fixture 中是
+// global_option，select 类型，cases=[1-1, 1-2]，无 default_case，按
+// MaaPI 约定默认回退首个 case "1-1"。
+TEST_F(MaapiAuthoringFixture, FreshSessionProjectsGlobalOptionPiDefault)
+{
+    auto interface_path =
+        FixturePath("interface_authoring_v28.jsonc").generic_string();
+    auto session = CreateSession(
+        "{\"adapter\":{\"interfacePath\":\"" + interface_path + "\"}}");
+
+    DasPtr<Das::ExportInterface::IDasJson> get_json;
+    ASSERT_EQ(session->GetDocument({}, get_json.Put()), DAS_S_OK);
+    auto envelope = ReadJsonInterface(get_json.Get());
+    auto get_valid =
+        Das::Core::TaskScheduler::ValidateAuthoringGetResult(envelope);
+    EXPECT_TRUE(get_valid.valid) << "error_kind=" << get_valid.error_kind
+                                 << " message=" << get_valid.message;
+
+    auto document = DocumentOfGet(get_json.Get());
+    // stage 是 v28 fixture 的唯一 global_option；fresh session 下
+    // settings.pi.global_options 为空，必须回退到 PI 首个 case "1-1"。
+    auto stage_field = FindRootField(document, "options.stage");
+    ASSERT_TRUE(stage_field.has_value());
+    auto stage_obj = stage_field->as_object();
+    ASSERT_TRUE(stage_obj.has_value());
+    ASSERT_TRUE(stage_obj->contains(std::string_view("value")));
+    auto stage_value =
+        (*stage_obj)[std::string_view("value")].as_string().value_or("");
+    EXPECT_EQ(stage_value, "1-1")
+        << "global_option stage 必须回退到 PI 首个 case '";
+}
+
+// UAT 端到端回归：用户通过 addFormSequenceItem 在 UI 加入 DailyFarm 后，
+// Apply result 的 document.formSequence.items[0].fields[] 必须含 PI 接口
+// 默认值（retry multi-input 的 times=3 / unit=second；stage=1-1 首个 case；
+// use-medicine=[] 因 v28 fixture 无 default_case）。
+TEST_F(MaapiAuthoringFixture, AddFormSequenceItemProjectsTaskOptionPiDefaults)
+{
+    auto interface_path =
+        FixturePath("interface_authoring_v28.jsonc").generic_string();
+    auto session = CreateSession(
+        "{\"adapter\":{\"interfacePath\":\"" + interface_path + "\"}}");
+
+    DasPtr<Das::ExportInterface::IDasJson> apply_json;
+    auto                                   change = ParseDasJson(
+        "{\"baseRevision\":0,\"kind\":\"addFormSequenceItem\",\"payload\":{"
+        "\"actionId\":\"DailyFarm\"}}");
+    ASSERT_EQ(session->ApplyChange(change.Get(), apply_json.Put()), DAS_S_OK);
+
+    auto apply = ReadJsonInterface(apply_json.Get());
+    auto apply_valid =
+        Das::Core::TaskScheduler::ValidateAuthoringApplyResult(apply, 0);
+    EXPECT_TRUE(apply_valid.valid) << "error_kind=" << apply_valid.error_kind
+                                   << " message=" << apply_valid.message;
+
+    auto document = DocumentFromApplyResult(apply);
+    auto item_ids = CollectFormItemIds(document);
+    ASSERT_EQ(item_ids.size(), 1u);
+
+    // retry 是 multi-input (times/unit)，sub-field 寻址 options.retry.times。
+    // times 的 PI default_value="3" (v28 fixture)，pipeline_type=int → 标量 3。
+    // MakeInputSubField 经 mutable_value_base operator= 路径赋值，positive int
+    // 可能落 uint subtype，故用 is_int() / as_int() 兼容两种 subtype。
+    auto retry_times_val = FindSequenceItemFieldValue(
+        document,
+        item_ids[0],
+        "options.retry.times");
+    ASSERT_TRUE(retry_times_val.is_int());
+    EXPECT_EQ(retry_times_val.as_int().value_or(0), 3);
+
+    // unit 的 PI default_value="second" (v28 fixture)，pipeline_type=string →
+    // string "second"。
+    auto retry_unit_val =
+        FindSequenceItemFieldValue(document, item_ids[0], "options.retry.unit");
+    ASSERT_TRUE(retry_unit_val.is_string());
+    EXPECT_EQ(retry_unit_val.as_string().value_or(""), "second");
+
+    // stage 是 task 级 select，无 default_case → 回退首个 case "1-1"。
+    // 注意：stage 也是 global_option，但在 task 级是 DailyFarm.dto.option
+    // 之一。
+    auto stage_val =
+        FindSequenceItemFieldValue(document, item_ids[0], "options.stage");
+    ASSERT_TRUE(stage_val.is_string());
+    EXPECT_EQ(stage_val.as_string().value_or(""), "1-1");
+}
+
 // Tracer 1 RED: 字面量 post-84 state → Get→Apply→new-session Get 全链路
 // 在 84-01 validator 下通过，itemId 稳定。证明 Provider → 投影 端到端正确。
 TEST_F(MaapiAuthoringFixture, LiteralPost84StateRoundTripsProviderGetApplyGet)

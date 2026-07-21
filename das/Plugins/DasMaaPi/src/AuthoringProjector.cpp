@@ -565,13 +565,23 @@ namespace Das::Plugins::DasMaaPi
         {
             auto mapping = MapOptionType(dto);
 
+            // UAT fix: PI 接口定义的 default 值必须投影到 FieldDescriptor.value
+            // 即使 acceptedProperties 未初始化该 option (current == nullptr)。
+            // PI 协议层面 default_case (select/checkbox) / 首个 case (select 无
+            // default_case) / switch 默认 true (MaaPI 约定，见
+            // InitializeOptionDefaults) / input.default_value (input) 都是
+            // 静态 schema 的一部分，不应依赖 acceptedProperties 是否已注入。
+            // 用户运行时值 (current != nullptr) 优先于 PI default。
             yyjson::value value = [&]() -> yyjson::value
             {
                 if (dto.type == "switch")
                 {
-                    return yyjson::value(
-                        current && current->bool_value ? *current->bool_value
-                                                       : false);
+                    if (current && current->bool_value)
+                    {
+                        return yyjson::value(*current->bool_value);
+                    }
+                    // MaaPI 约定：switch 默认 true (InitializeOptionDefaults)。
+                    return yyjson::value(true);
                 }
                 if (dto.type == "select" || dto.type.empty())
                 {
@@ -579,19 +589,26 @@ namespace Das::Plugins::DasMaaPi
                     {
                         return JsonString(current->selected_cases.front());
                     }
+                    // PI default_case 优先；缺失则回退首个 case。
+                    if (!dto.default_cases.empty())
+                    {
+                        return JsonString(dto.default_cases.front());
+                    }
+                    if (!dto.cases.empty())
+                    {
+                        return JsonString(dto.cases.front().name);
+                    }
                     return JsonString(std::string_view{});
                 }
                 if (dto.type == "checkbox")
                 {
-                    yyjson::value arr(Array());
-                    if (current)
+                    yyjson::value                   arr(Array());
+                    const std::vector<std::string>& src =
+                        current != nullptr ? current->selected_cases
+                                           : dto.default_cases;
+                    for (const auto& selected_case : src)
                     {
-                        for (const auto& selected_case :
-                             current->selected_cases)
-                        {
-                            arr.as_array()->emplace_back(
-                                JsonString(selected_case));
-                        }
+                        arr.as_array()->emplace_back(JsonString(selected_case));
                     }
                     return arr;
                 }
@@ -608,6 +625,19 @@ namespace Das::Plugins::DasMaaPi
                             {
                                 (*o)[std::string_view(key)] =
                                     JsonString(input_value);
+                            }
+                        }
+                        else
+                        {
+                            // current 缺省时回退每个 input 的 PI
+                            // default_value。
+                            for (const auto& input : dto.inputs)
+                            {
+                                if (input.default_value)
+                                {
+                                    (*o)[std::string_view(input.name)] =
+                                        JsonString(*input.default_value);
+                                }
                             }
                         }
                         return obj;
