@@ -108,6 +108,23 @@ namespace
         return parsed ? std::move(*parsed) : Das::Utils::MakeYyjsonObject();
     }
 
+    // MaapiAuthoringSession::GetDocument returns the strict Phase 84 envelope
+    // {document, diagnostics}. Field-level assertions need the nested document
+    // payload; the envelope itself is what ValidateAuthoringGetResult expects.
+    // ReadJsonInterface remains used by Apply/Compile paths whose root IS the
+    // envelope they validate against.
+    yyjson::value DocumentOfGet(Das::ExportInterface::IDasJson* get_result)
+    {
+        auto envelope = ReadJsonInterface(get_result);
+        auto obj = envelope.as_object();
+        if (!obj || !obj->contains(std::string_view("document")))
+        {
+            return Das::Utils::MakeYyjsonObject();
+        }
+        return Das::Utils::CloneYyjsonValue(
+            (*obj)[std::string_view("document")]);
+    }
+
     // D-84-13: 根字段直接挂在 document 上（不再位于 formSequence.fields）。
     // 此助手检查根 fields[] 是否包含指定 name。
     bool FormSequenceHasField(
@@ -772,7 +789,7 @@ TEST_F(MaapiAuthoringFixture, ContractDocShapeHasFormSequenceAndNoPrivateFields)
 
     DasPtr<Das::ExportInterface::IDasJson> result_json;
     ASSERT_EQ(session->GetDocument({}, result_json.Put()), DAS_S_OK);
-    auto document = ReadJsonInterface(result_json.Get());
+    auto document = DocumentOfGet(result_json.Get());
     auto doc_obj = document.as_object();
     ASSERT_TRUE(doc_obj.has_value());
     EXPECT_EQ(
@@ -3761,7 +3778,7 @@ TEST_F(MaapiAuthoringFixture, SetValueDocumentTargetRejectsUnknownField)
     // 先 Get 一份初始 document，记录 revision 0。
     DasPtr<Das::ExportInterface::IDasJson> get_json;
     ASSERT_EQ(session->GetDocument({}, get_json.Put()), DAS_S_OK);
-    auto initial_doc = ReadJsonInterface(get_json.Get());
+    auto initial_doc = DocumentOfGet(get_json.Get());
 
     DasPtr<Das::ExportInterface::IDasJson> result_json;
     auto                                   change = ParseDasJson(
@@ -4760,23 +4777,17 @@ TEST_F(MaapiAuthoringFixture, LiteralV28InterfaceProjectsStrictWire)
 
     DasPtr<Das::ExportInterface::IDasJson> get_json;
     ASSERT_EQ(session->GetDocument({}, get_json.Put()), DAS_S_OK);
-    // Build a {document, diagnostics} envelope so 84-01 Get validator runs.
-    auto document = ReadJsonInterface(get_json.Get());
-
-    yyjson::value envelope(Das::Utils::MakeYyjsonObject());
-    {
-        auto env_obj = envelope.as_object();
-        (*env_obj)[std::string_view("document")] =
-            Das::Utils::CloneYyjsonValue(document);
-        (*env_obj)[std::string_view("diagnostics")] =
-            Das::Utils::MakeYyjsonArray();
-    }
-
+    // Production-path: Provider GetDocument must return the strict
+    // {document, diagnostics} envelope directly. A prior regression returned
+    // a bare document and SchedulerService rejected it with
+    // "AuthoringGetResult.diagnostics required".
+    auto envelope = ReadJsonInterface(get_json.Get());
     auto get_valid =
         Das::Core::TaskScheduler::ValidateAuthoringGetResult(envelope);
     EXPECT_TRUE(get_valid.valid) << "error_kind=" << get_valid.error_kind
                                  << " message=" << get_valid.message;
 
+    auto document = DocumentOfGet(get_json.Get());
     auto doc_obj = document.as_object();
     ASSERT_TRUE(doc_obj.has_value());
     EXPECT_EQ(
@@ -4843,20 +4854,14 @@ TEST_F(MaapiAuthoringFixture, LiteralPost84StateRoundTripsProviderGetApplyGet)
     // Get #1: 必须看见 cfg_a 的两个 DailyFarm item。
     DasPtr<Das::ExportInterface::IDasJson> get_json;
     ASSERT_EQ(session->GetDocument({}, get_json.Put()), DAS_S_OK);
-    auto document1 = ReadJsonInterface(get_json.Get());
-
-    yyjson::value envelope1(Das::Utils::MakeYyjsonObject());
-    {
-        auto env_obj = envelope1.as_object();
-        (*env_obj)[std::string_view("document")] =
-            Das::Utils::CloneYyjsonValue(document1);
-        (*env_obj)[std::string_view("diagnostics")] =
-            Das::Utils::MakeYyjsonArray();
-    }
+    // Production-path: Provider GetDocument returns the envelope directly.
+    auto envelope1 = ReadJsonInterface(get_json.Get());
     auto get_valid1 =
         Das::Core::TaskScheduler::ValidateAuthoringGetResult(envelope1);
     EXPECT_TRUE(get_valid1.valid) << "error_kind=" << get_valid1.error_kind
                                   << " message=" << get_valid1.message;
+
+    auto document1 = DocumentOfGet(get_json.Get());
 
     auto ids1 = CollectFormItemIds(document1);
     ASSERT_EQ(ids1.size(), 2u);
@@ -4909,7 +4914,7 @@ TEST_F(MaapiAuthoringFixture, LiteralPost84StateRoundTripsProviderGetApplyGet)
     auto session2 = CreateSession(context_buf.str());
     DasPtr<Das::ExportInterface::IDasJson> get2_json;
     ASSERT_EQ(session2->GetDocument({}, get2_json.Put()), DAS_S_OK);
-    auto document2 = ReadJsonInterface(get2_json.Get());
+    auto document2 = DocumentOfGet(get2_json.Get());
     auto ids2 = CollectFormItemIds(document2);
     ASSERT_EQ(ids2.size(), 2u);
     EXPECT_EQ(ids2[0], "item_daily_farm_a1");
@@ -5057,7 +5062,7 @@ TEST_F(MaapiAuthoringFixture, MalformedChangeLeavesDisposableStateUnchanged)
     // baseline。每个 Apply 失败之后必须等于这个 baseline。
     DasPtr<Das::ExportInterface::IDasJson> get_json;
     ASSERT_EQ(session->GetDocument({}, get_json.Put()), DAS_S_OK);
-    auto initial_doc = ReadJsonInterface(get_json.Get());
+    auto initial_doc = DocumentOfGet(get_json.Get());
     EXPECT_EQ(DocumentRevision(initial_doc), 0);
 
     // 失败 #1: legacy valuePath payload → 84-07 unsupportedChange。
@@ -5108,7 +5113,7 @@ TEST_F(MaapiAuthoringFixture, MalformedChangeLeavesDisposableStateUnchanged)
     // 重新 Get：document 仍是初始状态，revision 仍是 0。
     DasPtr<Das::ExportInterface::IDasJson> post_get_json;
     ASSERT_EQ(session->GetDocument({}, post_get_json.Put()), DAS_S_OK);
-    auto post_doc = ReadJsonInterface(post_get_json.Get());
+    auto post_doc = DocumentOfGet(post_get_json.Get());
     EXPECT_EQ(DocumentRevision(post_doc), 0);
     auto post_ids = CollectFormItemIds(post_doc);
     ASSERT_EQ(post_ids.size(), 2u);
@@ -5158,22 +5163,13 @@ TEST_F(MaapiAuthoringFixture, LegacyTaskId7BoundaryPreservedReadOnlyWithSha256)
     // Get：document 必须能生产；legacy 缺 itemId 由 NormalizeItemIds 分配。
     DasPtr<Das::ExportInterface::IDasJson> get_json;
     ASSERT_EQ(session->GetDocument({}, get_json.Put()), DAS_S_OK);
-    auto document = ReadJsonInterface(get_json.Get());
-
-    // document 通过 84-01 ApplyResult validator 的 document 子校验
-    // （嵌套 ValidateAuthoringDocument）。
-    {
-        yyjson::value envelope(Das::Utils::MakeYyjsonObject());
-        auto          env_obj = envelope.as_object();
-        (*env_obj)[std::string_view("document")] =
-            Das::Utils::CloneYyjsonValue(document);
-        (*env_obj)[std::string_view("diagnostics")] =
-            Das::Utils::MakeYyjsonArray();
-        auto get_valid =
-            Das::Core::TaskScheduler::ValidateAuthoringGetResult(envelope);
-        EXPECT_TRUE(get_valid.valid) << "error_kind=" << get_valid.error_kind
-                                     << " message=" << get_valid.message;
-    }
+    // Production-path: Provider GetDocument returns the envelope directly.
+    auto envelope = ReadJsonInterface(get_json.Get());
+    auto get_valid =
+        Das::Core::TaskScheduler::ValidateAuthoringGetResult(envelope);
+    EXPECT_TRUE(get_valid.valid) << "error_kind=" << get_valid.error_kind
+                                 << " message=" << get_valid.message;
+    auto document = DocumentOfGet(get_json.Get());
 
     // formSequence.items[] 必须全部有非空 id（legacy 没 itemId，
     // NormalizeItemIds 必须补齐）。

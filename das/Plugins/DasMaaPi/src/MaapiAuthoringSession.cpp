@@ -259,10 +259,48 @@ namespace Plugins::DasMaaPi
         {
             return DAS_E_INVALID_POINTER;
         }
+        *pp_out_document_json = nullptr;
+
+        // D-84-08: 严格 Get envelope = {document, diagnostics}。
+        // SchedulerService ValidateAuthoringGetResult 要求 top-level
+        // diagnostics 数组（即使空）。BuildDocument 既投影 document 又填充
+        // diagnostics，envelope 同级包装二者（与 Compile 对称）。
         std::vector<PiDiagnosticDto> diagnostics;
-        auto                         wrapped =
-            WrapJson(BuildDocument(settings_, revision_, diagnostics));
+        auto document = BuildDocument(settings_, revision_, diagnostics);
+
+        yyjson::value envelope(Das::Utils::MakeYyjsonObject());
+        auto          env_obj = envelope.as_object();
+        (*env_obj)[std::string_view("document")] = std::move(document);
+
+        yyjson::value diagnostics_json(Das::Utils::MakeYyjsonArray());
+        for (const auto& diagnostic : diagnostics)
+        {
+            yyjson::value item(Das::Utils::MakeYyjsonObject());
+            auto          item_obj = item.as_object();
+            (*item_obj)[std::string_view("severity")] =
+                JsonString(diagnostic.severity);
+            (*item_obj)[std::string_view("message")] =
+                JsonString(diagnostic.message);
+            if (diagnostic.int_code)
+            {
+                (*item_obj)[std::string_view("code")] = *diagnostic.int_code;
+            }
+            if (diagnostic.path)
+            {
+                (*item_obj)[std::string_view("path")] =
+                    JsonString(*diagnostic.path);
+            }
+            diagnostics_json.as_array()->emplace_back(std::move(item));
+        }
+        (*env_obj)[std::string_view("diagnostics")] =
+            std::move(diagnostics_json);
+
+        auto wrapped = WrapJson(std::move(envelope));
         *pp_out_document_json = wrapped.Get();
+        if (*pp_out_document_json == nullptr)
+        {
+            return DAS_E_FAIL;
+        }
         (*pp_out_document_json)->AddRef();
         return DAS_S_OK;
     }

@@ -2263,11 +2263,17 @@ TEST_F(
     auto json = ToYyjson(document.Get());
     auto obj = json.as_object();
     ASSERT_TRUE(obj.has_value());
-    // D-84-02: Phase 84 严格 wire 使用 viewKind 而不是 kind。
+    // D-84-08: Provider GetDocument returns the strict Phase 84 envelope
+    // {document, diagnostics}. The nested document is the strict wire
+    // (D-84-02: viewKind instead of kind).
+    ASSERT_TRUE(obj->contains(std::string_view("document")));
+    ASSERT_TRUE(obj->contains(std::string_view("diagnostics")));
+    auto doc_obj = (*obj)[std::string_view("document")].as_object();
+    ASSERT_TRUE(doc_obj.has_value());
     EXPECT_EQ(
-        (*obj)[std::string_view("viewKind")].as_string().value_or(""),
+        (*doc_obj)[std::string_view("viewKind")].as_string().value_or(""),
         std::string_view("formSequence"));
-    EXPECT_FALSE(obj->contains(std::string_view("kind")));
+    EXPECT_FALSE(doc_obj->contains(std::string_view("kind")));
 }
 
 TEST_F(IpcMultiProcessTestIntegration, CrossProcess_TaskComponentFactory)

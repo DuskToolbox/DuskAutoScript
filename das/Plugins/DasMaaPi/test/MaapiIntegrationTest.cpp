@@ -228,7 +228,12 @@ TEST_F(MaapiIntegrationFixture, SampleInterfaceAuthoringCompileRuntimeDryRun)
     ASSERT_EQ(
         session->GetDocument(nullptr, initial_document_json.Put()),
         DAS_S_OK);
-    auto initial_document = ReadJsonInterface(initial_document_json.Get());
+    auto initial_envelope = ReadJsonInterface(initial_document_json.Get());
+    auto initial_env_obj = initial_envelope.as_object();
+    ASSERT_TRUE(initial_env_obj.has_value());
+    EXPECT_TRUE(initial_env_obj->contains(std::string_view("document")));
+    EXPECT_TRUE(initial_env_obj->contains(std::string_view("diagnostics")));
+    auto initial_document = (*initial_env_obj)[std::string_view("document")];
     // D-84-02: 严格 wire 下 document 用 viewKind 而不是 kind。
     EXPECT_EQ(
         (*initial_document.as_object())[std::string_view("viewKind")]

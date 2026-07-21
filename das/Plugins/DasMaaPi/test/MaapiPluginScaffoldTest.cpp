@@ -351,7 +351,12 @@ TEST_F(MaapiPluginScaffoldFixture, AdapterOnlyDocumentBeforeProjectSelection)
 
     DasPtr<Das::ExportInterface::IDasJson> document_json;
     ASSERT_EQ(session->GetDocument(nullptr, document_json.Put()), DAS_S_OK);
-    auto document = ReadJsonInterface(document_json.Get());
+    auto envelope = ReadJsonInterface(document_json.Get());
+    auto env_obj = envelope.as_object();
+    ASSERT_TRUE(env_obj.has_value());
+    EXPECT_TRUE(env_obj->contains(std::string_view("document")));
+    EXPECT_TRUE(env_obj->contains(std::string_view("diagnostics")));
+    auto document = (*env_obj)[std::string_view("document")];
     auto obj = document.as_object();
     ASSERT_TRUE(obj.has_value());
     // D-84-02/13: 严格 IR 下 document 用 viewKind 而不是 kind。
