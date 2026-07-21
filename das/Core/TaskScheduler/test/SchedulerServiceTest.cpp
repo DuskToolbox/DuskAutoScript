@@ -4674,7 +4674,7 @@ TEST_F(
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
 
     auto entry = SingleRepositoryEntry(scheduler_->GetTaskRepository());
-    ExpectRepositoryAvailability(entry, "authoringCapabilityMissing");
+    ExpectRepositoryAvailability(entry, "capabilityMissing");
     EXPECT_TRUE(
         std::filesystem::exists(settings_dir_ / "0" / "taskRepository0.json"));
     ExpectNoRepositoryAuthoringProviderCalls(shared_state_);
@@ -4832,7 +4832,7 @@ TEST_F(
     ExpectRepositoryAuthoringRejectedWithoutProviderCalls(
         *scheduler_,
         shared_state_,
-        "authoringCapabilityMissing");
+        "capabilityMissing");
 }
 
 TEST_F(
@@ -4970,7 +4970,7 @@ TEST_F(
     ExpectRepositoryCompileRejectedWithoutProviderCalls(
         *scheduler_,
         shared_state_,
-        "authoringCapabilityMissing");
+        "capabilityMissing");
 }
 
 TEST_F(
@@ -5286,7 +5286,7 @@ TEST_F(
         *scheduler_,
         shared_state_,
         settings_dir_,
-        "authoringCapabilityMissing");
+        "capabilityMissing");
 }
 
 TEST_F(
