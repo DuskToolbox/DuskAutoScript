@@ -2,5 +2,9 @@
   "controller.android": "安卓端",
   "resource.official": "官服资源",
   "task.daily": "日常任务",
-  "group.daily": "日常"
+  "group.daily": "日常",
+  "field.controller": "控制器",
+  "field.resource": "资源",
+  "field.preset": "预设",
+  "field.language": "语言"
 }

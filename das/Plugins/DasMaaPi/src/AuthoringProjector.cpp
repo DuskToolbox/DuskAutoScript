@@ -1918,6 +1918,8 @@ namespace Das::Plugins::DasMaaPi
 
         if (catalog)
         {
+            // 根字段 label 走 PI i18n 解析；缺译时回退到英文字段名（协议层
+            // 概念）并向 projection_diagnostics 报告 warning，便于开发者补译。
             auto controller_candidates = CandidateArray(
                 catalog->controllers,
                 catalog,
@@ -1925,7 +1927,13 @@ namespace Das::Plugins::DasMaaPi
                 projection_diagnostics);
             fields.as_array()->emplace_back(MakePropertyField(
                 "controllerName",
-                "Controller",
+                ResolveI18nOrDiag(
+                    "$field.controller",
+                    *catalog,
+                    current_language,
+                    "Controller",
+                    projection_diagnostics,
+                    "fields.controllerName.label"),
                 4,
                 1,
                 settings.pi.controller_name
@@ -1939,7 +1947,13 @@ namespace Das::Plugins::DasMaaPi
                 projection_diagnostics);
             fields.as_array()->emplace_back(MakePropertyField(
                 "resourceName",
-                "Resource",
+                ResolveI18nOrDiag(
+                    "$field.resource",
+                    *catalog,
+                    current_language,
+                    "Resource",
+                    projection_diagnostics,
+                    "fields.resourceName.label"),
                 4,
                 1,
                 settings.pi.resource_name
@@ -1953,7 +1967,13 @@ namespace Das::Plugins::DasMaaPi
                 projection_diagnostics);
             fields.as_array()->emplace_back(MakePropertyField(
                 "presetName",
-                "Preset",
+                ResolveI18nOrDiag(
+                    "$field.preset",
+                    *catalog,
+                    current_language,
+                    "Preset",
+                    projection_diagnostics,
+                    "fields.presetName.label"),
                 4,
                 1,
                 settings.pi.preset_name
@@ -1998,7 +2018,13 @@ namespace Das::Plugins::DasMaaPi
             }
             fields.as_array()->emplace_back(MakePropertyField(
                 "language",
-                "Language",
+                ResolveI18nOrDiag(
+                    "$field.language",
+                    *catalog,
+                    current_language,
+                    "Language",
+                    projection_diagnostics,
+                    "fields.language.label"),
                 4,
                 1,
                 yyjson::value(current_language),

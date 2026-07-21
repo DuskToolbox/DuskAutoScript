@@ -457,6 +457,27 @@ namespace
         return "";
     }
 
+    // 从 root.fields[name] 取字段本身的 label（不是 candidate label）。
+    // 用于断言根字段 label 是否走 PI i18n 解析。
+    std::string RootFieldLabel(
+        const yyjson::value& document,
+        std::string_view     name)
+    {
+        auto field = FindRootField(document, name);
+        if (!field)
+        {
+            return "";
+        }
+        auto field_obj = field->as_object();
+        if (!field_obj || !field_obj->contains(std::string_view("label")))
+        {
+            return "";
+        }
+        auto label_val =
+            (*field_obj)[std::string_view("label")].as_string().value_or("");
+        return std::string(label_val);
+    }
+
     // 从 actionCatalog.entries[] 中按 actionId 取候选 label。
     std::string ActionCatalogLabel(
         const yyjson::value& document,
@@ -1189,7 +1210,11 @@ namespace
             {"option.case.1-1", "1-1关"},
             {"option.retry", "重试"},
             {"option.times", "次数"},
-            {"option.notify", "通知"}};
+            {"option.notify", "通知"},
+            {"field.controller", "控制器"},
+            {"field.resource", "资源"},
+            {"field.preset", "预设"},
+            {"field.language", "语言"}};
         catalog.translations["en"] = {
             {"controller.android", "Android"},
             {"resource.official", "Official Resource"},
@@ -1198,7 +1223,11 @@ namespace
             {"option.case.1-1", "Stage 1-1"},
             {"option.retry", "Retry"},
             {"option.times", "Times"},
-            {"option.notify", "Notify"}};
+            {"option.notify", "Notify"},
+            {"field.controller", "Controller"},
+            {"field.resource", "Resource"},
+            {"field.preset", "Preset"},
+            {"field.language", "Language"}};
 
         PiController controller;
         controller.dto.name = "Android";
@@ -1406,6 +1435,57 @@ TEST(I18nTest, ResolveI18nResolvesDollarPrefixKeys)
     EXPECT_EQ(CandidateLabel(document, "controllerName", "Android"), "安卓端");
     EXPECT_EQ(CandidateLabel(document, "resourceName", "Official"), "官服资源");
     EXPECT_EQ(ActionCatalogLabel(document, "DailyFarm"), "日常任务");
+}
+
+// 根字段 label 走 PI i18n 解析：controllerName/resourceName/presetName/language
+// 的 label 不能是硬编码协议英文（"Controller"/"Resource"/...），必须按当前
+// language 解析 $field.* key。缺译时回退到英文字段名并 emit warning。
+TEST(I18nTest, RootFieldLabelsAreLocalizedViaDollarPrefixKeys)
+{
+    auto catalog = MakeI18nMockCatalog();
+
+    AcceptedSettingsDto settings_zh;
+    settings_zh.pi.language = "zh_cn";
+    auto document_zh = ProjectAuthoringDocument(settings_zh, &catalog, {}, 0);
+    EXPECT_EQ(RootFieldLabel(document_zh, "controllerName"), "控制器");
+    EXPECT_EQ(RootFieldLabel(document_zh, "resourceName"), "资源");
+    EXPECT_EQ(RootFieldLabel(document_zh, "presetName"), "预设");
+    EXPECT_EQ(RootFieldLabel(document_zh, "language"), "语言");
+
+    AcceptedSettingsDto settings_en;
+    settings_en.pi.language = "en";
+    auto document_en = ProjectAuthoringDocument(settings_en, &catalog, {}, 0);
+    EXPECT_EQ(RootFieldLabel(document_en, "controllerName"), "Controller");
+    EXPECT_EQ(RootFieldLabel(document_en, "resourceName"), "Resource");
+    EXPECT_EQ(RootFieldLabel(document_en, "presetName"), "Preset");
+    EXPECT_EQ(RootFieldLabel(document_en, "language"), "Language");
+}
+
+// 根字段 label 缺译时回退到英文字段名（最后兜底），并向 projection_diagnostics
+// 报告 warning，便于开发者补译。
+TEST(I18nTest, RootFieldLabelFallsBackToEnglishWhenTranslationMissing)
+{
+    auto catalog = MakeI18nMockCatalog();
+    catalog.translations["zh_cn"].erase("field.controller");
+
+    AcceptedSettingsDto settings;
+    settings.pi.language = "zh_cn";
+
+    std::vector<PiDiagnosticDto> diags;
+    auto document = ProjectAuthoringDocument(settings, &catalog, {}, 0, &diags);
+
+    EXPECT_EQ(RootFieldLabel(document, "controllerName"), "Controller");
+    bool found_missing = false;
+    for (const auto& d : diags)
+    {
+        if (d.severity == "warning"
+            && d.message.find("field.controller") != std::string::npos)
+        {
+            found_missing = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(found_missing);
 }
 
 TEST(I18nTest, ResolveI18nSwitchesLanguageCorrectly)
