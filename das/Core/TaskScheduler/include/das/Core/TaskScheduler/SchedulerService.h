@@ -10,6 +10,7 @@
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
 #include <das/Core/SettingsManager/SettingsManager.h>
 #include <das/Core/TaskScheduler/RepositoryInvokeCompiler.h>
+#include <das/Core/TaskScheduler/TaskAuthoringContract.h>
 #include <das/Core/TaskScheduler/TaskCapabilityRegistry.h>
 #include <das/Core/TaskScheduler/TaskRepositoryStore.h>
 #include <das/Core/Utils/IDasStopTokenImpl.h>
@@ -249,6 +250,14 @@ namespace Das::Core::TaskScheduler
         Repository::Dto::RepositoryAvailabilityDto
         DeriveRepositoryAvailabilityLocked(
             const Repository::Dto::RepositoryEntryDto& entry);
+
+        // Authoring guards — caller must hold mutex_ (*Locked suffix).
+        // Returns engaged optional on guard failure; nullopt on pass.
+        std::optional<AuthoringGuardError> CheckSchedulerIdleLocked() const;
+
+        std::optional<AuthoringGuardError> ResolveAuthoringCapabilityLocked(
+            const DasGuid&           task_guid,
+            TaskAuthoringCapability& out_capability);
 
         // ----------------------------------------------------------------
         // Config-side persistence (OnTick nextExecutionTime)

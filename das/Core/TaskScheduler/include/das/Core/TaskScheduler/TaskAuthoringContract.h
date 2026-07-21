@@ -15,6 +15,16 @@ namespace Das::Core::TaskScheduler
         std::string message;
     };
 
+    // Guard error returned by SchedulerService lock-held authoring helpers
+    // (CheckSchedulerIdleLocked / ResolveAuthoringCapabilityLocked). The
+    // std::optional<AuthoringGuardError>::engaged state expresses "guard
+    // failed" so no separate valid flag is needed.
+    struct AuthoringGuardError
+    {
+        std::string error_kind;
+        std::string message;
+    };
+
     AuthoringValidationResult ValidateAuthoringDocument(
         const yyjson::value& document);
 

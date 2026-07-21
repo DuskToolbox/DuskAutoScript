@@ -937,6 +937,35 @@ namespace Das::Core::TaskScheduler
         return availability;
     }
 
+    std::optional<AuthoringGuardError>
+    SchedulerService::CheckSchedulerIdleLocked() const
+    {
+        if (state_.load() == SchedulerState::Running
+            || state_.load() == SchedulerState::Stopping)
+        {
+            return AuthoringGuardError{
+                "taskWorking",
+                "Scheduler is running or stopping"};
+        }
+        return std::nullopt;
+    }
+
+    std::optional<AuthoringGuardError>
+    SchedulerService::ResolveAuthoringCapabilityLocked(
+        const DasGuid&           task_guid,
+        TaskAuthoringCapability& out_capability)
+    {
+        auto* authoring = capability_registry_.FindAuthoring(task_guid);
+        if (!authoring)
+        {
+            return AuthoringGuardError{
+                "capabilityMissing",
+                "Task does not declare authoring capability"};
+        }
+        out_capability = *authoring;
+        return std::nullopt;
+    }
+
     // ----------------------------------------------------------------
     // Construction
     // ----------------------------------------------------------------
@@ -2026,12 +2055,12 @@ namespace Das::Core::TaskScheduler
         std::shared_ptr<TaskRepositoryStore> store;
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            if (state_.load() == SchedulerState::Running
-                || state_.load() == SchedulerState::Stopping)
+            auto                        idle_guard = CheckSchedulerIdleLocked();
+            if (idle_guard)
             {
                 return MakeRepositoryResponseError(
-                    "taskWorking",
-                    "Scheduler is running or stopping");
+                    idle_guard->error_kind,
+                    idle_guard->message);
             }
             if (!initialized_ || !task_repository_store_)
             {
@@ -2089,15 +2118,17 @@ namespace Das::Core::TaskScheduler
                         : availability.message);
             }
 
-            auto* authoring = capability_registry_.FindAuthoring(task_guid);
-            if (!authoring)
+            auto capability_guard =
+                ResolveAuthoringCapabilityLocked(task_guid, capability);
+            if (capability_guard)
             {
+                // Repository-side capability message preserved byte-level
+                // (Task path uses the helper's generic message verbatim).
                 return MakeRepositoryResponseError(
-                    "capabilityMissing",
+                    capability_guard->error_kind,
                     "Repository entry task type does not declare authoring "
                     "capability");
             }
-            capability = *authoring;
         }
 
         // Envelope guard: Phase 84 task/repository symmetry requires the
@@ -3191,12 +3222,12 @@ namespace Das::Core::TaskScheduler
         yyjson::value           properties;
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            if (state_.load() == SchedulerState::Running
-                || state_.load() == SchedulerState::Stopping)
+            auto                        idle_guard = CheckSchedulerIdleLocked();
+            if (idle_guard)
             {
                 return MakeAuthoringResponseError(
-                    "taskWorking",
-                    "Scheduler is running or stopping");
+                    idle_guard->error_kind,
+                    idle_guard->message);
             }
 
             auto* inst = FindTaskInstance(task_id);
@@ -3212,15 +3243,14 @@ namespace Das::Core::TaskScheduler
                     "unavailable",
                     "Task instance is unavailable");
             }
-            auto* authoring =
-                capability_registry_.FindAuthoring(inst->task_guid);
-            if (!authoring)
+            auto capability_guard =
+                ResolveAuthoringCapabilityLocked(inst->task_guid, capability);
+            if (capability_guard)
             {
                 return MakeAuthoringResponseError(
-                    "capabilityMissing",
-                    "Task does not declare authoring capability");
+                    capability_guard->error_kind,
+                    capability_guard->message);
             }
-            capability = *authoring;
             properties = CloneJsonValue(inst->properties);
         }
 
