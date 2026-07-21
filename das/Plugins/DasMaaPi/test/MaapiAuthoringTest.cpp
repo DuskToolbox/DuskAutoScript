@@ -4534,6 +4534,121 @@ TEST_F(MaapiAuthoringFixture, InvokeCommandRejectsUnknownCommandId)
     EXPECT_EQ(DocumentRevisionFromApplyResult(result), 0);
 }
 
+// D-84.2-04: newPreset 是 D-84-28 通用 invokeCommand 在 MaaPI 的落地。
+// flat pi seed（无 configurations）+ invokeCommand{commandId:"newPreset"} 应：
+// (a) ApplyChange 返回 DAS_S_OK；(b) 通过 84-01 严格 Apply validator；
+// (c) document.revision == 1；(d) 无 error 诊断；
+// (e) acceptedProperties.pi.customPresets 从 0 变 1，新条目含非空 id/name；
+// (f) 新条目镜像当前 flat pi 的 controller/resource/language；
+// (g) document.commands[] 含 id="newPreset" 的 invokeCommand 条目；
+// (h) acceptedProperties.pi.presetName 保持原值（newPreset 不污染 PI 官方
+// preset 引用）。
+TEST_F(MaapiAuthoringFixture, InvokeCommandNewPresetCreatesSnapshot)
+{
+    auto interface_path =
+        FixturePath("interface_authoring.jsonc").generic_string();
+    // flat pi seed：无 configurations，只有 PI 官方字段 + 一个 task 实例。
+    auto session = CreateSession(
+        "{\"adapter\":{\"interfacePath\":\"" + interface_path
+        + "\"},"
+          "\"pi\":{\"controllerName\":\"Android\","
+          "\"resourceName\":\"Official\",\"presetName\":\"DailyPreset\","
+          "\"language\":\"zh_cn\",\"tasks\":[{\"itemId\":\"seed_t1\","
+          "\"taskName\":\"DailyFarm\",\"enabled\":true}]}}");
+
+    DasPtr<Das::ExportInterface::IDasJson> result_json;
+    auto                                   change = ParseDasJson(
+        "{\"baseRevision\":0,\"kind\":\"invokeCommand\","
+        "\"payload\":{\"commandId\":\"newPreset\"}}");
+    ASSERT_EQ(session->ApplyChange(change.Get(), result_json.Put()), DAS_S_OK);
+    auto result = ReadJsonInterface(result_json.Get());
+
+    // (b) 严格 envelope 校验。
+    auto apply_valid =
+        Das::Core::TaskScheduler::ValidateAuthoringApplyResult(result, 0);
+    EXPECT_TRUE(apply_valid.valid) << "error_kind=" << apply_valid.error_kind
+                                   << " message=" << apply_valid.message;
+    // (c) 成功 Apply 必须 document.revision == baseRevision + 1。
+    EXPECT_EQ(DocumentRevisionFromApplyResult(result), 1);
+    // (d) 无 error severity 诊断。
+    EXPECT_EQ(CountDiagnosticsBySeverity(result, "error"), 0u);
+
+    // (e)(f)(h) acceptedProperties.pi 断言。
+    auto pi = AcceptedPiFromApplyResult(result);
+    auto pi_obj = pi.as_object();
+    ASSERT_TRUE(pi_obj.has_value());
+    // (h) presetName 保持原值，newPreset 不污染 PI 官方 preset 引用。
+    EXPECT_EQ(
+        (*pi_obj)[std::string_view("presetName")].as_string().value_or(""),
+        "DailyPreset");
+    // (e) customPresets 数组从 0 变 1。
+    ASSERT_TRUE(pi_obj->contains(std::string_view("customPresets")));
+    auto presets = (*pi_obj)[std::string_view("customPresets")].as_array();
+    ASSERT_TRUE(presets.has_value());
+    ASSERT_EQ(presets->size(), 1u);
+    auto snapshot_obj = (*presets)[0].as_object();
+    ASSERT_TRUE(snapshot_obj.has_value());
+    auto snapshot_id =
+        (*snapshot_obj)[std::string_view("id")].as_string().value_or("");
+    auto snapshot_name =
+        (*snapshot_obj)[std::string_view("name")].as_string().value_or("");
+    EXPECT_FALSE(snapshot_id.empty());
+    EXPECT_FALSE(snapshot_name.empty());
+    // (f) snapshot 镜像当前 flat pi 的 controller/resource/language。
+    EXPECT_EQ(
+        (*snapshot_obj)[std::string_view("controllerName")]
+            .as_string()
+            .value_or(""),
+        "Android");
+    EXPECT_EQ(
+        (*snapshot_obj)[std::string_view("resourceName")].as_string().value_or(
+            ""),
+        "Official");
+    EXPECT_EQ(
+        (*snapshot_obj)[std::string_view("language")].as_string().value_or(""),
+        "zh_cn");
+
+    // (g) document.commands[] 含 newPreset invokeCommand 条目。
+    auto result_obj = result.as_object();
+    ASSERT_TRUE(result_obj.has_value());
+    ASSERT_TRUE(result_obj->contains(std::string_view("document")));
+    auto document = Das::Utils::CloneYyjsonValue(
+        (*result_obj)[std::string_view("document")]);
+    auto doc_obj = document.as_object();
+    ASSERT_TRUE(doc_obj.has_value());
+    ASSERT_TRUE(doc_obj->contains(std::string_view("commands")));
+    auto commands = (*doc_obj)[std::string_view("commands")].as_array();
+    ASSERT_TRUE(commands.has_value());
+    bool found_new_preset = false;
+    for (auto it = commands->begin(); it != commands->end(); ++it)
+    {
+        auto cmd = it->as_object();
+        if (!cmd)
+        {
+            continue;
+        }
+        if ((*cmd)[std::string_view("id")].as_string().value_or("")
+            == "newPreset")
+        {
+            found_new_preset = true;
+            auto apply = (*cmd)[std::string_view("apply")].as_object();
+            ASSERT_TRUE(apply.has_value());
+            EXPECT_EQ(
+                (*apply)[std::string_view("kind")].as_string().value_or(""),
+                "invokeCommand");
+            auto payload = (*apply)[std::string_view("payload")].as_object();
+            ASSERT_TRUE(payload.has_value());
+            EXPECT_EQ(
+                (*payload)[std::string_view("commandId")].as_string().value_or(
+                    ""),
+                "newPreset");
+            break;
+        }
+    }
+    EXPECT_TRUE(found_new_preset)
+        << "document.commands[] missing newPreset entry";
+}
+
 // Tracer 3 RED: convertView 在 MaaPI 必须拒绝（MaaPI 只支持 formSequence）。
 TEST_F(MaapiAuthoringFixture, ConvertViewRejectedByMaapi)
 {
