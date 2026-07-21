@@ -856,8 +856,13 @@ TEST_F(MaapiAuthoringFixture, ContractDocShapeHasFormSequenceAndNoPrivateFields)
     // D-84-07: settings 已删除；可编辑值只在 fields[]。
     EXPECT_FALSE(first->contains(std::string_view("settings")));
     EXPECT_TRUE(first->contains(std::string_view("enabled")));
-    // D-84-45: label 不在 item 级（label 走 i18n 入 fields/catalog）。
-    EXPECT_FALSE(first->contains(std::string_view("label")));
+    // item.label/description 是 PI task 本地化展示文案的权威投影；
+    // 前端 DasNativeUI 依赖 item.label 显示 task 卡标题，缺失会 fallback
+    // 到 id。label 走 PI i18n（task.dto.label），缺译时回退到 task_name。
+    EXPECT_TRUE(first->contains(std::string_view("label")));
+    EXPECT_FALSE(
+        (*first)[std::string_view("label")].as_string().value_or("").empty());
+    EXPECT_TRUE(first->contains(std::string_view("description")));
 
     EXPECT_FALSE(ContainsAnyKey(
         document,
@@ -1415,6 +1420,99 @@ namespace
         }
         return "";
     }
+
+    // D-84-13: 读 formSequence.items[id].label —— 前端 task 卡标题的权威来源。
+    // 缺 key 返回空字符串（调用方用以断言 key 是否被投影）。
+    std::string GetSequenceItemLabel(
+        const yyjson::value& document,
+        std::string_view     item_id)
+    {
+        auto obj = document.as_object();
+        if (!obj || !obj->contains(std::string_view("formSequence")))
+        {
+            return "";
+        }
+        auto fs = (*obj)[std::string_view("formSequence")].as_object();
+        if (!fs || !fs->contains(std::string_view("items")))
+        {
+            return "";
+        }
+        auto items = (*fs)[std::string_view("items")].as_array();
+        if (!items)
+        {
+            return "";
+        }
+        for (auto it = items->begin(); it != items->end(); ++it)
+        {
+            auto item = it->as_object();
+            if (!item)
+            {
+                continue;
+            }
+            if ((*item)[std::string_view("id")].as_string().value_or("")
+                != item_id)
+            {
+                continue;
+            }
+            return std::string(
+                (*item)[std::string_view("label")].as_string().value_or(""));
+        }
+        return "";
+    }
+
+    // D-84-13: 读 formSequence.items[id].description。与 GetSequenceItemLabel
+    // 不同之处：description 允许空字符串，但 key 仍应存在；用 has_key out
+    // 参数让调用方区分 "key 不存在" 与 "key 存在但值为空"。
+    std::string GetSequenceItemDescription(
+        const yyjson::value& document,
+        std::string_view     item_id,
+        bool*                has_key)
+    {
+        if (has_key != nullptr)
+        {
+            *has_key = false;
+        }
+        auto obj = document.as_object();
+        if (!obj || !obj->contains(std::string_view("formSequence")))
+        {
+            return "";
+        }
+        auto fs = (*obj)[std::string_view("formSequence")].as_object();
+        if (!fs || !fs->contains(std::string_view("items")))
+        {
+            return "";
+        }
+        auto items = (*fs)[std::string_view("items")].as_array();
+        if (!items)
+        {
+            return "";
+        }
+        for (auto it = items->begin(); it != items->end(); ++it)
+        {
+            auto item = it->as_object();
+            if (!item)
+            {
+                continue;
+            }
+            if ((*item)[std::string_view("id")].as_string().value_or("")
+                != item_id)
+            {
+                continue;
+            }
+            if (!item->contains(std::string_view("description")))
+            {
+                return "";
+            }
+            if (has_key != nullptr)
+            {
+                *has_key = true;
+            }
+            return std::string(
+                (*item)[std::string_view("description")].as_string().value_or(
+                    ""));
+        }
+        return "";
+    }
 } // namespace
 
 TEST(I18nTest, ResolveI18nResolvesDollarPrefixKeys)
@@ -1526,6 +1624,169 @@ TEST(I18nTest, RootFieldLabelFallsBackToChineseDefaultEvenForEnglishLanguage)
     auto document = ProjectAuthoringDocument(settings, &catalog, {}, 0, &diags);
 
     EXPECT_EQ(RootFieldLabel(document, "controllerName"), "控制器");
+}
+
+// formSequence.items[].label 投影 PI task 的本地化名称。前端 DasNativeUI
+// 依赖此 label 显示 task 卡标题；缺失或为空会让前端 fallback 到 id
+// （显示 task_1 / item_1）。本测试覆盖：
+//  - PI i18n 有译时 label 走译名（zh_cn + en 两种语言）
+//  - description key 一定存在（值允许空）
+//  - label 非空且不等于 id（不是 fallback）
+TEST(I18nTest, FormSequenceItemLabelProjectedFromPiI18n)
+{
+    auto                                        catalog = MakeI18nMockCatalog();
+    Das::Plugins::DasMaaPi::AcceptedSettingsDto settings;
+    settings.pi.language = "zh_cn";
+    Das::Plugins::DasMaaPi::MaapiPiTaskSettingsDto daily_farm;
+    daily_farm.item_id = "item_daily_farm";
+    daily_farm.task_name = "DailyFarm";
+    daily_farm.enabled = true;
+    settings.pi.tasks.push_back(std::move(daily_farm));
+
+    auto document_zh = ProjectAuthoringDocument(settings, &catalog, {}, 0);
+    EXPECT_EQ(GetSequenceItemLabel(document_zh, "item_daily_farm"), "日常任务");
+    // label 必须非空、且不等于 id（前端依赖 label 区分 task 卡）。
+    EXPECT_NE(GetSequenceItemLabel(document_zh, "item_daily_farm"), "");
+    EXPECT_NE(
+        GetSequenceItemLabel(document_zh, "item_daily_farm"),
+        "item_daily_farm");
+
+    // description key 存在；i18n 缺译时允许空字符串（MakeI18nMockCatalog
+    // 未给 task.dailyfarm.desc 提供翻译，故 zh_cn 下 description 退到空）。
+    bool has_desc = false;
+    auto desc =
+        GetSequenceItemDescription(document_zh, "item_daily_farm", &has_desc);
+    EXPECT_TRUE(has_desc);
+    EXPECT_TRUE(desc.empty());
+
+    // 切换到 en：label 走 en 译名；description 仍允许空。
+    settings.pi.language = "en";
+    auto document_en = ProjectAuthoringDocument(settings, &catalog, {}, 0);
+    EXPECT_EQ(
+        GetSequenceItemLabel(document_en, "item_daily_farm"),
+        "Daily Farm");
+    EXPECT_NE(
+        GetSequenceItemLabel(document_en, "item_daily_farm"),
+        "item_daily_farm");
+}
+
+// PI i18n 缺译时，item.label 回退到 task_name（PI 用户可见标识），绝不能
+// 回退到 id（item_1 / task_1）。fallback 路径同时向 projection_diagnostics
+// emit warning，便于开发者补译。description 缺译时退到空字符串（key 仍在）。
+TEST(I18nTest, FormSequenceItemLabelFallsBackToTaskNameWhenTranslationMissing)
+{
+    auto catalog = MakeI18nMockCatalog();
+    catalog.translations["zh_cn"].erase("task.dailyfarm");
+    catalog.translations["en"].erase("task.dailyfarm");
+
+    Das::Plugins::DasMaaPi::AcceptedSettingsDto settings;
+    settings.pi.language = "zh_cn";
+    Das::Plugins::DasMaaPi::MaapiPiTaskSettingsDto daily_farm;
+    daily_farm.item_id = "item_daily_farm";
+    daily_farm.task_name = "DailyFarm";
+    daily_farm.enabled = true;
+    settings.pi.tasks.push_back(std::move(daily_farm));
+
+    std::vector<PiDiagnosticDto> diags;
+    auto document = ProjectAuthoringDocument(settings, &catalog, {}, 0, &diags);
+
+    const auto label = GetSequenceItemLabel(document, "item_daily_farm");
+    // 回退到 task_name（非空、非 id、非 $key、非英文字段名）。
+    EXPECT_EQ(label, "DailyFarm");
+    EXPECT_NE(label, "item_daily_farm");
+    EXPECT_NE(label, "");
+    EXPECT_NE(label, "$task.dailyfarm");
+
+    // 缺译应 emit warning，path 指向 formSequence.items.<id>.label。
+    bool found_label_diag = false;
+    for (const auto& d : diags)
+    {
+        if (d.severity == "warning"
+            && d.message.find("task.dailyfarm") != std::string::npos
+            && d.path.has_value()
+            && d.path->find("item_daily_farm") != std::string::npos
+            && d.path->find(".label") != std::string::npos)
+        {
+            found_label_diag = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(found_label_diag);
+
+    // description key 存在但值为空（fallback 是空字符串）。
+    bool has_desc = false;
+    auto desc =
+        GetSequenceItemDescription(document, "item_daily_farm", &has_desc);
+    EXPECT_TRUE(has_desc);
+    EXPECT_TRUE(desc.empty());
+}
+
+// 多个不同 task_name 的 item，label 各自正确（不相互污染）。
+TEST(I18nTest, FormSequenceItemLabelDistinctPerTask)
+{
+    using namespace Das::Plugins::DasMaaPi;
+    PiCatalog catalog;
+    catalog.name = "MultiTask";
+    catalog.version = "1.0";
+    catalog.translations["zh_cn"] = {
+        {"task.farm", "日常刷图"},
+        {"task.visit", "访问好友"}};
+
+    PiTask farm;
+    farm.dto.name = "DailyFarm";
+    farm.dto.entry = "StartFarm";
+    farm.dto.label = "$task.farm";
+    catalog.tasks.push_back(std::move(farm));
+
+    PiTask visit;
+    visit.dto.name = "VisitFriends";
+    visit.dto.entry = "StartVisit";
+    visit.dto.label = "$task.visit";
+    catalog.tasks.push_back(std::move(visit));
+
+    AcceptedSettingsDto settings;
+    settings.pi.language = "zh_cn";
+    MaapiPiTaskSettingsDto farm_task;
+    farm_task.item_id = "item_farm";
+    farm_task.task_name = "DailyFarm";
+    farm_task.enabled = true;
+    settings.pi.tasks.push_back(std::move(farm_task));
+    MaapiPiTaskSettingsDto visit_task;
+    visit_task.item_id = "item_visit";
+    visit_task.task_name = "VisitFriends";
+    visit_task.enabled = true;
+    settings.pi.tasks.push_back(std::move(visit_task));
+
+    auto document = ProjectAuthoringDocument(settings, &catalog, {}, 0);
+    EXPECT_EQ(GetSequenceItemLabel(document, "item_farm"), "日常刷图");
+    EXPECT_EQ(GetSequenceItemLabel(document, "item_visit"), "访问好友");
+}
+
+// catalog 缺席（无 PI 接口）时，item.label 退到 task_name（非空），
+// description key 仍存在（空字符串）。保证前端离线场景仍能显示稳定标题。
+TEST(I18nTest, FormSequenceItemLabelFallsBackWhenCatalogAbsent)
+{
+    Das::Plugins::DasMaaPi::AcceptedSettingsDto settings;
+    settings.pi.language = "zh_cn";
+    Das::Plugins::DasMaaPi::MaapiPiTaskSettingsDto daily_farm;
+    daily_farm.item_id = "item_daily_farm";
+    daily_farm.task_name = "DailyFarm";
+    daily_farm.enabled = true;
+    settings.pi.tasks.push_back(std::move(daily_farm));
+
+    auto document = ProjectAuthoringDocument(settings, nullptr, {}, 0);
+    EXPECT_EQ(GetSequenceItemLabel(document, "item_daily_farm"), "DailyFarm");
+    EXPECT_NE(GetSequenceItemLabel(document, "item_daily_farm"), "");
+    EXPECT_NE(
+        GetSequenceItemLabel(document, "item_daily_farm"),
+        "item_daily_farm");
+
+    bool has_desc = false;
+    /*auto desc =*/GetSequenceItemDescription(
+        document,
+        "item_daily_farm",
+        &has_desc);
+    EXPECT_TRUE(has_desc);
 }
 
 TEST(I18nTest, ResolveI18nSwitchesLanguageCorrectly)
@@ -3212,8 +3473,17 @@ TEST(MaapiProjectionTest, DocumentPassesStrictContractValidator)
         "item_strict_1");
     // D-84-07: FormSequenceItem.settings 已删除。
     EXPECT_FALSE(item_obj->contains(std::string_view("settings")));
-    // D-84-45: 不把 PI task name / componentGuid 当 label 回退；label 走 i18n。
-    EXPECT_FALSE(item_obj->contains(std::string_view("label")));
+    // item.label 现在是 PI task 本地化标题的权威投影（走 i18n，缺译时
+    // 回退到 task_name，绝不回退到 id/componentGuid）。
+    EXPECT_TRUE(item_obj->contains(std::string_view("label")));
+    EXPECT_FALSE((*item_obj)[std::string_view("label")]
+                     .as_string()
+                     .value_or("")
+                     .empty());
+    EXPECT_NE(
+        (*item_obj)[std::string_view("label")].as_string().value_or(""),
+        "item_strict_1");
+    EXPECT_TRUE(item_obj->contains(std::string_view("description")));
 }
 
 // Tracer 2: multi-input 拆分。D-84-17: PI 多字段 input 投影为一个纵向
@@ -3633,7 +3903,15 @@ TEST(MaapiProjectionTest, RootCommandsAndItemDebugInfoProjected)
     EXPECT_EQ(
         (*debug_info)[std::string_view("piEntry")].as_string().value_or(""),
         "StartDaily");
-    EXPECT_FALSE(item_obj->contains(std::string_view("label")));
+    // item.label/description 现在是 PI task 本地化展示文案的权威投影；
+    // taskName/entry 不在 label/可见 UI（D-84-45 保留：debugInfo 是 opaque
+    // 调试元数据，与 label 的展示角色互不重叠）。
+    EXPECT_TRUE(item_obj->contains(std::string_view("label")));
+    EXPECT_FALSE(item_obj->operator[](std::string_view("label"))
+                     .as_string()
+                     .value_or("")
+                     .empty());
+    EXPECT_TRUE(item_obj->contains(std::string_view("description")));
 }
 
 // Tracer 6: icon 解析为绝对本地路径或 http(s)。

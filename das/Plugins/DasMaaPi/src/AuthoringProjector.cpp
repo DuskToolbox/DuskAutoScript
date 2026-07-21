@@ -2083,6 +2083,55 @@ namespace Das::Plugins::DasMaaPi
             (*item_obj)[std::string_view("targetKind")] =
                 JsonString("componentRef");
 
+            // item.label/description 投影 PI task 的本地化展示文案。前端
+            // DasNativeUI 依赖 label 显示 task 卡标题；label 缺失会 fallback
+            // 到 id（如 task_1）。优先用 PI i18n 解析 dto.label/description
+            // 里的 $key；缺译或无 dto.label 时，label 回退到 task_name（PI
+            // 用户可见标识，非空、唯一），description 回退到空字符串。
+            // D-84-40 仅约束 id 不能用 taskName 兜底；label 用 task_name
+            // 是合理的（label 本就是展示用）。
+            if (catalog)
+            {
+                const auto* catalog_task = FindTask(*catalog, task.task_name);
+                const std::string label_path =
+                    "formSequence.items." + task.item_id + ".label";
+                const std::string desc_path =
+                    "formSequence.items." + task.item_id + ".description";
+                const std::string_view label_text =
+                    catalog_task && catalog_task->dto.label
+                        ? std::string_view(*catalog_task->dto.label)
+                        : std::string_view{};
+                const std::string_view desc_text =
+                    catalog_task && catalog_task->dto.description
+                        ? std::string_view(*catalog_task->dto.description)
+                        : std::string_view{};
+                (*item_obj)[std::string_view("label")] =
+                    JsonString(ResolveI18nOrDiag(
+                        label_text,
+                        *catalog,
+                        current_language,
+                        task.task_name,
+                        projection_diagnostics,
+                        label_path));
+                (*item_obj)[std::string_view("description")] =
+                    JsonString(ResolveI18nOrDiag(
+                        desc_text,
+                        *catalog,
+                        current_language,
+                        std::string_view{},
+                        projection_diagnostics,
+                        desc_path));
+            }
+            else
+            {
+                // catalog 缺席（无 PI 接口）：label 用 task_name 兜底，
+                // description 空。label 仍非空。
+                (*item_obj)[std::string_view("label")] =
+                    JsonString(task.task_name);
+                (*item_obj)[std::string_view("description")] =
+                    JsonString(std::string_view{});
+            }
+
             yyjson::value item_fields(Array());
             // D-84-17: 当 item 含 multi-input option 时，必须 emit fieldLayout
             // 覆盖全部字段，并在 multi-input 处用纵向 FieldSectionDescriptor

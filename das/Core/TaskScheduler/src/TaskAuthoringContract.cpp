@@ -1034,6 +1034,31 @@ namespace Das::Core::TaskScheduler
                 return Fail("invalidDebugInfo", "debugInfo must be object");
             }
 
+            // item.label 是前端 task 卡标题的权威来源；缺失会让前端 fallback
+            // 到 id（如 task_1），因此即便允许缺省字段，一旦出现就必须是非空
+            // 字符串。description 允许空字符串（仅描述缺失不破坏 UI）。
+            if (obj.contains("label"))
+            {
+                if (!obj["label"].is_string())
+                {
+                    return Fail(
+                        "invalidLabel",
+                        "FormSequenceItem.label must be string");
+                }
+                if (obj["label"].as_string().value().empty())
+                {
+                    return Fail(
+                        "invalidLabel",
+                        "FormSequenceItem.label must be non-empty");
+                }
+            }
+            if (obj.contains("description") && !obj["description"].is_string())
+            {
+                return Fail(
+                    "invalidDescription",
+                    "FormSequenceItem.description must be string");
+            }
+
             std::set<std::string> field_names;
             if (auto r = ValidateFieldContainer(obj, field_names); !r.valid)
             {
@@ -1054,6 +1079,8 @@ namespace Das::Core::TaskScheduler
                      "componentGuid",
                      "targetKind",
                      "entryRef",
+                     "label",
+                     "description",
                      "fields",
                      "fieldLayout",
                      "commands",
