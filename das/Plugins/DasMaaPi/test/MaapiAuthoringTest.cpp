@@ -5238,3 +5238,229 @@ TEST(MaapiLegacyBoundaryTest, LegacyPre84ParseDoesNotEmitAuthoringLegacyFields)
     EXPECT_FALSE(
         serialized_obj->contains(std::string_view("sourceFingerprint")));
 }
+
+// ---------------------------------------------------------------------------
+// UAT 回归：PI 接口定义的默认静态设置必须投影到 Authoring doc 的 fields
+//
+// 背景：用户在 UI 创建 MaaPI 任务后，GetDocument 返回的 document.fields
+// 缺失 PI 接口定义的 default 值。根因是 ProjectAuthoringDocument 投影
+// catalog.global_options 时，acceptedProperties.pi.global_options 在 fresh
+// session 下为空 (current=nullptr)，MakeOptionPropertyField 对 select /
+// checkbox / switch 类型未回退到 PI 接口定义的 default_case / 首个 case /
+// switch 默认 true 约定，导致 FieldDescriptor.value 始终为空字符串/空数组/
+// false。同理，task 级 option 当 acceptedProperties 外部加载且 task.options
+// 缺省时也走同一 nullptr 路径。
+//
+// 这些测试用 MakeStrictProjectionMockCatalog (没有 literal fixture 的
+// 完整 acceptedProperties)，强制 current=nullptr，确保投影端独立满足
+// "PI 接口默认值进入 fields" 的契约。
+// ---------------------------------------------------------------------------
+
+namespace
+{
+    yyjson::value FieldValueOf(
+        const yyjson::value& document,
+        std::string_view     name)
+    {
+        auto obj = document.as_object();
+        if (!obj || !obj->contains(std::string_view("fields")))
+        {
+            return yyjson::value(nullptr);
+        }
+        auto fields = (*obj)[std::string_view("fields")].as_array();
+        if (!fields)
+        {
+            return yyjson::value(nullptr);
+        }
+        for (auto it = fields->begin(); it != fields->end(); ++it)
+        {
+            auto field = it->as_object();
+            if (!field)
+            {
+                continue;
+            }
+            if ((*field)[std::string_view("name")].as_string().value_or("")
+                == name)
+            {
+                return Das::Utils::CloneYyjsonValue(
+                    (*field)[std::string_view("value")]);
+            }
+        }
+        return yyjson::value(nullptr);
+    }
+
+    // 构造一个覆盖 select(input)/checkbox/switch 四种 option 类型，且每种都
+    // 携带 PI 协议层面 default 信号的 mock catalog。stage 与 settings 是
+    // global_options，notify 是 task 级 switch。stage 没有 default_case，
+    // cases=[1-1,1-2]；explore 有 default_case=[hard]；notify 是 switch。
+    PiCatalog MakePiDefaultProjectionMockCatalog()
+    {
+        using namespace Das::Plugins::DasMaaPi;
+        PiCatalog catalog;
+        catalog.name = "PiDefaultProjection";
+        catalog.version = "1.0";
+
+        PiTask task;
+        task.dto.name = "DailyFarm";
+        task.dto.entry = "StartDaily";
+        task.dto.option = {"stage", "explore", "notify"};
+        catalog.tasks.push_back(std::move(task));
+
+        auto make_select_stage = []() -> PiOption
+        {
+            PiOption o;
+            o.dto.name = "stage";
+            o.dto.type = "select";
+            PiCaseDto c1;
+            c1.name = "1-1";
+            PiCaseDto c2;
+            c2.name = "1-2";
+            o.dto.cases.push_back(std::move(c1));
+            o.dto.cases.push_back(std::move(c2));
+            // 没有 default_case —— PI 默认应回退到首个 case "1-1"。
+            return o;
+        };
+
+        auto make_select_explore = []() -> PiOption
+        {
+            PiOption o;
+            o.dto.name = "explore";
+            o.dto.type = "select";
+            PiCaseDto easy;
+            easy.name = "easy";
+            PiCaseDto hard;
+            hard.name = "hard";
+            o.dto.cases.push_back(std::move(easy));
+            o.dto.cases.push_back(std::move(hard));
+            o.dto.default_cases.push_back("hard");
+            return o;
+        };
+
+        auto make_switch = []() -> PiOption
+        {
+            PiOption o;
+            o.dto.name = "notify";
+            o.dto.type = "switch";
+            return o;
+        };
+
+        catalog.options.push_back(make_select_stage());
+        catalog.options.push_back(make_select_explore());
+        catalog.options.push_back(make_switch());
+
+        // stage 与 explore 都注册为 global_option（既出现在 catalog.options
+        // 也出现在 catalog.global_options），模拟 PI interface.json 的
+        // global_option 字段。notify 仅 task 级。
+        for (const auto& opt : catalog.options)
+        {
+            if (opt.dto.name == "stage" || opt.dto.name == "explore")
+            {
+                catalog.global_options.push_back(opt);
+            }
+        }
+        return catalog;
+    }
+} // namespace
+
+// UAT-RED: fresh session (空 acceptedProperties.pi.global_options) →
+// document.fields[options.stage].value 必须是 PI 首个 case "1-1"
+// (select 无 default_case 时回退首个 case)；options.explore.value 必须
+// 是 PI default_case "hard"。修复前 current=nullptr 导致返回空字符串。
+TEST(MaapiProjectionTest, GlobalOptionsProjectPiInterfaceDefaultsWhenUnset)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto catalog = MakePiDefaultProjectionMockCatalog();
+
+    // fresh session：没有任何用户运行时设置。
+    AcceptedSettingsDto settings;
+
+    auto document = ProjectAuthoringDocument(settings, &catalog, {}, 0);
+
+    // 严格 contract 仍要通过。
+    auto validate =
+        Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+    EXPECT_TRUE(validate.valid) << "error_kind=" << validate.error_kind
+                                << " message=" << validate.message;
+
+    // stage: select 无 default_case → 回退首个 case "1-1"。
+    auto stage_val = FieldValueOf(document, "options.stage");
+    ASSERT_TRUE(stage_val.is_string())
+        << "options.stage value must be string (select scalar IR)";
+    EXPECT_EQ(stage_val.as_string().value_or(""), "1-1");
+
+    // explore: select 有 default_case=["hard"] → 使用 "hard"。
+    auto explore_val = FieldValueOf(document, "options.explore");
+    ASSERT_TRUE(explore_val.is_string())
+        << "options.explore value must be string (select scalar IR)";
+    EXPECT_EQ(explore_val.as_string().value_or(""), "hard");
+}
+
+// UAT-RED: 用户已通过 setValue 把 stage 改为 "1-2"，则 projection 必须呈现
+// 用户值而不是 PI 默认。这保证修复不会覆盖用户运行时值。
+TEST(MaapiProjectionTest, GlobalOptionsRespectUserValueOverPiDefault)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto catalog = MakePiDefaultProjectionMockCatalog();
+
+    AcceptedSettingsDto      settings;
+    MaapiPiOptionSettingsDto user_stage;
+    user_stage.option_name = "stage";
+    user_stage.kind = "select";
+    user_stage.selected_cases.push_back("1-2");
+    settings.pi.global_options.push_back(std::move(user_stage));
+
+    auto document = ProjectAuthoringDocument(settings, &catalog, {}, 0);
+
+    auto stage_val = FieldValueOf(document, "options.stage");
+    ASSERT_TRUE(stage_val.is_string());
+    EXPECT_EQ(stage_val.as_string().value_or(""), "1-2");
+
+    // explore 用户没改 → 仍走 PI default_case "hard"。
+    auto explore_val = FieldValueOf(document, "options.explore");
+    ASSERT_TRUE(explore_val.is_string());
+    EXPECT_EQ(explore_val.as_string().value_or(""), "hard");
+}
+
+// UAT-RED: task 级 switch option 在 acceptedProperties.tasks[i].options 缺省
+// 时（外部加载 acceptedProperties 没有该 option），projection 必须呈现 PI
+// 默认 true（MaaPI 约定，见 InitializeOptionDefaults）。
+TEST(MaapiProjectionTest, TaskSwitchOptionFallsBackToPiDefaultWhenMissing)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto catalog = MakePiDefaultProjectionMockCatalog();
+
+    AcceptedSettingsDto    settings;
+    MaapiPiTaskSettingsDto task;
+    task.item_id = "item_daily_farm";
+    task.task_name = "DailyFarm";
+    task.enabled = true;
+    // 故意不填 task.options：模拟外部加载的 acceptedProperties
+    // (post84 fixture 的 item_daily_farm_a2 形态：只配置了 stage)。
+    settings.pi.tasks.push_back(std::move(task));
+
+    auto document = ProjectAuthoringDocument(settings, &catalog, {}, 0);
+
+    auto validate =
+        Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+    EXPECT_TRUE(validate.valid) << "error_kind=" << validate.error_kind
+                                << " message=" << validate.message;
+
+    // notify: switch 缺省 → PI 默认 true。
+    auto notify_val = FindSequenceItemFieldValue(
+        document,
+        "item_daily_farm",
+        "options.notify");
+    ASSERT_TRUE(notify_val.is_bool());
+    EXPECT_TRUE(notify_val.as_bool().value_or(false));
+
+    // stage: select 缺省 → 回退首个 case "1-1"。
+    auto stage_val = FindSequenceItemFieldValue(
+        document,
+        "item_daily_farm",
+        "options.stage");
+    ASSERT_TRUE(stage_val.is_string());
+    EXPECT_EQ(stage_val.as_string().value_or(""), "1-1");
+}
