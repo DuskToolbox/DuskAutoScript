@@ -15,6 +15,9 @@ target_link_libraries(DasMaaPi PUBLIC DAS_EX_PRIVATE_LIBS)
 target_link_libraries(DasMaaPi PRIVATE
     DasCore
     DasBundledMaaFramework)
+if(TARGET DasBundledMaaToolkit)
+    target_link_libraries(DasMaaPi PRIVATE DasBundledMaaToolkit)
+endif()
 
 if(WIN32)
     target_link_libraries(DasMaaPi PRIVATE bcrypt)

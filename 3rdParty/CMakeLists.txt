@@ -701,6 +701,30 @@ function(_download_and_config_maaframework)
         INTERFACE_INCLUDE_DIRECTORIES "${_maa_include_dir}"
         INTERFACE_LINK_LIBRARIES DasBundledMaaFrameworkDll)
 
+    # MaaToolkit ships in the same bundle as MaaFramework
+    # (include/MaaToolkit/MaaToolkitAPI.h, lib/MaaToolkit.lib, bin/MaaToolkit.dll).
+    # Expose it as a sibling interface target so plugins (DasMaaPi HWND discovery)
+    # can opt in without changing the DasBundledMaaFramework interface.
+    set(_maa_toolkit_implib "${_maa_root}/lib/MaaToolkit.lib")
+    set(_maa_toolkit_dll "${_maa_root}/bin/MaaToolkit.dll")
+    if(EXISTS "${_maa_toolkit_implib}" AND EXISTS "${_maa_toolkit_dll}")
+        add_library(DasBundledMaaToolkitDll SHARED IMPORTED GLOBAL)
+        set_target_properties(
+            DasBundledMaaToolkitDll
+            PROPERTIES
+            IMPORTED_LOCATION "${_maa_toolkit_dll}"
+            IMPORTED_IMPLIB "${_maa_toolkit_implib}"
+            INTERFACE_INCLUDE_DIRECTORIES "${_maa_include_dir}")
+        add_library(DasBundledMaaToolkit INTERFACE IMPORTED GLOBAL)
+        set_target_properties(
+            DasBundledMaaToolkit
+            PROPERTIES
+            INTERFACE_INCLUDE_DIRECTORIES "${_maa_include_dir}"
+            INTERFACE_LINK_LIBRARIES DasBundledMaaToolkitDll)
+    else()
+        message(WARNING "MaaToolkit binaries not found under ${_maa_root}; DasMaaPi Win32WindowFinder will fall back to test-stub enumerator.")
+    endif()
+
     file(GLOB _maa_runtime_dlls "${_maa_root}/bin/*.dll")
     set(DAS_MAAFRAMEWORK_RUNTIME_DLLS
         "${_maa_runtime_dlls}"
