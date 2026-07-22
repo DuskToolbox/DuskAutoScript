@@ -10,10 +10,12 @@
 #endif
 
 #include <algorithm>
+#include <cctype>
 #include <cstdint>
 #include <initializer_list>
 #include <map>
 #include <optional>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -21,6 +23,17 @@ namespace Das::Plugins::DasMaaPi
 {
     namespace
     {
+        std::string ToLower(std::string_view text)
+        {
+            std::string out(text);
+            std::transform(
+                out.begin(),
+                out.end(),
+                out.begin(),
+                [](unsigned char ch)
+                { return static_cast<char>(std::tolower(ch)); });
+            return out;
+        }
         // D-86-12: 运行时查询 MaaFramework 版本作为 PI client_maafw_version。
         // 测试构建（DAS_MAAPI_DISABLE_REAL_MAA_BOUNDARY）不链接 MaaFramework，
         // 此时返回非空占位字符串以满足「禁止空 stub」契约。
@@ -544,6 +557,18 @@ namespace Das::Plugins::DasMaaPi
 
         envelope.maapi.controller_name = controller->dto.name;
         envelope.maapi.controller = NormalizeControllerSpec(*controller);
+        // Typed init params: filled when the controller carries win32/gamepad
+        // blocks or is a Tier2 type (MacOS/PlayCover/WlRoots). Adb/Dbg
+        // controllers leave this nullopt and MaaRuntime::Run uses the legacy
+        // single-arg CreateController path.
+        auto       init_params = NormalizeControllerInitParams(*controller);
+        const auto lower_type = ToLower(init_params.controller_type);
+        if (init_params.win32 || init_params.gamepad || lower_type == "macos"
+            || lower_type == "playcover" || lower_type == "wlroots"
+            || lower_type == "wlroots_kwin")
+        {
+            envelope.maapi.controller_init_params = std::move(init_params);
+        }
         envelope.maapi.resource_name = resource->dto.name;
         envelope.maapi.resource_hash = resource->dto.hash;
         for (const auto& path : resource->resolved_paths)

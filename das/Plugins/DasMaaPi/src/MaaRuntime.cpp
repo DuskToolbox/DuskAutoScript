@@ -5,6 +5,7 @@
 #include "AgentProcessRunner.h"
 #include "AgentRuntimeService.h"
 #include "MaaHandle.h"
+#include "Win32WindowFinder.h"
 
 #ifndef DAS_MAAPI_DISABLE_REAL_MAA_BOUNDARY
 #include <MaaAgentClient/MaaAgentClientAPI.h>
@@ -178,17 +179,133 @@ namespace Das::Plugins::DasMaaPi
             }
 
             CreateControllerResult CreateControllerFromParams(
-                const ControllerSpec& /*spec*/,
-                const ControllerInitParams& /*params*/) override
+                const ControllerSpec&       spec,
+                const ControllerInitParams& params) override
             {
-                // RED placeholder — real win32/gamepad/Tier2 dispatch lands in
-                // GREEN via MaaWin32ControllerCreate /
-                // MaaGamepadControllerCreate
-                // + Win32WindowFinder HWND discovery.
                 CreateControllerResult result;
+                const auto             type = Lower(params.controller_type);
+                if (type == "win32" && params.win32)
+                {
+                    return CreateWin32Controller(params);
+                }
+                if (type == "gamepad" && params.gamepad)
+                {
+                    return CreateGamepadController(params);
+                }
+                // Tier2 controller types (MacOS/PlayCover/WlRoots/...) —
+                // MaaFW does not export those create symbols on Windows. The
+                // PI spec defines them as cross-platform, but we can only
+                // support them on the build target that matches.
                 result.error_code = "controller-type-unsupported-on-platform";
                 result.error_message =
-                    "Typed controller init path is not implemented yet";
+                    "Controller type '" + params.controller_type
+                    + "' is not available on this build of DasMaaPi (spec name='"
+                    + spec.name + "')";
+                return result;
+            }
+
+        private:
+            static void ApplyDisplayOptions(
+                MaaController*              controller,
+                const ControllerInitParams& params)
+            {
+                if (params.display_short_side)
+                {
+                    const auto value = *params.display_short_side;
+                    MaaControllerSetOption(
+                        controller,
+                        MaaCtrlOption_ScreenshotTargetShortSide,
+                        const_cast<void*>(static_cast<const void*>(&value)),
+                        sizeof(value));
+                }
+                if (params.display_long_side)
+                {
+                    const auto value = *params.display_long_side;
+                    MaaControllerSetOption(
+                        controller,
+                        MaaCtrlOption_ScreenshotTargetLongSide,
+                        const_cast<void*>(static_cast<const void*>(&value)),
+                        sizeof(value));
+                }
+                if (params.display_raw)
+                {
+                    const auto value =
+                        *params.display_raw ? MaaBool{1} : MaaBool{0};
+                    MaaControllerSetOption(
+                        controller,
+                        MaaCtrlOption_ScreenshotUseRawSize,
+                        const_cast<void*>(static_cast<const void*>(&value)),
+                        sizeof(value));
+                }
+            }
+
+            static CreateControllerResult CreateWin32Controller(
+                const ControllerInitParams& params)
+            {
+                CreateControllerResult result;
+                const auto&            w = *params.win32;
+                auto hwnd = FindWindowByRegex(w.class_regex, w.window_regex);
+                if (hwnd.handle == nullptr)
+                {
+                    result.error_code = hwnd.error_code;
+                    result.error_message = hwnd.error_message;
+                    return result;
+                }
+                auto* controller = MaaWin32ControllerCreate(
+                    hwnd.handle,
+                    static_cast<MaaWin32ScreencapMethod>(w.screencap_method),
+                    static_cast<MaaWin32InputMethod>(w.mouse_method),
+                    static_cast<MaaWin32InputMethod>(w.keyboard_method));
+                if (!controller)
+                {
+                    result.error_code = "controller-create-failed";
+                    result.error_message =
+                        "MaaWin32ControllerCreate returned null for class_regex='"
+                        + w.class_regex + "' window_regex='" + w.window_regex
+                        + "'";
+                    return result;
+                }
+                ApplyDisplayOptions(controller, params);
+                result.handle =
+                    reinterpret_cast<MaaControllerHandle>(controller);
+                return result;
+            }
+
+            static CreateControllerResult CreateGamepadController(
+                const ControllerInitParams& params)
+            {
+                CreateControllerResult result;
+                const auto&            g = *params.gamepad;
+                // Gamepad hWnd is optional (screencap disabled when null).
+                // Only invoke Win32WindowFinder when the PI supplied a regex.
+                void* hwnd = nullptr;
+                if (!g.class_regex.empty() || !g.window_regex.empty())
+                {
+                    auto found =
+                        FindWindowByRegex(g.class_regex, g.window_regex);
+                    if (found.handle == nullptr)
+                    {
+                        result.error_code = found.error_code;
+                        result.error_message = found.error_message;
+                        return result;
+                    }
+                    hwnd = found.handle;
+                }
+                auto* controller = MaaGamepadControllerCreate(
+                    hwnd,
+                    static_cast<MaaGamepadType>(g.gamepad_type),
+                    static_cast<MaaWin32ScreencapMethod>(g.screencap_method));
+                if (!controller)
+                {
+                    result.error_code = "controller-create-failed";
+                    result.error_message =
+                        "MaaGamepadControllerCreate returned null for gamepad_type="
+                        + std::to_string(g.gamepad_type);
+                    return result;
+                }
+                ApplyDisplayOptions(controller, params);
+                result.handle =
+                    reinterpret_cast<MaaControllerHandle>(controller);
                 return result;
             }
 
@@ -879,18 +996,44 @@ namespace Das::Plugins::DasMaaPi
         {
             controller_spec.name = envelope.maapi.controller_name;
         }
-        ScopedController controller(
-            boundary,
-            boundary.CreateController(controller_spec));
-        if (controller.get() == kInvalidMaaControllerHandle)
+        MaaControllerHandle controller_handle = kInvalidMaaControllerHandle;
+        if (envelope.maapi.controller_init_params)
         {
-            result.das_result = DAS_E_FAIL;
-            AddDiagnostic(
-                result,
-                "create-controller-failed",
-                "Maa controller creation failed");
-            return result;
+            // Typed-init path (Win32/Gamepad/Tier2): surface structured
+            // failure codes (controller-window-not-found /
+            // controller-window-ambiguous / controller-type-unsupported-on-
+            // platform) instead of the generic create-controller-failed.
+            auto typed = boundary.CreateControllerFromParams(
+                controller_spec,
+                *envelope.maapi.controller_init_params);
+            controller_handle = typed.handle;
+            if (controller_handle == kInvalidMaaControllerHandle)
+            {
+                result.das_result = DAS_E_FAIL;
+                AddDiagnostic(
+                    result,
+                    typed.error_code.empty() ? "create-controller-failed"
+                                             : typed.error_code,
+                    typed.error_message.empty()
+                        ? "Maa typed controller creation failed"
+                        : typed.error_message);
+                return result;
+            }
         }
+        else
+        {
+            controller_handle = boundary.CreateController(controller_spec);
+            if (controller_handle == kInvalidMaaControllerHandle)
+            {
+                result.das_result = DAS_E_FAIL;
+                AddDiagnostic(
+                    result,
+                    "create-controller-failed",
+                    "Maa controller creation failed");
+                return result;
+            }
+        }
+        ScopedController controller(boundary, controller_handle);
 
         ScopedTasker tasker(boundary, boundary.CreateTasker());
         if (tasker.get() == kInvalidMaaTaskerHandle)
