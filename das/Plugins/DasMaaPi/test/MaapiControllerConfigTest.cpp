@@ -231,8 +231,12 @@ TEST(NormalizeControllerInitParams, ReadsGamepadSameLevelTypedKeys)
     EXPECT_FALSE(params.display_raw.has_value());
 }
 
-TEST(NormalizeControllerInitParams, AdbControllerHasNoTypedInitParams)
+TEST(NormalizeControllerInitParams, AdbControllerPopulatesTypedAdbBlockOnly)
 {
+    // After the unified-dispatch refactor, Adb controllers MUST populate
+    // params.adb (address/adbPath/configJson/agentPath) so the typed
+    // CreateControllerFromParams dispatch can read them. Win32/Gamepad/Dbg
+    // blocks stay absent for a pure Adb controller.
     auto result = ParseProjectInterface(
         {.interface_path = FixturePath("interface_controller.jsonc")});
     ASSERT_TRUE(result.ok);
@@ -240,8 +244,12 @@ TEST(NormalizeControllerInitParams, AdbControllerHasNoTypedInitParams)
     const auto& adb = result.catalog.controllers[0];
     const auto  params = NormalizeControllerInitParams(adb);
     EXPECT_EQ(params.controller_type, "Adb");
+    ASSERT_TRUE(params.adb.has_value());
+    EXPECT_EQ(params.adb->address, "127.0.0.1:5555");
+    EXPECT_EQ(params.adb->adb_path, "adb");
     EXPECT_FALSE(params.win32.has_value());
     EXPECT_FALSE(params.gamepad.has_value());
+    EXPECT_FALSE(params.dbg.has_value());
     EXPECT_FALSE(params.display_short_side.has_value());
     EXPECT_FALSE(params.display_long_side.has_value());
     EXPECT_FALSE(params.display_raw.has_value());

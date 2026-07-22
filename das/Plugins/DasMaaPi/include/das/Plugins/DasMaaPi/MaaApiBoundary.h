@@ -144,15 +144,13 @@ namespace Das::Plugins::DasMaaPi
         virtual std::optional<std::string> GetResourceHash(
             MaaResourceHandle resource) = 0;
 
-        virtual MaaControllerHandle CreateController(
-            const ControllerSpec& spec) = 0;
-        // Typed-init overload: dispatches to MaaWin32ControllerCreate /
-        // MaaGamepadControllerCreate when the corresponding optional block is
-        // present. Tier2 controller types (macos/playcover/wlroots) return
-        // kInvalidMaaControllerHandle with
-        // controller-type-unsupported-on-platform on Windows builds — MaaFW
-        // does not export those symbols here. Adb/dbg callers continue using
-        // the legacy single-arg overload.
+        // Unified typed dispatch: fans out by params.controller_type to the
+        // matching typed block (adb/dbg are hard-linked cross-platform core;
+        // win32/gamepad are runtime-resolved via MaaDynamicSymbols). Tier2
+        // controller types (macos/playcover/wlroots) and any genuinely
+        // unknown type surface as kInvalidMaaControllerHandle with
+        // controller-type-unsupported-on-platform — MaaFW does not export
+        // those symbols on Windows builds.
         virtual CreateControllerResult CreateControllerFromParams(
             const ControllerSpec&       spec,
             const ControllerInitParams& params) = 0;

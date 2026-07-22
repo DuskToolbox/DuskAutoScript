@@ -68,6 +68,18 @@ namespace
         return result;
     }
 
+    // Default typed init params JSON for the default Adb controller. After
+    // the unified-dispatch refactor, every envelope must carry typed init
+    // params — the legacy flat-string CreateController(spec) overload is
+    // gone. Tests that swap in a different controller type pass a matching
+    // controller_init_params_json.
+    constexpr const char* kDefaultAdbInitParamsJson =
+        R"({"controllerType":"Adb","win32":null,"gamepad":null,)"
+        R"("adb":{"adbPath":"adb","address":"","screencapMethod":0,)"
+        R"("inputMethod":0,"configJson":"{}","agentPath":""},)"
+        R"("dbg":null,"displayShortSide":null,"displayLongSide":null,)"
+        R"("displayRaw":null})";
+
     yyjson::value EnvelopeValue(
         bool        fail_fast = true,
         std::string plugin_guid = std::string(kPluginGuidText),
@@ -80,7 +92,7 @@ namespace
         std::string controller_json =
             R"({"name":"Android","type":"Adb","readPath":"","address":"","adbPath":"adb","configJson":"{}","agentPath":""})",
         std::string agent_json = {},
-        std::string controller_init_params_json = "null")
+        std::string controller_init_params_json = kDefaultAdbInitParamsJson)
     {
         auto json =
             R"({"version":1,"pluginGuid":")" + plugin_guid
@@ -102,8 +114,8 @@ namespace
             + R"(,"piEnv":{"interfaceVersion":"2","clientName":"DAS","clientVersion":"0.1","clientLanguage":"cpp","clientMaafwVersion":"test","projectVersion":"","controllerJson":)"
             + JsonStringLiteral(controller_json)
             + R"(,"resourceJson":"{\"name\":\"Official\"}"},"controllerInitParams":)"
-            + controller_init_params_json + R"(,"pretasks":[],"tasks":)"
-            + tasks + "}}";
+            + controller_init_params_json + R"(,"pretasks":[],"tasks":)" + tasks
+            + "}}";
         auto parsed = Das::Utils::ParseYyjsonFromString(json);
         EXPECT_TRUE(parsed.has_value());
         return parsed ? std::move(*parsed) : Das::Utils::MakeYyjsonObject();
@@ -117,7 +129,8 @@ namespace
           {"taskName":"Base","entry":"StartBase","pipelineOverride":{"Stage":{"value":"two"}}}
         ])",
         std::string controller_json =
-            R"({"name":"Android","type":"Adb","readPath":"","address":"","adbPath":"adb","configJson":"{}","agentPath":""})")
+            R"({"name":"Android","type":"Adb","readPath":"","address":"","adbPath":"adb","configJson":"{}","agentPath":""})",
+        std::string controller_init_params_json = kDefaultAdbInitParamsJson)
     {
         auto parsed = ParseExecutionEnvelope(EnvelopeValue(
             fail_fast,
@@ -125,7 +138,9 @@ namespace
             std::string(kTaskGuidText),
             requires_agent,
             std::move(tasks),
-            std::move(controller_json)));
+            std::move(controller_json),
+            {},
+            std::move(controller_init_params_json)));
         EXPECT_EQ(parsed.result, DAS_S_OK);
         return std::move(parsed.envelope);
     }
@@ -262,7 +277,7 @@ TEST(DasMaaPiRuntime, RuntimeCallSequenceAndCleanup)
     EXPECT_TRUE(fake.Contains("LoadResource:C:/maa/resource"));
     EXPECT_TRUE(fake.Contains("LoadResource:C:/maa/attach"));
     EXPECT_TRUE(fake.Contains("GetResourceHash"));
-    EXPECT_TRUE(fake.Contains("CreateController:Android:Adb"));
+    EXPECT_TRUE(fake.Contains("CreateControllerFromParams:Android:Adb"));
     EXPECT_TRUE(fake.Contains("CreateTasker"));
     EXPECT_TRUE(fake.Contains("BindResource"));
     EXPECT_TRUE(fake.Contains("BindController"));
@@ -283,7 +298,13 @@ TEST(DasMaaPiRuntime, RuntimePassesTypedAdbCamelCaseControllerFields)
             true,
             false,
             R"([{"taskName":"DailyFarm","entry":"StartDaily","pipelineOverride":{}}])",
-            R"({"name":"Android","type":"Adb","readPath":"","address":"127.0.0.1:5555","adbPath":"C:/tools/adb.exe","configJson":"{\"touch\":\"maatouch\"}","agentPath":"C:/maa/agent"})"),
+            R"({"name":"Android","type":"Adb","readPath":"","address":"127.0.0.1:5555","adbPath":"C:/tools/adb.exe","configJson":"{\"touch\":\"maatouch\"}","agentPath":"C:/maa/agent"})",
+            R"({"controllerType":"Adb","win32":null,"gamepad":null,)"
+            R"("adb":{"adbPath":"C:/tools/adb.exe","address":"127.0.0.1:5555",)"
+            R"("screencapMethod":0,"inputMethod":0,)"
+            R"("configJson":"{\"touch\":\"maatouch\"}","agentPath":"C:/maa/agent"},)"
+            R"("dbg":null,"displayShortSide":null,"displayLongSide":null,)"
+            R"("displayRaw":null})"),
         fake,
         nullptr);
 
@@ -297,6 +318,15 @@ TEST(DasMaaPiRuntime, RuntimePassesTypedAdbCamelCaseControllerFields)
         fake.last_controller_spec->config_json,
         R"({"touch":"maatouch"})");
     EXPECT_EQ(fake.last_controller_spec->agent_path, "C:/maa/agent");
+    // Typed init params also carry the Adb block through the unified
+    // dispatch (regression guard for the caster trap + dispatch routing).
+    ASSERT_TRUE(fake.last_controller_init_params.has_value());
+    EXPECT_EQ(fake.last_controller_init_params->controller_type, "Adb");
+    ASSERT_TRUE(fake.last_controller_init_params->adb.has_value());
+    EXPECT_EQ(fake.last_controller_init_params->adb->address, "127.0.0.1:5555");
+    EXPECT_EQ(
+        fake.last_controller_init_params->adb->adb_path,
+        "C:/tools/adb.exe");
 }
 
 TEST(DasMaaPiRuntime, RuntimeRejectsSnakeCaseControllerFields)
@@ -339,7 +369,10 @@ TEST(DasMaaPiRuntime, RuntimePassesTypedDbgControllerReadPath)
             true,
             false,
             R"([{"taskName":"DailyFarm","entry":"StartDaily","pipelineOverride":{}}])",
-            R"({"name":"Debug","type":"Dbg","readPath":"C:/maa/debug","address":"","adbPath":"adb","configJson":"{}","agentPath":""})"),
+            R"({"name":"Debug","type":"Dbg","readPath":"C:/maa/debug","address":"","adbPath":"adb","configJson":"{}","agentPath":""})",
+            R"({"controllerType":"Dbg","win32":null,"gamepad":null,"adb":null,)"
+            R"("dbg":{"readPath":"C:/maa/debug"},"displayShortSide":null,)"
+            R"("displayLongSide":null,"displayRaw":null})"),
         fake,
         nullptr);
 
@@ -347,6 +380,11 @@ TEST(DasMaaPiRuntime, RuntimePassesTypedDbgControllerReadPath)
     ASSERT_TRUE(fake.last_controller_spec.has_value());
     EXPECT_EQ(fake.last_controller_spec->type, "Dbg");
     EXPECT_EQ(fake.last_controller_spec->read_path, "C:/maa/debug");
+    // Typed dispatch now also carries the Dbg block.
+    ASSERT_TRUE(fake.last_controller_init_params.has_value());
+    EXPECT_EQ(fake.last_controller_init_params->controller_type, "Dbg");
+    ASSERT_TRUE(fake.last_controller_init_params->dbg.has_value());
+    EXPECT_EQ(fake.last_controller_init_params->dbg->read_path, "C:/maa/debug");
 }
 
 TEST(DasMaaPiRuntime, RuntimeSourceDoesNotExtractControllerFieldsFromRawJson)
@@ -725,16 +763,46 @@ TEST(DasMaaPiRuntime, Tier2ControllerTypesRejectedOnWindows)
     }
 }
 
-TEST(DasMaaPiRuntime, LegacyAdbPathUnaffectedByTypedDispatch)
+TEST(DasMaaPiRuntime, DefaultAdbEnvelopeRoutesThroughTypedDispatch)
 {
-    // Adb envelope without controller_init_params must keep using the legacy
-    // single-arg CreateController overload — no regression in the existing
-    // happy path.
+    // After the refactor, Adb routes through CreateControllerFromParams
+    // (typed). The legacy single-arg CreateController(spec) overload is
+    // DELETED — there is no fallback path. The default Envelope() helper
+    // now carries typed init params, so the happy path reaches the typed
+    // dispatch and succeeds.
     FakeMaaApiBoundary fake;
     auto               result = MaaRuntime::Run(Envelope(), fake, nullptr);
     EXPECT_EQ(result.das_result, DAS_S_OK);
-    EXPECT_TRUE(fake.Contains("CreateController:Android:Adb"));
-    EXPECT_FALSE(fake.last_controller_init_params.has_value());
+    EXPECT_TRUE(fake.Contains("CreateControllerFromParams:Android:Adb"));
+    ASSERT_TRUE(fake.last_controller_init_params.has_value());
+    EXPECT_EQ(fake.last_controller_init_params->controller_type, "Adb");
+    ASSERT_TRUE(fake.last_controller_init_params->adb.has_value());
+}
+
+TEST(DasMaaPiRuntime, EnvelopeWithoutInitParamsSurfacesStructuredError)
+{
+    // Hand-crafted envelope without controller_init_params must surface a
+    // deterministic create-controller-failed diagnostic. Before the refactor
+    // the runtime fell back to the legacy CreateController(spec) overload;
+    // that overload is now deleted, so the runtime explicitly rejects the
+    // envelope instead of silently calling a non-existent method.
+    auto value = EnvelopeValue(
+        true,
+        std::string(kPluginGuidText),
+        std::string(kTaskGuidText),
+        false,
+        R"([{"taskName":"T","entry":"E","pipelineOverride":{}}])",
+        R"({"name":"Android","type":"Adb","readPath":"","address":"127.0.0.1:5555","adbPath":"adb","configJson":"{}","agentPath":""})",
+        {},
+        "null");
+    auto parsed = ParseExecutionEnvelope(value);
+    ASSERT_EQ(parsed.result, DAS_S_OK);
+    FakeMaaApiBoundary fake;
+    auto               result = MaaRuntime::Run(parsed.envelope, fake, nullptr);
+    EXPECT_NE(result.das_result, DAS_S_OK);
+    ASSERT_FALSE(result.diagnostics.empty());
+    EXPECT_EQ(result.diagnostics.back().code, "create-controller-failed");
+    EXPECT_FALSE(fake.Contains("CreateControllerFromParams:"));
 }
 
 // ============================================================================
@@ -778,6 +846,14 @@ namespace
         envelope.maapi.fail_fast = true;
         envelope.maapi.controller_name = "Android";
         envelope.maapi.controller.type = "Adb";
+        // Typed init params are required by the unified dispatch. Provide an
+        // Adb block so the happy-path tests reach CreateControllerFromParams.
+        ControllerInitParams init_params;
+        init_params.controller_type = "Adb";
+        AdbInitParams adb;
+        adb.address = "127.0.0.1:5555";
+        init_params.adb = adb;
+        envelope.maapi.controller_init_params = std::move(init_params);
         envelope.maapi.resource_name = "Official";
         envelope.maapi.resource_paths.emplace_back("C:/maa/resource");
         envelope.maapi.pretasks = std::move(pretasks);
@@ -818,7 +894,7 @@ TEST(DasMaaPiRuntime, EmptyPretasksSkipsRunnerAndReachesController)
     auto result = MaaRuntime::Run(EnvelopeWithPretasks({}), fake, nullptr);
     EXPECT_EQ(result.das_result, DAS_S_OK);
     EXPECT_TRUE(runner.launches.empty());
-    EXPECT_TRUE(fake.Contains("CreateController:Android:Adb"));
+    EXPECT_TRUE(fake.Contains("CreateControllerFromParams:Android:Adb"));
 }
 
 TEST(DasMaaPiRuntime, PretaskZeroExitProceedsToControllerCreate)
@@ -839,7 +915,7 @@ TEST(DasMaaPiRuntime, PretaskZeroExitProceedsToControllerCreate)
         runner.launches[0].working_directory.string(),
         std::filesystem::path("C:/maa").string());
     // Ordering: pretask ran before controller create. Controller still created.
-    EXPECT_TRUE(fake.Contains("CreateController:Android:Adb"));
+    EXPECT_TRUE(fake.Contains("CreateControllerFromParams:Android:Adb"));
 }
 
 TEST(DasMaaPiRuntime, PretaskNonzeroExitAbortsBeforeControllerCreate)
@@ -864,7 +940,7 @@ TEST(DasMaaPiRuntime, PretaskNonzeroExitAbortsBeforeControllerCreate)
     // Resource creation happens before the pretask stage; controller create
     // is what must be skipped when a pretask aborts the run.
     EXPECT_TRUE(fake.Contains("CreateResource"));
-    EXPECT_FALSE(fake.Contains("CreateController:Android:Adb"));
+    EXPECT_FALSE(fake.Contains("CreateControllerFromParams:Android:Adb"));
 }
 
 TEST(DasMaaPiRuntime, PretaskSpawnFailureAbortsBeforeControllerCreate)
@@ -887,7 +963,7 @@ TEST(DasMaaPiRuntime, PretaskSpawnFailureAbortsBeforeControllerCreate)
     EXPECT_NE(
         result.diagnostics.back().message.find("ENOENT"),
         std::string::npos);
-    EXPECT_FALSE(fake.Contains("CreateController:Android:Adb"));
+    EXPECT_FALSE(fake.Contains("CreateControllerFromParams:Android:Adb"));
     EXPECT_TRUE(fake.Contains("CreateResource"));
 }
 
@@ -1168,9 +1244,10 @@ TEST(DasMaaPiPretaskCompile, V281FilterIncludesWhenControllerListEmpty)
 // After the refactor, the legacy single-arg IMaaApiBoundary::CreateController
 // overload is DELETED. Adb/Dbg controllers route through
 // CreateControllerFromParams as variants alongside Win32/Gamepad, and the
-// cpp_yyjson caster trap that 86-08 caught for Win32/Gamepad/ControllerInitParams
-// must also be guarded for optional<AdbInitParams> / optional<DbgInitParams>
-// (leading std::string field → constructible_from<const char*> dispatch trap).
+// cpp_yyjson caster trap that 86-08 caught for
+// Win32/Gamepad/ControllerInitParams must also be guarded for
+// optional<AdbInitParams> / optional<DbgInitParams> (leading std::string field
+// → constructible_from<const char*> dispatch trap).
 // ============================================================================
 
 TEST(NormalizeControllerInitParams, AdbControllerPopulatesTypedAdbBlock)
@@ -1215,9 +1292,7 @@ TEST(NormalizeControllerInitParams, DbgControllerPopulatesTypedDbgBlock)
     EXPECT_FALSE(params.gamepad.has_value());
 }
 
-TEST(
-    DasMaaPiRuntime,
-    TypedAdbControllerDispatchesToCreateControllerFromParams)
+TEST(DasMaaPiRuntime, TypedAdbControllerDispatchesToCreateControllerFromParams)
 {
     // After the refactor, Adb routes through CreateControllerFromParams
     // (typed) — the single-arg CreateController legacy overload is deleted.
@@ -1244,16 +1319,12 @@ TEST(
     ASSERT_TRUE(fake.last_controller_init_params.has_value());
     EXPECT_EQ(fake.last_controller_init_params->controller_type, "Adb");
     ASSERT_TRUE(fake.last_controller_init_params->adb.has_value());
-    EXPECT_EQ(
-        fake.last_controller_init_params->adb->address,
-        "127.0.0.1:5555");
+    EXPECT_EQ(fake.last_controller_init_params->adb->address, "127.0.0.1:5555");
     // Legacy single-arg path must NOT have been invoked — it no longer exists.
     EXPECT_FALSE(fake.Contains("CreateController:Android:Adb"));
 }
 
-TEST(
-    DasMaaPiRuntime,
-    TypedDbgControllerDispatchesToCreateControllerFromParams)
+TEST(DasMaaPiRuntime, TypedDbgControllerDispatchesToCreateControllerFromParams)
 {
     // Dbg routes through CreateControllerFromParams (typed).
     FakeMaaApiBoundary fake;
@@ -1276,9 +1347,7 @@ TEST(
     ASSERT_TRUE(fake.last_controller_init_params.has_value());
     EXPECT_EQ(fake.last_controller_init_params->controller_type, "Dbg");
     ASSERT_TRUE(fake.last_controller_init_params->dbg.has_value());
-    EXPECT_EQ(
-        fake.last_controller_init_params->dbg->read_path,
-        "C:/maa/debug");
+    EXPECT_EQ(fake.last_controller_init_params->dbg->read_path, "C:/maa/debug");
 }
 
 TEST(DasMaaPiRuntime, OptionalAdbInitParamsSurvivesIpcJsonRoundTrip)

@@ -735,18 +735,14 @@ namespace Das::Plugins::DasMaaPi
 
         envelope.maapi.controller_name = controller->dto.name;
         envelope.maapi.controller = NormalizeControllerSpec(*controller);
-        // Typed init params: filled when the controller carries win32/gamepad
-        // blocks or is a Tier2 type (MacOS/PlayCover/WlRoots). Adb/Dbg
-        // controllers leave this nullopt and MaaRuntime::Run uses the legacy
-        // single-arg CreateController path.
-        auto       init_params = NormalizeControllerInitParams(*controller);
-        const auto lower_type = ToLower(init_params.controller_type);
-        if (init_params.win32 || init_params.gamepad || lower_type == "macos"
-            || lower_type == "playcover" || lower_type == "wlroots"
-            || lower_type == "wlroots_kwin")
-        {
-            envelope.maapi.controller_init_params = std::move(init_params);
-        }
+        // Typed init params: always emitted. Every supported controller type
+        // (Adb/Dbg/Win32/Gamepad) now routes through the unified
+        // CreateControllerFromParams dispatch as typed variants alongside
+        // Tier2 types (MacOS/PlayCover/WlRoots/...) which surface
+        // controller-type-unsupported-on-platform. The legacy flat-string
+        // CreateController(spec) overload has been deleted.
+        envelope.maapi.controller_init_params =
+            NormalizeControllerInitParams(*controller);
         envelope.maapi.resource_name = resource->dto.name;
         envelope.maapi.resource_hash = resource->dto.hash;
         for (const auto& path : resource->resolved_paths)
@@ -900,10 +896,13 @@ namespace Das::Plugins::DasMaaPi
     }
 
     // Build typed init params from a PI controller's raw_json. Reads
-    // same-level win32/gamepad blocks and display_* keys (NOT the `config`
-    // sub-key, which is Adb's generic JSON blob). String→enum translation
-    // delegates to ControllerMethodMaps. ControllerSpec wire format is
-    // untouched — this struct is a parallel, non-serialized carrier.
+    // same-level adb/dbg/win32/gamepad blocks and display_* keys (NOT the
+    // `config` sub-key, which is Adb's generic JSON blob). String→enum
+    // translation delegates to ControllerMethodMaps. ControllerSpec wire
+    // format is untouched — this struct is a parallel, non-serialized
+    // carrier. Every supported controller type (adb/dbg/win32/gamepad/Tier2)
+    // now routes through CreateControllerFromParams; the legacy flat-string
+    // CreateController(spec) overload is gone.
     ControllerInitParams NormalizeControllerInitParams(
         const PiController& controller)
     {
@@ -914,6 +913,34 @@ namespace Das::Plugins::DasMaaPi
         if (!obj)
         {
             return params;
+        }
+
+        const auto lower_type = ToLower(params.controller_type);
+
+        // Adb typed block: reads same-level address/adbPath/config/agentPath
+        // (mirrors NormalizeControllerSpec). screencap/input methods default
+        // to 0; production boundary can substitute Maa defaults at call time
+        // when both are zero.
+        if (lower_type == "adb")
+        {
+            AdbInitParams adb;
+            adb.address = OptionalStringField(*obj, "address").value_or("");
+            adb.adb_path = OptionalStringField(*obj, {"adbPath", "adb_path"})
+                               .value_or("adb");
+            adb.config_json = ControllerConfigJson(*obj);
+            adb.agent_path =
+                OptionalStringField(*obj, {"agentPath", "agent_path"})
+                    .value_or("");
+            params.adb = std::move(adb);
+        }
+
+        // Dbg typed block: read_path only.
+        if (lower_type == "dbg" || lower_type == "debug")
+        {
+            DbgInitParams dbg;
+            dbg.read_path = OptionalStringField(*obj, {"readPath", "read_path"})
+                                .value_or("");
+            params.dbg = std::move(dbg);
         }
 
         // Same-level win32 typed block (NOT config.win32).

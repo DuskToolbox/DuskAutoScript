@@ -183,17 +183,24 @@ namespace
         FakeMaaApiBoundary fake;
 
         {
+            ControllerSpec spec;
+            spec.name = "Android";
+            spec.type = "Adb";
+            ControllerInitParams params;
+            params.controller_type = "Adb";
+            AdbInitParams adb;
+            adb.address = "127.0.0.1:5555";
+            params.adb = adb;
             ScopedResource   resource(fake, fake.CreateResource());
             ScopedController controller(
                 fake,
-                fake.CreateController(
-                    ControllerSpec{.name = "Android", .type = "Adb"}));
+                fake.CreateControllerFromParams(spec, params).handle);
             ScopedTasker tasker(fake, fake.CreateTasker());
         }
 
         const std::vector<std::string> expected{
             "CreateResource",
-            "CreateController:Android:Adb",
+            "CreateControllerFromParams:Android:Adb",
             "CreateTasker",
             "DestroyTasker:3",
             "DestroyController:2",

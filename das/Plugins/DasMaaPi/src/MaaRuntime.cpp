@@ -148,45 +148,20 @@ namespace Das::Plugins::DasMaaPi
                 return value ? std::optional<std::string>(value) : std::nullopt;
             }
 
-            MaaControllerHandle CreateController(
-                const ControllerSpec& spec) override
-            {
-                auto type = Lower(spec.type);
-                if (type == "dbg" || type == "debug")
-                {
-                    return reinterpret_cast<MaaControllerHandle>(
-                        MaaDbgControllerCreate(spec.read_path.c_str()));
-                }
-                if (type == "adb")
-                {
-                    if (spec.address.empty())
-                    {
-                        return kInvalidMaaControllerHandle;
-                    }
-                    const auto adb_path = spec.adb_path.empty()
-                                              ? std::string("adb")
-                                              : spec.adb_path;
-                    const auto config = spec.config_json.empty()
-                                            ? std::string("{}")
-                                            : spec.config_json;
-                    return reinterpret_cast<MaaControllerHandle>(
-                        MaaAdbControllerCreate(
-                            adb_path.c_str(),
-                            spec.address.c_str(),
-                            MaaAdbScreencapMethod_Default,
-                            MaaAdbInputMethod_Default,
-                            config.c_str(),
-                            spec.agent_path.c_str()));
-                }
-                return kInvalidMaaControllerHandle;
-            }
-
             CreateControllerResult CreateControllerFromParams(
                 const ControllerSpec&       spec,
                 const ControllerInitParams& params) override
             {
                 CreateControllerResult result;
                 const auto             type = Lower(params.controller_type);
+                if (type == "adb" && params.adb)
+                {
+                    return CreateAdbController(params);
+                }
+                if ((type == "dbg" || type == "debug") && params.dbg)
+                {
+                    return CreateDbgController(params);
+                }
                 if (type == "win32" && params.win32)
                 {
                     return CreateWin32Controller(params);
@@ -195,11 +170,12 @@ namespace Das::Plugins::DasMaaPi
                 {
                     return CreateGamepadController(params);
                 }
-                // Tier2 controller types (MacOS/PlayCover/WlRoots/...) fall
-                // through to controller-type-unsupported-on-platform here.
-                // The same diagnostic is now reached NATURALLY on platforms
-                // whose MaaFW build does not export the Win32/Gamepad create
-                // symbols — MaaDynamicSymbols leaves the pointer null and
+                // Tier2 controller types (MacOS/PlayCover/WlRoots/...) and
+                // any genuinely unknown type fall through to
+                // controller-type-unsupported-on-platform here. The same
+                // diagnostic is reached NATURALLY on platforms whose MaaFW
+                // build does not export the Win32/Gamepad create symbols —
+                // MaaDynamicSymbols leaves the pointer null and
                 // CreateWin32Controller / CreateGamepadController short-
                 // circuit with the same error_code, so no #ifdef is needed
                 // to keep the cross-platform binary link-safe.
@@ -244,6 +220,86 @@ namespace Das::Plugins::DasMaaPi
                         const_cast<void*>(static_cast<const void*>(&value)),
                         sizeof(value));
                 }
+            }
+
+            static CreateControllerResult CreateAdbController(
+                const ControllerInitParams& params)
+            {
+                CreateControllerResult result;
+                const auto&            a = *params.adb;
+                // MaaAdbControllerCreate / MaaDbgControllerCreate stay
+                // HARD-LINKED (cross-platform core). Only Win32/Gamepad go
+                // through MaaDynamicSymbols runtime resolution. Empty address
+                // is rejected as a configuration error — Adb requires a
+                // device address.
+                if (a.address.empty())
+                {
+                    result.error_code = "controller-create-failed";
+                    result.error_message =
+                        "Adb controller requires a non-empty address";
+                    return result;
+                }
+                const auto adb_path =
+                    a.adb_path.empty() ? std::string("adb") : a.adb_path;
+                const auto config =
+                    a.config_json.empty() ? std::string("{}") : a.config_json;
+                // When screencap/input are both zero (PI did not specify),
+                // fall back to MaaFW defaults — preserves the prior
+                // MaaAdbScreencapMethod_Default / MaaAdbInputMethod_Default
+                // behavior of the legacy overload.
+                const auto screencap =
+                    a.screencap_method != 0
+                        ? static_cast<MaaAdbScreencapMethod>(a.screencap_method)
+                        : MaaAdbScreencapMethod_Default;
+                const auto input =
+                    a.input_method != 0
+                        ? static_cast<MaaAdbInputMethod>(a.input_method)
+                        : MaaAdbInputMethod_Default;
+                auto* controller =
+                    reinterpret_cast<MaaController*>(MaaAdbControllerCreate(
+                        adb_path.c_str(),
+                        a.address.c_str(),
+                        screencap,
+                        input,
+                        config.c_str(),
+                        a.agent_path.c_str()));
+                if (!controller)
+                {
+                    result.error_code = "controller-create-failed";
+                    result.error_message =
+                        "MaaAdbControllerCreate returned null for address='"
+                        + a.address + "'";
+                    return result;
+                }
+                ApplyDisplayOptions(controller, params);
+                result.handle =
+                    reinterpret_cast<MaaControllerHandle>(controller);
+                return result;
+            }
+
+            static CreateControllerResult CreateDbgController(
+                const ControllerInitParams& params)
+            {
+                CreateControllerResult result;
+                const auto&            d = *params.dbg;
+                // MaaDbgControllerCreate is hard-linked (cross-platform
+                // core). The single read_path arg mirrors the legacy
+                // overload; no display options to apply for the dbg
+                // controller.
+                auto* controller = reinterpret_cast<MaaController*>(
+                    MaaDbgControllerCreate(d.read_path.c_str()));
+                if (!controller)
+                {
+                    result.error_code = "controller-create-failed";
+                    result.error_message =
+                        "MaaDbgControllerCreate returned null for read_path='"
+                        + d.read_path + "'";
+                    return result;
+                }
+                ApplyDisplayOptions(controller, params);
+                result.handle =
+                    reinterpret_cast<MaaControllerHandle>(controller);
+                return result;
             }
 
             static CreateControllerResult CreateWin32Controller(
@@ -640,11 +696,6 @@ namespace Das::Plugins::DasMaaPi
                 MaaResourceHandle) override
             {
                 return std::nullopt;
-            }
-
-            MaaControllerHandle CreateController(const ControllerSpec&) override
-            {
-                return kInvalidMaaControllerHandle;
             }
 
             CreateControllerResult CreateControllerFromParams(
@@ -1111,41 +1162,40 @@ namespace Das::Plugins::DasMaaPi
             controller_spec.name = envelope.maapi.controller_name;
         }
         MaaControllerHandle controller_handle = kInvalidMaaControllerHandle;
-        if (envelope.maapi.controller_init_params)
+        if (!envelope.maapi.controller_init_params)
         {
-            // Typed-init path (Win32/Gamepad/Tier2): surface structured
-            // failure codes (controller-window-not-found /
-            // controller-window-ambiguous / controller-type-unsupported-on-
-            // platform) instead of the generic create-controller-failed.
-            auto typed = boundary.CreateControllerFromParams(
-                controller_spec,
-                *envelope.maapi.controller_init_params);
-            controller_handle = typed.handle;
-            if (controller_handle == kInvalidMaaControllerHandle)
-            {
-                result.das_result = DAS_E_FAIL;
-                AddDiagnostic(
-                    result,
-                    typed.error_code.empty() ? "create-controller-failed"
-                                             : typed.error_code,
-                    typed.error_message.empty()
-                        ? "Maa typed controller creation failed"
-                        : typed.error_message);
-                return result;
-            }
+            // Every supported controller type (Adb/Dbg/Win32/Gamepad/Tier2)
+            // is emitted by PiCompiler with typed init params. Reaching here
+            // means the envelope was hand-crafted without them — surface a
+            // deterministic error instead of silently calling a deleted
+            // legacy overload.
+            result.das_result = DAS_E_FAIL;
+            AddDiagnostic(
+                result,
+                "create-controller-failed",
+                "Controller init params missing for controller '"
+                    + controller_spec.name + "'");
+            return result;
         }
-        else
+        // Unified typed dispatch (Adb/Dbg/Win32/Gamepad/Tier2): surface
+        // structured failure codes (controller-window-not-found /
+        // controller-window-ambiguous / controller-type-unsupported-on-
+        // platform) instead of the generic create-controller-failed.
+        auto typed = boundary.CreateControllerFromParams(
+            controller_spec,
+            *envelope.maapi.controller_init_params);
+        controller_handle = typed.handle;
+        if (controller_handle == kInvalidMaaControllerHandle)
         {
-            controller_handle = boundary.CreateController(controller_spec);
-            if (controller_handle == kInvalidMaaControllerHandle)
-            {
-                result.das_result = DAS_E_FAIL;
-                AddDiagnostic(
-                    result,
-                    "create-controller-failed",
-                    "Maa controller creation failed");
-                return result;
-            }
+            result.das_result = DAS_E_FAIL;
+            AddDiagnostic(
+                result,
+                typed.error_code.empty() ? "create-controller-failed"
+                                         : typed.error_code,
+                typed.error_message.empty()
+                    ? "Maa typed controller creation failed"
+                    : typed.error_message);
+            return result;
         }
         ScopedController controller(boundary, controller_handle);
 

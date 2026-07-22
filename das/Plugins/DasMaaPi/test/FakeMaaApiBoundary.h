@@ -66,15 +66,6 @@ namespace Das::Plugins::DasMaaPi::Test
             return resource_hash;
         }
 
-        MaaControllerHandle CreateController(
-            const ControllerSpec& spec) override
-        {
-            last_controller_spec = spec;
-            calls.emplace_back(
-                "CreateController:" + spec.name + ":" + spec.type);
-            return NextHandle();
-        }
-
         CreateControllerResult CreateControllerFromParams(
             const ControllerSpec&       spec,
             const ControllerInitParams& params) override

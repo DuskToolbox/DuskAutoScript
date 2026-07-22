@@ -496,7 +496,7 @@ TEST_F(MaapiIntegrationFixture, V28E2EPretaskSuccessPathRunsBeforeController)
         runner.launches[0].working_directory.string(),
         compiled.envelope->maapi.interface_directory);
     // Controller + tasker still created after pretask stage completes.
-    EXPECT_TRUE(fake.Contains("CreateController:Android:Adb"));
+    EXPECT_TRUE(fake.Contains("CreateControllerFromParams:Android:Adb"));
     EXPECT_TRUE(fake.ContainsSubstring("PostTask:StartDaily:"));
 }
 
@@ -525,7 +525,7 @@ TEST_F(MaapiIntegrationFixture, V28E2EPretaskNonzeroExitAbortsBeforeController)
     ASSERT_TRUE(run_result.diagnostics.back().provider_code.has_value());
     EXPECT_EQ(*run_result.diagnostics.back().provider_code, 7);
     ASSERT_EQ(runner.launches.size(), 1u);
-    EXPECT_FALSE(fake.Contains("CreateController:Android:Adb"));
+    EXPECT_FALSE(fake.Contains("CreateControllerFromParams:Android:Adb"));
     EXPECT_FALSE(fake.ContainsSubstring("PostTask:"));
 }
 
@@ -553,7 +553,7 @@ TEST_F(MaapiIntegrationFixture, V28E2EPretaskSpawnFailureAbortsBeforeController)
     EXPECT_NE(
         run_result.diagnostics.back().message.find("ENOENT"),
         std::string::npos);
-    EXPECT_FALSE(fake.Contains("CreateController:Android:Adb"));
+    EXPECT_FALSE(fake.Contains("CreateControllerFromParams:Android:Adb"));
 }
 
 // Hotkey option tolerance: the parser stores the unknown type as a raw string
@@ -658,6 +658,7 @@ TEST_F(MaapiIntegrationFixture, V28E2EWin32TypedControllerEmitsTypedInitParams)
     ASSERT_TRUE(fake.last_controller_init_params.has_value());
     EXPECT_EQ(fake.last_controller_init_params->controller_type, "Win32");
     // Legacy single-arg overload must NOT have been invoked for typed
-    // controllers.
+    // controllers (the method is deleted — only its name is recorded here as
+    // a regression guard against accidental reintroduction).
     EXPECT_FALSE(fake.Contains("CreateController:Desktop:Win32"));
 }
