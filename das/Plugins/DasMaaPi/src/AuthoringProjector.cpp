@@ -296,6 +296,11 @@ namespace Das::Plugins::DasMaaPi
         std::vector<MaapiPresetSnapshotDto> ParseCustomPresetsArray(
             const TObject&   obj,
             std::string_view key);
+        // D-86-03/06: pretasks parse 辅助前向声明（定义在本命名空间后段）。
+        template <typename TObject>
+        std::vector<MaapiPiPretaskSettingsDto> ParsePretaskSettingsArray(
+            const TObject&   obj,
+            std::string_view key);
         // D-84-40: NormalizeItemIds 现已移出匿名 namespace（在 header 公开
         // 声明，实现在本文件公共 namespace 段），供 ProjectAuthoringDocument
         // 与 apply 路径作为不变量兜底。ParseAcceptedObject 经由 header 声明
@@ -350,6 +355,10 @@ namespace Das::Plugins::DasMaaPi
                     // 存储。缺失时返回空 vector（flat pi 形态）。
                     settings.pi.custom_presets =
                         ParseCustomPresetsArray(*pi, "customPresets");
+                    // D-86-03/06: pretasks 是 Provider 私有的 pretask 选中值
+                    // 存储。缺失时返回空 vector。
+                    settings.pi.pretasks =
+                        ParsePretaskSettingsArray(*pi, "pretasks");
                 }
             }
             // D-84-40: 任何 legacy task (pre-84 输入或 ApplyAddSequenceItem
@@ -991,6 +1000,96 @@ namespace Das::Plugins::DasMaaPi
                 arr.as_array()->emplace_back(std::move(value));
             }
             return arr;
+        }
+
+        // D-86-03/06: 序列化 pi.pretasks[]（Provider 私有 pretask 选中值
+        // 存储）。形态：pretaskId + options 子数组。不进入 document UI IR，
+        // 只在 acceptedProperties.pi 序列化时输出。
+        yyjson::value PretaskSettingsArray(
+            const std::vector<MaapiPiPretaskSettingsDto>& pretasks)
+        {
+            yyjson::value arr(Array());
+            for (const auto& pretask : pretasks)
+            {
+                yyjson::value value(Object());
+                auto          obj = value.as_object();
+                (*obj)[std::string_view("pretaskId")] =
+                    JsonString(pretask.pretask_id);
+                (*obj)[std::string_view("options")] =
+                    OptionSettingsArray(pretask.options);
+                arr.as_array()->emplace_back(std::move(value));
+            }
+            return arr;
+        }
+
+        // D-86-03/06: 解析 pi.pretasks[] 数组（Provider 私有 pretask 选中值
+        // 存储）。缺失时返回空 vector。跳过空 pretaskId 条目。
+        std::vector<MaapiPiPretaskSettingsDto> ParsePretaskSettingsArray(
+            const auto&      obj,
+            std::string_view key)
+        {
+            std::vector<MaapiPiPretaskSettingsDto> result;
+            if (!obj.contains(key))
+            {
+                return result;
+            }
+            auto arr = obj[key].as_array();
+            if (!arr)
+            {
+                return result;
+            }
+            for (auto it = arr->begin(); it != arr->end(); ++it)
+            {
+                auto pretask_obj = it->as_object();
+                if (!pretask_obj)
+                {
+                    continue;
+                }
+                MaapiPiPretaskSettingsDto pretask;
+                pretask.pretask_id =
+                    OptionalString(*pretask_obj, "pretaskId").value_or("");
+                pretask.options =
+                    ParseOptionSettingsArray(*pretask_obj, "options");
+                if (!pretask.pretask_id.empty())
+                {
+                    result.emplace_back(std::move(pretask));
+                }
+            }
+            return result;
+        }
+
+        // D-86-03/06: 按 pretask_id 在 acceptedProperties.pi.pretasks 中查找
+        // 选中值存储。找不到时返回 nullptr（caller 视为 fresh session 走
+        // PI default 回退）。
+        const MaapiPiPretaskSettingsDto* FindPretaskSettings(
+            const AcceptedSettingsDto& settings,
+            std::string_view           pretask_id)
+        {
+            auto it = std::find_if(
+                settings.pi.pretasks.begin(),
+                settings.pi.pretasks.end(),
+                [&](const MaapiPiPretaskSettingsDto& p)
+                { return p.pretask_id == pretask_id; });
+            return it == settings.pi.pretasks.end() ? nullptr : &*it;
+        }
+
+        MaapiPiPretaskSettingsDto* FindOrCreatePretaskSettings(
+            AcceptedSettingsDto& settings,
+            std::string_view     pretask_id)
+        {
+            auto it = std::find_if(
+                settings.pi.pretasks.begin(),
+                settings.pi.pretasks.end(),
+                [&](const MaapiPiPretaskSettingsDto& p)
+                { return p.pretask_id == pretask_id; });
+            if (it != settings.pi.pretasks.end())
+            {
+                return &*it;
+            }
+            MaapiPiPretaskSettingsDto fresh;
+            fresh.pretask_id = std::string(pretask_id);
+            settings.pi.pretasks.emplace_back(std::move(fresh));
+            return &settings.pi.pretasks.back();
         }
 
         bool HasTask(const PiCatalog& catalog, std::string_view name)
@@ -1718,6 +1817,13 @@ namespace Das::Plugins::DasMaaPi
             OptionSettingsArray(settings.pi.controller_options);
         (*pi_obj)[std::string_view("tasks")] =
             TaskSettingsArray(settings.pi.tasks);
+        // D-86-03/06: pretasks 是 Provider 私有 pretask 选中值存储。
+        // 仅在非空时输出，避免 legacy fixture 出现空数组。
+        if (!settings.pi.pretasks.empty())
+        {
+            (*pi_obj)[std::string_view("pretasks")] =
+                PretaskSettingsArray(settings.pi.pretasks);
+        }
         // D-84.2-04: customPresets 是 Provider 私有 preset 快照存储。
         // 仅在非空时输出，避免 legacy fixture 出现空数组。
         if (!settings.pi.custom_presets.empty())
@@ -1904,8 +2010,27 @@ namespace Das::Plugins::DasMaaPi
                 yyjson::value(current_language),
                 &language_candidates));
 
+            // D-86-04/06: 计算 S = 被任意 setting 引用的 option 键集。
+            // global_option 循环对 S 内键跳过（不 emit options.<name>），
+            // 让 setting 投影独占 settings.<name> 根字段，UI 单一渲染、
+            // setValue 目标唯一。
+            std::set<std::string> setting_option_keys;
+            for (const auto& setting : catalog->settings)
+            {
+                for (const auto& opt_name : setting.dto.option)
+                {
+                    setting_option_keys.insert(opt_name);
+                }
+            }
+
             for (const auto& option : catalog->global_options)
             {
+                // D-86-06: 重叠键去重——同时被 setting 引用的键只走
+                // settings.* 路径，避免 UI 双重渲染与 setValue 歧义。
+                if (setting_option_keys.count(option.dto.name) > 0)
+                {
+                    continue;
+                }
                 const auto* current = FindOptionSettings(
                     settings.pi.global_options,
                     option.dto.name);
@@ -1915,6 +2040,76 @@ namespace Das::Plugins::DasMaaPi
                     current,
                     catalog,
                     current_language));
+            }
+
+            // D-86-04/06: setting 分区的 option 投影为 root FieldDescriptor
+            // (settings.<optionKey>)。值取自 global_options 存储（setting 与
+            // global_option 共享 global 级合并，D-86-04）。多个 setting 引用
+            // 同一 option 键时去重（首个 setting 的引用胜出，与 import
+            // global_option 先者为准一致）。
+            std::set<std::string> emitted_setting_keys;
+            for (const auto& setting : catalog->settings)
+            {
+                for (const auto& opt_name : setting.dto.option)
+                {
+                    if (!emitted_setting_keys.insert(opt_name).second)
+                    {
+                        continue;
+                    }
+                    const auto* option_dto = FindOption(*catalog, opt_name);
+                    if (option_dto == nullptr)
+                    {
+                        continue;
+                    }
+                    const auto* current = FindOptionSettings(
+                        settings.pi.global_options,
+                        opt_name);
+                    fields.as_array()->emplace_back(MakeOptionPropertyField(
+                        std::string{"settings."} + opt_name,
+                        option_dto->dto,
+                        current,
+                        catalog,
+                        current_language));
+                }
+            }
+
+            // D-86-03/06: pretask 的 option 投影为 root FieldDescriptor
+            // (pretask.<optionKey>)。值取自
+            // acceptedProperties.pi.pretasks[<id>].options（镜像
+            // custom_presets 的私有存储模式）。stable pretask_id 遵循
+            // D-86-03（dto.name 非空→name，否则 exec）。多个 pretask 引用
+            // 同一 option 键时去重（首个 pretask 的引用胜出）。
+            std::set<std::string> emitted_pretask_keys;
+            for (const auto& pretask : catalog->pretasks)
+            {
+                const std::string pretask_id = pretask.dto.name.empty()
+                                                   ? pretask.dto.exec
+                                                   : pretask.dto.name;
+                const auto*       pretask_settings =
+                    FindPretaskSettings(settings, pretask_id);
+                for (const auto& opt_name : pretask.dto.option)
+                {
+                    if (!emitted_pretask_keys.insert(opt_name).second)
+                    {
+                        continue;
+                    }
+                    const auto* option_dto = FindOption(*catalog, opt_name);
+                    if (option_dto == nullptr)
+                    {
+                        continue;
+                    }
+                    const auto* current = pretask_settings
+                                              ? FindOptionSettings(
+                                                    pretask_settings->options,
+                                                    opt_name)
+                                              : nullptr;
+                    fields.as_array()->emplace_back(MakeOptionPropertyField(
+                        std::string{"pretask."} + opt_name,
+                        option_dto->dto,
+                        current,
+                        catalog,
+                        current_language));
+                }
             }
         }
         (*obj)[std::string_view("fields")] = std::move(fields);
@@ -2964,6 +3159,86 @@ namespace Das::Plugins::DasMaaPi
                     *catalog,
                     std::string_view(field).substr(kOptionPrefix.size()),
                     value);
+                return true;
+            }
+            // D-86-04/06: settings.{name} 与 global_option 共享 global_options
+            // 存储（D-86-04）。路由到与 options.* 一致的 ApplyOptionValueChange
+            // 保证唯一存储位置。
+            constexpr std::string_view kSettingPrefix = "settings.";
+            if (field.starts_with(kSettingPrefix) && catalog)
+            {
+                ApplyOptionValueChange(
+                    settings,
+                    *catalog,
+                    std::string_view(field).substr(kSettingPrefix.size()),
+                    value);
+                return true;
+            }
+            // D-86-03/06: pretask.{name} 路由到 acceptedProperties.pi.pretasks
+            // 私有存储。stable pretask_id 取自首个引用该 option 的 pretask
+            // （dto.name 非空→name，否则 exec，与投影端一致）。catalog 缺该
+            // option 时报 error 诊断。
+            constexpr std::string_view kPretaskPrefix = "pretask.";
+            if (field.starts_with(kPretaskPrefix) && catalog)
+            {
+                const auto option_name =
+                    std::string_view(field).substr(kPretaskPrefix.size());
+                const auto* option = FindOption(*catalog, option_name);
+                if (option == nullptr)
+                {
+                    EmitDiagnostic(
+                        diagnostics,
+                        "error",
+                        "setValue field references unknown option",
+                        DAS_E_INVALID_ARGUMENT,
+                        field);
+                    return false;
+                }
+                // 找到首个引用该 option 的 pretask 作为唯一存储载体。
+                std::string target_pretask_id;
+                for (const auto& pretask : catalog->pretasks)
+                {
+                    if (ContainsName(pretask.dto.option, option_name))
+                    {
+                        target_pretask_id = pretask.dto.name.empty()
+                                                ? pretask.dto.exec
+                                                : pretask.dto.name;
+                        break;
+                    }
+                }
+                if (target_pretask_id.empty())
+                {
+                    EmitDiagnostic(
+                        diagnostics,
+                        "error",
+                        "setValue field not declared on any pretask",
+                        DAS_E_INVALID_ARGUMENT,
+                        field);
+                    return false;
+                }
+                if (value.is_null())
+                {
+                    auto* pretask_settings = FindOrCreatePretaskSettings(
+                        settings,
+                        target_pretask_id);
+                    RemoveOption(pretask_settings->options, option_name);
+                    return true;
+                }
+                auto parsed = ParseOptionValue(*option, value);
+                if (!parsed)
+                {
+                    EmitDiagnostic(
+                        diagnostics,
+                        "error",
+                        "setValue value type incompatible with option",
+                        DAS_E_INVALID_ARGUMENT,
+                        field);
+                    return false;
+                }
+                auto* pretask_settings =
+                    FindOrCreatePretaskSettings(settings, target_pretask_id);
+                RemoveOption(pretask_settings->options, option_name);
+                UpsertOption(pretask_settings->options, std::move(*parsed));
                 return true;
             }
             EmitDiagnostic(

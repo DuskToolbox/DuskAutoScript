@@ -64,6 +64,16 @@ namespace Das::Plugins::DasMaaPi
         std::vector<MaapiPiTaskSettingsDto>   tasks;
     };
 
+    // D-86-03/06: pretask 选中 option 值的 Provider 私有存储。stable
+    // pretask_id 遵循 D-86-03（dto.name 非空→name，否则 exec）。镜像
+    // custom_presets 的私有存储模式：不进入 document UI IR 的 id 层，只存
+    // option 选中值用于 Get 投影与 setValue 回写。
+    struct MaapiPiPretaskSettingsDto
+    {
+        std::string                           pretask_id;
+        std::vector<MaapiPiOptionSettingsDto> options;
+    };
+
     // 用户配置实例快照 (D-84.2-04)。
     // D-84.2-01 已删除 configurations[] 多配置变体模型；customPresets 取代
     // 旧的 configuration 概念作为 Provider 私有 preset 存储（见下文）。
@@ -86,6 +96,11 @@ namespace Das::Plugins::DasMaaPi
         std::vector<MaapiPiOptionSettingsDto> resource_options;
         std::vector<MaapiPiOptionSettingsDto> controller_options;
         std::vector<MaapiPiTaskSettingsDto>   tasks;
+
+        // D-86-03/06: pretask 选中值私有存储。pretask_id 遵循
+        // name||exec（D-86-03）；不进入 document UI IR 的 id 层，只供
+        // pretask.<key> 根字段读写。
+        std::vector<MaapiPiPretaskSettingsDto> pretasks;
 
         // D-84.2-04: Provider 私有 preset 快照存储。newPreset invokeCommand
         // 追加当前 flat pi 字段的镜像到此数组；投影层把 id/name 合并到
@@ -130,6 +145,13 @@ struct yyjson::field_name_rule<Das::Plugins::DasMaaPi::MaapiPiTaskSettingsDto>
 
 template <>
 struct yyjson::field_name_rule<Das::Plugins::DasMaaPi::MaapiPresetSnapshotDto>
+{
+    using type = yyjson::snake_to_camel_transform;
+};
+
+template <>
+struct yyjson::field_name_rule<
+    Das::Plugins::DasMaaPi::MaapiPiPretaskSettingsDto>
 {
     using type = yyjson::snake_to_camel_transform;
 };
