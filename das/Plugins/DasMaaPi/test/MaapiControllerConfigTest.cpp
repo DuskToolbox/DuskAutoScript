@@ -1,4 +1,5 @@
 #include "../src/ControllerMethodMaps.h"
+#include "../src/Win32WindowFinder.h"
 #include <das/Plugins/DasMaaPi/MaaApiBoundary.h>
 #include <das/Plugins/DasMaaPi/PiCompiler.h>
 #include <das/Plugins/DasMaaPi/PiParser.h>
@@ -284,4 +285,104 @@ TEST(NormalizeControllerInitParams, ControllerSpecWireStaysByteIdentical)
     EXPECT_EQ(serialized.find("win32"), std::string::npos);
     EXPECT_EQ(serialized.find("gamepad"), std::string::npos);
     EXPECT_EQ(serialized.find("display_short_side"), std::string::npos);
+}
+
+// Feature 3 RED — Win32WindowFinder regex HWND discovery. 0/1/N match
+// disambiguation policy + injectable enumerator.
+
+TEST(Win32WindowFinder, NoMatchReturnsNotFoundError)
+{
+    auto result = FindWindowByRegex(
+        "NonExistent.*",
+        "",
+        []() { return std::vector<WindowInfo>{}; });
+    EXPECT_EQ(result.handle, nullptr);
+    EXPECT_EQ(result.error_code, "controller-window-not-found");
+    EXPECT_FALSE(result.error_message.empty());
+}
+
+TEST(Win32WindowFinder, SingleMatchReturnsHandle)
+{
+    WindowInfo window;
+    window.handle = reinterpret_cast<void*>(static_cast<std::uintptr_t>(12345));
+    window.class_name = "AppClass";
+    window.window_name = "AppWindow";
+    auto result = FindWindowByRegex(
+        "App.*",
+        "",
+        [&]() { return std::vector<WindowInfo>{window}; });
+    EXPECT_EQ(result.handle, window.handle);
+    EXPECT_TRUE(result.error_code.empty());
+    EXPECT_TRUE(result.error_message.empty());
+}
+
+TEST(Win32WindowFinder, MultipleMatchesReturnAmbiguousError)
+{
+    WindowInfo a;
+    a.handle = reinterpret_cast<void*>(static_cast<std::uintptr_t>(1));
+    a.class_name = "Match";
+    WindowInfo b;
+    b.handle = reinterpret_cast<void*>(static_cast<std::uintptr_t>(2));
+    b.class_name = "Match";
+    auto result = FindWindowByRegex(
+        "Match",
+        "",
+        [&]() { return std::vector<WindowInfo>{a, b}; });
+    EXPECT_EQ(result.handle, nullptr);
+    EXPECT_EQ(result.error_code, "controller-window-ambiguous");
+    EXPECT_FALSE(result.error_message.empty());
+}
+
+TEST(Win32WindowFinder, EmptyRegexMatchesAnything)
+{
+    // Empty class_regex + empty window_regex = match every window. With one
+    // window in the enumerator, succeeds; with two, ambiguous.
+    WindowInfo only;
+    only.handle = reinterpret_cast<void*>(static_cast<std::uintptr_t>(42));
+    only.class_name = "Any";
+    only.window_name = "Thing";
+    auto single = FindWindowByRegex(
+        "",
+        "",
+        [&]() { return std::vector<WindowInfo>{only}; });
+    EXPECT_EQ(single.handle, only.handle);
+    EXPECT_TRUE(single.error_code.empty());
+}
+
+TEST(Win32WindowFinder, WindowRegexFiltersByTitle)
+{
+    WindowInfo match;
+    match.handle = reinterpret_cast<void*>(static_cast<std::uintptr_t>(777));
+    match.class_name = "App";
+    match.window_name = "Target Window";
+    WindowInfo other;
+    other.handle = reinterpret_cast<void*>(static_cast<std::uintptr_t>(888));
+    other.class_name = "App";
+    other.window_name = "Other Window";
+    auto result = FindWindowByRegex(
+        "App",
+        "Target.*",
+        [&]() { return std::vector<WindowInfo>{match, other}; });
+    EXPECT_EQ(result.handle, match.handle);
+    EXPECT_TRUE(result.error_code.empty());
+}
+
+TEST(Win32WindowFinder, CaseSensitiveRegex)
+{
+    // ECMA-262 regex is case-sensitive by default. ClassName "MixedCase"
+    // should NOT match "mixedcase".
+    WindowInfo w;
+    w.handle = reinterpret_cast<void*>(static_cast<std::uintptr_t>(1));
+    w.class_name = "MixedCase";
+    auto lower = FindWindowByRegex(
+        "mixedcase",
+        "",
+        [&]() { return std::vector<WindowInfo>{w}; });
+    EXPECT_EQ(lower.error_code, "controller-window-not-found");
+    auto exact = FindWindowByRegex(
+        "MixedCase",
+        "",
+        [&]() { return std::vector<WindowInfo>{w}; });
+    EXPECT_EQ(exact.handle, w.handle);
+    EXPECT_TRUE(exact.error_code.empty());
 }
