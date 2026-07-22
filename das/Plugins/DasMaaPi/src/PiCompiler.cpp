@@ -813,6 +813,44 @@ namespace Das::Plugins::DasMaaPi
                     controller->dto.name,
                     resource->dto.name);
             }
+            // PI v2.8.0 setting[].option[] (D-86-04): 每个 setting 分区引用的
+            // option 视为额外 global option，在 global 级并入 pipeline_override
+            // （与 MXU globalOptionValues 路由一致；优先级
+            // global<resource<controller<task 不变）。用户选中值存储在
+            // settings.pi.global_options 与显式 global_option 共享存储。按键
+            // 去重：与上方 global_option 循环共享 merged_global_keys，且跨
+            // setting 分区去重；同一 option
+            // 键无论出现在几处只合并一次（幂等）。 无用户选中的
+            // setting-referenced option 跳过（与既有 global_option
+            // 循环行为一致；MergeSelectedOption 内部 IsActive v2.8.1 过滤同样
+            // 适用于 setting 引用 option）。
+            std::set<std::string> merged_global_keys;
+            for (const auto& option : settings.pi.global_options)
+            {
+                merged_global_keys.insert(option.option_name);
+            }
+            for (const auto& setting : catalog.settings)
+            {
+                for (const auto& key : setting.dto.option)
+                {
+                    if (!merged_global_keys.insert(key).second)
+                    {
+                        continue;
+                    }
+                    const auto* selection = FindGlobalSelection(settings, key);
+                    if (!selection)
+                    {
+                        continue;
+                    }
+                    MergeSelectedOption(
+                        result,
+                        execution.pipeline_override,
+                        catalog,
+                        *selection,
+                        controller->dto.name,
+                        resource->dto.name);
+                }
+            }
             for (const auto& option : settings.pi.resource_options)
             {
                 MergeSelectedOption(
