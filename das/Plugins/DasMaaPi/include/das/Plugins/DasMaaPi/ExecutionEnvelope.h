@@ -54,10 +54,10 @@ namespace Das::Plugins::DasMaaPi
         ControllerSpec controller;
         // Optional typed init params parallel to `controller`. CompileMaapi
         // fills both: `controller` stays wire-shaped (yyjson round-trip),
-        // `controller_init_params` carries win32/gamepad typed bits + display
-        // options consumed by CreateControllerFromParams. Adb/dbg controllers
-        // leave this nullopt and MaaRuntime::Run uses the legacy
-        // single-arg CreateController path.
+        // `controller_init_params` carries the typed controller bits
+        // (win32/gamepad/adb/dbg) + display options consumed by the single
+        // CreateControllerFromParams entry point. When absent, MaaRuntime::Run
+        // surfaces a structured error — there is no legacy single-arg fallback.
         std::optional<ControllerInitParams>     controller_init_params;
         std::string                             resource_name;
         std::vector<std::string>                resource_paths;
