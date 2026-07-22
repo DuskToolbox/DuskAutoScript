@@ -1,4 +1,5 @@
 #include "../src/ControllerMethodMaps.h"
+#include "../src/MaaDynamicSymbols.h"
 #include "../src/Win32WindowFinder.h"
 #include <das/Plugins/DasMaaPi/MaaApiBoundary.h>
 #include <das/Plugins/DasMaaPi/PiCompiler.h>
@@ -385,4 +386,55 @@ TEST(Win32WindowFinder, CaseSensitiveRegex)
         [&]() { return std::vector<WindowInfo>{w}; });
     EXPECT_EQ(exact.handle, w.handle);
     EXPECT_TRUE(exact.error_code.empty());
+}
+
+// Dynamic-failure contract lock: when MaaFramework / MaaToolkit symbols are
+// not resolvable at runtime (non-Windows MaaFW build, or MaaToolkit DLL
+// missing from the plugin's co-located dir), the loader must surface null
+// pointers gracefully — no crash, no throw, no link-time dependency on the
+// platform-specific symbols. DasMaaPiTest runs under
+// DAS_MAAPI_DISABLE_REAL_MAA_BOUNDARY without linking MaaFramework or
+// co-locating MaaToolkit.dll, so the dynamic resolver deterministically
+// falls through to the null-pointer path here.
+
+TEST(MaaDynamicSymbols, LoadNeverThrowsEvenWhenLibrariesUnavailable)
+{
+    // The test exe runs from build/.../Test/, which does NOT have
+    // MaaFramework.dll or MaaToolkit.dll co-located. The loader must
+    // swallow boost::system::error_code failures and return a populated
+    // (mostly-null) struct rather than throwing.
+    const auto& symbols = LoadMaaDynamicSymbols();
+    // Touch every pointer so the compiler can't optimize the call away;
+    // we don't assert which are null vs non-null because a Windows test
+    // environment *could* happen to find a MaaFramework.dll via system
+    // search. The contract is: NO throw, NO crash, deterministic return.
+    (void)symbols.win32_create;
+    (void)symbols.gamepad_create;
+    (void)symbols.tk_list_create;
+    (void)symbols.tk_list_destroy;
+    (void)symbols.tk_find_all;
+    (void)symbols.tk_list_size;
+    (void)symbols.tk_list_at;
+    (void)symbols.tk_get_handle;
+    (void)symbols.tk_get_class_name;
+    (void)symbols.tk_get_window_name;
+    SUCCEED() << "LoadMaaDynamicSymbols returned without throwing";
+}
+
+TEST(
+    MaaDynamicSymbols,
+    DefaultWindowEnumeratorDegradesGracefullyWhenToolkitUnavailable)
+{
+    // The production enumerator is built lazily from LoadMaaDynamicSymbols.
+    // When MaaToolkit is not loaded, the enumerator must return an empty
+    // window list (not crash). A subsequent FindWindowByRegex call surfaces
+    // controller-window-not-found — exactly what end users see when the
+    // DLL is missing or the platform doesn't export the symbols.
+    SetWindowEnumeratorForTest(nullptr);
+    auto result = FindWindowByRegex("AnyClass", "AnyWindow");
+    EXPECT_EQ(result.handle, nullptr);
+    // Either the enumerator returned empty (controller-window-not-found) or
+    // the system actually had real desktop windows but none matched the
+    // regex — both produce the not-found diagnostic. Either way, no crash.
+    EXPECT_EQ(result.error_code, "controller-window-not-found");
 }
