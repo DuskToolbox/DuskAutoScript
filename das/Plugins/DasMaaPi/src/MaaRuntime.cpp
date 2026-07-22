@@ -5,6 +5,7 @@
 
 #include "AgentProcessRunner.h"
 #include "AgentRuntimeService.h"
+#include "MaaDynamicSymbols.h"
 #include "MaaHandle.h"
 #include "PretaskRunner.h"
 #include "Win32WindowFinder.h"
@@ -194,10 +195,14 @@ namespace Das::Plugins::DasMaaPi
                 {
                     return CreateGamepadController(params);
                 }
-                // Tier2 controller types (MacOS/PlayCover/WlRoots/...) —
-                // MaaFW does not export those create symbols on Windows. The
-                // PI spec defines them as cross-platform, but we can only
-                // support them on the build target that matches.
+                // Tier2 controller types (MacOS/PlayCover/WlRoots/...) fall
+                // through to controller-type-unsupported-on-platform here.
+                // The same diagnostic is now reached NATURALLY on platforms
+                // whose MaaFW build does not export the Win32/Gamepad create
+                // symbols — MaaDynamicSymbols leaves the pointer null and
+                // CreateWin32Controller / CreateGamepadController short-
+                // circuit with the same error_code, so no #ifdef is needed
+                // to keep the cross-platform binary link-safe.
                 result.error_code = "controller-type-unsupported-on-platform";
                 result.error_message =
                     "Controller type '" + params.controller_type
@@ -246,6 +251,25 @@ namespace Das::Plugins::DasMaaPi
             {
                 CreateControllerResult result;
                 const auto&            w = *params.win32;
+                // Win32 controller create is resolved at runtime via
+                // MaaDynamicSymbols (one cross-platform binary). When the
+                // host MaaFW build does not export MaaWin32ControllerCreate
+                // (non-Windows), the pointer is null and the typed path
+                // surfaces controller-type-unsupported-on-platform — no
+                // #ifdef DAS_MAAPI_DISABLE_REAL_MAA_BOUNDARY sprawl, the
+                // fallback falls out of dynamic availability naturally.
+                const auto& symbols = LoadMaaDynamicSymbols();
+                if (!symbols.win32_create)
+                {
+                    result.error_code =
+                        "controller-type-unsupported-on-platform";
+                    result.error_message =
+                        "MaaWin32ControllerCreate is not available on this "
+                        "build of DasMaaPi (class_regex='"
+                        + w.class_regex + "' window_regex='" + w.window_regex
+                        + "')";
+                    return result;
+                }
                 auto hwnd = FindWindowByRegex(w.class_regex, w.window_regex);
                 if (hwnd.handle == nullptr)
                 {
@@ -253,11 +277,12 @@ namespace Das::Plugins::DasMaaPi
                     result.error_message = hwnd.error_message;
                     return result;
                 }
-                auto* controller = MaaWin32ControllerCreate(
-                    hwnd.handle,
-                    static_cast<MaaWin32ScreencapMethod>(w.screencap_method),
-                    static_cast<MaaWin32InputMethod>(w.mouse_method),
-                    static_cast<MaaWin32InputMethod>(w.keyboard_method));
+                auto* controller =
+                    reinterpret_cast<MaaController*>(symbols.win32_create(
+                        hwnd.handle,
+                        w.screencap_method,
+                        w.mouse_method,
+                        w.keyboard_method));
                 if (!controller)
                 {
                     result.error_code = "controller-create-failed";
@@ -278,6 +303,21 @@ namespace Das::Plugins::DasMaaPi
             {
                 CreateControllerResult result;
                 const auto&            g = *params.gamepad;
+                // Same dynamic-resolution pattern as CreateWin32Controller:
+                // MaaGamepadControllerCreate is only exported on Windows
+                // MaaFW; on other platforms the loader leaves the pointer
+                // null and we return controller-type-unsupported-on-platform.
+                const auto& symbols = LoadMaaDynamicSymbols();
+                if (!symbols.gamepad_create)
+                {
+                    result.error_code =
+                        "controller-type-unsupported-on-platform";
+                    result.error_message =
+                        "MaaGamepadControllerCreate is not available on this "
+                        "build of DasMaaPi (gamepad_type="
+                        + std::to_string(g.gamepad_type) + ")";
+                    return result;
+                }
                 // Gamepad hWnd is optional (screencap disabled when null).
                 // Only invoke Win32WindowFinder when the PI supplied a regex.
                 void* hwnd = nullptr;
@@ -293,10 +333,11 @@ namespace Das::Plugins::DasMaaPi
                     }
                     hwnd = found.handle;
                 }
-                auto* controller = MaaGamepadControllerCreate(
-                    hwnd,
-                    static_cast<MaaGamepadType>(g.gamepad_type),
-                    static_cast<MaaWin32ScreencapMethod>(g.screencap_method));
+                auto* controller =
+                    reinterpret_cast<MaaController*>(symbols.gamepad_create(
+                        hwnd,
+                        g.gamepad_type,
+                        g.screencap_method));
                 if (!controller)
                 {
                     result.error_code = "controller-create-failed";

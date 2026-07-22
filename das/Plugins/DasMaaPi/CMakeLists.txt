@@ -15,9 +15,14 @@ target_link_libraries(DasMaaPi PUBLIC DAS_EX_PRIVATE_LIBS)
 target_link_libraries(DasMaaPi PRIVATE
     DasCore
     DasBundledMaaFramework)
-if(TARGET DasBundledMaaToolkit)
-    target_link_libraries(DasMaaPi PRIVATE DasBundledMaaToolkit)
-endif()
+# MaaToolkit is NOT hard-linked — it's runtime-loaded by MaaDynamicSymbols
+# (boost::dll) from the plugin's co-located directory. Keeping it out of the
+# link line is what makes this binary cross-platform-link-safe: the 10
+# platform-specific symbols (MaaWin32ControllerCreate /
+# MaaGamepadControllerCreate + 8 MaaToolkitDesktopWindow* family) never
+# appear on the link line, so a non-Windows MaaFW build that doesn't export
+# them links cleanly. The bundle DLL copy in the POST_BUILD loop below still
+# copies MaaToolkit.dll into plugins/DasMaaPi/ for the runtime load.
 
 if(WIN32)
     target_link_libraries(DasMaaPi PRIVATE bcrypt)

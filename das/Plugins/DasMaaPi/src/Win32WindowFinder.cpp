@@ -1,13 +1,12 @@
 #include "Win32WindowFinder.h"
 
+#include "MaaDynamicSymbols.h"
+
 #include <algorithm>
+#include <cstdint>
 #include <regex>
 #include <string>
 #include <utility>
-
-#ifndef DAS_MAAPI_DISABLE_REAL_MAA_BOUNDARY
-#include <MaaToolkit/MaaToolkitAPI.h>
-#endif
 
 namespace Das::Plugins::DasMaaPi
 {
@@ -93,50 +92,71 @@ namespace Das::Plugins::DasMaaPi
     {
         return []() -> std::vector<WindowInfo>
         {
-#ifndef DAS_MAAPI_DISABLE_REAL_MAA_BOUNDARY
-            // MaaToolkitDesktopWindowFindAll owns the returned list handle;
-            // we copy out the fields we need then destroy it before returning.
+            // MaaToolkit is loaded at runtime via MaaDynamicSymbols (one
+            // cross-platform binary; no #ifdef
+            // DAS_MAAPI_DISABLE_REAL_MAA_BOUNDARY branch needed). When the DLL
+            // is not co-located or any of the window-enumeration symbols are
+            // not exported, every pointer stays null and we return an empty
+            // list — the caller surfaces controller-window-not-found, exactly
+            // as if no desktop window matched.
+            const auto& symbols = LoadMaaDynamicSymbols();
+            if (!symbols.tk_list_create || !symbols.tk_list_destroy
+                || !symbols.tk_find_all || !symbols.tk_list_size
+                || !symbols.tk_list_at || !symbols.tk_get_handle
+                || !symbols.tk_get_class_name || !symbols.tk_get_window_name)
+            {
+                return {};
+            }
+
             std::vector<WindowInfo> windows;
-            auto                    list = std::unique_ptr<
-                MaaToolkitDesktopWindowList,
-                decltype(&MaaToolkitDesktopWindowListDestroy)>(
-                MaaToolkitDesktopWindowListCreate(),
-                MaaToolkitDesktopWindowListDestroy);
+            // MaaToolkitDesktopWindowFindAll owns the returned list handle;
+            // we copy out the fields we need then destroy it before
+            // returning. Custom deleter routes through the runtime-resolved
+            // destroy symbol (stateful — holds the function pointer).
+            struct ToolkitListDeleter
+            {
+                MaaToolkitDesktopWindowListDestroyFn destroy;
+                void operator()(void* p) const noexcept
+                {
+                    if (p && destroy)
+                    {
+                        destroy(p);
+                    }
+                }
+            };
+            std::unique_ptr<void, ToolkitListDeleter> list(
+                symbols.tk_list_create(),
+                ToolkitListDeleter{symbols.tk_list_destroy});
             if (!list)
             {
                 return windows;
             }
-            if (!MaaToolkitDesktopWindowFindAll(list.get()))
+            if (!symbols.tk_find_all(list.get()))
             {
                 return windows;
             }
-            const auto size = MaaToolkitDesktopWindowListSize(list.get());
-            for (MaaSize i = 0; i < size; ++i)
+            const auto size = symbols.tk_list_size(list.get());
+            for (std::uint64_t i = 0; i < size; ++i)
             {
-                const auto* window =
-                    MaaToolkitDesktopWindowListAt(list.get(), i);
+                const auto* window = symbols.tk_list_at(list.get(), i);
                 if (!window)
                 {
                     continue;
                 }
                 WindowInfo info;
-                info.handle = MaaToolkitDesktopWindowGetHandle(window);
-                if (const char* class_name =
-                        MaaToolkitDesktopWindowGetClassName(window))
+                info.handle = symbols.tk_get_handle(window);
+                if (const char* class_name = symbols.tk_get_class_name(window))
                 {
                     info.class_name = class_name;
                 }
                 if (const char* window_name =
-                        MaaToolkitDesktopWindowGetWindowName(window))
+                        symbols.tk_get_window_name(window))
                 {
                     info.window_name = window_name;
                 }
                 windows.emplace_back(std::move(info));
             }
             return windows;
-#else
-            return {};
-#endif
         };
     }
 
