@@ -4248,10 +4248,8 @@ TEST_F(MaapiAuthoringFixture, InvokeCommandNewPresetCreatesSnapshot)
     auto pi = AcceptedPiFromApplyResult(result);
     auto pi_obj = pi.as_object();
     ASSERT_TRUE(pi_obj.has_value());
-    // (h) presetName 保持原值，newPreset 不污染 PI 官方 preset 引用。
-    EXPECT_EQ(
-        (*pi_obj)[std::string_view("presetName")].as_string().value_or(""),
-        "DailyPreset");
+    // (h) newPreset 自动选中新 preset：presetName 应切到新 snapshot id
+    // （在下方 snapshot_id 取得后断言）。
     // (e) customPresets 数组从 0 变 1。
     ASSERT_TRUE(pi_obj->contains(std::string_view("customPresets")));
     auto presets = (*pi_obj)[std::string_view("customPresets")].as_array();
@@ -4265,6 +4263,11 @@ TEST_F(MaapiAuthoringFixture, InvokeCommandNewPresetCreatesSnapshot)
         (*snapshot_obj)[std::string_view("name")].as_string().value_or("");
     EXPECT_FALSE(snapshot_id.empty());
     EXPECT_FALSE(snapshot_name.empty());
+    // (h) newPreset 自动选中新 preset：presetName 切到新 snapshot id，
+    // 经 apply-returns-document 反馈通道产生可见变化。
+    EXPECT_EQ(
+        (*pi_obj)[std::string_view("presetName")].as_string().value_or(""),
+        snapshot_id);
     // (f) snapshot 镜像当前 flat pi 的 controller/resource/language。
     EXPECT_EQ(
         (*snapshot_obj)[std::string_view("controllerName")]

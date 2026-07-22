@@ -71,8 +71,9 @@ namespace Das::Plugins::DasMaaPi
     // PI 权威设置层。
     // flat 字段 (controller_name / resource_name / language /
     // global_options / resource_options / controller_options / tasks) 是
-    // acceptedProperties.pi 的当前权威；preset_name 是 PI 官方 preset 模板
-    // 引用，只读 (D-84-42)。
+    // acceptedProperties.pi 的当前权威；preset_name 是当前选中的 preset 引用
+    // ——可以是 PI 官方 preset 模板（只读，D-84-42），也可以是 custom_presets
+    // 中的用户快照（newPreset 创建后自动选中，D-84.2-04）。
     // orphan_paths 保留在 pi 层，是 Provider 私有诊断路径，不进入 UI IR
     // (D-84-04)。
     struct MaapiPiSettingsDto

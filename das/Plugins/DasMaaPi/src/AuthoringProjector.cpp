@@ -1616,13 +1616,17 @@ namespace Das::Plugins::DasMaaPi
     }
 
     // D-84.2-04: newPreset invokeCommand 实现。把当前 flat pi 字段镜像为一个
-    // snapshot，追加到 pi.custom_presets。snapshot.id 由 AllocatePresetId
-    // 颁发； name 自动生成；controller/resource/language/options/tasks 从 flat
-    // pi 字段 拷贝。presetName（PI 官方 preset 引用）保持不变。
+    // snapshot，追加到 pi.custom_presets，并把 preset_name 指向新 snapshot。这
+    // 样 apply 返回的 document 里 presetName select 的当前值会切到新 preset，
+    // 经既有的 apply-returns-document 反馈通道产生立即可见的变化；否则新 preset
+    // 仅作为下拉候选项静默出现，UI 看不到任何变化。snapshot.id 由
+    // AllocatePresetId 颁发；name 自动生成；controller/resource/language/
+    // options/tasks 从 flat pi 字段拷贝。
     void ApplyNewPreset(AcceptedSettingsDto& settings)
     {
+        const std::string      new_preset_id = AllocatePresetId(settings);
         MaapiPresetSnapshotDto snapshot;
-        snapshot.id = AllocatePresetId(settings);
+        snapshot.id = new_preset_id;
         snapshot.name =
             "Preset " + std::to_string(settings.pi.custom_presets.size() + 1);
         snapshot.controller_name = settings.pi.controller_name;
@@ -1633,6 +1637,9 @@ namespace Das::Plugins::DasMaaPi
         snapshot.controller_options = settings.pi.controller_options;
         snapshot.tasks = settings.pi.tasks;
         settings.pi.custom_presets.emplace_back(std::move(snapshot));
+        // 自动选中新 preset：返回 document 的 presetName 当前值切到新 preset，
+        // 使新建结果立即可见。
+        settings.pi.preset_name = new_preset_id;
     }
 
     AcceptedSettingsDto ParseAcceptedSettings(const yyjson::value& value)
