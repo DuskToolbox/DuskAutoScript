@@ -2664,6 +2664,31 @@ namespace Das::Plugins::DasMaaPi
         }
     }
 
+    // D-84.2-04: 加载 customPresets 中的用户快照为当前配置（选自定义 preset）。
+    // 镜像 ApplyPreset 的"加载 preset 配置"语义，但数据源是 Provider 私有快照；
+    // customPresets 数组本身不变（快照不含 customPresets，加载不影响它）。
+    void ApplyCustomPreset(
+        AcceptedSettingsDto& settings,
+        std::string_view     preset_id)
+    {
+        auto it = std::find_if(
+            settings.pi.custom_presets.begin(),
+            settings.pi.custom_presets.end(),
+            [&](const MaapiPresetSnapshotDto& s) { return s.id == preset_id; });
+        if (it == settings.pi.custom_presets.end())
+        {
+            return;
+        }
+        settings.pi.controller_name = it->controller_name;
+        settings.pi.resource_name = it->resource_name;
+        settings.pi.language = it->language;
+        settings.pi.global_options = it->global_options;
+        settings.pi.resource_options = it->resource_options;
+        settings.pi.controller_options = it->controller_options;
+        settings.pi.tasks = it->tasks;
+        settings.pi.preset_name = std::string(preset_id);
+    }
+
     // ---------------------------------------------------------------------------
     // D-84-07: Strict Phase 84 change dispatch helpers.
     //
@@ -2873,9 +2898,32 @@ namespace Das::Plugins::DasMaaPi
                     return false;
                 }
                 const auto name = std::string(value.as_string().value_or(""));
-                if (catalog == nullptr || name.empty())
+                if (name.empty())
                 {
-                    // catalog 缺失时不能验证 preset；视为语义失败。
+                    EmitDiagnostic(
+                        diagnostics,
+                        "error",
+                        "presetName value must be non-empty",
+                        DAS_E_INVALID_ARGUMENT,
+                        field);
+                    return false;
+                }
+                // D-84.2-04: 先查 Provider 私有
+                // customPresets（用户创建的快照）；
+                // 命中则加载其配置，作为"选自定义 preset"的语义。
+                const auto custom_it = std::find_if(
+                    settings.pi.custom_presets.begin(),
+                    settings.pi.custom_presets.end(),
+                    [&](const MaapiPresetSnapshotDto& s)
+                    { return s.id == name; });
+                if (custom_it != settings.pi.custom_presets.end())
+                {
+                    ApplyCustomPreset(settings, name);
+                    return true;
+                }
+                // 再查 PI 官方 catalog。
+                if (catalog == nullptr)
+                {
                     EmitDiagnostic(
                         diagnostics,
                         "error",

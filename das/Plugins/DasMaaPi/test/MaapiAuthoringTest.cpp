@@ -4213,6 +4213,72 @@ TEST_F(MaapiAuthoringFixture, InvokeCommandRejectsUnknownCommandId)
         << " message=" << rejected_valid.message;
 }
 
+// D-84.2-04: 选自定义 preset（setValue presetName=<customId>）经
+// ApplyCustomPreset 加载快照配置，成功递增 revision、无 error。此前 presetName
+// 处理只查 PI catalog，选自定义 preset 会误报 "Unknown preset name"。
+TEST_F(MaapiAuthoringFixture, SetValuePresetNameLoadsCustomPreset)
+{
+    auto interface_path =
+        FixturePath("interface_authoring.jsonc").generic_string();
+    auto session = CreateSession(
+        "{\"adapter\":{\"interfacePath\":\"" + interface_path
+        + "\"},\"pi\":{\"controllerName\":\"Android\","
+          "\"resourceName\":\"Official\",\"presetName\":\"DailyPreset\","
+          "\"language\":\"zh_cn\",\"tasks\":[{\"itemId\":\"seed_t1\","
+          "\"taskName\":\"DailyFarm\",\"enabled\":true}]}}");
+
+    // 1) newPreset 创建快照（镜像 controllerName=Android），auto-select。
+    DasPtr<Das::ExportInterface::IDasJson> r1_json;
+    auto                                   c1 = ParseDasJson(
+        "{\"baseRevision\":0,\"kind\":\"invokeCommand\","
+        "\"payload\":{\"commandId\":\"newPreset\"}}");
+    ASSERT_EQ(session->ApplyChange(c1.Get(), r1_json.Put()), DAS_S_OK);
+    auto r1 = ReadJsonInterface(r1_json.Get());
+    auto pi1 = AcceptedPiFromApplyResult(r1).as_object();
+    ASSERT_TRUE(pi1.has_value());
+    const auto preset_id = std::string(
+        (*pi1)[std::string_view("presetName")].as_string().value_or(""));
+    ASSERT_FALSE(preset_id.empty());
+    ASSERT_EQ(DocumentRevisionFromApplyResult(r1), 1);
+
+    // 2) 改 controllerName，使当前配置偏离快照。
+    DasPtr<Das::ExportInterface::IDasJson> r2_json;
+    auto                                   c2 = ParseDasJson(
+        "{\"baseRevision\":1,\"kind\":\"setValue\",\"payload\":{\"target\":{"
+        "\"kind\":\"document\"},\"fieldName\":\"controllerName\","
+        "\"value\":\"Win32\"}}");
+    ASSERT_EQ(session->ApplyChange(c2.Get(), r2_json.Put()), DAS_S_OK);
+    ASSERT_EQ(
+        DocumentRevisionFromApplyResult(ReadJsonInterface(r2_json.Get())),
+        2);
+
+    // 3) 选自定义 preset → ApplyCustomPreset 应加载快照（controllerName 恢复
+    //    为 Android）。此前这一步会报 "Unknown preset name: <preset_id>"。
+    DasPtr<Das::ExportInterface::IDasJson> r3_json;
+    auto                                   c3 = ParseDasJson(
+        "{\"baseRevision\":2,\"kind\":\"setValue\",\"payload\":{\"target\":{"
+        "\"kind\":\"document\"},\"fieldName\":\"presetName\",\"value\":\""
+        + preset_id + "\"}}");
+    ASSERT_EQ(session->ApplyChange(c3.Get(), r3_json.Put()), DAS_S_OK);
+    auto r3 = ReadJsonInterface(r3_json.Get());
+
+    auto valid = Das::Core::TaskScheduler::ValidateAuthoringApplyResult(r3, 2);
+    EXPECT_TRUE(valid.valid)
+        << "error_kind=" << valid.error_kind << " message=" << valid.message;
+    EXPECT_EQ(DocumentRevisionFromApplyResult(r3), 3);
+    EXPECT_EQ(CountDiagnosticsBySeverity(r3, "error"), 0u);
+
+    auto pi3 = AcceptedPiFromApplyResult(r3).as_object();
+    ASSERT_TRUE(pi3.has_value());
+    EXPECT_EQ(
+        (*pi3)[std::string_view("presetName")].as_string().value_or(""),
+        preset_id);
+    // 快照恢复：controllerName 从 Win32 回到快照里的 Android。
+    EXPECT_EQ(
+        (*pi3)[std::string_view("controllerName")].as_string().value_or(""),
+        "Android");
+}
+
 // D-84.2-04: newPreset 是 D-84-28 通用 invokeCommand 在 MaaPI 的落地。
 // flat pi seed（无 configurations）+ invokeCommand{commandId:"newPreset"} 应：
 // (a) ApplyChange 返回 DAS_S_OK；(b) 通过 84-01 严格 Apply validator；
