@@ -5943,3 +5943,383 @@ TEST(MaapiItemIdSafetyNetTest, ProjectAuthoringDocumentFillsEmptyItemId)
     auto document_again = ProjectAuthoringDocument(settings, &catalog, {}, 0);
     EXPECT_TRUE(AllItemIdsNonEmptyAndUnique(document_again));
 }
+
+// ---------------------------------------------------------------------------
+// Phase 86-06 (D-86-03/04/06): pretask/setting neutral root FieldDescriptor
+// projection.
+//
+// pretask.option → root FieldDescriptor(pretask.<key>) with acceptedProperties
+// persistence (mirrors custom_presets private storage).
+// setting.option → root FieldDescriptor(settings.<key>) sharing global storage
+// with global_option (D-86-04). Overlap keys (key referenced by BOTH
+// global_option and setting) emit only settings.<key>, not options.<key>,
+// so UI renders exactly one field per overlapping key.
+//
+// Business-neutrality (D-86-06): projections reuse existing FieldDescriptor +
+// setValue + acceptedProperties private storage. Core contract untouched.
+// ---------------------------------------------------------------------------
+
+namespace
+{
+    // 构造一个覆盖 pretask/setting/global_option + 重叠键场景的 mock catalog：
+    //   - stage 是 global_option 同时被 setting(performance) 引用（重叠键）
+    //   - retry 仅在 setting(advanced) 中（setting-only 键）
+    //   - shared_opt 仅在 global_option（global-only 键）
+    //   - bootstrap_mode 仅在 pretask(Bootstrap) 的 option 引用中
+    // 预期：S = {stage, retry}
+    //   - options.shared_opt emitted (不在 S)
+    //   - options.stage SKIPPED (在 S, 改发 settings.stage)
+    //   - settings.stage emitted
+    //   - settings.retry emitted
+    //   - pretask.bootstrap_mode emitted
+    PiCatalog MakeNeutralProjectionMockCatalog()
+    {
+        using namespace Das::Plugins::DasMaaPi;
+        PiCatalog catalog;
+        catalog.name = "NeutralProjection";
+        catalog.version = "1.0";
+
+        PiTask task;
+        task.dto.name = "DailyFarm";
+        task.dto.entry = "StartDaily";
+        catalog.tasks.push_back(std::move(task));
+
+        auto make_select = [](std::string              name,
+                              std::vector<std::string> case_names,
+                              std::optional<std::vector<std::string>> defaults =
+                                  std::nullopt) -> PiOption
+        {
+            PiOption o;
+            o.dto.name = std::move(name);
+            o.dto.type = "select";
+            for (auto& cn : case_names)
+            {
+                PiCaseDto c;
+                c.name = std::move(cn);
+                o.dto.cases.push_back(std::move(c));
+            }
+            if (defaults)
+            {
+                o.dto.default_cases = std::move(*defaults);
+            }
+            return o;
+        };
+
+        PiOption stage_option = make_select(
+            "stage",
+            {"1-1", "1-2"},
+            std::vector<std::string>{"1-1"});
+        PiOption retry_option = make_select("retry", {"slow", "fast"});
+        PiOption shared_option = make_select("shared_opt", {"yes", "no"});
+        PiOption bootstrap_option =
+            make_select("bootstrap_mode", {"safe", "fast"});
+
+        catalog.options.push_back(stage_option);
+        catalog.options.push_back(retry_option);
+        catalog.options.push_back(shared_option);
+        catalog.options.push_back(bootstrap_option);
+
+        // global_option 引用 stage + shared_opt；stage 与 setting 重叠。
+        catalog.global_options.push_back(stage_option);
+        catalog.global_options.push_back(shared_option);
+
+        PiSetting performance;
+        performance.dto.name = "performance";
+        performance.dto.option = {"stage"};
+        catalog.settings.push_back(std::move(performance));
+
+        PiSetting advanced;
+        advanced.dto.name = "advanced";
+        advanced.dto.option = {"retry"};
+        catalog.settings.push_back(std::move(advanced));
+
+        PiPretask bootstrap;
+        bootstrap.dto.name = "Bootstrap";
+        bootstrap.dto.exec = "tools/bootstrap.exe";
+        bootstrap.dto.option = {"bootstrap_mode"};
+        catalog.pretasks.push_back(std::move(bootstrap));
+
+        return catalog;
+    }
+
+    // 计 document.fields[] 中满足 predicate 的 field 数量。
+    std::size_t CountFieldsMatching(
+        const yyjson::value&                             document,
+        const std::function<bool(const yyjson::value&)>& pred)
+    {
+        auto obj = document.as_object();
+        if (!obj || !obj->contains(std::string_view("fields")))
+        {
+            return 0;
+        }
+        auto fields = (*obj)[std::string_view("fields")].as_array();
+        if (!fields)
+        {
+            return 0;
+        }
+        std::size_t count = 0;
+        for (auto it = fields->begin(); it != fields->end(); ++it)
+        {
+            if (pred(*it))
+            {
+                ++count;
+            }
+        }
+        return count;
+    }
+
+    std::size_t CountFieldsWithName(
+        const yyjson::value& document,
+        std::string_view     name)
+    {
+        return CountFieldsMatching(
+            document,
+            [&](const yyjson::value& field)
+            {
+                auto fo = field.as_object();
+                if (!fo)
+                {
+                    return false;
+                }
+                return (*fo)[std::string_view("name")].as_string().value_or("")
+                       == name;
+            });
+    }
+
+    std::size_t CountFieldsWithPrefix(
+        const yyjson::value& document,
+        std::string_view     prefix)
+    {
+        return CountFieldsMatching(
+            document,
+            [&](const yyjson::value& field)
+            {
+                auto fo = field.as_object();
+                if (!fo)
+                {
+                    return false;
+                }
+                auto name =
+                    (*fo)[std::string_view("name")].as_string().value_or("");
+                return std::string_view(name).starts_with(prefix);
+            });
+    }
+} // namespace
+
+// Feature 1 RED: pretask.option 引用 option 必须投影为 root FieldDescriptor
+// (pretask.<key>)。值取自 acceptedProperties.pi.pretasks[<id>].options。
+TEST(MaapiProjectionTest, ProjectsPretaskOptionAsNeutralRootField)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto catalog = MakeNeutralProjectionMockCatalog();
+
+    AcceptedSettingsDto settings;
+    // 用户已为 Bootstrap 选择 bootstrap_mode=fast。
+    MaapiPiPretaskSettingsDto pretask_settings;
+    pretask_settings.pretask_id = "Bootstrap";
+    MaapiPiOptionSettingsDto bootstrap_value;
+    bootstrap_value.option_name = "bootstrap_mode";
+    bootstrap_value.kind = "select";
+    bootstrap_value.selected_cases.push_back("fast");
+    pretask_settings.options.push_back(std::move(bootstrap_value));
+    settings.pi.pretasks.push_back(std::move(pretask_settings));
+
+    auto document = ProjectAuthoringDocument(settings, &catalog, {}, 0);
+    auto validate =
+        Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+    EXPECT_TRUE(validate.valid) << "error_kind=" << validate.error_kind
+                                << " message=" << validate.message;
+
+    // pretask.bootstrap_mode root field 必须存在，且 value = "fast"。
+    EXPECT_EQ(CountFieldsWithName(document, "pretask.bootstrap_mode"), 1u);
+    auto value = FieldValueOf(document, "pretask.bootstrap_mode");
+    ASSERT_TRUE(value.is_string())
+        << "pretask.bootstrap_mode value must be string (select scalar IR)";
+    EXPECT_EQ(value.as_string().value_or(""), "fast");
+}
+
+// Feature 1 RED: pretask.option 在 acceptedProperties 未初始化时（fresh
+// session）仍应投影为 root FieldDescriptor，value 回退到 PI default_case /
+// 首个 case。
+TEST(MaapiProjectionTest, ProjectsPretaskOptionWithPiDefaultWhenUnset)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto                catalog = MakeNeutralProjectionMockCatalog();
+    AcceptedSettingsDto settings; // fresh — no pretasks
+
+    auto document = ProjectAuthoringDocument(settings, &catalog, {}, 0);
+
+    EXPECT_EQ(CountFieldsWithName(document, "pretask.bootstrap_mode"), 1u);
+    auto value = FieldValueOf(document, "pretask.bootstrap_mode");
+    ASSERT_TRUE(value.is_string());
+    // bootstrap_mode 的 default_cases 未设置，应回退首个 case "safe"。
+    EXPECT_EQ(value.as_string().value_or(""), "safe");
+}
+
+// Feature 1 RED: setValue target=document field=pretask.<key> 必须持久化到
+// acceptedProperties.pi.pretasks[<id>].options。
+TEST(MaapiProjectionTest, ApplyDocumentSetValueOnPretaskFieldPersistsValue)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto                catalog = MakeNeutralProjectionMockCatalog();
+    AcceptedSettingsDto settings;
+
+    std::vector<PiDiagnosticDto> diagnostics;
+    auto                         payload = Das::Utils::ParseYyjsonFromString(
+                                               R"({"target":{"kind":"document"},)"
+                                               R"("fieldName":"pretask.bootstrap_mode",)"
+                                               R"("value":"fast"})")
+                                               .value_or(yyjson::value(nullptr));
+    bool                         ok =
+        ApplyStrictSetValueChange(settings, payload, &catalog, diagnostics);
+    EXPECT_TRUE(ok);
+    EXPECT_TRUE(diagnostics.empty());
+
+    // 持久化路径：settings.pi.pretasks 里应有 Bootstrap 条目，其 options 含
+    // bootstrap_mode="fast"。
+    auto it = std::find_if(
+        settings.pi.pretasks.begin(),
+        settings.pi.pretasks.end(),
+        [&](const MaapiPiPretaskSettingsDto& p)
+        { return p.pretask_id == "Bootstrap"; });
+    ASSERT_NE(it, settings.pi.pretasks.end());
+    auto opt_it = std::find_if(
+        it->options.begin(),
+        it->options.end(),
+        [&](const MaapiPiOptionSettingsDto& o)
+        { return o.option_name == "bootstrap_mode"; });
+    ASSERT_NE(opt_it, it->options.end());
+    ASSERT_EQ(opt_it->selected_cases.size(), 1u);
+    EXPECT_EQ(opt_it->selected_cases[0], "fast");
+}
+
+// Feature 2 RED: setting 引用 option 必须投影为 root FieldDescriptor
+// (settings.<key>)，与既有 global_option 根字段并列。
+TEST(MaapiProjectionTest, ProjectsSettingOptionAsNeutralRootField)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto                catalog = MakeNeutralProjectionMockCatalog();
+    AcceptedSettingsDto settings;
+
+    auto document = ProjectAuthoringDocument(settings, &catalog, {}, 0);
+    auto validate =
+        Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+    EXPECT_TRUE(validate.valid) << "error_kind=" << validate.error_kind
+                                << " message=" << validate.message;
+
+    // settings.stage + settings.retry 必须存在。
+    EXPECT_EQ(CountFieldsWithName(document, "settings.stage"), 1u);
+    EXPECT_EQ(CountFieldsWithName(document, "settings.retry"), 1u);
+    // stage default_cases=["1-1"] → 默认值 1-1。
+    auto stage_val = FieldValueOf(document, "settings.stage");
+    ASSERT_TRUE(stage_val.is_string());
+    EXPECT_EQ(stage_val.as_string().value_or(""), "1-1");
+}
+
+// Feature 2 RED (首轮审计主要点)：重叠键（同时被 global_option 与 setting
+// 引用）必须只发 settings.<key> 一个根字段，global_option 循环跳过该键。
+// UI 渲染计数 = 1（不重复）。
+TEST(MaapiProjectionTest, OverlapKeyEmittedAsSettingsOnlyNotOptions)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto                catalog = MakeNeutralProjectionMockCatalog();
+    AcceptedSettingsDto settings;
+
+    auto document = ProjectAuthoringDocument(settings, &catalog, {}, 0);
+
+    // stage ∈ S（被 setting 引用）→ options.stage 必须不存在。
+    EXPECT_EQ(CountFieldsWithName(document, "options.stage"), 0u)
+        << "overlap key must NOT emit options.<key>";
+    // settings.stage 必须存在。
+    EXPECT_EQ(CountFieldsWithName(document, "settings.stage"), 1u)
+        << "overlap key must emit settings.<key>";
+
+    // 全文 stage 总渲染数：唯一一个根字段 settings.stage
+    // （actionCatalog.entries/groups 不引用 option keys，故 document.fields
+    // 是唯一渲染点）。计数 = 1。
+    auto stage_in_fields = CountFieldsMatching(
+        document,
+        [](const yyjson::value& field)
+        {
+            auto fo = field.as_object();
+            if (!fo)
+            {
+                return false;
+            }
+            auto name =
+                (*fo)[std::string_view("name")].as_string().value_or("");
+            return std::string_view(name).find("stage") != std::string::npos;
+        });
+    EXPECT_EQ(stage_in_fields, 1u)
+        << "stage should render exactly once across document.fields";
+
+    // shared_opt 不在 S → options.shared_opt 仍存在。
+    EXPECT_EQ(CountFieldsWithName(document, "options.shared_opt"), 1u);
+    // shared_opt 不该走 settings.* 路径。
+    EXPECT_EQ(CountFieldsWithName(document, "settings.shared_opt"), 0u);
+}
+
+// Feature 2 RED: setValue target=document field=settings.<key> 必须持久化到
+// acceptedProperties.pi.global_options（setting 与 global_option 共享
+// global 级存储，D-86-04）。
+TEST(MaapiProjectionTest, ApplyDocumentSetValueOnSettingsFieldPersistsGlobal)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto                catalog = MakeNeutralProjectionMockCatalog();
+    AcceptedSettingsDto settings;
+
+    std::vector<PiDiagnosticDto> diagnostics;
+    auto                         payload = Das::Utils::ParseYyjsonFromString(
+                                               R"({"target":{"kind":"document"},)"
+                                               R"("fieldName":"settings.stage",)"
+                                               R"("value":"1-2"})")
+                                               .value_or(yyjson::value(nullptr));
+    bool                         ok =
+        ApplyStrictSetValueChange(settings, payload, &catalog, diagnostics);
+    EXPECT_TRUE(ok);
+    EXPECT_TRUE(diagnostics.empty());
+
+    // 持久化路径：setting 与 global_option 共享 global_options 存储。
+    auto it = std::find_if(
+        settings.pi.global_options.begin(),
+        settings.pi.global_options.end(),
+        [&](const MaapiPiOptionSettingsDto& o)
+        { return o.option_name == "stage"; });
+    ASSERT_NE(it, settings.pi.global_options.end());
+    ASSERT_EQ(it->selected_cases.size(), 1u);
+    EXPECT_EQ(it->selected_cases[0], "1-2");
+}
+
+// Round-trip 持久化 RED: settings.pi.pretasks 序列化→parse→project 必须
+// 幂等（pretask.<key> value 跨 SerializeAcceptedSettings /
+// ParseAcceptedSettings 保持一致）。
+TEST(MaapiProjectionTest, PretaskSettingsRoundTripPreservesSelectedValue)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto                      catalog = MakeNeutralProjectionMockCatalog();
+    AcceptedSettingsDto       settings;
+    MaapiPiPretaskSettingsDto pretask_settings;
+    pretask_settings.pretask_id = "Bootstrap";
+    MaapiPiOptionSettingsDto bootstrap_value;
+    bootstrap_value.option_name = "bootstrap_mode";
+    bootstrap_value.kind = "select";
+    bootstrap_value.selected_cases.push_back("fast");
+    pretask_settings.options.push_back(std::move(bootstrap_value));
+    settings.pi.pretasks.push_back(std::move(pretask_settings));
+
+    auto serialized = SerializeAcceptedSettings(settings);
+    auto reparsed = ParseAcceptedSettings(serialized);
+
+    auto document = ProjectAuthoringDocument(reparsed, &catalog, {}, 0);
+    EXPECT_EQ(CountFieldsWithName(document, "pretask.bootstrap_mode"), 1u);
+    auto value = FieldValueOf(document, "pretask.bootstrap_mode");
+    ASSERT_TRUE(value.is_string());
+    EXPECT_EQ(value.as_string().value_or(""), "fast");
+}
