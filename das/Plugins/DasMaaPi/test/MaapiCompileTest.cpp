@@ -335,6 +335,34 @@ TEST_F(MaapiCompileFixture, PipelineOverrideMergesOptions)
     EXPECT_FALSE(pipeline->contains(std::string_view("Inactive")));
 }
 
+TEST_F(MaapiCompileFixture, CompileExecutionEnvSnapshotHasClientVersions)
+{
+    // D-86-12: PiEnvSnapshotDto 从 6 字段拓宽到 8(补 client_version +
+    // client_maafw_version)。compile→envelope→run 路径须让全 8 个 PI_*
+    // 环境变量可达；禁止空 stub（两字段必须由 PiCompiler 真实填充）。
+    auto result = Compile(
+        CompileContext(FixturePath("interface_compile.jsonc").generic_string()),
+        "execution");
+    auto obj = result.as_object();
+    ASSERT_TRUE(obj.has_value());
+    auto envelope = (*obj)[std::string_view("executionInput")].as_object();
+    ASSERT_TRUE(envelope.has_value());
+    auto maapi = (*envelope)[std::string_view("maapi")].as_object();
+    ASSERT_TRUE(maapi.has_value());
+    auto pi_env = (*maapi)[std::string_view("piEnv")].as_object();
+    ASSERT_TRUE(pi_env.has_value());
+
+    const auto client_version =
+        (*pi_env)[std::string_view("clientVersion")].as_string().value_or("");
+    const auto client_maafw_version =
+        (*pi_env)[std::string_view("clientMaafwVersion")].as_string().value_or(
+            "");
+    EXPECT_FALSE(client_version.empty())
+        << "piEnv.clientVersion 必须由 PiCompiler 填充，禁止空 stub";
+    EXPECT_FALSE(client_maafw_version.empty())
+        << "piEnv.clientMaafwVersion 必须由 PiCompiler 填充(源 MaaVersion())，禁止空 stub";
+}
+
 TEST_F(MaapiCompileFixture, AgentBoundaryAllowsExecutionEnvelope)
 {
     auto result = Compile(
