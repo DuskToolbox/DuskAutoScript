@@ -1,3 +1,4 @@
+#include "../src/PretaskRunner.h"
 #include "FakeMaaApiBoundary.h"
 
 #include <IpcTestConfig.h>
@@ -6,14 +7,17 @@
 #include <das/Core/IPC/MainProcess/IpcContext.h>
 #include <das/Core/SettingsManager/SettingsManager.h>
 #include <das/DasApi.h>
+#include <das/Plugins/DasMaaPi/MaaPiErrorCodes.h>
 #include <das/Plugins/DasMaaPi/MaaRuntime.h>
 #include <das/Plugins/DasMaaPi/MaapiDto.h>
+#include <das/Plugins/DasMaaPi/PiCompiler.h>
 #include <das/Utils/DasJsonCore.h>
 #include <das/_autogen/idl/abi/IDasTaskAuthoring.h>
 #include <gtest/gtest.h>
 
 #include <algorithm>
 #include <chrono>
+#include <deque>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -189,6 +193,12 @@ namespace
 
         DasPtr<Das::PluginInterface::IDasTaskAuthoringSession> CreateSession()
         {
+            return CreateSessionWithContext(nullptr);
+        }
+
+        DasPtr<Das::PluginInterface::IDasTaskAuthoringSession>
+        CreateSessionWithContext(Das::ExportInterface::IDasJson* context)
+        {
             auto features = plugin_manager_->GetFeaturesByType(
                 DAS_PLUGIN_FEATURE_TASK_AUTHORING_FACTORY);
             EXPECT_EQ(features.size(), 1u);
@@ -204,7 +214,7 @@ namespace
             EXPECT_EQ(
                 factory->CreateSession(
                     MakeDasGuid(std::string(kTaskGuidText)),
-                    nullptr,
+                    context,
                     session.Put()),
                 DAS_S_OK);
             return session;
@@ -346,4 +356,308 @@ TEST_F(MaapiIntegrationFixture, SampleInterfaceAuthoringCompileRuntimeDryRun)
     EXPECT_EQ(run_result.das_result, DAS_S_OK);
     EXPECT_TRUE(fake.Contains(
         "PostTask:StartDaily:{\"StartDaily\":{\"enabled\":true}}"));
+}
+
+// ---------------------------------------------------------------------------
+// v2.8.1 end-to-end coverage (pretask execution / hotkey tolerance /
+// env snapshot 8 fields / Win32 typed controller dispatch).
+//
+// These tests drive the REAL DasMaaPi plugin through the PluginManager +
+// IDasTaskAuthoringSession pipeline (parse → project → ApplyChange → Compile)
+// and then invoke MaaRuntime::Run directly with FakeMaaApiBoundary +
+// FakePretaskRunner. The pretask runner seam lets the tests script pretask
+// outcomes (zero / nonzero / spawn failure) without spawning real subprocess,
+// matching the contract locked in by DasMaaPiRuntime pretask stage.
+// ---------------------------------------------------------------------------
+
+namespace
+{
+    class FakePretaskRunner final : public IPretaskRunner
+    {
+    public:
+        std::vector<PretaskLaunchRequest> launches;
+        std::deque<PretaskRunResult>      scripted_results;
+
+        PretaskRunResult Run(const PretaskLaunchRequest& request) override
+        {
+            launches.push_back(request);
+            if (!scripted_results.empty())
+            {
+                auto result = scripted_results.front();
+                scripted_results.pop_front();
+                return result;
+            }
+            PretaskRunResult ok;
+            ok.launched = true;
+            ok.exit_code = 0;
+            return ok;
+        }
+    };
+
+    class ScopedPretaskRunner final
+    {
+    public:
+        explicit ScopedPretaskRunner(IPretaskRunner* runner)
+        {
+            SetPretaskRunnerForTest(runner);
+        }
+        ~ScopedPretaskRunner() { SetPretaskRunnerForTest(nullptr); }
+    };
+
+    struct CompiledEnvelope
+    {
+        CompileResultDto                    compile;
+        std::optional<ExecutionEnvelopeDto> envelope;
+    };
+
+    // Apply interfacePath setValue + Compile({"purpose":"execution"}) and
+    // return the unwrapped compile result + parsed envelope. Mirrors the unwrap
+    // pattern from MaapiCompileFixture but drives it through the integration
+    // session.
+    CompiledEnvelope CompileFixtureForExecution(
+        Das::PluginInterface::IDasTaskAuthoringSession* session,
+        std::string_view                                fixture_name)
+    {
+        CompiledEnvelope out;
+        const auto interface_path = FixturePath(fixture_name).generic_string();
+        auto       set_path = ParseDasJson(
+            "{\"baseRevision\":0,\"kind\":\"setValue\",\"payload\":{"
+            "\"target\":{\"kind\":\"document\"},\"fieldName\":"
+            "\"adapter.interfacePath\",\"value\":\""
+            + interface_path + "\"}}");
+        DasPtr<Das::ExportInterface::IDasJson> apply_json;
+        EXPECT_EQ(
+            session->ApplyChange(set_path.Get(), apply_json.Put()),
+            DAS_S_OK);
+        auto exec_request = ParseDasJson(R"({"purpose":"execution"})");
+        DasPtr<Das::ExportInterface::IDasJson> exec_json;
+        EXPECT_EQ(
+            session->Compile(exec_request.Get(), exec_json.Put()),
+            DAS_S_OK);
+        auto root = ReadJsonInterface(exec_json.Get()).as_object();
+        EXPECT_TRUE(root.has_value());
+        if (!root || !root->contains(std::string_view("compile")))
+        {
+            return out;
+        }
+        auto compile_obj = (*root)[std::string_view("compile")].as_object();
+        if (!compile_obj)
+        {
+            return out;
+        }
+        out.compile = yyjson::cast<CompileResultDto>(*compile_obj);
+        if (!compile_obj->contains(std::string_view("executionInput")))
+        {
+            return out;
+        }
+        auto parsed = ParseExecutionEnvelope(
+            (*compile_obj)[std::string_view("executionInput")]);
+        if (parsed.result == DAS_S_OK)
+        {
+            out.envelope = std::move(parsed.envelope);
+        }
+        return out;
+    }
+} // namespace
+
+// Pretask success path: PiCompiler fills envelope.pretasks with the 3 pretasks
+// declared across interface_v28.jsonc (Bootstrap) + its import
+// (Warmup, Cleanup). FakePretaskRunner returns zero exit for each. MaaRuntime
+// must run all of them in order, then proceed to CreateController + PostTask.
+TEST_F(MaapiIntegrationFixture, V28E2EPretaskSuccessPathRunsBeforeController)
+{
+    auto session = CreateSession();
+    auto compiled =
+        CompileFixtureForExecution(session.Get(), "interface_v28.jsonc");
+    ASSERT_TRUE(compiled.envelope.has_value());
+    // Bootstrap (controller=Android) is included; Warmup/Cleanup have no
+    // controller filter so ContainsName(empty, Android)==true includes them.
+    // Import merge adds them after main's Bootstrap in source order.
+    ASSERT_EQ(compiled.envelope->maapi.pretasks.size(), 3u);
+    EXPECT_EQ(compiled.envelope->maapi.pretasks[0].name, "Bootstrap");
+    EXPECT_EQ(compiled.envelope->maapi.pretasks[1].name, "Warmup");
+    EXPECT_EQ(compiled.envelope->maapi.pretasks[2].name, "Cleanup");
+
+    FakePretaskRunner   runner;
+    ScopedPretaskRunner hook(&runner);
+    FakeMaaApiBoundary  fake;
+    fake.resource_hash = compiled.envelope->maapi.resource_hash.value_or("");
+    auto run_result = MaaRuntime::Run(*compiled.envelope, fake, nullptr);
+    EXPECT_EQ(run_result.das_result, DAS_S_OK);
+    ASSERT_EQ(runner.launches.size(), 3u);
+    // Bootstrap is declared with args ["--init","--quiet"]; PiCompiler appends
+    // the option JSON only when pretask.option has user-selected values, and
+    // the integration test does not set pretask.bootstrap-mode, so the trailing
+    // JSON arg is omitted and the original args pass through unchanged.
+    EXPECT_EQ(runner.launches[0].exec, "tools/bootstrap.exe");
+    EXPECT_EQ(runner.launches[1].exec, "tools/warmup.exe");
+    EXPECT_EQ(runner.launches[2].exec, "tools/cleanup.exe");
+    EXPECT_EQ(
+        runner.launches[0].working_directory.string(),
+        compiled.envelope->maapi.interface_directory);
+    // Controller + tasker still created after pretask stage completes.
+    EXPECT_TRUE(fake.Contains("CreateController:Android:Adb"));
+    EXPECT_TRUE(fake.ContainsSubstring("PostTask:StartDaily:"));
+}
+
+// Pretask nonzero exit aborts the run before CreateController. The structured
+// diagnostic code is `pretask-nonzero-exit` and provider_code carries the
+// raw exit status so operators can locate the failing bootstrap step.
+TEST_F(MaapiIntegrationFixture, V28E2EPretaskNonzeroExitAbortsBeforeController)
+{
+    auto session = CreateSession();
+    auto compiled =
+        CompileFixtureForExecution(session.Get(), "interface_v28.jsonc");
+    ASSERT_TRUE(compiled.envelope.has_value());
+
+    FakePretaskRunner runner;
+    PretaskRunResult  nonzero;
+    nonzero.launched = true;
+    nonzero.exit_code = 7;
+    runner.scripted_results.push_back(nonzero);
+    ScopedPretaskRunner hook(&runner);
+    FakeMaaApiBoundary  fake;
+    fake.resource_hash = compiled.envelope->maapi.resource_hash.value_or("");
+    auto run_result = MaaRuntime::Run(*compiled.envelope, fake, nullptr);
+    EXPECT_EQ(run_result.das_result, DAS_E_MAAPI_PRETASK_FAILED);
+    ASSERT_FALSE(run_result.diagnostics.empty());
+    EXPECT_EQ(run_result.diagnostics.back().code, "pretask-nonzero-exit");
+    ASSERT_TRUE(run_result.diagnostics.back().provider_code.has_value());
+    EXPECT_EQ(*run_result.diagnostics.back().provider_code, 7);
+    ASSERT_EQ(runner.launches.size(), 1u);
+    EXPECT_FALSE(fake.Contains("CreateController:Android:Adb"));
+    EXPECT_FALSE(fake.ContainsSubstring("PostTask:"));
+}
+
+// Pretask spawn failure (launch=false) surfaces as `pretask-failed` diagnostic
+// with the OS error message, aborting before CreateController.
+TEST_F(MaapiIntegrationFixture, V28E2EPretaskSpawnFailureAbortsBeforeController)
+{
+    auto session = CreateSession();
+    auto compiled =
+        CompileFixtureForExecution(session.Get(), "interface_v28.jsonc");
+    ASSERT_TRUE(compiled.envelope.has_value());
+
+    FakePretaskRunner runner;
+    PretaskRunResult  spawn_fail;
+    spawn_fail.launched = false;
+    spawn_fail.failure_message = "ENOENT: tools/bootstrap.exe";
+    runner.scripted_results.push_back(spawn_fail);
+    ScopedPretaskRunner hook(&runner);
+    FakeMaaApiBoundary  fake;
+    fake.resource_hash = compiled.envelope->maapi.resource_hash.value_or("");
+    auto run_result = MaaRuntime::Run(*compiled.envelope, fake, nullptr);
+    EXPECT_EQ(run_result.das_result, DAS_E_MAAPI_PRETASK_FAILED);
+    ASSERT_FALSE(run_result.diagnostics.empty());
+    EXPECT_EQ(run_result.diagnostics.back().code, "pretask-failed");
+    EXPECT_NE(
+        run_result.diagnostics.back().message.find("ENOENT"),
+        std::string::npos);
+    EXPECT_FALSE(fake.Contains("CreateController:Android:Adb"));
+}
+
+// Hotkey option tolerance: the parser stores the unknown type as a raw string
+// and PiCompiler never references the unreferenced option, so compile + run
+// must succeed without crashing. Locks the v2.8.1 hotkey deferred behavior
+// (no support, no guard, no crash).
+TEST_F(MaapiIntegrationFixture, V28E2EHotkeyOptionToleratedByParserAndCompiler)
+{
+    auto session = CreateSession();
+    auto compiled =
+        CompileFixtureForExecution(session.Get(), "interface_v28_hotkey.jsonc");
+    ASSERT_TRUE(compiled.envelope.has_value());
+    EXPECT_TRUE(compiled.compile.ok)
+        << "hotkey option in fixture must not break compile";
+    // Sanity: the hotkey fixture still has the Android controller + DailyFarm
+    // task, so the run reaches PostTask via the legacy single-arg path.
+    FakeMaaApiBoundary fake;
+    fake.resource_hash = compiled.envelope->maapi.resource_hash.value_or("");
+    auto run_result = MaaRuntime::Run(*compiled.envelope, fake, nullptr);
+    EXPECT_EQ(run_result.das_result, DAS_S_OK);
+    EXPECT_TRUE(fake.ContainsSubstring("PostTask:StartDaily:"));
+}
+
+// Env snapshot 8 fields: PiCompiler must populate all 8 PI_* env variables
+// (D-86-12). compile→envelope→run path needs every field non-empty so the
+// production agent runtime can emit PI_CLIENT_VERSION / PI_CLIENT_MAAFW_VERSION
+// alongside the original 6.
+TEST_F(MaapiIntegrationFixture, V28E2EEnvSnapshotHasAllEightPiFields)
+{
+    auto session = CreateSession();
+    auto compiled =
+        CompileFixtureForExecution(session.Get(), "interface_v28.jsonc");
+    ASSERT_TRUE(compiled.envelope.has_value());
+    const auto& env = compiled.envelope->maapi.pi_env;
+    EXPECT_FALSE(env.interface_version.empty());
+    EXPECT_FALSE(env.client_name.empty());
+    EXPECT_FALSE(env.client_version.empty())
+        << "client_version must be filled from kPluginVersionText";
+    EXPECT_FALSE(env.client_language.empty());
+    EXPECT_FALSE(env.client_maafw_version.empty())
+        << "client_maafw_version must be filled from MaaVersion()";
+    EXPECT_FALSE(env.project_version.empty());
+    EXPECT_FALSE(env.controller_json.empty());
+    EXPECT_FALSE(env.resource_json.empty());
+}
+
+// Win32 typed controller dispatch: PiCompiler must emit
+// controller_init_params.{controller_type=Win32, win32=...} for the Desktop
+// controller in interface_controller.jsonc, and MaaRuntime::Run routes through
+// CreateControllerFromParams (not the single-arg legacy overload). This is the
+// E2E path that the boost::dll dynamic loader ( ScopedMaaApiBoundary ) would
+// take in production; here we use FakeMaaApiBoundary to verify the envelope
+// shape + dispatch routing end-to-end through the real plugin compile path.
+TEST_F(MaapiIntegrationFixture, V28E2EWin32TypedControllerEmitsTypedInitParams)
+{
+    const auto interface_path =
+        FixturePath("interface_controller.jsonc").generic_string();
+    // Select the Desktop (Win32) controller explicitly so PiCompiler emits the
+    // typed init params instead of defaulting to the first controller
+    // (Android).
+    auto context = ParseDasJson(
+        "{\"adapter\":{\"interfacePath\":\"" + interface_path
+        + "\",\"executionPolicy\":{\"failFast\":true}},"
+          "\"pi\":{\"controllerName\":\"Desktop\","
+          "\"resourceName\":\"Official\"}}");
+    auto session = CreateSessionWithContext(context.Get());
+
+    auto exec_request = ParseDasJson(R"({"purpose":"execution"})");
+    DasPtr<Das::ExportInterface::IDasJson> exec_json;
+    ASSERT_EQ(session->Compile(exec_request.Get(), exec_json.Put()), DAS_S_OK);
+    auto root = ReadJsonInterface(exec_json.Get()).as_object();
+    ASSERT_TRUE(root.has_value());
+    ASSERT_TRUE(root->contains(std::string_view("compile")));
+    auto compile_obj = (*root)[std::string_view("compile")].as_object();
+    ASSERT_TRUE(compile_obj.has_value());
+    ASSERT_TRUE(compile_obj->contains(std::string_view("executionInput")));
+    auto parsed = ParseExecutionEnvelope(
+        (*compile_obj)[std::string_view("executionInput")]);
+    ASSERT_EQ(parsed.result, DAS_S_OK) << "message: " << parsed.message;
+    ASSERT_TRUE(parsed.envelope.maapi.controller_init_params.has_value());
+    const auto& params = *parsed.envelope.maapi.controller_init_params;
+    EXPECT_EQ(params.controller_type, "Win32");
+    ASSERT_TRUE(params.win32.has_value());
+    EXPECT_EQ(params.win32->class_regex, "Arknights.*");
+    EXPECT_EQ(params.win32->window_regex, ".*AutoScript");
+    // Foreground = DXGI_DesktopDup_Window | ScreenDC (bit 3 | bit 5 = 40),
+    // per MaaFramework MaaDef.h Win32ScreencapMethod enum and the
+    // ControllerMethodMaps predefined-combo table.
+    EXPECT_EQ(params.win32->screencap_method, 40ULL);
+    // display_* options are applied inside ScopedMaaApiBoundary in production;
+    // the E2E envelope carries them so the boundary can consume the values.
+    ASSERT_TRUE(params.display_short_side.has_value());
+    EXPECT_EQ(*params.display_short_side, 720);
+    ASSERT_TRUE(params.display_long_side.has_value());
+    EXPECT_EQ(*params.display_long_side, 1280);
+
+    FakeMaaApiBoundary fake;
+    fake.resource_hash = parsed.envelope.maapi.resource_hash.value_or("");
+    auto run_result = MaaRuntime::Run(parsed.envelope, fake, nullptr);
+    EXPECT_EQ(run_result.das_result, DAS_S_OK);
+    EXPECT_TRUE(fake.Contains("CreateControllerFromParams:Desktop:Win32"));
+    ASSERT_TRUE(fake.last_controller_init_params.has_value());
+    EXPECT_EQ(fake.last_controller_init_params->controller_type, "Win32");
+    // Legacy single-arg overload must NOT have been invoked for typed
+    // controllers.
+    EXPECT_FALSE(fake.Contains("CreateController:Desktop:Win32"));
 }

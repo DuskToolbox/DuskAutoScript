@@ -1,0 +1,46 @@
+// v2.8.1 hotkey-tolerance fixture for end-to-end parse + compile coverage.
+//
+// `hotkey` is intentionally out of scope (no parse/compile/UI support), but
+// the pipeline must tolerate its presence without crashing: the parser stores
+// the unknown type as a raw string and compile never references the option.
+// This fixture declares an unreferenced hotkey option alongside a normal
+// select option that IS referenced by the task. Successful compile + run
+// through the real plugin (MaapiIntegrationFixture) locks in the tolerance
+// contract so future refactors cannot regress to a crash.
+{
+  "interface_version": 2,
+  "name": "V28HotkeyFixture",
+  "version": "2.8.1",
+  "controller": [
+    {
+      "name": "Android",
+      "type": "Adb"
+    }
+  ],
+  "resource": [
+    {
+      "name": "Official",
+      "path": ["resource/base"]
+    }
+  ],
+  "task": [
+    {
+      "name": "DailyFarm",
+      "entry": "StartDaily",
+      "option": ["stage"]
+    }
+  ],
+  "option": {
+    "stage": {
+      "type": "select",
+      "cases": [
+        { "name": "1-1" },
+        { "name": "1-2" }
+      ]
+    },
+    "shortcut": {
+      "type": "hotkey",
+      "default": "Ctrl+Shift+D"
+    }
+  }
+}
