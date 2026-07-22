@@ -77,6 +77,17 @@ namespace Das::Plugins::DasMaaPi
         std::optional<bool>              display_raw;
     };
 
+    // Result of CreateControllerFromParams. The boundary surfaces structured
+    // failure context (error_code/message) so MaaRuntime can attach typed
+    // diagnostics (e.g. controller-window-not-found) without reverse-
+    // engineering a bare kInvalidMaaControllerHandle.
+    struct CreateControllerResult
+    {
+        MaaControllerHandle handle = kInvalidMaaControllerHandle;
+        std::string         error_code; // empty on success
+        std::string         error_message;
+    };
+
     struct MaaApiResult
     {
         bool         ok = true;
@@ -118,6 +129,16 @@ namespace Das::Plugins::DasMaaPi
 
         virtual MaaControllerHandle CreateController(
             const ControllerSpec& spec) = 0;
+        // Typed-init overload: dispatches to MaaWin32ControllerCreate /
+        // MaaGamepadControllerCreate when the corresponding optional block is
+        // present. Tier2 controller types (macos/playcover/wlroots) return
+        // kInvalidMaaControllerHandle with
+        // controller-type-unsupported-on-platform on Windows builds — MaaFW
+        // does not export those symbols here. Adb/dbg callers continue using
+        // the legacy single-arg overload.
+        virtual CreateControllerResult CreateControllerFromParams(
+            const ControllerSpec&       spec,
+            const ControllerInitParams& params) = 0;
         virtual void DestroyController(
             MaaControllerHandle controller) noexcept = 0;
 

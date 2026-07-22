@@ -35,9 +35,16 @@ namespace Das::Plugins::DasMaaPi
 
     struct MaaExecutionPlanDto
     {
-        std::string                             interface_directory;
-        std::string                             controller_name;
-        ControllerSpec                          controller;
+        std::string    interface_directory;
+        std::string    controller_name;
+        ControllerSpec controller;
+        // Optional typed init params parallel to `controller`. CompileMaapi
+        // fills both: `controller` stays wire-shaped (yyjson round-trip),
+        // `controller_init_params` carries win32/gamepad typed bits + display
+        // options consumed by CreateControllerFromParams. Adb/dbg controllers
+        // leave this nullopt and MaaRuntime::Run uses the legacy
+        // single-arg CreateController path.
+        std::optional<ControllerInitParams>     controller_init_params;
         std::string                             resource_name;
         std::vector<std::string>                resource_paths;
         std::optional<std::string>              resource_hash;
@@ -77,6 +84,24 @@ namespace Das::Plugins::DasMaaPi
 
 template <>
 struct yyjson::field_name_rule<Das::Plugins::DasMaaPi::ControllerSpec>
+{
+    using type = yyjson::snake_to_camel_transform;
+};
+
+template <>
+struct yyjson::field_name_rule<Das::Plugins::DasMaaPi::Win32InitParams>
+{
+    using type = yyjson::snake_to_camel_transform;
+};
+
+template <>
+struct yyjson::field_name_rule<Das::Plugins::DasMaaPi::GamepadInitParams>
+{
+    using type = yyjson::snake_to_camel_transform;
+};
+
+template <>
+struct yyjson::field_name_rule<Das::Plugins::DasMaaPi::ControllerInitParams>
 {
     using type = yyjson::snake_to_camel_transform;
 };

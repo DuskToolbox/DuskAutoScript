@@ -89,8 +89,8 @@ namespace
                     : R"([])")
             + R"(,"piEnv":{"interfaceVersion":"2","clientName":"DAS","clientVersion":"0.1","clientLanguage":"cpp","clientMaafwVersion":"test","projectVersion":"","controllerJson":)"
             + JsonStringLiteral(controller_json)
-            + R"(,"resourceJson":"{\"name\":\"Official\"}"},"tasks":)" + tasks
-            + "}}";
+            + R"(,"resourceJson":"{\"name\":\"Official\"}"},"controllerInitParams":null,"tasks":)"
+            + tasks + "}}";
         auto parsed = Das::Utils::ParseYyjsonFromString(json);
         EXPECT_TRUE(parsed.has_value());
         return parsed ? std::move(*parsed) : Das::Utils::MakeYyjsonObject();
@@ -554,4 +554,172 @@ TEST(DasMaaPiRuntime, DoRunsValidNonAgentEnvelope)
         fake.Contains("PostTask:StartDaily:{\"Stage\":{\"value\":\"one\"}}"));
 
     SetMaaApiBoundaryForTest(nullptr);
+}
+
+// Feature 4 RED — typed controller dispatch + Tier2 platform stub.
+// MaaRuntime::Run must route to CreateControllerFromParams when the envelope
+// carries win32/gamepad init params, and reject Tier2 types with a structured
+// controller-type-unsupported-on-platform diagnostic.
+
+namespace
+{
+    ExecutionEnvelopeDto EnvelopeWithTypedController(
+        ControllerSpec                   spec,
+        ControllerInitParams             init_params,
+        std::vector<MaaTaskExecutionDto> tasks = {})
+    {
+        ExecutionEnvelopeDto envelope;
+        envelope.maapi.interface_directory = "C:/maa";
+        envelope.maapi.fail_fast = true;
+        envelope.maapi.controller_name = spec.name;
+        envelope.maapi.controller = std::move(spec);
+        envelope.maapi.controller_init_params = std::move(init_params);
+        envelope.maapi.resource_name = "Official";
+        envelope.maapi.resource_paths.emplace_back("C:/maa/resource");
+        if (tasks.empty())
+        {
+            MaaTaskExecutionDto task;
+            task.task_name = "DailyFarm";
+            task.entry = "StartDaily";
+            envelope.maapi.tasks.emplace_back(std::move(task));
+        }
+        else
+        {
+            envelope.maapi.tasks = std::move(tasks);
+        }
+        return envelope;
+    }
+} // namespace
+
+TEST(
+    DasMaaPiRuntime,
+    TypedWin32ControllerDispatchesToCreateControllerFromParams)
+{
+    FakeMaaApiBoundary fake;
+    ControllerSpec     spec;
+    spec.name = "Desktop";
+    spec.type = "Win32";
+    ControllerInitParams params;
+    params.controller_type = "Win32";
+    Win32InitParams win32;
+    win32.class_regex = "App.*";
+    win32.window_regex = ".*";
+    win32.screencap_method = 1ULL;
+    win32.mouse_method = 1ULL;
+    win32.keyboard_method = 1ULL << 1;
+    params.win32 = win32;
+
+    auto result = MaaRuntime::Run(
+        EnvelopeWithTypedController(spec, std::move(params)),
+        fake,
+        nullptr);
+    EXPECT_EQ(result.das_result, DAS_S_OK);
+    EXPECT_TRUE(fake.Contains("CreateControllerFromParams:Desktop:Win32"));
+    ASSERT_TRUE(fake.last_controller_init_params.has_value());
+    EXPECT_EQ(fake.last_controller_init_params->controller_type, "Win32");
+    ASSERT_TRUE(fake.last_controller_init_params->win32.has_value());
+    EXPECT_EQ(fake.last_controller_init_params->win32->class_regex, "App.*");
+    // Legacy single-arg path must NOT have been invoked for typed controllers.
+    EXPECT_FALSE(fake.Contains("CreateController:Desktop:Win32"));
+}
+
+TEST(
+    DasMaaPiRuntime,
+    TypedGamepadControllerDispatchesToCreateControllerFromParams)
+{
+    FakeMaaApiBoundary fake;
+    ControllerSpec     spec;
+    spec.name = "Gamepad1";
+    spec.type = "Gamepad";
+    ControllerInitParams params;
+    params.controller_type = "Gamepad";
+    GamepadInitParams gamepad;
+    gamepad.class_regex = "Xbox.*";
+    gamepad.window_regex = ".*";
+    gamepad.gamepad_type = 1ULL;
+    gamepad.screencap_method = 1ULL;
+    params.gamepad = gamepad;
+
+    auto result = MaaRuntime::Run(
+        EnvelopeWithTypedController(spec, std::move(params)),
+        fake,
+        nullptr);
+    EXPECT_EQ(result.das_result, DAS_S_OK);
+    EXPECT_TRUE(fake.Contains("CreateControllerFromParams:Gamepad1:Gamepad"));
+    ASSERT_TRUE(fake.last_controller_init_params.has_value());
+    ASSERT_TRUE(fake.last_controller_init_params->gamepad.has_value());
+    EXPECT_EQ(fake.last_controller_init_params->gamepad->gamepad_type, 1ULL);
+}
+
+TEST(DasMaaPiRuntime, TypedControllerBoundaryFailureSurfacesAsDiagnostic)
+{
+    FakeMaaApiBoundary fake;
+    fake.create_from_params_result.handle = kInvalidMaaControllerHandle;
+    fake.create_from_params_result.error_code = "controller-window-not-found";
+    fake.create_from_params_result.error_message =
+        "No desktop window matched class_regex='Missing.*'";
+
+    ControllerSpec spec;
+    spec.name = "Desktop";
+    spec.type = "Win32";
+    ControllerInitParams params;
+    params.controller_type = "Win32";
+    params.win32 = Win32InitParams{};
+
+    auto result = MaaRuntime::Run(
+        EnvelopeWithTypedController(spec, std::move(params)),
+        fake,
+        nullptr);
+    EXPECT_NE(result.das_result, DAS_S_OK);
+    ASSERT_FALSE(result.diagnostics.empty());
+    EXPECT_EQ(result.diagnostics.back().code, "controller-window-not-found");
+    EXPECT_NE(
+        result.diagnostics.back().message.find("class_regex='Missing.*'"),
+        std::string::npos);
+}
+
+TEST(DasMaaPiRuntime, Tier2ControllerTypesRejectedOnWindows)
+{
+    // MacOS/PlayCover/WlRoots controllers are not linkable on Windows — the
+    // production ScopedMaaApiBoundary Tier2 stub returns kInvalid with a
+    // structured controller-type-unsupported-on-platform code. MaaRuntime
+    // surfaces it as a diagnostic without calling the single-arg overload.
+    for (const auto* type : {"MacOS", "PlayCover", "WlRoots"})
+    {
+        FakeMaaApiBoundary fake;
+        fake.create_from_params_result.handle = kInvalidMaaControllerHandle;
+        fake.create_from_params_result.error_code =
+            "controller-type-unsupported-on-platform";
+        fake.create_from_params_result.error_message =
+            std::string("Controller type ") + type
+            + " is not available on this platform";
+
+        ControllerSpec spec;
+        spec.name = type;
+        spec.type = type;
+        ControllerInitParams params;
+        params.controller_type = type;
+
+        auto result = MaaRuntime::Run(
+            EnvelopeWithTypedController(spec, std::move(params)),
+            fake,
+            nullptr);
+        EXPECT_NE(result.das_result, DAS_S_OK);
+        ASSERT_FALSE(result.diagnostics.empty());
+        EXPECT_EQ(
+            result.diagnostics.back().code,
+            "controller-type-unsupported-on-platform");
+    }
+}
+
+TEST(DasMaaPiRuntime, LegacyAdbPathUnaffectedByTypedDispatch)
+{
+    // Adb envelope without controller_init_params must keep using the legacy
+    // single-arg CreateController overload — no regression in the existing
+    // happy path.
+    FakeMaaApiBoundary fake;
+    auto               result = MaaRuntime::Run(Envelope(), fake, nullptr);
+    EXPECT_EQ(result.das_result, DAS_S_OK);
+    EXPECT_TRUE(fake.Contains("CreateController:Android:Adb"));
+    EXPECT_FALSE(fake.last_controller_init_params.has_value());
 }

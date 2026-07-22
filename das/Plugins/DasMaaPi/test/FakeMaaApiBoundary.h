@@ -18,8 +18,14 @@ namespace Das::Plugins::DasMaaPi::Test
         std::map<std::string, MaaTaskStatus> wait_status_by_entry;
         std::map<std::string, MaaApiResult>  post_result_by_entry;
         std::optional<ControllerSpec>        last_controller_spec;
-        std::optional<std::string>           last_agent_client_identifier;
-        std::optional<std::uint16_t>         last_agent_client_tcp_port;
+        std::optional<ControllerInitParams>  last_controller_init_params;
+        // Configurable result for the typed-init overload. Default constructs
+        // a fresh handle so MaaRuntime::Run proceeds through the happy path;
+        // tests exercising Tier2 stubs or HWND-resolution failure set this to
+        // carry an error_code and kInvalidMaaControllerHandle.
+        CreateControllerResult       create_from_params_result;
+        std::optional<std::string>   last_agent_client_identifier;
+        std::optional<std::uint16_t> last_agent_client_tcp_port;
         std::vector<std::string> agent_client_identifiers{"agent-client-id"};
         MaaApiResult bind_agent_client_resource_result = MaaApiResult::Ok();
         MaaApiResult register_agent_client_resource_sink_result =
@@ -67,6 +73,27 @@ namespace Das::Plugins::DasMaaPi::Test
             calls.emplace_back(
                 "CreateController:" + spec.name + ":" + spec.type);
             return NextHandle();
+        }
+
+        CreateControllerResult CreateControllerFromParams(
+            const ControllerSpec&       spec,
+            const ControllerInitParams& params) override
+        {
+            last_controller_spec = spec;
+            last_controller_init_params = params;
+            calls.emplace_back(
+                "CreateControllerFromParams:" + spec.name + ":"
+                + params.controller_type);
+            CreateControllerResult result = create_from_params_result;
+            // Default-construct a fresh handle when the test hasn't configured
+            // a failure so the happy-path dispatch can proceed past
+            // CreateController without each caller wiring up a result.
+            if (result.handle == kInvalidMaaControllerHandle
+                && result.error_code.empty())
+            {
+                result.handle = NextHandle();
+            }
+            return result;
         }
 
         void DestroyController(MaaControllerHandle controller) noexcept override

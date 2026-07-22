@@ -177,6 +177,21 @@ namespace Das::Plugins::DasMaaPi
                 return kInvalidMaaControllerHandle;
             }
 
+            CreateControllerResult CreateControllerFromParams(
+                const ControllerSpec& /*spec*/,
+                const ControllerInitParams& /*params*/) override
+            {
+                // RED placeholder — real win32/gamepad/Tier2 dispatch lands in
+                // GREEN via MaaWin32ControllerCreate /
+                // MaaGamepadControllerCreate
+                // + Win32WindowFinder HWND discovery.
+                CreateControllerResult result;
+                result.error_code = "controller-type-unsupported-on-platform";
+                result.error_message =
+                    "Typed controller init path is not implemented yet";
+                return result;
+            }
+
             void DestroyController(
                 MaaControllerHandle controller) noexcept override
             {
@@ -470,6 +485,16 @@ namespace Das::Plugins::DasMaaPi
             MaaControllerHandle CreateController(const ControllerSpec&) override
             {
                 return kInvalidMaaControllerHandle;
+            }
+
+            CreateControllerResult CreateControllerFromParams(
+                const ControllerSpec&,
+                const ControllerInitParams&) override
+            {
+                CreateControllerResult result;
+                result.error_code = "controller-type-unsupported-on-platform";
+                result.error_message = "Real Maa boundary disabled in tests";
+                return result;
             }
 
             void DestroyController(MaaControllerHandle) noexcept override {}
