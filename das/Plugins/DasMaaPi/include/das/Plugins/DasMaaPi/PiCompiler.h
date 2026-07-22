@@ -13,6 +13,15 @@ namespace Das::Plugins::DasMaaPi
         const PiCatalog&           catalog,
         std::string_view           purpose);
 
+    // Build typed controller init params from a PI controller's raw_json.
+    // Reads win32/gamepad same-level keys (NOT the `config` sub-key) plus
+    // display_short_side/long_side/raw. Returns a struct with empty typed
+    // blocks for controller types that don't carry them (Adb/Dbg/MacOS/...).
+    // ControllerSpec wire format is unaffected — callers still obtain the
+    // wire-shaped spec via the existing CompileMaapi path.
+    ControllerInitParams NormalizeControllerInitParams(
+        const PiController& controller);
+
     // 把 CompileResultDto 序列化并直接构造为 IDasJson 句柄。原接口返回
     // yyjson::value，但 owning yyjson::value 经多次跨函数 move 后再 write
     // 时会出现 invalid UTF-8 错误（cpp_yyjson owning value move 链路问题，

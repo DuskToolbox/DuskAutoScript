@@ -3,6 +3,8 @@
 #include <das/Utils/DasJsonCore.h>
 #include <das/Utils/StringUtils.h>
 
+#include "ControllerMethodMaps.h"
+
 #ifndef DAS_MAAPI_DISABLE_REAL_MAA_BOUNDARY
 #include <MaaFramework/MaaAPI.h>
 #endif
@@ -627,6 +629,92 @@ namespace Das::Plugins::DasMaaPi
             result.execution_input = std::move(envelope);
         }
         return result;
+    }
+
+    // Build typed init params from a PI controller's raw_json. Reads
+    // same-level win32/gamepad blocks and display_* keys (NOT the `config`
+    // sub-key, which is Adb's generic JSON blob). String→enum translation
+    // delegates to ControllerMethodMaps. ControllerSpec wire format is
+    // untouched — this struct is a parallel, non-serialized carrier.
+    ControllerInitParams NormalizeControllerInitParams(
+        const PiController& controller)
+    {
+        ControllerInitParams params;
+        params.controller_type = controller.dto.type;
+        auto raw = ParseRawObject(controller.raw.raw_json);
+        auto obj = raw.as_object();
+        if (!obj)
+        {
+            return params;
+        }
+
+        // Same-level win32 typed block (NOT config.win32).
+        if (obj->contains(std::string_view("win32")))
+        {
+            if (auto win32_obj = (*obj)[std::string_view("win32")].as_object())
+            {
+                Win32InitParams win32;
+                win32.class_regex =
+                    OptionalStringField(*win32_obj, "class_regex").value_or("");
+                win32.window_regex =
+                    OptionalStringField(*win32_obj, "window_regex")
+                        .value_or("");
+                win32.screencap_method = ParseWin32ScreencapMethod(
+                    OptionalStringField(*win32_obj, "screencap").value_or(""));
+                win32.mouse_method = ParseWin32InputMethod(
+                    OptionalStringField(*win32_obj, "mouse").value_or(""));
+                win32.keyboard_method = ParseWin32InputMethod(
+                    OptionalStringField(*win32_obj, "keyboard").value_or(""));
+                params.win32 = std::move(win32);
+            }
+        }
+
+        // Same-level gamepad typed block.
+        if (obj->contains(std::string_view("gamepad")))
+        {
+            if (auto gamepad_obj =
+                    (*obj)[std::string_view("gamepad")].as_object())
+            {
+                GamepadInitParams gamepad;
+                gamepad.class_regex =
+                    OptionalStringField(*gamepad_obj, "class_regex")
+                        .value_or("");
+                gamepad.window_regex =
+                    OptionalStringField(*gamepad_obj, "window_regex")
+                        .value_or("");
+                gamepad.gamepad_type = ParseGamepadType(
+                    OptionalStringField(*gamepad_obj, "gamepad_type")
+                        .value_or(""));
+                gamepad.screencap_method = ParseWin32ScreencapMethod(
+                    OptionalStringField(*gamepad_obj, "screencap")
+                        .value_or(""));
+                params.gamepad = std::move(gamepad);
+            }
+        }
+
+        // Display options (PI v2.3.0 focus.display, applied via
+        // MaaControllerSetOption). Same-level keys, integers / bool.
+        params.display_short_side = OptionalInt32Field(
+            *obj,
+            {"display_short_side", "displayShortSide"});
+        params.display_long_side =
+            OptionalInt32Field(*obj, {"display_long_side", "displayLongSide"});
+        if (obj->contains(std::string_view("display_raw"))
+            && (*obj)[std::string_view("display_raw")].is_bool())
+        {
+            params.display_raw =
+                (*obj)[std::string_view("display_raw")].as_bool().value_or(
+                    false);
+        }
+        else if (
+            obj->contains(std::string_view("displayRaw"))
+            && (*obj)[std::string_view("displayRaw")].is_bool())
+        {
+            params.display_raw =
+                (*obj)[std::string_view("displayRaw")].as_bool().value_or(
+                    false);
+        }
+        return params;
     }
 
     Das::DasPtr<Das::ExportInterface::IDasJson> SerializeCompileResult(

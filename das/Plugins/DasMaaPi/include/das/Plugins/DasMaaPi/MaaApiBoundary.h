@@ -39,6 +39,44 @@ namespace Das::Plugins::DasMaaPi
         std::string agent_path;
     };
 
+    // Parallel typed init struct produced by NormalizeControllerInitParams.
+    // ControllerSpec stays the wire type (yyjson field_name_rule =
+    // snake_to_camel; MaapiRuntimeTest.cpp:107 hard-codes its JSON shape), so
+    // typed init parameters live in this separate struct. CompileMaapi fills
+    // both, and CreateController consumes both: existing call sites that pass
+    // only ControllerSpec keep working (adb/dbg path), new typed branches
+    // (win32/gamepad) read the parallel struct.
+    //
+    // Display options (display_short_side / display_long_side / display_raw)
+    // are read from the controller object's same-level keys (not the `config`
+    // sub-key) and applied post-create via MaaControllerSetOption.
+    struct Win32InitParams
+    {
+        std::string   class_regex;
+        std::string   window_regex;
+        std::uint64_t screencap_method = 0; // MaaWin32ScreencapMethod bitmask
+        std::uint64_t mouse_method = 0;     // MaaWin32InputMethod single-select
+        std::uint64_t keyboard_method = 0;  // MaaWin32InputMethod single-select
+    };
+
+    struct GamepadInitParams
+    {
+        std::string   class_regex;
+        std::string   window_regex;
+        std::uint64_t gamepad_type = 0;     // MaaGamepadType single-select
+        std::uint64_t screencap_method = 0; // MaaWin32ScreencapMethod bitmask
+    };
+
+    struct ControllerInitParams
+    {
+        std::string                      controller_type;
+        std::optional<Win32InitParams>   win32;
+        std::optional<GamepadInitParams> gamepad;
+        std::optional<std::int32_t>      display_short_side;
+        std::optional<std::int32_t>      display_long_side;
+        std::optional<bool>              display_raw;
+    };
+
     struct MaaApiResult
     {
         bool         ok = true;
