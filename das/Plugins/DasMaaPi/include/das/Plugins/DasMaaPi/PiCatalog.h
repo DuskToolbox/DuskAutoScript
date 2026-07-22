@@ -55,6 +55,18 @@ namespace Das::Plugins::DasMaaPi
         PiRawMetadata raw;
     };
 
+    struct PiPretask
+    {
+        PiPretaskDto  dto;
+        PiRawMetadata raw;
+    };
+
+    struct PiSetting
+    {
+        PiSettingDto  dto;
+        PiRawMetadata raw;
+    };
+
     struct PiCatalog
     {
         std::filesystem::path                        interface_path;
@@ -71,6 +83,8 @@ namespace Das::Plugins::DasMaaPi
         std::vector<PiOption>        options;
         std::vector<PiPreset>        presets;
         std::vector<PiGroup>         groups;
+        std::vector<PiPretask>       pretasks;
+        std::vector<PiSetting>       settings;
         std::vector<PiDiagnosticDto> diagnostics;
         std::string                  raw_agent_json;
         PiRawMetadata                raw;

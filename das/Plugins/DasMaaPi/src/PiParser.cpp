@@ -375,7 +375,8 @@ namespace Das::Plugins::DasMaaPi
                                             option_it->first);
                                         task.option_values.emplace(
                                             option_it->first,
-                                            Das::Utils::CloneYyjsonValue(option_it->second));
+                                            Das::Utils::CloneYyjsonValue(
+                                                option_it->second));
                                     }
                                 }
                             }
@@ -441,6 +442,144 @@ namespace Das::Plugins::DasMaaPi
                 if (auto obj = it->as_object())
                 {
                     parse(*obj);
+                }
+            }
+        }
+
+        template <typename TObject>
+        PiPretask ParsePretask(const TObject& obj)
+        {
+            PiPretask result;
+            FillNamed(result.dto, obj);
+            result.dto.exec = RequiredString(obj, "exec");
+            result.dto.args = ReadStringArray(obj, "args");
+            result.dto.option = ReadStringArray(obj, "option");
+            result.dto.controller = ReadStringArray(obj, "controller");
+            result.dto.resource = ReadStringArray(obj, "resource");
+            result.raw = MakeRaw(
+                obj,
+                {"name",
+                 "label",
+                 "description",
+                 "icon",
+                 "exec",
+                 "args",
+                 "option",
+                 "controller",
+                 "resource"});
+            return result;
+        }
+
+        // pretask 可为单对象或数组（PI v2.7.0）— 统一 normalize 后有序 append。
+        template <typename TValue>
+        void ParsePretaskField(
+            PiCatalog&                   catalog,
+            const TValue&                value,
+            const std::filesystem::path& source)
+        {
+            auto emit_one = [&](auto& obj)
+            {
+                if (RequiredString(obj, "exec").empty())
+                {
+                    AddDiagnostic(
+                        catalog,
+                        "error",
+                        "pretask-exec-required",
+                        "pretask entry missing required 'exec' field",
+                        source);
+                    return;
+                }
+                catalog.pretasks.emplace_back(ParsePretask(obj));
+            };
+
+            if (auto single = value.as_object())
+            {
+                emit_one(*single);
+                return;
+            }
+            if (auto arr = value.as_array())
+            {
+                for (auto it = arr->begin(); it != arr->end(); ++it)
+                {
+                    if (auto obj = it->as_object())
+                    {
+                        emit_one(*obj);
+                    }
+                }
+            }
+        }
+
+        template <typename TObject>
+        PiSetting ParseSetting(const TObject& obj)
+        {
+            PiSetting result;
+            FillNamed(result.dto, obj);
+            result.dto.option = ReadStringArray(obj, "option");
+            // PI v2.8.0 setting default_expand 协议默认为 true（与 group
+            // 相反）。
+            result.dto.default_expand =
+                OptionalBool(obj, "default_expand", true);
+            result.raw = MakeRaw(
+                obj,
+                {"name",
+                 "label",
+                 "description",
+                 "icon",
+                 "option",
+                 "default_expand"});
+            return result;
+        }
+
+        // setting 是数组（PI v2.8.0）— 逐项 append，缺 name 跳过并报诊断。
+        template <typename TValue>
+        void ParseSettingField(
+            PiCatalog&                   catalog,
+            const TValue&                value,
+            const std::filesystem::path& source)
+        {
+            auto arr = value.as_array();
+            if (!arr)
+            {
+                return;
+            }
+            for (auto it = arr->begin(); it != arr->end(); ++it)
+            {
+                if (auto obj = it->as_object())
+                {
+                    if (RequiredString(*obj, "name").empty())
+                    {
+                        AddDiagnostic(
+                            catalog,
+                            "error",
+                            "setting-name-required",
+                            "setting entry missing required 'name' field",
+                            source);
+                        continue;
+                    }
+                    catalog.settings.emplace_back(ParseSetting(*obj));
+                }
+            }
+        }
+
+        // global_option 合并（PI v2.8.0 import 也可贡献）：按键去重，先者为准。
+        // 主文件在 import 递归前派发 → 主文件优先顺序（协议 L261）。
+        template <typename TObject>
+        void ParseGlobalOptionField(PiCatalog& catalog, const TObject& top)
+        {
+            for (const auto& name : ReadStringArray(top, "global_option"))
+            {
+                const auto exists = std::any_of(
+                    catalog.global_options.begin(),
+                    catalog.global_options.end(),
+                    [&](const PiOption& item)
+                    { return item.dto.name == name; });
+                if (exists)
+                {
+                    continue;
+                }
+                if (const auto* option = FindOption(catalog, name))
+                {
+                    catalog.global_options.emplace_back(*option);
                 }
             }
         }
@@ -598,7 +737,9 @@ namespace Das::Plugins::DasMaaPi
                      "option",
                      "global_option",
                      "import",
-                     "preset"});
+                     "preset",
+                     "pretask",
+                     "setting"});
 
                 if (!top->contains(std::string_view("interface_version"))
                     || (*top)[std::string_view("interface_version")]
@@ -732,15 +873,29 @@ namespace Das::Plugins::DasMaaPi
                 }
             }
 
-            if (!is_import && top->contains(std::string_view("global_option")))
+            // pretask (PI v2.7.0) — 单对象或数组 normalize 后有序 append。
+            if (top->contains(std::string_view("pretask")))
             {
-                for (const auto& name : ReadStringArray(*top, "global_option"))
-                {
-                    if (const auto* option = FindOption(catalog, name))
-                    {
-                        catalog.global_options.emplace_back(*option);
-                    }
-                }
+                ParsePretaskField(
+                    catalog,
+                    (*top)[std::string_view("pretask")],
+                    source);
+            }
+
+            // setting (PI v2.8.0) — 数组逐项 append。
+            if (top->contains(std::string_view("setting")))
+            {
+                ParseSettingField(
+                    catalog,
+                    (*top)[std::string_view("setting")],
+                    source);
+            }
+
+            // global_option (PI v2.3.0+, v2.8.0 import merge) — 先者为准去重。
+            // 派发置于 import 递归前，保证主文件优先顺序（协议 L261）。
+            if (top->contains(std::string_view("global_option")))
+            {
+                ParseGlobalOptionField(catalog, *top);
             }
 
             if (top->contains(std::string_view("import")))
@@ -754,22 +909,6 @@ namespace Das::Plugins::DasMaaPi
                         resolved,
                         load_languages,
                         import_stack);
-                }
-            }
-
-            if (!is_import)
-            {
-                catalog.global_options.clear();
-                if (top->contains(std::string_view("global_option")))
-                {
-                    for (const auto& name :
-                         ReadStringArray(*top, "global_option"))
-                    {
-                        if (const auto* option = FindOption(catalog, name))
-                        {
-                            catalog.global_options.emplace_back(*option);
-                        }
-                    }
                 }
             }
         }

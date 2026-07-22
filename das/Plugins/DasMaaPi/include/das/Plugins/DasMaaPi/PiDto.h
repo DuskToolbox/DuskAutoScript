@@ -102,6 +102,26 @@ namespace Das::Plugins::DasMaaPi
     {
         std::vector<PiPresetTaskDto> task;
     };
+
+    // PI v2.7.0 — 顶层 pretask（Controller 启动前按序执行的外部进程）。
+    // exec 是唯一必填字段；name/label/description/icon 走 PiNamedDto；
+    // option/controller/resource 为 v2.8.1 激活过滤用键列表。
+    struct PiPretaskDto : PiNamedDto
+    {
+        std::string              exec;
+        std::vector<std::string> args;
+        std::vector<std::string> option;
+        std::vector<std::string> controller;
+        std::vector<std::string> resource;
+    };
+
+    // PI v2.8.0 — 任务设置页 UI 声明分区，option 引用 option 块中已定义的键。
+    // default_expand 协议默认为 true（与 PiGroupDto 的 false 默认相反）。
+    struct PiSettingDto : PiNamedDto
+    {
+        std::vector<std::string> option;
+        bool                     default_expand = true;
+    };
 } // namespace Das::Plugins::DasMaaPi
 
 template <>
@@ -166,6 +186,18 @@ struct yyjson::field_name_rule<Das::Plugins::DasMaaPi::PiPresetTaskDto>
 
 template <>
 struct yyjson::field_name_rule<Das::Plugins::DasMaaPi::PiPresetDto>
+{
+    using type = yyjson::snake_to_camel_transform;
+};
+
+template <>
+struct yyjson::field_name_rule<Das::Plugins::DasMaaPi::PiPretaskDto>
+{
+    using type = yyjson::snake_to_camel_transform;
+};
+
+template <>
+struct yyjson::field_name_rule<Das::Plugins::DasMaaPi::PiSettingDto>
 {
     using type = yyjson::snake_to_camel_transform;
 };
