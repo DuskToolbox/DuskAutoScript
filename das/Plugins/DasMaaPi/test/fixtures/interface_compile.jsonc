@@ -31,6 +31,15 @@
     }
   ],
   "global_option": ["difficulty"],
+  // PI v2.8.0 setting[] (D-86-04): each partition references option keys that
+  // compile into the global-level pipeline_override merge. "performance"
+  // overlaps with global_option (difficulty) — dedup must merge once.
+  // "extras" references setting-only options (bonus / filtered-opt) where
+  // filtered-opt carries a v2.8.1 controller filter to exercise IsActive.
+  "setting": [
+    {"name": "performance", "option": ["difficulty", "language"]},
+    {"name": "extras", "option": ["bonus", "filtered-opt"]}
+  ],
   "option": {
     "difficulty": {
       "type": "select",
@@ -43,6 +52,26 @@
             }
           }
         }
+      ]
+    },
+    "language": {
+      "type": "select",
+      "cases": [
+        {"name": "zh", "pipeline_override": {"Language": {"code": "zh"}}},
+        {"name": "en", "pipeline_override": {"Language": {"code": "en"}}}
+      ]
+    },
+    "bonus": {
+      "type": "select",
+      "cases": [
+        {"name": "extra", "pipeline_override": {"Bonus": {"tier": "extra"}}}
+      ]
+    },
+    "filtered-opt": {
+      "type": "select",
+      "controller": ["MissingController"],
+      "cases": [
+        {"name": "skip", "pipeline_override": {"Filtered": {"bad": true}}}
       ]
     },
     "server": {

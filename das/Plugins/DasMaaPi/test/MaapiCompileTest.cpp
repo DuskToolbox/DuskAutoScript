@@ -237,6 +237,32 @@ namespace
                  "{\"optionName\":\"notify\",\"kind\":\"switch\","
                  "\"boolValue\":true}]}]}}";
     }
+
+    // D-86-04 setting→global merge: drives the augmented
+    // interface_compile.jsonc fixture whose setting[] references difficulty
+    // (overlap with global_option, dedup), language (setting-only), bonus
+    // (setting-only, second partition) and filtered-opt (setting-only, v2.8.1
+    // controller mismatch). User selections for setting-referenced options
+    // are routed through globalOptions storage (mirrors MXU
+    // globalOptionValues).
+    std::string CompileContextSetting(std::string_view path)
+    {
+        return "{\"adapter\":{\"interfacePath\":\"" + std::string(path)
+               + "\",\"executionPolicy\":{\"failFast\":true}},\"pi\":{"
+                 "\"controllerName\":\"Android\","
+                 "\"resourceName\":\"Official\","
+                 "\"globalOptions\":["
+                 "{\"optionName\":\"difficulty\",\"kind\":\"select\","
+                 "\"selectedCases\":[\"hard\"]},"
+                 "{\"optionName\":\"language\",\"kind\":\"select\","
+                 "\"selectedCases\":[\"zh\"]},"
+                 "{\"optionName\":\"bonus\",\"kind\":\"select\","
+                 "\"selectedCases\":[\"extra\"]},"
+                 "{\"optionName\":\"filtered-opt\",\"kind\":\"select\","
+                 "\"selectedCases\":[\"skip\"]}"
+                 "],"
+                 "\"tasks\":[{\"taskName\":\"DailyFarm\",\"enabled\":true}]}}";
+    }
 } // namespace
 
 TEST_F(MaapiCompileFixture, CompilePreviewOmitsExecutionEnvelope)
@@ -390,4 +416,108 @@ TEST_F(MaapiCompileFixture, AgentBoundaryAllowsExecutionEnvelope)
     EXPECT_EQ(
         (*agent)[std::string_view("childExec")].as_string().value_or(""),
         "agent.exe");
+}
+
+// D-86-04: setting[].option[] 引用的 option 视为额外 global option，编译期
+// 并入 global 级 pipeline_override 合并（与 MXU globalOptionValues 路由一致）。
+// language 与 bonus 仅由 setting 引用（未列入 global_option[]），其选中值经
+// globalOptions 存储路由后应在 task.pipelineOverride 中可见；优先级
+// global<resource<controller<task 不变（setting 在 global 段并入）。
+TEST_F(MaapiCompileFixture, SettingReferencedOptionMergesAtGlobalLevel)
+{
+    auto result = Compile(
+        CompileContextSetting(
+            FixturePath("interface_compile.jsonc").generic_string()),
+        "execution");
+    auto obj = result.as_object();
+    ASSERT_TRUE(obj.has_value());
+    auto envelope = (*obj)[std::string_view("executionInput")].as_object();
+    ASSERT_TRUE(envelope.has_value());
+    auto maapi = (*envelope)[std::string_view("maapi")].as_object();
+    ASSERT_TRUE(maapi.has_value());
+    auto tasks = (*maapi)[std::string_view("tasks")].as_array();
+    ASSERT_TRUE(tasks.has_value());
+    auto first_task = (*tasks)[0].as_object();
+    ASSERT_TRUE(first_task.has_value());
+    auto pipeline =
+        (*first_task)[std::string_view("pipelineOverride")].as_object();
+    ASSERT_TRUE(pipeline.has_value());
+
+    // 显式 global_option 仍正常合并。
+    EXPECT_EQ(
+        (*(*pipeline)[std::string_view("Stage")]
+              .as_object())[std::string_view("value")]
+            .as_string()
+            .value_or(""),
+        "global-hard");
+    // 仅由 setting 引用的 option：language（performance 分区）。
+    EXPECT_EQ(
+        (*(*pipeline)[std::string_view("Language")]
+              .as_object())[std::string_view("code")]
+            .as_string()
+            .value_or(""),
+        "zh");
+    // 仅由 setting 引用的 option：bonus（extras 分区，证明跨分区收集）。
+    EXPECT_EQ(
+        (*(*pipeline)[std::string_view("Bonus")]
+              .as_object())[std::string_view("tier")]
+            .as_string()
+            .value_or(""),
+        "extra");
+}
+
+// 同一 option 键同时出现在 global_option[] 与 setting[].option[] → 仅合并一次
+// （幂等）。difficulty 在两侧均出现；结果应确定且无 missing-option 重复诊断。
+TEST_F(MaapiCompileFixture, SettingOptionDedupedWithExplicitGlobalOption)
+{
+    auto result = Compile(
+        CompileContextSetting(
+            FixturePath("interface_compile.jsonc").generic_string()),
+        "execution");
+    auto obj = result.as_object();
+    ASSERT_TRUE(obj.has_value());
+    // 无 missing-option / 重复诊断：ok=true。
+    EXPECT_TRUE((*obj)[std::string_view("ok")].as_bool().value_or(false));
+    auto envelope = (*obj)[std::string_view("executionInput")].as_object();
+    ASSERT_TRUE(envelope.has_value());
+    auto maapi = (*envelope)[std::string_view("maapi")].as_object();
+    ASSERT_TRUE(maapi.has_value());
+    auto tasks = (*maapi)[std::string_view("tasks")].as_array();
+    ASSERT_TRUE(tasks.has_value());
+    auto pipeline =
+        (*(*tasks)[0].as_object())[std::string_view("pipelineOverride")]
+            .as_object();
+    ASSERT_TRUE(pipeline.has_value());
+    // 单次合并产生确定值（select 取 selectedCases[0]，重复 MergeObject 不会
+    // 改变输出；断言锁定确定值非破坏）。
+    EXPECT_EQ(
+        (*(*pipeline)[std::string_view("Stage")]
+              .as_object())[std::string_view("value")]
+            .as_string()
+            .value_or(""),
+        "global-hard");
+}
+
+// setting 引用的 option 仍受自身 controller/resource 激活过滤 (IsActive
+// v2.8.1)。 filtered-opt 的 controller=["MissingController"] 与当前 Android
+// 不匹配 → 合并阶段被跳过，pipelineOverride 不含 Filtered 键。
+TEST_F(MaapiCompileFixture, SettingOptionRespectsV281IsActiveFilter)
+{
+    auto result = Compile(
+        CompileContextSetting(
+            FixturePath("interface_compile.jsonc").generic_string()),
+        "execution");
+    auto obj = result.as_object();
+    ASSERT_TRUE(obj.has_value());
+    auto envelope = (*obj)[std::string_view("executionInput")].as_object();
+    ASSERT_TRUE(envelope.has_value());
+    auto maapi = (*envelope)[std::string_view("maapi")].as_object();
+    ASSERT_TRUE(maapi.has_value());
+    auto tasks = (*maapi)[std::string_view("tasks")].as_array();
+    ASSERT_TRUE(tasks.has_value());
+    auto pipeline =
+        (*(*tasks)[0].as_object())[std::string_view("pipelineOverride")]
+            .as_object();
+    ASSERT_TRUE(pipeline.has_value());
+    EXPECT_FALSE(pipeline->contains(std::string_view("Filtered")));
 }
