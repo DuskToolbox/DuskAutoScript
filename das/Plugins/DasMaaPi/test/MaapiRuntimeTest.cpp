@@ -1,5 +1,6 @@
 #include "../src/AgentProcessRunner.h"
 #include "../src/MaapiTask.h"
+#include "../src/PretaskRunner.h"
 #include "FakeMaaApiBoundary.h"
 
 #include <das/Plugins/DasMaaPi/MaaRuntime.h>
@@ -9,6 +10,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <deque>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -722,4 +724,157 @@ TEST(DasMaaPiRuntime, LegacyAdbPathUnaffectedByTypedDispatch)
     EXPECT_EQ(result.das_result, DAS_S_OK);
     EXPECT_TRUE(fake.Contains("CreateController:Android:Adb"));
     EXPECT_FALSE(fake.last_controller_init_params.has_value());
+}
+
+// ============================================================================
+// PI v2.7.0 pretask execution stage (D-86-02).
+// pretask runs AFTER LoadResource and BEFORE CreateController. Spawn failure
+// or nonzero exit aborts the run with DAS_E_MAAPI_PRETASK_FAILED + structured
+// diagnostic (pretask-failed / pretask-nonzero-exit). CWD is the PI interface
+// directory.
+// ============================================================================
+
+namespace
+{
+    class FakePretaskRunner final : public IPretaskRunner
+    {
+    public:
+        std::vector<PretaskLaunchRequest> launches;
+        std::deque<PretaskRunResult>      scripted_results;
+
+        PretaskRunResult Run(const PretaskLaunchRequest& request) override
+        {
+            launches.push_back(request);
+            if (!scripted_results.empty())
+            {
+                auto result = scripted_results.front();
+                scripted_results.pop_front();
+                return result;
+            }
+            PretaskRunResult ok;
+            ok.launched = true;
+            ok.exit_code = 0;
+            return ok;
+        }
+    };
+
+    ExecutionEnvelopeDto EnvelopeWithPretasks(
+        std::vector<MaaPretaskDto> pretasks,
+        std::string                interface_directory = "C:/maa")
+    {
+        ExecutionEnvelopeDto envelope;
+        envelope.maapi.interface_directory = std::move(interface_directory);
+        envelope.maapi.fail_fast = true;
+        envelope.maapi.controller_name = "Android";
+        envelope.maapi.controller.type = "Adb";
+        envelope.maapi.resource_name = "Official";
+        envelope.maapi.resource_paths.emplace_back("C:/maa/resource");
+        envelope.maapi.pretasks = std::move(pretasks);
+        MaaTaskExecutionDto task;
+        task.task_name = "DailyFarm";
+        task.entry = "StartDaily";
+        envelope.maapi.tasks.emplace_back(std::move(task));
+        return envelope;
+    }
+
+    MaaPretaskDto MakePretask(
+        std::string              exec,
+        std::vector<std::string> args = {})
+    {
+        MaaPretaskDto pretask;
+        pretask.name = "pre";
+        pretask.exec = std::move(exec);
+        pretask.args = std::move(args);
+        return pretask;
+    }
+
+    class ScopedPretaskRunner final
+    {
+    public:
+        explicit ScopedPretaskRunner(IPretaskRunner* runner)
+        {
+            SetPretaskRunnerForTest(runner);
+        }
+        ~ScopedPretaskRunner() { SetPretaskRunnerForTest(nullptr); }
+    };
+} // namespace
+
+TEST(DasMaaPiRuntime, EmptyPretasksSkipsRunnerAndReachesController)
+{
+    FakeMaaApiBoundary  fake;
+    FakePretaskRunner   runner;
+    ScopedPretaskRunner hook(&runner);
+    auto result = MaaRuntime::Run(EnvelopeWithPretasks({}), fake, nullptr);
+    EXPECT_EQ(result.das_result, DAS_S_OK);
+    EXPECT_TRUE(runner.launches.empty());
+    EXPECT_TRUE(fake.Contains("CreateController:Android:Adb"));
+}
+
+TEST(DasMaaPiRuntime, PretaskZeroExitProceedsToControllerCreate)
+{
+    FakeMaaApiBoundary  fake;
+    FakePretaskRunner   runner;
+    ScopedPretaskRunner hook(&runner);
+    auto                result = MaaRuntime::Run(
+        EnvelopeWithPretasks({MakePretask("tools/pre.exe", {"--init"})}),
+        fake,
+        nullptr);
+    EXPECT_EQ(result.das_result, DAS_S_OK);
+    ASSERT_EQ(runner.launches.size(), 1u);
+    EXPECT_EQ(runner.launches[0].exec, "tools/pre.exe");
+    ASSERT_EQ(runner.launches[0].args.size(), 1u);
+    EXPECT_EQ(runner.launches[0].args[0], "--init");
+    EXPECT_EQ(
+        runner.launches[0].working_directory.string(),
+        std::filesystem::path("C:/maa").string());
+    // Ordering: pretask ran before controller create. Controller still created.
+    EXPECT_TRUE(fake.Contains("CreateController:Android:Adb"));
+}
+
+TEST(DasMaaPiRuntime, PretaskNonzeroExitAbortsBeforeControllerCreate)
+{
+    FakeMaaApiBoundary fake;
+    FakePretaskRunner  runner;
+    PretaskRunResult   nonzero;
+    nonzero.launched = true;
+    nonzero.exit_code = 7;
+    runner.scripted_results.push_back(nonzero);
+    ScopedPretaskRunner hook(&runner);
+
+    auto result = MaaRuntime::Run(
+        EnvelopeWithPretasks({MakePretask("tools/pre.exe")}),
+        fake,
+        nullptr);
+    EXPECT_EQ(result.das_result, DAS_E_MAAPI_PRETASK_FAILED);
+    ASSERT_FALSE(result.diagnostics.empty());
+    EXPECT_EQ(result.diagnostics.back().code, "pretask-nonzero-exit");
+    ASSERT_TRUE(result.diagnostics.back().provider_code.has_value());
+    EXPECT_EQ(*result.diagnostics.back().provider_code, 7);
+    // Controller create must NOT have been reached.
+    EXPECT_FALSE(fake.Contains("CreateController:Android:Adb"));
+    EXPECT_FALSE(fake.Contains("CreateResource"));
+}
+
+TEST(DasMaaPiRuntime, PretaskSpawnFailureAbortsBeforeControllerCreate)
+{
+    FakeMaaApiBoundary fake;
+    FakePretaskRunner  runner;
+    PretaskRunResult   spawn_fail;
+    spawn_fail.launched = false;
+    spawn_fail.failure_message = "ENOENT: tools/pre.exe";
+    runner.scripted_results.push_back(spawn_fail);
+    ScopedPretaskRunner hook(&runner);
+
+    auto result = MaaRuntime::Run(
+        EnvelopeWithPretasks({MakePretask("tools/missing.exe")}),
+        fake,
+        nullptr);
+    EXPECT_EQ(result.das_result, DAS_E_MAAPI_PRETASK_FAILED);
+    ASSERT_FALSE(result.diagnostics.empty());
+    EXPECT_EQ(result.diagnostics.back().code, "pretask-failed");
+    EXPECT_NE(
+        result.diagnostics.back().message.find("ENOENT"),
+        std::string::npos);
+    EXPECT_FALSE(fake.Contains("CreateController:Android:Adb"));
+    EXPECT_FALSE(fake.Contains("CreateResource"));
 }
