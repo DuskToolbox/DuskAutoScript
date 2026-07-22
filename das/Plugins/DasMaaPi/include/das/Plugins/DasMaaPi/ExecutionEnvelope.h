@@ -10,6 +10,7 @@
 
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace Das::Plugins::DasMaaPi
@@ -120,6 +121,222 @@ template <>
 struct yyjson::field_name_rule<Das::Plugins::DasMaaPi::ControllerInitParams>
 {
     using type = yyjson::snake_to_camel_transform;
+};
+
+// cpp_yyjson's default_caster dispatch checks `std::constructible_from<T,
+// const char*>` BEFORE the `is_optional_v<T>` branch. Under C++20 aggregate
+// parenthesized initialization, `ControllerInitParams` (an aggregate with a
+// leading `std::string` field) IS constructible_from<const char*>, so
+// `std::optional<ControllerInitParams>` is also constructible_from<const
+// char*> via the optional converting constructor. That makes the dispatch
+// pick the `const char*` branch for non-null JSON objects and throw
+// "optional<ControllerInitParams> is not constructible from JSON string"
+// even when the JSON value is a valid object.
+//
+// The same trap applies to Win32InitParams / GamepadInitParams (leading
+// std::string field aggregates wrapped in optional inside
+// ControllerInitParams). These explicit caster specializations short-circuit
+// the from_json dispatch and route directly through aggregate reflection
+// (default_caster<T>::from_json), so the JSON round-trip works for both null
+// (→nullopt) and object (→populated) payloads. The to_json overloads mirror
+// the default caster<optional<T>> signature so aggregate serialization via
+// PFR field iteration still works (the field is written through a
+// writer::value_ref, which dispatches back to the aggregate to_json path).
+// This is the path that production IPC takes when the real plugin emits a
+// typed controller envelope and the consumer calls ParseExecutionEnvelope.
+//
+// Specialization order matters: Win32/Gamepad optional casters must be
+// declared BEFORE the ControllerInitParams optional caster, because the
+// latter references ControllerInitParams (whose aggregate reflection touches
+// its optional<Win32InitParams> / optional<GamepadInitParams> fields) and
+// would otherwise implicitly instantiate the default optional caster before
+// the explicit specialization is visible ("explicit specialization after
+// instantiation" error).
+//
+// optional<bool> also needs an explicit specialization: C++ permits a
+// deprecated pointer→bool conversion, so `constructible_from<bool, const
+// char*>` is true and the same trap fires for optional<bool> when the JSON
+// value is not a string (e.g. JSON false for display_raw).
+template <>
+struct yyjson::caster<std::optional<bool>>
+{
+    using value_type = bool;
+
+    template <typename Json>
+    static std::optional<value_type> from_json(const Json& json)
+    {
+        if (json.is_null())
+        {
+            return std::nullopt;
+        }
+        if (const auto v = json.as_bool())
+        {
+            return *v;
+        }
+        throw yyjson::bad_cast(
+            "std::optional<bool> is not constructible from JSON bool");
+    }
+
+    template <typename... Ts>
+    static auto to_json(
+        yyjson::writer::value_ref&       v,
+        const std::optional<value_type>& t,
+        Ts...)
+    {
+        if (t.has_value())
+        {
+            v = *t;
+        }
+    }
+
+    template <typename... Ts>
+    static auto
+    to_json(yyjson::writer::value_ref& v, std::optional<value_type>&& t, Ts...)
+    {
+        if (t.has_value())
+        {
+            v = std::move(*t);
+        }
+    }
+};
+
+template <>
+struct yyjson::caster<std::optional<Das::Plugins::DasMaaPi::Win32InitParams>>
+{
+    using value_type = Das::Plugins::DasMaaPi::Win32InitParams;
+
+    template <typename Json>
+    static std::optional<value_type> from_json(const Json& json)
+    {
+        if (json.is_null())
+        {
+            return std::nullopt;
+        }
+        return std::optional<value_type>(yyjson::cast<value_type>(json));
+    }
+
+    template <typename... Ts>
+        requires requires(yyjson::writer::value_ref& v, value_type t) {
+            v = t;
+            v = std::pair(t, yyjson::copy_string);
+        }
+    static auto to_json(
+        yyjson::writer::value_ref&       v,
+        const std::optional<value_type>& t,
+        Ts...)
+    {
+        if (t.has_value())
+        {
+            v = *t;
+        }
+    }
+
+    template <typename... Ts>
+        requires requires(yyjson::writer::value_ref& v, value_type t) {
+            v = t;
+            v = std::pair(t, yyjson::copy_string);
+        }
+    static auto
+    to_json(yyjson::writer::value_ref& v, std::optional<value_type>&& t, Ts...)
+    {
+        if (t.has_value())
+        {
+            v = std::move(*t);
+        }
+    }
+};
+
+template <>
+struct yyjson::caster<std::optional<Das::Plugins::DasMaaPi::GamepadInitParams>>
+{
+    using value_type = Das::Plugins::DasMaaPi::GamepadInitParams;
+
+    template <typename Json>
+    static std::optional<value_type> from_json(const Json& json)
+    {
+        if (json.is_null())
+        {
+            return std::nullopt;
+        }
+        return std::optional<value_type>(yyjson::cast<value_type>(json));
+    }
+
+    template <typename... Ts>
+        requires requires(yyjson::writer::value_ref& v, value_type t) {
+            v = t;
+            v = std::pair(t, yyjson::copy_string);
+        }
+    static auto to_json(
+        yyjson::writer::value_ref&       v,
+        const std::optional<value_type>& t,
+        Ts...)
+    {
+        if (t.has_value())
+        {
+            v = *t;
+        }
+    }
+
+    template <typename... Ts>
+        requires requires(yyjson::writer::value_ref& v, value_type t) {
+            v = t;
+            v = std::pair(t, yyjson::copy_string);
+        }
+    static auto
+    to_json(yyjson::writer::value_ref& v, std::optional<value_type>&& t, Ts...)
+    {
+        if (t.has_value())
+        {
+            v = std::move(*t);
+        }
+    }
+};
+
+template <>
+struct yyjson::caster<
+    std::optional<Das::Plugins::DasMaaPi::ControllerInitParams>>
+{
+    using value_type = Das::Plugins::DasMaaPi::ControllerInitParams;
+
+    template <typename Json>
+    static std::optional<value_type> from_json(const Json& json)
+    {
+        if (json.is_null())
+        {
+            return std::nullopt;
+        }
+        return std::optional<value_type>(yyjson::cast<value_type>(json));
+    }
+
+    template <typename... Ts>
+        requires requires(yyjson::writer::value_ref& v, value_type t) {
+            v = t;
+            v = std::pair(t, yyjson::copy_string);
+        }
+    static auto to_json(
+        yyjson::writer::value_ref&       v,
+        const std::optional<value_type>& t,
+        Ts...)
+    {
+        if (t.has_value())
+        {
+            v = *t;
+        }
+    }
+
+    template <typename... Ts>
+        requires requires(yyjson::writer::value_ref& v, value_type t) {
+            v = t;
+            v = std::pair(t, yyjson::copy_string);
+        }
+    static auto
+    to_json(yyjson::writer::value_ref& v, std::optional<value_type>&& t, Ts...)
+    {
+        if (t.has_value())
+        {
+            v = std::move(*t);
+        }
+    }
 };
 
 template <>
