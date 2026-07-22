@@ -2007,6 +2007,52 @@ namespace Das::Core::TaskScheduler
         return Pass();
     }
 
+    bool HasErrorDiagnostic(const yyjson::value& diagnostics_array)
+    {
+        auto arr_opt = diagnostics_array.as_array();
+        if (!arr_opt)
+        {
+            return false;
+        }
+        for (const auto& diag : *arr_opt)
+        {
+            auto obj = diag.as_object();
+            if (obj)
+            {
+                auto sev = (*obj)[std::string_view("severity")].as_string();
+                if (sev && *sev == "error")
+                {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    std::string FirstErrorDiagnosticMessage(
+        const yyjson::value& diagnostics_array)
+    {
+        auto arr_opt = diagnostics_array.as_array();
+        if (!arr_opt)
+        {
+            return {};
+        }
+        for (const auto& diag : *arr_opt)
+        {
+            auto obj = diag.as_object();
+            if (obj)
+            {
+                auto sev = (*obj)[std::string_view("severity")].as_string();
+                if (sev && *sev == "error")
+                {
+                    auto msg = (*obj)[std::string_view("message")].as_string();
+                    return msg ? std::string(*msg) : std::string{};
+                }
+            }
+        }
+        return {};
+    }
+
     AuthoringValidationResult ValidateAuthoringApplyResult(
         const yyjson::value& result,
         int64_t              baseRevision)
@@ -2054,7 +2100,24 @@ namespace Das::Core::TaskScheduler
         }
         const auto&   revision_value = doc["revision"];
         const int64_t actual_revision = ReadInt(revision_value);
-        if (actual_revision != baseRevision + 1)
+        // A provider-rejected apply (error diagnostics present) is a legitimate
+        // failure envelope: diagnostics carry the real reason and the store
+        // must not advance (revision stays at baseRevision). Only a successful
+        // apply (no error diagnostics) must bump revision to baseRevision + 1.
+        // Requiring +1 unconditionally previously misreported every failed
+        // apply as revisionMismatch, hiding the real rejection reason.
+        const bool has_error = HasErrorDiagnostic(obj["diagnostics"]);
+        if (has_error)
+        {
+            if (actual_revision != baseRevision)
+            {
+                return Fail(
+                    "revisionMismatch",
+                    "failed AuthoringApplyResult (error diagnostics) must keep "
+                    "document.revision == baseRevision (no mutation on failure)");
+            }
+        }
+        else if (actual_revision != baseRevision + 1)
         {
             return Fail(
                 "revisionMismatch",

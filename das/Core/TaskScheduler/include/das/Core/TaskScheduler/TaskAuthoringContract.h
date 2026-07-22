@@ -52,4 +52,12 @@ namespace Das::Core::TaskScheduler
         std::string_view error_kind,
         std::string_view message);
 
+    // Diagnostic-array inspection helpers. Used by the apply pipeline to
+    // distinguish a provider-rejected apply (error diagnostics present) from a
+    // malformed envelope, so the real rejection reason surfaces instead of a
+    // generic revisionMismatch. Defined in TaskAuthoringContract.cpp.
+    bool        HasErrorDiagnostic(const yyjson::value& diagnostics_array);
+    std::string FirstErrorDiagnosticMessage(
+        const yyjson::value& diagnostics_array);
+
 } // namespace Das::Core::TaskScheduler

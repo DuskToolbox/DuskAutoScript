@@ -4203,6 +4203,14 @@ TEST_F(MaapiAuthoringFixture, InvokeCommandRejectsUnknownCommandId)
 
     EXPECT_GE(CountDiagnosticsBySeverity(result, "error"), 1u);
     EXPECT_EQ(DocumentRevisionFromApplyResult(result), 0);
+    // Provider-rejected apply envelope (error diagnostics + revision not
+    // bumped) must pass the strict Apply validator so the real reason surfaces
+    // instead of revisionMismatch.
+    auto rejected_valid =
+        Das::Core::TaskScheduler::ValidateAuthoringApplyResult(result, 0);
+    EXPECT_TRUE(rejected_valid.valid)
+        << "error_kind=" << rejected_valid.error_kind
+        << " message=" << rejected_valid.message;
 }
 
 // D-84.2-04: newPreset 是 D-84-28 通用 invokeCommand 在 MaaPI 的落地。

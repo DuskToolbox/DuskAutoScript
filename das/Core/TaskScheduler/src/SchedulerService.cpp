@@ -203,26 +203,38 @@ namespace Das::Core::TaskScheduler
     }
 
     static yyjson::value MakeAuthoringResponseError(
-        std::string_view kind,
-        std::string_view message)
+        std::string_view     kind,
+        std::string_view     message,
+        const yyjson::value* diagnostics = nullptr)
     {
         yyjson::value result(Das::Utils::MakeYyjsonObject());
         auto          obj = result.as_object();
         (*obj)[std::string_view("ok")] = false;
         (*obj)[std::string_view("errorKind")] = std::string(kind);
         (*obj)[std::string_view("message")] = std::string(message);
+        if (diagnostics != nullptr && diagnostics->as_array().has_value())
+        {
+            (*obj)[std::string_view("diagnostics")] =
+                CloneJsonValue(*diagnostics);
+        }
         return result;
     }
 
     static yyjson::value MakeRepositoryResponseError(
-        std::string_view kind,
-        std::string_view message)
+        std::string_view     kind,
+        std::string_view     message,
+        const yyjson::value* diagnostics = nullptr)
     {
         yyjson::value result(Das::Utils::MakeYyjsonObject());
         auto          obj = result.as_object();
         (*obj)[std::string_view("ok")] = false;
         (*obj)[std::string_view("errorKind")] = std::string(kind);
         (*obj)[std::string_view("message")] = std::string(message);
+        if (diagnostics != nullptr && diagnostics->as_array().has_value())
+        {
+            (*obj)[std::string_view("diagnostics")] =
+                CloneJsonValue(*diagnostics);
+        }
         return result;
     }
 
@@ -552,7 +564,16 @@ namespace Das::Core::TaskScheduler
         int64_t              base_revision)
     {
         AuthoringProviderApply outcome;
-        auto                   validation =
+        // Capture diagnostics before validation so a provider-rejected apply
+        // (error diagnostics) can surface its real reason even if the envelope
+        // later fails a stricter check.
+        auto pre_obj = provider_result.as_object();
+        if (pre_obj && pre_obj->contains(std::string_view("diagnostics")))
+        {
+            outcome.diagnostics =
+                CloneJsonValue((*pre_obj)[std::string_view("diagnostics")]);
+        }
+        auto validation =
             ValidateAuthoringApplyResult(provider_result, base_revision);
         if (!validation.valid)
         {
@@ -565,8 +586,6 @@ namespace Das::Core::TaskScheduler
         outcome.accepted_properties =
             CloneJsonValue((*obj)[std::string_view("acceptedProperties")]);
         outcome.document = CloneJsonValue((*obj)[std::string_view("document")]);
-        outcome.diagnostics =
-            CloneJsonValue((*obj)[std::string_view("diagnostics")]);
 
         auto       doc_obj = outcome.document.as_object();
         const auto revision_view = (*doc_obj)[std::string_view("revision")];
@@ -823,6 +842,25 @@ namespace Das::Core::TaskScheduler
             return result;
         }
         result.parsed = std::move(parsed);
+
+        // Provider-rejected apply: the envelope is valid but the provider
+        // declined the change (error diagnostics present). Do not advance the
+        // store (no persist, no revision bump); surface the real rejection
+        // reason. result.parsed stays populated so the response carries the
+        // diagnostics array.
+        if (HasErrorDiagnostic(result.parsed.diagnostics))
+        {
+            result.ok = false;
+            result.error_kind = "applyRejected";
+            result.error_message =
+                FirstErrorDiagnosticMessage(result.parsed.diagnostics);
+            if (result.error_message.empty())
+            {
+                result.error_message = "Authoring change rejected by provider";
+            }
+            return result;
+        }
+
         result.next_revision = result.parsed.returned_revision;
 
         const auto    change_kind = GetStringField(change, "kind", "");
@@ -2377,8 +2415,16 @@ namespace Das::Core::TaskScheduler
             {
                 message = "Repository authoring provider rejected change";
             }
-            yyjson::value err =
-                MakeRepositoryResponseError(pipeline.error_kind, message);
+            // applyRejected: keep pipeline.error_message (the real diagnostic)
+            // and surface the provider's diagnostics array.
+            const yyjson::value* diags =
+                (pipeline.error_kind == "applyRejected")
+                    ? &pipeline.parsed.diagnostics
+                    : nullptr;
+            yyjson::value err = MakeRepositoryResponseError(
+                pipeline.error_kind,
+                message,
+                diags);
             if (pipeline.error_kind == "revisionConflict")
             {
                 (*err.as_object())[std::string_view("currentRevision")] =
@@ -3466,10 +3512,17 @@ namespace Das::Core::TaskScheduler
             {
                 message = "Failed to create task authoring session";
             }
+            // applyRejected: keep pipeline.error_message (the real diagnostic);
+            // also surface the provider's diagnostics array so the UI shows the
+            // precise rejection reason instead of a generic message.
+            const yyjson::value* diags =
+                (pipeline.error_kind == "applyRejected")
+                    ? &pipeline.parsed.diagnostics
+                    : nullptr;
             // revisionConflict: pipeline default ("Authoring change
             // baseRevision is stale") matches the Task path verbatim.
             yyjson::value err =
-                MakeAuthoringResponseError(pipeline.error_kind, message);
+                MakeAuthoringResponseError(pipeline.error_kind, message, diags);
             if (pipeline.error_kind == "revisionConflict")
             {
                 (*err.as_object())[std::string_view("currentRevision")] =

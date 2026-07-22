@@ -1079,6 +1079,50 @@ TEST(TaskAuthoringContractTest, ApplyResultFailsWhenRevisionIsNotBasePlusOne)
     EXPECT_EQ(r.error_kind, "revisionMismatch");
 }
 
+TEST(TaskAuthoringContractTest, ApplyResultPassesForProviderRejectedApply)
+{
+    // A provider-rejected apply is a legitimate failure envelope: error
+    // diagnostics carry the real reason and the store must not advance
+    // (document.revision stays at baseRevision). The validator must accept it
+    // rather than misreport revisionMismatch, so the real reason can surface.
+    auto result = ParseJson(R"json({
+        "acceptedProperties": {},
+        "document": {
+            "contractVersion": 1,
+            "viewKind": "formSequence",
+            "revision": 4
+        },
+        "diagnostics": [
+            {"severity": "error", "message": "Unknown preset name: preset_1"}
+        ]
+    })json");
+
+    auto r = Das::Core::TaskScheduler::ValidateAuthoringApplyResult(result, 4);
+    EXPECT_TRUE(r.valid);
+    EXPECT_TRUE(r.error_kind.empty()) << r.message;
+}
+
+TEST(TaskAuthoringContractTest, HasErrorDiagnosticDetectsErrorSeverity)
+{
+    auto with_error = ParseJson(R"json([
+        {"severity": "warning", "message": "m1"},
+        {"severity": "error", "message": "Unknown preset name: preset_1"}
+    ])json");
+    EXPECT_TRUE(Das::Core::TaskScheduler::HasErrorDiagnostic(with_error));
+    EXPECT_EQ(
+        Das::Core::TaskScheduler::FirstErrorDiagnosticMessage(with_error),
+        "Unknown preset name: preset_1");
+
+    auto without_error = ParseJson(R"json([
+        {"severity": "info", "message": "m1"},
+        {"severity": "warning", "message": "m2"}
+    ])json");
+    EXPECT_FALSE(Das::Core::TaskScheduler::HasErrorDiagnostic(without_error));
+    EXPECT_TRUE(
+        Das::Core::TaskScheduler::FirstErrorDiagnosticMessage(without_error)
+            .empty());
+}
+
 TEST(TaskAuthoringContractTest, ApplyResultRequiresAcceptedProperties)
 {
     auto result = ParseJson(R"json({
