@@ -28,4 +28,10 @@ namespace Das::Plugins::DasMaaPi
     inline constexpr DasResult DAS_E_MAAPI_EXECUTION_FAILED =
         static_cast<DasResult>(-10005);
 
+    /// PI v2.7.0 pretask failed to launch or exited with a nonzero status.
+    /// Runtime emits `pretask-failed` (spawn failure) or `pretask-nonzero-exit`
+    /// diagnostics and aborts before CreateController (D-86-02).
+    inline constexpr DasResult DAS_E_MAAPI_PRETASK_FAILED =
+        static_cast<DasResult>(-10006);
+
 } // namespace Das::Plugins::DasMaaPi

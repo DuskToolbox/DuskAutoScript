@@ -3,6 +3,7 @@
 #include "../src/PretaskRunner.h"
 #include "FakeMaaApiBoundary.h"
 
+#include <das/Plugins/DasMaaPi/MaaPiErrorCodes.h>
 #include <das/Plugins/DasMaaPi/MaaRuntime.h>
 #include <das/Utils/DasJsonCore.h>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasStopToken.Implements.hpp>
@@ -91,7 +92,7 @@ namespace
                     : R"([])")
             + R"(,"piEnv":{"interfaceVersion":"2","clientName":"DAS","clientVersion":"0.1","clientLanguage":"cpp","clientMaafwVersion":"test","projectVersion":"","controllerJson":)"
             + JsonStringLiteral(controller_json)
-            + R"(,"resourceJson":"{\"name\":\"Official\"}"},"controllerInitParams":null,"tasks":)"
+            + R"(,"resourceJson":"{\"name\":\"Official\"}"},"controllerInitParams":null,"pretasks":[],"tasks":)"
             + tasks + "}}";
         auto parsed = Das::Utils::ParseYyjsonFromString(json);
         EXPECT_TRUE(parsed.has_value());
@@ -850,9 +851,10 @@ TEST(DasMaaPiRuntime, PretaskNonzeroExitAbortsBeforeControllerCreate)
     EXPECT_EQ(result.diagnostics.back().code, "pretask-nonzero-exit");
     ASSERT_TRUE(result.diagnostics.back().provider_code.has_value());
     EXPECT_EQ(*result.diagnostics.back().provider_code, 7);
-    // Controller create must NOT have been reached.
+    // Resource creation happens before the pretask stage; controller create
+    // is what must be skipped when a pretask aborts the run.
+    EXPECT_TRUE(fake.Contains("CreateResource"));
     EXPECT_FALSE(fake.Contains("CreateController:Android:Adb"));
-    EXPECT_FALSE(fake.Contains("CreateResource"));
 }
 
 TEST(DasMaaPiRuntime, PretaskSpawnFailureAbortsBeforeControllerCreate)
@@ -876,5 +878,5 @@ TEST(DasMaaPiRuntime, PretaskSpawnFailureAbortsBeforeControllerCreate)
         result.diagnostics.back().message.find("ENOENT"),
         std::string::npos);
     EXPECT_FALSE(fake.Contains("CreateController:Android:Adb"));
-    EXPECT_FALSE(fake.Contains("CreateResource"));
+    EXPECT_TRUE(fake.Contains("CreateResource"));
 }

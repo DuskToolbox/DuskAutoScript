@@ -33,6 +33,19 @@ namespace Das::Plugins::DasMaaPi
         yyjson::value pipeline_override;
     };
 
+    // PI v2.7.0 pretask (D-86-02). External processes executed in order BEFORE
+    // CreateController, with CWD = interface_directory. PiCompiler pre-filters
+    // by v2.8.1 controller/resource and serializes any selected option values
+    // into a trailing single-line compact JSON appended to `args`. MaaRuntime
+    // spawns each entry via IPretaskRunner and aborts on launch failure or
+    // nonzero exit (DAS_E_MAAPI_PRETASK_FAILED).
+    struct MaaPretaskDto
+    {
+        std::string              name; // optional, for diagnostics
+        std::string              exec;
+        std::vector<std::string> args; // includes trailing option JSON if any
+    };
+
     struct MaaExecutionPlanDto
     {
         std::string    interface_directory;
@@ -51,8 +64,11 @@ namespace Das::Plugins::DasMaaPi
         bool                                    fail_fast = true;
         bool                                    requires_agent_runtime = false;
         std::vector<AgentRuntime::AgentSpecDto> agent;
-        PiEnvSnapshotDto                        pi_env;
-        std::vector<MaaTaskExecutionDto>        tasks;
+        // PI v2.7.0 pretasks. Empty when the project declares no pretask or
+        // the v2.8.1 controller/resource filter excluded all entries.
+        std::vector<MaaPretaskDto>       pretasks;
+        PiEnvSnapshotDto                 pi_env;
+        std::vector<MaaTaskExecutionDto> tasks;
     };
 
     struct ExecutionEnvelopeDto
@@ -114,6 +130,12 @@ struct yyjson::field_name_rule<Das::Plugins::DasMaaPi::PiEnvSnapshotDto>
 
 template <>
 struct yyjson::field_name_rule<Das::Plugins::DasMaaPi::MaaTaskExecutionDto>
+{
+    using type = yyjson::snake_to_camel_transform;
+};
+
+template <>
+struct yyjson::field_name_rule<Das::Plugins::DasMaaPi::MaaPretaskDto>
 {
     using type = yyjson::snake_to_camel_transform;
 };

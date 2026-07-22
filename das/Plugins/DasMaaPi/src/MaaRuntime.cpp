@@ -1,10 +1,12 @@
 #include <das/Plugins/DasMaaPi/ExecutionEnvelope.h>
+#include <das/Plugins/DasMaaPi/MaaPiErrorCodes.h>
 #include <das/Plugins/DasMaaPi/MaaRuntime.h>
 #include <das/Utils/DasJsonCore.h>
 
 #include "AgentProcessRunner.h"
 #include "AgentRuntimeService.h"
 #include "MaaHandle.h"
+#include "PretaskRunner.h"
 #include "Win32WindowFinder.h"
 
 #ifndef DAS_MAAPI_DISABLE_REAL_MAA_BOUNDARY
@@ -855,6 +857,68 @@ namespace Das::Plugins::DasMaaPi
             return serialized.value_or("{}");
         }
 
+        // PI v2.7.0 pretask stage (D-86-02). Runs each pretask via the
+        // configured runner BEFORE CreateController. Returns false and emits a
+        // structured diagnostic when a pretask fails to spawn or exits with a
+        // nonzero code; the caller surfaces DAS_E_MAAPI_PRETASK_FAILED and
+        // aborts the run.
+        bool RunPretasks(
+            MaaRuntimeResult&               result,
+            const ExecutionEnvelopeDto&     envelope,
+            PluginInterface::IDasStopToken* stop_token)
+        {
+            if (envelope.maapi.pretasks.empty())
+            {
+                return true;
+            }
+            BoostPretaskRunner default_runner;
+            auto* const        test_runner = PretaskRunnerForRuntime();
+            auto& runner = test_runner
+                               ? *test_runner
+                               : static_cast<IPretaskRunner&>(default_runner);
+            for (const auto& pretask : envelope.maapi.pretasks)
+            {
+                if (StopRequested(stop_token))
+                {
+                    result.das_result = DAS_E_FAIL;
+                    result.stopped = true;
+                    AddDiagnostic(
+                        result,
+                        "pretask-stop-requested",
+                        "DAS stop token requested during pretask execution");
+                    return false;
+                }
+                PretaskLaunchRequest request;
+                request.exec = pretask.exec;
+                request.args = pretask.args;
+                request.working_directory = envelope.maapi.interface_directory;
+                auto run = runner.Run(request);
+                if (!run.launched)
+                {
+                    result.das_result = DAS_E_MAAPI_PRETASK_FAILED;
+                    AddDiagnostic(
+                        result,
+                        "pretask-failed",
+                        "PI pretask '" + pretask.name
+                            + "' failed to launch: " + run.failure_message);
+                    return false;
+                }
+                if (!run.exit_code || *run.exit_code != 0)
+                {
+                    const auto code = run.exit_code.value_or(-1);
+                    result.das_result = DAS_E_MAAPI_PRETASK_FAILED;
+                    AddDiagnostic(
+                        result,
+                        "pretask-nonzero-exit",
+                        "PI pretask '" + pretask.name
+                            + "' exited with nonzero status",
+                        static_cast<std::int64_t>(code));
+                    return false;
+                }
+            }
+            return true;
+        }
+
         // 手写 Field/FromObject helper（OptionalStringField /
         // RequiredStringField / StringArrayField / BoolField /
         // OptionalInt32Field / CopyJsonValue）已由 default_caster + caster
@@ -989,6 +1053,15 @@ namespace Das::Plugins::DasMaaPi
                     std::nullopt,
                     "warning");
             }
+        }
+
+        // PI v2.7.0 pretask stage (D-86-02): run BEFORE CreateController so
+        // the pretask can bootstrap the environment (launch emulator, log in,
+        // etc.) before the controller connects. Abort on launch failure or
+        // nonzero exit per protocol L259.
+        if (!RunPretasks(result, envelope, stop_token))
+        {
+            return result;
         }
 
         ControllerSpec controller_spec = envelope.maapi.controller;
