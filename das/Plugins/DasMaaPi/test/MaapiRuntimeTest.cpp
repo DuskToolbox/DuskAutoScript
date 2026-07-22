@@ -5,6 +5,7 @@
 
 #include <das/Plugins/DasMaaPi/MaaPiErrorCodes.h>
 #include <das/Plugins/DasMaaPi/MaaRuntime.h>
+#include <das/Plugins/DasMaaPi/PiCompiler.h>
 #include <das/Utils/DasJsonCore.h>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasStopToken.Implements.hpp>
 #include <gtest/gtest.h>
@@ -879,4 +880,209 @@ TEST(DasMaaPiRuntime, PretaskSpawnFailureAbortsBeforeControllerCreate)
         std::string::npos);
     EXPECT_FALSE(fake.Contains("CreateController:Android:Adb"));
     EXPECT_TRUE(fake.Contains("CreateResource"));
+}
+
+// ============================================================================
+// PI v2.7.0 pretask option serialization (PiCompiler side).
+// Verify envelope.pretasks carries exec + args + trailing single-line compact
+// JSON of selected option values, including nested sub-options activated by
+// the chosen case (protocol L290, MXU pretasks.ts:169-183).
+// ============================================================================
+
+namespace
+{
+    PiOption MakeSelectOption(
+        std::string              name,
+        std::vector<std::string> case_names,
+        std::vector<std::string> default_cases = {},
+        std::vector<PiCaseDto>   cases_with_nested = {})
+    {
+        PiOption option;
+        option.dto.name = std::move(name);
+        option.dto.type = "select";
+        if (cases_with_nested.empty())
+        {
+            for (auto& cn : case_names)
+            {
+                PiCaseDto c;
+                c.name = std::move(cn);
+                option.dto.cases.emplace_back(std::move(c));
+            }
+        }
+        else
+        {
+            option.dto.cases = std::move(cases_with_nested);
+        }
+        option.dto.default_cases = std::move(default_cases);
+        option.raw_pipeline_override_json = "{}";
+        option.raw.raw_json = "{}";
+        return option;
+    }
+
+    PiController MakeMinimalController(
+        std::string name = "Android",
+        std::string type = "Adb")
+    {
+        PiController controller;
+        controller.dto.name = std::move(name);
+        controller.dto.type = std::move(type);
+        controller.raw.raw_json = R"({"name":")" + controller.dto.name
+                                  + R"(","type":")" + controller.dto.type
+                                  + R"("})";
+        return controller;
+    }
+
+    PiResource MakeMinimalResource(std::string name = "Official")
+    {
+        PiResource resource;
+        resource.dto.name = std::move(name);
+        resource.dto.path.emplace_back("resource/base");
+        resource.resolved_paths.emplace_back("C:/maa/resource/base");
+        resource.raw.raw_json = R"({"name":")" + resource.dto.name
+                                + R"(","path":["resource/base"]})";
+        return resource;
+    }
+
+    PiTask MakeMinimalTask(std::string name = "T", std::string entry = "E")
+    {
+        PiTask task;
+        task.dto.name = std::move(name);
+        task.dto.entry = std::move(entry);
+        task.dto.default_check = true;
+        task.raw_pipeline_override_json = "{}";
+        task.raw.raw_json = "{}";
+        return task;
+    }
+
+    AcceptedSettingsDto MakeMinimalSettings(
+        std::string controller_name = "Android",
+        std::string resource_name = "Official")
+    {
+        AcceptedSettingsDto settings;
+        settings.pi.controller_name = std::move(controller_name);
+        settings.pi.resource_name = std::move(resource_name);
+        MaapiPiTaskSettingsDto task;
+        task.task_name = "T";
+        task.enabled = true;
+        settings.pi.tasks.emplace_back(std::move(task));
+        return settings;
+    }
+
+    MaapiPiOptionSettingsDto MakeSelected(
+        std::string              option_name,
+        std::string              kind,
+        std::vector<std::string> selected_cases = {})
+    {
+        MaapiPiOptionSettingsDto opt;
+        opt.option_name = std::move(option_name);
+        opt.kind = std::move(kind);
+        opt.selected_cases = std::move(selected_cases);
+        return opt;
+    }
+} // namespace
+
+TEST(DasMaaPiPretaskCompile, FlatSelectOptionSerializedAsCompactJsonTrailingArg)
+{
+    PiCatalog catalog;
+    catalog.controllers.emplace_back(MakeMinimalController());
+    catalog.resources.emplace_back(MakeMinimalResource());
+    catalog.tasks.emplace_back(MakeMinimalTask());
+    catalog.options.emplace_back(MakeSelectOption("mode", {"a", "b"}, {"a"}));
+    PiPretask pretask;
+    pretask.dto.name = "Bootstrap";
+    pretask.dto.exec = "tools/pre.exe";
+    pretask.dto.args = {"--init"};
+    pretask.dto.option = {"mode"};
+    pretask.raw.raw_json = "{}";
+    catalog.pretasks.emplace_back(std::move(pretask));
+
+    auto settings = MakeMinimalSettings();
+    settings.pi.global_options.emplace_back(
+        MakeSelected("mode", "select", {"a"}));
+
+    auto result = CompileMaapi(settings, catalog, "execute");
+    ASSERT_TRUE(result.ok) << "diagnostics: "
+                           << (result.diagnostics.empty()
+                                   ? std::string{"(none)"}
+                                   : result.diagnostics[0].message);
+    ASSERT_TRUE(result.execution_input.has_value());
+    ASSERT_EQ(result.execution_input->maapi.pretasks.size(), 1u);
+    EXPECT_EQ(result.execution_input->maapi.pretasks[0].exec, "tools/pre.exe");
+    ASSERT_EQ(result.execution_input->maapi.pretasks[0].args.size(), 2u);
+    EXPECT_EQ(result.execution_input->maapi.pretasks[0].args[0], "--init");
+    // Compact single-line JSON, no whitespace.
+    EXPECT_EQ(
+        result.execution_input->maapi.pretasks[0].args[1],
+        R"({"mode":"a"})");
+}
+
+TEST(DasMaaPiPretaskCompile, NestedOptionRecursesIntoActivatedCase)
+{
+    // Protocol L290: when a select/switch case is activated, its nested
+    // option[] entries must be added to the result object under their own
+    // keys. MXU pretasks.ts:169-183.
+    PiCatalog catalog;
+    catalog.controllers.emplace_back(MakeMinimalController());
+    catalog.resources.emplace_back(MakeMinimalResource());
+    catalog.tasks.emplace_back(MakeMinimalTask());
+
+    // "inner" is a nested select activated when "outer" = "on".
+    catalog.options.emplace_back(MakeSelectOption("inner", {"x", "y"}, {"x"}));
+    // "outer" select; its "on" case activates nested option "inner".
+    PiCaseDto on_case;
+    on_case.name = "on";
+    on_case.option = {"inner"};
+    PiCaseDto off_case;
+    off_case.name = "off";
+    catalog.options.emplace_back(
+        MakeSelectOption("outer", {}, {"on"}, {on_case, off_case}));
+
+    PiPretask pretask;
+    pretask.dto.name = "Pre";
+    pretask.dto.exec = "pre.exe";
+    pretask.dto.option = {"outer"};
+    pretask.raw.raw_json = "{}";
+    catalog.pretasks.emplace_back(std::move(pretask));
+
+    auto settings = MakeMinimalSettings();
+    settings.pi.global_options.emplace_back(
+        MakeSelected("outer", "select", {"on"}));
+    settings.pi.global_options.emplace_back(
+        MakeSelected("inner", "select", {"x"}));
+
+    auto result = CompileMaapi(settings, catalog, "execute");
+    ASSERT_TRUE(result.ok);
+    ASSERT_TRUE(result.execution_input.has_value());
+    ASSERT_EQ(result.execution_input->maapi.pretasks.size(), 1u);
+    ASSERT_EQ(result.execution_input->maapi.pretasks[0].args.size(), 1u);
+    // Both outer and nested inner must appear in the compact JSON, with outer's
+    // selected case and inner's selected case. Order: outer first (encountered
+    // first), then inner (added by recursion).
+    EXPECT_EQ(
+        result.execution_input->maapi.pretasks[0].args[0],
+        R"({"outer":"on","inner":"x"})");
+}
+
+TEST(DasMaaPiPretaskCompile, PretaskWithNoOptionsOmitsTrailingJsonArg)
+{
+    PiCatalog catalog;
+    catalog.controllers.emplace_back(MakeMinimalController());
+    catalog.resources.emplace_back(MakeMinimalResource());
+    catalog.tasks.emplace_back(MakeMinimalTask());
+
+    PiPretask pretask;
+    pretask.dto.name = "NoOpt";
+    pretask.dto.exec = "pre.exe";
+    pretask.dto.args = {"--flag"};
+    pretask.raw.raw_json = "{}";
+    catalog.pretasks.emplace_back(std::move(pretask));
+
+    auto settings = MakeMinimalSettings();
+    auto result = CompileMaapi(settings, catalog, "execute");
+    ASSERT_TRUE(result.ok);
+    ASSERT_TRUE(result.execution_input.has_value());
+    ASSERT_EQ(result.execution_input->maapi.pretasks.size(), 1u);
+    // No option declared → no trailing JSON arg appended.
+    ASSERT_EQ(result.execution_input->maapi.pretasks[0].args.size(), 1u);
+    EXPECT_EQ(result.execution_input->maapi.pretasks[0].args[0], "--flag");
 }
