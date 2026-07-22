@@ -1086,3 +1086,70 @@ TEST(DasMaaPiPretaskCompile, PretaskWithNoOptionsOmitsTrailingJsonArg)
     ASSERT_EQ(result.execution_input->maapi.pretasks[0].args.size(), 1u);
     EXPECT_EQ(result.execution_input->maapi.pretasks[0].args[0], "--flag");
 }
+
+// ============================================================================
+// PI v2.8.1 pretask controller/resource filter (D-86-02) + error code contract
+// (-10006). These tests lock the contract that Features 1/2 already
+// implemented: error code constant value and ContainsName-based exclusion.
+// ============================================================================
+
+TEST(DasMaaPiPretaskCompile, ErrorCodeConstantMatchesContract)
+{
+    // Lock the MaaPi error code contract: pretask failures surface as
+    // -10006 so error lens registration and downstream mappings can pin
+    // diagnostics to a stable integer.
+    EXPECT_EQ(
+        static_cast<std::int32_t>(DAS_E_MAAPI_PRETASK_FAILED),
+        static_cast<std::int32_t>(-10006));
+}
+
+TEST(DasMaaPiPretaskCompile, V281FilterExcludesControllerMismatch)
+{
+    PiCatalog catalog;
+    catalog.controllers.emplace_back(MakeMinimalController("Android"));
+    catalog.resources.emplace_back(MakeMinimalResource());
+    catalog.tasks.emplace_back(MakeMinimalTask());
+
+    PiPretask mismatched;
+    mismatched.dto.name = "EmulatorOnly";
+    mismatched.dto.exec = "emu-pre.exe";
+    mismatched.dto.controller = {"Emulator"}; // does not contain Android
+    mismatched.raw.raw_json = "{}";
+    catalog.pretasks.emplace_back(std::move(mismatched));
+
+    PiPretask matching;
+    matching.dto.name = "Universal";
+    matching.dto.exec = "any-pre.exe";
+    matching.dto.controller = {"Android"};
+    matching.raw.raw_json = "{}";
+    catalog.pretasks.emplace_back(std::move(matching));
+
+    auto settings = MakeMinimalSettings("Android");
+    auto result = CompileMaapi(settings, catalog, "execute");
+    ASSERT_TRUE(result.ok);
+    ASSERT_TRUE(result.execution_input.has_value());
+    ASSERT_EQ(result.execution_input->maapi.pretasks.size(), 1u);
+    EXPECT_EQ(result.execution_input->maapi.pretasks[0].name, "Universal");
+}
+
+TEST(DasMaaPiPretaskCompile, V281FilterIncludesWhenControllerListEmpty)
+{
+    PiCatalog catalog;
+    catalog.controllers.emplace_back(MakeMinimalController());
+    catalog.resources.emplace_back(MakeMinimalResource());
+    catalog.tasks.emplace_back(MakeMinimalTask());
+
+    PiPretask universal;
+    universal.dto.name = "AppliesToAll";
+    universal.dto.exec = "pre.exe";
+    // Empty controller/resource lists = protocol wildcard.
+    universal.raw.raw_json = "{}";
+    catalog.pretasks.emplace_back(std::move(universal));
+
+    auto settings = MakeMinimalSettings();
+    auto result = CompileMaapi(settings, catalog, "execute");
+    ASSERT_TRUE(result.ok);
+    ASSERT_TRUE(result.execution_input.has_value());
+    ASSERT_EQ(result.execution_input->maapi.pretasks.size(), 1u);
+    EXPECT_EQ(result.execution_input->maapi.pretasks[0].name, "AppliesToAll");
+}
