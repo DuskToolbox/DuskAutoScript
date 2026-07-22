@@ -80,15 +80,14 @@ namespace
               R"("failFast":)"
             + std::string(fail_fast ? "true" : "false")
             + R"(,"requiresAgentRuntime":)"
-            + std::string(requires_agent ? "true" : "false")
-            + R"(,"agent":)"
+            + std::string(requires_agent ? "true" : "false") + R"(,"agent":)"
             + std::string(
                 requires_agent
                     ? (agent_json.empty()
                            ? R"([{"childExec":"agent.exe","childArgs":["--serve"],"identifier":null,"timeoutMs":1000}])"
                            : agent_json)
                     : R"([])")
-            + R"(,"piEnv":{"interfaceVersion":"2","clientName":"DAS","clientLanguage":"cpp","projectVersion":"","controllerJson":)"
+            + R"(,"piEnv":{"interfaceVersion":"2","clientName":"DAS","clientVersion":"0.1","clientLanguage":"cpp","clientMaafwVersion":"test","projectVersion":"","controllerJson":)"
             + JsonStringLiteral(controller_json)
             + R"(,"resourceJson":"{\"name\":\"Official\"}"},"tasks":)" + tasks
             + "}}";
@@ -104,7 +103,8 @@ namespace
           {"taskName":"DailyFarm","entry":"StartDaily","pipelineOverride":{"Stage":{"value":"one"}}},
           {"taskName":"Base","entry":"StartBase","pipelineOverride":{"Stage":{"value":"two"}}}
         ])",
-        std::string controller_json = R"({"name":"Android","type":"Adb","readPath":"","address":"","adbPath":"adb","configJson":"{}","agentPath":""})")
+        std::string controller_json =
+            R"({"name":"Android","type":"Adb","readPath":"","address":"","adbPath":"adb","configJson":"{}","agentPath":""})")
     {
         auto parsed = ParseExecutionEnvelope(EnvelopeValue(
             fail_fast,
@@ -290,7 +290,8 @@ TEST(DasMaaPiRuntime, RuntimeRejectsSnakeCaseControllerFields)
 {
     // default_caster 要求 camelCase key（field_name_rule=snake_to_camel）；
     // snake_case controller 字段（adb_path/config/agent_path）缺对应 camelCase
-    // key（adbPath/configJson/agentPath），聚合反射抛 → DAS_E_INVALID_ARGUMENT。
+    // key（adbPath/configJson/agentPath），聚合反射抛 →
+    // DAS_E_INVALID_ARGUMENT。
     auto value = EnvelopeValue(
         true,
         std::string(kPluginGuidText),
@@ -480,7 +481,8 @@ TEST(DasMaaPiRuntime, DoRunsAgentRequiredEnvelopeThroughSharedRuntime)
 
 TEST(DasMaaPiRuntime, ParseAcceptsAgentObjectAsSingleElement)
 {
-    // PI V2 `agent: object | object[]`：单对象形态经 custom caster 解析成 1 元素 vector。
+    // PI V2 `agent: object | object[]`：单对象形态经 custom caster 解析成 1
+    // 元素 vector。
     auto value = EnvelopeValue(
         true,
         std::string(kPluginGuidText),
@@ -524,8 +526,8 @@ TEST(DasMaaPiRuntime, ParseAcceptsAgentArrayWithMultipleElements)
 
 TEST(DasMaaPiRuntime, ParseReadsControllerFromExplicitObject)
 {
-    // controller 作为非 optional 字段，default_caster 直接读显式 controller 对象
-    // （PiCompiler 总产出 controller 对象，运行时无 fallback 路径）。
+    // controller 作为非 optional 字段，default_caster 直接读显式 controller
+    // 对象 （PiCompiler 总产出 controller 对象，运行时无 fallback 路径）。
     auto value = EnvelopeValue(
         true,
         std::string(kPluginGuidText),

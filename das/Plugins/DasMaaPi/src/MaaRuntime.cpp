@@ -60,14 +60,16 @@ struct yyjson::caster<
 // MaaExecutionPlanDto：整体委托 default_caster 聚合反射（field_name_rule =
 // snake_to_camel）。controller 作为普通非 optional 字段直接读——PiCompiler 是
 // envelope 唯一生产者且总产出 controller 对象（PiCompiler.cpp:520），运行时无
-// 「无 controller → piEnv 兜底」路径，故移除两源 fallback（原 fallback 是死代码，
-// 仅合成测试覆盖）。缺 key 抛 std::out_of_range、类型错误抛 yyjson::bad_cast，
-// 由 ParseExecutionEnvelope 统一映射为 DAS_E_INVALID_ARGUMENT。
+// 「无 controller → piEnv 兜底」路径，故移除两源 fallback（原 fallback
+// 是死代码， 仅合成测试覆盖）。缺 key 抛 std::out_of_range、类型错误抛
+// yyjson::bad_cast， 由 ParseExecutionEnvelope 统一映射为
+// DAS_E_INVALID_ARGUMENT。
 template <>
 struct yyjson::caster<Das::Plugins::DasMaaPi::MaaExecutionPlanDto>
 {
     template <yyjson::json_value Json>
-    static Das::Plugins::DasMaaPi::MaaExecutionPlanDto from_json(const Json& json)
+    static Das::Plugins::DasMaaPi::MaaExecutionPlanDto from_json(
+        const Json& json)
     {
         auto obj = json.as_object();
         if (!obj)
@@ -643,7 +645,9 @@ namespace Das::Plugins::DasMaaPi
             AgentRuntime::PiEnvDto result;
             result.interface_version = env.interface_version;
             result.client_name = env.client_name;
+            result.client_version = env.client_version;
             result.client_language = env.client_language;
+            result.client_maafw_version = env.client_maafw_version;
             result.project_version = env.project_version;
             result.controller_json = env.controller_json;
             result.resource_json = env.resource_json;
@@ -709,10 +713,11 @@ namespace Das::Plugins::DasMaaPi
             return serialized.value_or("{}");
         }
 
-        // 手写 Field/FromObject helper（OptionalStringField / RequiredStringField /
-        // StringArrayField / BoolField / OptionalInt32Field / CopyJsonValue）已由
-        // default_caster + caster 特化全面取代并移除；SerializeJson 保留
-        // （MaaFW 边界 opaque JSON 透传，MaaRuntime::Run 在用）。
+        // 手写 Field/FromObject helper（OptionalStringField /
+        // RequiredStringField / StringArrayField / BoolField /
+        // OptionalInt32Field / CopyJsonValue）已由 default_caster + caster
+        // 特化全面取代并移除；SerializeJson 保留 （MaaFW 边界 opaque JSON
+        // 透传，MaaRuntime::Run 在用）。
     } // namespace
 
     IMaaApiBoundary& DefaultMaaApiBoundary()

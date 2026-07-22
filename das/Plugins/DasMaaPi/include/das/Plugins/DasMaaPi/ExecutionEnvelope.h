@@ -18,7 +18,9 @@ namespace Das::Plugins::DasMaaPi
     {
         std::string interface_version = "2";
         std::string client_name = "DAS";
+        std::string client_version;
         std::string client_language = "cpp";
+        std::string client_maafw_version;
         std::string project_version;
         std::string controller_json;
         std::string resource_json;

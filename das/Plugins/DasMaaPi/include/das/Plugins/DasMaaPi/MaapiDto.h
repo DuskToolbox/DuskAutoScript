@@ -15,6 +15,9 @@ namespace Das::Plugins::DasMaaPi
         "69F20000-0000-4000-8000-000000000001";
     inline constexpr std::string_view kTaskGuidText =
         "69F20001-0000-4000-8000-000000000001";
+    // 与 manifest DasMaaPi.json:version 对齐，作为 PI client_version 注入
+    // envelope（D-86-12）。manifest 与此常量须保持同步。
+    inline constexpr std::string_view kPluginVersionText = "0.1";
     inline constexpr std::string_view kAuthoringFactoryGuidText =
         "69F20002-0000-4000-8000-000000000001";
     inline constexpr std::string_view kAgentComponentGuidText =

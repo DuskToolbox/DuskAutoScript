@@ -3,6 +3,10 @@
 #include <das/Utils/DasJsonCore.h>
 #include <das/Utils/StringUtils.h>
 
+#ifndef DAS_MAAPI_DISABLE_REAL_MAA_BOUNDARY
+#include <MaaFramework/MaaAPI.h>
+#endif
+
 #include <algorithm>
 #include <cstdint>
 #include <initializer_list>
@@ -15,6 +19,18 @@ namespace Das::Plugins::DasMaaPi
 {
     namespace
     {
+        // D-86-12: 运行时查询 MaaFramework 版本作为 PI client_maafw_version。
+        // 测试构建（DAS_MAAPI_DISABLE_REAL_MAA_BOUNDARY）不链接 MaaFramework，
+        // 此时返回非空占位字符串以满足「禁止空 stub」契约。
+        std::string QueryMaaFrameworkVersion()
+        {
+#ifndef DAS_MAAPI_DISABLE_REAL_MAA_BOUNDARY
+            return std::string{MaaVersion()};
+#else
+            return "test-maafw";
+#endif
+        }
+
         yyjson::value Object() { return Das::Utils::MakeYyjsonObject(); }
 
         template <typename JsonValue>
@@ -474,6 +490,13 @@ namespace Das::Plugins::DasMaaPi
         envelope.maapi.requires_agent_runtime = !catalog.raw_agent_json.empty();
         envelope.maapi.agent = NormalizeAgentSpecs(catalog.raw_agent_json);
         envelope.maapi.pi_env.project_version = catalog.version;
+        // D-86-12: 拓宽 envelope env snapshot 至 8 字段，与
+        // AgentRuntime::PiEnvDto 对齐，让 compile→envelope→run 路径全 8 个 PI_*
+        // env 变量可达。 client_maafw_version 由 MaaVersion()
+        // 在编译期填充（MaaUtility.h:22）， client_version 取 DasMaaPi
+        // 插件版本（与 manifest DasMaaPi.json:version 对齐），禁止空 stub。
+        envelope.maapi.pi_env.client_maafw_version = QueryMaaFrameworkVersion();
+        envelope.maapi.pi_env.client_version = std::string{kPluginVersionText};
         result.summary.requires_agent_runtime =
             envelope.maapi.requires_agent_runtime;
 
