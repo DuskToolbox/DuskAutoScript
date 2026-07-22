@@ -33,11 +33,35 @@ namespace Das::Plugins::DasMaaPi
         std::optional<std::string> icon;
     };
 
+    // PI v2 controller typed config blocks. Strings stay as protocol text;
+    // the compiler layer translates them to MaaFW enum bitmasks via
+    // ControllerMethodMaps. Keeping them as strings in the DTO lets the parser
+    // stay byte-faithful (raw_json + typed block) while downstream consumers
+    // (NormalizeControllerInitParams) own the string→enum policy.
+    struct Win32ConfigDto
+    {
+        std::string class_regex;
+        std::string window_regex;
+        std::string screencap; // single method, predefined combo, or '|'-OR set
+        std::string mouse;     // single-select MaaWin32InputMethod name
+        std::string keyboard;  // single-select MaaWin32InputMethod name
+    };
+
+    struct GamepadConfigDto
+    {
+        std::string class_regex;
+        std::string window_regex;
+        std::string gamepad_type; // Xbox360 / DualShock4 / DS4 alias
+        std::string screencap;    // single method or combo (hWnd may be null)
+    };
+
     struct PiControllerDto : PiNamedDto
     {
-        std::string              type;
-        std::vector<std::string> attach_resource_path;
-        std::vector<std::string> option;
+        std::string                     type;
+        std::vector<std::string>        attach_resource_path;
+        std::vector<std::string>        option;
+        std::optional<Win32ConfigDto>   win32;
+        std::optional<GamepadConfigDto> gamepad;
     };
 
     struct PiResourceDto : PiNamedDto
@@ -138,6 +162,18 @@ struct yyjson::field_name_rule<Das::Plugins::DasMaaPi::PiNamedDto>
 
 template <>
 struct yyjson::field_name_rule<Das::Plugins::DasMaaPi::PiControllerDto>
+{
+    using type = yyjson::snake_to_camel_transform;
+};
+
+template <>
+struct yyjson::field_name_rule<Das::Plugins::DasMaaPi::Win32ConfigDto>
+{
+    using type = yyjson::snake_to_camel_transform;
+};
+
+template <>
+struct yyjson::field_name_rule<Das::Plugins::DasMaaPi::GamepadConfigDto>
 {
     using type = yyjson::snake_to_camel_transform;
 };

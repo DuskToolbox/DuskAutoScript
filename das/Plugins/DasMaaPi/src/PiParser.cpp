@@ -158,6 +158,29 @@ namespace Das::Plugins::DasMaaPi
         }
 
         template <typename TObject>
+        Win32ConfigDto ParseWin32TypedBlock(const TObject& obj)
+        {
+            Win32ConfigDto dto;
+            dto.class_regex = RequiredString(obj, "class_regex");
+            dto.window_regex = RequiredString(obj, "window_regex");
+            dto.screencap = RequiredString(obj, "screencap");
+            dto.mouse = RequiredString(obj, "mouse");
+            dto.keyboard = RequiredString(obj, "keyboard");
+            return dto;
+        }
+
+        template <typename TObject>
+        GamepadConfigDto ParseGamepadTypedBlock(const TObject& obj)
+        {
+            GamepadConfigDto dto;
+            dto.class_regex = RequiredString(obj, "class_regex");
+            dto.window_regex = RequiredString(obj, "window_regex");
+            dto.gamepad_type = RequiredString(obj, "gamepad_type");
+            dto.screencap = RequiredString(obj, "screencap");
+            return dto;
+        }
+
+        template <typename TObject>
         PiController ParseController(
             const TObject&               obj,
             const std::filesystem::path& base)
@@ -168,6 +191,21 @@ namespace Das::Plugins::DasMaaPi
             result.dto.attach_resource_path =
                 ReadStringArray(obj, "attach_resource_path");
             result.dto.option = ReadStringArray(obj, "option");
+            if (obj.contains(std::string_view("win32")))
+            {
+                if (auto win32_obj = obj[std::string_view("win32")].as_object())
+                {
+                    result.dto.win32 = ParseWin32TypedBlock(*win32_obj);
+                }
+            }
+            if (obj.contains(std::string_view("gamepad")))
+            {
+                if (auto gamepad_obj =
+                        obj[std::string_view("gamepad")].as_object())
+                {
+                    result.dto.gamepad = ParseGamepadTypedBlock(*gamepad_obj);
+                }
+            }
             for (const auto& path : result.dto.attach_resource_path)
             {
                 result.resolved_attach_resource_paths.emplace_back(
