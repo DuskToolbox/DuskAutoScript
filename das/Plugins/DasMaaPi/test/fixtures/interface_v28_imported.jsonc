@@ -1,0 +1,27 @@
+// Phase 86-01 imported fragment — merged into interface_v28.jsonc via PI import.
+// Contributes:
+//   - pretask array (v2.7.0): exercises array normalize on the import side;
+//     ordered append after main's single-object pretask.
+//   - setting (v2.8.0): one more section appended after main's settings.
+//   - global_option (v2.8.0 import merge): adds imported-opt and re-references
+//     shared-opt (dedup: main's shared-opt wins, import's reference skipped).
+{
+  "pretask": [
+    {
+      "name": "Warmup",
+      "exec": "tools/warmup.exe"
+    },
+    {
+      "name": "Cleanup",
+      "exec": "tools/cleanup.exe",
+      "args": ["--timeout=30"]
+    }
+  ],
+  "setting": [
+    {
+      "name": "imported-setting",
+      "option": ["imported-opt"]
+    }
+  ],
+  "global_option": ["imported-opt", "shared-opt"]
+}

@@ -151,3 +151,114 @@ TEST(DasMaaPiCatalog, NormalizeOptionsAndPreserveAgentConfig)
     ASSERT_EQ(result.catalog.global_options.size(), 1u);
     EXPECT_EQ(result.catalog.global_options[0].dto.name, "stage");
 }
+
+// ---------------------------------------------------------------------------
+// Phase 86-01: PI v2.7.0 pretask + v2.8.0 setting + import merge (v2.8.0)
+// ---------------------------------------------------------------------------
+
+TEST(DasMaaPiParseV28, ParsesPretaskFromSingleObjectAndArray)
+{
+    auto result = ParseProjectInterface(
+        {.interface_path = FixturePath("interface_v28.jsonc")});
+
+    ASSERT_TRUE(result.ok) << "v28 fixture should parse without errors";
+    // Main contributes a single-object pretask (Bootstrap); the imported
+    // fragment contributes an array of two (Warmup, Cleanup). All three must
+    // land in catalog.pretasks in source order (main first, then import).
+    ASSERT_EQ(result.catalog.pretasks.size(), 3u);
+    EXPECT_EQ(result.catalog.pretasks[0].dto.name, "Bootstrap");
+    EXPECT_EQ(result.catalog.pretasks[1].dto.name, "Warmup");
+    EXPECT_EQ(result.catalog.pretasks[2].dto.name, "Cleanup");
+}
+
+TEST(DasMaaPiParseV28, ParsesPretaskFieldsAndFilters)
+{
+    auto result = ParseProjectInterface(
+        {.interface_path = FixturePath("interface_v28.jsonc")});
+
+    ASSERT_TRUE(result.ok);
+    ASSERT_EQ(result.catalog.pretasks.size(), 3u);
+    const auto& bootstrap = result.catalog.pretasks[0].dto;
+    EXPECT_EQ(bootstrap.exec, "tools/bootstrap.exe");
+    ASSERT_EQ(bootstrap.args.size(), 2u);
+    EXPECT_EQ(bootstrap.args[0], "--init");
+    EXPECT_EQ(bootstrap.args[1], "--quiet");
+    ASSERT_EQ(bootstrap.option.size(), 1u);
+    EXPECT_EQ(bootstrap.option[0], "bootstrap-mode");
+    ASSERT_EQ(bootstrap.controller.size(), 1u);
+    EXPECT_EQ(bootstrap.controller[0], "Android");
+    ASSERT_EQ(bootstrap.resource.size(), 1u);
+    EXPECT_EQ(bootstrap.resource[0], "Official");
+}
+
+TEST(DasMaaPiParseV28, ParsesSettingsWithDefaultExpandSemantics)
+{
+    auto result = ParseProjectInterface(
+        {.interface_path = FixturePath("interface_v28.jsonc")});
+
+    ASSERT_TRUE(result.ok);
+    // Main contributes two settings; the imported fragment adds a third.
+    ASSERT_EQ(result.catalog.settings.size(), 3u);
+
+    const auto& performance = result.catalog.settings[0].dto;
+    EXPECT_EQ(performance.name, "performance");
+    ASSERT_EQ(performance.option.size(), 1u);
+    EXPECT_EQ(performance.option[0], "stage");
+    // default_expand omitted in fixture → protocol default is true.
+    EXPECT_TRUE(performance.default_expand);
+
+    const auto& advanced = result.catalog.settings[1].dto;
+    EXPECT_EQ(advanced.name, "advanced");
+    EXPECT_FALSE(advanced.default_expand);
+
+    const auto& imported = result.catalog.settings[2].dto;
+    EXPECT_EQ(imported.name, "imported-setting");
+    EXPECT_TRUE(imported.default_expand);
+}
+
+TEST(DasMaaPiParseV28, MergesImportedGlobalOptionSettingPretask)
+{
+    auto result = ParseProjectInterface(
+        {.interface_path = FixturePath("interface_v28.jsonc")});
+
+    ASSERT_TRUE(result.ok);
+    // global_option merge: main contributes [stage, shared-opt]; import
+    // contributes [imported-opt, shared-opt]. shared-opt is deduped (main's
+    // wins). Final order: stage, shared-opt, imported-opt.
+    ASSERT_EQ(result.catalog.global_options.size(), 3u);
+    EXPECT_EQ(result.catalog.global_options[0].dto.name, "stage");
+    EXPECT_EQ(result.catalog.global_options[1].dto.name, "shared-opt");
+    EXPECT_EQ(result.catalog.global_options[2].dto.name, "imported-opt");
+
+    // pretask ordered append: main's single-object pretask first, then the
+    // imported array entries.
+    ASSERT_EQ(result.catalog.pretasks.size(), 3u);
+    EXPECT_EQ(result.catalog.pretasks[0].dto.name, "Bootstrap");
+    EXPECT_EQ(result.catalog.pretasks[1].dto.name, "Warmup");
+    EXPECT_EQ(result.catalog.pretasks[2].dto.name, "Cleanup");
+
+    // setting ordered append: main's two, then imported's one.
+    ASSERT_EQ(result.catalog.settings.size(), 3u);
+    EXPECT_EQ(result.catalog.settings[2].dto.name, "imported-setting");
+}
+
+TEST(DasMaaPiParseV28, RejectsPretaskMissingExecAndSettingMissingName)
+{
+    auto result = ParseProjectInterface(
+        {.interface_path = FixturePath("interface_v28_malformed.jsonc")});
+
+    EXPECT_FALSE(result.ok);
+    ASSERT_EQ(result.catalog.pretasks.size(), 0u);
+    ASSERT_EQ(result.catalog.settings.size(), 0u);
+
+    const auto has_code = [&](std::string_view code)
+    {
+        return std::any_of(
+            result.catalog.diagnostics.begin(),
+            result.catalog.diagnostics.end(),
+            [&](const PiDiagnosticDto& d)
+            { return d.severity == "error" && d.code == code; });
+    };
+    EXPECT_TRUE(has_code("pretask-exec-required"));
+    EXPECT_TRUE(has_code("setting-name-required"));
+}

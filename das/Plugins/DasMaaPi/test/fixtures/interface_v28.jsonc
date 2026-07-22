@@ -1,0 +1,103 @@
+// Phase 86-01 fixture — PI v2.8.1 parse-layer coverage.
+// Exercises:
+//   - pretask as single object (v2.7.0) with controller/resource filter (v2.8.1)
+//     + option reference + args.
+//   - setting[] (v2.8.0) with default_expand default (omitted → true) and
+//     explicit false.
+//   - global_option (main contributes stage + shared-opt).
+//   - import merge: interface_v28_imported.jsonc contributes pretask array,
+//     one more setting, and global_option (imported-opt + dedup on shared-opt).
+//   - select / input / switch options reused from the v26 fixture style.
+// Per D-86-01 / Feature 4: hotkey is out of scope — this fixture intentionally
+// contains no `type: "hotkey"` option entries.
+{
+  "interface_version": 2,
+  "name": "V28ParseFixture",
+  "version": "2.8.1",
+  "pretask": {
+    "name": "Bootstrap",
+    "exec": "tools/bootstrap.exe",
+    "args": ["--init", "--quiet"],
+    "option": ["bootstrap-mode"],
+    "controller": ["Android"],
+    "resource": ["Official"]
+  },
+  "setting": [
+    {
+      "name": "performance",
+      "option": ["stage"]
+    },
+    {
+      "name": "advanced",
+      "option": ["retry"],
+      "default_expand": false
+    }
+  ],
+  "controller": [
+    {
+      "name": "Android",
+      "type": "Adb"
+    }
+  ],
+  "resource": [
+    {
+      "name": "Official",
+      "path": ["resource/base"]
+    }
+  ],
+  "group": [
+    {
+      "name": "Daily",
+      "default_expand": true
+    }
+  ],
+  "task": [
+    {
+      "name": "DailyFarm",
+      "entry": "StartDaily",
+      "option": ["stage"]
+    }
+  ],
+  "global_option": ["stage", "shared-opt"],
+  "import": ["interface_v28_imported.jsonc"],
+  "option": {
+    "stage": {
+      "type": "select",
+      "cases": [
+        { "name": "1-1" },
+        { "name": "1-2" }
+      ]
+    },
+    "retry": {
+      "type": "input",
+      "inputs": [
+        {
+          "name": "times",
+          "default": "3",
+          "pipeline_type": "int"
+        }
+      ]
+    },
+    "bootstrap-mode": {
+      "type": "select",
+      "cases": [
+        { "name": "safe" },
+        { "name": "fast" }
+      ]
+    },
+    "imported-opt": {
+      "type": "switch",
+      "cases": [
+        { "name": "on" },
+        { "name": "off" }
+      ]
+    },
+    "shared-opt": {
+      "type": "switch",
+      "cases": [
+        { "name": "yes" },
+        { "name": "no" }
+      ]
+    }
+  }
+}

@@ -1,0 +1,26 @@
+// Phase 86-01 fixture — error-case coverage for pretask/setting parsing.
+//   - pretask entry missing required `exec` → pretask-exec-required diagnostic.
+//   - setting entry missing required `name` → setting-name-required diagnostic.
+// Both produce error-severity diagnostics; result.ok must be false.
+{
+  "interface_version": 2,
+  "name": "V28MalformedFixture",
+  "pretask": [
+    {
+      "name": "NoExec"
+    }
+  ],
+  "setting": [
+    {
+      "option": ["stage"]
+    }
+  ],
+  "option": {
+    "stage": {
+      "type": "select",
+      "cases": [
+        { "name": "1-1" }
+      ]
+    }
+  }
+}
