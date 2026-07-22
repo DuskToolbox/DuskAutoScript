@@ -15,6 +15,7 @@
 #include <initializer_list>
 #include <map>
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -490,6 +491,183 @@ namespace Das::Plugins::DasMaaPi
             return tasks;
         }
 
+        // Locate the user's stored selection for an option key. Pretask option
+        // values live at the global scope (mirrors MXU routing pretask options
+        // through globalOptionValues).
+        const MaapiPiOptionSettingsDto* FindGlobalSelection(
+            const AcceptedSettingsDto& settings,
+            std::string_view           option_name)
+        {
+            for (const auto& opt : settings.pi.global_options)
+            {
+                if (opt.option_name == option_name)
+                {
+                    return &opt;
+                }
+            }
+            return nullptr;
+        }
+
+        // D-86-02 / PI v2.7.0 pretask option serialization. Recursively emits
+        // the selected value for `option_key` into `result`, then descends
+        // into the activated case's nested option[] entries (protocol L290).
+        // v2.8.1 controller/resource filter via IsActive; cycles broken by
+        // `visited`. Mirrors MXU pretasks.ts:100-183
+        // collectPretaskOptionValues.
+        void CollectPretaskOptionValue(
+            const PiCatalog&           catalog,
+            std::string_view           option_key,
+            const AcceptedSettingsDto& settings,
+            std::string_view           controller_name,
+            std::string_view           resource_name,
+            yyjson::value&             result,
+            std::set<std::string>&     visited)
+        {
+            std::string key{option_key};
+            if (visited.count(key) != 0)
+            {
+                return;
+            }
+            const auto* option = FindOption(catalog, option_key);
+            if (!option)
+            {
+                return;
+            }
+            if (!IsActive(*option, controller_name, resource_name))
+            {
+                return;
+            }
+            visited.insert(key);
+
+            const auto* selected = FindGlobalSelection(settings, option_key);
+            auto        result_obj = result.as_object();
+            const auto& type = option->dto.type;
+            if (type == "select" || type == "switch")
+            {
+                std::string case_name;
+                if (type == "switch")
+                {
+                    case_name = selected ? SwitchCaseName(*option, *selected)
+                                         : std::string{"No"};
+                }
+                else
+                {
+                    std::vector<std::string> cases =
+                        selected ? selected->selected_cases
+                                 : option->dto.default_cases;
+                    case_name = cases.empty() ? std::string{} : cases.front();
+                }
+                // copy_string avoids dangling pointer when key/case_name go
+                // out of scope (das-yyjson-string-safety).
+                (*result_obj)[key] = std::make_pair(
+                    std::string_view(case_name),
+                    yyjson::copy_string);
+                // Recurse into nested option[] refs on the activated case.
+                for (const auto& case_def : option->dto.cases)
+                {
+                    if (case_def.name != case_name)
+                    {
+                        continue;
+                    }
+                    for (const auto& nested : case_def.option)
+                    {
+                        CollectPretaskOptionValue(
+                            catalog,
+                            nested,
+                            settings,
+                            controller_name,
+                            resource_name,
+                            result,
+                            visited);
+                    }
+                }
+                return;
+            }
+            if (type == "checkbox")
+            {
+                std::vector<std::string> cases =
+                    selected ? selected->selected_cases
+                             : option->dto.default_cases;
+                yyjson::value arr(Das::Utils::MakeYyjsonArray());
+                auto          arr_ref = arr.as_array();
+                for (const auto& c : cases)
+                {
+                    arr_ref->emplace_back(yyjson::value(std::string(c)));
+                }
+                (*result_obj)[key] = std::move(arr);
+                for (const auto& case_def : option->dto.cases)
+                {
+                    if (std::find(cases.begin(), cases.end(), case_def.name)
+                        == cases.end())
+                    {
+                        continue;
+                    }
+                    for (const auto& nested : case_def.option)
+                    {
+                        CollectPretaskOptionValue(
+                            catalog,
+                            nested,
+                            settings,
+                            controller_name,
+                            resource_name,
+                            result,
+                            visited);
+                    }
+                }
+                return;
+            }
+            if (type == "input")
+            {
+                yyjson::value input_obj(Das::Utils::MakeYyjsonObject());
+                auto          input_ref = input_obj.as_object();
+                for (const auto& input : option->dto.inputs)
+                {
+                    std::string value = input.default_value.value_or("");
+                    if (selected)
+                    {
+                        auto it = selected->input_values.find(input.name);
+                        if (it != selected->input_values.end())
+                        {
+                            value = it->second;
+                        }
+                    }
+                    (*input_ref)[input.name] = std::make_pair(
+                        std::string_view(value),
+                        yyjson::copy_string);
+                }
+                (*result_obj)[key] = std::move(input_obj);
+            }
+        }
+
+        // Build the trailing compact single-line JSON for a pretask. Returns
+        // empty string when no option keys are declared; otherwise a compact
+        // JSON object (possibly "{}" when all options get filtered out by
+        // v2.8.1 controller/resource). Caller decides to append based on
+        // whether pretask.option was empty.
+        std::string SerializePretaskOptionJson(
+            const std::vector<std::string>& option_keys,
+            const PiCatalog&                catalog,
+            const AcceptedSettingsDto&      settings,
+            std::string_view                controller_name,
+            std::string_view                resource_name)
+        {
+            yyjson::value         result(Das::Utils::MakeYyjsonObject());
+            std::set<std::string> visited;
+            for (const auto& key : option_keys)
+            {
+                CollectPretaskOptionValue(
+                    catalog,
+                    key,
+                    settings,
+                    controller_name,
+                    resource_name,
+                    result,
+                    visited);
+            }
+            auto serialized = Das::Utils::SerializeYyjsonValue(result);
+            return serialized.value_or("{}");
+        }
+
     } // namespace
 
     CompileResultDto CompileMaapi(
@@ -580,6 +758,33 @@ namespace Das::Plugins::DasMaaPi
         envelope.maapi.pi_env.resource_json = resource->raw.raw_json;
         result.summary.controller_name = controller->dto.name;
         result.summary.resource_name = resource->dto.name;
+
+        // PI v2.7.0 pretasks (D-86-02). Filter by v2.8.1 controller/resource,
+        // serialize selected option values as trailing compact JSON when the
+        // pretask declares any option[] keys. MaaRuntime spawns each entry
+        // BEFORE CreateController.
+        for (const auto& pretask : catalog.pretasks)
+        {
+            if (!ContainsName(pretask.dto.controller, controller->dto.name)
+                || !ContainsName(pretask.dto.resource, resource->dto.name))
+            {
+                continue;
+            }
+            MaaPretaskDto dto;
+            dto.name = pretask.dto.name;
+            dto.exec = pretask.dto.exec;
+            dto.args = pretask.dto.args;
+            if (!pretask.dto.option.empty())
+            {
+                dto.args.push_back(SerializePretaskOptionJson(
+                    pretask.dto.option,
+                    catalog,
+                    settings,
+                    controller->dto.name,
+                    resource->dto.name));
+            }
+            envelope.maapi.pretasks.emplace_back(std::move(dto));
+        }
 
         for (const auto& selected : SelectedTasks(settings, catalog))
         {
