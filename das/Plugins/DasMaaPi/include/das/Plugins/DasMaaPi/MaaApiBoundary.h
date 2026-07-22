@@ -39,13 +39,13 @@ namespace Das::Plugins::DasMaaPi
         std::string agent_path;
     };
 
-    // Parallel typed init struct produced by NormalizeControllerInitParams.
-    // ControllerSpec stays the wire type (yyjson field_name_rule =
-    // snake_to_camel; MaapiRuntimeTest.cpp:107 hard-codes its JSON shape), so
-    // typed init parameters live in this separate struct. CompileMaapi fills
-    // both, and CreateController consumes both: existing call sites that pass
-    // only ControllerSpec keep working (adb/dbg path), new typed branches
-    // (win32/gamepad) read the parallel struct.
+    // Typed init parameters for every supported controller type. The single
+    // CreateControllerFromParams dispatch fans out by `controller_type` to
+    // the matching optional block: adb/dbg are cross-platform core symbols
+    // (hard-linked), win32/gamepad are platform-specific (runtime resolved
+    // via MaaDynamicSymbols). Tier2 types (MacOS/PlayCover/WlRoots/...) have
+    // no optional block here and fall through to
+    // controller-type-unsupported-on-platform.
     //
     // Display options (display_short_side / display_long_side / display_raw)
     // are read from the controller object's same-level keys (not the `config`
@@ -67,11 +67,28 @@ namespace Das::Plugins::DasMaaPi
         std::uint64_t screencap_method = 0; // MaaWin32ScreencapMethod bitmask
     };
 
+    struct AdbInitParams
+    {
+        std::string   adb_path = "adb";
+        std::string   address;
+        std::uint64_t screencap_method = 0; // MaaAdbScreencapMethod bitmask
+        std::uint64_t input_method = 0;     // MaaAdbInputMethod bitmask
+        std::string   config_json = "{}";
+        std::string   agent_path;
+    };
+
+    struct DbgInitParams
+    {
+        std::string read_path;
+    };
+
     struct ControllerInitParams
     {
         std::string                      controller_type;
         std::optional<Win32InitParams>   win32;
         std::optional<GamepadInitParams> gamepad;
+        std::optional<AdbInitParams>     adb;
+        std::optional<DbgInitParams>     dbg;
         std::optional<std::int32_t>      display_short_side;
         std::optional<std::int32_t>      display_long_side;
         std::optional<bool>              display_raw;

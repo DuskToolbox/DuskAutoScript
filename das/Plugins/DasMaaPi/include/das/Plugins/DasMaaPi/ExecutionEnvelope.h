@@ -118,6 +118,18 @@ struct yyjson::field_name_rule<Das::Plugins::DasMaaPi::GamepadInitParams>
 };
 
 template <>
+struct yyjson::field_name_rule<Das::Plugins::DasMaaPi::AdbInitParams>
+{
+    using type = yyjson::snake_to_camel_transform;
+};
+
+template <>
+struct yyjson::field_name_rule<Das::Plugins::DasMaaPi::DbgInitParams>
+{
+    using type = yyjson::snake_to_camel_transform;
+};
+
+template <>
 struct yyjson::field_name_rule<Das::Plugins::DasMaaPi::ControllerInitParams>
 {
     using type = yyjson::snake_to_camel_transform;
@@ -250,6 +262,98 @@ template <>
 struct yyjson::caster<std::optional<Das::Plugins::DasMaaPi::GamepadInitParams>>
 {
     using value_type = Das::Plugins::DasMaaPi::GamepadInitParams;
+
+    template <typename Json>
+    static std::optional<value_type> from_json(const Json& json)
+    {
+        if (json.is_null())
+        {
+            return std::nullopt;
+        }
+        return std::optional<value_type>(yyjson::cast<value_type>(json));
+    }
+
+    template <typename... Ts>
+        requires requires(yyjson::writer::value_ref& v, value_type t) {
+            v = t;
+            v = std::pair(t, yyjson::copy_string);
+        }
+    static auto to_json(
+        yyjson::writer::value_ref&       v,
+        const std::optional<value_type>& t,
+        Ts...)
+    {
+        if (t.has_value())
+        {
+            v = *t;
+        }
+    }
+
+    template <typename... Ts>
+        requires requires(yyjson::writer::value_ref& v, value_type t) {
+            v = t;
+            v = std::pair(t, yyjson::copy_string);
+        }
+    static auto
+    to_json(yyjson::writer::value_ref& v, std::optional<value_type>&& t, Ts...)
+    {
+        if (t.has_value())
+        {
+            v = std::move(*t);
+        }
+    }
+};
+
+template <>
+struct yyjson::caster<std::optional<Das::Plugins::DasMaaPi::AdbInitParams>>
+{
+    using value_type = Das::Plugins::DasMaaPi::AdbInitParams;
+
+    template <typename Json>
+    static std::optional<value_type> from_json(const Json& json)
+    {
+        if (json.is_null())
+        {
+            return std::nullopt;
+        }
+        return std::optional<value_type>(yyjson::cast<value_type>(json));
+    }
+
+    template <typename... Ts>
+        requires requires(yyjson::writer::value_ref& v, value_type t) {
+            v = t;
+            v = std::pair(t, yyjson::copy_string);
+        }
+    static auto to_json(
+        yyjson::writer::value_ref&       v,
+        const std::optional<value_type>& t,
+        Ts...)
+    {
+        if (t.has_value())
+        {
+            v = *t;
+        }
+    }
+
+    template <typename... Ts>
+        requires requires(yyjson::writer::value_ref& v, value_type t) {
+            v = t;
+            v = std::pair(t, yyjson::copy_string);
+        }
+    static auto
+    to_json(yyjson::writer::value_ref& v, std::optional<value_type>&& t, Ts...)
+    {
+        if (t.has_value())
+        {
+            v = std::move(*t);
+        }
+    }
+};
+
+template <>
+struct yyjson::caster<std::optional<Das::Plugins::DasMaaPi::DbgInitParams>>
+{
+    using value_type = Das::Plugins::DasMaaPi::DbgInitParams;
 
     template <typename Json>
     static std::optional<value_type> from_json(const Json& json)

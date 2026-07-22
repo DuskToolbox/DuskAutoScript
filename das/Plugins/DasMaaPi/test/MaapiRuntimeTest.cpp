@@ -6,6 +6,7 @@
 #include <das/Plugins/DasMaaPi/MaaPiErrorCodes.h>
 #include <das/Plugins/DasMaaPi/MaaRuntime.h>
 #include <das/Plugins/DasMaaPi/PiCompiler.h>
+#include <das/Plugins/DasMaaPi/PiParser.h>
 #include <das/Utils/DasJsonCore.h>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasStopToken.Implements.hpp>
 #include <gtest/gtest.h>
@@ -29,6 +30,12 @@ namespace
     using namespace Das::Plugins::DasMaaPi;
     using namespace Das::Plugins::DasMaaPi::AgentRuntime;
     using namespace Das::Plugins::DasMaaPi::Test;
+
+    std::filesystem::path FixturePath(std::string_view name)
+    {
+        return std::filesystem::current_path() / "DasMaaPi" / "test"
+               / "fixtures" / std::filesystem::path{name};
+    }
 
     std::string JsonStringLiteral(std::string_view value)
     {
@@ -72,7 +79,8 @@ namespace
         ])",
         std::string controller_json =
             R"({"name":"Android","type":"Adb","readPath":"","address":"","adbPath":"adb","configJson":"{}","agentPath":""})",
-        std::string agent_json = {})
+        std::string agent_json = {},
+        std::string controller_init_params_json = "null")
     {
         auto json =
             R"({"version":1,"pluginGuid":")" + plugin_guid
@@ -93,7 +101,8 @@ namespace
                     : R"([])")
             + R"(,"piEnv":{"interfaceVersion":"2","clientName":"DAS","clientVersion":"0.1","clientLanguage":"cpp","clientMaafwVersion":"test","projectVersion":"","controllerJson":)"
             + JsonStringLiteral(controller_json)
-            + R"(,"resourceJson":"{\"name\":\"Official\"}"},"controllerInitParams":null,"pretasks":[],"tasks":)"
+            + R"(,"resourceJson":"{\"name\":\"Official\"}"},"controllerInitParams":)"
+            + controller_init_params_json + R"(,"pretasks":[],"tasks":)"
             + tasks + "}}";
         auto parsed = Das::Utils::ParseYyjsonFromString(json);
         EXPECT_TRUE(parsed.has_value());
@@ -1152,4 +1161,175 @@ TEST(DasMaaPiPretaskCompile, V281FilterIncludesWhenControllerListEmpty)
     ASSERT_TRUE(result.execution_input.has_value());
     ASSERT_EQ(result.execution_input->maapi.pretasks.size(), 1u);
     EXPECT_EQ(result.execution_input->maapi.pretasks[0].name, "AppliesToAll");
+}
+
+// ============================================================================
+// Unified typed controller dispatch (Adb/Dbg join Win32/Gamepad).
+// After the refactor, the legacy single-arg IMaaApiBoundary::CreateController
+// overload is DELETED. Adb/Dbg controllers route through
+// CreateControllerFromParams as variants alongside Win32/Gamepad, and the
+// cpp_yyjson caster trap that 86-08 caught for Win32/Gamepad/ControllerInitParams
+// must also be guarded for optional<AdbInitParams> / optional<DbgInitParams>
+// (leading std::string field → constructible_from<const char*> dispatch trap).
+// ============================================================================
+
+TEST(NormalizeControllerInitParams, AdbControllerPopulatesTypedAdbBlock)
+{
+    // After the refactor, Adb controllers MUST surface a populated
+    // params.adb block (mirroring the existing Win32/Gamepad pattern) so the
+    // unified CreateControllerFromParams dispatch can read adb_path/address/
+    // config_json/agent_path from typed memory instead of the legacy flat
+    // ControllerSpec.
+    auto result = ParseProjectInterface(
+        {.interface_path = FixturePath("interface_controller.jsonc")});
+    ASSERT_TRUE(result.ok);
+    ASSERT_EQ(result.catalog.controllers.size(), 4u);
+    const auto& android = result.catalog.controllers[0];
+    EXPECT_EQ(android.dto.type, "Adb");
+    const auto params = NormalizeControllerInitParams(android);
+    EXPECT_EQ(params.controller_type, "Adb");
+    ASSERT_TRUE(params.adb.has_value()) << "Adb must populate typed adb block";
+    EXPECT_FALSE(params.adb->address.empty());
+    EXPECT_FALSE(params.adb->adb_path.empty());
+    EXPECT_FALSE(params.win32.has_value());
+    EXPECT_FALSE(params.gamepad.has_value());
+    EXPECT_FALSE(params.dbg.has_value());
+}
+
+TEST(NormalizeControllerInitParams, DbgControllerPopulatesTypedDbgBlock)
+{
+    // Dbg controllers MUST surface a populated params.dbg.read_path so the
+    // unified dispatch can call MaaDbgControllerCreate without falling back
+    // to the deleted legacy overload.
+    PiController controller;
+    controller.dto.name = "Debug";
+    controller.dto.type = "Dbg";
+    controller.raw.raw_json =
+        R"({"name":"Debug","type":"Dbg","readPath":"C:/maa/debug"})";
+    const auto params = NormalizeControllerInitParams(controller);
+    EXPECT_EQ(params.controller_type, "Dbg");
+    ASSERT_TRUE(params.dbg.has_value()) << "Dbg must populate typed dbg block";
+    EXPECT_EQ(params.dbg->read_path, "C:/maa/debug");
+    EXPECT_FALSE(params.adb.has_value());
+    EXPECT_FALSE(params.win32.has_value());
+    EXPECT_FALSE(params.gamepad.has_value());
+}
+
+TEST(
+    DasMaaPiRuntime,
+    TypedAdbControllerDispatchesToCreateControllerFromParams)
+{
+    // After the refactor, Adb routes through CreateControllerFromParams
+    // (typed) — the single-arg CreateController legacy overload is deleted.
+    FakeMaaApiBoundary fake;
+    ControllerSpec     spec;
+    spec.name = "Android";
+    spec.type = "Adb";
+    spec.address = "127.0.0.1:5555";
+    spec.adb_path = "adb";
+    ControllerInitParams params;
+    params.controller_type = "Adb";
+    AdbInitParams adb;
+    adb.adb_path = "adb";
+    adb.address = "127.0.0.1:5555";
+    adb.config_json = "{}";
+    params.adb = adb;
+
+    auto result = MaaRuntime::Run(
+        EnvelopeWithTypedController(spec, std::move(params)),
+        fake,
+        nullptr);
+    EXPECT_EQ(result.das_result, DAS_S_OK);
+    EXPECT_TRUE(fake.Contains("CreateControllerFromParams:Android:Adb"));
+    ASSERT_TRUE(fake.last_controller_init_params.has_value());
+    EXPECT_EQ(fake.last_controller_init_params->controller_type, "Adb");
+    ASSERT_TRUE(fake.last_controller_init_params->adb.has_value());
+    EXPECT_EQ(
+        fake.last_controller_init_params->adb->address,
+        "127.0.0.1:5555");
+    // Legacy single-arg path must NOT have been invoked — it no longer exists.
+    EXPECT_FALSE(fake.Contains("CreateController:Android:Adb"));
+}
+
+TEST(
+    DasMaaPiRuntime,
+    TypedDbgControllerDispatchesToCreateControllerFromParams)
+{
+    // Dbg routes through CreateControllerFromParams (typed).
+    FakeMaaApiBoundary fake;
+    ControllerSpec     spec;
+    spec.name = "Debug";
+    spec.type = "Dbg";
+    spec.read_path = "C:/maa/debug";
+    ControllerInitParams params;
+    params.controller_type = "Dbg";
+    DbgInitParams dbg;
+    dbg.read_path = "C:/maa/debug";
+    params.dbg = dbg;
+
+    auto result = MaaRuntime::Run(
+        EnvelopeWithTypedController(spec, std::move(params)),
+        fake,
+        nullptr);
+    EXPECT_EQ(result.das_result, DAS_S_OK);
+    EXPECT_TRUE(fake.Contains("CreateControllerFromParams:Debug:Dbg"));
+    ASSERT_TRUE(fake.last_controller_init_params.has_value());
+    EXPECT_EQ(fake.last_controller_init_params->controller_type, "Dbg");
+    ASSERT_TRUE(fake.last_controller_init_params->dbg.has_value());
+    EXPECT_EQ(
+        fake.last_controller_init_params->dbg->read_path,
+        "C:/maa/debug");
+}
+
+TEST(DasMaaPiRuntime, OptionalAdbInitParamsSurvivesIpcJsonRoundTrip)
+{
+    // Caster trap guard: AdbInitParams is an aggregate with a LEADING
+    // std::string field → optional<AdbInitParams> hits cpp_yyjson's
+    // default_caster const-char* dispatch branch (constructible_from<T,
+    // const char*> via aggregate parenthesized init) BEFORE the optional
+    // branch. Without the explicit caster specialization the envelope
+    // round-trip throws "not constructible from JSON string" in production
+    // IPC. This test locks the guard in.
+    auto value = EnvelopeValue(
+        true,
+        std::string(kPluginGuidText),
+        std::string(kTaskGuidText),
+        false,
+        R"([{"taskName":"T","entry":"E","pipelineOverride":{}}])",
+        R"({"name":"Android","type":"Adb","readPath":"","address":"127.0.0.1:5555","adbPath":"C:/tools/adb.exe","configJson":"{}","agentPath":"C:/maa/agent"})",
+        {},
+        R"({"controllerType":"Adb","win32":null,"gamepad":null,"adb":{"adbPath":"C:/tools/adb.exe","address":"127.0.0.1:5555","screencapMethod":0,"inputMethod":0,"configJson":"{}","agentPath":"C:/maa/agent"},"dbg":null,"displayShortSide":null,"displayLongSide":null,"displayRaw":null})");
+    auto parsed = ParseExecutionEnvelope(value);
+    ASSERT_EQ(parsed.result, DAS_S_OK) << "message: " << parsed.message;
+    ASSERT_TRUE(parsed.envelope.maapi.controller_init_params.has_value());
+    const auto& params = *parsed.envelope.maapi.controller_init_params;
+    EXPECT_EQ(params.controller_type, "Adb");
+    ASSERT_TRUE(params.adb.has_value())
+        << "optional<AdbInitParams> must survive JSON round-trip (caster trap)";
+    EXPECT_EQ(params.adb->adb_path, "C:/tools/adb.exe");
+    EXPECT_EQ(params.adb->address, "127.0.0.1:5555");
+    EXPECT_EQ(params.adb->config_json, "{}");
+    EXPECT_EQ(params.adb->agent_path, "C:/maa/agent");
+}
+
+TEST(DasMaaPiRuntime, OptionalDbgInitParamsSurvivesIpcJsonRoundTrip)
+{
+    // Caster trap guard for optional<DbgInitParams>.
+    auto value = EnvelopeValue(
+        true,
+        std::string(kPluginGuidText),
+        std::string(kTaskGuidText),
+        false,
+        R"([{"taskName":"T","entry":"E","pipelineOverride":{}}])",
+        R"({"name":"Debug","type":"Dbg","readPath":"C:/maa/debug","address":"","adbPath":"adb","configJson":"{}","agentPath":""})",
+        {},
+        R"({"controllerType":"Dbg","win32":null,"gamepad":null,"adb":null,"dbg":{"readPath":"C:/maa/debug"},"displayShortSide":null,"displayLongSide":null,"displayRaw":null})");
+    auto parsed = ParseExecutionEnvelope(value);
+    ASSERT_EQ(parsed.result, DAS_S_OK) << "message: " << parsed.message;
+    ASSERT_TRUE(parsed.envelope.maapi.controller_init_params.has_value());
+    const auto& params = *parsed.envelope.maapi.controller_init_params;
+    EXPECT_EQ(params.controller_type, "Dbg");
+    ASSERT_TRUE(params.dbg.has_value())
+        << "optional<DbgInitParams> must survive JSON round-trip (caster trap)";
+    EXPECT_EQ(params.dbg->read_path, "C:/maa/debug");
 }
