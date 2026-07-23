@@ -43,6 +43,7 @@
   "option": {
     "difficulty": {
       "type": "select",
+      "default_case": ["hard"],
       "cases": [
         {
           "name": "hard",
@@ -56,6 +57,7 @@
     },
     "language": {
       "type": "select",
+      "default_case": ["zh"],
       "cases": [
         {"name": "zh", "pipeline_override": {"Language": {"code": "zh"}}},
         {"name": "en", "pipeline_override": {"Language": {"code": "en"}}}
@@ -63,6 +65,7 @@
     },
     "bonus": {
       "type": "select",
+      "default_case": ["extra"],
       "cases": [
         {"name": "extra", "pipeline_override": {"Bonus": {"tier": "extra"}}}
       ]
@@ -92,6 +95,7 @@
     },
     "controller-mode": {
       "type": "select",
+      "default_case": ["safe"],
       "cases": [
         {
           "name": "safe",
@@ -108,7 +112,8 @@
       "inputs": [
         {
           "name": "times",
-          "pipeline_type": "int"
+          "pipeline_type": "int",
+          "default": "5"
         }
       ],
       "pipeline_override": {
@@ -119,6 +124,7 @@
     },
     "medicine": {
       "type": "checkbox",
+      "default_case": ["small"],
       "cases": [
         {
           "name": "small",

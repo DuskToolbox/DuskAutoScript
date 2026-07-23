@@ -971,7 +971,7 @@ TEST(DasMaaPiRuntime, PretaskSpawnFailureAbortsBeforeControllerCreate)
 // PI v2.7.0 pretask option serialization (PiCompiler side).
 // Verify envelope.pretasks carries exec + args + trailing single-line compact
 // JSON of selected option values, including nested sub-options activated by
-// the chosen case (protocol L290, MXU pretasks.ts:169-183).
+// the chosen case (protocol L290).
 // ============================================================================
 
 namespace
@@ -1105,7 +1105,7 @@ TEST(DasMaaPiPretaskCompile, NestedOptionRecursesIntoActivatedCase)
 {
     // Protocol L290: when a select/switch case is activated, its nested
     // option[] entries must be added to the result object under their own
-    // keys. MXU pretasks.ts:169-183.
+    // keys.
     PiCatalog catalog;
     catalog.controllers.emplace_back(MakeMinimalController());
     catalog.resources.emplace_back(MakeMinimalResource());

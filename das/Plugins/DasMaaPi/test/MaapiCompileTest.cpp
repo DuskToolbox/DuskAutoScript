@@ -243,8 +243,7 @@ namespace
     // (overlap with global_option, dedup), language (setting-only), bonus
     // (setting-only, second partition) and filtered-opt (setting-only, v2.8.1
     // controller mismatch). User selections for setting-referenced options
-    // are routed through globalOptions storage (mirrors MXU
-    // globalOptionValues).
+    // are routed through globalOptions storage.
     std::string CompileContextSetting(std::string_view path)
     {
         return "{\"adapter\":{\"interfacePath\":\"" + std::string(path)
@@ -261,6 +260,34 @@ namespace
                  "{\"optionName\":\"filtered-opt\",\"kind\":\"select\","
                  "\"selectedCases\":[\"skip\"]}"
                  "],"
+                 "\"tasks\":[{\"taskName\":\"DailyFarm\",\"enabled\":true}]}}";
+    }
+
+    // Variant with NO user option selections: every option stays unedited.
+    // Used to verify PiCompiler merges PI defaults (default_case /
+    // input.default / switch→"No") into execution.pipeline_override
+    // instead of dropping them.
+    std::string CompileContextDefaults(std::string_view path)
+    {
+        return "{\"adapter\":{\"interfacePath\":\"" + std::string(path)
+               + "\",\"executionPolicy\":{\"failFast\":true}},\"pi\":{"
+                 "\"controllerName\":\"Android\","
+                 "\"resourceName\":\"Official\","
+                 "\"tasks\":[{\"taskName\":\"DailyFarm\",\"enabled\":true}]}}";
+    }
+
+    // Variant selecting only `difficulty=hard` at global level; every other
+    // option stays unedited. Used to verify an explicit user selection wins
+    // over the PI default for the same option key while unrelated options
+    // still fall back to their defaults.
+    std::string CompileContextSingleGlobal(std::string_view path)
+    {
+        return "{\"adapter\":{\"interfacePath\":\"" + std::string(path)
+               + "\",\"executionPolicy\":{\"failFast\":true}},\"pi\":{"
+                 "\"controllerName\":\"Android\","
+                 "\"resourceName\":\"Official\","
+                 "\"globalOptions\":[{\"optionName\":\"difficulty\","
+                 "\"kind\":\"select\",\"selectedCases\":[\"hard\"]}],"
                  "\"tasks\":[{\"taskName\":\"DailyFarm\",\"enabled\":true}]}}";
     }
 } // namespace
@@ -419,7 +446,7 @@ TEST_F(MaapiCompileFixture, AgentBoundaryAllowsExecutionEnvelope)
 }
 
 // D-86-04: setting[].option[] 引用的 option 视为额外 global option，编译期
-// 并入 global 级 pipeline_override 合并（与 MXU globalOptionValues 路由一致）。
+// 并入 global 级 pipeline_override 合并。
 // language 与 bonus 仅由 setting 引用（未列入 global_option[]），其选中值经
 // globalOptions 存储路由后应在 task.pipelineOverride 中可见；优先级
 // global<resource<controller<task 不变（setting 在 global 段并入）。
@@ -520,4 +547,122 @@ TEST_F(MaapiCompileFixture, SettingOptionRespectsV281IsActiveFilter)
             .as_object();
     ASSERT_TRUE(pipeline.has_value());
     EXPECT_FALSE(pipeline->contains(std::string_view("Filtered")));
+}
+
+// PI v2.7.0 option default merging: unedited options must contribute their
+// PI defaults (default_cases / input.default_value / switch→"No") to
+// execution.pipeline_override. Prior to ResolveOptionSelection the compiler
+// only merged user-edited options, silently dropping defaults. This test
+// drives a context with NO user selections so every option falls back.
+TEST_F(MaapiCompileFixture, UneditedOptionDefaultsMergeIntoPipeline)
+{
+    auto result = Compile(
+        CompileContextDefaults(
+            FixturePath("interface_compile.jsonc").generic_string()),
+        "execution");
+    auto obj = result.as_object();
+    ASSERT_TRUE(obj.has_value());
+    ASSERT_TRUE((*obj)[std::string_view("ok")].as_bool().value_or(false))
+        << "compile must succeed when options rely on PI defaults";
+    auto envelope = (*obj)[std::string_view("executionInput")].as_object();
+    ASSERT_TRUE(envelope.has_value());
+    auto maapi = (*envelope)[std::string_view("maapi")].as_object();
+    ASSERT_TRUE(maapi.has_value());
+    auto tasks = (*maapi)[std::string_view("tasks")].as_array();
+    ASSERT_TRUE(tasks.has_value());
+    auto pipeline =
+        (*(*tasks)[0].as_object())[std::string_view("pipelineOverride")]
+            .as_object();
+    ASSERT_TRUE(pipeline.has_value());
+
+    // global_option difficulty default_cases=["hard"] →
+    // Stage.value=global-hard.
+    EXPECT_EQ(
+        (*(*pipeline)[std::string_view("Stage")]
+              .as_object())[std::string_view("value")]
+            .as_string()
+            .value_or(""),
+        "global-hard");
+    // setting-only option language default_cases=["zh"] → Language.code=zh
+    // (proves setting-referenced defaults also merge).
+    EXPECT_EQ(
+        (*(*pipeline)[std::string_view("Language")]
+              .as_object())[std::string_view("code")]
+            .as_string()
+            .value_or(""),
+        "zh");
+    // resource option server (switch, unedited) → PI default "No" branch has
+    // no pipeline_override, so Server key must be absent.
+    EXPECT_FALSE(pipeline->contains(std::string_view("Server")));
+    // controller option controller-mode default_cases=["safe"] →
+    // Controller.value=safe.
+    EXPECT_EQ(
+        (*(*pipeline)[std::string_view("Controller")]
+              .as_object())[std::string_view("value")]
+            .as_string()
+            .value_or(""),
+        "safe");
+    // task option retry (input) default_value="5" → Retry.times="5".
+    EXPECT_EQ(
+        (*(*pipeline)[std::string_view("Retry")]
+              .as_object())[std::string_view("times")]
+            .as_string()
+            .value_or(""),
+        "5");
+    // task option medicine (checkbox) default_cases=["small"] →
+    // MedicineSmall only.
+    EXPECT_TRUE(pipeline->contains(std::string_view("MedicineSmall")));
+    EXPECT_FALSE(pipeline->contains(std::string_view("MedicineLarge")));
+    // task option notify (switch, unedited) → default "No" branch has no
+    // pipeline_override, Notify key absent.
+    EXPECT_FALSE(pipeline->contains(std::string_view("Notify")));
+    // filtered-opt is gated by controller=["MissingController"] IsActive
+    // filter → skipped even when its default would otherwise merge.
+    EXPECT_FALSE(pipeline->contains(std::string_view("Filtered")));
+}
+
+// Explicit user selection wins over the PI default for the same option key.
+// Drives CompileContextSingleGlobal which selects only difficulty=hard at
+// global scope; every other option still falls back to defaults.
+TEST_F(MaapiCompileFixture, EditedOptionSelectionOverridesDefault)
+{
+    auto result = Compile(
+        CompileContextSingleGlobal(
+            FixturePath("interface_compile.jsonc").generic_string()),
+        "execution");
+    auto obj = result.as_object();
+    ASSERT_TRUE(obj.has_value());
+    ASSERT_TRUE((*obj)[std::string_view("ok")].as_bool().value_or(false));
+    auto envelope = (*obj)[std::string_view("executionInput")].as_object();
+    ASSERT_TRUE(envelope.has_value());
+    auto maapi = (*envelope)[std::string_view("maapi")].as_object();
+    ASSERT_TRUE(maapi.has_value());
+    auto tasks = (*maapi)[std::string_view("tasks")].as_array();
+    ASSERT_TRUE(tasks.has_value());
+    auto pipeline =
+        (*(*tasks)[0].as_object())[std::string_view("pipelineOverride")]
+            .as_object();
+    ASSERT_TRUE(pipeline.has_value());
+
+    // Explicit global selection difficulty=hard wins (same value as default
+    // here, but the merge path is the user-edited branch).
+    EXPECT_EQ(
+        (*(*pipeline)[std::string_view("Stage")]
+              .as_object())[std::string_view("value")]
+            .as_string()
+            .value_or(""),
+        "global-hard");
+    // Unedited options still fall back to their defaults alongside the edit.
+    EXPECT_EQ(
+        (*(*pipeline)[std::string_view("Controller")]
+              .as_object())[std::string_view("value")]
+            .as_string()
+            .value_or(""),
+        "safe");
+    EXPECT_EQ(
+        (*(*pipeline)[std::string_view("Retry")]
+              .as_object())[std::string_view("times")]
+            .as_string()
+            .value_or(""),
+        "5");
 }

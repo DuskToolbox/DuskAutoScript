@@ -344,6 +344,61 @@ namespace Das::Plugins::DasMaaPi
             return {};
         }
 
+        // Resolved form of a PI option's current selection. SSOT for
+        // "what value does this option contribute right now?" — used by both
+        // pipeline_override merging (MergeSelectedOption) and pretask option
+        // serialization (CollectPretaskOptionValue). When `selected` is null
+        // the option is unedited, so PI defaults apply per protocol v2.7.0:
+        //   select/checkbox → option.dto.default_cases
+        //   switch          → "No" branch
+        //   input           → input.default_value.value_or("")
+        // When `selected` is non-null the user's edited value wins.
+        struct ResolvedOptionSelection
+        {
+            std::vector<std::string>           cases;
+            std::map<std::string, std::string> input_values;
+        };
+
+        ResolvedOptionSelection ResolveOptionSelection(
+            const PiOption&                 option,
+            const MaapiPiOptionSettingsDto* selected)
+        {
+            ResolvedOptionSelection out;
+            const auto&             type = option.dto.type;
+            if (type == "switch")
+            {
+                std::string case_name = selected
+                                            ? SwitchCaseName(option, *selected)
+                                            : std::string{"No"};
+                if (!case_name.empty())
+                {
+                    out.cases.emplace_back(std::move(case_name));
+                }
+                return out;
+            }
+            if (type == "input")
+            {
+                for (const auto& input : option.dto.inputs)
+                {
+                    std::string value = input.default_value.value_or("");
+                    if (selected)
+                    {
+                        auto it = selected->input_values.find(input.name);
+                        if (it != selected->input_values.end())
+                        {
+                            value = it->second;
+                        }
+                    }
+                    out.input_values[input.name] = std::move(value);
+                }
+                return out;
+            }
+            // select / checkbox (unrecognized types fall back to cases path).
+            out.cases =
+                selected ? selected->selected_cases : option.dto.default_cases;
+            return out;
+        }
+
         std::string ReplaceAll(
             std::string                               text,
             const std::map<std::string, std::string>& values)
@@ -414,47 +469,27 @@ namespace Das::Plugins::DasMaaPi
         }
 
         void MergeSelectedOption(
-            CompileResultDto&               result,
             yyjson::value&                  pipeline,
-            const PiCatalog&                catalog,
-            const MaapiPiOptionSettingsDto& selected,
+            const PiOption&                 option,
+            const MaapiPiOptionSettingsDto* selected,
             std::string_view                controller,
             std::string_view                resource)
         {
-            const auto* option = FindOption(catalog, selected.option_name);
-            if (!option)
-            {
-                AddDiagnostic(
-                    result,
-                    "error",
-                    "missing-option",
-                    "Selected PI option is missing from catalog");
-                return;
-            }
-            if (!IsActive(*option, controller, resource))
+            if (!IsActive(option, controller, resource))
             {
                 return;
             }
-            if (option->dto.type == "input")
+            auto resolved = ResolveOptionSelection(option, selected);
+            if (option.dto.type == "input")
             {
                 MergeObject(
                     pipeline,
                     ParseRawObject(ReplaceAll(
-                        option->raw_pipeline_override_json,
-                        selected.input_values)));
+                        option.raw_pipeline_override_json,
+                        resolved.input_values)));
                 return;
             }
-            auto cases = selected.selected_cases;
-            if (option->dto.type == "switch")
-            {
-                cases.clear();
-                auto case_name = SwitchCaseName(*option, selected);
-                if (!case_name.empty())
-                {
-                    cases.emplace_back(std::move(case_name));
-                }
-            }
-            MergeCaseOverrides(pipeline, *option, cases);
+            MergeCaseOverrides(pipeline, option, resolved.cases);
         }
 
         std::vector<MaapiPiTaskSettingsDto> SelectedTasks(
@@ -492,8 +527,7 @@ namespace Das::Plugins::DasMaaPi
         }
 
         // Locate the user's stored selection for an option key. Pretask option
-        // values live at the global scope (mirrors MXU routing pretask options
-        // through globalOptionValues).
+        // values live at the global scope.
         const MaapiPiOptionSettingsDto* FindGlobalSelection(
             const AcceptedSettingsDto& settings,
             std::string_view           option_name)
@@ -508,12 +542,53 @@ namespace Das::Plugins::DasMaaPi
             return nullptr;
         }
 
+        const MaapiPiOptionSettingsDto* FindResourceSelection(
+            const AcceptedSettingsDto& settings,
+            std::string_view           option_name)
+        {
+            for (const auto& opt : settings.pi.resource_options)
+            {
+                if (opt.option_name == option_name)
+                {
+                    return &opt;
+                }
+            }
+            return nullptr;
+        }
+
+        const MaapiPiOptionSettingsDto* FindControllerSelection(
+            const AcceptedSettingsDto& settings,
+            std::string_view           option_name)
+        {
+            for (const auto& opt : settings.pi.controller_options)
+            {
+                if (opt.option_name == option_name)
+                {
+                    return &opt;
+                }
+            }
+            return nullptr;
+        }
+
+        const MaapiPiOptionSettingsDto* FindTaskSelection(
+            const MaapiPiTaskSettingsDto& task_settings,
+            std::string_view              option_name)
+        {
+            for (const auto& opt : task_settings.options)
+            {
+                if (opt.option_name == option_name)
+                {
+                    return &opt;
+                }
+            }
+            return nullptr;
+        }
+
         // D-86-02 / PI v2.7.0 pretask option serialization. Recursively emits
         // the selected value for `option_key` into `result`, then descends
         // into the activated case's nested option[] entries (protocol L290).
         // v2.8.1 controller/resource filter via IsActive; cycles broken by
-        // `visited`. Mirrors MXU pretasks.ts:100-183
-        // collectPretaskOptionValues.
+        // `visited`.
         void CollectPretaskOptionValue(
             const PiCatalog&           catalog,
             std::string_view           option_key,
@@ -540,23 +615,14 @@ namespace Das::Plugins::DasMaaPi
             visited.insert(key);
 
             const auto* selected = FindGlobalSelection(settings, option_key);
+            auto        resolved = ResolveOptionSelection(*option, selected);
             auto        result_obj = result.as_object();
             const auto& type = option->dto.type;
             if (type == "select" || type == "switch")
             {
-                std::string case_name;
-                if (type == "switch")
-                {
-                    case_name = selected ? SwitchCaseName(*option, *selected)
-                                         : std::string{"No"};
-                }
-                else
-                {
-                    std::vector<std::string> cases =
-                        selected ? selected->selected_cases
-                                 : option->dto.default_cases;
-                    case_name = cases.empty() ? std::string{} : cases.front();
-                }
+                std::string case_name = resolved.cases.empty()
+                                            ? std::string{}
+                                            : resolved.cases.front();
                 // copy_string avoids dangling pointer when key/case_name go
                 // out of scope (das-yyjson-string-safety).
                 (*result_obj)[key] = std::make_pair(
@@ -585,9 +651,7 @@ namespace Das::Plugins::DasMaaPi
             }
             if (type == "checkbox")
             {
-                std::vector<std::string> cases =
-                    selected ? selected->selected_cases
-                             : option->dto.default_cases;
+                const auto&   cases = resolved.cases;
                 yyjson::value arr(Das::Utils::MakeYyjsonArray());
                 auto          arr_ref = arr.as_array();
                 for (const auto& c : cases)
@@ -622,15 +686,7 @@ namespace Das::Plugins::DasMaaPi
                 auto          input_ref = input_obj.as_object();
                 for (const auto& input : option->dto.inputs)
                 {
-                    std::string value = input.default_value.value_or("");
-                    if (selected)
-                    {
-                        auto it = selected->input_values.find(input.name);
-                        if (it != selected->input_values.end())
-                        {
-                            value = it->second;
-                        }
-                    }
+                    std::string value = resolved.input_values[input.name];
                     (*input_ref)[input.name] = std::make_pair(
                         std::string_view(value),
                         yyjson::copy_string);
@@ -799,31 +855,30 @@ namespace Das::Plugins::DasMaaPi
             execution.entry = task->dto.entry;
             execution.pipeline_override =
                 ParseRawObject(task->raw_pipeline_override_json);
-            for (const auto& option : settings.pi.global_options)
+            // PI v2.7.0 option merge order: global<resource<controller<task.
+            // Each level iterates the option keys DECLARED by the catalog
+            // (catalog.global_options, catalog.settings[].option[],
+            // resource->dto.option, controller->dto.option, task->dto.option)
+            // and looks up the user's stored selection; unedited options fall
+            // back to PI defaults via ResolveOptionSelection inside
+            // MergeSelectedOption so defaults are no longer silently dropped.
+            //
+            // Global level: explicit global_option[] plus setting-referenced
+            // options (PI v2.8.0 setting[].option[]). The latter share
+            // settings.pi.global_options storage with explicit global_option.
+            // `merged_global_keys` dedups across global_option[] and all
+            // setting partitions: the same key is merged at most once even
+            // when declared in multiple places (idempotent MergeObject).
+            std::set<std::string> merged_global_keys;
+            for (const auto& opt : catalog.global_options)
             {
+                merged_global_keys.insert(opt.dto.name);
                 MergeSelectedOption(
-                    result,
                     execution.pipeline_override,
-                    catalog,
-                    option,
+                    opt,
+                    FindGlobalSelection(settings, opt.dto.name),
                     controller->dto.name,
                     resource->dto.name);
-            }
-            // PI v2.8.0 setting[].option[] (D-86-04): 每个 setting 分区引用的
-            // option 视为额外 global option，在 global 级并入 pipeline_override
-            // （与 MXU globalOptionValues 路由一致；优先级
-            // global<resource<controller<task 不变）。用户选中值存储在
-            // settings.pi.global_options 与显式 global_option 共享存储。按键
-            // 去重：与上方 global_option 循环共享 merged_global_keys，且跨
-            // setting 分区去重；同一 option
-            // 键无论出现在几处只合并一次（幂等）。 无用户选中的
-            // setting-referenced option 跳过（与既有 global_option
-            // 循环行为一致；MergeSelectedOption 内部 IsActive v2.8.1 过滤同样
-            // 适用于 setting 引用 option）。
-            std::set<std::string> merged_global_keys;
-            for (const auto& option : settings.pi.global_options)
-            {
-                merged_global_keys.insert(option.option_name);
             }
             for (const auto& setting : catalog.settings)
             {
@@ -833,47 +888,61 @@ namespace Das::Plugins::DasMaaPi
                     {
                         continue;
                     }
-                    const auto* selection = FindGlobalSelection(settings, key);
-                    if (!selection)
+                    const auto* opt = FindOption(catalog, key);
+                    if (!opt)
                     {
                         continue;
                     }
                     MergeSelectedOption(
-                        result,
                         execution.pipeline_override,
-                        catalog,
-                        *selection,
+                        *opt,
+                        FindGlobalSelection(settings, key),
                         controller->dto.name,
                         resource->dto.name);
                 }
             }
-            for (const auto& option : settings.pi.resource_options)
+            // Resource level.
+            for (const auto& key : resource->dto.option)
             {
+                const auto* opt = FindOption(catalog, key);
+                if (!opt)
+                {
+                    continue;
+                }
                 MergeSelectedOption(
-                    result,
                     execution.pipeline_override,
-                    catalog,
-                    option,
+                    *opt,
+                    FindResourceSelection(settings, key),
                     controller->dto.name,
                     resource->dto.name);
             }
-            for (const auto& option : settings.pi.controller_options)
+            // Controller level.
+            for (const auto& key : controller->dto.option)
             {
+                const auto* opt = FindOption(catalog, key);
+                if (!opt)
+                {
+                    continue;
+                }
                 MergeSelectedOption(
-                    result,
                     execution.pipeline_override,
-                    catalog,
-                    option,
+                    *opt,
+                    FindControllerSelection(settings, key),
                     controller->dto.name,
                     resource->dto.name);
             }
-            for (const auto& option : selected.options)
+            // Task level.
+            for (const auto& key : task->dto.option)
             {
+                const auto* opt = FindOption(catalog, key);
+                if (!opt)
+                {
+                    continue;
+                }
                 MergeSelectedOption(
-                    result,
                     execution.pipeline_override,
-                    catalog,
-                    option,
+                    *opt,
+                    FindTaskSelection(selected, key),
                     controller->dto.name,
                     resource->dto.name);
             }
