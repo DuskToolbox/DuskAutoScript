@@ -5,6 +5,7 @@
 #include <atomic>
 #include <cctype>
 #include <filesystem>
+#include <map>
 #include <set>
 #include <string_view>
 
@@ -1841,6 +1842,164 @@ namespace Das::Plugins::DasMaaPi
         return result;
     }
 
+    // 构建根级 fieldLayout[]。叶子 fieldName 集合 == fields[].name 集合
+    // （全覆盖、唯一），满足 schema validator ValidateFieldLayout 契约。
+    // 分区策略（PI v2.8.0/v2.7.0 语义）：pretask 是项目级预任务，并入项目设置
+    // section；setting 是协议自带的设置页分区声明，每元素独立一 section。
+    // section.label 经 PI i18n 解析（ResolveI18nOrDiag），缺译时 fallback 到
+    // setting.dto.name / 内置中文默认。游离 global_option（未被任何 setting
+    // 引用）不进 fields[]，故不进 layout —— PI v2.8.0 setting 才是"哪些 option
+    // 进设置页"的声明，未声明的不渲染。
+    yyjson::value BuildRootFieldLayout(
+        const yyjson::value&          fields,
+        const PiCatalog*              catalog,
+        std::string_view              current_language,
+        std::vector<PiDiagnosticDto>* projection_diagnostics)
+    {
+        yyjson::value layout(Array());
+        auto          layout_arr = layout.as_array();
+        if (!layout_arr)
+        {
+            return layout;
+        }
+        auto fields_arr = fields.as_array();
+        if (!fields_arr)
+        {
+            return layout;
+        }
+
+        // 按 name 前缀/字面量分类（保留 fields[] 声明顺序，layout 与 fields
+        // 顺序一致）。fields[] 不含 options.<name>（游离 global_option
+        // 不投影）， 故仅分两组：project 项目级字段与 settings.<opt> 分区字段。
+        std::vector<std::string>           project_entries;
+        std::map<std::string, std::string> settings_by_opt;
+        constexpr std::string_view         kSettingsPrefix = "settings.";
+        for (auto it = fields_arr->begin(); it != fields_arr->end(); ++it)
+        {
+            auto field_obj = it->as_object();
+            if (!field_obj)
+            {
+                continue;
+            }
+            auto name_opt = (*field_obj)[std::string_view("name")].as_string();
+            if (!name_opt)
+            {
+                continue;
+            }
+            const std::string_view name = *name_opt;
+            if (name.empty())
+            {
+                continue;
+            }
+            if (name == "controllerName" || name == "resourceName"
+                || name == "presetName" || name == "language"
+                || name.starts_with("adapter.") || name.starts_with("pretask."))
+            {
+                project_entries.emplace_back(std::string(name));
+            }
+            else if (name.starts_with(kSettingsPrefix))
+            {
+                settings_by_opt.emplace(
+                    std::string(name.substr(kSettingsPrefix.size())),
+                    std::string(name));
+            }
+        }
+
+        auto make_leaf = [](std::string_view field_name) -> yyjson::value
+        {
+            yyjson::value leaf(Object());
+            (*leaf.as_object())[std::string_view("fieldName")] =
+                JsonString(field_name);
+            return leaf;
+        };
+
+        // 项目设置 section（顺序第一）。defaultExpanded=false，匹配旧 UI 顶部
+        // "项目设置" 默认折叠行为。
+        if (!project_entries.empty())
+        {
+            yyjson::value section(Object());
+            auto          s_obj = section.as_object();
+            (*s_obj)[std::string_view("id")] = JsonString("project");
+            std::string_view project_label = "项目设置";
+            if (catalog != nullptr)
+            {
+                project_label = ResolveI18nOrDiag(
+                    "$section.project",
+                    *catalog,
+                    current_language,
+                    "项目设置",
+                    projection_diagnostics,
+                    "fieldLayout.section.project.label");
+            }
+            (*s_obj)[std::string_view("label")] = JsonString(project_label);
+            (*s_obj)[std::string_view("defaultExpanded")] = false;
+            yyjson::value entries(Array());
+            for (const auto& name : project_entries)
+            {
+                entries.as_array()->emplace_back(make_leaf(name));
+            }
+            (*s_obj)[std::string_view("entries")] = std::move(entries);
+            layout_arr->emplace_back(std::move(section));
+        }
+
+        // 每个 catalog->settings 元素独立一 section。按 setting.dto.option
+        // 顺序，仅当对应 settings.<opt> 字段存在且未被先前 setting 占用时计入
+        // （首个引用胜出，镜像 ProjectAuthoringDocument 的 setting 投影去重）。
+        // 空分区（无字段）省略，不发空 entries 的 section。
+        if (catalog != nullptr)
+        {
+            std::set<std::string> claimed_keys;
+            for (std::size_t i = 0; i < catalog->settings.size(); ++i)
+            {
+                const auto&   setting = catalog->settings[i];
+                yyjson::value entries(Array());
+                for (const auto& opt_name : setting.dto.option)
+                {
+                    auto mit = settings_by_opt.find(opt_name);
+                    if (mit == settings_by_opt.end())
+                    {
+                        continue;
+                    }
+                    if (!claimed_keys.insert(opt_name).second)
+                    {
+                        continue;
+                    }
+                    entries.as_array()->emplace_back(make_leaf(mit->second));
+                }
+                auto entries_arr = entries.as_array();
+                if (!entries_arr || entries_arr->empty())
+                {
+                    continue;
+                }
+                yyjson::value     section(Object());
+                auto              s_obj = section.as_object();
+                const std::string section_id =
+                    "setting_"
+                    + (setting.dto.name.empty() ? std::to_string(i)
+                                                : setting.dto.name);
+                (*s_obj)[std::string_view("id")] = JsonString(section_id);
+                const std::string_view label_text =
+                    setting.dto.label ? std::string_view(*setting.dto.label)
+                                      : std::string_view(setting.dto.name);
+                const std::string_view resolved_label = ResolveI18nOrDiag(
+                    label_text,
+                    *catalog,
+                    current_language,
+                    setting.dto.name,
+                    projection_diagnostics,
+                    "fieldLayout.section." + section_id + ".label");
+                (*s_obj)[std::string_view("label")] =
+                    JsonString(resolved_label);
+                (*s_obj)[std::string_view("defaultExpanded")] =
+                    setting.dto.default_expand;
+                (*s_obj)[std::string_view("entries")] = std::move(entries);
+                layout_arr->emplace_back(std::move(section));
+            }
+        }
+
+        return layout;
+    }
+
     yyjson::value ProjectAuthoringDocument(
         const AcceptedSettingsDto&          settings_in,
         const PiCatalog*                    catalog,
@@ -2010,37 +2169,11 @@ namespace Das::Plugins::DasMaaPi
                 yyjson::value(current_language),
                 &language_candidates));
 
-            // D-86-04/06: 计算 S = 被任意 setting 引用的 option 键集。
-            // global_option 循环对 S 内键跳过（不 emit options.<name>），
-            // 让 setting 投影独占 settings.<name> 根字段，UI 单一渲染、
-            // setValue 目标唯一。
-            std::set<std::string> setting_option_keys;
-            for (const auto& setting : catalog->settings)
-            {
-                for (const auto& opt_name : setting.dto.option)
-                {
-                    setting_option_keys.insert(opt_name);
-                }
-            }
-
-            for (const auto& option : catalog->global_options)
-            {
-                // D-86-06: 重叠键去重——同时被 setting 引用的键只走
-                // settings.* 路径，避免 UI 双重渲染与 setValue 歧义。
-                if (setting_option_keys.count(option.dto.name) > 0)
-                {
-                    continue;
-                }
-                const auto* current = FindOptionSettings(
-                    settings.pi.global_options,
-                    option.dto.name);
-                fields.as_array()->emplace_back(MakeOptionPropertyField(
-                    std::string{"options." + option.dto.name},
-                    option.dto,
-                    current,
-                    catalog,
-                    current_language));
-            }
+            // 游离 global_option（未被任何 setting 引用）不投影成根字段
+            // options.<name>。PI v2.8.0：setting 才是"哪些 option 进设置页"的
+            // 声明，未声明的 global_option 不渲染为可编辑字段，其默认值改由
+            // pipeline_override 合并处理。被 setting 引用的 global_option
+            // 仍通过下面的 settings.<opt> 投影路径独占根字段。
 
             // D-86-04/06: setting 分区的 option 投影为 root FieldDescriptor
             // (settings.<optionKey>)。值取自 global_options 存储（setting 与
@@ -2112,7 +2245,14 @@ namespace Das::Plugins::DasMaaPi
                 }
             }
         }
+        // 根级 fieldLayout 必须在 fields 移走前构建（按 const ref 读 fields）。
+        yyjson::value field_layout = BuildRootFieldLayout(
+            fields,
+            catalog,
+            current_language,
+            projection_diagnostics);
         (*obj)[std::string_view("fields")] = std::move(fields);
+        (*obj)[std::string_view("fieldLayout")] = std::move(field_layout);
 
         // D-84-13: formSequence 只承载 items[]；不再有根级 fields/sequence。
         // D-84-40: FormSequenceItem.id = Provider 颁发的 itemId，绝不回退到

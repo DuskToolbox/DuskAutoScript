@@ -515,6 +515,135 @@ namespace
         }
         return "";
     }
+
+    // 在 document.fieldLayout[] 中按 section.id 查找 section。
+    std::optional<yyjson::value> FindLayoutSection(
+        const yyjson::value& document,
+        std::string_view     id)
+    {
+        auto obj = document.as_object();
+        if (!obj || !obj->contains(std::string_view("fieldLayout")))
+        {
+            return std::nullopt;
+        }
+        auto layout = (*obj)[std::string_view("fieldLayout")].as_array();
+        if (!layout)
+        {
+            return std::nullopt;
+        }
+        for (auto it = layout->begin(); it != layout->end(); ++it)
+        {
+            auto section = it->as_object();
+            if (!section)
+            {
+                continue;
+            }
+            if ((*section)[std::string_view("id")].as_string().value_or("")
+                == id)
+            {
+                return Das::Utils::CloneYyjsonValue(*it);
+            }
+        }
+        return std::nullopt;
+    }
+
+    // 收集 section.entries[] 所有叶子 fieldName（保持声明顺序）。
+    std::vector<std::string> LayoutSectionFieldNames(
+        const yyjson::value& section)
+    {
+        std::vector<std::string> names;
+        auto                     section_obj = section.as_object();
+        if (!section_obj || !section_obj->contains(std::string_view("entries")))
+        {
+            return names;
+        }
+        auto entries = (*section_obj)[std::string_view("entries")].as_array();
+        if (!entries)
+        {
+            return names;
+        }
+        for (auto it = entries->begin(); it != entries->end(); ++it)
+        {
+            auto leaf = it->as_object();
+            if (!leaf)
+            {
+                continue;
+            }
+            names.emplace_back(
+                (*leaf)[std::string_view("fieldName")].as_string().value_or(
+                    ""));
+        }
+        return names;
+    }
+
+    // 收集 document.fields[] 所有 name（保持声明顺序）。
+    std::vector<std::string> RootFieldNames(const yyjson::value& document)
+    {
+        std::vector<std::string> names;
+        auto                     obj = document.as_object();
+        if (!obj || !obj->contains(std::string_view("fields")))
+        {
+            return names;
+        }
+        auto fields = (*obj)[std::string_view("fields")].as_array();
+        if (!fields)
+        {
+            return names;
+        }
+        for (auto it = fields->begin(); it != fields->end(); ++it)
+        {
+            auto field = it->as_object();
+            if (!field)
+            {
+                continue;
+            }
+            names.emplace_back(
+                (*field)[std::string_view("name")].as_string().value_or(""));
+        }
+        return names;
+    }
+
+    // 遍历 document.fieldLayout[] 各 section.entries[]，收集所有叶子
+    // fieldName。
+    std::vector<std::string> LayoutLeafFieldNames(const yyjson::value& document)
+    {
+        std::vector<std::string> names;
+        auto                     obj = document.as_object();
+        if (!obj || !obj->contains(std::string_view("fieldLayout")))
+        {
+            return names;
+        }
+        auto layout = (*obj)[std::string_view("fieldLayout")].as_array();
+        if (!layout)
+        {
+            return names;
+        }
+        for (auto it = layout->begin(); it != layout->end(); ++it)
+        {
+            auto section = it->as_object();
+            if (!section || !section->contains(std::string_view("entries")))
+            {
+                continue;
+            }
+            auto entries = (*section)[std::string_view("entries")].as_array();
+            if (!entries)
+            {
+                continue;
+            }
+            for (auto eit = entries->begin(); eit != entries->end(); ++eit)
+            {
+                auto leaf = eit->as_object();
+                if (!leaf)
+                {
+                    continue;
+                }
+                names.emplace_back(
+                    (*leaf)[std::string_view("fieldName")].as_string().value_or(
+                        ""));
+            }
+        }
+        return names;
+    }
 } // namespace
 
 TEST_F(MaapiAuthoringFixture, ApplyPathFailurePersistsDiagnostics)
@@ -576,7 +705,9 @@ TEST_F(MaapiAuthoringFixture, ApplyPathSuccessRefreshesDocument)
     auto document = (*obj)[std::string_view("document")];
     EXPECT_TRUE(FormSequenceHasField(document, "controllerName"));
     EXPECT_TRUE(FormSequenceHasField(document, "resourceName"));
-    EXPECT_TRUE(FormSequenceHasField(document, "options.stage"));
+    // interface_authoring.jsonc 无 setting，stage 是游离 global_option，
+    // 不投影成根字段（PI v2.8.0 setting 才进设置页）。
+    EXPECT_FALSE(FormSequenceHasField(document, "options.stage"));
     EXPECT_FALSE(FormSequenceHasField(document, "options.retry"));
     EXPECT_FALSE(FormSequenceHasField(document, "options.use-medicine"));
     EXPECT_FALSE(FormSequenceHasField(document, "options.notify"));
@@ -1969,9 +2100,13 @@ TEST(I18nTest, OptionFieldLabelsAreResolved)
     auto doc_obj = document.as_object();
     ASSERT_TRUE(doc_obj.has_value());
 
-    EXPECT_EQ(GetFieldLabel(document, "options.stage"), "关卡");
-    // retry/notify 是 task 级 option（在 catalog.options，不在
-    // global_options），归位到 items[].fields[]，不再出现在根 fields[]。
+    // stage 是游离 global_option（未被任何 setting 引用），不投影成根字段。
+    EXPECT_EQ(GetFieldLabel(document, "options.stage"), "");
+    // stage/retry/notify 都是 task 级 option（DailyFarm.dto.option），归位到
+    // items[].fields[]，label 走 PI i18n 解析。
+    EXPECT_EQ(
+        GetSequenceItemFieldLabel(document, "item_daily_farm", "options.stage"),
+        "关卡");
     EXPECT_EQ(
         GetSequenceItemFieldLabel(document, "item_daily_farm", "options.retry"),
         "重试");
@@ -5095,7 +5230,7 @@ TEST_F(MaapiAuthoringFixture, LiteralV28InterfaceProjectsStrictWire)
 // 必须含 PI 接口定义的默认静态设置。stage 在 v28 fixture 中是
 // global_option，select 类型，cases=[1-1, 1-2]，无 default_case，按
 // MaaPI 约定默认回退首个 case "1-1"。
-TEST_F(MaapiAuthoringFixture, FreshSessionProjectsGlobalOptionPiDefault)
+TEST_F(MaapiAuthoringFixture, FreshSessionOmitsFreeGlobalOptionFromRootFields)
 {
     auto interface_path =
         FixturePath("interface_authoring_v28.jsonc").generic_string();
@@ -5111,17 +5246,10 @@ TEST_F(MaapiAuthoringFixture, FreshSessionProjectsGlobalOptionPiDefault)
                                  << " message=" << get_valid.message;
 
     auto document = DocumentOfGet(get_json.Get());
-    // stage 是 v28 fixture 的唯一 global_option；fresh session 下
-    // settings.pi.global_options 为空，必须回退到 PI 首个 case "1-1"。
-    auto stage_field = FindRootField(document, "options.stage");
-    ASSERT_TRUE(stage_field.has_value());
-    auto stage_obj = stage_field->as_object();
-    ASSERT_TRUE(stage_obj.has_value());
-    ASSERT_TRUE(stage_obj->contains(std::string_view("value")));
-    auto stage_value =
-        (*stage_obj)[std::string_view("value")].as_string().value_or("");
-    EXPECT_EQ(stage_value, "1-1")
-        << "global_option stage 必须回退到 PI 首个 case '";
+    // v28 fixture 的 stage 是游离 global_option（无 setting 引用），不投影成
+    // 根字段。其默认值改由 pipeline_override 合并处理。document 仍须通过
+    // schema validator（fieldLayout 全覆盖）。
+    EXPECT_FALSE(FindRootField(document, "options.stage").has_value());
 }
 
 // UAT 端到端回归：用户通过 addFormSequenceItem 在 UI 加入 DailyFarm 后，
@@ -5694,67 +5822,6 @@ namespace
     }
 } // namespace
 
-// UAT-RED: fresh session (空 acceptedProperties.pi.global_options) →
-// document.fields[options.stage].value 必须是 PI 首个 case "1-1"
-// (select 无 default_case 时回退首个 case)；options.explore.value 必须
-// 是 PI default_case "hard"。修复前 current=nullptr 导致返回空字符串。
-TEST(MaapiProjectionTest, GlobalOptionsProjectPiInterfaceDefaultsWhenUnset)
-{
-    using namespace Das::Plugins::DasMaaPi;
-
-    auto catalog = MakePiDefaultProjectionMockCatalog();
-
-    // fresh session：没有任何用户运行时设置。
-    AcceptedSettingsDto settings;
-
-    auto document = ProjectAuthoringDocument(settings, &catalog, {}, 0);
-
-    // 严格 contract 仍要通过。
-    auto validate =
-        Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
-    EXPECT_TRUE(validate.valid) << "error_kind=" << validate.error_kind
-                                << " message=" << validate.message;
-
-    // stage: select 无 default_case → 回退首个 case "1-1"。
-    auto stage_val = FieldValueOf(document, "options.stage");
-    ASSERT_TRUE(stage_val.is_string())
-        << "options.stage value must be string (select scalar IR)";
-    EXPECT_EQ(stage_val.as_string().value_or(""), "1-1");
-
-    // explore: select 有 default_case=["hard"] → 使用 "hard"。
-    auto explore_val = FieldValueOf(document, "options.explore");
-    ASSERT_TRUE(explore_val.is_string())
-        << "options.explore value must be string (select scalar IR)";
-    EXPECT_EQ(explore_val.as_string().value_or(""), "hard");
-}
-
-// UAT-RED: 用户已通过 setValue 把 stage 改为 "1-2"，则 projection 必须呈现
-// 用户值而不是 PI 默认。这保证修复不会覆盖用户运行时值。
-TEST(MaapiProjectionTest, GlobalOptionsRespectUserValueOverPiDefault)
-{
-    using namespace Das::Plugins::DasMaaPi;
-
-    auto catalog = MakePiDefaultProjectionMockCatalog();
-
-    AcceptedSettingsDto      settings;
-    MaapiPiOptionSettingsDto user_stage;
-    user_stage.option_name = "stage";
-    user_stage.kind = "select";
-    user_stage.selected_cases.push_back("1-2");
-    settings.pi.global_options.push_back(std::move(user_stage));
-
-    auto document = ProjectAuthoringDocument(settings, &catalog, {}, 0);
-
-    auto stage_val = FieldValueOf(document, "options.stage");
-    ASSERT_TRUE(stage_val.is_string());
-    EXPECT_EQ(stage_val.as_string().value_or(""), "1-2");
-
-    // explore 用户没改 → 仍走 PI default_case "hard"。
-    auto explore_val = FieldValueOf(document, "options.explore");
-    ASSERT_TRUE(explore_val.is_string());
-    EXPECT_EQ(explore_val.as_string().value_or(""), "hard");
-}
-
 // UAT-RED: task 级 switch option 在 acceptedProperties.tasks[i].options 缺省
 // 时（外部加载 acceptedProperties 没有该 option），projection 必须呈现 PI
 // 默认 true（MaaPI 约定，见 InitializeOptionDefaults）。
@@ -5964,11 +6031,12 @@ namespace
     // 构造一个覆盖 pretask/setting/global_option + 重叠键场景的 mock catalog：
     //   - stage 是 global_option 同时被 setting(performance) 引用（重叠键）
     //   - retry 仅在 setting(advanced) 中（setting-only 键）
-    //   - shared_opt 仅在 global_option（global-only 键）
+    //   - shared_opt 仅在 global_option（游离 global_option，不被 setting
+    //   引用）
     //   - bootstrap_mode 仅在 pretask(Bootstrap) 的 option 引用中
-    // 预期：S = {stage, retry}
-    //   - options.shared_opt emitted (不在 S)
-    //   - options.stage SKIPPED (在 S, 改发 settings.stage)
+    // 预期 fields[]：游离 global_option 不投影成根字段
+    //   - options.shared_opt NOT emitted（游离 global_option）
+    //   - options.stage NOT emitted（被 setting 引用，改发 settings.stage）
     //   - settings.stage emitted
     //   - settings.retry emitted
     //   - pretask.bootstrap_mode emitted
@@ -6258,10 +6326,114 @@ TEST(MaapiProjectionTest, OverlapKeyEmittedAsSettingsOnlyNotOptions)
     EXPECT_EQ(stage_in_fields, 1u)
         << "stage should render exactly once across document.fields";
 
-    // shared_opt 不在 S → options.shared_opt 仍存在。
-    EXPECT_EQ(CountFieldsWithName(document, "options.shared_opt"), 1u);
+    // shared_opt 是游离 global_option（未被任何 setting 引用），不投影成根
+    // 字段（PI v2.8.0 setting 才进设置页）。
+    EXPECT_EQ(CountFieldsWithName(document, "options.shared_opt"), 0u);
     // shared_opt 不该走 settings.* 路径。
     EXPECT_EQ(CountFieldsWithName(document, "settings.shared_opt"), 0u);
+}
+
+// 根级 fieldLayout[] 把 fields[] 按分区编组：项目设置 section（adapter/* +
+// controller/resource/preset/language + pretask.*）+ 每个 catalog->settings
+// 元素独立一 section（settings.<opt>）。叶子 fieldName 集合 == fields[].name
+// 集合（全覆盖、唯一），schema validator apply 路径通过。游离 global_option
+// 不出现在 fields[]/fieldLayout（PI v2.8.0 setting 才是进设置页的声明）。
+TEST(
+    MaapiProjectionTest,
+    RootFieldLayoutPartitionsFieldsIntoProjectAndSettingSections)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto                catalog = MakeNeutralProjectionMockCatalog();
+    AcceptedSettingsDto settings;
+
+    std::vector<PiDiagnosticDto> diags;
+    auto document = ProjectAuthoringDocument(settings, &catalog, {}, 0, &diags);
+
+    auto validate =
+        Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+    EXPECT_TRUE(validate.valid) << "error_kind=" << validate.error_kind
+                                << " message=" << validate.message;
+
+    auto doc_obj = document.as_object();
+    ASSERT_TRUE(doc_obj.has_value());
+    ASSERT_TRUE(doc_obj->contains(std::string_view("fieldLayout")));
+    auto layout = (*doc_obj)[std::string_view("fieldLayout")].as_array();
+    ASSERT_TRUE(layout.has_value());
+
+    // 项目设置 section（顺序第一）。defaultExpanded=false。
+    auto project_section = FindLayoutSection(document, "project");
+    ASSERT_TRUE(project_section.has_value());
+    auto project_fields = LayoutSectionFieldNames(*project_section);
+    ASSERT_EQ(project_fields.size(), 7u);
+    EXPECT_EQ(project_fields[0], "adapter.interfacePath");
+    EXPECT_EQ(project_fields[1], "adapter.executionPolicy.failFast");
+    EXPECT_EQ(project_fields[2], "controllerName");
+    EXPECT_EQ(project_fields[3], "resourceName");
+    EXPECT_EQ(project_fields[4], "presetName");
+    EXPECT_EQ(project_fields[5], "language");
+    EXPECT_EQ(project_fields[6], "pretask.bootstrap_mode");
+    auto project_section_obj = project_section->as_object();
+    ASSERT_TRUE(project_section_obj.has_value());
+    EXPECT_FALSE((*project_section_obj)[std::string_view("defaultExpanded")]
+                     .as_bool()
+                     .value_or(true));
+
+    // setting section: performance → settings.stage。
+    auto perf_section = FindLayoutSection(document, "setting_performance");
+    ASSERT_TRUE(perf_section.has_value());
+    auto perf_fields = LayoutSectionFieldNames(*perf_section);
+    ASSERT_EQ(perf_fields.size(), 1u);
+    EXPECT_EQ(perf_fields[0], "settings.stage");
+
+    // setting section: advanced → settings.retry。
+    auto adv_section = FindLayoutSection(document, "setting_advanced");
+    ASSERT_TRUE(adv_section.has_value());
+    auto adv_fields = LayoutSectionFieldNames(*adv_section);
+    ASSERT_EQ(adv_fields.size(), 1u);
+    EXPECT_EQ(adv_fields[0], "settings.retry");
+
+    // 全覆盖 + 唯一：layout 叶子 fieldName 集合 == fields[].name 集合。
+    auto                  layout_names = LayoutLeafFieldNames(document);
+    auto                  field_names = RootFieldNames(document);
+    std::set<std::string> layout_set(layout_names.begin(), layout_names.end());
+    std::set<std::string> field_set(field_names.begin(), field_names.end());
+    EXPECT_EQ(layout_set, field_set)
+        << "fieldLayout must cover every root field exactly once";
+    EXPECT_EQ(layout_set.size(), layout_names.size())
+        << "fieldLayout must not duplicate any field reference";
+
+    // 游离 global_option 不出现在 fields[]/fieldLayout。
+    EXPECT_EQ(CountFieldsWithName(document, "options.shared_opt"), 0u);
+    EXPECT_EQ(CountFieldsWithName(document, "options.stage"), 0u);
+}
+
+// catalog 缺席（无 PI 接口）时，fieldLayout 仍存在并覆盖 adapter 两字段。
+TEST(MaapiProjectionTest, RootFieldLayoutCoversAdapterFieldsWhenCatalogAbsent)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    AcceptedSettingsDto settings;
+    auto document = ProjectAuthoringDocument(settings, nullptr, {}, 0);
+
+    auto validate =
+        Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+    EXPECT_TRUE(validate.valid) << "error_kind=" << validate.error_kind
+                                << " message=" << validate.message;
+
+    auto project_section = FindLayoutSection(document, "project");
+    ASSERT_TRUE(project_section.has_value());
+    auto project_fields = LayoutSectionFieldNames(*project_section);
+    ASSERT_EQ(project_fields.size(), 2u);
+    EXPECT_EQ(project_fields[0], "adapter.interfacePath");
+    EXPECT_EQ(project_fields[1], "adapter.executionPolicy.failFast");
+
+    auto                  layout_names = LayoutLeafFieldNames(document);
+    auto                  field_names = RootFieldNames(document);
+    std::set<std::string> layout_set(layout_names.begin(), layout_names.end());
+    std::set<std::string> field_set(field_names.begin(), field_names.end());
+    EXPECT_EQ(layout_set, field_set)
+        << "fieldLayout must cover every root field exactly once";
 }
 
 // Feature 2 RED: setValue target=document field=settings.<key> 必须持久化到
