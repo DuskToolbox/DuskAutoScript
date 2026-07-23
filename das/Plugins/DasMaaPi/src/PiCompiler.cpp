@@ -344,13 +344,34 @@ namespace Das::Plugins::DasMaaPi
             return {};
         }
 
+        // Locate the falsy case name for an unedited switch option. PI v2.7.0
+        // permits arbitrary case names; the default "关" branch is identified
+        // by the same case-insensitive No/no/N/n match used by SwitchCaseName
+        // for edited switches. Returns the first falsy case name found so
+        // MergeCaseOverrides can apply its pipeline_override; falls back to
+        // "No" when no case matches (preserves prior literal-default behavior
+        // as a last-resort safety net).
+        std::string DefaultSwitchCaseName(const PiOption& option)
+        {
+            for (const auto& item : option.dto.cases)
+            {
+                const bool falsy = item.name == "No" || item.name == "no"
+                                   || item.name == "N" || item.name == "n";
+                if (falsy)
+                {
+                    return item.name;
+                }
+            }
+            return "No";
+        }
+
         // Resolved form of a PI option's current selection. SSOT for
         // "what value does this option contribute right now?" — used by both
         // pipeline_override merging (MergeSelectedOption) and pretask option
         // serialization (CollectPretaskOptionValue). When `selected` is null
         // the option is unedited, so PI defaults apply per protocol v2.7.0:
         //   select/checkbox → option.dto.default_cases
-        //   switch          → "No" branch
+        //   switch          → falsy case (No/no/N/n, see DefaultSwitchCaseName)
         //   input           → input.default_value.value_or("")
         // When `selected` is non-null the user's edited value wins.
         struct ResolvedOptionSelection
@@ -369,7 +390,7 @@ namespace Das::Plugins::DasMaaPi
             {
                 std::string case_name = selected
                                             ? SwitchCaseName(option, *selected)
-                                            : std::string{"No"};
+                                            : DefaultSwitchCaseName(option);
                 if (!case_name.empty())
                 {
                     out.cases.emplace_back(std::move(case_name));
@@ -948,6 +969,47 @@ namespace Das::Plugins::DasMaaPi
             }
             result.summary.task_names.emplace_back(task->dto.name);
             envelope.maapi.tasks.emplace_back(std::move(execution));
+        }
+
+        // Stale option selection scan: PI interface evolution may drop an
+        // option from the catalog while the user's stored settings still
+        // references its key. Compile silently ignores such keys (forward-
+        // progress contract: never fail compile for stale state), but
+        // operators need observability to clean up settings.json. Emit one
+        // non-blocking warning diagnostic per stale key. Scanned levels:
+        // global / resource / controller / each selected task's options.
+        // Task level uses SelectedTasks so default-picked tasks (no stored
+        // user options) do not synthesize spurious warnings.
+        auto emit_stale_warning = [&](std::string_view option_key)
+        {
+            if (FindOption(catalog, option_key) == nullptr)
+            {
+                AddDiagnostic(
+                    result,
+                    "warning",
+                    "stale-option-selection",
+                    "stale option selection ignored: "
+                        + std::string(option_key));
+            }
+        };
+        for (const auto& opt : settings.pi.global_options)
+        {
+            emit_stale_warning(opt.option_name);
+        }
+        for (const auto& opt : settings.pi.resource_options)
+        {
+            emit_stale_warning(opt.option_name);
+        }
+        for (const auto& opt : settings.pi.controller_options)
+        {
+            emit_stale_warning(opt.option_name);
+        }
+        for (const auto& task : SelectedTasks(settings, catalog))
+        {
+            for (const auto& opt : task.options)
+            {
+                emit_stale_warning(opt.option_name);
+            }
         }
 
         result.ok = std::none_of(

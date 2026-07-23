@@ -22,7 +22,7 @@
       "name": "DailyFarm",
       "entry": "StartDaily",
       "default_check": true,
-      "option": ["retry", "medicine", "notify"],
+      "option": ["retry", "medicine", "notify", "notify-lower"],
       "pipeline_override": {
         "Stage": {
           "value": "base"
@@ -157,6 +157,31 @@
         },
         {
           "name": "no"
+        }
+      ]
+    },
+    // PI v2.7.0 permits arbitrary case names. notify-lower 的 "关" 分支 case
+    // name 是小写 "no" 且承载真实 pipeline_override —— 用于校验未编辑 switch
+    // 默认分支按 case-insensitive No/no/N/n 匹配定位（而非硬编码 "No"
+    // literal），避免小写 "关" 分支 override 被静默丢失。
+    "notify-lower": {
+      "type": "switch",
+      "cases": [
+        {
+          "name": "yes",
+          "pipeline_override": {
+            "NotifyLower": {
+              "state": "on"
+            }
+          }
+        },
+        {
+          "name": "no",
+          "pipeline_override": {
+            "NotifyLower": {
+              "state": "off"
+            }
+          }
         }
       ]
     },

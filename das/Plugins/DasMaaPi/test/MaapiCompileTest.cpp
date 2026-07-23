@@ -621,6 +621,45 @@ TEST_F(MaapiCompileFixture, UneditedOptionDefaultsMergeIntoPipeline)
     EXPECT_FALSE(pipeline->contains(std::string_view("Filtered")));
 }
 
+// PI v2.7.0 option default merging: switch option whose falsy case name is
+// lowercase ("no") and carries a real pipeline_override must contribute that
+// override when unedited. The default branch is located by case-insensitive
+// No/no/N/n matching (mirroring SwitchCaseName for edited switches), not by
+// a hardcoded "No" literal — otherwise lowercase "关" branch overrides are
+// silently dropped.
+TEST_F(MaapiCompileFixture, UneditedSwitchLowercaseNoCaseMergesOverride)
+{
+    auto result = Compile(
+        CompileContextDefaults(
+            FixturePath("interface_compile.jsonc").generic_string()),
+        "execution");
+    auto obj = result.as_object();
+    ASSERT_TRUE(obj.has_value());
+    ASSERT_TRUE((*obj)[std::string_view("ok")].as_bool().value_or(false))
+        << "compile must succeed when switch options rely on PI defaults";
+    auto envelope = (*obj)[std::string_view("executionInput")].as_object();
+    ASSERT_TRUE(envelope.has_value());
+    auto maapi = (*envelope)[std::string_view("maapi")].as_object();
+    ASSERT_TRUE(maapi.has_value());
+    auto tasks = (*maapi)[std::string_view("tasks")].as_array();
+    ASSERT_TRUE(tasks.has_value());
+    auto pipeline =
+        (*(*tasks)[0].as_object())[std::string_view("pipelineOverride")]
+            .as_object();
+    ASSERT_TRUE(pipeline.has_value());
+
+    // notify-lower (switch, unedited) → default falsy case is lowercase "no",
+    // whose pipeline_override {NotifyLower:{state:"off"}} must merge.
+    ASSERT_TRUE(pipeline->contains(std::string_view("NotifyLower")))
+        << "lowercase 'no' case override must merge when switch is unedited";
+    EXPECT_EQ(
+        (*(*pipeline)[std::string_view("NotifyLower")]
+              .as_object())[std::string_view("state")]
+            .as_string()
+            .value_or(""),
+        "off");
+}
+
 // Explicit user selection wins over the PI default for the same option key.
 // Drives CompileContextSingleGlobal which selects only difficulty=hard at
 // global scope; every other option still falls back to defaults.
@@ -665,4 +704,59 @@ TEST_F(MaapiCompileFixture, EditedOptionSelectionOverridesDefault)
             .as_string()
             .value_or(""),
         "5");
+}
+
+// PI interface evolution may drop an option from the catalog while stored
+// user settings still references its key. Compile must NOT fail (forward-
+// progress contract) but must emit a non-blocking warning diagnostic so
+// operators can clean up settings.json.
+TEST_F(MaapiCompileFixture, StaleOptionSelectionEmitsNonBlockingWarning)
+{
+    // Build a context whose globalOptions references "ghost-option" — not
+    // declared in interface_compile.jsonc's catalog.
+    const auto path = FixturePath("interface_compile.jsonc").generic_string();
+    const auto context =
+        "{\"adapter\":{\"interfacePath\":\"" + std::string(path)
+        + "\",\"executionPolicy\":{\"failFast\":true}},\"pi\":{"
+          "\"controllerName\":\"Android\","
+          "\"resourceName\":\"Official\","
+          "\"globalOptions\":[{\"optionName\":\"ghost-option\","
+          "\"kind\":\"select\",\"selectedCases\":[\"x\"]}],"
+          "\"tasks\":[{\"taskName\":\"DailyFarm\",\"enabled\":true}]}}";
+    auto result = Compile(context, "execution");
+    auto obj = result.as_object();
+    ASSERT_TRUE(obj.has_value());
+    // Non-blocking: compile still succeeds despite the stale key.
+    ASSERT_TRUE((*obj)[std::string_view("ok")].as_bool().value_or(false))
+        << "stale option selection must not block compile";
+    ASSERT_TRUE(
+        (*obj)[std::string_view("canExecute")].as_bool().value_or(false));
+
+    auto diags = (*obj)[std::string_view("diagnostics")].as_array();
+    ASSERT_TRUE(diags.has_value());
+    bool found_stale = false;
+    for (auto it = diags->begin(); it != diags->end(); ++it)
+    {
+        auto d = it->as_object();
+        if (!d)
+        {
+            continue;
+        }
+        if ((*d)[std::string_view("code")].as_string().value_or("")
+                != "stale-option-selection"
+            || (*d)[std::string_view("severity")].as_string().value_or("")
+                   != "warning")
+        {
+            continue;
+        }
+        if ((*d)[std::string_view("message")].as_string().value_or("").find(
+                "ghost-option")
+            != std::string::npos)
+        {
+            found_stale = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(found_stale)
+        << "stale-option-selection warning must name the stale key";
 }
