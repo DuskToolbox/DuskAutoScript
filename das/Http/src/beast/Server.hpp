@@ -15,6 +15,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
@@ -318,26 +319,34 @@ namespace Das::Http::Beast
               router_(std::move(router)), hub_(std::move(hub)),
               stop_condition_(std::move(stop_condition))
         {
-            boost::beast::error_code ec;
+            // open/bind/listen 失败必须 fail-fast 抛异常：否则 acceptor_
+            // 处于未监听状态，DoAccept 的 async_accept 立即以错误完成且不
+            // 重试，io_context 没有任何挂起 work，server.Run() 会立即返回，
+            // 进程静默 exit 0——外部（如 DasNativeUI）只见神秘的「连接失败」。
+            // 典型诱因：监听端口落在 Windows 动态排除端口范围
+            // （netsh excludedportrange），bind 返回 WSAEACCES。抛异常让
+            // 上层打印明确的端口错误并以非零码退出，便于排查。
+            boost::system::error_code ec;
 
             acceptor_.open(endpoint.protocol(), ec);
             if (ec)
             {
-                return;
+                throw std::runtime_error(
+                    "打开监听 socket 失败: " + ec.message());
             }
 
             acceptor_.set_option(
                 boost::asio::socket_base::reuse_address(true),
                 ec);
-            if (ec)
-            {
-                return;
-            }
+            // reuse_address 失败非致命，忽略继续
 
             acceptor_.bind(endpoint, ec);
             if (ec)
             {
-                return;
+                throw std::runtime_error(
+                    "bind " + endpoint.address().to_string() + ":"
+                    + std::to_string(endpoint.port())
+                    + " 失败: " + ec.message());
             }
 
             acceptor_.listen(
@@ -345,7 +354,7 @@ namespace Das::Http::Beast
                 ec);
             if (ec)
             {
-                return;
+                throw std::runtime_error("listen 失败: " + ec.message());
             }
         }
 

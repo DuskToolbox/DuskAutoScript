@@ -19,6 +19,7 @@
 #include <boost/asio/ip/address.hpp>
 #include <boost/program_options.hpp>
 #include <filesystem>
+#include <memory>
 
 #include "./service/DasPluginManagerServiceImpl.h"
 #include "./service/DasProfileServiceImpl.h"
@@ -466,91 +467,123 @@ namespace Das::Http
             [scheduler_controller](const Das::Http::Beast::HttpRequest& req)
             { return scheduler_controller->AuthoringCompile(req); });
 
-        // Create and start server
-        Das::Http::Beast::Server server(
-            listen_address,
-            listen_port,
-            components.router,
-            g_server_condition.GetCondition());
-
-        // Create NotificationHub (needs io_context from Server)
-        auto hub = std::make_shared<Das::Http::NotificationHub>(server.IoCtx());
-        server.SetHub(hub);
-        components.notification_hub = hub;
-
-        // Wire notify callbacks through COM interfaces → WebSocket broadcast
-        // Core layer sends {"code","msg","data"}; we inject "api" here.
-        components.settings_service->SetSettingsNotifyCallback(
-            [](const char* json_event, void* user_data)
-            {
-                auto* hub = static_cast<Das::Http::NotificationHub*>(user_data);
-                if (!hub || !json_event)
-                {
-                    return;
-                }
-                auto parsed = Das::Utils::ParseYyjsonFromString(json_event);
-                if (!parsed)
-                {
-                    return;
-                }
-                auto obj_opt = parsed->as_object();
-                if (obj_opt)
-                {
-                    obj_opt.value()[std::string_view("api")] =
-                        std::string_view("api/v1/settings/get");
-                }
-                auto serialized =
-                    Das::Utils::SerializeYyjsonValue(*parsed, false);
-                if (serialized)
-                {
-                    hub->Broadcast(std::move(*serialized));
-                }
-            },
-            hub.get());
-        components.scheduler_svc->SetStateNotifyCallback(
-            [](const char* json_state, void* user_data)
-            {
-                auto* hub = static_cast<Das::Http::NotificationHub*>(user_data);
-                if (!hub || !json_state)
-                {
-                    return;
-                }
-                auto parsed = Das::Utils::ParseYyjsonFromString(json_state);
-                if (!parsed)
-                {
-                    return;
-                }
-                auto obj_opt = parsed->as_object();
-                if (obj_opt)
-                {
-                    obj_opt.value()[std::string_view("api")] =
-                        std::string_view("api/v1/scheduler/get");
-                }
-                auto serialized =
-                    Das::Utils::SerializeYyjsonValue(*parsed, false);
-                if (serialized)
-                {
-                    hub->Broadcast(std::move(*serialized));
-                }
-            },
-            hub.get());
-
-        std::cout << "[DasHttp] Server listening on " << listen_address << ":"
-                  << listen_port << std::endl;
-
-        server.Run();
-
-        const auto shutdown_result = components.core_services->Shutdown();
-        if (DAS::IsFailed(shutdown_result))
+        // 把 server 的创建、回调装配与运行抽成局部 lambda：server 保持值
+        // 对象、整个生命周期都在 lambda 体内。bind/listen 失败（端口被
+        // Windows 动态排除端口范围占用、端口已被占用等）时 Listener 构造
+        // 抛异常，由下方 try 统一捕获。这样错误处理与正常流程分离，try
+        // 只包最小调用范围；IPC 清理在 try 外执行一次，正常退出与 bind
+        // 失败共用，避免重复。
+        auto run_server = [&]() -> DasResult
         {
-            DAS_LOG_ERROR(
-                DAS_FMT_NS::format(
-                    "Failed to shutdown CoreServices. result = {}",
-                    shutdown_result)
-                    .c_str());
+            Das::Http::Beast::Server server(
+                listen_address,
+                listen_port,
+                components.router,
+                g_server_condition.GetCondition());
+
+            // Create NotificationHub (needs io_context from Server)
+            auto hub =
+                std::make_shared<Das::Http::NotificationHub>(server.IoCtx());
+            server.SetHub(hub);
+            components.notification_hub = hub;
+
+            // Wire notify callbacks through COM interfaces → WebSocket
+            // broadcast Core layer sends {"code","msg","data"}; we inject "api"
+            // here.
+            components.settings_service->SetSettingsNotifyCallback(
+                [](const char* json_event, void* user_data)
+                {
+                    auto* hub =
+                        static_cast<Das::Http::NotificationHub*>(user_data);
+                    if (!hub || !json_event)
+                    {
+                        return;
+                    }
+                    auto parsed = Das::Utils::ParseYyjsonFromString(json_event);
+                    if (!parsed)
+                    {
+                        return;
+                    }
+                    auto obj_opt = parsed->as_object();
+                    if (obj_opt)
+                    {
+                        obj_opt.value()[std::string_view("api")] =
+                            std::string_view("api/v1/settings/get");
+                    }
+                    auto serialized =
+                        Das::Utils::SerializeYyjsonValue(*parsed, false);
+                    if (serialized)
+                    {
+                        hub->Broadcast(std::move(*serialized));
+                    }
+                },
+                hub.get());
+            components.scheduler_svc->SetStateNotifyCallback(
+                [](const char* json_state, void* user_data)
+                {
+                    auto* hub =
+                        static_cast<Das::Http::NotificationHub*>(user_data);
+                    if (!hub || !json_state)
+                    {
+                        return;
+                    }
+                    auto parsed = Das::Utils::ParseYyjsonFromString(json_state);
+                    if (!parsed)
+                    {
+                        return;
+                    }
+                    auto obj_opt = parsed->as_object();
+                    if (obj_opt)
+                    {
+                        obj_opt.value()[std::string_view("api")] =
+                            std::string_view("api/v1/scheduler/get");
+                    }
+                    auto serialized =
+                        Das::Utils::SerializeYyjsonValue(*parsed, false);
+                    if (serialized)
+                    {
+                        hub->Broadcast(std::move(*serialized));
+                    }
+                },
+                hub.get());
+
+            std::cout << "[DasHttp] Server listening on " << listen_address
+                      << ":" << listen_port << std::endl;
+
+            server.Run();
+
+            const auto shutdown_result = components.core_services->Shutdown();
+            if (DAS::IsFailed(shutdown_result))
+            {
+                DAS_LOG_ERROR(
+                    DAS_FMT_NS::format(
+                        "Failed to shutdown CoreServices. result = {}",
+                        shutdown_result)
+                        .c_str());
+            }
+            return shutdown_result;
+        };
+
+        DasResult run_result = DAS_E_FAIL;
+        try
+        {
+            run_result = run_server();
+        }
+        catch (const std::exception& ex)
+        {
+            // bind/listen 失败（典型：端口落在 Windows 动态排除端口范围，
+            // bind 返回 WSAEACCES）。打印明确错误，避免之前 bind 失败却照常
+            // cout "listening"、io_context 无挂起 work 秒退、外部只见神秘
+            // 「连接失败」的假监听现象。
+            const auto msg =
+                std::string{"[DasHttp] 监听端口失败，服务器未启动: "}
+                + ex.what();
+            std::cerr << msg << std::endl;
+            DAS_LOG_ERROR(msg.c_str());
         }
 
-        // Shutdown IPC context
+        // Shutdown IPC context（正常退出与 bind 失败统一在此清理，否则
+        // joinable 线程析构触发 std::terminate）
         if (components.ipc_context)
         {
             components.ipc_context->RequestStop();
@@ -559,8 +592,7 @@ namespace Das::Http
         {
             components.ipc_thread.join();
         }
-
-        return shutdown_result;
+        return run_result;
     }
 }
 
