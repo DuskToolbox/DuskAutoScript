@@ -1870,7 +1870,11 @@ namespace Das::Plugins::DasMaaPi
 
         // 按 name 前缀/字面量分类（保留 fields[] 声明顺序，layout 与 fields
         // 顺序一致）。fields[] 不含 options.<name>（游离 global_option
-        // 不投影）， 故仅分两组：project 项目级字段与 settings.<opt> 分区字段。
+        // 不投影），故已知字段分两组：project 项目级字段与 settings.<opt> 分区
+        // 字段。未识别前缀的 root field 兜底进 project_entries（项目设置
+        // section），保证 fieldLayout 全覆盖，防未来新增 root field 前缀漏列
+        // 触发 ValidateFieldLayout 的 layoutMissingField reject。新增 root
+        // field 前缀时应在此显式登记，以便走更贴切的分类桶。
         std::vector<std::string>           project_entries;
         std::map<std::string, std::string> settings_by_opt;
         constexpr std::string_view         kSettingsPrefix = "settings.";
@@ -1902,6 +1906,12 @@ namespace Das::Plugins::DasMaaPi
                 settings_by_opt.emplace(
                     std::string(name.substr(kSettingsPrefix.size())),
                     std::string(name));
+            }
+            else
+            {
+                // 兜底桶：未识别前缀的 root field 归项目设置 section，避免
+                // layout 漏列触发 ValidateFieldLayout reject。
+                project_entries.emplace_back(std::string(name));
             }
         }
 
