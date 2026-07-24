@@ -13,7 +13,9 @@ DAS_NS_BEGIN
 DasResult DasComponentImpl::GetGuid(DasGuid* p_out_guid)
 {
     if (!p_out_guid)
+    {
         return DAS_E_INVALID_ARGUMENT;
+    }
     // 返回 IDasComponent 的 IID
     *p_out_guid = DasIidOf<PluginInterface::IDasComponent>();
     return DAS_S_OK;
@@ -23,7 +25,9 @@ DasResult DasComponentImpl::GetRuntimeClassName(
     IDasReadOnlyString** pp_out_name)
 {
     if (!pp_out_name)
+    {
         return DAS_E_INVALID_ARGUMENT;
+    }
     static const char* class_name = "Das.ComponentImpl";
     return CreateIDasReadOnlyStringFromUtf8(class_name, pp_out_name);
 }
@@ -34,23 +38,35 @@ DasResult DasComponentImpl::Dispatch(
     ExportInterface::IDasVariantVector** pp_out_result)
 {
     if (!p_function_name || !pp_out_result)
+    {
         return DAS_E_INVALID_ARGUMENT;
+    }
 
     // Get method name from string
     const char* method_ptr = nullptr;
     if (DAS::IsFailed(p_function_name->GetUtf8(&method_ptr)))
+    {
         return DAS_E_INVALID_POINTER;
+    }
     if (!method_ptr)
+    {
         return DAS_E_INVALID_POINTER;
+    }
 
-    std::string method = method_ptr;
+    const std::string method = method_ptr;
 
     if (method == "echo")
+    {
         return HandleEcho(p_arguments, pp_out_result);
+    }
     else if (method == "compute")
+    {
         return HandleCompute(p_arguments, pp_out_result);
+    }
     else if (method == "getSessionInfo")
+    {
         return HandleGetSessionInfo(p_arguments, pp_out_result);
+    }
 
     return DAS_E_INVALID_ARGUMENT;
 }
@@ -91,7 +107,9 @@ DasResult DasComponentImpl::HandleGetSessionInfo(
 DasResult DasComponentFactoryImpl::GetGuid(DasGuid* p_out_guid)
 {
     if (!p_out_guid)
+    {
         return DAS_E_INVALID_ARGUMENT;
+    }
     // 返回 IDasComponentFactory 的 IID
     *p_out_guid = DasIidOf<PluginInterface::IDasComponentFactory>();
     return DAS_S_OK;
@@ -101,7 +119,9 @@ DasResult DasComponentFactoryImpl::GetRuntimeClassName(
     IDasReadOnlyString** pp_out_name)
 {
     if (!pp_out_name)
+    {
         return DAS_E_INVALID_ARGUMENT;
+    }
     static const char* class_name = "Das.ComponentFactoryImpl";
     return CreateIDasReadOnlyStringFromUtf8(class_name, pp_out_name);
 }
@@ -122,10 +142,14 @@ DasResult DasComponentFactoryImpl::CreateInstance(
     PluginInterface::IDasComponent** pp_out_component)
 {
     if (!pp_out_component)
+    {
         return DAS_E_INVALID_ARGUMENT;
+    }
 
     if (component_iid != DasIidOf<PluginInterface::IDasComponent>())
+    {
         return DAS_E_NO_IMPLEMENTATION;
+    }
 
     auto* instance = new DasComponentImpl();
     instance->AddRef();
@@ -140,7 +164,9 @@ DasResult IpcTestPlugin2::EnumFeature(
     PluginInterface::DasPluginFeature* p_out_feature)
 {
     if (!p_out_feature)
+    {
         return DAS_E_INVALID_ARGUMENT;
+    }
 
     if (index == 0)
     {
@@ -156,7 +182,9 @@ DasResult IpcTestPlugin2::CreateFeatureInterface(
     IDasBase** pp_out_interface)
 {
     if (!pp_out_interface)
+    {
         return DAS_E_INVALID_ARGUMENT;
+    }
 
     if (index == 0)
     {

@@ -6,10 +6,10 @@ using namespace Das::Core::IPC;
 
 TEST(CallKeyTest, Equality)
 {
-    CallKey key1{1, 100};
-    CallKey key2{1, 100};
-    CallKey key3{1, 101};
-    CallKey key4{2, 100};
+    const CallKey key1{1, 100};
+    const CallKey key2{1, 100};
+    const CallKey key3{1, 101};
+    const CallKey key4{2, 100};
 
     // Same values should be equal
     EXPECT_EQ(key1, key2);
@@ -23,19 +23,19 @@ TEST(CallKeyTest, Equality)
 
 TEST(CallKeyTest, Hash)
 {
-    CallKey key1{1, 100};
-    CallKey key2{1, 100};
-    CallKey key3{1, 101};
+    const CallKey key1{1, 100};
+    const CallKey key2{1, 100};
+    const CallKey key3{1, 101};
 
-    CallKeyHash hasher;
+    const CallKeyHash hasher;
 
     // Same values should have same hash
     EXPECT_EQ(hasher(key1), hasher(key2));
 
     // Different values usually have different hashes (but not guaranteed)
     // We just verify it compiles and runs
-    size_t hash1 = hasher(key1);
-    size_t hash3 = hasher(key3);
+    const size_t hash1 = hasher(key1);
+    const size_t hash3 = hasher(key3);
     (void)hash1;
     (void)hash3;
 }
@@ -44,9 +44,9 @@ TEST(CallKeyTest, UnorderedMapUsage)
 {
     std::unordered_map<CallKey, int, CallKeyHash> map;
 
-    CallKey key1{1, 100};
-    CallKey key2{1, 101};
-    CallKey key3{2, 100};
+    const CallKey key1{1, 100};
+    const CallKey key2{1, 101};
+    const CallKey key3{2, 100};
 
     // Insert
     map[key1] = 10;
@@ -69,14 +69,14 @@ TEST(CallKeyTest, DifferentSessions)
     // This is the key test for cross-process forwarding
     // Different sessions with same call_id should be different keys
 
-    CallKey key_host_a{1, 100}; // Host A's call with call_id=100
-    CallKey key_host_b{2, 100}; // Host B's call with call_id=100
+    const CallKey key_host_a{1, 100}; // Host A's call with call_id=100
+    const CallKey key_host_b{2, 100}; // Host B's call with call_id=100
 
     // They should NOT be equal (different source_session_id)
     EXPECT_NE(key_host_a, key_host_b);
 
     // They should have different hashes
-    CallKeyHash hasher;
+    const CallKeyHash hasher;
     EXPECT_NE(hasher(key_host_a), hasher(key_host_b));
 
     // Store in map - both should be able to coexist

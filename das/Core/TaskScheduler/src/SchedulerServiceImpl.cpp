@@ -121,7 +121,7 @@ namespace Das::Core::TaskScheduler
         {
             return result;
         }
-        std::filesystem::path plugin_dir =
+        const std::filesystem::path plugin_dir =
             std::filesystem::path(reinterpret_cast<const char8_t*>(u8_path));
 
         // 反序列化 disabled_guids: IDasReadOnlyGuidVector ->

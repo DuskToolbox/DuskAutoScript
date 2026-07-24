@@ -356,18 +356,18 @@ static float BoxScoreFast(
         y_coords[i] = box[i].y;
     }
 
-    int xmin = std::max(
+    const int xmin = std::max(
         0,
         static_cast<int>(
             std::floor(*std::min_element(x_coords, x_coords + 4))));
-    int xmax = std::min(
+    const int xmax = std::min(
         bitmap.cols - 1,
         static_cast<int>(std::ceil(*std::max_element(x_coords, x_coords + 4))));
-    int ymin = std::max(
+    const int ymin = std::max(
         0,
         static_cast<int>(
             std::floor(*std::min_element(y_coords, y_coords + 4))));
-    int ymax = std::min(
+    const int ymax = std::min(
         bitmap.rows - 1,
         static_cast<int>(std::ceil(*std::max_element(y_coords, y_coords + 4))));
 
@@ -384,7 +384,7 @@ static float BoxScoreFast(
             static_cast<int>(box[i].x - xmin),
             static_cast<int>(box[i].y - ymin));
     }
-    std::vector<std::vector<cv::Point>> contours = {shifted_box};
+    const std::vector<std::vector<cv::Point>> contours = {shifted_box};
     cv::fillPoly(mask, contours, cv::Scalar(1));
 
     cv::Scalar mean_val = cv::mean(
@@ -399,31 +399,31 @@ static std::vector<cv::Point2f> UnclipBox(
     const std::vector<cv::Point2f>& box,
     float                           unclip_ratio)
 {
-    double area = cv::contourArea(box);
-    double perimeter = cv::arcLength(box, true);
+    const double area = cv::contourArea(box);
+    const double perimeter = cv::arcLength(box, true);
     if (perimeter < 1e-6)
     {
         return box;
     }
 
-    double distance = area * unclip_ratio / perimeter;
+    const double distance = area * unclip_ratio / perimeter;
 
     // Offset each edge outward by distance
     std::vector<cv::Point2f> expanded;
-    int                      n = static_cast<int>(box.size());
+    const int                n = static_cast<int>(box.size());
     for (int i = 0; i < n; ++i)
     {
-        cv::Point2f prev = box[(i - 1 + n) % n];
-        cv::Point2f curr = box[i];
-        cv::Point2f next = box[(i + 1) % n];
+        const cv::Point2f prev = box[(i - 1 + n) % n];
+        const cv::Point2f curr = box[i];
+        const cv::Point2f next = box[(i + 1) % n];
 
         // Direction vectors
         cv::Point2f d1 = (curr - prev);
         cv::Point2f d2 = (next - curr);
 
         // Normalize
-        double len1 = std::sqrt(d1.x * d1.x + d1.y * d1.y);
-        double len2 = std::sqrt(d2.x * d2.x + d2.y * d2.y);
+        const double len1 = std::sqrt(d1.x * d1.x + d1.y * d1.y);
+        const double len2 = std::sqrt(d2.x * d2.x + d2.y * d2.y);
         if (len1 < 1e-6 || len2 < 1e-6)
         {
             expanded.push_back(curr);
@@ -433,12 +433,12 @@ static std::vector<cv::Point2f> UnclipBox(
         d2 /= static_cast<float>(len2);
 
         // Normal (outward) — perpendicular to edge direction
-        cv::Point2f n1(-d1.y, d1.x);
-        cv::Point2f n2(-d2.y, d2.x);
+        const cv::Point2f n1(-d1.y, d1.x);
+        const cv::Point2f n2(-d2.y, d2.x);
 
         // Average normal at corner
-        cv::Point2f avg_normal = (n1 + n2) * 0.5f;
-        double      avg_len = std::sqrt(
+        cv::Point2f  avg_normal = (n1 + n2) * 0.5f;
+        const double avg_len = std::sqrt(
             avg_normal.x * avg_normal.x + avg_normal.y * avg_normal.y);
         if (avg_len < 1e-6)
         {
@@ -468,9 +468,11 @@ static void SortBoxesByReadingOrder(std::vector<DetBox>& boxes)
         boxes.end(),
         [](const DetBox& a, const DetBox& b)
         {
-            float a_cy = static_cast<float>(a.rect.y + a.rect.height / 2.0);
-            float b_cy = static_cast<float>(b.rect.y + b.rect.height / 2.0);
-            float avg_h =
+            const float a_cy =
+                static_cast<float>(a.rect.y + a.rect.height / 2.0);
+            const float b_cy =
+                static_cast<float>(b.rect.y + b.rect.height / 2.0);
+            const float avg_h =
                 static_cast<float>((a.rect.height + b.rect.height) / 2.0);
             // Same row if y-difference < half average height
             if (std::abs(a_cy - b_cy) < avg_h * 0.5f)
@@ -560,19 +562,20 @@ static DasResult RunSession(
     // Build input names vector
     auto input_names = new IDasReadOnlyStringVectorImpl(input_name_strs);
     input_names->AddRef();
-    DAS::DasPtr<DAS::ExportInterface::IDasReadOnlyStringVector> input_names_ptr(
-        input_names);
+    const DAS::DasPtr<DAS::ExportInterface::IDasReadOnlyStringVector>
+        input_names_ptr(input_names);
 
     // Build inputs vector
     auto inputs = new IDasTensorVectorImpl();
     inputs->AddRef();
     inputs->AddTensor(input_tensor);
-    DAS::DasPtr<DAS::ExportInterface::IDasTensorVector> inputs_ptr(inputs);
+    const DAS::DasPtr<DAS::ExportInterface::IDasTensorVector> inputs_ptr(
+        inputs);
 
     // Build output names vector
     auto output_names = new IDasReadOnlyStringVectorImpl(output_name_strs);
     output_names->AddRef();
-    DAS::DasPtr<DAS::ExportInterface::IDasReadOnlyStringVector>
+    const DAS::DasPtr<DAS::ExportInterface::IDasReadOnlyStringVector>
         output_names_ptr(output_names);
 
     auto result = session->Run(input_names, inputs, output_names, pp_outputs);
@@ -604,8 +607,8 @@ static DasResult RecognizeTextCrop(
     }
 
     // Resize to rec_input_height, preserving aspect ratio
-    double scale = static_cast<double>(rec_input_height) / crop.rows;
-    int    target_w = std::min(
+    const double scale = static_cast<double>(rec_input_height) / crop.rows;
+    int          target_w = std::min(
         static_cast<int>(crop.cols * scale),
         static_cast<int>(rec_input_width));
     target_w = std::max(target_w, 1);
@@ -643,7 +646,7 @@ static DasResult RecognizeTextCrop(
         3,
         static_cast<int64_t>(resized.rows),
         static_cast<int64_t>(resized.cols)};
-    int64_t total_elements = shape[0] * shape[1] * shape[2] * shape[3];
+    const int64_t total_elements = shape[0] * shape[1] * shape[2] * shape[3];
 
     // Preprocess into DAS-owned memory so the ORT tensor never outlives its
     // backing buffer.
@@ -657,8 +660,8 @@ static DasResult RecognizeTextCrop(
     backing.shape = shape;
     auto* float_data = backing.data;
 
-    int height = resized.rows;
-    int width = resized.cols;
+    const int height = resized.rows;
+    const int width = resized.cols;
 
     for (int h = 0; h < height; ++h)
     {
@@ -668,7 +671,7 @@ static DasResult RecognizeTextCrop(
             {
                 auto src_byte =
                     static_cast<double>(resized.at<cv::Vec3b>(h, w)[c]);
-                float val = static_cast<float>(
+                const float val = static_cast<float>(
                     (src_byte / 255.0 - kRecMean[c] / 255.0)
                     / (kRecStd[c] / 255.0));
                 auto dst_idx =
@@ -693,7 +696,7 @@ static DasResult RecognizeTextCrop(
     // Run rec inference
     // Discover rec model input name — use first input name from session
     // PaddleOCR rec model input name is typically "x"
-    std::vector<std::string> rec_input_names = {"x"};
+    const std::vector<std::string> rec_input_names = {"x"};
 
     DAS::DasPtr<DAS::ExportInterface::IDasTensorVector> outputs;
     auto                                                result = RunSession(
@@ -866,14 +869,14 @@ DasResult PaddleOcrImpl::Recognize(
             return cr;
         }
 
-        int img_w = img_size.width;
-        int img_h = img_size.height;
+        const int img_w = img_size.width;
+        const int img_h = img_size.height;
 
         // PP-OCRv5 tools/infer uses OpenCV BGR channel order. Accept RGB input
         // from DAS image producers, but normalize the working Mat to BGR before
         // resize, crop, detection, and recognition preprocessing.
-        cv::Mat src_image(img_h, img_w, CV_8UC3, raw_data);
-        cv::Mat image;
+        const cv::Mat src_image(img_h, img_w, CV_8UC3, raw_data);
+        cv::Mat       image;
         if (pixel_format == DAS::ExportInterface::DAS_PIXEL_FORMAT_RGB)
         {
             cv::cvtColor(src_image, image, cv::COLOR_RGB2BGR);
@@ -890,11 +893,11 @@ DasResult PaddleOcrImpl::Recognize(
         {
             // --- Det preprocess: resize with aspect ratio, height aligned to
             // 32 ---
-            float scale_h = static_cast<float>(det_input_height_)
-                            / static_cast<float>(img_h);
-            float scale_w = static_cast<float>(det_input_width_)
-                            / static_cast<float>(img_w);
-            float scale = std::min(scale_h, scale_w);
+            const float scale_h = static_cast<float>(det_input_height_)
+                                  / static_cast<float>(img_h);
+            const float scale_w = static_cast<float>(det_input_width_)
+                                  / static_cast<float>(img_w);
+            const float scale = std::min(scale_h, scale_w);
 
             int target_h = static_cast<int>(img_h * scale);
             int target_w = static_cast<int>(img_w * scale);
@@ -917,7 +920,8 @@ DasResult PaddleOcrImpl::Recognize(
                 3,
                 static_cast<int64_t>(target_h),
                 static_cast<int64_t>(target_w)};
-            int64_t total_elements = shape[0] * shape[1] * shape[2] * shape[3];
+            const int64_t total_elements =
+                shape[0] * shape[1] * shape[2] * shape[3];
 
             FloatTensorBackingBuffer det_backing{};
             cr = CreateFloatTensorBackingBuffer(total_elements, &det_backing);
@@ -946,7 +950,7 @@ DasResult PaddleOcrImpl::Recognize(
                     {
                         auto src_byte =
                             static_cast<double>(resized.at<cv::Vec3b>(h, w)[c]);
-                        float val = static_cast<float>(
+                        const float val = static_cast<float>(
                             (src_byte / 255.0 - kDetMean[c]) / kDetStd[c]);
                         auto dst_idx = static_cast<size_t>(
                             c * target_h * target_w + h * target_w + w);
@@ -968,7 +972,7 @@ DasResult PaddleOcrImpl::Recognize(
             }
 
             // --- Det inference ---
-            std::vector<std::string> det_input_names = {"x"};
+            const std::vector<std::string> det_input_names = {"x"};
 
             DAS::DasPtr<DAS::ExportInterface::IDasTensorVector> det_outputs;
             cr = RunSession(
@@ -1078,7 +1082,7 @@ DasResult PaddleOcrImpl::Recognize(
             }
 
             // Binarize probability map
-            cv::Mat bitmap(prob_h, prob_w, CV_8UC1);
+            const cv::Mat bitmap(prob_h, prob_w, CV_8UC1);
             for (size_t i = 0; i < static_cast<size_t>(prob_element_count); ++i)
             {
                 bitmap.data[i] = prob_map[i] > kDbThreshold ? 255 : 0;
@@ -1103,9 +1107,9 @@ DasResult PaddleOcrImpl::Recognize(
             }
 
             // Scale factors from prob map to original image
-            float ratio_h =
+            const float ratio_h =
                 static_cast<float>(img_h) / static_cast<float>(prob_h);
-            float ratio_w =
+            const float ratio_w =
                 static_cast<float>(img_w) / static_cast<float>(prob_w);
 
             // Process each contour
@@ -1117,15 +1121,15 @@ DasResult PaddleOcrImpl::Recognize(
                 }
 
                 // Minimum area rect
-                cv::RotatedRect rotated_rect = cv::minAreaRect(contour);
+                const cv::RotatedRect rotated_rect = cv::minAreaRect(contour);
 
                 // Get 4 corners
                 cv::Point2f vertices[4];
                 rotated_rect.points(vertices);
-                std::vector<cv::Point2f> box(vertices, vertices + 4);
+                const std::vector<cv::Point2f> box(vertices, vertices + 4);
 
                 // Box score (BoxScoreFast algorithm)
-                float box_score = BoxScoreFast(
+                const float box_score = BoxScoreFast(
                     bitmap,
                     std::vector<cv::Point2f>{
                         cv::Point2f(
@@ -1159,14 +1163,14 @@ DasResult PaddleOcrImpl::Recognize(
                 }
 
                 // Get bounding rect of expanded box in original image coords
-                cv::Rect br = cv::boundingRect(expanded);
+                const cv::Rect br = cv::boundingRect(expanded);
 
                 // Scale to original image coordinates
-                int x = std::max(0, static_cast<int>(br.x * ratio_w));
-                int y = std::max(0, static_cast<int>(br.y * ratio_h));
-                int w =
+                const int x = std::max(0, static_cast<int>(br.x * ratio_w));
+                const int y = std::max(0, static_cast<int>(br.y * ratio_h));
+                const int w =
                     std::min(img_w - x, static_cast<int>(br.width * ratio_w));
-                int h =
+                const int h =
                     std::min(img_h - y, static_cast<int>(br.height * ratio_h));
 
                 if (w <= 0 || h <= 0)
@@ -1213,7 +1217,7 @@ DasResult PaddleOcrImpl::Recognize(
         for (auto& det_box : detected_boxes)
         {
             // Crop text region from image
-            cv::Rect safe_rect =
+            const cv::Rect safe_rect =
                 det_box.rect & cv::Rect(0, 0, image.cols, image.rows);
             if (safe_rect.width <= 0 || safe_rect.height <= 0)
             {
@@ -1226,29 +1230,29 @@ DasResult PaddleOcrImpl::Recognize(
             {
                 // Perspective transform for accurate crop
                 // Estimate aspect ratio from corners
-                float top_width = std::sqrt(
+                const float top_width = std::sqrt(
                     (det_box.corners[1].x - det_box.corners[0].x)
                         * (det_box.corners[1].x - det_box.corners[0].x)
                     + (det_box.corners[1].y - det_box.corners[0].y)
                           * (det_box.corners[1].y - det_box.corners[0].y));
-                float bot_width = std::sqrt(
+                const float bot_width = std::sqrt(
                     (det_box.corners[2].x - det_box.corners[3].x)
                         * (det_box.corners[2].x - det_box.corners[3].x)
                     + (det_box.corners[2].y - det_box.corners[3].y)
                           * (det_box.corners[2].y - det_box.corners[3].y));
-                float max_w = std::max(top_width, bot_width);
+                const float max_w = std::max(top_width, bot_width);
 
-                float left_height = std::sqrt(
+                const float left_height = std::sqrt(
                     (det_box.corners[3].x - det_box.corners[0].x)
                         * (det_box.corners[3].x - det_box.corners[0].x)
                     + (det_box.corners[3].y - det_box.corners[0].y)
                           * (det_box.corners[3].y - det_box.corners[0].y));
-                float right_height = std::sqrt(
+                const float right_height = std::sqrt(
                     (det_box.corners[2].x - det_box.corners[1].x)
                         * (det_box.corners[2].x - det_box.corners[1].x)
                     + (det_box.corners[2].y - det_box.corners[1].y)
                           * (det_box.corners[2].y - det_box.corners[1].y));
-                float max_h = std::max(left_height, right_height);
+                const float max_h = std::max(left_height, right_height);
 
                 // Target crop size
                 cv::Point2f dst_pts[4] = {
@@ -1262,7 +1266,7 @@ DasResult PaddleOcrImpl::Recognize(
                     det_box.corners[2],
                     det_box.corners[3]};
 
-                cv::Mat transform =
+                const cv::Mat transform =
                     cv::getPerspectiveTransform(src_pts, dst_pts);
                 cv::warpPerspective(
                     image,
@@ -1316,7 +1320,7 @@ DasResult PaddleOcrImpl::Recognize(
                 const auto& text = ctc_result.text;
                 for (size_t i = 0; i < text.size();)
                 {
-                    unsigned char c = static_cast<unsigned char>(text[i]);
+                    const unsigned char c = static_cast<unsigned char>(text[i]);
                     if (c < 0x80)
                     {
                         ++i;
@@ -1342,7 +1346,8 @@ DasResult PaddleOcrImpl::Recognize(
             }
             if (char_count > 0 && det_box.rect.width > 0)
             {
-                int char_w = det_box.rect.width / static_cast<int>(char_count);
+                const int char_w =
+                    det_box.rect.width / static_cast<int>(char_count);
                 for (uint32_t ci = 0; ci < char_count; ++ci)
                 {
                     DAS::ExportInterface::DasRect result_rect;

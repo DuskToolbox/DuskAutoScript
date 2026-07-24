@@ -128,7 +128,7 @@ auto IpcRemotePluginHost::LoadPlugin(const RemotePluginLoadRequest& request)
         return tl::make_unexpected(result);
     }
 
-    DAS::DasPtr<DAS::Core::IPC::IHostLauncher> launcher(raw_launcher);
+    const DAS::DasPtr<DAS::Core::IPC::IHostLauncher> launcher(raw_launcher);
 
     uint16_t owner_session_id = 0;
     result = launcher->StartWithDesc(

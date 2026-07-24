@@ -371,7 +371,7 @@ std::vector<FromSequenceLintWarning> LintFromSequenceLinearity(
         visited.insert(node.node_id);
         while (!queue.empty())
         {
-            std::string u = queue.front();
+            const std::string u = queue.front();
             queue.pop_front();
             for (const auto& v : signal_adj[u])
             {

@@ -157,8 +157,8 @@ SettingsKeyCell* SettingsManager::GetOrCreateCell(const std::string& key)
 {
     // Double-checked locking: first try shared_lock read
     {
-        std::shared_lock lock(cells_mutex_);
-        auto             it = key_cells_.find(key);
+        const std::shared_lock lock(cells_mutex_);
+        auto                   it = key_cells_.find(key);
         if (it != key_cells_.end())
         {
             return &it->second;
@@ -166,7 +166,7 @@ SettingsKeyCell* SettingsManager::GetOrCreateCell(const std::string& key)
     }
     // Not found: acquire unique_lock and create
     {
-        std::unique_lock lock(cells_mutex_);
+        const std::unique_lock lock(cells_mutex_);
         auto [it, inserted] = key_cells_.emplace(key, SettingsKeyCell{});
         return &it->second;
     }
@@ -187,9 +187,9 @@ SettingsManager::SettingsManager(const std::filesystem::path& base_dir)
     const auto ui_path = base_dir_ / "ui.json";
     if (std::filesystem::exists(ui_path))
     {
-        auto*                               cell = GetOrCreateCell("global/ui");
-        std::unique_lock<std::shared_mutex> cell_lock(cell->mutex);
-        auto                                content = ReadJsonFile(ui_path);
+        auto* cell = GetOrCreateCell("global/ui");
+        const std::unique_lock<std::shared_mutex> cell_lock(cell->mutex);
+        auto content = ReadJsonFile(ui_path);
         auto parsed = Das::Utils::ParseYyjsonFromString(content);
         if (parsed)
         {
@@ -207,7 +207,7 @@ std::string SettingsManager::ReadJsonFile(const std::filesystem::path& path)
 
     try
     {
-        std::ifstream ifs{path};
+        const std::ifstream ifs{path};
         if (!ifs.is_open())
         {
             return "{}";
@@ -404,7 +404,7 @@ DasResult SettingsManager::UpdatePluginSettings(
     auto  key = "profile/" + profile_id + "/plugin/" + guid;
     auto* cell = GetOrCreateCell(key);
 
-    std::unique_lock<std::shared_mutex> cell_lock(cell->mutex);
+    const std::unique_lock<std::shared_mutex> cell_lock(cell->mutex);
     cell->snapshot = *parsed;
     return WriteJsonFile(GetPluginSettingsPath(profile_id, guid), *parsed);
 }
@@ -418,7 +418,7 @@ yyjson::value SettingsManager::GetPluginSettingsJson(
 
     // Fast path: shared_lock for concurrent read access
     {
-        std::shared_lock lock(cell->mutex);
+        const std::shared_lock lock(cell->mutex);
         if (!cell->snapshot.is_null())
         {
             return cell->snapshot;
@@ -426,7 +426,7 @@ yyjson::value SettingsManager::GetPluginSettingsJson(
     }
 
     // Cache miss: acquire unique_lock for file read + snapshot fill
-    std::unique_lock<std::shared_mutex> lock(cell->mutex);
+    const std::unique_lock<std::shared_mutex> lock(cell->mutex);
     if (!cell->snapshot.is_null())
     {
         return cell->snapshot;
@@ -455,7 +455,7 @@ SettingsManager::GetPluginSettingsWithStatus(
     auto  path = GetPluginSettingsPath(profile_id, guid);
 
     // Per-key mutex covers the entire check-read-write cycle
-    std::unique_lock<std::shared_mutex> cell_lock(cell->mutex);
+    const std::unique_lock<std::shared_mutex> cell_lock(cell->mutex);
 
     // Check if file exists
     if (!std::filesystem::exists(path))
@@ -473,7 +473,7 @@ SettingsManager::GetPluginSettingsWithStatus(
     // Read raw file content directly
     try
     {
-        std::ifstream ifs{path};
+        const std::ifstream ifs{path};
         if (!ifs.is_open())
         {
             auto defaults = Das::Utils::MakeYyjsonObject();
@@ -513,7 +513,7 @@ DasResult SettingsManager::UpdatePluginSettingsJson(
     auto  key = "profile/" + profile_id + "/plugin/" + guid;
     auto* cell = GetOrCreateCell(key);
 
-    std::unique_lock<std::shared_mutex> cell_lock(cell->mutex);
+    const std::unique_lock<std::shared_mutex> cell_lock(cell->mutex);
     cell->snapshot = data;
     auto result = WriteJsonFile(GetPluginSettingsPath(profile_id, guid), data);
 
@@ -634,7 +634,7 @@ DasResult SettingsManager::UpdatePluginSettingsFieldJson(
 
     // Per-key mutex protects the entire RMW cycle:
     // read current -> modify -> WriteJsonFile -> update snapshot
-    std::unique_lock<std::shared_mutex> cell_lock(cell->mutex);
+    const std::unique_lock<std::shared_mutex> cell_lock(cell->mutex);
 
     auto path = GetPluginSettingsPath(profile_id, guid);
     auto current = cell->snapshot;
@@ -709,7 +709,7 @@ DasResult SettingsManager::RebuildPluginSettingsFromDefaults(
 
     // Per-key mutex protects the entire rebuild cycle:
     // exists check + ifstream + parse/defaults + WriteJsonFile + snapshot
-    std::unique_lock<std::shared_mutex> cell_lock(cell->mutex);
+    const std::unique_lock<std::shared_mutex> cell_lock(cell->mutex);
 
     auto path = GetPluginSettingsPath(profile_id, guid);
 
@@ -723,7 +723,7 @@ DasResult SettingsManager::RebuildPluginSettingsFromDefaults(
     {
         try
         {
-            std::ifstream ifs{path};
+            const std::ifstream ifs{path};
             if (!ifs.is_open())
             {
                 needs_rebuild = true;
@@ -786,7 +786,7 @@ yyjson::value SettingsManager::GetGlobalSettingsJson()
 
     // Fast path: shared_lock for concurrent read access
     {
-        std::shared_lock lock(cell->mutex);
+        const std::shared_lock lock(cell->mutex);
         if (!cell->snapshot.is_null())
         {
             return cell->snapshot;
@@ -794,7 +794,7 @@ yyjson::value SettingsManager::GetGlobalSettingsJson()
     }
 
     // Cache miss: acquire unique_lock for file read + snapshot fill
-    std::unique_lock<std::shared_mutex> lock(cell->mutex);
+    const std::unique_lock<std::shared_mutex> lock(cell->mutex);
     if (!cell->snapshot.is_null())
     {
         return cell->snapshot;
@@ -813,7 +813,7 @@ DasResult SettingsManager::UpdateGlobalSettingsJson(const yyjson::value& data)
 {
     auto* cell = GetOrCreateCell("global/ui");
 
-    std::unique_lock<std::shared_mutex> cell_lock(cell->mutex);
+    const std::unique_lock<std::shared_mutex> cell_lock(cell->mutex);
     cell->snapshot = data;
     return WriteJsonFile(base_dir_ / "ui.json", data);
 }
@@ -911,7 +911,7 @@ yyjson::value SettingsManager::GetProfileJson(const std::string& profile_id)
 
     // Fast path: shared_lock for concurrent read access
     {
-        std::shared_lock lock(cell->mutex);
+        const std::shared_lock lock(cell->mutex);
         if (!cell->snapshot.is_null())
         {
             return cell->snapshot;
@@ -919,7 +919,7 @@ yyjson::value SettingsManager::GetProfileJson(const std::string& profile_id)
     }
 
     // Cache miss: acquire unique_lock for file read + snapshot fill
-    std::unique_lock<std::shared_mutex> lock(cell->mutex);
+    const std::unique_lock<std::shared_mutex> lock(cell->mutex);
     if (!cell->snapshot.is_null())
     {
         return cell->snapshot;
@@ -944,7 +944,7 @@ DasResult SettingsManager::UpdateProfileJson(
     auto  key = profile_id + "/ui";
     auto* cell = GetOrCreateCell(key);
 
-    std::unique_lock<std::shared_mutex> cell_lock(cell->mutex);
+    const std::unique_lock<std::shared_mutex> cell_lock(cell->mutex);
     cell->snapshot = data;
     return WriteJsonFile(GetProfileUiPath(profile_id), data);
 }
@@ -959,7 +959,7 @@ yyjson::value SettingsManager::GetSchedulerIndexJson(
 
     // Fast path: shared_lock for concurrent read access
     {
-        std::shared_lock lock(cell->mutex);
+        const std::shared_lock lock(cell->mutex);
         if (!cell->snapshot.is_null())
         {
             return cell->snapshot;
@@ -967,7 +967,7 @@ yyjson::value SettingsManager::GetSchedulerIndexJson(
     }
 
     // Cache miss: acquire unique_lock for file read + snapshot fill
-    std::unique_lock<std::shared_mutex> lock(cell->mutex);
+    const std::unique_lock<std::shared_mutex> lock(cell->mutex);
     if (!cell->snapshot.is_null())
     {
         return cell->snapshot;
@@ -1006,7 +1006,7 @@ DasResult SettingsManager::UpdateSchedulerIndexJson(
     auto  key = "profile/" + profile_id + "/scheduler";
     auto* cell = GetOrCreateCell(key);
 
-    std::unique_lock<std::shared_mutex> cell_lock(cell->mutex);
+    const std::unique_lock<std::shared_mutex> cell_lock(cell->mutex);
     cell->snapshot = scheduler_json;
     return WriteJsonFile(GetSchedulerIndexPath(profile_id), scheduler_json);
 }
@@ -1022,7 +1022,7 @@ yyjson::value SettingsManager::GetTaskInstanceJson(
 
     // Fast path: shared_lock for concurrent read access
     {
-        std::shared_lock lock(cell->mutex);
+        const std::shared_lock lock(cell->mutex);
         if (!cell->snapshot.is_null())
         {
             return cell->snapshot;
@@ -1030,7 +1030,7 @@ yyjson::value SettingsManager::GetTaskInstanceJson(
     }
 
     // Cache miss: acquire unique_lock for file read + snapshot fill
-    std::unique_lock<std::shared_mutex> lock(cell->mutex);
+    const std::unique_lock<std::shared_mutex> lock(cell->mutex);
     if (!cell->snapshot.is_null())
     {
         return cell->snapshot;
@@ -1056,7 +1056,7 @@ DasResult SettingsManager::UpdateTaskInstanceJson(
     auto  key = "profile/" + profile_id + "/task/" + std::to_string(task_id);
     auto* cell = GetOrCreateCell(key);
 
-    std::unique_lock<std::shared_mutex> cell_lock(cell->mutex);
+    const std::unique_lock<std::shared_mutex> cell_lock(cell->mutex);
     cell->snapshot = task_json;
     return WriteJsonFile(GetTaskInstancePath(profile_id, task_id), task_json);
 }
@@ -1069,7 +1069,7 @@ DasResult SettingsManager::DeleteTaskInstanceJson(
     auto* cell = GetOrCreateCell(key);
 
     // Per-key mutex protects the delete operation + snapshot update
-    std::unique_lock<std::shared_mutex> cell_lock(cell->mutex);
+    const std::unique_lock<std::shared_mutex> cell_lock(cell->mutex);
 
     try
     {
@@ -1100,14 +1100,14 @@ yyjson::value SettingsManager::GetTaskRepositoryEntryJson(
     auto* cell = GetOrCreateCell(key);
 
     {
-        std::shared_lock lock(cell->mutex);
+        const std::shared_lock lock(cell->mutex);
         if (!cell->snapshot.is_null())
         {
             return cell->snapshot;
         }
     }
 
-    std::unique_lock<std::shared_mutex> lock(cell->mutex);
+    const std::unique_lock<std::shared_mutex> lock(cell->mutex);
     if (!cell->snapshot.is_null())
     {
         return cell->snapshot;
@@ -1135,7 +1135,7 @@ DasResult SettingsManager::UpdateTaskRepositoryEntryJson(
         "profile/" + profile_id + "/taskRepository/" + std::to_string(entry_id);
     auto* cell = GetOrCreateCell(key);
 
-    std::unique_lock<std::shared_mutex> cell_lock(cell->mutex);
+    const std::unique_lock<std::shared_mutex> cell_lock(cell->mutex);
     cell->snapshot = entry_json;
     return WriteJsonFile(
         GetTaskRepositoryEntryPath(profile_id, entry_id),
@@ -1150,7 +1150,7 @@ DasResult SettingsManager::DeleteTaskRepositoryEntryJson(
         "profile/" + profile_id + "/taskRepository/" + std::to_string(entry_id);
     auto* cell = GetOrCreateCell(key);
 
-    std::unique_lock<std::shared_mutex> cell_lock(cell->mutex);
+    const std::unique_lock<std::shared_mutex> cell_lock(cell->mutex);
 
     try
     {
@@ -1216,7 +1216,7 @@ int64_t SettingsManager::AllocateNextTaskRepositoryEntryId(
     auto* cell =
         GetOrCreateCell("profile/" + profile_id + "/taskRepository/allocate");
 
-    std::unique_lock<std::shared_mutex> cell_lock(cell->mutex);
+    const std::unique_lock<std::shared_mutex> cell_lock(cell->mutex);
 
     auto ids = ListTaskRepositoryEntryIds(profile_id);
     if (ids.empty())

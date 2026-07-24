@@ -58,7 +58,7 @@ namespace
 
 TEST(DasExceptionTest, CreateDasExceptionString_Basic)
 {
-    DasResult              error_code = DAS_E_FAIL;
+    const DasResult        error_code = DAS_E_FAIL;
     DasExceptionSourceInfo source_info{"test.cpp", 10, "test_func"};
     IDasExceptionString*   p_handle = nullptr;
 
@@ -76,9 +76,9 @@ TEST(DasExceptionTest, CreateDasExceptionString_Basic)
 
 TEST(DasExceptionTest, CreateDasExceptionString_WithMessage)
 {
-    DasResult              error_code = DAS_E_FAIL;
+    const DasResult        error_code = DAS_E_FAIL;
     DasExceptionSourceInfo source_info{"test.cpp", 10, "test_func"};
-    std::string            custom_msg = "Custom error message";
+    const std::string      custom_msg = "Custom error message";
     IDasExceptionString*   p_handle = nullptr;
 
     CreateDasExceptionStringWithMessage(
@@ -99,7 +99,7 @@ TEST(DasExceptionTest, CreateDasExceptionString_WithMessage)
 
 TEST(DasExceptionTest, CreateDasExceptionString_WithTypeInfo)
 {
-    DasResult              error_code = DAS_E_FAIL;
+    const DasResult        error_code = DAS_E_FAIL;
     IDasTypeInfo*          p_type_info = nullptr;
     DasExceptionSourceInfo source_info{"test.cpp", 10, "test_func"};
     IDasExceptionString*   p_handle = nullptr;

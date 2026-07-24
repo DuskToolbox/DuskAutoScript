@@ -342,7 +342,9 @@ std::vector<Dto::PortMappingDto> SubgraphCompiler::BuildInputMapping(
                 }
             }
             if (matched)
+            {
                 break;
+            }
         }
 
         // Fallback: try dynamic_ports on root nodes if compiled plan
@@ -353,7 +355,9 @@ std::vector<Dto::PortMappingDto> SubgraphCompiler::BuildInputMapping(
             {
                 auto it = node_by_id.find(root_id);
                 if (it == node_by_id.end())
+                {
                     continue;
+                }
 
                 for (const auto& port : it->second->dynamic_ports)
                 {
@@ -370,7 +374,9 @@ std::vector<Dto::PortMappingDto> SubgraphCompiler::BuildInputMapping(
                     }
                 }
                 if (matched)
+                {
                     break;
+                }
             }
         }
     }
@@ -429,7 +435,9 @@ std::vector<Dto::PortMappingDto> SubgraphCompiler::BuildOutputMapping(
                 }
             }
             if (matched)
+            {
                 break;
+            }
         }
 
         // Fallback: try dynamic_ports on terminal nodes
@@ -439,7 +447,9 @@ std::vector<Dto::PortMappingDto> SubgraphCompiler::BuildOutputMapping(
             {
                 auto it = node_by_id.find(term_id);
                 if (it == node_by_id.end())
+                {
                     continue;
+                }
 
                 for (const auto& port : it->second->dynamic_ports)
                 {
@@ -456,7 +466,9 @@ std::vector<Dto::PortMappingDto> SubgraphCompiler::BuildOutputMapping(
                     }
                 }
                 if (matched)
+                {
                     break;
+                }
             }
         }
     }

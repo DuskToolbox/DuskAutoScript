@@ -6,6 +6,7 @@
 #include <cpp_yyjson.hpp>
 
 #include <algorithm>
+#include <ranges>
 #include <set>
 
 DAS_CORE_GRAPHRUNTIME_NS_BEGIN
@@ -48,7 +49,8 @@ std::map<GraphEntryId, std::vector<std::string>> RefManager::ScanEntryRefs(
             if (node.target.target_kind == "entryRef"
                 && node.target.entry_ref.has_value())
             {
-                GraphEntryId ref_entry_id = node.target.entry_ref->entry_id;
+                const GraphEntryId ref_entry_id =
+                    node.target.entry_ref->entry_id;
                 ref_map[ref_entry_id].push_back(graph_doc.document_id);
             }
         }
@@ -213,7 +215,8 @@ DeepCloneResult RefManager::DeepCloneEntryRef(
                     if (node.target.target_kind == "entryRef"
                         && node.target.entry_ref.has_value())
                     {
-                        GraphEntryId child_id = node.target.entry_ref->entry_id;
+                        const GraphEntryId child_id =
+                            node.target.entry_ref->entry_id;
                         if (!visited.count(child_id))
                         {
                             frontier.push_back(child_id);
@@ -235,10 +238,8 @@ DeepCloneResult RefManager::DeepCloneEntryRef(
     // Clone leaves first (reverse topological order: children before parents)
     std::map<GraphEntryId, GraphEntryId> old_to_new;
 
-    for (auto it = to_clone.rbegin(); it != to_clone.rend(); ++it)
+    for (long long old_id : std::views::reverse(to_clone))
     {
-        GraphEntryId old_id = *it;
-
         auto entry_it = std::find_if(
             all_entries.begin(),
             all_entries.end(),
@@ -266,7 +267,7 @@ DeepCloneResult RefManager::DeepCloneEntryRef(
                     if (node.target.target_kind == "entryRef"
                         && node.target.entry_ref.has_value())
                     {
-                        GraphEntryId old_child =
+                        const GraphEntryId old_child =
                             node.target.entry_ref->entry_id;
                         auto mapping_it = old_to_new.find(old_child);
                         if (mapping_it != old_to_new.end())
@@ -291,7 +292,7 @@ DeepCloneResult RefManager::DeepCloneEntryRef(
         }
 
         // Create the new entry via factory
-        GraphEntryId new_id = entry_factory(new_entry);
+        const GraphEntryId new_id = entry_factory(new_entry);
         old_to_new[old_id] = new_id;
     }
 

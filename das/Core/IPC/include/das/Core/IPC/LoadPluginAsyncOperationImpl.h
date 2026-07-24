@@ -221,7 +221,9 @@ namespace Core
             {
                 auto r = --ref_count_;
                 if (r == 0)
+                {
                     delete this;
+                }
                 return r;
             }
 
@@ -256,7 +258,9 @@ namespace Core
                     != DAS_ASYNC_STARTED)
                 {
                     if (handler_)
+                    {
                         handler_->OnCompleted(this, status_.load());
+                    }
                 }
                 return DAS_S_OK;
             }
@@ -301,7 +305,9 @@ namespace Core
                 result_ = result;
                 status_.store(DAS_ASYNC_COMPLETED, std::memory_order_release);
                 if (handler_)
+                {
                     handler_->OnCompleted(this, DAS_ASYNC_COMPLETED);
+                }
             }
 
             // Error path: no proxy
@@ -310,7 +316,9 @@ namespace Core
                 result_ = result;
                 status_.store(DAS_ASYNC_FAILED, std::memory_order_release);
                 if (handler_)
+                {
                     handler_->OnCompleted(this, DAS_ASYNC_FAILED);
+                }
             }
         };
 

@@ -55,8 +55,8 @@ std::pair<DasResult, DasPtr<IDasBase>> ProxyFactory::GetOrCreateProxy(
         return {DAS_E_IPC_DISCONNECTED, nullptr};
     }
 
-    uint64_t key = EncodeObjectId(object_id);
-    auto     it = proxy_cache_.find(key);
+    const uint64_t key = EncodeObjectId(object_id);
+    auto           it = proxy_cache_.find(key);
     if (it != proxy_cache_.end())
     {
         auto view_it = it->second.interfaces.find(interface_id);
@@ -143,8 +143,8 @@ bool ProxyFactory::HasProxy(const ObjectId& object_id) const
         return false;
     }
 
-    std::lock_guard<std::mutex> lock(proxy_cache_mutex_);
-    auto it = proxy_cache_.find(EncodeObjectId(object_id));
+    const std::scoped_lock lock(proxy_cache_mutex_);
+    auto                   it = proxy_cache_.find(EncodeObjectId(object_id));
     if (it == proxy_cache_.end())
     {
         return false;
@@ -162,8 +162,8 @@ bool ProxyFactory::HasProxy(const ObjectId& object_id) const
 
 size_t ProxyFactory::GetProxyCount() const
 {
-    std::lock_guard<std::mutex> lock(proxy_cache_mutex_);
-    size_t                      count = 0;
+    const std::scoped_lock lock(proxy_cache_mutex_);
+    size_t                 count = 0;
     for (const auto& [encoded_id, identity] : proxy_cache_)
     {
         (void)encoded_id;
@@ -175,15 +175,15 @@ size_t ProxyFactory::GetProxyCount() const
 // 只清查找表，proxy 由外部 DasPtr 自然释放
 void ProxyFactory::ClearAllProxies()
 {
-    std::lock_guard<std::mutex> lock(proxy_cache_mutex_);
+    const std::scoped_lock lock(proxy_cache_mutex_);
     proxy_cache_.clear();
 }
 
 void ProxyFactory::InvalidateCacheEntry(const ObjectId& object_id)
 {
-    std::lock_guard<std::mutex> lock(proxy_cache_mutex_);
-    uint64_t                    key = EncodeObjectId(object_id);
-    auto                        it = proxy_cache_.find(key);
+    const std::scoped_lock lock(proxy_cache_mutex_);
+    const uint64_t         key = EncodeObjectId(object_id);
+    auto                   it = proxy_cache_.find(key);
     if (it != proxy_cache_.end())
     {
         proxy_cache_.erase(it);
@@ -195,7 +195,7 @@ void ProxyFactory::OnProxyFinalRelease(
     uint32_t        interface_id,
     IPCProxyBase*   runtime_ptr) noexcept
 {
-    std::lock_guard<std::mutex> lock(proxy_cache_mutex_);
+    const std::scoped_lock lock(proxy_cache_mutex_);
     auto identity_it = proxy_cache_.find(EncodeObjectId(object_id));
     if (identity_it == proxy_cache_.end())
     {

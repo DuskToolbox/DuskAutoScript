@@ -32,7 +32,7 @@ DasResult WindowsCaptureFactoryImpl::CreateInstance(
 
     const char* p_u8_plugin_config = nullptr;
 
-    DasResult result = p_plugin_config->GetUtf8(&p_u8_plugin_config);
+    const DasResult result = p_plugin_config->GetUtf8(&p_u8_plugin_config);
 
     if (FAILED(result))
     {
@@ -68,7 +68,7 @@ DasResult WindowsCaptureFactoryImpl::CreateInstance(
         return DAS_E_INVALID_ARGUMENT;
     }
 
-    std::string capture_mode = std::string(*cm_str);
+    const std::string capture_mode = std::string(*cm_str);
     if (capture_mode != "windows_graphics_capture"
         && capture_mode != "gdi_bitblt")
     {

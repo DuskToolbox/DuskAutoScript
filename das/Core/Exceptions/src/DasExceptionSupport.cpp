@@ -71,7 +71,7 @@ DAS_C_API void CreateDasExceptionString(
     DAS::DasPtr<IDasReadOnlyString> p_error_message{};
     const auto                      result =
         ::DasGetPredefinedErrorMessage(error_code, p_error_message.Put());
-    DasReadOnlyString das_error_message{std::move(p_error_message)};
+    const DasReadOnlyString das_error_message{std::move(p_error_message)};
 
     std::string error_msg;
     if (DAS::IsFailed(result))

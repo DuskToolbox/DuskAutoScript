@@ -157,8 +157,8 @@ namespace
     // QI 已 AddRef，Attach 不再加
     TEST(DasPtrAsTest, AsDasPtrRefUsesAttach)
     {
-        auto*                       raw = new TestQIObject(42);
-        DAS::DasPtr<ITestInterface> ptr(raw);
+        auto*                             raw = new TestQIObject(42);
+        const DAS::DasPtr<ITestInterface> ptr(raw);
         // DasPtr 构造 AddRef -> ref_count = 1
         ASSERT_EQ(raw->GetRefCount(), 1);
 
@@ -178,8 +178,8 @@ namespace
     // Test 2: As(Other**) 不额外 AddRef（QI 已 AddRef）
     TEST(DasPtrAsTest, AsRawPtrOutNoExtraAddRef)
     {
-        auto*                       raw = new TestQIObject(42);
-        DAS::DasPtr<ITestInterface> ptr(raw);
+        auto*                             raw = new TestQIObject(42);
+        const DAS::DasPtr<ITestInterface> ptr(raw);
         ASSERT_EQ(raw->GetRefCount(), 1);
 
         IDasBase*       base_raw = nullptr;
@@ -198,8 +198,8 @@ namespace
     // Test 3: As(const DasGuid&) 不对原始 ptr_ AddRef，由 QI 返回对象自带引用
     TEST(DasPtrAsTest, AsGuidReturnsQIResultWithRef)
     {
-        auto*                       raw = new TestQIObject(42);
-        DAS::DasPtr<ITestInterface> ptr(raw);
+        auto*                             raw = new TestQIObject(42);
+        const DAS::DasPtr<ITestInterface> ptr(raw);
         ASSERT_EQ(raw->GetRefCount(), 1);
 
         ITestInterface* iface =
@@ -216,11 +216,11 @@ namespace
     // Test 4: As(const DasGuid&) QI 失败返回 nullptr
     TEST(DasPtrAsTest, AsGuidQIFailureReturnsNullptr)
     {
-        auto*                       raw = new TestQIObject(42);
-        DAS::DasPtr<ITestInterface> ptr(raw);
+        auto*                             raw = new TestQIObject(42);
+        const DAS::DasPtr<ITestInterface> ptr(raw);
 
-        DasGuid unknown_guid = {0xDEAD, 0xBEEF, 0xCAFE, {}};
-        auto*   iface = ptr.As<ITestInterface>(unknown_guid);
+        const DasGuid unknown_guid = {0xDEAD, 0xBEEF, 0xCAFE, {}};
+        auto*         iface = ptr.As<ITestInterface>(unknown_guid);
         EXPECT_EQ(iface, nullptr);
         // QI 失败不 AddRef，ref_count 不变
         EXPECT_EQ(raw->GetRefCount(), 1);
@@ -229,7 +229,7 @@ namespace
     // Test 5: nullptr ptr_ 返回正确错误码
     TEST(DasPtrAsTest, NullptrReturnsCorrectErrors)
     {
-        DAS::DasPtr<ITestInterface> null_ptr;
+        const DAS::DasPtr<ITestInterface> null_ptr;
 
         DAS::DasPtr<IDasBase> base_ptr;
         EXPECT_EQ(null_ptr.As(base_ptr), DAS_E_INVALID_POINTER);
@@ -255,7 +255,7 @@ namespace
 
         auto* raw = new ApplyWrapper([](int x) { return DAS_S_OK; });
         // RefCounter 初始值 0, DasPtr 构造 AddRef -> ref_count = 1
-        DAS::DasPtr<ITestApplyInterface> ptr(raw);
+        const DAS::DasPtr<ITestApplyInterface> ptr(raw);
 
         DAS::DasPtr<IDasBase> base_ptr;
         const DasResult       result = ptr.As(base_ptr);
@@ -305,7 +305,7 @@ namespace
             int>::apply_impl;
 
         auto* raw = new ApplyWrapper([](int x) { return DAS_S_OK; });
-        DAS::DasPtr<ITestApplyInterface> ptr(raw);
+        const DAS::DasPtr<ITestApplyInterface> ptr(raw);
 
         // QI 到 IDasBase（不同的接口）
         DAS::DasPtr<IDasBase> base_ptr;

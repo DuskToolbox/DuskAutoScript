@@ -160,7 +160,7 @@ namespace
 
     std::string ReadFileText(const std::filesystem::path& path)
     {
-        std::ifstream input(path);
+        const std::ifstream input(path);
         EXPECT_TRUE(input.is_open()) << path.string();
         std::ostringstream buffer;
         buffer << input.rdbuf();
@@ -312,8 +312,8 @@ namespace
         std::string_view                   key,
         std::string_view                   value)
     {
-        DasReadOnlyString k{std::string{key}.c_str()};
-        DasReadOnlyString v{std::string{value}.c_str()};
+        const DasReadOnlyString k{std::string{key}.c_str()};
+        const DasReadOnlyString v{std::string{value}.c_str()};
         map->SetString(k.Get(), v.Get());
     }
 
@@ -322,7 +322,7 @@ namespace
         std::string_view                   key,
         bool                               value)
     {
-        DasReadOnlyString k{std::string{key}.c_str()};
+        const DasReadOnlyString k{std::string{key}.c_str()};
         map->SetBool(k.Get(), value);
     }
 
@@ -331,7 +331,7 @@ namespace
         std::string_view                   key,
         int64_t                            value)
     {
-        DasReadOnlyString k{std::string{key}.c_str()};
+        const DasReadOnlyString k{std::string{key}.c_str()};
         map->SetInt(k.Get(), value);
     }
 
@@ -339,8 +339,8 @@ namespace
         Das::ExportInterface::IDasReadOnlyPortMap* map,
         std::string_view                           key)
     {
-        int64_t           v{};
-        DasReadOnlyString k{std::string{key}.c_str()};
+        int64_t                 v{};
+        const DasReadOnlyString k{std::string{key}.c_str()};
         map->GetInt(k.Get(), &v);
         return v;
     }
@@ -349,9 +349,9 @@ namespace
         Das::ExportInterface::IDasReadOnlyPortMap* map,
         std::string_view                           key)
     {
-        IDasReadOnlyString* p_str = nullptr;
-        DasReadOnlyString   k{std::string{key}.c_str()};
-        auto                hr = map->GetString(k.Get(), &p_str);
+        IDasReadOnlyString*     p_str = nullptr;
+        const DasReadOnlyString k{std::string{key}.c_str()};
+        auto                    hr = map->GetString(k.Get(), &p_str);
         if (DAS::IsFailed(hr) || !p_str)
         {
             return {};
@@ -579,7 +579,7 @@ namespace
             }
 
             DAS::DasPtr<Das::ExportInterface::IDasPortMap> output_map;
-            DasResult hr = CreateIDasPortMap(output_map.Put());
+            const DasResult hr = CreateIDasPortMap(output_map.Put());
             if (DAS::IsFailed(hr))
             {
                 return hr;
@@ -930,7 +930,7 @@ TEST_F(
             &factory_base_raw),
         DAS_S_OK);
     ASSERT_NE(factory_base_raw, nullptr);
-    DasPtr<IDasBase> factory_base(factory_base_raw);
+    const DasPtr<IDasBase> factory_base(factory_base_raw);
 
     DasPtr<Das::PluginInterface::IDasTaskComponentFactory> factory;
     ASSERT_EQ(factory_base.As(factory.Put()), DAS_S_OK);
@@ -1111,7 +1111,7 @@ TEST_F(TaskComponentContractTest, RepositoryInvokeFailsWhenHostUnavailable)
     IDasBase* factory_base_raw = nullptr;
     ASSERT_EQ(package->CreateFeatureInterface(0, &factory_base_raw), DAS_S_OK);
     ASSERT_NE(factory_base_raw, nullptr);
-    DasPtr<IDasBase> factory_base(factory_base_raw);
+    const DasPtr<IDasBase> factory_base(factory_base_raw);
 
     DasPtr<Das::PluginInterface::IDasTaskComponentFactory> factory;
     ASSERT_EQ(factory_base.As(factory.Put()), DAS_S_OK);

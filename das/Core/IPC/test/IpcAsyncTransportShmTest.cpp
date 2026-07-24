@@ -595,7 +595,7 @@ TEST_F(IpcAsyncTransportShmTest, MultipleMessages_VariableSizes)
         // 启动 io_context 线程
         std::thread io_thread([this]() { io_context_.run(); });
 
-        DasResult send_result = send_future.get();
+        const DasResult send_result = send_future.get();
         ASSERT_EQ(send_result, DAS_S_OK) << "Failed to send message " << i;
 
         auto recv_result = recv_future.get();
@@ -666,7 +666,7 @@ TEST_F(IpcAsyncTransportShmTest, LargeMessage_WithoutPool_Fails)
         return;
     }
 
-    DasResult send_result = send_future.get();
+    const DasResult send_result = send_future.get();
 
     // 无 pool 时，大消息发送应该失败
     EXPECT_NE(send_result, DAS_S_OK);
@@ -717,7 +717,7 @@ TEST_F(IpcAsyncTransportShmTest, UnconnectedPools_HandleGracefully)
     // 启动 io_context 线程
     std::thread io_thread([this]() { io_context_.run(); });
 
-    DasResult send_result = send_future.get();
+    const DasResult send_result = send_future.get();
 
     // Pool 不连通（两端不同名 pool）时：发送侧用自己的 server_pool 仍能成功
     // Allocate+发送 （发送侧不感知对端 pool）；接收侧 client_pool 收到无效

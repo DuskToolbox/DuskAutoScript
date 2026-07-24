@@ -65,7 +65,9 @@ DasResult GraphRuntime::CheckStopToken(
     Das::PluginInterface::IDasStopToken* p_stop_token)
 {
     if (!p_stop_token)
+    {
         return DAS_S_OK;
+    }
 
     bool      stop_requested = false;
     DasResult hr = p_stop_token->StopRequested(&stop_requested);
@@ -119,9 +121,9 @@ DasResult GraphRuntime::GetStructuredError(
         return DAS_E_NOT_FOUND;
     }
 
-    DasReadOnlyString               locale{"en"};
+    const DasReadOnlyString         locale{"en"};
     DAS::DasPtr<IDasReadOnlyString> p_msg;
-    DasResult                       hr =
+    const DasResult                 hr =
         p_error_lens_->GetErrorMessage(locale.Get(), error_code, p_msg.Put());
     if (DAS_S_OK != hr || !p_msg.Get())
     {
@@ -388,7 +390,9 @@ DasResult GraphRuntime::ExecuteNodeWithComponent(
     for (const auto& b : plan.binding_plan.bindings)
     {
         if (b.target_node_id == node_id)
+        {
             input_bindings.push_back(b);
+        }
     }
 
     // 3. Build input PortMap from upstream PortFrame data
@@ -409,9 +413,11 @@ DasResult GraphRuntime::ExecuteNodeWithComponent(
     }
     else
     {
-        DasResult hr = CreateIDasPortMap(input_portmap.Put());
+        const DasResult hr = CreateIDasPortMap(input_portmap.Put());
         if (DAS_S_OK != hr)
+        {
             return hr;
+        }
     }
 
     // 4. Call Do() directly with PortMap — no JSON conversion

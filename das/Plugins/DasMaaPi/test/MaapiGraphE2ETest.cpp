@@ -197,8 +197,8 @@ namespace
 
 TEST(MaapiGraphE2ETest, MaaPiNodeExecutesSuccessfullyInGraphRuntime)
 {
-    FakeMaaApiBoundary fake;
-    ScopedBoundaryHook hook(fake);
+    FakeMaaApiBoundary       fake;
+    const ScopedBoundaryHook hook(fake);
 
     auto settings_json = MakeNodeSettingsJson(
         FixturePath("pi_e2e_interface.json").string(),
@@ -226,9 +226,9 @@ TEST(MaapiGraphE2ETest, MaaPiNodeExecutesSuccessfullyInGraphRuntime)
 
             // Extract pipeline_override JSON from the call string.
             // Format is "PostTask:StartE2E:<pipeline_override>"
-            auto        colon_pos = call.find(':', call.find("PostTask:") + 9);
-            auto        second_colon = call.find(':', colon_pos + 1);
-            std::string pipeline_override = call.substr(second_colon + 1);
+            auto colon_pos = call.find(':', call.find("PostTask:") + 9);
+            auto second_colon = call.find(':', colon_pos + 1);
+            const std::string pipeline_override = call.substr(second_colon + 1);
 
             // Verify PortMap inputs were merged via port_map mapping.
             // portMap maps graph_debug → enable_debug, graph_timeout →
@@ -255,7 +255,7 @@ TEST(MaapiGraphE2ETest, MaaPiNodePropagatesExecutionFailure)
 {
     FakeMaaApiBoundary fake;
     fake.wait_status_by_entry["StartE2E"] = MaaTaskStatus::Failed;
-    ScopedBoundaryHook hook(fake);
+    const ScopedBoundaryHook hook(fake);
 
     auto settings_json = MakeNodeSettingsJson(
         FixturePath("pi_e2e_interface.json").string(),

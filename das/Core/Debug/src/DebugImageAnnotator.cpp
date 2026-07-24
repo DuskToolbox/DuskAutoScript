@@ -238,8 +238,8 @@ namespace
             return nullptr;
         }
 
-        cv::Mat raw{size.height, size.width, CV_8UC(channels), p_data};
-        auto    snapshot = std::make_shared<DebugImageSnapshot>();
+        const cv::Mat raw{size.height, size.width, CV_8UC(channels), p_data};
+        auto          snapshot = std::make_shared<DebugImageSnapshot>();
         snapshot->pixel_format = format;
         snapshot->bgr_image = ConvertToBgr(raw.clone(), format);
         snapshot->available = !snapshot->bgr_image.empty();
@@ -460,7 +460,7 @@ namespace
             const auto job_result = ProcessImageJob(job);
 
             {
-                std::lock_guard lock{state.mutex};
+                const std::scoped_lock lock{state.mutex};
                 if (DAS::IsFailed(job_result)
                     && !DAS::IsFailed(state.first_error))
                 {
@@ -488,7 +488,7 @@ namespace
     {
         auto& state = WorkerState();
         {
-            std::lock_guard lock{state.mutex};
+            const std::scoped_lock lock{state.mutex};
             EnsureWorkerRunning();
             state.queue.emplace_back(std::move(job));
         }
@@ -604,7 +604,7 @@ void ShutdownImageWorker()
 {
     auto& state = WorkerState();
     {
-        std::lock_guard lock{state.mutex};
+        const std::scoped_lock lock{state.mutex};
         if (!state.running)
         {
             return;
@@ -617,7 +617,7 @@ void ShutdownImageWorker()
         state.worker.join();
     }
     {
-        std::lock_guard lock{state.mutex};
+        const std::scoped_lock lock{state.mutex};
         state.running = false;
         state.stopping = false;
     }
@@ -625,8 +625,8 @@ void ShutdownImageWorker()
 
 bool IsImageWorkerRunningForTest()
 {
-    auto&           state = WorkerState();
-    std::lock_guard lock{state.mutex};
+    auto&                  state = WorkerState();
+    const std::scoped_lock lock{state.mutex};
     return state.running;
 }
 

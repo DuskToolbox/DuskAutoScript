@@ -16,7 +16,7 @@ DasResult ComponentFactoryManager::OnPluginLoaded(
         return DAS_S_OK;
     }
 
-    std::unique_lock lock{mutex_};
+    const std::unique_lock lock{mutex_};
 
     for (auto* feat : factory_features)
     {
@@ -46,7 +46,7 @@ DasResult ComponentFactoryManager::OnPluginLoaded(
 
 DasResult ComponentFactoryManager::OnPluginUnloading(const DasGuid& plugin_guid)
 {
-    std::unique_lock lock{mutex_};
+    const std::unique_lock lock{mutex_};
 
     auto factory_it = factories_.find(plugin_guid);
     if (factory_it == factories_.end())
@@ -82,8 +82,8 @@ DasResult ComponentFactoryManager::CreateComponent(
     DasOutPtr<Das::PluginInterface::IDasComponent> result(pp_out_component);
 
     {
-        std::shared_lock lock{mutex_};
-        auto             it = routing_table_.find(component_iid);
+        const std::shared_lock lock{mutex_};
+        auto                   it = routing_table_.find(component_iid);
         if (it != routing_table_.end())
         {
             auto cr = it->second->CreateInstance(component_iid, result.Put());
@@ -96,8 +96,8 @@ DasResult ComponentFactoryManager::CreateComponent(
     }
 
     {
-        std::unique_lock lock{mutex_};
-        auto             it = routing_table_.find(component_iid);
+        const std::unique_lock lock{mutex_};
+        auto                   it = routing_table_.find(component_iid);
         if (it != routing_table_.end())
         {
             auto cr = it->second->CreateInstance(component_iid, result.Put());

@@ -125,7 +125,7 @@ namespace Das::Plugins::DasMaaPi
                     }
                 }
             };
-            std::unique_ptr<void, ToolkitListDeleter> list(
+            const std::unique_ptr<void, ToolkitListDeleter> list(
                 symbols.tk_list_create(),
                 ToolkitListDeleter{symbols.tk_list_destroy});
             if (!list)

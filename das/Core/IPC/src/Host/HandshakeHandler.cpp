@@ -31,7 +31,7 @@ namespace Core
                 if (local_session_id != 0
                     && (local_session_id == 0 || local_session_id == 0xFFFF))
                 {
-                    std::string msg = DAS_FMT_NS::format(
+                    const std::string msg = DAS_FMT_NS::format(
                         "HandshakeHandler: Invalid local_session_id: {}",
                         local_session_id);
                     DAS_LOG_ERROR(msg.c_str());
@@ -44,7 +44,7 @@ namespace Core
                         ? std::nullopt
                         : std::optional<uint16_t>(local_session_id);
 
-                std::string msg = DAS_FMT_NS::format(
+                const std::string msg = DAS_FMT_NS::format(
                     "HandshakeHandler initialized with session_id: {}",
                     local_session_id);
                 DAS_LOG_INFO(msg.c_str());
@@ -52,7 +52,7 @@ namespace Core
 
             HandshakeHandler::~HandshakeHandler()
             {
-                std::lock_guard<std::mutex> lock(clients_mutex_);
+                const std::scoped_lock lock(clients_mutex_);
 
                 for (auto& pair : clients_)
                 {
@@ -64,7 +64,7 @@ namespace Core
 
                 clients_.clear();
 
-                std::string msg =
+                const std::string msg =
                     DAS_FMT_NS::format("HandshakeHandler shutdown complete");
                 DAS_LOG_INFO(msg.c_str());
             }
@@ -77,7 +77,7 @@ namespace Core
             {
                 (void)ctx; // CONTROL_PLANE handler: IO-safe context only
 
-                HandshakeInterfaceId interface_id =
+                const HandshakeInterfaceId interface_id =
                     static_cast<HandshakeInterfaceId>(header.GetInterfaceId());
 
                 std::vector<uint8_t> response_body;
@@ -90,7 +90,7 @@ namespace Core
                 {
                     if (body.size() < sizeof(HelloRequestV1))
                     {
-                        std::string msg = DAS_FMT_NS::format(
+                        const std::string msg = DAS_FMT_NS::format(
                             "HandshakeHandler: HelloRequest body too small: {} < {}",
                             body.size(),
                             sizeof(HelloRequestV1));
@@ -107,7 +107,7 @@ namespace Core
                 {
                     if (body.size() < sizeof(ReadyRequestV1))
                     {
-                        std::string msg = DAS_FMT_NS::format(
+                        const std::string msg = DAS_FMT_NS::format(
                             "HandshakeHandler: ReadyRequest body too small: {} < {}",
                             body.size(),
                             sizeof(ReadyRequestV1));
@@ -124,7 +124,7 @@ namespace Core
                 {
                     if (body.size() != sizeof(HeartbeatV1))
                     {
-                        std::string msg = DAS_FMT_NS::format(
+                        const std::string msg = DAS_FMT_NS::format(
                             "Heartbeat body size invalid: {} != {}",
                             body.size(),
                             sizeof(HeartbeatV1));
@@ -162,7 +162,7 @@ namespace Core
                 {
                     if (body.size() < sizeof(GoodbyeV1))
                     {
-                        std::string msg = DAS_FMT_NS::format(
+                        const std::string msg = DAS_FMT_NS::format(
                             "HandshakeHandler: Goodbye body too small: {} < {}",
                             body.size(),
                             sizeof(GoodbyeV1));
@@ -177,7 +177,7 @@ namespace Core
 
                 default:
                 {
-                    std::string msg = DAS_FMT_NS::format(
+                    const std::string msg = DAS_FMT_NS::format(
                         "HandshakeHandler: Unknown interface_id: {}",
                         header.GetInterfaceId());
                     DAS_LOG_ERROR(msg.c_str());
@@ -249,15 +249,15 @@ namespace Core
 
             bool HandshakeHandler::HasClient(uint16_t session_id) const
             {
-                std::lock_guard<std::mutex> lock(clients_mutex_);
+                const std::scoped_lock lock(clients_mutex_);
                 return clients_.find(session_id) != clients_.end();
             }
 
             std::optional<ConnectedClient> HandshakeHandler::GetClient(
                 uint16_t session_id) const
             {
-                std::lock_guard<std::mutex> lock(clients_mutex_);
-                auto                        it = clients_.find(session_id);
+                const std::scoped_lock lock(clients_mutex_);
+                auto                   it = clients_.find(session_id);
                 if (it != clients_.end())
                 {
                     return it->second;
@@ -267,7 +267,7 @@ namespace Core
 
             std::vector<ConnectedClient> HandshakeHandler::GetAllClients() const
             {
-                std::lock_guard<std::mutex>  lock(clients_mutex_);
+                const std::scoped_lock       lock(clients_mutex_);
                 std::vector<ConnectedClient> result;
                 result.reserve(clients_.size());
                 for (const auto& pair : clients_)
@@ -279,7 +279,7 @@ namespace Core
 
             size_t HandshakeHandler::GetClientCount() const
             {
-                std::lock_guard<std::mutex> lock(clients_mutex_);
+                const std::scoped_lock lock(clients_mutex_);
                 return clients_.size();
             }
 
@@ -290,7 +290,7 @@ namespace Core
                 if (request.protocol_version
                     != HelloRequestV1::CURRENT_PROTOCOL_VERSION)
                 {
-                    std::string msg = DAS_FMT_NS::format(
+                    const std::string msg = DAS_FMT_NS::format(
                         "HandshakeHandler: Protocol version mismatch: {} != {}",
                         request.protocol_version,
                         HelloRequestV1::CURRENT_PROTOCOL_VERSION);
@@ -312,7 +312,7 @@ namespace Core
 
                 if (request.plugin_name[0] == '\0')
                 {
-                    std::string msg = DAS_FMT_NS::format(
+                    const std::string msg = DAS_FMT_NS::format(
                         "HandshakeHandler: Empty plugin name");
                     DAS_LOG_ERROR(msg.c_str());
 
@@ -334,7 +334,7 @@ namespace Core
                 uint16_t session_id = request.assigned_session_id;
                 if (session_id == 0 || session_id == 0xFFFF)
                 {
-                    std::string msg = DAS_FMT_NS::format(
+                    const std::string msg = DAS_FMT_NS::format(
                         "HandshakeHandler: Invalid assigned_session_id: {}",
                         session_id);
                     DAS_LOG_ERROR(msg.c_str());
@@ -364,11 +364,11 @@ namespace Core
                 client.last_heartbeat = std::chrono::steady_clock::now();
 
                 {
-                    std::lock_guard<std::mutex> lock(clients_mutex_);
+                    const std::scoped_lock lock(clients_mutex_);
                     clients_[session_id] = client;
                 }
 
-                std::string msg = DAS_FMT_NS::format(
+                const std::string msg = DAS_FMT_NS::format(
                     "HandshakeHandler: Client connected: session_id={}, pid={}, plugin={}",
                     session_id,
                     request.pid,
@@ -392,7 +392,7 @@ namespace Core
                     }
                     catch (const std::exception& e)
                     {
-                        std::string err_msg = DAS_FMT_NS::format(
+                        const std::string err_msg = DAS_FMT_NS::format(
                             "HandshakeHandler: exception in on_client_connected callback: {}",
                             e.what());
                         DAS_LOG_ERROR(err_msg.c_str());
@@ -411,12 +411,12 @@ namespace Core
                 const ReadyRequestV1& request,
                 std::vector<uint8_t>& response_body)
             {
-                std::lock_guard<std::mutex> lock(clients_mutex_);
+                const std::scoped_lock lock(clients_mutex_);
 
                 auto it = clients_.find(request.session_id);
                 if (it == clients_.end())
                 {
-                    std::string msg = DAS_FMT_NS::format(
+                    const std::string msg = DAS_FMT_NS::format(
                         "HandshakeHandler: ReadyRequest for unknown session: {}",
                         request.session_id);
                     DAS_LOG_ERROR(msg.c_str());
@@ -431,7 +431,7 @@ namespace Core
 
                 if (it->second.is_ready)
                 {
-                    std::string msg = DAS_FMT_NS::format(
+                    const std::string msg = DAS_FMT_NS::format(
                         "HandshakeHandler: Client already ready: session_id={}",
                         request.session_id);
                     DAS_LOG_WARNING(msg.c_str());
@@ -446,7 +446,7 @@ namespace Core
 
                 it->second.is_ready = true;
 
-                std::string msg = DAS_FMT_NS::format(
+                const std::string msg = DAS_FMT_NS::format(
                     "HandshakeHandler: Client ready: session_id={}, plugin={}",
                     request.session_id,
                     it->second.plugin_name.c_str());
@@ -464,7 +464,7 @@ namespace Core
                 uint16_t           sender_session_id,
                 const HeartbeatV1& heartbeat)
             {
-                std::lock_guard<std::mutex> lock(clients_mutex_);
+                const std::scoped_lock lock(clients_mutex_);
 
                 // 只更新发送者客户端的心跳时间戳
                 auto it = clients_.find(sender_session_id);
@@ -485,7 +485,7 @@ namespace Core
                 uint16_t session_id = 0;
 
                 {
-                    std::lock_guard<std::mutex> lock(clients_mutex_);
+                    const std::scoped_lock lock(clients_mutex_);
 
                     if (!clients_.empty())
                     {
@@ -497,7 +497,7 @@ namespace Core
 
                 if (session_id != 0)
                 {
-                    std::string msg = DAS_FMT_NS::format(
+                    const std::string msg = DAS_FMT_NS::format(
                         "HandshakeHandler: Client disconnected: session_id={}, reason={}",
                         session_id,
                         goodbye.reason);

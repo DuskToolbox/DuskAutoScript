@@ -496,7 +496,7 @@ TEST_F(IpcRunLoopTest, BusinessResponseWithPendingCallbackUsesFastPath)
         CreateConnectedTransportPair("business_response_callback");
     ASSERT_TRUE(transport_pair.has_value());
 
-    DAS::DasPtr<IHostConnection> host(new TestInternalHost(
+    const DAS::DasPtr<IHostConnection> host(new TestInternalHost(
         runloop_->GetIoContext(),
         REMOTE_SESSION_ID,
         transport_pair->run_loop_side));
@@ -509,7 +509,7 @@ TEST_F(IpcRunLoopTest, BusinessResponseWithPendingCallbackUsesFastPath)
     const CallKey        call_key{REMOTE_SESSION_ID, call_id};
 
     {
-        std::unique_lock<std::mutex> lock(runloop_->pending_mutex_);
+        const std::unique_lock<std::mutex> lock(runloop_->pending_mutex_);
         runloop_->pending_calls_[call_key] = PendingCallState{
             .call_key = call_key,
             .deadline = std::chrono::steady_clock::time_point::max(),
@@ -563,7 +563,7 @@ TEST_F(IpcRunLoopTest, BusinessResponseWithoutPendingCallbackFallsBackToQueue)
         CreateConnectedTransportPair("business_response_inbound_fallback");
     ASSERT_TRUE(transport_pair.has_value());
 
-    DAS::DasPtr<IHostConnection> host(new TestInternalHost(
+    const DAS::DasPtr<IHostConnection> host(new TestInternalHost(
         runloop_->GetIoContext(),
         REMOTE_SESSION_ID,
         transport_pair->run_loop_side));
@@ -571,7 +571,7 @@ TEST_F(IpcRunLoopTest, BusinessResponseWithoutPendingCallbackFallsBackToQueue)
 
     const CallKey call_key{REMOTE_SESSION_ID, call_id};
     {
-        std::unique_lock<std::mutex> lock(runloop_->pending_mutex_);
+        const std::unique_lock<std::mutex> lock(runloop_->pending_mutex_);
         runloop_->pending_calls_[call_key] = PendingCallState{
             .call_key = call_key,
             .deadline = std::chrono::steady_clock::time_point::max(),

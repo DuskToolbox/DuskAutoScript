@@ -131,8 +131,8 @@ namespace
         std::string_view              port_id,
         std::string_view              value)
     {
-        DasReadOnlyString key{std::string{port_id}.c_str()};
-        DasReadOnlyString val{std::string{value}.c_str()};
+        const DasReadOnlyString key{std::string{port_id}.c_str()};
+        const DasReadOnlyString val{std::string{value}.c_str()};
         map->SetString(key.Get(), val.Get());
     }
 
@@ -145,8 +145,8 @@ namespace
         auto serialized = Das::Utils::SerializeYyjsonValue(value);
         if (serialized)
         {
-            DasReadOnlyString key{std::string{port_id}.c_str()};
-            DasReadOnlyString val{serialized->c_str()};
+            const DasReadOnlyString key{std::string{port_id}.c_str()};
+            const DasReadOnlyString val{serialized->c_str()};
             map->SetString(key.Get(), val.Get());
         }
     }
@@ -156,9 +156,9 @@ namespace
         ExportInterface::IDasReadOnlyPortMap* map,
         std::string_view                      port_id)
     {
-        IDasReadOnlyString* p_str = nullptr;
-        DasReadOnlyString   key{std::string{port_id}.c_str()};
-        auto                hr = map->GetString(key.Get(), &p_str);
+        IDasReadOnlyString*     p_str = nullptr;
+        const DasReadOnlyString key{std::string{port_id}.c_str()};
+        auto                    hr = map->GetString(key.Get(), &p_str);
         if (DAS::IsFailed(hr) || p_str == nullptr)
         {
             return std::nullopt;
@@ -166,7 +166,7 @@ namespace
 
         const char* utf8 = nullptr;
         p_str->GetUtf8(&utf8);
-        std::string str_val(utf8 ? utf8 : "");
+        const std::string str_val(utf8 ? utf8 : "");
         p_str->Release();
 
         if (str_val.empty())
@@ -183,9 +183,9 @@ namespace
         std::string_view                      port_id,
         bool                                  default_val = false)
     {
-        bool              val = default_val;
-        DasReadOnlyString key{std::string{port_id}.c_str()};
-        auto              hr = map->GetBool(key.Get(), &val);
+        bool                    val = default_val;
+        const DasReadOnlyString key{std::string{port_id}.c_str()};
+        auto                    hr = map->GetBool(key.Get(), &val);
         return DAS::IsOk(hr) ? val : default_val;
     }
 
@@ -195,9 +195,9 @@ namespace
         std::string_view                      port_id,
         int64_t                               default_val = 0)
     {
-        int64_t           val = default_val;
-        DasReadOnlyString key{std::string{port_id}.c_str()};
-        auto              hr = map->GetInt(key.Get(), &val);
+        int64_t                 val = default_val;
+        const DasReadOnlyString key{std::string{port_id}.c_str()};
+        auto                    hr = map->GetInt(key.Get(), &val);
         return DAS::IsOk(hr) ? val : default_val;
     }
 
@@ -207,7 +207,7 @@ namespace
         std::string_view              port_id,
         int64_t                       value)
     {
-        DasReadOnlyString key{std::string{port_id}.c_str()};
+        const DasReadOnlyString key{std::string{port_id}.c_str()};
         map->SetInt(key.Get(), value);
     }
 
@@ -219,7 +219,7 @@ namespace
         ExportInterface::IDasPortMap* map,
         std::string_view              signal_port_id)
     {
-        std::string json =
+        const std::string json =
             std::string(R"([")") + std::string(signal_port_id) + R"("])";
         SetPortString(map, "signals", json);
     }
@@ -242,8 +242,8 @@ namespace
         ExportInterface::IDasPortMap*         dst,
         std::string_view                      dst_port)
     {
-        DasReadOnlyString key{std::string{src_port}.c_str()};
-        DasVariantType    kind = DAS_VARIANT_TYPE_NULL;
+        const DasReadOnlyString key{std::string{src_port}.c_str()};
+        DasVariantType          kind = DAS_VARIANT_TYPE_NULL;
         if (DAS::IsFailed(src->GetType(key.Get(), &kind)))
         {
             return false;
@@ -265,7 +265,7 @@ namespace
             bool v{};
             if (DAS::IsOk(src->GetBool(key.Get(), &v)))
             {
-                DasReadOnlyString dkey{std::string{dst_port}.c_str()};
+                const DasReadOnlyString dkey{std::string{dst_port}.c_str()};
                 dst->SetBool(dkey.Get(), v);
                 return true;
             }
@@ -276,7 +276,7 @@ namespace
             double v{};
             if (DAS::IsOk(src->GetFloat(key.Get(), &v)))
             {
-                DasReadOnlyString dkey{std::string{dst_port}.c_str()};
+                const DasReadOnlyString dkey{std::string{dst_port}.c_str()};
                 dst->SetFloat(dkey.Get(), v);
                 return true;
             }
@@ -288,7 +288,7 @@ namespace
             if (DAS::IsOk(src->GetString(key.Get(), &p_str))
                 && p_str != nullptr)
             {
-                DasReadOnlyString dkey{std::string{dst_port}.c_str()};
+                const DasReadOnlyString dkey{std::string{dst_port}.c_str()};
                 dst->SetString(dkey.Get(), p_str);
                 p_str->Release();
                 return true;
@@ -308,9 +308,9 @@ namespace
         std::string_view                      port_id,
         std::string_view                      default_val = {})
     {
-        IDasReadOnlyString* p_str = nullptr;
-        DasReadOnlyString   key{std::string{port_id}.c_str()};
-        auto                hr = map->GetString(key.Get(), &p_str);
+        IDasReadOnlyString*     p_str = nullptr;
+        const DasReadOnlyString key{std::string{port_id}.c_str()};
+        auto                    hr = map->GetString(key.Get(), &p_str);
         if (DAS::IsFailed(hr) || p_str == nullptr)
         {
             return std::string{default_val};
@@ -331,7 +331,7 @@ namespace
         ExportInterface::IDasPortMap** pp_out_port_map)
     {
         DAS::DasPtr<ExportInterface::IDasPortMap> output_map;
-        DasResult hr = CreateIDasPortMap(output_map.Put());
+        const DasResult hr = CreateIDasPortMap(output_map.Put());
         if (DAS::IsFailed(hr))
         {
             return hr;
@@ -478,7 +478,7 @@ DasResult DasFlowControlTaskComponent::DoRepositoryInvoke(
     {
         // Return a result with diagnostic information
         DAS::DasPtr<ExportInterface::IDasPortMap> output_map;
-        DasResult hr = CreateIDasPortMap(output_map.Put());
+        const DasResult hr = CreateIDasPortMap(output_map.Put());
         if (DAS::IsFailed(hr))
         {
             return hr;
@@ -502,7 +502,7 @@ DasResult DasFlowControlTaskComponent::DoRepositoryInvoke(
     catch (const std::exception&)
     {
         DAS::DasPtr<ExportInterface::IDasPortMap> output_map;
-        DasResult hr = CreateIDasPortMap(output_map.Put());
+        const DasResult hr = CreateIDasPortMap(output_map.Put());
         if (DAS::IsFailed(hr))
         {
             return hr;
@@ -520,7 +520,7 @@ DasResult DasFlowControlTaskComponent::DoRepositoryInvoke(
     if (snapshot.version != 1)
     {
         DAS::DasPtr<ExportInterface::IDasPortMap> output_map;
-        DasResult hr = CreateIDasPortMap(output_map.Put());
+        const DasResult hr = CreateIDasPortMap(output_map.Put());
         if (DAS::IsFailed(hr))
         {
             return hr;
@@ -538,7 +538,7 @@ DasResult DasFlowControlTaskComponent::DoRepositoryInvoke(
     if (!host_)
     {
         DAS::DasPtr<ExportInterface::IDasPortMap> output_map;
-        DasResult hr = CreateIDasPortMap(output_map.Put());
+        const DasResult hr = CreateIDasPortMap(output_map.Put());
         if (DAS::IsFailed(hr))
         {
             return hr;
@@ -559,7 +559,7 @@ DasResult DasFlowControlTaskComponent::DoRepositoryInvoke(
     if (DAS::IsFailed(guid_result))
     {
         DAS::DasPtr<ExportInterface::IDasPortMap> output_map;
-        DasResult hr = CreateIDasPortMap(output_map.Put());
+        const DasResult hr = CreateIDasPortMap(output_map.Put());
         if (DAS::IsFailed(hr))
         {
             return hr;
@@ -580,7 +580,7 @@ DasResult DasFlowControlTaskComponent::DoRepositoryInvoke(
     if (DAS::IsFailed(create_result) || !child_component)
     {
         DAS::DasPtr<ExportInterface::IDasPortMap> output_map;
-        DasResult hr = CreateIDasPortMap(output_map.Put());
+        const DasResult hr = CreateIDasPortMap(output_map.Put());
         if (DAS::IsFailed(hr))
         {
             return hr;
@@ -609,7 +609,7 @@ DasResult DasFlowControlTaskComponent::DoRepositoryInvoke(
             Das::Utils::SerializeYyjsonValue(snapshot.execution_input);
         if (input_serialized)
         {
-            DasReadOnlyString val{input_serialized->c_str()};
+            const DasReadOnlyString val{input_serialized->c_str()};
             SetPortString(
                 child_input.Get(),
                 "executionInput",
@@ -623,7 +623,7 @@ DasResult DasFlowControlTaskComponent::DoRepositoryInvoke(
     if (DAS::IsFailed(hr) || !child_output)
     {
         DAS::DasPtr<ExportInterface::IDasPortMap> output_map;
-        DasResult err_hr = CreateIDasPortMap(output_map.Put());
+        const DasResult err_hr = CreateIDasPortMap(output_map.Put());
         if (DAS::IsFailed(err_hr))
         {
             return err_hr;
@@ -642,7 +642,7 @@ DasResult DasFlowControlTaskComponent::DoRepositoryInvoke(
     // （component 用 SetPortString 写），用 GetPortString 直接读取，不能用
     // GetPortJson（会把裸字符串当 JSON 解析而失败，导致 child 失败被误报成
     // completed）。
-    std::string child_status =
+    const std::string child_status =
         GetPortString(child_output.Get(), "status", "completed");
 
     auto child_outputs_json = GetPortJson(child_output.Get(), "outputs");
@@ -651,7 +651,7 @@ DasResult DasFlowControlTaskComponent::DoRepositoryInvoke(
         child_outputs_json = Das::Utils::MakeYyjsonObject();
     }
 
-    std::string status = StatusFromChild(child_status);
+    const std::string status = StatusFromChild(child_status);
 
     DAS::DasPtr<ExportInterface::IDasPortMap> output_map;
     hr = CreateIDasPortMap(output_map.Put());
@@ -704,11 +704,7 @@ DasResult DasFlowControlTaskComponent::DoBranch(
     auto signals = Das::Utils::MakeYyjsonArray();
     (*signals.as_array()).emplace_back(selected);
 
-    return BuildResultPortMap(
-        "completed",
-        std::move(outputs),
-        std::move(signals),
-        pp_out_port_map);
+    return BuildResultPortMap("completed", outputs, signals, pp_out_port_map);
 }
 
 DasResult DasFlowControlTaskComponent::DoFor(
@@ -727,7 +723,7 @@ DasResult DasFlowControlTaskComponent::DoFor(
         && stop_requested)
     {
         DAS::DasPtr<ExportInterface::IDasPortMap> cancelled_map;
-        DasResult hr = CreateIDasPortMap(cancelled_map.Put());
+        const DasResult hr = CreateIDasPortMap(cancelled_map.Put());
         if (DAS::IsFailed(hr))
         {
             return hr;
@@ -759,7 +755,7 @@ DasResult DasFlowControlTaskComponent::DoFor(
     }
 
     DAS::DasPtr<ExportInterface::IDasPortMap> output_map;
-    DasResult hr = CreateIDasPortMap(output_map.Put());
+    const DasResult hr = CreateIDasPortMap(output_map.Put());
     if (DAS::IsFailed(hr))
     {
         return hr;
@@ -803,7 +799,7 @@ DasResult DasFlowControlTaskComponent::DoWhile(
         && stop_requested)
     {
         DAS::DasPtr<ExportInterface::IDasPortMap> cancelled_map;
-        DasResult hr = CreateIDasPortMap(cancelled_map.Put());
+        const DasResult hr = CreateIDasPortMap(cancelled_map.Put());
         if (DAS::IsFailed(hr))
         {
             return hr;
@@ -820,7 +816,7 @@ DasResult DasFlowControlTaskComponent::DoWhile(
                          : false;
 
     DAS::DasPtr<ExportInterface::IDasPortMap> output_map;
-    DasResult hr = CreateIDasPortMap(output_map.Put());
+    const DasResult hr = CreateIDasPortMap(output_map.Put());
     if (DAS::IsFailed(hr))
     {
         return hr;
@@ -847,7 +843,7 @@ DasResult DasFlowControlTaskComponent::DoMerge(
     (void)stop_token;
 
     DAS::DasPtr<ExportInterface::IDasPortMap> output_map;
-    DasResult hr = CreateIDasPortMap(output_map.Put());
+    const DasResult hr = CreateIDasPortMap(output_map.Put());
     if (DAS::IsFailed(hr))
     {
         return hr;
@@ -957,11 +953,7 @@ DasResult DasFlowControlTaskComponent::DoDelay(
     auto outputs = Das::Utils::MakeYyjsonObject();
     auto signals = Das::Utils::MakeYyjsonArray();
     (*signals.as_array()).emplace_back("next");
-    return BuildResultPortMap(
-        "completed",
-        std::move(outputs),
-        std::move(signals),
-        pp_out_port_map);
+    return BuildResultPortMap("completed", outputs, signals, pp_out_port_map);
 }
 
 DasResult DasFlowControlTaskComponent::Do(
@@ -1025,11 +1017,7 @@ DasResult DasFlowControlTaskComponent::Do(
     auto signals_arr = *signals.as_array();
     signals_arr.emplace_back("next");
 
-    return BuildResultPortMap(
-        "completed",
-        std::move(outputs),
-        std::move(signals),
-        pp_out_port_map);
+    return BuildResultPortMap("completed", outputs, signals, pp_out_port_map);
 }
 
 DasResult DasFlowControlTaskComponentFactory::GetGuid(DasGuid* p_out_guid)

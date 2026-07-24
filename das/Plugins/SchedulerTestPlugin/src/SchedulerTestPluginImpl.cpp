@@ -113,7 +113,7 @@ DasResult FactoryBackedTask::Do(
         }
     }
     {
-        ipc_scoped_lock lock(state_->mutex);
+        const ipc_scoped_lock lock(state_->mutex);
         state_->add_executed_id(instance_id_);
         state_->set_last_props_key1_value(key1_value);
         state_->do_entered = true;
@@ -221,7 +221,7 @@ DasResult FakeAuthoringSession::GetDocument(
     int64_t session_revision = 0;
     bool    emit_strict = false;
     {
-        ipc_scoped_lock lock(state_->mutex);
+        const ipc_scoped_lock lock(state_->mutex);
         ++state_->get_document_count;
         session_revision = state_->last_context_revision;
         emit_strict = state_->emit_strict_wire;
@@ -282,7 +282,7 @@ DasResult FakeAuthoringSession::ApplyChange(
     int64_t revision_delta = 0;
     int64_t session_revision = 0;
     {
-        ipc_scoped_lock lock(state_->mutex);
+        const ipc_scoped_lock lock(state_->mutex);
         ++state_->apply_change_count;
         if (!state_->apply_ok)
         {
@@ -356,7 +356,7 @@ DasResult FakeAuthoringSession::Compile(
     bool emit_strict = false;
     bool omit_compile = false;
     {
-        ipc_scoped_lock lock(state_->mutex);
+        const ipc_scoped_lock lock(state_->mutex);
         ++state_->compile_count;
         if (p_request_json)
         {
@@ -390,7 +390,7 @@ DasResult FakeAuthoringSession::Compile(
         yyjson::value execution_input(Das::Utils::MakeYyjsonObject());
         (*execution_input.as_object())[std::string_view("key1")] = "compiled";
         {
-            ipc_scoped_lock lock(state_->mutex);
+            const ipc_scoped_lock lock(state_->mutex);
             (*compile.as_object())[std::string_view("ok")] = state_->compile_ok;
             (*compile.as_object())[std::string_view("canExecute")] =
                 state_->compile_ok;
@@ -442,7 +442,7 @@ DasResult FakeAuthoringSession::Compile(
     yyjson::value execution_input(Das::Utils::MakeYyjsonObject());
     (*execution_input.as_object())[std::string_view("key1")] = "compiled";
     {
-        ipc_scoped_lock lock(state_->mutex);
+        const ipc_scoped_lock lock(state_->mutex);
         (*result.as_object())[std::string_view("ok")] = state_->compile_ok;
         (*result.as_object())[std::string_view("canExecute")] =
             state_->compile_ok;
@@ -543,7 +543,7 @@ DasResult FakeAuthoringSessionFactory::CreateSession(
     }
     if (!can_create_session_)
     {
-        ipc_scoped_lock lock(state_->mutex);
+        const ipc_scoped_lock lock(state_->mutex);
         ++state_->decoy_authoring_create_count;
         return DAS_E_FAIL;
     }
@@ -613,7 +613,7 @@ DasResult FakeAuthoringSessionFactory::CreateSession(
         }
     }
     {
-        ipc_scoped_lock lock(state_->mutex);
+        const ipc_scoped_lock lock(state_->mutex);
         ++state_->authoring_session_count;
         state_->last_context_entry_id = entry_id;
         state_->last_context_task_id = task_id;
@@ -701,7 +701,7 @@ DasResult FakeTaskComponent::Do(
         return DAS_E_INVALID_POINTER;
     }
     DAS::DasPtr<Das::ExportInterface::IDasPortMap> output_map;
-    DasResult hr = CreateIDasPortMap(output_map.Put());
+    const DasResult hr = CreateIDasPortMap(output_map.Put());
     if (DAS::IsFailed(hr))
     {
         return hr;

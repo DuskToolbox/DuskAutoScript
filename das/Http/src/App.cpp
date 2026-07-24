@@ -212,7 +212,7 @@ namespace Das::Http
                 });
 
         {
-            DAS::Core::IPC::ScopedCurrentIpcContext scope(
+            const DAS::Core::IPC::ScopedCurrentIpcContext scope(
                 static_cast<DAS::Core::IPC::MainProcess::IpcContext*>(
                     ipc_context.get()));
 
@@ -260,8 +260,8 @@ namespace Das::Http
 
             // Register computer vision services (cv.cpu / cv.cuda)
             {
-                auto               debug_dir_str = debug_dir.u8string();
-                DasCoreInitOptions init_options{
+                auto                     debug_dir_str = debug_dir.u8string();
+                const DasCoreInitOptions init_options{
                     reinterpret_cast<const char*>(debug_dir_str.c_str())};
                 auto init_cv_result = InitializeDasCoreWithOptions(
                     ipc_context.get(),
@@ -621,7 +621,7 @@ namespace
                 addr_str = addr_str.substr(1, addr_str.size() - 2);
             }
             const auto addr = boost::asio::ip::make_address(addr_str);
-            int        port = std::stoi(value.substr(colon_pos + 1));
+            const int  port = std::stoi(value.substr(colon_pos + 1));
             if (port <= 0 || port > 65535)
             {
                 return std::nullopt;
@@ -666,8 +666,8 @@ int main(int argc, const char* argv[])
         vm);
     boost::program_options::notify(vm);
 
-    std::filesystem::path plugin_dir = vm["plugin-dir"].as<std::string>();
-    std::filesystem::path debug_dir = vm["debug-dir"].as<std::string>();
+    const std::filesystem::path plugin_dir = vm["plugin-dir"].as<std::string>();
+    const std::filesystem::path debug_dir = vm["debug-dir"].as<std::string>();
 
     std::optional<DAS::Core::IPC::MainProcess::WebSocketConfig> ws_config;
     if (vm.count("ipc-ws"))

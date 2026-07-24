@@ -381,7 +381,8 @@ namespace
                     found = true;
                     // Verify the underlying target matches the original
                     // (component_guid should match)
-                    std::string expected_guid = "{" + old_id.substr(1) + "}";
+                    const std::string expected_guid =
+                        "{" + old_id.substr(1) + "}";
                     EXPECT_TRUE(child_node.target.component_ref.has_value());
                     break;
                 }
@@ -953,7 +954,7 @@ namespace
         };
 
         // Empty / null ref_count_callback
-        ExtractSubgraph::RefCountCallback empty_ref_cb;
+        const ExtractSubgraph::RefCountCallback empty_ref_cb;
 
         extractor.UndoExtract(
             replace_result.undo_snapshot,

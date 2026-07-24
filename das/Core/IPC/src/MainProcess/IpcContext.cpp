@@ -54,7 +54,7 @@ namespace Core
                 runloop_.SetSessionId(1);
 
                 // 2. Initialize reserved session IDs
-                for (uint16_t reserved_id : reserved_session_ids_)
+                for (const uint16_t reserved_id : reserved_session_ids_)
                 {
                     allocated_ids_[reserved_id] = true;
                 }
@@ -116,7 +116,7 @@ namespace Core
                 proxy_factory_->GetObjectManager().SetSessionId(1);
                 runloop_.SetSessionId(1);
 
-                for (uint16_t reserved_id : reserved_session_ids_)
+                for (const uint16_t reserved_id : reserved_session_ids_)
                 {
                     allocated_ids_[reserved_id] = true;
                 }
@@ -195,7 +195,7 @@ namespace Core
 
                         AnyTransport transport{
                             HttpIpcTransport(std::move(*ws))};
-                        DasPtr<IHostConnection> host =
+                        const DasPtr<IHostConnection> host =
                             DasPtr<IHostConnection>::Attach(
                                 new HttpHost(session_id, std::move(transport)));
 
@@ -388,7 +388,7 @@ namespace Core
                 }
 
                 // 预分配 session_id，作为值传入 HostLauncher 构造函数
-                uint16_t session_id = AllocateSessionId();
+                const uint16_t session_id = AllocateSessionId();
                 if (session_id == 0)
                 {
                     DAS_CORE_LOG_ERROR(
@@ -683,7 +683,7 @@ namespace Core
 
                 std::string relative_path(u8_relative_path);
                 uint16_t path_len = static_cast<uint16_t>(relative_path.size());
-                uint8_t  recursive_flag = recursive ? 1 : 0;
+                const uint8_t recursive_flag = recursive ? 1 : 0;
 
                 std::vector<uint8_t> payload(
                     sizeof(uint16_t) + path_len + sizeof(uint8_t));
@@ -716,7 +716,7 @@ namespace Core
 
                 auto [code, data, flags] = std::get<0>(*wait_result);
                 (void)flags;
-                cb(code, std::move(data));
+                cb(code, data);
                 return DAS_S_OK;
             }
 
@@ -784,13 +784,13 @@ namespace Core
 
                 auto [code, data, flags] = std::get<0>(*wait_result);
                 (void)flags;
-                cb(code, std::move(data));
+                cb(code, data);
                 return DAS_S_OK;
             }
 
             DasResult IpcContext::Run()
             {
-                ScopedCurrentIpcContext scope(this);
+                const ScopedCurrentIpcContext scope(this);
 
                 if (http_server_)
                 {
@@ -1009,15 +1009,15 @@ namespace Core
 
             uint16_t IpcContext::FindAvailableSessionId()
             {
-                uint16_t start_id = session_id_cursor_.load();
-                uint16_t current_id = start_id;
+                const uint16_t start_id = session_id_cursor_.load();
+                uint16_t       current_id = start_id;
 
                 do
                 {
                     if (!allocated_ids_[current_id])
                     {
                         bool is_reserved = false;
-                        for (uint16_t reserved_id : reserved_session_ids_)
+                        for (const uint16_t reserved_id : reserved_session_ids_)
                         {
                             if (current_id == reserved_id)
                             {
@@ -1067,9 +1067,9 @@ namespace Core
 
             uint16_t IpcContext::AllocateSessionId()
             {
-                std::lock_guard<std::mutex> lock(allocated_ids_mutex_);
+                const std::scoped_lock lock(allocated_ids_mutex_);
 
-                uint16_t available_id = FindAvailableSessionId();
+                const uint16_t available_id = FindAvailableSessionId();
                 if (available_id == 0)
                 {
                     DAS_CORE_LOG_ERROR("No available session_id");
@@ -1082,7 +1082,7 @@ namespace Core
 
             void IpcContext::ReleaseSessionId(uint16_t session_id)
             {
-                std::lock_guard<std::mutex> lock(allocated_ids_mutex_);
+                const std::scoped_lock lock(allocated_ids_mutex_);
                 MarkSessionIdAsFree(session_id);
             }
 
@@ -1225,18 +1225,18 @@ namespace Core
                 const DasGuid& iid,
                 IDasBase**     pp_out_object)
             {
-                uint32_t interface_id =
+                const uint32_t interface_id =
                     RemoteObjectRegistry::ComputeInterfaceId(iid);
                 RemoteObjectInfo info;
-                DasResult        lookup_result =
+                const DasResult  lookup_result =
                     registry_.LookupByInterface(interface_id, info);
                 if (DAS::IsFailed(lookup_result))
                 {
                     return DAS_E_IPC_OBJECT_NOT_FOUND;
                 }
 
-                IDasBase* local_obj = nullptr;
-                DasResult result =
+                IDasBase*       local_obj = nullptr;
+                const DasResult result =
                     proxy_factory_->GetObjectManager().LookupObject(
                         info.object_id,
                         &local_obj);
@@ -1417,14 +1417,15 @@ namespace Core
                 IDasBase**         pp_out_object)
             {
                 RemoteObjectInfo info;
-                DasResult lookup_result = registry_.LookupByName(name, info);
+                const DasResult  lookup_result =
+                    registry_.LookupByName(name, info);
                 if (DAS::IsFailed(lookup_result))
                 {
                     return DAS_E_IPC_OBJECT_NOT_FOUND;
                 }
 
-                IDasBase* local_obj = nullptr;
-                DasResult result =
+                IDasBase*       local_obj = nullptr;
+                const DasResult result =
                     proxy_factory_->GetObjectManager().LookupObject(
                         info.object_id,
                         &local_obj);

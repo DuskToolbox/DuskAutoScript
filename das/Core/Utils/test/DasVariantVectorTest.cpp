@@ -58,7 +58,7 @@ static_assert(
 TEST(DasVariantVectorTest, FactoryReturnsSuccess)
 {
     DAS::DasPtr<Das::ExportInterface::IDasVariantVector> vector;
-    DasResult result = CreateIDasVariantVector(vector.Put());
+    const DasResult result = CreateIDasVariantVector(vector.Put());
     ASSERT_EQ(result, DAS_S_OK);
     ASSERT_NE(vector.Get(), nullptr);
 }

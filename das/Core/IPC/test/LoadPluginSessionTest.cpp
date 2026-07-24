@@ -86,8 +86,8 @@ namespace
 
     TEST(LoadPluginSessionTest, V1Payload_LongPath_RoundTrips)
     {
-        std::string long_path(512, 'A');
-        auto        payload = BuildV1Payload(long_path);
+        const std::string long_path(512, 'A');
+        auto              payload = BuildV1Payload(long_path);
 
         std::string parsed;
         ASSERT_TRUE(ParseV1Payload(payload, parsed));

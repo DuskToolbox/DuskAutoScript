@@ -75,8 +75,8 @@ namespace Das::Core::Debug::Test
         auto MakeImage(int width = 48, int height = 32)
             -> Das::DasPtr<Das::ExportInterface::IDasImage>
         {
-            cv::Mat mat = cv::Mat::zeros(height, width, CV_8UC3);
-            auto*   image =
+            const cv::Mat mat = cv::Mat::zeros(height, width, CV_8UC3);
+            auto*         image =
                 OcvWrapper::CpuImageImpl<OcvWrapper::Storage::OwningStorage>::
                     MakeFromCpuMat(
                         mat,

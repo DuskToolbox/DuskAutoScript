@@ -233,8 +233,8 @@ namespace
         ListFileResponse parsed;
         ASSERT_TRUE(ParseListFileResponse(resp.response_data, parsed));
 
-        auto        expected_u8 = tmp_dir_.u8string();
-        std::string expected(
+        auto              expected_u8 = tmp_dir_.u8string();
+        const std::string expected(
             reinterpret_cast<const char*>(expected_u8.data()),
             expected_u8.size());
         EXPECT_EQ(parsed.working_path, expected);
@@ -259,7 +259,7 @@ namespace
 
                 auto expected_abs =
                     (tmp_dir_ / "PluginA" / "manifest.json").u8string();
-                std::string expected(
+                const std::string expected(
                     reinterpret_cast<const char*>(expected_abs.data()),
                     expected_abs.size());
                 EXPECT_EQ(e.abs_path, expected);

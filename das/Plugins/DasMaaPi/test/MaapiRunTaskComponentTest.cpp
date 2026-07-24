@@ -34,8 +34,8 @@ namespace
         DasPtr<ExportInterface::IDasPortMap> input_map;
         EXPECT_EQ(CreateIDasPortMap(input_map.Put()), DAS_S_OK);
 
-        DasReadOnlyString key{"executionInput"};
-        DasReadOnlyString val{std::string{execution_input_json}.c_str()};
+        const DasReadOnlyString key{"executionInput"};
+        const DasReadOnlyString val{std::string{execution_input_json}.c_str()};
         input_map->SetString(key.Get(), val.Get());
         return input_map;
     }
@@ -92,9 +92,9 @@ TEST(DasMaaPiRunTaskComponent, DoReturnsObjectNotInitWithoutSettings)
 
 TEST(DasMaaPiRunTaskComponent, DoHandlesNullInputPortMap)
 {
-    MaapiRunTaskComponent component;
-    FakeMaaApiBoundary    fake;
-    ScopedBoundaryHook    hook(fake);
+    MaapiRunTaskComponent    component;
+    FakeMaaApiBoundary       fake;
+    const ScopedBoundaryHook hook(fake);
 
     auto settings = MakeSettingsJson(
         FixturePath("interface_v26_jsonc.jsonc").string(),
@@ -112,9 +112,9 @@ TEST(DasMaaPiRunTaskComponent, DoHandlesNullInputPortMap)
 
 TEST(DasMaaPiRunTaskComponent, ApplySettingsChangeStoresSettings)
 {
-    MaapiRunTaskComponent component;
-    FakeMaaApiBoundary    fake;
-    ScopedBoundaryHook    hook(fake);
+    MaapiRunTaskComponent    component;
+    FakeMaaApiBoundary       fake;
+    const ScopedBoundaryHook hook(fake);
 
     auto settings = MakeSettingsJson(
         FixturePath("interface_v26_jsonc.jsonc").string(),
@@ -132,9 +132,9 @@ TEST(DasMaaPiRunTaskComponent, ApplySettingsChangeStoresSettings)
 
 TEST(DasMaaPiRunTaskComponent, DoCreatesOutputPortMap)
 {
-    MaapiRunTaskComponent component;
-    FakeMaaApiBoundary    fake;
-    ScopedBoundaryHook    hook(fake);
+    MaapiRunTaskComponent    component;
+    FakeMaaApiBoundary       fake;
+    const ScopedBoundaryHook hook(fake);
 
     auto settings = MakeSettingsJson(
         FixturePath("interface_v26_jsonc.jsonc").string(),
@@ -150,8 +150,8 @@ TEST(DasMaaPiRunTaskComponent, DoCreatesOutputPortMap)
     EXPECT_TRUE(result);
     if (result)
     {
-        bool              has_completed = false;
-        DasReadOnlyString completed_key("completedTasks");
+        bool                    has_completed = false;
+        const DasReadOnlyString completed_key("completedTasks");
         result->Has(completed_key.Get(), &has_completed);
         EXPECT_TRUE(has_completed);
     }
@@ -159,9 +159,9 @@ TEST(DasMaaPiRunTaskComponent, DoCreatesOutputPortMap)
 
 TEST(DasMaaPiRunTaskComponent, DoExecutesWithFakeBoundary)
 {
-    MaapiRunTaskComponent component;
-    FakeMaaApiBoundary    fake;
-    ScopedBoundaryHook    hook(fake);
+    MaapiRunTaskComponent    component;
+    FakeMaaApiBoundary       fake;
+    const ScopedBoundaryHook hook(fake);
 
     auto settings = MakeSettingsJson(
         FixturePath("interface_v26_jsonc.jsonc").string(),
@@ -180,9 +180,9 @@ TEST(DasMaaPiRunTaskComponent, DoExecutesWithFakeBoundary)
 
 TEST(DasMaaPiRunTaskComponent, DoMapsCompletedTasksToOutputPortMap)
 {
-    MaapiRunTaskComponent component;
-    FakeMaaApiBoundary    fake;
-    ScopedBoundaryHook    hook(fake);
+    MaapiRunTaskComponent    component;
+    FakeMaaApiBoundary       fake;
+    const ScopedBoundaryHook hook(fake);
 
     auto settings = MakeSettingsJson(
         FixturePath("interface_v26_jsonc.jsonc").string(),
@@ -196,8 +196,8 @@ TEST(DasMaaPiRunTaskComponent, DoMapsCompletedTasksToOutputPortMap)
     auto hr = component.Do(nullptr, nullptr, result.Put());
 
     ASSERT_TRUE(result);
-    IDasReadOnlyString* p_val = nullptr;
-    DasReadOnlyString   completed_key("completedTasks");
+    IDasReadOnlyString*     p_val = nullptr;
+    const DasReadOnlyString completed_key("completedTasks");
     auto string_hr = result->GetString(completed_key.Get(), &p_val);
     if (DAS::IsOk(string_hr) && p_val)
     {
@@ -214,9 +214,9 @@ TEST(DasMaaPiRunTaskComponent, DoMapsCompletedTasksToOutputPortMap)
 
 TEST(DasMaaPiRunTaskComponent, DoPortMapInputMerging)
 {
-    MaapiRunTaskComponent component;
-    FakeMaaApiBoundary    fake;
-    ScopedBoundaryHook    hook(fake);
+    MaapiRunTaskComponent    component;
+    FakeMaaApiBoundary       fake;
+    const ScopedBoundaryHook hook(fake);
 
     auto settings_obj = Utils::MakeYyjsonObject();
     auto obj = settings_obj.as_object();
@@ -238,8 +238,8 @@ TEST(DasMaaPiRunTaskComponent, DoPortMapInputMerging)
 
     DasPtr<ExportInterface::IDasPortMap> input_map;
     ASSERT_EQ(CreateIDasPortMap(input_map.Put()), DAS_S_OK);
-    DasReadOnlyString stage_key("stage");
-    DasReadOnlyString stage_val("1-1");
+    const DasReadOnlyString stage_key("stage");
+    const DasReadOnlyString stage_val("1-1");
     input_map->SetString(stage_key.Get(), stage_val.Get());
 
     DasPtr<ExportInterface::IDasPortMap> output;

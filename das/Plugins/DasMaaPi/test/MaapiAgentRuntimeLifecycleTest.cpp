@@ -191,11 +191,11 @@ namespace
             AdbInitParams adb;
             adb.address = "127.0.0.1:5555";
             params.adb = adb;
-            ScopedResource   resource(fake, fake.CreateResource());
-            ScopedController controller(
+            const ScopedResource   resource(fake, fake.CreateResource());
+            const ScopedController controller(
                 fake,
                 fake.CreateControllerFromParams(spec, params).handle);
-            ScopedTasker tasker(fake, fake.CreateTasker());
+            const ScopedTasker tasker(fake, fake.CreateTasker());
         }
 
         const std::vector<std::string> expected{
@@ -213,10 +213,12 @@ namespace
         FakeMaaApiBoundary fake;
 
         {
-            ScopedResource    resource(fake, kInvalidMaaResourceHandle);
-            ScopedController  controller(fake, kInvalidMaaControllerHandle);
-            ScopedTasker      tasker(fake, kInvalidMaaTaskerHandle);
-            ScopedAgentClient client(fake, kInvalidMaaAgentClientHandle);
+            const ScopedResource   resource(fake, kInvalidMaaResourceHandle);
+            const ScopedController controller(
+                fake,
+                kInvalidMaaControllerHandle);
+            const ScopedTasker      tasker(fake, kInvalidMaaTaskerHandle);
+            const ScopedAgentClient client(fake, kInvalidMaaAgentClientHandle);
         }
 
         EXPECT_TRUE(fake.calls.empty());
@@ -258,7 +260,7 @@ namespace
         FakeMaaApiBoundary fake;
 
         {
-            ScopedAgentClient client(fake, fake.CreateAgentClientTcp(0));
+            const ScopedAgentClient client(fake, fake.CreateAgentClientTcp(0));
         }
 
         const std::vector<std::string> expected{
@@ -273,7 +275,7 @@ namespace
         const auto source_path =
             std::filesystem::path(__FILE__).parent_path().parent_path() / "src"
             / "MaaRuntime.cpp";
-        std::ifstream input(source_path);
+        const std::ifstream input(source_path);
         ASSERT_TRUE(input.is_open()) << source_path.string();
 
         std::ostringstream buffer;
@@ -566,7 +568,7 @@ namespace
         const auto source_path =
             std::filesystem::path(__FILE__).parent_path().parent_path() / "src"
             / "AgentProcessRunner.cpp";
-        std::ifstream input(source_path);
+        const std::ifstream input(source_path);
         ASSERT_TRUE(input.is_open()) << source_path.string();
 
         std::ostringstream buffer;

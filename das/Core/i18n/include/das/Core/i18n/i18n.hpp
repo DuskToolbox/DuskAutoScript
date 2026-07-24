@@ -118,7 +118,7 @@ public:
             ifs,
             std::ios::badbit | std::ios::failbit,
             [&json_path](auto& stream) { stream.open(json_path); });
-        std::string content(
+        const std::string content(
             (std::istreambuf_iterator<char>(ifs)),
             std::istreambuf_iterator<char>());
         auto parsed = Das::Utils::ParseYyjsonFromString(content);

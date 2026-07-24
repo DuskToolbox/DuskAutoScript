@@ -33,7 +33,7 @@ namespace Das::Plugins::DasMaaPi
             {
                 return text;
             }
-            std::string_view key = text.substr(1);
+            const std::string_view key = text.substr(1);
             auto lang_it = catalog.translations.find(std::string(lang));
             if (lang_it == catalog.translations.end())
             {
@@ -143,9 +143,9 @@ namespace Das::Plugins::DasMaaPi
             }
             if (catalog && !catalog->interface_directory.empty())
             {
-                std::filesystem::path base(catalog->interface_directory);
-                std::filesystem::path leaf(icon);
-                auto                  combined = base / leaf;
+                const std::filesystem::path base(catalog->interface_directory);
+                const std::filesystem::path leaf(icon);
+                auto                        combined = base / leaf;
                 return combined.generic_string();
             }
             return std::string(icon);
@@ -572,7 +572,7 @@ namespace Das::Plugins::DasMaaPi
             // InitializeOptionDefaults) / input.default_value (input) 都是
             // 静态 schema 的一部分，不应依赖 acceptedProperties 是否已注入。
             // 用户运行时值 (current != nullptr) 优先于 PI default。
-            yyjson::value value = [&]() -> yyjson::value
+            const yyjson::value value = [&]() -> yyjson::value
             {
                 if (dto.type == "switch")
                 {
@@ -692,16 +692,16 @@ namespace Das::Plugins::DasMaaPi
                 return yyjson::value(nullptr);
             }();
 
-            yyjson::value  candidates;
-            yyjson::value* candidates_ptr = nullptr;
+            yyjson::value        candidates;
+            const yyjson::value* candidates_ptr = nullptr;
             if (mapping.input_type == 1 || mapping.input_type == 2)
             {
                 candidates = OptionCandidates(dto, catalog, language);
                 candidates_ptr = &candidates;
             }
-            std::string_view label =
+            const std::string_view label =
                 dto.label ? *dto.label : std::string_view(dto.name);
-            std::string_view resolved_label =
+            const std::string_view resolved_label =
                 ResolveI18n(label, *catalog, language);
             yyjson::value field = MakePropertyField(
                 field_name,
@@ -718,7 +718,7 @@ namespace Das::Plugins::DasMaaPi
                 const auto& input = dto.inputs.front();
                 if (input.verify && !input.verify->empty() && input.pattern_msg)
                 {
-                    std::string_view resolved_msg =
+                    const std::string_view resolved_msg =
                         ResolveI18n(*input.pattern_msg, *catalog, language);
                     if (!resolved_msg.empty())
                     {
@@ -794,9 +794,9 @@ namespace Das::Plugins::DasMaaPi
                 return JsonString(raw_value);
             }();
 
-            std::string_view label =
+            const std::string_view label =
                 input.label ? *input.label : std::string_view(input.name);
-            std::string_view resolved_label =
+            const std::string_view resolved_label =
                 ResolveI18n(label, *catalog, language);
             yyjson::value field(Object());
             auto          obj = field.as_object();
@@ -811,7 +811,7 @@ namespace Das::Plugins::DasMaaPi
             // {pattern,message} 形态）。
             if (input.verify && !input.verify->empty() && input.pattern_msg)
             {
-                std::string_view resolved_msg =
+                const std::string_view resolved_msg =
                     ResolveI18n(*input.pattern_msg, *catalog, language);
                 if (!resolved_msg.empty())
                 {
@@ -1899,7 +1899,7 @@ namespace Das::Plugins::DasMaaPi
                 || name == "presetName" || name == "language"
                 || name.starts_with("adapter.") || name.starts_with("pretask."))
             {
-                project_entries.emplace_back(std::string(name));
+                project_entries.emplace_back(name);
             }
             else if (name.starts_with(kSettingsPrefix))
             {
@@ -1911,7 +1911,7 @@ namespace Das::Plugins::DasMaaPi
             {
                 // 兜底桶：未识别前缀的 root field 归项目设置 section，避免
                 // layout 漏列触发 ValidateFieldLayout reject。
-                project_entries.emplace_back(std::string(name));
+                project_entries.emplace_back(name);
             }
         }
 
@@ -2408,11 +2408,11 @@ namespace Das::Plugins::DasMaaPi
                             }
                             // Section 节点：id 稳定（基于 optionName，单一
                             // 容器内唯一），label 经 i18n 解析。
-                            std::string_view section_label =
+                            const std::string_view section_label =
                                 option->dto.label
                                     ? *option->dto.label
                                     : std::string_view(option->dto.name);
-                            std::string_view resolved_section_label =
+                            const std::string_view resolved_section_label =
                                 ResolveI18n(
                                     section_label,
                                     *catalog,
@@ -2507,7 +2507,7 @@ namespace Das::Plugins::DasMaaPi
                 (*e_obj)[std::string_view("label")] = JsonString(label);
                 if (task.dto.description)
                 {
-                    std::string_view desc = ResolveI18n(
+                    const std::string_view desc = ResolveI18n(
                         *task.dto.description,
                         *catalog,
                         current_language);
@@ -3086,9 +3086,11 @@ namespace Das::Plugins::DasMaaPi
             std::set<std::string> actual;
             for (const auto& [key, _] : *obj_opt)
             {
-                actual.emplace(std::string(key));
+                actual.emplace(key);
             }
-            std::set<std::string> expected(allowed.begin(), allowed.end());
+            const std::set<std::string> expected(
+                allowed.begin(),
+                allowed.end());
             if (actual == expected)
             {
                 return true;
@@ -3549,7 +3551,7 @@ namespace Das::Plugins::DasMaaPi
             std::set<std::string> actual;
             for (const auto& [k, _] : target_obj)
             {
-                actual.emplace(std::string(k));
+                actual.emplace(k);
             }
             if (actual != std::set<std::string>{"kind", "id"})
             {
@@ -3579,7 +3581,7 @@ namespace Das::Plugins::DasMaaPi
             std::set<std::string> actual;
             for (const auto& [k, _] : target_obj)
             {
-                actual.emplace(std::string(k));
+                actual.emplace(k);
             }
             if (actual != std::set<std::string>{"kind"})
             {
@@ -3656,7 +3658,7 @@ namespace Das::Plugins::DasMaaPi
         std::set<std::string> actual;
         for (const auto& [k, _] : payload_obj)
         {
-            actual.emplace(std::string(k));
+            actual.emplace(k);
         }
         const std::set<std::string> allowed_no_index{"actionId"};
         const std::set<std::string> allowed_with_index{

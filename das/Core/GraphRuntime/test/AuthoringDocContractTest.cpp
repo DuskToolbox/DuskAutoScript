@@ -214,7 +214,7 @@ namespace
         GraphEdgeDto data_edge = MakeSignalEdge("e-data", "n1", "n2");
         data_edge.edge_type = "data";
         g.edges.push_back(data_edge);
-        GraphEdgeDto sig = MakeSignalEdge("e-sig", "n1", "n2");
+        const GraphEdgeDto sig = MakeSignalEdge("e-sig", "n1", "n2");
         g.edges.push_back(sig);
 
         const auto graph_json = ToJson(g);
@@ -615,7 +615,7 @@ namespace
         LinearChange_MoveFormSequenceItemReordersChain)
     {
         FormSequenceDto seq;
-        for (char c : {'a', 'b', 'c'})
+        for (const char c : {'a', 'b', 'c'})
         {
             seq.items.push_back(
                 {.item_id = std::string(1, c),

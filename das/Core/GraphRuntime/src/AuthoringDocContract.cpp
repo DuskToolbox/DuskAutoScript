@@ -1031,7 +1031,7 @@ namespace Contract
                         {},
                         std::nullopt};
                 }
-                std::size_t to =
+                const std::size_t to =
                     static_cast<std::size_t>(*change.destination_index);
                 if (to >= seq.items.size())
                 {
@@ -1402,7 +1402,7 @@ namespace Contract
                 // projection treats it as linear. Real graph→formSequence is
                 // only valid when the topology is a single signal chain; that
                 // invariant is the Provider's responsibility (D-84-29).
-                document.tags.emplace_back(std::string{kLinearTag});
+                document.tags.emplace_back(kLinearTag);
                 return {ChangeErrorKind::None, "", {}, std::nullopt};
             }
             else

@@ -34,8 +34,7 @@ void IDasOcrResultVectorImpl::AddResult(
 {
     if (p_result)
     {
-        items_.emplace_back(
-            Das::DasPtr<Das::ExportInterface::IDasOcrResult>(p_result));
+        items_.emplace_back(p_result);
     }
 }
 

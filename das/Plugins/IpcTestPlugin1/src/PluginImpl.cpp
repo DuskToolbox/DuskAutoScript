@@ -132,7 +132,7 @@ DasResult DasQueryComponentImpl::Dispatch(
         return DAS_E_INVALID_POINTER;
     }
 
-    std::string method = method_ptr;
+    const std::string method = method_ptr;
 
     if (method == "queryMainProcessString")
     {
@@ -167,7 +167,7 @@ DasResult DasQueryComponentImpl::HandleQueryMainProcessString(
         raw_obj.Put());
     if (DAS::IsFailed(hr) || !raw_obj)
     {
-        std::string err_msg = DAS_FMT_NS::format(
+        const std::string err_msg = DAS_FMT_NS::format(
             "DasQueryMainProcessInterface failed, hr = {:#x}",
             static_cast<uint32_t>(hr));
         DAS_LOG_ERROR(err_msg.c_str());
@@ -184,7 +184,7 @@ DasResult DasQueryComponentImpl::HandleQueryMainProcessString(
     }
 
     // 打印获取到的字符串（用于验证）
-    std::string log_msg = DAS_FMT_NS::format(
+    const std::string log_msg = DAS_FMT_NS::format(
         "queryMainProcessString got: {}",
         str ? str : "(null)");
     DAS_LOG_INFO(log_msg.c_str());
@@ -222,7 +222,7 @@ DasResult DasQueryComponentImpl::HandleQueryMainProcessVariantVector(
         raw_obj.Put());
     if (DAS::IsFailed(hr) || !raw_obj)
     {
-        std::string err_msg = DAS_FMT_NS::format(
+        const std::string err_msg = DAS_FMT_NS::format(
             "DasQueryMainProcessInterface(IDasVariantVector) failed, "
             "hr = {:#x}",
             static_cast<uint32_t>(hr));
@@ -242,7 +242,7 @@ DasResult DasQueryComponentImpl::HandleQueryMainProcessVariantVector(
         return hr;
     }
 
-    std::string log_msg = DAS_FMT_NS::format(
+    const std::string log_msg = DAS_FMT_NS::format(
         "queryMainProcessVariantVector got Int[0] = {}",
         int_val);
     DAS_LOG_INFO(log_msg.c_str());
@@ -291,7 +291,7 @@ DasResult DasQueryComponentImpl::HandleQueryMainProcessStringByName(
         DasQueryMainProcessInterfaceByName(service_name.c_str(), raw_obj.Put());
     if (DAS::IsFailed(hr) || !raw_obj)
     {
-        std::string err_msg = DAS_FMT_NS::format(
+        const std::string err_msg = DAS_FMT_NS::format(
             "DasQueryMainProcessInterfaceByName('{}') failed, hr = {:#x}",
             service_name,
             static_cast<uint32_t>(hr));
@@ -308,14 +308,14 @@ DasResult DasQueryComponentImpl::HandleQueryMainProcessStringByName(
         return hr;
     }
 
-    std::string log_msg = DAS_FMT_NS::format(
+    const std::string log_msg = DAS_FMT_NS::format(
         "queryMainProcessStringByName('{}') got: {}",
         service_name,
         str ? str : "(null)");
     DAS_LOG_INFO(log_msg.c_str());
 
     // 创建结果 VariantVector 并回传读取到的字符串
-    std::string result_value = str ? str : "";
+    const std::string result_value = str ? str : "";
 
     DAS::DasPtr<IDasReadOnlyString> return_string;
     hr = CreateIDasReadOnlyStringFromUtf8(
@@ -510,7 +510,7 @@ DasResult IpcTaskComponentImpl::Do(
     }
 
     DAS::DasPtr<ExportInterface::IDasPortMap> output_map;
-    DasResult hr = CreateIDasPortMap(output_map.Put());
+    const DasResult hr = CreateIDasPortMap(output_map.Put());
     if (DAS::IsFailed(hr))
     {
         return hr;
@@ -518,22 +518,22 @@ DasResult IpcTaskComponentImpl::Do(
 
     // Set status
     {
-        DasReadOnlyString status_key{"status"};
-        DasReadOnlyString status_val{"completed"};
+        const DasReadOnlyString status_key{"status"};
+        const DasReadOnlyString status_val{"completed"};
         output_map->SetString(status_key.Get(), status_val.Get());
     }
 
     // Set outputs with ipcResult
     {
-        DasReadOnlyString ipc_result_key{"ipcResult"};
-        DasReadOnlyString ipc_result_val{"ok"};
+        const DasReadOnlyString ipc_result_key{"ipcResult"};
+        const DasReadOnlyString ipc_result_val{"ok"};
         output_map->SetString(ipc_result_key.Get(), ipc_result_val.Get());
     }
 
     // Set signal
     {
-        DasReadOnlyString signal_key{"signal"};
-        DasReadOnlyString signal_val{"next"};
+        const DasReadOnlyString signal_key{"signal"};
+        const DasReadOnlyString signal_val{"next"};
         output_map->SetString(signal_key.Get(), signal_val.Get());
     }
 

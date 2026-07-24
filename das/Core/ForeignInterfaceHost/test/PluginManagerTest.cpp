@@ -1423,7 +1423,7 @@ TEST_F(
         factory_guid_,
         component_guid);
 
-    ScopedPluginManagerLogCapture logs;
+    const ScopedPluginManagerLogCapture logs;
     EXPECT_EQ(pm_->LoadPlugin(manifest_path), DAS_E_INVALID_JSON);
     EXPECT_TRUE(logs.Contains("factoryGuid"));
     EXPECT_TRUE(logs.Contains("missing required string"));
@@ -2004,7 +2004,7 @@ TEST_F(PluginManagerGuidTest, LoadPlugin_NodeManifestRoutesThroughNodeRuntime)
         ofs << *Das::Utils::SerializeYyjsonValue(manifest, false);
     }
 
-    ScopedEnvVar             env{NODE_HOST_ENV, node_exe_path.string()};
+    const ScopedEnvVar       env{NODE_HOST_ENV, node_exe_path.string()};
     CapturingRemoteHostState remote_state;
     pm_->SetRemotePluginHostFactoryForTest(
         [&remote_state]()
@@ -2331,7 +2331,7 @@ TEST_F(PluginManagerGuidTest, HeartbeatTimeout_RealThread_CleansUpIndex)
     // Release（HostLauncher 析构）。launcher_ptr 作为 borrowed raw
     // 跨线程访问，生命周期由 keeper 全权管理（模拟生产中 IpcContext::launchers_
     // 持有）。
-    DasPtr<HostLauncher> keeper =
+    const DasPtr<HostLauncher> keeper =
         DasPtr<HostLauncher>::Attach(launcher.release());
 
     // 跨线程触发（强制真实 GuardedCallback::Invoke 持锁路径）
@@ -2389,7 +2389,7 @@ TEST_F(PluginManagerGuidTest, Shutdown_DoesNotHoldMutexDuringStop)
         { pm_->OnHeartbeatTimeout(callback_guid); });
     // plan 04：测试局部 DasPtr<HostLauncher> keeper 全权持有（不再 friend
     // 注入 host_launchers_ 死字段，已删）。
-    DasPtr<HostLauncher> keeper =
+    const DasPtr<HostLauncher> keeper =
         DasPtr<HostLauncher>::Attach(launcher.release());
 
     // 并发场景：制造 AB-BA 触发条件。
@@ -2479,7 +2479,7 @@ namespace
         }
 
         // Create the resource subdirectory
-        std::string rp =
+        const std::string rp =
             resource_path_value.empty() ? "resource" : resource_path_value;
         std::filesystem::create_directories(pkg_dir / rp);
     }
@@ -2632,7 +2632,7 @@ namespace
     void WriteTinyRedPng(const std::filesystem::path& path)
     {
         // Create a 2x2 red image (B=0, G=0, R=255 in BGR format)
-        cv::Mat              red_img(2, 2, CV_8UC3, cv::Scalar(0, 0, 255));
+        const cv::Mat        red_img(2, 2, CV_8UC3, cv::Scalar(0, 0, 255));
         std::vector<uint8_t> buf;
         cv::imencode(".png", red_img, buf);
         assert(!buf.empty() && "imencode returned empty buffer");

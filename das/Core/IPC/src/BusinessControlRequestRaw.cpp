@@ -28,7 +28,7 @@ DasResult SendBusinessControlRequestRaw(
 
     uint16_t call_id = run_loop.AllocateCallId();
 
-    ValidatedIPCMessageHeader header =
+    const ValidatedIPCMessageHeader header =
         IPCMessageHeaderBuilder()
             .SetMessageType(MessageType::REQUEST)
             .SetBusinessControlCommand(command)
@@ -39,7 +39,7 @@ DasResult SendBusinessControlRequestRaw(
             .Build();
 
     // CallKey uses the REMOTE session_id as source_session_id
-    CallKey call_key{target_session_id, call_id};
+    const CallKey call_key{target_session_id, call_id};
 
     if (bt->IsCurrentThread())
     {
@@ -75,7 +75,7 @@ DasResult SendBusinessControlRequestRaw(
         }
 
         auto&                inner = std::get<0>(*result);
-        DasResult            ipc_result = std::get<0>(inner);
+        const DasResult      ipc_result = std::get<0>(inner);
         std::vector<uint8_t> response_body = std::move(std::get<1>(inner));
         out_response = std::move(response_body);
         return ipc_result;

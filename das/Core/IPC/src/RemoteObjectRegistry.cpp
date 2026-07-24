@@ -14,7 +14,7 @@ DasResult RemoteObjectRegistry::RegisterObject(
     const std::string& name,
     uint16_t           version)
 {
-    uint32_t interface_id = ComputeInterfaceId(iid);
+    const uint32_t interface_id = ComputeInterfaceId(iid);
     return RegisterObject(
         object_id,
         iid,
@@ -45,7 +45,7 @@ DasResult RemoteObjectRegistry::RegisterObject(
         return DAS_E_INVALID_ARGUMENT;
     }
 
-    std::unique_lock lock{mutex_};
+    const std::unique_lock lock{mutex_};
 
     // Check if name already exists
     auto name_it = objects_by_name_.find(name);
@@ -56,7 +56,7 @@ DasResult RemoteObjectRegistry::RegisterObject(
     }
 
     // Encode ObjectId for lookup
-    uint64_t encoded_id = EncodeObjectId(object_id);
+    const uint64_t encoded_id = EncodeObjectId(object_id);
 
     // Check if object already exists
     if (objects_by_id_.find(encoded_id) != objects_by_id_.end())
@@ -93,9 +93,9 @@ DasResult RemoteObjectRegistry::UnregisterObject(const ObjectId& object_id)
         return DAS_E_IPC_INVALID_OBJECT_ID;
     }
 
-    std::unique_lock lock{mutex_};
-    uint64_t         encoded_id = EncodeObjectId(object_id);
-    auto             it = objects_by_id_.find(encoded_id);
+    const std::unique_lock lock{mutex_};
+    uint64_t               encoded_id = EncodeObjectId(object_id);
+    auto                   it = objects_by_id_.find(encoded_id);
 
     if (it == objects_by_id_.end())
     {
@@ -129,8 +129,8 @@ DasResult RemoteObjectRegistry::UnregisterObject(const ObjectId& object_id)
 
 void RemoteObjectRegistry::UnregisterAllFromSession(uint16_t session_id)
 {
-    std::unique_lock      lock{mutex_};
-    std::vector<uint64_t> ids_to_remove;
+    const std::unique_lock lock{mutex_};
+    std::vector<uint64_t>  ids_to_remove;
 
     // 收集要删除的对象ID
     for (const auto& pair : objects_by_id_)
@@ -142,7 +142,7 @@ void RemoteObjectRegistry::UnregisterAllFromSession(uint16_t session_id)
     }
 
     // 逐个删除
-    for (uint64_t encoded_id : ids_to_remove)
+    for (const uint64_t encoded_id : ids_to_remove)
     {
         auto it = objects_by_id_.find(encoded_id);
         if (it != objects_by_id_.end())
@@ -176,8 +176,8 @@ DasResult RemoteObjectRegistry::LookupByName(
     const std::string& name,
     RemoteObjectInfo&  out_info) const
 {
-    std::shared_lock lock{mutex_};
-    auto             it = objects_by_name_.find(name);
+    const std::shared_lock lock{mutex_};
+    auto                   it = objects_by_name_.find(name);
     if (it == objects_by_name_.end())
     {
         DAS_CORE_LOG_ERROR("Object not found for name = {}", name);
@@ -200,8 +200,8 @@ DasResult RemoteObjectRegistry::LookupByInterface(
     uint32_t          interface_id,
     RemoteObjectInfo& out_info) const
 {
-    std::shared_lock lock{mutex_};
-    auto             it = objects_by_interface_.find(interface_id);
+    const std::shared_lock lock{mutex_};
+    auto                   it = objects_by_interface_.find(interface_id);
     if (it == objects_by_interface_.end())
     {
         DAS_CORE_LOG_ERROR(
@@ -232,9 +232,9 @@ DasResult RemoteObjectRegistry::GetObjectInfo(
         return DAS_E_IPC_INVALID_OBJECT_ID;
     }
 
-    std::shared_lock lock{mutex_};
-    uint64_t         encoded_id = EncodeObjectId(object_id);
-    auto             it = objects_by_id_.find(encoded_id);
+    const std::shared_lock lock{mutex_};
+    uint64_t               encoded_id = EncodeObjectId(object_id);
+    auto                   it = objects_by_id_.find(encoded_id);
 
     if (it == objects_by_id_.end())
     {
@@ -249,7 +249,7 @@ DasResult RemoteObjectRegistry::GetObjectInfo(
 void RemoteObjectRegistry::ListAllObjects(
     std::vector<RemoteObjectInfo>& out_objects) const
 {
-    std::shared_lock lock{mutex_};
+    const std::shared_lock lock{mutex_};
     out_objects.clear();
     out_objects.reserve(objects_by_id_.size());
 
@@ -263,7 +263,7 @@ void RemoteObjectRegistry::ListObjectsBySession(
     uint16_t                       session_id,
     std::vector<RemoteObjectInfo>& out_objects) const
 {
-    std::shared_lock lock{mutex_};
+    const std::shared_lock lock{mutex_};
     out_objects.clear();
 
     for (const auto& pair : objects_by_id_)
@@ -282,20 +282,20 @@ bool RemoteObjectRegistry::ObjectExists(const ObjectId& object_id) const
         return false;
     }
 
-    std::shared_lock lock{mutex_};
-    uint64_t         encoded_id = EncodeObjectId(object_id);
+    const std::shared_lock lock{mutex_};
+    const uint64_t         encoded_id = EncodeObjectId(object_id);
     return objects_by_id_.find(encoded_id) != objects_by_id_.end();
 }
 
 size_t RemoteObjectRegistry::GetObjectCount() const
 {
-    std::shared_lock lock{mutex_};
+    const std::shared_lock lock{mutex_};
     return objects_by_id_.size();
 }
 
 void RemoteObjectRegistry::Clear()
 {
-    std::unique_lock lock{mutex_};
+    const std::unique_lock lock{mutex_};
     objects_by_id_.clear();
     objects_by_name_.clear();
     objects_by_interface_.clear();

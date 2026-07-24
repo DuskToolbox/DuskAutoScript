@@ -13,7 +13,9 @@ IDasTemplateMatchResultImpl::IDasTemplateMatchResultImpl(
 DasResult IDasTemplateMatchResultImpl::Getscore(double* p_out)
 {
     if (!p_out)
+    {
         return DAS_E_INVALID_POINTER;
+    }
     *p_out = score_;
     return DAS_S_OK;
 }
@@ -28,7 +30,9 @@ DasResult IDasTemplateMatchResultImpl::Getmatch_rect(
     ExportInterface::DasRect* p_out)
 {
     if (!p_out)
+    {
         return DAS_E_INVALID_POINTER;
+    }
     *p_out = match_rect_;
     return DAS_S_OK;
 }
@@ -43,7 +47,9 @@ DasResult IDasTemplateMatchResultImpl::Setmatch_rect(
 DasResult IDasTemplateMatchResultImpl::Getraw_score(double* p_out)
 {
     if (!p_out)
+    {
         return DAS_E_INVALID_POINTER;
+    }
     *p_out = raw_score_;
     return DAS_S_OK;
 }

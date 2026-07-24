@@ -233,7 +233,7 @@ namespace FakeMainProcess
             data_->reserved = 0;
 
             // 创建同步互斥锁
-            std::string mutex_name = shm_name_ + "_mutex";
+            const std::string mutex_name = shm_name_ + "_mutex";
             mutex_ = std::make_unique<boost::interprocess::named_mutex>(
                 boost::interprocess::open_or_create,
                 mutex_name.c_str());
@@ -270,7 +270,7 @@ namespace FakeMainProcess
 
             try
             {
-                std::string mutex_name = shm_name_ + "_mutex";
+                const std::string mutex_name = shm_name_ + "_mutex";
                 boost::interprocess::named_mutex::remove(mutex_name.c_str());
             }
             catch (...)
@@ -386,7 +386,7 @@ namespace FakeMainProcess
 
         try
         {
-            std::string mutex_name = shm_name + "_mutex";
+            const std::string mutex_name = shm_name + "_mutex";
             boost::interprocess::named_mutex::remove(mutex_name.c_str());
         }
         catch (...)

@@ -87,7 +87,7 @@ public:
 TEST(IpcSerializerTest, WriteReadInt8)
 {
     MemorySerializerWriter writer;
-    int8_t                 value = -42;
+    const int8_t           value = -42;
     EXPECT_EQ(writer.WriteInt8(value), DAS_S_OK);
 
     MemorySerializerReader reader(writer.GetBuffer());
@@ -99,7 +99,7 @@ TEST(IpcSerializerTest, WriteReadInt8)
 TEST(IpcSerializerTest, WriteReadUInt8)
 {
     MemorySerializerWriter writer;
-    uint8_t                value = 255;
+    const uint8_t          value = 255;
     EXPECT_EQ(writer.WriteUInt8(value), DAS_S_OK);
 
     MemorySerializerReader reader(writer.GetBuffer());
@@ -111,7 +111,7 @@ TEST(IpcSerializerTest, WriteReadUInt8)
 TEST(IpcSerializerTest, WriteReadInt16)
 {
     MemorySerializerWriter writer;
-    int16_t                value = -1000;
+    const int16_t          value = -1000;
     EXPECT_EQ(writer.WriteInt16(value), DAS_S_OK);
 
     MemorySerializerReader reader(writer.GetBuffer());
@@ -123,7 +123,7 @@ TEST(IpcSerializerTest, WriteReadInt16)
 TEST(IpcSerializerTest, WriteReadInt32)
 {
     MemorySerializerWriter writer;
-    int32_t                value = -1234567;
+    const int32_t          value = -1234567;
     EXPECT_EQ(writer.WriteInt32(value), DAS_S_OK);
 
     MemorySerializerReader reader(writer.GetBuffer());
@@ -136,7 +136,7 @@ TEST(IpcSerializerTest, WriteReadInt32)
 TEST(IpcSerializerTest, WriteReadFloat)
 {
     MemorySerializerWriter writer;
-    float                  value = 3.14159f;
+    const float            value = 3.14159f;
     EXPECT_EQ(writer.WriteFloat(value), DAS_S_OK);
 
     MemorySerializerReader reader(writer.GetBuffer());
@@ -148,7 +148,7 @@ TEST(IpcSerializerTest, WriteReadFloat)
 TEST(IpcSerializerTest, WriteReadDouble)
 {
     MemorySerializerWriter writer;
-    double                 value = 2.718281828459045;
+    const double           value = 2.718281828459045;
     EXPECT_EQ(writer.WriteDouble(value), DAS_S_OK);
 
     MemorySerializerReader reader(writer.GetBuffer());
@@ -190,7 +190,7 @@ TEST(IpcSerializerTest, WriteReadString)
 {
     MemorySerializerWriter writer;
     const char*            str = "Hello, World!";
-    size_t                 length = std::strlen(str);
+    const size_t           length = std::strlen(str);
     EXPECT_EQ(writer.WriteString(str, length), DAS_S_OK);
 
     MemorySerializerReader reader(writer.GetBuffer());
@@ -202,8 +202,8 @@ TEST(IpcSerializerTest, WriteReadString)
 // Test empty buffer
 TEST(IpcSerializerTest, ReadEmptyBuffer)
 {
-    std::vector<uint8_t>   empty_buffer;
-    MemorySerializerReader reader(empty_buffer);
+    const std::vector<uint8_t> empty_buffer;
+    MemorySerializerReader     reader(empty_buffer);
 
     int8_t value;
     EXPECT_NE(reader.ReadInt8(&value), DAS_S_OK);

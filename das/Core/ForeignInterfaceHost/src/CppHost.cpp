@@ -67,7 +67,7 @@ public:
         std::string plugin_name;
         std::string plugin_extension;
         {
-            std::string manifest_content(
+            const std::string manifest_content(
                 (std::istreambuf_iterator<char>(file)),
                 std::istreambuf_iterator<char>());
             auto manifest_opt =

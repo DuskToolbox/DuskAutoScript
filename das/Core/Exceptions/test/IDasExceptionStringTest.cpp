@@ -5,7 +5,7 @@
 
 TEST(IDasExceptionStringTest, Creation_Release)
 {
-    DasResult              error_code = DAS_E_FAIL;
+    const DasResult        error_code = DAS_E_FAIL;
     DasExceptionSourceInfo source_info{"test.cpp", 10, "test_func"};
     IDasExceptionString*   p_handle = nullptr;
 
@@ -24,7 +24,7 @@ TEST(IDasExceptionStringTest, Creation_Release)
 
 TEST(IDasExceptionStringTest, EmptyErrorCode)
 {
-    DasResult              error_code = DAS_S_OK;
+    const DasResult        error_code = DAS_S_OK;
     DasExceptionSourceInfo source_info{"test.cpp", 20, "empty_func"};
     IDasExceptionString*   p_handle = nullptr;
 
@@ -42,7 +42,7 @@ TEST(IDasExceptionStringTest, EmptyErrorCode)
 
 TEST(IDasExceptionStringTest, MultipleRelease)
 {
-    DasResult              error_code = DAS_E_INVALID_ARGUMENT;
+    const DasResult        error_code = DAS_E_INVALID_ARGUMENT;
     DasExceptionSourceInfo source_info{"test.cpp", 30, "test_func"};
     IDasExceptionString*   p_handle = nullptr;
 

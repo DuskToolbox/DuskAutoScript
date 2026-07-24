@@ -87,10 +87,10 @@ TEST(DasStringNullTerminationTest, GetUtf16_StdU16StringInterop)
     // Construct std::u16string using the null-terminated constructor (no
     // explicit length). This will read until it finds u'\0'. If the buffer
     // were not null-terminated, this would read past the end.
-    std::u16string reconstructed(out_string);
+    const std::u16string reconstructed(out_string);
     EXPECT_EQ(reconstructed.size(), out_string_size);
 
-    std::u16string expected = u"路径/测试.onnx";
+    const std::u16string expected = u"路径/测试.onnx";
     EXPECT_EQ(reconstructed, expected);
 
     p_string->Release();
@@ -106,8 +106,8 @@ TEST(DasStringNullTerminationTest, GetUtf16_MixedAsciiCjk)
     ASSERT_NE(out_string, nullptr);
 
     // Null-terminated constructor must produce identical content
-    std::u16string reconstructed(out_string);
-    std::u16string expected = u"model_模型_v2";
+    const std::u16string reconstructed(out_string);
+    const std::u16string expected = u"model_模型_v2";
     EXPECT_EQ(reconstructed, expected);
     EXPECT_EQ(reconstructed.size(), out_string_size);
     EXPECT_EQ(out_string[out_string_size], u'\0');

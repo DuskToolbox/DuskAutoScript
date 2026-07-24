@@ -159,10 +159,11 @@ TEST(IpcMultiProcessTestBasic, TestPluginJsonPathResolvesFlatAndFolderManifests)
 
 TEST(IpcMultiProcessTestBasic, ObjectIdEncodingDecoding)
 {
-    DAS::Core::IPC::ObjectId original = {2, 1, 100};
+    const DAS::Core::IPC::ObjectId original = {2, 1, 100};
 
-    uint64_t                 encoded = DAS::Core::IPC::EncodeObjectId(original);
-    DAS::Core::IPC::ObjectId decoded = DAS::Core::IPC::DecodeObjectId(encoded);
+    const uint64_t encoded = DAS::Core::IPC::EncodeObjectId(original);
+    const DAS::Core::IPC::ObjectId decoded =
+        DAS::Core::IPC::DecodeObjectId(encoded);
 
     EXPECT_EQ(decoded.session_id, original.session_id);
     EXPECT_EQ(decoded.generation, original.generation);
@@ -172,8 +173,8 @@ TEST(IpcMultiProcessTestBasic, ObjectIdEncodingDecoding)
 
 TEST(IpcMultiProcessTestBasic, ObjectIdNullCheck)
 {
-    DAS::Core::IPC::ObjectId null_id = {0, 0, 0};
-    DAS::Core::IPC::ObjectId valid_id = {1, 1, 1};
+    const DAS::Core::IPC::ObjectId null_id = {0, 0, 0};
+    const DAS::Core::IPC::ObjectId valid_id = {1, 1, 1};
 
     EXPECT_TRUE(DAS::Core::IPC::IsNullObjectId(null_id));
     EXPECT_FALSE(DAS::Core::IPC::IsNullObjectId(valid_id));
@@ -183,13 +184,13 @@ TEST(IpcMultiProcessTestBasic, ObjectIdEncodeDecodeRoundTrip)
 {
     for (uint32_t i = 0; i < 100; ++i)
     {
-        DAS::Core::IPC::ObjectId original = {
+        const DAS::Core::IPC::ObjectId original = {
             static_cast<uint16_t>(i % 65534 + 1),
             static_cast<uint16_t>(i % 65535),
             i * 1000};
 
-        uint64_t encoded = DAS::Core::IPC::EncodeObjectId(original);
-        DAS::Core::IPC::ObjectId decoded =
+        const uint64_t encoded = DAS::Core::IPC::EncodeObjectId(original);
+        const DAS::Core::IPC::ObjectId decoded =
             DAS::Core::IPC::DecodeObjectId(encoded);
 
         EXPECT_EQ(decoded, original);
@@ -202,13 +203,13 @@ TEST(IpcMultiProcessTestBasic, RemoteObjectRegistry_RegisterAndLookup)
 {
     DAS::Core::IPC::RemoteObjectRegistry registry;
 
-    DAS::Core::IPC::ObjectId obj_id = {2, 1, 100};
-    DasGuid                  iid = {
+    const DAS::Core::IPC::ObjectId obj_id = {2, 1, 100};
+    const DasGuid                  iid = {
         0x12345678,
         0x1234,
         0x5678,
         {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08}};
-    std::string obj_name = "TestRemoteObject";
+    const std::string obj_name = "TestRemoteObject";
 
     DasResult result = registry.RegisterObject(obj_id, iid, 2, obj_name, 1);
     ASSERT_EQ(result, DAS_S_OK);
@@ -232,11 +233,11 @@ TEST(IpcMultiProcessTestBasic, RemoteObjectRegistry_MultipleObjects)
 
     for (size_t i = 0; i < obj_names.size(); ++i)
     {
-        DAS::Core::IPC::ObjectId obj_id = {
+        const DAS::Core::IPC::ObjectId obj_id = {
             2,
             1,
             static_cast<uint32_t>(100 + i)};
-        DasGuid iid = {
+        const DasGuid iid = {
             static_cast<uint32_t>(0x1000 + i),
             0x1234,
             0x5678,
@@ -249,11 +250,11 @@ TEST(IpcMultiProcessTestBasic, RemoteObjectRegistry_MultipleObjects)
     }
 
     // 验证所有对象
-    for (size_t i = 0; i < obj_names.size(); ++i)
+    for (const auto& obj_name : obj_names)
     {
         DAS::Core::IPC::RemoteObjectInfo info;
-        ASSERT_EQ(registry.LookupByName(obj_names[i], info), DAS_S_OK);
-        EXPECT_EQ(info.name, obj_names[i]);
+        ASSERT_EQ(registry.LookupByName(obj_name, info), DAS_S_OK);
+        EXPECT_EQ(info.name, obj_name);
     }
 
     // 清理
@@ -267,22 +268,22 @@ TEST(IpcMultiProcessTestBasic, RemoteObjectRegistry_SessionCleanup)
 {
     DAS::Core::IPC::RemoteObjectRegistry registry;
 
-    uint16_t                              session_id = 100;
+    const uint16_t                        session_id = 100;
     std::vector<DAS::Core::IPC::ObjectId> obj_ids;
 
     // 注册多个对象
     for (int i = 0; i < 5; ++i)
     {
-        DAS::Core::IPC::ObjectId obj_id = {
+        const DAS::Core::IPC::ObjectId obj_id = {
             session_id,
             1,
             static_cast<uint32_t>(100 + i)};
-        DasGuid iid = {
+        const DasGuid iid = {
             static_cast<uint32_t>(0x2000 + i),
             0x1234,
             0x5678,
             {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08}};
-        std::string name = "SessionObject" + std::to_string(i);
+        const std::string name = "SessionObject" + std::to_string(i);
 
         registry.RegisterObject(obj_id, iid, session_id, name, 1);
         obj_ids.push_back(obj_id);
@@ -291,7 +292,7 @@ TEST(IpcMultiProcessTestBasic, RemoteObjectRegistry_SessionCleanup)
     // 验证对象存在
     std::vector<DAS::Core::IPC::RemoteObjectInfo> objects;
     registry.ListAllObjects(objects);
-    size_t count_before = objects.size();
+    const size_t count_before = objects.size();
 
     // 清理会话所有对象
     registry.UnregisterAllFromSession(session_id);
@@ -304,10 +305,10 @@ TEST(IpcMultiProcessTestBasic, RemoteObjectRegistry_SessionCleanup)
 
 TEST(IpcMultiProcessTestBasic, RemoteObjectRegistry_LookupNonExistent)
 {
-    DAS::Core::IPC::RemoteObjectRegistry registry;
+    const DAS::Core::IPC::RemoteObjectRegistry registry;
 
     DAS::Core::IPC::RemoteObjectInfo info;
-    DasResult result = registry.LookupByName("NonExistentObject", info);
+    const DasResult result = registry.LookupByName("NonExistentObject", info);
     EXPECT_EQ(result, DAS_E_IPC_OBJECT_NOT_FOUND);
 }
 
@@ -362,9 +363,9 @@ TEST(IpcMultiProcessTestBasic, Handshake_ReadyAckInit)
 TEST(IpcMultiProcessTestBasic, MessageQueueNameGeneration)
 {
     // 新格式: das_ipc_<main_pid>_<host_pid>_m2h/h2m
-    std::string m2h_name =
+    const std::string m2h_name =
         DAS::Core::IPC::Host::MakeMessageQueueName(100, 12345, true);
-    std::string h2m_name =
+    const std::string h2m_name =
         DAS::Core::IPC::Host::MakeMessageQueueName(100, 12345, false);
 
     EXPECT_TRUE(m2h_name.find("das_ipc_100_12345_m2h") != std::string::npos);
@@ -375,7 +376,7 @@ TEST(IpcMultiProcessTestBasic, MessageQueueNameGeneration)
 TEST(IpcMultiProcessTestBasic, SharedMemoryNameGeneration)
 {
     // 新格式: das_ipc_<main_pid>_<host_pid>_shm
-    std::string shm_name =
+    const std::string shm_name =
         DAS::Core::IPC::Host::MakeSharedMemoryName(100, 12345);
 
     EXPECT_TRUE(shm_name.find("das_ipc_100_12345_shm") != std::string::npos);

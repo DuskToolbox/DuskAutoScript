@@ -47,9 +47,9 @@ constexpr uint32_t ComputeInterfaceId(const DasGuid& guid) noexcept
     hash_value *= FNV_PRIME;
 
     // Hash data4 (8 bytes)
-    for (int i = 0; i < 8; ++i)
+    for (unsigned char i : guid.data4)
     {
-        hash_value ^= guid.data4[i];
+        hash_value ^= i;
         hash_value *= FNV_PRIME;
     }
 

@@ -115,7 +115,9 @@ namespace
         {
             auto r = --ref_count_;
             if (r == 0)
+            {
                 delete this;
+            }
             return r;
         }
 
@@ -147,7 +149,9 @@ namespace
             if (status_.load(std::memory_order_acquire) != DAS_ASYNC_STARTED)
             {
                 if (handler_)
+                {
                     handler_->OnCompleted(this, status_.load());
+                }
             }
             return DAS_S_OK;
         }
@@ -172,7 +176,9 @@ namespace
         DasResult GetResults(uint16_t* p_out_session_id) override
         {
             if (status_.load(std::memory_order_acquire) != DAS_ASYNC_COMPLETED)
+            {
                 return DAS_E_IPC_INVALID_STATE;
+            }
             *p_out_session_id = session_id_;
             return result_;
         }
@@ -185,12 +191,14 @@ namespace
             session_id_ = sid;
             result_ = result;
 
-            int32_t new_status =
+            const int32_t new_status =
                 DAS::IsOk(result) ? DAS_ASYNC_COMPLETED : DAS_ASYNC_FAILED;
             status_.store(new_status, std::memory_order_release);
 
             if (handler_)
+            {
                 handler_->OnCompleted(this, new_status);
+            }
         }
 
         [[nodiscard]]
@@ -474,7 +482,7 @@ DasResult HostLauncher::Start(
     // 检查可执行文件是否存在
     if (!std::filesystem::exists(host_exe_path))
     {
-        std::string msg =
+        const std::string msg =
             DAS_FMT_NS::format("Host executable not found: {}", host_exe_path);
         DAS_CORE_LOG_ERROR(msg.c_str());
         return DAS_E_INVALID_ARGUMENT;
@@ -484,14 +492,14 @@ DasResult HostLauncher::Start(
     uint32_t main_pid =
         static_cast<uint32_t>(boost::process::v2::current_pid());
 
-    std::string pid_msg = DAS_FMT_NS::format(
+    const std::string pid_msg = DAS_FMT_NS::format(
         "HostLauncher::Start - Main process PID: {}",
         main_pid);
     DAS_LOG_INFO(pid_msg.c_str());
 
     // 构建命令行参数
     std::vector<std::string> args;
-    args.push_back("--main-pid");
+    args.emplace_back("--main-pid");
     args.push_back(std::to_string(main_pid));
 
     return StartLaunchSequence(
@@ -626,7 +634,7 @@ DasResult HostLauncher::StartLaunchSequence(
         }
     }
 
-    std::string msg = DAS_FMT_NS::format(
+    const std::string msg = DAS_FMT_NS::format(
         "Host process started successfully: PID={}, session_id={}",
         impl_->pid,
         out_session_id);
@@ -650,7 +658,7 @@ DasResult HostLauncher::StartLaunchSequence(
                     boost::asio::redirect_error(
                         boost::asio::use_awaitable,
                         ec));
-                int exit_code = ec ? -1 : process_ptr->exit_code();
+                const int exit_code = ec ? -1 : process_ptr->exit_code();
                 // 持锁执行 callback（INV-01：回调内部不得重入本 slot）
                 on_process_exit_slot_.Invoke(session_id, exit_code);
                 co_return;
@@ -681,7 +689,7 @@ void HostLauncher::Stop()
         GoodbyeV1 goodbye{};
         goodbye.reason = static_cast<uint32_t>(GoodbyeReason::NormalShutdown);
 
-        std::string log_msg = DAS_FMT_NS::format(
+        const std::string log_msg = DAS_FMT_NS::format(
             "Sending GOODBYE to Host process: PID={}",
             impl_->pid);
         DAS_LOG_INFO(log_msg.c_str());
@@ -708,7 +716,7 @@ void HostLauncher::Stop()
             DasResult result = future.get();
             if (result != DAS_S_OK)
             {
-                std::string err_msg = DAS_FMT_NS::format(
+                const std::string err_msg = DAS_FMT_NS::format(
                     "Failed to send GOODBYE: error={}",
                     result);
                 DAS_CORE_LOG_ERROR(err_msg.c_str());
@@ -716,14 +724,14 @@ void HostLauncher::Stop()
         }
         catch (const boost::system::system_error& e)
         {
-            std::string err_msg = DAS_FMT_NS::format(
+            const std::string err_msg = DAS_FMT_NS::format(
                 "Send GOODBYE failed with system_error: {}",
                 ToString(e.what()));
             DAS_CORE_LOG_ERROR(err_msg.c_str());
         }
         catch (const std::exception& e)
         {
-            std::string err_msg = DAS_FMT_NS::format(
+            const std::string err_msg = DAS_FMT_NS::format(
                 "Send GOODBYE failed: {}",
                 ToString(e.what()));
             DAS_CORE_LOG_ERROR(err_msg.c_str());
@@ -744,7 +752,7 @@ void HostLauncher::Stop()
 
         if (process_exited)
         {
-            std::string exit_msg = DAS_FMT_NS::format(
+            const std::string exit_msg = DAS_FMT_NS::format(
                 "Host process exited gracefully: PID={}",
                 impl_->pid);
             DAS_LOG_INFO(exit_msg.c_str());
@@ -761,11 +769,11 @@ void HostLauncher::Stop()
         boost::system::error_code ec;
 
         // 检查进程是否仍在运行
-        bool still_running = impl_->process->running(ec);
+        const bool still_running = impl_->process->running(ec);
 
         if (still_running)
         {
-            std::string msg = DAS_FMT_NS::format(
+            const std::string msg = DAS_FMT_NS::format(
                 "HostLauncher::Stop - terminating Host process: pid={}, session_id={}",
                 impl_->pid,
                 impl_->session_id);
@@ -840,7 +848,7 @@ DasResult HostLauncher::StartAsync(
 
     if (!std::filesystem::exists(host_exe_path))
     {
-        std::string msg =
+        const std::string msg =
             DAS_FMT_NS::format("Host executable not found: {}", host_exe_path);
         DAS_CORE_LOG_ERROR(msg.c_str());
         return DAS_E_INVALID_ARGUMENT;
@@ -877,13 +885,13 @@ void HostLauncher::SetOnHeartbeatTimeout(OnHeartbeatTimeoutCallback callback)
 
 void HostLauncher::SetAssociatedGuid(DasGuid guid)
 {
-    std::lock_guard<std::mutex> lock(associated_guid_mutex_);
+    const std::scoped_lock lock(associated_guid_mutex_);
     associated_guid_ = guid;
 }
 
 DasGuid HostLauncher::GetAssociatedGuid() const
 {
-    std::lock_guard<std::mutex> lock(associated_guid_mutex_);
+    const std::scoped_lock lock(associated_guid_mutex_);
     return associated_guid_;
 }
 
@@ -893,7 +901,7 @@ void HostLauncher::NotifyHeartbeatTimeout()
     // 锁执行）。 单一锁职责：slot 锁内不嵌套 guid 锁，避免锁层级耦合。
     DasGuid guid_snapshot{};
     {
-        std::lock_guard<std::mutex> lock(associated_guid_mutex_);
+        const std::scoped_lock lock(associated_guid_mutex_);
         guid_snapshot = associated_guid_;
     }
     on_heartbeat_timeout_slot_.Invoke(guid_snapshot);
@@ -916,7 +924,7 @@ void HostLauncher::TerminateIfRunning()
     if (impl_->process)
     {
         boost::system::error_code ec;
-        bool                      still_running = impl_->process->running(ec);
+        const bool                still_running = impl_->process->running(ec);
 
         if (still_running)
         {
@@ -1011,7 +1019,7 @@ DasResult HostLauncher::LaunchProcess(
         impl_->pid = static_cast<uint32_t>(impl_->process->id());
         impl_->is_running = true;
 
-        std::string msg =
+        const std::string msg =
             DAS_FMT_NS::format("Host process launched: PID={}", impl_->pid);
         DAS_LOG_INFO(msg.c_str());
 
@@ -1019,7 +1027,7 @@ DasResult HostLauncher::LaunchProcess(
     }
     catch (const boost::system::system_error& e)
     {
-        std::string msg = DAS_FMT_NS::format(
+        const std::string msg = DAS_FMT_NS::format(
             "Exception launching Host process (system_error): {}",
             ToString(e.what()));
         DAS_CORE_LOG_ERROR(msg.c_str());
@@ -1027,7 +1035,7 @@ DasResult HostLauncher::LaunchProcess(
     }
     catch (const std::exception& e)
     {
-        std::string msg = DAS_FMT_NS::format(
+        const std::string msg = DAS_FMT_NS::format(
             "Exception launching Host process: {}",
             ToString(e.what()));
         DAS_CORE_LOG_ERROR(msg.c_str());
@@ -1073,16 +1081,16 @@ DasResult HostLauncher::WaitForHostReady(uint32_t timeout_ms)
 
 DasResult HostLauncher::ConnectToHost(uint32_t timeout_ms)
 {
-    uint32_t main_pid =
+    const uint32_t main_pid =
         static_cast<uint32_t>(boost::process::v2::current_pid());
-    uint32_t host_pid = impl_->pid;
+    const uint32_t host_pid = impl_->pid;
 
     std::string host_to_plugin_pipe =
         Host::MakeMessageQueueName(main_pid, host_pid, false);
     std::string plugin_to_host_pipe =
         Host::MakeMessageQueueName(main_pid, host_pid, true);
 
-    std::string msg = DAS_FMT_NS::format(
+    const std::string msg = DAS_FMT_NS::format(
         "Creating pipes for Host IPC: {}, {} (MainProcess is server)",
         host_to_plugin_pipe,
         plugin_to_host_pipe);
@@ -1141,7 +1149,7 @@ DasResult HostLauncher::ConnectToHost(uint32_t timeout_ms)
         auto [transport_result, maybe_transport] = future.get();
         if (DAS::IsFailed(transport_result) || !maybe_transport)
         {
-            std::string err_msg = DAS_FMT_NS::format(
+            const std::string err_msg = DAS_FMT_NS::format(
                 "Failed to create Host IPC transport: error={}",
                 transport_result);
             DAS_CORE_LOG_ERROR(err_msg.c_str());
@@ -1152,7 +1160,7 @@ DasResult HostLauncher::ConnectToHost(uint32_t timeout_ms)
     }
     catch (const boost::system::system_error& e)
     {
-        std::string err_msg = DAS_FMT_NS::format(
+        const std::string err_msg = DAS_FMT_NS::format(
             "Failed to create Host IPC transport (system_error): {}",
             ToString(e.what()));
         DAS_CORE_LOG_ERROR(err_msg.c_str());
@@ -1160,7 +1168,7 @@ DasResult HostLauncher::ConnectToHost(uint32_t timeout_ms)
     }
     catch (const std::exception& e)
     {
-        std::string err_msg = DAS_FMT_NS::format(
+        const std::string err_msg = DAS_FMT_NS::format(
             "Failed to create Host IPC transport: exception={}",
             ToString(e.what()));
         DAS_CORE_LOG_ERROR(err_msg.c_str());
@@ -1205,7 +1213,7 @@ DasResult HostLauncher::PerformFullHandshake(
         return result;
     }
 
-    std::string msg = DAS_FMT_NS::format(
+    const std::string msg = DAS_FMT_NS::format(
         "Full handshake completed: session_id={}",
         out_session_id);
     DAS_LOG_INFO(msg.c_str());
@@ -1229,7 +1237,7 @@ boost::asio::awaitable<DasResult> HostLauncher::SendHandshakeHelloAsync(
     uint32_t my_pid = static_cast<uint32_t>(boost::process::v2::current_pid());
 
     // session_id 已在构造时预分配
-    uint16_t assigned_session_id = session_id_;
+    const uint16_t assigned_session_id = session_id_;
     if (assigned_session_id == 0)
     {
         DAS_CORE_LOG_ERROR("Invalid pre-allocated session_id (0)");
@@ -1243,7 +1251,7 @@ boost::asio::awaitable<DasResult> HostLauncher::SendHandshakeHelloAsync(
     constexpr uint16_t MAIN_PROCESS_SESSION_ID = 1;
 
     // V3: 16-bit call_id
-    uint16_t call_id = impl_->next_call_id++;
+    const uint16_t call_id = impl_->next_call_id++;
     if (impl_->next_call_id == 0)
     {
         impl_->next_call_id = 1; // 溢出后从 1 开始
@@ -1266,13 +1274,13 @@ boost::asio::awaitable<DasResult> HostLauncher::SendHandshakeHelloAsync(
 
     if (result != DAS_S_OK)
     {
-        std::string msg =
+        const std::string msg =
             DAS_FMT_NS::format("Failed to send Hello: error={}", result);
         DAS_CORE_LOG_ERROR(msg.c_str());
         co_return result;
     }
 
-    std::string info_msg =
+    const std::string info_msg =
         DAS_FMT_NS::format("Sent Hello: pid={}, name={}", my_pid, client_name);
     DAS_LOG_INFO(info_msg.c_str());
     co_return DAS_S_OK;
@@ -1295,8 +1303,8 @@ boost::asio::awaitable<DasResult> HostLauncher::ReceiveHandshakeWelcomeAsync(
 
     if (result_variant.index() == 0)
     {
-        DasResult   error_code = std::get<0>(result_variant);
-        std::string msg = DAS_FMT_NS::format(
+        DasResult         error_code = std::get<0>(result_variant);
+        const std::string msg = DAS_FMT_NS::format(
             "Failed to receive Welcome: error={}",
             error_code);
         DAS_CORE_LOG_ERROR(msg.c_str());
@@ -1310,7 +1318,7 @@ boost::asio::awaitable<DasResult> HostLauncher::ReceiveHandshakeWelcomeAsync(
     if (raw_header.interface_id
         != static_cast<uint32_t>(HandshakeInterfaceId::HANDSHAKE_IFACE_WELCOME))
     {
-        std::string msg = DAS_FMT_NS::format(
+        const std::string msg = DAS_FMT_NS::format(
             "Unexpected interface_id: {}",
             raw_header.interface_id);
         DAS_CORE_LOG_ERROR(msg.c_str());
@@ -1328,7 +1336,7 @@ boost::asio::awaitable<DasResult> HostLauncher::ReceiveHandshakeWelcomeAsync(
 
     if (welcome.status != WelcomeResponseV1::STATUS_SUCCESS)
     {
-        std::string msg =
+        const std::string msg =
             DAS_FMT_NS::format("Welcome status error: {}", welcome.status);
         DAS_CORE_LOG_ERROR(msg.c_str());
         co_return DAS_E_IPC_HANDSHAKE_FAILED;
@@ -1336,7 +1344,7 @@ boost::asio::awaitable<DasResult> HostLauncher::ReceiveHandshakeWelcomeAsync(
 
     out_session_id = welcome.session_id;
 
-    std::string info_msg = DAS_FMT_NS::format(
+    const std::string info_msg = DAS_FMT_NS::format(
         "Received Welcome: session_id={}, status={}",
         welcome.session_id,
         welcome.status);
@@ -1360,7 +1368,7 @@ boost::asio::awaitable<DasResult> HostLauncher::SendHandshakeReadyAsync(
     constexpr uint16_t MAIN_PROCESS_SESSION_ID = 1;
 
     // V3: 16-bit call_id
-    uint16_t call_id = impl_->next_call_id++;
+    const uint16_t call_id = impl_->next_call_id++;
     if (impl_->next_call_id == 0)
     {
         impl_->next_call_id = 1; // 溢出后从 1 开始
@@ -1382,13 +1390,13 @@ boost::asio::awaitable<DasResult> HostLauncher::SendHandshakeReadyAsync(
 
     if (result != DAS_S_OK)
     {
-        std::string msg =
+        const std::string msg =
             DAS_FMT_NS::format("Failed to send Ready: error={}", result);
         DAS_CORE_LOG_ERROR(msg.c_str());
         co_return result;
     }
 
-    std::string info_msg =
+    const std::string info_msg =
         DAS_FMT_NS::format("Sent Ready: session_id={}", session_id);
     DAS_LOG_INFO(info_msg.c_str());
     co_return DAS_S_OK;
@@ -1409,8 +1417,8 @@ boost::asio::awaitable<DasResult> HostLauncher::ReceiveHandshakeReadyAckAsync(
 
     if (result_variant.index() == 0)
     {
-        DasResult   error_code = std::get<0>(result_variant);
-        std::string msg = DAS_FMT_NS::format(
+        DasResult         error_code = std::get<0>(result_variant);
+        const std::string msg = DAS_FMT_NS::format(
             "Failed to receive ReadyAck: error={}",
             error_code);
         DAS_CORE_LOG_ERROR(msg.c_str());
@@ -1425,7 +1433,7 @@ boost::asio::awaitable<DasResult> HostLauncher::ReceiveHandshakeReadyAckAsync(
         != static_cast<uint32_t>(
             HandshakeInterfaceId::HANDSHAKE_IFACE_READY_ACK))
     {
-        std::string msg = DAS_FMT_NS::format(
+        const std::string msg = DAS_FMT_NS::format(
             "Unexpected interface_id: {}",
             raw_header.interface_id);
         DAS_CORE_LOG_ERROR(msg.c_str());
@@ -1442,13 +1450,13 @@ boost::asio::awaitable<DasResult> HostLauncher::ReceiveHandshakeReadyAckAsync(
 
     if (ack.status != ReadyAckV1::STATUS_SUCCESS)
     {
-        std::string msg =
+        const std::string msg =
             DAS_FMT_NS::format("ReadyAck status error: {}", ack.status);
         DAS_CORE_LOG_ERROR(msg.c_str());
         co_return DAS_E_IPC_HANDSHAKE_FAILED;
     }
 
-    std::string info_msg =
+    const std::string info_msg =
         DAS_FMT_NS::format("Received ReadyAck: status={}", ack.status);
     DAS_LOG_INFO(info_msg.c_str());
 
@@ -1489,7 +1497,7 @@ boost::asio::awaitable<DasResult> HostLauncher::PerformFullHandshakeAsync(
         co_return result;
     }
 
-    std::string msg = DAS_FMT_NS::format(
+    const std::string msg = DAS_FMT_NS::format(
         "Full handshake completed: session_id={}",
         out_session_id);
     DAS_LOG_INFO(msg.c_str());
@@ -1513,7 +1521,7 @@ DasResult HostLauncher::SendHandshakeHello(const std::string& client_name)
     }
     catch (const boost::system::system_error& e)
     {
-        std::string msg = DAS_FMT_NS::format(
+        const std::string msg = DAS_FMT_NS::format(
             "SendHandshakeHello failed (system_error): {}",
             ToString(e.what()));
         DAS_CORE_LOG_ERROR(msg.c_str());
@@ -1521,7 +1529,7 @@ DasResult HostLauncher::SendHandshakeHello(const std::string& client_name)
     }
     catch (const std::exception& e)
     {
-        std::string msg = DAS_FMT_NS::format(
+        const std::string msg = DAS_FMT_NS::format(
             "SendHandshakeHello failed: {}",
             ToString(e.what()));
         DAS_CORE_LOG_ERROR(msg.c_str());
@@ -1553,7 +1561,7 @@ DasResult HostLauncher::ReceiveHandshakeWelcome(
     }
     catch (const boost::system::system_error& e)
     {
-        std::string msg = DAS_FMT_NS::format(
+        const std::string msg = DAS_FMT_NS::format(
             "ReceiveHandshakeWelcome failed (system_error): {}",
             ToString(e.what()));
         DAS_CORE_LOG_ERROR(msg.c_str());
@@ -1561,7 +1569,7 @@ DasResult HostLauncher::ReceiveHandshakeWelcome(
     }
     catch (const std::exception& e)
     {
-        std::string msg = DAS_FMT_NS::format(
+        const std::string msg = DAS_FMT_NS::format(
             "ReceiveHandshakeWelcome failed: {}",
             ToString(e.what()));
         DAS_CORE_LOG_ERROR(msg.c_str());
@@ -1581,7 +1589,7 @@ DasResult HostLauncher::SendHandshakeReady(uint16_t session_id)
     }
     catch (const boost::system::system_error& e)
     {
-        std::string msg = DAS_FMT_NS::format(
+        const std::string msg = DAS_FMT_NS::format(
             "SendHandshakeReady failed (system_error): {}",
             ToString(e.what()));
         DAS_CORE_LOG_ERROR(msg.c_str());
@@ -1589,7 +1597,7 @@ DasResult HostLauncher::SendHandshakeReady(uint16_t session_id)
     }
     catch (const std::exception& e)
     {
-        std::string msg = DAS_FMT_NS::format(
+        const std::string msg = DAS_FMT_NS::format(
             "SendHandshakeReady failed: {}",
             ToString(e.what()));
         DAS_CORE_LOG_ERROR(msg.c_str());
@@ -1619,7 +1627,7 @@ DasResult HostLauncher::ReceiveHandshakeReadyAck(uint32_t timeout_ms)
     }
     catch (const boost::system::system_error& e)
     {
-        std::string msg = DAS_FMT_NS::format(
+        const std::string msg = DAS_FMT_NS::format(
             "ReceiveHandshakeReadyAck failed (system_error): {}",
             ToString(e.what()));
         DAS_CORE_LOG_ERROR(msg.c_str());
@@ -1627,7 +1635,7 @@ DasResult HostLauncher::ReceiveHandshakeReadyAck(uint32_t timeout_ms)
     }
     catch (const std::exception& e)
     {
-        std::string msg = DAS_FMT_NS::format(
+        const std::string msg = DAS_FMT_NS::format(
             "ReceiveHandshakeReadyAck failed: {}",
             ToString(e.what()));
         DAS_CORE_LOG_ERROR(msg.c_str());
@@ -1678,16 +1686,16 @@ boost::asio::awaitable<DasResult> HostLauncher::WaitForHostReadyAsync(
 
 boost::asio::awaitable<DasResult> HostLauncher::ConnectToHostAsync()
 {
-    uint32_t main_pid =
+    const uint32_t main_pid =
         static_cast<uint32_t>(boost::process::v2::current_pid());
-    uint32_t host_pid = impl_->pid;
+    const uint32_t host_pid = impl_->pid;
 
     std::string host_to_plugin_pipe =
         Host::MakeMessageQueueName(main_pid, host_pid, false);
     std::string plugin_to_host_pipe =
         Host::MakeMessageQueueName(main_pid, host_pid, true);
 
-    std::string msg = DAS_FMT_NS::format(
+    const std::string msg = DAS_FMT_NS::format(
         "Creating pipes for Host IPC: {}, {} (MainProcess is server)",
         host_to_plugin_pipe,
         plugin_to_host_pipe);
@@ -1728,7 +1736,7 @@ boost::asio::awaitable<DasResult> HostLauncher::ConnectToHostAsync()
 
         if (DAS::IsFailed(transport_result) || !maybe_transport)
         {
-            std::string err_msg = DAS_FMT_NS::format(
+            const std::string err_msg = DAS_FMT_NS::format(
                 "Failed to create Host IPC transport: error = {}",
                 transport_result);
             DAS_CORE_LOG_ERROR(err_msg.c_str());
@@ -1739,7 +1747,7 @@ boost::asio::awaitable<DasResult> HostLauncher::ConnectToHostAsync()
     }
     catch (const boost::system::system_error& e)
     {
-        std::string err_msg = DAS_FMT_NS::format(
+        const std::string err_msg = DAS_FMT_NS::format(
             "Failed to create Host IPC transport (system_error): {}",
             ToString(e.what()));
         DAS_CORE_LOG_ERROR(err_msg.c_str());
@@ -1747,7 +1755,7 @@ boost::asio::awaitable<DasResult> HostLauncher::ConnectToHostAsync()
     }
     catch (const std::exception& e)
     {
-        std::string err_msg = DAS_FMT_NS::format(
+        const std::string err_msg = DAS_FMT_NS::format(
             "Failed to create Host IPC transport: {}",
             ToString(e.what()));
         DAS_CORE_LOG_ERROR(err_msg.c_str());
@@ -1772,12 +1780,16 @@ boost::asio::awaitable<void> HostLauncher::RunAsync(
     auto remaining_ms = [&]() -> uint32_t
     {
         if (timeout_ms == 0)
+        {
             return 0;
+        }
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
                            std::chrono::steady_clock::now() - start_time)
                            .count();
         if (elapsed >= static_cast<int64_t>(timeout_ms))
+        {
             return 0;
+        }
         return static_cast<uint32_t>(timeout_ms - elapsed);
     };
 
@@ -1790,10 +1802,10 @@ boost::asio::awaitable<void> HostLauncher::RunAsync(
             co_return;
         }
 
-        uint32_t main_pid =
+        const uint32_t main_pid =
             static_cast<uint32_t>(boost::process::v2::current_pid());
         std::vector<std::string> args;
-        args.push_back("--main-pid");
+        args.emplace_back("--main-pid");
         args.push_back(std::to_string(main_pid));
 
         DasResult result = LaunchProcess(exe_path, args);
@@ -1876,7 +1888,7 @@ boost::asio::awaitable<void> HostLauncher::RunAsync(
             }
         }
 
-        std::string success_msg = DAS_FMT_NS::format(
+        const std::string success_msg = DAS_FMT_NS::format(
             "Host process started successfully: PID = {}, session_id = {}",
             impl_->pid,
             session_id);
@@ -1901,7 +1913,7 @@ boost::asio::awaitable<void> HostLauncher::RunAsync(
                         boost::asio::redirect_error(
                             boost::asio::use_awaitable,
                             ec));
-                    int exit_code = ec ? -1 : process_ptr->exit_code();
+                    const int exit_code = ec ? -1 : process_ptr->exit_code();
                     // 持锁执行 callback（INV-01：回调内部不得重入本 slot）
                     on_process_exit_slot_.Invoke(cb_session_id, exit_code);
                     co_return;
@@ -1913,7 +1925,7 @@ boost::asio::awaitable<void> HostLauncher::RunAsync(
     }
     catch (const std::exception& e)
     {
-        std::string err_msg = DAS_FMT_NS::format(
+        const std::string err_msg = DAS_FMT_NS::format(
             "Async Host start failed: {}",
             ToString(e.what()));
         DAS_CORE_LOG_ERROR(err_msg.c_str());

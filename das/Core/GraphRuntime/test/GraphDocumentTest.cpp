@@ -406,8 +406,8 @@ namespace
         auto json_str = std::string(entry_json.write());
 
         // 3. Deserialise back
-        auto    parsed = yyjson::read(json_str);
-        TaskDto restored = yyjson::cast<TaskDto>(parsed);
+        auto          parsed = yyjson::read(json_str);
+        const TaskDto restored = yyjson::cast<TaskDto>(parsed);
 
         // 4. Extract and deserialise the graph_document
         auto graph_obj = restored.graph_document;
@@ -430,8 +430,8 @@ namespace
         auto entry_json = yyjson::object(entry);
         auto json_str = std::string(entry_json.write());
 
-        auto    parsed = yyjson::read(json_str);
-        TaskDto restored = yyjson::cast<TaskDto>(parsed);
+        auto          parsed = yyjson::read(json_str);
+        const TaskDto restored = yyjson::cast<TaskDto>(parsed);
 
         auto ap = restored.accepted_properties;
         auto ap_obj = ap.as_object();
@@ -447,7 +447,7 @@ namespace
 TEST(GraphTaskEntryStorageTest, GraphEntryIdIsInt64)
 {
     // Also verified by static_assert at top of file.
-    Das::Core::GraphRuntime::GraphEntryId id = 42;
+    const Das::Core::GraphRuntime::GraphEntryId id = 42;
     EXPECT_EQ(id, 42);
     EXPECT_TRUE((std::is_same_v<decltype(id), int64_t>));
 }
@@ -457,7 +457,7 @@ TEST(GraphTaskEntryStorageTest, GraphEntryIdIsInt64)
 // ---------------------------------------------------------------------------
 TEST(GraphTaskEntryStorageTest, EntryDtoHasGraphDocumentField)
 {
-    TaskDto entry;
+    const TaskDto entry;
     // The field must exist and be of type yyjson::value.
     auto& field = entry.graph_document;
     (void)field;

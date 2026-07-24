@@ -27,7 +27,7 @@ DasResult AiCpuImpl::CreateSession(
         // DasReadOnlyString by-value parameter holds a DasPtr reference count
         // that keeps the underlying UTF-16 buffer alive through the borrow
         // scope
-        DasReadOnlyString model_path_string(model_path);
+        const DasReadOnlyString model_path_string(model_path);
 
         Ort::SessionOptions session_options;
         session_options.SetIntraOpNumThreads(1);
@@ -47,7 +47,7 @@ DasResult AiCpuImpl::CreateSession(
     }
     catch (const Ort::Exception& e)
     {
-        DasReadOnlyString path_wrapper(model_path);
+        const DasReadOnlyString path_wrapper(model_path);
         DAS_CORE_LOG_ERROR(
             "CreateSession failed: model_path={}, error={}",
             path_wrapper.GetUtf8(),

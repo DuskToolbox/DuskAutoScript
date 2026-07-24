@@ -112,8 +112,8 @@ DasResult QueryInterfaceStub::HandleMessage(
     }
 
     // 5. Register the new interface pointer as a local object
-    ObjectId  new_obj_id;
-    DasResult reg_result =
+    ObjectId        new_obj_id;
+    const DasResult reg_result =
         ctx.object_manager.RegisterLocalObject(new_obj.Get(), new_obj_id);
     if (DAS::IsFailed(reg_result))
     {

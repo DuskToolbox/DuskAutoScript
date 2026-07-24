@@ -59,8 +59,8 @@ TEST(RemoteObjectRegistryTest, RegisterObject_Basic)
     RemoteObjectRegistry registry;
     registry.Clear();
 
-    ObjectId obj_id{.session_id = 1, .generation = 1, .local_id = 100};
-    DasGuid  iid = CreateTestGuid(
+    ObjectId      obj_id{.session_id = 1, .generation = 1, .local_id = 100};
+    const DasGuid iid = CreateTestGuid(
         0x12345678,
         0x1234,
         0x5678,
@@ -73,7 +73,7 @@ TEST(RemoteObjectRegistryTest, RegisterObject_Basic)
         0xDE,
         0xF0);
 
-    DasResult result =
+    const DasResult result =
         registry.RegisterObject(obj_id, iid, 1, "test_object", 1);
 
     EXPECT_EQ(result, DAS_S_OK);
@@ -87,8 +87,8 @@ TEST(RemoteObjectRegistryTest, RegisterObject_Duplicate)
     RemoteObjectRegistry registry;
     registry.Clear();
 
-    ObjectId obj_id{.session_id = 1, .generation = 1, .local_id = 100};
-    DasGuid  iid = CreateTestGuid(
+    ObjectId      obj_id{.session_id = 1, .generation = 1, .local_id = 100};
+    const DasGuid iid = CreateTestGuid(
         0x12345678,
         0x1234,
         0x5678,
@@ -102,12 +102,12 @@ TEST(RemoteObjectRegistryTest, RegisterObject_Duplicate)
         0xF0);
 
     // 第一次注册成功
-    DasResult result1 =
+    const DasResult result1 =
         registry.RegisterObject(obj_id, iid, 1, "test_object", 1);
     EXPECT_EQ(result1, DAS_S_OK);
 
     // 第二次注册应该失败
-    DasResult result2 =
+    const DasResult result2 =
         registry.RegisterObject(obj_id, iid, 1, "test_object", 1);
     EXPECT_EQ(result2, DAS_E_DUPLICATE_ELEMENT);
 }
@@ -118,8 +118,8 @@ TEST(RemoteObjectRegistryTest, RegisterObject_EmptyName)
     RemoteObjectRegistry registry;
     registry.Clear();
 
-    ObjectId obj_id{.session_id = 1, .generation = 1, .local_id = 100};
-    DasGuid  iid = CreateTestGuid(
+    ObjectId      obj_id{.session_id = 1, .generation = 1, .local_id = 100};
+    const DasGuid iid = CreateTestGuid(
         0x12345678,
         0x1234,
         0x5678,
@@ -132,7 +132,7 @@ TEST(RemoteObjectRegistryTest, RegisterObject_EmptyName)
         0xDE,
         0xF0);
 
-    DasResult result = registry.RegisterObject(obj_id, iid, 1, "", 1);
+    const DasResult result = registry.RegisterObject(obj_id, iid, 1, "", 1);
 
     EXPECT_EQ(result, DAS_E_INVALID_ARGUMENT);
     EXPECT_EQ(registry.GetObjectCount(), 0);
@@ -148,7 +148,7 @@ TEST(RemoteObjectRegistryTest, RegisterObject_InvalidObjectId)
         .session_id = 0,
         .generation = 0,
         .local_id = 0}; // 无效ObjectId
-    DasGuid iid = CreateTestGuid(
+    const DasGuid iid = CreateTestGuid(
         0x12345678,
         0x1234,
         0x5678,
@@ -161,7 +161,7 @@ TEST(RemoteObjectRegistryTest, RegisterObject_InvalidObjectId)
         0xDE,
         0xF0);
 
-    DasResult result =
+    const DasResult result =
         registry.RegisterObject(obj_id, iid, 1, "test_object", 1);
 
     EXPECT_EQ(result, DAS_E_IPC_INVALID_OBJECT_ID);
@@ -174,8 +174,8 @@ TEST(RemoteObjectRegistryTest, UnregisterObject)
     RemoteObjectRegistry registry;
     registry.Clear();
 
-    ObjectId obj_id{.session_id = 1, .generation = 1, .local_id = 100};
-    DasGuid  iid = CreateTestGuid(
+    ObjectId      obj_id{.session_id = 1, .generation = 1, .local_id = 100};
+    const DasGuid iid = CreateTestGuid(
         0x12345678,
         0x1234,
         0x5678,
@@ -193,7 +193,7 @@ TEST(RemoteObjectRegistryTest, UnregisterObject)
     EXPECT_EQ(registry.GetObjectCount(), 1);
 
     // 注销对象
-    DasResult result = registry.UnregisterObject(obj_id);
+    const DasResult result = registry.UnregisterObject(obj_id);
     EXPECT_EQ(result, DAS_S_OK);
     EXPECT_EQ(registry.GetObjectCount(), 0);
     EXPECT_FALSE(registry.ObjectExists(obj_id));
@@ -205,8 +205,8 @@ TEST(RemoteObjectRegistryTest, UnregisterObject_NotFound)
     RemoteObjectRegistry registry;
     registry.Clear();
 
-    ObjectId obj_id{.session_id = 1, .generation = 1, .local_id = 100};
-    DasGuid  iid = CreateTestGuid(
+    ObjectId      obj_id{.session_id = 1, .generation = 1, .local_id = 100};
+    const DasGuid iid = CreateTestGuid(
         0x12345678,
         0x1234,
         0x5678,
@@ -224,7 +224,7 @@ TEST(RemoteObjectRegistryTest, UnregisterObject_NotFound)
     registry.RegisterObject(other_obj_id, iid, 1, "other_object", 1);
 
     // 注销不存在的对象
-    DasResult result = registry.UnregisterObject(obj_id);
+    const DasResult result = registry.UnregisterObject(obj_id);
     EXPECT_EQ(result, DAS_E_IPC_OBJECT_NOT_FOUND);
     EXPECT_EQ(registry.GetObjectCount(), 1); // 其他对象仍然存在
 }
@@ -236,8 +236,8 @@ TEST(RemoteObjectRegistryTest, UnregisterAllFromSession)
     registry.Clear();
 
     // 注册来自会话1的对象
-    ObjectId obj1{.session_id = 1, .generation = 1, .local_id = 100};
-    DasGuid  iid = CreateTestGuid(
+    ObjectId      obj1{.session_id = 1, .generation = 1, .local_id = 100};
+    const DasGuid iid = CreateTestGuid(
         0x12345678,
         0x1234,
         0x5678,
@@ -263,7 +263,7 @@ TEST(RemoteObjectRegistryTest, UnregisterAllFromSession)
 
     // 注销会话1的所有对象
     registry.UnregisterAllFromSession(1);
-    DasResult result = DAS_S_OK;
+    const DasResult result = DAS_S_OK;
     EXPECT_EQ(registry.GetObjectCount(), 1);
     EXPECT_FALSE(registry.ObjectExists(obj1));
     EXPECT_FALSE(registry.ObjectExists(obj3));
@@ -276,8 +276,8 @@ TEST(RemoteObjectRegistryTest, LookupByName)
     RemoteObjectRegistry registry;
     registry.Clear();
 
-    ObjectId obj_id{.session_id = 1, .generation = 1, .local_id = 100};
-    DasGuid  iid = CreateTestGuid(
+    ObjectId      obj_id{.session_id = 1, .generation = 1, .local_id = 100};
+    const DasGuid iid = CreateTestGuid(
         0x12345678,
         0x1234,
         0x5678,
@@ -293,7 +293,7 @@ TEST(RemoteObjectRegistryTest, LookupByName)
     registry.RegisterObject(obj_id, iid, 1, "test_object", 1);
 
     RemoteObjectInfo info;
-    DasResult        result = registry.LookupByName("test_object", info);
+    const DasResult  result = registry.LookupByName("test_object", info);
 
     EXPECT_EQ(result, DAS_S_OK);
     EXPECT_EQ(info.object_id.session_id, 1);
@@ -308,8 +308,8 @@ TEST(RemoteObjectRegistryTest, LookupByName_NotFound)
     RemoteObjectRegistry registry;
     registry.Clear();
 
-    ObjectId obj_id{.session_id = 1, .generation = 1, .local_id = 100};
-    DasGuid  iid = CreateTestGuid(
+    ObjectId      obj_id{.session_id = 1, .generation = 1, .local_id = 100};
+    const DasGuid iid = CreateTestGuid(
         0x12345678,
         0x1234,
         0x5678,
@@ -325,7 +325,7 @@ TEST(RemoteObjectRegistryTest, LookupByName_NotFound)
     registry.RegisterObject(obj_id, iid, 1, "test_object", 1);
 
     RemoteObjectInfo info;
-    DasResult        result = registry.LookupByName("nonexistent_object", info);
+    const DasResult  result = registry.LookupByName("nonexistent_object", info);
 
     EXPECT_EQ(result, DAS_E_IPC_OBJECT_NOT_FOUND);
 }
@@ -336,8 +336,8 @@ TEST(RemoteObjectRegistryTest, LookupByInterface)
     RemoteObjectRegistry registry;
     registry.Clear();
 
-    ObjectId obj_id{.session_id = 1, .generation = 1, .local_id = 100};
-    DasGuid  iid = CreateTestGuid(
+    ObjectId      obj_id{.session_id = 1, .generation = 1, .local_id = 100};
+    const DasGuid iid = CreateTestGuid(
         0x12345678,
         0x1234,
         0x5678,
@@ -353,7 +353,7 @@ TEST(RemoteObjectRegistryTest, LookupByInterface)
     registry.RegisterObject(obj_id, iid, 1, "test_object", 1);
 
     RemoteObjectInfo info;
-    DasResult        result = registry.LookupByInterface(
+    const DasResult  result = registry.LookupByInterface(
         RemoteObjectRegistry::ComputeInterfaceId(iid),
         info);
 
@@ -370,8 +370,8 @@ TEST(RemoteObjectRegistryTest, LookupByInterface_NotFound)
     RemoteObjectRegistry registry;
     registry.Clear();
 
-    ObjectId obj_id{.session_id = 1, .generation = 1, .local_id = 100};
-    DasGuid  iid = CreateTestGuid(
+    ObjectId      obj_id{.session_id = 1, .generation = 1, .local_id = 100};
+    const DasGuid iid = CreateTestGuid(
         0x12345678,
         0x1234,
         0x5678,
@@ -386,7 +386,7 @@ TEST(RemoteObjectRegistryTest, LookupByInterface_NotFound)
 
     registry.RegisterObject(obj_id, iid, 1, "test_object", 1);
 
-    DasGuid other_iid = CreateTestGuid(
+    const DasGuid other_iid = CreateTestGuid(
         0x87654321,
         0x4321,
         0x8765,
@@ -400,7 +400,7 @@ TEST(RemoteObjectRegistryTest, LookupByInterface_NotFound)
         0xF0);
 
     RemoteObjectInfo info;
-    DasResult        result = registry.LookupByInterface(
+    const DasResult  result = registry.LookupByInterface(
         RemoteObjectRegistry::ComputeInterfaceId(other_iid),
         info);
 
@@ -413,8 +413,8 @@ TEST(RemoteObjectRegistryTest, GetObjectInfo)
     RemoteObjectRegistry registry;
     registry.Clear();
 
-    ObjectId obj_id{.session_id = 1, .generation = 1, .local_id = 100};
-    DasGuid  iid = CreateTestGuid(
+    ObjectId      obj_id{.session_id = 1, .generation = 1, .local_id = 100};
+    const DasGuid iid = CreateTestGuid(
         0x12345678,
         0x1234,
         0x5678,
@@ -430,7 +430,7 @@ TEST(RemoteObjectRegistryTest, GetObjectInfo)
     registry.RegisterObject(obj_id, iid, 1, "test_object", 2);
 
     RemoteObjectInfo info;
-    DasResult        result = registry.GetObjectInfo(obj_id, info);
+    const DasResult  result = registry.GetObjectInfo(obj_id, info);
 
     EXPECT_EQ(result, DAS_S_OK);
     EXPECT_EQ(info.object_id.session_id, 1);
@@ -447,7 +447,7 @@ TEST(RemoteObjectRegistryTest, ListAllObjects)
     RemoteObjectRegistry registry;
     registry.Clear();
 
-    DasGuid iid = CreateTestGuid(
+    const DasGuid iid = CreateTestGuid(
         0x12345678,
         0x1234,
         0x5678,
@@ -503,7 +503,7 @@ TEST(RemoteObjectRegistryTest, ListObjectsBySession)
     RemoteObjectRegistry registry;
     registry.Clear();
 
-    DasGuid iid = CreateTestGuid(
+    const DasGuid iid = CreateTestGuid(
         0x12345678,
         0x1234,
         0x5678,
@@ -556,7 +556,7 @@ TEST(RemoteObjectRegistryTest, Clear)
     RemoteObjectRegistry registry;
     registry.Clear();
 
-    DasGuid iid = CreateTestGuid(
+    const DasGuid iid = CreateTestGuid(
         0x12345678,
         0x1234,
         0x5678,

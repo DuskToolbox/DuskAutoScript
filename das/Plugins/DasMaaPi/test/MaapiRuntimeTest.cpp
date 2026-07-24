@@ -392,7 +392,7 @@ TEST(DasMaaPiRuntime, RuntimeSourceDoesNotExtractControllerFieldsFromRawJson)
     const auto source_path =
         std::filesystem::path(__FILE__).parent_path().parent_path() / "src"
         / "MaaRuntime.cpp";
-    std::ifstream input(source_path);
+    const std::ifstream input(source_path);
     ASSERT_TRUE(input.is_open()) << source_path.string();
 
     std::ostringstream buffer;
@@ -507,14 +507,14 @@ TEST(DasMaaPiRuntime, DoRejectsMissingTasks)
 
 TEST(DasMaaPiRuntime, DoRunsAgentRequiredEnvelopeThroughSharedRuntime)
 {
-    auto               json = ParseDasJson(EnvelopeJson(
+    auto                     json = ParseDasJson(EnvelopeJson(
         true,
         std::string(kPluginGuidText),
         std::string(kTaskGuidText),
         true));
-    FakeMaaApiBoundary fake;
-    FakeProcessRunner  runner;
-    ScopedRuntimeHooks hooks(fake, runner);
+    FakeMaaApiBoundary       fake;
+    FakeProcessRunner        runner;
+    const ScopedRuntimeHooks hooks(fake, runner);
 
     MaapiTask task;
     EXPECT_EQ(task.Do(nullptr, nullptr, json.Get()), DAS_S_OK);
@@ -888,9 +888,9 @@ namespace
 
 TEST(DasMaaPiRuntime, EmptyPretasksSkipsRunnerAndReachesController)
 {
-    FakeMaaApiBoundary  fake;
-    FakePretaskRunner   runner;
-    ScopedPretaskRunner hook(&runner);
+    FakeMaaApiBoundary        fake;
+    FakePretaskRunner         runner;
+    const ScopedPretaskRunner hook(&runner);
     auto result = MaaRuntime::Run(EnvelopeWithPretasks({}), fake, nullptr);
     EXPECT_EQ(result.das_result, DAS_S_OK);
     EXPECT_TRUE(runner.launches.empty());
@@ -899,10 +899,10 @@ TEST(DasMaaPiRuntime, EmptyPretasksSkipsRunnerAndReachesController)
 
 TEST(DasMaaPiRuntime, PretaskZeroExitProceedsToControllerCreate)
 {
-    FakeMaaApiBoundary  fake;
-    FakePretaskRunner   runner;
-    ScopedPretaskRunner hook(&runner);
-    auto                result = MaaRuntime::Run(
+    FakeMaaApiBoundary        fake;
+    FakePretaskRunner         runner;
+    const ScopedPretaskRunner hook(&runner);
+    auto                      result = MaaRuntime::Run(
         EnvelopeWithPretasks({MakePretask("tools/pre.exe", {"--init"})}),
         fake,
         nullptr);
@@ -926,7 +926,7 @@ TEST(DasMaaPiRuntime, PretaskNonzeroExitAbortsBeforeControllerCreate)
     nonzero.launched = true;
     nonzero.exit_code = 7;
     runner.scripted_results.push_back(nonzero);
-    ScopedPretaskRunner hook(&runner);
+    const ScopedPretaskRunner hook(&runner);
 
     auto result = MaaRuntime::Run(
         EnvelopeWithPretasks({MakePretask("tools/pre.exe")}),
@@ -951,7 +951,7 @@ TEST(DasMaaPiRuntime, PretaskSpawnFailureAbortsBeforeControllerCreate)
     spawn_fail.launched = false;
     spawn_fail.failure_message = "ENOENT: tools/pre.exe";
     runner.scripted_results.push_back(spawn_fail);
-    ScopedPretaskRunner hook(&runner);
+    const ScopedPretaskRunner hook(&runner);
 
     auto result = MaaRuntime::Run(
         EnvelopeWithPretasks({MakePretask("tools/missing.exe")}),

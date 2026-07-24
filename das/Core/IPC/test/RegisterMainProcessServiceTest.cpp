@@ -138,7 +138,7 @@ protected:
 
 TEST_F(RegisterMainProcessServiceTest, NullObject_ReturnsInvalidPointer)
 {
-    ScopedCurrentIpcContext scope(
+    const ScopedCurrentIpcContext scope(
         static_cast<MainProcess::IpcContext*>(ctx_.get()));
 
     auto result =
@@ -150,7 +150,7 @@ TEST_F(RegisterMainProcessServiceTest, E2E_RegisterQuery_VerifyObject)
 {
     auto* test_string = new TestReadOnlyString("Service OK");
 
-    ScopedCurrentIpcContext scope(
+    const ScopedCurrentIpcContext scope(
         static_cast<MainProcess::IpcContext*>(ctx_.get()));
 
     // Register
@@ -164,8 +164,8 @@ TEST_F(RegisterMainProcessServiceTest, E2E_RegisterQuery_VerifyObject)
     ASSERT_NE(query.GetValue(), nullptr);
 
     auto* readonly_str = static_cast<IDasReadOnlyString*>(query.GetValue());
-    const char* utf8 = nullptr;
-    DasResult   hr = readonly_str->GetUtf8(&utf8);
+    const char*     utf8 = nullptr;
+    const DasResult hr = readonly_str->GetUtf8(&utf8);
     EXPECT_EQ(hr, DAS_S_OK);
     ASSERT_NE(utf8, nullptr);
     EXPECT_STREQ(utf8, "Service OK");
@@ -179,7 +179,7 @@ TEST_F(RegisterMainProcessServiceTest, DuplicateIID_ReturnsDuplicateElement)
     auto* obj1 = new TestReadOnlyString("first");
     auto* obj2 = new TestReadOnlyString("second");
 
-    ScopedCurrentIpcContext scope(
+    const ScopedCurrentIpcContext scope(
         static_cast<MainProcess::IpcContext*>(ctx_.get()));
 
     // First registration succeeds
@@ -202,7 +202,7 @@ TEST_F(
 {
     auto* test_string = new TestReadOnlyString("temporary");
 
-    ScopedCurrentIpcContext scope(
+    const ScopedCurrentIpcContext scope(
         static_cast<MainProcess::IpcContext*>(ctx_.get()));
 
     // Register
@@ -225,10 +225,10 @@ TEST_F(
     RegisterMainProcessServiceTest,
     UnregisterUnknownIID_ReturnsObjectNotFound)
 {
-    ScopedCurrentIpcContext scope(
+    const ScopedCurrentIpcContext scope(
         static_cast<MainProcess::IpcContext*>(ctx_.get()));
 
-    DasGuid unknown_iid = {
+    const DasGuid unknown_iid = {
         0xDEADBEEF,
         0xCAFE,
         0xBEEF,
@@ -297,8 +297,8 @@ TEST_F(
     RegisterMainProcessServiceByNameTest,
     NullName_RegisterByNameReturnsInvalidPointer)
 {
-    auto*                   obj = new TestReadOnlyString("test");
-    ScopedCurrentIpcContext scope(
+    auto*                         obj = new TestReadOnlyString("test");
+    const ScopedCurrentIpcContext scope(
         static_cast<MainProcess::IpcContext*>(ctx_.get()));
 
     auto result = DasRegisterMainProcessServiceByName(
@@ -313,7 +313,7 @@ TEST_F(
     RegisterMainProcessServiceByNameTest,
     NullObject_RegisterByNameReturnsInvalidPointer)
 {
-    ScopedCurrentIpcContext scope(
+    const ScopedCurrentIpcContext scope(
         static_cast<MainProcess::IpcContext*>(ctx_.get()));
 
     auto result = DasRegisterMainProcessServiceByName(
@@ -329,7 +329,7 @@ TEST_F(
 {
     auto* test_string = new TestReadOnlyString("Named Service");
 
-    ScopedCurrentIpcContext scope(
+    const ScopedCurrentIpcContext scope(
         static_cast<MainProcess::IpcContext*>(ctx_.get()));
 
     // Register by name
@@ -345,8 +345,8 @@ TEST_F(
     ASSERT_NE(query.GetValue(), nullptr);
 
     auto* readonly_str = static_cast<IDasReadOnlyString*>(query.GetValue());
-    const char* utf8 = nullptr;
-    DasResult   hr = readonly_str->GetUtf8(&utf8);
+    const char*     utf8 = nullptr;
+    const DasResult hr = readonly_str->GetUtf8(&utf8);
     EXPECT_EQ(hr, DAS_S_OK);
     ASSERT_NE(utf8, nullptr);
     EXPECT_STREQ(utf8, "Named Service");
@@ -360,7 +360,7 @@ TEST_F(
 {
     auto* test_string = new TestReadOnlyString("Default Name");
 
-    ScopedCurrentIpcContext scope(
+    const ScopedCurrentIpcContext scope(
         static_cast<MainProcess::IpcContext*>(ctx_.get()));
 
     // Register with default (IID-based) name
@@ -369,7 +369,8 @@ TEST_F(
     ASSERT_EQ(reg_result, DAS_S_OK);
 
     // The default name is the GUID string representation of the IID
-    std::string guid_name = DAS::fmt::format("{}", DAS_IID_READ_ONLY_STRING);
+    const std::string guid_name =
+        DAS::fmt::format("{}", DAS_IID_READ_ONLY_STRING);
 
     // Query by the GUID string name
     auto query = QueryMainProcessInterfaceByName(guid_name.c_str());
@@ -391,13 +392,13 @@ TEST_F(
 {
     auto* obj1 = new TestReadOnlyString("first");
 
-    DasGuid other_iid = {
+    const DasGuid other_iid = {
         0xAAAAAAAA,
         0xBBBB,
         0xCCCC,
         {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08}};
 
-    ScopedCurrentIpcContext scope(
+    const ScopedCurrentIpcContext scope(
         static_cast<MainProcess::IpcContext*>(ctx_.get()));
 
     // First registration with name "shared_name"
@@ -425,7 +426,7 @@ TEST_F(
 {
     auto* test_string = new TestReadOnlyString("temporary_named");
 
-    ScopedCurrentIpcContext scope(
+    const ScopedCurrentIpcContext scope(
         static_cast<MainProcess::IpcContext*>(ctx_.get()));
 
     // Register by name

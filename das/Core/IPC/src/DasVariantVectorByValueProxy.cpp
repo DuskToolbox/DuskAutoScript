@@ -97,7 +97,7 @@ DasResult DasVariantVectorByValueProxy::EnsureDataLoaded(uint16_t method_id)
 
     uint16_t call_id = NextCallId();
 
-    ValidatedIPCMessageHeader header =
+    const ValidatedIPCMessageHeader header =
         IPCMessageHeaderBuilder()
             .SetMessageType(MessageType::REQUEST)
             .SetHeaderFlags(HeaderFlags::BUSINESS_EVENT)
@@ -108,7 +108,7 @@ DasResult DasVariantVectorByValueProxy::EnsureDataLoaded(uint16_t method_id)
             .SetTargetSessionId(GetObjectId().session_id)
             .Build();
 
-    CallKey call_key{GetObjectId().session_id, call_id};
+    const CallKey call_key{GetObjectId().session_id, call_id};
 
     std::vector<uint8_t> response;
 
@@ -358,7 +358,7 @@ DasResult DasVariantVectorByValueProxy::SendWriteBack(
     const uint8_t* params,
     size_t         params_size)
 {
-    DasResult runtime_result =
+    const DasResult runtime_result =
         CheckRuntimeAvailable("DasVariantVectorByValueProxy::SendWriteBack");
     if (DAS::IsFailed(runtime_result))
     {
@@ -370,7 +370,7 @@ DasResult DasVariantVectorByValueProxy::SendWriteBack(
     auto body = BuildBusinessBody(method_id, params, params_size);
 
     // Fire-and-forget EVENT + BUSINESS_EVENT
-    ValidatedIPCMessageHeader header =
+    const ValidatedIPCMessageHeader header =
         IPCMessageHeaderBuilder()
             .SetMessageType(MessageType::EVENT)
             .SetHeaderFlags(HeaderFlags::BUSINESS_EVENT)
@@ -393,7 +393,7 @@ DasResult DasVariantVectorByValueProxy::GetInt(
     {
         return DAS_E_INVALID_POINTER;
     }
-    DasResult result = EnsureDataLoaded(0);
+    const DasResult result = EnsureDataLoaded(0);
     if (DAS::IsFailed(result))
     {
         return result;
@@ -412,7 +412,7 @@ DasResult DasVariantVectorByValueProxy::GetInt(
 
 DasResult DasVariantVectorByValueProxy::SetInt(uint64_t index, int64_t in_int)
 {
-    DasResult result = EnsureDataLoaded(1);
+    const DasResult result = EnsureDataLoaded(1);
     if (DAS::IsFailed(result))
     {
         return result;
@@ -438,7 +438,7 @@ DasResult DasVariantVectorByValueProxy::SetInt(uint64_t index, int64_t in_int)
 
 DasResult DasVariantVectorByValueProxy::PushBackInt(int64_t in_int)
 {
-    DasResult result = EnsureDataLoaded(2);
+    const DasResult result = EnsureDataLoaded(2);
     if (DAS::IsFailed(result))
     {
         return result;
@@ -469,7 +469,7 @@ DasResult DasVariantVectorByValueProxy::GetFloat(
     {
         return DAS_E_INVALID_POINTER;
     }
-    DasResult result = EnsureDataLoaded(3);
+    const DasResult result = EnsureDataLoaded(3);
     if (DAS::IsFailed(result))
     {
         return result;
@@ -488,7 +488,7 @@ DasResult DasVariantVectorByValueProxy::GetFloat(
 
 DasResult DasVariantVectorByValueProxy::SetFloat(uint64_t index, float in_float)
 {
-    DasResult result = EnsureDataLoaded(4);
+    const DasResult result = EnsureDataLoaded(4);
     if (DAS::IsFailed(result))
     {
         return result;
@@ -513,7 +513,7 @@ DasResult DasVariantVectorByValueProxy::SetFloat(uint64_t index, float in_float)
 
 DasResult DasVariantVectorByValueProxy::PushBackFloat(float in_float)
 {
-    DasResult result = EnsureDataLoaded(5);
+    const DasResult result = EnsureDataLoaded(5);
     if (DAS::IsFailed(result))
     {
         return result;
@@ -592,7 +592,7 @@ DasResult DasVariantVectorByValueProxy::SetString(
     {
         return result;
     }
-    size_t utf8_len = (utf8_data != nullptr) ? std::strlen(utf8_data) : 0;
+    const size_t utf8_len = (utf8_data != nullptr) ? std::strlen(utf8_data) : 0;
 
     // Update local cache
     cache_[index].type = ::Das::ExportInterface::DAS_VARIANT_TYPE_STRING;
@@ -631,7 +631,7 @@ DasResult DasVariantVectorByValueProxy::PushBackString(
     {
         return result;
     }
-    size_t utf8_len = (utf8_data != nullptr) ? std::strlen(utf8_data) : 0;
+    const size_t utf8_len = (utf8_data != nullptr) ? std::strlen(utf8_data) : 0;
 
     CachedVariant entry;
     entry.type = ::Das::ExportInterface::DAS_VARIANT_TYPE_STRING;
@@ -661,7 +661,7 @@ DasResult DasVariantVectorByValueProxy::GetBool(
     {
         return DAS_E_INVALID_POINTER;
     }
-    DasResult result = EnsureDataLoaded(9);
+    const DasResult result = EnsureDataLoaded(9);
     if (DAS::IsFailed(result))
     {
         return result;
@@ -680,7 +680,7 @@ DasResult DasVariantVectorByValueProxy::GetBool(
 
 DasResult DasVariantVectorByValueProxy::SetBool(uint64_t index, bool in_bool)
 {
-    DasResult result = EnsureDataLoaded(10);
+    const DasResult result = EnsureDataLoaded(10);
     if (DAS::IsFailed(result))
     {
         return result;
@@ -705,7 +705,7 @@ DasResult DasVariantVectorByValueProxy::SetBool(uint64_t index, bool in_bool)
 
 DasResult DasVariantVectorByValueProxy::PushBackBool(bool in_bool)
 {
-    DasResult result = EnsureDataLoaded(11);
+    const DasResult result = EnsureDataLoaded(11);
     if (DAS::IsFailed(result))
     {
         return result;
@@ -737,7 +737,7 @@ DasResult DasVariantVectorByValueProxy::GetComponent(
     }
     *pp_out_component = nullptr;
 
-    DasResult result = EnsureDataLoaded(12);
+    const DasResult result = EnsureDataLoaded(12);
     if (DAS::IsFailed(result))
     {
         return result;
@@ -757,9 +757,10 @@ DasResult DasVariantVectorByValueProxy::GetComponent(
         // Use QueryInterface to safely obtain IDasComponent instead of
         // an unsafe static_cast — the cached base_ptr may not actually
         // implement IDasComponent.
-        DasResult qi_result = cache_[index].base_ptr.Get()->QueryInterface(
-            DasIidOf<::Das::PluginInterface::IDasComponent>(),
-            reinterpret_cast<void**>(pp_out_component));
+        const DasResult qi_result =
+            cache_[index].base_ptr.Get()->QueryInterface(
+                DasIidOf<::Das::PluginInterface::IDasComponent>(),
+                reinterpret_cast<void**>(pp_out_component));
         return qi_result;
     }
     return DAS_S_OK;
@@ -889,7 +890,7 @@ DasResult DasVariantVectorByValueProxy::GetBase(
     }
     *pp_out_base = nullptr;
 
-    DasResult result = EnsureDataLoaded(15);
+    const DasResult result = EnsureDataLoaded(15);
     if (DAS::IsFailed(result))
     {
         return result;
@@ -1031,7 +1032,7 @@ DasResult DasVariantVectorByValueProxy::GetImage(
     }
     *pp_out_image = nullptr;
 
-    DasResult result = EnsureDataLoaded(18);
+    const DasResult result = EnsureDataLoaded(18);
     if (DAS::IsFailed(result))
     {
         return result;
@@ -1050,9 +1051,10 @@ DasResult DasVariantVectorByValueProxy::GetImage(
         // Use QueryInterface to safely obtain IDasImage instead of
         // an unsafe static_cast — the cached base_ptr may not actually
         // implement IDasImage.
-        DasResult qi_result = cache_[index].base_ptr.Get()->QueryInterface(
-            DasIidOf<Das::ExportInterface::IDasImage>(),
-            reinterpret_cast<void**>(pp_out_image));
+        const DasResult qi_result =
+            cache_[index].base_ptr.Get()->QueryInterface(
+                DasIidOf<Das::ExportInterface::IDasImage>(),
+                reinterpret_cast<void**>(pp_out_image));
         return qi_result;
     }
     return DAS_S_OK;
@@ -1179,7 +1181,7 @@ DasResult DasVariantVectorByValueProxy::IsNull(
     {
         return DAS_E_INVALID_POINTER;
     }
-    DasResult result = EnsureDataLoaded(21);
+    const DasResult result = EnsureDataLoaded(21);
     if (DAS::IsFailed(result))
     {
         return result;
@@ -1195,7 +1197,7 @@ DasResult DasVariantVectorByValueProxy::IsNull(
 
 DasResult DasVariantVectorByValueProxy::PushBackNull()
 {
-    DasResult result = EnsureDataLoaded(22);
+    const DasResult result = EnsureDataLoaded(22);
     if (DAS::IsFailed(result))
     {
         return result;
@@ -1219,7 +1221,7 @@ DasResult DasVariantVectorByValueProxy::GetType(
     {
         return DAS_E_INVALID_POINTER;
     }
-    DasResult result = EnsureDataLoaded(23);
+    const DasResult result = EnsureDataLoaded(23);
     if (DAS::IsFailed(result))
     {
         return result;
@@ -1234,7 +1236,7 @@ DasResult DasVariantVectorByValueProxy::GetType(
 
 DasResult DasVariantVectorByValueProxy::RemoveAt(uint64_t index)
 {
-    DasResult result = EnsureDataLoaded(24);
+    const DasResult result = EnsureDataLoaded(24);
     if (DAS::IsFailed(result))
     {
         return result;
@@ -1258,7 +1260,7 @@ DasResult DasVariantVectorByValueProxy::RemoveAt(uint64_t index)
 
 DasResult DasVariantVectorByValueProxy::GetSize()
 {
-    DasResult result = EnsureDataLoaded(25);
+    const DasResult result = EnsureDataLoaded(25);
     if (DAS::IsFailed(result))
     {
         return result;

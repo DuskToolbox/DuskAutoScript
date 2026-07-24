@@ -41,7 +41,9 @@ namespace
         ~ScopedHandle()
         {
             if (Valid())
+            {
                 CloseHandle(handle_);
+            }
         }
 
         ScopedHandle(const ScopedHandle&) = delete;
@@ -72,7 +74,9 @@ namespace
         void    Reset(HANDLE h = INVALID_HANDLE_VALUE)
         {
             if (Valid())
+            {
                 CloseHandle(handle_);
+            }
             handle_ = h;
         }
         HANDLE Release()
@@ -529,7 +533,9 @@ boost::asio::awaitable<DasResult> Win32AsyncIpcTransport::InitializeAsync(
         auto write_result =
             co_await CreateNamedPipeAsync(write_endpoint, false, true);
         if (auto* err = std::get_if<DasResult>(&write_result))
+        {
             co_return *err;
+        }
         auto* h_write_ptr = std::get_if<HANDLE>(&write_result);
         if (!h_write_ptr)
         {
@@ -581,7 +587,9 @@ boost::asio::awaitable<DasResult> Win32AsyncIpcTransport::InitializeAsync(
         DAS_FMT_NS::format("{}{}", PIPE_PREFIX, read_endpoint);
     auto read_result = co_await OpenPipeAsync(read_full_name, true);
     if (auto* err = std::get_if<DasResult>(&read_result))
+    {
         co_return *err;
+    }
     HANDLE h_read = std::get<HANDLE>(read_result);
 
     const std::string write_full_name =
@@ -651,9 +659,9 @@ Win32AsyncIpcTransport::ReceiveCoroutine()
     {
         // Log raw bytes for debugging
         std::string hex_bytes;
-        for (size_t i = 0; i < header_buffer.size(); ++i)
+        for (unsigned char& i : header_buffer)
         {
-            hex_bytes += DAS_FMT_NS::format("{:02X} ", header_buffer[i]);
+            hex_bytes += DAS_FMT_NS::format("{:02X} ", i);
         }
         DAS_LOG_ERROR(
             DAS_FMT_NS::format(
@@ -718,7 +726,7 @@ Win32AsyncIpcTransport::ReceiveCoroutine()
         uint64_t handle;
         std::memcpy(&handle, body_buffer.data(), sizeof(uint64_t));
 
-        ShmBlockGuard guard =
+        const ShmBlockGuard guard =
             ShmBlockGuard::Attach(state->shared_memory_pool, handle, 0);
         if (!guard)
         {
@@ -730,7 +738,7 @@ Win32AsyncIpcTransport::ReceiveCoroutine()
             co_return DAS_E_IPC_INVALID_MESSAGE;
         }
 
-        uint64_t             real_size = *static_cast<uint64_t*>(guard.Data());
+        const uint64_t       real_size = *static_cast<uint64_t*>(guard.Data());
         std::vector<uint8_t> large_body(real_size);
         std::memcpy(
             large_body.data(),
@@ -772,7 +780,7 @@ boost::asio::awaitable<DasResult> Win32AsyncIpcTransport::SendCoroutine(
     }
 
     // Lock() 返回 bool：true=cancelled，false=正常获取锁
-    bool cancelled = co_await state->send_mutex.Lock();
+    const bool cancelled = co_await state->send_mutex.Lock();
     if (cancelled)
     {
         co_return DAS_E_IPC_CONNECTION_LOST; // 不访问任何 transport 成员
@@ -825,7 +833,7 @@ boost::asio::awaitable<DasResult> Win32AsyncIpcTransport::SendCoroutine(
                     .Build();
 
             uint64_t net_handle = guard.Handle();
-            std::array<boost::asio::const_buffer, 2> shm_buffers = {
+            const std::array<boost::asio::const_buffer, 2> shm_buffers = {
                 boost::asio::const_buffer{
                     static_cast<const IPCMessageHeader*>(validated_shm_header),
                     sizeof(IPCMessageHeader)},
@@ -862,7 +870,7 @@ boost::asio::awaitable<DasResult> Win32AsyncIpcTransport::SendCoroutine(
 
     // 直写路径（小消息 / pool 空 / Allocate 失败）：scatter-gather
     const auto* raw_header = static_cast<const IPCMessageHeader*>(header);
-    std::array<boost::asio::const_buffer, 2> buffers = {
+    const std::array<boost::asio::const_buffer, 2> buffers = {
         boost::asio::const_buffer{raw_header, sizeof(IPCMessageHeader)},
         boost::asio::const_buffer{body, body_size}};
 

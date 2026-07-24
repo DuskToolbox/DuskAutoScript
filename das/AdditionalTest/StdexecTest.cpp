@@ -37,11 +37,12 @@ TEST(StdexecTest, StaticThreadPoolTest)
         });                                                                  // 3
 
     sender auto add_42 = then(hi_again, [](int arg) { return arg + 42; }); // 4
-    auto [i] = sync_wait(std::move(add_42)).value();                       // 5
+    auto [i] = sync_wait(add_42).value();                                  // 5
     std::cout << "Result: " << i << std::endl;
 
     // Sync_wait provides a run_loop scheduler
-    std::tuple<run_loop::__scheduler> t = sync_wait(get_scheduler()).value();
+    const std::tuple<run_loop::__scheduler> t =
+        sync_wait(get_scheduler()).value();
     (void)t;
 
     auto y = let_value(
@@ -58,7 +59,7 @@ TEST(StdexecTest, StaticThreadPoolTest)
                         return 42;
                     }));
         });
-    sync_wait(std::move(y));
+    sync_wait(y);
 
     sync_wait(when_all(just(42), get_scheduler(), get_stop_token()));
 }

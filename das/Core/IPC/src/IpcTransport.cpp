@@ -51,7 +51,7 @@ IpcTransport::IpcTransport(
             boost::interprocess::message_queue::remove(
                 plugin_queue_name.c_str());
 
-            IpcSecurityAttributes ipc_sec;
+            const IpcSecurityAttributes ipc_sec;
 
             impl_->host_queue_ =
                 std::make_unique<boost::interprocess::message_queue>(
@@ -180,7 +180,7 @@ DasResult IpcTransport::Send(
         return DAS_E_IPC_CONNECTION_LOST;
     }
 
-    size_t total_size = sizeof(IPCMessageHeader) + body_size;
+    const size_t total_size = sizeof(IPCMessageHeader) + body_size;
 
     if (total_size <= impl_->max_message_size_)
     {
@@ -219,7 +219,7 @@ std::optional<ReceiveResult> IpcTransport::Receive(uint32_t timeout_ms)
         {
             // 有限超时 - 使用带超时的接收
             // NOTE: 使用 universal_time() 以确保与 Windows 兼容
-            bool received = impl_->plugin_queue_->timed_receive(
+            const bool received = impl_->plugin_queue_->timed_receive(
                 buffer.data(),
                 impl_->max_message_size_,
                 received_size,

@@ -42,12 +42,12 @@ namespace
 
     bool FindEndOfCentralDir(const std::string& zip_data, size_t& eocd_offset)
     {
-        size_t max_search =
+        const size_t max_search =
             std::min(zip_data.size(), kEndOfCentralDirSize + kMaxCommentSize);
 
         for (size_t i = 0; i < max_search - kEndOfCentralDirSize + 1; ++i)
         {
-            size_t offset = zip_data.size() - kEndOfCentralDirSize - i;
+            const size_t offset = zip_data.size() - kEndOfCentralDirSize - i;
             if (ReadLE<uint32_t>(zip_data.data(), offset)
                 == kEndOfCentralDirSig)
             {
@@ -80,7 +80,7 @@ namespace
             return false;
         }
 
-        int ret = inflate(&stream, Z_FINISH);
+        const int ret = inflate(&stream, Z_FINISH);
         inflateEnd(&stream);
 
         return ret == Z_STREAM_END;
@@ -299,7 +299,7 @@ namespace
             ReadLE<uint16_t>(zip_data.data(), local_header + 26);
         auto local_extra_length =
             ReadLE<uint16_t>(zip_data.data(), local_header + 28);
-        size_t data_offset =
+        const size_t data_offset =
             local_header + 30 + local_filename_length + local_extra_length;
 
         if (data_offset + meta.compressed_size > zip_data.size())
@@ -316,7 +316,7 @@ namespace
         }
         else if (meta.compression == kCompressionDeflate)
         {
-            std::string compressed(
+            const std::string compressed(
                 zip_data.data() + data_offset,
                 meta.compressed_size);
             std::string output;
@@ -479,7 +479,7 @@ DasResult InstallPlugin(
                     ReadLE<uint16_t>(zip_str.data(), local_header + 26);
                 auto lex_len =
                     ReadLE<uint16_t>(zip_str.data(), local_header + 28);
-                size_t data_off = local_header + 30 + lfn_len + lex_len;
+                const size_t data_off = local_header + 30 + lfn_len + lex_len;
 
                 if (data_off + e.compressed_size > zip_str.size())
                 {
@@ -495,7 +495,7 @@ DasResult InstallPlugin(
                 }
                 else if (e.compression == kCompressionDeflate)
                 {
-                    std::string compressed(
+                    const std::string compressed(
                         zip_str.data() + data_off,
                         e.compressed_size);
                     InflateData(
@@ -733,9 +733,9 @@ DasResult ReadPluginManifestMetadataFromZip(
             continue;
         }
 
-        auto   lfn_len = ReadLE<uint16_t>(zip_str.data(), local_header + 26);
-        auto   lex_len = ReadLE<uint16_t>(zip_str.data(), local_header + 28);
-        size_t data_off = local_header + 30 + lfn_len + lex_len;
+        auto lfn_len = ReadLE<uint16_t>(zip_str.data(), local_header + 26);
+        auto lex_len = ReadLE<uint16_t>(zip_str.data(), local_header + 28);
+        const size_t data_off = local_header + 30 + lfn_len + lex_len;
 
         if (data_off + meta->compressed_size > zip_str.size())
         {
@@ -749,7 +749,7 @@ DasResult ReadPluginManifestMetadataFromZip(
         }
         else if (meta->compression == kCompressionDeflate)
         {
-            std::string compressed(
+            const std::string compressed(
                 zip_str.data() + data_off,
                 meta->compressed_size);
             if (!InflateData(

@@ -59,7 +59,7 @@ IpcSecurityAttributes::IpcSecurityAttributes()
     // Build SDDL: "D:(A;;GA;;;{current-user-sid})"
     // D: = DACL
     // (A;;GA;;;SID) = Allow, Generic All, to SID
-    std::wstring sddl = L"D:(A;;GA;;;" + std::wstring(sidString) + L")";
+    const std::wstring sddl = L"D:(A;;GA;;;" + std::wstring(sidString) + L")";
     LocalFree(sidString);
 
     // Convert SDDL to SECURITY_DESCRIPTOR

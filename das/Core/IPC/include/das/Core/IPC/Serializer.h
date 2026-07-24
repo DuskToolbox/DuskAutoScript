@@ -81,7 +81,7 @@ public:
     DasResult WriteArray(const void* data, size_t size)
     {
         // 先写大小，再写数据
-        DasResult result = WriteUInt64(static_cast<uint64_t>(size));
+        const DasResult result = WriteUInt64(static_cast<uint64_t>(size));
         if (result != DAS_S_OK)
         {
             return result;

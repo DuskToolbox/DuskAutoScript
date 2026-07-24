@@ -44,7 +44,7 @@ namespace
     {
         std::string out;
         out.reserve(s.size());
-        for (char c : s)
+        for (const char c : s)
         {
             if (c != ' ' && c != '\t' && c != '\n' && c != '\r')
             {
@@ -132,8 +132,8 @@ namespace
 
     TEST(GraphAuthoringSessionTest, EmptyStoreProjectsAsGraph)
     {
-        SessionHandle s{""};
-        auto          json = Compact(
+        const SessionHandle s{""};
+        auto                json = Compact(
             Das::Utils::SerializeYyjsonValue(DocumentOf(s.p)).value_or(""));
         // Phase 84 strict wire uses viewKind (not kind).
         EXPECT_NE(json.find("\"viewKind\":\"graph\""), std::string::npos);
@@ -148,7 +148,7 @@ namespace
             R"({"itemId":"a","target":{"targetKind":"componentRef","componentRef":{"kind":"componentRef","componentGuid":"{ga}","pluginGuid":"{p}"}},"settings":{}})";
         constexpr std::string_view item_b =
             R"({"itemId":"b","target":{"targetKind":"componentRef","componentRef":{"kind":"componentRef","componentGuid":"{gb}","pluginGuid":"{p}"}},"settings":{}})";
-        SessionHandle s{
+        const SessionHandle s{
             std::string(R"({"documentId":"d1","version":0,"items":[)")
             + std::string(item_a) + "," + std::string(item_b) + "]}"};
         auto json = Compact(
@@ -169,7 +169,7 @@ namespace
 
     TEST(GraphAuthoringSessionTest, GraphModeApplyChangeAddGraphNode)
     {
-        SessionHandle s{""}; // graph mode
+        const SessionHandle s{""}; // graph mode
         SetActionCatalog(s.p, R"(["{g1}"])");
         auto r = ApplyChange(
             s.p,
@@ -192,8 +192,8 @@ namespace
     {
         // Only the unified {baseRevision, kind, payload} envelope is accepted;
         // the legacy {op, flat} shape is rejected as malformed.
-        SessionHandle s{""};
-        auto          r = ApplyChange(
+        const SessionHandle s{""};
+        auto                r = ApplyChange(
             s.p,
             R"({"op":"addGraphNode","node":{"id":"x","componentGuid":"{g1}","settings":{}}})");
         const auto result = Compact(JsonToUtf8(r.Get()));
@@ -208,7 +208,7 @@ namespace
             R"({"itemId":"a","target":{"targetKind":"componentRef","componentRef":{"kind":"componentRef","componentGuid":"{ga}","pluginGuid":"{p}"}},"settings":{}})";
         constexpr std::string_view item_b =
             R"({"itemId":"b","target":{"targetKind":"componentRef","componentRef":{"kind":"componentRef","componentGuid":"{gb}","pluginGuid":"{p}"}},"settings":{}})";
-        SessionHandle s{
+        const SessionHandle s{
             std::string(R"({"items":[)") + std::string(item_a) + ","
             + std::string(item_b) + "]}"};
         EXPECT_NE(
@@ -234,7 +234,7 @@ namespace
     {
         constexpr std::string_view item_a =
             R"({"itemId":"a","target":{"targetKind":"componentRef","componentRef":{"kind":"componentRef","componentGuid":"{ga}","pluginGuid":"{p}"}},"settings":{}})";
-        SessionHandle s{
+        const SessionHandle s{
             std::string(R"({"items":[)") + std::string(item_a) + "]}"};
         SetActionCatalog(s.p, R"(["{gb}"])");
         auto r = ApplyChange(
@@ -274,7 +274,7 @@ namespace
         // Start empty (graph mode), add a node, take the acceptedProperties the
         // scheduler would persist, and re-seed a fresh session from it — the
         // node must survive the round-trip.
-        SessionHandle s1{""};
+        const SessionHandle s1{""};
         SetActionCatalog(s1.p, R"(["{g1}","{g2}"])");
         ASSERT_NE(
             Compact(
@@ -297,8 +297,8 @@ namespace
         // context).
         const std::string ctx =
             std::string(R"({"properties":)") + persisted + "}";
-        SessionHandle s2{ctx};
-        const auto    doc = Compact(
+        const SessionHandle s2{ctx};
+        const auto          doc = Compact(
             Das::Utils::SerializeYyjsonValue(DocumentOf(s2.p)).value_or(""));
         EXPECT_NE(doc.find("\"componentGuid\":\"{g1}\""), std::string::npos);
         EXPECT_NE(doc.find("\"componentGuid\":\"{g2}\""), std::string::npos);
@@ -310,7 +310,7 @@ namespace
         // Seed a graph store, Compile, and confirm the plan is well-formed
         // (object with the compiled-plan shape; execution itself is exercised
         // by DasGraphTaskTest / GraphRuntimeTest).
-        SessionHandle s{""};
+        const SessionHandle s{""};
         SetActionCatalog(s.p, R"(["{g1}"])");
         ApplyChange(
             s.p,
@@ -334,7 +334,7 @@ namespace
             R"({"itemId":"a","target":{"targetKind":"componentRef","componentRef":{"kind":"componentRef","componentGuid":"{ga}","pluginGuid":"{p}"}},"settings":{}})";
         constexpr std::string_view item_b =
             R"({"itemId":"b","target":{"targetKind":"componentRef","componentRef":{"kind":"componentRef","componentGuid":"{gb}","pluginGuid":"{p}"}},"settings":{}})";
-        SessionHandle s{
+        const SessionHandle s{
             std::string(R"({"items":[)") + std::string(item_a) + ","
             + std::string(item_b) + "]}"};
 
@@ -368,7 +368,7 @@ namespace
     {
         constexpr std::string_view item_a =
             R"({"itemId":"a","target":{"targetKind":"componentRef","componentRef":{"kind":"componentRef","componentGuid":"{ga}","pluginGuid":"{p}"}},"settings":{}})";
-        SessionHandle s{
+        const SessionHandle s{
             std::string(R"({"items":[)") + std::string(item_a) + "]}"};
         const auto envelope_json = JsonToUtf8(GetDocument(s.p).Get());
         auto       parsed = yyjson::read(envelope_json);
@@ -384,7 +384,7 @@ namespace
 
     TEST(GraphAuthoringSessionTest, ValidatorAccepts_GraphOutput)
     {
-        SessionHandle s{""};
+        const SessionHandle s{""};
         SetActionCatalog(s.p, R"(["{g1}"])");
         ApplyChange(
             s.p,
@@ -403,7 +403,7 @@ namespace
 
     TEST(GraphAuthoringSessionTest, ValidatorAccepts_ApplyResultEnvelope)
     {
-        SessionHandle s{""};
+        const SessionHandle s{""};
         SetActionCatalog(s.p, R"(["{g1}"])");
         auto apply_json = JsonToUtf8(
             ApplyChange(

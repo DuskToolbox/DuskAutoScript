@@ -207,7 +207,7 @@ namespace Plugins::DasMaaPi
                                 p_val.Put()))
                             && p_val)
                         {
-                            DasReadOnlyString val_reader{p_val.Get()};
+                            const DasReadOnlyString val_reader{p_val.Get()};
                             auto arr = Das::Utils::MakeYyjsonArray();
                             arr.as_array()->emplace_back(
                                 yyjson::value(
@@ -250,7 +250,7 @@ namespace Plugins::DasMaaPi
         }
 
         MaaPiExecutionEngine engine;
-        EngineOutput         output =
+        const EngineOutput   output =
             engine.Execute(input, MaaApiBoundaryForRuntime(), stop_token);
 
         output_map->SetBool(

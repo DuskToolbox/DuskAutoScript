@@ -36,8 +36,8 @@ namespace
 
     void ExpectLookupFailsSafely(const char* const text)
     {
-        DAS::Core::i18n::I18n<DasResult> test_instance{ParseJson(text)};
-        DAS::DasPtr<IDasReadOnlyString>  result{};
+        const DAS::Core::i18n::I18n<DasResult> test_instance{ParseJson(text)};
+        DAS::DasPtr<IDasReadOnlyString>        result{};
 
         EXPECT_NE(test_instance.GetErrorMessage(-1, result.Put()), DAS_S_OK);
         EXPECT_EQ(result.Get(), nullptr);
@@ -61,8 +61,8 @@ TEST(DasCoreI18n, DasResultDefaultLocaleTest)
 
 TEST(DasCoreI18n, DasResultUserDefinedLocaleTest)
 {
-    DAS::Core::i18n::I18n<DasResult> test_instance{GetValidJson()};
-    DAS::DasPtr<IDasReadOnlyString>  zh_cn_expected{};
+    const DAS::Core::i18n::I18n<DasResult> test_instance{GetValidJson()};
+    DAS::DasPtr<IDasReadOnlyString>        zh_cn_expected{};
     ::CreateIDasReadOnlyStringFromUtf8(
         static_cast<const char*>(
             DAS_UTILS_STRINGUTILS_DEFINE_U8STR("测试错误消息")),

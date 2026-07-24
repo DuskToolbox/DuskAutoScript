@@ -168,8 +168,8 @@ namespace
         {
         case DasVariantType::DAS_VARIANT_TYPE_INT:
         {
-            int64_t   value = 0;
-            DasResult result = impl->GetInt(index, &value);
+            int64_t         value = 0;
+            const DasResult result = impl->GetInt(index, &value);
             if (DAS::IsFailed(result))
             {
                 return result;
@@ -179,8 +179,8 @@ namespace
         }
         case DasVariantType::DAS_VARIANT_TYPE_FLOAT:
         {
-            float     value = 0.0f;
-            DasResult result = impl->GetFloat(index, &value);
+            float           value = 0.0f;
+            const DasResult result = impl->GetFloat(index, &value);
             if (DAS::IsFailed(result))
             {
                 return result;
@@ -202,7 +202,7 @@ namespace
             {
                 return result;
             }
-            size_t utf8_len =
+            const size_t utf8_len =
                 (utf8_data != nullptr) ? std::strlen(utf8_data) : 0;
             // STRING wire format: [str_len:8B][utf8_bytes:str_len]
             writer.WriteUInt64(static_cast<uint64_t>(utf8_len));
@@ -214,8 +214,8 @@ namespace
         }
         case DasVariantType::DAS_VARIANT_TYPE_BOOL:
         {
-            bool      value = false;
-            DasResult result = impl->GetBool(index, &value);
+            bool            value = false;
+            const DasResult result = impl->GetBool(index, &value);
             if (DAS::IsFailed(result))
             {
                 return result;
@@ -227,7 +227,7 @@ namespace
         case DasVariantType::DAS_VARIANT_TYPE_BASE:
         {
             DAS::DasPtr<IDasBase> base_obj;
-            DasResult             result = impl->GetBase(index, base_obj.Put());
+            const DasResult       result = impl->GetBase(index, base_obj.Put());
             if (DAS::IsFailed(result))
             {
                 return result;
@@ -236,8 +236,8 @@ namespace
             // [session_id:2B][generation:2B][local_id:4B][interface_id:4B]
             if (base_obj.Get() != nullptr)
             {
-                ObjectId  oid;
-                DasResult register_result =
+                ObjectId        oid;
+                const DasResult register_result =
                     ctx.object_manager.RegisterLocalObject(base_obj.Get(), oid);
                 if (DAS::IsFailed(register_result))
                 {
@@ -260,7 +260,7 @@ namespace
         case DasVariantType::DAS_VARIANT_TYPE_COMPONENT:
         {
             DAS::DasPtr<Das::PluginInterface::IDasComponent> comp_obj;
-            DasResult result = impl->GetComponent(index, comp_obj.Put());
+            const DasResult result = impl->GetComponent(index, comp_obj.Put());
             if (DAS::IsFailed(result))
             {
                 return result;
@@ -268,8 +268,8 @@ namespace
             // COMPONENT wire format (12B): same as BASE
             if (comp_obj.Get() != nullptr)
             {
-                ObjectId  oid;
-                DasResult register_result =
+                ObjectId        oid;
+                const DasResult register_result =
                     ctx.object_manager.RegisterLocalObject(comp_obj.Get(), oid);
                 if (DAS::IsFailed(register_result))
                 {
@@ -294,15 +294,15 @@ namespace
         {
             // IMAGE wire format: same 12B as BASE/COMPONENT (object reference)
             DAS::DasPtr<Das::ExportInterface::IDasImage> image_obj;
-            DasResult result = impl->GetImage(index, image_obj.Put());
+            const DasResult result = impl->GetImage(index, image_obj.Put());
             if (DAS::IsFailed(result))
             {
                 return result;
             }
             if (image_obj.Get() != nullptr)
             {
-                ObjectId  oid;
-                DasResult register_result =
+                ObjectId        oid;
+                const DasResult register_result =
                     ctx.object_manager.RegisterLocalObject(
                         image_obj.Get(),
                         oid);
@@ -395,8 +395,8 @@ DasResult DasVariantVectorByValueStub::HandleGetSnapshot(
     // GetSize returns the size as DasResult directly.
     // Per IDL: "此函数一定成功，因此返回值即为大小"
     // DasResult is int32_t, so we cast it to uint64_t for count.
-    DasResult size_result = variant_vector->GetSize();
-    uint64_t  count =
+    const DasResult size_result = variant_vector->GetSize();
+    const uint64_t  count =
         static_cast<uint64_t>(static_cast<uint64_t>(size_result) & 0xFFFFFFFF);
 
     // Serialize the full snapshot
@@ -418,7 +418,7 @@ DasResult DasVariantVectorByValueStub::HandleGetSnapshot(
             return type_result;
         }
 
-        DasResult write_result =
+        const DasResult write_result =
             WriteVariantValue(writer, type, variant_vector, i, ctx);
         if (DAS::IsFailed(write_result))
         {
@@ -481,7 +481,7 @@ DasResult DasVariantVectorByValueStub::HandleSet(
         }
         // Create an IDasReadOnlyString from the UTF-8 data
         DAS::DasPtr<IDasReadOnlyString> str_obj;
-        DasResult result = CreateIDasReadOnlyStringFromUtf8WithLength(
+        const DasResult result = CreateIDasReadOnlyStringFromUtf8WithLength(
             utf8_str.c_str(),
             utf8_str.size(),
             str_obj.Put());
@@ -513,13 +513,13 @@ DasResult DasVariantVectorByValueStub::HandleSet(
         {
             return DAS_E_IPC_DESERIALIZATION_FAILED;
         }
-        ObjectId oid{session_id, generation, local_id};
+        const ObjectId oid{session_id, generation, local_id};
         if (IsNullObjectId(oid))
         {
             return variant_vector->SetComponent(index, nullptr);
         }
-        IDasBase* base_ptr = nullptr;
-        DasResult result = DeserializeInInterfaceParam(
+        IDasBase*       base_ptr = nullptr;
+        const DasResult result = DeserializeInInterfaceParam(
             EncodeObjectId(oid),
             iface_id,
             ctx.object_manager,
@@ -548,13 +548,13 @@ DasResult DasVariantVectorByValueStub::HandleSet(
         {
             return DAS_E_IPC_DESERIALIZATION_FAILED;
         }
-        ObjectId oid{session_id, generation, local_id};
+        const ObjectId oid{session_id, generation, local_id};
         if (IsNullObjectId(oid))
         {
             return variant_vector->SetBase(index, nullptr);
         }
-        IDasBase* base_ptr = nullptr;
-        DasResult result = DeserializeInInterfaceParam(
+        IDasBase*       base_ptr = nullptr;
+        const DasResult result = DeserializeInInterfaceParam(
             EncodeObjectId(oid),
             iface_id,
             ctx.object_manager,
@@ -581,13 +581,13 @@ DasResult DasVariantVectorByValueStub::HandleSet(
         {
             return DAS_E_IPC_DESERIALIZATION_FAILED;
         }
-        ObjectId oid{session_id, generation, local_id};
+        const ObjectId oid{session_id, generation, local_id};
         if (IsNullObjectId(oid))
         {
             return variant_vector->SetImage(index, nullptr);
         }
-        IDasBase* base_ptr = nullptr;
-        DasResult result = DeserializeInInterfaceParam(
+        IDasBase*       base_ptr = nullptr;
+        const DasResult result = DeserializeInInterfaceParam(
             EncodeObjectId(oid),
             iface_id,
             ctx.object_manager,
@@ -654,7 +654,7 @@ DasResult DasVariantVectorByValueStub::HandlePushBack(
             return DAS_E_IPC_DESERIALIZATION_FAILED;
         }
         DAS::DasPtr<IDasReadOnlyString> str_obj;
-        DasResult result = CreateIDasReadOnlyStringFromUtf8WithLength(
+        const DasResult result = CreateIDasReadOnlyStringFromUtf8WithLength(
             utf8_str.c_str(),
             utf8_str.size(),
             str_obj.Put());
@@ -686,13 +686,13 @@ DasResult DasVariantVectorByValueStub::HandlePushBack(
         {
             return DAS_E_IPC_DESERIALIZATION_FAILED;
         }
-        ObjectId oid{session_id, generation, local_id};
+        const ObjectId oid{session_id, generation, local_id};
         if (IsNullObjectId(oid))
         {
             return variant_vector->PushBackComponent(nullptr);
         }
-        IDasBase* base_ptr = nullptr;
-        DasResult result = DeserializeInInterfaceParam(
+        IDasBase*       base_ptr = nullptr;
+        const DasResult result = DeserializeInInterfaceParam(
             EncodeObjectId(oid),
             iface_id,
             ctx.object_manager,
@@ -721,13 +721,13 @@ DasResult DasVariantVectorByValueStub::HandlePushBack(
         {
             return DAS_E_IPC_DESERIALIZATION_FAILED;
         }
-        ObjectId oid{session_id, generation, local_id};
+        const ObjectId oid{session_id, generation, local_id};
         if (IsNullObjectId(oid))
         {
             return variant_vector->PushBackBase(nullptr);
         }
-        IDasBase* base_ptr = nullptr;
-        DasResult result = DeserializeInInterfaceParam(
+        IDasBase*       base_ptr = nullptr;
+        const DasResult result = DeserializeInInterfaceParam(
             EncodeObjectId(oid),
             iface_id,
             ctx.object_manager,
@@ -754,13 +754,13 @@ DasResult DasVariantVectorByValueStub::HandlePushBack(
         {
             return DAS_E_IPC_DESERIALIZATION_FAILED;
         }
-        ObjectId oid{session_id, generation, local_id};
+        const ObjectId oid{session_id, generation, local_id};
         if (IsNullObjectId(oid))
         {
             return variant_vector->PushBackImage(nullptr);
         }
-        IDasBase* base_ptr = nullptr;
-        DasResult result = DeserializeInInterfaceParam(
+        IDasBase*       base_ptr = nullptr;
+        const DasResult result = DeserializeInInterfaceParam(
             EncodeObjectId(oid),
             iface_id,
             ctx.object_manager,

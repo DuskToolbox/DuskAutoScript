@@ -110,7 +110,9 @@ namespace Core::IPC
                 {
                     auto r = --ref_;
                     if (r == 0)
+                    {
                         delete this;
+                    }
                     return r;
                 }
 
@@ -222,7 +224,9 @@ namespace Core::IPC
                 {
                     auto r = --ref_;
                     if (r == 0)
+                    {
                         delete this;
+                    }
                     return r;
                 }
 
@@ -388,7 +392,9 @@ namespace Core::IPC
                 {
                     auto r = --ref_;
                     if (r == 0)
+                    {
                         delete this;
+                    }
                     return r;
                 }
 
@@ -570,7 +576,7 @@ namespace Core::IPC
 
         std::optional<value_tuple_t> result;
         bool                         done = false;
-        void*                        wakeup = nullptr;
+        const void*                  wakeup = nullptr;
 
         auto op = stdexec::connect(
             std::forward<Sender>(sender),

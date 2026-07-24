@@ -363,7 +363,7 @@ namespace
 
     TEST_F(RefManagerLifecycleTest, ShallowCopyEntryRefSameEntryId)
     {
-        EntryRefDto original{"entryRef", 42, std::nullopt, std::nullopt};
+        const EntryRefDto original{"entryRef", 42, std::nullopt, std::nullopt};
 
         auto copy = RefManager::ShallowCopyEntryRef(original);
 
@@ -372,7 +372,7 @@ namespace
 
     TEST_F(RefManagerLifecycleTest, ShallowCopyEntryRefPreservesOptionalFields)
     {
-        EntryRefDto original{
+        const EntryRefDto original{
             "entryRef",
             42,
             int64_t{7},
@@ -553,8 +553,8 @@ namespace
     TEST_F(RefManagerLifecycleTest, ShallowCopyVsDeepClone)
     {
         // Shallow copy preserves entry_id
-        EntryRefDto original{"entryRef", 42, std::nullopt, std::nullopt};
-        auto        shallow = RefManager::ShallowCopyEntryRef(original);
+        const EntryRefDto original{"entryRef", 42, std::nullopt, std::nullopt};
+        auto              shallow = RefManager::ShallowCopyEntryRef(original);
         EXPECT_EQ(shallow.entry_id, 42);
 
         // Deep clone creates new entry_id

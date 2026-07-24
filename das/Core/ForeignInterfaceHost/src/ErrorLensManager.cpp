@@ -170,7 +170,7 @@ DasResult ErrorLensManager::OnPluginLoaded(
 
 DasResult ErrorLensManager::OnPluginUnloading(const DasGuid& plugin_guid)
 {
-    std::unique_lock lock{mutex_};
+    const std::unique_lock lock{mutex_};
 
     const auto owner_it = plugin_routes_.find(plugin_guid);
     if (owner_it == plugin_routes_.end())
@@ -219,7 +219,7 @@ DasResult ErrorLensManager::RegisterRoutes(
 {
     DAS_UTILS_CHECK_POINTER(p_error_lens)
 
-    std::unique_lock lock{mutex_};
+    const std::unique_lock lock{mutex_};
 
     for (const auto& iid : guids)
     {
@@ -276,7 +276,7 @@ DasResult ErrorLensManager::FindInterface(
 
     DasPtr<PluginInterface::IDasErrorLens> lens;
     {
-        std::shared_lock lock{mutex_};
+        const std::shared_lock lock{mutex_};
         if (const auto it = routes_.find(iid); it != routes_.end())
         {
             lens = it->second.lens;
@@ -301,7 +301,7 @@ auto ErrorLensManager::GetErrorMessage(
 {
     DasPtr<PluginInterface::IDasErrorLens> lens;
     {
-        std::shared_lock lock{mutex_};
+        const std::shared_lock lock{mutex_};
         if (const auto it = routes_.find(iid); it != routes_.end())
         {
             lens = it->second.lens;

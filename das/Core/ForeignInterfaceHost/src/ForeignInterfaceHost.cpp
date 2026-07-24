@@ -751,7 +751,7 @@ void ParseTaskDescriptorFromJson(
 
         TaskExecutionComponentDesc execution_component;
         execution_component.component_guid = *component_guid;
-        output.execution_component = std::move(execution_component);
+        output.execution_component = execution_component;
     }
     if (obj.contains(std::string_view("descriptors")))
     {
@@ -979,13 +979,13 @@ TaskComponentsValidationResult ValidateTaskComponents(
 
 void PluginPackageDesc::SettingsJson::SetValue(IDasReadOnlyString* p_json)
 {
-    std::lock_guard _{mutex_};
+    const std::scoped_lock _{mutex_};
     settings_json_ = p_json;
 }
 
 void PluginPackageDesc::SettingsJson::GetValue(IDasReadOnlyString** pp_out_json)
 {
-    std::lock_guard _{mutex_};
+    const std::scoped_lock _{mutex_};
     Utils::SetResult(settings_json_, pp_out_json);
 }
 

@@ -35,7 +35,7 @@ namespace
         IDasPortMap*       map)
     {
         // Create a DasReadOnlyString for the port_id key.
-        DasReadOnlyString key_str{port_id.c_str()};
+        const DasReadOnlyString key_str{port_id.c_str()};
 
         if (pv.IsNull())
         {
@@ -51,8 +51,8 @@ namespace
         }
         if (pv.IsString())
         {
-            const auto&       s = *pv.AsString();
-            DasReadOnlyString val_str{s.c_str()};
+            const auto&             s = *pv.AsString();
+            const DasReadOnlyString val_str{s.c_str()};
             return map->SetString(key_str.Get(), val_str.Get());
         }
         if (pv.IsBool())
@@ -113,7 +113,7 @@ namespace
         DasGuid            node_id,
         PortFrame&         frame)
     {
-        DasReadOnlyString key_str{port_id.c_str()};
+        const DasReadOnlyString key_str{port_id.c_str()};
 
         DasVariantType kind = DAS_VARIANT_TYPE_NULL;
         DasResult      result = map->GetType(key_str.Get(), &kind);
@@ -254,9 +254,9 @@ namespace
         DasGuid                            node_id,
         PortFrame&                         frame)
     {
-        DasReadOnlyString   key{std::string{kEmittedSignalsKey}.c_str()};
-        IDasReadOnlyString* p_str = nullptr;
-        DasResult           result = map->GetString(key.Get(), &p_str);
+        const DasReadOnlyString key{std::string{kEmittedSignalsKey}.c_str()};
+        IDasReadOnlyString*     p_str = nullptr;
+        const DasResult         result = map->GetString(key.Get(), &p_str);
         if (DAS::IsFailed(result) || p_str == nullptr)
         {
             return DAS_S_OK;
@@ -318,7 +318,7 @@ namespace
         const std::string&   port_id,
         const yyjson::value& default_value)
     {
-        DasReadOnlyString key{port_id.c_str()};
+        const DasReadOnlyString key{port_id.c_str()};
 
         if (default_value.is_null())
         {
@@ -338,8 +338,8 @@ namespace
         }
         if (auto v = default_value.as_string())
         {
-            std::string       s(*v);
-            DasReadOnlyString val{s.c_str()};
+            const std::string       s(*v);
+            const DasReadOnlyString val{s.c_str()};
             return map->SetString(key.Get(), val.Get());
         }
 
@@ -383,7 +383,7 @@ DasResult BuildInputPortMap(
         // broadcast injection.)
         if (binding.source_node_id == std::string{kBroadcastSource})
         {
-            DasResult r = SetDefaultFromYyjson(
+            const DasResult r = SetDefaultFromYyjson(
                 map.Get(),
                 binding.target_port_id,
                 binding.default_value);

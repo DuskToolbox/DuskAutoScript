@@ -65,7 +65,9 @@ namespace
         DasResult DAS_STD_CALL StopRequested(bool* canStop) override
         {
             if (!canStop)
+            {
                 return DAS_E_INVALID_POINTER;
+            }
             *canStop = cancelled.load();
             return DAS_S_OK;
         }
@@ -136,7 +138,7 @@ namespace
             // Generate GUID-format node_id
             char buf[64];
             snprintf(buf, sizeof(buf), "10000000-0000-0000-0000-%012d", i + 1);
-            std::string nid(buf);
+            const std::string nid(buf);
 
             auto snap = MakeSnapshotWithPorts(
                 nid,
@@ -176,7 +178,9 @@ namespace
         for (const auto& b : plan.binding_plan.bindings)
         {
             if (b.target_node_id == target_node_id)
+            {
                 result.push_back(b);
+            }
         }
         return result;
     }
@@ -224,7 +228,9 @@ namespace GraphRuntimeTestMock
         QueryInterface(const DasGuid& iid, void** pp_out) override
         {
             if (!pp_out)
+            {
                 return DAS_E_INVALID_POINTER;
+            }
             *pp_out = nullptr;
             return DAS_E_NO_INTERFACE;
         }
@@ -232,7 +238,9 @@ namespace GraphRuntimeTestMock
         DasResult DAS_STD_CALL GetGuid(DasGuid* p_out_guid) override
         {
             if (!p_out_guid)
+            {
                 return DAS_E_INVALID_POINTER;
+            }
             *p_out_guid = Das::Core::ForeignInterfaceHost::MakeDasGuid(
                 "30000000-0000-0000-0000-000000000001");
             return DAS_S_OK;
@@ -242,7 +250,9 @@ namespace GraphRuntimeTestMock
         GetRuntimeClassName(IDasReadOnlyString** pp_out_name) override
         {
             if (!pp_out_name)
+            {
                 return DAS_E_INVALID_POINTER;
+            }
             return CreateIDasReadOnlyStringFromUtf8(
                 "MockTaskComponent",
                 pp_out_name);
@@ -346,7 +356,9 @@ namespace GraphRuntimeTestMock
             Das::PluginInterface::IDasTaskComponent** pp_out_component) override
         {
             if (!pp_out_component)
+            {
                 return DAS_E_INVALID_POINTER;
+            }
 
             auto guid_str = Das::Core::ForeignInterfaceHost::DasGuidToStdString(
                 component_guid);
@@ -368,7 +380,9 @@ namespace GraphRuntimeTestMock
             Das::ExportInterface::IDasReadOnlyGuidVector** pp_out_iids) override
         {
             if (!pp_out_iids)
+            {
                 return DAS_E_INVALID_POINTER;
+            }
             *pp_out_iids = nullptr;
             return DAS_E_NO_INTERFACE;
         }
@@ -379,7 +393,9 @@ namespace GraphRuntimeTestMock
             IDasReadOnlyString** out_string) override
         {
             if (!out_string)
+            {
                 return DAS_E_INVALID_POINTER;
+            }
 
             auto it = error_messages.find(error_code);
             if (it != error_messages.end())
@@ -412,13 +428,17 @@ namespace GraphRuntimeTestMock
         {
             auto parsed = Das::Utils::ParseYyjsonFromString(settings_json);
             if (parsed.has_value())
+            {
                 snap.compiled_settings = std::move(*parsed);
+            }
         }
         if (!payload_json.empty())
         {
             auto parsed = Das::Utils::ParseYyjsonFromString(payload_json);
             if (parsed.has_value())
+            {
                 snap.compiled_payload_json = std::move(*parsed);
+            }
         }
 
         snap.resolved_ports = {MakePortDef("in"), MakePortDef("out")};
@@ -520,8 +540,8 @@ TEST(GraphRuntimeTest, RunWithHostSingleExecution)
 
     auto host = MockTaskComponentHost::Make();
 
-    GraphRuntime               rt;
-    Das::DasPtr<IDasStopToken> token =
+    GraphRuntime                     rt;
+    const Das::DasPtr<IDasStopToken> token =
         Das::PluginInterface::DasStopTokenImplBase<MockStopToken>::Make();
 
     auto hr = rt.RunWithHost(plan, "fp_v1", token.Get(), host.Get());
@@ -538,8 +558,8 @@ TEST(GraphRuntimeTest, RunWithHostLinearChain)
 
     auto host = MockTaskComponentHost::Make();
 
-    GraphRuntime               rt;
-    Das::DasPtr<IDasStopToken> token =
+    GraphRuntime                     rt;
+    const Das::DasPtr<IDasStopToken> token =
         Das::PluginInterface::DasStopTokenImplBase<MockStopToken>::Make();
 
     auto hr = rt.RunWithHost(plan, "fp_v1", token.Get(), host.Get());
@@ -557,8 +577,8 @@ TEST(GraphRuntimeTest, RunWithHostFingerprintMismatch)
 
     auto host = MockTaskComponentHost::Make();
 
-    GraphRuntime               rt;
-    Das::DasPtr<IDasStopToken> token =
+    GraphRuntime                     rt;
+    const Das::DasPtr<IDasStopToken> token =
         Das::PluginInterface::DasStopTokenImplBase<MockStopToken>::Make();
 
     auto hr = rt.RunWithHost(plan, "wrong_fp", token.Get(), host.Get());
@@ -599,8 +619,8 @@ TEST(GraphRuntimeTest, RunWithHostEmptyGraph)
 
     auto host = MockTaskComponentHost::Make();
 
-    GraphRuntime               rt;
-    Das::DasPtr<IDasStopToken> token =
+    GraphRuntime                     rt;
+    const Das::DasPtr<IDasStopToken> token =
         Das::PluginInterface::DasStopTokenImplBase<MockStopToken>::Make();
 
     auto hr = rt.RunWithHost(plan, "fp_v1", token.Get(), host.Get());
@@ -682,7 +702,9 @@ namespace SignalGatedTestMock
         QueryInterface(const DasGuid& iid, void** pp_out) override
         {
             if (!pp_out)
+            {
                 return DAS_E_INVALID_POINTER;
+            }
             *pp_out = nullptr;
             return DAS_E_NO_INTERFACE;
         }
@@ -690,7 +712,9 @@ namespace SignalGatedTestMock
         DasResult DAS_STD_CALL GetGuid(DasGuid* p_out_guid) override
         {
             if (!p_out_guid)
+            {
                 return DAS_E_INVALID_POINTER;
+            }
             *p_out_guid = Das::Core::ForeignInterfaceHost::MakeDasGuid(
                 std::string{kBehaviorGuid});
             return DAS_S_OK;
@@ -700,7 +724,9 @@ namespace SignalGatedTestMock
         GetRuntimeClassName(IDasReadOnlyString** pp_out_name) override
         {
             if (!pp_out_name)
+            {
                 return DAS_E_INVALID_POINTER;
+            }
             return CreateIDasReadOnlyStringFromUtf8(
                 "BehaviorComponent",
                 pp_out_name);
@@ -784,15 +810,15 @@ namespace SignalGatedTestMock
         // Emit a signal by writing the reserved "signals" JSON string array.
         void EmitSignal(IDasPortMap* map, const std::string& sig)
         {
-            std::string       json = std::string(R"([")") + sig + R"("])";
-            DasReadOnlyString key{"signals"};
-            DasReadOnlyString val{json.c_str()};
+            const std::string       json = std::string(R"([")") + sig + R"("])";
+            const DasReadOnlyString key{"signals"};
+            const DasReadOnlyString val{json.c_str()};
             map->SetString(key.Get(), val.Get());
         }
 
         void SetOutInt(IDasPortMap* map, const std::string& port, int64_t v)
         {
-            DasReadOnlyString key{port.c_str()};
+            const DasReadOnlyString key{port.c_str()};
             map->SetInt(key.Get(), v);
         }
 
@@ -806,7 +832,7 @@ namespace SignalGatedTestMock
             ++do_count;
 
             DAS::DasPtr<IDasPortMap> output;
-            DasResult                hr = CreateIDasPortMap(output.Put());
+            const DasResult          hr = CreateIDasPortMap(output.Put());
             if (DAS::IsFailed(hr))
             {
                 return hr;
@@ -842,8 +868,8 @@ namespace SignalGatedTestMock
             {
                 // φ-join: copy whichever of value_true / value_false the taken
                 // branch produced into result.
-                int64_t           v{};
-                DasReadOnlyString kt{"value_true"};
+                int64_t                 v{};
+                const DasReadOnlyString kt{"value_true"};
                 if (p_input_port_map != nullptr
                     && DAS::IsOk(p_input_port_map->GetInt(kt.Get(), &v)))
                 {
@@ -852,7 +878,7 @@ namespace SignalGatedTestMock
                 }
                 else
                 {
-                    DasReadOnlyString kf{"value_false"};
+                    const DasReadOnlyString kf{"value_false"};
                     if (p_input_port_map != nullptr
                         && DAS::IsOk(p_input_port_map->GetInt(kf.Get(), &v)))
                     {
@@ -993,9 +1019,9 @@ TEST(SignalGatedRuntimeTest, BranchIfOnlyHitBranchRuns)
         MakeBinding(branch, "false", falseSink, "in", "signal"),
     };
 
-    auto                       host = BehaviorHost::Make();
-    GraphRuntime               rt;
-    Das::DasPtr<IDasStopToken> token =
+    auto                             host = BehaviorHost::Make();
+    GraphRuntime                     rt;
+    const Das::DasPtr<IDasStopToken> token =
         Das::PluginInterface::DasStopTokenImplBase<MockStopToken>::Make();
 
     auto hr = rt.RunWithHost(plan, "fp_v1", token.Get(), host.Get());
@@ -1041,9 +1067,9 @@ TEST(SignalGatedRuntimeTest, SkipPropagatesAlongDataEdges)
         MakeBinding(b, "out", c, "in", "int"),
     };
 
-    auto                       host = BehaviorHost::Make();
-    GraphRuntime               rt;
-    Das::DasPtr<IDasStopToken> token =
+    auto                             host = BehaviorHost::Make();
+    GraphRuntime                     rt;
+    const Das::DasPtr<IDasStopToken> token =
         Das::PluginInterface::DasStopTokenImplBase<MockStopToken>::Make();
 
     auto hr = rt.RunWithHost(plan, "fp_v1", token.Get(), host.Get());
@@ -1087,9 +1113,9 @@ TEST(SignalGatedRuntimeTest, ForLoopIteratesCorrectly)
         MakeBinding(body, "done", forNode, "loop_in", "signal"),
     };
 
-    auto                       host = BehaviorHost::Make();
-    GraphRuntime               rt;
-    Das::DasPtr<IDasStopToken> token =
+    auto                             host = BehaviorHost::Make();
+    GraphRuntime                     rt;
+    const Das::DasPtr<IDasStopToken> token =
         Das::PluginInterface::DasStopTokenImplBase<MockStopToken>::Make();
 
     auto hr = rt.RunWithHost(plan, "fp_v1", token.Get(), host.Get());
@@ -1146,9 +1172,9 @@ TEST(SignalGatedRuntimeTest, LoopWithInnerBranchHasNoCrossIterationResidue)
         MakeBinding(term, "done", forNode, "loop_in", "signal"),
     };
 
-    auto                       host = BehaviorHost::Make();
-    GraphRuntime               rt;
-    Das::DasPtr<IDasStopToken> token =
+    auto                             host = BehaviorHost::Make();
+    GraphRuntime                     rt;
+    const Das::DasPtr<IDasStopToken> token =
         Das::PluginInterface::DasStopTokenImplBase<MockStopToken>::Make();
 
     auto hr = rt.RunWithHost(plan, "fp_v1", token.Get(), host.Get());
@@ -1208,9 +1234,9 @@ TEST(SignalGatedRuntimeTest, MergeJoinRunsOnTakenBranch)
         MakeBinding(b, "out", mergeNode, "value_false", "int"),
     };
 
-    auto                       host = BehaviorHost::Make();
-    GraphRuntime               rt;
-    Das::DasPtr<IDasStopToken> token =
+    auto                             host = BehaviorHost::Make();
+    GraphRuntime                     rt;
+    const Das::DasPtr<IDasStopToken> token =
         Das::PluginInterface::DasStopTokenImplBase<MockStopToken>::Make();
 
     auto hr = rt.RunWithHost(plan, "fp_v1", token.Get(), host.Get());

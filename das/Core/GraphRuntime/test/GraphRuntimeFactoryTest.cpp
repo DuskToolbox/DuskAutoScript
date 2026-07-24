@@ -13,14 +13,14 @@ using IDasGraphRuntime = Das::ExportInterface::IDasGraphRuntime;
 TEST(GraphRuntimeFactoryTest, CreateGraphRuntimeReturnsValidPointer)
 {
     Das::DasPtr<IDasGraphRuntime> runtime;
-    DasResult                     hr = CreateGraphRuntime(runtime.Put());
+    const DasResult               hr = CreateGraphRuntime(runtime.Put());
     ASSERT_EQ(hr, DAS_S_OK);
     ASSERT_NE(runtime.Get(), nullptr);
 }
 
 TEST(GraphRuntimeFactoryTest, CreateGraphRuntimeNullOutParam)
 {
-    DasResult hr = CreateGraphRuntime(nullptr);
+    const DasResult hr = CreateGraphRuntime(nullptr);
     ASSERT_EQ(hr, DAS_E_INVALID_POINTER);
 }
 
@@ -30,7 +30,7 @@ TEST(GraphRuntimeFactoryTest, IDasGraphRuntimeGetErrorMessage)
     ASSERT_EQ(CreateGraphRuntime(runtime.Put()), DAS_S_OK);
 
     Das::DasPtr<IDasReadOnlyString> error_msg;
-    DasResult hr = runtime->GetErrorMessage(error_msg.Put());
+    const DasResult hr = runtime->GetErrorMessage(error_msg.Put());
     EXPECT_EQ(hr, DAS_S_OK);
 }
 
@@ -39,7 +39,7 @@ TEST(GraphRuntimeFactoryTest, IDasGraphRuntimeGetErrorMessageNullPointer)
     Das::DasPtr<IDasGraphRuntime> runtime;
     ASSERT_EQ(CreateGraphRuntime(runtime.Put()), DAS_S_OK);
 
-    DasResult hr = runtime->GetErrorMessage(nullptr);
+    const DasResult hr = runtime->GetErrorMessage(nullptr);
     EXPECT_EQ(hr, DAS_E_INVALID_POINTER);
 }
 
@@ -54,7 +54,7 @@ TEST(GraphRuntimeFactoryTest, IDasGraphRuntimeRefCounting)
     EXPECT_GE(ref, 1u);
 
     Das::DasPtr<IDasReadOnlyString> error_msg;
-    DasResult hr = runtime->GetErrorMessage(error_msg.Put());
+    const DasResult hr = runtime->GetErrorMessage(error_msg.Put());
     EXPECT_EQ(hr, DAS_S_OK);
 }
 
@@ -65,7 +65,7 @@ TEST(GraphRuntimeFactoryTest, CCompliance_CreateGraphRuntime)
     ASSERT_NE(fn, nullptr);
 
     Das::DasPtr<IDasGraphRuntime> runtime;
-    DasResult                     hr = fn(runtime.Put());
+    const DasResult               hr = fn(runtime.Put());
     ASSERT_EQ(hr, DAS_S_OK);
     ASSERT_NE(runtime.Get(), nullptr);
 }

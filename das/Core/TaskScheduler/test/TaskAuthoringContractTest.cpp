@@ -657,8 +657,8 @@ TEST(TaskAuthoringContractTest, SupportedChangeKindsPass)
     for (const auto& c : kCases)
     {
         auto change = ParseJson(
-            std::string{"{\"baseRevision\":1,\"kind\":\""} + std::string{c.kind}
-            + "\",\"payload\":" + std::string{c.payload} + "}");
+            std::string{R"({"baseRevision":1,"kind":")"} + std::string{c.kind}
+            + R"(","payload":)" + std::string{c.payload} + "}");
 
         auto result = Das::Core::TaskScheduler::ValidateAuthoringChange(change);
 
@@ -682,8 +682,8 @@ TEST(TaskAuthoringContractTest, ChangeRejectsOldKindAliases)
     for (auto kind : kLegacy)
     {
         auto change = ParseJson(
-            std::string{"{\"baseRevision\":1,\"kind\":\""} + std::string{kind}
-            + "\",\"payload\":{}}");
+            std::string{R"({"baseRevision":1,"kind":")"} + std::string{kind}
+            + R"(","payload":{}})");
 
         auto result = Das::Core::TaskScheduler::ValidateAuthoringChange(change);
 
@@ -702,10 +702,9 @@ TEST(TaskAuthoringContractTest, SetValueTargetVariants)
     for (auto target : kTargets)
     {
         auto change = ParseJson(
-            std::string{
-                "{\"baseRevision\":1,\"kind\":\"setValue\",\"payload\":"}
+            std::string{R"({"baseRevision":1,"kind":"setValue","payload":)"}
             + "{\"target\":" + std::string{target}
-            + ",\"fieldName\":\"x\",\"value\":null}}");
+            + R"(,"fieldName":"x","value":null}})");
 
         auto result = Das::Core::TaskScheduler::ValidateAuthoringChange(change);
 

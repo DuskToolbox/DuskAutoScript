@@ -161,7 +161,7 @@ namespace
         auto entry_100 = MakeRepositoryEntry(100, inner_doc);
         auto accessor = MockEntryAccessor({{100, entry_100}});
 
-        SubgraphCompiler compiler;
+        const SubgraphCompiler compiler;
         auto snapshot = compiler.CompileEntryRef(100, outer_doc, accessor);
 
         EXPECT_EQ(snapshot.entry_id, 100);
@@ -181,7 +181,7 @@ namespace
         auto entry_100 = MakeRepositoryEntry(100, inner_doc);
         auto accessor = MockEntryAccessor({{100, entry_100}});
 
-        SubgraphCompiler compiler;
+        const SubgraphCompiler compiler;
         auto snapshot = compiler.CompileEntryRef(100, outer_doc, accessor);
 
         // execution_order should contain all inner nodes in topological order
@@ -211,7 +211,7 @@ namespace
         auto entry_100 = MakeRepositoryEntry(100, inner_doc);
         auto accessor = MockEntryAccessor({{100, entry_100}});
 
-        SubgraphCompiler compiler;
+        const SubgraphCompiler compiler;
         auto snapshot = compiler.CompileEntryRef(100, outer_doc, accessor);
 
         ASSERT_EQ(snapshot.input_mapping.size(), 1u);
@@ -239,7 +239,7 @@ namespace
         auto entry_100 = MakeRepositoryEntry(100, inner_doc);
         auto accessor = MockEntryAccessor({{100, entry_100}});
 
-        SubgraphCompiler compiler;
+        const SubgraphCompiler compiler;
         auto snapshot = compiler.CompileEntryRef(100, outer_doc, accessor);
 
         EXPECT_EQ(snapshot.input_mapping.size(), 2u);
@@ -272,7 +272,7 @@ namespace
         auto entry_100 = MakeRepositoryEntry(100, inner_doc);
         auto accessor = MockEntryAccessor({{100, entry_100}});
 
-        SubgraphCompiler compiler;
+        const SubgraphCompiler compiler;
         auto snapshot = compiler.CompileEntryRef(100, outer_doc, accessor);
 
         ASSERT_EQ(snapshot.output_mapping.size(), 1u);
@@ -301,7 +301,7 @@ namespace
         auto entry_100 = MakeRepositoryEntry(100, inner_doc);
         auto accessor = MockEntryAccessor({{100, entry_100}});
 
-        SubgraphCompiler compiler;
+        const SubgraphCompiler compiler;
         auto snapshot = compiler.CompileEntryRef(100, outer_doc, accessor);
 
         EXPECT_EQ(snapshot.output_mapping.size(), 2u);
@@ -339,7 +339,7 @@ namespace
 
         auto accessor = MockEntryAccessor({{200, entry_200}, {300, entry_300}});
 
-        SubgraphCompiler compiler;
+        const SubgraphCompiler compiler;
         auto snapshot = compiler.CompileRecursive(outer_doc, accessor);
 
         // Should have snapshot for entry 200
@@ -369,8 +369,8 @@ namespace
 
         auto accessor = MockEntryAccessor({{100, entry_100}, {200, entry_200}});
 
-        SubgraphCompiler compiler;
-        auto             snapshot = compiler.CompileRecursive(doc_a, accessor);
+        const SubgraphCompiler compiler;
+        auto snapshot = compiler.CompileRecursive(doc_a, accessor);
 
         // Should produce snapshot for entry 200
         // But should detect cycle when trying to recurse into entry 100
@@ -411,7 +411,7 @@ namespace
         auto entry_500 = MakeRepositoryEntry(500, doc_self);
         auto accessor = MockEntryAccessor({{500, entry_500}});
 
-        SubgraphCompiler compiler;
+        const SubgraphCompiler compiler;
         auto snapshot = compiler.CompileRecursive(doc_self, accessor);
 
         // Should detect self-reference and produce diagnostic (any depth)
@@ -442,7 +442,7 @@ namespace
             {MakeComponentNode("A", "g-A"), MakeComponentNode("B", "g-B")},
             {MakeEdge("e1", "A", "out", "B", "in")});
 
-        SubgraphCompiler compiler;
+        const SubgraphCompiler compiler;
         auto snapshot = compiler.CompileRecursive(doc, MockEntryAccessor({}));
 
         // No entryRefs → empty snapshot
@@ -457,8 +457,8 @@ namespace
         auto outer_doc = MakeGraphDocument({MakeEntryRefNode("ref", 999)});
 
         // Empty accessor — entry 999 does not exist
-        SubgraphCompiler compiler;
-        auto             snapshot =
+        const SubgraphCompiler compiler;
+        auto                   snapshot =
             compiler.CompileEntryRef(999, outer_doc, MockEntryAccessor({}));
 
         // Should return snapshot with diagnostic, no crash
@@ -474,7 +474,7 @@ namespace
         auto entry_100 = MakeRepositoryEntry(100, inner_doc);
 
         std::set<GraphEntryId> called_ids;
-        EntryAccessor          tracking_accessor =
+        const EntryAccessor    tracking_accessor =
             [&called_ids, entry_100](GraphEntryId id) -> std::optional<TaskDto>
         {
             called_ids.insert(id);
@@ -485,7 +485,7 @@ namespace
             return std::nullopt;
         };
 
-        SubgraphCompiler compiler;
+        const SubgraphCompiler compiler;
         compiler.CompileEntryRef(100, outer_doc, tracking_accessor);
 
         EXPECT_TRUE(called_ids.count(100));
@@ -505,7 +505,7 @@ namespace
         auto entry_100 = MakeRepositoryEntry(100, inner_doc);
         auto accessor = MockEntryAccessor({{100, entry_100}});
 
-        SubgraphCompiler compiler;
+        const SubgraphCompiler compiler;
         auto snapshot = compiler.CompileEntryRef(100, outer_doc, accessor);
 
         ASSERT_EQ(snapshot.input_mapping.size(), 1u);
@@ -526,7 +526,7 @@ namespace
 
         auto accessor = MockEntryAccessor({{200, entry_200}, {300, entry_300}});
 
-        SubgraphCompiler compiler;
+        const SubgraphCompiler compiler;
         auto snapshot = compiler.CompileRecursive(outer_doc, accessor);
 
         ASSERT_EQ(snapshot.nested_snapshots.size(), 1u);

@@ -47,7 +47,7 @@ TEST(DasJsonTest, ArrayTest)
     {
         DasJson first;
         ASSERT_EQ(ParseDasJsonFromString("{}", first.Put()), DAS_S_OK);
-        Details::Dummy first_dummy{1, 3222222222222};
+        const Details::Dummy first_dummy{1, 3222222222222};
         ToJson(first, first_dummy);
         array.SetObjectByIndex(0, first);
     }
@@ -55,7 +55,7 @@ TEST(DasJsonTest, ArrayTest)
     {
         DasJson second;
         ASSERT_EQ(ParseDasJsonFromString("{}", second.Put()), DAS_S_OK);
-        Details::Dummy second_dummy{3, 9223372036854775807};
+        const Details::Dummy second_dummy{3, 9223372036854775807};
         ToJson(second, second_dummy);
         array.SetObjectByIndex(1, second);
     }

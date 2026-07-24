@@ -140,8 +140,8 @@ namespace Das::Core::Debug::Test
 
         auto MakePatternImage() -> Das::DasPtr<Das::ExportInterface::IDasImage>
         {
-            cv::Mat image = cv::Mat::zeros(32, 32, CV_8UC3);
-            cv::Mat templ(8, 8, CV_8UC3, cv::Scalar{10, 20, 30});
+            const cv::Mat image = cv::Mat::zeros(32, 32, CV_8UC3);
+            cv::Mat       templ(8, 8, CV_8UC3, cv::Scalar{10, 20, 30});
             cv::line(
                 templ,
                 cv::Point{0, 0},
@@ -397,7 +397,7 @@ namespace Das::Core::Debug::Test
                 {
                     return DAS_E_INVALID_POINTER;
                 }
-                DasReadOnlyString value{"A"};
+                const DasReadOnlyString value{"A"};
                 value.GetImpl(pp_text);
                 return DAS_S_OK;
             }
@@ -536,7 +536,7 @@ namespace Das::Core::Debug::Test
 
         auto ctx = DAS::Core::IPC::MainProcess::CreateIpcContextEz(false);
         ASSERT_NE(ctx.get(), nullptr);
-        DAS::Core::IPC::ScopedCurrentIpcContext scope(
+        const DAS::Core::IPC::ScopedCurrentIpcContext scope(
             static_cast<DAS::Core::IPC::MainProcess::IpcContext*>(ctx.get()));
 
         ASSERT_EQ(RegisterDebugWriterService(*ctx), DAS_S_OK);
@@ -587,7 +587,7 @@ namespace Das::Core::Debug::Test
 
         auto ctx = DAS::Core::IPC::MainProcess::CreateIpcContextEz(false);
         ASSERT_NE(ctx.get(), nullptr);
-        DAS::Core::IPC::ScopedCurrentIpcContext scope(
+        const DAS::Core::IPC::ScopedCurrentIpcContext scope(
             static_cast<DAS::Core::IPC::MainProcess::IpcContext*>(ctx.get()));
         ASSERT_EQ(RegisterDebugWriterService(*ctx), DAS_S_OK);
 
@@ -602,10 +602,10 @@ namespace Das::Core::Debug::Test
         auto  fake_ai_guard =
             Das::DasPtr<Das::ExportInterface::IDasAI>::Attach(fake_ai);
 
-        const std::string rec_model_path = "fake-rec.onnx";
-        const std::string dict_path_string = dict_path.string();
-        DasReadOnlyString rec_model{rec_model_path.c_str()};
-        DasReadOnlyString dict_model{dict_path_string.c_str()};
+        const std::string       rec_model_path = "fake-rec.onnx";
+        const std::string       dict_path_string = dict_path.string();
+        const DasReadOnlyString rec_model{rec_model_path.c_str()};
+        const DasReadOnlyString dict_model{dict_path_string.c_str()};
 
         Das::ExportInterface::IDasOcr* raw_ocr = nullptr;
         ASSERT_EQ(

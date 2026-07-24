@@ -61,9 +61,9 @@ DasResult AdbCaptureFactoryImpl::CreateInstance(
     PluginInterface::IDasCapture** pp_out_object)
 {
     (void)p_plugin_config;
-    const char* p_key_string = "";
-    const char* p_u8_environment_json = nullptr;
-    DasResult   result =
+    const char*     p_key_string = "";
+    const char*     p_u8_environment_json = nullptr;
+    const DasResult result =
         p_environment_json_config->GetUtf8(&p_u8_environment_json);
     if (DAS::IsFailed(result))
     {

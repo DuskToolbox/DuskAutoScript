@@ -37,7 +37,8 @@ DasResult DasReadOnlyStringStub::HandleGetUtf16Snapshot(
 
     const char16_t* utf16_data = nullptr;
     size_t          char_count = 0;
-    DasResult result = readonly_string->GetUtf16(&utf16_data, &char_count);
+    const DasResult result =
+        readonly_string->GetUtf16(&utf16_data, &char_count);
 
     MemorySerializerWriter writer;
     writer.WriteInt32(static_cast<int32_t>(result));

@@ -104,7 +104,7 @@ DasResult GDICapture::Capture(
     bmi.bmiHeader.biBitCount = 24;
     bmi.bmiHeader.biCompression = BI_RGB;
 
-    int32_t pitch = ((width_ * 3 + 3) & ~3);
+    const int32_t pitch = ((width_ * 3 + 3) & ~3);
     data_size_ = pitch * height_;
 
     bitmap_data_ = new (std::nothrow) uint8_t[data_size_];

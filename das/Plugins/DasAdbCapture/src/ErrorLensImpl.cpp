@@ -84,7 +84,7 @@ DasResult AdbCaptureErrorLens::GetErrorMessage(
     DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(out_string);
     *out_string = nullptr;
 
-    DasPtr locale_name_ptr{locale_name};
+    const DasPtr locale_name_ptr{locale_name};
     if (const auto locale_it = map_.find(locale_name_ptr);
         locale_it != map_.end())
     {

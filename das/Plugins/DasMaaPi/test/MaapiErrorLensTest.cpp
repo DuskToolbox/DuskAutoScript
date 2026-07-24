@@ -26,7 +26,7 @@ namespace
         const char*         locale,
         DasResult           error_code)
     {
-        DasReadOnlyString          locale_str{locale};
+        const DasReadOnlyString    locale_str{locale};
         DasPtr<IDasReadOnlyString> out;
         auto                       hr =
             lens->GetErrorMessage(locale_str.Get(), error_code, out.Put());
@@ -103,7 +103,7 @@ TEST(MaapiErrorLensTest, ReturnsErrorOnUnknownCode)
     auto lens = MakeRegisteredLens();
     ASSERT_TRUE(lens);
 
-    DasReadOnlyString          locale{"en"};
+    const DasReadOnlyString    locale{"en"};
     DasPtr<IDasReadOnlyString> out;
     auto hr = lens->GetErrorMessage(locale.Get(), DAS_E_FAIL, out.Put());
     EXPECT_EQ(hr, DAS_E_OUT_OF_RANGE);

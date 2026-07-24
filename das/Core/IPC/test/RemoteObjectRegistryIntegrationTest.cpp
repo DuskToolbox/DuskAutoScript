@@ -59,12 +59,12 @@ protected:
 
 TEST_F(RemoteObjectRegistryIntegrationTest, SessionIdAllocationAndUsage)
 {
-    uint16_t host_session_id = AllocateTestSessionId();
+    const uint16_t host_session_id = AllocateTestSessionId();
     ASSERT_NE(host_session_id, 0);
 
-    ObjectId    obj_id = {host_session_id, 1, 100};
-    DasGuid     iid = CreateTestGuid(1);
-    std::string name = "TestObject";
+    ObjectId          obj_id = {host_session_id, 1, 100};
+    const DasGuid     iid = CreateTestGuid(1);
+    const std::string name = "TestObject";
 
     DasResult result =
         registry_.RegisterObject(obj_id, iid, host_session_id, name, 1);
@@ -91,7 +91,7 @@ TEST_F(RemoteObjectRegistryIntegrationTest, MultipleHosts)
 
     for (int i = 0; i < 3; ++i)
     {
-        uint16_t session_id = AllocateTestSessionId();
+        const uint16_t session_id = AllocateTestSessionId();
         host_session_ids.push_back(session_id);
     }
 
@@ -101,10 +101,10 @@ TEST_F(RemoteObjectRegistryIntegrationTest, MultipleHosts)
             host_session_ids[i],
             1,
             static_cast<uint32_t>(i + 1)};
-        DasGuid     iid = CreateTestGuid(static_cast<uint32_t>(i));
-        std::string name = "HostObject_" + std::to_string(i);
+        const DasGuid     iid = CreateTestGuid(static_cast<uint32_t>(i));
+        const std::string name = "HostObject_" + std::to_string(i);
 
-        DasResult result =
+        const DasResult result =
             registry_.RegisterObject(obj_id, iid, host_session_ids[i], name, 1);
         ASSERT_EQ(result, DAS_S_OK);
     }
@@ -117,7 +117,7 @@ TEST_F(RemoteObjectRegistryIntegrationTest, MultipleHosts)
         EXPECT_EQ(objects[0].name, "HostObject_" + std::to_string(i));
 
         RemoteObjectInfo found_info;
-        DasResult        result = registry_.LookupByName(
+        const DasResult  result = registry_.LookupByName(
             "HostObject_" + std::to_string(i),
             found_info);
         ASSERT_EQ(result, DAS_S_OK);
@@ -129,11 +129,11 @@ TEST_F(RemoteObjectRegistryIntegrationTest, MultipleHosts)
 
 TEST_F(RemoteObjectRegistryIntegrationTest, SessionIdSequentialAllocation)
 {
-    uint16_t session_id1 = AllocateTestSessionId();
+    const uint16_t session_id1 = AllocateTestSessionId();
 
-    ObjectId    obj_id1 = {session_id1, 1, 100};
-    DasGuid     iid1 = CreateTestGuid(1);
-    std::string name1 = "Object1";
+    ObjectId          obj_id1 = {session_id1, 1, 100};
+    const DasGuid     iid1 = CreateTestGuid(1);
+    const std::string name1 = "Object1";
 
     DasResult result =
         registry_.RegisterObject(obj_id1, iid1, session_id1, name1, 1);
@@ -143,12 +143,12 @@ TEST_F(RemoteObjectRegistryIntegrationTest, SessionIdSequentialAllocation)
     registry_.ListObjectsBySession(session_id1, objects);
     ASSERT_EQ(objects.size(), 1);
 
-    uint16_t session_id2 = AllocateTestSessionId();
+    const uint16_t session_id2 = AllocateTestSessionId();
     EXPECT_GT(session_id2, session_id1);
 
-    ObjectId    obj_id2 = {session_id2, 1, 101};
-    DasGuid     iid2 = CreateTestGuid(2);
-    std::string name2 = "Object2";
+    ObjectId          obj_id2 = {session_id2, 1, 101};
+    const DasGuid     iid2 = CreateTestGuid(2);
+    const std::string name2 = "Object2";
 
     result = registry_.RegisterObject(obj_id2, iid2, session_id2, name2, 1);
     ASSERT_EQ(result, DAS_S_OK);
@@ -162,11 +162,11 @@ TEST_F(RemoteObjectRegistryIntegrationTest, SessionIdSequentialAllocation)
 
 TEST_F(RemoteObjectRegistryIntegrationTest, EdgeCases)
 {
-    uint16_t    session_id = AllocateTestSessionId();
-    ObjectId    obj_id = {session_id, 1, 100};
-    DasGuid     iid = CreateTestGuid(1);
-    std::string name = "TestObject";
-    DasResult   result =
+    const uint16_t    session_id = AllocateTestSessionId();
+    ObjectId          obj_id = {session_id, 1, 100};
+    const DasGuid     iid = CreateTestGuid(1);
+    const std::string name = "TestObject";
+    DasResult         result =
         registry_.RegisterObject(obj_id, iid, session_id, name, 1);
     ASSERT_EQ(result, DAS_S_OK);
 
@@ -187,18 +187,18 @@ TEST_F(RemoteObjectRegistryIntegrationTest, EdgeCases)
 
 TEST_F(RemoteObjectRegistryIntegrationTest, DuplicateNames)
 {
-    uint16_t session_id1 = AllocateTestSessionId();
-    uint16_t session_id2 = AllocateTestSessionId();
+    const uint16_t session_id1 = AllocateTestSessionId();
+    const uint16_t session_id2 = AllocateTestSessionId();
 
-    ObjectId  obj_id1 = {session_id1, 1, 100};
-    DasGuid   iid1 = CreateTestGuid(1);
-    DasResult result =
+    ObjectId      obj_id1 = {session_id1, 1, 100};
+    const DasGuid iid1 = CreateTestGuid(1);
+    DasResult     result =
         registry_
             .RegisterObject(obj_id1, iid1, session_id1, "DuplicateName", 1);
     ASSERT_EQ(result, DAS_S_OK);
 
-    ObjectId obj_id2 = {session_id2, 1, 100};
-    DasGuid  iid2 = CreateTestGuid(2);
+    ObjectId      obj_id2 = {session_id2, 1, 100};
+    const DasGuid iid2 = CreateTestGuid(2);
     result =
         registry_
             .RegisterObject(obj_id2, iid2, session_id2, "DuplicateName", 1);

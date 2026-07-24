@@ -187,12 +187,16 @@ TEST(RuntimeExecutionCacheTest, RoutesFromBindingPlan)
     for (const auto& s : a_outputs)
     {
         if (s.port_id == "out1")
+        {
             out1_slot = s.slot_index;
+        }
     }
     for (const auto& s : b_inputs)
     {
         if (s.port_id == "in1")
+        {
             in1_slot = s.slot_index;
+        }
     }
 
     bool found_route = false;

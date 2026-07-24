@@ -89,8 +89,8 @@ TEST(DoAdapterTest, BuildInputPortMap_IntValue)
     ASSERT_EQ(BuildInputPortMap(frame, bindings, map.Put()), DAS_S_OK);
     ASSERT_NE(map.Get(), nullptr);
 
-    int64_t           val{};
-    DasReadOnlyString key{"in"};
+    int64_t                 val{};
+    const DasReadOnlyString key{"in"};
     ASSERT_EQ(map->GetInt(key.Get(), &val), DAS_S_OK);
     EXPECT_EQ(val, 42);
 }
@@ -105,8 +105,8 @@ TEST(DoAdapterTest, BuildInputPortMap_FloatValue)
     DAS::DasPtr<IDasPortMap> map;
     ASSERT_EQ(BuildInputPortMap(frame, bindings, map.Put()), DAS_S_OK);
 
-    double            val{};
-    DasReadOnlyString key{"in"};
+    double                  val{};
+    const DasReadOnlyString key{"in"};
     ASSERT_EQ(map->GetFloat(key.Get(), &val), DAS_S_OK);
     EXPECT_DOUBLE_EQ(val, 3.14);
 }
@@ -121,8 +121,8 @@ TEST(DoAdapterTest, BuildInputPortMap_StringValue)
     DAS::DasPtr<IDasPortMap> map;
     ASSERT_EQ(BuildInputPortMap(frame, bindings, map.Put()), DAS_S_OK);
 
-    IDasReadOnlyString* p_str = nullptr;
-    DasReadOnlyString   key{"in"};
+    IDasReadOnlyString*     p_str = nullptr;
+    const DasReadOnlyString key{"in"};
     ASSERT_EQ(map->GetString(key.Get(), &p_str), DAS_S_OK);
     ASSERT_NE(p_str, nullptr);
 
@@ -142,8 +142,8 @@ TEST(DoAdapterTest, BuildInputPortMap_BoolValue)
     DAS::DasPtr<IDasPortMap> map;
     ASSERT_EQ(BuildInputPortMap(frame, bindings, map.Put()), DAS_S_OK);
 
-    bool              val{};
-    DasReadOnlyString key{"in"};
+    bool                    val{};
+    const DasReadOnlyString key{"in"};
     ASSERT_EQ(map->GetBool(key.Get(), &val), DAS_S_OK);
     EXPECT_TRUE(val);
 }
@@ -160,8 +160,8 @@ TEST(DoAdapterTest, BuildInputPortMap_SignalValue)
 
     // Signal is a control-flow marker — the port should not be present
     // in the resulting map.
-    DasReadOnlyString key{"in"};
-    bool              has{};
+    const DasReadOnlyString key{"in"};
+    bool                    has{};
     ASSERT_EQ(map->Has(key.Get(), &has), DAS_S_OK);
     EXPECT_FALSE(has);
 }
@@ -186,13 +186,13 @@ TEST(DoAdapterTest, BuildInputPortMap_MultipleBindings)
     DAS::DasPtr<IDasPortMap> map;
     ASSERT_EQ(BuildInputPortMap(frame, bindings, map.Put()), DAS_S_OK);
 
-    int64_t           int_val{};
-    DasReadOnlyString key_x{"in_x"};
+    int64_t                 int_val{};
+    const DasReadOnlyString key_x{"in_x"};
     ASSERT_EQ(map->GetInt(key_x.Get(), &int_val), DAS_S_OK);
     EXPECT_EQ(int_val, 10);
 
-    IDasReadOnlyString* p_str = nullptr;
-    DasReadOnlyString   key_y{"in_y"};
+    IDasReadOnlyString*     p_str = nullptr;
+    const DasReadOnlyString key_y{"in_y"};
     ASSERT_EQ(map->GetString(key_y.Get(), &p_str), DAS_S_OK);
     ASSERT_NE(p_str, nullptr);
     const char* utf8 = nullptr;
@@ -200,8 +200,8 @@ TEST(DoAdapterTest, BuildInputPortMap_MultipleBindings)
     EXPECT_STREQ(utf8, "world");
     p_str->Release();
 
-    double            float_val{};
-    DasReadOnlyString key_z{"in_z"};
+    double                  float_val{};
+    const DasReadOnlyString key_z{"in_z"};
     ASSERT_EQ(map->GetFloat(key_z.Get(), &float_val), DAS_S_OK);
     EXPECT_DOUBLE_EQ(float_val, 2.5);
 }
@@ -212,8 +212,8 @@ TEST(DoAdapterTest, BuildInputPortMap_MultipleBindings)
 
 TEST(DoAdapterTest, BuildInputPortMap_NullOutput)
 {
-    PortFrame frame;
-    auto      bindings = {MakeBinding(GuidToString(kSourceNode), "out", "in")};
+    const PortFrame frame;
+    auto bindings = {MakeBinding(GuidToString(kSourceNode), "out", "in")};
 
     EXPECT_EQ(
         BuildInputPortMap(frame, bindings, nullptr),
@@ -226,7 +226,7 @@ TEST(DoAdapterTest, BuildInputPortMap_NullOutput)
 
 TEST(DoAdapterTest, BuildInputPortMap_MissingSourcePort)
 {
-    PortFrame frame;
+    const PortFrame frame;
     // No entries in frame.
 
     auto bindings = {
@@ -238,8 +238,8 @@ TEST(DoAdapterTest, BuildInputPortMap_MissingSourcePort)
     ASSERT_NE(map.Get(), nullptr);
 
     // The map should be empty.
-    bool              has{};
-    DasReadOnlyString key{"in"};
+    bool                    has{};
+    const DasReadOnlyString key{"in"};
     ASSERT_EQ(map->Has(key.Get(), &has), DAS_S_OK);
     EXPECT_FALSE(has);
 }
@@ -258,8 +258,8 @@ TEST(DoAdapterTest, BuildInputPortMap_NullValueSkipped)
     DAS::DasPtr<IDasPortMap> map;
     ASSERT_EQ(BuildInputPortMap(frame, bindings, map.Put()), DAS_S_OK);
 
-    DasReadOnlyString key{"in"};
-    bool              has{};
+    const DasReadOnlyString key{"in"};
+    bool                    has{};
     ASSERT_EQ(map->Has(key.Get(), &has), DAS_S_OK);
     EXPECT_FALSE(has);
 }
@@ -274,37 +274,37 @@ TEST(DoAdapterTest, BuildInputPortMap_NullValueSkipped)
 
 TEST(DoAdapterTest, BuildInputPortMap_BroadcastIntDefault)
 {
-    PortFrame frame; // intentionally empty — value comes from the default
+    const PortFrame frame; // intentionally empty — value comes from the default
 
     auto bindings = {MakeBroadcastBinding("threshold", "in", ParseJson("42"))};
 
     DAS::DasPtr<IDasPortMap> map;
     ASSERT_EQ(BuildInputPortMap(frame, bindings, map.Put()), DAS_S_OK);
 
-    int64_t           val{};
-    DasReadOnlyString key{"in"};
+    int64_t                 val{};
+    const DasReadOnlyString key{"in"};
     ASSERT_EQ(map->GetInt(key.Get(), &val), DAS_S_OK);
     EXPECT_EQ(val, 42);
 }
 
 TEST(DoAdapterTest, BuildInputPortMap_BroadcastBoolDefault)
 {
-    PortFrame frame;
+    const PortFrame frame;
 
     auto bindings = {MakeBroadcastBinding("flag", "in", ParseJson("true"))};
 
     DAS::DasPtr<IDasPortMap> map;
     ASSERT_EQ(BuildInputPortMap(frame, bindings, map.Put()), DAS_S_OK);
 
-    bool              val{};
-    DasReadOnlyString key{"in"};
+    bool                    val{};
+    const DasReadOnlyString key{"in"};
     ASSERT_EQ(map->GetBool(key.Get(), &val), DAS_S_OK);
     EXPECT_TRUE(val);
 }
 
 TEST(DoAdapterTest, BuildInputPortMap_BroadcastStringDefault)
 {
-    PortFrame frame;
+    const PortFrame frame;
 
     auto bindings = {
         MakeBroadcastBinding("name", "in", ParseJson(R"("greeting")"))};
@@ -312,8 +312,8 @@ TEST(DoAdapterTest, BuildInputPortMap_BroadcastStringDefault)
     DAS::DasPtr<IDasPortMap> map;
     ASSERT_EQ(BuildInputPortMap(frame, bindings, map.Put()), DAS_S_OK);
 
-    IDasReadOnlyString* p_str = nullptr;
-    DasReadOnlyString   key{"in"};
+    IDasReadOnlyString*     p_str = nullptr;
+    const DasReadOnlyString key{"in"};
     ASSERT_EQ(map->GetString(key.Get(), &p_str), DAS_S_OK);
     ASSERT_NE(p_str, nullptr);
     const char* utf8 = nullptr;
@@ -324,22 +324,22 @@ TEST(DoAdapterTest, BuildInputPortMap_BroadcastStringDefault)
 
 TEST(DoAdapterTest, BuildInputPortMap_BroadcastFloatDefault)
 {
-    PortFrame frame;
+    const PortFrame frame;
 
     auto bindings = {MakeBroadcastBinding("ratio", "in", ParseJson("3.14"))};
 
     DAS::DasPtr<IDasPortMap> map;
     ASSERT_EQ(BuildInputPortMap(frame, bindings, map.Put()), DAS_S_OK);
 
-    double            val{};
-    DasReadOnlyString key{"in"};
+    double                  val{};
+    const DasReadOnlyString key{"in"};
     ASSERT_EQ(map->GetFloat(key.Get(), &val), DAS_S_OK);
     EXPECT_DOUBLE_EQ(val, 3.14);
 }
 
 TEST(DoAdapterTest, BuildInputPortMap_BroadcastNullDefaultSkipped)
 {
-    PortFrame frame;
+    const PortFrame frame;
 
     auto bindings = {MakeBroadcastBinding("opt", "in", ParseJson("null"))};
 
@@ -347,15 +347,15 @@ TEST(DoAdapterTest, BuildInputPortMap_BroadcastNullDefaultSkipped)
     ASSERT_EQ(BuildInputPortMap(frame, bindings, map.Put()), DAS_S_OK);
 
     // null default → port left unset; the component keeps its own default.
-    DasReadOnlyString key{"in"};
-    bool              has{};
+    const DasReadOnlyString key{"in"};
+    bool                    has{};
     ASSERT_EQ(map->Has(key.Get(), &has), DAS_S_OK);
     EXPECT_FALSE(has);
 }
 
 TEST(DoAdapterTest, BuildInputPortMap_BroadcastNonScalarSkipped)
 {
-    PortFrame frame;
+    const PortFrame frame;
 
     // Object defaults are not scalar options — skipped with a warning.
     auto bindings = {
@@ -364,8 +364,8 @@ TEST(DoAdapterTest, BuildInputPortMap_BroadcastNonScalarSkipped)
     DAS::DasPtr<IDasPortMap> map;
     ASSERT_EQ(BuildInputPortMap(frame, bindings, map.Put()), DAS_S_OK);
 
-    DasReadOnlyString key{"in"};
-    bool              has{};
+    const DasReadOnlyString key{"in"};
+    bool                    has{};
     ASSERT_EQ(map->Has(key.Get(), &has), DAS_S_OK);
     EXPECT_FALSE(has);
 }
@@ -377,7 +377,7 @@ TEST(DoAdapterTest, BuildInputPortMap_BroadcastAndPointToPointCoexist)
     PortFrame frame;
     frame.Set(kSourceNode, "out", PortValue(int64_t{7}));
 
-    std::vector<Dto::PortBindingDto> bindings = {
+    const std::vector<Dto::PortBindingDto> bindings = {
         MakeBinding(GuidToString(kSourceNode), "out", "in_data"),
         MakeBroadcastBinding("threshold", "in_opt", ParseJson("99")),
     };
@@ -385,13 +385,13 @@ TEST(DoAdapterTest, BuildInputPortMap_BroadcastAndPointToPointCoexist)
     DAS::DasPtr<IDasPortMap> map;
     ASSERT_EQ(BuildInputPortMap(frame, bindings, map.Put()), DAS_S_OK);
 
-    int64_t           data_val{};
-    DasReadOnlyString data_key{"in_data"};
+    int64_t                 data_val{};
+    const DasReadOnlyString data_key{"in_data"};
     ASSERT_EQ(map->GetInt(data_key.Get(), &data_val), DAS_S_OK);
     EXPECT_EQ(data_val, 7);
 
-    int64_t           opt_val{};
-    DasReadOnlyString opt_key{"in_opt"};
+    int64_t                 opt_val{};
+    const DasReadOnlyString opt_key{"in_opt"};
     ASSERT_EQ(map->GetInt(opt_key.Get(), &opt_val), DAS_S_OK);
     EXPECT_EQ(opt_val, 99);
 }
@@ -405,7 +405,7 @@ TEST(DoAdapterTest, ExtractOutputPortMap_IntValue)
     DAS::DasPtr<IDasPortMap> map;
     ASSERT_EQ(CreateIDasPortMap(map.Put()), DAS_S_OK);
 
-    DasReadOnlyString key{"out"};
+    const DasReadOnlyString key{"out"};
     ASSERT_EQ(map->SetInt(key.Get(), 99), DAS_S_OK);
 
     PortFrame frame;
@@ -422,7 +422,7 @@ TEST(DoAdapterTest, ExtractOutputPortMap_FloatValue)
     DAS::DasPtr<IDasPortMap> map;
     ASSERT_EQ(CreateIDasPortMap(map.Put()), DAS_S_OK);
 
-    DasReadOnlyString key{"out"};
+    const DasReadOnlyString key{"out"};
     ASSERT_EQ(map->SetFloat(key.Get(), 1.23), DAS_S_OK);
 
     PortFrame frame;
@@ -439,8 +439,8 @@ TEST(DoAdapterTest, ExtractOutputPortMap_StringValue)
     DAS::DasPtr<IDasPortMap> map;
     ASSERT_EQ(CreateIDasPortMap(map.Put()), DAS_S_OK);
 
-    DasReadOnlyString key{"out"};
-    DasReadOnlyString val{"test_str"};
+    const DasReadOnlyString key{"out"};
+    const DasReadOnlyString val{"test_str"};
     ASSERT_EQ(map->SetString(key.Get(), val.Get()), DAS_S_OK);
 
     PortFrame frame;
@@ -457,7 +457,7 @@ TEST(DoAdapterTest, ExtractOutputPortMap_BoolValue)
     DAS::DasPtr<IDasPortMap> map;
     ASSERT_EQ(CreateIDasPortMap(map.Put()), DAS_S_OK);
 
-    DasReadOnlyString key{"out"};
+    const DasReadOnlyString key{"out"};
     ASSERT_EQ(map->SetBool(key.Get(), true), DAS_S_OK);
 
     PortFrame frame;
@@ -474,8 +474,8 @@ TEST(DoAdapterTest, ExtractOutputPortMap_MultipleEntries)
     DAS::DasPtr<IDasPortMap> map;
     ASSERT_EQ(CreateIDasPortMap(map.Put()), DAS_S_OK);
 
-    DasReadOnlyString k1{"a"};
-    DasReadOnlyString k2{"b"};
+    const DasReadOnlyString k1{"a"};
+    const DasReadOnlyString k2{"b"};
     map->SetInt(k1.Get(), 10);
     map->SetBool(k2.Get(), false);
 
@@ -526,15 +526,15 @@ TEST(DoAdapterTest, RoundTrip_IntAndString)
     ASSERT_EQ(BuildInputPortMap(frame, bindings, input_map.Put()), DAS_S_OK);
 
     // Verify input map contents.
-    int64_t           count_val{};
-    DasReadOnlyString count_key{"count"};
+    int64_t                 count_val{};
+    const DasReadOnlyString count_key{"count"};
     ASSERT_EQ(input_map->GetInt(count_key.Get(), &count_val), DAS_S_OK);
     EXPECT_EQ(count_val, 7);
 
     // Now simulate Do() producing an output map with the same data.
     DAS::DasPtr<IDasPortMap> output_map;
     ASSERT_EQ(CreateIDasPortMap(output_map.Put()), DAS_S_OK);
-    DasReadOnlyString out_key{"result"};
+    const DasReadOnlyString out_key{"result"};
     output_map->SetInt(out_key.Get(), 42);
 
     // Extract output back into the frame under a different node.
@@ -558,7 +558,7 @@ TEST(DoAdapterTest, BuildInputPortMap_EmptyBindings)
     PortFrame frame;
     frame.Set(kSourceNode, "out", PortValue(int64_t{1}));
 
-    std::vector<Dto::PortBindingDto> empty_bindings;
+    const std::vector<Dto::PortBindingDto> empty_bindings;
 
     DAS::DasPtr<IDasPortMap> map;
     ASSERT_EQ(BuildInputPortMap(frame, empty_bindings, map.Put()), DAS_S_OK);

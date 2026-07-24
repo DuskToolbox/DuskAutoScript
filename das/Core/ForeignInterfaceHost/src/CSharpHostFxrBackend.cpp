@@ -167,7 +167,7 @@ namespace
 #ifndef DAS_CSHARP_NETHOST_LIBRARY_PATH
         return {};
 #else
-        DynamicLibrary nethost_library{
+        const DynamicLibrary nethost_library{
             std::filesystem::path{DAS_CSHARP_NETHOST_LIBRARY_PATH}};
         if (!nethost_library.IsLoaded())
         {

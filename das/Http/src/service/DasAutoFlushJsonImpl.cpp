@@ -33,7 +33,7 @@ namespace Das::Http
             {
                 return std::nullopt;
             }
-            std::string json_str = ToString(p_str.Get());
+            const std::string json_str = ToString(p_str.Get());
             return Das::Utils::ParseYyjsonFromString(json_str);
         }
 
@@ -176,7 +176,8 @@ namespace Das::Http
 
         auto* p_json_value = new DasHttpJson(serialized->c_str());
         p_json_value->AddRef();
-        DasPtr<IDasJson> json_value = DasPtr<IDasJson>::Attach(p_json_value);
+        const DasPtr<IDasJson> json_value =
+            DasPtr<IDasJson>::Attach(p_json_value);
 
         return settings_service_.UpdatePluginSettingsField(
             p_profile_id.Get(),
@@ -314,7 +315,7 @@ namespace Das::Http
         {
             return DAS_E_TYPE_ERROR;
         }
-        std::string str_val(opt.value());
+        const std::string str_val(opt.value());
         return CreateIDasReadOnlyStringFromUtf8(str_val.c_str(), pp_out_string);
     }
 
@@ -617,7 +618,7 @@ namespace Das::Http
         {
             return DAS_E_TYPE_ERROR;
         }
-        std::string str_val(opt.value());
+        const std::string str_val(opt.value());
         return CreateIDasReadOnlyStringFromUtf8(str_val.c_str(), pp_out_string);
     }
 
@@ -738,7 +739,7 @@ namespace Das::Http
         }
 
         arr[index] = in_int;
-        return SetField(path_prefix_, std::move(json_opt.value()));
+        return SetField(path_prefix_, json_opt.value());
     }
 
     DasResult DasAutoFlushJsonImpl::SetFloatByIndex(
@@ -768,7 +769,7 @@ namespace Das::Http
         }
 
         arr[index] = in_float;
-        return SetField(path_prefix_, std::move(json_opt.value()));
+        return SetField(path_prefix_, json_opt.value());
     }
 
     DasResult DasAutoFlushJsonImpl::SetStringByIndex(
@@ -807,7 +808,7 @@ namespace Das::Http
         }
 
         arr[index] = std::string(value_str);
-        return SetField(path_prefix_, std::move(json_opt.value()));
+        return SetField(path_prefix_, json_opt.value());
     }
 
     DasResult DasAutoFlushJsonImpl::SetBoolByIndex(size_t index, bool in_bool)
@@ -835,7 +836,7 @@ namespace Das::Http
         }
 
         arr[index] = in_bool;
-        return SetField(path_prefix_, std::move(json_opt.value()));
+        return SetField(path_prefix_, json_opt.value());
     }
 
     DasResult DasAutoFlushJsonImpl::SetObjectByIndex(
@@ -887,7 +888,7 @@ namespace Das::Http
         }
 
         arr[index] = std::move(parsed.value());
-        return SetField(path_prefix_, std::move(json_opt.value()));
+        return SetField(path_prefix_, json_opt.value());
     }
 
     // ── GetType ──

@@ -311,8 +311,8 @@ boost::asio::awaitable<DasResult> UnixAsyncIpcTransport::CreateUnixSocketAsync(
         co_return DAS_E_IPC_MESSAGE_QUEUE_FAILED;
     }
 
-    boost::system::error_code accept_ec;
-    auto                      client_socket =
+    const boost::system::error_code accept_ec;
+    auto                            client_socket =
         co_await acceptor_->async_accept(boost::asio::use_awaitable);
 
     if (accept_ec)
@@ -486,7 +486,7 @@ UnixAsyncIpcTransport::ReceiveCoroutine()
         uint64_t handle;
         std::memcpy(&handle, body_buffer_.data(), sizeof(uint64_t));
 
-        ShmBlockGuard guard =
+        const ShmBlockGuard guard =
             ShmBlockGuard::Attach(shared_memory_pool_, handle, 0);
         if (!guard)
         {
@@ -498,7 +498,7 @@ UnixAsyncIpcTransport::ReceiveCoroutine()
             co_return DAS_E_IPC_INVALID_MESSAGE;
         }
 
-        uint64_t             real_size = *static_cast<uint64_t*>(guard.Data());
+        const uint64_t       real_size = *static_cast<uint64_t*>(guard.Data());
         std::vector<uint8_t> large_body(real_size);
         std::memcpy(
             large_body.data(),
@@ -534,7 +534,7 @@ boost::asio::awaitable<DasResult> UnixAsyncIpcTransport::SendCoroutine(
     size_t                           body_size)
 {
     // Lock() 返回 bool：true=cancelled，false=正常获取锁
-    bool cancelled = co_await send_mutex_.Lock();
+    const bool cancelled = co_await send_mutex_.Lock();
     if (cancelled)
     {
         co_return DAS_E_IPC_CONNECTION_LOST; // 不访问任何 transport 成员
@@ -587,7 +587,7 @@ boost::asio::awaitable<DasResult> UnixAsyncIpcTransport::SendCoroutine(
                     .Build();
 
             uint64_t net_handle = guard.Handle();
-            std::array<boost::asio::const_buffer, 2> shm_buffers = {
+            const std::array<boost::asio::const_buffer, 2> shm_buffers = {
                 boost::asio::const_buffer{
                     static_cast<const IPCMessageHeader*>(validated_shm_header),
                     sizeof(IPCMessageHeader)},
@@ -624,7 +624,7 @@ boost::asio::awaitable<DasResult> UnixAsyncIpcTransport::SendCoroutine(
 
     // 直写路径（小消息 / pool 空 / Allocate 失败）：scatter-gather
     const auto* raw_header = static_cast<const IPCMessageHeader*>(header);
-    std::array<boost::asio::const_buffer, 2> buffers = {
+    const std::array<boost::asio::const_buffer, 2> buffers = {
         boost::asio::const_buffer{raw_header, sizeof(IPCMessageHeader)},
         boost::asio::const_buffer{body, body_size}};
 

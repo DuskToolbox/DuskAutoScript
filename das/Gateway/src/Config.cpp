@@ -11,7 +11,7 @@ DAS_NS_ANONYMOUS_DETAILS_BEGIN
 
 auto GetDasCore() -> boost::dll::shared_library
 {
-    static boost::dll::shared_library result{DAS_CORE_DLL};
+    static const boost::dll::shared_library result{DAS_CORE_DLL};
     return result;
 }
 

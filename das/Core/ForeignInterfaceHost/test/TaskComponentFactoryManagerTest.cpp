@@ -576,7 +576,7 @@ namespace
         FeatureInfo* feature_ptr = &feature;
         auto manifest = MakeManifest(declared_factory_guid, component_guid);
 
-        ScopedLogCapture logs;
+        const ScopedLogCapture logs;
         EXPECT_EQ(
             manager.OnPluginLoaded(plugin_guid, {&feature_ptr, 1}, manifest),
             DAS_E_NOT_FOUND);
@@ -609,7 +609,7 @@ namespace
             .at(DasGuidToStdString(component_guid))
             .factory_guid = std::nullopt;
 
-        ScopedLogCapture logs;
+        const ScopedLogCapture logs;
         EXPECT_EQ(
             manager.OnPluginLoaded(plugin_guid, {&feature_ptr, 1}, manifest),
             DAS_E_INVALID_ARGUMENT);
@@ -648,7 +648,7 @@ namespace
         *manifest.factories =
             std::vector<std::string>{DasGuidToStdString(declared_factory_guid)};
 
-        ScopedLogCapture logs;
+        const ScopedLogCapture logs;
         EXPECT_EQ(
             manager.OnPluginLoaded(plugin_guid, features, manifest),
             DAS_E_INVALID_ARGUMENT);
@@ -679,7 +679,7 @@ namespace
         FeatureInfo* feature_ptr = &feature;
         auto         manifest = MakeManifest(factory_guid, component_guid);
 
-        ScopedLogCapture logs;
+        const ScopedLogCapture logs;
         EXPECT_EQ(
             manager.OnPluginLoaded(plugin_guid, {&feature_ptr, 1}, manifest),
             DAS_E_FAIL);

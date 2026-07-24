@@ -21,6 +21,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <ranges>
 #include <vector>
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
@@ -135,7 +136,7 @@ PluginManager::~PluginManager()
 
 DasResult PluginManager::Initialize(uint16_t session_id)
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    const std::scoped_lock lock(mutex_);
 
     if (session_id_ != 0 && session_id_ != session_id)
     {
@@ -165,7 +166,7 @@ DasResult PluginManager::Shutdown()
     // callback_mutex_ -> mutex_ 正向， 消除旧版持 mutex_ 调 ClearCallbacks/Stop
     // 的 AB-BA 死锁向量。
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        const std::scoped_lock lock(mutex_);
 
         // 卸载所有插件
         for (auto& [guid, plugin] : loaded_plugins_)
@@ -205,7 +206,7 @@ void PluginManager::RegisterRuntimeProvider(
     LoadMode                          load_mode,
     std::shared_ptr<IRuntimeProvider> provider)
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    const std::scoped_lock lock(mutex_);
     registered_providers_.push_back(
         RegisteredRuntimeProvider{language, load_mode, std::move(provider)});
 }
@@ -214,15 +215,15 @@ std::shared_ptr<IRuntimeProvider> PluginManager::FindRegisteredRuntimeProvider(
     ForeignInterfaceLanguage language,
     LoadMode                 load_mode) const
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    const std::scoped_lock lock(mutex_);
     // 逆序遍历：后注册者优先（便于测试覆盖内置）。
-    for (auto it = registered_providers_.rbegin();
-         it != registered_providers_.rend();
-         ++it)
+    for (const auto& registered_provider :
+         std::views::reverse(registered_providers_))
     {
-        if (it->language == language && it->load_mode == load_mode)
+        if (registered_provider.language == language
+            && registered_provider.load_mode == load_mode)
         {
-            return it->provider;
+            return registered_provider.provider;
         }
     }
     return nullptr;
@@ -244,7 +245,7 @@ DasResult PluginManager::LoadPlugin(
     std::shared_ptr<PluginPackageDesc> desc;
     DasResult                          manifest_parse_result = DAS_S_OK;
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        const std::scoped_lock lock(mutex_);
 
         normalized_path = NormalizePath(path);
         manifest_path = ResolveManifestPath(normalized_path);
@@ -278,7 +279,7 @@ DasResult PluginManager::LoadPlugin(
             {
                 try
                 {
-                    std::string content(
+                    const std::string content(
                         (std::istreambuf_iterator<char>(ifs)),
                         std::istreambuf_iterator<char>());
                     auto parsed = Das::Utils::ParseYyjsonFromString(
@@ -413,7 +414,7 @@ DasResult PluginManager::LoadPlugin(
         return DAS_E_INVALID_POINTER;
     }
     // 接管 object（已 AddRef），析构时 Release。
-    DasPtr<IDasBase> object_owner =
+    const DasPtr<IDasBase> object_owner =
         DasPtr<IDasBase>::Attach(load_result.object);
 
     LoadedPlugin plugin;
@@ -465,7 +466,7 @@ DasResult PluginManager::LoadPlugin(
     }
 
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        const std::scoped_lock lock(mutex_);
 
         if (loaded_plugins_.contains(desc->guid))
         {
@@ -619,7 +620,7 @@ DasResult PluginManager::GetPlugin(
 
     DasOutPtr<Das::PluginInterface::IDasPluginPackage> result(pp_out_package);
 
-    std::lock_guard<std::mutex> lock(mutex_);
+    const std::scoped_lock lock(mutex_);
 
     auto normalized_path = NormalizePath(path);
     auto path_str = std::string{DAS::Utils::U8AsString(
@@ -649,7 +650,7 @@ DasResult PluginManager::GetPlugin(
 
 std::vector<std::filesystem::path> PluginManager::GetLoadedPluginPaths() const
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    const std::scoped_lock lock(mutex_);
 
     std::vector<std::filesystem::path> paths;
     paths.reserve(loaded_plugins_.size());
@@ -667,7 +668,7 @@ DasResult PluginManager::GetObjectByFeature(
     const DasGuid&                         iid,
     void**                                 pp_out_object)
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    const std::scoped_lock lock(mutex_);
 
     if (!pp_out_object)
     {
@@ -723,7 +724,7 @@ DasResult PluginManager::GetObjectByFeature(
 std::span<FeatureInfo* const> PluginManager::GetFeaturesByType(
     Das::PluginInterface::DasPluginFeature type) const
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    const std::scoped_lock lock(mutex_);
 
     auto it = feature_type_index_.find(type);
     if (it == feature_type_index_.end())
@@ -749,8 +750,8 @@ DasResult PluginManager::CreateFeatureInterface(
 
     DasPtr<Das::PluginInterface::IDasPluginPackage> package;
     {
-        std::lock_guard<std::mutex> lock(mutex_);
-        auto                        it = loaded_plugins_.find(plugin_guid);
+        const std::scoped_lock lock(mutex_);
+        auto                   it = loaded_plugins_.find(plugin_guid);
         if (it == loaded_plugins_.end() || !it->second.package)
         {
             return DAS_E_NOT_FOUND;
@@ -773,7 +774,7 @@ DasResult PluginManager::GetPluginFeatures(
     const std::filesystem::path& path,
     std::vector<FeatureInfo>&    out_features) const
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    const std::scoped_lock lock(mutex_);
 
     auto normalized_path = NormalizePath(path);
     auto path_str = std::string{DAS::Utils::U8AsString(
@@ -797,7 +798,7 @@ DasResult PluginManager::GetPluginFeatures(
 
 bool PluginManager::IsPluginLoaded(const std::filesystem::path& path) const
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    const std::scoped_lock lock(mutex_);
     return path_to_guid_.contains(
         std::string{DAS::Utils::U8AsString(
             ResolveManifestIdentityPath(NormalizePath(path)).u8string())});
@@ -805,7 +806,7 @@ bool PluginManager::IsPluginLoaded(const std::filesystem::path& path) const
 
 size_t PluginManager::GetLoadedPluginCount() const
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    const std::scoped_lock lock(mutex_);
     return loaded_plugins_.size();
 }
 
@@ -909,7 +910,7 @@ DasResult PluginManager::UnloadPluginIpc(
 {
     // 从索引中移除（必须在 Stop 之前，Stop 可能触发断连回调）
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        const std::scoped_lock lock(mutex_);
         error_lens_mgr_.OnPluginUnloading(guid);
         component_factory_mgr_.OnPluginUnloading(guid);
         task_component_factory_mgr_.OnPluginUnloading(guid);
@@ -965,7 +966,7 @@ void PluginManager::OnHostProcessExit(DasGuid plugin_guid, int exit_code)
         "Host process exited unexpectedly: exit_code={}",
         exit_code);
 
-    std::lock_guard<std::mutex> lock(mutex_);
+    const std::scoped_lock lock(mutex_);
     CleanupPluginByGuid(plugin_guid);
 }
 
@@ -976,7 +977,7 @@ void PluginManager::OnHeartbeatTimeout(DasGuid plugin_guid)
     // heartbeat_thread_ 由 ConnectionManager 持有并在析构时 join。
     DAS_CORE_LOG_WARN("Heartbeat timeout for plugin, cleaning up index");
 
-    std::lock_guard<std::mutex> lock(mutex_);
+    const std::scoped_lock lock(mutex_);
     CleanupPluginByGuid(plugin_guid);
 }
 

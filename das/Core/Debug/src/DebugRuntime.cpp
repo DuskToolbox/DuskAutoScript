@@ -170,8 +170,8 @@ DebugEvent MakeDebugEvent(
 
 DasResult DebugRuntime::Initialize(const DebugRuntimeOptions& options)
 {
-    auto&           state = State();
-    std::lock_guard lock{state.mutex};
+    auto&                  state = State();
+    const std::scoped_lock lock{state.mutex};
 
     if (state.initialized)
     {
@@ -202,8 +202,8 @@ DasResult DebugRuntime::Initialize(const DebugRuntimeOptions& options)
 
 bool DebugRuntime::IsEnabled()
 {
-    auto&           state = State();
-    std::lock_guard lock{state.mutex};
+    auto&                  state = State();
+    const std::scoped_lock lock{state.mutex};
     return state.enabled;
 }
 
@@ -216,8 +216,8 @@ DasResult DebugRuntime::SubmitEvent(const DebugEvent& event)
 {
     std::vector<std::shared_ptr<IDebugSink>> sinks;
     {
-        auto&           state = State();
-        std::lock_guard lock{state.mutex};
+        auto&                  state = State();
+        const std::scoped_lock lock{state.mutex};
         if (!state.enabled)
         {
             return DAS_S_OK;
@@ -246,8 +246,8 @@ void DebugRuntime::RegisterSink(std::shared_ptr<IDebugSink> sink)
         return;
     }
 
-    auto&           state = State();
-    std::lock_guard lock{state.mutex};
+    auto&                  state = State();
+    const std::scoped_lock lock{state.mutex};
     state.sinks.emplace_back(std::move(sink));
 }
 
@@ -258,29 +258,29 @@ void DebugRuntime::RegisterDrain(std::shared_ptr<IDebugDrain> drain)
         return;
     }
 
-    auto&           state = State();
-    std::lock_guard lock{state.mutex};
+    auto&                  state = State();
+    const std::scoped_lock lock{state.mutex};
     state.drains.emplace_back(std::move(drain));
 }
 
 void DebugRuntime::SetLatestImage(std::shared_ptr<DebugImageSnapshot> image)
 {
-    auto&           state = State();
-    std::lock_guard lock{state.mutex};
+    auto&                  state = State();
+    const std::scoped_lock lock{state.mutex};
     state.latest_image = std::move(image);
 }
 
 std::shared_ptr<DebugImageSnapshot> DebugRuntime::GetLatestImage()
 {
-    auto&           state = State();
-    std::lock_guard lock{state.mutex};
+    auto&                  state = State();
+    const std::scoped_lock lock{state.mutex};
     return state.latest_image;
 }
 
 void DebugRuntime::ClearLatestImage()
 {
-    auto&           state = State();
-    std::lock_guard lock{state.mutex};
+    auto&                  state = State();
+    const std::scoped_lock lock{state.mutex};
     state.latest_image.reset();
 }
 
@@ -289,8 +289,8 @@ DasResult DebugRuntime::Flush()
     std::vector<std::shared_ptr<IDebugSink>>  sinks;
     std::vector<std::shared_ptr<IDebugDrain>> drains;
     {
-        auto&           state = State();
-        std::lock_guard lock{state.mutex};
+        auto&                  state = State();
+        const std::scoped_lock lock{state.mutex};
         if (!state.enabled)
         {
             return DAS_S_OK;
@@ -340,8 +340,8 @@ void DebugRuntime::Shutdown()
     std::vector<std::shared_ptr<IDebugSink>>  sinks;
     std::vector<std::shared_ptr<IDebugDrain>> drains;
     {
-        auto&           state = State();
-        std::lock_guard lock{state.mutex};
+        auto&                  state = State();
+        const std::scoped_lock lock{state.mutex};
         sinks = state.sinks;
         drains = state.drains;
     }
@@ -369,8 +369,8 @@ void DebugRuntime::Shutdown()
 
 void DebugRuntime::ResetForTest()
 {
-    auto&           state = State();
-    std::lock_guard lock{state.mutex};
+    auto&                  state = State();
+    const std::scoped_lock lock{state.mutex};
     state.initialized = false;
     state.enabled = false;
     state.debug_dir = std::filesystem::path{"logs/debug"};

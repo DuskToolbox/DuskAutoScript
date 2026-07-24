@@ -26,7 +26,9 @@ namespace jvm_dll
 JniEnvGuard::JniEnvGuard(JavaVM* vm) : vm_(vm), env_(nullptr), attached_(false)
 {
     if (!vm_)
+    {
         return;
+    }
 
     // 尝试获取当前线程的 JNIEnv
     jint result = vm_->GetEnv(reinterpret_cast<void**>(&env_), JNI_VERSION_1_2);
@@ -188,7 +190,7 @@ JavaVM* JvmManager::GetOrCreateVM(
     const std::vector<std::string>&           jvm_options,
     const std::vector<std::filesystem::path>& class_path)
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    const std::scoped_lock lock(mutex_);
 
     if (jvm_)
     {
@@ -297,10 +299,11 @@ JavaVM* JvmManager::CreateJVM(
     // 这样可以找到 DasCoreJavaExport.dll
     {
         // 使用 boost::dll 获取当前模块（DasCore.dll）的路径
-        boost::dll::fs::path module_path = boost::dll::this_line_location();
+        const boost::dll::fs::path module_path =
+            boost::dll::this_line_location();
         if (!module_path.empty())
         {
-            boost::dll::fs::path module_dir = module_path.parent_path();
+            const boost::dll::fs::path module_dir = module_path.parent_path();
             // 使用 generic_string() 获取正斜杠路径，避免 JVM
             // 把反斜杠解析为转义字符
             java_library_path = DAS_FMT_NS::format(
@@ -389,7 +392,7 @@ std::string JvmManager::BuildClassPathString(
 
 JavaRuntime::JavaRuntime() : jvm_(nullptr)
 {
-    std::filesystem::path jvm_dll_path = JvmManager::FindJvmDllPath();
+    const std::filesystem::path jvm_dll_path = JvmManager::FindJvmDllPath();
     if (jvm_dll_path.empty())
     {
         DAS_CORE_LOG_ERROR("Failed to find jvm.dll");
@@ -481,7 +484,7 @@ auto JavaRuntime::LoadPlugin(const std::filesystem::path& path)
         // 4. 创建 URLClassLoader
         //    URL[] urls = new URL[] { new URL("file:///path/to/plugin.jar"),
         //    ... }; URLClassLoader loader = new URLClassLoader(urls);
-        JClassPtr url_class(env, env->FindClass("java/net/URL"));
+        const JClassPtr url_class(env, env->FindClass("java/net/URL"));
         if (!url_class)
         {
             DAS_CORE_LOG_ERROR("Failed to find java.net.URL class");
@@ -518,7 +521,7 @@ auto JavaRuntime::LoadPlugin(const std::filesystem::path& path)
             DAS_CORE_LOG_ERROR("Failed to create URL array");
             return tl::make_unexpected(DAS_E_OUT_OF_MEMORY);
         }
-        JObjectPtr<jobjectArray> url_array_ptr(env, url_array);
+        const JObjectPtr<jobjectArray> url_array_ptr(env, url_array);
 
         for (size_t i = 0; i < jar_paths.size(); ++i)
         {
@@ -527,7 +530,9 @@ auto JavaRuntime::LoadPlugin(const std::filesystem::path& path)
                 std::filesystem::absolute(jar_paths[i]).generic_string();
             auto url_string = DAS_FMT_NS::format("file:///{}", jar_absolute);
 
-            JStringPtr j_url_str(env, env->NewStringUTF(url_string.c_str()));
+            const JStringPtr j_url_str(
+                env,
+                env->NewStringUTF(url_string.c_str()));
             if (!j_url_str)
             {
                 DAS_CORE_LOG_ERROR(
@@ -536,7 +541,7 @@ auto JavaRuntime::LoadPlugin(const std::filesystem::path& path)
                 return tl::make_unexpected(DAS_E_OUT_OF_MEMORY);
             }
 
-            JObjectPtr<> url_obj(
+            const JObjectPtr<> url_obj(
                 env,
                 env->NewObject(url_class.get(), url_ctor, j_url_str.get()));
             if (!url_obj)
@@ -557,7 +562,9 @@ auto JavaRuntime::LoadPlugin(const std::filesystem::path& path)
         }
 
         // 创建 URLClassLoader
-        JClassPtr url_cl_class(env, env->FindClass("java/net/URLClassLoader"));
+        const JClassPtr url_cl_class(
+            env,
+            env->FindClass("java/net/URLClassLoader"));
         if (!url_cl_class)
         {
             DAS_CORE_LOG_ERROR("Failed to find URLClassLoader class");
@@ -584,7 +591,7 @@ auto JavaRuntime::LoadPlugin(const std::filesystem::path& path)
             return tl::make_unexpected(DAS_E_FAIL);
         }
 
-        JObjectPtr<> class_loader(
+        const JObjectPtr<> class_loader(
             env,
             env->NewObject(
                 url_cl_class.get(),
@@ -626,8 +633,10 @@ auto JavaRuntime::LoadPlugin(const std::filesystem::path& path)
             return tl::make_unexpected(DAS_E_FAIL);
         }
 
-        JStringPtr j_class_name(env, env->NewStringUTF(dot_class_name.c_str()));
-        JClassPtr  plugin_class(
+        const JStringPtr j_class_name(
+            env,
+            env->NewStringUTF(dot_class_name.c_str()));
+        const JClassPtr plugin_class(
             env,
             static_cast<jclass>(env->CallObjectMethod(
                 class_loader.get(),
@@ -670,7 +679,7 @@ auto JavaRuntime::LoadPlugin(const std::filesystem::path& path)
             return tl::make_unexpected(DAS_E_SYMBOL_NOT_FOUND);
         }
         // 6. 调用静态方法
-        JObjectPtr<> ret_base(
+        const JObjectPtr<> ret_base(
             env,
             env->CallStaticObjectMethod(plugin_class.get(), method));
         if (!ret_base)
@@ -743,8 +752,8 @@ std::pair<std::string, std::string> JavaRuntime::ParseEntryPoint(
         return {"", entry_point};
     }
 
-    std::string class_path = entry_point.substr(0, last_dot);
-    std::string method_name = entry_point.substr(last_dot + 1);
+    std::string       class_path = entry_point.substr(0, last_dot);
+    const std::string method_name = entry_point.substr(last_dot + 1);
 
     // 将 "." 替换为 "/"
     std::replace(class_path.begin(), class_path.end(), '.', '/');
@@ -756,7 +765,7 @@ DasPtr<IDasBase> JavaRuntime::ExtractIDasBaseFromDasRetBase(
     JNIEnv* env,
     jobject das_ret_base)
 {
-    JClassPtr ret_base_class(env, env->GetObjectClass(das_ret_base));
+    const JClassPtr ret_base_class(env, env->GetObjectClass(das_ret_base));
     if (!ret_base_class)
     {
         DAS_CORE_LOG_ERROR("Failed to get class of DasRetBase object");
@@ -783,7 +792,7 @@ DasPtr<IDasBase> JavaRuntime::ExtractIDasBaseFromDasRetBase(
         return nullptr;
     }
 
-    JObjectPtr<> idas_base(
+    const JObjectPtr<> idas_base(
         env,
         env->CallObjectMethod(das_ret_base, get_value_method));
     if (env->ExceptionCheck())
@@ -800,7 +809,7 @@ DasPtr<IDasBase> JavaRuntime::ExtractIDasBaseFromDasRetBase(
         return nullptr;
     }
 
-    JClassPtr idas_base_class(env, env->GetObjectClass(idas_base.get()));
+    const JClassPtr idas_base_class(env, env->GetObjectClass(idas_base.get()));
     if (!idas_base_class)
     {
         DAS_CORE_LOG_ERROR("Failed to get class of IDasBase object");
@@ -825,7 +834,7 @@ DasPtr<IDasBase> JavaRuntime::ExtractIDasBaseFromDasRetBase(
         return nullptr;
     }
 
-    jlong c_ptr = env->GetLongField(idas_base.get(), swig_cptr_field);
+    const jlong c_ptr = env->GetLongField(idas_base.get(), swig_cptr_field);
     if (env->ExceptionCheck())
     {
         DAS_CORE_LOG_ERROR("Exception occurred while reading swigCPtr field");
@@ -875,7 +884,7 @@ DasResult JavaRuntime::LoadPluginConfig(
         return DAS_E_FILE_NOT_FOUND;
     }
     {
-        std::string config_content(
+        const std::string config_content(
             (std::istreambuf_iterator<char>(file)),
             std::istreambuf_iterator<char>());
         auto config_opt = Das::Utils::ParseYyjsonFromString(config_content);

@@ -75,7 +75,7 @@ namespace Das::Plugins::DasGraphTask
         DasResult                       hr = DAS_S_OK;
         if (p_input_port_map != nullptr)
         {
-            DasReadOnlyString compiled_plan_key{"compiledPlan"};
+            const DasReadOnlyString compiled_plan_key{"compiledPlan"};
             hr = p_input_port_map->GetString(
                 compiled_plan_key.Get(),
                 p_artifact.Put());
@@ -131,7 +131,7 @@ namespace Das::Plugins::DasGraphTask
             hr = result_json->ToString(0, p_result_str.Put());
             if (DAS::IsOk(hr) && p_result_str.Get())
             {
-                DasReadOnlyString result_key{"result"};
+                const DasReadOnlyString result_key{"result"};
                 output_map->SetString(result_key.Get(), p_result_str.Get());
             }
         }

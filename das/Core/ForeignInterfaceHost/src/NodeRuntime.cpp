@@ -353,8 +353,8 @@ DasResult NodeRuntime::LoadPlugin(
         return DAS_E_INVALID_ARGUMENT;
     }
 
-    NodeRuntime resolver{package_root, node_modules_root};
-    auto        launch = resolver.BuildHostLaunchDesc();
+    const NodeRuntime resolver{package_root, node_modules_root};
+    auto              launch = resolver.BuildHostLaunchDesc();
     if (!launch)
     {
         return launch.error();

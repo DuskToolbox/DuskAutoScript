@@ -87,7 +87,7 @@ inline std::string FindManifestInEntries(
     const std::vector<FileEntry>& subdir_entries,
     const std::string&            dirname)
 {
-    std::string primary = dirname + ".json";
+    const std::string primary = dirname + ".json";
     for (const auto& e : subdir_entries)
     {
         if (!e.is_directory && e.name == primary)
@@ -145,7 +145,7 @@ std::vector<ScanResult> ScanPluginsWith(FileProvider& provider)
             }
 
             // Layer 2: list subdirectory entries
-            std::string subdir_path = dirname + "/";
+            const std::string subdir_path = dirname + "/";
             auto subdir_entries = provider.ListDirectory(subdir_path, false);
 
             // Check deletion marker
@@ -173,8 +173,8 @@ std::vector<ScanResult> ScanPluginsWith(FileProvider& provider)
             }
 
             // Read manifest content
-            std::string relative_manifest = subdir_path + manifest_name;
-            auto        content = provider.ReadFile(relative_manifest);
+            const std::string relative_manifest = subdir_path + manifest_name;
+            auto              content = provider.ReadFile(relative_manifest);
             if (content.empty())
             {
                 continue;

@@ -429,10 +429,10 @@ namespace
 
 TEST(CSharpHostBackend, MissingRuntimeConfigMapsToSpecificError)
 {
-    TempBackendLayout    layout;
-    FakeHostFxrState     state;
-    auto                 loader = MakeFakeHostFxrLoader(state);
-    CSharpHostFxrBackend backend{loader};
+    const TempBackendLayout layout;
+    FakeHostFxrState        state;
+    auto                    loader = MakeFakeHostFxrLoader(state);
+    CSharpHostFxrBackend    backend{loader};
 
     EXPECT_EQ(
         InvokeBackend(backend, layout.Manifest()),
@@ -442,7 +442,7 @@ TEST(CSharpHostBackend, MissingRuntimeConfigMapsToSpecificError)
 
 TEST(CSharpHostBackend, HostFxrInitFailureMapsToHostFxrInitFailed)
 {
-    TempBackendLayout layout;
+    const TempBackendLayout layout;
     layout.WriteRuntimeConfig();
     FakeHostFxrState state;
     state.init_result = -1;
@@ -458,7 +458,7 @@ TEST(CSharpHostBackend, HostFxrInitFailureMapsToHostFxrInitFailed)
 
 TEST(CSharpHostBackend, HostFxrDelegateFailureMapsToHostFxrInitFailed)
 {
-    TempBackendLayout layout;
+    const TempBackendLayout layout;
     layout.WriteRuntimeConfig();
     FakeHostFxrState state;
     state.delegate_result = -1;
@@ -473,7 +473,7 @@ TEST(CSharpHostBackend, HostFxrDelegateFailureMapsToHostFxrInitFailed)
 
 TEST(CSharpHostBackend, MissingEntrypointPointerMapsToEntrypointMissing)
 {
-    TempBackendLayout layout;
+    const TempBackendLayout layout;
     layout.WriteRuntimeConfig();
     FakeHostFxrState state;
     auto             loader = MakeFakeHostFxrLoader(state);
@@ -487,7 +487,7 @@ TEST(CSharpHostBackend, MissingEntrypointPointerMapsToEntrypointMissing)
 
 TEST(CSharpHostBackend, EntrypointLookupFailureMapsToEntrypointMissing)
 {
-    TempBackendLayout layout;
+    const TempBackendLayout layout;
     layout.WriteRuntimeConfig();
     FakeHostFxrState state;
     state.entrypoint_lookup_result = -1;
@@ -501,7 +501,7 @@ TEST(CSharpHostBackend, EntrypointLookupFailureMapsToEntrypointMissing)
 
 TEST(CSharpHostBackend, InvalidManifestEntrypointMapsToEntrypointInvalid)
 {
-    TempBackendLayout layout;
+    const TempBackendLayout layout;
     layout.WriteRuntimeConfig();
     FakeHostFxrState     state;
     auto                 loader = MakeFakeHostFxrLoader(state);
@@ -516,7 +516,7 @@ TEST(CSharpHostBackend, InvalidManifestEntrypointMapsToEntrypointInvalid)
 
 TEST(CSharpHostBackend, EntrypointFailureMapsToPluginInitFailed)
 {
-    TempBackendLayout layout;
+    const TempBackendLayout layout;
     layout.WriteRuntimeConfig();
     FakeHostFxrState state;
     state.entrypoint_result = DAS_E_CSHARP_ERROR;
@@ -530,7 +530,7 @@ TEST(CSharpHostBackend, EntrypointFailureMapsToPluginInitFailed)
 
 TEST(CSharpHostBackend, NullPackageOutMapsToPluginInitFailed)
 {
-    TempBackendLayout layout;
+    const TempBackendLayout layout;
     layout.WriteRuntimeConfig();
     FakeHostFxrState state;
     state.set_package = false;
@@ -546,7 +546,7 @@ TEST(
     CSharpHostBackend,
     ModernEntrypointUsesAssemblyQualifiedTypeAndDefaultSignature)
 {
-    TempBackendLayout layout;
+    const TempBackendLayout layout;
     layout.WriteRuntimeConfig();
     FakeHostFxrState     state;
     auto                 loader = MakeFakeHostFxrLoader(state);
@@ -592,8 +592,8 @@ TEST(CSharpHostBackend, FindDotNetDefinesNativeHostingDiscoveryContract)
 
 TEST(CSharpHostBackendNetFx, WindowsSeamUsesDefaultAppDomainStringContract)
 {
-    TempBackendLayout layout;
-    auto              manifest = layout.Manifest();
+    const TempBackendLayout layout;
+    auto                    manifest = layout.Manifest();
     manifest.target_framework = "net48";
     manifest.target_framework_family = CSharpTargetFrameworkFamily::NetFx;
     manifest.runtime_config_path = std::nullopt;
@@ -616,8 +616,8 @@ TEST(CSharpHostBackendNetFx, WindowsSeamUsesDefaultAppDomainStringContract)
 
 TEST(CSharpHostBackendNetFx, ClrInitFailureMapsToClrInitFailed)
 {
-    TempBackendLayout layout;
-    auto              manifest = layout.Manifest();
+    const TempBackendLayout layout;
+    auto                    manifest = layout.Manifest();
     manifest.target_framework = "net48";
     manifest.target_framework_family = CSharpTargetFrameworkFamily::NetFx;
     manifest.runtime_config_path = std::nullopt;
@@ -635,8 +635,8 @@ TEST(CSharpHostBackendNetFx, ClrInitFailureMapsToClrInitFailed)
 
 TEST(CSharpHostBackendNetFx, EntrypointFailureMapsToEntrypointMissing)
 {
-    TempBackendLayout layout;
-    auto              manifest = layout.Manifest();
+    const TempBackendLayout layout;
+    auto                    manifest = layout.Manifest();
     manifest.target_framework = "net48";
     manifest.target_framework_family = CSharpTargetFrameworkFamily::NetFx;
     manifest.runtime_config_path = std::nullopt;
@@ -653,8 +653,8 @@ TEST(CSharpHostBackendNetFx, EntrypointFailureMapsToEntrypointMissing)
 
 TEST(CSharpHostBackendNetFx, ManagedFailureMapsToPluginInitFailed)
 {
-    TempBackendLayout layout;
-    auto              manifest = layout.Manifest();
+    const TempBackendLayout layout;
+    auto                    manifest = layout.Manifest();
     manifest.target_framework = "net48";
     manifest.target_framework_family = CSharpTargetFrameworkFamily::NetFx;
     manifest.runtime_config_path = std::nullopt;
@@ -671,8 +671,8 @@ TEST(CSharpHostBackendNetFx, ManagedFailureMapsToPluginInitFailed)
 
 TEST(CSharpHostBackendNetFx, NullPackageOutMapsToPluginInitFailed)
 {
-    TempBackendLayout layout;
-    auto              manifest = layout.Manifest();
+    const TempBackendLayout layout;
+    auto                    manifest = layout.Manifest();
     manifest.target_framework = "net48";
     manifest.target_framework_family = CSharpTargetFrameworkFamily::NetFx;
     manifest.runtime_config_path = std::nullopt;
@@ -689,8 +689,8 @@ TEST(CSharpHostBackendNetFx, NullPackageOutMapsToPluginInitFailed)
 
 TEST(CSharpHostBackendNetFx, DefaultBackendIsDeterministicWithoutClrSeam)
 {
-    TempBackendLayout layout;
-    auto              manifest = layout.Manifest();
+    const TempBackendLayout layout;
+    auto                    manifest = layout.Manifest();
     manifest.target_framework = "net48";
     manifest.target_framework_family = CSharpTargetFrameworkFamily::NetFx;
     manifest.runtime_config_path = std::nullopt;

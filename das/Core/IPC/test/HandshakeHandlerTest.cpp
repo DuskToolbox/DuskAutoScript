@@ -273,11 +273,11 @@ TEST_F(
     auto transport_pair = CreateConnectedTransportPair(run_loop.GetIoContext());
     ASSERT_TRUE(transport_pair.has_value());
 
-    DasPtr<IHostConnection> connection(new TestHostConnection(
+    const DasPtr<IHostConnection> connection(new TestHostConnection(
         run_loop.GetIoContext(),
         REMOTE_SESSION_ID,
         transport_pair->run_loop_side));
-    IpcResponseSender       sender(
+    IpcResponseSender             sender(
         IpcResponseSender::HostConnectionRoute{&run_loop, connection});
 
     HeartbeatV1 request{};

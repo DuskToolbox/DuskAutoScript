@@ -58,21 +58,21 @@ namespace
         std::ifstream json_file(manifest_path);
         if (!json_file.is_open())
         {
-            std::string msg = DAS_FMT_NS::format(
+            const std::string msg = DAS_FMT_NS::format(
                 "无法打开 manifest 文件: {}",
                 DAS::Utils::U8AsString(manifest_path.u8string()));
             DAS_LOG_ERROR(msg.c_str());
             return tl::make_unexpected(DAS_E_IPC_PLUGIN_LOAD_FAILED);
         }
 
-        std::string manifest_content(
+        const std::string manifest_content(
             (std::istreambuf_iterator<char>(json_file)),
             std::istreambuf_iterator<char>());
         auto manifest_json_opt =
             Das::Utils::ParseYyjsonFromString(manifest_content);
         if (!manifest_json_opt)
         {
-            std::string msg = DAS_FMT_NS::format(
+            const std::string msg = DAS_FMT_NS::format(
                 "解析 manifest JSON 失败: {}",
                 DAS::Utils::U8AsString(manifest_path.u8string()));
             DAS_LOG_ERROR(msg.c_str());
@@ -85,7 +85,7 @@ namespace
             auto manifest_obj = manifest_json.as_object();
             if (!manifest_obj)
             {
-                std::string msg =
+                const std::string msg =
                     "提取插件信息失败: manifest root is not an object";
                 DAS_LOG_ERROR(msg.c_str());
                 return tl::make_unexpected(DAS_E_IPC_PLUGIN_LOAD_FAILED);
@@ -94,7 +94,7 @@ namespace
             auto language_str = language_val.as_string();
             if (!language_str)
             {
-                std::string msg =
+                const std::string msg =
                     "提取插件信息失败: manifest missing 'language' field";
                 DAS_LOG_ERROR(msg.c_str());
                 return tl::make_unexpected(DAS_E_IPC_PLUGIN_LOAD_FAILED);
@@ -146,14 +146,14 @@ namespace
             if (result.has_value())
             {
                 g_runtime = std::move(result.value());
-                std::string msg = DAS_FMT_NS::format(
+                const std::string msg = DAS_FMT_NS::format(
                     "Runtime initialized: {}",
                     plugin_language);
                 DAS_LOG_INFO(msg.c_str());
             }
             else
             {
-                std::string msg = DAS_FMT_NS::format(
+                const std::string msg = DAS_FMT_NS::format(
                     "Failed to create runtime: {}",
                     plugin_language);
                 DAS_LOG_ERROR(msg.c_str());
@@ -164,7 +164,7 @@ namespace
         auto result = g_runtime->LoadPlugin(manifest_path);
         if (!result.has_value())
         {
-            std::string err_msg = DAS_FMT_NS::format(
+            const std::string err_msg = DAS_FMT_NS::format(
                 "Plugin load failed: {}",
                 DAS::Utils::U8AsString(manifest_path.u8string()));
             DAS_LOG_ERROR(err_msg.c_str());
@@ -208,18 +208,18 @@ int main(int argc, char* argv[])
         {
             std::ostringstream oss;
             oss << desc;
-            std::string help_msg = oss.str();
+            const std::string help_msg = oss.str();
             DAS_LOG_INFO(help_msg.c_str());
             return EXIT_SUCCESS;
         }
 
-        bool verbose = vm.count("verbose") > 0;
+        const bool verbose = vm.count("verbose") > 0;
 
         // Parse --log-level argument
         if (vm.count("log-level"))
         {
-            std::string log_level_str = vm["log-level"].as<std::string>();
-            int         level = -1;
+            const std::string log_level_str = vm["log-level"].as<std::string>();
+            int               level = -1;
             if (log_level_str == "trace")
             {
                 level = DAS_LOG_LEVEL_TRACE;
@@ -267,8 +267,8 @@ int main(int argc, char* argv[])
         if (env_log_level != nullptr
             && vm["log-level"].as<std::string>().empty() && !verbose)
         {
-            int         level = -1;
-            std::string env_str(env_log_level);
+            int               level = -1;
+            const std::string env_str(env_log_level);
             if (env_str == "trace")
             {
                 level = DAS_LOG_LEVEL_TRACE;
@@ -378,7 +378,7 @@ int main(int argc, char* argv[])
                 std::move(handler_options));
         if (DAS::IsFailed(handler_result))
         {
-            std::string err_msg = DAS_FMT_NS::format(
+            const std::string err_msg = DAS_FMT_NS::format(
                 "Failed to register host command handlers: {}",
                 handler_result);
             DAS_LOG_ERROR(err_msg.c_str());
@@ -392,7 +392,7 @@ int main(int argc, char* argv[])
 
         if (DAS::IsFailed(result))
         {
-            std::string err_msg =
+            const std::string err_msg =
                 DAS_FMT_NS::format("IPC context run failed: {}", result);
             DAS_LOG_ERROR(err_msg.c_str());
             return EXIT_FAILURE;
@@ -402,7 +402,7 @@ int main(int argc, char* argv[])
     }
     catch (const std::exception& e)
     {
-        std::string err_msg = DAS_FMT_NS::format("Error: {}", e.what());
+        const std::string err_msg = DAS_FMT_NS::format("Error: {}", e.what());
         DAS_LOG_ERROR(err_msg.c_str());
         return EXIT_FAILURE;
     }

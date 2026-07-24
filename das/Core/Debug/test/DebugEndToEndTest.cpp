@@ -154,8 +154,8 @@ namespace Das::Core::Debug::Test
 
         auto MakeTemplate() -> Das::DasPtr<Das::ExportInterface::IDasImage>
         {
-            cv::Mat templ(10, 12, CV_8UC3, cv::Scalar{210, 180, 80});
-            auto*   raw =
+            const cv::Mat templ(10, 12, CV_8UC3, cv::Scalar{210, 180, 80});
+            auto*         raw =
                 OcvWrapper::CpuImageImpl<OcvWrapper::Storage::OwningStorage>::
                     MakeFromCpuMat(
                         templ,
@@ -461,7 +461,7 @@ namespace Das::Core::Debug::Test
         {
             auto ctx = RegisterWriterForRuntime(dir);
             ASSERT_NE(ctx.get(), nullptr);
-            DAS::Core::IPC::ScopedCurrentIpcContext scope(
+            const DAS::Core::IPC::ScopedCurrentIpcContext scope(
                 static_cast<DAS::Core::IPC::MainProcess::IpcContext*>(
                     ctx.get()));
 
@@ -515,7 +515,7 @@ namespace Das::Core::Debug::Test
                 Das::DasPtr<Das::ExportInterface::IDasTemplateMatchResults>::
                     Attach(raw_matches);
 
-            Das::ExportInterface::DasColorRange range{
+            const Das::ExportInterface::DasColorRange range{
                 {0, 0, 0, 0},
                 {255, 255, 255, 255}};
             Das::ExportInterface::IDasImage* raw_mask = nullptr;

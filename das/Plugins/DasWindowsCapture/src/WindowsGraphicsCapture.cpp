@@ -22,7 +22,7 @@ DasResult WindowsGraphicsCapture::CreateD3DDevice()
         D3D_FEATURE_LEVEL_10_1,
         D3D_FEATURE_LEVEL_10_0};
     D3D_FEATURE_LEVEL feature_level{};
-    UINT              flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
+    UINT const        flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
 
     auto hr = D3D11CreateDevice(
         nullptr,
@@ -51,7 +51,7 @@ DasResult WindowsGraphicsCapture::CreateCaptureItem(HWND hwnd)
     {
         winrt::init_apartment(winrt::apartment_type::multi_threaded);
 
-        winrt::com_ptr<IGraphicsCaptureItemInterop>            interop;
+        const winrt::com_ptr<IGraphicsCaptureItemInterop>      interop;
         winrt::Windows::Graphics::Capture::GraphicsCaptureItem item{nullptr};
 
         auto hr = interop->CreateForWindow(

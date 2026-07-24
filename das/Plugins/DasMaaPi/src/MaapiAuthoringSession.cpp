@@ -133,7 +133,7 @@ namespace Plugins::DasMaaPi
             std::set<std::string> actual;
             for (const auto& [k, _] : obj)
             {
-                actual.emplace(std::string(k));
+                actual.emplace(k);
             }
             if (actual
                 != std::set<std::string>{"baseRevision", "kind", "payload"})
@@ -434,7 +434,7 @@ namespace Plugins::DasMaaPi
             // (cpp_yyjson-value-moved-from-null-deref.md)；SerializeCompileResult
             // 直接生成 IDasJson 句柄避免崩溃。这里再读回为 yyjson::value 以
             // 便包装进严格 envelope。
-            DasPtr<ExportInterface::IDasJson> compiled_handle =
+            const DasPtr<ExportInterface::IDasJson> compiled_handle =
                 SerializeCompileResult(
                     CompileMaapi(settings_, *catalog, purpose),
                     purpose);

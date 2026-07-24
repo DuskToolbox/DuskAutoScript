@@ -296,7 +296,7 @@ void DebugWriterImpl::WorkerLoop()
         }
 
         {
-            std::lock_guard lock{mutex_};
+            const std::scoped_lock lock{mutex_};
             if (result < 0 && worker_error_ >= 0)
             {
                 worker_error_ = result;
@@ -339,7 +339,7 @@ DasResult DebugWriterImpl::Flush()
 void DebugWriterImpl::Shutdown()
 {
     {
-        std::lock_guard lock{mutex_};
+        const std::scoped_lock lock{mutex_};
         if (stopping_)
         {
             return;

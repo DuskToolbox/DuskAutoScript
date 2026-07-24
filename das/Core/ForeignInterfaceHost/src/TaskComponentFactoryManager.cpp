@@ -281,7 +281,7 @@ DasResult TaskComponentFactoryManager::OnPluginLoaded(
                 CopyJsonValue(*entry.definition)});
     }
 
-    std::unique_lock lock{mutex_};
+    const std::unique_lock lock{mutex_};
     for (const auto& [factory_guid, factory_entry] : plugin_factories)
     {
         auto existing_it = factories_.find(factory_guid);
@@ -350,7 +350,7 @@ DasResult TaskComponentFactoryManager::OnPluginLoaded(
 DasResult TaskComponentFactoryManager::OnPluginUnloading(
     const DasGuid& plugin_guid)
 {
-    std::unique_lock lock{mutex_};
+    const std::unique_lock lock{mutex_};
 
     for (auto it = routes_.begin(); it != routes_.end();)
     {
@@ -389,8 +389,8 @@ DasResult TaskComponentFactoryManager::CreateComponent(
     DasPtr<Das::PluginInterface::IDasTaskComponentFactory> factory;
     DasGuid                                                factory_guid{};
     {
-        std::shared_lock lock{mutex_};
-        auto             route_it = routes_.find(component_guid);
+        const std::shared_lock lock{mutex_};
+        auto                   route_it = routes_.find(component_guid);
         if (route_it == routes_.end())
         {
             DAS_CORE_LOG_WARN(
@@ -433,7 +433,7 @@ DasResult TaskComponentFactoryManager::CreateComponent(
 std::vector<TaskComponentDefinitionInfo>
 TaskComponentFactoryManager::EnumerateDefinitions() const
 {
-    std::shared_lock lock{mutex_};
+    const std::shared_lock lock{mutex_};
 
     std::vector<TaskComponentDefinitionInfo> definitions;
     definitions.reserve(routes_.size());

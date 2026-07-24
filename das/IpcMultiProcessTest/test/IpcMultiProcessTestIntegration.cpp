@@ -414,7 +414,7 @@ namespace
         for (size_t attempt = 0; attempt < attempts; ++attempt)
         {
             DAS::DasPtr<IDasAsyncLoadPluginOperation> op;
-            DasResult result = context.LoadPluginAsync(
+            const DasResult result = context.LoadPluginAsync(
                 launcher,
                 plugin_path.c_str(),
                 op.Put(),
@@ -449,8 +449,8 @@ namespace
             return {};
         }
 
-        DAS::DasPtr<IDasBase> package_base(package_proxy);
-        DasPluginPackage      plugin_package;
+        const DAS::DasPtr<IDasBase> package_base(package_proxy);
+        DasPluginPackage            plugin_package;
         if (DAS::IsFailed(package_base.As(plugin_package.Put())))
         {
             return {};
@@ -566,7 +566,7 @@ namespace
         auto component = CreateComponentFromFactory(factory.Get());
         ASSERT_NE(component.Get(), nullptr);
 
-        DasReadOnlyString method_name{"queryMainProcessString"};
+        const DasReadOnlyString method_name{"queryMainProcessString"};
         DAS::ExportInterface::DasVariantVector dispatch_result;
         DAS::ExportInterface::DasVariantVector params;
         ASSERT_EQ(CreateIDasVariantVector(params.Put()), DAS_S_OK);
@@ -845,16 +845,19 @@ namespace
         const auto environment_config_text =
             MakeNodeHostEnvironmentConfig(node_modules_root);
 
-        DasReadOnlyString executable_string{executable_text.c_str()};
-        DasReadOnlyString script_arg{script_text.c_str()};
-        DasReadOnlyString main_pid_name{"--main-pid"};
-        DasReadOnlyString main_pid_arg{main_pid_value.c_str()};
-        DasReadOnlyString package_root_name{"--package-root"};
-        DasReadOnlyString package_root_arg{package_root_text.c_str()};
-        DasReadOnlyString node_modules_root_name{"--node-modules-root"};
-        DasReadOnlyString node_modules_root_arg{node_modules_root_text.c_str()};
-        DasReadOnlyString working_directory{working_directory_text.c_str()};
-        DasReadOnlyString environment_config{environment_config_text.c_str()};
+        const DasReadOnlyString executable_string{executable_text.c_str()};
+        const DasReadOnlyString script_arg{script_text.c_str()};
+        const DasReadOnlyString main_pid_name{"--main-pid"};
+        const DasReadOnlyString main_pid_arg{main_pid_value.c_str()};
+        const DasReadOnlyString package_root_name{"--package-root"};
+        const DasReadOnlyString package_root_arg{package_root_text.c_str()};
+        const DasReadOnlyString node_modules_root_name{"--node-modules-root"};
+        const DasReadOnlyString node_modules_root_arg{
+            node_modules_root_text.c_str()};
+        const DasReadOnlyString working_directory{
+            working_directory_text.c_str()};
+        const DasReadOnlyString environment_config{
+            environment_config_text.c_str()};
 
         std::array<IDasReadOnlyString*, 7> args{
             script_arg.Get(),
@@ -883,7 +886,7 @@ namespace
         ASSERT_NE(component, nullptr);
 
         {
-            DasReadOnlyString method_name{"getSessionInfo"};
+            const DasReadOnlyString method_name{"getSessionInfo"};
             DAS::ExportInterface::DasVariantVector dispatch_result;
             DAS::ExportInterface::DasVariantVector params;
             ASSERT_EQ(CreateIDasVariantVector(params.Put()), DAS_S_OK);
@@ -919,11 +922,11 @@ namespace
         }
 
         {
-            DasReadOnlyString                      method_name{"echo"};
+            const DasReadOnlyString                method_name{"echo"};
             DAS::ExportInterface::DasVariantVector dispatch_result;
             DAS::ExportInterface::DasVariantVector params;
             ASSERT_EQ(CreateIDasVariantVector(params.Put()), DAS_S_OK);
-            DasReadOnlyString input_text{"ipc-node-e2e"};
+            const DasReadOnlyString input_text{"ipc-node-e2e"};
             ASSERT_EQ(params.Get()->PushBackString(input_text.Get()), DAS_S_OK);
 
             ASSERT_EQ(
@@ -946,11 +949,11 @@ namespace
         }
 
         {
-            DasReadOnlyString                      method_name{"compute"};
+            const DasReadOnlyString                method_name{"compute"};
             DAS::ExportInterface::DasVariantVector dispatch_result;
             DAS::ExportInterface::DasVariantVector params;
             ASSERT_EQ(CreateIDasVariantVector(params.Put()), DAS_S_OK);
-            DasReadOnlyString operation{"mul"};
+            const DasReadOnlyString operation{"mul"};
             ASSERT_EQ(params.Get()->PushBackString(operation.Get()), DAS_S_OK);
             ASSERT_EQ(params.Get()->PushBackInt(6), DAS_S_OK);
             ASSERT_EQ(params.Get()->PushBackInt(7), DAS_S_OK);
@@ -1238,7 +1241,7 @@ namespace
     {
         ASSERT_NE(factory, nullptr);
 
-        DasGuid unsupported_component_iid{};
+        const DasGuid unsupported_component_iid{};
         EXPECT_EQ(
             factory->IsSupported(unsupported_component_iid),
             DAS_E_NO_IMPLEMENTATION)
@@ -1262,7 +1265,7 @@ namespace
         ASSERT_NE(component, nullptr);
 
         {
-            DasReadOnlyString method_name{"getSessionInfo"};
+            const DasReadOnlyString method_name{"getSessionInfo"};
             DAS::ExportInterface::DasVariantVector dispatch_result;
             DAS::ExportInterface::DasVariantVector params;
             ASSERT_EQ(CreateIDasVariantVector(params.Put()), DAS_S_OK);
@@ -1300,11 +1303,11 @@ namespace
         }
 
         {
-            DasReadOnlyString                      method_name{"echo"};
+            const DasReadOnlyString                method_name{"echo"};
             DAS::ExportInterface::DasVariantVector dispatch_result;
             DAS::ExportInterface::DasVariantVector params;
             ASSERT_EQ(CreateIDasVariantVector(params.Put()), DAS_S_OK);
-            DasReadOnlyString input_text{"ipc-python-e2e"};
+            const DasReadOnlyString input_text{"ipc-python-e2e"};
             ASSERT_EQ(params.Get()->PushBackString(input_text.Get()), DAS_S_OK);
 
             ASSERT_EQ(
@@ -1327,11 +1330,11 @@ namespace
         }
 
         {
-            DasReadOnlyString                      method_name{"compute"};
+            const DasReadOnlyString                method_name{"compute"};
             DAS::ExportInterface::DasVariantVector dispatch_result;
             DAS::ExportInterface::DasVariantVector params;
             ASSERT_EQ(CreateIDasVariantVector(params.Put()), DAS_S_OK);
-            DasReadOnlyString operation{"mul"};
+            const DasReadOnlyString operation{"mul"};
             ASSERT_EQ(params.Get()->PushBackString(operation.Get()), DAS_S_OK);
             ASSERT_EQ(params.Get()->PushBackInt(6), DAS_S_OK);
             ASSERT_EQ(params.Get()->PushBackInt(7), DAS_S_OK);
@@ -1351,7 +1354,7 @@ namespace
         }
 
         {
-            DasReadOnlyString method_name{"failDeterministically"};
+            const DasReadOnlyString method_name{"failDeterministically"};
             DAS::ExportInterface::DasVariantVector dispatch_result;
             DAS::ExportInterface::DasVariantVector params;
             ASSERT_EQ(CreateIDasVariantVector(params.Put()), DAS_S_OK);
@@ -1400,7 +1403,7 @@ namespace
         std::string_view                           expected_component_name)
     {
         ASSERT_NE(launcher.Get(), nullptr);
-        ScopedHostStop guard{launcher};
+        const ScopedHostStop guard{launcher};
 
         uint16_t        session_id = 0;
         const DasResult start_result = launcher->Start(
@@ -1470,8 +1473,8 @@ TEST_F(IpcMultiProcessTestIntegration, HostLauncherStart)
         GTEST_SKIP() << "DasHostX.exe not found at: " << host_exe_path_;
     }
 
-    uint16_t  session_id = 0;
-    DasResult result = launcher_->Start(
+    uint16_t        session_id = 0;
+    const DasResult result = launcher_->Start(
         host_exe_path_,
         session_id,
         IpcTestConfig::GetHostStartTimeoutMs());
@@ -1491,9 +1494,9 @@ TEST_F(IpcMultiProcessTestIntegration, HeartbeatResponse_KeepsRealHostAlive)
     ASSERT_FALSE(IpcTestConfig::ShouldDisableHeartbeat())
         << "Heartbeat keepalive test requires heartbeat to be enabled";
 
-    ScopedHostStop guard{launcher_};
+    const ScopedHostStop guard{launcher_};
 
-    DasResult result = StartHostAndSetupRunLoop();
+    const DasResult result = StartHostAndSetupRunLoop();
     ASSERT_EQ(result, DAS_S_OK);
     ASSERT_TRUE(launcher_->IsRunning());
     ASSERT_GT(launcher_->GetPid(), 0u);
@@ -1521,7 +1524,7 @@ TEST_F(
     ASSERT_FALSE(IpcTestConfig::ShouldDisableHeartbeat())
         << "Heartbeat timeout test requires heartbeat to be enabled";
 
-    ScopedHostStop guard{launcher_};
+    const ScopedHostStop guard{launcher_};
 
     DasResult result = StartHostAndSetupRunLoop();
     ASSERT_EQ(result, DAS_S_OK);
@@ -1533,7 +1536,7 @@ TEST_F(
     {
         auto suspended = SuspendProcessForTest(host_pid);
         ASSERT_TRUE(suspended) << suspended.failure;
-        ScopedProcessResumeForTest resume_guard{suspended};
+        const ScopedProcessResumeForTest resume_guard{suspended};
 
         const bool terminated = WaitUntilForTest(
             [this]() { return !launcher_->IsRunning(); },
@@ -1547,10 +1550,10 @@ TEST_F(
 
     DAS::Core::IPC::IHostLauncher* raw_restart_launcher = nullptr;
     ASSERT_EQ(ctx_->CreateHostLauncher(&raw_restart_launcher), DAS_S_OK);
-    DAS::DasPtr<DAS::Core::IPC::IHostLauncher> restart_launcher(
+    const DAS::DasPtr<DAS::Core::IPC::IHostLauncher> restart_launcher(
         raw_restart_launcher);
     ASSERT_NE(restart_launcher.Get(), nullptr);
-    ScopedHostStop restart_guard{restart_launcher};
+    const ScopedHostStop restart_guard{restart_launcher};
 
     uint16_t restarted_session_id = 0;
     result = restart_launcher->Start(
@@ -1588,7 +1591,7 @@ TEST_F(
     ASSERT_FALSE(IpcTestConfig::ShouldDisableHeartbeat())
         << "Heartbeat cross-thread drain test requires heartbeat to be enabled";
 
-    ScopedHostStop guard{launcher_};
+    const ScopedHostStop guard{launcher_};
     ASSERT_EQ(StartHostAndSetupRunLoop(), DAS_S_OK);
     ASSERT_TRUE(launcher_->IsRunning());
 
@@ -1603,7 +1606,7 @@ TEST_F(
     {
         auto suspended = SuspendProcessForTest(host_pid);
         ASSERT_TRUE(suspended) << suspended.failure;
-        ScopedProcessResumeForTest resume_guard{suspended};
+        const ScopedProcessResumeForTest resume_guard{suspended};
 
         const bool terminated = WaitUntilForTest(
             [this]() { return !launcher_->IsRunning(); },
@@ -1638,9 +1641,9 @@ TEST_F(IpcMultiProcessTestIntegration, NodeHostLauncherStart)
     ASSERT_TRUE(
         AssertNoNodeRuntimeArtifactsInPluginRoot(plugin_collection_root, true));
 
-    ScopedHostStop guard{launcher_};
-    uint16_t       session_id = 0;
-    const auto     result = StartNodeHostPackage(
+    const ScopedHostStop guard{launcher_};
+    uint16_t             session_id = 0;
+    const auto           result = StartNodeHostPackage(
         launcher_.Get(),
         node_executable,
         node_package_root,
@@ -1685,9 +1688,9 @@ TEST_F(IpcMultiProcessTestIntegration, NodeHostLoadPluginQueryInterface)
         plugin_package_root,
         IsPluginCollectionRoot(plugin_package_root, host_exe_path_)));
 
-    ScopedHostStop guard{launcher_};
-    uint16_t       session_id = 0;
-    auto           result = StartNodeHostPackage(
+    const ScopedHostStop guard{launcher_};
+    uint16_t             session_id = 0;
+    auto                 result = StartNodeHostPackage(
         launcher_.Get(),
         node_executable,
         node_package_root,
@@ -1715,7 +1718,8 @@ TEST_F(IpcMultiProcessTestIntegration, NodeHostLoadPluginQueryInterface)
     ASSERT_EQ(load_result, DAS_S_OK);
     ASSERT_NE(proxy, nullptr);
 
-    DAS::DasPtr<IDasBase> raw_proxy = DAS::DasPtr<IDasBase>::Attach(proxy);
+    const DAS::DasPtr<IDasBase> raw_proxy =
+        DAS::DasPtr<IDasBase>::Attach(proxy);
     DAS::PluginInterface::DasPluginPackage plugin_package;
     ASSERT_EQ(raw_proxy.As(plugin_package.Put()), DAS_S_OK)
         << "Node LOAD_PLUGIN proxy must QI to IDasPluginPackage";
@@ -1762,9 +1766,9 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LoadNodePlugin)
         plugin_package_root,
         IsPluginCollectionRoot(plugin_package_root, host_exe_path_)));
 
-    ScopedHostStop guard{launcher_};
-    uint16_t       session_id = 0;
-    auto           result = StartNodeHostPackage(
+    const ScopedHostStop guard{launcher_};
+    uint16_t             session_id = 0;
+    auto                 result = StartNodeHostPackage(
         launcher_.Get(),
         node_executable,
         node_package_root,
@@ -1792,7 +1796,8 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LoadNodePlugin)
     ASSERT_EQ(load_result, DAS_S_OK);
     ASSERT_NE(proxy, nullptr);
 
-    DAS::DasPtr<IDasBase> raw_proxy = DAS::DasPtr<IDasBase>::Attach(proxy);
+    const DAS::DasPtr<IDasBase> raw_proxy =
+        DAS::DasPtr<IDasBase>::Attach(proxy);
     DAS::PluginInterface::DasPluginPackage plugin_package;
     ASSERT_EQ(raw_proxy.As(plugin_package.Put()), DAS_S_OK);
 
@@ -1851,9 +1856,9 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LoadNodeFolderPlugin)
     ASSERT_TRUE(
         AssertNoNodeRuntimeArtifactsInPluginRoot(plugin_package_root, false));
 
-    ScopedHostStop guard{launcher_};
-    uint16_t       session_id = 0;
-    auto           result = StartNodeHostPackage(
+    const ScopedHostStop guard{launcher_};
+    uint16_t             session_id = 0;
+    auto                 result = StartNodeHostPackage(
         launcher_.Get(),
         node_executable,
         node_package_root,
@@ -2005,8 +2010,8 @@ TEST_F(IpcMultiProcessTestIntegration, MultipleStartStop)
 
     for (int i = 0; i < 3; ++i)
     {
-        uint16_t  session_id = 0;
-        DasResult result = launcher_->Start(
+        uint16_t        session_id = 0;
+        const DasResult result = launcher_->Start(
             host_exe_path_,
             session_id,
             IpcTestConfig::GetHostStartTimeoutMs());
@@ -2028,8 +2033,8 @@ TEST_F(IpcMultiProcessTestIntegration, StopTerminatesProcess)
         GTEST_SKIP() << "DasHostX.exe not found at: " << host_exe_path_;
     }
 
-    uint16_t  session_id = 0;
-    DasResult result = launcher_->Start(
+    uint16_t        session_id = 0;
+    const DasResult result = launcher_->Start(
         host_exe_path_,
         session_id,
         IpcTestConfig::GetHostStartTimeoutMs());
@@ -2138,7 +2143,8 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_TaskAuthoringFactory)
     ASSERT_EQ(load_result, DAS_S_OK);
     ASSERT_NE(proxy, nullptr);
 
-    DAS::DasPtr<IDasBase> raw_proxy = DAS::DasPtr<IDasBase>::Attach(proxy);
+    const DAS::DasPtr<IDasBase> raw_proxy =
+        DAS::DasPtr<IDasBase>::Attach(proxy);
     DAS::PluginInterface::DasPluginPackage plugin_package;
     ASSERT_EQ(raw_proxy.As(plugin_package.Put()), DAS_S_OK);
 
@@ -2160,7 +2166,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_TaskAuthoringFactory)
         factory->CreateSession(IPC_TASK_GUID, nullptr, &session_raw),
         DAS_S_OK);
     ASSERT_NE(session_raw, nullptr);
-    DAS::DasPtr<IDasTaskAuthoringSession> session(session_raw);
+    const DAS::DasPtr<IDasTaskAuthoringSession> session(session_raw);
 
     DAS::DasPtr<IDasJson> document;
     ASSERT_EQ(session->GetDocument(nullptr, document.Put()), DAS_S_OK);
@@ -2224,7 +2230,8 @@ TEST_F(
     ASSERT_EQ(load_result, DAS_S_OK);
     ASSERT_NE(proxy, nullptr);
 
-    DAS::DasPtr<IDasBase> raw_proxy = DAS::DasPtr<IDasBase>::Attach(proxy);
+    const DAS::DasPtr<IDasBase> raw_proxy =
+        DAS::DasPtr<IDasBase>::Attach(proxy);
     DAS::PluginInterface::DasPluginPackage plugin_package;
     ASSERT_EQ(raw_proxy.As(plugin_package.Put()), DAS_S_OK);
 
@@ -2256,7 +2263,7 @@ TEST_F(
             &session_raw),
         DAS_S_OK);
     ASSERT_NE(session_raw, nullptr);
-    DAS::DasPtr<IDasTaskAuthoringSession> session(session_raw);
+    const DAS::DasPtr<IDasTaskAuthoringSession> session(session_raw);
 
     DAS::DasPtr<IDasJson> document;
     ASSERT_EQ(session->GetDocument(nullptr, document.Put()), DAS_S_OK);
@@ -2313,7 +2320,8 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_TaskComponentFactory)
     ASSERT_EQ(load_result, DAS_S_OK);
     ASSERT_NE(proxy, nullptr);
 
-    DAS::DasPtr<IDasBase> raw_proxy = DAS::DasPtr<IDasBase>::Attach(proxy);
+    const DAS::DasPtr<IDasBase> raw_proxy =
+        DAS::DasPtr<IDasBase>::Attach(proxy);
     DAS::PluginInterface::DasPluginPackage plugin_package;
     ASSERT_EQ(raw_proxy.As(plugin_package.Put()), DAS_S_OK);
 
@@ -2341,7 +2349,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_TaskComponentFactory)
         factory->CreateComponent(IPC_TASK_COMPONENT_GUID, &component_raw),
         DAS_S_OK);
     ASSERT_NE(component_raw, nullptr);
-    DAS::DasPtr<IDasTaskComponent> component(component_raw);
+    const DAS::DasPtr<IDasTaskComponent> component(component_raw);
 
     DAS::DasPtr<IDasJson> settings_result;
     ASSERT_EQ(
@@ -2353,8 +2361,8 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_TaskComponentFactory)
 
     DAS::DasPtr<Das::ExportInterface::IDasPortMap> do_result;
     ASSERT_EQ(component->Do(nullptr, nullptr, do_result.Put()), DAS_S_OK);
-    IDasReadOnlyString* status_str = nullptr;
-    DasReadOnlyString   status_key{"status"};
+    IDasReadOnlyString*     status_str = nullptr;
+    const DasReadOnlyString status_key{"status"};
     ASSERT_EQ(do_result->GetString(status_key.Get(), &status_str), DAS_S_OK);
     const char* status_u8 = nullptr;
     ASSERT_EQ(status_str->GetUtf8(&status_u8), DAS_S_OK);
@@ -2381,7 +2389,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_HostToHostCall)
     DAS::Core::IPC::IHostLauncher* raw_host_b = nullptr;
     DasResult result = ctx_->CreateHostLauncher(&raw_host_b);
     ASSERT_EQ(result, DAS_S_OK);
-    DAS::DasPtr<DAS::Core::IPC::IHostLauncher> host_b(raw_host_b);
+    const DAS::DasPtr<DAS::Core::IPC::IHostLauncher> host_b(raw_host_b);
 
     uint16_t session_b = 0;
     result = host_b->Start(
@@ -2395,7 +2403,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_HostToHostCall)
     DAS::Core::IPC::IHostLauncher* raw_host_a = nullptr;
     result = ctx_->CreateHostLauncher(&raw_host_a);
     ASSERT_EQ(result, DAS_S_OK);
-    DAS::DasPtr<DAS::Core::IPC::IHostLauncher> host_a(raw_host_a);
+    const DAS::DasPtr<DAS::Core::IPC::IHostLauncher> host_a(raw_host_a);
 
     uint16_t session_a = 0;
     result = host_a->Start(
@@ -2466,7 +2474,7 @@ TEST_F(IpcMultiProcessTestIntegration, MixedTransport_HttpAndIpcHostToHostCall)
     ASSERT_GT(http_port_, static_cast<uint16_t>(0))
         << "SetUp did not create an HTTP-enabled MainProcess context";
 
-    ScopedHostStop ipc_host_guard(launcher_);
+    const ScopedHostStop ipc_host_guard(launcher_);
 
     uint16_t  ipc_session = 0;
     DasResult result = launcher_->Start(
@@ -2478,7 +2486,7 @@ TEST_F(IpcMultiProcessTestIntegration, MixedTransport_HttpAndIpcHostToHostCall)
 
     const uint16_t expected_http_session =
         static_cast<uint16_t>(ipc_session + 1);
-    std::vector<std::string> http_host_args{
+    const std::vector<std::string> http_host_args{
         "--connect-url",
         DAS_FMT_NS::format("ws://127.0.0.1:{}", http_port_),
         "--log-level",
@@ -2544,7 +2552,7 @@ TEST_F(IpcMultiProcessTestIntegration, MixedTransport_HttpAndIpcHostToHostCall)
     DAS::ExportInterface::DasVariantVector empty_params;
     ASSERT_EQ(CreateIDasVariantVector(empty_params.Put()), DAS_S_OK);
 
-    DasReadOnlyString method_name{"queryMainProcessString"};
+    const DasReadOnlyString method_name{"queryMainProcessString"};
     DAS::ExportInterface::DasVariantVector dispatch_result;
     result = ipc_component->Dispatch(
         method_name.Get(),
@@ -2598,7 +2606,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LoadJavaPlugin)
     }
 
     // 检查 JAR 文件是否存在
-    std::filesystem::path jar_path =
+    const std::filesystem::path jar_path =
         std::filesystem::path(plugin_json_path).parent_path()
         / "JavaTestPlugin.jar";
     ASSERT_TRUE(std::filesystem::exists(jar_path))
@@ -2658,7 +2666,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LoadJavaPlugin)
     ASSERT_EQ(factory_base.As(factory.Put()), DAS_S_OK);
 
     // 验证 IsSupported
-    DasGuid empty_guid{};
+    const DasGuid empty_guid{};
     EXPECT_EQ(factory->IsSupported(empty_guid), DAS_E_NO_IMPLEMENTATION);
     EXPECT_EQ(
         factory->IsSupported(DasIidOf<DAS::PluginInterface::IDasComponent>()),
@@ -2672,17 +2680,18 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LoadJavaPlugin)
             &component_raw),
         DAS_S_OK);
     ASSERT_NE(component_raw, nullptr);
-    DAS::DasPtr<DAS::PluginInterface::IDasComponent> component(component_raw);
+    const DAS::DasPtr<DAS::PluginInterface::IDasComponent> component(
+        component_raw);
 
     // 调用 Dispatch("echo", ...) 跨进程验证
     // 设计意图：传递空 VariantVector，Java 端应返回 DAS_E_INVALID_ARGUMENT，
     // C++ 端校验错误码传播正确
     {
-        DasReadOnlyString                      method_name{"echo"};
+        const DasReadOnlyString                method_name{"echo"};
         DAS::ExportInterface::DasVariantVector result;
         DAS::ExportInterface::DasVariantVector params;
         ASSERT_EQ(CreateIDasVariantVector(params.Put()), DAS_S_OK);
-        DasResult dispatch_result =
+        const DasResult dispatch_result =
             component->Dispatch(method_name.Get(), params.Get(), result.Put());
         ASSERT_NE(dispatch_result, DAS_S_OK)
             << "Dispatch(echo) with empty params should return error code";
@@ -2690,11 +2699,11 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LoadJavaPlugin)
 
     // 调用 Dispatch("compute", ...) — 同理，空参数应返回错误码
     {
-        DasReadOnlyString                      method_name{"compute"};
+        const DasReadOnlyString                method_name{"compute"};
         DAS::ExportInterface::DasVariantVector result;
         DAS::ExportInterface::DasVariantVector params;
         ASSERT_EQ(CreateIDasVariantVector(params.Put()), DAS_S_OK);
-        DasResult dispatch_result =
+        const DasResult dispatch_result =
             component->Dispatch(method_name.Get(), params.Get(), result.Put());
         ASSERT_NE(dispatch_result, DAS_S_OK)
             << "Dispatch(compute) with empty params should return error code";
@@ -2704,11 +2713,11 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LoadJavaPlugin)
     // getSessionInfo Java handler 不检查参数数量，直接返回 session 信息
     // 所以空参数时 dispatch_result 应为 DAS_S_OK
     {
-        DasReadOnlyString                      method_name{"getSessionInfo"};
+        const DasReadOnlyString                method_name{"getSessionInfo"};
         DAS::ExportInterface::DasVariantVector result;
         DAS::ExportInterface::DasVariantVector params;
         ASSERT_EQ(CreateIDasVariantVector(params.Put()), DAS_S_OK);
-        DasResult dispatch_result =
+        const DasResult dispatch_result =
             component->Dispatch(method_name.Get(), params.Get(), result.Put());
         ASSERT_EQ(dispatch_result, DAS_S_OK)
             << "Dispatch(getSessionInfo) should succeed (handler does not "
@@ -2746,7 +2755,7 @@ TEST_F(
     // 手动启动 DasHost.exe 进程，传入不存在的 --main-pid
     boost::asio::io_context  io_ctx;
     std::vector<std::string> args;
-    args.push_back("--main-pid");
+    args.emplace_back("--main-pid");
     args.push_back(std::to_string(fake_main_pid));
 
     boost::process::v2::process host_process(
@@ -2821,8 +2830,8 @@ TEST_F(
     // 1. 获取当前可执行程序路径
     std::string test_exe_path;
     {
-        char  buffer[MAX_PATH];
-        DWORD len = GetModuleFileNameA(nullptr, buffer, MAX_PATH);
+        char        buffer[MAX_PATH];
+        DWORD const len = GetModuleFileNameA(nullptr, buffer, MAX_PATH);
         if (len == 0 || len >= MAX_PATH)
         {
             GTEST_SKIP() << "Failed to get current executable path";
@@ -2831,15 +2840,15 @@ TEST_F(
     }
 
     // 2. 生成唯一信号名称
-    std::string signal_name = FakeMainProcess::GenerateUniqueSignalName();
+    const std::string signal_name = FakeMainProcess::GenerateUniqueSignalName();
 
     // 3. 创建信号持有者（持有锁，FakeMain 会等待）
     FakeMainProcess::SignalHolder signal_holder(signal_name);
 
     // 4. 启动假主进程（等待 host_pid）
     //    FakeMain 会先创建共享内存，然后等待我们写入 host_pid
-    boost::asio::io_context  fake_main_io_ctx;
-    std::vector<std::string> fake_main_args = {
+    boost::asio::io_context        fake_main_io_ctx;
+    const std::vector<std::string> fake_main_args = {
         "--fake-main",
         "--signal-name",
         signal_name};
@@ -2855,8 +2864,8 @@ TEST_F(
 
     // 5. 启动 DasHost（连接到假主进程）
     //    先启动 DasHost 获取 host_pid，然后写入共享内存让 FakeMain 创建管道
-    boost::asio::io_context  host_io_ctx;
-    std::vector<std::string> host_args = {
+    boost::asio::io_context        host_io_ctx;
+    const std::vector<std::string> host_args = {
         "--main-pid",
         std::to_string(fake_main_pid)};
 
@@ -2874,7 +2883,7 @@ TEST_F(
         fake_main_pid);
 
     // 6. 等待 FakeMain 创建共享内存（避免竞态条件）
-    bool shm_ready =
+    const bool shm_ready =
         FakeMainProcess::KillParentSharedMemory::WaitForSharedMemoryReady(
             FakeMainProcess::KILL_PARENT_SHM_NAME,
             std::chrono::seconds(10));
@@ -2889,7 +2898,7 @@ TEST_F(
 
     // 8. 等待假主进程就绪（管道已创建）
     //    DasHost 有 1 秒的连接重试超时，应该足够让 FakeMain 创建管道
-    bool ready = signal_holder.ReleaseAndWait(std::chrono::seconds(10));
+    const bool ready = signal_holder.ReleaseAndWait(std::chrono::seconds(10));
     ASSERT_TRUE(ready) << "Fake main process did not become ready in time";
 
     // 9. 确认假主进程还在运行
@@ -2900,7 +2909,7 @@ TEST_F(
     }
 
     // 10. 等待握手完成
-    bool handshake_done =
+    const bool handshake_done =
         FakeMainProcess::KillParentSharedMemory::WaitForHandshakeDone(
             FakeMainProcess::KILL_PARENT_SHM_NAME,
             std::chrono::seconds(10));
@@ -3148,7 +3157,7 @@ TEST_F(IpcMultiProcessTestIntegration, RemoteProxy_ComponentFactory_IsSupported)
     DasResult result = StartHostAndSetupRunLoop();
     ASSERT_EQ(result, DAS_S_OK);
 
-    std::string plugin_path =
+    const std::string plugin_path =
         IpcTestConfig::GetTestPluginJsonPath("IpcTestPlugin2");
 
     DAS::DasPtr<IDasAsyncLoadPluginOperation> op;
@@ -3205,7 +3214,7 @@ TEST_F(IpcMultiProcessTestIntegration, RemoteProxy_ComponentFactory_IsSupported)
     ASSERT_EQ(factoryBase.As(factory.Put()), DAS_S_OK);
 
     // 空 GUID 不被支持，应返回 DAS_E_NO_IMPLEMENTATION
-    DasGuid guid{};
+    const DasGuid guid{};
     EXPECT_EQ(factory->IsSupported(guid), DAS_E_NO_IMPLEMENTATION);
 
     // 正确的 IID 应被支持
@@ -3414,7 +3423,7 @@ TEST_F(IpcMultiProcessTestIntegration, QueryMainProcessInterface_E2E)
     result = plugin_package->CreateFeatureInterface(1, &factory_base_raw);
     ASSERT_EQ(result, DAS_S_OK);
     ASSERT_NE(factory_base_raw, nullptr);
-    DAS::DasPtr<IDasBase> factory_base(factory_base_raw);
+    const DAS::DasPtr<IDasBase> factory_base(factory_base_raw);
 
     DAS::DasPtr<DAS::PluginInterface::IDasComponentFactory> factory;
     ASSERT_EQ(factory_base.As(factory.Put()), DAS_S_OK);
@@ -3430,16 +3439,17 @@ TEST_F(IpcMultiProcessTestIntegration, QueryMainProcessInterface_E2E)
         &component_raw);
     ASSERT_EQ(result, DAS_S_OK);
     ASSERT_NE(component_raw, nullptr);
-    DAS::DasPtr<DAS::PluginInterface::IDasComponent> component(component_raw);
+    const DAS::DasPtr<DAS::PluginInterface::IDasComponent> component(
+        component_raw);
 
     // 9. Dispatch("queryMainProcessString") — 核心验证
     {
-        DasReadOnlyString method_name{"queryMainProcessString"};
+        const DasReadOnlyString method_name{"queryMainProcessString"};
         DAS::ExportInterface::DasVariantVector result;
         DAS::ExportInterface::DasVariantVector params;
         ASSERT_EQ(CreateIDasVariantVector(params.Put()), DAS_S_OK);
 
-        DasResult dispatch_result =
+        const DasResult dispatch_result =
             component->Dispatch(method_name.Get(), params.Get(), result.Put());
         EXPECT_EQ(dispatch_result, DAS_S_OK)
             << "Dispatch(queryMainProcessString) failed — "
@@ -3449,12 +3459,12 @@ TEST_F(IpcMultiProcessTestIntegration, QueryMainProcessInterface_E2E)
 
     // 10. Dispatch("queryMainProcessVariantVector") — 验证 IDL 定义的接口
     {
-        DasReadOnlyString method_name{"queryMainProcessVariantVector"};
+        const DasReadOnlyString method_name{"queryMainProcessVariantVector"};
         DAS::ExportInterface::DasVariantVector vv_result;
         DAS::ExportInterface::DasVariantVector vv_params;
         ASSERT_EQ(CreateIDasVariantVector(vv_params.Put()), DAS_S_OK);
 
-        DasResult dispatch_result = component->Dispatch(
+        const DasResult dispatch_result = component->Dispatch(
             method_name.Get(),
             vv_params.Get(),
             vv_result.Put());
@@ -3507,7 +3517,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_QueryMainProcessString)
 
     // 2. 在主进程中注册一个 IDasReadOnlyString 服务
     DAS::DasPtr<IDasReadOnlyString> service_string;
-    DasResult create_result = CreateIDasReadOnlyStringFromUtf8(
+    const DasResult create_result = CreateIDasReadOnlyStringFromUtf8(
         "Hello from CrossProcess E2E",
         service_string.Put());
     ASSERT_EQ(create_result, DAS_S_OK) << "Failed to create test string";
@@ -3554,7 +3564,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_QueryMainProcessString)
     result = plugin_package->CreateFeatureInterface(1, &factory_base_raw);
     ASSERT_EQ(result, DAS_S_OK);
     ASSERT_NE(factory_base_raw, nullptr);
-    DAS::DasPtr<IDasBase> factory_base(factory_base_raw);
+    const DAS::DasPtr<IDasBase> factory_base(factory_base_raw);
 
     DAS::DasPtr<DAS::PluginInterface::IDasComponentFactory> factory;
     ASSERT_EQ(factory_base.As(factory.Put()), DAS_S_OK);
@@ -3570,16 +3580,17 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_QueryMainProcessString)
         &component_raw);
     ASSERT_EQ(result, DAS_S_OK);
     ASSERT_NE(component_raw, nullptr);
-    DAS::DasPtr<DAS::PluginInterface::IDasComponent> component(component_raw);
+    const DAS::DasPtr<DAS::PluginInterface::IDasComponent> component(
+        component_raw);
 
     // 8. Dispatch("queryMainProcessString") — 核心验证
     {
-        DasReadOnlyString method_name{"queryMainProcessString"};
+        const DasReadOnlyString method_name{"queryMainProcessString"};
         DAS::ExportInterface::DasVariantVector dispatch_result;
         DAS::ExportInterface::DasVariantVector params;
         ASSERT_EQ(CreateIDasVariantVector(params.Put()), DAS_S_OK);
 
-        DasResult dispatch_hr = component->Dispatch(
+        const DasResult dispatch_hr = component->Dispatch(
             method_name.Get(),
             params.Get(),
             dispatch_result.Put());
@@ -3588,17 +3599,17 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_QueryMainProcessString)
 
         // 验证返回的 VariantVector 包含 1 个元素
         ASSERT_NE(dispatch_result.Get(), nullptr);
-        uint64_t size = dispatch_result->GetSize();
+        const uint64_t size = dispatch_result->GetSize();
         ASSERT_EQ(size, 1u) << "Expected 1 element in result, got " << size;
 
         // 验证返回的字符串与注册的一致
         IDasReadOnlyString* out_string = nullptr;
-        DasResult           get_hr = dispatch_result->GetString(0, &out_string);
+        const DasResult     get_hr = dispatch_result->GetString(0, &out_string);
         ASSERT_EQ(get_hr, DAS_S_OK) << "GetString(0) failed";
         ASSERT_NE(out_string, nullptr);
 
-        const char* out_str = nullptr;
-        DasResult   utf8_hr = out_string->GetUtf8(&out_str);
+        const char*     out_str = nullptr;
+        const DasResult utf8_hr = out_string->GetUtf8(&out_str);
         ASSERT_EQ(utf8_hr, DAS_S_OK) << "GetUtf8 failed";
         ASSERT_NE(out_str, nullptr);
         EXPECT_STREQ(out_str, "Hello from CrossProcess E2E")
@@ -3717,7 +3728,7 @@ public:
             return hr;
         }
 
-        std::string func = func_ptr;
+        const std::string func = func_ptr;
 
         const std::string callback_prefix = "lifecycle_callback:";
         if (func == "lifecycle_callback" || func.rfind(callback_prefix, 0) == 0)
@@ -3774,7 +3785,7 @@ public:
         if (pp_out_result)
         {
             DAS::ExportInterface::DasVariantVector empty_result;
-            DasResult hr = CreateIDasVariantVector(empty_result.Put());
+            const DasResult hr = CreateIDasVariantVector(empty_result.Put());
             if (DAS::IsOk(hr) && empty_result.Get())
             {
                 empty_result.Get()->AddRef();
@@ -3839,7 +3850,7 @@ void AssertPythonDirectorLifecycleBehavior(
 {
     ASSERT_NE(launcher.Get(), nullptr);
     ASSERT_NE(callback, nullptr);
-    ScopedHostStop guard{launcher};
+    const ScopedHostStop guard{launcher};
 
     uint16_t        session_id = 0;
     const DasResult start_result = launcher->Start(
@@ -3895,13 +3906,13 @@ void AssertPythonDirectorLifecycleBehavior(
 
     DAS::DasPtr<IDasComponent> director_component;
     {
-        DasReadOnlyString method_name{"bridgeLifecycleTest"};
+        const DasReadOnlyString method_name{"bridgeLifecycleTest"};
         DAS::ExportInterface::DasVariantVector dispatch_result;
         DAS::ExportInterface::DasVariantVector params;
         ASSERT_EQ(CreateIDasVariantVector(params.Put()), DAS_S_OK);
 
-        const std::string marker_text{marker};
-        DasReadOnlyString marker_value{marker_text.c_str()};
+        const std::string       marker_text{marker};
+        const DasReadOnlyString marker_value{marker_text.c_str()};
         ASSERT_EQ(params.Get()->PushBackComponent(callback), DAS_S_OK);
         ASSERT_EQ(params.Get()->PushBackString(marker_value.Get()), DAS_S_OK);
 
@@ -3977,7 +3988,7 @@ void RunCSharpBridgeLifecycleTest(
 {
     ASSERT_NE(launcher.Get(), nullptr);
     ASSERT_NE(callback, nullptr);
-    ScopedHostStop guard{launcher};
+    const ScopedHostStop guard{launcher};
 
     uint16_t        session_id = 0;
     const DasResult start_result = launcher->Start(
@@ -4027,13 +4038,13 @@ void RunCSharpBridgeLifecycleTest(
 
     DAS::DasPtr<IDasComponent> director_component;
     {
-        DasReadOnlyString method_name{"bridgeLifecycleTest"};
+        const DasReadOnlyString method_name{"bridgeLifecycleTest"};
         DAS::ExportInterface::DasVariantVector dispatch_result;
         DAS::ExportInterface::DasVariantVector params;
         ASSERT_EQ(CreateIDasVariantVector(params.Put()), DAS_S_OK);
 
-        const std::string marker_text{marker};
-        DasReadOnlyString marker_value{marker_text.c_str()};
+        const std::string       marker_text{marker};
+        const DasReadOnlyString marker_value{marker_text.c_str()};
         ASSERT_EQ(params.Get()->PushBackComponent(callback), DAS_S_OK);
         ASSERT_EQ(params.Get()->PushBackString(marker_value.Get()), DAS_S_OK);
 
@@ -4217,11 +4228,11 @@ void AssertPythonEchoDispatchStillWorks(IDasComponent* component)
 {
     ASSERT_NE(component, nullptr);
 
-    DasReadOnlyString                      method_name{"echo"};
+    const DasReadOnlyString                method_name{"echo"};
     DAS::ExportInterface::DasVariantVector dispatch_result;
     DAS::ExportInterface::DasVariantVector params;
     ASSERT_EQ(CreateIDasVariantVector(params.Put()), DAS_S_OK);
-    DasReadOnlyString input_text{"ipc-python-after-failure"};
+    const DasReadOnlyString input_text{"ipc-python-after-failure"};
     ASSERT_EQ(params.Get()->PushBackString(input_text.Get()), DAS_S_OK);
 
     ASSERT_EQ(
@@ -4251,7 +4262,7 @@ void ExpectPythonDispatchFailure(
     ASSERT_NE(launcher, nullptr);
 
     const std::string                      method_text{method};
-    DasReadOnlyString                      method_name{method_text.c_str()};
+    const DasReadOnlyString                method_name{method_text.c_str()};
     DAS::ExportInterface::DasVariantVector dispatch_result;
 
     const DasResult result =
@@ -4283,9 +4294,9 @@ void AssertPythonFailurePathBehavior(
         DasIidOf<DAS::PluginInterface::IDasComponent>());
     ASSERT_EQ(reg_result, DAS_S_OK);
 
-    ScopedHostStop  guard{launcher};
-    uint16_t        session_id = 0;
-    const DasResult start_result = launcher->Start(
+    const ScopedHostStop guard{launcher};
+    uint16_t             session_id = 0;
+    const DasResult      start_result = launcher->Start(
         host_exe_path,
         session_id,
         IpcTestConfig::GetHostStartTimeoutMs());
@@ -4357,7 +4368,7 @@ void AssertPythonFailurePathBehavior(
         ASSERT_EQ(
             params.Get()->PushBackComponent(failing_callback.Get()),
             DAS_S_OK);
-        DasReadOnlyString marker{"callback_failure_marker"};
+        const DasReadOnlyString marker{"callback_failure_marker"};
         ASSERT_EQ(params.Get()->PushBackString(marker.Get()), DAS_S_OK);
 
         ExpectPythonDispatchFailure(
@@ -4511,14 +4522,14 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_NodeDirectorLifecycleTest)
     callback->Configure(GetContext());
     callback->request_stop_on_callback_ = false;
 
-    DasResult reg_result = ctx_->RegisterService(
+    const DasResult reg_result = ctx_->RegisterService(
         callback.Get(),
         DasIidOf<DAS::PluginInterface::IDasComponent>());
     ASSERT_EQ(reg_result, DAS_S_OK);
 
-    ScopedHostStop guard{launcher_};
-    uint16_t       session_id = 0;
-    DasResult      result = StartNodeHostPackage(
+    const ScopedHostStop guard{launcher_};
+    uint16_t             session_id = 0;
+    DasResult            result = StartNodeHostPackage(
         launcher_.Get(),
         node_executable,
         node_package_root,
@@ -4546,7 +4557,8 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_NodeDirectorLifecycleTest)
     ASSERT_EQ(load_result, DAS_S_OK);
     ASSERT_NE(proxy, nullptr);
 
-    DAS::DasPtr<IDasBase> raw_proxy = DAS::DasPtr<IDasBase>::Attach(proxy);
+    const DAS::DasPtr<IDasBase> raw_proxy =
+        DAS::DasPtr<IDasBase>::Attach(proxy);
     DAS::PluginInterface::DasPluginPackage plugin_package;
     ASSERT_EQ(raw_proxy.As(plugin_package.Put()), DAS_S_OK);
 
@@ -4571,12 +4583,12 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_NodeDirectorLifecycleTest)
 
     DAS::DasPtr<IDasComponent> director_component;
     {
-        DasReadOnlyString method_name{"bridgeLifecycleTest"};
+        const DasReadOnlyString method_name{"bridgeLifecycleTest"};
         DAS::ExportInterface::DasVariantVector dispatch_result;
         DAS::ExportInterface::DasVariantVector params;
         ASSERT_EQ(CreateIDasVariantVector(params.Put()), DAS_S_OK);
 
-        DasReadOnlyString marker{"node_bridge_marker"};
+        const DasReadOnlyString marker{"node_bridge_marker"};
         ASSERT_EQ(params.Get()->PushBackComponent(callback.Get()), DAS_S_OK);
         ASSERT_EQ(params.Get()->PushBackString(marker.Get()), DAS_S_OK);
 
@@ -4632,7 +4644,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_NodeDirectorLifecycleTest)
            "p_arguments->GetString(0)";
 
     {
-        DasReadOnlyString director_method{"getSessionInfo"};
+        const DasReadOnlyString director_method{"getSessionInfo"};
         DAS::ExportInterface::DasVariantVector director_result;
         DAS::ExportInterface::DasVariantVector director_params;
         ASSERT_EQ(CreateIDasVariantVector(director_params.Put()), DAS_S_OK);
@@ -4667,7 +4679,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_NodeDirectorLifecycleTest)
     }
 
     {
-        DasReadOnlyString director_method{"getSessionInfoPromise"};
+        const DasReadOnlyString director_method{"getSessionInfoPromise"};
         DAS::ExportInterface::DasVariantVector director_result;
         DAS::ExportInterface::DasVariantVector director_params;
         ASSERT_EQ(CreateIDasVariantVector(director_params.Put()), DAS_S_OK);
@@ -4813,7 +4825,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_JavaDirectorLifecycleTest)
 
     // 通过 RegisterService() 注册服务（内部完成 ObjectManager + Registry
     // 两步注册）
-    DasResult reg_result = ctx_->RegisterService(
+    const DasResult reg_result = ctx_->RegisterService(
         callback.Get(),
         DasIidOf<DAS::PluginInterface::IDasComponent>());
     ASSERT_EQ(reg_result, DAS_S_OK);
@@ -4868,7 +4880,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_JavaDirectorLifecycleTest)
     // 5. Dispatch bridgeLifecycleTest
     // PushBackBase 传 IDasBase* → 验证 Java 侧 as() 向下转换
     {
-        DasReadOnlyString method_name{"bridgeLifecycleTest"};
+        const DasReadOnlyString method_name{"bridgeLifecycleTest"};
         DAS::ExportInterface::DasVariantVector result;
         DAS::ExportInterface::DasVariantVector params;
         ASSERT_EQ(CreateIDasVariantVector(params.Put()), DAS_S_OK);
@@ -4879,7 +4891,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_JavaDirectorLifecycleTest)
         params.PushBackBase(callback.Get());
         params.PushBackString(DasReadOnlyString{"bridge_test_marker"});
 
-        DasResult dispatch_result =
+        const DasResult dispatch_result =
             component->Dispatch(method_name.Get(), params.Get(), result.Put());
         ASSERT_EQ(dispatch_result, DAS_S_OK)
             << "Dispatch(bridgeLifecycleTest) failed";
@@ -4894,7 +4906,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_JavaDirectorLifecycleTest)
             if (size > 0)
             {
                 IDasReadOnlyString* elem0 = nullptr;
-                DasResult           hr = result->GetString(0, &elem0);
+                const DasResult     hr = result->GetString(0, &elem0);
                 if (DAS::IsOk(hr) && elem0)
                 {
                     const char* str = nullptr;
@@ -4985,7 +4997,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LuaDirectorLifecycleTest)
     auto callback = DAS::MakeDasPtr<LifecycleCallbackComponent>();
     callback->Configure(GetContext());
 
-    DasResult reg_result = ctx_->RegisterService(
+    const DasResult reg_result = ctx_->RegisterService(
         callback.Get(),
         DasIidOf<DAS::PluginInterface::IDasComponent>());
     ASSERT_EQ(reg_result, DAS_S_OK);
@@ -5039,7 +5051,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LuaDirectorLifecycleTest)
 
     // 5. Dispatch bridgeLifecycleTest
     {
-        DasReadOnlyString method_name{"bridgeLifecycleTest"};
+        const DasReadOnlyString method_name{"bridgeLifecycleTest"};
         DAS::ExportInterface::DasVariantVector result;
         DAS::ExportInterface::DasVariantVector params;
         ASSERT_EQ(CreateIDasVariantVector(params.Put()), DAS_S_OK);
@@ -5047,7 +5059,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LuaDirectorLifecycleTest)
         params.PushBackBase(callback.Get());
         params.PushBackString(DasReadOnlyString{"bridge_test_marker"});
 
-        DasResult dispatch_result =
+        const DasResult dispatch_result =
             component->Dispatch(method_name.Get(), params.Get(), result.Put());
         ASSERT_EQ(dispatch_result, DAS_S_OK)
             << "Dispatch(bridgeLifecycleTest) failed";
@@ -5061,7 +5073,7 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LuaDirectorLifecycleTest)
             if (size > 0)
             {
                 IDasReadOnlyString* elem0 = nullptr;
-                DasResult           hr = result->GetString(0, &elem0);
+                const DasResult     hr = result->GetString(0, &elem0);
                 if (DAS::IsOk(hr) && elem0)
                 {
                     const char* str = nullptr;
@@ -5159,7 +5171,7 @@ TEST_F(
 
     // 2. 在主进程中通过 ByName API 注册一个 IDasReadOnlyString 服务
     DAS::DasPtr<IDasReadOnlyString> service_string;
-    DasResult create_result = CreateIDasReadOnlyStringFromUtf8(
+    const DasResult create_result = CreateIDasReadOnlyStringFromUtf8(
         "Hello from ByName CrossProcess E2E",
         service_string.Put());
     ASSERT_EQ(create_result, DAS_S_OK) << "Failed to create test string";
@@ -5219,7 +5231,7 @@ TEST_F(
     result = plugin_package->CreateFeatureInterface(1, &factory_base_raw);
     ASSERT_EQ(result, DAS_S_OK);
     ASSERT_NE(factory_base_raw, nullptr);
-    DAS::DasPtr<IDasBase> factory_base(factory_base_raw);
+    const DAS::DasPtr<IDasBase> factory_base(factory_base_raw);
 
     DAS::DasPtr<DAS::PluginInterface::IDasComponentFactory> factory;
     ASSERT_EQ(factory_base.As(factory.Put()), DAS_S_OK);
@@ -5230,20 +5242,21 @@ TEST_F(
         &component_raw);
     ASSERT_EQ(result, DAS_S_OK);
     ASSERT_NE(component_raw, nullptr);
-    DAS::DasPtr<DAS::PluginInterface::IDasComponent> component(component_raw);
+    const DAS::DasPtr<DAS::PluginInterface::IDasComponent> component(
+        component_raw);
 
     // 6. Dispatch("queryMainProcessStringByName", [name]) — 核心验证
     {
-        DasReadOnlyString method_name{"queryMainProcessStringByName"};
+        const DasReadOnlyString method_name{"queryMainProcessStringByName"};
         DAS::ExportInterface::DasVariantVector dispatch_result;
         DAS::ExportInterface::DasVariantVector params;
         ASSERT_EQ(CreateIDasVariantVector(params.Put()), DAS_S_OK);
 
         // 传递 service name 作为参数
-        DasReadOnlyString name_param{SERVICE_NAME};
+        const DasReadOnlyString name_param{SERVICE_NAME};
         params.PushBackString(name_param.Get());
 
-        DasResult dispatch_hr = component->Dispatch(
+        const DasResult dispatch_hr = component->Dispatch(
             method_name.Get(),
             params.Get(),
             dispatch_result.Put());
@@ -5253,17 +5266,17 @@ TEST_F(
 
         // 验证返回的 VariantVector 包含 1 个元素
         ASSERT_NE(dispatch_result.Get(), nullptr);
-        uint64_t size = dispatch_result->GetSize();
+        const uint64_t size = dispatch_result->GetSize();
         ASSERT_EQ(size, 1u) << "Expected 1 element in result, got " << size;
 
         // 验证返回的字符串与注册的一致
         IDasReadOnlyString* out_string = nullptr;
-        DasResult           get_hr = dispatch_result->GetString(0, &out_string);
+        const DasResult     get_hr = dispatch_result->GetString(0, &out_string);
         ASSERT_EQ(get_hr, DAS_S_OK) << "GetString(0) failed";
         ASSERT_NE(out_string, nullptr);
 
-        const char* out_str = nullptr;
-        DasResult   utf8_hr = out_string->GetUtf8(&out_str);
+        const char*     out_str = nullptr;
+        const DasResult utf8_hr = out_string->GetUtf8(&out_str);
         ASSERT_EQ(utf8_hr, DAS_S_OK) << "GetUtf8 failed";
         ASSERT_NE(out_str, nullptr);
         EXPECT_STREQ(out_str, "Hello from ByName CrossProcess E2E")
@@ -5288,15 +5301,15 @@ TEST_F(
 
     // 注销后 Host 应查询失败
     {
-        DasReadOnlyString method_name{"queryMainProcessStringByName"};
+        const DasReadOnlyString method_name{"queryMainProcessStringByName"};
         DAS::ExportInterface::DasVariantVector dispatch_result;
         DAS::ExportInterface::DasVariantVector params;
         ASSERT_EQ(CreateIDasVariantVector(params.Put()), DAS_S_OK);
 
-        DasReadOnlyString name_param{SERVICE_NAME};
+        const DasReadOnlyString name_param{SERVICE_NAME};
         params.PushBackString(name_param.Get());
 
-        DasResult dispatch_hr = component->Dispatch(
+        const DasResult dispatch_hr = component->Dispatch(
             method_name.Get(),
             params.Get(),
             dispatch_result.Put());

@@ -60,7 +60,7 @@ public:
     /// DAS_E_IPC_CANCELED
     DasResult Push(T msg)
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        const std::scoped_lock lock(mutex_);
 
         if (uninitialized_)
         {
@@ -129,7 +129,7 @@ public:
     /// @return 有元素返回元素，否则返回 nullopt
     std::optional<T> TryPop()
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        const std::scoped_lock lock(mutex_);
 
         if (ring_.empty())
         {
@@ -146,7 +146,7 @@ public:
     /// @note 反初始化后，Push 返回 DAS_E_IPC_CANCELED，Pop 返回 nullopt
     void Uninitialize()
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        const std::scoped_lock lock(mutex_);
         uninitialized_ = true;
         cv_.notify_all();
     }
@@ -158,7 +158,7 @@ public:
     /// @return 已反初始化返回 true
     bool IsUninitialized() const
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::scoped_lock lock(mutex_);
         return uninitialized_;
     }
 

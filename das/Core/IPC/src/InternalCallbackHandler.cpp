@@ -33,7 +33,8 @@ DasResult InternalCallbackHandler::HandleMessage(
     }
 
     // DasPtr::Attach 接管已有引用（不 AddRef），析构时自动 Release
-    DasPtr<IDasAsyncCallback> cb = DasPtr<IDasAsyncCallback>::Attach(raw_cb);
+    const DasPtr<IDasAsyncCallback> cb =
+        DasPtr<IDasAsyncCallback>::Attach(raw_cb);
 
     cb->Do();
 

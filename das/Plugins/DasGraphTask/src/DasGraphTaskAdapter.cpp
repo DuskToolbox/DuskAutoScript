@@ -37,7 +37,7 @@ namespace Plugins::DasGraphTask
         // self-contained snapshot via the hostless factory (matches the
         // original 78935d8e IDasTask form).
         DAS::DasPtr<Das::ExportInterface::IDasGraphRuntime> runtime;
-        DasResult hr = CreateGraphRuntime(runtime.Put());
+        const DasResult hr = CreateGraphRuntime(runtime.Put());
         if (DAS::IsFailed(hr))
         {
             return hr;

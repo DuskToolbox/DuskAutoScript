@@ -137,9 +137,9 @@ namespace
 
 TEST(MaaPiExecutionEngine, EngineCompilesAndExecutesSuccessfully)
 {
-    FakeMaaApiBoundary fake;
-    FakeProcessRunner  runner;
-    ScopedRuntimeHooks hooks(fake, runner);
+    FakeMaaApiBoundary       fake;
+    FakeProcessRunner        runner;
+    const ScopedRuntimeHooks hooks(fake, runner);
 
     MaaPiExecutionEngine engine;
     auto output = engine.Execute(MakeDefaultInput(), fake, nullptr);
@@ -151,8 +151,8 @@ TEST(MaaPiExecutionEngine, EngineCompilesAndExecutesSuccessfully)
 
 TEST(MaaPiExecutionEngine, EngineReturnsErrorOnMissingPiPath)
 {
-    FakeMaaApiBoundary fake;
-    ScopedBoundaryHook hook(fake);
+    FakeMaaApiBoundary       fake;
+    const ScopedBoundaryHook hook(fake);
 
     EngineInput input;
     input.pi_path = "/nonexistent/path/interface.json";
@@ -169,8 +169,8 @@ TEST(MaaPiExecutionEngine, EngineReturnsErrorOnMissingPiPath)
 
 TEST(MaaPiExecutionEngine, EngineReturnsErrorOnEmptyPiPath)
 {
-    FakeMaaApiBoundary fake;
-    ScopedBoundaryHook hook(fake);
+    FakeMaaApiBoundary       fake;
+    const ScopedBoundaryHook hook(fake);
 
     EngineInput input;
     input.pi_path = "";
@@ -185,8 +185,8 @@ TEST(MaaPiExecutionEngine, EngineReturnsErrorOnEmptyPiPath)
 
 TEST(MaaPiExecutionEngine, EngineReturnsErrorOnTaskNotFound)
 {
-    FakeMaaApiBoundary fake;
-    ScopedBoundaryHook hook(fake);
+    FakeMaaApiBoundary       fake;
+    const ScopedBoundaryHook hook(fake);
 
     auto input = MakeDefaultInput();
     input.task_name = "NonExistentTask";
@@ -202,8 +202,8 @@ TEST(MaaPiExecutionEngine, EngineMapsExecutionFailureToErrorCode)
 {
     FakeMaaApiBoundary fake;
     fake.wait_status_by_entry["StartDaily"] = MaaTaskStatus::Failed;
-    FakeProcessRunner  runner;
-    ScopedRuntimeHooks hooks(fake, runner);
+    FakeProcessRunner        runner;
+    const ScopedRuntimeHooks hooks(fake, runner);
 
     MaaPiExecutionEngine engine;
     auto output = engine.Execute(MakeDefaultInput(), fake, nullptr);
@@ -213,8 +213,8 @@ TEST(MaaPiExecutionEngine, EngineMapsExecutionFailureToErrorCode)
 
 TEST(MaaPiExecutionEngine, EngineRespectsStopToken)
 {
-    FakeMaaApiBoundary fake;
-    ScopedBoundaryHook hook(fake);
+    FakeMaaApiBoundary       fake;
+    const ScopedBoundaryHook hook(fake);
 
     RequestedStopToken stop;
 

@@ -11,9 +11,9 @@ using DAS::Core::IPC::ObjectId;
 // Test basic encode/decode with non-zero values
 TEST(ObjectIdTest, EncodeDecode_BasicValues)
 {
-    ObjectId original{.session_id = 1, .generation = 2, .local_id = 3};
-    uint64_t encoded = EncodeObjectId(original);
-    ObjectId decoded = DecodeObjectId(encoded);
+    ObjectId       original{.session_id = 1, .generation = 2, .local_id = 3};
+    const uint64_t encoded = EncodeObjectId(original);
+    ObjectId       decoded = DecodeObjectId(encoded);
 
     EXPECT_EQ(decoded.session_id, 1);
     EXPECT_EQ(decoded.generation, 2);
@@ -27,8 +27,8 @@ TEST(ObjectIdTest, EncodeDecode_BoundaryValues)
         .session_id = 0xFFFF,
         .generation = 0xFFFF,
         .local_id = 0xFFFFFFFF};
-    uint64_t encoded = EncodeObjectId(max_values);
-    ObjectId decoded = DecodeObjectId(encoded);
+    const uint64_t encoded = EncodeObjectId(max_values);
+    ObjectId       decoded = DecodeObjectId(encoded);
 
     EXPECT_EQ(decoded.session_id, 0xFFFF);
     EXPECT_EQ(decoded.generation, 0xFFFF);
@@ -38,9 +38,9 @@ TEST(ObjectIdTest, EncodeDecode_BoundaryValues)
 // Test encode/decode with all zero values
 TEST(ObjectIdTest, EncodeDecode_ZeroValues)
 {
-    ObjectId zero{.session_id = 0, .generation = 0, .local_id = 0};
-    uint64_t encoded = EncodeObjectId(zero);
-    ObjectId decoded = DecodeObjectId(encoded);
+    ObjectId       zero{.session_id = 0, .generation = 0, .local_id = 0};
+    const uint64_t encoded = EncodeObjectId(zero);
+    ObjectId       decoded = DecodeObjectId(encoded);
 
     EXPECT_EQ(encoded, 0);
     EXPECT_EQ(decoded.session_id, 0);
@@ -98,7 +98,7 @@ TEST(ObjectIdTest, IsNullObjectId_EncodedZero)
 // Test IsNullObjectId with encoded non-zero
 TEST(ObjectIdTest, IsNullObjectId_EncodedNonZero)
 {
-    ObjectId obj{.session_id = 1, .generation = 0, .local_id = 0};
-    uint64_t encoded = EncodeObjectId(obj);
+    ObjectId       obj{.session_id = 1, .generation = 0, .local_id = 0};
+    const uint64_t encoded = EncodeObjectId(obj);
     EXPECT_FALSE(IsNullObjectId(encoded));
 }

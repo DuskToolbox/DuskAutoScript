@@ -19,9 +19,9 @@ namespace Plugins::DasMaaPi
             DasResult                            error_code,
             const char*                          message)
         {
-            DasReadOnlyString locale_str{locale};
-            DasReadOnlyString msg_str{message};
-            const auto        result = lens->RegisterErrorMessage(
+            const DasReadOnlyString locale_str{locale};
+            const DasReadOnlyString msg_str{message};
+            const auto              result = lens->RegisterErrorMessage(
                 locale_str.Get(),
                 error_code,
                 msg_str.Get());

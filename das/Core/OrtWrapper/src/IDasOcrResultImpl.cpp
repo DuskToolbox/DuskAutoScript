@@ -21,7 +21,7 @@ DasResult IDasOcrResultImpl::GetText(IDasReadOnlyString** pp_text)
 {
     DAS_UTILS_CHECK_POINTER(pp_text);
 
-    DasReadOnlyString str(text_.c_str());
+    const DasReadOnlyString str(text_.c_str());
     Das::Utils::SetResult(str, pp_text);
     return DAS_S_OK;
 }

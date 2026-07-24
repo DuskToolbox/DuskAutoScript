@@ -82,7 +82,7 @@ std::string ReadStringFromBuffer(
     const std::vector<uint8_t>& buffer,
     size_t&                     offset)
 {
-    uint16_t    len = ReadFromBuffer<uint16_t>(buffer, offset);
+    const uint16_t len = ReadFromBuffer<uint16_t>(buffer, offset);
     std::string str(reinterpret_cast<const char*>(buffer.data() + offset), len);
     offset += len;
     return str;
@@ -127,8 +127,8 @@ protected:
 
 TEST_F(IpcCommandHandlerTest, LookupObject_Success)
 {
-    ObjectId obj_id{.session_id = 1, .generation = 1, .local_id = 100};
-    DasGuid  iid = CreateTestGuid(
+    ObjectId      obj_id{.session_id = 1, .generation = 1, .local_id = 100};
+    const DasGuid iid = CreateTestGuid(
         0x12345678,
         0x1234,
         0x5678,
@@ -149,7 +149,7 @@ TEST_F(IpcCommandHandlerTest, LookupObject_Success)
     auto               header = MakeHeader(IpcCommandType::LOOKUP_OBJECT);
     IpcCommandResponse response;
 
-    DasResult result = handler_.HandleCommand(header, payload, response);
+    const DasResult result = handler_.HandleCommand(header, payload, response);
 
     EXPECT_EQ(result, DAS_S_OK);
 
@@ -159,19 +159,20 @@ TEST_F(IpcCommandHandlerTest, LookupObject_Success)
     EXPECT_EQ(returned_id.session_id, 1);
     EXPECT_EQ(returned_id.local_id, 100);
 
-    DasGuid returned_iid =
+    const DasGuid returned_iid =
         ReadFromBuffer<DasGuid>(response.response_data, offset);
     EXPECT_EQ(returned_iid.data1, 0x12345678);
 
-    uint16_t returned_session =
+    const uint16_t returned_session =
         ReadFromBuffer<uint16_t>(response.response_data, offset);
     EXPECT_EQ(returned_session, 1);
 
-    uint16_t returned_version =
+    const uint16_t returned_version =
         ReadFromBuffer<uint16_t>(response.response_data, offset);
     EXPECT_EQ(returned_version, 2);
 
-    std::string name = ReadStringFromBuffer(response.response_data, offset);
+    const std::string name =
+        ReadStringFromBuffer(response.response_data, offset);
     EXPECT_EQ(name, "test_object");
 }
 
@@ -185,15 +186,15 @@ TEST_F(IpcCommandHandlerTest, LookupObject_NotFound)
     auto               header = MakeHeader(IpcCommandType::LOOKUP_OBJECT);
     IpcCommandResponse response;
 
-    DasResult result = handler_.HandleCommand(header, payload, response);
+    const DasResult result = handler_.HandleCommand(header, payload, response);
 
     EXPECT_EQ(result, DAS_E_IPC_OBJECT_NOT_FOUND);
 }
 
 TEST_F(IpcCommandHandlerTest, LookupByName_Success)
 {
-    ObjectId obj_id{.session_id = 1, .generation = 1, .local_id = 100};
-    DasGuid  iid = CreateTestGuid(
+    ObjectId      obj_id{.session_id = 1, .generation = 1, .local_id = 100};
+    const DasGuid iid = CreateTestGuid(
         0x12345678,
         0x1234,
         0x5678,
@@ -214,7 +215,7 @@ TEST_F(IpcCommandHandlerTest, LookupByName_Success)
     auto               header = MakeHeader(IpcCommandType::LOOKUP_BY_NAME);
     IpcCommandResponse response;
 
-    DasResult result = handler_.HandleCommand(header, payload, response);
+    const DasResult result = handler_.HandleCommand(header, payload, response);
 
     EXPECT_EQ(result, DAS_S_OK);
 
@@ -225,21 +226,22 @@ TEST_F(IpcCommandHandlerTest, LookupByName_Success)
     EXPECT_EQ(returned_id.local_id, 100);
 
     // Verify DasGuid in response matches the registered IID
-    DasGuid returned_iid =
+    const DasGuid returned_iid =
         ReadFromBuffer<DasGuid>(response.response_data, offset);
     EXPECT_EQ(returned_iid.data1, 0x12345678);
     EXPECT_EQ(returned_iid.data2, 0x1234);
     EXPECT_EQ(returned_iid.data3, 0x5678);
 
-    uint16_t returned_session =
+    const uint16_t returned_session =
         ReadFromBuffer<uint16_t>(response.response_data, offset);
     EXPECT_EQ(returned_session, 1);
 
-    uint16_t returned_version =
+    const uint16_t returned_version =
         ReadFromBuffer<uint16_t>(response.response_data, offset);
     EXPECT_EQ(returned_version, 1);
 
-    std::string name = ReadStringFromBuffer(response.response_data, offset);
+    const std::string name =
+        ReadStringFromBuffer(response.response_data, offset);
     EXPECT_EQ(name, "test_object");
 }
 
@@ -251,15 +253,15 @@ TEST_F(IpcCommandHandlerTest, LookupByName_NotFound)
     auto               header = MakeHeader(IpcCommandType::LOOKUP_BY_NAME);
     IpcCommandResponse response;
 
-    DasResult result = handler_.HandleCommand(header, payload, response);
+    const DasResult result = handler_.HandleCommand(header, payload, response);
 
     EXPECT_EQ(result, DAS_E_IPC_OBJECT_NOT_FOUND);
 }
 
 TEST_F(IpcCommandHandlerTest, LookupByInterface_Success)
 {
-    ObjectId obj_id{.session_id = 1, .generation = 1, .local_id = 100};
-    DasGuid  iid = CreateTestGuid(
+    ObjectId      obj_id{.session_id = 1, .generation = 1, .local_id = 100};
+    const DasGuid iid = CreateTestGuid(
         0x12345678,
         0x1234,
         0x5678,
@@ -280,7 +282,7 @@ TEST_F(IpcCommandHandlerTest, LookupByInterface_Success)
     auto               header = MakeHeader(IpcCommandType::LOOKUP_BY_INTERFACE);
     IpcCommandResponse response;
 
-    DasResult result = handler_.HandleCommand(header, payload, response);
+    const DasResult result = handler_.HandleCommand(header, payload, response);
 
     EXPECT_EQ(result, DAS_S_OK);
 
@@ -292,7 +294,7 @@ TEST_F(IpcCommandHandlerTest, LookupByInterface_Success)
 
 TEST_F(IpcCommandHandlerTest, LookupByInterface_NotFound)
 {
-    DasGuid iid = CreateTestGuid(
+    const DasGuid iid = CreateTestGuid(
         0x87654321,
         0x4321,
         0x8765,
@@ -311,7 +313,7 @@ TEST_F(IpcCommandHandlerTest, LookupByInterface_NotFound)
     auto               header = MakeHeader(IpcCommandType::LOOKUP_BY_INTERFACE);
     IpcCommandResponse response;
 
-    DasResult result = handler_.HandleCommand(header, payload, response);
+    const DasResult result = handler_.HandleCommand(header, payload, response);
 
     EXPECT_EQ(result, DAS_E_IPC_OBJECT_NOT_FOUND);
 }
@@ -323,20 +325,21 @@ TEST_F(IpcCommandHandlerTest, ListObjects_Empty)
     auto               header = MakeHeader(IpcCommandType::LIST_OBJECTS);
     IpcCommandResponse response;
 
-    DasResult result = handler_.HandleCommand(header, payload, response);
+    const DasResult result = handler_.HandleCommand(header, payload, response);
 
     EXPECT_EQ(result, DAS_S_OK);
 
-    size_t   offset = 0;
-    uint32_t count = ReadFromBuffer<uint32_t>(response.response_data, offset);
+    size_t         offset = 0;
+    const uint32_t count =
+        ReadFromBuffer<uint32_t>(response.response_data, offset);
     EXPECT_EQ(count, 0);
 }
 
 TEST_F(IpcCommandHandlerTest, ListObjects_WithObjects)
 {
-    ObjectId obj1{.session_id = 1, .generation = 1, .local_id = 100};
-    ObjectId obj2{.session_id = 2, .generation = 1, .local_id = 200};
-    DasGuid  iid = CreateTestGuid(
+    ObjectId      obj1{.session_id = 1, .generation = 1, .local_id = 100};
+    ObjectId      obj2{.session_id = 2, .generation = 1, .local_id = 200};
+    const DasGuid iid = CreateTestGuid(
         0x12345678,
         0x1234,
         0x5678,
@@ -357,21 +360,22 @@ TEST_F(IpcCommandHandlerTest, ListObjects_WithObjects)
     auto               header = MakeHeader(IpcCommandType::LIST_OBJECTS);
     IpcCommandResponse response;
 
-    DasResult result = handler_.HandleCommand(header, payload, response);
+    const DasResult result = handler_.HandleCommand(header, payload, response);
 
     EXPECT_EQ(result, DAS_S_OK);
 
-    size_t   offset = 0;
-    uint32_t count = ReadFromBuffer<uint32_t>(response.response_data, offset);
+    size_t         offset = 0;
+    const uint32_t count =
+        ReadFromBuffer<uint32_t>(response.response_data, offset);
     EXPECT_EQ(count, 2);
 }
 
 TEST_F(IpcCommandHandlerTest, ListSessionObjects_Success)
 {
-    ObjectId obj1{.session_id = 1, .generation = 1, .local_id = 100};
-    ObjectId obj2{.session_id = 2, .generation = 1, .local_id = 200};
-    ObjectId obj3{.session_id = 1, .generation = 1, .local_id = 300};
-    DasGuid  iid = CreateTestGuid(
+    ObjectId      obj1{.session_id = 1, .generation = 1, .local_id = 100};
+    ObjectId      obj2{.session_id = 2, .generation = 1, .local_id = 200};
+    ObjectId      obj3{.session_id = 1, .generation = 1, .local_id = 300};
+    const DasGuid iid = CreateTestGuid(
         0x12345678,
         0x1234,
         0x5678,
@@ -394,20 +398,21 @@ TEST_F(IpcCommandHandlerTest, ListSessionObjects_Success)
     auto header = MakeHeader(IpcCommandType::LIST_SESSION_OBJECTS);
     IpcCommandResponse response;
 
-    DasResult result = handler_.HandleCommand(header, payload, response);
+    const DasResult result = handler_.HandleCommand(header, payload, response);
 
     EXPECT_EQ(result, DAS_S_OK);
 
-    size_t   offset = 0;
-    uint32_t count = ReadFromBuffer<uint32_t>(response.response_data, offset);
+    size_t         offset = 0;
+    const uint32_t count =
+        ReadFromBuffer<uint32_t>(response.response_data, offset);
     EXPECT_EQ(count, 2);
 }
 
 TEST_F(IpcCommandHandlerTest, ClearSession_Success)
 {
-    ObjectId obj1{.session_id = 1, .generation = 1, .local_id = 100};
-    ObjectId obj2{.session_id = 2, .generation = 1, .local_id = 200};
-    DasGuid  iid = CreateTestGuid(
+    ObjectId      obj1{.session_id = 1, .generation = 1, .local_id = 100};
+    ObjectId      obj2{.session_id = 2, .generation = 1, .local_id = 200};
+    const DasGuid iid = CreateTestGuid(
         0x12345678,
         0x1234,
         0x5678,
@@ -429,7 +434,7 @@ TEST_F(IpcCommandHandlerTest, ClearSession_Success)
     auto               header = MakeHeader(IpcCommandType::CLEAR_SESSION);
     IpcCommandResponse response;
 
-    DasResult result = handler_.HandleCommand(header, payload, response);
+    const DasResult result = handler_.HandleCommand(header, payload, response);
 
     EXPECT_EQ(result, DAS_S_OK);
     EXPECT_FALSE(registry_.ObjectExists(obj1));
@@ -443,21 +448,21 @@ TEST_F(IpcCommandHandlerTest, Ping_Success)
     auto               header = MakeHeader(IpcCommandType::PING);
     IpcCommandResponse response;
 
-    DasResult result = handler_.HandleCommand(header, payload, response);
+    const DasResult result = handler_.HandleCommand(header, payload, response);
 
     EXPECT_EQ(result, DAS_S_OK);
 
-    size_t   offset = 0;
-    uint64_t timestamp =
+    size_t         offset = 0;
+    const uint64_t timestamp =
         ReadFromBuffer<uint64_t>(response.response_data, offset);
     EXPECT_GT(timestamp, 0);
 }
 
 TEST_F(IpcCommandHandlerTest, GetObjectCount_Success)
 {
-    ObjectId obj1{.session_id = 1, .generation = 1, .local_id = 100};
-    ObjectId obj2{.session_id = 2, .generation = 1, .local_id = 200};
-    DasGuid  iid = CreateTestGuid(
+    ObjectId      obj1{.session_id = 1, .generation = 1, .local_id = 100};
+    ObjectId      obj2{.session_id = 2, .generation = 1, .local_id = 200};
+    const DasGuid iid = CreateTestGuid(
         0x12345678,
         0x1234,
         0x5678,
@@ -478,12 +483,13 @@ TEST_F(IpcCommandHandlerTest, GetObjectCount_Success)
     auto               header = MakeHeader(IpcCommandType::GET_OBJECT_COUNT);
     IpcCommandResponse response;
 
-    DasResult result = handler_.HandleCommand(header, payload, response);
+    const DasResult result = handler_.HandleCommand(header, payload, response);
 
     EXPECT_EQ(result, DAS_S_OK);
 
-    size_t   offset = 0;
-    uint64_t count = ReadFromBuffer<uint64_t>(response.response_data, offset);
+    size_t         offset = 0;
+    const uint64_t count =
+        ReadFromBuffer<uint64_t>(response.response_data, offset);
     EXPECT_EQ(count, 2);
 }
 
@@ -494,7 +500,7 @@ TEST_F(IpcCommandHandlerTest, InvalidCommand_ReturnsError)
     auto               header = MakeHeader(static_cast<IpcCommandType>(255));
     IpcCommandResponse response;
 
-    DasResult result = handler_.HandleCommand(header, payload, response);
+    const DasResult result = handler_.HandleCommand(header, payload, response);
 
     EXPECT_EQ(result, DAS_E_IPC_INVALID_MESSAGE_TYPE);
 }

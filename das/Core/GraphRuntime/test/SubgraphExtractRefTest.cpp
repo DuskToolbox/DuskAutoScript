@@ -304,7 +304,7 @@ namespace
         auto parent_entry =
             MakeRepositoryEntry(1, replace_result.updated_graph_document);
 
-        std::vector<TaskDto> all_entries = {parent_entry, child_entry};
+        const std::vector<TaskDto> all_entries = {parent_entry, child_entry};
 
         // The child entry is referenced by the parent via entryRef
         auto check =
@@ -353,8 +353,8 @@ namespace
 
         // If we build entries from the restored state, the child is no
         // longer referenced.
-        auto                 restored_entry = MakeRepositoryEntry(1, restored);
-        std::vector<TaskDto> entries_after_undo = {restored_entry};
+        auto restored_entry = MakeRepositoryEntry(1, restored);
+        const std::vector<TaskDto> entries_after_undo = {restored_entry};
 
         auto check = ref_manager.CheckDelete(
             extract_result.child_entry_id,
@@ -523,7 +523,7 @@ namespace
 
     TEST_F(SubgraphExtractRefTest, ShallowCopyPreservesEntryId)
     {
-        EntryRefDto original{
+        const EntryRefDto original{
             "entryRef",
             42,
             int64_t{7},
@@ -551,7 +551,7 @@ namespace
         auto root_entry = MakeRepositoryEntry(100, root_doc);
         auto child_entry = MakeRepositoryEntry(200, child_doc);
 
-        std::vector<TaskDto> all_entries = {root_entry, child_entry};
+        const std::vector<TaskDto> all_entries = {root_entry, child_entry};
 
         std::vector<TaskDto> created;
         auto factory = [&created](const TaskDto& src) mutable -> GraphEntryId
@@ -607,7 +607,7 @@ namespace
         auto root_entry = MakeRepositoryEntry(100, root_doc);
         auto child_entry = MakeRepositoryEntry(200, child_doc);
 
-        std::vector<TaskDto> all_entries = {root_entry, child_entry};
+        const std::vector<TaskDto> all_entries = {root_entry, child_entry};
 
         std::vector<TaskDto> created;
         auto factory = [&created](const TaskDto& src) mutable -> GraphEntryId
@@ -1016,7 +1016,7 @@ namespace
             MakeRepositoryEntry(1, replace1.updated_graph_document);
         auto parent2_entry = MakeRepositoryEntry(2, parent2);
 
-        std::vector<TaskDto> all_entries = {
+        const std::vector<TaskDto> all_entries = {
             parent1_entry,
             parent2_entry,
             child1_entry};

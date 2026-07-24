@@ -23,7 +23,7 @@ PluginResourceIndex& PluginResourceIndex::GetInstance()
 void PluginResourceIndex::ConfigurePluginResourceScanRoot(
     std::filesystem::path scan_root)
 {
-    std::unique_lock lock(mutex_);
+    const std::unique_lock lock(mutex_);
 
     if (scan_root_configured_ && scan_root_ == scan_root)
     {
@@ -52,7 +52,7 @@ DasResult PluginResourceIndex::ResolvePluginResourceEntryByGuid(
     }
 
     {
-        std::shared_lock lock(mutex_);
+        const std::shared_lock lock(mutex_);
         if (!cache_stale_)
         {
             auto it = entries_.find(lookup_guid);
@@ -77,8 +77,8 @@ DasResult PluginResourceIndex::ResolvePluginResourceEntryByGuid(
         return result;
     }
 
-    std::shared_lock lock(mutex_);
-    auto             it = entries_.find(lookup_guid);
+    const std::shared_lock lock(mutex_);
+    auto                   it = entries_.find(lookup_guid);
     if (it != entries_.end())
     {
         *pp_out = &(it->second);
@@ -100,7 +100,7 @@ DasResult PluginResourceIndex::ResolveResourceFullPath(
         return DAS_E_INVALID_PATH;
     }
 
-    std::filesystem::path rp(relative_path);
+    const std::filesystem::path rp(relative_path);
 
     if (rp.is_absolute())
     {
@@ -161,7 +161,7 @@ DasResult PluginResourceIndex::ResolveResourceFullPath(
 
 void PluginResourceIndex::InvalidateCache()
 {
-    std::unique_lock lock(mutex_);
+    const std::unique_lock lock(mutex_);
     cache_stale_ = true;
     DAS_CORE_LOG_INFO("PluginResourceIndex: cache invalidated");
 }
@@ -170,7 +170,7 @@ DasResult PluginResourceIndex::ScanAndPublish()
 {
     std::filesystem::path scan_root;
     {
-        std::shared_lock lock(mutex_);
+        const std::shared_lock lock(mutex_);
         scan_root = scan_root_;
     }
 
@@ -218,8 +218,8 @@ DasResult PluginResourceIndex::ScanAndPublish()
         PluginPackageDesc desc;
         try
         {
-            std::ifstream ifs(manifest_path);
-            std::string   content(
+            std::ifstream     ifs(manifest_path);
+            const std::string content(
                 (std::istreambuf_iterator<char>(ifs)),
                 std::istreambuf_iterator<char>());
             auto parsed = Das::Utils::ParseYyjsonFromString(content);
@@ -305,7 +305,7 @@ DasResult PluginResourceIndex::ScanAndPublish()
 
     size_t published_count = 0;
     {
-        std::unique_lock lock(mutex_);
+        const std::unique_lock lock(mutex_);
         published_count = temp_entries.size();
         entries_ = std::move(temp_entries);
         cache_stale_ = false;
@@ -329,7 +329,7 @@ DasResult PluginResourceIndex::ValidateResourcePath(
         return DAS_E_INVALID_PATH;
     }
 
-    std::filesystem::path rp(resource_path);
+    const std::filesystem::path rp(resource_path);
 
     if (rp.is_absolute())
     {
@@ -339,7 +339,7 @@ DasResult PluginResourceIndex::ValidateResourcePath(
         return DAS_E_INVALID_PATH;
     }
 
-    std::string rp_str{DAS::Utils::U8AsString(rp.u8string())};
+    const std::string rp_str{DAS::Utils::U8AsString(rp.u8string())};
     if (rp_str.find("..") != std::string::npos)
     {
         DAS_CORE_LOG_WARN(

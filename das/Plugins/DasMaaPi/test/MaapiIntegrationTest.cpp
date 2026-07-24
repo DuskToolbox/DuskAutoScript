@@ -478,9 +478,9 @@ TEST_F(MaapiIntegrationFixture, V28E2EPretaskSuccessPathRunsBeforeController)
     EXPECT_EQ(compiled.envelope->maapi.pretasks[1].name, "Warmup");
     EXPECT_EQ(compiled.envelope->maapi.pretasks[2].name, "Cleanup");
 
-    FakePretaskRunner   runner;
-    ScopedPretaskRunner hook(&runner);
-    FakeMaaApiBoundary  fake;
+    FakePretaskRunner         runner;
+    const ScopedPretaskRunner hook(&runner);
+    FakeMaaApiBoundary        fake;
     fake.resource_hash = compiled.envelope->maapi.resource_hash.value_or("");
     auto run_result = MaaRuntime::Run(*compiled.envelope, fake, nullptr);
     EXPECT_EQ(run_result.das_result, DAS_S_OK);
@@ -515,8 +515,8 @@ TEST_F(MaapiIntegrationFixture, V28E2EPretaskNonzeroExitAbortsBeforeController)
     nonzero.launched = true;
     nonzero.exit_code = 7;
     runner.scripted_results.push_back(nonzero);
-    ScopedPretaskRunner hook(&runner);
-    FakeMaaApiBoundary  fake;
+    const ScopedPretaskRunner hook(&runner);
+    FakeMaaApiBoundary        fake;
     fake.resource_hash = compiled.envelope->maapi.resource_hash.value_or("");
     auto run_result = MaaRuntime::Run(*compiled.envelope, fake, nullptr);
     EXPECT_EQ(run_result.das_result, DAS_E_MAAPI_PRETASK_FAILED);
@@ -543,8 +543,8 @@ TEST_F(MaapiIntegrationFixture, V28E2EPretaskSpawnFailureAbortsBeforeController)
     spawn_fail.launched = false;
     spawn_fail.failure_message = "ENOENT: tools/bootstrap.exe";
     runner.scripted_results.push_back(spawn_fail);
-    ScopedPretaskRunner hook(&runner);
-    FakeMaaApiBoundary  fake;
+    const ScopedPretaskRunner hook(&runner);
+    FakeMaaApiBoundary        fake;
     fake.resource_hash = compiled.envelope->maapi.resource_hash.value_or("");
     auto run_result = MaaRuntime::Run(*compiled.envelope, fake, nullptr);
     EXPECT_EQ(run_result.das_result, DAS_E_MAAPI_PRETASK_FAILED);
@@ -615,7 +615,7 @@ TEST_F(MaapiIntegrationFixture, V28E2EWin32TypedControllerEmitsTypedInitParams)
     // typed init params instead of defaulting to the first controller
     // (Android).
     auto context = ParseDasJson(
-        "{\"adapter\":{\"interfacePath\":\"" + interface_path
+        R"({"adapter":{"interfacePath":")" + interface_path
         + "\",\"executionPolicy\":{\"failFast\":true}},"
           "\"pi\":{\"controllerName\":\"Desktop\","
           "\"resourceName\":\"Official\"}}");

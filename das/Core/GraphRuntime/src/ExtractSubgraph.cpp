@@ -39,13 +39,13 @@ ExtractResult ExtractSubgraph::Extract(
     // --- Pre-conditions ---
     if (selected_node_ids.empty())
     {
-        result.diagnostics.push_back("No nodes selected for extract");
+        result.diagnostics.emplace_back("No nodes selected for extract");
         return result;
     }
 
     if (selected_node_ids.size() == parent_graph_doc.nodes.size())
     {
-        result.diagnostics.push_back(
+        result.diagnostics.emplace_back(
             "Cannot extract entire graph — all nodes selected");
         return result;
     }
@@ -69,8 +69,8 @@ ExtractResult ExtractSubgraph::Extract(
 
     for (const auto& edge : parent_graph_doc.edges)
     {
-        bool src_in = selected_node_ids.count(edge.source_node_id) > 0;
-        bool tgt_in = selected_node_ids.count(edge.target_node_id) > 0;
+        const bool src_in = selected_node_ids.count(edge.source_node_id) > 0;
+        const bool tgt_in = selected_node_ids.count(edge.target_node_id) > 0;
 
         if (src_in && tgt_in)
         {
@@ -198,7 +198,7 @@ ExtractResult ExtractSubgraph::Extract(
 
     if (result.child_entry_id == 0)
     {
-        result.diagnostics.push_back(
+        result.diagnostics.emplace_back(
             "entry_factory returned 0 — child entry not created");
         return result;
     }
@@ -238,14 +238,14 @@ ReplaceResult ExtractSubgraph::ReplaceWithSubgraph(
     // --- Validate ExtractResult ---
     if (extract_result.child_entry_id == 0)
     {
-        result.diagnostics.push_back(
+        result.diagnostics.emplace_back(
             "Invalid ExtractResult: child_entry_id = 0");
         return result;
     }
 
     if (selected_node_ids.empty())
     {
-        result.diagnostics.push_back("No nodes selected for replacement");
+        result.diagnostics.emplace_back("No nodes selected for replacement");
         return result;
     }
 
@@ -294,8 +294,8 @@ ReplaceResult ExtractSubgraph::ReplaceWithSubgraph(
     // Classify and rewire edges
     for (const auto& edge : parent_graph_doc.edges)
     {
-        bool src_in = selected_node_ids.count(edge.source_node_id) > 0;
-        bool tgt_in = selected_node_ids.count(edge.target_node_id) > 0;
+        const bool src_in = selected_node_ids.count(edge.source_node_id) > 0;
+        const bool tgt_in = selected_node_ids.count(edge.target_node_id) > 0;
 
         if (src_in && tgt_in)
         {

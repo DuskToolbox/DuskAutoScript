@@ -37,7 +37,7 @@ TEST(
 
 TEST(ReadOnlyStringManualProxyFactoryTest, StubInterfaceIdMatchesProxy)
 {
-    DasReadOnlyStringStub stub;
+    const DasReadOnlyStringStub stub;
     EXPECT_EQ(stub.GetInterfaceId(), DasReadOnlyStringProxy::InterfaceId);
 }
 
@@ -63,7 +63,7 @@ TEST(ReadOnlyStringManualProxyFactoryTest, IID_GuidMatchesSpecification)
 
 TEST(ReadOnlyStringStubTest, InterfaceId_ReturnsCorrectValue)
 {
-    DasReadOnlyStringStub stub;
+    const DasReadOnlyStringStub stub;
     EXPECT_EQ(stub.GetInterfaceId(), 0xFD698AF1u);
 }
 
@@ -205,7 +205,7 @@ TEST(ReadOnlyStringNullTerminationTest, EnsureUtf8Derived_NoTrailingNul)
     buffer[kCount] = u'\0';
 
     // Construct UnicodeString with size()-1 to exclude the NUL
-    icu::UnicodeString icu_str(
+    const icu::UnicodeString icu_str(
         reinterpret_cast<const UChar*>(buffer.data()),
         static_cast<int32_t>(buffer.size() - 1));
 
@@ -217,7 +217,7 @@ TEST(ReadOnlyStringNullTerminationTest, EnsureUtf8Derived_NoTrailingNul)
     EXPECT_EQ(utf8_result, "Hello");
     EXPECT_EQ(utf8_result.size(), 5u);
     // Verify no embedded NUL anywhere
-    for (char c : utf8_result)
+    for (const char c : utf8_result)
     {
         EXPECT_NE(c, '\0');
     }
@@ -236,11 +236,11 @@ TEST(ReadOnlyStringNullTerminationTest, EnsureUtf32Derived_NoTrailingNul)
     std::memcpy(buffer.data(), kData, kCount * sizeof(char16_t));
     buffer[kCount] = u'\0';
 
-    icu::UnicodeString icu_str(
+    const icu::UnicodeString icu_str(
         reinterpret_cast<const UChar*>(buffer.data()),
         static_cast<int32_t>(buffer.size() - 1));
 
-    int32_t char_count = icu_str.countChar32();
+    const int32_t char_count = icu_str.countChar32();
     EXPECT_EQ(char_count, static_cast<int32_t>(kCount));
 
     // Convert to UTF-32

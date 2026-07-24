@@ -74,8 +74,8 @@ TEST_F(SettingsManagerConcurrencyTest, SameKeySerialized)
 
     EXPECT_EQ(ops_done.load(), 2);
 
-    auto    result = sm_->GetPluginSettingsJson("0", key_guid);
-    int64_t final_value =
+    auto          result = sm_->GetPluginSettingsJson("0", key_guid);
+    const int64_t final_value =
         (*result.as_object())[std::string_view("value")].as_sint().value();
     EXPECT_TRUE(final_value >= 49);
     EXPECT_TRUE(final_value <= 1049);
@@ -106,7 +106,7 @@ TEST_F(SettingsManagerConcurrencyTest, HttpWholeFileVsPluginFieldRace)
     {
         for (int i = 0; i < 20; ++i)
         {
-            yyjson::value field_val(std::to_string(i));
+            const yyjson::value field_val(std::to_string(i));
             sm_->UpdatePluginSettingsFieldJson(
                 "0",
                 key_guid,
@@ -209,7 +209,7 @@ TEST_F(
             // UpdatePluginSettingsFieldJson performs a single-API RMW:
             // per-key mutex -> read current -> set field -> WriteJsonFile ->
             // snapshot
-            yyjson::value field_val(std::to_string(i));
+            const yyjson::value field_val(std::to_string(i));
             sm_->UpdatePluginSettingsFieldJson(
                 "0",
                 test_guid,

@@ -57,7 +57,7 @@ namespace
         const unsigned char pixels[] = {10, 20, 30, 255, 40, 50, 60, 255};
         std::copy_n(pixels, std::min(byte_count, sizeof(pixels)), data);
 
-        DAS::ExportInterface::DasSize size{width, height};
+        const DAS::ExportInterface::DasSize size{width, height};
         return ::CreateIDasImageFromRgb888(memory.Get(), &size, pp_out_image);
     }
 
@@ -147,8 +147,8 @@ TEST(AiCpuImplTest, CreateSessionNullOut_ReturnsInvalidPointer)
 {
     auto* ai = new Das::Core::OrtWrapper::AiCpuImpl{};
 
-    DasReadOnlyString path("nonexistent.onnx");
-    auto              result = ai->CreateSession(path.Get(), nullptr, nullptr);
+    const DasReadOnlyString path("nonexistent.onnx");
+    auto result = ai->CreateSession(path.Get(), nullptr, nullptr);
     EXPECT_EQ(result, DAS_E_INVALID_POINTER);
 
     ai->Release();
@@ -159,7 +159,7 @@ TEST(AiCpuImplTest, CreateSessionInvalidPath_ReturnsError)
     auto* ai = new Das::Core::OrtWrapper::AiCpuImpl{};
 
     DasPtr<Das::ExportInterface::IDasSession> session;
-    DasReadOnlyString                         path("nonexistent_model.onnx");
+    const DasReadOnlyString                   path("nonexistent_model.onnx");
     auto result = ai->CreateSession(path.Get(), nullptr, session.Put());
     EXPECT_NE(result, DAS_S_OK);
     EXPECT_EQ(session.Get(), nullptr);
@@ -181,7 +181,7 @@ TEST(AiCpuImplTest, CreateTensorFromImageNullImage_ReturnsInvalidPointer)
 
 TEST(AiCpuImplTest, CreateTensorFromImageValidRgbaInput_WritesTensor)
 {
-    DAS::DasPtr<DAS::Core::OrtWrapper::AiCpuImpl> ai{
+    const DAS::DasPtr<DAS::Core::OrtWrapper::AiCpuImpl> ai{
         new DAS::Core::OrtWrapper::AiCpuImpl{}};
 
     DAS::DasPtr<DAS::ExportInterface::IDasImage> image;
@@ -229,7 +229,7 @@ TEST(AiCpuImplTest, CreateTensorFromImageValidRgbaInput_WritesTensor)
 
 TEST(AiCpuImplTest, CreateTensorFromImageRetainsBackingAfterSourceRelease)
 {
-    DAS::DasPtr<DAS::Core::OrtWrapper::AiCpuImpl> ai{
+    const DAS::DasPtr<DAS::Core::OrtWrapper::AiCpuImpl> ai{
         new DAS::Core::OrtWrapper::AiCpuImpl{}};
 
     DAS::DasPtr<DAS::ExportInterface::IDasTensor> tensor;
@@ -270,7 +270,7 @@ TEST(
     AiCpuImplTest,
     CreateTensorFromImagePreprocessCopyStableAfterSourceMutation)
 {
-    DAS::DasPtr<DAS::Core::OrtWrapper::AiCpuImpl> ai{
+    const DAS::DasPtr<DAS::Core::OrtWrapper::AiCpuImpl> ai{
         new DAS::Core::OrtWrapper::AiCpuImpl{}};
 
     DAS::DasPtr<DAS::ExportInterface::IDasImage> image;
@@ -319,7 +319,7 @@ TEST(
     AiCpuImplTest,
     CreateTensorFromImageInvalidChannelCount_ReturnsInvalidArgument)
 {
-    DAS::DasPtr<DAS::Core::OrtWrapper::AiCpuImpl> ai{
+    const DAS::DasPtr<DAS::Core::OrtWrapper::AiCpuImpl> ai{
         new DAS::Core::OrtWrapper::AiCpuImpl{}};
 
     DAS::DasPtr<DAS::ExportInterface::IDasImage> image;
@@ -336,7 +336,7 @@ TEST(
 
 TEST(AiCpuImplTest, CreateTensorFromImageZeroStd_ReturnsInvalidArgument)
 {
-    DAS::DasPtr<DAS::Core::OrtWrapper::AiCpuImpl> ai{
+    const DAS::DasPtr<DAS::Core::OrtWrapper::AiCpuImpl> ai{
         new DAS::Core::OrtWrapper::AiCpuImpl{}};
 
     DAS::DasPtr<DAS::ExportInterface::IDasImage> image;

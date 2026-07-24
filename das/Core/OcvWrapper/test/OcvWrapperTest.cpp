@@ -224,7 +224,7 @@ namespace Das
                 32,
                 32,
                 DAS::ExportInterface::DAS_PIXEL_FORMAT_BGR);
-            DAS::ExportInterface::DasColorRange range{
+            const DAS::ExportInterface::DasColorRange range{
                 {0, 0, 0, 0},
                 {255, 255, 255, 255}};
             DAS::ExportInterface::IDasImage* out = nullptr;
@@ -927,7 +927,7 @@ namespace Das
             // Helper: create PNG-encoded test data
             auto MakePngData(int w, int h) -> std::vector<uint8_t>
             {
-                cv::Mat              img = MakeTestImage(h, w, 128, 64, 32);
+                const cv::Mat        img = MakeTestImage(h, w, 128, 64, 32);
                 std::vector<uint8_t> buf;
                 cv::imencode(".png", img, buf);
                 return buf;
@@ -988,9 +988,9 @@ namespace Das
             desc.data_size = rgb_data.size();
             desc.data_format = ExportInterface::DAS_IMAGE_FORMAT_RGB_888;
 
-            ExportInterface::DasSize    size{kWidth, kHeight};
-            ExportInterface::IDasImage* p_image = nullptr;
-            auto                        result =
+            const ExportInterface::DasSize size{kWidth, kHeight};
+            ExportInterface::IDasImage*    p_image = nullptr;
+            auto                           result =
                 CreateIDasImageFromDecodedData(&desc, &size, &p_image);
             ASSERT_EQ(result, DAS_S_OK);
 
@@ -1015,8 +1015,8 @@ namespace Das
             desc.data_size = 12;
             desc.data_format = ExportInterface::DAS_IMAGE_FORMAT_RGB_888;
 
-            ExportInterface::DasSize    size{2, 2};
-            ExportInterface::IDasImage* p_image = nullptr;
+            const ExportInterface::DasSize size{2, 2};
+            ExportInterface::IDasImage*    p_image = nullptr;
             EXPECT_EQ(
                 CreateIDasImageFromDecodedData(&desc, &size, &p_image),
                 DAS_E_INVALID_POINTER);
@@ -1032,8 +1032,8 @@ namespace Das
             desc.data_size = rgb.size();
             desc.data_format = ExportInterface::DAS_IMAGE_FORMAT_RGB_888;
 
-            ExportInterface::DasSize    size{2, 2};
-            ExportInterface::IDasImage* p_image = nullptr;
+            const ExportInterface::DasSize size{2, 2};
+            ExportInterface::IDasImage*    p_image = nullptr;
             EXPECT_EQ(
                 CreateIDasImageFromDecodedData(&desc, &size, &p_image),
                 DAS_E_OUT_OF_RANGE);
@@ -1049,8 +1049,8 @@ namespace Das
             desc.data_size = rgb.size();
             desc.data_format = ExportInterface::DAS_IMAGE_FORMAT_RGB_888;
 
-            ExportInterface::DasSize    size{0, 2};
-            ExportInterface::IDasImage* p_image = nullptr;
+            const ExportInterface::DasSize size{0, 2};
+            ExportInterface::IDasImage*    p_image = nullptr;
             EXPECT_EQ(
                 CreateIDasImageFromDecodedData(&desc, &size, &p_image),
                 DAS_E_INVALID_SIZE);
@@ -1068,8 +1068,8 @@ namespace Das
             auto* p_memory = new TestMemory(std::move(rgba_data));
             p_memory->AddRef();
 
-            ExportInterface::DasSize    size{kWidth, kHeight};
-            ExportInterface::IDasImage* p_image = nullptr;
+            const ExportInterface::DasSize size{kWidth, kHeight};
+            ExportInterface::IDasImage*    p_image = nullptr;
             auto result = CreateIDasImageFromRgb888(p_memory, &size, &p_image);
             ASSERT_EQ(result, DAS_S_OK);
 
@@ -1113,8 +1113,8 @@ namespace Das
             p_memory->AddRef();
             auto memory_destroyed = p_memory->DestroyedFlag();
 
-            ExportInterface::DasSize    size{kWidth, kHeight};
-            ExportInterface::IDasImage* p_image = nullptr;
+            const ExportInterface::DasSize size{kWidth, kHeight};
+            ExportInterface::IDasImage*    p_image = nullptr;
             ASSERT_EQ(
                 CreateIDasImageFromRgb888(p_memory, &size, &p_image),
                 DAS_S_OK);
@@ -1153,8 +1153,8 @@ namespace Das
             auto* p_memory = new TrackingMemory(std::move(rgba_data));
             p_memory->AddRef();
 
-            ExportInterface::DasSize    size{kWidth, kHeight};
-            ExportInterface::IDasImage* p_image = nullptr;
+            const ExportInterface::DasSize size{kWidth, kHeight};
+            ExportInterface::IDasImage*    p_image = nullptr;
             ASSERT_EQ(
                 CreateIDasImageFromRgb888(p_memory, &size, &p_image),
                 DAS_S_OK);
@@ -1232,8 +1232,8 @@ namespace Das
                 DAS_E_OUT_OF_RANGE);
             EXPECT_FALSE(out_of_range_view);
 
-            ExportInterface::DasSize    size{kWidth, kHeight};
-            ExportInterface::IDasImage* p_image = nullptr;
+            const ExportInterface::DasSize size{kWidth, kHeight};
+            ExportInterface::IDasImage*    p_image = nullptr;
             ASSERT_EQ(
                 CreateIDasImageFromRgb888(
                     payload_memory.Get(),
@@ -1280,8 +1280,8 @@ namespace Das
             auto* p_memory = new TrackingMemory(std::move(rgba_data));
             p_memory->AddRef();
 
-            ExportInterface::DasSize    size{kWidth, kHeight};
-            ExportInterface::IDasImage* p_image = nullptr;
+            const ExportInterface::DasSize size{kWidth, kHeight};
+            ExportInterface::IDasImage*    p_image = nullptr;
             ASSERT_EQ(
                 CreateIDasImageFromRgb888(p_memory, &size, &p_image),
                 DAS_S_OK);
@@ -1290,12 +1290,12 @@ namespace Das
 
             ExportInterface::IDasBinaryBuffer* p_first_buffer = nullptr;
             ASSERT_EQ(p_image->GetBinaryBuffer(&p_first_buffer), DAS_S_OK);
-            DAS::DasPtr<ExportInterface::IDasBinaryBuffer> first_buffer{
+            const DAS::DasPtr<ExportInterface::IDasBinaryBuffer> first_buffer{
                 p_first_buffer};
 
             ExportInterface::IDasBinaryBuffer* p_second_buffer = nullptr;
             ASSERT_EQ(p_image->GetBinaryBuffer(&p_second_buffer), DAS_S_OK);
-            DAS::DasPtr<ExportInterface::IDasBinaryBuffer> second_buffer{
+            const DAS::DasPtr<ExportInterface::IDasBinaryBuffer> second_buffer{
                 p_second_buffer};
 
             unsigned char* first_data = nullptr;
@@ -1321,8 +1321,8 @@ namespace Das
             auto*                p_memory = new TestMemory(std::move(rgba));
             p_memory->AddRef();
 
-            ExportInterface::DasSize    size{2, 2};
-            ExportInterface::IDasImage* p_image = nullptr;
+            const ExportInterface::DasSize size{2, 2};
+            ExportInterface::IDasImage*    p_image = nullptr;
             EXPECT_EQ(
                 CreateIDasImageFromRgb888(p_memory, &size, &p_image),
                 DAS_E_OUT_OF_RANGE);
@@ -1337,7 +1337,7 @@ namespace Das
             auto*                p_memory = new TestMemory(std::move(rgba));
             p_memory->AddRef();
 
-            ExportInterface::DasSize size{
+            const ExportInterface::DasSize size{
                 std::numeric_limits<int32_t>::max(),
                 std::numeric_limits<int32_t>::max()};
             ExportInterface::IDasImage* p_image = nullptr;
@@ -1406,8 +1406,8 @@ namespace Das
             desc.data_size = rgb.size();
             desc.data_format = ExportInterface::DAS_IMAGE_FORMAT_RGB_888;
 
-            ExportInterface::DasSize    size{kW, kH};
-            ExportInterface::IDasImage* p_image = nullptr;
+            const ExportInterface::DasSize size{kW, kH};
+            ExportInterface::IDasImage*    p_image = nullptr;
             ASSERT_EQ(
                 CreateIDasImageFromDecodedData(&desc, &size, &p_image),
                 DAS_S_OK);
@@ -1435,8 +1435,8 @@ namespace Das
             auto* p_mem = new TestMemory(std::move(rgba));
             p_mem->AddRef();
 
-            ExportInterface::DasSize    size{kW, kH};
-            ExportInterface::IDasImage* p_image = nullptr;
+            const ExportInterface::DasSize size{kW, kH};
+            ExportInterface::IDasImage*    p_image = nullptr;
             ASSERT_EQ(
                 CreateIDasImageFromRgb888(p_mem, &size, &p_image),
                 DAS_S_OK);
@@ -1461,11 +1461,11 @@ namespace Das
 
         TEST(CpuImageBinaryBufferTest, QI_Returns_IDasBinaryBuffer)
         {
-            cv::Mat mat = cv::Mat::zeros(10, 20, CV_8UC3);
-            auto*   img = CpuImageImpl<Storage::OwningStorage>::MakeFromCpuMat(
+            const cv::Mat mat = cv::Mat::zeros(10, 20, CV_8UC3);
+            auto* img = CpuImageImpl<Storage::OwningStorage>::MakeFromCpuMat(
                 mat,
                 ExportInterface::DAS_PIXEL_FORMAT_BGR);
-            DAS::DasPtr<IImageBackend> guard(img);
+            const DAS::DasPtr<IImageBackend> guard(img);
 
             void* ptr = nullptr;
             auto  result = img->QueryInterface(
@@ -1486,12 +1486,12 @@ namespace Das
             auto* img = CpuImageImpl<Storage::OwningStorage>::MakeFromCpuMat(
                 mat.clone(),
                 ExportInterface::DAS_PIXEL_FORMAT_BGR);
-            DAS::DasPtr<IImageBackend> guard(img);
+            const DAS::DasPtr<IImageBackend> guard(img);
 
             ExportInterface::IDasBinaryBuffer* p_buffer = nullptr;
             auto result = img->GetBinaryBuffer(&p_buffer);
             ASSERT_EQ(result, DAS_S_OK);
-            DAS::DasPtr<ExportInterface::IDasBinaryBuffer> buffer_guard(
+            const DAS::DasPtr<ExportInterface::IDasBinaryBuffer> buffer_guard(
                 p_buffer);
 
             unsigned char* data = nullptr;

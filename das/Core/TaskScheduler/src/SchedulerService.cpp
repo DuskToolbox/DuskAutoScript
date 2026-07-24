@@ -22,6 +22,7 @@
 #include <cstdio>
 #include <ctime>
 #include <fstream>
+#include <ranges>
 #include <sstream>
 #include <thread>
 #include <unordered_set>
@@ -80,7 +81,7 @@ namespace Das::Core::TaskScheduler
         std::optional<PluginPackageDesc> ReadPluginManifestDesc(
             const std::filesystem::path& manifest_path)
         {
-            std::ifstream ifs(manifest_path);
+            const std::ifstream ifs(manifest_path);
             if (!ifs.is_open())
             {
                 return std::nullopt;
@@ -140,7 +141,7 @@ namespace Das::Core::TaskScheduler
                 return std::chrono::steady_clock::duration::zero();
             }
 
-            int64_t due = *inst.next_execution_time;
+            const int64_t due = *inst.next_execution_time;
 
             if (due <= now_unix)
             {
@@ -1074,7 +1075,7 @@ namespace Das::Core::TaskScheduler
                 return &inst;
             }
 
-            int64_t due = *inst.next_execution_time;
+            const int64_t due = *inst.next_execution_time;
 
             if (due > now_unix)
             {
@@ -1288,7 +1289,7 @@ namespace Das::Core::TaskScheduler
     {
         // Phase 1: Short lock for state validation and cleanup
         {
-            std::lock_guard<std::mutex> lock(mutex_);
+            const std::scoped_lock lock(mutex_);
 
             if (state_.load() == SchedulerState::Running
                 || state_.load() == SchedulerState::Stopping)
@@ -1307,11 +1308,10 @@ namespace Das::Core::TaskScheduler
                 task_repository_store_.reset();
                 capability_registry_.Clear();
                 repository_plugin_availability_.clear();
-                for (auto it = loaded_plugin_paths_.rbegin();
-                     it != loaded_plugin_paths_.rend();
-                     ++it)
+                for (auto& loaded_plugin_path :
+                     std::views::reverse(loaded_plugin_paths_))
                 {
-                    plugin_manager_.UnloadPlugin(*it);
+                    plugin_manager_.UnloadPlugin(loaded_plugin_path);
                 }
                 loaded_plugin_paths_.clear();
                 initialized_ = false;
@@ -1520,16 +1520,13 @@ namespace Das::Core::TaskScheduler
             auto task_order_arr =
                 *sched_obj->operator[](std::string_view("taskOrder"))
                      .as_array();
-            for (auto arr_it = task_order_arr.begin();
-                 arr_it != task_order_arr.end();
-                 ++arr_it)
+            for (auto&& task_id_val : task_order_arr)
             {
-                const auto& task_id_val = *arr_it;
                 if (!task_id_val.is_int())
                 {
                     continue;
                 }
-                int64_t tid = static_cast<int64_t>(task_id_val);
+                const int64_t tid = static_cast<int64_t>(task_id_val);
 
                 auto instance_json = settings.GetTaskInstanceJson("0", tid);
                 auto inst_obj_opt = instance_json.as_object();
@@ -1692,7 +1689,7 @@ namespace Das::Core::TaskScheduler
 
         // Phase 4: Short lock to commit results to runtime state
         {
-            std::lock_guard<std::mutex> lock(mutex_);
+            const std::scoped_lock lock(mutex_);
             task_types_ = std::move(temp_types);
             task_instances_ = std::move(temp_instances);
             task_repository_store_ = std::make_shared<TaskRepositoryStore>(
@@ -1717,7 +1714,7 @@ namespace Das::Core::TaskScheduler
 
     DasResult SchedulerService::Enable()
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        const std::scoped_lock lock(mutex_);
 
         if (state_.load() != SchedulerState::Stopped)
         {
@@ -1760,7 +1757,7 @@ namespace Das::Core::TaskScheduler
                 ipc_context_.get().GetIoContext());
         }
 
-        int64_t now_unix = SystemClock::to_time_t(SystemClock::now());
+        const int64_t now_unix = SystemClock::to_time_t(SystemClock::now());
         StartTickTimer(ComputeNextDelay(task_instances_, now_unix));
 
         DAS_CORE_LOG_INFO("SchedulerService::Enable: scheduler started");
@@ -1770,7 +1767,7 @@ namespace Das::Core::TaskScheduler
     DasResult SchedulerService::Disable()
     {
         {
-            std::lock_guard<std::mutex> lock(mutex_);
+            const std::scoped_lock lock(mutex_);
 
             if (state_.load() == SchedulerState::Stopping)
             {
@@ -1837,8 +1834,8 @@ namespace Das::Core::TaskScheduler
     std::optional<DasGuid> SchedulerService::FindTaskExecutionComponent(
         const DasGuid& task_guid) const
     {
-        std::lock_guard<std::mutex> lock(mutex_);
-        auto*                       execution_component =
+        const std::scoped_lock lock(mutex_);
+        auto*                  execution_component =
             capability_registry_.FindExecutionComponent(task_guid);
         if (execution_component == nullptr)
         {
@@ -1853,7 +1850,7 @@ namespace Das::Core::TaskScheduler
 
     yyjson::value SchedulerService::Get()
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        const std::scoped_lock lock(mutex_);
 
         auto result = Das::Utils::MakeYyjsonObject();
         auto result_obj = *result.as_object();
@@ -2015,7 +2012,7 @@ namespace Das::Core::TaskScheduler
     {
         std::shared_ptr<TaskRepositoryStore> store;
         {
-            std::lock_guard<std::mutex> lock(mutex_);
+            const std::scoped_lock lock(mutex_);
             if (!initialized_ || !task_repository_store_)
             {
                 return MakeRepositoryResponseError(
@@ -2028,7 +2025,7 @@ namespace Das::Core::TaskScheduler
         Repository::Dto::RepositoryGetResponseDto response;
         response.entries = store->ListEntries();
         {
-            std::lock_guard<std::mutex> lock(mutex_);
+            const std::scoped_lock lock(mutex_);
             for (auto& entry : response.entries)
             {
                 entry.availability = DeriveRepositoryAvailabilityLocked(entry);
@@ -2068,7 +2065,7 @@ namespace Das::Core::TaskScheduler
         std::shared_ptr<TaskRepositoryStore> store;
         TaskTypeRecord                       type_snapshot;
         {
-            std::lock_guard<std::mutex> lock(mutex_);
+            const std::scoped_lock lock(mutex_);
 
             if (state_.load() == SchedulerState::Running
                 || state_.load() == SchedulerState::Stopping)
@@ -2117,7 +2114,7 @@ namespace Das::Core::TaskScheduler
     {
         std::shared_ptr<TaskRepositoryStore> store;
         {
-            std::lock_guard<std::mutex> lock(mutex_);
+            const std::scoped_lock lock(mutex_);
             if (!initialized_ || !task_repository_store_)
             {
                 return DAS_E_OBJECT_NOT_INIT;
@@ -2142,7 +2139,7 @@ namespace Das::Core::TaskScheduler
 
         std::shared_ptr<TaskRepositoryStore> store;
         {
-            std::lock_guard<std::mutex> lock(mutex_);
+            const std::scoped_lock lock(mutex_);
             if (!initialized_ || !task_repository_store_)
             {
                 return MakeRepositoryResponseError(
@@ -2163,7 +2160,7 @@ namespace Das::Core::TaskScheduler
         }
 
         {
-            std::lock_guard<std::mutex> lock(mutex_);
+            const std::scoped_lock lock(mutex_);
             entry.availability = DeriveRepositoryAvailabilityLocked(entry);
         }
 
@@ -2178,8 +2175,8 @@ namespace Das::Core::TaskScheduler
         Repository::Dto::RepositoryEntryDto        entry;
         Repository::Dto::RepositoryAvailabilityDto availability;
         {
-            std::lock_guard<std::mutex> lock(mutex_);
-            auto                        idle_guard = CheckSchedulerIdleLocked();
+            const std::scoped_lock lock(mutex_);
+            auto                   idle_guard = CheckSchedulerIdleLocked();
             if (idle_guard)
             {
                 return MakeRepositoryResponseError(
@@ -2229,7 +2226,7 @@ namespace Das::Core::TaskScheduler
         }
 
         {
-            std::lock_guard<std::mutex> lock(mutex_);
+            const std::scoped_lock lock(mutex_);
             availability = DeriveRepositoryAvailabilityLocked(entry);
             if (availability.state != "available")
             {
@@ -2307,8 +2304,8 @@ namespace Das::Core::TaskScheduler
         Repository::Dto::RepositoryEntryDto  entry;
         std::shared_ptr<TaskRepositoryStore> store;
         {
-            std::lock_guard<std::mutex> lock(mutex_);
-            auto                        idle_guard = CheckSchedulerIdleLocked();
+            const std::scoped_lock lock(mutex_);
+            auto                   idle_guard = CheckSchedulerIdleLocked();
             if (idle_guard)
             {
                 return MakeRepositoryResponseError(
@@ -2359,7 +2356,7 @@ namespace Das::Core::TaskScheduler
         }
 
         {
-            std::lock_guard<std::mutex> lock(mutex_);
+            const std::scoped_lock lock(mutex_);
             auto availability = DeriveRepositoryAvailabilityLocked(entry);
             if (availability.state != "available")
             {
@@ -2467,8 +2464,8 @@ namespace Das::Core::TaskScheduler
         TaskAuthoringCapability             capability;
         Repository::Dto::RepositoryEntryDto entry;
         {
-            std::lock_guard<std::mutex> lock(mutex_);
-            auto                        idle_guard = CheckSchedulerIdleLocked();
+            const std::scoped_lock lock(mutex_);
+            auto                   idle_guard = CheckSchedulerIdleLocked();
             if (idle_guard)
             {
                 return MakeRepositoryResponseError(
@@ -2518,7 +2515,7 @@ namespace Das::Core::TaskScheduler
         }
 
         {
-            std::lock_guard<std::mutex> lock(mutex_);
+            const std::scoped_lock lock(mutex_);
             auto availability = DeriveRepositoryAvailabilityLocked(entry);
             if (availability.state != "available")
             {
@@ -2613,7 +2610,7 @@ namespace Das::Core::TaskScheduler
         };
 
         {
-            std::lock_guard<std::mutex> lock(mutex_);
+            const std::scoped_lock lock(mutex_);
             if (state_.load() == SchedulerState::Running
                 || state_.load() == SchedulerState::Stopping)
             {
@@ -2650,7 +2647,7 @@ namespace Das::Core::TaskScheduler
                 return std::nullopt;
             }
 
-            std::lock_guard<std::mutex> lock(mutex_);
+            const std::scoped_lock lock(mutex_);
             entry.availability = DeriveRepositoryAvailabilityLocked(entry);
             return entry;
         };
@@ -2669,8 +2666,8 @@ namespace Das::Core::TaskScheduler
                 return std::nullopt;
             }
 
-            std::lock_guard<std::mutex> lock(mutex_);
-            auto*                       execution_component =
+            const std::scoped_lock lock(mutex_);
+            auto*                  execution_component =
                 capability_registry_.FindExecutionComponent(task_guid);
             if (execution_component == nullptr)
             {
@@ -2699,7 +2696,7 @@ namespace Das::Core::TaskScheduler
 
             TaskAuthoringCapability capability;
             {
-                std::lock_guard<std::mutex> lock(mutex_);
+                const std::scoped_lock lock(mutex_);
                 auto* authoring = capability_registry_.FindAuthoring(task_guid);
                 if (authoring == nullptr)
                 {
@@ -2775,7 +2772,7 @@ namespace Das::Core::TaskScheduler
         // dangling pointer if Initialize/Disable clears task_types_.
         TaskTypeRecord type_snapshot;
         {
-            std::lock_guard<std::mutex> lock(mutex_);
+            const std::scoped_lock lock(mutex_);
 
             if (state_.load() == SchedulerState::Running
                 || state_.load() == SchedulerState::Stopping)
@@ -2921,8 +2918,8 @@ namespace Das::Core::TaskScheduler
 
         // Phase 3: Short lock to commit to runtime state
         {
-            std::lock_guard<std::mutex> lock(mutex_);
-            auto*                       type_rec = FindTaskType(task_guid);
+            const std::scoped_lock lock(mutex_);
+            auto*                  type_rec = FindTaskType(task_guid);
             rec.task_type = type_rec;
             task_instances_.push_back(std::move(rec));
         }
@@ -2939,7 +2936,7 @@ namespace Das::Core::TaskScheduler
     {
         // Phase 1: Short lock to validate state and check existence
         {
-            std::lock_guard<std::mutex> lock(mutex_);
+            const std::scoped_lock lock(mutex_);
 
             if (state_.load() == SchedulerState::Running
                 || state_.load() == SchedulerState::Stopping)
@@ -2975,13 +2972,11 @@ namespace Das::Core::TaskScheduler
                 // Build new array without the deleted task
                 auto new_arr = Das::Utils::MakeYyjsonArray();
                 auto new_arr_ref = *new_arr.as_array();
-                for (auto oit = order_arr.begin(); oit != order_arr.end();
-                     ++oit)
+                for (auto&& oit : order_arr)
                 {
-                    if (!(*oit).is_int()
-                        || static_cast<int64_t>(*oit) != task_id)
+                    if (!oit.is_int() || static_cast<int64_t>(oit) != task_id)
                     {
-                        new_arr_ref.emplace_back(CloneJsonValue(*oit));
+                        new_arr_ref.emplace_back(CloneJsonValue(oit));
                     }
                 }
                 si_obj->operator[](std::string_view("taskOrder")) =
@@ -3008,8 +3003,8 @@ namespace Das::Core::TaskScheduler
             if (!DAS::IsFailed(delete_result) && !DAS::IsFailed(index_result))
             {
                 // Persistence succeeded — remove from runtime state
-                std::lock_guard<std::mutex> commit_lock(mutex_);
-                auto                        it = std::find_if(
+                const std::scoped_lock commit_lock(mutex_);
+                auto                   it = std::find_if(
                     task_instances_.begin(),
                     task_instances_.end(),
                     [task_id](const TaskInstanceRecord& r)
@@ -3051,7 +3046,7 @@ namespace Das::Core::TaskScheduler
                       descriptors;
         yyjson::value current_properties;
         {
-            std::lock_guard<std::mutex> lock(mutex_);
+            const std::scoped_lock lock(mutex_);
 
             if (state_.load() == SchedulerState::Running
                 || state_.load() == SchedulerState::Stopping)
@@ -3181,8 +3176,8 @@ namespace Das::Core::TaskScheduler
 
         // Phase 3: Short lock to commit properties to runtime state
         {
-            std::lock_guard<std::mutex> lock(mutex_);
-            auto*                       inst = FindTaskInstance(task_id);
+            const std::scoped_lock lock(mutex_);
+            auto*                  inst = FindTaskInstance(task_id);
             if (inst)
             {
                 inst->properties = std::move(current_properties);
@@ -3204,7 +3199,7 @@ namespace Das::Core::TaskScheduler
         std::optional<int64_t> new_next_time;
         bool                   has_update = false;
         {
-            std::lock_guard<std::mutex> lock(mutex_);
+            const std::scoped_lock lock(mutex_);
 
             if (state_.load() == SchedulerState::Running
                 || state_.load() == SchedulerState::Stopping)
@@ -3283,8 +3278,8 @@ namespace Das::Core::TaskScheduler
 
         // Phase 3: Short lock to commit to runtime state
         {
-            std::lock_guard<std::mutex> lock(mutex_);
-            auto*                       inst = FindTaskInstance(task_id);
+            const std::scoped_lock lock(mutex_);
+            auto*                  inst = FindTaskInstance(task_id);
             if (inst)
             {
                 inst->next_execution_time = new_next_time;
@@ -3306,7 +3301,7 @@ namespace Das::Core::TaskScheduler
         // safe to flip while the scheduler is running (that is the feature's
         // core value: pause/resume a single task without stopping the world).
         {
-            std::lock_guard<std::mutex> lock(mutex_);
+            const std::scoped_lock lock(mutex_);
 
             if (!initialized_)
             {
@@ -3347,8 +3342,8 @@ namespace Das::Core::TaskScheduler
 
         // Phase 3: Short lock to commit to runtime state.
         {
-            std::lock_guard<std::mutex> lock(mutex_);
-            auto*                       inst = FindTaskInstance(task_id);
+            const std::scoped_lock lock(mutex_);
+            auto*                  inst = FindTaskInstance(task_id);
             if (inst)
             {
                 inst->enabled = enabled;
@@ -3366,8 +3361,8 @@ namespace Das::Core::TaskScheduler
         DasGuid                 task_guid{};
         yyjson::value           properties;
         {
-            std::lock_guard<std::mutex> lock(mutex_);
-            auto*                       inst = FindTaskInstance(task_id);
+            const std::scoped_lock lock(mutex_);
+            auto*                  inst = FindTaskInstance(task_id);
             if (!inst)
             {
                 return MakeAuthoringResponseError(
@@ -3443,8 +3438,8 @@ namespace Das::Core::TaskScheduler
         TaskAuthoringCapability capability;
         yyjson::value           properties;
         {
-            std::lock_guard<std::mutex> lock(mutex_);
-            auto                        idle_guard = CheckSchedulerIdleLocked();
+            const std::scoped_lock lock(mutex_);
+            auto                   idle_guard = CheckSchedulerIdleLocked();
             if (idle_guard)
             {
                 return MakeAuthoringResponseError(
@@ -3547,8 +3542,8 @@ namespace Das::Core::TaskScheduler
         }
 
         {
-            std::lock_guard<std::mutex> lock(mutex_);
-            auto*                       inst = FindTaskInstance(task_id);
+            const std::scoped_lock lock(mutex_);
+            auto*                  inst = FindTaskInstance(task_id);
             if (inst)
             {
                 inst->properties =
@@ -3578,8 +3573,8 @@ namespace Das::Core::TaskScheduler
         TaskAuthoringCapability capability;
         yyjson::value           properties;
         {
-            std::lock_guard<std::mutex> lock(mutex_);
-            auto*                       inst = FindTaskInstance(task_id);
+            const std::scoped_lock lock(mutex_);
+            auto*                  inst = FindTaskInstance(task_id);
             if (!inst)
             {
                 return MakeAuthoringResponseError(
@@ -3682,7 +3677,7 @@ namespace Das::Core::TaskScheduler
         int64_t now_unix = SystemClock::to_time_t(SystemClock::now());
 
         {
-            std::lock_guard<std::mutex> lock(mutex_);
+            const std::scoped_lock lock(mutex_);
 
             if (state_.load() != SchedulerState::Running)
             {
@@ -3888,7 +3883,7 @@ namespace Das::Core::TaskScheduler
         int64_t persist_id = 0;
         int64_t persist_time = 0;
         {
-            std::lock_guard<std::mutex> lock(mutex_);
+            const std::scoped_lock lock(mutex_);
 
             // Update the instance record with refreshed nextExecutionTime
             if (selected_inst && has_refreshed_time)
@@ -3957,7 +3952,7 @@ namespace Das::Core::TaskScheduler
     void SchedulerService::PostPersistEvent(int64_t task_id, int64_t next_time)
     {
         {
-            std::lock_guard<std::mutex> lock(config_persist_mutex_);
+            const std::scoped_lock lock(config_persist_mutex_);
             config_persist_queue_.push({task_id, next_time});
         }
         config_persist_cv_.notify_one();
@@ -3979,7 +3974,7 @@ namespace Das::Core::TaskScheduler
             // Drain all pending events before checking shutdown
             while (!config_persist_queue_.empty())
             {
-                auto event = std::move(config_persist_queue_.front());
+                auto event = config_persist_queue_.front();
                 config_persist_queue_.pop();
                 lock.unlock();
 

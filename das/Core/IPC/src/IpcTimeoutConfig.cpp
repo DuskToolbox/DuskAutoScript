@@ -16,7 +16,7 @@ namespace IpcTimeoutConfig
 
     std::chrono::milliseconds FetchAndResetTimeout()
     {
-        uint32_t timeout = t_timeout_ms;
+        const uint32_t timeout = t_timeout_ms;
         t_timeout_ms = 0; // 重置为无限
         return std::chrono::milliseconds(timeout);
     }

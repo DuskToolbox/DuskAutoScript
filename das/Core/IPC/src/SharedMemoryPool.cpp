@@ -50,7 +50,7 @@ SharedMemoryPool::SharedMemoryPool(
 
         boost::interprocess::shared_memory_object::remove(pool_name.c_str());
 
-        IpcSecurityAttributes ipc_sec;
+        const IpcSecurityAttributes ipc_sec;
         impl_->segment_ =
             std::make_unique<boost::interprocess::managed_shared_memory>(
                 boost::interprocess::create_only,
@@ -88,7 +88,7 @@ SharedMemoryPool::~SharedMemoryPool() { Uninitialize(); }
 
 void SharedMemoryPool::Uninitialize()
 {
-    std::lock_guard<std::mutex> lock(impl_->mutex_);
+    const std::scoped_lock lock(impl_->mutex_);
 
     // 幂等性检查：如果已经关闭，直接返回
     // 这防止了 DestroyPool 中显式调用 Uninitialize() 后，
@@ -114,7 +114,7 @@ void SharedMemoryPool::Uninitialize()
 
 DasResult SharedMemoryPool::Allocate(size_t size, SharedMemoryBlock& block)
 {
-    std::lock_guard<std::mutex> lock(impl_->mutex_);
+    const std::scoped_lock lock(impl_->mutex_);
 
     if (!impl_->segment_)
     {
@@ -176,7 +176,7 @@ DasResult SharedMemoryPool::GetAddressByHandle(uint64_t handle, void*& out)
 
 DasResult SharedMemoryPool::Deallocate(uint64_t handle)
 {
-    std::lock_guard<std::mutex> lock(impl_->mutex_);
+    const std::scoped_lock lock(impl_->mutex_);
 
     if (!impl_->segment_)
     {
@@ -254,7 +254,7 @@ DasResult SharedMemoryPool::GetBlockByHandle(
     uint64_t           handle,
     SharedMemoryBlock& block)
 {
-    std::lock_guard<std::mutex> lock(impl_->mutex_);
+    const std::scoped_lock lock(impl_->mutex_);
 
     if (!impl_->segment_)
     {
@@ -295,7 +295,7 @@ DasResult SharedMemoryPool::CleanupStaleBlocks()
     // 真正的大消息块由接收方通过 ShmBlockGuard 析构释放。
     // 崩溃兜底：随连接销毁 + 进程重启时 shared_memory_object::remove（见 Create
     // 分支）。
-    std::lock_guard<std::mutex> lock(impl_->mutex_);
+    const std::scoped_lock lock(impl_->mutex_);
 
     if (!impl_->segment_)
     {
@@ -316,7 +316,7 @@ DasResult SharedMemoryPool::CleanupStaleBlocks()
         }
     }
 
-    for (uint64_t handle : blocks_to_remove)
+    for (const uint64_t handle : blocks_to_remove)
     {
         auto it = impl_->block_metadata_.find(handle);
         if (it != impl_->block_metadata_.end())
@@ -345,7 +345,7 @@ size_t SharedMemoryPool::GetTotalSize() const { return impl_->total_size_; }
 
 size_t SharedMemoryPool::GetUsedSize() const
 {
-    std::lock_guard<std::mutex> lock(impl_->mutex_);
+    const std::scoped_lock lock(impl_->mutex_);
     return impl_->used_size_;
 }
 
@@ -361,7 +361,7 @@ SharedMemoryManager::~SharedMemoryManager() { Uninitialize(); }
 
 void SharedMemoryManager::Uninitialize()
 {
-    std::lock_guard<std::mutex> lock(impl_->mutex_);
+    const std::scoped_lock lock(impl_->mutex_);
     impl_->pools_.clear();
 }
 
@@ -369,20 +369,20 @@ DasResult SharedMemoryManager::CreatePool(
     const std::string& pool_id,
     size_t             size)
 {
-    std::string pool_name =
+    const std::string pool_name =
         MakePoolName(1, static_cast<uint16_t>(std::stoul(pool_id)));
 
     auto pool = std::make_unique<SharedMemoryPool>(pool_name, size);
 
-    std::lock_guard<std::mutex> lock(impl_->mutex_);
+    const std::scoped_lock lock(impl_->mutex_);
     impl_->pools_[pool_id] = std::move(pool);
     return DAS_S_OK;
 }
 
 DasResult SharedMemoryManager::DestroyPool(const std::string& pool_id)
 {
-    std::lock_guard<std::mutex> lock(impl_->mutex_);
-    auto                        it = impl_->pools_.find(pool_id);
+    const std::scoped_lock lock(impl_->mutex_);
+    auto                   it = impl_->pools_.find(pool_id);
     if (it == impl_->pools_.end())
     {
         DAS_CORE_LOG_ERROR("Pool not found for pool_id = {}", pool_id);
@@ -399,8 +399,8 @@ DasResult SharedMemoryManager::GetPool(
     const std::string& pool_id,
     SharedMemoryPool*& pool)
 {
-    std::lock_guard<std::mutex> lock(impl_->mutex_);
-    auto                        it = impl_->pools_.find(pool_id);
+    const std::scoped_lock lock(impl_->mutex_);
+    auto                   it = impl_->pools_.find(pool_id);
     if (it == impl_->pools_.end())
     {
         DAS_CORE_LOG_ERROR("Pool not found for pool_id = {}", pool_id);

@@ -33,9 +33,9 @@ std::pair<DasResult, DasPtr<IDasBase>> CreateProxyByInterfaceIdWithFallback(
 {
     ManualProxyFactory manual_factory = nullptr;
     {
-        std::lock_guard lock{GetManualRegistryMutex()};
-        auto&           registry = GetManualRegistry();
-        auto            it = registry.find(interface_id);
+        const std::scoped_lock lock{GetManualRegistryMutex()};
+        auto&                  registry = GetManualRegistry();
+        auto                   it = registry.find(interface_id);
         if (it != registry.end())
         {
             manual_factory = it->second;
@@ -75,7 +75,7 @@ void RegisterManualProxyFactory(
     uint32_t           interface_id,
     ManualProxyFactory factory)
 {
-    std::lock_guard lock{GetManualRegistryMutex()};
+    const std::scoped_lock lock{GetManualRegistryMutex()};
     GetManualRegistry()[interface_id] = factory;
 }
 

@@ -145,7 +145,7 @@ namespace Das::Http
                 return DAS_E_TYPE_ERROR;
             }
             // Copy to std::string for null-terminated c_str()
-            std::string str_val(opt.value());
+            const std::string str_val(opt.value());
             return CreateIDasReadOnlyStringFromUtf8(
                 str_val.c_str(),
                 pp_out_string);
@@ -469,7 +469,7 @@ namespace Das::Http
             {
                 return DAS_E_TYPE_ERROR;
             }
-            std::string str_val(opt.value());
+            const std::string str_val(opt.value());
             return CreateIDasReadOnlyStringFromUtf8(
                 str_val.c_str(),
                 pp_out_string);

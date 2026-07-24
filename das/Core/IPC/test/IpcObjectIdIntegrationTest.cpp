@@ -71,7 +71,7 @@ TEST_F(IpcObjectIdIntegrationTest, ObjectId_EncodeDecode)
     ObjectId original{.session_id = 1, .generation = 5, .local_id = 100};
 
     // 编码为 uint64_t
-    uint64_t encoded = EncodeObjectId(original);
+    const uint64_t encoded = EncodeObjectId(original);
     EXPECT_NE(encoded, 0u);
 
     // 解码回 ObjectId
@@ -98,9 +98,9 @@ TEST_F(IpcObjectIdIntegrationTest, DistributedObjectManager_RegisterLocalObject)
     // 测试注册本地对象
     object_manager_->SetSessionId(1);
 
-    auto      test_object = new MockDasObject();
-    ObjectId  out_object_id{};
-    DasResult result =
+    auto            test_object = new MockDasObject();
+    ObjectId        out_object_id{};
+    const DasResult result =
         object_manager_->RegisterLocalObject(test_object, out_object_id);
 
     ASSERT_EQ(result, DAS_S_OK);
@@ -117,8 +117,8 @@ TEST_F(
     DistributedObjectManager_RegisterRemoteObject)
 {
     // 测试注册远程对象
-    ObjectId  remote_id{2, 1, 100}; // session_id=2 表示远程 Host
-    DasResult result = object_manager_->RegisterRemoteObject(remote_id);
+    ObjectId        remote_id{2, 1, 100}; // session_id=2 表示远程 Host
+    const DasResult result = object_manager_->RegisterRemoteObject(remote_id);
 
     ASSERT_EQ(result, DAS_S_OK);
 
@@ -137,7 +137,7 @@ TEST_F(IpcObjectIdIntegrationTest, DistributedObjectManager_LookupObject)
 
     // 查找对象（LookupObject 内部 AddRef）
     DAS::DasPtr<IDasBase> found_holder;
-    DasResult             result =
+    const DasResult       result =
         object_manager_->LookupObject(object_id, found_holder.Put());
 
     ASSERT_EQ(result, DAS_S_OK);
@@ -166,9 +166,9 @@ TEST_F(IpcObjectIdIntegrationTest, DistributedObjectManager_IsValidObject)
 TEST_F(IpcObjectIdIntegrationTest, RemoteObjectRegistry_RegisterObject)
 {
     // 在 RemoteObjectRegistry 中注册远程对象
-    ObjectId    obj_id{2, 1, 100}; // Host session_id = 2
-    DasGuid     iid = CreateTestGuid(1);
-    std::string name = "TestRemoteObject";
+    ObjectId          obj_id{2, 1, 100}; // Host session_id = 2
+    const DasGuid     iid = CreateTestGuid(1);
+    const std::string name = "TestRemoteObject";
 
     DasResult result = registry_.RegisterObject(obj_id, iid, 2, name, 1);
     ASSERT_EQ(result, DAS_S_OK);
@@ -184,15 +184,15 @@ TEST_F(IpcObjectIdIntegrationTest, RemoteObjectRegistry_RegisterObject)
 TEST_F(IpcObjectIdIntegrationTest, RemoteObjectRegistry_LookupByName)
 {
     // 注册对象
-    ObjectId    obj_id{2, 1, 100};
-    DasGuid     iid = CreateTestGuid(1);
-    std::string name = "TestObject";
+    ObjectId          obj_id{2, 1, 100};
+    const DasGuid     iid = CreateTestGuid(1);
+    const std::string name = "TestObject";
 
     ASSERT_EQ(registry_.RegisterObject(obj_id, iid, 2, name, 1), DAS_S_OK);
 
     // 按名称查找
     RemoteObjectInfo info;
-    DasResult        result = registry_.LookupByName(name, info);
+    const DasResult  result = registry_.LookupByName(name, info);
     ASSERT_EQ(result, DAS_S_OK);
     EXPECT_EQ(info.object_id.local_id, 100u);
 }
@@ -200,8 +200,8 @@ TEST_F(IpcObjectIdIntegrationTest, RemoteObjectRegistry_LookupByName)
 TEST_F(IpcObjectIdIntegrationTest, RemoteObjectRegistry_UnregisterObject)
 {
     // 注册对象
-    ObjectId obj_id{2, 1, 100};
-    DasGuid  iid = CreateTestGuid(1);
+    ObjectId      obj_id{2, 1, 100};
+    const DasGuid iid = CreateTestGuid(1);
 
     ASSERT_EQ(
         registry_.RegisterObject(obj_id, iid, 2, "TestObject", 1),
@@ -227,7 +227,7 @@ TEST_F(IpcObjectIdIntegrationTest, ObjectIdBidirectionalSync_HostToMain)
         2,
         1,
         1}; // session_id=2 (Host), generation=1, local_id=1
-    DasGuid iid = CreateTestGuid(100);
+    const DasGuid iid = CreateTestGuid(100);
 
     // 2. 数据平面响应携带 ObjectId，主进程在 RemoteObjectRegistry 中注册
     DasResult result =
@@ -246,8 +246,8 @@ TEST_F(IpcObjectIdIntegrationTest, ObjectIdBidirectionalSync_Unregister)
 {
     // 模拟 Host 进程销毁对象并同步到主进程
     // 1. 先注册对象
-    ObjectId obj_id{2, 1, 100};
-    DasGuid  iid = CreateTestGuid(1);
+    ObjectId      obj_id{2, 1, 100};
+    const DasGuid iid = CreateTestGuid(1);
 
     ASSERT_EQ(
         registry_.RegisterObject(obj_id, iid, 2, "TestObject", 1),
@@ -298,7 +298,7 @@ TEST_F(IpcObjectIdIntegrationTest, LocalObjectFallback_LookupLocal)
 
     // 2. 查找本地对象（LookupObject 内部 AddRef）
     DAS::DasPtr<IDasBase> found_holder;
-    DasResult             result =
+    const DasResult       result =
         object_manager_->LookupObject(object_id, found_holder.Put());
 
     ASSERT_EQ(result, DAS_S_OK);
@@ -317,7 +317,7 @@ TEST_F(IpcObjectIdIntegrationTest, LocalObjectFallback_RemoteLookup)
 
     // 2. 尝试查找远程对象（因为没有指针，应该返回错误或 nullptr）
     DAS::DasPtr<IDasBase> found_holder;
-    DasResult             result =
+    const DasResult       result =
         object_manager_->LookupObject(remote_id, found_holder.Put());
 
     // 远程对象在本地没有指针，返回错误是预期行为
@@ -339,7 +339,7 @@ TEST_F(IpcObjectIdIntegrationTest, InterfacePointer_EncodeDecode)
         DAS_S_OK);
 
     // 2. 编码 ObjectId（模拟序列化）
-    uint64_t encoded = EncodeObjectId(object_id);
+    const uint64_t encoded = EncodeObjectId(object_id);
     EXPECT_NE(encoded, 0u);
 
     // 3. 解码 ObjectId（模拟反序列化）
@@ -347,7 +347,7 @@ TEST_F(IpcObjectIdIntegrationTest, InterfacePointer_EncodeDecode)
 
     // 4. 查找对象（LookupObject 内部 AddRef）
     DAS::DasPtr<IDasBase> found_holder;
-    DasResult             result =
+    const DasResult       result =
         object_manager_->LookupObject(decoded, found_holder.Put());
 
     ASSERT_EQ(result, DAS_S_OK);
@@ -382,8 +382,8 @@ TEST_F(IpcObjectIdIntegrationTest, CreateRemoteProxy_InterfaceHash)
     test_iid.data4[7] = 0x88;
 
     // 计算两次，验证结果一致
-    uint32_t hash1 = RemoteObjectRegistry::ComputeInterfaceId(test_iid);
-    uint32_t hash2 = RemoteObjectRegistry::ComputeInterfaceId(test_iid);
+    const uint32_t hash1 = RemoteObjectRegistry::ComputeInterfaceId(test_iid);
+    const uint32_t hash2 = RemoteObjectRegistry::ComputeInterfaceId(test_iid);
 
     EXPECT_EQ(hash1, hash2);
     // 验证哈希值不为 0 (有效的接口应该有非零哈希)
@@ -408,7 +408,7 @@ TEST_F(IpcObjectIdIntegrationTest, CreateRemoteProxy_UnknownInterface)
     unknown_iid.data4[7] = 0x88;
 
     // 计算接口哈希
-    uint32_t interface_hash =
+    const uint32_t interface_hash =
         RemoteObjectRegistry::ComputeInterfaceId(unknown_iid);
 
     // 这个哈希值不应该是已知的接口 (已知接口: 0xF5FBD328, 0xB6261785)

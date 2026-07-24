@@ -245,8 +245,8 @@ void CleanupMarkedPlugins(const std::filesystem::path& plugin_dir)
                 auto manifest = plugin_dir / (plugin_name + ".json");
                 if (std::filesystem::exists(manifest))
                 {
-                    std::ifstream ifs(manifest);
-                    std::string   content(
+                    std::ifstream     ifs(manifest);
+                    const std::string content(
                         (std::istreambuf_iterator<char>(ifs)),
                         std::istreambuf_iterator<char>());
                     auto parsed = Das::Utils::ParseYyjsonFromString(
@@ -307,7 +307,7 @@ DasResult MarkForDeletion(
                 marker_path = plugin_dir / (sr.desc.name + ".willBeDelete");
             }
 
-            std::ofstream ofs(marker_path);
+            const std::ofstream ofs(marker_path);
             if (!ofs)
             {
                 DAS_CORE_LOG_WARN(

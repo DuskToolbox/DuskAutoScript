@@ -181,7 +181,7 @@ namespace Das::Http::Beast::JsonUtils
         if (opt_str)
         {
             DasPtr<IDasReadOnlyString> result;
-            std::string                str(opt_str.value());
+            const std::string          str(opt_str.value());
             CreateIDasReadOnlyStringFromUtf8(str.c_str(), result.Put());
             return result;
         }

@@ -83,7 +83,7 @@ namespace
         auto* raw = new TestQIObject(42);
         ASSERT_EQ(raw->GetRefCount(), 0);
 
-        DAS::DasRef<ITestInterface> ref(raw);
+        const DAS::DasRef<ITestInterface> ref(raw);
         // DasRef(T*) calls DasPtr(T*) which AddRefs -> refcount = 1
         EXPECT_EQ(raw->GetRefCount(), 1);
         EXPECT_EQ(ref.get().GetValue(), 42);
@@ -101,12 +101,12 @@ namespace
     // Test 3: RefCount on copy — copy adds another reference
     TEST(DasRefTest, RefCountOnCopy)
     {
-        auto*                       raw = new TestQIObject(42);
-        DAS::DasRef<ITestInterface> ref1(raw);
+        auto*                             raw = new TestQIObject(42);
+        const DAS::DasRef<ITestInterface> ref1(raw);
         ASSERT_EQ(raw->GetRefCount(), 1);
 
         {
-            DAS::DasRef<ITestInterface> ref2(ref1);
+            const DAS::DasRef<ITestInterface> ref2(ref1);
             // Copy DasRef copies internal DasPtr (AddRef) -> refcount = 2
             EXPECT_EQ(raw->GetRefCount(), 2);
             EXPECT_EQ(ref2.get().GetValue(), 42);
@@ -122,7 +122,7 @@ namespace
         DAS::DasRef<ITestInterface> ref1(raw);
         ASSERT_EQ(raw->GetRefCount(), 1);
 
-        DAS::DasRef<ITestInterface> ref2(std::move(ref1));
+        const DAS::DasRef<ITestInterface> ref2(std::move(ref1));
         // Move DasRef transfers internal DasPtr (no AddRef) -> refcount still 1
         EXPECT_EQ(raw->GetRefCount(), 1);
         EXPECT_EQ(ref2.get().GetValue(), 42);
@@ -131,14 +131,14 @@ namespace
     // Test 5: Reference access via get() and operator T&()
     TEST(DasRefTest, ReferenceAccess)
     {
-        auto*                       raw = new TestQIObject(99);
-        DAS::DasRef<ITestInterface> ref(raw);
+        auto*                             raw = new TestQIObject(99);
+        const DAS::DasRef<ITestInterface> ref(raw);
 
         // get() returns T&
         EXPECT_EQ(ref.get().GetValue(), 99);
 
         // operator T&() via implicit conversion
-        ITestInterface& iface = ref;
+        const ITestInterface& iface = ref;
         EXPECT_EQ(iface.GetValue(), 99);
 
         // static_cast<ITestInterface&> uses operator T&()
@@ -152,7 +152,7 @@ namespace
         DAS::DasPtr<ITestInterface> ptr(raw);
         ASSERT_EQ(raw->GetRefCount(), 1);
 
-        DAS::DasRef<ITestInterface> ref(std::move(ptr));
+        const DAS::DasRef<ITestInterface> ref(std::move(ptr));
         // ptr is now empty (move transferred)
         EXPECT_EQ(ptr.Get(), nullptr);
         // ref owns the reference, refcount unchanged
@@ -172,10 +172,10 @@ namespace
     // Test 8: DasCRef from DasRef — const view
     TEST(DasRefTest, DasCRefFromDasRef)
     {
-        auto*                       raw = new TestQIObject(42);
-        DAS::DasRef<ITestInterface> ref(raw);
+        auto*                             raw = new TestQIObject(42);
+        const DAS::DasRef<ITestInterface> ref(raw);
 
-        DAS::DasCRef<ITestInterface> cref(ref);
+        const DAS::DasCRef<ITestInterface> cref(ref);
         EXPECT_EQ(cref.get().GetValue(), 42);
 
         // operator const T&()
@@ -186,8 +186,8 @@ namespace
     // Test 9: AsPtrInterop — as_ptr() for QI interop
     TEST(DasRefTest, AsPtrInterop)
     {
-        auto*                       raw = new TestQIObject(42);
-        DAS::DasRef<ITestInterface> ref(raw);
+        auto*                             raw = new TestQIObject(42);
+        const DAS::DasRef<ITestInterface> ref(raw);
         ASSERT_EQ(raw->GetRefCount(), 1);
 
         // as_ptr() returns const DasPtr<T>& for QI
@@ -206,10 +206,10 @@ namespace
     // Test 10: Copy semantics — both refs access same object
     TEST(DasRefTest, CopySemantics)
     {
-        auto*                       raw = new TestQIObject(42);
-        DAS::DasRef<ITestInterface> ref1(raw);
+        auto*                             raw = new TestQIObject(42);
+        const DAS::DasRef<ITestInterface> ref1(raw);
 
-        DAS::DasRef<ITestInterface> ref2 = ref1;
+        const DAS::DasRef<ITestInterface> ref2 = ref1;
         EXPECT_EQ(&ref1.get(), &ref2.get());
         EXPECT_EQ(ref2.get().GetValue(), 42);
         EXPECT_EQ(raw->GetRefCount(), 2);

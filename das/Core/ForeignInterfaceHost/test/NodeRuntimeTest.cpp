@@ -358,7 +358,7 @@ namespace
 
 TEST(NodeRuntimeResolver, UnsetEnvironmentUsesBareNodeLookup)
 {
-    ScopedEnvVar env{NODE_HOST_EXECUTABLE_ENV, std::nullopt};
+    const ScopedEnvVar env{NODE_HOST_EXECUTABLE_ENV, std::nullopt};
 
     auto resolved = NodeRuntime::ResolveNodeExecutable();
 
@@ -370,7 +370,7 @@ TEST(NodeRuntimeResolver, UnsetEnvironmentUsesBareNodeLookup)
 
 TEST(NodeRuntimeResolver, EmptyEnvironmentUsesBareNodeLookup)
 {
-    ScopedEnvVar env{NODE_HOST_EXECUTABLE_ENV, std::string{}};
+    const ScopedEnvVar env{NODE_HOST_EXECUTABLE_ENV, std::string{}};
 
     auto resolved = NodeRuntime::ResolveNodeExecutable();
 
@@ -382,12 +382,12 @@ TEST(NodeRuntimeResolver, StrictEnvironmentExecutableHasNoFallback)
 {
     TempNodeRuntimeLayout layout;
     layout.CreateRuntimePackageFiles();
-    ScopedEnvVar env{
+    const ScopedEnvVar env{
         NODE_HOST_EXECUTABLE_ENV,
         (layout.FakeNode().parent_path() / "missing-node.exe").string()};
 
-    NodeRuntime runtime{layout.PackageRoot(), layout.NodeModulesRoot()};
-    auto        launch = runtime.BuildHostLaunchDesc();
+    const NodeRuntime runtime{layout.PackageRoot(), layout.NodeModulesRoot()};
+    auto              launch = runtime.BuildHostLaunchDesc();
 
     ASSERT_FALSE(launch);
     EXPECT_EQ(launch.error(), DAS_E_FILE_NOT_FOUND);
@@ -397,10 +397,12 @@ TEST(NodeRuntimeResolver, StrictEnvironmentExecutableIsUsedWhenPresent)
 {
     TempNodeRuntimeLayout layout;
     layout.CreateRuntimePackageFiles();
-    ScopedEnvVar env{NODE_HOST_EXECUTABLE_ENV, layout.FakeNode().string()};
+    const ScopedEnvVar env{
+        NODE_HOST_EXECUTABLE_ENV,
+        layout.FakeNode().string()};
 
-    NodeRuntime runtime{layout.PackageRoot(), layout.NodeModulesRoot()};
-    auto        launch = runtime.BuildHostLaunchDesc();
+    const NodeRuntime runtime{layout.PackageRoot(), layout.NodeModulesRoot()};
+    auto              launch = runtime.BuildHostLaunchDesc();
 
     ASSERT_TRUE(launch);
     EXPECT_EQ(
@@ -410,7 +412,7 @@ TEST(NodeRuntimeResolver, StrictEnvironmentExecutableIsUsedWhenPresent)
 
 TEST(NodeRuntimePackage, ResolvesExplicitRuntimePackagePaths)
 {
-    TempNodeRuntimeLayout layout;
+    const TempNodeRuntimeLayout layout;
 
     const auto paths = NodeRuntime::ResolvePackagePaths(
         layout.PackageRoot(),
@@ -438,10 +440,12 @@ TEST(NodeRuntimePackage, LegacyPluginRootRuntimeArtifactsAreIgnored)
 {
     TempNodeRuntimeLayout layout;
     layout.CreateLegacyPluginRootRuntimeFiles();
-    ScopedEnvVar env{NODE_HOST_EXECUTABLE_ENV, layout.FakeNode().string()};
+    const ScopedEnvVar env{
+        NODE_HOST_EXECUTABLE_ENV,
+        layout.FakeNode().string()};
 
-    NodeRuntime runtime{layout.PackageRoot(), layout.NodeModulesRoot()};
-    auto        launch = runtime.BuildHostLaunchDesc();
+    const NodeRuntime runtime{layout.PackageRoot(), layout.NodeModulesRoot()};
+    auto              launch = runtime.BuildHostLaunchDesc();
 
     ASSERT_FALSE(launch);
     EXPECT_EQ(launch.error(), DAS_E_FILE_NOT_FOUND);
@@ -452,10 +456,12 @@ TEST(NodeRuntimePackage, MissingRuntimeRootFailsDeterministically)
     TempNodeRuntimeLayout layout;
     layout.CreateFakeNode();
     layout.CreatePluginManifest();
-    ScopedEnvVar env{NODE_HOST_EXECUTABLE_ENV, layout.FakeNode().string()};
+    const ScopedEnvVar env{
+        NODE_HOST_EXECUTABLE_ENV,
+        layout.FakeNode().string()};
 
-    NodeRuntime runtime{layout.PackageRoot(), layout.NodeModulesRoot()};
-    auto        launch = runtime.BuildHostLaunchDesc();
+    const NodeRuntime runtime{layout.PackageRoot(), layout.NodeModulesRoot()};
+    auto              launch = runtime.BuildHostLaunchDesc();
 
     ASSERT_FALSE(launch);
     EXPECT_EQ(launch.error(), DAS_E_FILE_NOT_FOUND);
@@ -466,10 +472,12 @@ TEST(NodeRuntimePackage, MissingPackageJsonFailsDeterministically)
     TempNodeRuntimeLayout layout;
     layout.CreateRuntimePackageFiles();
     layout.RemoveRuntimeFile("package.json");
-    ScopedEnvVar env{NODE_HOST_EXECUTABLE_ENV, layout.FakeNode().string()};
+    const ScopedEnvVar env{
+        NODE_HOST_EXECUTABLE_ENV,
+        layout.FakeNode().string()};
 
-    NodeRuntime runtime{layout.PackageRoot(), layout.NodeModulesRoot()};
-    auto        launch = runtime.BuildHostLaunchDesc();
+    const NodeRuntime runtime{layout.PackageRoot(), layout.NodeModulesRoot()};
+    auto              launch = runtime.BuildHostLaunchDesc();
 
     ASSERT_FALSE(launch);
     EXPECT_EQ(launch.error(), DAS_E_FILE_NOT_FOUND);
@@ -480,10 +488,12 @@ TEST(NodeRuntimePackage, MissingPackageEntryFailsDeterministically)
     TempNodeRuntimeLayout layout;
     layout.CreateRuntimePackageFiles();
     layout.RemoveRuntimeFile(PACKAGE_ENTRY_RELATIVE);
-    ScopedEnvVar env{NODE_HOST_EXECUTABLE_ENV, layout.FakeNode().string()};
+    const ScopedEnvVar env{
+        NODE_HOST_EXECUTABLE_ENV,
+        layout.FakeNode().string()};
 
-    NodeRuntime runtime{layout.PackageRoot(), layout.NodeModulesRoot()};
-    auto        launch = runtime.BuildHostLaunchDesc();
+    const NodeRuntime runtime{layout.PackageRoot(), layout.NodeModulesRoot()};
+    auto              launch = runtime.BuildHostLaunchDesc();
 
     ASSERT_FALSE(launch);
     EXPECT_EQ(launch.error(), DAS_E_FILE_NOT_FOUND);
@@ -494,10 +504,12 @@ TEST(NodeRuntimePackage, MissingWrapperFailsDeterministically)
     TempNodeRuntimeLayout layout;
     layout.CreateRuntimePackageFiles();
     layout.RemoveRuntimeFile(WRAPPER_RELATIVE);
-    ScopedEnvVar env{NODE_HOST_EXECUTABLE_ENV, layout.FakeNode().string()};
+    const ScopedEnvVar env{
+        NODE_HOST_EXECUTABLE_ENV,
+        layout.FakeNode().string()};
 
-    NodeRuntime runtime{layout.PackageRoot(), layout.NodeModulesRoot()};
-    auto        launch = runtime.BuildHostLaunchDesc();
+    const NodeRuntime runtime{layout.PackageRoot(), layout.NodeModulesRoot()};
+    auto              launch = runtime.BuildHostLaunchDesc();
 
     ASSERT_FALSE(launch);
     EXPECT_EQ(launch.error(), DAS_E_FILE_NOT_FOUND);
@@ -508,10 +520,12 @@ TEST(NodeRuntimePackage, MissingHostScriptFailsDeterministically)
     TempNodeRuntimeLayout layout;
     layout.CreateRuntimePackageFiles();
     layout.RemoveRuntimeFile(HOST_SCRIPT_RELATIVE);
-    ScopedEnvVar env{NODE_HOST_EXECUTABLE_ENV, layout.FakeNode().string()};
+    const ScopedEnvVar env{
+        NODE_HOST_EXECUTABLE_ENV,
+        layout.FakeNode().string()};
 
-    NodeRuntime runtime{layout.PackageRoot(), layout.NodeModulesRoot()};
-    auto        launch = runtime.BuildHostLaunchDesc();
+    const NodeRuntime runtime{layout.PackageRoot(), layout.NodeModulesRoot()};
+    auto              launch = runtime.BuildHostLaunchDesc();
 
     ASSERT_FALSE(launch);
     EXPECT_EQ(launch.error(), DAS_E_FILE_NOT_FOUND);
@@ -522,10 +536,12 @@ TEST(NodeRuntimePackage, MissingAddonFailsDeterministically)
     TempNodeRuntimeLayout layout;
     layout.CreateRuntimePackageFiles();
     layout.RemoveRuntimeFile(ADDON_RELATIVE);
-    ScopedEnvVar env{NODE_HOST_EXECUTABLE_ENV, layout.FakeNode().string()};
+    const ScopedEnvVar env{
+        NODE_HOST_EXECUTABLE_ENV,
+        layout.FakeNode().string()};
 
-    NodeRuntime runtime{layout.PackageRoot(), layout.NodeModulesRoot()};
-    auto        launch = runtime.BuildHostLaunchDesc();
+    const NodeRuntime runtime{layout.PackageRoot(), layout.NodeModulesRoot()};
+    auto              launch = runtime.BuildHostLaunchDesc();
 
     ASSERT_FALSE(launch);
     EXPECT_EQ(launch.error(), DAS_E_FILE_NOT_FOUND);
@@ -535,10 +551,12 @@ TEST(NodeRuntimePackage, BuildHostLaunchDescUsesRuntimeScriptAndExplicitRoots)
 {
     TempNodeRuntimeLayout layout;
     layout.CreateRuntimePackageFiles();
-    ScopedEnvVar env{NODE_HOST_EXECUTABLE_ENV, layout.FakeNode().string()};
+    const ScopedEnvVar env{
+        NODE_HOST_EXECUTABLE_ENV,
+        layout.FakeNode().string()};
 
-    NodeRuntime runtime{layout.PackageRoot(), layout.NodeModulesRoot()};
-    auto        launch = runtime.BuildHostLaunchDesc();
+    const NodeRuntime runtime{layout.PackageRoot(), layout.NodeModulesRoot()};
+    auto              launch = runtime.BuildHostLaunchDesc();
 
     ASSERT_TRUE(launch);
     const auto& desc = launch->launch_desc;
@@ -591,7 +609,9 @@ TEST(NodeRuntimeRemoteHost, LoadPluginRejectsMissingNodeModulesRoot)
 {
     TempNodeRuntimeLayout layout;
     layout.CreateRuntimePackageFiles();
-    ScopedEnvVar      env{NODE_HOST_EXECUTABLE_ENV, layout.FakeNode().string()};
+    const ScopedEnvVar env{
+        NODE_HOST_EXECUTABLE_ENV,
+        layout.FakeNode().string()};
     RemoteHostCapture capture;
     NodeRuntime       runtime{
         std::make_unique<CapturingRemotePluginHost>(capture, 82),
@@ -614,7 +634,9 @@ TEST(NodeRuntimeRemoteHost, LoadDelegatesToRemoteHostWithExplicitLaunchDesc)
 {
     TempNodeRuntimeLayout layout;
     layout.CreateRuntimePackageFiles();
-    ScopedEnvVar      env{NODE_HOST_EXECUTABLE_ENV, layout.FakeNode().string()};
+    const ScopedEnvVar env{
+        NODE_HOST_EXECUTABLE_ENV,
+        layout.FakeNode().string()};
     RemoteHostCapture capture;
 
     NodeRuntime runtime{
@@ -666,7 +688,9 @@ TEST(NodeRuntimeRemoteHost, LoadForwardsIpcLifecycleCallbacks)
 {
     TempNodeRuntimeLayout layout;
     layout.CreateRuntimePackageFiles();
-    ScopedEnvVar      env{NODE_HOST_EXECUTABLE_ENV, layout.FakeNode().string()};
+    const ScopedEnvVar env{
+        NODE_HOST_EXECUTABLE_ENV,
+        layout.FakeNode().string()};
     RemoteHostCapture capture;
 
     RuntimeLifecycleCallbacks callbacks{};

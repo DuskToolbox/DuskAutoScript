@@ -113,7 +113,7 @@ TEST(
     RepositoryCompileResultDto compile;
     compile.can_execute = true;
     compile.summary.can_execute = true;
-    compile.summary.task_names.push_back("Start");
+    compile.summary.task_names.emplace_back("Start");
     compile.summary.requires_agent_runtime = true;
     compile.diagnostics.push_back(MakePayload());
     compile.debug_compile = MakePayload();

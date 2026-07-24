@@ -27,8 +27,8 @@ DAS_NS_ANONYMOUS_DETAILS_END
 
 void DasLogError(IDasReadOnlyString* p_string)
 {
-    Das::DasPtr<IDasReadOnlyString> p_string_holder{p_string};
-    const char*                     p_u8_string{};
+    const Das::DasPtr<IDasReadOnlyString> p_string_holder{p_string};
+    const char*                           p_u8_string{};
 
     p_string_holder->GetUtf8(&p_u8_string);
     DasLogErrorU8(p_u8_string);
@@ -36,8 +36,8 @@ void DasLogError(IDasReadOnlyString* p_string)
 
 void DasLogWarning(IDasReadOnlyString* p_string)
 {
-    DAS::DasPtr<IDasReadOnlyString> p_string_holder{p_string};
-    const char*                     p_u8_string{};
+    const DAS::DasPtr<IDasReadOnlyString> p_string_holder{p_string};
+    const char*                           p_u8_string{};
 
     p_string_holder->GetUtf8(&p_u8_string);
     DasLogWarningU8(p_u8_string);
@@ -45,8 +45,8 @@ void DasLogWarning(IDasReadOnlyString* p_string)
 
 void DasLogInfo(IDasReadOnlyString* p_string)
 {
-    Das::DasPtr<IDasReadOnlyString> p_string_holder{p_string};
-    const char*                     p_u8_string{};
+    const Das::DasPtr<IDasReadOnlyString> p_string_holder{p_string};
+    const char*                           p_u8_string{};
 
     p_string_holder->GetUtf8(&p_u8_string);
     DasLogInfoU8(p_u8_string);

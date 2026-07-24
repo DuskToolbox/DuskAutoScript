@@ -33,8 +33,8 @@ DasResult SerializeInInterfaceParam(
 
     // Try to look up the object in local registry
     //    DAS_E_NOT_FOUND is NOT an error here, try Proxy branch next
-    ObjectId  local_id;
-    DasResult lookup_result =
+    ObjectId        local_id;
+    const DasResult lookup_result =
         object_manager.LookupObjectIdFromPtr(interface_ptr, local_id);
     if (DAS::IsOk(lookup_result))
     {
@@ -43,8 +43,8 @@ DasResult SerializeInInterfaceParam(
     }
 
     // Check if the pointer is an IPC Proxy via QueryInterface
-    IPCProxyBase* runtime_tag = nullptr;
-    DasResult     qi_result = interface_ptr->QueryInterface(
+    IPCProxyBase*   runtime_tag = nullptr;
+    const DasResult qi_result = interface_ptr->QueryInterface(
         DasIidOf<IPCProxyBase>(),
         reinterpret_cast<void**>(&runtime_tag));
     if (DAS::IsOk(qi_result) && runtime_tag != nullptr)
@@ -92,7 +92,7 @@ DasResult DeserializeInInterfaceParam(
 
     *out_ptr = nullptr;
 
-    ObjectId id = DecodeObjectId(encoded_id);
+    const ObjectId id = DecodeObjectId(encoded_id);
     if (IsNullObjectId(id))
     {
         return DAS_S_OK; // nullptr parameter
@@ -102,7 +102,7 @@ DasResult DeserializeInInterfaceParam(
     if (object_manager.IsLocalObject(id))
     {
         // LookupObject AddRefs on success; caller receives ownership
-        DasResult result = object_manager.LookupObject(id, out_ptr);
+        const DasResult result = object_manager.LookupObject(id, out_ptr);
         return result;
     }
 

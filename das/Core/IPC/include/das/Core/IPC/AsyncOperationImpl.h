@@ -37,7 +37,9 @@ namespace Core::IPC
             const std::vector<uint8_t>& data)
         {
             if (data.size() < sizeof(uint16_t))
+            {
                 return std::nullopt;
+            }
             uint16_t result;
             std::memcpy(&result, data.data(), sizeof(uint16_t));
             return result;
@@ -137,7 +139,9 @@ namespace Core::IPC
         {
             auto r = --ref_count_;
             if (r == 0)
+            {
                 delete this;
+            }
             return r;
         }
 
@@ -170,7 +174,9 @@ namespace Core::IPC
             if (status_.load(std::memory_order_acquire) != DAS_ASYNC_STARTED)
             {
                 if (handler_)
+                {
                     handler_->OnCompleted(this, status_.load());
+                }
             }
             return DAS_S_OK;
         }
@@ -195,7 +201,9 @@ namespace Core::IPC
         DasResult GetResults(TResult* p_out) override
         {
             if (status_.load(std::memory_order_acquire) != DAS_ASYNC_COMPLETED)
+            {
                 return DAS_E_IPC_INVALID_STATE;
+            }
             *p_out = value_;
             return result_;
         }
@@ -213,7 +221,9 @@ namespace Core::IPC
             status_.store(new_status, std::memory_order_release);
 
             if (handler_)
+            {
                 handler_->OnCompleted(this, new_status);
+            }
         }
     };
 

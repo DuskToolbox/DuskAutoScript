@@ -68,7 +68,7 @@ public:
     /// 持锁替换 callback_。调用方通常是 PluginManager / IPC setup 线程。
     void Set(Callback cb)
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        const std::scoped_lock lock(mutex_);
         callback_ = std::move(cb);
     }
 
@@ -77,7 +77,7 @@ public:
     /// 这是 CR-02 "drain 轻量等价" 的实现机制。
     void Clear()
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        const std::scoped_lock lock(mutex_);
         callback_ = nullptr;
     }
 
@@ -95,7 +95,7 @@ public:
      */
     void Invoke(Args... args)
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        const std::scoped_lock lock(mutex_);
         if (callback_)
         {
             callback_(args...);

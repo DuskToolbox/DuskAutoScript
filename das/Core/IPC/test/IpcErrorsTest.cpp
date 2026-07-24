@@ -32,7 +32,7 @@ TEST(IpcErrorsTest, SequentialPattern)
     // 16 i.e., -1080000001 to -1080000016
     for (int i = 0; i < 16; ++i)
     {
-        int expected = DAS_E_IPC_BASE - (i + 1);
+        const int expected = DAS_E_IPC_BASE - (i + 1);
         EXPECT_LE(expected, DAS_E_IPC_BASE - 1);  // Max: -1080000001
         EXPECT_GE(expected, DAS_E_IPC_BASE - 16); // Min: -1080000016
     }

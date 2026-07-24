@@ -106,7 +106,7 @@ TEST(QueryMainProcessInterfaceTest, NoContext_QueryByName_ReturnsObjectNotInit)
 
 TEST(QueryMainProcessInterfaceTest, DasRetIDasBase_DefaultState)
 {
-    DasRetIDasBase result;
+    const DasRetIDasBase result;
     EXPECT_EQ(result.GetErrorCode(), DAS_E_UNDEFINED_RETURN_VALUE);
     EXPECT_EQ(result.GetValue(), nullptr);
 }
@@ -149,10 +149,10 @@ TEST_F(
 
     // Use public RegisterService API (replaces direct object_manager_ +
     // registry_ access)
-    ScopedCurrentIpcContext scope(
+    const ScopedCurrentIpcContext scope(
         static_cast<MainProcess::IpcContext*>(concrete_ctx_.get()));
 
-    DasResult reg_result =
+    const DasResult reg_result =
         concrete_ctx_->RegisterService(test_string, DAS_IID_READ_ONLY_STRING);
     ASSERT_EQ(reg_result, DAS_S_OK);
 
@@ -163,8 +163,8 @@ TEST_F(
 
     // Verify the object is the same one we registered
     auto* readonly_str = static_cast<IDasReadOnlyString*>(result.GetValue());
-    const char* utf8 = nullptr;
-    DasResult   hr = readonly_str->GetUtf8(&utf8);
+    const char*     utf8 = nullptr;
+    const DasResult hr = readonly_str->GetUtf8(&utf8);
     EXPECT_EQ(hr, DAS_S_OK);
     ASSERT_NE(utf8, nullptr);
     EXPECT_STREQ(utf8, "Hello from main process!");
@@ -179,15 +179,15 @@ TEST_F(
 {
     auto* test_string = new TestReadOnlyString("test");
 
-    ScopedCurrentIpcContext scope(
+    const ScopedCurrentIpcContext scope(
         static_cast<MainProcess::IpcContext*>(concrete_ctx_.get()));
 
-    DasResult reg_result =
+    const DasResult reg_result =
         concrete_ctx_->RegisterService(test_string, DAS_IID_READ_ONLY_STRING);
     ASSERT_EQ(reg_result, DAS_S_OK);
 
     // Query with a different IID — should fail
-    DasGuid unknown_iid = {
+    const DasGuid unknown_iid = {
         0xDEADBEEF,
         0xCAFE,
         0xBEEF,
@@ -207,16 +207,16 @@ TEST_F(
     auto* str1 = new TestReadOnlyString("First string");
     auto* str2 = new TestReadOnlyString("Second string");
 
-    ScopedCurrentIpcContext scope(
+    const ScopedCurrentIpcContext scope(
         static_cast<MainProcess::IpcContext*>(concrete_ctx_.get()));
 
     // Register first string under DAS_IID_READ_ONLY_STRING
-    DasResult reg1 =
+    const DasResult reg1 =
         concrete_ctx_->RegisterService(str1, DAS_IID_READ_ONLY_STRING);
     ASSERT_EQ(reg1, DAS_S_OK);
 
     // Second registration with same IID should fail (duplicate)
-    DasResult reg2 =
+    const DasResult reg2 =
         concrete_ctx_->RegisterService(str2, DAS_IID_READ_ONLY_STRING);
     EXPECT_EQ(reg2, DAS_E_DUPLICATE_ELEMENT);
 
@@ -240,10 +240,10 @@ TEST_F(QueryMainProcessInterfaceE2ETest, QueryRegisteredName_ReturnsValidObject)
 {
     auto* test_string = new TestReadOnlyString("Hello by name!");
 
-    ScopedCurrentIpcContext scope(
+    const ScopedCurrentIpcContext scope(
         static_cast<MainProcess::IpcContext*>(concrete_ctx_.get()));
 
-    DasResult reg_result = concrete_ctx_->RegisterServiceByName(
+    const DasResult reg_result = concrete_ctx_->RegisterServiceByName(
         test_string,
         DAS_IID_READ_ONLY_STRING,
         "greeting_service");
@@ -255,8 +255,8 @@ TEST_F(QueryMainProcessInterfaceE2ETest, QueryRegisteredName_ReturnsValidObject)
     ASSERT_NE(result.GetValue(), nullptr);
 
     auto* readonly_str = static_cast<IDasReadOnlyString*>(result.GetValue());
-    const char* utf8 = nullptr;
-    DasResult   hr = readonly_str->GetUtf8(&utf8);
+    const char*     utf8 = nullptr;
+    const DasResult hr = readonly_str->GetUtf8(&utf8);
     EXPECT_EQ(hr, DAS_S_OK);
     ASSERT_NE(utf8, nullptr);
     EXPECT_STREQ(utf8, "Hello by name!");
@@ -268,7 +268,7 @@ TEST_F(QueryMainProcessInterfaceE2ETest, QueryRegisteredName_ReturnsValidObject)
 
 TEST_F(QueryMainProcessInterfaceE2ETest, QueryUnknownName_ReturnsObjectNotFound)
 {
-    ScopedCurrentIpcContext scope(
+    const ScopedCurrentIpcContext scope(
         static_cast<MainProcess::IpcContext*>(concrete_ctx_.get()));
 
     auto result = QueryMainProcessInterfaceByName("nonexistent_service");

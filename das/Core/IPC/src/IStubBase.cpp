@@ -103,10 +103,10 @@ DasResult IStubBase::HandleMessage(
 
     // 调用 DispatchMethod
     const uint8_t* params = body.data() + V3_BODY_HEADER_SIZE;
-    size_t         params_size = body.size() - V3_BODY_HEADER_SIZE;
+    const size_t   params_size = body.size() - V3_BODY_HEADER_SIZE;
 
     std::vector<uint8_t> response_body;
-    DasResult            dispatch_result = DispatchMethod(
+    const DasResult      dispatch_result = DispatchMethod(
         method_id,
         static_cast<void*>(impl_holder.Get()),
         params,

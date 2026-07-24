@@ -121,12 +121,12 @@ DasResult IPCProxyBase::SendRequest(
     // 2. Generate call_id and build request header
     uint16_t call_id = NextCallId();
 
-    ValidatedIPCMessageHeader header =
+    const ValidatedIPCMessageHeader header =
         BuildRequestHeader(call_id, MessageType::REQUEST, body_size);
 
     // 3. Construct call_key and wait for response using
     //    thread-appropriate strategy
-    CallKey call_key{object_id_.session_id, call_id};
+    const CallKey call_key{object_id_.session_id, call_id};
 
     if (bt->IsCurrentThread())
     {
@@ -177,9 +177,9 @@ DasResult IPCProxyBase::SendRequest(
 
         // sync_wait returns optional<tuple<DasResult, vector, uint16_t flags>>
         auto&                inner = std::get<0>(*result);
-        DasResult            ipc_result = std::get<0>(inner);
+        const DasResult      ipc_result = std::get<0>(inner);
         std::vector<uint8_t> response_body = std::move(std::get<1>(inner));
-        uint16_t             response_flags = std::get<2>(inner);
+        const uint16_t       response_flags = std::get<2>(inner);
         out_response = std::move(response_body);
         if (out_flags)
         {
@@ -213,7 +213,7 @@ DasResult IPCProxyBase::SendBusinessControlRequest(
 
     uint16_t call_id = NextCallId();
 
-    ValidatedIPCMessageHeader header =
+    const ValidatedIPCMessageHeader header =
         IPCMessageHeaderBuilder()
             .SetMessageType(MessageType::REQUEST)
             .SetBusinessControlCommand(command)
@@ -223,7 +223,7 @@ DasResult IPCProxyBase::SendBusinessControlRequest(
             .SetTargetSessionId(object_id_.session_id)
             .Build();
 
-    CallKey call_key{object_id_.session_id, call_id};
+    const CallKey call_key{object_id_.session_id, call_id};
 
     if (bt->IsCurrentThread())
     {
@@ -274,7 +274,7 @@ DasResult IPCProxyBase::SendBusinessControlRequest(
         }
 
         auto&                inner = std::get<0>(*result);
-        DasResult            ipc_result = std::get<0>(inner);
+        const DasResult      ipc_result = std::get<0>(inner);
         std::vector<uint8_t> response_body = std::move(std::get<1>(inner));
         out_response = std::move(response_body);
         return ipc_result;

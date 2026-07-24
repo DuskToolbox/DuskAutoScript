@@ -410,8 +410,8 @@ namespace Das::Http::Beast
             : router_(std::move(router)), hub_(std::move(hub)),
               stop_condition_(std::move(stop_condition)), ioc_(4)
         {
-            auto const addr = boost::asio::ip::make_address(address);
-            auto const endpoint = tcp::endpoint{addr, port};
+            const auto addr = boost::asio::ip::make_address(address);
+            const auto endpoint = tcp::endpoint{addr, port};
 
             listener_ = std::make_shared<Listener>(
                 ioc_,

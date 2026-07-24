@@ -47,7 +47,7 @@ DasResult DasBasicErrorLensImpl::GetErrorMessage(
 
     *out_string = nullptr;
 
-    DasPtr locale_name_holder{locale_name};
+    const DasPtr locale_name_holder{locale_name};
 
     const auto locale_it = map_.find(locale_name_holder);
     if (locale_it != map_.end())
@@ -87,7 +87,7 @@ DasResult DasBasicErrorLensImpl::RegisterErrorMessage(
     DasPtr locale_name_holder{locale_name};
     try
     {
-        DasPtr error_message_holder = {p_error_message};
+        const DasPtr error_message_holder = {p_error_message};
         map_[std::move(locale_name_holder)][error_code] = error_message_holder;
     }
     catch (const std::bad_alloc&)

@@ -49,8 +49,8 @@ DasResult GraphRuntimeImpl::Execute(
     Dto::CompiledGraphPlanDto plan;
     if (p_compiled_artifact_json)
     {
-        const char* utf8 = nullptr;
-        DasResult   hr = p_compiled_artifact_json->GetUtf8(&utf8);
+        const char*     utf8 = nullptr;
+        const DasResult hr = p_compiled_artifact_json->GetUtf8(&utf8);
         if (DAS::IsFailed(hr) || !utf8)
         {
             last_error_ = "Execute: failed to read compiled artifact JSON";
@@ -67,7 +67,7 @@ DasResult GraphRuntimeImpl::Execute(
     }
 
     // Execute via engine.
-    DasResult result = engine_.RunWithHost(
+    const DasResult result = engine_.RunWithHost(
         plan,
         plan.compiled_fingerprint,
         p_stop_token,
@@ -1104,7 +1104,7 @@ DAS_C_API DasResult GraphAuthoringSessionSetActionCatalog(
         {
             if (auto s = v.as_string())
             {
-                p->valid_action_ids.emplace_back(std::string(*s));
+                p->valid_action_ids.emplace_back(*s);
             }
         }
         return DAS_S_OK;

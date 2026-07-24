@@ -231,8 +231,8 @@ namespace
                 return DAS_E_INVALID_POINTER;
             }
 
-            const char* remote_text = nullptr;
-            DasResult   result = target_->GetUtf8(&remote_text);
+            const char*     remote_text = nullptr;
+            const DasResult result = target_->GetUtf8(&remote_text);
             if (DAS::IsFailed(result))
             {
                 return result;
@@ -257,7 +257,8 @@ namespace
 
             const char16_t* remote_text = nullptr;
             size_t          remote_size = 0;
-            DasResult result = target_->GetUtf16(&remote_text, &remote_size);
+            const DasResult result =
+                target_->GetUtf16(&remote_text, &remote_size);
             if (DAS::IsFailed(result))
             {
                 return result;
@@ -529,7 +530,7 @@ protected:
 
         // 2. LoadPluginAsync
         DAS::DasPtr<IDasAsyncLoadPluginOperation> op;
-        DasResult                                 result =
+        const DasResult                           result =
             ctx_->LoadPluginAsync(launcher, plugin_path.c_str(), op.Put());
         if (DAS::IsFailed(result))
         {
@@ -579,7 +580,7 @@ protected:
         {
             return nullptr;
         }
-        DAS::DasPtr<IDasBase> factory_base(factory_base_raw);
+        const DAS::DasPtr<IDasBase> factory_base(factory_base_raw);
 
         DAS::DasPtr<DAS::PluginInterface::IDasComponentFactory> factory;
         if (DAS::IsFailed(factory_base.As(factory.Put())))
@@ -637,7 +638,7 @@ protected:
 
         // 2. LoadPluginAsync
         DAS::DasPtr<IDasAsyncLoadPluginOperation> op;
-        DasResult                                 result =
+        const DasResult                           result =
             ctx_->LoadPluginAsync(launcher, plugin_path.c_str(), op.Put());
         if (DAS::IsFailed(result))
         {
@@ -681,7 +682,7 @@ protected:
         {
             return nullptr;
         }
-        DAS::DasPtr<IDasBase> factory_base(factory_base_raw);
+        const DAS::DasPtr<IDasBase> factory_base(factory_base_raw);
 
         DAS::DasPtr<DAS::PluginInterface::IDasComponentFactory> factory;
         if (DAS::IsFailed(factory_base.As(factory.Put())))
@@ -716,7 +717,7 @@ protected:
         for (size_t attempt = 0; attempt < attempts; ++attempt)
         {
             DAS::DasPtr<IDasAsyncLoadPluginOperation> op;
-            DasResult result = ctx_->LoadPluginAsync(
+            const DasResult result = ctx_->LoadPluginAsync(
                 launcher,
                 plugin_path.c_str(),
                 op.Put(),
@@ -751,8 +752,8 @@ protected:
             return {};
         }
 
-        DAS::DasPtr<IDasBase> package_base(package_proxy);
-        DasPluginPackage      plugin_package;
+        const DAS::DasPtr<IDasBase> package_base(package_proxy);
+        DasPluginPackage            plugin_package;
         if (DAS::IsFailed(package_base.As(plugin_package.Put())))
         {
             return {};
@@ -765,7 +766,7 @@ protected:
         {
             return {};
         }
-        DAS::DasPtr<IDasBase> factory_base(factory_base_raw);
+        const DAS::DasPtr<IDasBase> factory_base(factory_base_raw);
 
         DAS::DasPtr<IDasComponentFactory> factory;
         if (DAS::IsFailed(factory_base.As(factory.Put())))
@@ -788,12 +789,12 @@ protected:
         const std::string& str)
     {
         DAS::ExportInterface::DasVariantVector params;
-        DasResult result = CreateIDasVariantVector(params.Put());
+        const DasResult result = CreateIDasVariantVector(params.Put());
         if (DAS::IsFailed(result))
         {
             return {};
         }
-        DasReadOnlyString input{str.c_str()};
+        const DasReadOnlyString input{str.c_str()};
         params->PushBackString(input.Get());
         return params;
     }
@@ -812,12 +813,12 @@ protected:
         int64_t            b)
     {
         DAS::ExportInterface::DasVariantVector params;
-        DasResult result = CreateIDasVariantVector(params.Put());
+        const DasResult result = CreateIDasVariantVector(params.Put());
         if (DAS::IsFailed(result))
         {
             return {};
         }
-        DasReadOnlyString op_str{op.c_str()};
+        const DasReadOnlyString op_str{op.c_str()};
         params->PushBackString(op_str.Get());
         params->PushBackInt(a);
         params->PushBackInt(b);
@@ -826,8 +827,8 @@ protected:
 
     uint16_t FindFreeLoopbackPort()
     {
-        boost::asio::io_context        io_context;
-        boost::asio::ip::tcp::acceptor acceptor(
+        boost::asio::io_context              io_context;
+        const boost::asio::ip::tcp::acceptor acceptor(
             io_context,
             {boost::asio::ip::make_address("127.0.0.1"), 0});
         return acceptor.local_endpoint().port();
@@ -925,14 +926,14 @@ TEST_F(IpcPerformanceTest, RoundTripLatency_Compute)
     // Warmup: discard first N iterations
     for (size_t i = 0; i < kWarmup; ++i)
     {
-        DasReadOnlyString                      method_name{"compute"};
+        const DasReadOnlyString                method_name{"compute"};
         DAS::ExportInterface::DasVariantVector result;
         auto params = CreateComputeParams("add", 42, 58);
         component->Dispatch(method_name.Get(), params.Get(), result.Put());
     }
 
     // Suppress logs during measurement
-    SuppressLogDuringBenchmark log_guard;
+    const SuppressLogDuringBenchmark log_guard;
 
     std::vector<double> latencies;
     latencies.reserve(kIterations);
@@ -941,28 +942,28 @@ TEST_F(IpcPerformanceTest, RoundTripLatency_Compute)
 
     for (size_t i = 0; i < kIterations; ++i)
     {
-        DasReadOnlyString                      method_name{"compute"};
+        const DasReadOnlyString                method_name{"compute"};
         DAS::ExportInterface::DasVariantVector result;
 
         auto start = std::chrono::steady_clock::now();
         component->Dispatch(method_name.Get(), params.Get(), result.Put());
         auto end = std::chrono::steady_clock::now();
 
-        double latency_us =
+        const double latency_us =
             std::chrono::duration<double, std::micro>(end - start).count();
         latencies.push_back(latency_us);
     }
 
-    double mean = das::benchmark::CalculateMean(latencies);
-    double p50 = das::benchmark::CalculatePercentile(latencies, 50);
-    double p95 = das::benchmark::CalculatePercentile(latencies, 95);
-    double p99 = das::benchmark::CalculatePercentile(latencies, 99);
+    const double mean = das::benchmark::CalculateMean(latencies);
+    const double p50 = das::benchmark::CalculatePercentile(latencies, 50);
+    const double p95 = das::benchmark::CalculatePercentile(latencies, 95);
+    const double p99 = das::benchmark::CalculatePercentile(latencies, 99);
     auto [min_it, max_it] =
         std::minmax_element(latencies.begin(), latencies.end());
-    double min_val = *min_it;
-    double max_val = *max_it;
-    double total_s = mean * kIterations / 1e6;
-    double throughput = static_cast<double>(kIterations) / total_s;
+    const double min_val = *min_it;
+    const double max_val = *max_it;
+    const double total_s = mean * kIterations / 1e6;
+    const double throughput = static_cast<double>(kIterations) / total_s;
 
     PrintBenchmarkResult(
         "RoundTripLatency_Compute",
@@ -1002,46 +1003,46 @@ TEST_F(IpcPerformanceTest, RoundTripLatency_Echo_SmallString)
     constexpr size_t kIterations = 1000;
 
     // Pre-construct string outside measurement loop
-    std::string small_string(32, 'a');
-    auto        params = CreateStringParam(small_string);
+    const std::string small_string(32, 'a');
+    auto              params = CreateStringParam(small_string);
 
     // Warmup
     for (size_t i = 0; i < kWarmup; ++i)
     {
-        DasReadOnlyString                      method_name{"echo"};
+        const DasReadOnlyString                method_name{"echo"};
         DAS::ExportInterface::DasVariantVector result;
         component->Dispatch(method_name.Get(), params.Get(), result.Put());
     }
 
-    SuppressLogDuringBenchmark log_guard;
+    const SuppressLogDuringBenchmark log_guard;
 
     std::vector<double> latencies;
     latencies.reserve(kIterations);
 
     for (size_t i = 0; i < kIterations; ++i)
     {
-        DasReadOnlyString                      method_name{"echo"};
+        const DasReadOnlyString                method_name{"echo"};
         DAS::ExportInterface::DasVariantVector result;
 
         auto start = std::chrono::steady_clock::now();
         component->Dispatch(method_name.Get(), params.Get(), result.Put());
         auto end = std::chrono::steady_clock::now();
 
-        double latency_us =
+        const double latency_us =
             std::chrono::duration<double, std::micro>(end - start).count();
         latencies.push_back(latency_us);
     }
 
-    double mean = das::benchmark::CalculateMean(latencies);
-    double p50 = das::benchmark::CalculatePercentile(latencies, 50);
-    double p95 = das::benchmark::CalculatePercentile(latencies, 95);
-    double p99 = das::benchmark::CalculatePercentile(latencies, 99);
+    const double mean = das::benchmark::CalculateMean(latencies);
+    const double p50 = das::benchmark::CalculatePercentile(latencies, 50);
+    const double p95 = das::benchmark::CalculatePercentile(latencies, 95);
+    const double p99 = das::benchmark::CalculatePercentile(latencies, 99);
     auto [min_it, max_it] =
         std::minmax_element(latencies.begin(), latencies.end());
-    double min_val = *min_it;
-    double max_val = *max_it;
-    double total_s = mean * kIterations / 1e6;
-    double throughput = static_cast<double>(kIterations) / total_s;
+    const double min_val = *min_it;
+    const double max_val = *max_it;
+    const double total_s = mean * kIterations / 1e6;
+    const double throughput = static_cast<double>(kIterations) / total_s;
 
     PrintBenchmarkResult(
         "RoundTripLatency_Echo_SmallString",
@@ -1081,46 +1082,46 @@ TEST_F(IpcPerformanceTest, RoundTripLatency_Echo_MediumString)
     constexpr size_t kIterations = 1000;
 
     // Pre-construct 4KB string outside measurement loop
-    std::string medium_string(4096, 'b');
-    auto        params = CreateStringParam(medium_string);
+    const std::string medium_string(4096, 'b');
+    auto              params = CreateStringParam(medium_string);
 
     // Warmup
     for (size_t i = 0; i < kWarmup; ++i)
     {
-        DasReadOnlyString                      method_name{"echo"};
+        const DasReadOnlyString                method_name{"echo"};
         DAS::ExportInterface::DasVariantVector result;
         component->Dispatch(method_name.Get(), params.Get(), result.Put());
     }
 
-    SuppressLogDuringBenchmark log_guard;
+    const SuppressLogDuringBenchmark log_guard;
 
     std::vector<double> latencies;
     latencies.reserve(kIterations);
 
     for (size_t i = 0; i < kIterations; ++i)
     {
-        DasReadOnlyString                      method_name{"echo"};
+        const DasReadOnlyString                method_name{"echo"};
         DAS::ExportInterface::DasVariantVector result;
 
         auto start = std::chrono::steady_clock::now();
         component->Dispatch(method_name.Get(), params.Get(), result.Put());
         auto end = std::chrono::steady_clock::now();
 
-        double latency_us =
+        const double latency_us =
             std::chrono::duration<double, std::micro>(end - start).count();
         latencies.push_back(latency_us);
     }
 
-    double mean = das::benchmark::CalculateMean(latencies);
-    double p50 = das::benchmark::CalculatePercentile(latencies, 50);
-    double p95 = das::benchmark::CalculatePercentile(latencies, 95);
-    double p99 = das::benchmark::CalculatePercentile(latencies, 99);
+    const double mean = das::benchmark::CalculateMean(latencies);
+    const double p50 = das::benchmark::CalculatePercentile(latencies, 50);
+    const double p95 = das::benchmark::CalculatePercentile(latencies, 95);
+    const double p99 = das::benchmark::CalculatePercentile(latencies, 99);
     auto [min_it, max_it] =
         std::minmax_element(latencies.begin(), latencies.end());
-    double min_val = *min_it;
-    double max_val = *max_it;
-    double total_s = mean * kIterations / 1e6;
-    double throughput = static_cast<double>(kIterations) / total_s;
+    const double min_val = *min_it;
+    const double max_val = *max_it;
+    const double total_s = mean * kIterations / 1e6;
+    const double throughput = static_cast<double>(kIterations) / total_s;
 
     PrintBenchmarkResult(
         "RoundTripLatency_Echo_MediumString",
@@ -1160,46 +1161,46 @@ TEST_F(IpcPerformanceTest, RoundTripLatency_Echo_LargePayload_32KB)
     constexpr size_t kIterations = 500;
 
     // Pre-construct 32000-byte string outside measurement loop
-    std::string large_string(32000, 'c');
-    auto        params = CreateStringParam(large_string);
+    const std::string large_string(32000, 'c');
+    auto              params = CreateStringParam(large_string);
 
     // Warmup
     for (size_t i = 0; i < kWarmup; ++i)
     {
-        DasReadOnlyString                      method_name{"echo"};
+        const DasReadOnlyString                method_name{"echo"};
         DAS::ExportInterface::DasVariantVector result;
         component->Dispatch(method_name.Get(), params.Get(), result.Put());
     }
 
-    SuppressLogDuringBenchmark log_guard;
+    const SuppressLogDuringBenchmark log_guard;
 
     std::vector<double> latencies;
     latencies.reserve(kIterations);
 
     for (size_t i = 0; i < kIterations; ++i)
     {
-        DasReadOnlyString                      method_name{"echo"};
+        const DasReadOnlyString                method_name{"echo"};
         DAS::ExportInterface::DasVariantVector result;
 
         auto start = std::chrono::steady_clock::now();
         component->Dispatch(method_name.Get(), params.Get(), result.Put());
         auto end = std::chrono::steady_clock::now();
 
-        double latency_us =
+        const double latency_us =
             std::chrono::duration<double, std::micro>(end - start).count();
         latencies.push_back(latency_us);
     }
 
-    double mean = das::benchmark::CalculateMean(latencies);
-    double p50 = das::benchmark::CalculatePercentile(latencies, 50);
-    double p95 = das::benchmark::CalculatePercentile(latencies, 95);
-    double p99 = das::benchmark::CalculatePercentile(latencies, 99);
+    const double mean = das::benchmark::CalculateMean(latencies);
+    const double p50 = das::benchmark::CalculatePercentile(latencies, 50);
+    const double p95 = das::benchmark::CalculatePercentile(latencies, 95);
+    const double p99 = das::benchmark::CalculatePercentile(latencies, 99);
     auto [min_it, max_it] =
         std::minmax_element(latencies.begin(), latencies.end());
-    double min_val = *min_it;
-    double max_val = *max_it;
-    double total_s = mean * kIterations / 1e6;
-    double throughput = static_cast<double>(kIterations) / total_s;
+    const double min_val = *min_it;
+    const double max_val = *max_it;
+    const double total_s = mean * kIterations / 1e6;
+    const double throughput = static_cast<double>(kIterations) / total_s;
 
     PrintBenchmarkResult(
         "RoundTripLatency_Echo_LargePayload_32KB",
@@ -1355,7 +1356,7 @@ TEST(IpcPerfColdStart, ColdStart_FirstCall)
             run_thread.join();
             continue;
         }
-        DAS::DasPtr<IDasBase> factory_base(factory_base_raw);
+        const DAS::DasPtr<IDasBase> factory_base(factory_base_raw);
 
         DAS::DasPtr<IDasComponentFactory> factory;
         if (DAS::IsFailed(factory_base.As(factory.Put())))
@@ -1381,18 +1382,18 @@ TEST(IpcPerfColdStart, ColdStart_FirstCall)
             run_thread.join();
             continue;
         }
-        DAS::DasPtr<IDasComponent> component(component_raw);
+        const DAS::DasPtr<IDasComponent> component(component_raw);
 
         // 5. Measure first Dispatch call
         {
-            SuppressLogDuringBenchmark log_guard;
+            const SuppressLogDuringBenchmark log_guard;
 
-            DasReadOnlyString                      method_name{"compute"};
+            const DasReadOnlyString                method_name{"compute"};
             DAS::ExportInterface::DasVariantVector result;
             // Inline CreateComputeParams (fixture method unavailable in TEST)
             DAS::ExportInterface::DasVariantVector params;
             CreateIDasVariantVector(params.Put());
-            DasReadOnlyString op_str{"add"};
+            const DasReadOnlyString op_str{"add"};
             params->PushBackString(op_str.Get());
             params->PushBackInt(1);
             params->PushBackInt(1);
@@ -1401,7 +1402,7 @@ TEST(IpcPerfColdStart, ColdStart_FirstCall)
             component->Dispatch(method_name.Get(), params.Get(), result.Put());
             auto end = std::chrono::steady_clock::now();
 
-            double latency_us =
+            const double latency_us =
                 std::chrono::duration<double, std::micro>(end - start).count();
             first_call_latencies.push_back(latency_us);
         }
@@ -1422,15 +1423,18 @@ TEST(IpcPerfColdStart, ColdStart_FirstCall)
         GTEST_SKIP() << "No successful cold start cycles completed";
     }
 
-    double mean = das::benchmark::CalculateMean(first_call_latencies);
-    double p50 = das::benchmark::CalculatePercentile(first_call_latencies, 50);
-    double p95 = das::benchmark::CalculatePercentile(first_call_latencies, 95);
-    double p99 = das::benchmark::CalculatePercentile(first_call_latencies, 99);
+    const double mean = das::benchmark::CalculateMean(first_call_latencies);
+    const double p50 =
+        das::benchmark::CalculatePercentile(first_call_latencies, 50);
+    const double p95 =
+        das::benchmark::CalculatePercentile(first_call_latencies, 95);
+    const double p99 =
+        das::benchmark::CalculatePercentile(first_call_latencies, 99);
     auto [min_it, max_it] = std::minmax_element(
         first_call_latencies.begin(),
         first_call_latencies.end());
-    double min_val = *min_it;
-    double max_val = *max_it;
+    const double min_val = *min_it;
+    const double max_val = *max_it;
 
     std::cout << "\n";
     std::cout << "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550"
@@ -1498,18 +1502,18 @@ TEST_F(IpcPerformanceTest, Throughput_Sustained_10s)
     constexpr size_t kWarmup = 100;
 
     // Pre-construct small string for sustained load
-    std::string small_string(32, 'a');
-    auto        params = CreateStringParam(small_string);
+    const std::string small_string(32, 'a');
+    auto              params = CreateStringParam(small_string);
 
     // Warmup
     for (size_t i = 0; i < kWarmup; ++i)
     {
-        DasReadOnlyString                      method_name{"echo"};
+        const DasReadOnlyString                method_name{"echo"};
         DAS::ExportInterface::DasVariantVector result;
         component->Dispatch(method_name.Get(), params.Get(), result.Put());
     }
 
-    SuppressLogDuringBenchmark log_guard;
+    const SuppressLogDuringBenchmark log_guard;
 
     // Sustained load for 10 seconds
     constexpr auto   kDuration = std::chrono::seconds(10);
@@ -1525,7 +1529,7 @@ TEST_F(IpcPerformanceTest, Throughput_Sustained_10s)
         // Run a batch of calls
         for (size_t batch = 0; batch < kSampleInterval; ++batch)
         {
-            DasReadOnlyString                      method_name{"echo"};
+            const DasReadOnlyString                method_name{"echo"};
             DAS::ExportInterface::DasVariantVector result;
 
             auto start = std::chrono::steady_clock::now();
@@ -1536,7 +1540,7 @@ TEST_F(IpcPerformanceTest, Throughput_Sustained_10s)
             if (end >= deadline)
             {
                 total_calls += batch + 1;
-                double latency_us =
+                const double latency_us =
                     std::chrono::duration<double, std::micro>(end - start)
                         .count();
                 sampled_latencies.push_back(latency_us);
@@ -1548,12 +1552,12 @@ TEST_F(IpcPerformanceTest, Throughput_Sustained_10s)
 
         // Record one sample per batch for latency distribution
         {
-            DasReadOnlyString                      method_name{"echo"};
+            const DasReadOnlyString                method_name{"echo"};
             DAS::ExportInterface::DasVariantVector result;
             auto start = std::chrono::steady_clock::now();
             component->Dispatch(method_name.Get(), params.Get(), result.Put());
-            auto   end = std::chrono::steady_clock::now();
-            double latency_us =
+            auto         end = std::chrono::steady_clock::now();
+            const double latency_us =
                 std::chrono::duration<double, std::micro>(end - start).count();
             sampled_latencies.push_back(latency_us);
             total_calls++;
@@ -1567,15 +1571,18 @@ done:
         GTEST_SKIP() << "No samples collected during sustained load";
     }
 
-    double mean = das::benchmark::CalculateMean(sampled_latencies);
-    double p50 = das::benchmark::CalculatePercentile(sampled_latencies, 50);
-    double p95 = das::benchmark::CalculatePercentile(sampled_latencies, 95);
-    double p99 = das::benchmark::CalculatePercentile(sampled_latencies, 99);
+    const double mean = das::benchmark::CalculateMean(sampled_latencies);
+    const double p50 =
+        das::benchmark::CalculatePercentile(sampled_latencies, 50);
+    const double p95 =
+        das::benchmark::CalculatePercentile(sampled_latencies, 95);
+    const double p99 =
+        das::benchmark::CalculatePercentile(sampled_latencies, 99);
     auto [min_it, max_it] =
         std::minmax_element(sampled_latencies.begin(), sampled_latencies.end());
-    double min_val = *min_it;
-    double max_val = *max_it;
-    double throughput = static_cast<double>(total_calls) / 10.0;
+    const double min_val = *min_it;
+    const double max_val = *max_it;
+    const double throughput = static_cast<double>(total_calls) / 10.0;
 
     std::cout << "\n";
     std::cout << "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550"
@@ -1624,7 +1631,7 @@ TEST_F(IpcPerformanceTest, ReverseIPC_QueryMainProcessString)
 
     // 1. Register IDasReadOnlyString service in main process
     DAS::DasPtr<IDasReadOnlyString> service_string;
-    DasResult create_result = CreateIDasReadOnlyStringFromUtf8(
+    const DasResult create_result = CreateIDasReadOnlyStringFromUtf8(
         "Hello from IPC Performance Test",
         service_string.Put());
     if (DAS::IsFailed(create_result))
@@ -1632,7 +1639,7 @@ TEST_F(IpcPerformanceTest, ReverseIPC_QueryMainProcessString)
         GTEST_SKIP() << "Failed to create test string";
     }
 
-    DasResult result = ctx_->RegisterService(
+    const DasResult result = ctx_->RegisterService(
         service_string.Get(),
         DasIidOf<IDasReadOnlyString>());
     if (DAS::IsFailed(result))
@@ -1665,7 +1672,7 @@ TEST_F(IpcPerformanceTest, ReverseIPC_QueryMainProcessString)
     // Warmup
     for (size_t i = 0; i < kWarmup; ++i)
     {
-        DasReadOnlyString method_name{"queryMainProcessString"};
+        const DasReadOnlyString method_name{"queryMainProcessString"};
         DAS::ExportInterface::DasVariantVector dispatch_result;
         component->Dispatch(
             method_name.Get(),
@@ -1673,14 +1680,14 @@ TEST_F(IpcPerformanceTest, ReverseIPC_QueryMainProcessString)
             dispatch_result.Put());
     }
 
-    SuppressLogDuringBenchmark log_guard;
+    const SuppressLogDuringBenchmark log_guard;
 
     std::vector<double> latencies;
     latencies.reserve(kIterations);
 
     for (size_t i = 0; i < kIterations; ++i)
     {
-        DasReadOnlyString method_name{"queryMainProcessString"};
+        const DasReadOnlyString method_name{"queryMainProcessString"};
         DAS::ExportInterface::DasVariantVector dispatch_result;
 
         auto start = std::chrono::steady_clock::now();
@@ -1690,21 +1697,21 @@ TEST_F(IpcPerformanceTest, ReverseIPC_QueryMainProcessString)
             dispatch_result.Put());
         auto end = std::chrono::steady_clock::now();
 
-        double latency_us =
+        const double latency_us =
             std::chrono::duration<double, std::micro>(end - start).count();
         latencies.push_back(latency_us);
     }
 
-    double mean = das::benchmark::CalculateMean(latencies);
-    double p50 = das::benchmark::CalculatePercentile(latencies, 50);
-    double p95 = das::benchmark::CalculatePercentile(latencies, 95);
-    double p99 = das::benchmark::CalculatePercentile(latencies, 99);
+    const double mean = das::benchmark::CalculateMean(latencies);
+    const double p50 = das::benchmark::CalculatePercentile(latencies, 50);
+    const double p95 = das::benchmark::CalculatePercentile(latencies, 95);
+    const double p99 = das::benchmark::CalculatePercentile(latencies, 99);
     auto [min_it, max_it] =
         std::minmax_element(latencies.begin(), latencies.end());
-    double min_val = *min_it;
-    double max_val = *max_it;
-    double total_s = mean * kIterations / 1e6;
-    double throughput = static_cast<double>(kIterations) / total_s;
+    const double min_val = *min_it;
+    const double max_val = *max_it;
+    const double total_s = mean * kIterations / 1e6;
+    const double throughput = static_cast<double>(kIterations) / total_s;
 
     PrintBenchmarkResult(
         "ReverseIPC_QueryMainProcessString [Host \xE2\x86\x92 MainProcess]",
@@ -1737,7 +1744,7 @@ TEST_F(IpcPerformanceTest, MixedTransport_HttpAndIpcHostToHostPerformance)
     const uint16_t expected_http_session =
         static_cast<uint16_t>(ipc_session + 1);
 
-    std::vector<std::string> http_host_args{
+    const std::vector<std::string> http_host_args{
         "--connect-url",
         DAS_FMT_NS::format("ws://127.0.0.1:{}", http_port_),
         "--log-level",
@@ -1805,7 +1812,7 @@ TEST_F(IpcPerformanceTest, MixedTransport_HttpAndIpcHostToHostPerformance)
 
     auto invoke_mixed_dispatch = [&](double* latency_us) -> DasResult
     {
-        DAS::DasPtr<IDasReadOnlyString> forwarding_service =
+        const DAS::DasPtr<IDasReadOnlyString> forwarding_service =
             DAS::DasPtr<IDasReadOnlyString>::Attach(
                 new ForwardingReadOnlyString(http_remote_name));
 
@@ -1825,7 +1832,7 @@ TEST_F(IpcPerformanceTest, MixedTransport_HttpAndIpcHostToHostPerformance)
             dispatch_result.Put());
         auto end = std::chrono::steady_clock::now();
 
-        DasResult unregister_result =
+        const DasResult unregister_result =
             ctx_->UnregisterService(DasIidOf<IDasReadOnlyString>());
         if (DAS::IsFailed(unregister_result) && DAS::IsOk(call_result))
         {
@@ -1849,29 +1856,29 @@ TEST_F(IpcPerformanceTest, MixedTransport_HttpAndIpcHostToHostPerformance)
         ASSERT_EQ(invoke_mixed_dispatch(nullptr), DAS_S_OK);
     }
 
-    SuppressLogDuringBenchmark log_guard;
+    const SuppressLogDuringBenchmark log_guard;
 
     std::vector<double> latencies;
     latencies.reserve(kIterations);
 
     for (size_t i = 0; i < kIterations; ++i)
     {
-        double    latency_us = 0.0;
-        DasResult result = invoke_mixed_dispatch(&latency_us);
+        double          latency_us = 0.0;
+        const DasResult result = invoke_mixed_dispatch(&latency_us);
         ASSERT_EQ(result, DAS_S_OK);
         latencies.push_back(latency_us);
     }
 
-    double mean = das::benchmark::CalculateMean(latencies);
-    double p50 = das::benchmark::CalculatePercentile(latencies, 50);
-    double p95 = das::benchmark::CalculatePercentile(latencies, 95);
-    double p99 = das::benchmark::CalculatePercentile(latencies, 99);
+    const double mean = das::benchmark::CalculateMean(latencies);
+    const double p50 = das::benchmark::CalculatePercentile(latencies, 50);
+    const double p95 = das::benchmark::CalculatePercentile(latencies, 95);
+    const double p99 = das::benchmark::CalculatePercentile(latencies, 99);
     auto [min_it, max_it] =
         std::minmax_element(latencies.begin(), latencies.end());
-    double min_val = *min_it;
-    double max_val = *max_it;
-    double total_s = mean * kIterations / 1e6;
-    double throughput = static_cast<double>(kIterations) / total_s;
+    const double min_val = *min_it;
+    const double max_val = *max_it;
+    const double total_s = mean * kIterations / 1e6;
+    const double throughput = static_cast<double>(kIterations) / total_s;
 
     PrintBenchmarkResult(
         "MixedTransport_HttpAndIpcHostToHostPerformance",
@@ -1916,7 +1923,7 @@ TEST_F(IpcPerformanceTest, RemoteProxy_IsSupported_FirstCall)
     }
 
     DAS::DasPtr<IDasAsyncLoadPluginOperation> op;
-    DasResult                                 result =
+    const DasResult                           result =
         ctx_->LoadPluginAsync(launcher.Get(), plugin_path.c_str(), op.Put());
     if (DAS::IsFailed(result))
     {
@@ -1965,7 +1972,7 @@ TEST_F(IpcPerformanceTest, RemoteProxy_IsSupported_FirstCall)
         {
             GTEST_SKIP() << "CreateFeatureInterface failed";
         }
-        DAS::DasPtr<IDasBase> factory_base(factory_base_raw);
+        const DAS::DasPtr<IDasBase> factory_base(factory_base_raw);
 
         DAS::DasPtr<IDasComponentFactory> factory;
         if (DAS::IsFailed(factory_base.As(factory.Put())))
@@ -1979,7 +1986,7 @@ TEST_F(IpcPerformanceTest, RemoteProxy_IsSupported_FirstCall)
         }
     }
 
-    SuppressLogDuringBenchmark log_guard;
+    const SuppressLogDuringBenchmark log_guard;
 
     constexpr size_t    kIterations = 1000;
     std::vector<double> latencies;
@@ -1990,7 +1997,7 @@ TEST_F(IpcPerformanceTest, RemoteProxy_IsSupported_FirstCall)
         // Each measurement: get factory proxy + call IsSupported
         IDasBase* factory_base_raw = nullptr;
         plugin_package->CreateFeatureInterface(0, &factory_base_raw);
-        DAS::DasPtr<IDasBase> factory_base(factory_base_raw);
+        const DAS::DasPtr<IDasBase> factory_base(factory_base_raw);
 
         DAS::DasPtr<IDasComponentFactory> factory;
         factory_base.As(factory.Put());
@@ -1999,21 +2006,21 @@ TEST_F(IpcPerformanceTest, RemoteProxy_IsSupported_FirstCall)
         factory->IsSupported(DasIidOf<IDasComponent>());
         auto end = std::chrono::steady_clock::now();
 
-        double latency_us =
+        const double latency_us =
             std::chrono::duration<double, std::micro>(end - start).count();
         latencies.push_back(latency_us);
     }
 
-    double mean = das::benchmark::CalculateMean(latencies);
-    double p50 = das::benchmark::CalculatePercentile(latencies, 50);
-    double p95 = das::benchmark::CalculatePercentile(latencies, 95);
-    double p99 = das::benchmark::CalculatePercentile(latencies, 99);
+    const double mean = das::benchmark::CalculateMean(latencies);
+    const double p50 = das::benchmark::CalculatePercentile(latencies, 50);
+    const double p95 = das::benchmark::CalculatePercentile(latencies, 95);
+    const double p99 = das::benchmark::CalculatePercentile(latencies, 99);
     auto [min_it, max_it] =
         std::minmax_element(latencies.begin(), latencies.end());
-    double min_val = *min_it;
-    double max_val = *max_it;
-    double total_s = mean * kIterations / 1e6;
-    double throughput = static_cast<double>(kIterations) / total_s;
+    const double min_val = *min_it;
+    const double max_val = *max_it;
+    const double total_s = mean * kIterations / 1e6;
+    const double throughput = static_cast<double>(kIterations) / total_s;
 
     PrintBenchmarkResult(
         "RemoteProxy_IsSupported_FirstCall [GUID comparison]",
@@ -2058,45 +2065,45 @@ TEST_F(IpcPerformanceTest, Stress_HighFrequency_Dispatch)
     // Warmup
     for (size_t i = 0; i < kWarmup; ++i)
     {
-        DasReadOnlyString                      method_name{"compute"};
+        const DasReadOnlyString                method_name{"compute"};
         DAS::ExportInterface::DasVariantVector result;
         component->Dispatch(method_name.Get(), params.Get(), result.Put());
     }
 
     // Suppress logs during measurement
-    SuppressLogDuringBenchmark log_guard;
+    const SuppressLogDuringBenchmark log_guard;
 
     std::vector<double> latencies;
     latencies.reserve(kIterations);
 
     for (size_t i = 0; i < kIterations; ++i)
     {
-        DasReadOnlyString                      method_name{"compute"};
+        const DasReadOnlyString                method_name{"compute"};
         DAS::ExportInterface::DasVariantVector result;
 
         auto start = std::chrono::steady_clock::now();
         component->Dispatch(method_name.Get(), params.Get(), result.Put());
         auto end = std::chrono::steady_clock::now();
 
-        double latency_us =
+        const double latency_us =
             std::chrono::duration<double, std::micro>(end - start).count();
         latencies.push_back(latency_us);
     }
 
-    double mean = das::benchmark::CalculateMean(latencies);
-    double p50 = das::benchmark::CalculatePercentile(latencies, 50);
-    double p95 = das::benchmark::CalculatePercentile(latencies, 95);
-    double p99 = das::benchmark::CalculatePercentile(latencies, 99);
+    const double mean = das::benchmark::CalculateMean(latencies);
+    const double p50 = das::benchmark::CalculatePercentile(latencies, 50);
+    const double p95 = das::benchmark::CalculatePercentile(latencies, 95);
+    const double p99 = das::benchmark::CalculatePercentile(latencies, 99);
     auto [min_it, max_it] =
         std::minmax_element(latencies.begin(), latencies.end());
-    double min_val = *min_it;
-    double max_val = *max_it;
-    double total_s = mean * kIterations / 1e6;
-    double throughput = static_cast<double>(kIterations) / total_s;
+    const double min_val = *min_it;
+    const double max_val = *max_it;
+    const double total_s = mean * kIterations / 1e6;
+    const double throughput = static_cast<double>(kIterations) / total_s;
 
     // Spike ratio: p99/p50 — evaluates BusinessThread serial processing
     // stability under high frequency
-    double spike_ratio = (p50 > 0.0) ? (p99 / p50) : 0.0;
+    const double spike_ratio = (p50 > 0.0) ? (p99 / p50) : 0.0;
 
     PrintBenchmarkResult(
         "Stress_HighFrequency_Dispatch",
@@ -2209,7 +2216,7 @@ TEST_F(IpcPerformanceTest, DualHost_AlternatingCalls)
         {
             return nullptr;
         }
-        DAS::DasPtr<IDasBase> factory_base(factory_base_raw);
+        const DAS::DasPtr<IDasBase> factory_base(factory_base_raw);
 
         DAS::DasPtr<IDasComponentFactory> factory;
         if (DAS::IsFailed(factory_base.As(factory.Put())))
@@ -2251,7 +2258,7 @@ TEST_F(IpcPerformanceTest, DualHost_AlternatingCalls)
 
     for (size_t i = 0; i < kWarmup; ++i)
     {
-        DasReadOnlyString                      method_name{"compute"};
+        const DasReadOnlyString                method_name{"compute"};
         DAS::ExportInterface::DasVariantVector dispatch_result;
         auto& component = (i % 2 == 0) ? component_a : component_b;
         component->Dispatch(
@@ -2261,7 +2268,7 @@ TEST_F(IpcPerformanceTest, DualHost_AlternatingCalls)
     }
 
     // Suppress logs during measurement
-    SuppressLogDuringBenchmark log_guard;
+    const SuppressLogDuringBenchmark log_guard;
 
     // 6. Measure 1000 alternating calls
     constexpr size_t    kIterations = 1000;
@@ -2274,7 +2281,7 @@ TEST_F(IpcPerformanceTest, DualHost_AlternatingCalls)
 
     for (size_t i = 0; i < kIterations; ++i)
     {
-        DasReadOnlyString                      method_name{"compute"};
+        const DasReadOnlyString                method_name{"compute"};
         DAS::ExportInterface::DasVariantVector dispatch_result;
 
         auto start = std::chrono::steady_clock::now();
@@ -2294,7 +2301,7 @@ TEST_F(IpcPerformanceTest, DualHost_AlternatingCalls)
         }
         auto end = std::chrono::steady_clock::now();
 
-        double latency_us =
+        const double latency_us =
             std::chrono::duration<double, std::micro>(end - start).count();
         all_latencies.push_back(latency_us);
 
@@ -2309,19 +2316,22 @@ TEST_F(IpcPerformanceTest, DualHost_AlternatingCalls)
     }
 
     // 7. Compute statistics
-    double mean_a = das::benchmark::CalculateMean(latencies_a);
-    double mean_b = das::benchmark::CalculateMean(latencies_b);
+    const double mean_a = das::benchmark::CalculateMean(latencies_a);
+    const double mean_b = das::benchmark::CalculateMean(latencies_b);
 
-    double global_mean = das::benchmark::CalculateMean(all_latencies);
-    double global_p50 = das::benchmark::CalculatePercentile(all_latencies, 50);
-    double global_p95 = das::benchmark::CalculatePercentile(all_latencies, 95);
-    double global_p99 = das::benchmark::CalculatePercentile(all_latencies, 99);
+    const double global_mean = das::benchmark::CalculateMean(all_latencies);
+    const double global_p50 =
+        das::benchmark::CalculatePercentile(all_latencies, 50);
+    const double global_p95 =
+        das::benchmark::CalculatePercentile(all_latencies, 95);
+    const double global_p99 =
+        das::benchmark::CalculatePercentile(all_latencies, 99);
     auto [min_it, max_it] =
         std::minmax_element(all_latencies.begin(), all_latencies.end());
-    double min_val = *min_it;
-    double max_val = *max_it;
-    double total_s = global_mean * kIterations / 1e6;
-    double throughput = static_cast<double>(kIterations) / total_s;
+    const double min_val = *min_it;
+    const double max_val = *max_it;
+    const double total_s = global_mean * kIterations / 1e6;
+    const double throughput = static_cast<double>(kIterations) / total_s;
 
     std::cout << "\n";
     std::cout << "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550"

@@ -102,7 +102,7 @@ TEST(CompiledArtifactTest, PortBindingDtoVariousTypes)
 // ---------------------------------------------------------------------------
 TEST(CompiledArtifactTest, PortBindingPlanDtoEmpty)
 {
-    PortBindingPlanDto plan;
+    const PortBindingPlanDto plan;
 
     auto serialized = yyjson::object(plan);
 
@@ -371,8 +371,8 @@ namespace
 // ---------------------------------------------------------------------------
 TEST(CompiledArtifactEntryStorageTest, EntryDtoHasCompiledArtifactField)
 {
-    EntryDto      entry;
-    yyjson::value test = entry.compiled_artifact;
+    const EntryDto      entry;
+    const yyjson::value test = entry.compiled_artifact;
     (void)test;
 
     auto serialized = yyjson::object(entry);

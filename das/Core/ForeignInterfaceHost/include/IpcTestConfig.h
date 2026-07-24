@@ -120,7 +120,7 @@ namespace IpcTestConfig
         const char* host_path = std::getenv("DAS_HOST_EXE_PATH");
         if (host_path != nullptr && strlen(host_path) > 0)
         {
-            std::filesystem::path plugins_dir =
+            const std::filesystem::path plugins_dir =
                 std::filesystem::path(host_path).parent_path() / "plugins";
             if (std::filesystem::exists(plugins_dir))
             {
@@ -140,7 +140,7 @@ namespace IpcTestConfig
      */
     inline std::string GetTestPluginJsonPath(const std::string& plugin_name)
     {
-        std::filesystem::path json_path =
+        const std::filesystem::path json_path =
             std::filesystem::path{GetPluginDir()}
             / DAS_FMT_NS::format("{}.json", plugin_name);
 

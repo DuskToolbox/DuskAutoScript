@@ -184,7 +184,7 @@ DasResult LoadPluginConfig(
     }
 
     {
-        std::string config_content(
+        const std::string config_content(
             (std::istreambuf_iterator<char>(file)),
             std::istreambuf_iterator<char>());
         auto config_opt = Das::Utils::ParseYyjsonFromString(config_content);
@@ -441,19 +441,19 @@ bool PythonManager::Initialize()
         // 同目录）
         if (::Py_IsInitialized())
         {
-            PyGILGuard gil;
+            const PyGILGuard gil;
 
-            PyObjectPtr sys_module =
+            const PyObjectPtr sys_module =
                 PyObjectPtr::Attach(PyImport_ImportModule("sys"));
             if (sys_module)
             {
-                PyObjectPtr path_list = PyObjectPtr::Attach(
+                const PyObjectPtr path_list = PyObjectPtr::Attach(
                     PyObject_GetAttrString(sys_module.Get(), "path"));
                 if (path_list)
                 {
                     // 获取当前工作目录
-                    auto        cwd = std::filesystem::current_path();
-                    PyObjectPtr cwd_str =
+                    auto              cwd = std::filesystem::current_path();
+                    const PyObjectPtr cwd_str =
                         PyObjectPtr::Attach(PyUnicode_FromString(
                             reinterpret_cast<const char*>(
                                 cwd.u8string().c_str())));
@@ -492,7 +492,7 @@ PythonPluginHolder::PythonPluginHolder(PyObject* py_obj, IDasBase* cpp_ptr)
 
 PythonPluginHolder::~PythonPluginHolder()
 {
-    PyGILGuard gil;
+    const PyGILGuard gil;
     Py_DECREF(py_obj_);
     // cpp_ptr_ 析构时自动 Release（DasRef 通过 DasPtr）
 }
@@ -561,7 +561,7 @@ auto ExtractIDasBaseFromDasRetBase(PyObject* das_ret_base) -> DasPtr<IDasBase>
     }
 
     // 2. 获取 this 属性（SwigPyObject）
-    PyObjectPtr this_attr =
+    const PyObjectPtr this_attr =
         PyObjectPtr::Attach(PyObject_GetAttrString(value.Get(), "this"));
     if (!this_attr)
     {
@@ -570,7 +570,8 @@ auto ExtractIDasBaseFromDasRetBase(PyObject* das_ret_base) -> DasPtr<IDasBase>
     }
 
     // 3. int(this) 获取指针值（触发 SwigPyObject_long()）
-    PyObjectPtr ptr_long = PyObjectPtr::Attach(PyNumber_Long(this_attr.Get()));
+    const PyObjectPtr ptr_long =
+        PyObjectPtr::Attach(PyNumber_Long(this_attr.Get()));
     if (!ptr_long)
     {
         DAS_CORE_LOG_ERROR(
@@ -636,7 +637,7 @@ auto PythonRuntime::LoadPlugin(const std::filesystem::path& path)
     -> DAS::Utils::Expected<DasPtr<IDasBase>>
 {
     // 1. 获取 GIL
-    PyGILGuard gil_guard;
+    const PyGILGuard gil_guard;
 
     // 2. 确保解释器已初始化
     if (!PythonManager::GetInstance().IsInitialized())
@@ -678,7 +679,7 @@ auto PythonRuntime::LoadPlugin(const std::filesystem::path& path)
         // 添加 sys.path（不移除，与"解释器永不销毁"设计一致）
         {
             // 导入 sys 模块
-            PyObjectPtr sys_module =
+            const PyObjectPtr sys_module =
                 PyObjectPtr::Attach(PyImport_ImportModule("sys"));
             if (!sys_module)
             {
@@ -686,7 +687,7 @@ auto PythonRuntime::LoadPlugin(const std::filesystem::path& path)
             }
 
             // 获取 sys.path
-            PyObjectPtr path_list = PyObjectPtr::Attach(
+            const PyObjectPtr path_list = PyObjectPtr::Attach(
                 PyObject_GetAttrString(sys_module.Get(), "path"));
             if (!path_list)
             {
@@ -694,9 +695,10 @@ auto PythonRuntime::LoadPlugin(const std::filesystem::path& path)
             }
 
             // 创建目录字符串
-            PyObjectPtr dir_str = PyObjectPtr::Attach(PyUnicode_FromString(
-                reinterpret_cast<const char*>(
-                    manifest_dir.u8string().c_str())));
+            const PyObjectPtr dir_str =
+                PyObjectPtr::Attach(PyUnicode_FromString(
+                    reinterpret_cast<const char*>(
+                        manifest_dir.u8string().c_str())));
             if (!dir_str)
             {
                 throw PythonException("Failed to create directory string");

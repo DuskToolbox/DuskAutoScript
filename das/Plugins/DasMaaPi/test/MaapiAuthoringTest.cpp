@@ -162,16 +162,16 @@ namespace
         {
             for (const auto& [key, val] : *obj)
             {
-                keys.emplace(std::string(key));
+                keys.emplace(key);
                 CollectKeysRecursive(val, keys);
             }
             return;
         }
         if (auto arr = value.as_array())
         {
-            for (auto it = arr->begin(); it != arr->end(); ++it)
+            for (auto&& it : *arr)
             {
-                CollectKeysRecursive(*it, keys);
+                CollectKeysRecursive(it, keys);
             }
         }
     }
@@ -737,7 +737,7 @@ TEST_F(MaapiAuthoringFixture, PiValuePathsPersistTasksAndOptions)
     // session context 注入一个 DailyFarm 实例（带显式 itemId 方便后续
     // formSequenceItem-targeted setValue 寻址）。
     auto session = CreateSession(
-        "{\"adapter\":{\"interfacePath\":\"" + interface_path
+        R"({"adapter":{"interfacePath":")" + interface_path
         + "\"},\"pi\":{\"tasks\":[{\"itemId\":\"item_daily_farm\","
           "\"taskName\":\"DailyFarm\",\"enabled\":true}]}}");
 
@@ -837,7 +837,7 @@ TEST_F(MaapiAuthoringFixture, PiValuePathCleanupRemovesOrphans)
     auto interface_path =
         FixturePath("interface_authoring.jsonc").generic_string();
     auto session = CreateSession(
-        "{\"adapter\":{\"interfacePath\":\"" + interface_path
+        R"({"adapter":{"interfacePath":")" + interface_path
         + "\"},\"pi\":{\"orphanPaths\":[\"options:legacy\","
           "\"pi.tasks:MissingTask\"],\"globalOptions\":[{\"optionName\":"
           "\"legacy\",\"kind\":\"select\",\"selectedCases\":[\"old\"]}],"
@@ -885,8 +885,8 @@ TEST_F(MaapiAuthoringFixture, PresetAndOrphansProjectIntoSettings)
     auto interface_path =
         FixturePath("interface_authoring.jsonc").generic_string();
     auto session = CreateSession(
-        "{\"adapter\":{\"interfacePath\":\"" + interface_path
-        + "\"},\"pi\":{\"orphanPaths\":[\"pi.tasks:MissingTask\"]}}");
+        R"({"adapter":{"interfacePath":")" + interface_path
+        + R"("},"pi":{"orphanPaths":["pi.tasks:MissingTask"]}})");
 
     // D-84-37/42: applyPreset 已删除；选择 preset 走 setValue fieldName=
     // presetName，Provider 在 ApplyDocumentSetValue 内部触发 ApplyPreset
@@ -935,7 +935,7 @@ TEST_F(MaapiAuthoringFixture, ContractDocShapeHasFormSequenceAndNoPrivateFields)
     auto interface_path =
         FixturePath("interface_authoring.jsonc").generic_string();
     auto session = CreateSession(
-        "{\"adapter\":{\"interfacePath\":\"" + interface_path
+        R"({"adapter":{"interfacePath":")" + interface_path
         + "\"},\"pi\":{\"tasks\":[{\"taskName\":\"DailyFarm\","
           "\"enabled\":true}]}}");
 
@@ -1005,7 +1005,7 @@ TEST_F(MaapiAuthoringFixture, ItemLevelSetValueTogglesTaskEnabled)
     auto interface_path =
         FixturePath("interface_authoring.jsonc").generic_string();
     auto session = CreateSession(
-        "{\"adapter\":{\"interfacePath\":\"" + interface_path
+        R"({"adapter":{"interfacePath":")" + interface_path
         + "\"},\"pi\":{\"tasks\":[{\"itemId\":\"item_daily_farm\","
           "\"taskName\":\"DailyFarm\",\"enabled\":true}]}}");
 
@@ -1038,7 +1038,7 @@ TEST_F(MaapiAuthoringFixture, RemoveSequenceItemDropsTaskFromPiTasks)
     auto interface_path =
         FixturePath("interface_authoring.jsonc").generic_string();
     auto session = CreateSession(
-        "{\"adapter\":{\"interfacePath\":\"" + interface_path
+        R"({"adapter":{"interfacePath":")" + interface_path
         + "\"},\"pi\":{\"tasks\":[{\"itemId\":\"item_daily_farm\","
           "\"taskName\":\"DailyFarm\",\"enabled\":true},{\"itemId\":"
           "\"item_award\",\"taskName\":\"Award\",\"enabled\":true}]}}");
@@ -1138,7 +1138,7 @@ namespace
             task.dto.option.push_back(opt.dto.name);
         }
         catalog.tasks.push_back(std::move(task));
-        catalog.options = std::move(options);
+        catalog.options = options;
         return catalog;
     }
 
@@ -1290,7 +1290,7 @@ TEST_F(MaapiAuthoringFixture, ApplyChangeReturnsDynamicPortsInResultJson)
     // 起始 session 已注入 DailyFarm 实例（带 itemId），避免依赖已删除的
     // pi.tasks 批量替换入口。
     auto session = CreateSession(
-        "{\"adapter\":{\"interfacePath\":\"" + interface_path
+        R"({"adapter":{"interfacePath":")" + interface_path
         + "\"},\"pi\":{\"tasks\":[{\"itemId\":\"item_daily_farm\","
           "\"taskName\":\"DailyFarm\",\"enabled\":true}]}}");
     DasPtr<Das::ExportInterface::IDasJson> result_json;
@@ -2040,8 +2040,8 @@ TEST(I18nTest, LanguageFieldCanBeSetViaApplySetValueChange)
 
 TEST(I18nTest, DefaultLanguageIsZhCnWhenAvailable)
 {
-    auto                                        catalog = MakeI18nMockCatalog();
-    Das::Plugins::DasMaaPi::AcceptedSettingsDto settings;
+    auto catalog = MakeI18nMockCatalog();
+    const Das::Plugins::DasMaaPi::AcceptedSettingsDto settings;
 
     auto document = Das::Plugins::DasMaaPi::ProjectAuthoringDocument(
         settings,
@@ -2430,18 +2430,18 @@ TEST(OptionValueIrTest, ApplyRoundTripsScalarValuesBackToDto)
         const std::string json =
             std::string{"{\"baseRevision\":0,\"kind\":\"setValue\","
                         "\"payload\":{\"valuePath\":\""}
-            + value_path + "\",\"value\":" + value_json_literal + "}}";
+            + value_path + R"(","value":)" + value_json_literal + "}}";
         auto change = Das::Utils::ParseYyjsonFromString(json);
         ASSERT_TRUE(change.has_value());
         ApplySetValueChange(settings, *change, &catalog);
     };
 
-    apply("options.stage", "\"1-1\"");        // select string
-    apply("options.retry_text", "\"hello\""); // input 单字段 string
-    apply("options.retry_count", "42");       // input 单字段 int
-    apply("options.coord", "{\"x\":\"100\",\"y\":\"200\"}"); // input 多字段 obj
-    apply("options.tags", "[\"small\"]"); // checkbox jsonArray
-    apply("options.notify", "true");      // switch bool
+    apply("options.stage", "\"1-1\"");                  // select string
+    apply("options.retry_text", "\"hello\"");           // input 单字段 string
+    apply("options.retry_count", "42");                 // input 单字段 int
+    apply("options.coord", R"({"x":"100","y":"200"})"); // input 多字段 obj
+    apply("options.tags", "[\"small\"]");               // checkbox jsonArray
+    apply("options.notify", "true");                    // switch bool
 
     // 把 acceptedProperties 序列化出来，对照每个 option 的内部 DTO 字段。
     auto serialized = SerializeAcceptedSettings(settings);
@@ -2764,7 +2764,7 @@ TEST_F(MaapiAuthoringFixture, PresetNameSetValueTriggersTaskExpansion)
     auto interface_path =
         FixturePath("interface_authoring.jsonc").generic_string();
     auto session = CreateSession(
-        "{\"adapter\":{\"interfacePath\":\"" + interface_path + "\"}}");
+        R"({"adapter":{"interfacePath":")" + interface_path + "\"}}");
 
     DasPtr<Das::ExportInterface::IDasJson> result_json;
     // D-84-37/42: applyPreset 已删除；preset 选择通过 setValue target=document
@@ -2829,7 +2829,7 @@ TEST_F(MaapiAuthoringFixture, ApplyPresetExpandsTasksAndRestoresOptionValues)
     auto interface_path =
         FixturePath("interface_authoring.jsonc").generic_string();
     auto session = CreateSession(
-        "{\"adapter\":{\"interfacePath\":\"" + interface_path + "\"}}");
+        R"({"adapter":{"interfacePath":")" + interface_path + "\"}}");
 
     DasPtr<Das::ExportInterface::IDasJson> result_json;
     // D-84-37/42: applyPreset 已删除；preset 选择通过 setValue target=document
@@ -2902,7 +2902,7 @@ TEST_F(MaapiAuthoringFixture, InvalidPresetNameWritesOrphanPath)
     auto interface_path =
         FixturePath("interface_authoring.jsonc").generic_string();
     auto session = CreateSession(
-        "{\"adapter\":{\"interfacePath\":\"" + interface_path + "\"}}");
+        R"({"adapter":{"interfacePath":")" + interface_path + "\"}}");
 
     DasPtr<Das::ExportInterface::IDasJson> result_json;
     // D-84-24: 严格 setValue target=document fieldName=presetName。未知
@@ -3350,8 +3350,8 @@ TEST(MaapiProjectionTest, MultiInputOptionSplitsIntoIndependentFields)
         auto field = it->as_object();
         ASSERT_TRUE(field.has_value());
         item_field_names.emplace(
-            std::string(
-                (*field)[std::string_view("name")].as_string().value_or("")));
+
+            (*field)[std::string_view("name")].as_string().value_or(""));
     }
 
     // 多字段 input 被拆为独立字段；不再有 jsonObject 形态的 options.coord。
@@ -3421,9 +3421,9 @@ TEST(MaapiProjectionTest, MultiInputOptionSplitsIntoIndependentFields)
                 continue;
             }
             leaf_names.emplace(
-                std::string(
-                    (*leaf)[std::string_view("fieldName")].as_string().value_or(
-                        "")));
+
+                (*leaf)[std::string_view("fieldName")].as_string().value_or(
+                    ""));
         }
         if (leaf_names.count("options.coord.x")
             && leaf_names.count("options.coord.y"))
@@ -3682,7 +3682,7 @@ TEST(MaapiProjectionTest, RootCommandsAndItemDebugInfoProjected)
             (*cmd)[std::string_view("label")].as_string().value_or("");
         EXPECT_FALSE(id_opt.empty());
         EXPECT_FALSE(label_opt.empty());
-        command_ids.emplace(std::string(id_opt));
+        command_ids.emplace(id_opt);
         ASSERT_TRUE(cmd->contains(std::string_view("apply")));
         auto apply = (*cmd)[std::string_view("apply")].as_object();
         ASSERT_TRUE(apply.has_value());
@@ -3939,7 +3939,7 @@ TEST_F(MaapiAuthoringFixture, SetValueDocumentTargetControllerNameSucceeds)
     auto interface_path =
         FixturePath("interface_authoring.jsonc").generic_string();
     auto session = CreateSession(
-        "{\"adapter\":{\"interfacePath\":\"" + interface_path + "\"}}");
+        R"({"adapter":{"interfacePath":")" + interface_path + "\"}}");
 
     DasPtr<Das::ExportInterface::IDasJson> result_json;
     auto                                   change = ParseDasJson(
@@ -3978,7 +3978,7 @@ TEST_F(MaapiAuthoringFixture, SetValueDocumentTargetRejectsUnknownField)
     auto interface_path =
         FixturePath("interface_authoring.jsonc").generic_string();
     auto session = CreateSession(
-        "{\"adapter\":{\"interfacePath\":\"" + interface_path + "\"}}");
+        R"({"adapter":{"interfacePath":")" + interface_path + "\"}}");
 
     // 先 Get 一份初始 document，记录 revision 0。
     DasPtr<Das::ExportInterface::IDasJson> get_json;
@@ -4014,7 +4014,7 @@ TEST_F(MaapiAuthoringFixture, SetValueFormSequenceItemTargetUpdatesEnabled)
     auto interface_path =
         FixturePath("interface_authoring.jsonc").generic_string();
     auto session = CreateSession(
-        "{\"adapter\":{\"interfacePath\":\"" + interface_path
+        R"({"adapter":{"interfacePath":")" + interface_path
         + "\"},\"pi\":{\"tasks\":[{\"itemId\":\"item_a\","
           "\"taskName\":\"DailyFarm\",\"enabled\":true}]}}");
 
@@ -4046,7 +4046,7 @@ TEST_F(MaapiAuthoringFixture, SetValueFormSequenceItemTargetRejectsUnknownId)
     auto interface_path =
         FixturePath("interface_authoring.jsonc").generic_string();
     auto session = CreateSession(
-        "{\"adapter\":{\"interfacePath\":\"" + interface_path
+        R"({"adapter":{"interfacePath":")" + interface_path
         + "\"},\"pi\":{\"tasks\":[{\"itemId\":\"item_a\","
           "\"taskName\":\"DailyFarm\",\"enabled\":true}]}}");
 
@@ -4080,7 +4080,7 @@ TEST_F(MaapiAuthoringFixture, SetValueRejectsLegacyValuePathPayload)
     auto interface_path =
         FixturePath("interface_authoring.jsonc").generic_string();
     auto session = CreateSession(
-        "{\"adapter\":{\"interfacePath\":\"" + interface_path + "\"}}");
+        R"({"adapter":{"interfacePath":")" + interface_path + "\"}}");
 
     DasPtr<Das::ExportInterface::IDasJson> result_json;
     auto                                   change = ParseDasJson(
@@ -4107,7 +4107,7 @@ TEST_F(MaapiAuthoringFixture, SetValueRejectsLegacyNodeIdFieldPayload)
     auto interface_path =
         FixturePath("interface_authoring.jsonc").generic_string();
     auto session = CreateSession(
-        "{\"adapter\":{\"interfacePath\":\"" + interface_path
+        R"({"adapter":{"interfacePath":")" + interface_path
         + "\"},\"pi\":{\"tasks\":[{\"itemId\":\"item_a\","
           "\"taskName\":\"DailyFarm\",\"enabled\":true}]}}");
 
@@ -4138,7 +4138,7 @@ TEST_F(MaapiAuthoringFixture, SetValueRejectsExtraPayloadMember)
     auto interface_path =
         FixturePath("interface_authoring.jsonc").generic_string();
     auto session = CreateSession(
-        "{\"adapter\":{\"interfacePath\":\"" + interface_path + "\"}}");
+        R"({"adapter":{"interfacePath":")" + interface_path + "\"}}");
 
     DasPtr<Das::ExportInterface::IDasJson> result_json;
     auto                                   change = ParseDasJson(
@@ -4159,7 +4159,7 @@ TEST_F(MaapiAuthoringFixture, AddFormSequenceItemRegistersTaskInstance)
     auto interface_path =
         FixturePath("interface_authoring.jsonc").generic_string();
     auto session = CreateSession(
-        "{\"adapter\":{\"interfacePath\":\"" + interface_path + "\"}}");
+        R"({"adapter":{"interfacePath":")" + interface_path + "\"}}");
 
     DasPtr<Das::ExportInterface::IDasJson> result_json;
     auto                                   change = ParseDasJson(
@@ -4197,7 +4197,7 @@ TEST_F(MaapiAuthoringFixture, AddFormSequenceItemRejectsUnknownActionId)
     auto interface_path =
         FixturePath("interface_authoring.jsonc").generic_string();
     auto session = CreateSession(
-        "{\"adapter\":{\"interfacePath\":\"" + interface_path + "\"}}");
+        R"({"adapter":{"interfacePath":")" + interface_path + "\"}}");
 
     DasPtr<Das::ExportInterface::IDasJson> result_json;
     auto                                   change = ParseDasJson(
@@ -4224,7 +4224,7 @@ TEST_F(MaapiAuthoringFixture, RemoveFormSequenceItemDropsTaskByItemId)
     auto interface_path =
         FixturePath("interface_authoring.jsonc").generic_string();
     auto session = CreateSession(
-        "{\"adapter\":{\"interfacePath\":\"" + interface_path
+        R"({"adapter":{"interfacePath":")" + interface_path
         + "\"},\"pi\":{\"tasks\":["
           "{\"itemId\":\"item_a\",\"taskName\":\"DailyFarm\",\"enabled\":true},"
           "{\"itemId\":\"item_b\",\"taskName\":\"DailyFarm\",\"enabled\":true}]"
@@ -4259,7 +4259,7 @@ TEST_F(MaapiAuthoringFixture, RemoveFormSequenceItemRejectsUnknownId)
     auto interface_path =
         FixturePath("interface_authoring.jsonc").generic_string();
     auto session = CreateSession(
-        "{\"adapter\":{\"interfacePath\":\"" + interface_path
+        R"({"adapter":{"interfacePath":")" + interface_path
         + "\"},\"pi\":{\"tasks\":["
           "{\"itemId\":\"item_a\",\"taskName\":\"DailyFarm\",\"enabled\":true}]"
           "}}");
@@ -4288,7 +4288,7 @@ TEST_F(MaapiAuthoringFixture, MoveFormSequenceItemReordersByItemId)
     auto interface_path =
         FixturePath("interface_authoring.jsonc").generic_string();
     auto session = CreateSession(
-        "{\"adapter\":{\"interfacePath\":\"" + interface_path
+        R"({"adapter":{"interfacePath":")" + interface_path
         + "\"},\"pi\":{\"tasks\":["
           "{\"itemId\":\"item_a\",\"taskName\":\"DailyFarm\",\"enabled\":true},"
           "{\"itemId\":\"item_b\",\"taskName\":\"DailyFarm\",\"enabled\":true},"
@@ -4326,8 +4326,8 @@ TEST_F(MaapiAuthoringFixture, InvokeCommandRejectsUnknownCommandId)
     auto interface_path =
         FixturePath("interface_authoring.jsonc").generic_string();
     auto session = CreateSession(
-        "{\"adapter\":{\"interfacePath\":\"" + interface_path
-        + "\"},\"pi\":{\"presetName\":\"DailyPreset\"}}");
+        R"({"adapter":{"interfacePath":")" + interface_path
+        + R"("},"pi":{"presetName":"DailyPreset"}})");
 
     DasPtr<Das::ExportInterface::IDasJson> result_json;
     auto                                   change = ParseDasJson(
@@ -4356,7 +4356,7 @@ TEST_F(MaapiAuthoringFixture, SetValuePresetNameLoadsCustomPreset)
     auto interface_path =
         FixturePath("interface_authoring.jsonc").generic_string();
     auto session = CreateSession(
-        "{\"adapter\":{\"interfacePath\":\"" + interface_path
+        R"({"adapter":{"interfacePath":")" + interface_path
         + "\"},\"pi\":{\"controllerName\":\"Android\","
           "\"resourceName\":\"Official\",\"presetName\":\"DailyPreset\","
           "\"language\":\"zh_cn\",\"tasks\":[{\"itemId\":\"seed_t1\","
@@ -4429,7 +4429,7 @@ TEST_F(MaapiAuthoringFixture, InvokeCommandNewPresetCreatesSnapshot)
         FixturePath("interface_authoring.jsonc").generic_string();
     // flat pi seed：无 configurations，只有 PI 官方字段 + 一个 task 实例。
     auto session = CreateSession(
-        "{\"adapter\":{\"interfacePath\":\"" + interface_path
+        R"({"adapter":{"interfacePath":")" + interface_path
         + "\"},"
           "\"pi\":{\"controllerName\":\"Android\","
           "\"resourceName\":\"Official\",\"presetName\":\"DailyPreset\","
@@ -4538,7 +4538,7 @@ TEST_F(MaapiAuthoringFixture, ConvertViewRejectedByMaapi)
     auto interface_path =
         FixturePath("interface_authoring.jsonc").generic_string();
     auto session = CreateSession(
-        "{\"adapter\":{\"interfacePath\":\"" + interface_path + "\"}}");
+        R"({"adapter":{"interfacePath":")" + interface_path + "\"}}");
 
     DasPtr<Das::ExportInterface::IDasJson> result_json;
     auto                                   change = ParseDasJson(
@@ -4558,7 +4558,7 @@ TEST_F(MaapiAuthoringFixture, LegacyKindsRejectedAsUnsupportedChange)
     auto interface_path =
         FixturePath("interface_authoring.jsonc").generic_string();
     auto session = CreateSession(
-        "{\"adapter\":{\"interfacePath\":\"" + interface_path + "\"}}");
+        R"({"adapter":{"interfacePath":")" + interface_path + "\"}}");
 
     for (const auto* kind_str :
          {"applyPreset",
@@ -4573,8 +4573,8 @@ TEST_F(MaapiAuthoringFixture, LegacyKindsRejectedAsUnsupportedChange)
     {
         DasPtr<Das::ExportInterface::IDasJson> result_json;
         const std::string                      change_json =
-            std::string("{\"baseRevision\":0,\"kind\":\"") + kind_str
-            + "\",\"payload\":{}}";
+            std::string(R"({"baseRevision":0,"kind":")") + kind_str
+            + R"(","payload":{}})";
         auto change = ParseDasJson(change_json);
         ASSERT_EQ(
             session->ApplyChange(change.Get(), result_json.Put()),
@@ -4594,7 +4594,7 @@ TEST_F(MaapiAuthoringFixture, CompileEmptyRequestReturnsStrictEnvelope)
     auto interface_path =
         FixturePath("interface_authoring.jsonc").generic_string();
     auto session = CreateSession(
-        "{\"adapter\":{\"interfacePath\":\"" + interface_path + "\"}}");
+        R"({"adapter":{"interfacePath":")" + interface_path + "\"}}");
 
     DasPtr<Das::ExportInterface::IDasJson> result_json;
     ASSERT_EQ(session->Compile({}, result_json.Put()), DAS_S_OK);
@@ -4630,7 +4630,7 @@ TEST(MaapiApplyResultTest, SuccessfulApplyEnvelopePassesStrictValidator)
         *new_preset_payload,
         invoke_diagnostics));
 
-    std::vector<PiDiagnosticDto> diagnostics;
+    const std::vector<PiDiagnosticDto> diagnostics;
     auto result = Das::Plugins::DasMaaPi::BuildApplyResult(
         candidate,
         /*revision=*/1,
@@ -4694,9 +4694,9 @@ namespace
 
         void Update(std::string_view data)
         {
-            for (std::size_t i = 0; i < data.size(); ++i)
+            for (char i : data)
             {
-                data_[datalen_++] = static_cast<std::uint8_t>(data[i]);
+                data_[datalen_++] = static_cast<std::uint8_t>(i);
                 if (datalen_ == 64)
                 {
                     Transform();
@@ -4948,7 +4948,9 @@ namespace
     // 读 fixtures 字面量为 std::string，避免测试依赖生产 serializer 生成期望。
     std::optional<std::string> ReadFixtureText(std::string_view relative)
     {
-        std::ifstream ifs(FixturePath(std::string(relative)), std::ios::binary);
+        const std::ifstream ifs(
+            FixturePath(std::string(relative)),
+            std::ios::binary);
         if (!ifs.is_open())
         {
             return std::nullopt;
@@ -5151,7 +5153,7 @@ namespace
         {
             return std::nullopt;
         }
-        std::ifstream ifs(path, std::ios::binary);
+        const std::ifstream ifs(path, std::ios::binary);
         if (!ifs.is_open())
         {
             return std::nullopt;
@@ -5172,7 +5174,7 @@ TEST_F(MaapiAuthoringFixture, LiteralV28InterfaceProjectsStrictWire)
     auto interface_path =
         FixturePath("interface_authoring_v28.jsonc").generic_string();
     auto session = CreateSession(
-        "{\"adapter\":{\"interfacePath\":\"" + interface_path + "\"}}");
+        R"({"adapter":{"interfacePath":")" + interface_path + "\"}}");
 
     DasPtr<Das::ExportInterface::IDasJson> get_json;
     ASSERT_EQ(session->GetDocument({}, get_json.Put()), DAS_S_OK);
@@ -5235,7 +5237,7 @@ TEST_F(MaapiAuthoringFixture, FreshSessionOmitsFreeGlobalOptionFromRootFields)
     auto interface_path =
         FixturePath("interface_authoring_v28.jsonc").generic_string();
     auto session = CreateSession(
-        "{\"adapter\":{\"interfacePath\":\"" + interface_path + "\"}}");
+        R"({"adapter":{"interfacePath":")" + interface_path + "\"}}");
 
     DasPtr<Das::ExportInterface::IDasJson> get_json;
     ASSERT_EQ(session->GetDocument({}, get_json.Put()), DAS_S_OK);
@@ -5261,7 +5263,7 @@ TEST_F(MaapiAuthoringFixture, AddFormSequenceItemProjectsTaskOptionPiDefaults)
     auto interface_path =
         FixturePath("interface_authoring_v28.jsonc").generic_string();
     auto session = CreateSession(
-        "{\"adapter\":{\"interfacePath\":\"" + interface_path + "\"}}");
+        R"({"adapter":{"interfacePath":")" + interface_path + "\"}}");
 
     DasPtr<Das::ExportInterface::IDasJson> apply_json;
     auto                                   change = ParseDasJson(
@@ -5325,8 +5327,8 @@ TEST_F(MaapiAuthoringFixture, LiteralPost84StateRoundTripsProviderGetApplyGet)
     ASSERT_TRUE(pi_obj.has_value());
 
     std::ostringstream context_buf;
-    context_buf << "{\"adapter\":{\"interfacePath\":\"" << interface_path
-                << "\"},\"pi\":";
+    context_buf << R"({"adapter":{"interfacePath":")" << interface_path
+                << R"("},"pi":)";
     context_buf << SerializeOrEmpty((*root_obj)[std::string_view("pi")]);
     context_buf << "}";
     auto session = CreateSession(context_buf.str());
@@ -5409,8 +5411,8 @@ TEST_F(MaapiAuthoringFixture, LiteralPost84StateFullLifecyclePreservesAuthority)
         FixturePath("interface_authoring_v28.jsonc").generic_string();
 
     std::ostringstream context_buf;
-    context_buf << "{\"adapter\":{\"interfacePath\":\"" << interface_path
-                << "\"},\"pi\":";
+    context_buf << R"({"adapter":{"interfacePath":")" << interface_path
+                << R"("},"pi":)";
     auto parsed = ParseJsonFromStringStrict(*fixture_text);
     ASSERT_TRUE(parsed.has_value());
     auto root_obj = parsed->as_object();
@@ -5512,8 +5514,8 @@ TEST_F(MaapiAuthoringFixture, MalformedChangeLeavesDisposableStateUnchanged)
     ASSERT_TRUE(root_obj.has_value());
 
     std::ostringstream context_buf;
-    context_buf << "{\"adapter\":{\"interfacePath\":\"" << interface_path
-                << "\"},\"pi\":";
+    context_buf << R"({"adapter":{"interfacePath":")" << interface_path
+                << R"("},"pi":)";
     context_buf << SerializeOrEmpty((*root_obj)[std::string_view("pi")]);
     context_buf << "}";
     auto session = CreateSession(context_buf.str());
@@ -5614,8 +5616,8 @@ TEST_F(MaapiAuthoringFixture, LegacyTaskId7BoundaryPreservedReadOnlyWithSha256)
     auto interface_path =
         FixturePath("interface_authoring_v28.jsonc").generic_string();
     std::ostringstream context_buf;
-    context_buf << "{\"adapter\":{\"interfacePath\":\"" << interface_path
-                << "\"},\"pi\":";
+    context_buf << R"({"adapter":{"interfacePath":")" << interface_path
+                << R"("},"pi":)";
     context_buf << SerializeOrEmpty((*props)[std::string_view("pi")]);
     context_buf << "}";
     auto session = CreateSession(context_buf.str());
@@ -5792,7 +5794,7 @@ namespace
             hard.name = "hard";
             o.dto.cases.push_back(std::move(easy));
             o.dto.cases.push_back(std::move(hard));
-            o.dto.default_cases.push_back("hard");
+            o.dto.default_cases.emplace_back("hard");
             return o;
         };
 
@@ -5915,7 +5917,7 @@ TEST_F(MaapiAuthoringFixture, PresetExpansionAssignsStableItemIds)
     auto interface_path =
         FixturePath("interface_authoring.jsonc").generic_string();
     auto session = CreateSession(
-        "{\"adapter\":{\"interfacePath\":\"" + interface_path + "\"}}");
+        R"({"adapter":{"interfacePath":")" + interface_path + "\"}}");
 
     DasPtr<Das::ExportInterface::IDasJson> result_json;
     auto                                   preset_change = ParseDasJson(
@@ -5961,7 +5963,7 @@ TEST_F(
     auto interface_path =
         FixturePath("interface_authoring.jsonc").generic_string();
     auto session = CreateSession(
-        "{\"adapter\":{\"interfacePath\":\"" + interface_path + "\"}}");
+        R"({"adapter":{"interfacePath":")" + interface_path + "\"}}");
 
     DasPtr<Das::ExportInterface::IDasJson> result_json;
     // notify 是 DailyFarm 的 task 级 switch option；target=document 触发
@@ -6073,13 +6075,13 @@ namespace
             return o;
         };
 
-        PiOption stage_option = make_select(
+        const PiOption stage_option = make_select(
             "stage",
             {"1-1", "1-2"},
             std::vector<std::string>{"1-1"});
-        PiOption retry_option = make_select("retry", {"slow", "fast"});
-        PiOption shared_option = make_select("shared_opt", {"yes", "no"});
-        PiOption bootstrap_option =
+        const PiOption retry_option = make_select("retry", {"slow", "fast"});
+        const PiOption shared_option = make_select("shared_opt", {"yes", "no"});
+        const PiOption bootstrap_option =
             make_select("bootstrap_mode", {"safe", "fast"});
 
         catalog.options.push_back(stage_option);
@@ -6126,9 +6128,9 @@ namespace
             return 0;
         }
         std::size_t count = 0;
-        for (auto it = fields->begin(); it != fields->end(); ++it)
+        for (auto&& it : *fields)
         {
-            if (pred(*it))
+            if (pred(it))
             {
                 ++count;
             }
@@ -6189,7 +6191,7 @@ TEST(MaapiProjectionTest, ProjectsPretaskOptionAsNeutralRootField)
     MaapiPiOptionSettingsDto bootstrap_value;
     bootstrap_value.option_name = "bootstrap_mode";
     bootstrap_value.kind = "select";
-    bootstrap_value.selected_cases.push_back("fast");
+    bootstrap_value.selected_cases.emplace_back("fast");
     pretask_settings.options.push_back(std::move(bootstrap_value));
     settings.pi.pretasks.push_back(std::move(pretask_settings));
 
@@ -6214,8 +6216,8 @@ TEST(MaapiProjectionTest, ProjectsPretaskOptionWithPiDefaultWhenUnset)
 {
     using namespace Das::Plugins::DasMaaPi;
 
-    auto                catalog = MakeNeutralProjectionMockCatalog();
-    AcceptedSettingsDto settings; // fresh — no pretasks
+    auto                      catalog = MakeNeutralProjectionMockCatalog();
+    const AcceptedSettingsDto settings; // fresh — no pretasks
 
     auto document = ProjectAuthoringDocument(settings, &catalog, {}, 0);
 
@@ -6241,7 +6243,7 @@ TEST(MaapiProjectionTest, ApplyDocumentSetValueOnPretaskFieldPersistsValue)
                                                R"("fieldName":"pretask.bootstrap_mode",)"
                                                R"("value":"fast"})")
                                                .value_or(yyjson::value(nullptr));
-    bool                         ok =
+    const bool                   ok =
         ApplyStrictSetValueChange(settings, payload, &catalog, diagnostics);
     EXPECT_TRUE(ok);
     EXPECT_TRUE(diagnostics.empty());
@@ -6270,8 +6272,8 @@ TEST(MaapiProjectionTest, ProjectsSettingOptionAsNeutralRootField)
 {
     using namespace Das::Plugins::DasMaaPi;
 
-    auto                catalog = MakeNeutralProjectionMockCatalog();
-    AcceptedSettingsDto settings;
+    auto                      catalog = MakeNeutralProjectionMockCatalog();
+    const AcceptedSettingsDto settings;
 
     auto document = ProjectAuthoringDocument(settings, &catalog, {}, 0);
     auto validate =
@@ -6295,8 +6297,8 @@ TEST(MaapiProjectionTest, OverlapKeyEmittedAsSettingsOnlyNotOptions)
 {
     using namespace Das::Plugins::DasMaaPi;
 
-    auto                catalog = MakeNeutralProjectionMockCatalog();
-    AcceptedSettingsDto settings;
+    auto                      catalog = MakeNeutralProjectionMockCatalog();
+    const AcceptedSettingsDto settings;
 
     auto document = ProjectAuthoringDocument(settings, &catalog, {}, 0);
 
@@ -6344,8 +6346,8 @@ TEST(
 {
     using namespace Das::Plugins::DasMaaPi;
 
-    auto                catalog = MakeNeutralProjectionMockCatalog();
-    AcceptedSettingsDto settings;
+    auto                      catalog = MakeNeutralProjectionMockCatalog();
+    const AcceptedSettingsDto settings;
 
     std::vector<PiDiagnosticDto> diags;
     auto document = ProjectAuthoringDocument(settings, &catalog, {}, 0, &diags);
@@ -6394,10 +6396,14 @@ TEST(
     EXPECT_EQ(adv_fields[0], "settings.retry");
 
     // 全覆盖 + 唯一：layout 叶子 fieldName 集合 == fields[].name 集合。
-    auto                  layout_names = LayoutLeafFieldNames(document);
-    auto                  field_names = RootFieldNames(document);
-    std::set<std::string> layout_set(layout_names.begin(), layout_names.end());
-    std::set<std::string> field_set(field_names.begin(), field_names.end());
+    auto                        layout_names = LayoutLeafFieldNames(document);
+    auto                        field_names = RootFieldNames(document);
+    const std::set<std::string> layout_set(
+        layout_names.begin(),
+        layout_names.end());
+    const std::set<std::string> field_set(
+        field_names.begin(),
+        field_names.end());
     EXPECT_EQ(layout_set, field_set)
         << "fieldLayout must cover every root field exactly once";
     EXPECT_EQ(layout_set.size(), layout_names.size())
@@ -6413,7 +6419,7 @@ TEST(MaapiProjectionTest, RootFieldLayoutCoversAdapterFieldsWhenCatalogAbsent)
 {
     using namespace Das::Plugins::DasMaaPi;
 
-    AcceptedSettingsDto settings;
+    const AcceptedSettingsDto settings;
     auto document = ProjectAuthoringDocument(settings, nullptr, {}, 0);
 
     auto validate =
@@ -6428,10 +6434,14 @@ TEST(MaapiProjectionTest, RootFieldLayoutCoversAdapterFieldsWhenCatalogAbsent)
     EXPECT_EQ(project_fields[0], "adapter.interfacePath");
     EXPECT_EQ(project_fields[1], "adapter.executionPolicy.failFast");
 
-    auto                  layout_names = LayoutLeafFieldNames(document);
-    auto                  field_names = RootFieldNames(document);
-    std::set<std::string> layout_set(layout_names.begin(), layout_names.end());
-    std::set<std::string> field_set(field_names.begin(), field_names.end());
+    auto                        layout_names = LayoutLeafFieldNames(document);
+    auto                        field_names = RootFieldNames(document);
+    const std::set<std::string> layout_set(
+        layout_names.begin(),
+        layout_names.end());
+    const std::set<std::string> field_set(
+        field_names.begin(),
+        field_names.end());
     EXPECT_EQ(layout_set, field_set)
         << "fieldLayout must cover every root field exactly once";
 }
@@ -6452,7 +6462,7 @@ TEST(MaapiProjectionTest, ApplyDocumentSetValueOnSettingsFieldPersistsGlobal)
                                                R"("fieldName":"settings.stage",)"
                                                R"("value":"1-2"})")
                                                .value_or(yyjson::value(nullptr));
-    bool                         ok =
+    const bool                   ok =
         ApplyStrictSetValueChange(settings, payload, &catalog, diagnostics);
     EXPECT_TRUE(ok);
     EXPECT_TRUE(diagnostics.empty());
@@ -6482,7 +6492,7 @@ TEST(MaapiProjectionTest, PretaskSettingsRoundTripPreservesSelectedValue)
     MaapiPiOptionSettingsDto bootstrap_value;
     bootstrap_value.option_name = "bootstrap_mode";
     bootstrap_value.kind = "select";
-    bootstrap_value.selected_cases.push_back("fast");
+    bootstrap_value.selected_cases.emplace_back("fast");
     pretask_settings.options.push_back(std::move(bootstrap_value));
     settings.pi.pretasks.push_back(std::move(pretask_settings));
 

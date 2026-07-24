@@ -41,7 +41,7 @@ int main(int argc, char* argv[])
 
     if (vm.count("fake-main"))
     {
-        std::string signal_name =
+        const std::string signal_name =
             vm.count("signal-name")
                 ? vm["signal-name"].as<std::string>()
                 : FakeMainProcess::GenerateUniqueSignalName();

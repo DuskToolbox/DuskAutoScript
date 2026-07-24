@@ -900,7 +900,7 @@ DasResult AdbCapture::CaptureRawWithGZip()
         return DAS_E_INVALID_POINTER;
     }
 
-    ExportInterface::DasSize size{
+    const ExportInterface::DasSize size{
         static_cast<int32_t>(header.width),
         static_cast<int32_t>(header.height)};
     DasPtr<ExportInterface::IDasImage> p_image{};
@@ -911,7 +911,7 @@ DasResult AdbCapture::CaptureRawWithGZip()
     {
         try
         {
-            DasPtr<ExportInterface::IDasMemory> payload_memory{
+            const DasPtr<ExportInterface::IDasMemory> payload_memory{
                 new Details::PayloadMemoryView(payload_buffer.Get())};
             const auto create_image_result = ::CreateIDasImageFromRgb888(
                 payload_memory.Get(),
@@ -936,7 +936,7 @@ DasResult AdbCapture::CaptureRawWithGZip()
         {
             return color_format.error();
         }
-        DasImageDesc desc{
+        const DasImageDesc desc{
             .p_data = reinterpret_cast<char*>(p_payload_data),
             .data_size = expected_payload.value(),
             .data_format = color_format.value()};

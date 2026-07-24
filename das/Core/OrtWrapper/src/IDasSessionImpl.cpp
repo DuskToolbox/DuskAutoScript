@@ -15,14 +15,14 @@ IDasSessionImpl::IDasSessionImpl(Ort::Session session)
     for (size_t i = 0; i < num_inputs; ++i)
     {
         auto name = session_.GetInputNameAllocated(i, allocator_);
-        input_names_.push_back(name.get());
+        input_names_.emplace_back(name.get());
     }
 
     auto num_outputs = session_.GetOutputCount();
     for (size_t i = 0; i < num_outputs; ++i)
     {
         auto name = session_.GetOutputNameAllocated(i, allocator_);
-        output_names_.push_back(name.get());
+        output_names_.emplace_back(name.get());
     }
 }
 
@@ -121,7 +121,7 @@ DasResult IDasSessionImpl::Run(
                     static_cast<bool>(p_name));
                 return DAS::IsFailed(cr) ? cr : DAS_E_INVALID_POINTER;
             }
-            DasReadOnlyString name_wrapper(p_name.Get());
+            const DasReadOnlyString name_wrapper(p_name.Get());
 
             io_binding.BindInput(
                 name_wrapper.GetUtf8(),
@@ -150,7 +150,7 @@ DasResult IDasSessionImpl::Run(
                                ? get_name_result
                                : DAS_E_INVALID_POINTER;
                 }
-                DasReadOnlyString name_wrapper(p_name.Get());
+                const DasReadOnlyString name_wrapper(p_name.Get());
                 io_binding.BindOutput(
                     name_wrapper.GetUtf8(),
                     allocator_.GetInfo());

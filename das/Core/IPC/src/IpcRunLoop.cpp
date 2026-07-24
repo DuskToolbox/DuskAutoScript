@@ -149,7 +149,7 @@ void IpcRunLoop::RequestStop()
     {
         std::vector<PendingCallCompletion> completions;
         {
-            std::unique_lock<std::mutex> lock(pending_mutex_);
+            const std::unique_lock<std::mutex> lock(pending_mutex_);
             for (auto& [call_key, state] : pending_calls_)
             {
                 if (state.on_complete)
@@ -295,7 +295,7 @@ boost::asio::awaitable<void> IpcRunLoop::DispatchToHandlerWithSender(
     //    BUSINESS_EVENT) continue through the inbound_queue_ ->
     //    BusinessThread::ProcessInboundMessage path where StubContext is
     //    safely constructed on the BusinessThread.
-    IMessageHandler* handler =
+    const IMessageHandler* handler =
         GetHandler(header.GetHeaderFlags(), header.GetInterfaceId());
 
     if (handler)
@@ -336,7 +336,9 @@ boost::asio::awaitable<void> IpcRunLoop::RouteIncomingMessage(
                     header.GetSourceSessionId());
             }
 
-            CallKey call_key{header.GetSourceSessionId(), header.GetCallId()};
+            const CallKey call_key{
+                header.GetSourceSessionId(),
+                header.GetCallId()};
             static_cast<void>(TryCompletePendingCallbackOnly(
                 call_key,
                 GetResponseResult(header),
@@ -398,7 +400,7 @@ boost::asio::awaitable<void> IpcRunLoop::RouteIncomingMessage(
 
     if (header.GetMessageType() == MessageType::RESPONSE)
     {
-        CallKey call_key{header.GetSourceSessionId(), header.GetCallId()};
+        const CallKey call_key{header.GetSourceSessionId(), header.GetCallId()};
         if (TryCompletePendingCallbackOnly(
                 call_key,
                 GetResponseResult(header),
@@ -439,10 +441,10 @@ std::pair<ValidatedIPCMessageHeader, CallKey>
 IpcRunLoop::PrepareAsyncSendHeader(
     const ValidatedIPCMessageHeader& request_header)
 {
-    uint16_t                call_id = AllocateCallId();
+    const uint16_t          call_id = AllocateCallId();
     const IPCMessageHeader& raw = request_header.Raw();
 
-    CallKey call_key{
+    const CallKey call_key{
         .source_session_id = raw.target_session_id,
         .call_id = call_id};
 
@@ -465,12 +467,12 @@ std::pair<DasResult, CallKey> IpcRunLoop::PrepareSendRequestWithTransport(
     const uint8_t*                   body,
     size_t                           body_size)
 {
-    uint16_t call_id = AllocateCallId();
+    const uint16_t call_id = AllocateCallId();
 
     const IPCMessageHeader& raw = request_header.Raw();
     // V3: pending_call key 使用 target_session_id（对方进程的 session_id），
     // 这样响应返回时可以正确匹配
-    CallKey call_key{
+    const CallKey call_key{
         .source_session_id = raw.target_session_id,
         .call_id = call_id};
 
@@ -487,7 +489,7 @@ std::pair<DasResult, CallKey> IpcRunLoop::PrepareSendRequestWithTransport(
                                 .Build();
 
     {
-        std::unique_lock<std::mutex> lock(pending_mutex_);
+        const std::unique_lock<std::mutex> lock(pending_mutex_);
         pending_calls_[call_key] = PendingCallState{
             .call_key = call_key,
             .deadline = std::chrono::steady_clock::time_point::max(),
@@ -502,11 +504,11 @@ std::pair<DasResult, CallKey> IpcRunLoop::PrepareSendRequestWithTransport(
             transport.SendCoroutine(validated_header, body, body_size),
             boost::asio::use_future);
 
-        DasResult send_result = future.get();
+        const DasResult send_result = future.get();
 
         if (send_result != DAS_S_OK)
         {
-            std::unique_lock<std::mutex> lock(pending_mutex_);
+            const std::unique_lock<std::mutex> lock(pending_mutex_);
             pending_calls_.erase(call_key);
             return {send_result, CallKey{.source_session_id = 0, .call_id = 0}};
         }
@@ -518,7 +520,7 @@ std::pair<DasResult, CallKey> IpcRunLoop::PrepareSendRequestWithTransport(
         DAS_CORE_LOG_ERROR(
             "Send failed (system_error): {}",
             ToString(e.what()));
-        std::unique_lock<std::mutex> lock(pending_mutex_);
+        const std::unique_lock<std::mutex> lock(pending_mutex_);
         pending_calls_.erase(call_key);
         return {
             DAS_E_IPC_CONNECTION_LOST,
@@ -527,7 +529,7 @@ std::pair<DasResult, CallKey> IpcRunLoop::PrepareSendRequestWithTransport(
     catch (const std::exception& e)
     {
         DAS_CORE_LOG_ERROR("Send failed: {}", ToString(e.what()));
-        std::unique_lock<std::mutex> lock(pending_mutex_);
+        const std::unique_lock<std::mutex> lock(pending_mutex_);
         pending_calls_.erase(call_key);
         return {
             DAS_E_IPC_CONNECTION_LOST,
@@ -569,8 +571,8 @@ bool IpcRunLoop::TryCompletePendingCallbackOnly(
     PendingCallCompletion on_complete;
 
     {
-        std::unique_lock<std::mutex> lock(pending_mutex_);
-        auto                         it = pending_calls_.find(call_key);
+        const std::unique_lock<std::mutex> lock(pending_mutex_);
+        auto                               it = pending_calls_.find(call_key);
         if (it == pending_calls_.end())
         {
             return false;
@@ -605,7 +607,7 @@ void IpcRunLoop::TickPendingSenders()
 
     bool calls_empty = false;
     {
-        std::unique_lock<std::mutex> lock(pending_mutex_);
+        const std::unique_lock<std::mutex> lock(pending_mutex_);
         for (auto it = pending_calls_.begin(); it != pending_calls_.end();)
         {
             if (it->second.on_complete && now >= it->second.deadline)
@@ -644,7 +646,7 @@ void IpcRunLoop::TickPendingSenders()
 
 uint32_t IpcRunLoop::GetNearestDeadlineMs() const
 {
-    std::unique_lock<std::mutex> lock(pending_mutex_);
+    const std::unique_lock<std::mutex> lock(pending_mutex_);
 
     if (pending_calls_.empty())
     {
@@ -808,8 +810,8 @@ boost::asio::awaitable<void> IpcRunLoop::SendToSessionCoroutine(
     // response arriving before registration.
     if (on_complete)
     {
-        CallKey call_key{header.GetTargetSessionId(), header.GetCallId()};
-        std::unique_lock<std::mutex> lock(pending_mutex_);
+        const CallKey call_key{header.GetTargetSessionId(), header.GetCallId()};
+        const std::unique_lock<std::mutex> lock(pending_mutex_);
         pending_calls_[call_key] = PendingCallState{
             .call_key = call_key,
             .deadline = deadline,
@@ -817,8 +819,8 @@ boost::asio::awaitable<void> IpcRunLoop::SendToSessionCoroutine(
             .response_flags = 0};
     }
 
-    const uint16_t          target_session_id = header.GetTargetSessionId();
-    DasPtr<IHostConnection> host =
+    const uint16_t target_session_id = header.GetTargetSessionId();
+    const DasPtr<IHostConnection> host =
         connection_manager_->FindManagedHostConnection(target_session_id);
 
     DasResult                      lookup_result = DAS_E_IPC_OBJECT_NOT_FOUND;
@@ -942,7 +944,7 @@ void IpcRunLoop::NotifySendFailure(
                                .Build();
 
         InboundMessage msg;
-        msg.header = std::move(fail_header);
+        msg.header = fail_header;
         // body 为空 — 错误码已在 header.error_code 中
         auto push_result = inbound_queue_->Push(std::move(msg));
         if (push_result != DAS_S_OK)
@@ -970,7 +972,7 @@ void IpcRunLoop::ScheduleTimeoutCheck()
         return;
     }
 
-    uint32_t timeout_ms = GetNearestDeadlineMs();
+    const uint32_t timeout_ms = GetNearestDeadlineMs();
     if (timeout_ms == 0)
     {
         // 没有超时任务，不需要调度定时器
@@ -1054,7 +1056,7 @@ DasResult IpcRunLoop::RegisterHostLauncher(DasPtr<HostLauncher> launcher)
 
     auto& conn_mgr = GetConnectionManager();
 
-    DasResult result =
+    const DasResult result =
         conn_mgr.RegisterHostLauncher(session_id, std::move(launcher));
     if (result != DAS_S_OK)
     {
@@ -1100,8 +1102,8 @@ DasResult IpcRunLoop::RegisterInternalHost(DasPtr<IHostConnection> host)
         return DAS_E_IPC_NO_CONNECTIONS;
     }
 
-    auto&     conn_mgr = GetConnectionManager();
-    DasResult result = conn_mgr.RegisterInternalHost(session_id, host);
+    auto&           conn_mgr = GetConnectionManager();
+    const DasResult result = conn_mgr.RegisterInternalHost(session_id, host);
     if (DAS::IsFailed(result))
     {
         return result;

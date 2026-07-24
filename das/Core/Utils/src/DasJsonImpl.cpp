@@ -192,7 +192,7 @@ DasResult IDasJsonImpl::GetToImpl(IDasReadOnlyString* p_string, T* obj)
     }
     const auto p_u8_key = expected_u8_key.value();
 
-    std::scoped_lock _{mutex_};
+    const std::scoped_lock _{mutex_};
     try
     {
         auto val_opt = Details::GetValueByName(impl_, p_u8_key);
@@ -267,7 +267,7 @@ DasResult IDasJsonImpl::GetToImpl(
     }
     const auto p_u8_key = expected_u8_key.value();
 
-    std::scoped_lock _{mutex_};
+    const std::scoped_lock _{mutex_};
     try
     {
         auto val_opt = Details::GetValueByName(impl_, p_u8_key);
@@ -281,7 +281,7 @@ DasResult IDasJsonImpl::GetToImpl(
         {
             return DAS_E_TYPE_ERROR;
         }
-        std::string str_val(opt.value());
+        const std::string str_val(opt.value());
         return ::CreateIDasReadOnlyStringFromUtf8(str_val.c_str(), obj);
     }
     catch (const DasJsonImplRefExpiredException& ex)
@@ -306,7 +306,7 @@ DasResult IDasJsonImpl::GetToImpl(size_t index, T* obj)
 {
     DAS_UTILS_CHECK_POINTER(obj)
 
-    std::scoped_lock _{mutex_};
+    const std::scoped_lock _{mutex_};
     try
     {
         auto val_opt = Details::GetValueByIndex(impl_, index);
@@ -376,7 +376,7 @@ DasResult IDasJsonImpl::GetToImpl(size_t index, IDasReadOnlyString** pp_out_obj)
 {
     DAS_UTILS_CHECK_POINTER(pp_out_obj)
 
-    std::scoped_lock _{mutex_};
+    const std::scoped_lock _{mutex_};
     try
     {
         auto val_opt = Details::GetValueByIndex(impl_, index);
@@ -390,7 +390,7 @@ DasResult IDasJsonImpl::GetToImpl(size_t index, IDasReadOnlyString** pp_out_obj)
         {
             return DAS_E_TYPE_ERROR;
         }
-        std::string str_val(opt.value());
+        const std::string str_val(opt.value());
         return ::CreateIDasReadOnlyStringFromUtf8(str_val.c_str(), pp_out_obj);
     }
     catch (const DasJsonImplRefExpiredException& ex)
@@ -427,7 +427,7 @@ DasResult IDasJsonImpl::SetImpl(IDasReadOnlyString* p_string, const T& value)
     }
     const auto p_u8_key = expected_u8_key.value();
 
-    std::scoped_lock _{mutex_};
+    const std::scoped_lock _{mutex_};
     try
     {
         auto obj_opt = Details::GetObjectForSet(impl_);
@@ -497,7 +497,7 @@ DasResult IDasJsonImpl::SetImpl(IDasReadOnlyString* p_string, const T& value)
 template <class T>
 DasResult IDasJsonImpl::SetImpl(size_t index, const T& value)
 {
-    std::scoped_lock _{mutex_};
+    const std::scoped_lock _{mutex_};
     try
     {
         auto arr_opt = Details::GetArrayForSet(impl_);
@@ -664,7 +664,7 @@ DasResult IDasJsonImpl::GetObjectRefByName(
     }
     const auto p_u8_key = expected_u8_key.value();
 
-    std::scoped_lock _{mutex_};
+    const std::scoped_lock _{mutex_};
     try
     {
         auto val_opt = Details::GetValueByName(impl_, p_u8_key);
@@ -798,7 +798,7 @@ DasResult IDasJsonImpl::GetObjectRefByIndex(
 {
     DAS_UTILS_CHECK_POINTER(pp_out_das_json)
 
-    std::scoped_lock _{mutex_};
+    const std::scoped_lock _{mutex_};
     try
     {
         auto val_opt = Details::GetValueByIndex(impl_, index);
@@ -919,7 +919,7 @@ DasResult IDasJsonImpl::GetTypeByName(
     }
     const auto p_u8_key = expected_u8_key.value();
 
-    std::scoped_lock _{mutex_};
+    const std::scoped_lock _{mutex_};
     try
     {
         auto val_opt = Details::GetValueByName(impl_, p_u8_key);
@@ -948,7 +948,7 @@ DasResult IDasJsonImpl::GetTypeByIndex(size_t index, DasType* p_out_type)
 {
     DAS_UTILS_CHECK_POINTER(p_out_type)
 
-    std::scoped_lock _{mutex_};
+    const std::scoped_lock _{mutex_};
     try
     {
         auto val_opt = Details::GetValueByIndex(impl_, index);
@@ -1014,7 +1014,7 @@ DasResult IDasJsonImpl::ToString(
 {
     DAS_UTILS_CHECK_POINTER(pp_out_string)
 
-    std::scoped_lock _{mutex_};
+    const std::scoped_lock _{mutex_};
     try
     {
         return std::visit(
@@ -1066,7 +1066,7 @@ DasResult IDasJsonImpl::GetSize(uint64_t* p_out_size)
 {
     DAS_UTILS_CHECK_POINTER(p_out_size)
 
-    std::scoped_lock _{mutex_};
+    const std::scoped_lock _{mutex_};
     try
     {
         *p_out_size = std::visit(
@@ -1120,7 +1120,7 @@ DasResult IDasJsonImpl::GetSize(uint64_t* p_out_size)
 
 DasResult IDasJsonImpl::Clear()
 {
-    std::scoped_lock _{mutex_};
+    const std::scoped_lock _{mutex_};
     try
     {
         return std::visit(

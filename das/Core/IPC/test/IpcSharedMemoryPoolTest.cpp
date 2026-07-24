@@ -111,7 +111,7 @@ TEST_F(IpcSharedMemoryPoolTest, Allocate_UpdatesUsedSize)
     SharedMemoryBlock block;
     ASSERT_EQ(pool_->Allocate(1024, block), DAS_S_OK);
 
-    size_t used = pool_->GetUsedSize();
+    const size_t used = pool_->GetUsedSize();
     EXPECT_GE(used, 1024);
 }
 
@@ -143,10 +143,10 @@ TEST_F(IpcSharedMemoryPoolTest, Deallocate_ReducesUsedSize)
     SharedMemoryBlock block;
     ASSERT_EQ(pool_->Allocate(1024, block), DAS_S_OK);
 
-    size_t used_after_alloc = pool_->GetUsedSize();
+    const size_t used_after_alloc = pool_->GetUsedSize();
     ASSERT_EQ(pool_->Deallocate(block.handle), DAS_S_OK);
 
-    size_t used_after_dealloc = pool_->GetUsedSize();
+    const size_t used_after_dealloc = pool_->GetUsedSize();
     EXPECT_LT(used_after_dealloc, used_after_alloc);
 }
 
@@ -155,7 +155,7 @@ TEST_F(IpcSharedMemoryPoolTest, Deallocate_ReducesUsedSize)
 TEST_F(IpcSharedMemoryPoolTest, GetTotalSize_ReturnsInitializedSize)
 {
     // Pool is already initialized in SetUp via Create()
-    size_t initial_size = 65536;
+    const size_t initial_size = 65536;
     EXPECT_EQ(pool_->GetTotalSize(), initial_size);
 }
 
@@ -165,7 +165,7 @@ TEST_F(IpcSharedMemoryPoolTest, GetUsedSize_ZeroInitially)
 
     // Used size may not be exactly zero due to internal allocations
     // but it should be small
-    size_t used = pool_->GetUsedSize();
+    const size_t used = pool_->GetUsedSize();
     EXPECT_LT(used, 1000);
 }
 
@@ -249,7 +249,7 @@ TEST_F(IpcSharedMemoryManagerTest, DestroyPool_Succeeds)
 
 TEST_F(IpcSharedMemoryManagerTest, MakePoolName_GeneratesCorrectFormat)
 {
-    std::string name = SharedMemoryManager::MakePoolName(1, 2);
+    const std::string name = SharedMemoryManager::MakePoolName(1, 2);
     EXPECT_EQ(name, "das_shm_1_2");
 }
 

@@ -118,7 +118,7 @@ namespace
     // SchedulerAuthoring*/SchedulerRepositoryAuthoring* cases can call them.
     void EnableStrictAuthoringWire(FactoryTaskSharedState& state)
     {
-        ipc_scoped_lock lock(state.mutex);
+        const ipc_scoped_lock lock(state.mutex);
         state.emit_strict_wire = true;
     }
 
@@ -263,7 +263,7 @@ TEST_F(SchedulerServiceTest, Initialize_NonExistentDir_ReturnsError)
 TEST_F(SchedulerServiceTest, Initialize_WithDisabledGuids_Succeeds)
 {
     std::vector<DasGuid> disabled_guids;
-    DasGuid              empty_guid{};
+    const DasGuid        empty_guid{};
     disabled_guids.push_back(empty_guid);
 
     auto result = scheduler_->Initialize(plugin_dir_, disabled_guids);
@@ -1024,9 +1024,9 @@ TEST_F(SchedulerServiceTest, UpdateProperties_InvalidInstance_ReturnsError)
 
 TEST_F(SchedulerServiceTest, AddTask_NotInitialized_ReturnsError)
 {
-    DasGuid task_guid{};
-    int64_t out_id = -1;
-    auto    result = scheduler_->AddTask(task_guid, &out_id);
+    const DasGuid task_guid{};
+    int64_t       out_id = -1;
+    auto          result = scheduler_->AddTask(task_guid, &out_id);
     EXPECT_EQ(result, DAS_E_OBJECT_NOT_INIT);
 }
 
@@ -1062,8 +1062,8 @@ TEST_F(SchedulerServiceTest, AddTask_NullPointer)
 {
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
 
-    DasGuid task_guid{};
-    auto    result = scheduler_->AddTask(task_guid, nullptr);
+    const DasGuid task_guid{};
+    auto          result = scheduler_->AddTask(task_guid, nullptr);
     EXPECT_EQ(result, DAS_E_INVALID_POINTER);
 }
 
@@ -1255,8 +1255,8 @@ TEST_F(SchedulerServiceImplTest, AddTask_NullPointer_ReturnsError)
 {
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
 
-    DasGuid guid{};
-    auto    result = impl_->AddTask(guid, nullptr);
+    const DasGuid guid{};
+    auto          result = impl_->AddTask(guid, nullptr);
     EXPECT_EQ(result, DAS_E_INVALID_POINTER);
 }
 
@@ -1740,7 +1740,7 @@ protected:
             [this]()
             {
                 auto& io = ipc_sp_->GetIoContext();
-                boost::asio::executor_work_guard<
+                const boost::asio::executor_work_guard<
                     boost::asio::io_context::executor_type>
                     work(io.get_executor());
                 io.run();
@@ -2296,7 +2296,7 @@ TEST_F(SchedulerRuntimeBackedTest, AddTask_CreatesDistinctRuntimeInstances)
             .as_sint()
             .value());
 
-    ipc_scoped_lock lock(shared_state_->mutex);
+    const ipc_scoped_lock lock(shared_state_->mutex);
     EXPECT_EQ(shared_state_->executed_count, 2u);
     EXPECT_NE(
         shared_state_->executed_instance_ids[0],
@@ -2318,9 +2318,9 @@ TEST_F(
 
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
 
-    yyjson::value request(Das::Utils::MakeYyjsonObject());
-    auto          result = scheduler_->GetTaskAuthoringDocument(0, request);
-    auto          obj = result.as_object();
+    const yyjson::value request(Das::Utils::MakeYyjsonObject());
+    auto result = scheduler_->GetTaskAuthoringDocument(0, request);
+    auto obj = result.as_object();
     ASSERT_TRUE(obj.has_value());
     ASSERT_TRUE(obj->contains(std::string_view("document")));
     auto document = (*obj)[std::string_view("document")].as_object();
@@ -2333,7 +2333,7 @@ TEST_F(
     EXPECT_FALSE(document->contains(std::string_view("catalog")));
     EXPECT_TRUE(obj->contains(std::string_view("diagnostics")));
 
-    ipc_scoped_lock lock(shared_state_->mutex);
+    const ipc_scoped_lock lock(shared_state_->mutex);
     EXPECT_EQ(shared_state_->authoring_session_count, 1);
     EXPECT_EQ(shared_state_->decoy_authoring_create_count, 0);
     EXPECT_EQ(shared_state_->get_document_count, 1);
@@ -2443,7 +2443,7 @@ TEST_F(SchedulerRuntimeBackedTest, SchedulerAuthoringRevisionConflict)
         (*obj)[std::string_view("currentRevision")].as_sint().value_or(-1),
         3);
 
-    ipc_scoped_lock lock(shared_state_->mutex);
+    const ipc_scoped_lock lock(shared_state_->mutex);
     EXPECT_EQ(shared_state_->apply_change_count, 0);
 }
 
@@ -2510,7 +2510,7 @@ TEST_F(
     ASSERT_TRUE(WaitForExecutions(1, std::chrono::seconds(2)));
     ASSERT_EQ(scheduler_->Disable(), DAS_S_OK);
 
-    ipc_scoped_lock lock(shared_state_->mutex);
+    const ipc_scoped_lock lock(shared_state_->mutex);
     EXPECT_EQ(shared_state_->apply_change_count, 1);
     // Phase 84: Apply returns document inline, so Scheduler never falls back to
     // a separate GetDocument call.
@@ -2533,15 +2533,15 @@ TEST_F(SchedulerRuntimeBackedTest, SchedulerAuthoringCompilePreviewOnly)
 
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
 
-    yyjson::value request(Das::Utils::MakeYyjsonObject());
-    auto          result = scheduler_->CompileTaskAuthoring(0, request);
-    auto          obj = result.as_object();
+    const yyjson::value request(Das::Utils::MakeYyjsonObject());
+    auto                result = scheduler_->CompileTaskAuthoring(0, request);
+    auto                obj = result.as_object();
     ASSERT_TRUE(obj.has_value());
     auto compile = (*obj)[std::string_view("compile")].as_object();
     ASSERT_TRUE(compile.has_value());
     EXPECT_TRUE((*compile)[std::string_view("ok")].as_bool().value_or(false));
 
-    ipc_scoped_lock lock(shared_state_->mutex);
+    const ipc_scoped_lock lock(shared_state_->mutex);
     EXPECT_EQ(shared_state_->compile_count, 1);
     EXPECT_TRUE((shared_state_->executed_count == 0));
 }
@@ -2695,7 +2695,7 @@ namespace
 
     void ExpectNoRepositoryAuthoringProviderCalls(FactoryTaskSharedState* state)
     {
-        ipc_scoped_lock lock(state->mutex);
+        const ipc_scoped_lock lock(state->mutex);
         EXPECT_EQ(state->authoring_session_count, 0);
         EXPECT_EQ(state->get_document_count, 0);
         EXPECT_EQ(state->apply_change_count, 0);
@@ -2714,7 +2714,7 @@ namespace
 
     ProviderCallCounts SnapshotProviderCallCounts(FactoryTaskSharedState* state)
     {
-        ipc_scoped_lock lock(state->mutex);
+        const ipc_scoped_lock lock(state->mutex);
         return ProviderCallCounts{
             state->authoring_session_count,
             state->get_document_count,
@@ -2727,7 +2727,7 @@ namespace
         FactoryTaskSharedState*   state,
         const ProviderCallCounts& before)
     {
-        ipc_scoped_lock lock(state->mutex);
+        const ipc_scoped_lock lock(state->mutex);
         EXPECT_EQ(
             state->authoring_session_count,
             before.authoring_session_count);
@@ -2746,8 +2746,8 @@ namespace
     {
         auto before = SnapshotProviderCallCounts(state);
 
-        yyjson::value request(Das::Utils::MakeYyjsonObject());
-        auto          document =
+        const yyjson::value request(Das::Utils::MakeYyjsonObject());
+        auto                document =
             scheduler.GetRepositoryEntryAuthoringDocument(0, request);
         auto document_obj = document.as_object();
         ASSERT_TRUE(document_obj.has_value());
@@ -2775,7 +2775,7 @@ namespace
     {
         auto before = SnapshotProviderCallCounts(state);
 
-        yyjson::value request(Das::Utils::MakeYyjsonObject());
+        const yyjson::value request(Das::Utils::MakeYyjsonObject());
         auto compile = scheduler.CompileRepositoryEntryAuthoring(0, request);
         auto compile_obj = compile.as_object();
         ASSERT_TRUE(compile_obj.has_value());
@@ -2879,9 +2879,9 @@ TEST_F(
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
     EnableStrictAuthoringWire(*shared_state_);
 
-    yyjson::value request(Das::Utils::MakeYyjsonObject());
-    auto          result = scheduler_->GetTaskAuthoringDocument(0, request);
-    auto          obj = result.as_object();
+    const yyjson::value request(Das::Utils::MakeYyjsonObject());
+    auto result = scheduler_->GetTaskAuthoringDocument(0, request);
+    auto obj = result.as_object();
     ASSERT_TRUE(obj.has_value());
     EXPECT_EQ((*obj)[std::string_view("taskId")].as_sint().value_or(-1), 0);
     EXPECT_TRUE(obj->contains(std::string_view("document")));
@@ -2906,7 +2906,7 @@ TEST_F(
     auto diagnostics = (*obj)[std::string_view("diagnostics")].as_array();
     ASSERT_TRUE(diagnostics.has_value());
 
-    ipc_scoped_lock lock(shared_state_->mutex);
+    const ipc_scoped_lock lock(shared_state_->mutex);
     EXPECT_EQ(shared_state_->authoring_session_count, 1);
     EXPECT_EQ(shared_state_->get_document_count, 1);
 }
@@ -2919,7 +2919,7 @@ TEST_F(
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
     EnableStrictAuthoringWire(*shared_state_);
     {
-        ipc_scoped_lock lock(shared_state_->mutex);
+        const ipc_scoped_lock lock(shared_state_->mutex);
         shared_state_->apply_omit_document = true;
     }
 
@@ -2949,7 +2949,7 @@ TEST_F(
             0);
     }
 
-    ipc_scoped_lock lock(shared_state_->mutex);
+    const ipc_scoped_lock lock(shared_state_->mutex);
     EXPECT_EQ(shared_state_->apply_change_count, 1);
 }
 
@@ -2961,7 +2961,7 @@ TEST_F(
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
     EnableStrictAuthoringWire(*shared_state_);
     {
-        ipc_scoped_lock lock(shared_state_->mutex);
+        const ipc_scoped_lock lock(shared_state_->mutex);
         shared_state_->apply_document_revision_delta = 1;
     }
 
@@ -2983,7 +2983,7 @@ TEST_F(
         (*props)[std::string_view("key1")].as_string().value_or(""),
         std::string_view("initial"));
 
-    ipc_scoped_lock lock(shared_state_->mutex);
+    const ipc_scoped_lock lock(shared_state_->mutex);
     EXPECT_EQ(shared_state_->apply_change_count, 1);
 }
 
@@ -3043,7 +3043,7 @@ TEST_F(
     EXPECT_TRUE(
         persisted_authoring->contains(std::string_view("sourceFingerprint")));
 
-    ipc_scoped_lock lock(shared_state_->mutex);
+    const ipc_scoped_lock lock(shared_state_->mutex);
     EXPECT_EQ(shared_state_->apply_change_count, 1);
 }
 
@@ -3055,9 +3055,9 @@ TEST_F(
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
     EnableStrictAuthoringWire(*shared_state_);
 
-    yyjson::value request(Das::Utils::MakeYyjsonObject());
-    auto          result = scheduler_->CompileTaskAuthoring(0, request);
-    auto          obj = result.as_object();
+    const yyjson::value request(Das::Utils::MakeYyjsonObject());
+    auto                result = scheduler_->CompileTaskAuthoring(0, request);
+    auto                obj = result.as_object();
     ASSERT_TRUE(obj.has_value());
     EXPECT_TRUE(obj->contains(std::string_view("compile")));
     EXPECT_TRUE(obj->contains(std::string_view("diagnostics")));
@@ -3070,7 +3070,7 @@ TEST_F(
     ASSERT_TRUE(diagnostics.has_value());
     ASSERT_EQ(diagnostics->size(), 1u);
 
-    ipc_scoped_lock lock(shared_state_->mutex);
+    const ipc_scoped_lock lock(shared_state_->mutex);
     EXPECT_EQ(shared_state_->compile_count, 1);
 }
 
@@ -3104,9 +3104,9 @@ TEST_F(
 
     // Get #1: initial revision is 0.
     {
-        yyjson::value request(Das::Utils::MakeYyjsonObject());
-        auto          result = scheduler_->GetTaskAuthoringDocument(0, request);
-        auto          obj = result.as_object();
+        const yyjson::value request(Das::Utils::MakeYyjsonObject());
+        auto result = scheduler_->GetTaskAuthoringDocument(0, request);
+        auto obj = result.as_object();
         ASSERT_TRUE(obj.has_value());
         ASSERT_TRUE(obj->contains(std::string_view("document")));
         auto document = (*obj)[std::string_view("document")].as_object();
@@ -3138,9 +3138,9 @@ TEST_F(
     // created, and that the new session received that revision via the
     // context (SchedulerService::MakeAuthoringContextJson).
     {
-        yyjson::value request(Das::Utils::MakeYyjsonObject());
-        auto          result = scheduler_->GetTaskAuthoringDocument(0, request);
-        auto          obj = result.as_object();
+        const yyjson::value request(Das::Utils::MakeYyjsonObject());
+        auto result = scheduler_->GetTaskAuthoringDocument(0, request);
+        auto obj = result.as_object();
         ASSERT_TRUE(obj.has_value());
         ASSERT_TRUE(obj->contains(std::string_view("document")));
         auto document = (*obj)[std::string_view("document")].as_object();
@@ -3173,7 +3173,7 @@ TEST_F(
             std::string_view("setValue"));
     }
 
-    ipc_scoped_lock lock(shared_state_->mutex);
+    const ipc_scoped_lock lock(shared_state_->mutex);
     EXPECT_EQ(shared_state_->get_document_count, 2);
     EXPECT_EQ(shared_state_->apply_change_count, 1);
 }
@@ -3192,7 +3192,7 @@ TEST_F(
             -1),
         0);
 
-    yyjson::value request(Das::Utils::MakeYyjsonObject());
+    const yyjson::value request(Das::Utils::MakeYyjsonObject());
     auto result = scheduler_->GetRepositoryEntryAuthoringDocument(0, request);
     auto obj = result.as_object();
     ASSERT_TRUE(obj.has_value());
@@ -3207,7 +3207,7 @@ TEST_F(
     EXPECT_FALSE(document->contains(std::string_view("kind")));
     EXPECT_FALSE(document->contains(std::string_view("catalog")));
 
-    ipc_scoped_lock lock(shared_state_->mutex);
+    const ipc_scoped_lock lock(shared_state_->mutex);
     EXPECT_EQ(shared_state_->get_document_count, 1);
 }
 
@@ -3224,7 +3224,7 @@ TEST_F(
             -1),
         0);
     {
-        ipc_scoped_lock lock(shared_state_->mutex);
+        const ipc_scoped_lock lock(shared_state_->mutex);
         shared_state_->apply_omit_document = true;
     }
 
@@ -3253,7 +3253,7 @@ TEST_F(
         (*accepted)[std::string_view("key1")].as_string().value_or(""),
         std::string_view("default"));
 
-    ipc_scoped_lock lock(shared_state_->mutex);
+    const ipc_scoped_lock lock(shared_state_->mutex);
     EXPECT_EQ(shared_state_->apply_change_count, 1);
 }
 
@@ -3270,7 +3270,7 @@ TEST_F(
             -1),
         0);
     {
-        ipc_scoped_lock lock(shared_state_->mutex);
+        const ipc_scoped_lock lock(shared_state_->mutex);
         shared_state_->apply_document_revision_delta = 1;
     }
 
@@ -3293,7 +3293,7 @@ TEST_F(
         (*authoring)[std::string_view("revision")].as_sint().value_or(-1),
         0);
 
-    ipc_scoped_lock lock(shared_state_->mutex);
+    const ipc_scoped_lock lock(shared_state_->mutex);
     EXPECT_EQ(shared_state_->apply_change_count, 1);
 }
 
@@ -3354,7 +3354,7 @@ TEST_F(
             ""),
         std::string_view("accepted"));
 
-    ipc_scoped_lock lock(shared_state_->mutex);
+    const ipc_scoped_lock lock(shared_state_->mutex);
     EXPECT_EQ(shared_state_->apply_change_count, 1);
 }
 
@@ -3386,7 +3386,7 @@ TEST_F(
     EXPECT_FALSE(obj->contains(std::string_view("summary")));
     EXPECT_FALSE(obj->contains(std::string_view("canExecute")));
 
-    ipc_scoped_lock lock(shared_state_->mutex);
+    const ipc_scoped_lock lock(shared_state_->mutex);
     EXPECT_EQ(shared_state_->compile_count, 1);
     EXPECT_EQ(shared_state_->get_last_compile_purpose(), "preview");
 }
@@ -3844,7 +3844,7 @@ TEST_F(
     EXPECT_FALSE(obj->contains(std::string_view("compiledSnapshot")));
     EXPECT_FALSE(obj->contains(std::string_view("providerDebug")));
 
-    ipc_scoped_lock lock(shared_state_->mutex);
+    const ipc_scoped_lock lock(shared_state_->mutex);
     EXPECT_EQ(shared_state_->compile_count, 1);
     EXPECT_EQ(shared_state_->get_last_compile_purpose(), "preview");
     EXPECT_EQ(shared_state_->last_context_entry_id, 0);
@@ -3934,7 +3934,7 @@ TEST_F(
         (*execution_input)[std::string_view("key1")].as_string().value_or(""),
         std::string_view("compiled"));
 
-    ipc_scoped_lock lock(shared_state_->mutex);
+    const ipc_scoped_lock lock(shared_state_->mutex);
     EXPECT_EQ(shared_state_->compile_count, 1);
     EXPECT_EQ(shared_state_->get_last_compile_purpose(), "execution");
     EXPECT_EQ(shared_state_->last_context_entry_id, 0);
@@ -3985,7 +3985,7 @@ TEST_F(
         (*execution_input)[std::string_view("key1")].as_string().value_or(""),
         std::string_view("compiled"));
 
-    ipc_scoped_lock lock(shared_state_->mutex);
+    const ipc_scoped_lock lock(shared_state_->mutex);
     EXPECT_EQ(shared_state_->compile_count, 1);
     EXPECT_EQ(shared_state_->get_last_compile_purpose(), "execution");
     EXPECT_EQ(shared_state_->last_context_entry_id, 0);
@@ -4090,8 +4090,8 @@ TEST_F(
         (*created_obj)[std::string_view("entryId")].as_sint().value_or(-1),
         0);
 
-    yyjson::value request(Das::Utils::MakeYyjsonObject());
-    auto          document_response =
+    const yyjson::value request(Das::Utils::MakeYyjsonObject());
+    auto                document_response =
         scheduler_->GetRepositoryEntryAuthoringDocument(0, request);
     auto response_obj = document_response.as_object();
     ASSERT_TRUE(response_obj.has_value());
@@ -4121,7 +4121,7 @@ TEST_F(
             -1),
         0);
 
-    ipc_scoped_lock lock(shared_state_->mutex);
+    const ipc_scoped_lock lock(shared_state_->mutex);
     EXPECT_EQ(shared_state_->authoring_session_count, 1);
     EXPECT_EQ(shared_state_->decoy_authoring_create_count, 0);
     EXPECT_EQ(shared_state_->get_document_count, 1);
@@ -4192,7 +4192,7 @@ TEST_F(
     EXPECT_TRUE(authoring->contains(std::string_view("sourceFingerprint")));
     EXPECT_FALSE(authoring->contains(std::string_view("migrationState")));
 
-    ipc_scoped_lock lock(shared_state_->mutex);
+    const ipc_scoped_lock lock(shared_state_->mutex);
     EXPECT_EQ(shared_state_->apply_change_count, 1);
     // Phase 84 strict Apply carries the document in the Apply result envelope,
     // so the Scheduler no longer falls back to a separate GetDocument call on
@@ -4273,7 +4273,7 @@ TEST_F(
             -1),
         0);
     {
-        ipc_scoped_lock lock(shared_state_->mutex);
+        const ipc_scoped_lock lock(shared_state_->mutex);
         shared_state_->apply_ok = false;
     }
 
@@ -4300,7 +4300,7 @@ TEST_F(
         (*persisted_props)[std::string_view("key1")].as_string().value_or(""),
         std::string_view("default"));
 
-    ipc_scoped_lock lock(shared_state_->mutex);
+    const ipc_scoped_lock lock(shared_state_->mutex);
     EXPECT_EQ(shared_state_->apply_change_count, 1);
 }
 
@@ -4328,7 +4328,7 @@ TEST_F(
         (*obj)[std::string_view("errorKind")].as_string().value_or(""),
         std::string_view("persistenceFailed"));
 
-    ipc_scoped_lock lock(shared_state_->mutex);
+    const ipc_scoped_lock lock(shared_state_->mutex);
     EXPECT_EQ(shared_state_->apply_change_count, 1);
 }
 
@@ -4398,7 +4398,7 @@ TEST_F(
         0);
 
     EXPECT_EQ(scheduler_->Enable(), DAS_E_OBJECT_NOT_INIT);
-    ipc_scoped_lock lock(shared_state_->mutex);
+    const ipc_scoped_lock lock(shared_state_->mutex);
     EXPECT_TRUE((shared_state_->executed_count == 0));
     EXPECT_EQ(shared_state_->compile_count, 0);
 }
@@ -5065,7 +5065,7 @@ TEST_F(
         0);
 
     {
-        ipc_scoped_lock lock(shared_state_->mutex);
+        const ipc_scoped_lock lock(shared_state_->mutex);
         shared_state_->block_do = true;
     }
     ASSERT_EQ(scheduler_->Enable(), DAS_S_OK);
@@ -5085,7 +5085,7 @@ TEST_F(
         "taskWorking");
 
     {
-        ipc_scoped_lock lock(shared_state_->mutex);
+        const ipc_scoped_lock lock(shared_state_->mutex);
         shared_state_->unblock_do = true;
     }
     shared_state_->cv.notify_all();
@@ -5117,7 +5117,7 @@ TEST_F(
         0);
 
     {
-        ipc_scoped_lock lock(shared_state_->mutex);
+        const ipc_scoped_lock lock(shared_state_->mutex);
         shared_state_->block_do = true;
     }
     ASSERT_EQ(scheduler_->Enable(), DAS_S_OK);
@@ -5137,7 +5137,7 @@ TEST_F(
         "taskWorking");
 
     {
-        ipc_scoped_lock lock(shared_state_->mutex);
+        const ipc_scoped_lock lock(shared_state_->mutex);
         shared_state_->unblock_do = true;
     }
     shared_state_->cv.notify_all();
@@ -5303,7 +5303,7 @@ TEST_F(
     WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
 
     {
-        ipc_scoped_lock lock(shared_state_->mutex);
+        const ipc_scoped_lock lock(shared_state_->mutex);
         shared_state_->compile_ok = false;
     }
 
@@ -5312,7 +5312,7 @@ TEST_F(
     std::this_thread::sleep_for(std::chrono::milliseconds(1500));
     ASSERT_EQ(scheduler_->Disable(), DAS_S_OK);
 
-    ipc_scoped_lock lock(shared_state_->mutex);
+    const ipc_scoped_lock lock(shared_state_->mutex);
     EXPECT_EQ(shared_state_->compile_count, 1);
     EXPECT_EQ(shared_state_->get_last_compile_purpose(), "execution");
     EXPECT_TRUE((shared_state_->executed_count == 0));
@@ -7022,7 +7022,7 @@ TEST_F(
     int64_t task_id = -1;
     ASSERT_EQ(scheduler_->AddTask(FakeTaskGuid, &task_id), DAS_S_OK);
 
-    yyjson::value request(Das::Utils::MakeYyjsonObject());
+    const yyjson::value request(Das::Utils::MakeYyjsonObject());
     auto document = scheduler_->GetTaskAuthoringDocument(task_id, request);
     ASSERT_TRUE(document.is_object());
     EXPECT_EQ(
@@ -7347,7 +7347,7 @@ TEST_F(SchedulerUnavailableTest, MixedAvailableAndUnavailable_OnlyAvailableRuns)
     std::thread io_thread(
         [&io]()
         {
-            boost::asio::executor_work_guard<
+            const boost::asio::executor_work_guard<
                 boost::asio::io_context::executor_type>
                 work(io.get_executor());
             io.run();

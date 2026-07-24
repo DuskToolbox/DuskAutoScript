@@ -90,7 +90,7 @@ namespace
         ~InflightGuard()
         {
             {
-                std::lock_guard<std::mutex> lock(mutex_);
+                const std::scoped_lock lock(mutex_);
                 for (const auto& k : keys_)
                 {
                     set_.erase(k);
@@ -306,7 +306,7 @@ DasResult PluginManagerServiceImpl::InstallPluginPackageData(
     // Phase 2: RAII inflight guard — acquires both guid and name keys
     // in sorted order, blocks until all are available.
     // Same GUID or same name operations serialize.
-    InflightGuard guard(
+    const InflightGuard guard(
         inflight_mutex_,
         inflight_cv_,
         inflight_plugin_ops_,
@@ -329,7 +329,7 @@ DasResult PluginManagerServiceImpl::MarkPluginPackageForDeletion(
     DAS_UTILS_CHECK_POINTER(p_package_guid)
 
     // Convert DasGuid to string for inflight key
-    std::string guid_str = DasGuidToStdString(*p_package_guid);
+    const std::string guid_str = DasGuidToStdString(*p_package_guid);
 
     // Resolve plugin name from scanning installed plugins
     std::string plugin_name;
@@ -345,7 +345,7 @@ DasResult PluginManagerServiceImpl::MarkPluginPackageForDeletion(
 
     // RAII inflight guard — acquires both guid and name keys
     // in sorted order, blocks until all are available.
-    InflightGuard guard(
+    const InflightGuard guard(
         inflight_mutex_,
         inflight_cv_,
         inflight_plugin_ops_,

@@ -18,8 +18,7 @@ CoreServicesImpl::CoreServicesImpl(
     DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext> ipc_context,
     std::filesystem::path                                  settings_dir,
     std::filesystem::path                                  plugin_dir)
-    : ipc_context_{std::move(ipc_context)},
-      settings_manager_{std::move(settings_dir)},
+    : ipc_context_{std::move(ipc_context)}, settings_manager_{settings_dir},
       plugin_manager_{
           settings_manager_,
           DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(

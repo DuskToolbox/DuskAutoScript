@@ -156,7 +156,7 @@ public:
         reader.ReadInt32(&query_result_val);
         reader.ReadUInt32(&interface_id);
         reader.ReadUInt64(&new_object_id);
-        DasResult query_result = static_cast<DasResult>(query_result_val);
+        const DasResult query_result = static_cast<DasResult>(query_result_val);
 
         if (DAS::IsFailed(query_result))
         {
@@ -164,7 +164,7 @@ public:
         }
 
         // 根据 interface_id 创建对应的 Proxy（走 ProxyFactory 缓存）
-        ObjectId new_obj_id = DecodeObjectId(new_object_id);
+        const ObjectId new_obj_id = DecodeObjectId(new_object_id);
 
         result = CheckRuntimeAvailable("DasProxyBase::QueryInterfaceRemote");
         if (DAS::IsFailed(result))
@@ -223,7 +223,7 @@ protected:
         ObjectId obj_id = DecodeObjectId(encoded_object_id);
 
         DAS::DasPtr<IDasBase> obj_ptr;
-        DasResult result = proxy_factory->GetObjectManager().LookupObject(
+        const DasResult result = proxy_factory->GetObjectManager().LookupObject(
             obj_id,
             obj_ptr.Put());
         if (DAS::IsFailed(result))

@@ -694,7 +694,7 @@ GraphCompiler::TopologyResult GraphCompiler::ComputeTopology(
 
     while (!heap.empty())
     {
-        std::string current = heap.top();
+        const std::string current = heap.top();
         heap.pop();
         result.execution_order.push_back(current);
 

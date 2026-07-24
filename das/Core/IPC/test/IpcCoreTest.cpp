@@ -317,7 +317,7 @@ namespace Das::IPC::Test
         ProxyFactory                    proxy_factory;
         RemoteObjectRegistry            registry;
         IpcRunLoop run_loop(false, &inbound_queue, proxy_factory, registry);
-        DAS::DasPtr<Das::Core::IPC::InternalCallbackHandler>
+        const DAS::DasPtr<Das::Core::IPC::InternalCallbackHandler>
             internal_callback_handler(
                 new Das::Core::IPC::InternalCallbackHandler);
         run_loop.RegisterHandler(
@@ -338,29 +338,30 @@ namespace Das::IPC::Test
         std::atomic<DasResult>       observed_pump_result{DAS_E_FAIL};
         std::atomic_bool             predicate_called{false};
 
-        DAS::DasPtr<IDasAsyncCallback> callback(new BusinessThreadProbeCallback(
-            [&]()
-            {
-                auto* current = GetCurrentBusinessThread();
-                observed_current.store(current, std::memory_order_release);
-
-                std::atomic_bool done{true};
-                if (current != nullptr)
+        const DAS::DasPtr<IDasAsyncCallback> callback(
+            new BusinessThreadProbeCallback(
+                [&]()
                 {
-                    observed_pump_result.store(
-                        current->PumpUntilPredicate(
-                            "test current BusinessThread",
-                            [&]()
-                            {
-                                predicate_called.store(
-                                    true,
-                                    std::memory_order_release);
-                                return done.load(std::memory_order_acquire);
-                            }),
-                        std::memory_order_release);
-                }
-                callback_done.set_value();
-            }));
+                    auto* current = GetCurrentBusinessThread();
+                    observed_current.store(current, std::memory_order_release);
+
+                    std::atomic_bool done{true};
+                    if (current != nullptr)
+                    {
+                        observed_pump_result.store(
+                            current->PumpUntilPredicate(
+                                "test current BusinessThread",
+                                [&]()
+                                {
+                                    predicate_called.store(
+                                        true,
+                                        std::memory_order_release);
+                                    return done.load(std::memory_order_acquire);
+                                }),
+                            std::memory_order_release);
+                    }
+                    callback_done.set_value();
+                }));
 
         ASSERT_EQ(run_loop.PostToBusinessThread(callback.Get()), DAS_S_OK);
         ASSERT_EQ(
@@ -449,7 +450,7 @@ namespace Das::IPC::Test
 
         using StartWithDescSignature = DasResult (
             IHostLauncher::*)(const HostLaunchDesc*, uint32_t, uint16_t*);
-        StartWithDescSignature method = &IHostLauncher::StartWithDesc;
+        const StartWithDescSignature method = &IHostLauncher::StartWithDesc;
         EXPECT_NE(method, nullptr);
 
         HostLaunchDesc desc{};

@@ -241,11 +241,11 @@ TEST(CSharpHostRouting, DasHostSourceContainsExplicitCSharpBranch)
 
 TEST(CSharpHostRouting, LoadPluginDispatchesModernTfmToModernBackend)
 {
-    TempCSharpManifestLayout layout;
-    const auto               manifest_path = layout.WriteManifest("net8.0");
-    BackendCapture           modern_capture;
-    BackendCapture           netfx_capture;
-    CSharpRuntimeBackendSet  backends{};
+    const TempCSharpManifestLayout layout;
+    const auto              manifest_path = layout.WriteManifest("net8.0");
+    BackendCapture          modern_capture;
+    BackendCapture          netfx_capture;
+    CSharpRuntimeBackendSet backends{};
     backends.modern_dotnet =
         std::make_unique<CapturingCSharpBackend>(modern_capture);
     backends.netfx = std::make_unique<CapturingCSharpBackend>(netfx_capture);
@@ -278,11 +278,11 @@ TEST(CSharpHostRouting, LoadPluginDispatchesModernTfmToModernBackend)
 
 TEST(CSharpHostRouting, LoadPluginDispatchesNetFxTfmToNetFxBackend)
 {
-    TempCSharpManifestLayout layout;
-    const auto               manifest_path = layout.WriteManifest("net48");
-    BackendCapture           modern_capture;
-    BackendCapture           netfx_capture;
-    CSharpRuntimeBackendSet  backends{};
+    const TempCSharpManifestLayout layout;
+    const auto              manifest_path = layout.WriteManifest("net48");
+    BackendCapture          modern_capture;
+    BackendCapture          netfx_capture;
+    CSharpRuntimeBackendSet backends{};
     backends.modern_dotnet =
         std::make_unique<CapturingCSharpBackend>(modern_capture);
     backends.netfx = std::make_unique<CapturingCSharpBackend>(netfx_capture);
@@ -298,9 +298,9 @@ TEST(CSharpHostRouting, LoadPluginDispatchesNetFxTfmToNetFxBackend)
 
 TEST(CSharpHostRouting, LoadPluginMapsUnavailableModernBackend)
 {
-    TempCSharpManifestLayout layout;
-    const auto               manifest_path = layout.WriteManifest("net8.0");
-    CSharpHost               host{CSharpRuntimeBackendSet{}};
+    const TempCSharpManifestLayout layout;
+    const auto manifest_path = layout.WriteManifest("net8.0");
+    CSharpHost host{CSharpRuntimeBackendSet{}};
 
     auto result = host.LoadPlugin(manifest_path);
 
@@ -310,9 +310,9 @@ TEST(CSharpHostRouting, LoadPluginMapsUnavailableModernBackend)
 
 TEST(CSharpHostRouting, LoadPluginMapsUnavailableNetFxBackend)
 {
-    TempCSharpManifestLayout layout;
-    const auto               manifest_path = layout.WriteManifest("net48");
-    CSharpHost               host{CSharpRuntimeBackendSet{}};
+    const TempCSharpManifestLayout layout;
+    const auto manifest_path = layout.WriteManifest("net48");
+    CSharpHost host{CSharpRuntimeBackendSet{}};
 
     auto result = host.LoadPlugin(manifest_path);
 

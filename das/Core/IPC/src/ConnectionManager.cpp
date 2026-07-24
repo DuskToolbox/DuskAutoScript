@@ -60,7 +60,7 @@ ConnectionManager::~ConnectionManager()
 {
     StopHeartbeatThread();
 
-    std::unique_lock<std::shared_mutex> lock(impl_->connections_mutex_);
+    const std::unique_lock<std::shared_mutex> lock(impl_->connections_mutex_);
     for (auto& [remote_id, info] : impl_->connections_)
     {
         CleanupConnectionResources(remote_id);
@@ -84,9 +84,9 @@ DasResult ConnectionManager::RegisterConnection(
 
     // 创建 per-connection SharedMemoryPool（deterministic name from session
     // IDs） MainProcess side: local_id_ = main, remote_id = host
-    std::string shm_name = "das_shm_" + std::to_string(impl_->local_id_) + "_"
-                           + std::to_string(remote_id);
-    constexpr size_t SHM_POOL_INITIAL_SIZE = 4 * 1024 * 1024; // 4MB
+    const std::string shm_name = "das_shm_" + std::to_string(impl_->local_id_)
+                                 + "_" + std::to_string(remote_id);
+    constexpr size_t  SHM_POOL_INITIAL_SIZE = 4 * 1024 * 1024; // 4MB
     try
     {
         auto pool =
@@ -103,7 +103,7 @@ DasResult ConnectionManager::RegisterConnection(
         info.shm_pool = nullptr; // Fallback: SHM unavailable, pipe-only
     }
 
-    std::unique_lock<std::shared_mutex> lock(impl_->connections_mutex_);
+    const std::unique_lock<std::shared_mutex> lock(impl_->connections_mutex_);
     impl_->connections_[remote_id] = std::move(info);
 
     return DAS_S_OK;
@@ -111,7 +111,7 @@ DasResult ConnectionManager::RegisterConnection(
 
 DasResult ConnectionManager::UnregisterConnection(uint16_t remote_id)
 {
-    std::unique_lock<std::shared_mutex> lock(impl_->connections_mutex_);
+    const std::unique_lock<std::shared_mutex> lock(impl_->connections_mutex_);
     auto it = impl_->connections_.find(remote_id);
     if (it == impl_->connections_.end())
     {
@@ -129,7 +129,7 @@ DasResult ConnectionManager::UnregisterConnection(uint16_t remote_id)
 
 DasResult ConnectionManager::SendHeartbeat(uint16_t remote_id)
 {
-    std::shared_lock<std::shared_mutex> lock(impl_->connections_mutex_);
+    const std::shared_lock<std::shared_mutex> lock(impl_->connections_mutex_);
     auto it = impl_->connections_.find(remote_id);
     if (it == impl_->connections_.end())
     {
@@ -149,7 +149,7 @@ DasResult ConnectionManager::SendHeartbeat(uint16_t remote_id)
 
 bool ConnectionManager::IsConnectionAlive(uint16_t remote_id) const
 {
-    std::shared_lock<std::shared_mutex> lock(impl_->connections_mutex_);
+    const std::shared_lock<std::shared_mutex> lock(impl_->connections_mutex_);
     auto it = impl_->connections_.find(remote_id);
     if (it == impl_->connections_.end())
     {
@@ -163,7 +163,7 @@ DasResult ConnectionManager::GetConnection(
     uint16_t        session_id,
     ConnectionInfo& out_info) const
 {
-    std::shared_lock<std::shared_mutex> lock(impl_->connections_mutex_);
+    const std::shared_lock<std::shared_mutex> lock(impl_->connections_mutex_);
 
     auto it = impl_->connections_.find(session_id);
     if (it == impl_->connections_.end())
@@ -193,8 +193,8 @@ DasResult ConnectionManager::RegisterHostLauncher(
         return DAS_E_INVALID_ARGUMENT;
     }
 
-    DasPtr<IHostConnection>             host = launcher;
-    std::unique_lock<std::shared_mutex> lock(impl_->connections_mutex_);
+    const DasPtr<IHostConnection>             host = launcher;
+    const std::unique_lock<std::shared_mutex> lock(impl_->connections_mutex_);
     impl_->hosts_[session_id] = host;
 
     // 如果连接已存在，更新信息（shm_pool 已由 RegisterConnection 设置）
@@ -218,9 +218,10 @@ DasResult ConnectionManager::RegisterHostLauncher(
 
         // 创建 per-connection SharedMemoryPool（deterministic name from session
         // IDs）
-        std::string shm_name = "das_shm_" + std::to_string(impl_->local_id_)
-                               + "_" + std::to_string(session_id);
-        constexpr size_t SHM_POOL_INITIAL_SIZE = 4 * 1024 * 1024; // 4MB
+        const std::string shm_name = "das_shm_"
+                                     + std::to_string(impl_->local_id_) + "_"
+                                     + std::to_string(session_id);
+        constexpr size_t  SHM_POOL_INITIAL_SIZE = 4 * 1024 * 1024; // 4MB
         try
         {
             auto pool = std::make_unique<SharedMemoryPool>(
@@ -281,7 +282,7 @@ DasResult ConnectionManager::RegisterInternalHost(
         return DAS_E_IPC_NO_CONNECTIONS;
     }
 
-    std::unique_lock<std::shared_mutex> lock(impl_->connections_mutex_);
+    const std::unique_lock<std::shared_mutex> lock(impl_->connections_mutex_);
 
     impl_->hosts_[session_id] = host;
     impl_->shm_pools_.erase(session_id);
@@ -312,7 +313,7 @@ DasResult ConnectionManager::RegisterInternalHost(
 
 DasResult ConnectionManager::UnregisterHostLauncher(uint16_t session_id)
 {
-    std::unique_lock<std::shared_mutex> lock(impl_->connections_mutex_);
+    const std::unique_lock<std::shared_mutex> lock(impl_->connections_mutex_);
 
     auto it = impl_->hosts_.find(session_id);
     if (it == impl_->hosts_.end())
@@ -339,7 +340,7 @@ DasResult ConnectionManager::RegisterHostLocalTransport(
         return DAS_E_INVALID_ARGUMENT;
     }
 
-    std::unique_lock<std::shared_mutex> lock(impl_->connections_mutex_);
+    const std::unique_lock<std::shared_mutex> lock(impl_->connections_mutex_);
     impl_->host_local_transports_.try_emplace(session_id, std::move(t));
     DAS_CORE_LOG_INFO(
         "Host-local transport registered: session_id = {}",
@@ -356,7 +357,7 @@ DasResult ConnectionManager::RegisterHostLocalTransport(
         return DAS_E_INVALID_ARGUMENT;
     }
 
-    std::unique_lock<std::shared_mutex> lock(impl_->connections_mutex_);
+    const std::unique_lock<std::shared_mutex> lock(impl_->connections_mutex_);
     impl_->host_local_transports_.try_emplace(session_id, std::move(t));
     DAS_CORE_LOG_INFO(
         "Host-local transport registered: session_id = {}",
@@ -373,7 +374,7 @@ DasResult ConnectionManager::RegisterHostLocalTransport(
         return DAS_E_INVALID_ARGUMENT;
     }
 
-    std::unique_lock<std::shared_mutex> lock(impl_->connections_mutex_);
+    const std::unique_lock<std::shared_mutex> lock(impl_->connections_mutex_);
     impl_->host_local_transports_.try_emplace(session_id, std::move(t));
     DAS_CORE_LOG_INFO(
         "Host-local transport registered: session_id = {}",
@@ -390,7 +391,7 @@ DasResult ConnectionManager::RegisterHostLocalTransport(
         return DAS_E_INVALID_ARGUMENT;
     }
 
-    std::unique_lock<std::shared_mutex> lock(impl_->connections_mutex_);
+    const std::unique_lock<std::shared_mutex> lock(impl_->connections_mutex_);
     impl_->host_local_transports_.try_emplace(session_id, std::move(t));
     DAS_CORE_LOG_INFO(
         "Host-local transport registered: session_id = {}",
@@ -407,7 +408,7 @@ DasPtr<IHostConnection> ConnectionManager::GetInternalHost(
 DasPtr<IHostConnection> ConnectionManager::FindManagedHostConnection(
     uint16_t session_id) const
 {
-    std::shared_lock<std::shared_mutex> lock(impl_->connections_mutex_);
+    const std::shared_lock<std::shared_mutex> lock(impl_->connections_mutex_);
 
     auto conn_it = impl_->connections_.find(session_id);
     if (conn_it != impl_->connections_.end() && conn_it->second.IsClosing())
@@ -432,7 +433,7 @@ DasPtr<IHostConnection> ConnectionManager::FindManagedHostConnection(
 TransportLookupResult ConnectionManager::FindManagedHostTransport(
     uint16_t session_id)
 {
-    DasPtr<IHostConnection> host = FindManagedHostConnection(session_id);
+    const DasPtr<IHostConnection> host = FindManagedHostConnection(session_id);
     if (!host)
     {
         return {DAS_E_IPC_OBJECT_NOT_FOUND, std::nullopt};
@@ -444,7 +445,7 @@ TransportLookupResult ConnectionManager::FindManagedHostTransport(
 TransportLookupResult ConnectionManager::FindHostLocalTransport(
     uint16_t session_id)
 {
-    std::shared_lock<std::shared_mutex> lock(impl_->connections_mutex_);
+    const std::shared_lock<std::shared_mutex> lock(impl_->connections_mutex_);
 
     auto conn_it = impl_->connections_.find(session_id);
     if (conn_it != impl_->connections_.end() && conn_it->second.IsClosing())
@@ -485,7 +486,7 @@ DasResult ConnectionManager::SetConnectionAlive(
     uint16_t session_id,
     bool     is_alive)
 {
-    std::unique_lock<std::shared_mutex> lock(impl_->connections_mutex_);
+    const std::unique_lock<std::shared_mutex> lock(impl_->connections_mutex_);
 
     auto it = impl_->connections_.find(session_id);
     if (it == impl_->connections_.end())
@@ -520,8 +521,8 @@ void ConnectionManager::StartHeartbeatThread()
     impl_->heartbeat_thread_ = std::thread(
         [this]()
         {
-            uint64_t interval_ms = HEARTBEAT_INTERVAL_MS;
-            uint64_t timeout_ms = HEARTBEAT_TIMEOUT_MS;
+            const uint64_t interval_ms = HEARTBEAT_INTERVAL_MS;
+            const uint64_t timeout_ms = HEARTBEAT_TIMEOUT_MS;
 
             while (impl_->running_.load())
             {
@@ -537,7 +538,7 @@ void ConnectionManager::StartHeartbeatThread()
                 SendHeartbeatToAll();
 
                 // 2. 检查超时并处理
-                uint64_t current_time_ms = static_cast<uint64_t>(
+                const uint64_t current_time_ms = static_cast<uint64_t>(
                     std::chrono::duration_cast<std::chrono::milliseconds>(
                         std::chrono::steady_clock::now().time_since_epoch())
                         .count());
@@ -553,7 +554,7 @@ void ConnectionManager::StartHeartbeatThread()
                 std::vector<TimedOutConnection> timed_out;
 
                 {
-                    std::unique_lock<std::shared_mutex> lock(
+                    const std::unique_lock<std::shared_mutex> lock(
                         impl_->connections_mutex_);
 
                     for (auto it = impl_->connections_.begin();
@@ -566,7 +567,7 @@ void ConnectionManager::StartHeartbeatThread()
                             continue;
                         }
 
-                        uint64_t elapsed_ms =
+                        const uint64_t elapsed_ms =
                             current_time_ms - info.last_heartbeat_ms;
 
                         if (elapsed_ms > timeout_ms)
@@ -615,7 +616,7 @@ void ConnectionManager::StartHeartbeatThread()
                         toc.host->TerminateIfRunning();
                     }
 
-                    std::unique_lock<std::shared_mutex> lock(
+                    const std::unique_lock<std::shared_mutex> lock(
                         impl_->connections_mutex_);
                     auto it = impl_->connections_.find(toc.session_id);
                     if (it != impl_->connections_.end()
@@ -645,9 +646,9 @@ void ConnectionManager::StopHeartbeatThread()
 
 DasResult ConnectionManager::SendHeartbeatToAll()
 {
-    std::shared_lock<std::shared_mutex> lock(impl_->connections_mutex_);
+    const std::shared_lock<std::shared_mutex> lock(impl_->connections_mutex_);
 
-    uint16_t local_session_id = impl_->local_id_;
+    const uint16_t local_session_id = impl_->local_id_;
 
     for (const auto& [session_id, info] : impl_->connections_)
     {
@@ -738,7 +739,7 @@ DasResult ConnectionManager::SendHeartbeatToAll()
 
 void ConnectionManager::UpdateHeartbeatTimestamp(uint16_t session_id)
 {
-    std::unique_lock<std::shared_mutex> lock(impl_->connections_mutex_);
+    const std::unique_lock<std::shared_mutex> lock(impl_->connections_mutex_);
 
     auto it = impl_->connections_.find(session_id);
     if (it != impl_->connections_.end() && !it->second.IsClosing())
@@ -766,7 +767,7 @@ boost::asio::awaitable<DasResult> ConnectionManager::ForwardMessage(
     }
 
     // 2. 获取本地 session_id
-    uint16_t local_session_id = impl_->local_id_;
+    const uint16_t local_session_id = impl_->local_id_;
 
     // 3. 使用 IPCMessageHeaderBuilder 重建 header，修改 source_session_id
     auto forward_header = IPCMessageHeaderBuilder()
@@ -836,7 +837,7 @@ DasResult ConnectionManager::CleanupConnectionResources(uint16_t remote_id)
 
 void ConnectionManager::CleanupAllStaleBlocks()
 {
-    std::shared_lock<std::shared_mutex> lock(impl_->connections_mutex_);
+    const std::shared_lock<std::shared_mutex> lock(impl_->connections_mutex_);
 
     for (const auto& [session_id, conn_info] : impl_->connections_)
     {

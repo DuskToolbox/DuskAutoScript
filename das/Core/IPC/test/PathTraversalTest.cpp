@@ -219,7 +219,7 @@ namespace
         IpcCommandResponse resp{};
         ASSERT_EQ(CallListFile("", resp), DAS_S_OK);
 
-        uint16_t count = ParseListFileEntryCount(resp.response_data);
+        const uint16_t count = ParseListFileEntryCount(resp.response_data);
         EXPECT_EQ(count, uint16_t{1});
     }
 
@@ -234,7 +234,8 @@ namespace
         std::filesystem::create_directories(utf8_dir);
 
         IpcCommandResponse resp{};
-        std::string relative = "subdir/\xe6\x97\xa5\xe6\x9c\xac\xe8\xaa\x9e";
+        const std::string  relative =
+            "subdir/\xe6\x97\xa5\xe6\x9c\xac\xe8\xaa\x9e";
         EXPECT_EQ(CallListFile(relative, resp), DAS_S_OK);
     }
 

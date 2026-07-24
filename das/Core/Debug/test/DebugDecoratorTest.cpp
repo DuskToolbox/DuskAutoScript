@@ -96,7 +96,7 @@ namespace Das::Core::Debug::Test
             auto* image =
                 OcvWrapper::CpuImageImpl<OcvWrapper::Storage::OwningStorage>::
                     MakeFromCpuMat(mat, ExportInterface::DAS_PIXEL_FORMAT_BGR);
-            DasPtr<ExportInterface::IDasImage> image_guard(image);
+            const DasPtr<ExportInterface::IDasImage> image_guard(image);
             return CaptureImageSnapshot(image);
         }
 
@@ -114,7 +114,7 @@ namespace Das::Core::Debug::Test
             InitializeEnabledRuntime(dir);
             auto ctx = DAS::Core::IPC::MainProcess::CreateIpcContextEz(false);
             EXPECT_NE(ctx.get(), nullptr);
-            DAS::Core::IPC::ScopedCurrentIpcContext scope(
+            const DAS::Core::IPC::ScopedCurrentIpcContext scope(
                 static_cast<DAS::Core::IPC::MainProcess::IpcContext*>(
                     ctx.get()));
             EXPECT_EQ(RegisterDebugWriterService(*ctx), DAS_S_OK);
@@ -171,7 +171,7 @@ namespace Das::Core::Debug::Test
     {
         UnsetDasDebug();
 
-        DebugRuntimeOptions fallback_options{};
+        const DebugRuntimeOptions fallback_options{};
         ASSERT_EQ(DebugRuntime::Initialize(fallback_options), DAS_S_OK);
         EXPECT_EQ(
             DebugRuntime::DebugDir(),
@@ -223,7 +223,7 @@ namespace Das::Core::Debug::Test
             "\"params\":{\"a\":1},\"result\":{\"ok\":true},"
             "\"elapsed_ms\":12.5,\"image_filename\":\"img.png\"}"};
         DasU8StringOnStack second{
-            "{\"type\":\"second\",\"params\":{},\"result\":{}}"};
+            R"({"type":"second","params":{},"result":{}})"};
 
         ASSERT_EQ(writer->LogEntry(&first), DAS_S_OK);
         ASSERT_EQ(writer->LogEntry(&second), DAS_S_OK);
@@ -235,12 +235,12 @@ namespace Das::Core::Debug::Test
         ASSERT_EQ(lines.size(), 2U);
         ExpectContains(lines[0], "\"step\":1");
         ExpectContains(lines[1], "\"step\":2");
-        ExpectContains(lines[0], "\"type\":\"first\"");
-        ExpectContains(lines[0], "\"timestamp\":\"2026-05-07T01:02:03Z\"");
-        ExpectContains(lines[0], "\"params\":{\"a\":1}");
-        ExpectContains(lines[0], "\"result\":{\"ok\":true}");
+        ExpectContains(lines[0], R"("type":"first")");
+        ExpectContains(lines[0], R"("timestamp":"2026-05-07T01:02:03Z")");
+        ExpectContains(lines[0], R"("params":{"a":1})");
+        ExpectContains(lines[0], R"("result":{"ok":true})");
         ExpectContains(lines[0], "\"elapsed_ms\":12.5");
-        ExpectContains(lines[0], "\"image_filename\":\"img.png\"");
+        ExpectContains(lines[0], R"("image_filename":"img.png")");
         ExpectContains(lines[0], "\"timestamp\"");
         ExpectContains(lines[0], "\"params\"");
         ExpectContains(lines[0], "\"result\"");
@@ -257,13 +257,13 @@ namespace Das::Core::Debug::Test
         const auto dir = UniqueTempDir("WriterByName");
         auto       ctx = RegisterWriterForRuntime(dir);
 
-        DAS::Core::IPC::ScopedCurrentIpcContext scope(
+        const DAS::Core::IPC::ScopedCurrentIpcContext scope(
             static_cast<DAS::Core::IPC::MainProcess::IpcContext*>(ctx.get()));
         IDasBase* p_base = nullptr;
         ASSERT_EQ(
             DasQueryMainProcessInterfaceByName("debug.writer", &p_base),
             DAS_S_OK);
-        DasPtr<IDasBase> base_guard = DasPtr<IDasBase>::Attach(p_base);
+        const DasPtr<IDasBase> base_guard = DasPtr<IDasBase>::Attach(p_base);
 
         DasPtr<ExportInterface::IDasDebugWriter> writer;
         ASSERT_EQ(base_guard.As(writer), DAS_S_OK);
@@ -283,7 +283,7 @@ namespace Das::Core::Debug::Test
 
         const auto lines = ReadLines(dir / "debug.jsonl");
         ASSERT_EQ(lines.size(), 1U);
-        ExpectContains(lines[0], "\"type\":\"flush_metadata\"");
+        ExpectContains(lines[0], R"("type":"flush_metadata")");
 
         ctx->UnregisterServiceByName("debug.writer");
     }

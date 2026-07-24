@@ -111,7 +111,7 @@ boost::asio::awaitable<DasResult> HttpIpcTransport::SendCoroutine(
     }
 
     // Lock() 返回 bool：true=cancelled，false=正常获取锁
-    bool cancelled = co_await impl_->send_mutex.Lock();
+    const bool cancelled = co_await impl_->send_mutex.Lock();
     if (cancelled)
     {
         co_return DAS_E_IPC_CONNECTION_LOST;

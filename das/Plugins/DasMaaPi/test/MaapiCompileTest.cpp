@@ -163,7 +163,7 @@ namespace
             // 决定是否 emit executionInput。测试断言历来读 PiCompiler 输出
             // （ok/canExecute/executionInput/...），故这里 unwrap compile
             // 字段。
-            auto request = ParseDasJson("{\"purpose\":\"" + purpose + "\"}");
+            auto request = ParseDasJson(R"({"purpose":")" + purpose + "\"}");
             DasPtr<Das::ExportInterface::IDasJson> result_json;
             EXPECT_EQ(
                 session->Compile(request.Get(), result_json.Put()),
@@ -191,7 +191,7 @@ namespace
 
     std::string CompileContext(std::string_view path)
     {
-        return "{\"adapter\":{\"interfacePath\":\"" + std::string(path)
+        return R"({"adapter":{"interfacePath":")" + std::string(path)
                + "\",\"executionPolicy\":{\"failFast\":true}},\"pi\":{"
                  "\"controllerName\":\"Android\","
                  "\"resourceName\":\"Official\","
@@ -219,7 +219,7 @@ namespace
     // "missing-option" errors and canExecute=false.
     std::string CompileContextV26(std::string_view path)
     {
-        return "{\"adapter\":{\"interfacePath\":\"" + std::string(path)
+        return R"({"adapter":{"interfacePath":")" + std::string(path)
                + "\",\"executionPolicy\":{\"failFast\":true}},\"pi\":{"
                  "\"controllerName\":\"Android\","
                  "\"resourceName\":\"Official\","
@@ -246,7 +246,7 @@ namespace
     // are routed through globalOptions storage.
     std::string CompileContextSetting(std::string_view path)
     {
-        return "{\"adapter\":{\"interfacePath\":\"" + std::string(path)
+        return R"({"adapter":{"interfacePath":")" + std::string(path)
                + "\",\"executionPolicy\":{\"failFast\":true}},\"pi\":{"
                  "\"controllerName\":\"Android\","
                  "\"resourceName\":\"Official\","
@@ -269,7 +269,7 @@ namespace
     // instead of dropping them.
     std::string CompileContextDefaults(std::string_view path)
     {
-        return "{\"adapter\":{\"interfacePath\":\"" + std::string(path)
+        return R"({"adapter":{"interfacePath":")" + std::string(path)
                + "\",\"executionPolicy\":{\"failFast\":true}},\"pi\":{"
                  "\"controllerName\":\"Android\","
                  "\"resourceName\":\"Official\","
@@ -282,7 +282,7 @@ namespace
     // still fall back to their defaults.
     std::string CompileContextSingleGlobal(std::string_view path)
     {
-        return "{\"adapter\":{\"interfacePath\":\"" + std::string(path)
+        return R"({"adapter":{"interfacePath":")" + std::string(path)
                + "\",\"executionPolicy\":{\"failFast\":true}},\"pi\":{"
                  "\"controllerName\":\"Android\","
                  "\"resourceName\":\"Official\","
@@ -716,7 +716,7 @@ TEST_F(MaapiCompileFixture, StaleOptionSelectionEmitsNonBlockingWarning)
     // declared in interface_compile.jsonc's catalog.
     const auto path = FixturePath("interface_compile.jsonc").generic_string();
     const auto context =
-        "{\"adapter\":{\"interfacePath\":\"" + std::string(path)
+        R"({"adapter":{"interfacePath":")" + std::string(path)
         + "\",\"executionPolicy\":{\"failFast\":true}},\"pi\":{"
           "\"controllerName\":\"Android\","
           "\"resourceName\":\"Official\","

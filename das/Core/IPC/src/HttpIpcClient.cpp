@@ -69,8 +69,8 @@ HttpIpcClient::Connect(
         HelloRequestV1 hello{};
         InitHelloRequest(hello, my_pid, "HttpIpcClient");
 
-        uint16_t call_id = 1;
-        auto     validated_header =
+        const uint16_t call_id = 1;
+        auto           validated_header =
             IPCMessageHeaderBuilder()
                 .SetMessageType(MessageType::REQUEST)
                 .SetControlPlaneCommand(
@@ -154,8 +154,8 @@ HttpIpcClient::Connect(
         ReadyRequestV1 ready{};
         InitReadyRequest(ready, session_id);
 
-        uint16_t call_id = 2;
-        auto     validated_header =
+        const uint16_t call_id = 2;
+        auto           validated_header =
             IPCMessageHeaderBuilder()
                 .SetMessageType(MessageType::REQUEST)
                 .SetControlPlaneCommand(

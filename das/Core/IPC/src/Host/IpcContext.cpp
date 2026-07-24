@@ -221,7 +221,7 @@ namespace Core
                 handshake_handler_->SetOnShutdownRequested(
                     [this]()
                     {
-                        std::string msg = DAS_FMT_NS::format(
+                        const std::string msg = DAS_FMT_NS::format(
                             "IpcContext: 收到 GOODBYE，请求退出");
                         DAS_LOG_INFO(msg.c_str());
 
@@ -367,7 +367,7 @@ namespace Core
                 parent_monitor_thread_ = std::thread(
                     [this]()
                     {
-                        std::string start_msg = DAS_FMT_NS::format(
+                        const std::string start_msg = DAS_FMT_NS::format(
                             "IpcContext: 父进程监控线程启动，监控 main_pid={}",
                             main_pid_);
                         DAS_LOG_INFO(start_msg.c_str());
@@ -376,7 +376,7 @@ namespace Core
                         {
                             if (!IsProcessAlive(main_pid_))
                             {
-                                std::string msg = DAS_FMT_NS::format(
+                                const std::string msg = DAS_FMT_NS::format(
                                     "IpcContext: 检测到主进程 (PID={}) 已退出，Host 将自动退出",
                                     main_pid_);
                                 DAS_LOG_INFO(msg.c_str());
@@ -398,7 +398,7 @@ namespace Core
                             }
                         }
 
-                        std::string stop_msg = DAS_FMT_NS::format(
+                        const std::string stop_msg = DAS_FMT_NS::format(
                             "IpcContext: 父进程监控线程结束");
                         DAS_LOG_INFO(stop_msg.c_str());
                     });
@@ -441,7 +441,7 @@ namespace Core
 
             DasResult IpcContext::Run()
             {
-                ScopedCurrentIpcContext scope(this);
+                const ScopedCurrentIpcContext scope(this);
 
                 if (is_running_)
                 {
@@ -564,7 +564,8 @@ namespace Core
                                         // ConnectionManager，借用引用
                                         auto& conn_mgr =
                                             run_loop_.GetConnectionManager();
-                                        uint16_t main_process_session_id = 1;
+                                        const uint16_t main_process_session_id =
+                                            1;
                                         conn_mgr.RegisterHostLocalTransport(
                                             main_process_session_id,
                                             std::move(pipe_transport));
@@ -596,7 +597,7 @@ namespace Core
                 }
 
                 // 运行 io_context（连接任务已 post）
-                DasResult result = run_loop_.Run();
+                const DasResult result = run_loop_.Run();
 
                 is_running_ = false;
                 StopParentProcessMonitor();

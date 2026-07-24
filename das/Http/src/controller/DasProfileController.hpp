@@ -84,7 +84,7 @@ namespace Das::Http
                     DAS_E_INVALID_ARGUMENT,
                     "Missing or invalid 'profileId' field");
             }
-            std::string                profile_id(profile_id_opt.value());
+            const std::string          profile_id(profile_id_opt.value());
             DasPtr<IDasReadOnlyString> p_pid;
             auto                       cr = CreateIDasReadOnlyStringFromUtf8(
                 profile_id.c_str(),
@@ -106,8 +106,8 @@ namespace Das::Http
                     auto name_opt = name_val.as_string();
                     if (name_opt)
                     {
-                        std::string name(name_opt.value());
-                        auto        name_cr = CreateIDasReadOnlyStringFromUtf8(
+                        const std::string name(name_opt.value());
+                        auto name_cr = CreateIDasReadOnlyStringFromUtf8(
                             name.c_str(),
                             p_name.Put());
                         if (DAS::IsFailed(name_cr))
@@ -244,7 +244,7 @@ namespace Das::Http
                     "Failed to create string");
             }
 
-            DasPtr<Das::ExportInterface::IDasJson> json_data =
+            const DasPtr<Das::ExportInterface::IDasJson> json_data =
                 DasPtr<Das::ExportInterface::IDasJson>::Attach(
                     DasHttpJson::MakeRaw(body));
 
@@ -303,7 +303,7 @@ namespace Das::Http
                     "Failed to create string");
             }
 
-            std::string                name(name_opt.value());
+            const std::string          name(name_opt.value());
             DasPtr<IDasReadOnlyString> p_name;
             auto                       name_cr =
                 CreateIDasReadOnlyStringFromUtf8(name.c_str(), p_name.Put());
@@ -444,7 +444,7 @@ namespace Das::Http
                     "Invalid GUID format");
             }
 
-            DasPtr<Das::ExportInterface::IDasJson> json_data =
+            const DasPtr<Das::ExportInterface::IDasJson> json_data =
                 DasPtr<Das::ExportInterface::IDasJson>::Attach(
                     DasHttpJson::MakeRaw(body));
 

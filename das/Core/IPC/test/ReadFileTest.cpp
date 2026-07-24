@@ -114,7 +114,7 @@ namespace
         std::memcpy(&size, resp.response_data.data(), sizeof(uint32_t));
         EXPECT_EQ(size, static_cast<uint32_t>(content.size()));
 
-        std::string actual(
+        const std::string actual(
             resp.response_data.begin() + sizeof(uint32_t),
             resp.response_data.end());
         EXPECT_EQ(actual, content);
@@ -144,7 +144,7 @@ namespace
         std::memcpy(&size, resp.response_data.data(), sizeof(uint32_t));
         EXPECT_EQ(size, static_cast<uint32_t>(binary_data.size()));
 
-        std::vector<uint8_t> actual(
+        const std::vector<uint8_t> actual(
             resp.response_data.begin() + sizeof(uint32_t),
             resp.response_data.end());
         EXPECT_EQ(actual, binary_data);
@@ -160,7 +160,7 @@ namespace
         IpcCommandResponse resp{};
         ASSERT_EQ(CallReadFile("PluginA/data.txt", resp), DAS_S_OK);
 
-        std::string actual(
+        const std::string actual(
             resp.response_data.begin() + sizeof(uint32_t),
             resp.response_data.end());
         EXPECT_EQ(actual, content);
@@ -204,7 +204,8 @@ namespace
             for (size_t written = 0; written < kOversize;
                  written += zeros.size())
             {
-                size_t to_write = std::min(zeros.size(), kOversize - written);
+                const size_t to_write =
+                    std::min(zeros.size(), kOversize - written);
                 ofs.write(zeros.data(), static_cast<std::streamsize>(to_write));
             }
             ofs.flush();

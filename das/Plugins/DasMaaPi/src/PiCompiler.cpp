@@ -619,7 +619,7 @@ namespace Das::Plugins::DasMaaPi
             yyjson::value&             result,
             std::set<std::string>&     visited)
         {
-            std::string key{option_key};
+            const std::string key{option_key};
             if (visited.count(key) != 0)
             {
                 return;
@@ -641,9 +641,9 @@ namespace Das::Plugins::DasMaaPi
             const auto& type = option->dto.type;
             if (type == "select" || type == "switch")
             {
-                std::string case_name = resolved.cases.empty()
-                                            ? std::string{}
-                                            : resolved.cases.front();
+                const std::string case_name = resolved.cases.empty()
+                                                  ? std::string{}
+                                                  : resolved.cases.front();
                 // copy_string avoids dangling pointer when key/case_name go
                 // out of scope (das-yyjson-string-safety).
                 (*result_obj)[key] = std::make_pair(
@@ -707,7 +707,7 @@ namespace Das::Plugins::DasMaaPi
                 auto          input_ref = input_obj.as_object();
                 for (const auto& input : option->dto.inputs)
                 {
-                    std::string value = resolved.input_values[input.name];
+                    const std::string value = resolved.input_values[input.name];
                     (*input_ref)[input.name] = std::make_pair(
                         std::string_view(value),
                         yyjson::copy_string);
@@ -825,7 +825,7 @@ namespace Das::Plugins::DasMaaPi
         for (const auto& path : resource->resolved_paths)
         {
             envelope.maapi.resource_paths.emplace_back(
-                std::string{DAS::Utils::U8AsString(path.u8string())});
+                DAS::Utils::U8AsString(path.u8string()));
         }
         envelope.maapi.pi_env.controller_json = controller->raw.raw_json;
         envelope.maapi.pi_env.resource_json = resource->raw.raw_json;

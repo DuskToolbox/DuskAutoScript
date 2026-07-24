@@ -179,7 +179,7 @@ auto LuaRuntime::LoadPlugin(const std::filesystem::path& path)
     std::string plugin_name;
     std::string entry_point;
     {
-        std::string manifest_content(
+        const std::string manifest_content(
             (std::istreambuf_iterator<char>(file)),
             std::istreambuf_iterator<char>());
         auto manifest_opt = DAS::Utils::ParseYyjsonFromString(manifest_content);
@@ -323,7 +323,7 @@ auto LuaRuntime::LoadPlugin(const std::filesystem::path& path)
         sol::table      package_table = lua["package"];
         if (package_table.valid())
         {
-            std::string current_path =
+            const std::string current_path =
                 package_table["path"].get_or(std::string(""));
             package_table["path"] = manifest_dir + "/?.lua;" + current_path;
         }
@@ -339,19 +339,19 @@ auto LuaRuntime::LoadPlugin(const std::filesystem::path& path)
 
     DAS_CORE_LOG_INFO("[LuaRuntime::LoadPlugin] Executing Lua: {}", lua_code);
 
-    sol::state_view                lua(lua_state_);
-    sol::protected_function_result result =
+    sol::state_view                      lua(lua_state_);
+    const sol::protected_function_result result =
         lua.safe_script(lua_code, sol::script_pass_on_error);
 
     if (!result.valid())
     {
-        sol::error err = result;
+        const sol::error err = result;
         DAS_CORE_LOG_ERROR("Lua script execution failed: {}", err.what());
         return tl::make_unexpected(DAS_E_FAIL);
     }
 
     // ── 8. Extract IDasBase* from Lua return value ──────────────────────
-    sol::object ret_obj = result.get<sol::object>(0);
+    const sol::object ret_obj = result.get<sol::object>(0);
     if (ret_obj.get_type() != sol::type::userdata)
     {
         DAS_CORE_LOG_ERROR(
@@ -378,8 +378,8 @@ auto LuaRuntime::LoadPlugin(const std::filesystem::path& path)
     {
         DAS_CORE_LOG_WARN(
             "ExtractDasBasePointer not available, using inline fallback");
-        void*  raw_memory = lua_touserdata(lua_state_, result.stack_index());
-        void** ptr_to_obj = static_cast<void**>(raw_memory);
+        void* raw_memory = lua_touserdata(lua_state_, result.stack_index());
+        void* const* ptr_to_obj = static_cast<void**>(raw_memory);
         base_ptr = static_cast<IDasBase*>(*ptr_to_obj);
     }
 

@@ -209,9 +209,9 @@ DasResult CreateIDasImageFromEncodedData(
 
         try
         {
-            const auto int_data_size = static_cast<int>(data_size);
-            cv::Mat    encoded_data{1, int_data_size, CV_8UC1, p_data};
-            auto       mat = cv::imdecode(encoded_data, cv::IMREAD_UNCHANGED);
+            const auto    int_data_size = static_cast<int>(data_size);
+            const cv::Mat encoded_data{1, int_data_size, CV_8UC1, p_data};
+            auto mat = cv::imdecode(encoded_data, cv::IMREAD_UNCHANGED);
             if (mat.empty())
             {
                 DAS_CORE_LOG_ERROR(
@@ -332,7 +332,7 @@ DasResult CreateIDasImageFromDecodedData(
 
     try
     {
-        cv::Mat input_image{
+        const cv::Mat input_image{
             size.height,
             size.width,
             expected_type.value(),
@@ -420,7 +420,7 @@ DasResult CreateIDasImageFromRgb888(
         return get_data_result;
     }
 
-    DasImageDesc desc{
+    const DasImageDesc desc{
         .p_data = reinterpret_cast<char*>(p_data),
         .data_size = static_cast<size_t>(data_size),
         .data_format = DAS::ExportInterface::DAS_IMAGE_FORMAT_RGBA_8888};

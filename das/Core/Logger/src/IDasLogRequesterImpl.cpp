@@ -64,7 +64,7 @@ DasResult IDasLogRequesterImpl::QueryInterface(
 DasResult IDasLogRequesterImpl::RequestOne(
     Das::ExportInterface::IDasLogReader* p_reader)
 {
-    std::lock_guard guard{mutex_};
+    const std::scoped_lock guard{mutex_};
 
     if (buffer_.empty())
     {

@@ -130,7 +130,7 @@ namespace Das::Plugins::DasMaaPi
             std::optional<std::string> GetResourceHash(
                 MaaResourceHandle resource) override
             {
-                std::unique_ptr<
+                const std::unique_ptr<
                     MaaStringBuffer,
                     decltype(&MaaStringBufferDestroy)>
                     buffer(MaaStringBufferCreate(), MaaStringBufferDestroy);
@@ -536,7 +536,7 @@ namespace Das::Plugins::DasMaaPi
             std::optional<std::string> GetAgentClientIdentifier(
                 MaaAgentClientHandle client) override
             {
-                std::unique_ptr<
+                const std::unique_ptr<
                     MaaStringBuffer,
                     decltype(&MaaStringBufferDestroy)>
                     buffer(MaaStringBufferCreate(), MaaStringBufferDestroy);
@@ -1107,7 +1107,7 @@ namespace Das::Plugins::DasMaaPi
             return result;
         }
 
-        ScopedResource resource(boundary, boundary.CreateResource());
+        const ScopedResource resource(boundary, boundary.CreateResource());
         if (resource.get() == kInvalidMaaResourceHandle)
         {
             result.das_result = DAS_E_FAIL;
@@ -1197,9 +1197,9 @@ namespace Das::Plugins::DasMaaPi
                     : typed.error_message);
             return result;
         }
-        ScopedController controller(boundary, controller_handle);
+        const ScopedController controller(boundary, controller_handle);
 
-        ScopedTasker tasker(boundary, boundary.CreateTasker());
+        const ScopedTasker tasker(boundary, boundary.CreateTasker());
         if (tasker.get() == kInvalidMaaTaskerHandle)
         {
             result.das_result = DAS_E_FAIL;

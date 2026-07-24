@@ -85,7 +85,9 @@ public:
     DAS_IMPL StopRequested(bool* canStop) override
     {
         if (!canStop)
+        {
             return DAS_E_INVALID_POINTER;
+        }
         *canStop = cancelled_;
         return DAS_S_OK;
     }
@@ -105,7 +107,7 @@ TEST(DasGraphTaskTest, DoReturnsErrorWhenHostIsNull)
     ASSERT_NE(task.Get(), nullptr);
 
     DasPtr<Das::ExportInterface::IDasPortMap> result;
-    DasResult hr = task->Do(nullptr, nullptr, result.Put());
+    const DasResult hr = task->Do(nullptr, nullptr, result.Put());
     EXPECT_TRUE(DAS::IsFailed(hr));
 }
 
@@ -114,8 +116,8 @@ TEST(DasGraphTaskTest, GetGuidReturnsNonEmpty)
     auto task = DasGraphTaskImpl::Make(nullptr);
     ASSERT_NE(task.Get(), nullptr);
 
-    DasGuid   guid{};
-    DasResult hr = task->GetGuid(&guid);
+    DasGuid         guid{};
+    const DasResult hr = task->GetGuid(&guid);
     EXPECT_TRUE(DAS::IsOk(hr));
 }
 
@@ -127,7 +129,7 @@ TEST(DasGraphTaskTest, DoWithMockHostReturnsSuccessOnEmptyPlan)
     ASSERT_NE(task.Get(), nullptr);
 
     DasPtr<Das::ExportInterface::IDasPortMap> result;
-    DasResult hr = task->Do(nullptr, nullptr, result.Put());
+    const DasResult hr = task->Do(nullptr, nullptr, result.Put());
     // Empty plan runs without error (empty graph).
     EXPECT_TRUE(DAS::IsOk(hr));
 }
@@ -141,7 +143,7 @@ TEST(DasGraphTaskTest, DoStopTokenCancel)
 
     auto cancelled_token = MockStopTokenForTask::Make(true);
     DasPtr<Das::ExportInterface::IDasPortMap> result;
-    DasResult hr = task->Do(cancelled_token.Get(), nullptr, result.Put());
+    const DasResult hr = task->Do(cancelled_token.Get(), nullptr, result.Put());
     // RunWithHost should propagate cancellation.
     EXPECT_TRUE(DAS::IsFailed(hr));
 }
@@ -169,7 +171,7 @@ TEST(DasGraphTaskTest, AuthoringCompilePlanFeedsIntoDo)
 
     DasPtr<Das::ExportInterface::IDasPortMap> input_map;
     ASSERT_EQ(CreateIDasPortMap(input_map.Put()), DAS_S_OK);
-    DasReadOnlyString compiled_plan_key{"compiledPlan"};
+    const DasReadOnlyString compiled_plan_key{"compiledPlan"};
     ASSERT_EQ(
         input_map->SetString(compiled_plan_key.Get(), plan_str.Get()),
         DAS_S_OK);
@@ -181,6 +183,6 @@ TEST(DasGraphTaskTest, AuthoringCompilePlanFeedsIntoDo)
     ASSERT_NE(task.Get(), nullptr);
 
     DasPtr<Das::ExportInterface::IDasPortMap> result;
-    DasResult hr = task->Do(nullptr, input_map.Get(), result.Put());
+    const DasResult hr = task->Do(nullptr, input_map.Get(), result.Put());
     EXPECT_TRUE(DAS::IsOk(hr));
 }

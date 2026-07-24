@@ -207,7 +207,7 @@ struct yyjson::caster<std::optional<bool>>
     {
         if (t.has_value())
         {
-            v = std::move(*t);
+            v = *t;
         }
     }
 };

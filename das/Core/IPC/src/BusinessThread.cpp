@@ -91,8 +91,8 @@ void BusinessThread::Run()
 {
     DAS_CORE_LOG_INFO("BusinessThread::Run() started");
 
-    ScopedBusinessThreadMarker business_thread_marker(this);
-    ScopedCurrentIpcContext    scope(&resolve_context_);
+    const ScopedBusinessThreadMarker business_thread_marker(this);
+    const ScopedCurrentIpcContext    scope(&resolve_context_);
 
     proxy_factory_.GetObjectManager().SetBusinessThreadId(
         std::this_thread::get_id());
@@ -128,12 +128,12 @@ void BusinessThread::ProcessInboundMessage(InboundMessage& msg)
     if (header.GetMessageType() == MessageType::RESPONSE)
     {
         // RESPONSE: 调用 CompletePendingCall
-        CallKey call_key{
+        const CallKey call_key{
             .source_session_id = header.GetSourceSessionId(),
             .call_id = header.GetCallId()};
-        DasResult result = header.HasError()
-                               ? static_cast<DasResult>(header.GetErrorCode())
-                               : DAS_S_OK;
+        const DasResult result =
+            header.HasError() ? static_cast<DasResult>(header.GetErrorCode())
+                              : DAS_S_OK;
         run_loop_.CompletePendingCall(
             call_key,
             result,
@@ -207,8 +207,8 @@ void BusinessThread::ProcessInboundMessage(InboundMessage& msg)
                                 DAS_E_IPC_COMMAND_NOT_REGISTERED))
                         .Build();
 
-                IpcResponseSender    sender(run_loop_);
-                std::vector<uint8_t> empty_body;
+                IpcResponseSender          sender(run_loop_);
+                const std::vector<uint8_t> empty_body;
                 auto send_result = sender.SendResponse(nack_header, empty_body);
                 if (DAS::IsFailed(send_result))
                 {
@@ -256,7 +256,7 @@ DasResult BusinessThread::PumpUntilResponse(
 
         if (msg.header.GetMessageType() == MessageType::RESPONSE)
         {
-            CallKey call_key{
+            const CallKey call_key{
                 .source_session_id = msg.header.GetSourceSessionId(),
                 .call_id = msg.header.GetCallId()};
 

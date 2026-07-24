@@ -167,7 +167,7 @@ DasResult WindowsCapture::InitializeGDICapture()
     auto wh_str = wh_val.as_string();
     if (wh_str)
     {
-        std::string handle_str = std::string(*wh_str);
+        const std::string handle_str = std::string(*wh_str);
         if (handle_str.find("0x") == 0 || handle_str.find("0X") == 0)
         {
             target_hwnd =
@@ -209,7 +209,7 @@ DasResult WindowsCapture::InitializeGDICapture()
             if (pn_str)
             {
                 std::string proc_name = std::string(*pn_str);
-                DWORD       pid = FindProcessByName(proc_name.c_str());
+                DWORD const pid = FindProcessByName(proc_name.c_str());
                 if (pid == 0)
                 {
                     DAS_LOG_ERROR(
@@ -302,7 +302,7 @@ DasResult WindowsCapture::InitializeGraphicsCapture()
     auto wh_str = wh_val.as_string();
     if (wh_str)
     {
-        std::string handle_str = std::string(*wh_str);
+        const std::string handle_str = std::string(*wh_str);
         if (handle_str.find("0x") == 0 || handle_str.find("0X") == 0)
         {
             target_hwnd =
@@ -319,7 +319,7 @@ DasResult WindowsCapture::InitializeGraphicsCapture()
         auto wt_str = wt_val.as_string();
         if (wt_str)
         {
-            std::string title = std::string(*wt_str);
+            const std::string title = std::string(*wt_str);
             target_hwnd = FindWindowByTitle(title.c_str());
         }
         else
@@ -328,8 +328,8 @@ DasResult WindowsCapture::InitializeGraphicsCapture()
             auto pn_str = pn_val.as_string();
             if (pn_str)
             {
-                std::string proc_name = std::string(*pn_str);
-                DWORD       pid = FindProcessByName(proc_name.c_str());
+                const std::string proc_name = std::string(*pn_str);
+                DWORD const       pid = FindProcessByName(proc_name.c_str());
                 if (pid != 0)
                 {
                     target_hwnd = FindMainWindowForProcess(pid);
@@ -341,7 +341,7 @@ DasResult WindowsCapture::InitializeGraphicsCapture()
                 auto pid_uint = pid_val.as_uint();
                 if (pid_uint)
                 {
-                    uint32_t pid = static_cast<uint32_t>(*pid_uint);
+                    const uint32_t pid = static_cast<uint32_t>(*pid_uint);
                     target_hwnd = FindMainWindowForProcess(pid);
                 }
                 else

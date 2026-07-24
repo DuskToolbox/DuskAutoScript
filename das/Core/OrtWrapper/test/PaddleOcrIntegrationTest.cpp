@@ -35,7 +35,7 @@ namespace
 
 TEST(OcrResultInterface, GetTextReturnsStoredText)
 {
-    Das::ExportInterface::DasRect              box{10, 20, 100, 30};
+    const Das::ExportInterface::DasRect        box{10, 20, 100, 30};
     std::vector<Das::ExportInterface::DasRect> char_boxes = {
         {10, 20, 25, 30},
         {35, 20, 25, 30},
@@ -50,7 +50,7 @@ TEST(OcrResultInterface, GetTextReturnsStoredText)
         std::move(char_boxes),
         std::move(char_scores));
     result->AddRef();
-    DasPtr<Das::ExportInterface::IDasOcrResult> ptr(result);
+    const DasPtr<Das::ExportInterface::IDasOcrResult> ptr(result);
 
     IDasReadOnlyString* text = nullptr;
     auto                cr = ptr->GetText(&text);
@@ -64,11 +64,11 @@ TEST(OcrResultInterface, GetTextReturnsStoredText)
 
 TEST(OcrResultInterface, GetBoxReturnsStoredBox)
 {
-    Das::ExportInterface::DasRect box{10, 20, 100, 30};
-    auto*                         result =
+    const Das::ExportInterface::DasRect box{10, 20, 100, 30};
+    auto*                               result =
         new Das::Core::OrtWrapper::IDasOcrResultImpl("test", box, 0.9, {}, {});
     result->AddRef();
-    DasPtr<Das::ExportInterface::IDasOcrResult> ptr(result);
+    const DasPtr<Das::ExportInterface::IDasOcrResult> ptr(result);
 
     Das::ExportInterface::DasRect out_box{};
     auto                          cr = ptr->GetBox(&out_box);
@@ -88,7 +88,7 @@ TEST(OcrResultInterface, GetScoreReturnsStoredScore)
         {},
         {});
     result->AddRef();
-    DasPtr<Das::ExportInterface::IDasOcrResult> ptr(result);
+    const DasPtr<Das::ExportInterface::IDasOcrResult> ptr(result);
 
     double score = 0.0;
     auto   cr = ptr->GetScore(&score);
@@ -111,7 +111,7 @@ TEST(OcrResultInterface, CharAccessors)
         std::move(char_boxes),
         std::move(char_scores));
     result->AddRef();
-    DasPtr<Das::ExportInterface::IDasOcrResult> ptr(result);
+    const DasPtr<Das::ExportInterface::IDasOcrResult> ptr(result);
 
     uint32_t count = 0;
     auto     cr = ptr->GetCharCount(&count);
@@ -141,7 +141,7 @@ TEST(OcrResultVectorTest, EmptyVector)
 {
     auto* vec = new Das::Core::OrtWrapper::IDasOcrResultVectorImpl();
     vec->AddRef();
-    DasPtr<Das::ExportInterface::IDasOcrResultVector> ptr(vec);
+    const DasPtr<Das::ExportInterface::IDasOcrResultVector> ptr(vec);
 
     uint32_t count = 99;
     auto     cr = vec->GetCount(&count);
@@ -177,7 +177,7 @@ TEST(OcrResultVectorTest, VectorWithResults)
     r1->Release();
     r2->Release();
 
-    DasPtr<Das::ExportInterface::IDasOcrResultVector> ptr(vec);
+    const DasPtr<Das::ExportInterface::IDasOcrResultVector> ptr(vec);
 
     uint32_t count = 0;
     auto     cr = vec->GetCount(&count);
@@ -226,7 +226,7 @@ TEST_F(PaddleOcrTest, CreateOcrNullRecModel_ReturnsInvalidPointer)
     auto* ai = new Das::Core::OrtWrapper::AiCpuImpl{};
 
     DasPtr<Das::ExportInterface::IDasOcr> ocr;
-    DasReadOnlyString                     dict_path("dict.txt");
+    const DasReadOnlyString               dict_path("dict.txt");
     auto result = ai->CreateOcr(nullptr, nullptr, dict_path.Get(), ocr.Put());
     EXPECT_EQ(result, DAS_E_INVALID_POINTER);
 
@@ -238,7 +238,7 @@ TEST_F(PaddleOcrTest, CreateOcrNullDictPath_ReturnsInvalidPointer)
     auto* ai = new Das::Core::OrtWrapper::AiCpuImpl{};
 
     DasPtr<Das::ExportInterface::IDasOcr> ocr;
-    DasReadOnlyString                     rec_path("model.onnx");
+    const DasReadOnlyString               rec_path("model.onnx");
     auto result = ai->CreateOcr(nullptr, rec_path.Get(), nullptr, ocr.Put());
     EXPECT_EQ(result, DAS_E_INVALID_POINTER);
 
@@ -250,8 +250,8 @@ TEST_F(PaddleOcrTest, CreateOcrNonexistentRecModel_ReturnsError)
     auto* ai = new Das::Core::OrtWrapper::AiCpuImpl{};
 
     DasPtr<Das::ExportInterface::IDasOcr> ocr;
-    DasReadOnlyString                     rec_path("nonexistent_model.onnx");
-    DasReadOnlyString                     dict_path("nonexistent_dict.txt");
+    const DasReadOnlyString               rec_path("nonexistent_model.onnx");
+    const DasReadOnlyString               dict_path("nonexistent_dict.txt");
     auto                                  result =
         ai->CreateOcr(nullptr, rec_path.Get(), dict_path.Get(), ocr.Put());
     EXPECT_NE(result, DAS_S_OK);
@@ -266,7 +266,7 @@ TEST_F(PaddleOcrTest, CreateOcrWithValidPaths_SkipIfNoModel)
     // This test would require actual ONNX model files
     auto* ai = new Das::Core::OrtWrapper::AiCpuImpl{};
 
-    DasPtr<Das::ExportInterface::IDasOcr> ocr;
+    const DasPtr<Das::ExportInterface::IDasOcr> ocr;
     // ... would use real paths
 
     ai->Release();
@@ -281,11 +281,11 @@ TEST(CudaEpProbe, GetAvailableProvidersDoesNotCrash)
     {
         auto providers = Ort::GetAvailableProviders();
         // Check that CPU EP is always available
-        bool has_cpu = std::find(
-                           providers.begin(),
-                           providers.end(),
-                           "CPUExecutionProvider")
-                       != providers.end();
+        const bool has_cpu = std::find(
+                                 providers.begin(),
+                                 providers.end(),
+                                 "CPUExecutionProvider")
+                             != providers.end();
         EXPECT_TRUE(has_cpu);
     }
     catch (const Ort::Exception& e)

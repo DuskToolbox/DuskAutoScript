@@ -188,8 +188,8 @@ namespace Das::Core::IPC::Host
                 return qi_result;
             }
 
-            ObjectId  new_obj_id;
-            DasResult reg_result =
+            ObjectId        new_obj_id;
+            const DasResult reg_result =
                 ctx.RegisterLocalObject(new_obj.Get(), new_obj_id);
             if (DAS::IsFailed(reg_result))
             {
@@ -234,10 +234,11 @@ namespace Das::Core::IPC::Host
             size_t start = 0;
             while (start < path.size())
             {
-                size_t      sep = path.find_first_of("/\\", start);
-                std::string segment = (sep == std::string::npos)
-                                          ? path.substr(start)
-                                          : path.substr(start, sep - start);
+                const size_t      sep = path.find_first_of("/\\", start);
+                const std::string segment =
+                    (sep == std::string::npos)
+                        ? path.substr(start)
+                        : path.substr(start, sep - start);
                 if (segment == component)
                 {
                     return true;
@@ -274,7 +275,7 @@ namespace Das::Core::IPC::Host
                 }
             }
 
-            std::filesystem::path candidate =
+            const std::filesystem::path candidate =
                 relative_path_u8.empty()
                     ? base_dir
                     : base_dir
@@ -353,8 +354,8 @@ namespace Das::Core::IPC::Host
             response.error_code = DAS_S_OK;
             response.response_data.clear();
 
-            auto        u8base = plugin_dir.u8string();
-            std::string base_u8{DAS::Utils::U8AsString(u8base)};
+            auto              u8base = plugin_dir.u8string();
+            const std::string base_u8{DAS::Utils::U8AsString(u8base)};
             SerializeString(response.response_data, base_u8);
 
             std::vector<uint8_t> entries_buf;
@@ -380,14 +381,14 @@ namespace Das::Core::IPC::Host
                             kMaxListEntries);
                         break;
                     }
-                    uint8_t type =
+                    const uint8_t type =
                         entry.is_directory() ? uint8_t{1} : uint8_t{0};
                     entries_buf.push_back(type);
-                    auto        u8name = entry.path().filename().u8string();
-                    std::string name_u8{DAS::Utils::U8AsString(u8name)};
+                    auto u8name = entry.path().filename().u8string();
+                    const std::string name_u8{DAS::Utils::U8AsString(u8name)};
                     SerializeString(entries_buf, name_u8);
-                    auto        u8abs = entry.path().u8string();
-                    std::string abs_u8{DAS::Utils::U8AsString(u8abs)};
+                    auto              u8abs = entry.path().u8string();
+                    const std::string abs_u8{DAS::Utils::U8AsString(u8abs)};
                     SerializeString(entries_buf, abs_u8);
                     ++entry_count;
                 }
@@ -411,14 +412,14 @@ namespace Das::Core::IPC::Host
                             kMaxListEntries);
                         break;
                     }
-                    uint8_t type =
+                    const uint8_t type =
                         entry.is_directory() ? uint8_t{1} : uint8_t{0};
                     entries_buf.push_back(type);
-                    auto        u8name = entry.path().filename().u8string();
-                    std::string name_u8{DAS::Utils::U8AsString(u8name)};
+                    auto u8name = entry.path().filename().u8string();
+                    const std::string name_u8{DAS::Utils::U8AsString(u8name)};
                     SerializeString(entries_buf, name_u8);
-                    auto        u8abs = entry.path().u8string();
-                    std::string abs_u8{DAS::Utils::U8AsString(u8abs)};
+                    auto              u8abs = entry.path().u8string();
+                    const std::string abs_u8{DAS::Utils::U8AsString(u8abs)};
                     SerializeString(entries_buf, abs_u8);
                     ++entry_count;
                 }

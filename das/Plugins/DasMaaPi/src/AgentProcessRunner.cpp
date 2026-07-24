@@ -147,7 +147,7 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
 
             AgentProcessSnapshot Snapshot() const override
             {
-                std::lock_guard lock(mutex_);
+                const std::scoped_lock lock(mutex_);
                 return AgentProcessSnapshot{
                     .running = running_,
                     .pid = pid_,
@@ -196,7 +196,7 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
                         if (!ec)
                         {
                             {
-                                std::lock_guard lock(mutex_);
+                                const std::scoped_lock lock(mutex_);
                                 AppendBounded(
                                     stdout_tail_,
                                     stdout_buffer_.data(),
@@ -217,7 +217,7 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
                         if (!ec)
                         {
                             {
-                                std::lock_guard lock(mutex_);
+                                const std::scoped_lock lock(mutex_);
                                 AppendBounded(
                                     stderr_tail_,
                                     stderr_buffer_.data(),
@@ -232,7 +232,7 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
             void OnExited(boost::system::error_code ec, int exit_code)
             {
                 {
-                    std::lock_guard lock(mutex_);
+                    const std::scoped_lock lock(mutex_);
                     running_ = false;
                     exit_code_ = ec ? -1 : exit_code;
                 }

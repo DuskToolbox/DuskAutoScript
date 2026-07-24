@@ -229,7 +229,7 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
             const AgentRuntimeRequestDto& request,
             const AgentRuntimeMaaContext& context)
         {
-            std::lock_guard lock(mutex_);
+            const std::scoped_lock lock(mutex_);
 
             std::vector<SessionAgent> staged_agents;
             const auto                session_id =
@@ -425,8 +425,8 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
             std::string_view              session_id,
             const AgentRuntimeOptionsDto& options)
         {
-            std::lock_guard lock(mutex_);
-            auto            it = sessions_.find(std::string(session_id));
+            const std::scoped_lock lock(mutex_);
+            auto                   it = sessions_.find(std::string(session_id));
             if (it == sessions_.end())
             {
                 return MissingSession(session_id);
@@ -448,8 +448,8 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
 
         AgentRuntimeResultDto Status(std::string_view session_id)
         {
-            std::lock_guard lock(mutex_);
-            auto            it = sessions_.find(std::string(session_id));
+            const std::scoped_lock lock(mutex_);
+            auto                   it = sessions_.find(std::string(session_id));
             if (it == sessions_.end())
             {
                 return MissingSession(session_id);
@@ -652,7 +652,7 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
 
         void Shutdown()
         {
-            std::lock_guard lock(mutex_);
+            const std::scoped_lock lock(mutex_);
             for (auto& [_, session] : sessions_)
             {
                 bool timed_out = false;

@@ -5,7 +5,9 @@ DAS_CORE_OCVWRAPPER_NS_BEGIN
 DasResult IDasMatchResultImpl::GetMatchCount(uint32_t* p_out_count)
 {
     if (!p_out_count)
+    {
         return DAS_E_INVALID_POINTER;
+    }
     *p_out_count = static_cast<uint32_t>(matches_.size());
     return DAS_S_OK;
 }
@@ -15,10 +17,14 @@ DasResult IDasMatchResultImpl::GetMatchPair(
     ExportInterface::DasMatchedPoint* p_out_pair)
 {
     if (!p_out_pair)
+    {
         return DAS_E_INVALID_POINTER;
+    }
 
     if (index >= matches_.size())
+    {
         return DAS_E_OUT_OF_RANGE;
+    }
 
     *p_out_pair = matches_[index];
     return DAS_S_OK;

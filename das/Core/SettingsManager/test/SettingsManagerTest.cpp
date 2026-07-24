@@ -204,8 +204,8 @@ namespace
         Das::Core::SettingsManager::SettingsManager sm(test_dir_);
         sm.CreateProfile("0", "plain");
 
-        std::string name = "a\"b\\c\n\t\r渡边";
-        auto        result = sm.RenameProfile("0", name);
+        const std::string name = "a\"b\\c\n\t\r渡边";
+        auto              result = sm.RenameProfile("0", name);
         EXPECT_EQ(result, DAS_S_OK);
 
         auto list = sm.GetProfileListJson();
@@ -399,8 +399,8 @@ namespace
 
         // Update a single field
         {
-            yyjson::value field_val("updated");
-            auto          result = sm.UpdatePluginSettingsFieldJson(
+            const yyjson::value field_val("updated");
+            auto                result = sm.UpdatePluginSettingsFieldJson(
                 "0",
                 "my-guid",
                 "field1",
@@ -801,7 +801,7 @@ namespace
 
         EXPECT_EQ(sm.AllocateNextTaskRepositoryEntryId("0"), 0);
 
-        for (int64_t entry_id : {0, 1, 2})
+        for (const int64_t entry_id : {0, 1, 2})
         {
             yyjson::value entry(Das::Utils::MakeYyjsonObject());
             (*entry.as_object())[std::string_view("entryId")] = entry_id;
@@ -883,9 +883,9 @@ namespace
         }
 
         // Rebuild should restore defaults and return DAS_S_FALSE
-        std::vector<std::string> names = {"adbPath", "timeout"};
-        std::vector<std::string> defaults = {"\"/usr/bin/adb\"", "30"};
-        auto                     result = sm.RebuildPluginSettingsFromDefaults(
+        const std::vector<std::string> names = {"adbPath", "timeout"};
+        const std::vector<std::string> defaults = {"\"/usr/bin/adb\"", "30"};
+        auto result = sm.RebuildPluginSettingsFromDefaults(
             "0",
             "corrupt-guid",
             names,
@@ -919,9 +919,9 @@ namespace
         sm.UpdatePluginSettingsJson("0", "good-guid", valid);
 
         // Rebuild on a valid file should return DAS_S_OK (no rebuild needed)
-        std::vector<std::string> names = {"defaultKey"};
-        std::vector<std::string> defaults = {"\"defaultValue\""};
-        auto                     result = sm.RebuildPluginSettingsFromDefaults(
+        const std::vector<std::string> names = {"defaultKey"};
+        const std::vector<std::string> defaults = {"\"defaultValue\""};
+        auto result = sm.RebuildPluginSettingsFromDefaults(
             "0",
             "good-guid",
             names,
@@ -994,9 +994,9 @@ namespace
         EXPECT_FALSE(std::filesystem::exists(guid_file));
 
         // Rebuild should create the file and return DAS_S_FALSE
-        std::vector<std::string> names = {"key1"};
-        std::vector<std::string> defaults = {"\"value1\""};
-        auto                     result = sm.RebuildPluginSettingsFromDefaults(
+        const std::vector<std::string> names = {"key1"};
+        const std::vector<std::string> defaults = {"\"value1\""};
+        auto result = sm.RebuildPluginSettingsFromDefaults(
             "0",
             "missing-guid",
             names,

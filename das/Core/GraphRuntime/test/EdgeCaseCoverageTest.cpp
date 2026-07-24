@@ -59,7 +59,9 @@ namespace
         DasResult DAS_STD_CALL StopRequested(bool* canStop) override
         {
             if (!canStop)
+            {
                 return DAS_E_INVALID_POINTER;
+            }
             *canStop = cancelled.load();
             return DAS_S_OK;
         }
@@ -74,7 +76,7 @@ namespace
             const std::string&   component_guid_str,
             const yyjson::value& definition)
         {
-            DasGuid guid = Das::Core::ForeignInterfaceHost::MakeDasGuid(
+            const DasGuid guid = Das::Core::ForeignInterfaceHost::MakeDasGuid(
                 component_guid_str);
             definitions_.push_back(
                 {guid, guid, guid, Das::Utils::CloneYyjsonValue(definition)});
@@ -145,7 +147,9 @@ namespace
         for (size_t i = 0; i < inputs.size(); ++i)
         {
             if (i > 0)
+            {
                 json += ",";
+            }
             json += R"({"id":")" + inputs[i].first + R"(","type":")"
                     + inputs[i].second + R"("})";
         }
@@ -153,7 +157,9 @@ namespace
         for (size_t i = 0; i < outputs.size(); ++i)
         {
             if (i > 0)
+            {
                 json += ",";
+            }
             json += R"({"id":")" + outputs[i].first + R"(","type":")"
                     + outputs[i].second + R"("})";
         }

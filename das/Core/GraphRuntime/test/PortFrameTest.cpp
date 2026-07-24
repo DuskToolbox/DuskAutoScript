@@ -34,7 +34,7 @@ namespace
 
 TEST(PortFrameTest, DefaultIsNull)
 {
-    PortValue v;
+    const PortValue v;
     EXPECT_TRUE(v.IsNull());
     EXPECT_EQ(v.GetType(), PortValueType::Null);
     EXPECT_EQ(v.AsInt(), nullptr);
@@ -43,7 +43,7 @@ TEST(PortFrameTest, DefaultIsNull)
 
 TEST(PortFrameTest, IntValue)
 {
-    PortValue v(int64_t{42});
+    const PortValue v(int64_t{42});
     EXPECT_TRUE(v.IsInt());
     EXPECT_FALSE(v.IsNull());
     EXPECT_EQ(v.GetType(), PortValueType::Int);
@@ -53,7 +53,7 @@ TEST(PortFrameTest, IntValue)
 
 TEST(PortFrameTest, FloatValue)
 {
-    PortValue v(3.14);
+    const PortValue v(3.14);
     EXPECT_TRUE(v.IsFloat());
     EXPECT_EQ(v.GetType(), PortValueType::Float);
     ASSERT_NE(v.AsFloat(), nullptr);
@@ -62,7 +62,7 @@ TEST(PortFrameTest, FloatValue)
 
 TEST(PortFrameTest, StringValueFromStd)
 {
-    PortValue v(std::string("hello"));
+    const PortValue v(std::string("hello"));
     EXPECT_TRUE(v.IsString());
     EXPECT_EQ(v.GetType(), PortValueType::String);
     ASSERT_NE(v.AsString(), nullptr);
@@ -71,7 +71,7 @@ TEST(PortFrameTest, StringValueFromStd)
 
 TEST(PortFrameTest, StringValueFromLiteral)
 {
-    PortValue v("world");
+    const PortValue v("world");
     EXPECT_TRUE(v.IsString());
     ASSERT_NE(v.AsString(), nullptr);
     EXPECT_EQ(*v.AsString(), "world");
@@ -79,8 +79,8 @@ TEST(PortFrameTest, StringValueFromLiteral)
 
 TEST(PortFrameTest, BoolValue)
 {
-    PortValue v_true(true);
-    PortValue v_false(false);
+    const PortValue v_true(true);
+    const PortValue v_false(false);
     EXPECT_TRUE(v_true.IsBool());
     EXPECT_EQ(v_true.GetType(), PortValueType::Bool);
     ASSERT_NE(v_true.AsBool(), nullptr);
@@ -91,7 +91,7 @@ TEST(PortFrameTest, BoolValue)
 
 TEST(PortFrameTest, BaseValueNullptr)
 {
-    PortValue v(BaseHandle{DAS::DasPtr<IDasBase>{}});
+    const PortValue v(BaseHandle{DAS::DasPtr<IDasBase>{}});
     EXPECT_TRUE(v.IsBase());
     EXPECT_EQ(v.GetType(), PortValueType::Base);
     ASSERT_NE(v.AsBase(), nullptr);
@@ -100,7 +100,7 @@ TEST(PortFrameTest, BaseValueNullptr)
 
 TEST(PortFrameTest, ComponentValueNullptr)
 {
-    PortValue v(ComponentHandle{DAS::DasPtr<IDasBase>{}});
+    const PortValue v(ComponentHandle{DAS::DasPtr<IDasBase>{}});
     EXPECT_TRUE(v.IsComponent());
     EXPECT_EQ(v.GetType(), PortValueType::Component);
     ASSERT_NE(v.AsComponent(), nullptr);
@@ -110,7 +110,7 @@ TEST(PortFrameTest, ComponentValueNullptr)
 TEST(PortFrameTest, ImageValue)
 {
     std::vector<uint8_t> pixels = {0xFF, 0x00, 0x80, 0x40};
-    PortValue            v(ImageData{std::move(pixels)});
+    const PortValue      v(ImageData{std::move(pixels)});
     EXPECT_TRUE(v.IsImage());
     EXPECT_EQ(v.GetType(), PortValueType::Image);
     ASSERT_NE(v.AsImage(), nullptr);
@@ -121,8 +121,8 @@ TEST(PortFrameTest, ImageValue)
 
 TEST(PortFrameTest, JsonValue)
 {
-    auto      doc = yyjson::read(R"({"key": 42})");
-    PortValue v(JsonData{doc});
+    auto            doc = yyjson::read(R"({"key": 42})");
+    const PortValue v(JsonData{doc});
     EXPECT_TRUE(v.IsJson());
     EXPECT_EQ(v.GetType(), PortValueType::Json);
     ASSERT_NE(v.AsJson(), nullptr);
@@ -130,7 +130,7 @@ TEST(PortFrameTest, JsonValue)
 
 TEST(PortFrameTest, SignalValue)
 {
-    PortValue v = PortValue::Signal();
+    const PortValue v = PortValue::Signal();
     EXPECT_TRUE(v.IsSignal());
     EXPECT_EQ(v.GetType(), PortValueType::Signal);
     EXPECT_FALSE(v.IsNull());
@@ -142,7 +142,7 @@ TEST(PortFrameTest, SignalValue)
 
 TEST(PortFrameTest, TypeMismatchAccessors)
 {
-    PortValue v(int64_t{99});
+    const PortValue v(int64_t{99});
     EXPECT_EQ(v.AsFloat(), nullptr);
     EXPECT_EQ(v.AsString(), nullptr);
     EXPECT_EQ(v.AsBool(), nullptr);
@@ -180,17 +180,17 @@ TEST(PortFrameTest, PortKeyDiffPort)
 
 TEST(PortFrameTest, PortKeyHashEqual)
 {
-    PortKeyHash hasher;
-    auto        a = Key(kNode1, "port");
-    auto        b = Key(kNode1, "port");
+    const PortKeyHash hasher;
+    auto              a = Key(kNode1, "port");
+    auto              b = Key(kNode1, "port");
     EXPECT_EQ(hasher(a), hasher(b));
 }
 
 TEST(PortFrameTest, PortKeyHashDiffKey)
 {
-    PortKeyHash hasher;
-    auto        a = Key(kNode1, "port");
-    auto        b = Key(kNode2, "port");
+    const PortKeyHash hasher;
+    auto              a = Key(kNode1, "port");
+    auto              b = Key(kNode2, "port");
     // Hash *should* differ for different nodes (not a strict requirement,
     // but we verify it does in practice).
     EXPECT_NE(hasher(a), hasher(b));
@@ -202,7 +202,7 @@ TEST(PortFrameTest, PortKeyHashDiffKey)
 
 TEST(PortFrameTest, EmptyFrame)
 {
-    PortFrame frame;
+    const PortFrame frame;
     EXPECT_TRUE(frame.Empty());
     EXPECT_EQ(frame.Size(), 0u);
     EXPECT_EQ(frame.Find(Key(kNode1, "x")), nullptr);
@@ -299,8 +299,8 @@ TEST(PortFrameTest, MultipleEntries)
 
 TEST(PortFrameTest, IterateEmpty)
 {
-    PortFrame   frame;
-    std::size_t count = 0;
+    const PortFrame frame;
+    std::size_t     count = 0;
     for (auto it = frame.begin(); it != frame.end(); ++it)
     {
         ++count;

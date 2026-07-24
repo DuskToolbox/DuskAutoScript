@@ -17,13 +17,13 @@ namespace Das::Http
 
     void NotificationHub::Register(std::weak_ptr<WsSession> session)
     {
-        std::unique_lock lock(mutex_);
+        const std::unique_lock lock(mutex_);
         sessions_.push_back(std::move(session));
     }
 
     void NotificationHub::Unregister(WsSession* session)
     {
-        std::unique_lock lock(mutex_);
+        const std::unique_lock lock(mutex_);
         sessions_.erase(
             std::remove_if(
                 sessions_.begin(),
@@ -40,7 +40,7 @@ namespace Das::Http
     {
         auto shared_msg = std::make_shared<std::string>(std::move(message));
 
-        std::shared_lock lock(mutex_);
+        const std::shared_lock lock(mutex_);
         for (const auto& weak : sessions_)
         {
             if (auto session = weak.lock())
@@ -56,13 +56,13 @@ namespace Das::Http
 
     size_t NotificationHub::ActiveConnectionCount() const
     {
-        std::shared_lock lock(mutex_);
+        const std::shared_lock lock(mutex_);
         return sessions_.size();
     }
 
     void NotificationHub::CleanupStaleConnections()
     {
-        std::unique_lock lock(mutex_);
+        const std::unique_lock lock(mutex_);
         sessions_.erase(
             std::remove_if(
                 sessions_.begin(),

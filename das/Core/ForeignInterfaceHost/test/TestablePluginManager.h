@@ -80,7 +80,7 @@ public:
         const DasGuid&                         plugin_guid,
         IDasBase*                              interface_ptr)
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        const std::scoped_lock lock(mutex_);
 
         // 用静态容器持有 FeatureInfo 生命周期到进程结束 (保留原实现语义)
         static std::vector<std::unique_ptr<FeatureInfo>> test_features;
@@ -105,7 +105,7 @@ public:
     void SetRemotePluginHostFactoryForTest(
         std::function<std::unique_ptr<IRemotePluginHost>()> factory)
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        const std::scoped_lock lock(mutex_);
         remote_plugin_host_factory_ = std::move(factory);
     }
 

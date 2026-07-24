@@ -58,10 +58,12 @@ namespace Das::Plugins::DasMaaPi
         template <typename TObject>
         std::vector<std::string> UnknownFields(
             const TObject&                     obj,
-            std::initializer_list<char const*> known)
+            std::initializer_list<const char*> known)
         {
-            std::set<std::string_view> known_set(known.begin(), known.end());
-            std::vector<std::string>   result;
+            const std::set<std::string_view> known_set(
+                known.begin(),
+                known.end());
+            std::vector<std::string> result;
             for (auto it = obj.begin(); it != obj.end(); ++it)
             {
                 const std::string_view key(it->first);
@@ -152,7 +154,7 @@ namespace Das::Plugins::DasMaaPi
         template <typename TObject>
         PiRawMetadata MakeRaw(
             const TObject&                     obj,
-            std::initializer_list<char const*> known)
+            std::initializer_list<const char*> known)
         {
             return PiRawMetadata{RawJson(obj), UnknownFields(obj, known)};
         }

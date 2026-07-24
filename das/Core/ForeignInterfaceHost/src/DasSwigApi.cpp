@@ -127,7 +127,7 @@ DasRetIDasBase QueryMainProcessInterface(const DasGuid& iid)
     DasRetIDasBase result;
     IDasBase*      raw_ptr = nullptr;
 
-    DasResult hr = DasQueryMainProcessInterface(iid, &raw_ptr);
+    const DasResult hr = DasQueryMainProcessInterface(iid, &raw_ptr);
     result.SetErrorCode(hr);
 
     if (DAS::IsOk(hr) && raw_ptr)
@@ -144,7 +144,7 @@ DasRetIDasBase QueryMainProcessInterfaceByName(const char* name)
     DasRetIDasBase result;
     IDasBase*      raw_ptr = nullptr;
 
-    DasResult hr = DasQueryMainProcessInterfaceByName(name, &raw_ptr);
+    const DasResult hr = DasQueryMainProcessInterfaceByName(name, &raw_ptr);
     result.SetErrorCode(hr);
 
     if (DAS::IsOk(hr) && raw_ptr)

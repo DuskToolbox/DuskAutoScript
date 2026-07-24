@@ -100,7 +100,7 @@ TEST(GraphAuthoringTest, AddNodeSuccess)
     auto doc = MakeEmptyDocument();
     auto node = MakeNode("new_node");
 
-    GraphAuthoringChange change{AddNodeChange{std::move(node)}};
+    const GraphAuthoringChange change{AddNodeChange{std::move(node)}};
 
     auto result = ApplySettingsChange(doc, change);
     EXPECT_TRUE(result.Ok());
@@ -113,8 +113,8 @@ TEST(GraphAuthoringTest, AddNodeRejectsEmptyNodeId)
     auto doc = MakeEmptyDocument();
     auto node = MakeNode("");
 
-    GraphAuthoringChange change{AddNodeChange{std::move(node)}};
-    auto                 result = ApplySettingsChange(doc, change);
+    const GraphAuthoringChange change{AddNodeChange{std::move(node)}};
+    auto                       result = ApplySettingsChange(doc, change);
 
     EXPECT_FALSE(result.Ok());
     EXPECT_EQ(result.error_kind, AuthoringErrorKind::EmptyNodeId);
@@ -125,9 +125,9 @@ TEST(GraphAuthoringTest, AddNodeRejectsDuplicateNodeId)
 {
     auto doc = MakeDocumentWithTwoNodes();
 
-    auto                 node = MakeNode("node_1"); // already exists
-    GraphAuthoringChange change{AddNodeChange{std::move(node)}};
-    auto                 result = ApplySettingsChange(doc, change);
+    auto                       node = MakeNode("node_1"); // already exists
+    const GraphAuthoringChange change{AddNodeChange{std::move(node)}};
+    auto                       result = ApplySettingsChange(doc, change);
 
     EXPECT_FALSE(result.Ok());
     EXPECT_EQ(result.error_kind, AuthoringErrorKind::DuplicateNodeId);
@@ -144,8 +144,8 @@ TEST(GraphAuthoringTest, RemoveNodeSuccess)
     // Add an edge connected to node_1
     doc.edges.push_back(MakeEdge("edge_1", "node_1", "out", "node_2", "in"));
 
-    GraphAuthoringChange change{RemoveNodeChange{"node_1"}};
-    auto                 result = ApplySettingsChange(doc, change);
+    const GraphAuthoringChange change{RemoveNodeChange{"node_1"}};
+    auto                       result = ApplySettingsChange(doc, change);
 
     EXPECT_TRUE(result.Ok());
     ASSERT_EQ(doc.nodes.size(), 1u);
@@ -158,8 +158,8 @@ TEST(GraphAuthoringTest, RemoveNodeRejectsEmptyNodeId)
 {
     auto doc = MakeDocumentWithTwoNodes();
 
-    GraphAuthoringChange change{RemoveNodeChange{""}};
-    auto                 result = ApplySettingsChange(doc, change);
+    const GraphAuthoringChange change{RemoveNodeChange{""}};
+    auto                       result = ApplySettingsChange(doc, change);
 
     EXPECT_FALSE(result.Ok());
     EXPECT_EQ(result.error_kind, AuthoringErrorKind::EmptyNodeId);
@@ -170,8 +170,8 @@ TEST(GraphAuthoringTest, RemoveNodeRejectsNonExistentNodeId)
 {
     auto doc = MakeDocumentWithTwoNodes();
 
-    GraphAuthoringChange change{RemoveNodeChange{"nonexistent"}};
-    auto                 result = ApplySettingsChange(doc, change);
+    const GraphAuthoringChange change{RemoveNodeChange{"nonexistent"}};
+    auto                       result = ApplySettingsChange(doc, change);
 
     EXPECT_FALSE(result.Ok());
     EXPECT_EQ(result.error_kind, AuthoringErrorKind::NodeNotFound);
@@ -185,8 +185,8 @@ TEST(GraphAuthoringTest, RemoveNodeCascadesMultipleEdges)
     doc.edges.push_back(MakeEdge("e2", "node_2", "out1", "node_1", "in1"));
     doc.edges.push_back(MakeEdge("e3", "node_2", "out2", "node_1", "in2"));
 
-    GraphAuthoringChange change{RemoveNodeChange{"node_1"}};
-    auto                 result = ApplySettingsChange(doc, change);
+    const GraphAuthoringChange change{RemoveNodeChange{"node_1"}};
+    auto                       result = ApplySettingsChange(doc, change);
 
     EXPECT_TRUE(result.Ok());
     // Only edge e1 remains (node_2 -> node_2 was not in the list)
@@ -203,8 +203,8 @@ TEST(GraphAuthoringTest, ConnectPortsSuccess)
     auto doc = MakeDocumentWithTwoNodes();
 
     auto edge = MakeEdge("edge_1", "node_1", "out", "node_2", "in");
-    GraphAuthoringChange change{ConnectPortsChange{std::move(edge)}};
-    auto                 result = ApplySettingsChange(doc, change);
+    const GraphAuthoringChange change{ConnectPortsChange{std::move(edge)}};
+    auto                       result = ApplySettingsChange(doc, change);
 
     EXPECT_TRUE(result.Ok());
     ASSERT_EQ(doc.edges.size(), 1u);
@@ -215,9 +215,9 @@ TEST(GraphAuthoringTest, ConnectPortsRejectsEmptyEdgeId)
 {
     auto doc = MakeDocumentWithTwoNodes();
 
-    auto                 edge = MakeEdge("", "node_1", "out", "node_2", "in");
-    GraphAuthoringChange change{ConnectPortsChange{std::move(edge)}};
-    auto                 result = ApplySettingsChange(doc, change);
+    auto edge = MakeEdge("", "node_1", "out", "node_2", "in");
+    const GraphAuthoringChange change{ConnectPortsChange{std::move(edge)}};
+    auto                       result = ApplySettingsChange(doc, change);
 
     EXPECT_FALSE(result.Ok());
     EXPECT_EQ(result.error_kind, AuthoringErrorKind::EmptyEdgeId);
@@ -229,8 +229,8 @@ TEST(GraphAuthoringTest, ConnectPortsRejectsDuplicateEdgeId)
     doc.edges.push_back(MakeEdge("edge_1", "node_1", "out", "node_2", "in"));
 
     auto edge = MakeEdge("edge_1", "node_1", "out2", "node_2", "in2");
-    GraphAuthoringChange change{ConnectPortsChange{std::move(edge)}};
-    auto                 result = ApplySettingsChange(doc, change);
+    const GraphAuthoringChange change{ConnectPortsChange{std::move(edge)}};
+    auto                       result = ApplySettingsChange(doc, change);
 
     EXPECT_FALSE(result.Ok());
     EXPECT_EQ(result.error_kind, AuthoringErrorKind::DuplicateEdgeId);
@@ -242,8 +242,8 @@ TEST(GraphAuthoringTest, ConnectPortsRejectsMissingSourceNode)
     auto doc = MakeDocumentWithTwoNodes();
 
     auto edge = MakeEdge("edge_1", "nonexistent", "out", "node_2", "in");
-    GraphAuthoringChange change{ConnectPortsChange{std::move(edge)}};
-    auto                 result = ApplySettingsChange(doc, change);
+    const GraphAuthoringChange change{ConnectPortsChange{std::move(edge)}};
+    auto                       result = ApplySettingsChange(doc, change);
 
     EXPECT_FALSE(result.Ok());
     EXPECT_EQ(result.error_kind, AuthoringErrorKind::InvalidEdge);
@@ -255,8 +255,8 @@ TEST(GraphAuthoringTest, ConnectPortsRejectsMissingTargetNode)
     auto doc = MakeDocumentWithTwoNodes();
 
     auto edge = MakeEdge("edge_1", "node_1", "out", "nonexistent", "in");
-    GraphAuthoringChange change{ConnectPortsChange{std::move(edge)}};
-    auto                 result = ApplySettingsChange(doc, change);
+    const GraphAuthoringChange change{ConnectPortsChange{std::move(edge)}};
+    auto                       result = ApplySettingsChange(doc, change);
 
     EXPECT_FALSE(result.Ok());
     EXPECT_EQ(result.error_kind, AuthoringErrorKind::InvalidEdge);
@@ -272,8 +272,8 @@ TEST(GraphAuthoringTest, DisconnectPortsSuccess)
     auto doc = MakeDocumentWithTwoNodes();
     doc.edges.push_back(MakeEdge("edge_1", "node_1", "out", "node_2", "in"));
 
-    GraphAuthoringChange change{DisconnectPortsChange{"edge_1"}};
-    auto                 result = ApplySettingsChange(doc, change);
+    const GraphAuthoringChange change{DisconnectPortsChange{"edge_1"}};
+    auto                       result = ApplySettingsChange(doc, change);
 
     EXPECT_TRUE(result.Ok());
     EXPECT_TRUE(doc.edges.empty());
@@ -283,8 +283,8 @@ TEST(GraphAuthoringTest, DisconnectPortsRejectsEmptyEdgeId)
 {
     auto doc = MakeDocumentWithTwoNodes();
 
-    GraphAuthoringChange change{DisconnectPortsChange{""}};
-    auto                 result = ApplySettingsChange(doc, change);
+    const GraphAuthoringChange change{DisconnectPortsChange{""}};
+    auto                       result = ApplySettingsChange(doc, change);
 
     EXPECT_FALSE(result.Ok());
     EXPECT_EQ(result.error_kind, AuthoringErrorKind::EmptyEdgeId);
@@ -295,8 +295,8 @@ TEST(GraphAuthoringTest, DisconnectPortsRejectsNonExistentEdge)
     auto doc = MakeDocumentWithTwoNodes();
     doc.edges.push_back(MakeEdge("edge_1", "node_1", "out", "node_2", "in"));
 
-    GraphAuthoringChange change{DisconnectPortsChange{"nonexistent"}};
-    auto                 result = ApplySettingsChange(doc, change);
+    const GraphAuthoringChange change{DisconnectPortsChange{"nonexistent"}};
+    auto                       result = ApplySettingsChange(doc, change);
 
     EXPECT_FALSE(result.Ok());
     EXPECT_EQ(result.error_kind, AuthoringErrorKind::EdgeNotFound);
@@ -311,8 +311,8 @@ TEST(GraphAuthoringTest, UpdateNodeConfigSuccess)
 {
     auto doc = MakeDocumentWithTwoNodes();
 
-    auto                 new_settings = MakeSettings("threshold", 0.9);
-    GraphAuthoringChange change{
+    auto                       new_settings = MakeSettings("threshold", 0.9);
+    const GraphAuthoringChange change{
         UpdateNodeConfigChange{"node_1", std::move(new_settings)}};
     auto result = ApplySettingsChange(doc, change);
 
@@ -329,7 +329,7 @@ TEST(GraphAuthoringTest, UpdateNodeConfigRejectsEmptyNodeId)
 {
     auto doc = MakeDocumentWithTwoNodes();
 
-    GraphAuthoringChange change{
+    const GraphAuthoringChange change{
         UpdateNodeConfigChange{"", MakeSettings("x", 1.0)}};
     auto result = ApplySettingsChange(doc, change);
 
@@ -341,7 +341,7 @@ TEST(GraphAuthoringTest, UpdateNodeConfigRejectsNonExistentNode)
 {
     auto doc = MakeDocumentWithTwoNodes();
 
-    GraphAuthoringChange change{
+    const GraphAuthoringChange change{
         UpdateNodeConfigChange{"nonexistent", MakeSettings("x", 1.0)}};
     auto result = ApplySettingsChange(doc, change);
 
@@ -359,13 +359,13 @@ TEST(GraphAuthoringTest, CompositeScenario)
 
     // 1. Add node_1
     {
-        GraphAuthoringChange change{AddNodeChange{MakeNode("node_1")}};
+        const GraphAuthoringChange change{AddNodeChange{MakeNode("node_1")}};
         EXPECT_TRUE(ApplySettingsChange(doc, change).Ok());
     }
 
     // 2. Add node_2
     {
-        GraphAuthoringChange change{AddNodeChange{MakeNode("node_2")}};
+        const GraphAuthoringChange change{AddNodeChange{MakeNode("node_2")}};
         EXPECT_TRUE(ApplySettingsChange(doc, change).Ok());
     }
 
@@ -375,28 +375,28 @@ TEST(GraphAuthoringTest, CompositeScenario)
     // 3. Connect node_1 -> node_2
     {
         auto edge = MakeEdge("e1", "node_1", "output", "node_2", "input");
-        GraphAuthoringChange change{ConnectPortsChange{std::move(edge)}};
+        const GraphAuthoringChange change{ConnectPortsChange{std::move(edge)}};
         EXPECT_TRUE(ApplySettingsChange(doc, change).Ok());
     }
     ASSERT_EQ(doc.edges.size(), 1u);
 
     // 4. Update node_1 settings
     {
-        GraphAuthoringChange change{
+        const GraphAuthoringChange change{
             UpdateNodeConfigChange{"node_1", MakeSettings("value", 42.0)}};
         EXPECT_TRUE(ApplySettingsChange(doc, change).Ok());
     }
 
     // 5. Disconnect
     {
-        GraphAuthoringChange change{DisconnectPortsChange{"e1"}};
+        const GraphAuthoringChange change{DisconnectPortsChange{"e1"}};
         EXPECT_TRUE(ApplySettingsChange(doc, change).Ok());
     }
     EXPECT_TRUE(doc.edges.empty());
 
     // 6. Remove node_1
     {
-        GraphAuthoringChange change{RemoveNodeChange{"node_1"}};
+        const GraphAuthoringChange change{RemoveNodeChange{"node_1"}};
         EXPECT_TRUE(ApplySettingsChange(doc, change).Ok());
     }
     ASSERT_EQ(doc.nodes.size(), 1u);

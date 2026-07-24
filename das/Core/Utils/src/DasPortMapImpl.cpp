@@ -332,7 +332,7 @@ DasResult DasPortMapImpl::GetKeys(
 
     for (const auto& [key, _] : entries_)
     {
-        DasReadOnlyString dos{key.c_str()};
+        const DasReadOnlyString dos{key.c_str()};
         result = p_keys->PushBack(dos.Get());
         if (DAS::IsFailed(result))
         {

@@ -40,7 +40,7 @@ TEST(ProxyFactoryTest, ObjectIdEncodingConsistency)
     ObjectId original{.session_id = 123, .generation = 456, .local_id = 789012};
 
     // 编码
-    uint64_t encoded = EncodeObjectId(original);
+    const uint64_t encoded = EncodeObjectId(original);
 
     // 解码
     ObjectId decoded = DecodeObjectId(encoded);
@@ -60,8 +60,8 @@ TEST(ProxyFactoryTest, ObjectIdWithBoundaryValues)
         .local_id = 0xFFFFFFFF};
 
     // 编码解码
-    uint64_t encoded = EncodeObjectId(max_values);
-    ObjectId decoded = DecodeObjectId(encoded);
+    const uint64_t encoded = EncodeObjectId(max_values);
+    ObjectId       decoded = DecodeObjectId(encoded);
 
     EXPECT_EQ(decoded.session_id, max_values.session_id);
     EXPECT_EQ(decoded.generation, max_values.generation);
@@ -74,7 +74,7 @@ TEST(ProxyFactoryTest, ObjectIdWithZeroValues)
     ObjectId zero{.session_id = 0, .generation = 0, .local_id = 0};
 
     // 零值对象的编码应该为0
-    uint64_t encoded = EncodeObjectId(zero);
+    const uint64_t encoded = EncodeObjectId(zero);
     EXPECT_EQ(encoded, 0);
 
     // 解码后仍为零值

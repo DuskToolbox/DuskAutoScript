@@ -307,11 +307,11 @@ TEST_F(IpcConnectionManagerTest, HeartbeatTimeout_TriggersCallback)
     boost::asio::io_context io_ctx;
 
     // Create a HostLauncher (no real process launched)
-    DasPtr<HostLauncher> launcher(new HostLauncher(io_ctx, 2, nullptr));
+    const DasPtr<HostLauncher> launcher(new HostLauncher(io_ctx, 2, nullptr));
 
     // Setup heartbeat timeout callback
-    bool    callback_called = false;
-    DasGuid test_guid{
+    bool          callback_called = false;
+    const DasGuid test_guid{
         0x01020304,
         0x0506,
         0x0708,
@@ -348,14 +348,14 @@ TEST_F(IpcConnectionManagerTest, TimeoutMarksClosingBeforeCallbacksFinish)
 {
     boost::asio::io_context io_ctx;
 
-    DasPtr<HostLauncher> launcher(new HostLauncher(io_ctx, 2, nullptr));
+    const DasPtr<HostLauncher> launcher(new HostLauncher(io_ctx, 2, nullptr));
 
     std::mutex              mutex;
     std::condition_variable cv;
     bool                    callback_entered = false;
     bool                    release_callback = false;
 
-    DasGuid test_guid{
+    const DasGuid test_guid{
         0x01020304,
         0x0506,
         0x0708,
@@ -414,7 +414,7 @@ TEST_F(IpcConnectionManagerTest, TimeoutMarksClosingBeforeCallbacksFinish)
         == std::future_status::ready;
 
     {
-        std::lock_guard<std::mutex> lock(mutex);
+        const std::scoped_lock lock(mutex);
         release_callback = true;
     }
     cv.notify_all();

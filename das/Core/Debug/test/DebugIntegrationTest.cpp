@@ -167,7 +167,7 @@ namespace Das::Core::Debug::Test
             InitializeRuntime(dir, true);
             auto ctx = DAS::Core::IPC::MainProcess::CreateIpcContextEz(false);
             EXPECT_NE(ctx.get(), nullptr);
-            DAS::Core::IPC::ScopedCurrentIpcContext scope(
+            const DAS::Core::IPC::ScopedCurrentIpcContext scope(
                 static_cast<DAS::Core::IPC::MainProcess::IpcContext*>(
                     ctx.get()));
             EXPECT_EQ(RegisterDebugWriterService(*ctx), DAS_S_OK);
@@ -229,7 +229,7 @@ namespace Das::Core::Debug::Test
             auto* image =
                 OcvWrapper::CpuImageImpl<OcvWrapper::Storage::OwningStorage>::
                     MakeFromCpuMat(mat, ExportInterface::DAS_PIXEL_FORMAT_BGR);
-            DasPtr<ExportInterface::IDasImage> image_guard =
+            const DasPtr<ExportInterface::IDasImage> image_guard =
                 DasPtr<ExportInterface::IDasImage>::Attach(image);
             return CaptureImageSnapshot(image);
         }
@@ -607,7 +607,7 @@ namespace Das::Core::Debug::Test
 
         PluginManagerHarness harness;
         auto*                raw_factory = FakeCaptureFactory::MakeRaw();
-        DasPtr<PluginInterface::IDasCaptureFactory> factory_guard =
+        const DasPtr<PluginInterface::IDasCaptureFactory> factory_guard =
             DasPtr<PluginInterface::IDasCaptureFactory>::Attach(raw_factory);
         harness.PluginManager().RegisterTestFeature(
             PluginInterface::DAS_PLUGIN_FEATURE_CAPTURE_FACTORY,
@@ -636,7 +636,7 @@ namespace Das::Core::Debug::Test
             DasPtr<ExportInterface::IDasImage>::Attach(p_raw_image);
 
         ASSERT_EQ(DebugRuntime::Flush(), DAS_S_OK);
-        ExpectFileContains(dir / "debug.jsonl", "\"type\":\"capture\"");
+        ExpectFileContains(dir / "debug.jsonl", R"("type":"capture")");
         EXPECT_GE(CountPngFiles(dir / "img"), 2U);
         EXPECT_NE(DebugRuntime::GetLatestImage(), nullptr);
 
@@ -650,7 +650,7 @@ namespace Das::Core::Debug::Test
         DebugRuntime::SetLatestImage(MakeSnapshot());
 
         auto* raw_factory = FakeInputFactory::MakeRaw(false);
-        DasPtr<PluginInterface::IDasInputFactory> factory_guard =
+        const DasPtr<PluginInterface::IDasInputFactory> factory_guard =
             DasPtr<PluginInterface::IDasInputFactory>::Attach(raw_factory);
 
         ForeignInterfaceHost::InputFactoryManager manager;
@@ -669,7 +669,7 @@ namespace Das::Core::Debug::Test
 
         ASSERT_EQ(input->Click(10, 11), DAS_S_OK);
         ASSERT_EQ(DebugRuntime::Flush(), DAS_S_OK);
-        ExpectFileContains(dir / "debug.jsonl", "\"type\":\"input_click\"");
+        ExpectFileContains(dir / "debug.jsonl", R"("type":"input_click")");
         EXPECT_GE(CountPngFiles(dir / "img"), 2U);
 
         ctx->UnregisterServiceByName("debug.writer");
@@ -683,7 +683,7 @@ namespace Das::Core::Debug::Test
         auto       ctx = RegisterWriterForRuntime(dir);
 
         auto* raw_factory = FakeInputFactory::MakeRaw(false, true);
-        DasPtr<PluginInterface::IDasInputFactory> factory_guard =
+        const DasPtr<PluginInterface::IDasInputFactory> factory_guard =
             DasPtr<PluginInterface::IDasInputFactory>::Attach(raw_factory);
 
         ForeignInterfaceHost::InputFactoryManager manager;
@@ -709,7 +709,7 @@ namespace Das::Core::Debug::Test
 
         PluginManagerHarness harness;
         auto*                raw_factory = FakeInputFactory::MakeRaw(false);
-        DasPtr<PluginInterface::IDasInputFactory> factory_guard =
+        const DasPtr<PluginInterface::IDasInputFactory> factory_guard =
             DasPtr<PluginInterface::IDasInputFactory>::Attach(raw_factory);
         harness.PluginManager().RegisterTestFeature(
             PluginInterface::DAS_PLUGIN_FEATURE_INPUT_FACTORY,
@@ -735,7 +735,7 @@ namespace Das::Core::Debug::Test
         auto input = DasPtr<PluginInterface::IDasInput>::Attach(p_raw_input);
         ASSERT_EQ(input->Click(12, 13), DAS_S_OK);
         ASSERT_EQ(DebugRuntime::Flush(), DAS_S_OK);
-        ExpectFileContains(dir / "debug.jsonl", "\"type\":\"input_click\"");
+        ExpectFileContains(dir / "debug.jsonl", R"("type":"input_click")");
 
         ctx->UnregisterServiceByName("debug.writer");
     }
@@ -756,11 +756,11 @@ namespace Das::Core::Debug::Test
         ASSERT_EQ(decorated_input.As(decorated_touch), DAS_S_OK);
         ASSERT_NE(decorated_touch.Get(), nullptr);
 
-        PluginInterface::DasPoint from{1, 2};
-        PluginInterface::DasPoint to{30, 31};
+        const PluginInterface::DasPoint from{1, 2};
+        const PluginInterface::DasPoint to{30, 31};
         ASSERT_EQ(decorated_touch->Swipe(from, to, 250), DAS_S_OK);
         ASSERT_EQ(DebugRuntime::Flush(), DAS_S_OK);
-        ExpectFileContains(dir / "debug.jsonl", "\"type\":\"input_swipe\"");
+        ExpectFileContains(dir / "debug.jsonl", R"("type":"input_swipe")");
         EXPECT_GE(CountPngFiles(dir / "img"), 2U);
 
         ctx->UnregisterServiceByName("debug.writer");
@@ -811,7 +811,7 @@ namespace Das::Core::Debug::Test
         InitializeRuntime(dir, false);
 
         auto* raw_input_factory = FakeInputFactory::MakeRaw(false);
-        DasPtr<PluginInterface::IDasInputFactory> input_factory_guard =
+        const DasPtr<PluginInterface::IDasInputFactory> input_factory_guard =
             DasPtr<PluginInterface::IDasInputFactory>::Attach(
                 raw_input_factory);
         ForeignInterfaceHost::InputFactoryManager input_manager;
@@ -831,9 +831,10 @@ namespace Das::Core::Debug::Test
 
         PluginManagerHarness harness;
         auto* raw_capture_factory = FakeCaptureFactory::MakeRaw();
-        DasPtr<PluginInterface::IDasCaptureFactory> capture_factory_guard =
-            DasPtr<PluginInterface::IDasCaptureFactory>::Attach(
-                raw_capture_factory);
+        const DasPtr<PluginInterface::IDasCaptureFactory>
+            capture_factory_guard =
+                DasPtr<PluginInterface::IDasCaptureFactory>::Attach(
+                    raw_capture_factory);
         harness.PluginManager().RegisterTestFeature(
             PluginInterface::DAS_PLUGIN_FEATURE_CAPTURE_FACTORY,
             MakeGuid(0x6504F003),
