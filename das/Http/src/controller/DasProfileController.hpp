@@ -107,10 +107,9 @@ namespace Das::Http
                     if (name_opt)
                     {
                         std::string name(name_opt.value());
-                        auto        name_cr =
-                            CreateIDasReadOnlyStringFromUtf8(
-                                name.c_str(),
-                                p_name.Put());
+                        auto        name_cr = CreateIDasReadOnlyStringFromUtf8(
+                            name.c_str(),
+                            p_name.Put());
                         if (DAS::IsFailed(name_cr))
                         {
                             return Beast::HttpResponse::CreateErrorResponse(

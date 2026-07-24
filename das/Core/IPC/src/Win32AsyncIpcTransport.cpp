@@ -506,7 +506,7 @@ boost::asio::awaitable<DasResult> Win32AsyncIpcTransport::InitializeAsync(
     const std::string& write_endpoint,
     bool               is_server,
     size_t             max_message_size,
-    SharedMemoryPool* pool)
+    SharedMemoryPool*  pool)
 {
     auto state = state_;
     if (!state)
@@ -718,7 +718,8 @@ Win32AsyncIpcTransport::ReceiveCoroutine()
         uint64_t handle;
         std::memcpy(&handle, body_buffer.data(), sizeof(uint64_t));
 
-        ShmBlockGuard guard = ShmBlockGuard::Attach(state->shared_memory_pool, handle, 0);
+        ShmBlockGuard guard =
+            ShmBlockGuard::Attach(state->shared_memory_pool, handle, 0);
         if (!guard)
         {
             DAS_LOG_ERROR(
@@ -729,9 +730,12 @@ Win32AsyncIpcTransport::ReceiveCoroutine()
             co_return DAS_E_IPC_INVALID_MESSAGE;
         }
 
-        uint64_t real_size = *static_cast<uint64_t*>(guard.Data());
+        uint64_t             real_size = *static_cast<uint64_t*>(guard.Data());
         std::vector<uint8_t> large_body(real_size);
-        std::memcpy(large_body.data(), static_cast<uint8_t*>(guard.Data()) + 8, real_size);
+        std::memcpy(
+            large_body.data(),
+            static_cast<uint8_t*>(guard.Data()) + 8,
+            real_size);
         // guard 出作用域析构释放
 
         // 重组返回的 header 要恢复真实 body_size，清掉 LARGE_MESSAGE_VIA_SHM 位
@@ -739,7 +743,8 @@ Win32AsyncIpcTransport::ReceiveCoroutine()
         auto restored_header =
             IPCMessageHeaderBuilder()
                 .SetMessageType(static_cast<MessageType>(orig.message_type))
-                .SetHeaderFlags(orig.header_flags & ~HeaderFlags::LARGE_MESSAGE_VIA_SHM)
+                .SetHeaderFlags(
+                    orig.header_flags & ~HeaderFlags::LARGE_MESSAGE_VIA_SHM)
                 .SetCallId(orig.call_id)
                 .SetSourceSessionId(orig.source_session_id)
                 .SetTargetSessionId(orig.target_session_id)
@@ -775,8 +780,9 @@ boost::asio::awaitable<DasResult> Win32AsyncIpcTransport::SendCoroutine(
 
     DasResult result = DAS_S_OK;
 
-    // SHM 分流路径：大消息必须走 SHM；无 pool 或 Allocate 失败则拒绝（不降级直写——
-    // 直写超大 body 会被对端 64KB 上限拒绝，或阻塞管道）
+    // SHM 分流路径：大消息必须走 SHM；无 pool 或 Allocate
+    // 失败则拒绝（不降级直写—— 直写超大 body 会被对端 64KB
+    // 上限拒绝，或阻塞管道）
     if (body_size >= LARGE_MESSAGE_THRESHOLD)
     {
         if (state->shared_memory_pool == nullptr)
@@ -790,17 +796,25 @@ boost::asio::awaitable<DasResult> Win32AsyncIpcTransport::SendCoroutine(
         SharedMemoryBlock blk{};
         if (DAS::IsOk(state->shared_memory_pool->Allocate(body_size + 8, blk)))
         {
-            ShmBlockGuard guard(state->shared_memory_pool, blk.data, blk.size, blk.handle);
+            ShmBlockGuard guard(
+                state->shared_memory_pool,
+                blk.data,
+                blk.size,
+                blk.handle);
             uint64_t real_size = static_cast<uint64_t>(body_size);
-            std::memcpy(guard.Data(), &real_size, 8);                      // 块首 8B in-band size
-            std::memcpy(static_cast<uint8_t*>(guard.Data()) + 8, body, body_size);
+            std::memcpy(guard.Data(), &real_size, 8); // 块首 8B in-band size
+            std::memcpy(
+                static_cast<uint8_t*>(guard.Data()) + 8,
+                body,
+                body_size);
 
             // 重建 header：header_flags |= LARGE_MESSAGE_VIA_SHM, body_size = 8
             auto orig = header.Raw();
             auto validated_shm_header =
                 IPCMessageHeaderBuilder()
                     .SetMessageType(static_cast<MessageType>(orig.message_type))
-                    .SetHeaderFlags(orig.header_flags | HeaderFlags::LARGE_MESSAGE_VIA_SHM)
+                    .SetHeaderFlags(
+                        orig.header_flags | HeaderFlags::LARGE_MESSAGE_VIA_SHM)
                     .SetCallId(orig.call_id)
                     .SetSourceSessionId(orig.source_session_id)
                     .SetTargetSessionId(orig.target_session_id)
@@ -812,9 +826,10 @@ boost::asio::awaitable<DasResult> Win32AsyncIpcTransport::SendCoroutine(
 
             uint64_t net_handle = guard.Handle();
             std::array<boost::asio::const_buffer, 2> shm_buffers = {
-                boost::asio::const_buffer{static_cast<const IPCMessageHeader*>(validated_shm_header), sizeof(IPCMessageHeader)},
-                boost::asio::const_buffer{&net_handle, sizeof(uint64_t)}
-            };
+                boost::asio::const_buffer{
+                    static_cast<const IPCMessageHeader*>(validated_shm_header),
+                    sizeof(IPCMessageHeader)},
+                boost::asio::const_buffer{&net_handle, sizeof(uint64_t)}};
 
             try
             {
@@ -822,7 +837,8 @@ boost::asio::awaitable<DasResult> Win32AsyncIpcTransport::SendCoroutine(
                     state->write_pipe,
                     shm_buffers,
                     boost::asio::use_awaitable);
-                guard.Disown();  // 成功：转移所有权给 reader（经 wire 的 handle）
+                guard
+                    .Disown(); // 成功：转移所有权给 reader（经 wire 的 handle）
                 state->send_mutex.Unlock();
                 co_return DAS_S_OK;
             }

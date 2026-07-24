@@ -26,8 +26,9 @@ namespace MainProcess
             HandshakeInterfaceId             expected)
         {
             return header.IsControlPlane()
-                && header.GetMessageType() == MessageType::REQUEST
-                && header.GetInterfaceId() == static_cast<uint32_t>(expected);
+                   && header.GetMessageType() == MessageType::REQUEST
+                   && header.GetInterfaceId()
+                          == static_cast<uint32_t>(expected);
         }
     } // namespace
 
@@ -42,8 +43,7 @@ namespace MainProcess
     {
         ValidatedIPCMessageHeader hello_header;
         HelloRequestV1            hello{};
-        DasResult                 result =
-            co_await ReceiveHello(hello_header, hello);
+        DasResult result = co_await ReceiveHello(hello_header, hello);
         if (DAS::IsFailed(result))
         {
             co_return result;
@@ -68,10 +68,9 @@ namespace MainProcess
             co_return result;
         }
 
-        const uint32_t ready_status =
-            ready.session_id == session_id_
-                ? ReadyAckV1::STATUS_SUCCESS
-                : ReadyAckV1::STATUS_INVALID_SESSION;
+        const uint32_t ready_status = ready.session_id == session_id_
+                                          ? ReadyAckV1::STATUS_SUCCESS
+                                          : ReadyAckV1::STATUS_INVALID_SESSION;
         result = co_await SendReadyAck(ready_header, ready_status);
         if (DAS::IsFailed(result))
         {
@@ -95,8 +94,7 @@ namespace MainProcess
         co_return DAS_S_OK;
     }
 
-    boost::asio::awaitable<DasResult>
-    InboundHostHandshakeHandler::ReceiveHello(
+    boost::asio::awaitable<DasResult> InboundHostHandshakeHandler::ReceiveHello(
         ValidatedIPCMessageHeader& header,
         HelloRequestV1&            hello)
     {
@@ -133,8 +131,7 @@ namespace MainProcess
         co_return DAS_S_OK;
     }
 
-    boost::asio::awaitable<DasResult>
-    InboundHostHandshakeHandler::ReceiveReady(
+    boost::asio::awaitable<DasResult> InboundHostHandshakeHandler::ReceiveReady(
         ValidatedIPCMessageHeader& header,
         ReadyRequestV1&            ready)
     {
@@ -171,8 +168,7 @@ namespace MainProcess
         co_return DAS_S_OK;
     }
 
-    boost::asio::awaitable<DasResult>
-    InboundHostHandshakeHandler::SendWelcome(
+    boost::asio::awaitable<DasResult> InboundHostHandshakeHandler::SendWelcome(
         const ValidatedIPCMessageHeader& request_header,
         uint32_t                         status)
     {
@@ -203,8 +199,7 @@ namespace MainProcess
             sizeof(welcome));
     }
 
-    boost::asio::awaitable<DasResult>
-    InboundHostHandshakeHandler::SendReadyAck(
+    boost::asio::awaitable<DasResult> InboundHostHandshakeHandler::SendReadyAck(
         const ValidatedIPCMessageHeader& request_header,
         uint32_t                         status)
     {

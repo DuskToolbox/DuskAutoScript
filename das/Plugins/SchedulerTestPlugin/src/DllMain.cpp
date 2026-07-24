@@ -3,8 +3,8 @@
 
 #include "SchedulerTestPluginImpl.h"
 
-#include <das/DasConfig.h>
 #include <das/DasApi.h>
+#include <das/DasConfig.h>
 #include <das/IDasBase.h>
 #include <das/Utils/CommonUtils.hpp>
 

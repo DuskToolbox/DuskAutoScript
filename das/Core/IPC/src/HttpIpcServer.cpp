@@ -126,9 +126,7 @@ struct HttpIpcServer::Impl
                         if (websocket::is_upgrade(req)
                             && req.target() == kUpgradePath)
                         {
-                            self->UpgradeWebSocket(
-                                std::move(*socket_ptr),
-                                req);
+                            self->UpgradeWebSocket(std::move(*socket_ptr), req);
                         }
                         // Non-matching requests are dropped
                     });
@@ -168,13 +166,13 @@ struct HttpIpcServer::Impl
                     self->config.listen_address,
                     self->config.listen_port);
 
-                DAS_CORE_LOG_INFO("Host connected: endpoint = {}", endpoint_name);
+                DAS_CORE_LOG_INFO(
+                    "Host connected: endpoint = {}",
+                    endpoint_name);
 
                 if (self->on_connected)
                 {
-                    self->on_connected(
-                        std::move(ws),
-                        endpoint_name);
+                    self->on_connected(std::move(ws), endpoint_name);
                 }
             });
     }

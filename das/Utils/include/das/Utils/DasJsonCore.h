@@ -110,7 +110,8 @@ inline yyjson::value CloneYyjsonValue(yyjson::reader::const_value_ref source)
     return yyjson::value(source);
 }
 
-/// Convenience overload for yyjson writer values such as value/object/array refs.
+/// Convenience overload for yyjson writer values such as value/object/array
+/// refs.
 template <typename Json>
     requires requires(const Json& source) {
         yyjson::writer::const_value_ref(source);

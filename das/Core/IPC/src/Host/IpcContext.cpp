@@ -489,16 +489,21 @@ namespace Core
                                             "  write: {}",
                                             host_write_queue_);
 
-                                        // 0. 打开 SharedMemoryPool（MainProcess 已 Create）
+                                        // 0. 打开 SharedMemoryPool（MainProcess
+                                        // 已 Create）
                                         std::string shm_name =
-                                            MakeSharedMemoryName(main_pid_, host_pid_);
+                                            MakeSharedMemoryName(
+                                                main_pid_,
+                                                host_pid_);
                                         constexpr int MAX_OPEN_RETRIES = 50;
-                                        for (int i = 0; i < MAX_OPEN_RETRIES; ++i)
+                                        for (int i = 0; i < MAX_OPEN_RETRIES;
+                                             ++i)
                                         {
                                             try
                                             {
                                                 shared_memory_ =
-                                                    SharedMemoryPool::Open(shm_name);
+                                                    SharedMemoryPool::Open(
+                                                        shm_name);
                                                 DAS_CORE_LOG_INFO(
                                                     "Host: Opened SHM pool: {}",
                                                     shm_name);
@@ -521,10 +526,13 @@ namespace Core
                                                     MAX_OPEN_RETRIES,
                                                     e.what());
                                             }
-                                            // 重试等待移出 catch（co_await 不能在异常 handler 内）
-                                            auto timer = boost::asio::steady_timer(
-                                                run_loop_.GetIoContext(),
-                                                std::chrono::milliseconds(100));
+                                            // 重试等待移出 catch（co_await
+                                            // 不能在异常 handler 内）
+                                            auto timer =
+                                                boost::asio::steady_timer(
+                                                    run_loop_.GetIoContext(),
+                                                    std::chrono::milliseconds(
+                                                        100));
                                             co_await timer.async_wait(
                                                 boost::asio::use_awaitable);
                                         }
@@ -695,8 +703,7 @@ namespace Core
                     {
                         try
                         {
-                            shared_memory_ =
-                                SharedMemoryPool::Open(shm_name);
+                            shared_memory_ = SharedMemoryPool::Open(shm_name);
                             DAS_CORE_LOG_INFO(
                                 "Host: Opened SHM pool: {}",
                                 shm_name);
@@ -723,8 +730,7 @@ namespace Core
                         auto timer = boost::asio::steady_timer(
                             run_loop_.GetIoContext(),
                             std::chrono::milliseconds(100));
-                        co_await timer.async_wait(
-                            boost::asio::use_awaitable);
+                        co_await timer.async_wait(boost::asio::use_awaitable);
                     }
 
                     auto connect_result = co_await HttpIpcClient::Connect(

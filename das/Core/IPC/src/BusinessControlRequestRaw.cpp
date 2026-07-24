@@ -62,8 +62,8 @@ DasResult SendBusinessControlRequestRaw(
         constexpr auto kTimeout = std::chrono::milliseconds{30000};
 
         std::vector<uint8_t> body_vec(body, body + body_size);
-        AwaitResponseSender sender{
-            &run_loop, header, std::move(body_vec), call_key, kTimeout};
+        AwaitResponseSender
+             sender{&run_loop, header, std::move(body_vec), call_key, kTimeout};
         auto result = stdexec::sync_wait(std::move(sender));
         if (!result)
         {

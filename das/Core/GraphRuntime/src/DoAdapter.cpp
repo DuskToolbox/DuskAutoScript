@@ -239,9 +239,10 @@ namespace
     // Reserved output key carrying the component's emitted signal list.
     // A component fires its signal output ports by listing their port IDs in a
     // JSON string array under this key (e.g. R"(["true"])"). The adapter turns
-    // each entry into a PortValue::Signal() in the frame so the runtime can gate
-    // on it — the component itself never sees signal values (zero-awareness).
-    // (DAS-60 Stage 3: signal emission → PortFrame materialisation.)
+    // each entry into a PortValue::Signal() in the frame so the runtime can
+    // gate on it — the component itself never sees signal values
+    // (zero-awareness). (DAS-60 Stage 3: signal emission → PortFrame
+    // materialisation.)
     constexpr std::string_view kEmittedSignalsKey = "signals";
 
     /// Read the reserved @p "signals" array from @p map and write a
@@ -253,7 +254,7 @@ namespace
         DasGuid                            node_id,
         PortFrame&                         frame)
     {
-        DasReadOnlyString  key{std::string{kEmittedSignalsKey}.c_str()};
+        DasReadOnlyString   key{std::string{kEmittedSignalsKey}.c_str()};
         IDasReadOnlyString* p_str = nullptr;
         DasResult           result = map->GetString(key.Get(), &p_str);
         if (DAS::IsFailed(result) || p_str == nullptr)
@@ -300,17 +301,18 @@ namespace
 
     // Sentinel source marking a broadcast (graph-input) binding — not a real
     // node, so there is no upstream PortFrame entry to read. Must match
-    // GraphCompiler::kGraphInputBroadcastSource and GraphRuntime::kBroadcastSource.
-    // (DAS-75 graph_inputs broadcast injection.)
+    // GraphCompiler::kGraphInputBroadcastSource and
+    // GraphRuntime::kBroadcastSource. (DAS-75 graph_inputs broadcast
+    // injection.)
     constexpr std::string_view kBroadcastSource = "$graph_input";
 
-    /// Materialise a broadcast (graph-input) binding's @p default_value directly
-    /// into @p map under @p port_id. Unlike a point-to-point data edge there is
-    /// no upstream node to read from the frame; the value comes from the graph
-    /// input's declared default. Scalars (bool/int/float/string) are set by JSON
-    /// value kind; null leaves the port unset (the component keeps its own
-    /// default); other kinds (object/array) are skipped with a warning — graph
-    /// inputs are scalar options, mirroring MAA global_option.
+    /// Materialise a broadcast (graph-input) binding's @p default_value
+    /// directly into @p map under @p port_id. Unlike a point-to-point data edge
+    /// there is no upstream node to read from the frame; the value comes from
+    /// the graph input's declared default. Scalars (bool/int/float/string) are
+    /// set by JSON value kind; null leaves the port unset (the component keeps
+    /// its own default); other kinds (object/array) are skipped with a warning
+    /// — graph inputs are scalar options, mirroring MAA global_option.
     DasResult SetDefaultFromYyjson(
         IDasPortMap*         map,
         const std::string&   port_id,
@@ -336,7 +338,7 @@ namespace
         }
         if (auto v = default_value.as_string())
         {
-            std::string      s(*v);
+            std::string       s(*v);
             DasReadOnlyString val{s.c_str()};
             return map->SetString(key.Get(), val.Get());
         }
@@ -382,7 +384,9 @@ DasResult BuildInputPortMap(
         if (binding.source_node_id == std::string{kBroadcastSource})
         {
             DasResult r = SetDefaultFromYyjson(
-                map.Get(), binding.target_port_id, binding.default_value);
+                map.Get(),
+                binding.target_port_id,
+                binding.default_value);
             if (DAS::IsFailed(r))
             {
                 DAS_CORE_LOG_ERROR(

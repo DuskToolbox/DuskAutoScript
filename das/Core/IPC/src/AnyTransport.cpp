@@ -44,7 +44,7 @@ namespace
     }
 
     AnyTransport CreateUninitializedTransport(
-        RuntimeTransportKind        selected_kind,
+        RuntimeTransportKind     selected_kind,
         boost::asio::io_context& io_context)
     {
 #ifdef DAS_WINDOWS
@@ -58,19 +58,18 @@ namespace
         (void)selected_kind;
 #endif
 
-        auto transport =
-            UnixAsyncIpcTransport::CreateUninitialized(io_context);
+        auto transport = UnixAsyncIpcTransport::CreateUninitialized(io_context);
         return AnyTransport(std::move(*transport));
     }
 
     template <typename Transport>
     boost::asio::awaitable<DasResult> InitializeTransport(
-        Transport&          transport,
+        Transport&         transport,
         const std::string& read_endpoint,
         const std::string& write_endpoint,
         bool               is_server,
         size_t             max_message_size,
-        SharedMemoryPool* pool)
+        SharedMemoryPool*  pool)
     {
         using TransportType = std::decay_t<Transport>;
 
@@ -95,10 +94,8 @@ namespace
     }
 
     template <typename Transport>
-    concept HasPublicCleanup = requires(Transport& transport)
-    {
-        transport.Cleanup();
-    };
+    concept HasPublicCleanup =
+        requires(Transport& transport) { transport.Cleanup(); };
 
     template <typename Transport>
     void CleanupTransport(Transport& transport)
@@ -129,7 +126,8 @@ namespace
 } // namespace
 
 #ifdef DAS_WINDOWS
-AnyTransport::AnyTransport(Win32AsyncIpcTransport&& t) : transport_(std::move(t))
+AnyTransport::AnyTransport(Win32AsyncIpcTransport&& t)
+    : transport_(std::move(t))
 {
 }
 #endif
@@ -149,13 +147,14 @@ AnyTransport::CreateAsync(
     const std::string&       write_endpoint,
     bool                     is_server,
     size_t                   max_message_size,
-    SharedMemoryPool*       pool)
+    SharedMemoryPool*        pool)
 {
     const auto selected_kind = SelectRuntimeTransportKind();
 
     try
     {
-        auto transport = CreateUninitializedTransport(selected_kind, io_context);
+        auto transport =
+            CreateUninitializedTransport(selected_kind, io_context);
         auto result = co_await transport.InitializeAsync(
             read_endpoint,
             write_endpoint,
@@ -204,7 +203,7 @@ boost::asio::awaitable<DasResult> AnyTransport::InitializeAsync(
     const std::string& write_endpoint,
     bool               is_server,
     size_t             max_message_size,
-    SharedMemoryPool* pool)
+    SharedMemoryPool*  pool)
 {
     const std::string read_endpoint_copy = read_endpoint;
     const std::string write_endpoint_copy = write_endpoint;

@@ -13,8 +13,8 @@
 #include <functional>
 #include <optional>
 #include <string>
-#include <type_traits>
 #include <tuple>
+#include <type_traits>
 #include <variant>
 
 DAS_CORE_IPC_NS_BEGIN
@@ -55,7 +55,7 @@ public:
         const std::string&                  write_endpoint,
         bool                                is_server,
         size_t                              max_message_size = 65536,
-        SharedMemoryPool*                  pool = nullptr);
+        SharedMemoryPool*                   pool = nullptr);
 
     static AnyTransport CreateUninitialized(
         boost::asio::io_context& io_context DAS_LIFETIMEBOUND);
@@ -65,7 +65,7 @@ public:
         const std::string& write_endpoint,
         bool               is_server,
         size_t             max_message_size = 65536,
-        SharedMemoryPool* pool = nullptr);
+        SharedMemoryPool*  pool = nullptr);
 
     ~AnyTransport();
     AnyTransport(AnyTransport&&) noexcept;

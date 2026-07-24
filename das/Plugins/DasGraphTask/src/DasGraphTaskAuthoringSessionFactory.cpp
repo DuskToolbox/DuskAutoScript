@@ -18,14 +18,16 @@ namespace Plugins::DasGraphTask
     {
         /// Read the context document JSON (a formSequence doc, a graph doc, or
         /// empty) for the session to seed its Core-owned store from.
-        std::string InitialSequenceFromContext(ExportInterface::IDasJson* context)
+        std::string InitialSequenceFromContext(
+            ExportInterface::IDasJson* context)
         {
             if (context == nullptr)
             {
                 return {};
             }
             DasPtr<IDasReadOnlyString> text;
-            if (DAS::IsFailed(context->ToString(0, text.Put())) || text.Get() == nullptr)
+            if (DAS::IsFailed(context->ToString(0, text.Put()))
+                || text.Get() == nullptr)
             {
                 return {};
             }
@@ -51,7 +53,7 @@ namespace Plugins::DasGraphTask
 
         try
         {
-            auto initial = InitialSequenceFromContext(p_context_json);
+            auto  initial = InitialSequenceFromContext(p_context_json);
             auto* session =
                 new DasGraphTaskAuthoringSession(std::move(initial));
             session->AddRef();

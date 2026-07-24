@@ -19,10 +19,7 @@
 #include <windows.h>
 #else
 #include <unistd.h>
-inline DWORD GetCurrentProcessId()
-{
-    return static_cast<DWORD>(getpid());
-}
+inline DWORD GetCurrentProcessId() { return static_cast<DWORD>(getpid()); }
 #endif
 
 using DAS::Core::IPC::AnyTransport;
@@ -37,54 +34,54 @@ using namespace DAS::Core::IPC::HeaderFlags;
 
 namespace
 {
-constexpr uint16_t SERVER_SESSION_ID = 1;
-constexpr uint16_t CLIENT_SESSION_ID = 2;
+    constexpr uint16_t SERVER_SESSION_ID = 1;
+    constexpr uint16_t CLIENT_SESSION_ID = 2;
 
-// 大消息阈值定义（与实现一致）
-constexpr size_t LARGE_MESSAGE_THRESHOLD = 65536;
+    // 大消息阈值定义（与实现一致）
+    constexpr size_t LARGE_MESSAGE_THRESHOLD = 65536;
 
-// 生成测试用的 body 数据
-std::vector<uint8_t> GenerateTestBody(size_t size)
-{
-    std::vector<uint8_t> body(size);
-    for (size_t i = 0; i < size; ++i)
+    // 生成测试用的 body 数据
+    std::vector<uint8_t> GenerateTestBody(size_t size)
     {
-        body[i] = static_cast<uint8_t>(i % 256);
-    }
-    return body;
-}
-
-// 验证 body 数据
-bool VerifyTestBody(const uint8_t* data, size_t size)
-{
-    for (size_t i = 0; i < size; ++i)
-    {
-        if (data[i] != static_cast<uint8_t>(i % 256))
+        std::vector<uint8_t> body(size);
+        for (size_t i = 0; i < size; ++i)
         {
-            return false;
+            body[i] = static_cast<uint8_t>(i % 256);
         }
+        return body;
     }
-    return true;
-}
 
-// 创建测试用的消息头
-ValidatedIPCMessageHeader CreateTestHeader(
-    uint16_t call_id,
-    uint16_t source_session_id,
-    uint16_t target_session_id,
-    uint32_t body_size,
-    uint8_t  header_flags = NONE)
-{
-    return IPCMessageHeaderBuilder()
-        .SetMessageType(DAS::Core::IPC::MessageType::REQUEST)
-        .SetHeaderFlags(header_flags)
-        .SetCallId(call_id)
-        .SetSourceSessionId(source_session_id)
-        .SetTargetSessionId(target_session_id)
-        .SetInterfaceId(0)
-        .SetBodySize(body_size)
-        .Build();
-}
+    // 验证 body 数据
+    bool VerifyTestBody(const uint8_t* data, size_t size)
+    {
+        for (size_t i = 0; i < size; ++i)
+        {
+            if (data[i] != static_cast<uint8_t>(i % 256))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // 创建测试用的消息头
+    ValidatedIPCMessageHeader CreateTestHeader(
+        uint16_t call_id,
+        uint16_t source_session_id,
+        uint16_t target_session_id,
+        uint32_t body_size,
+        uint8_t  header_flags = NONE)
+    {
+        return IPCMessageHeaderBuilder()
+            .SetMessageType(DAS::Core::IPC::MessageType::REQUEST)
+            .SetHeaderFlags(header_flags)
+            .SetCallId(call_id)
+            .SetSourceSessionId(source_session_id)
+            .SetTargetSessionId(target_session_id)
+            .SetInterfaceId(0)
+            .SetBodySize(body_size)
+            .Build();
+    }
 
 } // namespace
 
@@ -112,7 +109,8 @@ protected:
     }
 
     // 创建 server 端的 shared memory pool（Create 模式）
-    std::unique_ptr<SharedMemoryPool> CreateServerPool(size_t size = 10 * 1024 * 1024)
+    std::unique_ptr<SharedMemoryPool> CreateServerPool(
+        size_t size = 10 * 1024 * 1024)
     {
         return std::make_unique<SharedMemoryPool>(
             pool_name_,
@@ -139,7 +137,8 @@ protected:
                     std::chrono::milliseconds(retry_delay_ms));
             }
         }
-        throw std::runtime_error("Failed to open shared memory pool after retries");
+        throw std::runtime_error(
+            "Failed to open shared memory pool after retries");
     }
 
     // 创建连接的 transport 对（server + client）
@@ -152,7 +151,7 @@ protected:
     // 持有 io_context 和 transport 对
     struct TransportContext
     {
-        boost::asio::io_context io_context;
+        boost::asio::io_context      io_context;
         std::optional<TransportPair> transports;
     };
 
@@ -163,11 +162,11 @@ protected:
     {
         // 生成唯一的 endpoint 名称
         static std::atomic<uint32_t> next_endpoint_id{1};
-        const auto base = DAS_FMT_NS::format(
+        const auto                   base = DAS_FMT_NS::format(
             "shm_test_{}_{}",
             GetCurrentProcessId() % 10000,
             next_endpoint_id.fetch_add(1));
-        const auto read_endpoint  = base + "_read";
+        const auto read_endpoint = base + "_read";
         const auto write_endpoint = base + "_write";
 
         // 确保 io_context 有工作（使用 work guard）
@@ -180,8 +179,8 @@ protected:
                 io_context,
                 read_endpoint,
                 write_endpoint,
-                true,  // is_server
-                4 * 1024 * 1024,  // max_message_size (4MB)
+                true,            // is_server
+                4 * 1024 * 1024, // max_message_size (4MB)
                 server_pool),
             boost::asio::use_future);
 
@@ -192,8 +191,8 @@ protected:
                 io_context,
                 read_endpoint,
                 write_endpoint,
-                false,  // is_server
-                4 * 1024 * 1024,  // max_message_size (4MB)
+                false,           // is_server
+                4 * 1024 * 1024, // max_message_size (4MB)
                 client_pool),
             boost::asio::use_future);
 
@@ -232,10 +231,10 @@ protected:
             std::move(*client_transport)};
     }
 
-    std::string                               pool_name_;
-    std::unique_ptr<SharedMemoryPool>         server_pool_;
-    std::unique_ptr<SharedMemoryPool>         client_pool_;
-    boost::asio::io_context                   io_context_;
+    std::string                       pool_name_;
+    std::unique_ptr<SharedMemoryPool> server_pool_;
+    std::unique_ptr<SharedMemoryPool> client_pool_;
+    boost::asio::io_context           io_context_;
 };
 
 // ====== 小消息直写测试（不应走 SHM）======
@@ -244,7 +243,7 @@ TEST_F(IpcAsyncTransportShmTest, SmallMessage_DoesNotUseShm)
 {
     // 65535 字节，小于阈值，不应走 SHM
     constexpr size_t body_size = LARGE_MESSAGE_THRESHOLD - 1;
-    const auto        test_body = GenerateTestBody(body_size);
+    const auto       test_body = GenerateTestBody(body_size);
 
     server_pool_ = CreateServerPool();
     ASSERT_NE(server_pool_, nullptr);
@@ -252,7 +251,10 @@ TEST_F(IpcAsyncTransportShmTest, SmallMessage_DoesNotUseShm)
     client_pool_ = CreateClientPool();
     ASSERT_NE(client_pool_, nullptr);
 
-    auto transports = CreateConnectedTransports(io_context_, server_pool_.get(), client_pool_.get());
+    auto transports = CreateConnectedTransports(
+        io_context_,
+        server_pool_.get(),
+        client_pool_.get());
     ASSERT_TRUE(transports.has_value());
 
     // Server 发送消息
@@ -278,15 +280,14 @@ TEST_F(IpcAsyncTransportShmTest, SmallMessage_DoesNotUseShm)
     std::thread io_thread([this]() { io_context_.run(); });
 
     auto recv_result = recv_future.get();
-    ASSERT_TRUE(std::holds_alternative<DAS::Core::IPC::AsyncIpcMessage>(recv_result));
+    ASSERT_TRUE(
+        std::holds_alternative<DAS::Core::IPC::AsyncIpcMessage>(recv_result));
 
     auto& msg = std::get<DAS::Core::IPC::AsyncIpcMessage>(recv_result);
 
     // 验证：小消息不应走 SHM
     EXPECT_EQ(msg.first.Raw().body_size, body_size);
-    EXPECT_EQ(
-        msg.first.Raw().header_flags & LARGE_MESSAGE_VIA_SHM,
-        0);
+    EXPECT_EQ(msg.first.Raw().header_flags & LARGE_MESSAGE_VIA_SHM, 0);
 
     // 验证 body 内容正确
     ASSERT_EQ(msg.second.size(), body_size);
@@ -305,7 +306,7 @@ TEST_F(IpcAsyncTransportShmTest, ThresholdMessage_UsesShm)
 {
     // 65536 字节，等于阈值，应走 SHM
     constexpr size_t body_size = LARGE_MESSAGE_THRESHOLD;
-    const auto        test_body = GenerateTestBody(body_size);
+    const auto       test_body = GenerateTestBody(body_size);
 
     server_pool_ = CreateServerPool();
     ASSERT_NE(server_pool_, nullptr);
@@ -313,7 +314,10 @@ TEST_F(IpcAsyncTransportShmTest, ThresholdMessage_UsesShm)
     client_pool_ = CreateClientPool();
     ASSERT_NE(client_pool_, nullptr);
 
-    auto transports = CreateConnectedTransports(io_context_, server_pool_.get(), client_pool_.get());
+    auto transports = CreateConnectedTransports(
+        io_context_,
+        server_pool_.get(),
+        client_pool_.get());
     ASSERT_TRUE(transports.has_value());
 
     auto header = CreateTestHeader(
@@ -338,7 +342,8 @@ TEST_F(IpcAsyncTransportShmTest, ThresholdMessage_UsesShm)
     std::thread io_thread([this]() { io_context_.run(); });
 
     auto recv_result = recv_future.get();
-    ASSERT_TRUE(std::holds_alternative<DAS::Core::IPC::AsyncIpcMessage>(recv_result));
+    ASSERT_TRUE(
+        std::holds_alternative<DAS::Core::IPC::AsyncIpcMessage>(recv_result));
 
     auto& msg = std::get<DAS::Core::IPC::AsyncIpcMessage>(recv_result);
 
@@ -346,9 +351,7 @@ TEST_F(IpcAsyncTransportShmTest, ThresholdMessage_UsesShm)
     EXPECT_EQ(msg.first.Raw().body_size, body_size);
 
     // 验证 LARGE_MESSAGE_VIA_SHM 标志已清除（接收端已重组）
-    EXPECT_EQ(
-        msg.first.Raw().header_flags & LARGE_MESSAGE_VIA_SHM,
-        0);
+    EXPECT_EQ(msg.first.Raw().header_flags & LARGE_MESSAGE_VIA_SHM, 0);
 
     // 验证 body 内容正确
     ASSERT_EQ(msg.second.size(), body_size);
@@ -367,7 +370,7 @@ TEST_F(IpcAsyncTransportShmTest, JustAboveThresholdMessage_UsesShm)
 {
     // 65537 字节，刚超过阈值，应走 SHM
     constexpr size_t body_size = LARGE_MESSAGE_THRESHOLD + 1;
-    const auto        test_body = GenerateTestBody(body_size);
+    const auto       test_body = GenerateTestBody(body_size);
 
     server_pool_ = CreateServerPool();
     ASSERT_NE(server_pool_, nullptr);
@@ -375,7 +378,10 @@ TEST_F(IpcAsyncTransportShmTest, JustAboveThresholdMessage_UsesShm)
     client_pool_ = CreateClientPool();
     ASSERT_NE(client_pool_, nullptr);
 
-    auto transports = CreateConnectedTransports(io_context_, server_pool_.get(), client_pool_.get());
+    auto transports = CreateConnectedTransports(
+        io_context_,
+        server_pool_.get(),
+        client_pool_.get());
     ASSERT_TRUE(transports.has_value());
 
     auto header = CreateTestHeader(
@@ -400,14 +406,13 @@ TEST_F(IpcAsyncTransportShmTest, JustAboveThresholdMessage_UsesShm)
     std::thread io_thread([this]() { io_context_.run(); });
 
     auto recv_result = recv_future.get();
-    ASSERT_TRUE(std::holds_alternative<DAS::Core::IPC::AsyncIpcMessage>(recv_result));
+    ASSERT_TRUE(
+        std::holds_alternative<DAS::Core::IPC::AsyncIpcMessage>(recv_result));
 
     auto& msg = std::get<DAS::Core::IPC::AsyncIpcMessage>(recv_result);
 
     EXPECT_EQ(msg.first.Raw().body_size, body_size);
-    EXPECT_EQ(
-        msg.first.Raw().header_flags & LARGE_MESSAGE_VIA_SHM,
-        0);
+    EXPECT_EQ(msg.first.Raw().header_flags & LARGE_MESSAGE_VIA_SHM, 0);
 
     ASSERT_EQ(msg.second.size(), body_size);
     EXPECT_TRUE(VerifyTestBody(msg.second.data(), msg.second.size()));
@@ -425,7 +430,7 @@ TEST_F(IpcAsyncTransportShmTest, LargeMessage_1MB_UsesShm)
 {
     // 1MB，大消息，应走 SHM
     constexpr size_t body_size = 1024 * 1024;
-    const auto        test_body = GenerateTestBody(body_size);
+    const auto       test_body = GenerateTestBody(body_size);
 
     server_pool_ = CreateServerPool();
     ASSERT_NE(server_pool_, nullptr);
@@ -433,7 +438,10 @@ TEST_F(IpcAsyncTransportShmTest, LargeMessage_1MB_UsesShm)
     client_pool_ = CreateClientPool();
     ASSERT_NE(client_pool_, nullptr);
 
-    auto transports = CreateConnectedTransports(io_context_, server_pool_.get(), client_pool_.get());
+    auto transports = CreateConnectedTransports(
+        io_context_,
+        server_pool_.get(),
+        client_pool_.get());
     ASSERT_TRUE(transports.has_value());
 
     auto header = CreateTestHeader(
@@ -458,14 +466,13 @@ TEST_F(IpcAsyncTransportShmTest, LargeMessage_1MB_UsesShm)
     std::thread io_thread([this]() { io_context_.run(); });
 
     auto recv_result = recv_future.get();
-    ASSERT_TRUE(std::holds_alternative<DAS::Core::IPC::AsyncIpcMessage>(recv_result));
+    ASSERT_TRUE(
+        std::holds_alternative<DAS::Core::IPC::AsyncIpcMessage>(recv_result));
 
     auto& msg = std::get<DAS::Core::IPC::AsyncIpcMessage>(recv_result);
 
     EXPECT_EQ(msg.first.Raw().body_size, body_size);
-    EXPECT_EQ(
-        msg.first.Raw().header_flags & LARGE_MESSAGE_VIA_SHM,
-        0);
+    EXPECT_EQ(msg.first.Raw().header_flags & LARGE_MESSAGE_VIA_SHM, 0);
 
     ASSERT_EQ(msg.second.size(), body_size);
     EXPECT_TRUE(VerifyTestBody(msg.second.data(), msg.second.size()));
@@ -481,8 +488,8 @@ TEST_F(IpcAsyncTransportShmTest, LargeMessage_1MB_UsesShm)
 
 TEST_F(IpcAsyncTransportShmTest, Bidirectional_ClientToServer_LargeMessage)
 {
-    constexpr size_t body_size = 128 * 1024;  // 128KB
-    const auto        test_body = GenerateTestBody(body_size);
+    constexpr size_t body_size = 128 * 1024; // 128KB
+    const auto       test_body = GenerateTestBody(body_size);
 
     server_pool_ = CreateServerPool();
     ASSERT_NE(server_pool_, nullptr);
@@ -490,7 +497,10 @@ TEST_F(IpcAsyncTransportShmTest, Bidirectional_ClientToServer_LargeMessage)
     client_pool_ = CreateClientPool();
     ASSERT_NE(client_pool_, nullptr);
 
-    auto transports = CreateConnectedTransports(io_context_, server_pool_.get(), client_pool_.get());
+    auto transports = CreateConnectedTransports(
+        io_context_,
+        server_pool_.get(),
+        client_pool_.get());
     ASSERT_TRUE(transports.has_value());
 
     // Client 发送消息给 Server
@@ -516,7 +526,8 @@ TEST_F(IpcAsyncTransportShmTest, Bidirectional_ClientToServer_LargeMessage)
     std::thread io_thread([this]() { io_context_.run(); });
 
     auto recv_result = recv_future.get();
-    ASSERT_TRUE(std::holds_alternative<DAS::Core::IPC::AsyncIpcMessage>(recv_result));
+    ASSERT_TRUE(
+        std::holds_alternative<DAS::Core::IPC::AsyncIpcMessage>(recv_result));
 
     auto& msg = std::get<DAS::Core::IPC::AsyncIpcMessage>(recv_result);
 
@@ -544,14 +555,17 @@ TEST_F(IpcAsyncTransportShmTest, MultipleMessages_VariableSizes)
     client_pool_ = CreateClientPool();
     ASSERT_NE(client_pool_, nullptr);
 
-    auto transports = CreateConnectedTransports(io_context_, server_pool_.get(), client_pool_.get());
+    auto transports = CreateConnectedTransports(
+        io_context_,
+        server_pool_.get(),
+        client_pool_.get());
     ASSERT_TRUE(transports.has_value());
 
     // 测试几个关键的边界大小
     std::vector<size_t> test_sizes = {
-        1024,           // 1KB - 小消息
-        65536,          // 阈值
-        128 * 1024,     // 128KB
+        1024,       // 1KB - 小消息
+        65536,      // 阈值
+        128 * 1024, // 128KB
     };
 
     for (size_t i = 0; i < test_sizes.size(); ++i)
@@ -569,10 +583,8 @@ TEST_F(IpcAsyncTransportShmTest, MultipleMessages_VariableSizes)
         // 先投递协程，然后启动 io_context
         auto send_future = boost::asio::co_spawn(
             io_context_,
-            transports->server.SendCoroutine(
-                header,
-                test_body.data(),
-                body_size),
+            transports->server
+                .SendCoroutine(header, test_body.data(), body_size),
             boost::asio::use_future);
 
         auto recv_future = boost::asio::co_spawn(
@@ -587,17 +599,20 @@ TEST_F(IpcAsyncTransportShmTest, MultipleMessages_VariableSizes)
         ASSERT_EQ(send_result, DAS_S_OK) << "Failed to send message " << i;
 
         auto recv_result = recv_future.get();
-        ASSERT_TRUE(std::holds_alternative<DAS::Core::IPC::AsyncIpcMessage>(
-            recv_result)) << "Receive failed for message " << i;
+        ASSERT_TRUE(
+            std::holds_alternative<DAS::Core::IPC::AsyncIpcMessage>(
+                recv_result))
+            << "Receive failed for message " << i;
 
         auto& msg = std::get<DAS::Core::IPC::AsyncIpcMessage>(recv_result);
 
-        EXPECT_EQ(msg.first.Raw().body_size, body_size) << "Body size mismatch for message " << i;
-        EXPECT_EQ(
-            msg.first.Raw().header_flags & LARGE_MESSAGE_VIA_SHM,
-            0) << "LARGE_MESSAGE_VIA_SHM flag not cleared for message " << i;
+        EXPECT_EQ(msg.first.Raw().body_size, body_size)
+            << "Body size mismatch for message " << i;
+        EXPECT_EQ(msg.first.Raw().header_flags & LARGE_MESSAGE_VIA_SHM, 0)
+            << "LARGE_MESSAGE_VIA_SHM flag not cleared for message " << i;
 
-        ASSERT_EQ(msg.second.size(), body_size) << "Received body size mismatch for message " << i;
+        ASSERT_EQ(msg.second.size(), body_size)
+            << "Received body size mismatch for message " << i;
         EXPECT_TRUE(VerifyTestBody(msg.second.data(), msg.second.size()))
             << "Body content mismatch for message " << i;
 
@@ -619,7 +634,7 @@ TEST_F(IpcAsyncTransportShmTest, LargeMessage_WithoutPool_Fails)
     ASSERT_TRUE(transports.has_value());
 
     constexpr size_t body_size = LARGE_MESSAGE_THRESHOLD + 1;
-    const auto        test_body = GenerateTestBody(body_size);
+    const auto       test_body = GenerateTestBody(body_size);
 
     auto header = CreateTestHeader(
         1,
@@ -677,11 +692,14 @@ TEST_F(IpcAsyncTransportShmTest, UnconnectedPools_HandleGracefully)
         1024 * 1024,
         PoolMode::Create);
 
-    auto transports = CreateConnectedTransports(io_context_, server_pool_.get(), client_pool_.get());
+    auto transports = CreateConnectedTransports(
+        io_context_,
+        server_pool_.get(),
+        client_pool_.get());
     ASSERT_TRUE(transports.has_value());
 
     constexpr size_t body_size = LARGE_MESSAGE_THRESHOLD + 1;
-    const auto        test_body = GenerateTestBody(body_size);
+    const auto       test_body = GenerateTestBody(body_size);
 
     auto header = CreateTestHeader(
         1,
@@ -701,9 +719,10 @@ TEST_F(IpcAsyncTransportShmTest, UnconnectedPools_HandleGracefully)
 
     DasResult send_result = send_future.get();
 
-    // Pool 不连通（两端不同名 pool）时：发送侧用自己的 server_pool 仍能成功 Allocate+发送
-    // （发送侧不感知对端 pool）；接收侧 client_pool 收到无效 handle 会失败但不崩溃。
-    // 这里验证发送侧不崩（graceful）——send_result 应为成功。
+    // Pool 不连通（两端不同名 pool）时：发送侧用自己的 server_pool 仍能成功
+    // Allocate+发送 （发送侧不感知对端 pool）；接收侧 client_pool 收到无效
+    // handle 会失败但不崩溃。 这里验证发送侧不崩（graceful）——send_result
+    // 应为成功。
     EXPECT_EQ(send_result, DAS_S_OK);
 
     io_context_.stop();

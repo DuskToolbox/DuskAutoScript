@@ -23,7 +23,8 @@ DAS_CORE_IPC_NS_BEGIN
  * Two-path strategy:
  * - BusinessThread is the calling thread  -> PostSend + PumpUntilResponse
  * - External thread                       -> AwaitResponseSender::start() 中
- *                                           先注册 pending completion 再 PostSend
+ *                                           先注册 pending completion 再
+ * PostSend
  *
  * @param run_loop            IPC run loop (call_id allocation, PostSend)
  * @param business_thread     Weak ptr to the BusinessThread (PumpUntilResponse)

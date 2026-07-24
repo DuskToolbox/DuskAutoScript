@@ -157,7 +157,9 @@ public:
     }
 
     DasException(DasResult error_code, const std::string& message)
-        : DasException{error_code, std::string{message}}
+        : DasException{error_code, std::string {
+                           message
+                       }}
     {
     }
 #endif // SWIG

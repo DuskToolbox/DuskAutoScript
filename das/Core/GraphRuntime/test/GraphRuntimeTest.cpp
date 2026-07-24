@@ -659,10 +659,10 @@ namespace SignalGatedTestMock
         std::atomic<int>      do_count{0};
 
         // role configuration (parsed from compiled_settings)
-        std::string mode;          // emit | record | loop | alternate
-        std::string emit_signal;   // mode=emit: which signal port to fire
-        int         loop_end = 0;  // mode=loop: iteration count
-        int         counter = 0;   // mode=loop / alternate: persists across Do()
+        std::string mode;         // emit | record | loop | alternate
+        std::string emit_signal;  // mode=emit: which signal port to fire
+        int         loop_end = 0; // mode=loop: iteration count
+        int         counter = 0;  // mode=loop / alternate: persists across Do()
         int64_t     picked_value = -1; // mode=merge: value copied to result
 
         uint32_t DAS_STD_CALL AddRef() override { return ++ref_count_; }
@@ -701,7 +701,9 @@ namespace SignalGatedTestMock
         {
             if (!pp_out_name)
                 return DAS_E_INVALID_POINTER;
-            return CreateIDasReadOnlyStringFromUtf8("BehaviorComponent", pp_out_name);
+            return CreateIDasReadOnlyStringFromUtf8(
+                "BehaviorComponent",
+                pp_out_name);
         }
 
         DasResult ApplySettingsChange(
@@ -782,7 +784,7 @@ namespace SignalGatedTestMock
         // Emit a signal by writing the reserved "signals" JSON string array.
         void EmitSignal(IDasPortMap* map, const std::string& sig)
         {
-            std::string    json = std::string(R"([")") + sig + R"("])";
+            std::string       json = std::string(R"([")") + sig + R"("])";
             DasReadOnlyString key{"signals"};
             DasReadOnlyString val{json.c_str()};
             map->SetString(key.Get(), val.Get());
@@ -840,7 +842,7 @@ namespace SignalGatedTestMock
             {
                 // φ-join: copy whichever of value_true / value_false the taken
                 // branch produced into result.
-                int64_t         v{};
+                int64_t           v{};
                 DasReadOnlyString kt{"value_true"};
                 if (p_input_port_map != nullptr
                     && DAS::IsOk(p_input_port_map->GetInt(kt.Get(), &v)))
@@ -896,7 +898,8 @@ namespace SignalGatedTestMock
             {
                 return DAS_E_INVALID_POINTER;
             }
-            auto* c = static_cast<BehaviorComponent*>(BehaviorComponent::MakeRaw());
+            auto* c =
+                static_cast<BehaviorComponent*>(BehaviorComponent::MakeRaw());
             components.push_back(c);
             *pp_out_component = c;
             return DAS_S_OK;
@@ -990,8 +993,8 @@ TEST(SignalGatedRuntimeTest, BranchIfOnlyHitBranchRuns)
         MakeBinding(branch, "false", falseSink, "in", "signal"),
     };
 
-    auto host = BehaviorHost::Make();
-    GraphRuntime rt;
+    auto                       host = BehaviorHost::Make();
+    GraphRuntime               rt;
     Das::DasPtr<IDasStopToken> token =
         Das::PluginInterface::DasStopTokenImplBase<MockStopToken>::Make();
 
@@ -1038,8 +1041,8 @@ TEST(SignalGatedRuntimeTest, SkipPropagatesAlongDataEdges)
         MakeBinding(b, "out", c, "in", "int"),
     };
 
-    auto host = BehaviorHost::Make();
-    GraphRuntime rt;
+    auto                       host = BehaviorHost::Make();
+    GraphRuntime               rt;
     Das::DasPtr<IDasStopToken> token =
         Das::PluginInterface::DasStopTokenImplBase<MockStopToken>::Make();
 
@@ -1051,7 +1054,9 @@ TEST(SignalGatedRuntimeTest, SkipPropagatesAlongDataEdges)
     EXPECT_EQ(h->components[0]->do_count.load(), 1); // branch
     EXPECT_EQ(h->components[1]->do_count.load(), 1); // A (true branch) ran
     EXPECT_EQ(h->components[2]->do_count.load(), 0); // B skipped
-    EXPECT_EQ(h->components[3]->do_count.load(), 0); // C skipped (B produced nothing)
+    EXPECT_EQ(
+        h->components[3]->do_count.load(),
+        0); // C skipped (B produced nothing)
 }
 
 // -------------------------------------------------------------------
@@ -1082,8 +1087,8 @@ TEST(SignalGatedRuntimeTest, ForLoopIteratesCorrectly)
         MakeBinding(body, "done", forNode, "loop_in", "signal"),
     };
 
-    auto host = BehaviorHost::Make();
-    GraphRuntime rt;
+    auto                       host = BehaviorHost::Make();
+    GraphRuntime               rt;
     Das::DasPtr<IDasStopToken> token =
         Das::PluginInterface::DasStopTokenImplBase<MockStopToken>::Make();
 
@@ -1141,8 +1146,8 @@ TEST(SignalGatedRuntimeTest, LoopWithInnerBranchHasNoCrossIterationResidue)
         MakeBinding(term, "done", forNode, "loop_in", "signal"),
     };
 
-    auto host = BehaviorHost::Make();
-    GraphRuntime rt;
+    auto                       host = BehaviorHost::Make();
+    GraphRuntime               rt;
     Das::DasPtr<IDasStopToken> token =
         Das::PluginInterface::DasStopTokenImplBase<MockStopToken>::Make();
 
@@ -1151,10 +1156,18 @@ TEST(SignalGatedRuntimeTest, LoopWithInnerBranchHasNoCrossIterationResidue)
 
     auto* h = static_cast<BehaviorHost*>(host.Get());
     ASSERT_EQ(h->components.size(), 5u);
-    EXPECT_EQ(h->components[0]->do_count.load(), 3); // for: continue x2, break x1
-    EXPECT_EQ(h->components[1]->do_count.load(), 2); // selector ran both iterations
-    EXPECT_EQ(h->components[2]->do_count.load(), 1); // sinkT only on iter 0 (true)
-    EXPECT_EQ(h->components[3]->do_count.load(), 1); // sinkF only on iter 1 (false)
+    EXPECT_EQ(
+        h->components[0]->do_count.load(),
+        3); // for: continue x2, break x1
+    EXPECT_EQ(
+        h->components[1]->do_count.load(),
+        2); // selector ran both iterations
+    EXPECT_EQ(
+        h->components[2]->do_count.load(),
+        1); // sinkT only on iter 0 (true)
+    EXPECT_EQ(
+        h->components[3]->do_count.load(),
+        1); // sinkF only on iter 1 (false)
     EXPECT_EQ(h->components[4]->do_count.load(), 2); // term each iteration
 }
 
@@ -1195,8 +1208,8 @@ TEST(SignalGatedRuntimeTest, MergeJoinRunsOnTakenBranch)
         MakeBinding(b, "out", mergeNode, "value_false", "int"),
     };
 
-    auto host = BehaviorHost::Make();
-    GraphRuntime rt;
+    auto                       host = BehaviorHost::Make();
+    GraphRuntime               rt;
     Das::DasPtr<IDasStopToken> token =
         Das::PluginInterface::DasStopTokenImplBase<MockStopToken>::Make();
 
@@ -1208,7 +1221,11 @@ TEST(SignalGatedRuntimeTest, MergeJoinRunsOnTakenBranch)
     EXPECT_EQ(h->components[0]->do_count.load(), 1); // branch
     EXPECT_EQ(h->components[1]->do_count.load(), 1); // A (true branch) ran
     EXPECT_EQ(h->components[2]->do_count.load(), 0); // B (false branch) skipped
-    EXPECT_EQ(h->components[3]->do_count.load(), 1); // merge ran despite B skipped
+    EXPECT_EQ(
+        h->components[3]->do_count.load(),
+        1); // merge ran despite B skipped
     // merge picked A's value (A.out = do_count = 1 on its single run).
-    EXPECT_EQ(h->components[3]->picked_value, h->components[1]->do_count.load());
+    EXPECT_EQ(
+        h->components[3]->picked_value,
+        h->components[1]->do_count.load());
 }

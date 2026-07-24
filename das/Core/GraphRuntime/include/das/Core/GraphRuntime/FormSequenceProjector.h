@@ -45,10 +45,10 @@ namespace Dto
     /// identity metadata shared with GraphDocumentDto.
     struct FormSequenceDto
     {
-        std::string                        document_id;
-        int32_t                            version = 0;
-        std::string                        fingerprint;
-        std::vector<FormSequenceItemDto>   items;
+        std::string                      document_id;
+        int32_t                          version = 0;
+        std::string                      fingerprint;
+        std::vector<FormSequenceItemDto> items;
     };
 } // namespace Dto
 
@@ -65,7 +65,7 @@ struct AppendSequenceItemChange
 /// Insert an item before the given zero-based index (index == size appends).
 struct InsertSequenceItemChange
 {
-    std::size_t             index;
+    std::size_t              index;
     Dto::FormSequenceItemDto item;
 };
 
@@ -108,12 +108,12 @@ struct FormSequenceChange
 
 enum class FormSequenceErrorKind
 {
-    None,           // Success
-    EmptyItemId,    // item_id string is empty
-    DuplicateItemId,// append/insert with an already-existing item_id
-    ItemNotFound,   // referenced item_id does not exist
-    InvalidIndex,   // insert/move index out of range
-    NoChange,       // setValue with identical settings
+    None,            // Success
+    EmptyItemId,     // item_id string is empty
+    DuplicateItemId, // append/insert with an already-existing item_id
+    ItemNotFound,    // referenced item_id does not exist
+    InvalidIndex,    // insert/move index out of range
+    NoChange,        // setValue with identical settings
 };
 
 struct FormSequenceResult
@@ -194,7 +194,8 @@ DAS_GRAPHRUNTIME_DTO_CASTER(FormSequenceDto);
 #undef DAS_GRAPHRUNTIME_DTO_CASTER
 
 template <>
-struct yyjson::field_name_rule<Das::Core::GraphRuntime::Dto::FormSequenceItemDto>
+struct yyjson::field_name_rule<
+    Das::Core::GraphRuntime::Dto::FormSequenceItemDto>
 {
     using type = yyjson::snake_to_camel_transform;
 };

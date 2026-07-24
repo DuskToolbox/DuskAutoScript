@@ -156,7 +156,9 @@ TEST(DasGraphTaskTest, AuthoringCompilePlanFeedsIntoDo)
     ASSERT_EQ(CreateGraphAuthoringSession(nullptr, &state), DAS_S_OK);
     ASSERT_NE(state, nullptr);
     DasPtr<Das::ExportInterface::IDasJson> plan_json;
-    ASSERT_EQ(GraphAuthoringSessionCompile(state, nullptr, plan_json.Put()), DAS_S_OK);
+    ASSERT_EQ(
+        GraphAuthoringSessionCompile(state, nullptr, plan_json.Put()),
+        DAS_S_OK);
     DestroyGraphAuthoringSession(state);
     ASSERT_NE(plan_json.Get(), nullptr);
 
@@ -168,7 +170,9 @@ TEST(DasGraphTaskTest, AuthoringCompilePlanFeedsIntoDo)
     DasPtr<Das::ExportInterface::IDasPortMap> input_map;
     ASSERT_EQ(CreateIDasPortMap(input_map.Put()), DAS_S_OK);
     DasReadOnlyString compiled_plan_key{"compiledPlan"};
-    ASSERT_EQ(input_map->SetString(compiled_plan_key.Get(), plan_str.Get()), DAS_S_OK);
+    ASSERT_EQ(
+        input_map->SetString(compiled_plan_key.Get(), plan_str.Get()),
+        DAS_S_OK);
 
     // Feed the compiled plan into Do and confirm it runs (empty plan → OK).
     auto host = DasPtr<Das::PluginInterface::IDasTaskComponentHost>(

@@ -1,11 +1,11 @@
 #pragma once
+#include <cstdint>
 #include <das/Core/IPC/DasAsyncSender.h>
 #include <das/Core/IPC/ObjectId.h>
 #include <das/Core/IPC/ValidatedIPCMessageHeader.h>
 #include <das/Core/Utils/StdExecution.h>
 #include <das/DasApi.h>
 #include <das/IDasAsyncCallback.h>
-#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -42,7 +42,7 @@ namespace Core
             struct IpcContextEvents
             {
                 OnBeforeShutdown on_before_shutdown = nullptr;
-                void* p_on_before_shutdown_context = nullptr;
+                void*            p_on_before_shutdown_context = nullptr;
             };
 
             struct IpcContextConfig

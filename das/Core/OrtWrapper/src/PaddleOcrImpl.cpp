@@ -1346,7 +1346,8 @@ DasResult PaddleOcrImpl::Recognize(
                 for (uint32_t ci = 0; ci < char_count; ++ci)
                 {
                     DAS::ExportInterface::DasRect result_rect;
-                    result_rect.x = det_box.rect.x + static_cast<int>(ci) * char_w;
+                    result_rect.x =
+                        det_box.rect.x + static_cast<int>(ci) * char_w;
                     result_rect.y = det_box.rect.y;
                     result_rect.width = char_w;
                     result_rect.height = det_box.rect.height;

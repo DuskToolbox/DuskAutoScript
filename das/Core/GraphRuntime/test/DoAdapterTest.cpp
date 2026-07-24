@@ -48,9 +48,9 @@ namespace
         return Das::Core::ForeignInterfaceHost::DasGuidToStdString(guid);
     }
 
-    // Broadcast (graph-input) binding: the source is the "$graph_input" sentinel
-    // rather than a real node, and the value comes from default_value. (DAS-75
-    // graph_inputs broadcast injection.)
+    // Broadcast (graph-input) binding: the source is the "$graph_input"
+    // sentinel rather than a real node, and the value comes from default_value.
+    // (DAS-75 graph_inputs broadcast injection.)
     Dto::PortBindingDto MakeBroadcastBinding(
         const std::string& graph_input_port,
         const std::string& tgt_port,
@@ -358,7 +358,8 @@ TEST(DoAdapterTest, BuildInputPortMap_BroadcastNonScalarSkipped)
     PortFrame frame;
 
     // Object defaults are not scalar options — skipped with a warning.
-    auto bindings = {MakeBroadcastBinding("cfg", "in", ParseJson(R"({"a":1})"))};
+    auto bindings = {
+        MakeBroadcastBinding("cfg", "in", ParseJson(R"({"a":1})"))};
 
     DAS::DasPtr<IDasPortMap> map;
     ASSERT_EQ(BuildInputPortMap(frame, bindings, map.Put()), DAS_S_OK);

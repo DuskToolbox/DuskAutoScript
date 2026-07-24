@@ -66,7 +66,9 @@ std::pair<DasResult, DasPtr<IDasBase>> ProxyFactory::GetOrCreateProxy(
             if (entry.runtime_ptr != nullptr && entry.interface_ptr != nullptr
                 && entry.runtime_ptr->TryAddRefForCache())
             {
-                return {DAS_S_OK, DasPtr<IDasBase>::Attach(entry.interface_ptr)};
+                return {
+                    DAS_S_OK,
+                    DasPtr<IDasBase>::Attach(entry.interface_ptr)};
             }
 
             it->second.interfaces.erase(view_it);

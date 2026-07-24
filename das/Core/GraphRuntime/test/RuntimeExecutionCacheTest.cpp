@@ -122,33 +122,33 @@ TEST(RuntimeExecutionCacheTest, DeterministicSlotOrder)
     plan.node_snapshots.push_back(std::move(snap_a));
     plan.node_snapshots.push_back(std::move(snap_b));
 
-// All input ports of A must appear as targets in bindings
-plan.binding_plan.bindings.push_back(
-    MakeBinding("B", "out1", "A", "z_port", "int"));
-plan.binding_plan.bindings.push_back(
-    MakeBinding("B", "out2", "A", "a_port", "string"));
-plan.binding_plan.bindings.push_back(
-    MakeBinding("B", "out3", "A", "m_port", "bool"));
+    // All input ports of A must appear as targets in bindings
+    plan.binding_plan.bindings.push_back(
+        MakeBinding("B", "out1", "A", "z_port", "int"));
+    plan.binding_plan.bindings.push_back(
+        MakeBinding("B", "out2", "A", "a_port", "string"));
+    plan.binding_plan.bindings.push_back(
+        MakeBinding("B", "out3", "A", "m_port", "bool"));
 
-RuntimeExecutionCache cache1, cache2;
-cache1.BuildFrom(plan);
-cache2.BuildFrom(plan);
+    RuntimeExecutionCache cache1, cache2;
+    cache1.BuildFrom(plan);
+    cache2.BuildFrom(plan);
 
-const auto& slots1 = cache1.GetInputSlots("A");
-const auto& slots2 = cache2.GetInputSlots("A");
+    const auto& slots1 = cache1.GetInputSlots("A");
+    const auto& slots2 = cache2.GetInputSlots("A");
 
-ASSERT_EQ(slots1.size(), slots2.size());
-for (size_t i = 0; i < slots1.size(); ++i)
-{
-    EXPECT_EQ(slots1[i].port_id, slots2[i].port_id);
-    EXPECT_EQ(slots1[i].slot_index, slots2[i].slot_index);
-}
+    ASSERT_EQ(slots1.size(), slots2.size());
+    for (size_t i = 0; i < slots1.size(); ++i)
+    {
+        EXPECT_EQ(slots1[i].port_id, slots2[i].port_id);
+        EXPECT_EQ(slots1[i].slot_index, slots2[i].slot_index);
+    }
 
-// Verify alphabetical ordering
-ASSERT_EQ(slots1.size(), 3u);
-EXPECT_EQ(slots1[0].port_id, "a_port");
-EXPECT_EQ(slots1[1].port_id, "m_port");
-EXPECT_EQ(slots1[2].port_id, "z_port");
+    // Verify alphabetical ordering
+    ASSERT_EQ(slots1.size(), 3u);
+    EXPECT_EQ(slots1[0].port_id, "a_port");
+    EXPECT_EQ(slots1[1].port_id, "m_port");
+    EXPECT_EQ(slots1[2].port_id, "z_port");
 }
 
 TEST(RuntimeExecutionCacheTest, RoutesFromBindingPlan)

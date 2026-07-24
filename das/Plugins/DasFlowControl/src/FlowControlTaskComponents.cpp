@@ -219,8 +219,8 @@ namespace
         ExportInterface::IDasPortMap* map,
         std::string_view              signal_port_id)
     {
-        std::string json = std::string(R"([")") + std::string(signal_port_id)
-                           + R"("])";
+        std::string json =
+            std::string(R"([")") + std::string(signal_port_id) + R"("])";
         SetPortString(map, "signals", json);
     }
 
@@ -231,11 +231,11 @@ namespace
     using Das::ExportInterface::DAS_VARIANT_TYPE_NULL;
     using Das::ExportInterface::DAS_VARIANT_TYPE_STRING;
 
-    /// Copy a typed value from @p src_port of @p src into @p dst_port of @p dst,
-    /// preserving its runtime variant kind. Returns false when the source port
-    /// is absent or null (used by merge to detect which branch produced a value).
-    /// Covers the scalar kinds the data plane carries end-to-end; object/image
-    /// kinds are not pass-through-able here.
+    /// Copy a typed value from @p src_port of @p src into @p dst_port of @p
+    /// dst, preserving its runtime variant kind. Returns false when the source
+    /// port is absent or null (used by merge to detect which branch produced a
+    /// value). Covers the scalar kinds the data plane carries end-to-end;
+    /// object/image kinds are not pass-through-able here.
     bool CopyTypedPort(
         ExportInterface::IDasReadOnlyPortMap* src,
         std::string_view                      src_port,
@@ -285,7 +285,8 @@ namespace
         case DAS_VARIANT_TYPE_STRING:
         {
             IDasReadOnlyString* p_str = nullptr;
-            if (DAS::IsOk(src->GetString(key.Get(), &p_str)) && p_str != nullptr)
+            if (DAS::IsOk(src->GetString(key.Get(), &p_str))
+                && p_str != nullptr)
             {
                 DasReadOnlyString dkey{std::string{dst_port}.c_str()};
                 dst->SetString(dkey.Get(), p_str);
@@ -693,7 +694,7 @@ DasResult DasFlowControlTaskComponent::DoBranch(
     // 纯 signal 路由：读 condition → emit true/false。runtime 据 signal_routes
     // gate 分支；组件不感知自己因哪个 signal 被激活（DAS-60 Stage 4）。
     // 内嵌 compiledSnapshot 子图模型已移除，分支体是主图独立节点。
-    const bool             condition =
+    const bool condition =
         p_input_port_map ? GetPortBool(p_input_port_map, "condition", false)
                          : false;
     const std::string_view selected = condition ? "true" : "false";
@@ -726,8 +727,7 @@ DasResult DasFlowControlTaskComponent::DoFor(
         && stop_requested)
     {
         DAS::DasPtr<ExportInterface::IDasPortMap> cancelled_map;
-        DasResult                                 hr =
-            CreateIDasPortMap(cancelled_map.Put());
+        DasResult hr = CreateIDasPortMap(cancelled_map.Put());
         if (DAS::IsFailed(hr))
         {
             return hr;
@@ -739,15 +739,12 @@ DasResult DasFlowControlTaskComponent::DoFor(
     }
 
     // 循环参数走 input port（binding 装配：settings 默认值或上游 data edge）。
-    const int64_t start = p_input_port_map
-        ? GetPortInt(p_input_port_map, "start", 0)
-        : 0;
-    const int64_t end = p_input_port_map
-        ? GetPortInt(p_input_port_map, "end", 0)
-        : 0;
-    int64_t       step = p_input_port_map
-        ? GetPortInt(p_input_port_map, "step", 1)
-        : 1;
+    const int64_t start =
+        p_input_port_map ? GetPortInt(p_input_port_map, "start", 0) : 0;
+    const int64_t end =
+        p_input_port_map ? GetPortInt(p_input_port_map, "end", 0) : 0;
+    int64_t step =
+        p_input_port_map ? GetPortInt(p_input_port_map, "step", 1) : 1;
     if (step == 0)
     {
         step = 1; // 0 步长无意义且会死循环，兜底为 1。
@@ -762,7 +759,7 @@ DasResult DasFlowControlTaskComponent::DoFor(
     }
 
     DAS::DasPtr<ExportInterface::IDasPortMap> output_map;
-    DasResult                                 hr = CreateIDasPortMap(output_map.Put());
+    DasResult hr = CreateIDasPortMap(output_map.Put());
     if (DAS::IsFailed(hr))
     {
         return hr;
@@ -806,8 +803,7 @@ DasResult DasFlowControlTaskComponent::DoWhile(
         && stop_requested)
     {
         DAS::DasPtr<ExportInterface::IDasPortMap> cancelled_map;
-        DasResult                                 hr =
-            CreateIDasPortMap(cancelled_map.Put());
+        DasResult hr = CreateIDasPortMap(cancelled_map.Put());
         if (DAS::IsFailed(hr))
         {
             return hr;
@@ -824,7 +820,7 @@ DasResult DasFlowControlTaskComponent::DoWhile(
                          : false;
 
     DAS::DasPtr<ExportInterface::IDasPortMap> output_map;
-    DasResult                                 hr = CreateIDasPortMap(output_map.Put());
+    DasResult hr = CreateIDasPortMap(output_map.Put());
     if (DAS::IsFailed(hr))
     {
         return hr;
@@ -851,7 +847,7 @@ DasResult DasFlowControlTaskComponent::DoMerge(
     (void)stop_token;
 
     DAS::DasPtr<ExportInterface::IDasPortMap> output_map;
-    DasResult                                 hr = CreateIDasPortMap(output_map.Put());
+    DasResult hr = CreateIDasPortMap(output_map.Put());
     if (DAS::IsFailed(hr))
     {
         return hr;
@@ -859,17 +855,23 @@ DasResult DasFlowControlTaskComponent::DoMerge(
     SetPortString(output_map.Get(), "status", "completed");
 
     // φ-join：merge 由 in_true/in_false signal gate 激活（runtime 保证只有命中
-    // 分支到达 merge）。被 gate 掉的分支不产出 → 其 value_* 在输入 PortMap 缺席。
-    // 取在场的那路 value 输出到 result；组件自身不读 signal（零感知）。
+    // 分支到达 merge）。被 gate 掉的分支不产出 → 其 value_* 在输入 PortMap
+    // 缺席。 取在场的那路 value 输出到 result；组件自身不读 signal（零感知）。
     if (p_input_port_map == nullptr
         || !CopyTypedPort(
-               p_input_port_map, "value_true", output_map.Get(), "result"))
+            p_input_port_map,
+            "value_true",
+            output_map.Get(),
+            "result"))
     {
         // value_true 缺席（true 分支未命中）→ 尝试 value_false。
         if (p_input_port_map != nullptr)
         {
             CopyTypedPort(
-                p_input_port_map, "value_false", output_map.Get(), "result");
+                p_input_port_map,
+                "value_false",
+                output_map.Get(),
+                "result");
         }
     }
 
@@ -879,9 +881,9 @@ DasResult DasFlowControlTaskComponent::DoMerge(
 }
 
 DasResult DasFlowControlTaskComponent::DoDelay(
-    PluginInterface::IDasStopToken*       stop_token,
+    PluginInterface::IDasStopToken* stop_token,
     ExportInterface::IDasReadOnlyPortMap* /*p_input_port_map*/,
-    ExportInterface::IDasPortMap**        pp_out_port_map)
+    ExportInterface::IDasPortMap** pp_out_port_map)
 {
     if (pp_out_port_map == nullptr)
     {
@@ -932,8 +934,9 @@ DasResult DasFlowControlTaskComponent::DoDelay(
                 break;
             }
 
-            const auto remaining_ms = std::chrono::duration_cast<
-                std::chrono::milliseconds>(deadline - now);
+            const auto remaining_ms =
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    deadline - now);
             const auto slice_ms = std::min<int64_t>(remaining_ms.count(), 50);
             // wait_for 仅在谓词命中（stop 为真）时提前返回，否则等满该切片
             // 超时后回到循环顶部重查 stop 与 deadline。
@@ -981,10 +984,7 @@ DasResult DasFlowControlTaskComponent::Do(
 
     if (kind_ == kBranchKind)
     {
-        return DoBranch(
-            stop_token,
-            p_input_port_map,
-            pp_out_port_map);
+        return DoBranch(stop_token, p_input_port_map, pp_out_port_map);
     }
 
     if (kind_ == kForKind)

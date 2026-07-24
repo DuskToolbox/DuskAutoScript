@@ -285,7 +285,8 @@ std::string HttpIpcTransport::GetEndpointName() const
 void HttpIpcTransport::SetSharedMemoryPool(SharedMemoryPool* /*pool*/)
 {
     // HTTP transport 不使用共享内存（大消息直接作为完整 WebSocket 帧发送）。
-    // 保留 no-op 仅为让 AnyTransport::SetSharedMemoryPool 的 std::visit 可编译。
+    // 保留 no-op 仅为让 AnyTransport::SetSharedMemoryPool 的 std::visit
+    // 可编译。
 }
 
 void HttpIpcTransport::Cleanup()

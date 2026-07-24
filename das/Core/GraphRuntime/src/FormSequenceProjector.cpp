@@ -40,7 +40,7 @@ namespace
     {
         Dto::GraphNodeDto node;
         node.node_id = item.item_id;
-        node.target  = item.target;
+        node.target = item.target;
         node.settings = item.settings;
         return node;
     }
@@ -50,25 +50,27 @@ namespace
     // -----------------------------------------------------------------------
 
     FormSequenceResult ValidateNewItem(
-        const Dto::FormSequenceDto&      seq,
-        const Dto::FormSequenceItemDto&  item)
+        const Dto::FormSequenceDto&     seq,
+        const Dto::FormSequenceItemDto& item)
     {
         if (item.item_id.empty())
         {
-            return {FormSequenceErrorKind::EmptyItemId,
-                    "item_id must not be empty"};
+            return {
+                FormSequenceErrorKind::EmptyItemId,
+                "item_id must not be empty"};
         }
         if (FindItemIndex(seq, item.item_id) != seq.items.size())
         {
-            return {FormSequenceErrorKind::DuplicateItemId,
-                    "item_id already exists: " + item.item_id};
+            return {
+                FormSequenceErrorKind::DuplicateItemId,
+                "item_id already exists: " + item.item_id};
         }
         return {FormSequenceErrorKind::None, ""};
     }
 
     FormSequenceResult HandleAppend(
-        Dto::FormSequenceDto&            seq,
-        const AppendSequenceItemChange&  change)
+        Dto::FormSequenceDto&           seq,
+        const AppendSequenceItemChange& change)
     {
         if (auto r = ValidateNewItem(seq, change.item); !r.Ok())
         {
@@ -79,13 +81,14 @@ namespace
     }
 
     FormSequenceResult HandleInsert(
-        Dto::FormSequenceDto&             seq,
-        const InsertSequenceItemChange&   change)
+        Dto::FormSequenceDto&           seq,
+        const InsertSequenceItemChange& change)
     {
         if (change.index > seq.items.size())
         {
-            return {FormSequenceErrorKind::InvalidIndex,
-                    "insert index out of range"};
+            return {
+                FormSequenceErrorKind::InvalidIndex,
+                "insert index out of range"};
         }
         if (auto r = ValidateNewItem(seq, change.item); !r.Ok())
         {
@@ -113,13 +116,14 @@ namespace
     }
 
     FormSequenceResult HandleMove(
-        Dto::FormSequenceDto&          seq,
-        const MoveSequenceItemChange&  change)
+        Dto::FormSequenceDto&         seq,
+        const MoveSequenceItemChange& change)
     {
         if (change.from >= seq.items.size() || change.to >= seq.items.size())
         {
-            return {FormSequenceErrorKind::InvalidIndex,
-                    "move index out of range"};
+            return {
+                FormSequenceErrorKind::InvalidIndex,
+                "move index out of range"};
         }
         if (change.from == change.to)
         {
@@ -149,19 +153,21 @@ namespace
     }
 
     FormSequenceResult HandleRemove(
-        Dto::FormSequenceDto&            seq,
-        const RemoveSequenceItemChange&  change)
+        Dto::FormSequenceDto&           seq,
+        const RemoveSequenceItemChange& change)
     {
         if (change.item_id.empty())
         {
-            return {FormSequenceErrorKind::EmptyItemId,
-                    "item_id must not be empty"};
+            return {
+                FormSequenceErrorKind::EmptyItemId,
+                "item_id must not be empty"};
         }
         const auto idx = FindItemIndex(seq, change.item_id);
         if (idx == seq.items.size())
         {
-            return {FormSequenceErrorKind::ItemNotFound,
-                    "item not found: " + change.item_id};
+            return {
+                FormSequenceErrorKind::ItemNotFound,
+                "item not found: " + change.item_id};
         }
         // Rebuild by copy-construction, skipping the removed item (see
         // HandleInsert for the yyjson move-assignment rationale).
@@ -179,19 +185,21 @@ namespace
     }
 
     FormSequenceResult HandleSetValue(
-        Dto::FormSequenceDto&                seq,
-        const SetSequenceItemValueChange&    change)
+        Dto::FormSequenceDto&             seq,
+        const SetSequenceItemValueChange& change)
     {
         if (change.item_id.empty())
         {
-            return {FormSequenceErrorKind::EmptyItemId,
-                    "item_id must not be empty"};
+            return {
+                FormSequenceErrorKind::EmptyItemId,
+                "item_id must not be empty"};
         }
         const auto idx = FindItemIndex(seq, change.item_id);
         if (idx == seq.items.size())
         {
-            return {FormSequenceErrorKind::ItemNotFound,
-                    "item not found: " + change.item_id};
+            return {
+                FormSequenceErrorKind::ItemNotFound,
+                "item not found: " + change.item_id};
         }
         seq.items[idx].settings = change.settings;
         return {FormSequenceErrorKind::None, ""};
@@ -207,7 +215,7 @@ Dto::GraphDocumentDto FormSequenceProjector::Project(
 {
     Dto::GraphDocumentDto doc;
     doc.document_id = sequence.document_id;
-    doc.version     = sequence.version;
+    doc.version = sequence.version;
     doc.fingerprint = sequence.fingerprint;
 
     doc.nodes.reserve(sequence.items.size());
@@ -227,12 +235,12 @@ Dto::GraphDocumentDto FormSequenceProjector::Project(
         const auto& tgt = sequence.items[i].item_id;
 
         Dto::GraphEdgeDto edge;
-        edge.edge_id        = MakeSignalEdgeId(src, tgt);
+        edge.edge_id = MakeSignalEdgeId(src, tgt);
         edge.source_node_id = src;
         edge.source_port_id = std::string(SignalOutPort);
         edge.target_node_id = tgt;
         edge.target_port_id = std::string(SignalInPort);
-        edge.edge_type      = "signal";
+        edge.edge_type = "signal";
         doc.edges.push_back(std::move(edge));
     }
 

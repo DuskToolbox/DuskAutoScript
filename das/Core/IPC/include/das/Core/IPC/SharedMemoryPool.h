@@ -52,9 +52,14 @@ class ShmBlockGuard
 {
 public:
     ShmBlockGuard() = default;
-    ShmBlockGuard(SharedMemoryPool* pool, void* data, size_t size, uint64_t handle) noexcept
+    ShmBlockGuard(
+        SharedMemoryPool* pool,
+        void*             data,
+        size_t            size,
+        uint64_t          handle) noexcept
         : pool_(pool), data_(data), size_(size), handle_(handle)
-    {}
+    {
+    }
     ~ShmBlockGuard();
 
     ShmBlockGuard(const ShmBlockGuard&) = delete;
@@ -62,20 +67,26 @@ public:
     ShmBlockGuard(ShmBlockGuard&& other) noexcept;
     ShmBlockGuard& operator=(ShmBlockGuard&& other) noexcept;
 
-    static ShmBlockGuard Attach(SharedMemoryPool* pool, uint64_t handle, size_t size);
+    static ShmBlockGuard Attach(
+        SharedMemoryPool* pool,
+        uint64_t          handle,
+        size_t            size);
     SharedMemoryBlock Disown() noexcept;
 
     void*    Data() const noexcept { return data_; }
     size_t   Size() const noexcept { return size_; }
     uint64_t Handle() const noexcept { return handle_; }
-    explicit operator bool() const noexcept { return pool_ != nullptr && handle_ != 0; }
+    explicit operator bool() const noexcept
+    {
+        return pool_ != nullptr && handle_ != 0;
+    }
 
 private:
     void Reset() noexcept;
 
     SharedMemoryPool* pool_ = nullptr;
     void*             data_ = nullptr;
-    size_t            size_  = 0;
+    size_t            size_ = 0;
     uint64_t          handle_ = 0;
 };
 

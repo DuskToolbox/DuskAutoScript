@@ -390,8 +390,7 @@ namespace
     class FakeStopToken final : public Das::PluginInterface::IDasStopToken
     {
     public:
-        explicit FakeStopToken(bool requested = false)
-            : requested_(requested)
+        explicit FakeStopToken(bool requested = false) : requested_(requested)
         {
         }
 
@@ -442,7 +441,10 @@ namespace
         }
 
         // Thread-safe: a watchdog thread may flip stop mid-Do() (delay cancel).
-        void RequestStop() { requested_.store(true, std::memory_order_release); }
+        void RequestStop()
+        {
+            requested_.store(true, std::memory_order_release);
+        }
 
     private:
         std::atomic<bool>     requested_{false};
@@ -1313,7 +1315,8 @@ TEST_F(TaskComponentContractTest, ForEmitsContinueAndIndexThenBreak)
     auto component = CreateComponent(kForComponentGuid);
     ASSERT_NE(component.Get(), nullptr);
 
-    auto make_input = [&]() {
+    auto make_input = [&]()
+    {
         DAS::DasPtr<Das::ExportInterface::IDasPortMap> input_map;
         EXPECT_EQ(CreateIDasPortMap(input_map.Put()), DAS_S_OK);
         TestSetPortInt(input_map.Get(), "start", 0);
@@ -1326,7 +1329,7 @@ TEST_F(TaskComponentContractTest, ForEmitsContinueAndIndexThenBreak)
     const std::array<int64_t, 3> expected_indices{0, 1, 2};
     for (auto idx : expected_indices)
     {
-        auto in = make_input();
+        auto                                           in = make_input();
         DAS::DasPtr<Das::ExportInterface::IDasPortMap> result_map;
         ASSERT_EQ(component->Do(nullptr, in.Get(), result_map.Put()), DAS_S_OK);
         EXPECT_EQ(TestGetPortString(result_map.Get(), "status"), "completed");
@@ -1335,19 +1338,21 @@ TEST_F(TaskComponentContractTest, ForEmitsContinueAndIndexThenBreak)
     }
 
     // 4th call: range exhausted → break, no index output.
-    auto in = make_input();
+    auto                                           in = make_input();
     DAS::DasPtr<Das::ExportInterface::IDasPortMap> result_map;
     ASSERT_EQ(component->Do(nullptr, in.Get(), result_map.Put()), DAS_S_OK);
     EXPECT_EQ(TestGetEmittedSignal(result_map.Get()), "break");
 }
 
-// DAS-60 Stage 4: while emits continue/break by the dynamic condition each call.
+// DAS-60 Stage 4: while emits continue/break by the dynamic condition each
+// call.
 TEST_F(TaskComponentContractTest, WhileEmitsContinueOrBreakByCondition)
 {
     auto component = CreateComponent(kWhileComponentGuid);
     ASSERT_NE(component.Get(), nullptr);
 
-    auto run = [&](bool cond) {
+    auto run = [&](bool cond)
+    {
         DAS::DasPtr<Das::ExportInterface::IDasPortMap> input_map;
         EXPECT_EQ(CreateIDasPortMap(input_map.Put()), DAS_S_OK);
         TestSetPortBool(input_map.Get(), "condition", cond);
@@ -1369,7 +1374,8 @@ TEST_F(TaskComponentContractTest, MergeOutputsValueFromTakenBranch)
     auto component = CreateComponent(kMergeComponentGuid);
     ASSERT_NE(component.Get(), nullptr);
 
-    auto run = [&](std::string_view set_port, int64_t value) {
+    auto run = [&](std::string_view set_port, int64_t value)
+    {
         DAS::DasPtr<Das::ExportInterface::IDasPortMap> input_map;
         EXPECT_EQ(CreateIDasPortMap(input_map.Put()), DAS_S_OK);
         TestSetPortInt(input_map.Get(), set_port, value);
@@ -1380,8 +1386,8 @@ TEST_F(TaskComponentContractTest, MergeOutputsValueFromTakenBranch)
         return TestGetPortInt(result_map.Get(), "result");
     };
 
-    EXPECT_EQ(run("value_true", 42), 42);   // true branch taken
-    EXPECT_EQ(run("value_false", 7), 7);    // false branch taken
+    EXPECT_EQ(run("value_true", 42), 42); // true branch taken
+    EXPECT_EQ(run("value_false", 7), 7);  // false branch taken
 }
 
 // DAS-52: delay_ms <= 0 emits "next" immediately without waiting.
@@ -1390,11 +1396,11 @@ TEST_F(TaskComponentContractTest, DelayZeroMsEmitsNextImmediately)
     auto component = CreateComponent(kDelayComponentGuid);
     ASSERT_NE(component.Get(), nullptr);
 
-    auto change = ParseJson(R"json({
+    auto                                   change = ParseJson(R"json({
         "kind": "setValue",
         "payload": {"path": "delay_ms", "value": 0}
     })json");
-    auto request = Wrap(std::move(change));
+    auto                                   request = Wrap(std::move(change));
     DasPtr<Das::ExportInterface::IDasJson> settings_result;
     ASSERT_EQ(
         component->ApplySettingsChange(request.Get(), settings_result.Put()),
@@ -1424,11 +1430,11 @@ TEST_F(TaskComponentContractTest, DelayWaitsThenEmitsNext)
     auto component = CreateComponent(kDelayComponentGuid);
     ASSERT_NE(component.Get(), nullptr);
 
-    auto change = ParseJson(R"json({
+    auto                                   change = ParseJson(R"json({
         "kind": "setValue",
         "payload": {"path": "delay_ms", "value": 150}
     })json");
-    auto request = Wrap(std::move(change));
+    auto                                   request = Wrap(std::move(change));
     DasPtr<Das::ExportInterface::IDasJson> settings_result;
     ASSERT_EQ(
         component->ApplySettingsChange(request.Get(), settings_result.Put()),
@@ -1460,11 +1466,11 @@ TEST_F(TaskComponentContractTest, DelayIsCancellableByStopToken)
     auto component = CreateComponent(kDelayComponentGuid);
     ASSERT_NE(component.Get(), nullptr);
 
-    auto change = ParseJson(R"json({
+    auto                                   change = ParseJson(R"json({
         "kind": "setValue",
         "payload": {"path": "delay_ms", "value": 10000}
     })json");
-    auto request = Wrap(std::move(change));
+    auto                                   request = Wrap(std::move(change));
     DasPtr<Das::ExportInterface::IDasJson> settings_result;
     ASSERT_EQ(
         component->ApplySettingsChange(request.Get(), settings_result.Put()),
@@ -1475,10 +1481,12 @@ TEST_F(TaskComponentContractTest, DelayIsCancellableByStopToken)
 
     FakeStopToken stop_token; // not stopped initially
     // Watchdog flips stop mid-wait; the cancellable wait must observe it.
-    std::thread watchdog([&stop_token]() {
-        std::this_thread::sleep_for(std::chrono::milliseconds(40));
-        stop_token.RequestStop();
-    });
+    std::thread watchdog(
+        [&stop_token]()
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(40));
+            stop_token.RequestStop();
+        });
 
     const auto start = std::chrono::steady_clock::now();
     DAS::DasPtr<Das::ExportInterface::IDasPortMap> result_map;

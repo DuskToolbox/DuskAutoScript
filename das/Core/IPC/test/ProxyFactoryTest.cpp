@@ -98,11 +98,13 @@ TEST(ProxyFactoryTest, BeginShutdownFlipsRuntimeStateAndBlocksProxyCreation)
     proxy_factory.BeginShutdown();
 
     EXPECT_TRUE(runtime_state->IsShuttingDown());
-    EXPECT_FALSE(proxy_factory.GetOrCreateProxy(
-        run_loop,
-        {},
-        object_id,
-        DasReadOnlyStringProxy::InterfaceId).second);
+    EXPECT_FALSE(proxy_factory
+                     .GetOrCreateProxy(
+                         run_loop,
+                         {},
+                         object_id,
+                         DasReadOnlyStringProxy::InterfaceId)
+                     .second);
     EXPECT_FALSE(proxy_factory.HasProxy(object_id));
 }
 

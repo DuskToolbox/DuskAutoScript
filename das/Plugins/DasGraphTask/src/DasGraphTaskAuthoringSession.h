@@ -45,8 +45,10 @@ namespace Plugins::DasGraphTask
         explicit DasGraphTaskAuthoringSession(std::string context_json);
         ~DasGraphTaskAuthoringSession() override;
 
-        DasGraphTaskAuthoringSession(const DasGraphTaskAuthoringSession&)            = delete;
-        DasGraphTaskAuthoringSession& operator=(const DasGraphTaskAuthoringSession&) = delete;
+        DasGraphTaskAuthoringSession(const DasGraphTaskAuthoringSession&) =
+            delete;
+        DasGraphTaskAuthoringSession& operator=(
+            const DasGraphTaskAuthoringSession&) = delete;
 
         DAS_IMPL GetDocument(
             ExportInterface::IDasJson*  p_request_json,

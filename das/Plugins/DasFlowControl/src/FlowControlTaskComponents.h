@@ -72,8 +72,9 @@ private:
         ExportInterface::IDasReadOnlyPortMap* p_input_port_map,
         ExportInterface::IDasPortMap**        pp_out_port_map);
 
-    // Pure signal routing: read `condition`, emit the `true`/`false` signal. The
-    // runtime gates the downstream branch on the emitted signal (DAS-60 Stage 4).
+    // Pure signal routing: read `condition`, emit the `true`/`false` signal.
+    // The runtime gates the downstream branch on the emitted signal (DAS-60
+    // Stage 4).
     DasResult DoBranch(
         PluginInterface::IDasStopToken*       stop_token,
         ExportInterface::IDasReadOnlyPortMap* p_input_port_map,
@@ -102,10 +103,12 @@ private:
         ExportInterface::IDasReadOnlyPortMap* p_input_port_map,
         ExportInterface::IDasPortMap**        pp_out_port_map);
 
-    // Cancellable timed wait: blocks for `delay_ms` (config), then emits "next".
-    // stop_token is a poll-only interface with no callback, so the wait is sliced
-    // (~50ms) on a condition variable and re-polls stop each slice; a stop during
-    // the wait returns "cancelled" promptly. delay_ms <= 0 skips the wait.
+    // Cancellable timed wait: blocks for `delay_ms` (config), then emits
+    // "next". stop_token is a poll-only interface with no callback, so the wait
+    // is sliced
+    // (~50ms) on a condition variable and re-polls stop each slice; a stop
+    // during the wait returns "cancelled" promptly. delay_ms <= 0 skips the
+    // wait.
     DasResult DoDelay(
         PluginInterface::IDasStopToken*       stop_token,
         ExportInterface::IDasReadOnlyPortMap* p_input_port_map,

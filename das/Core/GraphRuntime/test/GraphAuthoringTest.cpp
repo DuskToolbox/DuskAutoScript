@@ -481,8 +481,8 @@ TEST(FromSequenceLintTest, WarnsOnDisconnectedChains)
 TEST(FromSequenceLintTest, NeverRejectsDocument)
 {
     // The lint is advisory only — it returns warnings, never signals rejection.
-    // A wildly non-linear tagged doc still yields a vector (possibly non-empty),
-    // and the document itself is never modified.
+    // A wildly non-linear tagged doc still yields a vector (possibly
+    // non-empty), and the document itself is never modified.
     auto doc = MakeEmptyDocument();
     doc.tags = {"fromsequence"};
     doc.nodes.push_back(MakeNode("t1"));

@@ -332,9 +332,9 @@ std::vector<FromSequenceLintWarning> LintFromSequenceLinearity(
         }
     }
 
-    // Connected components of the signal-edge subgraph (undirected). A node that
-    // touches no signal edge is isolated; multiple components (incl. isolated
-    // nodes) mean the topology is not a single chain.
+    // Connected components of the signal-edge subgraph (undirected). A node
+    // that touches no signal edge is isolated; multiple components (incl.
+    // isolated nodes) mean the topology is not a single chain.
     std::unordered_map<std::string, std::vector<std::string>> signal_adj;
     for (const auto& edge : document.edges)
     {
@@ -358,7 +358,8 @@ std::vector<FromSequenceLintWarning> LintFromSequenceLinearity(
         {
             continue;
         }
-        // An isolated node (no signal edge at all) is its own disconnected piece.
+        // An isolated node (no signal edge at all) is its own disconnected
+        // piece.
         if (signal_in[node.node_id] == 0 && signal_out[node.node_id] == 0)
         {
             visited.insert(node.node_id);

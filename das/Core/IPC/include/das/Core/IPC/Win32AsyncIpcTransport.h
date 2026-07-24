@@ -68,7 +68,7 @@ public:
         const std::string& write_endpoint,
         bool               is_server,
         size_t             max_message_size = 65536,
-        SharedMemoryPool* pool = nullptr);
+        SharedMemoryPool*  pool = nullptr);
 
     [[nodiscard]]
     bool IsConnected() const;

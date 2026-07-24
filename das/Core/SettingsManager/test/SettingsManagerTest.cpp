@@ -46,7 +46,9 @@ namespace
         std::filesystem::path test_dir_;
     };
 
-    TEST_F(SettingsManagerTest, GetGlobalSettingsJson_ReturnsEmptyObject_WhenNoFile)
+    TEST_F(
+        SettingsManagerTest,
+        GetGlobalSettingsJson_ReturnsEmptyObject_WhenNoFile)
     {
         Das::Core::SettingsManager::SettingsManager sm(test_dir_);
         auto result = sm.GetGlobalSettingsJson();
@@ -75,10 +77,9 @@ namespace
                             .value()),
             "dark");
         EXPECT_EQ(
-            std::string(
-                (*loaded.as_object())[std::string_view("language")]
-                    .as_string()
-                    .value()),
+            std::string((*loaded.as_object())[std::string_view("language")]
+                            .as_string()
+                            .value()),
             "zh-CN");
     }
 
@@ -204,7 +205,7 @@ namespace
         sm.CreateProfile("0", "plain");
 
         std::string name = "a\"b\\c\n\t\r渡边";
-        auto result = sm.RenameProfile("0", name);
+        auto        result = sm.RenameProfile("0", name);
         EXPECT_EQ(result, DAS_S_OK);
 
         auto list = sm.GetProfileListJson();
@@ -331,9 +332,8 @@ namespace
         ASSERT_TRUE(final_result.is_object());
         EXPECT_FALSE(
             (*final_result.as_object())[std::string_view("writer")].is_null());
-        EXPECT_FALSE(
-            (*final_result.as_object())[std::string_view("iteration")]
-                .is_null());
+        EXPECT_FALSE((*final_result.as_object())[std::string_view("iteration")]
+                         .is_null());
     }
 
     // --- Split-file plugin settings tests ---

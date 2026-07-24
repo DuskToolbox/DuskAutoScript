@@ -76,9 +76,10 @@ namespace Das::Core::TaskScheduler
                         {
                             auto property = props_obj->operator[](
                                 std::string_view(desc.name));
-                            if constexpr (std::is_same_v<
-                                              std::decay_t<decltype(value)>,
-                                              std::string>)
+                            if constexpr (
+                                std::is_same_v<
+                                    std::decay_t<decltype(value)>,
+                                    std::string>)
                             {
                                 property = std::string(value);
                             }

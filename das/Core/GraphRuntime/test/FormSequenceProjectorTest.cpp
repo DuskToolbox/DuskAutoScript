@@ -19,7 +19,7 @@ namespace
     yyjson::value MakeSettings(const std::string& key, double value)
     {
         auto payload = Das::Utils::MakeYyjsonObject();
-        auto obj     = *payload.as_object();
+        auto obj = *payload.as_object();
         obj[std::string_view(key)] = value;
         return payload;
     }
@@ -39,7 +39,7 @@ namespace
     {
         FormSequenceDto seq;
         seq.document_id = "test_seq";
-        seq.version     = 1;
+        seq.version = 1;
         seq.fingerprint = "sha256:test";
         return seq;
     }
@@ -77,9 +77,9 @@ TEST(FormSequenceProjectorTest, EmptySequenceProjectsToEmptyDocument)
 
 TEST(FormSequenceProjectorTest, ItemsBecomeNodesInOrder)
 {
-    auto seq    = MakeEmptySequence();
-    seq.items   = {MakeItem("a"), MakeItem("b"), MakeItem("c")};
-    auto doc    = FormSequenceProjector::Project(seq);
+    auto seq = MakeEmptySequence();
+    seq.items = {MakeItem("a"), MakeItem("b"), MakeItem("c")};
+    auto doc = FormSequenceProjector::Project(seq);
 
     ASSERT_EQ(doc.nodes.size(), 3u);
     EXPECT_EQ(doc.nodes[0].node_id, "a");
@@ -93,9 +93,9 @@ TEST(FormSequenceProjectorTest, ItemsBecomeNodesInOrder)
 
 TEST(FormSequenceProjectorTest, ConsecutiveItemsLinkedBySignalEdge)
 {
-    auto seq  = MakeEmptySequence();
+    auto seq = MakeEmptySequence();
     seq.items = {MakeItem("a"), MakeItem("b"), MakeItem("c")};
-    auto doc  = FormSequenceProjector::Project(seq);
+    auto doc = FormSequenceProjector::Project(seq);
 
     // N items → N-1 linear signal edges, auto-maintained.
     ASSERT_EQ(CountSignalEdges(doc), 2u);
@@ -103,10 +103,12 @@ TEST(FormSequenceProjectorTest, ConsecutiveItemsLinkedBySignalEdge)
 
     EXPECT_EQ(doc.edges[0].source_node_id, "a");
     EXPECT_EQ(doc.edges[0].target_node_id, "b");
-    EXPECT_EQ(doc.edges[0].source_port_id,
-              std::string(FormSequenceProjector::SignalOutPort));
-    EXPECT_EQ(doc.edges[0].target_port_id,
-              std::string(FormSequenceProjector::SignalInPort));
+    EXPECT_EQ(
+        doc.edges[0].source_port_id,
+        std::string(FormSequenceProjector::SignalOutPort));
+    EXPECT_EQ(
+        doc.edges[0].target_port_id,
+        std::string(FormSequenceProjector::SignalInPort));
     EXPECT_EQ(doc.edges[0].edge_type, "signal");
 
     EXPECT_EQ(doc.edges[1].source_node_id, "b");
@@ -115,9 +117,9 @@ TEST(FormSequenceProjectorTest, ConsecutiveItemsLinkedBySignalEdge)
 
 TEST(FormSequenceProjectorTest, SingleItemHasNoEdges)
 {
-    auto seq  = MakeEmptySequence();
+    auto seq = MakeEmptySequence();
     seq.items = {MakeItem("solo")};
-    auto doc  = FormSequenceProjector::Project(seq);
+    auto doc = FormSequenceProjector::Project(seq);
 
     ASSERT_EQ(doc.nodes.size(), 1u);
     EXPECT_TRUE(doc.edges.empty());
@@ -125,7 +127,7 @@ TEST(FormSequenceProjectorTest, SingleItemHasNoEdges)
 
 TEST(FormSequenceProjectorTest, ProjectIsPureAndIdempotent)
 {
-    auto seq  = MakeEmptySequence();
+    auto seq = MakeEmptySequence();
     seq.items = {MakeItem("a"), MakeItem("b")};
 
     auto doc1 = FormSequenceProjector::Project(seq);
@@ -146,11 +148,13 @@ TEST(FormSequenceProjectorTest, AppendAddsItemAtEnd)
     auto seq = MakeEmptySequence();
     EXPECT_TRUE(
         FormSequenceProjector::ApplyChange(
-            seq, FormSequenceChange{AppendSequenceItemChange{MakeItem("a")}})
+            seq,
+            FormSequenceChange{AppendSequenceItemChange{MakeItem("a")}})
             .Ok());
     EXPECT_TRUE(
         FormSequenceProjector::ApplyChange(
-            seq, FormSequenceChange{AppendSequenceItemChange{MakeItem("b")}})
+            seq,
+            FormSequenceChange{AppendSequenceItemChange{MakeItem("b")}})
             .Ok());
 
     ASSERT_EQ(seq.items.size(), 2u);
@@ -164,12 +168,14 @@ TEST(FormSequenceProjectorTest, AppendRejectsEmptyAndDuplicateItemId)
     seq.items = {MakeItem("a")};
 
     auto r1 = FormSequenceProjector::ApplyChange(
-        seq, FormSequenceChange{AppendSequenceItemChange{MakeItem("")}});
+        seq,
+        FormSequenceChange{AppendSequenceItemChange{MakeItem("")}});
     EXPECT_FALSE(r1.Ok());
     EXPECT_EQ(r1.error_kind, FormSequenceErrorKind::EmptyItemId);
 
     auto r2 = FormSequenceProjector::ApplyChange(
-        seq, FormSequenceChange{AppendSequenceItemChange{MakeItem("a")}});
+        seq,
+        FormSequenceChange{AppendSequenceItemChange{MakeItem("a")}});
     EXPECT_FALSE(r2.Ok());
     EXPECT_EQ(r2.error_kind, FormSequenceErrorKind::DuplicateItemId);
     ASSERT_EQ(seq.items.size(), 1u); // unchanged
@@ -180,10 +186,11 @@ TEST(FormSequenceProjectorTest, InsertPlacesItemAtIndex)
     auto seq = MakeEmptySequence();
     seq.items = {MakeItem("a"), MakeItem("c")};
 
-    EXPECT_TRUE(FormSequenceProjector::ApplyChange(
-        seq,
-        FormSequenceChange{InsertSequenceItemChange{1u, MakeItem("b")}})
-        .Ok());
+    EXPECT_TRUE(
+        FormSequenceProjector::ApplyChange(
+            seq,
+            FormSequenceChange{InsertSequenceItemChange{1u, MakeItem("b")}})
+            .Ok());
 
     ASSERT_EQ(seq.items.size(), 3u);
     EXPECT_EQ(seq.items[0].item_id, "a");
@@ -197,7 +204,8 @@ TEST(FormSequenceProjectorTest, InsertRejectsOutOfRangeIndex)
     seq.items = {MakeItem("a")};
 
     auto r = FormSequenceProjector::ApplyChange(
-        seq, FormSequenceChange{InsertSequenceItemChange{5u, MakeItem("b")}});
+        seq,
+        FormSequenceChange{InsertSequenceItemChange{5u, MakeItem("b")}});
     EXPECT_FALSE(r.Ok());
     EXPECT_EQ(r.error_kind, FormSequenceErrorKind::InvalidIndex);
     ASSERT_EQ(seq.items.size(), 1u);
@@ -209,9 +217,11 @@ TEST(FormSequenceProjectorTest, MoveReordersItem)
     seq.items = {MakeItem("a"), MakeItem("b"), MakeItem("c")};
 
     // Move "a" (index 0) to index 2 → [b, c, a]
-    EXPECT_TRUE(FormSequenceProjector::ApplyChange(
-        seq, FormSequenceChange{MoveSequenceItemChange{0u, 2u}})
-        .Ok());
+    EXPECT_TRUE(
+        FormSequenceProjector::ApplyChange(
+            seq,
+            FormSequenceChange{MoveSequenceItemChange{0u, 2u}})
+            .Ok());
 
     ASSERT_EQ(seq.items.size(), 3u);
     EXPECT_EQ(seq.items[0].item_id, "b");
@@ -225,7 +235,8 @@ TEST(FormSequenceProjectorTest, MoveRejectsOutOfRange)
     seq.items = {MakeItem("a")};
 
     auto r = FormSequenceProjector::ApplyChange(
-        seq, FormSequenceChange{MoveSequenceItemChange{0u, 3u}});
+        seq,
+        FormSequenceChange{MoveSequenceItemChange{0u, 3u}});
     EXPECT_FALSE(r.Ok());
     EXPECT_EQ(r.error_kind, FormSequenceErrorKind::InvalidIndex);
 }
@@ -235,9 +246,11 @@ TEST(FormSequenceProjectorTest, RemoveDeletesItem)
     auto seq = MakeEmptySequence();
     seq.items = {MakeItem("a"), MakeItem("b"), MakeItem("c")};
 
-    EXPECT_TRUE(FormSequenceProjector::ApplyChange(
-        seq, FormSequenceChange{RemoveSequenceItemChange{"b"}})
-        .Ok());
+    EXPECT_TRUE(
+        FormSequenceProjector::ApplyChange(
+            seq,
+            FormSequenceChange{RemoveSequenceItemChange{"b"}})
+            .Ok());
 
     ASSERT_EQ(seq.items.size(), 2u);
     EXPECT_EQ(seq.items[0].item_id, "a");
@@ -250,7 +263,8 @@ TEST(FormSequenceProjectorTest, RemoveRejectsMissingItem)
     seq.items = {MakeItem("a")};
 
     auto r = FormSequenceProjector::ApplyChange(
-        seq, FormSequenceChange{RemoveSequenceItemChange{"nope"}});
+        seq,
+        FormSequenceChange{RemoveSequenceItemChange{"nope"}});
     EXPECT_FALSE(r.Ok());
     EXPECT_EQ(r.error_kind, FormSequenceErrorKind::ItemNotFound);
     ASSERT_EQ(seq.items.size(), 1u);
@@ -261,11 +275,13 @@ TEST(FormSequenceProjectorTest, SetValueReplacesSettings)
     auto seq = MakeEmptySequence();
     seq.items = {MakeItem("a")};
 
-    EXPECT_TRUE(FormSequenceProjector::ApplyChange(
-        seq,
-        FormSequenceChange{
-            SetSequenceItemValueChange{"a", MakeSettings("threshold", 0.9)}})
-        .Ok());
+    EXPECT_TRUE(
+        FormSequenceProjector::ApplyChange(
+            seq,
+            FormSequenceChange{SetSequenceItemValueChange{
+                "a",
+                MakeSettings("threshold", 0.9)}})
+            .Ok());
 
     auto json_str = std::string(seq.items[0].settings.write());
     EXPECT_TRUE(json_str.find("0.9") != std::string::npos)
@@ -280,15 +296,19 @@ TEST(FormSequenceProjectorTest, EditsKeepProjectionLinear)
 {
     auto seq = MakeEmptySequence();
     FormSequenceProjector::ApplyChange(
-        seq, FormSequenceChange{AppendSequenceItemChange{MakeItem("a")}});
+        seq,
+        FormSequenceChange{AppendSequenceItemChange{MakeItem("a")}});
     FormSequenceProjector::ApplyChange(
-        seq, FormSequenceChange{AppendSequenceItemChange{MakeItem("b")}});
+        seq,
+        FormSequenceChange{AppendSequenceItemChange{MakeItem("b")}});
     FormSequenceProjector::ApplyChange(
-        seq, FormSequenceChange{AppendSequenceItemChange{MakeItem("c")}});
+        seq,
+        FormSequenceChange{AppendSequenceItemChange{MakeItem("c")}});
 
     // Remove the middle item — the projection must re-link a→c.
     FormSequenceProjector::ApplyChange(
-        seq, FormSequenceChange{RemoveSequenceItemChange{"b"}});
+        seq,
+        FormSequenceChange{RemoveSequenceItemChange{"b"}});
 
     auto doc = FormSequenceProjector::Project(seq);
     ASSERT_EQ(doc.nodes.size(), 2u);
@@ -303,9 +323,9 @@ TEST(FormSequenceProjectorTest, EditsKeepProjectionLinear)
 
 TEST(FormSequenceProjectorTest, ProjectedChainCompilesInSequenceOrder)
 {
-    auto seq  = MakeEmptySequence();
+    auto seq = MakeEmptySequence();
     seq.items = {MakeItem("t1"), MakeItem("t2"), MakeItem("t3")};
-    auto doc  = FormSequenceProjector::Project(seq);
+    auto doc = FormSequenceProjector::Project(seq);
 
     GraphCompiler compiler;
     auto          plan = compiler.Compile(doc);

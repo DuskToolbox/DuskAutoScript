@@ -67,16 +67,16 @@ public:
     // Profile management (settings/${pid}/)
     yyjson::value GetProfileListJson();
     DasResult     CreateProfile(
-            const std::string& profile_id,
-            const std::string& name = "");
-    DasResult     DeleteProfile(const std::string& profile_id);
-    DasResult     RenameProfile(
+        const std::string& profile_id,
+        const std::string& name = "");
+    DasResult DeleteProfile(const std::string& profile_id);
+    DasResult RenameProfile(
         const std::string& profile_id,
         const std::string& name);
 
     // Profile data (settings/${pid}/ui.json)
     yyjson::value GetProfileJson(const std::string& profile_id);
-    DasResult UpdateProfileJson(
+    DasResult     UpdateProfileJson(
         const std::string&   profile_id,
         const yyjson::value& data);
 
@@ -172,7 +172,8 @@ public:
 private:
     std::filesystem::path GetProfileDir(const std::string& profile_id) const;
     std::filesystem::path GetProfileUiPath(const std::string& profile_id) const;
-    std::filesystem::path GetProfileMetaPath(const std::string& profile_id) const;
+    std::filesystem::path GetProfileMetaPath(
+        const std::string& profile_id) const;
     std::filesystem::path GetPluginSettingsPath(
         const std::string& profile_id,
         const std::string& guid) const;

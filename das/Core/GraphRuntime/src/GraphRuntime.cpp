@@ -486,11 +486,10 @@ namespace
         std::size_t operator()(const EdgeKey& k) const noexcept
         {
             std::size_t seed = 0xcbf29ce484222325ULL;
-            auto mix = [&](const std::string& s)
+            auto        mix = [&](const std::string& s)
             {
-                seed ^=
-                    std::hash<std::string>{}(s) + 0x9e3779b9 + (seed << 6)
-                    + (seed >> 2);
+                seed ^= std::hash<std::string>{}(s) + 0x9e3779b9 + (seed << 6)
+                        + (seed >> 2);
             };
             mix(std::get<0>(k));
             mix(std::get<1>(k));
@@ -521,7 +520,10 @@ DasResult GraphRuntime::RunSignalGated(
     for (const auto& r : plan.signal_routes)
     {
         signal_edge_keys.insert(MakeEdgeKey(
-            r.source_node_id, r.source_port_id, r.target_node_id, r.target_port_id));
+            r.source_node_id,
+            r.source_port_id,
+            r.target_node_id,
+            r.target_port_id));
     }
     for (const auto& be : plan.back_edges)
     {
@@ -543,7 +545,10 @@ DasResult GraphRuntime::RunSignalGated(
             continue;
         }
         const auto key = MakeEdgeKey(
-            b.source_node_id, b.source_port_id, b.target_node_id, b.target_port_id);
+            b.source_node_id,
+            b.source_port_id,
+            b.target_node_id,
+            b.target_port_id);
         if (signal_edge_keys.count(key) > 0)
         {
             continue;
@@ -553,13 +558,18 @@ DasResult GraphRuntime::RunSignalGated(
     }
 
     // -- gate routes (non-back-edge signal routes) + signal fan-out ---------
-    std::unordered_map<std::string, std::vector<Dto::SignalRouteDto>> gate_routes;
-    std::unordered_map<std::string, std::vector<Dto::SignalRouteDto>> signal_out;
+    std::unordered_map<std::string, std::vector<Dto::SignalRouteDto>>
+        gate_routes;
+    std::unordered_map<std::string, std::vector<Dto::SignalRouteDto>>
+        signal_out;
     for (const auto& r : plan.signal_routes)
     {
         signal_out[r.source_node_id].push_back(r);
         const auto key = MakeEdgeKey(
-            r.source_node_id, r.source_port_id, r.target_node_id, r.target_port_id);
+            r.source_node_id,
+            r.source_port_id,
+            r.target_node_id,
+            r.target_port_id);
         // Back-edges re-activate the loop head via the pass restart below; they
         // are NOT gates the head must wait on (the head runs first each pass).
         if (back_edge_keys.count(key) > 0)
@@ -571,8 +581,8 @@ DasResult GraphRuntime::RunSignalGated(
 
     // -- loop structure: back-edge sources + loop heads ---------------------
     std::unordered_map<std::string, std::vector<Dto::BackEdgeDto>>
-                                        back_edges_by_source;
-    std::unordered_set<std::string>     loop_heads;
+                                    back_edges_by_source;
+    std::unordered_set<std::string> loop_heads;
     for (const auto& be : plan.back_edges)
     {
         loop_heads.insert(be.loop_head_node_id);
@@ -608,11 +618,11 @@ DasResult GraphRuntime::RunSignalGated(
 
     auto reach =
         [&](const std::string& start,
-            const std::unordered_map<std::string, std::vector<std::string>>& adj)
-        -> std::unordered_set<std::string>
+            const std::unordered_map<std::string, std::vector<std::string>>&
+                adj) -> std::unordered_set<std::string>
     {
         std::unordered_set<std::string> seen{start};
-        std::deque<std::string>        q{start};
+        std::deque<std::string>         q{start};
         while (!q.empty())
         {
             const std::string u = q.front();
@@ -643,8 +653,8 @@ DasResult GraphRuntime::RunSignalGated(
     std::unordered_map<std::string, std::vector<std::string>> loop_scc;
     for (const auto& head : loop_heads)
     {
-        const auto fr = reach(head, fwd_adj);
-        const auto br = reach(head, bwd_adj);
+        const auto               fr = reach(head, fwd_adj);
+        const auto               br = reach(head, bwd_adj);
         std::vector<std::string> scc;
         for (const auto& n : fr)
         {
@@ -670,12 +680,11 @@ DasResult GraphRuntime::RunSignalGated(
     }
 
     auto guid_of = [](const std::string& id)
-    {
-        return Das::Core::ForeignInterfaceHost::MakeDasGuid(id);
-    };
+    { return Das::Core::ForeignInterfaceHost::MakeDasGuid(id); };
     auto port_signaled = [&](const Dto::SignalRouteDto& r) -> bool
     {
-        const auto* pv = frame.Find(PortKey{guid_of(r.source_node_id), r.source_port_id});
+        const auto* pv =
+            frame.Find(PortKey{guid_of(r.source_node_id), r.source_port_id});
         return pv != nullptr && pv->IsSignal();
     };
     auto can_decide = [&](const std::string& n) -> bool
@@ -698,9 +707,9 @@ DasResult GraphRuntime::RunSignalGated(
     };
     auto should_skip = [&](const std::string& n) -> bool
     {
-        // Gate first. A node with incoming signal routes runs only when at least
-        // one fired: if none fired it is skipped (the untaken branch of an if);
-        // if one fired it is on a taken branch and must run even when a
+        // Gate first. A node with incoming signal routes runs only when at
+        // least one fired: if none fired it is skipped (the untaken branch of
+        // an if); if one fired it is on a taken branch and must run even when a
         // non-taken-branch data predecessor was skipped — that is a φ-join such
         // as das.flow.merge, whose value_* inputs come from both branches but
         // only the taken one produced a value (DAS-74).
@@ -718,8 +727,8 @@ DasResult GraphRuntime::RunSignalGated(
             }
             return !any_open;
         }
-        // No signal gate: skip-propagation — a data predecessor that was skipped
-        // starves this node.
+        // No signal gate: skip-propagation — a data predecessor that was
+        // skipped starves this node.
         for (const auto& p : data_preds[n])
         {
             if (state[p] == NState::Skipped)
@@ -761,7 +770,9 @@ DasResult GraphRuntime::RunSignalGated(
             {
                 SetError(
                     hr,
-                    DAS_FMT_NS::format("Execution cancelled before node = {}", n));
+                    DAS_FMT_NS::format(
+                        "Execution cancelled before node = {}",
+                        n));
                 return hr;
             }
 
@@ -792,7 +803,8 @@ DasResult GraphRuntime::RunSignalGated(
             }
             if (!fired_head.empty())
             {
-                // iteration boundary: clear stale signals, then re-pend head + body
+                // iteration boundary: clear stale signals, then re-pend head +
+                // body
                 for (const auto& m : loop_scc[fired_head])
                 {
                     frame.ClearSignalsByNode(guid_of(m));

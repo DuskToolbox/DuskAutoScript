@@ -1163,7 +1163,8 @@ TEST(SignalAwareCompileTest, FromSequenceLinearChainCompilesInArrayOrder)
     mgr.AddDefinition("BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB", task_def);
     mgr.AddDefinition("CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC", task_def);
 
-    auto build_doc = [&]() {
+    auto build_doc = [&]()
+    {
         GraphDocumentDto doc;
         doc.nodes.push_back(
             MakeComponentNode("t1", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"));

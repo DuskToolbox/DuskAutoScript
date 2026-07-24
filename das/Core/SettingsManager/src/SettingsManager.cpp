@@ -145,9 +145,8 @@ namespace
     {
         auto obj = Das::Utils::MakeYyjsonObject();
         auto o = obj.as_object();
-        (*o)["profileId"] = std::make_pair(
-            std::string_view(profile_id),
-            yyjson::copy_string);
+        (*o)["profileId"] =
+            std::make_pair(std::string_view(profile_id), yyjson::copy_string);
         (*o)["name"] =
             std::make_pair(std::string_view(name), yyjson::copy_string);
         return obj;
