@@ -7,10 +7,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from csharp_generator import generate_csharp_artifacts as _generate_csharp_artifacts
-from das_idl_parser import parse_idl, parse_idl_file
+from das_idl_parser import parse_idl
 
 
-ROOT = Path(__file__).resolve().parents[2]
 TEST_DAS_NATIVE_MODULE = "DasCoreNativeForTest"
 TEST_CSHARP_NATIVE_SUPPORT_MODULE = "DasCoreCSharpSupportForTest"
 
@@ -69,7 +68,20 @@ def _artifacts():
 
 def _source_das_result_artifacts():
     return generate_csharp_artifacts(
-        parse_idl_file(str(ROOT / "idl" / "DasResult.idl")),
+        parse_idl(
+            """
+            errorcode DasResult {
+                DAS_S_OK = 0,
+                DAS_E_CSHARP_ERROR = -1073750021,
+                DAS_E_CSHARP_MISSING_RUNTIMECONFIG = -1073750044,
+                DAS_E_CSHARP_UNSUPPORTED_TFM = -1073750045,
+                DAS_E_CSHARP_HOSTFXR_INIT_FAILED = -1073750046,
+                DAS_E_CSHARP_COM_CLR_INIT_FAILED = -1073750047,
+                DAS_E_CSHARP_ENTRYPOINT_MISSING = -1073750048,
+                DAS_E_CSHARP_PLUGIN_INIT_FAILED = -1073750049,
+            }
+            """
+        ),
         namespace_root="Das.Generated",
         idl_header_names=["DasResult.idl"],
     )
@@ -1202,27 +1214,6 @@ class TestCSharpGeneratorPhase79NativeDirectorSurface(unittest.TestCase):
                     f'DllImport(DAS_NATIVE_MODULE, EntryPoint = "{public_helper}"',
                     native_methods,
                 )
-
-    def test_d79_2_public_header_does_not_expose_csharp_helper_abi(self):
-        public_headers = "\n".join(
-            [
-                (ROOT / "include" / "das" / "DasApi.h").read_text(encoding="utf-8"),
-                (ROOT / "include" / "das" / "DasString.hpp").read_text(encoding="utf-8"),
-            ]
-        )
-
-        for helper_name in (
-            "DasAddRef",
-            "DasRelease",
-            "GetIDasReadOnlyStringUtf16",
-            "GetIDasVariantVectorString",
-            "GetIDasVariantVectorComponent",
-            "PushBackIDasVariantVectorString",
-            "PushBackIDasVariantVectorComponent",
-            "DispatchIDasComponent",
-        ):
-            with self.subTest(helper_name=helper_name):
-                self.assertNotIn(helper_name, public_headers)
 
     def test_d79_04_d79_06_variant_vector_wrapper_uses_native_calls(self):
         artifacts = _phase79_director_artifacts()

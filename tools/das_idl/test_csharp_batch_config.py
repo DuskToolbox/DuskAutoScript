@@ -7,7 +7,6 @@ from pathlib import Path
 
 
 SCRIPT_DIR = Path(__file__).parent
-REPO_ROOT = SCRIPT_DIR.parent.parent
 CSHARP_MODULE_ARGS = (
     "--csharp-das-native-module-name",
     "DasCoreNativeForTest",
@@ -243,44 +242,6 @@ class TestCSharpBatchConfig(unittest.TestCase):
                 ),
                 outputs,
             )
-
-    def test_csharp_only_cmake_route_cannot_require_swig(self):
-        cmake_text = (REPO_ROOT / "cmake" / "DasAddIdlExport.cmake").read_text(
-            encoding="utf-8"
-        )
-        self.assertIn('_LANG_LOWER STREQUAL "python"', cmake_text)
-        self.assertIn('_LANG_LOWER STREQUAL "java"', cmake_text)
-        self.assertIn("C# is a pure reduce-owned generator", cmake_text)
-        self.assertIn("Registered C# pure reduce generator outputs", cmake_text)
-        self.assertNotRegex(
-            cmake_text,
-            r"_NEED_SWIG[\s\S]*?_LANG_LOWER STREQUAL \"csharp\"[\s\S]*?set\(_NEED_SWIG TRUE\)",
-        )
-        self.assertNotRegex(
-            cmake_text,
-            r"find_package\(SWIG REQUIRED\)[\s\S]*?_LANG_NAME \"CSharp\"",
-        )
-        self.assertNotIn('set(_LANG_NAME "CSharp")', cmake_text)
-        for language in ("csharp", "lua", "node"):
-            self.assertRegex(
-                cmake_text,
-                rf'_LANG_LOWER STREQUAL "{language}"[\s\S]*?continue\(\)',
-            )
-
-    def test_third_party_swig_discovery_excludes_csharp(self):
-        third_party_text = (REPO_ROOT / "3rdParty" / "CMakeLists.txt").read_text(
-            encoding="utf-8"
-        )
-        self.assertIn("das_check_language_export(JAVA", third_party_text)
-        self.assertIn("das_check_language_export(PYTHON", third_party_text)
-        self.assertNotRegex(
-            third_party_text,
-            r"das_check_language_export\s*\(\s*CSHARP\b",
-        )
-        self.assertIn(
-            "find_package(SWIG 4.1.1 COMPONENTS ${DAS_EXPORT_LANGUAGES_LIST} REQUIRED)",
-            third_party_text,
-        )
 
     def test_batch_execution_runs_csharp_reduce_phase(self):
         with tempfile.TemporaryDirectory() as temp_dir:

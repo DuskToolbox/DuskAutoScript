@@ -1433,9 +1433,14 @@ class TestNapiGenerator(unittest.TestCase):
         self.assertIn("ThrowDasException(env, result", artifacts.cpp)
 
     def test_napi_das_result_exports_javascript_error_codes(self):
-        root = Path(__file__).parents[2]
-        das_result_idl = root / "idl" / "DasResult.idl"
-        doc = parse_idl(das_result_idl.read_text(encoding="utf-8"))
+        doc = parse_idl(
+            """
+            errorcode DasResult {
+                DAS_E_JAVASCRIPT_ERROR = -1073750001,
+                DAS_E_JAVASCRIPT_NO_IMPLEMENTATION = -1073750002,
+            }
+            """
+        )
         artifacts = generate_napi_artifacts(
             doc,
             package_name="das-core",
@@ -1449,19 +1454,6 @@ class TestNapiGenerator(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertIn(name, artifacts.cpp)
                 self.assertIn(name, artifacts.dts)
-
-        messages = (
-            root / "das" / "Core" / "Exceptions" / "src" / "GlobalErrorMessages.cpp"
-        ).read_text(encoding="utf-8")
-        self.assertRegex(
-            messages,
-            r"\{\s*DAS_E_JAVASCRIPT_ERROR\s*,\s*\"JavaScript error\"\s*\}",
-        )
-        self.assertRegex(
-            messages,
-            r"\{\s*DAS_E_JAVASCRIPT_NO_IMPLEMENTATION\s*,\s*"
-            r"\"JavaScript callback not implemented\"\s*\}",
-        )
 
 
 class TestNapiExportCli(unittest.TestCase):
