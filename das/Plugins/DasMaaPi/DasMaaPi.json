@@ -13,7 +13,7 @@
     "69F20001-0000-4000-8000-000000000001": {
       "pluginGuid": "69F20000-0000-4000-8000-000000000001",
       "name": "maa.projectInterface",
-      "description": "Run a MaaFramework ProjectInterface project through DAS task authoring",
+      "description": "创建一个 MaaFramework 任务",
       "gameName": "MaaFramework",
       "authoring": {
         "factoryGuid": "69F20002-0000-4000-8000-000000000001",
