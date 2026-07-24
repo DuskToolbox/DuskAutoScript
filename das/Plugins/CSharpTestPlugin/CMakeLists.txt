@@ -52,7 +52,16 @@ function(das_add_csharp_test_plugin_build
     set(_BUILD_OUTPUT_DIR
         "${CSHARP_TEST_PLUGIN_BUILD_ROOT}/${TARGET_FRAMEWORK}/${CSHARP_TEST_PLUGIN_CONFIGURATION}")
 
-    add_custom_target(${TARGET_NAME}
+    # stamp 作为 OUTPUT，让 CMake 按输入新鲜度决定是否调用 dotnet（避免每次全量重编）。
+    # 路径含 $<CONFIG>：Ninja 单值，VS multi-config 各配置一份（CMake 3.20+ 支持 per-config OUTPUT）。
+    set(_BUILD_STAMP
+        "${CSHARP_TEST_PLUGIN_BUILD_ROOT}/${TARGET_FRAMEWORK}/${CSHARP_TEST_PLUGIN_CONFIGURATION}.stamp")
+
+    file(GLOB _CS_PLUGIN_SOURCES CONFIGURE_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cs")
+
+    add_custom_command(
+        OUTPUT "${_BUILD_STAMP}"
         COMMAND ${CMAKE_COMMAND} -E make_directory "${_BUILD_OUTPUT_DIR}"
         COMMAND "${DotNet_EXECUTABLE}" build "${CSHARP_TEST_PLUGIN_PROJECT}"
             --framework "${TARGET_FRAMEWORK}"
@@ -63,11 +72,15 @@ function(das_add_csharp_test_plugin_build
             -p:DasGeneratedOutputDir="${DAS_CORE_CSHARP_OUTPUT_DIR}"
             -p:TargetFrameworks="${TARGET_FRAMEWORK}"
             -v:minimal
-        COMMAND ${CMAKE_COMMAND} -E rm -rf
-            "${CMAKE_CURRENT_SOURCE_DIR}/bin"
-            "${CMAKE_CURRENT_SOURCE_DIR}/obj"
+        COMMAND ${CMAKE_COMMAND} -E touch "${_BUILD_STAMP}"
+        DEPENDS
+            "${CSHARP_TEST_PLUGIN_PROJECT}"
+            ${_CS_PLUGIN_SOURCES}
+            DasCoreCSharpExport
+        COMMENT "Building C# plugin ${PACKAGE_NAME} (${TARGET_FRAMEWORK})"
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
         VERBATIM)
+    add_custom_target(${TARGET_NAME} DEPENDS "${_BUILD_STAMP}")
     add_dependencies(${TARGET_NAME} DasCoreCSharpExport)
 endfunction()
 
@@ -229,7 +242,11 @@ endif()
 
 if(DAS_CSHARP_NATIVEAOT_SMOKE)
     set(CSHARP_TEST_PLUGIN_NATIVEAOT_RUNTIME_ID win-x64 CACHE STRING "Runtime identifier for the C# NativeAOT smoke publish")
-    add_custom_target(CSharpTestPluginNativeAotPublish
+    set(_NATIVEAOT_STAMP
+        "${CSHARP_TEST_PLUGIN_BINARY_ROOT}/nativeaot/${CSHARP_TEST_PLUGIN_CONFIGURATION}.stamp")
+
+    add_custom_command(
+        OUTPUT "${_NATIVEAOT_STAMP}"
         COMMAND ${CMAKE_COMMAND} -E make_directory
             "${CSHARP_TEST_PLUGIN_BINARY_ROOT}/nativeaot/${CSHARP_TEST_PLUGIN_CONFIGURATION}"
         COMMAND "${DotNet_EXECUTABLE}" publish "${CSHARP_TEST_PLUGIN_PROJECT}"
@@ -243,10 +260,13 @@ if(DAS_CSHARP_NATIVEAOT_SMOKE)
             -p:DasGeneratedOutputDir="${DAS_CORE_CSHARP_OUTPUT_DIR}"
             -p:TargetFrameworks=net8.0
             -v:minimal
-        COMMAND ${CMAKE_COMMAND} -E rm -rf
-            "${CMAKE_CURRENT_SOURCE_DIR}/bin"
-            "${CMAKE_CURRENT_SOURCE_DIR}/obj"
+        COMMAND ${CMAKE_COMMAND} -E touch "${_NATIVEAOT_STAMP}"
+        DEPENDS
+            "${CSHARP_TEST_PLUGIN_PROJECT}"
+            DasCoreCSharpExport
+        COMMENT "Publishing C# plugin NativeAOT (${CSHARP_TEST_PLUGIN_MODERN_NAME})"
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
         VERBATIM)
+    add_custom_target(CSharpTestPluginNativeAotPublish DEPENDS "${_NATIVEAOT_STAMP}")
     add_dependencies(CSharpTestPluginNativeAotPublish DasCoreCSharpExport)
 endif()

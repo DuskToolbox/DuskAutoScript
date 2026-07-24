@@ -20,3 +20,7 @@ __pycache__/
 .VSCodeCounter/
 logs/
 CMakeUserPresets.json
+
+# .NET / C# build intermediates (e.g. das/Plugins/CSharpTestPlugin)
+bin/
+obj/
