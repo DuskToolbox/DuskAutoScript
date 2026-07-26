@@ -6447,6 +6447,176 @@ TEST(MaapiProjectionTest, RootFieldLayoutCoversAdapterFieldsWhenCatalogAbsent)
         << "fieldLayout must cover every root field exactly once";
 }
 
+// ============================================================================
+// Phase 87-03 — BuildDocument 把 ui.values["sectionExpand.<id>"] 合并进
+// fieldLayout[].defaultExpanded（B 方案：MaaPI 投影层合并，Get 响应不加
+// acceptedProperties）。前端直接读 section.DefaultExpanded，不解析 raw kv。
+// ============================================================================
+
+// REQ-MaaPI-merge 用例 1（TrueOverride）：原始 default_expand=false 的 setting
+// section，ui.values["sectionExpand.<id>"]=true → defaultExpanded==true。
+TEST(MaapiAuthoringDefaultExpandedMerge, TrueOverrideRestoresExpandedPreference)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto catalog = MakeNeutralProjectionMockCatalog();
+    ASSERT_FALSE(catalog.settings.empty());
+    catalog.settings[0].dto.default_expand = false;
+
+    AcceptedSettingsDto settings;
+    settings.ui.values["sectionExpand.setting_performance"] =
+        yyjson::value(true);
+
+    auto document = ProjectAuthoringDocument(settings, &catalog, {}, 0);
+
+    auto section = FindLayoutSection(document, "setting_performance");
+    ASSERT_TRUE(section.has_value());
+    auto section_obj = section->as_object();
+    ASSERT_TRUE(section_obj.has_value());
+    EXPECT_TRUE(
+        (*section_obj)[std::string_view("defaultExpanded")].as_bool().value_or(
+            false));
+}
+
+// REQ-MaaPI-merge 用例 2（FalseOverride）：原始 default_expand=true 的 setting
+// section，ui.values["sectionExpand.<id>"]=false → defaultExpanded==false。
+TEST(
+    MaapiAuthoringDefaultExpandedMerge,
+    FalseOverrideRestoresCollapsedPreference)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto catalog = MakeNeutralProjectionMockCatalog();
+    ASSERT_GE(catalog.settings.size(), 2u);
+    catalog.settings[1].dto.default_expand = true;
+
+    AcceptedSettingsDto settings;
+    settings.ui.values["sectionExpand.setting_advanced"] = yyjson::value(false);
+
+    auto document = ProjectAuthoringDocument(settings, &catalog, {}, 0);
+
+    auto section = FindLayoutSection(document, "setting_advanced");
+    ASSERT_TRUE(section.has_value());
+    auto section_obj = section->as_object();
+    ASSERT_TRUE(section_obj.has_value());
+    EXPECT_FALSE(
+        (*section_obj)[std::string_view("defaultExpanded")].as_bool().value_or(
+            true));
+}
+
+// REQ-MaaPI-merge 用例 3（MissingKeyDefault）：ui.values 无对应键 →
+// 用原始默认。
+TEST(MaapiAuthoringDefaultExpandedMerge, MissingKeyFallsBackToOriginalDefault)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto catalog = MakeNeutralProjectionMockCatalog();
+    ASSERT_FALSE(catalog.settings.empty());
+    catalog.settings[0].dto.default_expand = false;
+    ASSERT_GE(catalog.settings.size(), 2u);
+    catalog.settings[1].dto.default_expand = true;
+
+    AcceptedSettingsDto settings; // ui.values 空 → 全部走原始默认
+
+    auto document = ProjectAuthoringDocument(settings, &catalog, {}, 0);
+
+    auto perf = FindLayoutSection(document, "setting_performance");
+    ASSERT_TRUE(perf.has_value());
+    EXPECT_FALSE((*perf->as_object())[std::string_view("defaultExpanded")]
+                     .as_bool()
+                     .value_or(true));
+
+    auto adv = FindLayoutSection(document, "setting_advanced");
+    ASSERT_TRUE(adv.has_value());
+    EXPECT_TRUE((*adv->as_object())[std::string_view("defaultExpanded")]
+                    .as_bool()
+                    .value_or(false));
+
+    // 项目设置 section 原始硬编码 true，不受 ui.values 缺失影响。
+    auto project = FindLayoutSection(document, "project");
+    ASSERT_TRUE(project.has_value());
+    EXPECT_TRUE((*project->as_object())[std::string_view("defaultExpanded")]
+                    .as_bool()
+                    .value_or(false));
+}
+
+// REQ-MaaPI-merge 用例 4（NonBoolIgnored）：ui.values 存在但类型非 bool
+// （字符串/数字）→ 安全 fallback 用原始默认（cpp_yyjson safe cast 失败不抛）。
+TEST(MaapiAuthoringDefaultExpandedMerge, NonBoolValueIgnoredFallsBackToOriginal)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto catalog = MakeNeutralProjectionMockCatalog();
+    ASSERT_FALSE(catalog.settings.empty());
+    catalog.settings[0].dto.default_expand = false;
+    ASSERT_GE(catalog.settings.size(), 2u);
+    catalog.settings[1].dto.default_expand = true;
+
+    AcceptedSettingsDto settings;
+    auto str_val = Das::Utils::ParseYyjsonFromString(R"("true")");
+    ASSERT_TRUE(str_val.has_value());
+    settings.ui.values["sectionExpand.setting_performance"] =
+        std::move(*str_val);
+    auto num_val = Das::Utils::ParseYyjsonFromString("1");
+    ASSERT_TRUE(num_val.has_value());
+    settings.ui.values["sectionExpand.setting_advanced"] = std::move(*num_val);
+
+    auto document = ProjectAuthoringDocument(settings, &catalog, {}, 0);
+
+    auto perf = FindLayoutSection(document, "setting_performance");
+    ASSERT_TRUE(perf.has_value());
+    EXPECT_FALSE((*perf->as_object())[std::string_view("defaultExpanded")]
+                     .as_bool()
+                     .value_or(true));
+
+    auto adv = FindLayoutSection(document, "setting_advanced");
+    ASSERT_TRUE(adv.has_value());
+    EXPECT_TRUE((*adv->as_object())[std::string_view("defaultExpanded")]
+                    .as_bool()
+                    .value_or(false));
+}
+
+// REQ-MaaPI-W3（B 方案核心约束）：Get 响应 envelope 不含顶层
+// acceptedProperties。 ui.values 合并后 Get 路径产出的 envelope 仍是 {document,
+// diagnostics}，前端通过 document.fieldLayout[].defaultExpanded 拿偏好，不读
+// raw kv。显式 negative assertion 锁定此不变量，防后续误在 Get envelope 暴露
+// acceptedProperties。
+TEST(
+    MaapiAuthoringGetEnvelopeOmitsAcceptedProperties,
+    GetPathEnvelopeHasNoAcceptedPropertiesTopLevel)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto                catalog = MakeNeutralProjectionMockCatalog();
+    AcceptedSettingsDto settings;
+    settings.ui.values["sectionExpand.setting_performance"] =
+        yyjson::value(true);
+
+    std::vector<PiDiagnosticDto> diagnostics;
+    auto                         document =
+        ProjectAuthoringDocument(settings, &catalog, diagnostics, 0);
+
+    // 构造 Get envelope（镜像 MaapiAuthoringSession::GetDocument: {document,
+    // diagnostics}）。
+    yyjson::value envelope(Das::Utils::MakeYyjsonObject());
+    auto          env_obj = envelope.as_object();
+    (*env_obj)[std::string_view("document")] =
+        Das::Utils::CloneYyjsonValue(document);
+    auto empty_diag = Das::Utils::ParseYyjsonFromString("[]");
+    ASSERT_TRUE(empty_diag.has_value());
+    (*env_obj)[std::string_view("diagnostics")] = std::move(*empty_diag);
+
+    // W3 显式 negative assertion：Get envelope 不含 acceptedProperties
+    // 顶层字段。
+    EXPECT_FALSE(env_obj->contains(std::string_view("acceptedProperties")));
+
+    // document 本身也不含 acceptedProperties（document 是 UI
+    // IR，非持久化形态）。
+    auto doc_obj = document.as_object();
+    ASSERT_TRUE(doc_obj.has_value());
+    EXPECT_FALSE(doc_obj->contains(std::string_view("acceptedProperties")));
+}
+
 // Feature 2 RED: setValue target=document field=settings.<key> 必须持久化到
 // acceptedProperties.pi.global_options（setting 与 global_option 共享
 // global 级存储，D-86-04）。

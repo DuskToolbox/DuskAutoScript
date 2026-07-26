@@ -1885,10 +1885,11 @@ namespace Das::Plugins::DasMaaPi
     // 引用）不进 fields[]，故不进 layout —— PI v2.8.0 setting 才是"哪些 option
     // 进设置页"的声明，未声明的不渲染。
     yyjson::value BuildRootFieldLayout(
-        const yyjson::value&          fields,
-        const PiCatalog*              catalog,
-        std::string_view              current_language,
-        std::vector<PiDiagnosticDto>* projection_diagnostics)
+        const yyjson::value&                        fields,
+        const PiCatalog*                            catalog,
+        std::string_view                            current_language,
+        std::vector<PiDiagnosticDto>*               projection_diagnostics,
+        const std::map<std::string, yyjson::value>& ui_values)
     {
         yyjson::value layout(Array());
         auto          layout_arr = layout.as_array();
@@ -1957,6 +1958,28 @@ namespace Das::Plugins::DasMaaPi
             return leaf;
         };
 
+        // section defaultExpanded 合并（B 方案）：查
+        // ui.values["sectionExpand.<id>"] 是否有持久化偏好。键存在且为 bool →
+        // 覆盖原始默认；缺失或非 bool → 用原始默认（cpp_yyjson safe cast，失败
+        // fallback 不抛）。前端直接读 defaultExpanded，不解析 raw kv；Get 响应
+        // 不加 acceptedProperties（B 方案核心约束）。
+        auto resolve_default_expanded = [&ui_values](
+                                            std::string_view section_id,
+                                            bool original_default) -> bool
+        {
+            const std::string key = "sectionExpand." + std::string(section_id);
+            auto              it = ui_values.find(key);
+            if (it == ui_values.end())
+            {
+                return original_default;
+            }
+            if (!it->second.is_bool())
+            {
+                return original_default;
+            }
+            return it->second.as_bool().value_or(original_default);
+        };
+
         // 项目设置 section（顺序第一）。defaultExpanded=true，默认展开
         // （与任务设置 section 一致；“项目设置默认折叠”的旧 UI 行为已废弃）。
         if (!project_entries.empty())
@@ -1976,7 +1999,8 @@ namespace Das::Plugins::DasMaaPi
                     "fieldLayout.section.project.label");
             }
             (*s_obj)[std::string_view("label")] = JsonString(project_label);
-            (*s_obj)[std::string_view("defaultExpanded")] = true;
+            (*s_obj)[std::string_view("defaultExpanded")] =
+                resolve_default_expanded("project", true);
             yyjson::value entries(Array());
             for (const auto& name : project_entries)
             {
@@ -2035,7 +2059,9 @@ namespace Das::Plugins::DasMaaPi
                 (*s_obj)[std::string_view("label")] =
                     JsonString(resolved_label);
                 (*s_obj)[std::string_view("defaultExpanded")] =
-                    setting.dto.default_expand;
+                    resolve_default_expanded(
+                        section_id,
+                        setting.dto.default_expand);
                 (*s_obj)[std::string_view("entries")] = std::move(entries);
                 layout_arr->emplace_back(std::move(section));
             }
@@ -2294,7 +2320,8 @@ namespace Das::Plugins::DasMaaPi
             fields,
             catalog,
             current_language,
-            projection_diagnostics);
+            projection_diagnostics,
+            settings.ui.values);
         (*obj)[std::string_view("fields")] = std::move(fields);
         (*obj)[std::string_view("fieldLayout")] = std::move(field_layout);
 
