@@ -1299,6 +1299,13 @@ namespace Das::Core::TaskScheduler
                 task_repository_store_.reset();
                 capability_registry_.Clear();
                 repository_plugin_availability_.clear();
+                // Drop cached authoring sessions (lazy-rebuilt on next access).
+                // mutex_ is already held here, so clear the maps directly
+                // rather than calling InvalidateAuthoringSessions() (which
+                // re-locks). shared_ptr keeps any in-flight caller's entry
+                // alive (D-87-07).
+                task_authoring_sessions_.clear();
+                repository_authoring_sessions_.clear();
                 for (auto& loaded_plugin_path :
                      std::views::reverse(loaded_plugin_paths_))
                 {
@@ -2113,7 +2120,18 @@ namespace Das::Core::TaskScheduler
             store = task_repository_store_;
         }
 
-        return store->DeleteEntry(entry_id);
+        auto result = store->DeleteEntry(entry_id);
+        if (DAS::IsFailed(result))
+        {
+            return result;
+        }
+        // Entry deleted — drop its cached authoring session so a recreated
+        // entry id rebuilds against fresh state.
+        {
+            const std::scoped_lock lock(mutex_);
+            EvictAuthoringSession(repository_authoring_sessions_, entry_id);
+        }
+        return DAS_S_OK;
     }
 
     yyjson::value SchedulerService::RenameRepositoryEntry(
@@ -2192,6 +2210,35 @@ namespace Das::Core::TaskScheduler
             return nullptr;
         }
         return it->second;
+    }
+
+    void SchedulerService::EvictAuthoringSession(
+        std::unordered_map<int64_t, std::shared_ptr<AuthoringSessionEntry>>&
+                cache,
+        int64_t id)
+    {
+        // mutex_ held by caller. Direct erase — no drain. The map's shared_ptr
+        // releases its reference, but any in-flight caller that already took a
+        // copy keeps the entry (and its session) alive until it finishes
+        // (D-87-07 shared_ptr upgrade). That is what roots out the UAF a drain
+        // cycle was designed to prevent, so the drain is unnecessary here.
+        auto it = cache.find(id);
+        if (it == cache.end())
+        {
+            return;
+        }
+        cache.erase(it);
+    }
+
+    void SchedulerService::InvalidateAuthoringSessions()
+    {
+        // Direct clear of both maps under mutex_ — no per-entry drain.
+        // In-flight callers keep their entries alive via shared_ptr copies
+        // (D-87-07), so clearing the maps cannot dangle a session a caller is
+        // still using.
+        const std::scoped_lock lock(mutex_);
+        task_authoring_sessions_.clear();
+        repository_authoring_sessions_.clear();
     }
 
     yyjson::value SchedulerService::GetRepositoryEntryAuthoringDocument(
@@ -3158,6 +3205,10 @@ namespace Das::Core::TaskScheduler
                 {
                     task_instances_.erase(it);
                 }
+                // Drop the cached authoring session so a later re-created task
+                // id rebuilds against fresh state. commit_lock holds mutex_;
+                // EvictAuthoringSession assumes the caller holds it.
+                EvictAuthoringSession(task_authoring_sessions_, task_id);
                 return DAS_S_OK;
             }
 

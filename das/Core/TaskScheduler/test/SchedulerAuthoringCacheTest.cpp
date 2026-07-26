@@ -304,6 +304,22 @@ namespace
         return (*obj)[std::string_view("errorKind")].as_string().value_or("")
                == std::string_view("revisionConflict");
     }
+
+    // Builds a minimal authoring-capable task instance with the given id, for
+    // tests that seed more than one task (WriteSchedulerState rewrites the
+    // index, so multi-task tests must seed all tasks in one call).
+    yyjson::value MakeSeededTask(int64_t task_id)
+    {
+        yyjson::value task(Das::Utils::MakeYyjsonObject());
+        (*task.as_object())[std::string_view("id")] = task_id;
+        (*task.as_object())[std::string_view("taskGuid")] =
+            FactoryTaskGuidString;
+        (*task.as_object())[std::string_view("pluginGuid")] =
+            FactoryPluginGuidString;
+        (*task.as_object())[std::string_view("properties")] =
+            yyjson::value(Das::Utils::MakeYyjsonObject());
+        return task;
+    }
 } // namespace
 
 class SchedulerAuthoringCacheTest : public ::testing::Test
@@ -884,4 +900,109 @@ TEST_F(SchedulerAuthoringCacheTest, SchedulerAuthoringGetParallelDifferentTasks)
     // Per-task sessions: one cached entry per task id, no shared session.
     const ipc_scoped_lock lock(shared_state_->mutex);
     EXPECT_EQ(shared_state_->authoring_session_count, 2);
+}
+
+// REQ-06c: DeleteTask evicts the cached authoring session for that task only
+// (scoped evict, not a global clear). Seed two tasks, populate both sessions,
+// then delete task 0 and Get task 1 — task 1's cached session must still be a
+// hit (count stays 2). A buggy global clear would force task 1 to rebuild
+// (count 3). (Re-creating task 0 to observe its own rebuild end-to-end requires
+// re-Initialize, which hits a separate pre-existing PluginManager UAF outside
+// this plan's scope — see deferred-items; the scoped guarantee plus the
+// EvictAuthoringSession `cache.erase(id)` impl document the per-id evict.)
+TEST_F(SchedulerAuthoringCacheTest, SchedulerAuthoringCacheEvictOnDelete)
+{
+    WriteSchedulerState(
+        *settings_manager_,
+        2,
+        {0, 1},
+        {MakeSeededTask(0), MakeSeededTask(1)});
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    const yyjson::value request = MakeEmptyAuthoringRequest();
+    scheduler_->GetTaskAuthoringDocument(0, request);
+    scheduler_->GetTaskAuthoringDocument(1, request);
+    {
+        const ipc_scoped_lock lock(shared_state_->mutex);
+        EXPECT_EQ(shared_state_->authoring_session_count, 2);
+    }
+
+    ASSERT_EQ(scheduler_->DeleteTask(0), DAS_S_OK);
+
+    // Task 1's session is untouched by task 0's eviction — still a cache hit.
+    scheduler_->GetTaskAuthoringDocument(1, request);
+    {
+        const ipc_scoped_lock lock(shared_state_->mutex);
+        EXPECT_EQ(shared_state_->authoring_session_count, 2);
+    }
+}
+
+// REQ-06c (repository side): DeleteRepositoryEntry evicts the cached repository
+// authoring session scoped to that entry. Two entries, both Get-populated,
+// delete entry 0, then Get entry 1 stays a cache hit (count stays 2).
+TEST_F(
+    SchedulerAuthoringCacheTest,
+    SchedulerAuthoringRepositoryCacheEvictOnDelete)
+{
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    auto created0 = scheduler_->CreateRepositoryEntry(
+        MakeRepositoryCreateRequest("Repo entry 0", 3));
+    ASSERT_EQ(
+        (*created0.as_object())[std::string_view("entryId")].as_sint().value_or(
+            -1),
+        0);
+    auto created1 = scheduler_->CreateRepositoryEntry(
+        MakeRepositoryCreateRequest("Repo entry 1", 3));
+    ASSERT_EQ(
+        (*created1.as_object())[std::string_view("entryId")].as_sint().value_or(
+            -1),
+        1);
+
+    const yyjson::value request = MakeEmptyAuthoringRequest();
+    scheduler_->GetRepositoryEntryAuthoringDocument(0, request);
+    scheduler_->GetRepositoryEntryAuthoringDocument(1, request);
+    {
+        const ipc_scoped_lock lock(shared_state_->mutex);
+        EXPECT_EQ(shared_state_->authoring_session_count, 2);
+    }
+
+    ASSERT_EQ(scheduler_->DeleteRepositoryEntry(0), DAS_S_OK);
+
+    // Entry 1's session is untouched by entry 0's eviction — still a cache hit.
+    scheduler_->GetRepositoryEntryAuthoringDocument(1, request);
+    {
+        const ipc_scoped_lock lock(shared_state_->mutex);
+        EXPECT_EQ(shared_state_->authoring_session_count, 2);
+    }
+}
+
+// REQ-06d / REQ-08: the cache-clear mechanism (used by Initialize reentry and
+// the public InvalidateAuthoringSessions the Plan 04 listener will call) drops
+// the cached session so the next Get rebuilds (count 1 -> 2). Initialize
+// reentry and InvalidateAuthoringSessions share the identical `clear both maps`
+// path, so this exercises the clear directly. (End-to-end re-Initialize is
+// blocked by a pre-existing PluginManager UAF on IPC plugin reload — out of
+// scope; logged in deferred-items.)
+TEST_F(
+    SchedulerAuthoringCacheTest,
+    SchedulerAuthoringInvalidateAuthoringSessions)
+{
+    SeedAuthoringTask(0);
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    const yyjson::value request = MakeEmptyAuthoringRequest();
+    scheduler_->GetTaskAuthoringDocument(0, request);
+    {
+        const ipc_scoped_lock lock(shared_state_->mutex);
+        EXPECT_EQ(shared_state_->authoring_session_count, 1);
+    }
+
+    scheduler_->InvalidateAuthoringSessions();
+
+    scheduler_->GetTaskAuthoringDocument(0, request);
+    {
+        const ipc_scoped_lock lock(shared_state_->mutex);
+        EXPECT_EQ(shared_state_->authoring_session_count, 2);
+    }
 }
