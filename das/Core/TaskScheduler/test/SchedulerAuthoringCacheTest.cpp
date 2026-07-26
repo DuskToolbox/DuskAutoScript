@@ -235,11 +235,74 @@ namespace
     int64_t ReadRevision(const yyjson::value& result)
     {
         auto obj = result.as_object();
-        if (!obj.has_value())
+        if (!obj.has_value() || !obj->contains(std::string_view("revision")))
         {
             return -1;
         }
         return (*obj)[std::string_view("revision")].as_sint().value_or(-1);
+    }
+
+    // A Get response carries the revision inside document.revision (only the
+    // Apply response exposes a top-level revision). Read it out by path so the
+    // strict Get response shape is observed without throwing on the missing
+    // top-level key.
+    int64_t ReadDocumentRevision(const yyjson::value& result)
+    {
+        auto obj = result.as_object();
+        if (!obj.has_value() || !obj->contains(std::string_view("document")))
+        {
+            return -1;
+        }
+        auto doc = (*obj)[std::string_view("document")].as_object();
+        if (!doc.has_value() || !doc->contains(std::string_view("revision")))
+        {
+            return -1;
+        }
+        return (*doc)[std::string_view("revision")].as_sint().value_or(-1);
+    }
+
+    // Reads the persisted authoring revision straight off the settings store
+    // (authoring.revision). The SchedulerService GetAuthoringRevision helper is
+    // static inside SchedulerService.cpp's anonymous namespace, so the test
+    // re-derives the field path here.
+    int64_t ReadPersistedTaskRevision(
+        Das::Core::SettingsManager::SettingsManager& sm,
+        int64_t                                      task_id)
+    {
+        auto task_json = sm.GetTaskInstanceJson("0", task_id);
+        auto obj = task_json.as_object();
+        if (!obj.has_value())
+        {
+            return -1;
+        }
+        auto authoring = (*obj)[std::string_view("authoring")].as_object();
+        if (!authoring.has_value())
+        {
+            return -1;
+        }
+        return (*authoring)[std::string_view("revision")].as_sint().value_or(
+            -1);
+    }
+
+    bool ResultIsOk(const yyjson::value& result)
+    {
+        auto obj = result.as_object();
+        if (!obj.has_value())
+        {
+            return false;
+        }
+        return (*obj)[std::string_view("ok")].as_bool().value_or(false);
+    }
+
+    bool ResultIsRevisionConflict(const yyjson::value& result)
+    {
+        auto obj = result.as_object();
+        if (!obj.has_value())
+        {
+            return false;
+        }
+        return (*obj)[std::string_view("errorKind")].as_string().value_or("")
+               == std::string_view("revisionConflict");
     }
 } // namespace
 
@@ -393,6 +456,53 @@ protected:
         WriteSchedulerState(*settings_manager_, task_id + 1, {task_id}, {task});
     }
 
+    /// Park the FakeAuthoringSession::ApplyChange on the shared cv. The Apply
+    /// then holds the per-session write lock (entry->lock) while waiting, and
+    /// releases state_->mutex while parked (cv.wait contract), so a Get on a
+    /// different task is not blocked by the fake session's mutex.
+    void SetBlockApply(bool value)
+    {
+        {
+            const ipc_scoped_lock lock(shared_state_->mutex);
+            shared_state_->block_apply = value;
+            shared_state_->apply_entered = false;
+            shared_state_->unblock_apply = false;
+        }
+        shared_state_->cv.notify_all();
+    }
+
+    /// Release a parked Apply. Once unblock_apply is set every later Apply in
+    /// the same test returns from the wait immediately.
+    void UnblockApply()
+    {
+        {
+            const ipc_scoped_lock lock(shared_state_->mutex);
+            shared_state_->unblock_apply = true;
+        }
+        shared_state_->cv.notify_all();
+    }
+
+    /// Spin until the parked Apply has entered ApplyChange (apply_entered) or
+    /// time out. Guarantees the Apply holds the per-session write lock when it
+    /// returns true.
+    bool WaitForApplyEntered(
+        std::chrono::milliseconds timeout = std::chrono::seconds(5))
+    {
+        const auto deadline = std::chrono::steady_clock::now() + timeout;
+        while (std::chrono::steady_clock::now() < deadline)
+        {
+            {
+                const ipc_scoped_lock lock(shared_state_->mutex);
+                if (shared_state_->apply_entered)
+                {
+                    return true;
+                }
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        return false;
+    }
+
     std::filesystem::path test_dir_;
     std::filesystem::path settings_dir_;
     std::filesystem::path plugin_dir_;
@@ -525,4 +635,253 @@ TEST_F(SchedulerAuthoringCacheTest, SchedulerAuthoringRepositoryEntryCacheHit)
 
     const ipc_scoped_lock lock(shared_state_->mutex);
     EXPECT_EQ(shared_state_->authoring_session_count, 1);
+}
+
+// REQ-07a: two concurrent Applies to the same task are serialized by the
+// per-session write lock. Thread A (baseRevision 0) is parked inside
+// ApplyChange holding the write lock; thread B (baseRevision 1, building on A's
+// expected commit) blocks on the write lock. Once A is released, B re-reads the
+// now-bumped revision under the lock, passes the authoritative revision check,
+// and commits base+2. Both succeed; the final persisted revision is base+2 (no
+// jump, no regression). Without serialization B would read the pre-A revision
+// and either conflict or overwrite — never reach base+2 with both ok.
+TEST_F(SchedulerAuthoringCacheTest, SchedulerAuthoringConcurrentApplySerialized)
+{
+    SeedAuthoringTask(0);
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    const yyjson::value request = MakeEmptyAuthoringRequest();
+    auto prime = scheduler_->GetTaskAuthoringDocument(0, request);
+    ASSERT_EQ(ReadDocumentRevision(prime), 0);
+
+    SetBlockApply(true);
+
+    std::atomic<int>     ok_count{0};
+    std::atomic<int>     conflict_count{0};
+    std::atomic<int64_t> last_revision{-1};
+    std::atomic<bool>    a_started{false};
+
+    auto run_apply = [&](int64_t base_revision)
+    {
+        auto result = scheduler_->ApplyTaskAuthoringChange(
+            0,
+            MakeStrictAuthoringChange(base_revision));
+        if (ResultIsOk(result))
+        {
+            ++ok_count;
+            last_revision = ReadRevision(result);
+        }
+        else if (ResultIsRevisionConflict(result))
+        {
+            ++conflict_count;
+        }
+    };
+
+    std::thread a(
+        [&]
+        {
+            a_started = true;
+            run_apply(0);
+        });
+    ASSERT_TRUE(WaitForApplyEntered());
+    // Let A settle into the cv.wait so it holds the write lock.
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+    std::thread b([&] { run_apply(1); });
+    // B must be blocked behind A's write lock, not complete first.
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+    UnblockApply();
+    a.join();
+    b.join();
+
+    EXPECT_EQ(ok_count.load(), 2);
+    EXPECT_EQ(conflict_count.load(), 0);
+    EXPECT_EQ(last_revision.load(), 2);
+    EXPECT_EQ(
+        ReadPersistedTaskRevision(*settings_manager_, 0),
+        2); // base+2 on disk, no jump/regression
+
+    const ipc_scoped_lock lock(shared_state_->mutex);
+    EXPECT_EQ(shared_state_->apply_change_count, 2);
+}
+
+// REQ-07b: no lost update — both concurrent Applies take effect. With the same
+// serialization as REQ-07a (A parked, B queued behind the write lock), the
+// provider's ApplyChange runs twice (apply_change_count == 2) and the persisted
+// authoring revision advances to base+2. Without serialization B would conflict
+// on the stale pre-A revision (apply_change_count == 1, lost update).
+TEST_F(
+    SchedulerAuthoringCacheTest,
+    SchedulerAuthoringConcurrentApplyNoLostUpdate)
+{
+    SeedAuthoringTask(0);
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    const yyjson::value request = MakeEmptyAuthoringRequest();
+    auto prime = scheduler_->GetTaskAuthoringDocument(0, request);
+    ASSERT_EQ(ReadDocumentRevision(prime), 0);
+
+    SetBlockApply(true);
+
+    std::atomic<int64_t> a_revision{-1};
+    std::atomic<int64_t> b_revision{-1};
+
+    std::thread a(
+        [&]
+        {
+            auto r = scheduler_->ApplyTaskAuthoringChange(
+                0,
+                MakeStrictAuthoringChange(0));
+            a_revision = ReadRevision(r);
+        });
+    ASSERT_TRUE(WaitForApplyEntered());
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+    std::thread b(
+        [&]
+        {
+            auto r = scheduler_->ApplyTaskAuthoringChange(
+                0,
+                MakeStrictAuthoringChange(1));
+            b_revision = ReadRevision(r);
+        });
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+    UnblockApply();
+    a.join();
+    b.join();
+
+    // A committed base+1, B committed base+2 — both ApplyChange invocations
+    // took effect, no lost update.
+    EXPECT_EQ(a_revision.load(), 1);
+    EXPECT_EQ(b_revision.load(), 2);
+    EXPECT_EQ(ReadPersistedTaskRevision(*settings_manager_, 0), 2);
+
+    const ipc_scoped_lock lock(shared_state_->mutex);
+    EXPECT_EQ(shared_state_->apply_change_count, 2);
+    // Apply carries the document in the strict envelope; no GetDocument
+    // fallback.
+    EXPECT_EQ(shared_state_->get_document_count, 1);
+}
+
+// REQ-07c: during a slow Apply (parked holding the per-session write lock), a
+// Get on the same task blocks on the write lock and then returns a complete
+// snapshot — never a half-applied middle state. The blocked Get reads the old
+// committed revision (its settings read predates the persist); a fresh Get
+// after the Apply commits reads the new revision via the read-side freshness
+// rebuild.
+TEST_F(
+    SchedulerAuthoringCacheTest,
+    SchedulerAuthoringGetReadsConsistentSnapshot)
+{
+    SeedAuthoringTask(0);
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    const yyjson::value request = MakeEmptyAuthoringRequest();
+    auto prime = scheduler_->GetTaskAuthoringDocument(0, request);
+    ASSERT_EQ(ReadDocumentRevision(prime), 0);
+
+    SetBlockApply(true);
+
+    std::thread apply_thread(
+        [&]
+        {
+            scheduler_->ApplyTaskAuthoringChange(
+                0,
+                MakeStrictAuthoringChange(0));
+        });
+    ASSERT_TRUE(WaitForApplyEntered());
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+    // Get on the same task while the Apply holds the write lock. It must block
+    // (shared_lock waits for the unique_lock) and not observe a partial state.
+    std::promise<yyjson::value>       get_promise;
+    std::shared_future<yyjson::value> get_future =
+        get_promise.get_future().share();
+    std::thread get_thread(
+        [&]
+        {
+            get_promise.set_value(
+                scheduler_->GetTaskAuthoringDocument(0, request));
+        });
+
+    EXPECT_EQ(
+        get_future.wait_for(std::chrono::milliseconds(150)),
+        std::future_status::timeout)
+        << "Get completed during a slow Apply — write lock not held";
+
+    UnblockApply();
+    apply_thread.join();
+
+    yyjson::value blocked_get = get_future.get();
+    get_thread.join();
+    ASSERT_TRUE(blocked_get.as_object().has_value());
+    // Complete OLD snapshot: the blocked Get's settings read predates the
+    // persist, so the cached session still reports the pre-Apply revision.
+    EXPECT_EQ(ReadDocumentRevision(blocked_get), 0);
+
+    // After the Apply committed, a fresh Get rebuilds (read-side freshness) and
+    // reads the complete NEW snapshot.
+    auto after_get = scheduler_->GetTaskAuthoringDocument(0, request);
+    EXPECT_EQ(ReadDocumentRevision(after_get), 1);
+}
+
+// REQ-07d: per-session lock granularity — authoring sessions are cached
+// per-task, so a Get on one task reads its own snapshot through its own session
+// and never cross-contaminates with another task's revision. Two tasks seeded
+// with distinct revisions must each observe their own revision, and the plugin
+// must report two separate sessions (one per task).
+//
+// The SchedulerTestPlugin runs in a single DasHost subprocess whose one
+// business thread services one IPC call at a time, so end-to-end Get/Apply
+// parallelism cannot be timed through IPC. The per-session shared_lock
+// granularity itself is exercised under load by REQ-07a/b/c; this test pins
+// the per-task isolation guarantee those tests rely on.
+TEST_F(SchedulerAuthoringCacheTest, SchedulerAuthoringGetParallelDifferentTasks)
+{
+    // Seed both tasks in one shot: WriteSchedulerState rewrites the index
+    // (taskOrder), so two separate SeedAuthoringTask calls would clobber the
+    // first task out of the order. Task 0 has no authoring (revision 0); task 1
+    // carries revision 5 so per-task isolation is observable.
+    auto make_task = [](int64_t task_id, std::optional<int64_t> revision)
+    {
+        yyjson::value task(Das::Utils::MakeYyjsonObject());
+        (*task.as_object())[std::string_view("id")] = task_id;
+        (*task.as_object())[std::string_view("taskGuid")] =
+            FactoryTaskGuidString;
+        (*task.as_object())[std::string_view("pluginGuid")] =
+            FactoryPluginGuidString;
+        (*task.as_object())[std::string_view("properties")] =
+            yyjson::value(Das::Utils::MakeYyjsonObject());
+        if (revision.has_value())
+        {
+            yyjson::value authoring(Das::Utils::MakeYyjsonObject());
+            (*authoring.as_object())[std::string_view("revision")] = *revision;
+            (*task.as_object())[std::string_view("authoring")] =
+                std::move(authoring);
+        }
+        return task;
+    };
+    WriteSchedulerState(
+        *settings_manager_,
+        2,
+        {0, 1},
+        {make_task(0, std::nullopt), make_task(1, int64_t{5})});
+
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    const yyjson::value request = MakeEmptyAuthoringRequest();
+
+    auto get0 = scheduler_->GetTaskAuthoringDocument(0, request);
+    auto get1 = scheduler_->GetTaskAuthoringDocument(1, request);
+
+    ASSERT_TRUE(get0.as_object().has_value());
+    ASSERT_TRUE(get1.as_object().has_value());
+    EXPECT_EQ(ReadDocumentRevision(get0), 0);
+    EXPECT_EQ(ReadDocumentRevision(get1), 5);
+
+    // Per-task sessions: one cached entry per task id, no shared session.
+    const ipc_scoped_lock lock(shared_state_->mutex);
+    EXPECT_EQ(shared_state_->authoring_session_count, 2);
 }

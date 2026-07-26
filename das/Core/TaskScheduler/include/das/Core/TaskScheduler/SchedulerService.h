@@ -223,6 +223,13 @@ namespace Das::Core::TaskScheduler
         /// Register a callback to be invoked when scheduler state changes.
         void SetStateNotifyCallback(SchedulerNotifyFunc func, void* user_data);
 
+        /// Drop every cached authoring session (task + repository). Called when
+        /// the plugin runtime is invalidated (e.g. plugin unload/reload) so the
+        /// next authoring access rebuilds against fresh plugin state. Holds
+        /// mutex_ only to clear the maps; in-flight callers keep their entries
+        /// alive via shared_ptr (D-87-07).
+        void InvalidateAuthoringSessions();
+
     private:
         void      StartTickTimer(std::chrono::steady_clock::duration delay);
         void      OnTick();
@@ -319,6 +326,25 @@ namespace Das::Core::TaskScheduler
             yyjson::value                  context,
             int64_t                        current_revision = -1,
             bool                           enforce_fresh = false);
+
+        /// Peek the cache without creating. Returns the cached entry shared_ptr
+        /// (refcount+1) or null. The Apply path uses this to distinguish cache
+        /// hit (revision check inside the per-session write lock) from miss
+        /// (revision check before session create, preserving D-85-02c).
+        std::shared_ptr<AuthoringSessionEntry> FindCachedAuthoringSession(
+            std::unordered_map<int64_t, std::shared_ptr<AuthoringSessionEntry>>&
+                    cache,
+            int64_t id);
+
+        /// Evict a single cached session by id. Called with mutex_ held;
+        /// performs a direct map.erase (no drain). In-flight callers that hold
+        /// a shared_ptr copy keep their entry alive until they finish
+        /// (D-87-07 shared_ptr upgrade roots out the UAF that a drain cycle
+        /// was designed to prevent).
+        void EvictAuthoringSession(
+            std::unordered_map<int64_t, std::shared_ptr<AuthoringSessionEntry>>&
+                    cache,
+            int64_t id);
 
         // ----------------------------------------------------------------
         // Config-side persistence (OnTick nextExecutionTime)

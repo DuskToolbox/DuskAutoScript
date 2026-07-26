@@ -117,14 +117,21 @@ struct FactoryTaskSharedState
         }
     }
 
-    int     authoring_session_count = 0;
-    int     get_document_count = 0;
-    int     apply_change_count = 0;
-    int     compile_count = 0;
-    int     decoy_authoring_create_count = 0;
-    bool    block_do = false;
-    bool    do_entered = false;
-    bool    unblock_do = false;
+    int  authoring_session_count = 0;
+    int  get_document_count = 0;
+    int  apply_change_count = 0;
+    int  compile_count = 0;
+    int  decoy_authoring_create_count = 0;
+    bool block_do = false;
+    bool do_entered = false;
+    bool unblock_do = false;
+    // Symmetric trio for ApplyChange: lets a test park a slow Apply inside the
+    // fake session (on the existing ipc_mutex/cv) so the SchedulerService
+    // per-session write lock is observed held. Used by the REQ-07c "Get reads a
+    // consistent snapshot during a slow Apply" concurrency test.
+    bool    block_apply = false;
+    bool    apply_entered = false;
+    bool    unblock_apply = false;
     int64_t last_context_entry_id = -1;
     int64_t last_context_task_id = -1;
     bool    last_context_had_task_id = false;

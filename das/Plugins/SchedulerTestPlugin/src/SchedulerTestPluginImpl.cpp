@@ -292,6 +292,19 @@ DasResult FakeAuthoringSession::ApplyChange(
         omit_document = state_->apply_omit_document;
         revision_delta = state_->apply_document_revision_delta;
         session_revision = state_->last_context_revision;
+        state_->apply_entered = true;
+    }
+    state_->cv.notify_all();
+
+    // Test seam: park the Apply while a test holds `block_apply` so the
+    // SchedulerService per-session write lock is observed held. Mirrors the
+    // block_do trio; reuses the same ipc_mutex/cv. Once `unblock_apply` is set
+    // the wait returns immediately for any later Apply in the same test.
+    {
+        ipc_scoped_lock wait_lock(state_->mutex);
+        state_->cv.wait(
+            wait_lock,
+            [this] { return !state_->block_apply || state_->unblock_apply; });
     }
 
     int64_t base_revision = session_revision;

@@ -821,59 +821,23 @@ namespace Das::Core::TaskScheduler
         yyjson::value          authoring;
     };
 
-    // Shared Apply pipeline (envelope guard -> revision check -> session create
-    // -> Provider ApplyChange -> parse -> persisted metadata). Session is
-    // created only after ③④ pass, preserving byte-level invariance: envelope
-    // failures do not increment the plugin's authoring_session_count.
-    static AuthoringApplyPipelineResult RunAuthoringApplyPipeline(
-        std::unordered_map<int64_t, std::shared_ptr<AuthoringSessionEntry>>&
-                                                        cache,
-        std::mutex&                                     mutex,
-        Das::Core::ForeignInterfaceHost::PluginManager& plugin_manager,
-        const TaskAuthoringCapability&                  capability,
-        int64_t                                         id,
-        yyjson::value                                   context_json,
-        const yyjson::value&                            change,
-        const yyjson::value&                            source_json)
+    // Locked core of the Apply pipeline. The caller has already done the
+    // envelope validation, the revision check on a fresh settings read, and the
+    // cache resolve, and holds `entry->lock` (unique_lock) so this Provider
+    // ApplyChange (M) + parse + rejection check + persisted-metadata build runs
+    // atomically with the caller's persist (W). The whole M-W section lives
+    // outside mutex_ and inside entry->lock (D-87-07 mutex-not-abused).
+    // Returns true on success (result.parsed/next_revision/authoring filled);
+    // false on provider/parse/rejection error (result.error_kind/message set,
+    // result.parsed stays populated so an applyRejected response can carry the
+    // diagnostics array).
+    static bool RunAuthoringApplyPipelineLocked(
+        const std::shared_ptr<AuthoringSessionEntry>& entry,
+        const yyjson::value&                          change,
+        const yyjson::value&                          source_json,
+        int64_t                                       current_revision,
+        AuthoringApplyPipelineResult&                 result)
     {
-        AuthoringApplyPipelineResult result;
-        result.current_revision = GetAuthoringRevision(source_json);
-
-        auto validation = ValidateAuthoringChange(change);
-        if (!validation.valid)
-        {
-            result.error_kind = validation.error_kind;
-            result.error_message = validation.message;
-            return result;
-        }
-
-        auto base_revision = GetBaseRevision(change);
-        if (!base_revision || *base_revision != result.current_revision)
-        {
-            result.error_kind = "revisionConflict";
-            result.error_message = "Authoring change baseRevision is stale";
-            return result;
-        }
-
-        // Session is resolved through the cache AFTER ③④ so that an envelope
-        // or revision failure does not create (or even look up) a session
-        // (D-85-02c). On the second Apply for the same id this is a cache hit
-        // and no new session is created.
-        auto entry = ResolveCachedAuthoringSession(
-            cache,
-            mutex,
-            plugin_manager,
-            capability,
-            id,
-            std::move(context_json),
-            result.current_revision,
-            /*enforce_fresh=*/false);
-        if (!entry || !entry->session)
-        {
-            result.error_kind = "sessionCreateFailed";
-            result.error_message = "Failed to create authoring session";
-            return result;
-        }
         auto& session = entry->session;
 
         auto change_json = WrapJsonValue(CloneJsonValue(change));
@@ -884,18 +848,17 @@ namespace Das::Core::TaskScheduler
         {
             result.error_kind = "providerFailed";
             result.error_message = "Authoring provider rejected change";
-            return result;
+            return false;
         }
 
         auto provider_result = ReadJsonInterface(apply_result_json.Get());
-        auto parsed = ParseAuthoringProviderApply(
-            provider_result,
-            result.current_revision);
+        auto parsed =
+            ParseAuthoringProviderApply(provider_result, current_revision);
         if (!parsed.error_kind.empty())
         {
             result.error_kind = parsed.error_kind;
             result.error_message = parsed.error_message;
-            return result;
+            return false;
         }
         result.parsed = std::move(parsed);
 
@@ -906,7 +869,6 @@ namespace Das::Core::TaskScheduler
         // diagnostics array.
         if (HasErrorDiagnostic(result.parsed.diagnostics))
         {
-            result.ok = false;
             result.error_kind = "applyRejected";
             result.error_message =
                 FirstErrorDiagnosticMessage(result.parsed.diagnostics);
@@ -914,7 +876,7 @@ namespace Das::Core::TaskScheduler
             {
                 result.error_message = "Authoring change rejected by provider";
             }
-            return result;
+            return false;
         }
 
         result.next_revision = result.parsed.returned_revision;
@@ -933,7 +895,7 @@ namespace Das::Core::TaskScheduler
             previous_authoring);
 
         result.ok = true;
-        return result;
+        return true;
     }
 
     // Structured result of the shared Get pipeline. The caller owns response
@@ -2217,6 +2179,21 @@ namespace Das::Core::TaskScheduler
             enforce_fresh);
     }
 
+    std::shared_ptr<AuthoringSessionEntry>
+    SchedulerService::FindCachedAuthoringSession(
+        std::unordered_map<int64_t, std::shared_ptr<AuthoringSessionEntry>>&
+                cache,
+        int64_t id)
+    {
+        const std::scoped_lock lock(mutex_);
+        auto                   it = cache.find(id);
+        if (it == cache.end())
+        {
+            return nullptr;
+        }
+        return it->second;
+    }
+
     yyjson::value SchedulerService::GetRepositoryEntryAuthoringDocument(
         int64_t              entry_id,
         const yyjson::value& request)
@@ -2323,7 +2300,12 @@ namespace Das::Core::TaskScheduler
                 "sessionCreateFailed",
                 "Failed to create repository authoring session");
         }
-        auto pipeline = RunAuthoringGetPipeline(session_entry, request);
+        AuthoringGetPipelineResult pipeline;
+        {
+            const std::shared_lock<std::shared_mutex> read_lock(
+                session_entry->lock);
+            pipeline = RunAuthoringGetPipeline(session_entry, request);
+        }
         if (!pipeline.ok)
         {
             std::string message = std::move(pipeline.error_message);
@@ -2440,65 +2422,134 @@ namespace Das::Core::TaskScheduler
             }
         }
 
-        // Envelope guard: the contract requires the server to validate the
-        // {kind, payload} envelope before invoking the Provider. A structurally
-        // invalid change never reaches the plugin. The shared Apply pipeline
-        // owns ③④(envelope + revision) -> ⑤ session -> ⑥⑦⑧(Apply + parse +
-        // persisted metadata); this caller owns ①② locks/IO, ⑨ store
-        // persistence, and ⑩ entryId response assembly.
-        auto pipeline = RunAuthoringApplyPipeline(
-            repository_authoring_sessions_,
-            mutex_,
-            plugin_manager_,
-            capability,
-            entry_id,
-            MakeRepositoryAuthoringContextJson(
-                plugin_manager_,
-                entry_id,
-                entry.accepted_properties,
-                entry_json),
-            change,
-            entry_json);
-        if (!pipeline.ok)
+        // Envelope guard (③): validate the {kind, payload} envelope before any
+        // session resolve so an envelope failure does not create a session
+        // (D-85-02c) and does not increment the plugin's
+        // authoring_session_count.
+        auto validation = ValidateAuthoringChange(change);
+        if (!validation.valid)
         {
-            std::string message = std::move(pipeline.error_message);
-            if (pipeline.error_kind == "revisionConflict")
-            {
-                message = "Repository authoring change baseRevision is stale";
-            }
-            else if (pipeline.error_kind == "sessionCreateFailed")
-            {
-                message = "Failed to create repository authoring session";
-            }
-            else if (pipeline.error_kind == "providerFailed")
-            {
-                message = "Repository authoring provider rejected change";
-            }
-            // applyRejected: keep pipeline.error_message (the real diagnostic)
-            // and surface the provider's diagnostics array.
-            const yyjson::value* diags =
-                (pipeline.error_kind == "applyRejected")
-                    ? &pipeline.parsed.diagnostics
-                    : nullptr;
-            yyjson::value err = MakeRepositoryResponseError(
-                pipeline.error_kind,
-                message,
-                diags);
-            if (pipeline.error_kind == "revisionConflict")
-            {
-                (*err.as_object())[std::string_view("currentRevision")] =
-                    pipeline.current_revision;
-            }
-            return err;
+            return MakeRepositoryResponseError(
+                validation.error_kind,
+                validation.message);
         }
 
-        yyjson::value updated_entry_json;
-        auto          persist_result = store->UpdateAuthoring(
-            entry_id,
-            pipeline.parsed.accepted_properties,
-            pipeline.authoring,
-            updated_entry_json);
-        if (DAS::IsFailed(persist_result))
+        // Peek the cache (no create). A hit runs the authoritative revision
+        // check inside the per-session write lock below (concurrent Apply —
+        // REQ-07a/b). A miss runs an early revision check first so a stale
+        // baseRevision never creates a session (D-85-02c, byte-level for
+        // SchedulerRepositoryAuthoringApplyStaleBaseRevisionReturnsConflict).
+        auto cached_entry = FindCachedAuthoringSession(
+            repository_authoring_sessions_,
+            entry_id);
+        if (!cached_entry)
+        {
+            const int64_t early_revision = GetAuthoringRevision(entry_json);
+            const auto    base_revision = GetBaseRevision(change);
+            if (!base_revision || *base_revision != early_revision)
+            {
+                yyjson::value err = MakeRepositoryResponseError(
+                    "revisionConflict",
+                    "Repository authoring change baseRevision is stale");
+                (*err.as_object())[std::string_view("currentRevision")] =
+                    early_revision;
+                return err;
+            }
+        }
+
+        // Resolve the session through the cache (hit: reuse; miss: create).
+        auto session_entry = cached_entry
+                                 ? cached_entry
+                                 : GetOrCreateAuthoringSession(
+                                       repository_authoring_sessions_,
+                                       capability,
+                                       entry_id,
+                                       MakeRepositoryAuthoringContextJson(
+                                           plugin_manager_,
+                                           entry_id,
+                                           entry.accepted_properties,
+                                           entry_json),
+                                       GetAuthoringRevision(entry_json),
+                                       /*enforce_fresh=*/false);
+        if (!session_entry || !session_entry->session)
+        {
+            return MakeRepositoryResponseError(
+                "sessionCreateFailed",
+                "Failed to create repository authoring session");
+        }
+
+        // Per-session serialization (D-87-07): unique_lock wraps the
+        // authoritative revision check (fresh settings read), Provider
+        // ApplyChange (M), and the store persist (W). The M-W runs outside
+        // mutex_ and inside session_entry->lock. Lock order mutex_ ->
+        // entry->lock is forward (mutex_ never held when entry->lock is taken).
+        AuthoringApplyPipelineResult pipeline;
+        bool                         persistence_failed = false;
+        {
+            const std::unique_lock<std::shared_mutex> write_lock(
+                session_entry->lock);
+
+            auto fresh_json =
+                settings.GetTaskRepositoryEntryJson("0", entry_id);
+            if (fresh_json.is_null() || !fresh_json.is_object())
+            {
+                return MakeRepositoryResponseError(
+                    "notFound",
+                    "Repository entry was not found");
+            }
+            pipeline.current_revision = GetAuthoringRevision(fresh_json);
+            const auto base_revision = GetBaseRevision(change);
+            if (!base_revision || *base_revision != pipeline.current_revision)
+            {
+                yyjson::value err = MakeRepositoryResponseError(
+                    "revisionConflict",
+                    "Repository authoring change baseRevision is stale");
+                (*err.as_object())[std::string_view("currentRevision")] =
+                    pipeline.current_revision;
+                return err;
+            }
+
+            if (!RunAuthoringApplyPipelineLocked(
+                    session_entry,
+                    change,
+                    fresh_json,
+                    pipeline.current_revision,
+                    pipeline))
+            {
+                std::string message = std::move(pipeline.error_message);
+                if (pipeline.error_kind == "sessionCreateFailed")
+                {
+                    message = "Failed to create repository authoring session";
+                }
+                else if (pipeline.error_kind == "providerFailed")
+                {
+                    message = "Repository authoring provider rejected change";
+                }
+                // applyRejected: keep pipeline.error_message (the real
+                // diagnostic) and surface the provider's diagnostics array.
+                const yyjson::value* diags =
+                    (pipeline.error_kind == "applyRejected")
+                        ? &pipeline.parsed.diagnostics
+                        : nullptr;
+                return MakeRepositoryResponseError(
+                    pipeline.error_kind,
+                    message,
+                    diags);
+            }
+
+            yyjson::value updated_entry_json;
+            auto          persist_result = store->UpdateAuthoring(
+                entry_id,
+                pipeline.parsed.accepted_properties,
+                pipeline.authoring,
+                updated_entry_json);
+            if (DAS::IsFailed(persist_result))
+            {
+                persistence_failed = true;
+            }
+        }
+
+        if (persistence_failed)
         {
             return MakeRepositoryResponseError(
                 "persistenceFailed",
@@ -2622,7 +2673,12 @@ namespace Das::Core::TaskScheduler
                 "sessionCreateFailed",
                 "Failed to create repository authoring session");
         }
-        auto pipeline = RunAuthoringCompilePipeline(compile_entry, request);
+        AuthoringCompilePipelineResult pipeline;
+        {
+            const std::shared_lock<std::shared_mutex> read_lock(
+                compile_entry->lock);
+            pipeline = RunAuthoringCompilePipeline(compile_entry, request);
+        }
         if (!pipeline.ok)
         {
             std::string message = std::move(pipeline.error_message);
@@ -2798,8 +2854,13 @@ namespace Das::Core::TaskScheduler
                 result.diagnostics.push_back(std::move(diagnostic));
                 return result;
             }
-            auto provider_compile =
-                CompileRepositoryEntryProvider(compile_entry, request);
+            RepositoryProviderCompileResult provider_compile;
+            {
+                const std::shared_lock<std::shared_mutex> read_lock(
+                    compile_entry->lock);
+                provider_compile =
+                    CompileRepositoryEntryProvider(compile_entry, request);
+            }
 
             RepositoryInvoke::RepositoryInvokeProviderCompileResult result;
             result.ok = provider_compile.Succeeded();
@@ -3495,7 +3556,11 @@ namespace Das::Core::TaskScheduler
                 "sessionCreateFailed",
                 "Failed to create task authoring session");
         }
-        auto pipeline = RunAuthoringGetPipeline(entry, request);
+        AuthoringGetPipelineResult pipeline;
+        {
+            const std::shared_lock<std::shared_mutex> read_lock(entry->lock);
+            pipeline = RunAuthoringGetPipeline(entry, request);
+        }
         if (!pipeline.ok)
         {
             std::string message = std::move(pipeline.error_message);
@@ -3573,64 +3638,137 @@ namespace Das::Core::TaskScheduler
                 "Task instance file was not found");
         }
 
-        // Envelope guard: the contract requires the server to validate the
-        // {kind, payload} envelope before passing it to plugin authoring code.
-        // The shared Apply pipeline owns ③④(envelope + revision) -> ⑤ session
-        // -> ⑥⑦⑧(Apply + parse + persisted metadata); this caller owns ①②
-        // lock/IO, ⑨ settings persistence + in-memory inst sync, and ⑩ taskId
-        // response assembly.
-        auto pipeline = RunAuthoringApplyPipeline(
-            task_authoring_sessions_,
-            mutex_,
-            plugin_manager_,
-            capability,
-            task_id,
-            MakeAuthoringContextJson(
-                plugin_manager_,
-                task_id,
-                properties,
-                task_json),
-            change,
-            task_json);
-        if (!pipeline.ok)
+        // Envelope guard (③): validate the {kind, payload} envelope before any
+        // session resolve so an envelope failure does not create a session
+        // (D-85-02c) and does not increment the plugin's
+        // authoring_session_count.
+        auto validation = ValidateAuthoringChange(change);
+        if (!validation.valid)
         {
-            std::string message = std::move(pipeline.error_message);
-            if (pipeline.error_kind == "providerFailed")
-            {
-                message = "Task authoring provider rejected change";
-            }
-            else if (pipeline.error_kind == "sessionCreateFailed")
-            {
-                message = "Failed to create task authoring session";
-            }
-            // applyRejected: keep pipeline.error_message (the real diagnostic);
-            // also surface the provider's diagnostics array so the UI shows the
-            // precise rejection reason instead of a generic message.
-            const yyjson::value* diags =
-                (pipeline.error_kind == "applyRejected")
-                    ? &pipeline.parsed.diagnostics
-                    : nullptr;
-            // revisionConflict: pipeline default ("Authoring change
-            // baseRevision is stale") matches the Task path verbatim.
-            yyjson::value err =
-                MakeAuthoringResponseError(pipeline.error_kind, message, diags);
-            if (pipeline.error_kind == "revisionConflict")
-            {
-                (*err.as_object())[std::string_view("currentRevision")] =
-                    pipeline.current_revision;
-            }
-            return err;
+            return MakeAuthoringResponseError(
+                validation.error_kind,
+                validation.message);
         }
 
-        auto task_obj = task_json.as_object();
-        (*task_obj)[std::string_view("properties")] =
-            CloneJsonValue(pipeline.parsed.accepted_properties);
-        (*task_obj)[std::string_view("authoring")] =
-            CloneJsonValue(pipeline.authoring);
+        // Peek the cache (no create). A hit means a session already exists, so
+        // the authoritative revision check runs inside the per-session write
+        // lock below (handles concurrent Apply on the same task — REQ-07a/b). A
+        // miss runs an early revision check first so a stale baseRevision never
+        // creates a session (D-85-02c, preserved byte-level for the
+        // revisionConflict regression cases).
+        auto cached_entry =
+            FindCachedAuthoringSession(task_authoring_sessions_, task_id);
+        if (!cached_entry)
+        {
+            const int64_t early_revision = GetAuthoringRevision(task_json);
+            const auto    base_revision = GetBaseRevision(change);
+            if (!base_revision || *base_revision != early_revision)
+            {
+                yyjson::value err = MakeAuthoringResponseError(
+                    "revisionConflict",
+                    "Authoring change baseRevision is stale");
+                (*err.as_object())[std::string_view("currentRevision")] =
+                    early_revision;
+                return err;
+            }
+        }
 
-        auto persist_result =
-            settings.UpdateTaskInstanceJson("0", task_id, task_json);
-        if (DAS::IsFailed(persist_result))
+        // Resolve the session through the cache (hit: reuse; miss: create — the
+        // early check above already passed). Apply passes enforce_fresh=false
+        // so consecutive Applies share one session (D-87-06 cache reuse).
+        auto entry = cached_entry ? cached_entry
+                                  : GetOrCreateAuthoringSession(
+                                        task_authoring_sessions_,
+                                        capability,
+                                        task_id,
+                                        MakeAuthoringContextJson(
+                                            plugin_manager_,
+                                            task_id,
+                                            properties,
+                                            task_json),
+                                        GetAuthoringRevision(task_json),
+                                        /*enforce_fresh=*/false);
+        if (!entry || !entry->session)
+        {
+            return MakeAuthoringResponseError(
+                "sessionCreateFailed",
+                "Failed to create task authoring session");
+        }
+
+        // Per-session serialization (D-87-07): the unique_lock wraps the
+        // authoritative revision check (on a fresh settings read), the Provider
+        // ApplyChange (M), and the settings persist (W). The whole M-W runs
+        // outside mutex_ and inside entry->lock; mutex_ is re-acquired only for
+        // the short in-memory inst metadata update after the lock releases.
+        // Lock order is mutex_ -> entry->lock (forward): mutex_ is never held
+        // when entry->lock is acquired, so there is no AB-BA with the Get path
+        // (which also never holds them simultaneously).
+        AuthoringApplyPipelineResult pipeline;
+        bool                         persistence_failed = false;
+        {
+            const std::unique_lock<std::shared_mutex> write_lock(entry->lock);
+
+            auto fresh_json = settings.GetTaskInstanceJson("0", task_id);
+            if (fresh_json.is_null() || !fresh_json.is_object())
+            {
+                return MakeAuthoringResponseError(
+                    "notFound",
+                    "Task instance file was not found");
+            }
+            pipeline.current_revision = GetAuthoringRevision(fresh_json);
+            const auto base_revision = GetBaseRevision(change);
+            if (!base_revision || *base_revision != pipeline.current_revision)
+            {
+                yyjson::value err = MakeAuthoringResponseError(
+                    "revisionConflict",
+                    "Authoring change baseRevision is stale");
+                (*err.as_object())[std::string_view("currentRevision")] =
+                    pipeline.current_revision;
+                return err;
+            }
+
+            if (!RunAuthoringApplyPipelineLocked(
+                    entry,
+                    change,
+                    fresh_json,
+                    pipeline.current_revision,
+                    pipeline))
+            {
+                std::string message = std::move(pipeline.error_message);
+                if (pipeline.error_kind == "providerFailed")
+                {
+                    message = "Task authoring provider rejected change";
+                }
+                else if (pipeline.error_kind == "sessionCreateFailed")
+                {
+                    message = "Failed to create task authoring session";
+                }
+                // applyRejected: keep pipeline.error_message (the real
+                // diagnostic); also surface the provider's diagnostics array so
+                // the UI shows the precise rejection reason.
+                const yyjson::value* diags =
+                    (pipeline.error_kind == "applyRejected")
+                        ? &pipeline.parsed.diagnostics
+                        : nullptr;
+                return MakeAuthoringResponseError(
+                    pipeline.error_kind,
+                    message,
+                    diags);
+            }
+
+            auto fresh_obj = fresh_json.as_object();
+            (*fresh_obj)[std::string_view("properties")] =
+                CloneJsonValue(pipeline.parsed.accepted_properties);
+            (*fresh_obj)[std::string_view("authoring")] =
+                CloneJsonValue(pipeline.authoring);
+            if (DAS::IsFailed(
+                    settings.UpdateTaskInstanceJson("0", task_id, fresh_json)))
+            {
+                persistence_failed = true;
+            }
+        }
+
+        if (persistence_failed)
         {
             return MakeAuthoringResponseError(
                 "persistenceFailed",
@@ -3710,7 +3848,12 @@ namespace Das::Core::TaskScheduler
                 "sessionCreateFailed",
                 "Failed to create task authoring session");
         }
-        auto pipeline = RunAuthoringCompilePipeline(compile_entry, request);
+        AuthoringCompilePipelineResult pipeline;
+        {
+            const std::shared_lock<std::shared_mutex> read_lock(
+                compile_entry->lock);
+            pipeline = RunAuthoringCompilePipeline(compile_entry, request);
+        }
         if (!pipeline.ok)
         {
             std::string message = std::move(pipeline.error_message);
@@ -3852,6 +3995,8 @@ namespace Das::Core::TaskScheduler
             }
             else
             {
+                const std::shared_lock<std::shared_mutex> read_lock(
+                    ontick_entry->lock);
                 auto& session = ontick_entry->session;
                 auto  request_json =
                     WrapJsonValue(MakeExecutionCompileRequest());
