@@ -96,10 +96,16 @@ namespace Das::Core::TaskScheduler
     {
         std::shared_mutex                                      lock;
         DasPtr<Das::PluginInterface::IDasTaskAuthoringSession> session;
+        // Persisted authoring revision the session was built from. Read-side
+        // freshness (Get path): if the on-disk revision advanced since creation
+        // (an Apply bumped it), the cached session's document view is stale and
+        // is rebuilt. -1 = untracked.
+        int64_t creation_revision = -1;
 
         AuthoringSessionEntry() = default;
         AuthoringSessionEntry(AuthoringSessionEntry&& other) noexcept
-            : session(std::move(other.session))
+            : session(std::move(other.session)),
+              creation_revision(other.creation_revision)
         {
         }
         AuthoringSessionEntry& operator=(AuthoringSessionEntry&& other) noexcept
@@ -107,6 +113,7 @@ namespace Das::Core::TaskScheduler
             if (this != &other)
             {
                 session = std::move(other.session);
+                creation_revision = other.creation_revision;
             }
             return *this;
         }
@@ -297,12 +304,21 @@ namespace Das::Core::TaskScheduler
         /// session creation (factory lookup + plugin IPC) happens outside the
         /// lock. Returns null on session-create failure (no empty entry is
         /// inserted into the map).
+        ///
+        /// Read-side freshness: when enforce_fresh is true (Get path), a cached
+        /// entry whose creation_revision differs from current_revision is
+        /// dropped and rebuilt, so a Get following an Apply observes the new
+        /// persisted revision. Apply passes enforce_fresh=false (it derives the
+        /// base revision from the change, not the session view) so consecutive
+        /// Applies reuse one session.
         std::shared_ptr<AuthoringSessionEntry> GetOrCreateAuthoringSession(
             std::unordered_map<int64_t, std::shared_ptr<AuthoringSessionEntry>>&
                                            cache,
             const TaskAuthoringCapability& capability,
             int64_t                        id,
-            yyjson::value                  context);
+            yyjson::value                  context,
+            int64_t                        current_revision = -1,
+            bool                           enforce_fresh = false);
 
         // ----------------------------------------------------------------
         // Config-side persistence (OnTick nextExecutionTime)

@@ -191,6 +191,56 @@ namespace
     {
         return yyjson::value(Das::Utils::MakeYyjsonObject());
     }
+
+    yyjson::value MakeStrictAuthoringChange(
+        int64_t          base_revision,
+        std::string_view kind = "setValue")
+    {
+        yyjson::value change(Das::Utils::MakeYyjsonObject());
+        (*change.as_object())[std::string_view("baseRevision")] = base_revision;
+        (*change.as_object())[std::string_view("kind")] = std::string(kind);
+        yyjson::value payload(Das::Utils::MakeYyjsonObject());
+        if (kind == std::string_view("setValue"))
+        {
+            yyjson::value target(Das::Utils::MakeYyjsonObject());
+            (*target.as_object())[std::string_view("kind")] = "document";
+            (*payload.as_object())[std::string_view("target")] =
+                std::move(target);
+            (*payload.as_object())[std::string_view("fieldName")] = "key1";
+            (*payload.as_object())[std::string_view("value")] = "edited";
+        }
+        (*change.as_object())[std::string_view("payload")] = std::move(payload);
+        return change;
+    }
+
+    yyjson::value MakeRepositoryCreateRequest(
+        std::string_view display_name,
+        int64_t          retry_count = 3)
+    {
+        yyjson::value request(Das::Utils::MakeYyjsonObject());
+        (*request.as_object())[std::string_view("pluginGuid")] =
+            std::string(FactoryPluginGuidString);
+        (*request.as_object())[std::string_view("taskTypeGuid")] =
+            std::string(FactoryTaskGuidString);
+        (*request.as_object())[std::string_view("displayName")] =
+            std::string(display_name);
+
+        yyjson::value initial(Das::Utils::MakeYyjsonObject());
+        (*initial.as_object())[std::string_view("retryCount")] = retry_count;
+        (*request.as_object())[std::string_view("initialProperties")] =
+            std::move(initial);
+        return request;
+    }
+
+    int64_t ReadRevision(const yyjson::value& result)
+    {
+        auto obj = result.as_object();
+        if (!obj.has_value())
+        {
+            return -1;
+        }
+        return (*obj)[std::string_view("revision")].as_sint().value_or(-1);
+    }
 } // namespace
 
 class SchedulerAuthoringCacheTest : public ::testing::Test
@@ -396,6 +446,82 @@ TEST_F(SchedulerAuthoringCacheTest, SchedulerAuthoringCacheLazyCreate)
     const yyjson::value request = MakeEmptyAuthoringRequest();
     auto result = scheduler_->GetTaskAuthoringDocument(0, request);
     ASSERT_TRUE(result.as_object().has_value());
+
+    const ipc_scoped_lock lock(shared_state_->mutex);
+    EXPECT_EQ(shared_state_->authoring_session_count, 1);
+}
+
+// Apply path: two consecutive Apply calls on the same task reuse one session
+// (authoring_session_count stays 1) while ApplyChange runs twice
+// (apply_change_count == 2). Proves the Apply pipeline routes through the cache
+// without breaking the strict envelope/revision pre-checks (each Apply still
+// advances the revision).
+TEST_F(SchedulerAuthoringCacheTest, SchedulerAuthoringApplyCacheHit)
+{
+    SeedAuthoringTask(0);
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    auto first =
+        scheduler_->ApplyTaskAuthoringChange(0, MakeStrictAuthoringChange(0));
+    ASSERT_TRUE(first.as_object().has_value());
+    ASSERT_TRUE(
+        (*first.as_object())[std::string_view("ok")].as_bool().value_or(false));
+    const int64_t revision_after_first = ReadRevision(first);
+    ASSERT_EQ(revision_after_first, 1);
+
+    auto second = scheduler_->ApplyTaskAuthoringChange(
+        0,
+        MakeStrictAuthoringChange(revision_after_first));
+    ASSERT_TRUE(second.as_object().has_value());
+    ASSERT_TRUE(
+        (*second.as_object())[std::string_view("ok")].as_bool().value_or(
+            false));
+    ASSERT_EQ(ReadRevision(second), 2);
+
+    const ipc_scoped_lock lock(shared_state_->mutex);
+    EXPECT_EQ(shared_state_->authoring_session_count, 1);
+    EXPECT_EQ(shared_state_->apply_change_count, 2);
+}
+
+// Compile path: two Compile calls on the same task reuse one session.
+TEST_F(SchedulerAuthoringCacheTest, SchedulerAuthoringCompileCacheHit)
+{
+    SeedAuthoringTask(0);
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    const yyjson::value request = MakeEmptyAuthoringRequest();
+
+    auto first = scheduler_->CompileTaskAuthoring(0, request);
+    ASSERT_TRUE(first.as_object().has_value());
+
+    auto second = scheduler_->CompileTaskAuthoring(0, request);
+    ASSERT_TRUE(second.as_object().has_value());
+
+    const ipc_scoped_lock lock(shared_state_->mutex);
+    EXPECT_EQ(shared_state_->authoring_session_count, 1);
+    EXPECT_EQ(shared_state_->compile_count, 2);
+}
+
+// Repository Get path: two Get calls on the same entry reuse one session
+// (repository_authoring_sessions_ cache).
+TEST_F(SchedulerAuthoringCacheTest, SchedulerAuthoringRepositoryEntryCacheHit)
+{
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    auto created = scheduler_->CreateRepositoryEntry(
+        MakeRepositoryCreateRequest("Repository cache hit", 8));
+    ASSERT_EQ(
+        (*created.as_object())[std::string_view("entryId")].as_sint().value_or(
+            -1),
+        0);
+
+    const yyjson::value request = MakeEmptyAuthoringRequest();
+
+    auto first = scheduler_->GetRepositoryEntryAuthoringDocument(0, request);
+    ASSERT_TRUE(first.as_object().has_value());
+
+    auto second = scheduler_->GetRepositoryEntryAuthoringDocument(0, request);
+    ASSERT_TRUE(second.as_object().has_value());
 
     const ipc_scoped_lock lock(shared_state_->mutex);
     EXPECT_EQ(shared_state_->authoring_session_count, 1);

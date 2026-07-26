@@ -745,23 +745,66 @@ namespace Das::Core::TaskScheduler
             session.Put());
     }
 
-    static DasResult CreateAuthoringSession(
-        Das::Core::ForeignInterfaceHost::PluginManager&         plugin_manager,
-        const TaskAuthoringCapability&                          capability,
-        int64_t                                                 task_id,
-        const yyjson::value&                                    properties,
-        const yyjson::value&                                    task_json,
-        DasPtr<Das::PluginInterface::IDasTaskAuthoringSession>& session)
+    // Cache core, shared by the member GetOrCreateAuthoringSession (Task/Repo
+    // Get + Compile callers, which resolve the session before any pipeline)
+    // and by the Apply pipeline, which must resolve the session AFTER its ③④
+    // envelope/revision pre-checks (D-85-02c: an envelope failure must not
+    // create a session). `mutex` guards only find/emplace; session creation
+    // happens outside the lock (v1.3 short-critical-section rule). Returns
+    // null on create failure without inserting an empty entry.
+    static std::shared_ptr<AuthoringSessionEntry> ResolveCachedAuthoringSession(
+        std::unordered_map<int64_t, std::shared_ptr<AuthoringSessionEntry>>&
+                                                        cache,
+        std::mutex&                                     mutex,
+        Das::Core::ForeignInterfaceHost::PluginManager& plugin_manager,
+        const TaskAuthoringCapability&                  capability,
+        int64_t                                         id,
+        yyjson::value                                   context,
+        int64_t                                         current_revision,
+        bool                                            enforce_fresh)
     {
-        return CreateAuthoringSessionWithContext(
+        {
+            const std::scoped_lock lock(mutex);
+            auto                   it = cache.find(id);
+            if (it != cache.end())
+            {
+                // Read-side freshness: a Get following an Apply must rebuild
+                // because the provider's document view is built from the
+                // context captured at session creation. Apply skips this
+                // (enforce_fresh=false) so consecutive Applies reuse one
+                // session.
+                if (enforce_fresh
+                    && it->second->creation_revision != current_revision)
+                {
+                    cache.erase(it);
+                }
+                else
+                {
+                    return it->second;
+                }
+            }
+        }
+
+        DasPtr<Das::PluginInterface::IDasTaskAuthoringSession> session;
+        auto session_result = CreateAuthoringSessionWithContext(
             plugin_manager,
             capability,
-            MakeAuthoringContextJson(
-                plugin_manager,
-                task_id,
-                properties,
-                task_json),
+            std::move(context),
             session);
+        if (DAS::IsFailed(session_result) || !session)
+        {
+            return nullptr;
+        }
+
+        auto entry = std::make_shared<AuthoringSessionEntry>();
+        entry->session = std::move(session);
+        entry->creation_revision = current_revision;
+
+        // emplace (not operator[]) so a concurrent inserter wins and ours is
+        // dropped: avoids overwriting a live entry.
+        const std::scoped_lock lock(mutex);
+        auto                   emplace_result = cache.emplace(id, entry);
+        return emplace_result.first->second;
     }
 
     // Structured result of the shared Apply pipeline. The caller owns response
@@ -783,8 +826,12 @@ namespace Das::Core::TaskScheduler
     // created only after ③④ pass, preserving byte-level invariance: envelope
     // failures do not increment the plugin's authoring_session_count.
     static AuthoringApplyPipelineResult RunAuthoringApplyPipeline(
+        std::unordered_map<int64_t, std::shared_ptr<AuthoringSessionEntry>>&
+                                                        cache,
+        std::mutex&                                     mutex,
         Das::Core::ForeignInterfaceHost::PluginManager& plugin_manager,
         const TaskAuthoringCapability&                  capability,
+        int64_t                                         id,
         yyjson::value                                   context_json,
         const yyjson::value&                            change,
         const yyjson::value&                            source_json)
@@ -808,18 +855,26 @@ namespace Das::Core::TaskScheduler
             return result;
         }
 
-        DasPtr<Das::PluginInterface::IDasTaskAuthoringSession> session;
-        auto session_result = CreateAuthoringSessionWithContext(
+        // Session is resolved through the cache AFTER ③④ so that an envelope
+        // or revision failure does not create (or even look up) a session
+        // (D-85-02c). On the second Apply for the same id this is a cache hit
+        // and no new session is created.
+        auto entry = ResolveCachedAuthoringSession(
+            cache,
+            mutex,
             plugin_manager,
             capability,
+            id,
             std::move(context_json),
-            session);
-        if (DAS::IsFailed(session_result) || !session)
+            result.current_revision,
+            /*enforce_fresh=*/false);
+        if (!entry || !entry->session)
         {
             result.error_kind = "sessionCreateFailed";
             result.error_message = "Failed to create authoring session";
             return result;
         }
+        auto& session = entry->session;
 
         auto change_json = WrapJsonValue(CloneJsonValue(change));
         DasPtr<Das::ExportInterface::IDasJson> apply_result_json;
@@ -951,25 +1006,18 @@ namespace Das::Core::TaskScheduler
     // Caller owns ①② locks/IO/context-build; pipeline owns ⑤⑥⑦. Session is
     // created inside the pipeline, mirroring the Apply/Get pipeline ordering.
     static AuthoringCompilePipelineResult RunAuthoringCompilePipeline(
-        Das::Core::ForeignInterfaceHost::PluginManager& plugin_manager,
-        const TaskAuthoringCapability&                  capability,
-        yyjson::value                                   context_json,
-        const yyjson::value&                            request)
+        std::shared_ptr<AuthoringSessionEntry> entry,
+        const yyjson::value&                   request)
     {
         AuthoringCompilePipelineResult result;
 
-        DasPtr<Das::PluginInterface::IDasTaskAuthoringSession> session;
-        auto session_result = CreateAuthoringSessionWithContext(
-            plugin_manager,
-            capability,
-            std::move(context_json),
-            session);
-        if (DAS::IsFailed(session_result) || !session)
+        if (!entry || !entry->session)
         {
             result.error_kind = "sessionCreateFailed";
             result.error_message = "Failed to create authoring session";
             return result;
         }
+        auto& session = entry->session;
 
         auto request_json = WrapJsonValue(CloneJsonValue(request));
         DasPtr<Das::ExportInterface::IDasJson> compile_json;
@@ -1007,30 +1055,17 @@ namespace Das::Core::TaskScheduler
     };
 
     static RepositoryProviderCompileResult CompileRepositoryEntryProvider(
-        Das::Core::ForeignInterfaceHost::PluginManager& plugin_manager,
-        const TaskAuthoringCapability&                  capability,
-        int64_t                                         entry_id,
-        const Repository::Dto::RepositoryEntryDto&      entry,
-        const yyjson::value&                            entry_json,
-        const yyjson::value&                            request)
+        std::shared_ptr<AuthoringSessionEntry> entry,
+        const yyjson::value&                   request)
     {
-        DasPtr<Das::PluginInterface::IDasTaskAuthoringSession> session;
-        auto session_result = CreateAuthoringSessionWithContext(
-            plugin_manager,
-            capability,
-            MakeRepositoryAuthoringContextJson(
-                plugin_manager,
-                entry_id,
-                entry.accepted_properties,
-                entry_json),
-            session);
-        if (DAS::IsFailed(session_result) || !session)
+        if (!entry || !entry->session)
         {
             return {
                 {},
                 "sessionCreateFailed",
                 "Failed to create repository authoring session"};
         }
+        auto& session = entry->session;
 
         auto request_json = WrapJsonValue(CloneJsonValue(request));
         DasPtr<Das::ExportInterface::IDasJson> compile_json;
@@ -2167,43 +2202,19 @@ namespace Das::Core::TaskScheduler
                                        cache,
         const TaskAuthoringCapability& capability,
         int64_t                        id,
-        yyjson::value                  context)
+        yyjson::value                  context,
+        int64_t                        current_revision,
+        bool                           enforce_fresh)
     {
-        // Short critical section: find under mutex_, return a shared_ptr copy
-        // on hit (refcount+1). mutex_ is never held across session creation or
-        // persistence (v1.3 short-critical-section + lock-outside-I/O rule).
-        {
-            const std::scoped_lock lock(mutex_);
-            auto                   it = cache.find(id);
-            if (it != cache.end())
-            {
-                return it->second;
-            }
-        }
-
-        // Cache miss: create the session outside mutex_ (factory lookup +
-        // plugin IPC round-trip). On failure return null without inserting an
-        // empty entry, so the next attempt re-creates cleanly.
-        DasPtr<Das::PluginInterface::IDasTaskAuthoringSession> session;
-        auto session_result = CreateAuthoringSessionWithContext(
+        return ResolveCachedAuthoringSession(
+            cache,
+            mutex_,
             plugin_manager_,
             capability,
+            id,
             std::move(context),
-            session);
-        if (DAS::IsFailed(session_result) || !session)
-        {
-            return nullptr;
-        }
-
-        auto entry = std::make_shared<AuthoringSessionEntry>();
-        entry->session = std::move(session);
-
-        // emplace (not operator[]) so a concurrent inserter wins and ours is
-        // dropped: avoids overwriting a live entry. Either way return a copy
-        // of the entry now cached for this id.
-        const std::scoped_lock lock(mutex_);
-        auto                   emplace_result = cache.emplace(id, entry);
-        return emplace_result.first->second;
+            current_revision,
+            enforce_fresh);
     }
 
     yyjson::value SchedulerService::GetRepositoryEntryAuthoringDocument(
@@ -2303,7 +2314,9 @@ namespace Das::Core::TaskScheduler
                 plugin_manager_,
                 entry_id,
                 entry.accepted_properties,
-                entry_json));
+                entry_json),
+            GetAuthoringRevision(entry_json),
+            /*enforce_fresh=*/true);
         if (!session_entry)
         {
             return MakeRepositoryResponseError(
@@ -2434,8 +2447,11 @@ namespace Das::Core::TaskScheduler
         // persisted metadata); this caller owns ①② locks/IO, ⑨ store
         // persistence, and ⑩ entryId response assembly.
         auto pipeline = RunAuthoringApplyPipeline(
+            repository_authoring_sessions_,
+            mutex_,
             plugin_manager_,
             capability,
+            entry_id,
             MakeRepositoryAuthoringContextJson(
                 plugin_manager_,
                 entry_id,
@@ -2487,14 +2503,6 @@ namespace Das::Core::TaskScheduler
             return MakeRepositoryResponseError(
                 "persistenceFailed",
                 "Failed to persist accepted repository authoring change");
-        }
-
-        // Invalidate the cached repository Get session: Apply mutated state via
-        // a separate session, so a cached session would observe a stale
-        // revision on the next Get. Mirrors the Task Apply invalidation.
-        {
-            const std::scoped_lock lock(mutex_);
-            repository_authoring_sessions_.erase(entry_id);
         }
 
         yyjson::value result(Das::Utils::MakeYyjsonObject());
@@ -2599,15 +2607,22 @@ namespace Das::Core::TaskScheduler
         // document. D-84-09 forbids client properties/document in Compile.
         // The shared Compile pipeline owns ⑤ session -> ⑥⑦(Compile + parse);
         // this caller owns ①② locks/IO, and ⑩ entryId response assembly.
-        auto pipeline = RunAuthoringCompilePipeline(
-            plugin_manager_,
+        auto compile_entry = GetOrCreateAuthoringSession(
+            repository_authoring_sessions_,
             capability,
+            entry_id,
             MakeRepositoryAuthoringContextJson(
                 plugin_manager_,
                 entry_id,
                 entry.accepted_properties,
-                entry_json),
-            request);
+                entry_json));
+        if (!compile_entry)
+        {
+            return MakeRepositoryResponseError(
+                "sessionCreateFailed",
+                "Failed to create repository authoring session");
+        }
+        auto pipeline = RunAuthoringCompilePipeline(compile_entry, request);
         if (!pipeline.ok)
         {
             std::string message = std::move(pipeline.error_message);
@@ -2763,13 +2778,28 @@ namespace Das::Core::TaskScheduler
             }
 
             auto entry_json = CloneJsonValue(yyjson::object(entry));
-            auto provider_compile = CompileRepositoryEntryProvider(
-                plugin_manager_,
+            auto compile_entry = GetOrCreateAuthoringSession(
+                repository_authoring_sessions_,
                 capability,
                 entry.entry_id,
-                entry,
-                entry_json,
-                request);
+                MakeRepositoryAuthoringContextJson(
+                    plugin_manager_,
+                    entry.entry_id,
+                    entry.accepted_properties,
+                    entry_json));
+            if (!compile_entry)
+            {
+                RepositoryInvoke::RepositoryInvokeProviderCompileResult result;
+                result.ok = false;
+                RepositoryInvoke::RepositoryInvokeCompileDiagnostic diagnostic;
+                diagnostic.code = "provider-compile-failed";
+                diagnostic.message =
+                    "Failed to create repository authoring session";
+                result.diagnostics.push_back(std::move(diagnostic));
+                return result;
+            }
+            auto provider_compile =
+                CompileRepositoryEntryProvider(compile_entry, request);
 
             RepositoryInvoke::RepositoryInvokeProviderCompileResult result;
             result.ok = provider_compile.Succeeded();
@@ -3456,7 +3486,9 @@ namespace Das::Core::TaskScheduler
                 plugin_manager_,
                 task_id,
                 properties,
-                task_json));
+                task_json),
+            GetAuthoringRevision(task_json),
+            /*enforce_fresh=*/true);
         if (!entry)
         {
             return MakeAuthoringResponseError(
@@ -3548,8 +3580,11 @@ namespace Das::Core::TaskScheduler
         // lock/IO, ⑨ settings persistence + in-memory inst sync, and ⑩ taskId
         // response assembly.
         auto pipeline = RunAuthoringApplyPipeline(
+            task_authoring_sessions_,
+            mutex_,
             plugin_manager_,
             capability,
+            task_id,
             MakeAuthoringContextJson(
                 plugin_manager_,
                 task_id,
@@ -3611,13 +3646,6 @@ namespace Das::Core::TaskScheduler
                     CloneJsonValue(pipeline.parsed.accepted_properties);
                 inst->authoring = CloneJsonValue(pipeline.authoring);
             }
-            // Drop any cached Get session for this task: Apply just changed the
-            // persisted state via a separate session, so a cached session would
-            // observe a stale revision on the next Get. Until Apply itself runs
-            // through the cache (sharing one session with Get), invalidate on
-            // every successful persist so the next Get lazily rebuilds from the
-            // fresh on-disk context.
-            task_authoring_sessions_.erase(task_id);
         }
 
         yyjson::value result(Das::Utils::MakeYyjsonObject());
@@ -3667,15 +3695,22 @@ namespace Das::Core::TaskScheduler
         // {kind, payload} envelope before invoking the Provider. The shared
         // Compile pipeline owns ⑤ session -> ⑥⑦(Compile + parse); this caller
         // owns ①② lock/IO, and ⑩ taskId response assembly.
-        auto pipeline = RunAuthoringCompilePipeline(
-            plugin_manager_,
+        auto compile_entry = GetOrCreateAuthoringSession(
+            task_authoring_sessions_,
             capability,
+            task_id,
             MakeAuthoringContextJson(
                 plugin_manager_,
                 task_id,
                 properties,
-                task_json),
-            request);
+                task_json));
+        if (!compile_entry)
+        {
+            return MakeAuthoringResponseError(
+                "sessionCreateFailed",
+                "Failed to create task authoring session");
+        }
+        auto pipeline = RunAuthoringCompilePipeline(compile_entry, request);
         if (!pipeline.ok)
         {
             std::string message = std::move(pipeline.error_message);
@@ -3798,26 +3833,27 @@ namespace Das::Core::TaskScheduler
                     "0",
                     selected_id);
 
-            DasPtr<Das::PluginInterface::IDasTaskAuthoringSession> session;
-            auto session_result = CreateAuthoringSession(
-                plugin_manager_,
+            auto ontick_entry = GetOrCreateAuthoringSession(
+                task_authoring_sessions_,
                 *authoring_capability,
                 selected_id,
-                properties_copy,
-                task_json,
-                session);
-            if (DAS::IsFailed(session_result) || !session)
+                MakeAuthoringContextJson(
+                    plugin_manager_,
+                    selected_id,
+                    properties_copy,
+                    task_json));
+            if (!ontick_entry || !ontick_entry->session)
             {
                 compile_failed = true;
                 DAS_CORE_LOG_WARN(
                     "SchedulerService::OnTick: task {} authoring session "
-                    "create failed, result={}",
-                    selected_id,
-                    session_result);
+                    "create failed",
+                    selected_id);
             }
             else
             {
-                auto request_json =
+                auto& session = ontick_entry->session;
+                auto  request_json =
                     WrapJsonValue(MakeExecutionCompileRequest());
                 DasPtr<Das::ExportInterface::IDasJson> compile_json;
                 auto                                   compile_result =
