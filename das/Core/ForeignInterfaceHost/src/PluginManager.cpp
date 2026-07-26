@@ -165,16 +165,20 @@ DasResult PluginManager::Shutdown()
     // on_process_exit_slot_ / on_heartbeat_timeout_slot_）。锁序保持
     // callback_mutex_ -> mutex_ 正向， 消除旧版持 mutex_ 调 ClearCallbacks/Stop
     // 的 AB-BA 死锁向量。
+    // shutdown_notify_guids: 释锁后通知 lifecycle listener 用的 guid 副本集合
+    // （D-87-08 两阶段 collect 持锁 -> 释 mutex_ -> fire）。
+    std::vector<DasGuid> shutdown_notify_guids;
     {
         const std::scoped_lock lock(mutex_);
 
-        // 卸载所有插件
+        // 卸载所有插件；collect guid 副本用于释锁后通知 lifecycle listener。
         for (auto& [guid, plugin] : loaded_plugins_)
         {
             // 通知 ComponentFactoryManager 释放工厂引用
             error_lens_mgr_.OnPluginUnloading(guid);
             component_factory_mgr_.OnPluginUnloading(guid);
             task_component_factory_mgr_.OnPluginUnloading(guid);
+            shutdown_notify_guids.push_back(guid);
         }
 
         feature_type_index_.clear();
@@ -183,6 +187,15 @@ DasResult PluginManager::Shutdown()
         session_id_ = 0;
         ClearActiveErrorLensManager(&error_lens_mgr_);
     } // 释放 mutex_ —— 阶段 2 锁外调 ResetHostLifecycleCallbacks（INV-03）
+
+    // 锁外触发 lifecycle listener（Unloading per plugin）：上面 scoped_lock
+    // 作用域已结束，满足 INV-03 与订阅者无 AB-BA 约束（D-87-08 全清语义下，
+    // 订阅者对首个事件即全清 cache，后续事件空转，但仍按 per-plugin 通知
+    // 保持语义对称）。
+    for (const auto& guid : shutdown_notify_guids)
+    {
+        FireLifecycleListener(PluginLifecyclePhase::Unloading, guid);
+    }
 
     // 阶段 2：锁外 ResetHostLifecycleCallbacks（经 ipc_context_ 接口转发到
     // 真实 launchers_，纯 RAII 析构 drain，非两段式，语义像 ~ofstream 的
@@ -199,6 +212,25 @@ DasResult PluginManager::Shutdown()
 void PluginManager::SetHostExePath(const std::string& path)
 {
     host_exe_path_ = path;
+}
+
+void PluginManager::SetPluginLifecycleListener(
+    IPluginLifecycleListener* listener)
+{
+    const std::scoped_lock lock(mutex_);
+    lifecycle_listener_ = listener;
+}
+
+void PluginManager::FireLifecycleListener(
+    PluginLifecyclePhase phase,
+    const DasGuid&       guid)
+{
+    // 调用契约：调用方已释放 mutex_（4 个 fire 点的两阶段范式负责释锁），
+    // 本方法不 acquire / release 任何锁。listener 未注册时空转。
+    if (lifecycle_listener_)
+    {
+        lifecycle_listener_->OnPluginLifecycleEvent(phase, guid);
+    }
 }
 
 void PluginManager::RegisterRuntimeProvider(
@@ -465,6 +497,11 @@ DasResult PluginManager::LoadPlugin(
         ++index;
     }
 
+    // 释锁后回调（FireLifecycleListener）使用的 guid 副本：在下方锁内赋值，
+    // 锁外读取 —— 满足 D-87-08「collect 持锁 -> 释 mutex_ -> fire」两阶段
+    // 范式，避免 PluginManager::mutex_ 与订阅者内部锁形成 AB-BA。
+    DasGuid loaded_guid_for_notify{};
+
     {
         const std::scoped_lock lock(mutex_);
 
@@ -477,6 +514,10 @@ DasResult PluginManager::LoadPlugin(
         }
 
         const auto guid = desc->guid;
+        // 按值捕获一份供释锁后 FireLifecycleListener 使用（D-87-08：plugin
+        // load 通知外部 listener。listener 触发必须晚于本锁作用域，避免
+        // PluginManager::mutex_ 与订阅者内部锁形成 AB-BA）。
+        loaded_guid_for_notify = guid;
         // 记录 IPC owner_session_id（RuntimeLoadResult.owner_session_id 已在
         // IpcRemotePluginHost.cpp:112/208 设置），用于运行时卸载
         // (UnloadPluginIpc 经 session_id 调 ipc_context_
@@ -544,6 +585,10 @@ DasResult PluginManager::LoadPlugin(
             out_package.Set(loaded_plugins_[guid].package.Get());
         }
     }
+
+    // 锁外触发 lifecycle listener（Loaded）：上面 scoped_lock 作用域已结束，
+    // 满足 INV-03 锁层级与订阅者无 AB-BA 约束（参考 Shutdown 两阶段范式）。
+    FireLifecycleListener(PluginLifecyclePhase::Loaded, loaded_guid_for_notify);
 
     out_package.Keep();
     return DAS_S_OK;
@@ -919,6 +964,12 @@ DasResult PluginManager::UnloadPluginIpc(
         loaded_plugins_.erase(guid);
     }
 
+    // 锁外触发 lifecycle listener（Unloading）：上面内层 scoped_lock 作用域
+    // 已结束，满足 INV-03 与订阅者无 AB-BA 约束。在 UnregisterHostLauncher
+    // 之前通知，让订阅者（SchedulerService）先失效 authoring cache —— 之后
+    // Host 进程 Stop 可能阻塞等待进程退出，期间订阅者已完成 cache 全清。
+    FireLifecycleListener(PluginLifecyclePhase::Unloading, guid);
+
     // 经 ipc_context_ 接口按 session 主动 Stop Host 进程 + 清 ConnectionManager
     // 索引。 HostLauncher 所有权唯一归 IpcContext::launchers_ +
     // ConnectionManager::hosts_ （PluginManager 不持有，host_launchers_
@@ -966,8 +1017,13 @@ void PluginManager::OnHostProcessExit(DasGuid plugin_guid, int exit_code)
         "Host process exited unexpectedly: exit_code={}",
         exit_code);
 
-    const std::scoped_lock lock(mutex_);
-    CleanupPluginByGuid(plugin_guid);
+    {
+        const std::scoped_lock lock(mutex_);
+        CleanupPluginByGuid(plugin_guid);
+    }
+    // 锁外触发 lifecycle listener（Unloading）：CleanupPluginByGuid 调用方
+    // 持锁契约不变，fire 由本调用方在释锁后负责（D-87-08 两阶段范式）。
+    FireLifecycleListener(PluginLifecyclePhase::Unloading, plugin_guid);
 }
 
 void PluginManager::OnHeartbeatTimeout(DasGuid plugin_guid)
@@ -977,8 +1033,12 @@ void PluginManager::OnHeartbeatTimeout(DasGuid plugin_guid)
     // heartbeat_thread_ 由 ConnectionManager 持有并在析构时 join。
     DAS_CORE_LOG_WARN("Heartbeat timeout for plugin, cleaning up index");
 
-    const std::scoped_lock lock(mutex_);
-    CleanupPluginByGuid(plugin_guid);
+    {
+        const std::scoped_lock lock(mutex_);
+        CleanupPluginByGuid(plugin_guid);
+    }
+    // 锁外触发 lifecycle listener（Unloading）：与 OnHostProcessExit 对称。
+    FireLifecycleListener(PluginLifecyclePhase::Unloading, plugin_guid);
 }
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_END

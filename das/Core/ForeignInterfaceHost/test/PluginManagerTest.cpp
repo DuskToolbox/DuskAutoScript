@@ -2282,6 +2282,91 @@ TEST_F(PluginManagerGuidTest, OnHeartbeatTimeout_DirectCall_CleansUpIndex)
 }
 
 // ============================================================
+// Phase 87 Plan 04: 外部 lifecycle listener 触发验证（D-87-08）。
+// 用手写 fake IPluginLifecycleListener 记录回调，验证 PluginManager 在
+// OnHostProcessExit / OnHeartbeatTimeout / Shutdown 三条 fire 点释 mutex_ 后
+// 通知 listener，且 phase/guid 正确。fire 点 1（LoadPlugin）经 SchedulerService
+// 端到端用例（SchedulerAuthoringInvalidateOnPlugin*）覆盖。
+// ============================================================
+namespace
+{
+    struct RecordedLifecycleEvent
+    {
+        PluginLifecyclePhase phase;
+        DasGuid              guid;
+    };
+
+    class CapturingLifecycleListener : public IPluginLifecycleListener
+    {
+    public:
+        std::vector<RecordedLifecycleEvent> events;
+        std::mutex                          mutex;
+
+        void OnPluginLifecycleEvent(
+            PluginLifecyclePhase phase,
+            const DasGuid&       plugin_guid) override
+        {
+            const std::scoped_lock lock(mutex);
+            events.push_back({phase, plugin_guid});
+        }
+    };
+} // namespace
+
+TEST_F(PluginManagerGuidTest, LifecycleListener_FiresOnProcessExitAndHeartbeat)
+{
+    CapturingLifecycleListener listener;
+    pm_->SetPluginLifecycleListener(&listener);
+    EXPECT_EQ(pm_->GetLoadedPluginCount(), 0u);
+
+    // fire 点 3（CleanupPluginByGuid 调用方 OnHostProcessExit）。
+    DasGuid exit_guid{};
+    exit_guid.data1 = 0x000000CC;
+    {
+        LoadedPlugin fake_plugin;
+        fake_plugin.plugin_path = "/fake/listener/exit";
+        pm_->loaded_plugins_[exit_guid] = std::move(fake_plugin);
+        pm_->path_to_guid_["/fake/listener/exit"] = exit_guid;
+    }
+    pm_->OnHostProcessExit(exit_guid, 1);
+
+    // fire 点 3（CleanupPluginByGuid 调用方 OnHeartbeatTimeout）。
+    DasGuid hb_guid{};
+    hb_guid.data1 = 0x000000DD;
+    {
+        LoadedPlugin fake_plugin;
+        fake_plugin.plugin_path = "/fake/listener/heartbeat";
+        pm_->loaded_plugins_[hb_guid] = std::move(fake_plugin);
+        pm_->path_to_guid_["/fake/listener/heartbeat"] = hb_guid;
+    }
+    pm_->OnHeartbeatTimeout(hb_guid);
+
+    {
+        const std::scoped_lock lock(listener.mutex);
+        ASSERT_EQ(listener.events.size(), 2u);
+        EXPECT_EQ(listener.events[0].phase, PluginLifecyclePhase::Unloading);
+        EXPECT_EQ(listener.events[0].guid, exit_guid);
+        EXPECT_EQ(listener.events[1].phase, PluginLifecyclePhase::Unloading);
+        EXPECT_EQ(listener.events[1].guid, hb_guid);
+    }
+
+    // 清注册后不再触发（单订阅者覆盖语义 + nullptr 清除）。
+    pm_->SetPluginLifecycleListener(nullptr);
+    DasGuid silent_guid{};
+    silent_guid.data1 = 0x000000EE;
+    {
+        LoadedPlugin fake_plugin;
+        fake_plugin.plugin_path = "/fake/listener/silent";
+        pm_->loaded_plugins_[silent_guid] = std::move(fake_plugin);
+        pm_->path_to_guid_["/fake/listener/silent"] = silent_guid;
+    }
+    pm_->OnHeartbeatTimeout(silent_guid);
+    {
+        const std::scoped_lock lock(listener.mutex);
+        EXPECT_EQ(listener.events.size(), 2u); // 未增长
+    }
+}
+
+// ============================================================
 // Phase 80.2 Plan 03 Task 2b: 真实跨线程心跳回调验证（D-09）
 // Blocker #1: 强制真实 HostLauncher + NotifyHeartbeatTimeout 跨线程链
 // Blocker #2: Shutdown 测试必须有第二线程并发 NotifyHeartbeatTimeout 制造

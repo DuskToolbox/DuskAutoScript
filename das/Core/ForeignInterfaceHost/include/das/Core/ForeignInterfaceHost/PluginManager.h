@@ -6,6 +6,7 @@
 #include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/Core/ForeignInterfaceHost/ErrorLensManager.h>
 #include <das/Core/ForeignInterfaceHost/ForeignInterfaceHost.h>
+#include <das/Core/ForeignInterfaceHost/IPluginLifecycleListener.h>
 #include <das/Core/ForeignInterfaceHost/RuntimeProvider.h>
 #include <das/Core/ForeignInterfaceHost/TaskComponentFactoryManager.h>
 #include <das/Core/IPC/HostLauncher.h>
@@ -143,6 +144,21 @@ public:
         ForeignInterfaceLanguage          language,
         LoadMode                          load_mode,
         std::shared_ptr<IRuntimeProvider> provider);
+
+    /**
+     * @brief 注册外部插件生命周期订阅者（非所有权）。
+     *
+     * 订阅者在 plugin load/unload 时收到 OnPluginLifecycleEvent 回调
+     * （D-87-08：SchedulerService 据此全清 authoring cache）。listener 寿命
+     * 由调用方管理 —— SchedulerService 持有 PluginManager& 引用，结构上
+     * PluginManager 存活长于 SchedulerService，注册的裸指针在 SchedulerService
+     * 存活期间有效。单订阅者模型：再次调用覆盖前一次注册。传入 nullptr
+     * 清除注册（~SchedulerService 防御用）。
+     *
+     * @note 回调在 PluginManager 释放 mutex_ 后触发（参考 Shutdown 两阶段
+     *       范式），实现不得重新获取 PluginManager::mutex_（避免 AB-BA）。
+     */
+    void SetPluginLifecycleListener(IPluginLifecycleListener* listener);
 
     /**
      * @brief 加载插件
@@ -300,6 +316,16 @@ private:
      */
     void CleanupPluginByGuid(DasGuid plugin_guid);
 
+    /**
+     * @brief 触发外部 lifecycle listener（若有）
+     *
+     * 调用契约：调用方必须在释放 mutex_ 之后调用本方法（不在本方法内部
+     * 释锁，由 4 个 fire 点的「collect guid 持锁 -> 释 mutex_ -> fire」
+     * 两阶段范式负责），避免 PluginManager::mutex_ 与订阅者内部锁形成
+     * AB-BA。listener 未注册时空转。
+     */
+    void FireLifecycleListener(PluginLifecyclePhase phase, const DasGuid& guid);
+
 protected:
     /**
      * @brief Host 进程退出回调
@@ -353,6 +379,11 @@ protected:
     // 时先查此表（language/load_mode 匹配），命中优先于内置
     // CreateRuntimeProvider。
     std::vector<RegisteredRuntimeProvider> registered_providers_;
+
+    // 外部 lifecycle 订阅者（非所有权裸指针）。由 SetPluginLifecycleListener
+    // 注册；SchedulerService 结构上存活短于 PluginManager（持有 PluginManager&
+    // 引用），故裸指针安全。默认 nullptr。
+    IPluginLifecycleListener* lifecycle_listener_ = nullptr;
 
 private:
     /**
