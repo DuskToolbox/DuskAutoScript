@@ -892,29 +892,23 @@ namespace Das::Core::TaskScheduler
         AuthoringProviderGet parsed;
     };
 
-    // Shared Get pipeline (session create -> Provider GetDocument -> parse).
-    // Caller owns ①② locks/IO/context-build; pipeline owns ⑤⑥⑦. Session is
-    // created inside the pipeline, mirroring the Apply pipeline's ordering.
+    // Shared Get pipeline (Provider GetDocument -> parse). The caller owns
+    // ①② locks/IO/context-build and resolves the cached session via
+    // GetOrCreateAuthoringSession; this pipeline owns ⑥⑦(GetDocument + parse).
     static AuthoringGetPipelineResult RunAuthoringGetPipeline(
-        Das::Core::ForeignInterfaceHost::PluginManager& plugin_manager,
-        const TaskAuthoringCapability&                  capability,
-        yyjson::value                                   context_json,
-        const yyjson::value&                            request)
+        std::shared_ptr<AuthoringSessionEntry> entry,
+        const yyjson::value&                   request)
     {
         AuthoringGetPipelineResult result;
 
-        DasPtr<Das::PluginInterface::IDasTaskAuthoringSession> session;
-        auto session_result = CreateAuthoringSessionWithContext(
-            plugin_manager,
-            capability,
-            std::move(context_json),
-            session);
-        if (DAS::IsFailed(session_result) || !session)
+        if (!entry || !entry->session)
         {
             result.error_kind = "sessionCreateFailed";
             result.error_message = "Failed to create authoring session";
             return result;
         }
+
+        auto& session = entry->session;
 
         auto request_json = WrapJsonValue(CloneJsonValue(request));
         DasPtr<Das::ExportInterface::IDasJson> document_json;
@@ -2167,6 +2161,51 @@ namespace Das::Core::TaskScheduler
         return CloneJsonValue(yyjson::object(entry));
     }
 
+    std::shared_ptr<AuthoringSessionEntry>
+    SchedulerService::GetOrCreateAuthoringSession(
+        std::unordered_map<int64_t, std::shared_ptr<AuthoringSessionEntry>>&
+                                       cache,
+        const TaskAuthoringCapability& capability,
+        int64_t                        id,
+        yyjson::value                  context)
+    {
+        // Short critical section: find under mutex_, return a shared_ptr copy
+        // on hit (refcount+1). mutex_ is never held across session creation or
+        // persistence (v1.3 short-critical-section + lock-outside-I/O rule).
+        {
+            const std::scoped_lock lock(mutex_);
+            auto                   it = cache.find(id);
+            if (it != cache.end())
+            {
+                return it->second;
+            }
+        }
+
+        // Cache miss: create the session outside mutex_ (factory lookup +
+        // plugin IPC round-trip). On failure return null without inserting an
+        // empty entry, so the next attempt re-creates cleanly.
+        DasPtr<Das::PluginInterface::IDasTaskAuthoringSession> session;
+        auto session_result = CreateAuthoringSessionWithContext(
+            plugin_manager_,
+            capability,
+            std::move(context),
+            session);
+        if (DAS::IsFailed(session_result) || !session)
+        {
+            return nullptr;
+        }
+
+        auto entry = std::make_shared<AuthoringSessionEntry>();
+        entry->session = std::move(session);
+
+        // emplace (not operator[]) so a concurrent inserter wins and ours is
+        // dropped: avoids overwriting a live entry. Either way return a copy
+        // of the entry now cached for this id.
+        const std::scoped_lock lock(mutex_);
+        auto                   emplace_result = cache.emplace(id, entry);
+        return emplace_result.first->second;
+    }
+
     yyjson::value SchedulerService::GetRepositoryEntryAuthoringDocument(
         int64_t              entry_id,
         const yyjson::value& request)
@@ -2256,15 +2295,22 @@ namespace Das::Core::TaskScheduler
         // Get pipeline owns ⑤ session -> ⑥⑦(GetDocument + parse); this caller
         // owns ①② locks/IO, and ⑩ entryId/taskTypeGuid/revision response
         // assembly.
-        auto pipeline = RunAuthoringGetPipeline(
-            plugin_manager_,
+        auto session_entry = GetOrCreateAuthoringSession(
+            repository_authoring_sessions_,
             capability,
+            entry_id,
             MakeRepositoryAuthoringContextJson(
                 plugin_manager_,
                 entry_id,
                 entry.accepted_properties,
-                entry_json),
-            request);
+                entry_json));
+        if (!session_entry)
+        {
+            return MakeRepositoryResponseError(
+                "sessionCreateFailed",
+                "Failed to create repository authoring session");
+        }
+        auto pipeline = RunAuthoringGetPipeline(session_entry, request);
         if (!pipeline.ok)
         {
             std::string message = std::move(pipeline.error_message);
@@ -2441,6 +2487,14 @@ namespace Das::Core::TaskScheduler
             return MakeRepositoryResponseError(
                 "persistenceFailed",
                 "Failed to persist accepted repository authoring change");
+        }
+
+        // Invalidate the cached repository Get session: Apply mutated state via
+        // a separate session, so a cached session would observe a stale
+        // revision on the next Get. Mirrors the Task Apply invalidation.
+        {
+            const std::scoped_lock lock(mutex_);
+            repository_authoring_sessions_.erase(entry_id);
         }
 
         yyjson::value result(Das::Utils::MakeYyjsonObject());
@@ -3394,15 +3448,22 @@ namespace Das::Core::TaskScheduler
         // {kind, payload} envelope before invoking the Provider. The shared
         // Get pipeline owns ⑤ session -> ⑥⑦(GetDocument + parse); this caller
         // owns ①② lock/IO, and ⑩ taskId response assembly.
-        auto pipeline = RunAuthoringGetPipeline(
-            plugin_manager_,
+        auto entry = GetOrCreateAuthoringSession(
+            task_authoring_sessions_,
             capability,
+            task_id,
             MakeAuthoringContextJson(
                 plugin_manager_,
                 task_id,
                 properties,
-                task_json),
-            request);
+                task_json));
+        if (!entry)
+        {
+            return MakeAuthoringResponseError(
+                "sessionCreateFailed",
+                "Failed to create task authoring session");
+        }
+        auto pipeline = RunAuthoringGetPipeline(entry, request);
         if (!pipeline.ok)
         {
             std::string message = std::move(pipeline.error_message);
@@ -3550,6 +3611,13 @@ namespace Das::Core::TaskScheduler
                     CloneJsonValue(pipeline.parsed.accepted_properties);
                 inst->authoring = CloneJsonValue(pipeline.authoring);
             }
+            // Drop any cached Get session for this task: Apply just changed the
+            // persisted state via a separate session, so a cached session would
+            // observe a stale revision on the next Get. Until Apply itself runs
+            // through the cache (sharing one session with Get), invalidate on
+            // every successful persist so the next Get lazily rebuilds from the
+            // fresh on-disk context.
+            task_authoring_sessions_.erase(task_id);
         }
 
         yyjson::value result(Das::Utils::MakeYyjsonObject());

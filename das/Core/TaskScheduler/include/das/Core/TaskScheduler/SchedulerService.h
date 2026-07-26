@@ -28,6 +28,7 @@
 #include <mutex>
 #include <optional>
 #include <queue>
+#include <shared_mutex>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -81,6 +82,36 @@ namespace Das::Core::TaskScheduler
         // Pointer to the task type record if available
         TaskTypeRecord*                        task_type = nullptr;
         DasPtr<Das::PluginInterface::IDasTask> task_instance;
+    };
+
+    /// Cached authoring session for one task/repository-entry id. Mirrors the
+    /// move-only, non-copyable shape of SettingsManager's SettingsKeyCell
+    /// (std::shared_mutex is neither copyable nor movable). The cache map
+    /// stores std::shared_ptr<AuthoringSessionEntry> so a caller can hold a
+    /// copy, release mutex_, and still use entry->session safely even if the
+    /// entry is evicted from the map concurrently. The per-session `lock` is
+    /// reserved for per-session serialization (a later plan) and is
+    /// intentionally unused here.
+    struct AuthoringSessionEntry
+    {
+        std::shared_mutex                                      lock;
+        DasPtr<Das::PluginInterface::IDasTaskAuthoringSession> session;
+
+        AuthoringSessionEntry() = default;
+        AuthoringSessionEntry(AuthoringSessionEntry&& other) noexcept
+            : session(std::move(other.session))
+        {
+        }
+        AuthoringSessionEntry& operator=(AuthoringSessionEntry&& other) noexcept
+        {
+            if (this != &other)
+            {
+                session = std::move(other.session);
+            }
+            return *this;
+        }
+        AuthoringSessionEntry(const AuthoringSessionEntry&) = delete;
+        AuthoringSessionEntry& operator=(const AuthoringSessionEntry&) = delete;
     };
 
     class SchedulerService
@@ -259,6 +290,20 @@ namespace Das::Core::TaskScheduler
             const DasGuid&           task_guid,
             TaskAuthoringCapability& out_capability);
 
+        /// Get-or-create a cached authoring session for the given id. Returns a
+        /// shared_ptr copy (refcount+1) so the caller can release mutex_ before
+        /// using entry->session; the entry stays alive even if evicted from the
+        /// map concurrently. mutex_ is held only for the short find/emplace;
+        /// session creation (factory lookup + plugin IPC) happens outside the
+        /// lock. Returns null on session-create failure (no empty entry is
+        /// inserted into the map).
+        std::shared_ptr<AuthoringSessionEntry> GetOrCreateAuthoringSession(
+            std::unordered_map<int64_t, std::shared_ptr<AuthoringSessionEntry>>&
+                                           cache,
+            const TaskAuthoringCapability& capability,
+            int64_t                        id,
+            yyjson::value                  context);
+
         // ----------------------------------------------------------------
         // Config-side persistence (OnTick nextExecutionTime)
         // ----------------------------------------------------------------
@@ -318,6 +363,15 @@ namespace Das::Core::TaskScheduler
         };
         std::unordered_map<DasGuid, RepositoryPluginAvailabilityState>
             repository_plugin_availability_;
+
+        // Cached authoring sessions, keyed by task/repository-entry id. Both
+        // maps are guarded by mutex_ (short find/emplace/erase only; session
+        // use and persistence happen outside the lock). Values are shared_ptr
+        // so callers hold a copy after releasing mutex_.
+        std::unordered_map<int64_t, std::shared_ptr<AuthoringSessionEntry>>
+            task_authoring_sessions_;
+        std::unordered_map<int64_t, std::shared_ptr<AuthoringSessionEntry>>
+            repository_authoring_sessions_;
 
         Das::PluginInterface::IDasTask*    current_task_ = nullptr;
         std::vector<std::filesystem::path> loaded_plugin_paths_;
