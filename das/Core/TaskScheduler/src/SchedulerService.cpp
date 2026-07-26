@@ -1227,15 +1227,37 @@ namespace Das::Core::TaskScheduler
     {
         config_persist_thread_ =
             std::thread(&SchedulerService::ConfigPersistThreadLoop, this);
+        // D-87-08: 注册为 PluginManager 的 lifecycle listener，plugin
+        // load/unload 后全清 authoring cache。SchedulerService 持有
+        // PluginManager& 引用，结构上 PluginManager 存活长于
+        // SchedulerService，裸指针注册安全。
+        plugin_manager_.SetPluginLifecycleListener(this);
     }
 
     SchedulerService::~SchedulerService()
     {
+        // 防御：清注册。PluginManager 结构上存活长于 SchedulerService（持有
+        // PluginManager& 引用），此调用成本为零；若实际析构顺序变化也避免
+        // PluginManager 持悬空 listener 指针。
+        plugin_manager_.SetPluginLifecycleListener(nullptr);
         ShutdownConfigPersistQueue();
         if (disable_thread_.joinable())
         {
             disable_thread_.join();
         }
+    }
+
+    void SchedulerService::OnPluginLifecycleEvent(
+        Das::Core::ForeignInterfaceHost::PluginLifecyclePhase /*phase*/,
+        const DasGuid& /*plugin_guid*/)
+    {
+        // D-87-08 粗粒度全清：不区分 Loaded/Unloading 也不区分哪个 plugin，
+        // 任何 plugin 变动都全清 authoring cache，下次 Get lazy 重建（带新
+        // catalog）。本方法由 PluginManager 在释 mutex_ 后回调（参考其
+        // Shutdown 两阶段范式），故此处不重 acquire PluginManager::mutex_；
+        // InvalidateAuthoringSessions 内部 acquire SchedulerService::mutex_，
+        // 此时无 PluginManager::mutex_ 嵌套，无 AB-BA。
+        InvalidateAuthoringSessions();
     }
 
     DasResult SchedulerService::CreateTaskInstance(

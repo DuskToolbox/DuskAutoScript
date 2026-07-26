@@ -6,6 +6,7 @@
 #include <condition_variable>
 #include <cpp_yyjson.hpp>
 #include <das/Core/ForeignInterfaceHost/ForeignInterfaceHost.h>
+#include <das/Core/ForeignInterfaceHost/IPluginLifecycleListener.h>
 #include <das/Core/ForeignInterfaceHost/PluginManager.h>
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
 #include <das/Core/SettingsManager/SettingsManager.h>
@@ -122,6 +123,7 @@ namespace Das::Core::TaskScheduler
     };
 
     class SchedulerService
+        : public Das::Core::ForeignInterfaceHost::IPluginLifecycleListener
     {
     public:
         explicit SchedulerService(
@@ -230,6 +232,17 @@ namespace Das::Core::TaskScheduler
         /// alive via shared_ptr (D-87-07).
         void InvalidateAuthoringSessions();
 
+        // IPluginLifecycleListener (D-87-08): PluginManager 在释 mutex_ 后回调
+        // 本方法（参考其 Shutdown 两阶段范式）。粗粒度全清 —— 不区分
+        // Loaded/Unloading 也不区分哪个 plugin，任何 plugin 变动都全清
+        // authoring cache，下次 Get 重建。本方法不重 acquire
+        // PluginManager::mutex_（避免反向锁序；listener 触发时 PluginManager
+        // 已不持 mutex_）。public 以便测试直接调用 listener 入口验证调用链。
+        void OnPluginLifecycleEvent(
+            Das::Core::ForeignInterfaceHost::PluginLifecyclePhase phase,
+            const DasGuid& plugin_guid) override;
+
+    private:
     private:
         void      StartTickTimer(std::chrono::steady_clock::duration delay);
         void      OnTick();
