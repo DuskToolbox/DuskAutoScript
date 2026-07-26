@@ -317,6 +317,24 @@ private:
     void CleanupPluginByGuid(DasGuid plugin_guid);
 
     /**
+     * @brief 统一卸载索引清理（feature_type_index_ + 3 个内部 sub-manager）
+     * @param plugin_guid 插件 GUID（通知 sub-manager 用）
+     * @param plugin 待卸载插件（提供 features 列表）
+     *
+     * 从 feature_type_index_ 移除本插件所有 feature 指针 + 通知 error_lens /
+     * component_factory / task_component_factory 三个 sub-manager
+     * OnPluginUnloading。loaded_plugins_ / path_to_guid_ 的 erase 由调用方负责
+     * （进程内路径锁内 erase；IPC 路径先 erase 再释锁停进程）。
+     *
+     * 必须在 LoadedPlugin.features 释放前调用。三条卸载路径（进程内
+     * UnloadPlugin 分支 / IPC UnloadPluginIpc 的调用方 / heartbeat-exit
+     * CleanupPluginByGuid） 统一走这里，避免 feature_type_index_ 残留悬空
+     * FeatureInfo*（曾致 IPC 卸载 后 GetFeaturesByType 解引用已释放内存的
+     * UAF）。调用方必须已持有 mutex_。
+     */
+    void CleanupPluginIndexes(DasGuid plugin_guid, const LoadedPlugin& plugin);
+
+    /**
      * @brief 触发外部 lifecycle listener（若有）
      *
      * 调用契约：调用方必须在释放 mutex_ 之后调用本方法（不在本方法内部

@@ -1053,26 +1053,16 @@ TEST_F(
     }
 }
 
-// REQ-08 (full E2E attempt): DISABLED — hits a pre-existing
-// GetFeaturesByType use-after-free on IPC-plugin unload (deferred-items.md,
-// Phase 87-02 finding). Reproduced here: after PluginManager::UnloadPlugin
-// (IPC path), the post-unload Get iterates GetFeaturesByType, which returns
-// stale FeatureInfo* pointers to freed entries (UnloadPluginIpc erases
-// loaded_plugins_, destroying the FeatureInfo vector, but leaves
-// feature_type_index_ dangling). ASAN aborts with "Freed heap region".
-//
-// This UAF is a PluginManager feature-cleanup bug, out of phase-87 scope. The
-// listener chain itself is wired and verified by
-// SchedulerAuthoringInvalidateOnPluginLifecycleEvent above (calls the listener
-// entry point directly -> cache cleared -> next Get rebuilds, count 1 -> 2 ->
-// 3) and by the PluginManager-level
-// LifecycleListener_FiresOnProcessExitAndHeartbeat (fire points fire after
-// mutex_ release, no deadlock). Renamed to DISABLED_ so gtest skips it while
-// keeping the scenario documented; re-enable once the PluginManager
-// feature-cleanup UAF is fixed (suggested follow-up in deferred-items.md).
-TEST_F(
-    SchedulerAuthoringCacheTest,
-    DISABLED_SchedulerAuthoringInvalidateOnPluginUnload)
+// REQ-08 (full E2E): IPC plugin unload fires the Unloading lifecycle event
+// (post mutex_ release) -> SchedulerService::OnPluginLifecycleEvent ->
+// InvalidateAuthoringSessions clears the cache. The previously-blocking
+// pre-existing GetFeaturesByType UAF (feature_type_index_ left dangling after
+// UnloadPlugin) is now fixed — CleanupPluginIndexes cleans the index in all
+// three unload paths before features are freed. Completing without an ASAN
+// abort is the E2E win; the rebuild count is not asserted because the Host
+// process is gone post-unload (REQ-08 rebuild verification lives in the
+// mechanism test SchedulerAuthoringInvalidateOnPluginLifecycleEvent above).
+TEST_F(SchedulerAuthoringCacheTest, SchedulerAuthoringInvalidateOnPluginUnload)
 {
     SeedAuthoringTask(0);
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
@@ -1092,11 +1082,11 @@ TEST_F(
     ASSERT_EQ(plugin_manager_->UnloadPlugin(manifest_path_), DAS_S_OK);
 
     // The cache was cleared by the listener. The post-unload Get cannot
-    // rebuild (the Host process is gone and GetFeaturesByType is stale), so we
-    // do not assert a count bump — reaching here without crashing is the
-    // signal that the listener fire point in UnloadPluginIpc is wired and
-    // deadlock/UAF-free for this path. (REQ-08 rebuild verification lives in
-    // the mechanism test above.)
+    // rebuild (the Host process is gone — no plugin to re-probe), so we do not
+    // assert a count bump — reaching here without an ASAN abort is the signal
+    // that the unload path (CleanupPluginIndexes + the fire point in
+    // UnloadPluginIpc) is UAF-free for this path. (REQ-08 rebuild verification
+    // lives in the mechanism test above.)
     scheduler_->GetTaskAuthoringDocument(0, request);
     SUCCEED() << "unload -> listener fire -> cache clear path executed";
 }

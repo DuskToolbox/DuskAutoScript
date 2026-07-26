@@ -626,7 +626,10 @@ DasResult PluginManager::UnloadPlugin(const std::filesystem::path& path)
     // LoadedPlugin 记录加载来源标记。
     if (plug_it->second.session_id > 1)
     {
-        // 从 loaded_plugins_ 取出 plugin（UnloadPluginIpc 负责 erase）
+        // IPC 路径：统一索引清理（feature_type_index_ + sub-manager）必须在
+        // move-out 前（plug_it 此刻有效，features 在原址）；之后再 move-out +
+        // erase + 释锁，UnloadPluginIpc 只剩锁外停进程。
+        CleanupPluginIndexes(guid, plug_it->second);
         LoadedPlugin ipc_plugin = std::move(plug_it->second);
         loaded_plugins_.erase(plug_it);
         path_to_guid_.erase(path_it);
@@ -634,22 +637,8 @@ DasResult PluginManager::UnloadPlugin(const std::filesystem::path& path)
         return UnloadPluginIpc(guid, ipc_plugin);
     }
 
-    // 进程内路径：先从 feature_type_index_ 中移除指针（在 erase
-    // loaded_plugins_ 之前）
-    error_lens_mgr_.OnPluginUnloading(guid);
-    component_factory_mgr_.OnPluginUnloading(guid);
-    task_component_factory_mgr_.OnPluginUnloading(guid);
-
-    for (auto& feature : plug_it->second.features)
-    {
-        auto type_it = feature_type_index_.find(feature.feature_type);
-        if (type_it != feature_type_index_.end())
-        {
-            auto& vec = type_it->second;
-            vec.erase(std::remove(vec.begin(), vec.end(), &feature), vec.end());
-        }
-    }
-
+    // 进程内路径：统一索引清理（feature_type_index_ + sub-manager）再 erase。
+    CleanupPluginIndexes(guid, plug_it->second);
     loaded_plugins_.erase(plug_it);
     path_to_guid_.erase(path_it);
 
@@ -953,47 +942,57 @@ DasResult PluginManager::UnloadPluginIpc(
     const DasGuid& guid,
     LoadedPlugin&  plugin)
 {
-    // 从索引中移除（必须在 Stop 之前，Stop 可能触发断连回调）
-    {
-        const std::scoped_lock lock(mutex_);
-        error_lens_mgr_.OnPluginUnloading(guid);
-        component_factory_mgr_.OnPluginUnloading(guid);
-        task_component_factory_mgr_.OnPluginUnloading(guid);
-        path_to_guid_.erase(
-            std::string{DAS::Utils::U8AsString(plugin.plugin_path.u8string())});
-        loaded_plugins_.erase(guid);
-    }
-
-    // 锁外触发 lifecycle listener（Unloading）：上面内层 scoped_lock 作用域
-    // 已结束，满足 INV-03 与订阅者无 AB-BA 约束。在 UnregisterHostLauncher
-    // 之前通知，让订阅者（SchedulerService）先失效 authoring cache —— 之后
-    // Host 进程 Stop 可能阻塞等待进程退出，期间订阅者已完成 cache 全清。
+    // 索引清理（feature_type_index_ + sub-manager）+ loaded_plugins_ /
+    // path_to_guid_ erase 已由唯一调用方 UnloadPlugin 在持锁阶段完成
+    // （CleanupPluginIndexes + erase + move-out），并在调用前释 mutex_。本方法
+    // 只负责锁外两件事（INV-03：停进程可能阻塞 / 触发重入回调，必须锁外）：
+    //   1) fire lifecycle listener（Unloading）—— 订阅者先失效 authoring
+    //   cache； 2) 经 ipc_context_ 按 session 主动 Stop Host 进程 + 清
+    //   ConnectionManager。
+    // plugin 由调用方 move-out 保活，session_id 在释锁后仍可用。fire 在 Stop
+    // 之前， 让订阅者在 Host 进程 Stop 阻塞等待退出期间已完成 cache 全清。
+    // UnregisterHostLauncherBySession 在 IpcContext override 内组合
+    // launcher->Stop()（GOODBYE + 等待进程退出 + ClearCallbacks 全清三 slot）+
+    // ConnectionManager::UnregisterHostLauncher（清 hosts_/connections_
+    // 索引）。
     FireLifecycleListener(PluginLifecyclePhase::Unloading, guid);
 
-    // 经 ipc_context_ 接口按 session 主动 Stop Host 进程 + 清 ConnectionManager
-    // 索引。 HostLauncher 所有权唯一归 IpcContext::launchers_ +
-    // ConnectionManager::hosts_ （PluginManager 不持有，host_launchers_
-    // 死字段已删）。本调用在 mutex_ 锁外 （上面内层 lock_guard
-    // 作用域已结束），满足 INV-03。UnregisterHostLauncherBySession 在
-    // IpcContext override 内组合 launcher->Stop()（含 GOODBYE + 等待进程退出 +
-    // ClearCallbacks 全清三 slot，保留运行时卸载"主动 Stop Host 进程"语义）+
-    // runloop_.GetConnectionManager().UnregisterHostLauncher（清
-    // hosts_/connections_ 索引）。
     return ipc_context_.get().UnregisterHostLauncherBySession(
         plugin.session_id);
+}
+
+void PluginManager::CleanupPluginIndexes(
+    DasGuid             plugin_guid,
+    const LoadedPlugin& plugin)
+{
+    // 调用方已持有 mutex_。从 feature_type_index_ 移除本插件所有 feature 指针
+    // （必须在 features 释放前），再通知 3 个内部 sub-manager
+    // OnPluginUnloading。 统一三条卸载路径的索引清理，避免 feature_type_index_
+    // 残留悬空 FeatureInfo* （曾致 IPC 卸载后 GetFeaturesByType
+    // 解引用已释放内存的 UAF）。
+    for (const auto& feature : plugin.features)
+    {
+        const auto type_it = feature_type_index_.find(feature.feature_type);
+        if (type_it != feature_type_index_.end())
+        {
+            auto& vec = type_it->second;
+            vec.erase(std::remove(vec.begin(), vec.end(), &feature), vec.end());
+        }
+    }
+    error_lens_mgr_.OnPluginUnloading(plugin_guid);
+    component_factory_mgr_.OnPluginUnloading(plugin_guid);
+    task_component_factory_mgr_.OnPluginUnloading(plugin_guid);
 }
 
 void PluginManager::CleanupPluginByGuid(DasGuid plugin_guid)
 {
     // 调用方已持有 mutex_
 
-    // 清理 loaded_plugins_ 索引
     auto plugin_it = loaded_plugins_.find(plugin_guid);
     if (plugin_it != loaded_plugins_.end())
     {
-        error_lens_mgr_.OnPluginUnloading(plugin_guid);
-        component_factory_mgr_.OnPluginUnloading(plugin_guid);
-        task_component_factory_mgr_.OnPluginUnloading(plugin_guid);
+        // 统一索引清理（feature_type_index_ + sub-manager）再 erase。
+        CleanupPluginIndexes(plugin_guid, plugin_it->second);
         path_to_guid_.erase(
             std::string{DAS::Utils::U8AsString(
                 plugin_it->second.plugin_path.u8string())});
