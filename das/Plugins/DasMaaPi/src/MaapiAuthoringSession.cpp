@@ -76,6 +76,10 @@ namespace Plugins::DasMaaPi
                 diagnostics.push_back(std::move(diag));
                 return false;
             }
+            if (kind == "uiEvent")
+            {
+                return ApplyUiEventChange(candidate, payload, diagnostics);
+            }
             // 84-01 严格 change kinds 中 MaaPI 不支持的（graphNode 系列）+
             // 所有 legacy alias（applyPreset/addSequenceItem/moveSequenceItem/
             // removeSequenceItem 等）一律 unsupportedChange。
@@ -375,7 +379,8 @@ namespace Plugins::DasMaaPi
         auto result_json = BuildApplyResult(
             settings_,
             result_revision,
-            std::move(diagnostics));
+            std::move(diagnostics),
+            /*project_document=*/kind != "uiEvent");
 
         // 5) 注入 portDefinitions/portMap 到 acceptedProperties（Provider 私有
         //    运行期派生，不属于 document UI IR）。

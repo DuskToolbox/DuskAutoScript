@@ -110,11 +110,22 @@ namespace Das::Plugins::DasMaaPi
         std::vector<std::string> orphan_paths;
     };
 
+    // 通用 UI 状态 kv 存储（视图偏好 + 插件自定义数据）。
+    // key → 任意 JSON value；经 Apply uiEvent kind 写入（ApplyUiEventChange
+    // handler 按 event type 映射到 key，如 sectionExpandChanged →
+    // "sectionExpand.<id>"）。 不参与 PI 业务语义/编译，纯存储；Get 时前端读
+    // values 自行合成 UI 状态 （后端不耦合 sectionExpand 等 UI 概念）。
+    struct MaapiUiSettingsDto
+    {
+        std::map<std::string, yyjson::value> values;
+    };
+
     struct AcceptedSettingsDto
     {
         int32_t                 version = 1;
         MaapiAdapterSettingsDto adapter;
         MaapiPiSettingsDto      pi;
+        MaapiUiSettingsDto      ui;
     };
 } // namespace Das::Plugins::DasMaaPi
 

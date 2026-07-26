@@ -28,10 +28,14 @@ namespace Plugins::DasMaaPi
         int64_t                       revision,
         std::vector<PiDiagnosticDto>& diagnostics);
 
+    // project_document=false 时跳过 document 投影（uiEvent 等 UI 事件响应不带
+    // document，避免无谓 catalog 解析 + 投影；前端据此分流——有 document 重建，
+    // 无则只更新 revision）。
     yyjson::value BuildApplyResult(
         const AcceptedSettingsDto&   settings,
         int64_t                      revision,
-        std::vector<PiDiagnosticDto> diagnostics);
+        std::vector<PiDiagnosticDto> diagnostics,
+        bool                         project_document = true);
 
     // Port derivation utilities (D-05/D-06/D-07)
 

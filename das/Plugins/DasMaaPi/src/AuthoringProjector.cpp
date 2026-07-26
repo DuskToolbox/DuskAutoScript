@@ -362,6 +362,27 @@ namespace Das::Plugins::DasMaaPi
                         ParsePretaskSettingsArray(*pi, "pretasks");
                 }
             }
+
+            // ui（通用 kv：视图偏好 + 插件自定义）。缺失时留空 map；不参与
+            // PI 业务语义/编译，Get 时前端读 values 自行合成 UI 状态。
+            if (obj.contains(std::string_view("ui")))
+            {
+                if (auto ui = obj[std::string_view("ui")].as_object())
+                {
+                    if (ui->contains(std::string_view("values")))
+                    {
+                        if (auto vals =
+                                (*ui)[std::string_view("values")].as_object())
+                        {
+                            for (const auto& [k, v] : *vals)
+                            {
+                                settings.ui.values[std::string(k)] =
+                                    Das::Utils::CloneYyjsonValue(v);
+                            }
+                        }
+                    }
+                }
+            }
             // D-84-40: 任何 legacy task (pre-84 输入或 ApplyAddSequenceItem
             // 创建后未补 itemId 的情况) 在 parse 完成后获得稳定 itemId，
             // 保证 Get 投影不需要在每次调用时分配身份（Get idempotent）。
@@ -1839,6 +1860,19 @@ namespace Das::Plugins::DasMaaPi
         }
         (*pi_obj)[std::string_view("orphanPaths")] = std::move(orphans);
         (*obj)[std::string_view("pi")] = std::move(pi);
+
+        // ui（通用 kv）：非空时输出，避免 legacy/空形态出现空 values 对象。
+        if (!settings.ui.values.empty())
+        {
+            yyjson::value ui(Das::Utils::MakeYyjsonObject());
+            auto          ui_obj = ui.as_object();
+            for (const auto& [k, v] : settings.ui.values)
+            {
+                (*ui_obj)[std::string_view(k)] =
+                    Das::Utils::CloneYyjsonValue(v);
+            }
+            (*obj)[std::string_view("ui")] = std::move(ui);
+        }
         return result;
     }
 
@@ -1923,8 +1957,8 @@ namespace Das::Plugins::DasMaaPi
             return leaf;
         };
 
-        // 项目设置 section（顺序第一）。defaultExpanded=false，匹配旧 UI 顶部
-        // "项目设置" 默认折叠行为。
+        // 项目设置 section（顺序第一）。defaultExpanded=true，默认展开
+        // （与任务设置 section 一致；“项目设置默认折叠”的旧 UI 行为已废弃）。
         if (!project_entries.empty())
         {
             yyjson::value section(Object());
@@ -1942,7 +1976,7 @@ namespace Das::Plugins::DasMaaPi
                     "fieldLayout.section.project.label");
             }
             (*s_obj)[std::string_view("label")] = JsonString(project_label);
-            (*s_obj)[std::string_view("defaultExpanded")] = false;
+            (*s_obj)[std::string_view("defaultExpanded")] = true;
             yyjson::value entries(Array());
             for (const auto& name : project_entries)
             {
@@ -3746,6 +3780,86 @@ namespace Das::Plugins::DasMaaPi
                 std::move(new_task));
         }
         return true;
+    }
+
+    // uiEvent kind handler：通用 UI 事件 → ui.values kv。
+    // payload {type, target, data}（OnlyKeysExact 外层严格；target/data 内部按
+    // type）。 当前实现 sectionExpandChanged：target.sectionId + data.expanded
+    // → values["sectionExpand.<id>"] = bool。type 驱动；未来加新 type
+    // 在此分派， 前端协议不变。不参与 PI 业务语义；ApplyChange 主流程对 uiEvent
+    // 短路 document。
+    bool ApplyUiEventChange(
+        AcceptedSettingsDto&          settings,
+        const yyjson::value&          payload,
+        std::vector<PiDiagnosticDto>& diagnostics)
+    {
+        if (!OnlyKeysExact(
+                payload,
+                "uiEvent",
+                {"type", "target", "data"},
+                diagnostics))
+        {
+            return false;
+        }
+        auto payload_obj = *payload.as_object();
+        auto type = ObjectStringField(payload_obj, "type");
+        if (!type || type->empty())
+        {
+            EmitDiagnostic(
+                diagnostics,
+                "error",
+                "uiEvent.type required and non-empty",
+                DAS_E_INVALID_ARGUMENT,
+                "type");
+            return false;
+        }
+
+        const auto& target_val = payload_obj[std::string_view("target")];
+        const auto& data_val = payload_obj[std::string_view("data")];
+
+        if (*type == "sectionExpandChanged")
+        {
+            auto target_obj = target_val.as_object();
+            auto section_id = target_obj
+                                  ? ObjectStringField(*target_obj, "sectionId")
+                                  : std::optional<std::string>{};
+            if (!section_id || section_id->empty())
+            {
+                EmitDiagnostic(
+                    diagnostics,
+                    "error",
+                    "sectionExpandChanged.target.sectionId required",
+                    DAS_E_INVALID_ARGUMENT,
+                    "target.sectionId");
+                return false;
+            }
+            auto data_obj = data_val.as_object();
+            if (!data_obj || !data_obj->contains(std::string_view("expanded"))
+                || !(*data_obj)[std::string_view("expanded")].is_bool())
+            {
+                EmitDiagnostic(
+                    diagnostics,
+                    "error",
+                    "sectionExpandChanged.data.expanded required bool",
+                    DAS_E_INVALID_ARGUMENT,
+                    "data.expanded");
+                return false;
+            }
+            bool expanded =
+                (*data_obj)[std::string_view("expanded")].as_bool().value_or(
+                    true);
+            settings.ui.values["sectionExpand." + *section_id] =
+                yyjson::value(expanded);
+            return true;
+        }
+
+        EmitDiagnostic(
+            diagnostics,
+            "error",
+            "uiEvent.type unsupported: " + *type,
+            DAS_E_INVALID_ARGUMENT,
+            "type");
+        return false;
     }
 
     bool ApplyMoveFormSequenceItem(

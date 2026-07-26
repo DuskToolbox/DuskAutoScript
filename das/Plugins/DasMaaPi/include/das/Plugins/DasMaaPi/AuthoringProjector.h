@@ -76,6 +76,16 @@ namespace Das::Plugins::DasMaaPi
         const yyjson::value&          payload,
         std::vector<PiDiagnosticDto>& diagnostics);
 
+    // uiEvent kind handler：通用 UI 事件 → ui.values kv（视图偏好 +
+    // 插件自定义）。 payload {type, target, data}（OnlyKeysExact
+    // 外层严格；target/data 按 type）； type 驱动映射（当前
+    // sectionExpandChanged → values["sectionExpand.<id>"]）。 不参与 PI
+    // 业务语义；ApplyChange 主流程对 uiEvent 短路 document（不投影）。
+    bool ApplyUiEventChange(
+        AcceptedSettingsDto&          settings,
+        const yyjson::value&          payload,
+        std::vector<PiDiagnosticDto>& diagnostics);
+
     void ApplyPreset(
         AcceptedSettingsDto& settings,
         const PiCatalog&     catalog,

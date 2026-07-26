@@ -50,7 +50,8 @@ namespace Das::Plugins::DasMaaPi
     yyjson::value BuildApplyResult(
         const AcceptedSettingsDto&   settings,
         int64_t                      revision,
-        std::vector<PiDiagnosticDto> diagnostics);
+        std::vector<PiDiagnosticDto> diagnostics,
+        bool                         project_document = true);
 } // namespace Das::Plugins::DasMaaPi
 
 namespace
@@ -6363,7 +6364,7 @@ TEST(
     auto layout = (*doc_obj)[std::string_view("fieldLayout")].as_array();
     ASSERT_TRUE(layout.has_value());
 
-    // 项目设置 section（顺序第一）。defaultExpanded=false。
+    // 项目设置 section（顺序第一）。defaultExpanded=true。
     auto project_section = FindLayoutSection(document, "project");
     ASSERT_TRUE(project_section.has_value());
     auto project_fields = LayoutSectionFieldNames(*project_section);
@@ -6377,9 +6378,9 @@ TEST(
     EXPECT_EQ(project_fields[6], "pretask.bootstrap_mode");
     auto project_section_obj = project_section->as_object();
     ASSERT_TRUE(project_section_obj.has_value());
-    EXPECT_FALSE((*project_section_obj)[std::string_view("defaultExpanded")]
-                     .as_bool()
-                     .value_or(true));
+    EXPECT_TRUE((*project_section_obj)[std::string_view("defaultExpanded")]
+                    .as_bool()
+                    .value_or(false));
 
     // setting section: performance → settings.stage。
     auto perf_section = FindLayoutSection(document, "setting_performance");

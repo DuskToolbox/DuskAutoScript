@@ -80,22 +80,33 @@ namespace Plugins::DasMaaPi
     yyjson::value BuildApplyResult(
         const AcceptedSettingsDto&   settings,
         int64_t                      revision,
-        std::vector<PiDiagnosticDto> diagnostics)
+        std::vector<PiDiagnosticDto> diagnostics,
+        bool                         project_document)
     {
-        auto          catalog = TryParseCatalog(settings, diagnostics);
+        // project_document=false（uiEvent 等 UI 事件）时跳过 catalog 解析 +
+        // document 投影，省下 TryParseCatalog 的文件 IO + 解析开销。
+        std::optional<PiCatalog> catalog;
+        if (project_document)
+        {
+            catalog = TryParseCatalog(settings, diagnostics);
+        }
         yyjson::value result(Das::Utils::MakeYyjsonObject());
         auto          obj = result.as_object();
-        // D-84-08/11: Apply 严格 envelope = {acceptedProperties, document,
-        // diagnostics}。不再 emit migration/sourceFingerprint (D-84-04)。
-        // document 内也不携带 diagnostics（envelope 同级）。
+        // D-84-08/11: Apply 严格 envelope = {acceptedProperties, document?,
+        // diagnostics}。project_document=false 时省略 document 字段（uiEvent
+        // 等 UI 事件响应不带 document；前端据此分流——有则重建，无则只更
+        // revision）。
         (*obj)[std::string_view("acceptedProperties")] =
             SerializeAcceptedSettings(settings);
 
-        (*obj)[std::string_view("document")] = ProjectAuthoringDocument(
-            settings,
-            catalog ? &*catalog : nullptr,
-            diagnostics,
-            revision);
+        if (project_document)
+        {
+            (*obj)[std::string_view("document")] = ProjectAuthoringDocument(
+                settings,
+                catalog ? &*catalog : nullptr,
+                diagnostics,
+                revision);
+        }
 
         yyjson::value diagnostics_json(Das::Utils::MakeYyjsonArray());
         for (const auto& diagnostic : diagnostics)
