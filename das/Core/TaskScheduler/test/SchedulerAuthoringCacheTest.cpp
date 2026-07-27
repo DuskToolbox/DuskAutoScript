@@ -977,13 +977,8 @@ TEST_F(
     }
 }
 
-// REQ-06d / REQ-08: the cache-clear mechanism (used by Initialize reentry and
-// the public InvalidateAuthoringSessions the Plan 04 listener will call) drops
-// the cached session so the next Get rebuilds (count 1 -> 2). Initialize
-// reentry and InvalidateAuthoringSessions share the identical `clear both maps`
-// path, so this exercises the clear directly. (End-to-end re-Initialize is
-// blocked by a pre-existing PluginManager UAF on IPC plugin reload — out of
-// scope; logged in deferred-items.)
+// REQ-06d / REQ-08: the public invalidation entry drops the cached session so
+// the next Get rebuilds (count 1 -> 2).
 TEST_F(
     SchedulerAuthoringCacheTest,
     SchedulerAuthoringInvalidateAuthoringSessions)
@@ -999,6 +994,30 @@ TEST_F(
     }
 
     scheduler_->InvalidateAuthoringSessions();
+
+    scheduler_->GetTaskAuthoringDocument(0, request);
+    {
+        const ipc_scoped_lock lock(shared_state_->mutex);
+        EXPECT_EQ(shared_state_->authoring_session_count, 2);
+    }
+}
+
+// REQ-06d: Initialize reentry clears the authoring cache while holding the
+// SchedulerService mutex. PluginManager's synchronous unload notification must
+// not try to acquire that mutex again.
+TEST_F(SchedulerAuthoringCacheTest, SchedulerAuthoringInvalidateOnReinitialize)
+{
+    SeedAuthoringTask(0);
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    const yyjson::value request = MakeEmptyAuthoringRequest();
+    scheduler_->GetTaskAuthoringDocument(0, request);
+    {
+        const ipc_scoped_lock lock(shared_state_->mutex);
+        EXPECT_EQ(shared_state_->authoring_session_count, 1);
+    }
+
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
 
     scheduler_->GetTaskAuthoringDocument(0, request);
     {

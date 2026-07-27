@@ -9,6 +9,7 @@
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
 #include <das/IDasBase.h>
+#include <das/Utils/CommonUtils.hpp>
 #include <das/Utils/DasJsonCore.h>
 #include <das/Utils/StringUtils.h>
 #include <das/_autogen/idl/abi/IDasPluginPackage.h>
@@ -1251,12 +1252,17 @@ namespace Das::Core::TaskScheduler
         Das::Core::ForeignInterfaceHost::PluginLifecyclePhase /*phase*/,
         const DasGuid& /*plugin_guid*/)
     {
-        // D-87-08 粗粒度全清：不区分 Loaded/Unloading 也不区分哪个 plugin，
-        // 任何 plugin 变动都全清 authoring cache，下次 Get lazy 重建（带新
-        // catalog）。本方法由 PluginManager 在释 mutex_ 后回调（参考其
-        // Shutdown 两阶段范式），故此处不重 acquire PluginManager::mutex_；
-        // InvalidateAuthoringSessions 内部 acquire SchedulerService::mutex_，
-        // 此时无 PluginManager::mutex_ 嵌套，无 AB-BA。
+        // Initialize() has already cleared both caches while holding mutex_.
+        // PluginManager may notify synchronously from the initiating thread or
+        // concurrently from a Host callback. In either case, acquiring mutex_
+        // here is redundant and may deadlock with the active unload path.
+        if (suppress_plugin_lifecycle_invalidation_.load())
+        {
+            return;
+        }
+
+        // Any plugin change outside the SS-initiated window invalidates every
+        // authoring session so the next access rebuilds against fresh state.
         InvalidateAuthoringSessions();
     }
 
@@ -1321,13 +1327,13 @@ namespace Das::Core::TaskScheduler
                 task_repository_store_.reset();
                 capability_registry_.Clear();
                 repository_plugin_availability_.clear();
-                // Drop cached authoring sessions (lazy-rebuilt on next access).
-                // mutex_ is already held here, so clear the maps directly
-                // rather than calling InvalidateAuthoringSessions() (which
-                // re-locks). shared_ptr keeps any in-flight caller's entry
-                // alive (D-87-07).
-                task_authoring_sessions_.clear();
-                repository_authoring_sessions_.clear();
+                InvalidateAuthoringSessionsLocked();
+
+                const Das::Utils::ScopeGuardVoid lifecycle_invalidation_guard{
+                    [this]()
+                    { suppress_plugin_lifecycle_invalidation_.store(true); },
+                    [this]()
+                    { suppress_plugin_lifecycle_invalidation_.store(false); }};
                 for (auto& loaded_plugin_path :
                      std::views::reverse(loaded_plugin_paths_))
                 {
@@ -2254,11 +2260,15 @@ namespace Das::Core::TaskScheduler
 
     void SchedulerService::InvalidateAuthoringSessions()
     {
-        // Direct clear of both maps under mutex_ — no per-entry drain.
-        // In-flight callers keep their entries alive via shared_ptr copies
-        // (D-87-07), so clearing the maps cannot dangle a session a caller is
-        // still using.
         const std::scoped_lock lock(mutex_);
+        InvalidateAuthoringSessionsLocked();
+    }
+
+    void SchedulerService::InvalidateAuthoringSessionsLocked()
+    {
+        // No per-entry drain. In-flight callers keep their entries alive via
+        // shared_ptr copies (D-87-07), so clearing the maps cannot dangle a
+        // session a caller is still using. The caller must hold mutex_.
         task_authoring_sessions_.clear();
         repository_authoring_sessions_.clear();
     }

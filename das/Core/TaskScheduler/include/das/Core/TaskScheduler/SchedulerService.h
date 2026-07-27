@@ -244,6 +244,7 @@ namespace Das::Core::TaskScheduler
 
     private:
     private:
+        void      InvalidateAuthoringSessionsLocked();
         void      StartTickTimer(std::chrono::steady_clock::duration delay);
         void      OnTick();
         DasResult CreateTaskInstance(
@@ -427,6 +428,12 @@ namespace Das::Core::TaskScheduler
             task_authoring_sessions_;
         std::unordered_map<int64_t, std::shared_ptr<AuthoringSessionEntry>>
             repository_authoring_sessions_;
+
+        // True while SchedulerService has already invalidated the authoring
+        // caches under mutex_ and is actively changing plugins. Lifecycle
+        // callbacks may arrive synchronously or from Host threads during this
+        // window; they must not try to acquire mutex_ again.
+        std::atomic<bool> suppress_plugin_lifecycle_invalidation_{false};
 
         Das::PluginInterface::IDasTask*    current_task_ = nullptr;
         std::vector<std::filesystem::path> loaded_plugin_paths_;
