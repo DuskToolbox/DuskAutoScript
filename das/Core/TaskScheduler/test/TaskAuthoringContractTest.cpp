@@ -1065,6 +1065,20 @@ TEST(
     EXPECT_TRUE(r.error_kind.empty()) << r.message;
 }
 
+// uiEvent 等短路 kind 的响应不带 document——前端据有无 document 分流，
+// Core 契约层放行（document 可选）。
+TEST(TaskAuthoringContractTest, ApplyResultPassesWithoutDocument)
+{
+    auto result = ParseJson(R"json({
+        "acceptedProperties": {},
+        "diagnostics": []
+    })json");
+
+    auto r = Das::Core::TaskScheduler::ValidateAuthoringApplyResult(result, 4);
+    EXPECT_TRUE(r.valid);
+    EXPECT_TRUE(r.error_kind.empty()) << r.message;
+}
+
 TEST(TaskAuthoringContractTest, ApplyResultFailsWhenRevisionIsNotBasePlusOne)
 {
     auto result = ParseJson(R"json({

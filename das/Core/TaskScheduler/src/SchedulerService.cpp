@@ -587,21 +587,36 @@ namespace Das::Core::TaskScheduler
         auto obj = provider_result.as_object();
         outcome.accepted_properties =
             CloneJsonValue((*obj)[std::string_view("acceptedProperties")]);
-        outcome.document = CloneJsonValue((*obj)[std::string_view("document")]);
 
-        auto       doc_obj = outcome.document.as_object();
-        const auto revision_view = (*doc_obj)[std::string_view("revision")];
-        outcome.returned_revision =
-            revision_view.is_sint()
-                ? revision_view.as_sint().value()
-                : static_cast<int64_t>(revision_view.as_uint().value());
-
-        auto document_validation = ValidateAuthoringDocument(outcome.document);
-        if (!document_validation.valid)
+        // document 可选：uiEvent 等短路 kind 的响应不带 document（前端据有无
+        // document 分流）。有则解析 revision + 校验 document；无则按 base+1
+        // 推进 revision（与前端一致，ui.values 已变更）。
+        const bool has_document =
+            obj->contains(std::string_view("document"))
+            && !(*obj)[std::string_view("document")].is_null();
+        if (has_document)
         {
-            outcome.error_kind = document_validation.error_kind;
-            outcome.error_message = document_validation.message;
-            return outcome;
+            outcome.document =
+                CloneJsonValue((*obj)[std::string_view("document")]);
+            auto       doc_obj = outcome.document.as_object();
+            const auto revision_view = (*doc_obj)[std::string_view("revision")];
+            outcome.returned_revision =
+                revision_view.is_sint()
+                    ? revision_view.as_sint().value()
+                    : static_cast<int64_t>(revision_view.as_uint().value());
+
+            auto document_validation =
+                ValidateAuthoringDocument(outcome.document);
+            if (!document_validation.valid)
+            {
+                outcome.error_kind = document_validation.error_kind;
+                outcome.error_message = document_validation.message;
+                return outcome;
+            }
+        }
+        else
+        {
+            outcome.returned_revision = base_revision + 1;
         }
         return outcome;
     }

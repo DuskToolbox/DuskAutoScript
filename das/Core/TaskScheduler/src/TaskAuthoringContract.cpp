@@ -2073,19 +2073,9 @@ namespace Das::Core::TaskScheduler
                 "missingField",
                 "AuthoringApplyResult.acceptedProperties required");
         }
-        if (!obj.contains("document") || obj["document"].is_null())
-        {
-            return Fail(
-                "missingField",
-                "AuthoringApplyResult.document required");
-        }
-        auto doc_opt = obj["document"].as_object();
-        if (!doc_opt)
-        {
-            return Fail(
-                "invalidDocument",
-                "AuthoringApplyResult.document must be object");
-        }
+        // document 可选：uiEvent 等短路 kind 的响应不带 document（前端据有无
+        // document 分流 UiEventApplied/ChangeApplied）。acceptedProperties +
+        // diagnostics 恒需；document 有则校验 revision 不变量，无则跳过。
         if (!HasArrayField(obj, "diagnostics"))
         {
             return Fail(
@@ -2093,38 +2083,47 @@ namespace Das::Core::TaskScheduler
                 "AuthoringApplyResult.diagnostics required");
         }
 
-        const auto& doc = doc_opt.value();
-        if (!HasIntegerField(doc, "revision"))
+        const bool has_document =
+            obj.contains("document") && !obj["document"].is_null();
+        if (has_document)
         {
-            return Fail(
-                "missingField",
-                "AuthoringApplyResult.document.revision required");
-        }
-        const auto&   revision_value = doc["revision"];
-        const int64_t actual_revision = ReadInt(revision_value);
-        // A provider-rejected apply (error diagnostics present) is a legitimate
-        // failure envelope: diagnostics carry the real reason and the store
-        // must not advance (revision stays at baseRevision). Only a successful
-        // apply (no error diagnostics) must bump revision to baseRevision + 1.
-        // Requiring +1 unconditionally previously misreported every failed
-        // apply as revisionMismatch, hiding the real rejection reason.
-        const bool has_error = HasErrorDiagnostic(obj["diagnostics"]);
-        if (has_error)
-        {
-            if (actual_revision != baseRevision)
+            auto doc_opt = obj["document"].as_object();
+            if (!doc_opt)
+            {
+                return Fail(
+                    "invalidDocument",
+                    "AuthoringApplyResult.document must be object");
+            }
+            const auto& doc = doc_opt.value();
+            if (!HasIntegerField(doc, "revision"))
+            {
+                return Fail(
+                    "missingField",
+                    "AuthoringApplyResult.document.revision required");
+            }
+            const int64_t actual_revision = ReadInt(doc["revision"]);
+            // 失败 envelope（有 error diagnostic）不推进 revision（须 ==
+            // baseRevision）； 成功 envelope 必须推进（须 == baseRevision +
+            // 1）。
+            const bool has_error = HasErrorDiagnostic(obj["diagnostics"]);
+            if (has_error)
+            {
+                if (actual_revision != baseRevision)
+                {
+                    return Fail(
+                        "revisionMismatch",
+                        "failed AuthoringApplyResult (error diagnostics) must "
+                        "keep document.revision == baseRevision (no mutation "
+                        "on failure)");
+                }
+            }
+            else if (actual_revision != baseRevision + 1)
             {
                 return Fail(
                     "revisionMismatch",
-                    "failed AuthoringApplyResult (error diagnostics) must keep "
-                    "document.revision == baseRevision (no mutation on failure)");
+                    "AuthoringApplyResult.document.revision must equal "
+                    "baseRevision + 1");
             }
-        }
-        else if (actual_revision != baseRevision + 1)
-        {
-            return Fail(
-                "revisionMismatch",
-                "AuthoringApplyResult.document.revision must equal "
-                "baseRevision + 1");
         }
 
         if (auto d = ValidateDiagnosticArray(obj["diagnostics"]); !d.valid)
@@ -2132,7 +2131,18 @@ namespace Das::Core::TaskScheduler
             return d;
         }
 
-        if (!OnlyKeys(obj, {"acceptedProperties", "document", "diagnostics"}))
+        if (has_document)
+        {
+            if (!OnlyKeys(
+                    obj,
+                    {"acceptedProperties", "document", "diagnostics"}))
+            {
+                return Fail(
+                    "unknownField",
+                    "AuthoringApplyResult rejects unknown field");
+            }
+        }
+        else if (!OnlyKeys(obj, {"acceptedProperties", "diagnostics"}))
         {
             return Fail(
                 "unknownField",
