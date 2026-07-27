@@ -19,7 +19,8 @@ namespace Das::Core::TaskScheduler
             "formSequence",
             "graph"};
 
-        constexpr std::array<std::string_view, 10> CHANGE_KINDS{
+        // initializer_list：元素数自动推导，新增 kind 不必同步改长度。
+        constexpr std::initializer_list<std::string_view> CHANGE_KINDS{
             "setValue",
             "invokeCommand",
             "convertView",
@@ -29,7 +30,8 @@ namespace Das::Core::TaskScheduler
             "addGraphNode",
             "removeGraphNode",
             "connectGraphPorts",
-            "disconnectGraphPorts"};
+            "disconnectGraphPorts",
+            "uiEvent"};
 
         constexpr std::array<int, 7> VALUE_TYPES{0, 1, 2, 4, 8, 16, 32};
 

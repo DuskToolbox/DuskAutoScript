@@ -652,6 +652,10 @@ TEST(TaskAuthoringContractTest, SupportedChangeKindsPass)
          R"({"fromNodeId":"a","fromPortId":"p1","toNodeId":"b","toPortId":"p2"})"},
         {"disconnectGraphPorts",
          R"({"fromNodeId":"a","fromPortId":"p1","toNodeId":"b","toPortId":"p2"})"},
+        // uiEvent：Core 契约层只放行 kind，payload 语义由 MaaPI
+        // ApplyUiEventChange 校验（Core 不解 ui.values 黑盒）。
+        {"uiEvent",
+         R"({"type":"sectionExpandChanged","target":{"sectionId":"s1"},"data":{"expanded":true}})"},
     };
 
     for (const auto& c : kCases)
