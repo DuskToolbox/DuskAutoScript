@@ -6576,6 +6576,42 @@ TEST(MaapiAuthoringDefaultExpandedMerge, NonBoolValueIgnoredFallsBackToOriginal)
                     .value_or(false));
 }
 
+// REQ-MaaPI-merge round-trip：SerializeAcceptedSettings → ParseAcceptedSettings
+// → ProjectAuthoringDocument 必须保留 ui.values 并合并进 defaultExpanded。此前
+// Serialize 把 ui.values 扁平铺到 ui、Parse 查 ui.values 读不回 → 合并失效（Get
+// 在 Apply 后 evict session 从 acceptedProperties 重建走的正是这条
+// round-trip）。锁定 序列化/反序列化对 ui.values 对称，防回归。
+TEST(
+    MaapiAuthoringDefaultExpandedMerge,
+    SerializeParseRoundTripPreservesUiValuesAndMerges)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto catalog = MakeNeutralProjectionMockCatalog();
+    ASSERT_FALSE(catalog.settings.empty());
+    catalog.settings[0].dto.default_expand = true;
+
+    AcceptedSettingsDto settings;
+    settings.ui.values["sectionExpand.setting_performance"] =
+        yyjson::value(false);
+
+    // 模拟 Apply 持久化 acceptedProperties 后，Get 重建 session 从它解析
+    // settings。
+    auto accepted_json = SerializeAcceptedSettings(settings);
+    auto restored = ParseAcceptedSettings(accepted_json);
+
+    auto document = ProjectAuthoringDocument(restored, &catalog, {}, 0);
+
+    auto section = FindLayoutSection(document, "setting_performance");
+    ASSERT_TRUE(section.has_value());
+    auto section_obj = section->as_object();
+    ASSERT_TRUE(section_obj.has_value());
+    EXPECT_FALSE(
+        (*section_obj)[std::string_view("defaultExpanded")].as_bool().value_or(
+            true))
+        << "round-trip 后 ui.values 必须保留并合并进 defaultExpanded";
+}
+
 // REQ-MaaPI-W3（B 方案核心约束）：Get 响应 envelope 不含顶层
 // acceptedProperties。 ui.values 合并后 Get 路径产出的 envelope 仍是 {document,
 // diagnostics}，前端通过 document.fieldLayout[].defaultExpanded 拿偏好，不读

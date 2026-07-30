@@ -1861,16 +1861,22 @@ namespace Das::Plugins::DasMaaPi
         (*pi_obj)[std::string_view("orphanPaths")] = std::move(orphans);
         (*obj)[std::string_view("pi")] = std::move(pi);
 
-        // ui（通用 kv）：非空时输出，避免 legacy/空形态出现空 values 对象。
+        // ui（通用 kv）：非空时输出 ui.values，与反序列化（ParseAcceptedObject
+        // 查 ui.values）对称。此前扁平铺到 ui 会导致 session 从
+        // acceptedProperties 重建时 读不回 → BuildDocument 的 defaultExpanded
+        // 合并失效。
         if (!settings.ui.values.empty())
         {
             yyjson::value ui(Das::Utils::MakeYyjsonObject());
             auto          ui_obj = ui.as_object();
+            yyjson::value vals(Das::Utils::MakeYyjsonObject());
+            auto          vals_obj = vals.as_object();
             for (const auto& [k, v] : settings.ui.values)
             {
-                (*ui_obj)[std::string_view(k)] =
+                (*vals_obj)[std::string_view(k)] =
                     Das::Utils::CloneYyjsonValue(v);
             }
+            (*ui_obj)[std::string_view("values")] = std::move(vals);
             (*obj)[std::string_view("ui")] = std::move(ui);
         }
         return result;
