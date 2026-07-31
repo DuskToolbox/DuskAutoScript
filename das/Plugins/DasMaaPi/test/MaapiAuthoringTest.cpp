@@ -666,7 +666,8 @@ TEST_F(MaapiAuthoringFixture, ApplyPathFailurePersistsDiagnostics)
     ASSERT_TRUE(accepted.has_value());
     auto adapter = (*accepted)[std::string_view("adapter")].as_object();
     ASSERT_TRUE(adapter.has_value());
-    EXPECT_EQ(
+    // 失败语义：远端不落盘——无效路径不得写入 acceptedProperties，保持原值。
+    EXPECT_NE(
         (*adapter)[std::string_view("interfacePath")].as_string().value_or(""),
         missing_path);
 

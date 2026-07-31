@@ -366,9 +366,32 @@ namespace Plugins::DasMaaPi
                     catalog,
                     diagnostics))
             {
-                settings_ = std::move(candidate);
-                ++revision_;
-                result_revision = revision_;
+                // interfacePath 变更会改变 catalog；新路径必须可解析，否则保留
+                // 失败语义——不落盘、不 ++revision，把解析诊断回传前端（远端保持
+                // 原值，只在前端留记录）。dispatch 用的是旧 settings_ 解析的
+                // catalog，看不到新路径是否有效，故此处按 candidate 复查。
+                bool accept = true;
+                if (candidate.adapter.interface_path
+                    != settings_.adapter.interface_path)
+                {
+                    std::vector<PiDiagnosticDto> probe;
+                    const auto& path = candidate.adapter.interface_path;
+                    accept = !path || path->empty()
+                        || TryParseCatalog(candidate, probe).has_value();
+                    if (!accept)
+                    {
+                        diagnostics.insert(
+                            diagnostics.end(),
+                            probe.begin(),
+                            probe.end());
+                    }
+                }
+                if (accept)
+                {
+                    settings_ = std::move(candidate);
+                    ++revision_;
+                    result_revision = revision_;
+                }
             }
         }
 
