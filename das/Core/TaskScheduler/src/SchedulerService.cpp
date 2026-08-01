@@ -561,9 +561,18 @@ namespace Das::Core::TaskScheduler
         std::string   error_message;
     };
 
+    // 短路 kind：Apply 响应不带 document，前端据有无 document 分流
+    // （UiEventApplied/ChangeApplied）。目前仅 uiEvent；其余为文档编辑 kind，
+    // 缺 document 视为 provider 未执行变更（missingField，不落盘）。
+    static bool IsShortCircuitAuthoringKind(std::string_view kind)
+    {
+        return kind == "uiEvent";
+    }
+
     static AuthoringProviderApply ParseAuthoringProviderApply(
         const yyjson::value& provider_result,
-        int64_t              base_revision)
+        int64_t              base_revision,
+        std::string_view     change_kind)
     {
         AuthoringProviderApply outcome;
         // Capture diagnostics before validation so a provider-rejected apply
@@ -588,9 +597,10 @@ namespace Das::Core::TaskScheduler
         outcome.accepted_properties =
             CloneJsonValue((*obj)[std::string_view("acceptedProperties")]);
 
-        // document 可选：uiEvent 等短路 kind 的响应不带 document（前端据有无
-        // document 分流）。有则解析 revision + 校验 document；无则按 base+1
-        // 推进 revision（与前端一致，ui.values 已变更）。
+        // document 对短路 kind（uiEvent 等）可选：其响应不带 document（前端
+        // 据有无 document 分流）。文档编辑 kind 必须回传 document——有则解析
+        // revision + 校验 document；无则按 base+1 推进 revision（与前端一致，
+        // ui.values 已变更）。
         const bool has_document =
             obj->contains(std::string_view("document"))
             && !(*obj)[std::string_view("document")].is_null();
@@ -613,6 +623,14 @@ namespace Das::Core::TaskScheduler
                 outcome.error_message = document_validation.message;
                 return outcome;
             }
+        }
+        else if (!IsShortCircuitAuthoringKind(change_kind))
+        {
+            outcome.error_kind = "missingField";
+            outcome.error_message =
+                "AuthoringApplyResult.document required for kind "
+                + std::string(change_kind);
+            return outcome;
         }
         else
         {
@@ -867,9 +885,12 @@ namespace Das::Core::TaskScheduler
             return false;
         }
 
-        auto provider_result = ReadJsonInterface(apply_result_json.Get());
-        auto parsed =
-            ParseAuthoringProviderApply(provider_result, current_revision);
+        auto       provider_result = ReadJsonInterface(apply_result_json.Get());
+        const auto change_kind = GetStringField(change, "kind", "");
+        auto       parsed = ParseAuthoringProviderApply(
+            provider_result,
+            current_revision,
+            change_kind);
         if (!parsed.error_kind.empty())
         {
             result.error_kind = parsed.error_kind;
@@ -897,7 +918,6 @@ namespace Das::Core::TaskScheduler
 
         result.next_revision = result.parsed.returned_revision;
 
-        const auto    change_kind = GetStringField(change, "kind", "");
         yyjson::value previous_authoring;
         if (auto src_obj = source_json.as_object();
             src_obj && src_obj->contains(std::string_view("authoring")))
