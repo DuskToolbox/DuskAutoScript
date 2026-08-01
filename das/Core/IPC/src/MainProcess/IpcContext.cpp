@@ -816,10 +816,12 @@ namespace Core
                 // 在停 io_context run loop 之前，按标准流程 Stop 所有
                 // HostLauncher（GOODBYE → 等待退出 → 超时强杀 → process.reset
                 // → close → UnregisterWaitEx 同步 drain TP wait）。必须在
-                // runloop_.RequestStop() 之前：Stop() 的 GOODBYE 协程与
-                // process_exit_future 靠 co_spawn+future 阻塞等 io_context 处理
-                // 完成，要求 run loop 活着（由独立 ipc 线程驱动）。否则
-                // HostLauncher 会因被 ConnectionManager::hosts_ 持引用而推迟到
+                // runloop_.RequestStop() 之前：Stop() 的 GOODBYE 协程、
+                // transport 清理（已串行化到 io_context 线程，见
+                // HostLauncher::CleanupTransportAsync）与 process_exit_future
+                // 都靠 co_spawn+future 阻塞等 io_context 处理完成，要求 run
+                // loop 活着（由独立 ipc 线程驱动）。否则 HostLauncher 会因被
+                // ConnectionManager::hosts_ 持引用而推迟到
                 // ~IpcContext（io_context 已死）才析构，残留 TP wait callback
                 // 在 service 析构后触发 UAF。调用方须在非 io_context 线程调本
                 // 方法（HostLauncher::Stop 的 assert 保证）。

@@ -472,7 +472,17 @@ HostLauncher::HostLauncher(
 {
 }
 
-HostLauncher::~HostLauncher() { Stop(); }
+HostLauncher::~HostLauncher()
+{
+    // 析构路径：io_context 可能已停止/析构（~IpcRunLoop 先 stop 再 reset
+    // io_context_，随 ~ConnectionManager / io_context 析构释放 hosts_ 与
+    // receive loop 帧的引用后本对象才析构）。此时 CleanupTransportAsync 会
+    // co_spawn 到已停的 io_context 而永不执行 → .get() 死锁。且无存活
+    // io_context 协程借用 transport（receive loop 的 DasPtr 已随协程帧释放），
+    // 直接清理安全。
+    use_async_transport_cleanup_ = false;
+    Stop();
+}
 
 DasResult HostLauncher::Start(
     const std::string& host_exe_path,
@@ -669,8 +679,28 @@ DasResult HostLauncher::StartLaunchSequence(
     return DAS_S_OK;
 }
 
+std::future<void> HostLauncher::CleanupTransportAsync()
+{
+    // transport 清理串行化到 io_context 线程（单线程执行），调用线程阻塞等待。
+    // 解决：调用线程直接 CleanupTransport 与 io_context 线程 pending
+    // ReceiveCoroutine 对同一 transport 的跨线程并发双释放。
+    return boost::asio::co_spawn(
+        impl_->io_ctx,
+        [this]() -> boost::asio::awaitable<void>
+        {
+            CleanupTransport(impl_->async_transport);
+            co_return;
+        },
+        boost::asio::use_future);
+}
+
 void HostLauncher::Stop()
 {
+    // 并发 Stop() 串行化（stop_mutex_）：RequestStop 与生命周期回调可能同时
+    // 对同一 launcher 触发 teardown，双重 teardown 会竞争 process/transport
+    // 对象。后到者等待先到者完成；teardown body 幂等，重复执行无害。
+    const std::scoped_lock lock(stop_mutex_);
+
     // Stop() 使用 co_spawn + use_future 阻塞当前线程等待 io_context 完成操作，
     // 因此不能从 io_context 线程调用，否则会死锁。
     assert(
@@ -759,7 +789,31 @@ void HostLauncher::Stop()
         }
     }
 
-    CleanupTransport(impl_->async_transport);
+    // transport 清理必须与 io_context 线程上 pending 的 ReceiveCoroutine 串行
+    // （单线程 io_context 按序执行），否则跨线程并发双释放。仅在 transport
+    // 已连接（可能有 io_context 线程协程借用）时走串行化；未连接/无 transport
+    // 时无并发借用，直接清理。use_async_transport_cleanup_ == false 时是析构
+    // 路径，io_context 已停/析构且无存活协程借用 transport，直接清理。
+    if (use_async_transport_cleanup_ && !impl_->io_ctx.stopped()
+        && impl_->async_transport && impl_->async_transport->IsConnected())
+    {
+        try
+        {
+            // T0 阻塞等待；transport 清理完全在 io_context 线程上执行。
+            CleanupTransportAsync().get();
+        }
+        catch (const std::exception& e)
+        {
+            const std::string msg = DAS_FMT_NS::format(
+                "HostLauncher::Stop transport cleanup failed: {}",
+                ToString(e.what()));
+            DAS_CORE_LOG_ERROR(msg.c_str());
+        }
+    }
+    else
+    {
+        CleanupTransport(impl_->async_transport);
+    }
 
     // 清理 SharedMemoryPool（transport 清理后，确保无悬空引用）
     impl_->pool_.reset();
@@ -921,6 +975,11 @@ void HostLauncher::ResetHostLifecycleCallbacks()
 
 void HostLauncher::TerminateIfRunning()
 {
+    // 与 Stop() 共用 stop_mutex_：心跳线程的 TerminateIfRunning 可能与
+    // RequestStop 的 Stop() 并发，两者都改写 impl_->process/transport/pool，
+    // 需串行化避免跨线程竞争。
+    const std::scoped_lock lock(stop_mutex_);
+
     if (impl_->process)
     {
         boost::system::error_code ec;
@@ -944,7 +1003,32 @@ void HostLauncher::TerminateIfRunning()
         (void)impl_->process.release();
     }
 
-    CleanupTransport(impl_->async_transport);
+    // 与 Stop() 相同：transport 清理串行化到 io_context 线程，避免与
+    // pending ReceiveCoroutine 跨线程并发。仅在 transport 已连接时才有
+    // io_context 线程协程借用；未连接/无 transport（如单测本地 io_context
+    // 从未 run）时直接清理，避免 CleanupTransportAsync 阻塞在永不执行的
+    // co_spawn 上。心跳线程在 io_context_ 析构前已被 join（~IpcRunLoop 先
+    // StopHeartbeatThread 再 reset io_context_），因此此处 io_context 必存活，
+    // stopped() 可安全判断。
+    if (!impl_->io_ctx.stopped() && impl_->async_transport
+        && impl_->async_transport->IsConnected())
+    {
+        try
+        {
+            CleanupTransportAsync().get();
+        }
+        catch (const std::exception& e)
+        {
+            const std::string msg = DAS_FMT_NS::format(
+                "HostLauncher::TerminateIfRunning transport cleanup failed: {}",
+                ToString(e.what()));
+            DAS_CORE_LOG_ERROR(msg.c_str());
+        }
+    }
+    else
+    {
+        CleanupTransport(impl_->async_transport);
+    }
 
     // 清理 SharedMemoryPool（错误恢复路径）
     impl_->pool_.reset();

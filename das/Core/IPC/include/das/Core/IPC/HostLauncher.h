@@ -13,6 +13,7 @@
 #include <das/DasApi.h>
 #include <das/IDasBase.h>
 #include <functional>
+#include <future>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -329,8 +330,28 @@ private:
         std::string                        exe_path,
         uint32_t                           timeout_ms);
 
+    /**
+     * @brief 把 transport 清理串行化到 io_context 线程执行
+     *
+     * 单线程 io_context 保证清理动作与所有 pending handler 按序执行，
+     * 消除 Stop()/TerminateIfRunning() 所在线程与 io_context 线程上
+     * pending ReceiveCoroutine 对同一 transport 的跨线程并发双释放。
+     */
+    std::future<void> CleanupTransportAsync();
+
     struct Impl;
     std::unique_ptr<Impl> impl_;
+
+    /// 析构路径（io_context 可能已停止/析构）禁止走 CleanupTransportAsync：
+    /// co_spawn 到已停的 io_context 永远不执行 → .get() 死锁。仅 ~HostLauncher
+    /// 置 false，Stop() 据此走直接清理。atomic：析构线程写，Stop() 线程读。
+    std::atomic<bool> use_async_transport_cleanup_{true};
+
+    /// 串行化 Stop()/TerminateIfRunning() teardown。RequestStop（主线程）与
+    /// 生命周期回调（业务线程）可能同时对同一 launcher 触发 teardown，
+    /// 双重 teardown 会竞争 process/transport 对象（跨线程双释放）。
+    /// 后到者等待先到者完成；teardown body 幂等，重复执行无害。
+    std::mutex stop_mutex_;
 
     uint16_t           session_id_ = 0;
     OnRegisterCallback on_register_;
