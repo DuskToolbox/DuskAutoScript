@@ -22,6 +22,14 @@ namespace Das::Core
         static DAS_API std::filesystem::path SessionDir();
         // 会话目录下的 user.jsonl 路径；未初始化返回空 path。
         static DAS_API std::filesystem::path UserJsonlPath();
+        // 进程内图片序号（跨 recorder 实例共享），返回 "%04u" 形式的 4 位
+        // 零填充序号；字典序即时间序。运行期不设缓存上限（D-88-05a）。
+        static DAS_API uint32_t NextImageSeq();
+        // 扫描 debug_dir 下匹配 `{ts}-{pid}` 命名的子目录，删除 pid 不存活
+        // 的孤儿会话目录（D-88-05b）。remove_all 用 error_code 版 best-effort，
+        // 失败仅记日志。当前进程 pid 视为存活。
+        static DAS_API void CleanupOrphanSessionDirs(
+            const std::filesystem::path& debug_dir);
         // 幂等；删除整个会话目录并清空 initialized。
         static DAS_API void Shutdown();
         // 置回未初始化态（测试用）。

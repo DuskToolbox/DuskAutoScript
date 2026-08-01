@@ -2,12 +2,14 @@
 
 #include <das/Core/Logger/LogRecorderRuntime.h>
 #include <das/Core/Logger/Logger.h>
+#include <das/Core/OcvWrapper/ImageSaver.h>
 #include <das/DasApi.h>
 #include <das/DasString.hpp>
 #include <das/Utils/CommonUtils.hpp>
 #include <das/Utils/DasJsonCore.h>
 
 #include <chrono>
+#include <cstdio>
 #include <fstream>
 #include <new>
 #include <string>
@@ -160,10 +162,40 @@ namespace Das::Core
         const auto joined_text = JoinTexts(entry_impl->GetTexts());
         (*obj.as_object())[std::string_view("text")] =
             std::make_pair(std::string_view(joined_text), yyjson::copy_string);
-        // 本 plan 只做文本路径：图片引用暂存，imageRefs 恒空数组（88-02
-        // 编码落盘）。
-        (*obj.as_object())[std::string_view("imageRefs")] =
-            DAS::Utils::MakeYyjsonArray();
+
+        // 图片编码落盘（D-88-04a）：每个 IDasImage 经 OcvWrapper 的
+        // ImageSaver（JPG 质量 85）写到会话目录 img/{seq}.jpg，imageRefs
+        // 填相对路径。单个图片失败仅记日志跳过，不影响文本条目。运行期
+        // 不设缓存上限（D-88-05a）。
+        auto       image_refs = DAS::Utils::MakeYyjsonArray();
+        const auto session_dir = LogRecorderRuntime::SessionDir();
+        auto image_refs_array = image_refs.as_array();
+        for (const auto& image : entry_impl->GetImages())
+        {
+            const auto seq = LogRecorderRuntime::NextImageSeq();
+            char       file_name[32]{};
+            std::snprintf(file_name, sizeof file_name, "img/%04u.jpg", seq);
+            const auto rc = Das::Core::OcvWrapper::ImageSaver::SaveToFile(
+                image.Get(),
+                Das::ExportInterface::DAS_IMAGE_FORMAT_JPG,
+                85,
+                session_dir / file_name);
+            if (DAS::IsFailed(rc))
+            {
+                DAS_CORE_LOG_ERROR(
+                    "Record: failed to save image {}: result={}",
+                    file_name,
+                    rc);
+                continue;
+            }
+            if (image_refs_array)
+            {
+                image_refs_array->emplace_back(
+                    std::string_view{file_name},
+                    yyjson::copy_string);
+            }
+        }
+        (*obj.as_object())[std::string_view("imageRefs")] = image_refs;
 
         auto fields_obj = DAS::Utils::MakeYyjsonObject();
         for (const auto& [key, json] : entry_impl->GetFields())
