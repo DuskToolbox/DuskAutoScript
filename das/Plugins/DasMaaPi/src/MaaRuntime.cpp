@@ -494,6 +494,35 @@ namespace Das::Plugins::DasMaaPi
                 return MaaApiResult::Ok(id);
             }
 
+            MaaApiResult SetCallback(
+                MaaTaskerHandle  tasker,
+                MaaMsgCallbackFn callback,
+                void*            trans_arg) override
+            {
+                const auto& symbols = LoadMaaDynamicSymbols();
+                if (!symbols.tasker_add_sink)
+                {
+                    // T-88-13: dynamic symbol resolution failed (e.g. an
+                    // unusual MaaFW build without the export) — surface a
+                    // diagnostic, never crash. Focus logging degrades off.
+                    return MaaApiResult::Failure(
+                        0,
+                        "MaaTaskerAddSink is not available on this build of "
+                        "DasMaaPi");
+                }
+                const auto sink_id = symbols.tasker_add_sink(
+                    reinterpret_cast<void*>(tasker),
+                    reinterpret_cast<void*>(callback),
+                    trans_arg);
+                if (sink_id == MaaInvalidId)
+                {
+                    return MaaApiResult::Failure(
+                        sink_id,
+                        "MaaTaskerAddSink failed");
+                }
+                return MaaApiResult::Ok(sink_id);
+            }
+
             MaaAgentClientHandle CreateAgentClientV2(
                 std::optional<std::string_view> identifier) override
             {
@@ -749,6 +778,14 @@ namespace Das::Plugins::DasMaaPi
             }
 
             MaaApiResult PostStop(MaaTaskerHandle) override
+            {
+                return MaaApiResult::Failure(
+                    0,
+                    "Real Maa boundary disabled in tests");
+            }
+
+            MaaApiResult SetCallback(MaaTaskerHandle, MaaMsgCallbackFn, void*)
+                override
             {
                 return MaaApiResult::Failure(
                     0,

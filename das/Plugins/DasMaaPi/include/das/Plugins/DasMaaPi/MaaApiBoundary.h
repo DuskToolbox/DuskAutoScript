@@ -19,6 +19,25 @@ namespace Das::Plugins::DasMaaPi
     inline constexpr MaaAgentClientHandle kInvalidMaaAgentClientHandle = 0;
     inline constexpr MaaAsyncId           kInvalidMaaAsyncId = 0;
 
+    // MaaFW MaaEventCallback calling convention (MAA_CALL = __stdcall on
+    // Windows). Mirrored here so MaaCallbackLogger compiles in BOTH the
+    // production target (MaaFW headers visible) and the
+    // DAS_MAAPI_DISABLE_REAL_MAA_BOUNDARY test target (MaaFW headers
+    // invisible). The signature mirrors MaaDef.h:600:
+    //   typedef void(MAA_CALL* MaaEventCallback)(
+    //       void* handle, const char* message, const char* details_json,
+    //       void* trans_arg);
+#ifdef _WIN32
+#define DAS_MAA_CALL __stdcall
+#else
+#define DAS_MAA_CALL
+#endif
+    using MaaMsgCallbackFn = void(DAS_MAA_CALL*)(
+        void*       handle,
+        const char* message,
+        const char* details_json,
+        void*       trans_arg);
+
     enum class MaaTaskStatus : std::int32_t
     {
         Invalid = 0,
@@ -165,6 +184,15 @@ namespace Das::Plugins::DasMaaPi
         virtual MaaApiResult BindController(
             MaaTaskerHandle     tasker,
             MaaControllerHandle controller) = 0;
+
+        // Register the MaaMsgAsyncCallback sink (D-88-07): forwards (message,
+        // details_json) into the callback, trans_arg is the logger context.
+        // Mirrors MaaFW's MaaTaskerAddSink (runtime-resolved dynamic symbol,
+        // T-88-13: null symbol → Failure diagnostic, never crash).
+        virtual MaaApiResult SetCallback(
+            MaaTaskerHandle  tasker,
+            MaaMsgCallbackFn callback,
+            void*            trans_arg) = 0;
 
         virtual MaaApiResult PostTask(
             MaaTaskerHandle  tasker,

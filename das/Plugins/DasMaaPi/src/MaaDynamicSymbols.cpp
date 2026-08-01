@@ -69,6 +69,13 @@ namespace Das::Plugins::DasMaaPi
                 ec);
             if (!ec && handles.framework.is_loaded())
             {
+                // MaaTaskerAddSink registers the MaaEventCallback sink
+                // (D-88-07). Resolved from the already-mapped MaaFramework
+                // module like the create symbols; null → MaaRuntime
+                // SetCallback returns a Failure diagnostic (T-88-13).
+                symbols.tasker_add_sink = TryResolve<MaaTaskerAddSinkFn>(
+                    handles.framework,
+                    "MaaTaskerAddSink");
                 symbols.win32_create = TryResolve<MaaWin32ControllerCreateFn>(
                     handles.framework,
                     "MaaWin32ControllerCreate");

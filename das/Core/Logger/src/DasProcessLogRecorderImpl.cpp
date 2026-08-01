@@ -247,6 +247,22 @@ namespace Das::Core
 
 // ------------------------------------------------------------ C ABI 工厂
 
+DasResult CreateIDasLogEntry(Das::ExportInterface::IDasLogEntry** pp_out_entry)
+{
+    DAS_UTILS_CHECK_POINTER(pp_out_entry);
+    try
+    {
+        auto* p = new Das::Core::IDasLogEntryImpl{};
+        *pp_out_entry = p;
+        p->AddRef();
+        return DAS_S_OK;
+    }
+    catch (const std::bad_alloc&)
+    {
+        return DAS_E_OUT_OF_MEMORY;
+    }
+}
+
 DasResult CreateIDasProcessLogRecorder(
     Das::ExportInterface::IDasProcessLogRecorder** pp_out_recorder)
 {

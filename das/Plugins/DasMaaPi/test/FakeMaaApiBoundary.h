@@ -151,6 +151,13 @@ namespace Das::Plugins::DasMaaPi::Test
             return MaaApiResult::Ok(NextId());
         }
 
+        MaaApiResult SetCallback(MaaTaskerHandle, MaaMsgCallbackFn, void*)
+            override
+        {
+            calls.emplace_back("SetCallback");
+            return MaaApiResult::Ok(NextId());
+        }
+
         MaaAgentClientHandle CreateAgentClientV2(
             std::optional<std::string_view> identifier) override
         {
