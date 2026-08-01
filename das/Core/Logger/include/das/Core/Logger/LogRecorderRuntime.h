@@ -1,6 +1,7 @@
 #ifndef DAS_CORE_LOGGER_LOGRECORDERRUNTIME_H
 #define DAS_CORE_LOGGER_LOGRECORDERRUNTIME_H
 
+#include <das/DasExport.h>
 #include <das/DasTypes.hpp>
 
 #include <filesystem>
@@ -15,15 +16,16 @@ namespace Das::Core
     public:
         // 以 debug_dir 为根创建会话目录，命名 {ts}-{pid}（如
         // 20260801-123456-8841），并建 img 子目录。幂等：已初始化直接返回。
-        static DasResult Initialize(const std::filesystem::path& debug_dir);
+        static DAS_API DasResult
+        Initialize(const std::filesystem::path& debug_dir);
         // 当前会话目录；未初始化返回空 path。
-        static std::filesystem::path SessionDir();
+        static DAS_API std::filesystem::path SessionDir();
         // 会话目录下的 user.jsonl 路径；未初始化返回空 path。
-        static std::filesystem::path UserJsonlPath();
+        static DAS_API std::filesystem::path UserJsonlPath();
         // 幂等；删除整个会话目录并清空 initialized。
-        static void Shutdown();
+        static DAS_API void Shutdown();
         // 置回未初始化态（测试用）。
-        static void ResetForTest();
+        static DAS_API void ResetForTest();
     };
 } // namespace Das::Core
 

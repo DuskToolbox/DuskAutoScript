@@ -26,6 +26,7 @@
 #include <das/Core/IPC/CurrentIpcContextScope.h>
 #include <das/Core/IPC/HttpIpcServer.h>
 #include <das/Core/IPC/MainProcess/IpcContext.h>
+#include <das/Core/Logger/LogRecorderRuntime.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
@@ -274,6 +275,20 @@ namespace Das::Http
                             init_cv_result)
                             .c_str());
                     return init_cv_result;
+                }
+
+                // 用户可见日志会话目录随进程生命周期初始化（D-88-10/05b），
+                // 进程退出时整目录删除。
+                const auto log_recorder_result =
+                    Das::Core::LogRecorderRuntime::Initialize(debug_dir);
+                if (DAS::IsFailed(log_recorder_result))
+                {
+                    DAS_LOG_ERROR(
+                        DAS_FMT_NS::format(
+                            "Failed to init log recorder runtime. result = {}",
+                            log_recorder_result)
+                            .c_str());
+                    return log_recorder_result;
                 }
             }
         }
@@ -561,6 +576,8 @@ namespace Das::Http
                         shutdown_result)
                         .c_str());
             }
+            // 正常退出路径：删除会话目录（D-88-05b）。
+            Das::Core::LogRecorderRuntime::Shutdown();
             return shutdown_result;
         };
 
@@ -581,6 +598,9 @@ namespace Das::Http
             std::cerr << msg << std::endl;
             DAS_LOG_ERROR(msg.c_str());
         }
+
+        // bind 失败路径同样清理会话目录，避免残留（D-88-05b）；Shutdown 幂等。
+        Das::Core::LogRecorderRuntime::Shutdown();
 
         // Shutdown IPC context（正常退出与 bind 失败统一在此清理，否则
         // joinable 线程析构触发 std::terminate）
