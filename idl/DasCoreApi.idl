@@ -166,6 +166,13 @@ module
         [out] Das::ExportInterface::IDasLogArchive** pp_out_archive);
 
     //=============================================================================
+    // Process log recorder (JSONL user-visible entries)
+    //=============================================================================
+
+    [ export, c_abi ] DasResult CreateIDasProcessLogRecorder(
+        [out] Das::ExportInterface::IDasProcessLogRecorder** pp_out_recorder);
+
+    //=============================================================================
     // IPC timeout
     //=============================================================================
 

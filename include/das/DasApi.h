@@ -3,6 +3,7 @@
 
 #include "DasLogger.h"
 #include "IDasImage.h"
+#include "IDasLogRecorder.h"
 #include <das/DasString.hpp>
 #include <das/IDasBase.h>
 #include <limits>

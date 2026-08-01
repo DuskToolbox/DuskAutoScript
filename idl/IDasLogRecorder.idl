@@ -1,0 +1,35 @@
+import "IDasImage.idl";
+
+namespace Das::ExportInterface
+{
+
+    enum DasLogType
+    {
+        DAS_LOG_TYPE_INFO = 0,
+        DAS_LOG_TYPE_SUCCESS = 1,
+        DAS_LOG_TYPE_WARNING = 2,
+        DAS_LOG_TYPE_ERROR = 3,
+        DAS_LOG_TYPE_AGENT = 4,
+        DAS_LOG_TYPE_FOCUS = 5,
+        DAS_LOG_TYPE_FORCE_DWORD = 0x7FFFFFFF
+    }
+
+    // 用户可见日志条目容器：插件用 Setter 填充一次，再经 IDasProcessLogRecorder::Record 提交。
+    // 加字段/类型 = 加方法，老调用方不破坏。
+    [uuid("9274a013-4d88-4dd7-b964-322a9de4bf16")]
+    interface IDasLogEntry : IDasBase
+    {
+        DasResult SetType(DasLogType type);
+        DasResult AddText(IDasReadOnlyString* text);
+        DasResult AddImage(IDasImage* image);
+        DasResult SetField(IDasReadOnlyString* key, IDasReadOnlyString* json);
+    }
+
+    // 进程级日志记录器：把 IDasLogEntry 序列化为 JSONL 写入会话目录。
+    [uuid("b47e45ef-e582-463f-bea5-0432a5c79d9f")]
+    interface IDasProcessLogRecorder : IDasBase
+    {
+        DasResult Record(IDasLogEntry* entry);
+    }
+
+}
