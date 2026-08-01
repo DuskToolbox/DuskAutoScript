@@ -10,6 +10,7 @@
 #include "./AppComponent.hpp"
 #include "./NotificationHub.hpp"
 #include "./beast/Server.hpp"
+#include "./controller/DasImageController.hpp"
 #include "./controller/DasLogController.hpp"
 #include "./controller/DasMiscController.hpp"
 #include "./controller/DasPluginManagerController.hpp"
@@ -327,6 +328,10 @@ namespace Das::Http
             DAS_HTTP_API_PREFIX "logs/{profile}",
             [log_controller](const Das::Http::Beast::HttpRequest& req)
             { return log_controller->GetLogs(req); });
+        // 静态图片：按 imageRef（如 img/0001.jpg）从会话目录回 JPG。
+        components.router->Get(
+            DAS_HTTP_API_PREFIX "logs/{profile}/images/{file}",
+            &Das::Http::DasImageController::GetImage);
 
         // Profile
         components.router->Post(
