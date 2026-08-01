@@ -567,6 +567,21 @@ namespace Das::Http
                 },
                 hub.get());
 
+            // 日志增量 WS 广播（D-88-01/02）：Recorder 每写盘一条日志条目就
+            // 触发通知回调，事件 JSON 已内置 "api":"api/v1/logs/get"（与
+            // settings/scheduler 的「注入 api」不同，recorder 侧已带 schema），
+            // 这里直接复用 hub->Broadcast 推给已连前端，零新 WS 端点。hub 为
+            // 空（无 WS）时回调可空安全；capture 按值持 shared_ptr 保活。
+            Das::Core::LogRecorderRuntime::SetLogNotifyCallback(
+                [hub](const char* json_event)
+                {
+                    if (!hub || !json_event)
+                    {
+                        return;
+                    }
+                    hub->Broadcast(std::string{json_event});
+                });
+
             std::cout << "[DasHttp] Server listening on " << listen_address
                       << ":" << listen_port << std::endl;
 
