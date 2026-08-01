@@ -159,12 +159,11 @@ module
         [out] Das::PluginInterface::IDasBasicErrorLens * *pp_out_error_lens);
 
     //=============================================================================
-    // Log requester
+    // Log archive (file-backed, offset cursor)
     //=============================================================================
 
-    [ export, c_abi ] DasResult CreateIDasLogRequester(
-        uint32_t                                       max_line_count,
-        [out] Das::ExportInterface::IDasLogRequester** pp_out_requester);
+    [ export, c_abi ] DasResult CreateIDasLogArchive(
+        [out] Das::ExportInterface::IDasLogArchive** pp_out_archive);
 
     //=============================================================================
     // IPC timeout

@@ -309,7 +309,7 @@ namespace Das::Http
 
         // Log
         components.router->Post(
-            DAS_HTTP_API_PREFIX "logs",
+            DAS_HTTP_API_PREFIX "logs/{profile}",
             [log_controller](const Das::Http::Beast::HttpRequest& req)
             { return log_controller->GetLogs(req); });
 

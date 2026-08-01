@@ -22,7 +22,6 @@ namespace Das::ExportInterface
     struct IDasPluginManager;
     struct IDasMemory;
     struct IDasImage;
-    struct IDasLogRequester;
     struct IDasReadOnlyGuidVector;
     struct IDasInitializeIDasPluginManagerCallback;
     struct IDasInitializeIDasPluginManagerWaiter;

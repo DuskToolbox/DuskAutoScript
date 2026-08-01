@@ -10,19 +10,42 @@ interface IDasSourceLocation {
     [get, set] IDasReadOnlyString FunctionName;
 };
 
-[uuid("F4191604-D061-49A4-85EC-28EFC376119F")]
-interface IDasLogReader : IDasBase {
-    DasResult ReadOne(IDasReadOnlyString* message);
-}
-
-[uuid("806E244C-CCF0-4DC3-AD54-6886FDF9B1F4")]
-interface IDasLogRequester : IDasBase {
+// 文件回溯的日志归档：按字节偏移游标读取写盘的日志文件（非破坏、可回看、跟随轮转）。
+[uuid("C7A1E2F4-3B5D-4A6E-9F80-1C2D3E4F5A6B")]
+interface IDasLogArchive : IDasBase {
     /**
-     * @brief 使用用户自定义的方法对数据进行读取
-     * @param p_reader 在内部加锁后进行阅读的操作，由用户继承并实现
-     * @return 指示操作是否成功
+     * @brief 读最后 lines 行（首次打开 / 轮转重置用）
+     * @param lines 期望读取的行数
+     * @param pp_out_lines 输出：读到的日志行（以换行符分隔的拼接串；Http 层再按行拆成数组）
+     * @param p_out_next_offset 输出：本次读到的最新字节偏移（对齐到行尾）
      */
-    DasResult RequestOne(IDasLogReader* p_reader);
+    DasResult ReadTail(uint32_t lines,
+        [out] IDasReadOnlyString** pp_out_lines,
+        [out] uint64_t* p_out_next_offset,
+        [out] uint64_t* p_out_earliest_offset);
+
+    /**
+     * @brief 读 offset 之后到 EOF 的新行（轮询向新）
+     * @param offset 上次的 next_offset
+     * @param pp_out_lines 输出：新增的日志行（以换行符分隔的拼接串）
+     * @param p_out_next_offset 输出：本次读到的最新字节偏移
+     */
+    DasResult ReadAfter(uint64_t offset,
+        [out] IDasReadOnlyString** pp_out_lines,
+        [out] uint64_t* p_out_next_offset);
+
+    /**
+     * @brief 读 offset 之前 lines 行（上翻向旧）
+     * @param offset 当前最早可见行的偏移
+     * @param lines 期望向前读取的行数
+     * @param pp_out_lines 输出：更早的日志行（以换行符分隔的拼接串，按时间正序）
+     * @param p_out_next_offset 输出：本次读到的最早字节偏移
+     * @param p_out_eof 输出：已到文件头（无更早历史）时为 true
+     */
+    DasResult ReadBefore(uint64_t offset, uint32_t lines,
+        [out] IDasReadOnlyString** pp_out_lines,
+        [out] uint64_t* p_out_next_offset,
+        [out] bool* p_out_eof);
 }
 
 }

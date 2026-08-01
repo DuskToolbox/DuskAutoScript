@@ -2,7 +2,6 @@
 // warning C4996: 'getenv': This function or variable may be unsafe. Consider
 // using _dupenv_s instead.
 #define _CRT_SECURE_NO_WARNINGS
-#include "IDasLogRequesterImpl.h"
 #include <array>
 #include <das/Core/Logger/CrossProcessMutex.h>
 #include <das/Core/Logger/Logger.h>
@@ -108,14 +107,9 @@ namespace Core
                 "logs/" DAS_CORE_NAME ".log",
                 50 * 1024 * 1024, // 50mb
                 2);
-        const auto log_requester_sink =
-            std::make_shared<DasLogRequesterSink<std::mutex>>();
-        g_das_log_requester_sink = log_requester_sink;
-
-        const auto sinks = std::array<spdlog::sink_ptr, 3>{
+        const auto sinks = std::array<spdlog::sink_ptr, 2>{
             std_sink,
-            file_sink,
-            log_requester_sink};
+            file_sink};
         const auto result = std::make_shared<spdlog::logger>(
             g_logger_name,
             std::begin(sinks),

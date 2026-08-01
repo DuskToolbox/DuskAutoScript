@@ -44,6 +44,7 @@ namespace Das::Http::Beast::JsonUtils
             return default_value;
         }
         const auto& obj = obj_opt.value();
+        if (!obj.contains(key)) return default_value;
         auto        val = obj[key];
         auto        opt_int = val.as_sint();
         return opt_int ? opt_int.value() : default_value;
@@ -105,7 +106,7 @@ namespace Das::Http::Beast::JsonUtils
             return false;
         }
         const auto& obj = obj_opt.value();
-        return !obj[key].is_null();
+        return obj.contains(key);
     }
 
     // 创建标准响应
