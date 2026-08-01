@@ -181,11 +181,35 @@ protected:
 
     uint16_t FindFreeLoopbackPort()
     {
-        boost::asio::io_context        io_context;
-        boost::asio::ip::tcp::acceptor acceptor(
-            io_context,
-            {boost::asio::ip::make_address("127.0.0.1"), 0});
-        return acceptor.local_endpoint().port();
+        // 高位固定端口探测：从 48080 起递增，避开 Windows 动态端口排除范围
+        // （当前 49806-53273 被排除）与 well-known 保留端口（<1024）
+        constexpr uint16_t kStartPort = 48080;
+        constexpr uint16_t kEndPort = 48999;
+        constexpr int      kMaxAttempts = 50;
+        for (int i = 0; i < kMaxAttempts; ++i)
+        {
+            const uint16_t port = static_cast<uint16_t>(kStartPort + i);
+            if (port > kEndPort)
+            {
+                break;
+            }
+            boost::asio::io_context        io_context;
+            boost::asio::ip::tcp::acceptor acceptor(io_context);
+            boost::system::error_code      ec;
+            acceptor.open(boost::asio::ip::tcp::v4(), ec);
+            if (ec)
+            {
+                return 0;
+            }
+            acceptor.bind(
+                {boost::asio::ip::make_address("127.0.0.1"), port},
+                ec);
+            if (!ec)
+            {
+                return port;
+            }
+        }
+        return 0;
     }
 
     std::string                                               host_exe_path_;
