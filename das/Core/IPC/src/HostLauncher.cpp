@@ -707,53 +707,51 @@ void HostLauncher::Stop()
         !impl_->io_ctx.get_executor().running_in_this_thread()
         && "Stop() must not be called from the io_context thread");
 
-    StopBody();
-}
-
-void HostLauncher::StopFromIoContext()
-{
-    // RunAsync 失败路径调用：本方法运行在 io_context 线程（RunAsync 经
-    // StartAsync 的 co_spawn 在 io_context 上执行）。Stop() 用
-    // co_spawn+use_future 阻塞等 io_context 完成 GOODBYE / transport 清理 /
-    // exit-watcher drain，从 io_context 线程调用会触发 Stop() 的 assert 并
-    // 死锁。本方法在 io_context 线程上直接执行同步清理：transport 清理天然
-    // 与该线程 pending 协程串行（单线程 io_context 按序执行），无需 co_spawn
-    // 转发。
-    //
-    // 用 try_lock 而非 lock：若另一线程的 Stop()/TerminateIfRunning() 已持
-    // stop_mutex_ 且阻塞在 co_spawn+get（等 io_context 处理），本方法若阻塞
-    // 在 stop_mutex_ 上会让 io_context 线程卡死 → 死锁。try_lock 失败 = 另一
-    // teardown 进行中，其会完成清理（teardown body 幂等，重复执行无害），
-    // 本方法跳过自身清理直接返回。
-    std::unique_lock lock(stop_mutex_, std::try_to_lock);
-    if (!lock.owns_lock())
+    // teardown 主体 StopBody() 是运行在 io_context 线程上的协程：GOODBYE 用
+    // co_await 发送（不阻塞），transport 清理直接执行（天然与该线程 pending
+    // 协程串行，保持 31616073 的双 UAF 修复语义）。仅当 io_context 存活且
+    // transport 已连接（说明 io_context 正被驱动）时 co_spawn+get 阻塞等其
+    // 完成；析构路径（use_async_transport_cleanup_ == false，io_context 已停/
+    // 析构）或 transport 未连接时不能/无需 co_spawn——co_spawn 到已停的
+    // io_context 永不执行 → .get() 死锁，未驱动的 io_context 也会阻塞，此时
+    // 走 StopBodySync() 直接同步清理（无存活协程借用 transport，GOODBYE
+    // 无意义）。
+    if (use_async_transport_cleanup_ && !impl_->io_ctx.stopped()
+        && impl_->async_transport && impl_->async_transport->IsConnected())
     {
-        return;
+        try
+        {
+            boost::asio::co_spawn(
+                impl_->io_ctx,
+                StopBody(),
+                boost::asio::use_future)
+                .get();
+        }
+        catch (const std::exception& e)
+        {
+            const std::string msg = DAS_FMT_NS::format(
+                "HostLauncher::Stop teardown coroutine failed: {}",
+                ToString(e.what()));
+            DAS_CORE_LOG_ERROR(msg.c_str());
+        }
     }
-
-    assert(
-        impl_->io_ctx.get_executor().running_in_this_thread()
-        && "StopFromIoContext must be called from the io_context thread");
-
-    StopBody();
+    else
+    {
+        StopBodySync();
+    }
 }
 
-void HostLauncher::StopBody()
+boost::asio::awaitable<void> HostLauncher::StopBody()
 {
-    const bool on_io_thread =
-        impl_->io_ctx.get_executor().running_in_this_thread();
-
     // 全清心跳+退出 slot（Pitfall 6 修复：消除旧版只清 on_process_exit_
     // 的不对称）。 ClearCallbacks 持锁 drain（CR-02），避免 Stop
     // 主动关闭进程时残留 callback 被并发触发。心跳 slot 同清，避免 Stop
     // 后心跳线程仍触发回调的窗口。
     ClearCallbacks();
 
-    // 先发送 GOODBYE 消息让 Host 进程优雅退出。
-    // GOODBYE 用 co_spawn+use_future 阻塞等 io_context，只能从非 io_context
-    // 线程执行；io_context 线程路径（RunAsync 失败）跳过——握手/启动已失败，
-    // Host 处于部分状态，直接 terminate 即可。
-    if (!on_io_thread && impl_->async_transport && impl_->is_running)
+    // 先发送 GOODBYE 消息让 Host 进程优雅退出（所有路径保留：co_await 非阻塞
+    // 发送，不依赖 co_spawn+use_future）。
+    if (impl_->async_transport && impl_->is_running)
     {
         GoodbyeV1 goodbye{};
         goodbye.reason = static_cast<uint32_t>(GoodbyeReason::NormalShutdown);
@@ -771,18 +769,12 @@ void HostLauncher::StopBody()
                 .SetBodySize(sizeof(goodbye))
                 .Build();
 
-        // 使用 co_spawn + use_future 发送 GOODBYE
         try
         {
-            auto future = boost::asio::co_spawn(
-                impl_->io_ctx,
-                impl_->async_transport->SendCoroutine(
-                    validated_header,
-                    reinterpret_cast<const uint8_t*>(&goodbye),
-                    sizeof(goodbye)),
-                boost::asio::use_future);
-
-            DasResult result = future.get();
+            DasResult result = co_await impl_->async_transport->SendCoroutine(
+                validated_header,
+                reinterpret_cast<const uint8_t*>(&goodbye),
+                sizeof(goodbye));
             if (result != DAS_S_OK)
             {
                 const std::string err_msg = DAS_FMT_NS::format(
@@ -806,17 +798,25 @@ void HostLauncher::StopBody()
             DAS_CORE_LOG_ERROR(err_msg.c_str());
         }
 
-        // 等待进程退出，最多等待 2 秒
-        // 如果进程在 GOODBYE 后正常退出，则不需要 terminate
-        bool process_exited = false;
-        for (int i = 0; i < 20; ++i)
+        // 等待进程退出，最多等待 2 秒。
+        // 如果进程在 GOODBYE 后正常退出，则不需要 terminate。协程版用
+        // steady_timer 轮询（co_await 让出 io_context），不阻塞线程；期间
+        // io_context 会处理已排队的 process-exit watcher completion（TP
+        // drain 的等价物）。
+        bool       process_exited = false;
+        const auto wait_deadline =
+            std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        while (std::chrono::steady_clock::now() < wait_deadline)
         {
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
             if (!impl_->process->running())
             {
                 process_exited = true;
                 break;
             }
+            boost::asio::steady_timer timer(
+                impl_->io_ctx,
+                std::chrono::milliseconds(100));
+            co_await timer.async_wait(boost::asio::use_awaitable);
         }
 
         if (process_exited)
@@ -828,34 +828,77 @@ void HostLauncher::StopBody()
         }
     }
 
-    // transport 清理必须与 io_context 线程上 pending 的 ReceiveCoroutine 串行
-    // （单线程 io_context 按序执行），否则跨线程并发双释放。仅在 transport
-    // 已连接（可能有 io_context 线程协程借用）时走串行化；未连接/无 transport
-    // 时无并发借用，直接清理。use_async_transport_cleanup_ == false 时是析构
-    // 路径，io_context 已停/析构且无存活协程借用 transport，直接清理。
-    // io_context 线程路径（on_io_thread）本就在该线程上执行，直接清理天然
-    // 串行，不需要 co_spawn 转发。
-    if (!on_io_thread && use_async_transport_cleanup_
-        && !impl_->io_ctx.stopped() && impl_->async_transport
-        && impl_->async_transport->IsConnected())
+    // transport 清理：本协程在 io_context 线程上执行，与该线程 pending
+    // ReceiveCoroutine 按序串行（单线程 io_context），直接清理安全，保持
+    // 31616073 的双 UAF 修复语义。
+    CleanupTransport(impl_->async_transport);
+
+    // 清理 SharedMemoryPool（transport 清理后，确保无悬空引用）
+    impl_->pool_.reset();
+
+    if (impl_->process)
     {
-        try
-        {
-            // T0 阻塞等待；transport 清理完全在 io_context 线程上执行。
-            CleanupTransportAsync().get();
-        }
-        catch (const std::exception& e)
+        boost::system::error_code ec;
+
+        // 检查进程是否仍在运行
+        const bool still_running = impl_->process->running(ec);
+
+        if (still_running)
         {
             const std::string msg = DAS_FMT_NS::format(
-                "HostLauncher::Stop transport cleanup failed: {}",
-                ToString(e.what()));
-            DAS_CORE_LOG_ERROR(msg.c_str());
+                "HostLauncher::Stop - terminating Host process: pid={}, session_id={}",
+                impl_->pid,
+                impl_->session_id);
+            DAS_LOG_INFO(msg.c_str());
+            impl_->process->terminate(ec);
         }
+
+        // 等子进程真正退出后再析构（terminate 后 wait 瞬间返回）。
+        // 注意：本协程在 io_context 线程上，不能直接 process_exit_future.wait()
+        // —— future 未就绪时 exit-watcher 协程完成需 io_context 驱动，
+        // io_context 线程阻塞在其上会死锁。改为 wait_for(0) 轮询 + 短延时
+        // co_await 让 io_context 处理已排队的 async_wait completion（TP
+        // drain 的等价物），确保 io_context 线程不再引用 process handle 后再
+        // reset（test 1338 的 UAF 防护）。future 无效（RunAsync 失败路径，
+        // watcher 未 spawn）或已就绪则立即跳过。
+        if (impl_->process_exit_future.valid())
+        {
+            const auto drain_deadline =
+                std::chrono::steady_clock::now() + std::chrono::seconds(2);
+            while (impl_->process_exit_future.wait_for(std::chrono::seconds(0))
+                       != std::future_status::ready
+                   && std::chrono::steady_clock::now() < drain_deadline)
+            {
+                boost::asio::steady_timer drain_timer(impl_->io_ctx);
+                drain_timer.expires_after(std::chrono::milliseconds(1));
+                co_await drain_timer.async_wait(boost::asio::use_awaitable);
+            }
+        }
+
+        // 正常析构：Windows 上 ~process() 会调 UnregisterWaitEx(NULL)，
+        // 同步等待已 pending 的 thread-pool wait callback 完成。
+        impl_->process.reset();
     }
-    else
-    {
-        CleanupTransport(impl_->async_transport);
-    }
+
+    impl_->is_running = false;
+    impl_->session_id = 0;
+    impl_->pid = 0;
+}
+
+void HostLauncher::StopBodySync()
+{
+    // 非 io_context 线程的直接同步 teardown（io_context 已停/析构或 transport
+    // 未连接时的 fallback，由 Stop() 调用）。此时无存活 io_context 协程借用
+    // transport，直接清理安全；GOODBYE 依赖 co_spawn 阻塞等 io_context，此
+    // 路径不可用且 transport 未连接时发送无意义，跳过。
+
+    // 全清心跳+退出 slot（Pitfall 6 修复：消除旧版只清 on_process_exit_
+    // 的不对称）。 ClearCallbacks 持锁 drain（CR-02），避免 Stop
+    // 主动关闭进程时残留 callback 被并发触发。心跳 slot 同清，避免 Stop
+    // 后心跳线程仍触发回调的窗口。
+    ClearCallbacks();
+
+    CleanupTransport(impl_->async_transport);
 
     // 清理 SharedMemoryPool（transport 清理后，确保无悬空引用）
     impl_->pool_.reset();
@@ -880,13 +923,10 @@ void HostLauncher::StopBody()
         // 等 StartLaunchSequence 的 process-exit watcher 协程跑完，
         // 确保 io_context 线程不再引用 process handle。否则 process.reset()
         // 释放 handle 时，io_context 线程可能仍在 async_wait completion 中
-        // → heap-use-after-free（test 1338）。
-        // io_context 线程路径（RunAsync 失败）跳过：RunAsync 只在成功路径
-        // spawn exit-watcher（detached，不存入 process_exit_future），失败路径
-        // 的当前 process 无 watcher 引用；残留的旧 process_exit_future 引用
-        // 的是先前 process 对象，与当前 reset() 无关联。从 io_context 线程
-        // wait() 未就绪的 future 会死锁（协程完成需 io_context 驱动）。
-        if (!on_io_thread && impl_->process_exit_future.valid())
+        // → heap-use-after-free（test 1338）。本路径在非 io_context 线程，
+        // wait() 让 io_context 线程空闲驱动 watcher；io_context 已停时
+        // watcher 已完成或未启动，future 已就绪/无效。
+        if (impl_->process_exit_future.valid())
         {
             try
             {
@@ -910,6 +950,33 @@ void HostLauncher::StopBody()
     impl_->is_running = false;
     impl_->session_id = 0;
     impl_->pid = 0;
+}
+
+boost::asio::awaitable<void> HostLauncher::StopFromIoContext()
+{
+    // RunAsync 失败路径调用：本协程在 io_context 线程上执行（RunAsync 经
+    // StartAsync 的 co_spawn 在 io_context 上运行）。Stop() 用 co_spawn +
+    // use_future 阻塞等 io_context 完成 GOODBYE / transport 清理 /
+    // exit-watcher drain，从 io_context 线程调用会 assert + 死锁。本协程
+    // 直接 co_await StopBody()：GOODBYE 用 co_await 发送（不阻塞），transport
+    // 清理在 io_context 线程天然与 pending 协程串行。
+    //
+    // 用 try_lock 而非 lock：若另一线程的 Stop()/TerminateIfRunning() 已持
+    // stop_mutex_ 且阻塞在 co_spawn+get（等 io_context 处理），本协程若阻塞
+    // 在 stop_mutex_ 上会让 io_context 线程卡死 → 死锁。try_lock 失败 = 另一
+    // teardown 进行中，其会完成清理（teardown body 幂等，重复执行无害），
+    // 本协程跳过自身清理直接返回。
+    std::unique_lock lock(stop_mutex_, std::try_to_lock);
+    if (!lock.owns_lock())
+    {
+        co_return;
+    }
+
+    assert(
+        impl_->io_ctx.get_executor().running_in_this_thread()
+        && "StopFromIoContext must be called from the io_context thread");
+
+    co_await StopBody();
 }
 
 bool HostLauncher::IsRunning() const
@@ -1924,6 +1991,11 @@ boost::asio::awaitable<void> HostLauncher::RunAsync(
         return static_cast<uint32_t>(timeout_ms - elapsed);
     };
 
+    // C++ 协程禁止 co_await 出现在异常 handler（catch 块）中，因此异常路径
+    // 的 teardown（co_await StopFromIoContext）移到 try/catch 之后，用
+    // caught_exception 标志触发。
+    std::exception_ptr caught_exception;
+
     try
     {
         // Phase 1: LaunchProcess (sync, fast)
@@ -1949,7 +2021,7 @@ boost::asio::awaitable<void> HostLauncher::RunAsync(
         // Phase 2: ConnectToHost (async)
         if (!alive->load(std::memory_order_acquire))
         {
-            StopFromIoContext();
+            co_await StopFromIoContext();
             op->Complete(DAS_E_IPC_CANCELED, 0);
             co_return;
         }
@@ -1957,7 +2029,7 @@ boost::asio::awaitable<void> HostLauncher::RunAsync(
         result = co_await ConnectToHostAsync();
         if (DAS::IsFailed(result))
         {
-            StopFromIoContext();
+            co_await StopFromIoContext();
             op->Complete(result, 0);
             co_return;
         }
@@ -1965,7 +2037,7 @@ boost::asio::awaitable<void> HostLauncher::RunAsync(
         // Phase 3: WaitForHostReady (async)
         if (!alive->load(std::memory_order_acquire))
         {
-            StopFromIoContext();
+            co_await StopFromIoContext();
             op->Complete(DAS_E_IPC_CANCELED, 0);
             co_return;
         }
@@ -1973,7 +2045,7 @@ boost::asio::awaitable<void> HostLauncher::RunAsync(
         result = co_await WaitForHostReadyAsync(remaining_ms());
         if (DAS::IsFailed(result))
         {
-            StopFromIoContext();
+            co_await StopFromIoContext();
             op->Complete(result, 0);
             co_return;
         }
@@ -1981,7 +2053,7 @@ boost::asio::awaitable<void> HostLauncher::RunAsync(
         // Phase 4: PerformFullHandshake (async)
         if (!alive->load(std::memory_order_acquire))
         {
-            StopFromIoContext();
+            co_await StopFromIoContext();
             op->Complete(DAS_E_IPC_CANCELED, 0);
             co_return;
         }
@@ -1990,7 +2062,7 @@ boost::asio::awaitable<void> HostLauncher::RunAsync(
         result = co_await PerformFullHandshakeAsync(session_id, remaining_ms());
         if (DAS::IsFailed(result))
         {
-            StopFromIoContext();
+            co_await StopFromIoContext();
             op->Complete(result, 0);
             co_return;
         }
@@ -2000,7 +2072,7 @@ boost::asio::awaitable<void> HostLauncher::RunAsync(
         // Phase 5: RegisterHostLauncher (sync, fast)
         if (!alive->load(std::memory_order_acquire))
         {
-            StopFromIoContext();
+            co_await StopFromIoContext();
             op->Complete(DAS_E_IPC_CANCELED, 0);
             co_return;
         }
@@ -2013,7 +2085,7 @@ boost::asio::awaitable<void> HostLauncher::RunAsync(
                 DAS_CORE_LOG_ERROR(
                     "Registration callback failed: error={}",
                     result);
-                StopFromIoContext();
+                co_await StopFromIoContext();
                 op->Complete(result, 0);
                 co_return;
             }
@@ -2060,8 +2132,24 @@ boost::asio::awaitable<void> HostLauncher::RunAsync(
             "Async Host start failed: {}",
             ToString(e.what()));
         DAS_CORE_LOG_ERROR(err_msg.c_str());
-        StopFromIoContext();
+        caught_exception = std::current_exception();
+    }
+
+    if (caught_exception)
+    {
+        try
+        {
+            co_await StopFromIoContext();
+        }
+        catch (const std::exception& e)
+        {
+            const std::string teardown_err = DAS_FMT_NS::format(
+                "Async teardown after failed Host start: {}",
+                ToString(e.what()));
+            DAS_CORE_LOG_ERROR(teardown_err.c_str());
+        }
         op->Complete(DAS_E_IPC_HANDSHAKE_FAILED, 0);
+        co_return;
     }
 }
 

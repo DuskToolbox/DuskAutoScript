@@ -340,26 +340,39 @@ private:
     std::future<void> CleanupTransportAsync();
 
     /**
-     * @brief 从 io_context 线程执行 teardown（RunAsync 失败路径用）
+     * @brief teardown 主体（协程，运行在 io_context 线程）
      *
-     * Stop() 用 co_spawn+use_future 阻塞等 io_context 完成 GOODBYE / transport
-     * 清理 / exit-watcher drain，从 io_context 线程调用会触发 Stop() 的
-     * assert 并死锁。本方法用 try_lock 获取 stop_mutex_（避免与其他线程的
-     * Stop()/TerminateIfRunning() 阻塞在 co_spawn+get 上时互等死锁）后调
-     * StopBody()：io_context 线程上 transport 清理天然与该线程 pending 协程
-     * 串行（单线程 io_context 按序执行），不需要 co_spawn 转发。
+     * GOODBYE 用 co_await 发送（非阻塞，所有路径保留），transport 清理直接
+     * 执行（单线程 io_context 按序执行，与该线程 pending 协程天然串行，
+     * 保持 31616073 的双 UAF 修复语义），process-exit watcher 的 TP drain 用
+     * wait_for(0) 轮询 + 短延时 co_await 让 io_context 处理已排队的
+     * completion。 由 Stop()（非 io 线程，co_spawn+use_future 阻塞等）或
+     * StopFromIoContext()（io 线程，co_await）驱动；调用方须持 stop_mutex_。
      */
-    void StopFromIoContext();
+    boost::asio::awaitable<void> StopBody();
 
     /**
-     * @brief teardown 公共体（调用方须持 stop_mutex_）
+     * @brief teardown 同步 fallback（非 io 线程直接执行）
      *
-     * 按是否在 io_context 线程自适应：io_context 线程路径跳过需要
-     * co_spawn+use_future 阻塞的 GOODBYE / exit-watcher drain（从 io_context
-     * 线程阻塞等 io_context 会死锁），transport 清理直接执行（已在 io_context
-     * 线程，天然串行）。
+     * io_context 已停/析构（co_spawn 到已停的 io_context 永不执行 → .get()
+     * 死锁）或 transport 未连接（co_spawn 无意义）时使用。此时无存活
+     * io_context 协程借用 transport，直接清理安全；GOODBYE 依赖 co_spawn
+     * 阻塞且此路径下 transport 未连接/io_context 已死，发送无意义，跳过。
+     * 调用方须持 stop_mutex_。
      */
-    void StopBody();
+    void StopBodySync();
+
+    /**
+     * @brief 从 io_context 线程执行 teardown（RunAsync 失败路径用）
+     *
+     * Stop() 用 co_spawn+use_future 阻塞等 io_context 完成，从 io_context
+     * 线程调用会 assert + 死锁。本协程直接 co_await StopBody()（GOODBYE 用
+     * co_await 发送，不阻塞）。用 try_lock 获取 stop_mutex_：若另一线程的
+     * Stop()/TerminateIfRunning() 已持锁且阻塞在 co_spawn+get（等 io_context
+     * 处理），本协程阻塞在锁上会让 io_context 线程卡死 → 死锁；try_lock 失败
+     * = 另一 teardown 进行中（body 幂等，其会完成清理），跳过自身清理。
+     */
+    boost::asio::awaitable<void> StopFromIoContext();
 
     struct Impl;
     std::unique_ptr<Impl> impl_;
