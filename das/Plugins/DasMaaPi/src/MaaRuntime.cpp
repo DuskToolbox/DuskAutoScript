@@ -5,6 +5,7 @@
 
 #include "AgentProcessRunner.h"
 #include "AgentRuntimeService.h"
+#include "MaaCallbackLogger.h"
 #include "MaaDynamicSymbols.h"
 #include "MaaHandle.h"
 #include "PretaskRunner.h"
@@ -1236,6 +1237,27 @@ namespace Das::Plugins::DasMaaPi
         }
         const ScopedController controller(boundary, controller_handle);
 
+        // D-88-07：recorder 单例化 + 回调上下文。上下文先于 tasker 构造，
+        // 局部析构逆序保证 tasker 存活期间 trans_arg 有效。创建失败仅告警，
+        // focus 日志降级为不记录，不阻断任务执行。
+        Das::DasPtr<Das::ExportInterface::IDasProcessLogRecorder> log_recorder;
+        auto recorder_rc = CreateIDasProcessLogRecorder(log_recorder.Put());
+        std::unique_ptr<MaaCallbackLoggerContext> log_context;
+        if (DAS::IsFailed(recorder_rc))
+        {
+            AddDiagnostic(
+                result,
+                "create-recorder-failed",
+                "CreateIDasProcessLogRecorder failed",
+                static_cast<std::int64_t>(recorder_rc),
+                "warning");
+        }
+        else
+        {
+            log_context = std::make_unique<MaaCallbackLoggerContext>();
+            log_context->recorder = std::move(log_recorder);
+        }
+
         const ScopedTasker tasker(boundary, boundary.CreateTasker());
         if (tasker.get() == kInvalidMaaTaskerHandle)
         {
@@ -1271,6 +1293,26 @@ namespace Das::Plugins::DasMaaPi
                 bind_controller.message,
                 bind_controller.provider_code);
             return result;
+        }
+
+        if (log_context)
+        {
+            // 注册 MaaMsgAsyncCallback → MaaCallbackLogger 转发（D-88-07）。
+            // 符号解析失败（T-88-13）或回调注册失败仅告警：focus 日志降级，
+            // 任务本身不受影响。
+            auto set_callback = boundary.SetCallback(
+                tasker.get(),
+                &MaaCallbackLoggerEntry,
+                log_context.get());
+            if (!set_callback.ok)
+            {
+                AddDiagnostic(
+                    result,
+                    "set-callback-failed",
+                    set_callback.message,
+                    set_callback.provider_code,
+                    "warning");
+            }
         }
 
         AgentRuntime::BoostAgentProcessRunner default_agent_runner;
