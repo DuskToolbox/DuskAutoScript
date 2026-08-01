@@ -122,6 +122,56 @@ TEST_F(LogRecorderFixture, LogRecorderTest_RecordAppendsMultipleLines)
     EXPECT_EQ(line_count, 2);
 }
 
+TEST_F(LogRecorderFixture, LogRecorderTest_NotifyCallbackReceivesEvent)
+{
+    const auto dir = UniqueTempDir("NotifyCallback");
+    Das::Core::LogRecorderRuntime::ResetForTest();
+    ASSERT_EQ(Das::Core::LogRecorderRuntime::Initialize(dir), DAS_S_OK);
+
+    Das::DasPtr<Das::ExportInterface::IDasProcessLogRecorder> recorder;
+    ASSERT_EQ(CreateIDasProcessLogRecorder(recorder.Put()), DAS_S_OK);
+
+    std::string received_event;
+    Das::Core::LogRecorderRuntime::SetLogNotifyCallback(
+        [&received_event](const char* json_event)
+        { received_event = json_event ? json_event : ""; });
+
+    DasU8StringOnStack text{"notify-me"};
+    auto               entry = Das::DasPtr<Das::ExportInterface::IDasLogEntry>{
+        new Das::Core::IDasLogEntryImpl{}};
+    ASSERT_EQ(
+        entry->SetType(Das::ExportInterface::DAS_LOG_TYPE_WARNING),
+        DAS_S_OK);
+    ASSERT_EQ(entry->AddText(&text), DAS_S_OK);
+    EXPECT_EQ(recorder->Record(entry.Get()), DAS_S_OK);
+
+    ASSERT_FALSE(received_event.empty());
+    auto parsed = DAS::Utils::ParseYyjsonFromString(received_event);
+    ASSERT_TRUE(parsed.has_value());
+    auto obj = parsed->as_object();
+    ASSERT_TRUE(obj.has_value());
+
+    auto api = (*obj)[std::string_view("api")].as_string();
+    ASSERT_TRUE(api.has_value());
+    EXPECT_EQ(*api, "api/v1/logs/get");
+
+    auto data = (*obj)[std::string_view("data")].as_object();
+    ASSERT_TRUE(data.has_value());
+
+    auto next_cursor = (*data)[std::string_view("nextCursor")].as_uint();
+    ASSERT_TRUE(next_cursor.has_value());
+    EXPECT_GT(*next_cursor, 0u);
+
+    auto entries = (*data)[std::string_view("entries")].as_array();
+    ASSERT_TRUE(entries.has_value());
+    ASSERT_FALSE(entries->empty());
+    auto first_entry = (*entries)[0].as_object();
+    ASSERT_TRUE(first_entry.has_value());
+    auto text_value = (*first_entry)[std::string_view("text")].as_string();
+    ASSERT_TRUE(text_value.has_value());
+    EXPECT_EQ(*text_value, "notify-me");
+}
+
 TEST_F(LogRecorderFixture, LogRecorderTest_RecordWithoutInitFails)
 {
     Das::Core::LogRecorderRuntime::ResetForTest();

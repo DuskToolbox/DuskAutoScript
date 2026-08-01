@@ -5,6 +5,8 @@
 #include <das/DasTypes.hpp>
 
 #include <filesystem>
+#include <functional>
+#include <string>
 
 namespace Das::Core
 {
@@ -14,6 +16,20 @@ namespace Das::Core
     class LogRecorderRuntime
     {
     public:
+        // 日志增量通知回调（D-88-01/02）：Recorder 每写盘一条 JSONL 后触发，
+        // 参数为已组装完整的事件 JSON（含 api/nextCursor/entries）。值语义
+        // 单例槽，跨线程仅由 recorder 调用；DasHttp 装配到 NotificationHub
+        // 广播（Broadcast 自身线程安全）。未注册时空槽安全跳过。
+        using LogNotifyCallback = std::function<void(const char* json_event)>;
+        // 带锁写入/替换静态通知槽；传空函数可清除（Shutdown 会清空）。
+        static DAS_API void SetLogNotifyCallback(LogNotifyCallback callback);
+        // 组装完整事件 JSON（{"api":"api/v1/logs/get","code":0,"data":{
+        // "profile":"0","nextCursor":<写盘后文件大小>,"entries":[<line_json
+        // 解析对象>]}}）后调槽；空槽或解析失败安全跳过。由 Recorder::Record
+        // 写盘成功后调用。
+        static DAS_API void NotifyLogAppended(
+            uint64_t           next_cursor,
+            const std::string& line_json);
         // 以 debug_dir 为根创建会话目录，命名 {ts}-{pid}（如
         // 20260801-123456-8841），并建 img 子目录。幂等：已初始化直接返回。
         static DAS_API DasResult

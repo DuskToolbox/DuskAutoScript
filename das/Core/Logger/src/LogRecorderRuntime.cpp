@@ -3,6 +3,7 @@
 #include <das/Core/Logger/LogRecorderRuntime.h>
 
 #include <das/Core/Logger/Logger.h>
+#include <das/Utils/DasJsonCore.h>
 
 #include <atomic>
 #include <chrono>
@@ -32,6 +33,9 @@ namespace Das::Core
             std::filesystem::path session_dir;
             // 进程内图片序号，跨 recorder 实例共享（D-88-05a，不设上限）。
             std::atomic<uint32_t> image_seq{0};
+            // 日志增量通知槽（D-88-01/02）。锁内拷贝后锁外调用，避免持锁
+            // 执行用户回调造成重入死锁。空槽安全跳过。
+            LogRecorderRuntime::LogNotifyCallback notify_callback;
         };
 
         RuntimeState& State()
@@ -199,6 +203,60 @@ namespace Das::Core
         return state.image_seq.fetch_add(1) + 1;
     }
 
+    void LogRecorderRuntime::SetLogNotifyCallback(LogNotifyCallback callback)
+    {
+        auto&                  state = State();
+        const std::scoped_lock lock{state.mutex};
+        state.notify_callback = std::move(callback);
+    }
+
+    void LogRecorderRuntime::NotifyLogAppended(
+        uint64_t           next_cursor,
+        const std::string& line_json)
+    {
+        auto&             state = State();
+        LogNotifyCallback callback;
+        {
+            const std::scoped_lock lock{state.mutex};
+            callback = state.notify_callback;
+        }
+        if (!callback)
+        {
+            return; // 空槽安全跳过；装配前的事件由 HTTP 轮询兜底
+        }
+
+        // 组装完整事件 JSON（D-88-01/02）：entries 复用已序列化的 JSONL 行
+        // 经解析再塞入数组，避免二次转义。事件 JSON 由 recorder 用 yyjson
+        // 组装（T-88-09），不拼接外部字符串。
+        auto entry = DAS::Utils::ParseYyjsonFromString(line_json);
+        if (!entry)
+        {
+            return;
+        }
+        auto entries = DAS::Utils::MakeYyjsonArray();
+        entries.as_array()->emplace_back(std::move(*entry));
+
+        auto data = DAS::Utils::MakeYyjsonObject();
+        (*data.as_object())[std::string_view("profile")] =
+            std::make_pair(std::string_view("0"), yyjson::copy_string);
+        (*data.as_object())[std::string_view("nextCursor")] = next_cursor;
+        (*data.as_object())[std::string_view("entries")] = std::move(entries);
+
+        auto event = DAS::Utils::MakeYyjsonObject();
+        (*event.as_object())[std::string_view("api")] = std::make_pair(
+            std::string_view("api/v1/logs/get"),
+            yyjson::copy_string);
+        (*event.as_object())[std::string_view("code")] = 0;
+        (*event.as_object())[std::string_view("data")] = std::move(data);
+
+        auto serialized = DAS::Utils::SerializeYyjsonValue(event);
+        if (!serialized)
+        {
+            return;
+        }
+        callback(serialized->c_str());
+    }
+
     void LogRecorderRuntime::CleanupOrphanSessionDirs(
         const std::filesystem::path& debug_dir)
     {
@@ -263,6 +321,7 @@ namespace Das::Core
             DAS_CORE_LOG_WARN("Failed to remove session dir: {}", ec.message());
         }
         state.session_dir.clear();
+        state.notify_callback = LogNotifyCallback{};
         state.initialized = false;
     }
 
@@ -273,6 +332,7 @@ namespace Das::Core
         state.initialized = false;
         state.session_dir.clear();
         state.image_seq.store(0);
+        state.notify_callback = LogNotifyCallback{};
     }
 
 } // namespace Das::Core

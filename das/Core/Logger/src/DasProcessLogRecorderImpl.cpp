@@ -169,7 +169,7 @@ namespace Das::Core
         // 不设缓存上限（D-88-05a）。
         auto       image_refs = DAS::Utils::MakeYyjsonArray();
         const auto session_dir = LogRecorderRuntime::SessionDir();
-        auto image_refs_array = image_refs.as_array();
+        auto       image_refs_array = image_refs.as_array();
         for (const auto& image : entry_impl->GetImages())
         {
             const auto seq = LogRecorderRuntime::NextImageSeq();
@@ -223,7 +223,24 @@ namespace Das::Core
         }
         output << *line << '\n';
         output.flush();
-        return output ? DAS_S_OK : DAS_E_INVALID_FILE;
+        if (!output)
+        {
+            return DAS_E_INVALID_FILE;
+        }
+
+        // 日志增量通知（D-88-01/02）：写盘成功后把 newCursor 与新条目交给
+        // LogRecorderRuntime 组装完整事件 JSON 并触发通知槽（DasHttp 侧装配
+        // 到 NotificationHub 广播）。nextCursor = 写盘后文件大小，与 archive
+        // 的 AlignToLastNewline 行尾对齐一致。空槽安全跳过，装配前的事件由
+        // HTTP 轮询兜底。
+        std::error_code size_ec;
+        const auto      next_cursor =
+            std::filesystem::file_size(user_jsonl_path, size_ec);
+        if (!size_ec)
+        {
+            LogRecorderRuntime::NotifyLogAppended(next_cursor, *line);
+        }
+        return DAS_S_OK;
     }
 
 } // namespace Das::Core
