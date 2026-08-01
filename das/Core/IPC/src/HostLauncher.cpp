@@ -707,14 +707,53 @@ void HostLauncher::Stop()
         !impl_->io_ctx.get_executor().running_in_this_thread()
         && "Stop() must not be called from the io_context thread");
 
+    StopBody();
+}
+
+void HostLauncher::StopFromIoContext()
+{
+    // RunAsync 失败路径调用：本方法运行在 io_context 线程（RunAsync 经
+    // StartAsync 的 co_spawn 在 io_context 上执行）。Stop() 用
+    // co_spawn+use_future 阻塞等 io_context 完成 GOODBYE / transport 清理 /
+    // exit-watcher drain，从 io_context 线程调用会触发 Stop() 的 assert 并
+    // 死锁。本方法在 io_context 线程上直接执行同步清理：transport 清理天然
+    // 与该线程 pending 协程串行（单线程 io_context 按序执行），无需 co_spawn
+    // 转发。
+    //
+    // 用 try_lock 而非 lock：若另一线程的 Stop()/TerminateIfRunning() 已持
+    // stop_mutex_ 且阻塞在 co_spawn+get（等 io_context 处理），本方法若阻塞
+    // 在 stop_mutex_ 上会让 io_context 线程卡死 → 死锁。try_lock 失败 = 另一
+    // teardown 进行中，其会完成清理（teardown body 幂等，重复执行无害），
+    // 本方法跳过自身清理直接返回。
+    std::unique_lock lock(stop_mutex_, std::try_to_lock);
+    if (!lock.owns_lock())
+    {
+        return;
+    }
+
+    assert(
+        impl_->io_ctx.get_executor().running_in_this_thread()
+        && "StopFromIoContext must be called from the io_context thread");
+
+    StopBody();
+}
+
+void HostLauncher::StopBody()
+{
+    const bool on_io_thread =
+        impl_->io_ctx.get_executor().running_in_this_thread();
+
     // 全清心跳+退出 slot（Pitfall 6 修复：消除旧版只清 on_process_exit_
     // 的不对称）。 ClearCallbacks 持锁 drain（CR-02），避免 Stop
     // 主动关闭进程时残留 callback 被并发触发。心跳 slot 同清，避免 Stop
     // 后心跳线程仍触发回调的窗口。
     ClearCallbacks();
 
-    // 先发送 GOODBYE 消息让 Host 进程优雅退出
-    if (impl_->async_transport && impl_->is_running)
+    // 先发送 GOODBYE 消息让 Host 进程优雅退出。
+    // GOODBYE 用 co_spawn+use_future 阻塞等 io_context，只能从非 io_context
+    // 线程执行；io_context 线程路径（RunAsync 失败）跳过——握手/启动已失败，
+    // Host 处于部分状态，直接 terminate 即可。
+    if (!on_io_thread && impl_->async_transport && impl_->is_running)
     {
         GoodbyeV1 goodbye{};
         goodbye.reason = static_cast<uint32_t>(GoodbyeReason::NormalShutdown);
@@ -794,8 +833,11 @@ void HostLauncher::Stop()
     // 已连接（可能有 io_context 线程协程借用）时走串行化；未连接/无 transport
     // 时无并发借用，直接清理。use_async_transport_cleanup_ == false 时是析构
     // 路径，io_context 已停/析构且无存活协程借用 transport，直接清理。
-    if (use_async_transport_cleanup_ && !impl_->io_ctx.stopped()
-        && impl_->async_transport && impl_->async_transport->IsConnected())
+    // io_context 线程路径（on_io_thread）本就在该线程上执行，直接清理天然
+    // 串行，不需要 co_spawn 转发。
+    if (!on_io_thread && use_async_transport_cleanup_
+        && !impl_->io_ctx.stopped() && impl_->async_transport
+        && impl_->async_transport->IsConnected())
     {
         try
         {
@@ -839,7 +881,12 @@ void HostLauncher::Stop()
         // 确保 io_context 线程不再引用 process handle。否则 process.reset()
         // 释放 handle 时，io_context 线程可能仍在 async_wait completion 中
         // → heap-use-after-free（test 1338）。
-        if (impl_->process_exit_future.valid())
+        // io_context 线程路径（RunAsync 失败）跳过：RunAsync 只在成功路径
+        // spawn exit-watcher（detached，不存入 process_exit_future），失败路径
+        // 的当前 process 无 watcher 引用；残留的旧 process_exit_future 引用
+        // 的是先前 process 对象，与当前 reset() 无关联。从 io_context 线程
+        // wait() 未就绪的 future 会死锁（协程完成需 io_context 驱动）。
+        if (!on_io_thread && impl_->process_exit_future.valid())
         {
             try
             {
@@ -1902,7 +1949,7 @@ boost::asio::awaitable<void> HostLauncher::RunAsync(
         // Phase 2: ConnectToHost (async)
         if (!alive->load(std::memory_order_acquire))
         {
-            Stop();
+            StopFromIoContext();
             op->Complete(DAS_E_IPC_CANCELED, 0);
             co_return;
         }
@@ -1910,7 +1957,7 @@ boost::asio::awaitable<void> HostLauncher::RunAsync(
         result = co_await ConnectToHostAsync();
         if (DAS::IsFailed(result))
         {
-            Stop();
+            StopFromIoContext();
             op->Complete(result, 0);
             co_return;
         }
@@ -1918,7 +1965,7 @@ boost::asio::awaitable<void> HostLauncher::RunAsync(
         // Phase 3: WaitForHostReady (async)
         if (!alive->load(std::memory_order_acquire))
         {
-            Stop();
+            StopFromIoContext();
             op->Complete(DAS_E_IPC_CANCELED, 0);
             co_return;
         }
@@ -1926,7 +1973,7 @@ boost::asio::awaitable<void> HostLauncher::RunAsync(
         result = co_await WaitForHostReadyAsync(remaining_ms());
         if (DAS::IsFailed(result))
         {
-            Stop();
+            StopFromIoContext();
             op->Complete(result, 0);
             co_return;
         }
@@ -1934,7 +1981,7 @@ boost::asio::awaitable<void> HostLauncher::RunAsync(
         // Phase 4: PerformFullHandshake (async)
         if (!alive->load(std::memory_order_acquire))
         {
-            Stop();
+            StopFromIoContext();
             op->Complete(DAS_E_IPC_CANCELED, 0);
             co_return;
         }
@@ -1943,7 +1990,7 @@ boost::asio::awaitable<void> HostLauncher::RunAsync(
         result = co_await PerformFullHandshakeAsync(session_id, remaining_ms());
         if (DAS::IsFailed(result))
         {
-            Stop();
+            StopFromIoContext();
             op->Complete(result, 0);
             co_return;
         }
@@ -1953,7 +2000,7 @@ boost::asio::awaitable<void> HostLauncher::RunAsync(
         // Phase 5: RegisterHostLauncher (sync, fast)
         if (!alive->load(std::memory_order_acquire))
         {
-            Stop();
+            StopFromIoContext();
             op->Complete(DAS_E_IPC_CANCELED, 0);
             co_return;
         }
@@ -1966,7 +2013,7 @@ boost::asio::awaitable<void> HostLauncher::RunAsync(
                 DAS_CORE_LOG_ERROR(
                     "Registration callback failed: error={}",
                     result);
-                Stop();
+                StopFromIoContext();
                 op->Complete(result, 0);
                 co_return;
             }
@@ -2013,7 +2060,7 @@ boost::asio::awaitable<void> HostLauncher::RunAsync(
             "Async Host start failed: {}",
             ToString(e.what()));
         DAS_CORE_LOG_ERROR(err_msg.c_str());
-        Stop();
+        StopFromIoContext();
         op->Complete(DAS_E_IPC_HANDSHAKE_FAILED, 0);
     }
 }

@@ -339,6 +339,28 @@ private:
      */
     std::future<void> CleanupTransportAsync();
 
+    /**
+     * @brief 从 io_context 线程执行 teardown（RunAsync 失败路径用）
+     *
+     * Stop() 用 co_spawn+use_future 阻塞等 io_context 完成 GOODBYE / transport
+     * 清理 / exit-watcher drain，从 io_context 线程调用会触发 Stop() 的
+     * assert 并死锁。本方法用 try_lock 获取 stop_mutex_（避免与其他线程的
+     * Stop()/TerminateIfRunning() 阻塞在 co_spawn+get 上时互等死锁）后调
+     * StopBody()：io_context 线程上 transport 清理天然与该线程 pending 协程
+     * 串行（单线程 io_context 按序执行），不需要 co_spawn 转发。
+     */
+    void StopFromIoContext();
+
+    /**
+     * @brief teardown 公共体（调用方须持 stop_mutex_）
+     *
+     * 按是否在 io_context 线程自适应：io_context 线程路径跳过需要
+     * co_spawn+use_future 阻塞的 GOODBYE / exit-watcher drain（从 io_context
+     * 线程阻塞等 io_context 会死锁），transport 清理直接执行（已在 io_context
+     * 线程，天然串行）。
+     */
+    void StopBody();
+
     struct Impl;
     std::unique_ptr<Impl> impl_;
 
