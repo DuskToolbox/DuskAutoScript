@@ -73,17 +73,14 @@ namespace Das::Plugins::DasMaaPi
     // includes. Return is MaaSinkId (int64_t), 0 == MaaInvalidId.
     using MaaTaskerAddSinkFn = std::int64_t (*)(void*, void*, void*);
 
-    // const char* MaaVersion();
-    // MaaFW framework version (D-89-07 修订): version-display data source.
-    // Returns a pointer to a static string owned by MaaFramework; callers must
-    // copy it into std::string immediately before it can go stale. C-signature
-    // opaque typedef so the header needs no MaaFW include.
-    using MaaVersionFn = const char* (*)();
-
     // All symbols routed through runtime lookup. Any
     // pointer that fails to resolve stays null — callers must check before
     // dispatching and surface controller-type-unsupported-on-platform (or an
     // empty window list) instead of dereferencing.
+    //
+    // MaaFW framework version 不在此处解析：MaaVersion() 是 MaaFramework 通用
+    // 跨平台 API，由 AuthoringProjector 硬链直接调用（与 PiCompiler
+    // QueryMaaFrameworkVersion 同源），不经动态符号。
     struct MaaDynamicSymbols
     {
         MaaTaskerAddSinkFn                     tasker_add_sink = nullptr;
@@ -97,12 +94,6 @@ namespace Das::Plugins::DasMaaPi
         MaaToolkitDesktopWindowGetHandleFn     tk_get_handle = nullptr;
         MaaToolkitDesktopWindowGetClassNameFn  tk_get_class_name = nullptr;
         MaaToolkitDesktopWindowGetWindowNameFn tk_get_window_name = nullptr;
-
-        // MaaFW framework version (MaaVersion). null when MaaFramework is not
-        // mapped or the symbol is absent — callers degrade to a hidden
-        // version display. Data source for 89-03 authoring field projection
-        // (D-89-07 修订; no dedicated GetVersionInfo query channel).
-        MaaVersionFn version = nullptr;
     };
 
     // Singleton accessor: the first call resolves every symbol via

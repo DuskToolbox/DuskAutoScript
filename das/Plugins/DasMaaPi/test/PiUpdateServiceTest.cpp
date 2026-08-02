@@ -3,6 +3,10 @@
 #include "../src/PiHttpClient.h"
 #include "FakeMaaApiBoundary.h"
 
+#ifndef DAS_MAAPI_DISABLE_REAL_MAA_BOUNDARY
+#include <MaaFramework/MaaAPI.h>
+#endif
+
 #include <das/Plugins/DasMaaPi/MaaPiErrorCodes.h>
 #include <das/_autogen/idl/abi/DasResult.h>
 #include <gtest/gtest.h>
@@ -888,30 +892,21 @@ TEST(PiUpdateService, ApplyUpdateInterfaceJsonLockedPreservesAllFiles)
 }
 
 // ---------------------------------------------------------------------
-// Task 4：MaaVersion 动态符号（版本显示数据源，D-89-07 修订）
+// Task 4：MaaVersion 硬链调用（版本显示数据源，D-89-07 修订）
 // ---------------------------------------------------------------------
 
-TEST(PiUpdateService, MaaVersionSymbolIsNullSafeAndStructHasMember)
+TEST(PiUpdateService, MaaVersionResolvedFromHardlink)
 {
-    // 编译期断言：MaaDynamicSymbols 结构含 version 成员（D-89-07 修订要求
-    // MaaVersion 符号落地；无 GetVersionInfo / PiVersionInfo 残留）。
-    using Das::Plugins::DasMaaPi::MaaDynamicSymbols;
-    static_assert(
-        std::is_same_v<decltype(MaaDynamicSymbols::version), MaaVersionFn>,
-        "MaaDynamicSymbols must expose a MaaVersionFn member named 'version'");
-
-    // null-safe：DAS_MAAPI_DISABLE_REAL_MAA_BOUNDARY 测试构建下 MaaFramework
-    // 可能未映射 / 无该符号 → version 为 nullptr 且调用不崩。非空时立即拷贝
-    // 防 dangling（MaaVersion 返回 MaaFW 静态字符串）。
-    const auto& symbols = LoadMaaDynamicSymbols();
-    if (symbols.version != nullptr)
-    {
-        const std::string version_text(symbols.version());
-        EXPECT_FALSE(version_text.empty());
-    }
-    else
-    {
-        SUCCEED() << "MaaVersion symbol is null (framework unloaded) — "
-                     "callers must degrade, not crash";
-    }
+    // MaaVersion() 是 MaaFramework 通用跨平台 API，由 AuthoringProjector
+    // 硬链直接调用（与 PiCompiler QueryMaaFrameworkVersion 同源），不经动态
+    // 符号解析。生产语义：硬链返回非空版本串（MaaFW 静态字符串，立即拷贝）。
+    // 测试构建（DAS_MAAPI_DISABLE_REAL_MAA_BOUNDARY）不链接 MaaFramework，
+    // MaaVersion() 不可用，此测试仅在生产构建下有意义。
+#ifndef DAS_MAAPI_DISABLE_REAL_MAA_BOUNDARY
+    const std::string version_text{MaaVersion()};
+    EXPECT_FALSE(version_text.empty());
+#else
+    SUCCEED() << "MaaVersion hard-link unavailable in test build — "
+                 "version display is production-only";
+#endif
 }

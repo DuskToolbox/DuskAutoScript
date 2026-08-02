@@ -4,6 +4,10 @@
 #include "PiHttpClient.h"
 #include "PiUpdateService.h"
 
+#ifndef DAS_MAAPI_DISABLE_REAL_MAA_BOUNDARY
+#include <MaaFramework/MaaAPI.h>
+#endif
+
 #include <das/DasApi.h>
 #include <das/Plugins/DasMaaPi/MaaPiErrorCodes.h>
 #include <das/Utils/DasJsonCore.h>
@@ -2493,10 +2497,14 @@ namespace Das::Plugins::DasMaaPi
             yyjson::value(resource_version),
             nullptr,
             /*readonly=*/true));
-        const std::string maafw_version =
-            LoadMaaDynamicSymbols().version != nullptr
-                ? std::string(LoadMaaDynamicSymbols().version())
-                : std::string{};
+        // maafwVersion = MaaFW MaaVersion() 硬链调用（与 PiCompiler 同源，
+        // 跨平台天然正确）。测试构建（DAS_MAAPI_DISABLE_REAL_MAA_BOUNDARY）
+        // 不链接 MaaFramework，MaaVersion() 不可用，退化为空串。
+#ifndef DAS_MAAPI_DISABLE_REAL_MAA_BOUNDARY
+        const std::string maafw_version = std::string{MaaVersion()};
+#else
+        const std::string maafw_version{};
+#endif
         std::string_view maafw_label = "MaaFramework 版本";
         if (catalog != nullptr)
         {

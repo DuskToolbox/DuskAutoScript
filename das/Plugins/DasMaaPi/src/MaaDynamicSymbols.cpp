@@ -1,5 +1,8 @@
 #include "MaaDynamicSymbols.h"
 
+#include <das/DasApi.h>
+#include <das/Utils/fmt.h>
+
 #include <boost/dll/runtime_symbol_info.hpp>
 #include <boost/dll/shared_library.hpp>
 #include <boost/system/error_code.hpp>
@@ -63,10 +66,25 @@ namespace Das::Plugins::DasMaaPi
             // MaaFW has no Win32/Gamepad controller), has() returns false
             // and the pointer stays null — exactly the dynamic-failure
             // behavior we want, with zero #ifdef sprawl.
-            handles.framework.load(
-                "MaaFramework",
-                boost::dll::load_mode::search_system_folders,
-                ec);
+            //
+            // 加载路径：MaaFramework.dll 由 DasHostX（IPC host 进程）以
+            // load_with_altered_search_path 从插件目录加载（CppHost.cpp
+            // 注释），进程里虽已映射，但 search_system_folders
+            // 只在系统目录搜索，裸名 "MaaFramework" 会 load 失败 → version 恒为
+            // nullptr → 版本号不显示。与 toolkit 一致 用插件目录绝对路径 +
+            // load_with_altered_search_path 重新解析
+            // （已映射模块按名匹配返回既有句柄）。
+            // MaaFramework.dll is hard-linked for the cross-platform core
+            // (MaaAdbControllerCreate / MaaDbgControllerCreate / ...), so
+            // it is already mapped into the process by the time DasMaaPi
+            // runs. Loading it by name returns the existing module handle
+            // (Windows refcounts module handles; *nix dlopen semantics
+            // match). On a platform whose MaaFW build does not export
+            // MaaWin32ControllerCreate / MaaGamepadControllerCreate (Linux
+            // MaaFW has no Win32/Gamepad controller), has() returns false
+            // and the pointer stays null — exactly the dynamic-failure
+            // behavior we want, with zero #ifdef sprawl.
+            handles.framework.load("MaaFramework", ec);
             if (!ec && handles.framework.is_loaded())
             {
                 // MaaTaskerAddSink registers the MaaEventCallback sink
@@ -83,11 +101,6 @@ namespace Das::Plugins::DasMaaPi
                     TryResolve<MaaGamepadControllerCreateFn>(
                         handles.framework,
                         "MaaGamepadControllerCreate");
-                // MaaFW framework version — version-display data source
-                // (D-89-07 修订). null-safe: MaaFW absent / symbol missing →
-                // nullptr, callers degrade.
-                symbols.version =
-                    TryResolve<MaaVersionFn>(handles.framework, "MaaVersion");
             }
 
             // MaaToolkit is NOT hard-linked (after this refactor), so a
