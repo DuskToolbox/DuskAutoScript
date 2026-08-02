@@ -24,12 +24,12 @@ namespace Das::Plugins::DasMaaPi
     {
         // MirrorChyan 检查 / GitHub 兜底 / 直接下载拼接的端到端默认值
         // （MXU updateService.ts:74-77 MIRRORCHYAN_API_BASES 对齐）。
-        constexpr std::string_view kMirrorchyanBasePrimary =
+        constexpr std::string_view MIRRORCHYAN_BASE_PRIMARY =
             "https://mirrorchyan.com/api/resources";
-        constexpr std::string_view kMirrorchyanBaseBackup =
+        constexpr std::string_view MIRRORCHYAN_BASE_BACKUP =
             "https://mirrorchyan.net/api/resources";
-        constexpr std::string_view kGithubApiBase = "https://api.github.com";
-        constexpr std::string_view kGithubWebBase = "https://github.com";
+        constexpr std::string_view GITHUB_API_BASE = "https://api.github.com";
+        constexpr std::string_view GITHUB_WEB_BASE = "https://github.com";
 
         std::string Lower(std::string s)
         {
@@ -46,7 +46,7 @@ namespace Das::Plugins::DasMaaPi
         // 版本常见字符）。
         std::string UrlEncode(std::string_view value)
         {
-            constexpr std::string_view kHex = "0123456789ABCDEF";
+            constexpr std::string_view HEX_DIGITS = "0123456789ABCDEF";
             std::string                out;
             for (const unsigned char c : value)
             {
@@ -59,8 +59,8 @@ namespace Das::Plugins::DasMaaPi
                 else
                 {
                     out.push_back('%');
-                    out.push_back(kHex[c >> 4]);
-                    out.push_back(kHex[c & 0xF]);
+                    out.push_back(HEX_DIGITS[c >> 4]);
+                    out.push_back(HEX_DIGITS[c & 0xF]);
                 }
             }
             return out;
@@ -409,8 +409,8 @@ namespace Das::Plugins::DasMaaPi
             PiUpdateInfo&            out)
         {
             const std::vector<std::string> bases{
-                std::string(kMirrorchyanBasePrimary),
-                std::string(kMirrorchyanBaseBackup)};
+                std::string(MIRRORCHYAN_BASE_PRIMARY),
+                std::string(MIRRORCHYAN_BASE_BACKUP)};
             for (const auto& base : bases)
             {
                 const std::string url =
@@ -496,8 +496,8 @@ namespace Das::Plugins::DasMaaPi
                 return DAS_E_MAAPI_UPDATE_CHECK_FAILED;
             }
 
-            const std::string api_base = std::string(kGithubApiBase);
-            const std::string web_base = std::string(kGithubWebBase);
+            const std::string api_base = std::string(GITHUB_API_BASE);
+            const std::string web_base = std::string(GITHUB_WEB_BASE);
 
             // Open Question 3 决策：先 releases/latest；version_name 与 latest
             // tag 不匹配时再 releases/tags/{version} 兜底。
@@ -588,14 +588,13 @@ namespace Das::Plugins::DasMaaPi
         // EnumerateZipEntries / ExtractEntryToDisk 模式。
         // -----------------------------------------------------------------
 
-        constexpr std::uint32_t kLocalFileHeaderSig = 0x04034B50;
-        constexpr std::uint32_t kCentralDirSig = 0x02014B50;
-        constexpr std::uint32_t kEndOfCentralDirSig = 0x06054B50;
+        constexpr std::uint32_t LOCAL_FILE_HEADER_SIG = 0x04034B50;
+        constexpr std::uint32_t CENTRAL_DIR_SIG = 0x02014B50;
+        constexpr std::uint32_t END_OF_CENTRAL_DIR_SIG = 0x06054B50;
 
-        // 单个 zip 条目解压后的大小上限（WR-02 解压炸弹防护）。与
-        // PiHttpClient.cpp kMaxResponseBodyBytes 同量级（512MB），均为 DoS
-        // 缓解：攻击者/上游可控的 uncompressed_size（uint32，最高 ~4GB）不再
-        // 直接触发 output.resize() 的巨量分配。
+        // 单个 zip 条目解压后的大小上限（解压炸弹防护）。HTTP 响应体已不设
+        // 上限，但攻击者/上游可控的 uncompressed_size（uint32，最高 ~4GB）
+        // 不能直接触发 output.resize() 的巨量分配，故单条目仍限 512MB。
         constexpr std::size_t MAX_UNCOMPRESSED_ZIP_ENTRY_BYTES =
             512u * 1024u * 1024u;
 
@@ -611,21 +610,21 @@ namespace Das::Plugins::DasMaaPi
             const std::string& zip_data,
             size_t&            eocd_offset)
         {
-            constexpr size_t kEocdSize = 22;
-            constexpr size_t kMaxCommentSize = 65535;
-            if (zip_data.size() < kEocdSize)
+            constexpr size_t EOCD_SIZE = 22;
+            constexpr size_t MAX_COMMENT_SIZE = 65535;
+            if (zip_data.size() < EOCD_SIZE)
             {
                 return false;
             }
             const size_t max_search =
-                std::min(zip_data.size(), kEocdSize + kMaxCommentSize);
-            // max_search >= kEocdSize guaranteed above, so the loop count does
+                std::min(zip_data.size(), EOCD_SIZE + MAX_COMMENT_SIZE);
+            // max_search >= EOCD_SIZE guaranteed above, so the loop count does
             // not underflow (unsigned arithmetic) on short inputs.
-            for (size_t i = 0; i <= max_search - kEocdSize; ++i)
+            for (size_t i = 0; i <= max_search - EOCD_SIZE; ++i)
             {
-                const size_t offset = zip_data.size() - kEocdSize - i;
+                const size_t offset = zip_data.size() - EOCD_SIZE - i;
                 if (ReadLE<std::uint32_t>(zip_data.data(), offset)
-                    == kEndOfCentralDirSig)
+                    == END_OF_CENTRAL_DIR_SIG)
                 {
                     eocd_offset = offset;
                     return true;
@@ -752,7 +751,7 @@ namespace Das::Plugins::DasMaaPi
                     return DAS_E_MAAPI_UPDATE_APPLY_FAILED;
                 }
                 if (ReadLE<std::uint32_t>(zip_data.data(), pos)
-                    != kCentralDirSig)
+                    != CENTRAL_DIR_SIG)
                 {
                     LogError(
                         "PiUpdateService: bad central directory signature");
@@ -811,7 +810,7 @@ namespace Das::Plugins::DasMaaPi
                     return DAS_E_MAAPI_UPDATE_APPLY_FAILED;
                 }
                 if (ReadLE<std::uint32_t>(zip_data.data(), local_header_offset)
-                    != kLocalFileHeaderSig)
+                    != LOCAL_FILE_HEADER_SIG)
                 {
                     LogError("PiUpdateService: bad local header signature");
                     return DAS_E_MAAPI_UPDATE_APPLY_FAILED;

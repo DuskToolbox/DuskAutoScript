@@ -1,0 +1,9 @@
+#!/bin/sh
+# commit-msg hook: 拦截提交消息中的 code review finding 编号（WR-05 / IN-01 / CR-01 等）
+MSG_FILE="$1"
+if grep -qE '(^|[^A-Za-z])(CR|WR|IN)-[0-9]+([^0-9]|$)' "$MSG_FILE"; then
+    echo "错误：提交消息不得包含 code review finding 编号（如 CR-01 / WR-05 / IN-01）" >&2
+    echo "请在提交消息中描述问题本身，而不是引用审查报告的编号。" >&2
+    exit 1
+fi
+exit 0

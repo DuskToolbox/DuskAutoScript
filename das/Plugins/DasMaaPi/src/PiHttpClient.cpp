@@ -32,13 +32,10 @@ namespace Das::Plugins::DasMaaPi
 {
     namespace
     {
-        // Response body cap (T-89-01-03 DoS mitigation, WR-01). The seam
-        // buffers the whole response in memory; full PI update packages
-        // (MaaFW/MaaToolkit DLLs) are downloaded through the same Get seam
-        // (PiUpdateService::DownloadZip), so the cap is documented at 512MB to
-        // admit real packages while still bounding a hostile server's reply.
-        constexpr std::size_t      kMaxResponseBodyBytes = 512u * 1024u * 1024u;
-        constexpr std::string_view kUserAgent =
+        // 响应体不设上限：完整 PI 更新包（MaaFW/MaaToolkit DLLs）经同一
+        // Get seam（PiUpdateService::DownloadZip）下载，真实包大小可能远超
+        // 固定上限，故 body_limit(boost::none) 不限制。
+        constexpr std::string_view USER_AGENT =
             "DasMaaPi/0.1 (+DuskAutoScript)";
 
         struct UrlParts
@@ -169,7 +166,7 @@ namespace Das::Plugins::DasMaaPi
         // Minimal base64 (standard alphabet) for Proxy-Authorization Basic.
         std::string Base64Encode(std::string_view input)
         {
-            constexpr std::string_view kChars =
+            constexpr std::string_view CHARS =
                 "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
             std::string out;
             out.reserve(((input.size() + 2) / 3) * 4);
@@ -184,10 +181,10 @@ namespace Das::Plugins::DasMaaPi
                                   << 8)
                                | static_cast<std::uint32_t>(
                                    static_cast<std::uint8_t>(input[i + 2]));
-                out.push_back(kChars[(n >> 18) & 63]);
-                out.push_back(kChars[(n >> 12) & 63]);
-                out.push_back(kChars[(n >> 6) & 63]);
-                out.push_back(kChars[n & 63]);
+                out.push_back(CHARS[(n >> 18) & 63]);
+                out.push_back(CHARS[(n >> 12) & 63]);
+                out.push_back(CHARS[(n >> 6) & 63]);
+                out.push_back(CHARS[n & 63]);
                 i += 3;
             }
             const auto rem = input.size() - i;
@@ -196,8 +193,8 @@ namespace Das::Plugins::DasMaaPi
                 const auto n = static_cast<std::uint32_t>(
                                    static_cast<std::uint8_t>(input[i]))
                                << 16;
-                out.push_back(kChars[(n >> 18) & 63]);
-                out.push_back(kChars[(n >> 12) & 63]);
+                out.push_back(CHARS[(n >> 18) & 63]);
+                out.push_back(CHARS[(n >> 12) & 63]);
                 out.push_back('=');
                 out.push_back('=');
             }
@@ -209,9 +206,9 @@ namespace Das::Plugins::DasMaaPi
                                | (static_cast<std::uint32_t>(
                                       static_cast<std::uint8_t>(input[i + 1]))
                                   << 8);
-                out.push_back(kChars[(n >> 18) & 63]);
-                out.push_back(kChars[(n >> 12) & 63]);
-                out.push_back(kChars[(n >> 6) & 63]);
+                out.push_back(CHARS[(n >> 18) & 63]);
+                out.push_back(CHARS[(n >> 12) & 63]);
+                out.push_back(CHARS[(n >> 6) & 63]);
                 out.push_back('=');
             }
             return out;
@@ -265,12 +262,12 @@ namespace Das::Plugins::DasMaaPi
             }
             req.version(11);
             req.set(boost::beast::http::field::host, target.host_and_port);
-            req.set(boost::beast::http::field::user_agent, kUserAgent);
+            req.set(boost::beast::http::field::user_agent, USER_AGENT);
             req.set(boost::beast::http::field::accept, "*/*");
 
             boost::beast::http::response_parser<boost::beast::http::string_body>
                 parser;
-            parser.body_limit(kMaxResponseBodyBytes);
+            parser.body_limit(boost::none);
             parser.skip(head_only);
 
             boost::beast::flat_buffer buffer;
