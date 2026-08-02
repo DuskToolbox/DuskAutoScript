@@ -28,6 +28,15 @@ if(WIN32)
     target_link_libraries(DasMaaPi PRIVATE bcrypt)
 endif()
 
+# PiHttpClient uses Beast TLS (boost::beast::ssl_stream) for https targets.
+# Beast's ssl layer links OpenSSL; on the ember toolchain the import libs live
+# in the clang64 environment. MSVC builds (no OpenSSL in the toolchain) are not
+# part of the phase 89 gate and remain unlinked — the TLS code paths stay
+# reachable but require an OpenSSL-capable toolchain at link time.
+if(NOT MSVC)
+    target_link_libraries(DasMaaPi PRIVATE ssl crypto)
+endif()
+
 if(TARGET DasBundledMaaFrameworkDll)
     get_target_property(_das_maapi_framework_implib DasBundledMaaFrameworkDll IMPORTED_IMPLIB)
     get_filename_component(_das_maapi_framework_lib_dir "${_das_maapi_framework_implib}" DIRECTORY)
@@ -94,6 +103,9 @@ if(DAS_BUILD_TEST)
         DasCoreObjects)
     if(WIN32)
         target_link_libraries(DasMaaPiTest PRIVATE bcrypt)
+    endif()
+    if(NOT MSVC)
+        target_link_libraries(DasMaaPiTest PRIVATE ssl crypto)
     endif()
     target_compile_definitions(DasMaaPiTest PRIVATE
         DAS_MAAPI_DISABLE_REAL_MAA_BOUNDARY)
