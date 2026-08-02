@@ -7,6 +7,7 @@
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/redirect_error.hpp>
 #include <boost/asio/ssl.hpp>
 #include <boost/asio/this_coro.hpp>
 #include <boost/asio/use_awaitable.hpp>
@@ -416,7 +417,15 @@ namespace Das::Plugins::DasMaaPi
                     {
                     }
                 });
-            co_await state->timer.async_wait(boost::asio::use_awaitable);
+            // async_wait 经 redirect_error 捕获错误：resolver 先完成时 handler
+            // cancel timer → wait 以 operation_aborted 结束，这是"解析已就绪"
+            // 的正常信号而非失败，忽略 wait_ec，以 state->ec 为准；timer 自然
+            // 到期才走超时分支。
+            boost::system::error_code wait_ec;
+            co_await state->timer.async_wait(
+                boost::asio::redirect_error(
+                    boost::asio::use_awaitable,
+                    wait_ec));
             if (!state->ec)
             {
                 // Timer fired before resolution completed → cancel and fail.
