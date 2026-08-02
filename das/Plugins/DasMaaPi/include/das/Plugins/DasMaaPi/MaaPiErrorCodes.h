@@ -34,4 +34,20 @@ namespace Das::Plugins::DasMaaPi
     inline constexpr DasResult DAS_E_MAAPI_PRETASK_FAILED =
         static_cast<DasResult>(-10006);
 
+    /// Update version check failed (interface.json unreadable / missing
+    /// version / all check sources failed or returned no usable download info).
+    inline constexpr DasResult DAS_E_MAAPI_UPDATE_CHECK_FAILED =
+        static_cast<DasResult>(-10007);
+
+    /// Update apply failed (download / extract / replace error). The old
+    /// project directory has been rolled back before this is returned.
+    inline constexpr DasResult DAS_E_MAAPI_UPDATE_APPLY_FAILED =
+        static_cast<DasResult>(-10008);
+
+    /// Proxy scheme unsupported (socks5://). PiHttpClient rejects the URL up
+    /// front; this code converges the semantics for consumers that need a
+    /// distinct "proxy unsupported" result (D-89-08).
+    inline constexpr DasResult DAS_E_MAAPI_PROXY_UNSUPPORTED =
+        static_cast<DasResult>(-10009);
+
 } // namespace Das::Plugins::DasMaaPi
