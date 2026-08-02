@@ -6374,35 +6374,36 @@ TEST(
     ASSERT_TRUE(layout.has_value());
 
     // 项目设置 section（顺序第一）。defaultExpanded=true。
-    // D-89-09 增量：adapter.mirrorchyanKey / resourceVersion / maafwVersion
+    // D-89-09 增量：mirrorchyanCdk / proxyUrl / updateChannel / 版本字段
     // 已独立到 update section，project 只含项目级字段。
     auto project_section = FindLayoutSection(document, "project");
     ASSERT_TRUE(project_section.has_value());
     auto project_fields = LayoutSectionFieldNames(*project_section);
-    ASSERT_EQ(project_fields.size(), 8u);
+    ASSERT_EQ(project_fields.size(), 7u);
     EXPECT_EQ(project_fields[0], "adapter.interfacePath");
-    EXPECT_EQ(project_fields[1], "adapter.proxyUrl");
-    EXPECT_EQ(project_fields[2], "adapter.executionPolicy.failFast");
-    EXPECT_EQ(project_fields[3], "controllerName");
-    EXPECT_EQ(project_fields[4], "resourceName");
-    EXPECT_EQ(project_fields[5], "presetName");
-    EXPECT_EQ(project_fields[6], "language");
-    EXPECT_EQ(project_fields[7], "pretask.bootstrap_mode");
+    EXPECT_EQ(project_fields[1], "adapter.executionPolicy.failFast");
+    EXPECT_EQ(project_fields[2], "controllerName");
+    EXPECT_EQ(project_fields[3], "resourceName");
+    EXPECT_EQ(project_fields[4], "presetName");
+    EXPECT_EQ(project_fields[5], "language");
+    EXPECT_EQ(project_fields[6], "pretask.bootstrap_mode");
     auto project_section_obj = project_section->as_object();
     ASSERT_TRUE(project_section_obj.has_value());
     EXPECT_TRUE((*project_section_obj)[std::string_view("defaultExpanded")]
                     .as_bool()
                     .value_or(false));
 
-    // 更新 section（顺序第二）：mirrorchyanKey + 两个只读版本字段。
+    // 更新 section（顺序第二）：CDK / 代理 / 检查通道 + 两个只读版本字段。
     // defaultExpanded=true，与项目设置 section 一致。
     auto update_section = FindLayoutSection(document, "update");
     ASSERT_TRUE(update_section.has_value());
     auto update_fields = LayoutSectionFieldNames(*update_section);
-    ASSERT_EQ(update_fields.size(), 3u);
-    EXPECT_EQ(update_fields[0], "adapter.mirrorchyanKey");
-    EXPECT_EQ(update_fields[1], "resourceVersion");
-    EXPECT_EQ(update_fields[2], "maafwVersion");
+    ASSERT_EQ(update_fields.size(), 5u);
+    EXPECT_EQ(update_fields[0], "adapter.mirrorchyanCdk");
+    EXPECT_EQ(update_fields[1], "adapter.proxyUrl");
+    EXPECT_EQ(update_fields[2], "adapter.updateChannel");
+    EXPECT_EQ(update_fields[3], "resourceVersion");
+    EXPECT_EQ(update_fields[4], "maafwVersion");
     auto update_section_obj = update_section->as_object();
     ASSERT_TRUE(update_section_obj.has_value());
     EXPECT_TRUE((*update_section_obj)[std::string_view("defaultExpanded")]
@@ -6458,22 +6459,24 @@ TEST(MaapiProjectionTest, RootFieldLayoutCoversAdapterFieldsWhenCatalogAbsent)
     auto project_section = FindLayoutSection(document, "project");
     ASSERT_TRUE(project_section.has_value());
     auto project_fields = LayoutSectionFieldNames(*project_section);
-    // D-89-09 增量：mirrorchyanKey + 版本字段独立到 update section；project
-    // 只含 adapter 三字段（interfacePath / proxyUrl / executionPolicy）。
-    ASSERT_EQ(project_fields.size(), 3u);
+    // D-89-09 增量：mirrorchyanCdk / proxyUrl / updateChannel + 版本字段独立
+    // 到 update section；project 只含 adapter 两字段（interfacePath /
+    // executionPolicy）。
+    ASSERT_EQ(project_fields.size(), 2u);
     EXPECT_EQ(project_fields[0], "adapter.interfacePath");
-    EXPECT_EQ(project_fields[1], "adapter.proxyUrl");
-    EXPECT_EQ(project_fields[2], "adapter.executionPolicy.failFast");
+    EXPECT_EQ(project_fields[1], "adapter.executionPolicy.failFast");
 
-    // 无 catalog 时 update section 仍覆盖 mirrorchyanKey + 两个版本字段
+    // 无 catalog 时 update section 仍覆盖 CDK / 代理 / 通道 + 两个版本字段
     // （值回退空串）。
     auto update_section = FindLayoutSection(document, "update");
     ASSERT_TRUE(update_section.has_value());
     auto update_fields = LayoutSectionFieldNames(*update_section);
-    ASSERT_EQ(update_fields.size(), 3u);
-    EXPECT_EQ(update_fields[0], "adapter.mirrorchyanKey");
-    EXPECT_EQ(update_fields[1], "resourceVersion");
-    EXPECT_EQ(update_fields[2], "maafwVersion");
+    ASSERT_EQ(update_fields.size(), 5u);
+    EXPECT_EQ(update_fields[0], "adapter.mirrorchyanCdk");
+    EXPECT_EQ(update_fields[1], "adapter.proxyUrl");
+    EXPECT_EQ(update_fields[2], "adapter.updateChannel");
+    EXPECT_EQ(update_fields[3], "resourceVersion");
+    EXPECT_EQ(update_fields[4], "maafwVersion");
 
     auto                        layout_names = LayoutLeafFieldNames(document);
     auto                        field_names = RootFieldNames(document);
@@ -7415,7 +7418,10 @@ TEST(MaapiProjectionTest, ProjectAuthoringDocumentProjectsReadonlyVersionFields)
         std::find(names.begin(), names.end(), "maafwVersion"),
         names.end());
     EXPECT_NE(
-        std::find(names.begin(), names.end(), "adapter.mirrorchyanKey"),
+        std::find(names.begin(), names.end(), "adapter.mirrorchyanCdk"),
+        names.end());
+    EXPECT_NE(
+        std::find(names.begin(), names.end(), "adapter.updateChannel"),
         names.end());
 }
 

@@ -1102,17 +1102,38 @@ namespace Das::Plugins::DasMaaPi
         PiHttpClient&                http,
         PiUpdateInfo&                out,
         std::string_view             proxy_url,
-        std::string_view             mirrorchyan_key)
+        std::string_view             mirrorchyan_cdk,
+        std::string_view             update_channel)
     {
         out = PiUpdateInfo{};
         const std::string proxy(proxy_url);
-        const std::string cdk_key(mirrorchyan_key);
+        const std::string cdk_key(mirrorchyan_cdk);
 
         InterfaceMetadata meta;
         const auto        metadata_result = ReadInterfaceMetadata(pi_dir, meta);
         if (IsFailed(metadata_result))
         {
             return metadata_result;
+        }
+
+        // 检查更新通道（adapter.updateChannel）：
+        // "github" → 仅 GitHub 单通道检查（不触碰 MirrorChyan）；
+        // 空 / "mirrorchyan" → MirrorChyan 优先 + GitHub 兜底（既有行为）。
+        if (update_channel == "github")
+        {
+            if (meta.github.empty())
+            {
+                LogError(
+                    "PiUpdateService: updateChannel=github but interface.json "
+                    "has no github source");
+                return DAS_E_MAAPI_UPDATE_CHECK_FAILED;
+            }
+            const auto github_result = CheckGithub(meta, http, proxy, out);
+            if (IsOk(github_result))
+            {
+                return DAS_S_OK;
+            }
+            return DAS_E_MAAPI_UPDATE_CHECK_FAILED;
         }
 
         // MirrorChyan 优先（D-89-02）。
@@ -1173,7 +1194,7 @@ namespace Das::Plugins::DasMaaPi
         const PiUpdateInfo&          info,
         PiHttpClient&                http,
         std::string_view             proxy_url,
-        std::string_view             mirrorchyan_key,
+        std::string_view             mirrorchyan_cdk,
         IMaaApiBoundary*             boundary)
     {
         IMaaApiBoundary& api_boundary =
@@ -1215,9 +1236,9 @@ namespace Das::Plugins::DasMaaPi
         } cleanup{update_root};
 
         // 1. 下载全量 zip 到 .update/{version}.zip（D-89-03 / D-89-08）。
-        // MirrorChyan 来源的下载 URL 携带 key 时附带 cdk query（对齐 MXU
-        // 语义）；GitHub 来源或 key 为空时不改动 URL。
-        const std::string cdk_key(mirrorchyan_key);
+        // MirrorChyan 来源的下载 URL 携带 CDK 时附带 cdk query（对齐 MXU
+        // 语义）；GitHub 来源或 CDK 为空时不改动 URL。
+        const std::string cdk_key(mirrorchyan_cdk);
         std::string       download_url(info.download_url);
         if (!cdk_key.empty()
             && download_url.find("mirrorchyan") != std::string::npos)

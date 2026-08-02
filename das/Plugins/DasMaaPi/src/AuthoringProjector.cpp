@@ -330,8 +330,10 @@ namespace Das::Plugins::DasMaaPi
                         OptionalString(*adapter, "projectRoot");
                     settings.adapter.proxy_url =
                         OptionalString(*adapter, "proxyUrl");
-                    settings.adapter.mirrorchyan_key =
-                        OptionalString(*adapter, "mirrorchyanKey");
+                    settings.adapter.mirrorchyan_cdk =
+                        OptionalString(*adapter, "mirrorchyanCdk");
+                    settings.adapter.update_channel =
+                        OptionalString(*adapter, "updateChannel");
                     settings.adapter.source_fingerprint =
                         OptionalString(*adapter, "sourceFingerprint");
                     if (adapter->contains(std::string_view("executionPolicy")))
@@ -1816,10 +1818,15 @@ namespace Das::Plugins::DasMaaPi
             (*adapter_obj)[std::string_view("proxyUrl")] =
                 JsonString(*settings.adapter.proxy_url);
         }
-        if (settings.adapter.mirrorchyan_key)
+        if (settings.adapter.mirrorchyan_cdk)
         {
-            (*adapter_obj)[std::string_view("mirrorchyanKey")] =
-                JsonString(*settings.adapter.mirrorchyan_key);
+            (*adapter_obj)[std::string_view("mirrorchyanCdk")] =
+                JsonString(*settings.adapter.mirrorchyan_cdk);
+        }
+        if (settings.adapter.update_channel)
+        {
+            (*adapter_obj)[std::string_view("updateChannel")] =
+                JsonString(*settings.adapter.update_channel);
         }
         if (settings.adapter.project_root)
         {
@@ -1939,12 +1946,13 @@ namespace Das::Plugins::DasMaaPi
 
         // 按 name 前缀/字面量分类（保留 fields[] 声明顺序，layout 与 fields
         // 顺序一致）。fields[] 不含 options.<name>（游离 global_option
-        // 不投影），故已知字段分三组：update 更新字段（镜像源 key + 版本只读
-        // 字段，独立 section）、project 项目级字段与 settings.<opt> 分区
-        // 字段。未识别前缀的 root field 兜底进 project_entries（项目设置
-        // section），保证 fieldLayout 全覆盖，防未来新增 root field 前缀漏列
-        // 触发 ValidateFieldLayout 的 layoutMissingField reject。新增 root
-        // field 前缀时应在此显式登记，以便走更贴切的分类桶。
+        // 不投影），故已知字段分三组：update 更新字段（CDK / 代理 / 检查更新
+        // 通道 + 版本只读字段，独立 section）、project 项目级字段与
+        // settings.<opt> 分区字段。未识别前缀的 root field 兜底进
+        // project_entries（项目设置 section），保证 fieldLayout 全覆盖，防
+        // 未来新增 root field 前缀漏列触发 ValidateFieldLayout 的
+        // layoutMissingField reject。新增 root field 前缀时应在此显式登记，
+        // 以便走更贴切的分类桶。
         std::vector<std::string>           update_entries;
         std::vector<std::string>           project_entries;
         std::map<std::string, std::string> settings_by_opt;
@@ -1966,11 +1974,13 @@ namespace Das::Plugins::DasMaaPi
             {
                 continue;
             }
-            if (name == "adapter.mirrorchyanKey" || name == "resourceVersion"
+            if (name == "adapter.mirrorchyanCdk" || name == "adapter.proxyUrl"
+                || name == "adapter.updateChannel" || name == "resourceVersion"
                 || name == "maafwVersion")
             {
-                // 更新 section：镜像源 key + 版本只读字段（D-89-09 增量，
-                // 与 checkUpdate/applyUpdate 按钮同属"更新"语义分区）。
+                // 更新 section：CDK / 代理 / 检查更新通道 + 版本只读字段
+                // （D-89-09 增量，与 checkUpdate/applyUpdate 按钮同属"更新"
+                // 语义分区；代理设置并入更新 section，与 CDK 相邻）。
                 update_entries.emplace_back(name);
             }
             else if (
@@ -2054,9 +2064,10 @@ namespace Das::Plugins::DasMaaPi
             layout_arr->emplace_back(std::move(section));
         }
 
-        // 更新 section（顺序第二，紧跟项目设置）：镜像源 key（可编辑）+ 版本
-        // 只读字段。label 走 PI i18n（$section.update），缺译回退中文（catalog
-        // 缺席时直接回退）。defaultExpanded=true，与项目设置 section 一致。
+        // 更新 section（顺序第二，紧跟项目设置）：CDK / 代理 / 检查更新通道
+        // （可编辑）+ 版本只读字段。label 走 PI i18n（$section.update），缺译
+        // 回退中文（catalog 缺席时直接回退）。defaultExpanded=true，与项目设置
+        // section 一致。
         if (!update_entries.empty())
         {
             yyjson::value section(Object());
@@ -2203,6 +2214,16 @@ namespace Das::Plugins::DasMaaPi
             settings.adapter.interface_path
                 ? yyjson::value(*settings.adapter.interface_path)
                 : yyjson::value(std::string{})));
+        // 更新 section 字段（CDK / 代理 / 检查通道）：CDK 前置（MXU 语义，
+        // 代理设置在 CDK 之后，同属更新 section）。
+        fields.as_array()->emplace_back(MakePropertyField(
+            "adapter.mirrorchyanCdk",
+            "CDK",
+            4,
+            0,
+            settings.adapter.mirrorchyan_cdk
+                ? yyjson::value(*settings.adapter.mirrorchyan_cdk)
+                : yyjson::value(std::string{})));
         fields.as_array()->emplace_back(MakePropertyField(
             "adapter.proxyUrl",
             "代理地址",
@@ -2211,14 +2232,37 @@ namespace Das::Plugins::DasMaaPi
             settings.adapter.proxy_url
                 ? yyjson::value(*settings.adapter.proxy_url)
                 : yyjson::value(std::string{})));
-        fields.as_array()->emplace_back(MakePropertyField(
-            "adapter.mirrorchyanKey",
-            "MirrorChyan Key",
-            4,
-            0,
-            settings.adapter.mirrorchyan_key
-                ? yyjson::value(*settings.adapter.mirrorchyan_key)
-                : yyjson::value(std::string{})));
+        // 检查更新通道（MirrorChyan / GitHub 二选一）。通用 select 字段
+        // （valueType=4 string / inputType=1 select，复用 presetName 的
+        // candidates 机制），值域 mirrorchyan / github，UI 用通用 select
+        // 渲染，业务中立。空或未设置时投影默认 mirrorchyan（现有
+        // CheckUpdate 逻辑优先 MirrorChyan）。
+        {
+            yyjson::value channel_candidates(Array());
+            {
+                yyjson::value mirror(Object());
+                auto          mirror_obj = mirror.as_object();
+                (*mirror_obj)[std::string_view("value")] =
+                    JsonString("mirrorchyan");
+                (*mirror_obj)[std::string_view("label")] =
+                    JsonString("MirrorChyan");
+                channel_candidates.as_array()->emplace_back(std::move(mirror));
+                yyjson::value github(Object());
+                auto          github_obj = github.as_object();
+                (*github_obj)[std::string_view("value")] = JsonString("github");
+                (*github_obj)[std::string_view("label")] = JsonString("GitHub");
+                channel_candidates.as_array()->emplace_back(std::move(github));
+            }
+            const std::string channel_value =
+                settings.adapter.update_channel.value_or("mirrorchyan");
+            fields.as_array()->emplace_back(MakePropertyField(
+                "adapter.updateChannel",
+                "检查更新通道",
+                4,
+                1,
+                yyjson::value(channel_value),
+                &channel_candidates));
+        }
         fields.as_array()->emplace_back(MakePropertyField(
             "adapter.executionPolicy.failFast",
             "Fail fast",
@@ -2951,9 +2995,15 @@ namespace Das::Plugins::DasMaaPi
                 std::string(value.as_string().value_or(""));
             return;
         }
-        if (path == "adapter.mirrorchyanKey" && value.is_string())
+        if (path == "adapter.mirrorchyanCdk" && value.is_string())
         {
-            settings.adapter.mirrorchyan_key =
+            settings.adapter.mirrorchyan_cdk =
+                std::string(value.as_string().value_or(""));
+            return;
+        }
+        if (path == "adapter.updateChannel" && value.is_string())
+        {
+            settings.adapter.update_channel =
                 std::string(value.as_string().value_or(""));
             return;
         }
@@ -3407,10 +3457,10 @@ namespace Das::Plugins::DasMaaPi
         }
 
         // D-84-24: setValue 严格 target.kind=document 路径。
-        // MaaPI root fields: adapter.interfacePath / adapter.proxyUrl /
-        // adapter.mirrorchyanKey / adapter.executionPolicy.failFast /
-        // controllerName / resourceName / presetName / language /
-        // options.{name}。
+        // MaaPI root fields: adapter.interfacePath / adapter.mirrorchyanCdk /
+        // adapter.proxyUrl / adapter.updateChannel /
+        // adapter.executionPolicy.failFast / controllerName / resourceName /
+        // presetName / language / options.{name}。
         bool ApplyDocumentSetValue(
             AcceptedSettingsDto&          settings,
             std::string_view              field_name,
@@ -3451,20 +3501,49 @@ namespace Das::Plugins::DasMaaPi
                     std::string(value.as_string().value_or(""));
                 return true;
             }
-            if (field == "adapter.mirrorchyanKey")
+            if (field == "adapter.mirrorchyanCdk")
             {
                 if (!value.is_string())
                 {
                     EmitDiagnostic(
                         diagnostics,
                         "error",
-                        "adapter.mirrorchyanKey value must be string",
+                        "adapter.mirrorchyanCdk value must be string",
                         DAS_E_INVALID_ARGUMENT,
                         field);
                     return false;
                 }
-                settings.adapter.mirrorchyan_key =
+                settings.adapter.mirrorchyan_cdk =
                     std::string(value.as_string().value_or(""));
+                return true;
+            }
+            if (field == "adapter.updateChannel")
+            {
+                if (!value.is_string())
+                {
+                    EmitDiagnostic(
+                        diagnostics,
+                        "error",
+                        "adapter.updateChannel value must be string",
+                        DAS_E_INVALID_ARGUMENT,
+                        field);
+                    return false;
+                }
+                const std::string channel =
+                    std::string(value.as_string().value_or(""));
+                if (!channel.empty() && channel != "mirrorchyan"
+                    && channel != "github")
+                {
+                    EmitDiagnostic(
+                        diagnostics,
+                        "error",
+                        "adapter.updateChannel must be 'mirrorchyan' or "
+                        "'github'",
+                        DAS_E_INVALID_ARGUMENT,
+                        field);
+                    return false;
+                }
+                settings.adapter.update_channel = channel;
                 return true;
             }
             if (field == "adapter.executionPolicy.failFast")
@@ -4346,7 +4425,8 @@ namespace Das::Plugins::DasMaaPi
             *http.value,
             info,
             settings.adapter.proxy_url.value_or(""),
-            settings.adapter.mirrorchyan_key.value_or(""));
+            settings.adapter.mirrorchyan_cdk.value_or(""),
+            settings.adapter.update_channel.value_or(""));
         if (IsFailed(result))
         {
             // IN-02: 网络/来源失败时保留旧 pending_update_ 会令 applyUpdate
@@ -4413,7 +4493,7 @@ namespace Das::Plugins::DasMaaPi
             info,
             *http.value,
             settings.adapter.proxy_url.value_or(""),
-            settings.adapter.mirrorchyan_key.value_or(""));
+            settings.adapter.mirrorchyan_cdk.value_or(""));
         if (IsFailed(result))
         {
             // 失败保留 pending_update_（用户可重试）+ 携带错误详情。

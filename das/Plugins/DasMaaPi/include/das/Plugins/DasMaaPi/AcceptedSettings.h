@@ -21,7 +21,8 @@ namespace Das::Plugins::DasMaaPi
         std::optional<std::string>      interface_path;
         std::optional<std::string>      project_root;
         std::optional<std::string>      proxy_url;
-        std::optional<std::string>      mirrorchyan_key;
+        std::optional<std::string>      mirrorchyan_cdk;
+        std::optional<std::string>      update_channel;
         std::optional<std::string>      source_fingerprint;
         MaapiExecutionPolicySettingsDto execution_policy;
     };
