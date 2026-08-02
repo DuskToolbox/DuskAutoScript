@@ -2347,9 +2347,23 @@ namespace Das::Plugins::DasMaaPi
         // TextBlock，零改动。只读字段不经 setValue 写回（UI 不可编辑）。
         const std::string resource_version =
             catalog != nullptr ? catalog->version : std::string{};
+        // IN-03: 字段 label 走 PI
+        // i18n（$field.resourceVersion），缺译回退中文， 与周边字段/分区 label
+        // 一致（catalog 缺席时直接回退）。
+        std::string_view resource_label = "资源版本";
+        if (catalog != nullptr)
+        {
+            resource_label = ResolveI18nOrDiag(
+                "$field.resourceVersion",
+                *catalog,
+                current_language,
+                "资源版本",
+                projection_diagnostics,
+                "fields.resourceVersion.label");
+        }
         fields.as_array()->emplace_back(MakePropertyField(
             "resourceVersion",
-            "资源版本",
+            resource_label,
             4,
             0,
             yyjson::value(resource_version),
@@ -2359,9 +2373,20 @@ namespace Das::Plugins::DasMaaPi
             LoadMaaDynamicSymbols().version != nullptr
                 ? std::string(LoadMaaDynamicSymbols().version())
                 : std::string{};
+        std::string_view maafw_label = "MaaFramework 版本";
+        if (catalog != nullptr)
+        {
+            maafw_label = ResolveI18nOrDiag(
+                "$field.maafwVersion",
+                *catalog,
+                current_language,
+                "MaaFramework 版本",
+                projection_diagnostics,
+                "fields.maafwVersion.label");
+        }
         fields.as_array()->emplace_back(MakePropertyField(
             "maafwVersion",
-            "MaaFramework 版本",
+            maafw_label,
             4,
             0,
             yyjson::value(maafw_version),
@@ -2716,11 +2741,37 @@ namespace Das::Plugins::DasMaaPi
                 commands.as_array()->emplace_back(std::move(cmd));
             };
             emit_command("newPreset", "New Preset");
-            emit_command("checkUpdate", "检查更新");
+            // IN-03: 命令 label 走 PI i18n（$command.checkUpdate /
+            // $command.applyUpdate），缺译回退中文，语言切换时不再硬编码中文。
+            std::string_view check_label = "检查更新";
+            std::string_view apply_label = "更新";
+            if (catalog != nullptr)
+            {
+                check_label = ResolveI18nOrDiag(
+                    "$command.checkUpdate",
+                    *catalog,
+                    current_language,
+                    "检查更新",
+                    projection_diagnostics,
+                    "commands.checkUpdate.label");
+                apply_label = ResolveI18nOrDiag(
+                    "$command.applyUpdate",
+                    *catalog,
+                    current_language,
+                    "更新",
+                    projection_diagnostics,
+                    "commands.applyUpdate.label");
+            }
+            emit_command("checkUpdate", check_label);
+            // WR-05: 部分信息路径（MirrorChyan code!=0 但 data.version_name
+            // 存在）返回 has_update=true 且 download_url 为空，后端
+            // ApplyApplyUpdateCommand 以 "nothing to apply" 拒绝——投影必须与
+            // 后端命令可用性一致：无下载链接时按钮 disabled，避免可点但必失败。
             const bool apply_update_disabled =
                 pending_update == nullptr || !pending_update->has_value()
-                || !(*pending_update)->has_update;
-            emit_command("applyUpdate", "更新", apply_update_disabled);
+                || !(*pending_update)->has_update
+                || (*pending_update)->download_url.empty();
+            emit_command("applyUpdate", apply_label, apply_update_disabled);
             (*obj)[std::string_view("commands")] = std::move(commands);
         }
 
@@ -4161,6 +4212,9 @@ namespace Das::Plugins::DasMaaPi
         const auto pi_dir = ResolvePiDir(settings);
         if (!pi_dir)
         {
+            // IN-02: 复查失败时清空既有 pending_update_（按钮回 disabled），
+            // 避免按钮携带过期 has_update/download_url 信息。
+            pending_update->reset();
             EmitDiagnostic(
                 diagnostics,
                 "error",
@@ -4175,6 +4229,9 @@ namespace Das::Plugins::DasMaaPi
             PiUpdateService::CheckUpdate(*pi_dir, *http.value, info);
         if (IsFailed(result))
         {
+            // IN-02: 网络/来源失败时保留旧 pending_update_ 会令 applyUpdate
+            // 按钮携带陈旧信息；清空使按钮态与最新检查结果一致。
+            pending_update->reset();
             EmitDiagnostic(
                 diagnostics,
                 "error",
