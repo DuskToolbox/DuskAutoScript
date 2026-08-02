@@ -8,7 +8,6 @@
   "language": "Cpp",
   "loadMode": "ipc",
   "pluginFilenameExtension": "dll",
-  "proxyUrl": "",
   "settings": {},
   "tasks": {
     "69F20001-0000-4000-8000-000000000001": {

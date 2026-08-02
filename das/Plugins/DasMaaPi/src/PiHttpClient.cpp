@@ -15,14 +15,11 @@
 #include <boost/beast/http.hpp>
 #include <boost/beast/ssl.hpp>
 #include <boost/beast/version.hpp>
-#include <boost/dll.hpp>
 #include <openssl/ssl.h>
 
 #include <cstddef>
 #include <cstdint>
 #include <exception>
-#include <fstream>
-#include <iterator>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -818,59 +815,6 @@ namespace Das::Plugins::DasMaaPi
             }
         }
         return DAS_S_OK;
-    }
-
-    std::string ReadManifestProxyUrl(const std::filesystem::path& manifest_path)
-    {
-        std::filesystem::path manifest = manifest_path;
-        if (manifest.empty())
-        {
-            try
-            {
-                // this_line_location() returns a boost::filesystem::path;
-                // convert explicitly so the manifest path is std::filesystem.
-                manifest = std::filesystem::path(
-                    (boost::dll::this_line_location().parent_path()
-                     / "DasMaaPi.json")
-                        .string());
-            }
-            catch (const std::exception&)
-            {
-                // this_line_location() can fail on exotic platforms; treat the
-                // manifest as absent (direct connection).
-                return {};
-            }
-        }
-
-        std::ifstream file(manifest, std::ios::binary);
-        if (!file.is_open())
-        {
-            return {};
-        }
-        const std::string text(
-            (std::istreambuf_iterator<char>(file)),
-            std::istreambuf_iterator<char>());
-
-        const auto json = Das::Utils::ParseYyjsonFromString(text);
-        if (!json)
-        {
-            return {};
-        }
-        const auto obj = json->as_object();
-        if (!obj)
-        {
-            return {};
-        }
-        // Iterate rather than operator[] because cpp_yyjson operator[] throws
-        // std::out_of_range on a missing key; an absent proxyUrl means direct.
-        for (auto it = obj->begin(); it != obj->end(); ++it)
-        {
-            if (it->first == "proxyUrl" && it->second.is_string())
-            {
-                return std::string(it->second.as_string().value_or(""));
-            }
-        }
-        return {};
     }
 
     BeastHttpClient::BeastHttpClient(

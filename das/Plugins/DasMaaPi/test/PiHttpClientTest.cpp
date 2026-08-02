@@ -763,32 +763,4 @@ v6yQpUYtQbbVSIHbNlBhfp8=
         // Initial request + 5 followed hops.
         EXPECT_EQ(server.RequestCount(), 6);
     }
-
-    TEST(PiHttpClient, ReadManifestProxyUrlReadsTopLevelField)
-    {
-        const auto manifest =
-            std::filesystem::temp_directory_path() / "DasMaaPi_proxy_test.json";
-
-        const auto WriteManifest = [&](const std::string& content)
-        {
-            std::ofstream file(manifest, std::ios::binary);
-            file << content;
-        };
-
-        WriteManifest(
-            R"({"name":"libDasMaaPi","proxyUrl":"http://user:pass@proxy.example:8080"})");
-        EXPECT_EQ(
-            ReadManifestProxyUrl(manifest),
-            "http://user:pass@proxy.example:8080");
-
-        // Missing field -> empty string (direct connection).
-        WriteManifest(R"({"name":"libDasMaaPi"})");
-        EXPECT_EQ(ReadManifestProxyUrl(manifest), "");
-
-        // Missing file -> empty string.
-        std::filesystem::remove(manifest);
-        EXPECT_EQ(ReadManifestProxyUrl(manifest), "");
-
-        std::filesystem::remove(manifest);
-    }
 } // namespace

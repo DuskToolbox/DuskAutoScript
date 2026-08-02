@@ -328,6 +328,8 @@ namespace Das::Plugins::DasMaaPi
                         OptionalString(*adapter, "interfacePath");
                     settings.adapter.project_root =
                         OptionalString(*adapter, "projectRoot");
+                    settings.adapter.proxy_url =
+                        OptionalString(*adapter, "proxyUrl");
                     settings.adapter.source_fingerprint =
                         OptionalString(*adapter, "sourceFingerprint");
                     if (adapter->contains(std::string_view("executionPolicy")))
@@ -1807,6 +1809,11 @@ namespace Das::Plugins::DasMaaPi
             (*adapter_obj)[std::string_view("interfacePath")] =
                 JsonString(*settings.adapter.interface_path);
         }
+        if (settings.adapter.proxy_url)
+        {
+            (*adapter_obj)[std::string_view("proxyUrl")] =
+                JsonString(*settings.adapter.proxy_url);
+        }
         if (settings.adapter.project_root)
         {
             (*adapter_obj)[std::string_view("projectRoot")] =
@@ -2147,6 +2154,14 @@ namespace Das::Plugins::DasMaaPi
             0,
             settings.adapter.interface_path
                 ? yyjson::value(*settings.adapter.interface_path)
+                : yyjson::value(std::string{})));
+        fields.as_array()->emplace_back(MakePropertyField(
+            "adapter.proxyUrl",
+            "代理地址",
+            4,
+            0,
+            settings.adapter.proxy_url
+                ? yyjson::value(*settings.adapter.proxy_url)
                 : yyjson::value(std::string{})));
         fields.as_array()->emplace_back(MakePropertyField(
             "adapter.executionPolicy.failFast",
@@ -2874,6 +2889,12 @@ namespace Das::Plugins::DasMaaPi
                 std::string(value.as_string().value_or(""));
             return;
         }
+        if (path == "adapter.proxyUrl" && value.is_string())
+        {
+            settings.adapter.proxy_url =
+                std::string(value.as_string().value_or(""));
+            return;
+        }
         if (path == "adapter.executionPolicy.failFast" && value.is_bool())
         {
             settings.adapter.execution_policy.fail_fast =
@@ -3324,7 +3345,7 @@ namespace Das::Plugins::DasMaaPi
         }
 
         // D-84-24: setValue 严格 target.kind=document 路径。
-        // MaaPI root fields: adapter.interfacePath /
+        // MaaPI root fields: adapter.interfacePath / adapter.proxyUrl /
         // adapter.executionPolicy.failFast / controllerName / resourceName /
         // presetName / language / options.{name}。
         bool ApplyDocumentSetValue(
@@ -3348,6 +3369,22 @@ namespace Das::Plugins::DasMaaPi
                     return false;
                 }
                 settings.adapter.interface_path =
+                    std::string(value.as_string().value_or(""));
+                return true;
+            }
+            if (field == "adapter.proxyUrl")
+            {
+                if (!value.is_string())
+                {
+                    EmitDiagnostic(
+                        diagnostics,
+                        "error",
+                        "adapter.proxyUrl value must be string",
+                        DAS_E_INVALID_ARGUMENT,
+                        field);
+                    return false;
+                }
+                settings.adapter.proxy_url =
                     std::string(value.as_string().value_or(""));
                 return true;
             }
@@ -4225,8 +4262,11 @@ namespace Das::Plugins::DasMaaPi
         }
         auto         http = ResolveHttp(http_seam);
         PiUpdateInfo info;
-        const auto   result =
-            PiUpdateService::CheckUpdate(*pi_dir, *http.value, info);
+        const auto   result = PiUpdateService::CheckUpdate(
+            *pi_dir,
+            *http.value,
+            info,
+            settings.adapter.proxy_url.value_or(""));
         if (IsFailed(result))
         {
             // IN-02: 网络/来源失败时保留旧 pending_update_ 会令 applyUpdate
@@ -4288,8 +4328,11 @@ namespace Das::Plugins::DasMaaPi
             return false;
         }
         auto       http = ResolveHttp(http_seam);
-        const auto result =
-            PiUpdateService::ApplyUpdate(*pi_dir, info, *http.value);
+        const auto result = PiUpdateService::ApplyUpdate(
+            *pi_dir,
+            info,
+            *http.value,
+            settings.adapter.proxy_url.value_or(""));
         if (IsFailed(result))
         {
             // 失败保留 pending_update_（用户可重试）+ 携带错误详情。

@@ -1097,8 +1097,7 @@ namespace Das::Plugins::DasMaaPi
         std::string_view             proxy_url)
     {
         out = PiUpdateInfo{};
-        const std::string proxy =
-            proxy_url.empty() ? ReadManifestProxyUrl() : std::string(proxy_url);
+        const std::string proxy(proxy_url);
 
         InterfaceMetadata meta;
         const auto        metadata_result = ReadInterfaceMetadata(pi_dir, meta);
@@ -1173,8 +1172,7 @@ namespace Das::Plugins::DasMaaPi
             LogError("PiUpdateService: ApplyUpdate requires a download_url");
             return DAS_E_MAAPI_UPDATE_APPLY_FAILED;
         }
-        const std::string proxy =
-            proxy_url.empty() ? ReadManifestProxyUrl() : std::string(proxy_url);
+        const std::string proxy(proxy_url);
         const std::string old_version = ReadCurrentVersion(pi_dir);
 
         // .update 临时目录放 pi_dir 的兄弟目录（不是 pi_dir 内）——否则备份

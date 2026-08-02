@@ -36,9 +36,9 @@ namespace Das::Plugins::DasMaaPi
         // （PiCatalog 只解析 version，此处顶层原始读），MirrorChyan 优先 +
         // GitHub 兜底 + PiSemver 比较（D-89-02 / D-89-05）。
         //
-        // proxy_url 空串时读取 DasMaaPi.json 顶层
-        // proxyUrl（ReadManifestProxyUrl， D-89-08）；测试可显式传入本地 mock
-        // proxy。
+        // proxy_url 来自 authoring session settings 的 adapter.proxyUrl
+        // （经 invokeCommand apply 持久化，D-89-08 修订）；空串 = 直连。测试
+        // 可显式传入本地 mock proxy。
         static DasResult CheckUpdate(
             const std::filesystem::path& pi_dir,
             PiHttpClient&                http,
