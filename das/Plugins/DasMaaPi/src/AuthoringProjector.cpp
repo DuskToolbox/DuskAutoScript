@@ -4151,6 +4151,71 @@ namespace Das::Plugins::DasMaaPi
         return true;
     }
 
+    // D-89-05: applyUpdate dispatch。precondition 强校验 pending engaged 且
+    // has_update（有可应用更新，T-89-03-04）；调 PiUpdateService::ApplyUpdate
+    // （下载→解压→备份→原子替换→resource.hash 校验）。成功清 pending（按钮回
+    // disabled）；失败保留 pending（用户可重试）+ 错误详情。
+    bool ApplyApplyUpdateCommand(
+        AcceptedSettingsDto&          settings,
+        std::vector<PiDiagnosticDto>& diagnostics,
+        std::optional<PiUpdateInfo>*  pending_update,
+        PiHttpClient*                 http_seam)
+    {
+        if (pending_update == nullptr || !pending_update->has_value())
+        {
+            EmitDiagnostic(
+                diagnostics,
+                "error",
+                "applyUpdate requires a pending update (run checkUpdate "
+                "first)",
+                DAS_E_MAAPI_UPDATE_APPLY_FAILED,
+                "applyUpdate");
+            return false;
+        }
+        const auto& info = **pending_update;
+        if (!info.has_update || info.download_url.empty())
+        {
+            EmitDiagnostic(
+                diagnostics,
+                "error",
+                "applyUpdate has nothing to apply (no update available)",
+                DAS_E_MAAPI_UPDATE_APPLY_FAILED,
+                "applyUpdate");
+            return false;
+        }
+        const auto pi_dir = ResolvePiDir(settings);
+        if (!pi_dir)
+        {
+            EmitDiagnostic(
+                diagnostics,
+                "error",
+                "applyUpdate requires a valid adapter.interfacePath",
+                DAS_E_MAAPI_UPDATE_APPLY_FAILED,
+                "adapter.interfacePath");
+            return false;
+        }
+        auto       http = ResolveHttp(http_seam);
+        const auto result =
+            PiUpdateService::ApplyUpdate(*pi_dir, info, *http.value);
+        if (IsFailed(result))
+        {
+            // 失败保留 pending_update_（用户可重试）+ 携带错误详情。
+            EmitDiagnostic(
+                diagnostics,
+                "error",
+                "applyUpdate failed",
+                result,
+                "applyUpdate");
+            return false;
+        }
+        // 成功清 pending（按钮回 disabled）。缓存失效：MaaPI session 每次
+        // GetDocument/Compile/ApplyChange 都经 TryParseCatalog 内容感知重解析
+        // （89-02 [ASSUMED A4] 验证），替换后下一次请求自然读新
+        // interface.json， 无需显式失效调用。
+        pending_update->reset();
+        return true;
+    }
+
     bool ApplyInvokeCommandChange(
         AcceptedSettingsDto&          settings,
         const yyjson::value&          payload,
@@ -4185,12 +4250,20 @@ namespace Das::Plugins::DasMaaPi
             ApplyNewPreset(settings);
             return true;
         }
-        // D-89-04 / T-89-03-01: checkUpdate 白名单分支。commandId 拼写
-        // camelCase 与 89-04 DasNativeUI 锁定（T-89-03-02）。未知 commandId
-        // 仍走下方 DAS_E_NOT_FOUND 拒绝。
+        // D-89-04 / T-89-03-01: checkUpdate / applyUpdate 白名单分支。commandId
+        // 拼写 camelCase 与 89-04 DasNativeUI 锁定（T-89-03-02）。未知
+        // commandId 仍走下方 DAS_E_NOT_FOUND 拒绝。
         if (*command_id == "checkUpdate")
         {
             return ApplyCheckUpdateCommand(
+                settings,
+                diagnostics,
+                pending_update,
+                http_seam);
+        }
+        if (*command_id == "applyUpdate")
+        {
+            return ApplyApplyUpdateCommand(
                 settings,
                 diagnostics,
                 pending_update,

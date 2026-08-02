@@ -6917,6 +6917,95 @@ namespace
             context.has_value() ? *context : Das::Utils::MakeYyjsonObject());
     }
 
+    struct TestZipEntry
+    {
+        std::string filename;
+        std::string content;
+    };
+
+    // 最小 stored ZIP（固定 CRC——ExtractZip 不校验 CRC）。字节布局复刻
+    // PiUpdateServiceTest::BuildTestZip 的 stored 分支，供 applyUpdate
+    // 下载替换。
+    std::string BuildStoredZip(const std::vector<TestZipEntry>& entries)
+    {
+        auto append_u16 = [](std::string& out, std::uint16_t v)
+        {
+            out.push_back(static_cast<char>(v & 0xFF));
+            out.push_back(static_cast<char>((v >> 8) & 0xFF));
+        };
+        auto append_u32 = [](std::string& out, std::uint32_t v)
+        {
+            for (int i = 0; i < 4; ++i)
+            {
+                out.push_back(static_cast<char>((v >> (i * 8)) & 0xFF));
+            }
+        };
+
+        constexpr std::uint32_t kFakeCrc = 0x12345678;
+        std::string             local_section;
+        std::string             central_section;
+        for (const auto& entry : entries)
+        {
+            const auto local_header_offset =
+                static_cast<std::uint32_t>(local_section.size());
+            append_u32(local_section, 0x04034B50);
+            append_u16(local_section, 20);
+            append_u16(local_section, 0);
+            append_u16(local_section, 0); // stored
+            append_u16(local_section, 0);
+            append_u16(local_section, 0);
+            append_u32(local_section, kFakeCrc);
+            append_u32(
+                local_section,
+                static_cast<std::uint32_t>(entry.content.size()));
+            append_u32(
+                local_section,
+                static_cast<std::uint32_t>(entry.content.size()));
+            append_u16(
+                local_section,
+                static_cast<std::uint16_t>(entry.filename.size()));
+            append_u16(local_section, 0);
+            local_section += entry.filename;
+            local_section += entry.content;
+
+            append_u32(central_section, 0x02014B50);
+            append_u16(central_section, 20);
+            append_u16(central_section, 20);
+            append_u16(central_section, 0);
+            append_u16(central_section, 0);
+            append_u16(central_section, 0);
+            append_u16(central_section, 0);
+            append_u32(central_section, kFakeCrc);
+            append_u32(
+                central_section,
+                static_cast<std::uint32_t>(entry.content.size()));
+            append_u32(
+                central_section,
+                static_cast<std::uint32_t>(entry.content.size()));
+            append_u16(
+                central_section,
+                static_cast<std::uint16_t>(entry.filename.size()));
+            append_u16(central_section, 0);
+            append_u16(central_section, 0);
+            append_u16(central_section, 0);
+            append_u16(central_section, 0);
+            append_u32(central_section, 0);
+            append_u32(central_section, local_header_offset);
+            central_section += entry.filename;
+        }
+
+        std::string eocd;
+        append_u32(eocd, 0x06054B50);
+        append_u16(eocd, 0);
+        append_u16(eocd, 0);
+        append_u16(eocd, static_cast<std::uint16_t>(entries.size()));
+        append_u16(eocd, static_cast<std::uint16_t>(entries.size()));
+        append_u32(eocd, static_cast<std::uint32_t>(central_section.size()));
+        append_u32(eocd, static_cast<std::uint32_t>(local_section.size()));
+        append_u16(eocd, 0);
+        return local_section + central_section + eocd;
+    }
+
     // 在 document.commands[] 中按 id 找命令（89-03 commands 投影断言）。
     std::optional<yyjson::value> FindCommand(
         const yyjson::value& document,
@@ -6961,6 +7050,14 @@ namespace
         return cmd.has_value()
                && cmd->as_object().value().contains(
                    std::string_view("disabled"));
+    }
+
+    std::string ReadFileText(const std::filesystem::path& path)
+    {
+        std::ifstream      file(path, std::ios::binary);
+        std::ostringstream ss;
+        ss << file.rdbuf();
+        return ss.str();
     }
 } // namespace
 
@@ -7075,6 +7172,121 @@ TEST(MaapiUpdateCommandTest, InvokeCommandCheckUpdateFailureEmitsError)
 
 // D-89-05（Tracer 3）：无 pending（未先检查/已清）时 applyUpdate 拒绝 → error
 // 诊断 + 不递增 revision。
+// D-89-05：无 pending（未先检查/已清）时 applyUpdate 拒绝 → error 诊断 +
+// 不递增 revision。
+TEST(MaapiUpdateCommandTest, InvokeCommandApplyUpdateRejectsWithoutPending)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    TempUpdateProject project;
+    project.WriteInterface(
+        MakeUpdateInterface("1.0.0", "https://github.com/owner/repo"));
+
+    MaapiAuthoringSession session(MakeUpdateSettings(project.Dir()));
+
+    DasPtr<Das::ExportInterface::IDasJson> result_json;
+    auto                                   change = ParseDasJson(
+        "{\"baseRevision\":0,\"kind\":\"invokeCommand\","
+        "\"payload\":{\"commandId\":\"applyUpdate\"}}");
+    ASSERT_EQ(session.ApplyChange(change.Get(), result_json.Put()), DAS_S_OK);
+    auto result = ReadJsonInterface(result_json.Get());
+
+    EXPECT_GE(CountDiagnosticsBySeverity(result, "error"), 1u);
+    EXPECT_EQ(DocumentRevisionFromApplyResult(result), 0);
+}
+
+// D-89-05：applyUpdate 全链路——Fake seam 下载 zip → 解压 → 备份 → 原子替换
+// pi_dir → 成功清 pending_update_（按钮回 disabled）+ revision 递增；随后二次
+// applyUpdate（无 pending）拒绝。替换后下一次请求经 TryParseCatalog 内容感知
+// 重解析（89-02 [ASSUMED A4]）自然读新 interface.json。
+TEST(MaapiUpdateCommandTest, InvokeCommandApplyUpdateSuccessClearsPending)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    TempUpdateProject project;
+    project.WriteInterface(
+        MakeUpdateInterface("1.0.0", "https://github.com/owner/repo"));
+
+    const std::string new_interface =
+        MakeUpdateInterface("1.2.0", "https://github.com/owner/repo");
+    FakeUpdateHttpClient http;
+    http.AddRoute(
+        "/releases/download/v1.2.0/",
+        BuildStoredZip({{"interface.json", new_interface}}),
+        200);
+
+    MaapiAuthoringSession session(MakeUpdateSettings(project.Dir()));
+    session.SetHttpClientForTest(&http);
+    PiUpdateInfo info;
+    info.has_update = true;
+    info.version_name = "v1.2.0";
+    info.download_url =
+        "https://github.com/owner/repo/releases/download/v1.2.0/"
+        "test-project-win-x86_64-v1.2.0.zip";
+    session.SetPendingUpdate(info);
+
+    // 1) applyUpdate 成功。
+    DasPtr<Das::ExportInterface::IDasJson> r1_json;
+    auto                                   c1 = ParseDasJson(
+        "{\"baseRevision\":0,\"kind\":\"invokeCommand\","
+        "\"payload\":{\"commandId\":\"applyUpdate\"}}");
+    ASSERT_EQ(session.ApplyChange(c1.Get(), r1_json.Put()), DAS_S_OK);
+    auto r1 = ReadJsonInterface(r1_json.Get());
+    EXPECT_EQ(CountDiagnosticsBySeverity(r1, "error"), 0u);
+    EXPECT_EQ(DocumentRevisionFromApplyResult(r1), 1);
+    EXPECT_FALSE(session.PendingUpdate().has_value());
+
+    // pi_dir 已被替换：interface.json 现在是新版（1.2.0）。
+    const auto replaced = ReadFileText(project.Dir() / "interface.json");
+    EXPECT_NE(replaced.find("1.2.0"), std::string::npos);
+    EXPECT_EQ(replaced.find("1.0.0"), std::string::npos);
+
+    // 2) 二次 applyUpdate（pending 已清）→ 拒绝 + revision 不递增。
+    DasPtr<Das::ExportInterface::IDasJson> r2_json;
+    auto                                   c2 = ParseDasJson(
+        "{\"baseRevision\":1,\"kind\":\"invokeCommand\","
+        "\"payload\":{\"commandId\":\"applyUpdate\"}}");
+    ASSERT_EQ(session.ApplyChange(c2.Get(), r2_json.Put()), DAS_S_OK);
+    auto r2 = ReadJsonInterface(r2_json.Get());
+    EXPECT_GE(CountDiagnosticsBySeverity(r2, "error"), 1u);
+    EXPECT_EQ(DocumentRevisionFromApplyResult(r2), 1);
+}
+
+// D-89-05：applyUpdate 失败（网络/下载错）→ error 诊断 + 不递增 revision +
+// pending_update_ 保留（用户可重试）。
+TEST(MaapiUpdateCommandTest, InvokeCommandApplyUpdateFailureRetainsPending)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    TempUpdateProject project;
+    project.WriteInterface(
+        MakeUpdateInterface("1.0.0", "https://github.com/owner/repo"));
+
+    FakeUpdateHttpClient http;
+    http.SetNetworkFailure(true);
+
+    MaapiAuthoringSession session(MakeUpdateSettings(project.Dir()));
+    session.SetHttpClientForTest(&http);
+    PiUpdateInfo info;
+    info.has_update = true;
+    info.version_name = "v1.2.0";
+    info.download_url =
+        "https://github.com/owner/repo/releases/download/v1.2.0/"
+        "test-project-win-x86_64-v1.2.0.zip";
+    session.SetPendingUpdate(info);
+
+    DasPtr<Das::ExportInterface::IDasJson> result_json;
+    auto                                   change = ParseDasJson(
+        "{\"baseRevision\":0,\"kind\":\"invokeCommand\","
+        "\"payload\":{\"commandId\":\"applyUpdate\"}}");
+    ASSERT_EQ(session.ApplyChange(change.Get(), result_json.Put()), DAS_S_OK);
+    auto result = ReadJsonInterface(result_json.Get());
+
+    EXPECT_GE(CountDiagnosticsBySeverity(result, "error"), 1u);
+    EXPECT_EQ(DocumentRevisionFromApplyResult(result), 0);
+    EXPECT_TRUE(session.PendingUpdate().has_value());
+}
+
 // Open Question 1 决策：commands 投影 applyUpdate.disabled 完全由后端
 // pending_update_ 驱动（无 pending / has_update=false →
 // disabled；has_update=true → enabled）。前端只按投影 disabled 渲染，业务中立。
