@@ -1,4 +1,5 @@
 #include "../src/PiUpdateService.h"
+#include "../src/MaaDynamicSymbols.h"
 #include "../src/PiHttpClient.h"
 #include "FakeMaaApiBoundary.h"
 
@@ -11,6 +12,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -788,4 +790,33 @@ TEST(PiUpdateService, ApplyUpdateLockedFileStagedToPending)
     // 被锁 DLL 新版本暂存到 .pending/。
     const auto pending = project.Dir() / ".pending" / "MaaFramework.dll";
     EXPECT_TRUE(std::filesystem::exists(pending));
+}
+
+// ---------------------------------------------------------------------
+// Task 4：MaaVersion 动态符号（版本显示数据源，D-89-07 修订）
+// ---------------------------------------------------------------------
+
+TEST(PiUpdateService, MaaVersionSymbolIsNullSafeAndStructHasMember)
+{
+    // 编译期断言：MaaDynamicSymbols 结构含 version 成员（D-89-07 修订要求
+    // MaaVersion 符号落地；无 GetVersionInfo / PiVersionInfo 残留）。
+    using Das::Plugins::DasMaaPi::MaaDynamicSymbols;
+    static_assert(
+        std::is_same_v<decltype(MaaDynamicSymbols::version), MaaVersionFn>,
+        "MaaDynamicSymbols must expose a MaaVersionFn member named 'version'");
+
+    // null-safe：DAS_MAAPI_DISABLE_REAL_MAA_BOUNDARY 测试构建下 MaaFramework
+    // 可能未映射 / 无该符号 → version 为 nullptr 且调用不崩。非空时立即拷贝
+    // 防 dangling（MaaVersion 返回 MaaFW 静态字符串）。
+    const auto& symbols = LoadMaaDynamicSymbols();
+    if (symbols.version != nullptr)
+    {
+        const std::string version_text(symbols.version());
+        EXPECT_FALSE(version_text.empty());
+    }
+    else
+    {
+        SUCCEED() << "MaaVersion symbol is null (framework unloaded) — "
+                     "callers must degrade, not crash";
+    }
 }

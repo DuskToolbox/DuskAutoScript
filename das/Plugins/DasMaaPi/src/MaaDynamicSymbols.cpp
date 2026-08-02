@@ -83,6 +83,11 @@ namespace Das::Plugins::DasMaaPi
                     TryResolve<MaaGamepadControllerCreateFn>(
                         handles.framework,
                         "MaaGamepadControllerCreate");
+                // MaaFW framework version — version-display data source
+                // (D-89-07 修订). null-safe: MaaFW absent / symbol missing →
+                // nullptr, callers degrade.
+                symbols.version =
+                    TryResolve<MaaVersionFn>(handles.framework, "MaaVersion");
             }
 
             // MaaToolkit is NOT hard-linked (after this refactor), so a
