@@ -2215,15 +2215,24 @@ namespace Das::Plugins::DasMaaPi
                 ? yyjson::value(*settings.adapter.interface_path)
                 : yyjson::value(std::string{})));
         // 更新 section 字段（CDK / 代理 / 检查通道）：CDK 前置（MXU 语义，
-        // 代理设置在 CDK 之后，同属更新 section）。
-        fields.as_array()->emplace_back(MakePropertyField(
-            "adapter.mirrorchyanCdk",
-            "CDK",
-            4,
-            0,
-            settings.adapter.mirrorchyan_cdk
-                ? yyjson::value(*settings.adapter.mirrorchyan_cdk)
-                : yyjson::value(std::string{})));
+        // 代理设置在 CDK 之后，同属更新 section）。CDK 仅在通道为
+        // mirrorchyan（或未设置）时投影；选 github 时字段消失（fields[] 与
+        // fieldLayout 同步不发射 CDK，DasNativeUI 按 document 渲染，零改动）。
+        const bool hide_mirrorchyan_cdk =
+            settings.adapter.update_channel.has_value()
+            && !settings.adapter.update_channel->empty()
+            && *settings.adapter.update_channel == "github";
+        if (!hide_mirrorchyan_cdk)
+        {
+            fields.as_array()->emplace_back(MakePropertyField(
+                "adapter.mirrorchyanCdk",
+                "CDK",
+                4,
+                0,
+                settings.adapter.mirrorchyan_cdk
+                    ? yyjson::value(*settings.adapter.mirrorchyan_cdk)
+                    : yyjson::value(std::string{})));
+        }
         fields.as_array()->emplace_back(MakePropertyField(
             "adapter.proxyUrl",
             "代理地址",
@@ -2245,7 +2254,7 @@ namespace Das::Plugins::DasMaaPi
                 (*mirror_obj)[std::string_view("value")] =
                     JsonString("mirrorchyan");
                 (*mirror_obj)[std::string_view("label")] =
-                    JsonString("MirrorChyan");
+                    JsonString("Mirror酱");
                 channel_candidates.as_array()->emplace_back(std::move(mirror));
                 yyjson::value github(Object());
                 auto          github_obj = github.as_object();
