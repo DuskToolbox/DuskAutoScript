@@ -460,6 +460,12 @@ namespace Das::Plugins::DasMaaPi
                 if (verify_tls)
                 {
                     ctx.set_verify_mode(boost::asio::ssl::verify_peer);
+                    // 加载 OpenSSL 默认 CA（POSIX 走 /etc/ssl；Windows 上
+                    // clang64 libcrypto 基于自身位置解析 OPENSSLDIR，实测
+                    // 原生进程可定位到 ca-bundle）。set_verify_mode 只打开
+                    // 校验开关，不调这个的话信任存储为空，任何 HTTPS 目标
+                    // 都会 certificate verify failed。
+                    ctx.set_default_verify_paths();
                     ctx.set_verify_callback(
                         boost::asio::ssl::host_name_verification(target.host));
                 }
