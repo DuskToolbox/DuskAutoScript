@@ -592,6 +592,13 @@ namespace Das::Plugins::DasMaaPi
         constexpr std::uint32_t kCentralDirSig = 0x02014B50;
         constexpr std::uint32_t kEndOfCentralDirSig = 0x06054B50;
 
+        // 单个 zip 条目解压后的大小上限（WR-02 解压炸弹防护）。与
+        // PiHttpClient.cpp kMaxResponseBodyBytes 同量级（512MB），均为 DoS
+        // 缓解：攻击者/上游可控的 uncompressed_size（uint32，最高 ~4GB）不再
+        // 直接触发 output.resize() 的巨量分配。
+        constexpr std::size_t MAX_UNCOMPRESSED_ZIP_ENTRY_BYTES =
+            512u * 1024u * 1024u;
+
         template <typename T>
         T ReadLE(const char* data, size_t offset)
         {
@@ -687,6 +694,12 @@ namespace Das::Plugins::DasMaaPi
             size_t       uncompressed_size,
             std::string& output)
         {
+            // WR-02: reject entries that claim to inflate beyond the project
+            // cap before allocating, so a hostile/broken package cannot OOM.
+            if (uncompressed_size > MAX_UNCOMPRESSED_ZIP_ENTRY_BYTES)
+            {
+                return false;
+            }
             output.resize(uncompressed_size);
             z_stream stream{};
             stream.next_in =
@@ -830,6 +843,17 @@ namespace Das::Plugins::DasMaaPi
                 }
                 else if (compression == 8)
                 {
+                    // WR-02: 解压炸弹防护——解压目标大小超上限直接拒绝
+                    // （uncompressed_size 来自 zip central directory，攻击者/
+                    // 上游可控，最高 ~4GB）。
+                    if (uncompressed_size > MAX_UNCOMPRESSED_ZIP_ENTRY_BYTES)
+                    {
+                        LogError(
+                            "PiUpdateService: zip entry uncompressed size "
+                            "exceeds limit: "
+                            + std::to_string(uncompressed_size));
+                        return DAS_E_MAAPI_UPDATE_APPLY_FAILED;
+                    }
                     std::string output;
                     if (!InflateZipEntry(
                             zip_data.data() + data_offset,
@@ -886,12 +910,18 @@ namespace Das::Plugins::DasMaaPi
         // std::filesystem_error）时把新版本移入 {pi_dir}/.pending/{rel}
         // 并警告， 其余文件正常替换。interface.json 自身被锁（session 正持有）→
         // 整体 失败返回 -10008，pi_dir 保持完整（含原 interface.json）。
+        //
+        // WR-03 加固：1) 先固定完整文件清单并确保 interface.json 最先处理——
+        // 若它被锁，在任何其他文件被触碰前即返回 -10008，旧目录保持完整，满足
+        // 头文件"-10008 时旧目录已回滚"契约；2) 目标存在时先 rename 到侧备份
+        // 再 rename 新文件，remove 成功但 rename 失败的分支不再导致原文件从规范
+        // 路径消失（可恢复侧备份，避免文件丢失）。
         DasResult ReplaceFilesWithPending(
             const std::filesystem::path& extract_dir,
             const std::filesystem::path& pi_dir)
         {
-            std::vector<std::string> pending_files;
-            std::error_code          ec;
+            std::vector<std::filesystem::path> files;
+            std::error_code                    ec;
             for (std::filesystem::recursive_directory_iterator it(extract_dir),
                  end;
                  it != end;
@@ -901,30 +931,59 @@ namespace Das::Plugins::DasMaaPi
                 {
                     continue;
                 }
-                const auto rel = it->path().lexically_relative(extract_dir);
+                files.push_back(it->path());
+            }
+            // interface.json 优先处理（stable_partition 保序，覆盖顺序确定）。
+            std::stable_partition(
+                files.begin(),
+                files.end(),
+                [](const std::filesystem::path& p)
+                { return p.filename() == "interface.json"; });
+
+            std::vector<std::string> pending_files;
+            for (const auto& src : files)
+            {
+                const auto rel = src.lexically_relative(extract_dir);
                 const auto target = pi_dir / rel;
                 std::filesystem::create_directories(target.parent_path(), ec);
 
-                // 目标存在 → 先删再 rename（Windows rename
-                // 不能覆盖已存在目标）。
-                std::error_code remove_ec;
+                // 目标存在 → 先 rename 到侧备份（不直接删除），这样新文件
+                // rename 失败时仍能恢复原文件（WR-03 防文件丢失）。
+                const auto      backup = target.string() + ".update-backup";
+                std::error_code backup_ec;
                 if (std::filesystem::exists(target))
                 {
-                    std::filesystem::remove(target, remove_ec);
+                    std::filesystem::rename(target, backup, backup_ec);
                 }
                 std::error_code rename_ec;
-                std::filesystem::rename(it->path(), target, rename_ec);
+                std::filesystem::rename(src, target, rename_ec);
                 if (!rename_ec)
                 {
+                    // 新文件就位，删除侧备份（备份移动失败则忽略，原文件仍在
+                    // 规范路径）。
+                    if (!backup_ec && std::filesystem::exists(backup))
+                    {
+                        std::filesystem::remove(backup, ec);
+                    }
                     continue;
                 }
-                if (rel == std::filesystem::path("interface.json")
-                    && (remove_ec || rename_ec))
+                if (rel == std::filesystem::path("interface.json"))
                 {
+                    // interface.json 最先处理：失败时无其他文件被替换，pi_dir
+                    // 保持完整（恢复侧备份，若备份移动失败则原文件未动）。
+                    if (!backup_ec && std::filesystem::exists(backup))
+                    {
+                        std::filesystem::rename(backup, target, ec);
+                    }
                     LogError(
                         "PiUpdateService: interface.json is locked, update "
                         "failed");
                     return DAS_E_MAAPI_UPDATE_APPLY_FAILED;
+                }
+                // rename 新文件失败 → 恢复侧备份，再把新版本暂存 .pending/。
+                if (!backup_ec && std::filesystem::exists(backup))
+                {
+                    std::filesystem::rename(backup, target, ec);
                 }
                 // 被锁（sharing violation）→ 暂存 .pending/ + 警告。
                 const auto pending_path = pi_dir / ".pending" / rel;
@@ -933,7 +992,7 @@ namespace Das::Plugins::DasMaaPi
                     ec);
                 std::error_code copy_ec;
                 std::filesystem::copy_file(
-                    it->path(),
+                    src,
                     pending_path,
                     std::filesystem::copy_options::overwrite_existing,
                     copy_ec);

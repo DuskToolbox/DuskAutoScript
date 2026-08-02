@@ -285,12 +285,15 @@ namespace
 
     struct TestZipEntry
     {
-        std::string filename;
-        std::string content;
-        bool        deflate = false;
+        std::string   filename;
+        std::string   content;
+        bool          deflate = false;
+        std::uint32_t declared_uncompressed_size = 0;
     };
 
     // 构造一个合法的 ZIP（stored / deflate），支持故意含 ../ 的穿越条目。
+    // declared_uncompressed_size 非 0 时，zip 头中的 uncompressed size 字段
+    // 用该值（可伪造远超真实内容大小的声明，用于解压炸弹测试）。
     std::string BuildTestZip(const std::vector<TestZipEntry>& entries)
     {
         std::string local_section;
@@ -299,6 +302,10 @@ namespace
         {
             const auto data =
                 entry.deflate ? DeflateRaw(entry.content) : entry.content;
+            const auto declared_size =
+                entry.declared_uncompressed_size != 0
+                    ? entry.declared_uncompressed_size
+                    : static_cast<std::uint32_t>(entry.content.size());
             const std::uint32_t crc = crc32(
                 0,
                 reinterpret_cast<const Bytef*>(entry.content.data()),
@@ -316,9 +323,7 @@ namespace
             AppendU16(local_section, 0); // mod date
             AppendU32(local_section, crc);
             AppendU32(local_section, static_cast<std::uint32_t>(data.size()));
-            AppendU32(
-                local_section,
-                static_cast<std::uint32_t>(entry.content.size()));
+            AppendU32(local_section, declared_size);
             AppendU16(
                 local_section,
                 static_cast<std::uint16_t>(entry.filename.size()));
@@ -336,9 +341,7 @@ namespace
             AppendU16(central_section, 0); // mod date
             AppendU32(central_section, crc);
             AppendU32(central_section, static_cast<std::uint32_t>(data.size()));
-            AppendU32(
-                central_section,
-                static_cast<std::uint32_t>(entry.content.size()));
+            AppendU32(central_section, declared_size);
             AppendU16(
                 central_section,
                 static_cast<std::uint16_t>(entry.filename.size()));
@@ -630,6 +633,45 @@ TEST(PiUpdateService, ApplyUpdateRejectsTraversalEntry)
     EXPECT_FALSE(std::filesystem::exists(update_root));
 }
 
+TEST(PiUpdateService, ApplyUpdateRejectsDecompressionBomb)
+{
+    // WR-02: 条目 central directory 声称解压 1GB（远超市面全量包体积）→
+    // 解压炸弹防护必须在任何 4GB/1GB resize 前拒绝，旧内容不被替换。
+    FakePiHttpClient http;
+    http.AddRoute(
+        "/download/bomb.zip",
+        BuildTestZip({
+            TestZipEntry{
+                "huge.bin",
+                "tiny-compressed-data",
+                /*deflate=*/true,
+                /*declared_uncompressed_size=*/1024u * 1024u * 1024u},
+            TestZipEntry{"interface.json", "{\"version\":\"1.2.0\"}"},
+        }));
+
+    TempPiProject project;
+    project.WriteInterface(MakeInterface("1.0.0", "", ""));
+
+    PiUpdateInfo info;
+    info.version_name = "1.2.0";
+    info.download_url = "https://example.com/download/bomb.zip";
+
+    const auto result = PiUpdateService::ApplyUpdate(project.Dir(), info, http);
+
+    EXPECT_EQ(result, DAS_E_MAAPI_UPDATE_APPLY_FAILED);
+
+    // 旧内容未被替换（解压阶段失败，pi_dir 未动）。
+    std::ifstream old_interface(project.Dir() / "interface.json");
+    std::string   content(
+        (std::istreambuf_iterator<char>(old_interface)),
+        std::istreambuf_iterator<char>());
+    EXPECT_NE(content.find("1.0.0"), std::string::npos);
+    // .update 临时目录已清理。
+    const auto update_root = project.Dir().parent_path()
+                             / (project.Dir().filename().string() + ".update");
+    EXPECT_FALSE(std::filesystem::exists(update_root));
+}
+
 TEST(PiUpdateService, ApplyUpdateInvalidZipPreservesOldContent)
 {
     // 损坏 zip → 解压失败 → 旧目录原样保留，.update 临时目录清理。
@@ -790,6 +832,58 @@ TEST(PiUpdateService, ApplyUpdateLockedFileStagedToPending)
     // 被锁 DLL 新版本暂存到 .pending/。
     const auto pending = project.Dir() / ".pending" / "MaaFramework.dll";
     EXPECT_TRUE(std::filesystem::exists(pending));
+}
+
+TEST(PiUpdateService, ApplyUpdateInterfaceJsonLockedPreservesAllFiles)
+{
+    // WR-03: 逐文件替换降级路径下 interface.json 被锁 → -10008 且其他文件
+    // 未被触碰（interface.json 优先处理），旧目录保持完整，满足头文件
+    // "-10008 时旧目录已回滚"契约。
+    FakePiHttpClient http;
+    http.AddRoute(
+        "/download/package.zip",
+        BuildTestZip({
+            TestZipEntry{"interface.json", "{\"version\":\"1.2.0\"}"},
+            TestZipEntry{"config.json", "{\"speed\":99}"},
+        }));
+
+    TempPiProject project;
+    project.WriteInterface(MakeInterface("1.0.0", "", ""));
+    {
+        std::ofstream old_config(
+            project.Dir() / "config.json",
+            std::ios::binary);
+        old_config << "{\"speed\":1}";
+        old_config.flush();
+    }
+    // 锁住 interface.json → 整体目录 rename 失败，逐文件替换第一步即失败。
+    std::ifstream lock(project.Dir() / "interface.json", std::ios::binary);
+
+    PiUpdateInfo info;
+    info.version_name = "1.2.0";
+    info.download_url = "https://example.com/download/package.zip";
+
+    const auto result = PiUpdateService::ApplyUpdate(project.Dir(), info, http);
+    lock.close();
+
+    EXPECT_EQ(result, DAS_E_MAAPI_UPDATE_APPLY_FAILED);
+
+    // interface.json 与 config.json 都保持旧内容（interface.json 最先处理，
+    // 失败时无其他文件被替换）。
+    std::ifstream iface(project.Dir() / "interface.json");
+    std::string   iface_content(
+        (std::istreambuf_iterator<char>(iface)),
+        std::istreambuf_iterator<char>());
+    EXPECT_NE(iface_content.find("1.0.0"), std::string::npos);
+    std::ifstream cfg(project.Dir() / "config.json");
+    std::string   cfg_content(
+        (std::istreambuf_iterator<char>(cfg)),
+        std::istreambuf_iterator<char>());
+    EXPECT_NE(cfg_content.find("{\"speed\":1}"), std::string::npos);
+    // 未生成 backup 目录（整体 rename 失败分支不回退到 backup rename）。
+    const auto backup_dir =
+        std::filesystem::path(project.Dir().string() + "_backup_1.0.0");
+    EXPECT_FALSE(std::filesystem::exists(backup_dir));
 }
 
 // ---------------------------------------------------------------------
