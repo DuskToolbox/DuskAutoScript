@@ -3,10 +3,37 @@
 #include <das/_autogen/idl/abi/DasResult.h>
 
 #include <chrono>
+#include <cstdint>
+#include <filesystem>
+#include <optional>
 #include <string>
+#include <string_view>
 
 namespace Das::Plugins::DasMaaPi
 {
+    // Parsed HTTP proxy target (http://[user:pass@]host:port). Credentials are
+    // optional; a socks5:// proxy URL is rejected up front (D-89-08).
+    struct ProxyTarget
+    {
+        std::string                scheme;
+        std::string                host;
+        std::uint16_t              port = 0;
+        std::optional<std::string> username;
+        std::optional<std::string> password;
+    };
+
+    // Parse an HTTP proxy URL. Returns DAS_E_INVALID_ARGUMENT with a diagnostic
+    // for socks5:// and for malformed URLs (missing scheme/host/port) instead
+    // of silently connecting directly.
+    DasResult ParseProxyUrl(std::string_view url, ProxyTarget& out);
+
+    // Read the top-level "proxyUrl" field from the co-located DasMaaPi.json
+    // manifest (boost::dll::this_line_location().parent_path()). Empty string
+    // means direct connection. When manifest_path is given it is used instead
+    // (tests); a missing/unreadable manifest or absent field returns "".
+    std::string ReadManifestProxyUrl(
+        const std::filesystem::path& manifest_path = {});
+
     // Outbound HTTP seam (89-RESEARCH Pitfall 2). PiUpdateService depends on
     // this interface rather than a concrete client, so tests can inject a local
     // HTTP mock server while production uses the Boost.Beast implementation.

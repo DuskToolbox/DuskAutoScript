@@ -1,6 +1,7 @@
 #include "PiHttpClient.h"
 
 #include <das/DasApi.h>
+#include <das/Utils/DasJsonCore.h>
 #include <das/_autogen/idl/abi/DasResult.h>
 
 #include <boost/asio/co_spawn.hpp>
@@ -13,11 +14,14 @@
 #include <boost/beast/http.hpp>
 #include <boost/beast/ssl.hpp>
 #include <boost/beast/version.hpp>
+#include <boost/dll.hpp>
 #include <openssl/ssl.h>
 
 #include <cstddef>
 #include <cstdint>
 #include <exception>
+#include <fstream>
+#include <iterator>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -158,6 +162,57 @@ namespace Das::Plugins::DasMaaPi
             DAS_LOG_WARNING(message.c_str());
         }
 
+        // Minimal base64 (standard alphabet) for Proxy-Authorization Basic.
+        std::string Base64Encode(std::string_view input)
+        {
+            constexpr std::string_view kChars =
+                "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+            std::string out;
+            out.reserve(((input.size() + 2) / 3) * 4);
+            std::size_t i = 0;
+            while (i + 3 <= input.size())
+            {
+                const auto n = (static_cast<std::uint32_t>(
+                                    static_cast<std::uint8_t>(input[i]))
+                                << 16)
+                               | (static_cast<std::uint32_t>(
+                                      static_cast<std::uint8_t>(input[i + 1]))
+                                  << 8)
+                               | static_cast<std::uint32_t>(
+                                   static_cast<std::uint8_t>(input[i + 2]));
+                out.push_back(kChars[(n >> 18) & 63]);
+                out.push_back(kChars[(n >> 12) & 63]);
+                out.push_back(kChars[(n >> 6) & 63]);
+                out.push_back(kChars[n & 63]);
+                i += 3;
+            }
+            const auto rem = input.size() - i;
+            if (rem == 1)
+            {
+                const auto n = static_cast<std::uint32_t>(
+                                   static_cast<std::uint8_t>(input[i]))
+                               << 16;
+                out.push_back(kChars[(n >> 18) & 63]);
+                out.push_back(kChars[(n >> 12) & 63]);
+                out.push_back('=');
+                out.push_back('=');
+            }
+            else if (rem == 2)
+            {
+                const auto n = (static_cast<std::uint32_t>(
+                                    static_cast<std::uint8_t>(input[i]))
+                                << 16)
+                               | (static_cast<std::uint32_t>(
+                                      static_cast<std::uint8_t>(input[i + 1]))
+                                  << 8);
+                out.push_back(kChars[(n >> 18) & 63]);
+                out.push_back(kChars[(n >> 12) & 63]);
+                out.push_back(kChars[(n >> 6) & 63]);
+                out.push_back('=');
+            }
+            return out;
+        }
+
         // Re-arm the per-operation timeout. beast::tcp_stream exposes
         // expires_after directly; beast::ssl_stream forwards through
         // next_layer.
@@ -175,12 +230,15 @@ namespace Das::Plugins::DasMaaPi
         }
 
         // Write the request and read the bounded response over an established
-        // (optionally TLS) stream.
+        // (optionally TLS) stream. absolute_form is used for plain-http targets
+        // routed through a proxy: the request line carries the full URL
+        // (RFC 7230 5.3.2) while the Host header stays the target host.
         template <typename Stream>
         boost::asio::awaitable<DasResult> SendRequest(
             Stream&                   stream,
             const UrlParts&           target,
             bool                      head_only,
+            bool                      absolute_form,
             std::chrono::milliseconds timeout,
             std::string&              out_body,
             int&                      out_status)
@@ -189,7 +247,15 @@ namespace Das::Plugins::DasMaaPi
             req.method(
                 head_only ? boost::beast::http::verb::head
                           : boost::beast::http::verb::get);
-            req.target(target.path);
+            if (absolute_form)
+            {
+                req.target(
+                    target.scheme + "://" + target.host_and_port + target.path);
+            }
+            else
+            {
+                req.target(target.path);
+            }
             req.version(11);
             req.set(boost::beast::http::field::host, target.host_and_port);
             req.set(boost::beast::http::field::user_agent, kUserAgent);
@@ -219,19 +285,83 @@ namespace Das::Plugins::DasMaaPi
             co_return DAS_S_OK;
         }
 
+        // Establish a CONNECT tunnel to the target through the HTTP proxy
+        // (D-89-08). After the 200 Connection Established the same socket is
+        // reused for the TLS handshake.
+        boost::asio::awaitable<DasResult> DoConnectTunnel(
+            boost::beast::tcp_stream& stream,
+            const UrlParts&           target,
+            const ProxyTarget&        proxy,
+            std::chrono::milliseconds timeout)
+        {
+            const auto connect_target =
+                target.host + ":" + std::to_string(target.port);
+
+            boost::beast::http::request<boost::beast::http::empty_body> req;
+            req.method(boost::beast::http::verb::connect);
+            req.target(connect_target);
+            req.version(11);
+            req.set(boost::beast::http::field::host, connect_target);
+            if (proxy.username && proxy.password)
+            {
+                const auto credential = *proxy.username + ":" + *proxy.password;
+                req.set(
+                    boost::beast::http::field::proxy_authorization,
+                    "Basic " + Base64Encode(credential));
+            }
+
+            // A 2xx CONNECT response has no body (the tunnel starts
+            // immediately) and real proxies omit Content-Length, so a full
+            // message read would demand a body until connection close and fail
+            // with unexpected_body. A skip(true) parser ends after the header.
+            boost::beast::http::response_parser<boost::beast::http::empty_body>
+                parser;
+            parser.skip(true);
+            boost::beast::flat_buffer buffer;
+            ArmStreamTimeout(stream, timeout);
+            co_await boost::beast::http::async_write(
+                stream,
+                req,
+                boost::asio::use_awaitable);
+            ArmStreamTimeout(stream, timeout);
+            co_await boost::beast::http::async_read(
+                stream,
+                buffer,
+                parser,
+                boost::asio::use_awaitable);
+            const auto resp = parser.release();
+            if (resp.result() != boost::beast::http::status::ok)
+            {
+                LogDiagnosticError(
+                    "proxy CONNECT rejected: host=" + target.host + " status="
+                    + std::to_string(static_cast<int>(resp.result_int())));
+                co_return DAS_E_FAIL;
+            }
+            co_return DAS_S_OK;
+        }
+
         boost::asio::awaitable<DasResult> DoRequestImpl(
             bool                      verify_tls,
             std::chrono::milliseconds timeout,
             const UrlParts&           target,
+            const ProxyTarget*        proxy,
             bool                      head_only,
             std::string&              out_body,
             int&                      out_status)
         {
+            const bool via_proxy = (proxy != nullptr);
+            const bool use_tls = (target.scheme == "https");
+
+            // Connect to the proxy when one is configured, else the target.
+            const auto connect_host = via_proxy ? proxy->host : target.host;
+            const auto connect_port = via_proxy ? std::to_string(proxy->port)
+                                                : std::to_string(target.port);
+
             auto executor = co_await boost::asio::this_coro::executor;
             boost::asio::ip::tcp::resolver resolver(executor);
             const auto endpoints = co_await resolver.async_resolve(
-                target.host,
-                std::to_string(target.port),
+                connect_host,
+                connect_port,
                 boost::asio::use_awaitable);
 
             boost::beast::tcp_stream stream(executor);
@@ -240,7 +370,19 @@ namespace Das::Plugins::DasMaaPi
                 endpoints,
                 boost::asio::use_awaitable);
 
-            if (target.scheme == "https")
+            // https targets through a proxy go over a CONNECT tunnel; the TLS
+            // handshake runs inside it. http targets use absolute-form instead.
+            if (via_proxy && use_tls)
+            {
+                const auto tunnel_result =
+                    co_await DoConnectTunnel(stream, target, *proxy, timeout);
+                if (IsFailed(tunnel_result))
+                {
+                    co_return tunnel_result;
+                }
+            }
+
+            if (use_tls)
             {
                 boost::asio::ssl::context ctx(
                     boost::asio::ssl::context::tls_client);
@@ -271,6 +413,7 @@ namespace Das::Plugins::DasMaaPi
                     tls,
                     target,
                     head_only,
+                    /*absolute_form=*/false,
                     timeout,
                     out_body,
                     out_status);
@@ -280,6 +423,7 @@ namespace Das::Plugins::DasMaaPi
                 stream,
                 target,
                 head_only,
+                /*absolute_form=*/via_proxy,
                 timeout,
                 out_body,
                 out_status);
@@ -297,15 +441,6 @@ namespace Das::Plugins::DasMaaPi
         {
             try
             {
-                // Proxy routing lands with the CONNECT tunnel task; the seam
-                // signature already reserves the parameter (D-89-08).
-                if (!proxy_url.empty())
-                {
-                    outcome.result = DAS_E_INVALID_ARGUMENT;
-                    LogDiagnosticWarning(
-                        "BeastHttpClient proxy support not yet implemented");
-                    co_return;
-                }
                 UrlParts target;
                 if (!ParseUrl(url, target))
                 {
@@ -315,10 +450,27 @@ namespace Das::Plugins::DasMaaPi
                         + RedactUrlForLog(url));
                     co_return;
                 }
+
+                // Resolve the proxy up front; an invalid proxy URL (including
+                // socks5) fails here instead of silently connecting directly.
+                ProxyTarget        proxy;
+                const ProxyTarget* proxy_ptr = nullptr;
+                if (!proxy_url.empty())
+                {
+                    const auto parse_result = ParseProxyUrl(proxy_url, proxy);
+                    if (IsFailed(parse_result))
+                    {
+                        outcome.result = parse_result;
+                        co_return;
+                    }
+                    proxy_ptr = &proxy;
+                }
+
                 outcome.result = co_await DoRequestImpl(
                     verify_tls,
                     timeout,
                     target,
+                    proxy_ptr,
                     head_only,
                     out_body,
                     out_status);
@@ -385,6 +537,148 @@ namespace Das::Plugins::DasMaaPi
             return outcome.result;
         }
     } // namespace
+
+    DasResult ParseProxyUrl(std::string_view url, ProxyTarget& out)
+    {
+        const auto scheme_end = url.find("://");
+        if (scheme_end == std::string_view::npos)
+        {
+            LogDiagnosticWarning("proxy url missing scheme");
+            return DAS_E_INVALID_ARGUMENT;
+        }
+        const auto scheme = url.substr(0, scheme_end);
+        if (scheme == "socks5" || scheme == "socks5h")
+        {
+            // Explicit unsupported error rather than a silent downgrade
+            // (D-89-08). Converged to DAS_E_MAAPI_PROXY_UNSUPPORTED in 89-02.
+            LogDiagnosticWarning("socks5 proxy is not supported yet");
+            return DAS_E_INVALID_ARGUMENT;
+        }
+        if (scheme != "http")
+        {
+            LogDiagnosticWarning(
+                "unsupported proxy scheme: scheme=" + std::string(scheme));
+            return DAS_E_INVALID_ARGUMENT;
+        }
+
+        auto             authority = url.substr(scheme_end + 3);
+        std::string_view userinfo;
+        if (const auto at = authority.rfind('@'); at != std::string_view::npos)
+        {
+            userinfo = authority.substr(0, at);
+            authority = authority.substr(at + 1);
+        }
+
+        std::string_view host;
+        std::string_view port_str;
+        if (const auto colon = authority.rfind(':');
+            colon != std::string_view::npos)
+        {
+            host = authority.substr(0, colon);
+            port_str = authority.substr(colon + 1);
+        }
+        else
+        {
+            host = authority;
+        }
+        if (host.empty() || port_str.empty())
+        {
+            LogDiagnosticWarning(
+                "proxy url must include host and port: scheme="
+                + std::string(scheme));
+            return DAS_E_INVALID_ARGUMENT;
+        }
+        std::uint32_t port = 0;
+        for (const char c : port_str)
+        {
+            if (c < '0' || c > '9')
+            {
+                return DAS_E_INVALID_ARGUMENT;
+            }
+            port = port * 10 + static_cast<std::uint32_t>(c - '0');
+            if (port > 65535)
+            {
+                return DAS_E_INVALID_ARGUMENT;
+            }
+        }
+        if (port == 0)
+        {
+            return DAS_E_INVALID_ARGUMENT;
+        }
+
+        out.scheme = std::string(scheme);
+        out.host = std::string(host);
+        out.port = static_cast<std::uint16_t>(port);
+        out.username.reset();
+        out.password.reset();
+        if (!userinfo.empty())
+        {
+            if (const auto sep = userinfo.find(':');
+                sep != std::string_view::npos)
+            {
+                out.username = std::string(userinfo.substr(0, sep));
+                out.password = std::string(userinfo.substr(sep + 1));
+            }
+            else
+            {
+                out.username = std::string(userinfo);
+            }
+        }
+        return DAS_S_OK;
+    }
+
+    std::string ReadManifestProxyUrl(const std::filesystem::path& manifest_path)
+    {
+        std::filesystem::path manifest = manifest_path;
+        if (manifest.empty())
+        {
+            try
+            {
+                // this_line_location() returns a boost::filesystem::path;
+                // convert explicitly so the manifest path is std::filesystem.
+                manifest = std::filesystem::path(
+                    (boost::dll::this_line_location().parent_path()
+                     / "DasMaaPi.json")
+                        .string());
+            }
+            catch (const std::exception&)
+            {
+                // this_line_location() can fail on exotic platforms; treat the
+                // manifest as absent (direct connection).
+                return {};
+            }
+        }
+
+        std::ifstream file(manifest, std::ios::binary);
+        if (!file.is_open())
+        {
+            return {};
+        }
+        const std::string text(
+            (std::istreambuf_iterator<char>(file)),
+            std::istreambuf_iterator<char>());
+
+        const auto json = Das::Utils::ParseYyjsonFromString(text);
+        if (!json)
+        {
+            return {};
+        }
+        const auto obj = json->as_object();
+        if (!obj)
+        {
+            return {};
+        }
+        // Iterate rather than operator[] because cpp_yyjson operator[] throws
+        // std::out_of_range on a missing key; an absent proxyUrl means direct.
+        for (auto it = obj->begin(); it != obj->end(); ++it)
+        {
+            if (it->first == "proxyUrl" && it->second.is_string())
+            {
+                return std::string(it->second.as_string().value_or(""));
+            }
+        }
+        return {};
+    }
 
     BeastHttpClient::BeastHttpClient(
         bool                      verify_tls_certificate,
