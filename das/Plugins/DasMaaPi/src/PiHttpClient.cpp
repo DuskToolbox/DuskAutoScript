@@ -405,8 +405,16 @@ namespace Das::Plugins::DasMaaPi
                 {
                     state->ec = ec;
                     state->result = std::move(result);
-                    boost::system::error_code ignored;
-                    state->timer.cancel(ignored);
+                    // basic_waitable_timer::cancel() 在此 Boost 版本只接受零参
+                    // （可能抛 system_error）；失败可忽略——timer 随后以自然到期
+                    // 结束，仅增加最多 timeout 的等待，不崩溃。
+                    try
+                    {
+                        state->timer.cancel();
+                    }
+                    catch (const boost::system::system_error&)
+                    {
+                    }
                 });
             co_await state->timer.async_wait(boost::asio::use_awaitable);
             if (!state->ec)
