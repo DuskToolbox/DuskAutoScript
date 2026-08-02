@@ -367,6 +367,9 @@ TEST_F(MaapiPluginScaffoldFixture, AdapterOnlyDocumentBeforeProjectSelection)
     const auto        serialized = document.write(yyjson::WriteFlag::NoFlag);
     const std::string text(serialized.data(), serialized.size());
     EXPECT_EQ(text.find("controller"), std::string::npos);
-    EXPECT_EQ(text.find("resource"), std::string::npos);
+    // D-89-07：resourceVersion 只读版本字段常投影（无 catalog 时值空串），
+    // 故不能再用裸 "resource" 子串——只断言 catalog 驱动的 resourceName 字段
+    // 不泄漏。
+    EXPECT_EQ(text.find("resourceName"), std::string::npos);
     EXPECT_EQ(text.find("preset"), std::string::npos);
 }

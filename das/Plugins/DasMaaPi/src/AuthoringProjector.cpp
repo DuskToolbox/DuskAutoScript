@@ -475,7 +475,8 @@ namespace Das::Plugins::DasMaaPi
             int                  value_type,
             int                  input_type,
             const yyjson::value& value,
-            const yyjson::value* candidates = nullptr)
+            const yyjson::value* candidates = nullptr,
+            bool                 readonly = false)
         {
             yyjson::value field(Object());
             auto          obj = field.as_object();
@@ -489,6 +490,10 @@ namespace Das::Plugins::DasMaaPi
             {
                 (*obj)[std::string_view("candidates")] =
                     Das::Utils::CloneYyjsonValue(*candidates);
+            }
+            if (readonly)
+            {
+                (*obj)[std::string_view("readonly")] = true;
             }
             return field;
         }
@@ -2331,6 +2336,37 @@ namespace Das::Plugins::DasMaaPi
                 }
             }
         }
+
+        // D-89-07 修订：版本显示唯一机制 = authoring doc 只读字段（不建专用查询
+        // 通道 / 专用 UI 区）。resourceVersion = interface.json 顶层 version
+        // （PiCatalog.version 已解析，D-89-07；catalog 为空 → 空串）；
+        // maafwVersion = MaaFW MaaVersion() 动态符号（89-02 已解析，
+        // C 边界返回 const char* 立即拷贝防 dangling，T-89-03-05；符号未映射 →
+        // 空串）。字段名是通用只读字段，UI 不识别 Provider 业务前缀、不硬编码
+        // 标题（authoring-doc-layering）；DasNativeUI 渲染器已支持 readonly →
+        // TextBlock，零改动。只读字段不经 setValue 写回（UI 不可编辑）。
+        const std::string resource_version =
+            catalog != nullptr ? catalog->version : std::string{};
+        fields.as_array()->emplace_back(MakePropertyField(
+            "resourceVersion",
+            "资源版本",
+            4,
+            0,
+            yyjson::value(resource_version),
+            nullptr,
+            /*readonly=*/true));
+        const std::string maafw_version =
+            LoadMaaDynamicSymbols().version != nullptr
+                ? std::string(LoadMaaDynamicSymbols().version())
+                : std::string{};
+        fields.as_array()->emplace_back(MakePropertyField(
+            "maafwVersion",
+            "MaaFramework 版本",
+            4,
+            0,
+            yyjson::value(maafw_version),
+            nullptr,
+            /*readonly=*/true));
 
         // 根级 fieldLayout 必须在 fields 移走前构建（按 const ref 读 fields）。
         yyjson::value field_layout = BuildRootFieldLayout(

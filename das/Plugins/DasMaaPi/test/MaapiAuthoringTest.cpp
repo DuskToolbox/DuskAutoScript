@@ -6374,10 +6374,12 @@ TEST(
     ASSERT_TRUE(layout.has_value());
 
     // 项目设置 section（顺序第一）。defaultExpanded=true。
+    // D-89-07：project 尾部追加 resourceVersion / maafwVersion
+    // 两个只读版本字段。
     auto project_section = FindLayoutSection(document, "project");
     ASSERT_TRUE(project_section.has_value());
     auto project_fields = LayoutSectionFieldNames(*project_section);
-    ASSERT_EQ(project_fields.size(), 7u);
+    ASSERT_EQ(project_fields.size(), 9u);
     EXPECT_EQ(project_fields[0], "adapter.interfacePath");
     EXPECT_EQ(project_fields[1], "adapter.executionPolicy.failFast");
     EXPECT_EQ(project_fields[2], "controllerName");
@@ -6385,6 +6387,8 @@ TEST(
     EXPECT_EQ(project_fields[4], "presetName");
     EXPECT_EQ(project_fields[5], "language");
     EXPECT_EQ(project_fields[6], "pretask.bootstrap_mode");
+    EXPECT_EQ(project_fields[7], "resourceVersion");
+    EXPECT_EQ(project_fields[8], "maafwVersion");
     auto project_section_obj = project_section->as_object();
     ASSERT_TRUE(project_section_obj.has_value());
     EXPECT_TRUE((*project_section_obj)[std::string_view("defaultExpanded")]
@@ -6440,9 +6444,13 @@ TEST(MaapiProjectionTest, RootFieldLayoutCoversAdapterFieldsWhenCatalogAbsent)
     auto project_section = FindLayoutSection(document, "project");
     ASSERT_TRUE(project_section.has_value());
     auto project_fields = LayoutSectionFieldNames(*project_section);
-    ASSERT_EQ(project_fields.size(), 2u);
+    // D-89-07：无 catalog 时版本字段仍投影（值回退空串），故 adapter 两字段 +
+    // resourceVersion + maafwVersion 共 4 个。
+    ASSERT_EQ(project_fields.size(), 4u);
     EXPECT_EQ(project_fields[0], "adapter.interfacePath");
     EXPECT_EQ(project_fields[1], "adapter.executionPolicy.failFast");
+    EXPECT_EQ(project_fields[2], "resourceVersion");
+    EXPECT_EQ(project_fields[3], "maafwVersion");
 
     auto                        layout_names = LayoutLeafFieldNames(document);
     auto                        field_names = RootFieldNames(document);
@@ -7172,8 +7180,6 @@ TEST(MaapiUpdateCommandTest, InvokeCommandCheckUpdateFailureEmitsError)
 
 // D-89-05（Tracer 3）：无 pending（未先检查/已清）时 applyUpdate 拒绝 → error
 // 诊断 + 不递增 revision。
-// D-89-05：无 pending（未先检查/已清）时 applyUpdate 拒绝 → error 诊断 +
-// 不递增 revision。
 TEST(MaapiUpdateCommandTest, InvokeCommandApplyUpdateRejectsWithoutPending)
 {
     using namespace Das::Plugins::DasMaaPi;
@@ -7337,4 +7343,85 @@ TEST(MaapiProjectionTest, CommandsApplyUpdateDisabledDrivenByPendingState)
     auto apply_has_update = FindCommand(doc_has_update, "applyUpdate");
     ASSERT_TRUE(apply_has_update.has_value());
     EXPECT_FALSE(CommandHasDisabled(apply_has_update));
+}
+
+// D-89-07 修订：项目设置 section 投影两个只读版本字段。resourceVersion 值 =
+// catalog.version；maafwVersion 值 = MaaVersion 动态符号（测试构建未映射 →
+// 空串）。两字段 readonly:true、valueType 4 / inputType 0；fieldLayout 项目设置
+// section entries 覆盖两者；ValidateAuthoringDocument（含 ValidateFieldLayout
+// 全覆盖）不 reject。
+TEST(MaapiProjectionTest, ProjectAuthoringDocumentProjectsReadonlyVersionFields)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto catalog = MakeStrictProjectionMockCatalog();
+    catalog.version = "1.2.3";
+    AcceptedSettingsDto settings;
+    settings.pi.language = "zh_cn";
+
+    auto document = ProjectAuthoringDocument(settings, &catalog, {}, 0);
+    auto valid = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+    EXPECT_TRUE(valid.valid)
+        << "error_kind=" << valid.error_kind << " message=" << valid.message;
+
+    auto resource = FindRootField(document, "resourceVersion");
+    ASSERT_TRUE(resource.has_value());
+    EXPECT_EQ(FieldOf(*resource, "value").as_string().value_or(""), "1.2.3");
+    EXPECT_TRUE(FieldOf(*resource, "readonly").as_bool().value_or(false));
+    EXPECT_EQ(FieldOf(*resource, "valueType").as_sint().value_or(-1), 4);
+    EXPECT_EQ(FieldOf(*resource, "inputType").as_sint().value_or(-1), 0);
+
+    auto maafw = FindRootField(document, "maafwVersion");
+    ASSERT_TRUE(maafw.has_value());
+    EXPECT_TRUE(FieldOf(*maafw, "readonly").as_bool().value_or(false));
+    EXPECT_EQ(FieldOf(*maafw, "valueType").as_sint().value_or(-1), 4);
+    EXPECT_EQ(FieldOf(*maafw, "inputType").as_sint().value_or(-1), 0);
+    // 测试构建（DAS_MAAPI_DISABLE_REAL_MAA_BOUNDARY）MaaVersion 未映射 → 空串
+    // （null-safe，T-89-03-05 C 边界拷贝）。
+    EXPECT_EQ(FieldOf(*maafw, "value").as_string().value_or("x"), "");
+
+    // fieldLayout 项目设置 section entries 覆盖两个版本字段。
+    auto project = FindLayoutSection(document, "project");
+    ASSERT_TRUE(project.has_value());
+    auto names = LayoutSectionFieldNames(*project);
+    EXPECT_NE(
+        std::find(names.begin(), names.end(), "resourceVersion"),
+        names.end());
+    EXPECT_NE(
+        std::find(names.begin(), names.end(), "maafwVersion"),
+        names.end());
+}
+
+// D-89-07 修订：catalog 缺席（无 PI 接口）时版本字段仍投影，值回退空串，
+// fieldLayout 兜底桶（未识别前缀 → 项目设置 section）仍覆盖。
+TEST(MaapiProjectionTest, ProjectAuthoringDocumentVersionFieldsCatalogAbsent)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    AcceptedSettingsDto settings;
+    settings.pi.language = "zh_cn";
+
+    auto document = ProjectAuthoringDocument(settings, nullptr, {}, 0);
+    auto valid = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+    EXPECT_TRUE(valid.valid)
+        << "error_kind=" << valid.error_kind << " message=" << valid.message;
+
+    auto resource = FindRootField(document, "resourceVersion");
+    ASSERT_TRUE(resource.has_value());
+    EXPECT_EQ(FieldOf(*resource, "value").as_string().value_or(""), "");
+    EXPECT_TRUE(FieldOf(*resource, "readonly").as_bool().value_or(false));
+
+    auto maafw = FindRootField(document, "maafwVersion");
+    ASSERT_TRUE(maafw.has_value());
+    EXPECT_TRUE(FieldOf(*maafw, "readonly").as_bool().value_or(false));
+
+    auto project = FindLayoutSection(document, "project");
+    ASSERT_TRUE(project.has_value());
+    auto names = LayoutSectionFieldNames(*project);
+    EXPECT_NE(
+        std::find(names.begin(), names.end(), "resourceVersion"),
+        names.end());
+    EXPECT_NE(
+        std::find(names.begin(), names.end(), "maafwVersion"),
+        names.end());
 }
