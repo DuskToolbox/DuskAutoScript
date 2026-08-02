@@ -880,6 +880,156 @@ namespace Das::Plugins::DasMaaPi
             }
             return DAS_S_OK;
         }
+
+        // 逐文件替换（被锁文件暂存 .pending/ 策略，D-89-06）。extract_dir 内
+        // 每个文件覆盖 pi_dir 对应文件；无法覆盖（Windows sharing violation /
+        // std::filesystem_error）时把新版本移入 {pi_dir}/.pending/{rel}
+        // 并警告， 其余文件正常替换。interface.json 自身被锁（session 正持有）→
+        // 整体 失败返回 -10008，pi_dir 保持完整（含原 interface.json）。
+        DasResult ReplaceFilesWithPending(
+            const std::filesystem::path& extract_dir,
+            const std::filesystem::path& pi_dir)
+        {
+            std::vector<std::string> pending_files;
+            std::error_code          ec;
+            for (std::filesystem::recursive_directory_iterator it(extract_dir),
+                 end;
+                 it != end;
+                 ++it)
+            {
+                if (it->is_directory())
+                {
+                    continue;
+                }
+                const auto rel = it->path().lexically_relative(extract_dir);
+                const auto target = pi_dir / rel;
+                std::filesystem::create_directories(target.parent_path(), ec);
+
+                // 目标存在 → 先删再 rename（Windows rename
+                // 不能覆盖已存在目标）。
+                std::error_code remove_ec;
+                if (std::filesystem::exists(target))
+                {
+                    std::filesystem::remove(target, remove_ec);
+                }
+                std::error_code rename_ec;
+                std::filesystem::rename(it->path(), target, rename_ec);
+                if (!rename_ec)
+                {
+                    continue;
+                }
+                if (rel == std::filesystem::path("interface.json")
+                    && (remove_ec || rename_ec))
+                {
+                    LogError(
+                        "PiUpdateService: interface.json is locked, update "
+                        "failed");
+                    return DAS_E_MAAPI_UPDATE_APPLY_FAILED;
+                }
+                // 被锁（sharing violation）→ 暂存 .pending/ + 警告。
+                const auto pending_path = pi_dir / ".pending" / rel;
+                std::filesystem::create_directories(
+                    pending_path.parent_path(),
+                    ec);
+                std::error_code copy_ec;
+                std::filesystem::copy_file(
+                    it->path(),
+                    pending_path,
+                    std::filesystem::copy_options::overwrite_existing,
+                    copy_ec);
+                pending_files.push_back(rel.string());
+            }
+            if (!pending_files.empty())
+            {
+                std::string joined;
+                for (const auto& f : pending_files)
+                {
+                    if (!joined.empty())
+                    {
+                        joined += ", ";
+                    }
+                    joined += f;
+                }
+                LogWarning(
+                    "PiUpdateService: files staged to .pending (locked): "
+                    + joined);
+            }
+            return DAS_S_OK;
+        }
+
+        // resource.hash 校验（D-89-05 / [ASSUMED A5]）：替换成功后用新
+        // interface.json 的 resource 路径创建并加载资源，取 MaaFW hash 与
+        // 更新包记录 sha256 比对。不匹配或缺失 → 警告「建议重新下载资源包」，
+        // 不硬失败（协议 §resource.hash 语义）；无法计算（无 resource 句柄 /
+        // 加载失败）→ 降级为警告。
+        void VerifyResourceHash(
+            const std::filesystem::path& pi_dir,
+            const PiUpdateInfo&          info,
+            IMaaApiBoundary&             boundary)
+        {
+            const auto parsed = ParseProjectInterface(
+                {.interface_path = pi_dir / "interface.json"});
+            if (!parsed.ok)
+            {
+                LogWarning(
+                    "PiUpdateService: cannot parse new interface.json for "
+                    "resource.hash verify");
+                return;
+            }
+            std::vector<std::filesystem::path> resource_paths;
+            for (const auto& resource : parsed.catalog.resources)
+            {
+                resource_paths.insert(
+                    resource_paths.end(),
+                    resource.resolved_paths.begin(),
+                    resource.resolved_paths.end());
+            }
+            if (resource_paths.empty())
+            {
+                return; // 无 resource 可校验
+            }
+
+            const auto resource = boundary.CreateResource();
+            if (resource == kInvalidMaaResourceHandle)
+            {
+                LogWarning(
+                    "PiUpdateService: cannot create resource for hash "
+                    "verification");
+                return;
+            }
+            bool loaded = true;
+            for (const auto& path : resource_paths)
+            {
+                const auto load =
+                    boundary.LoadResource(resource, path.string());
+                if (!load.ok)
+                {
+                    loaded = false;
+                    break;
+                }
+            }
+            if (!loaded)
+            {
+                boundary.DestroyResource(resource);
+                LogWarning(
+                    "PiUpdateService: resource load failed, hash check "
+                    "skipped");
+                return;
+            }
+            const auto actual = boundary.GetResourceHash(resource);
+            boundary.DestroyResource(resource);
+            if (!actual)
+            {
+                LogWarning("PiUpdateService: cannot compute resource hash");
+                return;
+            }
+            if (!info.sha256 || *actual != *info.sha256)
+            {
+                LogWarning(
+                    "PiUpdateService: resource hash mismatch — 建议重新下载"
+                    "资源包");
+            }
+        }
     } // namespace
 
     DasResult PiUpdateService::CheckUpdate(
@@ -955,8 +1105,11 @@ namespace Das::Plugins::DasMaaPi
         const std::filesystem::path& pi_dir,
         const PiUpdateInfo&          info,
         PiHttpClient&                http,
-        std::string_view             proxy_url)
+        std::string_view             proxy_url,
+        IMaaApiBoundary*             boundary)
     {
+        IMaaApiBoundary& api_boundary =
+            boundary ? *boundary : DefaultMaaApiBoundary();
         if (info.download_url.empty())
         {
             LogError("PiUpdateService: ApplyUpdate requires a download_url");
@@ -1026,9 +1179,20 @@ namespace Das::Plugins::DasMaaPi
         std::filesystem::rename(pi_dir, backup_dir, ec);
         if (ec)
         {
-            LogError(
-                "PiUpdateService: backup rename failed: " + pi_dir.string());
-            return DAS_E_MAAPI_UPDATE_APPLY_FAILED;
+            // 整体 rename 失败：很可能是 pi_dir 内存在被占用的文件（如运行中
+            // 的 MaaFW DLL，Windows sharing violation）。D-89-06 策略——不做
+            // 自动重启，降级为逐文件替换 + .pending/ 暂存新版本 + 警告；若
+            // interface.json 自身被锁则整体失败（pi_dir 未被改动，保持完整）。
+            LogWarning(
+                "PiUpdateService: whole-dir backup rename failed, falling "
+                "back to per-file replace: "
+                + ec.message());
+            // 回滚：rename 失败时 pi_dir 保持原样（未移动），无需恢复。
+            const auto fallback_result =
+                ReplaceFilesWithPending(extract_dir, pi_dir);
+            cleanup.dismissed = true;
+            std::filesystem::remove_all(update_root, ec);
+            return fallback_result;
         }
         std::filesystem::rename(extract_dir, pi_dir, ec);
         if (ec)
@@ -1042,7 +1206,9 @@ namespace Das::Plugins::DasMaaPi
             return DAS_E_MAAPI_UPDATE_APPLY_FAILED;
         }
 
-        // 4. 成功：清理 .update 临时目录（zip + extract），保留 backup。
+        // 4. 成功：resource.hash 校验（D-89-05，警告不硬失败）+ 清理 .update
+        //    临时目录（zip + extract），保留 backup。
+        VerifyResourceHash(pi_dir, info, api_boundary);
         cleanup.dismissed = true;
         std::filesystem::remove_all(update_root, ec);
         return DAS_S_OK;

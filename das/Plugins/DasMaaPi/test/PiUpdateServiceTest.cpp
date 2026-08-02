@@ -1,5 +1,6 @@
 #include "../src/PiUpdateService.h"
 #include "../src/PiHttpClient.h"
+#include "FakeMaaApiBoundary.h"
 
 #include <das/Plugins/DasMaaPi/MaaPiErrorCodes.h>
 #include <das/_autogen/idl/abi/DasResult.h>
@@ -698,4 +699,93 @@ TEST(PiUpdateService, ApplyUpdateRenameFailurePreservesOldContent)
     const auto update_root = project.Dir().parent_path()
                              / (project.Dir().filename().string() + ".update");
     EXPECT_FALSE(std::filesystem::exists(update_root));
+}
+
+// ---------------------------------------------------------------------
+// Task 3：resource.hash 校验（警告不硬失败）+ 被锁文件 .pending 暂存
+// ---------------------------------------------------------------------
+
+TEST(PiUpdateService, ApplyUpdateResourceHashMismatchWarnsNotFails)
+{
+    // 新 interface.json 声明 resource → 替换成功后经 IMaaApiBoundary 计算
+    // resource hash，与更新包 sha256 比对。不匹配 → 警告「建议重新下载资源
+    // 包」，ApplyUpdate 仍返回成功（D-89-05 不硬失败）。
+    FakePiHttpClient http;
+    http.AddRoute(
+        "/download/package.zip",
+        BuildTestZip({
+            TestZipEntry{
+                "interface.json",
+                R"({"interface_version":2,"name":"test-project","version":"1.2.0","resource":[{"name":"res","path":["res"]}]})"},
+            TestZipEntry{"res/icon.png", "png-bytes"},
+        }));
+
+    TempPiProject project;
+    project.WriteInterface(MakeInterface("1.0.0", "", ""));
+
+    Das::Plugins::DasMaaPi::Test::FakeMaaApiBoundary fake;
+    fake.resource_hash = "sha256-real-but-different";
+
+    PiUpdateInfo info;
+    info.version_name = "1.2.0";
+    info.download_url = "https://example.com/download/package.zip";
+    info.sha256 = "sha256-from-update-manifest";
+
+    const auto result = PiUpdateService::ApplyUpdate(
+        project.Dir(),
+        info,
+        http,
+        /*proxy_url=*/{},
+        &fake);
+
+    // hash 不匹配给警告，不硬失败（D-89-05 / 协议 §resource.hash 语义）。
+    EXPECT_EQ(result, DAS_S_OK);
+    EXPECT_TRUE(fake.Contains("GetResourceHash"));
+    EXPECT_TRUE(fake.ContainsSubstring("LoadResource"));
+}
+
+TEST(PiUpdateService, ApplyUpdateLockedFileStagedToPending)
+{
+    // 项目目录内一个文件被占用（Windows sharing violation）→ 整体 rename
+    // 失败 → 降级逐文件替换：该文件新版本进 {pi_dir}/.pending/，其余正常替换
+    // （D-89-06），更新仍成功。
+    FakePiHttpClient http;
+    http.AddRoute(
+        "/download/package.zip",
+        BuildTestZip({
+            TestZipEntry{"interface.json", "{\"version\":\"1.2.0\"}"},
+            TestZipEntry{"MaaFramework.dll", "new-dll-bytes"},
+        }));
+
+    TempPiProject project;
+    project.WriteInterface(MakeInterface("1.0.0", "", ""));
+    {
+        // 预创建占用文件（持有句柄阻止删除/rename）。
+        std::ofstream locked(
+            project.Dir() / "MaaFramework.dll",
+            std::ios::binary);
+        locked << "old-dll-bytes";
+        locked.flush();
+    }
+    // 用只读属性 + 目录整体 rename 依赖的打开句柄来稳定触发 sharing
+    // violation：先以可写句柄持有，保证目录 rename 失败。
+    std::ifstream lock(project.Dir() / "MaaFramework.dll", std::ios::binary);
+
+    PiUpdateInfo info;
+    info.version_name = "1.2.0";
+    info.download_url = "https://example.com/download/package.zip";
+
+    const auto result = PiUpdateService::ApplyUpdate(project.Dir(), info, http);
+    lock.close();
+
+    EXPECT_EQ(result, DAS_S_OK);
+    // interface.json 已替换。
+    std::ifstream new_interface(project.Dir() / "interface.json");
+    std::string   content(
+        (std::istreambuf_iterator<char>(new_interface)),
+        std::istreambuf_iterator<char>());
+    EXPECT_EQ(content, "{\"version\":\"1.2.0\"}");
+    // 被锁 DLL 新版本暂存到 .pending/。
+    const auto pending = project.Dir() / ".pending" / "MaaFramework.dll";
+    EXPECT_TRUE(std::filesystem::exists(pending));
 }

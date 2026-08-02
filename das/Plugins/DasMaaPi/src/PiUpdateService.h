@@ -2,6 +2,7 @@
 
 #include "PiHttpClient.h"
 
+#include <das/Plugins/DasMaaPi/MaaApiBoundary.h>
 #include <das/_autogen/idl/abi/DasResult.h>
 
 #include <cstdint>
@@ -45,12 +46,16 @@ namespace Das::Plugins::DasMaaPi
             std::string_view             proxy_url = {});
 
         // 应用更新：下载全量 zip（经 http seam，D-89-03）→ 安全解压（目录穿越
-        // 防护）→ 备份旧项目目录 → 原子替换 interface.json 所在目录 → 清理
-        // .update 临时目录（D-89-01 / D-89-03）。返回 -10008 时旧目录已回滚。
+        // 防护）→ 备份旧项目目录 → 原子替换 interface.json 所在目录 →
+        // resource.hash 校验（经 IMaaApiBoundary，D-89-05）→ 清理 .update
+        // 临时目录（D-89-01 / D-89-03）。返回 -10008 时旧目录已回滚。
+        // boundary 为空时用 DefaultMaaApiBoundary()（测试传
+        // FakeMaaApiBoundary）。
         static DasResult ApplyUpdate(
             const std::filesystem::path& pi_dir,
             const PiUpdateInfo&          info,
             PiHttpClient&                http,
-            std::string_view             proxy_url = {});
+            std::string_view             proxy_url = {},
+            IMaaApiBoundary*             boundary = nullptr);
     };
 } // namespace Das::Plugins::DasMaaPi
