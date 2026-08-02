@@ -7,16 +7,27 @@
 
 namespace Das::Plugins::DasMaaPi
 {
+    // D-89-03: 更新检查暂态（checkUpdate 结果 + applyUpdate 输入）。跨
+    // session 持久化的"待更新"状态不存在——pending_update_ 是
+    // MaapiAuthoringSession 内存暂态，不入 acceptedProperties、不落盘（Phase 87
+    // 黑盒约束）。
+    struct PiUpdateInfo;
+    class PiHttpClient;
+
     AcceptedSettingsDto ParseAcceptedSettings(const yyjson::value& value);
     yyjson::value       SerializeAcceptedSettings(
         const AcceptedSettingsDto& settings);
 
+    // pending_update 为空指针（或未 engaged）时 applyUpdate 命令投影 disabled。
+    // 后端状态驱动 commands 投影（Open Question 1 决策）；前端只按投影
+    // disabled 字段渲染，业务中立。
     yyjson::value ProjectAuthoringDocument(
         const AcceptedSettingsDto&          settings,
         const PiCatalog*                    catalog,
         const std::vector<PiDiagnosticDto>& diagnostics,
         int64_t                             revision,
-        std::vector<PiDiagnosticDto>*       projection_diagnostics = nullptr);
+        std::vector<PiDiagnosticDto>*       projection_diagnostics = nullptr,
+        const std::optional<PiUpdateInfo>*  pending_update = nullptr);
 
     void ApplySetValueChange(
         AcceptedSettingsDto& settings,
@@ -64,11 +75,20 @@ namespace Das::Plugins::DasMaaPi
 
     // D-84-28: invokeCommand 严格 dispatch。已知 commandId：
     //   - "newPreset"（D-84.2-04 通用 invokeCommand 落地）
-    // 未知 commandId 返回 false 并 emit error 诊断。
+    //   - "checkUpdate"（D-89-04：调 PiUpdateService::CheckUpdate，结果暂存
+    //     pending_update）
+    //   - "applyUpdate"（D-89-05：precondition 校验 pending engaged →
+    //     PiUpdateService::ApplyUpdate，成功清 pending，失败保留可重试）
+    // 未知 commandId 返回 false 并 emit error 诊断（DAS_E_NOT_FOUND）。
+    // pending_update 为空指针时 checkUpdate/applyUpdate 拒绝（需 session
+    // 暂态）。 http_seam 为空时构造 BeastHttpClient（生产）；测试注入
+    // FakePiHttpClient。
     bool ApplyInvokeCommandChange(
         AcceptedSettingsDto&          settings,
         const yyjson::value&          payload,
-        std::vector<PiDiagnosticDto>& diagnostics);
+        std::vector<PiDiagnosticDto>& diagnostics,
+        std::optional<PiUpdateInfo>*  pending_update = nullptr,
+        PiHttpClient*                 http_seam = nullptr);
 
     // D-84-29: convertView 在 MaaPI 一律拒绝（MaaPI 只支持 formSequence）。
     // payload 严格 {targetViewKind}；返回 false 并 emit error 诊断。

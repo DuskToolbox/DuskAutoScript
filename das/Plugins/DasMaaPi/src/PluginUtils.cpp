@@ -65,23 +65,27 @@ namespace Plugins::DasMaaPi
     }
 
     yyjson::value BuildDocument(
-        const AcceptedSettingsDto&    settings,
-        int64_t                       revision,
-        std::vector<PiDiagnosticDto>& diagnostics)
+        const AcceptedSettingsDto&         settings,
+        int64_t                            revision,
+        std::vector<PiDiagnosticDto>&      diagnostics,
+        const std::optional<PiUpdateInfo>* pending_update)
     {
         auto catalog = TryParseCatalog(settings, diagnostics);
         return ProjectAuthoringDocument(
             settings,
             catalog ? &*catalog : nullptr,
             diagnostics,
-            revision);
+            revision,
+            nullptr,
+            pending_update);
     }
 
     yyjson::value BuildApplyResult(
-        const AcceptedSettingsDto&   settings,
-        int64_t                      revision,
-        std::vector<PiDiagnosticDto> diagnostics,
-        bool                         project_document)
+        const AcceptedSettingsDto&         settings,
+        int64_t                            revision,
+        std::vector<PiDiagnosticDto>       diagnostics,
+        bool                               project_document,
+        const std::optional<PiUpdateInfo>* pending_update)
     {
         // project_document=false（uiEvent 等 UI 事件）时跳过 catalog 解析 +
         // document 投影，省下 TryParseCatalog 的文件 IO + 解析开销。
@@ -105,7 +109,9 @@ namespace Plugins::DasMaaPi
                 settings,
                 catalog ? &*catalog : nullptr,
                 diagnostics,
-                revision);
+                revision,
+                nullptr,
+                pending_update);
         }
 
         yyjson::value diagnostics_json(Das::Utils::MakeYyjsonArray());

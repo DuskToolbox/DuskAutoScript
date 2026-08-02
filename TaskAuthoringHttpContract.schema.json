@@ -107,7 +107,11 @@
           "$comment": "Only allowed when apply is present (confirmation + openView is rejected)."
         },
         "apply": { "$ref": "#/$defs/CommandApplyTemplate" },
-        "openView": { "const": "actionCatalog" }
+        "openView": { "const": "actionCatalog" },
+        "disabled": {
+          "type": "boolean",
+          "$comment": "D-89-04: 后端状态驱动的命令可用性（如 applyUpdate 无待更新时置灰）。wire 位于命令对象顶层，缺失视为 false。"
+        }
       },
       "oneOf": [
         { "required": ["apply"], "not": { "required": ["openView"] } },

@@ -1,4 +1,11 @@
 #include <das/Plugins/DasMaaPi/AuthoringProjector.h>
+
+#include "MaaDynamicSymbols.h"
+#include "PiHttpClient.h"
+#include "PiUpdateService.h"
+
+#include <das/DasApi.h>
+#include <das/Plugins/DasMaaPi/MaaPiErrorCodes.h>
 #include <das/Utils/DasJsonCore.h>
 
 #include <algorithm>
@@ -6,6 +13,8 @@
 #include <cctype>
 #include <filesystem>
 #include <map>
+#include <memory>
+#include <optional>
 #include <set>
 #include <string_view>
 
@@ -2081,7 +2090,8 @@ namespace Das::Plugins::DasMaaPi
         const PiCatalog*                    catalog,
         const std::vector<PiDiagnosticDto>& diagnostics,
         int64_t                             revision,
-        std::vector<PiDiagnosticDto>*       projection_diagnostics)
+        std::vector<PiDiagnosticDto>*       projection_diagnostics,
+        const std::optional<PiUpdateInfo>*  pending_update)
     {
         // itemId 偶现 bug 投影层兜底：不管哪个 apply 路径漏分配 item_id，
         // Get 投影出 doc.item.id 必须永不空、永唯一。这里在投影前对一份
@@ -2321,6 +2331,7 @@ namespace Das::Plugins::DasMaaPi
                 }
             }
         }
+
         // 根级 fieldLayout 必须在 fields 移走前构建（按 const ref 读 fields）。
         yyjson::value field_layout = BuildRootFieldLayout(
             fields,
@@ -2635,15 +2646,28 @@ namespace Das::Plugins::DasMaaPi
         // D-84.2-04: 根级 commands。newPreset 是 D-84-28 通用 invokeCommand
         // 在 MaaPI 的落地（无条件 emit —— preset 创建入口）。UI 触发时由
         // 84-07 注入当前 baseRevision。
+        //
+        // D-89-04: 追加 checkUpdate / applyUpdate 双按钮。checkUpdate 恒可点；
+        // applyUpdate disabled 由后端 pending_update_（checkUpdate 结果暂态）
+        // 驱动（Open Question 1 决策：后端状态驱动 commands 投影，前端只按投影
+        // disabled 渲染，业务中立）。wire disabled 位于命令对象顶层（89-04
+        // 契约"缺失=false"，故仅 disabled 时 emit）。commandId 拼写
+        // checkUpdate / applyUpdate 与 89-04 DasNativeUI 锁定一致（Pitfall 8 /
+        // T-89-03-02）。
         {
             yyjson::value commands(Array());
-            auto          emit_command =
-                [&](std::string_view command_id, std::string_view label_text)
+            auto          emit_command = [&](std::string_view command_id,
+                                             std::string_view label_text,
+                                             bool             disabled = false)
             {
                 yyjson::value cmd(Object());
                 auto          c_obj = cmd.as_object();
                 (*c_obj)[std::string_view("id")] = JsonString(command_id);
                 (*c_obj)[std::string_view("label")] = JsonString(label_text);
+                if (disabled)
+                {
+                    (*c_obj)[std::string_view("disabled")] = true;
+                }
                 yyjson::value apply(Object());
                 auto          a_obj = apply.as_object();
                 (*a_obj)[std::string_view("kind")] =
@@ -2656,6 +2680,11 @@ namespace Das::Plugins::DasMaaPi
                 commands.as_array()->emplace_back(std::move(cmd));
             };
             emit_command("newPreset", "New Preset");
+            emit_command("checkUpdate", "检查更新");
+            const bool apply_update_disabled =
+                pending_update == nullptr || !pending_update->has_value()
+                || !(*pending_update)->has_update;
+            emit_command("applyUpdate", "更新", apply_update_disabled);
             (*obj)[std::string_view("commands")] = std::move(commands);
         }
 
@@ -4036,10 +4065,98 @@ namespace Das::Plugins::DasMaaPi
         return true;
     }
 
+    // D-89-03: 网络 seam 解析。测试注入 FakePiHttpClient；生产 seam 为空时
+    // 构造 BeastHttpClient（owned 保持存活到本次调用结束）。
+    struct ResolvedHttp
+    {
+        std::unique_ptr<PiHttpClient> owned;
+        PiHttpClient*                 value = nullptr;
+    };
+
+    ResolvedHttp ResolveHttp(PiHttpClient* seam)
+    {
+        ResolvedHttp resolved;
+        if (seam != nullptr)
+        {
+            resolved.value = seam;
+        }
+        else
+        {
+            resolved.owned = std::make_unique<BeastHttpClient>();
+            resolved.value = resolved.owned.get();
+        }
+        return resolved;
+    }
+
+    // interface_path 的父目录 = 项目目录（interface.json 所在目录，D-89-01：
+    // 更新目标 = 项目目录替换）。
+    std::optional<std::filesystem::path> ResolvePiDir(
+        const AcceptedSettingsDto& settings)
+    {
+        if (!settings.adapter.interface_path
+            || settings.adapter.interface_path->empty())
+        {
+            return std::nullopt;
+        }
+        return std::filesystem::path(*settings.adapter.interface_path)
+            .parent_path();
+    }
+
+    // D-89-04: checkUpdate dispatch。调 PiUpdateService::CheckUpdate（读
+    // interface.json 顶层 github / mirrorchyan_rid + PiSemver 比较），成功把
+    // PiUpdateInfo 暂存 pending_update（commands 投影据此驱动 applyUpdate
+    // disabled）。失败 emit 诊断返回 DAS_E_MAAPI_UPDATE_CHECK_FAILED。
+    bool ApplyCheckUpdateCommand(
+        AcceptedSettingsDto&          settings,
+        std::vector<PiDiagnosticDto>& diagnostics,
+        std::optional<PiUpdateInfo>*  pending_update,
+        PiHttpClient*                 http_seam)
+    {
+        if (pending_update == nullptr)
+        {
+            EmitDiagnostic(
+                diagnostics,
+                "error",
+                "checkUpdate requires session pending state",
+                DAS_E_INVALID_ARGUMENT,
+                "pendingUpdate");
+            return false;
+        }
+        const auto pi_dir = ResolvePiDir(settings);
+        if (!pi_dir)
+        {
+            EmitDiagnostic(
+                diagnostics,
+                "error",
+                "checkUpdate requires a valid adapter.interfacePath",
+                DAS_E_MAAPI_UPDATE_CHECK_FAILED,
+                "adapter.interfacePath");
+            return false;
+        }
+        auto         http = ResolveHttp(http_seam);
+        PiUpdateInfo info;
+        const auto   result =
+            PiUpdateService::CheckUpdate(*pi_dir, *http.value, info);
+        if (IsFailed(result))
+        {
+            EmitDiagnostic(
+                diagnostics,
+                "error",
+                "checkUpdate failed",
+                result,
+                "checkUpdate");
+            return false;
+        }
+        *pending_update = std::move(info);
+        return true;
+    }
+
     bool ApplyInvokeCommandChange(
         AcceptedSettingsDto&          settings,
         const yyjson::value&          payload,
-        std::vector<PiDiagnosticDto>& diagnostics)
+        std::vector<PiDiagnosticDto>& diagnostics,
+        std::optional<PiUpdateInfo>*  pending_update,
+        PiHttpClient*                 http_seam)
     {
         if (!OnlyKeysExact(
                 payload,
@@ -4067,6 +4184,17 @@ namespace Das::Plugins::DasMaaPi
         {
             ApplyNewPreset(settings);
             return true;
+        }
+        // D-89-04 / T-89-03-01: checkUpdate 白名单分支。commandId 拼写
+        // camelCase 与 89-04 DasNativeUI 锁定（T-89-03-02）。未知 commandId
+        // 仍走下方 DAS_E_NOT_FOUND 拒绝。
+        if (*command_id == "checkUpdate")
+        {
+            return ApplyCheckUpdateCommand(
+                settings,
+                diagnostics,
+                pending_update,
+                http_seam);
         }
         EmitDiagnostic(
             diagnostics,

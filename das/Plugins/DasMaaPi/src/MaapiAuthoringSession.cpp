@@ -23,7 +23,9 @@ namespace Plugins::DasMaaPi
             const yyjson::value&            payload,
             AcceptedSettingsDto&            candidate,
             const std::optional<PiCatalog>& catalog,
-            std::vector<PiDiagnosticDto>&   diagnostics)
+            std::vector<PiDiagnosticDto>&   diagnostics,
+            std::optional<PiUpdateInfo>*    pending_update = nullptr,
+            PiHttpClient*                   http_seam = nullptr)
         {
             const PiCatalog* catalog_ptr =
                 catalog.has_value() ? &*catalog : nullptr;
@@ -62,7 +64,9 @@ namespace Plugins::DasMaaPi
                 return ApplyInvokeCommandChange(
                     candidate,
                     payload,
-                    diagnostics);
+                    diagnostics,
+                    pending_update,
+                    http_seam);
             }
             if (kind == "convertView")
             {
@@ -270,7 +274,8 @@ namespace Plugins::DasMaaPi
         // diagnostics 数组（即使空）。BuildDocument 既投影 document 又填充
         // diagnostics，envelope 同级包装二者（与 Compile 对称）。
         std::vector<PiDiagnosticDto> diagnostics;
-        auto document = BuildDocument(settings_, revision_, diagnostics);
+        auto                         document =
+            BuildDocument(settings_, revision_, diagnostics, &pending_update_);
 
         yyjson::value envelope(Das::Utils::MakeYyjsonObject());
         auto          env_obj = envelope.as_object();
@@ -364,7 +369,9 @@ namespace Plugins::DasMaaPi
                     payload,
                     candidate,
                     catalog,
-                    diagnostics))
+                    diagnostics,
+                    &pending_update_,
+                    test_http_))
             {
                 // interfacePath 变更会改变 catalog；新路径必须可解析，否则保留
                 // 失败语义——不落盘、不 ++revision，把解析诊断回传前端（远端保持
@@ -377,7 +384,7 @@ namespace Plugins::DasMaaPi
                     std::vector<PiDiagnosticDto> probe;
                     const auto& path = candidate.adapter.interface_path;
                     accept = !path || path->empty()
-                        || TryParseCatalog(candidate, probe).has_value();
+                             || TryParseCatalog(candidate, probe).has_value();
                     if (!accept)
                     {
                         diagnostics.insert(
@@ -403,7 +410,8 @@ namespace Plugins::DasMaaPi
             settings_,
             result_revision,
             std::move(diagnostics),
-            /*project_document=*/kind != "uiEvent");
+            /*project_document=*/kind != "uiEvent",
+            &pending_update_);
 
         // 5) 注入 portDefinitions/portMap 到 acceptedProperties（Provider 私有
         //    运行期派生，不属于 document UI IR）。

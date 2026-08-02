@@ -836,6 +836,16 @@ namespace Das::Core::TaskScheduler
                 }
             }
 
+            // D-89-04: disabled（后端状态驱动的命令可用性，如 applyUpdate 无待
+            // 更新时置灰）。wire 位于命令对象顶层，缺失视为 false（89-04
+            // DasNativeUI 契约）。为 bool 时才合法。
+            if (obj.contains("disabled") && !obj["disabled"].is_bool())
+            {
+                return Fail(
+                    "invalidDisabled",
+                    "CommandDescriptor.disabled must be bool");
+            }
+
             if (has_apply)
             {
                 if (auto r = ValidateCommandApplyTemplate(obj["apply"]);
@@ -867,7 +877,8 @@ namespace Das::Core::TaskScheduler
                      "icon",
                      "confirmation",
                      "apply",
-                     "openView"}))
+                     "openView",
+                     "disabled"}))
             {
                 return Fail(
                     "unknownField",

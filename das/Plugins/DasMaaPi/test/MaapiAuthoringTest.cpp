@@ -15,6 +15,12 @@
 #include <das/_autogen/idl/abi/IDasTaskAuthoring.h>
 #include <gtest/gtest.h>
 
+// D-89-03: 会话级直接测试（不经 IPC）——MaapiAuthoringSession 是 final 具体类，
+// DasMaaPiTest 直接编译本类 + PiUpdateService + FakeHttpClient seam，可无 IPC
+// 验证 checkUpdate/applyUpdate 全链路 + pending_update_ 暂态。
+#include "MaapiAuthoringSession.h"
+#include "PiUpdateService.h"
+
 #include <array>
 #include <chrono>
 #include <cstdint>
@@ -46,12 +52,14 @@ namespace Das::Plugins::DasMaaPi
             ports);
 
     // D-84-07: 暴露 BuildApplyResult 给 session-level 测试做严格 envelope
-    // 校验。
+    // 校验。pending_update（D-89-03）供 commands 投影驱动 applyUpdate
+    // disabled。
     yyjson::value BuildApplyResult(
-        const AcceptedSettingsDto&   settings,
-        int64_t                      revision,
-        std::vector<PiDiagnosticDto> diagnostics,
-        bool                         project_document = true);
+        const AcceptedSettingsDto&         settings,
+        int64_t                            revision,
+        std::vector<PiDiagnosticDto>       diagnostics,
+        bool                               project_document = true,
+        const std::optional<PiUpdateInfo>* pending_update = nullptr);
 } // namespace Das::Plugins::DasMaaPi
 
 namespace
@@ -6712,4 +6720,409 @@ TEST(MaapiProjectionTest, PretaskSettingsRoundTripPreservesSelectedValue)
     auto value = FieldValueOf(document, "pretask.bootstrap_mode");
     ASSERT_TRUE(value.is_string());
     EXPECT_EQ(value.as_string().value_or(""), "fast");
+}
+
+// ============================================================================
+// Phase 89 Plan 03 — checkUpdate / applyUpdate invokeCommand dispatch +
+// 只读版本字段投影（D-89-04 / D-89-05 / D-89-07 修订）。
+//
+// 会话级直接测试（不经 IPC）：MaapiAuthoringSession 是 final 具体类，且
+// DasMaaPiTest 直接编译本类 + PiUpdateService + FakeUpdateHttpClient seam，故可
+// 在进程内构造 session、注入网络 seam、读 pending_update_，端到端验证
+// checkUpdate → pending_update_ → commands 投影 disabled → applyUpdate 全链路。
+// ============================================================================
+namespace
+{
+    // D-89-03: 最小网络 seam（同 PiUpdateServiceTest::FakePiHttpClient）。按
+    // URL 子串路由 canned 响应，零外网；记录调用供断言路由。
+    class FakeUpdateHttpClient final : public PiHttpClient
+    {
+    public:
+        struct Route
+        {
+            std::string path_fragment;
+            std::string body;
+            int         status = 200;
+        };
+
+        void AddRoute(
+            std::string path_fragment,
+            std::string body,
+            int         status = 200)
+        {
+            routes_.push_back(
+                Route{std::move(path_fragment), std::move(body), status});
+        }
+
+        void SetNetworkFailure(bool fail) { fail_all_ = fail; }
+
+        int CountRequestsWith(std::string_view fragment) const
+        {
+            int count = 0;
+            for (const auto& call : calls_)
+            {
+                if (call.url.find(fragment) != std::string::npos)
+                {
+                    ++count;
+                }
+            }
+            return count;
+        }
+
+        DasResult Get(
+            const std::string& url,
+            std::string&       out_body,
+            int&               out_status,
+            const std::string& proxy_url) override
+        {
+            return Dispatch(url, out_body, out_status, proxy_url);
+        }
+
+        DasResult Head(
+            const std::string& url,
+            int&               out_status,
+            const std::string& proxy_url) override
+        {
+            std::string body;
+            return Dispatch(url, body, out_status, proxy_url);
+        }
+
+    private:
+        DasResult Dispatch(
+            const std::string& url,
+            std::string&       out_body,
+            int&               out_status,
+            const std::string& proxy_url)
+        {
+            calls_.push_back(Call{url, proxy_url});
+            if (fail_all_)
+            {
+                return DAS_E_FAIL;
+            }
+            for (const auto& route : routes_)
+            {
+                if (url.find(route.path_fragment) != std::string::npos)
+                {
+                    out_body = route.body;
+                    out_status = route.status;
+                    return DAS_S_OK;
+                }
+            }
+            out_status = 404;
+            return DAS_S_OK;
+        }
+
+        struct Call
+        {
+            std::string url;
+            std::string proxy_url;
+        };
+
+        std::vector<Route> routes_;
+        std::vector<Call>  calls_;
+        bool               fail_all_ = false;
+    };
+
+    // 临时项目目录（interface.json 所在目录 = D-89-01 更新目标）。唯一名防并行
+    // ctest 进程（及其 _backup_ / .update 兄弟目录）碰撞，析构清理。
+    class TempUpdateProject
+    {
+    public:
+        explicit TempUpdateProject(std::string name = {})
+        {
+            static int counter{0};
+            if (name.empty())
+            {
+                name = "MaapiUpdate_" + std::to_string(counter++);
+            }
+            name_ = std::move(name);
+            dir_ = std::filesystem::temp_directory_path() / name_;
+            Cleanup();
+            std::error_code ec;
+            std::filesystem::create_directories(dir_, ec);
+        }
+
+        ~TempUpdateProject() { Cleanup(); }
+
+        const std::filesystem::path& Dir() const { return dir_; }
+
+        void WriteInterface(const std::string& json)
+        {
+            std::ofstream file(dir_ / "interface.json", std::ios::binary);
+            file << json;
+        }
+
+    private:
+        void Cleanup()
+        {
+            std::error_code ec;
+            std::filesystem::remove_all(dir_, ec);
+            // 清理兄弟目录：{name}_backup_{version} + {name}.update。
+            const auto parent = dir_.parent_path();
+            const auto backup_prefix = name_ + "_backup_";
+            const auto update_name = name_ + ".update";
+            for (const auto& entry : std::filesystem::directory_iterator(
+                     parent,
+                     std::filesystem::directory_options::skip_permission_denied,
+                     ec))
+            {
+                const auto leaf = entry.path().filename().string();
+                if (leaf.rfind(backup_prefix, 0) == 0 || leaf == update_name)
+                {
+                    std::filesystem::remove_all(entry.path(), ec);
+                }
+            }
+        }
+
+        std::string           name_;
+        std::filesystem::path dir_;
+    };
+
+    // interface.json 顶层 github 字段 → GitHub 检查来源（MirrorChyan 兜底）。
+    std::string MakeUpdateInterface(
+        const std::string& version,
+        const std::string& github,
+        const std::string& name = "test-project")
+    {
+        return R"({
+            "interface_version": 2,
+            "name": ")"
+               + name + R"(",
+            "version": ")"
+               + version + R"(",
+            "github": ")"
+               + github + R"("
+        })";
+    }
+
+    // GitHub releases/latest API 响应（tag + 可匹配 os=windows arch=x86_64 的
+    // asset，d 89-02 MatchGithubAsset 语义）。
+    std::string UpdateGithubRelease(const std::string& tag)
+    {
+        return R"({"tag_name":")" + tag
+               + R"(","body":"notes","assets":[{"name":"test-project-win-x86_64-)"
+               + tag
+               + R"(.zip","size":123,"browser_download_url":"https://github.com/owner/repo/releases/download/)"
+               + tag + R"(/test-project-win-x86_64-)" + tag + R"(.zip"}]})";
+    }
+
+    // 构造会话直接测试的 AcceptedSettingsDto（adapter.interfacePath →
+    // 临时项目目录的 interface.json；generic_string 用 '/' 避免 JSON 转义）。
+    AcceptedSettingsDto MakeUpdateSettings(const std::filesystem::path& pi_dir)
+    {
+        const auto context = Das::Utils::ParseYyjsonFromString(
+            R"({"adapter":{"interfacePath":")"
+            + (pi_dir / "interface.json").generic_string() + R"("}})");
+        return ParseAcceptedSettings(
+            context.has_value() ? *context : Das::Utils::MakeYyjsonObject());
+    }
+
+    // 在 document.commands[] 中按 id 找命令（89-03 commands 投影断言）。
+    std::optional<yyjson::value> FindCommand(
+        const yyjson::value& document,
+        std::string_view     id)
+    {
+        auto obj = document.as_object();
+        if (!obj || !obj->contains(std::string_view("commands")))
+        {
+            return std::nullopt;
+        }
+        auto commands = (*obj)[std::string_view("commands")].as_array();
+        if (!commands)
+        {
+            return std::nullopt;
+        }
+        for (auto it = commands->begin(); it != commands->end(); ++it)
+        {
+            auto cmd = it->as_object();
+            if (!cmd)
+            {
+                continue;
+            }
+            if ((*cmd)[std::string_view("id")].as_string().value_or("") == id)
+            {
+                return Das::Utils::CloneYyjsonValue(*it);
+            }
+        }
+        return std::nullopt;
+    }
+
+    // 对 owning yyjson::value 按下标取字段（object_ref 才有 operator[]，须先
+    // as_object().value()）。仅在键确实存在时使用（缺失 operator[] 抛异常）。
+    auto FieldOf(const yyjson::value& value, std::string_view key)
+    {
+        return value.as_object().value()[key];
+    }
+
+    // 命令是否含顶层 disabled 键（enabled 时后端省略该键，前端"缺失=false"；
+    // 89-04 契约）。
+    bool CommandHasDisabled(const std::optional<yyjson::value>& cmd)
+    {
+        return cmd.has_value()
+               && cmd->as_object().value().contains(
+                   std::string_view("disabled"));
+    }
+} // namespace
+
+// D-89-04 端到端（Tracer 3）：checkUpdate 经 invokeCommand 分派 → 调
+// PiUpdateService::CheckUpdate（Fake 网络 seam，GitHub 兜底）→ 写 session
+// pending_update_ → commands 投影双按钮：checkUpdate 恒可点、applyUpdate 检查到
+// 新版后 enabled（无 disabled）。revision 递增、无 error、严格 envelope
+// 可消费。
+TEST(MaapiUpdateCommandTest, InvokeCommandCheckUpdateDispatchesAndEnablesApply)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    TempUpdateProject project;
+    project.WriteInterface(
+        MakeUpdateInterface("1.0.0", "https://github.com/owner/repo"));
+
+    FakeUpdateHttpClient http;
+    http.AddRoute(
+        "/repos/owner/repo/releases/latest",
+        UpdateGithubRelease("v1.2.0"));
+
+    MaapiAuthoringSession session(MakeUpdateSettings(project.Dir()));
+    session.SetHttpClientForTest(&http);
+
+    DasPtr<Das::ExportInterface::IDasJson> result_json;
+    auto                                   change = ParseDasJson(
+        "{\"baseRevision\":0,\"kind\":\"invokeCommand\","
+        "\"payload\":{\"commandId\":\"checkUpdate\"}}");
+    ASSERT_EQ(session.ApplyChange(change.Get(), result_json.Put()), DAS_S_OK);
+    auto result = ReadJsonInterface(result_json.Get());
+
+    EXPECT_EQ(CountDiagnosticsBySeverity(result, "error"), 0u);
+    EXPECT_EQ(DocumentRevisionFromApplyResult(result), 1);
+    // pending_update_ 暂态写入（检查到新版 has_update=true）。
+    ASSERT_TRUE(session.PendingUpdate().has_value());
+    EXPECT_TRUE(session.PendingUpdate()->has_update);
+    EXPECT_EQ(session.PendingUpdate()->version_name, "v1.2.0");
+
+    auto document = DocumentFromApplyResult(result);
+    auto check_cmd = FindCommand(document, "checkUpdate");
+    ASSERT_TRUE(check_cmd.has_value());
+    // checkUpdate 恒可点：缺失 disabled == false（89-04 契约"缺失=false"）。
+    EXPECT_FALSE(CommandHasDisabled(check_cmd));
+    auto apply_cmd = FindCommand(document, "applyUpdate");
+    ASSERT_TRUE(apply_cmd.has_value());
+    EXPECT_FALSE(CommandHasDisabled(apply_cmd));
+    EXPECT_EQ(http.CountRequestsWith("/repos/owner/repo/releases/latest"), 1);
+}
+
+// D-89-04：checkUpdate 无新版（tag == 当前版本）→ has_update=false →
+// commands 投影 applyUpdate.disabled==true（"更新"按钮置灰）。
+TEST(MaapiUpdateCommandTest, InvokeCommandCheckUpdateNoUpdateDisablesApply)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    TempUpdateProject project;
+    project.WriteInterface(
+        MakeUpdateInterface("1.0.0", "https://github.com/owner/repo"));
+
+    FakeUpdateHttpClient http;
+    http.AddRoute(
+        "/repos/owner/repo/releases/latest",
+        UpdateGithubRelease("v1.0.0"));
+
+    MaapiAuthoringSession session(MakeUpdateSettings(project.Dir()));
+    session.SetHttpClientForTest(&http);
+
+    DasPtr<Das::ExportInterface::IDasJson> result_json;
+    auto                                   change = ParseDasJson(
+        "{\"baseRevision\":0,\"kind\":\"invokeCommand\","
+        "\"payload\":{\"commandId\":\"checkUpdate\"}}");
+    ASSERT_EQ(session.ApplyChange(change.Get(), result_json.Put()), DAS_S_OK);
+    auto result = ReadJsonInterface(result_json.Get());
+
+    EXPECT_EQ(CountDiagnosticsBySeverity(result, "error"), 0u);
+    ASSERT_TRUE(session.PendingUpdate().has_value());
+    EXPECT_FALSE(session.PendingUpdate()->has_update);
+
+    auto document = DocumentFromApplyResult(result);
+    auto apply_cmd = FindCommand(document, "applyUpdate");
+    ASSERT_TRUE(apply_cmd.has_value());
+    EXPECT_TRUE(FieldOf(*apply_cmd, "disabled").as_bool().value_or(false));
+}
+
+// D-89-04：checkUpdate 网络失败 → error 诊断 + 不递增 revision +
+// pending_update_ 不 engaged（"检查更新"仍可重试）。
+TEST(MaapiUpdateCommandTest, InvokeCommandCheckUpdateFailureEmitsError)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    TempUpdateProject project;
+    project.WriteInterface(
+        MakeUpdateInterface("1.0.0", "https://github.com/owner/repo"));
+
+    FakeUpdateHttpClient http;
+    http.SetNetworkFailure(true);
+
+    MaapiAuthoringSession session(MakeUpdateSettings(project.Dir()));
+    session.SetHttpClientForTest(&http);
+
+    DasPtr<Das::ExportInterface::IDasJson> result_json;
+    auto                                   change = ParseDasJson(
+        "{\"baseRevision\":0,\"kind\":\"invokeCommand\","
+        "\"payload\":{\"commandId\":\"checkUpdate\"}}");
+    ASSERT_EQ(session.ApplyChange(change.Get(), result_json.Put()), DAS_S_OK);
+    auto result = ReadJsonInterface(result_json.Get());
+
+    EXPECT_GE(CountDiagnosticsBySeverity(result, "error"), 1u);
+    EXPECT_EQ(DocumentRevisionFromApplyResult(result), 0);
+    EXPECT_FALSE(session.PendingUpdate().has_value());
+}
+
+// D-89-05（Tracer 3）：无 pending（未先检查/已清）时 applyUpdate 拒绝 → error
+// 诊断 + 不递增 revision。
+// Open Question 1 决策：commands 投影 applyUpdate.disabled 完全由后端
+// pending_update_ 驱动（无 pending / has_update=false →
+// disabled；has_update=true → enabled）。前端只按投影 disabled 渲染，业务中立。
+TEST(MaapiProjectionTest, CommandsApplyUpdateDisabledDrivenByPendingState)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto                catalog = MakeStrictProjectionMockCatalog();
+    AcceptedSettingsDto settings;
+    settings.pi.language = "zh_cn";
+
+    // 无 pending（未检查）→ applyUpdate disabled。
+    auto doc_no_pending = ProjectAuthoringDocument(settings, &catalog, {}, 0);
+    auto apply_no_pending = FindCommand(doc_no_pending, "applyUpdate");
+    ASSERT_TRUE(apply_no_pending.has_value());
+    EXPECT_TRUE(
+        FieldOf(*apply_no_pending, "disabled").as_bool().value_or(false));
+    auto check_cmd = FindCommand(doc_no_pending, "checkUpdate");
+    ASSERT_TRUE(check_cmd.has_value());
+    EXPECT_FALSE(CommandHasDisabled(check_cmd));
+
+    // pending engaged 但 has_update=false → disabled。
+    std::optional<PiUpdateInfo> pending_no_update;
+    pending_no_update.emplace();
+    auto doc_no_update = ProjectAuthoringDocument(
+        settings,
+        &catalog,
+        {},
+        0,
+        nullptr,
+        &pending_no_update);
+    auto apply_no_update = FindCommand(doc_no_update, "applyUpdate");
+    ASSERT_TRUE(apply_no_update.has_value());
+    EXPECT_TRUE(
+        FieldOf(*apply_no_update, "disabled").as_bool().value_or(false));
+
+    // pending engaged 且 has_update=true → enabled（缺失 disabled == false）。
+    std::optional<PiUpdateInfo> pending_has_update;
+    pending_has_update.emplace();
+    pending_has_update->has_update = true;
+    auto doc_has_update = ProjectAuthoringDocument(
+        settings,
+        &catalog,
+        {},
+        0,
+        nullptr,
+        &pending_has_update);
+    auto apply_has_update = FindCommand(doc_has_update, "applyUpdate");
+    ASSERT_TRUE(apply_has_update.has_value());
+    EXPECT_FALSE(CommandHasDisabled(apply_has_update));
 }
