@@ -322,6 +322,9 @@ namespace Plugins::DasMaaPi
         {
             return DAS_E_INVALID_POINTER;
         }
+        // IN-01: 与 GetDocument/Compile 对齐——入口清空 out，避免调用方传入
+        // 非空 out 指针时旧对象泄漏。
+        *pp_out_result_json = nullptr;
 
         std::vector<PiDiagnosticDto> diagnostics;
         auto catalog = TryParseCatalog(settings_, diagnostics);
@@ -363,6 +366,7 @@ namespace Plugins::DasMaaPi
         int64_t result_revision = revision_;
         if (request_ok && revision_ok)
         {
+            const auto          path_before = settings_.adapter.interface_path;
             AcceptedSettingsDto candidate = settings_;
             if (DispatchStrictChange(
                     kind,
@@ -399,6 +403,16 @@ namespace Plugins::DasMaaPi
                     ++revision_;
                     result_revision = revision_;
                 }
+                // WR-06: interface_path 变更后按新 settings_ 重新解析 catalog，
+                // 否则 InjectPortDerivations 沿用旧路径解析的 catalog（旧路径
+                // 失效时为 null 直接跳过），返回的 acceptedProperties 的
+                // portDefinitions/portMap 与 document 所用的新 interface.json
+                // 不一致（BuildApplyResult 内部已用新路径重解析，document
+                // 正确）。
+                if (settings_.adapter.interface_path != path_before)
+                {
+                    catalog = TryParseCatalog(settings_, diagnostics);
+                }
             }
         }
 
@@ -419,6 +433,13 @@ namespace Plugins::DasMaaPi
 
         auto wrapped = WrapJson(std::move(result_json));
         *pp_out_result_json = wrapped.Get();
+        // IN-01: WrapJson 内部 SerializeYyjsonValue 失败时返回空 DasPtr，此处
+        // 判空防止 (*pp_out_result_json)->AddRef() 空指针解引用（与
+        // GetDocument/Compile 对齐）。
+        if (*pp_out_result_json == nullptr)
+        {
+            return DAS_E_FAIL;
+        }
         (*pp_out_result_json)->AddRef();
         return DAS_S_OK;
     }
