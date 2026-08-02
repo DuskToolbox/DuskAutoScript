@@ -406,6 +406,7 @@ namespace Das::Plugins::DasMaaPi
             const InterfaceMetadata& meta,
             PiHttpClient&            http,
             const std::string&       proxy,
+            const std::string&       cdk_key,
             PiUpdateInfo&            out)
         {
             const std::vector<std::string> bases{
@@ -413,11 +414,17 @@ namespace Das::Plugins::DasMaaPi
                 std::string(MIRRORCHYAN_BASE_BACKUP)};
             for (const auto& base : bases)
             {
-                const std::string url =
+                std::string url =
                     base + "/" + meta.mirrorchyan_rid
                     + "/latest?current_version=" + UrlEncode(meta.version)
                     + "&user_agent=DasMaaPi&os=windows"
                       "&arch=x86_64&channel=stable";
+                // 对齐 MXU 语义：CDK 作为可选 query 参数（cdk）；无 key
+                // 时不带。
+                if (!cdk_key.empty())
+                {
+                    url += "&cdk=" + UrlEncode(cdk_key);
+                }
                 std::string body;
                 int         status = 0;
                 const auto  result = http.Get(url, body, status, proxy);
@@ -1094,10 +1101,12 @@ namespace Das::Plugins::DasMaaPi
         const std::filesystem::path& pi_dir,
         PiHttpClient&                http,
         PiUpdateInfo&                out,
-        std::string_view             proxy_url)
+        std::string_view             proxy_url,
+        std::string_view             mirrorchyan_key)
     {
         out = PiUpdateInfo{};
         const std::string proxy(proxy_url);
+        const std::string cdk_key(mirrorchyan_key);
 
         InterfaceMetadata meta;
         const auto        metadata_result = ReadInterfaceMetadata(pi_dir, meta);
@@ -1109,7 +1118,8 @@ namespace Das::Plugins::DasMaaPi
         // MirrorChyan 优先（D-89-02）。
         if (!meta.mirrorchyan_rid.empty())
         {
-            const auto mirror_result = CheckMirrorChyan(meta, http, proxy, out);
+            const auto mirror_result =
+                CheckMirrorChyan(meta, http, proxy, cdk_key, out);
             if (IsOk(mirror_result))
             {
                 // code!=0 部分信息 → 按 MXU 语义直接返回（不尝试 GitHub）。
@@ -1163,6 +1173,7 @@ namespace Das::Plugins::DasMaaPi
         const PiUpdateInfo&          info,
         PiHttpClient&                http,
         std::string_view             proxy_url,
+        std::string_view             mirrorchyan_key,
         IMaaApiBoundary*             boundary)
     {
         IMaaApiBoundary& api_boundary =
@@ -1204,8 +1215,20 @@ namespace Das::Plugins::DasMaaPi
         } cleanup{update_root};
 
         // 1. 下载全量 zip 到 .update/{version}.zip（D-89-03 / D-89-08）。
+        // MirrorChyan 来源的下载 URL 携带 key 时附带 cdk query（对齐 MXU
+        // 语义）；GitHub 来源或 key 为空时不改动 URL。
+        const std::string cdk_key(mirrorchyan_key);
+        std::string       download_url(info.download_url);
+        if (!cdk_key.empty()
+            && download_url.find("mirrorchyan") != std::string::npos)
+        {
+            download_url +=
+                std::string(
+                    download_url.find('?') != std::string::npos ? "&" : "?")
+                + "cdk=" + UrlEncode(cdk_key);
+        }
         std::string zip_data;
-        if (IsFailed(DownloadZip(http, info.download_url, proxy, zip_data)))
+        if (IsFailed(DownloadZip(http, download_url, proxy, zip_data)))
         {
             return DAS_E_MAAPI_UPDATE_APPLY_FAILED;
         }

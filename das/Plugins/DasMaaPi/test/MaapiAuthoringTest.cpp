@@ -6374,24 +6374,38 @@ TEST(
     ASSERT_TRUE(layout.has_value());
 
     // 项目设置 section（顺序第一）。defaultExpanded=true。
-    // D-89-07：project 尾部追加 resourceVersion / maafwVersion
-    // 两个只读版本字段。
+    // D-89-09 增量：adapter.mirrorchyanKey / resourceVersion / maafwVersion
+    // 已独立到 update section，project 只含项目级字段。
     auto project_section = FindLayoutSection(document, "project");
     ASSERT_TRUE(project_section.has_value());
     auto project_fields = LayoutSectionFieldNames(*project_section);
-    ASSERT_EQ(project_fields.size(), 9u);
+    ASSERT_EQ(project_fields.size(), 8u);
     EXPECT_EQ(project_fields[0], "adapter.interfacePath");
-    EXPECT_EQ(project_fields[1], "adapter.executionPolicy.failFast");
-    EXPECT_EQ(project_fields[2], "controllerName");
-    EXPECT_EQ(project_fields[3], "resourceName");
-    EXPECT_EQ(project_fields[4], "presetName");
-    EXPECT_EQ(project_fields[5], "language");
-    EXPECT_EQ(project_fields[6], "pretask.bootstrap_mode");
-    EXPECT_EQ(project_fields[7], "resourceVersion");
-    EXPECT_EQ(project_fields[8], "maafwVersion");
+    EXPECT_EQ(project_fields[1], "adapter.proxyUrl");
+    EXPECT_EQ(project_fields[2], "adapter.executionPolicy.failFast");
+    EXPECT_EQ(project_fields[3], "controllerName");
+    EXPECT_EQ(project_fields[4], "resourceName");
+    EXPECT_EQ(project_fields[5], "presetName");
+    EXPECT_EQ(project_fields[6], "language");
+    EXPECT_EQ(project_fields[7], "pretask.bootstrap_mode");
     auto project_section_obj = project_section->as_object();
     ASSERT_TRUE(project_section_obj.has_value());
     EXPECT_TRUE((*project_section_obj)[std::string_view("defaultExpanded")]
+                    .as_bool()
+                    .value_or(false));
+
+    // 更新 section（顺序第二）：mirrorchyanKey + 两个只读版本字段。
+    // defaultExpanded=true，与项目设置 section 一致。
+    auto update_section = FindLayoutSection(document, "update");
+    ASSERT_TRUE(update_section.has_value());
+    auto update_fields = LayoutSectionFieldNames(*update_section);
+    ASSERT_EQ(update_fields.size(), 3u);
+    EXPECT_EQ(update_fields[0], "adapter.mirrorchyanKey");
+    EXPECT_EQ(update_fields[1], "resourceVersion");
+    EXPECT_EQ(update_fields[2], "maafwVersion");
+    auto update_section_obj = update_section->as_object();
+    ASSERT_TRUE(update_section_obj.has_value());
+    EXPECT_TRUE((*update_section_obj)[std::string_view("defaultExpanded")]
                     .as_bool()
                     .value_or(false));
 
@@ -6444,13 +6458,22 @@ TEST(MaapiProjectionTest, RootFieldLayoutCoversAdapterFieldsWhenCatalogAbsent)
     auto project_section = FindLayoutSection(document, "project");
     ASSERT_TRUE(project_section.has_value());
     auto project_fields = LayoutSectionFieldNames(*project_section);
-    // D-89-07：无 catalog 时版本字段仍投影（值回退空串），故 adapter 两字段 +
-    // resourceVersion + maafwVersion 共 4 个。
-    ASSERT_EQ(project_fields.size(), 4u);
+    // D-89-09 增量：mirrorchyanKey + 版本字段独立到 update section；project
+    // 只含 adapter 三字段（interfacePath / proxyUrl / executionPolicy）。
+    ASSERT_EQ(project_fields.size(), 3u);
     EXPECT_EQ(project_fields[0], "adapter.interfacePath");
-    EXPECT_EQ(project_fields[1], "adapter.executionPolicy.failFast");
-    EXPECT_EQ(project_fields[2], "resourceVersion");
-    EXPECT_EQ(project_fields[3], "maafwVersion");
+    EXPECT_EQ(project_fields[1], "adapter.proxyUrl");
+    EXPECT_EQ(project_fields[2], "adapter.executionPolicy.failFast");
+
+    // 无 catalog 时 update section 仍覆盖 mirrorchyanKey + 两个版本字段
+    // （值回退空串）。
+    auto update_section = FindLayoutSection(document, "update");
+    ASSERT_TRUE(update_section.has_value());
+    auto update_fields = LayoutSectionFieldNames(*update_section);
+    ASSERT_EQ(update_fields.size(), 3u);
+    EXPECT_EQ(update_fields[0], "adapter.mirrorchyanKey");
+    EXPECT_EQ(update_fields[1], "resourceVersion");
+    EXPECT_EQ(update_fields[2], "maafwVersion");
 
     auto                        layout_names = LayoutLeafFieldNames(document);
     auto                        field_names = RootFieldNames(document);
@@ -7380,20 +7403,24 @@ TEST(MaapiProjectionTest, ProjectAuthoringDocumentProjectsReadonlyVersionFields)
     // （null-safe，T-89-03-05 C 边界拷贝）。
     EXPECT_EQ(FieldOf(*maafw, "value").as_string().value_or("x"), "");
 
-    // fieldLayout 项目设置 section entries 覆盖两个版本字段。
-    auto project = FindLayoutSection(document, "project");
-    ASSERT_TRUE(project.has_value());
-    auto names = LayoutSectionFieldNames(*project);
+    // fieldLayout 更新 section entries 覆盖两个版本字段（D-89-09 增量：
+    // 版本字段从项目设置 section 独立到更新 section）。
+    auto update = FindLayoutSection(document, "update");
+    ASSERT_TRUE(update.has_value());
+    auto names = LayoutSectionFieldNames(*update);
     EXPECT_NE(
         std::find(names.begin(), names.end(), "resourceVersion"),
         names.end());
     EXPECT_NE(
         std::find(names.begin(), names.end(), "maafwVersion"),
         names.end());
+    EXPECT_NE(
+        std::find(names.begin(), names.end(), "adapter.mirrorchyanKey"),
+        names.end());
 }
 
 // D-89-07 修订：catalog 缺席（无 PI 接口）时版本字段仍投影，值回退空串，
-// fieldLayout 兜底桶（未识别前缀 → 项目设置 section）仍覆盖。
+// fieldLayout 更新 section（update 桶）仍覆盖。
 TEST(MaapiProjectionTest, ProjectAuthoringDocumentVersionFieldsCatalogAbsent)
 {
     using namespace Das::Plugins::DasMaaPi;
@@ -7415,9 +7442,9 @@ TEST(MaapiProjectionTest, ProjectAuthoringDocumentVersionFieldsCatalogAbsent)
     ASSERT_TRUE(maafw.has_value());
     EXPECT_TRUE(FieldOf(*maafw, "readonly").as_bool().value_or(false));
 
-    auto project = FindLayoutSection(document, "project");
-    ASSERT_TRUE(project.has_value());
-    auto names = LayoutSectionFieldNames(*project);
+    auto update = FindLayoutSection(document, "update");
+    ASSERT_TRUE(update.has_value());
+    auto names = LayoutSectionFieldNames(*update);
     EXPECT_NE(
         std::find(names.begin(), names.end(), "resourceVersion"),
         names.end());

@@ -330,6 +330,8 @@ namespace Das::Plugins::DasMaaPi
                         OptionalString(*adapter, "projectRoot");
                     settings.adapter.proxy_url =
                         OptionalString(*adapter, "proxyUrl");
+                    settings.adapter.mirrorchyan_key =
+                        OptionalString(*adapter, "mirrorchyanKey");
                     settings.adapter.source_fingerprint =
                         OptionalString(*adapter, "sourceFingerprint");
                     if (adapter->contains(std::string_view("executionPolicy")))
@@ -1814,6 +1816,11 @@ namespace Das::Plugins::DasMaaPi
             (*adapter_obj)[std::string_view("proxyUrl")] =
                 JsonString(*settings.adapter.proxy_url);
         }
+        if (settings.adapter.mirrorchyan_key)
+        {
+            (*adapter_obj)[std::string_view("mirrorchyanKey")] =
+                JsonString(*settings.adapter.mirrorchyan_key);
+        }
         if (settings.adapter.project_root)
         {
             (*adapter_obj)[std::string_view("projectRoot")] =
@@ -1932,11 +1939,13 @@ namespace Das::Plugins::DasMaaPi
 
         // 按 name 前缀/字面量分类（保留 fields[] 声明顺序，layout 与 fields
         // 顺序一致）。fields[] 不含 options.<name>（游离 global_option
-        // 不投影），故已知字段分两组：project 项目级字段与 settings.<opt> 分区
+        // 不投影），故已知字段分三组：update 更新字段（镜像源 key + 版本只读
+        // 字段，独立 section）、project 项目级字段与 settings.<opt> 分区
         // 字段。未识别前缀的 root field 兜底进 project_entries（项目设置
         // section），保证 fieldLayout 全覆盖，防未来新增 root field 前缀漏列
         // 触发 ValidateFieldLayout 的 layoutMissingField reject。新增 root
         // field 前缀时应在此显式登记，以便走更贴切的分类桶。
+        std::vector<std::string>           update_entries;
         std::vector<std::string>           project_entries;
         std::map<std::string, std::string> settings_by_opt;
         constexpr std::string_view         kSettingsPrefix = "settings.";
@@ -1957,7 +1966,15 @@ namespace Das::Plugins::DasMaaPi
             {
                 continue;
             }
-            if (name == "controllerName" || name == "resourceName"
+            if (name == "adapter.mirrorchyanKey" || name == "resourceVersion"
+                || name == "maafwVersion")
+            {
+                // 更新 section：镜像源 key + 版本只读字段（D-89-09 增量，
+                // 与 checkUpdate/applyUpdate 按钮同属"更新"语义分区）。
+                update_entries.emplace_back(name);
+            }
+            else if (
+                name == "controllerName" || name == "resourceName"
                 || name == "presetName" || name == "language"
                 || name.starts_with("adapter.") || name.starts_with("pretask."))
             {
@@ -2030,6 +2047,37 @@ namespace Das::Plugins::DasMaaPi
                 resolve_default_expanded("project", true);
             yyjson::value entries(Array());
             for (const auto& name : project_entries)
+            {
+                entries.as_array()->emplace_back(make_leaf(name));
+            }
+            (*s_obj)[std::string_view("entries")] = std::move(entries);
+            layout_arr->emplace_back(std::move(section));
+        }
+
+        // 更新 section（顺序第二，紧跟项目设置）：镜像源 key（可编辑）+ 版本
+        // 只读字段。label 走 PI i18n（$section.update），缺译回退中文（catalog
+        // 缺席时直接回退）。defaultExpanded=true，与项目设置 section 一致。
+        if (!update_entries.empty())
+        {
+            yyjson::value section(Object());
+            auto          s_obj = section.as_object();
+            (*s_obj)[std::string_view("id")] = JsonString("update");
+            std::string_view update_label = "更新";
+            if (catalog != nullptr)
+            {
+                update_label = ResolveI18nOrDiag(
+                    "$section.update",
+                    *catalog,
+                    current_language,
+                    "更新",
+                    projection_diagnostics,
+                    "fieldLayout.section.update.label");
+            }
+            (*s_obj)[std::string_view("label")] = JsonString(update_label);
+            (*s_obj)[std::string_view("defaultExpanded")] =
+                resolve_default_expanded("update", true);
+            yyjson::value entries(Array());
+            for (const auto& name : update_entries)
             {
                 entries.as_array()->emplace_back(make_leaf(name));
             }
@@ -2162,6 +2210,14 @@ namespace Das::Plugins::DasMaaPi
             0,
             settings.adapter.proxy_url
                 ? yyjson::value(*settings.adapter.proxy_url)
+                : yyjson::value(std::string{})));
+        fields.as_array()->emplace_back(MakePropertyField(
+            "adapter.mirrorchyanKey",
+            "MirrorChyan Key",
+            4,
+            0,
+            settings.adapter.mirrorchyan_key
+                ? yyjson::value(*settings.adapter.mirrorchyan_key)
                 : yyjson::value(std::string{})));
         fields.as_array()->emplace_back(MakePropertyField(
             "adapter.executionPolicy.failFast",
@@ -2895,6 +2951,12 @@ namespace Das::Plugins::DasMaaPi
                 std::string(value.as_string().value_or(""));
             return;
         }
+        if (path == "adapter.mirrorchyanKey" && value.is_string())
+        {
+            settings.adapter.mirrorchyan_key =
+                std::string(value.as_string().value_or(""));
+            return;
+        }
         if (path == "adapter.executionPolicy.failFast" && value.is_bool())
         {
             settings.adapter.execution_policy.fail_fast =
@@ -3346,8 +3408,9 @@ namespace Das::Plugins::DasMaaPi
 
         // D-84-24: setValue 严格 target.kind=document 路径。
         // MaaPI root fields: adapter.interfacePath / adapter.proxyUrl /
-        // adapter.executionPolicy.failFast / controllerName / resourceName /
-        // presetName / language / options.{name}。
+        // adapter.mirrorchyanKey / adapter.executionPolicy.failFast /
+        // controllerName / resourceName / presetName / language /
+        // options.{name}。
         bool ApplyDocumentSetValue(
             AcceptedSettingsDto&          settings,
             std::string_view              field_name,
@@ -3385,6 +3448,22 @@ namespace Das::Plugins::DasMaaPi
                     return false;
                 }
                 settings.adapter.proxy_url =
+                    std::string(value.as_string().value_or(""));
+                return true;
+            }
+            if (field == "adapter.mirrorchyanKey")
+            {
+                if (!value.is_string())
+                {
+                    EmitDiagnostic(
+                        diagnostics,
+                        "error",
+                        "adapter.mirrorchyanKey value must be string",
+                        DAS_E_INVALID_ARGUMENT,
+                        field);
+                    return false;
+                }
+                settings.adapter.mirrorchyan_key =
                     std::string(value.as_string().value_or(""));
                 return true;
             }
@@ -4266,7 +4345,8 @@ namespace Das::Plugins::DasMaaPi
             *pi_dir,
             *http.value,
             info,
-            settings.adapter.proxy_url.value_or(""));
+            settings.adapter.proxy_url.value_or(""),
+            settings.adapter.mirrorchyan_key.value_or(""));
         if (IsFailed(result))
         {
             // IN-02: 网络/来源失败时保留旧 pending_update_ 会令 applyUpdate
@@ -4332,7 +4412,8 @@ namespace Das::Plugins::DasMaaPi
             *pi_dir,
             info,
             *http.value,
-            settings.adapter.proxy_url.value_or(""));
+            settings.adapter.proxy_url.value_or(""),
+            settings.adapter.mirrorchyan_key.value_or(""));
         if (IsFailed(result))
         {
             // 失败保留 pending_update_（用户可重试）+ 携带错误详情。

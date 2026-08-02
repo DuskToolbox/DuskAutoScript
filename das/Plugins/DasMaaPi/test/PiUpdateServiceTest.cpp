@@ -780,6 +780,7 @@ TEST(PiUpdateService, ApplyUpdateResourceHashMismatchWarnsNotFails)
         info,
         http,
         /*proxy_url=*/{},
+        /*mirrorchyan_key=*/{},
         &fake);
 
     // hash 不匹配给警告，不硬失败（D-89-05 / 协议 §resource.hash 语义）。
