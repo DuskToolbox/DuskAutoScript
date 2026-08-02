@@ -127,6 +127,111 @@ namespace
         std::string                                     last_target_;
     };
 
+    // Mock server that answers /redirect with a 302 + Location header and every
+    // other path with a canned 200 body. With loop_redirect set, every request
+    // redirects to itself so tests can exercise the hop-limit guard.
+    class LocalRedirectServer
+    {
+    public:
+        ~LocalRedirectServer() { Stop(); }
+
+        void Start()
+        {
+            acceptor_ = std::make_unique<boost::asio::ip::tcp::acceptor>(
+                io_,
+                boost::asio::ip::tcp::endpoint(
+                    boost::asio::ip::address_v4::loopback(),
+                    0));
+            port_ = acceptor_->local_endpoint().port();
+            running_.store(true);
+            thread_ = std::thread([this] { AcceptLoop(); });
+        }
+
+        void Stop()
+        {
+            if (!running_.exchange(false))
+            {
+                return;
+            }
+            if (acceptor_)
+            {
+                acceptor_->close();
+            }
+            if (thread_.joinable())
+            {
+                thread_.join();
+            }
+        }
+
+        std::uint16_t Port() const { return port_; }
+        int           RequestCount() const { return request_count_.load(); }
+        void          SetLoopRedirect(bool loop) { loop_ = loop; }
+
+    private:
+        void AcceptLoop()
+        {
+            while (running_.load())
+            {
+                boost::system::error_code    ec;
+                boost::asio::ip::tcp::socket sock = acceptor_->accept(ec);
+                if (ec || !running_.load())
+                {
+                    break;
+                }
+                std::thread([this, s = std::move(sock)]() mutable
+                            { Handle(std::move(s)); })
+                    .detach();
+            }
+        }
+
+        void Handle(boost::asio::ip::tcp::socket sock)
+        {
+            try
+            {
+                boost::beast::flat_buffer buffer;
+                boost::beast::http::request<boost::beast::http::string_body>
+                    req;
+                boost::beast::http::read(sock, buffer, req);
+                request_count_.fetch_add(1);
+
+                boost::beast::http::response<boost::beast::http::string_body>
+                    resp;
+                resp.version(11);
+                if (loop_ || req.target() == "/redirect")
+                {
+                    resp.result(boost::beast::http::status::found);
+                    const std::string location =
+                        loop_ ? std::string("/redirect")
+                              : "http://127.0.0.1:" + std::to_string(port_)
+                                    + "/final";
+                    resp.set(boost::beast::http::field::location, location);
+                    resp.prepare_payload();
+                }
+                else
+                {
+                    resp.result(boost::beast::http::status::ok);
+                    resp.set(
+                        boost::beast::http::field::content_type,
+                        "application/json");
+                    resp.body() = "{\"redirected\":true}";
+                    resp.prepare_payload();
+                }
+                boost::beast::http::write(sock, resp);
+            }
+            catch (...)
+            {
+            }
+        }
+
+        boost::asio::io_context                         io_;
+        std::unique_ptr<boost::asio::ip::tcp::acceptor> acceptor_;
+        std::thread                                     thread_;
+        std::atomic<bool>                               running_{false};
+        std::uint16_t                                   port_ = 0;
+        std::atomic<int>                                request_count_{0};
+        bool                                            loop_ = false;
+    };
+
     TEST(PiHttpClient, GetReturnsBodyAndStatusFromLocalMock)
     {
         LocalHttpServer server;
@@ -599,6 +704,64 @@ v6yQpUYtQbbVSIHbNlBhfp8=
                 status,
                 "ftp://127.0.0.1:21"),
             DAS_E_INVALID_ARGUMENT);
+    }
+
+    TEST(PiHttpClient, GetFollowsRedirectToLocation)
+    {
+        // CR-01: GitHub release download URLs 302 to another host; the client
+        // must follow the Location header and return the final 200 body.
+        LocalRedirectServer server;
+        server.Start();
+
+        BeastHttpClient client;
+        std::string     body;
+        int             status = 0;
+        const auto      url =
+            "http://127.0.0.1:" + std::to_string(server.Port()) + "/redirect";
+        const auto result = client.Get(url, body, status);
+
+        EXPECT_EQ(result, DAS_S_OK);
+        EXPECT_EQ(status, 200);
+        EXPECT_EQ(body, "{\"redirected\":true}");
+        // One 302 hop + one 200 final.
+        EXPECT_EQ(server.RequestCount(), 2);
+    }
+
+    TEST(PiHttpClient, HeadFollowsRedirectToLocation)
+    {
+        LocalRedirectServer server;
+        server.Start();
+
+        BeastHttpClient client;
+        int             status = 0;
+        const auto      url =
+            "http://127.0.0.1:" + std::to_string(server.Port()) + "/redirect";
+        const auto result = client.Head(url, status);
+
+        EXPECT_EQ(result, DAS_S_OK);
+        EXPECT_EQ(status, 200);
+        EXPECT_EQ(server.RequestCount(), 2);
+    }
+
+    TEST(PiHttpClient, RedirectLoopStopsAfterMaxHops)
+    {
+        // A server that redirects to itself must not loop forever; the client
+        // gives up at the hop limit and surfaces the 3xx status.
+        LocalRedirectServer server;
+        server.SetLoopRedirect(true);
+        server.Start();
+
+        BeastHttpClient client;
+        std::string     body;
+        int             status = 0;
+        const auto      url =
+            "http://127.0.0.1:" + std::to_string(server.Port()) + "/redirect";
+        const auto result = client.Get(url, body, status);
+
+        EXPECT_EQ(result, DAS_S_OK);
+        EXPECT_EQ(status, 302);
+        // Initial request + 5 followed hops.
+        EXPECT_EQ(server.RequestCount(), 6);
     }
 
     TEST(PiHttpClient, ReadManifestProxyUrlReadsTopLevelField)

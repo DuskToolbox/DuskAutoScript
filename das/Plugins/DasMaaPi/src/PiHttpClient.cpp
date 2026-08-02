@@ -22,6 +22,7 @@
 #include <exception>
 #include <fstream>
 #include <iterator>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -30,10 +31,12 @@ namespace Das::Plugins::DasMaaPi
 {
     namespace
     {
-        // Response body cap (T-89-01-03 DoS mitigation). Streamed downloads are
-        // handled by the 89-02 update flow; the seam only ever buffers API
-        // responses that fit well under this bound.
-        constexpr std::size_t      kMaxResponseBodyBytes = 64u * 1024u * 1024u;
+        // Response body cap (T-89-01-03 DoS mitigation, WR-01). The seam
+        // buffers the whole response in memory; full PI update packages
+        // (MaaFW/MaaToolkit DLLs) are downloaded through the same Get seam
+        // (PiUpdateService::DownloadZip), so the cap is documented at 512MB to
+        // admit real packages while still bounding a hostile server's reply.
+        constexpr std::size_t      kMaxResponseBodyBytes = 512u * 1024u * 1024u;
         constexpr std::string_view kUserAgent =
             "DasMaaPi/0.1 (+DuskAutoScript)";
 
@@ -233,6 +236,8 @@ namespace Das::Plugins::DasMaaPi
         // (optionally TLS) stream. absolute_form is used for plain-http targets
         // routed through a proxy: the request line carries the full URL
         // (RFC 7230 5.3.2) while the Host header stays the target host.
+        // out_location, when non-null, receives the response Location header
+        // (empty when absent) so the caller can follow 3xx redirects (CR-01).
         template <typename Stream>
         boost::asio::awaitable<DasResult> SendRequest(
             Stream&                   stream,
@@ -241,7 +246,8 @@ namespace Das::Plugins::DasMaaPi
             bool                      absolute_form,
             std::chrono::milliseconds timeout,
             std::string&              out_body,
-            int&                      out_status)
+            int&                      out_status,
+            std::string*              out_location)
         {
             boost::beast::http::request<boost::beast::http::empty_body> req;
             req.method(
@@ -282,6 +288,14 @@ namespace Das::Plugins::DasMaaPi
             auto resp = parser.release();
             out_status = static_cast<int>(resp.result_int());
             out_body = std::move(resp.body());
+            if (out_location)
+            {
+                const auto loc = resp.find(boost::beast::http::field::location);
+                if (loc != resp.end())
+                {
+                    *out_location = std::string(loc->value());
+                }
+            }
             co_return DAS_S_OK;
         }
 
@@ -347,7 +361,8 @@ namespace Das::Plugins::DasMaaPi
             const ProxyTarget*        proxy,
             bool                      head_only,
             std::string&              out_body,
-            int&                      out_status)
+            int&                      out_status,
+            std::string*              out_location)
         {
             const bool via_proxy = (proxy != nullptr);
             const bool use_tls = (target.scheme == "https");
@@ -359,10 +374,55 @@ namespace Das::Plugins::DasMaaPi
 
             auto executor = co_await boost::asio::this_coro::executor;
             boost::asio::ip::tcp::resolver resolver(executor);
-            const auto endpoints = co_await resolver.async_resolve(
+
+            // WR-04: DNS resolution has no per-operation timeout of its own
+            // (ArmStreamTimeout covers TCP connect/read/write only). Wrap
+            // async_resolve in a steady_timer so a hung resolver cannot block
+            // the authoring thread forever. The timer lives in the shared
+            // state: after a timeout we cancel the resolver and return
+            // DAS_E_TIMEOUT, and the resolve completion handler (which still
+            // runs with operation_aborted) keeps the state alive — no dangling
+            // reference into the coroutine frame.
+            struct ResolveState
+            {
+                std::optional<boost::system::error_code> ec;
+                std::optional<boost::asio::ip::tcp::resolver::results_type>
+                                          result;
+                boost::asio::steady_timer timer;
+                explicit ResolveState(boost::asio::any_io_executor executor)
+                    : timer(std::move(executor))
+                {
+                }
+            };
+            auto state = std::make_shared<ResolveState>(executor);
+            state->timer.expires_after(timeout);
+            resolver.async_resolve(
                 connect_host,
                 connect_port,
-                boost::asio::use_awaitable);
+                [state](
+                    const boost::system::error_code&             ec,
+                    boost::asio::ip::tcp::resolver::results_type result)
+                {
+                    state->ec = ec;
+                    state->result = std::move(result);
+                    boost::system::error_code ignored;
+                    state->timer.cancel(ignored);
+                });
+            co_await state->timer.async_wait(boost::asio::use_awaitable);
+            if (!state->ec)
+            {
+                // Timer fired before resolution completed → cancel and fail.
+                resolver.cancel();
+                LogDiagnosticError(
+                    "BeastHttpClient DNS resolution timed out: host="
+                    + connect_host);
+                co_return DAS_E_TIMEOUT;
+            }
+            if (*state->ec)
+            {
+                throw boost::system::system_error(*state->ec);
+            }
+            const auto endpoints = std::move(*state->result);
 
             boost::beast::tcp_stream stream(executor);
             ArmStreamTimeout(stream, timeout);
@@ -416,7 +476,8 @@ namespace Das::Plugins::DasMaaPi
                     /*absolute_form=*/false,
                     timeout,
                     out_body,
-                    out_status);
+                    out_status,
+                    out_location);
             }
 
             co_return co_await SendRequest(
@@ -426,7 +487,70 @@ namespace Das::Plugins::DasMaaPi
                 /*absolute_form=*/via_proxy,
                 timeout,
                 out_body,
-                out_status);
+                out_status,
+                out_location);
+        }
+
+        // 3xx status codes whose Location header is followed by the redirect
+        // loop. 301/302/303 and 307/308 both map to a re-issued GET/HEAD here:
+        // the seam only ever issues GET or HEAD, so no method/body rewrite is
+        // ever required (303's POST→GET rule is moot without POST).
+        bool IsRedirectStatus(int status)
+        {
+            switch (status)
+            {
+            case 301: // Moved Permanently
+            case 302: // Found
+            case 303: // See Other
+            case 307: // Temporary Redirect
+            case 308: // Permanent Redirect
+                return true;
+            default:
+                return false;
+            }
+        }
+
+        // Resolve a Location header against the current target URL (RFC 3986
+        // §5 relative resolution). Handles absolute URLs, protocol-relative
+        // (//host[:port][/path]), root-relative (/path) and path-relative
+        // locations. Returns nullopt for malformed / empty locations.
+        std::optional<std::string> ResolveRedirectUrl(
+            const UrlParts&  current,
+            std::string_view location)
+        {
+            if (location.empty())
+            {
+                return std::nullopt;
+            }
+            // Absolute URL.
+            if (location.find("://") != std::string_view::npos)
+            {
+                UrlParts parsed;
+                if (!ParseUrl(location, parsed))
+                {
+                    return std::nullopt;
+                }
+                return std::string(location);
+            }
+            // Protocol-relative "//host[:port][/path]".
+            if (location.substr(0, 2) == "//")
+            {
+                return current.scheme + ":" + std::string(location);
+            }
+            // Root-relative "/path".
+            if (location.front() == '/')
+            {
+                return current.scheme + "://" + current.host_and_port
+                       + std::string(location);
+            }
+            // Path-relative: resolve against the current path's directory.
+            const auto        slash = current.path.rfind('/');
+            const std::string base_dir =
+                (slash == std::string::npos)
+                    ? std::string("/")
+                    : current.path.substr(0, slash + 1);
+            return current.scheme + "://" + current.host_and_port + base_dir
+                   + std::string(location);
         }
 
         boost::asio::awaitable<void> DoRequest(
@@ -466,14 +590,69 @@ namespace Das::Plugins::DasMaaPi
                     proxy_ptr = &proxy;
                 }
 
-                outcome.result = co_await DoRequestImpl(
-                    verify_tls,
-                    timeout,
-                    target,
-                    proxy_ptr,
-                    head_only,
-                    out_body,
-                    out_status);
+                // CR-01: follow up to MAX_REDIRECTS 3xx responses. GitHub
+                // release download URLs 302 to
+                // release-assets.githubusercontent.com, so a single-shot GET
+                // would fail the DownloadZip status==200 check on every
+                // real-network applyUpdate. Each hop re-issues the request
+                // against the resolved Location; the proxy (if any) is applied
+                // per hop inside DoRequestImpl.
+                constexpr int MAX_REDIRECTS = 5;
+                std::string   current_url = url;
+                std::string   location;
+                for (int hop = 0; hop <= MAX_REDIRECTS; ++hop)
+                {
+                    if (!ParseUrl(current_url, target))
+                    {
+                        outcome.result = DAS_E_INVALID_URL;
+                        LogDiagnosticError(
+                            "BeastHttpClient invalid redirect url: url="
+                            + RedactUrlForLog(current_url));
+                        co_return;
+                    }
+                    location.clear();
+                    outcome.result = co_await DoRequestImpl(
+                        verify_tls,
+                        timeout,
+                        target,
+                        proxy_ptr,
+                        head_only,
+                        out_body,
+                        out_status,
+                        &location);
+                    if (IsFailed(outcome.result))
+                    {
+                        co_return;
+                    }
+                    if (!IsRedirectStatus(out_status))
+                    {
+                        co_return;
+                    }
+                    if (location.empty())
+                    {
+                        // 3xx without a Location header is surfaced as-is so
+                        // the caller sees the redirect status.
+                        co_return;
+                    }
+                    if (hop == MAX_REDIRECTS)
+                    {
+                        LogDiagnosticWarning(
+                            "BeastHttpClient redirect limit reached: url="
+                            + RedactUrlForLog(url)
+                            + " hops=" + std::to_string(MAX_REDIRECTS));
+                        co_return;
+                    }
+                    const auto resolved = ResolveRedirectUrl(target, location);
+                    if (!resolved)
+                    {
+                        LogDiagnosticError(
+                            "BeastHttpClient invalid redirect location: url="
+                            + RedactUrlForLog(current_url));
+                        outcome.result = DAS_E_FAIL;
+                        co_return;
+                    }
+                    current_url = *resolved;
+                }
             }
             catch (const boost::system::system_error& e)
             {
