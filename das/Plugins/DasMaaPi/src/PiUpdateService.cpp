@@ -8,11 +8,15 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstring>
+#include <fstream>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
+
+#include <zlib.h>
 
 namespace Das::Plugins::DasMaaPi
 {
@@ -577,6 +581,305 @@ namespace Das::Plugins::DasMaaPi
                 + direct_url);
             return DAS_E_MAAPI_UPDATE_CHECK_FAILED;
         }
+
+        // -----------------------------------------------------------------
+        // ZIP 解压（T-89-02-01 目录穿越防护）。格式解析参考
+        // PluginZipExtractor.cpp:89-152 / 160-354 的 IsPathSafe /
+        // EnumerateZipEntries / ExtractEntryToDisk 模式。
+        // -----------------------------------------------------------------
+
+        constexpr std::uint32_t kLocalFileHeaderSig = 0x04034B50;
+        constexpr std::uint32_t kCentralDirSig = 0x02014B50;
+        constexpr std::uint32_t kEndOfCentralDirSig = 0x06054B50;
+
+        template <typename T>
+        T ReadLE(const char* data, size_t offset)
+        {
+            T value;
+            std::memcpy(&value, data + offset, sizeof(T));
+            return value;
+        }
+
+        bool FindEndOfCentralDir(
+            const std::string& zip_data,
+            size_t&            eocd_offset)
+        {
+            constexpr size_t kEocdSize = 22;
+            constexpr size_t kMaxCommentSize = 65535;
+            if (zip_data.size() < kEocdSize)
+            {
+                return false;
+            }
+            const size_t max_search =
+                std::min(zip_data.size(), kEocdSize + kMaxCommentSize);
+            // max_search >= kEocdSize guaranteed above, so the loop count does
+            // not underflow (unsigned arithmetic) on short inputs.
+            for (size_t i = 0; i <= max_search - kEocdSize; ++i)
+            {
+                const size_t offset = zip_data.size() - kEocdSize - i;
+                if (ReadLE<std::uint32_t>(zip_data.data(), offset)
+                    == kEndOfCentralDirSig)
+                {
+                    eocd_offset = offset;
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // 目录穿越防护：条目路径规范化后必须位于 extract_dir 内。
+        // 拒绝绝对路径 / 含 ".." 段 / 规范化后逃逸出 extract_dir（双保险，
+        // 参考 Phase 88 SanitizeImagePath 范式 + PluginZipExtractor
+        // IsPathSafe）。
+        bool IsSafeZipEntry(
+            const std::filesystem::path& extract_dir,
+            std::string_view             entry_name)
+        {
+            if (entry_name.empty())
+            {
+                return false;
+            }
+            if (entry_name.front() == '/' || entry_name.front() == '\\')
+            {
+                return false;
+            }
+            // 逐分量检查 ".."（同时处理 '/' 和 '\\'）。
+            for (const char* c = entry_name.data();
+                 c != entry_name.data() + entry_name.size();)
+            {
+                const char* next =
+                    std::find(c, entry_name.data() + entry_name.size(), '/');
+                std::string_view component(c, next - c);
+                if (component == "..")
+                {
+                    return false;
+                }
+                if (next == entry_name.data() + entry_name.size())
+                {
+                    break;
+                }
+                c = next + 1;
+            }
+            // 规范化后必须在 extract_dir 内（双保险）。
+            const auto target = (extract_dir / entry_name).lexically_normal();
+            const auto normalized_extract = extract_dir.lexically_normal();
+            const auto rel = target.lexically_relative(normalized_extract);
+            if (rel.empty())
+            {
+                return false;
+            }
+            const std::string rel_str = rel.generic_string();
+            if (rel_str == ".." || rel_str.rfind("../", 0) == 0)
+            {
+                return false;
+            }
+            if (target.string().rfind(normalized_extract.string(), 0) != 0
+                && target != normalized_extract)
+            {
+                return false;
+            }
+            return true;
+        }
+
+        bool InflateZipEntry(
+            const char*  compressed,
+            size_t       compressed_size,
+            size_t       uncompressed_size,
+            std::string& output)
+        {
+            output.resize(uncompressed_size);
+            z_stream stream{};
+            stream.next_in =
+                reinterpret_cast<Bytef*>(const_cast<char*>(compressed));
+            stream.avail_in = static_cast<uInt>(compressed_size);
+            stream.next_out = reinterpret_cast<Bytef*>(output.data());
+            stream.avail_out = static_cast<uInt>(uncompressed_size);
+            if (inflateInit2(&stream, -MAX_WBITS) != Z_OK)
+            {
+                return false;
+            }
+            const int ret = inflate(&stream, Z_FINISH);
+            inflateEnd(&stream);
+            return ret == Z_STREAM_END;
+        }
+
+        // 解压 zip 到 extract_dir，返回 DAS_S_OK /
+        // DAS_E_MAAPI_UPDATE_APPLY_FAILED。
+        DasResult ExtractZip(
+            const std::string&           zip_data,
+            const std::filesystem::path& extract_dir)
+        {
+            size_t eocd_offset = 0;
+            if (!FindEndOfCentralDir(zip_data, eocd_offset))
+            {
+                LogError("PiUpdateService: invalid zip (no EOCD)");
+                return DAS_E_MAAPI_UPDATE_APPLY_FAILED;
+            }
+            const auto num_entries =
+                ReadLE<std::uint16_t>(zip_data.data(), eocd_offset + 10);
+            const auto cd_offset =
+                ReadLE<std::uint32_t>(zip_data.data(), eocd_offset + 16);
+
+            std::error_code ec;
+            // 空 zip（0 条目）不创建 extract_dir —— replace rename 的源目录
+            // 缺失 → ApplyUpdate 视为替换失败走回滚，旧目录被恢复。
+            if (num_entries == 0)
+            {
+                LogError("PiUpdateService: empty zip has no files to extract");
+                return DAS_E_MAAPI_UPDATE_APPLY_FAILED;
+            }
+            std::filesystem::create_directories(extract_dir, ec);
+
+            size_t pos = cd_offset;
+            for (std::uint16_t i = 0; i < num_entries; ++i)
+            {
+                if (pos + 46 > zip_data.size())
+                {
+                    LogError("PiUpdateService: truncated central directory");
+                    return DAS_E_MAAPI_UPDATE_APPLY_FAILED;
+                }
+                if (ReadLE<std::uint32_t>(zip_data.data(), pos)
+                    != kCentralDirSig)
+                {
+                    LogError(
+                        "PiUpdateService: bad central directory signature");
+                    return DAS_E_MAAPI_UPDATE_APPLY_FAILED;
+                }
+                const auto compression =
+                    ReadLE<std::uint16_t>(zip_data.data(), pos + 10);
+                const auto compressed_size =
+                    ReadLE<std::uint32_t>(zip_data.data(), pos + 20);
+                const auto uncompressed_size =
+                    ReadLE<std::uint32_t>(zip_data.data(), pos + 24);
+                const auto filename_length =
+                    ReadLE<std::uint16_t>(zip_data.data(), pos + 28);
+                const auto extra_length =
+                    ReadLE<std::uint16_t>(zip_data.data(), pos + 30);
+                const auto comment_length =
+                    ReadLE<std::uint16_t>(zip_data.data(), pos + 32);
+                const auto local_header_offset =
+                    ReadLE<std::uint32_t>(zip_data.data(), pos + 42);
+
+                if (pos + 46 + filename_length + extra_length + comment_length
+                    > zip_data.size())
+                {
+                    LogError("PiUpdateService: truncated entry metadata");
+                    return DAS_E_MAAPI_UPDATE_APPLY_FAILED;
+                }
+
+                const std::string filename(
+                    zip_data.data() + pos + 46,
+                    filename_length);
+                pos += 46 + filename_length + extra_length + comment_length;
+
+                // 目录穿越防护（T-89-02-01）。
+                if (!IsSafeZipEntry(extract_dir, filename))
+                {
+                    LogError(
+                        "PiUpdateService: unsafe zip entry rejected: "
+                        + filename);
+                    return DAS_E_MAAPI_UPDATE_APPLY_FAILED;
+                }
+
+                const bool is_directory =
+                    !filename.empty() && filename.back() == '/';
+                const auto target = (extract_dir / filename).lexically_normal();
+                if (is_directory)
+                {
+                    std::filesystem::create_directories(target, ec);
+                    continue;
+                }
+                std::filesystem::create_directories(target.parent_path(), ec);
+
+                // 从 local file header 解析数据偏移。
+                if (local_header_offset + 30 > zip_data.size())
+                {
+                    LogError("PiUpdateService: truncated local header");
+                    return DAS_E_MAAPI_UPDATE_APPLY_FAILED;
+                }
+                if (ReadLE<std::uint32_t>(zip_data.data(), local_header_offset)
+                    != kLocalFileHeaderSig)
+                {
+                    LogError("PiUpdateService: bad local header signature");
+                    return DAS_E_MAAPI_UPDATE_APPLY_FAILED;
+                }
+                const auto local_filename_length = ReadLE<std::uint16_t>(
+                    zip_data.data(),
+                    local_header_offset + 26);
+                const auto local_extra_length = ReadLE<std::uint16_t>(
+                    zip_data.data(),
+                    local_header_offset + 28);
+                const size_t data_offset = local_header_offset + 30
+                                           + local_filename_length
+                                           + local_extra_length;
+                if (data_offset + compressed_size > zip_data.size())
+                {
+                    LogError("PiUpdateService: truncated file data");
+                    return DAS_E_MAAPI_UPDATE_APPLY_FAILED;
+                }
+
+                std::ofstream ofs(target, std::ios::binary | std::ios::trunc);
+                if (!ofs)
+                {
+                    LogError("PiUpdateService: cannot open output file");
+                    return DAS_E_MAAPI_UPDATE_APPLY_FAILED;
+                }
+                if (compression == 0)
+                {
+                    ofs.write(zip_data.data() + data_offset, compressed_size);
+                }
+                else if (compression == 8)
+                {
+                    std::string output;
+                    if (!InflateZipEntry(
+                            zip_data.data() + data_offset,
+                            compressed_size,
+                            uncompressed_size,
+                            output))
+                    {
+                        LogError("PiUpdateService: inflate failed");
+                        return DAS_E_MAAPI_UPDATE_APPLY_FAILED;
+                    }
+                    ofs.write(output.data(), output.size());
+                }
+                else
+                {
+                    LogError(
+                        "PiUpdateService: unsupported zip compression: "
+                        + std::to_string(compression));
+                    return DAS_E_MAAPI_UPDATE_APPLY_FAILED;
+                }
+            }
+            return DAS_S_OK;
+        }
+
+        // 当前项目目录内 interface.json 的版本号（用于备份目录名）。
+        std::string ReadCurrentVersion(const std::filesystem::path& pi_dir)
+        {
+            InterfaceMetadata meta;
+            if (IsFailed(ReadInterfaceMetadata(pi_dir, meta)))
+            {
+                return {};
+            }
+            return meta.version;
+        }
+
+        DasResult DownloadZip(
+            PiHttpClient&      http,
+            const std::string& download_url,
+            const std::string& proxy,
+            std::string&       out_zip)
+        {
+            int        status = 0;
+            const auto result = http.Get(download_url, out_zip, status, proxy);
+            if (IsFailed(result) || status != 200)
+            {
+                LogError(
+                    "PiUpdateService: download failed url=" + download_url);
+                return DAS_E_MAAPI_UPDATE_APPLY_FAILED;
+            }
+            return DAS_S_OK;
+        }
     } // namespace
 
     DasResult PiUpdateService::CheckUpdate(
@@ -646,5 +949,102 @@ namespace Das::Plugins::DasMaaPi
                 "mirrorchyan_rid) and no usable download info");
         }
         return DAS_E_MAAPI_UPDATE_CHECK_FAILED;
+    }
+
+    DasResult PiUpdateService::ApplyUpdate(
+        const std::filesystem::path& pi_dir,
+        const PiUpdateInfo&          info,
+        PiHttpClient&                http,
+        std::string_view             proxy_url)
+    {
+        if (info.download_url.empty())
+        {
+            LogError("PiUpdateService: ApplyUpdate requires a download_url");
+            return DAS_E_MAAPI_UPDATE_APPLY_FAILED;
+        }
+        const std::string proxy =
+            proxy_url.empty() ? ReadManifestProxyUrl() : std::string(proxy_url);
+        const std::string old_version = ReadCurrentVersion(pi_dir);
+
+        // .update 临时目录放 pi_dir 的兄弟目录（不是 pi_dir 内）——否则备份
+        // rename(pi_dir → backup) 会把 .update 一起移走，后续 replace rename
+        // 的源路径失效（与 MXU updateService.ts:1012 的
+        // joinPath(dirname(zipPath), 'update_extract') 兄弟目录语义一致）。
+        const auto update_root =
+            pi_dir.parent_path() / (pi_dir.filename().string() + ".update");
+        const auto version_tag =
+            info.version_name.empty() ? old_version : info.version_name;
+        const auto zip_path = update_root / (version_tag + ".zip");
+        const auto extract_dir = update_root / ("extract_" + version_tag);
+        const auto backup_dir =
+            std::filesystem::path(pi_dir.string() + "_backup_" + old_version);
+
+        // RAII：退出时清理 .update 临时目录（zip + extract）。
+        struct UpdateCleanup
+        {
+            std::filesystem::path root;
+            bool                  dismissed = false;
+            ~UpdateCleanup()
+            {
+                if (!dismissed)
+                {
+                    std::error_code ec;
+                    std::filesystem::remove_all(root, ec);
+                }
+            }
+        } cleanup{update_root};
+
+        // 1. 下载全量 zip 到 .update/{version}.zip（D-89-03 / D-89-08）。
+        std::string zip_data;
+        if (IsFailed(DownloadZip(http, info.download_url, proxy, zip_data)))
+        {
+            return DAS_E_MAAPI_UPDATE_APPLY_FAILED;
+        }
+        std::error_code ec;
+        std::filesystem::create_directories(update_root, ec);
+        {
+            std::ofstream ofs(zip_path, std::ios::binary | std::ios::trunc);
+            if (!ofs)
+            {
+                LogError("PiUpdateService: cannot write zip to disk");
+                return DAS_E_MAAPI_UPDATE_APPLY_FAILED;
+            }
+            ofs.write(zip_data.data(), zip_data.size());
+        }
+
+        // 2. 安全解压（目录穿越防护，T-89-02-01）。
+        if (IsFailed(ExtractZip(zip_data, extract_dir)))
+        {
+            return DAS_E_MAAPI_UPDATE_APPLY_FAILED;
+        }
+
+        // 3. 备份 + 原子替换（Pitfall 6 / D-89-01，参考
+        //    PluginZipExtractor.cpp:593-636 的 rename 替换 + 回滚模式）。
+        //    若 {pi_dir}_backup_{oldVersion} 已存在先删除（仅保留上一份，
+        //    Open Question 4 决策；定时清理 defer）。
+        std::filesystem::remove_all(backup_dir, ec);
+        std::filesystem::rename(pi_dir, backup_dir, ec);
+        if (ec)
+        {
+            LogError(
+                "PiUpdateService: backup rename failed: " + pi_dir.string());
+            return DAS_E_MAAPI_UPDATE_APPLY_FAILED;
+        }
+        std::filesystem::rename(extract_dir, pi_dir, ec);
+        if (ec)
+        {
+            // 任一步失败 → 回滚：恢复旧目录，清理 .update 临时目录。
+            LogError(
+                "PiUpdateService: replace rename failed, rolling back: "
+                + pi_dir.string());
+            std::error_code restore_ec;
+            std::filesystem::rename(backup_dir, pi_dir, restore_ec);
+            return DAS_E_MAAPI_UPDATE_APPLY_FAILED;
+        }
+
+        // 4. 成功：清理 .update 临时目录（zip + extract），保留 backup。
+        cleanup.dismissed = true;
+        std::filesystem::remove_all(update_root, ec);
+        return DAS_S_OK;
     }
 } // namespace Das::Plugins::DasMaaPi

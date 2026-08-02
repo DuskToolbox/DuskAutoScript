@@ -4,7 +4,9 @@
 #include <das/Plugins/DasMaaPi/MaaPiErrorCodes.h>
 #include <das/_autogen/idl/abi/DasResult.h>
 #include <gtest/gtest.h>
+#include <zlib.h>
 
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -127,24 +129,27 @@ namespace
         bool               fail_all_ = false;
     };
 
-    // Temp project dir with interface.json.
+    // Temp project dir with interface.json. Unique name per instance so
+    // parallel test instances (and their _backup_ / .update siblings) never
+    // collide.
     class TempPiProject
     {
     public:
-        TempPiProject()
+        explicit TempPiProject(std::string name = {})
         {
-            dir_ = std::filesystem::temp_directory_path()
-                   / "PiUpdate_Test_Project";
+            static std::atomic<int> counter{0};
+            if (name.empty())
+            {
+                name = "PiUpdate_" + std::to_string(counter.fetch_add(1));
+            }
+            name_ = std::move(name);
+            dir_ = std::filesystem::temp_directory_path() / name_;
+            Cleanup();
             std::error_code ec;
-            std::filesystem::remove_all(dir_, ec);
             std::filesystem::create_directories(dir_, ec);
         }
 
-        ~TempPiProject()
-        {
-            std::error_code ec;
-            std::filesystem::remove_all(dir_, ec);
-        }
+        ~TempPiProject() { Cleanup(); }
 
         const std::filesystem::path& Dir() const { return dir_; }
 
@@ -155,6 +160,30 @@ namespace
         }
 
     private:
+        void Cleanup()
+        {
+            std::error_code ec;
+            std::filesystem::remove_all(dir_, ec);
+            // 清理兄弟目录：{name}_backup_{version} + {name}.update。
+            // 各 ctest 用例独立进程运行，static counter 每次从 0 起，需按
+            // 前缀清掉上次用例残留的 backup。
+            const auto parent = dir_.parent_path();
+            const auto backup_prefix = name_ + "_backup_";
+            const auto update_name = name_ + ".update";
+            for (const auto& entry : std::filesystem::directory_iterator(
+                     parent,
+                     std::filesystem::directory_options::skip_permission_denied,
+                     ec))
+            {
+                const auto leaf = entry.path().filename().string();
+                if (leaf.rfind(backup_prefix, 0) == 0 || leaf == update_name)
+                {
+                    std::filesystem::remove_all(entry.path(), ec);
+                }
+            }
+        }
+
+        std::string           name_;
         std::filesystem::path dir_;
     };
 
@@ -199,6 +228,140 @@ namespace
                + R"(","body":"github notes","assets":[{"name":")" + asset_name
                + R"(","size":123,"browser_download_url":"https://github.com/owner/repo/releases/download/)"
                + tag + R"(/)" + asset_name + R"("}]})";
+    }
+
+    // ---------------------------------------------------------------------
+    // 最小 ZIP 构造器（测试用）：stored + deflate 条目 + 目录穿越条目。
+    // 参考 PluginZipExtractor.cpp 的 ZIP 二进制格式。
+    // ---------------------------------------------------------------------
+
+    void AppendU16(std::string& out, std::uint16_t value)
+    {
+        out.push_back(static_cast<char>(value & 0xFF));
+        out.push_back(static_cast<char>((value >> 8) & 0xFF));
+    }
+
+    void AppendU32(std::string& out, std::uint32_t value)
+    {
+        for (int i = 0; i < 4; ++i)
+        {
+            out.push_back(static_cast<char>((value >> (i * 8)) & 0xFF));
+        }
+    }
+
+    std::string DeflateRaw(const std::string& input)
+    {
+        z_stream stream{};
+        stream.next_in =
+            reinterpret_cast<Bytef*>(const_cast<char*>(input.data()));
+        stream.avail_in = static_cast<uInt>(input.size());
+        const int init_result = deflateInit2(
+            &stream,
+            Z_DEFAULT_COMPRESSION,
+            Z_DEFLATED,
+            -MAX_WBITS,
+            8,
+            Z_DEFAULT_STRATEGY);
+        if (init_result != Z_OK)
+        {
+            return {};
+        }
+        std::string output;
+        output.resize(deflateBound(&stream, input.size()));
+        stream.next_out = reinterpret_cast<Bytef*>(output.data());
+        stream.avail_out = static_cast<uInt>(output.size());
+        const int deflate_result = deflate(&stream, Z_FINISH);
+        deflateEnd(&stream);
+        if (deflate_result != Z_STREAM_END)
+        {
+            return {};
+        }
+        output.resize(stream.total_out);
+        return output;
+    }
+
+    struct TestZipEntry
+    {
+        std::string filename;
+        std::string content;
+        bool        deflate = false;
+    };
+
+    // 构造一个合法的 ZIP（stored / deflate），支持故意含 ../ 的穿越条目。
+    std::string BuildTestZip(const std::vector<TestZipEntry>& entries)
+    {
+        std::string local_section;
+        std::string central_section;
+        for (const auto& entry : entries)
+        {
+            const auto data =
+                entry.deflate ? DeflateRaw(entry.content) : entry.content;
+            const std::uint32_t crc = crc32(
+                0,
+                reinterpret_cast<const Bytef*>(entry.content.data()),
+                static_cast<uInt>(entry.content.size()));
+
+            const auto local_header_offset =
+                static_cast<std::uint32_t>(local_section.size());
+
+            // Local file header
+            AppendU32(local_section, 0x04034B50);
+            AppendU16(local_section, 20); // version needed
+            AppendU16(local_section, 0);  // flags
+            AppendU16(local_section, entry.deflate ? 8 : 0);
+            AppendU16(local_section, 0); // mod time
+            AppendU16(local_section, 0); // mod date
+            AppendU32(local_section, crc);
+            AppendU32(local_section, static_cast<std::uint32_t>(data.size()));
+            AppendU32(
+                local_section,
+                static_cast<std::uint32_t>(entry.content.size()));
+            AppendU16(
+                local_section,
+                static_cast<std::uint16_t>(entry.filename.size()));
+            AppendU16(local_section, 0); // extra length
+            local_section += entry.filename;
+            local_section += data;
+
+            // Central directory entry
+            AppendU32(central_section, 0x02014B50);
+            AppendU16(central_section, 20); // version made by
+            AppendU16(central_section, 20); // version needed
+            AppendU16(central_section, 0);  // flags
+            AppendU16(central_section, entry.deflate ? 8 : 0);
+            AppendU16(central_section, 0); // mod time
+            AppendU16(central_section, 0); // mod date
+            AppendU32(central_section, crc);
+            AppendU32(central_section, static_cast<std::uint32_t>(data.size()));
+            AppendU32(
+                central_section,
+                static_cast<std::uint32_t>(entry.content.size()));
+            AppendU16(
+                central_section,
+                static_cast<std::uint16_t>(entry.filename.size()));
+            AppendU16(central_section, 0); // extra length
+            AppendU16(central_section, 0); // comment length
+            AppendU16(central_section, 0); // disk number start
+            AppendU16(central_section, 0); // internal attrs
+            AppendU32(central_section, 0); // external attrs
+            AppendU32(central_section, local_header_offset);
+            central_section += entry.filename;
+        }
+
+        // End of central directory
+        const auto central_size =
+            static_cast<std::uint32_t>(central_section.size());
+        std::string eocd;
+        AppendU32(eocd, 0x06054B50);
+        AppendU16(eocd, 0); // disk number
+        AppendU16(eocd, 0); // disk with central dir
+        AppendU16(eocd, static_cast<std::uint16_t>(entries.size()));
+        AppendU16(eocd, static_cast<std::uint16_t>(entries.size()));
+        AppendU32(eocd, central_size);
+        AppendU32(eocd, static_cast<std::uint32_t>(local_section.size()));
+        AppendU16(eocd, 0); // comment length
+
+        return local_section + central_section + eocd;
     }
 } // namespace
 
@@ -373,4 +536,166 @@ TEST(PiUpdateService, CheckUpdateIncrementalDegradesToGithubFull)
         info.download_url,
         "https://github.com/owner/repo/releases/download/v1.2.0/"
         "test-project-win-x86_64-v1.2.0.zip");
+}
+
+// ---------------------------------------------------------------------
+// ApplyUpdate（D-89-03 下载 → 安全解压 → 备份 → 原子替换 → 回滚）
+// ---------------------------------------------------------------------
+
+TEST(PiUpdateService, ApplyUpdateDownloadsExtractsBacksUpAndReplaces)
+{
+    FakePiHttpClient http;
+    http.AddRoute(
+        "/releases/download/v1.2.0/package.zip",
+        BuildTestZip({
+            TestZipEntry{"interface.json", "{\"version\":\"1.2.0\"}"},
+            TestZipEntry{"config.json", "{\"speed\":10}"},
+            TestZipEntry{
+                "assets/image.png",
+                "fake-image-bytes",
+                /*deflate=*/true},
+        }));
+
+    TempPiProject project;
+    project.WriteInterface(MakeInterface("1.0.0", "", ""));
+
+    PiUpdateInfo info;
+    info.version_name = "1.2.0";
+    info.download_url =
+        "https://github.com/owner/repo/releases/download/v1.2.0/package.zip";
+
+    const auto result = PiUpdateService::ApplyUpdate(project.Dir(), info, http);
+
+    EXPECT_EQ(result, DAS_S_OK);
+
+    // 替换后 pi_dir 内容 = 新 zip 内容。
+    std::ifstream new_interface(project.Dir() / "interface.json");
+    std::string   content(
+        (std::istreambuf_iterator<char>(new_interface)),
+        std::istreambuf_iterator<char>());
+    EXPECT_EQ(content, "{\"version\":\"1.2.0\"}");
+    EXPECT_TRUE(std::filesystem::exists(project.Dir() / "config.json"));
+    EXPECT_TRUE(std::filesystem::exists(project.Dir() / "assets/image.png"));
+
+    // 备份目录存在（{pi_dir}_backup_{oldVersion}）。
+    const auto backup_dir =
+        std::filesystem::path(project.Dir().string() + "_backup_1.0.0");
+    EXPECT_TRUE(std::filesystem::is_directory(backup_dir));
+    EXPECT_TRUE(std::filesystem::exists(backup_dir / "interface.json"));
+
+    // .update 临时目录已清理。
+    const auto update_root = project.Dir().parent_path()
+                             / (project.Dir().filename().string() + ".update");
+    EXPECT_FALSE(std::filesystem::exists(update_root));
+}
+
+TEST(PiUpdateService, ApplyUpdateRejectsTraversalEntry)
+{
+    // 含一个故意 ../evil.txt 条目 —— 目录穿越防护必须拒绝（T-89-02-01）。
+    FakePiHttpClient http;
+    http.AddRoute(
+        "/download/evil.zip",
+        BuildTestZip({
+            TestZipEntry{"interface.json", "{\"version\":\"1.2.0\"}"},
+            TestZipEntry{"../evil.txt", "escape"},
+        }));
+
+    TempPiProject project;
+    project.WriteInterface(MakeInterface("1.0.0", "", ""));
+
+    PiUpdateInfo info;
+    info.version_name = "1.2.0";
+    info.download_url = "https://example.com/download/evil.zip";
+
+    const auto result = PiUpdateService::ApplyUpdate(project.Dir(), info, http);
+
+    EXPECT_EQ(result, DAS_E_MAAPI_UPDATE_APPLY_FAILED);
+
+    // 旧内容未被替换（未生成 backup / 未动 pi_dir 之外）。
+    EXPECT_TRUE(std::filesystem::exists(project.Dir() / "interface.json"));
+    std::ifstream old_interface(project.Dir() / "interface.json");
+    std::string   content(
+        (std::istreambuf_iterator<char>(old_interface)),
+        std::istreambuf_iterator<char>());
+    EXPECT_NE(content.find("1.0.0"), std::string::npos);
+    EXPECT_FALSE(
+        std::filesystem::exists(
+            std::filesystem::temp_directory_path() / "evil.txt"));
+    // .update 临时目录已清理。
+    const auto update_root = project.Dir().parent_path()
+                             / (project.Dir().filename().string() + ".update");
+    EXPECT_FALSE(std::filesystem::exists(update_root));
+}
+
+TEST(PiUpdateService, ApplyUpdateInvalidZipPreservesOldContent)
+{
+    // 损坏 zip → 解压失败 → 旧目录原样保留，.update 临时目录清理。
+    FakePiHttpClient http;
+    http.AddRoute("/download/bad.zip", "not-a-real-zip-bytes");
+
+    TempPiProject project;
+    project.WriteInterface(MakeInterface("1.0.0", "", ""));
+
+    PiUpdateInfo info;
+    info.version_name = "1.2.0";
+    info.download_url = "https://example.com/download/bad.zip";
+
+    const auto result = PiUpdateService::ApplyUpdate(project.Dir(), info, http);
+
+    EXPECT_EQ(result, DAS_E_MAAPI_UPDATE_APPLY_FAILED);
+
+    // 旧内容未被替换。
+    std::ifstream old_interface(project.Dir() / "interface.json");
+    std::string   content(
+        (std::istreambuf_iterator<char>(old_interface)),
+        std::istreambuf_iterator<char>());
+    EXPECT_NE(content.find("1.0.0"), std::string::npos);
+    // 未生成 backup。
+    const auto backup_dir =
+        std::filesystem::path(project.Dir().string() + "_backup_1.0.0");
+    EXPECT_FALSE(std::filesystem::exists(backup_dir));
+    // .update 临时目录已清理。
+    const auto update_root = project.Dir().parent_path()
+                             / (project.Dir().filename().string() + ".update");
+    EXPECT_FALSE(std::filesystem::exists(update_root));
+}
+
+TEST(PiUpdateService, ApplyUpdateRenameFailurePreservesOldContent)
+{
+    // 备份/替换 rename 任一步失败 → 旧目录原样保留（不产生半替换态）。
+    // 用一个打开的 ifstream 持有 pi_dir 内文件的句柄（Windows sharing
+    // violation 使 backup rename 失败）→ ApplyUpdate 返回失败且旧内容完整。
+    FakePiHttpClient http;
+    http.AddRoute(
+        "/download/package.zip",
+        BuildTestZip({
+            TestZipEntry{"interface.json", "{\"version\":\"1.2.0\"}"},
+        }));
+
+    TempPiProject project;
+    project.WriteInterface(MakeInterface("1.0.0", "", ""));
+
+    PiUpdateInfo info;
+    info.version_name = "1.2.0";
+    info.download_url = "https://example.com/download/package.zip";
+
+    // 持有句柄阻止目录 rename（仅 Windows 语义；POSIX 上 rename 目录不受
+    // 打开文件影响，但该环境为 Windows/MinGW，共享违规确定发生）。
+    std::ifstream lock(project.Dir() / "interface.json", std::ios::binary);
+
+    const auto result = PiUpdateService::ApplyUpdate(project.Dir(), info, http);
+    lock.close();
+
+    EXPECT_EQ(result, DAS_E_MAAPI_UPDATE_APPLY_FAILED);
+
+    // 旧内容未被替换。
+    std::ifstream old_interface(project.Dir() / "interface.json");
+    std::string   content(
+        (std::istreambuf_iterator<char>(old_interface)),
+        std::istreambuf_iterator<char>());
+    EXPECT_NE(content.find("1.0.0"), std::string::npos);
+    // .update 临时目录已清理。
+    const auto update_root = project.Dir().parent_path()
+                             / (project.Dir().filename().string() + ".update");
+    EXPECT_FALSE(std::filesystem::exists(update_root));
 }
