@@ -38,6 +38,11 @@ namespace
             std::string path_fragment;
             std::string body;
             int         status = 200;
+            // 模拟流式下载：false → 无 Content-Length（total_bytes
+            // 空，阶段态）； chunk_size=0 → 整包一次写入 + 单次回调，非 0 →
+            // 按块回调。
+            bool          has_content_length = true;
+            std::uint64_t chunk_size = 0;
         };
 
         struct Call
@@ -49,12 +54,19 @@ namespace
         };
 
         void AddRoute(
-            std::string path_fragment,
-            std::string body,
-            int         status = 200)
+            std::string   path_fragment,
+            std::string   body,
+            int           status = 200,
+            bool          has_content_length = true,
+            std::uint64_t chunk_size = 0)
         {
             routes_.push_back(
-                Route{std::move(path_fragment), std::move(body), status});
+                Route{
+                    std::move(path_fragment),
+                    std::move(body),
+                    status,
+                    has_content_length,
+                    chunk_size});
         }
 
         // When true, every Get/Head fails (simulated network failure).
@@ -101,6 +113,80 @@ namespace
         {
             std::string body;
             return Dispatch(url, body, out_status, proxy_url);
+        }
+
+        // 流式下载 mock：命中路由时把 body 写入 out_path（按 chunk_size 分块）
+        // 并逐块回调 on_progress；has_content_length=false 时 total_bytes 空。
+        DasResult DownloadStream(
+            const std::string&           url,
+            const std::filesystem::path& out_path,
+            const ProgressCallback&      on_progress,
+            int&                         out_status,
+            const std::string&           proxy_url) override
+        {
+            calls_.push_back(Call{url, 0, {}, proxy_url});
+            if (fail_all_)
+            {
+                return DAS_E_FAIL;
+            }
+            for (const auto& route : routes_)
+            {
+                if (url.find(route.path_fragment) != std::string::npos)
+                {
+                    out_status = route.status;
+                    calls_.back().status = route.status;
+                    calls_.back().body = route.body;
+                    if (route.status != 200)
+                    {
+                        return DAS_S_OK;
+                    }
+                    std::ofstream ofs(
+                        out_path,
+                        std::ios::binary | std::ios::trunc);
+                    if (!ofs)
+                    {
+                        return DAS_E_FAIL;
+                    }
+                    std::optional<std::uint64_t> total;
+                    if (route.has_content_length)
+                    {
+                        total = static_cast<std::uint64_t>(route.body.size());
+                    }
+                    const std::uint64_t body_size =
+                        static_cast<std::uint64_t>(route.body.size());
+                    if (body_size == 0)
+                    {
+                        if (on_progress)
+                        {
+                            on_progress(DownloadProgress{0, total});
+                        }
+                        return DAS_S_OK;
+                    }
+                    const std::uint64_t step =
+                        route.chunk_size == 0 ? body_size : route.chunk_size;
+                    std::uint64_t offset = 0;
+                    do
+                    {
+                        std::uint64_t n = body_size - offset;
+                        if (n > step)
+                        {
+                            n = step;
+                        }
+                        ofs.write(
+                            route.body.data() + offset,
+                            static_cast<std::streamsize>(n));
+                        offset += n;
+                        if (on_progress)
+                        {
+                            on_progress(DownloadProgress{offset, total});
+                        }
+                    } while (offset < body_size);
+                    return DAS_S_OK;
+                }
+            }
+            out_status = 404;
+            calls_.back().status = 404;
+            return DAS_S_OK;
         }
 
     private:

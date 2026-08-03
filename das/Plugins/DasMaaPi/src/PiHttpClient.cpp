@@ -17,9 +17,13 @@
 #include <boost/beast/version.hpp>
 #include <openssl/ssl.h>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <exception>
+#include <filesystem>
+#include <fstream>
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -294,6 +298,164 @@ namespace Das::Plugins::DasMaaPi
             co_return DAS_S_OK;
         }
 
+        // Streaming GET that writes the response body straight to out_path as
+        // it arrives (no whole-body buffering). The caller's on_progress
+        // callback receives byte counts; total_bytes is filled only when the
+        // response carries a Content-Length header (Content-Length absent =>
+        // stage-only progress). Response headers use
+        // response_parser<buffer_body>
+        // + async_read_header so the header (and thus Content-Length) is known
+        // before the first body byte is written to disk.
+        template <typename Stream>
+        boost::asio::awaitable<DasResult> SendStreamRequest(
+            Stream&                      stream,
+            const UrlParts&              target,
+            bool                         absolute_form,
+            std::chrono::milliseconds    timeout,
+            const std::filesystem::path& out_path,
+            const ProgressCallback&      on_progress,
+            int&                         out_status,
+            std::string*                 out_location)
+        {
+            boost::beast::http::request<boost::beast::http::empty_body> req;
+            req.method(boost::beast::http::verb::get);
+            if (absolute_form)
+            {
+                req.target(
+                    target.scheme + "://" + target.host_and_port + target.path);
+            }
+            else
+            {
+                req.target(target.path);
+            }
+            req.version(11);
+            req.set(boost::beast::http::field::host, target.host_and_port);
+            req.set(boost::beast::http::field::user_agent, USER_AGENT);
+            req.set(boost::beast::http::field::accept, "*/*");
+
+            boost::beast::http::response_parser<boost::beast::http::buffer_body>
+                parser;
+            parser.body_limit(boost::none);
+
+            boost::beast::flat_buffer buffer;
+            ArmStreamTimeout(stream, timeout);
+            co_await boost::beast::http::async_write(
+                stream,
+                req,
+                boost::asio::use_awaitable);
+            ArmStreamTimeout(stream, timeout);
+            co_await boost::beast::http::async_read_header(
+                stream,
+                buffer,
+                parser,
+                boost::asio::use_awaitable);
+
+            auto resp = parser.get();
+            out_status = static_cast<int>(resp.result_int());
+            if (out_location)
+            {
+                const auto loc = resp.find(boost::beast::http::field::location);
+                if (loc != resp.end())
+                {
+                    *out_location = std::string(loc->value());
+                }
+            }
+
+            // 一次性打开输出文件（binary append/truncate）；写入路径由版本号
+            // 拼接，调用侧负责目录穿越防护。
+            std::ofstream ofs(out_path, std::ios::binary | std::ios::trunc);
+            if (!ofs)
+            {
+                LogDiagnosticError(
+                    "BeastHttpClient cannot open download path: "
+                    + out_path.string());
+                co_return DAS_E_FAIL;
+            }
+
+            // Content-Length（存在时）→ total_bytes；缺失（chunked / 连接关闭
+            // 定界）→ total_bytes 空，调用侧显示阶段态。
+            std::optional<std::uint64_t> total_bytes;
+            if (const auto cl =
+                    resp.find(boost::beast::http::field::content_length);
+                cl != resp.end())
+            {
+                std::uint64_t value = 0;
+                bool          ok = !cl->value().empty();
+                for (const char c : cl->value())
+                {
+                    if (c < '0' || c > '9')
+                    {
+                        ok = false;
+                        break;
+                    }
+                    value = value * 10 + static_cast<std::uint64_t>(c - '0');
+                }
+                if (ok)
+                {
+                    total_bytes = value;
+                }
+            }
+
+            std::uint64_t               bytes_received = 0;
+            std::array<char, 64 * 1024> buf{};
+            for (;;)
+            {
+                auto& body = parser.get().body();
+                body.data = buf.data();
+                body.size = buf.size();
+                const std::size_t requested = buf.size();
+
+                boost::system::error_code ec;
+                co_await boost::beast::http::async_read_some(
+                    stream,
+                    buffer,
+                    parser,
+                    boost::asio::redirect_error(
+                        boost::asio::use_awaitable,
+                        ec));
+
+                // buffer_body 消费后 body.size 为剩余缓冲空间，
+                // requested - body.size 即本次写入 body 缓冲的字节数。
+                const std::size_t written = requested - body.size;
+                if (written > 0)
+                {
+                    ofs.write(
+                        buf.data(),
+                        static_cast<std::streamsize>(written));
+                    if (!ofs)
+                    {
+                        LogDiagnosticError(
+                            "BeastHttpClient write to disk failed: "
+                            + out_path.string());
+                        co_return DAS_E_FAIL;
+                    }
+                    bytes_received += written;
+                    if (on_progress)
+                    {
+                        on_progress(
+                            DownloadProgress{bytes_received, total_bytes});
+                    }
+                }
+                if (ec)
+                {
+                    if (ec == boost::beast::http::error::need_buffer)
+                    {
+                        // 缓冲区已满且仍有 body 剩余 → 提供新缓冲区继续。
+                        continue;
+                    }
+                    throw boost::system::system_error(ec);
+                }
+                // chunked 传输时 async_read_some 可能只消费 framing（分块头）
+                // 而不写 body 字节、且未完成——不能因 written==0 提前结束，
+                // 继续读直到 parser.is_done()。
+                if (parser.is_done())
+                {
+                    break;
+                }
+            }
+            co_return DAS_S_OK;
+        }
+
         // Establish a CONNECT tunnel to the target through the HTTP proxy
         // (D-89-08). After the 200 Connection Established the same socket is
         // reused for the TLS handshake.
@@ -370,7 +532,7 @@ namespace Das::Plugins::DasMaaPi
             auto executor = co_await boost::asio::this_coro::executor;
             boost::asio::ip::tcp::resolver resolver(executor);
 
-            // WR-04: DNS resolution has no per-operation timeout of its own
+            // DNS resolution has no per-operation timeout of its own
             // (ArmStreamTimeout covers TCP connect/read/write only). Wrap
             // async_resolve in a steady_timer so a hung resolver cannot block
             // the authoring thread forever. The timer lives in the shared
@@ -504,6 +666,152 @@ namespace Das::Plugins::DasMaaPi
                 /*absolute_form=*/via_proxy,
                 timeout,
                 out_body,
+                out_status,
+                out_location);
+        }
+
+        // Connect-and-read coroutine for DownloadStream. Mirrors
+        // DoRequestImpl's DNS-with-timeout / CONNECT tunnel / TLS /
+        // absolute-form logic but terminates in SendStreamRequest (body
+        // streamed to disk) instead of the whole-body SendRequest.
+        boost::asio::awaitable<DasResult> DoStreamRequestImpl(
+            bool                         verify_tls,
+            std::chrono::milliseconds    timeout,
+            const UrlParts&              target,
+            const ProxyTarget*           proxy,
+            const std::filesystem::path& out_path,
+            const ProgressCallback&      on_progress,
+            int&                         out_status,
+            std::string*                 out_location)
+        {
+            const bool via_proxy = (proxy != nullptr);
+            const bool use_tls = (target.scheme == "https");
+
+            // Connect to the proxy when one is configured, else the target.
+            const auto connect_host = via_proxy ? proxy->host : target.host;
+            const auto connect_port = via_proxy ? std::to_string(proxy->port)
+                                                : std::to_string(target.port);
+
+            auto executor = co_await boost::asio::this_coro::executor;
+            boost::asio::ip::tcp::resolver resolver(executor);
+
+            // DNS resolution has no per-operation timeout of its own
+            // (ArmStreamTimeout covers TCP connect/read/write only). Wrap
+            // async_resolve in a steady_timer so a hung resolver cannot block
+            // the authoring thread forever (same pattern as DoRequestImpl).
+            struct ResolveState
+            {
+                std::optional<boost::system::error_code> ec;
+                std::optional<boost::asio::ip::tcp::resolver::results_type>
+                                          result;
+                boost::asio::steady_timer timer;
+                explicit ResolveState(boost::asio::any_io_executor executor)
+                    : timer(std::move(executor))
+                {
+                }
+            };
+            auto state = std::make_shared<ResolveState>(executor);
+            state->timer.expires_after(timeout);
+            resolver.async_resolve(
+                connect_host,
+                connect_port,
+                [state](
+                    const boost::system::error_code&             ec,
+                    boost::asio::ip::tcp::resolver::results_type result)
+                {
+                    state->ec = ec;
+                    state->result = std::move(result);
+                    try
+                    {
+                        state->timer.cancel();
+                    }
+                    catch (const boost::system::system_error&)
+                    {
+                    }
+                });
+            boost::system::error_code wait_ec;
+            co_await state->timer.async_wait(
+                boost::asio::redirect_error(
+                    boost::asio::use_awaitable,
+                    wait_ec));
+            if (!state->ec)
+            {
+                resolver.cancel();
+                LogDiagnosticError(
+                    "BeastHttpClient DNS resolution timed out: host="
+                    + connect_host);
+                co_return DAS_E_TIMEOUT;
+            }
+            if (*state->ec)
+            {
+                throw boost::system::system_error(*state->ec);
+            }
+            const auto endpoints = std::move(*state->result);
+
+            boost::beast::tcp_stream stream(executor);
+            ArmStreamTimeout(stream, timeout);
+            co_await stream.async_connect(
+                endpoints,
+                boost::asio::use_awaitable);
+
+            // https targets through a proxy go over a CONNECT tunnel; the TLS
+            // handshake runs inside it. http targets use absolute-form instead.
+            if (via_proxy && use_tls)
+            {
+                const auto tunnel_result =
+                    co_await DoConnectTunnel(stream, target, *proxy, timeout);
+                if (IsFailed(tunnel_result))
+                {
+                    co_return tunnel_result;
+                }
+            }
+
+            if (use_tls)
+            {
+                boost::asio::ssl::context ctx(
+                    boost::asio::ssl::context::tls_client);
+                if (verify_tls)
+                {
+                    ctx.set_verify_mode(boost::asio::ssl::verify_peer);
+                    ctx.set_default_verify_paths();
+                    ctx.set_verify_callback(
+                        boost::asio::ssl::host_name_verification(target.host));
+                }
+                else
+                {
+                    ctx.set_verify_mode(boost::asio::ssl::verify_none);
+                }
+                boost::beast::ssl_stream<boost::beast::tcp_stream> tls(
+                    std::move(stream),
+                    ctx);
+                if (verify_tls)
+                {
+                    SSL_set_tlsext_host_name(
+                        tls.native_handle(),
+                        target.host.c_str());
+                }
+                ArmStreamTimeout(tls, timeout);
+                co_await tls.async_handshake(
+                    boost::asio::ssl::stream_base::client,
+                    boost::asio::use_awaitable);
+                co_return co_await SendStreamRequest(
+                    tls,
+                    target,
+                    /*absolute_form=*/false,
+                    timeout,
+                    out_path,
+                    on_progress,
+                    out_status,
+                    out_location);
+            }
+
+            co_return co_await SendStreamRequest(
+                stream,
+                target,
+                /*absolute_form=*/via_proxy,
+                timeout,
+                out_path,
+                on_progress,
                 out_status,
                 out_location);
         }
@@ -687,6 +995,166 @@ namespace Das::Plugins::DasMaaPi
             }
         }
 
+        boost::asio::awaitable<void> DoStreamRequest(
+            const std::string&           url,
+            const std::string&           proxy_url,
+            bool                         verify_tls,
+            std::chrono::milliseconds    timeout,
+            const std::filesystem::path& out_path,
+            const ProgressCallback&      on_progress,
+            int&                         out_status,
+            RequestOutcome&              outcome)
+        {
+            try
+            {
+                UrlParts target;
+                if (!ParseUrl(url, target))
+                {
+                    outcome.result = DAS_E_INVALID_URL;
+                    LogDiagnosticError(
+                        "BeastHttpClient invalid url: url="
+                        + RedactUrlForLog(url));
+                    co_return;
+                }
+
+                // Resolve the proxy up front; an invalid proxy URL (including
+                // socks5) fails here instead of silently connecting directly.
+                ProxyTarget        proxy;
+                const ProxyTarget* proxy_ptr = nullptr;
+                if (!proxy_url.empty())
+                {
+                    const auto parse_result = ParseProxyUrl(proxy_url, proxy);
+                    if (IsFailed(parse_result))
+                    {
+                        outcome.result = parse_result;
+                        co_return;
+                    }
+                    proxy_ptr = &proxy;
+                }
+
+                // Follow up to MAX_REDIRECTS 3xx responses. Each hop
+                // re-issues the request against the resolved Location; each hop
+                // truncates out_path, so the file ends up with only the final
+                // 200 body.
+                constexpr int MAX_REDIRECTS = 5;
+                std::string   current_url = url;
+                std::string   location;
+                for (int hop = 0; hop <= MAX_REDIRECTS; ++hop)
+                {
+                    if (!ParseUrl(current_url, target))
+                    {
+                        outcome.result = DAS_E_INVALID_URL;
+                        LogDiagnosticError(
+                            "BeastHttpClient invalid redirect url: url="
+                            + RedactUrlForLog(current_url));
+                        co_return;
+                    }
+                    location.clear();
+                    outcome.result = co_await DoStreamRequestImpl(
+                        verify_tls,
+                        timeout,
+                        target,
+                        proxy_ptr,
+                        out_path,
+                        on_progress,
+                        out_status,
+                        &location);
+                    if (IsFailed(outcome.result))
+                    {
+                        co_return;
+                    }
+                    if (!IsRedirectStatus(out_status))
+                    {
+                        co_return;
+                    }
+                    if (location.empty())
+                    {
+                        // 3xx without a Location header is surfaced as-is so
+                        // the caller sees the redirect status.
+                        co_return;
+                    }
+                    if (hop == MAX_REDIRECTS)
+                    {
+                        LogDiagnosticWarning(
+                            "BeastHttpClient redirect limit reached: url="
+                            + RedactUrlForLog(url)
+                            + " hops=" + std::to_string(MAX_REDIRECTS));
+                        co_return;
+                    }
+                    const auto resolved = ResolveRedirectUrl(target, location);
+                    if (!resolved)
+                    {
+                        LogDiagnosticError(
+                            "BeastHttpClient invalid redirect location: url="
+                            + RedactUrlForLog(current_url));
+                        outcome.result = DAS_E_FAIL;
+                        co_return;
+                    }
+                    current_url = *resolved;
+                }
+            }
+            catch (const boost::system::system_error& e)
+            {
+                outcome.result = MapSystemError(e.code());
+                LogDiagnosticError(
+                    "BeastHttpClient stream request failed: url="
+                    + RedactUrlForLog(url) + " error=" + e.code().message());
+            }
+            catch (const std::exception& e)
+            {
+                outcome.result = DAS_E_FAIL;
+                LogDiagnosticError(
+                    "BeastHttpClient stream request exception: url="
+                    + RedactUrlForLog(url) + " error=" + e.what());
+            }
+        }
+
+        DasResult RunStreamRequest(
+            bool                         verify_tls,
+            std::chrono::milliseconds    timeout,
+            const std::string&           url,
+            const std::string&           proxy_url,
+            const std::filesystem::path& out_path,
+            const ProgressCallback&      on_progress,
+            int&                         out_status)
+        {
+            boost::asio::io_context io;
+            RequestOutcome          outcome;
+            boost::asio::co_spawn(
+                io,
+                DoStreamRequest(
+                    url,
+                    proxy_url,
+                    verify_tls,
+                    timeout,
+                    out_path,
+                    on_progress,
+                    out_status,
+                    outcome),
+                [&](std::exception_ptr e) { outcome.error = std::move(e); });
+            io.run();
+            if (outcome.error)
+            {
+                try
+                {
+                    std::rethrow_exception(outcome.error);
+                }
+                catch (const boost::system::system_error& e)
+                {
+                    outcome.result = MapSystemError(e.code());
+                    LogDiagnosticError(
+                        "BeastHttpClient stream request aborted: url="
+                        + RedactUrlForLog(url)
+                        + " error=" + e.code().message());
+                }
+                catch (...)
+                {
+                    outcome.result = DAS_E_FAIL;
+                }
+            }
+            return outcome.result;
+        }
+
         DasResult RunRequest(
             bool                      verify_tls,
             std::chrono::milliseconds timeout,
@@ -859,6 +1327,23 @@ namespace Das::Plugins::DasMaaPi
             proxy_url,
             /*head_only=*/true,
             unused_body,
+            out_status);
+    }
+
+    DasResult BeastHttpClient::DownloadStream(
+        const std::string&           url,
+        const std::filesystem::path& out_path,
+        const ProgressCallback&      on_progress,
+        int&                         out_status,
+        const std::string&           proxy_url)
+    {
+        return RunStreamRequest(
+            verify_tls_certificate_,
+            timeout_,
+            url,
+            proxy_url,
+            out_path,
+            on_progress,
             out_status);
     }
 } // namespace Das::Plugins::DasMaaPi

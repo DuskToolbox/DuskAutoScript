@@ -6821,6 +6821,50 @@ namespace
             return Dispatch(url, body, out_status, proxy_url);
         }
 
+        // 流式下载 mock：命中路由时把 body 写入 out_path（供 ApplyUpdate
+        // 流式落盘后解压），成功后回调一次 on_progress。
+        DasResult DownloadStream(
+            const std::string&           url,
+            const std::filesystem::path& out_path,
+            const ProgressCallback&      on_progress,
+            int&                         out_status,
+            const std::string&           proxy_url) override
+        {
+            if (fail_all_)
+            {
+                return DAS_E_FAIL;
+            }
+            for (const auto& route : routes_)
+            {
+                if (url.find(route.path_fragment) != std::string::npos)
+                {
+                    out_status = route.status;
+                    if (route.status != 200)
+                    {
+                        return DAS_S_OK;
+                    }
+                    std::ofstream ofs(
+                        out_path,
+                        std::ios::binary | std::ios::trunc);
+                    if (!ofs)
+                    {
+                        return DAS_E_FAIL;
+                    }
+                    ofs.write(route.body.data(), route.body.size());
+                    if (on_progress)
+                    {
+                        on_progress(
+                            DownloadProgress{
+                                static_cast<std::uint64_t>(route.body.size()),
+                                static_cast<std::uint64_t>(route.body.size())});
+                    }
+                    return DAS_S_OK;
+                }
+            }
+            out_status = 404;
+            return DAS_S_OK;
+        }
+
     private:
         DasResult Dispatch(
             const std::string& url,

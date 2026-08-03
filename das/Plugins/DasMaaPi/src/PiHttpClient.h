@@ -4,6 +4,8 @@
 
 #include <chrono>
 #include <cstdint>
+#include <filesystem>
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -25,6 +27,17 @@ namespace Das::Plugins::DasMaaPi
     // for socks5:// and for malformed URLs (missing scheme/host/port) instead
     // of silently connecting directly.
     DasResult ParseProxyUrl(std::string_view url, ProxyTarget& out);
+
+    // 流式下载进度。total_bytes 仅在响应携带 Content-Length 时填充；缺失
+    // （chunked / 连接关闭定界）时为空，调用侧显示阶段态「正在下载…」而非
+    // 估算百分比。
+    struct DownloadProgress
+    {
+        std::uint64_t                bytes_received = 0;
+        std::optional<std::uint64_t> total_bytes;
+    };
+
+    using ProgressCallback = std::function<void(const DownloadProgress&)>;
 
     // Outbound HTTP seam (89-RESEARCH Pitfall 2). PiUpdateService depends on
     // this interface rather than a concrete client, so tests can inject a local
@@ -50,6 +63,16 @@ namespace Das::Plugins::DasMaaPi
             const std::string& url,
             int&               out_status,
             const std::string& proxy_url = {}) = 0;
+
+        // 流式下载 seam。把响应体边下边写入 out_path（不得整体缓冲进内存），
+        // 逐块调 on_progress。测试注入 mock 模拟进度；生产传 BeastHttpClient。
+        // out_path 由版本号拼接，调用侧负责目录穿越防护。
+        virtual DasResult DownloadStream(
+            const std::string&           url,
+            const std::filesystem::path& out_path,
+            const ProgressCallback&      on_progress,
+            int&                         out_status,
+            const std::string&           proxy_url = {}) = 0;
     };
 
     // Production Boost.Beast implementation of PiHttpClient. All network I/O is
@@ -73,6 +96,13 @@ namespace Das::Plugins::DasMaaPi
             const std::string& url,
             int&               out_status,
             const std::string& proxy_url = {}) override;
+
+        DasResult DownloadStream(
+            const std::string&           url,
+            const std::filesystem::path& out_path,
+            const ProgressCallback&      on_progress,
+            int&                         out_status,
+            const std::string&           proxy_url = {}) override;
 
     private:
         bool                      verify_tls_certificate_;

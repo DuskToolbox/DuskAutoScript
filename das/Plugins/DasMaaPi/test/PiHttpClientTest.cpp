@@ -18,6 +18,7 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <utility>
@@ -72,6 +73,9 @@ namespace
         std::string   LastTarget() const { return last_target_; }
         int           RequestCount() const { return request_count_.load(); }
         void          SetBody(std::string body) { body_ = std::move(body); }
+        // 无 Content-Length：以 Transfer-Encoding: chunked 响应（流式下载
+        // 无 total_bytes 阶段态场景）。
+        void SetChunkedResponse(bool chunked) { chunked_ = chunked; }
 
     private:
         void AcceptLoop()
@@ -101,6 +105,23 @@ namespace
                 request_count_.fetch_add(1);
                 last_target_ = std::string(req.target());
 
+                if (chunked_)
+                {
+                    // 手动写一个 chunked 响应（无 Content-Length）：
+                    // 单 chunk + 终止块。用于无 total_bytes 阶段态测试。
+                    std::ostringstream hex;
+                    hex << std::hex << body_.size();
+                    std::string raw = "HTTP/1.1 200 OK\r\n";
+                    raw += "Content-Type: application/octet-stream\r\n";
+                    raw += "Transfer-Encoding: chunked\r\n";
+                    raw += "\r\n";
+                    raw += hex.str() + "\r\n";
+                    raw += body_;
+                    raw += "\r\n0\r\n\r\n";
+                    boost::asio::write(sock, boost::asio::buffer(raw));
+                    return;
+                }
+
                 boost::beast::http::response<boost::beast::http::string_body>
                     resp;
                 resp.result(boost::beast::http::status::ok);
@@ -125,6 +146,7 @@ namespace
         std::string                                     body_;
         std::atomic<int>                                request_count_{0};
         std::string                                     last_target_;
+        bool                                            chunked_ = false;
     };
 
     // Mock server that answers /redirect with a 302 + Location header and every
@@ -762,5 +784,126 @@ v6yQpUYtQbbVSIHbNlBhfp8=
         EXPECT_EQ(status, 302);
         // Initial request + 5 followed hops.
         EXPECT_EQ(server.RequestCount(), 6);
+    }
+
+    // ---------------------------------------------------------------------
+    // 流式下载 DownloadStream：有/无 Content-Length、写盘、逐块进度回调。
+    // ---------------------------------------------------------------------
+
+    TEST(PiHttpClient, DownloadStreamWithContentLengthReportsChunkedProgress)
+    {
+        // 200KB body > 64KB 客户端缓冲 → 多块回调（Test 1：逐块 + total）。
+        const std::string body(200 * 1024, 'x');
+        LocalHttpServer   server(body);
+        server.Start();
+
+        BeastHttpClient client;
+        const auto      out_path = std::filesystem::temp_directory_path()
+                                   / "das_pi_download_cl_test.bin";
+        std::error_code ec;
+        std::filesystem::remove(out_path, ec);
+
+        std::vector<DownloadProgress> progress;
+        int                           status = 0;
+        const auto url = "http://127.0.0.1:" + std::to_string(server.Port())
+                         + "/package.zip";
+        const auto result = client.DownloadStream(
+            url,
+            out_path,
+            [&](const DownloadProgress& p) { progress.push_back(p); },
+            status);
+
+        EXPECT_EQ(result, DAS_S_OK);
+        EXPECT_EQ(status, 200);
+        // 多块回调（64KB 缓冲 → 200KB body 至少 3 次）。
+        EXPECT_GE(progress.size(), 3u);
+        ASSERT_FALSE(progress.empty());
+        const auto& last = progress.back();
+        EXPECT_EQ(last.bytes_received, static_cast<std::uint64_t>(body.size()));
+        ASSERT_TRUE(last.total_bytes.has_value());
+        EXPECT_EQ(*last.total_bytes, static_cast<std::uint64_t>(body.size()));
+        // Test 3：写盘字节与响应体一致。
+        std::ifstream ifs(out_path, std::ios::binary);
+        std::string   content(
+            (std::istreambuf_iterator<char>(ifs)),
+            std::istreambuf_iterator<char>());
+        EXPECT_EQ(content, body);
+        std::filesystem::remove(out_path, ec);
+    }
+
+    TEST(PiHttpClient, DownloadStreamWithoutContentLengthReportsStageProgress)
+    {
+        // Test 2：无 Content-Length（chunked）→ total_bytes 空（阶段态），
+        // bytes_received 递增，写盘字节一致。
+        LocalHttpServer server("chunked-package-bytes");
+        server.SetChunkedResponse(true);
+        server.Start();
+
+        BeastHttpClient client;
+        const auto      out_path = std::filesystem::temp_directory_path()
+                                   / "das_pi_download_nocl_test.bin";
+        std::error_code ec;
+        std::filesystem::remove(out_path, ec);
+
+        std::vector<DownloadProgress> progress;
+        int                           status = 0;
+        const auto url = "http://127.0.0.1:" + std::to_string(server.Port())
+                         + "/package.zip";
+        const auto result = client.DownloadStream(
+            url,
+            out_path,
+            [&](const DownloadProgress& p) { progress.push_back(p); },
+            status);
+
+        EXPECT_EQ(result, DAS_S_OK);
+        EXPECT_EQ(status, 200);
+        ASSERT_FALSE(progress.empty());
+        for (const auto& p : progress)
+        {
+            EXPECT_FALSE(p.total_bytes.has_value());
+        }
+        EXPECT_GT(progress.back().bytes_received, 0u);
+        std::ifstream ifs(out_path, std::ios::binary);
+        std::string   content(
+            (std::istreambuf_iterator<char>(ifs)),
+            std::istreambuf_iterator<char>());
+        EXPECT_EQ(content, "chunked-package-bytes");
+        std::filesystem::remove(out_path, ec);
+    }
+
+    TEST(PiHttpClient, DownloadStreamNon200WritesNoBody)
+    {
+        // 非 200 响应：不写盘体（HTTP 层无 body 落盘），状态透传。
+        // LocalRedirectServer 对 /redirect 返回 302 + Location；DownloadStream
+        // 跟随跳转到 /final 拿到 200 体。
+        LocalRedirectServer server;
+        server.Start();
+
+        BeastHttpClient client;
+        const auto      out_path = std::filesystem::temp_directory_path()
+                                   / "das_pi_download_redirect_test.bin";
+        std::error_code ec;
+        std::filesystem::remove(out_path, ec);
+
+        std::vector<DownloadProgress> progress;
+        int                           status = 0;
+        const auto                    url =
+            "http://127.0.0.1:" + std::to_string(server.Port()) + "/redirect";
+        const auto result = client.DownloadStream(
+            url,
+            out_path,
+            [&](const DownloadProgress& p) { progress.push_back(p); },
+            status);
+
+        EXPECT_EQ(result, DAS_S_OK);
+        EXPECT_EQ(status, 200);
+        EXPECT_EQ(server.RequestCount(), 2);
+        ASSERT_FALSE(progress.empty());
+        std::ifstream ifs(out_path, std::ios::binary);
+        std::string   content(
+            (std::istreambuf_iterator<char>(ifs)),
+            std::istreambuf_iterator<char>());
+        EXPECT_EQ(content, "{\"redirected\":true}");
+        std::filesystem::remove(out_path, ec);
     }
 } // namespace
