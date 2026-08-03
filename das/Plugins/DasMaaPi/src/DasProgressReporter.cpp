@@ -102,10 +102,13 @@ namespace Plugins::DasMaaPi
         // 插件侧 IDasJson 构造惯例（SchedulerTestPluginImpl / DasFlowControl
         // 先例）：IDasJsonImpl 符号未从 DasCore.dll 导出，插件无法链接；改用
         // 导出的 ParseDasJsonFromString 经序列化往返创建。
+        // 注意必须带 copy_string：裸 yyjson::value{std::string} 会被
+        // initializer_list 构造解析成单元素数组（["..."]），字段值会变成
+        // 数组而非标量，service 侧装配会跳过。
         DasPtr<Das::ExportInterface::IDasJson> MakeJsonFieldValue(
             const std::string& text)
         {
-            yyjson::value value{std::string(text)};
+            yyjson::value value{std::string(text), yyjson::copy_string};
             auto          serialized = Das::Utils::SerializeYyjsonValue(value);
             if (!serialized)
             {
