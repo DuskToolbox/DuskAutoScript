@@ -19,9 +19,13 @@ CHECK_EXTENSIONS = {
 
 BOM = b"\xef\xbb\xbf"
 
-# 代码新增行中的审查报告编号引用（如类别前缀 C/R/W/I 后接 "-" 与数字）。
-# 报告编号是过程产物，不应以注释形式残留在代码里。
-REVIEW_FINDING_REF = re.compile(r"\b(CR|WR|IN)-[0-9]+\b")
+# 代码新增行中的过程产物编号引用：review finding 编号、决策 ID、phase 编号、plan 编号。
+# 这些编号是过程产物，不应以注释形式残留在代码里（与 .githooks/commit-msg 对齐）。
+REVIEW_FINDING_REF = re.compile(
+    r"\b(CR|WR|IN)-[0-9]+\b"
+    r"|D-[0-9]+(\.[0-9]+)?-[0-9]+"
+    r"|(?:Phase|phase|Plan|plan)[ \t]+[0-9]+"
+)
 
 
 def get_staged_files():
@@ -104,8 +108,8 @@ def main():
                 finding_violations.append((filepath, stripped.strip()))
 
     if finding_violations:
-        print("pre-commit: 新增代码含审查报告编号引用（类别前缀后接短横线与数字）", file=sys.stderr)
-        print("审查报告编号是过程产物，不应以注释形式残留在代码里。", file=sys.stderr)
+        print("pre-commit: 新增代码含过程产物编号引用（review finding、决策 ID、phase、plan 编号）", file=sys.stderr)
+        print("这些编号是过程产物，不应以注释形式残留在代码里。", file=sys.stderr)
         print("", file=sys.stderr)
         for filepath, line in finding_violations:
             print(f"  {filepath}: {line}", file=sys.stderr)
