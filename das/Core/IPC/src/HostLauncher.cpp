@@ -743,6 +743,18 @@ void HostLauncher::Stop()
     {
         try
         {
+            // scope 结构化 drain（D-91-06）：request_stop 取消在途握手链与
+            // 成功路径 exit-watcher 的 async_wait；io_context 仍活着（上面的
+            // !stopped() 守卫）驱动取消 completion，active 归零后 on_empty
+            // 完成。drain 必须先于 StopBody 的 process.reset()——成功路径
+            // watcher 在 scope 内，若 process.reset() 先执行会 #1338 式 UAF
+            // （UAF 2 根因）。request_stop 先行取消 watcher 时，Task 1 的
+            // stop_token 守卫跳过 on_process_exit_slot_.Invoke，无伪 -1 回调
+            // （Pitfall 3 缓解；与自然退出路径 ParentProcessExit_* 的
+            // stop 未请求放行真实 exit_code 语义由 Plan 03 负向审计验证）。
+            impl_->scope.request_stop();
+            stdexec::sync_wait(impl_->scope.on_empty());
+
             boost::asio::co_spawn(
                 impl_->io_ctx,
                 StopBody(),
