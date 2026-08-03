@@ -23,11 +23,11 @@ namespace
         return Das::Core::ForeignInterfaceHost::MakeDasGuid(s);
     }
 
-    const DasGuid kSourceNode =
+    const DasGuid SOURCE_NODE =
         MakeNode("11111111-1111-1111-1111-111111111111");
-    const DasGuid kTargetNode =
+    const DasGuid TARGET_NODE =
         MakeNode("22222222-2222-2222-2222-222222222222");
-    const DasGuid kOtherNode = MakeNode("33333333-3333-3333-3333-333333333333");
+    const DasGuid OTHER_NODE = MakeNode("33333333-3333-3333-3333-333333333333");
 
     Dto::PortBindingDto MakeBinding(
         const std::string& src_node,
@@ -81,9 +81,9 @@ namespace
 TEST(DoAdapterTest, BuildInputPortMap_IntValue)
 {
     PortFrame frame;
-    frame.Set(kSourceNode, "out", PortValue(int64_t{42}));
+    frame.Set(SOURCE_NODE, "out", PortValue(int64_t{42}));
 
-    auto bindings = {MakeBinding(GuidToString(kSourceNode), "out", "in")};
+    auto bindings = {MakeBinding(GuidToString(SOURCE_NODE), "out", "in")};
 
     DAS::DasPtr<IDasPortMap> map;
     ASSERT_EQ(BuildInputPortMap(frame, bindings, map.Put()), DAS_S_OK);
@@ -98,9 +98,9 @@ TEST(DoAdapterTest, BuildInputPortMap_IntValue)
 TEST(DoAdapterTest, BuildInputPortMap_FloatValue)
 {
     PortFrame frame;
-    frame.Set(kSourceNode, "out", PortValue(3.14));
+    frame.Set(SOURCE_NODE, "out", PortValue(3.14));
 
-    auto bindings = {MakeBinding(GuidToString(kSourceNode), "out", "in")};
+    auto bindings = {MakeBinding(GuidToString(SOURCE_NODE), "out", "in")};
 
     DAS::DasPtr<IDasPortMap> map;
     ASSERT_EQ(BuildInputPortMap(frame, bindings, map.Put()), DAS_S_OK);
@@ -114,9 +114,9 @@ TEST(DoAdapterTest, BuildInputPortMap_FloatValue)
 TEST(DoAdapterTest, BuildInputPortMap_StringValue)
 {
     PortFrame frame;
-    frame.Set(kSourceNode, "out", PortValue(std::string("hello")));
+    frame.Set(SOURCE_NODE, "out", PortValue(std::string("hello")));
 
-    auto bindings = {MakeBinding(GuidToString(kSourceNode), "out", "in")};
+    auto bindings = {MakeBinding(GuidToString(SOURCE_NODE), "out", "in")};
 
     DAS::DasPtr<IDasPortMap> map;
     ASSERT_EQ(BuildInputPortMap(frame, bindings, map.Put()), DAS_S_OK);
@@ -135,9 +135,9 @@ TEST(DoAdapterTest, BuildInputPortMap_StringValue)
 TEST(DoAdapterTest, BuildInputPortMap_BoolValue)
 {
     PortFrame frame;
-    frame.Set(kSourceNode, "out", PortValue(true));
+    frame.Set(SOURCE_NODE, "out", PortValue(true));
 
-    auto bindings = {MakeBinding(GuidToString(kSourceNode), "out", "in")};
+    auto bindings = {MakeBinding(GuidToString(SOURCE_NODE), "out", "in")};
 
     DAS::DasPtr<IDasPortMap> map;
     ASSERT_EQ(BuildInputPortMap(frame, bindings, map.Put()), DAS_S_OK);
@@ -151,9 +151,9 @@ TEST(DoAdapterTest, BuildInputPortMap_BoolValue)
 TEST(DoAdapterTest, BuildInputPortMap_SignalValue)
 {
     PortFrame frame;
-    frame.Set(kSourceNode, "out", PortValue::Signal());
+    frame.Set(SOURCE_NODE, "out", PortValue::Signal());
 
-    auto bindings = {MakeBinding(GuidToString(kSourceNode), "out", "in")};
+    auto bindings = {MakeBinding(GuidToString(SOURCE_NODE), "out", "in")};
 
     DAS::DasPtr<IDasPortMap> map;
     ASSERT_EQ(BuildInputPortMap(frame, bindings, map.Put()), DAS_S_OK);
@@ -173,14 +173,14 @@ TEST(DoAdapterTest, BuildInputPortMap_SignalValue)
 TEST(DoAdapterTest, BuildInputPortMap_MultipleBindings)
 {
     PortFrame frame;
-    frame.Set(kSourceNode, "out_a", PortValue(int64_t{10}));
-    frame.Set(kSourceNode, "out_b", PortValue(std::string("world")));
-    frame.Set(kOtherNode, "result", PortValue(2.5));
+    frame.Set(SOURCE_NODE, "out_a", PortValue(int64_t{10}));
+    frame.Set(SOURCE_NODE, "out_b", PortValue(std::string("world")));
+    frame.Set(OTHER_NODE, "result", PortValue(2.5));
 
     auto bindings = {
-        MakeBinding(GuidToString(kSourceNode), "out_a", "in_x"),
-        MakeBinding(GuidToString(kSourceNode), "out_b", "in_y"),
-        MakeBinding(GuidToString(kOtherNode), "result", "in_z"),
+        MakeBinding(GuidToString(SOURCE_NODE), "out_a", "in_x"),
+        MakeBinding(GuidToString(SOURCE_NODE), "out_b", "in_y"),
+        MakeBinding(GuidToString(OTHER_NODE), "result", "in_z"),
     };
 
     DAS::DasPtr<IDasPortMap> map;
@@ -213,7 +213,7 @@ TEST(DoAdapterTest, BuildInputPortMap_MultipleBindings)
 TEST(DoAdapterTest, BuildInputPortMap_NullOutput)
 {
     const PortFrame frame;
-    auto bindings = {MakeBinding(GuidToString(kSourceNode), "out", "in")};
+    auto bindings = {MakeBinding(GuidToString(SOURCE_NODE), "out", "in")};
 
     EXPECT_EQ(
         BuildInputPortMap(frame, bindings, nullptr),
@@ -230,7 +230,7 @@ TEST(DoAdapterTest, BuildInputPortMap_MissingSourcePort)
     // No entries in frame.
 
     auto bindings = {
-        MakeBinding(GuidToString(kSourceNode), "nonexistent", "in")};
+        MakeBinding(GuidToString(SOURCE_NODE), "nonexistent", "in")};
 
     DAS::DasPtr<IDasPortMap> map;
     // Should succeed — missing source ports are logged and skipped.
@@ -251,9 +251,9 @@ TEST(DoAdapterTest, BuildInputPortMap_MissingSourcePort)
 TEST(DoAdapterTest, BuildInputPortMap_NullValueSkipped)
 {
     PortFrame frame;
-    frame.Set(kSourceNode, "out", PortValue());
+    frame.Set(SOURCE_NODE, "out", PortValue());
 
-    auto bindings = {MakeBinding(GuidToString(kSourceNode), "out", "in")};
+    auto bindings = {MakeBinding(GuidToString(SOURCE_NODE), "out", "in")};
 
     DAS::DasPtr<IDasPortMap> map;
     ASSERT_EQ(BuildInputPortMap(frame, bindings, map.Put()), DAS_S_OK);
@@ -375,10 +375,10 @@ TEST(DoAdapterTest, BuildInputPortMap_BroadcastAndPointToPointCoexist)
     // A node may receive both a normal data edge and a graph-input broadcast;
     // both must land in the input map.
     PortFrame frame;
-    frame.Set(kSourceNode, "out", PortValue(int64_t{7}));
+    frame.Set(SOURCE_NODE, "out", PortValue(int64_t{7}));
 
     const std::vector<Dto::PortBindingDto> bindings = {
-        MakeBinding(GuidToString(kSourceNode), "out", "in_data"),
+        MakeBinding(GuidToString(SOURCE_NODE), "out", "in_data"),
         MakeBroadcastBinding("threshold", "in_opt", ParseJson("99")),
     };
 
@@ -409,9 +409,9 @@ TEST(DoAdapterTest, ExtractOutputPortMap_IntValue)
     ASSERT_EQ(map->SetInt(key.Get(), 99), DAS_S_OK);
 
     PortFrame frame;
-    ASSERT_EQ(ExtractOutputPortMap(map.Get(), kTargetNode, frame), DAS_S_OK);
+    ASSERT_EQ(ExtractOutputPortMap(map.Get(), TARGET_NODE, frame), DAS_S_OK);
 
-    const auto* pv = frame.Find({kTargetNode, "out"});
+    const auto* pv = frame.Find({TARGET_NODE, "out"});
     ASSERT_NE(pv, nullptr);
     ASSERT_TRUE(pv->IsInt());
     EXPECT_EQ(*pv->AsInt(), 99);
@@ -426,9 +426,9 @@ TEST(DoAdapterTest, ExtractOutputPortMap_FloatValue)
     ASSERT_EQ(map->SetFloat(key.Get(), 1.23), DAS_S_OK);
 
     PortFrame frame;
-    ASSERT_EQ(ExtractOutputPortMap(map.Get(), kTargetNode, frame), DAS_S_OK);
+    ASSERT_EQ(ExtractOutputPortMap(map.Get(), TARGET_NODE, frame), DAS_S_OK);
 
-    const auto* pv = frame.Find({kTargetNode, "out"});
+    const auto* pv = frame.Find({TARGET_NODE, "out"});
     ASSERT_NE(pv, nullptr);
     ASSERT_TRUE(pv->IsFloat());
     EXPECT_DOUBLE_EQ(*pv->AsFloat(), 1.23);
@@ -444,9 +444,9 @@ TEST(DoAdapterTest, ExtractOutputPortMap_StringValue)
     ASSERT_EQ(map->SetString(key.Get(), val.Get()), DAS_S_OK);
 
     PortFrame frame;
-    ASSERT_EQ(ExtractOutputPortMap(map.Get(), kTargetNode, frame), DAS_S_OK);
+    ASSERT_EQ(ExtractOutputPortMap(map.Get(), TARGET_NODE, frame), DAS_S_OK);
 
-    const auto* pv = frame.Find({kTargetNode, "out"});
+    const auto* pv = frame.Find({TARGET_NODE, "out"});
     ASSERT_NE(pv, nullptr);
     ASSERT_TRUE(pv->IsString());
     EXPECT_EQ(*pv->AsString(), "test_str");
@@ -461,9 +461,9 @@ TEST(DoAdapterTest, ExtractOutputPortMap_BoolValue)
     ASSERT_EQ(map->SetBool(key.Get(), true), DAS_S_OK);
 
     PortFrame frame;
-    ASSERT_EQ(ExtractOutputPortMap(map.Get(), kTargetNode, frame), DAS_S_OK);
+    ASSERT_EQ(ExtractOutputPortMap(map.Get(), TARGET_NODE, frame), DAS_S_OK);
 
-    const auto* pv = frame.Find({kTargetNode, "out"});
+    const auto* pv = frame.Find({TARGET_NODE, "out"});
     ASSERT_NE(pv, nullptr);
     ASSERT_TRUE(pv->IsBool());
     EXPECT_TRUE(*pv->AsBool());
@@ -480,14 +480,14 @@ TEST(DoAdapterTest, ExtractOutputPortMap_MultipleEntries)
     map->SetBool(k2.Get(), false);
 
     PortFrame frame;
-    ASSERT_EQ(ExtractOutputPortMap(map.Get(), kTargetNode, frame), DAS_S_OK);
+    ASSERT_EQ(ExtractOutputPortMap(map.Get(), TARGET_NODE, frame), DAS_S_OK);
 
-    const auto* pv_a = frame.Find({kTargetNode, "a"});
+    const auto* pv_a = frame.Find({TARGET_NODE, "a"});
     ASSERT_NE(pv_a, nullptr);
     ASSERT_TRUE(pv_a->IsInt());
     EXPECT_EQ(*pv_a->AsInt(), 10);
 
-    const auto* pv_b = frame.Find({kTargetNode, "b"});
+    const auto* pv_b = frame.Find({TARGET_NODE, "b"});
     ASSERT_NE(pv_b, nullptr);
     ASSERT_TRUE(pv_b->IsBool());
     EXPECT_FALSE(*pv_b->AsBool());
@@ -501,7 +501,7 @@ TEST(DoAdapterTest, ExtractOutputPortMap_NullMap)
 {
     PortFrame frame;
     EXPECT_EQ(
-        ExtractOutputPortMap(nullptr, kTargetNode, frame),
+        ExtractOutputPortMap(nullptr, TARGET_NODE, frame),
         DAS_E_INVALID_POINTER);
 }
 
@@ -513,13 +513,13 @@ TEST(DoAdapterTest, RoundTrip_IntAndString)
 {
     // Setup: source node has int and string outputs in PortFrame.
     PortFrame frame;
-    frame.Set(kSourceNode, "count", PortValue(int64_t{7}));
-    frame.Set(kSourceNode, "name", PortValue(std::string("alice")));
+    frame.Set(SOURCE_NODE, "count", PortValue(int64_t{7}));
+    frame.Set(SOURCE_NODE, "name", PortValue(std::string("alice")));
 
     // Build input map for the target node.
     auto bindings = {
-        MakeBinding(GuidToString(kSourceNode), "count", "count"),
-        MakeBinding(GuidToString(kSourceNode), "name", "name"),
+        MakeBinding(GuidToString(SOURCE_NODE), "count", "count"),
+        MakeBinding(GuidToString(SOURCE_NODE), "name", "name"),
     };
 
     DAS::DasPtr<IDasPortMap> input_map;
@@ -540,10 +540,10 @@ TEST(DoAdapterTest, RoundTrip_IntAndString)
     // Extract output back into the frame under a different node.
     PortFrame out_frame;
     ASSERT_EQ(
-        ExtractOutputPortMap(output_map.Get(), kTargetNode, out_frame),
+        ExtractOutputPortMap(output_map.Get(), TARGET_NODE, out_frame),
         DAS_S_OK);
 
-    const auto* pv = out_frame.Find({kTargetNode, "result"});
+    const auto* pv = out_frame.Find({TARGET_NODE, "result"});
     ASSERT_NE(pv, nullptr);
     ASSERT_TRUE(pv->IsInt());
     EXPECT_EQ(*pv->AsInt(), 42);
@@ -556,7 +556,7 @@ TEST(DoAdapterTest, RoundTrip_IntAndString)
 TEST(DoAdapterTest, BuildInputPortMap_EmptyBindings)
 {
     PortFrame frame;
-    frame.Set(kSourceNode, "out", PortValue(int64_t{1}));
+    frame.Set(SOURCE_NODE, "out", PortValue(int64_t{1}));
 
     const std::vector<Dto::PortBindingDto> empty_bindings;
 
@@ -575,6 +575,6 @@ TEST(DoAdapterTest, ExtractOutputPortMap_EmptyMap)
     ASSERT_EQ(CreateIDasPortMap(map.Put()), DAS_S_OK);
 
     PortFrame frame;
-    ASSERT_EQ(ExtractOutputPortMap(map.Get(), kTargetNode, frame), DAS_S_OK);
+    ASSERT_EQ(ExtractOutputPortMap(map.Get(), TARGET_NODE, frame), DAS_S_OK);
     EXPECT_TRUE(frame.Empty());
 }

@@ -541,7 +541,7 @@ namespace Das::Plugins::DasMaaPi
                             identifier->data(),
                             identifier->size()))
                     {
-                        return kInvalidMaaAgentClientHandle;
+                        return INVALID_MAA_AGENT_CLIENT_HANDLE;
                     }
                     id_buffer = buffer.get();
                 }
@@ -709,7 +709,7 @@ namespace Das::Plugins::DasMaaPi
         public:
             MaaResourceHandle CreateResource() override
             {
-                return kInvalidMaaResourceHandle;
+                return INVALID_MAA_RESOURCE_HANDLE;
             }
 
             void DestroyResource(MaaResourceHandle) noexcept override {}
@@ -742,7 +742,7 @@ namespace Das::Plugins::DasMaaPi
 
             MaaTaskerHandle CreateTasker() override
             {
-                return kInvalidMaaTaskerHandle;
+                return INVALID_MAA_TASKER_HANDLE;
             }
 
             void DestroyTasker(MaaTaskerHandle) noexcept override {}
@@ -796,12 +796,12 @@ namespace Das::Plugins::DasMaaPi
             MaaAgentClientHandle CreateAgentClientV2(
                 std::optional<std::string_view>) override
             {
-                return kInvalidMaaAgentClientHandle;
+                return INVALID_MAA_AGENT_CLIENT_HANDLE;
             }
 
             MaaAgentClientHandle CreateAgentClientTcp(std::uint16_t) override
             {
-                return kInvalidMaaAgentClientHandle;
+                return INVALID_MAA_AGENT_CLIENT_HANDLE;
             }
 
             void DestroyAgentClient(MaaAgentClientHandle) noexcept override {}
@@ -1107,8 +1107,8 @@ namespace Das::Plugins::DasMaaPi
 
     DasResult ValidateExecutionEnvelope(const ExecutionEnvelopeDto& envelope)
     {
-        if (envelope.plugin_guid != kPluginGuidText
-            || envelope.task_type_guid != kTaskGuidText)
+        if (envelope.plugin_guid != PLUGIN_GUID_TEXT
+            || envelope.task_type_guid != TASK_GUID_TEXT)
         {
             return DAS_E_INVALID_ARGUMENT;
         }
@@ -1146,7 +1146,7 @@ namespace Das::Plugins::DasMaaPi
         }
 
         const ScopedResource resource(boundary, boundary.CreateResource());
-        if (resource.get() == kInvalidMaaResourceHandle)
+        if (resource.get() == INVALID_MAA_RESOURCE_HANDLE)
         {
             result.das_result = DAS_E_FAIL;
             AddDiagnostic(
@@ -1199,7 +1199,7 @@ namespace Das::Plugins::DasMaaPi
         {
             controller_spec.name = envelope.maapi.controller_name;
         }
-        MaaControllerHandle controller_handle = kInvalidMaaControllerHandle;
+        MaaControllerHandle controller_handle = INVALID_MAA_CONTROLLER_HANDLE;
         if (!envelope.maapi.controller_init_params)
         {
             // Every supported controller type (Adb/Dbg/Win32/Gamepad/Tier2)
@@ -1223,7 +1223,7 @@ namespace Das::Plugins::DasMaaPi
             controller_spec,
             *envelope.maapi.controller_init_params);
         controller_handle = typed.handle;
-        if (controller_handle == kInvalidMaaControllerHandle)
+        if (controller_handle == INVALID_MAA_CONTROLLER_HANDLE)
         {
             result.das_result = DAS_E_FAIL;
             AddDiagnostic(
@@ -1259,7 +1259,7 @@ namespace Das::Plugins::DasMaaPi
         }
 
         const ScopedTasker tasker(boundary, boundary.CreateTasker());
-        if (tasker.get() == kInvalidMaaTaskerHandle)
+        if (tasker.get() == INVALID_MAA_TASKER_HANDLE)
         {
             result.das_result = DAS_E_FAIL;
             AddDiagnostic(

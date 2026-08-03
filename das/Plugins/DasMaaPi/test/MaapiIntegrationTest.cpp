@@ -213,7 +213,7 @@ namespace
             DasPtr<Das::PluginInterface::IDasTaskAuthoringSession> session;
             EXPECT_EQ(
                 factory->CreateSession(
-                    MakeDasGuid(std::string(kTaskGuidText)),
+                    MakeDasGuid(std::string(TASK_GUID_TEXT)),
                     context,
                     session.Put()),
                 DAS_S_OK);
@@ -591,7 +591,7 @@ TEST_F(MaapiIntegrationFixture, V28E2EEnvSnapshotHasAllEightPiFields)
     EXPECT_FALSE(env.interface_version.empty());
     EXPECT_FALSE(env.client_name.empty());
     EXPECT_FALSE(env.client_version.empty())
-        << "client_version must be filled from kPluginVersionText";
+        << "client_version must be filled from PLUGIN_VERSION_TEXT";
     EXPECT_FALSE(env.client_language.empty());
     EXPECT_FALSE(env.client_maafw_version.empty())
         << "client_maafw_version must be filled from MaaVersion()";

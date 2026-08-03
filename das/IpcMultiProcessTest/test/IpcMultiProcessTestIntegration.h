@@ -183,13 +183,13 @@ protected:
     {
         // 高位固定端口探测：从 48080 起递增，避开 Windows 动态端口排除范围
         // （当前 49806-53273 被排除）与 well-known 保留端口（<1024）
-        constexpr uint16_t kStartPort = 48080;
-        constexpr uint16_t kEndPort = 48999;
-        constexpr int      kMaxAttempts = 50;
-        for (int i = 0; i < kMaxAttempts; ++i)
+        constexpr uint16_t start_port = 48080;
+        constexpr uint16_t end_port = 48999;
+        constexpr int      max_attempts = 50;
+        for (int i = 0; i < max_attempts; ++i)
         {
-            const uint16_t port = static_cast<uint16_t>(kStartPort + i);
-            if (port > kEndPort)
+            const uint16_t port = static_cast<uint16_t>(start_port + i);
+            if (port > end_port)
             {
                 break;
             }

@@ -395,9 +395,12 @@ DasResult CvCpuImpl::TemplateMatchAll(
     // We keep it alive in this local scope for potential debug access.
 
     // Step 4: Global NMS with default IoU threshold of 0.5
-    constexpr double kIouThreshold = 0.5;
-    auto             final_candidates =
-        Details::ApplyNms(std::move(candidates), tmpl_w, tmpl_h, kIouThreshold);
+    constexpr double iou_threshold_value = 0.5;
+    auto             final_candidates = Details::ApplyNms(
+        std::move(candidates),
+        tmpl_w,
+        tmpl_h,
+        iou_threshold_value);
 
     // Step 5: Sort by score descending (already done by ApplyNms)
 

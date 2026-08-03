@@ -44,15 +44,15 @@ namespace
     using LuaOpenFunction = int(lua_State*);
 
     // DLL filename for the Lua export library
-    constexpr const char* kLuaExportDllName = "DasCoreLuaExport.dll";
+    constexpr const char* LUA_EXPORT_DLL_NAME = "DasCoreLuaExport.dll";
     // MinGW prefixes shared libraries with "lib"
-    constexpr const char* kLuaExportDllNameMingw = "libDasCoreLuaExport.dll";
+    constexpr const char* LUA_EXPORT_DLL_NAME_MINGW = "libDasCoreLuaExport.dll";
 
     // luaopen function symbol name, supplied by CMake from the generator input.
-    constexpr const char* kLuaOpenFunctionName = DAS_LUA_OPEN_FUNCTION_NAME;
+    constexpr const char* LUA_OPEN_FUNCTION_NAME = DAS_LUA_OPEN_FUNCTION_NAME;
 
     // ExtractDasBasePointer helper function symbol name
-    constexpr const char* kExtractBasePointerName = "ExtractDasBasePointer";
+    constexpr const char* EXTRACT_BASE_POINTER_NAME = "ExtractDasBasePointer";
 
     /// Try to find a DLL by name in the given directory
     auto TryDllInDir(const std::filesystem::path& dir, const char* dll_name)
@@ -78,18 +78,18 @@ namespace
         // Try MinGW name first, then standard name, in each directory
         for (const auto& search_dir : {manifest_dir, exe_dir})
         {
-            if (auto found = TryDllInDir(search_dir, kLuaExportDllNameMingw))
+            if (auto found = TryDllInDir(search_dir, LUA_EXPORT_DLL_NAME_MINGW))
             {
                 return *found;
             }
-            if (auto found = TryDllInDir(search_dir, kLuaExportDllName))
+            if (auto found = TryDllInDir(search_dir, LUA_EXPORT_DLL_NAME))
             {
                 return *found;
             }
         }
 
         // Fallback: return the standard name in manifest dir
-        return manifest_dir / kLuaExportDllName;
+        return manifest_dir / LUA_EXPORT_DLL_NAME;
     }
 } // namespace
 
@@ -264,21 +264,21 @@ auto LuaRuntime::LoadPlugin(const std::filesystem::path& path)
         }
 
         // ── 3. Get luaopen function pointer ─────────────────────────────
-        if (!export_lib_.has(kLuaOpenFunctionName))
+        if (!export_lib_.has(LUA_OPEN_FUNCTION_NAME))
         {
             DAS_CORE_LOG_ERROR(
                 "Lua export library missing '{}' function",
-                kLuaOpenFunctionName);
+                LUA_OPEN_FUNCTION_NAME);
             return tl::make_unexpected(DAS_E_SYMBOL_NOT_FOUND);
         }
 
         auto luaopen_func =
-            export_lib_.get<LuaOpenFunction>(kLuaOpenFunctionName);
+            export_lib_.get<LuaOpenFunction>(LUA_OPEN_FUNCTION_NAME);
         if (!luaopen_func)
         {
             DAS_CORE_LOG_ERROR(
                 "Failed to get '{}' from Lua export library",
-                kLuaOpenFunctionName);
+                LUA_OPEN_FUNCTION_NAME);
             return tl::make_unexpected(DAS_E_SYMBOL_NOT_FOUND);
         }
 
@@ -286,26 +286,26 @@ auto LuaRuntime::LoadPlugin(const std::filesystem::path& path)
         int luaopen_result = luaopen_func(lua_state_);
         DAS_CORE_LOG_INFO(
             "[LuaRuntime::LoadPlugin] {} returned {}",
-            kLuaOpenFunctionName,
+            LUA_OPEN_FUNCTION_NAME,
             luaopen_result);
 
         // ── 4b. Get ExtractDasBasePointer helper ──────────────────────
         // This function lives in the same DLL as the Director classes,
         // so the static_cast<IDasBase*> is performed where the complete
         // type information is available.
-        if (export_lib_.has(kExtractBasePointerName))
+        if (export_lib_.has(EXTRACT_BASE_POINTER_NAME))
         {
             extract_base_ptr_ = &export_lib_.get<ExtractBasePointerFunc>(
-                kExtractBasePointerName);
+                EXTRACT_BASE_POINTER_NAME);
             DAS_CORE_LOG_INFO(
                 "[LuaRuntime::LoadPlugin] Loaded {} helper",
-                kExtractBasePointerName);
+                EXTRACT_BASE_POINTER_NAME);
         }
         else
         {
             DAS_CORE_LOG_WARN(
                 "Lua export library missing '{}' helper function",
-                kExtractBasePointerName);
+                EXTRACT_BASE_POINTER_NAME);
         }
     }
 

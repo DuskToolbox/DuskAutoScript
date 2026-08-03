@@ -91,19 +91,19 @@ TEST(ReadOnlyStringStubTest, Release_ReturnsMaxValue)
 
 TEST(ReadOnlyStringStubTest, WireProtocolLayout_ResultAndCountAndPayload)
 {
-    const char16_t      kData[] = u"Hello"; // 5 char16_t, NOT null-terminated
-    constexpr size_t    kCount = 5;
-    constexpr DasResult kResult = DAS_S_OK;
+    const char16_t sample_data[] = u"Hello"; // 5 char16_t, NOT null-terminated
+    constexpr size_t    element_count = 5;
+    constexpr DasResult expected_result = DAS_S_OK;
 
     MemorySerializerWriter writer;
-    writer.WriteInt32(static_cast<int32_t>(kResult));
-    writer.WriteUInt64(static_cast<uint64_t>(kCount));
-    writer.Write(kData, kCount * sizeof(char16_t));
+    writer.WriteInt32(static_cast<int32_t>(expected_result));
+    writer.WriteUInt64(static_cast<uint64_t>(element_count));
+    writer.Write(sample_data, element_count * sizeof(char16_t));
 
     const auto& buf = writer.GetBuffer();
 
     // Expected size: 4 + 8 + 5*2 = 22 bytes
-    ASSERT_EQ(buf.size(), 4u + 8u + kCount * sizeof(char16_t));
+    ASSERT_EQ(buf.size(), 4u + 8u + element_count * sizeof(char16_t));
 
     // Byte 0-3: result (int32, value 0)
     int32_t actual_result = 0;
@@ -113,25 +113,28 @@ TEST(ReadOnlyStringStubTest, WireProtocolLayout_ResultAndCountAndPayload)
     // Byte 4-11: char_count (uint64, value 5)
     uint64_t actual_count = 0;
     std::memcpy(&actual_count, buf.data() + 4, sizeof(uint64_t));
-    EXPECT_EQ(actual_count, kCount);
+    EXPECT_EQ(actual_count, element_count);
 
     // Byte 12-21: UTF-16LE payload
     const auto* actual_utf16 =
         reinterpret_cast<const char16_t*>(buf.data() + 12);
     EXPECT_EQ(
-        std::char_traits<char16_t>::compare(actual_utf16, kData, kCount),
+        std::char_traits<char16_t>::compare(
+            actual_utf16,
+            sample_data,
+            element_count),
         0);
 }
 
 TEST(ReadOnlyStringStubTest, WireProtocolLayout_ErrorResult_NoPayload)
 {
     // When GetUtf16 returns an error, the stub writes only result + count(0).
-    constexpr DasResult kError = DAS_E_NO_IMPLEMENTATION;
-    constexpr uint64_t  kZero = 0;
+    constexpr DasResult expected_error = DAS_E_NO_IMPLEMENTATION;
+    constexpr uint64_t  zero = 0;
 
     MemorySerializerWriter writer;
-    writer.WriteInt32(static_cast<int32_t>(kError));
-    writer.WriteUInt64(kZero);
+    writer.WriteInt32(static_cast<int32_t>(expected_error));
+    writer.WriteUInt64(zero);
 
     const auto& buf = writer.GetBuffer();
 
@@ -140,7 +143,7 @@ TEST(ReadOnlyStringStubTest, WireProtocolLayout_ErrorResult_NoPayload)
 
     int32_t actual_result = 0;
     std::memcpy(&actual_result, buf.data(), sizeof(int32_t));
-    EXPECT_EQ(actual_result, kError);
+    EXPECT_EQ(actual_result, expected_error);
 
     uint64_t actual_count = 0;
     std::memcpy(&actual_count, buf.data() + 4, sizeof(uint64_t));
@@ -161,32 +164,35 @@ TEST(ReadOnlyStringNullTerminationTest, WireProtocolBuffer_HasNulAfterData)
     // Simulate deserializing "Hello" (5 code units) from wire protocol.
     // The proxy pattern: resize to char_count+1, memcpy data, write NUL at
     // [char_count].
-    const char16_t   kData[] = u"Hello";
-    constexpr size_t kCount = 5;
+    const char16_t   sample_data[] = u"Hello";
+    constexpr size_t element_count = 5;
 
     std::u16string buffer;
-    buffer.resize(kCount + 1); // +1 for NUL
-    std::memcpy(buffer.data(), kData, kCount * sizeof(char16_t));
-    buffer[kCount] = u'\0';
+    buffer.resize(element_count + 1); // +1 for NUL
+    std::memcpy(buffer.data(), sample_data, element_count * sizeof(char16_t));
+    buffer[element_count] = u'\0';
 
     // Verify NUL-termination contract
-    EXPECT_EQ(buffer.size(), kCount + 1);
-    EXPECT_EQ(buffer[kCount], u'\0');
+    EXPECT_EQ(buffer.size(), element_count + 1);
+    EXPECT_EQ(buffer[element_count], u'\0');
 
     // Verify data integrity
     EXPECT_EQ(
-        std::char_traits<char16_t>::compare(buffer.data(), kData, kCount),
+        std::char_traits<char16_t>::compare(
+            buffer.data(),
+            sample_data,
+            element_count),
         0);
 }
 
 TEST(ReadOnlyStringNullTerminationTest, WireProtocolBuffer_EmptyString)
 {
     // Simulate char_count == 0: buffer should have NUL at position 0
-    constexpr size_t kCount = 0;
+    constexpr size_t element_count = 0;
 
     std::u16string buffer;
-    buffer.resize(kCount + 1); // resize to 1
-    buffer[kCount] = u'\0';
+    buffer.resize(element_count + 1); // resize to 1
+    buffer[element_count] = u'\0';
 
     EXPECT_EQ(buffer.size(), 1u);
     EXPECT_EQ(buffer[0], u'\0');
@@ -196,20 +202,20 @@ TEST(ReadOnlyStringNullTerminationTest, EnsureUtf8Derived_NoTrailingNul)
 {
     // After the NUL append, constructing icu::UnicodeString with
     // (data(), size()-1) should produce correct UTF-8 without trailing NUL.
-    const char16_t   kData[] = u"Hello";
-    constexpr size_t kCount = 5;
+    const char16_t   sample_data[] = u"Hello";
+    constexpr size_t element_count = 5;
 
     std::u16string buffer;
-    buffer.resize(kCount + 1);
-    std::memcpy(buffer.data(), kData, kCount * sizeof(char16_t));
-    buffer[kCount] = u'\0';
+    buffer.resize(element_count + 1);
+    std::memcpy(buffer.data(), sample_data, element_count * sizeof(char16_t));
+    buffer[element_count] = u'\0';
 
     // Construct UnicodeString with size()-1 to exclude the NUL
     const icu::UnicodeString icu_str(
         reinterpret_cast<const UChar*>(buffer.data()),
         static_cast<int32_t>(buffer.size() - 1));
 
-    EXPECT_EQ(icu_str.length(), static_cast<int32_t>(kCount));
+    EXPECT_EQ(icu_str.length(), static_cast<int32_t>(element_count));
 
     // Convert to UTF-8 and verify no NUL byte
     std::string utf8_result;
@@ -228,20 +234,20 @@ TEST(ReadOnlyStringNullTerminationTest, EnsureUtf32Derived_NoTrailingNul)
     // After the NUL append, constructing icu::UnicodeString with
     // (data(), size()-1) and converting to UTF-32 should produce correct
     // code points without an extra U+0000.
-    const char16_t   kData[] = u"Hello";
-    constexpr size_t kCount = 5;
+    const char16_t   sample_data[] = u"Hello";
+    constexpr size_t element_count = 5;
 
     std::u16string buffer;
-    buffer.resize(kCount + 1);
-    std::memcpy(buffer.data(), kData, kCount * sizeof(char16_t));
-    buffer[kCount] = u'\0';
+    buffer.resize(element_count + 1);
+    std::memcpy(buffer.data(), sample_data, element_count * sizeof(char16_t));
+    buffer[element_count] = u'\0';
 
     const icu::UnicodeString icu_str(
         reinterpret_cast<const UChar*>(buffer.data()),
         static_cast<int32_t>(buffer.size() - 1));
 
     const int32_t char_count = icu_str.countChar32();
-    EXPECT_EQ(char_count, static_cast<int32_t>(kCount));
+    EXPECT_EQ(char_count, static_cast<int32_t>(element_count));
 
     // Convert to UTF-32
     std::vector<UChar32> utf32_buffer(static_cast<size_t>(char_count) + 1);

@@ -329,7 +329,7 @@ namespace
 
     TEST_F(GlobalErrorMessagesTest, UnknownCodeFallsBackToGeneric)
     {
-        constexpr DasResult kUnknownErrorCode =
+        constexpr DasResult unknown_error_code =
             static_cast<DasResult>(-12345678);
         const auto   provider_guid = MakeTestGuid(3);
         auto*        lens = FakeErrorLens::MakeRaw();
@@ -344,7 +344,7 @@ namespace
                 DasPtr<IDasReadOnlyString> out_message;
                 result = ::DasGetErrorMessage(
                     &type_info,
-                    kUnknownErrorCode,
+                    unknown_error_code,
                     out_message.Put());
                 message = ToUtf8(out_message.Get());
             });

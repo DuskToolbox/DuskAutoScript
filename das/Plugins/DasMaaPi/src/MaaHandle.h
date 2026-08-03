@@ -78,15 +78,15 @@ namespace Das::Plugins::DasMaaPi
 
     using ScopedResource = ScopedMaaHandle<
         MaaResourceHandle,
-        kInvalidMaaResourceHandle,
+        INVALID_MAA_RESOURCE_HANDLE,
         &IMaaApiBoundary::DestroyResource>;
     using ScopedController = ScopedMaaHandle<
         MaaControllerHandle,
-        kInvalidMaaControllerHandle,
+        INVALID_MAA_CONTROLLER_HANDLE,
         &IMaaApiBoundary::DestroyController>;
     using ScopedTasker = ScopedMaaHandle<
         MaaTaskerHandle,
-        kInvalidMaaTaskerHandle,
+        INVALID_MAA_TASKER_HANDLE,
         &IMaaApiBoundary::DestroyTasker>;
 
     class ScopedAgentClient final
@@ -107,7 +107,7 @@ namespace Das::Plugins::DasMaaPi
         ScopedAgentClient(ScopedAgentClient&& other) noexcept
             : boundary_(std::exchange(other.boundary_, nullptr)),
               handle_(
-                  std::exchange(other.handle_, kInvalidMaaAgentClientHandle))
+                  std::exchange(other.handle_, INVALID_MAA_AGENT_CLIENT_HANDLE))
         {
         }
 
@@ -117,8 +117,9 @@ namespace Das::Plugins::DasMaaPi
             {
                 reset();
                 boundary_ = std::exchange(other.boundary_, nullptr);
-                handle_ =
-                    std::exchange(other.handle_, kInvalidMaaAgentClientHandle);
+                handle_ = std::exchange(
+                    other.handle_,
+                    INVALID_MAA_AGENT_CLIENT_HANDLE);
             }
             return *this;
         }
@@ -129,25 +130,25 @@ namespace Das::Plugins::DasMaaPi
 
         explicit operator bool() const noexcept
         {
-            return handle_ != kInvalidMaaAgentClientHandle;
+            return handle_ != INVALID_MAA_AGENT_CLIENT_HANDLE;
         }
 
         MaaAgentClientHandle release() noexcept
         {
             boundary_ = nullptr;
-            return std::exchange(handle_, kInvalidMaaAgentClientHandle);
+            return std::exchange(handle_, INVALID_MAA_AGENT_CLIENT_HANDLE);
         }
 
         void reset() noexcept
         {
-            if (!boundary_ || handle_ == kInvalidMaaAgentClientHandle)
+            if (!boundary_ || handle_ == INVALID_MAA_AGENT_CLIENT_HANDLE)
             {
                 return;
             }
 
             IMaaApiBoundary* boundary = std::exchange(boundary_, nullptr);
             const auto       handle =
-                std::exchange(handle_, kInvalidMaaAgentClientHandle);
+                std::exchange(handle_, INVALID_MAA_AGENT_CLIENT_HANDLE);
 
             // AgentClient cleanup policy is fixed: disconnect before destroy.
             boundary->DisconnectAgentClient(handle);
@@ -165,6 +166,6 @@ namespace Das::Plugins::DasMaaPi
 
     private:
         IMaaApiBoundary*     boundary_ = nullptr;
-        MaaAgentClientHandle handle_ = kInvalidMaaAgentClientHandle;
+        MaaAgentClientHandle handle_ = INVALID_MAA_AGENT_CLIENT_HANDLE;
     };
 } // namespace Das::Plugins::DasMaaPi

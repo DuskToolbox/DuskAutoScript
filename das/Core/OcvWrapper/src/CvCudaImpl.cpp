@@ -409,9 +409,12 @@ DasResult CvCudaImpl::TemplateMatchAll(
     const uint32_t raw_match_count = static_cast<uint32_t>(candidates.size());
 
     // Step 3: Global NMS with default IoU threshold of 0.5
-    constexpr double kIouThreshold = 0.5;
-    auto             final_candidates =
-        Details::ApplyNms(std::move(candidates), tmpl_w, tmpl_h, kIouThreshold);
+    constexpr double iou_threshold_value = 0.5;
+    auto             final_candidates = Details::ApplyNms(
+        std::move(candidates),
+        tmpl_w,
+        tmpl_h,
+        iou_threshold_value);
 
     // Step 4: Apply max_count truncation
     if (max_count > 0

@@ -213,12 +213,14 @@ namespace
         FakeMaaApiBoundary fake;
 
         {
-            const ScopedResource   resource(fake, kInvalidMaaResourceHandle);
+            const ScopedResource   resource(fake, INVALID_MAA_RESOURCE_HANDLE);
             const ScopedController controller(
                 fake,
-                kInvalidMaaControllerHandle);
-            const ScopedTasker      tasker(fake, kInvalidMaaTaskerHandle);
-            const ScopedAgentClient client(fake, kInvalidMaaAgentClientHandle);
+                INVALID_MAA_CONTROLLER_HANDLE);
+            const ScopedTasker      tasker(fake, INVALID_MAA_TASKER_HANDLE);
+            const ScopedAgentClient client(
+                fake,
+                INVALID_MAA_AGENT_CLIENT_HANDLE);
         }
 
         EXPECT_TRUE(fake.calls.empty());
@@ -230,7 +232,7 @@ namespace
 
         const auto client =
             fake.CreateAgentClientV2(std::string_view("agent-1"));
-        EXPECT_NE(client, kInvalidMaaAgentClientHandle);
+        EXPECT_NE(client, INVALID_MAA_AGENT_CLIENT_HANDLE);
         EXPECT_EQ(fake.GetAgentClientIdentifier(client), "agent-client-id");
         EXPECT_TRUE(fake.BindAgentClientResource(client, 10).ok);
         EXPECT_TRUE(fake.RegisterAgentClientResourceSink(client, 10).ok);

@@ -32,8 +32,8 @@ using DAS::Core::IPC::HostLauncher;
 // 断言：不崩溃（ASAN 会抓 UAF）；counter ≥ 0（无内存损坏）。
 TEST(GuardedCallbackTest, SetClearInvoke_Concurrent_NoCrash)
 {
-    constexpr int kStressIterations = 100;
-    for (int iter = 0; iter < kStressIterations; ++iter)
+    constexpr int stress_iterations = 100;
+    for (int iter = 0; iter < stress_iterations; ++iter)
     {
         GuardedCallback<void(int)> slot;
         std::atomic<int>           counter{0};

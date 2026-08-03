@@ -77,7 +77,7 @@ namespace
      * Uses the same format as ForeignInterfaceHost test manifests
      * (uppercase GUID, required fields present).
      */
-    static const std::string kValidManifest = R"({
+    static const std::string VALID_MANIFEST = R"({
         "name": "TestPlugin",
         "author": "test",
         "version": "1.0",
@@ -121,7 +121,7 @@ namespace
         };
 
         provider.files["TestPlugin/manifest.json"] =
-            MockFileProvider::FileInfo{.content = kValidManifest};
+            MockFileProvider::FileInfo{.content = VALID_MANIFEST};
 
         return provider;
     }
@@ -203,7 +203,7 @@ namespace
         };
 
         provider.files["OldPlugin/manifest.json"] =
-            MockFileProvider::FileInfo{.content = kValidManifest};
+            MockFileProvider::FileInfo{.content = VALID_MANIFEST};
 
         auto descs = ScanPluginsWith(provider);
         ASSERT_FALSE(descs.empty());
@@ -294,7 +294,7 @@ namespace
         };
 
         provider.files["DeadPlugin.json"] =
-            MockFileProvider::FileInfo{.content = kValidManifest};
+            MockFileProvider::FileInfo{.content = VALID_MANIFEST};
 
         auto descs = ScanPluginsWith(provider);
         EXPECT_TRUE(descs.empty());

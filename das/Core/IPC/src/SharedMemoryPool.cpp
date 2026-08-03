@@ -15,7 +15,7 @@ DAS_CORE_IPC_NS_BEGIN
  * @brief 共享内存块元数据
  *
  * 用于跟踪块的分配时间，支持 CleanupStaleBlocks 功能。
- * 超过 kStaleThreshold 的块会被自动清理，防止泄漏。
+ * 超过 STALE_THRESHOLD 的块会被自动清理，防止泄漏。
  */
 struct BlockMetadata
 {
@@ -33,7 +33,7 @@ struct SharedMemoryPool::Impl
     std::unordered_map<uint64_t, BlockMetadata>                 block_metadata_;
     mutable std::mutex                                          mutex_;
 
-    static constexpr std::chrono::seconds kStaleThreshold{60};
+    static constexpr std::chrono::seconds STALE_THRESHOLD{60};
 };
 
 SharedMemoryPool::SharedMemoryPool(
@@ -220,8 +220,8 @@ DasResult SharedMemoryPool::Deallocate(uint64_t handle)
         }
 
         // boost managed_shared_memory 的内部分配按至少 sizeof(void*) 对齐
-        constexpr uintptr_t kMinAlignment = sizeof(void*);
-        if (ptr_val % kMinAlignment != 0)
+        constexpr uintptr_t min_alignment = sizeof(void*);
+        if (ptr_val % min_alignment != 0)
         {
             DAS_CORE_LOG_WARN(
                 "Deallocate: handle {} misaligned (ptr={})",
@@ -310,7 +310,7 @@ DasResult SharedMemoryPool::CleanupStaleBlocks()
     {
         auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
             now - metadata.allocation_time);
-        if (elapsed >= Impl::kStaleThreshold)
+        if (elapsed >= Impl::STALE_THRESHOLD)
         {
             blocks_to_remove.push_back(handle);
         }

@@ -107,8 +107,8 @@ namespace Das::Http::Beast
             boost::asio::write(
                 socket_,
                 boost::asio::buffer(
-                    kChunkedTerminator.data(),
-                    kChunkedTerminator.size()),
+                    CHUNKED_TERMINATOR.data(),
+                    CHUNKED_TERMINATOR.size()),
                 ec);
             ShutdownSocket();
         }
@@ -195,15 +195,15 @@ namespace Das::Http::Beast
             boost::asio::async_write(
                 socket_,
                 boost::asio::buffer(
-                    kChunkedTerminator.data(),
-                    kChunkedTerminator.size()),
+                    CHUNKED_TERMINATOR.data(),
+                    CHUNKED_TERMINATOR.size()),
                 [self](boost::beast::error_code /*ec*/, std::size_t /*n*/)
                 { self->ShutdownSocket(); });
         }
 
     private:
         // HTTP chunked 传输编码终止块（0 长度 chunk 表示流结束）。
-        static constexpr std::string_view kChunkedTerminator = "0\r\n\r\n";
+        static constexpr std::string_view CHUNKED_TERMINATOR = "0\r\n\r\n";
 
         /**
          * @brief 同步关闭 socket + 注销 hub（幂等）。析构路径使用。
@@ -312,7 +312,7 @@ namespace Das::Http::Beast
          */
         static void AppendHexSize(std::string& out, std::size_t n)
         {
-            static constexpr char kHexChars[] = "0123456789abcdef";
+            static constexpr char HEX_CHARS[] = "0123456789abcdef";
             if (n == 0)
             {
                 out.push_back('0');
@@ -322,7 +322,7 @@ namespace Das::Http::Beast
             char* p = buf + sizeof(buf);
             while (n > 0)
             {
-                *--p = kHexChars[n & 0xF];
+                *--p = HEX_CHARS[n & 0xF];
                 n >>= 4;
             }
             out.append(p, buf + sizeof(buf));

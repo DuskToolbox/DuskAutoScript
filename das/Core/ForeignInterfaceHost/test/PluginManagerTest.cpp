@@ -2525,8 +2525,8 @@ TEST_F(PluginManagerGuidTest, Shutdown_DoesNotHoldMutexDuringStop)
 
 namespace
 {
-    constexpr const char* kTestGuid1 = "A1B2C3D4-1111-2222-3333-444455556666";
-    constexpr const char* kTestGuid2 = "A1B2C3D4-5555-6666-7777-888899990000";
+    constexpr const char* TEST_GUID1 = "A1B2C3D4-1111-2222-3333-444455556666";
+    constexpr const char* TEST_GUID2 = "A1B2C3D4-5555-6666-7777-888899990000";
 
     void WriteFolderModePlugin(
         const std::filesystem::path& plugin_dir,
@@ -2602,9 +2602,9 @@ protected:
 
 TEST_F(PluginResourceIndexTest, CacheMissTriggersFullScanAndHits)
 {
-    WriteFolderModePlugin(plugin_dir_, "TestPlugin1", kTestGuid1, "");
+    WriteFolderModePlugin(plugin_dir_, "TestPlugin1", TEST_GUID1, "");
 
-    auto  guid = MakeDasGuid(kTestGuid1);
+    auto  guid = MakeDasGuid(TEST_GUID1);
     auto& index = PluginResourceIndex::GetInstance();
 
     const PluginResourceEntry* p_entry = nullptr;
@@ -2619,9 +2619,9 @@ TEST_F(PluginResourceIndexTest, CacheMissTriggersFullScanAndHits)
 TEST_F(PluginResourceIndexTest, DuplicateGuidConflictFailsAndPreservesOriginal)
 {
     // First, populate the cache with a single valid plugin
-    WriteFolderModePlugin(plugin_dir_, "PluginAlpha", kTestGuid1, "");
+    WriteFolderModePlugin(plugin_dir_, "PluginAlpha", TEST_GUID1, "");
 
-    auto  guid = MakeDasGuid(kTestGuid1);
+    auto  guid = MakeDasGuid(TEST_GUID1);
     auto& index = PluginResourceIndex::GetInstance();
 
     const PluginResourceEntry* p_entry = nullptr;
@@ -2631,7 +2631,7 @@ TEST_F(PluginResourceIndexTest, DuplicateGuidConflictFailsAndPreservesOriginal)
     EXPECT_EQ(p_entry->plugin_name, "PluginAlpha");
 
     // Now add a second plugin with the SAME GUID -> conflict
-    WriteFolderModePlugin(plugin_dir_, "PluginBeta", kTestGuid1, "");
+    WriteFolderModePlugin(plugin_dir_, "PluginBeta", TEST_GUID1, "");
 
     // Force a rescan
     index.InvalidateCache();
@@ -2647,9 +2647,9 @@ TEST_F(PluginResourceIndexTest, DuplicateGuidConflictFailsAndPreservesOriginal)
 TEST_F(PluginResourceIndexTest, SuccessfulRescanReplacesOldMap)
 {
     // Initial state: one plugin
-    WriteFolderModePlugin(plugin_dir_, "PluginV1", kTestGuid1, "");
+    WriteFolderModePlugin(plugin_dir_, "PluginV1", TEST_GUID1, "");
 
-    auto  guid1 = MakeDasGuid(kTestGuid1);
+    auto  guid1 = MakeDasGuid(TEST_GUID1);
     auto& index = PluginResourceIndex::GetInstance();
 
     const PluginResourceEntry* p_entry = nullptr;
@@ -2659,7 +2659,7 @@ TEST_F(PluginResourceIndexTest, SuccessfulRescanReplacesOldMap)
 
     // Remove the old plugin and add a new one with a different GUID
     std::filesystem::remove_all(plugin_dir_ / "PluginV1");
-    WriteFolderModePlugin(plugin_dir_, "PluginV2", kTestGuid2, "assets");
+    WriteFolderModePlugin(plugin_dir_, "PluginV2", TEST_GUID2, "assets");
 
     // Force rescan
     index.InvalidateCache();
@@ -2671,7 +2671,7 @@ TEST_F(PluginResourceIndexTest, SuccessfulRescanReplacesOldMap)
         << "Old GUID should not exist after map replacement";
 
     // New GUID should be present
-    auto                       guid2 = MakeDasGuid(kTestGuid2);
+    auto                       guid2 = MakeDasGuid(TEST_GUID2);
     const PluginResourceEntry* p_new = nullptr;
     auto new_result = index.ResolvePluginResourceEntryByGuid(guid2, &p_new);
     ASSERT_EQ(new_result, DAS_S_OK);
@@ -2680,9 +2680,9 @@ TEST_F(PluginResourceIndexTest, SuccessfulRescanReplacesOldMap)
 
 TEST_F(PluginResourceIndexTest, InvalidResourcePath_TraversalFails)
 {
-    WriteFolderModePlugin(plugin_dir_, "EvilPlugin", kTestGuid1, "../outside");
+    WriteFolderModePlugin(plugin_dir_, "EvilPlugin", TEST_GUID1, "../outside");
 
-    auto  guid = MakeDasGuid(kTestGuid1);
+    auto  guid = MakeDasGuid(TEST_GUID1);
     auto& index = PluginResourceIndex::GetInstance();
 
     const PluginResourceEntry* p_entry = nullptr;
@@ -2697,10 +2697,10 @@ TEST_F(PluginResourceIndexTest, InvalidResourcePath_AbsoluteFails)
     WriteFolderModePlugin(
         plugin_dir_,
         "AbsolutePlugin",
-        kTestGuid1,
+        TEST_GUID1,
         "/etc/secrets");
 
-    auto  guid = MakeDasGuid(kTestGuid1);
+    auto  guid = MakeDasGuid(TEST_GUID1);
     auto& index = PluginResourceIndex::GetInstance();
 
     const PluginResourceEntry* p_entry = nullptr;
@@ -2818,7 +2818,7 @@ protected:
         auto manifest = Das::Utils::MakeYyjsonObject();
         {
             auto obj = *manifest.as_object();
-            obj[std::string_view("guid")] = kTestGuid1;
+            obj[std::string_view("guid")] = TEST_GUID1;
             obj[std::string_view("name")] = "ImagePlugin";
             obj[std::string_view("language")] = "Cpp";
             obj[std::string_view("description")] = "test image plugin";
@@ -2837,7 +2837,7 @@ protected:
 
         WriteTinyRedPng(res_dir / "tiny.png");
 
-        test_guid_ = MakeDasGuid(kTestGuid1);
+        test_guid_ = MakeDasGuid(TEST_GUID1);
     }
 
     void TearDown() override

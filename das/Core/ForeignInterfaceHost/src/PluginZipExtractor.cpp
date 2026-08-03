@@ -23,13 +23,13 @@ DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 namespace
 {
     // ZIP format signatures
-    constexpr uint32_t kLocalFileHeaderSig = 0x04034B50;
-    constexpr uint32_t kCentralDirSig = 0x02014B50;
-    constexpr uint32_t kEndOfCentralDirSig = 0x06054B50;
-    constexpr uint16_t kCompressionStored = 0;
-    constexpr uint16_t kCompressionDeflate = 8;
-    constexpr size_t   kEndOfCentralDirSize = 22;
-    constexpr size_t   kMaxCommentSize = 65535;
+    constexpr uint32_t LOCAL_FILE_HEADER_SIG = 0x04034B50;
+    constexpr uint32_t CENTRAL_DIR_SIG = 0x02014B50;
+    constexpr uint32_t END_OF_CENTRAL_DIR_SIG = 0x06054B50;
+    constexpr uint16_t COMPRESSION_STORED = 0;
+    constexpr uint16_t COMPRESSION_DEFLATE = 8;
+    constexpr size_t   END_OF_CENTRAL_DIR_SIZE = 22;
+    constexpr size_t   MAX_COMMENT_SIZE = 65535;
 
     // Read little-endian values from byte buffer
     template <typename T>
@@ -42,14 +42,15 @@ namespace
 
     bool FindEndOfCentralDir(const std::string& zip_data, size_t& eocd_offset)
     {
-        const size_t max_search =
-            std::min(zip_data.size(), kEndOfCentralDirSize + kMaxCommentSize);
+        const size_t max_search = std::min(
+            zip_data.size(),
+            END_OF_CENTRAL_DIR_SIZE + MAX_COMMENT_SIZE);
 
-        for (size_t i = 0; i < max_search - kEndOfCentralDirSize + 1; ++i)
+        for (size_t i = 0; i < max_search - END_OF_CENTRAL_DIR_SIZE + 1; ++i)
         {
-            const size_t offset = zip_data.size() - kEndOfCentralDirSize - i;
+            const size_t offset = zip_data.size() - END_OF_CENTRAL_DIR_SIZE - i;
             if (ReadLE<uint32_t>(zip_data.data(), offset)
-                == kEndOfCentralDirSig)
+                == END_OF_CENTRAL_DIR_SIG)
             {
                 eocd_offset = offset;
                 return true;
@@ -188,7 +189,7 @@ namespace
             }
 
             auto sig = ReadLE<uint32_t>(zip_data.data(), pos);
-            if (sig != kCentralDirSig)
+            if (sig != CENTRAL_DIR_SIG)
             {
                 DAS_CORE_LOG_WARN(
                     "Invalid ZIP: bad central directory signature");
@@ -289,7 +290,7 @@ namespace
         }
 
         auto local_sig = ReadLE<uint32_t>(zip_data.data(), local_header);
-        if (local_sig != kLocalFileHeaderSig)
+        if (local_sig != LOCAL_FILE_HEADER_SIG)
         {
             DAS_CORE_LOG_WARN("Invalid ZIP: bad local file header signature");
             return DAS_E_INVALID_ARGUMENT;
@@ -310,11 +311,11 @@ namespace
             return DAS_E_INVALID_ARGUMENT;
         }
 
-        if (meta.compression == kCompressionStored)
+        if (meta.compression == COMPRESSION_STORED)
         {
             ofs.write(zip_data.data() + data_offset, meta.compressed_size);
         }
-        else if (meta.compression == kCompressionDeflate)
+        else if (meta.compression == COMPRESSION_DEFLATE)
         {
             const std::string compressed(
                 zip_data.data() + data_offset,
@@ -487,13 +488,13 @@ DasResult InstallPlugin(
                 }
 
                 std::string file_data;
-                if (e.compression == kCompressionStored)
+                if (e.compression == COMPRESSION_STORED)
                 {
                     file_data.assign(
                         zip_str.data() + data_off,
                         e.compressed_size);
                 }
-                else if (e.compression == kCompressionDeflate)
+                else if (e.compression == COMPRESSION_DEFLATE)
                 {
                     const std::string compressed(
                         zip_str.data() + data_off,
@@ -728,7 +729,7 @@ DasResult ReadPluginManifestMetadataFromZip(
         }
 
         auto local_sig = ReadLE<uint32_t>(zip_str.data(), local_header);
-        if (local_sig != kLocalFileHeaderSig)
+        if (local_sig != LOCAL_FILE_HEADER_SIG)
         {
             continue;
         }
@@ -743,11 +744,11 @@ DasResult ReadPluginManifestMetadataFromZip(
         }
 
         std::string file_data;
-        if (meta->compression == kCompressionStored)
+        if (meta->compression == COMPRESSION_STORED)
         {
             file_data.assign(zip_str.data() + data_off, meta->compressed_size);
         }
-        else if (meta->compression == kCompressionDeflate)
+        else if (meta->compression == COMPRESSION_DEFLATE)
         {
             const std::string compressed(
                 zip_str.data() + data_off,

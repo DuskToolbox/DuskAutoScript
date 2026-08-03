@@ -636,7 +636,7 @@ TEST(TaskAuthoringContractTest, SupportedChangeKindsPass)
         std::string_view kind;
         std::string_view payload;
     };
-    constexpr Case kCases[] = {
+    constexpr Case cases[] = {
         {"setValue",
          R"({"target":{"kind":"document"},"fieldName":"x","value":null})"},
         {"invokeCommand", R"({"commandId":"do-thing"})"},
@@ -658,7 +658,7 @@ TEST(TaskAuthoringContractTest, SupportedChangeKindsPass)
          R"({"type":"sectionExpandChanged","target":{"sectionId":"s1"},"data":{"expanded":true}})"},
     };
 
-    for (const auto& c : kCases)
+    for (const auto& c : cases)
     {
         auto change = ParseJson(
             std::string{R"({"baseRevision":1,"kind":")"} + std::string{c.kind}
@@ -672,7 +672,7 @@ TEST(TaskAuthoringContractTest, SupportedChangeKindsPass)
 
 TEST(TaskAuthoringContractTest, ChangeRejectsOldKindAliases)
 {
-    constexpr std::string_view kLegacy[] = {
+    constexpr std::string_view legacy_tag[] = {
         "applyPreset",
         "addSequenceItem",
         "moveSequenceItem",
@@ -683,7 +683,7 @@ TEST(TaskAuthoringContractTest, ChangeRejectsOldKindAliases)
         "disconnectPorts",
         "updateNodeConfig"};
 
-    for (auto kind : kLegacy)
+    for (auto kind : legacy_tag)
     {
         auto change = ParseJson(
             std::string{R"({"baseRevision":1,"kind":")"} + std::string{kind}
@@ -698,12 +698,12 @@ TEST(TaskAuthoringContractTest, ChangeRejectsOldKindAliases)
 
 TEST(TaskAuthoringContractTest, SetValueTargetVariants)
 {
-    constexpr std::string_view kTargets[] = {
+    constexpr std::string_view targets[] = {
         R"({"kind":"document"})",
         R"({"kind":"formSequenceItem","id":"item-1"})",
         R"({"kind":"graphNode","id":"node-1"})"};
 
-    for (auto target : kTargets)
+    for (auto target : targets)
     {
         auto change = ParseJson(
             std::string{R"({"baseRevision":1,"kind":"setValue","payload":)"}

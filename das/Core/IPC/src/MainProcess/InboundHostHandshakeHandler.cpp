@@ -12,7 +12,7 @@ namespace MainProcess
 {
     namespace
     {
-        constexpr uint16_t kMainProcessSessionId = 1;
+        constexpr uint16_t MAIN_PROCESS_SESSION_ID = 1;
 
         template <typename T>
         void CopyBody(const std::vector<uint8_t>& body, T& out)
@@ -185,7 +185,7 @@ namespace MainProcess
                     HandshakeInterfaceId::HandshakeIfaceWelcome)
                 .SetBodySize(sizeof(welcome))
                 .SetCallId(request_header.GetCallId())
-                .SetSourceSessionId(kMainProcessSessionId)
+                .SetSourceSessionId(MAIN_PROCESS_SESSION_ID)
                 .SetTargetSessionId(request_header.GetSourceSessionId())
                 .SetErrorCode(
                     status == WelcomeResponseV1::STATUS_SUCCESS
@@ -213,7 +213,7 @@ namespace MainProcess
                     HandshakeInterfaceId::HandshakeIfaceReadyAck)
                 .SetBodySize(sizeof(ack))
                 .SetCallId(request_header.GetCallId())
-                .SetSourceSessionId(kMainProcessSessionId)
+                .SetSourceSessionId(MAIN_PROCESS_SESSION_ID)
                 .SetTargetSessionId(request_header.GetSourceSessionId())
                 .SetErrorCode(
                     status == ReadyAckV1::STATUS_SUCCESS

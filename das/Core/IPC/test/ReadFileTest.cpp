@@ -196,16 +196,16 @@ namespace
     TEST_F(ReadFileTest, OversizedFile_ReturnsInvalidSize)
     {
         auto              big_file = tmp_dir_ / "big.bin";
-        constexpr size_t  kSizeLimit = 4 * 1024 * 1024;
-        constexpr size_t  kOversize = kSizeLimit + 1024;
+        constexpr size_t  size_limit = 4 * 1024 * 1024;
+        constexpr size_t  oversize = size_limit + 1024;
         std::vector<char> zeros(65536, 0);
         {
             std::ofstream ofs(big_file, std::ios::binary);
-            for (size_t written = 0; written < kOversize;
+            for (size_t written = 0; written < oversize;
                  written += zeros.size())
             {
                 const size_t to_write =
-                    std::min(zeros.size(), kOversize - written);
+                    std::min(zeros.size(), oversize - written);
                 ofs.write(zeros.data(), static_cast<std::streamsize>(to_write));
             }
             ofs.flush();
@@ -213,7 +213,7 @@ namespace
         }
 
         ASSERT_TRUE(std::filesystem::exists(big_file));
-        ASSERT_GT(std::filesystem::file_size(big_file), kSizeLimit);
+        ASSERT_GT(std::filesystem::file_size(big_file), size_limit);
 
         IpcCommandResponse resp{};
         EXPECT_EQ(CallReadFile("big.bin", resp), DAS_E_INVALID_SIZE);

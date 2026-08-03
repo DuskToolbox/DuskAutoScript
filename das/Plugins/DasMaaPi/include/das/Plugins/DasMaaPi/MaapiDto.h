@@ -11,26 +11,26 @@
 
 namespace Das::Plugins::DasMaaPi
 {
-    inline constexpr std::string_view kPluginGuidText =
+    inline constexpr std::string_view PLUGIN_GUID_TEXT =
         "69F20000-0000-4000-8000-000000000001";
-    inline constexpr std::string_view kTaskGuidText =
+    inline constexpr std::string_view TASK_GUID_TEXT =
         "69F20001-0000-4000-8000-000000000001";
     // 与 manifest DasMaaPi.json:version 对齐，作为 PI client_version 注入
     // envelope（D-86-12）。manifest 与此常量须保持同步。
-    inline constexpr std::string_view kPluginVersionText = "0.1";
-    inline constexpr std::string_view kAuthoringFactoryGuidText =
+    inline constexpr std::string_view PLUGIN_VERSION_TEXT = "0.1";
+    inline constexpr std::string_view AUTHORING_FACTORY_GUID_TEXT =
         "69F20002-0000-4000-8000-000000000001";
-    inline constexpr std::string_view kAgentComponentGuidText =
+    inline constexpr std::string_view AGENT_COMPONENT_GUID_TEXT =
         "69F20004-0000-4000-8000-000000000001";
-    inline constexpr std::string_view kAgentComponentFactoryGuidText =
+    inline constexpr std::string_view AGENT_COMPONENT_FACTORY_GUID_TEXT =
         "69F20005-0000-4000-8000-000000000001";
-    inline constexpr std::string_view kAgentTaskComponentGuidText =
+    inline constexpr std::string_view AGENT_TASK_COMPONENT_GUID_TEXT =
         "69F20006-0000-4000-8000-000000000001";
-    inline constexpr std::string_view kAgentTaskComponentFactoryGuidText =
+    inline constexpr std::string_view AGENT_TASK_COMPONENT_FACTORY_GUID_TEXT =
         "69F20007-0000-4000-8000-000000000001";
-    inline constexpr std::string_view kRunTaskComponentGuidText =
+    inline constexpr std::string_view RUN_TASK_COMPONENT_GUID_TEXT =
         "69F20008-0000-4000-8000-000000000001";
-    inline constexpr std::string_view kRunTaskComponentFactoryGuidText =
+    inline constexpr std::string_view RUN_TASK_COMPONENT_FACTORY_GUID_TEXT =
         "69F20009-0000-4000-8000-000000000001";
 
     struct MaapiExecutionPolicyDto

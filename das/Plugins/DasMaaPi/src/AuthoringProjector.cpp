@@ -1967,7 +1967,7 @@ namespace Das::Plugins::DasMaaPi
         std::vector<std::string>           update_entries;
         std::vector<std::string>           project_entries;
         std::map<std::string, std::string> settings_by_opt;
-        constexpr std::string_view         kSettingsPrefix = "settings.";
+        constexpr std::string_view         settings_prefix = "settings.";
         for (auto it = fields_arr->begin(); it != fields_arr->end(); ++it)
         {
             auto field_obj = it->as_object();
@@ -2003,10 +2003,10 @@ namespace Das::Plugins::DasMaaPi
             {
                 project_entries.emplace_back(name);
             }
-            else if (name.starts_with(kSettingsPrefix))
+            else if (name.starts_with(settings_prefix))
             {
                 settings_by_opt.emplace(
-                    std::string(name.substr(kSettingsPrefix.size())),
+                    std::string(name.substr(settings_prefix.size())),
                     std::string(name));
             }
             else
@@ -3085,10 +3085,10 @@ namespace Das::Plugins::DasMaaPi
                 }
                 return;
             }
-            constexpr std::string_view kOptionFieldPrefix = "options.";
-            if (field->starts_with(kOptionFieldPrefix) && catalog)
+            constexpr std::string_view option_field_prefix = "options.";
+            if (field->starts_with(option_field_prefix) && catalog)
             {
-                auto option_name = field->substr(kOptionFieldPrefix.size());
+                auto option_name = field->substr(option_field_prefix.size());
                 if (auto* task = ensure_task())
                 {
                     if (item_value.is_null())
@@ -3190,11 +3190,11 @@ namespace Das::Plugins::DasMaaPi
             RemoveOrphanPrefix(settings, "pi.tasks:");
             return;
         }
-        constexpr std::string_view kOptionPrefix = "options.";
-        if (path.starts_with(kOptionPrefix) && catalog)
+        constexpr std::string_view option_prefix = "options.";
+        if (path.starts_with(option_prefix) && catalog)
         {
             const auto option_tail =
-                std::string_view(path).substr(kOptionPrefix.size());
+                std::string_view(path).substr(option_prefix.size());
             // D-84-17: multi-input 拆分后 sub-field 寻址形如
             // options.{optionName}.{inputName}。找到第一个 '.' 之后，若余下
             // 部分仍是 multi-input option 的 input name，则把值写入对应
@@ -3276,17 +3276,17 @@ namespace Das::Plugins::DasMaaPi
             ApplyOptionValueChange(settings, *catalog, option_tail, value);
             return;
         }
-        constexpr std::string_view kTaskPrefix = "pi.tasks.";
-        constexpr std::string_view kTaskOptionSeparator = ".options.";
-        if (path.starts_with(kTaskPrefix) && catalog)
+        constexpr std::string_view task_prefix = "pi.tasks.";
+        constexpr std::string_view task_option_separator = ".options.";
+        if (path.starts_with(task_prefix) && catalog)
         {
-            auto tail = std::string_view(path).substr(kTaskPrefix.size());
-            auto option_pos = tail.find(kTaskOptionSeparator);
+            auto tail = std::string_view(path).substr(task_prefix.size());
+            auto option_pos = tail.find(task_option_separator);
             if (option_pos != std::string_view::npos)
             {
                 auto task_name = tail.substr(0, option_pos);
                 auto option_name =
-                    tail.substr(option_pos + kTaskOptionSeparator.size());
+                    tail.substr(option_pos + task_option_separator.size());
                 auto* task = FindSelectedTask(settings, task_name);
                 if (!task && HasTask(*catalog, task_name))
                 {
@@ -3317,11 +3317,11 @@ namespace Das::Plugins::DasMaaPi
                 return;
             }
 
-            constexpr std::string_view kEnabledSuffix = ".enabled";
-            if (tail.ends_with(kEnabledSuffix) && value.is_bool())
+            constexpr std::string_view enabled_suffix = ".enabled";
+            if (tail.ends_with(enabled_suffix) && value.is_bool())
             {
                 auto task_name =
-                    tail.substr(0, tail.size() - kEnabledSuffix.size());
+                    tail.substr(0, tail.size() - enabled_suffix.size());
                 auto* task = FindSelectedTask(settings, task_name);
                 if (!task && HasTask(*catalog, task_name))
                 {
@@ -3819,26 +3819,26 @@ namespace Das::Plugins::DasMaaPi
             }
             // options.{name} 或 options.{name}.{input}（多字段 input 子字段）。
             // 委托给既有 ApplyOptionValueChange / 多字段路径处理。
-            constexpr std::string_view kOptionPrefix = "options.";
-            if (field.starts_with(kOptionPrefix) && catalog)
+            constexpr std::string_view option_prefix = "options.";
+            if (field.starts_with(option_prefix) && catalog)
             {
                 ApplyOptionValueChange(
                     settings,
                     *catalog,
-                    std::string_view(field).substr(kOptionPrefix.size()),
+                    std::string_view(field).substr(option_prefix.size()),
                     value);
                 return true;
             }
             // D-86-04/06: settings.{name} 与 global_option 共享 global_options
             // 存储（D-86-04）。路由到与 options.* 一致的 ApplyOptionValueChange
             // 保证唯一存储位置。
-            constexpr std::string_view kSettingPrefix = "settings.";
-            if (field.starts_with(kSettingPrefix) && catalog)
+            constexpr std::string_view setting_prefix = "settings.";
+            if (field.starts_with(setting_prefix) && catalog)
             {
                 ApplyOptionValueChange(
                     settings,
                     *catalog,
-                    std::string_view(field).substr(kSettingPrefix.size()),
+                    std::string_view(field).substr(setting_prefix.size()),
                     value);
                 return true;
             }
@@ -3846,11 +3846,11 @@ namespace Das::Plugins::DasMaaPi
             // 私有存储。stable pretask_id 取自首个引用该 option 的 pretask
             // （dto.name 非空→name，否则 exec，与投影端一致）。catalog 缺该
             // option 时报 error 诊断。
-            constexpr std::string_view kPretaskPrefix = "pretask.";
-            if (field.starts_with(kPretaskPrefix) && catalog)
+            constexpr std::string_view pretask_prefix = "pretask.";
+            if (field.starts_with(pretask_prefix) && catalog)
             {
                 const auto option_name =
-                    std::string_view(field).substr(kPretaskPrefix.size());
+                    std::string_view(field).substr(pretask_prefix.size());
                 const auto* option = FindOption(*catalog, option_name);
                 if (option == nullptr)
                 {
@@ -3956,11 +3956,11 @@ namespace Das::Plugins::DasMaaPi
                 task->enabled = value.as_bool().value_or(true);
                 return true;
             }
-            constexpr std::string_view kOptionPrefix = "options.";
-            if (field.starts_with(kOptionPrefix) && catalog)
+            constexpr std::string_view option_prefix = "options.";
+            if (field.starts_with(option_prefix) && catalog)
             {
                 const auto option_tail =
-                    std::string_view(field).substr(kOptionPrefix.size());
+                    std::string_view(field).substr(option_prefix.size());
                 const auto* catalog_task = FindTask(*catalog, task->task_name);
                 if (!catalog_task
                     || !ContainsName(catalog_task->dto.option, option_tail))
@@ -4533,12 +4533,12 @@ namespace Das::Plugins::DasMaaPi
         std::random_device                 rd;
         std::mt19937                       gen(rd());
         std::uniform_int_distribution<int> dist(0, 15);
-        static constexpr char              kHex[] = "0123456789abcdef";
+        static constexpr char              HEX[] = "0123456789abcdef";
         std::ostringstream                 oss;
         oss << std::hex << now;
         for (int i = 0; i < 24; ++i)
         {
-            oss << kHex[dist(gen)];
+            oss << HEX[dist(gen)];
         }
         return oss.str();
     }

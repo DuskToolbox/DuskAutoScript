@@ -23,7 +23,7 @@ DAS_NS_BEGIN
 
 namespace
 {
-    constexpr DasGuid kIpcTaskComponentGuid{
+    constexpr DasGuid IPC_TASK_COMPONENT_GUID{
         0x68F10701,
         0x0000,
         0x4000,
@@ -805,7 +805,7 @@ DasResult IpcTaskComponentFactoryImpl::CreateComponent(
     }
     *pp_out_component = nullptr;
 
-    if (!GuidEquals(component_guid, kIpcTaskComponentGuid))
+    if (!GuidEquals(component_guid, IPC_TASK_COMPONENT_GUID))
     {
         return DAS_E_NOT_FOUND;
     }

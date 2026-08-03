@@ -66,7 +66,7 @@ namespace Das::Plugins::DasMaaPi
         using NowFn = std::function<TimePoint()>;
 
         // 滑动时间窗（最近 2 秒）。
-        static constexpr std::chrono::milliseconds kRateWindowDuration{2000};
+        static constexpr std::chrono::milliseconds RATE_WINDOW_DURATION{2000};
 
         explicit DownloadRateTracker(NowFn now = DefaultNow)
             : now_(std::move(now))
@@ -80,7 +80,7 @@ namespace Das::Plugins::DasMaaPi
         {
             const auto now = now_();
             samples_.push_back(Sample{bytes_received, now});
-            const auto cutoff = now - kRateWindowDuration;
+            const auto cutoff = now - RATE_WINDOW_DURATION;
             while (samples_.size() > 1 && samples_.front().time < cutoff)
             {
                 samples_.erase(samples_.begin());

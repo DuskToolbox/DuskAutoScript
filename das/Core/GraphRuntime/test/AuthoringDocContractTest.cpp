@@ -167,7 +167,7 @@ namespace
              .settings = MakeSettings(3.0)});
 
         auto doc = FormSequenceProjector::Project(seq);
-        doc.tags.emplace_back(kLinearTag); // mark linear state
+        doc.tags.emplace_back(LINEAR_TAG); // mark linear state
 
         auto out = ToAuthoringDocument(doc);
         ASSERT_EQ(out.view_kind, ViewKind::FormSequence);
@@ -187,7 +187,7 @@ namespace
         GraphDocumentDto doc;
         doc.version = 1;
         doc.nodes.push_back(MakeNode("x", "{gx}", 9.0));
-        doc.tags.emplace_back(kLinearTag);
+        doc.tags.emplace_back(LINEAR_TAG);
 
         auto json = ToJson(doc);
         EXPECT_NE(
@@ -240,7 +240,7 @@ namespace
                   .component_ref = MakeCompRef("{gb}")},
              .settings = MakeSettings(2.0)});
         auto fdoc = FormSequenceProjector::Project(seq);
-        fdoc.tags.emplace_back(kLinearTag);
+        fdoc.tags.emplace_back(LINEAR_TAG);
         const auto fs_json = ToJson(fdoc);
         EXPECT_EQ(fs_json.find("edgeType"), std::string::npos);
         EXPECT_EQ(fs_json.find("edgeId"), std::string::npos);
@@ -393,7 +393,7 @@ namespace
         seq.items.push_back(
             {.item_id = "b", .target = {.target_kind = "componentRef"}});
         auto doc = FormSequenceProjector::Project(seq);
-        doc.tags.emplace_back(kLinearTag);
+        doc.tags.emplace_back(LINEAR_TAG);
         const auto nodes_before = doc.nodes.size();
         const auto edges_before = doc.edges.size();
 
@@ -425,7 +425,7 @@ namespace
         EXPECT_FALSE(IsLinear(doc));
         doc.tags.emplace_back("fromsequence"); // legacy/other tag — not linear
         EXPECT_FALSE(IsLinear(doc));
-        doc.tags.emplace_back(kLinearTag);
+        doc.tags.emplace_back(LINEAR_TAG);
         EXPECT_TRUE(IsLinear(doc));
     }
 
@@ -558,7 +558,7 @@ namespace
                   .component_ref = MakeCompRef("{gb}")},
              .settings = MakeSettings(2.0)});
         auto doc = FormSequenceProjector::Project(seq);
-        doc.tags.emplace_back(kLinearTag);
+        doc.tags.emplace_back(LINEAR_TAG);
         ASSERT_EQ(doc.edges.size(), 1u); // a->b signal
 
         AuthoringChange add;
@@ -596,7 +596,7 @@ namespace
                  .target_kind = "componentRef",
                  .component_ref = MakeCompRef("{gc}")}});
         auto doc = FormSequenceProjector::Project(seq);
-        doc.tags.emplace_back(kLinearTag);
+        doc.tags.emplace_back(LINEAR_TAG);
 
         AuthoringChange rm;
         rm.kind = "removeFormSequenceItem";
@@ -624,7 +624,7 @@ namespace
                      .component_ref = MakeCompRef("{g}")}});
         }
         auto doc = FormSequenceProjector::Project(seq);
-        doc.tags.emplace_back(kLinearTag);
+        doc.tags.emplace_back(LINEAR_TAG);
 
         AuthoringChange mv;
         mv.kind = "moveFormSequenceItem";
@@ -643,7 +643,7 @@ namespace
     TEST(AuthoringDocContractTest, LinearChange_RejectsGraphOnlyKind)
     {
         GraphDocumentDto doc;
-        doc.tags.emplace_back(kLinearTag);
+        doc.tags.emplace_back(LINEAR_TAG);
 
         AuthoringChange bad;
         bad.kind = "addGraphNode";
@@ -661,7 +661,7 @@ namespace
         seq.items.push_back(
             {.item_id = "a", .target = {.target_kind = "componentRef"}});
         auto doc = FormSequenceProjector::Project(seq);
-        doc.tags.emplace_back(kLinearTag);
+        doc.tags.emplace_back(LINEAR_TAG);
 
         AuthoringChange add;
         add.kind = "addFormSequenceItem";
@@ -691,7 +691,7 @@ namespace
                  .target_kind = "componentRef",
                  .component_ref = MakeCompRef("{gb}")}});
         auto doc = FormSequenceProjector::Project(seq);
-        doc.tags.emplace_back(kLinearTag);
+        doc.tags.emplace_back(LINEAR_TAG);
 
         // Snapshot the ids before conversion; the linear projection currently
         // shows them as FormSequenceItem.id.
@@ -717,7 +717,7 @@ namespace
     TEST(AuthoringDocContractTest, ConvertView_RejectsUnsupportedTarget)
     {
         GraphDocumentDto doc;
-        doc.tags.emplace_back(kLinearTag);
+        doc.tags.emplace_back(LINEAR_TAG);
 
         AuthoringChange cv;
         cv.kind = "convertView";
@@ -771,7 +771,7 @@ namespace
     {
         GraphDocumentDto doc;
         doc.nodes.push_back(MakeNode("n1", "{g1}", 0.0));
-        doc.tags.emplace_back(kLinearTag);
+        doc.tags.emplace_back(LINEAR_TAG);
 
         const auto json = ToJson(doc);
         // New strict wire uses viewKind (not kind) and formSequence.items
@@ -801,7 +801,7 @@ namespace
         GraphDocumentDto doc;
         doc.nodes.push_back(MakeNode("n1", "{g1}", 0.0));
         doc.fingerprint = "should-not-leak";
-        doc.tags.emplace_back(kLinearTag);
+        doc.tags.emplace_back(LINEAR_TAG);
 
         const auto json = ToJson(doc);
         // Public wire drops business settings (D-84-07) and the document-level

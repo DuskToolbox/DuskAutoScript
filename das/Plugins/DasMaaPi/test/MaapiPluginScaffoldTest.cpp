@@ -29,8 +29,8 @@ namespace
     using Das::PluginInterface::DAS_PLUGIN_FEATURE_TASK_AUTHORING_FACTORY;
     using Das::PluginInterface::DAS_PLUGIN_FEATURE_TASK_COMPONENT_FACTORY;
 
-    constexpr std::string_view kRunTaskComponentKind = "das.maapi.run";
-    constexpr std::string_view kAgentRuntimeTaskComponentKind =
+    constexpr std::string_view RUN_TASK_COMPONENT_KIND = "das.maapi.run";
+    constexpr std::string_view AGENT_RUNTIME_TASK_COMPONENT_KIND =
         "das.maapi.agentRuntime";
 
     std::filesystem::path PluginPackageDir()
@@ -188,7 +188,7 @@ TEST(MaapiPluginScaffoldTest, ArtifactsUseOfficialPluginContract)
         manifest_content.find(R"("name": "libDasMaaPi")"),
         std::string::npos);
     EXPECT_NE(
-        manifest_content.find(std::string(kAuthoringFactoryGuidText)),
+        manifest_content.find(std::string(AUTHORING_FACTORY_GUID_TEXT)),
         std::string::npos);
 }
 
@@ -198,17 +198,17 @@ TEST_F(
 {
     ASSERT_EQ(plugin_manager_->LoadPlugin(PluginPackageDir()), DAS_S_OK);
 
-    const auto plugin_guid = MakeDasGuid(std::string(kPluginGuidText));
+    const auto plugin_guid = MakeDasGuid(std::string(PLUGIN_GUID_TEXT));
     auto*      package = plugin_manager_->FindPluginPackageByGuid(plugin_guid);
     ASSERT_NE(package, nullptr);
 
-    const auto task_guid = MakeDasGuid(std::string(kTaskGuidText));
+    const auto task_guid = MakeDasGuid(std::string(TASK_GUID_TEXT));
     auto       task_it = package->task_descriptors.find(task_guid);
     ASSERT_NE(task_it, package->task_descriptors.end());
     ASSERT_TRUE(task_it->second.authoring.has_value());
     EXPECT_EQ(
         task_it->second.authoring->factory_guid,
-        MakeDasGuid(std::string(kAuthoringFactoryGuidText)));
+        MakeDasGuid(std::string(AUTHORING_FACTORY_GUID_TEXT)));
 
     auto task_features =
         plugin_manager_->GetFeaturesByType(DAS_PLUGIN_FEATURE_TASK);
@@ -236,7 +236,7 @@ TEST_F(
     ASSERT_EQ(factory->GetGuid(&loaded_factory_guid), DAS_S_OK);
     EXPECT_EQ(
         loaded_factory_guid,
-        MakeDasGuid(std::string(kAuthoringFactoryGuidText)));
+        MakeDasGuid(std::string(AUTHORING_FACTORY_GUID_TEXT)));
 }
 
 TEST_F(
@@ -245,17 +245,17 @@ TEST_F(
 {
     ASSERT_EQ(plugin_manager_->LoadPlugin(PluginPackageDir()), DAS_S_OK);
 
-    const auto plugin_guid = MakeDasGuid(std::string(kPluginGuidText));
+    const auto plugin_guid = MakeDasGuid(std::string(PLUGIN_GUID_TEXT));
     auto*      package = plugin_manager_->FindPluginPackageByGuid(plugin_guid);
     ASSERT_NE(package, nullptr);
 
-    const auto task_guid = MakeDasGuid(std::string(kTaskGuidText));
+    const auto task_guid = MakeDasGuid(std::string(TASK_GUID_TEXT));
     auto       task_it = package->task_descriptors.find(task_guid);
     ASSERT_NE(task_it, package->task_descriptors.end());
     ASSERT_TRUE(task_it->second.execution_component.has_value());
     EXPECT_EQ(
         task_it->second.execution_component->component_guid,
-        MakeDasGuid(std::string(kRunTaskComponentGuidText)));
+        MakeDasGuid(std::string(RUN_TASK_COMPONENT_GUID_TEXT)));
 
     ASSERT_TRUE(package->task_components.has_value());
     ASSERT_TRUE(package->task_components->factories.has_value());
@@ -263,19 +263,19 @@ TEST_F(
         std::find(
             package->task_components->factories->begin(),
             package->task_components->factories->end(),
-            std::string(kRunTaskComponentFactoryGuidText)),
+            std::string(RUN_TASK_COMPONENT_FACTORY_GUID_TEXT)),
         package->task_components->factories->end());
 
     ASSERT_TRUE(package->task_components->components.has_value());
     auto component_it = package->task_components->components->find(
-        std::string(kRunTaskComponentGuidText));
+        std::string(RUN_TASK_COMPONENT_GUID_TEXT));
     ASSERT_NE(component_it, package->task_components->components->end());
     ASSERT_TRUE(component_it->second.definition.has_value());
     auto definition = component_it->second.definition->as_object();
     ASSERT_TRUE(definition.has_value());
     EXPECT_EQ(
         (*definition)[std::string_view("kind")].as_string().value_or(""),
-        kRunTaskComponentKind);
+        RUN_TASK_COMPONENT_KIND);
 }
 
 TEST_F(
@@ -287,13 +287,13 @@ TEST_F(
     const std::string manifest_text(text.data(), text.size());
 
     EXPECT_EQ(
-        manifest_text.find(std::string(kAgentRuntimeTaskComponentKind)),
+        manifest_text.find(std::string(AGENT_RUNTIME_TASK_COMPONENT_KIND)),
         std::string::npos);
     EXPECT_EQ(
-        manifest_text.find(std::string(kAgentTaskComponentGuidText)),
+        manifest_text.find(std::string(AGENT_TASK_COMPONENT_GUID_TEXT)),
         std::string::npos);
     EXPECT_EQ(
-        manifest_text.find(std::string(kAgentTaskComponentFactoryGuidText)),
+        manifest_text.find(std::string(AGENT_TASK_COMPONENT_FACTORY_GUID_TEXT)),
         std::string::npos);
 }
 
@@ -315,7 +315,7 @@ TEST_F(MaapiPluginScaffoldFixture, TaskComponentFactoryCreatesRunComponent)
     DasPtr<Das::PluginInterface::IDasTaskComponent> component;
     ASSERT_EQ(
         factory->CreateComponent(
-            MakeDasGuid(std::string(kRunTaskComponentGuidText)),
+            MakeDasGuid(std::string(RUN_TASK_COMPONENT_GUID_TEXT)),
             component.Put()),
         DAS_S_OK);
 
@@ -323,7 +323,7 @@ TEST_F(MaapiPluginScaffoldFixture, TaskComponentFactoryCreatesRunComponent)
     ASSERT_EQ(component->GetGuid(&loaded_component_guid), DAS_S_OK);
     EXPECT_EQ(
         loaded_component_guid,
-        MakeDasGuid(std::string(kRunTaskComponentGuidText)));
+        MakeDasGuid(std::string(RUN_TASK_COMPONENT_GUID_TEXT)));
 }
 
 TEST_F(MaapiPluginScaffoldFixture, AdapterOnlyDocumentBeforeProjectSelection)
@@ -344,7 +344,7 @@ TEST_F(MaapiPluginScaffoldFixture, AdapterOnlyDocumentBeforeProjectSelection)
     DasPtr<Das::PluginInterface::IDasTaskAuthoringSession> session;
     ASSERT_EQ(
         factory->CreateSession(
-            MakeDasGuid(std::string(kTaskGuidText)),
+            MakeDasGuid(std::string(TASK_GUID_TEXT)),
             nullptr,
             session.Put()),
         DAS_S_OK);

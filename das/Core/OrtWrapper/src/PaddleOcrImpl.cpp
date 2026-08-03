@@ -30,19 +30,19 @@ DAS_CORE_ORTWRAPPER_NS_BEGIN
 
 // ===== DB post-processing constants (aligned with PaddleOCR db_postprocess.py)
 // =====
-static constexpr float kDbThreshold = 0.3f;
-static constexpr float kBoxThresh = 0.5f;
-static constexpr float kUnclipRatio = 2.0f;
-static constexpr int   kMaxContours = 10000;
-static constexpr int   kMaxImageDim = 16384;
+static constexpr float DB_THRESHOLD = 0.3f;
+static constexpr float BOX_THRESH = 0.5f;
+static constexpr float UNCLIP_RATIO = 2.0f;
+static constexpr int   MAX_CONTOURS = 10000;
+static constexpr int   MAX_IMAGE_DIM = 16384;
 
 // ===== Detection normalization: ImageNet (Pitfall 3) =====
-static constexpr double kDetMean[] = {0.485, 0.456, 0.406};
-static constexpr double kDetStd[] = {0.229, 0.224, 0.225};
+static constexpr double DET_MEAN[] = {0.485, 0.456, 0.406};
+static constexpr double DET_STD[] = {0.229, 0.224, 0.225};
 
 // ===== Recognition normalization: (pixel/255 - 0.5) / 0.5 (Pitfall 3) =====
-static constexpr double kRecMean[] = {127.5, 127.5, 127.5};
-static constexpr double kRecStd[] = {127.5, 127.5, 127.5};
+static constexpr double REC_MEAN[] = {127.5, 127.5, 127.5};
+static constexpr double REC_STD[] = {127.5, 127.5, 127.5};
 
 static bool TryMultiplyUint64(uint64_t lhs, uint64_t rhs, uint64_t* p_out_value)
 {
@@ -672,8 +672,8 @@ static DasResult RecognizeTextCrop(
                 auto src_byte =
                     static_cast<double>(resized.at<cv::Vec3b>(h, w)[c]);
                 const float val = static_cast<float>(
-                    (src_byte / 255.0 - kRecMean[c] / 255.0)
-                    / (kRecStd[c] / 255.0));
+                    (src_byte / 255.0 - REC_MEAN[c] / 255.0)
+                    / (REC_STD[c] / 255.0));
                 auto dst_idx =
                     static_cast<size_t>(c * height * width + h * width + w);
                 float_data[dst_idx] = val;
@@ -844,7 +844,7 @@ DasResult PaddleOcrImpl::Recognize(
         }
 
         // Image dimension safety check (T-64-12)
-        if (img_size.width > kMaxImageDim || img_size.height > kMaxImageDim
+        if (img_size.width > MAX_IMAGE_DIM || img_size.height > MAX_IMAGE_DIM
             || img_size.width <= 0 || img_size.height <= 0)
         {
             DAS_CORE_LOG_ERROR(
@@ -951,7 +951,7 @@ DasResult PaddleOcrImpl::Recognize(
                         auto src_byte =
                             static_cast<double>(resized.at<cv::Vec3b>(h, w)[c]);
                         const float val = static_cast<float>(
-                            (src_byte / 255.0 - kDetMean[c]) / kDetStd[c]);
+                            (src_byte / 255.0 - DET_MEAN[c]) / DET_STD[c]);
                         auto dst_idx = static_cast<size_t>(
                             c * target_h * target_w + h * target_w + w);
                         float_data[dst_idx] = val;
@@ -1085,7 +1085,7 @@ DasResult PaddleOcrImpl::Recognize(
             const cv::Mat bitmap(prob_h, prob_w, CV_8UC1);
             for (size_t i = 0; i < static_cast<size_t>(prob_element_count); ++i)
             {
-                bitmap.data[i] = prob_map[i] > kDbThreshold ? 255 : 0;
+                bitmap.data[i] = prob_map[i] > DB_THRESHOLD ? 255 : 0;
             }
 
             // Find contours
@@ -1097,13 +1097,13 @@ DasResult PaddleOcrImpl::Recognize(
                 cv::CHAIN_APPROX_SIMPLE);
 
             // Limit contour count (T-64-14)
-            if (contours.size() > static_cast<size_t>(kMaxContours))
+            if (contours.size() > static_cast<size_t>(MAX_CONTOURS))
             {
                 DAS_CORE_LOG_WARN(
                     "Too many contours: {}, truncating to {}",
                     contours.size(),
-                    kMaxContours);
-                contours.resize(kMaxContours);
+                    MAX_CONTOURS);
+                contours.resize(MAX_CONTOURS);
             }
 
             // Scale factors from prob map to original image
@@ -1150,13 +1150,13 @@ DasResult PaddleOcrImpl::Recognize(
                                 + rotated_rect.size.height / 2),
                     });
 
-                if (box_score < kBoxThresh)
+                if (box_score < BOX_THRESH)
                 {
                     continue;
                 }
 
                 // DB unclip
-                auto expanded = UnclipBox(box, kUnclipRatio);
+                auto expanded = UnclipBox(box, UNCLIP_RATIO);
                 if (expanded.size() < 4)
                 {
                     continue;

@@ -12,7 +12,7 @@ DAS_CORE_IPC_NS_BEGIN
 using tcp = boost::asio::ip::tcp;
 namespace websocket = boost::beast::websocket;
 
-static constexpr const char* kUpgradePath = "/ipc/v1/transport";
+static constexpr const char* UPGRADE_PATH = "/ipc/v1/transport";
 
 struct HttpIpcServer::Impl
 {
@@ -124,7 +124,7 @@ struct HttpIpcServer::Impl
                         auto& req = parser->get();
 
                         if (websocket::is_upgrade(req)
-                            && req.target() == kUpgradePath)
+                            && req.target() == UPGRADE_PATH)
                         {
                             self->UpgradeWebSocket(std::move(*socket_ptr), req);
                         }

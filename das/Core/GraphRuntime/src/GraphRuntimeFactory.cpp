@@ -387,7 +387,7 @@ namespace
                 }
             }
             s.document = GR::FormSequenceProjector::Project(seq);
-            s.document.tags.emplace_back(GR::Contract::kLinearTag);
+            s.document.tags.emplace_back(GR::Contract::LINEAR_TAG);
             return;
         }
 
@@ -525,7 +525,7 @@ namespace
                 }
             }
             s.document = GR::FormSequenceProjector::Project(seq);
-            s.document.tags.emplace_back(GR::Contract::kLinearTag);
+            s.document.tags.emplace_back(GR::Contract::LINEAR_TAG);
         }
         else if (obj->contains(std::string_view("nodes")))
         {

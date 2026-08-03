@@ -12,9 +12,9 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
 {
     struct AgentRuntimeMaaContext
     {
-        MaaResourceHandle   resource = kInvalidMaaResourceHandle;
-        MaaControllerHandle controller = kInvalidMaaControllerHandle;
-        MaaTaskerHandle     tasker = kInvalidMaaTaskerHandle;
+        MaaResourceHandle   resource = INVALID_MAA_RESOURCE_HANDLE;
+        MaaControllerHandle controller = INVALID_MAA_CONTROLLER_HANDLE;
+        MaaTaskerHandle     tasker = INVALID_MAA_TASKER_HANDLE;
     };
 
     class AgentRuntimeService final

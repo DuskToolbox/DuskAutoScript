@@ -132,14 +132,14 @@ namespace
 
     TEST(LoadPluginSessionTest, SessionIdZero_IsInvalid)
     {
-        constexpr uint16_t kInvalidSessionId = 0;
-        EXPECT_EQ(kInvalidSessionId, uint16_t{0});
+        constexpr uint16_t invalid_session_id = 0;
+        EXPECT_EQ(invalid_session_id, uint16_t{0});
     }
 
     TEST(LoadPluginSessionTest, SessionIdNonZero_IsValid)
     {
-        constexpr uint16_t kValidSessionId = 42;
-        EXPECT_NE(kValidSessionId, uint16_t{0});
+        constexpr uint16_t valid_session_id = 42;
+        EXPECT_NE(valid_session_id, uint16_t{0});
     }
 
     // ============================================================

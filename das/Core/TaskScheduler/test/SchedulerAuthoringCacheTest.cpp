@@ -387,12 +387,12 @@ protected:
 
         boost::interprocess::shared_memory_object::remove(shm_name_.c_str());
 
-        const size_t kShmSize = sizeof(FactoryTaskSharedState) + 4096;
+        const size_t shm_size = sizeof(FactoryTaskSharedState) + 4096;
         shm_segment_ =
             std::make_unique<boost::interprocess::managed_shared_memory>(
                 boost::interprocess::create_only_t{},
                 shm_name_.c_str(),
-                kShmSize);
+                shm_size);
 
         shared_state_ =
             shm_segment_->construct<FactoryTaskSharedState>("state")();

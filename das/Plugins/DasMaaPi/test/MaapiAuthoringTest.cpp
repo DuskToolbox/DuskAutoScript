@@ -381,7 +381,7 @@ namespace
             DasPtr<Das::PluginInterface::IDasTaskAuthoringSession> session;
             EXPECT_EQ(
                 factory->CreateSession(
-                    MakeDasGuid(std::string(kTaskGuidText)),
+                    MakeDasGuid(std::string(TASK_GUID_TEXT)),
                     context_json.Get(),
                     session.Put()),
                 DAS_S_OK);
@@ -4779,13 +4779,13 @@ namespace
 
         std::string Hex() const
         {
-            static constexpr char kHex[] = "0123456789abcdef";
+            static constexpr char HEX[] = "0123456789abcdef";
             auto                  d = Digest();
             std::string           s(d.size() * 2, '0');
             for (std::size_t i = 0; i < d.size(); ++i)
             {
-                s[i * 2] = kHex[(d[i] >> 4) & 0xf];
-                s[i * 2 + 1] = kHex[d[i] & 0xf];
+                s[i * 2] = HEX[(d[i] >> 4) & 0xf];
+                s[i * 2 + 1] = HEX[d[i] & 0xf];
             }
             return s;
         }
@@ -5674,7 +5674,7 @@ TEST(MaapiLegacyBoundaryTest, LegacyPre84ParseDoesNotEmitAuthoringLegacyFields)
     // 字面量构造 pre-84 形态（与 taskId7.json 同结构），不读 live 文件本身。
     // ParseAcceptedSettings 期望 acceptedProperties envelope shape（含 `pi`
     // 顶层字段），与 taskId7.json 的 properties.pi 形态一致。
-    static constexpr std::string_view kLegacyAccepted = R"({
+    static constexpr std::string_view LEGACY_ACCEPTED = R"({
       "version": 1,
       "adapter": {"interfacePath": "D:/softwares/green/MaaEnd-win/interface.json"},
       "pi": {
@@ -5692,7 +5692,7 @@ TEST(MaapiLegacyBoundaryTest, LegacyPre84ParseDoesNotEmitAuthoringLegacyFields)
         "orphanPaths": []
       }
     })";
-    auto parsed = Das::Utils::ParseYyjsonFromString(kLegacyAccepted);
+    auto parsed = Das::Utils::ParseYyjsonFromString(LEGACY_ACCEPTED);
     ASSERT_TRUE(parsed.has_value());
     auto settings = Das::Plugins::DasMaaPi::ParseAcceptedSettings(*parsed);
 
@@ -7021,7 +7021,7 @@ namespace
             }
         };
 
-        constexpr std::uint32_t kFakeCrc = 0x12345678;
+        constexpr std::uint32_t fake_crc = 0x12345678;
         std::string             local_section;
         std::string             central_section;
         for (const auto& entry : entries)
@@ -7034,7 +7034,7 @@ namespace
             append_u16(local_section, 0); // stored
             append_u16(local_section, 0);
             append_u16(local_section, 0);
-            append_u32(local_section, kFakeCrc);
+            append_u32(local_section, fake_crc);
             append_u32(
                 local_section,
                 static_cast<std::uint32_t>(entry.content.size()));
@@ -7055,7 +7055,7 @@ namespace
             append_u16(central_section, 0);
             append_u16(central_section, 0);
             append_u16(central_section, 0);
-            append_u32(central_section, kFakeCrc);
+            append_u32(central_section, fake_crc);
             append_u32(
                 central_section,
                 static_cast<std::uint32_t>(entry.content.size()));

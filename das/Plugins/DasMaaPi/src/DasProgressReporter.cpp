@@ -23,24 +23,24 @@ namespace Plugins::DasMaaPi
         // 字节数格式化为人类可读文本（"12.3 MB"）。1024 进制。
         std::string FormatBytes(std::uint64_t bytes)
         {
-            constexpr double   kBytesPerKiB = 1024.0;
-            constexpr double   kBytesPerMiB = 1024.0 * 1024.0;
-            constexpr double   kBytesPerGiB = 1024.0 * 1024.0 * 1024.0;
+            constexpr double   bytes_per_kib = 1024.0;
+            constexpr double   bytes_per_mib = 1024.0 * 1024.0;
+            constexpr double   bytes_per_gib = 1024.0 * 1024.0 * 1024.0;
             std::ostringstream oss;
-            if (bytes >= static_cast<std::uint64_t>(kBytesPerGiB))
+            if (bytes >= static_cast<std::uint64_t>(bytes_per_gib))
             {
                 oss << std::fixed << std::setprecision(1)
-                    << (bytes / kBytesPerGiB) << " GB";
+                    << (bytes / bytes_per_gib) << " GB";
             }
-            else if (bytes >= static_cast<std::uint64_t>(kBytesPerMiB))
+            else if (bytes >= static_cast<std::uint64_t>(bytes_per_mib))
             {
                 oss << std::fixed << std::setprecision(1)
-                    << (bytes / kBytesPerMiB) << " MB";
+                    << (bytes / bytes_per_mib) << " MB";
             }
-            else if (bytes >= static_cast<std::uint64_t>(kBytesPerKiB))
+            else if (bytes >= static_cast<std::uint64_t>(bytes_per_kib))
             {
                 oss << std::fixed << std::setprecision(1)
-                    << (bytes / kBytesPerKiB) << " KB";
+                    << (bytes / bytes_per_kib) << " KB";
             }
             else
             {

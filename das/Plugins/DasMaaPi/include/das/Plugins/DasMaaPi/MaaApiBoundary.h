@@ -13,11 +13,11 @@ namespace Das::Plugins::DasMaaPi
     using MaaAgentClientHandle = std::uintptr_t;
     using MaaAsyncId = std::int64_t;
 
-    inline constexpr MaaResourceHandle    kInvalidMaaResourceHandle = 0;
-    inline constexpr MaaControllerHandle  kInvalidMaaControllerHandle = 0;
-    inline constexpr MaaTaskerHandle      kInvalidMaaTaskerHandle = 0;
-    inline constexpr MaaAgentClientHandle kInvalidMaaAgentClientHandle = 0;
-    inline constexpr MaaAsyncId           kInvalidMaaAsyncId = 0;
+    inline constexpr MaaResourceHandle    INVALID_MAA_RESOURCE_HANDLE = 0;
+    inline constexpr MaaControllerHandle  INVALID_MAA_CONTROLLER_HANDLE = 0;
+    inline constexpr MaaTaskerHandle      INVALID_MAA_TASKER_HANDLE = 0;
+    inline constexpr MaaAgentClientHandle INVALID_MAA_AGENT_CLIENT_HANDLE = 0;
+    inline constexpr MaaAsyncId           INVALID_MAA_ASYNC_ID = 0;
 
     // MaaFW MaaEventCallback calling convention (MAA_CALL = __stdcall on
     // Windows). Mirrored here so MaaCallbackLogger compiles in BOTH the
@@ -116,10 +116,10 @@ namespace Das::Plugins::DasMaaPi
     // Result of CreateControllerFromParams. The boundary surfaces structured
     // failure context (error_code/message) so MaaRuntime can attach typed
     // diagnostics (e.g. controller-window-not-found) without reverse-
-    // engineering a bare kInvalidMaaControllerHandle.
+    // engineering a bare INVALID_MAA_CONTROLLER_HANDLE.
     struct CreateControllerResult
     {
-        MaaControllerHandle handle = kInvalidMaaControllerHandle;
+        MaaControllerHandle handle = INVALID_MAA_CONTROLLER_HANDLE;
         std::string         error_code; // empty on success
         std::string         error_message;
     };
@@ -129,9 +129,9 @@ namespace Das::Plugins::DasMaaPi
         bool         ok = true;
         std::int64_t provider_code = 0;
         std::string  message;
-        MaaAsyncId   id = kInvalidMaaAsyncId;
+        MaaAsyncId   id = INVALID_MAA_ASYNC_ID;
 
-        static MaaApiResult Ok(MaaAsyncId id = kInvalidMaaAsyncId)
+        static MaaApiResult Ok(MaaAsyncId id = INVALID_MAA_ASYNC_ID)
         {
             MaaApiResult result;
             result.id = id;
@@ -167,7 +167,7 @@ namespace Das::Plugins::DasMaaPi
         // matching typed block (adb/dbg are hard-linked cross-platform core;
         // win32/gamepad are runtime-resolved via MaaDynamicSymbols). Tier2
         // controller types (macos/playcover/wlroots) and any genuinely
-        // unknown type surface as kInvalidMaaControllerHandle with
+        // unknown type surface as INVALID_MAA_CONTROLLER_HANDLE with
         // controller-type-unsupported-on-platform — MaaFW does not export
         // those symbols on Windows builds.
         virtual CreateControllerResult CreateControllerFromParams(

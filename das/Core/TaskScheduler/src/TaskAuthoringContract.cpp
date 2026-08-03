@@ -1790,9 +1790,9 @@ namespace Das::Core::TaskScheduler
                 return Fail("invalidPayload", "payload must be object");
             }
             const auto&                       obj = obj_opt.value();
-            static constexpr std::string_view kFields[] =
+            static constexpr std::string_view FIELDS[] =
                 {"fromNodeId", "fromPortId", "toNodeId", "toPortId"};
-            for (auto f : kFields)
+            for (auto f : FIELDS)
             {
                 if (!HasStringField(obj, f)
                     || obj[f].as_string().value().empty())

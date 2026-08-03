@@ -35,18 +35,19 @@ namespace
 
     // ---- Component GUIDs ----
 
-    const std::string kCompPassThrough = "B0000000-0000-0000-0000-000000000001";
-    const std::string kCompIntOut = "B0000000-0000-0000-0000-000000000002";
-    const std::string kCompStringOut = "B0000000-0000-0000-0000-000000000003";
-    const std::string kCompFail = "B0000000-0000-0000-0000-000000000004";
+    const std::string COMP_PASS_THROUGH =
+        "B0000000-0000-0000-0000-000000000001";
+    const std::string COMP_INT_OUT = "B0000000-0000-0000-0000-000000000002";
+    const std::string COMP_STRING_OUT = "B0000000-0000-0000-0000-000000000003";
+    const std::string COMP_FAIL = "B0000000-0000-0000-0000-000000000004";
 
     // ---- Node IDs ----
 
-    const std::string kNodeA = "20000000-0000-0000-0000-000000000001";
-    const std::string kNodeB = "20000000-0000-0000-0000-000000000002";
-    const std::string kNodeC = "20000000-0000-0000-0000-000000000003";
-    const std::string kNodeD = "20000000-0000-0000-0000-000000000004";
-    const std::string kNodeE = "20000000-0000-0000-0000-000000000005";
+    const std::string NODE_A = "20000000-0000-0000-0000-000000000001";
+    const std::string NODE_B = "20000000-0000-0000-0000-000000000002";
+    const std::string NODE_C = "20000000-0000-0000-0000-000000000003";
+    const std::string NODE_D = "20000000-0000-0000-0000-000000000004";
+    const std::string NODE_E = "20000000-0000-0000-0000-000000000005";
 
     // ---- Mock StopToken ----
 
@@ -262,7 +263,7 @@ namespace
         node.node_id = node_id;
         node.target.target_kind = "componentRef";
         node.target.component_ref =
-            ComponentRefDto{"componentRef", kCompPassThrough, ""};
+            ComponentRefDto{"componentRef", COMP_PASS_THROUGH, ""};
         return node;
     }
 
@@ -289,24 +290,24 @@ protected:
 
         // Pass-through: in="value_in", out="value_out"
         stub_mgr_->AddDefinition(
-            kCompPassThrough,
+            COMP_PASS_THROUGH,
             MakeDefinition({{"value_in", "int"}}, {{"value_out", "int"}}));
 
         // Int-only output
         stub_mgr_->AddDefinition(
-            kCompIntOut,
+            COMP_INT_OUT,
             MakeDefinition({{"value_in", "int"}}, {{"value_out", "int"}}));
 
         // String output
         stub_mgr_->AddDefinition(
-            kCompStringOut,
+            COMP_STRING_OUT,
             MakeDefinition(
                 {{"value_in", "string"}},
                 {{"value_out", "string"}}));
 
         // Fail component
         stub_mgr_->AddDefinition(
-            kCompFail,
+            COMP_FAIL,
             MakeDefinition({{"value_in", "int"}}, {{"value_out", "int"}}));
 
         token_ =

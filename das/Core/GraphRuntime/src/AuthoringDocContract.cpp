@@ -320,7 +320,7 @@ namespace Contract
 
     bool IsLinear(const Dto::GraphDocumentDto& document) noexcept
     {
-        return HasTag(document, kLinearTag);
+        return HasTag(document, LINEAR_TAG);
     }
 
     AuthoringDocument ToAuthoringDocument(const Dto::GraphDocumentDto& document)
@@ -349,7 +349,7 @@ namespace Contract
         {
             return false;
         }
-        RemoveTag(document, kLinearTag);
+        RemoveTag(document, LINEAR_TAG);
         return true;
     }
 
@@ -1183,7 +1183,7 @@ namespace Contract
                 }
                 // RemoveTag is lossless. D-84-38: ids are stable because the
                 // store carries them verbatim and the projection copies them.
-                RemoveTag(document, kLinearTag);
+                RemoveTag(document, LINEAR_TAG);
                 return {ChangeErrorKind::None, "", {}, std::nullopt};
             }
             return {
@@ -1402,7 +1402,7 @@ namespace Contract
                 // projection treats it as linear. Real graph→formSequence is
                 // only valid when the topology is a single signal chain; that
                 // invariant is the Provider's responsibility (D-84-29).
-                document.tags.emplace_back(kLinearTag);
+                document.tags.emplace_back(LINEAR_TAG);
                 return {ChangeErrorKind::None, "", {}, std::nullopt};
             }
             else

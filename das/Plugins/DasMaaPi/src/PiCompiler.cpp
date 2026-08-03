@@ -766,7 +766,7 @@ namespace Das::Plugins::DasMaaPi
         // 在编译期填充（MaaUtility.h:22）， client_version 取 DasMaaPi
         // 插件版本（与 manifest DasMaaPi.json:version 对齐），禁止空 stub。
         envelope.maapi.pi_env.client_maafw_version = QueryMaaFrameworkVersion();
-        envelope.maapi.pi_env.client_version = std::string{kPluginVersionText};
+        envelope.maapi.pi_env.client_version = std::string{PLUGIN_VERSION_TEXT};
         result.summary.requires_agent_runtime =
             envelope.maapi.requires_agent_runtime;
 

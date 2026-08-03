@@ -977,10 +977,10 @@ namespace Das
 
         TEST(FactoryMigrationTest, FromDecodedData_ReturnsCpuImageWithRGBFormat)
         {
-            constexpr int        kWidth = 32;
-            constexpr int        kHeight = 24;
+            constexpr int        frame_width = 32;
+            constexpr int        frame_height = 24;
             std::vector<uint8_t> rgb_data(
-                static_cast<size_t>(kWidth * kHeight * 3),
+                static_cast<size_t>(frame_width * frame_height * 3),
                 128);
 
             DasImageDesc desc{};
@@ -988,7 +988,7 @@ namespace Das
             desc.data_size = rgb_data.size();
             desc.data_format = ExportInterface::DAS_IMAGE_FORMAT_RGB_888;
 
-            const ExportInterface::DasSize size{kWidth, kHeight};
+            const ExportInterface::DasSize size{frame_width, frame_height};
             ExportInterface::IDasImage*    p_image = nullptr;
             auto                           result =
                 CreateIDasImageFromDecodedData(&desc, &size, &p_image);
@@ -1002,8 +1002,8 @@ namespace Das
 
             ExportInterface::DasSize img_size{};
             EXPECT_EQ(p_image->GetSize(&img_size), DAS_S_OK);
-            EXPECT_EQ(img_size.width, kWidth);
-            EXPECT_EQ(img_size.height, kHeight);
+            EXPECT_EQ(img_size.width, frame_width);
+            EXPECT_EQ(img_size.height, frame_height);
 
             p_image->Release();
         }
@@ -1061,14 +1061,15 @@ namespace Das
 
         TEST(FactoryMigrationTest, FromRgb888_ReturnsCpuImageWithRGBAFormat)
         {
-            constexpr int kWidth = 16;
-            constexpr int kHeight = 16;
-            auto rgba_data = MakeRgbaData(kWidth, kHeight, 255, 128, 64, 255);
+            constexpr int frame_width = 16;
+            constexpr int frame_height = 16;
+            auto          rgba_data =
+                MakeRgbaData(frame_width, frame_height, 255, 128, 64, 255);
 
             auto* p_memory = new TestMemory(std::move(rgba_data));
             p_memory->AddRef();
 
-            const ExportInterface::DasSize size{kWidth, kHeight};
+            const ExportInterface::DasSize size{frame_width, frame_height};
             ExportInterface::IDasImage*    p_image = nullptr;
             auto result = CreateIDasImageFromRgb888(p_memory, &size, &p_image);
             ASSERT_EQ(result, DAS_S_OK);
@@ -1088,7 +1089,9 @@ namespace Das
 
             uint64_t data_size = 0;
             EXPECT_EQ(p_image->GetDataSize(&data_size), DAS_S_OK);
-            EXPECT_EQ(data_size, static_cast<uint64_t>(kWidth * kHeight * 4));
+            EXPECT_EQ(
+                data_size,
+                static_cast<uint64_t>(frame_width * frame_height * 4));
 
             ExportInterface::IDasBinaryBuffer* p_buffer = nullptr;
             EXPECT_EQ(p_image->GetBinaryBuffer(&p_buffer), DAS_S_OK);
@@ -1105,15 +1108,16 @@ namespace Das
             FactoryMigrationTest,
             FromRgb888_RetainsReturnedBufferViewAfterMemoryRelease)
         {
-            constexpr int kWidth = 2;
-            constexpr int kHeight = 1;
-            auto rgba_data = MakeRgbaData(kWidth, kHeight, 10, 20, 30, 40);
+            constexpr int frame_width = 2;
+            constexpr int frame_height = 1;
+            auto          rgba_data =
+                MakeRgbaData(frame_width, frame_height, 10, 20, 30, 40);
 
             auto* p_memory = new TrackingMemory(std::move(rgba_data));
             p_memory->AddRef();
             auto memory_destroyed = p_memory->DestroyedFlag();
 
-            const ExportInterface::DasSize size{kWidth, kHeight};
+            const ExportInterface::DasSize size{frame_width, frame_height};
             ExportInterface::IDasImage*    p_image = nullptr;
             ASSERT_EQ(
                 CreateIDasImageFromRgb888(p_memory, &size, &p_image),
@@ -1129,7 +1133,9 @@ namespace Das
 
             uint64_t buffer_size = 0;
             EXPECT_EQ(p_buffer->GetSize(&buffer_size), DAS_S_OK);
-            EXPECT_EQ(buffer_size, static_cast<uint64_t>(kWidth * kHeight * 4));
+            EXPECT_EQ(
+                buffer_size,
+                static_cast<uint64_t>(frame_width * frame_height * 4));
 
             unsigned char* p_image_data = nullptr;
             EXPECT_EQ(p_buffer->GetData(&p_image_data), DAS_S_OK);
@@ -1146,14 +1152,15 @@ namespace Das
 
         TEST(FactoryMigrationTest, FromRgb888_BinaryBufferSharesReturnedBytes)
         {
-            constexpr int kWidth = 2;
-            constexpr int kHeight = 1;
-            auto          rgba_data = MakeRgbaData(kWidth, kHeight, 1, 2, 3, 4);
+            constexpr int frame_width = 2;
+            constexpr int frame_height = 1;
+            auto          rgba_data =
+                MakeRgbaData(frame_width, frame_height, 1, 2, 3, 4);
 
             auto* p_memory = new TrackingMemory(std::move(rgba_data));
             p_memory->AddRef();
 
-            const ExportInterface::DasSize size{kWidth, kHeight};
+            const ExportInterface::DasSize size{frame_width, frame_height};
             ExportInterface::IDasImage*    p_image = nullptr;
             ASSERT_EQ(
                 CreateIDasImageFromRgb888(p_memory, &size, &p_image),
@@ -1179,16 +1186,16 @@ namespace Das
 
         TEST(FactoryMigrationTest, FromRgb888_RetainsOffsetPayloadBufferView)
         {
-            constexpr std::size_t kHeaderSize = 16;
-            constexpr int         kWidth = 2;
-            constexpr int         kHeight = 1;
-            constexpr std::size_t kPayloadSize =
-                static_cast<std::size_t>(kWidth * kHeight * 4);
-            constexpr std::size_t kTotalSize = kHeaderSize + kPayloadSize;
+            constexpr std::size_t header_size = 16;
+            constexpr int         frame_width = 2;
+            constexpr int         frame_height = 1;
+            constexpr std::size_t payload_byte_count =
+                static_cast<std::size_t>(frame_width * frame_height * 4);
+            constexpr std::size_t total_size = header_size + payload_byte_count;
 
             DAS::DasPtr<ExportInterface::IDasMemory> framebuffer_memory;
             ASSERT_EQ(
-                ::CreateIDasMemory(kTotalSize, framebuffer_memory.Put()),
+                ::CreateIDasMemory(total_size, framebuffer_memory.Put()),
                 DAS_S_OK);
             ASSERT_TRUE(framebuffer_memory);
 
@@ -1202,16 +1209,16 @@ namespace Das
             ASSERT_EQ(whole_buffer->GetData(&p_framebuffer), DAS_S_OK);
             ASSERT_NE(p_framebuffer, nullptr);
 
-            std::fill_n(p_framebuffer, kHeaderSize, 0xEE);
-            auto* const p_payload = p_framebuffer + kHeaderSize;
-            const std::array<unsigned char, kPayloadSize>
+            std::fill_n(p_framebuffer, header_size, 0xEE);
+            auto* const p_payload = p_framebuffer + header_size;
+            const std::array<unsigned char, payload_byte_count>
                 payload_bytes{1, 2, 3, 4, 5, 6, 7, 8};
             std::copy(payload_bytes.begin(), payload_bytes.end(), p_payload);
 
             DAS::DasPtr<ExportInterface::IDasBinaryBuffer> payload_buffer;
             ASSERT_EQ(
                 framebuffer_memory->GetBinaryBuffer(
-                    kHeaderSize,
+                    header_size,
                     payload_buffer.Put()),
                 DAS_S_OK);
             ASSERT_TRUE(payload_buffer);
@@ -1227,12 +1234,12 @@ namespace Das
             DAS::DasPtr<ExportInterface::IDasBinaryBuffer> out_of_range_view;
             EXPECT_EQ(
                 payload_memory->GetBinaryBuffer(
-                    kPayloadSize + 1,
+                    payload_byte_count + 1,
                     out_of_range_view.Put()),
                 DAS_E_OUT_OF_RANGE);
             EXPECT_FALSE(out_of_range_view);
 
-            const ExportInterface::DasSize size{kWidth, kHeight};
+            const ExportInterface::DasSize size{frame_width, frame_height};
             ExportInterface::IDasImage*    p_image = nullptr;
             ASSERT_EQ(
                 CreateIDasImageFromRgb888(
@@ -1253,7 +1260,9 @@ namespace Das
 
             uint64_t image_buffer_size = 0;
             EXPECT_EQ(p_image_buffer->GetSize(&image_buffer_size), DAS_S_OK);
-            EXPECT_EQ(image_buffer_size, static_cast<uint64_t>(kPayloadSize));
+            EXPECT_EQ(
+                image_buffer_size,
+                static_cast<uint64_t>(payload_byte_count));
 
             unsigned char* p_image_data = nullptr;
             ASSERT_EQ(p_image_buffer->GetData(&p_image_data), DAS_S_OK);
@@ -1273,14 +1282,15 @@ namespace Das
             FactoryMigrationTest,
             FromRgb888_MutableSharingVisibleAcrossImageBuffers)
         {
-            constexpr int kWidth = 2;
-            constexpr int kHeight = 1;
-            auto rgba_data = MakeRgbaData(kWidth, kHeight, 10, 20, 30, 40);
+            constexpr int frame_width = 2;
+            constexpr int frame_height = 1;
+            auto          rgba_data =
+                MakeRgbaData(frame_width, frame_height, 10, 20, 30, 40);
 
             auto* p_memory = new TrackingMemory(std::move(rgba_data));
             p_memory->AddRef();
 
-            const ExportInterface::DasSize size{kWidth, kHeight};
+            const ExportInterface::DasSize size{frame_width, frame_height};
             ExportInterface::IDasImage*    p_image = nullptr;
             ASSERT_EQ(
                 CreateIDasImageFromRgb888(p_memory, &size, &p_image),
@@ -1397,16 +1407,18 @@ namespace Das
             FactoryMigrationTest,
             FromDecodedData_BinaryBufferSizeMatchesDataSize)
         {
-            constexpr int        kW = 8;
-            constexpr int        kH = 8;
-            std::vector<uint8_t> rgb(static_cast<size_t>(kW * kH * 3), 100);
+            constexpr int        frame_w = 8;
+            constexpr int        frame_h = 8;
+            std::vector<uint8_t> rgb(
+                static_cast<size_t>(frame_w * frame_h * 3),
+                100);
 
             DasImageDesc desc{};
             desc.p_data = reinterpret_cast<char*>(rgb.data());
             desc.data_size = rgb.size();
             desc.data_format = ExportInterface::DAS_IMAGE_FORMAT_RGB_888;
 
-            const ExportInterface::DasSize size{kW, kH};
+            const ExportInterface::DasSize size{frame_w, frame_h};
             ExportInterface::IDasImage*    p_image = nullptr;
             ASSERT_EQ(
                 CreateIDasImageFromDecodedData(&desc, &size, &p_image),
@@ -1428,14 +1440,14 @@ namespace Das
 
         TEST(FactoryMigrationTest, FromRgb888_BinaryBufferSizeMatchesDataSize)
         {
-            constexpr int kW = 8;
-            constexpr int kH = 8;
-            auto          rgba = MakeRgbaData(kW, kH, 200, 100, 50, 255);
+            constexpr int frame_w = 8;
+            constexpr int frame_h = 8;
+            auto rgba = MakeRgbaData(frame_w, frame_h, 200, 100, 50, 255);
 
             auto* p_mem = new TestMemory(std::move(rgba));
             p_mem->AddRef();
 
-            const ExportInterface::DasSize size{kW, kH};
+            const ExportInterface::DasSize size{frame_w, frame_h};
             ExportInterface::IDasImage*    p_image = nullptr;
             ASSERT_EQ(
                 CreateIDasImageFromRgb888(p_mem, &size, &p_image),

@@ -22,7 +22,7 @@ namespace Das::Plugins::DasMaaPi::Test
         // Configurable result for the typed-init overload. Default constructs
         // a fresh handle so MaaRuntime::Run proceeds through the happy path;
         // tests exercising Tier2 stubs or HWND-resolution failure set this to
-        // carry an error_code and kInvalidMaaControllerHandle.
+        // carry an error_code and INVALID_MAA_CONTROLLER_HANDLE.
         CreateControllerResult       create_from_params_result;
         std::optional<std::string>   last_agent_client_identifier;
         std::optional<std::uint16_t> last_agent_client_tcp_port;
@@ -79,7 +79,7 @@ namespace Das::Plugins::DasMaaPi::Test
             // Default-construct a fresh handle when the test hasn't configured
             // a failure so the happy-path dispatch can proceed past
             // CreateController without each caller wiring up a result.
-            if (result.handle == kInvalidMaaControllerHandle
+            if (result.handle == INVALID_MAA_CONTROLLER_HANDLE
                 && result.error_code.empty())
             {
                 result.handle = NextHandle();

@@ -27,8 +27,8 @@
 DAS_CORE_DEBUG_NS_BEGIN
 namespace
 {
-    constexpr auto kDebugWriterServiceName = "debug.writer";
-    constexpr auto kMaxQueuedEvents = 4096U;
+    constexpr auto DEBUG_WRITER_SERVICE_NAME = "debug.writer";
+    constexpr auto MAX_QUEUED_EVENTS = 4096U;
 
     auto NowIsoString() -> std::string
     {
@@ -243,7 +243,7 @@ DasResult DebugWriterImpl::Enqueue(QueueItem item)
     std::unique_lock lock{mutex_};
     cv_.wait(
         lock,
-        [this]() { return stopping_ || queue_.size() < kMaxQueuedEvents; });
+        [this]() { return stopping_ || queue_.size() < MAX_QUEUED_EVENTS; });
     if (stopping_)
     {
         return DAS_E_OBJECT_NOT_INIT;
@@ -367,7 +367,7 @@ DasResult RegisterDebugWriterService(
     auto result = ipc_context.RegisterServiceByName(
         writer.Get(),
         DasIidOf<Das::ExportInterface::IDasDebugWriter>(),
-        kDebugWriterServiceName);
+        DEBUG_WRITER_SERVICE_NAME);
     if (result < 0)
     {
         return result;

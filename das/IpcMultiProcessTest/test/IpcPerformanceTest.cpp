@@ -829,13 +829,13 @@ protected:
     {
         // 高位固定端口探测：从 48080 起递增，避开 Windows 动态端口排除范围
         // （当前 49806-53273 被排除）与 well-known 保留端口（<1024）
-        constexpr uint16_t kStartPort = 48080;
-        constexpr uint16_t kEndPort = 48999;
-        constexpr int      kMaxAttempts = 50;
-        for (int i = 0; i < kMaxAttempts; ++i)
+        constexpr uint16_t start_port = 48080;
+        constexpr uint16_t end_port = 48999;
+        constexpr int      max_attempts = 50;
+        for (int i = 0; i < max_attempts; ++i)
         {
-            const uint16_t port = static_cast<uint16_t>(kStartPort + i);
-            if (port > kEndPort)
+            const uint16_t port = static_cast<uint16_t>(start_port + i);
+            if (port > end_port)
             {
                 break;
             }
@@ -944,11 +944,11 @@ TEST_F(IpcPerformanceTest, RoundTripLatency_Compute)
         GTEST_SKIP() << "Failed to load IpcTestPlugin2";
     }
 
-    constexpr size_t kWarmup = 100;
-    constexpr size_t kIterations = 10000;
+    constexpr size_t warmup = 100;
+    constexpr size_t num_iterations = 10000;
 
     // Warmup: discard first N iterations
-    for (size_t i = 0; i < kWarmup; ++i)
+    for (size_t i = 0; i < warmup; ++i)
     {
         const DasReadOnlyString                method_name{"compute"};
         DAS::ExportInterface::DasVariantVector result;
@@ -960,11 +960,11 @@ TEST_F(IpcPerformanceTest, RoundTripLatency_Compute)
     const SuppressLogDuringBenchmark log_guard;
 
     std::vector<double> latencies;
-    latencies.reserve(kIterations);
+    latencies.reserve(num_iterations);
 
     auto params = CreateComputeParams("add", 42, 58);
 
-    for (size_t i = 0; i < kIterations; ++i)
+    for (size_t i = 0; i < num_iterations; ++i)
     {
         const DasReadOnlyString                method_name{"compute"};
         DAS::ExportInterface::DasVariantVector result;
@@ -986,12 +986,12 @@ TEST_F(IpcPerformanceTest, RoundTripLatency_Compute)
         std::minmax_element(latencies.begin(), latencies.end());
     const double min_val = *min_it;
     const double max_val = *max_it;
-    const double total_s = mean * kIterations / 1e6;
-    const double throughput = static_cast<double>(kIterations) / total_s;
+    const double total_s = mean * num_iterations / 1e6;
+    const double throughput = static_cast<double>(num_iterations) / total_s;
 
     PrintBenchmarkResult(
         "RoundTripLatency_Compute",
-        kIterations,
+        num_iterations,
         "compute(\"add\", 42, 58) ~26 bytes",
         mean,
         p50,
@@ -1023,15 +1023,15 @@ TEST_F(IpcPerformanceTest, RoundTripLatency_Echo_SmallString)
         GTEST_SKIP() << "Failed to load IpcTestPlugin2";
     }
 
-    constexpr size_t kWarmup = 100;
-    constexpr size_t kIterations = 1000;
+    constexpr size_t warmup = 100;
+    constexpr size_t num_iterations = 1000;
 
     // Pre-construct string outside measurement loop
     const std::string small_string(32, 'a');
     auto              params = CreateStringParam(small_string);
 
     // Warmup
-    for (size_t i = 0; i < kWarmup; ++i)
+    for (size_t i = 0; i < warmup; ++i)
     {
         const DasReadOnlyString                method_name{"echo"};
         DAS::ExportInterface::DasVariantVector result;
@@ -1041,9 +1041,9 @@ TEST_F(IpcPerformanceTest, RoundTripLatency_Echo_SmallString)
     const SuppressLogDuringBenchmark log_guard;
 
     std::vector<double> latencies;
-    latencies.reserve(kIterations);
+    latencies.reserve(num_iterations);
 
-    for (size_t i = 0; i < kIterations; ++i)
+    for (size_t i = 0; i < num_iterations; ++i)
     {
         const DasReadOnlyString                method_name{"echo"};
         DAS::ExportInterface::DasVariantVector result;
@@ -1065,12 +1065,12 @@ TEST_F(IpcPerformanceTest, RoundTripLatency_Echo_SmallString)
         std::minmax_element(latencies.begin(), latencies.end());
     const double min_val = *min_it;
     const double max_val = *max_it;
-    const double total_s = mean * kIterations / 1e6;
-    const double throughput = static_cast<double>(kIterations) / total_s;
+    const double total_s = mean * num_iterations / 1e6;
+    const double throughput = static_cast<double>(num_iterations) / total_s;
 
     PrintBenchmarkResult(
         "RoundTripLatency_Echo_SmallString",
-        kIterations,
+        num_iterations,
         "echo(32 bytes) ~44 bytes (with \"[Cpp] echo: \" prefix)",
         mean,
         p50,
@@ -1102,15 +1102,15 @@ TEST_F(IpcPerformanceTest, RoundTripLatency_Echo_MediumString)
         GTEST_SKIP() << "Failed to load IpcTestPlugin2";
     }
 
-    constexpr size_t kWarmup = 100;
-    constexpr size_t kIterations = 1000;
+    constexpr size_t warmup = 100;
+    constexpr size_t num_iterations = 1000;
 
     // Pre-construct 4KB string outside measurement loop
     const std::string medium_string(4096, 'b');
     auto              params = CreateStringParam(medium_string);
 
     // Warmup
-    for (size_t i = 0; i < kWarmup; ++i)
+    for (size_t i = 0; i < warmup; ++i)
     {
         const DasReadOnlyString                method_name{"echo"};
         DAS::ExportInterface::DasVariantVector result;
@@ -1120,9 +1120,9 @@ TEST_F(IpcPerformanceTest, RoundTripLatency_Echo_MediumString)
     const SuppressLogDuringBenchmark log_guard;
 
     std::vector<double> latencies;
-    latencies.reserve(kIterations);
+    latencies.reserve(num_iterations);
 
-    for (size_t i = 0; i < kIterations; ++i)
+    for (size_t i = 0; i < num_iterations; ++i)
     {
         const DasReadOnlyString                method_name{"echo"};
         DAS::ExportInterface::DasVariantVector result;
@@ -1144,12 +1144,12 @@ TEST_F(IpcPerformanceTest, RoundTripLatency_Echo_MediumString)
         std::minmax_element(latencies.begin(), latencies.end());
     const double min_val = *min_it;
     const double max_val = *max_it;
-    const double total_s = mean * kIterations / 1e6;
-    const double throughput = static_cast<double>(kIterations) / total_s;
+    const double total_s = mean * num_iterations / 1e6;
+    const double throughput = static_cast<double>(num_iterations) / total_s;
 
     PrintBenchmarkResult(
         "RoundTripLatency_Echo_MediumString",
-        kIterations,
+        num_iterations,
         "echo(4096 bytes) ~4108 bytes (with \"[Cpp] echo: \" prefix)",
         mean,
         p50,
@@ -1181,15 +1181,15 @@ TEST_F(IpcPerformanceTest, RoundTripLatency_Echo_LargePayload_32KB)
         GTEST_SKIP() << "Failed to load IpcTestPlugin2";
     }
 
-    constexpr size_t kWarmup = 100;
-    constexpr size_t kIterations = 500;
+    constexpr size_t warmup = 100;
+    constexpr size_t num_iterations = 500;
 
     // Pre-construct 32000-byte string outside measurement loop
     const std::string large_string(32000, 'c');
     auto              params = CreateStringParam(large_string);
 
     // Warmup
-    for (size_t i = 0; i < kWarmup; ++i)
+    for (size_t i = 0; i < warmup; ++i)
     {
         const DasReadOnlyString                method_name{"echo"};
         DAS::ExportInterface::DasVariantVector result;
@@ -1199,9 +1199,9 @@ TEST_F(IpcPerformanceTest, RoundTripLatency_Echo_LargePayload_32KB)
     const SuppressLogDuringBenchmark log_guard;
 
     std::vector<double> latencies;
-    latencies.reserve(kIterations);
+    latencies.reserve(num_iterations);
 
-    for (size_t i = 0; i < kIterations; ++i)
+    for (size_t i = 0; i < num_iterations; ++i)
     {
         const DasReadOnlyString                method_name{"echo"};
         DAS::ExportInterface::DasVariantVector result;
@@ -1223,12 +1223,12 @@ TEST_F(IpcPerformanceTest, RoundTripLatency_Echo_LargePayload_32KB)
         std::minmax_element(latencies.begin(), latencies.end());
     const double min_val = *min_it;
     const double max_val = *max_it;
-    const double total_s = mean * kIterations / 1e6;
-    const double throughput = static_cast<double>(kIterations) / total_s;
+    const double total_s = mean * num_iterations / 1e6;
+    const double throughput = static_cast<double>(num_iterations) / total_s;
 
     PrintBenchmarkResult(
         "RoundTripLatency_Echo_LargePayload_32KB",
-        kIterations,
+        num_iterations,
         "echo(32000 bytes) ~32012 bytes (with \"[Cpp] echo: \" prefix)",
         mean,
         p50,
@@ -1259,11 +1259,11 @@ TEST(IpcPerfColdStart, ColdStart_FirstCall)
         GTEST_SKIP() << "DasHostX.exe not found";
     }
 
-    constexpr size_t    kCycles = 10;
+    constexpr size_t    num_cycles = 10;
     std::vector<double> first_call_latencies;
-    first_call_latencies.reserve(kCycles);
+    first_call_latencies.reserve(num_cycles);
 
-    for (size_t cycle = 0; cycle < kCycles; ++cycle)
+    for (size_t cycle = 0; cycle < num_cycles; ++cycle)
     {
         // 1. Create IIpcContext
         auto ctx = DAS::Core::IPC::MainProcess::CreateIpcContextShared(
@@ -1473,7 +1473,7 @@ TEST(IpcPerfColdStart, ColdStart_FirstCall)
                  "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550"
                  "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n";
     std::cout << "  Successful Cycles: " << first_call_latencies.size() << "/"
-              << kCycles << "\n";
+              << num_cycles << "\n";
     std::cout << "  Payload:          compute(\"add\", 1, 1) — first call "
                  "after full Host startup\n";
     std::cout << "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500"
@@ -1523,14 +1523,14 @@ TEST_F(IpcPerformanceTest, Throughput_Sustained_10s)
         GTEST_SKIP() << "Failed to load IpcTestPlugin2";
     }
 
-    constexpr size_t kWarmup = 100;
+    constexpr size_t warmup = 100;
 
     // Pre-construct small string for sustained load
     const std::string small_string(32, 'a');
     auto              params = CreateStringParam(small_string);
 
     // Warmup
-    for (size_t i = 0; i < kWarmup; ++i)
+    for (size_t i = 0; i < warmup; ++i)
     {
         const DasReadOnlyString                method_name{"echo"};
         DAS::ExportInterface::DasVariantVector result;
@@ -1540,18 +1540,18 @@ TEST_F(IpcPerformanceTest, Throughput_Sustained_10s)
     const SuppressLogDuringBenchmark log_guard;
 
     // Sustained load for 10 seconds
-    constexpr auto   kDuration = std::chrono::seconds(10);
-    constexpr size_t kSampleInterval = 1000;
+    constexpr auto   run_duration = std::chrono::seconds(10);
+    constexpr size_t sample_interval = 1000;
 
     std::vector<double> sampled_latencies;
     size_t              total_calls = 0;
 
-    auto deadline = std::chrono::steady_clock::now() + kDuration;
+    auto deadline = std::chrono::steady_clock::now() + run_duration;
 
     while (std::chrono::steady_clock::now() < deadline)
     {
         // Run a batch of calls
-        for (size_t batch = 0; batch < kSampleInterval; ++batch)
+        for (size_t batch = 0; batch < sample_interval; ++batch)
         {
             const DasReadOnlyString                method_name{"echo"};
             DAS::ExportInterface::DasVariantVector result;
@@ -1686,15 +1686,15 @@ TEST_F(IpcPerformanceTest, ReverseIPC_QueryMainProcessString)
         GTEST_SKIP() << "Failed to load IpcTestPlugin1";
     }
 
-    constexpr size_t kWarmup = 100;
-    constexpr size_t kIterations = 1000;
+    constexpr size_t warmup = 100;
+    constexpr size_t num_iterations = 1000;
 
     // Pre-construct empty params
     DAS::ExportInterface::DasVariantVector empty_params;
     CreateIDasVariantVector(empty_params.Put());
 
     // Warmup
-    for (size_t i = 0; i < kWarmup; ++i)
+    for (size_t i = 0; i < warmup; ++i)
     {
         const DasReadOnlyString method_name{"queryMainProcessString"};
         DAS::ExportInterface::DasVariantVector dispatch_result;
@@ -1707,9 +1707,9 @@ TEST_F(IpcPerformanceTest, ReverseIPC_QueryMainProcessString)
     const SuppressLogDuringBenchmark log_guard;
 
     std::vector<double> latencies;
-    latencies.reserve(kIterations);
+    latencies.reserve(num_iterations);
 
-    for (size_t i = 0; i < kIterations; ++i)
+    for (size_t i = 0; i < num_iterations; ++i)
     {
         const DasReadOnlyString method_name{"queryMainProcessString"};
         DAS::ExportInterface::DasVariantVector dispatch_result;
@@ -1734,12 +1734,12 @@ TEST_F(IpcPerformanceTest, ReverseIPC_QueryMainProcessString)
         std::minmax_element(latencies.begin(), latencies.end());
     const double min_val = *min_it;
     const double max_val = *max_it;
-    const double total_s = mean * kIterations / 1e6;
-    const double throughput = static_cast<double>(kIterations) / total_s;
+    const double total_s = mean * num_iterations / 1e6;
+    const double throughput = static_cast<double>(num_iterations) / total_s;
 
     PrintBenchmarkResult(
         "ReverseIPC_QueryMainProcessString [Host \xE2\x86\x92 MainProcess]",
-        kIterations,
+        num_iterations,
         "queryMainProcessString — Reverse IPC: Host queries MainProcess string",
         mean,
         p50,
@@ -1872,10 +1872,10 @@ TEST_F(IpcPerformanceTest, MixedTransport_HttpAndIpcHostToHostPerformance)
         return call_result;
     };
 
-    constexpr size_t kWarmup = 50;
-    constexpr size_t kIterations = 500;
+    constexpr size_t warmup = 50;
+    constexpr size_t num_iterations = 500;
 
-    for (size_t i = 0; i < kWarmup; ++i)
+    for (size_t i = 0; i < warmup; ++i)
     {
         ASSERT_EQ(invoke_mixed_dispatch(nullptr), DAS_S_OK);
     }
@@ -1883,9 +1883,9 @@ TEST_F(IpcPerformanceTest, MixedTransport_HttpAndIpcHostToHostPerformance)
     const SuppressLogDuringBenchmark log_guard;
 
     std::vector<double> latencies;
-    latencies.reserve(kIterations);
+    latencies.reserve(num_iterations);
 
-    for (size_t i = 0; i < kIterations; ++i)
+    for (size_t i = 0; i < num_iterations; ++i)
     {
         double          latency_us = 0.0;
         const DasResult result = invoke_mixed_dispatch(&latency_us);
@@ -1901,12 +1901,12 @@ TEST_F(IpcPerformanceTest, MixedTransport_HttpAndIpcHostToHostPerformance)
         std::minmax_element(latencies.begin(), latencies.end());
     const double min_val = *min_it;
     const double max_val = *max_it;
-    const double total_s = mean * kIterations / 1e6;
-    const double throughput = static_cast<double>(kIterations) / total_s;
+    const double total_s = mean * num_iterations / 1e6;
+    const double throughput = static_cast<double>(num_iterations) / total_s;
 
     PrintBenchmarkResult(
         "MixedTransport_HttpAndIpcHostToHostPerformance",
-        kIterations,
+        num_iterations,
         "queryMainProcessString dispatch, refreshed forwarding service",
         mean,
         p50,
@@ -2012,11 +2012,11 @@ TEST_F(IpcPerformanceTest, RemoteProxy_IsSupported_FirstCall)
 
     const SuppressLogDuringBenchmark log_guard;
 
-    constexpr size_t    kIterations = 1000;
+    constexpr size_t    num_iterations = 1000;
     std::vector<double> latencies;
-    latencies.reserve(kIterations);
+    latencies.reserve(num_iterations);
 
-    for (size_t i = 0; i < kIterations; ++i)
+    for (size_t i = 0; i < num_iterations; ++i)
     {
         // Each measurement: get factory proxy + call IsSupported
         IDasBase* factory_base_raw = nullptr;
@@ -2043,12 +2043,12 @@ TEST_F(IpcPerformanceTest, RemoteProxy_IsSupported_FirstCall)
         std::minmax_element(latencies.begin(), latencies.end());
     const double min_val = *min_it;
     const double max_val = *max_it;
-    const double total_s = mean * kIterations / 1e6;
-    const double throughput = static_cast<double>(kIterations) / total_s;
+    const double total_s = mean * num_iterations / 1e6;
+    const double throughput = static_cast<double>(num_iterations) / total_s;
 
     PrintBenchmarkResult(
         "RemoteProxy_IsSupported_FirstCall [GUID comparison]",
-        kIterations,
+        num_iterations,
         "IsSupported(DasIidOf<IDasComponent>) — RemoteProxy: GUID lookup",
         mean,
         p50,
@@ -2080,14 +2080,14 @@ TEST_F(IpcPerformanceTest, Stress_HighFrequency_Dispatch)
         GTEST_SKIP() << "Failed to load IpcTestPlugin2";
     }
 
-    constexpr size_t kWarmup = 100;
-    constexpr size_t kIterations = 5000;
+    constexpr size_t warmup = 100;
+    constexpr size_t num_iterations = 5000;
 
     // Pre-construct params
     auto params = CreateComputeParams("add", 1, 1);
 
     // Warmup
-    for (size_t i = 0; i < kWarmup; ++i)
+    for (size_t i = 0; i < warmup; ++i)
     {
         const DasReadOnlyString                method_name{"compute"};
         DAS::ExportInterface::DasVariantVector result;
@@ -2098,9 +2098,9 @@ TEST_F(IpcPerformanceTest, Stress_HighFrequency_Dispatch)
     const SuppressLogDuringBenchmark log_guard;
 
     std::vector<double> latencies;
-    latencies.reserve(kIterations);
+    latencies.reserve(num_iterations);
 
-    for (size_t i = 0; i < kIterations; ++i)
+    for (size_t i = 0; i < num_iterations; ++i)
     {
         const DasReadOnlyString                method_name{"compute"};
         DAS::ExportInterface::DasVariantVector result;
@@ -2122,8 +2122,8 @@ TEST_F(IpcPerformanceTest, Stress_HighFrequency_Dispatch)
         std::minmax_element(latencies.begin(), latencies.end());
     const double min_val = *min_it;
     const double max_val = *max_it;
-    const double total_s = mean * kIterations / 1e6;
-    const double throughput = static_cast<double>(kIterations) / total_s;
+    const double total_s = mean * num_iterations / 1e6;
+    const double throughput = static_cast<double>(num_iterations) / total_s;
 
     // Spike ratio: p99/p50 — evaluates BusinessThread serial processing
     // stability under high frequency
@@ -2131,7 +2131,7 @@ TEST_F(IpcPerformanceTest, Stress_HighFrequency_Dispatch)
 
     PrintBenchmarkResult(
         "Stress_HighFrequency_Dispatch",
-        kIterations,
+        num_iterations,
         "compute(\"add\", 1, 1) — back-to-back, no delay",
         mean,
         p50,
@@ -2277,10 +2277,10 @@ TEST_F(IpcPerformanceTest, DualHost_AlternatingCalls)
     }
 
     // 5. Warmup: 100 alternating calls
-    constexpr size_t kWarmup = 100;
+    constexpr size_t warmup = 100;
     auto             params = CreateComputeParams("add", 1, 1);
 
-    for (size_t i = 0; i < kWarmup; ++i)
+    for (size_t i = 0; i < warmup; ++i)
     {
         const DasReadOnlyString                method_name{"compute"};
         DAS::ExportInterface::DasVariantVector dispatch_result;
@@ -2295,15 +2295,15 @@ TEST_F(IpcPerformanceTest, DualHost_AlternatingCalls)
     const SuppressLogDuringBenchmark log_guard;
 
     // 6. Measure 1000 alternating calls
-    constexpr size_t    kIterations = 1000;
+    constexpr size_t    num_iterations = 1000;
     std::vector<double> latencies_a;
     std::vector<double> latencies_b;
     std::vector<double> all_latencies;
-    latencies_a.reserve(kIterations / 2);
-    latencies_b.reserve(kIterations / 2);
-    all_latencies.reserve(kIterations);
+    latencies_a.reserve(num_iterations / 2);
+    latencies_b.reserve(num_iterations / 2);
+    all_latencies.reserve(num_iterations);
 
-    for (size_t i = 0; i < kIterations; ++i)
+    for (size_t i = 0; i < num_iterations; ++i)
     {
         const DasReadOnlyString                method_name{"compute"};
         DAS::ExportInterface::DasVariantVector dispatch_result;
@@ -2354,8 +2354,8 @@ TEST_F(IpcPerformanceTest, DualHost_AlternatingCalls)
         std::minmax_element(all_latencies.begin(), all_latencies.end());
     const double min_val = *min_it;
     const double max_val = *max_it;
-    const double total_s = global_mean * kIterations / 1e6;
-    const double throughput = static_cast<double>(kIterations) / total_s;
+    const double total_s = global_mean * num_iterations / 1e6;
+    const double throughput = static_cast<double>(num_iterations) / total_s;
 
     std::cout << "\n";
     std::cout << "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550"
@@ -2369,7 +2369,7 @@ TEST_F(IpcPerformanceTest, DualHost_AlternatingCalls)
                  "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550"
                  "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550"
                  "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n";
-    std::cout << "  Iterations:     " << kIterations << " (alternating)\n";
+    std::cout << "  Iterations:     " << num_iterations << " (alternating)\n";
     std::cout << "  Host A calls:   " << latencies_a.size() << "\n";
     std::cout << "  Host B calls:   " << latencies_b.size() << "\n";
     std::cout << "  Payload:        compute(\"add\", 1, 1)\n";

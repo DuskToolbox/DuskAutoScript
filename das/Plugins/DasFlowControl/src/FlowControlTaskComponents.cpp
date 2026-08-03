@@ -32,16 +32,16 @@ namespace
     namespace RepositoryInvokeDto =
         Das::Core::TaskScheduler::RepositoryInvoke::Dto;
 
-    constexpr std::string_view kRepositoryInvokeKind =
+    constexpr std::string_view REPOSITORY_INVOKE_KIND =
         "das.flow.invokeRepository";
 
-    constexpr std::string_view kBranchKind = "das.flow.branch";
-    constexpr std::string_view kDelayKind = "das.flow.delay";
-    constexpr std::string_view kForKind = "das.flow.for";
-    constexpr std::string_view kWhileKind = "das.flow.while";
-    constexpr std::string_view kMergeKind = "das.flow.merge";
+    constexpr std::string_view BRANCH_KIND = "das.flow.branch";
+    constexpr std::string_view DELAY_KIND = "das.flow.delay";
+    constexpr std::string_view FOR_KIND = "das.flow.for";
+    constexpr std::string_view WHILE_KIND = "das.flow.while";
+    constexpr std::string_view MERGE_KIND = "das.flow.merge";
 
-    constexpr std::array<ComponentSpec, 6> kComponents{
+    constexpr std::array<ComponentSpec, 6> COMPONENTS{
         ComponentSpec{
             DasGuid{
                 0x68f10001,
@@ -94,7 +94,7 @@ namespace
 
     std::optional<ComponentSpec> FindSpec(const DasGuid& component_guid)
     {
-        for (const auto& spec : kComponents)
+        for (const auto& spec : COMPONENTS)
         {
             if (spec.guid == component_guid)
             {
@@ -966,7 +966,7 @@ DasResult DasFlowControlTaskComponent::Do(
         return DAS_E_INVALID_POINTER;
     }
 
-    if (kind_ == kRepositoryInvokeKind)
+    if (kind_ == REPOSITORY_INVOKE_KIND)
     {
         return DoRepositoryInvoke(
             stop_token,
@@ -974,27 +974,27 @@ DasResult DasFlowControlTaskComponent::Do(
             pp_out_port_map);
     }
 
-    if (kind_ == kBranchKind)
+    if (kind_ == BRANCH_KIND)
     {
         return DoBranch(stop_token, p_input_port_map, pp_out_port_map);
     }
 
-    if (kind_ == kForKind)
+    if (kind_ == FOR_KIND)
     {
         return DoFor(stop_token, p_input_port_map, pp_out_port_map);
     }
 
-    if (kind_ == kWhileKind)
+    if (kind_ == WHILE_KIND)
     {
         return DoWhile(stop_token, p_input_port_map, pp_out_port_map);
     }
 
-    if (kind_ == kMergeKind)
+    if (kind_ == MERGE_KIND)
     {
         return DoMerge(stop_token, p_input_port_map, pp_out_port_map);
     }
 
-    if (kind_ == kDelayKind)
+    if (kind_ == DELAY_KIND)
     {
         return DoDelay(stop_token, p_input_port_map, pp_out_port_map);
     }

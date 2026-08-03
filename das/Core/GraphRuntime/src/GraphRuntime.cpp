@@ -482,7 +482,7 @@ namespace
 {
     // Sentinel source marking a broadcast (graph-input) binding — not a real
     // node, so it creates no data dependency. Must match GraphCompiler.
-    constexpr std::string_view kBroadcastSource = "$graph_input";
+    constexpr std::string_view BROADCAST_SOURCE = "$graph_input";
 
     using EdgeKey =
         std::tuple<std::string, std::string, std::string, std::string>;
@@ -546,7 +546,7 @@ DasResult GraphRuntime::RunSignalGated(
     std::unordered_map<std::string, std::vector<std::string>> data_succ;
     for (const auto& b : plan.binding_plan.bindings)
     {
-        if (b.source_node_id == std::string(kBroadcastSource))
+        if (b.source_node_id == std::string(BROADCAST_SOURCE))
         {
             continue;
         }

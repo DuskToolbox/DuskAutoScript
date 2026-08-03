@@ -44,7 +44,7 @@ namespace
         std::string_view guid_text;
     };
 
-    constexpr std::array<OfficialFlowComponent, 6> kOfficialComponents{
+    constexpr std::array<OfficialFlowComponent, 6> OFFICIAL_COMPONENTS{
         OfficialFlowComponent{
             "branch",
             "das.flow.branch",
@@ -71,25 +71,25 @@ namespace
             "68F10008-0000-4000-8000-000000000008"},
     };
 
-    constexpr std::string_view kRepositoryInvokeComponentGuid =
+    constexpr std::string_view REPOSITORY_INVOKE_COMPONENT_GUID =
         "68F10007-0000-4000-8000-000000000007";
-    constexpr std::string_view kDelayComponentGuid =
+    constexpr std::string_view DELAY_COMPONENT_GUID =
         "68F10003-0000-4000-8000-000000000003";
-    constexpr std::string_view kForComponentGuid =
+    constexpr std::string_view FOR_COMPONENT_GUID =
         "68F10004-0000-4000-8000-000000000004";
-    constexpr std::string_view kWhileComponentGuid =
+    constexpr std::string_view WHILE_COMPONENT_GUID =
         "68F10005-0000-4000-8000-000000000005";
-    constexpr std::string_view kMergeComponentGuid =
+    constexpr std::string_view MERGE_COMPONENT_GUID =
         "68F10008-0000-4000-8000-000000000008";
-    constexpr std::string_view kFakeChildPluginGuid =
+    constexpr std::string_view FAKE_CHILD_PLUGIN_GUID =
         "68F19998-0000-4000-8000-000000000001";
-    constexpr std::string_view kFakeChildFactoryGuid =
+    constexpr std::string_view FAKE_CHILD_FACTORY_GUID =
         "68F19998-0000-4000-8000-000000000002";
-    constexpr std::string_view kFakeChildComponentGuid =
+    constexpr std::string_view FAKE_CHILD_COMPONENT_GUID =
         "68F19999-0000-4000-8000-000000000001";
-    constexpr std::string_view kMissingChildComponentGuid =
+    constexpr std::string_view MISSING_CHILD_COMPONENT_GUID =
         "68F19999-0000-4000-8000-000000000099";
-    constexpr std::string_view kMaapiRunTaskComponentGuid =
+    constexpr std::string_view MAAPI_RUN_TASK_COMPONENT_GUID =
         "69F20008-0000-4000-8000-000000000001";
 
     std::filesystem::path UniqueSettingsDir()
@@ -240,19 +240,19 @@ namespace
     {
         Das::Core::ForeignInterfaceHost::TaskComponentsManifestDesc manifest;
         manifest.factories =
-            std::vector<std::string>{std::string{kFakeChildFactoryGuid}};
+            std::vector<std::string>{std::string{FAKE_CHILD_FACTORY_GUID}};
 
         Das::Core::ForeignInterfaceHost::TaskComponentManifestEntryDesc entry;
-        entry.factory_guid = std::string{kFakeChildFactoryGuid};
+        entry.factory_guid = std::string{FAKE_CHILD_FACTORY_GUID};
         entry.definition =
-            MakeDefinition(kFakeChildComponentGuid, "test.child.recording");
+            MakeDefinition(FAKE_CHILD_COMPONENT_GUID, "test.child.recording");
 
         std::unordered_map<
             std::string,
             Das::Core::ForeignInterfaceHost::TaskComponentManifestEntryDesc>
             components;
         components.emplace(
-            std::string{kFakeChildComponentGuid},
+            std::string{FAKE_CHILD_COMPONENT_GUID},
             std::move(entry));
         manifest.components = std::move(components);
         return manifest;
@@ -267,7 +267,7 @@ namespace
         snapshot.source_entry_id = 42;
         snapshot.source_revision = 7;
         snapshot.source_fingerprint = "source-hash";
-        snapshot.plugin_guid = std::string{kFakeChildPluginGuid};
+        snapshot.plugin_guid = std::string{FAKE_CHILD_PLUGIN_GUID};
         snapshot.task_type_guid = "68F19997-0000-4000-8000-000000000001";
         snapshot.component_guid = std::string{component_guid};
         snapshot.execution_input = ParseJson(R"json({
@@ -680,7 +680,7 @@ namespace
             {
                 return DAS_E_INVALID_POINTER;
             }
-            *p_out_guid = GuidFromText(kFakeChildFactoryGuid);
+            *p_out_guid = GuidFromText(FAKE_CHILD_FACTORY_GUID);
             return DAS_S_OK;
         }
 
@@ -705,7 +705,7 @@ namespace
                 return DAS_E_INVALID_POINTER;
             }
             *pp_out_component = nullptr;
-            if (component_guid != GuidFromText(kFakeChildComponentGuid))
+            if (component_guid != GuidFromText(FAKE_CHILD_COMPONENT_GUID))
             {
                 return DAS_E_NOT_FOUND;
             }
@@ -796,7 +796,7 @@ namespace
             EXPECT_EQ(
                 plugin_manager_->GetTaskComponentFactoryManager()
                     .OnPluginLoaded(
-                        GuidFromText(kFakeChildPluginGuid),
+                        GuidFromText(FAKE_CHILD_PLUGIN_GUID),
                         {&feature_ptr, 1},
                         MakeChildManifest()),
                 DAS_S_OK);
@@ -819,9 +819,9 @@ TEST_F(
 {
     auto definitions = plugin_manager_->GetTaskComponentFactoryManager()
                            .EnumerateDefinitions();
-    ASSERT_EQ(definitions.size(), kOfficialComponents.size());
+    ASSERT_EQ(definitions.size(), OFFICIAL_COMPONENTS.size());
 
-    for (const auto& expected : kOfficialComponents)
+    for (const auto& expected : OFFICIAL_COMPONENTS)
     {
         const auto expected_guid = GuidFromText(expected.guid_text);
         const auto found = std::ranges::find_if(
@@ -853,7 +853,7 @@ TEST_F(
     auto       definitions = plugin_manager_->GetTaskComponentFactoryManager()
                                  .EnumerateDefinitions();
     const auto repository_invoke_guid =
-        GuidFromText(kRepositoryInvokeComponentGuid);
+        GuidFromText(REPOSITORY_INVOKE_COMPONENT_GUID);
     auto repository_invoke = std::ranges::find_if(
         definitions,
         [&repository_invoke_guid](const auto& definition)
@@ -881,7 +881,7 @@ TEST_F(
     auto components =
         (*task_components)[std::string_view("components")].as_object();
     ASSERT_TRUE(components.has_value());
-    auto run_entry = (*components)[kMaapiRunTaskComponentGuid].as_object();
+    auto run_entry = (*components)[MAAPI_RUN_TASK_COMPONENT_GUID].as_object();
     ASSERT_TRUE(run_entry.has_value());
     auto definition = (*run_entry)[std::string_view("definition")].as_object();
     ASSERT_TRUE(definition.has_value());
@@ -935,7 +935,7 @@ TEST_F(
     DasPtr<Das::PluginInterface::IDasTaskComponentFactory> factory;
     ASSERT_EQ(factory_base.As(factory.Put()), DAS_S_OK);
 
-    for (const auto& expected : kOfficialComponents)
+    for (const auto& expected : OFFICIAL_COMPONENTS)
     {
         DasPtr<Das::PluginInterface::IDasTaskComponent> component;
         EXPECT_EQ(
@@ -950,7 +950,7 @@ TEST_F(
 
 TEST_F(TaskComponentContractTest, CreatesAllOfficialFlowComponentsByGuid)
 {
-    for (const auto& expected : kOfficialComponents)
+    for (const auto& expected : OFFICIAL_COMPONENTS)
     {
         auto component = CreateComponent(expected.guid_text);
         ASSERT_NE(component.Get(), nullptr) << expected.name;
@@ -967,7 +967,7 @@ TEST_F(TaskComponentContractTest, CreatesAllOfficialFlowComponentsByGuid)
 
 TEST_F(TaskComponentContractTest, ApplySettingsChangeReturnsAcceptedSettings)
 {
-    auto component = CreateComponent(kOfficialComponents[0].guid_text);
+    auto component = CreateComponent(OFFICIAL_COMPONENTS[0].guid_text);
     ASSERT_NE(component.Get(), nullptr);
 
     auto change = Das::Utils::ParseYyjsonFromString(R"json({
@@ -993,7 +993,7 @@ TEST_F(TaskComponentContractTest, ApplySettingsChangeReturnsAcceptedSettings)
 
 TEST_F(TaskComponentContractTest, BranchDoReturnsTrueAndFalseSignals)
 {
-    auto component = CreateComponent(kOfficialComponents[0].guid_text);
+    auto component = CreateComponent(OFFICIAL_COMPONENTS[0].guid_text);
     ASSERT_NE(component.Get(), nullptr);
 
     const std::array<std::pair<bool, std::string_view>, 2> cases{
@@ -1032,11 +1032,11 @@ TEST_F(TaskComponentContractTest, RepositoryInvokeExecutesCompiledSnapshotChild)
     auto*     child_factory = RegisterRecordingChildFactory(state);
     const int create_count_before = child_factory->create_call_count;
 
-    auto component = CreateComponent(kRepositoryInvokeComponentGuid);
+    auto component = CreateComponent(REPOSITORY_INVOKE_COMPONENT_GUID);
     ASSERT_NE(component.Get(), nullptr);
 
     FakeStopToken stop_token;
-    auto input_json = MakeRepositoryInvokeInput(kFakeChildComponentGuid);
+    auto input_json = MakeRepositoryInvokeInput(FAKE_CHILD_COMPONENT_GUID);
     auto input_obj = input_json.as_object();
     ASSERT_TRUE(input_obj.has_value());
     auto snapshot_val = (*input_obj)[std::string_view("compiledSnapshot")];
@@ -1083,7 +1083,7 @@ TEST_F(TaskComponentContractTest, RepositoryInvokeExecutesCompiledSnapshotChild)
 
 TEST_F(TaskComponentContractTest, RepositoryInvokeRequiresCompiledSnapshot)
 {
-    auto component = CreateComponent(kRepositoryInvokeComponentGuid);
+    auto component = CreateComponent(REPOSITORY_INVOKE_COMPONENT_GUID);
     ASSERT_NE(component.Get(), nullptr);
 
     DAS::DasPtr<Das::ExportInterface::IDasPortMap> input_map;
@@ -1119,11 +1119,11 @@ TEST_F(TaskComponentContractTest, RepositoryInvokeFailsWhenHostUnavailable)
     DasPtr<IDasTaskComponent> component;
     ASSERT_EQ(
         factory->CreateComponent(
-            GuidFromText(kRepositoryInvokeComponentGuid),
+            GuidFromText(REPOSITORY_INVOKE_COMPONENT_GUID),
             component.Put()),
         DAS_S_OK);
 
-    auto input = MakeRepositoryInvokeInput(kFakeChildComponentGuid);
+    auto input = MakeRepositoryInvokeInput(FAKE_CHILD_COMPONENT_GUID);
     auto input_obj = input.as_object();
     ASSERT_TRUE(input_obj.has_value());
     auto snapshot_val = (*input_obj)[std::string_view("compiledSnapshot")];
@@ -1145,10 +1145,10 @@ TEST_F(TaskComponentContractTest, RepositoryInvokeFailsWhenHostUnavailable)
 
 TEST_F(TaskComponentContractTest, RepositoryInvokeReportsMissingChildRoute)
 {
-    auto component = CreateComponent(kRepositoryInvokeComponentGuid);
+    auto component = CreateComponent(REPOSITORY_INVOKE_COMPONENT_GUID);
     ASSERT_NE(component.Get(), nullptr);
 
-    auto input = MakeRepositoryInvokeInput(kMissingChildComponentGuid);
+    auto input = MakeRepositoryInvokeInput(MISSING_CHILD_COMPONENT_GUID);
     auto input_obj = input.as_object();
     ASSERT_TRUE(input_obj.has_value());
     auto snapshot_val = (*input_obj)[std::string_view("compiledSnapshot")];
@@ -1176,8 +1176,8 @@ TEST_F(TaskComponentContractTest, RepositoryInvokeReportsChildFailure)
     state->do_result = DAS_E_FAIL;
     auto* child_factory = RegisterRecordingChildFactory(state);
 
-    auto component = CreateComponent(kRepositoryInvokeComponentGuid);
-    auto input = MakeRepositoryInvokeInput(kFakeChildComponentGuid);
+    auto component = CreateComponent(REPOSITORY_INVOKE_COMPONENT_GUID);
+    auto input = MakeRepositoryInvokeInput(FAKE_CHILD_COMPONENT_GUID);
     auto input_obj = input.as_object();
     ASSERT_TRUE(input_obj.has_value());
     auto snapshot_val = (*input_obj)[std::string_view("compiledSnapshot")];
@@ -1207,8 +1207,8 @@ TEST_F(TaskComponentContractTest, RepositoryInvokeReportsMalformedChildResult)
     state->result_json = R"json([])json";
     auto* child_factory = RegisterRecordingChildFactory(state);
 
-    auto component = CreateComponent(kRepositoryInvokeComponentGuid);
-    auto input = MakeRepositoryInvokeInput(kFakeChildComponentGuid);
+    auto component = CreateComponent(REPOSITORY_INVOKE_COMPONENT_GUID);
+    auto input = MakeRepositoryInvokeInput(FAKE_CHILD_COMPONENT_GUID);
     auto input_obj = input.as_object();
     ASSERT_TRUE(input_obj.has_value());
     auto snapshot_val = (*input_obj)[std::string_view("compiledSnapshot")];
@@ -1234,10 +1234,10 @@ TEST_F(TaskComponentContractTest, RepositoryInvokeReportsMalformedChildResult)
 
 TEST_F(TaskComponentContractTest, RepositoryInvokeRejectsInvalidSnapshotVersion)
 {
-    auto component = CreateComponent(kRepositoryInvokeComponentGuid);
+    auto component = CreateComponent(REPOSITORY_INVOKE_COMPONENT_GUID);
     ASSERT_NE(component.Get(), nullptr);
 
-    auto input = MakeRepositoryInvokeInput(kFakeChildComponentGuid, 2);
+    auto input = MakeRepositoryInvokeInput(FAKE_CHILD_COMPONENT_GUID, 2);
     auto input_obj = input.as_object();
     ASSERT_TRUE(input_obj.has_value());
     auto snapshot_val = (*input_obj)[std::string_view("compiledSnapshot")];
@@ -1265,9 +1265,9 @@ TEST_F(TaskComponentContractTest, RepositoryInvokeHonorsAlreadyRequestedStop)
     auto*     child_factory = RegisterRecordingChildFactory(state);
     const int create_count_before = child_factory->create_call_count;
 
-    auto          component = CreateComponent(kRepositoryInvokeComponentGuid);
+    auto          component = CreateComponent(REPOSITORY_INVOKE_COMPONENT_GUID);
     FakeStopToken stop_token(true);
-    auto          input = MakeRepositoryInvokeInput(kFakeChildComponentGuid);
+    auto          input = MakeRepositoryInvokeInput(FAKE_CHILD_COMPONENT_GUID);
     auto          input_obj = input.as_object();
     ASSERT_TRUE(input_obj.has_value());
     auto snapshot_val = (*input_obj)[std::string_view("compiledSnapshot")];
@@ -1295,7 +1295,7 @@ TEST_F(TaskComponentContractTest, RepositoryInvokeHonorsAlreadyRequestedStop)
 
 TEST_F(TaskComponentContractTest, TaskComponentDoesNotExposeDynamicComponent)
 {
-    auto component = CreateComponent(kOfficialComponents[0].guid_text);
+    auto component = CreateComponent(OFFICIAL_COMPONENTS[0].guid_text);
     ASSERT_NE(component.Get(), nullptr);
 
     void* out = nullptr;
@@ -1312,7 +1312,7 @@ TEST_F(TaskComponentContractTest, TaskComponentDoesNotExposeDynamicComponent)
 // Do() calls on the same component instance.
 TEST_F(TaskComponentContractTest, ForEmitsContinueAndIndexThenBreak)
 {
-    auto component = CreateComponent(kForComponentGuid);
+    auto component = CreateComponent(FOR_COMPONENT_GUID);
     ASSERT_NE(component.Get(), nullptr);
 
     auto make_input = [&]()
@@ -1348,7 +1348,7 @@ TEST_F(TaskComponentContractTest, ForEmitsContinueAndIndexThenBreak)
 // call.
 TEST_F(TaskComponentContractTest, WhileEmitsContinueOrBreakByCondition)
 {
-    auto component = CreateComponent(kWhileComponentGuid);
+    auto component = CreateComponent(WHILE_COMPONENT_GUID);
     ASSERT_NE(component.Get(), nullptr);
 
     auto run = [&](bool cond)
@@ -1371,7 +1371,7 @@ TEST_F(TaskComponentContractTest, WhileEmitsContinueOrBreakByCondition)
 // The runtime guarantees only the taken branch's value_* reaches merge.
 TEST_F(TaskComponentContractTest, MergeOutputsValueFromTakenBranch)
 {
-    auto component = CreateComponent(kMergeComponentGuid);
+    auto component = CreateComponent(MERGE_COMPONENT_GUID);
     ASSERT_NE(component.Get(), nullptr);
 
     auto run = [&](std::string_view set_port, int64_t value)
@@ -1393,7 +1393,7 @@ TEST_F(TaskComponentContractTest, MergeOutputsValueFromTakenBranch)
 // DAS-52: delay_ms <= 0 emits "next" immediately without waiting.
 TEST_F(TaskComponentContractTest, DelayZeroMsEmitsNextImmediately)
 {
-    auto component = CreateComponent(kDelayComponentGuid);
+    auto component = CreateComponent(DELAY_COMPONENT_GUID);
     ASSERT_NE(component.Get(), nullptr);
 
     auto                                   change = ParseJson(R"json({
@@ -1427,7 +1427,7 @@ TEST_F(TaskComponentContractTest, DelayZeroMsEmitsNextImmediately)
 // DAS-52: delay_ms > 0 actually waits (≈delay_ms), then emits "next".
 TEST_F(TaskComponentContractTest, DelayWaitsThenEmitsNext)
 {
-    auto component = CreateComponent(kDelayComponentGuid);
+    auto component = CreateComponent(DELAY_COMPONENT_GUID);
     ASSERT_NE(component.Get(), nullptr);
 
     auto                                   change = ParseJson(R"json({
@@ -1463,7 +1463,7 @@ TEST_F(TaskComponentContractTest, DelayWaitsThenEmitsNext)
 // proving the wait is interruptible (not a blocking sleep_for).
 TEST_F(TaskComponentContractTest, DelayIsCancellableByStopToken)
 {
-    auto component = CreateComponent(kDelayComponentGuid);
+    auto component = CreateComponent(DELAY_COMPONENT_GUID);
     ASSERT_NE(component.Get(), nullptr);
 
     auto                                   change = ParseJson(R"json({

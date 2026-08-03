@@ -148,7 +148,7 @@ namespace
             DasPtr<Das::PluginInterface::IDasTaskAuthoringSession> session;
             EXPECT_EQ(
                 factory->CreateSession(
-                    MakeDasGuid(std::string(kTaskGuidText)),
+                    MakeDasGuid(std::string(TASK_GUID_TEXT)),
                     context_json.Get(),
                     session.Put()),
                 DAS_S_OK);

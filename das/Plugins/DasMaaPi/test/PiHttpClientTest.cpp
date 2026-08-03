@@ -307,7 +307,7 @@ namespace
     // Self-signed localhost certificate used by the mock TLS server. The client
     // under test disables verification (verify_tls_certificate=false) so no
     // trust store is needed.
-    constexpr std::string_view kTestCertPem = R"(-----BEGIN CERTIFICATE-----
+    constexpr std::string_view TEST_CERT_PEM = R"(-----BEGIN CERTIFICATE-----
 MIIDCTCCAfGgAwIBAgIUUEtKOtvIqhW/sJzTYsbeR2O7Ar8wDQYJKoZIhvcNAQEL
 BQAwFDESMBAGA1UEAwwJbG9jYWxob3N0MB4XDTI2MDgwMjA2MDU1MFoXDTM2MDcz
 MDA2MDU1MFowFDESMBAGA1UEAwwJbG9jYWxob3N0MIIBIjANBgkqhkiG9w0BAQEF
@@ -328,7 +328,7 @@ rF0xis0f6gCD7h9gVw==
 -----END CERTIFICATE-----
 )";
 
-    constexpr std::string_view kTestKeyPem = R"(-----BEGIN PRIVATE KEY-----
+    constexpr std::string_view TEST_KEY_PEM = R"(-----BEGIN PRIVATE KEY-----
 MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDbceJQ90909VfZ
 aAHqI+F7KfjJX7S/1VySiluyiyU/sqP/iA1Q1egf146cs/m8E2UbmNJlc1wjgItP
 HeXs60ucNqnPhRStDp7DNxiMBRjcvyDrPWZY1MJtOLxJb3sZqwEbP80ecfL/mpl9
@@ -555,9 +555,9 @@ v6yQpUYtQbbVSIHbNlBhfp8=
             port_ = acceptor_->local_endpoint().port();
             ctx_ = std::make_unique<boost::asio::ssl::context>(
                 boost::asio::ssl::context::tls_server);
-            ctx_->use_certificate_chain(boost::asio::buffer(kTestCertPem));
+            ctx_->use_certificate_chain(boost::asio::buffer(TEST_CERT_PEM));
             ctx_->use_private_key(
-                boost::asio::buffer(kTestKeyPem),
+                boost::asio::buffer(TEST_KEY_PEM),
                 boost::asio::ssl::context::pem);
             running_.store(true);
             thread_ = std::thread([this] { AcceptLoop(); });

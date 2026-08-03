@@ -75,8 +75,8 @@ namespace Das::Plugins::DasMaaPi
     struct ExecutionEnvelopeDto
     {
         int32_t             version = 1;
-        std::string         plugin_guid = std::string(kPluginGuidText);
-        std::string         task_type_guid = std::string(kTaskGuidText);
+        std::string         plugin_guid = std::string(PLUGIN_GUID_TEXT);
+        std::string         task_type_guid = std::string(TASK_GUID_TEXT);
         MaaExecutionPlanDto maapi;
     };
 

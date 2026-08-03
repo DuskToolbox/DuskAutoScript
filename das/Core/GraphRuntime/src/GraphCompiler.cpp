@@ -20,7 +20,7 @@ DAS_CORE_GRAPHRUNTIME_NS_BEGIN
 // ---------------------------------------------------------------------------
 namespace
 {
-    constexpr std::string_view kGraphInputBroadcastSource = "$graph_input";
+    constexpr std::string_view GRAPH_INPUT_BROADCAST_SOURCE = "$graph_input";
 }
 
 // ---------------------------------------------------------------------------
@@ -796,7 +796,7 @@ Dto::PortBindingPlanDto GraphCompiler::GeneratePortBindingPlan(
     // global_option) are bound to every node input port that declares using
     // them — by port_id name match. Unlike point-to-point data edges this is
     // a one-to-many binding; its source_node_id is the sentinel
-    // kGraphInputBroadcastSource and it carries the graph input's default.
+    // GRAPH_INPUT_BROADCAST_SOURCE and it carries the graph input's default.
     for (const auto& graph_input : document.graph_inputs)
     {
         for (const auto& node : document.nodes)
@@ -822,7 +822,7 @@ Dto::PortBindingPlanDto GraphCompiler::GeneratePortBindingPlan(
 
                 Dto::PortBindingDto binding;
                 binding.source_node_id =
-                    std::string(kGraphInputBroadcastSource);
+                    std::string(GRAPH_INPUT_BROADCAST_SOURCE);
                 binding.source_port_id = graph_input.port_id;
                 binding.target_node_id = node.node_id;
                 binding.target_port_id = in_port.port_id;

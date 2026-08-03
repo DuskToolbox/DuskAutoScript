@@ -93,10 +93,10 @@ TEST(IpcRuntimeThreadingTest, RemoteObjectRegistryConcurrentCopyOut)
     std::atomic<bool>        start{false};
     std::vector<std::thread> threads;
 
-    constexpr int kWriterCount = 4;
-    constexpr int kObjectsPerWriter = 64;
+    constexpr int writer_count = 4;
+    constexpr int objects_per_writer = 64;
 
-    for (int writer = 0; writer < kWriterCount; ++writer)
+    for (int writer = 0; writer < writer_count; ++writer)
     {
         threads.emplace_back(
             [&, writer]
@@ -106,10 +106,10 @@ TEST(IpcRuntimeThreadingTest, RemoteObjectRegistryConcurrentCopyOut)
                     std::this_thread::yield();
                 }
 
-                for (int i = 0; i < kObjectsPerWriter; ++i)
+                for (int i = 0; i < objects_per_writer; ++i)
                 {
                     const auto local_id = static_cast<uint32_t>(
-                        writer * kObjectsPerWriter + i + 1);
+                        writer * objects_per_writer + i + 1);
                     const ObjectId object_id{
                         .session_id = static_cast<uint16_t>(writer + 1),
                         .generation = 1,
@@ -149,7 +149,7 @@ TEST(IpcRuntimeThreadingTest, RemoteObjectRegistryConcurrentCopyOut)
                     std::this_thread::yield();
                 }
 
-                for (int i = 0; i < kWriterCount * kObjectsPerWriter; ++i)
+                for (int i = 0; i < writer_count * objects_per_writer; ++i)
                 {
                     std::vector<RemoteObjectInfo> objects;
                     registry.ListAllObjects(objects);
@@ -170,7 +170,7 @@ TEST(IpcRuntimeThreadingTest, RemoteObjectRegistryConcurrentCopyOut)
 
     EXPECT_EQ(
         registry.GetObjectCount(),
-        static_cast<size_t>(kWriterCount * kObjectsPerWriter));
+        static_cast<size_t>(writer_count * objects_per_writer));
 }
 
 TEST(

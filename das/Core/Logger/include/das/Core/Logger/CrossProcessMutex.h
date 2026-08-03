@@ -31,8 +31,8 @@ namespace Core
     {
         namespace Details
         {
-            inline constexpr const char* kLoggerMutexEnv = "_DAS_LOGGER_MUTEX";
-            inline constexpr const char* kLoggerMutexPrefix =
+            inline constexpr const char* LOGGER_MUTEX_ENV = "_DAS_LOGGER_MUTEX";
+            inline constexpr const char* LOGGER_MUTEX_PREFIX =
                 "_DAS_LOGGER_MUTEX-";
 
             inline std::string GetCurrentPidString()
@@ -46,13 +46,13 @@ namespace Core
             inline void SetLoggerMutexEnv(const std::string& value)
             {
 #ifdef DAS_WINDOWS
-                if (_putenv_s(kLoggerMutexEnv, value.c_str()) != 0)
+                if (_putenv_s(LOGGER_MUTEX_ENV, value.c_str()) != 0)
                 {
                     throw std::runtime_error(
                         "Failed to set DAS logger mutex environment value");
                 }
 #else
-                if (setenv(kLoggerMutexEnv, value.c_str(), 1) != 0)
+                if (setenv(LOGGER_MUTEX_ENV, value.c_str(), 1) != 0)
                 {
                     throw std::system_error(
                         errno,
@@ -71,18 +71,21 @@ namespace Core
 
             inline LoggerMutexIdentity ResolveLoggerMutexIdentity()
             {
-                if (const char* owner_pid = std::getenv(kLoggerMutexEnv);
+                if (const char* owner_pid = std::getenv(LOGGER_MUTEX_ENV);
                     owner_pid != nullptr && owner_pid[0] != '\0')
                 {
                     return {
-                        DAS::fmt::format("{}{}", kLoggerMutexPrefix, owner_pid),
+                        DAS::fmt::format(
+                            "{}{}",
+                            LOGGER_MUTEX_PREFIX,
+                            owner_pid),
                         false};
                 }
 
                 std::string pid = GetCurrentPidString();
                 SetLoggerMutexEnv(pid);
                 return {
-                    DAS::fmt::format("{}{}", kLoggerMutexPrefix, pid),
+                    DAS::fmt::format("{}{}", LOGGER_MUTEX_PREFIX, pid),
                     true};
             }
 
@@ -144,11 +147,11 @@ namespace Core
 
             inline int ParseSemaphoreIdFromEnv()
             {
-                const char* raw_value = std::getenv(kLoggerMutexEnv);
+                const char* raw_value = std::getenv(LOGGER_MUTEX_ENV);
                 if (raw_value == nullptr || raw_value[0] == '\0')
                 {
                     throw std::runtime_error(
-                        DAS::fmt::format("{} is not set", kLoggerMutexEnv));
+                        DAS::fmt::format("{} is not set", LOGGER_MUTEX_ENV));
                 }
 
                 char* end = nullptr;
@@ -160,7 +163,7 @@ namespace Core
                     throw std::runtime_error(
                         DAS::fmt::format(
                             "Invalid {} value: {}",
-                            kLoggerMutexEnv,
+                            LOGGER_MUTEX_ENV,
                             raw_value));
                 }
 
@@ -287,7 +290,7 @@ namespace Core
 
                 handle_ = Details::NativeHandle{handle};
 #else
-                if (const char* sem_id = std::getenv(Details::kLoggerMutexEnv);
+                if (const char* sem_id = std::getenv(Details::LOGGER_MUTEX_ENV);
                     sem_id != nullptr && sem_id[0] != '\0')
                 {
                     sem_id_ = Details::ParseSemaphoreIdFromEnv();

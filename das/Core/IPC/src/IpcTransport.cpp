@@ -12,7 +12,7 @@
 #include <string>
 #include <vector>
 DAS_CORE_IPC_NS_BEGIN
-constexpr uint16_t kFlagLargeMessage = 0x01;
+constexpr uint16_t FLAG_LARGE_MESSAGE = 0x01;
 
 struct IpcTransport::Impl
 {
@@ -258,7 +258,7 @@ std::optional<ReceiveResult> IpcTransport::Receive(uint32_t timeout_ms)
         result.header = std::move(validated_header).value();
 
         // 检查是否为大消息
-        if (result.header->GetFlags() & kFlagLargeMessage)
+        if (result.header->GetFlags() & FLAG_LARGE_MESSAGE)
         {
             if (impl_->shm_pool_ == nullptr)
             {
@@ -394,7 +394,7 @@ DasResult IpcTransport::SendLargeMessage(
 
     // 创建带大消息标志的 header
     IPCMessageHeader shm_header = header.Raw();
-    shm_header.flags |= kFlagLargeMessage;
+    shm_header.flags |= FLAG_LARGE_MESSAGE;
 
     // 使用 Builder API 构建
     auto validated_shm_header =

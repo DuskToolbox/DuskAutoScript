@@ -36,15 +36,16 @@ namespace
 
     // ---- GUID helpers ----
 
-    const std::string kCompPassThrough = "A0000000-0000-0000-0000-000000000001";
-    const std::string kCompDouble = "A0000000-0000-0000-0000-000000000002";
-    const std::string kCompSum = "A0000000-0000-0000-0000-000000000003";
-    const std::string kCompFail = "A0000000-0000-0000-0000-000000000004";
+    const std::string COMP_PASS_THROUGH =
+        "A0000000-0000-0000-0000-000000000001";
+    const std::string COMP_DOUBLE = "A0000000-0000-0000-0000-000000000002";
+    const std::string COMP_SUM = "A0000000-0000-0000-0000-000000000003";
+    const std::string COMP_FAIL = "A0000000-0000-0000-0000-000000000004";
 
-    const std::string kNodeA = "10000000-0000-0000-0000-000000000001";
-    const std::string kNodeB = "10000000-0000-0000-0000-000000000002";
-    const std::string kNodeC = "10000000-0000-0000-0000-000000000003";
-    const std::string kNodeD = "10000000-0000-0000-0000-000000000004";
+    const std::string NODE_A = "10000000-0000-0000-0000-000000000001";
+    const std::string NODE_B = "10000000-0000-0000-0000-000000000002";
+    const std::string NODE_C = "10000000-0000-0000-0000-000000000003";
+    const std::string NODE_D = "10000000-0000-0000-0000-000000000004";
 
     // ---- Mock StopToken ----
 
@@ -199,7 +200,7 @@ namespace
     // Build a linear chain plan: node_0 -> node_1 -> ... -> node_{n-1}
     CompiledGraphPlanDto MakeLinearPlan(
         int                num_nodes,
-        const std::string& component_guid = kCompPassThrough)
+        const std::string& component_guid = COMP_PASS_THROUGH)
     {
         CompiledGraphPlanDto plan;
         plan.source_fingerprint = "fp_v1";
@@ -281,22 +282,22 @@ protected:
 
         // Pass-through: reads "value_in", writes "value_out" (= value_in)
         stub_mgr_->AddDefinition(
-            kCompPassThrough,
+            COMP_PASS_THROUGH,
             MakeDefinition({{"value_in", "int"}}, {{"value_out", "int"}}));
 
         // Double: reads "value_in", writes "value_out" (= value_in * 2)
         stub_mgr_->AddDefinition(
-            kCompDouble,
+            COMP_DOUBLE,
             MakeDefinition({{"value_in", "int"}}, {{"value_out", "int"}}));
 
         // Sum: reads "value_in", writes "value_out" (= sum of value_in)
         stub_mgr_->AddDefinition(
-            kCompSum,
+            COMP_SUM,
             MakeDefinition({{"value_in", "int"}}, {{"value_out", "int"}}));
 
         // Fail: reads "value_in", always returns DAS_E_FAIL from Do()
         stub_mgr_->AddDefinition(
-            kCompFail,
+            COMP_FAIL,
             MakeDefinition({{"value_in", "int"}}, {{"value_out", "int"}}));
 
         token_ =

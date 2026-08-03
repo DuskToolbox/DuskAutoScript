@@ -1068,7 +1068,7 @@ namespace Das::Plugins::DasMaaPi
             }
 
             const auto resource = boundary.CreateResource();
-            if (resource == kInvalidMaaResourceHandle)
+            if (resource == INVALID_MAA_RESOURCE_HANDLE)
             {
                 LogWarning(
                     "PiUpdateService: cannot create resource for hash "

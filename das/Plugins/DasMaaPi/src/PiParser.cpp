@@ -14,7 +14,7 @@ namespace Das::Plugins::DasMaaPi
 {
     namespace
     {
-        constexpr auto kJsoncFlags = yyjson::ReadFlag::AllowComments
+        constexpr auto JSONC_FLAGS = yyjson::ReadFlag::AllowComments
                                      | yyjson::ReadFlag::AllowTrailingCommas;
 
         std::string ReadTextFile(const std::filesystem::path& path)
@@ -642,7 +642,7 @@ namespace Das::Plugins::DasMaaPi
                 return;
             }
             auto parsed =
-                Das::Utils::ParseYyjsonFromString(content, kJsoncFlags);
+                Das::Utils::ParseYyjsonFromString(content, JSONC_FLAGS);
             if (!parsed || !parsed->is_object())
             {
                 AddDiagnostic(
@@ -706,7 +706,7 @@ namespace Das::Plugins::DasMaaPi
                 return;
             }
             auto parsed =
-                Das::Utils::ParseYyjsonFromString(content, kJsoncFlags);
+                Das::Utils::ParseYyjsonFromString(content, JSONC_FLAGS);
             if (!parsed || !parsed->is_object())
             {
                 AddDiagnostic(
@@ -975,7 +975,7 @@ namespace Das::Plugins::DasMaaPi
             return result;
         }
 
-        auto parsed = Das::Utils::ParseYyjsonFromString(content, kJsoncFlags);
+        auto parsed = Das::Utils::ParseYyjsonFromString(content, JSONC_FLAGS);
         if (!parsed || !parsed->is_object())
         {
             AddDiagnostic(

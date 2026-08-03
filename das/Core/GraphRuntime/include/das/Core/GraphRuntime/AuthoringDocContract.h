@@ -38,7 +38,7 @@ DAS_CORE_GRAPHRUNTIME_NS_BEGIN
 //     BuildActionCatalogFromDefinitions.
 //
 // kind dispatch (internal):
-//   - viewKind == FormSequence  ⇔  GraphDocumentDto carries kLinearTag.
+//   - viewKind == FormSequence  ⇔  GraphDocumentDto carries LINEAR_TAG.
 //   - viewKind == Graph         ⇔  GraphDocumentDto is in canvas mode.
 // ---------------------------------------------------------------------------
 
@@ -46,7 +46,7 @@ namespace Contract
 {
     /// Linear-state marker carried on GraphDocumentDto::tags. A document with
     /// this tag projects to viewKind == FormSequence; without it, Graph.
-    inline constexpr std::string_view kLinearTag = "formsequence";
+    inline constexpr std::string_view LINEAR_TAG = "formsequence";
 
     /// Public viewKind discriminator (D-84-02). Mirrors the wire string
     /// ("formSequence" | "graph").

@@ -786,7 +786,7 @@ DasResult FakeTaskComponentFactory::CreateComponent(
     }
     *pp_out_component = nullptr;
 
-    static constexpr std::array kSupportedComponents{
+    static constexpr std::array SUPPORTED_COMPONENTS{
         DasGuid{
             0x68F10001,
             0x0000,
@@ -819,8 +819,8 @@ DasResult FakeTaskComponentFactory::CreateComponent(
             {0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x06}}};
 
     const auto supported = std::any_of(
-        kSupportedComponents.begin(),
-        kSupportedComponents.end(),
+        SUPPORTED_COMPONENTS.begin(),
+        SUPPORTED_COMPONENTS.end(),
         [&component_guid](const DasGuid& supported_guid)
         { return component_guid == supported_guid; });
     if (!supported)

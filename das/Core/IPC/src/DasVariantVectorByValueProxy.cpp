@@ -135,10 +135,10 @@ DasResult DasVariantVectorByValueProxy::EnsureDataLoaded(uint16_t method_id)
     {
         // External thread path: AwaitResponseSender 的 start() 会调用
         // PostSend(带回调)，在 IO 线程注册 pending call 后再发送
-        constexpr auto kTimeout = std::chrono::milliseconds{30000};
+        constexpr auto timeout = std::chrono::milliseconds{30000};
 
         AwaitResponseSender
-             sender{&GetRunLoop(), header, std::move(body), call_key, kTimeout};
+             sender{&GetRunLoop(), header, std::move(body), call_key, timeout};
         auto result = stdexec::sync_wait(std::move(sender));
         if (!result)
         {

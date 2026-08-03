@@ -15,9 +15,9 @@ namespace
     using namespace Das::Core::TaskScheduler::RepositoryInvoke;
     using namespace Das::Core::TaskScheduler::RepositoryInvoke::Dto;
 
-    constexpr char kPluginGuid[] = "12345678-9ABC-4DEF-8123-456789ABCDEF";
-    constexpr char kTaskGuid[] = "87654321-CBA9-4FED-9123-FEDCBA987654";
-    constexpr char kComponentGuid[] = "68F10001-0000-4000-8000-000000000001";
+    constexpr char PLUGIN_GUID[] = "12345678-9ABC-4DEF-8123-456789ABCDEF";
+    constexpr char TASK_GUID[] = "87654321-CBA9-4FED-9123-FEDCBA987654";
+    constexpr char COMPONENT_GUID[] = "68F10001-0000-4000-8000-000000000001";
 
     yyjson::value ParseJson(std::string_view json)
     {
@@ -31,8 +31,8 @@ namespace
         RepositoryEntryDto entry;
         entry.entry_id = 42;
         entry.display_name = "Repository task";
-        entry.plugin_guid = kPluginGuid;
-        entry.task_type_guid = kTaskGuid;
+        entry.plugin_guid = PLUGIN_GUID;
+        entry.task_type_guid = TASK_GUID;
         entry.authoring.revision = revision;
         entry.authoring.last_change_kind = "setValue";
         entry.authoring.source_fingerprint = "source-a";
@@ -45,7 +45,7 @@ namespace
     {
         std::optional<RepositoryEntryDto> entry;
         std::optional<std::string>        execution_component_guid =
-            std::string(kComponentGuid);
+            std::string(COMPONENT_GUID);
         bool        provider_ok = true;
         std::string compile_result_json =
             R"json({"ok":true,"executionInput":{"key1":"compiled"}})json";
@@ -240,9 +240,9 @@ TEST(RepositoryInvokeCompilerTest, ExecutionCompileBuildsChildSnapshot)
     EXPECT_EQ(snapshot.source_entry_id, 42);
     EXPECT_EQ(snapshot.source_revision, 7);
     EXPECT_EQ(snapshot.source_fingerprint, "source-a");
-    EXPECT_EQ(snapshot.plugin_guid, kPluginGuid);
-    EXPECT_EQ(snapshot.task_type_guid, kTaskGuid);
-    EXPECT_EQ(snapshot.component_guid, kComponentGuid);
+    EXPECT_EQ(snapshot.plugin_guid, PLUGIN_GUID);
+    EXPECT_EQ(snapshot.task_type_guid, TASK_GUID);
+    EXPECT_EQ(snapshot.component_guid, COMPONENT_GUID);
 
     auto execution_input = snapshot.execution_input.as_object();
     ASSERT_TRUE(execution_input.has_value());

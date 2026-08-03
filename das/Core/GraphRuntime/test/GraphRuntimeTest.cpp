@@ -46,13 +46,13 @@ namespace
     }
 
     // Test node GUIDs — 36-char standard format
-    const std::string kNodeA = "10000000-0000-0000-0000-000000000001";
-    const std::string kNodeB = "10000000-0000-0000-0000-000000000002";
-    const std::string kNodeC = "10000000-0000-0000-0000-000000000003";
+    const std::string NODE_A = "10000000-0000-0000-0000-000000000001";
+    const std::string NODE_B = "10000000-0000-0000-0000-000000000002";
+    const std::string NODE_C = "10000000-0000-0000-0000-000000000003";
 
     // Test component GUIDs — 36-char standard format for MakeDasGuid
-    const std::string kCompA = "20000000-0000-0000-0000-000000000001";
-    const std::string kCompTest = "20000000-0000-0000-0000-000000000099";
+    const std::string COMP_A = "20000000-0000-0000-0000-000000000001";
+    const std::string COMP_TEST = "20000000-0000-0000-0000-000000000099";
 
     // ---- Mock StopToken ----
 
@@ -143,7 +143,7 @@ namespace
             auto snap = MakeSnapshotWithPorts(
                 nid,
                 {MakePortDef("in"), MakePortDef("out")},
-                kCompTest);
+                COMP_TEST);
             plan.node_snapshots.push_back(std::move(snap));
             plan.execution_order.push_back(nid);
         }
@@ -457,7 +457,7 @@ TEST(GraphRuntimeTest, ConfigureCreatesComponents)
     using namespace GraphRuntimeTestMock;
 
     auto plan =
-        MakePlanWithSettings(kNodeA, kCompA, R"({"threshold": 42})", "");
+        MakePlanWithSettings(NODE_A, COMP_A, R"({"threshold": 42})", "");
 
     auto host = MockTaskComponentHost::Make();
 
@@ -478,8 +478,8 @@ TEST(GraphRuntimeTest, ConfigureAppliesSettings)
     using namespace GraphRuntimeTestMock;
 
     auto plan = MakePlanWithSettings(
-        kNodeA,
-        kCompA,
+        NODE_A,
+        COMP_A,
         R"({"threshold": 42})",
         R"({"mode": "fast"})");
 
@@ -535,8 +535,8 @@ TEST(GraphRuntimeTest, RunWithHostSingleExecution)
     plan.compiled_fingerprint = "compiled_fp_v1";
 
     plan.node_snapshots.push_back(
-        MakeSnapshotWithPorts(kNodeA, {MakePortDef("out")}, kCompA));
-    plan.execution_order = {kNodeA};
+        MakeSnapshotWithPorts(NODE_A, {MakePortDef("out")}, COMP_A));
+    plan.execution_order = {NODE_A};
 
     auto host = MockTaskComponentHost::Make();
 
@@ -636,7 +636,7 @@ TEST(GraphRuntimeTest, V17DataSepSettingsNotInPortMap)
     // Verify that settings are applied via ApplySettingsChange (Configure)
     // and NOT passed through the PortMap data plane during Do().
     auto plan =
-        MakePlanWithSettings(kNodeA, kCompA, R"({"threshold": 42})", "");
+        MakePlanWithSettings(NODE_A, COMP_A, R"({"threshold": 42})", "");
 
     auto host = MockTaskComponentHost::Make();
 
@@ -669,7 +669,7 @@ namespace SignalGatedTestMock
 
     // Shared component GUID for every behaviour node — the host ignores it and
     // the role comes from settings, so a single GUID is enough.
-    constexpr std::string_view kBehaviorGuid =
+    constexpr std::string_view BEHAVIOR_GUID =
         "20000000-0000-0000-0000-000000000099";
 
     class BehaviorComponent final : public IDasTaskComponent
@@ -716,7 +716,7 @@ namespace SignalGatedTestMock
                 return DAS_E_INVALID_POINTER;
             }
             *p_out_guid = Das::Core::ForeignInterfaceHost::MakeDasGuid(
-                std::string{kBehaviorGuid});
+                std::string{BEHAVIOR_GUID});
             return DAS_S_OK;
         }
 
@@ -938,7 +938,7 @@ namespace SignalGatedTestMock
     {
         CompiledNodeSnapshotDto snap;
         snap.node_id = node_id;
-        snap.component_guid = std::string{kBehaviorGuid};
+        snap.component_guid = std::string{BEHAVIOR_GUID};
         if (!settings_json.empty())
         {
             auto parsed = Das::Utils::ParseYyjsonFromString(settings_json);

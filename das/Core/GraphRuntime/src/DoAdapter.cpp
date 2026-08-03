@@ -243,7 +243,7 @@ namespace
     // gate on it — the component itself never sees signal values
     // (zero-awareness). (DAS-60 Stage 3: signal emission → PortFrame
     // materialisation.)
-    constexpr std::string_view kEmittedSignalsKey = "signals";
+    constexpr std::string_view EMITTED_SIGNALS_KEY = "signals";
 
     /// Read the reserved @p "signals" array from @p map and write a
     /// PortValue::Signal() into @p frame for every listed port, under
@@ -254,7 +254,7 @@ namespace
         DasGuid                            node_id,
         PortFrame&                         frame)
     {
-        const DasReadOnlyString key{std::string{kEmittedSignalsKey}.c_str()};
+        const DasReadOnlyString key{std::string{EMITTED_SIGNALS_KEY}.c_str()};
         IDasReadOnlyString*     p_str = nullptr;
         const DasResult         result = map->GetString(key.Get(), &p_str);
         if (DAS::IsFailed(result) || p_str == nullptr)
@@ -301,10 +301,10 @@ namespace
 
     // Sentinel source marking a broadcast (graph-input) binding — not a real
     // node, so there is no upstream PortFrame entry to read. Must match
-    // GraphCompiler::kGraphInputBroadcastSource and
-    // GraphRuntime::kBroadcastSource. (DAS-75 graph_inputs broadcast
+    // GraphCompiler::GRAPH_INPUT_BROADCAST_SOURCE and
+    // GraphRuntime::BROADCAST_SOURCE. (DAS-75 graph_inputs broadcast
     // injection.)
-    constexpr std::string_view kBroadcastSource = "$graph_input";
+    constexpr std::string_view BROADCAST_SOURCE = "$graph_input";
 
     /// Materialise a broadcast (graph-input) binding's @p default_value
     /// directly into @p map under @p port_id. Unlike a point-to-point data edge
@@ -381,7 +381,7 @@ DasResult BuildInputPortMap(
         // default_value — there is no upstream node to read from the frame, and
         // MakeDasGuid would reject the sentinel string. (DAS-75 graph_inputs
         // broadcast injection.)
-        if (binding.source_node_id == std::string{kBroadcastSource})
+        if (binding.source_node_id == std::string{BROADCAST_SOURCE})
         {
             const DasResult r = SetDefaultFromYyjson(
                 map.Get(),
@@ -474,7 +474,7 @@ DasResult ExtractOutputPortMap(
 
         // The reserved "signals" key is control-flow metadata, not a data
         // port — materialise it as Signal markers and skip normal extraction.
-        if (port_id == std::string{kEmittedSignalsKey})
+        if (port_id == std::string{EMITTED_SIGNALS_KEY})
         {
             ExtractEmittedSignals(output_map, node_id, frame);
             p_key->Release();

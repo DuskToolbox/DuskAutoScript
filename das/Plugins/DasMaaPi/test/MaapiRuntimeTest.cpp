@@ -73,7 +73,7 @@ namespace
     // params — the legacy flat-string CreateController(spec) overload is
     // gone. Tests that swap in a different controller type pass a matching
     // controller_init_params_json.
-    constexpr const char* kDefaultAdbInitParamsJson =
+    constexpr const char* DEFAULT_ADB_INIT_PARAMS_JSON =
         R"({"controllerType":"Adb","win32":null,"gamepad":null,)"
         R"("adb":{"adbPath":"adb","address":"","screencapMethod":0,)"
         R"("inputMethod":0,"configJson":"{}","agentPath":""},)"
@@ -82,8 +82,8 @@ namespace
 
     yyjson::value EnvelopeValue(
         bool        fail_fast = true,
-        std::string plugin_guid = std::string(kPluginGuidText),
-        std::string task_guid = std::string(kTaskGuidText),
+        std::string plugin_guid = std::string(PLUGIN_GUID_TEXT),
+        std::string task_guid = std::string(TASK_GUID_TEXT),
         bool        requires_agent = false,
         std::string tasks = R"([
           {"taskName":"DailyFarm","entry":"StartDaily","pipelineOverride":{"Stage":{"value":"one"}}},
@@ -92,7 +92,7 @@ namespace
         std::string controller_json =
             R"({"name":"Android","type":"Adb","readPath":"","address":"","adbPath":"adb","configJson":"{}","agentPath":""})",
         std::string agent_json = {},
-        std::string controller_init_params_json = kDefaultAdbInitParamsJson)
+        std::string controller_init_params_json = DEFAULT_ADB_INIT_PARAMS_JSON)
     {
         auto json =
             R"({"version":1,"pluginGuid":")" + plugin_guid
@@ -130,12 +130,12 @@ namespace
         ])",
         std::string controller_json =
             R"({"name":"Android","type":"Adb","readPath":"","address":"","adbPath":"adb","configJson":"{}","agentPath":""})",
-        std::string controller_init_params_json = kDefaultAdbInitParamsJson)
+        std::string controller_init_params_json = DEFAULT_ADB_INIT_PARAMS_JSON)
     {
         auto parsed = ParseExecutionEnvelope(EnvelopeValue(
             fail_fast,
-            std::string(kPluginGuidText),
-            std::string(kTaskGuidText),
+            std::string(PLUGIN_GUID_TEXT),
+            std::string(TASK_GUID_TEXT),
             requires_agent,
             std::move(tasks),
             std::move(controller_json),
@@ -154,8 +154,8 @@ namespace
 
     std::string EnvelopeJson(
         bool        fail_fast = true,
-        std::string plugin_guid = std::string(kPluginGuidText),
-        std::string task_guid = std::string(kTaskGuidText),
+        std::string plugin_guid = std::string(PLUGIN_GUID_TEXT),
+        std::string task_guid = std::string(TASK_GUID_TEXT),
         bool        requires_agent = false,
         std::string tasks = R"([
           {"taskName":"DailyFarm","entry":"StartDaily","pipelineOverride":{"Stage":{"value":"one"}}}
@@ -337,8 +337,8 @@ TEST(DasMaaPiRuntime, RuntimeRejectsSnakeCaseControllerFields)
     // DAS_E_INVALID_ARGUMENT。
     auto value = EnvelopeValue(
         true,
-        std::string(kPluginGuidText),
-        std::string(kTaskGuidText),
+        std::string(PLUGIN_GUID_TEXT),
+        std::string(TASK_GUID_TEXT),
         false,
         R"([{"taskName":"T","entry":"E","pipelineOverride":{}}])",
         R"({"name":"Android","type":"Adb","readPath":"","address":"emulator-5554","adb_path":"adb-custom","config":"{}","agent_path":"x"})");
@@ -352,8 +352,8 @@ TEST(DasMaaPiRuntime, RuntimeRejectsConfigObjectInput)
     // object 时类型不匹配，聚合反射抛 → DAS_E_INVALID_ARGUMENT。
     auto value = EnvelopeValue(
         true,
-        std::string(kPluginGuidText),
-        std::string(kTaskGuidText),
+        std::string(PLUGIN_GUID_TEXT),
+        std::string(TASK_GUID_TEXT),
         false,
         R"([{"taskName":"T","entry":"E","pipelineOverride":{}}])",
         R"({"name":"Android","type":"Adb","readPath":"","address":"","adbPath":"adb","configJson":{"touch":"maatouch"},"agentPath":""})");
@@ -488,7 +488,7 @@ TEST(DasMaaPiRuntime, DoRejectsWrongGuid)
     auto      json = ParseDasJson(EnvelopeJson(
         true,
         "00000000-0000-0000-0000-000000000000",
-        std::string(kTaskGuidText)));
+        std::string(TASK_GUID_TEXT)));
     MaapiTask task;
     EXPECT_EQ(task.Do(nullptr, nullptr, json.Get()), DAS_E_INVALID_ARGUMENT);
 }
@@ -497,8 +497,8 @@ TEST(DasMaaPiRuntime, DoRejectsMissingTasks)
 {
     auto      json = ParseDasJson(EnvelopeJson(
         true,
-        std::string(kPluginGuidText),
-        std::string(kTaskGuidText),
+        std::string(PLUGIN_GUID_TEXT),
+        std::string(TASK_GUID_TEXT),
         false,
         "[]"));
     MaapiTask task;
@@ -509,8 +509,8 @@ TEST(DasMaaPiRuntime, DoRunsAgentRequiredEnvelopeThroughSharedRuntime)
 {
     auto                     json = ParseDasJson(EnvelopeJson(
         true,
-        std::string(kPluginGuidText),
-        std::string(kTaskGuidText),
+        std::string(PLUGIN_GUID_TEXT),
+        std::string(TASK_GUID_TEXT),
         true));
     FakeMaaApiBoundary       fake;
     FakeProcessRunner        runner;
@@ -536,8 +536,8 @@ TEST(DasMaaPiRuntime, ParseAcceptsAgentObjectAsSingleElement)
     // 元素 vector。
     auto value = EnvelopeValue(
         true,
-        std::string(kPluginGuidText),
-        std::string(kTaskGuidText),
+        std::string(PLUGIN_GUID_TEXT),
+        std::string(TASK_GUID_TEXT),
         true,
         R"([{"taskName":"DailyFarm","entry":"StartDaily","pipelineOverride":{}}])",
         R"({"name":"Android","type":"Adb","readPath":"","address":"","adbPath":"adb","configJson":"{}","agentPath":""})",
@@ -558,8 +558,8 @@ TEST(DasMaaPiRuntime, ParseAcceptsAgentArrayWithMultipleElements)
     // 数组形态解析成多元素 vector，并覆盖 optional identifier 字段。
     auto value = EnvelopeValue(
         true,
-        std::string(kPluginGuidText),
-        std::string(kTaskGuidText),
+        std::string(PLUGIN_GUID_TEXT),
+        std::string(TASK_GUID_TEXT),
         true,
         R"([{"taskName":"DailyFarm","entry":"StartDaily","pipelineOverride":{}}])",
         R"({"name":"Android","type":"Adb","readPath":"","address":"","adbPath":"adb","configJson":"{}","agentPath":""})",
@@ -581,8 +581,8 @@ TEST(DasMaaPiRuntime, ParseReadsControllerFromExplicitObject)
     // 对象 （PiCompiler 总产出 controller 对象，运行时无 fallback 路径）。
     auto value = EnvelopeValue(
         true,
-        std::string(kPluginGuidText),
-        std::string(kTaskGuidText),
+        std::string(PLUGIN_GUID_TEXT),
+        std::string(TASK_GUID_TEXT),
         false,
         R"([{"taskName":"T","entry":"E","pipelineOverride":{}}])",
         R"({"name":"Explicit","type":"Adb","readPath":"","address":"","adbPath":"C:/explicit/adb.exe","configJson":"{}","agentPath":"explicit/agent"})");
@@ -705,7 +705,7 @@ TEST(
 TEST(DasMaaPiRuntime, TypedControllerBoundaryFailureSurfacesAsDiagnostic)
 {
     FakeMaaApiBoundary fake;
-    fake.create_from_params_result.handle = kInvalidMaaControllerHandle;
+    fake.create_from_params_result.handle = INVALID_MAA_CONTROLLER_HANDLE;
     fake.create_from_params_result.error_code = "controller-window-not-found";
     fake.create_from_params_result.error_message =
         "No desktop window matched class_regex='Missing.*'";
@@ -738,7 +738,7 @@ TEST(DasMaaPiRuntime, Tier2ControllerTypesRejectedOnWindows)
     for (const auto* type : {"MacOS", "PlayCover", "WlRoots"})
     {
         FakeMaaApiBoundary fake;
-        fake.create_from_params_result.handle = kInvalidMaaControllerHandle;
+        fake.create_from_params_result.handle = INVALID_MAA_CONTROLLER_HANDLE;
         fake.create_from_params_result.error_code =
             "controller-type-unsupported-on-platform";
         fake.create_from_params_result.error_message =
@@ -788,8 +788,8 @@ TEST(DasMaaPiRuntime, EnvelopeWithoutInitParamsSurfacesStructuredError)
     // envelope instead of silently calling a non-existent method.
     auto value = EnvelopeValue(
         true,
-        std::string(kPluginGuidText),
-        std::string(kTaskGuidText),
+        std::string(PLUGIN_GUID_TEXT),
+        std::string(TASK_GUID_TEXT),
         false,
         R"([{"taskName":"T","entry":"E","pipelineOverride":{}}])",
         R"({"name":"Android","type":"Adb","readPath":"","address":"127.0.0.1:5555","adbPath":"adb","configJson":"{}","agentPath":""})",
@@ -1361,8 +1361,8 @@ TEST(DasMaaPiRuntime, OptionalAdbInitParamsSurvivesIpcJsonRoundTrip)
     // IPC. This test locks the guard in.
     auto value = EnvelopeValue(
         true,
-        std::string(kPluginGuidText),
-        std::string(kTaskGuidText),
+        std::string(PLUGIN_GUID_TEXT),
+        std::string(TASK_GUID_TEXT),
         false,
         R"([{"taskName":"T","entry":"E","pipelineOverride":{}}])",
         R"({"name":"Android","type":"Adb","readPath":"","address":"127.0.0.1:5555","adbPath":"C:/tools/adb.exe","configJson":"{}","agentPath":"C:/maa/agent"})",
@@ -1386,8 +1386,8 @@ TEST(DasMaaPiRuntime, OptionalDbgInitParamsSurvivesIpcJsonRoundTrip)
     // Caster trap guard for optional<DbgInitParams>.
     auto value = EnvelopeValue(
         true,
-        std::string(kPluginGuidText),
-        std::string(kTaskGuidText),
+        std::string(PLUGIN_GUID_TEXT),
+        std::string(TASK_GUID_TEXT),
         false,
         R"([{"taskName":"T","entry":"E","pipelineOverride":{}}])",
         R"({"name":"Debug","type":"Dbg","readPath":"C:/maa/debug","address":"","adbPath":"adb","configJson":"{}","agentPath":""})",

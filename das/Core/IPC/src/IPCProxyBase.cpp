@@ -160,11 +160,11 @@ DasResult IPCProxyBase::SendRequest(
 
         // External thread: AwaitResponseSender 的 start() 会调用
         // PostSend(带回调)，在 IO 线程注册 pending call 后再发送
-        constexpr auto kTimeout = std::chrono::milliseconds{30000};
+        constexpr auto timeout = std::chrono::milliseconds{30000};
 
         std::vector<uint8_t> body_vec(body, body + body_size);
         AwaitResponseSender
-            sender{&run_loop_, header, std::move(body_vec), call_key, kTimeout};
+             sender{&run_loop_, header, std::move(body_vec), call_key, timeout};
         auto result = stdexec::sync_wait(std::move(sender));
         if (!result)
         {
@@ -258,11 +258,11 @@ DasResult IPCProxyBase::SendBusinessControlRequest(
 
         // External thread: AwaitResponseSender 的 start() 会调用
         // PostSend(带回调)，在 IO 线程注册 pending call 后再发送
-        constexpr auto kTimeout = std::chrono::milliseconds{30000};
+        constexpr auto timeout = std::chrono::milliseconds{30000};
 
         std::vector<uint8_t> body_vec(body, body + body_size);
         AwaitResponseSender
-            sender{&run_loop_, header, std::move(body_vec), call_key, kTimeout};
+             sender{&run_loop_, header, std::move(body_vec), call_key, timeout};
         auto result = stdexec::sync_wait(std::move(sender));
         if (!result)
         {

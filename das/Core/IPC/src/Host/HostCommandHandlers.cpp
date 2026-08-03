@@ -314,8 +314,8 @@ namespace Das::Core::IPC::Host
             return resolved;
         }
 
-        static constexpr size_t kMaxListEntries = 4096;
-        static constexpr size_t kMaxReadFileSize = 4 * 1024 * 1024;
+        static constexpr size_t MAX_LIST_ENTRIES = 4096;
+        static constexpr size_t MAX_READ_FILE_SIZE = 4 * 1024 * 1024;
 
         DasResult HandleListFile(
             const std::filesystem::path& plugin_dir,
@@ -374,11 +374,11 @@ namespace Das::Core::IPC::Host
                     {
                         break;
                     }
-                    if (entry_count >= kMaxListEntries)
+                    if (entry_count >= MAX_LIST_ENTRIES)
                     {
                         DAS_CORE_LOG_WARN(
                             "HandleListFile: entry count exceeded {}, truncating",
-                            kMaxListEntries);
+                            MAX_LIST_ENTRIES);
                         break;
                     }
                     const uint8_t type =
@@ -405,11 +405,11 @@ namespace Das::Core::IPC::Host
                     {
                         break;
                     }
-                    if (entry_count >= kMaxListEntries)
+                    if (entry_count >= MAX_LIST_ENTRIES)
                     {
                         DAS_CORE_LOG_WARN(
                             "HandleListFile: entry count exceeded {}, truncating",
-                            kMaxListEntries);
+                            MAX_LIST_ENTRIES);
                         break;
                     }
                     const uint8_t type =
@@ -474,7 +474,7 @@ namespace Das::Core::IPC::Host
 
             ifs.seekg(0, std::ios::end);
             auto size = ifs.tellg();
-            if (size < 0 || static_cast<size_t>(size) > kMaxReadFileSize)
+            if (size < 0 || static_cast<size_t>(size) > MAX_READ_FILE_SIZE)
             {
                 DAS_CORE_LOG_ERROR(
                     "HandleReadFile: file too large or unreadable: {}, size={}",

@@ -53,7 +53,7 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
             std::string_view camel_key;
         };
 
-        constexpr std::array<PiEnvKnownField, 8> kKnownPiEnvFields{
+        constexpr std::array<PiEnvKnownField, 8> KNOWN_PI_ENV_FIELDS{
             PiEnvKnownField{"PI_INTERFACE_VERSION", "interfaceVersion"},
             PiEnvKnownField{"PI_CLIENT_NAME", "clientName"},
             PiEnvKnownField{"PI_CLIENT_VERSION", "clientVersion"},
@@ -66,8 +66,8 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
         bool IsKnownPiEnvKey(std::string_view key)
         {
             return std::any_of(
-                kKnownPiEnvFields.begin(),
-                kKnownPiEnvFields.end(),
+                KNOWN_PI_ENV_FIELDS.begin(),
+                KNOWN_PI_ENV_FIELDS.end(),
                 [key](const PiEnvKnownField& field)
                 { return field.env_key == key || field.camel_key == key; });
         }
@@ -257,7 +257,7 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
                 }
 
                 const auto client = CreateAgentClient(spec, request.options);
-                if (client == kInvalidMaaAgentClientHandle)
+                if (client == INVALID_MAA_AGENT_CLIENT_HANDLE)
                 {
                     auto diagnostic = Diagnostic(
                         "create-agent-client-failed",

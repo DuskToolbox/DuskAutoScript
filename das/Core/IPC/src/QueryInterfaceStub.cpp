@@ -22,8 +22,8 @@ DasResult QueryInterfaceStub::HandleMessage(
     (void)header;
 
     // Body: ObjectId (8B) + DasGuid (16B) = 24B minimum
-    constexpr size_t kMinBodySize = sizeof(ObjectId) + sizeof(DasGuid);
-    if (body.size() < kMinBodySize)
+    constexpr size_t min_body_size = sizeof(ObjectId) + sizeof(DasGuid);
+    if (body.size() < min_body_size)
     {
         DAS_CORE_LOG_ERROR(
             "[QUERY_INTERFACE] payload too small: {}",

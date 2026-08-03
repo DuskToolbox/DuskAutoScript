@@ -571,10 +571,10 @@ TEST(PiUpdateService, CheckUpdateForwardsProxyUrlToSeam)
     project.WriteInterface(
         MakeInterface("1.0.0", "https://github.com/owner/repo", "rid-proxy"));
 
-    constexpr std::string_view kProxy = "http://127.0.0.1:8899";
+    constexpr std::string_view test_proxy = "http://127.0.0.1:8899";
     PiUpdateInfo               info;
     const auto                 result =
-        PiUpdateService::CheckUpdate(project.Dir(), http, info, kProxy);
+        PiUpdateService::CheckUpdate(project.Dir(), http, info, test_proxy);
 
     EXPECT_EQ(result, DAS_S_OK);
     EXPECT_TRUE(info.has_update);
@@ -582,7 +582,7 @@ TEST(PiUpdateService, CheckUpdateForwardsProxyUrlToSeam)
     ASSERT_FALSE(http.Calls().empty());
     for (const auto& call : http.Calls())
     {
-        EXPECT_EQ(call.proxy_url, kProxy);
+        EXPECT_EQ(call.proxy_url, test_proxy);
     }
 }
 

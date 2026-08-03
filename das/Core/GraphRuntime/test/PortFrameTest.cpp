@@ -18,9 +18,9 @@ namespace
     }
 
     // Fixed GUIDs for tests.
-    const DasGuid kNode1 = MakeNode("11111111-1111-1111-1111-111111111111");
-    const DasGuid kNode2 = MakeNode("22222222-2222-2222-2222-222222222222");
-    const DasGuid kNode3 = MakeNode("33333333-3333-3333-3333-333333333333");
+    const DasGuid NODE1 = MakeNode("11111111-1111-1111-1111-111111111111");
+    const DasGuid NODE2 = MakeNode("22222222-2222-2222-2222-222222222222");
+    const DasGuid NODE3 = MakeNode("33333333-3333-3333-3333-333333333333");
 
     PortKey Key(const DasGuid& node, const std::string& port)
     {
@@ -158,39 +158,39 @@ TEST(PortFrameTest, TypeMismatchAccessors)
 
 TEST(PortFrameTest, PortKeyEqual)
 {
-    auto a = Key(kNode1, "out");
-    auto b = Key(kNode1, "out");
+    auto a = Key(NODE1, "out");
+    auto b = Key(NODE1, "out");
     EXPECT_EQ(a, b);
     EXPECT_FALSE(a != b);
 }
 
 TEST(PortFrameTest, PortKeyDiffNode)
 {
-    auto a = Key(kNode1, "out");
-    auto b = Key(kNode2, "out");
+    auto a = Key(NODE1, "out");
+    auto b = Key(NODE2, "out");
     EXPECT_NE(a, b);
 }
 
 TEST(PortFrameTest, PortKeyDiffPort)
 {
-    auto a = Key(kNode1, "out_a");
-    auto b = Key(kNode1, "out_b");
+    auto a = Key(NODE1, "out_a");
+    auto b = Key(NODE1, "out_b");
     EXPECT_NE(a, b);
 }
 
 TEST(PortFrameTest, PortKeyHashEqual)
 {
     const PortKeyHash hasher;
-    auto              a = Key(kNode1, "port");
-    auto              b = Key(kNode1, "port");
+    auto              a = Key(NODE1, "port");
+    auto              b = Key(NODE1, "port");
     EXPECT_EQ(hasher(a), hasher(b));
 }
 
 TEST(PortFrameTest, PortKeyHashDiffKey)
 {
     const PortKeyHash hasher;
-    auto              a = Key(kNode1, "port");
-    auto              b = Key(kNode2, "port");
+    auto              a = Key(NODE1, "port");
+    auto              b = Key(NODE2, "port");
     // Hash *should* differ for different nodes (not a strict requirement,
     // but we verify it does in practice).
     EXPECT_NE(hasher(a), hasher(b));
@@ -205,20 +205,20 @@ TEST(PortFrameTest, EmptyFrame)
     const PortFrame frame;
     EXPECT_TRUE(frame.Empty());
     EXPECT_EQ(frame.Size(), 0u);
-    EXPECT_EQ(frame.Find(Key(kNode1, "x")), nullptr);
-    EXPECT_FALSE(frame.Contains(Key(kNode1, "x")));
+    EXPECT_EQ(frame.Find(Key(NODE1, "x")), nullptr);
+    EXPECT_FALSE(frame.Contains(Key(NODE1, "x")));
 }
 
 TEST(PortFrameTest, SetAndFind)
 {
     PortFrame frame;
-    frame.Set(Key(kNode1, "output"), PortValue(int64_t{7}));
+    frame.Set(Key(NODE1, "output"), PortValue(int64_t{7}));
 
     EXPECT_FALSE(frame.Empty());
     EXPECT_EQ(frame.Size(), 1u);
-    EXPECT_TRUE(frame.Contains(Key(kNode1, "output")));
+    EXPECT_TRUE(frame.Contains(Key(NODE1, "output")));
 
-    auto* pv = frame.Find(Key(kNode1, "output"));
+    auto* pv = frame.Find(Key(NODE1, "output"));
     ASSERT_NE(pv, nullptr);
     EXPECT_TRUE(pv->IsInt());
     EXPECT_EQ(*pv->AsInt(), 7);
@@ -227,9 +227,9 @@ TEST(PortFrameTest, SetAndFind)
 TEST(PortFrameTest, SetWithSeparateArgs)
 {
     PortFrame frame;
-    frame.Set(kNode1, std::string("result"), PortValue(2.5));
+    frame.Set(NODE1, std::string("result"), PortValue(2.5));
 
-    auto* pv = frame.Find(Key(kNode1, "result"));
+    auto* pv = frame.Find(Key(NODE1, "result"));
     ASSERT_NE(pv, nullptr);
     EXPECT_TRUE(pv->IsFloat());
     EXPECT_DOUBLE_EQ(*pv->AsFloat(), 2.5);
@@ -238,11 +238,11 @@ TEST(PortFrameTest, SetWithSeparateArgs)
 TEST(PortFrameTest, OverwriteExisting)
 {
     PortFrame frame;
-    frame.Set(Key(kNode1, "out"), PortValue(int64_t{1}));
-    frame.Set(Key(kNode1, "out"), PortValue(int64_t{2}));
+    frame.Set(Key(NODE1, "out"), PortValue(int64_t{1}));
+    frame.Set(Key(NODE1, "out"), PortValue(int64_t{2}));
 
     EXPECT_EQ(frame.Size(), 1u);
-    auto* pv = frame.Find(Key(kNode1, "out"));
+    auto* pv = frame.Find(Key(NODE1, "out"));
     ASSERT_NE(pv, nullptr);
     EXPECT_EQ(*pv->AsInt(), 2);
 }
@@ -250,23 +250,23 @@ TEST(PortFrameTest, OverwriteExisting)
 TEST(PortFrameTest, RemoveExisting)
 {
     PortFrame frame;
-    frame.Set(Key(kNode1, "out"), PortValue(int64_t{1}));
-    EXPECT_TRUE(frame.Remove(Key(kNode1, "out")));
+    frame.Set(Key(NODE1, "out"), PortValue(int64_t{1}));
+    EXPECT_TRUE(frame.Remove(Key(NODE1, "out")));
     EXPECT_TRUE(frame.Empty());
-    EXPECT_EQ(frame.Find(Key(kNode1, "out")), nullptr);
+    EXPECT_EQ(frame.Find(Key(NODE1, "out")), nullptr);
 }
 
 TEST(PortFrameTest, RemoveNonexistent)
 {
     PortFrame frame;
-    EXPECT_FALSE(frame.Remove(Key(kNode1, "out")));
+    EXPECT_FALSE(frame.Remove(Key(NODE1, "out")));
 }
 
 TEST(PortFrameTest, Clear)
 {
     PortFrame frame;
-    frame.Set(Key(kNode1, "a"), PortValue(int64_t{1}));
-    frame.Set(Key(kNode2, "b"), PortValue(3.14));
+    frame.Set(Key(NODE1, "a"), PortValue(int64_t{1}));
+    frame.Set(Key(NODE2, "b"), PortValue(3.14));
     EXPECT_EQ(frame.Size(), 2u);
 
     frame.Clear();
@@ -280,17 +280,17 @@ TEST(PortFrameTest, Clear)
 TEST(PortFrameTest, MultipleEntries)
 {
     PortFrame frame;
-    frame.Set(Key(kNode1, "out_int"), PortValue(int64_t{42}));
-    frame.Set(Key(kNode1, "out_str"), PortValue(std::string("hello")));
-    frame.Set(Key(kNode2, "out_flt"), PortValue(1.5));
-    frame.Set(Key(kNode3, "out_sig"), PortValue::Signal());
+    frame.Set(Key(NODE1, "out_int"), PortValue(int64_t{42}));
+    frame.Set(Key(NODE1, "out_str"), PortValue(std::string("hello")));
+    frame.Set(Key(NODE2, "out_flt"), PortValue(1.5));
+    frame.Set(Key(NODE3, "out_sig"), PortValue::Signal());
 
     EXPECT_EQ(frame.Size(), 4u);
 
-    EXPECT_TRUE(frame.Find(Key(kNode1, "out_int"))->IsInt());
-    EXPECT_TRUE(frame.Find(Key(kNode1, "out_str"))->IsString());
-    EXPECT_TRUE(frame.Find(Key(kNode2, "out_flt"))->IsFloat());
-    EXPECT_TRUE(frame.Find(Key(kNode3, "out_sig"))->IsSignal());
+    EXPECT_TRUE(frame.Find(Key(NODE1, "out_int"))->IsInt());
+    EXPECT_TRUE(frame.Find(Key(NODE1, "out_str"))->IsString());
+    EXPECT_TRUE(frame.Find(Key(NODE2, "out_flt"))->IsFloat());
+    EXPECT_TRUE(frame.Find(Key(NODE3, "out_sig"))->IsSignal());
 }
 
 // ===========================================================================
@@ -311,8 +311,8 @@ TEST(PortFrameTest, IterateEmpty)
 TEST(PortFrameTest, IterateNonEmpty)
 {
     PortFrame frame;
-    frame.Set(Key(kNode1, "a"), PortValue(int64_t{1}));
-    frame.Set(Key(kNode2, "b"), PortValue(int64_t{2}));
+    frame.Set(Key(NODE1, "a"), PortValue(int64_t{1}));
+    frame.Set(Key(NODE2, "b"), PortValue(int64_t{2}));
 
     std::size_t count = 0;
     for (const auto& [key, value] : frame)
@@ -332,34 +332,34 @@ TEST(PortFrameTest, AllValueTypes)
 {
     PortFrame frame;
 
-    frame.Set(Key(kNode1, "v_null"), PortValue());
-    frame.Set(Key(kNode1, "v_int"), PortValue(int64_t{-100}));
-    frame.Set(Key(kNode1, "v_float"), PortValue(2.718));
-    frame.Set(Key(kNode1, "v_string"), PortValue(std::string("test")));
-    frame.Set(Key(kNode1, "v_bool"), PortValue(true));
+    frame.Set(Key(NODE1, "v_null"), PortValue());
+    frame.Set(Key(NODE1, "v_int"), PortValue(int64_t{-100}));
+    frame.Set(Key(NODE1, "v_float"), PortValue(2.718));
+    frame.Set(Key(NODE1, "v_string"), PortValue(std::string("test")));
+    frame.Set(Key(NODE1, "v_bool"), PortValue(true));
     frame.Set(
-        Key(kNode1, "v_base"),
+        Key(NODE1, "v_base"),
         PortValue(BaseHandle{DAS::DasPtr<IDasBase>{}}));
     frame.Set(
-        Key(kNode1, "v_comp"),
+        Key(NODE1, "v_comp"),
         PortValue(ComponentHandle{DAS::DasPtr<IDasBase>{}}));
-    frame.Set(Key(kNode1, "v_image"), PortValue(ImageData{{0xAA, 0xBB}}));
-    frame.Set(Key(kNode1, "v_json"), PortValue(JsonData{yyjson::read("[]")}));
-    frame.Set(Key(kNode1, "v_signal"), PortValue::Signal());
+    frame.Set(Key(NODE1, "v_image"), PortValue(ImageData{{0xAA, 0xBB}}));
+    frame.Set(Key(NODE1, "v_json"), PortValue(JsonData{yyjson::read("[]")}));
+    frame.Set(Key(NODE1, "v_signal"), PortValue::Signal());
 
     EXPECT_EQ(frame.Size(), 10u);
 
-    EXPECT_TRUE(frame.Find(Key(kNode1, "v_null"))->IsNull());
-    EXPECT_EQ(*frame.Find(Key(kNode1, "v_int"))->AsInt(), -100);
-    EXPECT_DOUBLE_EQ(*frame.Find(Key(kNode1, "v_float"))->AsFloat(), 2.718);
-    EXPECT_EQ(*frame.Find(Key(kNode1, "v_string"))->AsString(), "test");
-    EXPECT_TRUE(*frame.Find(Key(kNode1, "v_bool"))->AsBool());
-    EXPECT_TRUE(frame.Find(Key(kNode1, "v_base"))->IsBase());
-    EXPECT_TRUE(frame.Find(Key(kNode1, "v_comp"))->IsComponent());
-    ASSERT_NE(frame.Find(Key(kNode1, "v_image"))->AsImage(), nullptr);
-    EXPECT_EQ(frame.Find(Key(kNode1, "v_image"))->AsImage()->bytes.size(), 2u);
-    EXPECT_TRUE(frame.Find(Key(kNode1, "v_json"))->IsJson());
-    EXPECT_TRUE(frame.Find(Key(kNode1, "v_signal"))->IsSignal());
+    EXPECT_TRUE(frame.Find(Key(NODE1, "v_null"))->IsNull());
+    EXPECT_EQ(*frame.Find(Key(NODE1, "v_int"))->AsInt(), -100);
+    EXPECT_DOUBLE_EQ(*frame.Find(Key(NODE1, "v_float"))->AsFloat(), 2.718);
+    EXPECT_EQ(*frame.Find(Key(NODE1, "v_string"))->AsString(), "test");
+    EXPECT_TRUE(*frame.Find(Key(NODE1, "v_bool"))->AsBool());
+    EXPECT_TRUE(frame.Find(Key(NODE1, "v_base"))->IsBase());
+    EXPECT_TRUE(frame.Find(Key(NODE1, "v_comp"))->IsComponent());
+    ASSERT_NE(frame.Find(Key(NODE1, "v_image"))->AsImage(), nullptr);
+    EXPECT_EQ(frame.Find(Key(NODE1, "v_image"))->AsImage()->bytes.size(), 2u);
+    EXPECT_TRUE(frame.Find(Key(NODE1, "v_json"))->IsJson());
+    EXPECT_TRUE(frame.Find(Key(NODE1, "v_signal"))->IsSignal());
 }
 
 // ===========================================================================
