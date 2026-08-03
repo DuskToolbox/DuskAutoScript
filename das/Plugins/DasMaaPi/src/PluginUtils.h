@@ -36,13 +36,16 @@ namespace Plugins::DasMaaPi
 
     // project_document=false 时跳过 document 投影（uiEvent 等 UI 事件响应不带
     // document，避免无谓 catalog 解析 + 投影；前端据此分流——有 document 重建，
-    // 无则只更新 revision）。pending_update 同 BuildDocument。
+    // 无则只更新 revision）。pending_update 同 BuildDocument。command_result
+    // 非空时向 envelope 追加可选 commandResult={commandId, data}（通用业务结果
+    // 回传机制，checkUpdate 用它返回 progress_key；无业务结果的命令不带）。
     yyjson::value BuildApplyResult(
         const AcceptedSettingsDto&         settings,
         int64_t                            revision,
         std::vector<PiDiagnosticDto>       diagnostics,
         bool                               project_document = true,
-        const std::optional<PiUpdateInfo>* pending_update = nullptr);
+        const std::optional<PiUpdateInfo>* pending_update = nullptr,
+        const yyjson::value*               command_result = nullptr);
 
     // Port derivation utilities (D-05/D-06/D-07)
 

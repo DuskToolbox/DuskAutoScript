@@ -85,7 +85,8 @@ namespace Plugins::DasMaaPi
         int64_t                            revision,
         std::vector<PiDiagnosticDto>       diagnostics,
         bool                               project_document,
-        const std::optional<PiUpdateInfo>* pending_update)
+        const std::optional<PiUpdateInfo>* pending_update,
+        const yyjson::value*               command_result)
     {
         // project_document=false（uiEvent 等 UI 事件）时跳过 catalog 解析 +
         // document 投影，省下 TryParseCatalog 的文件 IO + 解析开销。
@@ -112,6 +113,14 @@ namespace Plugins::DasMaaPi
                 revision,
                 nullptr,
                 pending_update);
+        }
+
+        // 可选 commandResult（严格 {commandId, data}）：无业务结果的命令不带；
+        // 畸形判定由 Core 验证器 ValidateAuthoringApplyResult 负责。
+        if (command_result != nullptr)
+        {
+            (*obj)[std::string_view("commandResult")] =
+                Das::Utils::CloneYyjsonValue(*command_result);
         }
 
         yyjson::value diagnostics_json(Das::Utils::MakeYyjsonArray());

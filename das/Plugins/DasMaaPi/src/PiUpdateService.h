@@ -16,7 +16,7 @@
 
 namespace Das::Plugins::DasMaaPi
 {
-    // 版本检查 / 下载结果（D-89-05）。download_url / sha256 仅在来源返回
+    // 版本检查 / 下载结果。download_url / sha256 仅在来源返回
     // 有效下载信息时填充；error_code 携带 MirrorChyan 业务错误码（code!=0
     // 但 data.version_name 存在时按 MXU 语义返回部分信息）。
     struct PiUpdateInfo
@@ -27,6 +27,10 @@ namespace Das::Plugins::DasMaaPi
         std::string                download_url;
         std::optional<std::string> sha256;
         std::optional<int64_t>     error_code;
+        // checkUpdate 成功后生成的随机不可枚举 SSE 订阅 key（前端经
+        // commandResult.data.progressKey 拿到，applyUpdate 时用同一 key 订阅
+        // 进度流）。不投影 document。
+        std::string progress_key;
     };
 
     // 更新流程阶段。

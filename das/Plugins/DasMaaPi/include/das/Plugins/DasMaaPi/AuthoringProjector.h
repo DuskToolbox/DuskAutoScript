@@ -5,6 +5,11 @@
 
 #include <optional>
 
+namespace Das::ExportInterface
+{
+    struct IDasProgressService;
+}
+
 namespace Das::Plugins::DasMaaPi
 {
     // D-89-03: 更新检查暂态（checkUpdate 结果 + applyUpdate 输入）。跨
@@ -82,13 +87,16 @@ namespace Das::Plugins::DasMaaPi
     // 未知 commandId 返回 false 并 emit error 诊断（DAS_E_NOT_FOUND）。
     // pending_update 为空指针时 checkUpdate/applyUpdate 拒绝（需 session
     // 暂态）。 http_seam 为空时构造 BeastHttpClient（生产）；测试注入
-    // FakePiHttpClient。
+    // FakePiHttpClient。progress_service_seam 为空时 applyUpdate 路径经
+    // GetCurrentIpcContext Resolve 主进程 service（测试注入 fake）。
     bool ApplyInvokeCommandChange(
-        AcceptedSettingsDto&          settings,
-        const yyjson::value&          payload,
-        std::vector<PiDiagnosticDto>& diagnostics,
-        std::optional<PiUpdateInfo>*  pending_update = nullptr,
-        PiHttpClient*                 http_seam = nullptr);
+        AcceptedSettingsDto&                       settings,
+        const yyjson::value&                       payload,
+        std::vector<PiDiagnosticDto>&              diagnostics,
+        std::optional<PiUpdateInfo>*               pending_update = nullptr,
+        PiHttpClient*                              http_seam = nullptr,
+        Das::ExportInterface::IDasProgressService* progress_service_seam =
+            nullptr);
 
     // D-84-29: convertView 在 MaaPI 一律拒绝（MaaPI 只支持 formSequence）。
     // payload 严格 {targetViewKind}；返回 false 并 emit error 诊断。

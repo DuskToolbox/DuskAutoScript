@@ -1,5 +1,6 @@
 #include <das/Plugins/DasMaaPi/AuthoringProjector.h>
 
+#include "DasProgressReporter.h"
 #include "MaaDynamicSymbols.h"
 #include "PiHttpClient.h"
 #include "PiUpdateService.h"
@@ -8,6 +9,7 @@
 #include <MaaFramework/MaaAPI.h>
 #endif
 
+#include <das/Core/IPC/CurrentIpcContextScope.h>
 #include <das/DasApi.h>
 #include <das/Plugins/DasMaaPi/MaaPiErrorCodes.h>
 #include <das/Utils/DasJsonCore.h>
@@ -15,12 +17,16 @@
 #include <algorithm>
 #include <atomic>
 #include <cctype>
+#include <chrono>
 #include <filesystem>
 #include <map>
 #include <memory>
 #include <optional>
+#include <random>
 #include <set>
+#include <sstream>
 #include <string_view>
+#include <utility>
 
 namespace Das::Plugins::DasMaaPi
 {
@@ -4401,6 +4407,27 @@ namespace Das::Plugins::DasMaaPi
             .parent_path();
     }
 
+    // 随机不可枚举 SSE 订阅 key：时间戳前缀 + mt19937 随机十六进制后缀
+    // （std::random_device 播种）。checkUpdate 成功响应时创建，前端经
+    // commandResult.data.progressKey 拿到后拼 SSE URL 订阅；applyUpdate 用
+    // 同一 key 上报进度。
+    std::string GenerateProgressKey()
+    {
+        const auto now =
+            std::chrono::steady_clock::now().time_since_epoch().count();
+        std::random_device                 rd;
+        std::mt19937                       gen(rd());
+        std::uniform_int_distribution<int> dist(0, 15);
+        static constexpr char              kHex[] = "0123456789abcdef";
+        std::ostringstream                 oss;
+        oss << std::hex << now;
+        for (int i = 0; i < 24; ++i)
+        {
+            oss << kHex[dist(gen)];
+        }
+        return oss.str();
+    }
+
     // D-89-04: checkUpdate dispatch。调 PiUpdateService::CheckUpdate（读
     // interface.json 顶层 github / mirrorchyan_rid + PiSemver 比较），成功把
     // PiUpdateInfo 暂存 pending_update（commands 投影据此驱动 applyUpdate
@@ -4457,6 +4484,9 @@ namespace Das::Plugins::DasMaaPi
                 "checkUpdate");
             return false;
         }
+        // 生成随机不可枚举 SSE 订阅 key（经 Apply 响应 commandResult 返回，
+        // 不投影 document）。
+        info.progress_key = GenerateProgressKey();
         *pending_update = std::move(info);
         return true;
     }
@@ -4466,10 +4496,11 @@ namespace Das::Plugins::DasMaaPi
     // （下载→解压→备份→原子替换→resource.hash 校验）。成功清 pending（按钮回
     // disabled）；失败保留 pending（用户可重试）+ 错误详情。
     bool ApplyApplyUpdateCommand(
-        AcceptedSettingsDto&          settings,
-        std::vector<PiDiagnosticDto>& diagnostics,
-        std::optional<PiUpdateInfo>*  pending_update,
-        PiHttpClient*                 http_seam)
+        AcceptedSettingsDto&                       settings,
+        std::vector<PiDiagnosticDto>&              diagnostics,
+        std::optional<PiUpdateInfo>*               pending_update,
+        PiHttpClient*                              http_seam,
+        Das::ExportInterface::IDasProgressService* progress_service_seam)
     {
         if (pending_update == nullptr || !pending_update->has_value())
         {
@@ -4504,7 +4535,57 @@ namespace Das::Plugins::DasMaaPi
                 "adapter.interfacePath");
             return false;
         }
-        auto       http = ResolveHttp(http_seam);
+        auto http = ResolveHttp(http_seam);
+
+        // 进度上报：seam（测试注入）优先，生产经 GetCurrentIpcContext
+        // Resolve 主进程 IDasProgressService。GetCurrentIpcContext 为空 /
+        // resolve 失败 / Start 失败 → 降级纯本地更新（不报进度），日志警告。
+        DasPtr<Das::ExportInterface::IDasProgressService> progress_service;
+        if (progress_service_seam != nullptr)
+        {
+            progress_service =
+                DasPtr<Das::ExportInterface::IDasProgressService>(
+                    progress_service_seam);
+        }
+        else if (
+            auto* ctx = Das::Core::IPC::GetCurrentIpcContext(); ctx != nullptr)
+        {
+            DasPtr<IDasBase> base;
+            const auto       rc = ctx->ResolveMainProcessInterfaceByName(
+                "IDasProgressService",
+                base.Put());
+            if (DAS::IsOk(rc) && base)
+            {
+                (void)base.As(progress_service);
+            }
+        }
+        if (!progress_service)
+        {
+            DAS_LOG_WARNING(
+                "ApplyUpdate: progress service unavailable, degrade to local "
+                "update");
+        }
+
+        // 更新期间真实经 IPC 上报字段增量（成对 AddCallback/RemoveCallback）。
+        std::unique_ptr<DasProgressReporter> reporter;
+        if (progress_service && pending_update->has_value()
+            && !(*pending_update)->progress_key.empty())
+        {
+            reporter = std::make_unique<DasProgressReporter>(
+                (*pending_update)->progress_key,
+                progress_service);
+            if (!reporter->Start())
+            {
+                reporter.reset();
+            }
+        }
+        ProgressReporter progress_cb;
+        if (reporter)
+        {
+            progress_cb = [&reporter](const UpdateProgress& p)
+            { reporter->Report(p); };
+        }
+
         const auto result = PiUpdateService::ApplyUpdate(
             *pi_dir,
             info,
@@ -4512,7 +4593,13 @@ namespace Das::Plugins::DasMaaPi
             settings.adapter.proxy_url.value_or(""),
             settings.adapter.mirrorchyan_cdk.value_or(""),
             /*boundary=*/nullptr,
-            /*progress_reporter=*/{});
+            progress_cb);
+
+        if (reporter)
+        {
+            reporter->Stop();
+        }
+
         if (IsFailed(result))
         {
             // 失败保留 pending_update_（用户可重试）+ 携带错误详情。
@@ -4533,11 +4620,12 @@ namespace Das::Plugins::DasMaaPi
     }
 
     bool ApplyInvokeCommandChange(
-        AcceptedSettingsDto&          settings,
-        const yyjson::value&          payload,
-        std::vector<PiDiagnosticDto>& diagnostics,
-        std::optional<PiUpdateInfo>*  pending_update,
-        PiHttpClient*                 http_seam)
+        AcceptedSettingsDto&                       settings,
+        const yyjson::value&                       payload,
+        std::vector<PiDiagnosticDto>&              diagnostics,
+        std::optional<PiUpdateInfo>*               pending_update,
+        PiHttpClient*                              http_seam,
+        Das::ExportInterface::IDasProgressService* progress_service_seam)
     {
         if (!OnlyKeysExact(
                 payload,
@@ -4583,7 +4671,8 @@ namespace Das::Plugins::DasMaaPi
                 settings,
                 diagnostics,
                 pending_update,
-                http_seam);
+                http_seam,
+                progress_service_seam);
         }
         EmitDiagnostic(
             diagnostics,

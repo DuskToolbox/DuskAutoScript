@@ -13,6 +13,7 @@
 #include <das/Plugins/DasMaaPi/PiCatalog.h>
 #include <das/Utils/DasJsonCore.h>
 #include <das/_autogen/idl/abi/IDasTaskAuthoring.h>
+#include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasProgressService.Implements.hpp>
 #include <gtest/gtest.h>
 
 // D-89-03: 会话级直接测试（不经 IPC）——MaapiAuthoringSession 是 final 具体类，
@@ -53,13 +54,14 @@ namespace Das::Plugins::DasMaaPi
 
     // D-84-07: 暴露 BuildApplyResult 给 session-level 测试做严格 envelope
     // 校验。pending_update（D-89-03）供 commands 投影驱动 applyUpdate
-    // disabled。
+    // disabled。command_result 可选业务结果回传（checkUpdate → progressKey）。
     yyjson::value BuildApplyResult(
         const AcceptedSettingsDto&         settings,
         int64_t                            revision,
         std::vector<PiDiagnosticDto>       diagnostics,
         bool                               project_document = true,
-        const std::optional<PiUpdateInfo>* pending_update = nullptr);
+        const std::optional<PiUpdateInfo>* pending_update = nullptr,
+        const yyjson::value*               command_result = nullptr);
 } // namespace Das::Plugins::DasMaaPi
 
 namespace
@@ -7137,6 +7139,73 @@ namespace
         ss << file.rdbuf();
         return ss.str();
     }
+
+    // 测试缝：本地 IDasProgressService 实现。记录 AddCallback / RemoveCallback
+    // / Report 收到的 entry + 可读回字段（无需真 IPC）。
+    class FakeProgressService final
+        : public Das::ExportInterface::DasProgressServiceImplBase<
+              FakeProgressService>
+    {
+    public:
+        int                                                add_count = 0;
+        int                                                remove_count = 0;
+        DasPtr<Das::ExportInterface::IDasProgressCallback> callback;
+        std::vector<DasPtr<Das::ExportInterface::IDasProgressUpdate>> entries;
+
+        DasResult AddCallback(
+            Das::ExportInterface::IDasProgressCallback* cb) override
+        {
+            callback = cb;
+            ++add_count;
+            return DAS_S_OK;
+        }
+
+        DasResult RemoveCallback(
+            Das::ExportInterface::IDasProgressCallback* cb) override
+        {
+            if (cb != nullptr && cb == callback.Get())
+            {
+                callback.Reset();
+            }
+            ++remove_count;
+            return DAS_S_OK;
+        }
+
+        DasResult Report(
+            Das::ExportInterface::IDasProgressUpdate* entry) override
+        {
+            entries.emplace_back(entry);
+            return DAS_S_OK;
+        }
+    };
+
+    // Apply 响应 envelope 的可选 commandResult（checkUpdate 成功时携带）。
+    std::optional<yyjson::value> CommandResultOf(const yyjson::value& result)
+    {
+        auto obj = result.as_object();
+        if (!obj || !obj->contains(std::string_view("commandResult")))
+        {
+            return std::nullopt;
+        }
+        return Das::Utils::CloneYyjsonValue(
+            (*obj)[std::string_view("commandResult")]);
+    }
+
+    // entry 的路由 key。
+    std::string EntryKey(Das::ExportInterface::IDasProgressUpdate* entry)
+    {
+        DasPtr<IDasReadOnlyString> key;
+        if (DAS::IsFailed(entry->GetKey(key.Put())) || !key)
+        {
+            return {};
+        }
+        const char* raw = nullptr;
+        if (DAS::IsFailed(key->GetUtf8(&raw)) || raw == nullptr)
+        {
+            return {};
+        }
+        return std::string(raw);
+    }
 } // namespace
 
 // D-89-04 端到端（Tracer 3）：checkUpdate 经 invokeCommand 分派 → 调
@@ -7246,6 +7315,124 @@ TEST(MaapiUpdateCommandTest, InvokeCommandCheckUpdateFailureEmitsError)
     EXPECT_GE(CountDiagnosticsBySeverity(result, "error"), 1u);
     EXPECT_EQ(DocumentRevisionFromApplyResult(result), 0);
     EXPECT_FALSE(session.PendingUpdate().has_value());
+}
+
+// checkUpdate 成功后 Apply 响应 envelope 携带 commandResult={commandId,
+// data:{progressKey}}（SSE 订阅 key，随机不可枚举）；无业务结果的命令
+// （newPreset）不带 commandResult。
+TEST(
+    MaapiUpdateCommandTest,
+    InvokeCommandCheckUpdateReturnsProgressKeyInCommandResult)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    TempUpdateProject project;
+    project.WriteInterface(
+        MakeUpdateInterface("1.0.0", "https://github.com/owner/repo"));
+
+    FakeUpdateHttpClient http;
+    http.AddRoute(
+        "/repos/owner/repo/releases/latest",
+        UpdateGithubRelease("v1.2.0"));
+
+    MaapiAuthoringSession session(MakeUpdateSettings(project.Dir()));
+    session.SetHttpClientForTest(&http);
+
+    DasPtr<Das::ExportInterface::IDasJson> result_json;
+    auto                                   change = ParseDasJson(
+        "{\"baseRevision\":0,\"kind\":\"invokeCommand\","
+        "\"payload\":{\"commandId\":\"checkUpdate\"}}");
+    ASSERT_EQ(session.ApplyChange(change.Get(), result_json.Put()), DAS_S_OK);
+    auto result = ReadJsonInterface(result_json.Get());
+
+    auto cr = CommandResultOf(result);
+    ASSERT_TRUE(cr.has_value());
+    auto cr_obj = cr->as_object();
+    ASSERT_TRUE(cr_obj.has_value());
+    EXPECT_EQ(
+        std::string(
+            (*cr_obj)[std::string_view("commandId")].as_string().value_or("")),
+        "checkUpdate");
+    auto data_obj = (*cr_obj)[std::string_view("data")].as_object();
+    ASSERT_TRUE(data_obj.has_value());
+    const std::string progress_key = std::string(
+        (*data_obj)[std::string_view("progressKey")].as_string().value_or(""));
+    EXPECT_FALSE(progress_key.empty());
+    // 与 pending_update 中同一 key（applyUpdate 用同一 key 订阅进度流）。
+    ASSERT_TRUE(session.PendingUpdate().has_value());
+    EXPECT_EQ(session.PendingUpdate()->progress_key, progress_key);
+
+    // 其它命令（newPreset）不带 commandResult。
+    DasPtr<Das::ExportInterface::IDasJson> r2_json;
+    auto                                   c2 = ParseDasJson(
+        "{\"baseRevision\":1,\"kind\":\"invokeCommand\","
+        "\"payload\":{\"commandId\":\"newPreset\"}}");
+    ASSERT_EQ(session.ApplyChange(c2.Get(), r2_json.Put()), DAS_S_OK);
+    auto r2 = ReadJsonInterface(r2_json.Get());
+    EXPECT_FALSE(CommandResultOf(r2).has_value());
+}
+
+// applyUpdate 期间经进度 service 上报字段增量：AddCallback → Report（entry key
+// == checkUpdate 返回的 progress_key）→ RemoveCallback 成对（proxy 释放）。
+TEST(MaapiUpdateCommandTest, ApplyUpdateReportsProgressWithCheckUpdateKey)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    TempUpdateProject project;
+    project.WriteInterface(
+        MakeUpdateInterface("1.0.0", "https://github.com/owner/repo"));
+
+    const std::string new_interface =
+        MakeUpdateInterface("1.2.0", "https://github.com/owner/repo");
+    FakeUpdateHttpClient http;
+    http.AddRoute(
+        "/repos/owner/repo/releases/latest",
+        UpdateGithubRelease("v1.2.0"));
+    http.AddRoute(
+        "/releases/download/v1.2.0/",
+        BuildStoredZip({{"interface.json", new_interface}}),
+        200);
+
+    MaapiAuthoringSession session(MakeUpdateSettings(project.Dir()));
+    session.SetHttpClientForTest(&http);
+
+    DasPtr<Das::ExportInterface::IDasProgressService> service =
+        FakeProgressService::Make();
+    auto* fake = static_cast<FakeProgressService*>(service.Get());
+    session.SetProgressServiceForTest(service.Get());
+
+    // checkUpdate → progress_key（commandResult 返回）。
+    DasPtr<Das::ExportInterface::IDasJson> r1_json;
+    auto                                   c1 = ParseDasJson(
+        "{\"baseRevision\":0,\"kind\":\"invokeCommand\","
+        "\"payload\":{\"commandId\":\"checkUpdate\"}}");
+    ASSERT_EQ(session.ApplyChange(c1.Get(), r1_json.Put()), DAS_S_OK);
+    auto r1 = ReadJsonInterface(r1_json.Get());
+    auto cr = CommandResultOf(r1);
+    ASSERT_TRUE(cr.has_value());
+    auto data_obj =
+        cr->as_object().value()[std::string_view("data")].as_object();
+    ASSERT_TRUE(data_obj.has_value());
+    const std::string progress_key = std::string(
+        (*data_obj)[std::string_view("progressKey")].as_string().value_or(""));
+    EXPECT_FALSE(progress_key.empty());
+
+    // applyUpdate → 进度上报（AddCallback + Report + RemoveCallback 成对）。
+    DasPtr<Das::ExportInterface::IDasJson> r2_json;
+    auto                                   c2 = ParseDasJson(
+        "{\"baseRevision\":1,\"kind\":\"invokeCommand\","
+        "\"payload\":{\"commandId\":\"applyUpdate\"}}");
+    ASSERT_EQ(session.ApplyChange(c2.Get(), r2_json.Put()), DAS_S_OK);
+    auto r2 = ReadJsonInterface(r2_json.Get());
+    EXPECT_EQ(CountDiagnosticsBySeverity(r2, "error"), 0u);
+
+    EXPECT_EQ(fake->add_count, 1);
+    EXPECT_EQ(fake->remove_count, 1);
+    EXPECT_FALSE(fake->entries.empty());
+    for (const auto& entry : fake->entries)
+    {
+        EXPECT_EQ(EntryKey(entry.Get()), progress_key);
+    }
 }
 
 // D-89-05（Tracer 3）：无 pending（未先检查/已清）时 applyUpdate 拒绝 → error

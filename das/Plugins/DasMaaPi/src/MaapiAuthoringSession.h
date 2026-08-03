@@ -6,6 +6,11 @@
 #include <das/Plugins/DasMaaPi/AcceptedSettings.h>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasTaskAuthoringSession.Implements.hpp>
 
+namespace Das::ExportInterface
+{
+    struct IDasProgressService;
+}
+
 DAS_DEFINE_CLASS_IN_NAMESPACE(
     Das::Plugins::DasMaaPi,
     MaapiAuthoringSession,
@@ -61,11 +66,22 @@ namespace Plugins::DasMaaPi
         // FakePiHttpClient，可无 IPC 验证 checkUpdate/applyUpdate 全链路。
         void SetHttpClientForTest(PiHttpClient* http) { test_http_ = http; }
 
+        // 测试缝：注入进度 service（生产为空指针时 applyUpdate 路径经
+        // GetCurrentIpcContext Resolve 主进程 service）。测试传本地 fake
+        // 即可无 IPC 驱动 applyUpdate 期间的进度上报链路。
+        void SetProgressServiceForTest(
+            Das::ExportInterface::IDasProgressService* svc)
+        {
+            progress_service_seam_ = svc;
+        }
+
     private:
-        AcceptedSettingsDto         settings_{};
-        int64_t                     revision_ = 0;
-        std::optional<PiUpdateInfo> pending_update_;
-        PiHttpClient*               test_http_ = nullptr;
+        AcceptedSettingsDto                        settings_{};
+        int64_t                                    revision_ = 0;
+        std::optional<PiUpdateInfo>                pending_update_;
+        PiHttpClient*                              test_http_ = nullptr;
+        Das::ExportInterface::IDasProgressService* progress_service_seam_ =
+            nullptr;
     };
 } // namespace Plugins::DasMaaPi
 DAS_NS_END

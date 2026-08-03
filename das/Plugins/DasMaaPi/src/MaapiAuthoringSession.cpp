@@ -19,13 +19,15 @@ namespace Plugins::DasMaaPi
         // 表示拒绝 （调用方丢弃 candidate、不递增 revision）。无论
         // true/false，均可能 向 diagnostics 追加 info/warning/error 条目。
         bool DispatchStrictChange(
-            const std::string&              kind,
-            const yyjson::value&            payload,
-            AcceptedSettingsDto&            candidate,
-            const std::optional<PiCatalog>& catalog,
-            std::vector<PiDiagnosticDto>&   diagnostics,
-            std::optional<PiUpdateInfo>*    pending_update = nullptr,
-            PiHttpClient*                   http_seam = nullptr)
+            const std::string&                         kind,
+            const yyjson::value&                       payload,
+            AcceptedSettingsDto&                       candidate,
+            const std::optional<PiCatalog>&            catalog,
+            std::vector<PiDiagnosticDto>&              diagnostics,
+            std::optional<PiUpdateInfo>*               pending_update = nullptr,
+            PiHttpClient*                              http_seam = nullptr,
+            Das::ExportInterface::IDasProgressService* progress_service_seam =
+                nullptr)
         {
             const PiCatalog* catalog_ptr =
                 catalog.has_value() ? &*catalog : nullptr;
@@ -66,7 +68,8 @@ namespace Plugins::DasMaaPi
                     payload,
                     diagnostics,
                     pending_update,
-                    http_seam);
+                    http_seam,
+                    progress_service_seam);
             }
             if (kind == "convertView")
             {
@@ -364,6 +367,21 @@ namespace Plugins::DasMaaPi
         // 3) Dispatch。成功时把 candidate 写回 settings_ 并 ++revision_。
         //    失败时 settings_ 原样保留，revision_ 不变。
         int64_t result_revision = revision_;
+        // checkUpdate 成功时携带 commandResult={commandId, data:{progressKey}}
+        // 的业务结果（其它命令不带）。
+        std::string invoked_command_id;
+        if (kind == "invokeCommand")
+        {
+            if (auto payload_obj = payload.as_object())
+            {
+                if (auto cid = (*payload_obj)[std::string_view("commandId")]
+                                   .as_string())
+                {
+                    invoked_command_id = std::string(*cid);
+                }
+            }
+        }
+        std::optional<yyjson::value> command_result;
         if (request_ok && revision_ok)
         {
             const auto          path_before = settings_.adapter.interface_path;
@@ -375,7 +393,8 @@ namespace Plugins::DasMaaPi
                     catalog,
                     diagnostics,
                     &pending_update_,
-                    test_http_))
+                    test_http_,
+                    progress_service_seam_))
             {
                 // interfacePath 变更会改变 catalog；新路径必须可解析，否则保留
                 // 失败语义——不落盘、不 ++revision，把解析诊断回传前端（远端保持
@@ -403,6 +422,24 @@ namespace Plugins::DasMaaPi
                     ++revision_;
                     result_revision = revision_;
                 }
+                // checkUpdate 成功 → commandResult 携带 progress_key（SSE
+                // 订阅 key，随机不可枚举；经 commandResult 返回，不投影
+                // document）。
+                if (accept && invoked_command_id == "checkUpdate"
+                    && pending_update_.has_value()
+                    && !pending_update_->progress_key.empty())
+                {
+                    yyjson::value cr(Das::Utils::MakeYyjsonObject());
+                    auto          cr_obj = cr.as_object();
+                    (*cr_obj)[std::string_view("commandId")] =
+                        JsonString("checkUpdate");
+                    yyjson::value data(Das::Utils::MakeYyjsonObject());
+                    auto          data_obj = data.as_object();
+                    (*data_obj)[std::string_view("progressKey")] =
+                        JsonString(pending_update_->progress_key);
+                    (*cr_obj)[std::string_view("data")] = std::move(data);
+                    command_result = std::move(cr);
+                }
                 // WR-06: interface_path 变更后按新 settings_ 重新解析 catalog，
                 // 否则 InjectPortDerivations 沿用旧路径解析的 catalog（旧路径
                 // 失效时为 null 直接跳过），返回的 acceptedProperties 的
@@ -419,13 +456,15 @@ namespace Plugins::DasMaaPi
         // 4) 构建严格 Apply envelope {acceptedProperties, document,
         //    diagnostics}。失败请求也返回 envelope，但 document.revision
         //    保持原 revision_（无递增），acceptedProperties 反映未变的
-        //    settings_。diagnostics 内含 error severity 条目。
+        //    settings_。diagnostics 内含 error severity 条目。checkUpdate
+        //    成功时附带可选 commandResult（无业务结果的命令不带）。
         auto result_json = BuildApplyResult(
             settings_,
             result_revision,
             std::move(diagnostics),
             /*project_document=*/kind != "uiEvent",
-            &pending_update_);
+            &pending_update_,
+            command_result ? &*command_result : nullptr);
 
         // 5) 注入 portDefinitions/portMap 到 acceptedProperties（Provider 私有
         //    运行期派生，不属于 document UI IR）。
