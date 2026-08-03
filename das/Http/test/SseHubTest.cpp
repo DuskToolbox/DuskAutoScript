@@ -84,6 +84,8 @@ namespace
         hub.Unregister(session.get(), "k1");
 
         EXPECT_EQ(hub.SubscriberCount("k1"), 0u);
+        // key-empty 回调经 post 异步执行（不阻塞调用线程），poll 驱动。
+        ioc.poll();
         ASSERT_EQ(fired_keys.size(), 1u);
         EXPECT_EQ(fired_keys[0], "k1");
     }

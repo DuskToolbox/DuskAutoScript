@@ -58,6 +58,9 @@ namespace
             if (session)
             {
                 session->Close();
+                // Close 异步写 chunked 终止块后 ShutdownSocket，pump 驱动完成
+                // （否则 ioc 析构时 async_write 挂起引用已销毁对象）。
+                PumpIo(ioc);
             }
         }
     };

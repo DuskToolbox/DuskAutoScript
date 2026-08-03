@@ -16,6 +16,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <string_view>
 
 namespace Das::Http::Beast
 {
@@ -96,7 +97,9 @@ namespace Das::Http::Beast
         // RAII 兜底：异常路径 / ioc 停止时 keepalive handler 收到
         // operation_aborted 直接返回而不走 Close，析构保证注销 hub，
         // 杜绝 hub 残留 expired weak_ptr（key-empty 永不触发的泄漏面）。
-        ~SseSessionT() override { Close(); }
+        // 同步关（ShutdownSocket）：连接已死，无需异步发终止块，且 async_write
+        // 会引用已析构对象。
+        ~SseSessionT() override { ShutdownSocket(); }
 
         /**
          * @brief 启动会话：写 200 头，完成后注册到 hub + 启动 keep-alive。
@@ -158,7 +161,11 @@ namespace Das::Http::Beast
         const std::string& Key() const noexcept override { return key_; }
 
         /**
-         * @brief 关闭会话（幂等）：取消 keep-alive、关 socket、注销 hub。
+         * @brief 关闭会话（幂等）：发 chunked 终止块后关 socket、注销 hub。
+         *
+         * 先 async_write "0\r\n\r\n" 终止块再 ShutdownSocket：严格 HTTP
+         * 客户端/代理对无终止块的流判为截断响应。连接已断时 async_write
+         * 立即失败，同样走 ShutdownSocket 清理。
          */
         void Close()
         {
@@ -172,6 +179,25 @@ namespace Das::Http::Beast
                 write_queue_.clear();
                 write_in_flight_ = false;
             }
+            auto self = this->shared_from_this();
+            boost::asio::async_write(
+                socket_,
+                boost::asio::buffer(
+                    kSseTerminator.data(),
+                    kSseTerminator.size()),
+                [self](boost::beast::error_code /*ec*/, std::size_t /*n*/)
+                { self->ShutdownSocket(); });
+        }
+
+    private:
+        // chunked 编码终止块（0 长度 chunk 表示流结束）。
+        static constexpr std::string_view kSseTerminator = "0\r\n\r\n";
+
+        /**
+         * @brief 同步关闭 socket + 注销 hub（幂等）。析构路径使用。
+         */
+        void ShutdownSocket()
+        {
             boost::beast::close_socket(socket_);
             keepalive_timer_.cancel();
             if (hub_)
@@ -179,8 +205,6 @@ namespace Das::Http::Beast
                 hub_->Unregister(this, key_);
             }
         }
-
-    private:
         /**
          * @brief 入队一个完整 SSE 帧，若无非在途写则立即开始出队。
          *
