@@ -23,24 +23,24 @@ namespace Plugins::DasMaaPi
         // 字节数格式化为人类可读文本（"12.3 MB"）。1024 进制。
         std::string FormatBytes(std::uint64_t bytes)
         {
-            constexpr double   kKiB = 1024.0;
-            constexpr double   kMiB = 1024.0 * 1024.0;
-            constexpr double   kGiB = 1024.0 * 1024.0 * 1024.0;
+            constexpr double   kBytesPerKiB = 1024.0;
+            constexpr double   kBytesPerMiB = 1024.0 * 1024.0;
+            constexpr double   kBytesPerGiB = 1024.0 * 1024.0 * 1024.0;
             std::ostringstream oss;
-            if (bytes >= static_cast<std::uint64_t>(kGiB))
+            if (bytes >= static_cast<std::uint64_t>(kBytesPerGiB))
             {
-                oss << std::fixed << std::setprecision(1) << (bytes / kGiB)
-                    << " GB";
+                oss << std::fixed << std::setprecision(1)
+                    << (bytes / kBytesPerGiB) << " GB";
             }
-            else if (bytes >= static_cast<std::uint64_t>(kMiB))
+            else if (bytes >= static_cast<std::uint64_t>(kBytesPerMiB))
             {
-                oss << std::fixed << std::setprecision(1) << (bytes / kMiB)
-                    << " MB";
+                oss << std::fixed << std::setprecision(1)
+                    << (bytes / kBytesPerMiB) << " MB";
             }
-            else if (bytes >= static_cast<std::uint64_t>(kKiB))
+            else if (bytes >= static_cast<std::uint64_t>(kBytesPerKiB))
             {
-                oss << std::fixed << std::setprecision(1) << (bytes / kKiB)
-                    << " KB";
+                oss << std::fixed << std::setprecision(1)
+                    << (bytes / kBytesPerKiB) << " KB";
             }
             else
             {

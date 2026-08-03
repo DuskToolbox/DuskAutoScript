@@ -312,7 +312,7 @@ namespace Das::Http::Beast
          */
         static void AppendHexSize(std::string& out, std::size_t n)
         {
-            static constexpr char kHexDigits[] = "0123456789abcdef";
+            static constexpr char kHexChars[] = "0123456789abcdef";
             if (n == 0)
             {
                 out.push_back('0');
@@ -322,7 +322,7 @@ namespace Das::Http::Beast
             char* p = buf + sizeof(buf);
             while (n > 0)
             {
-                *--p = kHexDigits[n & 0xF];
+                *--p = kHexChars[n & 0xF];
                 n >>= 4;
             }
             out.append(p, buf + sizeof(buf));
