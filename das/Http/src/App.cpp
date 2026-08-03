@@ -9,6 +9,7 @@
 
 #include "./AppComponent.hpp"
 #include "./NotificationHub.hpp"
+#include "./SseHub.hpp"
 #include "./beast/Server.hpp"
 #include "./controller/DasImageController.hpp"
 #include "./controller/DasLogController.hpp"
@@ -24,6 +25,7 @@
 
 #include "./service/DasPluginManagerServiceImpl.h"
 #include "./service/DasProfileServiceImpl.h"
+#include "./service/DasProgressServiceImpl.h"
 #include <das/Core/IPC/CurrentIpcContextScope.h>
 #include <das/Core/IPC/HttpIpcServer.h>
 #include <das/Core/IPC/MainProcess/IpcContext.h>
@@ -506,6 +508,50 @@ namespace Das::Http
                 std::make_shared<Das::Http::NotificationHub>(server.IoCtx());
             server.SetHub(hub);
             components.notification_hub = hub;
+
+            // Create SSE hub (per-key SSE 广播，IDasProgressService 传输层)。
+            auto sse_hub = std::make_shared<Das::Http::SseHub>(server.IoCtx());
+            server.SetSseHub(sse_hub);
+
+            // Register IDasProgressService 主进程服务（按名注册）。service
+            // shared_ptr 以 Release 为 deleter 持有 COM 引用，注册表（DOM）
+            // 另持有一份；run_server 结束后注册表持有保活，Shutdown 时释放。
+            Das::Http::DasProgressServiceImpl* progress_raw =
+                new Das::Http::DasProgressServiceImpl(sse_hub);
+            progress_raw->AddRef();
+            std::shared_ptr<Das::Http::DasProgressServiceImpl> progress_service(
+                progress_raw,
+                [](Das::Http::DasProgressServiceImpl* ptr) { ptr->Release(); });
+            {
+                const DAS::Core::IPC::ScopedCurrentIpcContext scope(
+                    static_cast<DAS::Core::IPC::MainProcess::IpcContext*>(
+                        ipc_context.get()));
+                const auto progress_reg = ipc_context->RegisterServiceByName(
+                    progress_raw,
+                    DasIidOf<Das::ExportInterface::IDasProgressService>(),
+                    "IDasProgressService");
+                if (DAS::IsFailed(progress_reg))
+                {
+                    DAS_LOG_ERROR(
+                        DAS_FMT_NS::format(
+                            "Failed to register IDasProgressService. result = "
+                            "{}",
+                            progress_reg)
+                            .c_str());
+                    return progress_reg;
+                }
+            }
+            // key 订阅归零 → service 反向通知（hub 业务中立，只带 key）。
+            sse_hub->SetOnKeyEmpty(
+                [weak_service =
+                     std::weak_ptr<Das::Http::DasProgressServiceImpl>(
+                         progress_service)](const std::string& key)
+                {
+                    if (auto service = weak_service.lock())
+                    {
+                        service->OnKeySubscribersEmpty(key);
+                    }
+                });
 
             // Wire notify callbacks through COM interfaces → WebSocket
             // broadcast Core layer sends {"code","msg","data"}; we inject "api"
