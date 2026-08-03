@@ -3,7 +3,10 @@
 
 #include "Request.hpp"
 #include <cpp_yyjson.hpp>
+#include <das/DasApi.h>
 #include <das/IDasBase.h>
+#include <das/Utils/fmt.h>
+
 #include <functional>
 #include <memory>
 #include <string>
@@ -128,6 +131,9 @@ namespace Das::Http::Beast
         HttpResponse Handle(const HttpRequest& request) const
         {
             std::string target = std::string(request.Target());
+            DAS_LOG_INFO(
+                DAS_FMT_NS::format("[HTTP] {} {}", request.Method(), target)
+                    .c_str());
             if (!target.empty() && target.front() == '/')
             {
                 target = target.substr(1);

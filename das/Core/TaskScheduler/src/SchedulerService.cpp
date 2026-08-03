@@ -556,6 +556,8 @@ namespace Das::Core::TaskScheduler
         yyjson::value accepted_properties;
         yyjson::value document;
         yyjson::value diagnostics;
+        yyjson::value command_result;      // 可选：业务命令结果（如 checkUpdate 的 progress_key）
+        bool          has_command_result = false;
         int64_t       returned_revision = 0;
         std::string   error_kind;
         std::string   error_message;
@@ -596,6 +598,14 @@ namespace Das::Core::TaskScheduler
         auto obj = provider_result.as_object();
         outcome.accepted_properties =
             CloneJsonValue((*obj)[std::string_view("acceptedProperties")]);
+        // 可选 commandResult（业务命令结果，如 checkUpdate 返回的
+        // progress_key）：provider 带则转发到 HTTP 响应。
+        if (obj->contains(std::string_view("commandResult")))
+        {
+            outcome.command_result =
+                CloneJsonValue((*obj)[std::string_view("commandResult")]);
+            outcome.has_command_result = true;
+        }
 
         // document 对短路 kind（uiEvent 等）可选：其响应不带 document（前端
         // 据有无 document 分流）。文档编辑 kind 必须回传 document——有则解析
@@ -2681,6 +2691,11 @@ namespace Das::Core::TaskScheduler
             std::move(pipeline.parsed.document);
         (*result_obj)[std::string_view("diagnostics")] =
             std::move(pipeline.parsed.diagnostics);
+        if (pipeline.parsed.has_command_result)
+        {
+            (*result_obj)[std::string_view("commandResult")] =
+                std::move(pipeline.parsed.command_result);
+        }
         return result;
     }
 
@@ -3915,6 +3930,11 @@ namespace Das::Core::TaskScheduler
             std::move(pipeline.parsed.document);
         (*result_obj)[std::string_view("diagnostics")] =
             std::move(pipeline.parsed.diagnostics);
+        if (pipeline.parsed.has_command_result)
+        {
+            (*result_obj)[std::string_view("commandResult")] =
+                std::move(pipeline.parsed.command_result);
+        }
         return result;
     }
 
