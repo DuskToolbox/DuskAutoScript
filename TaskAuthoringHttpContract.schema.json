@@ -128,6 +128,16 @@
         "payload": { "type": "object" }
       }
     },
+    "CommandResult": {
+      "type": "object",
+      "required": ["commandId", "data"],
+      "additionalProperties": false,
+      "$comment": "D-92-17: invokeCommand 命令业务结果回传，可选（无业务结果的命令不带）；checkUpdate 用它返回 progressKey。",
+      "properties": {
+        "commandId": { "type": "string", "minLength": 1 },
+        "data": { "$ref": "#/$defs/JsonValue" }
+      }
+    },
     "FieldDescriptor": {
       "type": "object",
       "required": ["name", "label", "valueType", "inputType", "value"],
@@ -142,8 +152,8 @@
         },
         "inputType": {
           "type": "integer",
-          "enum": [0, 1, 2, 3, 4, 5, 6],
-          "$comment": "0=plain 1=select 2=multiselect 3=long-input 4=region-select 5=filePath 6=directoryPath."
+          "enum": [0, 1, 2, 3, 4, 5, 6, 7],
+          "$comment": "0=plain 1=select 2=multiselect 3=long-input 4=region-select 5=filePath 6=directoryPath 7=markdown (readonly, release note)."
         },
         "value": { "$ref": "#/$defs/JsonValue" },
         "description": { "type": "string" },
@@ -160,7 +170,20 @@
           "type": "array",
           "items": { "$ref": "#/$defs/CommandDescriptor" }
         }
-      }
+      },
+      "if": {
+        "properties": {
+          "inputType": { "const": 7 }
+        },
+        "required": ["inputType"]
+      },
+      "then": {
+        "properties": {
+          "readonly": { "const": true }
+        },
+        "required": ["readonly"]
+      },
+      "$comment": "D-92-16: inputType==7 (markdown) requires readonly==true (schema side; the C++ validator enforces the same)."
     },
     "FieldLayoutLeaf": {
       "type": "object",
@@ -572,9 +595,10 @@
                 "diagnostics": {
                   "type": "array",
                   "items": { "$ref": "#/$defs/Diagnostic" }
-                }
+                },
+                "commandResult": { "$ref": "#/$defs/CommandResult" }
               },
-              "$comment": "document.revision must equal baseRevision + 1 (checked by the C++ validator)."
+              "$comment": "document.revision must equal baseRevision + 1 (checked by the C++ validator). commandResult is optional (D-92-17); responses without business results omit it."
             }
           }
         }
