@@ -18,6 +18,7 @@ import json
 import os
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -56,7 +57,7 @@ def staged_cpp_files():
     """返回暂存区改动(新增/复制/修改)的 C++ 文件，相对仓库根路径。"""
     out = subprocess.run(
         ['git', 'diff', '--cached', '--name-only', '--diff-filter=ACM'],
-        cwd=ROOT, capture_output=True, text=True, check=True,
+        cwd=ROOT, capture_output=True, text=True, encoding='utf-8', errors='replace', check=True,
     ).stdout
     files = []
     for line in out.splitlines():
@@ -72,7 +73,7 @@ def changed_line_ranges(rel_path):
     """解析 git diff --cached -U0 的 hunk，返回暂存版本(new 侧)的改动行范围 [(start, end)]。"""
     out = subprocess.run(
         ['git', 'diff', '--cached', '-U0', '--', rel_path],
-        cwd=ROOT, capture_output=True, text=True, check=True,
+        cwd=ROOT, capture_output=True, text=True, encoding='utf-8', errors='replace', check=True,
     ).stdout
     ranges = []
     for line in out.splitlines():
@@ -106,7 +107,8 @@ def run_clang_tidy(rel_path, ranges, compile_db):
         '--line-filter=' + build_line_filter(rel_path, ranges),
         abs_path,
     ]
-    proc = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True)
+    proc = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True,
+                          encoding='utf-8', errors='replace')
     violations = []
     for line in (proc.stdout + proc.stderr).splitlines():
         if 'warning: invalid case' in line and 'readability-identifier-naming' in line:
@@ -152,15 +154,21 @@ python tools/check_cpp_naming.py --staged || exit $?
         print('[check_cpp_naming] 无暂存 C++ 改动')
         return 0
 
-    all_violations = 0
-    for rel in files:
+    def check_one(rel, db):
         ranges = changed_line_ranges(rel)
         if not ranges:
-            continue
-        violations = run_clang_tidy(rel, ranges, compile_db)
-        for v in violations:
-            print(v)
-        all_violations += len(violations)
+            return rel, []
+        return rel, run_clang_tidy(rel, ranges, db)
+
+    all_violations = 0
+    # 并行跑 clang-tidy（大提交时显著缩短 hook 耗时）
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        futures = {ex.submit(check_one, rel, compile_db): rel for rel in files}
+        for fut in as_completed(futures):
+            rel, violations = fut.result()
+            for v in violations:
+                print(v)
+            all_violations += len(violations)
 
     if all_violations:
         print(f'[check_cpp_naming] 发现 {all_violations} 处命名违规（仅改动行）: '
