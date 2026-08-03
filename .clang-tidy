@@ -2,7 +2,7 @@
 Checks: >
   readability-braces-around-statements,
   misc-const-correctness,
-  performance-move-const-arg,
+  performance-*,
   readability-const-return-value,
   clang-analyzer-*,
   modernize-*,

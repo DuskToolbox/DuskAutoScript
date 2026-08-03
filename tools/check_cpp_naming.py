@@ -98,12 +98,21 @@ def build_line_filter(rel_path, ranges):
     return json.dumps([{'name': name, 'lines': [[s, e] for s, e in ranges]}])
 
 
+# pre-commit 钩子启用的 clang-tidy checks：命名规范 + 单行语句强制花括号 + 性能 + Modern C++ + 静态分析
+CHECKS = ('-*,readability-identifier-naming,readability-braces-around-statements,'
+          'performance-*,modernize-*,-modernize-use-trailing-return-type,'
+          '-modernize-avoid-c-arrays,-modernize-use-transparent-functors,clang-analyzer-*')
+# 解析时按 check 名前缀匹配违规（仅收集上面启用的检查）
+CHECK_MARKERS = ('readability-identifier-naming', 'readability-braces-around-statements',
+                 'performance-', 'modernize-', 'clang-analyzer-')
+
+
 def run_clang_tidy(rel_path, ranges, compile_db):
     abs_path = str((ROOT / rel_path).resolve())
     cmd = [
         find_clang_tidy(),
         '-p', compile_db,
-        '--checks=-*,readability-identifier-naming',
+        '--checks=' + CHECKS,
         '--line-filter=' + build_line_filter(rel_path, ranges),
         abs_path,
     ]
@@ -111,7 +120,7 @@ def run_clang_tidy(rel_path, ranges, compile_db):
                           encoding='utf-8', errors='replace')
     violations = []
     for line in (proc.stdout + proc.stderr).splitlines():
-        if 'warning: invalid case' in line and 'readability-identifier-naming' in line:
+        if any(m in line for m in CHECK_MARKERS):
             violations.append(line.strip())
     return violations
 
@@ -163,10 +172,15 @@ python tools/check_cpp_naming.py --staged || exit $?
     all_violations = 0
     # 并行跑 clang-tidy（大提交时显著缩短 hook 耗时，worker 数为 CPU 核心数的一半）
     workers = max(1, (os.cpu_count() or 4) // 2)
+    total = len(files)
+    done = 0
     with ThreadPoolExecutor(max_workers=workers) as ex:
         futures = {ex.submit(check_one, rel, compile_db): rel for rel in files}
         for fut in as_completed(futures):
             rel, violations = fut.result()
+            done += 1
+            if total > 1:
+                print(f'[check_cpp_naming] 进度 {done}/{total} 完成 ({rel})', file=sys.stderr)
             for v in violations:
                 print(v)
             all_violations += len(violations)
