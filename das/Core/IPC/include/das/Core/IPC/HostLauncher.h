@@ -319,18 +319,6 @@ private:
     boost::asio::awaitable<DasResult> ConnectToHostAsync();
 
     /**
-     * @brief 异步启动完整流程协程（5 阶段）
-     *
-     * op 参数实际类型为 HandshakeAsyncOperationImpl*（在 .cpp 中定义），
-     * 通过 IDasAsyncHandshakeOperation* 传递以避免头文件暴露实现类。
-     */
-    boost::asio::awaitable<void> RunAsync(
-        IDasAsyncHandshakeOperation*       op,
-        std::shared_ptr<std::atomic<bool>> alive,
-        std::string                        exe_path,
-        uint32_t                           timeout_ms);
-
-    /**
      * @brief 把 transport 清理串行化到 io_context 线程执行
      *
      * 单线程 io_context 保证清理动作与所有 pending handler 按序执行，
@@ -363,7 +351,7 @@ private:
     void StopBodySync();
 
     /**
-     * @brief 从 io_context 线程执行 teardown（RunAsync 失败路径用）
+     * @brief 从 io_context 线程执行 teardown（启动链失败路径用）
      *
      * Stop() 用 co_spawn+use_future 阻塞等 io_context 完成，从 io_context
      * 线程调用会 assert + 死锁。本协程直接 co_await StopBody()（GOODBYE 用

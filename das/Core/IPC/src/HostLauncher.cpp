@@ -7,6 +7,7 @@
 #include <cassert>
 #include <cctype>
 #include <chrono>
+#include <das/Core/IPC/AsioSender.h>
 #include <das/Core/IPC/AsyncIpcTransport.h>
 #include <das/Core/IPC/Config.h>
 #include <das/Core/IPC/Handshake.h>
@@ -24,16 +25,14 @@
 #include <das/Utils/StringUtils.h>
 #include <das/Utils/fmt.h>
 #include <filesystem>
+#include <functional>
 #include <future>
 #include <limits>
 #include <map>
 #include <optional>
 #include <thread>
 
-#include <boost/asio/bind_cancellation_slot.hpp>
-#include <boost/asio/cancellation_signal.hpp>
 #include <boost/asio/co_spawn.hpp>
-#include <boost/asio/detached.hpp>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/post.hpp>
 #include <boost/asio/redirect_error.hpp>
@@ -50,6 +49,11 @@ DAS_IGNORE_BOOST_PROCESS_WARNING
 #include <boost/system/error_code.hpp>
 DAS_DISABLE_WARNING_END
 
+DAS_DISABLE_WARNING_BEGIN
+DAS_IGNORE_STDEXEC_PARAMETERS
+#include <exec/async_scope.hpp>
+DAS_DISABLE_WARNING_END
+
 DAS_CORE_IPC_NS_BEGIN
 
 /**
@@ -62,16 +66,15 @@ struct HostLauncher::Impl
     explicit Impl(boost::asio::io_context& ctx) : io_ctx(ctx) {}
 
     boost::asio::io_context& io_ctx; // 引用，由外部管理生命周期
+    // 跟踪全部异步子任务（StartAsync 握手链 + 成功路径 exit-watcher）。
+    // Stop()/析构时 request_stop + on_empty() 结构化 drain（D-91-06）。
+    exec::async_scope                            scope;
     std::unique_ptr<boost::process::v2::process> process;
     std::optional<AnyTransport>                  async_transport;
     std::unique_ptr<SharedMemoryPool>            pool_;
-    // 用于取消 StartLaunchSequence 中 co_spawn 的 process-exit watcher 协程。
-    // Stop()/TerminateIfRunning() 在 process.reset() 前 emit 信号并 drain
-    // io_context，避免 io_context 线程在 freed handle 上执行 async_wait。
-    std::unique_ptr<boost::asio::cancellation_signal> process_exit_cancel;
     // StartLaunchSequence 用 use_future 拉起的 exit-watcher 协程的 future。
     // Stop() 在 process.reset() 前 wait()，确保 io_context 线程不再引用
-    // process handle，避免 heap-use-after-free。
+    // process handle，避免 heap-use-after-free。Plan 03 迁入 scope 后移除。
     std::future<void>     process_exit_future;
     uint32_t              pid = 0;
     uint16_t              session_id = 0;
@@ -229,6 +232,25 @@ namespace
         // co_await. Cleanup wakes those operations, but backing storage stays
         // owned by HostLauncher until owner teardown or controlled Start reuse.
         transport->Cleanup();
+    }
+
+    std::string DescribeException(std::exception_ptr e)
+    {
+        try
+        {
+            std::rethrow_exception(e);
+        }
+        catch (const std::exception& ex)
+        {
+            // ToString 处理 Windows 异常消息的 GBK -> UTF-8 编码转换（与既有
+            // catch 块的日志用法一致，boost::system::system_error /
+            // std::exception 都经此转换）。
+            return std::string(ToString(ex.what()).string_view());
+        }
+        catch (...)
+        {
+            return "unknown exception";
+        }
     }
 
     DasResult ReadUtf8String(
@@ -859,7 +881,7 @@ boost::asio::awaitable<void> HostLauncher::StopBody()
         // io_context 线程阻塞在其上会死锁。改为 wait_for(0) 轮询 + 短延时
         // co_await 让 io_context 处理已排队的 async_wait completion（TP
         // drain 的等价物），确保 io_context 线程不再引用 process handle 后再
-        // reset（test 1338 的 UAF 防护）。future 无效（RunAsync 失败路径，
+        // reset（test 1338 的 UAF 防护）。future 无效（StartAsync 链失败路径，
         // watcher 未 spawn）或已就绪则立即跳过。
         if (impl_->process_exit_future.valid())
         {
@@ -954,8 +976,8 @@ void HostLauncher::StopBodySync()
 
 boost::asio::awaitable<void> HostLauncher::StopFromIoContext()
 {
-    // RunAsync 失败路径调用：本协程在 io_context 线程上执行（RunAsync 经
-    // StartAsync 的 co_spawn 在 io_context 上运行）。Stop() 用 co_spawn +
+    // 启动链失败路径调用（TeardownThen）：本协程在 io_context 线程上执行
+    // （启动链经 io_context hop 在 io_context 上运行）。Stop() 用 co_spawn +
     // use_future 阻塞等 io_context 完成 GOODBYE / transport 清理 /
     // exit-watcher drain，从 io_context 线程调用会 assert + 死锁。本协程
     // 直接 co_await StopBody()：GOODBYE 用 co_await 发送（不阻塞），transport
@@ -1032,10 +1054,250 @@ DasResult HostLauncher::StartAsync(
     auto               alive = std::make_shared<std::atomic<bool>>(true);
     auto*              op = new HandshakeAsyncOperationImpl(*this, alive);
 
-    boost::asio::co_spawn(
+    // 5 阶段启动链 sender 化（D-91-03 方案 A / D-91-06）。握手 awaitable
+    // 保留协程实现，经 AsioSenderToken 桥（Plan 01）包成 stdexec sender。
+    // let_value 分支（TeardownThen vs 下一阶段）返回同一类型：用
+    // std::function<awaitable<DasResult>()> 类型擦除 awaitable，使两分支的
+    // co_spawn 结果 sender 类型一致（plan 原文"if (IsFailed) return
+    // TeardownThen(r); return AsioSender{...}" 的异类型分支不满足 C++ 单一
+    // 返回类型约束，须类型擦除才能编译）。
+    using PhaseAwaitableFn = std::function<boost::asio::awaitable<DasResult>()>;
+
+    const auto start_time = std::chrono::steady_clock::now();
+
+    const auto remaining_ms = [start_time,
+                               timeout_ms = DEFAULT_TIMEOUT_MS]() -> uint32_t
+    {
+        if (timeout_ms == 0)
+        {
+            return 0;
+        }
+        const auto elapsed =
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - start_time)
+                .count();
+        if (elapsed >= static_cast<int64_t>(timeout_ms))
+        {
+            return 0;
+        }
+        return static_cast<uint32_t>(timeout_ms - elapsed);
+    };
+
+    // 失败路径 teardown：io 线程 try_lock stop_mutex_ 执行 StopFromIoContext
+    // （复用 :955-980 语义），完成时把原始 DasResult 传回链。teardown_done
+    // 保证失败后链继续流经后续 let_value 时只真正 teardown 一次（后续只是
+    // 透传失败结果，不再重入 StopBody）。
+    auto teardown_done = std::make_shared<bool>(false);
+
+    const auto teardown_then = [this, teardown_done](DasResult r)
+    {
+        PhaseAwaitableFn fn =
+            [this, r, teardown_done]() -> boost::asio::awaitable<DasResult>
+        {
+            if (!*teardown_done)
+            {
+                *teardown_done = true;
+                co_await StopFromIoContext();
+            }
+            co_return r;
+        };
+        return boost::asio::co_spawn(
+            impl_->io_ctx,
+            std::move(fn),
+            AsioSenderToken{});
+    };
+
+    // 链首 io_context hop（Pitfall 2）：保证 LaunchProcess/RegisterHostLauncher
+    // 等同步步骤跑在 io_context 线程，不跑在 scope.spawn 的调用线程
+    // （StartAsync 调用者线程），避免与 io_context 线程的 Stop() 竞争 impl_
+    // 成员。
+    auto io_ctx_hop = boost::asio::co_spawn(
         impl_->io_ctx,
-        RunAsync(op, alive, host_exe_path, DEFAULT_TIMEOUT_MS),
-        boost::asio::detached);
+        []() -> boost::asio::awaitable<void>
+        { co_await boost::asio::post(boost::asio::use_awaitable); },
+        AsioSenderToken{});
+
+    // PerformFullHandshakeAsync 经引用写出的 session_id；链内多阶段共享。
+    auto session_id = std::make_shared<uint16_t>(0);
+
+    const auto build_chain = [&]() -> stdexec::sender auto
+    {
+        return io_ctx_hop
+               // Phase 1: LaunchProcess (sync)
+               | stdexec::then(
+                   [this, exe_path = host_exe_path]() -> DasResult
+                   {
+                       const uint32_t main_pid = static_cast<uint32_t>(
+                           boost::process::v2::current_pid());
+                       std::vector<std::string> args;
+                       args.emplace_back("--main-pid");
+                       args.push_back(std::to_string(main_pid));
+                       return LaunchProcess(exe_path, args);
+                   })
+               // Phase 2: ConnectToHost (async)
+               | stdexec::let_value(
+                   [this, teardown_then](DasResult r) -> stdexec::sender auto
+                   {
+                       if (DAS::IsFailed(r))
+                       {
+                           return teardown_then(r);
+                       }
+                       PhaseAwaitableFn fn =
+                           [this]() -> boost::asio::awaitable<DasResult>
+                       { co_return co_await ConnectToHostAsync(); };
+                       return boost::asio::co_spawn(
+                           impl_->io_ctx,
+                           std::move(fn),
+                           AsioSenderToken{});
+                   })
+               // Phase 3: WaitForHostReady (async)
+               | stdexec::let_value(
+                   [this, teardown_then, remaining_ms](
+                       DasResult r) -> stdexec::sender auto
+                   {
+                       if (DAS::IsFailed(r))
+                       {
+                           return teardown_then(r);
+                       }
+                       const uint32_t   ms = remaining_ms();
+                       PhaseAwaitableFn fn =
+                           [this, ms]() -> boost::asio::awaitable<DasResult>
+                       { co_return co_await WaitForHostReadyAsync(ms); };
+                       return boost::asio::co_spawn(
+                           impl_->io_ctx,
+                           std::move(fn),
+                           AsioSenderToken{});
+                   })
+               // Phase 4: PerformFullHandshake (async)
+               | stdexec::let_value(
+                   [this, teardown_then, remaining_ms, session_id](
+                       DasResult r) -> stdexec::sender auto
+                   {
+                       if (DAS::IsFailed(r))
+                       {
+                           return teardown_then(r);
+                       }
+                       const uint32_t   ms = remaining_ms();
+                       PhaseAwaitableFn fn = [this, session_id, ms]()
+                           -> boost::asio::awaitable<DasResult>
+                       {
+                           co_return co_await PerformFullHandshakeAsync(
+                               *session_id,
+                               ms);
+                       };
+                       return boost::asio::co_spawn(
+                           impl_->io_ctx,
+                           std::move(fn),
+                           AsioSenderToken{});
+                   })
+               // Phase 5: RegisterHostLauncher (sync)
+               | stdexec::let_value(
+                   [this, teardown_then, session_id](
+                       DasResult r) -> stdexec::sender auto
+                   {
+                       if (DAS::IsFailed(r))
+                       {
+                           return teardown_then(r);
+                       }
+                       impl_->session_id = *session_id;
+                       const DasResult reg_result =
+                           on_register_ ? on_register_() : DAS_S_OK;
+                       if (DAS::IsFailed(reg_result))
+                       {
+                           DAS_CORE_LOG_ERROR(
+                               "Registration callback failed: error={}",
+                               reg_result);
+                           return teardown_then(reg_result);
+                       }
+                       PhaseAwaitableFn fn =
+                           [reg_result]() -> boost::asio::awaitable<DasResult>
+                       { co_return reg_result; };
+                       return boost::asio::co_spawn(
+                           impl_->io_ctx,
+                           std::move(fn),
+                           AsioSenderToken{});
+                   })
+               // 链尾：alive 守卫（Pitfall 6 / UAF 1 防回归，D-91-02）+
+               // 成功路径 exit-watcher 迁入 scope（UAF 2 消除，D-91-02）。
+               | stdexec::then(
+                   [this, op, alive, session_id](DasResult r)
+                   {
+                       if (!alive->load(std::memory_order_acquire))
+                       {
+                           return;
+                       }
+                       if (DAS::IsOk(r))
+                       {
+                           if (impl_->process)
+                           {
+                               auto       cb_session_id = *session_id;
+                               auto       process_ptr = impl_->process.get();
+                               const auto stop_token =
+                                   impl_->scope.get_stop_token();
+                               impl_->scope.spawn(
+                                   boost::asio::co_spawn(
+                                       impl_->io_ctx,
+                                       [this,
+                                        process_ptr,
+                                        cb_session_id,
+                                        stop_token]()
+                                           -> boost::asio::awaitable<void>
+                                       {
+                                           boost::system::error_code ec;
+                                           co_await process_ptr->async_wait(
+                                               boost::asio::redirect_error(
+                                                   boost::asio::use_awaitable,
+                                                   ec));
+                                           // Pitfall 3 守卫：Stop() 的
+                                           // request_stop 取消 async_wait 会
+                                           // 产生 ec=operation_aborted，已停止
+                                           // 时跳过 Invoke 避免伪 -1 回调。
+                                           if (stop_token.stop_requested())
+                                           {
+                                               co_return;
+                                           }
+                                           const int exit_code =
+                                               ec ? -1
+                                                  : process_ptr->exit_code();
+                                           // 持锁执行 callback（INV-01）
+                                           on_process_exit_slot_.Invoke(
+                                               cb_session_id,
+                                               exit_code);
+                                           co_return;
+                                       },
+                                       AsioSenderToken{})
+                                   | stdexec::let_error(
+                                       [](std::exception_ptr e)
+                                       {
+                                           DAS_CORE_LOG_ERROR(
+                                               "Host exit-watcher failed: {}",
+                                               DescribeException(e));
+                                           return stdexec::just_stopped();
+                                       }));
+                           }
+                           op->Complete(r, *session_id);
+                       }
+                       else
+                       {
+                           op->Complete(r, 0);
+                       }
+                   });
+    };
+
+    // 启动链 spawn 进 scope。链异常经 let_error → just_stopped 兜底（Pitfall
+    // 1 / async_scope.hpp:718-736）：spawn receiver 对 set_error 是
+    // [[noreturn]] rethrow，裸 error completion 会让 io_context 线程
+    // terminate。
+    impl_->scope.spawn(
+        build_chain()
+        | stdexec::let_error(
+            [](std::exception_ptr e)
+            {
+                DAS_CORE_LOG_ERROR(
+                    "Async host start failed: {}",
+                    DescribeException(e));
+                return stdexec::just_stopped();
+            }));
 
     *pp_out_operation = op;
     return DAS_S_OK;
@@ -1962,195 +2224,6 @@ boost::asio::awaitable<DasResult> HostLauncher::ConnectToHostAsync()
 
     DAS_LOG_INFO("Host IPC pipes created and Host connected successfully");
     co_return DAS_S_OK;
-}
-
-boost::asio::awaitable<void> HostLauncher::RunAsync(
-    IDasAsyncHandshakeOperation*       op_interface,
-    std::shared_ptr<std::atomic<bool>> alive,
-    std::string                        exe_path,
-    uint32_t                           timeout_ms)
-{
-    // Cast to concrete type for internal Complete() access
-    auto* op = static_cast<HandshakeAsyncOperationImpl*>(op_interface);
-
-    auto start_time = std::chrono::steady_clock::now();
-
-    auto remaining_ms = [&]() -> uint32_t
-    {
-        if (timeout_ms == 0)
-        {
-            return 0;
-        }
-        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-                           std::chrono::steady_clock::now() - start_time)
-                           .count();
-        if (elapsed >= static_cast<int64_t>(timeout_ms))
-        {
-            return 0;
-        }
-        return static_cast<uint32_t>(timeout_ms - elapsed);
-    };
-
-    // C++ 协程禁止 co_await 出现在异常 handler（catch 块）中，因此异常路径
-    // 的 teardown（co_await StopFromIoContext）移到 try/catch 之后，用
-    // caught_exception 标志触发。
-    std::exception_ptr caught_exception;
-
-    try
-    {
-        // Phase 1: LaunchProcess (sync, fast)
-        if (!alive->load(std::memory_order_acquire))
-        {
-            op->Complete(DAS_E_IPC_CANCELED, 0);
-            co_return;
-        }
-
-        const uint32_t main_pid =
-            static_cast<uint32_t>(boost::process::v2::current_pid());
-        std::vector<std::string> args;
-        args.emplace_back("--main-pid");
-        args.push_back(std::to_string(main_pid));
-
-        DasResult result = LaunchProcess(exe_path, args);
-        if (DAS::IsFailed(result))
-        {
-            op->Complete(result, 0);
-            co_return;
-        }
-
-        // Phase 2: ConnectToHost (async)
-        if (!alive->load(std::memory_order_acquire))
-        {
-            co_await StopFromIoContext();
-            op->Complete(DAS_E_IPC_CANCELED, 0);
-            co_return;
-        }
-
-        result = co_await ConnectToHostAsync();
-        if (DAS::IsFailed(result))
-        {
-            co_await StopFromIoContext();
-            op->Complete(result, 0);
-            co_return;
-        }
-
-        // Phase 3: WaitForHostReady (async)
-        if (!alive->load(std::memory_order_acquire))
-        {
-            co_await StopFromIoContext();
-            op->Complete(DAS_E_IPC_CANCELED, 0);
-            co_return;
-        }
-
-        result = co_await WaitForHostReadyAsync(remaining_ms());
-        if (DAS::IsFailed(result))
-        {
-            co_await StopFromIoContext();
-            op->Complete(result, 0);
-            co_return;
-        }
-
-        // Phase 4: PerformFullHandshake (async)
-        if (!alive->load(std::memory_order_acquire))
-        {
-            co_await StopFromIoContext();
-            op->Complete(DAS_E_IPC_CANCELED, 0);
-            co_return;
-        }
-
-        uint16_t session_id = 0;
-        result = co_await PerformFullHandshakeAsync(session_id, remaining_ms());
-        if (DAS::IsFailed(result))
-        {
-            co_await StopFromIoContext();
-            op->Complete(result, 0);
-            co_return;
-        }
-
-        impl_->session_id = session_id;
-
-        // Phase 5: RegisterHostLauncher (sync, fast)
-        if (!alive->load(std::memory_order_acquire))
-        {
-            co_await StopFromIoContext();
-            op->Complete(DAS_E_IPC_CANCELED, 0);
-            co_return;
-        }
-
-        if (on_register_)
-        {
-            result = on_register_();
-            if (DAS::IsFailed(result))
-            {
-                DAS_CORE_LOG_ERROR(
-                    "Registration callback failed: error={}",
-                    result);
-                co_await StopFromIoContext();
-                op->Complete(result, 0);
-                co_return;
-            }
-        }
-
-        const std::string success_msg = DAS_FMT_NS::format(
-            "Host process started successfully: PID = {}, session_id = {}",
-            impl_->pid,
-            session_id);
-        DAS_LOG_INFO(success_msg.c_str());
-
-        // 异步监控 Host 进程退出，触发回调通知 PluginManager 清理索引。
-        // 不取裸 std::function 副本（CR-01 数据竞争点），改为协程触发时持锁
-        // Invoke。
-        if (impl_->process)
-        {
-            auto cb_session_id = session_id;
-            auto process_ptr = impl_->process.get();
-
-            boost::asio::co_spawn(
-                impl_->io_ctx,
-                [this,
-                 process_ptr,
-                 cb_session_id]() -> boost::asio::awaitable<void>
-                {
-                    boost::system::error_code ec;
-                    co_await process_ptr->async_wait(
-                        boost::asio::redirect_error(
-                            boost::asio::use_awaitable,
-                            ec));
-                    const int exit_code = ec ? -1 : process_ptr->exit_code();
-                    // 持锁执行 callback（INV-01：回调内部不得重入本 slot）
-                    on_process_exit_slot_.Invoke(cb_session_id, exit_code);
-                    co_return;
-                },
-                boost::asio::detached);
-        }
-
-        op->Complete(DAS_S_OK, session_id);
-    }
-    catch (const std::exception& e)
-    {
-        const std::string err_msg = DAS_FMT_NS::format(
-            "Async Host start failed: {}",
-            ToString(e.what()));
-        DAS_CORE_LOG_ERROR(err_msg.c_str());
-        caught_exception = std::current_exception();
-    }
-
-    if (caught_exception)
-    {
-        try
-        {
-            co_await StopFromIoContext();
-        }
-        catch (const std::exception& e)
-        {
-            const std::string teardown_err = DAS_FMT_NS::format(
-                "Async teardown after failed Host start: {}",
-                ToString(e.what()));
-            DAS_CORE_LOG_ERROR(teardown_err.c_str());
-        }
-        op->Complete(DAS_E_IPC_HANDSHAKE_FAILED, 0);
-        co_return;
-    }
 }
 
 DAS_CORE_IPC_NS_END
