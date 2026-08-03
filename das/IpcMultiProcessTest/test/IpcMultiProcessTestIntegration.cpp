@@ -2153,6 +2153,68 @@ TEST_F(
     EXPECT_NE(last_exit_code.load(std::memory_order_relaxed), -1);
 }
 
+// 复用回归测试：Start→Stop→Start 复用后，重启 host 的 exit-watcher 必须仍然
+// 注册 async_wait 并触发 on_process_exit 回调。旧实现 Stop() 调
+// impl_->scope.request_stop()（exec::async_scope 的 inplace_stop_source 是
+// one-way），第二次 Start 的 watcher 前置守卫 stop_requested() 立即 true → 不
+// 注册 async_wait → 重启 host 的退出回调永不触发（PluginManager 的 host-crash
+// 索引清理静默失效）。MultipleStartStop 只断言 IsRunning()，掩盖了此回归。
+TEST_F(IpcMultiProcessTestIntegration, ExitWatcher_FiresAfterLauncherReuse)
+{
+    if (!std::filesystem::exists(host_exe_path_))
+    {
+        GTEST_SKIP() << "DasHostX.exe not found at: " << host_exe_path_;
+    }
+
+    const ScopedHostStop guard{launcher_};
+
+    // 第一次 Start + Stop：旧实现下这会 request_stop scope，永久禁用复用。
+    ASSERT_EQ(StartHostAndSetupRunLoop(), DAS_S_OK);
+    ASSERT_TRUE(launcher_->IsRunning());
+    launcher_->Stop();
+    ASSERT_FALSE(launcher_->IsRunning());
+
+    // 注册退出回调（必须在第一次 Stop 之后：StopBodyRequestExit 的
+    // ClearCallbacks 会清空 slot）。
+    std::atomic<int> callback_count{0};
+    std::atomic<int> last_exit_code{0};
+    auto*            concrete_launcher =
+        dynamic_cast<DAS::Core::IPC::HostLauncher*>(launcher_.Get());
+    ASSERT_NE(concrete_launcher, nullptr)
+        << "launcher_ is not a concrete HostLauncher";
+    concrete_launcher->SetOnProcessExit(
+        [&](uint16_t /*session_id*/, int exit_code)
+        {
+            callback_count.fetch_add(1, std::memory_order_relaxed);
+            last_exit_code.store(exit_code, std::memory_order_relaxed);
+        });
+
+    // 第二次 Start：新 host 的 exit-watcher 必须重新注册 async_wait。
+    ASSERT_EQ(StartHostAndSetupRunLoop(), DAS_S_OK);
+    ASSERT_TRUE(launcher_->IsRunning());
+    const uint32_t host_pid = launcher_->GetPid();
+    ASSERT_GT(host_pid, 0u);
+
+    // 外部终止进程（非 Stop 驱动）→ watcher async_wait 自然完成 → 回调触发。
+    {
+        HANDLE h = OpenProcess(PROCESS_TERMINATE, FALSE, host_pid);
+        ASSERT_NE(h, nullptr) << "OpenProcess failed: error=" << GetLastError();
+        ASSERT_TRUE(TerminateProcess(h, 42))
+            << "TerminateProcess failed: error=" << GetLastError();
+        CloseHandle(h);
+    }
+
+    const bool fired = WaitUntilForTest(
+        [&]() { return callback_count.load(std::memory_order_relaxed) > 0; },
+        std::chrono::seconds(5));
+    ASSERT_TRUE(fired)
+        << "on_process_exit callback not fired for the restarted host after "
+           "Stop()→Start() reuse (scope was permanently stopped?)";
+
+    EXPECT_EQ(last_exit_code.load(std::memory_order_relaxed), 42)
+        << "restarted-host natural-exit path must deliver the real exit_code";
+}
+
 TEST_F(IpcMultiProcessTestIntegration, LauncherStateBeforeStart)
 {
     EXPECT_EQ(launcher_->GetSessionId(), 0u);

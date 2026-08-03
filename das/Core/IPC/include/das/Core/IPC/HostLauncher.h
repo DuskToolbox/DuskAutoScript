@@ -328,17 +328,38 @@ private:
     std::future<void> CleanupTransportAsync();
 
     /**
-     * @brief teardown 主体（协程，运行在 io_context 线程）
+     * @brief teardown 阶段 1：让 Host 进程最终必然退出（协程，运行在
+     * io_context 线程）
      *
-     * GOODBYE 用 co_await 发送（非阻塞，所有路径保留），transport 清理直接
-     * 执行（单线程 io_context 按序执行，与该线程 pending 协程天然串行，
-     * 保持 31616073 的双 UAF 修复语义）。process-exit watcher 的 drain 由
-     * Stop() 先 scope.request_stop() + sync_wait(scope.on_empty()) 承担
-     * （在 co_spawn(StopBody) 之前），本协程不再做 future 轮询。由 Stop()
-     * （非 io 线程，co_spawn+use_future 阻塞等）或 StopFromIoContext()
-     * （io 线程，co_await）驱动；调用方须持 stop_mutex_。
+     * 语义（Stop 不再 request_stop scope，取消改为自然完成）：
+     *   1. ClearCallbacks 清空退出/心跳 slot（正常路径的伪回调抑制由这里
+     *      承担——watcher 在 scope drain 时自然完成并 Invoke，但 callback
+     *      已空 → 空转）；
+     *   2. GOODBYE 用 co_await 发送（非阻塞）让进程优雅退出；
+     *   3. 等待进程退出（最多 2s），超时则 terminate 杀进程兜底 —— 这是
+     *      「进程最终必然退出」的保证，否则进程卡住不退，exit-watcher 的
+     *      async_wait 永不完成，Stop() 的 sync_wait(scope.on_empty())
+     * 永久挂起。 本阶段不 reset process —— process.reset() 由 StopBodyCleanup
+     * 在 Stop() 完成 scope drain 之后执行（exit-watcher 的 async_wait 借用的
+     * process 对象须存活到 watcher 完成，#1338 语义）。由 Stop()（非 io 线程，
+     * co_spawn+use_future 阻塞等）或 StopFromIoContext()（io 线程，
+     * co_await）驱动；调用方须持 stop_mutex_。
      */
-    boost::asio::awaitable<void> StopBody();
+    boost::asio::awaitable<void> StopBodyRequestExit();
+
+    /**
+     * @brief teardown 阶段 2：transport / pool / process 清理（协程，运行在
+     * io_context 线程）
+     *
+     * transport 清理直接执行（单线程 io_context 按序执行，与该线程 pending
+     * 协程天然串行，保持 31616073 的双 UAF 修复语义）。process.reset() 只允许
+     * 在 scope 已 drain（exit-watcher 已完成）后发生——Stop() 在
+     * StopBodyRequestExit 与 StopBodyCleanup 之间 sync_wait(scope.on_empty())
+     * 承担 drain；StopFromIoContext（失败路径）无 exit-watcher，直接连续执行
+     * 两阶段安全。由 Stop()（非 io 线程，co_spawn+use_future 阻塞等）或
+     * StopFromIoContext()（io 线程，co_await）驱动；调用方须持 stop_mutex_。
+     */
+    boost::asio::awaitable<void> StopBodyCleanup();
 
     /**
      * @brief teardown 同步 fallback（非 io 线程直接执行）
@@ -355,8 +376,10 @@ private:
      * @brief 从 io_context 线程执行 teardown（启动链失败路径用）
      *
      * Stop() 用 co_spawn+use_future 阻塞等 io_context 完成，从 io_context
-     * 线程调用会 assert + 死锁。本协程直接 co_await StopBody()（GOODBYE 用
-     * co_await 发送，不阻塞）。用 try_lock 获取 stop_mutex_：若另一线程的
+     * 线程调用会 assert + 死锁。本协程直接 co_await StopBodyRequestExit() +
+     * StopBodyCleanup()（GOODBYE 用 co_await 发送，不阻塞）。失败路径下 scope
+     * 无 exit-watcher，两阶段间无需 on_empty drain。用 try_lock 获取
+     * stop_mutex_：若另一线程的
      * Stop()/TerminateIfRunning() 已持锁且阻塞在 co_spawn+get（等 io_context
      * 处理），本协程阻塞在锁上会让 io_context 线程卡死 → 死锁；try_lock 失败
      * = 另一 teardown 进行中（body 幂等，其会完成清理），跳过自身清理。

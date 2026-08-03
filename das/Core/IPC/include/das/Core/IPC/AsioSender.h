@@ -253,7 +253,12 @@ private:
                             std::current_exception());
                     }
                 }
-                self_ = nullptr;
+                // 注意：这里不能写 self_ = nullptr。完成 receiver 可能同步销毁
+                // 持有本 handler 的 OperationState（如 async_scope::spawn 的
+                // spawn receiver 完成时会 delete 整个 spawn op，连带 co_spawn
+                // 协程帧与其中的本 handler），随后对 self_
+                // 的写入即悬空写。handler 恰好只被调用一次（co_spawn
+                // 只完成一次），move 构造已把 moved-from 源置空，故无需此行。
             }
 
         private:

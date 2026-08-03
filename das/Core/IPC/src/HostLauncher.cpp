@@ -67,7 +67,11 @@ struct HostLauncher::Impl
 
     boost::asio::io_context& io_ctx; // 引用，由外部管理生命周期
     // 跟踪全部异步子任务（StartAsync 握手链 + 成功路径 exit-watcher）。
-    // Stop()/析构时 request_stop + on_empty() 结构化 drain（D-91-06）。
+    // Stop() 不 request_stop（exec::async_scope 的 inplace_stop_source
+    // 是 one-way，request_stop 会永久锁死 scope，Start→Stop→Start 复用后新
+    // watcher 的 stop_token 立即 stop_requested → exit-watcher 永不触发）。
+    // drain 改为自然完成：GOODBYE（+terminate 兜底）让进程退出 → exit-watcher
+    // 的 async_wait 收到真实退出码自然完成 → sync_wait(scope.on_empty()) 返回。
     exec::async_scope                            scope;
     std::unique_ptr<boost::process::v2::process> process;
     std::optional<AnyTransport>                  async_transport;
@@ -687,12 +691,12 @@ DasResult HostLauncher::StartLaunchSequence(
                 [this, process_ptr, session_id, stop_token]()
                     -> boost::asio::awaitable<void>
                 {
-                    // Pitfall 3 守卫（前置检查）：Stop() 若在 watcher 尚未注册
-                    // async_wait 时 request_stop，terminal 取消信号会在协程启动
-                    // 前被 co_spawn 消费掉，async_wait 因进程存活永不完成 →
-                    // scope 永不 drain → Stop() 的 on_empty 死锁。前置检查让已
-                    // 停止的 watcher 在注册 async_wait 前直接退出，scope 立即
-                    // drain（MultipleStartStop/StopTerminatesProcess 依赖此）。
+                    // Pitfall 3 守卫（前置检查，保留为防御性）。Stop()
+                    // 不再 request_stop scope，正常生命周期下 stop_token
+                    // 永不停， 守卫不触发——但保留它以防御未来任何 stop
+                    // 源（scope 的 inplace_stop_source 仍可能被外部
+                    // request_stop）。若已停止 则在注册 async_wait 前退出，避免
+                    // async_wait 因进程存活 永不完成导致 scope 永不 drain。
                     if (stop_token.stop_requested())
                     {
                         co_return;
@@ -702,11 +706,12 @@ DasResult HostLauncher::StartLaunchSequence(
                         boost::asio::redirect_error(
                             boost::asio::use_awaitable,
                             ec));
-                    // Pitfall 3 守卫（后置检查）：Stop() 的 request_stop 取消
-                    // async_wait 会产生 ec=operation_aborted，已停止时跳过
-                    // Invoke 避免伪 -1 回调。进程自然退出路径 stop 未请求 →
-                    // 守卫放行真实 exit_code（两条路径的选择性由 Plan 03
-                    // Task 2 负向审计验证）。
+                    // Pitfall 3 守卫（后置检查，保留为防御性）。正常路径（无
+                    // cancel）async_wait 因进程真实退出完成，ec 为空 → 放行真实
+                    // exit_code。仅当外部 request_stop 取消 async_wait 时 ec=
+                    // operation_aborted 且 stop_requested() 为 true，此处跳过
+                    // Invoke 避免伪 -1 回调（防御性；Stop 驱动 teardown 的伪
+                    // 回调抑制由 StopBodyRequestExit 的 ClearCallbacks 承担）。
                     if (stop_token.stop_requested())
                     {
                         co_return;
@@ -758,35 +763,48 @@ void HostLauncher::Stop()
         !impl_->io_ctx.get_executor().running_in_this_thread()
         && "Stop() must not be called from the io_context thread");
 
-    // teardown 主体 StopBody() 是运行在 io_context 线程上的协程：GOODBYE 用
-    // co_await 发送（不阻塞），transport 清理直接执行（天然与该线程 pending
-    // 协程串行，保持 31616073 的双 UAF 修复语义）。仅当 io_context 存活且
-    // transport 已连接（说明 io_context 正被驱动）时 co_spawn+get 阻塞等其
-    // 完成；析构路径（use_async_transport_cleanup_ == false，io_context 已停/
-    // 析构）或 transport 未连接时不能/无需 co_spawn——co_spawn 到已停的
-    // io_context 永不执行 → .get() 死锁，未驱动的 io_context 也会阻塞，此时
-    // 走 StopBodySync() 直接同步清理（无存活协程借用 transport，GOODBYE
+    // teardown 两阶段（StopBodyRequestExit + StopBodyCleanup）是运行在
+    // io_context 线程上的协程：GOODBYE 用 co_await 发送（不阻塞），transport
+    // 清理直接执行（天然与该线程 pending 协程串行，保持 31616073 的双 UAF
+    // 修复语义）。仅当 io_context 存活且 transport 已连接（说明 io_context
+    // 正被驱动）时 co_spawn+get 阻塞等其完成；析构路径
+    // （use_async_transport_cleanup_ == false，io_context 已停/析构）或
+    // transport 未连接时不能/无需 co_spawn——co_spawn 到已停的 io_context
+    // 永不执行 → .get() 死锁，未驱动的 io_context 也会阻塞，此时走
+    // StopBodySync() 直接同步清理（无存活协程借用 transport，GOODBYE
     // 无意义）。
     if (use_async_transport_cleanup_ && !impl_->io_ctx.stopped()
         && impl_->async_transport && impl_->async_transport->IsConnected())
     {
         try
         {
-            // scope 结构化 drain（D-91-06）：request_stop 取消在途握手链与
-            // 成功路径 exit-watcher 的 async_wait；io_context 仍活着（上面的
-            // !stopped() 守卫）驱动取消 completion，active 归零后 on_empty
-            // 完成。drain 必须先于 StopBody 的 process.reset()——成功路径
-            // watcher 在 scope 内，若 process.reset() 先执行会 #1338 式 UAF
-            // （UAF 2 根因）。request_stop 先行取消 watcher 时，Task 1 的
-            // stop_token 守卫跳过 on_process_exit_slot_.Invoke，无伪 -1 回调
-            // （Pitfall 3 缓解；与自然退出路径 ParentProcessExit_* 的
-            // stop 未请求放行真实 exit_code 语义由 Plan 03 负向审计验证）。
-            impl_->scope.request_stop();
+            // 修复：scope 永不 request_stop（exec::async_scope 的
+            // inplace_stop_source 是 one-way，request_stop 会永久锁死 scope，
+            // Start→Stop→Start 复用后新 exit-watcher 的 stop_token 立即
+            // stop_requested → 不注册 async_wait → on_process_exit 对重启后的
+            // host 永不触发）。drain 改为自然完成：
+            //   1. StopBodyRequestExit 发 GOODBYE（+terminate 兜底）让进程最终
+            //      必然退出；
+            //   2. exit-watcher 的 async_wait
+            //   因进程真实退出完成（真实退出码）；
+            //   3. sync_wait(scope.on_empty()) drain 返回（在途 StartAsync 握手
+            //      链因进程退出/管道断开/超时自然结束，可接受几秒级延迟）。
+            // 顺序约束：terminate 兜底必须先于 on_empty——否则进程卡住不退，
+            // watcher 的 async_wait 永不完成，on_empty
+            // 永久挂起。process.reset() 必须后于 drain（StopBodyCleanup
+            // 执行）——否则 watcher 借用的 process 对象先被销毁会 UAF（#1338
+            // 语义）。
+            boost::asio::co_spawn(
+                impl_->io_ctx,
+                StopBodyRequestExit(),
+                boost::asio::use_future)
+                .get();
+
             stdexec::sync_wait(impl_->scope.on_empty());
 
             boost::asio::co_spawn(
                 impl_->io_ctx,
-                StopBody(),
+                StopBodyCleanup(),
                 boost::asio::use_future)
                 .get();
         }
@@ -804,12 +822,17 @@ void HostLauncher::Stop()
     }
 }
 
-boost::asio::awaitable<void> HostLauncher::StopBody()
+boost::asio::awaitable<void> HostLauncher::StopBodyRequestExit()
 {
     // 全清心跳+退出 slot（Pitfall 6 修复：消除旧版只清 on_process_exit_
     // 的不对称）。 ClearCallbacks 持锁 drain（CR-02），避免 Stop
     // 主动关闭进程时残留 callback 被并发触发。心跳 slot 同清，避免 Stop
     // 后心跳线程仍触发回调的窗口。
+    //
+    // 本阶段保证「进程最终必然退出」（GOODBYE → 超时 → terminate 兜底）。
+    // 关键：exit-watcher 的正常路径回调抑制靠这里清空的 slot（watcher 在
+    // scope drain 时自然完成并 Invoke，但 callback 已空 → 空转），而非靠
+    // stop_token 守卫（Stop 不 request_stop，守卫不触发）。
     ClearCallbacks();
 
     // 先发送 GOODBYE 消息让 Host 进程优雅退出（所有路径保留：co_await 非阻塞
@@ -865,7 +888,7 @@ boost::asio::awaitable<void> HostLauncher::StopBody()
         // 如果进程在 GOODBYE 后正常退出，则不需要 terminate。协程版用
         // steady_timer 轮询（co_await 让出 io_context），不阻塞线程；期间
         // io_context 会处理已排队的 process-exit watcher completion（TP
-        // drain 的等价物）。
+        // drain 的等价物），exit-watcher 在进程退出后自然完成。
         bool       process_exited = false;
         const auto wait_deadline =
             std::chrono::steady_clock::now() + std::chrono::seconds(2);
@@ -891,14 +914,13 @@ boost::asio::awaitable<void> HostLauncher::StopBody()
         }
     }
 
-    // transport 清理：本协程在 io_context 线程上执行，与该线程 pending
-    // ReceiveCoroutine 按序串行（单线程 io_context），直接清理安全，保持
-    // 31616073 的双 UAF 修复语义。
-    CleanupTransport(impl_->async_transport);
-
-    // 清理 SharedMemoryPool（transport 清理后，确保无悬空引用）
-    impl_->pool_.reset();
-
+    // 进程退出兜底（GOODBYE → 超时 → terminate）：GOODBYE 未在 2s 内退出（或
+    // transport 未连接/无 GOODBYE）时，若进程仍存活则 terminate 杀进程兜底。
+    // 这是「进程最终必然退出」的保证——否则进程卡住不退，exit-watcher 的
+    // async_wait 永不完成，Stop() 的 sync_wait(scope.on_empty()) 会永久挂起。
+    // 注意：本阶段只保证进程退出，不 reset process —— process.reset() 由
+    // StopBodyCleanup 在 Stop() 完成 scope drain 之后执行（exit-watcher 的
+    // async_wait 借用的 process 对象须存活到 watcher 完成，#1338 语义）。
     if (impl_->process)
     {
         boost::system::error_code ec;
@@ -915,15 +937,27 @@ boost::asio::awaitable<void> HostLauncher::StopBody()
             DAS_LOG_INFO(msg.c_str());
             impl_->process->terminate(ec);
         }
+    }
+}
 
-        // 等子进程真正退出后再析构（terminate 后 wait 瞬间返回）。
-        // 注意：本协程在 io_context 线程上，不能直接阻塞等待 exit-watcher
-        // 完成——watcher 协程完成需 io_context 驱动，阻塞会死锁。Stop() 在
-        // co_spawn(StopBody) 之前已先 scope.request_stop() +
-        // sync_wait(scope.on_empty()) drain 全部在途子任务（StartAsync 握手链
-        // + 两个 exit-watcher），故此处 scope 已空、watcher 已完成，
-        // process.reset() 严格发生在 scope 清空之后（UAF 2/#1338 防护由
-        // scope drain 承载，替代旧 use_future watcher 载体的 wait_for 轮询）。
+boost::asio::awaitable<void> HostLauncher::StopBodyCleanup()
+{
+    // transport 清理：本协程在 io_context 线程上执行，与该线程 pending
+    // ReceiveCoroutine 按序串行（单线程 io_context），直接清理安全，保持
+    // 31616073 的双 UAF 修复语义。
+    CleanupTransport(impl_->async_transport);
+
+    // 清理 SharedMemoryPool（transport 清理后，确保无悬空引用）
+    impl_->pool_.reset();
+
+    if (impl_->process)
+    {
+        // 进程已在 StopBodyRequestExit 中退出（GOODBYE 优雅退出或 terminate
+        // 兜底），且 Stop() 在两个阶段之间 sync_wait(scope.on_empty()) drain
+        // 了全部在途子任务（StartAsync 握手链 + 成功路径 exit-watcher）——
+        // watcher 已完成，process.reset() 严格发生在 scope 清空之后
+        // （UAF 2/#1338 防护由 scope drain 承载，替代旧 use_future watcher
+        // 载体的 wait_for 轮询）。
 
         // 正常析构：Windows 上 ~process() 会调 UnregisterWaitEx(NULL)，
         // 同步等待已 pending 的 thread-pool wait callback 完成。
@@ -933,6 +967,8 @@ boost::asio::awaitable<void> HostLauncher::StopBody()
     impl_->is_running = false;
     impl_->session_id = 0;
     impl_->pid = 0;
+
+    co_return; // 使本函数成为协程（co_spawn 需要 awaitable；本阶段无 co_await）
 }
 
 void HostLauncher::StopBodySync()
@@ -941,6 +977,16 @@ void HostLauncher::StopBodySync()
     // 未连接时的 fallback，由 Stop() 调用）。此时无存活 io_context 协程借用
     // transport，直接清理安全；GOODBYE 依赖 co_spawn 阻塞等 io_context，此
     // 路径不可用且 transport 未连接时发送无意义，跳过。
+    //
+    // scope drain 约束（已评估，接受）：本路径不 drain
+    // async_scope。正常生命周期 下 scope 由 Stop() 的 async
+    // 分支（StopBodyRequestExit → on_empty → StopBodyCleanup）在 io_context
+    // 仍存活时 drain，故走到 StopBodySync 时 scope 应为空（exit-watcher
+    // 已完成、StartAsync 链已结束）。仅当 io_context 已停而 scope
+    // 仍有未完成任务（StartAsync 在途且从未被 async Stop 收口） 时，async_scope
+    // 析构会 STDEXEC_ASSERT(__active_ == 0)。此处不能同步 drain：io_context
+    // 已停时 sync_wait(on_empty) 无人驱动会死锁（Pitfall 4）。
+    // 这是约束而非可运行时处理的场景——保持注释明文化。
 
     // 全清心跳+退出 slot（Pitfall 6 修复：消除旧版只清 on_process_exit_
     // 的不对称）。 ClearCallbacks 持锁 drain（CR-02），避免 Stop
@@ -993,8 +1039,11 @@ boost::asio::awaitable<void> HostLauncher::StopFromIoContext()
     // （启动链经 io_context hop 在 io_context 上运行）。Stop() 用 co_spawn +
     // use_future 阻塞等 io_context 完成 GOODBYE / transport 清理 /
     // exit-watcher drain，从 io_context 线程调用会 assert + 死锁。本协程
-    // 直接 co_await StopBody()：GOODBYE 用 co_await 发送（不阻塞），transport
-    // 清理在 io_context 线程天然与 pending 协程串行。
+    // 直接 co_await StopBodyRequestExit() + StopBodyCleanup()：GOODBYE 用
+    // co_await 发送（不阻塞），transport 清理在 io_context 线程天然与
+    // pending 协程串行。失败路径下 scope 无 exit-watcher（watcher 只在链
+    // 尾成功分支 spawn），故两阶段间无需 on_empty drain——Stop()（若随后
+    // 调用）会在 async 分支统一 drain。
     //
     // 用 try_lock 而非 lock：若另一线程的 Stop()/TerminateIfRunning() 已持
     // stop_mutex_ 且阻塞在 co_spawn+get（等 io_context 处理），本协程若阻塞
@@ -1011,7 +1060,8 @@ boost::asio::awaitable<void> HostLauncher::StopFromIoContext()
         impl_->io_ctx.get_executor().running_in_this_thread()
         && "StopFromIoContext must be called from the io_context thread");
 
-    co_await StopBody();
+    co_await StopBodyRequestExit();
+    co_await StopBodyCleanup();
 }
 
 bool HostLauncher::IsRunning() const
@@ -1057,11 +1107,11 @@ DasResult HostLauncher::StartAsync(
         return DAS_E_INVALID_ARGUMENT;
     }
 
-    if (IsRunning())
-    {
-        DAS_CORE_LOG_ERROR("Host process already running");
-        return DAS_E_IPC_INVALID_STATE;
-    }
+    // 调用线程竞争修复：原 IsRunning() 前置检查在调用者线程读 impl_->process /
+    // impl_->is_running，与并发 Stop()（改写同一成员）数据竞争。改为在链内
+    // 阶段 1（io_context hop 之后、io_context 线程上）做权威检查，失败经链
+    // 尾 op->Complete(DAS_E_IPC_INVALID_STATE, 0) 异步送达（StartAsync 本仓
+    // 无生产调用方，同步错误→异步错误不影响既有消费方）。
 
     constexpr uint32_t DEFAULT_TIMEOUT_MS = 10000;
     auto               alive = std::make_shared<std::atomic<bool>>(true);
@@ -1107,6 +1157,14 @@ DasResult HostLauncher::StartAsync(
         PhaseAwaitableFn fn =
             [this, r, teardown_done]() -> boost::asio::awaitable<DasResult>
         {
+            // 并发竞争防护：DAS_E_IPC_INVALID_STATE 只由链内阶段 1 的 running
+            // 检查 产生（"launcher 已在运行"）。此时绝不能 teardown——StopBody
+            // 会 杀掉既有/并发 Start 的存活进程并触发其 exit-watcher UAF。直接
+            // 透传失败结果，不做任何清理。
+            if (r == DAS_E_IPC_INVALID_STATE)
+            {
+                co_return r;
+            }
             if (!*teardown_done)
             {
                 *teardown_done = true;
@@ -1136,10 +1194,20 @@ DasResult HostLauncher::StartAsync(
     const auto build_chain = [&]() -> stdexec::sender auto
     {
         return io_ctx_hop
-               // Phase 1: LaunchProcess (sync)
+               // 阶段 1: running 检查 + LaunchProcess（sync）。竞争防护：在
+               // io_context 线程做权威 IsRunning() 检查（链首 hop 已把本 then
+               // 移到 io_context 线程），取代原调用者线程的前置检查——消除与
+               // 并发 Stop() 改写 impl_ 成员的数据竞争。launcher 已在运行时
+               // 返回 INVALID_STATE，经 teardown_then 的 INVALID_STATE 特判
+               // 透传（不 teardown，避免杀既有进程），最终经链尾 op->Complete
+               // 异步送达。
                | stdexec::then(
                    [this, exe_path = host_exe_path]() -> DasResult
                    {
+                       if (IsRunning())
+                       {
+                           return DAS_E_IPC_INVALID_STATE;
+                       }
                        const uint32_t main_pid = static_cast<uint32_t>(
                            boost::process::v2::current_pid());
                        std::vector<std::string> args;
@@ -1230,6 +1298,24 @@ DasResult HostLauncher::StartAsync(
                            std::move(fn),
                            AsioSenderToken{});
                    })
+               // op 完成兜底：把 set_error / set_stopped 都转成值走链尾，保证
+               // op 永不被 orphan（被 Stop()/Cancel()/并发 teardown 中断或链内
+               // 异常时 op 也 complete，参考旧 RunAsync 的"总是 complete
+               // op"）。 若没有这两层适配，链以 set_stopped 完成时 then
+               // 链尾被跳过 → op 卡 DAS_ASYNC_STARTED、OnCompleted
+               // 永不触发、GetResults 永远
+               // INVALID_STATE。upon_error/upon_stopped 是值型适配（非 let_* 的
+               // sender 型），函数返回 DasResult 直接 set_value 送达链尾。
+               | stdexec::upon_error(
+                   [](std::exception_ptr e) -> DasResult
+                   {
+                       DAS_CORE_LOG_ERROR(
+                           "Async host start chain failed: {}",
+                           DescribeException(e));
+                       return DAS_E_IPC_CANCELED;
+                   })
+               | stdexec::upon_stopped(
+                   []() -> DasResult { return DAS_E_IPC_CANCELED; })
                // 链尾：alive 守卫（Pitfall 6 / UAF 1 防回归，D-91-02）+
                // 成功路径 exit-watcher 迁入 scope（UAF 2 消除，D-91-02）。
                | stdexec::then(
@@ -1256,15 +1342,16 @@ DasResult HostLauncher::StartAsync(
                                         stop_token]()
                                            -> boost::asio::awaitable<void>
                                        {
-                                           // Pitfall 3 守卫（前置检查）：与
-                                           // StartLaunchSequence watcher 同款。
-                                           // Stop() 若在 watcher 尚未注册
-                                           // async_wait 时 request_stop，
-                                           // terminal 取消会在协程启动前被
-                                           // co_spawn 消费掉，async_wait 因进程
-                                           // 存活永不完成 → scope 永不 drain →
-                                           // Stop() 的 on_empty 死锁。已停止
-                                           // 直接退出。
+                                           // Pitfall 3 守卫（前置检查，保留为
+                                           // 防御性）：与 StartLaunchSequence
+                                           // watcher 同款。Stop() 不再
+                                           // request_stop
+                                           // scope，正常路径不触发；
+                                           // 保留以防未来任何 stop 源在 watcher
+                                           // 注册 async_wait 前 request_stop，
+                                           // 否则 async_wait 因进程存活永不完成
+                                           // → scope 永不 drain → on_empty
+                                           // 死锁。
                                            if (stop_token.stop_requested())
                                            {
                                                co_return;
@@ -1274,10 +1361,17 @@ DasResult HostLauncher::StartAsync(
                                                boost::asio::redirect_error(
                                                    boost::asio::use_awaitable,
                                                    ec));
-                                           // Pitfall 3 守卫（后置检查）：Stop()
-                                           // 的 request_stop 取消 async_wait 会
-                                           // 产生 ec=operation_aborted，已停止
-                                           // 时跳过 Invoke 避免伪 -1 回调。
+                                           // Pitfall 3 守卫（后置检查，保留为
+                                           // 防御性）：正常路径 async_wait
+                                           // 因进程 真实退出完成（ec 空）→
+                                           // 放行真实 exit_code。仅外部
+                                           // request_stop 取消 async_wait 时
+                                           // ec=operation_aborted 且
+                                           // stop_requested() 为 true，此处跳过
+                                           // Invoke 避免伪 -1 回调（Stop 驱动
+                                           // teardown 的伪回调抑制由
+                                           // StopBodyRequestExit 的
+                                           // ClearCallbacks 承担）。
                                            if (stop_token.stop_requested())
                                            {
                                                co_return;
@@ -1310,10 +1404,10 @@ DasResult HostLauncher::StartAsync(
                    });
     };
 
-    // 启动链 spawn 进 scope。链异常经 let_error → just_stopped 兜底（Pitfall
-    // 1 / async_scope.hpp:718-736）：spawn receiver 对 set_error 是
-    // [[noreturn]] rethrow，裸 error completion 会让 io_context 线程
-    // terminate。
+    // 启动链 spawn 进 scope。链内 let_error/upon_stopped 已把 error/stopped
+    // 转成 值走链尾（op 必 complete），故本层 let_error 是防御性兜底（Pitfall 1
+    // / async_scope.hpp:718-736：spawn receiver 对 set_error 是 [[noreturn]]
+    // rethrow，裸 error completion 会让 io_context 线程 terminate）。
     impl_->scope.spawn(
         build_chain()
         | stdexec::let_error(
