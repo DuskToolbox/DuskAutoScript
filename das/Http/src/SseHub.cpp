@@ -2,6 +2,7 @@
 #include "beast/SseSession.hpp" // for SseSessionBase full definition
 
 #include <boost/asio/dispatch.hpp>
+#include <boost/asio/post.hpp>
 
 #include <algorithm>
 
@@ -50,7 +51,13 @@ namespace Das::Http
         {
             if (on_key_empty_)
             {
-                on_key_empty_(key);
+                // key-empty 反向通知含跨进程同步 IPC（DasHttp → DasMaaPi），
+                // 在 SseSession 的 strand 线程上执行会阻塞该 strand 上全部
+                // SSE 会话的写（所有连接共享同一 strand）——post 到 hub 的
+                // io_context 全局队列，由任意空闲 worker 执行，脱离 strand
+                // 串行化约束。
+                auto cb = on_key_empty_;
+                boost::asio::post(ioc_, [cb, key]() { cb(key); });
             }
         }
     }

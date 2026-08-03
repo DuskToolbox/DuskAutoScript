@@ -93,6 +93,11 @@ namespace Das::Http::Beast
         SseSessionT(const SseSessionT&) = delete;
         SseSessionT& operator=(const SseSessionT&) = delete;
 
+        // RAII 兜底：异常路径 / ioc 停止时 keepalive handler 收到
+        // operation_aborted 直接返回而不走 Close，析构保证注销 hub，
+        // 杜绝 hub 残留 expired weak_ptr（key-empty 永不触发的泄漏面）。
+        ~SseSessionT() override { Close(); }
+
         /**
          * @brief 启动会话：写 200 头，完成后注册到 hub + 启动 keep-alive。
          */

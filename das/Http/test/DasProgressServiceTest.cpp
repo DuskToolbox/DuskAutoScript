@@ -331,6 +331,8 @@ TEST(DasProgressServiceTest, KeyEmptyNotifiesAllCallbacks)
     fixture.hub->Unregister(session.get(), "k1");
 
     ASSERT_EQ(fixture.hub->SubscriberCount("k1"), 0u);
+    // key-empty 反向通知经 post 异步执行（不阻塞 strand 线程），poll 驱动。
+    fixture.ioc.poll();
     ASSERT_EQ(raw_cb->DisconnectedKeys().size(), 1u);
     EXPECT_EQ(raw_cb->DisconnectedKeys()[0], "k1");
 
