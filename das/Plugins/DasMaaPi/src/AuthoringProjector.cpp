@@ -4682,11 +4682,14 @@ namespace Das::Plugins::DasMaaPi
         }
 
         // 更新期间真实经 IPC 上报字段增量（成对 AddCallback/RemoveCallback）。
-        std::unique_ptr<DasProgressReporter> reporter;
+        // shared_ptr 管理：DasProgressCallbackImpl 内部持 weak_ptr 访问
+        // owner（跨进程 proxy 保活使其可能活得比 reporter 久），且析构
+        // RAII 兜底 RemoveCallback。
+        std::shared_ptr<DasProgressReporter> reporter;
         if (progress_service && pending_update->has_value()
             && !(*pending_update)->progress_key.empty())
         {
-            reporter = std::make_unique<DasProgressReporter>(
+            reporter = std::make_shared<DasProgressReporter>(
                 (*pending_update)->progress_key,
                 progress_service);
             if (!reporter->Start())
@@ -4697,7 +4700,7 @@ namespace Das::Plugins::DasMaaPi
         ProgressReporter progress_cb;
         if (reporter)
         {
-            progress_cb = [&reporter](const UpdateProgress& p)
+            progress_cb = [reporter](const UpdateProgress& p)
             { reporter->Report(p); };
         }
 

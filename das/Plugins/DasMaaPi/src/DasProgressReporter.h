@@ -6,6 +6,7 @@
 #include <das/_autogen/idl/abi/IDasProgressService.h>
 
 #include <atomic>
+#include <memory>
 #include <string>
 
 DAS_NS_BEGIN
@@ -17,7 +18,12 @@ namespace Plugins::DasMaaPi
     // IDasProgressUpdate 字段增量上报（复用 setValue payload 字段语义，
     // 无 percent/status/stage——显示由 document 字段值决定），Stop()
     // RemoveCallback 释放 proxy（成对生命周期）。
-    class DasProgressReporter
+    // reporter 生命周期被跨进程 callback 反向引用共享（callback proxy 由
+    // DasHttp 保活、可能活得比 reporter 久），故 reporter 由 shared_ptr 管理、
+    // callback 持 weak_ptr（lock() 判空后访问，杜绝 owner 悬垂）。Start() 用
+    // shared_from_this()，要求创建方必须 make_shared。
+    class DasProgressReporter final
+        : public std::enable_shared_from_this<DasProgressReporter>
     {
     public:
         DasProgressReporter(
@@ -28,6 +34,9 @@ namespace Plugins::DasMaaPi
         bool Start();
         // 反注册 callback（RemoveCallback）+ 释放 proxy。幂等。
         void Stop();
+        // RAII：析构自动 Stop()，异常路径（ApplyUpdate 抛 filesystem 错误）
+        // 也保证 RemoveCallback 执行，杜绝 callback 泄漏与 owner 悬垂。
+        ~DasProgressReporter();
         // 上报字段增量；未 Start / 已 Stop / 订阅全断开时为空操作。
         void Report(const UpdateProgress& progress);
 

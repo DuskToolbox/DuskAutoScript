@@ -192,13 +192,17 @@ namespace Plugins::DasMaaPi
 
     // 反向通知回调（IDasProgressCallback 本地实现）。service 在
     // 该 key 所有 SSE 订阅断开时调用；own_key 过滤命中才停止上报。
+    // owner_ 持 weak_ptr：跨进程 proxy 去重使本回调可能活得比 reporter
+    // 久（DasHttp 持 proxy 引用），lock() 判空后访问 owner，杜绝 UAF。
     class DasProgressReporter::DasProgressCallbackImpl final
         : public Das::ExportInterface::DasProgressCallbackImplBase<
               DasProgressCallbackImpl>
     {
     public:
-        DasProgressCallbackImpl(std::string own_key, DasProgressReporter* owner)
-            : own_key_(std::move(own_key)), owner_(owner)
+        DasProgressCallbackImpl(
+            std::string                        own_key,
+            std::weak_ptr<DasProgressReporter> owner)
+            : own_key_(std::move(own_key)), owner_(std::move(owner))
         {
         }
 
@@ -215,14 +219,17 @@ namespace Plugins::DasMaaPi
             }
             if (own_key_ == raw)
             {
-                owner_->OnSubscribersDisconnected();
+                if (auto owner = owner_.lock())
+                {
+                    owner->OnSubscribersDisconnected();
+                }
             }
             return DAS_S_OK;
         }
 
     private:
-        std::string          own_key_;
-        DasProgressReporter* owner_;
+        std::string                        own_key_;
+        std::weak_ptr<DasProgressReporter> owner_;
     };
 
     DasProgressReporter::DasProgressReporter(
@@ -230,6 +237,13 @@ namespace Plugins::DasMaaPi
         DasPtr<Das::ExportInterface::IDasProgressService> service)
         : key_(std::move(key)), service_(std::move(service))
     {
+    }
+
+    DasProgressReporter::~DasProgressReporter()
+    {
+        // RAII 兜底：ApplyUpdate 抛异常跳过正常路径的显式 Stop() 时，
+        // 析构保证 RemoveCallback 执行，不泄漏跨进程 callback 注册。
+        Stop();
     }
 
     bool DasProgressReporter::Start()
@@ -248,7 +262,7 @@ namespace Plugins::DasMaaPi
                     .c_str());
             return false;
         }
-        callback_ = DasProgressCallbackImpl::Make(key_, this);
+        callback_ = DasProgressCallbackImpl::Make(key_, shared_from_this());
         const auto rc = service_->AddCallback(callback_.Get());
         if (DAS::IsFailed(rc))
         {
@@ -315,12 +329,17 @@ namespace Plugins::DasMaaPi
         fields.emplace_back(
             "updateProgress",
             MakeJsonFieldValue(BuildUpdateProgressText(progress)));
-        fields.emplace_back(
-            "downloadRate",
-            MakeJsonFieldValue(FormatRate(progress.rate_mbps)));
-        fields.emplace_back(
-            "downloadElapsed",
-            MakeJsonFieldValue(FormatElapsed(progress.elapsed)));
+        // 非下载阶段不投影速率/耗时：解压/替换期 0 值是陈旧数据，UI 不应
+        // 在「解压中…」旁出现 "0.0 MB/s" 的误导字段。
+        if (progress.stage == UpdateStage::Download)
+        {
+            fields.emplace_back(
+                "downloadRate",
+                MakeJsonFieldValue(FormatRate(progress.rate_mbps)));
+            fields.emplace_back(
+                "downloadElapsed",
+                MakeJsonFieldValue(FormatElapsed(progress.elapsed)));
+        }
 
         DasPtr<Das::ExportInterface::IDasProgressUpdate> entry =
             DasProgressUpdateImpl::Make(key_, std::move(fields));

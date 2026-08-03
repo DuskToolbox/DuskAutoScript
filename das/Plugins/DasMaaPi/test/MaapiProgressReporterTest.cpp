@@ -101,8 +101,8 @@ TEST(MaapiProgressReporterTest, ReportAssemblesFieldIncrementReadableByService)
         FakeProgressService::Make();
     auto* fake = static_cast<FakeProgressService*>(service.Get());
 
-    DasProgressReporter reporter("key1", service);
-    ASSERT_TRUE(reporter.Start());
+    auto reporter = std::make_shared<DasProgressReporter>("key1", service);
+    ASSERT_TRUE(reporter->Start());
     ASSERT_EQ(fake->add_count, 1);
 
     UpdateProgress progress{};
@@ -110,7 +110,7 @@ TEST(MaapiProgressReporterTest, ReportAssemblesFieldIncrementReadableByService)
     progress.bytes_received = 100;
     progress.total_bytes = 200;
     progress.rate_mbps = 2.5;
-    reporter.Report(progress);
+    reporter->Report(progress);
 
     ASSERT_EQ(fake->entries.size(), 1u);
     auto entry = fake->entries.front();
@@ -132,7 +132,7 @@ TEST(MaapiProgressReporterTest, ReportAssemblesFieldIncrementReadableByService)
     auto [name2, value2] = ReadEntryField(entry.Get(), 2);
     EXPECT_EQ(name2, "downloadElapsed");
 
-    reporter.Stop();
+    reporter->Stop();
     EXPECT_EQ(fake->remove_count, 1);
 }
 
@@ -144,8 +144,8 @@ TEST(MaapiProgressReporterTest, OnAllSubscribersDisconnectedFiltersByOwnKey)
         FakeProgressService::Make();
     auto* fake = static_cast<FakeProgressService*>(service.Get());
 
-    DasProgressReporter reporter("key1", service);
-    ASSERT_TRUE(reporter.Start());
+    auto reporter = std::make_shared<DasProgressReporter>("key1", service);
+    ASSERT_TRUE(reporter->Start());
     ASSERT_TRUE(fake->callback);
 
     UpdateProgress progress{};
@@ -163,7 +163,7 @@ TEST(MaapiProgressReporterTest, OnAllSubscribersDisconnectedFiltersByOwnKey)
             fake->callback->OnAllSubscribersDisconnected(other_key.Get()),
             DAS_S_OK);
     }
-    reporter.Report(progress);
+    reporter->Report(progress);
     ASSERT_EQ(fake->entries.size(), 1u);
 
     // own key 的断连通知 → 停止上报标志 + 不再上报。
@@ -176,11 +176,11 @@ TEST(MaapiProgressReporterTest, OnAllSubscribersDisconnectedFiltersByOwnKey)
             fake->callback->OnAllSubscribersDisconnected(own_key.Get()),
             DAS_S_OK);
     }
-    EXPECT_TRUE(reporter.IsDisconnected());
-    reporter.Report(progress);
+    EXPECT_TRUE(reporter->IsDisconnected());
+    reporter->Report(progress);
     ASSERT_EQ(fake->entries.size(), 1u);
 
-    reporter.Stop();
+    reporter->Stop();
 }
 
 // Behavior 4: RemoveCallback 成对（service 侧 callback 释放）+ 停止后不再上报。
@@ -190,18 +190,18 @@ TEST(MaapiProgressReporterTest, RemoveCallbackStopsReporting)
         FakeProgressService::Make();
     auto* fake = static_cast<FakeProgressService*>(service.Get());
 
-    DasProgressReporter reporter("key1", service);
-    ASSERT_TRUE(reporter.Start());
+    auto reporter = std::make_shared<DasProgressReporter>("key1", service);
+    ASSERT_TRUE(reporter->Start());
     ASSERT_EQ(fake->add_count, 1);
     ASSERT_TRUE(fake->callback);
 
-    reporter.Stop();
+    reporter->Stop();
     EXPECT_EQ(fake->remove_count, 1);
     EXPECT_FALSE(fake->callback);
 
     UpdateProgress progress{};
     progress.stage = UpdateStage::Extract;
-    reporter.Report(progress);
+    reporter->Report(progress);
     EXPECT_EQ(fake->entries.size(), 0u);
 }
 
