@@ -5,6 +5,7 @@
 #include <das/Plugins/DasMaaPi/MaaPiErrorCodes.h>
 #include <das/Plugins/DasMaaPi/PiParser.h>
 #include <das/Utils/DasJsonCore.h>
+#include <das/Utils/fmt.h>
 
 #include <algorithm>
 #include <cctype>
@@ -74,6 +75,35 @@ namespace Das::Plugins::DasMaaPi
         void LogWarning(const std::string& message)
         {
             DAS_LOG_WARNING(message.c_str());
+        }
+
+        void LogInfo(const std::string& message)
+        {
+            DAS_LOG_INFO(message.c_str());
+        }
+
+        // 下载 URL 记日志时剥掉 query（cdk 等敏感参数不进日志）。
+        std::string RedactDownloadUrlForLog(const std::string& url)
+        {
+            const auto query = url.find('?');
+            return query == std::string::npos ? url : url.substr(0, query);
+        }
+
+        // 把已落盘文件读回内存（流式下载完成后再读回供解压，避免下载期间
+        // 整体缓冲）。
+        bool ReadFileToBuffer(
+            const std::filesystem::path& path,
+            std::string&                 out)
+        {
+            std::ifstream ifs(path, std::ios::binary);
+            if (!ifs)
+            {
+                return false;
+            }
+            out.assign(
+                std::istreambuf_iterator<char>(ifs),
+                std::istreambuf_iterator<char>());
+            return true;
         }
 
         // interface.json 顶层元数据（github / mirrorchyan_rid / version）。
@@ -894,24 +924,7 @@ namespace Das::Plugins::DasMaaPi
             return meta.version;
         }
 
-        DasResult DownloadZip(
-            PiHttpClient&      http,
-            const std::string& download_url,
-            const std::string& proxy,
-            std::string&       out_zip)
-        {
-            int        status = 0;
-            const auto result = http.Get(download_url, out_zip, status, proxy);
-            if (IsFailed(result) || status != 200)
-            {
-                LogError(
-                    "PiUpdateService: download failed url=" + download_url);
-                return DAS_E_MAAPI_UPDATE_APPLY_FAILED;
-            }
-            return DAS_S_OK;
-        }
-
-        // 逐文件替换（被锁文件暂存 .pending/ 策略，D-89-06）。extract_dir 内
+        // 逐文件替换（被锁文件暂存 .pending/ 策略）。extract_dir 内
         // 每个文件覆盖 pi_dir 对应文件；无法覆盖（Windows sharing violation /
         // std::filesystem_error）时把新版本移入 {pi_dir}/.pending/{rel}
         // 并警告， 其余文件正常替换。interface.json 自身被锁（session 正持有）→
@@ -1195,7 +1208,8 @@ namespace Das::Plugins::DasMaaPi
         PiHttpClient&                http,
         std::string_view             proxy_url,
         std::string_view             mirrorchyan_cdk,
-        IMaaApiBoundary*             boundary)
+        IMaaApiBoundary*             boundary,
+        ProgressReporter             progress_reporter)
     {
         IMaaApiBoundary& api_boundary =
             boundary ? *boundary : DefaultMaaApiBoundary();
@@ -1206,11 +1220,13 @@ namespace Das::Plugins::DasMaaPi
         }
         const std::string proxy(proxy_url);
         const std::string old_version = ReadCurrentVersion(pi_dir);
+        const std::string entry_id =
+            info.version_name.empty() ? old_version : info.version_name;
+        const std::string log_url = RedactDownloadUrlForLog(info.download_url);
 
         // .update 临时目录放 pi_dir 的兄弟目录（不是 pi_dir 内）——否则备份
         // rename(pi_dir → backup) 会把 .update 一起移走，后续 replace rename
-        // 的源路径失效（与 MXU updateService.ts:1012 的
-        // joinPath(dirname(zipPath), 'update_extract') 兄弟目录语义一致）。
+        // 的源路径失效。
         const auto update_root =
             pi_dir.parent_path() / (pi_dir.filename().string() + ".update");
         const auto version_tag =
@@ -1235,7 +1251,7 @@ namespace Das::Plugins::DasMaaPi
             }
         } cleanup{update_root};
 
-        // 1. 下载全量 zip 到 .update/{version}.zip（D-89-03 / D-89-08）。
+        // 1. 流式下载 zip 到 .update/{version}.zip（边下边写盘，不整体缓冲）。
         // MirrorChyan 来源的下载 URL 携带 CDK 时附带 cdk query（对齐 MXU
         // 语义）；GitHub 来源或 CDK 为空时不改动 URL。
         const std::string cdk_key(mirrorchyan_cdk);
@@ -1248,69 +1264,165 @@ namespace Das::Plugins::DasMaaPi
                     download_url.find('?') != std::string::npos ? "&" : "?")
                 + "cdk=" + UrlEncode(cdk_key);
         }
-        std::string zip_data;
-        if (IsFailed(DownloadZip(http, download_url, proxy, zip_data)))
-        {
-            return DAS_E_MAAPI_UPDATE_APPLY_FAILED;
-        }
         std::error_code ec;
         std::filesystem::create_directories(update_root, ec);
-        {
-            std::ofstream ofs(zip_path, std::ios::binary | std::ios::trunc);
-            if (!ofs)
-            {
-                LogError("PiUpdateService: cannot write zip to disk");
-                return DAS_E_MAAPI_UPDATE_APPLY_FAILED;
-            }
-            ofs.write(zip_data.data(), zip_data.size());
-        }
 
-        // 2. 安全解压（目录穿越防护，T-89-02-01）。
-        if (IsFailed(ExtractZip(zip_data, extract_dir)))
+        // 可追溯日志（entryId / 下载 URL / 阶段 / 字节 / 错误码 / 耗时）。
+        LogInfo(
+            DAS::fmt::format(
+                "PiUpdateService: update download start entryId={} url={}",
+                entry_id,
+                log_url));
+        const auto download_start = std::chrono::steady_clock::now();
+        int        download_status = 0;
+        const auto download_result = http.DownloadStream(
+            download_url,
+            zip_path,
+            [&](const DownloadProgress& p)
+            {
+                if (progress_reporter)
+                {
+                    UpdateProgress up{};
+                    up.stage = UpdateStage::Download;
+                    up.bytes_received = p.bytes_received;
+                    up.total_bytes = p.total_bytes;
+                    progress_reporter(up);
+                }
+            },
+            download_status,
+            proxy);
+        const auto download_elapsed_ms =
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - download_start)
+                .count();
+        if (IsFailed(download_result) || download_status != 200)
         {
+            LogError(
+                DAS::fmt::format(
+                    "PiUpdateService: update download failed entryId={} url={} "
+                    "status={} result={} elapsedMs={}",
+                    entry_id,
+                    log_url,
+                    download_status,
+                    static_cast<int>(download_result),
+                    download_elapsed_ms));
+            return DAS_E_MAAPI_UPDATE_APPLY_FAILED;
+        }
+        LogInfo(
+            DAS::fmt::format(
+                "PiUpdateService: update download complete entryId={} zip={} "
+                "elapsedMs={}",
+                entry_id,
+                zip_path.filename().string(),
+                download_elapsed_ms));
+
+        // 流式下载完成后再读回 zip 文件供解压（此阶段一次性缓冲）。
+        std::string zip_data;
+        if (!ReadFileToBuffer(zip_path, zip_data))
+        {
+            LogError(
+                DAS::fmt::format(
+                    "PiUpdateService: cannot read downloaded zip entryId={}",
+                    entry_id));
             return DAS_E_MAAPI_UPDATE_APPLY_FAILED;
         }
 
-        // 3. 备份 + 原子替换（Pitfall 6 / D-89-01，参考
-        //    PluginZipExtractor.cpp:593-636 的 rename 替换 + 回滚模式）。
-        //    若 {pi_dir}_backup_{oldVersion} 已存在先删除（仅保留上一份，
-        //    Open Question 4 决策；定时清理 defer）。
+        // 2. 安全解压（目录穿越防护）。
+        if (progress_reporter)
+        {
+            progress_reporter(
+                UpdateProgress{UpdateStage::Extract, 0, std::nullopt});
+        }
+        const auto extract_result = ExtractZip(zip_data, extract_dir);
+        if (IsFailed(extract_result))
+        {
+            LogError(
+                DAS::fmt::format(
+                    "PiUpdateService: update extract failed entryId={} result={}",
+                    entry_id,
+                    static_cast<int>(extract_result)));
+            return DAS_E_MAAPI_UPDATE_APPLY_FAILED;
+        }
+
+        // 3. 备份 + 原子替换（rename 替换 + 回滚模式）。若
+        //    {pi_dir}_backup_{oldVersion} 已存在先删除（仅保留上一份）。
+        if (progress_reporter)
+        {
+            progress_reporter(
+                UpdateProgress{UpdateStage::Replace, 0, std::nullopt});
+        }
+        LogInfo(
+            DAS::fmt::format(
+                "PiUpdateService: update backup start entryId={} backup={}",
+                entry_id,
+                backup_dir.filename().string()));
         std::filesystem::remove_all(backup_dir, ec);
         std::filesystem::rename(pi_dir, backup_dir, ec);
         if (ec)
         {
             // 整体 rename 失败：很可能是 pi_dir 内存在被占用的文件（如运行中
-            // 的 MaaFW DLL，Windows sharing violation）。D-89-06 策略——不做
-            // 自动重启，降级为逐文件替换 + .pending/ 暂存新版本 + 警告；若
-            // interface.json 自身被锁则整体失败（pi_dir 未被改动，保持完整）。
+            // 的 MaaFW DLL，Windows sharing violation）。降级为逐文件替换 +
+            // .pending/ 暂存新版本 + 警告；若 interface.json 自身被锁则整体
+            // 失败（pi_dir 未被改动，保持完整）。
             LogWarning(
-                "PiUpdateService: whole-dir backup rename failed, falling "
-                "back to per-file replace: "
-                + ec.message());
+                DAS::fmt::format(
+                    "PiUpdateService: update backup failed entryId={} falling "
+                    "back to per-file replace: {}",
+                    entry_id,
+                    ec.message()));
             // 回滚：rename 失败时 pi_dir 保持原样（未移动），无需恢复。
             const auto fallback_result =
                 ReplaceFilesWithPending(extract_dir, pi_dir);
+            LogInfo(
+                DAS::fmt::format(
+                    "PiUpdateService: update replace (per-file) finished "
+                    "entryId={} result={}",
+                    entry_id,
+                    static_cast<int>(fallback_result)));
             cleanup.dismissed = true;
             std::filesystem::remove_all(update_root, ec);
             return fallback_result;
         }
+        LogInfo(
+            DAS::fmt::format(
+                "PiUpdateService: update backup complete entryId={} backup={}",
+                entry_id,
+                backup_dir.filename().string()));
+        LogInfo(
+            DAS::fmt::format(
+                "PiUpdateService: update replace start entryId={}",
+                entry_id));
         std::filesystem::rename(extract_dir, pi_dir, ec);
         if (ec)
         {
             // 任一步失败 → 回滚：恢复旧目录，清理 .update 临时目录。
             LogError(
-                "PiUpdateService: replace rename failed, rolling back: "
-                + pi_dir.string());
+                DAS::fmt::format(
+                    "PiUpdateService: update replace failed entryId={} rolling "
+                    "back: {}",
+                    entry_id,
+                    pi_dir.string()));
             std::error_code restore_ec;
             std::filesystem::rename(backup_dir, pi_dir, restore_ec);
             return DAS_E_MAAPI_UPDATE_APPLY_FAILED;
         }
+        LogInfo(
+            DAS::fmt::format(
+                "PiUpdateService: update replace complete entryId={}",
+                entry_id));
 
-        // 4. 成功：resource.hash 校验（D-89-05，警告不硬失败）+ 清理 .update
+        // 4. 成功：resource.hash 校验（警告不硬失败）+ 清理 .update
         //    临时目录（zip + extract），保留 backup。
         VerifyResourceHash(pi_dir, info, api_boundary);
         cleanup.dismissed = true;
         std::filesystem::remove_all(update_root, ec);
+        LogInfo(
+            DAS::fmt::format(
+                "PiUpdateService: update applied entryId={} elapsedMs={}",
+                entry_id,
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - download_start)
+                    .count()));
         return DAS_S_OK;
     }
 } // namespace Das::Plugins::DasMaaPi

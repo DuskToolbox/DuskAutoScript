@@ -7,6 +7,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -26,10 +27,28 @@ namespace Das::Plugins::DasMaaPi
         std::optional<int64_t>     error_code;
     };
 
-    // 共享更新编排层（MaaPI 逻辑层职责，D-89-05）。网络经 PiHttpClient seam
-    // 注入（生产传 BeastHttpClient，测试传本地 mock——RESEARCH Pitfall 2），
-    // 文件操作全部在 interface.json 所在目录（项目目录，D-89-01）内完成，
-    // 不触碰 DAS 自身二进制。
+    // 更新流程阶段。
+    enum class UpdateStage
+    {
+        Download, // 下载阶段：有 Content-Length 带字节对，无则阶段态
+        Extract,  // 解压阶段：仅阶段事件
+        Replace,  // 替换阶段：仅阶段事件
+    };
+
+    // 进度上报载荷。total_bytes 仅在下载来源返回 Content-Length 时填充；无则
+    // 调用侧显示阶段态「正在下载…」。
+    struct UpdateProgress
+    {
+        UpdateStage                  stage = UpdateStage::Download;
+        std::uint64_t                bytes_received = 0;
+        std::optional<std::uint64_t> total_bytes;
+    };
+
+    using ProgressReporter = std::function<void(const UpdateProgress&)>;
+
+    // 共享更新编排层（MaaPI 逻辑层职责）。网络经 PiHttpClient seam
+    // 注入（生产传 BeastHttpClient，测试传本地 mock），文件操作全部在
+    // interface.json 所在目录（项目目录）内完成，不触碰 DAS 自身二进制。
     struct PiUpdateService
     {
         // 检查更新：读 interface.json 顶层 github / mirrorchyan_rid / version
@@ -52,19 +71,22 @@ namespace Das::Plugins::DasMaaPi
             std::string_view             mirrorchyan_cdk = {},
             std::string_view             update_channel = {});
 
-        // 应用更新：下载全量 zip（经 http seam，D-89-03）→ 安全解压（目录穿越
-        // 防护）→ 备份旧项目目录 → 原子替换 interface.json 所在目录 →
-        // resource.hash 校验（经 IMaaApiBoundary，D-89-05）→ 清理 .update
-        // 临时目录（D-89-01 / D-89-03）。返回 -10008 时旧目录已回滚。
+        // 应用更新：流式下载 zip（经 http seam，边下边写盘，不整体缓冲）→
+        // 安全解压（目录穿越防护）→ 备份旧项目目录 → 原子替换 interface.json
+        // 所在目录 → resource.hash 校验（经 IMaaApiBoundary）→ 清理 .update
+        // 临时目录。返回 -10008 时旧目录已回滚。
         // boundary 为空时用 DefaultMaaApiBoundary()（测试传
         // FakeMaaApiBoundary）。mirrorchyan_cdk 非空且下载 URL 为 MirrorChyan
         // 来源时附带 cdk query（与检查请求一致）。
+        // progress_reporter 为空时不产生进度回调；非空时按阶段（下载/解压/
+        // 替换）上报进度，供 IPC 推送链路消费。
         static DasResult ApplyUpdate(
             const std::filesystem::path& pi_dir,
             const PiUpdateInfo&          info,
             PiHttpClient&                http,
             std::string_view             proxy_url = {},
             std::string_view             mirrorchyan_cdk = {},
-            IMaaApiBoundary*             boundary = nullptr);
+            IMaaApiBoundary*             boundary = nullptr,
+            ProgressReporter             progress_reporter = {});
     };
 } // namespace Das::Plugins::DasMaaPi

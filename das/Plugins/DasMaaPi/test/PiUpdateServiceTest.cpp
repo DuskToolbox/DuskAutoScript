@@ -996,3 +996,155 @@ TEST(PiUpdateService, MaaVersionResolvedFromHardlink)
                  "version display is production-only";
 #endif
 }
+
+// ---------------------------------------------------------------------
+// 流式下载进度上报：阶段序列 + 有/无 total + 失败路径
+// ---------------------------------------------------------------------
+
+TEST(PiUpdateService, ApplyUpdateReportsDownloadExtractReplaceStages)
+{
+    // 有 Content-Length 的 mock 下载（分块回调）→ ApplyUpdate 触发 download
+    // 阶段回调带 bytes/total，随后 Extract / Replace 各一次阶段事件。
+    FakePiHttpClient http;
+    http.AddRoute(
+        "/download/package.zip",
+        BuildTestZip(
+            {TestZipEntry{"interface.json", "{\"version\":\"1.2.0\"}"}}),
+        200,
+        /*has_content_length=*/true,
+        /*chunk_size=*/4);
+
+    TempPiProject project;
+    project.WriteInterface(MakeInterface("1.0.0", "", ""));
+
+    PiUpdateInfo info;
+    info.version_name = "1.2.0";
+    info.download_url = "https://example.com/download/package.zip";
+
+    std::vector<UpdateProgress> progress;
+    const auto                  result = PiUpdateService::ApplyUpdate(
+        project.Dir(),
+        info,
+        http,
+        /*proxy_url=*/{},
+        /*mirrorchyan_cdk=*/{},
+        /*boundary=*/nullptr,
+        [&](const UpdateProgress& p) { progress.push_back(p); });
+
+    EXPECT_EQ(result, DAS_S_OK);
+
+    ASSERT_FALSE(progress.empty());
+    // 下载阶段至少一次，且最终字节对 = 包大小。
+    std::optional<UpdateProgress> download_stage;
+    std::optional<std::size_t>    extract_index;
+    std::optional<std::size_t>    replace_index;
+    for (std::size_t i = 0; i < progress.size(); ++i)
+    {
+        const auto& p = progress[i];
+        if (p.stage == UpdateStage::Download)
+        {
+            download_stage = p;
+        }
+        else if (p.stage == UpdateStage::Extract)
+        {
+            extract_index = i;
+        }
+        else if (p.stage == UpdateStage::Replace)
+        {
+            replace_index = i;
+        }
+    }
+    ASSERT_TRUE(download_stage.has_value());
+    EXPECT_GT(download_stage->bytes_received, 0u);
+    ASSERT_TRUE(download_stage->total_bytes.has_value());
+    EXPECT_EQ(*download_stage->total_bytes, download_stage->bytes_received);
+    // 阶段序列 Download → Extract → Replace。
+    ASSERT_TRUE(extract_index.has_value());
+    ASSERT_TRUE(replace_index.has_value());
+    EXPECT_LT(*extract_index, *replace_index);
+}
+
+TEST(PiUpdateService, ApplyUpdateWithoutContentLengthReportsStageOnly)
+{
+    // 无 Content-Length（has_content_length=false）→ download 阶段回调
+    // total 为空（阶段态，不估算字节/百分比）。
+    FakePiHttpClient http;
+    http.AddRoute(
+        "/download/package.zip",
+        BuildTestZip(
+            {TestZipEntry{"interface.json", "{\"version\":\"1.2.0\"}"}}),
+        200,
+        /*has_content_length=*/false);
+
+    TempPiProject project;
+    project.WriteInterface(MakeInterface("1.0.0", "", ""));
+
+    PiUpdateInfo info;
+    info.version_name = "1.2.0";
+    info.download_url = "https://example.com/download/package.zip";
+
+    std::vector<UpdateProgress> progress;
+    const auto                  result = PiUpdateService::ApplyUpdate(
+        project.Dir(),
+        info,
+        http,
+        {},
+        {},
+        nullptr,
+        [&](const UpdateProgress& p) { progress.push_back(p); });
+
+    EXPECT_EQ(result, DAS_S_OK);
+
+    bool saw_download = false;
+    bool saw_extract = false;
+    bool saw_replace = false;
+    for (const auto& p : progress)
+    {
+        if (p.stage == UpdateStage::Download)
+        {
+            saw_download = true;
+            EXPECT_FALSE(p.total_bytes.has_value());
+        }
+        else if (p.stage == UpdateStage::Extract)
+        {
+            saw_extract = true;
+        }
+        else if (p.stage == UpdateStage::Replace)
+        {
+            saw_replace = true;
+        }
+    }
+    EXPECT_TRUE(saw_download);
+    EXPECT_TRUE(saw_extract);
+    EXPECT_TRUE(saw_replace);
+}
+
+TEST(PiUpdateService, ApplyUpdateDownloadFailurePreservesOldContent)
+{
+    // 流式下载失败（mock 返回非 200）→ ApplyUpdate 返回 -10008，且不落坏
+    // zip（.update 临时目录清理），旧内容保留。
+    FakePiHttpClient http;
+    http.AddRoute("/download/package.zip", "not-a-zip", /*status=*/500);
+
+    TempPiProject project;
+    project.WriteInterface(MakeInterface("1.0.0", "", ""));
+
+    PiUpdateInfo info;
+    info.version_name = "1.2.0";
+    info.download_url = "https://example.com/download/package.zip";
+
+    const auto result = PiUpdateService::ApplyUpdate(project.Dir(), info, http);
+
+    EXPECT_EQ(result, DAS_E_MAAPI_UPDATE_APPLY_FAILED);
+
+    // 无坏 zip 残留。
+    const auto update_root = project.Dir().parent_path()
+                             / (project.Dir().filename().string() + ".update");
+    EXPECT_FALSE(std::filesystem::exists(update_root));
+    // 旧内容保留。
+    std::ifstream iface(project.Dir() / "interface.json");
+    std::string   content(
+        (std::istreambuf_iterator<char>(iface)),
+        std::istreambuf_iterator<char>());
+    EXPECT_NE(content.find("1.0.0"), std::string::npos);
+}

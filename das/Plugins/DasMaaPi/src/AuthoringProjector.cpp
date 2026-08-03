@@ -4510,7 +4510,9 @@ namespace Das::Plugins::DasMaaPi
             info,
             *http.value,
             settings.adapter.proxy_url.value_or(""),
-            settings.adapter.mirrorchyan_cdk.value_or(""));
+            settings.adapter.mirrorchyan_cdk.value_or(""),
+            /*boundary=*/nullptr,
+            /*progress_reporter=*/{});
         if (IsFailed(result))
         {
             // 失败保留 pending_update_（用户可重试）+ 携带错误详情。
