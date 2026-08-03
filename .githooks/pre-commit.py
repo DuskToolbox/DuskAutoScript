@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
-"""Pre-commit hook: 拒绝非 UTF-8 (含 BOM) 的代码文件提交 + 新增行审查报告编号检查"""
+"""Pre-commit hook: 拒绝非 UTF-8 (含 BOM) 的代码文件提交 + 新增行审查报告编号检查 + C++ 命名风格检查"""
 
 import os
 import re
 import subprocess
 import sys
+from pathlib import Path
+
+# 项目根（.githooks 的上一级）
+ROOT = Path(__file__).resolve().parent.parent
 
 # 需要检查编码的文件扩展名
 CHECK_EXTENSIONS = {
@@ -114,6 +118,13 @@ def main():
         for filepath, line in finding_violations:
             print(f"  {filepath}: {line}", file=sys.stderr)
         sys.exit(1)
+
+    # C++ 命名风格检查（clang-tidy readability-identifier-naming，仅查暂存改动行）
+    naming = subprocess.run(
+        [sys.executable, str(ROOT / "tools" / "check_cpp_naming.py"), "--staged"]
+    )
+    if naming.returncode != 0:
+        sys.exit(naming.returncode)
 
     sys.exit(0)
 
