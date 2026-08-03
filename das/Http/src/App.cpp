@@ -633,18 +633,17 @@ namespace Das::Http
 
             server.Run();
 
-            const auto shutdown_result = components.core_services->Shutdown();
-            if (DAS::IsFailed(shutdown_result))
-            {
-                DAS_LOG_ERROR(
-                    DAS_FMT_NS::format(
-                        "Failed to shutdown CoreServices. result = {}",
-                        shutdown_result)
-                        .c_str());
-            }
-            // 正常退出路径：删除会话目录（D-88-05b）。
+            // 停 HTTP 后立即无效化 hub（切断 IPC→HTTP 的 SSE 写路径）：之后
+            // 析构 server（io_context）前，IPC 线程晚到的 Report 经
+            // hub->Broadcast 变 no-op，不再 dispatch 到已析构 io_context。
+            // 过渡期（RequestServerStop → server.Run 返回）IPC 写 dispatch 到
+            // 还在 run 的 ioc，无害。
+            sse_hub->Invalidate();
+            // 正常退出路径：删除会话目录。core_services->Shutdown
+            // 移到外层（IPC join 之后）统一执行，确保 service 由注册表保活到
+            // IPC 排空完成。
             Das::Core::LogRecorderRuntime::Shutdown();
-            return shutdown_result;
+            return DAS_S_OK;
         };
 
         DasResult run_result = DAS_E_FAIL;
@@ -668,8 +667,7 @@ namespace Das::Http
         // bind 失败路径同样清理会话目录，避免残留（D-88-05b）；Shutdown 幂等。
         Das::Core::LogRecorderRuntime::Shutdown();
 
-        // Shutdown IPC context（正常退出与 bind 失败统一在此清理，否则
-        // joinable 线程析构触发 std::terminate）
+        // 停 IPC（排空在途 Report）：service 仍由注册表（DOM）保活，join 安全。
         if (components.ipc_context)
         {
             components.ipc_context->RequestStop();
@@ -677,6 +675,18 @@ namespace Das::Http
         if (components.ipc_thread.joinable())
         {
             components.ipc_thread.join();
+        }
+
+        // IPC 停止后才释放 service 注册表（core Shutdown），确保无晚到 Report
+        // 打已析构 service。bind 失败路径（server 未启动）也统一在此清理。
+        const auto shutdown_result = components.core_services->Shutdown();
+        if (DAS::IsFailed(shutdown_result))
+        {
+            DAS_LOG_ERROR(
+                DAS_FMT_NS::format(
+                    "Failed to shutdown CoreServices. result = {}",
+                    shutdown_result)
+                    .c_str());
         }
         return run_result;
     }

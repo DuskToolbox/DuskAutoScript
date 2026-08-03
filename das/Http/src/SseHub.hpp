@@ -2,6 +2,8 @@
 #define DAS_HTTP_SSE_HUB_HPP
 
 #include <boost/asio/io_context.hpp>
+
+#include <atomic>
 #include <functional>
 #include <memory>
 #include <shared_mutex>
@@ -91,10 +93,19 @@ namespace Das::Http
          */
         void CleanupStaleConnections();
 
+        /**
+         * @brief 使 hub 失效：此后 Register/Unregister/Broadcast 全部 no-op。
+         *
+         * 关闭流程中先无效化 hub 再析构 HTTP 资源（io_context），确保 IPC
+         * 线程晚到的 Report 经 Broadcast 不再 dispatch 到已析构的 io_context。
+         */
+        void Invalidate() noexcept { invalidated_.store(true); }
+
         boost::asio::io_context& IoCtx() noexcept { return ioc_; }
 
     private:
         boost::asio::io_context&  ioc_;
+        std::atomic<bool>         invalidated_{false};
         mutable std::shared_mutex mutex_;
         std::unordered_map<
             std::string,

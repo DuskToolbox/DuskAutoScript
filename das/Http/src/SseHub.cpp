@@ -16,12 +16,20 @@ namespace Das::Http
         std::weak_ptr<SseSessionBase> session,
         std::string                   key)
     {
+        if (invalidated_.load())
+        {
+            return;
+        }
         const std::unique_lock lock(mutex_);
         sessions_by_key_[std::move(key)].push_back(std::move(session));
     }
 
     void SseHub::Unregister(SseSessionBase* session, const std::string& key)
     {
+        if (invalidated_.load())
+        {
+            return;
+        }
         bool key_empty = false;
         {
             const std::unique_lock lock(mutex_);
@@ -66,6 +74,10 @@ namespace Das::Http
         const std::string&                 key,
         std::shared_ptr<const std::string> payload)
     {
+        if (invalidated_.load())
+        {
+            return;
+        }
         const std::shared_lock lock(mutex_);
         auto                   it = sessions_by_key_.find(key);
         if (it == sessions_by_key_.end())
