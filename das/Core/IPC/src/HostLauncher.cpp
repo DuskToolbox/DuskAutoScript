@@ -687,16 +687,26 @@ DasResult HostLauncher::StartLaunchSequence(
                 [this, process_ptr, session_id, stop_token]()
                     -> boost::asio::awaitable<void>
                 {
+                    // Pitfall 3 守卫（前置检查）：Stop() 若在 watcher 尚未注册
+                    // async_wait 时 request_stop，terminal 取消信号会在协程启动
+                    // 前被 co_spawn 消费掉，async_wait 因进程存活永不完成 →
+                    // scope 永不 drain → Stop() 的 on_empty 死锁。前置检查让已
+                    // 停止的 watcher 在注册 async_wait 前直接退出，scope 立即
+                    // drain（MultipleStartStop/StopTerminatesProcess 依赖此）。
+                    if (stop_token.stop_requested())
+                    {
+                        co_return;
+                    }
                     boost::system::error_code ec;
                     co_await process_ptr->async_wait(
                         boost::asio::redirect_error(
                             boost::asio::use_awaitable,
                             ec));
-                    // Pitfall 3 守卫：Stop() 的 request_stop 取消 async_wait 会
-                    // 产生 ec=operation_aborted，已停止时跳过 Invoke 避免伪 -1
-                    // 回调。进程自然退出路径 stop 未请求 → 守卫放行真实
-                    // exit_code（两条路径的选择性由 Plan 03 Task 2
-                    // 负向审计验证）。
+                    // Pitfall 3 守卫（后置检查）：Stop() 的 request_stop 取消
+                    // async_wait 会产生 ec=operation_aborted，已停止时跳过
+                    // Invoke 避免伪 -1 回调。进程自然退出路径 stop 未请求 →
+                    // 守卫放行真实 exit_code（两条路径的选择性由 Plan 03
+                    // Task 2 负向审计验证）。
                     if (stop_token.stop_requested())
                     {
                         co_return;
@@ -1246,13 +1256,26 @@ DasResult HostLauncher::StartAsync(
                                         stop_token]()
                                            -> boost::asio::awaitable<void>
                                        {
+                                           // Pitfall 3 守卫（前置检查）：与
+                                           // StartLaunchSequence watcher 同款。
+                                           // Stop() 若在 watcher 尚未注册
+                                           // async_wait 时 request_stop，
+                                           // terminal 取消会在协程启动前被
+                                           // co_spawn 消费掉，async_wait 因进程
+                                           // 存活永不完成 → scope 永不 drain →
+                                           // Stop() 的 on_empty 死锁。已停止
+                                           // 直接退出。
+                                           if (stop_token.stop_requested())
+                                           {
+                                               co_return;
+                                           }
                                            boost::system::error_code ec;
                                            co_await process_ptr->async_wait(
                                                boost::asio::redirect_error(
                                                    boost::asio::use_awaitable,
                                                    ec));
-                                           // Pitfall 3 守卫：Stop() 的
-                                           // request_stop 取消 async_wait 会
+                                           // Pitfall 3 守卫（后置检查）：Stop()
+                                           // 的 request_stop 取消 async_wait 会
                                            // 产生 ec=operation_aborted，已停止
                                            // 时跳过 Invoke 避免伪 -1 回调。
                                            if (stop_token.stop_requested())

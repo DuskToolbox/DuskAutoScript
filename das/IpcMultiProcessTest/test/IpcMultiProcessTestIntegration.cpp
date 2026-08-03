@@ -2046,6 +2046,113 @@ TEST_F(IpcMultiProcessTestIntegration, StopTerminatesProcess)
     EXPECT_FALSE(launcher_->IsRunning());
 }
 
+// Phase 91 Plan 03 Task 2：exit-watcher 伪回调负向审计。
+// 验证 stop_requested 守卫的选择性（Pitfall 3）：两条退出路径缺一不可——
+// 1) 进程自然退出（非 Stop 驱动）→ 守卫放行真实 exit_code 回调（防过度抑制）；
+// 2) Stop 驱动 teardown（取消在途 async_wait）→ 守卫抑制伪 -1 回调（防
+// spurious）。
+
+// 自然退出路径：外部终止 Host 进程（不经过 Stop）→ watcher 的 async_wait 自然
+// 完成（真实 exit_code）→ stop 未请求 → 守卫放行 → 回调收到真实退出码。
+TEST_F(
+    IpcMultiProcessTestIntegration,
+    ExitWatcher_NaturalExitDeliversRealExitCode)
+{
+    if (!std::filesystem::exists(host_exe_path_))
+    {
+        GTEST_SKIP() << "DasHostX.exe not found at: " << host_exe_path_;
+    }
+
+    std::atomic<int> callback_count{0};
+    std::atomic<int> last_exit_code{0};
+
+    const ScopedHostStop guard{launcher_};
+    ASSERT_EQ(StartHostAndSetupRunLoop(), DAS_S_OK);
+    ASSERT_TRUE(launcher_->IsRunning());
+    const uint32_t host_pid = launcher_->GetPid();
+    ASSERT_GT(host_pid, 0u);
+
+    auto* concrete_launcher =
+        dynamic_cast<DAS::Core::IPC::HostLauncher*>(launcher_.Get());
+    ASSERT_NE(concrete_launcher, nullptr)
+        << "launcher_ is not a concrete HostLauncher";
+    concrete_launcher->SetOnProcessExit(
+        [&](uint16_t /*session_id*/, int exit_code)
+        {
+            callback_count.fetch_add(1, std::memory_order_relaxed);
+            last_exit_code.store(exit_code, std::memory_order_relaxed);
+        });
+
+    // 外部终止进程（非 Stop 驱动）：进程退出 → watcher async_wait 自然完成。
+    {
+        HANDLE h = OpenProcess(PROCESS_TERMINATE, FALSE, host_pid);
+        ASSERT_NE(h, nullptr) << "OpenProcess failed: error=" << GetLastError();
+        ASSERT_TRUE(TerminateProcess(h, 42))
+            << "TerminateProcess failed: error=" << GetLastError();
+        CloseHandle(h);
+    }
+
+    const bool fired = WaitUntilForTest(
+        [&]() { return callback_count.load(std::memory_order_relaxed) > 0; },
+        std::chrono::seconds(5));
+    ASSERT_TRUE(fired)
+        << "on_process_exit callback not fired after external process "
+           "termination";
+
+    EXPECT_EQ(last_exit_code.load(std::memory_order_relaxed), 42)
+        << "natural-exit path must deliver the real exit_code (guard must not "
+           "over-suppress legitimate callbacks)";
+
+    // 收尾：显式 Stop 清理（进程已死，Stop 对死进程幂等）。
+    launcher_->Stop();
+    EXPECT_FALSE(launcher_->IsRunning());
+}
+
+// Stop 驱动 teardown 路径：进程存活时调用 Stop() → request_stop 取消在途
+// watcher 的 async_wait（ec=operation_aborted）→ stop_requested() 为 true →
+// 守卫跳过 Invoke → 无伪 -1 回调。Stop() 的 scope.on_empty() drain 保证断言
+// 时 watcher 已完成（硬同步点，无需额外 sleep）。
+TEST_F(
+    IpcMultiProcessTestIntegration,
+    ExitWatcher_StopSuppressesSpuriousMinusOneCallback)
+{
+    if (!std::filesystem::exists(host_exe_path_))
+    {
+        GTEST_SKIP() << "DasHostX.exe not found at: " << host_exe_path_;
+    }
+
+    std::atomic<int> callback_count{0};
+    std::atomic<int> last_exit_code{0};
+
+    const ScopedHostStop guard{launcher_};
+    ASSERT_EQ(StartHostAndSetupRunLoop(), DAS_S_OK);
+    ASSERT_TRUE(launcher_->IsRunning());
+
+    auto* concrete_launcher =
+        dynamic_cast<DAS::Core::IPC::HostLauncher*>(launcher_.Get());
+    ASSERT_NE(concrete_launcher, nullptr)
+        << "launcher_ is not a concrete HostLauncher";
+    concrete_launcher->SetOnProcessExit(
+        [&](uint16_t /*session_id*/, int exit_code)
+        {
+            callback_count.fetch_add(1, std::memory_order_relaxed);
+            last_exit_code.store(exit_code, std::memory_order_relaxed);
+        });
+
+    // 进程存活时 Stop()：watcher 在 scope 内被 request_stop 取消，守卫抑制。
+    // 先给 io_context 一点时间让 watcher 的 async_wait 注册完成（Start() 是
+    // 异步 spawn，进程刚启动时 watcher 协程可能尚未跑到 async_wait；立即 Stop
+    // 会命中 co_spawn 启动前取消的竞态窗口）。watcher 注册后 Stop 取消它才是
+    // 本测试要验证的守卫抑制路径。
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    launcher_->Stop();
+    EXPECT_FALSE(launcher_->IsRunning());
+
+    EXPECT_EQ(callback_count.load(std::memory_order_relaxed), 0)
+        << "Stop() must not fire a spurious on_process_exit(-1) callback";
+    EXPECT_NE(last_exit_code.load(std::memory_order_relaxed), -1);
+}
+
 TEST_F(IpcMultiProcessTestIntegration, LauncherStateBeforeStart)
 {
     EXPECT_EQ(launcher_->GetSessionId(), 0u);
