@@ -5,12 +5,14 @@
 #include <das/Plugins/DasMaaPi/MaaApiBoundary.h>
 #include <das/_autogen/idl/abi/DasResult.h>
 
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace Das::Plugins::DasMaaPi
 {
@@ -36,15 +38,82 @@ namespace Das::Plugins::DasMaaPi
     };
 
     // 进度上报载荷。total_bytes 仅在下载来源返回 Content-Length 时填充；无则
-    // 调用侧显示阶段态「正在下载…」。
+    // 调用侧显示阶段态「正在下载…」。rate_mbps 由字节增量/时间窗计算（MB/s，
+    // 1024*1024 字节）；elapsed 为下载段起算的已用时间。
     struct UpdateProgress
     {
         UpdateStage                  stage = UpdateStage::Download;
         std::uint64_t                bytes_received = 0;
         std::optional<std::uint64_t> total_bytes;
+        double                       rate_mbps = 0.0;
+        std::chrono::milliseconds    elapsed{0};
     };
 
     using ProgressReporter = std::function<void(const UpdateProgress&)>;
+
+    // 下载速率计算。维护 (bytes, time_point) 采样序列，滑动时间窗内
+    // (last.bytes - first.bytes) / elapsed_seconds 得速率；时间窗 ≤ 0 → 速率 0
+    // （防除零）。时钟可注入（测试用固定时钟断言速率公式与窗口平滑）。
+    class DownloadRateTracker
+    {
+    public:
+        using Clock = std::chrono::steady_clock;
+        using TimePoint = Clock::time_point;
+        using NowFn = std::function<TimePoint()>;
+
+        // 滑动时间窗（最近 2 秒）。
+        static constexpr std::chrono::milliseconds kWindow{2000};
+
+        explicit DownloadRateTracker(NowFn now = DefaultNow)
+            : now_(std::move(now))
+        {
+        }
+
+        TimePoint Now() const { return now_(); }
+
+        // 每块下载回调时记录最新已收字节，仅保留滑动窗口内采样。
+        void OnChunk(std::uint64_t bytes_received)
+        {
+            const auto now = now_();
+            samples_.push_back(Sample{bytes_received, now});
+            const auto cutoff = now - kWindow;
+            while (samples_.size() > 1 && samples_.front().time < cutoff)
+            {
+                samples_.erase(samples_.begin());
+            }
+        }
+
+        // 当前速率（MB/s）；采样不足 2 个或时间窗 ≤ 0 → 0。
+        double CurrentRateMbps() const
+        {
+            if (samples_.size() < 2)
+            {
+                return 0.0;
+            }
+            const auto&  first = samples_.front();
+            const auto&  last = samples_.back();
+            const double elapsed_seconds =
+                std::chrono::duration<double>(last.time - first.time).count();
+            if (elapsed_seconds <= 0.0)
+            {
+                return 0.0;
+            }
+            const double bytes_delta = static_cast<double>(last.bytes)
+                                       - static_cast<double>(first.bytes);
+            return bytes_delta / elapsed_seconds / (1024.0 * 1024.0);
+        }
+
+        static TimePoint DefaultNow() { return Clock::now(); }
+
+    private:
+        struct Sample
+        {
+            std::uint64_t bytes;
+            TimePoint     time;
+        };
+        NowFn               now_;
+        std::vector<Sample> samples_;
+    };
 
     // 共享更新编排层（MaaPI 逻辑层职责）。网络经 PiHttpClient seam
     // 注入（生产传 BeastHttpClient，测试传本地 mock），文件操作全部在

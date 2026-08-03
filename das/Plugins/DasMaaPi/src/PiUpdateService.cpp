@@ -1273,27 +1273,44 @@ namespace Das::Plugins::DasMaaPi
                 "PiUpdateService: update download start entryId={} url={}",
                 entry_id,
                 log_url));
-        const auto download_start = std::chrono::steady_clock::now();
-        int        download_status = 0;
-        const auto download_result = http.DownloadStream(
+        // 速率采样 + 上报节流（~4 Hz）：首块必报，之后每 ≥250ms 报一次，
+        // 最后一块（bytes==total）必报。
+        DownloadRateTracker rate_tracker;
+        const auto          download_start = rate_tracker.Now();
+        auto                last_report = download_start;
+        bool                first_download_report = true;
+        int                 download_status = 0;
+        const auto          download_result = http.DownloadStream(
             download_url,
             zip_path,
             [&](const DownloadProgress& p)
             {
-                if (progress_reporter)
+                rate_tracker.OnChunk(p.bytes_received);
+                const auto now = rate_tracker.Now();
+                const bool should_report =
+                    first_download_report
+                    || (now - last_report) >= std::chrono::milliseconds(250)
+                    || (p.total_bytes && p.bytes_received >= *p.total_bytes);
+                if (should_report && progress_reporter)
                 {
                     UpdateProgress up{};
                     up.stage = UpdateStage::Download;
                     up.bytes_received = p.bytes_received;
                     up.total_bytes = p.total_bytes;
+                    up.rate_mbps = rate_tracker.CurrentRateMbps();
+                    up.elapsed =
+                        std::chrono::duration_cast<std::chrono::milliseconds>(
+                            now - download_start);
                     progress_reporter(up);
+                    last_report = now;
                 }
+                first_download_report = false;
             },
             download_status,
             proxy);
         const auto download_elapsed_ms =
             std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::steady_clock::now() - download_start)
+                rate_tracker.Now() - download_start)
                 .count();
         if (IsFailed(download_result) || download_status != 200)
         {
@@ -1421,7 +1438,7 @@ namespace Das::Plugins::DasMaaPi
                 "PiUpdateService: update applied entryId={} elapsedMs={}",
                 entry_id,
                 std::chrono::duration_cast<std::chrono::milliseconds>(
-                    std::chrono::steady_clock::now() - download_start)
+                    rate_tracker.Now() - download_start)
                     .count()));
         return DAS_S_OK;
     }

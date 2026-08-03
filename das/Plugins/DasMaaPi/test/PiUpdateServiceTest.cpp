@@ -1058,6 +1058,9 @@ TEST(PiUpdateService, ApplyUpdateReportsDownloadExtractReplaceStages)
     EXPECT_GT(download_stage->bytes_received, 0u);
     ASSERT_TRUE(download_stage->total_bytes.has_value());
     EXPECT_EQ(*download_stage->total_bytes, download_stage->bytes_received);
+    // UpdateProgress 携带速率与已用时间字段（供投影层消费）。
+    EXPECT_GE(download_stage->rate_mbps, 0.0);
+    EXPECT_GE(download_stage->elapsed.count(), 0);
     // 阶段序列 Download → Extract → Replace。
     ASSERT_TRUE(extract_index.has_value());
     ASSERT_TRUE(replace_index.has_value());
@@ -1147,4 +1150,55 @@ TEST(PiUpdateService, ApplyUpdateDownloadFailurePreservesOldContent)
         (std::istreambuf_iterator<char>(iface)),
         std::istreambuf_iterator<char>());
     EXPECT_NE(content.find("1.0.0"), std::string::npos);
+}
+
+// ---------------------------------------------------------------------
+// 下载速率计算 DownloadRateTracker：公式 + 除零保护 + 滑动窗口平滑
+// ---------------------------------------------------------------------
+
+TEST(PiUpdateService, DownloadRateTrackerComputesMbpsOverWindow)
+{
+    // 注入固定时钟：t0 收到 0 字节，t0+1s 收到 2.4MB → 速率 = 2.4 MB/s。
+    using Clock = DownloadRateTracker::Clock;
+    auto                current = Clock::now();
+    DownloadRateTracker tracker([&] { return current; });
+
+    tracker.OnChunk(0);
+    current += std::chrono::seconds(1);
+    tracker.OnChunk(static_cast<std::uint64_t>(2.4 * 1024 * 1024));
+
+    EXPECT_NEAR(tracker.CurrentRateMbps(), 2.4, 0.01);
+}
+
+TEST(PiUpdateService, DownloadRateTrackerZeroWindowReturnsZero)
+{
+    // 同一时刻两个采样 → 时间窗 0 → 速率 0（不除零）。
+    using Clock = DownloadRateTracker::Clock;
+    auto                current = Clock::now();
+    DownloadRateTracker tracker([&] { return current; });
+
+    tracker.OnChunk(0);
+    tracker.OnChunk(1024 * 1024);
+    EXPECT_EQ(tracker.CurrentRateMbps(), 0.0);
+
+    // 单采样 → 0。
+    DownloadRateTracker single([&] { return current; });
+    single.OnChunk(100);
+    EXPECT_EQ(single.CurrentRateMbps(), 0.0);
+}
+
+TEST(PiUpdateService, DownloadRateTrackerSlidingWindowAverages)
+{
+    // 每秒均匀 +1MB，共 4 秒；滑动 2s 窗口内速率应稳定在 ~1 MB/s。
+    using Clock = DownloadRateTracker::Clock;
+    auto                current = Clock::now();
+    DownloadRateTracker tracker([&] { return current; });
+
+    for (int i = 0; i <= 4; ++i)
+    {
+        tracker.OnChunk(static_cast<std::uint64_t>(i) * 1024u * 1024u);
+        current += std::chrono::seconds(1);
+    }
+    // 窗口内 (4MB - 2MB) / 2s ≈ 1 MB/s（不随单点跳动）。
+    EXPECT_NEAR(tracker.CurrentRateMbps(), 1.0, 0.01);
 }
