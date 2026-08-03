@@ -7399,10 +7399,12 @@ TEST(MaapiProjectionTest, CommandsApplyUpdateDisabledDrivenByPendingState)
     EXPECT_TRUE(
         FieldOf(*apply_no_update, "disabled").as_bool().value_or(false));
 
-    // pending engaged 且 has_update=true → enabled（缺失 disabled == false）。
+    // pending engaged 且 has_update=true + 有下载链接 → enabled
+    // （缺失 disabled == false）。
     std::optional<PiUpdateInfo> pending_has_update;
     pending_has_update.emplace();
     pending_has_update->has_update = true;
+    pending_has_update->download_url = "https://example.com/package.zip";
     auto doc_has_update = ProjectAuthoringDocument(
         settings,
         &catalog,
