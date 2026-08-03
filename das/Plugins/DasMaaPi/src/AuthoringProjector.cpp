@@ -1940,7 +1940,8 @@ namespace Das::Plugins::DasMaaPi
         const PiCatalog*                            catalog,
         std::string_view                            current_language,
         std::vector<PiDiagnosticDto>*               projection_diagnostics,
-        const std::map<std::string, yyjson::value>& ui_values)
+        const std::map<std::string, yyjson::value>& ui_values,
+        bool                                        update_section_top = false)
     {
         yyjson::value layout(Array());
         auto          layout_arr = layout.as_array();
@@ -1986,10 +1987,12 @@ namespace Das::Plugins::DasMaaPi
             }
             if (name == "adapter.mirrorchyanCdk" || name == "adapter.proxyUrl"
                 || name == "adapter.updateChannel" || name == "resourceVersion"
-                || name == "maafwVersion")
+                || name == "maafwVersion" || name == "updateVersion"
+                || name == "releaseNote" || name == "updateProgress"
+                || name == "downloadRate" || name == "downloadElapsed")
             {
-                // 更新 section：CDK / 代理 / 检查更新通道 + 版本只读字段
-                // （D-89-09 增量，与 checkUpdate/applyUpdate 按钮同属"更新"
+                // 更新 section：CDK / 代理 / 检查更新通道 + 版本只读字段 +
+                // 更新 panel 五字段（与 checkUpdate/applyUpdate 按钮同属"更新"
                 // 语义分区；代理设置并入更新 section，与 CDK 相邻）。
                 update_entries.emplace_back(name);
             }
@@ -2044,9 +2047,9 @@ namespace Das::Plugins::DasMaaPi
             return it->second.as_bool().value_or(original_default);
         };
 
-        // 项目设置 section（顺序第一）。defaultExpanded=true，默认展开
-        // （与任务设置 section 一致；“项目设置默认折叠”的旧 UI 行为已废弃）。
-        if (!project_entries.empty())
+        // 项目设置 section。defaultExpanded=true，默认展开（与任务设置 section
+        // 一致；“项目设置默认折叠”的旧 UI 行为已废弃）。
+        auto emit_project_section = [&]()
         {
             yyjson::value section(Object());
             auto          s_obj = section.as_object();
@@ -2072,13 +2075,13 @@ namespace Das::Plugins::DasMaaPi
             }
             (*s_obj)[std::string_view("entries")] = std::move(entries);
             layout_arr->emplace_back(std::move(section));
-        }
+        };
 
-        // 更新 section（顺序第二，紧跟项目设置）：CDK / 代理 / 检查更新通道
-        // （可编辑）+ 版本只读字段。label 走 PI i18n（$section.update），缺译
-        // 回退中文（catalog 缺席时直接回退）。defaultExpanded=true，与项目设置
-        // section 一致。
-        if (!update_entries.empty())
+        // 更新 section：CDK / 代理 / 检查更新通道（可编辑）+ 版本只读字段 +
+        // 更新 panel 五字段。label 走 PI i18n（$section.update），缺译回退中文
+        // （catalog 缺席时直接回退）。defaultExpanded=true，与项目设置 section
+        // 一致。
+        auto emit_update_section = [&]()
         {
             yyjson::value section(Object());
             auto          s_obj = section.as_object();
@@ -2104,6 +2107,22 @@ namespace Das::Plugins::DasMaaPi
             }
             (*s_obj)[std::string_view("entries")] = std::move(entries);
             layout_arr->emplace_back(std::move(section));
+        };
+
+        // pending 时更新 section 置顶（fieldLayout 首位）；否则项目设置在前、
+        // 更新 section 紧跟其后。
+        const bool update_first = update_section_top && !update_entries.empty();
+        if (update_first)
+        {
+            emit_update_section();
+        }
+        if (!project_entries.empty())
+        {
+            emit_project_section();
+        }
+        if (!update_first && !update_entries.empty())
+        {
+            emit_update_section();
         }
 
         // 每个 catalog->settings 元素独立一 section。按 setting.dto.option
@@ -2531,13 +2550,109 @@ namespace Das::Plugins::DasMaaPi
             nullptr,
             /*readonly=*/true));
 
+        // 更新 section 五字段（pending engaged 且有更新时投影，不常驻）。
+        // key 传递方案 B：不投影 progress_key/updateKey——SSE 订阅 key 经
+        // checkUpdate 响应 commandResult 返回，不污染 document。字段集合在
+        // 初始 document 固定（增量只改 value，不增删字段）。
+        if (pending_update != nullptr && pending_update->has_value()
+            && (*pending_update)->has_update)
+        {
+            const auto& update_info = **pending_update;
+
+            const std::string current_version =
+                catalog != nullptr ? catalog->version : std::string{};
+            const std::string target_version = update_info.version_name;
+            std::string       version_text;
+            if (current_version.empty())
+            {
+                version_text = target_version;
+            }
+            else if (target_version.empty())
+            {
+                version_text = current_version;
+            }
+            else
+            {
+                version_text = current_version + " → " + target_version;
+            }
+            const std::string release_text = update_info.release_note.empty()
+                                                 ? "暂无更新日志"
+                                                 : update_info.release_note;
+
+            auto update_field_label =
+                [&](std::string_view key,
+                    std::string_view fallback) -> std::string_view
+            {
+                if (catalog != nullptr)
+                {
+                    return ResolveI18nOrDiag(
+                        key,
+                        *catalog,
+                        current_language,
+                        fallback,
+                        projection_diagnostics,
+                        "fields.updateSection.label");
+                }
+                return fallback;
+            };
+
+            fields.as_array()->emplace_back(MakePropertyField(
+                "updateVersion",
+                update_field_label("$field.updateVersion", "更新版本"),
+                4,
+                0,
+                yyjson::value(version_text),
+                nullptr,
+                /*readonly=*/true));
+            // releaseNote：inputType=7=markdown，契约强制
+            // readonly（只读展示）。
+            fields.as_array()->emplace_back(MakePropertyField(
+                "releaseNote",
+                update_field_label("$field.releaseNote", "更新日志"),
+                4,
+                7,
+                yyjson::value(release_text),
+                nullptr,
+                /*readonly=*/true));
+            fields.as_array()->emplace_back(MakePropertyField(
+                "updateProgress",
+                update_field_label("$field.updateProgress", "下载进度"),
+                4,
+                0,
+                yyjson::value(std::string{"等待更新…"}),
+                nullptr,
+                /*readonly=*/true));
+            fields.as_array()->emplace_back(MakePropertyField(
+                "downloadRate",
+                update_field_label("$field.downloadRate", "下载速率"),
+                4,
+                0,
+                yyjson::value(std::string{}),
+                nullptr,
+                /*readonly=*/true));
+            fields.as_array()->emplace_back(MakePropertyField(
+                "downloadElapsed",
+                update_field_label("$field.downloadElapsed", "已用时间"),
+                4,
+                0,
+                yyjson::value(std::string{}),
+                nullptr,
+                /*readonly=*/true));
+        }
+
         // 根级 fieldLayout 必须在 fields 移走前构建（按 const ref 读 fields）。
+        // pending engaged → 更新 section 置顶（检测到更新时更新 panel 出现在
+        // document 顶部，前端零硬编码）。
+        const bool    update_section_top = pending_update != nullptr
+                                           && pending_update->has_value()
+                                           && (*pending_update)->has_update;
         yyjson::value field_layout = BuildRootFieldLayout(
             fields,
             catalog,
             current_language,
             projection_diagnostics,
-            settings.ui.values);
+            settings.ui.values,
+            update_section_top);
         (*obj)[std::string_view("fields")] = std::move(fields);
         (*obj)[std::string_view("fieldLayout")] = std::move(field_layout);
 
