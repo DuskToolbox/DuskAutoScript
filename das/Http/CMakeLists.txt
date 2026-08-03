@@ -31,6 +31,8 @@ set_target_properties(DasHttp PROPERTIES
 file(GLOB HTTP_TEST_SOURCES test/*.cpp)
 if(HTTP_TEST_SOURCES)
     add_executable(HttpTest ${HTTP_TEST_SOURCES})
+    # SSE 测试链接 SseHub 实现（SseSession 为 header-only，经 src 直达）
+    target_sources(HttpTest PRIVATE src/SseHub.cpp)
     target_include_directories(HttpTest PRIVATE src)
     target_link_libraries(
         HttpTest
