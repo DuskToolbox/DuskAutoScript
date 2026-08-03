@@ -563,7 +563,11 @@ class IpcStubGenerator:
                 # [in] parameters: struct pointers (non-interface) need & prefix
                 # e.g., const DasRect* - deserialize into local struct, pass &local_name
                 is_interface = (param.type_info.type_kind == TypeKind.INTERFACE and param.type_info.is_pointer)
-                if param.type_info.is_pointer and param.type_info.pointer_level >= 1 and not is_interface:
+                if is_interface and param.type_info.base_type != "IDasReadOnlyString":
+                    # [in] 接口参数由 DasPtr owner 保活（RAII 自动 Release），
+                    # impl 接收借用指针（如需保存须自行 AddRef/DasPtr）
+                    call_params.append(f"{local_name}_owner.Get()")
+                elif param.type_info.is_pointer and param.type_info.pointer_level >= 1 and not is_interface:
                     call_params.append(f"&{local_name}")
                 else:
                     call_params.append(f"{local_name}")
@@ -577,28 +581,10 @@ class IpcStubGenerator:
         else:
             lines.append(f"{inner_indent}impl->{method.name}({params_str});")
 
-        # 释放反序列化的 [in] 接口指针引用（stub 持有 DeserializeInInterfaceParam
-        # 返回的引用，调用后必须 Release，否则 proxy 泄漏、远端对象永不释放）。
-        # 注意：IDasReadOnlyString 走零拷贝特化（变量名无 _base），不在此释放。
-        for param in method.parameters:
-            if param.direction in (ParamDirection.OUT, ParamDirection.INOUT):
-                continue
-            is_iface = (
-                param.type_info.type_kind == TypeKind.INTERFACE
-                and param.type_info.is_pointer
-            )
-            if not is_iface:
-                continue
-            if param.type_info.base_type == "IDasReadOnlyString":
-                continue
-            local_name = f"arg_{param.name}" if param.name in handle_param_names else param.name
-            lines.append(f"{inner_indent}if ({local_name}_base != nullptr)")
-            lines.append(f"{inner_indent}{{")
-            lines.append(
-                f"{inner_indent}    static_cast<IDasBase*>({local_name}_base)->Release();"
-            )
-            lines.append(f"{inner_indent}    {local_name}_base = nullptr;")
-            lines.append(f"{inner_indent}}}")
+        # [in] 接口参数的引用已由反序列化阶段生成的 DasPtr owner 管理
+        # （Attach 接管，作用域内保活，析构自动 Release），此处无需手动
+        # Release——见 _generate_deserialize_param_for_stub 的 DasPtr Attach。
+        # IDasReadOnlyString 走零拷贝特化（变量名无 _base），同样不受此影响。
 
         for param in out_params:
             local_name = f"arg_{param.name}" if param.name in handle_param_names else param.name
@@ -1140,6 +1126,15 @@ class IpcStubGenerator:
             lines.append(f"{indent}    }}")
             lines.append(f"{indent}    {param_name} = static_cast<{full_interface_name}*>({param_name}_base);")
             lines.append(f"{indent}}}")
+            # [in] 接口参数引用交给 DasPtr RAII 管理：Attach 接管反序列化
+            # AddRef 的引用（adopting 不 AddRef），作用域内保活、析构自动
+            # Release——避免手写 Release 遗漏的泄漏/悬垂，异常路径也安全。
+            lines.append(
+                f"{indent}DAS::DasPtr<{full_interface_name}> {param_name}_owner ="
+            )
+            lines.append(
+                f"{indent}    DAS::DasPtr<{full_interface_name}>::Attach({param_name});"
+            )
             return lines
 
         type_info = self.type_mapper.get_type_info(param.type_info.base_type)
