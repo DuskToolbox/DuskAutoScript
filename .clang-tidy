@@ -8,6 +8,114 @@ Checks: >
   modernize-*,
   -modernize-use-trailing-return-type,
   -modernize-avoid-c-arrays,
-  -modernize-use-transparent-functors
+  -modernize-use-transparent-functors,
+  readability-identifier-naming,
 WarningsAsErrors: ''
-HeaderFilterRegex: '.*'
+# 只检查项目自有源码头文件，排除第三方头（boost/fmt/spdlog 等）
+HeaderFilterRegex: 'DAS-claude/(das|include|idl)/'
+CheckOptions:
+  # ================= C++ 命名规范 (readability-identifier-naming) =================
+  # --- 类型 / 别名 ---
+  - key: readability-identifier-naming.ClassCase
+    value: CamelCase
+  - key: readability-identifier-naming.StructCase
+    value: CamelCase
+  - key: readability-identifier-naming.UnionCase
+    value: CamelCase
+  - key: readability-identifier-naming.EnumCase
+    value: CamelCase
+  - key: readability-identifier-naming.TypeAliasCase
+    value: CamelCase
+  - key: readability-identifier-naming.TypedefCase
+    value: CamelCase
+  # 豁免: snake_case 内部元编程类型/别名(如 at_impl)、前导下划线 GUID 结构(_das_GUID)
+  - key: readability-identifier-naming.ClassIgnoredRegexp
+    value: '^[a-z_][a-z0-9_]*$|^_.*'
+  - key: readability-identifier-naming.StructIgnoredRegexp
+    value: '^[a-z_][a-z0-9_]*$|^_.*'
+  - key: readability-identifier-naming.UnionIgnoredRegexp
+    value: '^[a-z_][a-z0-9_]*$|^_.*'
+  - key: readability-identifier-naming.EnumIgnoredRegexp
+    value: '^[a-z_][a-z0-9_]*$'
+  - key: readability-identifier-naming.TypeAliasIgnoredRegexp
+    value: '^[a-z_][a-z0-9_]*$'
+  - key: readability-identifier-naming.TypedefIgnoredRegexp
+    value: '^[a-z_][a-z0-9_]*$'
+
+  # --- 函数 / 方法 ---
+  - key: readability-identifier-naming.FunctionCase
+    value: CamelCase
+  - key: readability-identifier-naming.GlobalFunctionCase
+    value: CamelCase
+  - key: readability-identifier-naming.MethodCase
+    value: CamelCase
+  - key: readability-identifier-naming.VirtualMethodCase
+    value: CamelCase
+  # 豁免: 前导下划线内部符号(_das_internal_*)、snake_case ADL/CPO 自由函数(swap/tag_invoke/wait)、snake_case STL 镜像方法(begin/cend 等)
+  - key: readability-identifier-naming.FunctionIgnoredRegexp
+    value: '^_.*|^[a-z_][a-z0-9_]*$'
+  - key: readability-identifier-naming.GlobalFunctionIgnoredRegexp
+    value: '^_.*|^[a-z_][a-z0-9_]*$'
+  - key: readability-identifier-naming.MethodIgnoredRegexp
+    value: '^[a-z_][a-z0-9_]*$|^_.*'
+
+  # --- 成员变量 ---
+  - key: readability-identifier-naming.ClassMemberCase
+    value: lower_case
+  - key: readability-identifier-naming.ClassMemberSuffix
+    value: '_'
+  - key: readability-identifier-naming.PublicMemberCase
+    value: lower_case
+  # 豁免: 尾随下划线公有成员(PImpl/测试结构惯例，如 impl_/rcvr_)
+  - key: readability-identifier-naming.PublicMemberIgnoredRegexp
+    value: '^.*_$'
+
+  # --- 常量 (核心: 杜绝 kXxx, 统一 UPPER_SNAKE) ---
+  # 豁免: STL tag 对象惯例(take_ownership 等，模仿 std::piecewise_construct)
+  - key: readability-identifier-naming.GlobalConstantIgnoredRegexp
+    value: '^[a-z_][a-z0-9_]*$'
+  - key: readability-identifier-naming.GlobalConstantCase
+    value: UPPER_CASE
+  - key: readability-identifier-naming.LocalConstantCase
+    value: lower_case
+  - key: readability-identifier-naming.StaticConstantCase
+    value: UPPER_CASE
+  - key: readability-identifier-naming.ClassConstantCase
+    value: UPPER_CASE
+  - key: readability-identifier-naming.EnumConstantCase
+    value: UPPER_CASE
+  # enum class 常量: 统一 PascalCase; 仅豁免图形/数值格式惯例(U8/RGBA_8888 等，与 Skia 对应)
+  - key: readability-identifier-naming.ScopedEnumConstantCase
+    value: CamelCase
+  - key: readability-identifier-naming.ScopedEnumConstantIgnoredRegexp
+    value: '^U[0-9]+$|^[A-Za-z]+_[0-9]+$'
+
+  # --- 变量 ---
+  - key: readability-identifier-naming.GlobalVariableCase
+    value: lower_case
+  - key: readability-identifier-naming.GlobalVariablePrefix
+    value: 'g_'
+  - key: readability-identifier-naming.LocalVariableCase
+    value: lower_case
+  - key: readability-identifier-naming.ParameterCase
+    value: lower_case
+
+  # --- 模板参数 ---
+  - key: readability-identifier-naming.TemplateParameterCase
+    value: CamelCase
+  - key: readability-identifier-naming.TypeTemplateParameterCase
+    value: CamelCase
+  - key: readability-identifier-naming.ValueTemplateParameterCase
+    value: aNy_CasE
+
+  # --- 命名空间 ---
+  - key: readability-identifier-naming.NamespaceCase
+    value: CamelCase
+  - key: readability-identifier-naming.NamespaceIgnoredRegexp
+    value: '^(detail|internal|Details|jvm_dll|benchmark|fmt)$'
+
+  # --- 宏 ---
+  - key: readability-identifier-naming.MacroDefinitionCase
+    value: UPPER_CASE
+  - key: readability-identifier-naming.MacroDefinitionIgnoredRegexp
+    value: '^(WIN32_|_CRT|SWIG_|ASTR_|NOMINMAX|UNICODE|_UNICODE|_DEBUG|_WIN32|_WIN64|_MSC_VER|DAS_METHOD_).*'
