@@ -1,8 +1,10 @@
 #ifndef DAS_HTTP_BEAST_SERVER_HPP
 #define DAS_HTTP_BEAST_SERVER_HPP
 
+#include "../Config.h"
 #include "Request.hpp"
 #include "Router.hpp"
+#include "SseSession.hpp"
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/strand.hpp>
 #include <boost/beast/core.hpp>
@@ -246,6 +248,7 @@ namespace Das::Http::Beast
         std::shared_ptr<Router>          router_;
         std::function<bool()>            stop_condition_;
         std::shared_ptr<NotificationHub> hub_;
+        std::shared_ptr<SseHub>          sse_hub_;
         boost::beast::flat_buffer        buffer_;
 
     public:
@@ -253,10 +256,20 @@ namespace Das::Http::Beast
             tcp::socket                      socket,
             std::shared_ptr<Router>          router,
             std::function<bool()>            stop_condition,
-            std::shared_ptr<NotificationHub> hub)
+            std::shared_ptr<NotificationHub> hub,
+            std::shared_ptr<SseHub>          sse_hub = nullptr)
             : socket_(std::move(socket)), router_(std::move(router)),
-              stop_condition_(std::move(stop_condition)), hub_(std::move(hub))
+              stop_condition_(std::move(stop_condition)), hub_(std::move(hub)),
+              sse_hub_(std::move(sse_hub))
         {
+        }
+
+        /**
+         * @brief 设置 SseHub（延迟注入，解决初始化顺序问题）。
+         */
+        void SetSseHub(std::shared_ptr<SseHub> sse_hub)
+        {
+            sse_hub_ = std::move(sse_hub);
         }
 
         void Detect()
@@ -275,6 +288,27 @@ namespace Das::Http::Beast
                     }
 
                     auto& req = self->parser_.get();
+
+                    // SSE 长响应：路径前缀 {base}authoring/events/{key} 分派
+                    // 到 SseSession（不经同步 RouteHandler，RESEARCH Pitfall
+                    // 1）
+                    const boost::beast::string_view sse_prefix =
+                        "/" DAS_HTTP_API_PREFIX "authoring/events/";
+                    if (self->sse_hub_ && req.target().starts_with(sse_prefix))
+                    {
+                        const boost::beast::string_view key =
+                            req.target().substr(sse_prefix.size());
+                        if (!key.empty())
+                        {
+                            auto sse = std::make_shared<SseSession>(
+                                std::move(self->socket_),
+                                std::string(key),
+                                self->sse_hub_);
+                            sse->DoStart();
+                            return;
+                        }
+                    }
+
                     if (boost::beast::websocket::is_upgrade(req)
                         && req.target() == "/ws")
                     {
@@ -306,6 +340,7 @@ namespace Das::Http::Beast
         tcp::acceptor                    acceptor_;
         std::shared_ptr<Router>          router_;
         std::shared_ptr<NotificationHub> hub_;
+        std::shared_ptr<SseHub>          sse_hub_;
         std::function<bool()>            stop_condition_;
 
     public:
@@ -314,9 +349,11 @@ namespace Das::Http::Beast
             tcp::endpoint                    endpoint,
             std::shared_ptr<Router>          router,
             std::function<bool()>            stop_condition,
-            std::shared_ptr<NotificationHub> hub)
+            std::shared_ptr<NotificationHub> hub,
+            std::shared_ptr<SseHub>          sse_hub = nullptr)
             : acceptor_(boost::asio::make_strand(ioc)),
               router_(std::move(router)), hub_(std::move(hub)),
+              sse_hub_(std::move(sse_hub)),
               stop_condition_(std::move(stop_condition))
         {
             // open/bind/listen 失败必须 fail-fast 抛异常：否则 acceptor_
@@ -368,6 +405,14 @@ namespace Das::Http::Beast
             hub_ = std::move(hub);
         }
 
+        /**
+         * @brief 设置 SseHub（延迟注入，解决初始化顺序问题）。
+         */
+        void SetSseHub(std::shared_ptr<SseHub> sse_hub)
+        {
+            sse_hub_ = std::move(sse_hub);
+        }
+
     private:
         void DoAccept()
         {
@@ -383,12 +428,13 @@ namespace Das::Http::Beast
                     }
 
                     // Use request_parser to peek at headers before
-                    // deciding HTTP vs WebSocket
+                    // deciding HTTP vs WebSocket / SSE
                     auto detector = std::make_shared<UpgradeDetector>(
                         std::move(socket),
                         self->router_,
                         self->stop_condition_,
-                        self->hub_);
+                        self->hub_,
+                        self->sse_hub_);
                     detector->Detect();
 
                     // Continue accepting
@@ -406,8 +452,10 @@ namespace Das::Http::Beast
             unsigned short                   port,
             std::shared_ptr<Router>          router,
             std::function<bool()>            stop_condition,
-            std::shared_ptr<NotificationHub> hub = nullptr)
+            std::shared_ptr<NotificationHub> hub = nullptr,
+            std::shared_ptr<SseHub>          sse_hub = nullptr)
             : router_(std::move(router)), hub_(std::move(hub)),
+              sse_hub_(std::move(sse_hub)),
               stop_condition_(std::move(stop_condition)), ioc_(4)
         {
             const auto addr = boost::asio::ip::make_address(address);
@@ -418,7 +466,8 @@ namespace Das::Http::Beast
                 endpoint,
                 router_,
                 stop_condition_,
-                hub_);
+                hub_,
+                sse_hub_);
         }
 
         /**
@@ -432,6 +481,20 @@ namespace Das::Http::Beast
             if (listener_)
             {
                 listener_->SetHub(hub_);
+            }
+        }
+
+        /**
+         * @brief 设置 SseHub（延迟注入，解决初始化顺序问题）。
+         *
+         * 同时传播到 Listener。
+         */
+        void SetSseHub(std::shared_ptr<SseHub> sse_hub)
+        {
+            sse_hub_ = std::move(sse_hub);
+            if (listener_)
+            {
+                listener_->SetSseHub(sse_hub_);
             }
         }
 
@@ -531,6 +594,7 @@ namespace Das::Http::Beast
     private:
         std::shared_ptr<Router>          router_;
         std::shared_ptr<NotificationHub> hub_;
+        std::shared_ptr<SseHub>          sse_hub_;
         std::function<bool()>            stop_condition_;
         boost::asio::io_context          ioc_;
         std::shared_ptr<Listener>        listener_;
