@@ -45,7 +45,7 @@ public:
             if (out_error)
             {
                 *out_error = {
-                    .error = HeaderValidationError::BODY_SIZE_TOO_SMALL,
+                    .error = HeaderValidationError::BodySizeTooSmall,
                     .message = "Data too small",
                     .call_site = ValidationCallSite{}};
             }
@@ -146,28 +146,28 @@ public:
     [[nodiscard]]
     bool IsRequest() const noexcept
     {
-        return GetMessageType() == MessageType::REQUEST;
+        return GetMessageType() == MessageType::Request;
     }
 
     /// @brief 是否为响应消息
     [[nodiscard]]
     bool IsResponse() const noexcept
     {
-        return GetMessageType() == MessageType::RESPONSE;
+        return GetMessageType() == MessageType::Response;
     }
 
     /// @brief 是否为事件消息
     [[nodiscard]]
     bool IsEvent() const noexcept
     {
-        return GetMessageType() == MessageType::EVENT;
+        return GetMessageType() == MessageType::Event;
     }
 
     /// @brief 是否为心跳消息
     [[nodiscard]]
     bool IsHeartbeat() const noexcept
     {
-        return GetMessageType() == MessageType::HEARTBEAT;
+        return GetMessageType() == MessageType::Heartbeat;
     }
 
     /// @brief 是否为控制平面消息

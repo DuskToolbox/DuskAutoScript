@@ -535,10 +535,10 @@ namespace FakeMainProcess
 
             auto hello_header =
                 DAS::Core::IPC::IPCMessageHeaderBuilder()
-                    .SetMessageType(DAS::Core::IPC::MessageType::REQUEST)
+                    .SetMessageType(DAS::Core::IPC::MessageType::Request)
                     .SetControlPlaneCommand(
                         DAS::Core::IPC::HandshakeInterfaceId::
-                            HANDSHAKE_IFACE_HELLO)
+                            HandshakeIfaceHello)
                     .SetSourceSessionId(hello.assigned_session_id)
                     .SetBodySize(sizeof(hello))
                     .SetCallId(1)
@@ -584,7 +584,7 @@ namespace FakeMainProcess
             // 验证是 WELCOME 消息
             if (welcome_header.Raw().interface_id
                 != static_cast<uint32_t>(DAS::Core::IPC::HandshakeInterfaceId::
-                                             HANDSHAKE_IFACE_WELCOME))
+                                             HandshakeIfaceWelcome))
             {
                 DAS_CORE_LOG_ERROR("[FakeMain] Expected WELCOME message");
                 return 1;
@@ -620,10 +620,10 @@ namespace FakeMainProcess
 
             auto ready_header =
                 DAS::Core::IPC::IPCMessageHeaderBuilder()
-                    .SetMessageType(DAS::Core::IPC::MessageType::REQUEST)
+                    .SetMessageType(DAS::Core::IPC::MessageType::Request)
                     .SetControlPlaneCommand(
                         DAS::Core::IPC::HandshakeInterfaceId::
-                            HANDSHAKE_IFACE_READY)
+                            HandshakeIfaceReady)
                     .SetSourceSessionId(ready.session_id)
                     .SetBodySize(sizeof(ready))
                     .SetCallId(2)
@@ -670,7 +670,7 @@ namespace FakeMainProcess
 
             if (ack_header.Raw().interface_id
                 != static_cast<uint32_t>(DAS::Core::IPC::HandshakeInterfaceId::
-                                             HANDSHAKE_IFACE_READY_ACK))
+                                             HandshakeIfaceReadyAck))
             {
                 DAS_CORE_LOG_ERROR("[FakeMain] Expected READY_ACK message");
                 return 1;

@@ -14,7 +14,7 @@ DAS_CORE_IPC_NS_BEGIN
 ///       + interface_id 路由到本 handler
 enum class InternalBusinessCommand : uint32_t
 {
-    ASYNC_CALLBACK = 1,
+    AsyncCallback = 1,
 };
 
 /**
@@ -35,7 +35,7 @@ public:
     [[nodiscard]]
     uint32_t GetInterfaceId() const noexcept override
     {
-        return static_cast<uint32_t>(InternalBusinessCommand::ASYNC_CALLBACK);
+        return static_cast<uint32_t>(InternalBusinessCommand::AsyncCallback);
     }
 
     DasResult HandleMessage(

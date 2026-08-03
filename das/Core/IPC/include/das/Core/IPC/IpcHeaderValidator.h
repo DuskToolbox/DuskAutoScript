@@ -11,31 +11,31 @@ DAS_CORE_IPC_NS_BEGIN
 /// @brief Header 验证错误类型
 enum class HeaderValidationError : uint8_t
 {
-    NONE = 0,
+    None = 0,
 
     // 基础校验
-    INVALID_MAGIC,
-    INVALID_VERSION,
+    InvalidMagic,
+    InvalidVersion,
 
     // 消息类型校验
-    INVALID_MESSAGE_TYPE,
-    UNEXPECTED_MESSAGE_TYPE,
+    InvalidMessageType,
+    UnexpectedMessageType,
 
     // 控制平面校验
-    INVALID_CONTROL_PLANE_COMMAND,
+    InvalidControlPlaneCommand,
 
     // 业务平面校验
 
     // Body 校验
-    BODY_SIZE_TOO_SMALL,
-    BODY_SIZE_EXCEEDS_LIMIT,
-    BODY_SIZE_MISMATCH,
+    BodySizeTooSmall,
+    BodySizeExceedsLimit,
+    BodySizeMismatch,
 
     // Session 校验
-    INVALID_TARGET_SESSION_ID,
+    InvalidTargetSessionId,
 
     // 调用校验
-    UNKNOWN_CALL_ID,
+    UnknownCallId,
 };
 
 /// @brief 调用点信息（用于日志）
@@ -55,14 +55,14 @@ struct ValidationCallSite
 /// @brief Header 验证结果
 struct HeaderValidationResult
 {
-    HeaderValidationError error = HeaderValidationError::NONE;
+    HeaderValidationError error = HeaderValidationError::None;
     const char*           message = nullptr;
     ValidationCallSite    call_site; // 调用点信息
 
     [[nodiscard]]
     bool IsOk() const noexcept
     {
-        return error == HeaderValidationError::NONE;
+        return error == HeaderValidationError::None;
     }
 
     [[nodiscard]]
@@ -109,7 +109,7 @@ public:
         if (header.magic != IPCMessageHeader::MAGIC)
         {
             return {
-                HeaderValidationError::INVALID_MAGIC,
+                HeaderValidationError::InvalidMagic,
                 "Invalid magic number",
                 ValidationCallSite{
                     loc.file_name(),
@@ -120,7 +120,7 @@ public:
         if (header.version != IPCMessageHeader::CURRENT_VERSION)
         {
             return {
-                HeaderValidationError::INVALID_VERSION,
+                HeaderValidationError::InvalidVersion,
                 "Unsupported version",
                 ValidationCallSite{
                     loc.file_name(),
@@ -199,10 +199,10 @@ public:
     {
         const auto type = static_cast<MessageType>(header.message_type);
 
-        if (type != MessageType::REQUEST && type != MessageType::RESPONSE)
+        if (type != MessageType::Request && type != MessageType::Response)
         {
             return {
-                HeaderValidationError::INVALID_MESSAGE_TYPE,
+                HeaderValidationError::InvalidMessageType,
                 "Invalid message type",
                 ValidationCallSite{
                     loc.file_name(),
@@ -214,7 +214,7 @@ public:
             && type != context.expected_type)
         {
             return {
-                HeaderValidationError::UNEXPECTED_MESSAGE_TYPE,
+                HeaderValidationError::UnexpectedMessageType,
                 "Unexpected message type",
                 ValidationCallSite{
                     loc.file_name(),
@@ -237,7 +237,7 @@ public:
             if (!IsValidControlPlaneCommand(header.interface_id))
             {
                 return {
-                    HeaderValidationError::INVALID_CONTROL_PLANE_COMMAND,
+                    HeaderValidationError::InvalidControlPlaneCommand,
                     "Invalid control plane command",
                     ValidationCallSite{
                         loc.file_name(),
@@ -259,7 +259,7 @@ public:
             && header.body_size != context.actual_body_size)
         {
             return {
-                HeaderValidationError::BODY_SIZE_MISMATCH,
+                HeaderValidationError::BodySizeMismatch,
                 "Body size mismatch",
                 ValidationCallSite{
                     loc.file_name(),
@@ -271,7 +271,7 @@ public:
             && header.body_size < context.min_body_size)
         {
             return {
-                HeaderValidationError::BODY_SIZE_TOO_SMALL,
+                HeaderValidationError::BodySizeTooSmall,
                 "Body size too small for message type",
                 ValidationCallSite{
                     loc.file_name(),
@@ -282,7 +282,7 @@ public:
         if (header.body_size > context.max_body_size)
         {
             return {
-                HeaderValidationError::BODY_SIZE_EXCEEDS_LIMIT,
+                HeaderValidationError::BodySizeExceedsLimit,
                 "Body size exceeds limit",
                 ValidationCallSite{
                     loc.file_name(),
@@ -309,7 +309,7 @@ public:
         if (header.target_session_id == 0)
         {
             return {
-                HeaderValidationError::INVALID_TARGET_SESSION_ID,
+                HeaderValidationError::InvalidTargetSessionId,
                 "Invalid target session ID",
                 ValidationCallSite{
                     loc.file_name(),
@@ -328,7 +328,7 @@ public:
     {
         // 仅对响应消息检查
         if (static_cast<MessageType>(header.message_type)
-            != MessageType::RESPONSE)
+            != MessageType::Response)
         {
             return {};
         }
@@ -341,7 +341,7 @@ public:
                     context.is_call_pending_user_data))
             {
                 return {
-                    HeaderValidationError::UNKNOWN_CALL_ID,
+                    HeaderValidationError::UnknownCallId,
                     "Unknown call ID in response",
                     ValidationCallSite{
                         loc.file_name(),
@@ -386,9 +386,9 @@ public:
     static bool IsValidControlPlaneCommand(uint32_t interface_id) noexcept
     {
         return interface_id >= static_cast<uint32_t>(
-                   HandshakeInterfaceId::HANDSHAKE_IFACE_HELLO)
+                   HandshakeInterfaceId::HandshakeIfaceHello)
                && interface_id <= static_cast<uint32_t>(
-                      HandshakeInterfaceId::HANDSHAKE_IFACE_GOODBYE);
+                      HandshakeInterfaceId::HandshakeIfaceGoodbye);
     }
 };
 
@@ -399,27 +399,27 @@ inline const char* HeaderValidationResult::GetErrorName() const noexcept
 {
     switch (error)
     {
-    case HeaderValidationError::NONE:
+    case HeaderValidationError::None:
         return "NONE";
-    case HeaderValidationError::INVALID_MAGIC:
+    case HeaderValidationError::InvalidMagic:
         return "INVALID_MAGIC";
-    case HeaderValidationError::INVALID_VERSION:
+    case HeaderValidationError::InvalidVersion:
         return "INVALID_VERSION";
-    case HeaderValidationError::INVALID_MESSAGE_TYPE:
+    case HeaderValidationError::InvalidMessageType:
         return "INVALID_MESSAGE_TYPE";
-    case HeaderValidationError::UNEXPECTED_MESSAGE_TYPE:
+    case HeaderValidationError::UnexpectedMessageType:
         return "UNEXPECTED_MESSAGE_TYPE";
-    case HeaderValidationError::INVALID_CONTROL_PLANE_COMMAND:
+    case HeaderValidationError::InvalidControlPlaneCommand:
         return "INVALID_CONTROL_PLANE_COMMAND";
-    case HeaderValidationError::BODY_SIZE_TOO_SMALL:
+    case HeaderValidationError::BodySizeTooSmall:
         return "BODY_SIZE_TOO_SMALL";
-    case HeaderValidationError::BODY_SIZE_EXCEEDS_LIMIT:
+    case HeaderValidationError::BodySizeExceedsLimit:
         return "BODY_SIZE_EXCEEDS_LIMIT";
-    case HeaderValidationError::BODY_SIZE_MISMATCH:
+    case HeaderValidationError::BodySizeMismatch:
         return "BODY_SIZE_MISMATCH";
-    case HeaderValidationError::INVALID_TARGET_SESSION_ID:
+    case HeaderValidationError::InvalidTargetSessionId:
         return "INVALID_TARGET_SESSION_ID";
-    case HeaderValidationError::UNKNOWN_CALL_ID:
+    case HeaderValidationError::UnknownCallId:
         return "UNKNOWN_CALL_ID";
     default:
         return "UNKNOWN";

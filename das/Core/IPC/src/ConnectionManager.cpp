@@ -676,9 +676,9 @@ DasResult ConnectionManager::SendHeartbeatToAll()
 
         auto validated_header =
             IPCMessageHeaderBuilder()
-                .SetMessageType(MessageType::REQUEST)
+                .SetMessageType(MessageType::Request)
                 .SetControlPlaneCommand(
-                    HandshakeInterfaceId::HANDSHAKE_IFACE_HEARTBEAT)
+                    HandshakeInterfaceId::HandshakeIfaceHeartbeat)
                 .SetBodySize(sizeof(heartbeat))
                 .SetSourceSessionId(local_session_id)
                 .SetTargetSessionId(session_id)

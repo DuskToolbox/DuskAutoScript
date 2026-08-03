@@ -73,7 +73,7 @@ namespace
         uint8_t  header_flags = NONE)
     {
         return IPCMessageHeaderBuilder()
-            .SetMessageType(DAS::Core::IPC::MessageType::REQUEST)
+            .SetMessageType(DAS::Core::IPC::MessageType::Request)
             .SetHeaderFlags(header_flags)
             .SetCallId(call_id)
             .SetSourceSessionId(source_session_id)

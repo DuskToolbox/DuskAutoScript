@@ -47,8 +47,8 @@ DasResult IpcCommandHandler::HandleMessage(
     // 处理 REMOTE_RELEASE EVENT（fire-and-forget）
     // EVENT 类型不需要响应，直接在 HandleMessage 中处理
     const IpcCommandType cmd_type = ExtractCommandType(header);
-    if (cmd_type == IpcCommandType::REMOTE_RELEASE
-        && header.GetMessageType() == MessageType::EVENT)
+    if (cmd_type == IpcCommandType::RemoteRelease
+        && header.GetMessageType() == MessageType::Event)
     {
         // 解析 ObjectId 并调用 object_manager->Release
         if (payload.size() >= sizeof(ObjectId))
@@ -71,8 +71,8 @@ DasResult IpcCommandHandler::HandleMessage(
     }
 
     // 处理 RELEASE_SHM_BLOCK EVENT（fire-and-forget）
-    if (cmd_type == IpcCommandType::RELEASE_SHM_BLOCK
-        && header.GetMessageType() == MessageType::EVENT)
+    if (cmd_type == IpcCommandType::ReleaseShmBlock
+        && header.GetMessageType() == MessageType::Event)
     {
         if (payload.size() >= sizeof(ReleaseShmBlockPayload))
         {
@@ -121,7 +121,7 @@ DasResult IpcCommandHandler::HandleMessage(
     // 构建响应 header（保留请求的 header_flags，确保响应路由正确）
     auto validated_response_header =
         IPCMessageHeaderBuilder()
-            .SetMessageType(MessageType::RESPONSE)
+            .SetMessageType(MessageType::Response)
             .SetHeaderFlags(header.GetHeaderFlags())
             .SetInterfaceId(header.GetInterfaceId())
             .SetBodySize(static_cast<uint32_t>(response.response_data.size()))
@@ -155,31 +155,31 @@ DasResult IpcCommandHandler::HandleCommand(
 
     switch (cmd_type)
     {
-    case IpcCommandType::LOOKUP_OBJECT:
+    case IpcCommandType::LookupObject:
         return OnLookupObject(header, payload, response);
 
-    case IpcCommandType::LOOKUP_BY_NAME:
+    case IpcCommandType::LookupByName:
         return OnLookupByName(header, payload, response);
 
-    case IpcCommandType::LOOKUP_BY_INTERFACE:
+    case IpcCommandType::LookupByInterface:
         return OnLookupByInterface(header, payload, response);
 
-    case IpcCommandType::LIST_OBJECTS:
+    case IpcCommandType::ListObjects:
         return OnListObjects(header, payload, response);
 
-    case IpcCommandType::LIST_SESSION_OBJECTS:
+    case IpcCommandType::ListSessionObjects:
         return OnListSessionObjects(header, payload, response);
 
-    case IpcCommandType::CLEAR_SESSION:
+    case IpcCommandType::ClearSession:
         return OnClearSession(header, payload, response);
 
-    case IpcCommandType::PING:
+    case IpcCommandType::Ping:
         return OnPing(header, payload, response);
 
-    case IpcCommandType::GET_OBJECT_COUNT:
+    case IpcCommandType::GetObjectCount:
         return OnGetObjectCount(header, payload, response);
 
-    case IpcCommandType::LOAD_PLUGIN:
+    case IpcCommandType::LoadPlugin:
         // LOAD_PLUGIN requires custom handler registration.
         // Must call RegisterHandler() before using this command.
         response.error_code = DAS_E_IPC_COMMAND_NOT_REGISTERED;

@@ -289,9 +289,9 @@ TEST_F(
     ASSERT_NE(heartbeat_handler, nullptr);
 
     auto header = IPCMessageHeaderBuilder()
-                      .SetMessageType(MessageType::REQUEST)
+                      .SetMessageType(MessageType::Request)
                       .SetControlPlaneCommand(
-                          HandshakeInterfaceId::HANDSHAKE_IFACE_HEARTBEAT)
+                          HandshakeInterfaceId::HandshakeIfaceHeartbeat)
                       .SetBodySize(static_cast<uint32_t>(body.size()))
                       .SetCallId(next_call_id_++)
                       .SetSourceSessionId(REMOTE_SESSION_ID)
@@ -346,10 +346,10 @@ TEST_F(
 
     ASSERT_TRUE(received_message.has_value());
     const auto& [response_header, response_body] = *received_message;
-    EXPECT_EQ(response_header.GetMessageType(), MessageType::RESPONSE);
+    EXPECT_EQ(response_header.GetMessageType(), MessageType::Response);
     EXPECT_EQ(
         response_header.GetInterfaceId(),
-        static_cast<uint32_t>(HandshakeInterfaceId::HANDSHAKE_IFACE_HEARTBEAT));
+        static_cast<uint32_t>(HandshakeInterfaceId::HandshakeIfaceHeartbeat));
     EXPECT_EQ(response_header.GetCallId(), header.GetCallId());
     EXPECT_EQ(response_header.GetSourceSessionId(), LOCAL_SESSION_ID);
     EXPECT_EQ(response_header.GetTargetSessionId(), REMOTE_SESSION_ID);

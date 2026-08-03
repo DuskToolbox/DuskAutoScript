@@ -57,7 +57,7 @@ namespace
             IpcCommandResponse& response)
         {
             auto it = ctx_.handlers.find(
-                static_cast<uint32_t>(IpcCommandType::LIST_FILE));
+                static_cast<uint32_t>(IpcCommandType::ListFile));
             if (it == ctx_.handlers.end())
             {
                 return DAS_E_FAIL;
@@ -75,7 +75,7 @@ namespace
             IpcCommandResponse& response)
         {
             auto it = ctx_.handlers.find(
-                static_cast<uint32_t>(IpcCommandType::READ_FILE));
+                static_cast<uint32_t>(IpcCommandType::ReadFile));
             if (it == ctx_.handlers.end())
             {
                 return DAS_E_FAIL;

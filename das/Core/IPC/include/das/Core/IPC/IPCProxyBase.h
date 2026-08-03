@@ -218,7 +218,7 @@ protected:
     [[nodiscard]]
     ValidatedIPCMessageHeader BuildRequestHeader(
         uint16_t    call_id,
-        MessageType message_type = MessageType::REQUEST,
+        MessageType message_type = MessageType::Request,
         size_t      body_size = 0) const
     {
         return IPCMessageHeaderBuilder()

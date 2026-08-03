@@ -77,29 +77,29 @@ namespace Core
                 runloop_.RegisterHandler(
                     HeaderFlags::BUSINESS_CONTROL,
                     static_cast<uint32_t>(
-                        InternalBusinessCommand::ASYNC_CALLBACK),
+                        InternalBusinessCommand::AsyncCallback),
                     internal_callback_handler_.Get());
 
                 // 6. 注册 LOOKUP_BY_INTERFACE 到 IpcRunLoop
                 runloop_.RegisterHandler(
                     HeaderFlags::BUSINESS_CONTROL,
-                    static_cast<uint32_t>(IpcCommandType::LOOKUP_BY_INTERFACE),
+                    static_cast<uint32_t>(IpcCommandType::LookupByInterface),
                     command_handler_.Get());
 
                 // 7. 注册 LOOKUP_BY_NAME 到 IpcRunLoop
                 runloop_.RegisterHandler(
                     HeaderFlags::BUSINESS_CONTROL,
-                    static_cast<uint32_t>(IpcCommandType::LOOKUP_BY_NAME),
+                    static_cast<uint32_t>(IpcCommandType::LookupByName),
                     command_handler_.Get());
 
                 runloop_.RegisterHandler(
                     HeaderFlags::BUSINESS_CONTROL,
-                    static_cast<uint32_t>(IpcCommandType::REMOTE_RELEASE),
+                    static_cast<uint32_t>(IpcCommandType::RemoteRelease),
                     command_handler_.Get());
 
                 runloop_.RegisterHandler(
                     HeaderFlags::BUSINESS_CONTROL,
-                    static_cast<uint32_t>(IpcCommandType::RELEASE_SHM_BLOCK),
+                    static_cast<uint32_t>(IpcCommandType::ReleaseShmBlock),
                     command_handler_.Get());
             }
 
@@ -137,27 +137,27 @@ namespace Core
                 runloop_.RegisterHandler(
                     HeaderFlags::BUSINESS_CONTROL,
                     static_cast<uint32_t>(
-                        InternalBusinessCommand::ASYNC_CALLBACK),
+                        InternalBusinessCommand::AsyncCallback),
                     internal_callback_handler_.Get());
 
                 runloop_.RegisterHandler(
                     HeaderFlags::BUSINESS_CONTROL,
-                    static_cast<uint32_t>(IpcCommandType::LOOKUP_BY_INTERFACE),
+                    static_cast<uint32_t>(IpcCommandType::LookupByInterface),
                     command_handler_.Get());
 
                 runloop_.RegisterHandler(
                     HeaderFlags::BUSINESS_CONTROL,
-                    static_cast<uint32_t>(IpcCommandType::LOOKUP_BY_NAME),
+                    static_cast<uint32_t>(IpcCommandType::LookupByName),
                     command_handler_.Get());
 
                 runloop_.RegisterHandler(
                     HeaderFlags::BUSINESS_CONTROL,
-                    static_cast<uint32_t>(IpcCommandType::REMOTE_RELEASE),
+                    static_cast<uint32_t>(IpcCommandType::RemoteRelease),
                     command_handler_.Get());
 
                 runloop_.RegisterHandler(
                     HeaderFlags::BUSINESS_CONTROL,
-                    static_cast<uint32_t>(IpcCommandType::RELEASE_SHM_BLOCK),
+                    static_cast<uint32_t>(IpcCommandType::ReleaseShmBlock),
                     command_handler_.Get());
 
                 // Create HTTP/WebSocket server (RAII: constructor binds and
@@ -448,14 +448,14 @@ namespace Core
                 std::memcpy(body.data(), &callback, sizeof(IDasAsyncCallback*));
 
                 // 构造 header: BUSINESS_CONTROL +
-                // InternalBusinessCommand::ASYNC_CALLBACK
+                // InternalBusinessCommand::AsyncCallback
                 auto header =
                     IPCMessageHeaderBuilder()
-                        .SetMessageType(MessageType::EVENT)
+                        .SetMessageType(MessageType::Event)
                         .SetHeaderFlags(HeaderFlags::BUSINESS_CONTROL)
                         .SetInterfaceId(
                             static_cast<uint32_t>(
-                                InternalBusinessCommand::ASYNC_CALLBACK))
+                                InternalBusinessCommand::AsyncCallback))
                         .SetBodySize(static_cast<uint32_t>(body.size()))
                         .Build();
 
@@ -535,7 +535,7 @@ namespace Core
 
                 // 3. 构建消息头
                 auto header = MakeBusinessControlRequest(
-                    IpcCommandType::LOAD_PLUGIN,
+                    IpcCommandType::LoadPlugin,
                     static_cast<uint32_t>(payload.size()),
                     session_id);
 
@@ -614,7 +614,7 @@ namespace Core
 
                 // 构建消息头
                 auto header = MakeBusinessControlRequest(
-                    IpcCommandType::LOAD_PLUGIN,
+                    IpcCommandType::LoadPlugin,
                     static_cast<uint32_t>(payload.size()),
                     target_session_id);
 
@@ -695,7 +695,7 @@ namespace Core
                 payload[sizeof(uint16_t) + path_len] = recursive_flag;
 
                 auto header = MakeBusinessControlRequest(
-                    IpcCommandType::LIST_FILE,
+                    IpcCommandType::ListFile,
                     static_cast<uint32_t>(payload.size()),
                     session_id);
 
@@ -763,7 +763,7 @@ namespace Core
                     path_len);
 
                 auto header = MakeBusinessControlRequest(
-                    IpcCommandType::READ_FILE,
+                    IpcCommandType::ReadFile,
                     static_cast<uint32_t>(payload.size()),
                     session_id);
 

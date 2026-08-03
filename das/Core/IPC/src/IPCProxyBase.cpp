@@ -122,7 +122,7 @@ DasResult IPCProxyBase::SendRequest(
     uint16_t call_id = NextCallId();
 
     const ValidatedIPCMessageHeader header =
-        BuildRequestHeader(call_id, MessageType::REQUEST, body_size);
+        BuildRequestHeader(call_id, MessageType::Request, body_size);
 
     // 3. Construct call_key and wait for response using
     //    thread-appropriate strategy
@@ -215,7 +215,7 @@ DasResult IPCProxyBase::SendBusinessControlRequest(
 
     const ValidatedIPCMessageHeader header =
         IPCMessageHeaderBuilder()
-            .SetMessageType(MessageType::REQUEST)
+            .SetMessageType(MessageType::Request)
             .SetBusinessControlCommand(command)
             .SetBodySize(static_cast<uint32_t>(body_size))
             .SetCallId(call_id)

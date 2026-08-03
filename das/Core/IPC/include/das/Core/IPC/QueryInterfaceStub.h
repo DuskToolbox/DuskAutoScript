@@ -9,7 +9,7 @@ DAS_CORE_IPC_NS_BEGIN
 /**
  * @brief QUERY_INTERFACE 命令的 IPC Stub
  *
- * 处理 IpcCommandType::QUERY_INTERFACE (120) 的远程 QueryInterface 请求。
+ * 处理 IpcCommandType::QueryInterface (120) 的远程 QueryInterface 请求。
  * 不继承 IStubBase，因为 body 格式不同（ObjectId + DasGuid，无 V3 Body
  * Header）。
  *
@@ -42,7 +42,7 @@ public:
     [[nodiscard]]
     uint32_t GetInterfaceId() const noexcept override
     {
-        return static_cast<uint32_t>(IpcCommandType::QUERY_INTERFACE);
+        return static_cast<uint32_t>(IpcCommandType::QueryInterface);
     }
 
     DasResult HandleMessage(

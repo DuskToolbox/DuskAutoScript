@@ -30,7 +30,7 @@ DasResult SendBusinessControlRequestRaw(
 
     const ValidatedIPCMessageHeader header =
         IPCMessageHeaderBuilder()
-            .SetMessageType(MessageType::REQUEST)
+            .SetMessageType(MessageType::Request)
             .SetBusinessControlCommand(command)
             .SetBodySize(static_cast<uint32_t>(body_size))
             .SetCallId(call_id)

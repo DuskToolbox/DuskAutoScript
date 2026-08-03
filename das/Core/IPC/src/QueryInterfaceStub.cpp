@@ -59,7 +59,7 @@ DasResult QueryInterfaceStub::HandleMessage(
         // Send failure response
         auto response_header =
             IPCMessageHeaderBuilder()
-                .SetMessageType(MessageType::RESPONSE)
+                .SetMessageType(MessageType::Response)
                 .SetBodySize(0)
                 .SetCallId(header.GetCallId())
                 .SetSourceSessionId(header.GetTargetSessionId())
@@ -100,7 +100,7 @@ DasResult QueryInterfaceStub::HandleMessage(
 
         auto response_header =
             IPCMessageHeaderBuilder()
-                .SetMessageType(MessageType::RESPONSE)
+                .SetMessageType(MessageType::Response)
                 .SetBodySize(static_cast<uint32_t>(response_body.size()))
                 .SetCallId(header.GetCallId())
                 .SetSourceSessionId(header.GetTargetSessionId())
@@ -119,7 +119,7 @@ DasResult QueryInterfaceStub::HandleMessage(
     {
         auto response_header =
             IPCMessageHeaderBuilder()
-                .SetMessageType(MessageType::RESPONSE)
+                .SetMessageType(MessageType::Response)
                 .SetBodySize(0)
                 .SetCallId(header.GetCallId())
                 .SetSourceSessionId(header.GetTargetSessionId())
@@ -152,7 +152,7 @@ DasResult QueryInterfaceStub::HandleMessage(
 
     auto response_header =
         IPCMessageHeaderBuilder()
-            .SetMessageType(MessageType::RESPONSE)
+            .SetMessageType(MessageType::Response)
             .SetBodySize(static_cast<uint32_t>(response_body.size()))
             .SetCallId(header.GetCallId())
             .SetSourceSessionId(header.GetTargetSessionId())

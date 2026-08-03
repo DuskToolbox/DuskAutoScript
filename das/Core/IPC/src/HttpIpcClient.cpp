@@ -72,9 +72,9 @@ HttpIpcClient::Connect(
         const uint16_t call_id = 1;
         auto           validated_header =
             IPCMessageHeaderBuilder()
-                .SetMessageType(MessageType::REQUEST)
+                .SetMessageType(MessageType::Request)
                 .SetControlPlaneCommand(
-                    HandshakeInterfaceId::HANDSHAKE_IFACE_HELLO)
+                    HandshakeInterfaceId::HandshakeIfaceHello)
                 .SetBodySize(sizeof(hello))
                 .SetCallId(call_id)
                 .Build();
@@ -112,7 +112,7 @@ HttpIpcClient::Connect(
 
         if (raw_header.interface_id
             != static_cast<uint32_t>(
-                HandshakeInterfaceId::HANDSHAKE_IFACE_WELCOME))
+                HandshakeInterfaceId::HandshakeIfaceWelcome))
         {
             DAS_CORE_LOG_ERROR(
                 "Unexpected interface_id: {}",
@@ -157,9 +157,9 @@ HttpIpcClient::Connect(
         const uint16_t call_id = 2;
         auto           validated_header =
             IPCMessageHeaderBuilder()
-                .SetMessageType(MessageType::REQUEST)
+                .SetMessageType(MessageType::Request)
                 .SetControlPlaneCommand(
-                    HandshakeInterfaceId::HANDSHAKE_IFACE_READY)
+                    HandshakeInterfaceId::HandshakeIfaceReady)
                 .SetBodySize(sizeof(ready))
                 .SetCallId(call_id)
                 .Build();
@@ -196,7 +196,7 @@ HttpIpcClient::Connect(
 
         if (raw_header.interface_id
             != static_cast<uint32_t>(
-                HandshakeInterfaceId::HANDSHAKE_IFACE_READY_ACK))
+                HandshakeInterfaceId::HandshakeIfaceReadyAck))
         {
             DAS_CORE_LOG_ERROR(
                 "Unexpected interface_id: {}",

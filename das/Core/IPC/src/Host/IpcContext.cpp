@@ -235,37 +235,37 @@ namespace Core
                 run_loop_.RegisterHandler(
                     HeaderFlags::CONTROL_PLANE,
                     static_cast<uint32_t>(
-                        HandshakeInterfaceId::HANDSHAKE_IFACE_HELLO),
+                        HandshakeInterfaceId::HandshakeIfaceHello),
                     handshake_handler_.Get());
                 // READY (interface_id=3)
                 run_loop_.RegisterHandler(
                     HeaderFlags::CONTROL_PLANE,
                     static_cast<uint32_t>(
-                        HandshakeInterfaceId::HANDSHAKE_IFACE_READY),
+                        HandshakeInterfaceId::HandshakeIfaceReady),
                     handshake_handler_.Get());
                 // HEARTBEAT (interface_id=6)
                 run_loop_.RegisterHandler(
                     HeaderFlags::CONTROL_PLANE,
                     static_cast<uint32_t>(
-                        HandshakeInterfaceId::HANDSHAKE_IFACE_HEARTBEAT),
+                        HandshakeInterfaceId::HandshakeIfaceHeartbeat),
                     handshake_handler_.Get());
                 // GOODBYE (interface_id=7)
                 run_loop_.RegisterHandler(
                     HeaderFlags::CONTROL_PLANE,
                     static_cast<uint32_t>(
-                        HandshakeInterfaceId::HANDSHAKE_IFACE_GOODBYE),
+                        HandshakeInterfaceId::HandshakeIfaceGoodbye),
                     handshake_handler_.Get());
 
                 // REMOTE_RELEASE (fire-and-forget EVENT)
                 run_loop_.RegisterHandler(
                     HeaderFlags::BUSINESS_CONTROL,
-                    static_cast<uint32_t>(IpcCommandType::REMOTE_RELEASE),
+                    static_cast<uint32_t>(IpcCommandType::RemoteRelease),
                     command_handler_.Get());
 
                 // RELEASE_SHM_BLOCK (fire-and-forget EVENT)
                 run_loop_.RegisterHandler(
                     HeaderFlags::BUSINESS_CONTROL,
-                    static_cast<uint32_t>(IpcCommandType::RELEASE_SHM_BLOCK),
+                    static_cast<uint32_t>(IpcCommandType::ReleaseShmBlock),
                     command_handler_.Get());
 
                 // HTTP/WebSocket transport mode
@@ -871,7 +871,7 @@ namespace Core
                     business_thread_,
                     session_id_,
                     1, // target_session_id = main process
-                    IpcCommandType::LOOKUP_BY_INTERFACE,
+                    IpcCommandType::LookupByInterface,
                     reinterpret_cast<const uint8_t*>(&lookup_payload),
                     sizeof(lookup_payload),
                     response);
@@ -964,7 +964,7 @@ namespace Core
                     business_thread_,
                     session_id_,
                     1, // target_session_id = main process
-                    IpcCommandType::LOOKUP_BY_NAME,
+                    IpcCommandType::LookupByName,
                     payload.data(),
                     payload.size(),
                     response);

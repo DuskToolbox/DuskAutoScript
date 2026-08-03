@@ -99,7 +99,7 @@ DasResult DasVariantVectorByValueProxy::EnsureDataLoaded(uint16_t method_id)
 
     const ValidatedIPCMessageHeader header =
         IPCMessageHeaderBuilder()
-            .SetMessageType(MessageType::REQUEST)
+            .SetMessageType(MessageType::Request)
             .SetHeaderFlags(HeaderFlags::BUSINESS_EVENT)
             .SetBodySize(static_cast<uint32_t>(body.size()))
             .SetCallId(call_id)
@@ -372,7 +372,7 @@ DasResult DasVariantVectorByValueProxy::SendWriteBack(
     // Fire-and-forget EVENT + BUSINESS_EVENT
     const ValidatedIPCMessageHeader header =
         IPCMessageHeaderBuilder()
-            .SetMessageType(MessageType::EVENT)
+            .SetMessageType(MessageType::Event)
             .SetHeaderFlags(HeaderFlags::BUSINESS_EVENT)
             .SetBodySize(static_cast<uint32_t>(body.size()))
             .SetInterfaceId(GetInterfaceId())

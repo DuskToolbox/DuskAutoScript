@@ -26,7 +26,7 @@ namespace MainProcess
             HandshakeInterfaceId             expected)
         {
             return header.IsControlPlane()
-                   && header.GetMessageType() == MessageType::REQUEST
+                   && header.GetMessageType() == MessageType::Request
                    && header.GetInterfaceId()
                           == static_cast<uint32_t>(expected);
         }
@@ -107,7 +107,7 @@ namespace MainProcess
         auto&& [received_header, body] = std::get<1>(received);
         if (!IsExpectedHandshakeRequest(
                 received_header,
-                HandshakeInterfaceId::HANDSHAKE_IFACE_HELLO))
+                HandshakeInterfaceId::HandshakeIfaceHello))
         {
             DAS_CORE_LOG_ERROR(
                 "InboundHostHandshakeHandler: expected HELLO, got interface_id={}, type={}, flags={}",
@@ -144,7 +144,7 @@ namespace MainProcess
         auto&& [received_header, body] = std::get<1>(received);
         if (!IsExpectedHandshakeRequest(
                 received_header,
-                HandshakeInterfaceId::HANDSHAKE_IFACE_READY))
+                HandshakeInterfaceId::HandshakeIfaceReady))
         {
             DAS_CORE_LOG_ERROR(
                 "InboundHostHandshakeHandler: expected READY, got interface_id={}, type={}, flags={}",
@@ -180,9 +180,9 @@ namespace MainProcess
 
         auto header =
             IPCMessageHeaderBuilder()
-                .SetMessageType(MessageType::RESPONSE)
+                .SetMessageType(MessageType::Response)
                 .SetControlPlaneCommand(
-                    HandshakeInterfaceId::HANDSHAKE_IFACE_WELCOME)
+                    HandshakeInterfaceId::HandshakeIfaceWelcome)
                 .SetBodySize(sizeof(welcome))
                 .SetCallId(request_header.GetCallId())
                 .SetSourceSessionId(kMainProcessSessionId)
@@ -208,9 +208,9 @@ namespace MainProcess
 
         auto header =
             IPCMessageHeaderBuilder()
-                .SetMessageType(MessageType::RESPONSE)
+                .SetMessageType(MessageType::Response)
                 .SetControlPlaneCommand(
-                    HandshakeInterfaceId::HANDSHAKE_IFACE_READY_ACK)
+                    HandshakeInterfaceId::HandshakeIfaceReadyAck)
                 .SetBodySize(sizeof(ack))
                 .SetCallId(request_header.GetCallId())
                 .SetSourceSessionId(kMainProcessSessionId)

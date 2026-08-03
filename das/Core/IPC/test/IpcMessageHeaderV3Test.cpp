@@ -161,7 +161,7 @@ namespace Das::Core::IPC::Test
     {
         // Use Builder to construct a V3 header
         auto validated = IPCMessageHeaderBuilder()
-                             .SetMessageType(MessageType::REQUEST)
+                             .SetMessageType(MessageType::Request)
                              .SetCallId(0x1234)
                              .SetSourceSessionId(0x100)
                              .SetTargetSessionId(0x200)
@@ -175,7 +175,7 @@ namespace Das::Core::IPC::Test
         EXPECT_EQ(header.version, 3);
         EXPECT_EQ(
             header.message_type,
-            static_cast<uint8_t>(MessageType::REQUEST));
+            static_cast<uint8_t>(MessageType::Request));
         EXPECT_EQ(header.call_id, 0x1234u);
         EXPECT_EQ(header.source_session_id, 0x100u);
         EXPECT_EQ(header.target_session_id, 0x200u);

@@ -521,7 +521,7 @@ namespace Das::Core::IPC::Host
 
         auto load_plugin = std::move(options.load_plugin);
         ctx->RegisterCommandHandler(
-            static_cast<uint32_t>(IpcCommandType::LOAD_PLUGIN),
+            static_cast<uint32_t>(IpcCommandType::LoadPlugin),
             [ctx, load_plugin = std::move(load_plugin)](
                 const ValidatedIPCMessageHeader&,
                 std::span<const uint8_t> payload,
@@ -529,7 +529,7 @@ namespace Das::Core::IPC::Host
             { return HandleLoadPlugin(*ctx, load_plugin, payload, response); });
 
         ctx->RegisterCommandHandler(
-            static_cast<uint32_t>(IpcCommandType::QUERY_INTERFACE),
+            static_cast<uint32_t>(IpcCommandType::QueryInterface),
             [ctx](
                 const ValidatedIPCMessageHeader&,
                 std::span<const uint8_t> payload,
@@ -540,7 +540,7 @@ namespace Das::Core::IPC::Host
         {
             auto plugin_dir = options.plugin_dir;
             ctx->RegisterCommandHandler(
-                static_cast<uint32_t>(IpcCommandType::LIST_FILE),
+                static_cast<uint32_t>(IpcCommandType::ListFile),
                 [plugin_dir](
                     const ValidatedIPCMessageHeader&,
                     std::span<const uint8_t> payload,
@@ -548,7 +548,7 @@ namespace Das::Core::IPC::Host
                 { return HandleListFile(plugin_dir, payload, response); });
 
             ctx->RegisterCommandHandler(
-                static_cast<uint32_t>(IpcCommandType::READ_FILE),
+                static_cast<uint32_t>(IpcCommandType::ReadFile),
                 [plugin_dir](
                     const ValidatedIPCMessageHeader&,
                     std::span<const uint8_t> payload,

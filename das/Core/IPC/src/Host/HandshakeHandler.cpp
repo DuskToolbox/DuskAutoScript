@@ -86,7 +86,7 @@ namespace Core
                 // 根据接口 ID 调用对应的处理函数
                 switch (interface_id)
                 {
-                case HandshakeInterfaceId::HANDSHAKE_IFACE_HELLO:
+                case HandshakeInterfaceId::HandshakeIfaceHello:
                 {
                     if (body.size() < sizeof(HelloRequestV1))
                     {
@@ -103,7 +103,7 @@ namespace Core
                     break;
                 }
 
-                case HandshakeInterfaceId::HANDSHAKE_IFACE_READY:
+                case HandshakeInterfaceId::HandshakeIfaceReady:
                 {
                     if (body.size() < sizeof(ReadyRequestV1))
                     {
@@ -120,7 +120,7 @@ namespace Core
                     break;
                 }
 
-                case HandshakeInterfaceId::HANDSHAKE_IFACE_HEARTBEAT:
+                case HandshakeInterfaceId::HandshakeIfaceHeartbeat:
                 {
                     if (body.size() != sizeof(HeartbeatV1))
                     {
@@ -158,7 +158,7 @@ namespace Core
                     break;
                 }
 
-                case HandshakeInterfaceId::HANDSHAKE_IFACE_GOODBYE:
+                case HandshakeInterfaceId::HandshakeIfaceGoodbye:
                 {
                     if (body.size() < sizeof(GoodbyeV1))
                     {
@@ -193,13 +193,13 @@ namespace Core
                     switch (static_cast<HandshakeInterfaceId>(
                         header.GetInterfaceId()))
                     {
-                    case HandshakeInterfaceId::HANDSHAKE_IFACE_HELLO:
+                    case HandshakeInterfaceId::HandshakeIfaceHello:
                         response_interface_id = static_cast<uint32_t>(
-                            HandshakeInterfaceId::HANDSHAKE_IFACE_WELCOME);
+                            HandshakeInterfaceId::HandshakeIfaceWelcome);
                         break;
-                    case HandshakeInterfaceId::HANDSHAKE_IFACE_READY:
+                    case HandshakeInterfaceId::HandshakeIfaceReady:
                         response_interface_id = static_cast<uint32_t>(
-                            HandshakeInterfaceId::HANDSHAKE_IFACE_READY_ACK);
+                            HandshakeInterfaceId::HandshakeIfaceReadyAck);
                         break;
                     default:
                         // 其他消息保持原 interface_id
@@ -208,7 +208,7 @@ namespace Core
 
                     auto validated_response_header =
                         IPCMessageHeaderBuilder()
-                            .SetMessageType(MessageType::RESPONSE)
+                            .SetMessageType(MessageType::Response)
                             .SetControlPlaneCommand(
                                 static_cast<HandshakeInterfaceId>(
                                     response_interface_id))

@@ -92,7 +92,7 @@ ValidatedIPCMessageHeader MakeHeader(IpcCommandType cmd_type)
 {
     IPCMessageHeader header{};
     header.call_id = 1;
-    header.message_type = static_cast<uint8_t>(MessageType::REQUEST);
+    header.message_type = static_cast<uint8_t>(MessageType::Request);
     header.error_code = 0;
     header.interface_id = static_cast<uint32_t>(cmd_type);
     // V3: session_id/generation/local_id moved to body
@@ -102,7 +102,7 @@ ValidatedIPCMessageHeader MakeHeader(IpcCommandType cmd_type)
     header.flags = 0;
     header.body_size = 0;
     return IPCMessageHeaderBuilder()
-        .SetMessageType(MessageType::REQUEST)
+        .SetMessageType(MessageType::Request)
         .SetControlPlaneCommand(cmd_type)
         .SetCallId(1)
         .SetSourceSessionId(0)
@@ -146,7 +146,7 @@ TEST_F(IpcCommandHandlerTest, LookupObject_Success)
     std::vector<uint8_t> payload;
     AppendToBuffer(payload, obj_id);
 
-    auto               header = MakeHeader(IpcCommandType::LOOKUP_OBJECT);
+    auto               header = MakeHeader(IpcCommandType::LookupObject);
     IpcCommandResponse response;
 
     const DasResult result = handler_.HandleCommand(header, payload, response);
@@ -183,7 +183,7 @@ TEST_F(IpcCommandHandlerTest, LookupObject_NotFound)
     std::vector<uint8_t> payload;
     AppendToBuffer(payload, obj_id);
 
-    auto               header = MakeHeader(IpcCommandType::LOOKUP_OBJECT);
+    auto               header = MakeHeader(IpcCommandType::LookupObject);
     IpcCommandResponse response;
 
     const DasResult result = handler_.HandleCommand(header, payload, response);
@@ -212,7 +212,7 @@ TEST_F(IpcCommandHandlerTest, LookupByName_Success)
     std::vector<uint8_t> payload;
     AppendString(payload, "test_object");
 
-    auto               header = MakeHeader(IpcCommandType::LOOKUP_BY_NAME);
+    auto               header = MakeHeader(IpcCommandType::LookupByName);
     IpcCommandResponse response;
 
     const DasResult result = handler_.HandleCommand(header, payload, response);
@@ -250,7 +250,7 @@ TEST_F(IpcCommandHandlerTest, LookupByName_NotFound)
     std::vector<uint8_t> payload;
     AppendString(payload, "nonexistent");
 
-    auto               header = MakeHeader(IpcCommandType::LOOKUP_BY_NAME);
+    auto               header = MakeHeader(IpcCommandType::LookupByName);
     IpcCommandResponse response;
 
     const DasResult result = handler_.HandleCommand(header, payload, response);
@@ -279,7 +279,7 @@ TEST_F(IpcCommandHandlerTest, LookupByInterface_Success)
     std::vector<uint8_t> payload;
     AppendToBuffer(payload, iid);
 
-    auto               header = MakeHeader(IpcCommandType::LOOKUP_BY_INTERFACE);
+    auto               header = MakeHeader(IpcCommandType::LookupByInterface);
     IpcCommandResponse response;
 
     const DasResult result = handler_.HandleCommand(header, payload, response);
@@ -310,7 +310,7 @@ TEST_F(IpcCommandHandlerTest, LookupByInterface_NotFound)
     std::vector<uint8_t> payload;
     AppendToBuffer(payload, iid);
 
-    auto               header = MakeHeader(IpcCommandType::LOOKUP_BY_INTERFACE);
+    auto               header = MakeHeader(IpcCommandType::LookupByInterface);
     IpcCommandResponse response;
 
     const DasResult result = handler_.HandleCommand(header, payload, response);
@@ -322,7 +322,7 @@ TEST_F(IpcCommandHandlerTest, ListObjects_Empty)
 {
     std::vector<uint8_t> payload;
 
-    auto               header = MakeHeader(IpcCommandType::LIST_OBJECTS);
+    auto               header = MakeHeader(IpcCommandType::ListObjects);
     IpcCommandResponse response;
 
     const DasResult result = handler_.HandleCommand(header, payload, response);
@@ -357,7 +357,7 @@ TEST_F(IpcCommandHandlerTest, ListObjects_WithObjects)
 
     std::vector<uint8_t> payload;
 
-    auto               header = MakeHeader(IpcCommandType::LIST_OBJECTS);
+    auto               header = MakeHeader(IpcCommandType::ListObjects);
     IpcCommandResponse response;
 
     const DasResult result = handler_.HandleCommand(header, payload, response);
@@ -395,7 +395,7 @@ TEST_F(IpcCommandHandlerTest, ListSessionObjects_Success)
     std::vector<uint8_t> payload;
     AppendToBuffer(payload, static_cast<uint16_t>(1));
 
-    auto header = MakeHeader(IpcCommandType::LIST_SESSION_OBJECTS);
+    auto               header = MakeHeader(IpcCommandType::ListSessionObjects);
     IpcCommandResponse response;
 
     const DasResult result = handler_.HandleCommand(header, payload, response);
@@ -431,7 +431,7 @@ TEST_F(IpcCommandHandlerTest, ClearSession_Success)
     std::vector<uint8_t> payload;
     AppendToBuffer(payload, static_cast<uint16_t>(1));
 
-    auto               header = MakeHeader(IpcCommandType::CLEAR_SESSION);
+    auto               header = MakeHeader(IpcCommandType::ClearSession);
     IpcCommandResponse response;
 
     const DasResult result = handler_.HandleCommand(header, payload, response);
@@ -445,7 +445,7 @@ TEST_F(IpcCommandHandlerTest, Ping_Success)
 {
     std::vector<uint8_t> payload;
 
-    auto               header = MakeHeader(IpcCommandType::PING);
+    auto               header = MakeHeader(IpcCommandType::Ping);
     IpcCommandResponse response;
 
     const DasResult result = handler_.HandleCommand(header, payload, response);
@@ -480,7 +480,7 @@ TEST_F(IpcCommandHandlerTest, GetObjectCount_Success)
 
     std::vector<uint8_t> payload;
 
-    auto               header = MakeHeader(IpcCommandType::GET_OBJECT_COUNT);
+    auto               header = MakeHeader(IpcCommandType::GetObjectCount);
     IpcCommandResponse response;
 
     const DasResult result = handler_.HandleCommand(header, payload, response);

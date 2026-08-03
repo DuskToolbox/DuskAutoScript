@@ -132,7 +132,7 @@ namespace
             IpcCommandResponse& response)
         {
             auto it = ctx_.handlers.find(
-                static_cast<uint32_t>(IpcCommandType::LIST_FILE));
+                static_cast<uint32_t>(IpcCommandType::ListFile));
             if (it == ctx_.handlers.end())
             {
                 return DAS_E_FAIL;
@@ -287,14 +287,14 @@ namespace
 
         EXPECT_EQ(
             no_dir_ctx.handlers.find(
-                static_cast<uint32_t>(IpcCommandType::LIST_FILE)),
+                static_cast<uint32_t>(IpcCommandType::ListFile)),
             no_dir_ctx.handlers.end());
     }
 
     TEST_F(ListFileTest, InvalidPayload_ReturnsInvalidMessageBody)
     {
-        auto it = ctx_.handlers.find(
-            static_cast<uint32_t>(IpcCommandType::LIST_FILE));
+        auto it =
+            ctx_.handlers.find(static_cast<uint32_t>(IpcCommandType::ListFile));
         ASSERT_NE(it, ctx_.handlers.end());
 
         std::vector<uint8_t> bad_payload{0xFF, 0xFF};

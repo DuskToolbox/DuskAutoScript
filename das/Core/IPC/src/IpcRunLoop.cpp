@@ -46,7 +46,7 @@ namespace
     {
         return header.GetInterfaceId()
                == static_cast<uint32_t>(
-                   HandshakeInterfaceId::HANDSHAKE_IFACE_HEARTBEAT);
+                   HandshakeInterfaceId::HandshakeIfaceHeartbeat);
     }
 
     DasResult GetResponseResult(
@@ -99,7 +99,7 @@ IpcRunLoop::IpcRunLoop(
         static QueryInterfaceStub s_query_interface_stub;
         RegisterHandler(
             HeaderFlags::BUSINESS_CONTROL,
-            static_cast<uint32_t>(IpcCommandType::QUERY_INTERFACE),
+            static_cast<uint32_t>(IpcCommandType::QueryInterface),
             &s_query_interface_stub);
     }
 }
@@ -328,7 +328,7 @@ boost::asio::awaitable<void> IpcRunLoop::RouteIncomingMessage(
 {
     if (IsControlPlaneMessage(header))
     {
-        if (header.GetMessageType() == MessageType::RESPONSE)
+        if (header.GetMessageType() == MessageType::Response)
         {
             if (IsHeartbeatMessage(header) && connection_manager_)
             {
@@ -398,7 +398,7 @@ boost::asio::awaitable<void> IpcRunLoop::RouteIncomingMessage(
         co_return;
     }
 
-    if (header.GetMessageType() == MessageType::RESPONSE)
+    if (header.GetMessageType() == MessageType::Response)
     {
         const CallKey call_key{header.GetSourceSessionId(), header.GetCallId()};
         if (TryCompletePendingCallbackOnly(
@@ -449,7 +449,7 @@ IpcRunLoop::PrepareAsyncSendHeader(
         .call_id = call_id};
 
     auto validated_header = IPCMessageHeaderBuilder()
-                                .SetMessageType(MessageType::REQUEST)
+                                .SetMessageType(MessageType::Request)
                                 .SetInterfaceId(raw.interface_id)
                                 .SetHeaderFlags(raw.header_flags)
                                 .SetBodySize(raw.body_size)
@@ -479,7 +479,7 @@ std::pair<DasResult, CallKey> IpcRunLoop::PrepareSendRequestWithTransport(
     // V3: method_id 和 ObjectId 在 body 中携带，header 只保留 interface_id 和
     // session 路由信息
     auto validated_header = IPCMessageHeaderBuilder()
-                                .SetMessageType(MessageType::REQUEST)
+                                .SetMessageType(MessageType::Request)
                                 .SetInterfaceId(raw.interface_id)
                                 .SetHeaderFlags(raw.header_flags)
                                 .SetBodySize(raw.body_size)
@@ -711,13 +711,13 @@ DasResult IpcRunLoop::PostToBusinessThread(IDasAsyncCallback* callback) noexcept
     std::memcpy(body.data(), &callback, sizeof(IDasAsyncCallback*));
 
     // Construct header: BUSINESS_CONTROL +
-    // InternalBusinessCommand::ASYNC_CALLBACK
+    // InternalBusinessCommand::AsyncCallback
     auto header =
         IPCMessageHeaderBuilder()
-            .SetMessageType(MessageType::EVENT)
+            .SetMessageType(MessageType::Event)
             .SetHeaderFlags(HeaderFlags::BUSINESS_CONTROL)
             .SetInterfaceId(
-                static_cast<uint32_t>(InternalBusinessCommand::ASYNC_CALLBACK))
+                static_cast<uint32_t>(InternalBusinessCommand::AsyncCallback))
             .SetBodySize(static_cast<uint32_t>(body.size()))
             .Build();
 

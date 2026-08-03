@@ -849,9 +849,9 @@ boost::asio::awaitable<void> HostLauncher::StopBodyRequestExit()
 
         auto validated_header =
             IPCMessageHeaderBuilder()
-                .SetMessageType(MessageType::REQUEST)
+                .SetMessageType(MessageType::Request)
                 .SetControlPlaneCommand(
-                    HandshakeInterfaceId::HANDSHAKE_IFACE_GOODBYE)
+                    HandshakeInterfaceId::HandshakeIfaceGoodbye)
                 .SetBodySize(sizeof(goodbye))
                 .Build();
 
@@ -1838,8 +1838,8 @@ boost::asio::awaitable<DasResult> HostLauncher::SendHandshakeHelloAsync(
     }
     auto validated_header =
         IPCMessageHeaderBuilder()
-            .SetMessageType(MessageType::REQUEST)
-            .SetControlPlaneCommand(HandshakeInterfaceId::HANDSHAKE_IFACE_HELLO)
+            .SetMessageType(MessageType::Request)
+            .SetControlPlaneCommand(HandshakeInterfaceId::HandshakeIfaceHello)
             .SetBodySize(sizeof(hello))
             .SetCallId(call_id)
             .SetSourceSessionId(MAIN_PROCESS_SESSION_ID)
@@ -1896,7 +1896,7 @@ boost::asio::awaitable<DasResult> HostLauncher::ReceiveHandshakeWelcomeAsync(
     const IPCMessageHeader& raw_header = header.Raw();
 
     if (raw_header.interface_id
-        != static_cast<uint32_t>(HandshakeInterfaceId::HANDSHAKE_IFACE_WELCOME))
+        != static_cast<uint32_t>(HandshakeInterfaceId::HandshakeIfaceWelcome))
     {
         const std::string msg = DAS_FMT_NS::format(
             "Unexpected interface_id: {}",
@@ -1955,8 +1955,8 @@ boost::asio::awaitable<DasResult> HostLauncher::SendHandshakeReadyAsync(
     }
     auto validated_header =
         IPCMessageHeaderBuilder()
-            .SetMessageType(MessageType::REQUEST)
-            .SetControlPlaneCommand(HandshakeInterfaceId::HANDSHAKE_IFACE_READY)
+            .SetMessageType(MessageType::Request)
+            .SetControlPlaneCommand(HandshakeInterfaceId::HandshakeIfaceReady)
             .SetBodySize(sizeof(ready))
             .SetCallId(call_id)
             .SetSourceSessionId(MAIN_PROCESS_SESSION_ID)
@@ -2010,8 +2010,7 @@ boost::asio::awaitable<DasResult> HostLauncher::ReceiveHandshakeReadyAckAsync(
     const IPCMessageHeader& raw_header = header.Raw();
 
     if (raw_header.interface_id
-        != static_cast<uint32_t>(
-            HandshakeInterfaceId::HANDSHAKE_IFACE_READY_ACK))
+        != static_cast<uint32_t>(HandshakeInterfaceId::HandshakeIfaceReadyAck))
     {
         const std::string msg = DAS_FMT_NS::format(
             "Unexpected interface_id: {}",

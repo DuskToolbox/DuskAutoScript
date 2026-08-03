@@ -40,10 +40,10 @@ namespace MessageFlags
 /// @brief IPC 消息类型
 enum class MessageType : uint8_t
 {
-    REQUEST = 1,
-    RESPONSE = 2,
-    EVENT = 3,
-    HEARTBEAT = 4
+    Request = 1,
+    Response = 2,
+    Event = 3,
+    Heartbeat = 4
 };
 
 /// @brief MessageHeader V3 - 32B 紧凑设计

@@ -28,7 +28,7 @@ public:
         header_ = {};
         header_.magic = IPCMessageHeader::MAGIC;
         header_.version = IPCMessageHeader::CURRENT_VERSION;
-        header_.message_type = static_cast<uint8_t>(MessageType::REQUEST);
+        header_.message_type = static_cast<uint8_t>(MessageType::Request);
         header_.header_flags = 0;
         header_.call_id = 0;
         header_.source_session_id = 0;
@@ -126,7 +126,7 @@ public:
     IPCMessageHeaderBuilder& SetErrorCode(int32_t error_code) noexcept
     {
         header_.error_code = error_code;
-        header_.message_type = static_cast<uint8_t>(MessageType::RESPONSE);
+        header_.message_type = static_cast<uint8_t>(MessageType::Response);
         return *this;
     }
 
@@ -151,7 +151,7 @@ inline ValidatedIPCMessageHeader MakeControlPlaneRequest(
     uint16_t       target_session_id = 0)
 {
     return IPCMessageHeaderBuilder()
-        .SetMessageType(MessageType::REQUEST)
+        .SetMessageType(MessageType::Request)
         .SetControlPlaneCommand(command)
         .SetBodySize(body_size)
         .SetTargetSessionId(target_session_id)
@@ -166,7 +166,7 @@ inline ValidatedIPCMessageHeader MakeControlPlaneResponse(
     int32_t        error_code = 0)
 {
     return IPCMessageHeaderBuilder()
-        .SetMessageType(MessageType::RESPONSE)
+        .SetMessageType(MessageType::Response)
         .SetControlPlaneCommand(command)
         .SetBodySize(body_size)
         .SetCallId(call_id)
@@ -181,7 +181,7 @@ inline ValidatedIPCMessageHeader MakeBusinessControlRequest(
     uint16_t       target_session_id = 0)
 {
     return IPCMessageHeaderBuilder()
-        .SetMessageType(MessageType::REQUEST)
+        .SetMessageType(MessageType::Request)
         .SetBusinessControlCommand(command)
         .SetBodySize(body_size)
         .SetTargetSessionId(target_session_id)

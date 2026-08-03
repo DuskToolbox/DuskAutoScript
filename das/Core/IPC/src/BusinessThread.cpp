@@ -125,7 +125,7 @@ void BusinessThread::ProcessInboundMessage(InboundMessage& msg)
         header.GetInterfaceId(),
         header.GetCallId());
 
-    if (header.GetMessageType() == MessageType::RESPONSE)
+    if (header.GetMessageType() == MessageType::Response)
     {
         // RESPONSE: 调用 CompletePendingCall
         const CallKey call_key{
@@ -186,7 +186,7 @@ void BusinessThread::ProcessInboundMessage(InboundMessage& msg)
         }
         else
         {
-            if (header.GetMessageType() == MessageType::REQUEST)
+            if (header.GetMessageType() == MessageType::Request)
             {
                 DAS_CORE_LOG_ERROR(
                     "BusinessThread: no handler for REQUEST "
@@ -254,7 +254,7 @@ DasResult BusinessThread::PumpUntilResponse(
 
         InboundMessage msg = std::move(msg_opt.value());
 
-        if (msg.header.GetMessageType() == MessageType::RESPONSE)
+        if (msg.header.GetMessageType() == MessageType::Response)
         {
             const CallKey call_key{
                 .source_session_id = msg.header.GetSourceSessionId(),

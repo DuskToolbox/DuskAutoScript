@@ -17,12 +17,12 @@ DAS_CORE_IPC_NS_BEGIN
 /// 控制平面特征: ObjectId = {0, 0, 0} (session_id=0, generation=0, local_id=0)
 enum class HandshakeInterfaceId : uint32_t
 {
-    HANDSHAKE_IFACE_HELLO = 1,     // 客户端发起握手
-    HANDSHAKE_IFACE_WELCOME = 2,   // 服务端响应握手
-    HANDSHAKE_IFACE_READY = 3,     // 客户端就绪
-    HANDSHAKE_IFACE_READY_ACK = 4, // 服务端确认就绪
-    HANDSHAKE_IFACE_HEARTBEAT = 6, // 心跳
-    HANDSHAKE_IFACE_GOODBYE = 7    // 断开连接
+    HandshakeIfaceHello = 1,     // 客户端发起握手
+    HandshakeIfaceWelcome = 2,   // 服务端响应握手
+    HandshakeIfaceReady = 3,     // 客户端就绪
+    HandshakeIfaceReadyAck = 4,  // 服务端确认就绪
+    HandshakeIfaceHeartbeat = 6, // 心跳
+    HandshakeIfaceGoodbye = 7    // 断开连接
 };
 
 /**

@@ -573,9 +573,9 @@ namespace Das::IPC::Test
             DAS_S_OK);
 
         const auto load_command =
-            static_cast<uint32_t>(IpcCommandType::LOAD_PLUGIN);
+            static_cast<uint32_t>(IpcCommandType::LoadPlugin);
         const auto qi_command =
-            static_cast<uint32_t>(IpcCommandType::QUERY_INTERFACE);
+            static_cast<uint32_t>(IpcCommandType::QueryInterface);
         ASSERT_TRUE(ctx.handlers.contains(load_command));
         ASSERT_TRUE(ctx.handlers.contains(qi_command));
 

@@ -26,37 +26,37 @@ DAS_CORE_IPC_NS_BEGIN
 enum class IpcCommandType : uint8_t
 {
     // 对象管理命令
-    LOOKUP_OBJECT = 3,        // 通过 ObjectId 查找对象
-    LOOKUP_BY_NAME = 4,       // 通过名称查找对象
-    LOOKUP_BY_INTERFACE = 5,  // 通过接口类型查找对象
-    LIST_OBJECTS = 6,         // 列出所有对象
-    LIST_SESSION_OBJECTS = 7, // 列出指定会话的对象
-    CLEAR_SESSION = 8,        // 清除指定会话的所有对象
-    LOAD_PLUGIN = 9,          // 加载插件
+    LookupObject = 3,       // 通过 ObjectId 查找对象
+    LookupByName = 4,       // 通过名称查找对象
+    LookupByInterface = 5,  // 通过接口类型查找对象
+    ListObjects = 6,        // 列出所有对象
+    ListSessionObjects = 7, // 列出指定会话的对象
+    ClearSession = 8,       // 清除指定会话的所有对象
+    LoadPlugin = 9,         // 加载插件
 
     // 心跳和状态命令
-    PING = 10, // 心跳请求
-    PONG = 11, // 心跳响应
+    Ping = 10, // 心跳请求
+    Pong = 11, // 心跳响应
 
     // 查询命令
-    GET_OBJECT_COUNT = 20, // 获取对象数量
+    GetObjectCount = 20, // 获取对象数量
 
     // 远端文件访问 (50-59)
-    LIST_FILE = 50, // 列出远端 Host 工作目录下的文件/目录
-    READ_FILE = 51, // 读取远端 Host 工作目录下的文件内容
+    ListFile = 50, // 列出远端 Host 工作目录下的文件/目录
+    ReadFile = 51, // 读取远端 Host 工作目录下的文件内容
 
     // 接口查询 (120-129)
-    QUERY_INTERFACE = 120, // 远程 QueryInterface 请求
+    QueryInterface = 120, // 远程 QueryInterface 请求
 
     // 远程引用计数 (130-139)
-    REMOTE_ADD_REF = 130, // 远程端增加引用
-    REMOTE_RELEASE = 132, // 远程端释放引用
+    RemoteAddRef = 130,  // 远程端增加引用
+    RemoteRelease = 132, // 远程端释放引用
 
     // 共享内存管理 (140-149)
-    RELEASE_SHM_BLOCK = 140, // 释放共享内存块（fire-and-forget EVENT）
+    ReleaseShmBlock = 140, // 释放共享内存块（fire-and-forget EVENT）
 
     // 保留
-    UNKNOWN = 255
+    Unknown = 255
 };
 
 /**

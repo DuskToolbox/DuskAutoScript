@@ -65,10 +65,10 @@ public:
 
             auto release_header =
                 IPCMessageHeaderBuilder()
-                    .SetMessageType(MessageType::EVENT)
+                    .SetMessageType(MessageType::Event)
                     .SetHeaderFlags(HeaderFlags::BUSINESS_CONTROL)
                     .SetInterfaceId(
-                        static_cast<uint32_t>(IpcCommandType::REMOTE_RELEASE))
+                        static_cast<uint32_t>(IpcCommandType::RemoteRelease))
                     .SetSourceSessionId(GetSourceSessionId())
                     .SetTargetSessionId(oid.session_id)
                     .SetBodySize(static_cast<uint32_t>(release_body.size()))
@@ -138,7 +138,7 @@ public:
 
         std::vector<uint8_t> response;
         DasResult            result = SendBusinessControlRequest(
-            IpcCommandType::QUERY_INTERFACE,
+            IpcCommandType::QueryInterface,
             body.data(),
             body.size(),
             response);

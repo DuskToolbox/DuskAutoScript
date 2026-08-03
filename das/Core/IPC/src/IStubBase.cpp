@@ -60,7 +60,7 @@ DasResult IStubBase::HandleMessage(
         // 构建错误响应
         auto error_header =
             IPCMessageHeaderBuilder()
-                .SetMessageType(MessageType::RESPONSE)
+                .SetMessageType(MessageType::Response)
                 .SetBodySize(0)
                 .SetCallId(header.GetCallId())
                 .SetSourceSessionId(header.GetTargetSessionId())
@@ -90,7 +90,7 @@ DasResult IStubBase::HandleMessage(
         // 构建错误响应
         auto error_header =
             IPCMessageHeaderBuilder()
-                .SetMessageType(MessageType::RESPONSE)
+                .SetMessageType(MessageType::Response)
                 .SetBodySize(0)
                 .SetCallId(header.GetCallId())
                 .SetSourceSessionId(header.GetTargetSessionId())
@@ -117,7 +117,7 @@ DasResult IStubBase::HandleMessage(
     // 构建响应并发送
     auto response_header =
         IPCMessageHeaderBuilder()
-            .SetMessageType(MessageType::RESPONSE)
+            .SetMessageType(MessageType::Response)
             .SetFlags(ctx.response_flags)
             .SetBodySize(static_cast<uint32_t>(response_body.size()))
             .SetCallId(header.GetCallId())

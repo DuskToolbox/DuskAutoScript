@@ -178,7 +178,7 @@ protected:
     }
 
     ValidatedIPCMessageHeader CreateTestHeader(
-        MessageType type = MessageType::REQUEST)
+        MessageType type = MessageType::Request)
     {
         return IPCMessageHeaderBuilder()
             .SetMessageType(type)
@@ -194,7 +194,7 @@ protected:
         uint32_t body_size)
     {
         return IPCMessageHeaderBuilder()
-            .SetMessageType(MessageType::RESPONSE)
+            .SetMessageType(MessageType::Response)
             .SetHeaderFlags(DAS::Core::IPC::HeaderFlags::NONE)
             .SetInterfaceId(0x1234)
             .SetCallId(call_id)
@@ -601,7 +601,7 @@ TEST_F(IpcRunLoopTest, BusinessResponseWithoutPendingCallbackFallsBackToQueue)
            "visible to BusinessThread::PumpUntilResponse";
     if (queued)
     {
-        EXPECT_EQ(queued->header.GetMessageType(), MessageType::RESPONSE);
+        EXPECT_EQ(queued->header.GetMessageType(), MessageType::Response);
         EXPECT_EQ(queued->header.GetSourceSessionId(), REMOTE_SESSION_ID);
         EXPECT_EQ(queued->header.GetTargetSessionId(), LOCAL_SESSION_ID);
         EXPECT_EQ(queued->header.GetCallId(), call_id);

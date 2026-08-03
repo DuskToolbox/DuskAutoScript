@@ -54,7 +54,7 @@ namespace
             IpcCommandResponse& response)
         {
             auto it = ctx_.handlers.find(
-                static_cast<uint32_t>(IpcCommandType::READ_FILE));
+                static_cast<uint32_t>(IpcCommandType::ReadFile));
             if (it == ctx_.handlers.end())
             {
                 return DAS_E_FAIL;
@@ -225,8 +225,8 @@ namespace
 
     TEST_F(ReadFileTest, InvalidPayload_ReturnsInvalidMessageBody)
     {
-        auto it = ctx_.handlers.find(
-            static_cast<uint32_t>(IpcCommandType::READ_FILE));
+        auto it =
+            ctx_.handlers.find(static_cast<uint32_t>(IpcCommandType::ReadFile));
         ASSERT_NE(it, ctx_.handlers.end());
 
         std::vector<uint8_t> bad_payload{0xFF, 0xFF};
