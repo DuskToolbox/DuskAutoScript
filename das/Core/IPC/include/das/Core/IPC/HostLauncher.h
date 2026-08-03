@@ -332,10 +332,11 @@ private:
      *
      * GOODBYE 用 co_await 发送（非阻塞，所有路径保留），transport 清理直接
      * 执行（单线程 io_context 按序执行，与该线程 pending 协程天然串行，
-     * 保持 31616073 的双 UAF 修复语义），process-exit watcher 的 TP drain 用
-     * wait_for(0) 轮询 + 短延时 co_await 让 io_context 处理已排队的
-     * completion。 由 Stop()（非 io 线程，co_spawn+use_future 阻塞等）或
-     * StopFromIoContext()（io 线程，co_await）驱动；调用方须持 stop_mutex_。
+     * 保持 31616073 的双 UAF 修复语义）。process-exit watcher 的 drain 由
+     * Stop() 先 scope.request_stop() + sync_wait(scope.on_empty()) 承担
+     * （在 co_spawn(StopBody) 之前），本协程不再做 future 轮询。由 Stop()
+     * （非 io 线程，co_spawn+use_future 阻塞等）或 StopFromIoContext()
+     * （io 线程，co_await）驱动；调用方须持 stop_mutex_。
      */
     boost::asio::awaitable<void> StopBody();
 

@@ -72,12 +72,8 @@ struct HostLauncher::Impl
     std::unique_ptr<boost::process::v2::process> process;
     std::optional<AnyTransport>                  async_transport;
     std::unique_ptr<SharedMemoryPool>            pool_;
-    // StartLaunchSequence 用 use_future 拉起的 exit-watcher 协程的 future。
-    // Stop() 在 process.reset() 前 wait()，确保 io_context 线程不再引用
-    // process handle，避免 heap-use-after-free。Plan 03 迁入 scope 后移除。
-    std::future<void>     process_exit_future;
-    uint32_t              pid = 0;
-    uint16_t              session_id = 0;
+    uint32_t                                     pid = 0;
+    uint16_t                                     session_id = 0;
     uint16_t              next_call_id = 1; // V3: 16-bit call_id
     bool                  is_running = false;
     std::atomic<uint32_t> ref_count{1}; // 引用计数，初始为 1（创建时持有）
@@ -676,26 +672,49 @@ DasResult HostLauncher::StartLaunchSequence(
     // 注意：不再取裸 std::function 副本（CR-01 数据竞争点）。exit-watcher 协程
     // 触发时直接调 slot_.Invoke，持锁执行 callback（D-01）。slot 未 Set 时
     // Invoke 内部判断空则空转，语义等价于旧版 `if (callback)` 判断。
+    // 与 StartAsync 成功路径 watcher 一致迁入 async_scope（D-91-06）：watcher
+    // 生命周期由 Stop() 的 scope.on_empty() drain 跟踪，替代 use_future 载体
+    // （UAF 2/#1338 防护由 scope drain 承载）。
     if (impl_->process)
     {
-        auto session_id = session_id_;
-        auto process_ptr = impl_->process.get();
+        auto       session_id = session_id_;
+        auto       process_ptr = impl_->process.get();
+        const auto stop_token = impl_->scope.get_stop_token();
 
-        impl_->process_exit_future = boost::asio::co_spawn(
-            impl_->io_ctx,
-            [this, process_ptr, session_id]() -> boost::asio::awaitable<void>
-            {
-                boost::system::error_code ec;
-                co_await process_ptr->async_wait(
-                    boost::asio::redirect_error(
-                        boost::asio::use_awaitable,
-                        ec));
-                const int exit_code = ec ? -1 : process_ptr->exit_code();
-                // 持锁执行 callback（INV-01：回调内部不得重入本 slot）
-                on_process_exit_slot_.Invoke(session_id, exit_code);
-                co_return;
-            },
-            boost::asio::use_future);
+        impl_->scope.spawn(
+            boost::asio::co_spawn(
+                impl_->io_ctx,
+                [this, process_ptr, session_id, stop_token]()
+                    -> boost::asio::awaitable<void>
+                {
+                    boost::system::error_code ec;
+                    co_await process_ptr->async_wait(
+                        boost::asio::redirect_error(
+                            boost::asio::use_awaitable,
+                            ec));
+                    // Pitfall 3 守卫：Stop() 的 request_stop 取消 async_wait 会
+                    // 产生 ec=operation_aborted，已停止时跳过 Invoke 避免伪 -1
+                    // 回调。进程自然退出路径 stop 未请求 → 守卫放行真实
+                    // exit_code（两条路径的选择性由 Plan 03 Task 2
+                    // 负向审计验证）。
+                    if (stop_token.stop_requested())
+                    {
+                        co_return;
+                    }
+                    const int exit_code = ec ? -1 : process_ptr->exit_code();
+                    // 持锁执行 callback（INV-01：回调内部不得重入本 slot）
+                    on_process_exit_slot_.Invoke(session_id, exit_code);
+                    co_return;
+                },
+                AsioSenderToken{})
+            | stdexec::let_error(
+                [](std::exception_ptr e)
+                {
+                    DAS_CORE_LOG_ERROR(
+                        "Host exit-watcher failed: {}",
+                        DescribeException(e));
+                    return stdexec::just_stopped();
+                }));
     }
 
     return DAS_S_OK;
@@ -888,26 +907,13 @@ boost::asio::awaitable<void> HostLauncher::StopBody()
         }
 
         // 等子进程真正退出后再析构（terminate 后 wait 瞬间返回）。
-        // 注意：本协程在 io_context 线程上，不能直接 process_exit_future.wait()
-        // —— future 未就绪时 exit-watcher 协程完成需 io_context 驱动，
-        // io_context 线程阻塞在其上会死锁。改为 wait_for(0) 轮询 + 短延时
-        // co_await 让 io_context 处理已排队的 async_wait completion（TP
-        // drain 的等价物），确保 io_context 线程不再引用 process handle 后再
-        // reset（test 1338 的 UAF 防护）。future 无效（StartAsync 链失败路径，
-        // watcher 未 spawn）或已就绪则立即跳过。
-        if (impl_->process_exit_future.valid())
-        {
-            const auto drain_deadline =
-                std::chrono::steady_clock::now() + std::chrono::seconds(2);
-            while (impl_->process_exit_future.wait_for(std::chrono::seconds(0))
-                       != std::future_status::ready
-                   && std::chrono::steady_clock::now() < drain_deadline)
-            {
-                boost::asio::steady_timer drain_timer(impl_->io_ctx);
-                drain_timer.expires_after(std::chrono::milliseconds(1));
-                co_await drain_timer.async_wait(boost::asio::use_awaitable);
-            }
-        }
+        // 注意：本协程在 io_context 线程上，不能直接阻塞等待 exit-watcher
+        // 完成——watcher 协程完成需 io_context 驱动，阻塞会死锁。Stop() 在
+        // co_spawn(StopBody) 之前已先 scope.request_stop() +
+        // sync_wait(scope.on_empty()) drain 全部在途子任务（StartAsync 握手链
+        // + 两个 exit-watcher），故此处 scope 已空、watcher 已完成，
+        // process.reset() 严格发生在 scope 清空之后（UAF 2/#1338 防护由
+        // scope drain 承载，替代旧 use_future watcher 载体的 wait_for 轮询）。
 
         // 正常析构：Windows 上 ~process() 会调 UnregisterWaitEx(NULL)，
         // 同步等待已 pending 的 thread-pool wait callback 完成。
@@ -954,26 +960,11 @@ void HostLauncher::StopBodySync()
             impl_->process->terminate(ec);
         }
 
-        // 等 StartLaunchSequence 的 process-exit watcher 协程跑完，
-        // 确保 io_context 线程不再引用 process handle。否则 process.reset()
-        // 释放 handle 时，io_context 线程可能仍在 async_wait completion 中
-        // → heap-use-after-free（test 1338）。本路径在非 io_context 线程，
-        // wait() 让 io_context 线程空闲驱动 watcher；io_context 已停时
-        // watcher 已完成或未启动，future 已就绪/无效。
-        if (impl_->process_exit_future.valid())
-        {
-            try
-            {
-                impl_->process_exit_future.wait();
-            }
-            catch (...)
-            {
-                // coroutine 异常（如 process 已退出时的 error_code）忽略
-            }
-        }
-
         // 等子进程真正退出后再析构（terminate 后 wait 瞬间返回），
         // 缩小 io_context 线程处理 exit 事件与 reset() 的竞争窗口。
+        // 说明：本路径（io_context 已停 / transport 未连接）下 exit-watcher
+        // 的 co_spawn 从未被驱动（async_wait 未注册），直接清理安全；停后
+        // 阻塞等 watcher 会死锁（Pitfall 4），不引入同步等待。
         impl_->process->wait(ec);
 
         // 正常析构：Windows 上 ~process() 会调 UnregisterWaitEx(NULL)，
