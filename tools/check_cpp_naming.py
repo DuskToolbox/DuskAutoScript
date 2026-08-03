@@ -161,8 +161,9 @@ python tools/check_cpp_naming.py --staged || exit $?
         return rel, run_clang_tidy(rel, ranges, db)
 
     all_violations = 0
-    # 并行跑 clang-tidy（大提交时显著缩短 hook 耗时）
-    with ThreadPoolExecutor(max_workers=4) as ex:
+    # 并行跑 clang-tidy（大提交时显著缩短 hook 耗时，worker 数为 CPU 核心数的一半）
+    workers = max(1, (os.cpu_count() or 4) // 2)
+    with ThreadPoolExecutor(max_workers=workers) as ex:
         futures = {ex.submit(check_one, rel, compile_db): rel for rel in files}
         for fut in as_completed(futures):
             rel, violations = fut.result()
