@@ -577,6 +577,29 @@ class IpcStubGenerator:
         else:
             lines.append(f"{inner_indent}impl->{method.name}({params_str});")
 
+        # 释放反序列化的 [in] 接口指针引用（stub 持有 DeserializeInInterfaceParam
+        # 返回的引用，调用后必须 Release，否则 proxy 泄漏、远端对象永不释放）。
+        # 注意：IDasReadOnlyString 走零拷贝特化（变量名无 _base），不在此释放。
+        for param in method.parameters:
+            if param.direction in (ParamDirection.OUT, ParamDirection.INOUT):
+                continue
+            is_iface = (
+                param.type_info.type_kind == TypeKind.INTERFACE
+                and param.type_info.is_pointer
+            )
+            if not is_iface:
+                continue
+            if param.type_info.base_type == "IDasReadOnlyString":
+                continue
+            local_name = f"arg_{param.name}" if param.name in handle_param_names else param.name
+            lines.append(f"{inner_indent}if ({local_name}_base != nullptr)")
+            lines.append(f"{inner_indent}{{")
+            lines.append(
+                f"{inner_indent}    static_cast<IDasBase*>({local_name}_base)->Release();"
+            )
+            lines.append(f"{inner_indent}    {local_name}_base = nullptr;")
+            lines.append(f"{inner_indent}}}")
+
         for param in out_params:
             local_name = f"arg_{param.name}" if param.name in handle_param_names else param.name
             is_iface = (param.type_info.type_kind == TypeKind.INTERFACE and param.type_info.is_pointer)
@@ -1098,8 +1121,11 @@ class IpcStubGenerator:
                 # Built-in types not in document (e.g. IDasBase): use BUILTIN_INTERFACE_HASHES
                 iface_id_hash = BUILTIN_INTERFACE_HASHES.get(interface_name, 0)
 
+            # base 声明提升到方法作用域，供调用后释放（DeserializeInInterfaceParam
+            # 返回的引用由 stub 持有，调用后必须 Release，否则 proxy 永不销毁、
+            # 远端对象永不释放 —— 见 RemoveCallback DOM 泄漏回归）。
+            lines.append(f"{indent}IDasBase* {param_name}_base = nullptr;")
             lines.append(f"{indent}{{")
-            lines.append(f"{indent}    IDasBase* {param_name}_base = nullptr;")
             lines.append(f"{indent}    serial_result = Das::Core::IPC::DeserializeInInterfaceParam(")
             lines.append(f"{indent}        {param_name}_encoded_value,")
             lines.append(f"{indent}        0x{iface_id_hash:08X}u,")

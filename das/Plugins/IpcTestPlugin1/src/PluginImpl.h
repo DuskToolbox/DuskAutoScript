@@ -5,6 +5,7 @@
 #include <das/_autogen/idl/abi/IDasComponent.h>
 #include <das/_autogen/idl/abi/IDasInput.h>
 #include <das/_autogen/idl/abi/IDasPluginPackage.h>
+#include <das/_autogen/idl/abi/IDasProgressService.h>
 #include <das/_autogen/idl/abi/IDasTaskAuthoring.h>
 #include <das/_autogen/idl/abi/IDasTaskComponent.h>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasComponent.Implements.hpp>
@@ -184,6 +185,9 @@ private:
 
     DasResult HandleQueryMainProcessStringByName(
         ExportInterface::IDasVariantVector*  p_arguments,
+        ExportInterface::IDasVariantVector** pp_out_result);
+
+    DasResult HandleProgressServiceRoundTrip(
         ExportInterface::IDasVariantVector** pp_out_result);
 };
 

@@ -8,10 +8,16 @@
 #include <das/Utils/fmt.h>
 #include <das/_autogen/idl/abi/IDasPortMap.h>
 #include <das/_autogen/idl/header/IDasPortMap.generated.h>
+#include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasProgressCallback.Implements.hpp>
+#include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasProgressService.Implements.hpp>
+#include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasProgressUpdate.Implements.hpp>
 
 #include <array>
+#include <atomic>
 #include <cstring>
 #include <string>
+#include <utility>
+#include <vector>
 
 DAS_NS_BEGIN
 
@@ -39,6 +45,142 @@ namespace
     {
         return std::memcmp(&lhs, &rhs, sizeof(DasGuid)) == 0;
     }
+
+    // 插件侧 IDasJson 构造惯例：经 ParseDasJsonFromString 序列化往返创建。
+    // 必须带 copy_string，否则 brace-init 走 initializer_list 生成数组。
+    DasPtr<ExportInterface::IDasJson> MakePluginJsonString(
+        const std::string& text)
+    {
+        yyjson::value value{std::string(text), yyjson::copy_string};
+        auto          serialized = Utils::SerializeYyjsonValue(value);
+        if (!serialized)
+        {
+            return {};
+        }
+        DasPtr<ExportInterface::IDasJson> result;
+        ParseDasJsonFromString(serialized->c_str(), result.Put());
+        return result;
+    }
+
+    // 反向通知回调本地实现（带公开引用计数，供 RemoveCallback DOM 归零断言）。
+    class RoundTripCallback final
+        : public Das::ExportInterface::IDasProgressCallback
+    {
+    public:
+        DasResult OnAllSubscribersDisconnected(IDasReadOnlyString*) override
+        {
+            return DAS_S_OK;
+        }
+
+        DasResult DAS_STD_CALL
+        QueryInterface(const DasGuid& iid, void** pp_out_object) override
+        {
+            if (pp_out_object == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *pp_out_object = nullptr;
+            if (iid == DasIidOf<IDasBase>()
+                || iid
+                       == DasIidOf<
+                           Das::ExportInterface::IDasProgressCallback>())
+            {
+                AddRef();
+                *pp_out_object =
+                    static_cast<Das::ExportInterface::IDasProgressCallback*>(
+                        this);
+                return DAS_S_OK;
+            }
+            return DAS_E_NO_INTERFACE;
+        }
+
+        uint32_t DAS_STD_CALL AddRef() override { return ++ref_count_; }
+
+        uint32_t DAS_STD_CALL Release() override
+        {
+            const auto count = --ref_count_;
+            if (count == 0)
+            {
+                delete this;
+            }
+            return count;
+        }
+
+        [[nodiscard]]
+        uint32_t RefCount() const
+        {
+            return ref_count_.load();
+        }
+
+    private:
+        std::atomic<uint32_t> ref_count_{1};
+    };
+
+    // 只读进度更新条目本地实现（供 Report 逐字段往返读取）。
+    class RoundTripUpdate final
+        : public Das::ExportInterface::DasProgressUpdateImplBase<
+              RoundTripUpdate>
+    {
+    public:
+        using Field =
+            std::pair<std::string, DasPtr<Das::ExportInterface::IDasJson>>;
+
+        RoundTripUpdate(std::string key, std::vector<Field> fields)
+            : key_(std::move(key)), fields_(std::move(fields))
+        {
+        }
+
+        DasResult GetKey(IDasReadOnlyString** pp_out_key) override
+        {
+            if (pp_out_key == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *pp_out_key = nullptr;
+            return CreateIDasReadOnlyStringFromUtf8(key_.c_str(), pp_out_key);
+        }
+
+        DasResult GetFieldCount(size_t* p_out_count) override
+        {
+            if (p_out_count == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *p_out_count = fields_.size();
+            return DAS_S_OK;
+        }
+
+        DasResult GetFieldByIndex(
+            size_t                           index,
+            IDasReadOnlyString**             pp_out_name,
+            Das::ExportInterface::IDasJson** pp_out_value) override
+        {
+            if (pp_out_name == nullptr || pp_out_value == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *pp_out_name = nullptr;
+            *pp_out_value = nullptr;
+            if (index >= fields_.size())
+            {
+                return DAS_E_OUT_OF_RANGE;
+            }
+            auto rc = CreateIDasReadOnlyStringFromUtf8(
+                fields_[index].first.c_str(),
+                pp_out_name);
+            if (DAS::IsFailed(rc))
+            {
+                return rc;
+            }
+            *pp_out_value = fields_[index].second.Get();
+            (*pp_out_value)->AddRef();
+            return DAS_S_OK;
+        }
+
+    private:
+        std::string        key_;
+        std::vector<Field> fields_;
+    };
 } // namespace
 
 // === DasTouchMockImpl ===
@@ -147,6 +289,11 @@ DasResult DasQueryComponentImpl::Dispatch(
     if (method == "queryMainProcessStringByName")
     {
         return HandleQueryMainProcessStringByName(p_arguments, pp_out_result);
+    }
+
+    if (method == "progressServiceRoundTrip")
+    {
+        return HandleProgressServiceRoundTrip(pp_out_result);
     }
 
     return DAS_E_INVALID_ARGUMENT;
@@ -333,6 +480,112 @@ DasResult DasQueryComponentImpl::HandleQueryMainProcessStringByName(
         return hr;
     }
     hr = (*pp_out_result)->PushBackString(return_string.Get());
+    return hr;
+}
+
+DasResult DasQueryComponentImpl::HandleProgressServiceRoundTrip(
+    ExportInterface::IDasVariantVector** pp_out_result)
+{
+    if (!pp_out_result)
+    {
+        return DAS_E_INVALID_ARGUMENT;
+    }
+
+    // 按名解析主进程 IDasProgressService proxy。
+    DAS::DasPtr<IDasBase> raw_obj;
+    DasResult             hr = DasQueryMainProcessInterfaceByName(
+        "IDasProgressService",
+        raw_obj.Put());
+    if (DAS::IsFailed(hr) || !raw_obj)
+    {
+        DAS_LOG_ERROR(
+            DAS_FMT_NS::format(
+                "progressServiceRoundTrip: resolve failed hr={:#x}",
+                static_cast<uint32_t>(hr))
+                .c_str());
+        return hr;
+    }
+    DAS::DasPtr<Das::ExportInterface::IDasProgressService> service;
+    hr = raw_obj.As(service.Put());
+    if (DAS::IsFailed(hr) || !service)
+    {
+        return hr;
+    }
+
+    // 本地 callback（new 即持有一份引用）。
+    auto* const   cb = new RoundTripCallback();
+    const int64_t ref_after_create = cb->RefCount();
+
+    hr = service->AddCallback(cb);
+    if (DAS::IsFailed(hr))
+    {
+        cb->Release();
+        return hr;
+    }
+    const int64_t ref_after_add = cb->RefCount();
+
+    // Report 一个含 2 字段的条目（service 侧逐字段读回）。
+    std::vector<RoundTripUpdate::Field> fields;
+    fields.emplace_back(
+        std::string("updateProgress"),
+        MakePluginJsonString("正在下载（1.0 MB / 2.0 MB）50%"));
+    fields.emplace_back(
+        std::string("downloadRate"),
+        MakePluginJsonString("1.0 MB/s"));
+    DAS::DasPtr<Das::ExportInterface::IDasProgressUpdate> entry =
+        RoundTripUpdate::Make("roundtrip-key", std::move(fields));
+    hr = service->Report(entry.Get());
+    if (DAS::IsFailed(hr))
+    {
+        cb->Release();
+        return hr;
+    }
+
+    hr = service->RemoveCallback(cb);
+    if (DAS::IsFailed(hr))
+    {
+        cb->Release();
+        return hr;
+    }
+
+    // flush：多次 Report 往返，每次 PumpUntilResponse 处理 host BusinessThread
+    // 排队中的 REMOTE_RELEASE，直到本地 callback 引用回到 baseline（仅剩插件
+    // 持有的引用）。
+    std::vector<RoundTripUpdate::Field> empty_fields;
+    int64_t                             ref_after_flush = cb->RefCount();
+    for (int attempt = 0; attempt < 50 && ref_after_flush > 1; ++attempt)
+    {
+        DAS::DasPtr<Das::ExportInterface::IDasProgressUpdate> flush_entry =
+            RoundTripUpdate::Make("roundtrip-key", empty_fields);
+        hr = service->Report(flush_entry.Get());
+        if (DAS::IsFailed(hr))
+        {
+            cb->Release();
+            return hr;
+        }
+        ref_after_flush = cb->RefCount();
+    }
+
+    // 释放本地引用（refcount 归零删除对象）。
+    cb->Release();
+
+    // 回传 ref_after_create / ref_after_add / ref_after_flush 供断言。
+    hr = CreateIDasVariantVector(pp_out_result);
+    if (DAS::IsFailed(hr))
+    {
+        return hr;
+    }
+    hr = (*pp_out_result)->PushBackInt(ref_after_create);
+    if (DAS::IsFailed(hr))
+    {
+        return hr;
+    }
+    hr = (*pp_out_result)->PushBackInt(ref_after_add);
+    if (DAS::IsFailed(hr))
+    {
+        return hr;
+    }
+    hr = (*pp_out_result)->PushBackInt(ref_after_flush);
     return hr;
 }
 
