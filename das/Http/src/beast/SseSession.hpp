@@ -7,6 +7,7 @@
 #include <boost/asio/buffer.hpp>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/steady_timer.hpp>
+#include <boost/asio/write.hpp>
 #include <boost/beast/core/stream_traits.hpp>
 #include <boost/beast/http.hpp>
 
@@ -97,9 +98,20 @@ namespace Das::Http::Beast
         // RAII 兜底：异常路径 / ioc 停止时 keepalive handler 收到
         // operation_aborted 直接返回而不走 Close，析构保证注销 hub，
         // 杜绝 hub 残留 expired weak_ptr（key-empty 永不触发的泄漏面）。
-        // 同步关（ShutdownSocket）：连接已死，无需异步发终止块，且 async_write
-        // 会引用已析构对象。
-        ~SseSessionT() override { ShutdownSocket(); }
+        // 析构体执行期间 this 存活，可同步尽力发 chunked 终止块再关（无 UAF）：
+        // 5 字节几乎总能写入内核发送缓冲（客户端不读也不阻塞）；写失败由
+        // ShutdownSocket 关 socket 兜底（客户端收 EOF 仍可识别流结束）。
+        ~SseSessionT() override
+        {
+            boost::system::error_code ec;
+            boost::asio::write(
+                socket_,
+                boost::asio::buffer(
+                    kChunkedTerminator.data(),
+                    kChunkedTerminator.size()),
+                ec);
+            ShutdownSocket();
+        }
 
         /**
          * @brief 启动会话：写 200 头，完成后注册到 hub + 启动 keep-alive。
@@ -183,15 +195,15 @@ namespace Das::Http::Beast
             boost::asio::async_write(
                 socket_,
                 boost::asio::buffer(
-                    kSseTerminator.data(),
-                    kSseTerminator.size()),
+                    kChunkedTerminator.data(),
+                    kChunkedTerminator.size()),
                 [self](boost::beast::error_code /*ec*/, std::size_t /*n*/)
                 { self->ShutdownSocket(); });
         }
 
     private:
-        // chunked 编码终止块（0 长度 chunk 表示流结束）。
-        static constexpr std::string_view kSseTerminator = "0\r\n\r\n";
+        // HTTP chunked 传输编码终止块（0 长度 chunk 表示流结束）。
+        static constexpr std::string_view kChunkedTerminator = "0\r\n\r\n";
 
         /**
          * @brief 同步关闭 socket + 注销 hub（幂等）。析构路径使用。
