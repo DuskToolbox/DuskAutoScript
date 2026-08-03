@@ -35,7 +35,7 @@ namespace Das::Core::TaskScheduler
 
         constexpr std::array<int, 7> VALUE_TYPES{0, 1, 2, 4, 8, 16, 32};
 
-        constexpr std::array<int, 7> INPUT_TYPES{0, 1, 2, 3, 4, 5, 6};
+        constexpr std::array<int, 8> INPUT_TYPES{0, 1, 2, 3, 4, 5, 6, 7};
 
         bool IsOneOf(
             std::string_view value,
@@ -453,6 +453,17 @@ namespace Das::Core::TaskScheduler
                 return Fail(
                     "invalidReadonly",
                     "FieldDescriptor.readonly must be bool");
+            }
+            // markdown(inputType=7) 必须 readonly==true：前端只读展示，暂不支持
+            // markdown 编辑（契约强制，schema if-then 同步约束）。
+            if (it == 7
+                && !(
+                    obj.contains("readonly") && obj["readonly"].is_bool()
+                    && obj["readonly"].as_bool().value_or(false)))
+            {
+                return Fail(
+                    "invalidReadonly",
+                    "inputType 7 (markdown) requires readonly=true");
             }
 
             if (obj.contains("candidates"))
@@ -2142,18 +2153,56 @@ namespace Das::Core::TaskScheduler
             return d;
         }
 
+        // commandResult 可选（无业务结果的命令不带）。出现时必须符合
+        // {commandId: 非空 string, data: JsonValue} 严格形状。
+        if (obj.contains("commandResult"))
+        {
+            auto cr_opt = obj["commandResult"].as_object();
+            if (!cr_opt)
+            {
+                return Fail(
+                    "invalidCommandResult",
+                    "commandResult must be object");
+            }
+            const auto& cr = cr_opt.value();
+            if (!OnlyKeys(cr, {"commandId", "data"}))
+            {
+                return Fail(
+                    "invalidCommandResult",
+                    "commandResult rejects unknown field");
+            }
+            if (!HasStringField(cr, "commandId")
+                || cr["commandId"].as_string().value().empty())
+            {
+                return Fail(
+                    "invalidCommandResult",
+                    "commandResult.commandId required and non-empty");
+            }
+            if (!cr.contains("data"))
+            {
+                return Fail(
+                    "invalidCommandResult",
+                    "commandResult.data required");
+            }
+        }
+
         if (has_document)
         {
             if (!OnlyKeys(
                     obj,
-                    {"acceptedProperties", "document", "diagnostics"}))
+                    {"acceptedProperties",
+                     "document",
+                     "diagnostics",
+                     "commandResult"}))
             {
                 return Fail(
                     "unknownField",
                     "AuthoringApplyResult rejects unknown field");
             }
         }
-        else if (!OnlyKeys(obj, {"acceptedProperties", "diagnostics"}))
+        else if (!OnlyKeys(
+                     obj,
+                     {"acceptedProperties", "diagnostics", "commandResult"}))
         {
             return Fail(
                 "unknownField",

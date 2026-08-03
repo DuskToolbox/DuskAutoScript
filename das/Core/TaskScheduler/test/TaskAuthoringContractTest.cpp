@@ -1407,3 +1407,142 @@ TEST(TaskAuthoringContractTest, FieldDescriptorCommandsValidated)
     EXPECT_FALSE(r.valid);
     EXPECT_EQ(r.error_kind, "commandActionXorRequired");
 }
+
+// =============================================================================
+// markdown inputType=7 (readonly) + optional commandResult on Apply envelope
+// =============================================================================
+
+TEST(TaskAuthoringContractTest, MarkdownFieldRequiresReadonlyTrue)
+{
+    auto ok = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "fields": [{
+            "name": "releaseNote", "label": "更新日志", "valueType": 4,
+            "inputType": 7, "value": "# 标题", "readonly": true
+        }]
+    })json");
+    auto r_ok = Das::Core::TaskScheduler::ValidateAuthoringDocument(ok);
+    EXPECT_TRUE(r_ok.valid) << r_ok.message;
+
+    auto missing_readonly = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "fields": [{
+            "name": "releaseNote", "label": "更新日志", "valueType": 4,
+            "inputType": 7, "value": "# 标题"
+        }]
+    })json");
+    auto r_missing =
+        Das::Core::TaskScheduler::ValidateAuthoringDocument(missing_readonly);
+    EXPECT_FALSE(r_missing.valid);
+    EXPECT_EQ(r_missing.error_kind, "invalidReadonly");
+
+    auto readonly_false = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "fields": [{
+            "name": "releaseNote", "label": "更新日志", "valueType": 4,
+            "inputType": 7, "value": "# 标题", "readonly": false
+        }]
+    })json");
+    auto r_false =
+        Das::Core::TaskScheduler::ValidateAuthoringDocument(readonly_false);
+    EXPECT_FALSE(r_false.valid);
+    EXPECT_EQ(r_false.error_kind, "invalidReadonly");
+}
+
+TEST(TaskAuthoringContractTest, LegacyInputTypeSixRemainsEditable)
+{
+    auto document = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "fields": [{
+            "name": "dir", "label": "目录", "valueType": 4,
+            "inputType": 6, "value": "C:/x", "readonly": false
+        }]
+    })json");
+
+    auto r = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+    EXPECT_TRUE(r.valid) << r.message;
+}
+
+TEST(TaskAuthoringContractTest, ApplyResultPassesWithCommandResult)
+{
+    auto result = ParseJson(R"json({
+        "acceptedProperties": {},
+        "document": {
+            "contractVersion": 1,
+            "viewKind": "formSequence",
+            "revision": 5
+        },
+        "diagnostics": [],
+        "commandResult": {
+            "commandId": "checkUpdate",
+            "data": {"progressKey": "a1b2c3d4"}
+        }
+    })json");
+
+    auto r = Das::Core::TaskScheduler::ValidateAuthoringApplyResult(result, 4);
+    EXPECT_TRUE(r.valid);
+    EXPECT_TRUE(r.error_kind.empty()) << r.message;
+}
+
+TEST(TaskAuthoringContractTest, ApplyResultRejectsMalformedCommandResult)
+{
+    auto missing_command_id = ParseJson(R"json({
+        "acceptedProperties": {},
+        "document": {
+            "contractVersion": 1,
+            "viewKind": "formSequence",
+            "revision": 5
+        },
+        "diagnostics": [],
+        "commandResult": {"data": {"progressKey": "x"}}
+    })json");
+    auto r1 = Das::Core::TaskScheduler::ValidateAuthoringApplyResult(
+        missing_command_id,
+        4);
+    EXPECT_FALSE(r1.valid);
+    EXPECT_EQ(r1.error_kind, "invalidCommandResult");
+
+    auto extra_field = ParseJson(R"json({
+        "acceptedProperties": {},
+        "document": {
+            "contractVersion": 1,
+            "viewKind": "formSequence",
+            "revision": 5
+        },
+        "diagnostics": [],
+        "commandResult": {
+            "commandId": "checkUpdate",
+            "data": {},
+            "bogus": true
+        }
+    })json");
+    auto r2 =
+        Das::Core::TaskScheduler::ValidateAuthoringApplyResult(extra_field, 4);
+    EXPECT_FALSE(r2.valid);
+    EXPECT_EQ(r2.error_kind, "invalidCommandResult");
+}
+
+TEST(TaskAuthoringContractTest, ApplyResultPassesWithoutCommandResult)
+{
+    auto result = ParseJson(R"json({
+        "acceptedProperties": {},
+        "document": {
+            "contractVersion": 1,
+            "viewKind": "formSequence",
+            "revision": 5
+        },
+        "diagnostics": []
+    })json");
+
+    auto r = Das::Core::TaskScheduler::ValidateAuthoringApplyResult(result, 4);
+    EXPECT_TRUE(r.valid);
+    EXPECT_TRUE(r.error_kind.empty()) << r.message;
+}
