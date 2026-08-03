@@ -44,7 +44,8 @@ if(${DAS_BUILD_TEST})
     das_add_additional_test(AdditionalTest)
     target_include_directories(AdditionalTest PRIVATE
         ${CMAKE_SOURCE_DIR}/das/_shims
-        Core/ForeignInterfaceHost/include)
+        Core/ForeignInterfaceHost/include
+        Core/IPC/include)
     target_link_libraries(AdditionalTest PUBLIC DasUtils Boost::url)
 endif()
 
