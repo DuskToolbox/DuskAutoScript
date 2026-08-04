@@ -19,6 +19,7 @@
 #include "./controller/DasSchedulerController.hpp"
 #include "./controller/UISettingsController.hpp"
 #include <boost/asio/ip/address.hpp>
+#include <boost/asio/steady_timer.hpp>
 #include <boost/program_options.hpp>
 #include <filesystem>
 #include <memory>
@@ -326,6 +327,16 @@ namespace Das::Http
             { return misc_controller->RequestShutdown(req); });
 
         // Log
+        // 调试日志端点（3 段 logs/debug/{profile}）：返回 spdlog 文件的纯文本
+        // logs[]。 注册在 2 段 logs/{profile} 之前——router
+        // 按段数精确匹配不冲突（已读 router 源码确认：param_routes_
+        // 要求 segments.size() 相同），但前置 注册让意图更显式。
+        components.router->Post(
+            DAS_HTTP_API_PREFIX "logs/debug/{profile}",
+            [log_controller](const Das::Http::Beast::HttpRequest& req)
+            { return log_controller->GetDebugLogs(req); });
+        // 焦点日志端点（2 段 logs/{profile}）：返回 user.jsonl 的 LogEntry[]
+        // JSONL。
         components.router->Post(
             DAS_HTTP_API_PREFIX "logs/{profile}",
             [log_controller](const Das::Http::Beast::HttpRequest& req)
@@ -628,10 +639,60 @@ namespace Das::Http
                     hub->Broadcast(std::string{json_event});
                 });
 
+            // 调试日志通道统一通知：Http 16ms 定时器挂在 server 的 io_context
+            // 上 （不是 IPC BusinessThread——Consume 不得占 RPC 分发线程）。
+            // 每 tick 调 GetDasLogNotifier→Consume(Spdlog)；dirty 时 hub->Broadcast
+            // 一个无 payload 的 api/v1/logs/debug/get tick，前端 LogStore.Refresh→
+            // ReadAfter 拉新（tick 不带数据，payload 仅声明 api 路由）。Consume 是纯
+            // atomic exchange， 可安全在 io_context 线程调。timer 在 server.Run() 退出后 cancel。
+            auto spdlog_poll_timer =
+                std::make_shared<boost::asio::steady_timer>(
+                    server.IoCtx(),
+                    std::chrono::milliseconds(16));
+            auto recursive_tick = std::make_shared<
+                std::function<void(const boost::system::error_code&)>>();
+            *recursive_tick = [hub, spdlog_poll_timer, recursive_tick](
+                                  const boost::system::error_code& ec)
+            {
+                if (ec)
+                {
+                    return; // timer canceled（server shutdown）
+                }
+                Das::DasPtr<Das::ExportInterface::IDasLogNotifier> notifier;
+                if (GetDasLogNotifier(notifier.Put()) == DAS_S_OK && notifier)
+                {
+                    bool was_dirty = false;
+                    if (notifier->Consume(
+                            Das::ExportInterface::DAS_LOG_CHANNEL_SPDLOG,
+                            &was_dirty)
+                        == DAS_S_OK)
+                    {
+                        if (was_dirty && hub)
+                        {
+                            // tick payload 不带 entries：前端按 api 路由
+                            // Refresh→ReadAfter。 与 settings/scheduler
+                            // 的「注入 api」同模式，但此处 recorder 不参与，纯
+                            // sink dirty → Consume → broadcast。
+                            hub->Broadcast(
+                                std::string{"{\"api\":\"api/v1/logs/debug/"
+                                            "get\",\"code\":0,\"data\":{}}"});
+                        }
+                    }
+                }
+                spdlog_poll_timer->expires_after(std::chrono::milliseconds(16));
+                spdlog_poll_timer->async_wait(*recursive_tick);
+            };
+            spdlog_poll_timer->async_wait(*recursive_tick);
+
             std::cout << "[DasHttp] Server listening on " << listen_address
                       << ":" << listen_port << std::endl;
 
             server.Run();
+
+            // server.Run() 返回（RequestServerStop 触发）：cancel pending
+            // async_wait， 让 recursive_tick 收 operation_aborted
+            // 后停止重排，不再访问 io_context。
+            spdlog_poll_timer->cancel();
 
             // 停 HTTP 后立即无效化 hub（切断 IPC→HTTP 的 SSE 写路径）：之后
             // 析构 server（io_context）前，IPC 线程晚到的 Report 经

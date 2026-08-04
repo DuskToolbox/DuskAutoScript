@@ -19,10 +19,14 @@ namespace Das::Http
 {
 
     // 日志接口：按字节偏移游标读取写盘的日志文件（IDasLogArchive），支持 tail /
-    // after / before。
+    // after / before。两类归档：p_archive_（焦点日志，user.jsonl）+
+    // p_debug_archive_ （调试日志，spdlog rotating_file）。GetLogs 服务焦点端点
+    // logs/{profile}， GetDebugLogs 服务调试端点
+    // logs/debug/{profile}（返回纯文本 logs[]）。
     class DasLogController
     {
         DAS::DasPtr<ExportInterface::IDasLogArchive> p_archive{};
+        DAS::DasPtr<ExportInterface::IDasLogArchive> p_debug_archive{};
 
     public:
         DasLogController()
@@ -31,6 +35,9 @@ namespace Das::Http
             ::CreateIDasLogArchive(
                 ExportInterface::DAS_LOG_ARCHIVE_SOURCE_USER_JSONL,
                 p_archive.Put());
+            ::CreateIDasLogArchive(
+                ExportInterface::DAS_LOG_ARCHIVE_SOURCE_SPDLOG_FILE,
+                p_debug_archive.Put());
             DAS_LOG_INFO("Log archive loaded.");
         }
 
@@ -47,6 +54,35 @@ namespace Das::Http
                     "Profile ID must be 0 in v1.2");
             }
 
+            return ReadArchive(request, p_archive);
+        }
+
+        // 调试日志端点 logs/debug/{profile}：读 spdlog 文件 archive，返回纯文本
+        // logs[]（每条是 spdlog pattern 格式化后的整行，含
+        // [level]/时间戳/线程等前缀）。 profile 段语义同焦点端点（v1.2 仅
+        // "0"）；路由 3 段 logs/debug/{profile} 与 2 段 logs/{profile}
+        // 按段数精确匹配，不冲突。
+        Beast::HttpResponse GetDebugLogs(const Beast::HttpRequest& request)
+        {
+            if (request.GetPathParameter("profile") != "0")
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_INVALID_ARGUMENT,
+                    "Profile ID must be 0 in v1.2");
+            }
+
+            return ReadArchive(request, p_debug_archive);
+        }
+
+    private:
+        // 焦点 / 调试两端点共用读路径：按 body 的 tail/after/before 游标读
+        // archive， 把换行分隔的拼接串拆成 string[] 填进 response.data.logs。仅
+        // archive 数据源 不同（焦点 user.jsonl JSONL 行；调试 spdlog
+        // 文件纯文本行）。
+        Beast::HttpResponse ReadArchive(
+            const Beast::HttpRequest&                     request,
+            DAS::DasPtr<ExportInterface::IDasLogArchive>& archive)
+        {
             using namespace Das::Http::Beast::JsonUtils;
 
             const auto& body = request.JsonBody();
@@ -63,7 +99,7 @@ namespace Das::Http
                     static_cast<uint64_t>(GetInt(body, "before", 0));
                 const auto lines =
                     static_cast<uint32_t>(GetInt(body, "lines", 200));
-                rc = p_archive->ReadBefore(
+                rc = archive->ReadBefore(
                     offset,
                     lines,
                     lines_str.Put(),
@@ -74,14 +110,13 @@ namespace Das::Http
             {
                 const auto offset =
                     static_cast<uint64_t>(GetInt(body, "after", 0));
-                rc =
-                    p_archive->ReadAfter(offset, lines_str.Put(), &next_offset);
+                rc = archive->ReadAfter(offset, lines_str.Put(), &next_offset);
             }
             else
             {
                 const auto lines =
                     static_cast<uint32_t>(GetInt(body, "tail", 500));
-                rc = p_archive->ReadTail(
+                rc = archive->ReadTail(
                     lines,
                     lines_str.Put(),
                     &next_offset,
@@ -111,7 +146,6 @@ namespace Das::Http
             return Beast::HttpResponse::CreateSuccessResponse(response.data);
         }
 
-    private:
         // IDasLogArchive 返回的是换行分隔的单串，这里按行拆成数组对外。
         static void SplitLines(const char* utf8, std::vector<std::string>& out)
         {
