@@ -396,26 +396,37 @@ TEST(Win32WindowFinder, CaseSensitiveRegex)
     EXPECT_TRUE(exact.error_code.empty());
 }
 
-// Dynamic-failure contract lock: when MaaFramework / MaaToolkit symbols are
-// not resolvable at runtime (non-Windows MaaFW build, or MaaToolkit DLL
-// missing from the plugin's co-located dir), the loader must surface null
-// pointers gracefully — no crash, no throw, no link-time dependency on the
-// platform-specific symbols. DasMaaPiTest runs under
-// DAS_MAAPI_DISABLE_REAL_MAA_BOUNDARY without linking MaaFramework or
-// co-locating MaaToolkit.dll, so the dynamic resolver deterministically
-// falls through to the null-pointer path here.
+// Load-contract lockdown: this test only locks down the no-throw +
+// idempotent CODE CONTRACT of LoadMaaDynamicSymbols. It deliberately
+// makes NO assertion on any framework-dependent symbol field's pointer
+// value. Real production symbol resolution is NOT verified by any
+// automated test here:
+//   - The test stub boundary mocks MaaFW by design, so unit tests never
+//     exercise the real symbol-resolution path.
+//   - boost::dll::this_line_location() inside the test exe returns this
+//     exe's own directory, which overlaps the default DLL search base;
+//     any co-located null/non-null assertion would be unfaithful (both
+//     the bare-name and plugin-dir loads would resolve identically).
+// Production verification = construction (the toolkit load pattern
+// already works in production; the framework load mirrors it) +
+// empirical evidence (commit 89962574 proved the bare-name load fails
+// when the plugin is loaded from a non-system directory) + post-exec
+// manual/E2E (Win32/Gamepad typed controller production scenarios).
 
 TEST(MaaDynamicSymbols, LoadNeverThrowsEvenWhenLibrariesUnavailable)
 {
-    // The test exe runs from build/.../Test/, which does NOT have
-    // MaaFramework.dll or MaaToolkit.dll co-located. The loader must
-    // swallow boost::system::error_code failures and return a populated
-    // (mostly-null) struct rather than throwing.
+    // The loader must swallow boost::system::error_code failures and any
+    // this_line_location() exception, and return a populated (mostly-null)
+    // struct rather than throwing. Idempotent re-entry must also be safe:
+    // the singleton's static-local initialization runs once, and a second
+    // call must not throw even if the first already loaded (or failed to
+    // load) the framework handle.
+    EXPECT_NO_THROW((void)LoadMaaDynamicSymbols());
     const auto& symbols = LoadMaaDynamicSymbols();
-    // Touch every pointer so the compiler can't optimize the call away;
-    // we don't assert which are null vs non-null because a Windows test
-    // environment *could* happen to find a MaaFramework.dll via system
-    // search. The contract is: NO throw, NO crash, deterministic return.
+    EXPECT_NO_THROW((void)LoadMaaDynamicSymbols());
+    // Touch every pointer so the compiler can't optimize the call away.
+    // Nullness is deliberately not asserted (see the contract comment above).
+    (void)symbols.tasker_add_sink;
     (void)symbols.win32_create;
     (void)symbols.gamepad_create;
     (void)symbols.tk_list_create;
