@@ -117,6 +117,19 @@ if(DAS_BUILD_TEST)
         ${CMAKE_CURRENT_SOURCE_DIR}/src
         ${CMAKE_SOURCE_DIR}/das/Core/ForeignInterfaceHost/include)
 
+    # Per-config overrides REQUIRED — parent das/Plugins/CMakeLists.txt:1-15
+    # sets directory-level CMAKE_RUNTIME_OUTPUT_DIRECTORY_<CONFIG>=bin/<CONFIG>/plugins
+    # which initializes target per-config properties and beats the unsuffixed
+    # RUNTIME_OUTPUT_DIRECTORY below. Mirror das_add_test (cmake/DasUtils.cmake:64-68,
+    # 93-95) by overriding all 4 per-config properties to ${CMAKE_BINARY_DIR}/Test
+    # so the exe lands next to every other test binary and matches the
+    # gtest_discover_tests WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/Test contract.
+    foreach(_das_maapi_test_cfg "DEBUG;Debug" "RELEASE;Release" "RELWITHDEBINFO;RelWithDebInfo" "MINSIZEREL;MinSizeRel")
+        list(GET _das_maapi_test_cfg 0 _das_maapi_test_suffix)
+        set_target_properties(DasMaaPiTest PROPERTIES
+            RUNTIME_OUTPUT_DIRECTORY_${_das_maapi_test_suffix} ${CMAKE_BINARY_DIR}/Test)
+    endforeach()
+
     set_target_properties(DasMaaPiTest PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/Test)
 
