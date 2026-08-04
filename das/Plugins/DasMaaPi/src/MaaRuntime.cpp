@@ -18,11 +18,13 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cstdint>
 #include <initializer_list>
 #include <memory>
 #include <optional>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -90,6 +92,19 @@ namespace Das::Plugins::DasMaaPi
 {
     namespace
     {
+        // WaitConnection poll-loop bounds (mirror MXU's
+        // callbackCache.ts:104-133 deadline-polling shape). The previous
+        // implementation called MaaControllerWait synchronously, which has
+        // no timeout form parameter — an unresponsive adb server / frozen
+        // emulator / stuck driver blocked the runtime indefinitely. The
+        // poll loop bounds the wait with CONNECT_WAIT_DEADLINE_MS while
+        // checking MaaControllerStatus every CONNECT_POLL_INTERVAL_MS.
+        // Run-level StopRequested (checked before PostConnection) provides
+        // cooperative cancel at the entry point; the deadline is the bound
+        // for in-progress connect ops that ignore the stop request.
+        inline constexpr int CONNECT_WAIT_DEADLINE_MS = 30000;
+        inline constexpr int CONNECT_POLL_INTERVAL_MS = 50;
+
 #ifndef DAS_MAAPI_DISABLE_REAL_MAA_BOUNDARY
         class ScopedMaaApiBoundary final : public IMaaApiBoundary
         {
@@ -478,9 +493,48 @@ namespace Das::Plugins::DasMaaPi
                 MaaControllerHandle controller,
                 MaaAsyncId          connection_id) override
             {
-                return static_cast<MaaTaskStatus>(MaaControllerWait(
-                    AsMaaController(controller),
-                    static_cast<MaaCtrlId>(connection_id)));
+                // Poll MaaControllerStatus instead of blocking on
+                // MaaControllerWait. MaaControllerWait has no timeout form
+                // parameter — without this loop an unresponsive adb
+                // server / frozen emulator / stuck device driver would
+                // block the runtime indefinitely (the DAS stop_token
+                // cannot interrupt a syscall stuck inside MaaFW). The poll
+                // loop bounds the wait with CONNECT_WAIT_DEADLINE_MS while
+                // checking MaaControllerStatus every
+                // CONNECT_POLL_INTERVAL_MS, returning control between
+                // checks so a Run-level stop request observed before
+                // PostConnection can still short-circuit. On deadline
+                // expiry the loop returns Invalid — Run treats that as a
+                // connect failure via the existing
+                // status != Succeeded || !IsConnected check (decimal
+                // DasResult diagnostic, never hex). The interface contract
+                // is unchanged: callers still see MaaTaskStatus.
+                const auto ctrl = AsMaaController(controller);
+                const auto id = static_cast<MaaCtrlId>(connection_id);
+                const auto deadline =
+                    std::chrono::steady_clock::now()
+                    + std::chrono::milliseconds(CONNECT_WAIT_DEADLINE_MS);
+                for (;;)
+                {
+                    const auto status = MaaControllerStatus(ctrl, id);
+                    // Pending/Running are non-terminal — keep polling.
+                    // Invalid/Succeeded/Failed are terminal — return them
+                    // to the caller for connection-state judgment.
+                    if (status != MaaStatus_Pending
+                        && status != MaaStatus_Running)
+                    {
+                        return static_cast<MaaTaskStatus>(status);
+                    }
+                    if (std::chrono::steady_clock::now() >= deadline)
+                    {
+                        // Deadline expired without a terminal status —
+                        // surface as Invalid (Run's existing
+                        // status != Succeeded check handles it).
+                        return MaaTaskStatus::Invalid;
+                    }
+                    std::this_thread::sleep_for(
+                        std::chrono::milliseconds(CONNECT_POLL_INTERVAL_MS));
+                }
             }
 
             bool IsConnected(MaaControllerHandle controller) override

@@ -772,6 +772,35 @@ TEST(DasMaaPiRuntime, Run_ShortCircuitsWhenNotConnected)
     EXPECT_FALSE(fake.ContainsSubstring("PostTask:"));
 }
 
+TEST(DasMaaPiRuntime, Run_ShortCircuitsOnWaitConnectionTimeout)
+{
+    // WaitConnection poll-loop deadline contract: when the connect op
+    // fails to reach a terminal status within the deadline, the prod
+    // boundary returns Invalid (decimal 0) — the Fake emulates this by
+    // returning Invalid directly. Run MUST surface a decimal DasResult
+    // diagnostic (never hex) and short-circuit before PostTask. The
+    // status value is recorded verbatim in the controller-not-connected
+    // diagnostic message so operators can correlate against MaaFW's
+    // MaaStatus enum (Invalid=0, Pending=1000, Running=2000,
+    // Succeeded=3000, Failed=4000).
+    FakeMaaApiBoundary fake;
+    fake.wait_connection_status = MaaTaskStatus::Invalid;
+
+    auto result = MaaRuntime::Run(Envelope(), fake, nullptr);
+
+    EXPECT_EQ(result.das_result, DAS_E_FAIL);
+    ASSERT_FALSE(result.diagnostics.empty());
+    EXPECT_EQ(result.diagnostics.front().code, "controller-not-connected");
+    // Decimal status (never hex). Invalid == 0.
+    EXPECT_EQ(
+        result.diagnostics.front().provider_code.value_or(-1),
+        static_cast<std::int64_t>(MaaTaskStatus::Invalid));
+    EXPECT_NE(
+        result.diagnostics.front().message.find("status=0"),
+        std::string::npos);
+    EXPECT_FALSE(fake.ContainsSubstring("PostTask:"));
+}
+
 TEST(DasMaaPiRuntime, Run_ShortCircuitsWhenPostConnectionFails)
 {
     FakeMaaApiBoundary fake;
