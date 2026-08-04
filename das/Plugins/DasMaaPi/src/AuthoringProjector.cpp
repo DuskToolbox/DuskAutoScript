@@ -2640,6 +2640,42 @@ namespace Das::Plugins::DasMaaPi
                 /*readonly=*/true));
         }
 
+        // welcome：ProjectInterface V2 顶层静态 catalog 字段。投影为只读
+        // markdown field（与 releaseNote 同构三元组 valueType=4 / inputType=7 /
+        // readonly=true），复用既有 markdown 渲染链路。welcome 是初始 document
+        // 内容（非 apply change），Core schema/validator 零改动。
+        // 内容以 '$' 开头时走 ResolveI18nOrDiag 解析 $key；非 '$' 时原样返回。
+        // $key 缺译时 ResolveI18nOrDiag 返回 caller fallback（= 原 welcome
+        // 文本） 并 emit warning diagnostic——此时 resolved 仍是 $key
+        // 字面量，跳过投影 避免用户看到 $key。
+        if (catalog != nullptr && catalog->welcome.has_value()
+            && !catalog->welcome->empty())
+        {
+            const std::string_view welcome_source = *catalog->welcome;
+            const std::string_view welcome_label = ResolveI18nOrDiag(
+                "$section.welcome",
+                *catalog,
+                current_language,
+                "公告",
+                projection_diagnostics,
+                "fields.welcome.label");
+            const std::string_view welcome_value = ResolveI18nOrDiag(
+                welcome_source,
+                *catalog,
+                current_language,
+                welcome_source,
+                projection_diagnostics,
+                "fields.welcome.value");
+            fields.as_array()->emplace_back(MakePropertyField(
+                "welcome",
+                welcome_label,
+                4, // valueType=string
+                7, // inputType=markdown
+                yyjson::value(std::string(welcome_value)),
+                nullptr,
+                /*readonly=*/true));
+        }
+
         // 根级 fieldLayout 必须在 fields 移走前构建（按 const ref 读 fields）。
         // pending engaged → 更新 section 置顶（检测到更新时更新 panel 出现在
         // document 顶部，前端零硬编码）。

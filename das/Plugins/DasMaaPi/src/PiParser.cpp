@@ -753,6 +753,7 @@ namespace Das::Plugins::DasMaaPi
             {
                 catalog.name = RequiredString(*top, "name");
                 catalog.version = OptionalString(*top, "version").value_or("");
+                catalog.welcome = OptionalString(*top, "welcome");
                 catalog.raw = MakeRaw(
                     *top,
                     {"interface_version",

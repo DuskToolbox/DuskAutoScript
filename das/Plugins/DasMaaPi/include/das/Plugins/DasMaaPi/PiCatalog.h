@@ -4,6 +4,7 @@
 
 #include <filesystem>
 #include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -69,10 +70,13 @@ namespace Das::Plugins::DasMaaPi
 
     struct PiCatalog
     {
-        std::filesystem::path                        interface_path;
-        std::filesystem::path                        interface_directory;
-        std::string                                  name;
-        std::string                                  version;
+        std::filesystem::path interface_path;
+        std::filesystem::path interface_directory;
+        std::string           name;
+        std::string           version;
+        // ProjectInterface V2 协议顶层 welcome 字段（与 license/description
+        // 并列）。可选——为空时投影层不输出 welcome field/section。
+        std::optional<std::string>                   welcome;
         std::map<std::string, std::filesystem::path> language_paths;
         std::map<std::string, std::map<std::string, std::string>> translations;
         std::vector<std::filesystem::path>                        imports;
