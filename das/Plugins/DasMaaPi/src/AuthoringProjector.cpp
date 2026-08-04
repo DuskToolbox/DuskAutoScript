@@ -2712,14 +2712,21 @@ namespace Das::Plugins::DasMaaPi
                 welcome_source,
                 projection_diagnostics,
                 "fields.welcome.value");
-            fields.as_array()->emplace_back(MakePropertyField(
-                "welcome",
-                welcome_label,
-                4, // valueType=string
-                7, // inputType=markdown
-                yyjson::value(std::string(welcome_value)),
-                nullptr,
-                /*readonly=*/true));
+            // 缺译保护：welcome 内容是 $key 但 ResolveI18nOrDiag 未能解析（返回
+            // 值仍以 '$' 开头，即 caller fallback = 原 $key
+            // 字面量）时跳过投影。 ResolveI18nOrDiag 已 emit warning
+            // diagnostic，此处只需跳过 emplace。
+            if (!welcome_value.starts_with('$'))
+            {
+                fields.as_array()->emplace_back(MakePropertyField(
+                    "welcome",
+                    welcome_label,
+                    4, // valueType=string
+                    7, // inputType=markdown
+                    yyjson::value(std::string(welcome_value)),
+                    nullptr,
+                    /*readonly=*/true));
+            }
         }
 
         // 根级 fieldLayout 必须在 fields 移走前构建（按 const ref 读 fields）。
