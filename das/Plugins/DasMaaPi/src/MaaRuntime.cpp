@@ -1353,6 +1353,53 @@ namespace Das::Plugins::DasMaaPi
             return result;
         }
 
+        // 显式连接控制器（必败根因修复）：BindController 仅把 controller 绑到
+        // tasker，不等同于 controller 已连接目标设备/窗口。MaaFW 协议要求所有
+        // controller 类型（含 Dbg）显式 PostConnection + Wait + Connected
+        // 校验； 未连接的 controller 进 PostTask 必在 HitResource/HitController
+        // 阶段 抛出下游歧义错误。连接失败短路返回，不进 SetCallback/PostTask。
+        // WaitConnection 阻塞至 MaaFW 报告连接 op 完成（无超时形参），故在
+        // PostConnection 之前先查 stop_token 给已停止请求一个早退机会。
+        if (StopRequested(stop_token))
+        {
+            result.das_result = DAS_E_FAIL;
+            result.stopped = true;
+            AddDiagnostic(
+                result,
+                "stop-requested-before-connect",
+                "DAS stop token requested before controller connection");
+            return result;
+        }
+
+        auto post_connection = boundary.PostConnection(controller.get());
+        if (!post_connection.ok)
+        {
+            result.das_result = DAS_E_FAIL;
+            AddDiagnostic(
+                result,
+                "controller-connect-failed",
+                post_connection.message,
+                post_connection.provider_code);
+            return result;
+        }
+
+        const auto connection_status =
+            boundary.WaitConnection(controller.get(), post_connection.id);
+        if (connection_status != MaaTaskStatus::Succeeded
+            || !boundary.IsConnected(controller.get()))
+        {
+            result.das_result = DAS_E_FAIL;
+            AddDiagnostic(
+                result,
+                "controller-not-connected",
+                "Controller failed to connect (status="
+                    + std::to_string(
+                        static_cast<std::int32_t>(connection_status))
+                    + ")",
+                static_cast<std::int64_t>(connection_status));
+            return result;
+        }
+
         if (log_context)
         {
             // 注册 MaaMsgAsyncCallback → MaaCallbackLogger 转发（D-88-07）。

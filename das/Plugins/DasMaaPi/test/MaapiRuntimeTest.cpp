@@ -466,7 +466,11 @@ TEST(DasMaaPiRuntime, RuntimeStopTokenMapsToMaaStop)
     auto result = MaaRuntime::Run(Envelope(), fake, &stop);
     EXPECT_EQ(result.das_result, DAS_E_FAIL);
     EXPECT_TRUE(result.stopped);
-    EXPECT_TRUE(fake.Contains("PostStop"));
+    // Stop requested from the start is now caught at the pre-connection check
+    // (stop-requested-before-connect) — before any task is posted, so PostStop
+    // is NOT called (nothing to stop). PostStop is only invoked from the
+    // in-task loop when a stop arrives mid-execution.
+    EXPECT_FALSE(fake.Contains("PostStop"));
     EXPECT_FALSE(
         fake.Contains("PostTask:StartDaily:{\"Stage\":{\"value\":\"one\"}}"));
 }
