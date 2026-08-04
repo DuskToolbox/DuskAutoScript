@@ -552,6 +552,49 @@ namespace Das::Plugins::DasMaaPi
                 return MaaApiResult::Ok(sink_id);
             }
 
+            MaaApiResult RegisterResourceSink(
+                MaaResourceHandle resource,
+                MaaMsgCallbackFn  callback,
+                void*             trans_arg) override
+            {
+                // Same cross-platform core sink family as SetCallback above.
+                // Resource sink funnels resource-loading events into the
+                // shared MaaEventCallback. Hard-link direct call — no
+                // dynamic resolution, no null check.
+                const auto sink_id = MaaResourceAddSink(
+                    AsMaaResource(resource),
+                    reinterpret_cast<MaaEventCallback>(callback),
+                    trans_arg);
+                if (sink_id == MaaInvalidId)
+                {
+                    return MaaApiResult::Failure(
+                        sink_id,
+                        "MaaResourceAddSink failed");
+                }
+                return MaaApiResult::Ok(sink_id);
+            }
+
+            MaaApiResult RegisterControllerSink(
+                MaaControllerHandle controller,
+                MaaMsgCallbackFn    callback,
+                void*               trans_arg) override
+            {
+                // Same cross-platform core sink family as SetCallback above.
+                // Controller sink funnels controller-connection / state
+                // events into the shared MaaEventCallback.
+                const auto sink_id = MaaControllerAddSink(
+                    AsMaaController(controller),
+                    reinterpret_cast<MaaEventCallback>(callback),
+                    trans_arg);
+                if (sink_id == MaaInvalidId)
+                {
+                    return MaaApiResult::Failure(
+                        sink_id,
+                        "MaaControllerAddSink failed");
+                }
+                return MaaApiResult::Ok(sink_id);
+            }
+
             MaaAgentClientHandle CreateAgentClientV2(
                 std::optional<std::string_view> identifier) override
             {
@@ -749,6 +792,14 @@ namespace Das::Plugins::DasMaaPi
                 // NOLINTNEXTLINE(performance-no-int-to-ptr)
                 return reinterpret_cast<MaaTasker*>(handle);
             }
+
+            // MaaResourceHandle（uintptr_t）→ MaaResource*：同 AsMaaController
+            // 的边界恢复语义，用于 resource sink 的硬链直调。
+            static MaaResource* AsMaaResource(MaaResourceHandle handle)
+            {
+                // NOLINTNEXTLINE(performance-no-int-to-ptr)
+                return reinterpret_cast<MaaResource*>(handle);
+            }
         };
 #else
         class ScopedMaaApiBoundary final : public IMaaApiBoundary
@@ -849,6 +900,26 @@ namespace Das::Plugins::DasMaaPi
 
             MaaApiResult SetCallback(MaaTaskerHandle, MaaMsgCallbackFn, void*)
                 override
+            {
+                return MaaApiResult::Failure(
+                    0,
+                    "Real Maa boundary disabled in tests");
+            }
+
+            MaaApiResult RegisterResourceSink(
+                MaaResourceHandle,
+                MaaMsgCallbackFn,
+                void*) override
+            {
+                return MaaApiResult::Failure(
+                    0,
+                    "Real Maa boundary disabled in tests");
+            }
+
+            MaaApiResult RegisterControllerSink(
+                MaaControllerHandle,
+                MaaMsgCallbackFn,
+                void*) override
             {
                 return MaaApiResult::Failure(
                     0,
@@ -1420,6 +1491,36 @@ namespace Das::Plugins::DasMaaPi
                     "set-callback-failed",
                     set_callback.message,
                     set_callback.provider_code,
+                    "warning");
+            }
+            // Resource / controller sink 注册：与 tasker sink 共享同一个
+            // MaaCallbackLoggerEntry 回调与 log_context trans_arg，让资源加载
+            // 与控制器连接事件也进入 Record 管线。失败仅告警，不阻断 PostTask
+            // （镜像 SetCallback 既有降级范式；只有连接失败才短路）。
+            auto reg_res = boundary.RegisterResourceSink(
+                resource.get(),
+                &MaaCallbackLoggerEntry,
+                log_context.get());
+            if (!reg_res.ok)
+            {
+                AddDiagnostic(
+                    result,
+                    "register-resource-sink-failed",
+                    reg_res.message,
+                    reg_res.provider_code,
+                    "warning");
+            }
+            auto reg_ctrl = boundary.RegisterControllerSink(
+                controller.get(),
+                &MaaCallbackLoggerEntry,
+                log_context.get());
+            if (!reg_ctrl.ok)
+            {
+                AddDiagnostic(
+                    result,
+                    "register-controller-sink-failed",
+                    reg_ctrl.message,
+                    reg_ctrl.provider_code,
                     "warning");
             }
         }

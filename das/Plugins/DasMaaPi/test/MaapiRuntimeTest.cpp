@@ -529,6 +529,59 @@ TEST(DasMaaPiRuntime, Run_AfterTaskerSinkMigration_StillRegistersTaskerSink)
     }
 }
 
+TEST(DasMaaPiRuntime, Run_RegistersResourceAndControllerSinks)
+{
+    // After the tasker sink is wired, Run must also register the resource
+    // and controller sinks so resource-loading and controller-connection
+    // events reach the same MaaCallbackLoggerEntry callback + trans_arg.
+    // All three sinks share the same log_context pointer as trans_arg.
+    FakeMaaApiBoundary fake;
+
+    auto result = MaaRuntime::Run(Envelope(), fake, nullptr);
+
+    EXPECT_EQ(result.das_result, DAS_S_OK);
+    EXPECT_TRUE(fake.Contains("RegisterResourceSink"));
+    EXPECT_TRUE(fake.Contains("RegisterControllerSink"));
+    // All three sinks share the same trans_arg (the log_context pointer).
+    // The tasker sink trans_arg must be non-null and match the other two.
+    ASSERT_NE(fake.last_set_callback_trans_arg, nullptr);
+    EXPECT_EQ(
+        fake.last_registered_resource_sink_trans_arg,
+        fake.last_set_callback_trans_arg);
+    EXPECT_EQ(
+        fake.last_registered_controller_sink_trans_arg,
+        fake.last_set_callback_trans_arg);
+    EXPECT_TRUE(fake.ContainsSubstring("PostTask:"));
+}
+
+TEST(DasMaaPiRuntime, Run_SinkRegistrationFailureDoesNotBlock)
+{
+    // Sink registration failure degrades to a warning diagnostic — does NOT
+    // short-circuit PostTask (mirrors the existing SetCallback failure
+    // pattern). Only connect failure short-circuits.
+    FakeMaaApiBoundary fake;
+    fake.register_resource_sink_result =
+        MaaApiResult::Failure(0, "resource sink failed");
+    fake.register_controller_sink_result =
+        MaaApiResult::Failure(0, "controller sink failed");
+
+    auto result = MaaRuntime::Run(Envelope(), fake, nullptr);
+
+    // Run proceeds to PostTask — sink failures are warnings, not errors.
+    EXPECT_TRUE(fake.ContainsSubstring("PostTask:"));
+    // Both warning diagnostics emitted.
+    const auto find_warning = [&](const std::string& code)
+    {
+        return std::ranges::find_if(
+                   result.diagnostics,
+                   [&](const MaaRuntimeDiagnostic& d)
+                   { return d.code == code && d.severity == "warning"; })
+               != result.diagnostics.end();
+    };
+    EXPECT_TRUE(find_warning("register-resource-sink-failed"));
+    EXPECT_TRUE(find_warning("register-controller-sink-failed"));
+}
+
 TEST(DasMaaPiRuntime, Run_ShortCircuitsWhenNotConnected)
 {
     FakeMaaApiBoundary fake;

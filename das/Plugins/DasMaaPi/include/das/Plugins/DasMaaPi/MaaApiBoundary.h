@@ -207,6 +207,22 @@ namespace Das::Plugins::DasMaaPi
             MaaMsgCallbackFn callback,
             void*            trans_arg) = 0;
 
+        // Resource / controller sink registration — same MaaEventCallback
+        // family as the tasker sink, hard-linked direct calls in the prod
+        // branch per the binding principle (every MaaFW build exports all
+        // three). MaaRuntime::Run invokes them after the tasker sink so
+        // resource-loading and controller-connection events reach the same
+        // callback + trans_arg. Failure degrades to a warning diagnostic —
+        // does not short-circuit PostTask.
+        virtual MaaApiResult RegisterResourceSink(
+            MaaResourceHandle resource,
+            MaaMsgCallbackFn  callback,
+            void*             trans_arg) = 0;
+        virtual MaaApiResult RegisterControllerSink(
+            MaaControllerHandle controller,
+            MaaMsgCallbackFn    callback,
+            void*               trans_arg) = 0;
+
         virtual MaaApiResult PostTask(
             MaaTaskerHandle  tasker,
             std::string_view entry,

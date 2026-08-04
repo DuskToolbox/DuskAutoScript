@@ -186,11 +186,54 @@ namespace Das::Plugins::DasMaaPi::Test
             return MaaApiResult::Ok(NextId());
         }
 
-        MaaApiResult SetCallback(MaaTaskerHandle, MaaMsgCallbackFn, void*)
-            override
+        MaaApiResult SetCallback(
+            MaaTaskerHandle,
+            MaaMsgCallbackFn,
+            void* trans_arg) override
         {
             calls.emplace_back("SetCallback");
-            return MaaApiResult::Ok(NextId());
+            last_set_callback_trans_arg = trans_arg;
+            return set_callback_result;
+        }
+
+        // Configurable sink-registration results. Defaults mirror the tasker
+        // sink happy path so existing Run tests proceed without per-test
+        // wiring; tests exercising the warning-degradation path override
+        // the relevant field. Last-trans-arg capture lets a test assert all
+        // three sinks share the same logger context pointer.
+        MaaApiResult set_callback_result = MaaApiResult::Ok();
+        MaaApiResult register_resource_sink_result = MaaApiResult::Ok();
+        MaaApiResult register_controller_sink_result = MaaApiResult::Ok();
+        void*        last_set_callback_trans_arg = nullptr;
+        void*        last_registered_resource_sink_trans_arg = nullptr;
+        void*        last_registered_controller_sink_trans_arg = nullptr;
+
+        MaaApiResult RegisterResourceSink(
+            MaaResourceHandle,
+            MaaMsgCallbackFn,
+            void* trans_arg) override
+        {
+            calls.emplace_back("RegisterResourceSink");
+            last_registered_resource_sink_trans_arg = trans_arg;
+            if (register_resource_sink_result.ok)
+            {
+                return MaaApiResult::Ok(NextId());
+            }
+            return register_resource_sink_result;
+        }
+
+        MaaApiResult RegisterControllerSink(
+            MaaControllerHandle,
+            MaaMsgCallbackFn,
+            void* trans_arg) override
+        {
+            calls.emplace_back("RegisterControllerSink");
+            last_registered_controller_sink_trans_arg = trans_arg;
+            if (register_controller_sink_result.ok)
+            {
+                return MaaApiResult::Ok(NextId());
+            }
+            return register_controller_sink_result;
         }
 
         MaaAgentClientHandle CreateAgentClientV2(
