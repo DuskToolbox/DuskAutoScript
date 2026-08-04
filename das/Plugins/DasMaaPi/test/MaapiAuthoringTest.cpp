@@ -7691,3 +7691,69 @@ TEST(MaapiProjectionTest, ProjectAuthoringDocumentVersionFieldsCatalogAbsent)
         std::find(names.begin(), names.end(), "maafwVersion"),
         names.end());
 }
+
+// ============================================================================
+// welcome 字段投影（ProjectInterface V2 协议 welcome 顶层字段）
+// ============================================================================
+//
+// welcome 是 PI interface.json 顶层静态 catalog 字段（与 license/description
+// 并列），由 MaaPI 投影层在 ProjectAuthoringDocument 时挂入 document.fields[]
+// + fieldLayout[]。welcome 是初始 document 内容（非 apply change），Core
+// schema/validator 零改动——welcome field 复用既有 inputType=7 markdown 渲染
+// 链路（与 releaseNote 同构三元组 valueType=4/inputType=7/readonly=true）。
+//
+// 业务中立：welcome 是通用 authoring doc 元素，Core 不识别 Provider 业务前缀，
+// 前端按 fieldLayout 数据驱动渲染（inputType=7 路由既有，零前端改动）。
+
+// catalog 含 welcome 时 document.fields[] 含 welcome field，三元组
+// (valueType=4 / inputType=7 / readonly=true) 与 releaseNote 同构。
+// 内容非 $ 前缀时按直接 markdown 文本投影。
+TEST(MaapiProjectionTest, WelcomeFieldMarkdownReadonly)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto catalog = MakeStrictProjectionMockCatalog();
+    catalog.welcome = "## Welcome to DAS";
+    AcceptedSettingsDto settings;
+    settings.pi.language = "zh_cn";
+
+    auto document = ProjectAuthoringDocument(settings, &catalog, {}, 0);
+    auto valid = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+    EXPECT_TRUE(valid.valid)
+        << "error_kind=" << valid.error_kind << " message=" << valid.message;
+
+    auto field = FindRootField(document, "welcome");
+    ASSERT_TRUE(field.has_value());
+    auto field_obj = field->as_object();
+    ASSERT_TRUE(field_obj.has_value());
+    EXPECT_EQ(
+        (*field_obj)[std::string_view("valueType")].as_sint().value_or(-1),
+        4);
+    EXPECT_EQ(
+        (*field_obj)[std::string_view("inputType")].as_sint().value_or(-1),
+        7);
+    EXPECT_TRUE(
+        (*field_obj)[std::string_view("readonly")].as_bool().value_or(false));
+    const std::string value = std::string(
+        (*field_obj)[std::string_view("value")].as_string().value_or(""));
+    EXPECT_NE(value.find("Welcome to DAS"), std::string::npos);
+}
+
+// 业务中立空值守卫：catalog 无 welcome（std::nullopt）时不投影空 welcome
+// field（避免前端渲染空面板）。
+TEST(MaapiProjectionTest, WelcomeFieldAbsentWhenCatalogLacksWelcome)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto catalog = MakeStrictProjectionMockCatalog();
+    // welcome 保持 std::nullopt（默认）
+    AcceptedSettingsDto settings;
+    settings.pi.language = "zh_cn";
+
+    auto document = ProjectAuthoringDocument(settings, &catalog, {}, 0);
+    auto valid = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+    EXPECT_TRUE(valid.valid)
+        << "error_kind=" << valid.error_kind << " message=" << valid.message;
+
+    EXPECT_FALSE(FindRootField(document, "welcome").has_value());
+}
