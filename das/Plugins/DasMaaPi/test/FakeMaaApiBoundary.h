@@ -117,6 +117,41 @@ namespace Das::Plugins::DasMaaPi::Test
             return MaaApiResult::Ok();
         }
 
+        // Configurable connection results. Defaults synthesise the happy path
+        // (PostConnection ok + fresh id, WaitConnection Succeeded, connected
+        // true) so existing Run tests keep working without per-test wiring;
+        // tests exercising the short-circuit paths override the relevant
+        // field. post_connection_result defaults to Ok() with id=0 — the
+        // override generates a fresh id on the happy path, mirroring PostTask.
+        MaaApiResult  post_connection_result = MaaApiResult::Ok();
+        MaaTaskStatus wait_connection_status = MaaTaskStatus::Succeeded;
+        bool          is_connected_result = true;
+
+        MaaApiResult PostConnection(MaaControllerHandle) override
+        {
+            calls.emplace_back("PostConnection");
+            if (post_connection_result.ok)
+            {
+                return MaaApiResult::Ok(NextId());
+            }
+            return post_connection_result;
+        }
+
+        MaaTaskStatus WaitConnection(
+            MaaControllerHandle,
+            MaaAsyncId connection_id) override
+        {
+            calls.emplace_back(
+                "WaitConnection:" + std::to_string(connection_id));
+            return wait_connection_status;
+        }
+
+        bool IsConnected(MaaControllerHandle) override
+        {
+            calls.emplace_back("IsConnected");
+            return is_connected_result;
+        }
+
         MaaApiResult PostTask(
             MaaTaskerHandle,
             std::string_view entry,

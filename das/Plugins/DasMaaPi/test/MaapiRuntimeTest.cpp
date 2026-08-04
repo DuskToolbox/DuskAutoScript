@@ -11,6 +11,7 @@
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasStopToken.Implements.hpp>
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <deque>
@@ -468,6 +469,68 @@ TEST(DasMaaPiRuntime, RuntimeStopTokenMapsToMaaStop)
     EXPECT_TRUE(fake.Contains("PostStop"));
     EXPECT_FALSE(
         fake.Contains("PostTask:StartDaily:{\"Stage\":{\"value\":\"one\"}}"));
+}
+
+TEST(DasMaaPiRuntime, Run_CallsPostConnectionBeforePostTask)
+{
+    FakeMaaApiBoundary fake;
+    fake.post_connection_result = MaaApiResult::Ok();
+    fake.wait_connection_status = MaaTaskStatus::Succeeded;
+    fake.is_connected_result = true;
+
+    auto result = MaaRuntime::Run(Envelope(), fake, nullptr);
+    EXPECT_EQ(result.das_result, DAS_S_OK);
+
+    EXPECT_TRUE(fake.Contains("PostConnection"));
+    EXPECT_TRUE(fake.ContainsSubstring("WaitConnection:"));
+    EXPECT_TRUE(fake.Contains("IsConnected"));
+    EXPECT_TRUE(
+        fake.Contains("PostTask:StartDaily:{\"Stage\":{\"value\":\"one\"}}"));
+
+    // Ordering: PostConnection must come before any PostTask. The Fake records
+    // calls in invocation order, so the index of "PostConnection" (exact) must
+    // be smaller than the first record that starts with "PostTask:".
+    const auto post_conn =
+        std::ranges::find(fake.calls, std::string{"PostConnection"});
+    const auto first_post_task = std::ranges::find_if(
+        fake.calls,
+        [](const std::string& c) { return c.starts_with("PostTask:"); });
+    ASSERT_NE(post_conn, fake.calls.end());
+    ASSERT_NE(first_post_task, fake.calls.end());
+    ASSERT_LT(
+        std::distance(fake.calls.begin(), post_conn),
+        std::distance(fake.calls.begin(), first_post_task))
+        << "PostConnection must precede PostTask";
+}
+
+TEST(DasMaaPiRuntime, Run_ShortCircuitsWhenNotConnected)
+{
+    FakeMaaApiBoundary fake;
+    fake.wait_connection_status = MaaTaskStatus::Succeeded;
+    fake.is_connected_result = false;
+
+    auto result = MaaRuntime::Run(Envelope(), fake, nullptr);
+    EXPECT_EQ(result.das_result, DAS_E_FAIL);
+
+    ASSERT_FALSE(result.diagnostics.empty());
+    EXPECT_EQ(result.diagnostics.front().code, "controller-not-connected");
+
+    EXPECT_FALSE(fake.ContainsSubstring("PostTask:"));
+}
+
+TEST(DasMaaPiRuntime, Run_ShortCircuitsWhenPostConnectionFails)
+{
+    FakeMaaApiBoundary fake;
+    fake.post_connection_result =
+        MaaApiResult::Failure(0, "test connect failure");
+
+    auto result = MaaRuntime::Run(Envelope(), fake, nullptr);
+    EXPECT_EQ(result.das_result, DAS_E_FAIL);
+
+    ASSERT_FALSE(result.diagnostics.empty());
+    EXPECT_EQ(result.diagnostics.front().code, "controller-connect-failed");
+
+    EXPECT_FALSE(fake.ContainsSubstring("PostTask:"));
 }
 
 TEST(DasMaaPiRuntime, DoRejectsMissingEnvelope)

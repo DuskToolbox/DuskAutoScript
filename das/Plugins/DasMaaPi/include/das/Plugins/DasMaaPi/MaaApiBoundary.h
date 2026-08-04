@@ -185,6 +185,19 @@ namespace Das::Plugins::DasMaaPi
             MaaTaskerHandle     tasker,
             MaaControllerHandle controller) = 0;
 
+        // Explicit controller connection (cross-platform core MaaFW symbols,
+        // hard-linked in the prod boundary branch per the binding principle —
+        // same category as MaaControllerSetOption, NOT routed through dynamic
+        // symbol resolution). MaaRuntime::Run invokes these between
+        // BindController and SetCallback/PostTask so an unconnected controller
+        // is detected before any task is posted (otherwise every PostTask
+        // fails opaquely at HitResource/HitController time).
+        virtual MaaApiResult PostConnection(MaaControllerHandle controller) = 0;
+        virtual MaaTaskStatus WaitConnection(
+            MaaControllerHandle controller,
+            MaaAsyncId          connection_id) = 0;
+        virtual bool IsConnected(MaaControllerHandle controller) = 0;
+
         // Register the MaaMsgAsyncCallback sink (D-88-07): forwards (message,
         // details_json) into the callback, trans_arg is the logger context.
         // Mirrors MaaFW's MaaTaskerAddSink (runtime-resolved dynamic symbol,

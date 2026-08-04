@@ -456,6 +456,38 @@ namespace Das::Plugins::DasMaaPi
                 return MaaApiResult::Ok();
             }
 
+            // Cross-platform core MaaFW symbols (exported by every MaaFW
+            // build) — hard-linked direct calls per the binding principle,
+            // same category as MaaControllerSetOption above. They do not go
+            // through MaaDynamicSymbols; the linker resolves them against the
+            // SHARED IMPORTED DasBundledMaaFramework dependency at build time.
+            MaaApiResult PostConnection(MaaControllerHandle controller) override
+            {
+                const auto id =
+                    MaaControllerPostConnection(AsMaaController(controller));
+                if (id == MaaInvalidId)
+                {
+                    return MaaApiResult::Failure(
+                        id,
+                        "MaaControllerPostConnection failed");
+                }
+                return MaaApiResult::Ok(id);
+            }
+
+            MaaTaskStatus WaitConnection(
+                MaaControllerHandle controller,
+                MaaAsyncId          connection_id) override
+            {
+                return static_cast<MaaTaskStatus>(MaaControllerWait(
+                    AsMaaController(controller),
+                    static_cast<MaaCtrlId>(connection_id)));
+            }
+
+            bool IsConnected(MaaControllerHandle controller) override
+            {
+                return MaaControllerConnected(AsMaaController(controller)) != 0;
+            }
+
             MaaApiResult PostTask(
                 MaaTaskerHandle  tasker,
                 std::string_view entry,
@@ -702,6 +734,17 @@ namespace Das::Plugins::DasMaaPi
                     { return static_cast<char>(std::tolower(ch)); });
                 return value;
             }
+
+            // MaaControllerHandle（uintptr_t）与 MaaController*（MaaFW 不透明
+            // 指针）之间的转换是 IMaaApiBoundary 抽象的固有代价：handle 以
+            // uintptr_t 跨 ABI 边界（可 mock、可序列化、FakeMaaApiBoundary 无
+            // 需 MaaFW 头），调 MaaFW C API 时必须转回指针。收敛到单一命名
+            // helper，比在每个方法里散布 reinterpret_cast 更清晰。
+            static MaaController* AsMaaController(MaaControllerHandle handle)
+            {
+                // NOLINTNEXTLINE(performance-no-int-to-ptr)
+                return reinterpret_cast<MaaController*>(handle);
+            }
         };
 #else
         class ScopedMaaApiBoundary final : public IMaaApiBoundary
@@ -762,6 +805,21 @@ namespace Das::Plugins::DasMaaPi
                     0,
                     "Real Maa boundary disabled in tests");
             }
+
+            MaaApiResult PostConnection(MaaControllerHandle) override
+            {
+                return MaaApiResult::Failure(
+                    0,
+                    "Real Maa boundary disabled in tests");
+            }
+
+            MaaTaskStatus WaitConnection(MaaControllerHandle, MaaAsyncId)
+                override
+            {
+                return MaaTaskStatus::Invalid;
+            }
+
+            bool IsConnected(MaaControllerHandle) override { return false; }
 
             MaaApiResult PostTask(
                 MaaTaskerHandle,
