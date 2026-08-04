@@ -14,6 +14,26 @@ namespace Das::ExportInterface
         DAS_LOG_TYPE_FORCE_DWORD = 0x7FFFFFFF
     }
 
+    // 日志通道：区分 spdlog 调试日志（DAS_LOG 写盘）与 user.jsonl 焦点日志（recorder 写盘）。
+    // 统一通知 sink DasLogNotifierSink 用此枚举区分 per-channel dirty flag；
+    // archive 工厂、Http tick、UI LogStore 都按通道参数化。
+    enum DasLogChannel
+    {
+        DAS_LOG_CHANNEL_SPDLOG = 0,
+        DAS_LOG_CHANNEL_USER_JSONL = 1,
+        DAS_LOG_CHANNEL_FORCE_DWORD = 0x7FFFFFFF
+    }
+
+    // archive 数据源：工厂 CreateIDasLogArchive 按此分发到不同 impl。
+    // UserJsonl 读会话目录的 user.jsonl（焦点日志）；SpdlogFile 读 g_logger 的
+    // rotating_file_sink_mt 目标文件（调试日志，恢复 3ab1623d 设计）。
+    enum DasLogArchiveSource
+    {
+        DAS_LOG_ARCHIVE_SOURCE_USER_JSONL = 0,
+        DAS_LOG_ARCHIVE_SOURCE_SPDLOG_FILE = 1,
+        DAS_LOG_ARCHIVE_SOURCE_FORCE_DWORD = 0x7FFFFFFF
+    }
+
     // 用户可见日志条目容器：插件用 Setter 填充一次，再经 IDasProcessLogRecorder::Record 提交。
     // 加字段/类型 = 加方法，老调用方不破坏。
     [uuid("9274a013-4d88-4dd7-b964-322a9de4bf16")]
@@ -30,6 +50,21 @@ namespace Das::ExportInterface
     interface IDasProcessLogRecorder : IDasBase
     {
         DasResult Record(IDasLogEntry* entry);
+    }
+
+    // 统一日志通知器：per-channel atomic dirty flag 的持有者。
+    // 唯一实现 DasLogNotifierSink 是 g_logger 的固定 sink（多继承 base_sink<null_mutex> +
+    // IDasLogNotifier），进程级永不死。AddRef/Release 是借用引用的空操作（g_logger 的
+    // shared_ptr 拥有 sink 生命周期）。Signal(channel) 由 recorder 写完 user.jsonl 后调用
+    // 置 UserJsonl dirty；sink 的 sink_it_ 自带置 Spdlog dirty。Consume(channel) 由 Http
+    // 16ms 定时器轮询，atomic exchange 返回此前是否 dirty 并清零。
+    [uuid("f3c8b7d6-5a4e-4f3b-9c2d-1e8a7b6c5d4e")]
+    interface IDasLogNotifier : IDasBase
+    {
+        // 置 channel 的 dirty flag（recorder 写完 user.jsonl 后调 Signal(UserJsonl)）。
+        DasResult Signal(DasLogChannel channel);
+        // 探询并清零 channel 的 dirty flag：返回此前是否 dirty。Http 定时器每 tick 调一次。
+        DasResult Consume(DasLogChannel channel, [out] bool* p_out_was_dirty);
     }
 
 }

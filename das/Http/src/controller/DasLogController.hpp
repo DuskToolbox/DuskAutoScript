@@ -18,7 +18,8 @@
 namespace Das::Http
 {
 
-    // 日志接口：按字节偏移游标读取写盘的日志文件（IDasLogArchive），支持 tail / after / before。
+    // 日志接口：按字节偏移游标读取写盘的日志文件（IDasLogArchive），支持 tail /
+    // after / before。
     class DasLogController
     {
         DAS::DasPtr<ExportInterface::IDasLogArchive> p_archive{};
@@ -27,7 +28,9 @@ namespace Das::Http
         DasLogController()
         {
             DAS_LOG_INFO("Preparing to load log archive.");
-            ::CreateIDasLogArchive(p_archive.Put());
+            ::CreateIDasLogArchive(
+                ExportInterface::DAS_LOG_ARCHIVE_SOURCE_USER_JSONL,
+                p_archive.Put());
             DAS_LOG_INFO("Log archive loaded.");
         }
 
@@ -56,19 +59,33 @@ namespace Das::Http
 
             if (HasField(body, "before"))
             {
-                const auto offset = static_cast<uint64_t>(GetInt(body, "before", 0));
-                const auto lines = static_cast<uint32_t>(GetInt(body, "lines", 200));
-                rc = p_archive->ReadBefore(offset, lines, lines_str.Put(), &next_offset, &eof);
+                const auto offset =
+                    static_cast<uint64_t>(GetInt(body, "before", 0));
+                const auto lines =
+                    static_cast<uint32_t>(GetInt(body, "lines", 200));
+                rc = p_archive->ReadBefore(
+                    offset,
+                    lines,
+                    lines_str.Put(),
+                    &next_offset,
+                    &eof);
             }
             else if (HasField(body, "after"))
             {
-                const auto offset = static_cast<uint64_t>(GetInt(body, "after", 0));
-                rc = p_archive->ReadAfter(offset, lines_str.Put(), &next_offset);
+                const auto offset =
+                    static_cast<uint64_t>(GetInt(body, "after", 0));
+                rc =
+                    p_archive->ReadAfter(offset, lines_str.Put(), &next_offset);
             }
             else
             {
-                const auto lines = static_cast<uint32_t>(GetInt(body, "tail", 500));
-                rc = p_archive->ReadTail(lines, lines_str.Put(), &next_offset, &earliest_cursor);
+                const auto lines =
+                    static_cast<uint32_t>(GetInt(body, "tail", 500));
+                rc = p_archive->ReadTail(
+                    lines,
+                    lines_str.Put(),
+                    &next_offset,
+                    &earliest_cursor);
             }
 
             Dto::Logs response;
@@ -81,7 +98,9 @@ namespace Das::Http
                 response.code = DAS_S_OK;
                 const char* utf8 = nullptr;
                 if (lines_str->GetUtf8(&utf8) == DAS_S_OK && utf8 != nullptr)
+                {
                     SplitLines(utf8, response.data.logs);
+                }
             }
             else
             {
@@ -100,12 +119,23 @@ namespace Das::Http
             std::size_t      pos = 0;
             while (pos < s.size())
             {
-                const auto nl = s.find('\n', pos);
-                const auto len = nl == std::string_view::npos ? std::string_view::npos : nl - pos;
+                const auto       nl = s.find('\n', pos);
+                const auto       len = nl == std::string_view::npos
+                                           ? std::string_view::npos
+                                           : nl - pos;
                 std::string_view line = s.substr(pos, len);
-                if (!line.empty() && line.back() == '\r') line.remove_suffix(1);
-                if (!line.empty()) out.emplace_back(line);
-                if (nl == std::string_view::npos) break;
+                if (!line.empty() && line.back() == '\r')
+                {
+                    line.remove_suffix(1);
+                }
+                if (!line.empty())
+                {
+                    out.emplace_back(line);
+                }
+                if (nl == std::string_view::npos)
+                {
+                    break;
+                }
                 pos = nl + 1;
             }
         }

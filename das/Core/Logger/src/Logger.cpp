@@ -4,6 +4,7 @@
 #define _CRT_SECURE_NO_WARNINGS
 #include <array>
 #include <das/Core/Logger/CrossProcessMutex.h>
+#include <das/Core/Logger/DasLogNotifierSink.h>
 #include <das/Core/Logger/Logger.h>
 #include <spdlog/details/null_mutex.h>
 #include <spdlog/sinks/base_sink.h>
@@ -107,9 +108,14 @@ namespace Core
                 "logs/" DAS_CORE_NAME ".log",
                 50 * 1024 * 1024, // 50mb
                 2);
-        const auto sinks = std::array<spdlog::sink_ptr, 2>{
-            std_sink,
-            file_sink};
+        // DasLogNotifierSink：统一日志通知 sink（借用引用语义），多继承
+        // base_sink<null_mutex>
+        // + IDasLogNotifier。挂在此处与 stdout/file_sink
+        // 并列；进程级固定，运行时永不动 g_logger->sinks() vector（Pitfall
+        // #2：vector 固定使 sink_it_ 的无锁迭代安全）。
+        const auto notifier_sink = std::make_shared<DasLogNotifierSink>();
+        const auto sinks =
+            std::array<spdlog::sink_ptr, 3>{std_sink, file_sink, notifier_sink};
         const auto result = std::make_shared<spdlog::logger>(
             g_logger_name,
             std::begin(sinks),

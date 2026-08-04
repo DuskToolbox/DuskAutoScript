@@ -162,8 +162,17 @@ module
     // Log archive (file-backed, offset cursor)
     //=============================================================================
 
+    // 工厂按 source 枚举分发到 UserJsonl impl（会话目录 user.jsonl）或
+    // SpdlogFile impl（g_logger 的 rotating_file_sink_mt 目标文件）。
     [ export, c_abi ] DasResult CreateIDasLogArchive(
+        Das::ExportInterface::DasLogArchiveSource source,
         [out] Das::ExportInterface::IDasLogArchive** pp_out_archive);
+
+    // 返回 g_logger 中固定的 DasLogNotifierSink（dynamic_cast sinks vector），
+    // 借用引用——调用方持 DasPtr<IDasLogNotifier> 期间 sink 永远有效（g_logger 的
+    // shared_ptr 进程级拥有）。返回 null 表示 sink 未装配（早期初始化或单测环境）。
+    [ export, c_abi ] DasResult GetDasLogNotifier(
+        [out] Das::ExportInterface::IDasLogNotifier** pp_out_notifier);
 
     //=============================================================================
     // Process log recorder (JSONL user-visible entries)

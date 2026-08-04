@@ -96,7 +96,7 @@ TEST_F(LogArchiveJsonlFixture, LogArchiveJsonlTest_ReadTailReadsJsonLines)
         Das::ExportInterface::DAS_LOG_TYPE_WARNING);
 
     Das::DasPtr<Das::ExportInterface::IDasLogArchive> archive;
-    ASSERT_EQ(CreateIDasLogArchive(archive.Put()), DAS_S_OK);
+    ASSERT_EQ(CreateIDasLogArchive(Das::ExportInterface::DAS_LOG_ARCHIVE_SOURCE_USER_JSONL, archive.Put()), DAS_S_OK);
 
     Das::DasPtr<IDasReadOnlyString> lines_str;
     uint64_t                        next = 0;
@@ -132,7 +132,7 @@ TEST_F(LogArchiveJsonlFixture, LogArchiveJsonlTest_ReadAfterAdvancesCursor)
         Das::ExportInterface::DAS_LOG_TYPE_INFO);
 
     Das::DasPtr<Das::ExportInterface::IDasLogArchive> archive;
-    ASSERT_EQ(CreateIDasLogArchive(archive.Put()), DAS_S_OK);
+    ASSERT_EQ(CreateIDasLogArchive(Das::ExportInterface::DAS_LOG_ARCHIVE_SOURCE_USER_JSONL, archive.Put()), DAS_S_OK);
 
     Das::DasPtr<IDasReadOnlyString> lines_str;
     uint64_t                        next = 0;
@@ -173,7 +173,7 @@ TEST_F(LogArchiveJsonlFixture, LogArchiveJsonlTest_ReadAfterDropsHalfLine)
     }
 
     Das::DasPtr<Das::ExportInterface::IDasLogArchive> archive;
-    ASSERT_EQ(CreateIDasLogArchive(archive.Put()), DAS_S_OK);
+    ASSERT_EQ(CreateIDasLogArchive(Das::ExportInterface::DAS_LOG_ARCHIVE_SOURCE_USER_JSONL, archive.Put()), DAS_S_OK);
 
     Das::DasPtr<IDasReadOnlyString> lines_str;
     uint64_t                        next = 0;
@@ -194,7 +194,7 @@ TEST_F(LogArchiveJsonlFixture, LogArchiveJsonlTest_UninitializedReturnsEmpty)
     Das::Core::LogRecorderRuntime::ResetForTest();
 
     Das::DasPtr<Das::ExportInterface::IDasLogArchive> archive;
-    ASSERT_EQ(CreateIDasLogArchive(archive.Put()), DAS_S_OK);
+    ASSERT_EQ(CreateIDasLogArchive(Das::ExportInterface::DAS_LOG_ARCHIVE_SOURCE_USER_JSONL, archive.Put()), DAS_S_OK);
 
     Das::DasPtr<IDasReadOnlyString> lines_str;
     uint64_t                        next = 0;
