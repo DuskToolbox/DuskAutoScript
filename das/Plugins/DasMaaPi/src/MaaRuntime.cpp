@@ -14,6 +14,7 @@
 #ifndef DAS_MAAPI_DISABLE_REAL_MAA_BOUNDARY
 #include <MaaAgentClient/MaaAgentClientAPI.h>
 #include <MaaFramework/MaaAPI.h>
+#include <boost/dll/runtime_symbol_info.hpp>
 #endif
 
 #include <algorithm>
@@ -22,6 +23,7 @@
 #include <cstdint>
 #include <initializer_list>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <thread>
@@ -1451,6 +1453,57 @@ namespace Das::Plugins::DasMaaPi
             log_context = std::make_unique<MaaCallbackLoggerContext>();
             log_context->recorder = std::move(log_recorder);
         }
+
+#ifndef DAS_MAAPI_DISABLE_REAL_MAA_BOUNDARY
+        // Configure MaaFW's global LogDir ONCE per process, before any
+        // MaaFW resource/controller/tasker is created. MaaFW writes its
+        // own maafw.log (full framework trace: message stream + internal
+        // recognition/action details) plus a .bak rotation into this
+        // directory — DasMaaPi does NOT write the file. The plugin's
+        // process working directory may differ from its install location
+        // (DasHostX loads plugins from arbitrary paths), so derive
+        // plugin_dir from this_line_location().parent_path() — bare-name
+        // load("MaaFramework") or default cwd assumptions fail when the
+        // plugin is loaded from a non-system directory. user.jsonl (the
+        // user-visible focus subset written by MaaCallbackLogger) is
+        // unchanged: maafw.log is the full framework trace, user.jsonl is
+        // the focus subset; the two complement each other. LogDir is a
+        // process-global option, so a once-flag prevents re-setting it on
+        // Run reentry.
+        static std::once_flag log_dir_once;
+        std::call_once(
+            log_dir_once,
+            []()
+            {
+                try
+                {
+                    const auto plugin_module = boost::dll::this_line_location();
+                    const auto plugin_dir = plugin_module.parent_path();
+                    const auto log_dir = (plugin_dir / "logs").string();
+                    // MaaGlobalSetOption is the cross-platform core MaaFW
+                    // symbol (MaaGlobal.h:25, hard-linked direct call per
+                    // the binding principle). value is the C-string path,
+                    // val_size is the string length (no null terminator).
+                    // Failure is best-effort: MaaFW falls back to its
+                    // default <cwd>/debug/maafw.log when the option is not
+                    // set, so a failure here does not block the run.
+                    // (MaaGlobalSetOption is the non-deprecated name for
+                    // the older MaaSetGlobalOption — same behavior.)
+                    (void)MaaGlobalSetOption(
+                        MaaGlobalOption_LogDir,
+                        const_cast<void*>(
+                            static_cast<const void*>(log_dir.c_str())),
+                        static_cast<MaaOptionValueSize>(log_dir.size()));
+                }
+                catch (const std::exception&)
+                {
+                    // this_line_location() can throw on exotic platforms
+                    // or when the module handle is not resolvable; MaaFW
+                    // falls back to its default LogDir. LogDir setup is
+                    // diagnostic-only — never blocks the task.
+                }
+            });
+#endif
 
         const ScopedResource resource(boundary, boundary.CreateResource());
         if (resource.get() == INVALID_MAA_RESOURCE_HANDLE)
