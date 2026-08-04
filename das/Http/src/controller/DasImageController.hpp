@@ -1,11 +1,13 @@
 #ifndef DAS_HTTP_CONTROLLER_IMAGECONTROLLER_HPP
 #define DAS_HTTP_CONTROLLER_IMAGECONTROLLER_HPP
 
-#include "Config.h"
 #include <cassert>
+
+#include "Config.h"
 #include "beast/Request.hpp"
-#include <das/Core/Logger/LogRecorderRuntime.h>
 #include <das/DasApi.h>
+#include <das/DasPtr.hpp>
+#include <das/_autogen/idl/abi/IDasLogRecorder.h>
 
 #include <cstdint>
 #include <filesystem>
@@ -18,13 +20,16 @@
 namespace Das::Http
 {
     // 静态图片服务：GET /logs/{profile}/images/{file} 从当前会话目录回 JPG
-    // 字节（Content-Type image/jpeg）。路径穿越防护（T-88-04）：file 与
-    // session_dir 拼接后 lexically_normal()，断言结果仍落在 session_dir
-    // 内，且 file 不含 ".." 段 / 不是绝对路径 / 不带盘符。
+    // 字节（Content-Type image/jpeg）。路径穿越防护：file 与 session_dir
+    // 拼接后 lexically_normal()，断言结果仍落在 session_dir 内，且 file
+    // 不含 ".." 段 / 不是绝对路径 / 不带盘符。
+    // session 由 App.cpp 注入（替代原 LogRecorderRuntime::SessionDir
+    // 静态调用）。 改为实例方法：handler 经 shared_ptr 持有 controller，session
+    // 在 ctor 时 由 App.cpp 传入。SanitizeImagePath 保持纯函数（含穿越防护）。
     class DasImageController
     {
     public:
-        static Beast::HttpResponse GetImage(const Beast::HttpRequest& request)
+        Beast::HttpResponse GetImage(const Beast::HttpRequest& request)
         {
             if (request.GetPathParameter("profile") != "0")
             {
@@ -33,14 +38,31 @@ namespace Das::Http
                     "Profile ID must be 0 in v1.2");
             }
 
-            const auto session_dir =
-                Das::Core::LogRecorderRuntime::SessionDir();
-            if (session_dir.empty())
+            if (!session_)
             {
                 return Beast::HttpResponse::CreateErrorResponse(
                     DAS_E_OBJECT_NOT_INIT,
                     "Log recorder session not initialized");
             }
+
+            Das::DasPtr<IDasReadOnlyString> directory_str;
+            if (DAS::IsFailed(session_->GetSessionDir(directory_str.Put()))
+                || !directory_str)
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_OBJECT_NOT_INIT,
+                    "Log recorder session not initialized");
+            }
+            const char* directory_utf8 = nullptr;
+            if (DAS::IsFailed(directory_str->GetUtf8(&directory_utf8))
+                || directory_utf8 == nullptr)
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_OBJECT_NOT_INIT,
+                    "Log recorder session not initialized");
+            }
+            const auto session_dir = std::filesystem::path(
+                reinterpret_cast<const char8_t*>(directory_utf8));
 
             const auto safe_path = SanitizeImagePath(
                 request.GetPathParameter("file"),
@@ -117,6 +139,15 @@ namespace Das::Http
             }
             return resolved;
         }
+
+        void SetSession(Das::ExportInterface::IDasLogSession* session)
+        {
+            session_ =
+                Das::DasPtr<Das::ExportInterface::IDasLogSession>(session);
+        }
+
+    private:
+        Das::DasPtr<Das::ExportInterface::IDasLogSession> session_;
     };
 } // namespace Das::Http
 

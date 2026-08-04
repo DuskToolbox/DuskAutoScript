@@ -1,5 +1,6 @@
+#include <das/Core/Logger/DasLogNotifierSink.h>
+#include <das/Core/Logger/DasLogSessionImpl.h>
 #include <das/Core/Logger/DasProcessLogRecorderImpl.h>
-#include <das/Core/Logger/LogRecorderRuntime.h>
 #include <das/DasApi.h>
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
@@ -25,13 +26,55 @@ namespace
         return path;
     }
 
+    std::filesystem::path ReadUserJsonlPath(
+        Das::ExportInterface::IDasLogSession* session)
+    {
+        Das::DasPtr<IDasReadOnlyString> path_str;
+        if (DAS::IsFailed(session->GetUserJsonlPath(path_str.Put()))
+            || !path_str)
+        {
+            return {};
+        }
+        const char* utf8 = nullptr;
+        if (DAS::IsFailed(path_str->GetUtf8(&utf8)) || utf8 == nullptr)
+        {
+            return {};
+        }
+        return std::filesystem::path{reinterpret_cast<const char8_t*>((utf8)});
+    }
+
     class LogArchiveJsonlFixture : public ::testing::Test
     {
     protected:
-        void TearDown() override
+        Das::DasPtr<Das::ExportInterface::IDasLogNotifier>        notifier_;
+        Das::DasPtr<Das::ExportInterface::IDasLogSession>         session_;
+        Das::DasPtr<Das::ExportInterface::IDasProcessLogRecorder> recorder_;
+        std::filesystem::path debug_directory_;
+
+        void SetUp() override { GetDasLogNotifier(notifier_.Put()); }
+
+        DasResult CreateContext(const std::filesystem::path& debug_directory)
         {
-            Das::Core::LogRecorderRuntime::Shutdown();
-            Das::Core::LogRecorderRuntime::ResetForTest();
+            debug_directory_ = debug_directory;
+            const auto directory_str = debug_directory.u8string();
+            Das::DasPtr<IDasReadOnlyString> directory_param;
+            const auto cr = CreateIDasReadOnlyStringFromUtf8(
+                reinterpret_cast<const char*>(directory_str.c_str()),
+                directory_param.Put());
+            if (DAS::IsFailed(cr))
+            {
+                return cr;
+            }
+            const auto session_cr =
+                CreateLogSession(directory_param.Get(), session_.Put());
+            if (DAS::IsFailed(session_cr))
+            {
+                return session_cr;
+            }
+            return CreateIDasProcessLogRecorder(
+                notifier_.Get(),
+                session_.Get(),
+                recorder_.Put());
         }
     };
 
@@ -81,22 +124,24 @@ namespace
 TEST_F(LogArchiveJsonlFixture, LogArchiveJsonlTest_ReadTailReadsJsonLines)
 {
     const auto dir = UniqueTempDir("ArchiveReadTail");
-    Das::Core::LogRecorderRuntime::ResetForTest();
-    ASSERT_EQ(Das::Core::LogRecorderRuntime::Initialize(dir), DAS_S_OK);
+    ASSERT_EQ(CreateContext(dir), DAS_S_OK);
 
-    Das::DasPtr<Das::ExportInterface::IDasProcessLogRecorder> recorder;
-    ASSERT_EQ(CreateIDasProcessLogRecorder(recorder.Put()), DAS_S_OK);
     RecordTextEntry(
-        recorder.Get(),
+        recorder_.Get(),
         "first",
         Das::ExportInterface::DAS_LOG_TYPE_INFO);
     RecordTextEntry(
-        recorder.Get(),
+        recorder_.Get(),
         "second",
         Das::ExportInterface::DAS_LOG_TYPE_WARNING);
 
     Das::DasPtr<Das::ExportInterface::IDasLogArchive> archive;
-    ASSERT_EQ(CreateIDasLogArchive(Das::ExportInterface::DAS_LOG_ARCHIVE_SOURCE_USER_JSONL, archive.Put()), DAS_S_OK);
+    ASSERT_EQ(
+        CreateIDasLogArchive(
+            Das::ExportInterface::DAS_LOG_ARCHIVE_SOURCE_USER_JSONL,
+            session_.Get(),
+            archive.Put()),
+        DAS_S_OK);
 
     Das::DasPtr<IDasReadOnlyString> lines_str;
     uint64_t                        next = 0;
@@ -121,18 +166,20 @@ TEST_F(LogArchiveJsonlFixture, LogArchiveJsonlTest_ReadTailReadsJsonLines)
 TEST_F(LogArchiveJsonlFixture, LogArchiveJsonlTest_ReadAfterAdvancesCursor)
 {
     const auto dir = UniqueTempDir("ArchiveReadAfter");
-    Das::Core::LogRecorderRuntime::ResetForTest();
-    ASSERT_EQ(Das::Core::LogRecorderRuntime::Initialize(dir), DAS_S_OK);
+    ASSERT_EQ(CreateContext(dir), DAS_S_OK);
 
-    Das::DasPtr<Das::ExportInterface::IDasProcessLogRecorder> recorder;
-    ASSERT_EQ(CreateIDasProcessLogRecorder(recorder.Put()), DAS_S_OK);
     RecordTextEntry(
-        recorder.Get(),
+        recorder_.Get(),
         "first",
         Das::ExportInterface::DAS_LOG_TYPE_INFO);
 
     Das::DasPtr<Das::ExportInterface::IDasLogArchive> archive;
-    ASSERT_EQ(CreateIDasLogArchive(Das::ExportInterface::DAS_LOG_ARCHIVE_SOURCE_USER_JSONL, archive.Put()), DAS_S_OK);
+    ASSERT_EQ(
+        CreateIDasLogArchive(
+            Das::ExportInterface::DAS_LOG_ARCHIVE_SOURCE_USER_JSONL,
+            session_.Get(),
+            archive.Put()),
+        DAS_S_OK);
 
     Das::DasPtr<IDasReadOnlyString> lines_str;
     uint64_t                        next = 0;
@@ -154,18 +201,15 @@ TEST_F(LogArchiveJsonlFixture, LogArchiveJsonlTest_ReadAfterAdvancesCursor)
 TEST_F(LogArchiveJsonlFixture, LogArchiveJsonlTest_ReadAfterDropsHalfLine)
 {
     const auto dir = UniqueTempDir("ArchiveHalfLine");
-    Das::Core::LogRecorderRuntime::ResetForTest();
-    ASSERT_EQ(Das::Core::LogRecorderRuntime::Initialize(dir), DAS_S_OK);
+    ASSERT_EQ(CreateContext(dir), DAS_S_OK);
 
-    Das::DasPtr<Das::ExportInterface::IDasProcessLogRecorder> recorder;
-    ASSERT_EQ(CreateIDasProcessLogRecorder(recorder.Put()), DAS_S_OK);
     RecordTextEntry(
-        recorder.Get(),
+        recorder_.Get(),
         "first",
         Das::ExportInterface::DAS_LOG_TYPE_INFO);
 
     // 在 user.jsonl 末尾手写半行 JSON（不换行）：读方应丢弃该半行。
-    const auto jsonl_path = Das::Core::LogRecorderRuntime::UserJsonlPath();
+    const auto jsonl_path = ReadUserJsonlPath(session_.Get());
     ASSERT_FALSE(jsonl_path.empty());
     {
         std::ofstream output{jsonl_path, std::ios::app | std::ios::binary};
@@ -173,7 +217,12 @@ TEST_F(LogArchiveJsonlFixture, LogArchiveJsonlTest_ReadAfterDropsHalfLine)
     }
 
     Das::DasPtr<Das::ExportInterface::IDasLogArchive> archive;
-    ASSERT_EQ(CreateIDasLogArchive(Das::ExportInterface::DAS_LOG_ARCHIVE_SOURCE_USER_JSONL, archive.Put()), DAS_S_OK);
+    ASSERT_EQ(
+        CreateIDasLogArchive(
+            Das::ExportInterface::DAS_LOG_ARCHIVE_SOURCE_USER_JSONL,
+            session_.Get(),
+            archive.Put()),
+        DAS_S_OK);
 
     Das::DasPtr<IDasReadOnlyString> lines_str;
     uint64_t                        next = 0;
@@ -189,12 +238,17 @@ TEST_F(LogArchiveJsonlFixture, LogArchiveJsonlTest_ReadAfterDropsHalfLine)
     ASSERT_TRUE(parsed.has_value());
 }
 
-TEST_F(LogArchiveJsonlFixture, LogArchiveJsonlTest_UninitializedReturnsEmpty)
+// archive 不持 session 时（factory 传 null）也能构造，读时返回空结果
+// （不崩溃）。
+TEST_F(LogArchiveJsonlFixture, LogArchiveJsonlTest_NullSessionReturnsEmpty)
 {
-    Das::Core::LogRecorderRuntime::ResetForTest();
-
     Das::DasPtr<Das::ExportInterface::IDasLogArchive> archive;
-    ASSERT_EQ(CreateIDasLogArchive(Das::ExportInterface::DAS_LOG_ARCHIVE_SOURCE_USER_JSONL, archive.Put()), DAS_S_OK);
+    ASSERT_EQ(
+        CreateIDasLogArchive(
+            Das::ExportInterface::DAS_LOG_ARCHIVE_SOURCE_USER_JSONL,
+            nullptr,
+            archive.Put()),
+        DAS_S_OK);
 
     Das::DasPtr<IDasReadOnlyString> lines_str;
     uint64_t                        next = 0;

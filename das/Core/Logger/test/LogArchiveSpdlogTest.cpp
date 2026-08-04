@@ -66,6 +66,7 @@ TEST(LogArchiveSpdlogTest, ReadTailReturnsLastLines)
     ASSERT_EQ(
         CreateIDasLogArchive(
             Das::ExportInterface::DAS_LOG_ARCHIVE_SOURCE_SPDLOG_FILE,
+            nullptr,
             archive.Put()),
         DAS_S_OK);
     ASSERT_TRUE(archive);
@@ -105,6 +106,7 @@ TEST(LogArchiveSpdlogTest, ReadAfterAdvancesCursor)
     ASSERT_EQ(
         CreateIDasLogArchive(
             Das::ExportInterface::DAS_LOG_ARCHIVE_SOURCE_SPDLOG_FILE,
+            nullptr,
             archive.Put()),
         DAS_S_OK);
 
@@ -151,6 +153,7 @@ TEST(LogArchiveSpdlogTest, ReadAfterBeyondSizeResetsCursor)
     ASSERT_EQ(
         CreateIDasLogArchive(
             Das::ExportInterface::DAS_LOG_ARCHIVE_SOURCE_SPDLOG_FILE,
+            nullptr,
             archive.Put()),
         DAS_S_OK);
 
@@ -166,12 +169,14 @@ TEST(LogArchiveSpdlogTest, ReadAfterBeyondSizeResetsCursor)
     EXPECT_EQ(next, 0u);
 }
 
-// CreateIDasLogArchive 对未知 source（FORCE_DWORD 哨兵）返 DAS_E_INVALID_ARGUMENT。
+// CreateIDasLogArchive 对未知 source（FORCE_DWORD 哨兵）返
+// DAS_E_INVALID_ARGUMENT。
 TEST(LogArchiveSpdlogTest, FactoryRejectsUnknownSource)
 {
     Das::DasPtr<Das::ExportInterface::IDasLogArchive> archive;
     const auto                                        rc = CreateIDasLogArchive(
         Das::ExportInterface::DAS_LOG_ARCHIVE_SOURCE_FORCE_DWORD,
+        nullptr,
         archive.Put());
     EXPECT_EQ(rc, DAS_E_INVALID_ARGUMENT);
     EXPECT_FALSE(archive);

@@ -30,7 +30,7 @@
 #include <das/Core/IPC/CurrentIpcContextScope.h>
 #include <das/Core/IPC/HttpIpcServer.h>
 #include <das/Core/IPC/MainProcess/IpcContext.h>
-#include <das/Core/Logger/LogRecorderRuntime.h>
+#include <das/Core/Logger/DasLogSessionImpl.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
@@ -280,20 +280,6 @@ namespace Das::Http
                             .c_str());
                     return init_cv_result;
                 }
-
-                // 用户可见日志会话目录随进程生命周期初始化（D-88-10/05b），
-                // 进程退出时整目录删除。
-                const auto log_recorder_result =
-                    Das::Core::LogRecorderRuntime::Initialize(debug_dir);
-                if (DAS::IsFailed(log_recorder_result))
-                {
-                    DAS_LOG_ERROR(
-                        DAS_FMT_NS::format(
-                            "Failed to init log recorder runtime. result = {}",
-                            log_recorder_result)
-                            .c_str());
-                    return log_recorder_result;
-                }
             }
         }
 
@@ -301,9 +287,95 @@ namespace Das::Http
             std::thread([&ipc_context]() { ipc_context->Run(); });
         components.ipc_context = ipc_context;
 
+        // 焦点日志会话目录 + 统一通知器 + 主进程 recorder（注入式生命周期）：
+        // session 是 RAII，run() 退出时 DasPtr<IDasLogSession> 析构递归删除
+        // 会话目录（替代原 LogRecorderRuntime 静态全局 + Shutdown 调用）。
+        // notifier 是 g_logger 的固定 sink（借用引用）。recorder 注入
+        // notifier + session，写盘后 Signal(UserJsonl) 让 Http 16ms 定时器
+        // 拉新广播。session 在 controllers 之前声明，保证 controllers 持
+        // session 引用期间 session_dir 持续有效。
+        DasPtr<Das::ExportInterface::IDasLogSession>         log_session;
+        DasPtr<Das::ExportInterface::IDasLogNotifier>        log_notifier;
+        DasPtr<Das::ExportInterface::IDasProcessLogRecorder> log_recorder_main;
+        {
+            const auto                 debug_dir_str = debug_dir.u8string();
+            DasPtr<IDasReadOnlyString> debug_dir_param;
+            const auto dir_cr = CreateIDasReadOnlyStringFromUtf8(
+                reinterpret_cast<const char*>(debug_dir_str.c_str()),
+                debug_dir_param.Put());
+            if (DAS::IsFailed(dir_cr))
+            {
+                DAS_LOG_ERROR(
+                    "Failed to create debug_dir string for log session");
+                return dir_cr;
+            }
+            const auto session_cr =
+                CreateLogSession(debug_dir_param.Get(), log_session.Put());
+            if (DAS::IsFailed(session_cr))
+            {
+                DAS_LOG_ERROR(
+                    DAS_FMT_NS::format(
+                        "Failed to create log session. result = {}",
+                        session_cr)
+                        .c_str());
+                return session_cr;
+            }
+            const auto notifier_cr = GetDasLogNotifier(log_notifier.Put());
+            if (DAS::IsFailed(notifier_cr))
+            {
+                DAS_LOG_WARNING(
+                    DAS_FMT_NS::format(
+                        "DasLogNotifierSink not present ({}); log dirty flag "
+                        "broadcasting disabled until logger initialized",
+                        notifier_cr)
+                        .c_str());
+                // notifier 为空时 recorder 容忍（写盘不广播），不阻断启动。
+            }
+            const auto recorder_cr = CreateIDasProcessLogRecorder(
+                log_notifier.Get(),
+                log_session.Get(),
+                log_recorder_main.Put());
+            if (DAS::IsFailed(recorder_cr))
+            {
+                DAS_LOG_ERROR(
+                    DAS_FMT_NS::format(
+                        "Failed to create main-process log recorder. result = "
+                        "{}",
+                        recorder_cr)
+                        .c_str());
+                return recorder_cr;
+            }
+        }
+
+        // 把主进程 recorder 注册为具名服务（IDasProgressService 范式）：
+        // IPC 模式插件（DasMaaPi）经 ResolveMainProcessInterfaceByName 拿
+        // proxy， 经跨进程 marshal 调 Record → 主进程 BusinessThread 串行分发 →
+        // recorder 写主进程 user.jsonl + Signal(UserJsonl) 置 dirty。
+        if (log_recorder_main)
+        {
+            const DAS::Core::IPC::ScopedCurrentIpcContext scope(
+                static_cast<DAS::Core::IPC::MainProcess::IpcContext*>(
+                    ipc_context.get()));
+            const auto recorder_reg = ipc_context->RegisterServiceByName(
+                log_recorder_main.Get(),
+                DasIidOf<Das::ExportInterface::IDasProcessLogRecorder>(),
+                "IDasProcessLogRecorder");
+            if (DAS::IsFailed(recorder_reg))
+            {
+                DAS_LOG_ERROR(
+                    DAS_FMT_NS::format(
+                        "Failed to register IDasProcessLogRecorder named "
+                        "service. result = {}",
+                        recorder_reg)
+                        .c_str());
+                return recorder_reg;
+            }
+        }
+
         // Create controller instances
         auto misc_controller = std::make_shared<Das::Http::DasMiscController>();
-        auto log_controller = std::make_shared<Das::Http::DasLogController>();
+        auto log_controller =
+            std::make_shared<Das::Http::DasLogController>(log_session.Get());
         auto profile_controller =
             std::make_shared<Das::Http::DasProfileController>(
                 *components.settings_service);
@@ -342,9 +414,15 @@ namespace Das::Http
             [log_controller](const Das::Http::Beast::HttpRequest& req)
             { return log_controller->GetLogs(req); });
         // 静态图片：按 imageRef（如 img/0001.jpg）从会话目录回 JPG。
+        // DasImageController 改为实例方法以持 session（替代 LogRecorderRuntime
+        // 静态调用），SanitizeImagePath 穿越防护不变。
+        auto image_controller =
+            std::make_shared<Das::Http::DasImageController>();
+        image_controller->SetSession(log_session.Get());
         components.router->Get(
             DAS_HTTP_API_PREFIX "logs/{profile}/images/{file}",
-            &Das::Http::DasImageController::GetImage);
+            [image_controller](const Das::Http::Beast::HttpRequest& req)
+            { return image_controller->GetImage(req); });
 
         // Profile
         components.router->Post(
@@ -624,34 +702,22 @@ namespace Das::Http
                 },
                 hub.get());
 
-            // 日志增量 WS 广播（D-88-01/02）：Recorder 每写盘一条日志条目就
-            // 触发通知回调，事件 JSON 已内置 "api":"api/v1/logs/get"（与
-            // settings/scheduler 的「注入 api」不同，recorder 侧已带 schema），
-            // 这里直接复用 hub->Broadcast 推给已连前端，零新 WS 端点。hub 为
-            // 空（无 WS）时回调可空安全；capture 按值持 shared_ptr 保活。
-            Das::Core::LogRecorderRuntime::SetLogNotifyCallback(
-                [hub](const char* json_event)
-                {
-                    if (!hub || !json_event)
-                    {
-                        return;
-                    }
-                    hub->Broadcast(std::string{json_event});
-                });
-
-            // 调试日志通道统一通知：Http 16ms 定时器挂在 server 的 io_context
-            // 上 （不是 IPC BusinessThread——Consume 不得占 RPC 分发线程）。
-            // 每 tick 调 GetDasLogNotifier→Consume(Spdlog)；dirty 时 hub->Broadcast
-            // 一个无 payload 的 api/v1/logs/debug/get tick，前端 LogStore.Refresh→
-            // ReadAfter 拉新（tick 不带数据，payload 仅声明 api 路由）。Consume 是纯
-            // atomic exchange， 可安全在 io_context 线程调。timer 在 server.Run() 退出后 cancel。
-            auto spdlog_poll_timer =
-                std::make_shared<boost::asio::steady_timer>(
-                    server.IoCtx(),
-                    std::chrono::milliseconds(16));
+            // 日志增量统一通知（focus + debug 共一套机制）：Http 16ms 定时器挂
+            // 在 server 的 io_context（非 IPC BusinessThread——Consume 不得占
+            // RPC 分发线程）。每 tick 轮询两个 channel 的 dirty flag：
+            //   - Spdlog dirty：sink::sink_it_ 在每条 DAS_LOG 触发时置；
+            //   - UserJsonl dirty：主进程 recorder Record 写盘后
+            //   Signal(UserJsonl)。
+            // 任一 dirty 时 hub->Broadcast 一个无 payload 的对应 api tick
+            // （api/v1/logs/debug/get 或 api/v1/logs/get），前端按 api 路由
+            // Refresh→ReadAfter 主动拉。Consume 是纯 atomic exchange，可安全在
+            // io_context 线程调。timer 在 server.Run() 退出后 cancel。
+            auto log_poll_timer = std::make_shared<boost::asio::steady_timer>(
+                server.IoCtx(),
+                std::chrono::milliseconds(16));
             auto recursive_tick = std::make_shared<
                 std::function<void(const boost::system::error_code&)>>();
-            *recursive_tick = [hub, spdlog_poll_timer, recursive_tick](
+            *recursive_tick = [hub, log_poll_timer, recursive_tick](
                                   const boost::system::error_code& ec)
             {
                 if (ec)
@@ -670,19 +736,30 @@ namespace Das::Http
                         if (was_dirty && hub)
                         {
                             // tick payload 不带 entries：前端按 api 路由
-                            // Refresh→ReadAfter。 与 settings/scheduler
-                            // 的「注入 api」同模式，但此处 recorder 不参与，纯
-                            // sink dirty → Consume → broadcast。
+                            // Refresh→ReadAfter。
                             hub->Broadcast(
                                 std::string{"{\"api\":\"api/v1/logs/debug/"
                                             "get\",\"code\":0,\"data\":{}}"});
                         }
                     }
+                    was_dirty = false;
+                    if (notifier->Consume(
+                            Das::ExportInterface::DAS_LOG_CHANNEL_USER_JSONL,
+                            &was_dirty)
+                        == DAS_S_OK)
+                    {
+                        if (was_dirty && hub)
+                        {
+                            hub->Broadcast(
+                                std::string{"{\"api\":\"api/v1/logs/"
+                                            "get\",\"code\":0,\"data\":{}}"});
+                        }
+                    }
                 }
-                spdlog_poll_timer->expires_after(std::chrono::milliseconds(16));
-                spdlog_poll_timer->async_wait(*recursive_tick);
+                log_poll_timer->expires_after(std::chrono::milliseconds(16));
+                log_poll_timer->async_wait(*recursive_tick);
             };
-            spdlog_poll_timer->async_wait(*recursive_tick);
+            log_poll_timer->async_wait(*recursive_tick);
 
             std::cout << "[DasHttp] Server listening on " << listen_address
                       << ":" << listen_port << std::endl;
@@ -692,7 +769,7 @@ namespace Das::Http
             // server.Run() 返回（RequestServerStop 触发）：cancel pending
             // async_wait， 让 recursive_tick 收 operation_aborted
             // 后停止重排，不再访问 io_context。
-            spdlog_poll_timer->cancel();
+            log_poll_timer->cancel();
 
             // 停 HTTP 后立即无效化 hub（切断 IPC→HTTP 的 SSE 写路径）：之后
             // 析构 server（io_context）前，IPC 线程晚到的 Report 经
@@ -700,10 +777,9 @@ namespace Das::Http
             // 过渡期（RequestServerStop → server.Run 返回）IPC 写 dispatch 到
             // 还在 run 的 ioc，无害。
             sse_hub->Invalidate();
-            // 正常退出路径：删除会话目录。core_services->Shutdown
-            // 移到外层（IPC join 之后）统一执行，确保 service 由注册表保活到
-            // IPC 排空完成。
-            Das::Core::LogRecorderRuntime::Shutdown();
+            // 会话目录由外层 DasPtr<IDasLogSession> log_session 析构 RAII
+            // 删除， 无需 Shutdown 调用（替代原
+            // LogRecorderRuntime::Shutdown）。
             return DAS_S_OK;
         };
 
@@ -725,8 +801,8 @@ namespace Das::Http
             DAS_LOG_ERROR(msg.c_str());
         }
 
-        // bind 失败路径同样清理会话目录，避免残留（D-88-05b）；Shutdown 幂等。
-        Das::Core::LogRecorderRuntime::Shutdown();
+        // bind 失败路径：log_session 的 DasPtr 析构 RAII 删除会话目录
+        // （幂等，run_server 未执行时 session 也已构造）。
 
         // 停 IPC（排空在途 Report）：service 仍由注册表（DOM）保活，join 安全。
         if (components.ipc_context)

@@ -1,5 +1,6 @@
+#include <das/Core/Logger/DasLogNotifierSink.h>
+#include <das/Core/Logger/DasLogSessionImpl.h>
 #include <das/Core/Logger/DasProcessLogRecorderImpl.h>
-#include <das/Core/Logger/LogRecorderRuntime.h>
 #include <das/DasApi.h>
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
@@ -23,13 +24,81 @@ namespace
         return path;
     }
 
+    // 从 IDasLogSession 取 session_dir（std::filesystem::path）。
+    std::filesystem::path ReadSessionDirectory(
+        Das::ExportInterface::IDasLogSession* session)
+    {
+        Das::DasPtr<IDasReadOnlyString> directory_str;
+        if (DAS::IsFailed(session->GetSessionDir(directory_str.Put()))
+            || !directory_str)
+        {
+            return {};
+        }
+        const char* utf8 = nullptr;
+        if (DAS::IsFailed(directory_str->GetUtf8(&utf8)) || utf8 == nullptr)
+        {
+            return {};
+        }
+        return std::filesystem::path{reinterpret_cast<const char8_t*>((utf8)});
+    }
+
+    std::filesystem::path ReadUserJsonlPath(
+        Das::ExportInterface::IDasLogSession* session)
+    {
+        Das::DasPtr<IDasReadOnlyString> path_str;
+        if (DAS::IsFailed(session->GetUserJsonlPath(path_str.Put()))
+            || !path_str)
+        {
+            return {};
+        }
+        const char* utf8 = nullptr;
+        if (DAS::IsFailed(path_str->GetUtf8(&utf8)) || utf8 == nullptr)
+        {
+            return {};
+        }
+        return std::filesystem::path{reinterpret_cast<const char8_t*>((utf8)});
+    }
+
+    // 测试夹具：每个用例建独立 session + recorder，析构时 RAII 自动清目录。
+    // recorder 注入 notifier（来自 g_logger 固定 sink）+ session。
     class LogRecorderFixture : public ::testing::Test
     {
     protected:
-        void TearDown() override
+        Das::DasPtr<Das::ExportInterface::IDasLogNotifier>        notifier_;
+        Das::DasPtr<Das::ExportInterface::IDasLogSession>         session_;
+        Das::DasPtr<Das::ExportInterface::IDasProcessLogRecorder> recorder_;
+        std::filesystem::path debug_directory_;
+
+        void SetUp() override
         {
-            Das::Core::LogRecorderRuntime::Shutdown();
-            Das::Core::LogRecorderRuntime::ResetForTest();
+            GetDasLogNotifier(notifier_.Put());
+            // notifier 可能为空（早期单测环境无 g_logger sink）；recorder
+            // 容忍空。
+        }
+
+        // 创建 session + recorder：debug_directory 由调用方提供。
+        DasResult CreateContext(const std::filesystem::path& debug_directory)
+        {
+            debug_directory_ = debug_directory;
+            const auto directory_str = debug_directory.u8string();
+            Das::DasPtr<IDasReadOnlyString> directory_param;
+            const auto cr = CreateIDasReadOnlyStringFromUtf8(
+                reinterpret_cast<const char*>(directory_str.c_str()),
+                directory_param.Put());
+            if (DAS::IsFailed(cr))
+            {
+                return cr;
+            }
+            const auto session_cr =
+                CreateLogSession(directory_param.Get(), session_.Put());
+            if (DAS::IsFailed(session_cr))
+            {
+                return session_cr;
+            }
+            return CreateIDasProcessLogRecorder(
+                notifier_.Get(),
+                session_.Get(),
+                recorder_.Put());
         }
     };
 } // namespace
@@ -37,11 +106,9 @@ namespace
 TEST_F(LogRecorderFixture, LogRecorderTest_RecordWritesJsonlEntry)
 {
     const auto dir = UniqueTempDir("RecordWritesJsonl");
-    Das::Core::LogRecorderRuntime::ResetForTest();
-    ASSERT_EQ(Das::Core::LogRecorderRuntime::Initialize(dir), DAS_S_OK);
-
-    Das::DasPtr<Das::ExportInterface::IDasProcessLogRecorder> recorder;
-    ASSERT_EQ(CreateIDasProcessLogRecorder(recorder.Put()), DAS_S_OK);
+    ASSERT_EQ(CreateContext(dir), DAS_S_OK);
+    ASSERT_TRUE(session_);
+    ASSERT_TRUE(recorder_);
 
     auto entry = Das::DasPtr<Das::ExportInterface::IDasLogEntry>{
         new Das::Core::IDasLogEntryImpl{}};
@@ -50,9 +117,9 @@ TEST_F(LogRecorderFixture, LogRecorderTest_RecordWritesJsonlEntry)
         entry->SetType(Das::ExportInterface::DAS_LOG_TYPE_INFO),
         DAS_S_OK);
     ASSERT_EQ(entry->AddText(&text), DAS_S_OK);
-    EXPECT_EQ(recorder->Record(entry.Get()), DAS_S_OK);
+    EXPECT_EQ(recorder_->Record(entry.Get()), DAS_S_OK);
 
-    const auto jsonl_path = Das::Core::LogRecorderRuntime::UserJsonlPath();
+    const auto jsonl_path = ReadUserJsonlPath(session_.Get());
     ASSERT_FALSE(jsonl_path.empty());
     ASSERT_TRUE(std::filesystem::exists(jsonl_path));
 
@@ -85,11 +152,7 @@ TEST_F(LogRecorderFixture, LogRecorderTest_RecordWritesJsonlEntry)
 TEST_F(LogRecorderFixture, LogRecorderTest_RecordAppendsMultipleLines)
 {
     const auto dir = UniqueTempDir("RecordAppends");
-    Das::Core::LogRecorderRuntime::ResetForTest();
-    ASSERT_EQ(Das::Core::LogRecorderRuntime::Initialize(dir), DAS_S_OK);
-
-    Das::DasPtr<Das::ExportInterface::IDasProcessLogRecorder> recorder;
-    ASSERT_EQ(CreateIDasProcessLogRecorder(recorder.Put()), DAS_S_OK);
+    ASSERT_EQ(CreateContext(dir), DAS_S_OK);
 
     DasU8StringOnStack first_text{"first"};
     auto first_entry = Das::DasPtr<Das::ExportInterface::IDasLogEntry>{
@@ -98,7 +161,7 @@ TEST_F(LogRecorderFixture, LogRecorderTest_RecordAppendsMultipleLines)
         first_entry->SetType(Das::ExportInterface::DAS_LOG_TYPE_INFO),
         DAS_S_OK);
     ASSERT_EQ(first_entry->AddText(&first_text), DAS_S_OK);
-    ASSERT_EQ(recorder->Record(first_entry.Get()), DAS_S_OK);
+    ASSERT_EQ(recorder_->Record(first_entry.Get()), DAS_S_OK);
 
     DasU8StringOnStack second_text{"second"};
     auto second_entry = Das::DasPtr<Das::ExportInterface::IDasLogEntry>{
@@ -107,9 +170,9 @@ TEST_F(LogRecorderFixture, LogRecorderTest_RecordAppendsMultipleLines)
         second_entry->SetType(Das::ExportInterface::DAS_LOG_TYPE_SUCCESS),
         DAS_S_OK);
     ASSERT_EQ(second_entry->AddText(&second_text), DAS_S_OK);
-    ASSERT_EQ(recorder->Record(second_entry.Get()), DAS_S_OK);
+    ASSERT_EQ(recorder_->Record(second_entry.Get()), DAS_S_OK);
 
-    const auto    jsonl_path = Das::Core::LogRecorderRuntime::UserJsonlPath();
+    const auto    jsonl_path = ReadUserJsonlPath(session_.Get());
     std::ifstream input{jsonl_path};
     std::string   line;
     int           line_count = 0;
@@ -122,19 +185,25 @@ TEST_F(LogRecorderFixture, LogRecorderTest_RecordAppendsMultipleLines)
     EXPECT_EQ(line_count, 2);
 }
 
-TEST_F(LogRecorderFixture, LogRecorderTest_NotifyCallbackReceivesEvent)
+// 统一通知：recorder Record 写盘后调 notifier->Signal(UserJsonl) 置 dirty
+// flag。 Http 16ms 定时器轮询 Consume 拿到 true 时 hub->Broadcast
+// api/v1/logs/get tick。
+TEST_F(LogRecorderFixture, LogRecorderTest_RecordSignalsUserJsonlNotifier)
 {
-    const auto dir = UniqueTempDir("NotifyCallback");
-    Das::Core::LogRecorderRuntime::ResetForTest();
-    ASSERT_EQ(Das::Core::LogRecorderRuntime::Initialize(dir), DAS_S_OK);
+    const auto dir = UniqueTempDir("RecordSignalsNotifier");
+    ASSERT_EQ(CreateContext(dir), DAS_S_OK);
 
-    Das::DasPtr<Das::ExportInterface::IDasProcessLogRecorder> recorder;
-    ASSERT_EQ(CreateIDasProcessLogRecorder(recorder.Put()), DAS_S_OK);
+    if (!notifier_)
+    {
+        GTEST_SKIP() << "DasLogNotifierSink not present in g_logger";
+    }
 
-    std::string received_event;
-    Das::Core::LogRecorderRuntime::SetLogNotifyCallback(
-        [&received_event](const char* json_event)
-        { received_event = json_event ? json_event : ""; });
+    // 先 Consume 排空残留 dirty（其他用例可能已 Signal）。
+    bool was_dirty = false;
+    notifier_->Consume(
+        Das::ExportInterface::DAS_LOG_CHANNEL_USER_JSONL,
+        &was_dirty);
+    was_dirty = false;
 
     DasU8StringOnStack text{"notify-me"};
     auto               entry = Das::DasPtr<Das::ExportInterface::IDasLogEntry>{
@@ -143,41 +212,24 @@ TEST_F(LogRecorderFixture, LogRecorderTest_NotifyCallbackReceivesEvent)
         entry->SetType(Das::ExportInterface::DAS_LOG_TYPE_WARNING),
         DAS_S_OK);
     ASSERT_EQ(entry->AddText(&text), DAS_S_OK);
-    EXPECT_EQ(recorder->Record(entry.Get()), DAS_S_OK);
+    EXPECT_EQ(recorder_->Record(entry.Get()), DAS_S_OK);
 
-    ASSERT_FALSE(received_event.empty());
-    auto parsed = DAS::Utils::ParseYyjsonFromString(received_event);
-    ASSERT_TRUE(parsed.has_value());
-    auto obj = parsed->as_object();
-    ASSERT_TRUE(obj.has_value());
-
-    auto api = (*obj)[std::string_view("api")].as_string();
-    ASSERT_TRUE(api.has_value());
-    EXPECT_EQ(*api, "api/v1/logs/get");
-
-    auto data = (*obj)[std::string_view("data")].as_object();
-    ASSERT_TRUE(data.has_value());
-
-    auto next_cursor = (*data)[std::string_view("nextCursor")].as_uint();
-    ASSERT_TRUE(next_cursor.has_value());
-    EXPECT_GT(*next_cursor, 0u);
-
-    auto entries = (*data)[std::string_view("entries")].as_array();
-    ASSERT_TRUE(entries.has_value());
-    ASSERT_FALSE(entries->empty());
-    auto first_entry = (*entries)[0].as_object();
-    ASSERT_TRUE(first_entry.has_value());
-    auto text_value = (*first_entry)[std::string_view("text")].as_string();
-    ASSERT_TRUE(text_value.has_value());
-    EXPECT_EQ(*text_value, "notify-me");
+    EXPECT_EQ(
+        notifier_->Consume(
+            Das::ExportInterface::DAS_LOG_CHANNEL_USER_JSONL,
+            &was_dirty),
+        DAS_S_OK);
+    EXPECT_TRUE(was_dirty);
 }
 
-TEST_F(LogRecorderFixture, LogRecorderTest_RecordWithoutInitFails)
+// 无 session 时（factory 传 null）Record 返 OBJECT_NOT_INIT（recorder 容忍空
+// notifier 但不容忍空 session——session 是写盘的硬前置）。
+TEST_F(LogRecorderFixture, LogRecorderTest_RecordWithoutSessionFails)
 {
-    Das::Core::LogRecorderRuntime::ResetForTest();
-
     Das::DasPtr<Das::ExportInterface::IDasProcessLogRecorder> recorder;
-    ASSERT_EQ(CreateIDasProcessLogRecorder(recorder.Put()), DAS_S_OK);
+    ASSERT_EQ(
+        CreateIDasProcessLogRecorder(notifier_.Get(), nullptr, recorder.Put()),
+        DAS_S_OK);
 
     auto entry = Das::DasPtr<Das::ExportInterface::IDasLogEntry>{
         new Das::Core::IDasLogEntryImpl{}};
@@ -196,4 +248,53 @@ TEST_F(LogRecorderFixture, LogRecorderTest_InvalidEnumRejected)
     EXPECT_EQ(
         entry->SetType(static_cast<Das::ExportInterface::DasLogType>(99)),
         DAS_E_INVALID_ENUM);
+}
+
+// IDasLogEntry getter 经接口读字段（替代 dynamic_cast 到 IDasLogEntryImpl）：
+// 本地 impl 路径返真值；跨进程 proxy 路径在 ProcessLogRecorderIpcTest 覆盖。
+TEST_F(LogRecorderFixture, LogRecorderTest_EntryGetterReturnsFieldValues)
+{
+    auto entry = Das::DasPtr<Das::ExportInterface::IDasLogEntry>{
+        new Das::Core::IDasLogEntryImpl{}};
+    DasU8StringOnStack first_text{"first"};
+    DasU8StringOnStack second_text{"second"};
+    ASSERT_EQ(
+        entry->SetType(Das::ExportInterface::DAS_LOG_TYPE_FOCUS),
+        DAS_S_OK);
+    ASSERT_EQ(entry->AddText(&first_text), DAS_S_OK);
+    ASSERT_EQ(entry->AddText(&second_text), DAS_S_OK);
+
+    Das::ExportInterface::DasLogType type =
+        Das::ExportInterface::DAS_LOG_TYPE_INFO;
+    EXPECT_EQ(entry->GetType(&type), DAS_S_OK);
+    EXPECT_EQ(type, Das::ExportInterface::DAS_LOG_TYPE_FOCUS);
+
+    size_t count = 0;
+    EXPECT_EQ(entry->GetTextCount(&count), DAS_S_OK);
+    EXPECT_EQ(count, 2u);
+
+    Das::DasPtr<IDasReadOnlyString> text0;
+    EXPECT_EQ(entry->GetText(0, text0.Put()), DAS_S_OK);
+    const char* text0_utf8 = nullptr;
+    ASSERT_TRUE(text0);
+    ASSERT_EQ(text0->GetUtf8(&text0_utf8), DAS_S_OK);
+    EXPECT_STREQ(text0_utf8, "first");
+
+    // 越界返 OUT_OF_RANGE。
+    Das::DasPtr<IDasReadOnlyString> text_out_of_range;
+    EXPECT_EQ(entry->GetText(99, text_out_of_range.Put()), DAS_E_OUT_OF_RANGE);
+}
+
+// IDasLogSession RAII：session 释时目录被删。
+TEST_F(LogRecorderFixture, LogRecorderTest_SessionDirectoryDeletedOnRelease)
+{
+    const auto dir = UniqueTempDir("SessionRaiiDelete");
+    ASSERT_EQ(CreateContext(dir), DAS_S_OK);
+    const auto session_dir = ReadSessionDirectory(session_.Get());
+    ASSERT_FALSE(session_dir.empty());
+    ASSERT_TRUE(std::filesystem::exists(session_dir));
+
+    session_.Reset();
+    recorder_.Reset(); // recorder 也持 session 引用，Reset 后才真正释放。
+    EXPECT_FALSE(std::filesystem::exists(session_dir));
 }

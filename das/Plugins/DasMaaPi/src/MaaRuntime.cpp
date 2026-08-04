@@ -1436,8 +1436,14 @@ namespace Das::Plugins::DasMaaPi
         // just the tasker. Recorder creation failure degrades focus logging
         // (log_context stays null, sinks see a null trans_arg) but does not
         // block the task.
+        // 当前传 nullptr/nullptr 走降级路径：本插件 loadMode=ipc 跑在 Host
+        // 进程，Host 无 session/notifier，recorder.Record 写盘返
+        // OBJECT_NOT_INIT （与 retire 前的 LogRecorderRuntime
+        // 未初始化行为一致）。主进程具名 服务 proxy 在后续 phase 接入（resolve
+        // → proxy → marshal 主进程）。
         Das::DasPtr<Das::ExportInterface::IDasProcessLogRecorder> log_recorder;
-        auto recorder_rc = CreateIDasProcessLogRecorder(log_recorder.Put());
+        auto                                                      recorder_rc =
+            CreateIDasProcessLogRecorder(nullptr, nullptr, log_recorder.Put());
         std::unique_ptr<MaaCallbackLoggerContext> log_context;
         if (DAS::IsFailed(recorder_rc))
         {

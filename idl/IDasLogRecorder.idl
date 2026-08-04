@@ -36,6 +36,9 @@ namespace Das::ExportInterface
 
     // 用户可见日志条目容器：插件用 Setter 填充一次，再经 IDasProcessLogRecorder::Record 提交。
     // 加字段/类型 = 加方法，老调用方不破坏。
+    // Getter 与 Setter 对称出现：recorder 经接口读字段，跨进程 entry proxy
+    // 经 getter RPC 把调用转发回插件侧 impl，避免 recorder dynamic_cast 到
+    // 具体实现类（跨进程 proxy 不是 impl，cast 返 nullptr 会丢日志）。
     [uuid("9274a013-4d88-4dd7-b964-322a9de4bf16")]
     interface IDasLogEntry : IDasBase
     {
@@ -43,6 +46,19 @@ namespace Das::ExportInterface
         DasResult AddText(IDasReadOnlyString* text);
         DasResult AddImage(IDasImage* image);
         DasResult SetField(IDasReadOnlyString* key, IDasReadOnlyString* json);
+
+        // 只读 getter：recorder 经接口读，跨进程 entry proxy 自动代理化。
+        DasResult GetType([out] DasLogType* p_out_type);
+        DasResult GetTextCount([out] size_t* p_out_count);
+        // 越界返回 DAS_E_OUT_OF_RANGE（与 IDasProgressUpdate::GetFieldByIndex 一致）。
+        DasResult GetText(size_t index, [out] IDasReadOnlyString** pp_out_text);
+        DasResult GetFieldCount([out] size_t* p_out_count);
+        DasResult GetField(
+            size_t               index,
+            [out] IDasReadOnlyString** pp_out_key,
+            [out] IDasReadOnlyString** pp_out_json);
+        DasResult GetImageCount([out] size_t* p_out_count);
+        DasResult GetImage(size_t index, [out] IDasImage** pp_out_image);
     }
 
     // 进程级日志记录器：把 IDasLogEntry 序列化为 JSONL 写入会话目录。
@@ -50,6 +66,22 @@ namespace Das::ExportInterface
     interface IDasProcessLogRecorder : IDasBase
     {
         DasResult Record(IDasLogEntry* entry);
+    }
+
+    // 会话目录 RAII：持本进程焦点日志 user.jsonl + img/ 子目录的生命周期。
+    // 工厂 CreateLogSession 在构造时建立 {ts}-{pid} 目录、清理孤儿会话目录；
+    // refcount 归零（最后一个 DasPtr 释）时目录被递归删除。GetSessionDir /
+    // GetUserJsonlPath / NextImageSeq 由 recorder 与 archive 经接口调用，
+    // 替代原 LogRecorderRuntime 的进程级静态状态。
+    [uuid("a1b2c3d4-5e6f-4a7b-8c9d-0e1f2a3b4c5d")]
+    interface IDasLogSession : IDasBase
+    {
+        // 返回当前会话目录绝对路径（含 {ts}-{pid} 段）。
+        DasResult GetSessionDir([out] IDasReadOnlyString** pp_out_directory);
+        // 返回会话目录下的 user.jsonl 完整路径。
+        DasResult GetUserJsonlPath([out] IDasReadOnlyString** pp_out_path);
+        // 返回进程内递增的图片序号（4 位零填充格式由调用方 sprintf）。
+        DasResult NextImageSeq([out] uint32_t* p_out_seq);
     }
 
     // 统一日志通知器：per-channel atomic dirty flag 的持有者。

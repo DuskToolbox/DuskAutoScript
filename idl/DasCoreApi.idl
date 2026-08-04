@@ -164,8 +164,11 @@ module
 
     // 工厂按 source 枚举分发到 UserJsonl impl（会话目录 user.jsonl）或
     // SpdlogFile impl（g_logger 的 rotating_file_sink_mt 目标文件）。
+    // UserJsonl impl 持 session 引用读 user.jsonl 路径；SpdlogFile impl 忽略 session
+    // 参数（读 g_logger 的 rotating_file_sink_mt 目标文件）。
     [ export, c_abi ] DasResult CreateIDasLogArchive(
         Das::ExportInterface::DasLogArchiveSource source,
+        Das::ExportInterface::IDasLogSession*     session,
         [out] Das::ExportInterface::IDasLogArchive** pp_out_archive);
 
     // 返回 g_logger 中固定的 DasLogNotifierSink（dynamic_cast sinks vector），
@@ -181,8 +184,22 @@ module
     [ export, c_abi ] DasResult CreateIDasLogEntry(
         [out] Das::ExportInterface::IDasLogEntry** pp_out_entry);
 
+    // 注入 notifier + session：recorder 写完 user.jsonl 后调 notifier->Signal(UserJsonl)
+    // 置 dirty flag；session 提供 user.jsonl 路径、会话目录、图片序号。
     [ export, c_abi ] DasResult CreateIDasProcessLogRecorder(
+        Das::ExportInterface::IDasLogNotifier*       notifier,
+        Das::ExportInterface::IDasLogSession*        session,
         [out] Das::ExportInterface::IDasProcessLogRecorder** pp_out_recorder);
+
+    //=============================================================================
+    // Log session (RAII session directory)
+    //=============================================================================
+
+    // 创建会话目录：ctor 建立 {ts}-{pid}/img/ 子目录并清理孤儿会话目录。
+    // refcount 归零时（最后一个 DasPtr 释）目录被递归删除。
+    [ export, c_abi ] DasResult CreateLogSession(
+        IDasReadOnlyString*                          debug_directory,
+        [out] Das::ExportInterface::IDasLogSession** pp_out_session);
 
     //=============================================================================
     // IPC timeout

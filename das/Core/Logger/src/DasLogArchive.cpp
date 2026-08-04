@@ -1,15 +1,15 @@
 // IDasLogArchive 实现：按字节偏移游标读取写盘的日志文件（非破坏、可回看）。
 // 工厂按 DasLogArchiveSource 分发：
-//   - UserJsonl：读 LogRecorderRuntime 会话目录的 user.jsonl（焦点日志）
+//   - UserJsonl：读 session_->GetUserJsonlPath() 指向的焦点日志文件
+//     （session 由 App.cpp / 测试注入，工厂 ctor 时一次性取路径缓存）
 //   - SpdlogFile：读 g_logger 的 rotating_file_sink_mt 目标文件（调试日志，
 //     恢复原版设计：dynamic_cast 拿 file_sink → ifstream(filename) →
-//     读前 g_logger->flush()）
+//     读前 g_logger->flush()）；忽略 session 参数
 // 返回的日志行为「换行分隔的拼接串」（绕开 Node NAPI 对字符串集合 out
 // 的不支持），Http 层再按行拆成数组对外。两 impl 共享行对齐与归一化助手。
 #include "das/_autogen/idl/wrapper/Das.ExportInterface.IDasLogArchive.Implements.hpp"
 
 #include <das/Core/Logger/DasLogNotifierSink.h>
-#include <das/Core/Logger/LogRecorderRuntime.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/DasApi.h>
 #include <das/DasString.hpp>
@@ -119,8 +119,8 @@ namespace
 } // namespace
 
 // ===== UserJsonl 实现（焦点日志：读会话目录 user.jsonl）=====
-// 读源固定为 LogRecorderRuntime 的会话目录 user.jsonl（焦点日志会话目录）；每条
-// Record 已同步 flush，读前无需 spdlog flush。
+// 读源固定为注入 session 的 user.jsonl 路径；每条 Record 已同步 flush，
+// 读前无需 spdlog flush。session 在 ctor 中一次性取路径，析构时不再访问。
 class IDasLogArchiveUserJsonlImpl final
     : public Das::ExportInterface::DasLogArchiveImplBase<
           IDasLogArchiveUserJsonlImpl>
@@ -128,11 +128,31 @@ class IDasLogArchiveUserJsonlImpl final
     std::filesystem::path user_jsonl_path_;
 
 public:
-    IDasLogArchiveUserJsonlImpl()
+    explicit IDasLogArchiveUserJsonlImpl(
+        Das::ExportInterface::IDasLogSession* session)
     {
-        // 读源固定为会话目录 user.jsonl；构造时 runtime 未初始化则留空，
+        // 从 session 读 user.jsonl 路径并缓存。session 为空或路径为空时留空，
         // 读时打开失败一律返回空结果而非异常。
-        user_jsonl_path_ = Das::Core::LogRecorderRuntime::UserJsonlPath();
+        if (session == nullptr)
+        {
+            return;
+        }
+        Das::DasPtr<IDasReadOnlyString> path_str;
+        if (DAS::IsFailed(session->GetUserJsonlPath(path_str.Put())))
+        {
+            return;
+        }
+        if (!path_str)
+        {
+            return;
+        }
+        const char* utf8 = nullptr;
+        if (DAS::IsFailed(path_str->GetUtf8(&utf8)) || utf8 == nullptr)
+        {
+            return;
+        }
+        user_jsonl_path_ =
+            std::filesystem::path(reinterpret_cast<const char8_t*>(utf8));
     }
 
     DasResult ReadTail(
@@ -406,6 +426,7 @@ public:
 
 DasResult CreateIDasLogArchive(
     Das::ExportInterface::DasLogArchiveSource source,
+    Das::ExportInterface::IDasLogSession*     session,
     Das::ExportInterface::IDasLogArchive**    pp_out_archive)
 {
     DAS_UTILS_CHECK_POINTER(pp_out_archive);
@@ -415,13 +436,15 @@ DasResult CreateIDasLogArchive(
         {
         case Das::ExportInterface::DAS_LOG_ARCHIVE_SOURCE_USER_JSONL:
         {
-            auto* p = new IDasLogArchiveUserJsonlImpl{};
+            auto* p = new IDasLogArchiveUserJsonlImpl{session};
             *pp_out_archive = p;
             p->AddRef();
             return DAS_S_OK;
         }
         case Das::ExportInterface::DAS_LOG_ARCHIVE_SOURCE_SPDLOG_FILE:
         {
+            // SpdlogFile impl 读 g_logger 的 rotating_file_sink_mt 目标文件，
+            // 不需要 session（参数忽略）。
             auto* p = new IDasLogArchiveSpdlogFileImpl{};
             *pp_out_archive = p;
             p->AddRef();

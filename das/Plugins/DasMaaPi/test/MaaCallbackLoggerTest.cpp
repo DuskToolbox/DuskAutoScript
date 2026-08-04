@@ -1,6 +1,7 @@
 #include "../src/MaaCallbackLogger.h"
 
-#include <das/Core/Logger/LogRecorderRuntime.h>
+#include <das/Core/Logger/DasLogNotifierSink.h>
+#include <das/Core/Logger/DasLogSessionImpl.h>
 #include <das/DasApi.h>
 #include <das/DasPtr.hpp>
 #include <das/Utils/DasJsonCore.h>
@@ -33,30 +34,78 @@ namespace
     class MaaCallbackLoggerFixture : public ::testing::Test
     {
     protected:
-        void TearDown() override
+        Das::DasPtr<Das::ExportInterface::IDasLogNotifier> notifier_;
+        Das::DasPtr<Das::ExportInterface::IDasLogSession>  session_;
+
+        void SetUp() override { GetDasLogNotifier(notifier_.Put()); }
+
+        // 测试用 recorder context 工厂：创建独立 session + recorder 注入到
+        // fixture 持有的 notifier_/session_。每用例独立目录，RAII 自动清理。
+        MaaCallbackLoggerContext MakeRecorderContext(
+            std::filesystem::path& out_dir,
+            FocusImageProvider     image_provider = {})
         {
-            Das::Core::LogRecorderRuntime::Shutdown();
-            Das::Core::LogRecorderRuntime::ResetForTest();
+            out_dir = UniqueTempDir("CallbackLogger");
+            const auto                      directory_str = out_dir.u8string();
+            Das::DasPtr<IDasReadOnlyString> directory_param;
+            EXPECT_EQ(
+                CreateIDasReadOnlyStringFromUtf8(
+                    reinterpret_cast<const char*>(directory_str.c_str()),
+                    directory_param.Put()),
+                DAS_S_OK);
+            EXPECT_EQ(
+                CreateLogSession(directory_param.Get(), session_.Put()),
+                DAS_S_OK);
+
+            MaaCallbackLoggerContext context;
+            EXPECT_EQ(
+                CreateIDasProcessLogRecorder(
+                    notifier_.Get(),
+                    session_.Get(),
+                    context.recorder.Put()),
+                DAS_S_OK);
+            context.image_provider = std::move(image_provider);
+            return context;
+        }
+
+        std::filesystem::path ReadUserJsonlPath()
+        {
+            if (!session_)
+            {
+                return {};
+            }
+            Das::DasPtr<IDasReadOnlyString> path_str;
+            if (DAS::IsFailed(session_->GetUserJsonlPath(path_str.Put()))
+                || !path_str)
+            {
+                return {};
+            }
+            const char* utf8 = nullptr;
+            if (DAS::IsFailed(path_str->GetUtf8(&utf8)) || utf8 == nullptr)
+            {
+                return {};
+            }
+            return std::filesystem::path{reinterpret_cast<const char8_t*>((utf8)});
+        }
+
+        // 读 user.jsonl 最后一行并解析为 JSON 对象。
+        yyjson::value ReadLastEntry()
+        {
+            const auto jsonl_path = ReadUserJsonlPath();
+            EXPECT_FALSE(jsonl_path.empty());
+            EXPECT_TRUE(std::filesystem::exists(jsonl_path));
+            std::ifstream input{jsonl_path};
+            std::string   line;
+            std::string   last;
+            while (std::getline(input, line))
+            {
+                last = line;
+            }
+            auto parsed = Das::Utils::ParseYyjsonFromString(last);
+            EXPECT_TRUE(parsed.has_value());
+            return parsed ? std::move(*parsed) : yyjson::value{};
         }
     };
-
-    // 读 user.jsonl 最后一行并解析为 JSON 对象。
-    yyjson::value ReadLastEntry()
-    {
-        const auto jsonl_path = Das::Core::LogRecorderRuntime::UserJsonlPath();
-        EXPECT_FALSE(jsonl_path.empty());
-        EXPECT_TRUE(std::filesystem::exists(jsonl_path));
-        std::ifstream input{jsonl_path};
-        std::string   line;
-        std::string   last;
-        while (std::getline(input, line))
-        {
-            last = line;
-        }
-        auto parsed = Das::Utils::ParseYyjsonFromString(last);
-        EXPECT_TRUE(parsed.has_value());
-        return parsed ? std::move(*parsed) : yyjson::value{};
-    }
 
     yyjson::value FocusDetails(const std::string& message_value)
     {
@@ -84,22 +133,6 @@ namespace
             CreateIDasImageFromDecodedData(&desc, &size, image.Put()),
             DAS_S_OK);
         return image;
-    }
-
-    MaaCallbackLoggerContext MakeRecorderContext(
-        std::filesystem::path& out_dir,
-        FocusImageProvider     image_provider = {})
-    {
-        Das::Core::LogRecorderRuntime::ResetForTest();
-        out_dir = UniqueTempDir("CallbackLogger");
-        EXPECT_EQ(Das::Core::LogRecorderRuntime::Initialize(out_dir), DAS_S_OK);
-
-        MaaCallbackLoggerContext context;
-        EXPECT_EQ(
-            CreateIDasProcessLogRecorder(context.recorder.Put()),
-            DAS_S_OK);
-        context.image_provider = std::move(image_provider);
-        return context;
     }
 
     std::string SerializeDetails(const yyjson::value& details)
@@ -279,7 +312,7 @@ TEST_F(MaaCallbackLoggerFixture, LogFocusMessage_NonFocusMessageIgnored)
         "Tasker.Task.Starting",
         SerializeDetails(details).c_str());
 
-    const auto jsonl_path = Das::Core::LogRecorderRuntime::UserJsonlPath();
+    const auto jsonl_path = ReadUserJsonlPath();
     EXPECT_FALSE(std::filesystem::exists(jsonl_path));
 }
 

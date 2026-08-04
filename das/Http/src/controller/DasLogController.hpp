@@ -22,21 +22,25 @@ namespace Das::Http
     // after / before。两类归档：p_archive_（焦点日志，user.jsonl）+
     // p_debug_archive_ （调试日志，spdlog rotating_file）。GetLogs 服务焦点端点
     // logs/{profile}， GetDebugLogs 服务调试端点
-    // logs/debug/{profile}（返回纯文本 logs[]）。
+    // logs/debug/{profile}（返回纯文本 logs[]）。session 由 App.cpp 注入：
+    // 焦点 user.jsonl archive 经它定位文件路径；调试 spdlog archive 不用
+    // session。
     class DasLogController
     {
         DAS::DasPtr<ExportInterface::IDasLogArchive> p_archive{};
         DAS::DasPtr<ExportInterface::IDasLogArchive> p_debug_archive{};
 
     public:
-        DasLogController()
+        explicit DasLogController(Das::ExportInterface::IDasLogSession* session)
         {
             DAS_LOG_INFO("Preparing to load log archive.");
             ::CreateIDasLogArchive(
                 ExportInterface::DAS_LOG_ARCHIVE_SOURCE_USER_JSONL,
+                session,
                 p_archive.Put());
             ::CreateIDasLogArchive(
                 ExportInterface::DAS_LOG_ARCHIVE_SOURCE_SPDLOG_FILE,
+                nullptr, // SpdlogFile impl 不需 session
                 p_debug_archive.Put());
             DAS_LOG_INFO("Log archive loaded.");
         }

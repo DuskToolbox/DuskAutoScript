@@ -1,5 +1,6 @@
+#include <das/Core/Logger/DasLogNotifierSink.h>
+#include <das/Core/Logger/DasLogSessionImpl.h>
 #include <das/Core/Logger/DasProcessLogRecorderImpl.h>
-#include <das/Core/Logger/LogRecorderRuntime.h>
 #include <das/DasApi.h>
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
@@ -85,13 +86,70 @@ namespace
 #endif
     }
 
+    std::filesystem::path ReadUserJsonlPath(
+        Das::ExportInterface::IDasLogSession* session)
+    {
+        Das::DasPtr<IDasReadOnlyString> path_str;
+        if (DAS::IsFailed(session->GetUserJsonlPath(path_str.Put()))
+            || !path_str)
+        {
+            return {};
+        }
+        const char* utf8 = nullptr;
+        if (DAS::IsFailed(path_str->GetUtf8(&utf8)) || utf8 == nullptr)
+        {
+            return {};
+        }
+        return std::filesystem::path{reinterpret_cast<const char8_t*>((utf8)});
+    }
+
+    std::filesystem::path ReadSessionDirectory(
+        Das::ExportInterface::IDasLogSession* session)
+    {
+        Das::DasPtr<IDasReadOnlyString> directory_str;
+        if (DAS::IsFailed(session->GetSessionDir(directory_str.Put()))
+            || !directory_str)
+        {
+            return {};
+        }
+        const char* utf8 = nullptr;
+        if (DAS::IsFailed(directory_str->GetUtf8(&utf8)) || utf8 == nullptr)
+        {
+            return {};
+        }
+        return std::filesystem::path{reinterpret_cast<const char8_t*>((utf8)});
+    }
+
     class SessionOrphanFixture : public ::testing::Test
     {
     protected:
-        void TearDown() override
+        Das::DasPtr<Das::ExportInterface::IDasLogNotifier>        notifier_;
+        Das::DasPtr<Das::ExportInterface::IDasLogSession>         session_;
+        Das::DasPtr<Das::ExportInterface::IDasProcessLogRecorder> recorder_;
+
+        void SetUp() override { GetDasLogNotifier(notifier_.Put()); }
+
+        DasResult CreateContext(const std::filesystem::path& debug_directory)
         {
-            Das::Core::LogRecorderRuntime::Shutdown();
-            Das::Core::LogRecorderRuntime::ResetForTest();
+            const auto directory_str = debug_directory.u8string();
+            Das::DasPtr<IDasReadOnlyString> directory_param;
+            const auto cr = CreateIDasReadOnlyStringFromUtf8(
+                reinterpret_cast<const char*>(directory_str.c_str()),
+                directory_param.Put());
+            if (DAS::IsFailed(cr))
+            {
+                return cr;
+            }
+            const auto session_cr =
+                CreateLogSession(directory_param.Get(), session_.Put());
+            if (DAS::IsFailed(session_cr))
+            {
+                return session_cr;
+            }
+            return CreateIDasProcessLogRecorder(
+                notifier_.Get(),
+                session_.Get(),
+                recorder_.Put());
         }
     };
 } // namespace
@@ -103,11 +161,7 @@ TEST_F(
     SessionOrphanCleanupTest_AddImageWritesJpgWithRelativeRef)
 {
     const auto dir = UniqueTempDir("AddImageJpg");
-    Das::Core::LogRecorderRuntime::ResetForTest();
-    ASSERT_EQ(Das::Core::LogRecorderRuntime::Initialize(dir), DAS_S_OK);
-
-    Das::DasPtr<Das::ExportInterface::IDasProcessLogRecorder> recorder;
-    ASSERT_EQ(CreateIDasProcessLogRecorder(recorder.Put()), DAS_S_OK);
+    ASSERT_EQ(CreateContext(dir), DAS_S_OK);
 
     auto entry = Das::DasPtr<Das::ExportInterface::IDasLogEntry>{
         new Das::Core::IDasLogEntryImpl{}};
@@ -133,9 +187,9 @@ TEST_F(
         DAS_S_OK);
     ASSERT_EQ(entry->AddImage(image.Get()), DAS_S_OK);
 
-    ASSERT_EQ(recorder->Record(entry.Get()), DAS_S_OK);
+    ASSERT_EQ(recorder_->Record(entry.Get()), DAS_S_OK);
 
-    const auto jsonl_path = Das::Core::LogRecorderRuntime::UserJsonlPath();
+    const auto jsonl_path = ReadUserJsonlPath(session_.Get());
     ASSERT_FALSE(jsonl_path.empty());
     ASSERT_TRUE(std::filesystem::exists(jsonl_path));
 
@@ -156,7 +210,7 @@ TEST_F(
     EXPECT_EQ(*ref_value, "img/0001.jpg");
 
     const auto img_path =
-        Das::Core::LogRecorderRuntime::SessionDir() / "img" / "0001.jpg";
+        ReadSessionDirectory(session_.Get()) / "img" / "0001.jpg";
     ASSERT_TRUE(std::filesystem::exists(img_path));
 
     std::ifstream     file_input{img_path, std::ios::binary};
@@ -179,8 +233,8 @@ TEST_F(
     EXPECT_EQ(decoded_size.height, height);
 }
 
-// D-88-05b：启动清理孤儿会话目录——死 pid 目录被删除、活 pid 目录保留、
-// 非会话目录不动、本次新会话目录已创建。
+// 启动清理孤儿会话目录——死 pid 目录被删除、活 pid 目录保留、
+// 非会话目录不动、本次新会话目录已创建。清理逻辑在 CreateLogSession ctor 中。
 TEST_F(
     SessionOrphanFixture,
     SessionOrphanCleanupTest_RemovesDeadPidKeepsLivePid)
@@ -204,11 +258,10 @@ TEST_F(
     std::filesystem::create_directories(live_dir);
     std::filesystem::create_directories(other_dir);
 
-    Das::Core::LogRecorderRuntime::ResetForTest();
-    ASSERT_EQ(Das::Core::LogRecorderRuntime::Initialize(debug_dir), DAS_S_OK);
+    ASSERT_EQ(CreateContext(debug_dir), DAS_S_OK);
 
     EXPECT_FALSE(std::filesystem::exists(dead_dir));
     EXPECT_TRUE(std::filesystem::exists(live_dir));
     EXPECT_TRUE(std::filesystem::exists(other_dir));
-    EXPECT_FALSE(Das::Core::LogRecorderRuntime::SessionDir().empty());
+    EXPECT_FALSE(ReadSessionDirectory(session_.Get()).empty());
 }
