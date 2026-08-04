@@ -426,7 +426,6 @@ TEST(MaaDynamicSymbols, LoadNeverThrowsEvenWhenLibrariesUnavailable)
     EXPECT_NO_THROW((void)LoadMaaDynamicSymbols());
     // Touch every pointer so the compiler can't optimize the call away.
     // Nullness is deliberately not asserted (see the contract comment above).
-    (void)symbols.tasker_add_sink;
     (void)symbols.win32_create;
     (void)symbols.gamepad_create;
     (void)symbols.tk_list_create;

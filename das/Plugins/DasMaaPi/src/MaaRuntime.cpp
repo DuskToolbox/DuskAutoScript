@@ -532,20 +532,16 @@ namespace Das::Plugins::DasMaaPi
                 MaaMsgCallbackFn callback,
                 void*            trans_arg) override
             {
-                const auto& symbols = LoadMaaDynamicSymbols();
-                if (!symbols.tasker_add_sink)
-                {
-                    // T-88-13: dynamic symbol resolution failed (e.g. an
-                    // unusual MaaFW build without the export) — surface a
-                    // diagnostic, never crash. Focus logging degrades off.
-                    return MaaApiResult::Failure(
-                        0,
-                        "MaaTaskerAddSink is not available on this build of "
-                        "DasMaaPi");
-                }
-                const auto sink_id = symbols.tasker_add_sink(
-                    reinterpret_cast<void*>(tasker),
-                    reinterpret_cast<void*>(callback),
+                // Sink family is cross-platform core MaaFW — every MaaFW
+                // build exports MaaTaskerAddSink, so it is a link-time
+                // dependency resolved against the SHARED IMPORTED
+                // DasBundledMaaFramework. No dynamic symbol resolution, no
+                // null check: if the binary links, the symbol exists.
+                // Failure here means MaaFW rejected the sink (invalid tasker
+                // handle, etc.) — surface as Failure, never crash.
+                const auto sink_id = MaaTaskerAddSink(
+                    AsMaaTasker(tasker),
+                    reinterpret_cast<MaaEventCallback>(callback),
                     trans_arg);
                 if (sink_id == MaaInvalidId)
                 {
@@ -744,6 +740,14 @@ namespace Das::Plugins::DasMaaPi
             {
                 // NOLINTNEXTLINE(performance-no-int-to-ptr)
                 return reinterpret_cast<MaaController*>(handle);
+            }
+
+            // MaaTaskerHandle（uintptr_t）→ MaaTasker*：同 AsMaaController 的
+            // 边界恢复语义，用于 sink 家族与 task 操作的硬链直调。
+            static MaaTasker* AsMaaTasker(MaaTaskerHandle handle)
+            {
+                // NOLINTNEXTLINE(performance-no-int-to-ptr)
+                return reinterpret_cast<MaaTasker*>(handle);
             }
         };
 #else

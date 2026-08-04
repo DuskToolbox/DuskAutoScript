@@ -66,13 +66,6 @@ namespace Das::Plugins::DasMaaPi
     //     const MaaToolkitDesktopWindow*);
     using MaaToolkitDesktopWindowGetWindowNameFn = const char* (*)(const void*);
 
-    // MaaSinkId MaaTaskerAddSink(MaaTasker* tasker, MaaEventCallback sink,
-    //     void* trans_arg);
-    // The sink callback is a MaaEventCallback (__stdcall on Windows); it is
-    // passed opaquely as void* here so the header stays free of MaaFW
-    // includes. Return is MaaSinkId (int64_t), 0 == MaaInvalidId.
-    using MaaTaskerAddSinkFn = std::int64_t (*)(void*, void*, void*);
-
     // All symbols routed through runtime lookup. Any
     // pointer that fails to resolve stays null — callers must check before
     // dispatching and surface controller-type-unsupported-on-platform (or an
@@ -83,7 +76,6 @@ namespace Das::Plugins::DasMaaPi
     // QueryMaaFrameworkVersion 同源），不经动态符号。
     struct MaaDynamicSymbols
     {
-        MaaTaskerAddSinkFn                     tasker_add_sink = nullptr;
         MaaWin32ControllerCreateFn             win32_create = nullptr;
         MaaGamepadControllerCreateFn           gamepad_create = nullptr;
         MaaToolkitDesktopWindowListCreateFn    tk_list_create = nullptr;

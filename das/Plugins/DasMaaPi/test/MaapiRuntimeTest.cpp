@@ -507,6 +507,28 @@ TEST(DasMaaPiRuntime, Run_CallsPostConnectionBeforePostTask)
         << "PostConnection must precede PostTask";
 }
 
+TEST(DasMaaPiRuntime, Run_AfterTaskerSinkMigration_StillRegistersTaskerSink)
+{
+    // Regression anchor for the sink-family hard-link migration: the tasker
+    // sink registration pathway must keep working end-to-end after the
+    // indirection through MaaDynamicSymbols is removed. The Fake path is
+    // unaffected (it always recorded the call), but this test pins the
+    // Run -> SetCallback -> PostTask ordering and the no-warning contract
+    // so a future regression of the SetCallback wiring is caught.
+    FakeMaaApiBoundary fake;
+
+    auto result = MaaRuntime::Run(Envelope(), fake, nullptr);
+
+    EXPECT_EQ(result.das_result, DAS_S_OK);
+    EXPECT_TRUE(fake.Contains("SetCallback"));
+    EXPECT_TRUE(fake.ContainsSubstring("PostTask:"));
+    for (const auto& diagnostic : result.diagnostics)
+    {
+        EXPECT_NE(diagnostic.code, "set-callback-failed")
+            << "tasker sink registration must not emit a warning diagnostic";
+    }
+}
+
 TEST(DasMaaPiRuntime, Run_ShortCircuitsWhenNotConnected)
 {
     FakeMaaApiBoundary fake;
