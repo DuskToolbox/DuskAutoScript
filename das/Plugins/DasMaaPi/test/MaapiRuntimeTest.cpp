@@ -576,6 +576,44 @@ TEST(DasMaaPiRuntime, Run_RegistersResourceAndControllerSinks)
     EXPECT_TRUE(fake.ContainsSubstring("PostTask:"));
 }
 
+TEST(DasMaaPiRuntime, Run_RegistersSinksBeforeEmittingOps)
+{
+    // Sink-timing invariant: the resource sink MUST be registered before
+    // LoadResource fires Resource.Loading.* events, and the controller sink
+    // MUST be registered before PostConnection fires Controller.Action.*
+    // events. A sink registered only after the op has finished would
+    // silently lose every event emitted during that op. The Fake records
+    // calls in invocation order, so the sink's index must be smaller than
+    // the first emitting op's index.
+    FakeMaaApiBoundary fake;
+
+    auto result = MaaRuntime::Run(Envelope(), fake, nullptr);
+
+    EXPECT_EQ(result.das_result, DAS_S_OK);
+    const auto register_resource =
+        std::ranges::find(fake.calls, std::string{"RegisterResourceSink"});
+    const auto first_load_resource = std::ranges::find_if(
+        fake.calls,
+        [](const std::string& c) { return c.starts_with("LoadResource:"); });
+    ASSERT_NE(register_resource, fake.calls.end());
+    ASSERT_NE(first_load_resource, fake.calls.end());
+    EXPECT_LT(
+        std::distance(fake.calls.begin(), register_resource),
+        std::distance(fake.calls.begin(), first_load_resource))
+        << "RegisterResourceSink must precede LoadResource";
+
+    const auto register_controller =
+        std::ranges::find(fake.calls, std::string{"RegisterControllerSink"});
+    const auto post_connection =
+        std::ranges::find(fake.calls, std::string{"PostConnection"});
+    ASSERT_NE(register_controller, fake.calls.end());
+    ASSERT_NE(post_connection, fake.calls.end());
+    EXPECT_LT(
+        std::distance(fake.calls.begin(), register_controller),
+        std::distance(fake.calls.begin(), post_connection))
+        << "RegisterControllerSink must precede PostConnection";
+}
+
 TEST(DasMaaPiRuntime, Run_SinkRegistrationFailureDoesNotBlock)
 {
     // Sink registration failure degrades to a warning diagnostic — does NOT

@@ -1409,6 +1409,32 @@ namespace Das::Plugins::DasMaaPi
             return result;
         }
 
+        // Resource sink MUST be registered BEFORE LoadResource so the
+        // Resource.Loading.Starting/Succeeded/Failed lifecycle events reach
+        // the callback (MaaFW emits them during LoadResource's
+        // post_bundle/wait). Registering after — as the previous wiring did
+        // — silently loses every Resource.Loading.* message because the sink
+        // is attached only after the op that emits them has finished.
+        // log_context is already constructed above (declared before every
+        // sink owner), so trans_arg stays valid through ScopedResource
+        // destruction. Failure degrades to a warning, never short-circuits.
+        if (log_context)
+        {
+            auto reg_res = boundary.RegisterResourceSink(
+                resource.get(),
+                &MaaCallbackLoggerEntry,
+                log_context.get());
+            if (!reg_res.ok)
+            {
+                AddDiagnostic(
+                    result,
+                    "register-resource-sink-failed",
+                    reg_res.message,
+                    reg_res.provider_code,
+                    "warning");
+            }
+        }
+
         for (const auto& path : envelope.maapi.resource_paths)
         {
             auto load = boundary.LoadResource(resource.get(), path);
@@ -1489,6 +1515,30 @@ namespace Das::Plugins::DasMaaPi
             return result;
         }
         const ScopedController controller(boundary, controller_handle);
+
+        // Controller sink MUST be registered BEFORE PostConnection so the
+        // Controller.Action.Starting/Succeeded/Failed events emitted during
+        // the connect op reach the callback. Registering after — as the
+        // previous wiring did — silently loses every Controller.Action.*
+        // message. log_context is already constructed above, trans_arg
+        // stays valid through ScopedController destruction. Failure degrades
+        // to a warning, never short-circuits.
+        if (log_context)
+        {
+            auto reg_ctrl = boundary.RegisterControllerSink(
+                controller.get(),
+                &MaaCallbackLoggerEntry,
+                log_context.get());
+            if (!reg_ctrl.ok)
+            {
+                AddDiagnostic(
+                    result,
+                    "register-controller-sink-failed",
+                    reg_ctrl.message,
+                    reg_ctrl.provider_code,
+                    "warning");
+            }
+        }
 
         const ScopedTasker tasker(boundary, boundary.CreateTasker());
         if (tasker.get() == INVALID_MAA_TASKER_HANDLE)
@@ -1629,36 +1679,11 @@ namespace Das::Plugins::DasMaaPi
                     reg_ctx.provider_code,
                     "warning");
             }
-            // Resource / controller sink 注册：与 tasker sink 共享同一个
-            // MaaCallbackLoggerEntry 回调与 log_context trans_arg，让资源加载
-            // 与控制器连接事件也进入 Record 管线。失败仅告警，不阻断 PostTask
-            // （镜像 SetCallback 既有降级范式；只有连接失败才短路）。
-            auto reg_res = boundary.RegisterResourceSink(
-                resource.get(),
-                &MaaCallbackLoggerEntry,
-                log_context.get());
-            if (!reg_res.ok)
-            {
-                AddDiagnostic(
-                    result,
-                    "register-resource-sink-failed",
-                    reg_res.message,
-                    reg_res.provider_code,
-                    "warning");
-            }
-            auto reg_ctrl = boundary.RegisterControllerSink(
-                controller.get(),
-                &MaaCallbackLoggerEntry,
-                log_context.get());
-            if (!reg_ctrl.ok)
-            {
-                AddDiagnostic(
-                    result,
-                    "register-controller-sink-failed",
-                    reg_ctrl.message,
-                    reg_ctrl.provider_code,
-                    "warning");
-            }
+            // Resource / controller sinks are registered earlier — at the
+            // respective owner's creation site (before LoadResource /
+            // PostConnection) — so their lifecycle events reach the
+            // callback. See the registration blocks next to ScopedResource
+            // and ScopedController above.
         }
 
         AgentRuntime::BoostAgentProcessRunner default_agent_runner;
