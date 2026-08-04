@@ -7883,3 +7883,60 @@ TEST(MaapiProjectionTest, WelcomeSectionAbsentWhenNoWelcome)
 
     EXPECT_FALSE(FindLayoutSection(document, "welcome").has_value());
 }
+
+// welcome 内容支持 PI i18n：值以 '$' 开头时按 translations[lang][key] 解析为
+// 翻译文本。经 ResolveI18nOrDiag 走与 releaseNote / section label 一致的 i18n
+// 链路（无新机制）。
+TEST(MaapiProjectionTest, WelcomeI18nKeyResolved)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto catalog = MakeStrictProjectionMockCatalog();
+    catalog.welcome = "$greeting.welcome";
+    catalog.translations["zh_cn"]["greeting.welcome"] = "# 欢迎";
+    AcceptedSettingsDto settings;
+    settings.pi.language = "zh_cn";
+
+    auto document = ProjectAuthoringDocument(settings, &catalog, {}, 0);
+
+    auto field = FindRootField(document, "welcome");
+    ASSERT_TRUE(field.has_value());
+    auto field_obj = field->as_object();
+    ASSERT_TRUE(field_obj.has_value());
+    const std::string value = std::string(
+        (*field_obj)[std::string_view("value")].as_string().value_or(""));
+    EXPECT_EQ(value, "# 欢迎");
+}
+
+// welcome \$key 缺译时不应投影该 field（避免用户看到 \$key 字面量）。同时
+// projection_diagnostics 应含 warning diagnostic（ResolveI18nOrDiag 缺译时
+// 上报）。
+TEST(MaapiProjectionTest, WelcomeI18nMissingKeyNotProjected)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto catalog = MakeStrictProjectionMockCatalog();
+    catalog.welcome = "$nonexistent.key";
+    // translations 不含 nonexistent.key
+    AcceptedSettingsDto settings;
+    settings.pi.language = "zh_cn";
+
+    std::vector<PiDiagnosticDto> diags;
+    auto document = ProjectAuthoringDocument(settings, &catalog, {}, 0, &diags);
+
+    // \$key 缺译 → 不投影 welcome field（避免显示 \$key 字面量）。
+    EXPECT_FALSE(FindRootField(document, "welcome").has_value());
+
+    // ResolveI18nOrDiag 应已 emit warning diagnostic。
+    bool found_warning = false;
+    for (const auto& d : diags)
+    {
+        if (d.severity == "warning"
+            && d.message.find("nonexistent.key") != std::string::npos)
+        {
+            found_warning = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(found_warning);
+}
