@@ -57,34 +57,44 @@ namespace Das::Plugins::DasMaaPi
             boost::system::error_code ec;
 
             // MaaFramework.dll is hard-linked for the cross-platform core
-            // (MaaAdbControllerCreate / MaaDbgControllerCreate / ...), so
-            // it is already mapped into the process by the time DasMaaPi
-            // runs. Loading it by name returns the existing module handle
-            // (Windows refcounts module handles; *nix dlopen semantics
-            // match). On a platform whose MaaFW build does not export
-            // MaaWin32ControllerCreate / MaaGamepadControllerCreate (Linux
-            // MaaFW has no Win32/Gamepad controller), has() returns false
-            // and the pointer stays null — exactly the dynamic-failure
-            // behavior we want, with zero #ifdef sprawl.
+            // (MaaAdbControllerCreate / MaaDbgControllerCreate / the
+            // PostConnection/Wait/Connected + sink family), so it is
+            // already mapped into the process by the time DasMaaPi runs.
+            // Those cross-platform core symbols are hard-linked direct
+            // calls in ScopedMaaApiBoundary prod; this dynamic load serves
+            // only the remaining platform-specific symbols (win32_create /
+            // gamepad_create + the MaaToolkit family resolved below).
             //
-            // 加载路径：MaaFramework.dll 由 DasHostX（IPC host 进程）以
-            // load_with_altered_search_path 从插件目录加载（CppHost.cpp
-            // 注释），进程里虽已映射，但 search_system_folders
-            // 只在系统目录搜索，裸名 "MaaFramework" 会 load 失败 → version 恒为
-            // nullptr → 版本号不显示。与 toolkit 一致 用插件目录绝对路径 +
-            // load_with_altered_search_path 重新解析
-            // （已映射模块按名匹配返回既有句柄）。
-            // MaaFramework.dll is hard-linked for the cross-platform core
-            // (MaaAdbControllerCreate / MaaDbgControllerCreate / ...), so
-            // it is already mapped into the process by the time DasMaaPi
-            // runs. Loading it by name returns the existing module handle
-            // (Windows refcounts module handles; *nix dlopen semantics
-            // match). On a platform whose MaaFW build does not export
-            // MaaWin32ControllerCreate / MaaGamepadControllerCreate (Linux
-            // MaaFW has no Win32/Gamepad controller), has() returns false
-            // and the pointer stays null — exactly the dynamic-failure
-            // behavior we want, with zero #ifdef sprawl.
-            handles.framework.load("MaaFramework", ec);
+            // The framework handle MUST be re-derived from the plugin's
+            // own co-located directory, mirroring the toolkit load below:
+            // bare-name load("MaaFramework") searches only system folders
+            // and fails when DasHostX loads the plugin from a non-system
+            // plugin directory, leaving every framework symbol null
+            // (commit 89962574 documented the MaaVersion-blank symptom).
+            // this_line_location().parent_path() + altered_search_path
+            // returns the already-mapped module handle (Windows refcounts
+            // module handles; already-mapped modules match by name
+            // regardless of path). On a platform whose MaaFW build does
+            // not export MaaWin32ControllerCreate /
+            // MaaGamepadControllerCreate (Linux MaaFW has no Win32/Gamepad
+            // controller), has() returns false and the pointer stays null
+            // — the dynamic-failure behavior we want, with zero #ifdef
+            // sprawl.
+            try
+            {
+                const auto plugin_module = boost::dll::this_line_location();
+                const auto plugin_dir = plugin_module.parent_path();
+                handles.framework.load(
+                    plugin_dir / "MaaFramework",
+                    boost::dll::load_mode::load_with_altered_search_path,
+                    ec);
+            }
+            catch (const std::exception&)
+            {
+                // this_line_location() can throw on exotic platforms; the
+                // framework handle stays unloaded and every dynamic symbol
+                // resolved below remains null.
+            }
             if (!ec && handles.framework.is_loaded())
             {
                 // MaaTaskerAddSink registers the MaaEventCallback sink
