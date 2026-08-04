@@ -38,6 +38,11 @@ namespace Das::Plugins::DasMaaPi
     // values are immutable, and mutating them through the mut_doc API after
     // cross-function moves risks invalid UTF-8 on write. Rebuild produces a
     // clean independent value that the caller can serialize or move freely.
+    //
+    // Nesting is capped at an internal depth limit (well above any legitimate
+    // PI document depth). If the limit is exceeded the offending subtree is
+    // deep-cloned unchanged (no resolution) rather than risking stack
+    // exhaustion on pathological or adversarial input.
     yyjson::value ResolveI18nJson(
         const yyjson::value& raw,
         const PiCatalog&     catalog,
