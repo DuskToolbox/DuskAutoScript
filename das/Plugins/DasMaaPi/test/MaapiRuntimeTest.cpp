@@ -604,6 +604,70 @@ TEST(DasMaaPiRuntime, Run_SinkRegistrationFailureDoesNotBlock)
     EXPECT_TRUE(find_warning("register-controller-sink-failed"));
 }
 
+TEST(DasMaaPiRuntime, Run_RegistersTaskerContextSinkForNodeFocus)
+{
+    // MaaFW delivers Node.* focus-bearing messages (Recognition / Action /
+    // NextList / WaitFreezes) ONLY through MaaTaskerAddContextSink — the
+    // main tasker sink (MaaTaskerAddSink, wired via SetCallback) never sees
+    // them. Without RegisterTaskerContextSink every focus template silently
+    // misses at the production boundary. Run MUST register the context sink
+    // after SetCallback, sharing the same callback + trans_arg so Node.*
+    // flows into the existing MaaCallbackLogger pipeline.
+    FakeMaaApiBoundary fake;
+
+    auto result = MaaRuntime::Run(Envelope(), fake, nullptr);
+
+    EXPECT_EQ(result.das_result, DAS_S_OK);
+    EXPECT_TRUE(fake.Contains("RegisterTaskerContextSink"));
+    // Context sink must share the same trans_arg as the main sink — all
+    // three sinks (main / context / resource / controller) route to the
+    // same MaaCallbackLoggerEntry with the same log_context.
+    ASSERT_NE(fake.last_set_callback_trans_arg, nullptr);
+    EXPECT_EQ(
+        fake.last_registered_tasker_context_sink_trans_arg,
+        fake.last_set_callback_trans_arg);
+    // Ordering: context sink registration follows SetCallback (the main
+    // sink) — both must precede PostTask so focus messages during task
+    // execution reach the logger.
+    const auto set_callback_it =
+        std::ranges::find(fake.calls, std::string{"SetCallback"});
+    const auto ctx_sink_it =
+        std::ranges::find(fake.calls, std::string{"RegisterTaskerContextSink"});
+    const auto first_post_task = std::ranges::find_if(
+        fake.calls,
+        [](const std::string& c) { return c.starts_with("PostTask:"); });
+    ASSERT_NE(set_callback_it, fake.calls.end());
+    ASSERT_NE(ctx_sink_it, fake.calls.end());
+    ASSERT_NE(first_post_task, fake.calls.end());
+    EXPECT_LT(
+        std::distance(fake.calls.begin(), set_callback_it),
+        std::distance(fake.calls.begin(), ctx_sink_it));
+    EXPECT_LT(
+        std::distance(fake.calls.begin(), ctx_sink_it),
+        std::distance(fake.calls.begin(), first_post_task));
+}
+
+TEST(DasMaaPiRuntime, Run_TaskerContextSinkFailureDoesNotBlock)
+{
+    // Context-sink registration failure degrades to a warning diagnostic,
+    // mirroring the other sink failures — never short-circuits PostTask.
+    FakeMaaApiBoundary fake;
+    fake.register_tasker_context_sink_result =
+        MaaApiResult::Failure(0, "context sink failed");
+
+    auto result = MaaRuntime::Run(Envelope(), fake, nullptr);
+
+    EXPECT_TRUE(fake.ContainsSubstring("PostTask:"));
+    const auto ctx_warning = std::ranges::find_if(
+        result.diagnostics,
+        [](const MaaRuntimeDiagnostic& d)
+        {
+            return d.code == "register-tasker-context-sink-failed"
+                   && d.severity == "warning";
+        });
+    EXPECT_NE(ctx_warning, result.diagnostics.end());
+}
+
 TEST(DasMaaPiRuntime, GetCachedImage_Fake_ReturnsConfiguredImage)
 {
     // Purely at the FakeMaaApiBoundary level: GetCachedImage must invoke the

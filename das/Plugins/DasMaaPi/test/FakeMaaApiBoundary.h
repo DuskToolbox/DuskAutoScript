@@ -260,6 +260,28 @@ namespace Das::Plugins::DasMaaPi::Test
             return register_controller_sink_result;
         }
 
+        // Configurable tasker context-sink result. Same shape as the other
+        // sink results — default Ok() so the happy path proceeds without
+        // per-test wiring; tests exercising the warning-degradation path
+        // override it. Last-trans-arg capture lets a test assert the context
+        // sink shares the same logger context pointer as the main sink.
+        MaaApiResult register_tasker_context_sink_result = MaaApiResult::Ok();
+        void*        last_registered_tasker_context_sink_trans_arg = nullptr;
+
+        MaaApiResult RegisterTaskerContextSink(
+            MaaTaskerHandle,
+            MaaMsgCallbackFn,
+            void* trans_arg) override
+        {
+            calls.emplace_back("RegisterTaskerContextSink");
+            last_registered_tasker_context_sink_trans_arg = trans_arg;
+            if (register_tasker_context_sink_result.ok)
+            {
+                return MaaApiResult::Ok(NextId());
+            }
+            return register_tasker_context_sink_result;
+        }
+
         // Configurable GetCachedImage result. Default empty function →
         // override returns empty DasPtr. Tests that need to verify the
         // {image} closure path inject a function returning a test image.

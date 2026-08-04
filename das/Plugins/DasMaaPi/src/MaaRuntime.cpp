@@ -595,6 +595,34 @@ namespace Das::Plugins::DasMaaPi
                 return MaaApiResult::Ok(sink_id);
             }
 
+            MaaApiResult RegisterTaskerContextSink(
+                MaaTaskerHandle  tasker,
+                MaaMsgCallbackFn callback,
+                void*            trans_arg) override
+            {
+                // Context sink — the second of MaaFW's two tasker sink
+                // channels. Node.* messages (Recognition / Action /
+                // NextList / WaitFreezes) carry the `focus` payload focus
+                // templates match against, and MaaFW delivers them ONLY
+                // through MaaTaskerAddContextSink (MaaTasker.h:32); the
+                // main sink (MaaTaskerAddSink, wired in SetCallback) never
+                // sees them. Same cross-platform core sink family — every
+                // MaaFW build exports it, so the hard-link direct call has
+                // no null check. Failure means MaaFW rejected the sink and
+                // is surfaced as MaaApiResult::Failure.
+                const auto sink_id = MaaTaskerAddContextSink(
+                    AsMaaTasker(tasker),
+                    reinterpret_cast<MaaEventCallback>(callback),
+                    trans_arg);
+                if (sink_id == MaaInvalidId)
+                {
+                    return MaaApiResult::Failure(
+                        sink_id,
+                        "MaaTaskerAddContextSink failed");
+                }
+                return MaaApiResult::Ok(sink_id);
+            }
+
             Das::DasPtr<Das::ExportInterface::IDasImage> GetCachedImage(
                 MaaControllerHandle controller) override
             {
@@ -964,6 +992,16 @@ namespace Das::Plugins::DasMaaPi
 
             MaaApiResult RegisterControllerSink(
                 MaaControllerHandle,
+                MaaMsgCallbackFn,
+                void*) override
+            {
+                return MaaApiResult::Failure(
+                    0,
+                    "Real Maa boundary disabled in tests");
+            }
+
+            MaaApiResult RegisterTaskerContextSink(
+                MaaTaskerHandle,
                 MaaMsgCallbackFn,
                 void*) override
             {
@@ -1568,6 +1606,27 @@ namespace Das::Plugins::DasMaaPi
                     "set-callback-failed",
                     set_callback.message,
                     set_callback.provider_code,
+                    "warning");
+            }
+            // Context sink — the second MaaFW tasker sink channel. Node.*
+            // messages (focus-bearing) are delivered ONLY through this
+            // channel; without it every focus template silently misses at
+            // the production boundary. Shares the same callback +
+            // trans_arg as the main sink so Node.* focus flows into the
+            // existing MaaCallbackLogger pipeline (focus template parse +
+            // {image} provider). Failure degrades to a warning, mirroring
+            // SetCallback — does not short-circuit PostTask.
+            auto reg_ctx = boundary.RegisterTaskerContextSink(
+                tasker.get(),
+                &MaaCallbackLoggerEntry,
+                log_context.get());
+            if (!reg_ctx.ok)
+            {
+                AddDiagnostic(
+                    result,
+                    "register-tasker-context-sink-failed",
+                    reg_ctx.message,
+                    reg_ctx.provider_code,
                     "warning");
             }
             // Resource / controller sink 注册：与 tasker sink 共享同一个

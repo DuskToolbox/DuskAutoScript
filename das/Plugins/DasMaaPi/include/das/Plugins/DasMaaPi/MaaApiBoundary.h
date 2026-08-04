@@ -230,6 +230,20 @@ namespace Das::Plugins::DasMaaPi
             MaaMsgCallbackFn    callback,
             void*               trans_arg) = 0;
 
+        // Context sink registration. MaaFW exposes two distinct tasker sink
+        // channels: the main sink (SetCallback above, wired to
+        // MaaTaskerAddSink) carries Tasker.Task.* lifecycle messages, while
+        // the context sink (wired here to MaaTaskerAddContextSink) carries
+        // Node.* messages (Recognition / Action / NextList / WaitFreezes)
+        // that carry the `focus: any` payload focus templates match against.
+        // Without this channel every Node.* focus template silently misses.
+        // Same cross-platform core sink family — hard-linked direct call,
+        // never crashes, surfaces rejection as MaaApiResult::Failure.
+        virtual MaaApiResult RegisterTaskerContextSink(
+            MaaTaskerHandle  tasker,
+            MaaMsgCallbackFn callback,
+            void*            trans_arg) = 0;
+
         // Non-blocking read of the controller's internal cached frame
         // (MaaControllerCachedImage, cross-platform core MaaFW symbol).
         // Returns an empty DasPtr when no frame is available (unconnected,
