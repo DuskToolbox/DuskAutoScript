@@ -202,10 +202,13 @@ namespace Das::Plugins::DasMaaPi
             MaaAsyncId          connection_id) = 0;
         virtual bool IsConnected(MaaControllerHandle controller) = 0;
 
-        // Register the MaaMsgAsyncCallback sink (D-88-07): forwards (message,
-        // details_json) into the callback, trans_arg is the logger context.
-        // Mirrors MaaFW's MaaTaskerAddSink (runtime-resolved dynamic symbol,
-        // T-88-13: null symbol → Failure diagnostic, never crash).
+        // Register the MaaMsgAsyncCallback sink: forwards (message,
+        // details_json) into the callback; trans_arg is the logger context.
+        // Mirrors MaaFW's MaaTaskerAddSink — cross-platform core MaaFW symbol,
+        // hard-linked direct call (every MaaFW build exports the sink family,
+        // so the symbol is a link-time dependency, not runtime-resolved).
+        // Failure here means MaaFW rejected the sink (invalid tasker handle,
+        // etc.) and is surfaced as MaaApiResult::Failure — never a crash.
         virtual MaaApiResult SetCallback(
             MaaTaskerHandle  tasker,
             MaaMsgCallbackFn callback,
