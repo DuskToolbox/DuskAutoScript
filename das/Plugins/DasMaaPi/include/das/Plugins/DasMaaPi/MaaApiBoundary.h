@@ -1,6 +1,10 @@
 #pragma once
 
+#include <das/DasApi.h>
+#include <das/DasPtr.hpp>
+
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -222,6 +226,16 @@ namespace Das::Plugins::DasMaaPi
             MaaControllerHandle controller,
             MaaMsgCallbackFn    callback,
             void*               trans_arg) = 0;
+
+        // Non-blocking read of the controller's internal cached frame
+        // (MaaControllerCachedImage, cross-platform core MaaFW symbol).
+        // Returns an empty DasPtr when no frame is available (unconnected,
+        // no screencap yet) — Record proceeds without image. The
+        // FocusImageProvider closure in MaaRuntime::Run captures this method on
+        // the controller handle so {image} placeholders in focus templates
+        // resolve to real screenshots without blocking the callback thread.
+        virtual Das::DasPtr<Das::ExportInterface::IDasImage> GetCachedImage(
+            MaaControllerHandle controller) = 0;
 
         virtual MaaApiResult PostTask(
             MaaTaskerHandle  tasker,

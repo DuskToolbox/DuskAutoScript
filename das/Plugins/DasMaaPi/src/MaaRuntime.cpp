@@ -595,6 +595,52 @@ namespace Das::Plugins::DasMaaPi
                 return MaaApiResult::Ok(sink_id);
             }
 
+            Das::DasPtr<Das::ExportInterface::IDasImage> GetCachedImage(
+                MaaControllerHandle controller) override
+            {
+                // Non-blocking read of MaaFW's internal cached frame
+                // (MaaControllerCachedImage, cross-platform core — hard-linked
+                // direct call per the binding principle). Returns false when
+                // no frame is available (unconnected / no screencap yet);
+                // the caller (FocusImageProvider closure) then proceeds
+                // without an image.
+                std::
+                    unique_ptr<MaaImageBuffer, decltype(&MaaImageBufferDestroy)>
+                        buffer(MaaImageBufferCreate(), &MaaImageBufferDestroy);
+                if (!buffer)
+                {
+                    return {};
+                }
+                if (!MaaControllerCachedImage(
+                        AsMaaController(controller),
+                        buffer.get()))
+                {
+                    return {};
+                }
+                const auto* encoded = MaaImageBufferGetEncoded(buffer.get());
+                const auto  size = MaaImageBufferGetEncodedSize(buffer.get());
+                if (encoded == nullptr || size == 0)
+                {
+                    return {};
+                }
+                // MaaFW encodes screenshots as JPG by default (configurable
+                // via MaaCtrlOption, but the encoded buffer always matches
+                // whatever format MaaFW chose internally). Both JPG and PNG
+                // are accepted by CreateIDasImageFromEncodedData.
+                DasImageDesc desc{
+                    .p_data = reinterpret_cast<char*>(
+                        const_cast<std::uint8_t*>(encoded)),
+                    .data_size = size,
+                    .data_format = Das::ExportInterface::DAS_IMAGE_FORMAT_JPG};
+                Das::DasPtr<Das::ExportInterface::IDasImage> image;
+                if (DAS::IsFailed(
+                        CreateIDasImageFromEncodedData(&desc, image.Put())))
+                {
+                    return {};
+                }
+                return image;
+            }
+
             MaaAgentClientHandle CreateAgentClientV2(
                 std::optional<std::string_view> identifier) override
             {
@@ -924,6 +970,12 @@ namespace Das::Plugins::DasMaaPi
                 return MaaApiResult::Failure(
                     0,
                     "Real Maa boundary disabled in tests");
+            }
+
+            Das::DasPtr<Das::ExportInterface::IDasImage> GetCachedImage(
+                MaaControllerHandle) override
+            {
+                return {};
             }
 
             MaaAgentClientHandle CreateAgentClientV2(
@@ -1473,6 +1525,22 @@ namespace Das::Plugins::DasMaaPi
                     + ")",
                 static_cast<std::int64_t>(connection_status));
             return result;
+        }
+
+        // Inject the production FocusImageProvider closure before sink
+        // registration: focus templates with {image} resolve to real
+        // screenshots via boundary.GetCachedImage (non-blocking read of the
+        // MaaFW internal cache). The closure captures the controller handle
+        // BY VALUE (uintptr_t stable — avoids destructor-order UAF if the
+        // controller unique_ptr resets before a sink callback drain) and
+        // references boundary (Run scope lifetime, outlives every callback).
+        // Assignment is a single std::function store — after every sink is
+        // registered the context fields are read-only to callback threads.
+        if (log_context)
+        {
+            const auto controller_handle = controller.get();
+            log_context->image_provider = [controller_handle, &boundary]()
+            { return boundary.GetCachedImage(controller_handle); };
         }
 
         if (log_context)

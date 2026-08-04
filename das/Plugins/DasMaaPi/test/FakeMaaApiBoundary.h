@@ -3,6 +3,7 @@
 #include <das/Plugins/DasMaaPi/MaaApiBoundary.h>
 
 #include <algorithm>
+#include <functional>
 #include <map>
 #include <optional>
 #include <string>
@@ -186,27 +187,50 @@ namespace Das::Plugins::DasMaaPi::Test
             return MaaApiResult::Ok(NextId());
         }
 
-        MaaApiResult SetCallback(
-            MaaTaskerHandle,
-            MaaMsgCallbackFn,
-            void* trans_arg) override
-        {
-            calls.emplace_back("SetCallback");
-            last_set_callback_trans_arg = trans_arg;
-            return set_callback_result;
-        }
-
         // Configurable sink-registration results. Defaults mirror the tasker
         // sink happy path so existing Run tests proceed without per-test
         // wiring; tests exercising the warning-degradation path override
         // the relevant field. Last-trans-arg capture lets a test assert all
         // three sinks share the same logger context pointer.
-        MaaApiResult set_callback_result = MaaApiResult::Ok();
-        MaaApiResult register_resource_sink_result = MaaApiResult::Ok();
-        MaaApiResult register_controller_sink_result = MaaApiResult::Ok();
-        void*        last_set_callback_trans_arg = nullptr;
-        void*        last_registered_resource_sink_trans_arg = nullptr;
-        void*        last_registered_controller_sink_trans_arg = nullptr;
+        MaaApiResult     set_callback_result = MaaApiResult::Ok();
+        MaaApiResult     register_resource_sink_result = MaaApiResult::Ok();
+        MaaApiResult     register_controller_sink_result = MaaApiResult::Ok();
+        void*            last_set_callback_trans_arg = nullptr;
+        void*            last_registered_resource_sink_trans_arg = nullptr;
+        void*            last_registered_controller_sink_trans_arg = nullptr;
+        MaaMsgCallbackFn last_set_callback_fn = nullptr;
+        // When true, SetCallback immediately fires a synthetic focus message
+        // through the registered callback to drive the image_provider closure
+        // during Run-level integration tests. Tests that only verify boundary
+        // call sequences leave this false.
+        bool        fire_focus_on_set_callback = false;
+        std::string focus_message = "Test.Focus.Message";
+        std::string focus_details =
+            R"({"focus":{"Test.Focus.Message":"{image}"}})";
+
+        MaaApiResult SetCallback(
+            MaaTaskerHandle,
+            MaaMsgCallbackFn callback,
+            void*            trans_arg) override
+        {
+            calls.emplace_back("SetCallback");
+            last_set_callback_fn = callback;
+            last_set_callback_trans_arg = trans_arg;
+            auto result = set_callback_result;
+            if (fire_focus_on_set_callback)
+            {
+                fire_focus_on_set_callback = false;
+                if (callback != nullptr)
+                {
+                    callback(
+                        nullptr,
+                        focus_message.c_str(),
+                        focus_details.c_str(),
+                        trans_arg);
+                }
+            }
+            return result;
+        }
 
         MaaApiResult RegisterResourceSink(
             MaaResourceHandle,
@@ -234,6 +258,25 @@ namespace Das::Plugins::DasMaaPi::Test
                 return MaaApiResult::Ok(NextId());
             }
             return register_controller_sink_result;
+        }
+
+        // Configurable GetCachedImage result. Default empty function →
+        // override returns empty DasPtr. Tests that need to verify the
+        // {image} closure path inject a function returning a test image.
+        std::function<Das::DasPtr<Das::ExportInterface::IDasImage>()>
+                            get_cached_image_result;
+        MaaControllerHandle last_get_cached_image_handle = 0;
+
+        Das::DasPtr<Das::ExportInterface::IDasImage> GetCachedImage(
+            MaaControllerHandle controller) override
+        {
+            calls.emplace_back("GetCachedImage");
+            last_get_cached_image_handle = controller;
+            if (get_cached_image_result)
+            {
+                return get_cached_image_result();
+            }
+            return {};
         }
 
         MaaAgentClientHandle CreateAgentClientV2(

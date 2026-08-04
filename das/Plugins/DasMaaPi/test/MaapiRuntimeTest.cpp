@@ -263,6 +263,28 @@ namespace
             SetMaaApiBoundaryForTest(nullptr);
         }
     };
+
+    // Build a small RGB888 test image for GetCachedImage injection —
+    // mirrors MaaCallbackLoggerTest's MakeTestImage helper so the Fake's
+    // get_cached_image_result can return a non-null DasPtr<IDasImage>.
+    Das::DasPtr<Das::ExportInterface::IDasImage> MakeTestImage()
+    {
+        constexpr int32_t width = 4;
+        constexpr int32_t height = 4;
+        std::vector<char> pixels(
+            static_cast<size_t>(width) * height * 3,
+            static_cast<char>(0x42));
+        DasImageDesc desc{
+            .p_data = pixels.data(),
+            .data_size = pixels.size(),
+            .data_format = Das::ExportInterface::DAS_IMAGE_FORMAT_RGB_888};
+        Das::ExportInterface::DasSize size{.width = width, .height = height};
+        Das::DasPtr<Das::ExportInterface::IDasImage> image;
+        EXPECT_EQ(
+            CreateIDasImageFromDecodedData(&desc, &size, image.Put()),
+            DAS_S_OK);
+        return image;
+    }
 } // namespace
 
 TEST(DasMaaPiRuntime, RuntimeCallSequenceAndCleanup)
@@ -580,6 +602,57 @@ TEST(DasMaaPiRuntime, Run_SinkRegistrationFailureDoesNotBlock)
     };
     EXPECT_TRUE(find_warning("register-resource-sink-failed"));
     EXPECT_TRUE(find_warning("register-controller-sink-failed"));
+}
+
+TEST(DasMaaPiRuntime, GetCachedImage_Fake_ReturnsConfiguredImage)
+{
+    // Purely at the FakeMaaApiBoundary level: GetCachedImage must invoke the
+    // configured std::function and return its result when engaged, recording
+    // the call. The prod impl (hard-linked MaaControllerCachedImage) is
+    // exercised only in integration tests against real MaaFW; the unit test
+    // scope verifies the boundary contract.
+    FakeMaaApiBoundary fake;
+    fake.get_cached_image_result = []() { return MakeTestImage(); };
+
+    auto image = fake.GetCachedImage(42);
+
+    EXPECT_TRUE(fake.Contains("GetCachedImage"));
+    EXPECT_NE(image.Get(), nullptr);
+    EXPECT_EQ(fake.last_get_cached_image_handle, 42u);
+}
+
+TEST(DasMaaPiRuntime, GetCachedImage_Fake_EmptyByDefault)
+{
+    // Default (no get_cached_image_result configured) returns empty DasPtr
+    // — mirrors the prod path where MaaControllerCachedImage returns false
+    // for an unconnected controller or one without a screencap yet. Record
+    // proceeds without image.
+    FakeMaaApiBoundary fake;
+
+    auto image = fake.GetCachedImage(7);
+
+    EXPECT_TRUE(fake.Contains("GetCachedImage"));
+    EXPECT_EQ(image.Get(), nullptr);
+}
+
+TEST(DasMaaPiRuntime, Run_InjectsImageProviderForFocusPlaceholder)
+{
+    // End-to-end wiring: Run must inject a production FocusImageProvider
+    // closure into log_context before the SetCallback block. When a focus
+    // message containing {image} arrives, the closure fires and calls
+    // boundary.GetCachedImage. The Fake simulates a focus callback firing
+    // synchronously during SetCallback; the closure path then invokes
+    // GetCachedImage, proving the wiring is in place.
+    FakeMaaApiBoundary fake;
+    fake.get_cached_image_result = []() { return MakeTestImage(); };
+    fake.fire_focus_on_set_callback = true;
+
+    auto result = MaaRuntime::Run(Envelope(), fake, nullptr);
+
+    EXPECT_EQ(result.das_result, DAS_S_OK);
+    EXPECT_TRUE(fake.Contains("GetCachedImage"))
+        << "image_provider closure must call GetCachedImage when a {image} "
+        << "focus message arrives during Run";
 }
 
 TEST(DasMaaPiRuntime, Run_ShortCircuitsWhenNotConnected)
