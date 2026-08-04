@@ -102,8 +102,10 @@ def build_line_filter(rel_path, ranges):
 CHECKS = ('-*,readability-identifier-naming,readability-braces-around-statements,'
           'performance-*,modernize-*,-modernize-use-trailing-return-type,'
           '-modernize-avoid-c-arrays,-modernize-use-transparent-functors,clang-analyzer-*')
-# 解析时按 check 名前缀匹配违规（仅收集上面启用的检查）
-CHECK_MARKERS = ('readability-identifier-naming', 'readability-braces-around-statements',
+# 解析时按 check 名前缀分类违规：命名检查(naming)与其他 clang-tidy 检查(other)分开收集，
+# 避免其他检查的违规混进 naming 日志。run_clang_tidy 返回 (naming, other) 两组。
+NAMING_MARKER = 'readability-identifier-naming'
+OTHER_MARKERS = ('readability-braces-around-statements',
                  'performance-', 'modernize-', 'clang-analyzer-')
 
 
@@ -118,17 +120,21 @@ def run_clang_tidy(rel_path, ranges, compile_db):
     ]
     proc = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True,
                           encoding='utf-8', errors='replace')
-    violations = []
+    naming = []
+    other = []
     for line in (proc.stdout + proc.stderr).splitlines():
-        if any(m in line for m in CHECK_MARKERS):
-            violations.append(line.strip())
-    return violations
+        s = line.strip()
+        if NAMING_MARKER in s:
+            naming.append(s)
+        elif any(m in s for m in OTHER_MARKERS):
+            other.append(s)
+    return naming, other
 
 
 def main():
-    parser = argparse.ArgumentParser(description='C++ 命名风格检查 (clang-tidy readability-identifier-naming)')
-    parser.add_argument('--staged', action='store_true', help='检查暂存区改动文件的改动行')
-    parser.add_argument('--install-hook', action='store_true', help='安装 pre-commit hook')
+    parser = argparse.ArgumentParser(description='C++ naming style check (clang-tidy readability-identifier-naming)')
+    parser.add_argument('--staged', action='store_true', help='check changed lines in staged files')
+    parser.add_argument('--install-hook', action='store_true', help='install the pre-commit hook')
     args = parser.parse_args()
 
     if args.install_hook:
@@ -147,29 +153,31 @@ python tools/check_cpp_naming.py --staged || exit $?
         return 0
 
     if not args.staged:
-        parser.error('需要 --staged 或 --install-hook')
+        parser.error('--staged or --install-hook is required')
 
     clang_tidy = find_clang_tidy()
     if not clang_tidy:
-        print('[check_cpp_naming] 跳过: 未找到 clang-tidy (需要 MSYS2/MinGW clang64 工具链)')
+        print('[check_cpp_naming] skipped: clang-tidy not found (need MSYS2/MinGW clang64 toolchain)')
         return 0
     compile_db = find_compile_db()
     if not compile_db:
-        print('[check_cpp_naming] 跳过: 未找到 build/*/compile_commands.json，请先配置构建')
+        print('[check_cpp_naming] skipped: build/*/compile_commands.json not found, configure a build first')
         return 0
 
     files = staged_cpp_files()
     if not files:
-        print('[check_cpp_naming] 无暂存 C++ 改动')
+        print('[check_cpp_naming] no staged C++ changes')
         return 0
 
     def check_one(rel, db):
         ranges = changed_line_ranges(rel)
         if not ranges:
-            return rel, []
-        return rel, run_clang_tidy(rel, ranges, db)
+            return rel, [], []
+        naming, other = run_clang_tidy(rel, ranges, db)
+        return rel, naming, other
 
-    all_violations = 0
+    naming_lines = []
+    other_lines = []
     # 并行跑 clang-tidy（大提交时显著缩短 hook 耗时，worker 数为 CPU 核心数的一半）
     workers = max(1, (os.cpu_count() or 4) // 2)
     total = len(files)
@@ -177,19 +185,31 @@ python tools/check_cpp_naming.py --staged || exit $?
     with ThreadPoolExecutor(max_workers=workers) as ex:
         futures = {ex.submit(check_one, rel, compile_db): rel for rel in files}
         for fut in as_completed(futures):
-            rel, violations = fut.result()
+            rel, naming, other = fut.result()
             done += 1
             if total > 1:
-                print(f'[check_cpp_naming] 进度 {done}/{total} 完成 ({rel})', file=sys.stderr)
-            for v in violations:
-                print(v)
-            all_violations += len(violations)
+                print(f'[check_cpp_naming] progress {done}/{total} done ({rel})', file=sys.stderr)
+            naming_lines.extend(naming)
+            other_lines.extend(other)
 
-    if all_violations:
-        print(f'[check_cpp_naming] 发现 {all_violations} 处命名违规（仅改动行）: '
-              f'请按 .clang-tidy 规则修改后重新 add')
+    # 分段打印：naming 与其他 clang-tidy 检查不混在一起
+    if naming_lines:
+        print(f'[check_cpp_naming] naming violations ({NAMING_MARKER}, changed lines only):')
+        for v in naming_lines:
+            print(v)
+    if other_lines:
+        print(f'[check_cpp_naming] other clang-tidy violations '
+              f'(braces/performance/modernize/analyzer, changed lines only):')
+        for v in other_lines:
+            print(v)
+
+    total_naming = len(naming_lines)
+    total_other = len(other_lines)
+    if total_naming or total_other:
+        print(f'[check_cpp_naming] {total_naming} naming + {total_other} other clang-tidy '
+              f'violation(s): fix per .clang-tidy rules, then re-add')
         return 1
-    print('[check_cpp_naming] 命名检查通过')
+    print('[check_cpp_naming] naming check passed')
     return 0
 
 
