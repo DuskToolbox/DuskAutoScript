@@ -1330,6 +1330,36 @@ namespace Das::Plugins::DasMaaPi
             return result;
         }
 
+        // Recorder + callback context MUST be declared before every sink
+        // owner (resource / controller / tasker). C++ destroys locals in
+        // reverse declaration order, so tasker, controller and resource all
+        // destruct BEFORE log_context — any final sink callback that
+        // Maa*Destroy internally flushes through MaaCallbackLoggerEntry still
+        // sees a valid trans_arg. All three sinks share the same
+        // log_context.get() trans_arg (SetCallback on the tasker,
+        // RegisterResourceSink on the resource, RegisterControllerSink on the
+        // controller), so the lifetime invariant must cover all three, not
+        // just the tasker. Recorder creation failure degrades focus logging
+        // (log_context stays null, sinks see a null trans_arg) but does not
+        // block the task.
+        Das::DasPtr<Das::ExportInterface::IDasProcessLogRecorder> log_recorder;
+        auto recorder_rc = CreateIDasProcessLogRecorder(log_recorder.Put());
+        std::unique_ptr<MaaCallbackLoggerContext> log_context;
+        if (DAS::IsFailed(recorder_rc))
+        {
+            AddDiagnostic(
+                result,
+                "create-recorder-failed",
+                "CreateIDasProcessLogRecorder failed",
+                static_cast<std::int64_t>(recorder_rc),
+                "warning");
+        }
+        else
+        {
+            log_context = std::make_unique<MaaCallbackLoggerContext>();
+            log_context->recorder = std::move(log_recorder);
+        }
+
         const ScopedResource resource(boundary, boundary.CreateResource());
         if (resource.get() == INVALID_MAA_RESOURCE_HANDLE)
         {
@@ -1421,27 +1451,6 @@ namespace Das::Plugins::DasMaaPi
             return result;
         }
         const ScopedController controller(boundary, controller_handle);
-
-        // D-88-07：recorder 单例化 + 回调上下文。上下文先于 tasker 构造，
-        // 局部析构逆序保证 tasker 存活期间 trans_arg 有效。创建失败仅告警，
-        // focus 日志降级为不记录，不阻断任务执行。
-        Das::DasPtr<Das::ExportInterface::IDasProcessLogRecorder> log_recorder;
-        auto recorder_rc = CreateIDasProcessLogRecorder(log_recorder.Put());
-        std::unique_ptr<MaaCallbackLoggerContext> log_context;
-        if (DAS::IsFailed(recorder_rc))
-        {
-            AddDiagnostic(
-                result,
-                "create-recorder-failed",
-                "CreateIDasProcessLogRecorder failed",
-                static_cast<std::int64_t>(recorder_rc),
-                "warning");
-        }
-        else
-        {
-            log_context = std::make_unique<MaaCallbackLoggerContext>();
-            log_context->recorder = std::move(log_recorder);
-        }
 
         const ScopedTasker tasker(boundary, boundary.CreateTasker());
         if (tasker.get() == INVALID_MAA_TASKER_HANDLE)

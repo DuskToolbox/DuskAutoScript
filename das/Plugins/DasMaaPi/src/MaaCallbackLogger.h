@@ -29,9 +29,11 @@ namespace Das::Plugins::DasMaaPi
     using FocusImageProvider =
         std::function<Das::DasPtr<Das::ExportInterface::IDasImage>()>;
 
-    // 回调上下文：持有 recorder（MaaRuntime 启动 Tasker 时建一次复用）与截图
-    // seam。生命周期由 MaaRuntime::Run 的 unique_ptr 管理（先于 tasker 构造，
-    // 逆序析构保证 tasker 存活期间上下文有效）。
+    // 回调上下文：持有 recorder（复用）与截图 seam。生命周期由
+    // MaaRuntime::Run 的 unique_ptr 管理——在 Run 中先于 resource /
+    // controller / tasker 三个 sink owner 声明，逆序析构保证三者析构期间
+    // trans_arg 持续有效（任一 Maa*Destroy 内部冲刷 final 回调时仍可安全
+    // 解引用）。
     struct MaaCallbackLoggerContext
     {
         Das::DasPtr<Das::ExportInterface::IDasProcessLogRecorder> recorder;
