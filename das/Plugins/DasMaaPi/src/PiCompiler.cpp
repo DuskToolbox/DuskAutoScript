@@ -4,6 +4,7 @@
 #include <das/Utils/StringUtils.h>
 
 #include "ControllerMethodMaps.h"
+#include "I18nResolver.h"
 
 #ifndef DAS_MAAPI_DISABLE_REAL_MAA_BOUNDARY
 #include <MaaFramework/MaaAPI.h>
@@ -827,8 +828,31 @@ namespace Das::Plugins::DasMaaPi
             envelope.maapi.resource_paths.emplace_back(
                 DAS::Utils::U8AsString(path.u8string()));
         }
-        envelope.maapi.pi_env.controller_json = controller->raw.raw_json;
-        envelope.maapi.pi_env.resource_json = resource->raw.raw_json;
+        // PI `$key` i18n resolution: walk controller / resource raw_json
+        // before assignment so the runtime receives localized strings
+        // instead of literal `$key` placeholders. Language selection mirrors
+        // AuthoringProjector.cpp: settings.pi.language wins; when nullopt or
+        // the requested language is absent from the catalog, fall back to the
+        // first available language. Malformed JSON falls back to the original
+        // raw_json verbatim (Pitfall 5 defense — no crash, no exception).
+        const std::string pi_language = settings.pi.language.value_or(
+            catalog.translations.empty() ? std::string{}
+                                         : catalog.translations.begin()->first);
+        const auto resolve_raw = [&](const std::string& raw_json) -> std::string
+        {
+            auto parsed = Das::Utils::ParseYyjsonFromString(raw_json);
+            if (!parsed.has_value())
+            {
+                return raw_json;
+            }
+            auto serialized = Das::Utils::SerializeYyjsonValue(
+                ResolveI18nJson(*parsed, catalog, pi_language));
+            return serialized.value_or(raw_json);
+        };
+        envelope.maapi.pi_env.controller_json =
+            resolve_raw(controller->raw.raw_json);
+        envelope.maapi.pi_env.resource_json =
+            resolve_raw(resource->raw.raw_json);
         result.summary.controller_name = controller->dto.name;
         result.summary.resource_name = resource->dto.name;
 

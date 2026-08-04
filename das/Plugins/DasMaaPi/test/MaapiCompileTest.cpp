@@ -766,7 +766,7 @@ TEST_F(MaapiCompileFixture, StaleOptionSelectionEmitsNonBlockingWarning)
 }
 
 // =============================================================================
-// P0-3 unit tests: ResolveI18nJson recursive PI `$key` resolution.
+// ResolveI18nJson recursive PI $key resolution tests.
 // Direct unit tests (no fixture / no DasHost spawn) exercising the shared
 // i18n helper extracted from AuthoringProjector.cpp. Input yyjson values are
 // built via ParseYyjsonFromString for compound shapes and via

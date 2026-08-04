@@ -1,6 +1,7 @@
 #include <das/Plugins/DasMaaPi/AuthoringProjector.h>
 
 #include "DasProgressReporter.h"
+#include "I18nResolver.h"
 #include "MaaDynamicSymbols.h"
 #include "PiHttpClient.h"
 #include "PiUpdateService.h"
@@ -39,39 +40,11 @@ namespace Das::Plugins::DasMaaPi
             return yyjson::value(std::string(value));
         }
 
-        std::string_view ResolveI18n(
-            std::string_view text,
-            const PiCatalog& catalog,
-            std::string_view lang)
-        {
-            if (text.empty())
-            {
-                return "";
-            }
-            if (!text.starts_with('$'))
-            {
-                return text;
-            }
-            const std::string_view key = text.substr(1);
-            auto lang_it = catalog.translations.find(std::string(lang));
-            if (lang_it == catalog.translations.end())
-            {
-                if (!catalog.translations.empty())
-                {
-                    lang_it = catalog.translations.begin();
-                }
-                else
-                {
-                    return key;
-                }
-            }
-            auto key_it = lang_it->second.find(std::string(key));
-            if (key_it != lang_it->second.end())
-            {
-                return std::string_view(key_it->second);
-            }
-            return key;
-        }
+        // ResolveI18n has been extracted to src/I18nResolver.h/.cpp so that
+        // PiCompiler can share the same `$key → catalog.translations[lang]`
+        // resolution. The strict variant below (ResolveI18nOrDiag) remains
+        // projection-local because its diagnostic-emitting contract is
+        // specific to field-label projection.
 
         // D-84-23: ResolveI18n 的严格化变体。当 $key 在当前 language 找不到
         // 翻译时，返回调用方提供的 fallback（通常是 PI 协议层面的用户可见
