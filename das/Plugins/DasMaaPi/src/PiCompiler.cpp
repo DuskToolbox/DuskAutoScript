@@ -830,14 +830,14 @@ namespace Das::Plugins::DasMaaPi
         }
         // PI `$key` i18n resolution: walk controller / resource raw_json
         // before assignment so the runtime receives localized strings
-        // instead of literal `$key` placeholders. Language selection mirrors
-        // AuthoringProjector.cpp: settings.pi.language wins; when nullopt or
-        // the requested language is absent from the catalog, fall back to the
-        // first available language. Malformed JSON falls back to the original
-        // raw_json verbatim (Pitfall 5 defense — no crash, no exception).
-        const std::string pi_language = settings.pi.language.value_or(
-            catalog.translations.empty() ? std::string{}
-                                         : catalog.translations.begin()->first);
+        // instead of literal `$key` placeholders. Language selection is
+        // shared with AuthoringProjector via SelectPiLanguage so the
+        // envelope and the projected document resolve the same catalog to
+        // the same language (zh_cn-preferred fallback). Malformed JSON falls
+        // back to the original raw_json verbatim (Pitfall 5 defense — no
+        // crash, no exception).
+        const std::string pi_language =
+            SelectPiLanguage(settings.pi.language, &catalog);
         const auto resolve_raw = [&](const std::string& raw_json) -> std::string
         {
             auto parsed = Das::Utils::ParseYyjsonFromString(raw_json);

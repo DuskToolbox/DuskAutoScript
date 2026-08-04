@@ -874,3 +874,58 @@ TEST(I18nResolverJson, OnEmptyCatalog_ReturnsKeyWithoutDollar)
     const auto          out = ResolveI18nJson(input, empty_catalog, "zh_cn");
     EXPECT_EQ(std::string(out.as_string().value_or("")), "ctrl.label");
 }
+
+// SelectPiLanguage shared fallback policy. PiCompiler and AuthoringProjector
+// both build the envelope / document for one authoring cycle; they must agree
+// on which language a multi-language catalog resolves to when the user has not
+// picked one. The zh_cn-preferred fallback mirrors the PI convention. The
+// en_us < zh_cn std::map ordering is exactly the case that used to diverge
+// (PiCompiler picked en_us via begin()->first, AuthoringProjector picked
+// zh_cn); the shared helper removes that split.
+TEST(SelectPiLanguageTest, MultiLanguage_PrefersZhCnWhenSettingAbsent)
+{
+    PiCatalog catalog;
+    catalog.translations["en_us"]["k"] = "v_en";
+    catalog.translations["zh_cn"]["k"] = "v_zh";
+    // std::map orders en_us before zh_cn; naive begin()->first yields en_us,
+    // but the policy must prefer zh_cn.
+    EXPECT_EQ(SelectPiLanguage(std::nullopt, &catalog), "zh_cn");
+}
+
+TEST(SelectPiLanguageTest, ExplicitNonEmptySettingWins)
+{
+    PiCatalog catalog;
+    catalog.translations["en_us"]["k"] = "v_en";
+    catalog.translations["zh_cn"]["k"] = "v_zh";
+    EXPECT_EQ(SelectPiLanguage(std::string("en_us"), &catalog), "en_us");
+}
+
+TEST(SelectPiLanguageTest, EmptySettingFallsBackToZhCn)
+{
+    PiCatalog catalog;
+    catalog.translations["en_us"]["k"] = "v_en";
+    catalog.translations["zh_cn"]["k"] = "v_zh";
+    // Empty-but-present setting is treated as absent (matches the prior
+    // AuthoringProjector behavior and unifies the old PiCompiler path that
+    // used to pass the empty string through).
+    EXPECT_EQ(SelectPiLanguage(std::string(""), &catalog), "zh_cn");
+}
+
+TEST(SelectPiLanguageTest, NoZhCn_FallsBackToFirstAvailable)
+{
+    PiCatalog catalog;
+    catalog.translations["en_us"]["k"] = "v_en";
+    catalog.translations["ja_jp"]["k"] = "v_ja";
+    EXPECT_EQ(SelectPiLanguage(std::nullopt, &catalog), "en_us");
+}
+
+TEST(SelectPiLanguageTest, NullCatalog_ReturnsEmpty)
+{
+    EXPECT_TRUE(SelectPiLanguage(std::nullopt, nullptr).empty());
+}
+
+TEST(SelectPiLanguageTest, EmptyCatalog_ReturnsEmpty)
+{
+    PiCatalog empty_catalog;
+    EXPECT_TRUE(SelectPiLanguage(std::nullopt, &empty_catalog).empty());
+}

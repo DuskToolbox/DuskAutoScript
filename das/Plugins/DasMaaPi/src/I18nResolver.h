@@ -3,6 +3,8 @@
 #include <das/Plugins/DasMaaPi/PiCatalog.h>
 #include <das/Utils/DasJsonCore.h>
 
+#include <optional>
+#include <string>
 #include <string_view>
 
 namespace Das::Plugins::DasMaaPi
@@ -27,6 +29,42 @@ namespace Das::Plugins::DasMaaPi
         std::string_view text,
         const PiCatalog& catalog,
         std::string_view lang);
+
+    // Select the PI document language used for `$key` resolution, applying the
+    // shared fallback policy so every caller resolves the same catalog to the
+    // same language within one authoring cycle:
+    //   1. Explicit non-empty setting wins.
+    //   2. Otherwise prefer zh_cn when the catalog has it (PI convention).
+    //   3. Otherwise the first available language in catalog order.
+    //   4. Otherwise empty (caller proceeds with an empty language, which
+    //      ResolveI18n treats as a miss / key-without-`$` fallback).
+    // `catalog` may be null (caller has no catalog) — returns empty.
+    // Centralizing this here keeps PiCompiler (envelope.maapi.pi_env raw
+    // JSON) and AuthoringProjector (document field labels) aligned instead
+    // of each picking a fallback by a different rule.
+    inline std::string SelectPiLanguage(
+        const std::optional<std::string>& setting,
+        const PiCatalog*                  catalog)
+    {
+        if (setting && !setting->empty())
+        {
+            return *setting;
+        }
+        if (!catalog)
+        {
+            return {};
+        }
+        const auto zh_cn = catalog->translations.find("zh_cn");
+        if (zh_cn != catalog->translations.end())
+        {
+            return "zh_cn";
+        }
+        if (!catalog->translations.empty())
+        {
+            return catalog->translations.begin()->first;
+        }
+        return {};
+    }
 
     // Recursively walk a yyjson value and resolve every `$`-prefixed string
     // leaf against catalog.translations[lang]. Returns a freshly constructed

@@ -2232,23 +2232,11 @@ namespace Das::Plugins::DasMaaPi
 
         // 当前 PI language：优先 settings.pi.language；缺省时按
         // zh_cn → 首个可用 language 的顺序兜底。所有 i18n 解析共用此值。
-        std::string current_language;
-        if (catalog)
-        {
-            current_language = settings.pi.language.value_or("");
-            if (current_language.empty())
-            {
-                auto zh_cn_it = catalog->translations.find("zh_cn");
-                if (zh_cn_it != catalog->translations.end())
-                {
-                    current_language = "zh_cn";
-                }
-                else if (!catalog->translations.empty())
-                {
-                    current_language = catalog->translations.begin()->first;
-                }
-            }
-        }
+        // SelectPiLanguage 与 PiCompiler 共用同一回退策略，保证同一 catalog
+        // 在 envelope 与 document 两侧解析为同一语言。catalog 为 nullptr 时
+        // 返回空串（与旧实现的未初始化默认一致）。
+        const std::string current_language =
+            SelectPiLanguage(settings.pi.language, catalog);
 
         // D-84-13: 根字段直接挂在 document 上。adapter / executionPolicy 是
         // MaaPI 适配层字段，controllerName / resourceName / presetName /
