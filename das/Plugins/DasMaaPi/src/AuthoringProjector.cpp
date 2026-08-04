@@ -1966,6 +1966,7 @@ namespace Das::Plugins::DasMaaPi
         // 以便走更贴切的分类桶。
         std::vector<std::string>           update_entries;
         std::vector<std::string>           project_entries;
+        std::vector<std::string>           welcome_entries;
         std::map<std::string, std::string> settings_by_opt;
         constexpr std::string_view         settings_prefix = "settings.";
         for (auto it = fields_arr->begin(); it != fields_arr->end(); ++it)
@@ -1995,6 +1996,13 @@ namespace Das::Plugins::DasMaaPi
                 // 更新 panel 五字段（与 checkUpdate/applyUpdate 按钮同属"更新"
                 // 语义分区；代理设置并入更新 section，与 CDK 相邻）。
                 update_entries.emplace_back(name);
+            }
+            else if (name == "welcome")
+            {
+                // welcome section：PI 顶层 welcome markdown 公告。独立成桶防
+                // 落入 project_entries 兜底（兜底桶会把 welcome 混入项目设置
+                // section，前端数据驱动渲染会显示在错误面板）。
+                welcome_entries.emplace_back(name);
             }
             else if (
                 name == "controllerName" || name == "resourceName"
@@ -2109,12 +2117,50 @@ namespace Das::Plugins::DasMaaPi
             layout_arr->emplace_back(std::move(section));
         };
 
-        // pending 时更新 section 置顶（fieldLayout 首位）；否则项目设置在前、
-        // 更新 section 紧跟其后。
+        // welcome section：PI 顶层 welcome markdown 公告面板。label 走 PI i18n
+        // （$section.welcome），缺译回退中文「公告」。defaultExpanded=true
+        // （首位展示语义，welcome 内容应默认可见，不应折叠）。
+        auto emit_welcome_section = [&]()
+        {
+            yyjson::value section(Object());
+            auto          s_obj = section.as_object();
+            (*s_obj)[std::string_view("id")] = JsonString("welcome");
+            std::string_view welcome_label = "公告";
+            if (catalog != nullptr)
+            {
+                welcome_label = ResolveI18nOrDiag(
+                    "$section.welcome",
+                    *catalog,
+                    current_language,
+                    "公告",
+                    projection_diagnostics,
+                    "fieldLayout.section.welcome.label");
+            }
+            (*s_obj)[std::string_view("label")] = JsonString(welcome_label);
+            (*s_obj)[std::string_view("defaultExpanded")] =
+                resolve_default_expanded("welcome", true);
+            yyjson::value entries(Array());
+            for (const auto& name : welcome_entries)
+            {
+                entries.as_array()->emplace_back(make_leaf(name));
+            }
+            (*s_obj)[std::string_view("entries")] = std::move(entries);
+            layout_arr->emplace_back(std::move(section));
+        };
+
+        // section emit 顺序：[update(若 top)] → [welcome] → [project] →
+        // [update(非 top)] → [settings]。welcome 在 update-top 之后、project
+        // 之前，满足面板顺序「检测到更新时更新插到 welcome 之前；否则 welcome
+        // 在首位」（PI V2 welcome 字段置顶语义）。前端按 fieldLayout 首现顺序
+        // 数据驱动渲染，后端 emit 顺序即显示顺序。
         const bool update_first = update_section_top && !update_entries.empty();
         if (update_first)
         {
             emit_update_section();
+        }
+        if (!welcome_entries.empty())
+        {
+            emit_welcome_section();
         }
         if (!project_entries.empty())
         {
