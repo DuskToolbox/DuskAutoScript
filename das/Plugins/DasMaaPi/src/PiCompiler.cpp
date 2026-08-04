@@ -836,6 +836,15 @@ namespace Das::Plugins::DasMaaPi
         // the same language (zh_cn-preferred fallback). Malformed JSON falls
         // back to the original raw_json verbatim (Pitfall 5 defense — no
         // crash, no exception).
+        //
+        // Scope is intentionally narrow: this pre-resolves ONLY the two
+        // raw_json blobs consumed by AgentRuntime (a separate process with
+        // no catalog access). Display-layer strings (welcome messages,
+        // task labels for UI rendering, etc.) are resolved separately by
+        // AuthoringProjector during projection — that layer keeps the
+        // catalog and re-resolves at display time. The two layers achieve
+        // the same user-visible outcome through different paths; this is
+        // an intentional split, not a coverage gap.
         const std::string pi_language =
             SelectPiLanguage(settings.pi.language, &catalog);
         const auto resolve_raw = [&](const std::string& raw_json) -> std::string

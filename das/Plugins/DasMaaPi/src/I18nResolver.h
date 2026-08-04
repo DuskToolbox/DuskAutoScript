@@ -81,6 +81,14 @@ namespace Das::Plugins::DasMaaPi
     // PI document depth). If the limit is exceeded the offending subtree is
     // deep-cloned unchanged (no resolution) rather than risking stack
     // exhaustion on pathological or adversarial input.
+    //
+    // Caller scope: PiCompiler invokes this ONLY on controller / resource
+    // raw_json destined for AgentRuntime — a separate process that has no
+    // catalog access and cannot resolve `$key` itself. Display-layer
+    // strings (welcome messages, task labels, etc.) are NOT routed through
+    // this entry; AuthoringProjector resolves them during projection with
+    // its own display-time access to the catalog. The narrow scope is an
+    // intentional layering decision, not a coverage gap.
     yyjson::value ResolveI18nJson(
         const yyjson::value& raw,
         const PiCatalog&     catalog,
