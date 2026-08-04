@@ -6,9 +6,13 @@
 #include <das/Core/SettingsManager/SettingsManager.h>
 #include <das/DasApi.h>
 #include <das/Plugins/DasMaaPi/MaapiDto.h>
+#include <das/Plugins/DasMaaPi/PiCatalog.h>
+#include <das/Plugins/DasMaaPi/PiCompiler.h>
 #include <das/Utils/DasJsonCore.h>
 #include <das/_autogen/idl/abi/IDasTaskAuthoring.h>
 #include <gtest/gtest.h>
+
+#include "I18nResolver.h"
 
 #include <chrono>
 #include <filesystem>
@@ -759,4 +763,114 @@ TEST_F(MaapiCompileFixture, StaleOptionSelectionEmitsNonBlockingWarning)
     }
     EXPECT_TRUE(found_stale)
         << "stale-option-selection warning must name the stale key";
+}
+
+// =============================================================================
+// P0-3 unit tests: ResolveI18nJson recursive PI `$key` resolution.
+// Direct unit tests (no fixture / no DasHost spawn) exercising the shared
+// i18n helper extracted from AuthoringProjector.cpp. Input yyjson values are
+// built via ParseYyjsonFromString for compound shapes and via
+// yyjson::value(std::string) for scalars. The helper returns a freshly built
+// value, so each assertion re-parses the output and inspects leaves.
+// =============================================================================
+
+namespace
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    PiCatalog MakeSingleLangCatalog()
+    {
+        PiCatalog catalog;
+        catalog.translations["zh_cn"]["ctrl.label"] = "\xE6\x8E\xA7\xE5\x88\xB6"
+                                                      "\xE5\x99\xA8"; // 控制器
+        return catalog;
+    }
+
+    // Append the 7 ResolveI18nJson tests in the same anonymous namespace.
+} // namespace
+
+TEST(I18nResolverJson, OnDollarString_Resolves)
+{
+    const auto          catalog = MakeSingleLangCatalog();
+    const yyjson::value input(std::string("$ctrl.label"));
+    const auto          out = ResolveI18nJson(input, catalog, "zh_cn");
+    EXPECT_EQ(
+        std::string(out.as_string().value_or("")),
+        "\xE6\x8E\xA7\xE5\x88\xB6\xE5\x99\xA8"); // 控制器
+}
+
+TEST(I18nResolverJson, OnNonDollarString_PreservesValue)
+{
+    const auto          catalog = MakeSingleLangCatalog();
+    const yyjson::value input(std::string("adb"));
+    const auto          out = ResolveI18nJson(input, catalog, "zh_cn");
+    EXPECT_EQ(std::string(out.as_string().value_or("")), "adb");
+}
+
+TEST(I18nResolverJson, OnNestedObject_RecursesValues)
+{
+    const auto catalog = MakeSingleLangCatalog();
+    const auto input = Das::Utils::ParseYyjsonFromString(
+        R"({"name":"$ctrl.label","type":"win32"})");
+    ASSERT_TRUE(input.has_value());
+    const auto out = ResolveI18nJson(*input, catalog, "zh_cn");
+    const auto out_o = out.as_object();
+    ASSERT_TRUE(out_o.has_value());
+    EXPECT_EQ(
+        std::string(
+            (*out_o)[std::string_view("name")].as_string().value_or("")),
+        "\xE6\x8E\xA7\xE5\x88\xB6\xE5\x99\xA8"); // 控制器
+    EXPECT_EQ(
+        std::string(
+            (*out_o)[std::string_view("type")].as_string().value_or("")),
+        "win32");
+}
+
+TEST(I18nResolverJson, OnArray_ResolvesElements)
+{
+    const auto catalog = MakeSingleLangCatalog();
+    const auto input =
+        Das::Utils::ParseYyjsonFromString(R"(["$ctrl.label","plain"])");
+    ASSERT_TRUE(input.has_value());
+    const auto out = ResolveI18nJson(*input, catalog, "zh_cn");
+    const auto out_a = out.as_array();
+    ASSERT_TRUE(out_a.has_value());
+    ASSERT_EQ(out_a->size(), 2u);
+    EXPECT_EQ(
+        std::string((*out_a)[0].as_string().value_or("")),
+        "\xE6\x8E\xA7\xE5\x88\xB6\xE5\x99\xA8"); // 控制器
+    EXPECT_EQ(std::string((*out_a)[1].as_string().value_or("")), "plain");
+}
+
+TEST(I18nResolverJson, OnNonString_Clones)
+{
+    const auto catalog = MakeSingleLangCatalog();
+    const auto input = Das::Utils::ParseYyjsonFromString(
+        R"({"num":42,"flag":true,"nothing":null})");
+    ASSERT_TRUE(input.has_value());
+    const auto out = ResolveI18nJson(*input, catalog, "zh_cn");
+    const auto out_o = out.as_object();
+    ASSERT_TRUE(out_o.has_value());
+    EXPECT_EQ((*out_o)[std::string_view("num")].as_int().value_or(0), 42);
+    EXPECT_TRUE((*out_o)[std::string_view("flag")].as_bool().value_or(false));
+    EXPECT_TRUE((*out_o)[std::string_view("nothing")].is_null());
+}
+
+TEST(I18nResolverJson, OnMissingLanguage_FallsBackToFirstAvailable)
+{
+    const auto          catalog = MakeSingleLangCatalog(); // only zh_cn
+    const yyjson::value input(std::string("$ctrl.label"));
+    // Request en_us which is absent; helper must fall back to zh_cn.
+    const auto out = ResolveI18nJson(input, catalog, "en_us");
+    EXPECT_EQ(
+        std::string(out.as_string().value_or("")),
+        "\xE6\x8E\xA7\xE5\x88\xB6\xE5\x99\xA8"); // 控制器
+}
+
+TEST(I18nResolverJson, OnEmptyCatalog_ReturnsKeyWithoutDollar)
+{
+    PiCatalog           empty_catalog;
+    const yyjson::value input(std::string("$ctrl.label"));
+    const auto          out = ResolveI18nJson(input, empty_catalog, "zh_cn");
+    EXPECT_EQ(std::string(out.as_string().value_or("")), "ctrl.label");
 }
