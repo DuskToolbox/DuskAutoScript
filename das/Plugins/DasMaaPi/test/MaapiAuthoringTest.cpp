@@ -7757,3 +7757,129 @@ TEST(MaapiProjectionTest, WelcomeFieldAbsentWhenCatalogLacksWelcome)
 
     EXPECT_FALSE(FindRootField(document, "welcome").has_value());
 }
+
+// welcome field 应独立成 section（id="welcome"），不落入 BuildRootFieldLayout
+// 的兜底桶（project_entries）。若 welcome 未显式登记分类桶，会混入「项目设置」
+// section，前端按数据驱动渲染会显示在错误面板里。
+TEST(MaapiProjectionTest, WelcomeSectionProjectedWhenPresent)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto catalog = MakeStrictProjectionMockCatalog();
+    catalog.welcome = "## Hello";
+    AcceptedSettingsDto settings;
+    settings.pi.language = "zh_cn";
+
+    auto document = ProjectAuthoringDocument(settings, &catalog, {}, 0);
+    auto valid = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+    EXPECT_TRUE(valid.valid)
+        << "error_kind=" << valid.error_kind << " message=" << valid.message;
+
+    auto section = FindLayoutSection(document, "welcome");
+    ASSERT_TRUE(section.has_value());
+    auto names = LayoutSectionFieldNames(*section);
+    EXPECT_NE(std::ranges::find(names, "welcome"), names.end());
+
+    // welcome 不应同时出现在 project section（防兜底桶双计入）。
+    auto project = FindLayoutSection(document, "project");
+    ASSERT_TRUE(project.has_value());
+    auto project_names = LayoutSectionFieldNames(*project);
+    EXPECT_EQ(std::ranges::find(project_names, "welcome"), project_names.end());
+}
+
+// welcome section 顺序位于 update section 之后、project section 之前。
+// pending_update engaged + welcome → fieldLayout 顺序含 [update, welcome,
+// project]。
+TEST(MaapiProjectionTest, WelcomeSectionOrderingBeforeProject)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto catalog = MakeStrictProjectionMockCatalog();
+    catalog.welcome = "## Hello";
+    AcceptedSettingsDto settings;
+    settings.pi.language = "zh_cn";
+    std::optional<PiUpdateInfo> pending;
+    pending.emplace();
+    pending->has_update = true;
+    pending->version_name = "v1.2.3";
+    pending->release_note = "note";
+    pending->download_url = "https://example.com/package.zip";
+
+    auto document =
+        ProjectAuthoringDocument(settings, &catalog, {}, 0, nullptr, &pending);
+
+    // 枚举 fieldLayout[] section.id 序列。
+    std::vector<std::string> section_ids;
+    {
+        auto doc_obj = document.as_object();
+        ASSERT_TRUE(doc_obj.has_value());
+        auto layout = (*doc_obj)[std::string_view("fieldLayout")].as_array();
+        ASSERT_TRUE(layout.has_value());
+        for (auto it = layout->begin(); it != layout->end(); ++it)
+        {
+            auto section = it->as_object();
+            if (!section)
+            {
+                continue;
+            }
+            section_ids.emplace_back(
+                (*section)[std::string_view("id")].as_string().value_or(""));
+        }
+    }
+
+    auto update_it = std::ranges::find(section_ids, "update");
+    auto welcome_it = std::ranges::find(section_ids, "welcome");
+    auto project_it = std::ranges::find(section_ids, "project");
+
+    ASSERT_NE(update_it, section_ids.end()) << "update section missing";
+    ASSERT_NE(welcome_it, section_ids.end()) << "welcome section missing";
+    ASSERT_NE(project_it, section_ids.end()) << "project section missing";
+
+    EXPECT_LT(update_it, welcome_it)
+        << "update section must come before welcome";
+    EXPECT_LT(welcome_it, project_it)
+        << "welcome section must come before project";
+}
+
+// 无 pending_update 时 welcome section 应在 fieldLayout 首位。
+TEST(MaapiProjectionTest, WelcomeTopNoUpdate)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto catalog = MakeStrictProjectionMockCatalog();
+    catalog.welcome = "## Hello";
+    AcceptedSettingsDto settings;
+    settings.pi.language = "zh_cn";
+
+    auto document = ProjectAuthoringDocument(settings, &catalog, {}, 0);
+
+    auto doc_obj = document.as_object();
+    ASSERT_TRUE(doc_obj.has_value());
+    auto layout = (*doc_obj)[std::string_view("fieldLayout")].as_array();
+    ASSERT_TRUE(layout.has_value());
+    ASSERT_FALSE(layout->empty());
+    auto first = layout->begin()->as_object();
+    ASSERT_TRUE(first.has_value());
+    EXPECT_EQ(
+        std::string((*first)[std::string_view("id")].as_string().value_or("")),
+        "welcome");
+}
+
+// catalog 无 welcome 时不应 emit 空 welcome section（避免前端渲染空
+// Expander）。
+TEST(MaapiProjectionTest, WelcomeSectionAbsentWhenNoWelcome)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto catalog = MakeStrictProjectionMockCatalog();
+    // welcome 保持 std::nullopt
+    AcceptedSettingsDto settings;
+    settings.pi.language = "zh_cn";
+
+    auto document = ProjectAuthoringDocument(settings, &catalog, {}, 0);
+    auto valid = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+    EXPECT_TRUE(valid.valid)
+        << "error_kind=" << valid.error_kind << " message=" << valid.message;
+
+    EXPECT_FALSE(FindLayoutSection(document, "welcome").has_value());
+}
