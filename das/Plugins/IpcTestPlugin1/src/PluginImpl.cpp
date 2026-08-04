@@ -6,6 +6,7 @@
 #include <das/IDasBase.h>
 #include <das/Utils/DasJsonCore.h>
 #include <das/Utils/fmt.h>
+#include <das/_autogen/idl/abi/IDasLogRecorder.h>
 #include <das/_autogen/idl/abi/IDasPortMap.h>
 #include <das/_autogen/idl/header/IDasPortMap.generated.h>
 #include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasProgressCallback.Implements.hpp>
@@ -294,6 +295,11 @@ DasResult DasQueryComponentImpl::Dispatch(
     if (method == "progressServiceRoundTrip")
     {
         return HandleProgressServiceRoundTrip(pp_out_result);
+    }
+
+    if (method == "processLogRecorderRoundTrip")
+    {
+        return HandleProcessLogRecorderRoundTrip(pp_out_result);
     }
 
     return DAS_E_INVALID_ARGUMENT;
@@ -586,6 +592,79 @@ DasResult DasQueryComponentImpl::HandleProgressServiceRoundTrip(
         return hr;
     }
     hr = (*pp_out_result)->PushBackInt(ref_after_flush);
+    return hr;
+}
+
+DasResult DasQueryComponentImpl::HandleProcessLogRecorderRoundTrip(
+    ExportInterface::IDasVariantVector** pp_out_result)
+{
+    if (!pp_out_result)
+    {
+        return DAS_E_INVALID_ARGUMENT;
+    }
+
+    // 按名解析主进程 IDasProcessLogRecorder proxy。
+    DAS::DasPtr<IDasBase> raw_obj;
+    DasResult             hr = DasQueryMainProcessInterfaceByName(
+        "IDasProcessLogRecorder",
+        raw_obj.Put());
+    if (DAS::IsFailed(hr) || !raw_obj)
+    {
+        DAS_LOG_ERROR(
+            DAS_FMT_NS::format(
+                "processLogRecorderRoundTrip: resolve failed hr={:#x}",
+                static_cast<uint32_t>(hr))
+                .c_str());
+        return hr;
+    }
+    DAS::DasPtr<Das::ExportInterface::IDasProcessLogRecorder> recorder;
+    hr = raw_obj.As(recorder.Put());
+    if (DAS::IsFailed(hr) || !recorder)
+    {
+        return hr;
+    }
+
+    // 插件侧构造 IDasLogEntry（C ABI 工厂，跨 DLL 安全）：
+    // SetType FOCUS + AddText("proxy-text") + SetField("source","agent")。
+    // 这四个字段经 getter RPC 转发回此插件 impl 读真值（recorder 主进程侧
+    // 经接口 getter 读，不再 dynamic_cast 到 IDasLogEntryImpl）。
+    DAS::DasPtr<Das::ExportInterface::IDasLogEntry> entry;
+    hr = CreateIDasLogEntry(entry.Put());
+    if (DAS::IsFailed(hr) || !entry)
+    {
+        return hr;
+    }
+    hr = entry->SetType(Das::ExportInterface::DAS_LOG_TYPE_FOCUS);
+    if (DAS::IsFailed(hr))
+    {
+        return hr;
+    }
+    DasU8StringOnStack text_str{"proxy-text"};
+    hr = entry->AddText(&text_str);
+    if (DAS::IsFailed(hr))
+    {
+        return hr;
+    }
+    DasU8StringOnStack field_key{"source"};
+    DasU8StringOnStack field_value{"\"agent\""};
+    hr = entry->SetField(&field_key, &field_value);
+    if (DAS::IsFailed(hr))
+    {
+        return hr;
+    }
+
+    // proxy->Record：经 IPC marshal 到主进程，recorder 写 user.jsonl +
+    // Signal(UserJsonl)。返 DAS_S_OK 表示跨进程字段读回成功（Pitfall #1
+    // 修复的回归点：旧实现 dynamic_cast 返 nullptr → DAS_E_INVALID_ARGUMENT）。
+    hr = recorder->Record(entry.Get());
+
+    // 回传 Record 结果码（test 侧断言 == DAS_S_OK）。
+    DasResult push_hr = CreateIDasVariantVector(pp_out_result);
+    if (DAS::IsFailed(push_hr))
+    {
+        return push_hr;
+    }
+    (*pp_out_result)->PushBackInt(static_cast<int64_t>(hr));
     return hr;
 }
 

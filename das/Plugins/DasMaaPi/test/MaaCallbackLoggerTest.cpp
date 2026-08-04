@@ -85,7 +85,8 @@ namespace
             {
                 return {};
             }
-            return std::filesystem::path{reinterpret_cast<const char8_t*>((utf8)});
+            return std::filesystem::path{
+                reinterpret_cast<const char8_t*>(utf8)};
         }
 
         // 读 user.jsonl 最后一行并解析为 JSON 对象。

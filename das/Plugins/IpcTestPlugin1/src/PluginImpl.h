@@ -189,6 +189,14 @@ private:
 
     DasResult HandleProgressServiceRoundTrip(
         ExportInterface::IDasVariantVector** pp_out_result);
+
+    // 验证 IDasProcessLogRecorder 跨进程 proxy Record 往返：
+    // 插件侧 resolve "IDasProcessLogRecorder" → 创建 IDasLogEntry →
+    // 设置 type/text/field → proxy->Record → 返 DAS_S_OK 与字段值。
+    // recorder 主进程侧经接口 getter 读字段（替代 dynamic_cast 到 impl），
+    // 跨进程 proxy 经 RPC 转发回此插件侧 impl 读真值。
+    DasResult HandleProcessLogRecorderRoundTrip(
+        ExportInterface::IDasVariantVector** pp_out_result);
 };
 
 /**

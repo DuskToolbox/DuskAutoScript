@@ -35,7 +35,7 @@ namespace
         {
             return {};
         }
-        return std::filesystem::path{reinterpret_cast<const char8_t*>((utf8)});
+        return std::filesystem::path{reinterpret_cast<const char8_t*>(utf8)};
     }
 
     std::filesystem::path ReadUserJsonlPath(
@@ -52,7 +52,7 @@ namespace
         {
             return {};
         }
-        return std::filesystem::path{reinterpret_cast<const char8_t*>((utf8)});
+        return std::filesystem::path{reinterpret_cast<const char8_t*>(utf8)};
     }
 
     class SessionDirFixture : public ::testing::Test

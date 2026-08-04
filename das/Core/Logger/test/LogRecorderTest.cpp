@@ -39,7 +39,7 @@ namespace
         {
             return {};
         }
-        return std::filesystem::path{reinterpret_cast<const char8_t*>((utf8)});
+        return std::filesystem::path{reinterpret_cast<const char8_t*>(utf8)};
     }
 
     std::filesystem::path ReadUserJsonlPath(
@@ -56,7 +56,7 @@ namespace
         {
             return {};
         }
-        return std::filesystem::path{reinterpret_cast<const char8_t*>((utf8)});
+        return std::filesystem::path{reinterpret_cast<const char8_t*>(utf8)};
     }
 
     // 测试夹具：每个用例建独立 session + recorder，析构时 RAII 自动清目录。

@@ -40,7 +40,7 @@ namespace
         {
             return {};
         }
-        return std::filesystem::path{reinterpret_cast<const char8_t*>((utf8)});
+        return std::filesystem::path{reinterpret_cast<const char8_t*>(utf8)};
     }
 
     class LogArchiveJsonlFixture : public ::testing::Test
