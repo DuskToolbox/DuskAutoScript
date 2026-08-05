@@ -36,6 +36,8 @@
 
 #include <boost/asio/steady_timer.hpp>
 
+#include <boost/sml.hpp>
+
 namespace Das::Core::TaskScheduler
 {
 
@@ -243,7 +245,6 @@ namespace Das::Core::TaskScheduler
             const DasGuid& plugin_guid) override;
 
     private:
-    private:
         void      InvalidateAuthoringSessionsLocked();
         void      StartTickTimer(std::chrono::steady_clock::duration delay);
         void      OnTick();
@@ -393,15 +394,44 @@ namespace Das::Core::TaskScheduler
         /// Must be called before SettingsManager dependencies are destroyed.
         void ShutdownConfigPersistQueue();
 
+        /// 序列化当前 scheduler 状态，经 state_notify_ 推
+        /// WS（api/v1/scheduler/get）。 Enable/Disable/OnTick
+        /// 状态变化时调用，让 UI 实时收 Running/Stopping/Stopped。
+        void NotifyStateChange();
+
+        struct EvtEnable
+        {
+        };
+        struct EvtDisable
+        {
+        };
+        struct EvtTickCompleted
+        {
+        };
+        struct FsmDefinition
+        {
+            auto operator()();
+        };
+        friend struct FsmDefinition;
+        bool FsmGuardNotInitialized() const;
+        bool FsmGuardNoAvailableTask() const;
+        void FsmActEnterRunning();
+        void FsmActEnterStopping();
+        void FsmActEnterStopped();
+        void FsmActRejectNotInitialized();
+        void FsmActRejectNoTask();
+        void FsmActRejectFail();
+        void FsmActRejectIgnored();
+
         Das::Core::ForeignInterfaceHost::PluginManager& plugin_manager_;
         Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>
             ipc_context_;
 
         mutable std::mutex          mutex_;
         std::atomic<SchedulerState> state_{SchedulerState::Stopped};
-        std::condition_variable     cv_;
-        std::thread                 disable_thread_;
         bool                        initialized_ = false;
+        std::unique_ptr<boost::sml::sm<FsmDefinition>> fsm_;
+        DasResult fsm_last_result_ = DAS_S_OK;
 
         // Available task types discovered from loaded manifests
         std::vector<std::unique_ptr<TaskTypeRecord>> task_types_;

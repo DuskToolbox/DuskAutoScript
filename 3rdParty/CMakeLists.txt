@@ -142,6 +142,20 @@ endif ()
 
 target_include_directories(Das3rdParty INTERFACE ${magic_enum_SOURCE_DIR}/include/magic_enum)
 
+# config boost::sml (header-only state machine, used by SchedulerService)
+set(DAS_SML_VERSION "1.2.0")
+message(STATUS "Downloading and collecting headers in boost::sml (VERSION = ${DAS_SML_VERSION}).")
+FetchContent_Declare(
+        sml
+        URL "https://github.com/boost-ext/sml/archive/refs/tags/v${DAS_SML_VERSION}.zip"
+)
+
+if (NOT sml_POPULATED)
+    FetchContent_Populate(sml)
+endif ()
+
+target_include_directories(Das3rdParty INTERFACE ${sml_SOURCE_DIR}/include)
+
 if (DAS_USE_BUNDLED_FMT)
     set(DAS_FMT_VERSION "12.1.0")
     message(STATUS "Downloading and configuring fmt (VERSION = ${DAS_FMT_VERSION}).")

@@ -28,8 +28,59 @@
 #include <thread>
 #include <unordered_set>
 
+#include <boost/sml.hpp>
+
 namespace Das::Core::TaskScheduler
 {
+
+    // boost::sml 转换表。guard lambda 用圆括号包成 event<E>[( [](auto&){...}
+    // )]： sml 的 guard 方括号与 lambda 捕获的 [ 会连成 [[，被 C++
+    // 当成属性语法拒绝， 中间塞一对 () 就隔开了。
+    auto SchedulerService::FsmDefinition::operator()()
+    {
+        return boost::sml::make_transition_table(
+            *boost::sml::state<class Stopped>
+                + boost::sml::event<EvtEnable>[(
+                      [](SchedulerService& s) -> bool
+                      { return s.FsmGuardNotInitialized(); })]
+                      / [](SchedulerService& s)
+                      { s.FsmActRejectNotInitialized(); },
+            boost::sml::state<class Stopped>
+                + boost::sml::event<EvtEnable>[(
+                      [](SchedulerService& s) -> bool
+                      { return s.FsmGuardNoAvailableTask(); })]
+                      / [](SchedulerService& s) { s.FsmActRejectNoTask(); },
+            boost::sml::state<class Stopped>
+                + boost::sml::event<EvtEnable> / [](SchedulerService& s)
+                      { s.FsmActEnterRunning(); } =
+                boost::sml::state<class Running>,
+            boost::sml::state<class Stopped>
+                + boost::sml::event<EvtDisable> / [](SchedulerService& s)
+                      { s.FsmActRejectFail(); },
+            boost::sml::state<class Stopped>
+                + boost::sml::event<EvtTickCompleted>
+                      / [](SchedulerService&) {},
+            boost::sml::state<class Running>
+                + boost::sml::event<EvtEnable> / [](SchedulerService& s)
+                      { s.FsmActRejectFail(); },
+            boost::sml::state<class Running>
+                + boost::sml::event<EvtDisable> / [](SchedulerService& s)
+                      { s.FsmActEnterStopping(); } =
+                boost::sml::state<class Stopping>,
+            boost::sml::state<class Running>
+                + boost::sml::event<EvtTickCompleted>
+                      / [](SchedulerService&) {},
+            boost::sml::state<class Stopping>
+                + boost::sml::event<EvtEnable> / [](SchedulerService& s)
+                      { s.FsmActRejectFail(); },
+            boost::sml::state<class Stopping>
+                + boost::sml::event<EvtDisable> / [](SchedulerService& s)
+                      { s.FsmActRejectIgnored(); },
+            boost::sml::state<class Stopping>
+                + boost::sml::event<EvtTickCompleted> / [](SchedulerService& s)
+                      { s.FsmActEnterStopped(); } =
+                boost::sml::state<class Stopped>);
+    }
 
     using Das::Core::ForeignInterfaceHost::FindManifest;
     using Das::Core::ForeignInterfaceHost::PluginPackageDesc;
@@ -556,11 +607,12 @@ namespace Das::Core::TaskScheduler
         yyjson::value accepted_properties;
         yyjson::value document;
         yyjson::value diagnostics;
-        yyjson::value command_result;      // 可选：业务命令结果（如 checkUpdate 的 progress_key）
-        bool          has_command_result = false;
-        int64_t       returned_revision = 0;
-        std::string   error_kind;
-        std::string   error_message;
+        yyjson::value command_result; // 可选：业务命令结果（如 checkUpdate 的
+                                      // progress_key）
+        bool        has_command_result = false;
+        int64_t     returned_revision = 0;
+        std::string error_kind;
+        std::string error_message;
     };
 
     // 短路 kind：Apply 响应不带 document，前端据有无 document 分流
@@ -1271,6 +1323,7 @@ namespace Das::Core::TaskScheduler
         Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext> ipc_context)
         : plugin_manager_(plugin_manager), ipc_context_{std::move(ipc_context)}
     {
+        fsm_ = std::make_unique<boost::sml::sm<FsmDefinition>>(*this);
         config_persist_thread_ =
             std::thread(&SchedulerService::ConfigPersistThreadLoop, this);
         // D-87-08: 注册为 PluginManager 的 lifecycle listener，plugin
@@ -1287,10 +1340,6 @@ namespace Das::Core::TaskScheduler
         // PluginManager 持悬空 listener 指针。
         plugin_manager_.SetPluginLifecycleListener(nullptr);
         ShutdownConfigPersistQueue();
-        if (disable_thread_.joinable())
-        {
-            disable_thread_.join();
-        }
     }
 
     void SchedulerService::OnPluginLifecycleEvent(
@@ -1786,121 +1835,134 @@ namespace Das::Core::TaskScheduler
     DasResult SchedulerService::Enable()
     {
         const std::scoped_lock lock(mutex_);
+        fsm_->process_event(EvtEnable{});
+        return fsm_last_result_;
+    }
 
-        if (state_.load() != SchedulerState::Stopped)
+    DasResult SchedulerService::Disable()
+    {
+        const std::scoped_lock lock(mutex_);
+        fsm_->process_event(EvtDisable{});
+        // 无 task 在跑：立即收尾 Stopped。有 task：保持 Stopping，等 OnTick
+        // task 完成时 process EvtTickCompleted 收尾。
+        if (current_task_ == nullptr)
         {
-            DAS_CORE_LOG_ERROR(
-                "SchedulerService::Enable: invalid state, must be "
-                "Stopped");
-            return DAS_E_FAIL;
+            fsm_->process_event(EvtTickCompleted{});
         }
+        return fsm_last_result_;
+    }
 
-        if (!initialized_)
+    SchedulerState SchedulerService::Status() const { return state_.load(); }
+
+    void SchedulerService::NotifyStateChange()
+    {
+        if (!state_notify_)
         {
-            DAS_CORE_LOG_ERROR(
-                "SchedulerService::Enable: not initialized, call "
-                "Initialize first");
-            return DAS_E_OBJECT_NOT_INIT;
+            return;
         }
+        auto state_json = Get();
 
-        // Check for at least one available task instance
-        bool has_available = false;
+        auto event = Das::Utils::MakeYyjsonObject();
+        auto obj = *event.as_object();
+        obj[std::string_view("code")] = static_cast<int64_t>(DAS_S_OK);
+        obj[std::string_view("msg")] = std::string_view("");
+        obj[std::string_view("data")] = state_json;
+
+        auto state_serialized = Das::Utils::SerializeYyjsonValue(event, false);
+        if (state_serialized)
+        {
+            state_notify_(state_serialized->c_str());
+        }
+    }
+
+    bool SchedulerService::FsmGuardNotInitialized() const
+    {
+        return !initialized_;
+    }
+
+    bool SchedulerService::FsmGuardNoAvailableTask() const
+    {
         for (const auto& inst : task_instances_)
         {
             if (inst.availability == TaskAvailability::Available)
             {
-                has_available = true;
-                break;
+                return false;
             }
         }
-        if (!has_available)
-        {
-            DAS_CORE_LOG_ERROR(
-                "SchedulerService::Enable: no available task instances");
-            return DAS_E_OBJECT_NOT_INIT;
-        }
+        return true;
+    }
 
+    void SchedulerService::FsmActEnterRunning()
+    {
         state_.store(SchedulerState::Running);
-
         if (!tick_timer_)
         {
             tick_timer_ = std::make_unique<boost::asio::steady_timer>(
                 ipc_context_.get().GetIoContext());
         }
-
         const int64_t now_unix = SystemClock::to_time_t(SystemClock::now());
         StartTickTimer(ComputeNextDelay(task_instances_, now_unix));
-
+        fsm_last_result_ = DAS_S_OK;
         DAS_CORE_LOG_INFO("SchedulerService::Enable: scheduler started");
-        return DAS_S_OK;
+        NotifyStateChange();
     }
 
-    DasResult SchedulerService::Disable()
+    void SchedulerService::FsmActEnterStopping()
     {
+        state_.store(SchedulerState::Stopping);
+        if (tick_timer_)
         {
-            const std::scoped_lock lock(mutex_);
-
-            if (state_.load() == SchedulerState::Stopping)
+            tick_timer_->cancel();
+        }
+        if (stop_token_)
+        {
+            auto* impl = static_cast<Das::Core::Utils::DasStopTokenImpl*>(
+                stop_token_.Get());
+            if (impl)
             {
-                DAS_CORE_LOG_WARN(
-                    "SchedulerService::Disable: already stopping, ignored");
-                return DAS_S_OK;
-            }
-
-            if (state_.load() != SchedulerState::Running)
-            {
-                DAS_CORE_LOG_ERROR(
-                    "SchedulerService::Disable: invalid state, must be "
-                    "Running");
-                return DAS_E_FAIL;
-            }
-
-            state_.store(SchedulerState::Stopping);
-
-            // Cancel the timer but keep the object alive until the scheduler is
-            // torn down, otherwise Boost.Asio may still hold internal
-            // references to the timer entry while draining the io_context.
-            if (tick_timer_)
-            {
-                tick_timer_->cancel();
-            }
-
-            // Request cooperative cancellation on the stop token.
-            // stop_token_ is always created via DasStopTokenImpl::Make() in
-            // OnTick(), so this static_cast is safe as long as OnTick remains
-            // the sole creator.
-            if (stop_token_)
-            {
-                auto* impl = static_cast<Das::Core::Utils::DasStopTokenImpl*>(
-                    stop_token_.Get());
-                if (impl)
-                {
-                    impl->RequestStop();
-                }
+                impl->RequestStop();
             }
         }
-
-        // Spawns a dedicated thread to wait for the current task to complete.
-        // The Stopping state guard above guarantees only one such thread exists
-        // at any time, so defensive joinable() check is unnecessary here.
-        disable_thread_ = std::thread(
-            [this]
-            {
-                {
-                    std::unique_lock<std::mutex> lock(mutex_);
-                    cv_.wait(lock, [this] { return current_task_ == nullptr; });
-                }
-
-                stop_token_.Reset();
-                state_.store(SchedulerState::Stopped);
-                DAS_CORE_LOG_INFO(
-                    "SchedulerService::Disable: scheduler stopped");
-            });
-
-        return DAS_S_OK;
+        fsm_last_result_ = DAS_S_OK;
+        DAS_CORE_LOG_INFO("SchedulerService::Disable: scheduler stopping");
+        NotifyStateChange();
     }
 
-    SchedulerState SchedulerService::Status() const { return state_.load(); }
+    void SchedulerService::FsmActEnterStopped()
+    {
+        stop_token_.Reset();
+        state_.store(SchedulerState::Stopped);
+        fsm_last_result_ = DAS_S_OK;
+        DAS_CORE_LOG_INFO("SchedulerService::Disable: scheduler stopped");
+        NotifyStateChange();
+    }
+
+    void SchedulerService::FsmActRejectNotInitialized()
+    {
+        fsm_last_result_ = DAS_E_OBJECT_NOT_INIT;
+        DAS_CORE_LOG_ERROR(
+            "SchedulerService::Enable: not initialized, call Initialize first");
+    }
+
+    void SchedulerService::FsmActRejectNoTask()
+    {
+        fsm_last_result_ = DAS_E_OBJECT_NOT_INIT;
+        DAS_CORE_LOG_ERROR(
+            "SchedulerService::Enable: no available task instances");
+    }
+
+    void SchedulerService::FsmActRejectFail()
+    {
+        fsm_last_result_ = DAS_E_FAIL;
+        DAS_CORE_LOG_WARN("SchedulerService: invalid state for operation");
+    }
+
+    void SchedulerService::FsmActRejectIgnored()
+    {
+        fsm_last_result_ = DAS_S_OK;
+        DAS_CORE_LOG_WARN(
+            "SchedulerService::Disable: already stopping, ignored");
+    }
 
     std::optional<DasGuid> SchedulerService::FindTaskExecutionComponent(
         const DasGuid& task_guid) const
@@ -4282,12 +4344,18 @@ namespace Das::Core::TaskScheduler
             }
 
             current_task_ = nullptr;
-            cv_.notify_all();
 
             if (state_.load() == SchedulerState::Running)
             {
                 now_unix = SystemClock::to_time_t(SystemClock::now());
                 next_delay = ComputeNextDelay(task_instances_, now_unix);
+            }
+            else if (state_.load() == SchedulerState::Stopping)
+            {
+                // task 完成立即收尾 Stopped：FsmActEnterStopped 置
+                // state/stop_token + NotifyStateChange。原后台线程删除
+                // 后，等活由 OnTick 自身完成。
+                fsm_->process_event(EvtTickCompleted{});
             }
         }
 
@@ -4305,24 +4373,9 @@ namespace Das::Core::TaskScheduler
             PostPersistEvent(persist_id, persist_time);
         }
 
-        // Notify WebSocket clients of state change (server-triggered only)
-        if (state_notify_)
-        {
-            auto state_json = Get();
-
-            auto event = Das::Utils::MakeYyjsonObject();
-            auto obj = *event.as_object();
-            obj[std::string_view("code")] = static_cast<int64_t>(DAS_S_OK);
-            obj[std::string_view("msg")] = std::string_view("");
-            obj[std::string_view("data")] = state_json;
-
-            auto state_serialized =
-                Das::Utils::SerializeYyjsonValue(event, false);
-            if (state_serialized)
-            {
-                state_notify_(state_serialized->c_str());
-            }
-        }
+        // 周期推送当前状态（UI task 列表刷新）；状态变化的即时推送由
+        // Enable/Disable/OnTick 收尾调 NotifyStateChange 负责。
+        NotifyStateChange();
     }
 
     // ----------------------------------------------------------------
