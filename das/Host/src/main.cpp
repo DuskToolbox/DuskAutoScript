@@ -18,6 +18,7 @@
 #include <das/Core/IPC/ObjectId.h>
 #include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <das/DasApi.h>
+#include <das/Debug/CrashDumper.h>
 #include <das/IDasBase.h>
 #include <das/Utils/DasJsonCore.h>
 #include <das/Utils/StringUtils.h>
@@ -177,6 +178,8 @@ namespace
 
 int main(int argc, char* argv[])
 {
+    Das::Debug::InstallCrashDumper();
+
     try
     {
         boost::program_options::options_description desc(

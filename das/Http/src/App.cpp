@@ -7,6 +7,8 @@
 #include "das/Utils/ThreadUtils.h"
 #include "das/Utils/fmt.h"
 
+#include <das/Debug/CrashDumper.h>
+
 #include "./AppComponent.hpp"
 #include "./NotificationHub.hpp"
 #include "./SseHub.hpp"
@@ -878,6 +880,8 @@ namespace
 
 int main(int argc, const char* argv[])
 {
+    Das::Debug::InstallCrashDumper();
+
     std::cout << "[DasHttp] " << (argv[0] ? argv[0] : "") << " is start"
               << std::endl;
 

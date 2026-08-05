@@ -10,7 +10,7 @@ target_include_directories(DasHostX PRIVATE ../Utils/include)
 target_include_directories(DasHostX PRIVATE ${CMAKE_SOURCE_DIR}/include)
 target_include_directories(DasHostX PRIVATE ${CMAKE_BINARY_DIR}/das/include)
 
-target_link_libraries(DasHostX PRIVATE DasCore DasCommonHeaders DasPlatformDefs)
+target_link_libraries(DasHostX PRIVATE DasCore DasCommonHeaders DasPlatformDefs DasDebug)
 
 # 使用 DasCore 的导出宏定义
 if(DasCore_EXPORT_DEFINITIONS)

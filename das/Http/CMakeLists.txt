@@ -8,6 +8,7 @@ target_include_directories(DasHttp PRIVATE src)
 target_link_libraries(DasHttp PRIVATE
         DasCore
         DAS_EX_PRIVATE_LIBS
+        DasDebug
         ${DAS_BUNDLED_BOOST_LIBS})
 
 if(WIN32)
