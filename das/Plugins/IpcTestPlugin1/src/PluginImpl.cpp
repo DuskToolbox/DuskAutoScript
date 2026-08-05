@@ -500,7 +500,7 @@ DasResult DasQueryComponentImpl::HandleProgressServiceRoundTrip(
     // 按名解析主进程 IDasProgressService proxy。
     DAS::DasPtr<IDasBase> raw_obj;
     DasResult             hr = DasQueryMainProcessInterfaceByName(
-        "IDasProgressService",
+        "Das::ProgressService",
         raw_obj.Put());
     if (DAS::IsFailed(hr) || !raw_obj)
     {
@@ -606,7 +606,7 @@ DasResult DasQueryComponentImpl::HandleProcessLogRecorderRoundTrip(
     // 按名解析主进程 IDasProcessLogRecorder proxy。
     DAS::DasPtr<IDasBase> raw_obj;
     DasResult             hr = DasQueryMainProcessInterfaceByName(
-        "IDasProcessLogRecorder",
+        "Das::FocusLogRecorder",
         raw_obj.Put());
     if (DAS::IsFailed(hr) || !raw_obj)
     {

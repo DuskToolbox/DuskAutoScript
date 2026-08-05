@@ -359,7 +359,7 @@ namespace Das::Http
             const auto recorder_reg = ipc_context->RegisterServiceByName(
                 log_recorder_main.Get(),
                 DasIidOf<Das::ExportInterface::IDasProcessLogRecorder>(),
-                "IDasProcessLogRecorder");
+                "Das::FocusLogRecorder");
             if (DAS::IsFailed(recorder_reg))
             {
                 DAS_LOG_ERROR(
@@ -618,7 +618,7 @@ namespace Das::Http
                 const auto progress_reg = ipc_context->RegisterServiceByName(
                     progress_raw,
                     DasIidOf<Das::ExportInterface::IDasProgressService>(),
-                    "IDasProgressService");
+                    "Das::ProgressService");
                 if (DAS::IsFailed(progress_reg))
                 {
                     DAS_LOG_ERROR(

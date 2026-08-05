@@ -133,7 +133,7 @@ namespace
                 ctx_->RegisterServiceByName(
                     recorder_.Get(),
                     DasIidOf<EP::IDasProcessLogRecorder>(),
-                    "IDasProcessLogRecorder"),
+                    "Das::FocusLogRecorder"),
                 DAS_S_OK);
 
             IHostLauncher* raw_launcher = nullptr;
@@ -154,7 +154,7 @@ namespace
         {
             if (ctx_)
             {
-                ctx_->UnregisterServiceByName("IDasProcessLogRecorder");
+                ctx_->UnregisterServiceByName("Das::FocusLogRecorder");
                 ctx_->RequestStop();
             }
             if (run_thread_.joinable())
