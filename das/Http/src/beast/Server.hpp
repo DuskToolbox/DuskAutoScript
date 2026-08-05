@@ -5,18 +5,26 @@
 #include "Request.hpp"
 #include "Router.hpp"
 #include "SseSession.hpp"
+#include <boost/asio/awaitable.hpp>
+#include <boost/asio/co_spawn.hpp>
+#include <boost/asio/detached.hpp>
 #include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/redirect_error.hpp>
+#include <boost/asio/steady_timer.hpp>
 #include <boost/asio/strand.hpp>
+#include <boost/asio/use_awaitable.hpp>
 #include <boost/beast/core.hpp>
 #include <boost/beast/http.hpp>
 #include <boost/beast/version.hpp>
 #include <boost/beast/websocket.hpp>
 #include <boost/config.hpp>
+#include <chrono>
 #include <das/DasApi.h>
 #include <das/Utils/fmt.h>
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <queue>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -133,12 +141,19 @@ namespace Das::Http::Beast
     {
         boost::beast::websocket::stream<tcp::socket> ws_;
         std::shared_ptr<NotificationHub>             hub_;
-        std::mutex                                   write_mutex_;
+        // 待发消息队列（shared_ptr 零拷贝传递；strand 内访问，无锁）。
+        std::queue<std::shared_ptr<const std::string>> write_queue_;
+        // 当"有新消息"的唤醒开关（不计时，expires_at max，仅 cancel_one
+        // 触发）。
+        boost::asio::steady_timer wakeup_timer_;
 
     public:
         WsSession(tcp::socket socket, std::shared_ptr<NotificationHub> hub)
-            : ws_(std::move(socket)), hub_(std::move(hub))
+            : ws_(std::move(socket)), hub_(std::move(hub)),
+              wakeup_timer_(ws_.get_executor())
         {
+            wakeup_timer_.expires_at(
+                std::chrono::steady_clock::time_point::max());
         }
 
         /**
@@ -177,6 +192,14 @@ namespace Das::Http::Beast
                     // 注册到 NotificationHub
                     self->hub_->Register(self);
 
+                    // 启动写协程（co_spawn 在 session strand：串行化
+                    // async_write， 防 beast websocket soft_mutex 重入断言）
+                    boost::asio::co_spawn(
+                        self->ws_.get_executor(),
+                        [self]() -> boost::asio::awaitable<void>
+                        { co_await self->WriteLoop(); },
+                        boost::asio::detached);
+
                     // 启动读循环
                     self->DoReadLoop();
                 });
@@ -191,18 +214,45 @@ namespace Das::Http::Beast
          */
         void WriteMessage(std::shared_ptr<const std::string> message)
         {
-            // Beast websocket::stream 不允许并发写
-            std::lock_guard<std::mutex> lock(write_mutex_);
-
-            auto self = shared_from_this();
-            ws_.async_write(
-                boost::asio::buffer(*message),
-                [self,
-                 message](boost::beast::error_code ec, std::size_t /*bytes*/)
-                { boost::ignore_unused(ec); });
+            // dispatch 进 session strand：push queue + cancel_one 唤醒写协程。
+            // 调用者无需关心是否已在 strand（dispatch 同步/异步自适应）。
+            boost::asio::dispatch(
+                ws_.get_executor(),
+                [self = shared_from_this(), message]()
+                {
+                    self->write_queue_.push(message);
+                    self->wakeup_timer_.cancel_one();
+                });
         }
 
     private:
+        // 写协程：串行化 async_write（co_await 保证 completion 后才下一条，
+        // 防 beast websocket soft_mutex 重入断言）。msg 在协程帧局部，
+        // co_await 期间存活。队列空时挂起 async_wait，WriteMessage cancel_one
+        // 唤醒。
+        boost::asio::awaitable<void> WriteLoop()
+        {
+            auto self = shared_from_this();
+            while (true)
+            {
+                if (!self->write_queue_.empty())
+                {
+                    auto msg = self->write_queue_.front();
+                    self->write_queue_.pop();
+                    co_await self->ws_.async_write(
+                        boost::asio::buffer(*msg),
+                        boost::asio::use_awaitable);
+                    continue;
+                }
+                boost::system::error_code ec;
+                co_await self->wakeup_timer_.async_wait(
+                    boost::asio::redirect_error(
+                        boost::asio::use_awaitable,
+                        ec));
+            }
+            co_return;
+        }
+
         void DoReadLoop()
         {
             auto self = shared_from_this();

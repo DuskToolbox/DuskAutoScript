@@ -131,9 +131,15 @@ namespace Das::Http::Beast
         HttpResponse Handle(const HttpRequest& request) const
         {
             std::string target = std::string(request.Target());
-            DAS_LOG_INFO(
-                DAS_FMT_NS::format("[HTTP] {} {}", request.Method(), target)
-                    .c_str());
+            // 日志端点（/logs/）静默：避免"处理日志请求 → 写 [HTTP] 日志 →
+            // DasLogNotifierSink 置 dirty → log tick broadcast →
+            // 前端又发日志请求" 的反馈循环。其他端点照常记请求日志。
+            if (target.find("/logs/") == std::string::npos)
+            {
+                DAS_LOG_INFO(
+                    DAS_FMT_NS::format("[HTTP] {} {}", request.Method(), target)
+                        .c_str());
+            }
             if (!target.empty() && target.front() == '/')
             {
                 target = target.substr(1);

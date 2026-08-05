@@ -38,6 +38,14 @@
 
 namespace Das::Http
 {
+    namespace
+    {
+        // 日志增量通知 tick 间隔（focus + debug
+        // 共一套）：过短会放大"日志请求→写日志→ 触发
+        // tick→新日志请求"的反馈循环密度；150ms 在刷新体感与负载间取平衡。
+        constexpr std::chrono::milliseconds LOG_POLL_INTERVAL(150);
+    }
+
     DAS_DEFINE_VARIABLE(g_server_condition){};
 
     void Das::Http::ServerCondition::RequestServerStop()
@@ -702,7 +710,7 @@ namespace Das::Http
                 },
                 hub.get());
 
-            // 日志增量统一通知（focus + debug 共一套机制）：Http 16ms 定时器挂
+            // 日志增量统一通知（focus + debug 共一套机制）：Http 150ms 定时器挂
             // 在 server 的 io_context（非 IPC BusinessThread——Consume 不得占
             // RPC 分发线程）。每 tick 轮询两个 channel 的 dirty flag：
             //   - Spdlog dirty：sink::sink_it_ 在每条 DAS_LOG 触发时置；
@@ -714,7 +722,7 @@ namespace Das::Http
             // io_context 线程调。timer 在 server.Run() 退出后 cancel。
             auto log_poll_timer = std::make_shared<boost::asio::steady_timer>(
                 server.IoCtx(),
-                std::chrono::milliseconds(16));
+                LOG_POLL_INTERVAL);
             auto recursive_tick = std::make_shared<
                 std::function<void(const boost::system::error_code&)>>();
             *recursive_tick = [hub, log_poll_timer, recursive_tick](
@@ -756,7 +764,7 @@ namespace Das::Http
                         }
                     }
                 }
-                log_poll_timer->expires_after(std::chrono::milliseconds(16));
+                log_poll_timer->expires_after(LOG_POLL_INTERVAL);
                 log_poll_timer->async_wait(*recursive_tick);
             };
             log_poll_timer->async_wait(*recursive_tick);
