@@ -1845,9 +1845,9 @@ namespace Das::Plugins::DasMaaPi
         // registered the context fields are read-only to callback threads.
         if (log_context)
         {
-            const auto controller_handle = controller.get();
-            log_context->image_provider = [controller_handle, &boundary]()
-            { return boundary.GetCachedImage(controller_handle); };
+            const auto image_controller_handle = controller.get();
+            log_context->image_provider = [image_controller_handle, &boundary]()
+            { return boundary.GetCachedImage(image_controller_handle); };
         }
 
         if (log_context)

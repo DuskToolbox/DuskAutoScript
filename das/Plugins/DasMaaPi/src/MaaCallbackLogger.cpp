@@ -172,13 +172,13 @@ namespace Das::Plugins::DasMaaPi
                 {
                     result.append(s->data(), s->size());
                 }
-                else if (auto num = value.as_sint())
+                else if (auto signed_integer = value.as_sint())
                 {
-                    result.append(std::to_string(*num));
+                    result.append(std::to_string(*signed_integer));
                 }
-                else if (auto num = value.as_uint())
+                else if (auto unsigned_integer = value.as_uint())
                 {
-                    result.append(std::to_string(*num));
+                    result.append(std::to_string(*unsigned_integer));
                 }
                 else if (auto real = value.as_real())
                 {

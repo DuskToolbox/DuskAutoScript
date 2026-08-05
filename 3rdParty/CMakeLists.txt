@@ -735,6 +735,35 @@ endfunction()
 
 _download_and_config_maaframework()
 
+function(_download_and_config_aws_lc)
+    set(DAS_AWSLC_GIT_TAG "v5.4.0" CACHE STRING "Pinned AWS-LC release tag")
+
+    set(CMAKE_FOLDER "Das3rd/aws-lc")
+    set(BUILD_SHARED_LIBS OFF)
+    set(BUILD_TESTING OFF)
+    set(FIPS OFF)
+    set(DISABLE_GO ON) # cmake/go.cmake otherwise FATALs without Go
+
+    # Enable asm when NASM is available; fall back to pure-C crypto otherwise.
+    find_program(NASM_EXECUTABLE nasm)
+    if(NOT NASM_EXECUTABLE)
+        set(OPENSSL_NO_ASM ON)
+        message(WARNING "NASM not found — AWS-LC builds with OPENSSL_NO_ASM (pure-C crypto, slower). Install NASM to enable asm.")
+    endif()
+
+    # TODO: switch to ${GITHUB_MIRROR_URL}/aws/aws-lc.git once the local cache mirrors it.
+    FetchContent_Declare(
+        aws-lc
+        GIT_REPOSITORY https://github.com/aws/aws-lc.git
+        GIT_TAG ${DAS_AWSLC_GIT_TAG}
+        GIT_SHALLOW TRUE)
+    FetchContent_MakeAvailable(aws-lc)
+endfunction()
+
+if(MSVC)
+    _download_and_config_aws_lc()
+endif()
+
 message("================================================================")
 
 # message(STATUS "The third-party libraries listed later are only used for Plugin.")

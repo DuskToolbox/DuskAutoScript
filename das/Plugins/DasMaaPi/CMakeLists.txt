@@ -9,7 +9,7 @@ set_target_properties(DasMaaPi PROPERTIES PREFIX "lib")
 target_include_directories(DasMaaPi PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_options(DasMaaPi PRIVATE
-    $<$<CXX_COMPILER_ID:MSVC>:/W4 /WX /MP>
+    $<$<CXX_COMPILER_ID:MSVC>:/W4 /WX /MP /bigobj>
     $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra -Wpedantic -Werror>)
 target_link_libraries(DasMaaPi PUBLIC DAS_EX_PRIVATE_LIBS)
 target_link_libraries(DasMaaPi PRIVATE
@@ -29,13 +29,12 @@ if(WIN32)
 endif()
 
 # PiHttpClient uses Beast TLS (boost::beast::ssl_stream) for https targets.
-# Beast's ssl layer links OpenSSL; on the ember toolchain the import libs live
-# in the clang64 environment. MSVC builds (no OpenSSL in the toolchain) are not
-# part of the phase 89 gate and remain unlinked — the TLS code paths stay
-# reachable but require an OpenSSL-capable toolchain at link time.
-if(NOT MSVC)
-    target_link_libraries(DasMaaPi PRIVATE ssl crypto)
-endif()
+# Both toolchains resolve to an OpenSSL-API-compatible TLS backend, so the
+# link line is identical:
+#   - MinGW/clang64: the system OpenSSL import libs (ssl crypto).
+#   - MSVC: the statically-linked AWS-LC targets (ssl crypto, BoringSSL fork),
+#     fetched in 3rdParty/CMakeLists.txt as the boost::asio::ssl backend.
+target_link_libraries(DasMaaPi PRIVATE ssl crypto)
 
 if(TARGET DasBundledMaaFrameworkDll)
     get_target_property(_das_maapi_framework_implib DasBundledMaaFrameworkDll IMPORTED_IMPLIB)
@@ -104,11 +103,13 @@ if(DAS_BUILD_TEST)
     if(WIN32)
         target_link_libraries(DasMaaPiTest PRIVATE bcrypt)
     endif()
-    if(NOT MSVC)
-        target_link_libraries(DasMaaPiTest PRIVATE ssl crypto)
-    endif()
+    target_link_libraries(DasMaaPiTest PRIVATE ssl crypto)
     target_compile_definitions(DasMaaPiTest PRIVATE
         DAS_MAAPI_DISABLE_REAL_MAA_BOUNDARY)
+    # PiHttpClient pulls in boost::asio::ssl + openssl headers; MSVC COFF
+    # 32k-section limit needs /bigobj (same as DasMaaPi).
+    target_compile_options(DasMaaPiTest PRIVATE
+        $<$<CXX_COMPILER_ID:MSVC>:/bigobj>)
 
     get_target_property(DAS_CORE_INCLUDE_DIRS DasCoreObjects INCLUDE_DIRECTORIES)
     target_include_directories(DasMaaPiTest PRIVATE
