@@ -227,7 +227,8 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
 
         AgentRuntimeResultDto Start(
             const AgentRuntimeRequestDto& request,
-            const AgentRuntimeMaaContext& context)
+            const AgentRuntimeMaaContext& context,
+            const AgentOutputCallback&    on_output)
         {
             const std::scoped_lock lock(mutex_);
 
@@ -329,6 +330,19 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
                 launch.environment = env;
                 launch.capture_output = request.options.capture_output;
                 launch.max_output_tail_bytes = MaxTailBytes(request.options);
+                // per-agent 绑 agent_id 后透传到 BoostAgentProcess。
+                // launch.on_output 与 BoostAgentProcess 实例同寿
+                // （std::function 拷贝闭包，MaaRuntime 注入的 recorder DasPtr
+                // 经 AddRef 保持引用直到 ~BoostAgentProcess 后最后一次
+                // async 回调完成）。
+                if (on_output)
+                {
+                    auto agent_id_for_closure = agent.agent_id;
+                    launch.on_output = [on_output, agent_id_for_closure](
+                                           std::string_view line,
+                                           bool             is_stderr)
+                    { on_output(agent_id_for_closure, line, is_stderr); };
+                }
 
                 auto launched = runner_.Launch(launch);
                 if (!launched.ok || !launched.process)
@@ -685,9 +699,10 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
 
     AgentRuntimeResultDto AgentRuntimeService::Start(
         const AgentRuntimeRequestDto& request,
-        const AgentRuntimeMaaContext& context)
+        const AgentRuntimeMaaContext& context,
+        const AgentOutputCallback&    on_output)
     {
-        return impl_->Start(request, context);
+        return impl_->Start(request, context, on_output);
     }
 
     AgentRuntimeResultDto AgentRuntimeService::Stop(

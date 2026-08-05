@@ -1260,6 +1260,76 @@ namespace Das::Plugins::DasMaaPi
                    && requested;
         }
 
+        // 把 agent 一行 stdout/stderr/失败消息包成 IDasLogEntry 投到 recorder。
+        // severity 映射：stdout→INFO，stderr→WARNING，failure→ERROR。
+        // stream_label：可读流标识（"stdout"/"stderr"/"failure"），写入
+        // stream field 供 UI 可选过滤。source/agentId/stream 的 value 都是
+        // JSON-encoded quoted literal（recorder 经 SetField JSON 解析后存盘），
+        // 经 DasU8StringOnStack 借用 std::string 持久内存——SetField 同步解析，
+        // 调用返回后字符串不再被引用。
+        // yyjson 字符串安全：不直接拼裸字符串进 user.jsonl；SetField value 经
+        // yyjson 解析、文本经 AddText 自动 JSON 转义。DAS_LOG_TYPE_AGENT 不用
+        // （无消费方槽位）。
+        DasResult RecordAgentOutput(
+            Das::ExportInterface::IDasProcessLogRecorder* recorder,
+            std::string_view                              agent_id,
+            std::string_view                              line,
+            Das::ExportInterface::DasLogType              severity,
+            std::string_view                              stream_label)
+        {
+            if (recorder == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            Das::DasPtr<Das::ExportInterface::IDasLogEntry> entry;
+            auto hr = CreateIDasLogEntry(entry.Put());
+            if (DAS::IsFailed(hr) || !entry)
+            {
+                return hr;
+            }
+            hr = entry->SetType(severity);
+            if (DAS::IsFailed(hr))
+            {
+                return hr;
+            }
+            const std::string  text(line);
+            DasU8StringOnStack text_string{text.c_str()};
+            hr = entry->AddText(&text_string);
+            if (DAS::IsFailed(hr))
+            {
+                return hr;
+            }
+            // value 是 JSON 字符串字面量：值需带引号。本地 std::string 持有引号
+            // 包裹后的值，DasU8StringOnStack 借用其 c_str()。SetField 调用返回
+            // 前 recorder 已同步解析/拷贝，本地 string 可安全析构。
+            const std::string agent_id_value =
+                "\"" + std::string(agent_id) + "\"";
+            const std::string stream_value =
+                "\"" + std::string(stream_label) + "\"";
+            DasU8StringOnStack source_key{"source"};
+            DasU8StringOnStack source_value{"\"agent\""};
+            hr = entry->SetField(&source_key, &source_value);
+            if (DAS::IsFailed(hr))
+            {
+                return hr;
+            }
+            DasU8StringOnStack agent_id_key{"agentId"};
+            DasU8StringOnStack agent_id_json{agent_id_value.c_str()};
+            hr = entry->SetField(&agent_id_key, &agent_id_json);
+            if (DAS::IsFailed(hr))
+            {
+                return hr;
+            }
+            DasU8StringOnStack stream_key{"stream"};
+            DasU8StringOnStack stream_json{stream_value.c_str()};
+            hr = entry->SetField(&stream_key, &stream_json);
+            if (DAS::IsFailed(hr))
+            {
+                return hr;
+            }
+            return recorder->Record(entry.Get());
+        }
+
         std::string SerializeJson(const yyjson::value& value)
         {
             auto serialized = Das::Utils::SerializeYyjsonValue(value);
@@ -1436,14 +1506,39 @@ namespace Das::Plugins::DasMaaPi
         // just the tasker. Recorder creation failure degrades focus logging
         // (log_context stays null, sinks see a null trans_arg) but does not
         // block the task.
-        // 当前传 nullptr/nullptr 走降级路径：本插件 loadMode=ipc 跑在 Host
-        // 进程，Host 无 session/notifier，recorder.Record 写盘返
-        // OBJECT_NOT_INIT （与 retire 前的 LogRecorderRuntime
-        // 未初始化行为一致）。主进程具名 服务 proxy 在后续 phase 接入（resolve
-        // → proxy → marshal 主进程）。
+        // resolve-or-degrade（IDasProgressService 范式）：本插件 loadMode=ipc
+        // 跑在 Host 进程，Host 无 session/notifier，本地 new 出的 recorder
+        // Record 写盘返 OBJECT_NOT_INIT（focus 日志在 IPC 下从没工作过的根因）。
+        // 先经 C ABI DasQueryMainProcessInterfaceByName 跨进程 resolve 主进程
+        // 具名服务 "Das::FocusLogRecorder"（App.cpp 注册的语义角色名），
+        // proxy.Record 经 IPC marshal 到主进程写 user.jsonl +
+        // notifier->Signal(UserJsonl)。resolve 失败 → 降级本地
+        // CreateIDasProcessLogRecorder 工厂（in-process /
+        // 测试路径保持行为一致）。 走 C ABI 而非内部 IPC C++ 接口：插件 DLL
+        // 通过稳定 ABI 契约访问 Core， 不依赖 das/Core/IPC 内部 thread_local 与
+        // IResolveContext vtable。
         Das::DasPtr<Das::ExportInterface::IDasProcessLogRecorder> log_recorder;
-        auto                                                      recorder_rc =
-            CreateIDasProcessLogRecorder(nullptr, nullptr, log_recorder.Put());
+        DasResult        recorder_rc = DAS_E_FAIL;
+        DasPtr<IDasBase> resolved_base;
+        const auto       resolve_rc = DasQueryMainProcessInterfaceByName(
+            "Das::FocusLogRecorder",
+            resolved_base.Put());
+        if (DAS::IsOk(resolve_rc) && resolved_base)
+        {
+            (void)resolved_base.As(log_recorder);
+            recorder_rc = log_recorder ? DAS_S_OK : DAS_E_FAIL;
+        }
+        if (!log_recorder)
+        {
+            // 降级：in-process / 测试路径（无 IPC context）或 resolve 失败
+            // （主进程未注册服务）。本地 recorder 在 Host 进程无 session 时
+            // Record 返 OBJECT_NOT_INIT，与 retire 前的 LogRecorderRuntime
+            // 未初始化行为一致（不阻塞 task）。
+            recorder_rc = CreateIDasProcessLogRecorder(
+                nullptr,
+                nullptr,
+                log_recorder.Put());
+        }
         std::unique_ptr<MaaCallbackLoggerContext> log_context;
         if (DAS::IsFailed(recorder_rc))
         {
@@ -1810,12 +1905,42 @@ namespace Das::Plugins::DasMaaPi
         if (envelope.maapi.requires_agent_runtime)
         {
             auto agent_request = BuildAgentStartRequest(envelope);
+            // on_output 闭包：每行 stdout/stderr 经 RecordAgentOutput 投到
+            // resolved recorder（IPC proxy 主进程 user.jsonl，或降级本地
+            // recorder；service 透传，不引用 recorder）。severity：stdout→
+            // INFO，stderr→WARNING。失败→ERROR 由 agent stop 后单独路径发
+            // （exit_code != 0 时）。recorder 经 DasPtr& 捕获，闭包拷贝
+            // （std::function copy）增 recorder refcount，与 BoostAgentProcess
+            // 同寿。
+            AgentRuntime::AgentOutputCallback agent_output_closure;
+            if (log_context && log_context->recorder)
+            {
+                agent_output_closure = [&recorder = log_context->recorder](
+                                           std::string_view agent_id,
+                                           std::string_view line,
+                                           bool             is_stderr)
+                {
+                    const auto severity =
+                        is_stderr ? Das::ExportInterface::DAS_LOG_TYPE_WARNING
+                                  : Das::ExportInterface::DAS_LOG_TYPE_INFO;
+                    const auto stream_label = is_stderr
+                                                  ? std::string_view{"stderr"}
+                                                  : std::string_view{"stdout"};
+                    (void)RecordAgentOutput(
+                        recorder.Get(),
+                        agent_id,
+                        line,
+                        severity,
+                        stream_label);
+                };
+            }
             auto agent_start = agent_service.Start(
                 agent_request,
                 AgentRuntime::AgentRuntimeMaaContext{
                     .resource = resource.get(),
                     .controller = controller.get(),
-                    .tasker = tasker.get()});
+                    .tasker = tasker.get()},
+                agent_output_closure);
             if (agent_start.status != "succeeded" || !agent_start.session_id)
             {
                 result.das_result = DAS_E_FAIL;
@@ -1906,6 +2031,31 @@ namespace Das::Plugins::DasMaaPi
                     "PI agent runtime cleanup timed out",
                     std::nullopt,
                     "warning");
+            }
+            // 失败 agent → 单条 ERROR 投递（severity 映射第三档）。exit_code
+            // 非零即视作失败；该路径与逐行 INFO/WARNING 闭包互补，覆盖 agent
+            // 整体失败语义（MXU maa_agent.rs 的 stderr→warn! 仅覆盖流，整体
+            // 失败需要单独 ERROR 信号）。
+            if (log_context && log_context->recorder)
+            {
+                for (const auto& agent_state : agent_stop.agent)
+                {
+                    const bool failed = agent_state.exit_code.has_value()
+                                        && *agent_state.exit_code != 0;
+                    if (!failed)
+                    {
+                        continue;
+                    }
+                    std::string failure_message =
+                        "agent exited with code "
+                        + std::to_string(*agent_state.exit_code);
+                    (void)RecordAgentOutput(
+                        log_context->recorder.Get(),
+                        agent_state.agent_id,
+                        failure_message,
+                        Das::ExportInterface::DAS_LOG_TYPE_ERROR,
+                        "failure");
+                }
             }
         }
 

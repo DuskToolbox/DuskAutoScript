@@ -7,6 +7,8 @@
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
+#include <format>
+#include <functional>
 #include <map>
 #include <mutex>
 #include <string>
@@ -35,6 +37,109 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
         bool StartsWithPi(std::string_view value)
         {
             return value.starts_with("PI_");
+        }
+
+        // 把 chunk 追加进 accumulator，按 '\n' 拆出每个完整行（去掉换行符）调
+        // on_output；末尾若不含 '\n'，残留留在 accumulator 等下一次读。返回发出
+        // 的行数。chunk 为空 view 时无副作用（仅用于 EOF flush 调用前的空读）。
+        // on_output 异常被 try/catch 兜底（DAS_LOG_WARNING），单行异常不阻断
+        // 后续行分发。tampering 缓解：agent 输出按不透明文本处理，不执行任何
+        // 控制序列（拆分只看 '\n'）。
+        std::size_t DispatchBufferedLines(
+            std::string&     accumulator,
+            std::string_view chunk,
+            bool             is_stderr,
+            const std::function<void(std::string_view line, bool is_stderr)>&
+                on_output)
+        {
+            if (!on_output || chunk.empty())
+            {
+                accumulator.append(chunk);
+                return 0;
+            }
+            accumulator.append(chunk);
+            std::size_t emitted = 0;
+            std::size_t start = 0;
+            while (true)
+            {
+                const auto newline = accumulator.find('\n', start);
+                if (newline == std::string::npos)
+                {
+                    break;
+                }
+                std::string_view line(
+                    accumulator.data() + start,
+                    newline - start);
+                // 跨平台容忍 '\r\n'：去掉末尾 '\r'（Windows 子进程常见）。
+                if (!line.empty() && line.back() == '\r')
+                {
+                    line.remove_suffix(1);
+                }
+                try
+                {
+                    on_output(line, is_stderr);
+                }
+                catch (const std::exception& exception)
+                {
+                    const auto reason = std::format(
+                        "AgentProcess on_output threw: {}",
+                        exception.what());
+                    DAS_LOG_WARNING(reason.c_str());
+                }
+                catch (...)
+                {
+                    DAS_LOG_WARNING(
+                        "AgentProcess on_output threw a non-std exception");
+                }
+                ++emitted;
+                start = newline + 1;
+            }
+            // 已分发的行从 accumulator 头部移除，剩 partial 留待下次。
+            if (start > 0)
+            {
+                accumulator.erase(0, start);
+            }
+            return emitted;
+        }
+
+        // EOF flush：accumulator 里残留的 partial（无结尾 '\n'）作末行发出。
+        // 空字符串不发（避免空末行噪声）。
+        void FlushBufferedLines(
+            std::string& accumulator,
+            bool         is_stderr,
+            const std::function<void(std::string_view line, bool is_stderr)>&
+                on_output)
+        {
+            if (!on_output || accumulator.empty())
+            {
+                accumulator.clear();
+                return;
+            }
+            std::string_view line(accumulator);
+            if (!line.empty() && line.back() == '\r')
+            {
+                line.remove_suffix(1);
+            }
+            if (!line.empty())
+            {
+                try
+                {
+                    on_output(line, is_stderr);
+                }
+                catch (const std::exception& exception)
+                {
+                    const auto reason = std::format(
+                        "AgentProcess on_output threw on flush: {}",
+                        exception.what());
+                    DAS_LOG_WARNING(reason.c_str());
+                }
+                catch (...)
+                {
+                    DAS_LOG_WARNING(
+                        "AgentProcess on_output threw a non-std exception on flush");
+                }
+            }
+            accumulator.clear();
         }
 
         void AppendBounded(
@@ -84,7 +189,8 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
         public:
             explicit BoostAgentProcess(const AgentProcessLaunchRequest& request)
                 : stdout_pipe_(io_context_), stderr_pipe_(io_context_),
-                  max_output_tail_bytes_(request.max_output_tail_bytes)
+                  max_output_tail_bytes_(request.max_output_tail_bytes),
+                  on_output_(request.on_output)
             {
                 auto env_values = BuildProcessEnvironment(request.environment);
                 boost::process::v2::process_environment child_environment{
@@ -203,7 +309,20 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
                                     size,
                                     max_output_tail_bytes_);
                             }
+                            DispatchBufferedLines(
+                                stdout_accumulator_,
+                                std::string_view(stdout_buffer_.data(), size),
+                                false,
+                                on_output_);
                             StartReadStdout();
+                        }
+                        else
+                        {
+                            const std::scoped_lock lock(mutex_);
+                            FlushBufferedLines(
+                                stdout_accumulator_,
+                                false,
+                                on_output_);
                         }
                     });
             }
@@ -224,7 +343,20 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
                                     size,
                                     max_output_tail_bytes_);
                             }
+                            DispatchBufferedLines(
+                                stderr_accumulator_,
+                                std::string_view(stderr_buffer_.data(), size),
+                                true,
+                                on_output_);
                             StartReadStderr();
+                        }
+                        else
+                        {
+                            const std::scoped_lock lock(mutex_);
+                            FlushBufferedLines(
+                                stderr_accumulator_,
+                                true,
+                                on_output_);
                         }
                     });
             }
@@ -254,6 +386,15 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
             std::optional<int32_t>  exit_code_;
             std::string             stdout_tail_;
             std::string             stderr_tail_;
+            // 行分发状态：per-stream accumulator 跨 chunk 维护 partial，
+            // EOF flush 末行。所有 DispatchBufferedLines/FlushBufferedLines
+            // 调用 都在 mutex_ 保护下进行（与 AppendBounded 同锁），on_output
+            // 在 持锁期间调出——caller 闭包不应反向调
+            // BoostAgentProcess（否则死锁）。
+            std::string stdout_accumulator_;
+            std::string stderr_accumulator_;
+            std::function<void(std::string_view line, bool is_stderr)>
+                on_output_;
         };
     } // namespace
 

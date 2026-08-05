@@ -5,9 +5,11 @@
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -22,6 +24,11 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
         std::vector<PiEnvVarDto> environment;
         bool                     capture_output = true;
         std::size_t              max_output_tail_bytes = 16384;
+        // 逐行分发子进程 stdout/stderr（is_stderr 区分两流）。BoostAgentProcess
+        // async_read 累积 chunk → 按 '\n' 拆行 → 每完整行调一次；EOF 时残留
+        // accumulator 作末行 flush。default 空：不关心的 caller 零开销。
+        // 异常被 try/catch 兜底（DAS_LOG_WARNING），不逃逸 async 回调。
+        std::function<void(std::string_view line, bool is_stderr)> on_output;
     };
 
     struct AgentProcessSnapshot
