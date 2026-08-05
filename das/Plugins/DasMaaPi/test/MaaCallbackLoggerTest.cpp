@@ -216,7 +216,7 @@ TEST_F(MaaCallbackLoggerFixture, LogFocusMessage_WritesFocusEntryToJsonl)
     ASSERT_TRUE(obj.has_value());
     auto type = (*obj)[std::string_view("type")].as_string();
     ASSERT_TRUE(type.has_value());
-    EXPECT_EQ(*type, "focus");
+    EXPECT_EQ(*type, "structural");
     auto text = (*obj)[std::string_view("text")].as_string();
     ASSERT_TRUE(text.has_value());
     EXPECT_EQ(*text, "NodeA 开始执行");

@@ -634,7 +634,7 @@ DasResult DasQueryComponentImpl::HandleProcessLogRecorderRoundTrip(
     {
         return hr;
     }
-    hr = entry->SetType(Das::ExportInterface::DAS_LOG_TYPE_FOCUS);
+    hr = entry->SetType(Das::ExportInterface::DAS_LOG_TYPE_STRUCTURAL);
     if (DAS::IsFailed(hr))
     {
         return hr;

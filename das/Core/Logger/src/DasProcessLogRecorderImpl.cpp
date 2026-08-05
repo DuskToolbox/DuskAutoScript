@@ -30,10 +30,8 @@ namespace Das::Core
                 return "warning";
             case Das::ExportInterface::DAS_LOG_TYPE_ERROR:
                 return "error";
-            case Das::ExportInterface::DAS_LOG_TYPE_AGENT:
-                return "agent";
-            case Das::ExportInterface::DAS_LOG_TYPE_FOCUS:
-                return "focus";
+            case Das::ExportInterface::DAS_LOG_TYPE_STRUCTURAL:
+                return "structural";
             case Das::ExportInterface::DAS_LOG_TYPE_INFO:
             default:
                 return "info";
@@ -149,7 +147,7 @@ namespace Das::Core
     DasResult IDasLogEntryImpl::SetType(Das::ExportInterface::DasLogType type)
     {
         if (type < Das::ExportInterface::DAS_LOG_TYPE_INFO
-            || type > Das::ExportInterface::DAS_LOG_TYPE_FOCUS)
+            || type > Das::ExportInterface::DAS_LOG_TYPE_STRUCTURAL)
         {
             return DAS_E_INVALID_ENUM;
         }

@@ -3,8 +3,8 @@
 //   ① BoostAgentProcess 的行分发逻辑：跨 chunk 拆行、EOF flush、CRLF 容忍、
 //      on_output 异常兜底；
 //   ② MaaRuntime 的 RecordAgentOutput severity 映射：stdout→INFO，
-//      stderr→WARNING，failure→ERROR；
-//   ③ DAS_LOG_TYPE_AGENT 永不作为 SetType 参数（无消费方槽位）。
+//      stderr→ERROR，failure→ERROR；agent 来源标识经 [AGENT <id>] 文本前缀
+//      表达（不占 type 槽）。
 //
 // 行分发不启 BoostAgentProcess（async_read_some+真子进程 flaky 且 OS 绑定）；
 // 改为直接测 anonymous-namespace 的 DispatchBufferedLines / FlushBufferedLines
@@ -261,11 +261,8 @@ namespace
     };
 
     // DasProcessLogRecorderImpl::LogTypeToString 输出的小写 type 标签。
-    // DAS_LOG_TYPE_AGENT -> "agent"（本 plan 永不使用）。
-    constexpr std::string_view K_LOG_TYPE_INFO = "info";
-    constexpr std::string_view K_LOG_TYPE_WARNING = "warning";
-    constexpr std::string_view K_LOG_TYPE_ERROR = "error";
-    constexpr std::string_view K_LOG_TYPE_AGENT = "agent";
+    constexpr std::string_view LOG_TYPE_INFO = "info";
+    constexpr std::string_view LOG_TYPE_ERROR = "error";
 } // namespace
 
 // ===== 行分发 helper 单测 =====
@@ -355,7 +352,8 @@ TEST(DasMaaPiAgentOnOutputLineDispatch, StdoutAndStderrIndependent)
 // RecordAgentOutput 是 MaaRuntime.cpp anonymous-namespace 内的 internal-linkage
 // helper，外部不可直接调。本测改走 integration 路径：用 MaaCallbackLogger 已暴
 // 露的 BuildFocusEntry 范式 + 真实 recorder + 手工构造 IDasLogEntry，验证
-// severity 映射 + DAS_LOG_TYPE_AGENT 永不使用契约（直接经 IDL SetType）。
+// severity 映射契约（stdout→INFO / stderr→ERROR / failure→ERROR，直接经 IDL
+// SetType）。
 
 TEST_F(AgentOutputRecorderFixture, StdoutMapsToInfoSeverity)
 {
@@ -373,12 +371,10 @@ TEST_F(AgentOutputRecorderFixture, StdoutMapsToInfoSeverity)
 
     const auto entries = ReadAllEntries();
     ASSERT_FALSE(entries.empty());
-    EXPECT_NE(FindByType(entries, K_LOG_TYPE_INFO), nullptr);
-    // DAS_LOG_TYPE_AGENT 永不出现：映射契约核心断言。
-    EXPECT_EQ(FindByType(entries, K_LOG_TYPE_AGENT), nullptr);
+    EXPECT_NE(FindByType(entries, LOG_TYPE_INFO), nullptr);
 }
 
-TEST_F(AgentOutputRecorderFixture, StderrMapsToWarningSeverity)
+TEST_F(AgentOutputRecorderFixture, StderrMapsToErrorSeverity)
 {
     auto context = MakeContext();
     ASSERT_TRUE(context.recorder);
@@ -386,7 +382,7 @@ TEST_F(AgentOutputRecorderFixture, StderrMapsToWarningSeverity)
     Das::DasPtr<Das::ExportInterface::IDasLogEntry> entry;
     ASSERT_EQ(CreateIDasLogEntry(entry.Put()), DAS_S_OK);
     ASSERT_EQ(
-        entry->SetType(Das::ExportInterface::DAS_LOG_TYPE_WARNING),
+        entry->SetType(Das::ExportInterface::DAS_LOG_TYPE_ERROR),
         DAS_S_OK);
     DasU8StringOnStack text{"agent stderr line"};
     ASSERT_EQ(entry->AddText(&text), DAS_S_OK);
@@ -394,8 +390,7 @@ TEST_F(AgentOutputRecorderFixture, StderrMapsToWarningSeverity)
 
     const auto entries = ReadAllEntries();
     ASSERT_FALSE(entries.empty());
-    EXPECT_NE(FindByType(entries, K_LOG_TYPE_WARNING), nullptr);
-    EXPECT_EQ(FindByType(entries, K_LOG_TYPE_AGENT), nullptr);
+    EXPECT_NE(FindByType(entries, LOG_TYPE_ERROR), nullptr);
 }
 
 TEST_F(AgentOutputRecorderFixture, FailureMapsToErrorSeverity)
@@ -430,10 +425,10 @@ TEST_F(AgentOutputRecorderFixture, FailureMapsToErrorSeverity)
 
     const auto entries = ReadAllEntries();
     ASSERT_FALSE(entries.empty());
-    EXPECT_NE(FindByType(entries, K_LOG_TYPE_ERROR), nullptr);
+    EXPECT_NE(FindByType(entries, LOG_TYPE_ERROR), nullptr);
     // 最后一行应有 source=agent / agentId / stream metadata（落盘为 fields
     // 对象）。
-    const auto* error_entry = FindByType(entries, K_LOG_TYPE_ERROR);
+    const auto* error_entry = FindByType(entries, LOG_TYPE_ERROR);
     ASSERT_NE(error_entry, nullptr);
     auto obj = error_entry->as_object();
     ASSERT_TRUE(obj);
@@ -459,8 +454,6 @@ TEST_F(AgentOutputRecorderFixture, FailureMapsToErrorSeverity)
     EXPECT_EQ(read_field_string("source"), "agent");
     EXPECT_EQ(read_field_string("stream"), "failure");
     EXPECT_EQ(read_field_string("agentId"), "agent-0");
-    // DAS_LOG_TYPE_AGENT 永不出现：再次断言。
-    EXPECT_EQ(FindByType(entries, K_LOG_TYPE_AGENT), nullptr);
 }
 
 // ===== AgentProcessLaunchRequest on_output 字段默认空 =====

@@ -2,6 +2,7 @@
 #include <das/Plugins/DasMaaPi/MaaPiErrorCodes.h>
 #include <das/Plugins/DasMaaPi/MaaRuntime.h>
 #include <das/Utils/DasJsonCore.h>
+#include <das/Utils/fmt.h>
 
 #include "AgentProcessRunner.h"
 #include "AgentRuntimeService.h"
@@ -1261,15 +1262,15 @@ namespace Das::Plugins::DasMaaPi
         }
 
         // 把 agent 一行 stdout/stderr/失败消息包成 IDasLogEntry 投到 recorder。
-        // severity 映射：stdout→INFO，stderr→WARNING，failure→ERROR。
+        // severity 映射：stdout→INFO，stderr→ERROR，failure→ERROR。
         // stream_label：可读流标识（"stdout"/"stderr"/"failure"），写入
         // stream field 供 UI 可选过滤。source/agentId/stream 的 value 都是
         // JSON-encoded quoted literal（recorder 经 SetField JSON 解析后存盘），
         // 经 DasU8StringOnStack 借用 std::string 持久内存——SetField 同步解析，
         // 调用返回后字符串不再被引用。
         // yyjson 字符串安全：不直接拼裸字符串进 user.jsonl；SetField value 经
-        // yyjson 解析、文本经 AddText 自动 JSON 转义。DAS_LOG_TYPE_AGENT 不用
-        // （无消费方槽位）。
+        // yyjson 解析、文本经 AddText 自动 JSON 转义。agent 来源标识经
+        // [AGENT <agentId>] 文本前缀表达（不占 type 槽）。
         DasResult RecordAgentOutput(
             Das::ExportInterface::IDasProcessLogRecorder* recorder,
             std::string_view                              agent_id,
@@ -1292,8 +1293,9 @@ namespace Das::Plugins::DasMaaPi
             {
                 return hr;
             }
-            const std::string  text(line);
-            DasU8StringOnStack text_string{text.c_str()};
+            const std::string prefixed =
+                DAS_FMT_NS::format("[AGENT {}] {}", agent_id, line);
+            DasU8StringOnStack text_string{prefixed.c_str()};
             hr = entry->AddText(&text_string);
             if (DAS::IsFailed(hr))
             {
@@ -1508,11 +1510,11 @@ namespace Das::Plugins::DasMaaPi
         // block the task.
         // resolve-or-degrade（IDasProgressService 范式）：本插件 loadMode=ipc
         // 跑在 Host 进程，Host 无 session/notifier，本地 new 出的 recorder
-        // Record 写盘返 OBJECT_NOT_INIT（focus 日志在 IPC 下从没工作过的根因）。
-        // 先经 C ABI DasQueryMainProcessInterfaceByName 跨进程 resolve 主进程
-        // 具名服务 "Das::FocusLogRecorder"（App.cpp 注册的语义角色名），
-        // proxy.Record 经 IPC marshal 到主进程写 user.jsonl +
-        // notifier->Signal(UserJsonl)。resolve 失败 → 降级本地
+        // Record 写盘返 OBJECT_NOT_INIT（focus 日志在 IPC
+        // 下从没工作过的根因）。 先经 C ABI DasQueryMainProcessInterfaceByName
+        // 跨进程 resolve 主进程 具名服务 "Das::FocusLogRecorder"（App.cpp
+        // 注册的语义角色名）， proxy.Record 经 IPC marshal 到主进程写
+        // user.jsonl + notifier->Signal(UserJsonl)。resolve 失败 → 降级本地
         // CreateIDasProcessLogRecorder 工厂（in-process /
         // 测试路径保持行为一致）。 走 C ABI 而非内部 IPC C++ 接口：插件 DLL
         // 通过稳定 ABI 契约访问 Core， 不依赖 das/Core/IPC 内部 thread_local 与
@@ -1921,7 +1923,7 @@ namespace Das::Plugins::DasMaaPi
                                            bool             is_stderr)
                 {
                     const auto severity =
-                        is_stderr ? Das::ExportInterface::DAS_LOG_TYPE_WARNING
+                        is_stderr ? Das::ExportInterface::DAS_LOG_TYPE_ERROR
                                   : Das::ExportInterface::DAS_LOG_TYPE_INFO;
                     const auto stream_label = is_stderr
                                                   ? std::string_view{"stderr"}

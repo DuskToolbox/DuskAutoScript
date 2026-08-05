@@ -167,7 +167,7 @@ TEST_F(
         new Das::Core::IDasLogEntryImpl{}};
     DasU8StringOnStack text{"focus"};
     ASSERT_EQ(
-        entry->SetType(Das::ExportInterface::DAS_LOG_TYPE_FOCUS),
+        entry->SetType(Das::ExportInterface::DAS_LOG_TYPE_STRUCTURAL),
         DAS_S_OK);
     ASSERT_EQ(entry->AddText(&text), DAS_S_OK);
 

@@ -51,8 +51,8 @@ namespace Das::Plugins::DasMaaPi
             {
                 return false;
             }
-            if (DAS::IsFailed(
-                    entry->SetType(Das::ExportInterface::DAS_LOG_TYPE_FOCUS)))
+            if (DAS::IsFailed(entry->SetType(
+                    Das::ExportInterface::DAS_LOG_TYPE_STRUCTURAL)))
             {
                 return false;
             }

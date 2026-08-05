@@ -259,7 +259,7 @@ TEST_F(LogRecorderFixture, LogRecorderTest_EntryGetterReturnsFieldValues)
     DasU8StringOnStack first_text{"first"};
     DasU8StringOnStack second_text{"second"};
     ASSERT_EQ(
-        entry->SetType(Das::ExportInterface::DAS_LOG_TYPE_FOCUS),
+        entry->SetType(Das::ExportInterface::DAS_LOG_TYPE_STRUCTURAL),
         DAS_S_OK);
     ASSERT_EQ(entry->AddText(&first_text), DAS_S_OK);
     ASSERT_EQ(entry->AddText(&second_text), DAS_S_OK);
@@ -267,7 +267,7 @@ TEST_F(LogRecorderFixture, LogRecorderTest_EntryGetterReturnsFieldValues)
     Das::ExportInterface::DasLogType type =
         Das::ExportInterface::DAS_LOG_TYPE_INFO;
     EXPECT_EQ(entry->GetType(&type), DAS_S_OK);
-    EXPECT_EQ(type, Das::ExportInterface::DAS_LOG_TYPE_FOCUS);
+    EXPECT_EQ(type, Das::ExportInterface::DAS_LOG_TYPE_STRUCTURAL);
 
     size_t count = 0;
     EXPECT_EQ(entry->GetTextCount(&count), DAS_S_OK);

@@ -315,8 +315,8 @@ TEST_F(ProcessLogRecorderIpcE2ETest, ProxyRecordRoundTripWritesUserJsonl)
     }
     EXPECT_NE(last.find("proxy-text"), std::string::npos)
         << "user.jsonl last line missing proxy-text: " << last;
-    EXPECT_NE(last.find("focus"), std::string::npos)
-        << "user.jsonl last line missing focus type: " << last;
+    EXPECT_NE(last.find("structural"), std::string::npos)
+        << "user.jsonl last line missing structural type: " << last;
     EXPECT_NE(last.find("source"), std::string::npos)
         << "user.jsonl last line missing source field: " << last;
 }

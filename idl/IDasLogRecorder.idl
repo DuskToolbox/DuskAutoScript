@@ -9,8 +9,7 @@ namespace Das::ExportInterface
         DAS_LOG_TYPE_SUCCESS = 1,
         DAS_LOG_TYPE_WARNING = 2,
         DAS_LOG_TYPE_ERROR = 3,
-        DAS_LOG_TYPE_AGENT = 4,
-        DAS_LOG_TYPE_FOCUS = 5,
+        DAS_LOG_TYPE_STRUCTURAL = 5,
         DAS_LOG_TYPE_FORCE_DWORD = 0x7FFFFFFF
     }
 
