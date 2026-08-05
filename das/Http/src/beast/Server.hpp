@@ -239,9 +239,22 @@ namespace Das::Http::Beast
                 {
                     auto msg = self->write_queue_.front();
                     self->write_queue_.pop();
+                    // redirect_error：连接断开时把异常转成 ec，避免
+                    // detached 协程未捕获异常 → std::terminate 进程崩溃
+                    // （点击停止调度时 UI 刷新/关闭 WS，服务端仍在广播 →
+                    // async_write 打到已死连接）。失败即注销 hub 并退出
+                    // 协程，与 DoReadLoop 清理路径一致。
+                    boost::system::error_code write_ec;
                     co_await self->ws_.async_write(
                         boost::asio::buffer(*msg),
-                        boost::asio::use_awaitable);
+                        boost::asio::redirect_error(
+                            boost::asio::use_awaitable,
+                            write_ec));
+                    if (write_ec)
+                    {
+                        self->hub_->Unregister(self.get());
+                        co_return;
+                    }
                     continue;
                 }
                 boost::system::error_code ec;
