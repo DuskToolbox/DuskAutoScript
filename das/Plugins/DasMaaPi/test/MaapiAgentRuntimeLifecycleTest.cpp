@@ -353,6 +353,49 @@ namespace
         EXPECT_GT(this_line_include, guard_block);
     }
 
+    // 验证 AgentProcessRunner.cpp 内 Windows CREATE_NO_WINDOW 经 v2
+    // process_creation_flags 模板实例化的接入点：两构造分支末尾的
+    // initializer + 整块 #ifdef _WIN32 守卫的 creation_flags.hpp include。
+    // kernel 实际效果（Windows 不弹控制台）走构造论证 + 人工 spawn 验证
+    // （RESEARCH §不可 hermetic 测的）。
+    TEST(DasMaaPiAgentClient, CreateNoWindowWiredInSource)
+    {
+        const auto source_path =
+            std::filesystem::path(__FILE__).parent_path().parent_path() / "src"
+            / "AgentProcessRunner.cpp";
+        const std::ifstream input(source_path);
+        ASSERT_TRUE(input.is_open()) << source_path.string();
+
+        std::ostringstream buffer;
+        buffer << input.rdbuf();
+        const auto source = buffer.str();
+
+        // 整块 #ifdef _WIN32 守卫的 creation_flags.hpp include（POSIX
+        // 编译跳过）
+        EXPECT_NE(
+            source.find("<boost/process/v2/windows/creation_flags.hpp>"),
+            std::string::npos);
+        // 两构造分支末尾的 initializer（capture_output + 非 capture 各一处）。
+        // clang-format 会把 process_creation_flags<CREATE_NO_WINDOW>{} 拆两行，
+        // 故分两段断言各自 count == 2（避免对整串字面量跨行敏感）。
+        const auto  flag_open = std::string("process_creation_flags<");
+        const auto  flag_close = std::string("CREATE_NO_WINDOW>{}");
+        std::size_t open_count = 0;
+        std::size_t close_count = 0;
+        for (std::size_t pos = 0;
+             (pos = source.find(flag_open, pos)) != std::string::npos;
+             open_count += 1, pos += flag_open.size())
+        {
+        }
+        for (std::size_t pos = 0;
+             (pos = source.find(flag_close, pos)) != std::string::npos;
+             close_count += 1, pos += flag_close.size())
+        {
+        }
+        EXPECT_EQ(open_count, 2u);
+        EXPECT_EQ(close_count, 2u);
+    }
+
     TEST(
         DasMaaPiAgentRuntimeStart,
         StartsSingleAgentWithIdentifierArgCwdAndPiEnv)

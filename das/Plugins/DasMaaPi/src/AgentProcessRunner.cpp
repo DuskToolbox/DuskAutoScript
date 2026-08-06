@@ -27,6 +27,11 @@ DAS_IGNORE_BOOST_PROCESS_WARNING
 #include <boost/process/v2/stdio.hpp>
 #include <boost/system/error_code.hpp>
 #include <boost/system/system_error.hpp>
+#ifdef _WIN32
+// creation_flags.hpp 依赖 Windows 类型（DWORD / CREATE_NEW_PROCESS_GROUP），
+// 必须整块守卫——POSIX 上不存在这些类型，不守卫 include 会编译错。
+#include <boost/process/v2/windows/creation_flags.hpp>
+#endif
 
 DAS_DISABLE_WARNING_END
 
@@ -208,7 +213,13 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
                             {},
                             stdout_pipe_,
                             stderr_pipe_},
-                        std::move(child_environment));
+                        std::move(child_environment)
+#ifdef _WIN32
+                            ,
+                        boost::process::v2::windows::process_creation_flags<
+                            CREATE_NO_WINDOW>{}
+#endif
+                    );
                     StartReadStdout();
                     StartReadStderr();
                 }
@@ -221,7 +232,13 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
                         boost::process::v2::process_start_dir(
                             request.working_directory.string()),
                         boost::process::v2::process_stdio{{}, nullptr, nullptr},
-                        std::move(child_environment));
+                        std::move(child_environment)
+#ifdef _WIN32
+                            ,
+                        boost::process::v2::windows::process_creation_flags<
+                            CREATE_NO_WINDOW>{}
+#endif
+                    );
                 }
 
                 pid_ = static_cast<uint32_t>(process_->id());
