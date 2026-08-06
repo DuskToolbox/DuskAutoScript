@@ -1,12 +1,12 @@
 #include <das/Plugins/DasMaaPi/AuthoringProjector.h>
 
-#include "AdbDeviceFinder.h"
 #include "DasProgressReporter.h"
 #include "I18nResolver.h"
 #include "MaaDynamicSymbols.h"
 #include "MaapiAuthoringSession.h"
 #include "PiHttpClient.h"
 #include "PiUpdateService.h"
+#include <das/Plugins/DasMaaPi/AdbDeviceFinder.h>
 
 #ifndef DAS_MAAPI_DISABLE_REAL_MAA_BOUNDARY
 #include <MaaFramework/MaaAPI.h>
@@ -1923,9 +1923,7 @@ namespace Das::Plugins::DasMaaPi
         std::string_view                            current_language,
         std::vector<PiDiagnosticDto>*               projection_diagnostics,
         const std::map<std::string, yyjson::value>& ui_values,
-        [[maybe_unused]] const std::vector<AdbDeviceInfo>* device_cache =
-            nullptr,
-        bool update_section_top = false)
+        bool                                        update_section_top = false)
     {
         yyjson::value layout(Array());
         auto          layout_arr = layout.as_array();
@@ -2859,7 +2857,6 @@ namespace Das::Plugins::DasMaaPi
             current_language,
             projection_diagnostics,
             settings.ui.values,
-            device_cache,
             update_section_top);
         (*obj)[std::string_view("fields")] = std::move(fields);
         (*obj)[std::string_view("fieldLayout")] = std::move(field_layout);
@@ -4970,20 +4967,38 @@ namespace Das::Plugins::DasMaaPi
     // 但无设备，candidates 投影空数组，前端 dropdown 空候补）。
     bool ApplyDiscoverAdbDevicesCommand(
         MaapiAuthoringSession&        session,
-        std::vector<PiDiagnosticDto>& diagnostics)
+        std::vector<PiDiagnosticDto>& diagnostics,
+        const AdbDeviceEnumerator&    adb_enumerator)
     {
-        session.device_cache_ = FindAllAdbDevices();
-        // 兜底诊断：扫描结果为空时附 info 条目，便于日志追踪（非错误，不阻断
-        // 命令成功 — 设备空可能是 adb server 未启动或真机未连接）。
+        const auto enumerator =
+            adb_enumerator ? adb_enumerator : DefaultAdbDeviceEnumerator();
+        session.device_cache_ = FindAllAdbDevices(enumerator);
+        // 诊断区分 toolkit 不可用（warning）vs 扫描成功但 0 设备（info）。
+        // 两者都不阻断命令成功（ok=true）— 降级不崩契约保持，但诊断明确
+        // 让操作员分辨"MaaToolkit 坏了"与"真没连设备"。
         if (session.device_cache_.empty())
         {
-            EmitDiagnostic(
-                diagnostics,
-                "info",
-                "discoverAdbDevices found 0 devices; ensure adb server is "
-                "running and a device is connected",
-                DAS_S_OK,
-                "discoverAdbDevices");
+            if (!IsAdbToolkitAvailable())
+            {
+                EmitDiagnostic(
+                    diagnostics,
+                    "warning",
+                    "discoverAdbDevices: MaaToolkit AdbDevice symbols "
+                    "unavailable; cannot scan devices (MaaToolkit.dll not "
+                    "co-located or AdbDevice family not exported)",
+                    DAS_S_OK,
+                    "discoverAdbDevices");
+            }
+            else
+            {
+                EmitDiagnostic(
+                    diagnostics,
+                    "info",
+                    "discoverAdbDevices found 0 devices; ensure adb server is "
+                    "running and a device is connected",
+                    DAS_S_OK,
+                    "discoverAdbDevices");
+            }
         }
         return true;
     }
@@ -4994,7 +5009,8 @@ namespace Das::Plugins::DasMaaPi
         const yyjson::value&                       payload,
         std::vector<PiDiagnosticDto>&              diagnostics,
         PiHttpClient*                              http_seam,
-        Das::ExportInterface::IDasProgressService* progress_service_seam)
+        Das::ExportInterface::IDasProgressService* progress_service_seam,
+        AdbDeviceEnumerator                        adb_enumerator)
     {
         InvokeCommandResult result;
         if (!OnlyKeysExact(
@@ -5074,7 +5090,10 @@ namespace Das::Plugins::DasMaaPi
         // 进 document field candidates，不走 commandResult.data）。
         if (*command_id == "discoverAdbDevices")
         {
-            result.ok = ApplyDiscoverAdbDevicesCommand(session, diagnostics);
+            result.ok = ApplyDiscoverAdbDevicesCommand(
+                session,
+                diagnostics,
+                adb_enumerator);
             result.command_result = std::nullopt;
             return result;
         }

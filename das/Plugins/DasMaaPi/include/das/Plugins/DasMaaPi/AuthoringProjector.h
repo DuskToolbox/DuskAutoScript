@@ -1,6 +1,7 @@
 #pragma once
 
 #include <das/Plugins/DasMaaPi/AcceptedSettings.h>
+#include <das/Plugins/DasMaaPi/AdbDeviceFinder.h>
 #include <das/Plugins/DasMaaPi/PiCatalog.h>
 
 #include <optional>
@@ -19,12 +20,6 @@ namespace Das::Plugins::DasMaaPi
     struct PiUpdateInfo;
     class PiHttpClient;
     class MaapiAuthoringSession;
-
-    // Forward declaration — full definition lives in src/AdbDeviceFinder.h
-    // (Plan A 产出). Used as a const pointer in projection signatures so the
-    // header compiles without pulling MaaToolkit includes into the public
-    // include dir.
-    struct AdbDeviceInfo;
 
     // invokeCommand 命令业务结果回传结构。各分支自填 command_result；
     // 调用方（MaapiAuthoringSession::ApplyChange）按 engaged 状态塞
@@ -122,7 +117,11 @@ namespace Das::Plugins::DasMaaPi
         std::vector<PiDiagnosticDto>&              diagnostics,
         PiHttpClient*                              http_seam = nullptr,
         Das::ExportInterface::IDasProgressService* progress_service_seam =
-            nullptr);
+            nullptr,
+        // discoverAdbDevices 扫描入口。生产留空（走 DefaultAdbDeviceEnumerator
+        // 经 MaaToolkit 扫描真机）；测试传 lambda 注入 0/1/N 设备。与 http_seam
+        // 同为显式依赖注入参数——业务代码不持有可变全局 test seam。
+        AdbDeviceEnumerator adb_enumerator = {});
 
     // D-84-29: convertView 在 MaaPI 一律拒绝（MaaPI 只支持 formSequence）。
     // payload 严格 {targetViewKind}；返回 false 并 emit error 诊断。

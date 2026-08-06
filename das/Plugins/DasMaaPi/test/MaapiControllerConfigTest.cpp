@@ -1,7 +1,7 @@
-#include "../src/AdbDeviceFinder.h"
 #include "../src/ControllerMethodMaps.h"
 #include "../src/MaaDynamicSymbols.h"
 #include "../src/Win32WindowFinder.h"
+#include <das/Plugins/DasMaaPi/AdbDeviceFinder.h>
 #include <das/Plugins/DasMaaPi/MaaApiBoundary.h>
 #include <das/Plugins/DasMaaPi/PiCompiler.h>
 #include <das/Plugins/DasMaaPi/PiParser.h>
@@ -449,8 +449,8 @@ TEST(
     // window list (not crash). A subsequent FindWindowByRegex call surfaces
     // controller-window-not-found — exactly what end users see when the
     // DLL is missing or the platform doesn't export the symbols.
-    SetWindowEnumeratorForTest(nullptr);
-    auto result = FindWindowByRegex("AnyClass", "AnyWindow");
+    auto result =
+        FindWindowByRegex("AnyClass", "AnyWindow", DefaultWindowEnumerator());
     EXPECT_EQ(result.handle, nullptr);
     // Either the enumerator returned empty (controller-window-not-found) or
     // the system actually had real desktop windows but none matched the

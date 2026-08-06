@@ -1,8 +1,8 @@
 #ifndef DAS_PLUGINS_DASMAAPI_PLUGINUTILS_H
 #define DAS_PLUGINS_DASMAAPI_PLUGINUTILS_H
 
-#include "AdbDeviceFinder.h"
 #include "PiUpdateService.h"
+#include <das/Plugins/DasMaaPi/AdbDeviceFinder.h>
 
 #include <das/Core/GraphRuntime/GraphDocument.h>
 #include <das/Plugins/DasMaaPi/AuthoringProjector.h>

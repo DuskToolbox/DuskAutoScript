@@ -351,7 +351,10 @@ namespace Das::Plugins::DasMaaPi
                         + "')";
                     return result;
                 }
-                auto hwnd = FindWindowByRegex(w.class_regex, w.window_regex);
+                auto hwnd = FindWindowByRegex(
+                    w.class_regex,
+                    w.window_regex,
+                    DefaultWindowEnumerator());
                 if (hwnd.handle == nullptr)
                 {
                     result.error_code = hwnd.error_code;
@@ -404,8 +407,10 @@ namespace Das::Plugins::DasMaaPi
                 void* hwnd = nullptr;
                 if (!g.class_regex.empty() || !g.window_regex.empty())
                 {
-                    auto found =
-                        FindWindowByRegex(g.class_regex, g.window_regex);
+                    auto found = FindWindowByRegex(
+                        g.class_regex,
+                        g.window_regex,
+                        DefaultWindowEnumerator());
                     if (found.handle == nullptr)
                     {
                         result.error_code = found.error_code;

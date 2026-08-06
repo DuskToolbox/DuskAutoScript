@@ -3,9 +3,9 @@
 #include <das/Utils/DasJsonCore.h>
 #include <das/Utils/StringUtils.h>
 
-#include "AdbDeviceFinder.h"
 #include "ControllerMethodMaps.h"
 #include "I18nResolver.h"
+#include <das/Plugins/DasMaaPi/AdbDeviceFinder.h>
 
 #ifndef DAS_MAAPI_DISABLE_REAL_MAA_BOUNDARY
 #include <MaaFramework/MaaAPI.h>

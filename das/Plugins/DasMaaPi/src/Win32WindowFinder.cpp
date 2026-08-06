@@ -35,8 +35,6 @@ namespace Das::Plugins::DasMaaPi
             }
             return std::regex_search(std::string(text), *regex);
         }
-
-        WindowEnumerator g_enumerator_for_test;
     } // namespace
 
     WindowMatchResult FindWindowByRegex(
@@ -159,27 +157,5 @@ namespace Das::Plugins::DasMaaPi
             }
             return windows;
         };
-    }
-
-    void SetWindowEnumeratorForTest(WindowEnumerator enumerator)
-    {
-        if (enumerator)
-        {
-            g_enumerator_for_test = std::move(enumerator);
-        }
-        else
-        {
-            g_enumerator_for_test = nullptr;
-        }
-    }
-
-    WindowMatchResult FindWindowByRegex(
-        std::string_view class_regex,
-        std::string_view window_regex)
-    {
-        const auto& enumerator = g_enumerator_for_test
-                                     ? g_enumerator_for_test
-                                     : DefaultWindowEnumerator();
-        return FindWindowByRegex(class_regex, window_regex, enumerator);
     }
 } // namespace Das::Plugins::DasMaaPi

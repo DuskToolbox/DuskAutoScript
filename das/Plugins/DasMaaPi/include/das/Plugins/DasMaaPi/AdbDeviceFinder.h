@@ -25,23 +25,23 @@ namespace Das::Plugins::DasMaaPi
     };
 
     // Injectable device enumerator. Production DefaultAdbDeviceEnumerator
-    // wraps the MaaToolkitAdbDevice* family; tests pass a lambda returning
-    // a fixed vector to drive 0/1/N-device coverage without linking
-    // MaaToolkit.
+    // wraps the MaaToolkitAdbDevice* family; callers pass a custom enumerator
+    // to drive 0/1/N-device coverage without linking MaaToolkit. Passed by
+    // value through call sites — a default-constructed (empty) instance is
+    // treated as "use the production default".
     using AdbDeviceEnumerator = std::function<std::vector<AdbDeviceInfo>()>;
 
+    // Whether the loaded MaaToolkit exports the full AdbDevice symbol set.
+    // discoverAdbDevices uses this to distinguish "toolkit unavailable"
+    // (warning) from "scan succeeded, zero devices" (info). False when the
+    // DLL is not co-located or any required symbol is not exported.
+    bool IsAdbToolkitAvailable();
+
     // Enumerate all ADB devices via the supplied enumerator. Thin pass-
-    // through; kept as a named function so the production no-arg overload
-    // and tests share a single resolution point.
+    // through; production callers pass DefaultAdbDeviceEnumerator(), tests
+    // pass a lambda returning a fixed vector.
     std::vector<AdbDeviceInfo> FindAllAdbDevices(
         const AdbDeviceEnumerator& enumerator);
-
-    // Convenience overload using the production default enumerator
-    // (MaaToolkitAdbDeviceFind). Under DAS_MAAPI_DISABLE_REAL_MAA_BOUNDARY
-    // (test build) every adb_* pointer is null and this returns an empty
-    // list. Tests that need deterministic output call
-    // SetAdbDeviceEnumeratorForTest first.
-    std::vector<AdbDeviceInfo> FindAllAdbDevices();
 
     // Production enumerator backed by MaaToolkitAdbDeviceFind + the six
     // per-device getters. Degrades to an empty list when MaaToolkit is not
@@ -49,10 +49,4 @@ namespace Das::Plugins::DasMaaPi
     // no null dereference. Devices with an empty address are skipped
     // (Toolkit contract: address is the stable device identity).
     AdbDeviceEnumerator DefaultAdbDeviceEnumerator();
-
-    // Test seam: install a custom enumerator used by the no-arg
-    // FindAllAdbDevices overload. Pass nullptr to restore the default.
-    // Tests must clear the seam before returning to avoid leaking the
-    // override into adjacent tests in the same TU.
-    void SetAdbDeviceEnumeratorForTest(AdbDeviceEnumerator enumerator);
 } // namespace Das::Plugins::DasMaaPi

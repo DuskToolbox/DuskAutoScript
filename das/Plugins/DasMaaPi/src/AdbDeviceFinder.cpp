@@ -1,4 +1,4 @@
-#include "AdbDeviceFinder.h"
+#include <das/Plugins/DasMaaPi/AdbDeviceFinder.h>
 
 #include "MaaDynamicSymbols.h"
 
@@ -11,8 +11,26 @@ namespace Das::Plugins::DasMaaPi
 {
     namespace
     {
-        AdbDeviceEnumerator g_enumerator_for_test;
+        // All eleven AdbDevice symbols resolved? Shared by
+        // IsAdbToolkitAvailable (discover diagnostics) and
+        // DefaultAdbDeviceEnumerator (graceful degradation). Abbreviated
+        // function template — LoadMaaDynamicSymbols returns a singleton ref
+        // whose exact type lives in MaaDynamicSymbols.h.
+        bool AdbSymbolsResolved(const auto& symbols)
+        {
+            return symbols.adb_list_create && symbols.adb_list_destroy
+                   && symbols.adb_find && symbols.adb_list_size
+                   && symbols.adb_list_at && symbols.adb_get_name
+                   && symbols.adb_get_adb_path && symbols.adb_get_address
+                   && symbols.adb_get_screencap_methods
+                   && symbols.adb_get_input_methods && symbols.adb_get_config;
+        }
     } // namespace
+
+    bool IsAdbToolkitAvailable()
+    {
+        return AdbSymbolsResolved(LoadMaaDynamicSymbols());
+    }
 
     std::vector<AdbDeviceInfo> FindAllAdbDevices(
         const AdbDeviceEnumerator& enumerator)
@@ -28,25 +46,8 @@ namespace Das::Plugins::DasMaaPi
     {
         return []() -> std::vector<AdbDeviceInfo>
         {
-            // MaaToolkit is loaded at runtime via MaaDynamicSymbols (one
-            // cross-platform binary; no #ifdef
-            // DAS_MAAPI_DISABLE_REAL_MAA_BOUNDARY branch needed). When the
-            // DLL is not co-located or any of the device-discovery symbols
-            // is not exported, every pointer stays null and we return an
-            // empty list — the caller surfaces an empty device dropdown,
-            // exactly as if no ADB device was attached.
-            //
-            // adb_find_specified is intentionally not required: the default
-            // enumerator uses the unspecific MaaToolkitAdbDeviceFind that
-            // walks adb_server's full device list. find_specified is bound
-            // on the symbol table for future callers but not gated here.
             const auto& symbols = LoadMaaDynamicSymbols();
-            if (!symbols.adb_list_create || !symbols.adb_list_destroy
-                || !symbols.adb_find || !symbols.adb_list_size
-                || !symbols.adb_list_at || !symbols.adb_get_name
-                || !symbols.adb_get_adb_path || !symbols.adb_get_address
-                || !symbols.adb_get_screencap_methods
-                || !symbols.adb_get_input_methods || !symbols.adb_get_config)
+            if (!AdbSymbolsResolved(symbols))
             {
                 return {};
             }
@@ -124,25 +125,5 @@ namespace Das::Plugins::DasMaaPi
             }
             return devices;
         };
-    }
-
-    void SetAdbDeviceEnumeratorForTest(AdbDeviceEnumerator enumerator)
-    {
-        if (enumerator)
-        {
-            g_enumerator_for_test = std::move(enumerator);
-        }
-        else
-        {
-            g_enumerator_for_test = nullptr;
-        }
-    }
-
-    std::vector<AdbDeviceInfo> FindAllAdbDevices()
-    {
-        const auto& enumerator = g_enumerator_for_test
-                                     ? g_enumerator_for_test
-                                     : DefaultAdbDeviceEnumerator();
-        return FindAllAdbDevices(enumerator);
     }
 } // namespace Das::Plugins::DasMaaPi

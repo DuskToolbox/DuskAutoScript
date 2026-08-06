@@ -45,17 +45,7 @@ namespace Das::Plugins::DasMaaPi
         std::string_view        window_regex,
         const WindowEnumerator& enumerator);
 
-    // Convenience overload using the production default enumerator
-    // (MaaToolkitDesktopWindowFindAll). Tests should call the 3-arg form.
-    WindowMatchResult FindWindowByRegex(
-        std::string_view class_regex,
-        std::string_view window_regex);
-
     // Production enumerator backed by MaaToolkitDesktopWindowFindAll. Under
     // DAS_MAAPI_DISABLE_REAL_MAA_BOUNDARY (test build) returns an empty list.
     WindowEnumerator DefaultWindowEnumerator();
-
-    // Test seam: install a custom enumerator used by the 2-arg
-    // FindWindowByRegex overload. Pass nullptr to restore the default.
-    void SetWindowEnumeratorForTest(WindowEnumerator enumerator);
 } // namespace Das::Plugins::DasMaaPi

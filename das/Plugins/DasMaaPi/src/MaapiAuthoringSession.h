@@ -1,8 +1,8 @@
 #ifndef DAS_PLUGINS_DASMAAPI_MAAPIAUTHORINGSESSION_H
 #define DAS_PLUGINS_DASMAAPI_MAAPIAUTHORINGSESSION_H
 
-#include "AdbDeviceFinder.h"
 #include "PiUpdateService.h"
+#include <das/Plugins/DasMaaPi/AdbDeviceFinder.h>
 
 #include <das/Plugins/DasMaaPi/AcceptedSettings.h>
 #include <das/Plugins/DasMaaPi/PiDto.h>
@@ -39,13 +39,15 @@ namespace Plugins::DasMaaPi
         const yyjson::value&                       payload,
         std::vector<PiDiagnosticDto>&              diagnostics,
         PiHttpClient*                              http_seam,
-        Das::ExportInterface::IDasProgressService* progress_service_seam);
+        Das::ExportInterface::IDasProgressService* progress_service_seam,
+        AdbDeviceEnumerator                        adb_enumerator);
 
     // discoverAdbDevices 命令 handler — 经 session& 引用直写 device_cache_
     // （零 T* 出参指针，与 ApplyInvokeCommandChange 同范式）。
     bool ApplyDiscoverAdbDevicesCommand(
         MaapiAuthoringSession&        session,
-        std::vector<PiDiagnosticDto>& diagnostics);
+        std::vector<PiDiagnosticDto>& diagnostics,
+        const AdbDeviceEnumerator&    adb_enumerator);
 
     class MaapiAuthoringSession final
         : public PluginInterface::DasTaskAuthoringSessionImplBase<
@@ -60,12 +62,14 @@ namespace Plugins::DasMaaPi
             const yyjson::value&                       payload,
             std::vector<PiDiagnosticDto>&              diagnostics,
             PiHttpClient*                              http_seam,
-            Das::ExportInterface::IDasProgressService* progress_service_seam);
+            Das::ExportInterface::IDasProgressService* progress_service_seam,
+            AdbDeviceEnumerator                        adb_enumerator);
 
         // ApplyDiscoverAdbDevicesCommand 直写 device_cache_（扫描结果填充）。
         friend bool ApplyDiscoverAdbDevicesCommand(
             MaapiAuthoringSession&        session,
-            std::vector<PiDiagnosticDto>& diagnostics);
+            std::vector<PiDiagnosticDto>& diagnostics,
+            const AdbDeviceEnumerator&    adb_enumerator);
 
     public:
         MaapiAuthoringSession() = default;

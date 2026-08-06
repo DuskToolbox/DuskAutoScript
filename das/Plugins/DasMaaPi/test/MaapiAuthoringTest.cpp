@@ -8288,8 +8288,9 @@ TEST(
 
 namespace
 {
-    // 经 SetAdbDeviceEnumeratorForTest 注入的 fake 扫描结果，供
-    // discoverAdbDevices 命令链路单测复用（镜像 AdbDeviceFinderTest 范式）。
+    // 经 ApplyInvokeCommandChange 的 adb_enumerator 参数注入的 fake
+    // 扫描结果，供 discoverAdbDevices 命令链路单测复用（镜像
+    // AdbDeviceFinderTest 范式）。
     std::vector<Das::Plugins::DasMaaPi::AdbDeviceInfo> MakeTwoFakeDevices()
     {
         using namespace Das::Plugins::DasMaaPi;
@@ -8314,44 +8315,54 @@ namespace
     }
 } // namespace
 
-// discoverAdbDevices 命令经 invokeCommand 分派 → AdbDeviceFinder 扫描 →
-// 填 session.device_cache_（size==2）→ 返回 {ok=true, command_result nullopt}
-// （设备进 document field candidates，不走 commandResult.data — 前端 dropdown
-// 现成机制渲染 candidates）。
+// discoverAdbDevices 命令经 ApplyInvokeCommandChange（adb_enumerator 显式
+// 依赖注入）→ AdbDeviceFinder 扫描 → 填 session.device_cache_（size==2）→
+// 返回 {ok=true, command_result nullopt}（设备进 document field candidates，
+// 不走 commandResult.data — 前端 dropdown 现成机制渲染 candidates）。
 TEST(
     MaapiAdbDeviceCommandTest,
     DiscoverAdbDevicesFillsCacheAndOmitsCommandResult)
 {
     using namespace Das::Plugins::DasMaaPi;
 
-    SetAdbDeviceEnumeratorForTest([]() { return MakeTwoFakeDevices(); });
-
     AcceptedSettingsDto   settings;
     MaapiAuthoringSession session(settings);
 
-    DasPtr<Das::ExportInterface::IDasJson> result_json;
-    auto                                   change = ParseDasJson(
-        "{\"baseRevision\":0,\"kind\":\"invokeCommand\","
-        "\"payload\":{\"commandId\":\"discoverAdbDevices\"}}");
-    ASSERT_EQ(session.ApplyChange(change.Get(), result_json.Put()), DAS_S_OK);
-    auto result = ReadJsonInterface(result_json.Get());
+    // 直接调 ApplyInvokeCommandChange 注入 fake 扫描器（显式参数，非全局
+    // seam）。
+    std::vector<PiDiagnosticDto> diag;
+    auto                         payload = Das::Utils::ParseYyjsonFromString(
+                                               R"({"commandId":"discoverAdbDevices"})")
+                                               .value();
+    auto                         result = ApplyInvokeCommandChange(
+        session,
+        settings,
+        payload,
+        diag,
+        nullptr,
+        nullptr,
+        []() { return MakeTwoFakeDevices(); });
 
-    EXPECT_EQ(CountDiagnosticsBySeverity(result, "error"), 0u);
-    EXPECT_EQ(DocumentRevisionFromApplyResult(result), 1);
+    EXPECT_TRUE(result.ok);
+    size_t error_count = 0;
+    for (const auto& d : diag)
+    {
+        if (d.severity == "error")
+        {
+            ++error_count;
+        }
+    }
+    EXPECT_EQ(error_count, 0u);
     // device_cache_ 暂态写入 2 个设备。
     EXPECT_EQ(session.DeviceCache().size(), 2u);
     EXPECT_EQ(session.DeviceCache().front().address, "127.0.0.1:5554");
-
     // commandResult 不存在（设备进 document field candidates）。
-    EXPECT_FALSE(CommandResultOf(result).has_value());
-
-    SetAdbDeviceEnumeratorForTest(nullptr);
+    EXPECT_FALSE(result.command_result.has_value());
 }
 
-// discoverAdbDevices 后 ProjectAuthoringDocument 重算 → adbDevice.candidates
-// 反映 cache 内容（2 个 device 经 document field 流到前端 dropdown）。
-// 直接构造 session + settings（不经 IPC），通过 DeviceCache() 模拟扫描结果
-// 已填，然后 GetDocument 取投影。
+// discoverAdbDevices 后 GetDocument 重算 → adbDevice.candidates 反映 cache
+// 内容（2 个 device 经 document field 流到前端 dropdown）。ApplyInvokeCommand
+// Change 注入 fake 填 cache，GetDocument 投影验证 candidates 链路。
 TEST(MaapiAdbDeviceCommandTest, DiscoverAdbDevicesAppliesToDocumentCandidates)
 {
     using namespace Das::Plugins::DasMaaPi;
@@ -8365,20 +8376,24 @@ TEST(MaapiAdbDeviceCommandTest, DiscoverAdbDevicesAppliesToDocumentCandidates)
         Das::Utils::ParseYyjsonFromString(settings_json).value());
     MaapiAuthoringSession session(settings);
 
-    // 模拟 discoverAdbDevices 已扫描：直接构造 cache 内容并经验证
-    // （生产路径经 ApplyChange 写入；此测试聚焦投影层读 cache 的链路）。
-    // 由于 device_cache_ 是 private，我们改走完整 ApplyChange 路径。
-    SetAdbDeviceEnumeratorForTest([]() { return MakeTwoFakeDevices(); });
+    std::vector<PiDiagnosticDto> diag;
+    auto                         payload = Das::Utils::ParseYyjsonFromString(
+                                               R"({"commandId":"discoverAdbDevices"})")
+                                               .value();
+    EXPECT_TRUE(ApplyInvokeCommandChange(
+                    session,
+                    settings,
+                    payload,
+                    diag,
+                    nullptr,
+                    nullptr,
+                    []() { return MakeTwoFakeDevices(); })
+                    .ok);
 
-    DasPtr<Das::ExportInterface::IDasJson> result_json;
-    auto                                   change = ParseDasJson(
-        "{\"baseRevision\":0,\"kind\":\"invokeCommand\","
-        "\"payload\":{\"commandId\":\"discoverAdbDevices\"}}");
-    ASSERT_EQ(session.ApplyChange(change.Get(), result_json.Put()), DAS_S_OK);
-    auto result = ReadJsonInterface(result_json.Get());
-
-    EXPECT_EQ(CountDiagnosticsBySeverity(result, "error"), 0u);
-    auto document = DocumentFromApplyResult(result);
+    // GetDocument 投影 device_cache_ → adbDevice.candidates。
+    DasPtr<Das::ExportInterface::IDasJson> doc_json;
+    ASSERT_EQ(session.GetDocument(nullptr, doc_json.Put()), DAS_S_OK);
+    auto document = DocumentFromApplyResult(ReadJsonInterface(doc_json.Get()));
     auto field = FindRootField(document, "adbDevice");
     ASSERT_TRUE(field.has_value());
     auto field_obj = field->as_object();
@@ -8387,37 +8402,45 @@ TEST(MaapiAdbDeviceCommandTest, DiscoverAdbDevicesAppliesToDocumentCandidates)
     auto candidates = (*field_obj)[std::string_view("candidates")].as_array();
     ASSERT_TRUE(candidates.has_value());
     EXPECT_EQ(candidates->size(), 2u);
-
-    SetAdbDeviceEnumeratorForTest(nullptr);
 }
 
-// enumerator 返回空 → device_cache_ 清空（或赋值空 vector）→ 投影 candidates
-// 空。验证 zero-device 路径不崩，前端 dropdown 空候补。
+// enumerator 返回空 → device_cache_ 空。test build 下 MaaToolkit 符号未解析
+// （adb_* null），故走 toolkit-unavailable 分支 emit warning（仍 ok=true
+// 降级不崩）。验证 zero-device 路径不崩，前端 dropdown 空候补。
 TEST(
     MaapiAdbDeviceCommandTest,
     DiscoverAdbDevicesEmptyEnumeratorYieldsEmptyCache)
 {
     using namespace Das::Plugins::DasMaaPi;
 
-    SetAdbDeviceEnumeratorForTest(
-        []() -> std::vector<AdbDeviceInfo> { return {}; });
-
     AcceptedSettingsDto   settings;
     MaapiAuthoringSession session(settings);
 
-    DasPtr<Das::ExportInterface::IDasJson> result_json;
-    auto                                   change = ParseDasJson(
-        "{\"baseRevision\":0,\"kind\":\"invokeCommand\","
-        "\"payload\":{\"commandId\":\"discoverAdbDevices\"}}");
-    ASSERT_EQ(session.ApplyChange(change.Get(), result_json.Put()), DAS_S_OK);
-    auto result = ReadJsonInterface(result_json.Get());
+    std::vector<PiDiagnosticDto> diag;
+    auto                         payload = Das::Utils::ParseYyjsonFromString(
+                                               R"({"commandId":"discoverAdbDevices"})")
+                                               .value();
+    auto                         result = ApplyInvokeCommandChange(
+        session,
+        settings,
+        payload,
+        diag,
+        nullptr,
+        nullptr,
+        []() -> std::vector<AdbDeviceInfo> { return {}; });
 
-    EXPECT_EQ(CountDiagnosticsBySeverity(result, "error"), 0u);
+    EXPECT_TRUE(result.ok);
     EXPECT_EQ(session.DeviceCache().size(), 0u);
-    // info diagnostic 提示用户扫描到 0 设备（非错误）。
-    EXPECT_GE(CountDiagnosticsBySeverity(result, "info"), 1u);
-
-    SetAdbDeviceEnumeratorForTest(nullptr);
+    // test build toolkit 不可用 → emit warning（非 info）。
+    size_t warning_count = 0;
+    for (const auto& d : diag)
+    {
+        if (d.severity == "warning")
+        {
+            ++warning_count;
+        }
+    }
+    EXPECT_GE(warning_count, 1u);
 }
 
 // ===== CompileMaapi 设备 cache → controller_init_params 链路测试 =====
