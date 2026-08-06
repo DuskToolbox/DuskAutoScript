@@ -9,6 +9,7 @@
 #include "MaaCallbackLogger.h"
 #include "MaaDynamicSymbols.h"
 #include "MaaHandle.h"
+#include "PiHttpClient.h"
 #include "PretaskRunner.h"
 #include "Win32WindowFinder.h"
 
@@ -1644,6 +1645,13 @@ namespace Das::Plugins::DasMaaPi
                 nullptr,
                 log_recorder.Put());
         }
+        // BeastHttpClient owner 声明在 log_context **之前**：C++ 逆序析构保证
+        // owner 在 log_context **之后**销毁——任一 Maa*Destroy 内部冲刷 final
+        // 回调时 log_context.http_client 裸指针持续有效（Pitfall 1 生命周期
+        // 不变量）。5 秒短超时 + verify_tls=true 默认 TLS 校验（SSRF 缓解：
+        // scheme 限制 + 短超时 + TLS 校验 + 失败降级字面文本 + 1 MiB 响应
+        // 体截断）。
+        std::unique_ptr<PiHttpClient>             http_client_owner;
         std::unique_ptr<MaaCallbackLoggerContext> log_context;
         if (DAS::IsFailed(recorder_rc))
         {
@@ -1656,11 +1664,15 @@ namespace Das::Plugins::DasMaaPi
         }
         else
         {
+            http_client_owner = std::make_unique<BeastHttpClient>(
+                true,
+                std::chrono::seconds(5));
             log_context = std::make_unique<MaaCallbackLoggerContext>();
             log_context->recorder = std::move(log_recorder);
             // focus content 解析所需的 log_context 四字段：
             // language / interface_directory / translations 来自 envelope，
-            // http_client 在此占位 nullptr（后续 BeastHttpClient owner 注入）。
+            // http_client 指向 BeastHttpClient owner（非 owning 裸指针）。
+            log_context->http_client = http_client_owner.get();
             log_context->language =
                 std::string{envelope.maapi.pi_env.client_language};
             log_context->interface_directory =
@@ -1727,7 +1739,6 @@ namespace Das::Plugins::DasMaaPi
                         "warning");
                 }
             }
-            log_context->http_client = nullptr;
         }
 
 #ifndef DAS_MAAPI_DISABLE_REAL_MAA_BOUNDARY

@@ -1,14 +1,26 @@
 #include "MaaCallbackLogger.h"
 
+#include "PiHttpClient.h"
+
 #include <das/DasString.hpp>
 
+#include <cstdint>
+#include <fstream>
+#include <iterator>
 #include <regex>
+#include <string>
 #include <utility>
 
 namespace Das::Plugins::DasMaaPi
 {
     namespace
     {
+        // URL/文件响应体大小上限（1 MiB = 1048576 字节）。恶意 PI 资源可能
+        // 指向流式 GB 端点在 BeastHttpClient 5s 超时窗口内拉满 RAM；截断首
+        // 1 MiB 保证单条 focus content 内存占用硬性上限。镜像协议规范要求
+        // 的「URL/focus content」合理体量（典型 release note / changelog
+        // 100 KB 以内）。
+        constexpr std::size_t MAX_FOCUS_CONTENT_BYTES = 1U << 20;
         // 从 yyjson 对象取 display 渠道：string → 单元素；string 数组 → 各
         // 元素；缺省/非法 → 默认 ["log"]。
         void AppendDisplayChannels(
@@ -210,22 +222,80 @@ namespace Das::Plugins::DasMaaPi
         {
             return std::string{};
         }
+        std::string text{content};
         // i18n `$key` 分支：首字符 `$` 视为 translations 查表 key。命中返回
         // 翻译文本；miss 返回去 `$` 前缀的 key 文本（与 ResolveI18n 既有
         // fallback 语义一致——用户看到的是 key 名而非裸 `$` 前缀）。
-        if (content.front() == '$')
+        if (text.front() == '$')
         {
-            const std::string key{content.substr(1)};
+            const std::string key{text.substr(1)};
             const auto        it = context.translations.find(key);
             if (it != context.translations.end())
             {
-                return it->second;
+                text = it->second;
             }
-            return key;
+            else
+            {
+                return key;
+            }
+        }
+        // URL 分支：http:// / https:// 前缀，经 BeastHttpClient 同步 GET（5s
+        // 短超时）。成功 + status=200 → 返回 body（截断至 1 MiB 上限，SSRF
+        // 内存耗尽防御）。失败 / 非 200 / http_client nullptr → 降级字面 URL
+        // 文本，不阻塞 MaaFW 回调线程。
+        if (text.starts_with("https://") || text.starts_with("http://"))
+        {
+            if (context.http_client != nullptr)
+            {
+                std::string body;
+                int         status = 0;
+                if (DAS::IsOk(context.http_client->Get(text, body, status))
+                    && status == 200)
+                {
+                    if (body.size() > MAX_FOCUS_CONTENT_BYTES)
+                    {
+                        body.resize(MAX_FOCUS_CONTENT_BYTES);
+                    }
+                    return body;
+                }
+            }
+            return text;
+        }
+        // file 分支：./ 或 ../ 前缀，或含文档扩展名（.md/.txt/.html/.htm）
+        // 启发式。从 context.interface_directory 拼接读文件；读失败/不存在
+        // 降级字面文本。URL 优先于 file 避免 http://.../foo.md 被误判。
+        const bool is_relative =
+            text.starts_with("./") || text.starts_with("../");
+        const bool has_doc_ext =
+            text.size() > 4
+            && (text.ends_with(".md") || text.ends_with(".txt")
+                || text.ends_with(".html") || text.ends_with(".htm"));
+        if (is_relative || has_doc_ext)
+        {
+            const auto      full = context.interface_directory / text;
+            std::error_code ec;
+            if (std::filesystem::exists(full, ec))
+            {
+                std::ifstream in{full, std::ios::binary};
+                if (in.is_open())
+                {
+                    std::string loaded(
+                        (std::istreambuf_iterator<char>(in)),
+                        std::istreambuf_iterator<char>());
+                    if (loaded.size() > MAX_FOCUS_CONTENT_BYTES)
+                    {
+                        loaded.resize(MAX_FOCUS_CONTENT_BYTES);
+                    }
+                    if (!loaded.empty())
+                    {
+                        return loaded;
+                    }
+                }
+            }
+            return text;
         }
         // literal 兜底：未匹配任何外部源 → 原文返回（与既有行为兼容）。
-        // URL（http:// / https://）与文件路径（./ 或文档扩展名）分支后续补全。
-        return std::string{content};
+        return text;
     }
 
     std::string FormatDisplayChannelsJson(
