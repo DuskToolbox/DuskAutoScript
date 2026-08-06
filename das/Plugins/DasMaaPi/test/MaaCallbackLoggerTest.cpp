@@ -547,6 +547,56 @@ TEST_F(
     EXPECT_EQ(ResolveFocusContent("notes.txt", context), "notes content");
 }
 
+// 绝对路径越界：content 是 interface_directory 之外的绝对路径 .md 文件时，
+// std::filesystem::path::operator/ 对绝对 RHS 丢弃 LHS 导致读取任意文件。
+// 范围守卫必须拒绝越界路径，降级字面文本。
+TEST_F(
+    MaaCallbackLoggerFixture,
+    ResolveFocusContent_AbsolutePathOutsideInterfaceDirReturnsLiteral)
+{
+    std::filesystem::path dir;
+    auto                  context = MakeRecorderContext(dir);
+    context.interface_directory = UniqueTempDir("AbsGuardInside");
+    std::filesystem::create_directories(context.interface_directory);
+    // 在 interface_directory 外的独立临时目录建靶文件（绝对路径含 .md）。
+    const auto external_dir = UniqueTempDir("AbsGuardOutside");
+    std::filesystem::create_directories(external_dir);
+    WriteFile(external_dir / "secret.md", "secret data");
+    const std::string content = (external_dir / "secret.md").string();
+    // 期望降级字面文本（不读外部文件），实现缺陷下会读到 "secret data"。
+    EXPECT_EQ(ResolveFocusContent(content, context), content);
+}
+
+// 父遍历越界：content = "../escape.md" 经 interface_directory/../ 解析后
+// 落到 interface_directory 父目录之外。范围守卫必须拒绝，降级字面文本。
+TEST_F(
+    MaaCallbackLoggerFixture,
+    ResolveFocusContent_ParentTraversalOutsideDirReturnsLiteral)
+{
+    std::filesystem::path dir;
+    auto                  context = MakeRecorderContext(dir);
+    context.interface_directory = UniqueTempDir("TraversalInside");
+    std::filesystem::create_directories(context.interface_directory);
+    // 在父目录建靶文件（../ 从 interface_directory 跳出到父目录命中它）。
+    const auto parent = context.interface_directory.parent_path();
+    WriteFile(parent / "escape.md", "escaped content");
+    // 期望降级字面文本（不读父目录文件），实现缺陷下会读到 "escaped content"。
+    EXPECT_EQ(ResolveFocusContent("../escape.md", context), "../escape.md");
+}
+
+// i18n 空翻译值 fallback：translations[key] 是空串（falsy）时按 MXU
+// `translations?.[key] || key` 语义 fallback 到 key（去 $ 前缀）。
+TEST_F(
+    MaaCallbackLoggerFixture,
+    ResolveFocusContent_EmptyTranslationFallsBackToKey)
+{
+    std::filesystem::path dir;
+    auto                  context = MakeRecorderContext(dir);
+    context.translations["empty_key"] = "";
+    // 空翻译值应 fallback 到 "empty_key"，实现缺陷下返回空串。
+    EXPECT_EQ(ResolveFocusContent("$empty_key", context), "empty_key");
+}
+
 // RecordEntryOrLog：recorder 为空时走 fallback 路径，返回
 // DAS_E_OBJECT_NOT_INIT（不吞失败），并按 fallback_level 映射打 DAS_LOG_*
 // （[focus-degraded] 前缀落 logs/DasCore.log，不在单测断言范围）。
