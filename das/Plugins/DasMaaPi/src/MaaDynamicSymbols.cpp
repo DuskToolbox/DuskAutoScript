@@ -8,6 +8,7 @@
 #include <boost/system/error_code.hpp>
 
 #include <exception>
+#include <type_traits>
 #include <utility>
 
 namespace Das::Plugins::DasMaaPi
@@ -31,22 +32,30 @@ namespace Das::Plugins::DasMaaPi
             const boost::dll::shared_library& lib,
             const char*                       symbol_name) noexcept
         {
-            // has() + get<>() would be racy if the library could unload
-            // between the two calls, but the library is held alive by the
-            // LoadedLibraryHandles singleton. Load-time resolution only.
             if (!lib.has(symbol_name))
             {
                 return nullptr;
             }
             try
             {
-                return lib.get<Signature>(symbol_name);
+                // boost::dll shared_library::get<T> 返回 T&（数据语义：把符号
+                // 地址当存储 T 的内存，*reinterpret_cast<T*>(addr)）。对函数
+                // 符号，T 必须是函数类型（如 void*()）而非函数指针类型
+                // （void*(*)()）：get<void*()> 走
+                // *reinterpret_cast<void*(*)()>(F) 把函数入口 F
+                // 当函数指针解一层引用、返回绑定到 F 的函数引用，
+                // 转函数指针即真实地址；若误用函数指针类型作 T，会再多解一层，
+                // 读 F 处机器码当指针（实测 adb_list_create=0x20b928ec8348 =
+                // prologue 指令字节，indirect call 即 execute
+                // fault）。Signature 是函数指针，取 remove_pointer
+                // 得函数类型喂给 get。
+                using FuncType = std::remove_pointer_t<Signature>;
+                return lib.template get<FuncType>(symbol_name);
             }
             catch (const std::exception&)
             {
-                // get<>() throws on type/signature mismatch; treat as
-                // unavailable so the caller degrades to
-                // controller-type-unsupported-on-platform.
+                // get<>() throws on missing symbol / type mismatch; degrade
+                // to unavailable so callers skip the feature gracefully.
                 return nullptr;
             }
         }
@@ -86,7 +95,8 @@ namespace Das::Plugins::DasMaaPi
                 const auto plugin_dir = plugin_module.parent_path();
                 handles.framework.load(
                     plugin_dir / "MaaFramework",
-                    boost::dll::load_mode::load_with_altered_search_path,
+                    boost::dll::load_mode::append_decorations
+                        | boost::dll::load_mode::load_with_altered_search_path,
                     ec);
             }
             catch (const std::exception&)
@@ -113,22 +123,61 @@ namespace Das::Plugins::DasMaaPi
             // into $<TARGET_FILE_DIR:DasMaaPi>). Derive that directory
             // from the current module's path so the lookup is independent
             // of the process working directory and any PATH assumptions.
-            // load_with_altered_search_path makes Windows search for
-            // MaaToolkit's own deps (MaaFramework, etc.) in the same dir.
             try
             {
                 const auto plugin_module = boost::dll::this_line_location();
                 const auto plugin_dir = plugin_module.parent_path();
+                // 必须 load_with_altered_search_path +
+                // append_decorations。两个坑： (1) altered：MaaToolkit
+                // 的递归依赖（MaaFramework→fastdeploy/ onnxruntime_maa 等在
+                // plugins/DasMaaPi/）需从 plugin_dir 搜索； DasHostX 的 PATH
+                // 不含插件目录，默认搜索（System32+PATH）找不到， 故必须
+                // altered 让依赖从 DLL 所在目录解析。 (2)
+                // append_decorations：boost::dll 对无扩展 path 默认会附尾点
+                // （"MaaToolkit."），LoadLibraryExW 把尾点当空扩展名 →
+                // 找不到文件。 append_decorations 让 boost::dll 走
+                // load_impl（LoadLibraryExW 直接收 decorated = 平台扩展后的
+                // MaaToolkit.dll/.so/.dylib + lib 前缀），
+                // 绕过尾点，且跨平台（不硬编码 .dll）。
                 handles.toolkit.load(
                     plugin_dir / "MaaToolkit",
-                    boost::dll::load_mode::load_with_altered_search_path,
+                    boost::dll::load_mode::append_decorations
+                        | boost::dll::load_mode::load_with_altered_search_path,
                     ec);
+                // 诊断：discoverAdbDevices 依赖 toolkit 的 11 个 AdbDevice
+                // 符号族 （IsAdbToolkitAvailable 要求全 resolved）。load
+                // 失败原本静默—— 操作员只看到 warning，记录 plugin_dir + ec
+                // 暴露运行时实况。
+                if (handles.toolkit.is_loaded())
+                {
+                    DAS_LOG_INFO(
+                        DAS_FMT_NS::format(
+                            "[DasMaaPi] MaaToolkit loaded from {}",
+                            plugin_dir.string())
+                            .c_str());
+                }
+                else
+                {
+                    DAS_LOG_WARNING(
+                        DAS_FMT_NS::format(
+                            "[DasMaaPi] MaaToolkit load failed: "
+                            "dir={} ec={} msg={}",
+                            plugin_dir.string(),
+                            ec.value(),
+                            ec.message())
+                            .c_str());
+                }
             }
-            catch (const std::exception&)
+            catch (const std::exception& ex)
             {
                 // this_line_location() can throw on exotic platforms; the
                 // toolkit handles stay unloaded and all tk_* pointers
                 // remain null.
+                DAS_LOG_WARNING(
+                    DAS_FMT_NS::format(
+                        "[DasMaaPi] MaaToolkit load threw: {}",
+                        ex.what())
+                        .c_str());
             }
             if (!ec && handles.toolkit.is_loaded())
             {
