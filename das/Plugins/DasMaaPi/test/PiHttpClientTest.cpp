@@ -1,5 +1,6 @@
 #include "../src/PiHttpClient.h"
 
+#include <das/Plugins/DasMaaPi/MaaPiErrorCodes.h>
 #include <das/_autogen/idl/abi/DasResult.h>
 #include <gtest/gtest.h>
 
@@ -691,27 +692,29 @@ v6yQpUYtQbbVSIHbNlBhfp8=
         EXPECT_EQ(server.LastTarget(), url);
     }
 
-    TEST(PiHttpClient, Socks5ProxyReturnsInvalidArgument)
+    TEST(PiHttpClient, Socks5ProxyReturnsProxyUnsupported)
     {
         BeastHttpClient client;
         std::string     body;
         int             status = 0;
-        // socks5 is rejected up front with no network I/O.
+        // socks5 is rejected up front with a distinct code so callers can tell
+        // proxy-target rejection from a structurally malformed URL.
         EXPECT_EQ(
             client.Get(
                 "https://example.com/update",
                 body,
                 status,
                 "socks5://127.0.0.1:1080"),
-            DAS_E_INVALID_ARGUMENT);
+            DAS_E_MAAPI_PROXY_UNSUPPORTED);
     }
 
-    TEST(PiHttpClient, MalformedProxyReturnsInvalidArgument)
+    TEST(PiHttpClient, MissingPortProxyReturnsInvalidArgument)
     {
         BeastHttpClient client;
         std::string     body;
         int             status = 0;
-        // Missing port must fail rather than silently connecting directly.
+        // Missing port is a structural URL error, not a proxy-scheme decision,
+        // and must fail rather than silently connecting directly.
         EXPECT_EQ(
             client.Get(
                 "https://example.com/update",
@@ -719,13 +722,57 @@ v6yQpUYtQbbVSIHbNlBhfp8=
                 status,
                 "http://127.0.0.1"),
             DAS_E_INVALID_ARGUMENT);
+    }
+
+    // Direct ParseProxyUrl unit tests (no network I/O). These pin the contract
+    // that proxy-scheme rejection (missing scheme / socks5 / non-http scheme)
+    // returns DAS_E_MAAPI_PROXY_UNSUPPORTED, while structural URL errors
+    // (empty host / port) keep returning DAS_E_INVALID_ARGUMENT.
+
+    TEST(PiHttpClient, ParseProxyUrl_Socks5ReturnsProxyUnsupported)
+    {
+        ProxyTarget out;
         EXPECT_EQ(
-            client.Get(
-                "https://example.com/update",
-                body,
-                status,
-                "ftp://127.0.0.1:21"),
+            ParseProxyUrl("socks5://127.0.0.1:1080", out),
+            DAS_E_MAAPI_PROXY_UNSUPPORTED);
+    }
+
+    TEST(PiHttpClient, ParseProxyUrl_UnsupportedSchemeReturnsProxyUnsupported)
+    {
+        ProxyTarget out;
+        EXPECT_EQ(
+            ParseProxyUrl("ftp://example.com:21", out),
+            DAS_E_MAAPI_PROXY_UNSUPPORTED);
+    }
+
+    TEST(PiHttpClient, ParseProxyUrl_MissingSchemeReturnsProxyUnsupported)
+    {
+        ProxyTarget out;
+        // No "://" — treated as a proxy URL missing its scheme, not a generic
+        // malformed URL, so callers can distinguish the two failure modes.
+        EXPECT_EQ(
+            ParseProxyUrl("example.com:8080", out),
+            DAS_E_MAAPI_PROXY_UNSUPPORTED);
+    }
+
+    TEST(PiHttpClient, ParseProxyUrl_HostPortEmptyReturnsInvalidArgument)
+    {
+        // Regression guard: structural URL errors (empty host/port) stay on
+        // DAS_E_INVALID_ARGUMENT — proxy-scheme rejection does not subsume
+        // them.
+        ProxyTarget out;
+        EXPECT_EQ(
+            ParseProxyUrl("http://127.0.0.1", out),
             DAS_E_INVALID_ARGUMENT);
+    }
+
+    TEST(PiHttpClient, ParseProxyUrl_HttpStillAccepted)
+    {
+        ProxyTarget out;
+        EXPECT_EQ(ParseProxyUrl("http://proxy.local:8080", out), DAS_S_OK);
+        EXPECT_EQ(out.host, "proxy.local");
+        EXPECT_EQ(out.port, 8080);
+        EXPECT_EQ(out.scheme, "http");
     }
 
     TEST(PiHttpClient, GetFollowsRedirectToLocation)
