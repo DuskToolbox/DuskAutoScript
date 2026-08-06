@@ -1,4 +1,5 @@
 #include "../src/MaaCallbackLogger.h"
+#include "../src/PiHttpClient.h"
 
 #include <das/Core/Logger/DasLogNotifierSink.h>
 #include <das/Core/Logger/DasLogSessionImpl.h>
@@ -8,6 +9,7 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <cstddef>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -140,6 +142,64 @@ namespace
     std::string SerializeDetails(const yyjson::value& details)
     {
         return Das::Utils::SerializeYyjsonValue(details).value_or("{}");
+    }
+
+    // 最小 PiHttpClient 测试桩：Get 返回预设 body+status；Head/DownloadStream
+    // 不用于 focus content 解析，返 DAS_E_NO_IMPLEMENTATION。
+    class FakeFocusHttpClient final : public PiHttpClient
+    {
+    public:
+        FakeFocusHttpClient(
+            std::string next_body,
+            int         next_status,
+            DasResult   next_result = DAS_S_OK)
+            : next_body_(std::move(next_body)), next_status_(next_status),
+              next_result_(next_result)
+        {
+        }
+
+        DasResult Get(
+            const std::string& /*url*/,
+            std::string& out_body,
+            int&         out_status,
+            const std::string& /*proxy_url*/ = {}) override
+        {
+            ++get_call_count;
+            out_body = next_body_;
+            out_status = next_status_;
+            return next_result_;
+        }
+
+        DasResult Head(
+            const std::string& /*url*/,
+            int& /*out_status*/,
+            const std::string& /*proxy_url*/ = {}) override
+        {
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+
+        DasResult DownloadStream(
+            const std::string& /*url*/,
+            const std::filesystem::path& /*out_path*/,
+            const ProgressCallback& /*on_progress*/,
+            int& /*out_status*/,
+            const std::string& /*proxy_url*/ = {}) override
+        {
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+
+        int get_call_count = 0;
+
+    private:
+        std::string next_body_;
+        int         next_status_;
+        DasResult   next_result_;
+    };
+
+    void WriteFile(const std::filesystem::path& path, std::string content)
+    {
+        std::ofstream out{path};
+        out << content;
     }
 } // namespace
 
@@ -389,4 +449,100 @@ TEST_F(
     auto text = (*obj)[std::string_view("text")].as_string();
     ASSERT_TRUE(text.has_value());
     EXPECT_EQ(*text, "Hello NodeA");
+}
+
+// ResolveFocusContent URL 分支：http(s):// + http_client 注入时，
+// 调 Get 拉取响应体。成功 + status=200 → 返回 body。
+TEST_F(MaaCallbackLoggerFixture, ResolveFocusContent_FetchesUrlReturnsBody)
+{
+    std::filesystem::path dir;
+    auto                  context = MakeRecorderContext(dir);
+    FakeFocusHttpClient   http{"from server", 200};
+    context.http_client = &http;
+    EXPECT_EQ(
+        ResolveFocusContent("http://example.com/note", context),
+        "from server");
+    EXPECT_EQ(http.get_call_count, 1);
+}
+
+// URL 加载失败（Get 返失败或 status != 200）→ 降级字面 URL 文本，不阻塞回调。
+TEST_F(
+    MaaCallbackLoggerFixture,
+    ResolveFocusContent_UrlFailureReturnsLiteralText)
+{
+    std::filesystem::path dir;
+    auto                  context = MakeRecorderContext(dir);
+    // Get 返 DAS_E_FAIL 模拟网络失败。
+    FakeFocusHttpClient failed_http{"", 0, DAS_E_FAIL};
+    context.http_client = &failed_http;
+    EXPECT_EQ(
+        ResolveFocusContent("https://unreachable.example.com", context),
+        "https://unreachable.example.com");
+}
+
+// https:// 前缀同走 URL 分支（http + https 都触发 GET）。
+TEST_F(MaaCallbackLoggerFixture, ResolveFocusContent_HttpsPrefixAlsoFetched)
+{
+    std::filesystem::path dir;
+    auto                  context = MakeRecorderContext(dir);
+    FakeFocusHttpClient   http{"secure body", 200};
+    context.http_client = &http;
+    EXPECT_EQ(
+        ResolveFocusContent("https://example.com/secure", context),
+        "secure body");
+}
+
+// URL 响应体上限：body 超 1 MiB（MAX_FOCUS_CONTENT_BYTES）截断至首 1 MiB，
+// SSRF 内存耗尽防御（恶意 PI 资源指向流式 GB 端点）。
+TEST_F(MaaCallbackLoggerFixture, ResolveFocusContent_UrlBodyTruncatedAtOneMib)
+{
+    std::filesystem::path dir;
+    auto                  context = MakeRecorderContext(dir);
+    constexpr std::size_t one_mib = 1U << 20;
+    std::string           huge_body(2 * one_mib, 'A');
+    FakeFocusHttpClient   http{std::move(huge_body), 200};
+    context.http_client = &http;
+    const auto result = ResolveFocusContent("http://example.com/big", context);
+    EXPECT_EQ(result.size(), one_mib);
+    EXPECT_TRUE(
+        std::all_of(
+            result.begin(),
+            result.end(),
+            [](char ch) { return ch == 'A'; }));
+}
+
+// file 分支：./ 前缀的相对路径，从 context.interface_directory 拼接读文件。
+TEST_F(MaaCallbackLoggerFixture, ResolveFocusContent_LoadsFileFromInterfaceDir)
+{
+    std::filesystem::path dir;
+    auto                  context = MakeRecorderContext(dir);
+    context.interface_directory = UniqueTempDir("FileBranch");
+    std::filesystem::create_directories(context.interface_directory);
+    WriteFile(context.interface_directory / "intro.md", "intro body");
+    EXPECT_EQ(ResolveFocusContent("./intro.md", context), "intro body");
+}
+
+// file 分支降级：文件不存在 → 返回原文字面（不阻塞）。
+TEST_F(
+    MaaCallbackLoggerFixture,
+    ResolveFocusContent_FileMissingReturnsLiteralText)
+{
+    std::filesystem::path dir;
+    auto                  context = MakeRecorderContext(dir);
+    context.interface_directory = UniqueTempDir("FileMissing");
+    std::filesystem::create_directories(context.interface_directory);
+    EXPECT_EQ(ResolveFocusContent("./missing.md", context), "./missing.md");
+}
+
+// file 分支扩展名启发式：无 ./ 前缀但含 .txt 扩展名 → 视为文件路径。
+TEST_F(
+    MaaCallbackLoggerFixture,
+    ResolveFocusContent_DocExtensionAlsoTreatedAsFile)
+{
+    std::filesystem::path dir;
+    auto                  context = MakeRecorderContext(dir);
+    context.interface_directory = UniqueTempDir("DocExt");
+    std::filesystem::create_directories(context.interface_directory);
+    WriteFile(context.interface_directory / "notes.txt", "notes content");
+    EXPECT_EQ(ResolveFocusContent("notes.txt", context), "notes content");
 }
