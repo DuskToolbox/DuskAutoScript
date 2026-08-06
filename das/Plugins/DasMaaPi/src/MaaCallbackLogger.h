@@ -76,9 +76,12 @@ namespace Das::Plugins::DasMaaPi
 
     // focus content 模板解析（i18n `$key` → URL → file → literal 四级
     // 优先级，镜像协议规范「文件路径 / URL / 直接文本 / `$key` i18n」四类源）。
-    // 当前实现 i18n `$key` 与 literal 两分支；URL/file 分支后续补全（函数
-    // 签名固定不改）。任何解析失败均降级为非空字符串（去 `$` 前缀的 key 或
-    // 原文），绝不返回空、不抛异常、不阻塞 MaaFW 回调线程。
+    // 任何解析失败均降级为字面文本（命中且非空的翻译值 / 1 MiB 内的 URL/file
+    // body / 原文）；i18n miss 或空翻译值 fallback 到去 `$` 前缀的 key（对齐
+    // MXU `translations?.[key] || key` 的 `||` 语义——空翻译值视为 falsy）。
+    // 唯一例外：空 key（content="$"）返空串是 MXU 行为，保留。文件分支加
+    // interface_directory 范围守卫，绝对路径 / `../` 穿越越界时降级字面文本。
+    // 不抛异常、不阻塞 MaaFW 回调线程。
     std::string ResolveFocusContent(
         std::string_view                content,
         const MaaCallbackLoggerContext& context);

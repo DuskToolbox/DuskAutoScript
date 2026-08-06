@@ -224,14 +224,16 @@ namespace Das::Plugins::DasMaaPi
             return std::string{};
         }
         std::string text{content};
-        // i18n `$key` 分支：首字符 `$` 视为 translations 查表 key。命中返回
-        // 翻译文本；miss 返回去 `$` 前缀的 key 文本（与 ResolveI18n 既有
-        // fallback 语义一致——用户看到的是 key 名而非裸 `$` 前缀）。
+        // i18n `$key` 分支：首字符 `$` 视为 translations 查表 key。命中且
+        // 翻译值非空 → 返回翻译文本；miss 或空翻译值 → fallback 到去 `$` 前
+        // 缀的 key（对齐 MXU `translations?.[key] || key` 的 `||` 语义——
+        // 空翻译值视为 falsy 也走 fallback）。空 key（content="$"）返空串
+        // 是 MXU 行为，保留。
         if (text.front() == '$')
         {
             const std::string key{text.substr(1)};
             const auto        it = context.translations.find(key);
-            if (it != context.translations.end())
+            if (it != context.translations.end() && !it->second.empty())
             {
                 text = it->second;
             }
@@ -255,6 +257,14 @@ namespace Das::Plugins::DasMaaPi
                 {
                     if (body.size() > MAX_FOCUS_CONTENT_BYTES)
                     {
+                        // 截断记 diagnostic warning，运维拿到截断后 release
+                        // note 可区分源端残缺 vs 本地截断（与降级 ERROR 同
+                        // spdlog 通路，落 logs/DasCore.log）。
+                        const auto truncate_warning = DAS_FMT_NS::format(
+                            "[focus-degraded] focus content body truncated "
+                            "at 1 MiB (original_size={})",
+                            body.size());
+                        DAS_LOG_WARNING(truncate_warning.c_str());
                         body.resize(MAX_FOCUS_CONTENT_BYTES);
                     }
                     return body;
@@ -273,24 +283,50 @@ namespace Das::Plugins::DasMaaPi
                 || text.ends_with(".html") || text.ends_with(".htm"));
         if (is_relative || has_doc_ext)
         {
-            const auto      full = context.interface_directory / text;
+            // 范围守卫：base/full 经 weakly_canonical 规范化后用 rfind(base,0)
+            // ==0 比较前缀。绝对路径（path::operator/ 对绝对 RHS 丢弃 LHS）
+            // 或 `../` 穿越只要越出 interface_directory 就读不到，降级字面
+            // 文本。对齐 MXU 后端 read_local_file 限 exe 目录的范围语义。
             std::error_code ec;
-            if (std::filesystem::exists(full, ec))
+            const auto      base = std::filesystem::weakly_canonical(
+                context.interface_directory,
+                ec);
+            if (ec)
             {
-                std::ifstream in{full, std::ios::binary};
-                if (in.is_open())
+                return text;
+            }
+            const auto full = std::filesystem::weakly_canonical(
+                context.interface_directory / text,
+                ec);
+            if (ec || !std::filesystem::exists(full, ec))
+            {
+                return text;
+            }
+            const auto base_str = base.string();
+            const auto full_str = full.string();
+            if (full_str.rfind(base_str, 0) != 0)
+            {
+                return text;
+            }
+            std::ifstream in{full, std::ios::binary};
+            if (in.is_open())
+            {
+                std::string loaded(
+                    (std::istreambuf_iterator<char>(in)),
+                    std::istreambuf_iterator<char>());
+                if (loaded.size() > MAX_FOCUS_CONTENT_BYTES)
                 {
-                    std::string loaded(
-                        (std::istreambuf_iterator<char>(in)),
-                        std::istreambuf_iterator<char>());
-                    if (loaded.size() > MAX_FOCUS_CONTENT_BYTES)
-                    {
-                        loaded.resize(MAX_FOCUS_CONTENT_BYTES);
-                    }
-                    if (!loaded.empty())
-                    {
-                        return loaded;
-                    }
+                    // 截断记 diagnostic warning（URL 分支同范式）。
+                    const auto truncate_warning = DAS_FMT_NS::format(
+                        "[focus-degraded] focus content body truncated "
+                        "at 1 MiB (original_size={})",
+                        loaded.size());
+                    DAS_LOG_WARNING(truncate_warning.c_str());
+                    loaded.resize(MAX_FOCUS_CONTENT_BYTES);
+                }
+                if (!loaded.empty())
+                {
+                    return loaded;
                 }
             }
             return text;
