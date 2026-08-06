@@ -164,6 +164,58 @@ namespace Das::Plugins::DasMaaPi
                     TryResolve<MaaToolkitDesktopWindowGetWindowNameFn>(
                         handles.toolkit,
                         "MaaToolkitDesktopWindowGetWindowName");
+
+                // MaaToolkitAdbDevice* family — ADB device discovery +
+                // recommended screencap/input/config probe. Same toolkit
+                // module as the desktop-window family above, so resolved
+                // in the same is_loaded() branch. adb_find_specified is
+                // bound for completeness but not consumed by the default
+                // enumerator (FindAllAdbDevices uses the unspecific Find).
+                symbols.adb_list_create =
+                    TryResolve<MaaToolkitAdbDeviceListCreateFn>(
+                        handles.toolkit,
+                        "MaaToolkitAdbDeviceListCreate");
+                symbols.adb_list_destroy =
+                    TryResolve<MaaToolkitAdbDeviceListDestroyFn>(
+                        handles.toolkit,
+                        "MaaToolkitAdbDeviceListDestroy");
+                symbols.adb_find = TryResolve<MaaToolkitAdbDeviceFindFn>(
+                    handles.toolkit,
+                    "MaaToolkitAdbDeviceFind");
+                symbols.adb_find_specified =
+                    TryResolve<MaaToolkitAdbDeviceFindSpecifiedFn>(
+                        handles.toolkit,
+                        "MaaToolkitAdbDeviceFindSpecified");
+                symbols.adb_list_size =
+                    TryResolve<MaaToolkitAdbDeviceListSizeFn>(
+                        handles.toolkit,
+                        "MaaToolkitAdbDeviceListSize");
+                symbols.adb_list_at = TryResolve<MaaToolkitAdbDeviceListAtFn>(
+                    handles.toolkit,
+                    "MaaToolkitAdbDeviceListAt");
+                symbols.adb_get_name = TryResolve<MaaToolkitAdbDeviceGetNameFn>(
+                    handles.toolkit,
+                    "MaaToolkitAdbDeviceGetName");
+                symbols.adb_get_adb_path =
+                    TryResolve<MaaToolkitAdbDeviceGetAdbPathFn>(
+                        handles.toolkit,
+                        "MaaToolkitAdbDeviceGetAdbPath");
+                symbols.adb_get_address =
+                    TryResolve<MaaToolkitAdbDeviceGetAddressFn>(
+                        handles.toolkit,
+                        "MaaToolkitAdbDeviceGetAddress");
+                symbols.adb_get_screencap_methods =
+                    TryResolve<MaaToolkitAdbDeviceGetScreencapMethodsFn>(
+                        handles.toolkit,
+                        "MaaToolkitAdbDeviceGetScreencapMethods");
+                symbols.adb_get_input_methods =
+                    TryResolve<MaaToolkitAdbDeviceGetInputMethodsFn>(
+                        handles.toolkit,
+                        "MaaToolkitAdbDeviceGetInputMethods");
+                symbols.adb_get_config =
+                    TryResolve<MaaToolkitAdbDeviceGetConfigFn>(
+                        handles.toolkit,
+                        "MaaToolkitAdbDeviceGetConfig");
             }
 
             return symbols;

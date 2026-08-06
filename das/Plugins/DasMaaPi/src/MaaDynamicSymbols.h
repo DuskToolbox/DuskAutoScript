@@ -66,6 +66,58 @@ namespace Das::Plugins::DasMaaPi
     //     const MaaToolkitDesktopWindow*);
     using MaaToolkitDesktopWindowGetWindowNameFn = const char* (*)(const void*);
 
+    // MaaToolkitAdbDevice* family — ADB device discovery + recommended
+    // init-param probe. Same runtime-resolution pattern as the desktop-window
+    // family above: resolved from the co-located MaaToolkit.dll, opaque
+    // typedefs so the header compiles without MaaFW includes (mirrors the
+    // tk_* block). On-disk C signatures live in
+    // MaaToolkit/AdbDevice/MaaToolkitAdbDevice.h. MaaBool = uint8_t,
+    // MaaSize = uint64_t, MaaAdbScreencapMethod / MaaAdbInputMethod =
+    // uint64_t (MaaDef.h).
+
+    // MaaToolkitAdbDeviceList* MaaToolkitAdbDeviceListCreate();
+    using MaaToolkitAdbDeviceListCreateFn = void* (*)();
+
+    // void MaaToolkitAdbDeviceListDestroy(MaaToolkitAdbDeviceList*);
+    using MaaToolkitAdbDeviceListDestroyFn = void (*)(void*);
+
+    // MaaBool MaaToolkitAdbDeviceFind(MaaToolkitAdbDeviceList* buffer);
+    using MaaToolkitAdbDeviceFindFn = std::uint8_t (*)(void*);
+
+    // MaaBool MaaToolkitAdbDeviceFindSpecified(
+    //     const char* adb_path, MaaToolkitAdbDeviceList* buffer);
+    using MaaToolkitAdbDeviceFindSpecifiedFn =
+        std::uint8_t (*)(const char*, void*);
+
+    // MaaSize MaaToolkitAdbDeviceListSize(const MaaToolkitAdbDeviceList*);
+    using MaaToolkitAdbDeviceListSizeFn = std::uint64_t (*)(const void*);
+
+    // const MaaToolkitAdbDevice* MaaToolkitAdbDeviceListAt(
+    //     const MaaToolkitAdbDeviceList*, MaaSize index);
+    using MaaToolkitAdbDeviceListAtFn = const void* (*)(const void*,
+                                                        std::uint64_t);
+
+    // const char* MaaToolkitAdbDeviceGetName(const MaaToolkitAdbDevice*);
+    using MaaToolkitAdbDeviceGetNameFn = const char* (*)(const void*);
+
+    // const char* MaaToolkitAdbDeviceGetAdbPath(const MaaToolkitAdbDevice*);
+    using MaaToolkitAdbDeviceGetAdbPathFn = const char* (*)(const void*);
+
+    // const char* MaaToolkitAdbDeviceGetAddress(const MaaToolkitAdbDevice*);
+    using MaaToolkitAdbDeviceGetAddressFn = const char* (*)(const void*);
+
+    // MaaAdbScreencapMethod MaaToolkitAdbDeviceGetScreencapMethods(
+    //     const MaaToolkitAdbDevice*);
+    using MaaToolkitAdbDeviceGetScreencapMethodsFn =
+        std::uint64_t (*)(const void*);
+
+    // MaaAdbInputMethod MaaToolkitAdbDeviceGetInputMethods(
+    //     const MaaToolkitAdbDevice*);
+    using MaaToolkitAdbDeviceGetInputMethodsFn = std::uint64_t (*)(const void*);
+
+    // const char* MaaToolkitAdbDeviceGetConfig(const MaaToolkitAdbDevice*);
+    using MaaToolkitAdbDeviceGetConfigFn = const char* (*)(const void*);
+
     // All symbols routed through runtime lookup. Any
     // pointer that fails to resolve stays null — callers must check before
     // dispatching and surface controller-type-unsupported-on-platform (or an
@@ -76,16 +128,29 @@ namespace Das::Plugins::DasMaaPi
     // QueryMaaFrameworkVersion 同源），不经动态符号。
     struct MaaDynamicSymbols
     {
-        MaaWin32ControllerCreateFn             win32_create = nullptr;
-        MaaGamepadControllerCreateFn           gamepad_create = nullptr;
-        MaaToolkitDesktopWindowListCreateFn    tk_list_create = nullptr;
-        MaaToolkitDesktopWindowListDestroyFn   tk_list_destroy = nullptr;
-        MaaToolkitDesktopWindowFindAllFn       tk_find_all = nullptr;
-        MaaToolkitDesktopWindowListSizeFn      tk_list_size = nullptr;
-        MaaToolkitDesktopWindowListAtFn        tk_list_at = nullptr;
-        MaaToolkitDesktopWindowGetHandleFn     tk_get_handle = nullptr;
-        MaaToolkitDesktopWindowGetClassNameFn  tk_get_class_name = nullptr;
-        MaaToolkitDesktopWindowGetWindowNameFn tk_get_window_name = nullptr;
+        MaaWin32ControllerCreateFn               win32_create = nullptr;
+        MaaGamepadControllerCreateFn             gamepad_create = nullptr;
+        MaaToolkitDesktopWindowListCreateFn      tk_list_create = nullptr;
+        MaaToolkitDesktopWindowListDestroyFn     tk_list_destroy = nullptr;
+        MaaToolkitDesktopWindowFindAllFn         tk_find_all = nullptr;
+        MaaToolkitDesktopWindowListSizeFn        tk_list_size = nullptr;
+        MaaToolkitDesktopWindowListAtFn          tk_list_at = nullptr;
+        MaaToolkitDesktopWindowGetHandleFn       tk_get_handle = nullptr;
+        MaaToolkitDesktopWindowGetClassNameFn    tk_get_class_name = nullptr;
+        MaaToolkitDesktopWindowGetWindowNameFn   tk_get_window_name = nullptr;
+        MaaToolkitAdbDeviceListCreateFn          adb_list_create = nullptr;
+        MaaToolkitAdbDeviceListDestroyFn         adb_list_destroy = nullptr;
+        MaaToolkitAdbDeviceFindFn                adb_find = nullptr;
+        MaaToolkitAdbDeviceFindSpecifiedFn       adb_find_specified = nullptr;
+        MaaToolkitAdbDeviceListSizeFn            adb_list_size = nullptr;
+        MaaToolkitAdbDeviceListAtFn              adb_list_at = nullptr;
+        MaaToolkitAdbDeviceGetNameFn             adb_get_name = nullptr;
+        MaaToolkitAdbDeviceGetAdbPathFn          adb_get_adb_path = nullptr;
+        MaaToolkitAdbDeviceGetAddressFn          adb_get_address = nullptr;
+        MaaToolkitAdbDeviceGetScreencapMethodsFn adb_get_screencap_methods =
+            nullptr;
+        MaaToolkitAdbDeviceGetInputMethodsFn adb_get_input_methods = nullptr;
+        MaaToolkitAdbDeviceGetConfigFn       adb_get_config = nullptr;
     };
 
     // Singleton accessor: the first call resolves every symbol via
