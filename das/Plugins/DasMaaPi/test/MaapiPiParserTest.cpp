@@ -216,6 +216,40 @@ TEST(DasMaaPiParseV28, ParsesSettingsWithDefaultExpandSemantics)
     EXPECT_TRUE(imported.default_expand);
 }
 
+TEST(DasMaaPiParseV28, ParsesGroupsWithDefaultExpandSemantics)
+{
+    auto result = ParseProjectInterface(
+        {.interface_path = FixturePath("interface_v28.jsonc")});
+
+    ASSERT_TRUE(result.ok);
+    // Fixture contributes three groups in source order: Daily (explicit
+    // true), Collapsed (default_expand omitted → PI v2 protocol default
+    // true), Advanced (explicit false override).
+    ASSERT_GE(result.catalog.groups.size(), 2u);
+
+    const auto find_group = [&result](std::string_view name) -> const PiGroup*
+    {
+        const auto it = std::find_if(
+            result.catalog.groups.begin(),
+            result.catalog.groups.end(),
+            [&name](const PiGroup& group) { return group.dto.name == name; });
+        return it == result.catalog.groups.end() ? nullptr : &*it;
+    };
+
+    const auto* daily = find_group("Daily");
+    ASSERT_NE(daily, nullptr);
+    EXPECT_TRUE(daily->dto.default_expand);
+
+    const auto* collapsed = find_group("Collapsed");
+    ASSERT_NE(collapsed, nullptr);
+    // default_expand omitted → PI v2 protocol default is true.
+    EXPECT_TRUE(collapsed->dto.default_expand);
+
+    const auto* advanced = find_group("Advanced");
+    ASSERT_NE(advanced, nullptr);
+    EXPECT_FALSE(advanced->dto.default_expand);
+}
+
 TEST(DasMaaPiParseV28, MergesImportedGlobalOptionSettingPretask)
 {
     auto result = ParseProjectInterface(

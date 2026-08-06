@@ -4,6 +4,8 @@
 //     + option reference + args.
 //   - setting[] (v2.8.0) with default_expand default (omitted → true) and
 //     explicit false.
+//   - group[] (PI v2.4.0) with default_expand default (omitted → true per
+//     PI v2 protocol), explicit true, and explicit false override.
 //   - global_option (main contributes stage + shared-opt).
 //   - import merge: interface_v28_imported.jsonc contributes pretask array,
 //     one more setting, and global_option (imported-opt + dedup on shared-opt).
@@ -49,6 +51,13 @@
     {
       "name": "Daily",
       "default_expand": true
+    },
+    {
+      "name": "Collapsed"
+    },
+    {
+      "name": "Advanced",
+      "default_expand": false
     }
   ],
   "task": [
