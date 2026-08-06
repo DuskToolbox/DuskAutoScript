@@ -546,3 +546,48 @@ TEST_F(
     WriteFile(context.interface_directory / "notes.txt", "notes content");
     EXPECT_EQ(ResolveFocusContent("notes.txt", context), "notes content");
 }
+
+// RecordEntryOrLog：recorder 为空时走 fallback 路径，返回
+// DAS_E_OBJECT_NOT_INIT（不吞失败），并按 fallback_level 映射打 DAS_LOG_*
+// （[focus-degraded] 前缀落 logs/DasCore.log，不在单测断言范围）。
+TEST_F(
+    MaaCallbackLoggerFixture,
+    RecordEntryOrLog_FallsBackToLogWhenRecorderNull)
+{
+    std::filesystem::path dir;
+    auto                  context = MakeRecorderContext(dir);
+    Das::DasPtr<Das::ExportInterface::IDasLogEntry> entry;
+    ASSERT_EQ(CreateIDasLogEntry(entry.Put()), DAS_S_OK);
+    DasU8StringOnStack text{"hello"};
+    ASSERT_EQ(entry->AddText(&text), DAS_S_OK);
+    const auto result = RecordEntryOrLog(
+        nullptr,
+        entry.Get(),
+        Das::ExportInterface::DAS_LOG_TYPE_STRUCTURAL,
+        "hello");
+    EXPECT_EQ(result, DAS_E_OBJECT_NOT_INIT);
+}
+
+// RecordEntryOrLog：recorder 非空且 Record 成功时透明转发返回 S_OK，
+// 不调 fallback（成功路径零介入）。
+TEST_F(MaaCallbackLoggerFixture, RecordEntryOrLog_PassesThroughOnSuccess)
+{
+    std::filesystem::path dir;
+    auto                  context = MakeRecorderContext(dir);
+    Das::DasPtr<Das::ExportInterface::IDasLogEntry> entry;
+    ASSERT_EQ(CreateIDasLogEntry(entry.Put()), DAS_S_OK);
+    DasU8StringOnStack text{"ok entry"};
+    ASSERT_EQ(entry->AddText(&text), DAS_S_OK);
+    const auto result = RecordEntryOrLog(
+        context.recorder.Get(),
+        entry.Get(),
+        Das::ExportInterface::DAS_LOG_TYPE_STRUCTURAL,
+        "ok entry");
+    EXPECT_EQ(result, DAS_S_OK);
+    // 验证 user.jsonl 写入了 entry（证明走 Record 成功路径，非 fallback）。
+    auto obj = ReadLastEntry().as_object();
+    ASSERT_TRUE(obj.has_value());
+    auto text_field = (*obj)[std::string_view("text")].as_string();
+    ASSERT_TRUE(text_field.has_value());
+    EXPECT_EQ(*text_field, "ok entry");
+}
