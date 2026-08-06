@@ -28,6 +28,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
@@ -654,6 +655,55 @@ namespace
             }
         }
         return names;
+    }
+
+    // 递归收集一个 section.entries[] 内（含 row 嵌套）的 commandId 叶子。
+    // 用于断言 update section 含 checkUpdate/applyUpdate 命令叶子。
+    std::vector<std::string> LayoutSectionCommandIds(
+        const yyjson::value& section)
+    {
+        std::vector<std::string> ids;
+        auto                     section_obj = section.as_object();
+        if (!section_obj || !section_obj->contains(std::string_view("entries")))
+        {
+            return ids;
+        }
+        auto entries = (*section_obj)[std::string_view("entries")].as_array();
+        if (!entries)
+        {
+            return ids;
+        }
+        std::function<void(const yyjson::value&)> walk =
+            [&](const yyjson::value& node)
+        {
+            auto obj = node.as_object();
+            if (!obj)
+            {
+                return;
+            }
+            if (obj->contains(std::string_view("commandId")))
+            {
+                ids.emplace_back(
+                    (*obj)[std::string_view("commandId")].as_string().value_or(
+                        ""));
+            }
+            if (obj->contains(std::string_view("row")))
+            {
+                if (auto row = (*obj)[std::string_view("row")].as_array())
+                {
+                    for (auto row_it = row->begin(); row_it != row->end();
+                         ++row_it)
+                    {
+                        walk(*row_it);
+                    }
+                }
+            }
+        };
+        for (auto it = entries->begin(); it != entries->end(); ++it)
+        {
+            walk(*it);
+        }
+        return ids;
     }
 } // namespace
 
@@ -6443,6 +6493,61 @@ TEST(
     // 游离 global_option 不出现在 fields[]/fieldLayout。
     EXPECT_EQ(CountFieldsWithName(document, "options.shared_opt"), 0u);
     EXPECT_EQ(CountFieldsWithName(document, "options.stage"), 0u);
+}
+
+// update section 内含 {row:[{commandId:checkUpdate},{commandId:applyUpdate}]}
+// 横排命令按钮组，与 update 字段同 section 渲染。
+// commands[] 投影仍 emit checkUpdate/applyUpdate/newPreset 三个 id（disabled
+// 状态投影机制保持）。回归守卫：refactor 后 commands 投影 + checkUpdate
+// commandResult 不破。
+TEST(
+    MaapiProjectionTest,
+    UpdateSectionLayoutContainsCommandLeafAndCommandsStillEmitted)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto                      catalog = MakeNeutralProjectionMockCatalog();
+    const AcceptedSettingsDto settings;
+
+    std::vector<PiDiagnosticDto> diags;
+    auto document = ProjectAuthoringDocument(settings, &catalog, {}, 0, &diags);
+
+    auto validate =
+        Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+    ASSERT_TRUE(validate.valid) << "error_kind=" << validate.error_kind
+                                << " message=" << validate.message;
+
+    auto update_section = FindLayoutSection(document, "update");
+    ASSERT_TRUE(update_section.has_value());
+
+    // update section.entries 内的 commandId 叶子集合（含 row 嵌套）。
+    auto command_ids = LayoutSectionCommandIds(*update_section);
+    ASSERT_EQ(command_ids.size(), 2u);
+    EXPECT_EQ(command_ids[0], "checkUpdate");
+    EXPECT_EQ(command_ids[1], "applyUpdate");
+
+    // commands[] 投影仍 emit 三个 id（归位 ≠ 删 commands
+    // 投影，只是改渲染入口）。
+    auto doc_obj = document.as_object();
+    ASSERT_TRUE(doc_obj.has_value());
+    ASSERT_TRUE(doc_obj->contains(std::string_view("commands")));
+    auto commands = (*doc_obj)[std::string_view("commands")].as_array();
+    ASSERT_TRUE(commands.has_value());
+    std::set<std::string> emitted_ids;
+    for (auto it = commands->begin(); it != commands->end(); ++it)
+    {
+        auto cmd_obj = it->as_object();
+        if (!cmd_obj)
+        {
+            continue;
+        }
+        emitted_ids.insert(
+            std::string(
+                (*cmd_obj)[std::string_view("id")].as_string().value_or("")));
+    }
+    EXPECT_EQ(emitted_ids.count("checkUpdate"), 1u);
+    EXPECT_EQ(emitted_ids.count("applyUpdate"), 1u);
+    EXPECT_EQ(emitted_ids.count("newPreset"), 1u);
 }
 
 // catalog 缺席（无 PI 接口）时，fieldLayout 仍存在并覆盖 adapter 两字段。
