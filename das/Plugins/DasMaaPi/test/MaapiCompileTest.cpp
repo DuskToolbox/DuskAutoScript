@@ -193,12 +193,22 @@ namespace
         std::thread ipc_run_thread_;
     };
 
-    std::string CompileContext(std::string_view path)
+    std::string CompileContext(
+        std::string_view path,
+        std::string_view language = "")
     {
+        // Optional PI UI language (settings.pi.language). Empty by default
+        // keeps the historical wire shape for existing callers; passing a
+        // value (e.g. "zh_cn") drives SelectPiLanguage so client_language
+        // wiring is observable end-to-end.
+        const std::string language_field =
+            language.empty()
+                ? std::string{}
+                : "\"language\":\"" + std::string(language) + "\",";
         return R"({"adapter":{"interfacePath":")" + std::string(path)
                + "\",\"executionPolicy\":{\"failFast\":true}},\"pi\":{"
-                 "\"controllerName\":\"Android\","
-                 "\"resourceName\":\"Official\","
+               + language_field + "\"controllerName\":\"Android\","
+               + "\"resourceName\":\"Official\","
                  "\"globalOptions\":[{\"optionName\":\"difficulty\","
                  "\"kind\":\"select\",\"selectedCases\":[\"hard\"]}],"
                  "\"resourceOptions\":[{\"optionName\":\"server\","
@@ -397,8 +407,13 @@ TEST_F(MaapiCompileFixture, CompileExecutionEnvSnapshotHasClientVersions)
     // D-86-12: PiEnvSnapshotDto 从 6 字段拓宽到 8(补 client_version +
     // client_maafw_version)。compile→envelope→run 路径须让全 8 个 PI_*
     // 环境变量可达；禁止空 stub（两字段必须由 PiCompiler 真实填充）。
+    // PI_INTERFACE_VERSION / PI_CLIENT_LANGUAGE 由 PiCompiler 注入（后者接
+    // SelectPiLanguage 选择结果），故此处显式带 UI language "zh_cn" 驱动整条
+    // compile→envelope→run 链路。
     auto result = Compile(
-        CompileContext(FixturePath("interface_compile.jsonc").generic_string()),
+        CompileContext(
+            FixturePath("interface_compile.jsonc").generic_string(),
+            "zh_cn"),
         "execution");
     auto obj = result.as_object();
     ASSERT_TRUE(obj.has_value());
@@ -418,6 +433,55 @@ TEST_F(MaapiCompileFixture, CompileExecutionEnvSnapshotHasClientVersions)
         << "piEnv.clientVersion 必须由 PiCompiler 填充，禁止空 stub";
     EXPECT_FALSE(client_maafw_version.empty())
         << "piEnv.clientMaafwVersion 必须由 PiCompiler 填充(源 MaaVersion())，禁止空 stub";
+
+    // PI_INTERFACE_VERSION（PI v2 协议 3.3-...:451）= Client 实现的 PI 扩展能力
+    // semver（如 v2.8.1），不是 interface.json 顶层 interface_version
+    // 数字（固定 2）。精确匹配常量 PI_EXTENSION_VERSION_TEXT。
+    const auto interface_version =
+        (*pi_env)[std::string_view("interfaceVersion")].as_string().value_or(
+            "");
+    EXPECT_EQ(interface_version, "v2.8.1")
+        << "piEnv.interfaceVersion 必须是 PI 扩展能力 semver (vX.Y.Z)，"
+        << "而非 interface.json 数字主版本 2；实际值: \"" << interface_version
+        << "\"";
+
+    // PI_CLIENT_LANGUAGE（3.3-...:454）= 当前 UI 语言代码（如 zh_cn / en_us），
+    // 由 PiCompiler 接 SelectPiLanguage 结果。禁止硬编码 "cpp"（实现语言）。
+    // 模式 ^[a-z]{2}_[A-Za-z]+$ 手工校验，避免 std::regex 依赖。
+    const auto client_language =
+        (*pi_env)[std::string_view("clientLanguage")].as_string().value_or("");
+    EXPECT_FALSE(client_language.empty())
+        << "piEnv.clientLanguage 必须由 PiCompiler 接 SelectPiLanguage 填充，"
+        << "禁止硬编码实现语言 stub";
+    const auto matches_language_code = [](std::string_view value) -> bool
+    {
+        if (value.size() < 4 || value[2] != '_')
+        {
+            return false;
+        }
+        if (value[0] < 'a' || value[0] > 'z')
+        {
+            return false;
+        }
+        if (value[1] < 'a' || value[1] > 'z')
+        {
+            return false;
+        }
+        for (std::size_t i = 3; i < value.size(); ++i)
+        {
+            const char c = value[i];
+            const bool lower_a = c >= 'a' && c <= 'z';
+            const bool upper_a = c >= 'A' && c <= 'Z';
+            if (!lower_a && !upper_a)
+            {
+                return false;
+            }
+        }
+        return true;
+    };
+    EXPECT_TRUE(matches_language_code(client_language))
+        << "piEnv.clientLanguage '" << client_language
+        << "' 必须匹配 ^[a-z]{2}_[A-Za-z]+$ (如 zh_cn, en_us)";
 }
 
 TEST_F(MaapiCompileFixture, AgentBoundaryAllowsExecutionEnvelope)
