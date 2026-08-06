@@ -18,6 +18,18 @@ namespace Das::Plugins::DasMaaPi
     // 黑盒约束）。
     struct PiUpdateInfo;
     class PiHttpClient;
+    class MaapiAuthoringSession;
+
+    // invokeCommand 命令业务结果回传结构。各分支自填 command_result；
+    // 调用方（MaapiAuthoringSession::ApplyChange）按 engaged 状态塞
+    // envelope。零 T* 出参指针 — session 的 pending_update_/device_cache_
+    // 通过 MaapiAuthoringSession& 引用直读直写，符合 DAS DasRef/DasOutPtr
+    // 全量替换 T** 出参的风格。
+    struct InvokeCommandResult
+    {
+        bool                         ok = false;
+        std::optional<yyjson::value> command_result;
+    };
 
     AcceptedSettingsDto ParseAcceptedSettings(const yyjson::value& value);
     yyjson::value       SerializeAcceptedSettings(
@@ -78,22 +90,22 @@ namespace Das::Plugins::DasMaaPi
         const yyjson::value&          payload,
         std::vector<PiDiagnosticDto>& diagnostics);
 
-    // D-84-28: invokeCommand 严格 dispatch。已知 commandId：
-    //   - "newPreset"（D-84.2-04 通用 invokeCommand 落地）
-    //   - "checkUpdate"（D-89-04：调 PiUpdateService::CheckUpdate，结果暂存
-    //     pending_update）
-    //   - "applyUpdate"（D-89-05：precondition 校验 pending engaged →
-    //     PiUpdateService::ApplyUpdate，成功清 pending，失败保留可重试）
-    // 未知 commandId 返回 false 并 emit error 诊断（DAS_E_NOT_FOUND）。
-    // pending_update 为空指针时 checkUpdate/applyUpdate 拒绝（需 session
-    // 暂态）。 http_seam 为空时构造 BeastHttpClient（生产）；测试注入
-    // FakePiHttpClient。progress_service_seam 为空时 applyUpdate 路径经
-    // GetCurrentIpcContext Resolve 主进程 service（测试注入 fake）。
-    bool ApplyInvokeCommandChange(
+    // invokeCommand 严格 dispatch。返回 InvokeCommandResult {ok,
+    // command_result}，零 T* 出参指针 — pending_update_/device_cache_ 经
+    // session 引用直读直写。已知 commandId：
+    //   - "newPreset"（通用 invokeCommand 落地，command_result nullopt）
+    //   - "checkUpdate"（成功且有 pending progress_key → command_result 自填
+    //     {commandId:"checkUpdate", data:{progressKey}}；否则 nullopt）
+    //   - "applyUpdate"（成功清 pending；command_result nullopt）
+    // 未知 commandId 返回 {ok=false} 并 emit error 诊断（DAS_E_NOT_FOUND）。
+    // http_seam 为空时构造 BeastHttpClient（生产）；测试注入 FakePiHttpClient。
+    // progress_service_seam 为空时 applyUpdate 路径经 GetCurrentIpcContext
+    // Resolve 主进程 service（测试注入 fake）。
+    InvokeCommandResult ApplyInvokeCommandChange(
+        MaapiAuthoringSession&                     session,
         AcceptedSettingsDto&                       settings,
         const yyjson::value&                       payload,
         std::vector<PiDiagnosticDto>&              diagnostics,
-        std::optional<PiUpdateInfo>*               pending_update = nullptr,
         PiHttpClient*                              http_seam = nullptr,
         Das::ExportInterface::IDasProgressService* progress_service_seam =
             nullptr);

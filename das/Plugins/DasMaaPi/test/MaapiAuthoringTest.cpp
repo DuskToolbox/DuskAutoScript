@@ -559,7 +559,9 @@ namespace
         return std::nullopt;
     }
 
-    // 收集 section.entries[] 所有叶子 fieldName（保持声明顺序）。
+    // 收集 section.entries[] 所有叶子 fieldName（保持声明顺序）。跳过非
+    // fieldName 叶子（{commandId} 叶子、{row:[...]} 容器等）— cpp_yyjson
+    // operator[] 对缺失 key 抛异常，必须先 contains 检查。
     std::vector<std::string> LayoutSectionFieldNames(
         const yyjson::value& section)
     {
@@ -577,7 +579,7 @@ namespace
         for (auto it = entries->begin(); it != entries->end(); ++it)
         {
             auto leaf = it->as_object();
-            if (!leaf)
+            if (!leaf || !leaf->contains(std::string_view("fieldName")))
             {
                 continue;
             }
@@ -616,7 +618,7 @@ namespace
     }
 
     // 遍历 document.fieldLayout[] 各 section.entries[]，收集所有叶子
-    // fieldName。
+    // fieldName。跳过非 fieldName 叶子（{commandId} 叶子、{row:[...]} 容器）。
     std::vector<std::string> LayoutLeafFieldNames(const yyjson::value& document)
     {
         std::vector<std::string> names;
@@ -645,7 +647,7 @@ namespace
             for (auto eit = entries->begin(); eit != entries->end(); ++eit)
             {
                 auto leaf = eit->as_object();
-                if (!leaf)
+                if (!leaf || !leaf->contains(std::string_view("fieldName")))
                 {
                     continue;
                 }
@@ -4681,16 +4683,21 @@ TEST(MaapiApplyResultTest, SuccessfulApplyEnvelopePassesStrictValidator)
     settings.pi.language = "zh_cn";
 
     // D-84.2-04: 通过 ApplyInvokeCommandChange(newPreset) 触发一次成功
-    // mutation。
-    AcceptedSettingsDto candidate = settings;
-    auto                new_preset_payload =
+    // mutation。ApplyInvokeCommandChange 接 session& 引用直读写
+    // pending_update_， 零 T* 出参指针。
+    AcceptedSettingsDto   candidate = settings;
+    MaapiAuthoringSession session(candidate);
+    auto                  new_preset_payload =
         Das::Utils::ParseYyjsonFromString(R"({"commandId":"newPreset"})");
     ASSERT_TRUE(new_preset_payload.has_value());
     std::vector<PiDiagnosticDto> invoke_diagnostics;
-    ASSERT_TRUE(ApplyInvokeCommandChange(
+    auto                         invoke_result = ApplyInvokeCommandChange(
+        session,
         candidate,
         *new_preset_payload,
-        invoke_diagnostics));
+        invoke_diagnostics);
+    ASSERT_TRUE(invoke_result.ok);
+    EXPECT_FALSE(invoke_result.command_result.has_value());
 
     const std::vector<PiDiagnosticDto> diagnostics;
     auto result = Das::Plugins::DasMaaPi::BuildApplyResult(

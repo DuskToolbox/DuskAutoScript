@@ -3,6 +3,7 @@
 #include "DasProgressReporter.h"
 #include "I18nResolver.h"
 #include "MaaDynamicSymbols.h"
+#include "MaapiAuthoringSession.h"
 #include "PiHttpClient.h"
 #include "PiUpdateService.h"
 
@@ -2059,9 +2060,11 @@ namespace Das::Plugins::DasMaaPi
         };
 
         // 更新 section：CDK / 代理 / 检查更新通道（可编辑）+ 版本只读字段 +
-        // 更新 panel 五字段。label 走 PI i18n（$section.update），缺译回退中文
-        // （catalog 缺席时直接回退）。defaultExpanded=true，与项目设置 section
-        // 一致。
+        // 更新 panel 五字段 + checkUpdate/applyUpdate 命令按钮组（row 横排）。
+        // label 走 PI i18n（$section.update），缺译回退中文（catalog 缺席时直接
+        // 回退）。defaultExpanded=true，与项目设置 section 一致。checkUpdate/
+        // applyUpdate 命令从根级 commands[] 渲染入口归位到本 section 的 row
+        // 横排成按钮组（与字段共 section，避免"按钮都在顶上"）。
         auto emit_update_section = [&]()
         {
             yyjson::value section(Object());
@@ -2082,6 +2085,29 @@ namespace Das::Plugins::DasMaaPi
             (*s_obj)[std::string_view("defaultExpanded")] =
                 resolve_default_expanded("update", true);
             yyjson::value entries(Array());
+            // 命令按钮组置顶作为操作入口：row 横排
+            // [{commandId:checkUpdate}, {commandId:applyUpdate}]。commands 定义
+            // 仍在根级 commands[] 投影 emit（disabled 状态投影机制保持），
+            // 此处只是渲染入口从 doc 根级移到 update section 内。
+            {
+                yyjson::value row(Object());
+                yyjson::value row_arr(Array());
+                auto          make_command_leaf = [](std::string_view cid)
+                {
+                    yyjson::value leaf(Object());
+                    auto          leaf_obj = leaf.as_object();
+                    (*leaf_obj)[std::string_view("commandId")] =
+                        JsonString(cid);
+                    return leaf;
+                };
+                row_arr.as_array()->emplace_back(
+                    make_command_leaf("checkUpdate"));
+                row_arr.as_array()->emplace_back(
+                    make_command_leaf("applyUpdate"));
+                (*row.as_object())[std::string_view("row")] =
+                    std::move(row_arr);
+                entries.as_array()->emplace_back(std::move(row));
+            }
             for (const auto& name : update_entries)
             {
                 entries.as_array()->emplace_back(make_leaf(name));
@@ -4787,21 +4813,22 @@ namespace Das::Plugins::DasMaaPi
         return true;
     }
 
-    bool ApplyInvokeCommandChange(
+    InvokeCommandResult ApplyInvokeCommandChange(
+        MaapiAuthoringSession&                     session,
         AcceptedSettingsDto&                       settings,
         const yyjson::value&                       payload,
         std::vector<PiDiagnosticDto>&              diagnostics,
-        std::optional<PiUpdateInfo>*               pending_update,
         PiHttpClient*                              http_seam,
         Das::ExportInterface::IDasProgressService* progress_service_seam)
     {
+        InvokeCommandResult result;
         if (!OnlyKeysExact(
                 payload,
                 "invokeCommand",
                 {"commandId"},
                 diagnostics))
         {
-            return false;
+            return result;
         }
         auto payload_obj = *payload.as_object();
         auto command_id = ObjectStringField(payload_obj, "commandId");
@@ -4813,34 +4840,60 @@ namespace Das::Plugins::DasMaaPi
                 "invokeCommand.commandId required and non-empty",
                 DAS_E_INVALID_ARGUMENT,
                 "commandId");
-            return false;
+            return result;
         }
         // D-84.2-04: newPreset 是 D-84-28 通用 invokeCommand 在 MaaPI 的落地。
         // 把当前 flat pi 字段镜像为 snapshot 追加到 pi.custom_presets。
         if (*command_id == "newPreset")
         {
             ApplyNewPreset(settings);
-            return true;
+            result.ok = true;
+            return result;
         }
         // D-89-04 / T-89-03-01: checkUpdate / applyUpdate 白名单分支。commandId
         // 拼写 camelCase 与 89-04 DasNativeUI 锁定（T-89-03-02）。未知
         // commandId 仍走下方 DAS_E_NOT_FOUND 拒绝。
         if (*command_id == "checkUpdate")
         {
-            return ApplyCheckUpdateCommand(
+            // session& 引用直读写 pending_update_（零 T* 出参指针 — DasRef/
+            // DasOutPtr 全量替换 T** 出参的风格）。helper 仍接 raw 指针（既有
+            // 范式），传 session 成员地址作为 dispatch 内部实现细节，对调用
+            // 方暴露的只是 InvokeCommandResult 结构体返回。
+            result.ok = ApplyCheckUpdateCommand(
                 settings,
                 diagnostics,
-                pending_update,
+                &session.pending_update_,
                 http_seam);
+            // checkUpdate 成功 + pending_update 有 progress_key → 自填
+            // command_result {commandId, data:{progressKey}}（SSE 订阅 key，
+            // 随机不可枚举；经 commandResult 返回，不投影 document）。
+            if (result.ok && session.pending_update_.has_value()
+                && !session.pending_update_->progress_key.empty())
+            {
+                yyjson::value cr(Das::Utils::MakeYyjsonObject());
+                auto          cr_obj = cr.as_object();
+                (*cr_obj)[std::string_view("commandId")] =
+                    JsonString("checkUpdate");
+                yyjson::value data(Das::Utils::MakeYyjsonObject());
+                auto          data_obj = data.as_object();
+                (*data_obj)[std::string_view("progressKey")] =
+                    JsonString(session.pending_update_->progress_key);
+                (*cr_obj)[std::string_view("data")] = std::move(data);
+                result.command_result = std::move(cr);
+            }
+            return result;
         }
         if (*command_id == "applyUpdate")
         {
-            return ApplyApplyUpdateCommand(
+            result.ok = ApplyApplyUpdateCommand(
                 settings,
                 diagnostics,
-                pending_update,
+                &session.pending_update_,
                 http_seam,
                 progress_service_seam);
+            // applyUpdate 成功清 pending（既有语义保持），command_result
+            // nullopt。
+            return result;
         }
         EmitDiagnostic(
             diagnostics,
@@ -4848,7 +4901,7 @@ namespace Das::Plugins::DasMaaPi
             "invokeCommand commandId not registered",
             DAS_E_NOT_FOUND,
             "commandId");
-        return false;
+        return result;
     }
 
     // D-84-29: MaaPI 只支持 formSequence；convertView 一律拒绝。

@@ -283,7 +283,9 @@ std::vector<std::string> LayoutSectionFieldNames(const yyjson::value& section)
     for (auto it = entries->begin(); it != entries->end(); ++it)
     {
         auto leaf = it->as_object();
-        if (!leaf)
+        // 跳过非 fieldName 叶子（{commandId} 叶子、{row:[...]} 容器）—
+        // cpp_yyjson operator[] 对缺失 key 抛异常。
+        if (!leaf || !leaf->contains(std::string_view("fieldName")))
         {
             continue;
         }

@@ -4,6 +4,7 @@
 #include "PiUpdateService.h"
 
 #include <das/Plugins/DasMaaPi/AcceptedSettings.h>
+#include <das/Plugins/DasMaaPi/PiDto.h>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasTaskAuthoringSession.Implements.hpp>
 
 namespace Das::ExportInterface
@@ -29,10 +30,31 @@ DAS_DEFINE_CLASS_IN_NAMESPACE(
 DAS_NS_BEGIN
 namespace Plugins::DasMaaPi
 {
+    // Forward decl for friend declaration below.
+    struct InvokeCommandResult;
+    InvokeCommandResult ApplyInvokeCommandChange(
+        MaapiAuthoringSession&                     session,
+        AcceptedSettingsDto&                       settings,
+        const yyjson::value&                       payload,
+        std::vector<PiDiagnosticDto>&              diagnostics,
+        PiHttpClient*                              http_seam,
+        Das::ExportInterface::IDasProgressService* progress_service_seam);
+
     class MaapiAuthoringSession final
         : public PluginInterface::DasTaskAuthoringSessionImplBase<
               MaapiAuthoringSession>
     {
+        // ApplyInvokeCommandChange 是 invokeCommand dispatch 中枢，直接
+        // 读写 pending_update_ / device_cache_（零 T* 出参指针 — 通过
+        // session& 引用而非成员地址指针承载状态）。
+        friend InvokeCommandResult ApplyInvokeCommandChange(
+            MaapiAuthoringSession&                     session,
+            AcceptedSettingsDto&                       settings,
+            const yyjson::value&                       payload,
+            std::vector<PiDiagnosticDto>&              diagnostics,
+            PiHttpClient*                              http_seam,
+            Das::ExportInterface::IDasProgressService* progress_service_seam);
+
     public:
         MaapiAuthoringSession() = default;
         explicit MaapiAuthoringSession(
