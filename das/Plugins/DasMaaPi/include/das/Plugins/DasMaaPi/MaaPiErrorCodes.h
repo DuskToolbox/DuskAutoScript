@@ -44,9 +44,11 @@ namespace Das::Plugins::DasMaaPi
     inline constexpr DasResult DAS_E_MAAPI_UPDATE_APPLY_FAILED =
         static_cast<DasResult>(-10008);
 
-    /// Proxy scheme unsupported (socks5://). PiHttpClient rejects the URL up
-    /// front; this code converges the semantics for consumers that need a
-    /// distinct "proxy unsupported" result (D-89-08).
+    /// Proxy scheme unsupported (socks5://, non-http scheme, or missing
+    /// scheme). PiHttpClient::ParseProxyUrl rejects these URLs up front with
+    /// this code so callers can distinguish proxy-target rejection from
+    /// generic invalid argument (host:port empty still returns
+    /// DAS_E_INVALID_ARGUMENT).
     inline constexpr DasResult DAS_E_MAAPI_PROXY_UNSUPPORTED =
         static_cast<DasResult>(-10009);
 

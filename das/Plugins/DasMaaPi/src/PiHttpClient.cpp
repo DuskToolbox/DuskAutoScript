@@ -1,6 +1,7 @@
 #include "PiHttpClient.h"
 
 #include <das/DasApi.h>
+#include <das/Plugins/DasMaaPi/MaaPiErrorCodes.h>
 #include <das/Utils/DasJsonCore.h>
 #include <das/_autogen/idl/abi/DasResult.h>
 
@@ -1208,7 +1209,7 @@ namespace Das::Plugins::DasMaaPi
         if (scheme_end == std::string_view::npos)
         {
             LogDiagnosticWarning("proxy url missing scheme");
-            return DAS_E_INVALID_ARGUMENT;
+            return DAS_E_MAAPI_PROXY_UNSUPPORTED;
         }
         const auto scheme = url.substr(0, scheme_end);
         if (scheme == "socks5" || scheme == "socks5h")
@@ -1216,13 +1217,13 @@ namespace Das::Plugins::DasMaaPi
             // Explicit unsupported error rather than a silent downgrade
             // (D-89-08). Converged to DAS_E_MAAPI_PROXY_UNSUPPORTED in 89-02.
             LogDiagnosticWarning("socks5 proxy is not supported yet");
-            return DAS_E_INVALID_ARGUMENT;
+            return DAS_E_MAAPI_PROXY_UNSUPPORTED;
         }
         if (scheme != "http")
         {
             LogDiagnosticWarning(
                 "unsupported proxy scheme: scheme=" + std::string(scheme));
-            return DAS_E_INVALID_ARGUMENT;
+            return DAS_E_MAAPI_PROXY_UNSUPPORTED;
         }
 
         auto             authority = url.substr(scheme_end + 3);

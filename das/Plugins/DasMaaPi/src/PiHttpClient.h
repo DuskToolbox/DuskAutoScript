@@ -23,9 +23,10 @@ namespace Das::Plugins::DasMaaPi
         std::optional<std::string> password;
     };
 
-    // Parse an HTTP proxy URL. Returns DAS_E_INVALID_ARGUMENT with a diagnostic
-    // for socks5:// and for malformed URLs (missing scheme/host/port) instead
-    // of silently connecting directly.
+    // Parse an HTTP proxy URL. Proxy-scheme rejection (missing scheme,
+    // socks5://, or any non-http scheme) returns DAS_E_MAAPI_PROXY_UNSUPPORTED
+    // so callers can distinguish it from structural URL errors
+    // (empty host/port), which still return DAS_E_INVALID_ARGUMENT.
     DasResult ParseProxyUrl(std::string_view url, ProxyTarget& out);
 
     // 流式下载进度。total_bytes 仅在响应携带 Content-Length 时填充；缺失
