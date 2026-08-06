@@ -104,4 +104,17 @@ namespace Das::Plugins::DasMaaPi
         MaaCallbackLoggerContext& context,
         const char*               message,
         const char*               details_json);
+
+    // recorder 失败降级 helper：recorder 非空调 Record(entry)；成功返回 rc；
+    // recorder 为空或 Record 失败（IPC resolve 失败 / 降级 stub 返
+    // OBJECT_NOT_INIT 等）时按 fallback_level 映射打 DAS_LOG_INFO/WARNING/
+    // ERROR（统一 [focus-degraded] 前缀 + fallback_text），避免日志黑洞。
+    // helper 透明转发成功路径（零介入），仅在失败时介入
+    // fallback；LogFocusMessage
+    // + RecordAgentOutput 共用以闭合降级黑洞。
+    DasResult RecordEntryOrLog(
+        Das::ExportInterface::IDasProcessLogRecorder* recorder,
+        Das::ExportInterface::IDasLogEntry*           entry,
+        Das::ExportInterface::DasLogType              fallback_level,
+        std::string_view                              fallback_text);
 } // namespace Das::Plugins::DasMaaPi

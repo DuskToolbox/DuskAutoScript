@@ -3,6 +3,7 @@
 #include "PiHttpClient.h"
 
 #include <das/DasString.hpp>
+#include <das/Utils/fmt.h>
 
 #include <cstdint>
 #include <fstream>
@@ -316,24 +317,6 @@ namespace Das::Plugins::DasMaaPi
         return json ? *json : "[]";
     }
 
-    void DAS_MAA_CALL MaaCallbackLoggerEntry(
-        void*       handle,
-        const char* message,
-        const char* details_json,
-        void*       trans_arg)
-    {
-        (void)handle;
-        if (message == nullptr || details_json == nullptr
-            || trans_arg == nullptr)
-        {
-            return;
-        }
-        LogFocusMessage(
-            *static_cast<MaaCallbackLoggerContext*>(trans_arg),
-            message,
-            details_json);
-    }
-
     void LogFocusMessage(
         MaaCallbackLoggerContext& context,
         const char*               message,
@@ -361,7 +344,7 @@ namespace Das::Plugins::DasMaaPi
         focus->content = ResolveFocusContent(focus->content, context);
         std::string text = ReplaceFocusPlaceholders(focus->content, *parsed);
         // {image} 占位符：截图经 imageRefs 透传，文本中替换为空串，避免 UI
-        // 渲染字面占位符（Pitfall 4：取不到截图 imageRefs 留空不阻塞 Record）。
+        // 渲染字面占位符（取不到截图 imageRefs 留空不阻塞 Record）。
         Das::DasPtr<Das::ExportInterface::IDasImage> image;
         if (text.find("{image}") != std::string::npos)
         {
@@ -382,6 +365,63 @@ namespace Das::Plugins::DasMaaPi
         {
             return;
         }
-        (void)context.recorder->Record(entry.Get());
+        // recorder 失败降级：recorder 为空或 Record 返失败时按
+        // DAS_LOG_TYPE_STRUCTURAL → DAS_LOG_INFO 打 [focus-degraded] 前缀
+        // fallback，落 logs/DasCore.log（不再静默黑洞）。focus 全 STRUCTURAL
+        // severity，与 BuildFocusEntry 既有 SetType(STRUCTURAL) 一致。
+        (void)RecordEntryOrLog(
+            context.recorder.Get(),
+            entry.Get(),
+            Das::ExportInterface::DAS_LOG_TYPE_STRUCTURAL,
+            text);
+    }
+
+    DasResult RecordEntryOrLog(
+        Das::ExportInterface::IDasProcessLogRecorder* recorder,
+        Das::ExportInterface::IDasLogEntry*           entry,
+        Das::ExportInterface::DasLogType              fallback_level,
+        std::string_view                              fallback_text)
+    {
+        const DasResult rc =
+            recorder ? recorder->Record(entry) : DAS_E_OBJECT_NOT_INIT;
+        if (DAS::IsOk(rc))
+        {
+            return rc;
+        }
+        const std::string formatted =
+            DAS_FMT_NS::format("[focus-degraded] {}", fallback_text);
+        switch (fallback_level)
+        {
+        case Das::ExportInterface::DAS_LOG_TYPE_ERROR:
+            DAS_LOG_ERROR(formatted.c_str());
+            break;
+        case Das::ExportInterface::DAS_LOG_TYPE_WARNING:
+            DAS_LOG_WARNING(formatted.c_str());
+            break;
+        default:
+            // STRUCTURAL / INFO / SUCCESS 全走 INFO（focus / agent 日志的
+            // fallback 不区分 info 与 structural，统一 INFO 降级）。
+            DAS_LOG_INFO(formatted.c_str());
+            break;
+        }
+        return rc;
+    }
+
+    void DAS_MAA_CALL MaaCallbackLoggerEntry(
+        void*       handle,
+        const char* message,
+        const char* details_json,
+        void*       trans_arg)
+    {
+        (void)handle;
+        if (message == nullptr || details_json == nullptr
+            || trans_arg == nullptr)
+        {
+            return;
+        }
+        LogFocusMessage(
+            *static_cast<MaaCallbackLoggerContext*>(trans_arg),
+            message,
+            details_json);
     }
 } // namespace Das::Plugins::DasMaaPi

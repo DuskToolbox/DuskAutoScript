@@ -1433,7 +1433,17 @@ namespace Das::Plugins::DasMaaPi
             {
                 return hr;
             }
-            return recorder->Record(entry.Get());
+            // recorder 失败降级：按 severity 映射打 [focus-degraded] 前缀
+            // fallback（stderr → ERROR，stdout → INFO），落 logs/DasCore.log
+            // 不再静默黑洞。line 是 RecordAgentOutput 既有局部量，与
+            // on_output 闭包的 severity 映射一致。
+            return RecordEntryOrLog(
+                recorder,
+                entry.Get(),
+                severity == Das::ExportInterface::DAS_LOG_TYPE_ERROR
+                    ? Das::ExportInterface::DAS_LOG_TYPE_ERROR
+                    : Das::ExportInterface::DAS_LOG_TYPE_INFO,
+                line);
         }
 
         std::string SerializeJson(const yyjson::value& value)
@@ -1639,7 +1649,15 @@ namespace Das::Plugins::DasMaaPi
             // 降级：in-process / 测试路径（无 IPC context）或 resolve 失败
             // （主进程未注册服务）。本地 recorder 在 Host 进程无 session 时
             // Record 返 OBJECT_NOT_INIT，与 retire 前的 LogRecorderRuntime
-            // 未初始化行为一致（不阻塞 task）。
+            // 未初始化行为一致（不阻塞 task）。打 DAS_LOG_ERROR（含 resolve_rc
+            // 十进制）让生产中降级可 grep 发现，focus/agent 日志经
+            // RecordEntryOrLog fallback 落 logs/DasCore.log（不再静默黑洞）。
+            const std::string degrade_message = DAS_FMT_NS::format(
+                "Focus recorder IPC resolve failed (resolve_rc={}); "
+                "falling back to spdlog only - focus/agent logs go to "
+                "logs/DasCore.log, NOT user.jsonl",
+                static_cast<std::int64_t>(resolve_rc));
+            DAS_LOG_ERROR(degrade_message.c_str());
             recorder_rc = CreateIDasProcessLogRecorder(
                 nullptr,
                 nullptr,
