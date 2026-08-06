@@ -18,7 +18,6 @@ import json
 import os
 import subprocess
 import sys
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -92,10 +91,12 @@ def changed_line_ranges(rel_path):
     return ranges
 
 
-def build_line_filter(rel_path, ranges):
+def build_line_filter(items):
+    # 合并所有改动文件到一次 line-filter，配合 run_clang_tidy 用一个进程检查全部。
     # clang-tidy 的 line-filter name 匹配的是文件 basename（实测完整路径会导致全量抑制）
-    name = Path(rel_path).name
-    return json.dumps([{'name': name, 'lines': [[s, e] for s, e in ranges]}])
+    entries = [{'name': Path(rel).name, 'lines': [[s, e] for s, e in ranges]}
+               for rel, ranges in items]
+    return json.dumps(entries)
 
 
 # pre-commit 钩子启用的 clang-tidy checks：命名规范 + 单行语句强制花括号 + 性能 + Modern C++ + 静态分析
@@ -109,15 +110,17 @@ OTHER_MARKERS = ('readability-braces-around-statements',
                  'performance-', 'modernize-', 'clang-analyzer-')
 
 
-def run_clang_tidy(rel_path, ranges, compile_db):
-    abs_path = str((ROOT / rel_path).resolve())
+def run_clang_tidy(items, compile_db):
+    # 一次 clang-tidy 进程检查所有改动文件：line-filter 合并多文件，命令行传全部路径，
+    # 省掉每文件启动一个进程的重复开销。-j 让单进程内部并行处理多文件。
+    workers = max(1, (os.cpu_count() or 4) // 2)
     cmd = [
         find_clang_tidy(),
         '-p', compile_db,
         '--checks=' + CHECKS,
-        '--line-filter=' + build_line_filter(rel_path, ranges),
-        abs_path,
-    ]
+        '--line-filter=' + build_line_filter(items),
+        '-j=' + str(workers),
+    ] + [str((ROOT / rel).resolve()) for rel, _ in items]
     proc = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True,
                           encoding='utf-8', errors='replace')
     naming = []
@@ -169,28 +172,17 @@ python tools/check_cpp_naming.py --staged || exit $?
         print('[check_cpp_naming] no staged C++ changes')
         return 0
 
-    def check_one(rel, db):
+    # 收集所有改动文件的改动行范围，一次 clang-tidy 进程检查全部（见 run_clang_tidy）
+    items = []
+    for rel in files:
         ranges = changed_line_ranges(rel)
-        if not ranges:
-            return rel, [], []
-        naming, other = run_clang_tidy(rel, ranges, db)
-        return rel, naming, other
+        if ranges:
+            items.append((rel, ranges))
+    if not items:
+        print('[check_cpp_naming] no changed lines to check')
+        return 0
 
-    naming_lines = []
-    other_lines = []
-    # 并行跑 clang-tidy（大提交时显著缩短 hook 耗时，worker 数为 CPU 核心数的一半）
-    workers = max(1, (os.cpu_count() or 4) // 2)
-    total = len(files)
-    done = 0
-    with ThreadPoolExecutor(max_workers=workers) as ex:
-        futures = {ex.submit(check_one, rel, compile_db): rel for rel in files}
-        for fut in as_completed(futures):
-            rel, naming, other = fut.result()
-            done += 1
-            if total > 1:
-                print(f'[check_cpp_naming] progress {done}/{total} done ({rel})', file=sys.stderr)
-            naming_lines.extend(naming)
-            other_lines.extend(other)
+    naming_lines, other_lines = run_clang_tidy(items, compile_db)
 
     # 分段打印：naming 与其他 clang-tidy 检查不混在一起
     if naming_lines:
