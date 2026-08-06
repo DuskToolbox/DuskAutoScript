@@ -1,5 +1,6 @@
 #include <das/Plugins/DasMaaPi/AuthoringProjector.h>
 
+#include "AdbDeviceFinder.h"
 #include "DasProgressReporter.h"
 #include "I18nResolver.h"
 #include "MaaDynamicSymbols.h"
@@ -343,6 +344,8 @@ namespace Das::Plugins::DasMaaPi
                         OptionalString(*pi, "resourceName");
                     settings.pi.preset_name = OptionalString(*pi, "presetName");
                     settings.pi.language = OptionalString(*pi, "language");
+                    settings.pi.controller_adb_device =
+                        OptionalString(*pi, "controllerAdbDevice");
                     settings.pi.orphan_paths = StringArray(*pi, "orphanPaths");
                     settings.pi.global_options =
                         ParseOptionSettingsArray(*pi, "globalOptions");
@@ -1850,6 +1853,11 @@ namespace Das::Plugins::DasMaaPi
             (*pi_obj)[std::string_view("language")] =
                 JsonString(*settings.pi.language);
         }
+        if (settings.pi.controller_adb_device)
+        {
+            (*pi_obj)[std::string_view("controllerAdbDevice")] =
+                JsonString(*settings.pi.controller_adb_device);
+        }
         (*pi_obj)[std::string_view("globalOptions")] =
             OptionSettingsArray(settings.pi.global_options);
         (*pi_obj)[std::string_view("resourceOptions")] =
@@ -1915,7 +1923,9 @@ namespace Das::Plugins::DasMaaPi
         std::string_view                            current_language,
         std::vector<PiDiagnosticDto>*               projection_diagnostics,
         const std::map<std::string, yyjson::value>& ui_values,
-        bool                                        update_section_top = false)
+        [[maybe_unused]] const std::vector<AdbDeviceInfo>* device_cache =
+            nullptr,
+        bool update_section_top = false)
     {
         yyjson::value layout(Array());
         auto          layout_arr = layout.as_array();
@@ -1981,7 +1991,8 @@ namespace Das::Plugins::DasMaaPi
             else if (
                 name == "controllerName" || name == "resourceName"
                 || name == "presetName" || name == "language"
-                || name.starts_with("adapter.") || name.starts_with("pretask."))
+                || name == "adbDevice" || name.starts_with("adapter.")
+                || name.starts_with("pretask."))
             {
                 project_entries.emplace_back(name);
             }
@@ -2030,7 +2041,7 @@ namespace Das::Plugins::DasMaaPi
         };
 
         // 项目设置 section。defaultExpanded=true，默认展开（与任务设置 section
-        // 一致；“项目设置默认折叠”的旧 UI 行为已废弃）。
+        // 一致；"项目设置默认折叠"的旧 UI 行为已废弃）。
         auto emit_project_section = [&]()
         {
             yyjson::value section(Object());
@@ -2051,8 +2062,42 @@ namespace Das::Plugins::DasMaaPi
             (*s_obj)[std::string_view("defaultExpanded")] =
                 resolve_default_expanded("project", true);
             yyjson::value entries(Array());
+            // 当 fields[] 同时含 controllerName + adbDevice（adb controller
+            // 才会投影 adbDevice 字段），两字段横排成一行：用户在选 controller
+            // 之后立刻看到设备 dropdown，扫描/选择/控制器类型形成一个连贯的
+            // 操作组。discoverAdbDevices commandId 叶子由 Plan C Task 2 在
+            // commands[] emit 之后追加进此 row。
+            const bool has_controller_name = std::find(
+                                                 project_entries.begin(),
+                                                 project_entries.end(),
+                                                 "controllerName")
+                                             != project_entries.end();
+            const bool has_adb_device = std::find(
+                                            project_entries.begin(),
+                                            project_entries.end(),
+                                            "adbDevice")
+                                        != project_entries.end();
+            const bool emit_adb_row = has_controller_name && has_adb_device;
             for (const auto& name : project_entries)
             {
+                if (emit_adb_row
+                    && (name == "controllerName" || name == "adbDevice"))
+                {
+                    // 已在 row 内 emit，跳过单独 leaf。
+                    if (name != "controllerName")
+                    {
+                        continue;
+                    }
+                    yyjson::value row(Object());
+                    yyjson::value row_arr(Array());
+                    row_arr.as_array()->emplace_back(
+                        make_leaf("controllerName"));
+                    row_arr.as_array()->emplace_back(make_leaf("adbDevice"));
+                    (*row.as_object())[std::string_view("row")] =
+                        std::move(row_arr);
+                    entries.as_array()->emplace_back(std::move(row));
+                    continue;
+                }
                 entries.as_array()->emplace_back(make_leaf(name));
             }
             (*s_obj)[std::string_view("entries")] = std::move(entries);
@@ -2230,13 +2275,48 @@ namespace Das::Plugins::DasMaaPi
         return layout;
     }
 
+    // 判断当前选中 controller 是否为 Adb 类型。controller_name 为空时回退到
+    // catalog 首个 controller（与 CompileMaapi 一致）。catalog 缺席或类型未知
+    // 返回 false（不投影 adbDevice 字段，UI 不显示 dropdown）。
+    bool IsCurrentControllerAdb(
+        const AcceptedSettingsDto& settings,
+        const PiCatalog&           catalog)
+    {
+        const auto* controller = [&]() -> const PiController*
+        {
+            const auto controller_name =
+                settings.pi.controller_name.value_or(std::string{});
+            if (!controller_name.empty())
+            {
+                return FindController(catalog, controller_name);
+            }
+            return catalog.controllers.empty() ? nullptr
+                                               : &catalog.controllers.front();
+        }();
+        if (controller == nullptr)
+        {
+            return false;
+        }
+        const auto& type = controller->dto.type;
+        if (type.size() != 3)
+        {
+            return false;
+        }
+        auto eq = [](char actual, char expected)
+        {
+            return std::tolower(static_cast<unsigned char>(actual)) == expected;
+        };
+        return eq(type[0], 'a') && eq(type[1], 'd') && eq(type[2], 'b');
+    }
+
     yyjson::value ProjectAuthoringDocument(
         const AcceptedSettingsDto&          settings_in,
         const PiCatalog*                    catalog,
         const std::vector<PiDiagnosticDto>& diagnostics,
         int64_t                             revision,
         std::vector<PiDiagnosticDto>*       projection_diagnostics,
-        const std::optional<PiUpdateInfo>*  pending_update)
+        const std::optional<PiUpdateInfo>*  pending_update,
+        const std::vector<AdbDeviceInfo>*   device_cache)
     {
         // itemId 偶现 bug 投影层兜底：不管哪个 apply 路径漏分配 item_id，
         // Get 投影出 doc.item.id 必须永不空、永唯一。这里在投影前对一份
@@ -2369,6 +2449,46 @@ namespace Das::Plugins::DasMaaPi
                     ? yyjson::value(*settings.pi.controller_name)
                     : yyjson::value(std::string{}),
                 &controller_candidates));
+            // adbDevice 字段：仅当前选中 controller 是 Adb 类型时投影
+            // （win32/dbg/gamepad controller 不显示 ADB 设备 dropdown）。value
+            // 是持久化的 controllerAdbDevice（用户选中的设备 address）；
+            // candidates 来自 session device_cache_（discoverAdbDevices 命令填
+            // 充，扫描结果不落盘）。cache 为空时 candidates
+            // 空数组（前端 dropdown 渲染空候补，字段仍 emit 触发 discover
+            // 按钮调用）。
+            if (IsCurrentControllerAdb(settings, *catalog))
+            {
+                yyjson::value device_candidates(Array());
+                if (device_cache != nullptr)
+                {
+                    for (const auto& dev : *device_cache)
+                    {
+                        yyjson::value candidate(Object());
+                        auto          c_obj = candidate.as_object();
+                        (*c_obj)[std::string_view("value")] =
+                            JsonString(dev.address);
+                        const std::string& label =
+                            dev.name.empty() ? dev.address : dev.name;
+                        (*c_obj)[std::string_view("label")] = JsonString(label);
+                        device_candidates.as_array()->emplace_back(
+                            std::move(candidate));
+                    }
+                }
+                fields.as_array()->emplace_back(MakePropertyField(
+                    "adbDevice",
+                    ResolveI18nOrDiag(
+                        "$field.adbDevice",
+                        *catalog,
+                        current_language,
+                        "ADB 设备",
+                        projection_diagnostics,
+                        "fields.adbDevice.label"),
+                    4,
+                    1,
+                    yyjson::value(
+                        settings.pi.controller_adb_device.value_or("")),
+                    &device_candidates));
+            }
             auto resource_candidates = CandidateArray(
                 catalog->resources,
                 catalog,
@@ -2728,6 +2848,7 @@ namespace Das::Plugins::DasMaaPi
             current_language,
             projection_diagnostics,
             settings.ui.values,
+            device_cache,
             update_section_top);
         (*obj)[std::string_view("fields")] = std::move(fields);
         (*obj)[std::string_view("fieldLayout")] = std::move(field_layout);

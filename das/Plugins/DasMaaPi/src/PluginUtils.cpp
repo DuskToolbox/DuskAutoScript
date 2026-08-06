@@ -68,7 +68,8 @@ namespace Plugins::DasMaaPi
         const AcceptedSettingsDto&         settings,
         int64_t                            revision,
         std::vector<PiDiagnosticDto>&      diagnostics,
-        const std::optional<PiUpdateInfo>* pending_update)
+        const std::optional<PiUpdateInfo>* pending_update,
+        const std::vector<AdbDeviceInfo>*  device_cache)
     {
         auto catalog = TryParseCatalog(settings, diagnostics);
         return ProjectAuthoringDocument(
@@ -77,7 +78,8 @@ namespace Plugins::DasMaaPi
             diagnostics,
             revision,
             nullptr,
-            pending_update);
+            pending_update,
+            device_cache);
     }
 
     yyjson::value BuildApplyResult(
@@ -86,7 +88,8 @@ namespace Plugins::DasMaaPi
         std::vector<PiDiagnosticDto>       diagnostics,
         bool                               project_document,
         const std::optional<PiUpdateInfo>* pending_update,
-        const yyjson::value*               command_result)
+        const yyjson::value*               command_result,
+        const std::vector<AdbDeviceInfo>*  device_cache)
     {
         // project_document=false（uiEvent 等 UI 事件）时跳过 catalog 解析 +
         // document 投影，省下 TryParseCatalog 的文件 IO + 解析开销。
@@ -112,7 +115,8 @@ namespace Plugins::DasMaaPi
                 diagnostics,
                 revision,
                 nullptr,
-                pending_update);
+                pending_update,
+                device_cache);
         }
 
         // 可选 commandResult（严格 {commandId, data}）：无业务结果的命令不带；

@@ -20,6 +20,12 @@ namespace Das::Plugins::DasMaaPi
     class PiHttpClient;
     class MaapiAuthoringSession;
 
+    // Forward declaration — full definition lives in src/AdbDeviceFinder.h
+    // (Plan A 产出). Used as a const pointer in projection signatures so the
+    // header compiles without pulling MaaToolkit includes into the public
+    // include dir.
+    struct AdbDeviceInfo;
+
     // invokeCommand 命令业务结果回传结构。各分支自填 command_result；
     // 调用方（MaapiAuthoringSession::ApplyChange）按 engaged 状态塞
     // envelope。零 T* 出参指针 — session 的 pending_update_/device_cache_
@@ -38,13 +44,18 @@ namespace Das::Plugins::DasMaaPi
     // pending_update 为空指针（或未 engaged）时 applyUpdate 命令投影 disabled。
     // 后端状态驱动 commands 投影（Open Question 1 决策）；前端只按投影
     // disabled 字段渲染，业务中立。
+    //
+    // device_cache 为空指针时 adbDevice.candidates 投影为空（前端 dropdown 空
+    // 候补但字段仍 emit）；非空时按 cache 内容构造 {value=address, label=name}
+    // 候补。cache 是 session 内存态，不进 acceptedProperties 不落盘。
     yyjson::value ProjectAuthoringDocument(
         const AcceptedSettingsDto&          settings,
         const PiCatalog*                    catalog,
         const std::vector<PiDiagnosticDto>& diagnostics,
         int64_t                             revision,
         std::vector<PiDiagnosticDto>*       projection_diagnostics = nullptr,
-        const std::optional<PiUpdateInfo>*  pending_update = nullptr);
+        const std::optional<PiUpdateInfo>*  pending_update = nullptr,
+        const std::vector<AdbDeviceInfo>*   device_cache = nullptr);
 
     void ApplySetValueChange(
         AcceptedSettingsDto& settings,

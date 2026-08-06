@@ -266,8 +266,12 @@ namespace Plugins::DasMaaPi
         // diagnostics 数组（即使空）。BuildDocument 既投影 document 又填充
         // diagnostics，envelope 同级包装二者（与 Compile 对称）。
         std::vector<PiDiagnosticDto> diagnostics;
-        auto                         document =
-            BuildDocument(settings_, revision_, diagnostics, &pending_update_);
+        auto                         document = BuildDocument(
+            settings_,
+            revision_,
+            diagnostics,
+            &pending_update_,
+            &device_cache_);
 
         yyjson::value envelope(Das::Utils::MakeYyjsonObject());
         auto          env_obj = envelope.as_object();
@@ -441,7 +445,8 @@ namespace Plugins::DasMaaPi
             std::move(diagnostics),
             /*project_document=*/kind != "uiEvent",
             &pending_update_,
-            command_result ? &*command_result : nullptr);
+            command_result ? &*command_result : nullptr,
+            &device_cache_);
 
         // 5) 注入 portDefinitions/portMap 到 acceptedProperties（Provider 私有
         //    运行期派生，不属于 document UI IR）。

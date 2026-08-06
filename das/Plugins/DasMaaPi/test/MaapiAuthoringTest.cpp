@@ -56,13 +56,15 @@ namespace Das::Plugins::DasMaaPi
     // D-84-07: 暴露 BuildApplyResult 给 session-level 测试做严格 envelope
     // 校验。pending_update（D-89-03）供 commands 投影驱动 applyUpdate
     // disabled。command_result 可选业务结果回传（checkUpdate → progressKey）。
+    // device_cache 供 adbDevice 字段投影 candidates。
     yyjson::value BuildApplyResult(
         const AcceptedSettingsDto&         settings,
         int64_t                            revision,
         std::vector<PiDiagnosticDto>       diagnostics,
         bool                               project_document = true,
         const std::optional<PiUpdateInfo>* pending_update = nullptr,
-        const yyjson::value*               command_result = nullptr);
+        const yyjson::value*               command_result = nullptr,
+        const std::vector<AdbDeviceInfo>*  device_cache = nullptr);
 } // namespace Das::Plugins::DasMaaPi
 
 namespace
@@ -8051,4 +8053,203 @@ TEST(MaapiProjectionTest, WelcomeI18nMissingKeyNotProjected)
         }
     }
     EXPECT_TRUE(found_warning);
+}
+
+// ===== controllerAdbDevice 字段 + adbDevice 字段投影 =====
+
+// controllerAdbDevice 持久化字段对称 parse/serialize round-trip。值是设备
+// address（用户 dropdown 选中项的稳定 key），完整六字段不进 AcceptedSettings
+// （运行时从 device_cache_ 取 Toolkit 推荐值不持久化）。
+TEST(MaapiProjectionTest, ControllerAdbDeviceRoundTrip)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    AcceptedSettingsDto src;
+    src.pi.controller_adb_device = "127.0.0.1:5555";
+
+    auto serialized = SerializeAcceptedSettings(src);
+    auto parsed = ParseAcceptedSettings(serialized);
+
+    ASSERT_TRUE(parsed.pi.controller_adb_device.has_value());
+    EXPECT_EQ(*parsed.pi.controller_adb_device, "127.0.0.1:5555");
+
+    // 缺失字段 round-trip 回 nullopt（不默认构造空串）。
+    AcceptedSettingsDto empty;
+    auto                empty_ser = SerializeAcceptedSettings(empty);
+    auto                empty_parsed = ParseAcceptedSettings(empty_ser);
+    EXPECT_FALSE(empty_parsed.pi.controller_adb_device.has_value());
+}
+
+// adbDevice 字段仅当 controller 类型为 Adb 时投影。win32 / gamepad / dbg 等
+// controller 不显示 ADB 设备 dropdown（IsCurrentControllerAdb 守卫）。
+TEST(MaapiProjectionTest, AdbDeviceFieldProjectedOnlyForAdbController)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto catalog = MakeStrictProjectionMockCatalog();
+    ASSERT_EQ(catalog.controllers.size(), 1u);
+    ASSERT_EQ(catalog.controllers.front().dto.type, "Adb");
+
+    AcceptedSettingsDto settings;
+    settings.pi.language = "zh_cn";
+    settings.pi.controller_name = catalog.controllers.front().dto.name;
+
+    auto document = ProjectAuthoringDocument(settings, &catalog, {}, 0);
+    auto valid = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+    EXPECT_TRUE(valid.valid)
+        << "error_kind=" << valid.error_kind << " message=" << valid.message;
+
+    EXPECT_TRUE(FindRootField(document, "adbDevice").has_value());
+
+    // 切换 controller 类型为 Win32 → adbDevice 字段消失。
+    auto& controller = catalog.controllers.front();
+    controller.dto.type = "Win32";
+    auto document_win32 = ProjectAuthoringDocument(settings, &catalog, {}, 0);
+    EXPECT_FALSE(FindRootField(document_win32, "adbDevice").has_value());
+}
+
+// adbDevice.candidates 从 device_cache 构造：value=address, label=name
+// （name 空 fallback address）。cache 非空 → 候补数组长度匹配。
+TEST(MaapiProjectionTest, AdbDeviceCandidatesFromCache)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto                catalog = MakeStrictProjectionMockCatalog();
+    AcceptedSettingsDto settings;
+    settings.pi.language = "zh_cn";
+    settings.pi.controller_name = catalog.controllers.front().dto.name;
+
+    std::vector<AdbDeviceInfo> cache;
+    AdbDeviceInfo              dev_emu;
+    dev_emu.name = "emulator-5554";
+    dev_emu.adb_path = "/usr/bin/adb";
+    dev_emu.address = "127.0.0.1:5554";
+    dev_emu.screencap_methods = 0x1;
+    dev_emu.input_methods = 0x2;
+    dev_emu.config = "{}";
+    cache.push_back(dev_emu);
+    AdbDeviceInfo dev_real;
+    dev_real.name = "Pixel-7";
+    dev_real.address = "192.168.1.42:5555";
+    cache.push_back(dev_real);
+
+    auto document = ProjectAuthoringDocument(
+        settings,
+        &catalog,
+        {},
+        0,
+        nullptr,
+        nullptr,
+        &cache);
+
+    auto field = FindRootField(document, "adbDevice");
+    ASSERT_TRUE(field.has_value());
+    auto field_obj = field->as_object();
+    ASSERT_TRUE(field_obj.has_value());
+    ASSERT_TRUE(field_obj->contains(std::string_view("candidates")));
+    auto candidates = (*field_obj)[std::string_view("candidates")].as_array();
+    ASSERT_TRUE(candidates.has_value());
+    EXPECT_EQ(candidates->size(), 2u);
+    // 第一项：value=address, label=name
+    auto first = (*candidates)[0].as_object();
+    ASSERT_TRUE(first.has_value());
+    EXPECT_EQ(
+        std::string(
+            (*first)[std::string_view("value")].as_string().value_or("")),
+        "127.0.0.1:5554");
+    EXPECT_EQ(
+        std::string(
+            (*first)[std::string_view("label")].as_string().value_or("")),
+        "emulator-5554");
+}
+
+// cache=nullptr 时 candidates 空数组，字段仍投影（前端 dropdown 空候补，
+// 触发用户点 discover 按钮扫描）。
+TEST(MaapiProjectionTest, AdbDeviceCandidatesEmptyWhenCacheNull)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto                catalog = MakeStrictProjectionMockCatalog();
+    AcceptedSettingsDto settings;
+    settings.pi.language = "zh_cn";
+    settings.pi.controller_name = catalog.controllers.front().dto.name;
+
+    auto document = ProjectAuthoringDocument(
+        settings,
+        &catalog,
+        {},
+        0,
+        nullptr,
+        nullptr,
+        /*device_cache=*/nullptr);
+    auto valid = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+    EXPECT_TRUE(valid.valid)
+        << "error_kind=" << valid.error_kind << " message=" << valid.message;
+
+    auto field = FindRootField(document, "adbDevice");
+    ASSERT_TRUE(field.has_value());
+    auto field_obj = field->as_object();
+    ASSERT_TRUE(field_obj.has_value());
+    ASSERT_TRUE(field_obj->contains(std::string_view("candidates")));
+    auto candidates = (*field_obj)[std::string_view("candidates")].as_array();
+    ASSERT_TRUE(candidates.has_value());
+    EXPECT_EQ(candidates->size(), 0u);
+}
+
+// adbDevice 与 controllerName 横排成 row（fieldLayout 内）；其余
+// project_entries 字段（resourceName / presetName / language / adapter.*
+// 等）仍各自单独 leaf。
+TEST(
+    MaapiProjectionTest,
+    AdbDeviceAndControllerNameEmittedAsRowInProjectSection)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto                catalog = MakeStrictProjectionMockCatalog();
+    AcceptedSettingsDto settings;
+    settings.pi.language = "zh_cn";
+    settings.pi.controller_name = catalog.controllers.front().dto.name;
+
+    auto document = ProjectAuthoringDocument(settings, &catalog, {}, 0);
+    auto valid = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+    EXPECT_TRUE(valid.valid)
+        << "error_kind=" << valid.error_kind << " message=" << valid.message;
+
+    auto layout_opt = FindLayoutSection(document, "project");
+    ASSERT_TRUE(layout_opt.has_value());
+    auto entries = (*layout_opt)
+                       .as_object()
+                       .value()[std::string_view("entries")]
+                       .as_array();
+    ASSERT_TRUE(entries.has_value());
+    // 找到含 row 的 entry，row 应含 controllerName + adbDevice 两 fieldName
+    // 叶子。
+    bool found_row = false;
+    for (auto&& entry : *entries)
+    {
+        auto entry_obj = entry.as_object();
+        if (!entry_obj || !entry_obj->contains(std::string_view("row")))
+        {
+            continue;
+        }
+        auto row = (*entry_obj)[std::string_view("row")].as_array();
+        ASSERT_TRUE(row.has_value());
+        EXPECT_EQ(row->size(), 2u);
+        auto leaf0 = (*row)[0].as_object();
+        auto leaf1 = (*row)[1].as_object();
+        ASSERT_TRUE(leaf0.has_value() && leaf1.has_value());
+        EXPECT_EQ(
+            std::string(
+                (*leaf0)[std::string_view("fieldName")].as_string().value_or(
+                    "")),
+            "controllerName");
+        EXPECT_EQ(
+            std::string(
+                (*leaf1)[std::string_view("fieldName")].as_string().value_or(
+                    "")),
+            "adbDevice");
+        found_row = true;
+        break;
+    }
+    EXPECT_TRUE(found_row);
 }

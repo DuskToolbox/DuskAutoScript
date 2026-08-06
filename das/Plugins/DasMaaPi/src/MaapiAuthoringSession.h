@@ -1,6 +1,7 @@
 #ifndef DAS_PLUGINS_DASMAAPI_MAAPIAUTHORINGSESSION_H
 #define DAS_PLUGINS_DASMAAPI_MAAPIAUTHORINGSESSION_H
 
+#include "AdbDeviceFinder.h"
 #include "PiUpdateService.h"
 
 #include <das/Plugins/DasMaaPi/AcceptedSettings.h>
@@ -83,6 +84,17 @@ namespace Plugins::DasMaaPi
             pending_update_ = std::move(pending);
         }
 
+        // ADB 扫描结果暂态（会话内存态，不入 acceptedProperties、不落
+        // 盘——同 pending_update_ 范式）。discoverAdbDevices 命令调用
+        // AdbDeviceFinder::FindAllAdbDevices 填充；adbDevice 字段投影的
+        // candidates 从此读取；PiCompiler 编译期按
+        // settings.pi.controller_adb_device 在此查六字段。空 vector =
+        // 未扫描或扫描到 0 设备（前端 dropdown 空候补）。
+        const std::vector<AdbDeviceInfo>& DeviceCache() const
+        {
+            return device_cache_;
+        }
+
         // 测试缝：注入网络 seam（生产 ApplyInvokeCommandChange 空指针时构造
         // BeastHttpClient）。DasMaaPiTest 直接编译本类 + PiUpdateService +
         // FakePiHttpClient，可无 IPC 验证 checkUpdate/applyUpdate 全链路。
@@ -98,9 +110,13 @@ namespace Plugins::DasMaaPi
         }
 
     private:
-        AcceptedSettingsDto                        settings_{};
-        int64_t                                    revision_ = 0;
-        std::optional<PiUpdateInfo>                pending_update_;
+        AcceptedSettingsDto         settings_{};
+        int64_t                     revision_ = 0;
+        std::optional<PiUpdateInfo> pending_update_;
+        // session 内存态，不进 AcceptedSettingsDto 不序列化
+        // （设备状态会变 — adb 拔出/换机，持久化 cache 会陈旧）。重启时
+        // controllerAdbDevice 持久化字段仍在但 cache 空 → 用户重扫描即可。
+        std::vector<AdbDeviceInfo>                 device_cache_;
         PiHttpClient*                              test_http_ = nullptr;
         Das::ExportInterface::IDasProgressService* progress_service_seam_ =
             nullptr;

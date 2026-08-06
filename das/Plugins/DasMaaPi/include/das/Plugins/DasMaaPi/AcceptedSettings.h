@@ -91,10 +91,17 @@ namespace Das::Plugins::DasMaaPi
     // (D-84-04)。
     struct MaapiPiSettingsDto
     {
-        std::optional<std::string>            controller_name;
-        std::optional<std::string>            resource_name;
-        std::optional<std::string>            preset_name;
-        std::optional<std::string>            language;
+        std::optional<std::string> controller_name;
+        std::optional<std::string> resource_name;
+        std::optional<std::string> preset_name;
+        std::optional<std::string> language;
+        // 选中 ADB 设备的 address key。value 是 AdbDeviceInfo.address
+        // （Toolkit 探测到的稳定设备身份）。完整六字段
+        // （adb_path / address / screencap_methods / input_methods / config）
+        // 运行时从 session device_cache_ 取 Toolkit
+        // 推荐值，不持久化（agent_path 仍走 PI
+        // raw_json）。空表示用户未选，编译期 fallback raw_json。
+        std::optional<std::string> controller_adb_device;
         std::vector<MaapiPiOptionSettingsDto> global_options;
         std::vector<MaapiPiOptionSettingsDto> resource_options;
         std::vector<MaapiPiOptionSettingsDto> controller_options;

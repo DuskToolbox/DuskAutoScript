@@ -1,6 +1,7 @@
 #ifndef DAS_PLUGINS_DASMAAPI_PLUGINUTILS_H
 #define DAS_PLUGINS_DASMAAPI_PLUGINUTILS_H
 
+#include "AdbDeviceFinder.h"
 #include "PiUpdateService.h"
 
 #include <das/Core/GraphRuntime/GraphDocument.h>
@@ -27,12 +28,15 @@ namespace Plugins::DasMaaPi
 
     // pending_update（D-89-03）供 commands 投影驱动 applyUpdate disabled
     // （Open Question 1：后端状态驱动投影，前端只按投影重渲染）。空指针 = 无
-    // 待更新态 → applyUpdate 投影 disabled。
+    // 待更新态 → applyUpdate 投影 disabled。device_cache 供 adbDevice
+    // 字段投影 candidates（discoverAdbDevices 命令填充，session
+    // 内存态不落盘）。 空指针 → candidates 空数组但字段仍 emit。
     yyjson::value BuildDocument(
         const AcceptedSettingsDto&         settings,
         int64_t                            revision,
         std::vector<PiDiagnosticDto>&      diagnostics,
-        const std::optional<PiUpdateInfo>* pending_update = nullptr);
+        const std::optional<PiUpdateInfo>* pending_update = nullptr,
+        const std::vector<AdbDeviceInfo>*  device_cache = nullptr);
 
     // project_document=false 时跳过 document 投影（uiEvent 等 UI 事件响应不带
     // document，避免无谓 catalog 解析 + 投影；前端据此分流——有 document 重建，
@@ -45,7 +49,8 @@ namespace Plugins::DasMaaPi
         std::vector<PiDiagnosticDto>       diagnostics,
         bool                               project_document = true,
         const std::optional<PiUpdateInfo>* pending_update = nullptr,
-        const yyjson::value*               command_result = nullptr);
+        const yyjson::value*               command_result = nullptr,
+        const std::vector<AdbDeviceInfo>*  device_cache = nullptr);
 
     // Port derivation utilities (D-05/D-06/D-07)
 
