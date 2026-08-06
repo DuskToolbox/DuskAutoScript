@@ -28,7 +28,10 @@
 #include <cctype>
 #include <chrono>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <initializer_list>
+#include <iterator>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -1655,6 +1658,76 @@ namespace Das::Plugins::DasMaaPi
         {
             log_context = std::make_unique<MaaCallbackLoggerContext>();
             log_context->recorder = std::move(log_recorder);
+            // focus content 解析所需的 log_context 四字段：
+            // language / interface_directory / translations 来自 envelope，
+            // http_client 在此占位 nullptr（后续 BeastHttpClient owner 注入）。
+            log_context->language =
+                std::string{envelope.maapi.pi_env.client_language};
+            log_context->interface_directory =
+                std::filesystem::path{reinterpret_cast<const char8_t*>(
+                    envelope.maapi.interface_directory.data())};
+            if (!envelope.maapi.focus_translations_path.empty())
+            {
+                // 一次性读取 translations 文件（PiCompiler 经
+                // catalog.language_paths[pi_language] 注入路径）。读/解析失败
+                // 时 translations 留空，focus content `$key` 解析降级为去 `$`
+                // 前缀的 key（ResolveFocusContent 既有 fallback），不阻塞
+                // task。
+                const auto translations_path =
+                    std::filesystem::path{reinterpret_cast<const char8_t*>(
+                        envelope.maapi.focus_translations_path.data())};
+                std::ifstream translations_input{translations_path};
+                if (translations_input.is_open())
+                {
+                    std::string translations_text(
+                        (std::istreambuf_iterator<char>(translations_input)),
+                        std::istreambuf_iterator<char>());
+                    auto parsed_translations =
+                        Das::Utils::ParseYyjsonFromString(translations_text);
+                    auto translations_obj =
+                        parsed_translations ? parsed_translations->as_object()
+                                            : std::nullopt;
+                    if (translations_obj)
+                    {
+                        for (auto it = translations_obj->begin();
+                             it != translations_obj->end();
+                             ++it)
+                        {
+                            if (auto value = it->second.as_string())
+                            {
+                                log_context
+                                    ->translations[std::string{it->first}] =
+                                    std::string{value->data(), value->size()};
+                            }
+                        }
+                    }
+                    else
+                    {
+                        AddDiagnostic(
+                            result,
+                            "focus-translations-parse-failed",
+                            "Failed to parse focus translations JSON at: "
+                                + translations_path.string()
+                                + "; focus content `$key` resolution "
+                                  "degrades to key text",
+                            std::nullopt,
+                            "warning");
+                    }
+                }
+                else
+                {
+                    AddDiagnostic(
+                        result,
+                        "focus-translations-missing",
+                        "Focus translations file not found at: "
+                            + translations_path.string()
+                            + "; focus content `$key` resolution degrades "
+                              "to key text",
+                        std::nullopt,
+                        "warning");
+                }
+            }
+            log_context->http_client = nullptr;
         }
 
 #ifndef DAS_MAAPI_DISABLE_REAL_MAA_BOUNDARY

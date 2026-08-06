@@ -114,7 +114,7 @@ namespace
                     : R"([])")
             + R"(,"piEnv":{"interfaceVersion":"2","clientName":"DAS","clientVersion":"0.1","clientLanguage":"cpp","clientMaafwVersion":"test","projectVersion":"","controllerJson":)"
             + JsonStringLiteral(controller_json)
-            + R"(,"resourceJson":"{\"name\":\"Official\"}"},"controllerInitParams":)"
+            + R"(,"resourceJson":"{\"name\":\"Official\"}"},"focusTranslationsPath":"","controllerInitParams":)"
             + controller_init_params_json + R"(,"pretasks":[],"tasks":)" + tasks
             + "}}";
         auto parsed = Das::Utils::ParseYyjsonFromString(json);
@@ -369,19 +369,20 @@ TEST(DasMaaPiRuntime, RuntimeRejectsSnakeCaseControllerFields)
     EXPECT_TRUE(DAS::IsFailed(parsed.result));
 }
 
-// cpp_yyjson caster 防御：MaaExecutionPlanDto 加 focus_translations_path
-// 字段后，default_caster 经 aggregate reflection 迭代所有字段；既有手搓
-// envelope JSON 的 fixture（EnvelopeValue helper）若未显式补
-// focusTranslationsPath key，缺 key 不应抛 std::out_of_range / bad_cast，
-// 应返回 DAS_S_OK + 字段为空串（default_caster 对 std::string 缺 key 默认
-// 空构造）。
-TEST(DasMaaPiRuntime, EnvelopeValueOmitsFocusTranslationsPathStillParses)
+// cpp_yyjson caster 契约锁定：MaaExecutionPlanDto 含 focus_translations_path
+// 字段，default_caster 经 PFR aggregate reflection 对每个字段调 obj[key]——
+// 缺 key 时 operator[] 直接抛 std::out_of_range（在 cast<field_type> 之前），
+// 与字段类型无关。故手搓 envelope JSON 的 fixture 必须显式补
+// focusTranslationsPath key（即便空串）才能解析；PiCompiler 总会写出该字段，
+// 所以 IPC 生产路径不受影响。此测试锁定该契约：补空串 key 时字段解析为空串。
+TEST(DasMaaPiRuntime, EnvelopeValueWithEmptyFocusTranslationsPathParses)
 {
     auto value = EnvelopeValue();
     auto parsed = ParseExecutionEnvelope(value);
     EXPECT_EQ(parsed.result, DAS_S_OK);
     EXPECT_TRUE(parsed.envelope.maapi.focus_translations_path.empty())
-        << "缺 focusTranslationsPath key 时字段应为空串，不应抛异常";
+        << "EnvelopeValue helper 必须显式补 focusTranslationsPath key "
+        << "（即便空串）；PiCompiler 生产路径总会写出该字段";
 }
 
 TEST(DasMaaPiRuntime, RuntimeRejectsConfigObjectInput)

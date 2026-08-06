@@ -892,6 +892,18 @@ namespace Das::Plugins::DasMaaPi
         // 误导 agent 子进程 i18n。空串是合法失败信号（用户未设置且 catalog
         // 无可用语言），由 AppendEnv 跳过空值、UI 层回退处理。
         envelope.maapi.pi_env.client_language = pi_language;
+        // focus content `$key` 解析所需 translations 文件路径（PI v2 协议
+        // focus content 支持文件 / URL / 直接文本 / `$key` i18n 四类源）。
+        // 从 catalog.language_paths[pi_language] 取路径，经 envelope 透传到
+        // MaaRuntime 运行期一次性读取填 log_context.translations（不重复
+        // 解析 interface.json）。catalog 无该语言或无 language_paths 时留空
+        // 串，运行期降级为字面文本 + 占位符替换（既有行为保持）。
+        const auto language_path_it = catalog.language_paths.find(pi_language);
+        if (language_path_it != catalog.language_paths.end())
+        {
+            envelope.maapi.focus_translations_path =
+                DAS::Utils::U8AsString(language_path_it->second.u8string());
+        }
         const auto resolve_raw = [&](const std::string& raw_json) -> std::string
         {
             auto parsed = Das::Utils::ParseYyjsonFromString(raw_json);

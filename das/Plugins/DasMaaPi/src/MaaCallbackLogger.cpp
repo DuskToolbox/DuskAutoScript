@@ -159,14 +159,13 @@ namespace Das::Plugins::DasMaaPi
             const std::string key = match[1].str();
             if (key == "image")
             {
-                // {image} 由截图通路单独处理，此处保留原样（照搬 MXU）。
+                // {image} 由截图通路单独处理，此处保留原样。
                 result.append(match[0].first, match[0].second);
             }
             else if (details_obj && details_obj->contains(key))
             {
-                // String(value) 语义（照搬 MXU）：字符串直接取，数字/bool
-                // 转十进制文本；结构值（对象/数组）不替换，占位符原样保留
-                // （T-88-11）。
+                // String(value) 语义：字符串直接取，数字/bool
+                // 转十进制文本；结构值（对象/数组）不替换，占位符原样保留。
                 auto value = (*details_obj)[key];
                 if (auto s = value.as_string())
                 {
@@ -201,6 +200,32 @@ namespace Das::Plugins::DasMaaPi
         }
         result.append(cursor, source.end());
         return result;
+    }
+
+    std::string ResolveFocusContent(
+        std::string_view                content,
+        const MaaCallbackLoggerContext& context)
+    {
+        if (content.empty())
+        {
+            return std::string{};
+        }
+        // i18n `$key` 分支：首字符 `$` 视为 translations 查表 key。命中返回
+        // 翻译文本；miss 返回去 `$` 前缀的 key 文本（与 ResolveI18n 既有
+        // fallback 语义一致——用户看到的是 key 名而非裸 `$` 前缀）。
+        if (content.front() == '$')
+        {
+            const std::string key{content.substr(1)};
+            const auto        it = context.translations.find(key);
+            if (it != context.translations.end())
+            {
+                return it->second;
+            }
+            return key;
+        }
+        // literal 兜底：未匹配任何外部源 → 原文返回（与既有行为兼容）。
+        // URL（http:// / https://）与文件路径（./ 或文档扩展名）分支后续补全。
+        return std::string{content};
     }
 
     std::string FormatDisplayChannelsJson(
@@ -258,6 +283,12 @@ namespace Das::Plugins::DasMaaPi
         {
             return;
         }
+        // 先解析 content 模板（i18n `$key`/URL/file/literal 四分支）再走占位符
+        // 替换——ResolveFocusContent 把 `$greeting` 展成翻译值（可能含
+        // `{name}` 占位符），随后 ReplaceFocusPlaceholders 把翻译值中的
+        // 占位符替换为 details 字段。两步组合保证 focus 模板支持
+        // `$key.with.placeholder` 形式。
+        focus->content = ResolveFocusContent(focus->content, context);
         std::string text = ReplaceFocusPlaceholders(focus->content, *parsed);
         // {image} 占位符：截图经 imageRefs 透传，文本中替换为空串，避免 UI
         // 渲染字面占位符（Pitfall 4：取不到截图 imageRefs 留空不阻塞 Record）。

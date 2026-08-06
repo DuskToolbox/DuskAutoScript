@@ -73,8 +73,20 @@ namespace Das::Plugins::DasMaaPi
         std::vector<AgentRuntime::AgentSpecDto> agent;
         // PI v2.7.0 pretasks. Empty when the project declares no pretask or
         // the v2.8.1 controller/resource filter excluded all entries.
-        std::vector<MaaPretaskDto>       pretasks;
-        PiEnvSnapshotDto                 pi_env;
+        std::vector<MaaPretaskDto> pretasks;
+        PiEnvSnapshotDto           pi_env;
+        // PI v2.8.1+ focus content `$key` 解析所需的 translations 文件路径
+        // （catalog.language_paths[pi_language] 经 PiCompiler 注入）。空串表示
+        // 无 translations 可用（运行期降级为字面文本 + 占位符替换）。MaaRuntime
+        // 启动时一次性读取（不重复解析 interface.json），读/解析失败时
+        // translations 留空，focus 解析回退 literal 文本。
+        //
+        // 字段类型契约：cpp_yyjson default_caster 经 PFR aggregate reflection
+        // 对每个字段调 obj[key]——缺 key 时 operator[] 直接抛 std::out_of_range
+        // （在 cast<field_type> 之前），与字段类型无关。故手搓 envelope JSON 的
+        // fixture 必须显式补 focusTranslationsPath key（即便空串）才能解析；
+        // PiCompiler 总会写出该字段，所以 IPC 生产路径不受影响。
+        std::string                      focus_translations_path;
         std::vector<MaaTaskExecutionDto> tasks;
     };
 
