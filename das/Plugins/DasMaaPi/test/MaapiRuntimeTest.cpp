@@ -369,6 +369,21 @@ TEST(DasMaaPiRuntime, RuntimeRejectsSnakeCaseControllerFields)
     EXPECT_TRUE(DAS::IsFailed(parsed.result));
 }
 
+// cpp_yyjson caster 防御：MaaExecutionPlanDto 加 focus_translations_path
+// 字段后，default_caster 经 aggregate reflection 迭代所有字段；既有手搓
+// envelope JSON 的 fixture（EnvelopeValue helper）若未显式补
+// focusTranslationsPath key，缺 key 不应抛 std::out_of_range / bad_cast，
+// 应返回 DAS_S_OK + 字段为空串（default_caster 对 std::string 缺 key 默认
+// 空构造）。
+TEST(DasMaaPiRuntime, EnvelopeValueOmitsFocusTranslationsPathStillParses)
+{
+    auto value = EnvelopeValue();
+    auto parsed = ParseExecutionEnvelope(value);
+    EXPECT_EQ(parsed.result, DAS_S_OK);
+    EXPECT_TRUE(parsed.envelope.maapi.focus_translations_path.empty())
+        << "缺 focusTranslationsPath key 时字段应为空串，不应抛异常";
+}
+
 TEST(DasMaaPiRuntime, RuntimeRejectsConfigObjectInput)
 {
     // default_caster 要求 ControllerSpec.config_json 为 string；configJson 是

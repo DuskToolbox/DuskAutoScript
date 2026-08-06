@@ -484,6 +484,39 @@ TEST_F(MaapiCompileFixture, CompileExecutionEnvSnapshotHasClientVersions)
         << "' 必须匹配 ^[a-z]{2}_[A-Za-z]+$ (如 zh_cn, en_us)";
 }
 
+// focus content `$key` 解析需 translations 文件路径经 envelope 透传到
+// MaaRuntime，运行期一次性读取填 log_context.translations（不重复解析
+// interface.json）。PiCompiler 从 catalog.language_paths[pi_language] 取路径
+// 注入 envelope.maapi.focusTranslationsPath。interface_v26_jsonc.jsonc 声明了
+// languages.zh_cn → languages/zh_cn.json，配合 CompileContext 的 "zh_cn" 设置
+// 驱动整条 compile→envelope 链路，断言路径非空且指向 zh_cn.json。
+TEST_F(MaapiCompileFixture, CompileExecutionIncludesFocusTranslationsPath)
+{
+    auto result = Compile(
+        CompileContext(
+            FixturePath("interface_v26_jsonc.jsonc").generic_string(),
+            "zh_cn"),
+        "execution");
+    auto obj = result.as_object();
+    ASSERT_TRUE(obj.has_value());
+    auto envelope = (*obj)[std::string_view("executionInput")].as_object();
+    ASSERT_TRUE(envelope.has_value());
+    auto maapi = (*envelope)[std::string_view("maapi")].as_object();
+    ASSERT_TRUE(maapi.has_value());
+
+    ASSERT_TRUE(maapi->contains(std::string_view("focusTranslationsPath")));
+    const auto focus_translations_path =
+        (*maapi)[std::string_view("focusTranslationsPath")]
+            .as_string()
+            .value_or("");
+    EXPECT_FALSE(focus_translations_path.empty())
+        << "focusTranslationsPath 必须由 PiCompiler 从 "
+        << "catalog.language_paths[pi_language] 注入，禁止空 stub";
+    EXPECT_NE(focus_translations_path.find("zh_cn.json"), std::string::npos)
+        << "focusTranslationsPath 应指向 zh_cn 语言文件，实际值: \""
+        << focus_translations_path << "\"";
+}
+
 TEST_F(MaapiCompileFixture, AgentBoundaryAllowsExecutionEnvelope)
 {
     auto result = Compile(

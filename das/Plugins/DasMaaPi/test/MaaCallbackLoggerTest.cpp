@@ -12,6 +12,7 @@
 #include <fstream>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -336,4 +337,56 @@ TEST_F(MaaCallbackLoggerFixture, MaaCallbackLoggerEntry_ForwardsToRecorder)
     auto text = (*obj)[std::string_view("text")].as_string();
     ASSERT_TRUE(text.has_value());
     EXPECT_EQ(*text, "NodeA 执行失败");
+}
+
+// ResolveFocusContent i18n `$key` 分支：命中 translations 时返回翻译值。
+TEST_F(MaaCallbackLoggerFixture, ResolveFocusContent_ResolvesI18nDollarKey)
+{
+    std::filesystem::path dir;
+    auto                  context = MakeRecorderContext(dir);
+    context.translations["greeting"] = "Hello";
+    EXPECT_EQ(ResolveFocusContent("$greeting", context), "Hello");
+}
+
+// ResolveFocusContent i18n miss：translations 不含 key 时返回去 `$` 前缀的
+// key 文本（与 ResolveI18n 既有 fallback 语义一致）。
+TEST_F(
+    MaaCallbackLoggerFixture,
+    ResolveFocusContent_I18nMissReturnsKeyWithoutDollar)
+{
+    std::filesystem::path dir;
+    auto                  context = MakeRecorderContext(dir);
+    EXPECT_EQ(ResolveFocusContent("$missing", context), "missing");
+}
+
+// ResolveFocusContent literal 分支：未匹配任何源（无 `$` 前缀）→ 原文返回。
+TEST_F(MaaCallbackLoggerFixture, ResolveFocusContent_LiteralTextPassesThrough)
+{
+    std::filesystem::path dir;
+    auto                  context = MakeRecorderContext(dir);
+    EXPECT_EQ(ResolveFocusContent("plain text", context), "plain text");
+}
+
+// LogFocusMessage 调用序：先 ResolveFocusContent 解析 `$key` 模板，
+// 再 ReplaceFocusPlaceholders 替换 `{name}` 等占位符。验证两步组合后
+// user.jsonl 文本含解析+占位符替换后的最终结果。
+TEST_F(
+    MaaCallbackLoggerFixture,
+    LogFocusMessage_ResolvesContentBeforePlaceholders)
+{
+    std::filesystem::path dir;
+    auto                  context = MakeRecorderContext(dir);
+    context.translations["greeting"] = "Hello {name}";
+    auto details = FocusDetails(R"("Node.Action.Starting":"$greeting")");
+
+    LogFocusMessage(
+        context,
+        "Node.Action.Starting",
+        SerializeDetails(details).c_str());
+
+    auto obj = ReadLastEntry().as_object();
+    ASSERT_TRUE(obj.has_value());
+    auto text = (*obj)[std::string_view("text")].as_string();
+    ASSERT_TRUE(text.has_value());
+    EXPECT_EQ(*text, "Hello NodeA");
 }
