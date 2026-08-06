@@ -169,6 +169,45 @@ void IpcRunLoop::RequestStop()
     // transport->ReceiveCoroutine() 会因 operation_aborted 退出。
 }
 
+size_t IpcRunLoop::FailPendingCallsBySession(uint16_t session_id, DasResult error)
+{
+    // host 断连/崩溃：该 session 的 pending call 永远收不到回包，主动 fail
+    // 回传 error 让调用方（HTTP handler / sync_wait）解除阻塞。复用 RequestStop
+    // 的 fail 模式（锁内收集 + 锁外回调，避免持锁调用户回调死锁），按
+    // source_session_id 过滤，不影响其他 host 的 pending。
+    std::vector<PendingCallCompletion> completions;
+    {
+        const std::unique_lock<std::mutex> lock(pending_mutex_);
+        for (auto it = pending_calls_.begin(); it != pending_calls_.end();)
+        {
+            if (it->first.source_session_id == session_id)
+            {
+                if (it->second.on_complete)
+                {
+                    completions.push_back(std::move(it->second.on_complete));
+                }
+                it = pending_calls_.erase(it);
+            }
+            else
+            {
+                ++it;
+            }
+        }
+    }
+    for (auto& cb : completions)
+    {
+        cb(error, {}, uint16_t{0});
+    }
+    if (!completions.empty())
+    {
+        DAS_CORE_LOG_WARN(
+            "Failed {} pending call(s) for disconnected session: session_id={}",
+            completions.size(),
+            session_id);
+    }
+    return completions.size();
+}
+
 void IpcRunLoop::RegisterHandler(
     uint8_t          header_flags,
     uint32_t         interface_id,
@@ -1145,6 +1184,21 @@ boost::asio::awaitable<void> IpcRunLoop::InternalHostReceiveLoop(
     uint16_t                session_id,
     DasPtr<IHostConnection> host)
 {
+    // host 断连/崩溃/退出时 fail 该 session 所有 pending call，避免调用方
+    // （HTTP handler / sync_wait）死等。scope guard：函数任何路径 co_return
+    // 都触发析构 fail（没 pending 则返 0 无害；operation_aborted/!running 正常
+    // 停止也调，但此时一般无 pending）。之前 host 崩 → receive 抛 system_error
+    // → co_return，pending 原样滞留 → 前端死等，这是根因。
+    struct PendingFailOnExit
+    {
+        IpcRunLoop* self;
+        uint16_t    session_id;
+        ~PendingFailOnExit()
+        {
+            self->FailPendingCallsBySession(session_id, DAS_E_IPC_CONNECTION_LOST);
+        }
+    } pending_fail_guard{this, session_id};
+
     while (running_.load())
     {
         if (!host)

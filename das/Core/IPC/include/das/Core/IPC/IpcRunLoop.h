@@ -190,6 +190,18 @@ public:
      */
     void RequestStop();
 
+    /// @brief 失败并移除指定 session 的所有 pending call（host 断连/崩溃时调用）
+    ///
+    /// host 进程退出或 IPC 连接断开时，该 session 上等待响应的 pending call
+    /// 永远收不到回包，调用方（如 HTTP handler）会死等。此方法主动 fail 这些
+    /// pending，回传 error。复用 RequestStop 的 fail 逻辑，按 source_session_id
+    /// 过滤，不影响其他 session。
+    ///
+    /// @param session_id 崩溃/断连的对端 host session_id
+    /// @param error 回传给调用方的错误码（通常 DAS_E_IPC_CONNECTION_LOST）
+    /// @return 被 fail 的 pending call 数量
+    size_t FailPendingCallsBySession(uint16_t session_id, DasResult error);
+
     /**
      * @brief 注册消息处理器（通过 AddRef 管理生命周期）
      *
