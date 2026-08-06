@@ -15,8 +15,14 @@
 #ifndef DAS_MAAPI_DISABLE_REAL_MAA_BOUNDARY
 #include <MaaAgentClient/MaaAgentClientAPI.h>
 #include <MaaFramework/MaaAPI.h>
-#include <boost/dll/runtime_symbol_info.hpp>
 #endif
+
+// boost::dll::this_line_location() 不依赖 MaaFW，测试构建（守卫生效）也要
+// 可用，否则 AgentOutputLogger 在测试 target 编译时解析不到 plugin_dir。
+#include <boost/dll/runtime_symbol_info.hpp>
+#include <das/Utils/FileUtils.hpp>
+#include <spdlog/sinks/rotating_file_sink.h>
+#include <spdlog/spdlog.h>
 
 #include <algorithm>
 #include <cctype>
@@ -1261,6 +1267,64 @@ namespace Das::Plugins::DasMaaPi
                    && requested;
         }
 
+        // agent stdout/stderr 本地落盘的旋转日志上限：5MB 单文件 × 3 文件 =
+        // 15MB 总上限，对齐 spdlog rotating_file_sink
+        // 既有范式（das/Gateway/Logger.cpp :16-19）。agent 输出是诊断用途，15MB
+        // 足以覆盖一次完整运行排查； spdlog 自动轮转清理，无需 sweep。
+        constexpr std::size_t MAX_AGENT_LOG_BYTES = 5 * 1024 * 1024;
+        constexpr std::size_t MAX_AGENT_LOG_FILES = 3;
+
+        // 进程级单例 spdlog rotating logger，把 agent stdout/stderr 落盘到
+        // {plugin_dir}/logs/DasMaaPi-agent.log（与 MaaFW maafw.log
+        // 同目录，文件名 不冲突）。函数级 static（C++11
+        // 起首次初始化线程安全）。 plugin_dir 经
+        // boost::dll::this_line_location().parent_path() 发现（既有 范式
+        // MaaRuntime.cpp:1583-1585、MaaDynamicSymbols.cpp:85-86）。 整函数
+        // try/catch 降级返空——本地落盘绝不阻塞 agent：plugin_dir 只读 / 磁盘满
+        // / this_line_location 异平台抛时静默退化为不落盘。 spdlog::logger
+        // 默认带 mutex + sink_mt 多线程安全：io_thread 闭包 （RecordAgentOutput
+        // 调用方 :1931）与 Run 线程失败路径（:2054）并发写 无虞。**显式
+        // spdlog::register_logger 不可省**：rotating_logger_mt 默认 走
+        // synchronous_factory::create → initialize_logger（仅 set level /
+        // pattern），不进 registry，spdlog::get 命中不了；Gateway/Logger.cpp:27
+        // 既有范式同此事。
+        std::shared_ptr<spdlog::logger> AgentOutputLogger()
+        {
+            try
+            {
+                const auto registered = spdlog::get("DasMaaPiAgent");
+                if (registered)
+                {
+                    return registered;
+                }
+                const auto plugin_module = boost::dll::this_line_location();
+                const auto plugin_dir = plugin_module.parent_path();
+                const auto log_dir = plugin_dir / "logs";
+                // boost::filesystem::path 与 std::filesystem::path
+                // 不能直接互转， 经 .string() 桥接（与 :1583 既有范式一致）。
+                std::error_code error_code;
+                if (!Das::Utils::CreateDirectoryRecursive(
+                        std::filesystem::path{log_dir.string()},
+                        error_code))
+                {
+                    return nullptr;
+                }
+                auto sink =
+                    std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
+                        (log_dir / "DasMaaPi-agent.log").string(),
+                        MAX_AGENT_LOG_BYTES,
+                        MAX_AGENT_LOG_FILES);
+                auto logger =
+                    std::make_shared<spdlog::logger>("DasMaaPiAgent", sink);
+                spdlog::register_logger(logger);
+                return logger;
+            }
+            catch (const std::exception&)
+            {
+                return nullptr;
+            }
+        }
+
         // 把 agent 一行 stdout/stderr/失败消息包成 IDasLogEntry 投到 recorder。
         // severity 映射：stdout→INFO，stderr→ERROR，failure→ERROR。
         // stream_label：可读流标识（"stdout"/"stderr"/"failure"），写入
@@ -1278,6 +1342,22 @@ namespace Das::Plugins::DasMaaPi
             Das::ExportInterface::DasLogType              severity,
             std::string_view                              stream_label)
         {
+            // 本地落盘先于 recorder 检查：recorder 降级空 / IPC 断 / 主进程没起
+            // 时 user.jsonl 投不到，本地 spdlog rotating
+            // 文件照写（事后排查靠它）。 AgentOutputLogger()
+            // 失败返空时静默跳过，不抛不阻断既有路径。
+            if (const auto logger = AgentOutputLogger())
+            {
+                if (severity == Das::ExportInterface::DAS_LOG_TYPE_ERROR)
+                {
+                    logger->error("[AGENT {}] {}", agent_id, line);
+                }
+                else
+                {
+                    logger->info("[AGENT {}] {}", agent_id, line);
+                }
+            }
+
             if (recorder == nullptr)
             {
                 return DAS_E_INVALID_POINTER;
@@ -1305,9 +1385,9 @@ namespace Das::Plugins::DasMaaPi
             // 包裹后的值，DasU8StringOnStack 借用其 c_str()。SetField 调用返回
             // 前 recorder 已同步解析/拷贝，本地 string 可安全析构。
             const std::string agent_id_value =
-                "\"" + std::string(agent_id) + "\"";
+                DAS_FMT_NS::format("\"{}\"", agent_id);
             const std::string stream_value =
-                "\"" + std::string(stream_label) + "\"";
+                DAS_FMT_NS::format("\"{}\"", stream_label);
             DasU8StringOnStack source_key{"source"};
             DasU8StringOnStack source_value{"\"agent\""};
             hr = entry->SetField(&source_key, &source_value);

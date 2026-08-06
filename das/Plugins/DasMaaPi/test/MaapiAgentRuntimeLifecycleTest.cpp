@@ -306,6 +306,53 @@ namespace
         EXPECT_EQ(source.find(forbidden_stub), std::string::npos);
     }
 
+    // 验证 MaaRuntime.cpp 内 agent 输出本地落盘的 spdlog rotating logger 接入
+    // 点：AgentOutputLogger 工厂函数 + rotating_file_sink_mt + 显式
+    // register_logger + logger->info 调用 + "[AGENT {" 字面量 + DAS_FMT_NS
+    // 字符串拼接整理。AgentOutputLogger 是 anonymous namespace 函数级 static
+    // 单例，hermetic 单测访问不到；本地写盘靠 rotating_file_sink 既有保证
+    // （LogArchiveSpdlogTest 范式）+ 真实 agent spawn 人工验证。
+    TEST(DasMaaPiAgentClient, AgentOutputLoggerWiredInSource)
+    {
+        const auto source_path =
+            std::filesystem::path(__FILE__).parent_path().parent_path() / "src"
+            / "MaaRuntime.cpp";
+        const std::ifstream input(source_path);
+        ASSERT_TRUE(input.is_open()) << source_path.string();
+
+        std::ostringstream buffer;
+        buffer << input.rdbuf();
+        const auto source = buffer.str();
+
+        EXPECT_NE(source.find("AgentOutputLogger"), std::string::npos);
+        EXPECT_NE(
+            source.find("spdlog::sinks::rotating_file_sink_mt"),
+            std::string::npos);
+        EXPECT_NE(source.find("spdlog::register_logger"), std::string::npos);
+        EXPECT_NE(source.find("logger->info"), std::string::npos);
+        EXPECT_NE(source.find("[AGENT {}]"), std::string::npos);
+        // fmt 整理：原 "\""+std::string(x)+"\"" 改走 DAS_FMT_NS::format
+        // 统一风格
+        EXPECT_NE(source.find("DAS_FMT_NS::format"), std::string::npos);
+        EXPECT_NE(source.find("MAX_AGENT_LOG_BYTES"), std::string::npos);
+        EXPECT_NE(source.find("MAX_AGENT_LOG_FILES"), std::string::npos);
+        // boost::dll::this_line_location 必须 #include 在
+        // DAS_MAAPI_DISABLE_REAL_MAA_BOUNDARY
+        // 守卫外（测试构建守卫生效也要可用）
+        EXPECT_NE(
+            source.find("boost::dll::this_line_location"),
+            std::string::npos);
+        const auto guard_block =
+            source.find("#ifndef DAS_MAAPI_DISABLE_REAL_MAA_BOUNDARY");
+        ASSERT_NE(guard_block, std::string::npos);
+        const auto this_line_include =
+            source.find("<boost/dll/runtime_symbol_info.hpp>");
+        ASSERT_NE(this_line_include, std::string::npos);
+        // this_line_location include 必须在守卫块之后、且不在守卫内（即守卫
+        // 的 #endif 之前但有独立 include 行）
+        EXPECT_GT(this_line_include, guard_block);
+    }
+
     TEST(
         DasMaaPiAgentRuntimeStart,
         StartsSingleAgentWithIdentifierArgCwdAndPiEnv)
