@@ -684,4 +684,81 @@ namespace
         EXPECT_EQ(source.find("environment::set("), std::string::npos);
         EXPECT_EQ(source.find("environment::unset("), std::string::npos);
     }
+
+    // BuildProcessEnvironment 是 spawn 子进程的环境装配纯函数：拉继承进程
+    // 环境 + 应用 PI_* 前缀过滤 + 注入 PYTHONIOENCODING/PYTHONUTF8。这些单测
+    // 调 test-only overload 注入 fixture 继承 env，避免依赖测试进程真继承 env
+    // （boost::process::v2::environment::current() 难控）。
+    namespace
+    {
+        bool ContainsEnv(
+            const std::vector<std::string>& env,
+            std::string_view                expected)
+        {
+            return std::find(env.begin(), env.end(), expected) != env.end();
+        }
+
+        std::vector<std::pair<std::string, std::string>> EmptyInheritedEnv()
+        {
+            return {};
+        }
+    } // namespace
+
+    TEST(DasMaaPiBuildEnvPython, EmptyPiEnvInjectsPythonUtf8)
+    {
+        const auto env = Detail::BuildProcessEnvironment(
+            std::vector<PiEnvVarDto>{},
+            EmptyInheritedEnv());
+        EXPECT_TRUE(ContainsEnv(env, "PYTHONIOENCODING=utf-8"));
+        EXPECT_TRUE(ContainsEnv(env, "PYTHONUTF8=1"));
+    }
+
+    TEST(DasMaaPiBuildEnvPython, OverridesInheritedPythonUtf8)
+    {
+        // 继承 env 含 PYTHONUTF8=0（系统抑制 UTF-8 mode），注入必须覆盖。
+        std::vector<std::pair<std::string, std::string>> inherited{
+            {"PYTHONUTF8", "0"}};
+        const auto env = Detail::BuildProcessEnvironment(
+            std::vector<PiEnvVarDto>{},
+            inherited);
+        EXPECT_TRUE(ContainsEnv(env, "PYTHONUTF8=1"));
+    }
+
+    TEST(DasMaaPiBuildEnvPython, OverridesInheritedPythonIoencoding)
+    {
+        // 继承 env 含 PYTHONIOENCODING=latin-1，注入必须覆盖对齐 MXU
+        // maa_agent.rs:360-361 的 .env() 覆盖语义（operator[] 非
+        // try_emplace）。
+        std::vector<std::pair<std::string, std::string>> inherited{
+            {"PYTHONIOENCODING", "latin-1"}};
+        const auto env = Detail::BuildProcessEnvironment(
+            std::vector<PiEnvVarDto>{},
+            inherited);
+        EXPECT_TRUE(ContainsEnv(env, "PYTHONIOENCODING=utf-8"));
+    }
+
+    TEST(DasMaaPiBuildEnvPython, PiFilterKeepsPiAndRejectsNonPi)
+    {
+        std::vector<PiEnvVarDto> pi_env{
+            PiEnvVarDto{.key = "PI_TEST", .value = "x"},
+            PiEnvVarDto{.key = "NON_PI", .value = "y"},
+        };
+        const auto env =
+            Detail::BuildProcessEnvironment(pi_env, EmptyInheritedEnv());
+        EXPECT_TRUE(ContainsEnv(env, "PI_TEST=x"));
+        EXPECT_FALSE(ContainsEnv(env, "NON_PI=y"));
+    }
+
+    TEST(DasMaaPiBuildEnvPython, PythonInjectionSurvivesPiPrefixedKeyShadow)
+    {
+        // PI_PYTHONIOENCODING 是 PI_* 前缀但与 PYTHON* 不同——验证 PYTHON*
+        // 注入在 PI_* filter 之后，最终 PYTHONIOENCODING=utf-8 生效。
+        std::vector<PiEnvVarDto> pi_env{PiEnvVarDto{
+            .key = "PI_PYTHONIOENCODING",
+            .value = "should_not_apply"}};
+        const auto               env =
+            Detail::BuildProcessEnvironment(pi_env, EmptyInheritedEnv());
+        EXPECT_TRUE(ContainsEnv(env, "PYTHONIOENCODING=utf-8"));
+        EXPECT_TRUE(ContainsEnv(env, "PI_PYTHONIOENCODING=should_not_apply"));
+    }
 } // namespace

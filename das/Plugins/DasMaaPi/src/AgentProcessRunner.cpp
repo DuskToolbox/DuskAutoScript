@@ -163,14 +163,25 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
                 target.erase(0, target.size() - max_bytes);
             }
         }
+    } // namespace
 
+    // BuildProcessEnvironment 从匿名 namespace 提升（task 5 Open Question
+    // #1）： Detail 子 namespace 让单测经 test-only overload 注入 fixture 继承
+    // env。 既有 BoostAgentProcess 构造内调用经 Detail::
+    // 限定命中（source-compatible 提升，调用点零签名变化）。StartsWithPi
+    // 仍在匿名 namespace（内部链接）， 经 Das::Plugins::DasMaaPi::AgentRuntime
+    // 外层作用域 unqualified lookup 可见。
+    namespace Detail
+    {
         std::vector<std::string> BuildProcessEnvironment(
-            const std::vector<PiEnvVarDto>& pi_env)
+            const std::vector<PiEnvVarDto>& pi_env,
+            const std::vector<std::pair<std::string, std::string>>&
+                inherited_env)
         {
             std::map<std::string, std::string> values;
-            for (const auto item : boost::process::v2::environment::current())
+            for (const auto& [key, value] : inherited_env)
             {
-                values[item.key().string()] = item.value().string();
+                values[key] = value;
             }
             for (const auto& item : pi_env)
             {
@@ -179,6 +190,12 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
                     values[item.key] = item.value;
                 }
             }
+            // PYTHON* 无条件覆盖注入（operator[] 非 try_emplace）：对齐 MXU
+            // maa_agent.rs:360-361 .env() 覆盖语义；注入位置在 PI_* filter
+            // 之后，保证继承进程环境的同名值被覆盖、且 PI_* filter 通道不受
+            // 干扰（PYTHON* 非 PI_*，无"作者优先"伪概念）。
+            values["PYTHONIOENCODING"] = "utf-8";
+            values["PYTHONUTF8"] = "1";
 
             std::vector<std::string> result;
             result.reserve(values.size());
@@ -189,6 +206,23 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
             return result;
         }
 
+        std::vector<std::string> BuildProcessEnvironment(
+            const std::vector<PiEnvVarDto>& pi_env)
+        {
+            std::vector<std::pair<std::string, std::string>> inherited;
+            for (const auto item : boost::process::v2::environment::current())
+            {
+                inherited.emplace_back(
+                    item.key().string(),
+                    item.value().string());
+            }
+            return BuildProcessEnvironment(pi_env, inherited);
+        }
+    } // namespace Detail
+
+    namespace
+    {
+
         class BoostAgentProcess final : public IAgentProcess
         {
         public:
@@ -197,7 +231,8 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
                   max_output_tail_bytes_(request.max_output_tail_bytes),
                   on_output_(request.on_output)
             {
-                auto env_values = BuildProcessEnvironment(request.environment);
+                auto env_values =
+                    Detail::BuildProcessEnvironment(request.environment);
                 boost::process::v2::process_environment child_environment{
                     env_values};
 

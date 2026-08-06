@@ -83,6 +83,26 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
             const AgentProcessLaunchRequest& request) = 0;
     };
 
+    // Detail 子 namespace：内部 helper 与公共 BoostAgentProcessRunner API
+    // 分层。BuildProcessEnvironment 是 spawn 子进程环境装配纯函数，从匿名
+    // namespace 提升（task 5 Open Question #1）：单测经 test-only overload
+    // 注入 fixture 继承 env，避开 boost::process::v2::environment::current()
+    // 在测试进程内拉真继承 env 不可控。
+    namespace Detail
+    {
+        // 生产单参版：内部转 boost::process::v2::environment::current() 喂
+        // 双参 test overload。既有 BoostAgentProcess 构造内调用零改动
+        // （source-compatible 提升，命名空间限定经 ADL 命中）。
+        std::vector<std::string> BuildProcessEnvironment(
+            const std::vector<PiEnvVarDto>& pi_env);
+
+        // test-only overload：单测注入 fixture 继承 env，纯函数无副作用。
+        std::vector<std::string> BuildProcessEnvironment(
+            const std::vector<PiEnvVarDto>& pi_env,
+            const std::vector<std::pair<std::string, std::string>>&
+                inherited_env);
+    } // namespace Detail
+
     class BoostAgentProcessRunner final : public IAgentProcessRunner
     {
     public:
