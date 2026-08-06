@@ -17,10 +17,16 @@ namespace Das::Plugins::DasMaaPi
 {
     struct PiEnvSnapshotDto
     {
-        std::string interface_version = "2";
+        // PI_INTERFACE_VERSION = Client 实现的 PI 扩展能力 semver
+        // （PI_EXTENSION_VERSION_TEXT），由 PiCompiler 填充。留空表示
+        // PiCompiler 尚未注入（AppendEnv 会跳过空值，子进程不收该 env）。
+        std::string interface_version;
         std::string client_name = "DAS";
         std::string client_version;
-        std::string client_language = "cpp";
+        // PI_CLIENT_LANGUAGE = 当前 UI 语言代码，由 PiCompiler 接
+        // SelectPiLanguage 选择结果填充。留空表示用户未设置且 catalog 无可用
+        // 语言（合法失败信号，UI 层回退，AppendEnv 跳过空值）。
+        std::string client_language;
         std::string client_maafw_version;
         std::string project_version;
         std::string controller_json;

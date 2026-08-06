@@ -770,6 +770,11 @@ namespace Das::Plugins::DasMaaPi
         // 插件版本（与 manifest DasMaaPi.json:version 对齐），禁止空 stub。
         envelope.maapi.pi_env.client_maafw_version = QueryMaaFrameworkVersion();
         envelope.maapi.pi_env.client_version = std::string{PLUGIN_VERSION_TEXT};
+        // PI_INTERFACE_VERSION（3.3-ProjectInterfaceV2协议.md:451）=
+        // DasMaaPi 作为 PI Client 实现的扩展能力 semver，与 interface.json
+        // 顶层 interface_version（固定数字 2，JSON 结构主版本）不同。
+        envelope.maapi.pi_env.interface_version =
+            std::string{PI_EXTENSION_VERSION_TEXT};
         result.summary.requires_agent_runtime =
             envelope.maapi.requires_agent_runtime;
 
@@ -881,6 +886,12 @@ namespace Das::Plugins::DasMaaPi
         // an intentional split, not a coverage gap.
         const std::string pi_language =
             SelectPiLanguage(settings.pi.language, &catalog);
+        // PI_CLIENT_LANGUAGE（3.3-ProjectInterfaceV2协议.md:454）= 当前 UI
+        // 语言代码，接 SelectPiLanguage 选择结果（用户设置优先，否则
+        // catalog zh_cn / 首个可用语言回退）。禁止硬编码 "cpp"（实现语言）
+        // 误导 agent 子进程 i18n。空串是合法失败信号（用户未设置且 catalog
+        // 无可用语言），由 AppendEnv 跳过空值、UI 层回退处理。
+        envelope.maapi.pi_env.client_language = pi_language;
         const auto resolve_raw = [&](const std::string& raw_json) -> std::string
         {
             auto parsed = Das::Utils::ParseYyjsonFromString(raw_json);

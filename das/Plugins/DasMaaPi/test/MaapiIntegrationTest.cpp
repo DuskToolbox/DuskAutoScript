@@ -583,11 +583,34 @@ TEST_F(MaapiIntegrationFixture, V28E2EHotkeyOptionToleratedByParserAndCompiler)
 // alongside the original 6.
 TEST_F(MaapiIntegrationFixture, V28E2EEnvSnapshotHasAllEightPiFields)
 {
-    auto session = CreateSession();
-    auto compiled =
-        CompileFixtureForExecution(session.Get(), "interface_v28.jsonc");
-    ASSERT_TRUE(compiled.envelope.has_value());
-    const auto& env = compiled.envelope->maapi.pi_env;
+    // Drive a UI language through session context so PI_CLIENT_LANGUAGE is
+    // populated end-to-end. client_language is sourced from SelectPiLanguage
+    // (user setting wins); without an explicit language it is legitimately
+    // empty and AppendEnv omits PI_CLIENT_LANGUAGE from the launch env.
+    const auto interface_path =
+        FixturePath("interface_v28.jsonc").generic_string();
+    auto context = ParseDasJson(
+        R"({"adapter":{"interfacePath":")" + interface_path
+        + "\",\"executionPolicy\":{\"failFast\":true}},"
+          "\"pi\":{\"language\":\"zh_cn\"}}");
+    auto session = CreateSessionWithContext(context.Get());
+
+    auto exec_request = ParseDasJson(R"({"purpose":"execution"})");
+    DasPtr<Das::ExportInterface::IDasJson> exec_json;
+    ASSERT_EQ(session->Compile(exec_request.Get(), exec_json.Put()), DAS_S_OK);
+    auto root = ReadJsonInterface(exec_json.Get()).as_object();
+    ASSERT_TRUE(root.has_value());
+    ASSERT_TRUE(root->contains(std::string_view("compile")));
+    auto compile_obj = (*root)[std::string_view("compile")].as_object();
+    ASSERT_TRUE(compile_obj.has_value());
+    ASSERT_TRUE(compile_obj->contains(std::string_view("executionInput")));
+    auto parsed = ParseExecutionEnvelope(
+        (*compile_obj)[std::string_view("executionInput")]);
+    ASSERT_EQ(parsed.result, DAS_S_OK) << "message: " << parsed.message;
+
+    const auto& env = parsed.envelope.maapi.pi_env;
+    // interface_version = PI extension capability semver
+    // (PI_EXTENSION_VERSION_TEXT), not the interface.json numeric major.
     EXPECT_FALSE(env.interface_version.empty());
     EXPECT_FALSE(env.client_name.empty());
     EXPECT_FALSE(env.client_version.empty())
