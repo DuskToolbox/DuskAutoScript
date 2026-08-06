@@ -1288,6 +1288,23 @@ namespace Das::Plugins::DasMaaPi
         // synchronous_factory::create → initialize_logger（仅 set level /
         // pattern），不进 registry，spdlog::get 命中不了；Gateway/Logger.cpp:27
         // 既有范式同此事。
+
+        // boost::filesystem::path（boost::dll::this_line_location() 返回）与
+        // std::filesystem::path 不能直接互转；boost::filesystem::path 也没有
+        // u8string()（那是 std::filesystem::path 的方法）。Windows 上 .string()
+        // 是 ACP narrow（中文 plugin 路径会乱码），经 wstring() 取 UTF-16 wide
+        // 再让 std::filesystem::path 走 native wide 解码；Unix native narrow
+        // 通常 即 UTF-8，直接 string()。
+        std::filesystem::path ToStdPath(
+            const boost::filesystem::path& boost_path)
+        {
+#ifdef _WIN32
+            return std::filesystem::path{boost_path.wstring()};
+#else
+            return std::filesystem::path{boost_path.string()};
+#endif
+        }
+
         std::shared_ptr<spdlog::logger> AgentOutputLogger()
         {
             try
@@ -1300,11 +1317,9 @@ namespace Das::Plugins::DasMaaPi
                 const auto plugin_module = boost::dll::this_line_location();
                 const auto plugin_dir = plugin_module.parent_path();
                 const auto log_dir = plugin_dir / "logs";
-                // boost::filesystem::path 与 std::filesystem::path
-                // 不能直接互转， 经 .string() 桥接（与 :1583 既有范式一致）。
                 std::error_code error_code;
                 if (!Das::Utils::CreateDirectoryRecursive(
-                        std::filesystem::path{log_dir.string()},
+                        ToStdPath(log_dir),
                         error_code))
                 {
                     return nullptr;
