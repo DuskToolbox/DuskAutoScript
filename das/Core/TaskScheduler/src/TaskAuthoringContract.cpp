@@ -191,8 +191,11 @@ namespace Das::Core::TaskScheduler
         // Forward declarations — defined after the structural helpers but
         // referenced by FieldDescriptor/FieldContainer because commands[] can
         // appear at every FieldContainer level (D-84-14/D-84-26).
+        // seen_ids_out 把 commands[].id 集合回传给 caller，供 fieldLayout
+        // 校验 {commandId} 叶子引用完整性。
         AuthoringValidationResult ValidateCommandDescriptorArray(
-            const yyjson::value& arr);
+            const yyjson::value&   arr,
+            std::set<std::string>* seen_ids_out = nullptr);
 
         // D-84-11 strict Diagnostic: required severity/message, optional
         // integer code, optional string path, no other fields.
@@ -553,11 +556,23 @@ namespace Das::Core::TaskScheduler
             return Pass();
         }
 
+        // fieldLayout 扩展为 6-arg。新参数：
+        //   - command_ids (down): 顶层 commands[] 的 id 集合，用于校验
+        //     {commandId} 叶子引用完整性（与 fieldName in field_names 对称）。
+        //   - referenced_command_ids (out): 已引用的 commandId 集合，用于
+        //     检测重复引用。独立于 referenced_names — 不污染 fieldName
+        //     全覆盖不变量；commandId 不要求全覆盖：未引用的 command 表示
+        //     不在 layout 中渲染，合法。
+        //   - row_allowed (down): 顶层 false，section.entries 内 true；row
+        //     容器只能在 section.entries 内（schema 模糊防御）。
         AuthoringValidationResult ValidateFieldLayoutTree(
             const yyjson::value&         node,
             const std::set<std::string>& field_names,
+            const std::set<std::string>& command_ids,
             std::set<std::string>&       referenced_names,
-            std::set<std::string>&       section_ids)
+            std::set<std::string>&       referenced_command_ids,
+            std::set<std::string>&       section_ids,
+            bool                         row_allowed = false)
         {
             auto obj_opt = node.as_object();
             if (!obj_opt)
@@ -598,6 +613,86 @@ namespace Das::Core::TaskScheduler
                     return Fail(
                         "unknownField",
                         "layout leaf rejects unknown field");
+                }
+                return Pass();
+            }
+
+            // {commandId} 叶子 — 与 {fieldName} 对称，引用 commands[]
+            // 定义池。独立 referenced_command_ids 不污染 fieldName 全覆盖
+            // 不变量。
+            if (obj.contains("commandId"))
+            {
+                if (!obj["commandId"].is_string())
+                {
+                    return Fail(
+                        "invalidLayoutLeaf",
+                        "commandId must be string");
+                }
+                const auto cid = obj["commandId"].as_string().value();
+                if (cid.empty())
+                {
+                    return Fail(
+                        "invalidLayoutLeaf",
+                        "commandId must be non-empty");
+                }
+                if (command_ids.count(std::string(cid)) == 0)
+                {
+                    return Fail(
+                        "layoutCommandNotInContainer",
+                        "commandId not in commands[]");
+                }
+                if (!referenced_command_ids.insert(std::string(cid)).second)
+                {
+                    return Fail(
+                        "layoutDuplicateCommandRef",
+                        "commandId referenced multiple times");
+                }
+                if (!OnlyKeys(obj, {"commandId"}))
+                {
+                    return Fail(
+                        "unknownField",
+                        "layout command leaf rejects unknown field");
+                }
+                return Pass();
+            }
+
+            //{row:[...]} 横向容器。只在 section.entries 内合法
+            // （row_allowed=true）；顶层直接放 row 会被拒（// schema
+            // 模糊防御）。row 可嵌套 row/leaf，但不允许 section （section
+            // 只在顶层）。
+            if (obj.contains("row"))
+            {
+                if (!row_allowed)
+                {
+                    return Fail(
+                        "rowOutsideSection",
+                        "row must be inside section.entries");
+                }
+                auto row_opt = obj["row"].as_array();
+                if (!row_opt)
+                {
+                    return Fail("invalidRow", "row must be array");
+                }
+                for (const auto& child : row_opt.value())
+                {
+                    if (auto r = ValidateFieldLayoutTree(
+                            child,
+                            field_names,
+                            command_ids,
+                            referenced_names,
+                            referenced_command_ids,
+                            section_ids,
+                            /*row_allowed=*/true);
+                        !r.valid)
+                    {
+                        return r;
+                    }
+                }
+                if (!OnlyKeys(obj, {"row"}))
+                {
+                    return Fail(
+                        "unknownField",
+                        "layout row rejects unknown field");
                 }
                 return Pass();
             }
@@ -656,13 +751,17 @@ namespace Das::Core::TaskScheduler
                         "invalidEntries",
                         "section.entries must be array");
                 }
+                // section.entries 内允许 row（wire shape）。
                 for (const auto& child : entries_opt.value())
                 {
                     if (auto r = ValidateFieldLayoutTree(
                             child,
                             field_names,
+                            command_ids,
                             referenced_names,
-                            section_ids);
+                            referenced_command_ids,
+                            section_ids,
+                            /*row_allowed=*/true);
                         !r.valid)
                     {
                         return r;
@@ -686,13 +785,14 @@ namespace Das::Core::TaskScheduler
 
             return Fail(
                 "invalidLayoutNode",
-                "layout node must be leaf {fieldName} or section "
-                "{id,label,entries}");
+                "layout node must be leaf {fieldName}/{commandId}, row, or "
+                "section {id,label,entries}");
         }
 
         AuthoringValidationResult ValidateFieldLayout(
             const yyjson::value&         layout,
-            const std::set<std::string>& field_names)
+            const std::set<std::string>& field_names,
+            const std::set<std::string>& command_ids)
         {
             auto arr_opt = layout.as_array();
             if (!arr_opt)
@@ -700,19 +800,25 @@ namespace Das::Core::TaskScheduler
                 return Fail("invalidLayout", "fieldLayout must be array");
             }
             std::set<std::string> referenced_names;
+            std::set<std::string> referenced_command_ids;
             std::set<std::string> section_ids;
             for (const auto& node : arr_opt.value())
             {
                 if (auto r = ValidateFieldLayoutTree(
                         node,
                         field_names,
+                        command_ids,
                         referenced_names,
-                        section_ids);
+                        referenced_command_ids,
+                        section_ids,
+                        /*row_allowed=*/false);
                     !r.valid)
                 {
                     return r;
                 }
             }
+            // fieldName 全覆盖不变量保持 — commandId 不要求
+            // 全覆盖，未引用的 command 就是不在 layout 中渲染，合法。
             if (referenced_names.size() != field_names.size())
             {
                 return Fail(
@@ -899,7 +1005,8 @@ namespace Das::Core::TaskScheduler
         }
 
         AuthoringValidationResult ValidateCommandDescriptorArray(
-            const yyjson::value& arr)
+            const yyjson::value&   arr,
+            std::set<std::string>* seen_ids_out)
         {
             auto arr_opt = arr.as_array();
             if (!arr_opt)
@@ -914,17 +1021,36 @@ namespace Das::Core::TaskScheduler
                     return r;
                 }
             }
+            // 把 commands[].id 集合回传给 caller，供 fieldLayout 校验
+            // {commandId} 叶子的引用完整性（与 fieldName in field_names
+            // 对称）。
+            if (seen_ids_out != nullptr)
+            {
+                *seen_ids_out = std::move(seen_ids);
+            }
             return Pass();
         }
 
         // Validate a FieldContainer (document root, FormSequenceItem, or
         // GraphNode): fields[], fieldLayout[], commands[]. Fills field_names
         // so the caller can apply additional constraints (e.g. enabled
-        // collision check).
+        // collision check). 同时收集 command_ids 供 ValidateFieldLayout 校验
+        // {commandId} 叶子引用完整性。
         AuthoringValidationResult ValidateFieldContainer(
             const auto&            obj,
             std::set<std::string>& field_names)
         {
+            std::set<std::string> command_ids;
+            if (obj.contains("commands"))
+            {
+                if (auto r = ValidateCommandDescriptorArray(
+                        obj["commands"],
+                        &command_ids);
+                    !r.valid)
+                {
+                    return r;
+                }
+            }
             if (obj.contains("fields"))
             {
                 if (auto r = ValidateFieldDescriptorArray(
@@ -937,16 +1063,10 @@ namespace Das::Core::TaskScheduler
             }
             if (obj.contains("fieldLayout"))
             {
-                if (auto r =
-                        ValidateFieldLayout(obj["fieldLayout"], field_names);
-                    !r.valid)
-                {
-                    return r;
-                }
-            }
-            if (obj.contains("commands"))
-            {
-                if (auto r = ValidateCommandDescriptorArray(obj["commands"]);
+                if (auto r = ValidateFieldLayout(
+                        obj["fieldLayout"],
+                        field_names,
+                        command_ids);
                     !r.valid)
                 {
                     return r;

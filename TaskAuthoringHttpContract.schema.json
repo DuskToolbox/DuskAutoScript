@@ -185,12 +185,39 @@
       },
       "$comment": "D-92-16: inputType==7 (markdown) requires readonly==true (schema side; the C++ validator enforces the same)."
     },
-    "FieldLayoutLeaf": {
+    "FieldLayoutLeafField": {
       "type": "object",
       "required": ["fieldName"],
       "additionalProperties": false,
       "properties": {
         "fieldName": { "type": "string", "minLength": 1 }
+      }
+    },
+    "FieldLayoutLeafCommand": {
+      "type": "object",
+      "required": ["commandId"],
+      "additionalProperties": false,
+      "$comment": "command 作为 fieldLayout 一等控件 — 引用顶层 commands[] 定义池，与 {fieldName} 对称。",
+      "properties": {
+        "commandId": { "type": "string", "minLength": 1 }
+      }
+    },
+    "FieldLayoutRow": {
+      "type": "object",
+      "required": ["row"],
+      "additionalProperties": false,
+      "$comment": "row 横向容器（与 section 纵向容器对称）。只在 section.entries 内合法（FieldLayoutSection.entries.items.oneOf 含本项；FieldLayoutNode oneOf 不含本项，顶层拒绝 rowOutsideSection）。",
+      "properties": {
+        "row": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              { "$ref": "#/$defs/FieldLayoutLeafField" },
+              { "$ref": "#/$defs/FieldLayoutLeafCommand" },
+              { "$ref": "#/$defs/FieldLayoutRow" }
+            ]
+          }
+        }
       }
     },
     "FieldLayoutSection": {
@@ -205,15 +232,23 @@
         "defaultExpanded": { "type": "boolean" },
         "entries": {
           "type": "array",
-          "items": { "$ref": "#/$defs/FieldLayoutNode" }
+          "items": {
+            "oneOf": [
+              { "$ref": "#/$defs/FieldLayoutLeafField" },
+              { "$ref": "#/$defs/FieldLayoutLeafCommand" },
+              { "$ref": "#/$defs/FieldLayoutRow" }
+            ]
+          }
         }
       }
     },
     "FieldLayoutNode": {
       "oneOf": [
-        { "$ref": "#/$defs/FieldLayoutLeaf" },
+        { "$ref": "#/$defs/FieldLayoutLeafField" },
+        { "$ref": "#/$defs/FieldLayoutLeafCommand" },
         { "$ref": "#/$defs/FieldLayoutSection" }
-      ]
+      ],
+      "$comment": "顶层 layout node 不含 FieldLayoutRow — row 只能在 section.entries 内（validator 拒绝 rowOutsideSection）。"
     },
     "EntryRef": {
       "type": "object",

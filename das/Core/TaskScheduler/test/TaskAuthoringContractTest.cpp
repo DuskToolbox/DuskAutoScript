@@ -458,6 +458,186 @@ TEST(TaskAuthoringContractTest, FieldLayoutSectionRecursiveCoverage)
     EXPECT_TRUE(r.valid) << r.message;
 }
 
+// {commandId} 叶子在 section.entries 内引用 commands[] 已声明的 id
+// → PASS。commands 必须含 apply.kind:"invokeCommand" + payload.commandId。
+TEST(TaskAuthoringContractTest, FieldLayoutCommandLeafValid)
+{
+    auto document = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "fields": [
+            {"name": "a", "label": "A", "valueType": 4, "inputType": 0, "value": ""}
+        ],
+        "fieldLayout": [
+            {
+                "id": "section-1",
+                "label": "Section",
+                "entries": [
+                    {"fieldName": "a"},
+                    {"commandId": "checkUpdate"}
+                ]
+            }
+        ],
+        "commands": [
+            {
+                "id": "checkUpdate",
+                "label": "Check Update",
+                "apply": {"kind": "invokeCommand", "payload": {"commandId": "checkUpdate"}}
+            }
+        ]
+    })json");
+    auto r = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+    EXPECT_TRUE(r.valid) << r.message;
+}
+
+// commandId 引用不在 commands[] 的 id → FAIL
+// layoutCommandNotInContainer。
+TEST(TaskAuthoringContractTest, FieldLayoutCommandLeafNotInCommands)
+{
+    auto document = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "fields": [
+            {"name": "a", "label": "A", "valueType": 4, "inputType": 0, "value": ""}
+        ],
+        "fieldLayout": [
+            {
+                "id": "section-1",
+                "label": "Section",
+                "entries": [
+                    {"fieldName": "a"},
+                    {"commandId": "ghost"}
+                ]
+            }
+        ],
+        "commands": [
+            {
+                "id": "checkUpdate",
+                "label": "Check Update",
+                "apply": {"kind": "invokeCommand", "payload": {"commandId": "checkUpdate"}}
+            }
+        ]
+    })json");
+    auto r = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+    EXPECT_FALSE(r.valid);
+    EXPECT_EQ(r.error_kind, "layoutCommandNotInContainer");
+}
+
+// row 横向容器在 section.entries 内合法 → PASS。横排两个 fieldName
+// 叶子（fieldName 全覆盖不变量保持）。
+TEST(TaskAuthoringContractTest, FieldLayoutRowInsideSection)
+{
+    auto document = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "fields": [
+            {"name": "a", "label": "A", "valueType": 4, "inputType": 0, "value": ""},
+            {"name": "b", "label": "B", "valueType": 4, "inputType": 0, "value": ""}
+        ],
+        "fieldLayout": [
+            {
+                "id": "section-1",
+                "label": "Section",
+                "entries": [
+                    {"row": [{"fieldName": "a"}, {"fieldName": "b"}]}
+                ]
+            }
+        ]
+    })json");
+    auto r = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+    EXPECT_TRUE(r.valid) << r.message;
+}
+
+// row 在顶层（无 section 包装）→ FAIL rowOutsideSection。
+TEST(TaskAuthoringContractTest, FieldLayoutRowAtTopLevelRejected)
+{
+    auto document = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "fields": [
+            {"name": "a", "label": "A", "valueType": 4, "inputType": 0, "value": ""}
+        ],
+        "fieldLayout": [
+            {"row": [{"fieldName": "a"}]}
+        ]
+    })json");
+    auto r = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+    EXPECT_FALSE(r.valid);
+    EXPECT_EQ(r.error_kind, "rowOutsideSection");
+}
+
+// 同一 commandId 被多次引用 → FAIL layoutDuplicateCommandRef。
+TEST(TaskAuthoringContractTest, FieldLayoutDuplicateCommandRef)
+{
+    auto document = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "fields": [
+            {"name": "a", "label": "A", "valueType": 4, "inputType": 0, "value": ""}
+        ],
+        "fieldLayout": [
+            {
+                "id": "section-1",
+                "label": "Section",
+                "entries": [
+                    {"fieldName": "a"},
+                    {"commandId": "checkUpdate"},
+                    {"commandId": "checkUpdate"}
+                ]
+            }
+        ],
+        "commands": [
+            {
+                "id": "checkUpdate",
+                "label": "Check Update",
+                "apply": {"kind": "invokeCommand", "payload": {"commandId": "checkUpdate"}}
+            }
+        ]
+    })json");
+    auto r = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+    EXPECT_FALSE(r.valid);
+    EXPECT_EQ(r.error_kind, "layoutDuplicateCommandRef");
+}
+
+// layout 同时含 fieldName 叶子和 commandId 叶子，
+// fieldName 全覆盖断言仍成立（commandId 不污染 referenced_names）。
+TEST(TaskAuthoringContractTest, FieldLayoutMixedLeavesPreservesFieldCoverage)
+{
+    auto document = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "fields": [
+            {"name": "a", "label": "A", "valueType": 4, "inputType": 0, "value": ""},
+            {"name": "b", "label": "B", "valueType": 4, "inputType": 0, "value": ""}
+        ],
+        "fieldLayout": [
+            {
+                "id": "section-1",
+                "label": "Section",
+                "entries": [
+                    {"row": [{"fieldName": "a"}, {"fieldName": "b"}]},
+                    {"commandId": "checkUpdate"}
+                ]
+            }
+        ],
+        "commands": [
+            {
+                "id": "checkUpdate",
+                "label": "Check Update",
+                "apply": {"kind": "invokeCommand", "payload": {"commandId": "checkUpdate"}}
+            }
+        ]
+    })json");
+    auto r = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+    EXPECT_TRUE(r.valid) << r.message;
+}
+
 TEST(TaskAuthoringContractTest, FormSequenceItemStrictShape)
 {
     auto valid = ParseJson(R"json({
