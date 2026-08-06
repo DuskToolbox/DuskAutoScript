@@ -84,7 +84,7 @@ namespace Das::Plugins::DasMaaPi
 
     struct PiGroupDto : PiNamedDto
     {
-        bool default_expand = false;
+        bool default_expand = true;
     };
 
     struct PiCaseDto : PiNamedDto
@@ -140,7 +140,8 @@ namespace Das::Plugins::DasMaaPi
     };
 
     // PI v2.8.0 — 任务设置页 UI 声明分区，option 引用 option 块中已定义的键。
-    // default_expand 协议默认为 true（与 PiGroupDto 的 false 默认相反）。
+    // default_expand 协议默认为 true（PI v2 group v2.4.0 / setting v2.8.0
+    // 一致，参见 3.3-ProjectInterfaceV2协议.md:494 与 :802）。
     struct PiSettingDto : PiNamedDto
     {
         std::vector<std::string> option;

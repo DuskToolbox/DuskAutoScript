@@ -300,7 +300,11 @@ namespace Das::Plugins::DasMaaPi
         {
             PiGroup result;
             FillNamed(result.dto, obj);
-            result.dto.default_expand = OptionalBool(obj, "default_expand");
+            // PI v2 group default_expand 协议默认为 true（与 setting 一致，
+            // 参见 3.3-ProjectInterfaceV2协议.md group v2.4.0 / setting
+            // v2.8.0）。
+            result.dto.default_expand =
+                OptionalBool(obj, "default_expand", true);
             result.raw = MakeRaw(
                 obj,
                 {"name", "label", "description", "icon", "default_expand"});
@@ -556,7 +560,7 @@ namespace Das::Plugins::DasMaaPi
             FillNamed(result.dto, obj);
             result.dto.option = ReadStringArray(obj, "option");
             // PI v2.8.0 setting default_expand 协议默认为 true（与 group
-            // 相反）。
+            // 一致，参见 3.3-ProjectInterfaceV2协议.md setting v2.8.0）。
             result.dto.default_expand =
                 OptionalBool(obj, "default_expand", true);
             result.raw = MakeRaw(
