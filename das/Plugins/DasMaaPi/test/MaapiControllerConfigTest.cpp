@@ -1,3 +1,4 @@
+#include "../src/AdbDeviceFinder.h"
 #include "../src/ControllerMethodMaps.h"
 #include "../src/MaaDynamicSymbols.h"
 #include "../src/Win32WindowFinder.h"
@@ -455,4 +456,62 @@ TEST(
     // the system actually had real desktop windows but none matched the
     // regex — both produce the not-found diagnostic. Either way, no crash.
     EXPECT_EQ(result.error_code, "controller-window-not-found");
+}
+
+// ===== 设备 cache 覆盖 raw_json 六字段（PiCompiler 层）=====
+
+// selected_adb_device 非空时覆盖 controller.raw.raw_json 的 adb 字段（Toolkit
+// 探测的推荐值优先；agent_path 不覆盖，仍取 raw_json 解析值）。
+TEST(NormalizeControllerInitParams, SelectedAdbDeviceOverridesRawJson)
+{
+    PiController controller;
+    controller.dto.name = "CustomAndroid";
+    controller.dto.type = "Adb";
+    controller.raw.raw_json =
+        R"({"name":"CustomAndroid","type":"Adb",)"
+        R"("address":"raw.example:5555","adbPath":"raw_adb",)"
+        R"("config":"{\"raw\":true}","agentPath":"raw_agent"})";
+
+    AdbDeviceInfo device;
+    device.name = "emulator-5554";
+    device.adb_path = "/toolkit/adb";
+    device.address = "127.0.0.1:5554";
+    device.screencap_methods = 0x1;
+    device.input_methods = 0x2;
+    device.config = R"({"toolkit":true})";
+
+    const auto params = NormalizeControllerInitParams(controller, &device);
+    EXPECT_EQ(params.controller_type, "Adb");
+    ASSERT_TRUE(params.adb.has_value());
+    // 六字段中前五字段来自 cache（Toolkit 推荐值）。
+    EXPECT_EQ(params.adb->address, "127.0.0.1:5554");
+    EXPECT_EQ(params.adb->adb_path, "/toolkit/adb");
+    EXPECT_EQ(params.adb->screencap_method, 0x1u);
+    EXPECT_EQ(params.adb->input_method, 0x2u);
+    EXPECT_EQ(params.adb->config_json, R"({"toolkit":true})");
+    // agent_path 不在 AdbDeviceInfo 中，仍取 raw_json 解析值。
+    EXPECT_EQ(params.adb->agent_path, "raw_agent");
+}
+
+// selected_adb_device=nullptr 时完全用 raw_json 既有六字段（用户未选设备或
+// cache 不可用，既有行为保持 — 不会因为 cache 缺席而清空 adb 块）。
+TEST(NormalizeControllerInitParams, NullAdbDeviceFallsBackToRawJson)
+{
+    PiController controller;
+    controller.dto.name = "Android";
+    controller.dto.type = "Adb";
+    controller.raw.raw_json =
+        R"({"name":"Android","type":"Adb","address":"raw.example:5555",)"
+        R"("adbPath":"raw_adb","config":"{\"raw\":true}"})";
+
+    const auto params = NormalizeControllerInitParams(
+        controller,
+        /*selected_adb_device=*/nullptr);
+    EXPECT_EQ(params.controller_type, "Adb");
+    ASSERT_TRUE(params.adb.has_value());
+    EXPECT_EQ(params.adb->address, "raw.example:5555");
+    EXPECT_EQ(params.adb->adb_path, "raw_adb");
+    EXPECT_EQ(params.adb->screencap_method, 0x0u);
+    EXPECT_EQ(params.adb->input_method, 0x0u);
+    EXPECT_EQ(params.adb->config_json, R"({"raw":true})");
 }

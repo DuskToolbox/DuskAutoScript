@@ -41,6 +41,12 @@ namespace Plugins::DasMaaPi
         PiHttpClient*                              http_seam,
         Das::ExportInterface::IDasProgressService* progress_service_seam);
 
+    // discoverAdbDevices 命令 handler — 经 session& 引用直写 device_cache_
+    // （零 T* 出参指针，与 ApplyInvokeCommandChange 同范式）。
+    bool ApplyDiscoverAdbDevicesCommand(
+        MaapiAuthoringSession&        session,
+        std::vector<PiDiagnosticDto>& diagnostics);
+
     class MaapiAuthoringSession final
         : public PluginInterface::DasTaskAuthoringSessionImplBase<
               MaapiAuthoringSession>
@@ -55,6 +61,11 @@ namespace Plugins::DasMaaPi
             std::vector<PiDiagnosticDto>&              diagnostics,
             PiHttpClient*                              http_seam,
             Das::ExportInterface::IDasProgressService* progress_service_seam);
+
+        // ApplyDiscoverAdbDevicesCommand 直写 device_cache_（扫描结果填充）。
+        friend bool ApplyDiscoverAdbDevicesCommand(
+            MaapiAuthoringSession&        session,
+            std::vector<PiDiagnosticDto>& diagnostics);
 
     public:
         MaapiAuthoringSession() = default;

@@ -108,6 +108,9 @@ namespace Das::Plugins::DasMaaPi
     //   - "checkUpdate"（成功且有 pending progress_key → command_result 自填
     //     {commandId:"checkUpdate", data:{progressKey}}；否则 nullopt）
     //   - "applyUpdate"（成功清 pending；command_result nullopt）
+    //   - "discoverAdbDevices"（扫描设备填 session.device_cache_，
+    //     command_result nullopt — 设备进 adbDevice field candidates 不走
+    //     commandResult.data）
     // 未知 commandId 返回 {ok=false} 并 emit error 诊断（DAS_E_NOT_FOUND）。
     // http_seam 为空时构造 BeastHttpClient（生产）；测试注入 FakePiHttpClient。
     // progress_service_seam 为空时 applyUpdate 路径经 GetCurrentIpcContext

@@ -11,6 +11,8 @@
 #include <das/Plugins/DasMaaPi/AuthoringProjector.h>
 #include <das/Plugins/DasMaaPi/MaapiDto.h>
 #include <das/Plugins/DasMaaPi/PiCatalog.h>
+#include <das/Plugins/DasMaaPi/PiCompiler.h>
+#include <das/Plugins/DasMaaPi/PiParser.h>
 #include <das/Utils/DasJsonCore.h>
 #include <das/_autogen/idl/abi/IDasTaskAuthoring.h>
 #include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasProgressService.Implements.hpp>
@@ -8222,8 +8224,8 @@ TEST(
                        .value()[std::string_view("entries")]
                        .as_array();
     ASSERT_TRUE(entries.has_value());
-    // 找到含 row 的 entry，row 应含 controllerName + adbDevice 两 fieldName
-    // 叶子。
+    // 找到含 row 的 entry，row 应含三叶子：controllerName / adbDevice
+    // （fieldName 叶子）+ discoverAdbDevices （commandId 叶子）。
     bool found_row = false;
     for (auto&& entry : *entries)
     {
@@ -8234,10 +8236,12 @@ TEST(
         }
         auto row = (*entry_obj)[std::string_view("row")].as_array();
         ASSERT_TRUE(row.has_value());
-        EXPECT_EQ(row->size(), 2u);
+        EXPECT_EQ(row->size(), 3u);
         auto leaf0 = (*row)[0].as_object();
         auto leaf1 = (*row)[1].as_object();
-        ASSERT_TRUE(leaf0.has_value() && leaf1.has_value());
+        auto leaf2 = (*row)[2].as_object();
+        ASSERT_TRUE(
+            leaf0.has_value() && leaf1.has_value() && leaf2.has_value());
         EXPECT_EQ(
             std::string(
                 (*leaf0)[std::string_view("fieldName")].as_string().value_or(
@@ -8248,8 +8252,311 @@ TEST(
                 (*leaf1)[std::string_view("fieldName")].as_string().value_or(
                     "")),
             "adbDevice");
+        EXPECT_EQ(
+            std::string(
+                (*leaf2)[std::string_view("commandId")].as_string().value_or(
+                    "")),
+            "discoverAdbDevices");
         found_row = true;
         break;
     }
     EXPECT_TRUE(found_row);
+
+    // commands[] 应含 discoverAdbDevices（IsCurrentControllerAdb 守卫通过）。
+    auto commands_opt =
+        document.as_object().value()[std::string_view("commands")].as_array();
+    ASSERT_TRUE(commands_opt.has_value());
+    bool found_cmd = false;
+    for (auto&& cmd : *commands_opt)
+    {
+        auto cmd_obj = cmd.as_object();
+        if (!cmd_obj)
+        {
+            continue;
+        }
+        if ((*cmd_obj)[std::string_view("id")].as_string().value_or("")
+            == "discoverAdbDevices")
+        {
+            found_cmd = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(found_cmd);
+}
+
+// ===== discoverAdbDevices command handler 闭环测试（session 级）=====
+
+namespace
+{
+    // 经 SetAdbDeviceEnumeratorForTest 注入的 fake 扫描结果，供
+    // discoverAdbDevices 命令链路单测复用（镜像 AdbDeviceFinderTest 范式）。
+    std::vector<Das::Plugins::DasMaaPi::AdbDeviceInfo> MakeTwoFakeDevices()
+    {
+        using namespace Das::Plugins::DasMaaPi;
+        std::vector<AdbDeviceInfo> devices;
+        AdbDeviceInfo              emu;
+        emu.name = "emulator-5554";
+        emu.adb_path = "/fake/adb";
+        emu.address = "127.0.0.1:5554";
+        emu.screencap_methods = 0x1;
+        emu.input_methods = 0x2;
+        emu.config = "{}";
+        devices.push_back(emu);
+        AdbDeviceInfo real;
+        real.name = "Pixel-7";
+        real.address = "192.168.1.42:5555";
+        real.adb_path = "/fake/adb";
+        real.screencap_methods = 0x4;
+        real.input_methods = 0x8;
+        real.config = "{}";
+        devices.push_back(real);
+        return devices;
+    }
+} // namespace
+
+// discoverAdbDevices 命令经 invokeCommand 分派 → AdbDeviceFinder 扫描 →
+// 填 session.device_cache_（size==2）→ 返回 {ok=true, command_result nullopt}
+// （设备进 document field candidates，不走 commandResult.data — 前端 dropdown
+// 现成机制渲染 candidates）。
+TEST(
+    MaapiAdbDeviceCommandTest,
+    DiscoverAdbDevicesFillsCacheAndOmitsCommandResult)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    SetAdbDeviceEnumeratorForTest([]() { return MakeTwoFakeDevices(); });
+
+    AcceptedSettingsDto   settings;
+    MaapiAuthoringSession session(settings);
+
+    DasPtr<Das::ExportInterface::IDasJson> result_json;
+    auto                                   change = ParseDasJson(
+        "{\"baseRevision\":0,\"kind\":\"invokeCommand\","
+        "\"payload\":{\"commandId\":\"discoverAdbDevices\"}}");
+    ASSERT_EQ(session.ApplyChange(change.Get(), result_json.Put()), DAS_S_OK);
+    auto result = ReadJsonInterface(result_json.Get());
+
+    EXPECT_EQ(CountDiagnosticsBySeverity(result, "error"), 0u);
+    EXPECT_EQ(DocumentRevisionFromApplyResult(result), 1);
+    // device_cache_ 暂态写入 2 个设备。
+    EXPECT_EQ(session.DeviceCache().size(), 2u);
+    EXPECT_EQ(session.DeviceCache().front().address, "127.0.0.1:5554");
+
+    // commandResult 不存在（设备进 document field candidates）。
+    EXPECT_FALSE(CommandResultOf(result).has_value());
+
+    SetAdbDeviceEnumeratorForTest(nullptr);
+}
+
+// discoverAdbDevices 后 ProjectAuthoringDocument 重算 → adbDevice.candidates
+// 反映 cache 内容（2 个 device 经 document field 流到前端 dropdown）。
+// 直接构造 session + settings（不经 IPC），通过 DeviceCache() 模拟扫描结果
+// 已填，然后 GetDocument 取投影。
+TEST(MaapiAdbDeviceCommandTest, DiscoverAdbDevicesAppliesToDocumentCandidates)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    // 构造 AcceptedSettingsDto 指向 interface_controller.jsonc（含 Adb
+    // controller 名 "Android"，确保 IsCurrentControllerAdb 守卫通过）。
+    auto settings_json =
+        R"({"adapter":{"interfacePath":")"
+        + FixturePath("interface_controller.jsonc").generic_string() + R"("}})";
+    auto settings = ParseAcceptedSettings(
+        Das::Utils::ParseYyjsonFromString(settings_json).value());
+    MaapiAuthoringSession session(settings);
+
+    // 模拟 discoverAdbDevices 已扫描：直接构造 cache 内容并经验证
+    // （生产路径经 ApplyChange 写入；此测试聚焦投影层读 cache 的链路）。
+    // 由于 device_cache_ 是 private，我们改走完整 ApplyChange 路径。
+    SetAdbDeviceEnumeratorForTest([]() { return MakeTwoFakeDevices(); });
+
+    DasPtr<Das::ExportInterface::IDasJson> result_json;
+    auto                                   change = ParseDasJson(
+        "{\"baseRevision\":0,\"kind\":\"invokeCommand\","
+        "\"payload\":{\"commandId\":\"discoverAdbDevices\"}}");
+    ASSERT_EQ(session.ApplyChange(change.Get(), result_json.Put()), DAS_S_OK);
+    auto result = ReadJsonInterface(result_json.Get());
+
+    EXPECT_EQ(CountDiagnosticsBySeverity(result, "error"), 0u);
+    auto document = DocumentFromApplyResult(result);
+    auto field = FindRootField(document, "adbDevice");
+    ASSERT_TRUE(field.has_value());
+    auto field_obj = field->as_object();
+    ASSERT_TRUE(field_obj.has_value());
+    ASSERT_TRUE(field_obj->contains(std::string_view("candidates")));
+    auto candidates = (*field_obj)[std::string_view("candidates")].as_array();
+    ASSERT_TRUE(candidates.has_value());
+    EXPECT_EQ(candidates->size(), 2u);
+
+    SetAdbDeviceEnumeratorForTest(nullptr);
+}
+
+// enumerator 返回空 → device_cache_ 清空（或赋值空 vector）→ 投影 candidates
+// 空。验证 zero-device 路径不崩，前端 dropdown 空候补。
+TEST(
+    MaapiAdbDeviceCommandTest,
+    DiscoverAdbDevicesEmptyEnumeratorYieldsEmptyCache)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    SetAdbDeviceEnumeratorForTest(
+        []() -> std::vector<AdbDeviceInfo> { return {}; });
+
+    AcceptedSettingsDto   settings;
+    MaapiAuthoringSession session(settings);
+
+    DasPtr<Das::ExportInterface::IDasJson> result_json;
+    auto                                   change = ParseDasJson(
+        "{\"baseRevision\":0,\"kind\":\"invokeCommand\","
+        "\"payload\":{\"commandId\":\"discoverAdbDevices\"}}");
+    ASSERT_EQ(session.ApplyChange(change.Get(), result_json.Put()), DAS_S_OK);
+    auto result = ReadJsonInterface(result_json.Get());
+
+    EXPECT_EQ(CountDiagnosticsBySeverity(result, "error"), 0u);
+    EXPECT_EQ(session.DeviceCache().size(), 0u);
+    // info diagnostic 提示用户扫描到 0 设备（非错误）。
+    EXPECT_GE(CountDiagnosticsBySeverity(result, "info"), 1u);
+
+    SetAdbDeviceEnumeratorForTest(nullptr);
+}
+
+// ===== CompileMaapi 设备 cache → controller_init_params 链路测试 =====
+
+// settings.pi.controller_adb_device + device_cache 含该 address → 编译输出
+// 的 controller_init_params.adb 六字段取自 cache（覆盖 raw_json）。
+TEST(MaapiCompileDeviceCacheTest, SelectedDeviceInCacheOverridesRawJson)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    // interface_controller.jsonc fixture 含一个 Adb controller 名为 "Android"
+    // address="127.0.0.1:5555"（raw_json 默认值），cache 提供同 address 的设备
+    // 但 adb_path/screencap/input/config 不同 → 编译期应取 cache 值。
+    auto parsed = ParseProjectInterface(
+        {.interface_path = FixturePath("interface_controller.jsonc")});
+    ASSERT_TRUE(parsed.ok);
+
+    AcceptedSettingsDto settings;
+    settings.adapter.interface_path =
+        FixturePath("interface_controller.jsonc").string();
+    settings.pi.controller_name = "Android";
+    settings.pi.controller_adb_device = "127.0.0.1:5554";
+
+    std::vector<AdbDeviceInfo> cache;
+    AdbDeviceInfo              dev;
+    dev.name = "emulator-5554";
+    dev.adb_path = "/cache/adb";
+    dev.address = "127.0.0.1:5554";
+    dev.screencap_methods = 0x1;
+    dev.input_methods = 0x2;
+    dev.config = R"({"cache":true})";
+    cache.push_back(dev);
+
+    auto compile = CompileMaapi(settings, parsed.catalog, "preview", &cache);
+    ASSERT_TRUE(compile.ok);
+    ASSERT_TRUE(compile.execution_input.has_value());
+    ASSERT_TRUE(
+        compile.execution_input->maapi.controller_init_params.has_value());
+    ASSERT_TRUE(
+        compile.execution_input->maapi.controller_init_params->adb.has_value());
+    const auto& adb =
+        *compile.execution_input->maapi.controller_init_params->adb;
+    EXPECT_EQ(adb.address, "127.0.0.1:5554");
+    EXPECT_EQ(adb.adb_path, "/cache/adb");
+    EXPECT_EQ(adb.screencap_method, 0x1u);
+    EXPECT_EQ(adb.input_method, 0x2u);
+    EXPECT_EQ(adb.config_json, R"({"cache":true})");
+}
+
+// settings.pi.controller_adb_device 指向不在 cache 的 address → fallback 用
+// raw_json 字段 + warning diagnostic。
+TEST(MaapiCompileDeviceCacheTest, SelectedDeviceNotInCacheFallsBackWithWarning)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto parsed = ParseProjectInterface(
+        {.interface_path = FixturePath("interface_controller.jsonc")});
+    ASSERT_TRUE(parsed.ok);
+
+    AcceptedSettingsDto settings;
+    settings.adapter.interface_path =
+        FixturePath("interface_controller.jsonc").string();
+    settings.pi.controller_name = "Android";
+    // 指向不在 cache 的 address。
+    settings.pi.controller_adb_device = "ghost:9999";
+
+    std::vector<AdbDeviceInfo> cache;
+    AdbDeviceInfo              dev;
+    dev.address = "127.0.0.1:5554";
+    cache.push_back(dev);
+
+    auto compile = CompileMaapi(settings, parsed.catalog, "preview", &cache);
+    ASSERT_TRUE(compile.ok);
+    ASSERT_TRUE(compile.execution_input.has_value());
+    ASSERT_TRUE(
+        compile.execution_input->maapi.controller_init_params.has_value());
+    ASSERT_TRUE(
+        compile.execution_input->maapi.controller_init_params->adb.has_value());
+    const auto& adb =
+        *compile.execution_input->maapi.controller_init_params->adb;
+    // 用 raw_json 既有字段（fixture 中 address="127.0.0.1:5555"，adbPath 缺省
+    // → fallback "adb"）。
+    EXPECT_EQ(adb.address, "127.0.0.1:5555");
+    EXPECT_EQ(adb.adb_path, "adb");
+    // warning diagnostic 记录 cache miss。
+    bool found_warning = false;
+    for (const auto& diag : compile.diagnostics)
+    {
+        if (diag.severity == "warning"
+            && diag.message.find("ghost:9999") != std::string::npos)
+        {
+            found_warning = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(found_warning);
+}
+
+// settings.pi.controller_adb_device=nullopt + cache 非空 → 完全用 raw_json
+// （cache 被忽略，既有行为保持）。验证无选中设备时 cache 不强制覆盖。
+TEST(MaapiCompileDeviceCacheTest, EmptySelectedDeviceUsesRawJsonAndIgnoresCache)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto parsed = ParseProjectInterface(
+        {.interface_path = FixturePath("interface_controller.jsonc")});
+    ASSERT_TRUE(parsed.ok);
+
+    AcceptedSettingsDto settings;
+    settings.adapter.interface_path =
+        FixturePath("interface_controller.jsonc").string();
+    settings.pi.controller_name = "Android";
+    // controller_adb_device 留空（nullopt）。
+
+    std::vector<AdbDeviceInfo> cache;
+    AdbDeviceInfo              dev;
+    dev.address = "127.0.0.1:5554";
+    cache.push_back(dev);
+
+    auto compile = CompileMaapi(settings, parsed.catalog, "preview", &cache);
+    ASSERT_TRUE(compile.ok);
+    ASSERT_TRUE(compile.execution_input.has_value());
+    ASSERT_TRUE(
+        compile.execution_input->maapi.controller_init_params.has_value());
+    ASSERT_TRUE(
+        compile.execution_input->maapi.controller_init_params->adb.has_value());
+    const auto& adb =
+        *compile.execution_input->maapi.controller_init_params->adb;
+    EXPECT_EQ(adb.address, "127.0.0.1:5555");
+    EXPECT_EQ(adb.adb_path, "adb");
+    // 无 cache miss warning（用户未选设备，不需要查 cache）。
+    bool found_cache_warning = false;
+    for (const auto& diag : compile.diagnostics)
+    {
+        if (diag.severity == "warning" && diag.code == "adb-device-cache-miss")
+        {
+            found_cache_warning = true;
+            break;
+        }
+    }
+    EXPECT_FALSE(found_cache_warning);
 }

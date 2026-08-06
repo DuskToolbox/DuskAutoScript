@@ -3,6 +3,7 @@
 #include <das/Utils/DasJsonCore.h>
 #include <das/Utils/StringUtils.h>
 
+#include "AdbDeviceFinder.h"
 #include "ControllerMethodMaps.h"
 #include "I18nResolver.h"
 
@@ -751,7 +752,8 @@ namespace Das::Plugins::DasMaaPi
     CompileResultDto CompileMaapi(
         const AcceptedSettingsDto& settings,
         const PiCatalog&           catalog,
-        std::string_view)
+        std::string_view,
+        const std::vector<AdbDeviceInfo>* device_cache)
     {
         CompileResultDto     result;
         ExecutionEnvelopeDto envelope;
@@ -813,6 +815,38 @@ namespace Das::Plugins::DasMaaPi
 
         envelope.maapi.controller_name = controller->dto.name;
         envelope.maapi.controller = NormalizeControllerSpec(*controller);
+        // 解析选中的 ADB 设备：若 settings.pi.controller_adb_device 非空且
+        // device_cache 含该 address，取其六字段作为 typed init params 覆盖源
+        // （Toolkit 探测的推荐值优先于 raw_json — 用户已选设备就用最新扫描
+        // 结果）。cache miss 时不阻断编译，emit warning diagnostic 后 fallback
+        // raw_json（既有行为保持，用户可重新扫描）。
+        const AdbDeviceInfo* selected_adb_device = nullptr;
+        AdbDeviceInfo        adb_device_holder;
+        if (device_cache != nullptr && settings.pi.controller_adb_device
+            && !settings.pi.controller_adb_device->empty())
+        {
+            const std::string& selected_address =
+                *settings.pi.controller_adb_device;
+            auto device_it = std::find_if(
+                device_cache->begin(),
+                device_cache->end(),
+                [&](const AdbDeviceInfo& info)
+                { return info.address == selected_address; });
+            if (device_it != device_cache->end())
+            {
+                adb_device_holder = *device_it;
+                selected_adb_device = &adb_device_holder;
+            }
+            else
+            {
+                AddDiagnostic(
+                    result,
+                    "warning",
+                    "adb-device-cache-miss",
+                    "Selected ADB device '" + selected_address
+                        + "' not in scan cache; falling back to raw_json");
+            }
+        }
         // Typed init params: always emitted. Every supported controller type
         // (Adb/Dbg/Win32/Gamepad) now routes through the unified
         // CreateControllerFromParams dispatch as typed variants alongside
@@ -820,7 +854,7 @@ namespace Das::Plugins::DasMaaPi
         // controller-type-unsupported-on-platform. The legacy flat-string
         // CreateController(spec) overload has been deleted.
         envelope.maapi.controller_init_params =
-            NormalizeControllerInitParams(*controller);
+            NormalizeControllerInitParams(*controller, selected_adb_device);
         envelope.maapi.resource_name = resource->dto.name;
         envelope.maapi.resource_hash = resource->dto.hash;
         for (const auto& path : resource->resolved_paths)
@@ -1068,7 +1102,8 @@ namespace Das::Plugins::DasMaaPi
     // now routes through CreateControllerFromParams; the legacy flat-string
     // CreateController(spec) overload is gone.
     ControllerInitParams NormalizeControllerInitParams(
-        const PiController& controller)
+        const PiController&  controller,
+        const AdbDeviceInfo* selected_adb_device)
     {
         ControllerInitParams params;
         params.controller_type = controller.dto.type;
@@ -1095,6 +1130,17 @@ namespace Das::Plugins::DasMaaPi
             adb.agent_path =
                 OptionalStringField(*obj, {"agentPath", "agent_path"})
                     .value_or("");
+            // selected_adb_device 非空 → 覆盖 raw_json 解析结果（Toolkit 探测
+            // 的推荐值优先；agent_path 不覆盖，仍取 raw_json — Toolkit 探测
+            // 不含 agent 信息，保留 PI 协议值）。
+            if (selected_adb_device != nullptr)
+            {
+                adb.address = selected_adb_device->address;
+                adb.adb_path = selected_adb_device->adb_path;
+                adb.screencap_method = selected_adb_device->screencap_methods;
+                adb.input_method = selected_adb_device->input_methods;
+                adb.config_json = selected_adb_device->config;
+            }
             params.adb = std::move(adb);
         }
 

@@ -2093,6 +2093,17 @@ namespace Das::Plugins::DasMaaPi
                     row_arr.as_array()->emplace_back(
                         make_leaf("controllerName"));
                     row_arr.as_array()->emplace_back(make_leaf("adbDevice"));
+                    // discoverAdbDevices command 叶子：仅 adb controller 投影
+                    // 该 command（ProjectAuthoringDocument 经
+                    // IsCurrentControllerAdb 守卫 emit），此处引用为 row
+                    // 横排第三格，构成 [controllerName, adbDevice,
+                    // discoverAdbDevices] 操作组。 validator
+                    // 引用完整性（commandId in commands[]）保证前端 按 id
+                    // lookup 不会落空。
+                    yyjson::value cmd_leaf(Object());
+                    (*cmd_leaf.as_object())[std::string_view("commandId")] =
+                        JsonString("discoverAdbDevices");
+                    row_arr.as_array()->emplace_back(std::move(cmd_leaf));
                     (*row.as_object())[std::string_view("row")] =
                         std::move(row_arr);
                     entries.as_array()->emplace_back(std::move(row));
@@ -3195,6 +3206,7 @@ namespace Das::Plugins::DasMaaPi
             // $command.applyUpdate），缺译回退中文，语言切换时不再硬编码中文。
             std::string_view check_label = "检查更新";
             std::string_view apply_label = "更新";
+            std::string_view discover_label = "扫描设备";
             if (catalog != nullptr)
             {
                 check_label = ResolveI18nOrDiag(
@@ -3211,6 +3223,13 @@ namespace Das::Plugins::DasMaaPi
                     "更新",
                     projection_diagnostics,
                     "commands.applyUpdate.label");
+                discover_label = ResolveI18nOrDiag(
+                    "$command.discoverAdbDevices",
+                    *catalog,
+                    current_language,
+                    "扫描设备",
+                    projection_diagnostics,
+                    "commands.discoverAdbDevices.label");
             }
             emit_command("checkUpdate", check_label);
             // WR-05: 部分信息路径（MirrorChyan code!=0 但 data.version_name
@@ -3222,6 +3241,15 @@ namespace Das::Plugins::DasMaaPi
                 || !(*pending_update)->has_update
                 || (*pending_update)->download_url.empty();
             emit_command("applyUpdate", apply_label, apply_update_disabled);
+            // discoverAdbDevices：仅 Adb controller 投影（win32/gamepad 不需
+            // 要扫描 ADB 设备）。命令被 controller section fieldLayout row
+            // 引用为 {commandId:"discoverAdbDevices"} 叶子，前端 row 横排成
+            // 按钮与 controllerName + adbDevice 同行。
+            if (catalog != nullptr
+                && IsCurrentControllerAdb(settings, *catalog))
+            {
+                emit_command("discoverAdbDevices", discover_label);
+            }
             (*obj)[std::string_view("commands")] = std::move(commands);
         }
 
@@ -4934,6 +4962,32 @@ namespace Das::Plugins::DasMaaPi
         return true;
     }
 
+    // discoverAdbDevices dispatch：调 AdbDeviceFinder::FindAllAdbDevices 扫描
+    // 设备 → 填 session.device_cache_（session 内存态，与 pending_update_
+    // 同范式不落盘）。设备列表随后经 ProjectAuthoringDocument 投影到
+    // adbDevice.candidates（不走 commandResult.data，设备走 document field
+    // candidates — 前端 dropdown 现成机制）。零设备返回 ok=true（扫描成功
+    // 但无设备，candidates 投影空数组，前端 dropdown 空候补）。
+    bool ApplyDiscoverAdbDevicesCommand(
+        MaapiAuthoringSession&        session,
+        std::vector<PiDiagnosticDto>& diagnostics)
+    {
+        session.device_cache_ = FindAllAdbDevices();
+        // 兜底诊断：扫描结果为空时附 info 条目，便于日志追踪（非错误，不阻断
+        // 命令成功 — 设备空可能是 adb server 未启动或真机未连接）。
+        if (session.device_cache_.empty())
+        {
+            EmitDiagnostic(
+                diagnostics,
+                "info",
+                "discoverAdbDevices found 0 devices; ensure adb server is "
+                "running and a device is connected",
+                DAS_S_OK,
+                "discoverAdbDevices");
+        }
+        return true;
+    }
+
     InvokeCommandResult ApplyInvokeCommandChange(
         MaapiAuthoringSession&                     session,
         AcceptedSettingsDto&                       settings,
@@ -5014,6 +5068,14 @@ namespace Das::Plugins::DasMaaPi
                 progress_service_seam);
             // applyUpdate 成功清 pending（既有语义保持），command_result
             // nullopt。
+            return result;
+        }
+        // discoverAdbDevices：扫描设备填 cache，command_result nullopt（设备
+        // 进 document field candidates，不走 commandResult.data）。
+        if (*command_id == "discoverAdbDevices")
+        {
+            result.ok = ApplyDiscoverAdbDevicesCommand(session, diagnostics);
+            result.command_result = std::nullopt;
             return result;
         }
         EmitDiagnostic(
