@@ -72,9 +72,11 @@
 
 #define DAS_IGNORE_BEAST_WARNING DAS_PRAGMA(warning(disable : 4267))
 
+// stdexec 的 execution.hpp/async_scope.hpp 在 [[noreturn]] 与 std::terminate
+// 之后 存在不可达代码，MSVC 报 C4702，在 /WX 下编译失败
 #define DAS_IGNORE_STDEXEC_PARAMETERS                                          \
     DAS_IGNORE_UNUSED_PARAMETER                                                \
-    DAS_PRAGMA(warning(disable : 4324 4456))
+    DAS_PRAGMA(warning(disable : 4324 4456 4702))
 
 #define DAS_IGNORE_BOOST_PROCESS_WARNING                                       \
     DAS_IGNORE_UNUSED_PARAMETER                                                \
