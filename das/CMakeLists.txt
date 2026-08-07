@@ -46,7 +46,7 @@ if(${DAS_BUILD_TEST})
         ${CMAKE_SOURCE_DIR}/das/_shims
         Core/ForeignInterfaceHost/include
         Core/IPC/include)
-    target_link_libraries(AdditionalTest PUBLIC DasUtils Boost::url)
+    target_link_libraries(AdditionalTest PUBLIC DasUtils Boost::url Boost::asio Boost::system)
 endif()
 
 # 未来Gateway将以独立进程的形式来转发请求到具体的DasCore实例上，但是目前，Gateway即为Core

@@ -28,7 +28,10 @@
 #include <thread>
 #include <unordered_set>
 
+DAS_DISABLE_WARNING_BEGIN
+DAS_IGNORE_SML_WARNING
 #include <boost/sml.hpp>
+DAS_DISABLE_WARNING_END
 
 namespace Das::Core::TaskScheduler
 {

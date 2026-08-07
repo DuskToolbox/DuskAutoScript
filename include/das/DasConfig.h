@@ -83,6 +83,10 @@
 #define DAS_IGNORE_BOOST_INTERPROCESS_WARNING                                  \
     DAS_PRAGMA(warning(disable : 4459))
 
+// boost::sml 在 VS2022+ 把内置的 __has_builtin 重定义为函数式宏，触发 C4005
+// 宏重定义， 在 /WX 下编译失败
+#define DAS_IGNORE_SML_WARNING DAS_PRAGMA(warning(disable : 4005))
+
 #elif defined(__clang__)
 #define DAS_DISABLE_WARNING_BEGIN DAS_PRAGMA(clang diagnostic push)
 
@@ -100,6 +104,8 @@
 #define DAS_IGNORE_BEAST_WARNING
 
 #define DAS_IGNORE_BOOST_INTERPROCESS_WARNING
+
+#define DAS_IGNORE_SML_WARNING
 
 #define DAS_IGNORE_STDEXEC_PARAMETERS DAS_IGNORE_UNUSED_PARAMETER
 
@@ -128,6 +134,8 @@
         GCC diagnostic ignored "-Wempty-body")
 
 #define DAS_IGNORE_BOOST_PROCESS_WARNING DAS_IGNORE_UNUSED_PARAMETER
+
+#define DAS_IGNORE_SML_WARNING
 #endif
 
 #ifdef _MSC_VER
