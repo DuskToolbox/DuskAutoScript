@@ -34,6 +34,7 @@
 #include <das/Core/IPC/MainProcess/IpcContext.h>
 #include <das/Core/Logger/DasLogSessionImpl.h>
 #include <das/Core/Logger/Logger.h>
+#include <das/Core/i18n/DasLocaleServiceImpl.h>
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
 #include <das/_autogen/idl/abi/DasSettings.h>
@@ -638,6 +639,38 @@ namespace Das::Http
                             progress_reg)
                             .c_str());
                     return progress_reg;
+                }
+            }
+            // Register IDasLocaleService 主进程服务（按名注册 das.locale）。
+            // 跨进程 locale 同步服务端：Host 子进程经 resolve das.locale 拿
+            // proxy， AddCallback 注册反向通知、GetDefaultLocale 拉
+            // locale、SetDefaultLocale 更新进程 GlobalLocale 并反向遍历
+            // callbacks_。service shared_ptr 以 Release 为 deleter 持有 COM
+            // 引用，DOM 另持一份保活（照 progress 范式）。
+            auto* locale_raw = new Das::Core::i18n::DasLocaleServiceImpl();
+            locale_raw->AddRef();
+            std::shared_ptr<Das::Core::i18n::DasLocaleServiceImpl>
+                locale_service(
+                    locale_raw,
+                    [](Das::Core::i18n::DasLocaleServiceImpl* ptr)
+                    { ptr->Release(); });
+            {
+                const DAS::Core::IPC::ScopedCurrentIpcContext scope(
+                    static_cast<DAS::Core::IPC::MainProcess::IpcContext*>(
+                        ipc_context.get()));
+                const auto locale_reg = ipc_context->RegisterServiceByName(
+                    locale_raw,
+                    DasIidOf<Das::ExportInterface::IDasLocaleService>(),
+                    "das.locale");
+                if (DAS::IsFailed(locale_reg))
+                {
+                    DAS_LOG_ERROR(
+                        DAS_FMT_NS::format(
+                            "Failed to register IDasLocaleService. result = "
+                            "{}",
+                            locale_reg)
+                            .c_str());
+                    return locale_reg;
                 }
             }
             // key 订阅归零 → service 反向通知（hub 业务中立，只带 key）。
