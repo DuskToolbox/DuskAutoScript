@@ -226,10 +226,44 @@ DasResult IDasI18nImpl::AddTranslation(
     IDasReadOnlyString* key,
     IDasReadOnlyString* text)
 {
-    (void)locale_name;
-    (void)key;
-    (void)text;
-    return DAS_E_NO_IMPLEMENTATION;
+    DAS_UTILS_CHECK_POINTER(locale_name);
+    DAS_UTILS_CHECK_POINTER(key);
+    DAS_UTILS_CHECK_POINTER(text);
+
+    const char* locale_utf8 = nullptr;
+    if (!DAS::IsOk(locale_name->GetUtf8(&locale_utf8))
+        || locale_utf8 == nullptr)
+    {
+        return DAS_E_INVALID_ARGUMENT;
+    }
+    const char* key_utf8 = nullptr;
+    if (!DAS::IsOk(key->GetUtf8(&key_utf8)) || key_utf8 == nullptr)
+    {
+        return DAS_E_INVALID_ARGUMENT;
+    }
+    const char* text_utf8 = nullptr;
+    if (!DAS::IsOk(text->GetUtf8(&text_utf8)) || text_utf8 == nullptr)
+    {
+        return DAS_E_INVALID_ARGUMENT;
+    }
+
+    const std::string locale_str(locale_utf8);
+    const std::string key_str(key_utf8);
+    const std::string text_str(text_utf8);
+    if (locale_str.empty() || key_str.empty())
+    {
+        return DAS_E_INVALID_ARGUMENT;
+    }
+
+    try
+    {
+        translations_[locale_str][key_str] = text_str; // 覆盖语义
+    }
+    catch (const std::bad_alloc&)
+    {
+        return DAS_E_OUT_OF_MEMORY;
+    }
+    return DAS_S_OK;
 }
 
 DasResult IDasI18nImpl::MergeFromFile(IDasReadOnlyString* json_path_utf8)
