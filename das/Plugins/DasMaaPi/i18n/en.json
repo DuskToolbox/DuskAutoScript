@@ -1,0 +1,6 @@
+{
+    "progress.extracting": "Extracting…",
+    "progress.replacing": "Replacing…",
+    "progress.downloading": "Downloading…",
+    "progress.downloading_with_size": "Downloading ({1} / {2}){3}%"
+}

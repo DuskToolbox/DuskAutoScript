@@ -3,6 +3,7 @@
 #include "PiUpdateService.h"
 
 #include <das/DasPtr.hpp>
+#include <das/_autogen/idl/abi/IDasI18n.h>
 #include <das/_autogen/idl/abi/IDasProgressService.h>
 
 #include <atomic>
@@ -44,15 +45,34 @@ namespace Plugins::DasMaaPi
         // key）。
         bool IsDisconnected() const { return disconnected_.load(); }
 
+        // 注入外部翻译表（测试缝）。覆盖懒加载：传入非空 i18n 后
+        // GetI18n 直接返回它，不再走 this_line_location/i18n 装载。
+        // 传空清除注入并重置尝试标志，下次 GetI18n 重新懒加载。
+        void SetI18n(DasPtr<Das::ExportInterface::IDasI18n> i18n)
+        {
+            i18n_ = std::move(i18n);
+            i18n_load_attempted_ = (i18n_ != nullptr);
+        }
+
     private:
         class DasProgressCallbackImpl;
         void OnSubscribersDisconnected();
 
+        // 取翻译表：优先注入（SetI18n），否则首次调用懒加载
+        // <plugin_dir>/i18n（boost::dll::this_line_location 推导）。
+        // 目录缺失/装载失败永久返回 nullptr（不重试），降级硬编码文本。
+        Das::ExportInterface::IDasI18n* GetI18n();
+        // 把 UpdateProgress 投影成显示文本。i18n 就绪时走
+        // Translate(key)+vformat 填 {N}；否则回退硬编码字面量。
+        std::string BuildProgressText(const UpdateProgress& progress);
+
         std::string                                        key_;
         DasPtr<Das::ExportInterface::IDasProgressService>  service_;
         DasPtr<Das::ExportInterface::IDasProgressCallback> callback_;
+        DasPtr<Das::ExportInterface::IDasI18n>             i18n_;
         std::atomic<bool>                                  disconnected_{false};
         bool                                               started_ = false;
+        bool i18n_load_attempted_ = false;
     };
 } // namespace Plugins::DasMaaPi
 DAS_NS_END

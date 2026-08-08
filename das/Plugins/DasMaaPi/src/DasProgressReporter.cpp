@@ -4,12 +4,16 @@
 
 #include <das/DasApi.h>
 #include <das/Utils/DasJsonCore.h>
+#include <das/Utils/StringUtils.h>
 #include <das/Utils/fmt.h>
 #include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasProgressCallback.Implements.hpp>
 #include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasProgressUpdate.Implements.hpp>
 
+#include <boost/dll/runtime_symbol_info.hpp>
+
 #include <chrono>
 #include <cstdint>
+#include <filesystem>
 #include <iomanip>
 #include <sstream>
 #include <utility>
@@ -73,30 +77,51 @@ namespace Plugins::DasMaaPi
 
         // 阶段 → updateProgress 字段值文本。下载阶段有 total
         // → 字节对 + 百分比；无 total → 阶段态；解压/替换只报阶段。
-        std::string BuildUpdateProgressText(const UpdateProgress& progress)
+        // （实际实现迁入 DasProgressReporter::BuildProgressText，经 IDasI18n
+        // Translate + vformat 填充 {N}，此处仅保留 FormatBytes 等格式化辅助。）
+
+        // 经 i18n 翻译 key；i18n 为空 / key miss 返回空串（调用方回退硬编码）。
+        std::string TranslateKey(
+            Das::ExportInterface::IDasI18n* i18n,
+            const char*                     key)
         {
-            if (progress.stage == UpdateStage::Extract)
+            if (i18n == nullptr)
             {
-                return "解压中…";
+                return {};
             }
-            if (progress.stage == UpdateStage::Replace)
+            DasPtr<IDasReadOnlyString> key_str;
+            if (DAS::IsFailed(
+                    ::CreateIDasReadOnlyStringFromUtf8(key, key_str.Put())))
             {
-                return "替换中…";
+                return {};
             }
-            if (!progress.total_bytes || *progress.total_bytes == 0)
+            DasPtr<IDasReadOnlyString> text;
+            if (DAS::IsFailed(i18n->Translate(key_str.Get(), text.Put())))
             {
-                return "正在下载…";
+                return {};
             }
-            double        ratio = static_cast<double>(progress.bytes_received)
-                                  / static_cast<double>(*progress.total_bytes);
-            std::uint64_t percent = static_cast<std::uint64_t>(ratio * 100.0);
-            if (percent > 100)
+            const char* raw = nullptr;
+            if (text == nullptr || DAS::IsFailed(text->GetUtf8(&raw))
+                || raw == nullptr)
             {
-                percent = 100;
+                return {};
             }
-            return "正在下载（" + FormatBytes(progress.bytes_received) + " / "
-                   + FormatBytes(*progress.total_bytes) + "）"
-                   + std::to_string(percent) + "%";
+            return std::string(raw);
+        }
+
+        // boost::filesystem::path（this_line_location 返回）→ UTF-8
+        // std::string。 经 std::filesystem::path 桥接：Windows 走
+        // wstring（UTF-16），Unix 走 string（native narrow），再 u8string() 出
+        // UTF-8 字节。boost path 没有 u8string()，.string() 在 Windows 是 ACP
+        // narrow（中文路径乱码）。
+        std::string BoostPathToUtf8(const boost::filesystem::path& boost_path)
+        {
+#ifdef _WIN32
+            const std::filesystem::path std_path{boost_path.wstring()};
+#else
+            const std::filesystem::path std_path{boost_path.string()};
+#endif
+            return std::string{DAS::Utils::U8AsString(std_path.u8string())};
         }
 
         // 插件侧 IDasJson 构造惯例（SchedulerTestPluginImpl / DasFlowControl
@@ -314,6 +339,110 @@ namespace Plugins::DasMaaPi
         started_ = false;
     }
 
+    Das::ExportInterface::IDasI18n* DasProgressReporter::GetI18n()
+    {
+        if (i18n_ != nullptr)
+        {
+            return i18n_.Get();
+        }
+        if (i18n_load_attempted_)
+        {
+            return nullptr;
+        }
+        i18n_load_attempted_ = true;
+
+        // <plugin_dir>/i18n 经 boost::dll::this_line_location().parent_path()
+        // 推导（cwd != 插件安装目录，与 MaaFW LogDir 同范式）。目录缺失 /
+        // 装载失败永久降级硬编码（不重试），this_line_location 异平台抛时
+        // 静默兜底。
+        try
+        {
+            const auto plugin_module = boost::dll::this_line_location();
+            const auto boost_i18n_dir = plugin_module.parent_path() / "i18n";
+            const auto dir_utf8 = BoostPathToUtf8(boost_i18n_dir);
+
+            DasPtr<IDasReadOnlyString> dir_str;
+            if (DAS::IsFailed(
+                    ::CreateIDasReadOnlyStringFromUtf8(
+                        dir_utf8.c_str(),
+                        dir_str.Put())))
+            {
+                return nullptr;
+            }
+            const auto rc =
+                ::CreateIDasI18nFromDirectory(dir_str.Get(), i18n_.Put());
+            if (DAS::IsFailed(rc) || i18n_ == nullptr)
+            {
+                i18n_.Reset();
+                return nullptr;
+            }
+            return i18n_.Get();
+        }
+        catch (...)
+        {
+            return nullptr;
+        }
+    }
+
+    std::string DasProgressReporter::BuildProgressText(
+        const UpdateProgress& progress)
+    {
+        auto* const i18n = GetI18n();
+
+        if (progress.stage == UpdateStage::Extract)
+        {
+            auto text = TranslateKey(i18n, "progress.extracting");
+            if (!text.empty())
+            {
+                return text;
+            }
+            return "解压中…";
+        }
+        if (progress.stage == UpdateStage::Replace)
+        {
+            auto text = TranslateKey(i18n, "progress.replacing");
+            if (!text.empty())
+            {
+                return text;
+            }
+            return "替换中…";
+        }
+        if (!progress.total_bytes || *progress.total_bytes == 0)
+        {
+            auto text = TranslateKey(i18n, "progress.downloading");
+            if (!text.empty())
+            {
+                return text;
+            }
+            return "正在下载…";
+        }
+        double        ratio = static_cast<double>(progress.bytes_received)
+                              / static_cast<double>(*progress.total_bytes);
+        std::uint64_t percent = static_cast<std::uint64_t>(ratio * 100.0);
+        if (percent > 100)
+        {
+            percent = 100;
+        }
+        // make_format_args 持引用而非拥有：参数须是具名局部变量，生命周期覆盖
+        // vformat 调用（禁临时量，Pitfall 5 悬垂引用）。
+        const std::string bytes_str = FormatBytes(progress.bytes_received);
+        const std::string total_str = FormatBytes(*progress.total_bytes);
+        const std::string percent_str = std::to_string(percent);
+
+        auto tmpl = TranslateKey(i18n, "progress.downloading_with_size");
+        if (!tmpl.empty())
+        {
+            return DAS_FMT_NS::vformat(
+                std::string_view(tmpl),
+                DAS_FMT_NS::make_format_args(
+                    bytes_str,
+                    total_str,
+                    percent_str));
+        }
+        return "正在下载（" + bytes_str + " / " + total_str + "）" + percent_str
+               + "%";
+    }
+
     void DasProgressReporter::Report(const UpdateProgress& progress)
     {
         // 断开后不再浪费 IPC（反向通知语义）。
@@ -328,7 +457,7 @@ namespace Plugins::DasMaaPi
         std::vector<DasProgressUpdateImpl::Field> fields;
         fields.emplace_back(
             "updateProgress",
-            MakeJsonFieldValue(BuildUpdateProgressText(progress)));
+            MakeJsonFieldValue(BuildProgressText(progress)));
         // 非下载阶段不投影速率/耗时：解压/替换期 0 值是陈旧数据，UI 不应
         // 在「解压中…」旁出现 "0.0 MB/s" 的误导字段。
         if (progress.stage == UpdateStage::Download)

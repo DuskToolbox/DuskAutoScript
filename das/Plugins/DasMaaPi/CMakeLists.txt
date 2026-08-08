@@ -73,6 +73,15 @@ add_custom_command(
         ${CMAKE_BINARY_DIR}/das/tmp/DasMaaPi.json
         $<TARGET_FILE_DIR:DasMaaPi>/DasMaaPi.json)
 
+# i18n per-locale JSON 翻译表随插件部署到 plugins/DasMaaPi/i18n/，运行期
+# 经 boost::dll::this_line_location().parent_path()/i18n 定位（cwd != 插件目录）。
+add_custom_command(
+    TARGET DasMaaPi
+    POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_CURRENT_SOURCE_DIR}/i18n
+        $<TARGET_FILE_DIR:DasMaaPi>/i18n)
+
 if(NOT DAS_MAAFRAMEWORK_RUNTIME_DLLS)
     message(FATAL_ERROR "DAS_MAAFRAMEWORK_RUNTIME_DLLS is empty; cannot assemble DasMaaPi package")
 endif()
