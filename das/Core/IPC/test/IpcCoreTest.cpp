@@ -161,6 +161,11 @@ namespace Das::IPC::Test
 
         void PostCallback(IDasAsyncCallback*) override {}
 
+        DasResult PostToBusinessThread(IDasAsyncCallback*) override
+        {
+            return DAS_S_OK;
+        }
+
         DasResult RegisterLocalObject(
             IDasBase*                 object_ptr,
             Das::Core::IPC::ObjectId& out_object_id) override

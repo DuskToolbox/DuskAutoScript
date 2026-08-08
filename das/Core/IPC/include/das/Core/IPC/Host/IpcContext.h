@@ -103,6 +103,9 @@ namespace Core
 
                 void PostCallback(IDasAsyncCallback* callback) override;
 
+                DasResult PostToBusinessThread(
+                    IDasAsyncCallback* callback) override;
+
                 DasResult RegisterLocalObject(
                     IDasBase* object_ptr,
                     ObjectId& out_object_id) override;

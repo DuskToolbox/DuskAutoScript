@@ -843,6 +843,18 @@ namespace Core
                     [ptr = std::move(ptr)]() { ptr->Do(); });
             }
 
+            DasResult IpcContext::PostToBusinessThread(
+                IDasAsyncCallback* callback)
+            {
+                if (!callback)
+                {
+                    return DAS_S_OK;
+                }
+                // RED stub: real impl pending
+                (void)callback;
+                return DAS_S_OK;
+            }
+
             DasResult IpcContext::ResolveMainProcessInterface(
                 const DasGuid& iid,
                 IDasBase**     pp_out_object)

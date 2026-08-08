@@ -25,6 +25,11 @@ namespace Das::Core::IPC::Host
 
         void PostCallback(IDasAsyncCallback*) override {}
 
+        DasResult PostToBusinessThread(IDasAsyncCallback*) override
+        {
+            return DAS_S_OK;
+        }
+
         DasResult RegisterLocalObject(IDasBase* obj, ObjectId& out_id) override
         {
             return object_manager_.RegisterLocalObject(obj, out_id);

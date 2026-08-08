@@ -97,6 +97,24 @@ namespace Core
                 virtual void PostCallback(IDasAsyncCallback* callback) = 0;
 
                 /**
+                 * @brief 将回调投递到 BusinessThread 执行
+                 *
+                 * 与 PostCallback（投 io_context IO 线程）不同，此方法把
+                 * callback 经
+                 * BUSINESS_CONTROL|InternalBusinessCommand::AsyncCallback
+                 * 消息推入 inbound_queue_，由 BusinessThread 上的
+                 * InternalCallbackHandler 解码后调 Do()。
+                 *
+                 * callback 的 Do() 在 BusinessThread 上执行，IO 线程上的
+                 * 调用方可用此通道把可能 sync_wait 的逻辑安全地移出 IO 线程。
+                 *
+                 * @param callback 回调接口指针（内部 AddRef 保持生命周期）
+                 * @return DasResult DAS_S_OK 成功（含 nullptr no-op）
+                 */
+                virtual DasResult PostToBusinessThread(
+                    IDasAsyncCallback* callback) = 0;
+
+                /**
                  * @brief 注册本地对象到分布式对象管理器
                  *
                  * @param object_ptr 对象指针
