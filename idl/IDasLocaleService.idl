@@ -1,0 +1,29 @@
+import "DasBasicTypes.idl";
+
+namespace Das::ExportInterface
+{
+
+    // 默认 locale 变更反向通知回调（照 IDasProgressCallback 范式）。
+    // DasLocaleServiceImpl.SetDefaultLocale 更新进程级 GlobalLocale 后，
+    // 反向遍历已注册 callback 调用本方法，让远端订阅方（Host 子进程）同步 locale。
+    [uuid("7C3D4E5F-6A7B-4C8D-9E0F-1A2B3C4D5E6F")]
+    interface IDasLocaleCallback : IDasBase
+    {
+        DasResult OnDefaultLocaleChanged(IDasReadOnlyString* new_locale);
+    }
+
+    // 主进程 locale 服务（DasLocaleServiceImpl 实现 +
+    // RegisterServiceByName("das.locale") 按名注册）。
+    // 跨进程 callback 参数（IDasLocaleCallback*）经 SerializeInInterfaceParam
+    // 自动代理化，无需 RegisterLocalObject + obj_id 手动反向注册。
+    // RemoveCallback 必须释放 callback proxy 触发远端释放链，防 DOM 泄漏。
+    [uuid("7D4E5F6A-7B8C-4D9E-AF10-2B3C4D5E6F7A")]
+    interface IDasLocaleService : IDasBase
+    {
+        DasResult AddCallback(IDasLocaleCallback* callback);
+        DasResult RemoveCallback(IDasLocaleCallback* callback);
+        DasResult GetDefaultLocale([out] IDasReadOnlyString** pp_out_locale);
+        DasResult SetDefaultLocale(IDasReadOnlyString* locale);
+    }
+
+}
