@@ -261,10 +261,9 @@ class DebugDecorator<Das::ExportInterface::IDasOcr> final
 {
 public:
     DebugDecorator(
-        Das::ExportInterface::IDasOcr* inner,
-        std::string                    operation_name)
-        : inner_(Das::DasPtr<Das::ExportInterface::IDasOcr>::Attach(inner)),
-          operation_name_(std::move(operation_name))
+        Das::DasPtr<Das::ExportInterface::IDasOcr> inner,
+        std::string                                operation_name)
+        : inner_(std::move(inner)), operation_name_(std::move(operation_name))
     {
     }
 
@@ -316,19 +315,19 @@ private:
     std::string                                operation_name_;
 };
 
-Das::ExportInterface::IDasOcr* MaybeDecorateOcrRaw(
-    Das::ExportInterface::IDasOcr* p_raw,
-    const char*                    p_operation_name)
+Das::DasPtr<Das::ExportInterface::IDasOcr> MaybeDecorateOcrRaw(
+    Das::DasPtr<Das::ExportInterface::IDasOcr> ocr,
+    const char*                                p_operation_name)
 {
-    if (!p_raw || !DebugRuntime::IsEnabled())
+    if (!ocr || !DebugRuntime::IsEnabled())
     {
-        return p_raw;
+        return ocr;
     }
 
     const std::string operation_name =
         p_operation_name ? p_operation_name : "ocr";
-    return DebugDecorator<Das::ExportInterface::IDasOcr>::MakeRaw(
-        p_raw,
+    return DebugDecorator<Das::ExportInterface::IDasOcr>::Make(
+        std::move(ocr),
         operation_name);
 }
 

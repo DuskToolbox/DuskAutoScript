@@ -172,10 +172,9 @@ class DebugDecorator<Das::PluginInterface::IDasInput> final
 {
 public:
     DebugDecorator(
-        Das::PluginInterface::IDasInput* p_inner,
-        const char*                      p_input_name)
-        : inner_(Das::DasPtr<Das::PluginInterface::IDasInput>::Attach(p_inner)),
-          input_name_(SafeName(p_input_name))
+        Das::DasPtr<Das::PluginInterface::IDasInput> inner,
+        const char*                                  p_input_name)
+        : inner_(std::move(inner)), input_name_(SafeName(p_input_name))
     {
     }
 
@@ -233,15 +232,11 @@ class DebugDecorator<Das::PluginInterface::IDasTouch> final
 {
 public:
     DebugDecorator(
-        Das::PluginInterface::IDasInput* p_inner_input,
-        Das::PluginInterface::IDasTouch* p_inner_touch,
-        const char*                      p_input_name)
-        : inner_input_(
-              Das::DasPtr<Das::PluginInterface::IDasInput>::Attach(
-                  p_inner_input)),
-          inner_touch_(
-              Das::DasPtr<Das::PluginInterface::IDasTouch>::Attach(
-                  p_inner_touch)),
+        Das::DasPtr<Das::PluginInterface::IDasInput> inner_input,
+        Das::DasPtr<Das::PluginInterface::IDasTouch> inner_touch,
+        const char*                                  p_input_name)
+        : inner_input_(std::move(inner_input)),
+          inner_touch_(std::move(inner_touch)),
           input_name_(SafeName(p_input_name))
     {
     }
@@ -358,31 +353,29 @@ private:
     std::string                                  input_name_;
 };
 
-Das::PluginInterface::IDasInput* MaybeDecorateInput(
-    Das::PluginInterface::IDasInput* p_raw,
-    const char*                      p_input_name)
+Das::DasPtr<Das::PluginInterface::IDasInput> MaybeDecorateInput(
+    Das::DasPtr<Das::PluginInterface::IDasInput> input,
+    const char*                                  p_input_name)
 {
-    if (!p_raw || !DebugRuntime::IsEnabled())
+    if (!input || !DebugRuntime::IsEnabled())
     {
-        return p_raw;
+        return input;
     }
 
-    Das::PluginInterface::IDasTouch* p_touch = nullptr;
-    if (p_raw->QueryInterface(
-            DasIidOf<Das::PluginInterface::IDasTouch>(),
-            reinterpret_cast<void**>(&p_touch))
-            >= 0
-        && p_touch)
+    Das::DasPtr<Das::PluginInterface::IDasTouch> touch;
+    if (input.As(touch) >= 0 && touch)
     {
-        return static_cast<Das::PluginInterface::IDasInput*>(
-            DebugDecorator<Das::PluginInterface::IDasTouch>::MakeRaw(
-                p_raw,
-                p_touch,
-                p_input_name));
+        auto decorated = DebugDecorator<Das::PluginInterface::IDasTouch>::Make(
+            std::move(input),
+            std::move(touch),
+            p_input_name);
+        Das::DasPtr<Das::PluginInterface::IDasInput> decorated_input;
+        static_cast<void>(decorated.As(decorated_input));
+        return decorated_input;
     }
 
-    return DebugDecorator<Das::PluginInterface::IDasInput>::MakeRaw(
-        p_raw,
+    return DebugDecorator<Das::PluginInterface::IDasInput>::Make(
+        std::move(input),
         p_input_name);
 }
 

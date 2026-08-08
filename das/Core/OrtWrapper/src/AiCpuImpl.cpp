@@ -172,13 +172,15 @@ DasResult CreateOcrImpl(
         }
 
         // 4. Construct PaddleOcrImpl (D-13: RAII construction)
-        auto* impl = new PaddleOcrImpl(
-            ai,
-            det_session.Get(),
-            rec_session.Get(),
-            std::move(dict));
-        impl->AddRef();
-        *pp_ocr = DAS::Core::Debug::MaybeDecorateOcrRaw(impl, "ocr");
+        auto decorated = DAS::Core::Debug::MaybeDecorateOcrRaw(
+            PaddleOcrImpl::Make(
+                ai,
+                det_session.Get(),
+                rec_session.Get(),
+                std::move(dict)),
+            "ocr");
+        *pp_ocr = decorated.Get();
+        (*pp_ocr)->AddRef();
         return DAS_S_OK;
     }
     catch (const std::bad_alloc&)

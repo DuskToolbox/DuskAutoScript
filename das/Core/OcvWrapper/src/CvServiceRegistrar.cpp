@@ -15,14 +15,12 @@ DasResult RegisterCvServices(IPC::MainProcess::IIpcContext& ipc_context)
 {
     // 1. Always register CPU backend (per D-03: CPU is always available)
     {
-        auto* cpu_impl = DAS::Core::Debug::MaybeDecorateCvRaw(
-            CvCpuImpl::MakeRaw(),
-            "cv.cpu");
+        auto cpu_impl =
+            DAS::Core::Debug::MaybeDecorateCvRaw(CvCpuImpl::Make(), "cv.cpu");
         auto result = ipc_context.RegisterServiceByName(
-            cpu_impl,
+            cpu_impl.Get(),
             DasIidOf<ExportInterface::IDasCv>(),
             "cv.cpu");
-        cpu_impl->Release();
 
         if (IsFailed(result))
         {
@@ -41,14 +39,13 @@ DasResult RegisterCvServices(IPC::MainProcess::IIpcContext& ipc_context)
         int cuda_device_count = cv::cuda::getCudaEnabledDeviceCount();
         if (cuda_device_count > 0)
         {
-            auto* cuda_impl = DAS::Core::Debug::MaybeDecorateCvRaw(
-                CvCudaImpl::MakeRaw(),
+            auto cuda_impl = DAS::Core::Debug::MaybeDecorateCvRaw(
+                CvCudaImpl::Make(),
                 "cv.cuda");
             auto result = ipc_context.RegisterServiceByName(
-                cuda_impl,
+                cuda_impl.Get(),
                 DasIidOf<ExportInterface::IDasCv>(),
                 "cv.cuda");
-            cuda_impl->Release();
 
             if (IsFailed(result))
             {

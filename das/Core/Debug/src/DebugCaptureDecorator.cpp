@@ -92,11 +92,9 @@ class DebugDecorator<Das::PluginInterface::IDasCapture> final
 {
 public:
     DebugDecorator(
-        Das::PluginInterface::IDasCapture* p_inner,
-        const char*                        p_capture_name)
-        : inner_(
-              Das::DasPtr<Das::PluginInterface::IDasCapture>::Attach(p_inner)),
-          capture_name_(SafeName(p_capture_name))
+        Das::DasPtr<Das::PluginInterface::IDasCapture> inner,
+        const char*                                    p_capture_name)
+        : inner_(std::move(inner)), capture_name_(SafeName(p_capture_name))
     {
     }
 
@@ -158,17 +156,17 @@ private:
     std::string                                    capture_name_;
 };
 
-Das::PluginInterface::IDasCapture* MaybeDecorateCapture(
-    Das::PluginInterface::IDasCapture* p_raw,
-    const char*                        p_capture_name)
+Das::DasPtr<Das::PluginInterface::IDasCapture> MaybeDecorateCapture(
+    Das::DasPtr<Das::PluginInterface::IDasCapture> capture,
+    const char*                                    p_capture_name)
 {
-    if (!p_raw || !DebugRuntime::IsEnabled())
+    if (!capture || !DebugRuntime::IsEnabled())
     {
-        return p_raw;
+        return capture;
     }
 
-    return DebugDecorator<Das::PluginInterface::IDasCapture>::MakeRaw(
-        p_raw,
+    return DebugDecorator<Das::PluginInterface::IDasCapture>::Make(
+        std::move(capture),
         p_capture_name);
 }
 

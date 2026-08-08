@@ -57,31 +57,27 @@ DasResult DAS_STD_CALL DebugInputFactoryDecorator::CreateInstance(
         return DAS_E_INVALID_POINTER;
     }
 
-    Das::PluginInterface::IDasInput* p_raw_input = nullptr;
-    const auto result = inner_->CreateInstance(p_json_config, &p_raw_input);
+    Das::DasPtr<Das::PluginInterface::IDasInput> raw_input;
+    const auto result = inner_->CreateInstance(p_json_config, raw_input.Put());
     if (result < 0)
     {
-        if (p_raw_input)
-        {
-            p_raw_input->Release();
-        }
         return result;
     }
 
-    if (!p_raw_input)
+    if (!raw_input)
     {
         return DAS_E_INVALID_POINTER;
     }
 
-    auto* p_decorated_input =
-        MaybeDecorateInput(p_raw_input, factory_name_.c_str());
-    if (!p_decorated_input)
+    auto decorated_input =
+        MaybeDecorateInput(std::move(raw_input), factory_name_.c_str());
+    if (!decorated_input)
     {
-        p_raw_input->Release();
         return DAS_E_INVALID_POINTER;
     }
 
-    *pp_out_input = p_decorated_input;
+    *pp_out_input = decorated_input.Get();
+    (*pp_out_input)->AddRef();
     out_input.Keep();
     return result;
 }
@@ -95,10 +91,7 @@ Das::DasPtr<Das::PluginInterface::IDasInputFactory> MaybeDecorateInputFactory(
         return factory;
     }
 
-    return Das::DasPtr<Das::PluginInterface::IDasInputFactory>::Attach(
-        DebugInputFactoryDecorator::MakeRaw(
-            std::move(factory),
-            p_factory_name));
+    return DebugInputFactoryDecorator::Make(std::move(factory), p_factory_name);
 }
 
 DAS_CORE_DEBUG_NS_END

@@ -259,11 +259,12 @@ namespace Das::Core::Debug::Test
 
         const DAS::Core::IPC::ScopedCurrentIpcContext scope(
             static_cast<DAS::Core::IPC::MainProcess::IpcContext*>(ctx.get()));
-        IDasBase* p_base = nullptr;
+        DasPtr<IDasBase> base_guard;
         ASSERT_EQ(
-            DasQueryMainProcessInterfaceByName("debug.writer", &p_base),
+            DasQueryMainProcessInterfaceByName(
+                "debug.writer",
+                base_guard.Put()),
             DAS_S_OK);
-        const DasPtr<IDasBase> base_guard = DasPtr<IDasBase>::Attach(p_base);
 
         DasPtr<ExportInterface::IDasDebugWriter> writer;
         ASSERT_EQ(base_guard.As(writer), DAS_S_OK);

@@ -51,21 +51,53 @@ DasResult hr = factory_base.As(factory.Put());
 `QueryInterface`, immediately receive through `PutVoid()` or through an out-param
 owned by a RAII helper.
 
+## ImplBase Factory: Prefer Make()
+
+Every IDL interface implementation generated with the `DasXxxImplBase<TImpl>`
+CRTP base exposes two static factories:
+
+- `TImpl::Make(args...)` → `DasPtr<IInterface>` — new + AddRef + Attach in one
+  step, returns the interface smart pointer
+- `TImpl::MakeRaw(args...)` → `TImpl*` — new + AddRef, returns the concrete
+  raw pointer
+
+Prefer `Make()` for C++ internal creation — it hands back a ready `DasPtr`
+with no separate `Attach`:
+
+```cpp
+auto cv = CvCpuImpl::Make();                       // DasPtr<IDasCv>, no Attach
+auto decorated = MaybeDecorateCvRaw(std::move(cv), "cv.cpu");
+```
+
+Use `MakeRaw()` + `Attach` only when a downstream consumer needs the
+**concrete implementation type** — e.g. the class multiply-inherits a
+non-interface mixin and a helper takes `TImpl*`:
+
+```cpp
+// DebugWriterImpl : DasDebugWriterImplBase<...>, IDebugSink, IDebugDrain
+// MakeSinkRef(DebugWriterImpl*) requires the concrete type.
+auto writer = Das::DasPtr<DebugWriterImpl>::Attach(
+    DebugWriterImpl::MakeRaw(DebugRuntime::DebugDir()));
+```
+
+`Make()` returns the interface type and would drop the concrete type such
+helpers need.
+
 ## Attach
 
 `DasPtr<T>::Attach(raw)` adopts an already owned reference without `AddRef()`.
-Use it only at a boundary where the ownership contract is explicit and there is
-no better `Put()` call site.
+Use it only at a genuine boundary where ownership is explicit and there is no
+better factory or `Put()` call site.
 
-Acceptable examples:
+Acceptable boundaries:
 
-- wrapping a raw pointer returned by an async result contract that transfers
-  ownership
-- adopting `new Impl(...)` only when that implementation starts with an owned
-  reference for the caller
+- a raw pointer transferred by an async-result or IPC contract
 - inside `DasPtr::As(DasPtr<Other>&)`, because QI already added the reference
+- `MakeRaw()` + `Attach` for an ImplBase class whose consumer needs the
+  concrete type (see above)
 
-Do not use `Attach()` for borrowed pointers. Keep borrowed pointers raw, or use
+For ordinary ImplBase creation prefer `Make()`; for out-parameters prefer
+`Put()`. Do not `Attach()` borrowed pointers — keep them raw, or use
 `DasPtr(raw)` only when taking an intentional extra reference.
 
 ## Members And Async Callbacks
@@ -81,6 +113,29 @@ ctx->PostCallback(completion_signal_.Get());
 
 This prevents use-after-free when a callback arrives after a stack-local owner
 has been destroyed.
+
+## Do Not Return Raw Interface Pointers
+
+A C++ function must not return a `IDasXxx*` raw pointer that forces the caller
+to `Attach`. Return ownership explicitly instead:
+
+- C++ internal helper → return `DasPtr<T>` (`std::move` / move-semantics
+  transfer ownership to the caller)
+- IDL / ABI / interface method → use a `[out] T**` parameter (caller receives
+  via `Put()`), typically with a `DasResult` return code
+
+```cpp
+// C++ internal helper — return DasPtr
+Das::DasPtr<Das::ExportInterface::IDasCv>
+MaybeDecorateCvRaw(Das::DasPtr<Das::ExportInterface::IDasCv> cv, const char* name);
+
+// IDL / ABI boundary — [out] parameter + DasResult
+DasResult QueryInterface(const DasGuid& iid, void** pp_out);
+```
+
+This confines every `Attach` to genuine boundaries (transferred raw pointers,
+`MakeRaw` for a concrete type, framework internals) and lets the rest of the
+code flow `DasPtr` through `std::move` / `Put` with zero `Attach`.
 
 ## Returning Through T**
 

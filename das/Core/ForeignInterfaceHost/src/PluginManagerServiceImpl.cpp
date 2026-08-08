@@ -436,18 +436,14 @@ DasResult PluginManagerServiceImpl::CreateCaptureManager(
             }
         }
 
-        Das::PluginInterface::IDasCapture* p_raw_capture = nullptr;
+        DAS::DasPtr<Das::PluginInterface::IDasCapture> capture_obj;
         const auto create_result = factory->CreateInstance(
             p_environment_config,
             plugin_config.Get(),
-            &p_raw_capture);
+            capture_obj.Put());
 
-        if (DAS::IsFailed(create_result) || !p_raw_capture)
+        if (DAS::IsFailed(create_result) || !capture_obj)
         {
-            if (p_raw_capture)
-            {
-                p_raw_capture->Release();
-            }
             DAS_CORE_LOG_WARN(
                 "CaptureFactory::CreateInstance failed, result={}",
                 create_result);
@@ -492,7 +488,7 @@ DasResult PluginManagerServiceImpl::CreateCaptureManager(
         }
 
         DAS::DasPtr<IDasReadOnlyString> capture_name;
-        auto* type_info = static_cast<IDasTypeInfo*>(p_raw_capture);
+        auto* type_info = static_cast<IDasTypeInfo*>(capture_obj.Get());
         if (type_info)
         {
             type_info->GetRuntimeClassName(capture_name.Put());
@@ -520,11 +516,9 @@ DasResult PluginManagerServiceImpl::CreateCaptureManager(
             }
         }
 
-        auto* p_decorated_capture = Das::Core::Debug::MaybeDecorateCapture(
-            p_raw_capture,
+        auto capture = Das::Core::Debug::MaybeDecorateCapture(
+            std::move(capture_obj),
             p_capture_name_utf8);
-        auto capture = DAS::DasPtr<Das::PluginInterface::IDasCapture>::Attach(
-            p_decorated_capture);
 
         capture_mgr->AddInstance(std::move(capture_name), std::move(capture));
     }

@@ -617,23 +617,17 @@ namespace Das::Core::Debug::Test
         ForeignInterfaceHost::PluginManagerServiceImpl service(
             harness.PluginManager(),
             dir);
-        ExportInterface::IDasCaptureManager* p_raw_manager = nullptr;
+        DasPtr<ExportInterface::IDasCaptureManager> manager;
         ASSERT_EQ(
-            service.CreateCaptureManager(nullptr, &p_raw_manager),
+            service.CreateCaptureManager(nullptr, manager.Put()),
             DAS_S_OK);
-        auto manager =
-            DasPtr<ExportInterface::IDasCaptureManager>::Attach(p_raw_manager);
 
-        PluginInterface::IDasCapture* p_raw_capture = nullptr;
-        ASSERT_EQ(manager->EnumInterface(0, &p_raw_capture), DAS_S_OK);
-        auto capture =
-            DasPtr<PluginInterface::IDasCapture>::Attach(p_raw_capture);
+        DasPtr<PluginInterface::IDasCapture> capture;
+        ASSERT_EQ(manager->EnumInterface(0, capture.Put()), DAS_S_OK);
         EXPECT_NE(capture.Get(), raw_factory->last_created);
 
-        ExportInterface::IDasImage* p_raw_image = nullptr;
-        ASSERT_EQ(capture->Capture(&p_raw_image), DAS_S_OK);
-        auto image_guard =
-            DasPtr<ExportInterface::IDasImage>::Attach(p_raw_image);
+        DasPtr<ExportInterface::IDasImage> image_guard;
+        ASSERT_EQ(capture->Capture(image_guard.Put()), DAS_S_OK);
 
         ASSERT_EQ(DebugRuntime::Flush(), DAS_S_OK);
         ExpectFileContains(dir / "debug.jsonl", R"("type":"capture")");
@@ -746,11 +740,8 @@ namespace Das::Core::Debug::Test
         auto       ctx = RegisterWriterForRuntime(dir);
         DebugRuntime::SetLatestImage(MakeSnapshot());
 
-        auto* raw_touch = FakeTouch::MakeRaw();
-        auto* raw_input = static_cast<PluginInterface::IDasInput*>(raw_touch);
-        auto* decorated_raw = MaybeDecorateInput(raw_input, "fake_touch");
-        auto  decorated_input =
-            DasPtr<PluginInterface::IDasInput>::Attach(decorated_raw);
+        auto decorated_input =
+            MaybeDecorateInput(FakeTouch::Make(), "fake_touch");
 
         DasPtr<PluginInterface::IDasTouch> decorated_touch;
         ASSERT_EQ(decorated_input.As(decorated_touch), DAS_S_OK);
@@ -856,10 +847,8 @@ namespace Das::Core::Debug::Test
             DasPtr<PluginInterface::IDasCapture>::Attach(p_raw_capture);
         EXPECT_EQ(capture.Get(), raw_capture_factory->last_created);
 
-        ExportInterface::IDasImage* p_raw_image = nullptr;
-        ASSERT_EQ(capture->Capture(&p_raw_image), DAS_S_OK);
-        auto image_guard =
-            DasPtr<ExportInterface::IDasImage>::Attach(p_raw_image);
+        DasPtr<ExportInterface::IDasImage> image_guard;
+        ASSERT_EQ(capture->Capture(image_guard.Put()), DAS_S_OK);
 
         ASSERT_EQ(DebugRuntime::Flush(), DAS_S_OK);
         EXPECT_FALSE(std::filesystem::exists(dir / "debug.jsonl"));

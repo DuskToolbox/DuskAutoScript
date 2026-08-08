@@ -388,9 +388,9 @@ DasResult CreateIDasImageFromRgb888(
     uint64_t       data_size{};
     unsigned char* p_data{};
 
-    DAS::ExportInterface::IDasBinaryBuffer* p_buffer = nullptr;
+    DAS::DasPtr<DAS::ExportInterface::IDasBinaryBuffer> buffer_guard;
     if (const auto get_buffer_result =
-            p_alias_memory->GetBinaryBuffer(0, &p_buffer);
+            p_alias_memory->GetBinaryBuffer(0, buffer_guard.Put());
         DAS::IsFailed(get_buffer_result)) [[unlikely]]
     {
         DAS_CORE_LOG_ERROR(
@@ -399,10 +399,7 @@ DasResult CreateIDasImageFromRgb888(
         return get_buffer_result;
     }
 
-    auto buffer_guard =
-        DAS::DasPtr<DAS::ExportInterface::IDasBinaryBuffer>::Attach(p_buffer);
-
-    if (const auto get_size_result = p_buffer->GetSize(&data_size);
+    if (const auto get_size_result = buffer_guard->GetSize(&data_size);
         DAS::IsFailed(get_size_result)) [[unlikely]]
     {
         DAS_CORE_LOG_ERROR(
@@ -411,7 +408,7 @@ DasResult CreateIDasImageFromRgb888(
         return get_size_result;
     }
 
-    if (const auto get_data_result = p_buffer->GetData(&p_data);
+    if (const auto get_data_result = buffer_guard->GetData(&p_data);
         DAS::IsFailed(get_data_result)) [[unlikely]]
     {
         DAS_CORE_LOG_ERROR(
@@ -444,7 +441,7 @@ DasResult CreateIDasImageFromRgb888(
             size.height,
             size.width,
             CV_8UC4,
-            p_buffer};
+            buffer_guard.Get()};
         p_result->AddRef();
         result.Set(p_result);
         p_result->Release();

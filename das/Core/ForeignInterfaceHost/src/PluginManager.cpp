@@ -727,17 +727,15 @@ DasResult PluginManager::GetObjectByFeature(
     if (feature == Das::PluginInterface::DAS_PLUGIN_FEATURE_INPUT_FACTORY
         && iid == DasIidOf<Das::PluginInterface::IDasInputFactory>())
     {
-        Das::PluginInterface::IDasInputFactory* p_factory = nullptr;
+        DasPtr<Das::PluginInterface::IDasInputFactory> factory;
         const auto result = feature_info.interface_ptr->QueryInterface(
             iid,
-            reinterpret_cast<void**>(&p_factory));
-        if (DAS::IsFailed(result) || !p_factory)
+            reinterpret_cast<void**>(factory.Put()));
+        if (DAS::IsFailed(result) || !factory)
         {
             return result;
         }
 
-        auto factory =
-            DasPtr<Das::PluginInterface::IDasInputFactory>::Attach(p_factory);
         auto decorated_factory = Das::Core::Debug::MaybeDecorateInputFactory(
             std::move(factory),
             feature_info.plugin_name.c_str());

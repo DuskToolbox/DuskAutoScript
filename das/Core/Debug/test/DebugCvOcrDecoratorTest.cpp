@@ -542,18 +542,17 @@ namespace Das::Core::Debug::Test
         ASSERT_EQ(RegisterDebugWriterService(*ctx), DAS_S_OK);
         ASSERT_EQ(DAS::Core::OcvWrapper::RegisterCvServices(*ctx), DAS_S_OK);
 
-        IDasBase* base = nullptr;
+        Das::DasPtr<IDasBase> base_guard;
         ASSERT_EQ(
-            DasQueryMainProcessInterfaceByName("cv.cpu", &base),
+            DasQueryMainProcessInterfaceByName("cv.cpu", base_guard.Put()),
             DAS_S_OK);
-        auto base_guard = Das::DasPtr<IDasBase>::Attach(base);
 
         Das::DasPtr<Das::ExportInterface::IDasCv> cv;
         ASSERT_EQ(base_guard.As(cv), DAS_S_OK);
 
         auto image = MakePatternImage();
         auto templ = MakePatternTemplate();
-        Das::ExportInterface::IDasTemplateMatchResults* raw_results = nullptr;
+        Das::DasPtr<Das::ExportInterface::IDasTemplateMatchResults> results;
         ASSERT_EQ(
             cv->TemplateMatchAll(
                 image.Get(),
@@ -561,11 +560,8 @@ namespace Das::Core::Debug::Test
                 Das::ExportInterface::DAS_TEMPLATE_MATCH_TYPE_CCOEFF_NORMED,
                 0.8,
                 3,
-                &raw_results),
+                results.Put()),
             DAS_S_OK);
-        auto results =
-            Das::DasPtr<Das::ExportInterface::IDasTemplateMatchResults>::Attach(
-                raw_results);
 
         ASSERT_EQ(DebugRuntime::Flush(), DAS_S_OK);
         const auto lines = ReadLines(dir / "debug.jsonl");
@@ -607,23 +603,19 @@ namespace Das::Core::Debug::Test
         const DasReadOnlyString rec_model{rec_model_path.c_str()};
         const DasReadOnlyString dict_model{dict_path_string.c_str()};
 
-        Das::ExportInterface::IDasOcr* raw_ocr = nullptr;
+        Das::DasPtr<Das::ExportInterface::IDasOcr> ocr;
         ASSERT_EQ(
             DAS::Core::OrtWrapper::CreateOcrImpl(
                 fake_ai_guard.Get(),
                 nullptr,
                 rec_model.Get(),
                 dict_model.Get(),
-                &raw_ocr),
+                ocr.Put()),
             DAS_S_OK);
-        auto ocr = Das::DasPtr<Das::ExportInterface::IDasOcr>::Attach(raw_ocr);
 
-        auto                                       image = MakeOcrImage();
-        Das::ExportInterface::IDasOcrResultVector* raw_results = nullptr;
-        ASSERT_EQ(ocr->Recognize(image.Get(), &raw_results), DAS_S_OK);
-        auto results =
-            Das::DasPtr<Das::ExportInterface::IDasOcrResultVector>::Attach(
-                raw_results);
+        auto image = MakeOcrImage();
+        Das::DasPtr<Das::ExportInterface::IDasOcrResultVector> results;
+        ASSERT_EQ(ocr->Recognize(image.Get(), results.Put()), DAS_S_OK);
 
         ASSERT_EQ(DebugRuntime::Flush(), DAS_S_OK);
         const auto lines = ReadLines(dir / "debug.jsonl");
@@ -642,15 +634,14 @@ namespace Das::Core::Debug::Test
         const auto dir = UniqueTempDir("DisabledReturnsRawCvAndOcr");
         InitializeRuntime(dir, "0");
 
-        auto* raw_cv = DAS::Core::OcvWrapper::CvCpuImpl::MakeRaw();
-        auto* maybe_cv = MaybeDecorateCvRaw(raw_cv, "cv.cpu");
-        EXPECT_EQ(maybe_cv, raw_cv);
-        auto cv = Das::DasPtr<Das::ExportInterface::IDasCv>::Attach(maybe_cv);
+        auto  raw_cv = DAS::Core::OcvWrapper::CvCpuImpl::Make();
+        auto* raw_cv_ptr = raw_cv.Get();
+        auto  cv = MaybeDecorateCvRaw(std::move(raw_cv), "cv.cpu");
+        EXPECT_EQ(cv.Get(), raw_cv_ptr);
 
         auto image = MakePatternImage();
         auto templ = MakePatternTemplate();
-        Das::ExportInterface::IDasTemplateMatchResults* raw_cv_results =
-            nullptr;
+        Das::DasPtr<Das::ExportInterface::IDasTemplateMatchResults> cv_results;
         ASSERT_EQ(
             cv->TemplateMatchAll(
                 image.Get(),
@@ -658,25 +649,18 @@ namespace Das::Core::Debug::Test
                 Das::ExportInterface::DAS_TEMPLATE_MATCH_TYPE_CCOEFF_NORMED,
                 0.8,
                 1,
-                &raw_cv_results),
+                cv_results.Put()),
             DAS_S_OK);
-        auto cv_results =
-            Das::DasPtr<Das::ExportInterface::IDasTemplateMatchResults>::Attach(
-                raw_cv_results);
 
-        auto* raw_ocr = FakeOcr::MakeRaw();
-        auto* maybe_ocr = MaybeDecorateOcrRaw(raw_ocr, "ocr");
-        EXPECT_EQ(maybe_ocr, raw_ocr);
-        auto ocr =
-            Das::DasPtr<Das::ExportInterface::IDasOcr>::Attach(maybe_ocr);
+        auto  raw_ocr = FakeOcr::Make();
+        auto* raw_ocr_ptr = raw_ocr.Get();
+        auto  ocr = MaybeDecorateOcrRaw(std::move(raw_ocr), "ocr");
+        EXPECT_EQ(ocr.Get(), raw_ocr_ptr);
 
-        Das::ExportInterface::IDasOcrResultVector* raw_ocr_results = nullptr;
+        Das::DasPtr<Das::ExportInterface::IDasOcrResultVector> ocr_results;
         ASSERT_EQ(
-            ocr->Recognize(MakeOcrImage().Get(), &raw_ocr_results),
+            ocr->Recognize(MakeOcrImage().Get(), ocr_results.Put()),
             DAS_S_OK);
-        auto ocr_results =
-            Das::DasPtr<Das::ExportInterface::IDasOcrResultVector>::Attach(
-                raw_ocr_results);
 
         ASSERT_EQ(DebugRuntime::Flush(), DAS_S_OK);
         EXPECT_FALSE(std::filesystem::exists(dir / "debug.jsonl"));

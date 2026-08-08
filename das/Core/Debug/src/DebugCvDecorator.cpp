@@ -229,10 +229,9 @@ class DebugDecorator<Das::ExportInterface::IDasCv> final
 {
 public:
     DebugDecorator(
-        Das::ExportInterface::IDasCv* inner,
-        std::string                   service_name)
-        : inner_(Das::DasPtr<Das::ExportInterface::IDasCv>::Attach(inner)),
-          service_name_(std::move(service_name))
+        Das::DasPtr<Das::ExportInterface::IDasCv> inner,
+        std::string                               service_name)
+        : inner_(std::move(inner)), service_name_(std::move(service_name))
     {
     }
 
@@ -504,18 +503,18 @@ private:
     std::string                               service_name_;
 };
 
-Das::ExportInterface::IDasCv* MaybeDecorateCvRaw(
-    Das::ExportInterface::IDasCv* p_raw,
-    const char*                   p_service_name)
+Das::DasPtr<Das::ExportInterface::IDasCv> MaybeDecorateCvRaw(
+    Das::DasPtr<Das::ExportInterface::IDasCv> cv,
+    const char*                               p_service_name)
 {
-    if (!p_raw || !DebugRuntime::IsEnabled())
+    if (!cv || !DebugRuntime::IsEnabled())
     {
-        return p_raw;
+        return cv;
     }
 
     const std::string service_name = p_service_name ? p_service_name : "cv";
-    return DebugDecorator<Das::ExportInterface::IDasCv>::MakeRaw(
-        p_raw,
+    return DebugDecorator<Das::ExportInterface::IDasCv>::Make(
+        std::move(cv),
         service_name);
 }
 

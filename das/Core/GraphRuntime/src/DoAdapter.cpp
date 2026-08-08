@@ -172,15 +172,10 @@ namespace
         }
         case DAS_VARIANT_TYPE_BASE:
         {
-            IDasBase* p_obj = nullptr;
-            result = map->GetBase(key_str.Get(), DAS_IID_BASE, &p_obj);
+            DAS::DasPtr<IDasBase> base_ptr;
+            result = map->GetBase(key_str.Get(), DAS_IID_BASE, base_ptr.Put());
             if (DAS::IsOk(result))
             {
-                // Attach adopts the +1 ref from QueryInterface inside
-                // GetBase — no extra AddRef.  Using DasPtr(raw) here
-                // would double-count and leak (DasPtr.hpp:61 calls
-                // AddRef on raw-pointer construction).
-                auto base_ptr = DAS::DasPtr<IDasBase>::Attach(p_obj);
                 frame.Set(
                     node_id,
                     port_id,
@@ -190,13 +185,11 @@ namespace
         }
         case DAS_VARIANT_TYPE_COMPONENT:
         {
-            IDasBase* p_comp = nullptr;
-            result = map->GetComponent(key_str.Get(), DAS_IID_BASE, &p_comp);
+            DAS::DasPtr<IDasBase> comp_ptr;
+            result =
+                map->GetComponent(key_str.Get(), DAS_IID_BASE, comp_ptr.Put());
             if (DAS::IsOk(result))
             {
-                // Same pattern: GetComponent returns +1 ref, Attach
-                // adopts it without double counting.
-                auto comp_ptr = DAS::DasPtr<IDasBase>::Attach(p_comp);
                 frame.Set(
                     node_id,
                     port_id,

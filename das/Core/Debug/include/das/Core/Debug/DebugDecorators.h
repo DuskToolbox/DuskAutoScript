@@ -13,21 +13,21 @@ DAS_CORE_DEBUG_NS_BEGIN
 template <class TInterface>
 class DebugDecorator;
 
-Das::ExportInterface::IDasCv* MaybeDecorateCvRaw(
-    Das::ExportInterface::IDasCv* p_raw,
-    const char*                   p_service_name);
+Das::DasPtr<Das::ExportInterface::IDasCv> MaybeDecorateCvRaw(
+    Das::DasPtr<Das::ExportInterface::IDasCv> cv,
+    const char*                               p_service_name);
 
-Das::ExportInterface::IDasOcr* MaybeDecorateOcrRaw(
-    Das::ExportInterface::IDasOcr* p_raw,
-    const char*                    p_operation_name);
+Das::DasPtr<Das::ExportInterface::IDasOcr> MaybeDecorateOcrRaw(
+    Das::DasPtr<Das::ExportInterface::IDasOcr> ocr,
+    const char*                                p_operation_name);
 
-Das::PluginInterface::IDasCapture* MaybeDecorateCapture(
-    Das::PluginInterface::IDasCapture* p_raw,
-    const char*                        p_capture_name);
+Das::DasPtr<Das::PluginInterface::IDasCapture> MaybeDecorateCapture(
+    Das::DasPtr<Das::PluginInterface::IDasCapture> capture,
+    const char*                                    p_capture_name);
 
-Das::PluginInterface::IDasInput* MaybeDecorateInput(
-    Das::PluginInterface::IDasInput* p_raw,
-    const char*                      p_input_name);
+Das::DasPtr<Das::PluginInterface::IDasInput> MaybeDecorateInput(
+    Das::DasPtr<Das::PluginInterface::IDasInput> input,
+    const char*                                  p_input_name);
 
 Das::DasPtr<Das::PluginInterface::IDasInputFactory> MaybeDecorateInputFactory(
     Das::DasPtr<Das::PluginInterface::IDasInputFactory> factory,

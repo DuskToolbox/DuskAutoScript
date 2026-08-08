@@ -105,14 +105,13 @@ namespace
 
     DasResult SubmitEventByName(const DebugEvent& event)
     {
-        IDasBase*  p_base = nullptr;
-        const auto query_result =
-            DasQueryMainProcessInterfaceByName("debug.writer", &p_base);
+        Das::DasPtr<IDasBase> base;
+        const auto            query_result =
+            DasQueryMainProcessInterfaceByName("debug.writer", base.Put());
         if (query_result < 0)
         {
             return query_result;
         }
-        auto base = Das::DasPtr<IDasBase>::Attach(p_base);
 
         Das::DasPtr<Das::ExportInterface::IDasDebugWriter> writer;
         const auto qi_result = base.As(writer);
@@ -128,14 +127,13 @@ namespace
 
     DasResult FlushByName()
     {
-        IDasBase*  p_base = nullptr;
-        const auto query_result =
-            DasQueryMainProcessInterfaceByName("debug.writer", &p_base);
+        Das::DasPtr<IDasBase> base;
+        const auto            query_result =
+            DasQueryMainProcessInterfaceByName("debug.writer", base.Put());
         if (query_result < 0)
         {
             return query_result;
         }
-        auto base = Das::DasPtr<IDasBase>::Attach(p_base);
 
         Das::DasPtr<Das::ExportInterface::IDasDebugWriter> writer;
         const auto qi_result = base.As(writer);

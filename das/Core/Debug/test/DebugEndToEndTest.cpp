@@ -465,23 +465,14 @@ namespace Das::Core::Debug::Test
                 static_cast<DAS::Core::IPC::MainProcess::IpcContext*>(
                     ctx.get()));
 
-            auto* decorated_capture = MaybeDecorateCapture(
-                FakeCapture::MakeRaw(),
-                "end_to_end_capture");
             auto capture =
-                Das::DasPtr<Das::PluginInterface::IDasCapture>::Attach(
-                    decorated_capture);
+                MaybeDecorateCapture(FakeCapture::Make(), "end_to_end_capture");
 
-            Das::ExportInterface::IDasImage* raw_capture_image = nullptr;
-            ASSERT_EQ(capture->Capture(&raw_capture_image), DAS_S_OK);
-            auto capture_image =
-                Das::DasPtr<Das::ExportInterface::IDasImage>::Attach(
-                    raw_capture_image);
+            Das::DasPtr<Das::ExportInterface::IDasImage> capture_image;
+            ASSERT_EQ(capture->Capture(capture_image.Put()), DAS_S_OK);
 
-            auto* decorated_input =
-                MaybeDecorateInput(FakeTouch::MakeRaw(), "end_to_end_touch");
-            auto input = Das::DasPtr<Das::PluginInterface::IDasInput>::Attach(
-                decorated_input);
+            auto input =
+                MaybeDecorateInput(FakeTouch::Make(), "end_to_end_touch");
             ASSERT_EQ(input->Click(8, 9), DAS_S_OK);
 
             Das::DasPtr<Das::PluginInterface::IDasTouch> touch;
@@ -493,10 +484,8 @@ namespace Das::Core::Debug::Test
                     120),
                 DAS_S_OK);
 
-            auto* decorated_cv =
-                MaybeDecorateCvRaw(OcvWrapper::CvCpuImpl::MakeRaw(), "cv.cpu");
             auto cv =
-                Das::DasPtr<Das::ExportInterface::IDasCv>::Attach(decorated_cv);
+                MaybeDecorateCvRaw(OcvWrapper::CvCpuImpl::Make(), "cv.cpu");
             auto image = MakeImage();
             auto templ = MakeTemplate();
 
@@ -518,34 +507,22 @@ namespace Das::Core::Debug::Test
             const Das::ExportInterface::DasColorRange range{
                 {0, 0, 0, 0},
                 {255, 255, 255, 255}};
-            Das::ExportInterface::IDasImage* raw_mask = nullptr;
+            Das::DasPtr<Das::ExportInterface::IDasImage> mask;
             ASSERT_EQ(
-                cv->ColorFilter(image.Get(), &range, &raw_mask),
+                cv->ColorFilter(image.Get(), &range, mask.Put()),
                 DAS_S_OK);
-            auto mask =
-                Das::DasPtr<Das::ExportInterface::IDasImage>::Attach(raw_mask);
 
-            Das::ExportInterface::IDasImage* raw_converted = nullptr;
+            Das::DasPtr<Das::ExportInterface::IDasImage> converted;
             ASSERT_EQ(
                 cv->ConvertColor(
                     image.Get(),
                     Das::ExportInterface::DAS_PIXEL_FORMAT_RGB,
-                    &raw_converted),
+                    converted.Put()),
                 DAS_S_OK);
-            auto converted =
-                Das::DasPtr<Das::ExportInterface::IDasImage>::Attach(
-                    raw_converted);
 
-            auto* decorated_ocr =
-                MaybeDecorateOcrRaw(FakeOcr::MakeRaw(), "ocr");
-            auto ocr = Das::DasPtr<Das::ExportInterface::IDasOcr>::Attach(
-                decorated_ocr);
-            Das::ExportInterface::IDasOcrResultVector* raw_ocr_results =
-                nullptr;
-            ASSERT_EQ(ocr->Recognize(image.Get(), &raw_ocr_results), DAS_S_OK);
-            auto ocr_results =
-                Das::DasPtr<Das::ExportInterface::IDasOcrResultVector>::Attach(
-                    raw_ocr_results);
+            auto ocr = MaybeDecorateOcrRaw(FakeOcr::Make(), "ocr");
+            Das::DasPtr<Das::ExportInterface::IDasOcrResultVector> ocr_results;
+            ASSERT_EQ(ocr->Recognize(image.Get(), ocr_results.Put()), DAS_S_OK);
 
             ASSERT_EQ(DebugRuntime::Flush(), DAS_S_OK);
             std::cout << "DAS_DEBUG_DIR=" << dir.string() << '\n';
@@ -659,32 +636,28 @@ namespace Das::Core::Debug::Test
         const auto dir = UniqueTempDir("NoArtifactsAndRawObjects");
         InitializeRuntime(dir, "0");
 
-        auto* raw_capture = FakeCapture::MakeRaw();
-        auto* maybe_capture =
-            MaybeDecorateCapture(raw_capture, "disabled_capture");
-        EXPECT_EQ(maybe_capture, raw_capture);
-        auto capture = Das::DasPtr<Das::PluginInterface::IDasCapture>::Attach(
-            maybe_capture);
-        Das::ExportInterface::IDasImage* raw_image = nullptr;
-        ASSERT_EQ(capture->Capture(&raw_image), DAS_S_OK);
-        auto image =
-            Das::DasPtr<Das::ExportInterface::IDasImage>::Attach(raw_image);
+        auto  raw_capture = FakeCapture::Make();
+        auto* raw_capture_ptr = raw_capture.Get();
+        auto  capture =
+            MaybeDecorateCapture(std::move(raw_capture), "disabled_capture");
+        EXPECT_EQ(capture.Get(), raw_capture_ptr);
+        Das::DasPtr<Das::ExportInterface::IDasImage> image;
+        ASSERT_EQ(capture->Capture(image.Put()), DAS_S_OK);
 
-        auto* raw_input = FakeTouch::MakeRaw();
-        auto* maybe_input = MaybeDecorateInput(raw_input, "disabled_input");
+        auto  raw_input = FakeTouch::Make();
+        auto* raw_input_ptr = raw_input.Get();
+        auto input = MaybeDecorateInput(std::move(raw_input), "disabled_input");
         EXPECT_EQ(
-            maybe_input,
-            static_cast<Das::PluginInterface::IDasInput*>(raw_input));
-        auto input =
-            Das::DasPtr<Das::PluginInterface::IDasInput>::Attach(maybe_input);
+            input.Get(),
+            static_cast<Das::PluginInterface::IDasInput*>(raw_input_ptr));
         ASSERT_EQ(input->Click(1, 2), DAS_S_OK);
 
-        auto* raw_cv = OcvWrapper::CvCpuImpl::MakeRaw();
-        auto* maybe_cv = MaybeDecorateCvRaw(raw_cv, "cv.cpu");
-        EXPECT_EQ(maybe_cv, raw_cv);
-        auto cv = Das::DasPtr<Das::ExportInterface::IDasCv>::Attach(maybe_cv);
+        auto  raw_cv = OcvWrapper::CvCpuImpl::Make();
+        auto* raw_cv_ptr = raw_cv.Get();
+        auto  cv = MaybeDecorateCvRaw(std::move(raw_cv), "cv.cpu");
+        EXPECT_EQ(cv.Get(), raw_cv_ptr);
         auto templ = MakeTemplate();
-        Das::ExportInterface::IDasTemplateMatchResults* raw_matches = nullptr;
+        Das::DasPtr<Das::ExportInterface::IDasTemplateMatchResults> matches;
         ASSERT_EQ(
             cv->TemplateMatchAll(
                 image.Get(),
@@ -692,22 +665,15 @@ namespace Das::Core::Debug::Test
                 Das::ExportInterface::DAS_TEMPLATE_MATCH_TYPE_CCORR_NORMED,
                 0.8,
                 1,
-                &raw_matches),
+                matches.Put()),
             DAS_S_OK);
-        auto matches =
-            Das::DasPtr<Das::ExportInterface::IDasTemplateMatchResults>::Attach(
-                raw_matches);
 
-        auto* raw_ocr = FakeOcr::MakeRaw();
-        auto* maybe_ocr = MaybeDecorateOcrRaw(raw_ocr, "ocr");
-        EXPECT_EQ(maybe_ocr, raw_ocr);
-        auto ocr =
-            Das::DasPtr<Das::ExportInterface::IDasOcr>::Attach(maybe_ocr);
-        Das::ExportInterface::IDasOcrResultVector* raw_ocr_results = nullptr;
-        ASSERT_EQ(ocr->Recognize(image.Get(), &raw_ocr_results), DAS_S_OK);
-        auto ocr_results =
-            Das::DasPtr<Das::ExportInterface::IDasOcrResultVector>::Attach(
-                raw_ocr_results);
+        auto  raw_ocr = FakeOcr::Make();
+        auto* raw_ocr_ptr = raw_ocr.Get();
+        auto  ocr = MaybeDecorateOcrRaw(std::move(raw_ocr), "ocr");
+        EXPECT_EQ(ocr.Get(), raw_ocr_ptr);
+        Das::DasPtr<Das::ExportInterface::IDasOcrResultVector> ocr_results;
+        ASSERT_EQ(ocr->Recognize(image.Get(), ocr_results.Put()), DAS_S_OK);
 
         ASSERT_EQ(DebugRuntime::Flush(), DAS_S_OK);
         EXPECT_FALSE(std::filesystem::exists(dir / "debug.jsonl"));
