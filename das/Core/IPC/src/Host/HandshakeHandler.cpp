@@ -235,6 +235,12 @@ namespace Core
                 on_client_connected_ = std::move(callback);
             }
 
+            void HandshakeHandler::SetOnClientReady(
+                ClientReadyCallback callback)
+            {
+                on_client_ready_ = std::move(callback);
+            }
+
             void HandshakeHandler::SetOnClientDisconnected(
                 ClientDisconnectedCallback callback)
             {
@@ -451,6 +457,30 @@ namespace Core
                     request.session_id,
                     it->second.plugin_name.c_str());
                 DAS_LOG_INFO(msg.c_str());
+
+                // 触发 on_client_ready_ 回调（比 on_client_connected_ 更晚，
+                // 此时双向握手已完成）。用于 on_after_connect 等"连接完全建
+                // 立"后才能跑的逻辑（如经 BusinessThread 发起 sync_wait IPC
+                // resolve——过早触发会与握手消息争抢 transport 致字节交错）。
+                if (on_client_ready_)
+                {
+                    try
+                    {
+                        on_client_ready_(it->second);
+                    }
+                    catch (const std::exception& e)
+                    {
+                        const std::string err_msg = DAS_FMT_NS::format(
+                            "HandshakeHandler: exception in on_client_ready callback: {}",
+                            e.what());
+                        DAS_LOG_ERROR(err_msg.c_str());
+                    }
+                    catch (...)
+                    {
+                        DAS_LOG_ERROR(
+                            "HandshakeHandler: unknown exception in on_client_ready callback");
+                    }
+                }
 
                 ReadyAckV1 ack;
                 InitReadyAck(ack, ReadyAckV1::STATUS_SUCCESS);

@@ -214,8 +214,16 @@ namespace Core
                         }
 
                         is_connected_ = true;
-                        InvokeOnAfterConnect(this);
                     });
+
+                // on_after_connect 推迟到 Ready 之后触发——HandleHelloRequest
+                // 阶段 transport 还在传 Welcome/Ready/ReadyAck，此时
+                // BusinessThread 发起 sync_wait IPC 会与握手消息争抢
+                // transport 致字节交错。Ready 阶段握手完整结束，sync IPC
+                // 安全。
+                handshake_handler_->SetOnClientReady(
+                    [this](const ConnectedClient&)
+                    { InvokeOnAfterConnect(this); });
 
                 handshake_handler_->SetOnClientDisconnected(
                     [this](uint16_t /*session_id*/) { is_connected_ = false; });

@@ -130,6 +130,8 @@ namespace Core
                     std::function<void(const ConnectedClient&)>;
                 using ClientDisconnectedCallback =
                     std::function<void(uint16_t session_id)>;
+                using ClientReadyCallback =
+                    std::function<void(const ConnectedClient&)>;
                 using ShutdownRequestedCallback = std::function<void()>;
 
                 /**
@@ -170,6 +172,17 @@ namespace Core
                  * @param callback 回调函数
                  */
                 void SetOnClientConnected(ClientConnectedCallback callback);
+
+                /**
+                 * @brief 设置客户端就绪回调
+                 *
+                 * 当客户端完成 Ready 握手（完整握手结束，ReadyAck 即将发出）
+                 * 后触发。比 on_client_connected 更晚——此时双向握手已完成，
+                 * 业务线程发起的 sync_wait IPC 不会与握手消息争抢 transport。
+                 *
+                 * @param callback 回调函数
+                 */
+                void SetOnClientReady(ClientReadyCallback callback);
 
                 /**
                  * @brief 设置客户端断开回调
@@ -293,6 +306,8 @@ namespace Core
 
                 ClientConnectedCallback
                     on_client_connected_; ///< 客户端连接回调
+                ClientReadyCallback
+                    on_client_ready_; ///< 客户端就绪回调（Ready 后）
                 ClientDisconnectedCallback
                     on_client_disconnected_; ///< 客户端断开回调
 

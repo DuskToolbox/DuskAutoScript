@@ -17,6 +17,7 @@
 #include <das/Core/IPC/MethodMetadata.h>
 #include <das/Core/IPC/ObjectId.h>
 #include <das/Core/IPC/RemoteObjectRegistry.h>
+#include <das/Core/i18n/LocaleSyncCallback.h>
 #include <das/DasApi.h>
 #include <das/Debug/CrashDumper.h>
 #include <das/IDasBase.h>
@@ -318,6 +319,24 @@ int main(int argc, char* argv[])
         // 创建 IPC Context
         DAS::Core::IPC::Host::IpcContextConfig config{};
         std::string                            connect_url_storage;
+
+        // 连接 ready（Named Pipe + HTTP 两传输模式，IpcContext 在两 ready 点
+        // 都已触发本事件）后异步投 BusinessThread 跑 locale 同步。线程约束：
+        // lambda 跑 IO 线程，体内**只**调 PostToBusinessThread 异步投 BT，
+        // 绝不同步 resolve（sync_wait 阻塞 IO → LOOKUP 响应无人收 → 死锁）。
+        // locale 同步逻辑全在 LocaleSyncCallback::Do()（BT 上跑）。
+        config.events.on_after_connect =
+            [](void*, DAS::Core::IPC::Host::IIpcContext* ctx)
+        {
+            if (ctx == nullptr)
+            {
+                return static_cast<DasResult>(DAS_E_INVALID_POINTER);
+            }
+            // MakeLocaleSyncCallback() 返回已 AddRef 的指针，所有权转交
+            // PostToBusinessThread（内部再 AddRef 保生命周期）。
+            return ctx->PostToBusinessThread(MakeLocaleSyncCallback());
+        };
+        config.events.p_on_after_connect_context = nullptr;
 
         if (vm.count("connect-url"))
         {
