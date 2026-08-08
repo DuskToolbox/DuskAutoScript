@@ -167,6 +167,19 @@ endforeach()
 
 list(REMOVE_DUPLICATES _DOTNET_NATIVE_HOSTING_HINTS)
 
+# dotnet 升级后旧版本 host pack 目录会被删除，缓存的 find 结果可能指向
+# 已不存在的路径。校验缓存值仍有效，否则清除以强制重新探测。
+if(DotNet_NATIVE_HOSTING_INCLUDE_DIR
+   AND NOT EXISTS "${DotNet_NATIVE_HOSTING_INCLUDE_DIR}/nethost.h")
+    unset(DotNet_NATIVE_HOSTING_INCLUDE_DIR CACHE)
+endif()
+if(_DotNet_NETHOST_LINK_LIBRARY AND NOT EXISTS "${_DotNet_NETHOST_LINK_LIBRARY}")
+    unset(_DotNet_NETHOST_LINK_LIBRARY CACHE)
+endif()
+if(DotNet_NETHOST_LIBRARY AND NOT EXISTS "${DotNet_NETHOST_LIBRARY}")
+    unset(DotNet_NETHOST_LIBRARY CACHE)
+endif()
+
 find_path(DotNet_NATIVE_HOSTING_INCLUDE_DIR
     NAMES nethost.h hostfxr.h coreclr_delegates.h
     HINTS ${_DOTNET_NATIVE_HOSTING_HINTS}

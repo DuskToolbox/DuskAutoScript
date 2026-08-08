@@ -6,6 +6,16 @@ set(DotNetFramework_CSC_EXECUTABLE "" CACHE FILEPATH "Path to the C# compiler ex
 set(DotNetFramework_CLR_HOSTING_INCLUDE_DIR "" CACHE PATH "Directory containing CLR hosting headers")
 set(DotNetFramework_MSCOREE_LIBRARY "" CACHE FILEPATH "Path to the CLR hosting import library")
 
+# Windows SDK 升级后 NETFXSDK 4.8 目录可能被移除，缓存的 find 结果会指向
+# 已不存在的路径。校验缓存值仍有效，否则清除强制重新探测。
+if(DotNetFramework_CLR_HOSTING_INCLUDE_DIR
+   AND NOT EXISTS "${DotNetFramework_CLR_HOSTING_INCLUDE_DIR}/mscoree.h")
+    unset(DotNetFramework_CLR_HOSTING_INCLUDE_DIR CACHE)
+endif()
+if(DotNetFramework_MSCOREE_LIBRARY AND NOT EXISTS "${DotNetFramework_MSCOREE_LIBRARY}")
+    unset(DotNetFramework_MSCOREE_LIBRARY CACHE)
+endif()
+
 set(_NET48_REF_CANDIDATES "")
 
 if(DOTNET_FRAMEWORK_REFERENCE_ASSEMBLIES_DIR)

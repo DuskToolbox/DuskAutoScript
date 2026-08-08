@@ -30,7 +30,7 @@ set_target_properties(DasHttp PROPERTIES
 
 # 静态图片路径防护单元测试（DasImageController::SanitizeImagePath）
 file(GLOB HTTP_TEST_SOURCES test/*.cpp)
-if(HTTP_TEST_SOURCES)
+if(DAS_BUILD_TEST AND HTTP_TEST_SOURCES)
     add_executable(HttpTest ${HTTP_TEST_SOURCES})
     # SSE 测试链接 SseHub 实现（SseSession 为 header-only，经 src 直达）
     target_sources(HttpTest PRIVATE src/SseHub.cpp)
