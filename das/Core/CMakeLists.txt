@@ -324,7 +324,6 @@ if(WIN32)
 endif()
 
 target_compile_definitions(DasCoreObjects PUBLIC ${DAS_EXPORT_MACRO_LIST})
-target_compile_definitions(DasCoreObjects PRIVATE DAS_CORE_NAME="$<TARGET_FILE_NAME:DasCore>")
 
 target_link_libraries(DasCore PUBLIC DasCoreObjects)
 target_link_libraries(DasCore PRIVATE ${DAS_FOREIGN_LANGUAGE_LIB_LIST})

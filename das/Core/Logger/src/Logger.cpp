@@ -3,13 +3,23 @@
 // using _dupenv_s instead.
 #define _CRT_SECURE_NO_WARNINGS
 #include <array>
+#include <boost/asio/system_executor.hpp>
+#include <boost/dll/runtime_symbol_info.hpp>
+#include <boost/process/v2/process.hpp>
+#include <ctime>
 #include <das/Core/Logger/CrossProcessMutex.h>
 #include <das/Core/Logger/DasLogNotifierSink.h>
 #include <das/Core/Logger/Logger.h>
+#include <das/Utils/fmt.h>
+#include <filesystem>
+#include <iomanip>
+#include <regex>
 #include <spdlog/details/null_mutex.h>
 #include <spdlog/sinks/base_sink.h>
 #include <spdlog/sinks/rotating_file_sink.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
+#include <sstream>
+#include <string>
 
 #if defined(_WIN32) || defined(__CYGWIN__)
 #include <windows.h>
@@ -93,6 +103,107 @@ public:
 
     ~ProcessSafeStdoutSink() override = default;
 };
+
+// 检测 PID 是否存活。detach 防止析构时误杀被查询的进程。
+bool IsProcessAlive(unsigned long long pid)
+{
+    boost::system::error_code   ec;
+    boost::process::v2::process process{
+        boost::asio::system_executor{},
+        static_cast<boost::process::v2::pid_type>(pid)};
+    process.detach();
+    return process.running(ec);
+}
+
+// 构造当前进程的日志文件路径：logs/<进程exe名>-<YYYYMMDD_HH-MM-SS>-<PID>.log。
+// 进程名取自 boost::dll::program_location()（与 DasDebug 崩溃 dump 命名一致），
+// 每个进程独立文件名，避免多进程并发写入同一文件互相覆盖。
+std::string MakeProcessLogPath()
+{
+    const std::string process_stem =
+        boost::dll::program_location().stem().string();
+
+    const std::time_t now = std::time(nullptr);
+    std::tm           local_time{};
+#if defined(_WIN32) || defined(__CYGWIN__)
+    localtime_s(&local_time, &now);
+#else
+    localtime_r(&now, &local_time);
+#endif
+    char time_buffer[24];
+    std::strftime(
+        time_buffer,
+        sizeof(time_buffer),
+        "%Y%m%d_%H-%M-%S",
+        &local_time);
+
+    return DAS::fmt::format(
+        "logs/{}-{}-{}.log",
+        process_stem,
+        time_buffer,
+        static_cast<unsigned long long>(boost::process::v2::current_pid()));
+}
+
+// 删除超过 max_age_days 且进程已退出的旧日志；活跃进程的日志不删。best-effort。
+void CleanupStaleProcessLogs(
+    const std::filesystem::path& log_dir,
+    int                          max_age_days)
+{
+    std::error_code ec;
+    if (!std::filesystem::exists(log_dir, ec))
+    {
+        return;
+    }
+
+    const std::regex name_pattern(
+        R"(^(.+)-(\d{8}_\d{2}-\d{2}-\d{2})-(\d+)\.log(?:\.\d+)?$)");
+    const std::time_t now = std::time(nullptr);
+    const std::time_t cutoff =
+        now - static_cast<std::time_t>(max_age_days) * 86400;
+
+    for (const auto& entry : std::filesystem::directory_iterator(log_dir, ec))
+    {
+        if (ec)
+        {
+            break;
+        }
+        if (!entry.is_regular_file())
+        {
+            continue;
+        }
+
+        const std::string name = entry.path().filename().string();
+        std::smatch       match;
+        if (!std::regex_match(name, match, name_pattern))
+        {
+            continue;
+        }
+
+        std::tm            file_time{};
+        std::istringstream time_stream(match[2].str());
+        time_stream >> std::get_time(&file_time, "%Y%m%d_%H-%M-%S");
+        if (time_stream.fail())
+        {
+            continue;
+        }
+        const std::time_t file_epoch = std::mktime(&file_time);
+
+        unsigned long long pid = 0;
+        try
+        {
+            pid = std::stoull(match[3].str());
+        }
+        catch (...)
+        {
+            continue;
+        }
+
+        if (file_epoch < cutoff && !IsProcessAlive(pid))
+        {
+            std::filesystem::remove(entry.path(), ec); // best-effort，失败忽略
+        }
+    }
+}
 DAS_NS_ANONYMOUS_DETAILS_END
 
 DAS_NS_BEGIN
@@ -101,11 +212,16 @@ namespace Core
 {
     const std::shared_ptr<spdlog::logger> g_logger = []()
     {
+        const std::string log_path = ::Details::MakeProcessLogPath();
+        // 启动时清理：删除超期（默认 14 天）且对应进程已退出的旧日志，
+        // 控制累计日志量。活跃进程的日志不会被删。
+        ::Details::CleanupStaleProcessLogs(std::filesystem::path{"logs"}, 14);
+
         const auto std_sink =
             std::make_shared<::Details::ProcessSafeStdoutSink>();
         const auto file_sink =
             std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
-                "logs/" DAS_CORE_NAME ".log",
+                log_path,
                 50 * 1024 * 1024, // 50mb
                 2);
         // DasLogNotifierSink：统一日志通知 sink（借用引用语义），多继承
