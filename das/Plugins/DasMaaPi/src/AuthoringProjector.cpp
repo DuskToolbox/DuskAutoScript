@@ -4889,7 +4889,7 @@ namespace Das::Plugins::DasMaaPi
         {
             DasPtr<IDasBase> base;
             const auto       rc = ctx->ResolveMainProcessInterfaceByName(
-                "Das::ProgressService",
+                "das.progress",
                 base.Put());
             if (DAS::IsOk(rc) && base)
             {

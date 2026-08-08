@@ -22,7 +22,7 @@ namespace Das::ExportInterface
         DasResult OnAllSubscribersDisconnected(IDasReadOnlyString* key);
     }
 
-    // 主进程进度服务（DasHttp 实现 + RegisterServiceByName("IDasProgressService") 按名注册，D-92-06）。
+    // 主进程进度服务（DasHttp 实现 + RegisterServiceByName("das.progress") 按名注册，D-92-06）。
     // 跨进程对象参数（IDasProgressCallback* / IDasProgressUpdate*）经 SerializeInInterfaceParam 自动代理化，
     // 无需 RegisterLocalObject + obj_id 手动反向注册。
     // RemoveCallback 必须释放 callback proxy 触发远端释放链，防 DOM 泄漏（RESEARCH Pitfall 3）。

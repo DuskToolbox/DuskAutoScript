@@ -1626,7 +1626,7 @@ namespace Das::Plugins::DasMaaPi
         // 跑在 Host 进程，Host 无 session/notifier，本地 new 出的 recorder
         // Record 写盘返 OBJECT_NOT_INIT（focus 日志在 IPC
         // 下从没工作过的根因）。 先经 C ABI DasQueryMainProcessInterfaceByName
-        // 跨进程 resolve 主进程 具名服务 "Das::FocusLogRecorder"（App.cpp
+        // 跨进程 resolve 主进程 具名服务 "das.focus-log-recorder"（App.cpp
         // 注册的语义角色名）， proxy.Record 经 IPC marshal 到主进程写
         // user.jsonl + notifier->Signal(UserJsonl)。resolve 失败 → 降级本地
         // CreateIDasProcessLogRecorder 工厂（in-process /
@@ -1637,7 +1637,7 @@ namespace Das::Plugins::DasMaaPi
         DasResult        recorder_rc = DAS_E_FAIL;
         DasPtr<IDasBase> resolved_base;
         const auto       resolve_rc = DasQueryMainProcessInterfaceByName(
-            "Das::FocusLogRecorder",
+            "das.focus-log-recorder",
             resolved_base.Put());
         if (DAS::IsOk(resolve_rc) && resolved_base)
         {

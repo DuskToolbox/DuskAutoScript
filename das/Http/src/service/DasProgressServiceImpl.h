@@ -81,7 +81,7 @@ namespace Das::Http
     /**
      * @brief IDasProgressService 主进程实现。
      *
-     * DasHttp 侧实现 IDL 接口并经 RegisterServiceByName("Das::ProgressService")
+     * DasHttp 侧实现 IDL 接口并经 RegisterServiceByName("das.progress")
      * 按名注册。Report(entry) 读只读 entry 的字段增量，装配 authoring setValue
      * payload，经 SseHub 按 key 广播到前端 SSE；AddCallback/RemoveCallback
      * 管理跨进程 callback 生命周期（RemoveCallback 释放 proxy

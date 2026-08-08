@@ -11,7 +11,7 @@
  *   3. Report(entry) 经 proxy 逐字段读回（GetKey/GetFieldByIndex 往返）。
  *
  * 测试真实启动 DasHostX 进程加载 IpcTestPlugin1，插件侧经
- * ResolveMainProcessInterfaceByName("Das::ProgressService") 拿 service proxy 并
+ * ResolveMainProcessInterfaceByName("das.progress") 拿 service proxy 并
  * 执行 AddCallback/Report/RemoveCallback 往返。
  */
 
@@ -264,7 +264,7 @@ namespace
         {
             if (ctx_)
             {
-                ctx_->UnregisterServiceByName("Das::ProgressService");
+                ctx_->UnregisterServiceByName("das.progress");
                 ctx_->RequestStop();
             }
             if (run_thread_.joinable())
@@ -382,7 +382,7 @@ TEST_F(
         ctx_->RegisterServiceByName(
             fake_service.Get(),
             DasIidOf<EP::IDasProgressService>(),
-            "Das::ProgressService"),
+            "das.progress"),
         DAS_S_OK);
 
     ASSERT_EQ(StartHost(), DAS_S_OK);
