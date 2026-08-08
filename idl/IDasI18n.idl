@@ -1,0 +1,37 @@
+import "DasBasicTypes.idl";
+import "DasAI.idl";
+
+namespace Das::ExportInterface
+{
+
+    // 通用字符串 key 翻译查表接口（Phase 100）。Translate 默认读进程级 GlobalLocale，
+    // TranslateWithLocale 显式指定 locale；locale 缺失 key 时回退到 base(en)，
+    // base 也缺失返回 DAS_E_OUT_OF_RANGE。词条值含 {N} 位置序号占位符由消费方自填
+    // （vformat），接口只负责查表返回模板字符串。
+    [uuid("7A1B2C3D-5E6F-4A7B-8C9D-0E1F2A3B4C5D")]
+    interface IDasI18n : IDasBase
+    {
+        DasResult Translate(IDasReadOnlyString* key, [out] IDasReadOnlyString** pp_out_text);
+        DasResult TranslateWithLocale(
+            IDasReadOnlyString* locale_name,
+            IDasReadOnlyString* key,
+            [out] IDasReadOnlyString** pp_out_text);
+        DasResult GetAvailableLocales([out] IDasReadOnlyStringVector** pp_out_locales);
+        DasResult GetKeys(
+            IDasReadOnlyString* locale_name,
+            [out] IDasReadOnlyStringVector** pp_out_keys);
+    }
+
+    // 可变 i18n 表：运行时增词条 / 合并 per-locale 扁平 JSON 文件。
+    // 继承 IDasI18n 的查表能力，新增 AddTranslation / MergeFromFile。
+    [uuid("7B2C3D4E-6F5A-4B8C-9D0E-1F2A3B4C5D6E")]
+    interface IDasMutableI18n : IDasI18n
+    {
+        DasResult AddTranslation(
+            IDasReadOnlyString* locale_name,
+            IDasReadOnlyString* key,
+            IDasReadOnlyString* text);
+        DasResult MergeFromFile(IDasReadOnlyString* json_path_utf8);
+    }
+
+}

@@ -98,6 +98,25 @@ module
     ] DasResult DasGetDefaultLocale([out] IDasReadOnlyString * *pp_out_locale);
 
     //=============================================================================
+    // I18N (string-key translation tables)
+    //=============================================================================
+
+    // 从目录装载：扫描 {directory_path}/*.json，文件名 stem 作为 locale 名
+    // （en.json → "en"，zh-CN.json → "zh-CN"）。返回只读 IDasI18n 视图。
+    [ export, c_abi ] DasResult CreateIDasI18nFromDirectory(
+        IDasReadOnlyString*                     directory_path_utf8,
+        [out] Das::ExportInterface::IDasI18n**  pp_out_i18n);
+
+    // 从单文件装载：json_file_path 的 stem 作为 locale 名，合并该 locale 的扁平 JSON。
+    [ export, c_abi ] DasResult CreateIDasI18nFromFile(
+        IDasReadOnlyString*                     json_file_path_utf8,
+        [out] Das::ExportInterface::IDasI18n**  pp_out_i18n);
+
+    // 构造空可变 i18n 表，调用方运行时用 AddTranslation / MergeFromFile 填充。
+    [ export, c_abi ] DasResult CreateIDasMutableI18n(
+        [out] Das::ExportInterface::IDasMutableI18n** pp_out_i18n);
+
+    //=============================================================================
     // Collections
     //=============================================================================
 
