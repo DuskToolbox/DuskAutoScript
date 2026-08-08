@@ -48,31 +48,40 @@ namespace
         return out ? std::string(out) : std::string{};
     }
 
-    // 本测试套件的临时 JSON 夹具：{cwd}/das_i18n_test_fixtures/{en,zh-CN}.json
+    // 本测试套件的临时 JSON 夹具。ctest 经 gtest_discover_tests
+    // 把每个用例注册为 独立 ctest 项并以独立进程运行（-j8
+    // 并行），故每个用例须用各自的夹具目录， 否则并行进程会在共享目录上
+    // remove_all/写入互踩（曾导致 fallback/GetKeys 在 -j8
+    // 下随机失败、单独运行却通过）。
     class I18nLocaleTest : public ::testing::Test
     {
     protected:
-        inline static const std::filesystem::path kFixtureDir =
-            std::filesystem::current_path() / "das_i18n_test_fixtures";
+        std::filesystem::path fixture_dir_;
 
         void SetUp() override
         {
+            const auto* info =
+                ::testing::UnitTest::GetInstance()->current_test_info();
+            const std::string leaf = std::string("das_i18n_fixtures_")
+                                     + info->test_suite_name() + "_"
+                                     + info->name();
+            fixture_dir_ = std::filesystem::current_path() / leaf;
+
             std::error_code ec;
-            std::filesystem::remove_all(kFixtureDir, ec);
-            std::filesystem::create_directories(kFixtureDir, ec);
+            std::filesystem::remove_all(fixture_dir_, ec);
+            std::filesystem::create_directories(fixture_dir_, ec);
             ASSERT_FALSE(ec) << "create_directories failed: " << ec.message();
 
             // en.json — base locale，含占位符模板
             WriteFile(
-                kFixtureDir / "en.json",
+                fixture_dir_ / "en.json",
                 R"({"progress.downloading": "Downloading...",
-)" // placeholder line preserved below
-                R"(    "progress.downloading_with_size": "Downloading ({1} / {2}){3}%",
+    "progress.downloading_with_size": "Downloading ({1} / {2}){3}%",
     "label.confirm": "Confirm"})");
 
             // zh-CN.json — 非基础 locale
             WriteFile(
-                kFixtureDir / "zh-CN.json",
+                fixture_dir_ / "zh-CN.json",
                 R"({"progress.downloading": "正在下载…",
     "label.confirm": "确认"})");
         }
@@ -80,13 +89,13 @@ namespace
         void TearDown() override
         {
             std::error_code ec;
-            std::filesystem::remove_all(kFixtureDir, ec);
+            std::filesystem::remove_all(fixture_dir_, ec);
         }
 
         // 经工厂装载夹具目录，返回只读 IDasI18n 视图。
         DAS::DasPtr<Das::ExportInterface::IDasI18n> LoadFromFixtureDir()
         {
-            const auto dir_str = kFixtureDir.string();
+            const auto dir_str = fixture_dir_.string();
             DAS::DasPtr<Das::ExportInterface::IDasI18n> p_i18n;
             DAS::DasPtr<IDasReadOnlyString>             p_dir;
             ::CreateIDasReadOnlyStringFromUtf8(dir_str.c_str(), p_dir.Put());
