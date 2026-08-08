@@ -144,3 +144,42 @@ TEST(HostPostToBusinessThread, NullCallbackIsSafe)
     // nullptr 不应崩溃，应是安全 no-op
     EXPECT_EQ(ctx->PostToBusinessThread(nullptr), DAS_S_OK);
 }
+
+// ====== Task 2: on_after_connect 事件机制 ======
+
+TEST(HostPostToBusinessThread, OnAfterConnectTypedefAndFieldExist)
+{
+    using Das::Core::IPC::Host::IIpcContext;
+    using Das::Core::IPC::Host::IpcContextConfig;
+    using Das::Core::IPC::Host::IpcContextEvents;
+    using Das::Core::IPC::Host::OnAfterConnect;
+    using Das::Core::IPC::Host::OnBeforeShutdown;
+
+    // OnAfterConnect 是 C 函数指针 typedef，签名 (void*, IIpcContext*) ->
+    // DasResult
+    using ExpectedSignature = DasResult(DAS_STD_CALL*)(void*, IIpcContext*);
+    static_assert(std::is_same_v<OnAfterConnect, ExpectedSignature>);
+
+    // IpcContextEvents 末尾新增字段，带默认值（源兼容既有 events{} 初始化）
+    IpcContextEvents events{};
+    EXPECT_EQ(events.on_after_connect, nullptr);
+    EXPECT_EQ(events.p_on_after_connect_context, nullptr);
+    // 既有 on_before_shutdown 字段不受影响
+    EXPECT_EQ(events.on_before_shutdown, nullptr);
+    EXPECT_EQ(events.p_on_before_shutdown_context, nullptr);
+
+    // IpcContextConfig 用 events{} 聚合初始化，新增字段不破坏源兼容
+    IpcContextConfig config{};
+    EXPECT_EQ(config.events.on_after_connect, nullptr);
+    EXPECT_EQ(config.events.p_on_after_connect_context, nullptr);
+}
+
+TEST(HostPostToBusinessThread, NullOnAfterConnectIsSafe)
+{
+    // on_after_connect 未注册（默认 nullptr）时构造/析构 IpcContext 不崩溃
+    // InvokeOnAfterConnect 内部 null 检查早返回——安全 no-op
+    auto ctx = MakeDisconnectedHostContext();
+    ASSERT_NE(ctx, nullptr);
+    // 不调 Run()，不会触发连接 ready 路径；此处验证默认配置下构造安全
+    EXPECT_FALSE(ctx->IsConnected());
+}

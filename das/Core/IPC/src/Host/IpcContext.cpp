@@ -214,6 +214,7 @@ namespace Core
                         }
 
                         is_connected_ = true;
+                        InvokeOnAfterConnect(this);
                     });
 
                 handshake_handler_->SetOnClientDisconnected(
@@ -761,11 +762,17 @@ namespace Core
                             "MainProcess session_id={}",
                             main_session_id);
 
+                        // HTTP 握手在 HttpIpcClient::Connect 内同步完成，
+                        // 绕过 handshake_handler_ → on_client_connected_
+                        // 不触发，须在此显式标记连接就绪并触发事件
+                        is_connected_ = true;
+                        InvokeOnAfterConnect(this);
+
                         // 启动统一接收循环
                         co_await ReceiveLoopCoroutine();
                     }
 
-                    is_connected_ = true;
+                    is_connected_ = false;
                 }
                 catch (const boost::system::system_error& e)
                 {
@@ -820,6 +827,25 @@ namespace Core
                 {
                     DAS_CORE_LOG_WARN(
                         "IpcContext: OnBeforeShutdown returned error={}",
+                        result);
+                }
+            }
+
+            void IpcContext::InvokeOnAfterConnect(IIpcContext* ctx)
+            {
+                const auto& events = config_.events;
+                if (!events.on_after_connect)
+                {
+                    return;
+                }
+
+                const DasResult result = events.on_after_connect(
+                    events.p_on_after_connect_context,
+                    ctx);
+                if (DAS::IsFailed(result))
+                {
+                    DAS_CORE_LOG_WARN(
+                        "IpcContext: OnAfterConnect returned error={}",
                         result);
                 }
             }

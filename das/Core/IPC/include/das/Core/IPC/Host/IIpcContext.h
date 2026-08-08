@@ -34,15 +34,23 @@ namespace Core
                 HOST_SHUTDOWN_REASON_FORCE_DWORD = 0x7FFFFFFF,
             };
 
+            struct IIpcContext;
+
             typedef DasResult(DAS_STD_CALL* OnBeforeShutdown)(
                 void*              p_context,
                 HostShutdownReason reason,
                 uint32_t           timeout_ms);
 
+            typedef DasResult(DAS_STD_CALL* OnAfterConnect)(
+                void*        p_context,
+                IIpcContext* ctx);
+
             struct IpcContextEvents
             {
                 OnBeforeShutdown on_before_shutdown = nullptr;
                 void*            p_on_before_shutdown_context = nullptr;
+                OnAfterConnect   on_after_connect = nullptr;
+                void*            p_on_after_connect_context = nullptr;
             };
 
             struct IpcContextConfig
@@ -60,8 +68,6 @@ namespace Core
 
                 IpcContextEvents events{};
             };
-
-            struct IIpcContext;
 
             // 前置声明 DestroyIpcContext，用于友元
             DAS_API void DestroyIpcContext(IIpcContext* ctx);

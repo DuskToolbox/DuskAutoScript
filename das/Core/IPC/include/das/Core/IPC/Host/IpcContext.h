@@ -153,6 +153,7 @@ namespace Core
                 boost::asio::awaitable<void> ConnectHttp();
 
                 void InvokeOnBeforeShutdown(HostShutdownReason reason);
+                void InvokeOnAfterConnect(IIpcContext* ctx);
                 void RequestShutdown(HostShutdownReason reason);
 
                 void StartParentProcessMonitor();
