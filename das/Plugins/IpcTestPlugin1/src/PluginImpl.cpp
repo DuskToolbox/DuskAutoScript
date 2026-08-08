@@ -6,9 +6,11 @@
 #include <das/IDasBase.h>
 #include <das/Utils/DasJsonCore.h>
 #include <das/Utils/fmt.h>
+#include <das/_autogen/idl/abi/IDasLocaleService.h>
 #include <das/_autogen/idl/abi/IDasLogRecorder.h>
 #include <das/_autogen/idl/abi/IDasPortMap.h>
 #include <das/_autogen/idl/header/IDasPortMap.generated.h>
+#include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasLocaleService.Implements.hpp>
 #include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasProgressCallback.Implements.hpp>
 #include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasProgressService.Implements.hpp>
 #include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasProgressUpdate.Implements.hpp>
@@ -115,6 +117,85 @@ namespace
 
     private:
         std::atomic<uint32_t> ref_count_{1};
+    };
+
+    // locale 反向通知回调本地实现（带公开引用计数 + 反向通知计数）。
+    // service.SetDefaultLocale 触发 OnDefaultLocaleChanged → 记录 locale
+    // 字符串 + ++change_count_，供 test 端断言反向通知到达。
+    class RoundTripLocaleCallback final
+        : public Das::ExportInterface::IDasLocaleCallback
+    {
+    public:
+        DasResult OnDefaultLocaleChanged(
+            IDasReadOnlyString* new_locale) override
+        {
+            if (new_locale == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            const char* raw = nullptr;
+            if (DAS::IsOk(new_locale->GetUtf8(&raw)) && raw != nullptr)
+            {
+                last_locale_ = raw;
+                ++change_count_;
+            }
+            return DAS_S_OK;
+        }
+
+        DasResult DAS_STD_CALL
+        QueryInterface(const DasGuid& iid, void** pp_out_object) override
+        {
+            if (pp_out_object == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *pp_out_object = nullptr;
+            if (iid == DasIidOf<IDasBase>()
+                || iid == DasIidOf<Das::ExportInterface::IDasLocaleCallback>())
+            {
+                AddRef();
+                *pp_out_object =
+                    static_cast<Das::ExportInterface::IDasLocaleCallback*>(
+                        this);
+                return DAS_S_OK;
+            }
+            return DAS_E_NO_INTERFACE;
+        }
+
+        uint32_t DAS_STD_CALL AddRef() override { return ++ref_count_; }
+
+        uint32_t DAS_STD_CALL Release() override
+        {
+            const auto count = --ref_count_;
+            if (count == 0)
+            {
+                delete this;
+            }
+            return count;
+        }
+
+        [[nodiscard]]
+        uint32_t RefCount() const
+        {
+            return ref_count_.load();
+        }
+
+        [[nodiscard]]
+        uint32_t ChangeCount() const
+        {
+            return change_count_.load();
+        }
+
+        [[nodiscard]]
+        const std::string& LastLocale() const
+        {
+            return last_locale_;
+        }
+
+    private:
+        std::atomic<uint32_t> ref_count_{1};
+        std::atomic<uint32_t> change_count_{0};
+        std::string           last_locale_;
     };
 
     // 只读进度更新条目本地实现（供 Report 逐字段往返读取）。
@@ -295,6 +376,11 @@ DasResult DasQueryComponentImpl::Dispatch(
     if (method == "progressServiceRoundTrip")
     {
         return HandleProgressServiceRoundTrip(pp_out_result);
+    }
+
+    if (method == "localeServiceRoundTrip")
+    {
+        return HandleLocaleServiceRoundTrip(pp_out_result);
     }
 
     if (method == "processLogRecorderRoundTrip")
@@ -592,6 +678,157 @@ DasResult DasQueryComponentImpl::HandleProgressServiceRoundTrip(
     }
     hr = (*pp_out_result)->PushBackInt(ref_after_flush);
     return hr;
+}
+
+DasResult DasQueryComponentImpl::HandleLocaleServiceRoundTrip(
+    ExportInterface::IDasVariantVector** pp_out_result)
+{
+    if (!pp_out_result)
+    {
+        return DAS_E_INVALID_ARGUMENT;
+    }
+
+    // 按名解析主进程 IDasLocaleService proxy。
+    DAS::DasPtr<IDasBase> raw_obj;
+    DasResult             hr =
+        DasQueryMainProcessInterfaceByName("das.locale", raw_obj.Put());
+    int64_t resolve_ok = DAS::IsOk(hr) && raw_obj ? 1 : 0;
+    if (DAS::IsFailed(hr) || !raw_obj)
+    {
+        DAS_LOG_ERROR(
+            DAS_FMT_NS::format(
+                "localeServiceRoundTrip: resolve failed hr={}",
+                static_cast<int>(hr))
+                .c_str());
+        // 即便失败也构造结果向量回传 resolve_ok=0，便于 test 诊断。
+        hr = CreateIDasVariantVector(pp_out_result);
+        if (DAS::IsFailed(hr))
+        {
+            return hr;
+        }
+        (*pp_out_result)->PushBackInt(resolve_ok);
+        return DAS_E_FAIL;
+    }
+    DAS::DasPtr<Das::ExportInterface::IDasLocaleService> service;
+    hr = raw_obj.As(service.Put());
+    if (DAS::IsFailed(hr) || !service)
+    {
+        DAS_LOG_ERROR(
+            DAS_FMT_NS::format(
+                "localeServiceRoundTrip: QI IDasLocaleService failed hr={}",
+                static_cast<int>(hr))
+                .c_str());
+        return hr;
+    }
+
+    // 本地 callback（new 即持有一份引用，公开 RefCount 供跨进程配对断言）。
+    auto* const   cb = new RoundTripLocaleCallback();
+    const int64_t ref_after_create = cb->RefCount();
+
+    hr = service->AddCallback(cb);
+    if (DAS::IsFailed(hr))
+    {
+        cb->Release();
+        return hr;
+    }
+    const int64_t ref_after_add = cb->RefCount();
+
+    // GetDefaultLocale pull：记录主进程当前 locale。
+    DAS::DasPtr<IDasReadOnlyString> locale;
+    hr = service->GetDefaultLocale(locale.Put());
+    int64_t     get_locale_ok = DAS::IsOk(hr) && locale ? 1 : 0;
+    std::string locale_str;
+    if (get_locale_ok)
+    {
+        const char* raw = nullptr;
+        if (DAS::IsOk(locale->GetUtf8(&raw)) && raw != nullptr)
+        {
+            locale_str = raw;
+        }
+    }
+
+    // SetDefaultLocale push（"zh-CN"）→ service 反向遍历 callbacks_ 调
+    // OnDefaultLocaleChanged。BT 上 Plugin Dispatch 当前栈内嵌套执行
+    // （BusinessThread reentrant for nested IPC），反向通知在本调用返回前
+    // 到达。
+    {
+        DasReadOnlyString zh{"zh-CN"};
+        hr = service->SetDefaultLocale(zh.Get());
+    }
+    int64_t set_locale_ok = DAS::IsOk(hr) ? 1 : 0;
+
+    // 反向通知可能跨进程异步排队（不保证完全 sync 完成），flush 用多次
+    // GetDefaultLocale 往返泵 BT 处理待投递消息，直到 ChangeCount > 0 或
+    // 超过 50 次尝试（Pitfall 3 flush 范式，照 ProgressService roundtrip）。
+    int64_t change_count_after_set = cb->ChangeCount();
+    for (int attempt = 0; attempt < 50 && change_count_after_set == 0;
+         ++attempt)
+    {
+        DAS::DasPtr<IDasReadOnlyString> flush_locale;
+        service->GetDefaultLocale(flush_locale.Put());
+        change_count_after_set = cb->ChangeCount();
+    }
+
+    // RemoveCallback → DasPtr 析构 Release → 触发远端释放链。
+    hr = service->RemoveCallback(cb);
+    if (DAS::IsFailed(hr))
+    {
+        cb->Release();
+        return hr;
+    }
+
+    // flush REMOTE_RELEASE 直到本地 callback 引用回到 baseline（仅剩插件
+    // 持有的引用），Pitfall 3。
+    int64_t ref_after_flush = cb->RefCount();
+    for (int attempt = 0; attempt < 50 && ref_after_flush > 1; ++attempt)
+    {
+        DAS::DasPtr<IDasReadOnlyString> flush_locale;
+        service->GetDefaultLocale(flush_locale.Put());
+        ref_after_flush = cb->RefCount();
+    }
+
+    // 释放本地引用（refcount 归零删除对象）。
+    cb->Release();
+
+    // 回传：[resolve_ok, ref_after_create, ref_after_add, get_locale_ok,
+    //        set_locale_ok, change_count_after_set, ref_after_flush]
+    // test 侧断言：
+    //   - resolve_ok == 1
+    //   - ref_after_add > ref_after_create（proxy 注册）
+    //   - change_count_after_set >= 1（反向通知到达）
+    //   - ref_after_flush == ref_after_create（refcount 配对归零）
+    hr = CreateIDasVariantVector(pp_out_result);
+    if (DAS::IsFailed(hr))
+    {
+        return hr;
+    }
+    auto push_int = [pp_out_result](int64_t value) -> DasResult
+    { return (*pp_out_result)->PushBackInt(value); };
+    if (DAS::IsFailed(push_int(resolve_ok)))
+    {
+        return DAS_E_FAIL;
+    }
+    if (DAS::IsFailed(push_int(ref_after_create)))
+    {
+        return DAS_E_FAIL;
+    }
+    if (DAS::IsFailed(push_int(ref_after_add)))
+    {
+        return DAS_E_FAIL;
+    }
+    if (DAS::IsFailed(push_int(get_locale_ok)))
+    {
+        return DAS_E_FAIL;
+    }
+    if (DAS::IsFailed(push_int(set_locale_ok)))
+    {
+        return DAS_E_FAIL;
+    }
+    if (DAS::IsFailed(push_int(change_count_after_set)))
+    {
+        return DAS_E_FAIL;
+    }
+    return push_int(ref_after_flush);
 }
 
 DasResult DasQueryComponentImpl::HandleProcessLogRecorderRoundTrip(

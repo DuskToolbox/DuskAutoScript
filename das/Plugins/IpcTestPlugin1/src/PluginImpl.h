@@ -4,6 +4,7 @@
 #include <das/Utils/CommonUtils.hpp>
 #include <das/_autogen/idl/abi/IDasComponent.h>
 #include <das/_autogen/idl/abi/IDasInput.h>
+#include <das/_autogen/idl/abi/IDasLocaleService.h>
 #include <das/_autogen/idl/abi/IDasPluginPackage.h>
 #include <das/_autogen/idl/abi/IDasProgressService.h>
 #include <das/_autogen/idl/abi/IDasTaskAuthoring.h>
@@ -188,6 +189,13 @@ private:
         ExportInterface::IDasVariantVector** pp_out_result);
 
     DasResult HandleProgressServiceRoundTrip(
+        ExportInterface::IDasVariantVector** pp_out_result);
+
+    // 验证 IDasLocaleService 跨进程契约：插件侧 resolve "das.locale"
+    // → AddCallback → GetDefaultLocale → SetDefaultLocale（触发反向
+    // OnDefaultLocaleChanged）→ RemoveCallback。回传 refcount/反向通知
+    // 计数/locale 字符串供 test 端断言。
+    DasResult HandleLocaleServiceRoundTrip(
         ExportInterface::IDasVariantVector** pp_out_result);
 
     // 验证 IDasProcessLogRecorder 跨进程 proxy Record 往返：
