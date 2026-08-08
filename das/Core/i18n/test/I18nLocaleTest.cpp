@@ -234,3 +234,229 @@ TEST_F(I18nLocaleTest, GetKeysReturnsLocaleKeys)
         keys.end());
     EXPECT_NE(std::find(keys.begin(), keys.end(), "label.confirm"), keys.end());
 }
+
+// ---------------------------------------------------------------------------
+// IDasMutableI18n — AddTranslation / MergeFromFile / bad-JSON 守卫 / 回退链
+// ---------------------------------------------------------------------------
+
+namespace
+{
+    // 构造空可变 i18n 表。
+    DAS::DasPtr<Das::ExportInterface::IDasMutableI18n> MakeMutableI18n()
+    {
+        DAS::DasPtr<Das::ExportInterface::IDasMutableI18n> p;
+        ::CreateIDasMutableI18n(p.Put());
+        return p;
+    }
+
+    // 给当前用例生成唯一临时目录（同样避免并行进程互踩）。
+    std::filesystem::path UniqueDirForCurrentTest()
+    {
+        const auto* info =
+            ::testing::UnitTest::GetInstance()->current_test_info();
+        const std::string leaf = std::string("das_i18n_mutable_")
+                                 + info->test_suite_name() + "_" + info->name();
+        auto              dir = std::filesystem::current_path() / leaf;
+        std::error_code   ec;
+        std::filesystem::remove_all(dir, ec);
+        std::filesystem::create_directories(dir, ec);
+        return dir;
+    }
+} // namespace
+
+TEST(I18nMutable, AddTranslationAddsEntryTranslatableAfterwards)
+{
+    auto i18n = MakeMutableI18n();
+    ASSERT_NE(i18n.Get(), nullptr);
+
+    auto locale = MakeLocaleName("zh-CN");
+    auto key = MakeLocaleName("new.key");
+    auto text = MakeLocaleName("\xE6\x96\xB0\xE5\x80\xBC"); // "新值" UTF-8
+    ASSERT_EQ(
+        i18n->AddTranslation(locale.Get(), key.Get(), text.Get()),
+        DAS_S_OK);
+
+    DAS::DasPtr<IDasReadOnlyString> p_out;
+    ASSERT_EQ(
+        i18n->TranslateWithLocale(locale.Get(), key.Get(), p_out.Put()),
+        DAS_S_OK);
+    ASSERT_NE(p_out.Get(), nullptr);
+    EXPECT_EQ(ToUtf8(p_out.Get()), "\xE6\x96\xB0\xE5\x80\xBC");
+}
+
+TEST(I18nMutable, AddTranslationOverwritesExistingKey)
+{
+    auto i18n = MakeMutableI18n();
+    ASSERT_NE(i18n.Get(), nullptr);
+
+    auto locale = MakeLocaleName("en");
+    auto key = MakeLocaleName("dup.key");
+    auto first = MakeLocaleName("first");
+    auto second = MakeLocaleName("second");
+    ASSERT_EQ(
+        i18n->AddTranslation(locale.Get(), key.Get(), first.Get()),
+        DAS_S_OK);
+    ASSERT_EQ(
+        i18n->AddTranslation(locale.Get(), key.Get(), second.Get()),
+        DAS_S_OK);
+
+    DAS::DasPtr<IDasReadOnlyString> p_out;
+    ASSERT_EQ(
+        i18n->TranslateWithLocale(locale.Get(), key.Get(), p_out.Put()),
+        DAS_S_OK);
+    ASSERT_NE(p_out.Get(), nullptr);
+    EXPECT_EQ(ToUtf8(p_out.Get()), "second");
+}
+
+TEST(I18nMutable, AddTranslationEmptyLocaleReturnsInvalidArgument)
+{
+    auto i18n = MakeMutableI18n();
+    ASSERT_NE(i18n.Get(), nullptr);
+
+    auto locale = MakeLocaleName("");
+    auto key = MakeLocaleName("any.key");
+    auto text = MakeLocaleName("v");
+    EXPECT_EQ(
+        i18n->AddTranslation(locale.Get(), key.Get(), text.Get()),
+        DAS_E_INVALID_ARGUMENT);
+}
+
+TEST(I18nMutable, MergeFromFileMergesPerLocaleFlatJson)
+{
+    auto i18n = MakeMutableI18n();
+    ASSERT_NE(i18n.Get(), nullptr);
+
+    const auto dir = UniqueDirForCurrentTest();
+    const auto file = dir / "en.json";
+    WriteFile(file, R"({"a.b": "x", "c.d": "y"})");
+
+    auto path = MakeLocaleName(file.string().c_str());
+    ASSERT_EQ(i18n->MergeFromFile(path.Get()), DAS_S_OK);
+
+    auto                            locale = MakeLocaleName("en");
+    DAS::DasPtr<IDasReadOnlyString> p_ab;
+    ASSERT_EQ(
+        i18n->TranslateWithLocale(
+            locale.Get(),
+            MakeLocaleName("a.b").Get(),
+            p_ab.Put()),
+        DAS_S_OK);
+    EXPECT_EQ(ToUtf8(p_ab.Get()), "x");
+    DAS::DasPtr<IDasReadOnlyString> p_cd;
+    ASSERT_EQ(
+        i18n->TranslateWithLocale(
+            locale.Get(),
+            MakeLocaleName("c.d").Get(),
+            p_cd.Put()),
+        DAS_S_OK);
+    EXPECT_EQ(ToUtf8(p_cd.Get()), "y");
+}
+
+TEST(I18nMutable, MergeFromFileOverwritesExistingKey)
+{
+    auto i18n = MakeMutableI18n();
+    ASSERT_NE(i18n.Get(), nullptr);
+
+    // 先 AddTranslation 写入旧值
+    auto locale = MakeLocaleName("en");
+    auto key = MakeLocaleName("overlap.key");
+    ASSERT_EQ(
+        i18n->AddTranslation(
+            locale.Get(),
+            key.Get(),
+            MakeLocaleName("old").Get()),
+        DAS_S_OK);
+
+    const auto dir = UniqueDirForCurrentTest();
+    const auto file = dir / "en.json";
+    WriteFile(file, R"({"overlap.key": "new"})");
+    auto path = MakeLocaleName(file.string().c_str());
+    ASSERT_EQ(i18n->MergeFromFile(path.Get()), DAS_S_OK);
+
+    DAS::DasPtr<IDasReadOnlyString> p_out;
+    ASSERT_EQ(
+        i18n->TranslateWithLocale(locale.Get(), key.Get(), p_out.Put()),
+        DAS_S_OK);
+    EXPECT_EQ(ToUtf8(p_out.Get()), "new");
+}
+
+TEST(I18nBadJson, MissingBraceReturnsInvalidJsonAndLeavesTableUnchanged)
+{
+    auto i18n = MakeMutableI18n();
+    ASSERT_NE(i18n.Get(), nullptr);
+
+    // 先建一个有效条目，畸形合并后该条目必须仍可命中（事务性：不半合并）
+    auto locale = MakeLocaleName("en");
+    auto key = MakeLocaleName("keep.me");
+    ASSERT_EQ(
+        i18n->AddTranslation(
+            locale.Get(),
+            key.Get(),
+            MakeLocaleName("kept").Get()),
+        DAS_S_OK);
+
+    const auto dir = UniqueDirForCurrentTest();
+    const auto file = dir / "en.json";
+    WriteFile(file, R"({"broken": )"); // 缺值 + 缺花括号
+    auto path = MakeLocaleName(file.string().c_str());
+    EXPECT_EQ(i18n->MergeFromFile(path.Get()), DAS_E_INVALID_JSON);
+
+    // 原条目仍在
+    DAS::DasPtr<IDasReadOnlyString> p_keep;
+    ASSERT_EQ(
+        i18n->TranslateWithLocale(locale.Get(), key.Get(), p_keep.Put()),
+        DAS_S_OK);
+    EXPECT_EQ(ToUtf8(p_keep.Get()), "kept");
+    // 畸形文件的 key 未污染表
+    DAS::DasPtr<IDasReadOnlyString> p_broken;
+    EXPECT_EQ(
+        i18n->TranslateWithLocale(
+            locale.Get(),
+            MakeLocaleName("broken").Get(),
+            p_broken.Put()),
+        DAS_E_OUT_OF_RANGE);
+}
+
+TEST(I18nBadJson, NonObjectRootReturnsInvalidJson)
+{
+    auto i18n = MakeMutableI18n();
+    ASSERT_NE(i18n.Get(), nullptr);
+
+    const auto dir = UniqueDirForCurrentTest();
+    const auto file = dir / "en.json";
+    WriteFile(file, R"(["not", "an", "object"])");
+    auto path = MakeLocaleName(file.string().c_str());
+    EXPECT_EQ(i18n->MergeFromFile(path.Get()), DAS_E_INVALID_JSON);
+}
+
+TEST(I18nFallback, AddedLocaleHitsBeforeBaseMissesViaOtherLocale)
+{
+    auto i18n = MakeMutableI18n();
+    ASSERT_NE(i18n.Get(), nullptr);
+
+    // 给 ja 加 key，en base 无此 key
+    auto ja = MakeLocaleName("ja");
+    auto key = MakeLocaleName("only.in.ja");
+    ASSERT_EQ(
+        i18n->AddTranslation(
+            ja.Get(),
+            key.Get(),
+            MakeLocaleName("ja-val").Get()),
+        DAS_S_OK);
+
+    // TranslateWithLocale("ja") 直接命中 ja
+    DAS::DasPtr<IDasReadOnlyString> p_ja;
+    ASSERT_EQ(
+        i18n->TranslateWithLocale(ja.Get(), key.Get(), p_ja.Put()),
+        DAS_S_OK);
+    EXPECT_EQ(ToUtf8(p_ja.Get()), "ja-val");
+
+    // TranslateWithLocale("de") 该 key：de 不在表 → 回退 en base → 仍 miss →
+    // OUT_OF_RANGE
+    auto                            de = MakeLocaleName("de");
+    DAS::DasPtr<IDasReadOnlyString> p_de;
+    EXPECT_EQ(
+        i18n->TranslateWithLocale(de.Get(), key.Get(), p_de.Put()),
+        DAS_E_OUT_OF_RANGE);
+    EXPECT_EQ(p_de.Get(), nullptr);
+}
