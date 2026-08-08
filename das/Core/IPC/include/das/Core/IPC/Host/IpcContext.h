@@ -9,6 +9,7 @@
 #include <das/Core/IPC/Host/HandshakeHandler.h>
 #include <das/Core/IPC/Host/IIpcContext.h>
 #include <das/Core/IPC/HttpIpcClient.h>
+#include <das/Core/IPC/InternalCallbackHandler.h>
 #include <das/Core/IPC/IpcCommandHandler.h>
 #include <das/Core/IPC/IpcMessageQueue.h>
 #include <das/Core/IPC/IpcRunLoop.h>
@@ -180,6 +181,9 @@ namespace Core
 
                 DasPtr<IpcCommandHandler> command_handler_;
                 DasPtr<HandshakeHandler>  handshake_handler_;
+
+                /// 内部回调处理器（PostToBusinessThread 接收端）
+                DasPtr<InternalCallbackHandler> internal_callback_handler_;
 
                 /// 共享内存池（Open 模式，unique_ptr 由 Open 工厂返回）
                 std::unique_ptr<SharedMemoryPool> shared_memory_;

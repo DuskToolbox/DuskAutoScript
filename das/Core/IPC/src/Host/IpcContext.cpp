@@ -12,8 +12,10 @@
 #include <das/Core/IPC/Host/HostConfig.h>
 #include <das/Core/IPC/Host/IIpcContext.h>
 #include <das/Core/IPC/Host/IpcContext.h>
+#include <das/Core/IPC/InternalCallbackHandler.h>
 #include <das/Core/IPC/IpcCommandHandler.h>
 #include <das/Core/IPC/IpcMessageHeader.h>
+#include <das/Core/IPC/IpcMessageHeaderBuilder.h>
 #include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/IPC/IpcTransport.h>
 #include <das/Core/IPC/ManualProxyRegistry.h>
@@ -267,6 +269,16 @@ namespace Core
                     HeaderFlags::BUSINESS_CONTROL,
                     static_cast<uint32_t>(IpcCommandType::ReleaseShmBlock),
                     command_handler_.Get());
+
+                // 创建并注册 InternalCallbackHandler（PostToBusinessThread
+                // 接收端）
+                internal_callback_handler_ = DasPtr<InternalCallbackHandler>(
+                    new InternalCallbackHandler());
+                run_loop_.RegisterHandler(
+                    HeaderFlags::BUSINESS_CONTROL,
+                    static_cast<uint32_t>(
+                        InternalBusinessCommand::AsyncCallback),
+                    internal_callback_handler_.Get());
 
                 // HTTP/WebSocket transport mode
                 if (HasText(config_.connect_url))
@@ -850,8 +862,44 @@ namespace Core
                 {
                     return DAS_S_OK;
                 }
-                // RED stub: real impl pending
-                (void)callback;
+
+                // AddRef 保持生命周期（body 持有的引用）
+                callback->AddRef();
+
+                // body 编码 callback 原始指针
+                std::vector<uint8_t> body(sizeof(IDasAsyncCallback*));
+                std::memcpy(body.data(), &callback, sizeof(IDasAsyncCallback*));
+
+                // 构造 header: BUSINESS_CONTROL +
+                // InternalBusinessCommand::AsyncCallback
+                auto header =
+                    IPCMessageHeaderBuilder()
+                        .SetMessageType(MessageType::Event)
+                        .SetHeaderFlags(HeaderFlags::BUSINESS_CONTROL)
+                        .SetInterfaceId(
+                            static_cast<uint32_t>(
+                                InternalBusinessCommand::AsyncCallback))
+                        .SetBodySize(static_cast<uint32_t>(body.size()))
+                        .Build();
+
+                InboundMessage msg;
+                msg.header = header;
+                msg.body = std::move(body);
+
+                const DasResult push_result =
+                    inbound_queue_.Push(std::move(msg));
+                if (DAS::IsFailed(push_result))
+                {
+                    // Push 失败，用 DasPtr::Attach 释放 callback 引用防泄漏
+                    const auto released =
+                        DasPtr<IDasAsyncCallback>::Attach(callback);
+                    (void)released;
+                    DAS_CORE_LOG_ERROR(
+                        "PostToBusinessThread: Push failed, result={}",
+                        push_result);
+                    return push_result;
+                }
+
                 return DAS_S_OK;
             }
 
