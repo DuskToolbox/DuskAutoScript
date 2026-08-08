@@ -2,5 +2,5 @@
     "progress.extracting": "解压中…",
     "progress.replacing": "替换中…",
     "progress.downloading": "正在下载…",
-    "progress.downloading_with_size": "正在下载（{1} / {2}）{3}%"
+    "progress.downloading_with_size": "正在下载（{0} / {1}）{2}%"
 }
