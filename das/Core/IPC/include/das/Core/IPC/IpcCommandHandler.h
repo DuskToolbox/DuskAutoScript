@@ -83,18 +83,25 @@ public:
         std::span<const uint8_t>         payload,
         IpcCommandResponse&              response)>;
 
-    explicit IpcCommandHandler(RemoteObjectRegistry& registry);
+    explicit IpcCommandHandler(
+        RemoteObjectRegistry&     registry,
+        DistributedObjectManager& object_manager);
     ~IpcCommandHandler() = default;
 
     /**
      * @brief 工厂函数：创建 IpcCommandHandler 实例
      *
      * @param registry 远程对象注册表引用（per-IpcContext 依赖）
+     * @param object_manager 分布式对象管理器引用（LookupByName/ByInterface
+     *                       发出句柄时配对 DOM ref，配平远端 REMOTE_RELEASE）
      * @return DasPtr<IpcCommandHandler> 新创建的实例
      */
-    static DasPtr<IpcCommandHandler> Create(RemoteObjectRegistry& registry)
+    static DasPtr<IpcCommandHandler> Create(
+        RemoteObjectRegistry&     registry,
+        DistributedObjectManager& object_manager)
     {
-        return DasPtr<IpcCommandHandler>(new IpcCommandHandler(registry));
+        return DasPtr<IpcCommandHandler>(
+            new IpcCommandHandler(registry, object_manager));
     }
 
     DAS_UTILS_IDASBASE_AUTO_IMPL(IpcCommandHandler)
@@ -207,6 +214,9 @@ private:
 
     /// 远程对象注册表引用（构造时注入，per-IpcContext 依赖）
     RemoteObjectRegistry& registry_;
+
+    /// 分布式对象管理器引用（构造时注入，per-IpcContext 依赖）
+    DistributedObjectManager& object_manager_;
 
     std::unordered_map<IpcCommandType, CommandHandler> custom_handlers_;
 };

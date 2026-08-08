@@ -6,6 +6,7 @@
 #include "das/DasApi.h"
 #include "das/Utils/ThreadUtils.h"
 #include "das/Utils/fmt.h"
+#include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasLocaleService.hpp>
 
 #include <das/Debug/CrashDumper.h>
 
@@ -34,7 +35,6 @@
 #include <das/Core/IPC/MainProcess/IpcContext.h>
 #include <das/Core/Logger/DasLogSessionImpl.h>
 #include <das/Core/Logger/Logger.h>
-#include <das/Core/i18n/DasLocaleServiceImpl.h>
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
 #include <das/_autogen/idl/abi/DasSettings.h>
@@ -647,12 +647,17 @@ namespace Das::Http
             // locale、SetDefaultLocale 更新进程 GlobalLocale 并反向遍历
             // callbacks_。service shared_ptr 以 Release 为 deleter 持有 COM
             // 引用，DOM 另持一份保活（照 progress 范式）。
-            auto* locale_raw = new Das::Core::i18n::DasLocaleServiceImpl();
-            locale_raw->AddRef();
-            std::shared_ptr<Das::Core::i18n::DasLocaleServiceImpl>
+            Das::ExportInterface::IDasLocaleService* locale_raw = nullptr;
+            if (DAS::IsFailed(CreateDasLocaleServiceImpl(&locale_raw))
+                || locale_raw == nullptr)
+            {
+                DAS_LOG_ERROR("Failed to create IDasLocaleService");
+                return DAS_E_FAIL;
+            }
+            std::shared_ptr<Das::ExportInterface::IDasLocaleService>
                 locale_service(
                     locale_raw,
-                    [](Das::Core::i18n::DasLocaleServiceImpl* ptr)
+                    [](Das::ExportInterface::IDasLocaleService* ptr)
                     { ptr->Release(); });
             {
                 const DAS::Core::IPC::ScopedCurrentIpcContext scope(

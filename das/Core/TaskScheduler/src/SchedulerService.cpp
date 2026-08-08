@@ -4099,9 +4099,15 @@ namespace Das::Core::TaskScheduler
             {
                 if (!ec && state_.load() == SchedulerState::Running)
                 {
-                    auto* callback = new TickCallback(this);
-                    ipc_context_.get().PostToBusinessThread(callback);
-                    callback->Release();
+                    // DasPtr RAII 管理 TickCallback 引用（new 后 refcount=1
+                    // 归调用方）： PostToBusinessThread 内部 AddRef
+                    // 建独立引用，本 DasPtr 析构时 Release
+                    // 调用方那份，配对无泄漏（照 HostPostToBusinessThreadTest
+                    // 范式）。
+                    auto callback = Das::DasPtr<IDasAsyncCallback>::Attach(
+                        static_cast<IDasAsyncCallback*>(
+                            new TickCallback(this)));
+                    ipc_context_.get().PostToBusinessThread(callback.Get());
                 }
             });
     }

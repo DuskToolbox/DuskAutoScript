@@ -15,14 +15,15 @@ GlobalLocaleSingleton::GlobalLocaleSingleton()
     ::CreateIDasReadOnlyStringFromUtf8("en", p_locale_name.Put());
 }
 
-const Das::DasPtr<IDasReadOnlyString>& GlobalLocaleSingleton::GetInstance()
-    const
+Das::DasPtr<IDasReadOnlyString> GlobalLocaleSingleton::GetInstance() const
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     return p_locale_name;
 }
 
 void GlobalLocaleSingleton::SetInstance(IDasReadOnlyString& p_new_locale_name)
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     p_locale_name = &p_new_locale_name;
 }
 
@@ -53,8 +54,13 @@ DAS_C_API DasResult DasGetDefaultLocale(IDasReadOnlyString** pp_out_locale_name)
 {
     DAS_UTILS_CHECK_POINTER(pp_out_locale_name)
 
-    auto* p_result = DAS::Core::i18n::g_locale.GetInstance().Get();
-    p_result->AddRef();
+    // GetInstance 锁内拷贝(AddRef)出独立副本，再 AddRef 移交给调用方
+    auto  holder = DAS::Core::i18n::g_locale.GetInstance();
+    auto* p_result = holder.Get();
+    if (p_result != nullptr)
+    {
+        p_result->AddRef();
+    }
     *pp_out_locale_name = p_result;
     return DAS_S_OK;
 }

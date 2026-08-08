@@ -1,27 +1,8 @@
 #include "DasLocaleCallbackImpl.h"
 
 #include <das/DasApi.h>
-#include <das/Utils/fmt.h>
 
 DAS_CORE_I18N_NS_BEGIN
-
-LocaleSyncOwner::~LocaleSyncOwner()
-{
-    if (started && service && callback)
-    {
-        // RAII 兜底：RemoveCallback 触发 DasPtr 析构 Release → 远端释放链。
-        // 失败仅记日志（断连场景 best-effort，Pitfall 3）。
-        const auto rc = service->RemoveCallback(callback.Get());
-        if (DAS::IsFailed(rc))
-        {
-            DAS_LOG_ERROR(
-                DAS_FMT_NS::format(
-                    "LocaleSyncOwner: RemoveCallback failed result={}",
-                    static_cast<int>(rc))
-                    .c_str());
-        }
-    }
-}
 
 DasResult DasLocaleCallbackImpl::OnDefaultLocaleChanged(
     IDasReadOnlyString* new_locale)
@@ -30,14 +11,25 @@ DasResult DasLocaleCallbackImpl::OnDefaultLocaleChanged(
     {
         return DAS_E_INVALID_POINTER;
     }
-    // weak_ptr 兜底：Owner 已析构（理论上仅进程退出阶段）时空转不 UAF。
-    const std::shared_ptr<LocaleSyncOwner> locked = owner_.lock();
-    if (!locked)
-    {
-        return DAS_S_OK;
-    }
-    // 主进程切语言 → 经 IPC 反向通知到本 Host 进程 → 同步本地 GlobalLocale。
+    // 主进程切语言 → 经 IPC 反向通知 → 同步本地 GlobalLocale（mutex
+    // 保护，线程安全）
     return ::DasSetDefaultLocale(new_locale);
 }
 
 DAS_CORE_I18N_NS_END
+
+// C ABI factory（IDL [export,c_abi] 声明，Core 内 new 返回接口指针）。
+// Host（DasHost main.cpp）调本 factory 创建反向监听 callback，经 DasPtr 管理。
+DasResult CreateIDasLocaleCallback(
+    Das::ExportInterface::IDasLocaleCallback** pp_out)
+{
+    if (pp_out == nullptr)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+    *pp_out = nullptr;
+    auto* impl = new Das::Core::i18n::DasLocaleCallbackImpl();
+    impl->AddRef();
+    *pp_out = impl;
+    return DAS_S_OK;
+}

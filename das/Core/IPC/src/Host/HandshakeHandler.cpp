@@ -28,8 +28,7 @@ namespace Core
             {
                 // local_session_id = 0 表示等待握手时由主进程分配
                 // 非 0 值需要是有效的 session_id
-                if (local_session_id != 0
-                    && (local_session_id == 0 || local_session_id == 0xFFFF))
+                if (local_session_id == 0xFFFF)
                 {
                     const std::string msg = DAS_FMT_NS::format(
                         "HandshakeHandler: Invalid local_session_id: {}",
@@ -224,6 +223,31 @@ namespace Core
                     result = co_await sender.SendResponseAsync(
                         validated_response_header,
                         response_body);
+                }
+
+                // on_client_ready_ 推迟到 SendResponseAsync 之后：ReadyAck
+                // 已发、 握手完全结束，后续 sync IPC resolve 不与 ReadyAck
+                // 字节交错。
+                if (interface_id == HandshakeInterfaceId::HandshakeIfaceReady
+                    && DAS::IsOk(result) && on_client_ready_)
+                {
+                    try
+                    {
+                        on_client_ready_();
+                    }
+                    catch (const std::exception& e)
+                    {
+                        DAS_LOG_ERROR(
+                            DAS_FMT_NS::format(
+                                "HandshakeHandler: exception in on_client_ready callback: {}",
+                                e.what())
+                                .c_str());
+                    }
+                    catch (...)
+                    {
+                        DAS_LOG_ERROR(
+                            "HandshakeHandler: unknown exception in on_client_ready callback");
+                    }
                 }
 
                 co_return result;
@@ -458,29 +482,8 @@ namespace Core
                     it->second.plugin_name.c_str());
                 DAS_LOG_INFO(msg.c_str());
 
-                // 触发 on_client_ready_ 回调（比 on_client_connected_ 更晚，
-                // 此时双向握手已完成）。用于 on_after_connect 等"连接完全建
-                // 立"后才能跑的逻辑（如经 BusinessThread 发起 sync_wait IPC
-                // resolve——过早触发会与握手消息争抢 transport 致字节交错）。
-                if (on_client_ready_)
-                {
-                    try
-                    {
-                        on_client_ready_(it->second);
-                    }
-                    catch (const std::exception& e)
-                    {
-                        const std::string err_msg = DAS_FMT_NS::format(
-                            "HandshakeHandler: exception in on_client_ready callback: {}",
-                            e.what());
-                        DAS_LOG_ERROR(err_msg.c_str());
-                    }
-                    catch (...)
-                    {
-                        DAS_LOG_ERROR(
-                            "HandshakeHandler: unknown exception in on_client_ready callback");
-                    }
-                }
+                // on_client_ready_ 不在此触发——推迟到 HandleMessage 协程
+                // SendResponseAsync 之后（ReadyAck 已发，握手完全结束）。
 
                 ReadyAckV1 ack;
                 InitReadyAck(ack, ReadyAckV1::STATUS_SUCCESS);

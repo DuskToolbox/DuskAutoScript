@@ -32,6 +32,8 @@ namespace Das::ExportInterface
     struct IDasPortMap;
     struct IDasI18n;
     struct IDasMutableI18n;
+    struct IDasLocaleService;
+    struct IDasLocaleCallback;
     DAS_INTERFACE IDasGraphRuntime;
 } // namespace Das::ExportInterface
 

@@ -1,4 +1,4 @@
-#include <das/Core/i18n/DasLocaleServiceImpl.h>
+#include "../src/DasLocaleServiceImpl.h"
 #include <das/DasApi.h>
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>

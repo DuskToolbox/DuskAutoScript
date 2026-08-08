@@ -19,7 +19,9 @@
 #include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <das/Core/i18n/LocaleSyncCallback.h>
 #include <das/DasApi.h>
+#include <das/DasPtr.hpp>
 #include <das/Debug/CrashDumper.h>
+#include <das/IDasAsyncCallback.h>
 #include <das/IDasBase.h>
 #include <das/Utils/DasJsonCore.h>
 #include <das/Utils/StringUtils.h>
@@ -320,21 +322,20 @@ int main(int argc, char* argv[])
         DAS::Core::IPC::Host::IpcContextConfig config{};
         std::string                            connect_url_storage;
 
-        // 连接 ready（Named Pipe + HTTP 两传输模式，IpcContext 在两 ready 点
-        // 都已触发本事件）后异步投 BusinessThread 跑 locale 同步。线程约束：
-        // lambda 跑 IO 线程，体内**只**调 PostToBusinessThread 异步投 BT，
-        // 绝不同步 resolve（sync_wait 阻塞 IO → LOOKUP 响应无人收 → 死锁）。
-        // locale 同步逻辑全在 LocaleSyncCallback::Do()（BT 上跑）。
+        // 连接 ready 后异步投 BusinessThread 跑 locale 同步。on_after_connect
+        // 现在在 SendResponseAsync（ReadyAck 发送）之后触发，握手已完全结束；
+        // PostToBusinessThread 异步投 BT（不阻塞 IO 线程），BT 上 Do() resolve
+        // 走 PumpUntilResponse。
         config.events.on_after_connect =
-            [](void*, DAS::Core::IPC::Host::IIpcContext* ctx)
+            [](void*, DAS::Core::IPC::Host::IIpcContext* ctx) -> DasResult
         {
             if (ctx == nullptr)
             {
-                return static_cast<DasResult>(DAS_E_INVALID_POINTER);
+                return DAS_E_INVALID_POINTER;
             }
-            // MakeLocaleSyncCallback() 返回已 AddRef 的指针，所有权转交
-            // PostToBusinessThread（内部再 AddRef 保生命周期）。
-            return ctx->PostToBusinessThread(MakeLocaleSyncCallback());
+            DAS::DasPtr<IDasAsyncCallback> cb;
+            CreateLocaleSyncCallback(cb.Put());
+            return ctx->PostToBusinessThread(cb.Get());
         };
         config.events.p_on_after_connect_context = nullptr;
 

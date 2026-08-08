@@ -184,7 +184,9 @@ namespace Core
                 // FindTransport 在需要时解析 AnyTransport 引用。
 
                 // 创建并初始化 IpcCommandHandler
-                command_handler_ = IpcCommandHandler::Create(registry_);
+                command_handler_ = IpcCommandHandler::Create(
+                    registry_,
+                    proxy_factory_->GetObjectManager());
                 command_handler_->SetSessionId(session_id_);
 
                 // 创建 HandshakeHandler（使用 DasPtr 管理生命周期）
@@ -222,8 +224,7 @@ namespace Core
                 // transport 致字节交错。Ready 阶段握手完整结束，sync IPC
                 // 安全。
                 handshake_handler_->SetOnClientReady(
-                    [this](const ConnectedClient&)
-                    { InvokeOnAfterConnect(this); });
+                    [this]() { InvokeOnAfterConnect(this); });
 
                 handshake_handler_->SetOnClientDisconnected(
                     [this](uint16_t /*session_id*/) { is_connected_ = false; });

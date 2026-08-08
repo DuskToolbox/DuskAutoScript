@@ -116,6 +116,16 @@ module
     [ export, c_abi ] DasResult CreateIDasMutableI18n(
         [out] Das::ExportInterface::IDasMutableI18n** pp_out_i18n);
 
+    // 创建 IDasLocaleService 主进程实现（Core 内部 new，返回接口指针；DasHttp
+    // 经 RegisterServiceByName 注册为 "das.locale"，不直接 new Core 类）。
+    [ export, c_abi ] DasResult CreateDasLocaleServiceImpl(
+        [out] Das::ExportInterface::IDasLocaleService** pp_out);
+
+    // 创建 IDasLocaleCallback 反向监听（无状态 forwarder：OnDefaultLocaleChanged
+    // → ::DasSetDefaultLocale）。Host 经 AddCallback 注册到主进程 service。
+    [ export, c_abi ] DasResult CreateIDasLocaleCallback(
+        [out] Das::ExportInterface::IDasLocaleCallback** pp_out);
+
     //=============================================================================
     // Collections
     //=============================================================================

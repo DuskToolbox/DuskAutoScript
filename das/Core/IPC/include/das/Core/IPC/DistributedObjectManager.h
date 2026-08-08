@@ -10,9 +10,11 @@
 #include <das/DasPtr.hpp>
 #include <das/IDasBase.h>
 #include <memory>
+#include <mutex>
 #include <shared_mutex>
 #include <thread>
 #include <unordered_map>
+#include <utility>
 
 #include <das/Core/IPC/Config.h>
 
@@ -24,6 +26,26 @@ struct ObjectEntry
     ObjectId              object_id;
     DAS::DasPtr<IDasBase> object_ptr; // 本地对象非空，远程对象为 nullptr
     bool                  is_local;   // 决定 UnregisterObject 时是否 Release
+};
+
+// 本地对象的受限句柄：仅 DistributedObjectManager::WithLocalObject 在持锁
+// 期间发给回调，只暴露合法的引用计数/取值操作——既避免调用方反复加锁，
+// 又不泄露 ObjectEntry 内部。
+class LocalObjectRef
+{
+    ObjectEntry& entry_;
+    explicit LocalObjectRef(ObjectEntry& e) noexcept : entry_{e} {}
+    friend class DistributedObjectManager;
+
+public:
+    // 引用计数 +1（配平远端 proxy 销毁时的 REMOTE_RELEASE）。
+    void AddRef() noexcept { entry_.ref_count_++; }
+
+    [[nodiscard]]
+    IDasBase* Get() const noexcept
+    {
+        return entry_.object_ptr.Get();
+    }
 };
 
 // DistributedObjectManager is a free-threaded runtime table. It only tracks
@@ -60,6 +82,44 @@ public:
     [[nodiscard]]
     DasResult LookupObjectIdFromPtr(IDasBase* ptr, ObjectId& out_id)
         const noexcept;
+
+    /// @brief 持 DOM 锁对本地对象执行 fn（原子，避免多操作反复加锁）。
+    /// @param object_id 目标对象
+    /// @param fn 回调，收到 LocalObjectRef；其返回值透传给调用方
+    /// @return fn 的返回值；对象不存在 → OBJECT_NOT_FOUND，已回收(gen 不匹配)
+    ///         → STALE_OBJECT_HANDLE，非本地对象 → INVALID_OBJECT_ID
+    template <typename Fn>
+    DasResult WithLocalObject(const ObjectId& object_id, Fn&& fn)
+    {
+        const DasResult validate = ValidateObjectId(object_id);
+        if (validate != DAS_S_OK)
+        {
+            return validate;
+        }
+
+        const std::unique_lock lock{mutex_};
+        const auto             it = objects_.find(object_id);
+        if (it == objects_.end())
+        {
+            if (object_id.session_id == GetLocalSessionId())
+            {
+                const auto gen_it =
+                    local_id_generations_.find(object_id.local_id);
+                if (gen_it != local_id_generations_.end()
+                    && gen_it->second != object_id.generation)
+                {
+                    return DAS_E_IPC_STALE_OBJECT_HANDLE;
+                }
+            }
+            return DAS_E_IPC_OBJECT_NOT_FOUND;
+        }
+        if (!it->second.is_local)
+        {
+            return DAS_E_IPC_INVALID_OBJECT_ID;
+        }
+        LocalObjectRef ref{it->second};
+        return std::forward<Fn>(fn)(ref);
+    }
 
 private:
     static DasResult ValidateObjectId(const ObjectId& object_id);

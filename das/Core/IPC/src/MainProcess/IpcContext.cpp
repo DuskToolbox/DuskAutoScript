@@ -68,7 +68,9 @@ namespace Core
                     registry_);
 
                 // 4. 创建并初始化 IpcCommandHandler
-                command_handler_ = IpcCommandHandler::Create(registry_);
+                command_handler_ = IpcCommandHandler::Create(
+                    registry_,
+                    proxy_factory_->GetObjectManager());
                 command_handler_->SetSessionId(1);
 
                 // 5. 创建并注册 InternalCallbackHandler
@@ -128,7 +130,9 @@ namespace Core
                     *proxy_factory_,
                     registry_);
 
-                command_handler_ = IpcCommandHandler::Create(registry_);
+                command_handler_ = IpcCommandHandler::Create(
+                    registry_,
+                    proxy_factory_->GetObjectManager());
                 command_handler_->SetSessionId(1);
 
                 internal_callback_handler_ = DasPtr<InternalCallbackHandler>(

@@ -130,8 +130,7 @@ namespace Core
                     std::function<void(const ConnectedClient&)>;
                 using ClientDisconnectedCallback =
                     std::function<void(uint16_t session_id)>;
-                using ClientReadyCallback =
-                    std::function<void(const ConnectedClient&)>;
+                using ClientReadyCallback = std::function<void()>;
                 using ShutdownRequestedCallback = std::function<void()>;
 
                 /**

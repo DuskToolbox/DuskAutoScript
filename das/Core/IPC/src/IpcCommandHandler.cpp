@@ -21,8 +21,10 @@
 
 DAS_CORE_IPC_NS_BEGIN
 
-IpcCommandHandler::IpcCommandHandler(RemoteObjectRegistry& registry)
-    : session_id_(0), registry_(registry)
+IpcCommandHandler::IpcCommandHandler(
+    RemoteObjectRegistry&     registry,
+    DistributedObjectManager& object_manager)
+    : session_id_(0), registry_(registry), object_manager_(object_manager)
 {
 }
 
@@ -271,6 +273,25 @@ DasResult IpcCommandHandler::OnLookupByName(
 
     if (result == DAS_S_OK)
     {
+        // 发出的句柄须配对一个 DOM ref，配平远端 proxy 销毁时的
+        // REMOTE_RELEASE——否则服务注册 pin(ref=1) 被首个 proxy 释放吃掉 →
+        // ObjectId 回收(gen+1) → 后续 resolve 拿陈旧句柄 STALE_OBJECT_HANDLE
+        // （对齐 [out] 出参序列化时 RegisterLocalObject 的 +1）。对象已
+        // 回收/未注册 → 不发陈旧句柄，直接失败。
+        const DasResult ref_result = object_manager_.WithLocalObject(
+            info.object_id,
+            [](LocalObjectRef& ref)
+            {
+                ref.AddRef();
+                return DAS_S_OK;
+            });
+        if (DAS::IsFailed(ref_result))
+        {
+            response.error_code = ref_result;
+            response.response_data.clear();
+            return response.error_code;
+        }
+
         response.response_data.clear();
         SerializeValue(response.response_data, info.object_id);
         SerializeValue(response.response_data, info.iid);
@@ -317,6 +338,21 @@ DasResult IpcCommandHandler::OnLookupByInterface(
 
     if (result == DAS_S_OK)
     {
+        // 同 OnLookupByName：发出句柄配一个 DOM ref，配平远端 REMOTE_RELEASE。
+        const DasResult ref_result = object_manager_.WithLocalObject(
+            info.object_id,
+            [](LocalObjectRef& ref)
+            {
+                ref.AddRef();
+                return DAS_S_OK;
+            });
+        if (DAS::IsFailed(ref_result))
+        {
+            response.error_code = ref_result;
+            response.response_data.clear();
+            return response.error_code;
+        }
+
         response.response_data.clear();
         SerializeValue(response.response_data, info.object_id);
         SerializeValue(response.response_data, info.iid);

@@ -1,5 +1,6 @@
 #include <cstdint>
 #include <cstring>
+#include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/IpcCommandHandler.h>
 #include <das/Core/IPC/IpcMessageHeaderBuilder.h>
 #include <das/Core/IPC/ObjectId.h>
@@ -8,7 +9,10 @@
 #include <gtest/gtest.h>
 #include <vector>
 
+#include "MockDasObject.h"
+
 using DAS::Core::IPC::ClearSessionPayload;
+using DAS::Core::IPC::DistributedObjectManager;
 using DAS::Core::IPC::IpcCommandHandler;
 using DAS::Core::IPC::IpcCommandResponse;
 using DAS::Core::IPC::IpcCommandType;
@@ -116,13 +120,15 @@ protected:
     void SetUp() override
     {
         registry_.Clear();
+        object_manager_.SetSessionId(1);
         handler_.SetSessionId(1);
     }
 
     void TearDown() override { registry_.Clear(); }
 
-    RemoteObjectRegistry registry_;
-    IpcCommandHandler    handler_{registry_};
+    RemoteObjectRegistry     registry_;
+    DistributedObjectManager object_manager_;
+    IpcCommandHandler        handler_{registry_, object_manager_};
 };
 
 TEST_F(IpcCommandHandlerTest, LookupObject_Success)
@@ -193,7 +199,6 @@ TEST_F(IpcCommandHandlerTest, LookupObject_NotFound)
 
 TEST_F(IpcCommandHandlerTest, LookupByName_Success)
 {
-    ObjectId      obj_id{.session_id = 1, .generation = 1, .local_id = 100};
     const DasGuid iid = CreateTestGuid(
         0x12345678,
         0x1234,
@@ -207,6 +212,11 @@ TEST_F(IpcCommandHandlerTest, LookupByName_Success)
         0xDE,
         0xF0);
 
+    // resolve 的对象须先在 DOM 注册（与生产一致：服务经 RegisterLocalObject
+    // 入表），OnLookupByName 才能在发出句柄时配对 DOM ref。
+    MockDasObject* mock = new MockDasObject();
+    ObjectId       obj_id{};
+    ASSERT_EQ(object_manager_.RegisterLocalObject(mock, obj_id), DAS_S_OK);
     registry_.RegisterObject(obj_id, iid, 1, "test_object", 1);
 
     std::vector<uint8_t> payload;
@@ -222,8 +232,8 @@ TEST_F(IpcCommandHandlerTest, LookupByName_Success)
     size_t   offset = 0;
     ObjectId returned_id =
         ReadFromBuffer<ObjectId>(response.response_data, offset);
-    EXPECT_EQ(returned_id.session_id, 1);
-    EXPECT_EQ(returned_id.local_id, 100);
+    EXPECT_EQ(returned_id.session_id, obj_id.session_id);
+    EXPECT_EQ(returned_id.local_id, obj_id.local_id);
 
     // Verify DasGuid in response matches the registered IID
     const DasGuid returned_iid =
@@ -260,7 +270,6 @@ TEST_F(IpcCommandHandlerTest, LookupByName_NotFound)
 
 TEST_F(IpcCommandHandlerTest, LookupByInterface_Success)
 {
-    ObjectId      obj_id{.session_id = 1, .generation = 1, .local_id = 100};
     const DasGuid iid = CreateTestGuid(
         0x12345678,
         0x1234,
@@ -274,6 +283,9 @@ TEST_F(IpcCommandHandlerTest, LookupByInterface_Success)
         0xDE,
         0xF0);
 
+    MockDasObject* mock = new MockDasObject();
+    ObjectId       obj_id{};
+    ASSERT_EQ(object_manager_.RegisterLocalObject(mock, obj_id), DAS_S_OK);
     registry_.RegisterObject(obj_id, iid, 1, "test_object", 1);
 
     std::vector<uint8_t> payload;
@@ -289,7 +301,7 @@ TEST_F(IpcCommandHandlerTest, LookupByInterface_Success)
     size_t   offset = 0;
     ObjectId returned_id =
         ReadFromBuffer<ObjectId>(response.response_data, offset);
-    EXPECT_EQ(returned_id.local_id, 100);
+    EXPECT_EQ(returned_id.local_id, obj_id.local_id);
 }
 
 TEST_F(IpcCommandHandlerTest, LookupByInterface_NotFound)
