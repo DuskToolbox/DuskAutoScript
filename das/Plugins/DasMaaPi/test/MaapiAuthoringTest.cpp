@@ -5405,6 +5405,39 @@ namespace
         return yyjson::value(nullptr);
     }
 
+    // 返回 document.fields[] 中指定 name 的完整 field 描述符克隆（含
+    // valueType/inputType/candidates 等），缺失返回 nullopt。供 schedule
+    // 字段 valueType/inputType 断言使用。
+    std::optional<yyjson::value> FindField(
+        const yyjson::value& document,
+        std::string_view     name)
+    {
+        auto obj = document.as_object();
+        if (!obj || !obj->contains(std::string_view("fields")))
+        {
+            return std::nullopt;
+        }
+        auto fields = (*obj)[std::string_view("fields")].as_array();
+        if (!fields)
+        {
+            return std::nullopt;
+        }
+        for (auto it = fields->begin(); it != fields->end(); ++it)
+        {
+            auto field = it->as_object();
+            if (!field)
+            {
+                continue;
+            }
+            if ((*field)[std::string_view("name")].as_string().value_or("")
+                == name)
+            {
+                return Das::Utils::CloneYyjsonValue(*it);
+            }
+        }
+        return std::nullopt;
+    }
+
     // 构造一个覆盖 select(input)/checkbox/switch 四种 option 类型，且每种都
     // 携带 PI 协议层面 default 信号的 mock catalog。stage 与 settings 是
     // global_options，notify 是 task 级 switch。stage 没有 default_case，
@@ -8133,4 +8166,223 @@ TEST(MaapiCompileDeviceCacheTest, EmptySelectedDeviceUsesRawJsonAndIgnoresCache)
         }
     }
     EXPECT_FALSE(found_cache_warning);
+}
+
+// schedule.kind 投影为根字段（select：candidates off/interval/daily）。
+// 字段名走 pi.schedule.* 前缀范式，业务中立。
+TEST(MaapiProjectionTest, ProjectSchedule_EmitsKindSelect)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto                catalog = MakeNeutralProjectionMockCatalog();
+    AcceptedSettingsDto settings;
+    settings.pi.schedule_kind = "daily";
+
+    auto document = ProjectAuthoringDocument(settings, &catalog, {}, 0);
+    auto validate =
+        Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+    EXPECT_TRUE(validate.valid) << "error_kind=" << validate.error_kind
+                                << " message=" << validate.message;
+
+    EXPECT_EQ(CountFieldsWithName(document, "schedule.kind"), 1u);
+    auto kind_field = FindField(document, "schedule.kind");
+    ASSERT_TRUE(kind_field.has_value());
+    auto kf = kind_field->as_object();
+    ASSERT_TRUE(kf.has_value());
+    EXPECT_EQ((*kf)[std::string_view("valueType")].as_sint().value_or(-1), 4);
+    EXPECT_EQ((*kf)[std::string_view("inputType")].as_sint().value_or(-1), 1);
+    EXPECT_EQ(
+        (*kf)[std::string_view("value")].as_string().value_or(""),
+        "daily");
+    // candidates 含 off/interval/daily 三个 value。
+    auto candidates = (*kf)[std::string_view("candidates")].as_array();
+    ASSERT_TRUE(candidates.has_value());
+    std::set<std::string> candidate_values;
+    for (auto&& c : *candidates)
+    {
+        auto co = c.as_object();
+        if (co)
+        {
+            candidate_values.emplace(
+                (*co)[std::string_view("value")].as_string().value_or(""));
+        }
+    }
+    EXPECT_EQ(candidate_values.size(), 3u);
+    EXPECT_TRUE(candidate_values.count("off") > 0);
+    EXPECT_TRUE(candidate_values.count("interval") > 0);
+    EXPECT_TRUE(candidate_values.count("daily") > 0);
+}
+
+// kind=daily 投影 dailyTime(inputType=8 time)+dailyCatchUp(bool)。dailyCatchUp
+// 缺失默认 true（补跑倾向，服务端按 kind 重投影）。
+TEST(MaapiProjectionTest, ProjectSchedule_Daily_EmitsDailyTimeAndCatchUp)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto                catalog = MakeNeutralProjectionMockCatalog();
+    AcceptedSettingsDto settings;
+    settings.pi.schedule_kind = "daily";
+    settings.pi.schedule_daily_time = "09:30";
+
+    auto document = ProjectAuthoringDocument(settings, &catalog, {}, 0);
+
+    EXPECT_EQ(CountFieldsWithName(document, "schedule.dailyTime"), 1u);
+    auto time_field = FindField(document, "schedule.dailyTime");
+    ASSERT_TRUE(time_field.has_value());
+    auto tf = time_field->as_object();
+    ASSERT_TRUE(tf.has_value());
+    EXPECT_EQ((*tf)[std::string_view("valueType")].as_sint().value_or(-1), 4);
+    EXPECT_EQ((*tf)[std::string_view("inputType")].as_sint().value_or(-1), 8);
+    EXPECT_EQ(
+        (*tf)[std::string_view("value")].as_string().value_or(""),
+        "09:30");
+
+    EXPECT_EQ(CountFieldsWithName(document, "schedule.dailyCatchUp"), 1u);
+    auto catchup_field = FindField(document, "schedule.dailyCatchUp");
+    ASSERT_TRUE(catchup_field.has_value());
+    auto cf = catchup_field->as_object();
+    ASSERT_TRUE(cf.has_value());
+    EXPECT_EQ((*cf)[std::string_view("valueType")].as_sint().value_or(-1), 8);
+    // 缺失 daily_catch_up → 默认 true（补跑倾向）。
+    EXPECT_TRUE((*cf)[std::string_view("value")].as_bool().value_or(false));
+}
+
+// kind=interval 只投影 intervalMinutes（valueType=0 int），不发 dailyTime/
+// dailyCatchUp（服务端按 kind 重投影，前端零条件可见性）。
+TEST(MaapiProjectionTest, ProjectSchedule_Interval_EmitsOnlyIntervalMinutes)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto                catalog = MakeNeutralProjectionMockCatalog();
+    AcceptedSettingsDto settings;
+    settings.pi.schedule_kind = "interval";
+    settings.pi.schedule_interval_minutes = 90;
+
+    auto document = ProjectAuthoringDocument(settings, &catalog, {}, 0);
+
+    EXPECT_EQ(CountFieldsWithName(document, "schedule.kind"), 1u);
+    EXPECT_EQ(CountFieldsWithName(document, "schedule.intervalMinutes"), 1u);
+    auto interval_field = FindField(document, "schedule.intervalMinutes");
+    ASSERT_TRUE(interval_field.has_value());
+    auto ifo = interval_field->as_object();
+    ASSERT_TRUE(ifo.has_value());
+    EXPECT_EQ((*ifo)[std::string_view("valueType")].as_sint().value_or(-1), 0);
+    EXPECT_EQ((*ifo)[std::string_view("inputType")].as_sint().value_or(-1), 0);
+    EXPECT_EQ((*ifo)[std::string_view("value")].as_sint().value_or(-1), 90);
+
+    // interval kind 不发 daily 字段。
+    EXPECT_EQ(CountFieldsWithName(document, "schedule.dailyTime"), 0u);
+    EXPECT_EQ(CountFieldsWithName(document, "schedule.dailyCatchUp"), 0u);
+}
+
+// kind=off 只投影 schedule.kind，fieldLayout schedule section 只含 kind leaf。
+TEST(MaapiProjectionTest, ProjectSchedule_Off_EmitsOnlyKind)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto                catalog = MakeNeutralProjectionMockCatalog();
+    AcceptedSettingsDto settings; // schedule_kind 缺失 = "" = off
+
+    auto document = ProjectAuthoringDocument(settings, &catalog, {}, 0);
+    auto validate =
+        Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+    EXPECT_TRUE(validate.valid) << "error_kind=" << validate.error_kind
+                                << " message=" << validate.message;
+
+    EXPECT_EQ(CountFieldsWithName(document, "schedule.kind"), 1u);
+    EXPECT_EQ(CountFieldsWithName(document, "schedule.intervalMinutes"), 0u);
+    EXPECT_EQ(CountFieldsWithName(document, "schedule.dailyTime"), 0u);
+    EXPECT_EQ(CountFieldsWithName(document, "schedule.dailyCatchUp"), 0u);
+
+    auto schedule_section = FindLayoutSection(document, "schedule");
+    ASSERT_TRUE(schedule_section.has_value());
+    auto names = LayoutSectionFieldNames(*schedule_section);
+    ASSERT_EQ(names.size(), 1u);
+    EXPECT_EQ(names[0], "schedule.kind");
+}
+
+// kind 驱动 fieldLayout 重投影：kind=interval → schedule section 只含
+// kind+intervalMinutes leaf；kind=daily → kind+dailyTime+dailyCatchUp leaf。
+// 前端无客户端条件可见性，靠服务端按 kind 重投影 document。
+TEST(MaapiProjectionTest, KindReproject_LayoutMatchesKind)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto catalog = MakeNeutralProjectionMockCatalog();
+
+    // interval：schedule section = [kind, intervalMinutes]。
+    AcceptedSettingsDto interval_settings;
+    interval_settings.pi.schedule_kind = "interval";
+    interval_settings.pi.schedule_interval_minutes = 30;
+    auto interval_doc =
+        ProjectAuthoringDocument(interval_settings, &catalog, {}, 0);
+    auto interval_section = FindLayoutSection(interval_doc, "schedule");
+    ASSERT_TRUE(interval_section.has_value());
+    auto interval_names = LayoutSectionFieldNames(*interval_section);
+    EXPECT_EQ(interval_names.size(), 2u);
+    EXPECT_NE(
+        std::find(
+            interval_names.begin(),
+            interval_names.end(),
+            "schedule.kind"),
+        interval_names.end());
+    EXPECT_NE(
+        std::find(
+            interval_names.begin(),
+            interval_names.end(),
+            "schedule.intervalMinutes"),
+        interval_names.end());
+
+    // daily：schedule section = [kind, dailyTime, dailyCatchUp]。
+    AcceptedSettingsDto daily_settings;
+    daily_settings.pi.schedule_kind = "daily";
+    daily_settings.pi.schedule_daily_time = "09:30";
+    auto daily_doc = ProjectAuthoringDocument(daily_settings, &catalog, {}, 0);
+    auto daily_section = FindLayoutSection(daily_doc, "schedule");
+    ASSERT_TRUE(daily_section.has_value());
+    auto daily_names = LayoutSectionFieldNames(*daily_section);
+    EXPECT_EQ(daily_names.size(), 3u);
+    EXPECT_NE(
+        std::find(daily_names.begin(), daily_names.end(), "schedule.kind"),
+        daily_names.end());
+    EXPECT_NE(
+        std::find(daily_names.begin(), daily_names.end(), "schedule.dailyTime"),
+        daily_names.end());
+    EXPECT_NE(
+        std::find(
+            daily_names.begin(),
+            daily_names.end(),
+            "schedule.dailyCatchUp"),
+        daily_names.end());
+}
+
+// setValue target=document fieldName=schedule.kind 路由到
+// acceptedProperties.pi.schedule_kind，重投影后 document 含 daily 字段。
+TEST(MaapiProjectionTest, SetValue_ScheduleKind_RoutesToAcceptedProperties)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto                catalog = MakeNeutralProjectionMockCatalog();
+    AcceptedSettingsDto settings;
+
+    std::vector<PiDiagnosticDto> diagnostics;
+    auto                         payload = Das::Utils::ParseYyjsonFromString(
+                                               R"({"target":{"kind":"document"},)"
+                                               R"("fieldName":"schedule.kind",)"
+                                               R"("value":"daily"})")
+                                               .value_or(yyjson::value(nullptr));
+    const bool                   ok =
+        ApplyStrictSetValueChange(settings, payload, &catalog, diagnostics);
+    EXPECT_TRUE(ok);
+    EXPECT_TRUE(diagnostics.empty());
+
+    ASSERT_TRUE(settings.pi.schedule_kind.has_value());
+    EXPECT_EQ(*settings.pi.schedule_kind, "daily");
+
+    // 重投影：kind=daily document 含 dailyTime/dailyCatchUp 字段。
+    auto document = ProjectAuthoringDocument(settings, &catalog, {}, 0);
+    EXPECT_EQ(CountFieldsWithName(document, "schedule.kind"), 1u);
+    EXPECT_EQ(CountFieldsWithName(document, "schedule.dailyTime"), 1u);
+    EXPECT_EQ(CountFieldsWithName(document, "schedule.dailyCatchUp"), 1u);
+    EXPECT_EQ(CountFieldsWithName(document, "schedule.intervalMinutes"), 0u);
 }
