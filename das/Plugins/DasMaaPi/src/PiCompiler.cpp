@@ -867,6 +867,15 @@ namespace Das::Plugins::DasMaaPi
             envelope.maapi.resource_paths.emplace_back(
                 DAS::Utils::U8AsString(path.u8string()));
         }
+        // PI v2.2.0 controller.attach_resource_path：所选控制器声明在
+        // resource.path 之外的附加资源（设备/控制器专属识别模型、配置叠加
+        // 层）。PiCompiler 在此并入 envelope，由 MaaRuntime 在 resource.hash
+        // 校验后额外 LoadResource（协议 L136：path 加载完成后额外加载）。
+        for (const auto& path : controller->resolved_attach_resource_paths)
+        {
+            envelope.maapi.attach_resource_paths.emplace_back(
+                DAS::Utils::U8AsString(path.u8string()));
+        }
         // PI `$key` i18n resolution: walk controller / resource raw_json
         // before assignment so the runtime receives localized strings
         // instead of literal `$key` placeholders. Language selection is

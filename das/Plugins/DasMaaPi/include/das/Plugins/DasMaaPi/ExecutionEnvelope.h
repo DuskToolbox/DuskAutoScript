@@ -64,9 +64,15 @@ namespace Das::Plugins::DasMaaPi
         // (win32/gamepad/adb/dbg) + display options consumed by the single
         // CreateControllerFromParams entry point. When absent, MaaRuntime::Run
         // surfaces a structured error — there is no legacy single-arg fallback.
-        std::optional<ControllerInitParams>     controller_init_params;
-        std::string                             resource_name;
-        std::vector<std::string>                resource_paths;
+        std::optional<ControllerInitParams> controller_init_params;
+        std::string                         resource_name;
+        std::vector<std::string>            resource_paths;
+        // PI v2.2.0 controller.attach_resource_path：在 resource.path 加载
+        // 完成、resource.hash 校验（v2.6）之后额外加载的控制器专属资源
+        // 路径。PiCompiler 从所选 controller.resolved_attach_resource_paths
+        // 填充；MaaRuntime 在 hash 校验后遍历 LoadResource。空 = 该控制器
+        // 未声明附加资源（既有行为）。
+        std::vector<std::string>                attach_resource_paths;
         std::optional<std::string>              resource_hash;
         bool                                    fail_fast = true;
         bool                                    requires_agent_runtime = false;

@@ -101,7 +101,7 @@ namespace
             + R"(","maapi":{"interfaceDirectory":"C:/maa","controllerName":"Android","controller":)"
             + controller_json
             + R"(,"resourceName":"Official",)"
-              R"("resourcePaths":["C:/maa/resource","C:/maa/attach"],"resourceHash":"hash-expected",)"
+              R"("resourcePaths":["C:/maa/resource","C:/maa/attach"],"attachResourcePaths":[],"resourceHash":"hash-expected",)"
               R"("failFast":)"
             + std::string(fail_fast ? "true" : "false")
             + R"(,"requiresAgentRuntime":)"
@@ -1270,7 +1270,15 @@ TEST(DasMaaPiRuntime, PretaskZeroExitProceedsToControllerCreate)
         nullptr);
     EXPECT_EQ(result.das_result, DAS_S_OK);
     ASSERT_EQ(runner.launches.size(), 1u);
-    EXPECT_EQ(runner.launches[0].exec, "tools/pre.exe");
+    // ResolveChildExec 把相对 exec 基于 interface_directory 解析成绝对路径
+    // 后再 spawn：Windows CreateProcess 用父进程 CWD 解析相对可执行路径，
+    // process_start_dir 只决定子进程启动后的 CWD——不预解析会 spawn 失败。
+    // 期望值与 ResolveChildExec("tools/pre.exe","C:/maa") 的解析结果一致。
+    EXPECT_EQ(
+        runner.launches[0].exec,
+        (std::filesystem::path("C:/maa") / "tools/pre.exe")
+            .lexically_normal()
+            .string());
     ASSERT_EQ(runner.launches[0].args.size(), 1u);
     EXPECT_EQ(runner.launches[0].args[0], "--init");
     EXPECT_EQ(

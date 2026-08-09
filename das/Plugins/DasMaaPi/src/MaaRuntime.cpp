@@ -9,6 +9,7 @@
 #include "MaaCallbackLogger.h"
 #include "MaaDynamicSymbols.h"
 #include "MaaHandle.h"
+#include "PathResolver.h"
 #include "PiHttpClient.h"
 #include "PretaskRunner.h"
 #include "Win32WindowFinder.h"
@@ -1484,7 +1485,15 @@ namespace Das::Plugins::DasMaaPi
                     return false;
                 }
                 PretaskLaunchRequest request;
-                request.exec = pretask.exec;
+                // 相对路径 exec 必须基于 interface_directory 预解析成绝对
+                // 路径后再 spawn：Windows CreateProcess 用父进程 CWD 解析
+                // 相对可执行路径，process_start_dir 只决定子进程启动后的
+                // CWD——不预解析会 spawn 失败（与 agent 共用 ResolveChildExec，
+                // 对齐 MXU maa_agent.rs:339 resolve_child_exec_path）。
+                request.exec = ResolveChildExec(
+                                   pretask.exec,
+                                   envelope.maapi.interface_directory)
+                                   .string();
                 request.args = pretask.args;
                 request.working_directory = envelope.maapi.interface_directory;
                 auto run = runner.Run(request);
@@ -1873,6 +1882,26 @@ namespace Das::Plugins::DasMaaPi
                     "Maa resource hash does not match the PI envelope",
                     std::nullopt,
                     "warning");
+            }
+        }
+        // PI v2.2.0 controller.attach_resource_path：resource.path 加载完成
+        // 且 resource.hash 校验（v2.6）之后，额外加载所选控制器声明的附加
+        // 资源（协议 L236-238 校验时机：path 后、attach 前）。后加载的资源
+        // 覆盖先加载的同名任务（协议 L1076 资源覆盖）。失败按 resource.path
+        // 同语义中止——attach 是项目声明的必需资源，缺失应阻断并给出诊断，
+        // 而非静默丢失（W1 修复前的痛点正是无诊断的隐性资源丢失）。
+        for (const auto& path : envelope.maapi.attach_resource_paths)
+        {
+            auto attach_load = boundary.LoadResource(resource.get(), path);
+            if (!attach_load.ok)
+            {
+                result.das_result = DAS_E_FAIL;
+                AddDiagnostic(
+                    result,
+                    "load-attach-resource-failed",
+                    attach_load.message,
+                    attach_load.provider_code);
+                return result;
             }
         }
 
