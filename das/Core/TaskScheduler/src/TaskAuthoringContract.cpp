@@ -35,7 +35,7 @@ namespace Das::Core::TaskScheduler
 
         constexpr std::array<int, 7> VALUE_TYPES{0, 1, 2, 4, 8, 16, 32};
 
-        constexpr std::array<int, 8> INPUT_TYPES{0, 1, 2, 3, 4, 5, 6, 7};
+        constexpr std::array<int, 9> INPUT_TYPES{0, 1, 2, 3, 4, 5, 6, 7, 8};
 
         bool IsOneOf(
             std::string_view value,
@@ -467,6 +467,16 @@ namespace Das::Core::TaskScheduler
                 return Fail(
                     "invalidReadonly",
                     "inputType 7 (markdown) requires readonly=true");
+            }
+
+            // time(inputType=8) 必须 valueType=4(string "HH:MM")：通用时间
+            // 字段类型，Core 只强制类型契约，HH:MM 语义由投影层/渲染控件负责
+            // （schema if-then 同步约束）。
+            if (it == 8 && vt != 4)
+            {
+                return Fail(
+                    "invalidValueType",
+                    "inputType 8 (time) requires valueType=4 (string \"HH:MM\")");
             }
 
             if (obj.contains("candidates"))

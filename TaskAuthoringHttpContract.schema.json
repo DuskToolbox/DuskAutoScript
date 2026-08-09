@@ -152,8 +152,8 @@
         },
         "inputType": {
           "type": "integer",
-          "enum": [0, 1, 2, 3, 4, 5, 6, 7],
-          "$comment": "0=plain 1=select 2=multiselect 3=long-input 4=region-select 5=filePath 6=directoryPath 7=markdown (readonly, release note/welcome; value may be markdown text or http(s) URL — URL triggers client-side fetch + RFC 7234 cache + markdown render)."
+          "enum": [0, 1, 2, 3, 4, 5, 6, 7, 8],
+          "$comment": "0=plain 1=select 2=multiselect 3=long-input 4=region-select 5=filePath 6=directoryPath 7=markdown (readonly, release note/welcome; value may be markdown text or http(s) URL — URL triggers client-side fetch + RFC 7234 cache + markdown render). 8=time (24h \"HH:MM\" string; requires valueType=4)."
         },
         "value": { "$ref": "#/$defs/JsonValue" },
         "description": { "type": "string" },
@@ -171,19 +171,38 @@
           "items": { "$ref": "#/$defs/CommandDescriptor" }
         }
       },
-      "if": {
-        "properties": {
-          "inputType": { "const": 7 }
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "inputType": { "const": 7 }
+            },
+            "required": ["inputType"]
+          },
+          "then": {
+            "properties": {
+              "readonly": { "const": true }
+            },
+            "required": ["readonly"]
+          },
+          "$comment": "inputType==7 (markdown) requires readonly==true (schema side; the C++ validator enforces the same)."
         },
-        "required": ["inputType"]
-      },
-      "then": {
-        "properties": {
-          "readonly": { "const": true }
-        },
-        "required": ["readonly"]
-      },
-      "$comment": "D-92-16: inputType==7 (markdown) requires readonly==true (schema side; the C++ validator enforces the same)."
+        {
+          "if": {
+            "properties": {
+              "inputType": { "const": 8 }
+            },
+            "required": ["inputType"]
+          },
+          "then": {
+            "properties": {
+              "valueType": { "const": 4 }
+            },
+            "required": ["valueType"]
+          },
+          "$comment": "inputType==8 (time) requires valueType==4 (string \"HH:MM\" 24h); the C++ validator enforces the same."
+        }
+      ]
     },
     "FieldLayoutLeafField": {
       "type": "object",
