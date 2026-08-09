@@ -913,6 +913,18 @@ namespace Das::Plugins::DasMaaPi
             envelope.maapi.focus_translations_path =
                 DAS::Utils::U8AsString(language_path_it->second.u8string());
         }
+        // schedule（插件自治调度）。从 acceptedProperties.pi flat optional 字段
+        // 组装成 envelope.maapi.schedule（非 optional 始终写出，kind=""=off）。
+        // flat optional 规避 cpp_yyjson optional<聚合体首字段 string> caster
+        // 陷阱。 缺失 = nullopt = schedule off。MaapiTask::Do 解析后缓存到
+        // schedule_， GetNextExecutionTime 读缓存算下一次运行时间。
+        envelope.maapi.schedule.kind = settings.pi.schedule_kind.value_or("");
+        envelope.maapi.schedule.interval_minutes =
+            settings.pi.schedule_interval_minutes.value_or(0);
+        envelope.maapi.schedule.daily_time =
+            settings.pi.schedule_daily_time.value_or("");
+        envelope.maapi.schedule.daily_catch_up =
+            settings.pi.schedule_daily_catch_up.value_or(false);
         const auto resolve_raw = [&](const std::string& raw_json) -> std::string
         {
             auto parsed = Das::Utils::ParseYyjsonFromString(raw_json);
