@@ -3720,7 +3720,7 @@ namespace Das::Plugins::DasMaaPi
                 EmitDiagnostic(
                     diagnostics,
                     "error",
-                    std::string(context) + ": payload must be object",
+                    Translate("diagnostic.payloadMustBeObject", context),
                     DAS_E_INVALID_JSON);
                 return false;
             }
@@ -3748,8 +3748,10 @@ namespace Das::Plugins::DasMaaPi
             EmitDiagnostic(
                 diagnostics,
                 "error",
-                std::string(context) + ": payload must have exactly {"
-                    + allowed_list + "}",
+                Translate(
+                    "diagnostic.payloadMustHaveExactly",
+                    context,
+                    allowed_list),
                 DAS_E_INVALID_ARGUMENT);
             return false;
         }
@@ -3801,7 +3803,9 @@ namespace Das::Plugins::DasMaaPi
                     EmitDiagnostic(
                         diagnostics,
                         "error",
-                        "adapter.interfacePath value must be string",
+                        Translate(
+                            "diagnostic.valueMustBeString",
+                            "adapter.interfacePath"),
                         DAS_E_INVALID_ARGUMENT,
                         field);
                     return false;
@@ -3817,7 +3821,9 @@ namespace Das::Plugins::DasMaaPi
                     EmitDiagnostic(
                         diagnostics,
                         "error",
-                        "adapter.proxyUrl value must be string",
+                        Translate(
+                            "diagnostic.valueMustBeString",
+                            "adapter.proxyUrl"),
                         DAS_E_INVALID_ARGUMENT,
                         field);
                     return false;
@@ -3833,7 +3839,9 @@ namespace Das::Plugins::DasMaaPi
                     EmitDiagnostic(
                         diagnostics,
                         "error",
-                        "adapter.mirrorchyanCdk value must be string",
+                        Translate(
+                            "diagnostic.valueMustBeString",
+                            "adapter.mirrorchyanCdk"),
                         DAS_E_INVALID_ARGUMENT,
                         field);
                     return false;
@@ -3849,7 +3857,9 @@ namespace Das::Plugins::DasMaaPi
                     EmitDiagnostic(
                         diagnostics,
                         "error",
-                        "adapter.updateChannel value must be string",
+                        Translate(
+                            "diagnostic.valueMustBeString",
+                            "adapter.updateChannel"),
                         DAS_E_INVALID_ARGUMENT,
                         field);
                     return false;
@@ -3862,8 +3872,11 @@ namespace Das::Plugins::DasMaaPi
                     EmitDiagnostic(
                         diagnostics,
                         "error",
-                        "adapter.updateChannel must be 'mirrorchyan' or "
-                        "'github'",
+                        Translate(
+                            "diagnostic.valueMustBeOneOfTwo",
+                            "adapter.updateChannel",
+                            "mirrorchyan",
+                            "github"),
                         DAS_E_INVALID_ARGUMENT,
                         field);
                     return false;
@@ -3878,7 +3891,9 @@ namespace Das::Plugins::DasMaaPi
                     EmitDiagnostic(
                         diagnostics,
                         "error",
-                        "adapter.executionPolicy.failFast value must be bool",
+                        Translate(
+                            "diagnostic.valueMustBeBool",
+                            "adapter.executionPolicy.failFast"),
                         DAS_E_INVALID_ARGUMENT,
                         field);
                     return false;
@@ -3894,7 +3909,9 @@ namespace Das::Plugins::DasMaaPi
                     EmitDiagnostic(
                         diagnostics,
                         "error",
-                        "controllerName value must be string",
+                        Translate(
+                            "diagnostic.valueMustBeString",
+                            "controllerName"),
                         DAS_E_INVALID_ARGUMENT,
                         field);
                     return false;
@@ -3910,7 +3927,9 @@ namespace Das::Plugins::DasMaaPi
                     EmitDiagnostic(
                         diagnostics,
                         "error",
-                        "resourceName value must be string",
+                        Translate(
+                            "diagnostic.valueMustBeString",
+                            "resourceName"),
                         DAS_E_INVALID_ARGUMENT,
                         field);
                     return false;
@@ -3926,7 +3945,7 @@ namespace Das::Plugins::DasMaaPi
                     EmitDiagnostic(
                         diagnostics,
                         "error",
-                        "language value must be string",
+                        Translate("diagnostic.valueMustBeString", "language"),
                         DAS_E_INVALID_ARGUMENT,
                         field);
                     return false;
@@ -3942,7 +3961,7 @@ namespace Das::Plugins::DasMaaPi
                     EmitDiagnostic(
                         diagnostics,
                         "error",
-                        "presetName value must be string",
+                        Translate("diagnostic.valueMustBeString", "presetName"),
                         DAS_E_INVALID_ARGUMENT,
                         field);
                     return false;
@@ -3953,7 +3972,9 @@ namespace Das::Plugins::DasMaaPi
                     EmitDiagnostic(
                         diagnostics,
                         "error",
-                        "presetName value must be non-empty",
+                        Translate(
+                            "diagnostic.valueMustBeNonEmpty",
+                            "presetName"),
                         DAS_E_INVALID_ARGUMENT,
                         field);
                     return false;
@@ -3977,7 +3998,7 @@ namespace Das::Plugins::DasMaaPi
                     EmitDiagnostic(
                         diagnostics,
                         "error",
-                        "presetName requires a parsed PI catalog",
+                        Translate("diagnostic.presetNameRequiresCatalog"),
                         DAS_E_FAIL,
                         field);
                     return false;
@@ -3996,7 +4017,7 @@ namespace Das::Plugins::DasMaaPi
                     EmitDiagnostic(
                         diagnostics,
                         "error",
-                        "Unknown preset name: " + name,
+                        Translate("diagnostic.unknownPresetName", name),
                         DAS_E_NOT_FOUND,
                         field);
                     return false;
@@ -4044,7 +4065,8 @@ namespace Das::Plugins::DasMaaPi
                     EmitDiagnostic(
                         diagnostics,
                         "error",
-                        "setValue field references unknown option",
+                        Translate(
+                            "diagnostic.setValueFieldReferencesUnknownOption"),
                         DAS_E_INVALID_ARGUMENT,
                         field);
                     return false;
@@ -4066,7 +4088,8 @@ namespace Das::Plugins::DasMaaPi
                     EmitDiagnostic(
                         diagnostics,
                         "error",
-                        "setValue field not declared on any pretask",
+                        Translate(
+                            "diagnostic.setValueFieldNotDeclaredOnAnyPretask"),
                         DAS_E_INVALID_ARGUMENT,
                         field);
                     return false;
@@ -4085,7 +4108,7 @@ namespace Das::Plugins::DasMaaPi
                     EmitDiagnostic(
                         diagnostics,
                         "error",
-                        "setValue value type incompatible with option",
+                        Translate("diagnostic.setValueValueTypeIncompatible"),
                         DAS_E_INVALID_ARGUMENT,
                         field);
                     return false;
@@ -4099,7 +4122,7 @@ namespace Das::Plugins::DasMaaPi
             EmitDiagnostic(
                 diagnostics,
                 "error",
-                "setValue field unknown for document target",
+                Translate("diagnostic.setValueFieldUnknownDocument"),
                 DAS_E_INVALID_ARGUMENT,
                 field);
             return false;
@@ -4122,7 +4145,7 @@ namespace Das::Plugins::DasMaaPi
                 EmitDiagnostic(
                     diagnostics,
                     "error",
-                    "setValue target id not found",
+                    Translate("diagnostic.setValueTargetIdNotFound"),
                     DAS_E_NOT_FOUND,
                     "target.id");
                 return false;
@@ -4135,7 +4158,7 @@ namespace Das::Plugins::DasMaaPi
                     EmitDiagnostic(
                         diagnostics,
                         "error",
-                        "enabled value must be bool",
+                        Translate("diagnostic.valueMustBeBool", "enabled"),
                         DAS_E_INVALID_ARGUMENT,
                         field);
                     return false;
@@ -4155,7 +4178,8 @@ namespace Das::Plugins::DasMaaPi
                     EmitDiagnostic(
                         diagnostics,
                         "error",
-                        "setValue field not declared on this task",
+                        Translate(
+                            "diagnostic.setValueFieldNotDeclaredOnThisTask"),
                         DAS_E_INVALID_ARGUMENT,
                         field);
                     return false;
@@ -4166,7 +4190,8 @@ namespace Das::Plugins::DasMaaPi
                     EmitDiagnostic(
                         diagnostics,
                         "error",
-                        "setValue field references unknown option",
+                        Translate(
+                            "diagnostic.setValueFieldReferencesUnknownOption"),
                         DAS_E_INVALID_ARGUMENT,
                         field);
                     return false;
@@ -4182,7 +4207,7 @@ namespace Das::Plugins::DasMaaPi
                     EmitDiagnostic(
                         diagnostics,
                         "error",
-                        "setValue value type incompatible with option",
+                        Translate("diagnostic.setValueValueTypeIncompatible"),
                         DAS_E_INVALID_ARGUMENT,
                         field);
                     return false;
@@ -4194,7 +4219,7 @@ namespace Das::Plugins::DasMaaPi
             EmitDiagnostic(
                 diagnostics,
                 "error",
-                "setValue field unknown for formSequenceItem target",
+                Translate("diagnostic.setValueFieldUnknownFormSequenceItem"),
                 DAS_E_INVALID_ARGUMENT,
                 field);
             return false;
@@ -4227,7 +4252,7 @@ namespace Das::Plugins::DasMaaPi
             EmitDiagnostic(
                 diagnostics,
                 "error",
-                "setValue.target.kind required string",
+                Translate("diagnostic.setValueTargetKindRequiredString"),
                 DAS_E_INVALID_ARGUMENT,
                 "target.kind");
             return false;
@@ -4241,7 +4266,7 @@ namespace Das::Plugins::DasMaaPi
             EmitDiagnostic(
                 diagnostics,
                 "error",
-                "setValue.target.kind unsupported",
+                Translate("diagnostic.setValueTargetKindUnsupported"),
                 DAS_E_INVALID_ARGUMENT,
                 "target.kind");
             return false;
@@ -4261,7 +4286,9 @@ namespace Das::Plugins::DasMaaPi
                 EmitDiagnostic(
                     diagnostics,
                     "error",
-                    target_kind + " target must have exactly {kind, id}",
+                    Translate(
+                        "diagnostic.targetMustHaveExactlyKindId",
+                        target_kind),
                     DAS_E_INVALID_ARGUMENT,
                     "target");
                 return false;
@@ -4271,7 +4298,7 @@ namespace Das::Plugins::DasMaaPi
                 EmitDiagnostic(
                     diagnostics,
                     "error",
-                    "target.id must be string",
+                    Translate("diagnostic.mustBeString", "target.id"),
                     DAS_E_INVALID_ARGUMENT,
                     "target.id");
                 return false;
@@ -4291,7 +4318,7 @@ namespace Das::Plugins::DasMaaPi
                 EmitDiagnostic(
                     diagnostics,
                     "error",
-                    "document target must have exactly {kind}",
+                    Translate("diagnostic.documentTargetMustHaveExactlyKind"),
                     DAS_E_INVALID_ARGUMENT,
                     "target");
                 return false;
@@ -4303,7 +4330,7 @@ namespace Das::Plugins::DasMaaPi
             EmitDiagnostic(
                 diagnostics,
                 "error",
-                "graphNode target unsupported in MaaPI formSequence view",
+                Translate("diagnostic.graphNodeTargetUnsupported"),
                 DAS_E_INVALID_ARGUMENT,
                 "target.kind");
             return false;
@@ -4315,7 +4342,7 @@ namespace Das::Plugins::DasMaaPi
             EmitDiagnostic(
                 diagnostics,
                 "error",
-                "setValue.fieldName required and non-empty",
+                Translate("diagnostic.setValueFieldNameRequired"),
                 DAS_E_INVALID_ARGUMENT,
                 "fieldName");
             return false;
@@ -4352,7 +4379,7 @@ namespace Das::Plugins::DasMaaPi
             EmitDiagnostic(
                 diagnostics,
                 "error",
-                "addFormSequenceItem payload must be object",
+                Translate("diagnostic.addFormSequenceItemPayloadMustBeObject"),
                 DAS_E_INVALID_JSON);
             return false;
         }
@@ -4372,8 +4399,8 @@ namespace Das::Plugins::DasMaaPi
             EmitDiagnostic(
                 diagnostics,
                 "error",
-                "addFormSequenceItem payload must have exactly {actionId} or "
-                "{actionId, insertionIndex}",
+                Translate(
+                    "diagnostic.addFormSequenceItemPayloadMustHaveExactly"),
                 DAS_E_INVALID_ARGUMENT);
             return false;
         }
@@ -4383,7 +4410,7 @@ namespace Das::Plugins::DasMaaPi
             EmitDiagnostic(
                 diagnostics,
                 "error",
-                "addFormSequenceItem.actionId required and non-empty",
+                Translate("diagnostic.addFormSequenceItemActionIdRequired"),
                 DAS_E_INVALID_ARGUMENT,
                 "actionId");
             return false;
@@ -4398,7 +4425,7 @@ namespace Das::Plugins::DasMaaPi
                 EmitDiagnostic(
                     diagnostics,
                     "error",
-                    "insertionIndex must be integer",
+                    Translate("diagnostic.mustBeInteger", "insertionIndex"),
                     DAS_E_INVALID_ARGUMENT,
                     "insertionIndex");
                 return false;
@@ -4414,7 +4441,8 @@ namespace Das::Plugins::DasMaaPi
             EmitDiagnostic(
                 diagnostics,
                 "error",
-                "addFormSequenceItem actionId not registered",
+                Translate(
+                    "diagnostic.addFormSequenceItemActionIdNotRegistered"),
                 DAS_E_NOT_FOUND,
                 "actionId");
             return false;
@@ -4477,7 +4505,7 @@ namespace Das::Plugins::DasMaaPi
             EmitDiagnostic(
                 diagnostics,
                 "error",
-                "uiEvent.type required and non-empty",
+                Translate("diagnostic.uiEventTypeRequired"),
                 DAS_E_INVALID_ARGUMENT,
                 "type");
             return false;
@@ -4497,7 +4525,8 @@ namespace Das::Plugins::DasMaaPi
                 EmitDiagnostic(
                     diagnostics,
                     "error",
-                    "sectionExpandChanged.target.sectionId required",
+                    Translate(
+                        "diagnostic.sectionExpandChangedTargetSectionIdRequired"),
                     DAS_E_INVALID_ARGUMENT,
                     "target.sectionId");
                 return false;
@@ -4509,7 +4538,8 @@ namespace Das::Plugins::DasMaaPi
                 EmitDiagnostic(
                     diagnostics,
                     "error",
-                    "sectionExpandChanged.data.expanded required bool",
+                    Translate(
+                        "diagnostic.sectionExpandChangedDataExpandedRequiredBool"),
                     DAS_E_INVALID_ARGUMENT,
                     "data.expanded");
                 return false;
@@ -4525,7 +4555,7 @@ namespace Das::Plugins::DasMaaPi
         EmitDiagnostic(
             diagnostics,
             "error",
-            "uiEvent.type unsupported: " + *type,
+            Translate("diagnostic.uiEventTypeUnsupported", *type),
             DAS_E_INVALID_ARGUMENT,
             "type");
         return false;
@@ -4551,7 +4581,7 @@ namespace Das::Plugins::DasMaaPi
             EmitDiagnostic(
                 diagnostics,
                 "error",
-                "moveFormSequenceItem.formSequenceItemId required",
+                Translate("diagnostic.moveFormSequenceItemIdRequired"),
                 DAS_E_INVALID_ARGUMENT,
                 "formSequenceItemId");
             return false;
@@ -4562,7 +4592,7 @@ namespace Das::Plugins::DasMaaPi
             EmitDiagnostic(
                 diagnostics,
                 "error",
-                "destinationIndex must be integer",
+                Translate("diagnostic.mustBeInteger", "destinationIndex"),
                 DAS_E_INVALID_ARGUMENT,
                 "destinationIndex");
             return false;
@@ -4586,7 +4616,7 @@ namespace Das::Plugins::DasMaaPi
             EmitDiagnostic(
                 diagnostics,
                 "error",
-                "moveFormSequenceItem id not found",
+                Translate("diagnostic.moveFormSequenceItemIdNotFound"),
                 DAS_E_NOT_FOUND,
                 "formSequenceItemId");
             return false;
@@ -4596,7 +4626,7 @@ namespace Das::Plugins::DasMaaPi
             EmitDiagnostic(
                 diagnostics,
                 "error",
-                "destinationIndex out of range",
+                Translate("diagnostic.destinationIndexOutOfRange"),
                 DAS_E_OUT_OF_RANGE,
                 "destinationIndex");
             return false;
@@ -4638,7 +4668,7 @@ namespace Das::Plugins::DasMaaPi
             EmitDiagnostic(
                 diagnostics,
                 "error",
-                "removeFormSequenceItem.formSequenceItemId required",
+                Translate("diagnostic.removeFormSequenceItemIdRequired"),
                 DAS_E_INVALID_ARGUMENT,
                 "formSequenceItemId");
             return false;
@@ -4653,7 +4683,7 @@ namespace Das::Plugins::DasMaaPi
             EmitDiagnostic(
                 diagnostics,
                 "error",
-                "removeFormSequenceItem id not found",
+                Translate("diagnostic.removeFormSequenceItemIdNotFound"),
                 DAS_E_NOT_FOUND,
                 "formSequenceItemId");
             return false;
@@ -4745,7 +4775,7 @@ namespace Das::Plugins::DasMaaPi
             EmitDiagnostic(
                 diagnostics,
                 "error",
-                "checkUpdate requires session pending state",
+                Translate("diagnostic.checkUpdateRequiresPendingState"),
                 DAS_E_INVALID_ARGUMENT,
                 "pendingUpdate");
             return false;
@@ -4759,7 +4789,7 @@ namespace Das::Plugins::DasMaaPi
             EmitDiagnostic(
                 diagnostics,
                 "error",
-                "checkUpdate requires a valid adapter.interfacePath",
+                Translate("diagnostic.checkUpdateRequiresInterfacePath"),
                 DAS_E_MAAPI_UPDATE_CHECK_FAILED,
                 "adapter.interfacePath");
             return false;
@@ -4781,7 +4811,7 @@ namespace Das::Plugins::DasMaaPi
             EmitDiagnostic(
                 diagnostics,
                 "error",
-                "checkUpdate failed",
+                Translate("diagnostic.checkUpdateFailed"),
                 result,
                 "checkUpdate");
             return false;
@@ -4809,8 +4839,7 @@ namespace Das::Plugins::DasMaaPi
             EmitDiagnostic(
                 diagnostics,
                 "error",
-                "applyUpdate requires a pending update (run checkUpdate "
-                "first)",
+                Translate("diagnostic.applyUpdateRequiresPendingUpdate"),
                 DAS_E_MAAPI_UPDATE_APPLY_FAILED,
                 "applyUpdate");
             return false;
@@ -4821,7 +4850,7 @@ namespace Das::Plugins::DasMaaPi
             EmitDiagnostic(
                 diagnostics,
                 "error",
-                "applyUpdate has nothing to apply (no update available)",
+                Translate("diagnostic.applyUpdateNothingToApply"),
                 DAS_E_MAAPI_UPDATE_APPLY_FAILED,
                 "applyUpdate");
             return false;
@@ -4832,7 +4861,7 @@ namespace Das::Plugins::DasMaaPi
             EmitDiagnostic(
                 diagnostics,
                 "error",
-                "applyUpdate requires a valid adapter.interfacePath",
+                Translate("diagnostic.applyUpdateRequiresInterfacePath"),
                 DAS_E_MAAPI_UPDATE_APPLY_FAILED,
                 "adapter.interfacePath");
             return false;
@@ -4911,7 +4940,7 @@ namespace Das::Plugins::DasMaaPi
             EmitDiagnostic(
                 diagnostics,
                 "error",
-                "applyUpdate failed",
+                Translate("diagnostic.applyUpdateFailed"),
                 result,
                 "applyUpdate");
             return false;
@@ -4948,9 +4977,8 @@ namespace Das::Plugins::DasMaaPi
                 EmitDiagnostic(
                     diagnostics,
                     "warning",
-                    "discoverAdbDevices: MaaToolkit AdbDevice symbols "
-                    "unavailable; cannot scan devices (MaaToolkit.dll not "
-                    "co-located or AdbDevice family not exported)",
+                    Translate(
+                        "diagnostic.discoverAdbDevicesToolkitUnavailable"),
                     DAS_S_OK,
                     "discoverAdbDevices");
             }
@@ -4959,8 +4987,7 @@ namespace Das::Plugins::DasMaaPi
                 EmitDiagnostic(
                     diagnostics,
                     "info",
-                    "discoverAdbDevices found 0 devices; ensure adb server is "
-                    "running and a device is connected",
+                    Translate("diagnostic.discoverAdbDevicesNoDevices"),
                     DAS_S_OK,
                     "discoverAdbDevices");
             }
@@ -4993,7 +5020,7 @@ namespace Das::Plugins::DasMaaPi
             EmitDiagnostic(
                 diagnostics,
                 "error",
-                "invokeCommand.commandId required and non-empty",
+                Translate("diagnostic.invokeCommandIdRequired"),
                 DAS_E_INVALID_ARGUMENT,
                 "commandId");
             return result;
@@ -5065,7 +5092,7 @@ namespace Das::Plugins::DasMaaPi
         EmitDiagnostic(
             diagnostics,
             "error",
-            "invokeCommand commandId not registered",
+            Translate("diagnostic.invokeCommandIdNotRegistered"),
             DAS_E_NOT_FOUND,
             "commandId");
         return result;
@@ -5087,7 +5114,7 @@ namespace Das::Plugins::DasMaaPi
         EmitDiagnostic(
             diagnostics,
             "error",
-            "convertView unsupported by MaaPI",
+            Translate("diagnostic.convertViewUnsupported"),
             DAS_E_INVALID_ARGUMENT,
             "targetViewKind");
         return false;
