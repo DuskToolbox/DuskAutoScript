@@ -2049,8 +2049,10 @@ namespace Das::Plugins::DasMaaPi
         std::vector<std::string>           update_entries;
         std::vector<std::string>           project_entries;
         std::vector<std::string>           welcome_entries;
+        std::vector<std::string>           schedule_entries;
         std::map<std::string, std::string> settings_by_opt;
         constexpr std::string_view         settings_prefix = "settings.";
+        constexpr std::string_view         schedule_prefix = "schedule.";
         for (auto it = fields_arr->begin(); it != fields_arr->end(); ++it)
         {
             auto field_obj = it->as_object();
@@ -2099,6 +2101,14 @@ namespace Das::Plugins::DasMaaPi
                 settings_by_opt.emplace(
                     std::string(name.substr(settings_prefix.size())),
                     std::string(name));
+            }
+            else if (name.starts_with(schedule_prefix))
+            {
+                // schedule section：任务级调度配置（schedule.kind /
+                // intervalMinutes / dailyTime / dailyCatchUp）。叶子随
+                // ProjectAuthoringDocument 按 kind 投影的 fields[] 自然匹配
+                // （服务端按 kind 重投影，前端零条件可见性）。
+                schedule_entries.emplace_back(name);
             }
             else
             {
@@ -2272,11 +2282,35 @@ namespace Das::Plugins::DasMaaPi
             layout_arr->emplace_back(std::move(section));
         };
 
-        // section emit 顺序：[update(若 top)] → [welcome] → [project] →
-        // [update(非 top)] → [settings]。welcome 在 update-top 之后、project
-        // 之前，满足面板顺序「检测到更新时更新插到 welcome 之前；否则 welcome
-        // 在首位」（PI V2 welcome 字段置顶语义）。前端按 fieldLayout 首现顺序
-        // 数据驱动渲染，后端 emit 顺序即显示顺序。
+        // schedule section：任务级调度配置。label 走 host i18n（Translate，DAS
+        // chrome），与 section.project/update/welcome 同查表机制（不经 PI 作者
+        // 内容 ResolveI18nOrDiag）。叶子复用 make_leaf emit {fieldName} 形状，
+        // 随 ProjectAuthoringDocument 按 kind 投影的 schedule.* fields[]
+        // 自然匹配（服务端重投影）。
+        auto emit_schedule_section = [&]()
+        {
+            yyjson::value section(Object());
+            auto          s_obj = section.as_object();
+            (*s_obj)[std::string_view("id")] = JsonString("schedule");
+            const std::string schedule_label = Translate("section.schedule");
+            (*s_obj)[std::string_view("label")] = JsonString(schedule_label);
+            (*s_obj)[std::string_view("defaultExpanded")] =
+                resolve_default_expanded("schedule", true);
+            yyjson::value entries(Array());
+            for (const auto& name : schedule_entries)
+            {
+                entries.as_array()->emplace_back(make_leaf(name));
+            }
+            (*s_obj)[std::string_view("entries")] = std::move(entries);
+            layout_arr->emplace_back(std::move(section));
+        };
+
+        // section emit 顺序：[update(若 top)] → [welcome] → [schedule] →
+        // [project] → [update(非 top)] → [settings]。schedule 置于 project 之前
+        // （定时是任务级配置，置顶于项目设置之上符合 UI 直觉）。welcome 在
+        // update-top 之后，满足面板顺序「检测到更新时更新插到 welcome 之前；
+        // 否则 welcome 在首位」（PI V2 welcome 字段置顶语义）。前端按
+        // fieldLayout 首现顺序数据驱动渲染，后端 emit 顺序即显示顺序。
         const bool update_first = update_section_top && !update_entries.empty();
         if (update_first)
         {
@@ -2285,6 +2319,10 @@ namespace Das::Plugins::DasMaaPi
         if (!welcome_entries.empty())
         {
             emit_welcome_section();
+        }
+        if (!schedule_entries.empty())
+        {
+            emit_schedule_section();
         }
         if (!project_entries.empty())
         {
@@ -2830,6 +2868,63 @@ namespace Das::Plugins::DasMaaPi
                     yyjson::value(std::string(welcome_value)),
                     nullptr,
                     /*readonly=*/true));
+            }
+        }
+
+        // schedule 字段（任务级调度，业务中立通用配置）。kind 恒发（select，
+        // 让用户切换 schedule 类型）；intervalMinutes / dailyTime+dailyCatchUp
+        // 按 kind 重投影——fields[] 只含当前 kind 的字段，fieldLayout schedule
+        // section 经前缀分桶自然匹配（服务端重投影，前端零条件可见性）。
+        // dailyCatchUp 缺失默认 true（补跑倾向），与 PiCompiler 编译默认一致。
+        {
+            const std::string schedule_kind =
+                settings.pi.schedule_kind.value_or("");
+            // kind select：candidates off/interval/daily。
+            yyjson::value kind_candidates(Array());
+            for (const std::string_view kv : {"off", "interval", "daily"})
+            {
+                yyjson::value candidate(Object());
+                auto          candidate_obj = candidate.as_object();
+                (*candidate_obj)[std::string_view("value")] = JsonString(kv);
+                (*candidate_obj)[std::string_view("label")] = JsonString(kv);
+                kind_candidates.as_array()->emplace_back(std::move(candidate));
+            }
+            fields.as_array()->emplace_back(MakePropertyField(
+                "schedule.kind",
+                Translate("field.scheduleKind"),
+                4, // valueType=string
+                1, // inputType=select
+                yyjson::value(schedule_kind),
+                &kind_candidates));
+            if (schedule_kind == "interval")
+            {
+                const int interval_minutes =
+                    settings.pi.schedule_interval_minutes.value_or(0);
+                fields.as_array()->emplace_back(MakePropertyField(
+                    "schedule.intervalMinutes",
+                    Translate("field.scheduleInterval"),
+                    0, // valueType=int
+                    0, // inputType=plain
+                    yyjson::value(interval_minutes)));
+            }
+            else if (schedule_kind == "daily")
+            {
+                const std::string daily_time =
+                    settings.pi.schedule_daily_time.value_or("");
+                fields.as_array()->emplace_back(MakePropertyField(
+                    "schedule.dailyTime",
+                    Translate("field.scheduleDailyTime"),
+                    4, // valueType=string "HH:MM"
+                    8, // inputType=time
+                    yyjson::value(daily_time)));
+                const bool catch_up =
+                    settings.pi.schedule_daily_catch_up.value_or(true);
+                fields.as_array()->emplace_back(MakePropertyField(
+                    "schedule.dailyCatchUp",
+                    Translate("field.scheduleCatchUp"),
+                    8, // valueType=bool
+                    0, // inputType=plain
+                    yyjson::value(catch_up)));
             }
         }
 
@@ -3952,6 +4047,96 @@ namespace Das::Plugins::DasMaaPi
                 }
                 settings.pi.language =
                     std::string(value.as_string().value_or(""));
+                return true;
+            }
+            // schedule.* 路由到 acceptedProperties.pi flat optional schedule
+            // 字段。 kind 变化触发 ProjectAuthoringDocument 按 kind
+            // 重投影（前端 docChanged 重建），无需客户端条件可见性。
+            if (field == "schedule.kind")
+            {
+                if (!value.is_string())
+                {
+                    EmitDiagnostic(
+                        diagnostics,
+                        "error",
+                        Translate(
+                            "diagnostic.valueMustBeString",
+                            "schedule.kind"),
+                        DAS_E_INVALID_ARGUMENT,
+                        field);
+                    return false;
+                }
+                const auto kind = std::string(value.as_string().value_or(""));
+                if (kind != "off" && kind != "interval" && kind != "daily")
+                {
+                    EmitDiagnostic(
+                        diagnostics,
+                        "error",
+                        Translate(
+                            "diagnostic.valueMustBeScheduleKind",
+                            "schedule.kind"),
+                        DAS_E_INVALID_ARGUMENT,
+                        field);
+                    return false;
+                }
+                settings.pi.schedule_kind = kind;
+                return true;
+            }
+            if (field == "schedule.intervalMinutes")
+            {
+                if (!value.is_sint() && !value.is_uint())
+                {
+                    EmitDiagnostic(
+                        diagnostics,
+                        "error",
+                        Translate(
+                            "diagnostic.mustBeInteger",
+                            "schedule.intervalMinutes"),
+                        DAS_E_INVALID_ARGUMENT,
+                        field);
+                    return false;
+                }
+                const auto n = value.is_sint()
+                                   ? value.as_sint().value_or(0)
+                                   : static_cast<std::int64_t>(
+                                         value.as_uint().value_or(0));
+                settings.pi.schedule_interval_minutes = static_cast<int>(n);
+                return true;
+            }
+            if (field == "schedule.dailyTime")
+            {
+                if (!value.is_string())
+                {
+                    EmitDiagnostic(
+                        diagnostics,
+                        "error",
+                        Translate(
+                            "diagnostic.valueMustBeString",
+                            "schedule.dailyTime"),
+                        DAS_E_INVALID_ARGUMENT,
+                        field);
+                    return false;
+                }
+                settings.pi.schedule_daily_time =
+                    std::string(value.as_string().value_or(""));
+                return true;
+            }
+            if (field == "schedule.dailyCatchUp")
+            {
+                if (!value.is_bool())
+                {
+                    EmitDiagnostic(
+                        diagnostics,
+                        "error",
+                        Translate(
+                            "diagnostic.valueMustBeBool",
+                            "schedule.dailyCatchUp"),
+                        DAS_E_INVALID_ARGUMENT,
+                        field);
+                    return false;
+                }
+                settings.pi.schedule_daily_catch_up =
+                    value.as_bool().value_or(true);
                 return true;
             }
             if (field == "presetName")

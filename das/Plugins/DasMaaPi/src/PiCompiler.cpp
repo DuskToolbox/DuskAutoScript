@@ -924,7 +924,7 @@ namespace Das::Plugins::DasMaaPi
         envelope.maapi.schedule.daily_time =
             settings.pi.schedule_daily_time.value_or("");
         envelope.maapi.schedule.daily_catch_up =
-            settings.pi.schedule_daily_catch_up.value_or(false);
+            settings.pi.schedule_daily_catch_up.value_or(true);
         const auto resolve_raw = [&](const std::string& raw_json) -> std::string
         {
             auto parsed = Das::Utils::ParseYyjsonFromString(raw_json);
