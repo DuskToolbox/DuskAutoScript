@@ -2,6 +2,7 @@
 #include "../src/PiUpdateService.h"
 
 #include <das/DasApi.h>
+#include <das/DasString.hpp>
 #include <das/Plugins/DasMaaPi/AcceptedSettings.h>
 #include <das/Plugins/DasMaaPi/AuthoringProjector.h>
 #include <das/Utils/DasJsonCore.h>
@@ -19,6 +20,32 @@ namespace
 {
     using namespace Das;
     using namespace Das::Plugins::DasMaaPi;
+
+    // RAII：构造时设进程级 GlobalLocale，析构时复位 en（进程单例，测试间
+    // 隔离）。DasProgressReporter / AuthoringProjector 的 i18n Translate 经
+    // GlobalLocale 解析；测试若不设，默认 en 让进度/releaseNote 文案显示英文，
+    // 与中文断言不符。
+    class GlobalLocaleGuard
+    {
+    public:
+        explicit GlobalLocaleGuard(const char* locale)
+        {
+            SetGlobalLocale(locale);
+        }
+
+        ~GlobalLocaleGuard() { SetGlobalLocale("en"); }
+
+    private:
+        static void SetGlobalLocale(const char* utf8)
+        {
+            DasPtr<IDasReadOnlyString> locale_name;
+            ::CreateIDasReadOnlyStringFromUtf8(utf8, locale_name.Put());
+            if (locale_name != nullptr)
+            {
+                ::DasSetDefaultLocale(locale_name.Get());
+            }
+        }
+    };
 
     // 测试缝：本地 IDasProgressService 实现。记录 AddCallback /
     // RemoveCallback / Report 收到的 entry + 可读回字段（无需真 IPC）。
@@ -97,6 +124,7 @@ namespace
 // （GetKey / GetFieldCount / GetFieldByIndex）。
 TEST(MaapiProgressReporterTest, ReportAssemblesFieldIncrementReadableByService)
 {
+    GlobalLocaleGuard                                 locale_guard("zh-cn");
     DasPtr<Das::ExportInterface::IDasProgressService> service =
         FakeProgressService::Make();
     auto* fake = static_cast<FakeProgressService*>(service.Get());
@@ -361,6 +389,7 @@ TEST(MaapiProgressReporterTest, UpdateSectionAbsentWhenNoPending)
 // PiUpdateInfo.release_note）； 无内容 → 「暂无更新日志」。
 TEST(MaapiProgressReporterTest, ReleaseNoteValueFromPendingAndEmptyFallback)
 {
+    GlobalLocaleGuard locale_guard("zh-cn");
     using namespace Das::Plugins::DasMaaPi;
 
     AcceptedSettingsDto settings;

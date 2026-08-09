@@ -14,8 +14,14 @@
 
 #include <das/Core/IPC/CurrentIpcContextScope.h>
 #include <das/DasApi.h>
+#include <das/DasPtr.hpp>
 #include <das/Plugins/DasMaaPi/MaaPiErrorCodes.h>
 #include <das/Utils/DasJsonCore.h>
+#include <das/Utils/StringUtils.h>
+#include <das/Utils/fmt.h>
+#include <das/_autogen/idl/abi/IDasI18n.h>
+
+#include <boost/dll/runtime_symbol_info.hpp>
 
 #include <algorithm>
 #include <atomic>
@@ -24,10 +30,12 @@
 #include <filesystem>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <random>
 #include <set>
 #include <sstream>
+#include <string>
 #include <string_view>
 #include <utility>
 
@@ -48,12 +56,136 @@ namespace Das::Plugins::DasMaaPi
         // projection-local because its diagnostic-emitting contract is
         // specific to field-label projection.
 
+        // host i18n（DasMaaPi 自有 UI 文案翻译表）由 GetAuthoringHostI18n()
+        // 函数内 static cache 持有；无文件级全局状态。
+
+        // boost::filesystem::path（this_line_location 返回）→ UTF-8
+        // std::string。 boost path 没有 u8string()；.string() 在 Windows 是 ACP
+        // narrow（中文 路径乱码）。经 std::filesystem::path 桥接：Windows 走
+        // wstring（UTF-16）， Unix 走 string（native narrow），再 u8string() 出
+        // UTF-8 字节。
+        std::string BoostPathToUtf8(const boost::filesystem::path& boost_path)
+        {
+#ifdef _WIN32
+            const std::filesystem::path std_path{boost_path.wstring()};
+#else
+            const std::filesystem::path std_path{boost_path.string()};
+#endif
+            return std::string{DAS::Utils::U8AsString(std_path.u8string())};
+        }
+
+        // 取 host i18n 翻译表（DasMaaPi 自有 UI 文案）。函数内 static cache：
+        // 首次调用经 lambda 从 <plugin_dir>/i18n 装载（this_line_location 推导
+        // 模块路径），magic statics 保证初始化线程安全；mutex 保护访问。
+        // 返回 DasPtr（AddRef）——调用方持有独立引用计数，与 cache 解耦。
+        // 目录缺失/装载失败 cache 为空，Translate 降级返回 key 本身。
+        DasPtr<Das::ExportInterface::IDasI18n> GetAuthoringHostI18n()
+        {
+            static const DasPtr<Das::ExportInterface::IDasI18n> cache =
+                []() -> DasPtr<Das::ExportInterface::IDasI18n>
+            {
+                try
+                {
+                    const auto plugin_module = boost::dll::this_line_location();
+                    const auto boost_i18n_dir =
+                        plugin_module.parent_path() / "i18n";
+                    const auto dir_utf8 = BoostPathToUtf8(boost_i18n_dir);
+                    DasPtr<IDasReadOnlyString> dir_str;
+                    if (DAS::IsFailed(
+                            ::CreateIDasReadOnlyStringFromUtf8(
+                                dir_utf8.c_str(),
+                                dir_str.Put())))
+                    {
+                        return {};
+                    }
+                    DasPtr<Das::ExportInterface::IDasI18n> i18n;
+                    if (DAS::IsFailed(
+                            ::CreateIDasI18nFromDirectory(
+                                dir_str.Get(),
+                                i18n.Put()))
+                        || i18n == nullptr)
+                    {
+                        return {};
+                    }
+                    return i18n;
+                }
+                catch (...)
+                {
+                    return {};
+                }
+            }();
+            static std::mutex                 cache_mutex;
+            const std::lock_guard<std::mutex> lock(cache_mutex);
+            return cache;
+        }
+
+        // 经 host i18n 翻译 key；i18n 为空 / key miss 返回空串（调用方回退
+        // 硬编码）。镜像 DasProgressReporter 的 TranslateKey。
+        std::string TranslateHostKey(
+            Das::ExportInterface::IDasI18n* i18n,
+            std::string_view                key)
+        {
+            if (i18n == nullptr)
+            {
+                return {};
+            }
+            const std::string          key_str(key);
+            DasPtr<IDasReadOnlyString> key_param;
+            if (DAS::IsFailed(
+                    ::CreateIDasReadOnlyStringFromUtf8(
+                        key_str.c_str(),
+                        key_param.Put())))
+            {
+                return {};
+            }
+            DasPtr<IDasReadOnlyString> text;
+            if (DAS::IsFailed(i18n->Translate(key_param.Get(), text.Put())))
+            {
+                return {};
+            }
+            const char* raw = nullptr;
+            if (text == nullptr || DAS::IsFailed(text->GetUtf8(&raw))
+                || raw == nullptr)
+            {
+                return {};
+            }
+            return std::string(raw);
+        }
+
+        // 翻译 DAS host i18n 字符串（DasMaaPi 自有 UI 文案）。无额外实参 → 纯
+        // 查表；带实参 → 把模板里的 {0},{1}… 按位置用 std::format 填充。
+        // 缺 key 返回 key 本身（翻译缺失显性可见，不硬编码兜底）。对仗 MXU
+        // 的 t(key) / t(key, params)。与 ResolveI18nOrDiag（MaaPI 作者内容
+        // $key 解析）严格分离，二者各司其职。
+        template <typename... Args>
+        std::string Translate(std::string_view key, const Args&... args)
+        {
+            const DasPtr<Das::ExportInterface::IDasI18n> i18n =
+                GetAuthoringHostI18n();
+            std::string text = TranslateHostKey(i18n.Get(), key);
+            if (text.empty())
+            {
+                text = std::string(key); // 缺译 → 返回 key 本身，让缺失暴露
+            }
+            if constexpr (sizeof...(args) == 0)
+            {
+                return text;
+            }
+            return DAS_FMT_NS::vformat(
+                std::string_view(text),
+                DAS_FMT_NS::make_format_args(args...));
+        }
+
         // D-84-23: ResolveI18n 的严格化变体。当 $key 在当前 language 找不到
         // 翻译时，返回调用方提供的 fallback（通常是 PI 协议层面的用户可见
         // 标识，如 candidate.value 或 option.dto.name，而不是 $key / 机器
         // name / 'Language/Preset/Resource' 等协议英文），并向 projection
         // diagnostics 输出一条 warning。fallback 必须非空，保证 84-01 严格
         // FieldDescriptor/CandidateDescriptor label 校验通过。
+        // 本函数只做 MaaPI 作者内容的 $key → PI catalog 解析，不查 DAS host
+        // i18n：DAS 自有 UI 文案（chrome label）走 Translate，二者各司其职。
+        // 唯一经 host i18n 的是 emit 的 diagnostic 文案（见下 Translate
+        // 调用）。
         std::string_view ResolveI18nOrDiag(
             std::string_view              text,
             const PiCatalog&              catalog,
@@ -66,6 +198,7 @@ namespace Das::Plugins::DasMaaPi
             {
                 return text.empty() ? fallback : text;
             }
+
             const std::string_view key = text.substr(1);
             auto lang_it = catalog.translations.find(std::string(lang));
             if (lang_it != catalog.translations.end())
@@ -76,6 +209,7 @@ namespace Das::Plugins::DasMaaPi
                     return std::string_view(key_it->second);
                 }
             }
+
             // 缺译：emit diagnostic + 返回 fallback。fallback 是 caller 提供
             // 的 PI 用户可见标识（value / dto.name），不是 $key
             // 也不是协议英文。
@@ -83,9 +217,8 @@ namespace Das::Plugins::DasMaaPi
             {
                 PiDiagnosticDto diag;
                 diag.severity = "warning";
-                diag.message = "Missing translation for key '"
-                               + std::string(key) + "' in language '"
-                               + std::string(lang) + "'";
+                diag.message =
+                    Translate("diagnostic.missingTranslation", key, lang);
                 if (!context_path.empty())
                 {
                     diag.path = std::string(context_path);
@@ -1878,10 +2011,12 @@ namespace Das::Plugins::DasMaaPi
     // （全覆盖、唯一），满足 schema validator ValidateFieldLayout 契约。
     // 分区策略（PI v2.8.0/v2.7.0 语义）：pretask 是项目级预任务，并入项目设置
     // section；setting 是协议自带的设置页分区声明，每元素独立一 section。
-    // section.label 经 PI i18n 解析（ResolveI18nOrDiag），缺译时 fallback 到
-    // setting.dto.name / 内置中文默认。游离 global_option（未被任何 setting
-    // 引用）不进 fields[]，故不进 layout —— PI v2.8.0 setting 才是"哪些 option
-    // 进设置页"的声明，未声明的不渲染。
+    // setting section.label 是作者内容（setting.dto.label），经
+    // ResolveI18nOrDiag 解析，缺译时 fallback 到
+    // setting.dto.name；project/update/welcome section label 是 DAS
+    // chrome，在各 emit lambda 内经 Translate 解析（不在此函数）。 游离
+    // global_option（未被任何 setting 引用）不进 fields[]，故不进 layout —— PI
+    // v2.8.0 setting 才是"哪些 option 进设置页"的声明，未声明的不渲染。
     yyjson::value BuildRootFieldLayout(
         const yyjson::value&                        fields,
         const PiCatalog*                            catalog,
@@ -2010,17 +2145,7 @@ namespace Das::Plugins::DasMaaPi
             yyjson::value section(Object());
             auto          s_obj = section.as_object();
             (*s_obj)[std::string_view("id")] = JsonString("project");
-            std::string_view project_label = "项目设置";
-            if (catalog != nullptr)
-            {
-                project_label = ResolveI18nOrDiag(
-                    "$section.project",
-                    *catalog,
-                    current_language,
-                    "项目设置",
-                    projection_diagnostics,
-                    "fieldLayout.section.project.label");
-            }
+            const std::string project_label = Translate("section.project");
             (*s_obj)[std::string_view("label")] = JsonString(project_label);
             (*s_obj)[std::string_view("defaultExpanded")] =
                 resolve_default_expanded("project", true);
@@ -2080,8 +2205,8 @@ namespace Das::Plugins::DasMaaPi
 
         // 更新 section：CDK / 代理 / 检查更新通道（可编辑）+ 版本只读字段 +
         // 更新 panel 五字段 + checkUpdate/applyUpdate 命令按钮组（row 横排）。
-        // label 走 PI i18n（$section.update），缺译回退中文（catalog 缺席时直接
-        // 回退）。defaultExpanded=true，与项目设置 section 一致。checkUpdate/
+        // label 走 host i18n（Translate，DAS chrome），随 GlobalLocale 切换。
+        // defaultExpanded=true，与项目设置 section 一致。checkUpdate/
         // applyUpdate 命令从根级 commands[] 渲染入口归位到本 section 的 row
         // 横排成按钮组（与字段共 section，避免"按钮都在顶上"）。
         auto emit_update_section = [&]()
@@ -2089,17 +2214,7 @@ namespace Das::Plugins::DasMaaPi
             yyjson::value section(Object());
             auto          s_obj = section.as_object();
             (*s_obj)[std::string_view("id")] = JsonString("update");
-            std::string_view update_label = "更新";
-            if (catalog != nullptr)
-            {
-                update_label = ResolveI18nOrDiag(
-                    "$section.update",
-                    *catalog,
-                    current_language,
-                    "更新",
-                    projection_diagnostics,
-                    "fieldLayout.section.update.label");
-            }
+            const std::string update_label = Translate("section.update");
             (*s_obj)[std::string_view("label")] = JsonString(update_label);
             (*s_obj)[std::string_view("defaultExpanded")] =
                 resolve_default_expanded("update", true);
@@ -2135,25 +2250,16 @@ namespace Das::Plugins::DasMaaPi
             layout_arr->emplace_back(std::move(section));
         };
 
-        // welcome section：PI 顶层 welcome markdown 公告面板。label 走 PI i18n
-        // （$section.welcome），缺译回退中文「公告」。defaultExpanded=true
-        // （首位展示语义，welcome 内容应默认可见，不应折叠）。
+        // welcome section：PI 顶层 welcome markdown 公告面板。label 走 host
+        // i18n（Translate，DAS chrome），随 GlobalLocale
+        // 切换。defaultExpanded=true （首位展示语义，welcome
+        // 内容应默认可见，不应折叠）。
         auto emit_welcome_section = [&]()
         {
             yyjson::value section(Object());
             auto          s_obj = section.as_object();
             (*s_obj)[std::string_view("id")] = JsonString("welcome");
-            std::string_view welcome_label = "公告";
-            if (catalog != nullptr)
-            {
-                welcome_label = ResolveI18nOrDiag(
-                    "$section.welcome",
-                    *catalog,
-                    current_language,
-                    "公告",
-                    projection_diagnostics,
-                    "fieldLayout.section.welcome.label");
-            }
+            const std::string welcome_label = Translate("section.welcome");
             (*s_obj)[std::string_view("label")] = JsonString(welcome_label);
             (*s_obj)[std::string_view("defaultExpanded")] =
                 resolve_default_expanded("welcome", true);
@@ -2315,7 +2421,7 @@ namespace Das::Plugins::DasMaaPi
         yyjson::value fields(Array());
         fields.as_array()->emplace_back(MakePropertyField(
             "adapter.interfacePath",
-            "ProjectInterface path",
+            Translate("field.interfacePath"),
             4,
             0,
             settings.adapter.interface_path
@@ -2333,7 +2439,7 @@ namespace Das::Plugins::DasMaaPi
         {
             fields.as_array()->emplace_back(MakePropertyField(
                 "adapter.mirrorchyanCdk",
-                "CDK",
+                Translate("field.cdk"),
                 4,
                 0,
                 settings.adapter.mirrorchyan_cdk
@@ -2342,7 +2448,7 @@ namespace Das::Plugins::DasMaaPi
         }
         fields.as_array()->emplace_back(MakePropertyField(
             "adapter.proxyUrl",
-            "代理地址",
+            Translate("field.proxyAddress"),
             4,
             0,
             settings.adapter.proxy_url
@@ -2361,7 +2467,7 @@ namespace Das::Plugins::DasMaaPi
                 (*mirror_obj)[std::string_view("value")] =
                     JsonString("mirrorchyan");
                 (*mirror_obj)[std::string_view("label")] =
-                    JsonString("Mirror酱");
+                    JsonString(Translate("candidate.mirror.mirrorchyan"));
                 channel_candidates.as_array()->emplace_back(std::move(mirror));
                 yyjson::value github(Object());
                 auto          github_obj = github.as_object();
@@ -2373,7 +2479,7 @@ namespace Das::Plugins::DasMaaPi
                 settings.adapter.update_channel.value_or("mirrorchyan");
             fields.as_array()->emplace_back(MakePropertyField(
                 "adapter.updateChannel",
-                "检查更新通道",
+                Translate("field.updateChannel"),
                 4,
                 1,
                 yyjson::value(channel_value),
@@ -2381,7 +2487,7 @@ namespace Das::Plugins::DasMaaPi
         }
         fields.as_array()->emplace_back(MakePropertyField(
             "adapter.executionPolicy.failFast",
-            "Fail fast",
+            Translate("field.failFast"),
             8,
             0,
             yyjson::value(settings.adapter.execution_policy.fail_fast)));
@@ -2401,13 +2507,7 @@ namespace Das::Plugins::DasMaaPi
                 projection_diagnostics);
             fields.as_array()->emplace_back(MakePropertyField(
                 "controllerName",
-                ResolveI18nOrDiag(
-                    "$field.controller",
-                    *catalog,
-                    current_language,
-                    "控制器",
-                    projection_diagnostics,
-                    "fields.controllerName.label"),
+                Translate("field.controller"),
                 4,
                 1,
                 settings.pi.controller_name
@@ -2441,13 +2541,7 @@ namespace Das::Plugins::DasMaaPi
                 }
                 fields.as_array()->emplace_back(MakePropertyField(
                     "adbDevice",
-                    ResolveI18nOrDiag(
-                        "$field.adbDevice",
-                        *catalog,
-                        current_language,
-                        "ADB 设备",
-                        projection_diagnostics,
-                        "fields.adbDevice.label"),
+                    Translate("field.adbDevice"),
                     4,
                     1,
                     yyjson::value(
@@ -2461,13 +2555,7 @@ namespace Das::Plugins::DasMaaPi
                 projection_diagnostics);
             fields.as_array()->emplace_back(MakePropertyField(
                 "resourceName",
-                ResolveI18nOrDiag(
-                    "$field.resource",
-                    *catalog,
-                    current_language,
-                    "资源",
-                    projection_diagnostics,
-                    "fields.resourceName.label"),
+                Translate("field.resource"),
                 4,
                 1,
                 settings.pi.resource_name
@@ -2493,13 +2581,7 @@ namespace Das::Plugins::DasMaaPi
             }
             fields.as_array()->emplace_back(MakePropertyField(
                 "presetName",
-                ResolveI18nOrDiag(
-                    "$field.preset",
-                    *catalog,
-                    current_language,
-                    "预设",
-                    projection_diagnostics,
-                    "fields.presetName.label"),
+                Translate("field.preset"),
                 4,
                 1,
                 settings.pi.preset_name
@@ -2519,13 +2601,7 @@ namespace Das::Plugins::DasMaaPi
             }
             fields.as_array()->emplace_back(MakePropertyField(
                 "language",
-                ResolveI18nOrDiag(
-                    "$field.language",
-                    *catalog,
-                    current_language,
-                    "语言",
-                    projection_diagnostics,
-                    "fields.language.label"),
+                Translate("field.language"),
                 4,
                 1,
                 yyjson::value(current_language),
@@ -2618,20 +2694,8 @@ namespace Das::Plugins::DasMaaPi
         // TextBlock，零改动。只读字段不经 setValue 写回（UI 不可编辑）。
         const std::string resource_version =
             catalog != nullptr ? catalog->version : std::string{};
-        // IN-03: 字段 label 走 PI
-        // i18n（$field.resourceVersion），缺译回退中文， 与周边字段/分区 label
-        // 一致（catalog 缺席时直接回退）。
-        std::string_view resource_label = "资源版本";
-        if (catalog != nullptr)
-        {
-            resource_label = ResolveI18nOrDiag(
-                "$field.resourceVersion",
-                *catalog,
-                current_language,
-                "资源版本",
-                projection_diagnostics,
-                "fields.resourceVersion.label");
-        }
+        // 字段 label 走 host i18n（DAS chrome），随 GlobalLocale 切换。
+        const std::string resource_label = Translate("field.resourceVersion");
         fields.as_array()->emplace_back(MakePropertyField(
             "resourceVersion",
             resource_label,
@@ -2648,17 +2712,7 @@ namespace Das::Plugins::DasMaaPi
 #else
         const std::string maafw_version{};
 #endif
-        std::string_view maafw_label = "MaaFramework 版本";
-        if (catalog != nullptr)
-        {
-            maafw_label = ResolveI18nOrDiag(
-                "$field.maafwVersion",
-                *catalog,
-                current_language,
-                "MaaFramework 版本",
-                projection_diagnostics,
-                "fields.maafwVersion.label");
-        }
+        const std::string maafw_label = Translate("field.maafwVersion");
         fields.as_array()->emplace_back(MakePropertyField(
             "maafwVersion",
             maafw_label,
@@ -2693,30 +2747,14 @@ namespace Das::Plugins::DasMaaPi
             {
                 version_text = current_version + " → " + target_version;
             }
-            const std::string release_text = update_info.release_note.empty()
-                                                 ? "暂无更新日志"
-                                                 : update_info.release_note;
-
-            auto update_field_label =
-                [&](std::string_view key,
-                    std::string_view fallback) -> std::string_view
-            {
-                if (catalog != nullptr)
-                {
-                    return ResolveI18nOrDiag(
-                        key,
-                        *catalog,
-                        current_language,
-                        fallback,
-                        projection_diagnostics,
-                        "fields.updateSection.label");
-                }
-                return fallback;
-            };
+            const std::string release_text =
+                update_info.release_note.empty()
+                    ? Translate("field.releaseNote.empty")
+                    : update_info.release_note;
 
             fields.as_array()->emplace_back(MakePropertyField(
                 "updateVersion",
-                update_field_label("$field.updateVersion", "更新版本"),
+                Translate("field.updateVersion"),
                 4,
                 0,
                 yyjson::value(version_text),
@@ -2726,7 +2764,7 @@ namespace Das::Plugins::DasMaaPi
             // readonly（只读展示）。
             fields.as_array()->emplace_back(MakePropertyField(
                 "releaseNote",
-                update_field_label("$field.releaseNote", "更新日志"),
+                Translate("field.releaseNote"),
                 4,
                 7,
                 yyjson::value(release_text),
@@ -2734,15 +2772,15 @@ namespace Das::Plugins::DasMaaPi
                 /*readonly=*/true));
             fields.as_array()->emplace_back(MakePropertyField(
                 "updateProgress",
-                update_field_label("$field.updateProgress", "下载进度"),
+                Translate("field.updateProgress"),
                 4,
                 0,
-                yyjson::value(std::string{"等待更新…"}),
+                yyjson::value(Translate("field.updateProgress.initial")),
                 nullptr,
                 /*readonly=*/true));
             fields.as_array()->emplace_back(MakePropertyField(
                 "downloadRate",
-                update_field_label("$field.downloadRate", "下载速率"),
+                Translate("field.downloadRate"),
                 4,
                 0,
                 yyjson::value(std::string{}),
@@ -2750,7 +2788,7 @@ namespace Das::Plugins::DasMaaPi
                 /*readonly=*/true));
             fields.as_array()->emplace_back(MakePropertyField(
                 "downloadElapsed",
-                update_field_label("$field.downloadElapsed", "已用时间"),
+                Translate("field.downloadElapsed"),
                 4,
                 0,
                 yyjson::value(std::string{}),
@@ -2770,13 +2808,7 @@ namespace Das::Plugins::DasMaaPi
             && !catalog->welcome->empty())
         {
             const std::string_view welcome_source = *catalog->welcome;
-            const std::string_view welcome_label = ResolveI18nOrDiag(
-                "$section.welcome",
-                *catalog,
-                current_language,
-                "公告",
-                projection_diagnostics,
-                "fields.welcome.label");
+            const std::string      welcome_label = Translate("section.welcome");
             const std::string_view welcome_value = ResolveI18nOrDiag(
                 welcome_source,
                 *catalog,
@@ -3154,36 +3186,13 @@ namespace Das::Plugins::DasMaaPi
                 (*c_obj)[std::string_view("apply")] = std::move(apply);
                 commands.as_array()->emplace_back(std::move(cmd));
             };
-            emit_command("newPreset", "New Preset");
-            // IN-03: 命令 label 走 PI i18n（$command.checkUpdate /
-            // $command.applyUpdate），缺译回退中文，语言切换时不再硬编码中文。
-            std::string_view check_label = "检查更新";
-            std::string_view apply_label = "更新";
-            std::string_view discover_label = "扫描设备";
-            if (catalog != nullptr)
-            {
-                check_label = ResolveI18nOrDiag(
-                    "$command.checkUpdate",
-                    *catalog,
-                    current_language,
-                    "检查更新",
-                    projection_diagnostics,
-                    "commands.checkUpdate.label");
-                apply_label = ResolveI18nOrDiag(
-                    "$command.applyUpdate",
-                    *catalog,
-                    current_language,
-                    "更新",
-                    projection_diagnostics,
-                    "commands.applyUpdate.label");
-                discover_label = ResolveI18nOrDiag(
-                    "$command.discoverAdbDevices",
-                    *catalog,
-                    current_language,
-                    "扫描设备",
-                    projection_diagnostics,
-                    "commands.discoverAdbDevices.label");
-            }
+            emit_command("newPreset", Translate("command.newPreset"));
+            // 命令 label 走 host i18n（DAS chrome），随 GlobalLocale
+            // 切换，语言切换时不再硬编码中文。
+            const std::string check_label = Translate("command.checkUpdate");
+            const std::string apply_label = Translate("command.applyUpdate");
+            const std::string discover_label =
+                Translate("command.discoverAdbDevices");
             emit_command("checkUpdate", check_label);
             // WR-05: 部分信息路径（MirrorChyan code!=0 但 data.version_name
             // 存在）返回 has_update=true 且 download_url 为空，后端

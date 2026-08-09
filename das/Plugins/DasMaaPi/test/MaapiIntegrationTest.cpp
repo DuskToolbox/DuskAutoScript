@@ -489,9 +489,19 @@ TEST_F(MaapiIntegrationFixture, V28E2EPretaskSuccessPathRunsBeforeController)
     // the option JSON only when pretask.option has user-selected values, and
     // the integration test does not set pretask.bootstrap-mode, so the trailing
     // JSON arg is omitted and the original args pass through unchanged.
-    EXPECT_EQ(runner.launches[0].exec, "tools/bootstrap.exe");
-    EXPECT_EQ(runner.launches[1].exec, "tools/warmup.exe");
-    EXPECT_EQ(runner.launches[2].exec, "tools/cleanup.exe");
+    // pretask 相对路径 exec 由 RunPretasks 基于 interface_directory 预解析成
+    // 绝对路径后再 spawn（对齐 ResolveChildExec，写法同 MaapiRuntimeTest）。
+    const auto interface_dir =
+        std::filesystem::path(compiled.envelope->maapi.interface_directory);
+    EXPECT_EQ(
+        runner.launches[0].exec,
+        (interface_dir / "tools/bootstrap.exe").lexically_normal().string());
+    EXPECT_EQ(
+        runner.launches[1].exec,
+        (interface_dir / "tools/warmup.exe").lexically_normal().string());
+    EXPECT_EQ(
+        runner.launches[2].exec,
+        (interface_dir / "tools/cleanup.exe").lexically_normal().string());
     EXPECT_EQ(
         runner.launches[0].working_directory.string(),
         compiled.envelope->maapi.interface_directory);

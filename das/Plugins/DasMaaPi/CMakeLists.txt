@@ -104,6 +104,15 @@ if(DAS_BUILD_TEST)
     add_executable(DasMaaPiTest
         ${DAS_MAAPI_TEST_PLUGIN_SOURCES}
         ${DAS_MAAPI_TEST_SOURCES})
+    # DasMaaPiTest 静态编译 AuthoringProjector.cpp，this_line_location 在测试
+    # exe 目录解析；i18n 资源需同时部署到测试输出目录，否则投影 i18n 测试
+    # 加载不到翻译表。
+    add_custom_command(
+        TARGET DasMaaPiTest
+        POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            ${CMAKE_CURRENT_SOURCE_DIR}/i18n
+            $<TARGET_FILE_DIR:DasMaaPiTest>/i18n)
     target_link_libraries(DasMaaPiTest PRIVATE
         Das3rdParty
         GTest::gtest_main
