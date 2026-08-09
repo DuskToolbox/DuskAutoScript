@@ -148,12 +148,4 @@ namespace Das::Plugins::DasMaaPi
     // 基于 atomic counter 生成 "item_<n>" 形式，避免与已存在 id 冲突。
     // 不从 taskName/actionId/index/label 派生，避免同 task 类型撞 id。
     std::string AllocateItemId(const AcceptedSettingsDto& settings);
-
-    // 为 settings 内所有空 item_id 的 task 实例补齐稳定 item_id。仅补空，
-    // 已有 item_id 原样保留。覆盖 flat pi.tasks。调用幂等：同一 settings
-    // 多次调用结果稳定。
-    // 用途：parse 后兜底 (legacy pre-84 输入) + apply 路径兜底 (避免任何
-    // apply mutation 留下空 item_id 导致投影层 emit 空 id，触发前端
-    // "FormSequenceItem.id must be non-empty")。
-    void NormalizeItemIds(AcceptedSettingsDto& settings);
 } // namespace Das::Plugins::DasMaaPi

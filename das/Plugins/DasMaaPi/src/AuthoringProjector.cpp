@@ -296,10 +296,6 @@ namespace Das::Plugins::DasMaaPi
         std::vector<MaapiPiPretaskSettingsDto> ParsePretaskSettingsArray(
             const TObject&   obj,
             std::string_view key);
-        // D-84-40: NormalizeItemIds 现已移出匿名 namespace（在 header 公开
-        // 声明，实现在本文件公共 namespace 段），供 ProjectAuthoringDocument
-        // 与 apply 路径作为不变量兜底。ParseAcceptedObject 经由 header 声明
-        // 直接调用公共符号，不再需要此处前向声明。
 
         template <typename TObject>
         AcceptedSettingsDto ParseAcceptedObject(const TObject& obj)
@@ -385,10 +381,6 @@ namespace Das::Plugins::DasMaaPi
                     }
                 }
             }
-            // D-84-40: 任何 legacy task (pre-84 输入或 ApplyAddSequenceItem
-            // 创建后未补 itemId 的情况) 在 parse 完成后获得稳定 itemId，
-            // 保证 Get 投影不需要在每次调用时分配身份（Get idempotent）。
-            NormalizeItemIds(settings);
             return settings;
         }
 
@@ -1702,34 +1694,7 @@ namespace Das::Plugins::DasMaaPi
             const auto next = counter.fetch_add(1);
             return std::string(prefix) + std::to_string(next) + "_x";
         }
-
-        // D-84-40: 在 parse 完成后为任何缺失 itemId 的 task 实例分配稳定身份。
-        // 只对空 itemId 补齐，已有 itemId 原样保留 —— 保证 round-trip 测试
-        // RoundTripsTwoTasksWithSameNameAndDistinctItemIds 等不依赖原子计数器
-        // 的具体值。
-        // 公共包装 NormalizeItemIds（声明在 header）在匿名 namespace 外提供，
-        // 供 ProjectAuthoringDocument / Apply* 路径作为不变量兜底。
     } // namespace
-
-    // D-84-40 + itemId 偶现 bug 修复：为 settings 内所有空 item_id 的 task
-    // 实例补齐稳定 item_id。仅补空，已有 item_id 原样保留；覆盖 flat pi.tasks。
-    // 调用幂等。
-    void NormalizeItemIds(AcceptedSettingsDto& settings)
-    {
-        auto used = CollectUsedItemIds(settings);
-        auto ensure = [&used](std::vector<MaapiPiTaskSettingsDto>& tasks)
-        {
-            for (auto& task : tasks)
-            {
-                if (task.item_id.empty())
-                {
-                    task.item_id = AllocateIdWithPrefix("item_", used);
-                    used.emplace(task.item_id);
-                }
-            }
-        };
-        ensure(settings.pi.tasks);
-    }
 
     std::string AllocateItemId(const AcceptedSettingsDto& settings)
     {
@@ -2319,7 +2284,7 @@ namespace Das::Plugins::DasMaaPi
     }
 
     yyjson::value ProjectAuthoringDocument(
-        const AcceptedSettingsDto&          settings_in,
+        const AcceptedSettingsDto&          settings,
         const PiCatalog*                    catalog,
         const std::vector<PiDiagnosticDto>& diagnostics,
         int64_t                             revision,
@@ -2327,15 +2292,6 @@ namespace Das::Plugins::DasMaaPi
         const std::optional<PiUpdateInfo>*  pending_update,
         const std::vector<AdbDeviceInfo>*   device_cache)
     {
-        // itemId 偶现 bug 投影层兜底：不管哪个 apply 路径漏分配 item_id，
-        // Get 投影出 doc.item.id 必须永不空、永唯一。这里在投影前对一份
-        // mutable 拷贝做 NormalizeItemIds 兜底，不污染 caller 的 settings
-        // 状态。Layer 2 (apply 层 AllocateItemId) 正常工作时此 normalize
-        // 是 no-op，幂等；若 Layer 2 漏调则由此保证 doc 仍可消费 (虽然跨
-        // Get 的 id 仍依赖 caller 状态修复才稳定)。
-        AcceptedSettingsDto settings = settings_in;
-        NormalizeItemIds(settings);
-
         yyjson::value document(Object());
         auto          obj = document.as_object();
         // D-84-02/13: document 携带 viewKind 而不是 kind；contractVersion /
