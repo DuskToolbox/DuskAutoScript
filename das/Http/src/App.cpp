@@ -15,6 +15,7 @@
 #include "./SseHub.hpp"
 #include "./beast/Server.hpp"
 #include "./controller/DasImageController.hpp"
+#include "./controller/DasLocaleController.hpp"
 #include "./controller/DasLogController.hpp"
 #include "./controller/DasMiscController.hpp"
 #include "./controller/DasPluginManagerController.hpp"
@@ -678,6 +679,24 @@ namespace Das::Http
                     return locale_reg;
                 }
             }
+
+            // HTTP 入口触发 das.locale 服务（locale/put 设置、locale/get
+            // 读取）。 controller 持 service 引用；路由 lambda 共享捕获
+            // locale_service 保活。SetDefaultLocale 内部既更新主进程
+            // GlobalLocale，又反向遍历 callbacks_ 下发子进程——同步链路由
+            // service 既有逻辑保证，HTTP 层只触发。
+            auto locale_controller =
+                std::make_shared<Das::Http::DasLocaleController>(*locale_raw);
+            components.router->Post(
+                DAS_HTTP_API_PREFIX "locale/put",
+                [locale_controller,
+                 locale_service](const Das::Http::Beast::HttpRequest& req)
+                { return locale_controller->PutLocale(req); });
+            components.router->Post(
+                DAS_HTTP_API_PREFIX "locale/get",
+                [locale_controller,
+                 locale_service](const Das::Http::Beast::HttpRequest& req)
+                { return locale_controller->GetLocale(req); });
             // key 订阅归零 → service 反向通知（hub 业务中立，只带 key）。
             sse_hub->SetOnKeyEmpty(
                 [weak_service =
