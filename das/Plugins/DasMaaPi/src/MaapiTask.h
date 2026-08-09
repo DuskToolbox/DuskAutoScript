@@ -48,7 +48,10 @@ namespace Plugins::DasMaaPi
         // 初始 kind=""(off)。仅主线程 BusinessThread 访问，无需锁（OnTick
         // 串行）。
         MaaScheduleConfigDto schedule_{};
-        // daily catch-up 防热循环（预留，catch-up 启用时消费）。
+        // daily 跨日去重：标记今日 slot
+        // 已决策（排过或补跑过），GetNextExecutionTime 同日再次调用直接返回明日
+        // slot，防 catch-up 热循环与调度后同日双跑。
+        // 跨自然日自动失效（today_ymd != last_fired_ymd_）。
         int     last_fired_ymd_ = 0;
         ClockFn now_ = [] { return std::time(nullptr); };
     };

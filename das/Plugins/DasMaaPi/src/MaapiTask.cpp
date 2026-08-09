@@ -68,28 +68,12 @@ namespace Plugins::DasMaaPi
             out->second = static_cast<std::uint8_t>(utc.tm_sec);
         }
 
-        // 算"宿主机本地下一次 HH:MM"的 unix 时间戳。今日 slot 已过则推进到明日
-        // （mktime normalize tm_mday 进位跨月/年）。mktime 读本机
-        // TZ+DST，故结果 是真正的本地 HH:MM 对应的 unix。
-        std::time_t NextDailySlotUnix(std::time_t now, int hour, int minute)
+        // 把 local tm 编码成 year*10000+mon*100+day 的 ymd
+        // int（用于跨日去重）。
+        int EncodeYmd(const std::tm& local)
         {
-            std::tm local{};
-            if (PortableLocaltime(&now, &local) == nullptr)
-            {
-                return static_cast<std::time_t>(-1);
-            }
-            local.tm_hour = hour;
-            local.tm_min = minute;
-            local.tm_sec = 0;
-            local.tm_isdst = -1;
-            std::time_t slot = std::mktime(&local);
-            if (slot <= now)
-            {
-                local.tm_mday += 1;
-                local.tm_isdst = -1;
-                slot = std::mktime(&local);
-            }
-            return slot;
+            return (local.tm_year + 1900) * 10000 + (local.tm_mon + 1) * 100
+                   + local.tm_mday;
         }
     } // namespace
 
@@ -133,34 +117,105 @@ namespace Plugins::DasMaaPi
             return DAS_E_INVALID_POINTER;
         }
 
+        // interval：固定 now + intervalMinutes，绝不补跑（错过几档跳到下一未来
+        // 档）。intervalMinutes<=0 返回 DAS_E_INVALID_ARGUMENT，防 next-run=now
+        // 的热循环。
+        if (schedule_.kind == "interval")
+        {
+            if (schedule_.interval_minutes <= 0)
+            {
+                // 十进制 DasResult（非十六进制），便于日志阅读。
+                spdlog::warn(
+                    "[DasMaaPi] MaapiTask::GetNextExecutionTime: invalid "
+                    "interval_minutes {}, result={}",
+                    schedule_.interval_minutes,
+                    DAS_E_INVALID_ARGUMENT);
+                return DAS_E_INVALID_ARGUMENT;
+            }
+            const std::time_t target_unix =
+                now_()
+                + static_cast<std::time_t>(schedule_.interval_minutes) * 60;
+            FillDasDateFromUnix(target_unix, p_out_date);
+            return DAS_S_OK;
+        }
+
+        // daily：宿主机本地下一次 HH:MM，带 catch-up 状态机。
+        if (schedule_.kind == "daily")
+        {
+            int hour = 0;
+            int minute = 0;
+            if (!ParseDailyTime(schedule_.daily_time, hour, minute))
+            {
+                // 十进制 DasResult（非十六进制），便于日志阅读。
+                spdlog::warn(
+                    "[DasMaaPi] MaapiTask::GetNextExecutionTime: invalid "
+                    "dailyTime \"{}\", result={}",
+                    schedule_.daily_time,
+                    DAS_E_INVALID_ARGUMENT);
+                return DAS_E_INVALID_ARGUMENT;
+            }
+
+            const std::time_t now = now_();
+            std::tm           local_now{};
+            if (PortableLocaltime(&now, &local_now) == nullptr)
+            {
+                return DAS_E_INVALID_ARGUMENT;
+            }
+            const int today_ymd = EncodeYmd(local_now);
+
+            // 今日 slot unix（宿主机本地 HH:MM）。
+            std::tm slot_tm = local_now;
+            slot_tm.tm_hour = hour;
+            slot_tm.tm_min = minute;
+            slot_tm.tm_sec = 0;
+            slot_tm.tm_isdst = -1;
+            const std::time_t today_slot_unix = std::mktime(&slot_tm);
+            // 明日 slot unix（tm_mday 进位后 mktime normalize 跨月/年）。
+            std::tm tomorrow_tm = slot_tm;
+            tomorrow_tm.tm_mday += 1;
+            tomorrow_tm.tm_isdst = -1;
+            const std::time_t tomorrow_slot_unix = std::mktime(&tomorrow_tm);
+
+            std::time_t target_unix;
+            if (last_fired_ymd_ == today_ymd)
+            {
+                // 今日 slot 已决策（排过或补跑过）→ 明日 slot，防同日重复触发。
+                target_unix = tomorrow_slot_unix;
+            }
+            else if (now >= today_slot_unix)
+            {
+                // 今日 slot 已过（错过）。catchUp=true 补跑一次返回 now
+                // 并标记今日 已补跑（下次同日调用走上一分支返回明日
+                // slot，防热循环）； catchUp=false 直接跳到明日 slot。
+                if (schedule_.daily_catch_up)
+                {
+                    target_unix = now;
+                    last_fired_ymd_ = today_ymd;
+                }
+                else
+                {
+                    target_unix = tomorrow_slot_unix;
+                }
+            }
+            else
+            {
+                // 今日 slot 未到：排今日 slot，并标记今日已决策。Core 在 Do
+                // 后再 调本方法时 last_fired_ymd_==today → 明日 slot，防 Do
+                // 后立刻补跑 造成同日双跑。
+                target_unix = today_slot_unix;
+                last_fired_ymd_ = today_ymd;
+            }
+
+            if (target_unix == static_cast<std::time_t>(-1))
+            {
+                return DAS_E_INVALID_ARGUMENT;
+            }
+            FillDasDateFromUnix(target_unix, p_out_date);
+            return DAS_S_OK;
+        }
+
         // off / 未知 kind → 失败，Core sentinel 兜底（既有契约保持）。
-        if (schedule_.kind != "daily")
-        {
-            return DAS_E_NO_IMPLEMENTATION;
-        }
-
-        int hour = 0;
-        int minute = 0;
-        if (!ParseDailyTime(schedule_.daily_time, hour, minute))
-        {
-            // 十进制 DasResult（非十六进制），便于日志阅读。
-            spdlog::warn(
-                "[DasMaaPi] MaapiTask::GetNextExecutionTime: invalid dailyTime "
-                "\"{}\", result={}",
-                schedule_.daily_time,
-                DAS_E_INVALID_ARGUMENT);
-            return DAS_E_INVALID_ARGUMENT;
-        }
-
-        const std::time_t now = now_();
-        const std::time_t target_unix = NextDailySlotUnix(now, hour, minute);
-        if (target_unix == static_cast<std::time_t>(-1))
-        {
-            return DAS_E_INVALID_ARGUMENT;
-        }
-
-        FillDasDateFromUnix(target_unix, p_out_date);
-        return DAS_S_OK;
+        return DAS_E_NO_IMPLEMENTATION;
     }
 } // namespace Plugins::DasMaaPi
 DAS_NS_END
