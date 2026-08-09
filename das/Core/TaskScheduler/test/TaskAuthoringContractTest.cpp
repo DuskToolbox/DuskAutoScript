@@ -1651,6 +1651,84 @@ TEST(TaskAuthoringContractTest, LegacyInputTypeSixRemainsEditable)
     EXPECT_TRUE(r.valid) << r.message;
 }
 
+// inputType=8(time): 通用字段类型，强制 valueType=4(string "HH:MM")。
+// Core 业务中立，只校验类型契约；HH:MM 语义由投影/渲染层负责。
+TEST(TaskAuthoringContractTest, TimeInputTypeEightAcceptedWithValueTypeFour)
+{
+    auto ok = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "fields": [{
+            "name": "dailyTime", "label": "定时", "valueType": 4,
+            "inputType": 8, "value": "09:30"
+        }]
+    })json");
+    auto r_ok = Das::Core::TaskScheduler::ValidateAuthoringDocument(ok);
+    EXPECT_TRUE(r_ok.valid) << r_ok.message;
+}
+
+TEST(TaskAuthoringContractTest, TimeInputTypeEightRejectsNonStringValueType)
+{
+    auto as_int = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "fields": [{
+            "name": "dailyTime", "label": "定时", "valueType": 0,
+            "inputType": 8, "value": 930
+        }]
+    })json");
+    auto r_int = Das::Core::TaskScheduler::ValidateAuthoringDocument(as_int);
+    EXPECT_FALSE(r_int.valid);
+    EXPECT_EQ(r_int.error_kind, "invalidValueType") << r_int.message;
+
+    auto as_bool = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "fields": [{
+            "name": "dailyTime", "label": "定时", "valueType": 8,
+            "inputType": 8, "value": true
+        }]
+    })json");
+    auto r_bool = Das::Core::TaskScheduler::ValidateAuthoringDocument(as_bool);
+    EXPECT_FALSE(r_bool.valid);
+    EXPECT_EQ(r_bool.error_kind, "invalidValueType") << r_bool.message;
+}
+
+// 回归：新增的 inputType=8 valueType 强制规则只对 8 生效，
+// 既有 inputType 0-7 语义零变化（抽样 inputType=7 markdown 仍强制 readonly）。
+TEST(TaskAuthoringContractTest, TimeInputTypeRuleScopedBelowEightUnchanged)
+{
+    auto markdown_without_readonly = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "fields": [{
+            "name": "releaseNote", "label": "更新日志", "valueType": 4,
+            "inputType": 7, "value": "# 标题"
+        }]
+    })json");
+    auto r_md = Das::Core::TaskScheduler::ValidateAuthoringDocument(
+        markdown_without_readonly);
+    EXPECT_FALSE(r_md.valid);
+    EXPECT_EQ(r_md.error_kind, "invalidReadonly");
+
+    auto plain_int = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "formSequence",
+        "revision": 0,
+        "fields": [{
+            "name": "count", "label": "次数", "valueType": 0,
+            "inputType": 0, "value": 5
+        }]
+    })json");
+    auto r_plain =
+        Das::Core::TaskScheduler::ValidateAuthoringDocument(plain_int);
+    EXPECT_TRUE(r_plain.valid) << r_plain.message;
+}
+
 TEST(TaskAuthoringContractTest, ApplyResultPassesWithCommandResult)
 {
     auto result = ParseJson(R"json({
