@@ -79,9 +79,10 @@ namespace
     "progress.downloading_with_size": "Downloading ({1} / {2}){3}%",
     "label.confirm": "Confirm"})");
 
-            // zh-CN.json — 非基础 locale
+            // zh-cn.json — 非基础 locale（文件名小写；装载时 stem 也会
+            // toLower）
             WriteFile(
-                fixture_dir_ / "zh-CN.json",
+                fixture_dir_ / "zh-cn.json",
                 R"({"progress.downloading": "正在下载…",
     "label.confirm": "确认"})");
         }
@@ -202,7 +203,7 @@ TEST_F(I18nLocaleTest, GetAvailableLocalesReturnsAllLoadedLocales)
         names.push_back(ToUtf8(p_name.Get()));
     }
     EXPECT_NE(std::find(names.begin(), names.end(), "en"), names.end());
-    EXPECT_NE(std::find(names.begin(), names.end(), "zh-CN"), names.end());
+    EXPECT_NE(std::find(names.begin(), names.end(), "zh-cn"), names.end());
 }
 
 TEST_F(I18nLocaleTest, GetKeysReturnsLocaleKeys)

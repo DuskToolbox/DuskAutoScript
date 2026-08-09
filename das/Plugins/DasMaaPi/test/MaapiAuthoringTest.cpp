@@ -1792,11 +1792,14 @@ TEST(I18nTest, RootFieldLabelFallsBackToChineseDefaultWhenTranslationMissing)
     {
         if (d.severity == "warning")
         {
+            // message 格式 "Missing translation for key '<key>'..."；用闭合
+            // 单引号精确匹配，避免 field.resource 误命中
+            // field.resourceVersion。
             for (const auto* key :
-                 {"field.controller",
-                  "field.resource",
-                  "field.preset",
-                  "field.language"})
+                 {"field.controller'",
+                  "field.resource'",
+                  "field.preset'",
+                  "field.language'"})
             {
                 if (d.message.find(key) != std::string::npos)
                 {

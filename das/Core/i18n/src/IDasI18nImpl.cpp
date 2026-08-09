@@ -66,8 +66,12 @@ DasResult IDasI18nImpl::Lookup(
     const std::string&   key,
     IDasReadOnlyString** pp_out_text)
 {
+    // locale 大小写无关：统一小写查找（装载时 stem/入表已 toLower）。
+    std::string normalized_locale = locale;
+    DAS::Utils::ToLowerInPlace(normalized_locale);
     // 先查显式 locale
-    if (const auto it = translations_.find(locale); it != translations_.end())
+    if (const auto it = translations_.find(normalized_locale);
+        it != translations_.end())
     {
         if (const auto kit = it->second.find(key); kit != it->second.end())
         {
@@ -76,8 +80,8 @@ DasResult IDasI18nImpl::Lookup(
                 pp_out_text);
         }
     }
-    // miss 且非 base 时回退 base locale（默认 en）
-    if (locale != base_locale_)
+    // miss 且非 base 时回退 base locale（默认 en，已小写）
+    if (normalized_locale != base_locale_)
     {
         if (const auto bit = translations_.find(base_locale_);
             bit != translations_.end())
@@ -192,7 +196,10 @@ DasResult IDasI18nImpl::GetKeys(
         return DAS_E_INVALID_ARGUMENT;
     }
 
-    const auto it = translations_.find(locale_utf8);
+    // locale 大小写无关：统一小写查找（入表时已 toLower）。
+    std::string normalized_locale(locale_utf8);
+    DAS::Utils::ToLowerInPlace(normalized_locale);
+    const auto it = translations_.find(normalized_locale);
     if (it == translations_.end())
     {
         return DAS_E_OUT_OF_RANGE;
@@ -247,7 +254,8 @@ DasResult IDasI18nImpl::AddTranslation(
         return DAS_E_INVALID_ARGUMENT;
     }
 
-    const std::string locale_str(locale_utf8);
+    std::string locale_str(locale_utf8);
+    DAS::Utils::ToLowerInPlace(locale_str); // locale 大小写无关：统一小写入表
     const std::string key_str(key_utf8);
     const std::string text_str(text_utf8);
     if (locale_str.empty() || key_str.empty())
@@ -344,7 +352,10 @@ DasResult IDasI18nImpl::MergeSingleFile(const std::filesystem::path& json_path)
         return DAS_E_INVALID_JSON;
     }
 
-    const std::string locale = json_path.stem().string();
+    std::string locale = json_path.stem().string();
+    // locale 大小写无关：文件名 stem 统一小写入表（与 Lookup 的 normalized
+    // 查询对齐）。
+    DAS::Utils::ToLowerInPlace(locale);
 
     // 事务性：先解析进临时 map，全成功再合并入 translations_，畸形不污染既有表
     KeyToText tmp;
