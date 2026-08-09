@@ -67,6 +67,22 @@ namespace
         return std::mktime(&local);
     }
 
+    // 构造一个"本地 HH:MM:00 相对今天偏移 day_offset 天"的 unix 时间戳。mktime
+    // normalize tm_mday 进位，自动处理跨月/年与 DST。用作跨日 catch-up 测试的
+    // fake clock（昨日/明日同时刻）。
+    std::time_t LocalDaysOffsetTodayUnix(int day_offset, int hour, int minute)
+    {
+        std::time_t now = std::time(nullptr);
+        std::tm     local{};
+        PortableLocaltime(&now, &local);
+        local.tm_mday += day_offset;
+        local.tm_hour = hour;
+        local.tm_min = minute;
+        local.tm_sec = 0;
+        local.tm_isdst = -1;
+        return std::mktime(&local);
+    }
+
     // 独立计算"宿主机本地下一次 HH:MM"的 unix 时间戳（与实现同算法），
     // 用作 daily round-trip 期望值。slot 已过则推到明日。
     std::time_t ExpectedNextDailyUnix(std::time_t now, int hour, int minute)
@@ -222,4 +238,134 @@ TEST(MaapiSchedule, ParseExecutionEnvelope_AcceptsScheduleKey)
     EXPECT_EQ(parsed.envelope.maapi.schedule.interval_minutes, 45);
     EXPECT_EQ(parsed.envelope.maapi.schedule.daily_time, "09:00");
     EXPECT_TRUE(parsed.envelope.maapi.schedule.daily_catch_up);
+}
+
+// interval schedule：GetNextExecutionTime 返回 now + intervalMinutes（不补跑，
+// 跳到下一未来档）。fake clock 固定 unix T，intervalMinutes=120 → round-trip
+// DasDateToUnix == T + 7200s。
+TEST(MaapiSchedule, IntervalNextRun_ReturnsNowPlusInterval)
+{
+    MaapiTask task;
+    DriveDoWithSchedule(
+        task,
+        R"({"kind":"interval","intervalMinutes":120,"dailyTime":"","dailyCatchUp":false})");
+    const std::time_t now = LocalTodayUnix(12, 0);
+    task.SetClockForTest([stamp = now] { return stamp; });
+
+    Das::ExportInterface::DasDate date{};
+    ASSERT_EQ(task.GetNextExecutionTime(&date), DAS_S_OK);
+    EXPECT_EQ(DasDateToUnix(date), now + 120 * 60);
+}
+
+// interval 固定不补跑：即便停机恢复跨越多档（now 已过若干档），也只返回
+// now + interval（绝不连跑补 N 档）。断言结果严格等于 now + 单个 interval。
+TEST(MaapiSchedule, IntervalNoBackfill_SkipsToNextFuture)
+{
+    MaapiTask task;
+    DriveDoWithSchedule(
+        task,
+        R"({"kind":"interval","intervalMinutes":30,"dailyTime":"","dailyCatchUp":false})");
+    const std::time_t now = LocalTodayUnix(12, 0);
+    task.SetClockForTest([stamp = now] { return stamp; });
+
+    Das::ExportInterface::DasDate date{};
+    ASSERT_EQ(task.GetNextExecutionTime(&date), DAS_S_OK);
+    // 严格等于 now + 30 分钟（不是 now + 60 / now + 90 等多档补跑）。
+    EXPECT_EQ(DasDateToUnix(date), now + 30 * 60);
+}
+
+// interval intervalMinutes<=0 防热循环：返回 DAS_E_INVALID_ARGUMENT，不产出
+// next-run=now 导致 Core 立即重跑的热循环。
+TEST(MaapiSchedule, IntervalZeroOrNegative_ReturnsInvalidArgument)
+{
+    MaapiTask task_zero;
+    DriveDoWithSchedule(
+        task_zero,
+        R"({"kind":"interval","intervalMinutes":0,"dailyTime":"","dailyCatchUp":false})");
+    Das::ExportInterface::DasDate date_zero{};
+    EXPECT_EQ(
+        task_zero.GetNextExecutionTime(&date_zero),
+        DAS_E_INVALID_ARGUMENT);
+
+    MaapiTask task_neg;
+    DriveDoWithSchedule(
+        task_neg,
+        R"({"kind":"interval","intervalMinutes":-5,"dailyTime":"","dailyCatchUp":false})");
+    Das::ExportInterface::DasDate date_neg{};
+    EXPECT_EQ(task_neg.GetNextExecutionTime(&date_neg), DAS_E_INVALID_ARGUMENT);
+}
+
+// daily catch-up 状态机：catchUp=true 且今日 slot 已过且今日未跑 → 第 1 次返回
+// now（补跑一次），last_fired_ymd_=今日；第 2 次同日调用返回明日 slot（去重
+// 生效，防 catch-up 热循环核心断言）。
+TEST(MaapiSchedule, DailyCatchUp_ReturnsNowOnce_ThenTomorrow)
+{
+    MaapiTask task;
+    DriveDoWithSchedule(
+        task,
+        R"({"kind":"daily","intervalMinutes":0,"dailyTime":"09:00","dailyCatchUp":true})");
+    const std::time_t now =
+        LocalTodayUnix(10, 0); // 今日 10:00，slot 09:00 已过
+    task.SetClockForTest([stamp = now] { return stamp; });
+
+    // 第 1 次：今日 slot 已过 + catchUp + 未跑 → 返回 now（补跑一次）。
+    Das::ExportInterface::DasDate first_date{};
+    ASSERT_EQ(task.GetNextExecutionTime(&first_date), DAS_S_OK);
+    EXPECT_EQ(DasDateToUnix(first_date), now);
+
+    // 第 2 次：同日再问 → 去重，返回明日 09:00 slot（不再返回
+    // now，否则热循环）。
+    Das::ExportInterface::DasDate second_date{};
+    ASSERT_EQ(task.GetNextExecutionTime(&second_date), DAS_S_OK);
+    EXPECT_EQ(DasDateToUnix(second_date), ExpectedNextDailyUnix(now, 9, 0));
+    EXPECT_GT(DasDateToUnix(second_date), now);
+}
+
+// daily catchUp=false：今日 slot 已过 → 直接返回明日 slot（不补跑）。即便状态
+// 机就位，catchUp=false 路径永不返回 now。
+TEST(MaapiSchedule, DailyCatchUp_Disabled_SkipsToTomorrow)
+{
+    MaapiTask task;
+    DriveDoWithSchedule(
+        task,
+        R"({"kind":"daily","intervalMinutes":0,"dailyTime":"09:00","dailyCatchUp":false})");
+    const std::time_t now =
+        LocalTodayUnix(10, 0); // 今日 10:00，slot 09:00 已过
+    task.SetClockForTest([stamp = now] { return stamp; });
+
+    Das::ExportInterface::DasDate date{};
+    ASSERT_EQ(task.GetNextExecutionTime(&date), DAS_S_OK);
+    EXPECT_EQ(DasDateToUnix(date), ExpectedNextDailyUnix(now, 9, 0));
+    EXPECT_GT(DasDateToUnix(date), now); // 明日 slot，不是 now
+
+    // 同日第二次仍返回明日 slot（catchUp=false 永不返回 now）。
+    Das::ExportInterface::DasDate second_date{};
+    ASSERT_EQ(task.GetNextExecutionTime(&second_date), DAS_S_OK);
+    EXPECT_GT(DasDateToUnix(second_date), now);
+}
+
+// daily catch-up 跨日重置：昨日已补跑（last_fired_ymd_=昨日）不影响今日决策——
+// 今日 slot 已过 + catchUp → 仍补跑一次返回 now（today_ymd != last_fired_ymd_
+// 状态机去重按日边界自然失效）。
+TEST(MaapiSchedule, DailyCatchUp_NewDay_ResetsLastFired)
+{
+    MaapiTask task;
+    DriveDoWithSchedule(
+        task,
+        R"({"kind":"daily","intervalMinutes":0,"dailyTime":"09:00","dailyCatchUp":true})");
+
+    // 昨日 10:00：slot 09:00 已过 + catchUp → 补跑，last_fired_ymd_ = 昨日
+    // ymd。
+    const std::time_t yesterday = LocalDaysOffsetTodayUnix(-1, 10, 0);
+    task.SetClockForTest([stamp = yesterday] { return stamp; });
+    Das::ExportInterface::DasDate yesterday_date{};
+    ASSERT_EQ(task.GetNextExecutionTime(&yesterday_date), DAS_S_OK);
+    EXPECT_EQ(DasDateToUnix(yesterday_date), yesterday);
+
+    // 今日 10:00：跨日后 today_ymd != 昨日 last_fired_ymd_ → catchUp 再次生效。
+    const std::time_t today = LocalTodayUnix(10, 0);
+    task.SetClockForTest([stamp = today] { return stamp; });
+    Das::ExportInterface::DasDate today_date{};
+    ASSERT_EQ(task.GetNextExecutionTime(&today_date), DAS_S_OK);
+    EXPECT_EQ(DasDateToUnix(today_date), today); // 补跑返回 now，非明日 slot
 }
