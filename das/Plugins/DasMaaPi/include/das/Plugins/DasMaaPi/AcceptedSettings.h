@@ -101,7 +101,7 @@ namespace Das::Plugins::DasMaaPi
         // 运行时从 session device_cache_ 取 Toolkit
         // 推荐值，不持久化（agent_path 仍走 PI
         // raw_json）。空表示用户未选，编译期 fallback raw_json。
-        std::optional<std::string> controller_adb_device;
+        std::optional<std::string>            controller_adb_device;
         std::vector<MaapiPiOptionSettingsDto> global_options;
         std::vector<MaapiPiOptionSettingsDto> resource_options;
         std::vector<MaapiPiOptionSettingsDto> controller_options;
@@ -118,6 +118,16 @@ namespace Das::Plugins::DasMaaPi
         std::vector<MaapiPresetSnapshotDto> custom_presets;
 
         std::vector<std::string> orphan_paths;
+
+        // schedule 配置。flat optional 字段（非子 DTO），规避 cpp_yyjson
+        // optional<聚合体首字段 string> caster 陷阱。PiCompiler 组装成
+        // envelope.maapi.schedule。缺失 = nullopt = schedule off（kind=""）。
+        // interval_minutes / daily_catch_up 为预留字段。optional<bool> caster
+        // 已 在 ExecutionEnvelope.h 显式特化，沿用。
+        std::optional<std::string> schedule_kind;
+        std::optional<int>         schedule_interval_minutes;
+        std::optional<std::string> schedule_daily_time;
+        std::optional<bool>        schedule_daily_catch_up;
     };
 
     // 通用 UI 状态 kv 存储（视图偏好 + 插件自定义数据）。

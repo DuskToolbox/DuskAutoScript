@@ -114,7 +114,7 @@ namespace
                     : R"([])")
             + R"(,"piEnv":{"interfaceVersion":"2","clientName":"DAS","clientVersion":"0.1","clientLanguage":"cpp","clientMaafwVersion":"test","projectVersion":"","controllerJson":)"
             + JsonStringLiteral(controller_json)
-            + R"(,"resourceJson":"{\"name\":\"Official\"}"},"focusTranslationsPath":"","controllerInitParams":)"
+            + R"(,"resourceJson":"{\"name\":\"Official\"}"},"focusTranslationsPath":"","schedule":{"kind":"","intervalMinutes":0,"dailyTime":"","dailyCatchUp":false},"controllerInitParams":)"
             + controller_init_params_json + R"(,"pretasks":[],"tasks":)" + tasks
             + "}}";
         auto parsed = Das::Utils::ParseYyjsonFromString(json);

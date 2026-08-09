@@ -53,6 +53,21 @@ namespace Das::Plugins::DasMaaPi
         std::vector<std::string> args; // includes trailing option JSON if any
     };
 
+    // schedule 配置。PiCompiler 从 acceptedProperties.pi flat optional schedule
+    // 字段组装，MaapiTask::Do 解析 envelope 后缓存到 schedule_，
+    // GetNextExecutionTime 读缓存算下一次运行时间。作 MaaExecutionPlanDto 非
+    // optional 成员始终写出（kind=""=off），规避 cpp_yyjson
+    // optional<聚合体首字段 string> caster 陷阱（见上方 focus_translations_path
+    // / caster 陷阱文档）。 interval_minutes / daily_catch_up
+    // 为预留字段（interval/catch-up 后续启用）。
+    struct MaaScheduleConfigDto
+    {
+        std::string kind;                   // "", "daily", "interval"(预留)
+        int         interval_minutes = 0;   // interval kind 用
+        std::string daily_time;             // "HH:MM"，daily kind 用
+        bool        daily_catch_up = false; // daily 补跑用
+    };
+
     struct MaaExecutionPlanDto
     {
         std::string    interface_directory;
@@ -92,7 +107,11 @@ namespace Das::Plugins::DasMaaPi
         // （在 cast<field_type> 之前），与字段类型无关。故手搓 envelope JSON 的
         // fixture 必须显式补 focusTranslationsPath key（即便空串）才能解析；
         // PiCompiler 总会写出该字段，所以 IPC 生产路径不受影响。
-        std::string                      focus_translations_path;
+        std::string focus_translations_path;
+        // schedule（非 optional 始终写出，kind=""=off）。fixture 手搓 envelope
+        // JSON 必须显式补 schedule key（同 focus_translations_path 范式，缺 key
+        // 抛 out_of_range）。
+        MaaScheduleConfigDto             schedule;
         std::vector<MaaTaskExecutionDto> tasks;
     };
 
@@ -487,6 +506,12 @@ struct yyjson::field_name_rule<Das::Plugins::DasMaaPi::MaaPretaskDto>
 
 template <>
 struct yyjson::field_name_rule<Das::Plugins::DasMaaPi::MaaExecutionPlanDto>
+{
+    using type = yyjson::snake_to_camel_transform;
+};
+
+template <>
+struct yyjson::field_name_rule<Das::Plugins::DasMaaPi::MaaScheduleConfigDto>
 {
     using type = yyjson::snake_to_camel_transform;
 };

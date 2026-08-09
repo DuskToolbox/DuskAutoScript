@@ -1,7 +1,11 @@
 #ifndef DAS_PLUGINS_DASMAAPI_MAAPITASK_H
 #define DAS_PLUGINS_DASMAAPI_MAAPITASK_H
 
+#include <das/Plugins/DasMaaPi/ExecutionEnvelope.h>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasTask.Implements.hpp>
+
+#include <ctime>
+#include <functional>
 
 DAS_DEFINE_CLASS_IN_NAMESPACE(
     Das::Plugins::DasMaaPi,
@@ -31,6 +35,22 @@ namespace Plugins::DasMaaPi
 
         DAS_IMPL GetNextExecutionTime(
             ExportInterface::DasDate* p_out_date) override;
+
+        // fake clock seam：注入固定时钟驱动 daily 跨午夜 / off 单测，无需实时
+        // 等待。生产默认 std::time(nullptr)。照既有 DasMaaPi fake/seam 范式
+        // （DefaultAdbDeviceEnumerator::SetForTest）。
+        using ClockFn = std::function<std::time_t()>;
+        void SetClockForTest(ClockFn fn) { now_ = std::move(fn); }
+
+    private:
+        // Do-cache seam：Do 解析 envelope 后把 schedule 缓存到此成员，
+        // GetNextExecutionTime 读缓存（签名无 settings 参数，唯一 seam）。
+        // 初始 kind=""(off)。仅主线程 BusinessThread 访问，无需锁（OnTick
+        // 串行）。
+        MaaScheduleConfigDto schedule_{};
+        // daily catch-up 防热循环（预留，catch-up 启用时消费）。
+        int     last_fired_ymd_ = 0;
+        ClockFn now_ = [] { return std::time(nullptr); };
     };
 } // namespace Plugins::DasMaaPi
 DAS_NS_END
