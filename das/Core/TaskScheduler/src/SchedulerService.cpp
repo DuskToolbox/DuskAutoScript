@@ -1837,21 +1837,27 @@ namespace Das::Core::TaskScheduler
 
     DasResult SchedulerService::Enable()
     {
-        const std::scoped_lock lock(mutex_);
-        fsm_->process_event(EvtEnable{});
+        {
+            const std::scoped_lock lock(mutex_);
+            fsm_->process_event(EvtEnable{});
+        }
+        NotifyStateChange();
         return fsm_last_result_;
     }
 
     DasResult SchedulerService::Disable()
     {
-        const std::scoped_lock lock(mutex_);
-        fsm_->process_event(EvtDisable{});
-        // 无 task 在跑：立即收尾 Stopped。有 task：保持 Stopping，等 OnTick
-        // task 完成时 process EvtTickCompleted 收尾。
-        if (current_task_ == nullptr)
         {
-            fsm_->process_event(EvtTickCompleted{});
+            const std::scoped_lock lock(mutex_);
+            fsm_->process_event(EvtDisable{});
+            // 无 task 在跑：立即收尾 Stopped。有 task：保持 Stopping，等 OnTick
+            // task 完成时 process EvtTickCompleted 收尾。
+            if (current_task_ == nullptr)
+            {
+                fsm_->process_event(EvtTickCompleted{});
+            }
         }
+        NotifyStateChange();
         return fsm_last_result_;
     }
 
@@ -1907,7 +1913,6 @@ namespace Das::Core::TaskScheduler
         StartTickTimer(ComputeNextDelay(task_instances_, now_unix));
         fsm_last_result_ = DAS_S_OK;
         DAS_CORE_LOG_INFO("SchedulerService::Enable: scheduler started");
-        NotifyStateChange();
     }
 
     void SchedulerService::FsmActEnterStopping()
@@ -1928,7 +1933,6 @@ namespace Das::Core::TaskScheduler
         }
         fsm_last_result_ = DAS_S_OK;
         DAS_CORE_LOG_INFO("SchedulerService::Disable: scheduler stopping");
-        NotifyStateChange();
     }
 
     void SchedulerService::FsmActEnterStopped()
@@ -1937,7 +1941,6 @@ namespace Das::Core::TaskScheduler
         state_.store(SchedulerState::Stopped);
         fsm_last_result_ = DAS_S_OK;
         DAS_CORE_LOG_INFO("SchedulerService::Disable: scheduler stopped");
-        NotifyStateChange();
     }
 
     void SchedulerService::FsmActRejectNotInitialized()

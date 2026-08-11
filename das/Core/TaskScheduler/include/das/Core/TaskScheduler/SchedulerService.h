@@ -400,6 +400,8 @@ namespace Das::Core::TaskScheduler
         /// 序列化当前 scheduler 状态，经 state_notify_ 推
         /// WS（api/v1/scheduler/get）。 Enable/Disable/OnTick
         /// 状态变化时调用，让 UI 实时收 Running/Stopping/Stopped。
+        /// 调用者不得持有 mutex_：内部 Get() 会自加锁，持锁调用会递归死锁。
+        /// 故 FSM action 不直接调用，由 Enable/Disable/OnTick 在锁外触发。
         void NotifyStateChange();
 
         struct EvtEnable
