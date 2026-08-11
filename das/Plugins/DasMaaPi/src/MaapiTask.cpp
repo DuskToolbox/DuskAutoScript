@@ -97,10 +97,6 @@ namespace Plugins::DasMaaPi
         {
             return parsed.result;
         }
-        // Do-cache seam：GetNextExecutionTime 签名无 settings 参数，唯一接缝是
-        // Do 解析 envelope 后把 schedule 缓存到实例成员（Core 在 Do 后立刻调
-        // GetNextExecutionTime，缓存必然先热）。
-        schedule_ = parsed.envelope.maapi.schedule;
 
         auto result = MaaRuntime::Run(
             parsed.envelope,
@@ -110,47 +106,67 @@ namespace Plugins::DasMaaPi
     }
 
     DasResult MaapiTask::GetNextExecutionTime(
-        ExportInterface::DasDate* p_out_date)
+        ExportInterface::IDasJson* p_task_settings_json,
+        ExportInterface::DasDate*  p_out_date)
     {
         if (!p_out_date)
         {
             return DAS_E_INVALID_POINTER;
         }
+        if (!p_task_settings_json)
+        {
+            return DAS_E_INVALID_POINTER;
+        }
+
+        // GetNextExecutionTime 独立于 Do：直接从 task_settings_json 解析
+        // envelope 取 schedule（与 Do 同款解析路径）。schedule 不再缓存到实例
+        // 成员，schedule 变更实时反映到下次调用。
+        auto request = ReadJson(p_task_settings_json);
+        if (!request || !request->is_object())
+        {
+            return DAS_E_INVALID_JSON;
+        }
+        auto parsed = ParseExecutionEnvelope(*request);
+        if (DAS::IsFailed(parsed.result))
+        {
+            return parsed.result;
+        }
+        const auto& schedule = parsed.envelope.maapi.schedule;
 
         // interval：固定 now + intervalMinutes，绝不补跑（错过几档跳到下一未来
         // 档）。intervalMinutes<=0 返回 DAS_E_INVALID_ARGUMENT，防 next-run=now
         // 的热循环。
-        if (schedule_.kind == "interval")
+        if (schedule.kind == "interval")
         {
-            if (schedule_.interval_minutes <= 0)
+            if (schedule.interval_minutes <= 0)
             {
                 // 十进制 DasResult（非十六进制），便于日志阅读。
                 spdlog::warn(
                     "[DasMaaPi] MaapiTask::GetNextExecutionTime: invalid "
                     "interval_minutes {}, result={}",
-                    schedule_.interval_minutes,
+                    schedule.interval_minutes,
                     DAS_E_INVALID_ARGUMENT);
                 return DAS_E_INVALID_ARGUMENT;
             }
             const std::time_t target_unix =
                 now_()
-                + static_cast<std::time_t>(schedule_.interval_minutes) * 60;
+                + static_cast<std::time_t>(schedule.interval_minutes) * 60;
             FillDasDateFromUnix(target_unix, p_out_date);
             return DAS_S_OK;
         }
 
         // daily：宿主机本地下一次 HH:MM，带 catch-up 状态机。
-        if (schedule_.kind == "daily")
+        if (schedule.kind == "daily")
         {
             int hour = 0;
             int minute = 0;
-            if (!ParseDailyTime(schedule_.daily_time, hour, minute))
+            if (!ParseDailyTime(schedule.daily_time, hour, minute))
             {
                 // 十进制 DasResult（非十六进制），便于日志阅读。
                 spdlog::warn(
                     "[DasMaaPi] MaapiTask::GetNextExecutionTime: invalid "
                     "dailyTime \"{}\", result={}",
-                    schedule_.daily_time,
+                    schedule.daily_time,
                     DAS_E_INVALID_ARGUMENT);
                 return DAS_E_INVALID_ARGUMENT;
             }
@@ -187,7 +203,7 @@ namespace Plugins::DasMaaPi
                 // 今日 slot 已过（错过）。catchUp=true 补跑一次返回 now
                 // 并标记今日 已补跑（下次同日调用走上一分支返回明日
                 // slot，防热循环）； catchUp=false 直接跳到明日 slot。
-                if (schedule_.daily_catch_up)
+                if (schedule.daily_catch_up)
                 {
                     target_unix = now;
                     last_fired_ymd_ = today_ymd;
@@ -199,9 +215,7 @@ namespace Plugins::DasMaaPi
             }
             else
             {
-                // 今日 slot 未到：排今日 slot，并标记今日已决策。Core 在 Do
-                // 后再 调本方法时 last_fired_ymd_==today → 明日 slot，防 Do
-                // 后立刻补跑 造成同日双跑。
+                // 今日 slot 未到：排今日 slot，并标记今日已决策。
                 target_unix = today_slot_unix;
                 last_fired_ymd_ = today_ymd;
             }

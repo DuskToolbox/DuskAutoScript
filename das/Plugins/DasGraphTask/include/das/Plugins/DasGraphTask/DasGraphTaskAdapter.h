@@ -41,7 +41,8 @@ namespace Plugins::DasGraphTask
             ExportInterface::IDasJson*      p_task_settings_json) override;
 
         DAS_IMPL GetNextExecutionTime(
-            ExportInterface::DasDate* p_out_date) override;
+            ExportInterface::IDasJson* p_task_settings_json,
+            ExportInterface::DasDate*  p_out_date) override;
     };
 } // namespace Plugins::DasGraphTask
 DAS_NS_END

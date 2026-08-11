@@ -1491,6 +1491,7 @@ public:
     }
 
     DasResult GetNextExecutionTime(
+        Das::ExportInterface::IDasJson* /*p_task_settings_json*/,
         Das::ExportInterface::DasDate* p_out_date) override
     {
         if (!p_out_date)

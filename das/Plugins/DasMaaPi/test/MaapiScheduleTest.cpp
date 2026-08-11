@@ -1,8 +1,7 @@
-// MaapiTask schedule brain: fake-clock 单测覆盖 Do-cache-GetNextExecutionTime
-// seam / daily next-run / daily 跨午夜 / off→fail / envelope schedule key
-// 解析。
+// MaapiTask schedule brain: fake-clock 单测覆盖 GetNextExecutionTime 从
+// task_settings 参数解析 envelope schedule / daily next-run / daily 跨午夜 /
+// off→fail / envelope schedule key 解析。
 #include "../src/MaapiTask.h"
-#include "FakeMaaApiBoundary.h"
 
 #include <das/Plugins/DasMaaPi/MaaRuntime.h>
 #include <das/Utils/DasJsonCore.h>
@@ -17,7 +16,6 @@
 namespace
 {
     using namespace Das::Plugins::DasMaaPi;
-    using Das::Plugins::DasMaaPi::Test::FakeMaaApiBoundary;
 
     // 跨平台 timegm（_mkgmtime Win32 / timegm POSIX），镜像 Core 的
     // DasDateToUnix 语义（DasDate 字段按 UTC 解释）。
@@ -131,47 +129,26 @@ namespace
         return result;
     }
 
-    // RAII boundary hook（照 MaapiRunTaskComponentTest 范式）。
-    class ScopedBoundaryHook final
+    // 构造含 schedule 的 envelope → ParseDasJson 拿 IDasJson*，供
+    // GetNextExecutionTime 直接消费（settings 参数范式，不再先经 Do）。
+    Das::DasPtr<Das::ExportInterface::IDasJson> EnvelopeJson(
+        std::string_view schedule_json)
     {
-    public:
-        explicit ScopedBoundaryHook(FakeMaaApiBoundary& boundary)
-            : boundary_(boundary)
-        {
-            SetMaaApiBoundaryForTest(&boundary_);
-        }
-        ~ScopedBoundaryHook() { SetMaaApiBoundaryForTest(nullptr); }
-
-        ScopedBoundaryHook(const ScopedBoundaryHook&) = delete;
-        ScopedBoundaryHook& operator=(const ScopedBoundaryHook&) = delete;
-
-    private:
-        FakeMaaApiBoundary& boundary_;
-    };
-
-    // 驱动 Do-cache seam：构造含 schedule 的 envelope → MaapiTask::Do（fake
-    // boundary）→ schedule_ 经 ParseExecutionEnvelope 缓存。返回就绪的 task。
-    void DriveDoWithSchedule(MaapiTask& task, std::string_view schedule_json)
-    {
-        FakeMaaApiBoundary       fake;
-        const ScopedBoundaryHook hook(fake);
-        auto json = ParseDasJson(EnvelopeJsonWithSchedule(schedule_json));
-        ASSERT_EQ(task.Do(nullptr, nullptr, json.Get()), DAS_S_OK);
+        return ParseDasJson(EnvelopeJsonWithSchedule(schedule_json));
     }
 } // namespace
 
-// Do 解析 envelope 后缓存 schedule_，GetNextExecutionTime 读缓存返回
-// daily（若未缓存 schedule_ 保持默认 off 则会返回 DAS_E_NO_IMPLEMENTATION）。
-TEST(MaapiSchedule, DoCachesSchedule_FromEnvelope)
+// GetNextExecutionTime 从 task_settings 参数解析 envelope schedule 返回
+// daily（不再依赖 Do 副作用缓存）。
+TEST(MaapiSchedule, ParsesScheduleFromSettingsParam)
 {
     MaapiTask task;
-    DriveDoWithSchedule(
-        task,
-        R"({"kind":"daily","intervalMinutes":0,"dailyTime":"09:00","dailyCatchUp":false})");
     task.SetClockForTest([stamp = LocalTodayUnix(8, 0)] { return stamp; });
+    auto json = EnvelopeJson(
+        R"({"kind":"daily","intervalMinutes":0,"dailyTime":"09:00","dailyCatchUp":false})");
 
     Das::ExportInterface::DasDate date{};
-    ASSERT_EQ(task.GetNextExecutionTime(&date), DAS_S_OK);
+    ASSERT_EQ(task.GetNextExecutionTime(json.Get(), &date), DAS_S_OK);
     EXPECT_EQ(
         DasDateToUnix(date),
         ExpectedNextDailyUnix(LocalTodayUnix(8, 0), 9, 0));
@@ -181,15 +158,14 @@ TEST(MaapiSchedule, DoCachesSchedule_FromEnvelope)
 // DasDate（UTC round-trip == 今日 09:00 local 的 mktime 值）。
 TEST(MaapiSchedule, DailyNextRun_ReturnsNextLocalSlot)
 {
-    MaapiTask task;
-    DriveDoWithSchedule(
-        task,
-        R"({"kind":"daily","intervalMinutes":0,"dailyTime":"09:00","dailyCatchUp":false})");
+    MaapiTask         task;
     const std::time_t now = LocalTodayUnix(8, 0);
     task.SetClockForTest([stamp = now] { return stamp; });
+    auto json = EnvelopeJson(
+        R"({"kind":"daily","intervalMinutes":0,"dailyTime":"09:00","dailyCatchUp":false})");
 
     Das::ExportInterface::DasDate date{};
-    ASSERT_EQ(task.GetNextExecutionTime(&date), DAS_S_OK);
+    ASSERT_EQ(task.GetNextExecutionTime(json.Get(), &date), DAS_S_OK);
     EXPECT_EQ(DasDateToUnix(date), ExpectedNextDailyUnix(now, 9, 0));
 }
 
@@ -197,15 +173,14 @@ TEST(MaapiSchedule, DailyNextRun_ReturnsNextLocalSlot)
 // （跨午夜核心断言：slot 已过推进到明日，UTC round-trip 正确）。
 TEST(MaapiSchedule, DailyCrossMidnight_AdvancesToTomorrow)
 {
-    MaapiTask task;
-    DriveDoWithSchedule(
-        task,
-        R"({"kind":"daily","intervalMinutes":0,"dailyTime":"01:30","dailyCatchUp":false})");
+    MaapiTask         task;
     const std::time_t now = LocalTodayUnix(23, 0);
     task.SetClockForTest([stamp = now] { return stamp; });
+    auto json = EnvelopeJson(
+        R"({"kind":"daily","intervalMinutes":0,"dailyTime":"01:30","dailyCatchUp":false})");
 
     Das::ExportInterface::DasDate date{};
-    ASSERT_EQ(task.GetNextExecutionTime(&date), DAS_S_OK);
+    ASSERT_EQ(task.GetNextExecutionTime(json.Get(), &date), DAS_S_OK);
     // 明日 01:30 必严格晚于 now（23:00 今日）。
     EXPECT_GT(DasDateToUnix(date), now);
     EXPECT_EQ(DasDateToUnix(date), ExpectedNextDailyUnix(now, 1, 30));
@@ -216,12 +191,13 @@ TEST(MaapiSchedule, DailyCrossMidnight_AdvancesToTomorrow)
 TEST(MaapiSchedule, OffKind_ReturnsFailureForSentinel)
 {
     MaapiTask task;
-    DriveDoWithSchedule(
-        task,
+    auto      json = EnvelopeJson(
         R"({"kind":"","intervalMinutes":0,"dailyTime":"","dailyCatchUp":false})");
 
     Das::ExportInterface::DasDate date{};
-    EXPECT_EQ(task.GetNextExecutionTime(&date), DAS_E_NO_IMPLEMENTATION);
+    EXPECT_EQ(
+        task.GetNextExecutionTime(json.Get(), &date),
+        DAS_E_NO_IMPLEMENTATION);
 }
 
 // ParseExecutionEnvelope 接受 schedule key（同 focus_translations_path 非
@@ -245,15 +221,14 @@ TEST(MaapiSchedule, ParseExecutionEnvelope_AcceptsScheduleKey)
 // DasDateToUnix == T + 7200s。
 TEST(MaapiSchedule, IntervalNextRun_ReturnsNowPlusInterval)
 {
-    MaapiTask task;
-    DriveDoWithSchedule(
-        task,
-        R"({"kind":"interval","intervalMinutes":120,"dailyTime":"","dailyCatchUp":false})");
+    MaapiTask         task;
     const std::time_t now = LocalTodayUnix(12, 0);
     task.SetClockForTest([stamp = now] { return stamp; });
+    auto json = EnvelopeJson(
+        R"({"kind":"interval","intervalMinutes":120,"dailyTime":"","dailyCatchUp":false})");
 
     Das::ExportInterface::DasDate date{};
-    ASSERT_EQ(task.GetNextExecutionTime(&date), DAS_S_OK);
+    ASSERT_EQ(task.GetNextExecutionTime(json.Get(), &date), DAS_S_OK);
     EXPECT_EQ(DasDateToUnix(date), now + 120 * 60);
 }
 
@@ -261,15 +236,14 @@ TEST(MaapiSchedule, IntervalNextRun_ReturnsNowPlusInterval)
 // now + interval（绝不连跑补 N 档）。断言结果严格等于 now + 单个 interval。
 TEST(MaapiSchedule, IntervalNoBackfill_SkipsToNextFuture)
 {
-    MaapiTask task;
-    DriveDoWithSchedule(
-        task,
-        R"({"kind":"interval","intervalMinutes":30,"dailyTime":"","dailyCatchUp":false})");
+    MaapiTask         task;
     const std::time_t now = LocalTodayUnix(12, 0);
     task.SetClockForTest([stamp = now] { return stamp; });
+    auto json = EnvelopeJson(
+        R"({"kind":"interval","intervalMinutes":30,"dailyTime":"","dailyCatchUp":false})");
 
     Das::ExportInterface::DasDate date{};
-    ASSERT_EQ(task.GetNextExecutionTime(&date), DAS_S_OK);
+    ASSERT_EQ(task.GetNextExecutionTime(json.Get(), &date), DAS_S_OK);
     // 严格等于 now + 30 分钟（不是 now + 60 / now + 90 等多档补跑）。
     EXPECT_EQ(DasDateToUnix(date), now + 30 * 60);
 }
@@ -279,20 +253,20 @@ TEST(MaapiSchedule, IntervalNoBackfill_SkipsToNextFuture)
 TEST(MaapiSchedule, IntervalZeroOrNegative_ReturnsInvalidArgument)
 {
     MaapiTask task_zero;
-    DriveDoWithSchedule(
-        task_zero,
+    auto      json_zero = EnvelopeJson(
         R"({"kind":"interval","intervalMinutes":0,"dailyTime":"","dailyCatchUp":false})");
     Das::ExportInterface::DasDate date_zero{};
     EXPECT_EQ(
-        task_zero.GetNextExecutionTime(&date_zero),
+        task_zero.GetNextExecutionTime(json_zero.Get(), &date_zero),
         DAS_E_INVALID_ARGUMENT);
 
     MaapiTask task_neg;
-    DriveDoWithSchedule(
-        task_neg,
+    auto      json_neg = EnvelopeJson(
         R"({"kind":"interval","intervalMinutes":-5,"dailyTime":"","dailyCatchUp":false})");
     Das::ExportInterface::DasDate date_neg{};
-    EXPECT_EQ(task_neg.GetNextExecutionTime(&date_neg), DAS_E_INVALID_ARGUMENT);
+    EXPECT_EQ(
+        task_neg.GetNextExecutionTime(json_neg.Get(), &date_neg),
+        DAS_E_INVALID_ARGUMENT);
 }
 
 // daily catch-up 状态机：catchUp=true 且今日 slot 已过且今日未跑 → 第 1 次返回
@@ -300,23 +274,22 @@ TEST(MaapiSchedule, IntervalZeroOrNegative_ReturnsInvalidArgument)
 // 生效，防 catch-up 热循环核心断言）。
 TEST(MaapiSchedule, DailyCatchUp_ReturnsNowOnce_ThenTomorrow)
 {
-    MaapiTask task;
-    DriveDoWithSchedule(
-        task,
-        R"({"kind":"daily","intervalMinutes":0,"dailyTime":"09:00","dailyCatchUp":true})");
+    MaapiTask         task;
     const std::time_t now =
         LocalTodayUnix(10, 0); // 今日 10:00，slot 09:00 已过
     task.SetClockForTest([stamp = now] { return stamp; });
+    auto json = EnvelopeJson(
+        R"({"kind":"daily","intervalMinutes":0,"dailyTime":"09:00","dailyCatchUp":true})");
 
     // 第 1 次：今日 slot 已过 + catchUp + 未跑 → 返回 now（补跑一次）。
     Das::ExportInterface::DasDate first_date{};
-    ASSERT_EQ(task.GetNextExecutionTime(&first_date), DAS_S_OK);
+    ASSERT_EQ(task.GetNextExecutionTime(json.Get(), &first_date), DAS_S_OK);
     EXPECT_EQ(DasDateToUnix(first_date), now);
 
     // 第 2 次：同日再问 → 去重，返回明日 09:00 slot（不再返回
     // now，否则热循环）。
     Das::ExportInterface::DasDate second_date{};
-    ASSERT_EQ(task.GetNextExecutionTime(&second_date), DAS_S_OK);
+    ASSERT_EQ(task.GetNextExecutionTime(json.Get(), &second_date), DAS_S_OK);
     EXPECT_EQ(DasDateToUnix(second_date), ExpectedNextDailyUnix(now, 9, 0));
     EXPECT_GT(DasDateToUnix(second_date), now);
 }
@@ -325,22 +298,21 @@ TEST(MaapiSchedule, DailyCatchUp_ReturnsNowOnce_ThenTomorrow)
 // 机就位，catchUp=false 路径永不返回 now。
 TEST(MaapiSchedule, DailyCatchUp_Disabled_SkipsToTomorrow)
 {
-    MaapiTask task;
-    DriveDoWithSchedule(
-        task,
-        R"({"kind":"daily","intervalMinutes":0,"dailyTime":"09:00","dailyCatchUp":false})");
+    MaapiTask         task;
     const std::time_t now =
         LocalTodayUnix(10, 0); // 今日 10:00，slot 09:00 已过
     task.SetClockForTest([stamp = now] { return stamp; });
+    auto json = EnvelopeJson(
+        R"({"kind":"daily","intervalMinutes":0,"dailyTime":"09:00","dailyCatchUp":false})");
 
     Das::ExportInterface::DasDate date{};
-    ASSERT_EQ(task.GetNextExecutionTime(&date), DAS_S_OK);
+    ASSERT_EQ(task.GetNextExecutionTime(json.Get(), &date), DAS_S_OK);
     EXPECT_EQ(DasDateToUnix(date), ExpectedNextDailyUnix(now, 9, 0));
     EXPECT_GT(DasDateToUnix(date), now); // 明日 slot，不是 now
 
     // 同日第二次仍返回明日 slot（catchUp=false 永不返回 now）。
     Das::ExportInterface::DasDate second_date{};
-    ASSERT_EQ(task.GetNextExecutionTime(&second_date), DAS_S_OK);
+    ASSERT_EQ(task.GetNextExecutionTime(json.Get(), &second_date), DAS_S_OK);
     EXPECT_GT(DasDateToUnix(second_date), now);
 }
 
@@ -350,8 +322,7 @@ TEST(MaapiSchedule, DailyCatchUp_Disabled_SkipsToTomorrow)
 TEST(MaapiSchedule, DailyCatchUp_NewDay_ResetsLastFired)
 {
     MaapiTask task;
-    DriveDoWithSchedule(
-        task,
+    auto      json = EnvelopeJson(
         R"({"kind":"daily","intervalMinutes":0,"dailyTime":"09:00","dailyCatchUp":true})");
 
     // 昨日 10:00：slot 09:00 已过 + catchUp → 补跑，last_fired_ymd_ = 昨日
@@ -359,13 +330,22 @@ TEST(MaapiSchedule, DailyCatchUp_NewDay_ResetsLastFired)
     const std::time_t yesterday = LocalDaysOffsetTodayUnix(-1, 10, 0);
     task.SetClockForTest([stamp = yesterday] { return stamp; });
     Das::ExportInterface::DasDate yesterday_date{};
-    ASSERT_EQ(task.GetNextExecutionTime(&yesterday_date), DAS_S_OK);
+    ASSERT_EQ(task.GetNextExecutionTime(json.Get(), &yesterday_date), DAS_S_OK);
     EXPECT_EQ(DasDateToUnix(yesterday_date), yesterday);
 
     // 今日 10:00：跨日后 today_ymd != 昨日 last_fired_ymd_ → catchUp 再次生效。
     const std::time_t today = LocalTodayUnix(10, 0);
     task.SetClockForTest([stamp = today] { return stamp; });
     Das::ExportInterface::DasDate today_date{};
-    ASSERT_EQ(task.GetNextExecutionTime(&today_date), DAS_S_OK);
+    ASSERT_EQ(task.GetNextExecutionTime(json.Get(), &today_date), DAS_S_OK);
     EXPECT_EQ(DasDateToUnix(today_date), today); // 补跑返回 now，非明日 slot
+}
+
+// GetNextExecutionTime null 参数 → DAS_E_INVALID_POINTER（Core compile_failed
+// 分支传 nullptr 时的契约）。
+TEST(MaapiSchedule, NullSettings_ReturnsInvalidPointer)
+{
+    MaapiTask                     task;
+    Das::ExportInterface::DasDate date{};
+    EXPECT_EQ(task.GetNextExecutionTime(nullptr, &date), DAS_E_INVALID_POINTER);
 }

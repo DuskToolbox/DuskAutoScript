@@ -4317,7 +4317,9 @@ namespace Das::Core::TaskScheduler
         }
         else
         {
-            auto net_result = task_ptr->GetNextExecutionTime(&next_date);
+            auto net_result = task_ptr->GetNextExecutionTime(
+                p_props_json ? p_props_json.Get() : nullptr,
+                &next_date);
             if (IsOk(net_result))
             {
                 refreshed_time = DasDateToUnix(next_date);

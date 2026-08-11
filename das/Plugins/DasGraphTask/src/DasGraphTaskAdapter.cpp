@@ -50,6 +50,7 @@ namespace Plugins::DasGraphTask
     }
 
     DasResult DasGraphTaskAdapter::GetNextExecutionTime(
+        ExportInterface::IDasJson* /*p_task_settings_json*/,
         ExportInterface::DasDate* p_out_date)
     {
         if (p_out_date == nullptr)

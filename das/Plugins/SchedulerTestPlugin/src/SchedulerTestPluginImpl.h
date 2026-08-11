@@ -45,6 +45,7 @@ public:
         Das::ExportInterface::IDasJson* p_task_settings_json) override;
 
     DasResult GetNextExecutionTime(
+        Das::ExportInterface::IDasJson* /*p_task_settings_json*/,
         Das::ExportInterface::DasDate* p_out_date) override;
 
 private:

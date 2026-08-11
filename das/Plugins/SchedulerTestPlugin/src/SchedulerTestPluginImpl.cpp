@@ -128,6 +128,7 @@ DasResult FactoryBackedTask::Do(
 }
 
 DasResult FactoryBackedTask::GetNextExecutionTime(
+    Das::ExportInterface::IDasJson* /*p_task_settings_json*/,
     Das::ExportInterface::DasDate* p_out_date)
 {
     if (!p_out_date)

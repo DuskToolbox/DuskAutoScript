@@ -34,7 +34,8 @@ namespace Plugins::DasMaaPi
             ExportInterface::IDasJson*      p_task_settings_json) override;
 
         DAS_IMPL GetNextExecutionTime(
-            ExportInterface::DasDate* p_out_date) override;
+            ExportInterface::IDasJson* p_task_settings_json,
+            ExportInterface::DasDate*  p_out_date) override;
 
         // fake clock seam：注入固定时钟驱动 daily 跨午夜 / off 单测，无需实时
         // 等待。生产默认 std::time(nullptr)。照既有 DasMaaPi fake/seam 范式
@@ -43,11 +44,6 @@ namespace Plugins::DasMaaPi
         void SetClockForTest(ClockFn fn) { now_ = std::move(fn); }
 
     private:
-        // Do-cache seam：Do 解析 envelope 后把 schedule 缓存到此成员，
-        // GetNextExecutionTime 读缓存（签名无 settings 参数，唯一 seam）。
-        // 初始 kind=""(off)。仅主线程 BusinessThread 访问，无需锁（OnTick
-        // 串行）。
-        MaaScheduleConfigDto schedule_{};
         // daily 跨日去重：标记今日 slot
         // 已决策（排过或补跑过），GetNextExecutionTime 同日再次调用直接返回明日
         // slot，防 catch-up 热循环与调度后同日双跑。
