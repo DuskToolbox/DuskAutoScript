@@ -1841,6 +1841,16 @@ namespace Das::Core::TaskScheduler
             const std::scoped_lock lock(mutex_);
             fsm_->process_event(EvtEnable{});
         }
+        // FsmActEnterRunning 置 Running 但不起 tick：先用最新 schedule 重算所有
+        // task 的 next_execution_time（覆盖非 Running 态 apply 的 schedule 变更
+        // 与 off→daily 残留的 sentinel），再起 tick，避免拿旧值把 tick
+        // 定到远期。
+        RefreshNextExecutionTimes();
+        {
+            const std::scoped_lock lock(mutex_);
+            const int64_t now_unix = SystemClock::to_time_t(SystemClock::now());
+            StartTickTimer(ComputeNextDelay(task_instances_, now_unix));
+        }
         NotifyStateChange();
         return fsm_last_result_;
     }
@@ -1909,8 +1919,9 @@ namespace Das::Core::TaskScheduler
             tick_timer_ = std::make_unique<boost::asio::steady_timer>(
                 ipc_context_.get().GetIoContext());
         }
-        const int64_t now_unix = SystemClock::to_time_t(SystemClock::now());
-        StartTickTimer(ComputeNextDelay(task_instances_, now_unix));
+        // tick 由 Enable 锁外段在 RefreshNextExecutionTimes 之后启动，用刷新后
+        // 的 next_execution_time 算 delay，避免拿非 Running 态 apply 残留的
+        // sentinel/旧值把 tick 定到远期。
         fsm_last_result_ = DAS_S_OK;
         DAS_CORE_LOG_INFO("SchedulerService::Enable: scheduler started");
     }
@@ -3914,6 +3925,82 @@ namespace Das::Core::TaskScheduler
             return std::nullopt;
         }
         return DasDateToUnix(next_date);
+    }
+
+    void SchedulerService::RefreshNextExecutionTimes()
+    {
+        // Enable 锁外段调用：用最新 schedule 重算所有 task 的
+        // next_execution_time， 覆盖非 Running 态 apply 残留的 sentinel/旧
+        // schedule 值（off→daily 变更 后 task 卡在 sentinel，Enable
+        // 若不刷新直接拿 sentinel 算 delay 会把 tick
+        // 定到远期，任务永不调度）。ComputeInitialNextExecutionTime 内部
+        // Compile 走 IPC 长耗时且自管 mutex_，故本方法不持锁：先 snapshot
+        // inputs，锁外算， 再回锁更新内存 + PostPersistEvent 持久化。
+        struct RecalcInput
+        {
+            DasGuid                         task_guid;
+            int64_t                         task_id;
+            yyjson::value                   properties;
+            Das::PluginInterface::IDasTask* task_ptr;
+        };
+        std::vector<RecalcInput> inputs;
+        {
+            const std::scoped_lock lock(mutex_);
+            for (const auto& inst : task_instances_)
+            {
+                if (!inst.task_instance)
+                {
+                    continue;
+                }
+                // 仅刷新 sentinel（GetNextExecutionTime 失败兜底）的
+                // task：sentinel 表示上次算下次时间失败，schedule 变更（如
+                // off→daily）后应重试。 null（未算过 / 立即执行语义）与正常 due
+                // 时间不动——避免覆盖 mock plugin 的固定返回值或破坏
+                // null→立即执行的契约。
+                if (!inst.next_execution_time
+                    || *inst.next_execution_time != SENTINEL_FUTURE_TIMESTAMP)
+                {
+                    continue;
+                }
+                inputs.push_back(
+                    {inst.task_guid,
+                     inst.id,
+                     CloneJsonValue(inst.properties),
+                     inst.task_instance.Get()});
+            }
+        }
+
+        auto& settings = plugin_manager_.GetSettingsManager();
+        std::vector<std::pair<int64_t, int64_t>> updates;
+        for (const auto& in : inputs)
+        {
+            auto refreshed = ComputeInitialNextExecutionTime(
+                in.task_guid,
+                in.task_id,
+                in.properties,
+                settings.GetTaskInstanceJson("0", in.task_id),
+                in.task_ptr);
+            if (refreshed)
+            {
+                updates.emplace_back(in.task_id, *refreshed);
+            }
+        }
+
+        {
+            const std::scoped_lock lock(mutex_);
+            for (const auto& [id, time] : updates)
+            {
+                auto* inst = FindTaskInstance(id);
+                if (inst)
+                {
+                    inst->next_execution_time = time;
+                }
+            }
+        }
+        for (const auto& [id, time] : updates)
+        {
+            PostPersistEvent(id, time);
+        }
     }
 
     yyjson::value SchedulerService::ApplyTaskAuthoringChange(

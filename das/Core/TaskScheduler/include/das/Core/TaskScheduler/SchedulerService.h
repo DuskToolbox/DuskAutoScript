@@ -201,6 +201,12 @@ namespace Das::Core::TaskScheduler
             const yyjson::value&            task_json,
             Das::PluginInterface::IDasTask* task_ptr);
 
+        /// 用最新 schedule 重算所有 task 的 next_execution_time。Enable 锁外段
+        /// 调用，覆盖非 Running 态 apply 的 schedule 变更与 off→daily 残留的
+        /// sentinel。不持 mutex_（内部 ComputeInitialNextExecutionTime
+        /// 自管锁）。
+        void RefreshNextExecutionTimes();
+
         yyjson::value CompileTaskAuthoring(
             int64_t              task_id,
             const yyjson::value& request);
