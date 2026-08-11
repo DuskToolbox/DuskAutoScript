@@ -188,6 +188,19 @@ namespace Das::Core::TaskScheduler
             int64_t              task_id,
             const yyjson::value& change);
 
+        // 计算含 authoring capability 的 task 的首次 next_execution_time。
+        // 用途：AddTask 时算首次时间（首跑语义 B），ApplyTaskAuthoringChange
+        // 成功后重算。返回 disengaged 表示无 authoring capability / Compile /
+        // GetNextExecutionTime 任一失败——caller 保持既有 next_execution_time
+        // 不变。task_ptr 必须非空（caller 持有 inst 引用，scheduler idle guard
+        // 保证不被释放）。
+        std::optional<int64_t> ComputeInitialNextExecutionTime(
+            const DasGuid&                  task_guid,
+            int64_t                         task_id,
+            const yyjson::value&            properties,
+            const yyjson::value&            task_json,
+            Das::PluginInterface::IDasTask* task_ptr);
+
         yyjson::value CompileTaskAuthoring(
             int64_t              task_id,
             const yyjson::value& request);

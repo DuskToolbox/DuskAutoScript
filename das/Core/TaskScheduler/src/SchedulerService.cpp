@@ -3212,7 +3212,34 @@ namespace Das::Core::TaskScheduler
             yyjson::value(GuidToString(rec.task_guid));
         inst_obj[std::string_view("pluginGuid")] =
             yyjson::value(GuidToString(rec.plugin_guid));
-        inst_obj[std::string_view("nextExecutionTime")] = nullptr;
+
+        // 首跑语义 B：含 authoring + schedule 的 task 在 AddTask 时算首次
+        // next_execution_time（scheduler 到点才首次跑）。off / 无 authoring
+        // 的 task 保持 null（既有 descriptor-driven 行为不变）。仅在 scheduler
+        // 运行态下计算——非运行态 AddTask 后用户调 Start 时 OnTick 会自决首跑
+        // 时间（null → 立即跑一次后按 schedule 排），避免改写大量依赖"AddTask
+        // 后 nextExecutionTime=null"的既有测试与并发 Apply 测试场景的 IPC 争
+        // 用。
+        std::optional<int64_t> initial_next_time;
+        if (rec.task_instance && state_.load() == SchedulerState::Running)
+        {
+            initial_next_time = ComputeInitialNextExecutionTime(
+                task_guid,
+                rec.id,
+                rec.properties,
+                Das::Utils::MakeYyjsonObject(),
+                rec.task_instance.Get());
+        }
+        if (initial_next_time)
+        {
+            inst_obj[std::string_view("nextExecutionTime")] =
+                *initial_next_time;
+            rec.next_execution_time = *initial_next_time;
+        }
+        else
+        {
+            inst_obj[std::string_view("nextExecutionTime")] = nullptr;
+        }
         inst_obj[std::string_view("enabled")] = true;
 
         if (!rec.properties.is_null())
@@ -3790,6 +3817,105 @@ namespace Das::Core::TaskScheduler
         return result;
     }
 
+    std::optional<int64_t> SchedulerService::ComputeInitialNextExecutionTime(
+        const DasGuid&                  task_guid,
+        int64_t                         task_id,
+        const yyjson::value&            properties,
+        const yyjson::value&            task_json,
+        Das::PluginInterface::IDasTask* task_ptr)
+    {
+        if (task_ptr == nullptr)
+        {
+            return std::nullopt;
+        }
+
+        // 无 authoring capability → descriptor-driven，保持既有
+        // next_execution_time （Core OnTick 自决）。
+        TaskAuthoringCapability capability;
+        {
+            const std::scoped_lock lock(mutex_);
+            auto* authoring = capability_registry_.FindAuthoring(task_guid);
+            if (authoring == nullptr)
+            {
+                return std::nullopt;
+            }
+            capability = *authoring;
+        }
+
+        // Compile 走 IPC 长耗时，必须在 mutex_ 外执行。
+        auto entry = GetOrCreateAuthoringSession(
+            task_authoring_sessions_,
+            capability,
+            task_id,
+            MakeAuthoringContextJson(
+                plugin_manager_,
+                task_id,
+                properties,
+                task_json));
+        if (!entry || !entry->session)
+        {
+            DAS_CORE_LOG_WARN(
+                "SchedulerService::ComputeInitialNextExecutionTime: task {} "
+                "authoring session create failed",
+                task_id);
+            return std::nullopt;
+        }
+
+        DasPtr<Das::ExportInterface::IDasJson> p_props_json;
+        {
+            const std::shared_lock<std::shared_mutex> read_lock(entry->lock);
+            auto compiled_pipeline = RunAuthoringCompilePipeline(
+                entry,
+                MakeExecutionCompileRequest());
+            if (!compiled_pipeline.ok)
+            {
+                DAS_CORE_LOG_WARN(
+                    "SchedulerService::ComputeInitialNextExecutionTime: task {} "
+                    "authoring compile failed: {}",
+                    task_id,
+                    compiled_pipeline.error_kind);
+                return std::nullopt;
+            }
+
+            auto compile_obj = compiled_pipeline.parsed.compile.as_object();
+            if (compile_obj
+                && IsExplicitFalse((*compile_obj)[std::string_view("ok")]))
+            {
+                DAS_CORE_LOG_WARN(
+                    "SchedulerService::ComputeInitialNextExecutionTime: task {} "
+                    "authoring compile returned ok=false",
+                    task_id);
+                return std::nullopt;
+            }
+
+            try
+            {
+                p_props_json = Das::MakeDasPtr<Das::Core::Utils::IDasJsonImpl>(
+                    ExtractProviderExecutionInput(
+                        compiled_pipeline.parsed.compile));
+            }
+            catch (const std::bad_alloc&)
+            {
+                DAS_CORE_LOG_WARN(
+                    "SchedulerService::ComputeInitialNextExecutionTime: task {} "
+                    "failed to allocate IDasJson for compiled input",
+                    task_id);
+                return std::nullopt;
+            }
+        }
+
+        Das::ExportInterface::DasDate next_date{};
+        const auto                    net_result =
+            task_ptr->GetNextExecutionTime(p_props_json.Get(), &next_date);
+        if (IsFailed(net_result))
+        {
+            // schedule=off 或 GetNextExecutionTime 失败：保持既有
+            // next_execution_time（caller 默认行为）。
+            return std::nullopt;
+        }
+        return DasDateToUnix(next_date);
+    }
+
     yyjson::value SchedulerService::ApplyTaskAuthoringChange(
         int64_t              task_id,
         const yyjson::value& change)
@@ -3976,6 +4102,16 @@ namespace Das::Core::TaskScheduler
                 "Failed to persist accepted authoring change");
         }
 
+        // Apply 成功后重算 next_execution_time（schedule 变更实时反映）。
+        // 失败（Compile/GetNextExecutionTime 任一）→ 保留既有
+        // next_execution_time 不变 + 日志警告（不硬失败 apply 响应，apply
+        // 已成功）。 在 mutex_ 内拷贝所需上下文后释放锁，再走 Compile（IPC
+        // 长耗时不能持 mutex_），最后短锁内写回 next_execution_time +
+        // PostPersistEvent。
+        DasGuid                    task_guid_for_recalc{};
+        yyjson::value              properties_for_recalc;
+        PluginInterface::IDasTask* task_ptr_for_recalc = nullptr;
+        bool                       can_recalc = false;
         {
             const std::scoped_lock lock(mutex_);
             auto*                  inst = FindTaskInstance(task_id);
@@ -3984,6 +4120,49 @@ namespace Das::Core::TaskScheduler
                 inst->properties =
                     CloneJsonValue(pipeline.parsed.accepted_properties);
                 inst->authoring = CloneJsonValue(pipeline.authoring);
+                task_guid_for_recalc = inst->task_guid;
+                properties_for_recalc = CloneJsonValue(inst->properties);
+                task_ptr_for_recalc = inst->task_instance.Get();
+                can_recalc = true;
+            }
+        }
+
+        // 仅在 scheduler 运行态下重算 next_execution_time：生产场景 schedule
+        // 变更需实时反映到下次 tick。非运行态（Initialize 后未 Start / 测试
+        // 场景）OnTick 不会触发，重算无意义且可能与并发 Apply 路径争用 IPC
+        // （SchedulerAuthoringConcurrentApplySerialized 场景）。
+        if (can_recalc && state_.load() == SchedulerState::Running)
+        {
+            auto refreshed_next = ComputeInitialNextExecutionTime(
+                task_guid_for_recalc,
+                task_id,
+                properties_for_recalc,
+                settings.GetTaskInstanceJson("0", task_id),
+                task_ptr_for_recalc);
+            if (refreshed_next)
+            {
+                bool should_persist = false;
+                {
+                    const std::scoped_lock lock(mutex_);
+                    auto*                  inst = FindTaskInstance(task_id);
+                    if (inst)
+                    {
+                        inst->next_execution_time = *refreshed_next;
+                        should_persist = true;
+                    }
+                }
+                if (should_persist)
+                {
+                    PostPersistEvent(task_id, *refreshed_next);
+                }
+            }
+            else
+            {
+                DAS_CORE_LOG_WARN(
+                    "SchedulerService::ApplyTaskAuthoringChange: task {} "
+                    "next_execution_time recompute skipped (no authoring "
+                    "capability or schedule off), keeping existing value",
+                    task_id);
             }
         }
 
