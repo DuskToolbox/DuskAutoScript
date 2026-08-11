@@ -8386,3 +8386,87 @@ TEST(MaapiProjectionTest, SetValue_ScheduleKind_RoutesToAcceptedProperties)
     EXPECT_EQ(CountFieldsWithName(document, "schedule.dailyCatchUp"), 1u);
     EXPECT_EQ(CountFieldsWithName(document, "schedule.intervalMinutes"), 0u);
 }
+
+// schedule 持久化 round-trip：SerializeAcceptedSettings → ParseAcceptedSettings
+// 必须保留 pi.schedule_* 4 字段（apply 落盘后重启 GetAuthoringDocument 走的正是
+// 这条 round-trip）。3 个用例分别覆盖 daily/全 off/interval，锁定 engaged-only
+// 契约——off 时序列化结果 pi 对象不含 schedule* 键。
+TEST(MaapiAuthoringScheduleRoundTrip, DailyKeepsFourFieldsAndIntervalIsNullOpt)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    AcceptedSettingsDto settings;
+    settings.pi.schedule_kind = "daily";
+    settings.pi.schedule_daily_time = "09:00";
+    settings.pi.schedule_daily_catch_up = true;
+    // schedule_interval_minutes 保持 nullopt（daily 不发 interval）。
+
+    auto serialized = SerializeAcceptedSettings(settings);
+    auto s_obj = serialized.as_object();
+    ASSERT_TRUE(s_obj.has_value());
+    auto pi_obj = (*s_obj)[std::string_view("pi")].as_object();
+    ASSERT_TRUE(pi_obj.has_value());
+    // engaged 才写契约：4 字段中 engaged 的 3 个存在，interval 不存在。
+    EXPECT_TRUE(pi_obj->contains(std::string_view("scheduleKind")));
+    EXPECT_TRUE(pi_obj->contains(std::string_view("scheduleDailyTime")));
+    EXPECT_TRUE(pi_obj->contains(std::string_view("scheduleDailyCatchUp")));
+    EXPECT_FALSE(pi_obj->contains(std::string_view("scheduleIntervalMinutes")));
+
+    auto restored = ParseAcceptedSettings(serialized);
+    EXPECT_EQ(restored.pi.schedule_kind.value_or(""), "daily");
+    EXPECT_EQ(restored.pi.schedule_daily_time.value_or(""), "09:00");
+    EXPECT_TRUE(restored.pi.schedule_daily_catch_up.has_value());
+    EXPECT_EQ(*restored.pi.schedule_daily_catch_up, true);
+    EXPECT_FALSE(restored.pi.schedule_interval_minutes.has_value());
+}
+
+TEST(MaapiAuthoringScheduleRoundTrip, AllOffOmitsAllScheduleKeys)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    AcceptedSettingsDto settings; // 全部 schedule_* = nullopt = off
+
+    auto serialized = SerializeAcceptedSettings(settings);
+    auto s_obj = serialized.as_object();
+    ASSERT_TRUE(s_obj.has_value());
+    auto pi_obj = (*s_obj)[std::string_view("pi")].as_object();
+    ASSERT_TRUE(pi_obj.has_value());
+    // engaged-only 契约硬断言：off 时 pi 对象不含任何 schedule* 键。
+    EXPECT_FALSE(pi_obj->contains(std::string_view("scheduleKind")));
+    EXPECT_FALSE(pi_obj->contains(std::string_view("scheduleIntervalMinutes")));
+    EXPECT_FALSE(pi_obj->contains(std::string_view("scheduleDailyTime")));
+    EXPECT_FALSE(pi_obj->contains(std::string_view("scheduleDailyCatchUp")));
+
+    auto restored = ParseAcceptedSettings(serialized);
+    EXPECT_FALSE(restored.pi.schedule_kind.has_value());
+    EXPECT_FALSE(restored.pi.schedule_interval_minutes.has_value());
+    EXPECT_FALSE(restored.pi.schedule_daily_time.has_value());
+    EXPECT_FALSE(restored.pi.schedule_daily_catch_up.has_value());
+}
+
+TEST(MaapiAuthoringScheduleRoundTrip, IntervalKeepsKindAndMinutes)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    AcceptedSettingsDto settings;
+    settings.pi.schedule_kind = "interval";
+    settings.pi.schedule_interval_minutes = 120;
+    // schedule_daily_time / schedule_daily_catch_up 保持 nullopt。
+
+    auto serialized = SerializeAcceptedSettings(settings);
+    auto s_obj = serialized.as_object();
+    ASSERT_TRUE(s_obj.has_value());
+    auto pi_obj = (*s_obj)[std::string_view("pi")].as_object();
+    ASSERT_TRUE(pi_obj.has_value());
+    EXPECT_TRUE(pi_obj->contains(std::string_view("scheduleKind")));
+    EXPECT_TRUE(pi_obj->contains(std::string_view("scheduleIntervalMinutes")));
+    EXPECT_FALSE(pi_obj->contains(std::string_view("scheduleDailyTime")));
+    EXPECT_FALSE(pi_obj->contains(std::string_view("scheduleDailyCatchUp")));
+
+    auto restored = ParseAcceptedSettings(serialized);
+    EXPECT_EQ(restored.pi.schedule_kind.value_or(""), "interval");
+    EXPECT_TRUE(restored.pi.schedule_interval_minutes.has_value());
+    EXPECT_EQ(*restored.pi.schedule_interval_minutes, 120);
+    EXPECT_FALSE(restored.pi.schedule_daily_time.has_value());
+    EXPECT_FALSE(restored.pi.schedule_daily_catch_up.has_value());
+}

@@ -289,6 +289,31 @@ namespace Das::Plugins::DasMaaPi
             return obj[key].as_bool().value_or(fallback);
         }
 
+        // schedule_interval_minutes / schedule_daily_catch_up 等可选字段的
+        // optional<T> 形态：engaged 状态需要保留（缺失→nullopt 而非默认值），
+        // 与既有三参 OptionalBool（fallback→bool）语义不同。
+        template <typename TObject>
+        std::optional<bool> OptionalBool(
+            const TObject&   obj,
+            std::string_view key)
+        {
+            if (!obj.contains(key) || !obj[key].is_bool())
+            {
+                return std::nullopt;
+            }
+            return obj[key].as_bool().value_or(false);
+        }
+
+        template <typename TObject>
+        std::optional<int> OptionalInt(const TObject& obj, std::string_view key)
+        {
+            if (!obj.contains(key) || !obj[key].is_sint())
+            {
+                return std::nullopt;
+            }
+            return obj[key].as_sint().value_or(0);
+        }
+
         template <typename TObject>
         std::vector<std::string> StringArray(
             const TObject&   obj,
@@ -476,6 +501,16 @@ namespace Das::Plugins::DasMaaPi
                     settings.pi.controller_adb_device =
                         OptionalString(*pi, "controllerAdbDevice");
                     settings.pi.orphan_paths = StringArray(*pi, "orphanPaths");
+                    // schedule 配置：与 SerializeAcceptedSettings 对称——4 字段
+                    // 缺失时保持 nullopt（schedule off 契约）。
+                    settings.pi.schedule_kind =
+                        OptionalString(*pi, "scheduleKind");
+                    settings.pi.schedule_interval_minutes =
+                        OptionalInt(*pi, "scheduleIntervalMinutes");
+                    settings.pi.schedule_daily_time =
+                        OptionalString(*pi, "scheduleDailyTime");
+                    settings.pi.schedule_daily_catch_up =
+                        OptionalBool(*pi, "scheduleDailyCatchUp");
                     settings.pi.global_options =
                         ParseOptionSettingsArray(*pi, "globalOptions");
                     settings.pi.resource_options =
@@ -1984,6 +2019,29 @@ namespace Das::Plugins::DasMaaPi
             orphans.as_array()->emplace_back(JsonString(path));
         }
         (*pi_obj)[std::string_view("orphanPaths")] = std::move(orphans);
+        // schedule 配置：flat optional 字段，engaged 才写（与
+        // controllerName/resourceName 范式一致）。off 时 4 字段全部不写，
+        // 反序列化读不回 → 全部 nullopt（schedule off 契约）。
+        if (settings.pi.schedule_kind)
+        {
+            (*pi_obj)[std::string_view("scheduleKind")] =
+                JsonString(*settings.pi.schedule_kind);
+        }
+        if (settings.pi.schedule_interval_minutes)
+        {
+            (*pi_obj)[std::string_view("scheduleIntervalMinutes")] =
+                *settings.pi.schedule_interval_minutes;
+        }
+        if (settings.pi.schedule_daily_time)
+        {
+            (*pi_obj)[std::string_view("scheduleDailyTime")] =
+                JsonString(*settings.pi.schedule_daily_time);
+        }
+        if (settings.pi.schedule_daily_catch_up)
+        {
+            (*pi_obj)[std::string_view("scheduleDailyCatchUp")] =
+                *settings.pi.schedule_daily_catch_up;
+        }
         (*obj)[std::string_view("pi")] = std::move(pi);
 
         // ui（通用 kv）：非空时输出 ui.values，与反序列化（ParseAcceptedObject
