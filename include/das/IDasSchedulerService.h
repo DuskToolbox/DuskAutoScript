@@ -73,6 +73,7 @@ DAS_INTERFACE IDasSchedulerService : public IDasBase
         int64_t             task_id,
         IDasReadOnlyString* p_properties_json) = 0;
     DAS_METHOD SetTaskEnabled(int64_t task_id, DasBool enabled) = 0;
+    DAS_METHOD RunTaskNow(int64_t task_id) = 0;
     DAS_METHOD GetTaskAuthoringDocument(
         int64_t              task_id,
         IDasReadOnlyString*  p_request_json,

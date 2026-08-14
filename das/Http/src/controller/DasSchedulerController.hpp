@@ -602,6 +602,48 @@ namespace Das::Http
             return Beast::HttpResponse::CreateSuccessResponse();
         }
 
+        // HTTP contract: run a materialized task instance immediately.
+        // Method/path:
+        //   POST /api/v1/scheduler/{profile}/tasks/{taskId}/runNow
+        // request body: ignored.
+        // success response: standard empty success envelope — the call only
+        // marks the task due and posts a tick; execution happens on the
+        // business thread and progress is observable via scheduler state
+        // pushes (runningTaskId). Rejected with taskWorking when the
+        // scheduler is running/stopping or another task is executing.
+        Beast::HttpResponse RunTaskNow(const Beast::HttpRequest& request)
+        {
+            auto profile = request.GetPathParameter("profile");
+            auto task_id_str = request.GetPathParameter("taskId");
+            if (profile != "0")
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_INVALID_ARGUMENT,
+                    "Profile ID must be 0 in v1.2");
+            }
+
+            int64_t task_id = 0;
+            try
+            {
+                task_id = std::stoll(task_id_str);
+            }
+            catch (const std::exception&)
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    DAS_E_INVALID_ARGUMENT,
+                    "Invalid task ID format");
+            }
+
+            auto result = scheduler_.RunTaskNow(task_id);
+            if (DAS::IsFailed(result))
+            {
+                return Beast::HttpResponse::CreateErrorResponse(
+                    result,
+                    "Failed to run task now");
+            }
+            return Beast::HttpResponse::CreateSuccessResponse();
+        }
+
         // HTTP contract: task authoring endpoints.
         // Method/path:
         //   POST /api/v1/scheduler/{profile}/tasks/{taskId}/authoring/get

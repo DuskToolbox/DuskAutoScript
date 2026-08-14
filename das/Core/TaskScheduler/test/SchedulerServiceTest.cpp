@@ -5146,6 +5146,176 @@ TEST_F(
         WaitForSchedulerStopped(*scheduler_, std::chrono::milliseconds(2000)));
 }
 
+// ---------------------------------------------------------------------------
+// RunTaskNow（立即执行）
+// ---------------------------------------------------------------------------
+
+namespace
+{
+    yyjson::value MakeFutureScheduledTask(int64_t task_id, bool enabled = true)
+    {
+        yyjson::value task(Das::Utils::MakeYyjsonObject());
+        (*task.as_object())[std::string_view("id")] = task_id;
+        (*task.as_object())[std::string_view("taskGuid")] =
+            FactoryTaskGuidString;
+        (*task.as_object())[std::string_view("pluginGuid")] =
+            FactoryPluginGuidString;
+        // 远期时间：调度循环不会触发，只有 RunTaskNow 置 due 才执行。
+        (*task.as_object())[std::string_view("nextExecutionTime")] = 4070908800;
+        (*task.as_object())[std::string_view("enabled")] = enabled;
+        (*task.as_object())[std::string_view("properties")] =
+            yyjson::value(Das::Utils::MakeYyjsonObject());
+        return task;
+    }
+
+    ::testing::AssertionResult WaitForExecutedCount(
+        FactoryTaskSharedState&   state,
+        size_t                    expected,
+        std::chrono::milliseconds timeout)
+    {
+        const auto deadline = std::chrono::steady_clock::now() + timeout;
+        while (std::chrono::steady_clock::now() < deadline)
+        {
+            {
+                const ipc_scoped_lock lock(state.mutex);
+                if (state.executed_count >= expected)
+                {
+                    return ::testing::AssertionSuccess();
+                }
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        return ::testing::AssertionFailure()
+               << "executed_count did not reach " << expected << " within "
+               << timeout.count() << "ms";
+    }
+} // namespace
+
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    RunNow_ExecutesTaskInStoppedState_AndBlocksMutations)
+{
+    WriteSchedulerState(
+        *settings_manager_,
+        1,
+        {0},
+        {MakeFutureScheduledTask(0)});
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+    ASSERT_EQ(scheduler_->Status(), SchedulerState::Stopped);
+
+    {
+        const ipc_scoped_lock lock(shared_state_->mutex);
+        shared_state_->block_do = true;
+    }
+    ASSERT_EQ(scheduler_->RunTaskNow(0), DAS_S_OK);
+    {
+        ipc_scoped_lock lock(shared_state_->mutex);
+        ASSERT_TRUE(shared_state_->cv.wait_for(
+            lock,
+            std::chrono::seconds(2),
+            [this] { return shared_state_->do_entered; }));
+    }
+
+    // 执行中：状态保持 Stopped，Get() 暴露 runningTaskId，
+    // Enable/二次 RunNow/DeleteTask 全部被 busy 拒绝（卡住语义）。
+    ASSERT_EQ(scheduler_->Status(), SchedulerState::Stopped);
+    {
+        auto state_json = scheduler_->Get();
+        auto obj = state_json.as_object();
+        ASSERT_TRUE(obj);
+        auto running = obj->operator[](std::string_view("runningTaskId"));
+        ASSERT_TRUE(running.as_sint().has_value());
+        ASSERT_EQ(running.as_sint().value(), 0);
+    }
+    ASSERT_EQ(scheduler_->Enable(), DAS_E_TASK_WORKING);
+    ASSERT_EQ(scheduler_->RunTaskNow(0), DAS_E_TASK_WORKING);
+    ASSERT_EQ(scheduler_->DeleteTask(0), DAS_E_TASK_WORKING);
+
+    {
+        const ipc_scoped_lock lock(shared_state_->mutex);
+        shared_state_->unblock_do = true;
+    }
+    shared_state_->cv.notify_all();
+    ASSERT_TRUE(WaitForExecutedCount(
+        *shared_state_,
+        1,
+        std::chrono::milliseconds(2000)));
+
+    // executed_count 在 Do 入口自增，槽位清零在 OnTick 收尾——轮询等
+    // Get() 的 runningTaskId 消失（即收尾完成）。
+    bool running_cleared = false;
+    {
+        const auto deadline =
+            std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        while (std::chrono::steady_clock::now() < deadline)
+        {
+            auto state_json = scheduler_->Get();
+            auto obj = state_json.as_object();
+            if (obj && !obj->contains(std::string_view("runningTaskId")))
+            {
+                running_cleared = true;
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+    }
+    ASSERT_TRUE(running_cleared);
+
+    // 执行完成：状态仍为 Stopped，nextExecutionTime 被插件返回值
+    // （2030-01-01）重算。
+    ASSERT_EQ(scheduler_->Status(), SchedulerState::Stopped);
+    {
+        auto state_json = scheduler_->Get();
+        auto obj = state_json.as_object();
+        ASSERT_TRUE(obj);
+
+        auto tasks = obj->operator[](std::string_view("tasks")).as_array();
+        ASSERT_TRUE(tasks);
+        ASSERT_EQ(tasks->size(), 1U);
+        auto next_time = (*tasks)[0]
+                             .as_object()
+                             .value()
+                             .operator[](std::string_view("nextExecutionTime"))
+                             .as_sint();
+        ASSERT_TRUE(next_time.has_value());
+        // FactoryBackedTask::GetNextExecutionTime 返回 2030-01-01 00:00:SS
+        // （SS=instance_id）：确认被插件值重算，而非残留置 due 用的远期值。
+        ASSERT_GE(next_time.value(), 1893456000);
+        ASSERT_LT(next_time.value(), 1893456100);
+    }
+}
+
+TEST_F(SchedulerRuntimeBackedTest, RunNow_RejectedWhenRunning)
+{
+    WriteSchedulerState(
+        *settings_manager_,
+        1,
+        {0},
+        {MakeFutureScheduledTask(0)});
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+    ASSERT_EQ(scheduler_->Enable(), DAS_S_OK);
+
+    // 调度器运行中：立即执行被拒（状态隔离，想手动跑先停调度器）。
+    ASSERT_EQ(scheduler_->RunTaskNow(0), DAS_E_TASK_WORKING);
+
+    ASSERT_EQ(scheduler_->Disable(), DAS_S_OK);
+    ASSERT_TRUE(
+        WaitForSchedulerStopped(*scheduler_, std::chrono::milliseconds(2000)));
+}
+
+TEST_F(SchedulerRuntimeBackedTest, RunNow_RejectsUnknownAndDisabledTask)
+{
+    WriteSchedulerState(
+        *settings_manager_,
+        2,
+        {0, 1},
+        {MakeFutureScheduledTask(0), MakeFutureScheduledTask(1, false)});
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    ASSERT_EQ(scheduler_->RunTaskNow(999), DAS_E_NOT_FOUND);
+    ASSERT_EQ(scheduler_->RunTaskNow(1), DAS_E_FAIL);
+}
+
 TEST_F(
     SchedulerRuntimeBackedTest,
     SchedulerRepositoryUnavailableMissingPluginDeleteRenameNoProviderCall)
@@ -5342,6 +5512,7 @@ namespace
         std::atomic<bool> update_props_called{false};
         std::atomic<bool> update_internal_props_called{false};
         std::atomic<bool> set_enabled_called{false};
+        std::atomic<bool> run_now_called{false};
         std::atomic<bool> authoring_get_called{false};
         std::atomic<bool> authoring_apply_called{false};
         std::atomic<bool> authoring_compile_called{false};
@@ -5536,6 +5707,11 @@ namespace
         DasResult SetTaskEnabled(int64_t, DasBool) override
         {
             set_enabled_called = true;
+            return next_result;
+        }
+        DasResult RunTaskNow(int64_t) override
+        {
+            run_now_called = true;
             return next_result;
         }
         DasResult GetTaskAuthoringDocument(

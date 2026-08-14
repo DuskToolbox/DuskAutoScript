@@ -353,6 +353,11 @@ namespace Das::Core::TaskScheduler
         return svc_.SetTaskEnabled(task_id, enabled != 0);
     }
 
+    DasResult SchedulerServiceImpl::RunTaskNow(int64_t task_id)
+    {
+        return svc_.RunTaskNow(task_id);
+    }
+
     DasResult SchedulerServiceImpl::GetTaskAuthoringDocument(
         int64_t              task_id,
         IDasReadOnlyString*  p_request_json,

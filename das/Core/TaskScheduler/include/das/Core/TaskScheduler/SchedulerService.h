@@ -180,6 +180,13 @@ namespace Das::Core::TaskScheduler
         /// task without a full stop. Unknown task_id returns DAS_E_NOT_FOUND.
         DasResult SetTaskEnabled(int64_t task_id, bool enabled);
 
+        /// 立即执行一个已物化的 task 实例：置其 next_execution_time 为
+        /// 立即到期并投递一次 tick，复用 OnTick 既有执行路径（无第二条
+        /// 执行通路）。仅 Stopped 且执行槽空闲时允许；Running/Stopping
+        /// 或手动执行中返回 DAS_E_TASK_WORKING。投递后立即返回，Do 在
+        /// BusinessThread 串行执行。
+        DasResult RunTaskNow(int64_t task_id);
+
         yyjson::value GetTaskAuthoringDocument(
             int64_t              task_id,
             const yyjson::value& request);
@@ -337,6 +344,12 @@ namespace Das::Core::TaskScheduler
         // Returns engaged optional on guard failure; nullopt on pass.
         std::optional<AuthoringGuardError> CheckSchedulerIdleLocked() const;
 
+        /// 统一 busy 判定：非 Stopped（Running/Stopping）或手动立即执行
+        /// 占用执行槽（current_task_id_ 非零）都算忙。所有会变更
+        /// task_instances_ 或触碰插件 IPC 的入口都应拒绝 busy 状态。
+        /// caller 必须持有 mutex_。
+        bool SchedulerBusyLocked() const;
+
         std::optional<AuthoringGuardError> ResolveAuthoringCapabilityLocked(
             const DasGuid&           task_guid,
             TaskAuthoringCapability& out_capability);
@@ -489,7 +502,13 @@ namespace Das::Core::TaskScheduler
         // window; they must not try to acquire mutex_ again.
         std::atomic<bool> suppress_plugin_lifecycle_invalidation_{false};
 
-        Das::PluginInterface::IDasTask*    current_task_ = nullptr;
+        // 执行槽占用标记：disengaged = 空闲，engaged 值 = 正在执行的
+        // task id。用 optional 而非 0 哨兵——task id 0 是合法 id（测试与
+        // 持久化数据均使用），0 会被误判为空闲。OnTick 锁内置位、收尾
+        // 重锁复位。不持有任何任务指针——执行期间的对象由 OnTick 栈上
+        // DasPtr 拷贝保活，写回经 FindTaskInstance(id) 现查。Get() 以
+        // runningTaskId 输出。
+        std::optional<int64_t>             current_task_id_;
         std::vector<std::filesystem::path> loaded_plugin_paths_;
 
         // Cooperative cancellation token for the currently executing task

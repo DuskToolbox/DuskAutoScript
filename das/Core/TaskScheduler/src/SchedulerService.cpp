@@ -1288,15 +1288,20 @@ namespace Das::Core::TaskScheduler
         return availability;
     }
 
+    bool SchedulerService::SchedulerBusyLocked() const
+    {
+        return state_.load() != SchedulerState::Stopped
+               || current_task_id_.has_value();
+    }
+
     std::optional<AuthoringGuardError>
     SchedulerService::CheckSchedulerIdleLocked() const
     {
-        if (state_.load() == SchedulerState::Running
-            || state_.load() == SchedulerState::Stopping)
+        if (SchedulerBusyLocked())
         {
             return AuthoringGuardError{
                 "taskWorking",
-                "Scheduler is running or stopping"};
+                "Scheduler is running, stopping or a task is executing"};
         }
         return std::nullopt;
     }
@@ -1839,6 +1844,12 @@ namespace Das::Core::TaskScheduler
     {
         {
             const std::scoped_lock lock(mutex_);
+            // 手动立即执行期间拒绝启动调度：执行槽被占时一切状态切换
+            // 与 task 变更都视为 busy（卡住语义）。
+            if (current_task_id_.has_value())
+            {
+                return DAS_E_TASK_WORKING;
+            }
             fsm_->process_event(EvtEnable{});
         }
         // FsmActEnterRunning 置 Running 但不起 tick：先用最新 schedule 重算所有
@@ -1862,13 +1873,73 @@ namespace Das::Core::TaskScheduler
             fsm_->process_event(EvtDisable{});
             // 无 task 在跑：立即收尾 Stopped。有 task：保持 Stopping，等 OnTick
             // task 完成时 process EvtTickCompleted 收尾。
-            if (current_task_ == nullptr)
+            if (!current_task_id_.has_value())
             {
                 fsm_->process_event(EvtTickCompleted{});
             }
         }
         NotifyStateChange();
         return fsm_last_result_;
+    }
+
+    DasResult SchedulerService::RunTaskNow(int64_t task_id)
+    {
+        {
+            const std::scoped_lock lock(mutex_);
+
+            if (!initialized_)
+            {
+                return DAS_E_OBJECT_NOT_INIT;
+            }
+
+            // 状态隔离：Running/Stopping 是调度器的时间，拒绝手动插队；
+            // Stopped 且执行槽空闲才允许立即执行。
+            if (SchedulerBusyLocked())
+            {
+                return DAS_E_TASK_WORKING;
+            }
+
+            auto* inst = FindTaskInstance(task_id);
+            if (!inst)
+            {
+                return DAS_E_NOT_FOUND;
+            }
+            if (inst->availability != TaskAvailability::Available)
+            {
+                DAS_CORE_LOG_WARN(
+                    "SchedulerService::RunTaskNow: task {} unavailable",
+                    task_id);
+                return DAS_E_FAIL;
+            }
+            if (!inst->enabled)
+            {
+                DAS_CORE_LOG_WARN(
+                    "SchedulerService::RunTaskNow: task {} disabled",
+                    task_id);
+                return DAS_E_FAIL;
+            }
+            if (!inst->task_instance)
+            {
+                DAS_CORE_LOG_WARN(
+                    "SchedulerService::RunTaskNow: task {} has no materialized "
+                    "instance",
+                    task_id);
+                return DAS_E_FAIL;
+            }
+
+            // 立即执行的调度语义：置为立即到期，复用 OnTick 既有执行
+            // 路径（选任务/envelope 编译/Do/GetNextExecutionTime/持久化/
+            // 推送全部共用）。
+            inst->next_execution_time =
+                SystemClock::to_time_t(SystemClock::now());
+        }
+
+        // DasPtr RAII 管理 TickCallback 引用，投递 BusinessThread 后立即
+        // 返回；Do 在 BusinessThread 串行执行，不阻塞 HTTP 线程。
+        auto callback = Das::DasPtr<IDasAsyncCallback>::Attach(
+            static_cast<IDasAsyncCallback*>(new TickCallback(this)));
+        ipc_context_.get().PostToBusinessThread(callback.Get());
+        return DAS_S_OK;
     }
 
     SchedulerState SchedulerService::Status() const { return state_.load(); }
@@ -2009,6 +2080,14 @@ namespace Das::Core::TaskScheduler
             state_.load() == SchedulerState::Running    ? "running"
             : state_.load() == SchedulerState::Stopping ? "stopping"
                                                         : "stopped");
+
+        // 执行中才输出 runningTaskId，空闲时省略该 key（UI 视缺 key 为
+        // 无任务执行）。
+        if (current_task_id_)
+        {
+            result_obj[std::string_view("runningTaskId")] =
+                *current_task_id_;
+        }
 
         // Available task types
         auto types_arr = Das::Utils::MakeYyjsonArray();
@@ -3127,8 +3206,7 @@ namespace Das::Core::TaskScheduler
         {
             const std::scoped_lock lock(mutex_);
 
-            if (state_.load() == SchedulerState::Running
-                || state_.load() == SchedulerState::Stopping)
+            if (SchedulerBusyLocked())
             {
                 return DAS_E_TASK_WORKING;
             }
@@ -3318,8 +3396,7 @@ namespace Das::Core::TaskScheduler
         {
             const std::scoped_lock lock(mutex_);
 
-            if (state_.load() == SchedulerState::Running
-                || state_.load() == SchedulerState::Stopping)
+            if (SchedulerBusyLocked())
             {
                 return DAS_E_TASK_WORKING;
             }
@@ -3432,8 +3509,7 @@ namespace Das::Core::TaskScheduler
         {
             const std::scoped_lock lock(mutex_);
 
-            if (state_.load() == SchedulerState::Running
-                || state_.load() == SchedulerState::Stopping)
+            if (SchedulerBusyLocked())
             {
                 return DAS_E_TASK_WORKING;
             }
@@ -3585,8 +3661,7 @@ namespace Das::Core::TaskScheduler
         {
             const std::scoped_lock lock(mutex_);
 
-            if (state_.load() == SchedulerState::Running
-                || state_.load() == SchedulerState::Stopping)
+            if (SchedulerBusyLocked())
             {
                 return DAS_E_TASK_WORKING;
             }
@@ -3938,10 +4013,13 @@ namespace Das::Core::TaskScheduler
         // inputs，锁外算， 再回锁更新内存 + PostPersistEvent 持久化。
         struct RecalcInput
         {
-            DasGuid                         task_guid;
-            int64_t                         task_id;
-            yyjson::value                   properties;
-            Das::PluginInterface::IDasTask* task_ptr;
+            DasGuid       task_guid;
+            int64_t       task_id;
+            yyjson::value properties;
+            // DasPtr 拷贝持有：锁外 Compile 窗口期间 task_instances_ 可能
+            // 被并发变更（Disable 收尾后 DeleteTask 放行），引用计数保证
+            // 任务对象活到 GetNextExecutionTime 返回。
+            Das::DasPtr<Das::PluginInterface::IDasTask> task_holder;
         };
         std::vector<RecalcInput> inputs;
         {
@@ -3966,7 +4044,7 @@ namespace Das::Core::TaskScheduler
                     {inst.task_guid,
                      inst.id,
                      CloneJsonValue(inst.properties),
-                     inst.task_instance.Get()});
+                     inst.task_instance});
             }
         }
 
@@ -3979,7 +4057,7 @@ namespace Das::Core::TaskScheduler
                 in.task_id,
                 in.properties,
                 settings.GetTaskInstanceJson("0", in.task_id),
-                in.task_ptr);
+                in.task_holder.Get());
             if (refreshed)
             {
                 updates.emplace_back(in.task_id, *refreshed);
@@ -4195,10 +4273,12 @@ namespace Das::Core::TaskScheduler
         // 已成功）。 在 mutex_ 内拷贝所需上下文后释放锁，再走 Compile（IPC
         // 长耗时不能持 mutex_），最后短锁内写回 next_execution_time +
         // PostPersistEvent。
-        DasGuid                    task_guid_for_recalc{};
-        yyjson::value              properties_for_recalc;
-        PluginInterface::IDasTask* task_ptr_for_recalc = nullptr;
-        bool                       can_recalc = false;
+        DasGuid       task_guid_for_recalc{};
+        yyjson::value properties_for_recalc;
+        // DasPtr 拷贝持有：锁外 Compile 窗口期间对象保持存活（窗口内
+        // Disable 可收尾为 Stopped，随后 DeleteTask 放行即可析构对象）。
+        Das::DasPtr<PluginInterface::IDasTask> task_holder_for_recalc;
+        bool                                   can_recalc = false;
         {
             const std::scoped_lock lock(mutex_);
             auto*                  inst = FindTaskInstance(task_id);
@@ -4209,7 +4289,7 @@ namespace Das::Core::TaskScheduler
                 inst->authoring = CloneJsonValue(pipeline.authoring);
                 task_guid_for_recalc = inst->task_guid;
                 properties_for_recalc = CloneJsonValue(inst->properties);
-                task_ptr_for_recalc = inst->task_instance.Get();
+                task_holder_for_recalc = inst->task_instance;
                 can_recalc = true;
             }
         }
@@ -4225,7 +4305,7 @@ namespace Das::Core::TaskScheduler
                 task_id,
                 properties_for_recalc,
                 settings.GetTaskInstanceJson("0", task_id),
-                task_ptr_for_recalc);
+                task_holder_for_recalc.Get());
             if (refreshed_next)
             {
                 bool should_persist = false;
@@ -4383,19 +4463,23 @@ namespace Das::Core::TaskScheduler
 
     void SchedulerService::OnTick()
     {
-        if (state_.load() != SchedulerState::Running)
+        // Running：常规调度循环。Stopped：一次性执行（由 RunTaskNow 投递
+        // 触发），执行完不重排 timer。Stopping：收尾中，不再起执行。
+        if (state_.load() == SchedulerState::Stopping)
         {
             return;
         }
 
         // Select a runnable task instance under lock, then release lock
-        // before calling plugin Do.
-        Das::PluginInterface::IDasTask*        task_ptr = nullptr;
-        TaskInstanceRecord*                    selected_inst = nullptr;
-        yyjson::value                          properties_copy;
-        std::optional<TaskAuthoringCapability> authoring_capability;
-        int64_t                                selected_id = -1;
-        std::chrono::steady_clock::duration    next_delay =
+        // before calling plugin Do. task_holder 持引用计数：锁外窗口内
+        // 即使 task_instances_ 被变更（扩容/删除），任务对象也活到
+        // GetNextExecutionTime 返回。
+        Das::DasPtr<Das::PluginInterface::IDasTask> task_holder;
+        TaskInstanceRecord*                         selected_inst = nullptr;
+        yyjson::value                               properties_copy;
+        std::optional<TaskAuthoringCapability>      authoring_capability;
+        int64_t                                     selected_id = -1;
+        std::chrono::steady_clock::duration         next_delay =
             std::chrono::seconds(1);
 
         int64_t now_unix = SystemClock::to_time_t(SystemClock::now());
@@ -4403,7 +4487,7 @@ namespace Das::Core::TaskScheduler
         {
             const std::scoped_lock lock(mutex_);
 
-            if (state_.load() != SchedulerState::Running)
+            if (state_.load() == SchedulerState::Stopping)
             {
                 return;
             }
@@ -4415,11 +4499,14 @@ namespace Das::Core::TaskScheduler
                 DAS_CORE_LOG_DEBUG(
                     "SchedulerService::OnTick: no runnable task");
                 next_delay = ComputeNextDelay(task_instances_, now_unix);
-                StartTickTimer(next_delay);
+                if (state_.load() == SchedulerState::Running)
+                {
+                    StartTickTimer(next_delay);
+                }
                 return;
             }
 
-            task_ptr = selected_inst->task_instance.Get();
+            task_holder = selected_inst->task_instance;
             properties_copy = selected_inst->properties;
             selected_id = selected_inst->id;
             if (auto* authoring = capability_registry_.FindAuthoring(
@@ -4428,7 +4515,7 @@ namespace Das::Core::TaskScheduler
                 authoring_capability = *authoring;
             }
 
-            current_task_ = task_ptr;
+            current_task_id_ = selected_id;
 
             // Create or reuse stop token for cooperative cancellation
             if (!stop_token_)
@@ -4553,7 +4640,7 @@ namespace Das::Core::TaskScheduler
         if (!compile_failed)
         {
             // Call IDasTask::Do WITHOUT holding the mutex
-            auto do_result = task_ptr->Do(
+            auto do_result = task_holder.Get()->Do(
                 stop_token_.Get(),
                 p_env_json ? p_env_json.Get() : nullptr,
                 p_props_json ? p_props_json.Get() : nullptr);
@@ -4583,7 +4670,7 @@ namespace Das::Core::TaskScheduler
         }
         else
         {
-            auto net_result = task_ptr->GetNextExecutionTime(
+            auto net_result = task_holder.Get()->GetNextExecutionTime(
                 p_props_json ? p_props_json.Get() : nullptr,
                 &next_date);
             if (IsOk(net_result))
@@ -4611,19 +4698,26 @@ namespace Das::Core::TaskScheduler
         bool    should_persist = false;
         int64_t persist_id = 0;
         int64_t persist_time = 0;
+        bool    drain_pending = false;
         {
             const std::scoped_lock lock(mutex_);
 
-            // Update the instance record with refreshed nextExecutionTime
-            if (selected_inst && has_refreshed_time)
+            // 写回经 id 现查：锁外窗口不持有 record 指针。执行期间
+            // task 变更入口都被 SchedulerBusyLocked 拒绝，正常必中；
+            // 竞态漏防查不到则跳过写回（对象由 task_holder 保活，
+            // 不会 UAF）。
+            if (has_refreshed_time)
             {
-                selected_inst->next_execution_time = refreshed_time;
-                should_persist = true;
-                persist_id = selected_id;
-                persist_time = refreshed_time;
+                if (auto* inst = FindTaskInstance(selected_id))
+                {
+                    inst->next_execution_time = refreshed_time;
+                    should_persist = true;
+                    persist_id = selected_id;
+                    persist_time = refreshed_time;
+                }
             }
 
-            current_task_ = nullptr;
+            current_task_id_.reset();
 
             if (state_.load() == SchedulerState::Running)
             {
@@ -4637,12 +4731,27 @@ namespace Das::Core::TaskScheduler
                 // 后，等活由 OnTick 自身完成。
                 fsm_->process_event(EvtTickCompleted{});
             }
+            else if (state_.load() == SchedulerState::Stopped)
+            {
+                // Stopped 一次性排空：仍有 due 任务（立即执行置 due 或
+                // 历史残留）则再投一个 tick 继续处理。每次执行后
+                // next_execution_time 都被刷新到未来，循环必然终止。
+                now_unix = SystemClock::to_time_t(SystemClock::now());
+                drain_pending =
+                    FindNextRunnableTask(task_instances_, now_unix) != nullptr;
+            }
         }
 
         DAS_CORE_LOG_DEBUG("SchedulerService::OnTick: tick complete");
         if (state_.load() == SchedulerState::Running)
         {
             StartTickTimer(next_delay);
+        }
+        else if (drain_pending)
+        {
+            auto drain_callback = Das::DasPtr<IDasAsyncCallback>::Attach(
+                static_cast<IDasAsyncCallback*>(new TickCallback(this)));
+            ipc_context_.get().PostToBusinessThread(drain_callback.Get());
         }
 
         // Post persistence event to config-side thread (outside mutex_).

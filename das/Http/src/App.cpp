@@ -575,6 +575,10 @@ namespace Das::Http
             [scheduler_controller](const Das::Http::Beast::HttpRequest& req)
             { return scheduler_controller->DisableTask(req); });
         components.router->Post(
+            DAS_HTTP_API_PREFIX "scheduler/{profile}/tasks/{taskId}/runNow",
+            [scheduler_controller](const Das::Http::Beast::HttpRequest& req)
+            { return scheduler_controller->RunTaskNow(req); });
+        components.router->Post(
             DAS_HTTP_API_PREFIX
             "scheduler/{profile}/tasks/{taskId}/authoring/get",
             [scheduler_controller](const Das::Http::Beast::HttpRequest& req)
