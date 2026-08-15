@@ -103,6 +103,20 @@ namespace Plugins::DasMaaPi
             return parsed.result;
         }
 
+        // 今日 slot 已决策标记：Do 执行过（无论成败）即视为今日已消费。
+        // 不标记则执行后 GetNextExecutionTime 的 daily catch-up 分支看到
+        // 「今日未 fired 且 slot 已过」会返回 now（立即到期）再跑一次——
+        // 手动立即执行与调度执行都会双跑。catch-up 本义（进程停机错过
+        // slot、启动后由过期 next_execution_time 触发补跑）不受影响。
+        {
+            const std::time_t now = now_();
+            std::tm           local_now{};
+            if (PortableLocaltime(&now, &local_now) != nullptr)
+            {
+                last_fired_ymd_ = EncodeYmd(local_now);
+            }
+        }
+
         auto result = MaaRuntime::Run(
             parsed.envelope,
             MaaApiBoundaryForRuntime(),

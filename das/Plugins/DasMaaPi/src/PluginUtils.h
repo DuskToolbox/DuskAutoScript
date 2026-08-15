@@ -10,6 +10,7 @@
 #include <das/Plugins/DasMaaPi/PiCatalog.h>
 #include <das/Plugins/DasMaaPi/PiParser.h>
 #include <das/Utils/CommonUtils.hpp>
+#include <das/_autogen/idl/abi/IDasI18n.h>
 
 #include <map>
 #include <optional>
@@ -21,6 +22,14 @@ namespace Plugins::DasMaaPi
     DasPtr<ExportInterface::IDasJson> WrapJson(yyjson::value value);
     yyjson::value                     JsonString(std::string_view value);
     std::optional<yyjson::value>      ReadJson(ExportInterface::IDasJson* json);
+
+    /// 插件级 i18n 惰性单例：<plugin_dir>/i18n 经 this_line_location 推导
+    /// （与 MaaFW LogDir 同范式）。目录缺失 / 装载失败永久降级（返回
+    /// nullptr，调用方回退硬编码文案，不重试）。
+    ExportInterface::IDasI18n* GetPluginI18n();
+
+    /// 经 i18n 翻译 key；i18n 为空 / key miss 返回空串（调用方回退硬编码）。
+    std::string TranslatePluginKey(const char* key);
 
     std::optional<PiCatalog> TryParseCatalog(
         const AcceptedSettingsDto&    settings,

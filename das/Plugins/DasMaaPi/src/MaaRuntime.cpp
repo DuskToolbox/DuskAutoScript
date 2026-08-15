@@ -11,6 +11,7 @@
 #include "MaaHandle.h"
 #include "PathResolver.h"
 #include "PiHttpClient.h"
+#include "PluginUtils.h"
 #include "PretaskRunner.h"
 #include "Win32WindowFinder.h"
 
@@ -2297,21 +2298,43 @@ namespace Das::Plugins::DasMaaPi
 
     void LogRunFailure(const MaaRuntimeResult& result)
     {
-        std::string text = DAS_FMT_NS::format(
-            "[DasMaaPi] MaaRuntime run failed, result={}",
-            result.das_result);
+        // 标题 i18n（maapi.runFailed，{0} = 十进制错误码）；i18n 缺失 /
+        // key miss 回退英文硬编码。
+        const auto        title_tmpl = TranslatePluginKey("maapi.runFailed");
+        const std::string result_text =
+            DAS_FMT_NS::format("{}", result.das_result);
+        std::string text;
+        if (!title_tmpl.empty())
+        {
+            // make_format_args 持引用而非拥有：参数须是具名局部变量，
+            // 生命周期覆盖 vformat 调用（禁临时量）。
+            text = DAS_FMT_NS::vformat(
+                std::string_view(title_tmpl),
+                DAS_FMT_NS::make_format_args(result_text));
+        }
+        else
+        {
+            text = DAS_FMT_NS::format(
+                "[DasMaaPi] MaaRuntime run failed, result={}",
+                result.das_result);
+        }
+
         for (const auto& diagnostic : result.diagnostics)
         {
-            text += DAS_FMT_NS::format(
-                "\n[{}] {}",
-                diagnostic.code,
-                diagnostic.message);
+            // 诊断行 i18n：maapi.diagnostic.<code> key，miss 回退原始英文
+            // message；code 原样保留（稳定标识，日志可 grep）。
+            // provider_code 数值语言中立，始终附加。
+            const auto line_tmpl = TranslatePluginKey(
+                ("maapi.diagnostic." + diagnostic.code).c_str());
+            std::string line =
+                !line_tmpl.empty() ? line_tmpl : diagnostic.message;
             if (diagnostic.provider_code)
             {
-                text += DAS_FMT_NS::format(
+                line += DAS_FMT_NS::format(
                     " (provider_code={})",
                     *diagnostic.provider_code);
             }
+            text += DAS_FMT_NS::format("\n[{}] {}", diagnostic.code, line);
         }
 
         // 写 focus 事件日志（user.jsonl → UI 事件日志面板）：resolve 主进程

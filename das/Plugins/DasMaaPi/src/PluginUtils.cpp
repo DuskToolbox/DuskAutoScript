@@ -1,10 +1,96 @@
 #include "PluginUtils.h"
 
 #include <das/DasApi.h>
+#include <das/DasString.hpp>
+
+#include <boost/dll/runtime_symbol_info.hpp>
+
+#include <filesystem>
 
 DAS_NS_BEGIN
 namespace Plugins::DasMaaPi
 {
+    ExportInterface::IDasI18n* GetPluginI18n()
+    {
+        // 函数局部 static：首次调用装载，此后复用；装载失败也只试一次。
+        static DasPtr<ExportInterface::IDasI18n> i18n;
+        static bool                              load_attempted = false;
+        if (i18n != nullptr)
+        {
+            return i18n.Get();
+        }
+        if (load_attempted)
+        {
+            return nullptr;
+        }
+        load_attempted = true;
+
+        // <plugin_dir>/i18n 经 boost::dll::this_line_location().parent_path()
+        // 推导（cwd != 插件安装目录）。boost path → UTF-8 std::string 经
+        // std::filesystem::path 桥接（Windows wstring / Unix string），
+        // boost path 无 u8string()，.string() 在 Windows 是 ACP（中文乱码）。
+        try
+        {
+            const auto plugin_module = boost::dll::this_line_location();
+#ifdef _WIN32
+            const std::filesystem::path std_path{
+                (plugin_module.parent_path() / "i18n").wstring()};
+#else
+            const std::filesystem::path std_path{
+                (plugin_module.parent_path() / "i18n").string()};
+#endif
+            const auto        u8dir = std_path.u8string();
+            const std::string dir_utf8(u8dir.begin(), u8dir.end());
+
+            DasPtr<IDasReadOnlyString> dir_str;
+            if (DAS::IsFailed(
+                    ::CreateIDasReadOnlyStringFromUtf8(
+                        dir_utf8.c_str(),
+                        dir_str.Put())))
+            {
+                return nullptr;
+            }
+            const auto rc =
+                ::CreateIDasI18nFromDirectory(dir_str.Get(), i18n.Put());
+            if (DAS::IsFailed(rc) || i18n == nullptr)
+            {
+                i18n.Reset();
+                return nullptr;
+            }
+            return i18n.Get();
+        }
+        catch (...)
+        {
+            return nullptr;
+        }
+    }
+
+    std::string TranslatePluginKey(const char* key)
+    {
+        auto* const i18n = GetPluginI18n();
+        if (i18n == nullptr)
+        {
+            return {};
+        }
+        DasPtr<IDasReadOnlyString> key_str;
+        if (DAS::IsFailed(
+                ::CreateIDasReadOnlyStringFromUtf8(key, key_str.Put())))
+        {
+            return {};
+        }
+        DasPtr<IDasReadOnlyString> text;
+        if (DAS::IsFailed(i18n->Translate(key_str.Get(), text.Put())))
+        {
+            return {};
+        }
+        const char* raw = nullptr;
+        if (text == nullptr || DAS::IsFailed(text->GetUtf8(&raw))
+            || raw == nullptr)
+        {
+            return {};
+        }
+        return std::string(raw);
+    }
     DasPtr<ExportInterface::IDasJson> WrapJson(yyjson::value value)
     {
         auto serialized = Utils::SerializeYyjsonValue(value);
