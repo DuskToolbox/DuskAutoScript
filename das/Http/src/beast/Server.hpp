@@ -50,14 +50,19 @@ namespace Das::Http::Beast
         http::response<http::string_body> response_;
         std::shared_ptr<Router>           router_;
         std::function<bool()>             stop_condition_;
+        // 响应写完成且停止条件已置位时回调（触发 Server::BeginShutdown）。
+        // 在写完成处触发保证响应字节已进内核缓冲，退出路径不影响送达。
+        std::function<void()> on_server_stop_;
 
     public:
         Session(
             tcp::socket             socket,
             std::shared_ptr<Router> router,
-            std::function<bool()>   stop_condition)
+            std::function<bool()>   stop_condition,
+            std::function<void()>   on_server_stop = nullptr)
             : socket_(std::move(socket)), router_(std::move(router)),
-              stop_condition_(std::move(stop_condition))
+              stop_condition_(std::move(stop_condition)),
+              on_server_stop_(std::move(on_server_stop))
         {
         }
 
@@ -128,6 +133,15 @@ namespace Das::Http::Beast
                     self->socket_.shutdown(
                         tcp::socket::shutdown_send,
                         shutdown_ec);
+
+                    // 响应已交付（字节进内核缓冲）：request_shutdown 置位过
+                    // 停止条件时在此触发服务器关闭——写完成回调是唯一能
+                    // 保证「响应送达」与「停止服务器」先后次序的位置。
+                    if (self->on_server_stop_ && self->stop_condition_
+                        && !self->stop_condition_())
+                    {
+                        self->on_server_stop_();
+                    }
                 });
         }
 
@@ -310,6 +324,7 @@ namespace Das::Http::Beast
         tcp::socket                      socket_;
         std::shared_ptr<Router>          router_;
         std::function<bool()>            stop_condition_;
+        std::function<void()>            on_server_stop_;
         std::shared_ptr<NotificationHub> hub_;
         std::shared_ptr<SseHub>          sse_hub_;
         boost::beast::flat_buffer        buffer_;
@@ -320,9 +335,11 @@ namespace Das::Http::Beast
             std::shared_ptr<Router>          router,
             std::function<bool()>            stop_condition,
             std::shared_ptr<NotificationHub> hub,
+            std::function<void()>            on_server_stop = nullptr,
             std::shared_ptr<SseHub>          sse_hub = nullptr)
             : socket_(std::move(socket)), router_(std::move(router)),
-              stop_condition_(std::move(stop_condition)), hub_(std::move(hub)),
+              stop_condition_(std::move(stop_condition)),
+              on_server_stop_(std::move(on_server_stop)), hub_(std::move(hub)),
               sse_hub_(std::move(sse_hub))
         {
         }
@@ -387,7 +404,8 @@ namespace Das::Http::Beast
                         auto session = std::make_shared<Session>(
                             std::move(self->socket_),
                             self->router_,
-                            self->stop_condition_);
+                            self->stop_condition_,
+                            self->on_server_stop_);
                         session->RunWithParser(self->parser_.release());
                     }
                 });
@@ -405,6 +423,7 @@ namespace Das::Http::Beast
         std::shared_ptr<NotificationHub> hub_;
         std::shared_ptr<SseHub>          sse_hub_;
         std::function<bool()>            stop_condition_;
+        std::function<void()>            on_server_stop_;
 
     public:
         Listener(
@@ -413,11 +432,13 @@ namespace Das::Http::Beast
             std::shared_ptr<Router>          router,
             std::function<bool()>            stop_condition,
             std::shared_ptr<NotificationHub> hub,
+            std::function<void()>            on_server_stop = nullptr,
             std::shared_ptr<SseHub>          sse_hub = nullptr)
             : acceptor_(boost::asio::make_strand(ioc)),
               router_(std::move(router)), hub_(std::move(hub)),
               sse_hub_(std::move(sse_hub)),
-              stop_condition_(std::move(stop_condition))
+              stop_condition_(std::move(stop_condition)),
+              on_server_stop_(std::move(on_server_stop))
         {
             // open/bind/listen 失败必须 fail-fast 抛异常：否则 acceptor_
             // 处于未监听状态，DoAccept 的 async_accept 立即以错误完成且不
@@ -497,6 +518,7 @@ namespace Das::Http::Beast
                         self->router_,
                         self->stop_condition_,
                         self->hub_,
+                        self->on_server_stop_,
                         self->sse_hub_);
                     detector->Detect();
 
@@ -530,7 +552,28 @@ namespace Das::Http::Beast
                 router_,
                 stop_condition_,
                 hub_,
+                // 停止回调绑定到本 Server：由完成 request_shutdown 响应写出
+                // 的 Session 在写完成处触发（见 Session::DoWrite）。
+                [this]() { BeginShutdown(); },
                 sse_hub_);
+        }
+
+        /// 停止服务器：SSE 失效 → ioc.stop() 解除全部 ioc_.run() 阻塞
+        /// （idle keep-alive 读 / WS / 日志 tick / pending accept 一并扫掉，
+        /// acceptor 由析构关闭）。由 Session 写完成回调同步调用（ioc 工作
+        /// 线程；此时响应字节已进内核缓冲，退出路径不影响送达）。
+        /// 无需自加幂等标志：Invalidate 是原子置位、ioc.stop() 天然幂等，
+        /// 且首个 stop() 后其余排队 handler 不再执行——多 Session 并发触发
+        /// 的重复调用全部落到原语自身的 no-op 上。ioc 停止后 Server::Run
+        /// 返回，App 既有的 ipc RequestStop + CoreServices::Shutdown
+        /// 收尾链条自然接上。
+        void BeginShutdown()
+        {
+            if (sse_hub_)
+            {
+                sse_hub_->Invalidate();
+            }
+            ioc_.stop();
         }
 
         /**
