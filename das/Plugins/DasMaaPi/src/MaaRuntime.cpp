@@ -2294,4 +2294,67 @@ namespace Das::Plugins::DasMaaPi
 
         return result;
     }
+
+    void LogRunFailure(const MaaRuntimeResult& result)
+    {
+        std::string text = DAS_FMT_NS::format(
+            "[DasMaaPi] MaaRuntime run failed, result={}",
+            result.das_result);
+        for (const auto& diagnostic : result.diagnostics)
+        {
+            text += DAS_FMT_NS::format(
+                "\n[{}] {}",
+                diagnostic.code,
+                diagnostic.message);
+            if (diagnostic.provider_code)
+            {
+                text += DAS_FMT_NS::format(
+                    " (provider_code={})",
+                    *diagnostic.provider_code);
+            }
+        }
+
+        // 写 focus 事件日志（user.jsonl → UI 事件日志面板）：resolve 主进程
+        // recorder（与 Run 内同款 C ABI 路径）。Record 成功只进事件日志；
+        // 失败由 RecordEntryOrLog 打 [focus-degraded] 前缀降级落
+        // logs/DasCore.log，不静默。
+        Das::DasPtr<Das::ExportInterface::IDasProcessLogRecorder> recorder;
+        DasPtr<IDasBase>                                          resolved_base;
+        const auto resolve_rc = DasQueryMainProcessInterfaceByName(
+            "das.focus-log-recorder",
+            resolved_base.Put());
+        if (DAS::IsOk(resolve_rc) && resolved_base)
+        {
+            (void)resolved_base.As(recorder);
+        }
+        if (!recorder)
+        {
+            spdlog::error(
+                "[DasMaaPi] LogRunFailure: focus recorder resolve failed, "
+                "failure entry only in debug log (resolve_rc={})",
+                resolve_rc);
+            return;
+        }
+
+        Das::DasPtr<Das::ExportInterface::IDasLogEntry> entry;
+        if (DAS::IsFailed(CreateIDasLogEntry(entry.Put())) || !entry)
+        {
+            return;
+        }
+        if (DAS::IsFailed(
+                entry->SetType(Das::ExportInterface::DAS_LOG_TYPE_ERROR)))
+        {
+            return;
+        }
+        DasU8StringOnStack text_string{text.c_str()};
+        if (DAS::IsFailed(entry->AddText(&text_string)))
+        {
+            return;
+        }
+        (void)RecordEntryOrLog(
+            recorder.Get(),
+            entry.Get(),
+            Das::ExportInterface::DAS_LOG_TYPE_ERROR,
+            text);
+    }
 } // namespace Das::Plugins::DasMaaPi

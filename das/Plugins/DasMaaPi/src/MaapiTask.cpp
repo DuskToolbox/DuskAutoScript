@@ -95,6 +95,11 @@ namespace Plugins::DasMaaPi
         auto parsed = ParseExecutionEnvelope(*request);
         if (DAS::IsFailed(parsed.result))
         {
+            spdlog::error(
+                "[DasMaaPi] MaapiTask::Do: envelope parse failed, "
+                "result={}, message={}",
+                parsed.result,
+                parsed.message);
             return parsed.result;
         }
 
@@ -102,6 +107,13 @@ namespace Plugins::DasMaaPi
             parsed.envelope,
             MaaApiBoundaryForRuntime(),
             stop_token);
+        if (DAS::IsFailed(result.das_result))
+        {
+            // 失败诊断此前随 MaaRuntimeResult 被丢弃：上抛的只有裸错误码，
+            // 调试日志与事件日志都看不到失败原因（MaaFW 早期失败时连
+            // MAA 回调日志都没有）。落 spdlog + focus 事件日志后再返回。
+            LogRunFailure(result);
+        }
         return result.das_result;
     }
 
