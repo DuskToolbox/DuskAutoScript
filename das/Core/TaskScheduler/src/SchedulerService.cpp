@@ -2085,8 +2085,7 @@ namespace Das::Core::TaskScheduler
         // 无任务执行）。
         if (current_task_id_)
         {
-            result_obj[std::string_view("runningTaskId")] =
-                *current_task_id_;
+            result_obj[std::string_view("runningTaskId")] = *current_task_id_;
         }
 
         // Available task types
@@ -4523,6 +4522,12 @@ namespace Das::Core::TaskScheduler
                 stop_token_ = Das::Core::Utils::DasStopTokenImpl::Make();
             }
         }
+
+        // 执行开始即推送（锁外）：Get() 携带 runningTaskId，UI 立即感知
+        // 「任务执行中」并禁用相关操作。Do 可能执行分钟级，若只在收尾
+        // 推送，整个执行期间 UI 完全看不到占用状态。结束推送由收尾的
+        // NotifyStateChange 负责。
+        NotifyStateChange();
 
         // Create IDasJson inputs outside the lock (no serialization round-trip)
         DasPtr<Das::ExportInterface::IDasJson> p_env_json;
