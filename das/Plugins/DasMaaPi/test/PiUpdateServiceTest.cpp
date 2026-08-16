@@ -1,15 +1,10 @@
 #include "../src/PiUpdateService.h"
-#include "../src/MaaDynamicSymbols.h"
 #include "../src/PiHttpClient.h"
-#include "FakeMaaApiBoundary.h"
-
-#ifndef DAS_MAAPI_DISABLE_REAL_MAA_BOUNDARY
-#include <MaaFramework/MaaAPI.h>
-#endif
 
 #include <das/Plugins/DasMaaPi/MaaPiErrorCodes.h>
 #include <das/_autogen/idl/abi/DasResult.h>
 #include <gtest/gtest.h>
+#include <openssl/sha.h>
 #include <zlib.h>
 
 #include <cstdint>
@@ -463,6 +458,26 @@ namespace
         AppendU16(eocd, 0); // comment length
 
         return local_section + central_section + eocd;
+    }
+
+    // sha256（十六进制小写）——与生产 ComputeSha256Hex 同算法（OpenSSL 一次性
+    // API），供测试构造「与 zip 本体一致」的声明哈希。
+    std::string Sha256Hex(const std::string& data)
+    {
+        unsigned char digest[SHA256_DIGEST_LENGTH];
+        SHA256(
+            reinterpret_cast<const unsigned char*>(data.data()),
+            data.size(),
+            digest);
+        constexpr char HEX_DIGITS[] = "0123456789abcdef";
+        std::string    out;
+        out.reserve(SHA256_DIGEST_LENGTH * 2);
+        for (const unsigned char byte : digest)
+        {
+            out.push_back(HEX_DIGITS[byte >> 4]);
+            out.push_back(HEX_DIGITS[byte & 0xF]);
+        }
+        return out;
     }
 } // namespace
 
@@ -991,44 +1006,95 @@ TEST(PiUpdateService, ApplyUpdateRenameFailurePreservesOldContent)
 // Task 3：resource.hash 校验（警告不硬失败）+ 被锁文件 .pending 暂存
 // ---------------------------------------------------------------------
 
-TEST(PiUpdateService, ApplyUpdateResourceHashMismatchWarnsNotFails)
+TEST(PiUpdateService, ApplyUpdateSha256MismatchRejectsPackage)
 {
-    // 新 interface.json 声明 resource → 替换成功后经 IMaaApiBoundary 计算
-    // resource hash，与更新包 sha256 比对。不匹配 → 警告「建议重新下载资源
-    // 包」，ApplyUpdate 仍返回成功（D-89-05 不硬失败）。
+    // 来源声明 sha256 与 zip 本体实际哈希不符 → 硬拒（-10008），不进解压，
+    // 旧内容保留，.update 临时目录清理。
     FakePiHttpClient http;
     http.AddRoute(
         "/download/package.zip",
         BuildTestZip({
-            TestZipEntry{
-                "interface.json",
-                R"({"interface_version":2,"name":"test-project","version":"1.2.0","resource":[{"name":"res","path":["res"]}]})"},
-            TestZipEntry{"res/icon.png", "png-bytes"},
+            TestZipEntry{"interface.json", "{\"version\":\"1.2.0\"}"},
         }));
 
     TempPiProject project;
     project.WriteInterface(MakeInterface("1.0.0", "", ""));
 
-    Das::Plugins::DasMaaPi::Test::FakeMaaApiBoundary fake;
-    fake.resource_hash = "sha256-real-but-different";
+    PiUpdateInfo info;
+    info.version_name = "1.2.0";
+    info.download_url = "https://example.com/download/package.zip";
+    info.sha256 =
+        "0000000000000000000000000000000000000000000000000000000000000000";
+
+    const auto result = PiUpdateService::ApplyUpdate(project.Dir(), info, http);
+
+    EXPECT_EQ(result, DAS_E_MAAPI_UPDATE_APPLY_FAILED);
+
+    // 旧内容未被替换（sha256 校验失败于解压前，pi_dir 未动）。
+    std::ifstream old_interface(project.Dir() / "interface.json");
+    std::string   content(
+        (std::istreambuf_iterator<char>(old_interface)),
+        std::istreambuf_iterator<char>());
+    EXPECT_NE(content.find("1.0.0"), std::string::npos);
+    // .update 临时目录已清理。
+    const auto update_root = project.Dir().parent_path()
+                             / (project.Dir().filename().string() + ".update");
+    EXPECT_FALSE(std::filesystem::exists(update_root));
+}
+
+TEST(PiUpdateService, ApplyUpdateSha256MatchSucceeds)
+{
+    // 来源声明 sha256 与 zip 本体一致 → 校验通过，更新成功落地。
+    const std::string zip_data = BuildTestZip({
+        TestZipEntry{"interface.json", "{\"version\":\"1.2.0\"}"},
+    });
+    FakePiHttpClient  http;
+    http.AddRoute("/download/package.zip", zip_data);
+
+    TempPiProject project;
+    project.WriteInterface(MakeInterface("1.0.0", "", ""));
 
     PiUpdateInfo info;
     info.version_name = "1.2.0";
     info.download_url = "https://example.com/download/package.zip";
-    info.sha256 = "sha256-from-update-manifest";
+    info.sha256 = Sha256Hex(zip_data);
 
-    const auto result = PiUpdateService::ApplyUpdate(
-        project.Dir(),
-        info,
-        http,
-        /*proxy_url=*/{},
-        /*mirrorchyan_cdk=*/{},
-        &fake);
+    const auto result = PiUpdateService::ApplyUpdate(project.Dir(), info, http);
 
-    // hash 不匹配给警告，不硬失败（D-89-05 / 协议 §resource.hash 语义）。
     EXPECT_EQ(result, DAS_S_OK);
-    EXPECT_TRUE(fake.Contains("GetResourceHash"));
-    EXPECT_TRUE(fake.ContainsSubstring("LoadResource"));
+    std::ifstream new_interface(project.Dir() / "interface.json");
+    std::string   content(
+        (std::istreambuf_iterator<char>(new_interface)),
+        std::istreambuf_iterator<char>());
+    EXPECT_EQ(content, "{\"version\":\"1.2.0\"}");
+}
+
+TEST(PiUpdateService, ApplyUpdateWithoutSha256SkipsVerification)
+{
+    // GitHub 通道不提供包哈希（sha256 空）→ 跳过校验，更新照常成功。
+    FakePiHttpClient http;
+    http.AddRoute(
+        "/download/package.zip",
+        BuildTestZip({
+            TestZipEntry{"interface.json", "{\"version\":\"1.2.0\"}"},
+        }));
+
+    TempPiProject project;
+    project.WriteInterface(MakeInterface("1.0.0", "", ""));
+
+    PiUpdateInfo info;
+    info.version_name = "1.2.0";
+    info.download_url = "https://example.com/download/package.zip";
+    // info.sha256 保持空 optional。
+
+    const auto result = PiUpdateService::ApplyUpdate(project.Dir(), info, http);
+
+    EXPECT_EQ(result, DAS_S_OK);
+    std::ifstream new_interface(project.Dir() / "interface.json");
+    std::string   content(
+        (std::istreambuf_iterator<char>(new_interface)),
+        std::istreambuf_iterator<char>());
+    EXPECT_EQ(content, "{\"version\":\"1.2.0\"}");
 }
 
 TEST(PiUpdateService, ApplyUpdateLockedFileStagedToPending)
@@ -1180,7 +1246,6 @@ TEST(PiUpdateService, ApplyUpdateReportsDownloadExtractReplaceStages)
         http,
         /*proxy_url=*/{},
         /*mirrorchyan_cdk=*/{},
-        /*boundary=*/nullptr,
         [&](const UpdateProgress& p) { progress.push_back(p); });
 
     EXPECT_EQ(result, DAS_S_OK);
@@ -1245,7 +1310,6 @@ TEST(PiUpdateService, ApplyUpdateWithoutContentLengthReportsStageOnly)
         http,
         {},
         {},
-        nullptr,
         [&](const UpdateProgress& p) { progress.push_back(p); });
 
     EXPECT_EQ(result, DAS_S_OK);

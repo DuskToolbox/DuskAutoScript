@@ -2,7 +2,6 @@
 
 #include "PiHttpClient.h"
 
-#include <das/Plugins/DasMaaPi/MaaApiBoundary.h>
 #include <das/_autogen/idl/abi/DasResult.h>
 
 #include <chrono>
@@ -145,12 +144,11 @@ namespace Das::Plugins::DasMaaPi
             std::string_view             update_channel = {});
 
         // 应用更新：流式下载 zip（经 http seam，边下边写盘，不整体缓冲）→
-        // 安全解压（目录穿越防护）→ 备份旧项目目录 → 原子替换 interface.json
-        // 所在目录 → resource.hash 校验（经 IMaaApiBoundary）→ 清理 .update
-        // 临时目录。返回 -10008 时旧目录已回滚。
-        // boundary 为空时用 DefaultMaaApiBoundary()（测试传
-        // FakeMaaApiBoundary）。mirrorchyan_cdk 非空且下载 URL 为 MirrorChyan
-        // 来源时附带 cdk query（与检查请求一致）。
+        // sha256 完整性校验（来源声明时比对 zip 本体，不匹配硬拒；缺失跳过）
+        // → 安全解压（目录穿越防护）→ 备份旧项目目录 → 原子替换 interface.json
+        // 所在目录 → 清理 .update 临时目录。返回 -10008 时旧目录已回滚。
+        // mirrorchyan_cdk 非空且下载 URL 为 MirrorChyan 来源时附带 cdk query
+        // （与检查请求一致）。
         // progress_reporter 为空时不产生进度回调；非空时按阶段（下载/解压/
         // 替换）上报进度，供 IPC 推送链路消费。
         static DasResult ApplyUpdate(
@@ -159,7 +157,6 @@ namespace Das::Plugins::DasMaaPi
             PiHttpClient&                http,
             std::string_view             proxy_url = {},
             std::string_view             mirrorchyan_cdk = {},
-            IMaaApiBoundary*             boundary = nullptr,
             ProgressReporter             progress_reporter = {});
     };
 } // namespace Das::Plugins::DasMaaPi

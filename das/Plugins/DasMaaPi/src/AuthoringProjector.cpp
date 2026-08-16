@@ -5514,7 +5514,6 @@ namespace Das::Plugins::DasMaaPi
                                 *http,
                                 proxy_url,
                                 mirrorchyan_cdk,
-                                /*boundary=*/nullptr,
                                 progress_cb);
                         }
                         catch (const std::exception& error)

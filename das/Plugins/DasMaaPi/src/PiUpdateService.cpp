@@ -17,6 +17,7 @@
 #include <utility>
 #include <vector>
 
+#include <openssl/sha.h>
 #include <zip.h>
 
 namespace Das::Plugins::DasMaaPi
@@ -104,6 +105,26 @@ namespace Das::Plugins::DasMaaPi
                 std::istreambuf_iterator<char>(ifs),
                 std::istreambuf_iterator<char>());
             return true;
+        }
+
+        // zip 本体 sha256（十六进制小写）。插件已因 TLS 链 OpenSSL 兼容层
+        // （MinGW=MSYS2 系统版 / MSVC=aws-lc），零新依赖。
+        std::string ComputeSha256Hex(const std::string& data)
+        {
+            unsigned char digest[SHA256_DIGEST_LENGTH];
+            SHA256(
+                reinterpret_cast<const unsigned char*>(data.data()),
+                data.size(),
+                digest);
+            constexpr char HEX_DIGITS[] = "0123456789abcdef";
+            std::string    out;
+            out.reserve(SHA256_DIGEST_LENGTH * 2);
+            for (const unsigned char byte : digest)
+            {
+                out.push_back(HEX_DIGITS[byte >> 4]);
+                out.push_back(HEX_DIGITS[byte & 0xF]);
+            }
+            return out;
         }
 
         // interface.json 顶层元数据（github / mirrorchyan_rid / version）。
@@ -1009,80 +1030,6 @@ namespace Das::Plugins::DasMaaPi
             }
             return DAS_S_OK;
         }
-
-        // resource.hash 校验（D-89-05 / [ASSUMED A5]）：替换成功后用新
-        // interface.json 的 resource 路径创建并加载资源，取 MaaFW hash 与
-        // 更新包记录 sha256 比对。不匹配或缺失 → 警告「建议重新下载资源包」，
-        // 不硬失败（协议 §resource.hash 语义）；无法计算（无 resource 句柄 /
-        // 加载失败）→ 降级为警告。
-        void VerifyResourceHash(
-            const std::filesystem::path& pi_dir,
-            const PiUpdateInfo&          info,
-            IMaaApiBoundary&             boundary)
-        {
-            const auto parsed = ParseProjectInterface(
-                {.interface_path = pi_dir / "interface.json"});
-            if (!parsed.ok)
-            {
-                LogWarning(
-                    "PiUpdateService: cannot parse new interface.json for "
-                    "resource.hash verify");
-                return;
-            }
-            std::vector<std::filesystem::path> resource_paths;
-            for (const auto& resource : parsed.catalog.resources)
-            {
-                resource_paths.insert(
-                    resource_paths.end(),
-                    resource.resolved_paths.begin(),
-                    resource.resolved_paths.end());
-            }
-            if (resource_paths.empty())
-            {
-                return; // 无 resource 可校验
-            }
-
-            const auto resource = boundary.CreateResource();
-            if (resource == INVALID_MAA_RESOURCE_HANDLE)
-            {
-                LogWarning(
-                    "PiUpdateService: cannot create resource for hash "
-                    "verification");
-                return;
-            }
-            bool loaded = true;
-            for (const auto& path : resource_paths)
-            {
-                const auto load =
-                    boundary.LoadResource(resource, path.string());
-                if (!load.ok)
-                {
-                    loaded = false;
-                    break;
-                }
-            }
-            if (!loaded)
-            {
-                boundary.DestroyResource(resource);
-                LogWarning(
-                    "PiUpdateService: resource load failed, hash check "
-                    "skipped");
-                return;
-            }
-            const auto actual = boundary.GetResourceHash(resource);
-            boundary.DestroyResource(resource);
-            if (!actual)
-            {
-                LogWarning("PiUpdateService: cannot compute resource hash");
-                return;
-            }
-            if (!info.sha256 || *actual != *info.sha256)
-            {
-                LogWarning(
-                    "PiUpdateService: resource hash mismatch — 建议重新下载"
-                    "资源包");
-            }
-        }
     } // namespace
 
     DasResult PiUpdateService::CheckUpdate(
@@ -1204,11 +1151,8 @@ namespace Das::Plugins::DasMaaPi
         PiHttpClient&                http,
         std::string_view             proxy_url,
         std::string_view             mirrorchyan_cdk,
-        IMaaApiBoundary*             boundary,
         ProgressReporter             progress_reporter)
     {
-        IMaaApiBoundary& api_boundary =
-            boundary ? *boundary : DefaultMaaApiBoundary();
         if (info.download_url.empty())
         {
             LogError("PiUpdateService: ApplyUpdate requires a download_url");
@@ -1340,6 +1284,30 @@ namespace Das::Plugins::DasMaaPi
             return DAS_E_MAAPI_UPDATE_APPLY_FAILED;
         }
 
+        // 下载完整性校验：来源声明 sha256（MirrorChyan 通道，更新 zip 包
+        // 文件本体的哈希）时比对，不匹配硬拒（下载损坏 / 被篡改，不能进
+        // 解压）；缺失（GitHub 通道不提供包哈希）跳过。
+        if (info.sha256 && !info.sha256->empty())
+        {
+            const std::string actual_sha256 = ComputeSha256Hex(zip_data);
+            if (Lower(actual_sha256) != Lower(*info.sha256))
+            {
+                LogError(
+                    DAS::fmt::format(
+                        "PiUpdateService: update package sha256 mismatch "
+                        "entryId={} expected={} actual={}",
+                        entry_id,
+                        *info.sha256,
+                        actual_sha256));
+                return DAS_E_MAAPI_UPDATE_APPLY_FAILED;
+            }
+            LogInfo(
+                DAS::fmt::format(
+                    "PiUpdateService: update package sha256 verified "
+                    "entryId={}",
+                    entry_id));
+        }
+
         // 2. 安全解压（目录穿越防护）。
         if (progress_reporter)
         {
@@ -1437,9 +1405,7 @@ namespace Das::Plugins::DasMaaPi
                 "PiUpdateService: update replace complete entryId={}",
                 entry_id));
 
-        // 4. 成功：resource.hash 校验（警告不硬失败）+ 清理 .update
-        //    临时目录（zip + extract），保留 backup。
-        VerifyResourceHash(pi_dir, info, api_boundary);
+        // 4. 成功：清理 .update 临时目录（zip + extract），保留 backup。
         cleanup.dismissed = true;
         std::filesystem::remove_all(update_root, ec);
         LogInfo(
