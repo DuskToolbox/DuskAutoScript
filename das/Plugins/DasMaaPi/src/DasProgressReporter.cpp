@@ -484,6 +484,58 @@ namespace Plugins::DasMaaPi
         }
     }
 
+    void DasProgressReporter::ReportFinal(bool ok, const std::string& detail)
+    {
+        // 与 Report 同款早退链：断开后不再浪费 IPC，未 Start / 无 service
+        // 直接返回。
+        if (!started_ || disconnected_.load())
+        {
+            return;
+        }
+        if (!service_)
+        {
+            return;
+        }
+        auto* const i18n = GetI18n();
+        auto        tmpl = TranslateKey(
+            i18n,
+            ok ? "progress.updateDone" : "progress.updateFailed");
+        std::string text;
+        if (!tmpl.empty())
+        {
+            // make_format_args 持引用而非拥有：参数须是具名局部变量，生命
+            // 周期覆盖 vformat 调用（禁临时量悬垂引用）。
+            const std::string& detail_text = detail;
+            text = DAS_FMT_NS::vformat(
+                std::string_view(tmpl),
+                DAS_FMT_NS::make_format_args(detail_text));
+        }
+        else
+        {
+            text = ok ? "更新完成（" + detail + "）" : "更新失败：" + detail;
+        }
+        // 终态三字段恒推：文案 + 速率/耗时清空（陈旧下载指标不残留 UI）。
+        // 字段值必须经 MakeJsonFieldValue（copy_string——裸 brace init 变单
+        // 元素数组，service 侧标量校验会跳过字段）。
+        std::vector<DasProgressUpdateImpl::Field> fields;
+        fields.emplace_back("updateProgress", MakeJsonFieldValue(text));
+        fields.emplace_back("downloadRate", MakeJsonFieldValue(""));
+        fields.emplace_back("downloadElapsed", MakeJsonFieldValue(""));
+
+        DasPtr<Das::ExportInterface::IDasProgressUpdate> entry =
+            DasProgressUpdateImpl::Make(key_, std::move(fields));
+        const auto rc = service_->Report(entry.Get());
+        if (DAS::IsFailed(rc))
+        {
+            DAS_LOG_ERROR(
+                DAS::fmt::format(
+                    "DasProgressReporter: ReportFinal failed key={} result={}",
+                    key_,
+                    static_cast<int>(rc))
+                    .c_str());
+        }
+    }
+
     void DasProgressReporter::OnSubscribersDisconnected()
     {
         disconnected_.store(true);

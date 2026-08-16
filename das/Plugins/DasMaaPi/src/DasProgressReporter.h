@@ -40,6 +40,11 @@ namespace Plugins::DasMaaPi
         ~DasProgressReporter();
         // 上报字段增量；未 Start / 已 Stop / 订阅全断开时为空操作。
         void Report(const UpdateProgress& progress);
+        // 终态字段增量：updateProgress=文案（i18n progress.updateDone /
+        // progress.updateFailed 模板 {0} 填 detail）+ downloadRate 空串 +
+        // downloadElapsed 空串。后台更新 job 完成/失败时调用，前端经同一
+        // SSE 字段通道收到终态（零新协议）。
+        void ReportFinal(bool ok, const std::string& detail);
 
         // 该 key 所有 SSE 订阅断开（OnAllSubscribersDisconnected 命中 own
         // key）。

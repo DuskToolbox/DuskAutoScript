@@ -7681,12 +7681,13 @@ TEST(
     {
         const auto [name, value] = ReadEntryField(final_entry.Get(), 1);
         EXPECT_EQ(name, "downloadRate");
-        EXPECT_EQ(value, "");
+        // IDasJson::ToString(0) 返回紧凑 JSON 序列化——空串值是两字符 ""。
+        EXPECT_EQ(value, "\"\"");
     }
     {
         const auto [name, value] = ReadEntryField(final_entry.Get(), 2);
         EXPECT_EQ(name, "downloadElapsed");
-        EXPECT_EQ(value, "");
+        EXPECT_EQ(value, "\"\"");
     }
 
     // pi_dir 已替换 + pending 保留。

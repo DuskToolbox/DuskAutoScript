@@ -6,6 +6,7 @@
 #include "MaapiAuthoringSession.h"
 #include "PiHttpClient.h"
 #include "PiUpdateService.h"
+#include "UpdateJobRegistry.h"
 #include <das/Plugins/DasMaaPi/AdbDeviceFinder.h>
 
 #ifndef DAS_MAAPI_DISABLE_REAL_MAA_BOUNDARY
@@ -37,6 +38,7 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
 
 namespace Das::Plugins::DasMaaPi
@@ -5313,10 +5315,13 @@ namespace Das::Plugins::DasMaaPi
         return true;
     }
 
-    // D-89-05: applyUpdate dispatch。precondition 强校验 pending engaged 且
-    // has_update（有可应用更新，T-89-03-04）；调 PiUpdateService::ApplyUpdate
-    // （下载→解压→备份→原子替换→resource.hash 校验）。成功清 pending（按钮回
-    // disabled）；失败保留 pending（用户可重试）+ 错误详情。
+    // applyUpdate 受理异步化 dispatch。受理路径（IPC BusinessThread 上快速
+    // 返回）：前置校验（pending engaged + has_update + download_url 非空 +
+    // pi_dir 可解析）→ registry TryStart 防重入 → 拷贝 job 数据入后台线程执行
+    // PiUpdateService::ApplyUpdate（下载→解压→备份→原子替换），终态经
+    // DasProgressReporter::ReportFinal 推送（既有 SSE 字段增量通道）。受理
+    // 成功不清 pending_update_（job 完成时 session 可能已被驱逐重建，pending
+    // 清理交给下次 checkUpdate 覆盖；按钮防重入由 registry 状态驱动投影）。
     bool ApplyApplyUpdateCommand(
         AcceptedSettingsDto&                       settings,
         std::vector<PiDiagnosticDto>&              diagnostics,
@@ -5356,90 +5361,194 @@ namespace Das::Plugins::DasMaaPi
                 "adapter.interfacePath");
             return false;
         }
-        auto http = ResolveHttp(http_seam);
 
-        // 进度上报：seam（测试注入）优先，生产经 GetCurrentIpcContext
-        // Resolve 主进程 IDasProgressService。GetCurrentIpcContext 为空 /
-        // resolve 失败 / Start 失败 → 降级纯本地更新（不报进度），日志警告。
-        DasPtr<Das::ExportInterface::IDasProgressService> progress_service;
-        if (progress_service_seam != nullptr)
+        // http 归 shared_ptr 持有：slot 持有保证 registry 析构收尾时
+        // RequestCancel 可达。测试注入的 fake 由测试侧 shared_ptr 持有、
+        // .get() 喂 seam，此处构造非持有别名（无操作 deleter），杜绝双重
+        // 释放。
+        std::shared_ptr<PiHttpClient> http;
+        if (http_seam != nullptr)
         {
-            progress_service =
-                DasPtr<Das::ExportInterface::IDasProgressService>(
-                    progress_service_seam);
+            http =
+                std::shared_ptr<PiHttpClient>(http_seam, [](PiHttpClient*) {});
         }
-        else if (
-            auto* ctx = Das::Core::IPC::GetCurrentIpcContext(); ctx != nullptr)
+        else
         {
-            DasPtr<IDasBase> base;
-            const auto       rc = ctx->ResolveMainProcessInterfaceByName(
-                "das.progress",
-                base.Put());
-            if (DAS::IsOk(rc) && base)
+            http = std::make_shared<BeastHttpClient>();
+        }
+
+        auto& registry = UpdateJobRegistry::Instance();
+        auto  slot = registry.TryStart(*pi_dir, http);
+        if (slot == nullptr)
+        {
+            EmitDiagnostic(
+                diagnostics,
+                "error",
+                Translate("diagnostic.applyUpdateAlreadyRunning"),
+                DAS_E_MAAPI_UPDATE_APPLY_FAILED,
+                "applyUpdate");
+            return false;
+        }
+
+        // 受理成功后在后台线程执行；TryStart 之后任何异常都必须回滚
+        // running 标记，否则该 pi_dir 的更新入口被永久锁死。
+        try
+        {
+            // 进度上报：seam（测试注入）优先，生产经 GetCurrentIpcContext
+            // Resolve 主进程 IDasProgressService。GetCurrentIpcContext 为空 /
+            // resolve 失败 / Start 失败 → 降级纯本地更新（不报进度），日志
+            // 警告。Start 必须留在受理路径、线程构造之前——started_ 非
+            // atomic，线程构造建立 happens-before 后 job 线程只读。
+            DasPtr<Das::ExportInterface::IDasProgressService> progress_service;
+            if (progress_service_seam != nullptr)
             {
-                (void)base.As(progress_service);
+                progress_service =
+                    DasPtr<Das::ExportInterface::IDasProgressService>(
+                        progress_service_seam);
             }
-        }
-        if (!progress_service)
-        {
-            DAS_LOG_WARNING(
-                "ApplyUpdate: progress service unavailable, degrade to local "
-                "update");
-        }
-
-        // 更新期间真实经 IPC 上报字段增量（成对 AddCallback/RemoveCallback）。
-        // shared_ptr 管理：DasProgressCallbackImpl 内部持 weak_ptr 访问
-        // owner（跨进程 proxy 保活使其可能活得比 reporter 久），且析构
-        // RAII 兜底 RemoveCallback。
-        std::shared_ptr<DasProgressReporter> reporter;
-        if (progress_service && pending_update->has_value()
-            && !(*pending_update)->progress_key.empty())
-        {
-            reporter = std::make_shared<DasProgressReporter>(
-                (*pending_update)->progress_key,
-                progress_service);
-            if (!reporter->Start())
+            else if (
+                auto* ctx = Das::Core::IPC::GetCurrentIpcContext();
+                ctx != nullptr)
             {
-                reporter.reset();
+                DasPtr<IDasBase> base;
+                const auto       rc = ctx->ResolveMainProcessInterfaceByName(
+                    "das.progress",
+                    base.Put());
+                if (DAS::IsOk(rc) && base)
+                {
+                    (void)base.As(progress_service);
+                }
             }
-        }
-        ProgressReporter progress_cb;
-        if (reporter)
-        {
-            progress_cb = [reporter](const UpdateProgress& p)
-            { reporter->Report(p); };
-        }
+            if (!progress_service)
+            {
+                DAS_LOG_WARNING(
+                    "ApplyUpdate: progress service unavailable, degrade to "
+                    "local update");
+            }
 
-        const auto result = PiUpdateService::ApplyUpdate(
-            *pi_dir,
-            info,
-            *http.value,
-            settings.adapter.proxy_url.value_or(""),
-            settings.adapter.mirrorchyan_cdk.value_or(""),
-            /*boundary=*/nullptr,
-            progress_cb);
+            // 更新期间真实经 IPC 上报字段增量（成对
+            // AddCallback/RemoveCallback）。 shared_ptr
+            // 管理：DasProgressCallbackImpl 内部持 weak_ptr 访问 owner（跨进程
+            // proxy 保活使其可能活得比 reporter 久），且析构 RAII 兜底
+            // RemoveCallback。
+            std::shared_ptr<DasProgressReporter> reporter;
+            if (progress_service && pending_update->has_value()
+                && !(*pending_update)->progress_key.empty())
+            {
+                reporter = std::make_shared<DasProgressReporter>(
+                    (*pending_update)->progress_key,
+                    progress_service);
+                if (!reporter->Start())
+                {
+                    reporter.reset();
+                }
+            }
+            ProgressReporter progress_cb;
+            if (reporter)
+            {
+                progress_cb = [reporter](const UpdateProgress& p)
+                { reporter->Report(p); };
+            }
 
-        if (reporter)
-        {
-            reporter->Stop();
+            // job 全量值拷贝：job 线程绝不触碰 session / settings /
+            // diagnostics 等受理栈对象（session 可能在 job 期间被驱逐销毁）。
+            const PiUpdateInfo          job_info = info;
+            const std::filesystem::path job_pi_dir = *pi_dir;
+            const std::string           proxy_url =
+                settings.adapter.proxy_url.value_or("");
+            const std::string mirrorchyan_cdk =
+                settings.adapter.mirrorchyan_cdk.value_or("");
+
+            slot->worker = std::thread(
+                [slot,
+                 job_pi_dir,
+                 job_info,
+                 http,
+                 proxy_url,
+                 mirrorchyan_cdk,
+                 progress_cb,
+                 reporter]()
+                {
+                    // 后台线程绝不让异常逃逸（未捕获 → std::terminate 杀死
+                    // 整个 Host 进程）；filesystem 等异常就地映射失败终态。
+                    const auto result = [&]()
+                    {
+                        try
+                        {
+                            return PiUpdateService::ApplyUpdate(
+                                job_pi_dir,
+                                job_info,
+                                *http,
+                                proxy_url,
+                                mirrorchyan_cdk,
+                                /*boundary=*/nullptr,
+                                progress_cb);
+                        }
+                        catch (const std::exception& error)
+                        {
+                            DAS_LOG_ERROR(
+                                DAS::fmt::format(
+                                    "ApplyUpdate: background update job "
+                                    "exception version={} what={}",
+                                    job_info.version_name,
+                                    error.what())
+                                    .c_str());
+                            return DAS_E_FAIL;
+                        }
+                        catch (...)
+                        {
+                            DAS_LOG_ERROR(
+                                "ApplyUpdate: background update job unknown "
+                                "exception");
+                            return DAS_E_FAIL;
+                        }
+                    }();
+                    if (IsOk(result))
+                    {
+                        if (reporter)
+                        {
+                            reporter->ReportFinal(true, job_info.version_name);
+                        }
+                    }
+                    else
+                    {
+                        if (reporter)
+                        {
+                            const std::string failure_detail = DAS::fmt::format(
+                                "result={}",
+                                static_cast<int>(result));
+                            reporter->ReportFinal(false, failure_detail);
+                        }
+                        DAS_LOG_ERROR(
+                            DAS::fmt::format(
+                                "ApplyUpdate: background update job failed "
+                                "version={} result={}",
+                                job_info.version_name,
+                                static_cast<int>(result))
+                                .c_str());
+                    }
+                    if (reporter)
+                    {
+                        reporter->Stop();
+                    }
+                    UpdateJobRegistry::Instance().Finish(slot);
+                });
         }
-
-        if (IsFailed(result))
+        catch (...)
         {
-            // 失败保留 pending_update_（用户可重试）+ 携带错误详情。
+            registry.Finish(slot);
             EmitDiagnostic(
                 diagnostics,
                 "error",
                 Translate("diagnostic.applyUpdateFailed"),
-                result,
+                DAS_E_MAAPI_UPDATE_APPLY_FAILED,
                 "applyUpdate");
             return false;
         }
-        // 成功清 pending（按钮回 disabled）。缓存失效：MaaPI session 每次
-        // GetDocument/Compile/ApplyChange 都经 TryParseCatalog 内容感知重解析
-        // （89-02 [ASSUMED A4] 验证），替换后下一次请求自然读新
-        // interface.json， 无需显式失效调用。
-        pending_update->reset();
+        // 受理成功。pending_update_ 不清：job 完成时 session 可能已被
+        // Get-after- Apply 驱逐重建，内存清理无意义；pending 的清理由下次
+        // checkUpdate 覆盖（缓存失效经 TryParseCatalog
+        // 内容感知重解析自然生效）。
         return true;
     }
 
@@ -5564,8 +5673,21 @@ namespace Das::Plugins::DasMaaPi
                 &session.pending_update_,
                 http_seam,
                 progress_service_seam);
-            // applyUpdate 成功清 pending（既有语义保持），command_result
-            // nullopt。
+            // 受理成功自填 command_result {commandId, data:{accepted:true}}
+            // （前端分流：应用 document 但不关 SSE、保留 progressKey——下载
+            // 在后台执行，终态经既有 SSE 字段增量通道推送）。
+            if (result.ok)
+            {
+                yyjson::value cr(Das::Utils::MakeYyjsonObject());
+                auto          cr_obj = cr.as_object();
+                (*cr_obj)[std::string_view("commandId")] =
+                    JsonString("applyUpdate");
+                yyjson::value data(Das::Utils::MakeYyjsonObject());
+                auto          data_obj = data.as_object();
+                (*data_obj)[std::string_view("accepted")] = true;
+                (*cr_obj)[std::string_view("data")] = std::move(data);
+                result.command_result = std::move(cr);
+            }
             return result;
         }
         // discoverAdbDevices：扫描设备填 cache，command_result nullopt（设备
