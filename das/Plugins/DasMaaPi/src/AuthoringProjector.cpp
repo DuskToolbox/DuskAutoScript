@@ -5264,23 +5264,20 @@ namespace Das::Plugins::DasMaaPi
         return resolved;
     }
 
-    // 随机不可枚举 SSE 订阅 key：时间戳前缀 + mt19937 随机十六进制后缀
-    // （std::random_device 播种）。checkUpdate 成功响应时创建，前端经
-    // commandResult.data.progressKey 拿到后拼 SSE URL 订阅；applyUpdate 用
-    // 同一 key 上报进度。
+    // 随机不可枚举 SSE 订阅 key：全熵 std::random_device 生成 32 个十六进制
+    // 字符（128 bit）。key 是 /authoring/events/{key} 的唯一访问屏障，不用
+    // mt19937（非 CSPRNG，收集同进程 624×32bit 输出即可重建状态预测后续
+    // key，checkUpdate 天然提供多样本），也不掺可预测的时间戳前缀。
+    // checkUpdate 成功响应时创建，前端经 commandResult.data.progressKey 拿到
+    // 后拼 SSE URL 订阅；applyUpdate 用同一 key 上报进度。
     std::string GenerateProgressKey()
     {
-        const auto now =
-            std::chrono::steady_clock::now().time_since_epoch().count();
-        std::random_device                 rd;
-        std::mt19937                       gen(rd());
-        std::uniform_int_distribution<int> dist(0, 15);
-        static constexpr char              HEX[] = "0123456789abcdef";
-        std::ostringstream                 oss;
-        oss << std::hex << now;
-        for (int i = 0; i < 24; ++i)
+        std::random_device    rd;
+        static constexpr char HEX[] = "0123456789abcdef";
+        std::ostringstream    oss;
+        for (int i = 0; i < 32; ++i)
         {
-            oss << HEX[dist(gen)];
+            oss << HEX[rd() & 0xF];
         }
         return oss.str();
     }
