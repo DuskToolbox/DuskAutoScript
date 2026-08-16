@@ -1112,51 +1112,6 @@ namespace Das::Plugins::DasMaaPi
             }
         }
 
-        DasResult RunRequest(
-            bool                      verify_tls,
-            std::chrono::milliseconds timeout,
-            const std::string&        url,
-            const std::string&        proxy_url,
-            bool                      head_only,
-            std::string&              out_body,
-            int&                      out_status)
-        {
-            boost::asio::io_context io;
-            RequestOutcome          outcome;
-            boost::asio::co_spawn(
-                io,
-                DoRequest(
-                    url,
-                    proxy_url,
-                    head_only,
-                    verify_tls,
-                    timeout,
-                    out_body,
-                    out_status,
-                    outcome),
-                [&](std::exception_ptr e) { outcome.error = std::move(e); });
-            io.run();
-            if (outcome.error)
-            {
-                try
-                {
-                    std::rethrow_exception(outcome.error);
-                }
-                catch (const boost::system::system_error& e)
-                {
-                    outcome.result = MapSystemError(e.code());
-                    LogDiagnosticError(
-                        "BeastHttpClient request aborted: url="
-                        + RedactUrlForLog(url)
-                        + " error=" + e.code().message());
-                }
-                catch (...)
-                {
-                    outcome.result = DAS_E_FAIL;
-                }
-            }
-            return outcome.result;
-        }
     } // namespace
 
     DasResult ParseProxyUrl(std::string_view url, ProxyTarget& out)
@@ -1270,8 +1225,6 @@ namespace Das::Plugins::DasMaaPi
         const std::string& proxy_url)
     {
         return RunRequest(
-            verify_tls_certificate_,
-            timeout_,
             url,
             proxy_url,
             /*head_only=*/false,
@@ -1286,8 +1239,6 @@ namespace Das::Plugins::DasMaaPi
     {
         std::string unused_body;
         return RunRequest(
-            verify_tls_certificate_,
-            timeout_,
             url,
             proxy_url,
             /*head_only=*/true,
@@ -1360,6 +1311,57 @@ namespace Das::Plugins::DasMaaPi
                 outcome.result = MapSystemError(e.code());
                 LogDiagnosticError(
                     "BeastHttpClient stream request aborted: url="
+                    + RedactUrlForLog(url) + " error=" + e.code().message());
+            }
+            catch (...)
+            {
+                outcome.result = DAS_E_FAIL;
+            }
+        }
+        return outcome.result;
+    }
+
+    DasResult BeastHttpClient::RunRequest(
+        const std::string& url,
+        const std::string& proxy_url,
+        bool               head_only,
+        std::string&       out_body,
+        int&               out_status)
+    {
+        const auto state = std::make_shared<RequestState>();
+        {
+            const std::lock_guard<std::mutex> registration_lock(cancel_mutex_);
+            active_ = state;
+        }
+        RequestOutcome outcome;
+        boost::asio::co_spawn(
+            state->io,
+            DoRequest(
+                url,
+                proxy_url,
+                head_only,
+                verify_tls_certificate_,
+                timeout_,
+                out_body,
+                out_status,
+                outcome),
+            [&](std::exception_ptr e) { outcome.error = std::move(e); });
+        state->io.run();
+        {
+            const std::lock_guard<std::mutex> registration_lock(cancel_mutex_);
+            active_.reset();
+        }
+        if (outcome.error)
+        {
+            try
+            {
+                std::rethrow_exception(outcome.error);
+            }
+            catch (const boost::system::system_error& e)
+            {
+                outcome.result = MapSystemError(e.code());
+                LogDiagnosticError(
+                    "BeastHttpClient request aborted: url="
                     + RedactUrlForLog(url) + " error=" + e.code().message());
             }
             catch (...)

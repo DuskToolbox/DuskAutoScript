@@ -123,6 +123,13 @@ namespace Das::Plugins::DasMaaPi
         // 请求的 io_context。
         struct RequestState;
 
+        DasResult RunRequest(
+            const std::string& url,
+            const std::string& proxy_url,
+            bool               head_only,
+            std::string&       out_body,
+            int&               out_status);
+
         DasResult RunStreamRequest(
             const std::string&           url,
             const std::string&           proxy_url,
