@@ -379,11 +379,14 @@ namespace
         std::string   content;
         bool          deflate = false;
         std::uint32_t declared_uncompressed_size = 0;
+        std::uint32_t declared_crc = 0;
     };
 
     // 构造一个合法的 ZIP（stored / deflate），支持故意含 ../ 的穿越条目。
     // declared_uncompressed_size 非 0 时，zip 头中的 uncompressed size 字段
-    // 用该值（可伪造远超真实内容大小的声明，用于解压炸弹测试）。
+    // 用该值（可伪造远超真实内容大小的声明，用于解压炸弹测试）；
+    // declared_crc 非 0 时，local header 与 central directory 的 CRC 字段
+    // 都写该声明值（伪造与实际内容不符的 CRC，用于损坏包拒绝测试）。
     std::string BuildTestZip(const std::vector<TestZipEntry>& entries)
     {
         std::string local_section;
@@ -396,10 +399,12 @@ namespace
                 entry.declared_uncompressed_size != 0
                     ? entry.declared_uncompressed_size
                     : static_cast<std::uint32_t>(entry.content.size());
-            const std::uint32_t crc = crc32(
+            const std::uint32_t actual_crc = crc32(
                 0,
                 reinterpret_cast<const Bytef*>(entry.content.data()),
                 static_cast<uInt>(entry.content.size()));
+            const auto crc =
+                entry.declared_crc != 0 ? entry.declared_crc : actual_crc;
 
             const auto local_header_offset =
                 static_cast<std::uint32_t>(local_section.size());
@@ -850,6 +855,93 @@ TEST(PiUpdateService, ApplyUpdateInvalidZipPreservesOldContent)
         std::filesystem::path(project.Dir().string() + "_backup_1.0.0");
     EXPECT_FALSE(std::filesystem::exists(backup_dir));
     // .update 临时目录已清理。
+    const auto update_root = project.Dir().parent_path()
+                             / (project.Dir().filename().string() + ".update");
+    EXPECT_FALSE(std::filesystem::exists(update_root));
+}
+
+TEST(PiUpdateService, ApplyUpdateRejectsStoredEntryWithCorruptCrc)
+{
+    // 声明 CRC 与实际内容不符（stored 条目）→ 解压路径的 CRC 校验必须
+    // 拒绝该条目，整体失败且旧内容保留。
+    FakePiHttpClient http;
+    http.AddRoute(
+        "/download/corrupt-stored.zip",
+        BuildTestZip({
+            TestZipEntry{
+                "interface.json",
+                "{\"version\":\"1.2.0\"}",
+                /*deflate=*/false,
+                /*declared_uncompressed_size=*/0,
+                /*declared_crc=*/0xDEADBEEF},
+        }));
+
+    TempPiProject project;
+    project.WriteInterface(MakeInterface("1.0.0", "", ""));
+
+    PiUpdateInfo info;
+    info.version_name = "1.2.0";
+    info.download_url = "https://example.com/download/corrupt-stored.zip";
+
+    const auto result = PiUpdateService::ApplyUpdate(project.Dir(), info, http);
+
+    EXPECT_EQ(result, DAS_E_MAAPI_UPDATE_APPLY_FAILED);
+
+    // 旧内容未被替换（解压阶段失败，pi_dir 未动）。
+    std::ifstream old_interface(project.Dir() / "interface.json");
+    std::string   content(
+        (std::istreambuf_iterator<char>(old_interface)),
+        std::istreambuf_iterator<char>());
+    EXPECT_NE(content.find("1.0.0"), std::string::npos);
+    // 未生成 backup。
+    const auto backup_dir =
+        std::filesystem::path(project.Dir().string() + "_backup_1.0.0");
+    EXPECT_FALSE(std::filesystem::exists(backup_dir));
+    // .update 临时目录（含输出目录）已清理。
+    const auto update_root = project.Dir().parent_path()
+                             / (project.Dir().filename().string() + ".update");
+    EXPECT_FALSE(std::filesystem::exists(update_root));
+}
+
+TEST(PiUpdateService, ApplyUpdateRejectsDeflateEntryWithCorruptCrc)
+{
+    // 声明 CRC 与实际内容不符（deflate 条目）→ 解压路径的 CRC 校验必须
+    // 拒绝该条目，整体失败且旧内容保留。
+    FakePiHttpClient http;
+    http.AddRoute(
+        "/download/corrupt-deflate.zip",
+        BuildTestZip({
+            TestZipEntry{
+                "interface.json",
+                "{\"version\":\"1.2.0\"}",
+                /*deflate=*/true,
+                /*declared_uncompressed_size=*/0,
+                /*declared_crc=*/0xDEADBEEF},
+            TestZipEntry{"config.json", "{\"speed\":10}"},
+        }));
+
+    TempPiProject project;
+    project.WriteInterface(MakeInterface("1.0.0", "", ""));
+
+    PiUpdateInfo info;
+    info.version_name = "1.2.0";
+    info.download_url = "https://example.com/download/corrupt-deflate.zip";
+
+    const auto result = PiUpdateService::ApplyUpdate(project.Dir(), info, http);
+
+    EXPECT_EQ(result, DAS_E_MAAPI_UPDATE_APPLY_FAILED);
+
+    // 旧内容未被替换。
+    std::ifstream old_interface(project.Dir() / "interface.json");
+    std::string   content(
+        (std::istreambuf_iterator<char>(old_interface)),
+        std::istreambuf_iterator<char>());
+    EXPECT_NE(content.find("1.0.0"), std::string::npos);
+    // 未生成 backup。
+    const auto backup_dir =
+        std::filesystem::path(project.Dir().string() + "_backup_1.0.0");
+    EXPECT_FALSE(std::filesystem::exists(backup_dir));
+    // .update 临时目录（含输出目录）已清理。
     const auto update_root = project.Dir().parent_path()
                              / (project.Dir().filename().string() + ".update");
     EXPECT_FALSE(std::filesystem::exists(update_root));
