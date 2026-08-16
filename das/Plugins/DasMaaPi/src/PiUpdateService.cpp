@@ -474,12 +474,19 @@ namespace Das::Plugins::DasMaaPi
                 auto data = ParseMirrorChyanResponse(body);
                 if (!data)
                 {
+                    LogWarning(
+                        "PiUpdateService: MirrorChyan response unparseable: "
+                        + base);
                     continue;
                 }
                 if (data->code == 0)
                 {
                     if (data->version_name.empty())
                     {
+                        LogWarning(
+                            "PiUpdateService: MirrorChyan returned empty "
+                            "version_name: "
+                            + base);
                         continue;
                     }
                     out.version_name = data->version_name;
@@ -1146,6 +1153,15 @@ namespace Das::Plugins::DasMaaPi
             {
                 return DAS_S_OK;
             }
+            // GitHub 通道失败但已留下有效版本信息（release 拿到、asset/
+            // 直链匹配失败）→ 检查结果仍成立，返回无下载链接的成功。
+            if (out.has_update && !out.version_name.empty())
+            {
+                LogWarning(
+                    "PiUpdateService: github channel failed to resolve a "
+                    "download url; update info kept without one");
+                return DAS_S_OK;
+            }
             return DAS_E_MAAPI_UPDATE_CHECK_FAILED;
         }
 
@@ -1177,7 +1193,11 @@ namespace Das::Plugins::DasMaaPi
             // MirrorChyan 失败（网络 / 无版本信息）→ GitHub 兜底。
         }
 
-        // GitHub 兜底（D-89-02 / [ASSUMED A2]）。
+        // GitHub 兜底。GitHub 只负责补下载链接：
+        // 兜底失败时若已留下有效版本信息（MirrorChyan 无 CDK 查到新版本
+        // 但无下载链接 / GitHub 自身拿到 release 却无匹配 asset），检查结果
+        // 仍成立——返回成功，download_url 留空，applyUpdate 投影据此禁用
+        // 按钮；用户填 CDK 重查或经代理重试即可拿到链接。
         if (!meta.github.empty())
         {
             const auto github_result = CheckGithub(meta, http, proxy, out);
@@ -1185,7 +1205,15 @@ namespace Das::Plugins::DasMaaPi
             {
                 return DAS_S_OK;
             }
-            // GitHub 兜底失败 → 落到底部统一错误返回。
+            if (out.has_update && !out.version_name.empty())
+            {
+                LogWarning(
+                    "PiUpdateService: GitHub fallback failed to resolve a "
+                    "download url; update info kept without one: version = "
+                    + out.version_name);
+                return DAS_S_OK;
+            }
+            // GitHub 兜底失败且无版本信息 → 落到底部统一错误返回。
         }
 
         // 无可用来源 / 增量更新暂不支持且无 GitHub 兜底。

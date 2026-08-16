@@ -634,6 +634,66 @@ TEST(PiUpdateService, CheckUpdateIncrementalDegradesToGithubFull)
         "test-project-win-x86_64-v1.2.0.zip");
 }
 
+TEST(PiUpdateService, CheckUpdateMirrorNoUrlGithubFailsKeepsUpdateInfo)
+{
+    // 无 CDK 匿名查询：MirrorChyan code=0 查到新版本但 data.url 空 → 降级
+    // GitHub 补链接；GitHub 也不可用（无路由 → 404）→ 版本信息仍有效，
+    // CheckUpdate 返回成功（download_url 留空），不当成检查失败。
+    FakePiHttpClient http;
+    http.AddRoute(
+        "/api/resources/rid-nocdk/latest",
+        MirrorResponse(
+            "1.2.0",
+            /*code=*/0,
+            /*url=*/"",
+            /*sha256=*/"",
+            /*update_type=*/""));
+
+    TempPiProject project;
+    project.WriteInterface(
+        MakeInterface("1.0.0", "https://github.com/owner/repo", "rid-nocdk"));
+
+    PiUpdateInfo info;
+    const auto result = PiUpdateService::CheckUpdate(project.Dir(), http, info);
+
+    EXPECT_EQ(result, DAS_S_OK);
+    EXPECT_TRUE(info.has_update);
+    EXPECT_EQ(info.version_name, "1.2.0");
+    EXPECT_TRUE(info.download_url.empty());
+    EXPECT_FALSE(info.error_code.has_value());
+    // GitHub 兜底确实被尝试过。
+    EXPECT_EQ(http.CountRequestsWith("/repos/owner/repo"), 1);
+}
+
+TEST(PiUpdateService, CheckUpdateGithubChannelFailureKeepsVersionInfo)
+{
+    // updateChannel=github 单通道：GitHub 拿到 release 但 asset 匹配失败 +
+    // 直链 HEAD 404 → 检查结果仍成立（版本信息保留、无下载链接）。
+    FakePiHttpClient http;
+    // asset 名不带 os/arch 别名 → MatchGithubAsset 无匹配。
+    http.AddRoute(
+        "/repos/owner/repo/releases/latest",
+        GithubResponse("v1.2.0", "source-code-only.tar.gz"));
+
+    TempPiProject project;
+    project.WriteInterface(
+        MakeInterface("1.0.0", "https://github.com/owner/repo", "rid-x"));
+
+    PiUpdateInfo info;
+    const auto   result = PiUpdateService::CheckUpdate(
+        project.Dir(),
+        http,
+        info,
+        /*proxy_url=*/{},
+        /*mirrorchyan_cdk=*/{},
+        /*update_channel=*/"github");
+
+    EXPECT_EQ(result, DAS_S_OK);
+    EXPECT_TRUE(info.has_update);
+    EXPECT_EQ(info.version_name, "v1.2.0");
+    EXPECT_TRUE(info.download_url.empty());
+}
+
 // ---------------------------------------------------------------------
 // ApplyUpdate（D-89-03 下载 → 安全解压 → 备份 → 原子替换 → 回滚）
 // ---------------------------------------------------------------------
