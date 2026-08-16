@@ -15,14 +15,18 @@
 
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <memory>
+#include <mutex>
 #include <sstream>
 #include <string>
 #include <thread>
 #include <utility>
+#include <vector>
 
 namespace
 {
@@ -951,6 +955,146 @@ v6yQpUYtQbbVSIHbNlBhfp8=
             (std::istreambuf_iterator<char>(ifs)),
             std::istreambuf_iterator<char>());
         EXPECT_EQ(content, "{\"redirected\":true}");
+        std::filesystem::remove(out_path, ec);
+    }
+
+    // ---------------------------------------------------------------------
+    // RequestCancel：挂起连接上取消在途请求。断言 5 秒内有界返回（远小于
+    // 15s per-op 超时——等待超时兜底即失败），并以 ASAN 干净退出验证被放弃
+    // 协程帧随 io_context 析构的销毁安全。
+    // ---------------------------------------------------------------------
+
+    // 接受连接后不写任何字节的服务器：客户端阻塞在响应读取上，直到被取消
+    // 或 per-op 超时。取消用例的驱动源。
+    class HangingResponseServer
+    {
+    public:
+        ~HangingResponseServer() { Stop(); }
+
+        void Start()
+        {
+            acceptor_ = std::make_unique<boost::asio::ip::tcp::acceptor>(
+                io_,
+                boost::asio::ip::tcp::endpoint(
+                    boost::asio::ip::address_v4::loopback(),
+                    0));
+            port_ = acceptor_->local_endpoint().port();
+            running_.store(true);
+            thread_ = std::thread([this] { AcceptLoop(); });
+        }
+
+        void Stop()
+        {
+            if (!running_.exchange(false))
+            {
+                return;
+            }
+            if (acceptor_)
+            {
+                acceptor_->close();
+            }
+            if (thread_.joinable())
+            {
+                thread_.join();
+            }
+            // 关闭所有挂起连接：仍阻塞的客户端读会以 EOF 结束。
+            const std::lock_guard<std::mutex> parked_lock(parked_mutex_);
+            parked_.clear();
+        }
+
+        std::uint16_t Port() const { return port_; }
+        int           AcceptedCount() const { return accepted_count_.load(); }
+
+    private:
+        void AcceptLoop()
+        {
+            while (running_.load())
+            {
+                boost::system::error_code    ec;
+                boost::asio::ip::tcp::socket sock = acceptor_->accept(ec);
+                if (ec || !running_.load())
+                {
+                    break;
+                }
+                {
+                    const std::lock_guard<std::mutex> parked_lock(
+                        parked_mutex_);
+                    parked_.push_back(std::move(sock));
+                }
+                accepted_count_.fetch_add(1);
+            }
+        }
+
+        boost::asio::io_context                         io_;
+        std::unique_ptr<boost::asio::ip::tcp::acceptor> acceptor_;
+        std::thread                                     thread_;
+        std::atomic<bool>                               running_{false};
+        std::uint16_t                                   port_ = 0;
+        std::mutex                                      parked_mutex_;
+        std::vector<boost::asio::ip::tcp::socket>       parked_;
+        std::atomic<int>                                accepted_count_{0};
+    };
+
+    // 有界轮询等待谓词为真；超时返回 false，由调用方断言。
+    bool WaitFor(
+        const std::function<bool()>& predicate,
+        std::chrono::milliseconds    timeout)
+    {
+        const auto deadline = std::chrono::steady_clock::now() + timeout;
+        while (std::chrono::steady_clock::now() < deadline)
+        {
+            if (predicate())
+            {
+                return true;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        return predicate();
+    }
+
+    TEST(PiHttpClient, RequestCancelInterruptsHangingDownloadStream)
+    {
+        HangingResponseServer server;
+        server.Start();
+
+        BeastHttpClient client;
+        const auto      out_path = std::filesystem::temp_directory_path()
+                                   / "das_pi_download_cancel_test.bin";
+        std::error_code ec;
+        std::filesystem::remove(out_path, ec);
+
+        std::atomic<bool> request_returned{false};
+        DasResult         result = DAS_S_OK;
+        int               status = 0;
+        const auto  url = "http://127.0.0.1:" + std::to_string(server.Port())
+                          + "/package.zip";
+        std::thread request_thread(
+            [&]()
+            {
+                result = client.DownloadStream(
+                    url,
+                    out_path,
+                    [](const DownloadProgress&) {},
+                    status);
+                request_returned.store(true);
+            });
+
+        // 服务器收到连接即证明客户端已登记在途状态并阻塞在响应读取上。
+        ASSERT_TRUE(WaitFor(
+            [&] { return server.AcceptedCount() >= 1; },
+            std::chrono::seconds(5)));
+        client.RequestCancel();
+
+        // 5 秒内有界返回（远小于 15s per-op 超时——等待超时兜底即失败）。
+        const bool returned_within_bound = WaitFor(
+            [&] { return request_returned.load(); },
+            std::chrono::seconds(5));
+        request_thread.join();
+        EXPECT_TRUE(returned_within_bound);
+        // 协程被放弃，outcome 保持默认失败码。
+        EXPECT_EQ(result, DAS_E_FAIL);
+
+        // 取消后客户端正常析构、进程正常退出（ASAN 干净）即本用例收尾。
         std::filesystem::remove(out_path, ec);
     }
 } // namespace
