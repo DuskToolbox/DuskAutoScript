@@ -557,6 +557,7 @@ JSON 配置格式:
             all_outputs.append(f"{node_output_dir}/index.cjs")
             all_outputs.append(f"{node_output_dir}/index.d.ts")
             all_outputs.append(f"{node_output_dir}/bin/das-node-host.cjs")
+            all_outputs.append(f"{node_output_dir}/das_napi_loop_detach.h")
             all_outputs.append(f"{node_output_dir}/{node_stem}.cpp")
             all_outputs.append(f"{node_output_dir}/{node_stem}.d.ts")
             all_outputs.append(f"{node_output_dir}/{node_stem}.js")

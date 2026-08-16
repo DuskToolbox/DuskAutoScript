@@ -537,6 +537,66 @@ class TestNapiGenerator(unittest.TestCase):
         self.assertNotIn("shutdownPlugin", combined_public)
         self.assertNotIn("onPluginShutdown", combined_public)
 
+    def test_napi_shutdown_releases_loop_refs_deterministically(self):
+        """shutdown 链路归还 TSF 事件循环引用，不再依赖 GC finalizer。
+
+        director / 异步完成 hook 的 TSF 不释放，JS 事件循环永不排空，
+        node host 在 IPC 清理完后仍不退出，HostLauncher 只能强杀。
+        """
+        artifacts = generate_napi_artifacts(
+            _phase74_contract_doc(),
+            package_name="das-core",
+            addon_name="das_core_napi",
+        )
+
+        # 事件循环引用注册表（助手头）被生成 cpp 引号 include
+        self.assertIn('#include "das_napi_loop_detach.h"', artifacts.cpp)
+
+        # on_before_shutdown 钩子填充：停机时逐个归还
+        shutdown_hook = _cpp_free_function_block(
+            artifacts.cpp,
+            "OnNodeHostBeforeShutdown",
+        )
+        self.assertIn("DasNapiDetachableLoopRef::DetachAll();", shutdown_hook)
+
+        # director：注册 + 幂等 detach + 停机后新调用短路 + 析构复用同路径
+        director_base = _cpp_class_block(artifacts.cpp, "NapiDirectorBase")
+        self.assertIn(
+            "class NapiDirectorBase : public DasNapiDetachableLoopRef {",
+            artifacts.cpp,
+        )
+        self.assertIn("DasNapiDetachableLoopRef::Register(this);", director_base)
+        self.assertIn("void DetachFromLoop() override {", director_base)
+        self.assertIn(
+            "detached_.compare_exchange_strong(",
+            director_base,
+        )
+        self.assertIn("tsfn_ = Napi::ThreadSafeFunction();", director_base)
+        self.assertIn(
+            "director detached during shutdown",
+            director_base,
+        )
+        # dtor 不再裸 Release，统一走幂等 detach；注销先于成员销毁
+        # （DetachAll 快照并发触发虚调用时防 vptr 已回退基类）
+        self.assertIn(
+            "DasNapiDetachableLoopRef::Unregister(this);",
+            director_base,
+        )
+        self.assertIn(
+            "callbacks_.Reset();\n        DetachFromLoop();",
+            director_base,
+        )
+
+        # 异步完成 hook 同样纳入注册表
+        hook_block = _cpp_class_block(artifacts.cpp, "DasNapiAsyncCompletionHook")
+        self.assertIn("public DasNapiDetachableLoopRef {", artifacts.cpp)
+        self.assertIn("DasNapiDetachableLoopRef::Register(this);", hook_block)
+        self.assertIn("void DetachFromLoop() override {", hook_block)
+        self.assertIn(
+            "DasNapiDetachableLoopRef::Unregister(this);\n        DetachFromLoop();",
+            hook_block,
+        )
+
     def test_napi_generator_public_class_matches_function_helper(self):
         doc = _sample_doc()
 

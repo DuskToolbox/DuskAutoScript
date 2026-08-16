@@ -19,6 +19,10 @@ from shared_utils import idl_path_to_header_name
 NODE_HOST_SCRIPT_NAME = "das-node-host.cjs"
 NODE_HOST_SCRIPT_SOURCE = Path(__file__).parent / "node_host" / NODE_HOST_SCRIPT_NAME
 NODE_PACKAGE_HOST_SCRIPT = f"bin/{NODE_HOST_SCRIPT_NAME}"
+NODE_LOOP_DETACH_HEADER_NAME = "das_napi_loop_detach.h"
+NODE_LOOP_DETACH_HEADER_SOURCE = (
+    Path(__file__).parent / "node_host" / NODE_LOOP_DETACH_HEADER_NAME
+)
 
 
 def _node_package_json(package_name: str) -> str:
@@ -201,6 +205,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         _write_output(output_dir, "index.cjs", _node_index_cjs(addon_name))
         _write_output(output_dir, "index.d.ts", _node_index_dts(addon_name))
         _copy_output(output_dir, NODE_HOST_SCRIPT_SOURCE, NODE_PACKAGE_HOST_SCRIPT)
+        # 事件循环引用注册表：生成 cpp 以引号 include 引用（同目录），
+        # shutdown 链路经它确定性归还 TSF 的 Node 事件循环引用
+        _copy_output(
+            output_dir, NODE_LOOP_DETACH_HEADER_SOURCE, NODE_LOOP_DETACH_HEADER_NAME
+        )
     except OSError as exc:
         print(f"Error writing NAPI output: {exc}", file=sys.stderr)
         return 4
