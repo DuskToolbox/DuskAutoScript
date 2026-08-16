@@ -99,13 +99,17 @@ function(_download_and_config_libzip)
     set(CMAKE_FOLDER "Das3rd/libzip")
     message(STATUS "Downloading and configuring libzip (VERSION = ${DAS_LIBZIP_VERSION})")
     # libzip 顶层 cmake_minimum_required(3.10) 把 CMP0077 置 OLD：函数内
-    # 普通 set() 会被 option() 的 OLD 语义清掉并回填默认值，必须以
-    # CACHE FORCE 钉住（zlib-ng 的普通变量范式在它身上不成立）。
+    # 普通 set() 会被 option() 的 OLD 语义清掉并回填默认值。以
+    # CMAKE_POLICY_DEFAULT_CMP0077=NEW 让子项目按 NEW 语义执行（option()
+    # 尊重已存在的普通变量），BUILD_SHARED_LIBS 即回到 zlib-ng 的局部普通
+    # 变量范式，不再以 CACHE FORCE 全局钉 cache（那会把「libzip 的需求」
+    # 泄漏成其后所有 FetchContent 子项目的共享/静态默认）。
     # 静态最小配置：libzip 的 find_package(ZLIB) 经项目 cmake/FindZLIB.cmake
     # 命中 zlib-ng，压缩内核唯一。可选压缩后端（bzip2/lzma/zstd）与可选
     # 加密后端全关，仅保留 Windows CNG——平台判定由 libzip 内部 WIN32
     # 守卫承担，非 Windows 仅产生一条良性 warning 且 AES 禁用。
-    set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+    set(CMAKE_POLICY_DEFAULT_CMP0077 NEW)
+    set(BUILD_SHARED_LIBS OFF)
     set(CMAKE_POSITION_INDEPENDENT_CODE ON)
     set(BUILD_TESTING OFF)
     set(ENABLE_BZIP2 OFF CACHE BOOL "" FORCE)
