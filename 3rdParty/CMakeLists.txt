@@ -124,9 +124,12 @@ function(_download_and_config_libzip)
     set(LIBZIP_DO_INSTALL OFF CACHE BOOL "" FORCE)
     # 不钉下载哈希：GitHub release 资产重传会改变哈希，钉死反而断构建
     # （与 googletest/sml 等既有先例一致）。
+    # SYSTEM：zip.h 使用 clang 内建 _Nullable/_Nonnull 注解，非 Apple
+    # 目标上属于扩展——系统头路径使 -Wpedantic 下包含它的目标免告警。
     FetchContent_Declare(
             libzip
-            URL "${GITHUB_MIRROR_URL}/nih-at/libzip/releases/download/v${DAS_LIBZIP_VERSION}/libzip-1.11.4.tar.gz")
+            URL "${GITHUB_MIRROR_URL}/nih-at/libzip/releases/download/v${DAS_LIBZIP_VERSION}/libzip-1.11.4.tar.gz"
+            SYSTEM)
     FetchContent_MakeAvailable(libzip)
     target_link_libraries(Das3rdParty INTERFACE libzip::zip)
 endfunction()
