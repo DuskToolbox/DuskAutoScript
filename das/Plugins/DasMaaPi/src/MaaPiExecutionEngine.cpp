@@ -4,6 +4,7 @@
 #include <das/Utils/DasJsonCore.h>
 
 #include <algorithm>
+#include <cctype>
 #include <string>
 
 namespace Das::Plugins::DasMaaPi
@@ -18,6 +19,37 @@ namespace Das::Plugins::DasMaaPi
             }
             bool can_stop = false;
             return DAS::IsOk(stop_token->StopRequested(&can_stop)) && can_stop;
+        }
+
+        // 所选控制器（settings 选择或 catalog 首项默认，镜像 CompileMaapi
+        // 的解析顺序）是否 Adb 类型。大小写不敏感，与
+        // NormalizeControllerInitParams 的 ToLower(controller_type) 对齐。
+        bool IsAdbControllerSelected(
+            const PiCatalog&           catalog,
+            const AcceptedSettingsDto& settings)
+        {
+            const std::string controller_name =
+                settings.pi.controller_name.value_or(
+                    catalog.controllers.empty()
+                        ? std::string{}
+                        : catalog.controllers.front().dto.name);
+            const auto controller_it = std::find_if(
+                catalog.controllers.begin(),
+                catalog.controllers.end(),
+                [&](const PiController& item)
+                { return item.dto.name == controller_name; });
+            if (controller_it == catalog.controllers.end())
+            {
+                return false;
+            }
+            std::string controller_type = controller_it->dto.type;
+            std::transform(
+                controller_type.begin(),
+                controller_type.end(),
+                controller_type.begin(),
+                [](unsigned char character)
+                { return static_cast<char>(std::tolower(character)); });
+            return controller_type == "adb";
         }
 
         MaapiPiOptionSettingsDto BuildOptionFromYyjson(
@@ -227,7 +259,56 @@ namespace Das::Plugins::DasMaaPi
 
         auto settings = BuildMinimalSettings(input, catalog);
 
-        auto compile_result = CompileMaapi(settings, catalog, "execute");
+        // PI v2 的 controller.adb 对象不含 address（协议：设备由客户端
+        // 运行时发现），Adb 控制器从 raw_json 只能解析出空 address，真实
+        // 边界会在 MaaAdbControllerCreate 处拒绝。设备解析放在与
+        // PI_MISSING / TASK_MISSING 同层的执行输入校验段：任务设置必须
+        // 携带用户显式选择的 adbDevice（address），且该 address 必须在
+        // 执行期 Toolkit 扫描结果中（六字段 adb_path/screencap/input/
+        // config 只能运行时取，不持久化）。不做静默自动选设备——headless
+        // 调度跑错设备的代价远大于显性失败。
+        std::vector<AdbDeviceInfo> discovered_devices;
+        if (IsAdbControllerSelected(catalog, settings))
+        {
+            if (input.adb_device.empty())
+            {
+                output.das_result = DAS_E_MAAPI_ADB_DEVICE_MISSING;
+                output.error_message = "Adb device is not selected";
+                output.diagnostics.emplace_back(
+                    MaaRuntimeDiagnostic{
+                        "error",
+                        "adb-device-missing",
+                        "Adb controller requires a selected device; set "
+                        "'adbDevice' in the task settings",
+                        std::nullopt});
+                return output;
+            }
+            discovered_devices = boundary.FindAdbDevices();
+            const auto device_it = std::find_if(
+                discovered_devices.begin(),
+                discovered_devices.end(),
+                [&](const AdbDeviceInfo& info)
+                { return info.address == input.adb_device; });
+            if (device_it == discovered_devices.end())
+            {
+                output.das_result = DAS_E_MAAPI_ADB_DEVICE_MISSING;
+                output.error_message =
+                    "Selected Adb device not found: " + input.adb_device;
+                output.diagnostics.emplace_back(
+                    MaaRuntimeDiagnostic{
+                        "error",
+                        "adb-device-not-found",
+                        "Selected Adb device '" + input.adb_device
+                            + "' is absent from the Toolkit scan; check the "
+                              "device connection or re-select the device",
+                        std::nullopt});
+                return output;
+            }
+            settings.pi.controller_adb_device = input.adb_device;
+        }
+
+        auto compile_result =
+            CompileMaapi(settings, catalog, "execute", &discovered_devices);
 
         if (!compile_result.ok || !compile_result.execution_input)
         {

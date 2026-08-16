@@ -2,12 +2,14 @@
 
 #include <das/DasApi.h>
 #include <das/DasPtr.hpp>
+#include <das/Plugins/DasMaaPi/AdbDeviceFinder.h>
 
 #include <cstdint>
 #include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace Das::Plugins::DasMaaPi
 {
@@ -166,6 +168,16 @@ namespace Das::Plugins::DasMaaPi
             std::string_view  path) = 0;
         virtual std::optional<std::string> GetResourceHash(
             MaaResourceHandle resource) = 0;
+
+        // Discover ADB devices via MaaToolkit (cross-platform Toolkit family,
+        // runtime-resolved through MaaDynamicSymbols inside
+        // DefaultAdbDeviceEnumerator). Sits on this boundary because the
+        // Toolkit ships with MaaFW — same external world as the C API — and
+        // the ExecutionEngine resolves the user-selected device against this
+        // scan before compiling the execution envelope (PI v2 keeps the
+        // address out of interface.json; the client owns runtime discovery).
+        // Degrades to an empty list when the Toolkit is unavailable.
+        virtual std::vector<AdbDeviceInfo> FindAdbDevices() = 0;
 
         // Unified typed dispatch: fans out by params.controller_type to the
         // matching typed block (adb/dbg are hard-linked cross-platform core;

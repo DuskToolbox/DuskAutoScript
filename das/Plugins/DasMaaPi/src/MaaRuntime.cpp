@@ -179,6 +179,11 @@ namespace Das::Plugins::DasMaaPi
                 return value ? std::optional<std::string>(value) : std::nullopt;
             }
 
+            std::vector<AdbDeviceInfo> FindAdbDevices() override
+            {
+                return FindAllAdbDevices(DefaultAdbDeviceEnumerator());
+            }
+
             CreateControllerResult CreateControllerFromParams(
                 const ControllerSpec&       spec,
                 const ControllerInitParams& params) override
@@ -974,6 +979,15 @@ namespace Das::Plugins::DasMaaPi
                 return std::nullopt;
             }
 
+            std::vector<AdbDeviceInfo> FindAdbDevices() override
+            {
+                // Real Toolkit unavailable in the disabled-boundary test
+                // target — an empty scan keeps the engine's device
+                // resolution on its explicit adb-device-not-found failure
+                // path instead of crashing.
+                return {};
+            }
+
             CreateControllerResult CreateControllerFromParams(
                 const ControllerSpec&,
                 const ControllerInitParams&) override
@@ -1617,6 +1631,35 @@ namespace Das::Plugins::DasMaaPi
                 result,
                 "invalid-envelope",
                 "Execution envelope is not supported by the MAAPI runtime");
+            return result;
+        }
+
+        // PI v2 的 controller.adb 对象不含 address（设备由客户端运行时发现，
+        // 协议 L168-171）。物化时未选设备的 envelope 携带空 address，真实边界
+        // 只会在 MaaAdbControllerCreate 处报 "requires a non-empty address"——
+        // 用户无从知道去哪修。执行输入校验段显性拒绝：诊断走
+        // adb-device-missing（i18n 提示重新扫描并选择设备），与 graph 执行
+        // 路径（MaaPiExecutionEngine 编译前的设备解析）同码同语义。
+        // （Lower helper 位于 prod-only 宏分支内，这里自带 ASCII 小写化。）
+        std::string controller_type = envelope.maapi.controller.type;
+        std::transform(
+            controller_type.begin(),
+            controller_type.end(),
+            controller_type.begin(),
+            [](unsigned char character)
+            { return static_cast<char>(std::tolower(character)); });
+        if (controller_type == "adb"
+            && envelope.maapi.controller.address.empty()
+            && (!envelope.maapi.controller_init_params
+                || !envelope.maapi.controller_init_params->adb
+                || envelope.maapi.controller_init_params->adb->address.empty()))
+        {
+            result.das_result = DAS_E_MAAPI_ADB_DEVICE_MISSING;
+            AddDiagnostic(
+                result,
+                "adb-device-missing",
+                "Adb controller requires a selected device; re-materialize "
+                "the task after scanning and selecting an ADB device");
             return result;
         }
 
@@ -2324,10 +2367,33 @@ namespace Das::Plugins::DasMaaPi
             // 诊断行 i18n：maapi.diagnostic.<code> key，miss 回退原始英文
             // message；code 原样保留（稳定标识，日志可 grep）。
             // provider_code 数值语言中立，始终附加。
+            // 模板可含 {0} 占位：填原始英文 message（携带 pretask 名、
+            // OS spawn 错误、设备 address 等动态细节）——纯文案模板不含
+            // {0} 时行为不变（整行替换），避免翻译遮蔽排障所需信息。
             const auto line_tmpl = TranslatePluginKey(
                 ("maapi.diagnostic." + diagnostic.code).c_str());
-            std::string line =
-                !line_tmpl.empty() ? line_tmpl : diagnostic.message;
+            const std::string& original_message = diagnostic.message;
+            std::string        line;
+            if (!line_tmpl.empty())
+            {
+                if (line_tmpl.find("{0}") != std::string::npos
+                    && !original_message.empty())
+                {
+                    // make_format_args 持引用而非拥有：参数须是具名局部变量，
+                    // 生命周期覆盖 vformat 调用（禁临时量）。
+                    line = DAS_FMT_NS::vformat(
+                        std::string_view(line_tmpl),
+                        DAS_FMT_NS::make_format_args(original_message));
+                }
+                else
+                {
+                    line = line_tmpl;
+                }
+            }
+            else
+            {
+                line = original_message;
+            }
             if (diagnostic.provider_code)
             {
                 line += DAS_FMT_NS::format(

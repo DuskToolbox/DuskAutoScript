@@ -8387,6 +8387,64 @@ TEST(MaapiProjectionTest, SetValue_ScheduleKind_RoutesToAcceptedProperties)
     EXPECT_EQ(CountFieldsWithName(document, "schedule.intervalMinutes"), 0u);
 }
 
+// setValue target=document fieldName=adbDevice 路由到
+// acceptedProperties.pi.controller_adb_device（用户选择的设备 address，Adb
+// 控制器执行时经 device_cache 匹配六字段的唯一持久化键）。修复前该字段
+// 落入 setValueFieldUnknownDocument fallback——UI 的设备 dropdown 选择
+// 报「字段对 document 目标未知」且写不进设置。
+TEST(MaapiProjectionTest, SetValue_AdbDevice_RoutesToControllerAdbDevice)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto                catalog = MakeNeutralProjectionMockCatalog();
+    AcceptedSettingsDto settings;
+
+    {
+        std::vector<PiDiagnosticDto> diagnostics;
+        auto       payload = Das::Utils::ParseYyjsonFromString(
+                                 R"({"target":{"kind":"document"},)"
+                                 R"("fieldName":"adbDevice",)"
+                                 R"("value":"127.0.0.1:5555"})")
+                                 .value_or(yyjson::value(nullptr));
+        const bool ok =
+            ApplyStrictSetValueChange(settings, payload, &catalog, diagnostics);
+        EXPECT_TRUE(ok);
+        EXPECT_TRUE(diagnostics.empty());
+        ASSERT_TRUE(settings.pi.controller_adb_device.has_value());
+        EXPECT_EQ(*settings.pi.controller_adb_device, "127.0.0.1:5555");
+    }
+
+    // 空串 = 清除选择（回退未选状态），不是错误。
+    {
+        std::vector<PiDiagnosticDto> diagnostics;
+        auto       payload = Das::Utils::ParseYyjsonFromString(
+                                 R"({"target":{"kind":"document"},)"
+                                 R"("fieldName":"adbDevice",)"
+                                 R"("value":""})")
+                                 .value_or(yyjson::value(nullptr));
+        const bool ok =
+            ApplyStrictSetValueChange(settings, payload, &catalog, diagnostics);
+        EXPECT_TRUE(ok);
+        EXPECT_TRUE(diagnostics.empty());
+        EXPECT_FALSE(settings.pi.controller_adb_device.has_value());
+    }
+
+    // 非字符串拒绝并报 error 诊断。
+    {
+        std::vector<PiDiagnosticDto> diagnostics;
+        auto       payload = Das::Utils::ParseYyjsonFromString(
+                                 R"({"target":{"kind":"document"},)"
+                                 R"("fieldName":"adbDevice",)"
+                                 R"("value":42})")
+                                 .value_or(yyjson::value(nullptr));
+        const bool ok =
+            ApplyStrictSetValueChange(settings, payload, &catalog, diagnostics);
+        EXPECT_FALSE(ok);
+        ASSERT_FALSE(diagnostics.empty());
+        EXPECT_EQ(diagnostics.front().severity, "error");
+    }
+}
+
 // schedule 持久化 round-trip：SerializeAcceptedSettings → ParseAcceptedSettings
 // 必须保留 pi.schedule_* 4 字段（apply 落盘后重启 GetAuthoringDocument 走的正是
 // 这条 round-trip）。3 个用例分别覆盖 daily/全 off/interval，锁定 engaged-only

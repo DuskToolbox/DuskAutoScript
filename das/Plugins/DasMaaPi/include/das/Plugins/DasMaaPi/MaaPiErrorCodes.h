@@ -52,4 +52,12 @@ namespace Das::Plugins::DasMaaPi
     inline constexpr DasResult DAS_E_MAAPI_PROXY_UNSUPPORTED =
         static_cast<DasResult>(-10009);
 
+    /// Adb controller has no usable device for execution: the task settings
+    /// carry no `adbDevice` selection, or the pinned address is absent from
+    /// the runtime Toolkit scan. PI v2 keeps the address out of
+    /// interface.json (runtime client responsibility), so this is an
+    /// execution-input gap in the same tier as PI_MISSING / TASK_MISSING.
+    inline constexpr DasResult DAS_E_MAAPI_ADB_DEVICE_MISSING =
+        static_cast<DasResult>(-10010);
+
 } // namespace Das::Plugins::DasMaaPi

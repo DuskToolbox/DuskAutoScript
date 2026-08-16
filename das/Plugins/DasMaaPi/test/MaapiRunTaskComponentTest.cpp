@@ -50,6 +50,9 @@ namespace
         (*obj)["taskName"] = yyjson::value(task_name);
         (*obj)["options"] = Utils::MakeYyjsonObject();
         (*obj)["portMap"] = Utils::MakeYyjsonObject();
+        // fixture 控制器为 Adb：任务设置必须携带设备选择，pin
+        // FakeMaaApiBoundary 默认设备的 address
+        (*obj)["adbDevice"] = yyjson::value("127.0.0.1:5555");
         return WrapJson(std::move(settings));
     }
 
@@ -224,6 +227,7 @@ TEST(DasMaaPiRunTaskComponent, DoPortMapInputMerging)
         yyjson::value(FixturePath("interface_v26_jsonc.jsonc").string());
     (*obj)["taskName"] = yyjson::value("DailyFarm");
     (*obj)["options"] = Utils::MakeYyjsonObject();
+    (*obj)["adbDevice"] = yyjson::value("127.0.0.1:5555");
 
     auto port_map_obj = Utils::MakeYyjsonObject();
     auto pm = port_map_obj.as_object();

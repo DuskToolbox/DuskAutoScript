@@ -455,6 +455,16 @@ namespace
         if (parsed.result == DAS_S_OK)
         {
             out.envelope = std::move(parsed.envelope);
+            // v28 系 fixture 的控制器是 Adb，而集成链没有走设备选择
+            // （authoring session 的 device_cache_ 为空）：注入 address
+            // 模拟「用户已选设备」的物化产物——MaaRuntime::Run 对
+            // Adb+空 address 显性拒绝（执行输入校验）。
+            auto& plan = out.envelope->maapi;
+            plan.controller.address = "127.0.0.1:5555";
+            if (plan.controller_init_params && plan.controller_init_params->adb)
+            {
+                plan.controller_init_params->adb->address = "127.0.0.1:5555";
+            }
         }
         return out;
     }

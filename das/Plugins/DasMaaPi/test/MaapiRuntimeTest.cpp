@@ -73,10 +73,13 @@ namespace
     // the unified-dispatch refactor, every envelope must carry typed init
     // params — the legacy flat-string CreateController(spec) overload is
     // gone. Tests that swap in a different controller type pass a matching
-    // controller_init_params_json.
+    // controller_init_params_json. address 默认非空：PI v2 下设备地址只能
+    // 由客户端运行时提供，Run 对 Adb+空 address 显性拒绝（对应生产契约：
+    // 物化前必须选好设备）。
     constexpr const char* DEFAULT_ADB_INIT_PARAMS_JSON =
         R"({"controllerType":"Adb","win32":null,"gamepad":null,)"
-        R"("adb":{"adbPath":"adb","address":"","screencapMethod":0,)"
+        R"("adb":{"adbPath":"adb","address":"127.0.0.1:5555",)"
+        R"("screencapMethod":0,)"
         R"("inputMethod":0,"configJson":"{}","agentPath":""},)"
         R"("dbg":null,"displayShortSide":null,"displayLongSide":null,)"
         R"("displayRaw":null})";
@@ -91,7 +94,7 @@ namespace
           {"taskName":"Base","entry":"StartBase","pipelineOverride":{"Stage":{"value":"two"}}}
         ])",
         std::string controller_json =
-            R"({"name":"Android","type":"Adb","readPath":"","address":"","adbPath":"adb","configJson":"{}","agentPath":""})",
+            R"({"name":"Android","type":"Adb","readPath":"","address":"127.0.0.1:5555","adbPath":"adb","configJson":"{}","agentPath":""})",
         std::string agent_json = {},
         std::string controller_init_params_json = DEFAULT_ADB_INIT_PARAMS_JSON)
     {
@@ -130,7 +133,7 @@ namespace
           {"taskName":"Base","entry":"StartBase","pipelineOverride":{"Stage":{"value":"two"}}}
         ])",
         std::string controller_json =
-            R"({"name":"Android","type":"Adb","readPath":"","address":"","adbPath":"adb","configJson":"{}","agentPath":""})",
+            R"({"name":"Android","type":"Adb","readPath":"","address":"127.0.0.1:5555","adbPath":"adb","configJson":"{}","agentPath":""})",
         std::string controller_init_params_json = DEFAULT_ADB_INIT_PARAMS_JSON)
     {
         auto parsed = ParseExecutionEnvelope(EnvelopeValue(
@@ -1660,6 +1663,32 @@ TEST(NormalizeControllerInitParams, DbgControllerPopulatesTypedDbgBlock)
     EXPECT_FALSE(params.adb.has_value());
     EXPECT_FALSE(params.win32.has_value());
     EXPECT_FALSE(params.gamepad.has_value());
+}
+
+// 物化时未选设备的 Adb envelope（address 空）：Run 在执行输入校验段显性
+// 拒绝（DAS_E_MAAPI_ADB_DEVICE_MISSING + adb-device-missing 诊断），而不是
+// 延后到 MaaAdbControllerCreate 报模糊的 "requires a non-empty address"。
+TEST(DasMaaPiRuntime, AdbEnvelopeWithoutAddressFailsExplicitly)
+{
+    FakeMaaApiBoundary fake;
+    ControllerSpec     spec;
+    spec.name = "Android";
+    spec.type = "Adb";
+    ControllerInitParams params;
+    params.controller_type = "Adb";
+    AdbInitParams adb;
+    params.adb = adb;
+
+    auto result = MaaRuntime::Run(
+        EnvelopeWithTypedController(spec, params),
+        fake,
+        nullptr);
+
+    EXPECT_EQ(result.das_result, DAS_E_MAAPI_ADB_DEVICE_MISSING);
+    ASSERT_EQ(result.diagnostics.size(), 1u);
+    EXPECT_EQ(result.diagnostics.front().code, "adb-device-missing");
+    EXPECT_EQ(result.diagnostics.front().severity, "error");
+    EXPECT_FALSE(fake.Contains("CreateControllerFromParams"));
 }
 
 TEST(DasMaaPiRuntime, TypedAdbControllerDispatchesToCreateControllerFromParams)

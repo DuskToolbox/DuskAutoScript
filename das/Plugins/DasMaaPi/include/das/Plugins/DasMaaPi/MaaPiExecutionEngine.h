@@ -20,6 +20,10 @@ namespace Das::Plugins::DasMaaPi
         yyjson::value                        options;
         std::map<std::string, std::string>   port_map;
         std::map<std::string, yyjson::value> inputs;
+        // 用户在任务设置里显式选择的 ADB 设备 address（键名 adbDevice）。
+        // PI v2 的 controller.adb 对象不含 address（设备由客户端运行时
+        // 发现），Adb 控制器执行必须携带本字段，缺失即执行输入不完整。
+        std::string adb_device;
     };
 
     struct EngineOutput

@@ -4107,6 +4107,30 @@ namespace Das::Plugins::DasMaaPi
                     std::string(value.as_string().value_or(""));
                 return true;
             }
+            // adbDevice：用户在设备 dropdown 选择的 ADB 设备 address。这是
+            // AdbDeviceInfo 六字段中唯一持久化的稳定设备身份（投影端
+            // adbDevice.candidates 的 value），其余五字段执行期从扫描结果
+            // 取。PI v2 的 controller.adb 不含 address，Adb 控制器执行依赖
+            // 本字段。空串合法（清除选择，回退未选状态）。
+            if (field == "adbDevice")
+            {
+                if (!value.is_string())
+                {
+                    EmitDiagnostic(
+                        diagnostics,
+                        "error",
+                        Translate("diagnostic.valueMustBeString", "adbDevice"),
+                        DAS_E_INVALID_ARGUMENT,
+                        field);
+                    return false;
+                }
+                const auto address =
+                    std::string(value.as_string().value_or(""));
+                settings.pi.controller_adb_device =
+                    address.empty() ? std::optional<std::string>{}
+                                    : std::optional<std::string>{address};
+                return true;
+            }
             // schedule.* 路由到 acceptedProperties.pi flat optional schedule
             // 字段。 kind 变化触发 ProjectAuthoringDocument 按 kind
             // 重投影（前端 docChanged 重建），无需客户端条件可见性。

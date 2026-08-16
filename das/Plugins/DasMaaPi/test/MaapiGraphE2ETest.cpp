@@ -161,6 +161,9 @@ namespace
         auto obj = root.as_object();
         (*obj)["piPath"] = yyjson::value(pi_path);
         (*obj)["taskName"] = yyjson::value(task_name);
+        // fixture 控制器为 Adb：任务设置必须携带设备选择，pin
+        // FakeMaaApiBoundary 默认设备的 address
+        (*obj)["adbDevice"] = yyjson::value("127.0.0.1:5555");
 
         if (auto parsed = Utils::ParseYyjsonFromString(options_json); parsed)
         {
