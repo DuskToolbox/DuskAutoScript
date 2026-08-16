@@ -2603,7 +2603,13 @@ namespace Das::Plugins::DasMaaPi
                 projection_diagnostics);
             fields.as_array()->emplace_back(MakePropertyField(
                 "controllerName",
-                Translate("field.controller"),
+                std::string(ResolveI18nOrDiag(
+                    "$field.controller",
+                    *catalog,
+                    current_language,
+                    "控制器",
+                    projection_diagnostics,
+                    "controllerName")),
                 4,
                 1,
                 settings.pi.controller_name
@@ -2651,7 +2657,13 @@ namespace Das::Plugins::DasMaaPi
                 projection_diagnostics);
             fields.as_array()->emplace_back(MakePropertyField(
                 "resourceName",
-                Translate("field.resource"),
+                std::string(ResolveI18nOrDiag(
+                    "$field.resource",
+                    *catalog,
+                    current_language,
+                    "资源",
+                    projection_diagnostics,
+                    "resourceName")),
                 4,
                 1,
                 settings.pi.resource_name
@@ -2677,7 +2689,13 @@ namespace Das::Plugins::DasMaaPi
             }
             fields.as_array()->emplace_back(MakePropertyField(
                 "presetName",
-                Translate("field.preset"),
+                std::string(ResolveI18nOrDiag(
+                    "$field.preset",
+                    *catalog,
+                    current_language,
+                    "预设",
+                    projection_diagnostics,
+                    "presetName")),
                 4,
                 1,
                 settings.pi.preset_name
@@ -2697,7 +2715,13 @@ namespace Das::Plugins::DasMaaPi
             }
             fields.as_array()->emplace_back(MakePropertyField(
                 "language",
-                Translate("field.language"),
+                std::string(ResolveI18nOrDiag(
+                    "$field.language",
+                    *catalog,
+                    current_language,
+                    "语言",
+                    projection_diagnostics,
+                    "language")),
                 4,
                 1,
                 yyjson::value(current_language),
