@@ -60,4 +60,11 @@ namespace Das::Plugins::DasMaaPi
     inline constexpr DasResult DAS_E_MAAPI_ADB_DEVICE_MISSING =
         static_cast<DasResult>(-10010);
 
+    /// Update apply cancelled mid-flight (registry shutdown set the cancel
+    /// flag and the extraction / replace loop observed it). The old project
+    /// directory has been rolled back / left untouched before this is
+    /// returned, same contract as DAS_E_MAAPI_UPDATE_APPLY_FAILED.
+    inline constexpr DasResult DAS_E_MAAPI_UPDATE_CANCELLED =
+        static_cast<DasResult>(-10011);
+
 } // namespace Das::Plugins::DasMaaPi

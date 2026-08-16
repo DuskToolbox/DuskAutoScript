@@ -5408,27 +5408,19 @@ namespace Das::Plugins::DasMaaPi
         }
 
         auto& registry = UpdateJobRegistry::Instance();
-        auto  slot = registry.TryStart(*pi_dir, http);
-        if (slot == nullptr)
-        {
-            EmitDiagnostic(
-                diagnostics,
-                "error",
-                Translate("diagnostic.applyUpdateAlreadyRunning"),
-                DAS_E_MAAPI_UPDATE_APPLY_FAILED,
-                "applyUpdate");
-            return false;
-        }
 
-        // 受理成功后在后台线程执行；TryStart 之后任何异常都必须回滚
-        // running 标记，否则该 pi_dir 的更新入口被永久锁死。
+        // 受理路径的全部准备工作（progress service 解析 / reporter Start /
+        // job 全量值拷贝 / 线程体构造）先于 registry 占位：TryStart 在锁内
+        // 完成 running 置位与 worker 线程构造（不变量 running==true ⇒
+        // joinable()==true），此前任何异常都无需回滚 running——该 pi_dir 的
+        // 更新入口不会被锁死。
         try
         {
             // 进度上报：seam（测试注入）优先，生产经 GetCurrentIpcContext
             // Resolve 主进程 IDasProgressService。GetCurrentIpcContext 为空 /
             // resolve 失败 / Start 失败 → 降级纯本地更新（不报进度），日志
-            // 警告。Start 必须留在受理路径、线程构造之前——started_ 非
-            // atomic，线程构造建立 happens-before 后 job 线程只读。
+            // 警告。Start 必须留在受理路径、线程构造（TryStart 内）之前——
+            // started_ 非 atomic，线程构造建立 happens-before 后 job 线程只读。
             DasPtr<Das::ExportInterface::IDasProgressService> progress_service;
             if (progress_service_seam != nullptr)
             {
@@ -5489,83 +5481,104 @@ namespace Das::Plugins::DasMaaPi
             const std::string mirrorchyan_cdk =
                 settings.adapter.mirrorchyan_cdk.value_or("");
 
-            slot->worker = std::thread(
-                [slot,
-                 job_pi_dir,
+            // job 线程体（registry 在锁内以 slot 为实参启动它）：取消标志挂
+            // 在 slot 上（析构收尾置位），经 cancel_check 贯穿解压/替换循环，
+            // 命中即走「更新已中止」失败终态，使退出收尾 join 有界。
+            auto job_body =
+                [job_pi_dir,
                  job_info,
                  http,
                  proxy_url,
                  mirrorchyan_cdk,
                  progress_cb,
-                 reporter]()
+                 reporter](const std::shared_ptr<UpdateJobSlot>& slot)
+            {
+                const std::function<bool()> cancel_check = [slot]
+                { return slot->cancel_requested.load(); };
+                // 后台线程绝不让异常逃逸（未捕获 → std::terminate 杀死
+                // 整个 Host 进程）；filesystem 等异常就地映射失败终态。
+                const auto result = [&]()
                 {
-                    // 后台线程绝不让异常逃逸（未捕获 → std::terminate 杀死
-                    // 整个 Host 进程）；filesystem 等异常就地映射失败终态。
-                    const auto result = [&]()
+                    try
                     {
-                        try
-                        {
-                            return PiUpdateService::ApplyUpdate(
-                                job_pi_dir,
-                                job_info,
-                                *http,
-                                proxy_url,
-                                mirrorchyan_cdk,
-                                progress_cb);
-                        }
-                        catch (const std::exception& error)
-                        {
-                            DAS_LOG_ERROR(
-                                DAS::fmt::format(
-                                    "ApplyUpdate: background update job "
-                                    "exception version={} what={}",
-                                    job_info.version_name,
-                                    error.what())
-                                    .c_str());
-                            return DAS_E_FAIL;
-                        }
-                        catch (...)
-                        {
-                            DAS_LOG_ERROR(
-                                "ApplyUpdate: background update job unknown "
-                                "exception");
-                            return DAS_E_FAIL;
-                        }
-                    }();
-                    if (IsOk(result))
-                    {
-                        if (reporter)
-                        {
-                            reporter->ReportFinal(true, job_info.version_name);
-                        }
+                        return PiUpdateService::ApplyUpdate(
+                            job_pi_dir,
+                            job_info,
+                            *http,
+                            proxy_url,
+                            mirrorchyan_cdk,
+                            progress_cb,
+                            cancel_check);
                     }
-                    else
+                    catch (const std::exception& error)
                     {
-                        if (reporter)
-                        {
-                            const std::string failure_detail = DAS::fmt::format(
-                                "result={}",
-                                static_cast<int>(result));
-                            reporter->ReportFinal(false, failure_detail);
-                        }
                         DAS_LOG_ERROR(
                             DAS::fmt::format(
-                                "ApplyUpdate: background update job failed "
-                                "version={} result={}",
+                                "ApplyUpdate: background update job "
+                                "exception version={} what={}",
                                 job_info.version_name,
-                                static_cast<int>(result))
+                                error.what())
                                 .c_str());
+                        return DAS_E_FAIL;
                     }
+                    catch (...)
+                    {
+                        DAS_LOG_ERROR(
+                            "ApplyUpdate: background update job unknown "
+                            "exception");
+                        return DAS_E_FAIL;
+                    }
+                }();
+                if (IsOk(result))
+                {
                     if (reporter)
                     {
-                        reporter->Stop();
+                        reporter->ReportFinal(true, job_info.version_name);
                     }
-                    UpdateJobRegistry::Instance().Finish(slot);
-                });
+                }
+                else
+                {
+                    if (reporter)
+                    {
+                        const std::string failure_detail =
+                            result == DAS_E_MAAPI_UPDATE_CANCELLED
+                                ? Translate("progress.updateCancelled")
+                                : DAS::fmt::format(
+                                      "result={}",
+                                      static_cast<int>(result));
+                        reporter->ReportFinal(false, failure_detail);
+                    }
+                    DAS_LOG_ERROR(
+                        DAS::fmt::format(
+                            "ApplyUpdate: background update job failed "
+                            "version={} result={}",
+                            job_info.version_name,
+                            static_cast<int>(result))
+                            .c_str());
+                }
+                if (reporter)
+                {
+                    reporter->Stop();
+                }
+                UpdateJobRegistry::Instance().Finish(slot);
+            };
+
+            auto slot = registry.TryStart(*pi_dir, http, std::move(job_body));
+            if (slot == nullptr)
+            {
+                // 防重入拒绝：该 pi_dir 已有 running job。此前 Start 的
+                // reporter 随 shared_ptr 析构 RAII Stop（RemoveCallback）。
+                EmitDiagnostic(
+                    diagnostics,
+                    "error",
+                    Translate("diagnostic.applyUpdateAlreadyRunning"),
+                    DAS_E_MAAPI_UPDATE_APPLY_FAILED,
+                    "applyUpdate");
+                return false;
+            }
         }
         catch (...)
         {
-            registry.Finish(slot);
             EmitDiagnostic(
                 diagnostics,
                 "error",

@@ -717,10 +717,12 @@ namespace Das::Plugins::DasMaaPi
         }
 
         // 解压 zip 到 extract_dir，返回 DAS_S_OK /
-        // DAS_E_MAAPI_UPDATE_APPLY_FAILED。
+        // DAS_E_MAAPI_UPDATE_APPLY_FAILED /
+        // DAS_E_MAAPI_UPDATE_CANCELLED（cancel_check 在条目开头命中）。
         DasResult ExtractZip(
             const std::string&           zip_data,
-            const std::filesystem::path& extract_dir)
+            const std::filesystem::path& extract_dir,
+            const std::function<bool()>& cancel_check)
         {
             zip_error_t open_error;
             zip_error_init(&open_error);
@@ -774,6 +776,15 @@ namespace Das::Plugins::DasMaaPi
                  index < static_cast<zip_uint64_t>(num_entries);
                  ++index)
             {
+                // 取消观察缝：每条目开头轮询（进程退出收尾置位），命中即
+                // 整体中止，旧目录未被触碰。
+                if (cancel_check && cancel_check())
+                {
+                    LogWarning(
+                        "PiUpdateService: update cancelled during extraction");
+                    zip_discard(archive);
+                    return DAS_E_MAAPI_UPDATE_CANCELLED;
+                }
                 zip_stat_t stat;
                 zip_stat_init(&stat);
                 if (zip_stat_index(archive, index, 0, &stat) < 0)
@@ -933,7 +944,8 @@ namespace Das::Plugins::DasMaaPi
         // 路径消失（可恢复侧备份，避免文件丢失）。
         DasResult ReplaceFilesWithPending(
             const std::filesystem::path& extract_dir,
-            const std::filesystem::path& pi_dir)
+            const std::filesystem::path& pi_dir,
+            const std::function<bool()>& cancel_check)
         {
             std::vector<std::filesystem::path> files;
             std::error_code                    ec;
@@ -958,6 +970,15 @@ namespace Das::Plugins::DasMaaPi
             std::vector<std::string> pending_files;
             for (const auto& src : files)
             {
+                // 取消观察缝：每文件开头轮询，命中即中止（interface.json 最
+                // 先处理，此前已替换的文件保持新版本，pi_dir 整体一致性由
+                // 备份目录保底）。
+                if (cancel_check && cancel_check())
+                {
+                    LogWarning(
+                        "PiUpdateService: update cancelled during replace");
+                    return DAS_E_MAAPI_UPDATE_CANCELLED;
+                }
                 const auto rel = src.lexically_relative(extract_dir);
                 const auto target = pi_dir / rel;
                 std::filesystem::create_directories(target.parent_path(), ec);
@@ -1161,7 +1182,8 @@ namespace Das::Plugins::DasMaaPi
         PiHttpClient&                http,
         std::string_view             proxy_url,
         std::string_view             mirrorchyan_cdk,
-        ProgressReporter             progress_reporter)
+        ProgressReporter             progress_reporter,
+        std::function<bool()>        cancel_check)
     {
         if (info.download_url.empty())
         {
@@ -1324,7 +1346,8 @@ namespace Das::Plugins::DasMaaPi
             progress_reporter(
                 UpdateProgress{UpdateStage::Extract, 0, std::nullopt});
         }
-        const auto extract_result = ExtractZip(zip_data, extract_dir);
+        const auto extract_result =
+            ExtractZip(zip_data, extract_dir, cancel_check);
         if (IsFailed(extract_result))
         {
             LogError(
@@ -1332,7 +1355,7 @@ namespace Das::Plugins::DasMaaPi
                     "PiUpdateService: update extract failed entryId={} result={}",
                     entry_id,
                     static_cast<int>(extract_result)));
-            return DAS_E_MAAPI_UPDATE_APPLY_FAILED;
+            return extract_result;
         }
 
         // 3. 备份 + 原子替换（rename 替换 + 回滚模式）。若
@@ -1363,7 +1386,7 @@ namespace Das::Plugins::DasMaaPi
                     ec.message()));
             // 回滚：rename 失败时 pi_dir 保持原样（未移动），无需恢复。
             const auto fallback_result =
-                ReplaceFilesWithPending(extract_dir, pi_dir);
+                ReplaceFilesWithPending(extract_dir, pi_dir, cancel_check);
             LogInfo(
                 DAS::fmt::format(
                     "PiUpdateService: update replace (per-file) finished "

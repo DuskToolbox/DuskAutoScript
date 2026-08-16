@@ -1097,6 +1097,100 @@ TEST(PiUpdateService, ApplyUpdateWithoutSha256SkipsVerification)
     EXPECT_EQ(content, "{\"version\":\"1.2.0\"}");
 }
 
+TEST(PiUpdateService, ApplyUpdateCancelDuringExtractionReturnsCancelled)
+{
+    // 取消观察缝：解压循环条目开头命中 → 专用取消码，旧内容保留，.update
+    // 临时目录清理。cancel_check 首次调用 false（首条目照常解压）、之后
+    // true（第二条目开头中止）。
+    FakePiHttpClient http;
+    http.AddRoute(
+        "/download/package.zip",
+        BuildTestZip({
+            TestZipEntry{"interface.json", "{\"version\":\"1.2.0\"}"},
+            TestZipEntry{"config.json", "{\"speed\":10}"},
+            TestZipEntry{"assets/image.png", "fake-image-bytes"},
+        }));
+
+    TempPiProject project;
+    project.WriteInterface(MakeInterface("1.0.0", "", ""));
+
+    PiUpdateInfo info;
+    info.version_name = "1.2.0";
+    info.download_url = "https://example.com/download/package.zip";
+
+    int        cancel_call_count = 0;
+    const auto result = PiUpdateService::ApplyUpdate(
+        project.Dir(),
+        info,
+        http,
+        /*proxy_url=*/{},
+        /*mirrorchyan_cdk=*/{},
+        /*progress_reporter=*/{},
+        /*cancel_check=*/[&cancel_call_count]
+        { return ++cancel_call_count > 1; });
+
+    EXPECT_EQ(result, DAS_E_MAAPI_UPDATE_CANCELLED);
+
+    // 旧内容未被替换（取消发生在解压阶段，pi_dir 未动）。
+    std::ifstream old_interface(project.Dir() / "interface.json");
+    std::string   content(
+        (std::istreambuf_iterator<char>(old_interface)),
+        std::istreambuf_iterator<char>());
+    EXPECT_NE(content.find("1.0.0"), std::string::npos);
+    // .update 临时目录已清理。
+    const auto update_root = project.Dir().parent_path()
+                             / (project.Dir().filename().string() + ".update");
+    EXPECT_FALSE(std::filesystem::exists(update_root));
+}
+
+TEST(PiUpdateService, ApplyUpdateCancelDuringReplaceReturnsCancelled)
+{
+    // 替换循环取消：被锁文件触发逐文件降级路径后，首文件开头命中取消 →
+    // 专用取消码，pi_dir 保留旧内容。
+    FakePiHttpClient http;
+    http.AddRoute(
+        "/download/package.zip",
+        BuildTestZip({
+            TestZipEntry{"interface.json", "{\"version\":\"1.2.0\"}"},
+            TestZipEntry{"MaaFramework.dll", "new-dll-bytes"},
+        }));
+
+    TempPiProject project;
+    project.WriteInterface(MakeInterface("1.0.0", "", ""));
+    {
+        std::ofstream locked(
+            project.Dir() / "MaaFramework.dll",
+            std::ios::binary);
+        locked << "old-dll-bytes";
+        locked.flush();
+    }
+    // 持有句柄阻止目录整体 rename → 逐文件替换降级路径。
+    std::ifstream lock(project.Dir() / "MaaFramework.dll", std::ios::binary);
+
+    PiUpdateInfo info;
+    info.version_name = "1.2.0";
+    info.download_url = "https://example.com/download/package.zip";
+
+    const auto result = PiUpdateService::ApplyUpdate(
+        project.Dir(),
+        info,
+        http,
+        /*proxy_url=*/{},
+        /*mirrorchyan_cdk=*/{},
+        /*progress_reporter=*/{},
+        /*cancel_check=*/[] { return true; });
+    lock.close();
+
+    EXPECT_EQ(result, DAS_E_MAAPI_UPDATE_CANCELLED);
+
+    // interface.json 未被替换（首文件处理前即中止）。
+    std::ifstream old_interface(project.Dir() / "interface.json");
+    std::string   content(
+        (std::istreambuf_iterator<char>(old_interface)),
+        std::istreambuf_iterator<char>());
+    EXPECT_NE(content.find("1.0.0"), std::string::npos);
+}
+
 TEST(PiUpdateService, ApplyUpdateLockedFileStagedToPending)
 {
     // 项目目录内一个文件被占用（Windows sharing violation）→ 整体 rename

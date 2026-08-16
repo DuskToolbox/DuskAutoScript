@@ -6,6 +6,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -17,9 +18,12 @@ namespace Das::Plugins::DasMaaPi
     // per-pi_dir 更新 job slot。running 由 job 线程经 Finish 唯一写 false；
     // worker 持有本结构（shared_ptr），slot 复用不自删除（job 线程结束时
     // erase map 条目会在 worker 自身栈上 join 自己 → std::terminate）。
+    // cancel_requested 由 registry 析构收尾置 true，job 体经 cancel 观察缝
+    // （解压/替换循环）消费，使本地 IO 阶段的 join 有界。
     struct UpdateJobSlot
     {
         std::atomic<bool>             running{false};
+        std::atomic<bool>             cancel_requested{false};
         std::thread                   worker;
         std::shared_ptr<PiHttpClient> http;
     };
@@ -32,18 +36,26 @@ namespace Das::Plugins::DasMaaPi
     class UpdateJobRegistry final
     {
     public:
+        // job 线程体：registry 在持锁构造 worker 时以 slot 为实参调用（只有
+        // TryStart 能创建/复用 slot，调用方无法提前捕获）。
+        using JobBody =
+            std::function<void(const std::shared_ptr<UpdateJobSlot>&)>;
+
         static UpdateJobRegistry& Instance();
 
         UpdateJobRegistry(const UpdateJobRegistry&) = delete;
         UpdateJobRegistry& operator=(const UpdateJobRegistry&) = delete;
 
         // 已有该 pi_dir 的 running job → nullptr（防重入）；否则复用或新建
-        // slot（复用前对已结束的旧 worker join——立即返回），置 running=true
-        // 并存 http。返回的 slot 由 job 启动方持有（worker lambda 亦持有，
-        // 保证 job 执行期间 slot 存活）。
+        // slot（复用前对已结束的旧 worker join——立即返回），锁内完成
+        // running=true + http 存档 + worker 线程构造。不变量：
+        // running==true ⇒ worker.joinable()==true（线程构造不外泄到锁外，
+        // 析构快照不可能撞上「running 已置而 worker 未赋」的跳 join 窗口）。
+        // 线程构造失败（资源耗尽）时回滚 running 并返回 nullptr。
         std::shared_ptr<UpdateJobSlot> TryStart(
             const std::filesystem::path&  pi_dir,
-            std::shared_ptr<PiHttpClient> http);
+            std::shared_ptr<PiHttpClient> http,
+            JobBody                       job_body);
 
         bool IsRunning(const std::filesystem::path& pi_dir) const;
 
@@ -57,9 +69,11 @@ namespace Das::Plugins::DasMaaPi
             const std::filesystem::path& pi_dir,
             std::chrono::milliseconds    timeout);
 
-        // 对所有 running slot 先 http->RequestCancel()（使 join 有界）再
-        // join worker；未 running 的 slot 只 join（worker 已结束，立即返回，
-        // 且不 dereference http——别名构造的测试 fake 可能已析构）。
+        // 对所有 running slot 先置 cancel_requested（job 体的解压/替换循环
+        // 观察到即走失败终态收尾，使本地 IO 阶段的 join 有界）再
+        // http->RequestCancel()（中断在途 HTTP）后 join worker；未 running
+        // 的 slot 只 join（worker 已结束，立即返回，且不 dereference
+        // http——别名构造的测试 fake 可能已析构）。
         ~UpdateJobRegistry();
 
     private:

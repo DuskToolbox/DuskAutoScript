@@ -43,6 +43,8 @@
 #include <string>
 #include <thread>
 
+#include <atomic>
+
 // Forward declarations for PluginUtils functions (linked from PluginUtils.cpp)
 namespace Das::Plugins::DasMaaPi
 {
@@ -7794,6 +7796,58 @@ TEST(MaapiUpdateCommandTest, InvokeCommandApplyUpdateRejectedWhileJobRunning)
             project.Dir(),
             std::chrono::seconds(10)));
     EXPECT_FALSE(UpdateJobRegistry::Instance().IsRunning(project.Dir()));
+}
+
+// 受理占位与线程构造在 TryStart 锁内一体完成：不变量 running==true ⇒
+// worker.joinable()==true（线程构造不外泄到锁外，析构快照不可能撞上
+// 「running 已置而 worker 未赋」的跳 join 窗口）；job 体经参数获得 slot，
+// 取消标志置位后 job 体观察到即收尾 Finish。
+TEST(MaapiUpdateCommandTest, TryStartConstructsWorkerUnderLockAndHonorsCancel)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    TempUpdateProject project;
+    project.WriteInterface(
+        MakeUpdateInterface("1.0.0", "https://github.com/owner/repo"));
+
+    std::atomic<bool> body_entered{false};
+    auto job_body = [&body_entered](const std::shared_ptr<UpdateJobSlot>& slot)
+    {
+        body_entered.store(true);
+        // 有界轮询取消标志（防断言失败路径挂死）。
+        for (int spin = 0; spin < 2000 && !slot->cancel_requested.load();
+             ++spin)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        UpdateJobRegistry::Instance().Finish(slot);
+    };
+
+    auto& registry = UpdateJobRegistry::Instance();
+    auto  slot =
+        registry.TryStart(project.Dir(), /*http=*/nullptr, std::move(job_body));
+    ASSERT_NE(slot, nullptr);
+
+    // job 体已进入且 running ⇒ worker 已构造（joinable）。
+    bool entered = false;
+    for (int spin = 0; spin < 1000 && !entered; ++spin)
+    {
+        entered = body_entered.load();
+        if (!entered)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+    }
+    ASSERT_TRUE(entered);
+    EXPECT_TRUE(registry.IsRunning(project.Dir()));
+    EXPECT_TRUE(slot->worker.joinable());
+
+    // 置位取消标志 → job 体收尾 Finish → slot idle（防重入解除）。
+    slot->cancel_requested.store(true);
+    ASSERT_TRUE(registry.WaitForSlotIdleForTest(
+        project.Dir(),
+        std::chrono::seconds(10)));
+    EXPECT_FALSE(registry.IsRunning(project.Dir()));
 }
 
 // applyUpdate 失败（异步语义）——受理 ok=true（受理端点不感知后台失败）；

@@ -5,6 +5,7 @@
     "progress.downloading_with_size": "正在下载（{0} / {1}）{2}%",
     "progress.updateDone": "更新完成（{0}）",
     "progress.updateFailed": "更新失败：{0}",
+    "progress.updateCancelled": "更新已中止",
     "section.project": "项目设置",
     "section.update": "更新",
     "section.welcome": "公告",

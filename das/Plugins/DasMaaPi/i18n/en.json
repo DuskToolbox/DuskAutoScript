@@ -5,6 +5,7 @@
     "progress.downloading_with_size": "Downloading ({0} / {1}){2}%",
     "progress.updateDone": "Update complete ({0})",
     "progress.updateFailed": "Update failed: {0}",
+    "progress.updateCancelled": "Update cancelled",
     "section.project": "Project",
     "section.update": "Update",
     "section.welcome": "Announcements",
