@@ -408,6 +408,11 @@ namespace Das::Plugins::DasMaaPi
                 body.size = buf.size();
                 const std::size_t requested = buf.size();
 
+                // 每次读前重设截止（滑动窗口式 stall 检测）：expires_after 设
+                // 的是绝对截止而非每操作独立超时，body 循环不重设时整个响应
+                // 体传输被压进 read_header 前布防的单个 timeout 窗口——真实
+                // 网络下几百 MB 更新包必然中途超时失败。
+                ArmStreamTimeout(stream, timeout);
                 boost::system::error_code ec;
                 co_await boost::beast::http::async_read_some(
                     stream,

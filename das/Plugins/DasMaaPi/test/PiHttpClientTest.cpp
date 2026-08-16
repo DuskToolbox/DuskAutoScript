@@ -81,6 +81,15 @@ namespace
         // 无 Content-Length：以 Transfer-Encoding: chunked 响应（流式下载
         // 无 total_bytes 阶段态场景）。
         void SetChunkedResponse(bool chunked) { chunked_ = chunked; }
+        // 慢速分块 chunked 响应：逐块写、块间 sleep（chunked + 分块延迟，
+        // 驱动 body 循环超时重设回归测试）。非空即生效，优先于其它模式。
+        void SetSlowChunks(
+            std::vector<std::string>  chunks,
+            std::chrono::milliseconds delay)
+        {
+            slow_chunks_ = std::move(chunks);
+            chunk_delay_ = delay;
+        }
 
     private:
         void AcceptLoop()
@@ -109,6 +118,27 @@ namespace
                 boost::beast::http::read(sock, buffer, req);
                 request_count_.fetch_add(1);
                 last_target_ = std::string(req.target());
+
+                if (!slow_chunks_.empty())
+                {
+                    // 慢速分块：header 先行，随后逐块写、块间 sleep。
+                    std::string raw = "HTTP/1.1 200 OK\r\n";
+                    raw += "Content-Type: application/octet-stream\r\n";
+                    raw += "Transfer-Encoding: chunked\r\n";
+                    raw += "\r\n";
+                    boost::asio::write(sock, boost::asio::buffer(raw));
+                    for (const auto& chunk : slow_chunks_)
+                    {
+                        std::this_thread::sleep_for(chunk_delay_);
+                        std::ostringstream hex;
+                        hex << std::hex << chunk.size();
+                        const std::string piece =
+                            hex.str() + "\r\n" + chunk + "\r\n";
+                        boost::asio::write(sock, boost::asio::buffer(piece));
+                    }
+                    boost::asio::write(sock, boost::asio::buffer("0\r\n\r\n"));
+                    return;
+                }
 
                 if (chunked_)
                 {
@@ -152,6 +182,8 @@ namespace
         std::atomic<int>                                request_count_{0};
         std::string                                     last_target_;
         bool                                            chunked_ = false;
+        std::vector<std::string>                        slow_chunks_;
+        std::chrono::milliseconds                       chunk_delay_{0};
     };
 
     // Mock server that answers /redirect with a 302 + Location header and every
@@ -919,6 +951,50 @@ v6yQpUYtQbbVSIHbNlBhfp8=
             (std::istreambuf_iterator<char>(ifs)),
             std::istreambuf_iterator<char>());
         EXPECT_EQ(content, "chunked-package-bytes");
+        std::filesystem::remove(out_path, ec);
+    }
+
+    TEST(
+        PiHttpClient,
+        DownloadStreamSlowChunkedBodySurvivesTotalDurationBeyondTimeout)
+    {
+        // 流式下载 body 循环每次读前重设超时（滑动窗口 stall 检测）：分块
+        // 间延迟累计（5×500ms = 2.5s）远超单次 per-op 超时（1s）仍成功。
+        // 若 body 循环只依赖 read_header 前布防的绝对截止（不重设），第二
+        // 块起读必超时失败——真实网络大包回归的本地锁定。
+        // timeout 用短值：默认 15s 下等价测试需真实睡 >15s，太慢。
+        std::vector<std::string> chunks;
+        for (int i = 0; i < 5; ++i)
+        {
+            chunks.emplace_back(16 * 1024, 'x');
+        }
+        LocalHttpServer server;
+        server.SetSlowChunks(chunks, std::chrono::milliseconds(500));
+        server.Start();
+
+        BeastHttpClient client{/*verify_tls_certificate=*/true,
+                               std::chrono::milliseconds(1000)};
+        const auto      out_path = std::filesystem::temp_directory_path()
+                                   / "das_pi_download_slow_test.bin";
+        std::error_code ec;
+        std::filesystem::remove(out_path, ec);
+
+        int        status = 0;
+        const auto url = "http://127.0.0.1:" + std::to_string(server.Port())
+                         + "/package.zip";
+        const auto result = client.DownloadStream(
+            url,
+            out_path,
+            [](const DownloadProgress&) {},
+            status);
+
+        EXPECT_EQ(result, DAS_S_OK);
+        EXPECT_EQ(status, 200);
+        std::ifstream ifs(out_path, std::ios::binary);
+        std::string   content(
+            (std::istreambuf_iterator<char>(ifs)),
+            std::istreambuf_iterator<char>());
+        EXPECT_EQ(content.size(), 5u * 16 * 1024);
         std::filesystem::remove(out_path, ec);
     }
 
