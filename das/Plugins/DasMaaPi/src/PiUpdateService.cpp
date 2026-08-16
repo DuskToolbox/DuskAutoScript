@@ -806,6 +806,40 @@ namespace Das::Plugins::DasMaaPi
                 const std::string_view entry_name(
                     (stat.valid & ZIP_STAT_NAME) != 0 ? stat.name : "");
 
+                // 条目名编码排障日志：libzip 默认按猜测编码归一化名字
+                // （存储字节非合法 UTF-8 时按 CP437 转 UTF-8）；与原始存储
+                // 字节（ENC_RAW）比对不一致说明存储编码非 UTF-8，以十六进制
+                // 记录原始字节辅助排障（不做转码——产物命名仍走归一化后的
+                // 名字，hex 保持日志行是合法 UTF-8）。
+                if ((stat.valid & ZIP_STAT_NAME) != 0)
+                {
+                    zip_stat_t raw_stat;
+                    zip_stat_init(&raw_stat);
+                    if (zip_stat_index(
+                            archive,
+                            index,
+                            ZIP_FL_ENC_RAW,
+                            &raw_stat)
+                            == 0
+                        && (raw_stat.valid & ZIP_STAT_NAME) != 0
+                        && std::string_view(raw_stat.name) != entry_name)
+                    {
+                        constexpr char HEX_DIGITS[] = "0123456789abcdef";
+                        std::string    stored_hex;
+                        for (const char c : std::string_view(raw_stat.name))
+                        {
+                            const auto byte = static_cast<unsigned char>(c);
+                            stored_hex.push_back(HEX_DIGITS[byte >> 4]);
+                            stored_hex.push_back(HEX_DIGITS[byte & 0xF]);
+                        }
+                        LogWarning(
+                            "PiUpdateService: zip entry name not stored as "
+                            "UTF-8 (converted): entry="
+                            + std::string(entry_name)
+                            + " storedBytes=" + stored_hex);
+                    }
+                }
+
                 // 目录穿越防护。
                 if (!IsSafeZipEntry(extract_dir, entry_name))
                 {
