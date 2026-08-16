@@ -820,23 +820,28 @@ namespace Core
                 // 在停 io_context run loop 之前，按标准流程 Stop 所有
                 // HostLauncher（GOODBYE → 等待退出 → 超时强杀 → process.reset
                 // → close → UnregisterWaitEx 同步 drain TP wait）。必须在
-                // runloop_.RequestStop() 之前：Stop() 的 GOODBYE 协程、
+                // runloop_.RequestStop() 之前：停机链的 GOODBYE 协程、
                 // transport 清理（已串行化到 io_context 线程，见
                 // HostLauncher::CleanupTransportAsync）与 scope 结构化 drain
-                // （exit-watcher 已在 async_scope，Stop 先 on_empty 再
-                // co_spawn+future 阻塞等 StopBody）都要求 run loop 活着
+                // （exit-watcher 已在 async_scope）都要求 run loop 活着
                 // （由独立 ipc 线程驱动）。否则 HostLauncher 会因被
                 // ConnectionManager::hosts_ 持引用而推迟到
                 // ~IpcContext（io_context 已死）才析构，残留 TP wait callback
                 // 在 service 析构后触发 UAF。调用方须在非 io_context 线程调本
-                // 方法（HostLauncher::Stop 的 assert 保证）。
-                for (auto& [sid, launcher] : launchers_)
+                // 方法（HostLauncher::StopAll 的 assert 保证）。
+                // 并行编排：全部 GOODBYE 齐发、等待在 io_context 线程重叠，
+                // 总耗时 Σ(每 host) → max(每 host)；单 host 卡死只占自身
+                // 2s 兜底死线，不再连坐阻塞其余 host 的停止。
+                std::vector<DAS::DasPtr<HostLauncher>> active_launchers;
+                active_launchers.reserve(launchers_.size());
+                for (const auto& [sid, launcher] : launchers_)
                 {
                     if (launcher)
                     {
-                        launcher->Stop();
+                        active_launchers.push_back(launcher);
                     }
                 }
+                HostLauncher::StopAll(active_launchers);
 
                 runloop_.RequestStop();
             }

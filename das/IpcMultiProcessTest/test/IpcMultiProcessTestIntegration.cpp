@@ -37,6 +37,7 @@
 #include <das/Core/IPC/ConnectionManager.h>
 #include <das/Core/IPC/DasAsyncSender.h>
 #include <das/Core/IPC/DistributedObjectManager.h>
+#include <das/Core/IPC/HostLauncher.h>
 #include <das/Core/IPC/ObjectId.h>
 #include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <das/Core/Utils/StdExecution.h>
@@ -2631,6 +2632,81 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_HostToHostCall)
     // 6. 清理
     host_a->Stop();
     host_b->Stop();
+}
+
+/**
+ * @brief StopAll 并行停机编排：多 host 一次收口
+ *
+ * 覆盖三路分支：存活的 async 路径 host（GOODBYE 链）、未启动的 launcher
+ * （StopBodySync 就地清理）、空指针项（跳过）。全部停机完成后各 launcher
+ * 不再 IsRunning。
+ */
+TEST_F(IpcMultiProcessTestIntegration, StopAllStopsHostsInOnePass)
+{
+    if (!std::filesystem::exists(host_exe_path_))
+    {
+        GTEST_SKIP() << "DasHostX.exe not found at: " << host_exe_path_;
+    }
+
+    const auto make_launcher =
+        [this](DAS::DasPtr<DAS::Core::IPC::HostLauncher>& out) -> DasResult
+    {
+        DAS::Core::IPC::IHostLauncher* raw_launcher = nullptr;
+        auto result = ctx_->CreateHostLauncher(&raw_launcher);
+        if (DAS::IsFailed(result))
+        {
+            return result;
+        }
+        out = DAS::DasPtr<DAS::Core::IPC::HostLauncher>(
+            dynamic_cast<DAS::Core::IPC::HostLauncher*>(raw_launcher));
+        if (out.Get() == nullptr)
+        {
+            raw_launcher->Release();
+            return DAS_E_NO_INTERFACE;
+        }
+        return DAS_S_OK;
+    };
+
+    DAS::DasPtr<DAS::Core::IPC::HostLauncher> host_first;
+    ASSERT_EQ(make_launcher(host_first), DAS_S_OK);
+    DAS::DasPtr<DAS::Core::IPC::HostLauncher> host_second;
+    ASSERT_EQ(make_launcher(host_second), DAS_S_OK);
+    // 未启动的 launcher：StopAll 走 StopBodySync 就地清理分支
+    DAS::DasPtr<DAS::Core::IPC::HostLauncher> host_idle;
+    ASSERT_EQ(make_launcher(host_idle), DAS_S_OK);
+
+    const auto stop_all_on_failure = [&]
+    { DAS::Core::IPC::HostLauncher::StopAll({host_first, host_second}); };
+
+    uint16_t session_first = 0;
+    auto     result = host_first->Start(
+        host_exe_path_,
+        session_first,
+        IpcTestConfig::GetHostStartTimeoutMs());
+    if (DAS::IsFailed(result))
+    {
+        stop_all_on_failure();
+        FAIL() << "first host start failed: " << result;
+    }
+    uint16_t session_second = 0;
+    result = host_second->Start(
+        host_exe_path_,
+        session_second,
+        IpcTestConfig::GetHostStartTimeoutMs());
+    if (DAS::IsFailed(result))
+    {
+        stop_all_on_failure();
+        FAIL() << "second host start failed: " << result;
+    }
+    EXPECT_NE(session_first, session_second);
+
+    // 两个存活 host + 一个未启动 + 一个空指针：StopAll 一次收口
+    DAS::Core::IPC::HostLauncher::StopAll(
+        {host_first, host_second, host_idle, nullptr});
+
+    EXPECT_FALSE(host_first->IsRunning());
+    EXPECT_FALSE(host_second->IsRunning());
+    EXPECT_FALSE(host_idle->IsRunning());
 }
 
 TEST_F(IpcMultiProcessTestIntegration, MixedTransport_HttpAndIpcHostToHostCall)

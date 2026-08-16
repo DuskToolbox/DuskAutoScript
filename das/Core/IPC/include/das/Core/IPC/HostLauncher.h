@@ -24,6 +24,7 @@
 #include <das/Core/IPC/Config.h>
 #include <das/Core/IPC/IHostConnection.h>
 #include <das/Core/IPC/MainProcess/IHostLauncher.h>
+#include <das/DasPtr.hpp>
 
 // Forward declaration for io_context
 namespace boost::asio
@@ -224,6 +225,27 @@ public:
         uint16_t*             p_out_session_id) override;
 
     void Stop() override;
+
+    /**
+     * @brief 并行停机编排：所有 launcher 的 GOODBYE 齐发、等待重叠
+     *
+     * stdexec 结构化并发形态：每 launcher 的停机链（StopBodyRequestExit →
+     * scope drain → StopBodyCleanup）经 AsioSenderToken 桥包成 sender，
+     * spawn 进本函数局部的 exec::async_scope，调用线程
+     * sync_wait(on_empty) 等全部完成。单线程 io_context 上各链交错
+     * 执行——等待重叠即并行，总耗时从 Σ(每 host) 降为 max(每 host)。
+     *
+     * 逐 launcher 持 stop_mutex_ 到编排结束（锁窗口与 Stop() 等价：并发
+     * Stop() 对同一 launcher 阻塞排队，teardown 不重入）。单 launcher 链
+     * 失败经链尾 let_error 记日志隔离，不中断其余 launcher 的停机。
+     *
+     * 与 Stop() 相同的约束：必须在非 io_context 线程调用（assert），且须
+     * 在 run loop 停止前（io_context 存活被驱动）完成。空指针项跳过；
+     * io_context 已停 / transport 未连接的 launcher 走 StopBodySync 就地
+     * 同步清理，不进异步链。
+     */
+    static void StopAll(
+        const std::vector<DAS::DasPtr<HostLauncher>>& launchers);
 
     [[nodiscard]]
     bool IsRunning() const override;

@@ -822,6 +822,116 @@ void HostLauncher::Stop()
     }
 }
 
+void HostLauncher::StopAll(
+    const std::vector<DAS::DasPtr<HostLauncher>>& launchers)
+{
+    // 与 Stop() 相同的约束：停机链的 co_spawn / drain 需要 io_context 存活
+    // 且被驱动（调用方须在 runloop 停止前调本函数），调用线程阻塞等全部
+    // 完成，不能是 io_context 线程（否则自等死锁）。全部 launcher 共享
+    // 同一 run loop 的 io_context，取首个非空项校验即可。
+    const HostLauncher* first = nullptr;
+    for (const auto& launcher : launchers)
+    {
+        if (launcher)
+        {
+            first = launcher.Get();
+            break;
+        }
+    }
+    if (first == nullptr)
+    {
+        return;
+    }
+    assert(
+        !first->impl_->io_ctx.get_executor().running_in_this_thread()
+        && "StopAll() must not be called from the io_context thread");
+
+    // 调用线程逐 launcher 持锁并判定清理路径。
+    // 锁持有到本函数返回（sync_wait 完成）——窗口与 Stop() 全程持锁等价：
+    // 并发 Stop() 对同一 launcher 阻塞排队，teardown 不重入。io_context
+    // 已停 / transport 未连接的 launcher 走 StopBodySync 就地同步清理，
+    // 不进异步链（co_spawn 到已停的 io_context 永不执行 → on_empty 永不
+    // 完成，与 Stop() 同源的 Pitfall 4）。
+    std::vector<std::unique_lock<std::mutex>> held_locks;
+    held_locks.reserve(launchers.size());
+
+    // 局部编排 scope：只承载本函数 spawn 的停机链，与各 launcher 自己的
+    // async_scope（StartAsync 握手链 + exit-watcher）互不相干。
+    exec::async_scope stop_scope;
+
+    for (const auto& launcher : launchers)
+    {
+        if (!launcher)
+        {
+            continue;
+        }
+        HostLauncher* current = launcher.Get();
+        held_locks.emplace_back(current->stop_mutex_);
+
+        if (current->use_async_transport_cleanup_
+            && !current->impl_->io_ctx.stopped()
+            && current->impl_->async_transport
+            && current->impl_->async_transport->IsConnected())
+        {
+            // （io_context 线程，全部 launcher 并发）三段停机链
+            // sender 化后 spawn。co_spawn 把 GOODBYE 立即入队——循环走完
+            // 即全部齐发；等待在单线程 io_context 上交错重叠。drain 用
+            // launcher 自身 scope 的 on_empty() sender 形态续接（非阻塞：
+            // io 线程上 sync_wait(on_empty) 会自等死锁，这正是旧 Stop()
+            // 只能阻塞在调用线程、进而被外层 for 串行化的根因）。链尾
+            // let_error 隔离异常：单 launcher 失败记日志继续其余
+            // （async_scope::spawn 的 set_error 会 rethrow terminate）。
+            auto stop_sender =
+                boost::asio::co_spawn(
+                    current->impl_->io_ctx,
+                    current->StopBodyRequestExit(),
+                    AsioSenderToken{})
+                | stdexec::let_value(
+                    [current]() -> stdexec::sender auto
+                    { return current->impl_->scope.on_empty(); })
+                | stdexec::let_value(
+                    [current]() -> stdexec::sender auto
+                    {
+                        return boost::asio::co_spawn(
+                            current->impl_->io_ctx,
+                            current->StopBodyCleanup(),
+                            AsioSenderToken{});
+                    })
+                | stdexec::let_error(
+                    [current](std::exception_ptr error) -> stdexec::sender auto
+                    {
+                        try
+                        {
+                            if (error)
+                            {
+                                std::rethrow_exception(error);
+                            }
+                        }
+                        catch (const std::exception& e)
+                        {
+                            DAS_CORE_LOG_ERROR(
+                                "HostLauncher parallel stop failed: "
+                                "pid = {}, session_id = {}, error = {}",
+                                current->impl_->pid,
+                                current->impl_->session_id,
+                                ToString(e.what()));
+                        }
+                        return stdexec::just();
+                    });
+            stop_scope.spawn(std::move(stop_sender));
+        }
+        else
+        {
+            current->StopBodySync();
+        }
+    }
+
+    // 调用线程等全部链完成。每链有界——request-exit 含
+    // terminate 兜底保证进程必然退出，drain/cleanup 随之完成。锁在此后
+    // 随 held_locks 析构释放（逆序，launcher 间锁互相独立，顺序无关）。
+    stdexec::sync_wait(stop_scope.on_empty());
+}
+
 boost::asio::awaitable<void> HostLauncher::StopBodyRequestExit()
 {
     // 全清心跳+退出 slot（Pitfall 6 修复：消除旧版只清 on_process_exit_
