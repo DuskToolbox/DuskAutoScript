@@ -6,6 +6,8 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -110,8 +112,27 @@ namespace Das::Plugins::DasMaaPi
             int&                         out_status,
             const std::string&           proxy_url = {}) override;
 
+        // 取消在途请求：stop() 其 io_context，阻塞中的 run() 尽快返回，
+        // 协程被放弃、调用以默认失败码收尾。线程安全——可与执行请求的
+        // 线程并发调用（进程退出收尾经 registry 在非 io 线程触达）。
+        void RequestCancel() override;
+
     private:
-        bool                      verify_tls_certificate_;
-        std::chrono::milliseconds timeout_;
+        // 每请求独立的 I/O 状态。定义在实现文件中，Boost.Asio 依赖不进
+        // 本头文件；active_ 弱引用使 RequestCancel 能从其它线程触达挂起
+        // 请求的 io_context。
+        struct RequestState;
+
+        DasResult RunStreamRequest(
+            const std::string&           url,
+            const std::string&           proxy_url,
+            const std::filesystem::path& out_path,
+            const ProgressCallback&      on_progress,
+            int&                         out_status);
+
+        bool                        verify_tls_certificate_;
+        std::chrono::milliseconds   timeout_;
+        std::mutex                  cancel_mutex_;
+        std::weak_ptr<RequestState> active_;
     };
 } // namespace Das::Plugins::DasMaaPi

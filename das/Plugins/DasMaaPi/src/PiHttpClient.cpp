@@ -25,6 +25,8 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -1110,52 +1112,6 @@ namespace Das::Plugins::DasMaaPi
             }
         }
 
-        DasResult RunStreamRequest(
-            bool                         verify_tls,
-            std::chrono::milliseconds    timeout,
-            const std::string&           url,
-            const std::string&           proxy_url,
-            const std::filesystem::path& out_path,
-            const ProgressCallback&      on_progress,
-            int&                         out_status)
-        {
-            boost::asio::io_context io;
-            RequestOutcome          outcome;
-            boost::asio::co_spawn(
-                io,
-                DoStreamRequest(
-                    url,
-                    proxy_url,
-                    verify_tls,
-                    timeout,
-                    out_path,
-                    on_progress,
-                    out_status,
-                    outcome),
-                [&](std::exception_ptr e) { outcome.error = std::move(e); });
-            io.run();
-            if (outcome.error)
-            {
-                try
-                {
-                    std::rethrow_exception(outcome.error);
-                }
-                catch (const boost::system::system_error& e)
-                {
-                    outcome.result = MapSystemError(e.code());
-                    LogDiagnosticError(
-                        "BeastHttpClient stream request aborted: url="
-                        + RedactUrlForLog(url)
-                        + " error=" + e.code().message());
-                }
-                catch (...)
-                {
-                    outcome.result = DAS_E_FAIL;
-                }
-            }
-            return outcome.result;
-        }
-
         DasResult RunRequest(
             bool                      verify_tls,
             std::chrono::milliseconds timeout,
@@ -1292,6 +1248,14 @@ namespace Das::Plugins::DasMaaPi
         return DAS_S_OK;
     }
 
+    // 每请求独立的 io_context 状态：io.run() 阻塞期间经 BeastHttpClient::
+    // active_ 弱引用可达，RequestCancel 据此 stop()。stop 后 run() 尽快返回，
+    // 已排队未调用的 handler（含被放弃协程的帧）随 io_context 析构销毁。
+    struct BeastHttpClient::RequestState
+    {
+        boost::asio::io_context io;
+    };
+
     BeastHttpClient::BeastHttpClient(
         bool                      verify_tls_certificate,
         std::chrono::milliseconds timeout)
@@ -1339,12 +1303,70 @@ namespace Das::Plugins::DasMaaPi
         const std::string&           proxy_url)
     {
         return RunStreamRequest(
-            verify_tls_certificate_,
-            timeout_,
             url,
             proxy_url,
             out_path,
             on_progress,
             out_status);
+    }
+
+    void BeastHttpClient::RequestCancel()
+    {
+        const std::lock_guard<std::mutex> cancel_lock(cancel_mutex_);
+        if (const auto state = active_.lock())
+        {
+            state->io.stop();
+        }
+    }
+
+    DasResult BeastHttpClient::RunStreamRequest(
+        const std::string&           url,
+        const std::string&           proxy_url,
+        const std::filesystem::path& out_path,
+        const ProgressCallback&      on_progress,
+        int&                         out_status)
+    {
+        const auto state = std::make_shared<RequestState>();
+        {
+            const std::lock_guard<std::mutex> registration_lock(cancel_mutex_);
+            active_ = state;
+        }
+        RequestOutcome outcome;
+        boost::asio::co_spawn(
+            state->io,
+            DoStreamRequest(
+                url,
+                proxy_url,
+                verify_tls_certificate_,
+                timeout_,
+                out_path,
+                on_progress,
+                out_status,
+                outcome),
+            [&](std::exception_ptr e) { outcome.error = std::move(e); });
+        state->io.run();
+        {
+            const std::lock_guard<std::mutex> registration_lock(cancel_mutex_);
+            active_.reset();
+        }
+        if (outcome.error)
+        {
+            try
+            {
+                std::rethrow_exception(outcome.error);
+            }
+            catch (const boost::system::system_error& e)
+            {
+                outcome.result = MapSystemError(e.code());
+                LogDiagnosticError(
+                    "BeastHttpClient stream request aborted: url="
+                    + RedactUrlForLog(url) + " error=" + e.code().message());
+            }
+            catch (...)
+            {
+                outcome.result = DAS_E_FAIL;
+            }
+        }
+        return outcome.result;
     }
 } // namespace Das::Plugins::DasMaaPi
