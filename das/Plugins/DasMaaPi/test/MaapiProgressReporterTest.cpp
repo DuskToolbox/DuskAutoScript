@@ -234,6 +234,122 @@ TEST(MaapiProgressReporterTest, RemoveCallbackStopsReporting)
 }
 
 // ============================================================================
+// ReportFinal：后台更新 job 终态字段增量（三字段恒推：文案 + 空速率 + 空
+// 耗时；i18n 模板 0 基 {0} 填 detail）。i18n 表部署在测试 exe 目录（懒加载
+// 经 this_line_location 解析），locale 经 GlobalLocaleGuard 切换覆盖两语言。
+// ============================================================================
+
+// 成功终态：updateProgress 填入版本号（zh 模板「更新完成（{0}）」），
+// downloadRate / downloadElapsed 为空串值。
+TEST(MaapiProgressReporterTest, ReportFinalSuccessFillsVersionTemplate)
+{
+    GlobalLocaleGuard                                 locale_guard("zh-cn");
+    DasPtr<Das::ExportInterface::IDasProgressService> service =
+        FakeProgressService::Make();
+    auto* fake = static_cast<FakeProgressService*>(service.Get());
+
+    auto reporter = std::make_shared<DasProgressReporter>("key1", service);
+    ASSERT_TRUE(reporter->Start());
+
+    reporter->ReportFinal(true, "v1.2.0");
+
+    ASSERT_EQ(fake->entries.size(), 1u);
+    auto entry = fake->entries.front();
+    EXPECT_EQ(ReadEntryKey(entry.Get()), "key1");
+
+    size_t count = 0;
+    ASSERT_EQ(entry->GetFieldCount(&count), DAS_S_OK);
+    ASSERT_EQ(count, 3u);
+
+    const auto [name0, value0] = ReadEntryField(entry.Get(), 0);
+    EXPECT_EQ(name0, "updateProgress");
+    EXPECT_NE(value0.find("更新完成"), std::string::npos);
+    EXPECT_NE(value0.find("v1.2.0"), std::string::npos);
+
+    // IDasJson::ToString(0) 返回紧凑 JSON 序列化——空串值是两字符 ""。
+    const auto [name1, value1] = ReadEntryField(entry.Get(), 1);
+    EXPECT_EQ(name1, "downloadRate");
+    EXPECT_EQ(value1, "\"\"");
+
+    const auto [name2, value2] = ReadEntryField(entry.Get(), 2);
+    EXPECT_EQ(name2, "downloadElapsed");
+    EXPECT_EQ(value2, "\"\"");
+
+    reporter->Stop();
+}
+
+// 成功终态（默认 en locale）：模板 "Update complete ({0})"。
+TEST(MaapiProgressReporterTest, ReportFinalSuccessEnglishTemplate)
+{
+    DasPtr<Das::ExportInterface::IDasProgressService> service =
+        FakeProgressService::Make();
+    auto* fake = static_cast<FakeProgressService*>(service.Get());
+
+    auto reporter = std::make_shared<DasProgressReporter>("key1", service);
+    ASSERT_TRUE(reporter->Start());
+
+    reporter->ReportFinal(true, "v2.0.1");
+
+    ASSERT_EQ(fake->entries.size(), 1u);
+    const auto [name0, value0] = ReadEntryField(fake->entries.front().Get(), 0);
+    EXPECT_EQ(name0, "updateProgress");
+    EXPECT_NE(value0.find("Update complete"), std::string::npos);
+    EXPECT_NE(value0.find("v2.0.1"), std::string::npos);
+}
+
+// 失败终态：updateProgress 填入失败概要（detail 为 DasResult 十进制串）。
+TEST(MaapiProgressReporterTest, ReportFinalFailureFillsDetailTemplate)
+{
+    GlobalLocaleGuard                                 locale_guard("zh-cn");
+    DasPtr<Das::ExportInterface::IDasProgressService> service =
+        FakeProgressService::Make();
+    auto* fake = static_cast<FakeProgressService*>(service.Get());
+
+    auto reporter = std::make_shared<DasProgressReporter>("key1", service);
+    ASSERT_TRUE(reporter->Start());
+
+    reporter->ReportFinal(false, "result=-10008");
+
+    ASSERT_EQ(fake->entries.size(), 1u);
+    const auto [name0, value0] = ReadEntryField(fake->entries.front().Get(), 0);
+    EXPECT_EQ(name0, "updateProgress");
+    EXPECT_NE(value0.find("更新失败"), std::string::npos);
+    EXPECT_NE(value0.find("result=-10008"), std::string::npos);
+}
+
+// 未 Start → ReportFinal 无推送（add_count 不变、entries 空）。
+TEST(MaapiProgressReporterTest, ReportFinalWithoutStartDoesNotPush)
+{
+    DasPtr<Das::ExportInterface::IDasProgressService> service =
+        FakeProgressService::Make();
+    auto* fake = static_cast<FakeProgressService*>(service.Get());
+
+    auto reporter = std::make_shared<DasProgressReporter>("key1", service);
+    reporter->ReportFinal(true, "v1.2.0");
+
+    EXPECT_EQ(fake->add_count, 0);
+    EXPECT_EQ(fake->entries.size(), 0u);
+}
+
+// 已 Stop（终态后）→ ReportFinal 无推送。
+TEST(MaapiProgressReporterTest, ReportFinalAfterStopDoesNotPush)
+{
+    DasPtr<Das::ExportInterface::IDasProgressService> service =
+        FakeProgressService::Make();
+    auto* fake = static_cast<FakeProgressService*>(service.Get());
+
+    auto reporter = std::make_shared<DasProgressReporter>("key1", service);
+    ASSERT_TRUE(reporter->Start());
+    reporter->Stop();
+    const int remove_count_before = fake->remove_count;
+
+    reporter->ReportFinal(false, "result=-10008");
+
+    EXPECT_EQ(fake->entries.size(), 0u);
+    EXPECT_EQ(fake->remove_count, remove_count_before);
+}
+
+// ============================================================================
 // Task 3: 更新 section 字段投影（五字段无 updateKey + fieldLayout 置顶）
 // ============================================================================
 

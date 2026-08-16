@@ -7696,6 +7696,71 @@ TEST(
     EXPECT_TRUE(session.PendingUpdate().has_value());
 }
 
+// 防重入：job 运行中（下载挂起）再次 applyUpdate → 拒绝（ok=false）+
+// error 级诊断（DAS_E_MAAPI_UPDATE_APPLY_FAILED）+ 无 accepted
+// commandResult；registry 仍 running。收尾经 fake 的 RequestCancel 释放
+// latch（同时覆盖取消覆盖方法本身）+ 等待缝收干净 slot。
+TEST(MaapiUpdateCommandTest, InvokeCommandApplyUpdateRejectedWhileJobRunning)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    TempUpdateProject project;
+    project.WriteInterface(
+        MakeUpdateInterface("1.0.0", "https://github.com/owner/repo"));
+
+    const std::string new_interface =
+        MakeUpdateInterface("1.2.0", "https://github.com/owner/repo");
+    auto http = std::make_shared<FakeUpdateHttpClient>();
+    http->AddRoute(
+        "/releases/download/v1.2.0/",
+        BuildStoredZip({{"interface.json", new_interface}}),
+        200);
+    http->BlockDownloads();
+
+    MaapiAuthoringSession session(MakeUpdateSettings(project.Dir()));
+    session.SetHttpClientForTest(http.get());
+    PiUpdateInfo info;
+    info.has_update = true;
+    info.version_name = "v1.2.0";
+    info.download_url =
+        "https://github.com/owner/repo/releases/download/v1.2.0/"
+        "test-project-win-x86_64-v1.2.0.zip";
+    session.SetPendingUpdate(info);
+
+    // 1) 首次受理成功（job 挂起在下载中）。
+    DasPtr<Das::ExportInterface::IDasJson> r1_json;
+    auto                                   c1 = ParseDasJson(
+        "{\"baseRevision\":0,\"kind\":\"invokeCommand\","
+        "\"payload\":{\"commandId\":\"applyUpdate\"}}");
+    ASSERT_EQ(session.ApplyChange(c1.Get(), r1_json.Put()), DAS_S_OK);
+    auto r1 = ReadJsonInterface(r1_json.Get());
+    EXPECT_EQ(CountDiagnosticsBySeverity(r1, "error"), 0u);
+    EXPECT_EQ(DocumentRevisionFromApplyResult(r1), 1);
+    ASSERT_TRUE(UpdateJobRegistry::Instance().IsRunning(project.Dir()));
+
+    // 2) job 运行中二次 applyUpdate → 拒绝 + error 诊断（错误码 -10008）+
+    //    无 accepted commandResult + revision 不递增。
+    DasPtr<Das::ExportInterface::IDasJson> r2_json;
+    auto                                   c2 = ParseDasJson(
+        "{\"baseRevision\":1,\"kind\":\"invokeCommand\","
+        "\"payload\":{\"commandId\":\"applyUpdate\"}}");
+    ASSERT_EQ(session.ApplyChange(c2.Get(), r2_json.Put()), DAS_S_OK);
+    auto r2 = ReadJsonInterface(r2_json.Get());
+    EXPECT_GE(CountDiagnosticsBySeverity(r2, "error"), 1u);
+    EXPECT_TRUE(HasDiagnosticWithCode(r2, static_cast<std::int64_t>(-10008)));
+    EXPECT_FALSE(CommandResultOf(r2).has_value());
+    EXPECT_EQ(DocumentRevisionFromApplyResult(r2), 1);
+    EXPECT_TRUE(UpdateJobRegistry::Instance().IsRunning(project.Dir()));
+
+    // 3) 收尾：经 fake 的 RequestCancel 释放挂起下载，等待缝收干净 slot。
+    http->RequestCancel();
+    ASSERT_TRUE(
+        UpdateJobRegistry::Instance().WaitForSlotIdleForTest(
+            project.Dir(),
+            std::chrono::seconds(10)));
+    EXPECT_FALSE(UpdateJobRegistry::Instance().IsRunning(project.Dir()));
+}
+
 // applyUpdate 失败（异步语义）——受理 ok=true（受理端点不感知后台失败）；
 // job 下载失败后终态 entry 携带失败文案（detail 为 DasResult 十进制串），
 // pi_dir 旧内容保留 + pending_update_ 保留（用户可重试）。
