@@ -2494,8 +2494,31 @@ namespace Das::Plugins::DasMaaPi
                     std::move(row_arr);
                 entries.as_array()->emplace_back(std::move(row));
             }
+            // 版本/日志紧贴按钮 row：检查到更新后用户一眼看到新版本与日志，
+            // 再往下才是 CDK/代理/通道等配置与其余字段。纯 layout 顺序改动，
+            // 不动 fields[] 声明与字段投影本体（ValidateFieldLayout 只查全
+            // 覆盖不查顺序）。
+            auto emit_update_leaf_if_present =
+                [&entries, &update_entries, &make_leaf](
+                    std::string_view field_name)
+            {
+                if (std::any_of(
+                        update_entries.begin(),
+                        update_entries.end(),
+                        [&field_name](const std::string& entry_name)
+                        { return entry_name == field_name; }))
+                {
+                    entries.as_array()->emplace_back(make_leaf(field_name));
+                }
+            };
+            emit_update_leaf_if_present("updateVersion");
+            emit_update_leaf_if_present("releaseNote");
             for (const auto& name : update_entries)
             {
+                if (name == "updateVersion" || name == "releaseNote")
+                {
+                    continue;
+                }
                 entries.as_array()->emplace_back(make_leaf(name));
             }
             (*s_obj)[std::string_view("entries")] = std::move(entries);
@@ -2704,6 +2727,21 @@ namespace Das::Plugins::DasMaaPi
             return std::tolower(static_cast<unsigned char>(actual)) == expected;
         };
         return eq(type[0], 'a') && eq(type[1], 'd') && eq(type[2], 'b');
+    }
+
+    // interface_path 的父目录 = 项目目录（interface.json 所在目录，更新目标
+    // = 项目目录整体替换）。投影与 dispatch（checkUpdate/applyUpdate 前置
+    // 校验、registry IsRunning 键）共用。
+    std::optional<std::filesystem::path> ResolvePiDir(
+        const AcceptedSettingsDto& settings)
+    {
+        if (!settings.adapter.interface_path
+            || settings.adapter.interface_path->empty())
+        {
+            return std::nullopt;
+        }
+        return std::filesystem::path(*settings.adapter.interface_path)
+            .parent_path();
     }
 
     yyjson::value ProjectAuthoringDocument(
@@ -3576,15 +3614,24 @@ namespace Das::Plugins::DasMaaPi
             const std::string apply_label = Translate("command.applyUpdate");
             const std::string discover_label =
                 Translate("command.discoverAdbDevices");
-            emit_command("checkUpdate", check_label);
+            // 后台更新 job 运行中（registry per-pi_dir 状态驱动投影）：两键
+            // 都禁用，防 job 期间重复触发；slot idle 后恢复既有条件。
+            bool update_running = false;
+            if (const auto running_pi_dir = ResolvePiDir(settings))
+            {
+                update_running =
+                    UpdateJobRegistry::Instance().IsRunning(*running_pi_dir);
+            }
+            emit_command("checkUpdate", check_label, update_running);
             // WR-05: 部分信息路径（MirrorChyan code!=0 但 data.version_name
             // 存在）返回 has_update=true 且 download_url 为空，后端
             // ApplyApplyUpdateCommand 以 "nothing to apply" 拒绝——投影必须与
             // 后端命令可用性一致：无下载链接时按钮 disabled，避免可点但必失败。
             const bool apply_update_disabled =
-                pending_update == nullptr || !pending_update->has_value()
-                || !(*pending_update)->has_update
-                || (*pending_update)->download_url.empty();
+                (pending_update == nullptr || !pending_update->has_value()
+                 || !(*pending_update)->has_update
+                 || (*pending_update)->download_url.empty())
+                || update_running;
             emit_command("applyUpdate", apply_label, apply_update_disabled);
             // discoverAdbDevices：仅 Adb controller 投影（win32/gamepad 不需
             // 要扫描 ADB 设备）。命令被 controller section fieldLayout row
@@ -5215,20 +5262,6 @@ namespace Das::Plugins::DasMaaPi
             resolved.value = resolved.owned.get();
         }
         return resolved;
-    }
-
-    // interface_path 的父目录 = 项目目录（interface.json 所在目录，D-89-01：
-    // 更新目标 = 项目目录替换）。
-    std::optional<std::filesystem::path> ResolvePiDir(
-        const AcceptedSettingsDto& settings)
-    {
-        if (!settings.adapter.interface_path
-            || settings.adapter.interface_path->empty())
-        {
-            return std::nullopt;
-        }
-        return std::filesystem::path(*settings.adapter.interface_path)
-            .parent_path();
     }
 
     // 随机不可枚举 SSE 订阅 key：时间戳前缀 + mt19937 随机十六进制后缀

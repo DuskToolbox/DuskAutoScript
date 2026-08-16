@@ -6935,6 +6935,35 @@ namespace
         std::filesystem::path dir_;
     };
 
+    // RAII：挂起下载用例的任意退出路径（断言失败/异常逃逸）都先释放 latch
+    // 并等待 slot idle——否则 fake（测试侧持有）先于 job 析构，进程退出时
+    // registry 收尾的 RequestCancel 悬垂。正常路径的显式释放与之幂等。
+    class BlockedDownloadGuard
+    {
+    public:
+        BlockedDownloadGuard(
+            std::shared_ptr<FakeUpdateHttpClient> http,
+            std::filesystem::path                 pi_dir)
+            : http_(std::move(http)), pi_dir_(std::move(pi_dir))
+        {
+        }
+
+        ~BlockedDownloadGuard()
+        {
+            http_->ReleaseDownload();
+            (void)UpdateJobRegistry::Instance().WaitForSlotIdleForTest(
+                pi_dir_,
+                std::chrono::seconds(10));
+        }
+
+        BlockedDownloadGuard(const BlockedDownloadGuard&) = delete;
+        BlockedDownloadGuard& operator=(const BlockedDownloadGuard&) = delete;
+
+    private:
+        std::shared_ptr<FakeUpdateHttpClient> http_;
+        std::filesystem::path                 pi_dir_;
+    };
+
     // interface.json 顶层 github 字段 → GitHub 检查来源（MirrorChyan 兜底）。
     std::string MakeUpdateInterface(
         const std::string& version,
@@ -7612,6 +7641,7 @@ TEST(
         BuildStoredZip({{"interface.json", new_interface}}),
         200);
     http->BlockDownloads();
+    BlockedDownloadGuard download_guard(http, project.Dir());
 
     MaapiAuthoringSession session(MakeUpdateSettings(project.Dir()));
     session.SetHttpClientForTest(http.get());
@@ -7716,6 +7746,7 @@ TEST(MaapiUpdateCommandTest, InvokeCommandApplyUpdateRejectedWhileJobRunning)
         BuildStoredZip({{"interface.json", new_interface}}),
         200);
     http->BlockDownloads();
+    BlockedDownloadGuard download_guard(http, project.Dir());
 
     MaapiAuthoringSession session(MakeUpdateSettings(project.Dir()));
     session.SetHttpClientForTest(http.get());
@@ -7875,6 +7906,123 @@ TEST(MaapiProjectionTest, CommandsApplyUpdateDisabledDrivenByPendingState)
     auto apply_has_update = FindCommand(doc_has_update, "applyUpdate");
     ASSERT_TRUE(apply_has_update.has_value());
     EXPECT_FALSE(CommandHasDisabled(apply_has_update));
+}
+
+// 更新 section 布局：版本/日志字段紧贴按钮 row（用户检查到更新后一眼看到
+// 新版本与日志），其余条目（CDK/代理/通道/resourceVersion/maafwVersion/
+// updateProgress/downloadRate/downloadElapsed）保持 fields[] 声明原序。
+// LayoutSectionFieldNames 跳过 row/commandId 叶子且保序。全覆盖契约
+// （ValidateFieldLayout）保持。
+TEST(MaapiProjectionTest, UpdateSectionVersionAndReleaseNoteFollowButtonRow)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    AcceptedSettingsDto settings;
+    settings.pi.language = "zh_cn";
+    std::optional<PiUpdateInfo> pending;
+    pending.emplace();
+    pending->has_update = true;
+    pending->version_name = "v1.2.3";
+    pending->release_note = "note";
+    pending->download_url = "https://example.com/package.zip";
+
+    auto document =
+        ProjectAuthoringDocument(settings, nullptr, {}, 0, nullptr, &pending);
+    auto valid = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+    EXPECT_TRUE(valid.valid)
+        << "error_kind=" << valid.error_kind << " message=" << valid.message;
+
+    auto update_section = FindLayoutSection(document, "update");
+    ASSERT_TRUE(update_section.has_value());
+    const auto names = LayoutSectionFieldNames(*update_section);
+    ASSERT_GE(names.size(), 2u);
+    EXPECT_EQ(names[0], "updateVersion");
+    EXPECT_EQ(names[1], "releaseNote");
+    const std::vector<std::string> rest(names.begin() + 2, names.end());
+    EXPECT_EQ(
+        rest,
+        (std::vector<std::string>{
+            "adapter.mirrorchyanCdk",
+            "adapter.proxyUrl",
+            "adapter.updateChannel",
+            "resourceVersion",
+            "maafwVersion",
+            "updateProgress",
+            "downloadRate",
+            "downloadElapsed"}))
+        << "remaining update section entries must keep fields[] order";
+}
+
+// 后台更新 job 运行态投影（后端 registry 状态驱动）：受理响应自身的
+// document（ApplyChange dispatch 先于投影，TryStart 已生效）中 checkUpdate
+// 与 applyUpdate 均 disabled；slot idle 后投影恢复既有条件——checkUpdate
+// 恒可点（无 disabled），applyUpdate 回到 pending 驱动 enabled。
+TEST(MaapiProjectionTest, UpdateCommandsDisabledWhileJobRunningAndIdleAfter)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    TempUpdateProject project;
+    project.WriteInterface(
+        MakeUpdateInterface("1.0.0", "https://github.com/owner/repo"));
+
+    const std::string new_interface =
+        MakeUpdateInterface("1.2.0", "https://github.com/owner/repo");
+    auto http = std::make_shared<FakeUpdateHttpClient>();
+    http->AddRoute(
+        "/releases/download/v1.2.0/",
+        BuildStoredZip({{"interface.json", new_interface}}),
+        200);
+    http->BlockDownloads();
+    BlockedDownloadGuard download_guard(http, project.Dir());
+
+    MaapiAuthoringSession session(MakeUpdateSettings(project.Dir()));
+    session.SetHttpClientForTest(http.get());
+    PiUpdateInfo info;
+    info.has_update = true;
+    info.version_name = "v1.2.0";
+    info.download_url =
+        "https://github.com/owner/repo/releases/download/v1.2.0/"
+        "test-project-win-x86_64-v1.2.0.zip";
+    session.SetPendingUpdate(info);
+
+    // 受理 → 响应 document 已含双键 disabled。
+    DasPtr<Das::ExportInterface::IDasJson> r1_json;
+    auto                                   c1 = ParseDasJson(
+        "{\"baseRevision\":0,\"kind\":\"invokeCommand\","
+        "\"payload\":{\"commandId\":\"applyUpdate\"}}");
+    ASSERT_EQ(session.ApplyChange(c1.Get(), r1_json.Put()), DAS_S_OK);
+    auto r1 = ReadJsonInterface(r1_json.Get());
+    ASSERT_EQ(CountDiagnosticsBySeverity(r1, "error"), 0u);
+    auto document = DocumentFromApplyResult(r1);
+    auto check_cmd = FindCommand(document, "checkUpdate");
+    ASSERT_TRUE(check_cmd.has_value());
+    EXPECT_TRUE(FieldOf(*check_cmd, "disabled").as_bool().value_or(false));
+    auto apply_cmd = FindCommand(document, "applyUpdate");
+    ASSERT_TRUE(apply_cmd.has_value());
+    EXPECT_TRUE(FieldOf(*apply_cmd, "disabled").as_bool().value_or(false));
+
+    // 释放 + 等待 idle → 投影恢复：checkUpdate 无 disabled，applyUpdate
+    // 回到 pending 条件（enabled，缺失 disabled == false）。
+    http->ReleaseDownload();
+    ASSERT_TRUE(
+        UpdateJobRegistry::Instance().WaitForSlotIdleForTest(
+            project.Dir(),
+            std::chrono::seconds(10)));
+    std::optional<PiUpdateInfo> pending = session.PendingUpdate();
+    ASSERT_TRUE(pending.has_value());
+    auto idle_document = ProjectAuthoringDocument(
+        MakeUpdateSettings(project.Dir()),
+        nullptr,
+        {},
+        0,
+        nullptr,
+        &pending);
+    auto idle_check = FindCommand(idle_document, "checkUpdate");
+    ASSERT_TRUE(idle_check.has_value());
+    EXPECT_FALSE(CommandHasDisabled(idle_check));
+    auto idle_apply = FindCommand(idle_document, "applyUpdate");
+    ASSERT_TRUE(idle_apply.has_value());
+    EXPECT_FALSE(CommandHasDisabled(idle_apply));
 }
 
 // D-89-07 修订：项目设置 section 投影两个只读版本字段。resourceVersion 值 =
