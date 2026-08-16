@@ -1011,6 +1011,16 @@ namespace Das::Plugins::DasMaaPi
                     pending_path,
                     std::filesystem::copy_options::overwrite_existing,
                     copy_ec);
+                if (copy_ec)
+                {
+                    // 暂存失败（磁盘满/权限）：记 error 且不登记为 staged——
+                    // 无条件登记会把「新版本文件已静默丢失」谎报成「已暂存
+                    // 待下次生效」。
+                    LogError(
+                        "PiUpdateService: cannot stage to .pending: "
+                        + rel.string() + " error=" + copy_ec.message());
+                    continue;
+                }
                 pending_files.push_back(rel.string());
             }
             if (!pending_files.empty())
