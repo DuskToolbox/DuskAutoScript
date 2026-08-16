@@ -1417,6 +1417,19 @@ namespace Das::Plugins::DasMaaPi
                     pi_dir.string()));
             std::error_code restore_ec;
             std::filesystem::rename(backup_dir, pi_dir, restore_ec);
+            if (restore_ec)
+            {
+                // 回滚失败不再静默：backup 目录完整路径与错误原因进日志，
+                // 用户可按该路径手工恢复旧版本。
+                LogError(
+                    DAS::fmt::format(
+                        "PiUpdateService: update rollback failed entryId={} "
+                        "backup={} error={} - old version can be restored "
+                        "manually from the backup directory",
+                        entry_id,
+                        backup_dir.string(),
+                        restore_ec.message()));
+            }
             return DAS_E_MAAPI_UPDATE_APPLY_FAILED;
         }
         LogInfo(
