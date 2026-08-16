@@ -1097,4 +1097,40 @@ v6yQpUYtQbbVSIHbNlBhfp8=
         // 取消后客户端正常析构、进程正常退出（ASAN 干净）即本用例收尾。
         std::filesystem::remove(out_path, ec);
     }
+
+    TEST(PiHttpClient, RequestCancelInterruptsHangingGet)
+    {
+        // Get/Head 路径与流式下载共用同一登记/取消机制：挂起 GET 被
+        // RequestCancel 有界打断。
+        HangingResponseServer server;
+        server.Start();
+
+        BeastHttpClient client;
+        std::string     body;
+        int             status = 0;
+        const auto url = "http://127.0.0.1:" + std::to_string(server.Port())
+                         + "/releases/latest";
+
+        std::atomic<bool> request_returned{false};
+        DasResult         result = DAS_S_OK;
+        std::thread       request_thread(
+            [&]()
+            {
+                result = client.Get(url, body, status);
+                request_returned.store(true);
+            });
+
+        ASSERT_TRUE(WaitFor(
+            [&] { return server.AcceptedCount() >= 1; },
+            std::chrono::seconds(5)));
+        client.RequestCancel();
+
+        const bool returned_within_bound = WaitFor(
+            [&] { return request_returned.load(); },
+            std::chrono::seconds(5));
+        request_thread.join();
+        EXPECT_TRUE(returned_within_bound);
+        // 协程被放弃，outcome 保持默认失败码。
+        EXPECT_EQ(result, DAS_E_FAIL);
+    }
 } // namespace
