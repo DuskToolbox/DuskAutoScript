@@ -121,6 +121,9 @@ namespace Das::Plugins::DasMaaPi
 
         // Redact a URL for logging: keep scheme://host:port, drop path/query so
         // sensitive query parameters never reach the log (T-89-01-02).
+        // Fallback (unparseable URL) also strips everything from '?' on: the
+        // cdk query is appended to externally-sourced download URLs, and the
+        // invalid-url log line is exactly where redaction must not fail.
         std::string RedactUrlForLog(std::string_view url)
         {
             UrlParts parts;
@@ -128,7 +131,10 @@ namespace Das::Plugins::DasMaaPi
             {
                 return parts.scheme + "://" + parts.host_and_port;
             }
-            return std::string(url);
+            const auto query = url.find('?');
+            return query == std::string_view::npos
+                       ? std::string(url)
+                       : std::string(url.substr(0, query));
         }
 
         struct RequestOutcome
