@@ -17,7 +17,7 @@
 #include <utility>
 #include <vector>
 
-#include <zlib.h>
+#include <zip.h>
 
 namespace Das::Plugins::DasMaaPi
 {
@@ -627,55 +627,19 @@ namespace Das::Plugins::DasMaaPi
         }
 
         // -----------------------------------------------------------------
-        // ZIP 解压（T-89-02-01 目录穿越防护）。格式解析参考
-        // PluginZipExtractor.cpp:89-152 / 160-354 的 IsPathSafe /
-        // EnumerateZipEntries / ExtractEntryToDisk 模式。
+        // ZIP 解压：容器解析与 CRC32 完整性校验由 libzip 承担（读取时校验，
+        // 声明 CRC 与实际内容不符的条目以读取错误返回并整体拒绝）。
+        // 目录穿越防护与单条目解压上限在本侧保留。
         // -----------------------------------------------------------------
 
-        constexpr std::uint32_t LOCAL_FILE_HEADER_SIG = 0x04034B50;
-        constexpr std::uint32_t CENTRAL_DIR_SIG = 0x02014B50;
-        constexpr std::uint32_t END_OF_CENTRAL_DIR_SIG = 0x06054B50;
-
-        // 单个 zip 条目解压后的大小上限（解压炸弹防护）。HTTP 响应体已不设
-        // 上限，但攻击者/上游可控的 uncompressed_size（uint32，最高 ~4GB）
-        // 不能直接触发 output.resize() 的巨量分配，故单条目仍限 512MB。
+        // 单个 zip 条目解压后的大小上限（解压炸弹防护）。声明大小与实际
+        // 大小都不得超限（攻击者/上游可控的 central directory 字段最高
+        // ~4GB，不能直接触发巨量分配）。
         constexpr std::size_t MAX_UNCOMPRESSED_ZIP_ENTRY_BYTES =
             512u * 1024u * 1024u;
 
-        template <typename T>
-        T ReadLE(const char* data, size_t offset)
-        {
-            T value;
-            std::memcpy(&value, data + offset, sizeof(T));
-            return value;
-        }
-
-        bool FindEndOfCentralDir(
-            const std::string& zip_data,
-            size_t&            eocd_offset)
-        {
-            constexpr size_t EOCD_SIZE = 22;
-            constexpr size_t MAX_COMMENT_SIZE = 65535;
-            if (zip_data.size() < EOCD_SIZE)
-            {
-                return false;
-            }
-            const size_t max_search =
-                std::min(zip_data.size(), EOCD_SIZE + MAX_COMMENT_SIZE);
-            // max_search >= EOCD_SIZE guaranteed above, so the loop count does
-            // not underflow (unsigned arithmetic) on short inputs.
-            for (size_t i = 0; i <= max_search - EOCD_SIZE; ++i)
-            {
-                const size_t offset = zip_data.size() - EOCD_SIZE - i;
-                if (ReadLE<std::uint32_t>(zip_data.data(), offset)
-                    == END_OF_CENTRAL_DIR_SIG)
-                {
-                    eocd_offset = offset;
-                    return true;
-                }
-            }
-            return false;
-        }
+        // 单次 zip_fread 的块大小：流式落盘，避免整条目驻留内存。
+        constexpr zip_uint64_t ZIP_ENTRY_READ_CHUNK_BYTES = 64u * 1024u;
 
         // 目录穿越防护：条目路径规范化后必须位于 extract_dir 内。
         // 拒绝绝对路径 / 含 ".." 段 / 规范化后逃逸出 extract_dir（双保险，
@@ -731,191 +695,195 @@ namespace Das::Plugins::DasMaaPi
             return true;
         }
 
-        bool InflateZipEntry(
-            const char*  compressed,
-            size_t       compressed_size,
-            size_t       uncompressed_size,
-            std::string& output)
-        {
-            // WR-02: reject entries that claim to inflate beyond the project
-            // cap before allocating, so a hostile/broken package cannot OOM.
-            if (uncompressed_size > MAX_UNCOMPRESSED_ZIP_ENTRY_BYTES)
-            {
-                return false;
-            }
-            output.resize(uncompressed_size);
-            z_stream stream{};
-            stream.next_in =
-                reinterpret_cast<Bytef*>(const_cast<char*>(compressed));
-            stream.avail_in = static_cast<uInt>(compressed_size);
-            stream.next_out = reinterpret_cast<Bytef*>(output.data());
-            stream.avail_out = static_cast<uInt>(uncompressed_size);
-            if (inflateInit2(&stream, -MAX_WBITS) != Z_OK)
-            {
-                return false;
-            }
-            const int ret = inflate(&stream, Z_FINISH);
-            inflateEnd(&stream);
-            return ret == Z_STREAM_END;
-        }
-
         // 解压 zip 到 extract_dir，返回 DAS_S_OK /
         // DAS_E_MAAPI_UPDATE_APPLY_FAILED。
         DasResult ExtractZip(
             const std::string&           zip_data,
             const std::filesystem::path& extract_dir)
         {
-            size_t eocd_offset = 0;
-            if (!FindEndOfCentralDir(zip_data, eocd_offset))
+            zip_error_t open_error;
+            zip_error_init(&open_error);
+            zip_source_t* source = zip_source_buffer_create(
+                zip_data.data(),
+                static_cast<zip_uint64_t>(zip_data.size()),
+                0,
+                &open_error);
+            if (source == nullptr)
             {
-                LogError("PiUpdateService: invalid zip (no EOCD)");
+                LogError(
+                    std::string("PiUpdateService: zip source create failed: ")
+                    + zip_error_strerror(&open_error));
+                zip_error_fini(&open_error);
                 return DAS_E_MAAPI_UPDATE_APPLY_FAILED;
             }
-            const auto num_entries =
-                ReadLE<std::uint16_t>(zip_data.data(), eocd_offset + 10);
-            const auto cd_offset =
-                ReadLE<std::uint32_t>(zip_data.data(), eocd_offset + 16);
+            zip_t* archive =
+                zip_open_from_source(source, ZIP_RDONLY, &open_error);
+            if (archive == nullptr)
+            {
+                LogError(
+                    std::string("PiUpdateService: invalid zip: ")
+                    + zip_error_strerror(&open_error));
+                zip_error_fini(&open_error);
+                zip_source_free(source);
+                return DAS_E_MAAPI_UPDATE_APPLY_FAILED;
+            }
+            zip_error_fini(&open_error);
 
-            std::error_code ec;
+            const auto num_entries = zip_get_num_entries(archive, 0);
+            if (num_entries < 0)
+            {
+                LogError(
+                    std::string("PiUpdateService: zip entry count failed: ")
+                    + zip_strerror(archive));
+                zip_discard(archive);
+                return DAS_E_MAAPI_UPDATE_APPLY_FAILED;
+            }
             // 空 zip（0 条目）不创建 extract_dir —— replace rename 的源目录
             // 缺失 → ApplyUpdate 视为替换失败走回滚，旧目录被恢复。
             if (num_entries == 0)
             {
                 LogError("PiUpdateService: empty zip has no files to extract");
+                zip_discard(archive);
                 return DAS_E_MAAPI_UPDATE_APPLY_FAILED;
             }
+            std::error_code ec;
             std::filesystem::create_directories(extract_dir, ec);
 
-            size_t pos = cd_offset;
-            for (std::uint16_t i = 0; i < num_entries; ++i)
+            for (zip_uint64_t index = 0;
+                 index < static_cast<zip_uint64_t>(num_entries);
+                 ++index)
             {
-                if (pos + 46 > zip_data.size())
-                {
-                    LogError("PiUpdateService: truncated central directory");
-                    return DAS_E_MAAPI_UPDATE_APPLY_FAILED;
-                }
-                if (ReadLE<std::uint32_t>(zip_data.data(), pos)
-                    != CENTRAL_DIR_SIG)
+                zip_stat_t stat;
+                zip_stat_init(&stat);
+                if (zip_stat_index(archive, index, 0, &stat) < 0)
                 {
                     LogError(
-                        "PiUpdateService: bad central directory signature");
+                        std::string("PiUpdateService: zip stat failed: ")
+                        + zip_strerror(archive));
+                    zip_discard(archive);
                     return DAS_E_MAAPI_UPDATE_APPLY_FAILED;
                 }
-                const auto compression =
-                    ReadLE<std::uint16_t>(zip_data.data(), pos + 10);
-                const auto compressed_size =
-                    ReadLE<std::uint32_t>(zip_data.data(), pos + 20);
-                const auto uncompressed_size =
-                    ReadLE<std::uint32_t>(zip_data.data(), pos + 24);
-                const auto filename_length =
-                    ReadLE<std::uint16_t>(zip_data.data(), pos + 28);
-                const auto extra_length =
-                    ReadLE<std::uint16_t>(zip_data.data(), pos + 30);
-                const auto comment_length =
-                    ReadLE<std::uint16_t>(zip_data.data(), pos + 32);
-                const auto local_header_offset =
-                    ReadLE<std::uint32_t>(zip_data.data(), pos + 42);
+                const std::string_view entry_name(
+                    (stat.valid & ZIP_STAT_NAME) != 0 ? stat.name : "");
 
-                if (pos + 46 + filename_length + extra_length + comment_length
-                    > zip_data.size())
-                {
-                    LogError("PiUpdateService: truncated entry metadata");
-                    return DAS_E_MAAPI_UPDATE_APPLY_FAILED;
-                }
-
-                const std::string filename(
-                    zip_data.data() + pos + 46,
-                    filename_length);
-                pos += 46 + filename_length + extra_length + comment_length;
-
-                // 目录穿越防护（T-89-02-01）。
-                if (!IsSafeZipEntry(extract_dir, filename))
+                // 目录穿越防护。
+                if (!IsSafeZipEntry(extract_dir, entry_name))
                 {
                     LogError(
                         "PiUpdateService: unsafe zip entry rejected: "
-                        + filename);
+                        + std::string(entry_name));
+                    zip_discard(archive);
                     return DAS_E_MAAPI_UPDATE_APPLY_FAILED;
                 }
-
+                const auto target =
+                    (extract_dir / entry_name).lexically_normal();
+                // 目录条目：libzip 约定名字以 '/' 结尾（zip_dir_add 语义）。
                 const bool is_directory =
-                    !filename.empty() && filename.back() == '/';
-                const auto target = (extract_dir / filename).lexically_normal();
+                    !entry_name.empty() && entry_name.back() == '/';
                 if (is_directory)
                 {
                     std::filesystem::create_directories(target, ec);
                     continue;
                 }
+
+                // 解压炸弹防护：声明大小未知或超上限直接拒绝（stat.size 来自
+                // central directory，攻击者/上游可控）。
+                if ((stat.valid & ZIP_STAT_SIZE) == 0
+                    || stat.size > static_cast<zip_uint64_t>(
+                           MAX_UNCOMPRESSED_ZIP_ENTRY_BYTES))
+                {
+                    LogError(
+                        "PiUpdateService: zip entry uncompressed size exceeds "
+                        "limit or unknown: "
+                        + std::string(entry_name));
+                    zip_discard(archive);
+                    return DAS_E_MAAPI_UPDATE_APPLY_FAILED;
+                }
                 std::filesystem::create_directories(target.parent_path(), ec);
 
-                // 从 local file header 解析数据偏移。
-                if (local_header_offset + 30 > zip_data.size())
+                zip_file_t* entry_file = zip_fopen_index(archive, index, 0);
+                if (entry_file == nullptr)
                 {
-                    LogError("PiUpdateService: truncated local header");
+                    LogError(
+                        std::string("PiUpdateService: zip entry open failed: ")
+                        + zip_strerror(archive));
+                    zip_discard(archive);
                     return DAS_E_MAAPI_UPDATE_APPLY_FAILED;
                 }
-                if (ReadLE<std::uint32_t>(zip_data.data(), local_header_offset)
-                    != LOCAL_FILE_HEADER_SIG)
-                {
-                    LogError("PiUpdateService: bad local header signature");
-                    return DAS_E_MAAPI_UPDATE_APPLY_FAILED;
-                }
-                const auto local_filename_length = ReadLE<std::uint16_t>(
-                    zip_data.data(),
-                    local_header_offset + 26);
-                const auto local_extra_length = ReadLE<std::uint16_t>(
-                    zip_data.data(),
-                    local_header_offset + 28);
-                const size_t data_offset = local_header_offset + 30
-                                           + local_filename_length
-                                           + local_extra_length;
-                if (data_offset + compressed_size > zip_data.size())
-                {
-                    LogError("PiUpdateService: truncated file data");
-                    return DAS_E_MAAPI_UPDATE_APPLY_FAILED;
-                }
-
                 std::ofstream ofs(target, std::ios::binary | std::ios::trunc);
                 if (!ofs)
                 {
                     LogError("PiUpdateService: cannot open output file");
+                    zip_fclose(entry_file);
+                    zip_discard(archive);
                     return DAS_E_MAAPI_UPDATE_APPLY_FAILED;
                 }
-                if (compression == 0)
+
+                // 分块读到 EOF：CRC 校验由 libzip 在条目数据读完时完成，
+                // 不一致以读取错误返回；实际大小与声明不一致同样拒绝。
+                std::string read_buffer(
+                    static_cast<std::size_t>(ZIP_ENTRY_READ_CHUNK_BYTES),
+                    '\0');
+                zip_uint64_t total_read = 0;
+                bool         entry_failed = false;
+                while (!entry_failed)
                 {
-                    ofs.write(zip_data.data() + data_offset, compressed_size);
-                }
-                else if (compression == 8)
-                {
-                    // WR-02: 解压炸弹防护——解压目标大小超上限直接拒绝
-                    // （uncompressed_size 来自 zip central directory，攻击者/
-                    // 上游可控，最高 ~4GB）。
-                    if (uncompressed_size > MAX_UNCOMPRESSED_ZIP_ENTRY_BYTES)
+                    const zip_int64_t read_now = zip_fread(
+                        entry_file,
+                        read_buffer.data(),
+                        ZIP_ENTRY_READ_CHUNK_BYTES);
+                    if (read_now < 0)
                     {
                         LogError(
-                            "PiUpdateService: zip entry uncompressed size "
-                            "exceeds limit: "
-                            + std::to_string(uncompressed_size));
-                        return DAS_E_MAAPI_UPDATE_APPLY_FAILED;
+                            std::string(
+                                "PiUpdateService: zip entry read failed: ")
+                            + zip_file_strerror(entry_file));
+                        entry_failed = true;
+                        break;
                     }
-                    std::string output;
-                    if (!InflateZipEntry(
-                            zip_data.data() + data_offset,
-                            compressed_size,
-                            uncompressed_size,
-                            output))
+                    if (read_now == 0)
                     {
-                        LogError("PiUpdateService: inflate failed");
-                        return DAS_E_MAAPI_UPDATE_APPLY_FAILED;
+                        break;
                     }
-                    ofs.write(output.data(), output.size());
+                    total_read += static_cast<zip_uint64_t>(read_now);
+                    if (total_read > stat.size)
+                    {
+                        LogError(
+                            "PiUpdateService: zip entry size mismatch: "
+                            + std::string(entry_name));
+                        entry_failed = true;
+                        break;
+                    }
+                    ofs.write(
+                        read_buffer.data(),
+                        static_cast<std::streamsize>(read_now));
+                    if (!ofs)
+                    {
+                        LogError("PiUpdateService: cannot write output file");
+                        entry_failed = true;
+                    }
                 }
-                else
+                if (!entry_failed && total_read != stat.size)
                 {
                     LogError(
-                        "PiUpdateService: unsupported zip compression: "
-                        + std::to_string(compression));
+                        "PiUpdateService: zip entry size mismatch: "
+                        + std::string(entry_name));
+                    entry_failed = true;
+                }
+                zip_fclose(entry_file);
+                if (entry_failed)
+                {
+                    zip_discard(archive);
                     return DAS_E_MAAPI_UPDATE_APPLY_FAILED;
                 }
+            }
+            if (zip_close(archive) != 0)
+            {
+                LogError(
+                    std::string("PiUpdateService: zip close failed: ")
+                    + zip_strerror(archive));
+                zip_discard(archive);
+                return DAS_E_MAAPI_UPDATE_APPLY_FAILED;
             }
             return DAS_S_OK;
         }

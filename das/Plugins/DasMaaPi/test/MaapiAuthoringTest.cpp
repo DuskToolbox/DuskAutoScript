@@ -17,6 +17,7 @@
 #include <das/_autogen/idl/abi/IDasTaskAuthoring.h>
 #include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasProgressService.Implements.hpp>
 #include <gtest/gtest.h>
+#include <zlib.h>
 
 // D-89-03: 会话级直接测试（不经 IPC）——MaapiAuthoringSession 是 final 具体类，
 // DasMaaPiTest 直接编译本类 + PiUpdateService + FakeHttpClient seam，可无 IPC
@@ -7009,7 +7010,7 @@ namespace
         std::string content;
     };
 
-    // 最小 stored ZIP（固定 CRC——ExtractZip 不校验 CRC）。字节布局复刻
+    // 最小 stored ZIP（CRC 用 zlib crc32 逐条目真实计算）。字节布局复刻
     // PiUpdateServiceTest::BuildTestZip 的 stored 分支，供 applyUpdate
     // 下载替换。
     std::string BuildStoredZip(const std::vector<TestZipEntry>& entries)
@@ -7027,11 +7028,14 @@ namespace
             }
         };
 
-        constexpr std::uint32_t fake_crc = 0x12345678;
-        std::string             local_section;
-        std::string             central_section;
+        std::string local_section;
+        std::string central_section;
         for (const auto& entry : entries)
         {
+            const std::uint32_t crc = crc32(
+                0,
+                reinterpret_cast<const Bytef*>(entry.content.data()),
+                static_cast<uInt>(entry.content.size()));
             const auto local_header_offset =
                 static_cast<std::uint32_t>(local_section.size());
             append_u32(local_section, 0x04034B50);
@@ -7040,7 +7044,7 @@ namespace
             append_u16(local_section, 0); // stored
             append_u16(local_section, 0);
             append_u16(local_section, 0);
-            append_u32(local_section, fake_crc);
+            append_u32(local_section, crc);
             append_u32(
                 local_section,
                 static_cast<std::uint32_t>(entry.content.size()));
@@ -7061,7 +7065,7 @@ namespace
             append_u16(central_section, 0);
             append_u16(central_section, 0);
             append_u16(central_section, 0);
-            append_u32(central_section, fake_crc);
+            append_u32(central_section, crc);
             append_u32(
                 central_section,
                 static_cast<std::uint32_t>(entry.content.size()));
