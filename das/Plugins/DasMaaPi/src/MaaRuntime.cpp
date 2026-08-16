@@ -2339,31 +2339,45 @@ namespace Das::Plugins::DasMaaPi
         return result;
     }
 
-    void LogRunFailure(const MaaRuntimeResult& result)
+    std::vector<RunLogLine> BuildRunLogLines(const MaaRuntimeResult& result)
     {
+        std::vector<RunLogLine> lines;
+        const bool              failed = DAS::IsFailed(result.das_result);
+
         // 标题 i18n（maapi.runFailed，{0} = 十进制错误码）；i18n 缺失 /
-        // key miss 回退英文硬编码。
-        const auto        title_tmpl = TranslatePluginKey("maapi.runFailed");
-        const std::string result_text =
-            DAS_FMT_NS::format("{}", result.das_result);
-        std::string text;
-        if (!title_tmpl.empty())
+        // key miss 回退英文硬编码。仅失败时投递——标题是失败事件的锚点。
+        if (failed)
         {
-            // make_format_args 持引用而非拥有：参数须是具名局部变量，
-            // 生命周期覆盖 vformat 调用（禁临时量）。
-            text = DAS_FMT_NS::vformat(
-                std::string_view(title_tmpl),
-                DAS_FMT_NS::make_format_args(result_text));
-        }
-        else
-        {
-            text = DAS_FMT_NS::format(
-                "[DasMaaPi] MaaRuntime run failed, result={}",
-                result.das_result);
+            const auto title_tmpl = TranslatePluginKey("maapi.runFailed");
+            const std::string result_text =
+                DAS_FMT_NS::format("{}", result.das_result);
+            std::string title;
+            if (!title_tmpl.empty())
+            {
+                // make_format_args 持引用而非拥有：参数须是具名局部变量，
+                // 生命周期覆盖 vformat 调用（禁临时量）。
+                title = DAS_FMT_NS::vformat(
+                    std::string_view(title_tmpl),
+                    DAS_FMT_NS::make_format_args(result_text));
+            }
+            else
+            {
+                title = DAS_FMT_NS::format(
+                    "[DasMaaPi] MaaRuntime run failed, result={}",
+                    result.das_result);
+            }
+            lines.push_back(
+                {Das::ExportInterface::DAS_LOG_TYPE_ERROR, std::move(title)});
         }
 
         for (const auto& diagnostic : result.diagnostics)
         {
+            // 成功结果仅投递 warning 级诊断（sink 注册降级等在成功运行
+            // 也会出现）；error 级只伴随失败。
+            if (!failed && diagnostic.severity != "warning")
+            {
+                continue;
+            }
             // 诊断行 i18n：maapi.diagnostic.<code> key，miss 回退原始英文
             // message；code 原样保留（稳定标识，日志可 grep）。
             // provider_code 数值语言中立，始终附加。
@@ -2400,13 +2414,27 @@ namespace Das::Plugins::DasMaaPi
                     " (provider_code={})",
                     *diagnostic.provider_code);
             }
-            text += DAS_FMT_NS::format("\n[{}] {}", diagnostic.code, line);
+            lines.push_back(
+                {diagnostic.severity == "warning"
+                     ? Das::ExportInterface::DAS_LOG_TYPE_WARNING
+                     : Das::ExportInterface::DAS_LOG_TYPE_ERROR,
+                 DAS_FMT_NS::format("[{}] {}", diagnostic.code, line)});
+        }
+        return lines;
+    }
+
+    void LogRunResult(const MaaRuntimeResult& result)
+    {
+        const auto lines = BuildRunLogLines(result);
+        if (lines.empty())
+        {
+            return;
         }
 
         // 写 focus 事件日志（user.jsonl → UI 事件日志面板）：resolve 主进程
-        // recorder（与 Run 内同款 C ABI 路径）。Record 成功只进事件日志；
-        // 失败由 RecordEntryOrLog 打 [focus-degraded] 前缀降级落
-        // logs/DasCore.log，不静默。
+        // recorder（与 Run 内同款 C ABI 路径）。逐行建独立条目，severity
+        // 保真（UI 按条目级别渲染 / 过滤）。Record 失败由 RecordEntryOrLog
+        // 按行降级 [focus-degraded] 落 logs/DasCore.log，不静默。
         Das::DasPtr<Das::ExportInterface::IDasProcessLogRecorder> recorder;
         DasPtr<IDasBase>                                          resolved_base;
         const auto resolve_rc = DasQueryMainProcessInterfaceByName(
@@ -2418,32 +2446,53 @@ namespace Das::Plugins::DasMaaPi
         }
         if (!recorder)
         {
-            spdlog::error(
-                "[DasMaaPi] LogRunFailure: focus recorder resolve failed, "
-                "failure entry only in debug log (resolve_rc={})",
-                resolve_rc);
+            for (const auto& line : lines)
+            {
+                const std::string degraded =
+                    DAS_FMT_NS::format("[focus-degraded] {}", line.text);
+                switch (line.type)
+                {
+                case Das::ExportInterface::DAS_LOG_TYPE_ERROR:
+                    DAS_LOG_ERROR(degraded.c_str());
+                    break;
+                case Das::ExportInterface::DAS_LOG_TYPE_WARNING:
+                    DAS_LOG_WARNING(degraded.c_str());
+                    break;
+                default:
+                    DAS_LOG_INFO(degraded.c_str());
+                    break;
+                }
+            }
+            DAS_LOG_ERROR(
+                DAS_FMT_NS::format(
+                    "[DasMaaPi] LogRunResult: focus recorder resolve failed, "
+                    "result lines only in debug log (resolve_rc={})",
+                    resolve_rc)
+                    .c_str());
             return;
         }
 
-        Das::DasPtr<Das::ExportInterface::IDasLogEntry> entry;
-        if (DAS::IsFailed(CreateIDasLogEntry(entry.Put())) || !entry)
+        for (const auto& line : lines)
         {
-            return;
+            Das::DasPtr<Das::ExportInterface::IDasLogEntry> entry;
+            if (DAS::IsFailed(CreateIDasLogEntry(entry.Put())) || !entry)
+            {
+                continue;
+            }
+            if (DAS::IsFailed(entry->SetType(line.type)))
+            {
+                continue;
+            }
+            DasU8StringOnStack text_string{line.text.c_str()};
+            if (DAS::IsFailed(entry->AddText(&text_string)))
+            {
+                continue;
+            }
+            (void)RecordEntryOrLog(
+                recorder.Get(),
+                entry.Get(),
+                line.type,
+                line.text);
         }
-        if (DAS::IsFailed(
-                entry->SetType(Das::ExportInterface::DAS_LOG_TYPE_ERROR)))
-        {
-            return;
-        }
-        DasU8StringOnStack text_string{text.c_str()};
-        if (DAS::IsFailed(entry->AddText(&text_string)))
-        {
-            return;
-        }
-        (void)RecordEntryOrLog(
-            recorder.Get(),
-            entry.Get(),
-            Das::ExportInterface::DAS_LOG_TYPE_ERROR,
-            text);
     }
 } // namespace Das::Plugins::DasMaaPi

@@ -1171,6 +1171,74 @@ TEST(DasMaaPiRuntime, EnvelopeWithoutInitParamsSurfacesStructuredError)
 }
 
 // ============================================================================
+// BuildRunLogLines：Run 结果 → 事件日志行序列。失败 → 标题行 + 全部诊断行；
+// 成功 → 仅 warning 诊断行；每行携带自己的条目级别（severity 保真）。
+// 用 i18n 目录外的 code 保证走英文回退路径，断言不依赖测试环境的 i18n
+// 初始化状态；标题断言十进制错误码（回退与模板两条路径都包含该子串）。
+// ============================================================================
+
+TEST(DasMaaPiRuntime, BuildRunLogLinesFailureSplitsSeverityPerLine)
+{
+    MaaRuntimeResult result;
+    result.das_result = DAS_E_FAIL;
+    result.diagnostics.push_back(
+        {.severity = "warning",
+         .code = "unit-test-warning",
+         .message = "warning detail",
+         .provider_code = std::nullopt});
+    result.diagnostics.push_back(
+        {.severity = "error",
+         .code = "unit-test-error",
+         .message = "error detail",
+         .provider_code = std::int64_t{42}});
+
+    const auto lines = BuildRunLogLines(result);
+
+    ASSERT_EQ(lines.size(), 3u);
+    EXPECT_EQ(lines[0].type, Das::ExportInterface::DAS_LOG_TYPE_ERROR);
+    EXPECT_NE(
+        lines[0].text.find(std::to_string(result.das_result)),
+        std::string::npos);
+    EXPECT_EQ(lines[1].type, Das::ExportInterface::DAS_LOG_TYPE_WARNING);
+    EXPECT_NE(
+        lines[1].text.find("[unit-test-warning] warning detail"),
+        std::string::npos);
+    EXPECT_EQ(lines[2].type, Das::ExportInterface::DAS_LOG_TYPE_ERROR);
+    EXPECT_NE(
+        lines[2].text.find("[unit-test-error] error detail (provider_code=42)"),
+        std::string::npos);
+}
+
+TEST(DasMaaPiRuntime, BuildRunLogLinesSuccessEmitsOnlyWarningDiagnostics)
+{
+    MaaRuntimeResult result;
+    result.diagnostics.push_back(
+        {.severity = "warning",
+         .code = "unit-test-warning",
+         .message = "sink degraded",
+         .provider_code = std::nullopt});
+    result.diagnostics.push_back(
+        {.severity = "error",
+         .code = "unit-test-error",
+         .message = "should not appear",
+         .provider_code = std::nullopt});
+
+    const auto lines = BuildRunLogLines(result);
+
+    ASSERT_EQ(lines.size(), 1u);
+    EXPECT_EQ(lines[0].type, Das::ExportInterface::DAS_LOG_TYPE_WARNING);
+    EXPECT_NE(
+        lines[0].text.find("[unit-test-warning] sink degraded"),
+        std::string::npos);
+}
+
+TEST(DasMaaPiRuntime, BuildRunLogLinesSuccessWithoutWarningsIsEmpty)
+{
+    const MaaRuntimeResult result;
+    EXPECT_TRUE(BuildRunLogLines(result).empty());
+}
+
+// ============================================================================
 // PI v2.7.0 pretask execution stage (D-86-02).
 // pretask runs AFTER LoadResource and BEFORE CreateController. Spawn failure
 // or nonzero exit aborts the run with DAS_E_MAAPI_PRETASK_FAILED + structured

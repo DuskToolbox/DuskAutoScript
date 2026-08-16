@@ -121,13 +121,9 @@ namespace Plugins::DasMaaPi
             parsed.envelope,
             MaaApiBoundaryForRuntime(),
             stop_token);
-        if (DAS::IsFailed(result.das_result))
-        {
-            // 失败诊断此前随 MaaRuntimeResult 被丢弃：上抛的只有裸错误码，
-            // 调试日志与事件日志都看不到失败原因（MaaFW 早期失败时连
-            // MAA 回调日志都没有）。落 spdlog + focus 事件日志后再返回。
-            LogRunFailure(result);
-        }
+        // 结果诊断外显（事件日志）：warning 级无论成败投递（sink 注册降级
+        // 等在成功运行也会出现），标题与 error 级仅失败时投递。
+        LogRunResult(result);
         return result.das_result;
     }
 
