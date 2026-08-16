@@ -104,9 +104,12 @@ namespace Das::Http::Beast
 
         void ProcessRequest()
         {
+            // keep-alive 跟随请求：响应宣称的连接语义与实际行为一致
+            const bool   keep_alive = request_.keep_alive();
             HttpRequest  req(std::move(request_));
             HttpResponse http_response = router_->Handle(req);
             response_ = http_response.Release();
+            response_.keep_alive(keep_alive);
 
             DoWrite();
         }
@@ -128,12 +131,6 @@ namespace Das::Http::Beast
                         return;
                     }
 
-                    // 关闭连接
-                    boost::beast::error_code shutdown_ec;
-                    self->socket_.shutdown(
-                        tcp::socket::shutdown_send,
-                        shutdown_ec);
-
                     // 响应已交付（字节进内核缓冲）：request_shutdown 置位过
                     // 停止条件时在此触发服务器关闭——写完成回调是唯一能
                     // 保证「响应送达」与「停止服务器」先后次序的位置。
@@ -142,6 +139,24 @@ namespace Das::Http::Beast
                     {
                         self->on_server_stop_();
                     }
+
+                    if (self->response_.keep_alive())
+                    {
+                        // keep-alive：继续等本连接的下一个请求。此前每响应
+                        // 一次就 shutdown(send) 是 HTTP/1.1 违约——响应头宣称
+                        // keep-alive 却立即断开，客户端（.NET HttpClient）把
+                        // 连接放回池子后下一个请求撞上 FIN/RST，间歇性报
+                        // "error occurred while sending the request"。
+                        self->request_ = {};
+                        self->DoRead();
+                        return;
+                    }
+
+                    // Connection: close —— 显式关闭
+                    boost::beast::error_code shutdown_ec;
+                    self->socket_.shutdown(
+                        tcp::socket::shutdown_send,
+                        shutdown_ec);
                 });
         }
 
