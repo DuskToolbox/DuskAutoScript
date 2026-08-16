@@ -75,9 +75,13 @@ namespace
         }
 
         std::uint16_t Port() const { return port_; }
-        std::string   LastTarget() const { return last_target_; }
-        int           RequestCount() const { return request_count_.load(); }
-        void          SetBody(std::string body) { body_ = std::move(body); }
+        std::string   LastTarget() const
+        {
+            const std::lock_guard<std::mutex> lock(last_target_mutex_);
+            return last_target_;
+        }
+        int  RequestCount() const { return request_count_.load(); }
+        void SetBody(std::string body) { body_ = std::move(body); }
         // 无 Content-Length：以 Transfer-Encoding: chunked 响应（流式下载
         // 无 total_bytes 阶段态场景）。
         void SetChunkedResponse(bool chunked) { chunked_ = chunked; }
@@ -117,7 +121,10 @@ namespace
                     req;
                 boost::beast::http::read(sock, buffer, req);
                 request_count_.fetch_add(1);
-                last_target_ = std::string(req.target());
+                {
+                    const std::lock_guard<std::mutex> lock(last_target_mutex_);
+                    last_target_ = std::string(req.target());
+                }
 
                 if (!slow_chunks_.empty())
                 {
@@ -180,6 +187,7 @@ namespace
         std::uint16_t                                   port_ = 0;
         std::string                                     body_;
         std::atomic<int>                                request_count_{0};
+        mutable std::mutex                              last_target_mutex_;
         std::string                                     last_target_;
         bool                                            chunked_ = false;
         std::vector<std::string>                        slow_chunks_;
