@@ -5831,6 +5831,67 @@ namespace
                 return std::string_view(name).starts_with(prefix);
             });
     }
+
+    // 嵌套 pretask option 场景（GameSetting 形态）：display 是 select，其
+    // Window case 声明嵌套 option resolution（Borderless case 无嵌套）。
+    // pretask(GameSetting) 的 dto.option 只声明顶层 region/display——嵌套
+    // resolution 不在任何顶层列表里。
+    PiCatalog MakeNestedPretaskMockCatalog()
+    {
+        using namespace Das::Plugins::DasMaaPi;
+        PiCatalog catalog;
+        catalog.name = "NestedPretask";
+        catalog.version = "1.0";
+
+        PiTask task;
+        task.dto.name = "DailyFarm";
+        task.dto.entry = "StartDaily";
+        catalog.tasks.push_back(std::move(task));
+
+        PiOption region;
+        region.dto.name = "region";
+        region.dto.type = "select";
+        PiCaseDto region_cn;
+        region_cn.name = "CN";
+        PiCaseDto region_global;
+        region_global.name = "Global";
+        region.dto.cases = {region_cn, region_global};
+        region.dto.default_cases = {"CN"};
+
+        PiOption display;
+        display.dto.name = "display";
+        display.dto.type = "select";
+        PiCaseDto display_window;
+        display_window.name = "Window";
+        display_window.option = {"resolution"};
+        PiCaseDto display_borderless;
+        display_borderless.name = "Borderless";
+        display.dto.cases = {display_window, display_borderless};
+        display.dto.default_cases = {"Window"};
+
+        PiOption resolution;
+        resolution.dto.name = "resolution";
+        resolution.dto.type = "select";
+        PiCaseDto res_720;
+        res_720.name = "1280x720";
+        PiCaseDto res_1080;
+        res_1080.name = "1920x1080";
+        resolution.dto.cases = {res_720, res_1080};
+        resolution.dto.default_cases = {"1280x720"};
+
+        catalog.options.push_back(region);
+        catalog.options.push_back(display);
+        catalog.options.push_back(resolution);
+
+        PiPretask gamesetting;
+        gamesetting.dto.name = "GameSetting";
+        gamesetting.dto.exec = "tools/pre.exe";
+        gamesetting.dto.option = {"region", "display"};
+        gamesetting.dto.label = "⚙️ Game Settings";
+        catalog.pretasks.push_back(std::move(gamesetting));
+
+        return catalog;
+    }
 } // namespace
 
 // Feature 1 RED: pretask.option 引用 option 必须投影为 root FieldDescriptor
@@ -5923,6 +5984,175 @@ TEST(MaapiProjectionTest, ApplyDocumentSetValueOnPretaskFieldPersistsValue)
     EXPECT_EQ(opt_it->selected_cases[0], "fast");
 }
 
+// 嵌套 option（case.option）按激活 case 递归投影：fresh session 下
+// display 的 default case Window 激活 → pretask.resolution 字段出现；
+// 用户切到无嵌套的 case（Borderless）→ 重投影后 resolution 字段消失
+// （服务端重投影，前端零条件可见性）。
+TEST(MaapiProjectionTest, ProjectsNestedPretaskOptionOnActivatedCase)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto catalog = MakeNestedPretaskMockCatalog();
+
+    {
+        const AcceptedSettingsDto settings;
+        auto document = ProjectAuthoringDocument(settings, &catalog, {}, 0);
+        auto validate =
+            Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+        EXPECT_TRUE(validate.valid) << "error_kind=" << validate.error_kind
+                                    << " message=" << validate.message;
+        EXPECT_EQ(CountFieldsWithName(document, "pretask.region"), 1u);
+        EXPECT_EQ(CountFieldsWithName(document, "pretask.display"), 1u);
+        EXPECT_EQ(CountFieldsWithName(document, "pretask.resolution"), 1u);
+    }
+
+    AcceptedSettingsDto       borderless_settings;
+    MaapiPiPretaskSettingsDto borderless_pretask;
+    borderless_pretask.pretask_id = "GameSetting";
+    MaapiPiOptionSettingsDto display_value;
+    display_value.option_name = "display";
+    display_value.kind = "select";
+    display_value.selected_cases.emplace_back("Borderless");
+    borderless_pretask.options.push_back(std::move(display_value));
+    borderless_settings.pi.pretasks.push_back(std::move(borderless_pretask));
+
+    auto document =
+        ProjectAuthoringDocument(borderless_settings, &catalog, {}, 0);
+    EXPECT_EQ(CountFieldsWithName(document, "pretask.region"), 1u);
+    EXPECT_EQ(CountFieldsWithName(document, "pretask.display"), 1u);
+    EXPECT_EQ(CountFieldsWithName(document, "pretask.resolution"), 0u);
+}
+
+// 嵌套 pretask option 的 setValue 路由：pretask.<nestedKey> 必须沿 option
+// 树找到声明它的 pretask（顶层 dto.option 列表里没有嵌套键，此前会报
+// setValueFieldNotDeclaredOnAnyPretask 拒绝）。
+TEST(
+    MaapiProjectionTest,
+    ApplyDocumentSetValueOnNestedPretaskFieldPersistsValue)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto                catalog = MakeNestedPretaskMockCatalog();
+    AcceptedSettingsDto settings;
+
+    std::vector<PiDiagnosticDto> diagnostics;
+    auto                         payload = Das::Utils::ParseYyjsonFromString(
+                                               R"({"target":{"kind":"document"},)"
+                                               R"("fieldName":"pretask.resolution",)"
+                                               R"("value":"1920x1080"})")
+                                               .value_or(yyjson::value(nullptr));
+    const bool                   ok =
+        ApplyStrictSetValueChange(settings, payload, &catalog, diagnostics);
+    EXPECT_TRUE(ok);
+    EXPECT_TRUE(diagnostics.empty());
+
+    auto it = std::find_if(
+        settings.pi.pretasks.begin(),
+        settings.pi.pretasks.end(),
+        [&](const MaapiPiPretaskSettingsDto& p)
+        { return p.pretask_id == "GameSetting"; });
+    ASSERT_NE(it, settings.pi.pretasks.end());
+    auto opt_it = std::find_if(
+        it->options.begin(),
+        it->options.end(),
+        [&](const MaapiPiOptionSettingsDto& o)
+        { return o.option_name == "resolution"; });
+    ASSERT_NE(opt_it, it->options.end());
+    ASSERT_EQ(opt_it->selected_cases.size(), 1u);
+    EXPECT_EQ(opt_it->selected_cases[0], "1920x1080");
+}
+
+// pretask 字段独立 fieldLayout section：id=pretask_<stableId>、label=
+// 作者 label（i18n/字面）、entries 恰好覆盖该 pretask 的全部 pretask.*
+// 字段（含嵌套）；这些字段不得再混入 project section。
+TEST(MaapiProjectionTest, PretaskFieldsGetDedicatedFieldLayoutSection)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    auto                      catalog = MakeNestedPretaskMockCatalog();
+    const AcceptedSettingsDto settings;
+
+    auto document = ProjectAuthoringDocument(settings, &catalog, {}, 0);
+    auto validate =
+        Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+    EXPECT_TRUE(validate.valid) << "error_kind=" << validate.error_kind
+                                << " message=" << validate.message;
+
+    auto obj = document.as_object();
+    ASSERT_TRUE(obj);
+    ASSERT_TRUE(obj->contains(std::string_view("fieldLayout")));
+    auto layout = (*obj)[std::string_view("fieldLayout")].as_array();
+    ASSERT_TRUE(layout);
+
+    bool                  found_pretask_section = false;
+    std::string           pretask_label;
+    std::set<std::string> pretask_entry_names;
+    bool                  found_project_section = false;
+    std::set<std::string> project_field_names;
+    for (auto&& section : *layout)
+    {
+        auto so = section.as_object();
+        if (!so)
+        {
+            continue;
+        }
+        const auto id = (*so)[std::string_view("id")].as_string().value_or("");
+        if (id == "pretask_GameSetting")
+        {
+            found_pretask_section = true;
+            pretask_label = std::string(
+                (*so)[std::string_view("label")].as_string().value_or(""));
+            auto entries = (*so)[std::string_view("entries")].as_array();
+            ASSERT_TRUE(entries);
+            for (auto&& entry : *entries)
+            {
+                auto eo = entry.as_object();
+                ASSERT_TRUE(eo);
+                pretask_entry_names.insert(
+                    std::string((*eo)[std::string_view("fieldName")]
+                                    .as_string()
+                                    .value_or("")));
+            }
+        }
+        if (id == "project")
+        {
+            found_project_section = true;
+            auto entries = (*so)[std::string_view("entries")].as_array();
+            ASSERT_TRUE(entries);
+            for (auto&& entry : *entries)
+            {
+                auto eo = entry.as_object();
+                if (!eo || !eo->contains(std::string_view("fieldName")))
+                {
+                    continue;
+                }
+                project_field_names.insert(
+                    std::string((*eo)[std::string_view("fieldName")]
+                                    .as_string()
+                                    .value_or("")));
+            }
+        }
+    }
+    ASSERT_TRUE(found_pretask_section)
+        << "fieldLayout must contain a dedicated pretask section";
+    ASSERT_TRUE(found_project_section);
+
+    EXPECT_EQ(pretask_label, "⚙️ Game Settings");
+    EXPECT_EQ(
+        pretask_entry_names,
+        (std::set<std::string>{
+            "pretask.region",
+            "pretask.display",
+            "pretask.resolution"}));
+
+    for (const auto* leaked :
+         {"pretask.region", "pretask.display", "pretask.resolution"})
+    {
+        EXPECT_EQ(project_field_names.count(leaked), 0u)
+            << leaked << " must not stay in the project section";
+    }
+}
+
 // Feature 2 RED: setting 引用 option 必须投影为 root FieldDescriptor
 // (settings.<key>)，与既有 global_option 根字段并列。
 TEST(MaapiProjectionTest, ProjectsSettingOptionAsNeutralRootField)
@@ -5993,8 +6223,9 @@ TEST(MaapiProjectionTest, OverlapKeyEmittedAsSettingsOnlyNotOptions)
 }
 
 // 根级 fieldLayout[] 把 fields[] 按分区编组：项目设置 section（adapter/* +
-// controller/resource/preset/language + pretask.*）+ 每个 catalog->settings
-// 元素独立一 section（settings.<opt>）。叶子 fieldName 集合 == fields[].name
+// controller/resource/preset/language）+ 每个 pretask 独立一 section
+// （pretask_<stableId>）+ 每个 catalog->settings 元素独立一 section
+// （settings.<opt>）。叶子 fieldName 集合 == fields[].name
 // 集合（全覆盖、唯一），schema validator apply 路径通过。游离 global_option
 // 不出现在 fields[]/fieldLayout（PI v2.8.0 setting 才是进设置页的声明）。
 TEST(
@@ -6026,14 +6257,27 @@ TEST(
     auto project_section = FindLayoutSection(document, "project");
     ASSERT_TRUE(project_section.has_value());
     auto project_fields = LayoutSectionFieldNames(*project_section);
-    ASSERT_EQ(project_fields.size(), 7u);
+    ASSERT_EQ(project_fields.size(), 6u);
     EXPECT_EQ(project_fields[0], "adapter.interfacePath");
     EXPECT_EQ(project_fields[1], "adapter.executionPolicy.failFast");
     EXPECT_EQ(project_fields[2], "controllerName");
     EXPECT_EQ(project_fields[3], "resourceName");
     EXPECT_EQ(project_fields[4], "presetName");
     EXPECT_EQ(project_fields[5], "language");
-    EXPECT_EQ(project_fields[6], "pretask.bootstrap_mode");
+
+    // pretask 独立 section：Bootstrap 的 option 字段从 project section 移
+    // 到专属分区（label 来自 pretask 作者 label，此处字面无 i18n 原样）。
+    auto pretask_section = FindLayoutSection(document, "pretask_Bootstrap");
+    ASSERT_TRUE(pretask_section.has_value());
+    auto pretask_fields = LayoutSectionFieldNames(*pretask_section);
+    ASSERT_EQ(pretask_fields.size(), 1u);
+    EXPECT_EQ(pretask_fields[0], "pretask.bootstrap_mode");
+    auto pretask_section_obj = pretask_section->as_object();
+    ASSERT_TRUE(pretask_section_obj.has_value());
+    EXPECT_TRUE((*pretask_section_obj)[std::string_view("defaultExpanded")]
+                    .as_bool()
+                    .value_or(false));
+
     auto project_section_obj = project_section->as_object();
     ASSERT_TRUE(project_section_obj.has_value());
     EXPECT_TRUE((*project_section_obj)[std::string_view("defaultExpanded")]

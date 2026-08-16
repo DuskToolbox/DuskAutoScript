@@ -1523,8 +1523,12 @@ TEST(DasMaaPiPretaskCompile, FlatSelectOptionSerializedAsCompactJsonTrailingArg)
     catalog.pretasks.emplace_back(std::move(pretask));
 
     auto settings = MakeMinimalSettings();
-    settings.pi.global_options.emplace_back(
-        MakeSelected("mode", "select", {"a"}));
+    // 用户值经 pretask 私有存储注入（与投影/setValue 同一存储）；选 "b"
+    // （非 default "a"）证明用户值优先于 PI default 物化。
+    MaapiPiPretaskSettingsDto bootstrap_settings;
+    bootstrap_settings.pretask_id = "Bootstrap";
+    bootstrap_settings.options.push_back(MakeSelected("mode", "select", {"b"}));
+    settings.pi.pretasks.push_back(std::move(bootstrap_settings));
 
     auto result = CompileMaapi(settings, catalog, "execute");
     ASSERT_TRUE(result.ok) << "diagnostics: "
@@ -1536,7 +1540,34 @@ TEST(DasMaaPiPretaskCompile, FlatSelectOptionSerializedAsCompactJsonTrailingArg)
     EXPECT_EQ(result.execution_input->maapi.pretasks[0].exec, "tools/pre.exe");
     ASSERT_EQ(result.execution_input->maapi.pretasks[0].args.size(), 2u);
     EXPECT_EQ(result.execution_input->maapi.pretasks[0].args[0], "--init");
-    // Compact single-line JSON, no whitespace.
+    // Compact single-line JSON, no whitespace. 用户值 "b" 物化（非 default）。
+    EXPECT_EQ(
+        result.execution_input->maapi.pretasks[0].args[1],
+        R"({"mode":"b"})");
+}
+
+// fresh session（pi.pretasks 无存储）→ 尾参 JSON 全部回退 PI default_case。
+TEST(DasMaaPiPretaskCompile, FreshPretaskStorageFallsBackToPiDefaults)
+{
+    PiCatalog catalog;
+    catalog.controllers.emplace_back(MakeMinimalController());
+    catalog.resources.emplace_back(MakeMinimalResource());
+    catalog.tasks.emplace_back(MakeMinimalTask());
+    catalog.options.emplace_back(MakeSelectOption("mode", {"a", "b"}, {"a"}));
+    PiPretask pretask;
+    pretask.dto.name = "Bootstrap";
+    pretask.dto.exec = "tools/pre.exe";
+    pretask.dto.args = {"--init"};
+    pretask.dto.option = {"mode"};
+    pretask.raw.raw_json = "{}";
+    catalog.pretasks.emplace_back(std::move(pretask));
+
+    auto settings = MakeMinimalSettings();
+
+    auto result = CompileMaapi(settings, catalog, "execute");
+    ASSERT_TRUE(result.ok);
+    ASSERT_TRUE(result.execution_input.has_value());
+    ASSERT_EQ(result.execution_input->maapi.pretasks[0].args.size(), 2u);
     EXPECT_EQ(
         result.execution_input->maapi.pretasks[0].args[1],
         R"({"mode":"a"})");
@@ -1571,10 +1602,13 @@ TEST(DasMaaPiPretaskCompile, NestedOptionRecursesIntoActivatedCase)
     catalog.pretasks.emplace_back(std::move(pretask));
 
     auto settings = MakeMinimalSettings();
-    settings.pi.global_options.emplace_back(
-        MakeSelected("outer", "select", {"on"}));
-    settings.pi.global_options.emplace_back(
-        MakeSelected("inner", "select", {"x"}));
+    // outer/inner 用户值均经 pretask 私有存储注入；inner 选 "y"（default
+    // "x"）证明嵌套 option 的用户值同样从该存储物化。
+    MaapiPiPretaskSettingsDto pre_settings;
+    pre_settings.pretask_id = "Pre";
+    pre_settings.options.push_back(MakeSelected("outer", "select", {"on"}));
+    pre_settings.options.push_back(MakeSelected("inner", "select", {"y"}));
+    settings.pi.pretasks.push_back(std::move(pre_settings));
 
     auto result = CompileMaapi(settings, catalog, "execute");
     ASSERT_TRUE(result.ok);
@@ -1586,7 +1620,7 @@ TEST(DasMaaPiPretaskCompile, NestedOptionRecursesIntoActivatedCase)
     // first), then inner (added by recursion).
     EXPECT_EQ(
         result.execution_input->maapi.pretasks[0].args[0],
-        R"({"outer":"on","inner":"x"})");
+        R"({"outer":"on","inner":"y"})");
 }
 
 TEST(DasMaaPiPretaskCompile, PretaskWithNoOptionsOmitsTrailingJsonArg)

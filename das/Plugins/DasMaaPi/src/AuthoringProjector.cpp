@@ -1281,6 +1281,63 @@ namespace Das::Plugins::DasMaaPi
             return &settings.pi.pretasks.back();
         }
 
+        // 递归收集一个 option 键可达的全部 option 键（含每个 case 上声明的
+        // 嵌套 option），用于 pretask.<optionKey> 字段的归属判定——嵌套
+        // option 不在任何 pretask.dto.option 顶层列表里，必须沿 option 树
+        // 找。路由（setValue）与分桶（fieldLayout）共用。
+        void CollectReachableOptionKeys(
+            const PiCatalog&       catalog,
+            std::string_view       option_name,
+            std::set<std::string>& visited)
+        {
+            if (!visited.insert(std::string(option_name)).second)
+            {
+                return;
+            }
+            const auto* option = FindOption(catalog, option_name);
+            if (option == nullptr)
+            {
+                return;
+            }
+            for (const auto& case_def : option->dto.cases)
+            {
+                for (const auto& nested : case_def.option)
+                {
+                    CollectReachableOptionKeys(catalog, nested, visited);
+                }
+            }
+        }
+
+        // 首个（catalog->pretasks 序）可达该 option 键（含嵌套）的 pretask——
+        // 与投影侧 emitted_pretask_keys「首个 pretask 的引用胜出」语义一致。
+        // 返回 nullptr 表示没有任何 pretask 声明该 option。
+        const PiPretask* FindOwnerPretask(
+            const PiCatalog& catalog,
+            std::string_view option_name)
+        {
+            for (const auto& pretask : catalog.pretasks)
+            {
+                std::set<std::string> reachable;
+                for (const auto& declared : pretask.dto.option)
+                {
+                    CollectReachableOptionKeys(catalog, declared, reachable);
+                }
+                if (reachable.count(std::string(option_name)) != 0)
+                {
+                    return &pretask;
+                }
+            }
+            return nullptr;
+        }
+
+        // stable pretask_id（dto.name 非空→name，否则 exec），投影 / setValue
+        // 路由 / PiCompiler 物化三处共用同一派生规则。
+        std::string StablePretaskId(const PiPretask& pretask)
+        {
+            return pretask.dto.name.empty() ? pretask.dto.exec
+                                            : pretask.dto.name;
+        }
+
         bool HasTask(const PiCatalog& catalog, std::string_view name)
         {
             return std::any_of(
@@ -1386,6 +1443,94 @@ namespace Das::Plugins::DasMaaPi
                 [&](const MaapiPiOptionSettingsDto& item)
                 { return item.option_name == option_name; });
             return it == options.end() ? nullptr : &*it;
+        }
+
+        // pretask option 投影的激活 case 计算，与投影侧 switch 值语义一致
+        // （无存储回退 true，MaaPI 约定；MakeOptionPropertyField 同款）。
+        // select / checkbox：用户 selected_cases，无存储回退 default_cases。
+        std::vector<std::string> ActivatedOptionCases(
+            const PiOptionDto&              dto,
+            const MaapiPiOptionSettingsDto* current)
+        {
+            if (dto.type == "switch")
+            {
+                if (current && !current->bool_value
+                    && !current->selected_cases.empty())
+                {
+                    return {current->selected_cases.front()};
+                }
+                const bool desired = current && current->bool_value
+                                         ? *current->bool_value
+                                         : true;
+                for (const auto& case_def : dto.cases)
+                {
+                    const bool truthy =
+                        case_def.name == "Yes" || case_def.name == "yes"
+                        || case_def.name == "Y" || case_def.name == "y";
+                    const bool falsy =
+                        case_def.name == "No" || case_def.name == "no"
+                        || case_def.name == "N" || case_def.name == "n";
+                    if ((desired && truthy) || (!desired && falsy))
+                    {
+                        return {case_def.name};
+                    }
+                }
+                return {};
+            }
+            return current ? current->selected_cases : dto.default_cases;
+        }
+
+        // pretask option 递归投影：emit 一个 pretask.<optionKey> 字段后，沿
+        // 激活 case 的嵌套 option（协议 case.option）继续 emit——服务端重
+        // 投影范式：用户切换外层 case → document 重投影，嵌套字段随之出现/
+        // 消失，前端零条件可见性。emitted_keys 跨 pretask 共享（首个引用
+        // 胜出去重）。
+        void EmitPretaskOptionField(
+            const MaapiPiPretaskSettingsDto* pretask_settings,
+            const PiCatalog*                 catalog,
+            std::string_view                 current_language,
+            std::string_view                 option_name,
+            std::set<std::string>&           emitted_keys,
+            yyjson::value&                   fields)
+        {
+            if (!emitted_keys.insert(std::string(option_name)).second)
+            {
+                return;
+            }
+            const auto* option = FindOption(*catalog, option_name);
+            if (option == nullptr)
+            {
+                return;
+            }
+            const auto* current =
+                pretask_settings
+                    ? FindOptionSettings(pretask_settings->options, option_name)
+                    : nullptr;
+            fields.as_array()->emplace_back(MakeOptionPropertyField(
+                std::string{"pretask."} + std::string(option_name),
+                option->dto,
+                current,
+                catalog,
+                current_language));
+            const auto activated = ActivatedOptionCases(option->dto, current);
+            for (const auto& case_def : option->dto.cases)
+            {
+                if (std::find(activated.begin(), activated.end(), case_def.name)
+                    == activated.end())
+                {
+                    continue;
+                }
+                for (const auto& nested : case_def.option)
+                {
+                    EmitPretaskOptionField(
+                        pretask_settings,
+                        catalog,
+                        current_language,
+                        nested,
+                        emitted_keys,
+                        fields);
+                }
+            }
         }
 
         void RemoveOption(
@@ -2067,11 +2212,13 @@ namespace Das::Plugins::DasMaaPi
 
     // 构建根级 fieldLayout[]。叶子 fieldName 集合 == fields[].name 集合
     // （全覆盖、唯一），满足 schema validator ValidateFieldLayout 契约。
-    // 分区策略（PI v2.8.0/v2.7.0 语义）：pretask 是项目级预任务，并入项目设置
-    // section；setting 是协议自带的设置页分区声明，每元素独立一 section。
-    // setting section.label 是作者内容（setting.dto.label），经
+    // 分区策略（PI v2.8.0/v2.7.0 语义）：pretask 是项目级预任务，每个
+    // pretask 独立一 section（label = pretask 作者 label 经 i18n 解析，
+    // 让用户知道这组选项属于哪个预任务，协议 L308-315 呈现义务）；
+    // setting 是协议自带的设置页分区声明，每元素独立一 section。
+    // setting / pretask section.label 是作者内容（dto.label），经
     // ResolveI18nOrDiag 解析，缺译时 fallback 到
-    // setting.dto.name；project/update/welcome section label 是 DAS
+    // dto.name；project/update/welcome section label 是 DAS
     // chrome，在各 emit lambda 内经 Translate 解析（不在此函数）。 游离
     // global_option（未被任何 setting 引用）不进 fields[]，故不进 layout —— PI
     // v2.8.0 setting 才是"哪些 option 进设置页"的声明，未声明的不渲染。
@@ -2097,20 +2244,26 @@ namespace Das::Plugins::DasMaaPi
 
         // 按 name 前缀/字面量分类（保留 fields[] 声明顺序，layout 与 fields
         // 顺序一致）。fields[] 不含 options.<name>（游离 global_option
-        // 不投影），故已知字段分三组：update 更新字段（CDK / 代理 / 检查更新
-        // 通道 + 版本只读字段，独立 section）、project 项目级字段与
-        // settings.<opt> 分区字段。未识别前缀的 root field 兜底进
+        // 不投影），故已知字段分组：update 更新字段（CDK / 代理 / 检查更新
+        // 通道 + 版本只读字段，独立 section）、project 项目级字段、
+        // settings.<opt> 分区字段、pretask.<optKey> 按「声明该 option 的
+        // pretask」分组（FindOwnerPretask 首个可达胜出，含嵌套 option）。
+        // 未识别前缀的 root field 兜底进
         // project_entries（项目设置 section），保证 fieldLayout 全覆盖，防
         // 未来新增 root field 前缀漏列触发 ValidateFieldLayout 的
         // layoutMissingField reject。新增 root field 前缀时应在此显式登记，
         // 以便走更贴切的分类桶。
-        std::vector<std::string>           update_entries;
-        std::vector<std::string>           project_entries;
-        std::vector<std::string>           welcome_entries;
-        std::vector<std::string>           schedule_entries;
+        std::vector<std::string> update_entries;
+        std::vector<std::string> project_entries;
+        std::vector<std::string> welcome_entries;
+        std::vector<std::string> schedule_entries;
+        // pretask 分组桶：pretask 首现顺序保持（与投影 emit 顺序一致）。
+        std::vector<std::pair<const PiPretask*, std::vector<std::string>>>
+                                           pretask_buckets;
         std::map<std::string, std::string> settings_by_opt;
         constexpr std::string_view         settings_prefix = "settings.";
         constexpr std::string_view         schedule_prefix = "schedule.";
+        constexpr std::string_view         pretask_prefix = "pretask.";
         for (auto it = fields_arr->begin(); it != fields_arr->end(); ++it)
         {
             auto field_obj = it->as_object();
@@ -2146,11 +2299,40 @@ namespace Das::Plugins::DasMaaPi
                 // section，前端数据驱动渲染会显示在错误面板）。
                 welcome_entries.emplace_back(name);
             }
+            else if (name.starts_with(pretask_prefix) && catalog != nullptr)
+            {
+                // pretask.<optionKey> 按声明该 option 的 pretask 分组
+                // （含嵌套 option 树，与投影/setValue 路由同一归属规则）。
+                // catalog 缺席时兜底进 project_entries（保持全覆盖契约）。
+                const auto  option_name = name.substr(pretask_prefix.size());
+                const auto* owner = FindOwnerPretask(*catalog, option_name);
+                if (owner == nullptr)
+                {
+                    project_entries.emplace_back(name);
+                    continue;
+                }
+                auto bucket_it = std::find_if(
+                    pretask_buckets.begin(),
+                    pretask_buckets.end(),
+                    [&](const std::pair<
+                        const PiPretask*,
+                        std::vector<std::string>>& bucket)
+                    { return bucket.first == owner; });
+                if (bucket_it == pretask_buckets.end())
+                {
+                    pretask_buckets.emplace_back(
+                        owner,
+                        std::vector<std::string>{std::string(name)});
+                }
+                else
+                {
+                    bucket_it->second.emplace_back(name);
+                }
+            }
             else if (
                 name == "controllerName" || name == "resourceName"
                 || name == "presetName" || name == "language"
-                || name == "adbDevice" || name.starts_with("adapter.")
-                || name.starts_with("pretask."))
+                || name == "adbDevice" || name.starts_with("adapter."))
             {
                 project_entries.emplace_back(name);
             }
@@ -2389,6 +2571,43 @@ namespace Das::Plugins::DasMaaPi
         if (!update_first && !update_entries.empty())
         {
             emit_update_section();
+        }
+
+        // 每个 pretask 独立一 section（分区归属 = FindOwnerPretask，与投影
+        // /setValue 路由一致）。label 是 pretask 作者内容（dto.label 经
+        // ResolveI18nOrDiag，缺译 fallback dto.name / exec——协议 L308-309
+        // 的呈现回退顺序）。defaultExpanded=true（选项组通常少，默认展开）。
+        for (const auto& [owner_pretask, entry_names] : pretask_buckets)
+        {
+            yyjson::value     section(Object());
+            auto              s_obj = section.as_object();
+            const std::string section_id =
+                "pretask_" + StablePretaskId(*owner_pretask);
+            (*s_obj)[std::string_view("id")] = JsonString(section_id);
+            const std::string fallback_name = owner_pretask->dto.name.empty()
+                                                  ? owner_pretask->dto.exec
+                                                  : owner_pretask->dto.name;
+            const std::string_view label_text =
+                owner_pretask->dto.label
+                    ? std::string_view(*owner_pretask->dto.label)
+                    : std::string_view(fallback_name);
+            const std::string_view resolved_label = ResolveI18nOrDiag(
+                label_text,
+                *catalog,
+                current_language,
+                fallback_name,
+                projection_diagnostics,
+                "fieldLayout.section." + section_id + ".label");
+            (*s_obj)[std::string_view("label")] = JsonString(resolved_label);
+            (*s_obj)[std::string_view("defaultExpanded")] =
+                resolve_default_expanded(section_id, true);
+            yyjson::value entries(Array());
+            for (const auto& field_name : entry_names)
+            {
+                entries.as_array()->emplace_back(make_leaf(field_name));
+            }
+            (*s_obj)[std::string_view("entries")] = std::move(entries);
+            layout_arr->emplace_back(std::move(section));
         }
 
         // 每个 catalog->settings 元素独立一 section。按 setting.dto.option
@@ -2769,37 +2988,22 @@ namespace Das::Plugins::DasMaaPi
             // acceptedProperties.pi.pretasks[<id>].options（镜像
             // custom_presets 的私有存储模式）。stable pretask_id 遵循
             // D-86-03（dto.name 非空→name，否则 exec）。多个 pretask 引用
-            // 同一 option 键时去重（首个 pretask 的引用胜出）。
+            // 同一 option 键时去重（首个 pretask 的引用胜出）。嵌套 option
+            // （case.option）经 EmitPretaskOptionField 按激活 case 递归投影。
             std::set<std::string> emitted_pretask_keys;
             for (const auto& pretask : catalog->pretasks)
             {
-                const std::string pretask_id = pretask.dto.name.empty()
-                                                   ? pretask.dto.exec
-                                                   : pretask.dto.name;
-                const auto*       pretask_settings =
-                    FindPretaskSettings(settings, pretask_id);
+                const auto* pretask_settings =
+                    FindPretaskSettings(settings, StablePretaskId(pretask));
                 for (const auto& opt_name : pretask.dto.option)
                 {
-                    if (!emitted_pretask_keys.insert(opt_name).second)
-                    {
-                        continue;
-                    }
-                    const auto* option_dto = FindOption(*catalog, opt_name);
-                    if (option_dto == nullptr)
-                    {
-                        continue;
-                    }
-                    const auto* current = pretask_settings
-                                              ? FindOptionSettings(
-                                                    pretask_settings->options,
-                                                    opt_name)
-                                              : nullptr;
-                    fields.as_array()->emplace_back(MakeOptionPropertyField(
-                        std::string{"pretask."} + opt_name,
-                        option_dto->dto,
-                        current,
+                    EmitPretaskOptionField(
+                        pretask_settings,
                         catalog,
-                        current_language));
+                        current_language,
+                        opt_name,
+                        emitted_pretask_keys,
+                        fields);
                 }
             }
         }
@@ -4362,19 +4566,12 @@ namespace Das::Plugins::DasMaaPi
                         field);
                     return false;
                 }
-                // 找到首个引用该 option 的 pretask 作为唯一存储载体。
-                std::string target_pretask_id;
-                for (const auto& pretask : catalog->pretasks)
-                {
-                    if (ContainsName(pretask.dto.option, option_name))
-                    {
-                        target_pretask_id = pretask.dto.name.empty()
-                                                ? pretask.dto.exec
-                                                : pretask.dto.name;
-                        break;
-                    }
-                }
-                if (target_pretask_id.empty())
+                // 找到首个（含嵌套 option 树）可达该 option 的 pretask 作为
+                // 唯一存储载体——嵌套 option（case.option）不在任何
+                // pretask.dto.option 顶层列表里，必须沿 option 树找。
+                const auto* owner_pretask =
+                    FindOwnerPretask(*catalog, option_name);
+                if (owner_pretask == nullptr)
                 {
                     EmitDiagnostic(
                         diagnostics,
@@ -4385,6 +4582,8 @@ namespace Das::Plugins::DasMaaPi
                         field);
                     return false;
                 }
+                const std::string target_pretask_id =
+                    StablePretaskId(*owner_pretask);
                 if (value.is_null())
                 {
                     auto* pretask_settings = FindOrCreatePretaskSettings(

@@ -565,6 +565,33 @@ namespace Das::Plugins::DasMaaPi
             return nullptr;
         }
 
+        // pretask option 的用户选中值查找：投影/setValue 把
+        // pretask.<optionKey> 的用户值存进 acceptedProperties.pi.pretasks
+        // [<pretask_id>].options（私有存储），物化必须读同一份存储——
+        // 嵌套 option（case.option）的值也挂在同一 pretask 下。
+        const MaapiPiOptionSettingsDto* FindPretaskOptionSelection(
+            const AcceptedSettingsDto& settings,
+            std::string_view           pretask_id,
+            std::string_view           option_name)
+        {
+            for (const auto& pretask : settings.pi.pretasks)
+            {
+                if (pretask.pretask_id != pretask_id)
+                {
+                    continue;
+                }
+                for (const auto& opt : pretask.options)
+                {
+                    if (opt.option_name == option_name)
+                    {
+                        return &opt;
+                    }
+                }
+                return nullptr;
+            }
+            return nullptr;
+        }
+
         const MaapiPiOptionSettingsDto* FindResourceSelection(
             const AcceptedSettingsDto& settings,
             std::string_view           option_name)
@@ -616,6 +643,7 @@ namespace Das::Plugins::DasMaaPi
             const PiCatalog&           catalog,
             std::string_view           option_key,
             const AcceptedSettingsDto& settings,
+            std::string_view           pretask_id,
             std::string_view           controller_name,
             std::string_view           resource_name,
             yyjson::value&             result,
@@ -637,7 +665,8 @@ namespace Das::Plugins::DasMaaPi
             }
             visited.insert(key);
 
-            const auto* selected = FindGlobalSelection(settings, option_key);
+            const auto* selected =
+                FindPretaskOptionSelection(settings, pretask_id, option_key);
             auto        resolved = ResolveOptionSelection(*option, selected);
             auto        result_obj = result.as_object();
             const auto& type = option->dto.type;
@@ -664,6 +693,7 @@ namespace Das::Plugins::DasMaaPi
                             catalog,
                             nested,
                             settings,
+                            pretask_id,
                             controller_name,
                             resource_name,
                             result,
@@ -695,6 +725,7 @@ namespace Das::Plugins::DasMaaPi
                             catalog,
                             nested,
                             settings,
+                            pretask_id,
                             controller_name,
                             resource_name,
                             result,
@@ -727,6 +758,7 @@ namespace Das::Plugins::DasMaaPi
             const std::vector<std::string>& option_keys,
             const PiCatalog&                catalog,
             const AcceptedSettingsDto&      settings,
+            std::string_view                pretask_id,
             std::string_view                controller_name,
             std::string_view                resource_name)
         {
@@ -738,6 +770,7 @@ namespace Das::Plugins::DasMaaPi
                     catalog,
                     key,
                     settings,
+                    pretask_id,
                     controller_name,
                     resource_name,
                     result,
@@ -960,10 +993,16 @@ namespace Das::Plugins::DasMaaPi
             dto.args = pretask.dto.args;
             if (!pretask.dto.option.empty())
             {
+                // stable pretask_id 与投影/setValue 路由一致（dto.name 非空
+                // → name，否则 exec），保证用户值存储与物化读取对得上。
+                const std::string pretask_id = pretask.dto.name.empty()
+                                                   ? pretask.dto.exec
+                                                   : pretask.dto.name;
                 dto.args.push_back(SerializePretaskOptionJson(
                     pretask.dto.option,
                     catalog,
                     settings,
+                    pretask_id,
                     controller->dto.name,
                     resource->dto.name));
             }
