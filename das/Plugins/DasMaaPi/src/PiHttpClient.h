@@ -74,6 +74,11 @@ namespace Das::Plugins::DasMaaPi
             const ProgressCallback&      on_progress,
             int&                         out_status,
             const std::string&           proxy_url = {}) = 0;
+
+        // 请求取消 seam：请求在途时尽快中断（进程退出收尾用，使 join 有
+        // 界）。默认 no-op——具体实现按自身 I/O 模型覆盖；测试 fake 覆盖它
+        // 释放阻塞 latch。
+        virtual void RequestCancel() {}
     };
 
     // Production Boost.Beast implementation of PiHttpClient. All network I/O is

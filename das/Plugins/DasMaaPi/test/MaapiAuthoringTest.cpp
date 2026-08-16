@@ -23,9 +23,11 @@
 // 验证 checkUpdate/applyUpdate 全链路 + pending_update_ 暂态。
 #include "MaapiAuthoringSession.h"
 #include "PiUpdateService.h"
+#include "UpdateJobRegistry.h"
 
 #include <array>
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
@@ -33,6 +35,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <set>
 #include <sstream>
@@ -6736,6 +6739,23 @@ namespace
 
         void SetNetworkFailure(bool fail) { fail_all_ = fail; }
 
+        // 下载挂起 latch：BlockDownloads 后 DownloadStream 在命中路由时阻塞，
+        // 直到 ReleaseDownload（测试主动）或 RequestCancel（registry 析构收
+        // 尾调用——不覆盖则测试进程退出时 join 永等挂死）。等待有界（超时
+        // 自行放行），防误用导致的无限挂起。
+        void BlockDownloads() { block_downloads_ = true; }
+
+        void ReleaseDownload()
+        {
+            {
+                const std::lock_guard<std::mutex> lock(latch_mutex_);
+                release_latch_ = true;
+            }
+            latch_cv_.notify_all();
+        }
+
+        void RequestCancel() override { ReleaseDownload(); }
+
         int CountRequestsWith(std::string_view fragment) const
         {
             int count = 0;
@@ -6768,7 +6788,8 @@ namespace
         }
 
         // 流式下载 mock：命中路由时把 body 写入 out_path（供 ApplyUpdate
-        // 流式落盘后解压），成功后回调一次 on_progress。
+        // 流式落盘后解压），成功后回调一次 on_progress。BlockDownloads 置位
+        // 时在写盘前阻塞（模拟分钟级下载挂起，驱动受理异步化断言）。
         DasResult DownloadStream(
             const std::string&           url,
             const std::filesystem::path& out_path,
@@ -6784,6 +6805,14 @@ namespace
             {
                 if (url.find(route.path_fragment) != std::string::npos)
                 {
+                    if (block_downloads_)
+                    {
+                        std::unique_lock<std::mutex> lock(latch_mutex_);
+                        latch_cv_.wait_for(
+                            lock,
+                            std::chrono::seconds(3),
+                            [this] { return release_latch_; });
+                    }
                     out_status = route.status;
                     if (route.status != 200)
                     {
@@ -6842,9 +6871,13 @@ namespace
             std::string proxy_url;
         };
 
-        std::vector<Route> routes_;
-        std::vector<Call>  calls_;
-        bool               fail_all_ = false;
+        std::vector<Route>      routes_;
+        std::vector<Call>       calls_;
+        bool                    fail_all_ = false;
+        bool                    block_downloads_ = false;
+        std::mutex              latch_mutex_;
+        std::condition_variable latch_cv_;
+        bool                    release_latch_ = false;
     };
 
     // 临时项目目录（interface.json 所在目录 = D-89-01 更新目标）。唯一名防并行
@@ -7150,6 +7183,58 @@ namespace
         }
         return std::string(raw);
     }
+
+    // entry 字段逐字段读回（name + value 文本），镜像
+    // MaapiProgressReporterTest 的同名辅助（终态字段增量断言用）。
+    std::pair<std::string, std::string> ReadEntryField(
+        Das::ExportInterface::IDasProgressUpdate* entry,
+        size_t                                    index)
+    {
+        DasPtr<IDasReadOnlyString>             name;
+        DasPtr<Das::ExportInterface::IDasJson> value;
+        EXPECT_EQ(
+            entry->GetFieldByIndex(index, name.Put(), value.Put()),
+            DAS_S_OK);
+        const char* name_raw = nullptr;
+        EXPECT_EQ(name->GetUtf8(&name_raw), DAS_S_OK);
+        DasPtr<IDasReadOnlyString> text;
+        EXPECT_EQ(value->ToString(0, text.Put()), DAS_S_OK);
+        const char* text_raw = nullptr;
+        EXPECT_EQ(text->GetUtf8(&text_raw), DAS_S_OK);
+        return {
+            name_raw != nullptr ? std::string(name_raw) : std::string{},
+            text_raw != nullptr ? std::string(text_raw) : std::string{}};
+    }
+
+    // Apply 响应 diagnostics 数组中是否存在 wire code == 给定值的条目
+    // （diagnostic 严格 {severity, message, code?, path?}，code 是整数
+    // DasResult）。
+    bool HasDiagnosticWithCode(const yyjson::value& result, std::int64_t code)
+    {
+        auto obj = result.as_object();
+        if (!obj || !obj->contains(std::string_view("diagnostics")))
+        {
+            return false;
+        }
+        auto arr = (*obj)[std::string_view("diagnostics")].as_array();
+        if (!arr)
+        {
+            return false;
+        }
+        for (auto it = arr->begin(); it != arr->end(); ++it)
+        {
+            auto diag = it->as_object();
+            if (!diag || !diag->contains(std::string_view("code")))
+            {
+                continue;
+            }
+            if ((*diag)[std::string_view("code")].as_sint().value_or(0) == code)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
 } // namespace
 
 // D-89-04 端到端（Tracer 3）：checkUpdate 经 invokeCommand 分派 → 调
@@ -7316,8 +7401,10 @@ TEST(
     EXPECT_FALSE(CommandResultOf(r2).has_value());
 }
 
-// applyUpdate 期间经进度 service 上报字段增量：AddCallback → Report（entry key
-// == checkUpdate 返回的 progress_key）→ RemoveCallback 成对（proxy 释放）。
+// applyUpdate 受理后后台 job 经进度 service 上报字段增量：受理返回
+// accepted commandResult；等待缝收口 job 后 AddCallback → Report（entry key
+// == checkUpdate 返回的 progress_key，含终态 entry）→ RemoveCallback 成对
+// （proxy 释放）。
 TEST(MaapiUpdateCommandTest, ApplyUpdateReportsProgressWithCheckUpdateKey)
 {
     using namespace Das::Plugins::DasMaaPi;
@@ -7328,17 +7415,17 @@ TEST(MaapiUpdateCommandTest, ApplyUpdateReportsProgressWithCheckUpdateKey)
 
     const std::string new_interface =
         MakeUpdateInterface("1.2.0", "https://github.com/owner/repo");
-    FakeUpdateHttpClient http;
-    http.AddRoute(
+    auto http = std::make_shared<FakeUpdateHttpClient>();
+    http->AddRoute(
         "/repos/owner/repo/releases/latest",
         UpdateGithubRelease("v1.2.0"));
-    http.AddRoute(
+    http->AddRoute(
         "/releases/download/v1.2.0/",
         BuildStoredZip({{"interface.json", new_interface}}),
         200);
 
     MaapiAuthoringSession session(MakeUpdateSettings(project.Dir()));
-    session.SetHttpClientForTest(&http);
+    session.SetHttpClientForTest(http.get());
 
     DasPtr<Das::ExportInterface::IDasProgressService> service =
         FakeProgressService::Make();
@@ -7361,7 +7448,7 @@ TEST(MaapiUpdateCommandTest, ApplyUpdateReportsProgressWithCheckUpdateKey)
         (*data_obj)[std::string_view("progressKey")].as_string().value_or(""));
     EXPECT_FALSE(progress_key.empty());
 
-    // applyUpdate → 进度上报（AddCallback + Report + RemoveCallback 成对）。
+    // applyUpdate → 受理（accepted commandResult，无 error）。
     DasPtr<Das::ExportInterface::IDasJson> r2_json;
     auto                                   c2 = ParseDasJson(
         "{\"baseRevision\":1,\"kind\":\"invokeCommand\","
@@ -7369,6 +7456,21 @@ TEST(MaapiUpdateCommandTest, ApplyUpdateReportsProgressWithCheckUpdateKey)
     ASSERT_EQ(session.ApplyChange(c2.Get(), r2_json.Put()), DAS_S_OK);
     auto r2 = ReadJsonInterface(r2_json.Get());
     EXPECT_EQ(CountDiagnosticsBySeverity(r2, "error"), 0u);
+    auto apply_cr = CommandResultOf(r2);
+    ASSERT_TRUE(apply_cr.has_value());
+    EXPECT_EQ(
+        std::string(apply_cr->as_object()
+                        .value()[std::string_view("commandId")]
+                        .as_string()
+                        .value_or("")),
+        "applyUpdate");
+
+    // 等待缝收口 job → 进度上报（AddCallback + Report + RemoveCallback 成对，
+    // entries 含终态）。
+    ASSERT_TRUE(
+        UpdateJobRegistry::Instance().WaitForSlotIdleForTest(
+            project.Dir(),
+            std::chrono::seconds(10)));
 
     EXPECT_EQ(fake->add_count, 1);
     EXPECT_EQ(fake->remove_count, 1);
@@ -7402,11 +7504,12 @@ TEST(MaapiUpdateCommandTest, InvokeCommandApplyUpdateRejectsWithoutPending)
     EXPECT_EQ(DocumentRevisionFromApplyResult(result), 0);
 }
 
-// D-89-05：applyUpdate 全链路——Fake seam 下载 zip → 解压 → 备份 → 原子替换
-// pi_dir → 成功清 pending_update_（按钮回 disabled）+ revision 递增；随后二次
-// applyUpdate（无 pending）拒绝。替换后下一次请求经 TryParseCatalog 内容感知
-// 重解析（89-02 [ASSUMED A4]）自然读新 interface.json。
-TEST(MaapiUpdateCommandTest, InvokeCommandApplyUpdateSuccessClearsPending)
+// applyUpdate 全链路（异步受理语义）——Fake seam 下载 zip → 解压 → 备份 →
+// 原子替换 pi_dir 在后台 job 执行：受理返回 accepted + revision 递增，等待缝
+// 收口后文件已替换；受理与 job 完成均不清 pending_update_（清理交给下次
+// checkUpdate 覆盖），job 完成后再次 applyUpdate 不被 has-no-pending 前置
+// 拒绝。
+TEST(MaapiUpdateCommandTest, InvokeCommandApplyUpdateAcceptedRetainsPending)
 {
     using namespace Das::Plugins::DasMaaPi;
 
@@ -7416,14 +7519,14 @@ TEST(MaapiUpdateCommandTest, InvokeCommandApplyUpdateSuccessClearsPending)
 
     const std::string new_interface =
         MakeUpdateInterface("1.2.0", "https://github.com/owner/repo");
-    FakeUpdateHttpClient http;
-    http.AddRoute(
+    auto http = std::make_shared<FakeUpdateHttpClient>();
+    http->AddRoute(
         "/releases/download/v1.2.0/",
         BuildStoredZip({{"interface.json", new_interface}}),
         200);
 
     MaapiAuthoringSession session(MakeUpdateSettings(project.Dir()));
-    session.SetHttpClientForTest(&http);
+    session.SetHttpClientForTest(http.get());
     PiUpdateInfo info;
     info.has_update = true;
     info.version_name = "v1.2.0";
@@ -7432,7 +7535,7 @@ TEST(MaapiUpdateCommandTest, InvokeCommandApplyUpdateSuccessClearsPending)
         "test-project-win-x86_64-v1.2.0.zip";
     session.SetPendingUpdate(info);
 
-    // 1) applyUpdate 成功。
+    // 1) applyUpdate 受理成功（accepted commandResult，无同步执行）。
     DasPtr<Das::ExportInterface::IDasJson> r1_json;
     auto                                   c1 = ParseDasJson(
         "{\"baseRevision\":0,\"kind\":\"invokeCommand\","
@@ -7441,26 +7544,160 @@ TEST(MaapiUpdateCommandTest, InvokeCommandApplyUpdateSuccessClearsPending)
     auto r1 = ReadJsonInterface(r1_json.Get());
     EXPECT_EQ(CountDiagnosticsBySeverity(r1, "error"), 0u);
     EXPECT_EQ(DocumentRevisionFromApplyResult(r1), 1);
-    EXPECT_FALSE(session.PendingUpdate().has_value());
+    auto cr = CommandResultOf(r1);
+    ASSERT_TRUE(cr.has_value());
+    EXPECT_EQ(
+        std::string(cr->as_object()
+                        .value()[std::string_view("commandId")]
+                        .as_string()
+                        .value_or("")),
+        "applyUpdate");
+    auto accepted = cr->as_object()
+                        .value()[std::string_view("data")]
+                        .as_object()
+                        .value()[std::string_view("accepted")]
+                        .as_bool()
+                        .value_or(false);
+    EXPECT_TRUE(accepted);
+    // 受理后 pending 保留。
+    EXPECT_TRUE(session.PendingUpdate().has_value());
 
-    // pi_dir 已被替换：interface.json 现在是新版（1.2.0）。
+    // 2) 等待缝收口 job → pi_dir 已被替换：interface.json 现在是新版（1.2.0）。
+    ASSERT_TRUE(
+        UpdateJobRegistry::Instance().WaitForSlotIdleForTest(
+            project.Dir(),
+            std::chrono::seconds(10)));
     const auto replaced = ReadFileText(project.Dir() / "interface.json");
     EXPECT_NE(replaced.find("1.2.0"), std::string::npos);
     EXPECT_EQ(replaced.find("1.0.0"), std::string::npos);
+    // job 完成后 pending 仍保留。
+    EXPECT_TRUE(session.PendingUpdate().has_value());
 
-    // 2) 二次 applyUpdate（pending 已清）→ 拒绝 + revision 不递增。
+    // 3) 二次 applyUpdate（pending 保留）→ 不被 has-no-pending 前置拒绝
+    // （受理成功，第二次 job 再跑一遍替换）。
     DasPtr<Das::ExportInterface::IDasJson> r2_json;
     auto                                   c2 = ParseDasJson(
         "{\"baseRevision\":1,\"kind\":\"invokeCommand\","
         "\"payload\":{\"commandId\":\"applyUpdate\"}}");
     ASSERT_EQ(session.ApplyChange(c2.Get(), r2_json.Put()), DAS_S_OK);
     auto r2 = ReadJsonInterface(r2_json.Get());
-    EXPECT_GE(CountDiagnosticsBySeverity(r2, "error"), 1u);
-    EXPECT_EQ(DocumentRevisionFromApplyResult(r2), 1);
+    EXPECT_EQ(CountDiagnosticsBySeverity(r2, "error"), 0u);
+    EXPECT_EQ(DocumentRevisionFromApplyResult(r2), 2);
+    ASSERT_TRUE(
+        UpdateJobRegistry::Instance().WaitForSlotIdleForTest(
+            project.Dir(),
+            std::chrono::seconds(10)));
 }
 
-// D-89-05：applyUpdate 失败（网络/下载错）→ error 诊断 + 不递增 revision +
-// pending_update_ 保留（用户可重试）。
+// 受理异步化端到端：fake 下载挂起（latch）时 applyUpdate 受理在 2 秒内返回，
+// accepted commandResult 正确；释放 latch 后 job 完成，终态字段增量经进度
+// service 可读（updateProgress 含版本号、downloadRate/downloadElapsed 空串），
+// pi_dir 替换完成且 pending 保留。测试进程退出不挂死（fake 覆盖
+// RequestCancel 释放 latch + registry 析构 join 有界）。
+TEST(
+    MaapiUpdateCommandTest,
+    InvokeCommandApplyUpdateAcceptedRunsInBackgroundAndReportsFinal)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    TempUpdateProject project;
+    project.WriteInterface(
+        MakeUpdateInterface("1.0.0", "https://github.com/owner/repo"));
+
+    const std::string new_interface =
+        MakeUpdateInterface("1.2.0", "https://github.com/owner/repo");
+    auto http = std::make_shared<FakeUpdateHttpClient>();
+    http->AddRoute(
+        "/releases/download/v1.2.0/",
+        BuildStoredZip({{"interface.json", new_interface}}),
+        200);
+    http->BlockDownloads();
+
+    MaapiAuthoringSession session(MakeUpdateSettings(project.Dir()));
+    session.SetHttpClientForTest(http.get());
+
+    DasPtr<Das::ExportInterface::IDasProgressService> service =
+        FakeProgressService::Make();
+    auto* fake = static_cast<FakeProgressService*>(service.Get());
+    session.SetProgressServiceForTest(service.Get());
+
+    PiUpdateInfo info;
+    info.has_update = true;
+    info.version_name = "v1.2.0";
+    info.download_url =
+        "https://github.com/owner/repo/releases/download/v1.2.0/"
+        "test-project-win-x86_64-v1.2.0.zip";
+    info.progress_key = "accepted-final-key";
+    session.SetPendingUpdate(info);
+
+    // 受理：下载挂起时 ApplyChange 在 2 秒内返回。
+    const auto accept_start = std::chrono::steady_clock::now();
+    DasPtr<Das::ExportInterface::IDasJson> r1_json;
+    auto                                   c1 = ParseDasJson(
+        "{\"baseRevision\":0,\"kind\":\"invokeCommand\","
+        "\"payload\":{\"commandId\":\"applyUpdate\"}}");
+    ASSERT_EQ(session.ApplyChange(c1.Get(), r1_json.Put()), DAS_S_OK);
+    const auto accept_elapsed_ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - accept_start)
+            .count();
+    auto r1 = ReadJsonInterface(r1_json.Get());
+    EXPECT_EQ(CountDiagnosticsBySeverity(r1, "error"), 0u);
+    EXPECT_LT(accept_elapsed_ms, 2000);
+
+    auto cr = CommandResultOf(r1);
+    ASSERT_TRUE(cr.has_value());
+    auto cr_obj = cr->as_object();
+    ASSERT_TRUE(cr_obj.has_value());
+    EXPECT_EQ(
+        std::string(
+            (*cr_obj)[std::string_view("commandId")].as_string().value_or("")),
+        "applyUpdate");
+    auto data_obj = (*cr_obj)[std::string_view("data")].as_object();
+    ASSERT_TRUE(data_obj.has_value());
+    EXPECT_TRUE(
+        (*data_obj)[std::string_view("accepted")].as_bool().value_or(false));
+
+    // 释放 latch → job 完成（有界等待）。
+    http->ReleaseDownload();
+    ASSERT_TRUE(
+        UpdateJobRegistry::Instance().WaitForSlotIdleForTest(
+            project.Dir(),
+            std::chrono::seconds(10)));
+
+    // 终态 entry：updateProgress 含版本号（i18n 模板 {0} 填充），
+    // downloadRate/downloadElapsed 为空串；全部 entry 走同一 key。
+    ASSERT_FALSE(fake->entries.empty());
+    for (const auto& entry : fake->entries)
+    {
+        EXPECT_EQ(EntryKey(entry.Get()), "accepted-final-key");
+    }
+    auto& final_entry = fake->entries.back();
+    {
+        const auto [name, value] = ReadEntryField(final_entry.Get(), 0);
+        EXPECT_EQ(name, "updateProgress");
+        EXPECT_NE(value.find("v1.2.0"), std::string::npos);
+    }
+    {
+        const auto [name, value] = ReadEntryField(final_entry.Get(), 1);
+        EXPECT_EQ(name, "downloadRate");
+        EXPECT_EQ(value, "");
+    }
+    {
+        const auto [name, value] = ReadEntryField(final_entry.Get(), 2);
+        EXPECT_EQ(name, "downloadElapsed");
+        EXPECT_EQ(value, "");
+    }
+
+    // pi_dir 已替换 + pending 保留。
+    const auto replaced = ReadFileText(project.Dir() / "interface.json");
+    EXPECT_NE(replaced.find("1.2.0"), std::string::npos);
+    EXPECT_TRUE(session.PendingUpdate().has_value());
+}
+
+// applyUpdate 失败（异步语义）——受理 ok=true（受理端点不感知后台失败）；
+// job 下载失败后终态 entry 携带失败文案（detail 为 DasResult 十进制串），
+// pi_dir 旧内容保留 + pending_update_ 保留（用户可重试）。
 TEST(MaapiUpdateCommandTest, InvokeCommandApplyUpdateFailureRetainsPending)
 {
     using namespace Das::Plugins::DasMaaPi;
@@ -7469,28 +7706,54 @@ TEST(MaapiUpdateCommandTest, InvokeCommandApplyUpdateFailureRetainsPending)
     project.WriteInterface(
         MakeUpdateInterface("1.0.0", "https://github.com/owner/repo"));
 
-    FakeUpdateHttpClient http;
-    http.SetNetworkFailure(true);
+    auto http = std::make_shared<FakeUpdateHttpClient>();
+    http->SetNetworkFailure(true);
 
     MaapiAuthoringSession session(MakeUpdateSettings(project.Dir()));
-    session.SetHttpClientForTest(&http);
+    session.SetHttpClientForTest(http.get());
+
+    DasPtr<Das::ExportInterface::IDasProgressService> service =
+        FakeProgressService::Make();
+    auto* fake = static_cast<FakeProgressService*>(service.Get());
+    session.SetProgressServiceForTest(service.Get());
+
     PiUpdateInfo info;
     info.has_update = true;
     info.version_name = "v1.2.0";
     info.download_url =
         "https://github.com/owner/repo/releases/download/v1.2.0/"
         "test-project-win-x86_64-v1.2.0.zip";
+    info.progress_key = "failure-final-key";
     session.SetPendingUpdate(info);
 
-    DasPtr<Das::ExportInterface::IDasJson> result_json;
-    auto                                   change = ParseDasJson(
+    // 受理成功（失败发生在后台 job，受理端点无 error 诊断）。
+    DasPtr<Das::ExportInterface::IDasJson> r1_json;
+    auto                                   c1 = ParseDasJson(
         "{\"baseRevision\":0,\"kind\":\"invokeCommand\","
         "\"payload\":{\"commandId\":\"applyUpdate\"}}");
-    ASSERT_EQ(session.ApplyChange(change.Get(), result_json.Put()), DAS_S_OK);
-    auto result = ReadJsonInterface(result_json.Get());
+    ASSERT_EQ(session.ApplyChange(c1.Get(), r1_json.Put()), DAS_S_OK);
+    auto r1 = ReadJsonInterface(r1_json.Get());
+    EXPECT_EQ(CountDiagnosticsBySeverity(r1, "error"), 0u);
+    EXPECT_EQ(DocumentRevisionFromApplyResult(r1), 1);
+    auto cr = CommandResultOf(r1);
+    ASSERT_TRUE(cr.has_value());
 
-    EXPECT_GE(CountDiagnosticsBySeverity(result, "error"), 1u);
-    EXPECT_EQ(DocumentRevisionFromApplyResult(result), 0);
+    // 等待缝收口 job。
+    ASSERT_TRUE(
+        UpdateJobRegistry::Instance().WaitForSlotIdleForTest(
+            project.Dir(),
+            std::chrono::seconds(10)));
+
+    // 终态 entry：失败文案含 DasResult 十进制（下载失败映射 -10008）。
+    ASSERT_FALSE(fake->entries.empty());
+    const auto [final_name, final_value] =
+        ReadEntryField(fake->entries.back().Get(), 0);
+    EXPECT_EQ(final_name, "updateProgress");
+    EXPECT_NE(final_value.find("result=-10008"), std::string::npos);
+
+    // pi_dir 旧内容保留 + pending 保留（可重试）。
+    const auto current = ReadFileText(project.Dir() / "interface.json");
+    EXPECT_NE(current.find("1.0.0"), std::string::npos);
     EXPECT_TRUE(session.PendingUpdate().has_value());
 }
 
