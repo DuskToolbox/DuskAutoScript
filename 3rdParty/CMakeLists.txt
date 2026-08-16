@@ -94,6 +94,45 @@ set(ZLIB_NG_INCLUDE_DIR ${CMAKE_BINARY_DIR}/_deps/zlib-ng-build)
 set(ZLIB_NG_LIBRARY zlib)
 target_link_libraries(Das3rdParty INTERFACE zlib)
 
+function(_download_and_config_libzip)
+    set(DAS_LIBZIP_VERSION "1.11.4")
+    set(CMAKE_FOLDER "Das3rd/libzip")
+    message(STATUS "Downloading and configuring libzip (VERSION = ${DAS_LIBZIP_VERSION})")
+    # libzip 顶层 cmake_minimum_required(3.10) 把 CMP0077 置 OLD：函数内
+    # 普通 set() 会被 option() 的 OLD 语义清掉并回填默认值，必须以
+    # CACHE FORCE 钉住（zlib-ng 的普通变量范式在它身上不成立）。
+    # 静态最小配置：libzip 的 find_package(ZLIB) 经项目 cmake/FindZLIB.cmake
+    # 命中 zlib-ng，压缩内核唯一。可选压缩后端（bzip2/lzma/zstd）与可选
+    # 加密后端全关，仅保留 Windows CNG——平台判定由 libzip 内部 WIN32
+    # 守卫承担，非 Windows 仅产生一条良性 warning 且 AES 禁用。
+    set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+    set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+    set(BUILD_TESTING OFF)
+    set(ENABLE_BZIP2 OFF CACHE BOOL "" FORCE)
+    set(ENABLE_LZMA OFF CACHE BOOL "" FORCE)
+    set(ENABLE_ZSTD OFF CACHE BOOL "" FORCE)
+    set(ENABLE_WINDOWS_CRYPTO ON CACHE BOOL "" FORCE)
+    set(ENABLE_OPENSSL OFF CACHE BOOL "" FORCE)
+    set(ENABLE_GNUTLS OFF CACHE BOOL "" FORCE)
+    set(ENABLE_COMMONCRYPTO OFF CACHE BOOL "" FORCE)
+    set(ENABLE_MBEDTLS OFF CACHE BOOL "" FORCE)
+    set(BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+    set(BUILD_REGRESS OFF CACHE BOOL "" FORCE)
+    set(BUILD_OSSFUZZ OFF CACHE BOOL "" FORCE)
+    set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(BUILD_DOC OFF CACHE BOOL "" FORCE)
+    set(LIBZIP_DO_INSTALL OFF CACHE BOOL "" FORCE)
+    # 不钉下载哈希：GitHub release 资产重传会改变哈希，钉死反而断构建
+    # （与 googletest/sml 等既有先例一致）。
+    FetchContent_Declare(
+            libzip
+            URL "${GITHUB_MIRROR_URL}/nih-at/libzip/releases/download/v${DAS_LIBZIP_VERSION}/libzip-1.11.4.tar.gz")
+    FetchContent_MakeAvailable(libzip)
+    target_link_libraries(Das3rdParty INTERFACE libzip::zip)
+endfunction()
+
+_download_and_config_libzip()
+
 function(_download_and_config_gtest)
     set(DAS_GTESTS_VERSION "1.17.0-015950a936fc6b7cadca20eb0dbf6f054e6637fb")
     set(CMAKE_FOLDER "Das3rd/gtest")
