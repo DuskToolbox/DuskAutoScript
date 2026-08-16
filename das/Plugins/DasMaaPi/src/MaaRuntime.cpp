@@ -1974,7 +1974,7 @@ namespace Das::Plugins::DasMaaPi
             result.das_result = DAS_E_FAIL;
             AddDiagnostic(
                 result,
-                "create-controller-failed",
+                "controller-create-failed",
                 "Controller init params missing for controller '"
                     + controller_spec.name + "'");
             return result;
@@ -1982,7 +1982,7 @@ namespace Das::Plugins::DasMaaPi
         // Unified typed dispatch (Adb/Dbg/Win32/Gamepad/Tier2): surface
         // structured failure codes (controller-window-not-found /
         // controller-window-ambiguous / controller-type-unsupported-on-
-        // platform) instead of the generic create-controller-failed.
+        // platform) instead of the generic controller-create-failed.
         auto typed = boundary.CreateControllerFromParams(
             controller_spec,
             *envelope.maapi.controller_init_params);
@@ -1992,7 +1992,7 @@ namespace Das::Plugins::DasMaaPi
             result.das_result = DAS_E_FAIL;
             AddDiagnostic(
                 result,
-                typed.error_code.empty() ? "create-controller-failed"
+                typed.error_code.empty() ? "controller-create-failed"
                                          : typed.error_code,
                 typed.error_message.empty()
                     ? "Maa typed controller creation failed"

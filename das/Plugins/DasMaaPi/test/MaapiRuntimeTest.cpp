@@ -1147,7 +1147,7 @@ TEST(DasMaaPiRuntime, DefaultAdbEnvelopeRoutesThroughTypedDispatch)
 TEST(DasMaaPiRuntime, EnvelopeWithoutInitParamsSurfacesStructuredError)
 {
     // Hand-crafted envelope without controller_init_params must surface a
-    // deterministic create-controller-failed diagnostic. Before the refactor
+    // deterministic controller-create-failed diagnostic. Before the refactor
     // the runtime fell back to the legacy CreateController(spec) overload;
     // that overload is now deleted, so the runtime explicitly rejects the
     // envelope instead of silently calling a non-existent method.
@@ -1166,7 +1166,7 @@ TEST(DasMaaPiRuntime, EnvelopeWithoutInitParamsSurfacesStructuredError)
     auto               result = MaaRuntime::Run(parsed.envelope, fake, nullptr);
     EXPECT_NE(result.das_result, DAS_S_OK);
     ASSERT_FALSE(result.diagnostics.empty());
-    EXPECT_EQ(result.diagnostics.back().code, "create-controller-failed");
+    EXPECT_EQ(result.diagnostics.back().code, "controller-create-failed");
     EXPECT_FALSE(fake.Contains("CreateControllerFromParams:"));
 }
 
