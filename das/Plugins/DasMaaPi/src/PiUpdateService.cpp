@@ -771,6 +771,14 @@ namespace Das::Plugins::DasMaaPi
             }
             std::error_code ec;
             std::filesystem::create_directories(extract_dir, ec);
+            if (ec)
+            {
+                LogError(
+                    "PiUpdateService: cannot create extract dir: "
+                    + extract_dir.string() + " error=" + ec.message());
+                zip_discard(archive);
+                return DAS_E_MAAPI_UPDATE_APPLY_FAILED;
+            }
 
             for (zip_uint64_t index = 0;
                  index < static_cast<zip_uint64_t>(num_entries);
@@ -815,6 +823,15 @@ namespace Das::Plugins::DasMaaPi
                 if (is_directory)
                 {
                     std::filesystem::create_directories(target, ec);
+                    if (ec)
+                    {
+                        LogError(
+                            "PiUpdateService: cannot create zip entry dir: "
+                            + std::string(entry_name)
+                            + " error=" + ec.message());
+                        zip_discard(archive);
+                        return DAS_E_MAAPI_UPDATE_APPLY_FAILED;
+                    }
                     continue;
                 }
 
@@ -832,6 +849,15 @@ namespace Das::Plugins::DasMaaPi
                     return DAS_E_MAAPI_UPDATE_APPLY_FAILED;
                 }
                 std::filesystem::create_directories(target.parent_path(), ec);
+                if (ec)
+                {
+                    LogError(
+                        "PiUpdateService: cannot create output parent dir: "
+                        + target.parent_path().string()
+                        + " error=" + ec.message());
+                    zip_discard(archive);
+                    return DAS_E_MAAPI_UPDATE_APPLY_FAILED;
+                }
 
                 zip_file_t* entry_file = zip_fopen_index(archive, index, 0);
                 if (entry_file == nullptr)
