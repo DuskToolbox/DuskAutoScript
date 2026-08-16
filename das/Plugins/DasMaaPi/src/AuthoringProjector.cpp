@@ -5495,6 +5495,19 @@ namespace Das::Plugins::DasMaaPi
             {
                 const std::function<bool()> cancel_check = [slot]
                 { return slot->cancel_requested.load(); };
+                // 失败终态按阶段映射文案：progress 回调顺序即阶段推进
+                // （下载→解压→替换），记录最后阶段供失败终态取 i18n key，
+                // 裸错误码降为附注。
+                UpdateStage            last_stage = UpdateStage::Download;
+                const ProgressReporter stage_tracking_cb =
+                    [&last_stage, &progress_cb](const UpdateProgress& progress)
+                {
+                    last_stage = progress.stage;
+                    if (progress_cb)
+                    {
+                        progress_cb(progress);
+                    }
+                };
                 // 后台线程绝不让异常逃逸（未捕获 → std::terminate 杀死
                 // 整个 Host 进程）；filesystem 等异常就地映射失败终态。
                 const auto result = [&]()
@@ -5507,7 +5520,7 @@ namespace Das::Plugins::DasMaaPi
                             *http,
                             proxy_url,
                             mirrorchyan_cdk,
-                            progress_cb,
+                            stage_tracking_cb,
                             cancel_check);
                     }
                     catch (const std::exception& error)
@@ -5540,12 +5553,25 @@ namespace Das::Plugins::DasMaaPi
                 {
                     if (reporter)
                     {
-                        const std::string failure_detail =
-                            result == DAS_E_MAAPI_UPDATE_CANCELLED
-                                ? Translate("progress.updateCancelled")
-                                : DAS::fmt::format(
-                                      "result={}",
-                                      static_cast<int>(result));
+                        std::string failure_detail;
+                        if (result == DAS_E_MAAPI_UPDATE_CANCELLED)
+                        {
+                            failure_detail =
+                                Translate("progress.updateCancelled");
+                        }
+                        else
+                        {
+                            const char* const stage_key =
+                                last_stage == UpdateStage::Extract
+                                    ? "progress.extractFailed"
+                                    : (last_stage == UpdateStage::Replace
+                                           ? "progress.replaceFailed"
+                                           : "progress.downloadFailed");
+                            failure_detail = DAS::fmt::format(
+                                "{} (result={})",
+                                Translate(stage_key),
+                                static_cast<int>(result));
+                        }
                         reporter->ReportFinal(false, failure_detail);
                     }
                     DAS_LOG_ERROR(
