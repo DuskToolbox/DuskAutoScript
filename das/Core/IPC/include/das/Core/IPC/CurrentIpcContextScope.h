@@ -1,5 +1,6 @@
 #pragma once
 
+#include <das/DasExport.h>
 #include <das/IDasBase.h>
 
 DAS_NS_BEGIN
@@ -40,7 +41,15 @@ namespace Core
         };
 
         /**
-         * Thread-local IPC context pointer.
+         * @brief Read the per-thread IPC resolve context.
+         *
+         * Defined in libDasCore's single translation unit (see
+         * CurrentIpcContextScope.cpp): the storage must NOT be an inline
+         * variable in this header, because an inline thread_local gives
+         * every DLL its own copy — a plugin DLL reading it would always see
+         * null even after the Host BusinessThread (inside libDasCore) set
+         * its own copy. Keep it that way; plugin code must use the C ABI
+         * (DasQueryMainProcessInterfaceByName) instead.
          *
          * SAFETY PRECONDITION: Each IpcContext instance must exclusively own
          * its thread. Two IpcContext instances must never share the same
@@ -55,25 +64,26 @@ namespace Core
          *
          * 多 Context 正确性由现有测试覆盖。
          */
-        inline thread_local IResolveContext* g_current_context = nullptr;
+        DAS_API IResolveContext* GetCurrentIpcContext();
+
+        /**
+         * @brief Overwrite the per-thread IPC resolve context (see
+         * GetCurrentIpcContext for why this lives outside this header).
+         */
+        DAS_API void SetCurrentIpcContext(IResolveContext* context);
 
         class ScopedCurrentIpcContext
         {
         public:
             explicit ScopedCurrentIpcContext(IResolveContext* ctx)
             {
-                g_current_context = ctx;
+                SetCurrentIpcContext(ctx);
             }
-            ~ScopedCurrentIpcContext() { g_current_context = nullptr; }
+            ~ScopedCurrentIpcContext() { SetCurrentIpcContext(nullptr); }
             ScopedCurrentIpcContext(const ScopedCurrentIpcContext&) = delete;
             ScopedCurrentIpcContext& operator=(const ScopedCurrentIpcContext&) =
                 delete;
         };
-
-        inline IResolveContext* GetCurrentIpcContext()
-        {
-            return g_current_context;
-        }
 
     } // namespace IPC
 } // namespace Core

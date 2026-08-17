@@ -50,6 +50,7 @@ if (${DAS_BUILD_TEST})
     gtest_discover_tests(
         ${IpcMultiProcessTest_NAME}
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/Test
+        DISCOVERY_TIMEOUT 30
         PROPERTIES
             ENVIRONMENT "${das_test_env}"
     )

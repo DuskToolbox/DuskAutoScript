@@ -47,5 +47,6 @@ if(DAS_BUILD_TEST)
     das_get_test_runtime_environment(das_dasgraphtask_test_env)
     gtest_discover_tests(DasGraphTaskTest
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/Test
+        DISCOVERY_TIMEOUT 30
         PROPERTIES ENVIRONMENT "${das_dasgraphtask_test_env}")
 endif()

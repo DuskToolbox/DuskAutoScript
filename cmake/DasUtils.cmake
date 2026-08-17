@@ -69,7 +69,8 @@ function(das_add_additional_test ADDITIONAL_TEST_DIRECTORY_NAME)
 
     gtest_discover_tests(
         AdditionalTest
-        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/Test)
+        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/Test
+        DISCOVERY_TIMEOUT 30)
 endfunction()
 
 function(das_get_test_runtime_environment out_var)
@@ -102,6 +103,7 @@ function(das_add_core_test TEST_FOLDER)
     gtest_discover_tests(
         ${TEST_NAME}
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/Test
+        DISCOVERY_TIMEOUT 30
         PROPERTIES
             ENVIRONMENT "${das_test_env}")
 endfunction()
@@ -133,7 +135,8 @@ function(das_add_custom_test TEST_NAME)
 
     gtest_discover_tests(
         ${TEST_NAME}
-        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/Test)
+        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/Test
+        DISCOVERY_TIMEOUT 30)
 endfunction()
 
 function(das_add_swig_export_library LANGUAGE RAW_NAME FILES)

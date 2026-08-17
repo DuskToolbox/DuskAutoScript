@@ -59,6 +59,7 @@ if(DAS_BUILD_TEST AND HTTP_TEST_SOURCES)
     gtest_discover_tests(
         HttpTest
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/Test
+        DISCOVERY_TIMEOUT 30
         PROPERTIES
             ENVIRONMENT "${das_test_env}")
 endif()
