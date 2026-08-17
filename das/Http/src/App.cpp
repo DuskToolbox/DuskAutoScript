@@ -962,8 +962,8 @@ int main(int argc, const char* argv[])
         "Enable WebSocket IPC server (format: ip:port, e.g. 0.0.0.0:9527)")(
         "listen",
         boost::program_options::value<std::string>()->default_value(
-            "0.0.0.0:" + std::to_string(DAS_HTTP_PORT)),
-        "HTTP listen address (format: ip:port, e.g. 0.0.0.0:" DAS_STR(
+            "127.0.0.1:" + std::to_string(DAS_HTTP_PORT)),
+        "HTTP listen address (format: ip:port, e.g. 127.0.0.1:" DAS_STR(
             DAS_HTTP_PORT) ")");
 
     boost::program_options::variables_map vm;
@@ -991,7 +991,7 @@ int main(int argc, const char* argv[])
         ws_config->listen_port = static_cast<uint16_t>(endpoint->port);
     }
 
-    std::string listen_address = "0.0.0.0";
+    std::string listen_address = "127.0.0.1";
     int         listen_port = DAS_HTTP_PORT;
     if (vm.count("listen"))
     {
