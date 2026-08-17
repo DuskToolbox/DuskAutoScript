@@ -205,6 +205,12 @@ namespace Plugins::DasMaaPi
                     return rc;
                 }
                 *pp_out_value = fields_[index].second.Get();
+                // MakeJsonFieldValue 失败产生的空条目守卫：对空指针 AddRef
+                // 是解引用崩溃，返回失败而非崩溃（防御路径，正常序列化不触发）。
+                if (*pp_out_value == nullptr)
+                {
+                    return DAS_E_FAIL;
+                }
                 (*pp_out_value)->AddRef();
                 return DAS_S_OK;
             }
