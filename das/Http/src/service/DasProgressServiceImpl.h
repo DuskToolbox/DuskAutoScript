@@ -203,6 +203,18 @@ namespace Das::Http
                 {
                     continue;
                 }
+                // 零订阅者告警：推送打到无人订阅的 key（前端未订阅/订阅已
+                // 断开/注册未完成），帧丢失的确定性信号。
+                if (hub_->SubscriberCount(key) == 0)
+                {
+                    DAS_LOG_ERROR(
+                        DAS_FMT_NS::format(
+                            "SSE progress push with no subscriber: key={} "
+                            "field={}",
+                            key,
+                            field_name)
+                            .c_str());
+                }
                 hub_->Broadcast(
                     key,
                     std::make_shared<const std::string>(std::move(*payload)));

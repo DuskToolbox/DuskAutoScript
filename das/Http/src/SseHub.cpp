@@ -1,6 +1,9 @@
 #include "SseHub.hpp"
 #include "beast/SseSession.hpp" // for SseSessionBase full definition
 
+#include <das/DasApi.h>
+#include <das/Utils/fmt.h>
+
 #include <boost/asio/dispatch.hpp>
 #include <boost/asio/post.hpp>
 
@@ -20,6 +23,12 @@ namespace Das::Http
         {
             return;
         }
+        DAS_LOG_INFO(
+            DAS_FMT_NS::format(
+                "SseHub: subscriber registered key={} session={}",
+                key,
+                static_cast<const void*>(session.lock().get()))
+                .c_str());
         const std::unique_lock lock(mutex_);
         sessions_by_key_[std::move(key)].push_back(std::move(session));
     }
@@ -30,6 +39,12 @@ namespace Das::Http
         {
             return;
         }
+        DAS_LOG_INFO(
+            DAS_FMT_NS::format(
+                "SseHub: subscriber unregistered key={} session={}",
+                key,
+                static_cast<const void*>(session))
+                .c_str());
         bool key_empty = false;
         {
             const std::unique_lock lock(mutex_);
