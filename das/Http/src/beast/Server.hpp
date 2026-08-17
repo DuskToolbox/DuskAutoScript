@@ -27,6 +27,7 @@
 #include <queue>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -42,6 +43,11 @@ namespace Das::Http::Beast
     namespace http = boost::beast::http;
     using tcp = boost::asio::ip::tcp;
 
+    // SSE 订阅路径前缀（Session::TryHandOffToSse 单点判定用）。SSE 是长
+    // 推送，必须脱离请求-响应循环接管连接。
+    inline constexpr std::string_view kSseRequestPathPrefix =
+        "/" DAS_HTTP_API_PREFIX "authoring/events/";
+
     // 检测会话，处理单个HTTP连接
     class Session : public std::enable_shared_from_this<Session>
     {
@@ -53,16 +59,20 @@ namespace Das::Http::Beast
         // 响应写完成且停止条件已置位时回调（触发 Server::BeginShutdown）。
         // 在写完成处触发保证响应字节已进内核缓冲，退出路径不影响送达。
         std::function<void()> on_server_stop_;
+        // SSE 分流（keep-alive 跟随请求命中订阅路径时移交 SseSession）。
+        std::shared_ptr<SseHub> sse_hub_;
 
     public:
         Session(
             tcp::socket             socket,
             std::shared_ptr<Router> router,
             std::function<bool()>   stop_condition,
-            std::function<void()>   on_server_stop = nullptr)
+            std::function<void()>   on_server_stop = nullptr,
+            std::shared_ptr<SseHub> sse_hub = nullptr)
             : socket_(std::move(socket)), router_(std::move(router)),
               stop_condition_(std::move(stop_condition)),
-              on_server_stop_(std::move(on_server_stop))
+              on_server_stop_(std::move(on_server_stop)),
+              sse_hub_(std::move(sse_hub))
         {
         }
 
@@ -77,10 +87,44 @@ namespace Das::Http::Beast
         void RunWithParser(http::request<http::string_body> request)
         {
             request_ = std::move(request);
+            // 连接首请求（UpgradeDetector 判定非 WS 升级后移交）与 keep-alive
+            // 跟随请求（DoRead 读取）统一在此分流：SSE 订阅路径移交长推送
+            // 会话，其余进普通路由。SSE 判定全服务单一位置。
+            if (TryHandOffToSse())
+            {
+                return;
+            }
             ProcessRequest();
         }
 
     private:
+        // SSE 订阅路径分流（全服务单一判定点）：命中前缀且 key 非空时把
+        // 连接移交给 SseSession（长推送接管，脱离请求-响应循环）。连接的
+        // 第一个请求经 RunWithParser、keep-alive 跟随请求经 DoRead，都汇
+        // 聚到这里——.NET HttpClient 连接池会把 SSE GET 作为同连接的第二个
+        // 请求发出（首个请求通常是刚完成的 authoring/apply），只在首请求
+        // 分流时 SSE 请求会落进普通路由以 404 结束，客户端静默无订阅。
+        bool TryHandOffToSse()
+        {
+            if (!sse_hub_
+                || !request_.target().starts_with(kSseRequestPathPrefix))
+            {
+                return false;
+            }
+            const auto key =
+                request_.target().substr(kSseRequestPathPrefix.size());
+            if (key.empty())
+            {
+                return false;
+            }
+            auto sse = std::make_shared<SseSession>(
+                std::move(socket_),
+                std::string(key),
+                sse_hub_);
+            sse->DoStart();
+            return true;
+        }
+
         void DoRead()
         {
             auto self = shared_from_this();
@@ -95,6 +139,10 @@ namespace Das::Http::Beast
                 {
                     boost::ignore_unused(bytes_transferred);
                     if (ec)
+                    {
+                        return;
+                    }
+                    if (self->TryHandOffToSse())
                     {
                         return;
                     }
@@ -384,26 +432,10 @@ namespace Das::Http::Beast
 
                     auto& req = self->parser_.get();
 
-                    // SSE 长响应：路径前缀 {base}authoring/events/{key} 分派
-                    // 到 SseSession（不经同步 RouteHandler，RESEARCH Pitfall
-                    // 1）
-                    const boost::beast::string_view sse_prefix =
-                        "/" DAS_HTTP_API_PREFIX "authoring/events/";
-                    if (self->sse_hub_ && req.target().starts_with(sse_prefix))
-                    {
-                        const boost::beast::string_view key =
-                            req.target().substr(sse_prefix.size());
-                        if (!key.empty())
-                        {
-                            auto sse = std::make_shared<SseSession>(
-                                std::move(self->socket_),
-                                std::string(key),
-                                self->sse_hub_);
-                            sse->DoStart();
-                            return;
-                        }
-                    }
-
+                    // 连接首请求：WebSocket 升级在此分流（升级语义只可能
+                    // 出现在连接建立后的第一个请求）；SSE 订阅与普通请求
+                    // 一并移交 Session，由 Session::TryHandOffToSse 统一
+                    // 分流（判定单一位置，keep-alive 跟随请求同路径）。
                     if (boost::beast::websocket::is_upgrade(req)
                         && req.target() == "/ws")
                     {
@@ -420,7 +452,8 @@ namespace Das::Http::Beast
                             std::move(self->socket_),
                             self->router_,
                             self->stop_condition_,
-                            self->on_server_stop_);
+                            self->on_server_stop_,
+                            self->sse_hub_);
                         session->RunWithParser(self->parser_.release());
                     }
                 });
