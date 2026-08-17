@@ -18,6 +18,7 @@
 #include <das/Core/IPC/IpcMessageHeader.h>
 #include <das/Core/IPC/IpcMessageHeaderBuilder.h>
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
+#include <das/Core/IPC/SharedMemoryPool.h>
 #include <das/Core/Logger/Logger.h>
 
 #include <boost/asio/co_spawn.hpp>
@@ -444,6 +445,32 @@ namespace FakeMainProcess
         }
 
         DAS_CORE_LOG_INFO("[FakeMain] Received host_pid: {}", host_pid);
+
+        // Host PIPE 模式连接的前置条件：先创建 SharedMemoryPool 再创建
+        // 管道，与 HostLauncher::ConnectToHost 的主进程侧义务一致。
+        // Host 侧 ConnectIpc 会重试打开此池，缺失时重试耗尽即退出。
+        const std::string shared_memory_pool_name =
+            DAS::Core::IPC::Host::MakeSharedMemoryName(main_pid, host_pid);
+        std::unique_ptr<DAS::Core::IPC::SharedMemoryPool> shared_memory_pool;
+        try
+        {
+            shared_memory_pool =
+                std::make_unique<DAS::Core::IPC::SharedMemoryPool>(
+                    shared_memory_pool_name,
+                    DAS::Core::IPC::Host::DEFAULT_SHARED_MEMORY_SIZE);
+        }
+        catch (const std::exception& e)
+        {
+            DAS_CORE_LOG_ERROR(
+                "[FakeMain] Failed to create SHM pool: {}",
+                e.what());
+            return 1;
+        }
+
+        DAS_CORE_LOG_INFO(
+            "[FakeMain] Created SHM pool: {}, size={}",
+            shared_memory_pool_name,
+            DAS::Core::IPC::Host::DEFAULT_SHARED_MEMORY_SIZE);
 
         // 4. 创建管道（MainProcess 是服务端）
         std::string m2h_pipe = DAS::Core::IPC::Host::MakeMessageQueueName(
