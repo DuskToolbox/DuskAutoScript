@@ -31,6 +31,12 @@ namespace Das::Plugins::DasMaaPi
     // (empty host/port), which still return DAS_E_INVALID_ARGUMENT.
     DasResult ParseProxyUrl(std::string_view url, ProxyTarget& out);
 
+    // 日志用代理 URL 打码：空串输出 "direct"（无代理直连），解析成功输出
+    // scheme://host:port（认证字段剥离），解析失败输出 "unparsed(result=…)"
+    // 而不回落原文（原文可能携带认证信息）。排查「代理到底有没有生效」全靠
+    // 这条能与配置对账。
+    std::string RedactProxyUrlForLog(std::string_view proxy_url);
+
     // 流式下载进度。total_bytes 仅在响应携带 Content-Length 时填充；缺失
     // （chunked / 连接关闭定界）时为空，调用侧显示阶段态「正在下载…」而非
     // 估算百分比。

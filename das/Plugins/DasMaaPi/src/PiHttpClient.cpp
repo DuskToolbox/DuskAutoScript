@@ -3,6 +3,7 @@
 #include <das/DasApi.h>
 #include <das/Plugins/DasMaaPi/MaaPiErrorCodes.h>
 #include <das/Utils/DasJsonCore.h>
+#include <das/Utils/fmt.h>
 #include <das/_autogen/idl/abi/DasResult.h>
 
 #include <boost/asio/co_spawn.hpp>
@@ -18,6 +19,7 @@
 #include <boost/beast/version.hpp>
 #include <openssl/ssl.h>
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -173,6 +175,116 @@ namespace Das::Plugins::DasMaaPi
             DAS_LOG_WARNING(message.c_str());
         }
 
+        // ------------------------------------------------------------------
+        // HTTP 交换内容日志（普通级别）：请求/响应头默认逐行打印，正文
+        // 截断为可打印形式（前 HTTP_LOG_BODY_LIMIT 字节，不可打印字符替换
+        // '.'），认证/Cookie 头与 cdk query 值打码——出问题时快速分辨
+        // 「服务器返回了什么」与「客户端/网络侧问题」。流式下载 body 是
+        // 字节流不打（进度/完成日志已有字节数）。
+        // ------------------------------------------------------------------
+        constexpr std::size_t HTTP_LOG_BODY_LIMIT = 512;
+
+        bool IsSensitiveHeaderName(boost::beast::http::field field)
+        {
+            switch (field)
+            {
+            case boost::beast::http::field::authorization:
+            case boost::beast::http::field::proxy_authorization:
+            case boost::beast::http::field::cookie:
+            case boost::beast::http::field::set_cookie:
+                return true;
+            default:
+                return false;
+            }
+        }
+
+        // target（path + query）里的 cdk 值打码：用户 CDK 是长期秘密，
+        // 其余 query（GitHub 签名等）是短期值保持原样便于对账。
+        std::string RedactTargetForLog(std::string_view target)
+        {
+            std::string result(target);
+            for (std::size_t pos = result.find("cdk=");
+                 pos != std::string::npos;
+                 pos = result.find("cdk=", pos))
+            {
+                const std::size_t value_start = pos + 4;
+                const std::size_t value_end = result.find('&', value_start);
+                result.replace(
+                    value_start,
+                    (value_end == std::string::npos ? result.size() : value_end)
+                        - value_start,
+                    "***");
+                pos = value_start + 3;
+            }
+            return result;
+        }
+
+        template <typename Fields>
+        void LogHttpHeaderFields(const Fields& fields)
+        {
+            for (const auto& field : fields)
+            {
+                DAS_LOG_INFO(
+                    DAS::fmt::format(
+                        "PiHttpClient:   {}: {}",
+                        field.name_string(),
+                        IsSensitiveHeaderName(field.name())
+                            ? std::string("***")
+                            : std::string(field.value()))
+                        .c_str());
+            }
+        }
+
+        template <typename Request>
+        void LogHttpRequest(const Request& request)
+        {
+            DAS_LOG_INFO(
+                DAS::fmt::format(
+                    "PiHttpClient: request > {} {} HTTP/{}.{}",
+                    request.method_string(),
+                    RedactTargetForLog(request.target()),
+                    request.version() / 10,
+                    request.version() % 10)
+                    .c_str());
+            LogHttpHeaderFields(request);
+        }
+
+        template <typename Response>
+        void LogHttpResponse(const Response& response)
+        {
+            DAS_LOG_INFO(
+                DAS::fmt::format(
+                    "PiHttpClient: response < HTTP/{}.{} {} {}",
+                    response.version() / 10,
+                    response.version() % 10,
+                    response.result_int(),
+                    response.reason())
+                    .c_str());
+            LogHttpHeaderFields(response);
+        }
+
+        void LogHttpBody(std::string_view body)
+        {
+            const std::size_t shown =
+                std::min(body.size(), HTTP_LOG_BODY_LIMIT);
+            std::string printable;
+            printable.reserve(shown);
+            for (std::size_t index = 0; index < shown; ++index)
+            {
+                const auto byte = static_cast<unsigned char>(body[index]);
+                printable.push_back(
+                    (byte >= 0x20 && byte < 0x7F) ? static_cast<char>(byte)
+                                                  : '.');
+            }
+            DAS_LOG_INFO(
+                DAS::fmt::format(
+                    "PiHttpClient:   body ({}/{} bytes): {}",
+                    shown,
+                    body.size(),
+                    printable)
+                    .c_str());
+        }
+
         // Minimal base64 (standard alphabet) for Proxy-Authorization Basic.
         std::string Base64Encode(std::string_view input)
         {
@@ -274,6 +386,7 @@ namespace Das::Plugins::DasMaaPi
             req.set(boost::beast::http::field::host, target.host_and_port);
             req.set(boost::beast::http::field::user_agent, USER_AGENT);
             req.set(boost::beast::http::field::accept, "*/*");
+            LogHttpRequest(req);
 
             boost::beast::http::response_parser<boost::beast::http::string_body>
                 parser;
@@ -296,6 +409,11 @@ namespace Das::Plugins::DasMaaPi
             auto resp = parser.release();
             out_status = static_cast<int>(resp.result_int());
             out_body = std::move(resp.body());
+            LogHttpResponse(resp);
+            if (!head_only)
+            {
+                LogHttpBody(out_body);
+            }
             if (out_location)
             {
                 const auto loc = resp.find(boost::beast::http::field::location);
@@ -305,6 +423,25 @@ namespace Das::Plugins::DasMaaPi
                 }
             }
             co_return DAS_S_OK;
+        }
+
+        // 3xx status codes whose Location header is followed by the redirect
+        // loop. 301/302/303 and 307/308 both map to a re-issued GET/HEAD here:
+        // the seam only ever issues GET or HEAD, so no method/body rewrite is
+        // ever required (303's POST→GET rule is moot without POST).
+        bool IsRedirectStatus(int status)
+        {
+            switch (status)
+            {
+            case 301: // Moved Permanently
+            case 302: // Found
+            case 303: // See Other
+            case 307: // Temporary Redirect
+            case 308: // Permanent Redirect
+                return true;
+            default:
+                return false;
+            }
         }
 
         // Streaming GET that writes the response body straight to out_path as
@@ -341,6 +478,7 @@ namespace Das::Plugins::DasMaaPi
             req.set(boost::beast::http::field::host, target.host_and_port);
             req.set(boost::beast::http::field::user_agent, USER_AGENT);
             req.set(boost::beast::http::field::accept, "*/*");
+            LogHttpRequest(req);
 
             boost::beast::http::response_parser<boost::beast::http::buffer_body>
                 parser;
@@ -361,6 +499,7 @@ namespace Das::Plugins::DasMaaPi
 
             auto resp = parser.get();
             out_status = static_cast<int>(resp.result_int());
+            LogHttpResponse(resp);
             if (out_location)
             {
                 const auto loc = resp.find(boost::beast::http::field::location);
@@ -368,6 +507,17 @@ namespace Das::Plugins::DasMaaPi
                 {
                     *out_location = std::string(loc->value());
                 }
+            }
+
+            // 3xx redirect 的 body 不落盘也不读取：真实源（GitHub release
+            // 302）的重定向响应可能无 body 定界（无 Content-Length 且非
+            // chunked，语义为读至连接关闭），跟随 Location 的下一跳会重建
+            // 连接，旧连接上的 body 读取会一直等到超时才失败。每跳连接都
+            // 是本跳私有的（无池化复用），跳过 body 直接返回给 redirect
+            // 循环换发下一跳。
+            if (IsRedirectStatus(out_status))
+            {
+                co_return DAS_S_OK;
             }
 
             // 一次性打开输出文件（binary append/truncate）；写入路径由版本号
@@ -701,6 +851,21 @@ namespace Das::Plugins::DasMaaPi
             const bool via_proxy = (proxy != nullptr);
             const bool use_tls = (target.scheme == "https");
 
+            // 入口可观测：协程是否启动、目标与代理路由是否与配置对账。
+            DAS_LOG_INFO(
+                DAS::fmt::format(
+                    "PiHttpClient: DownloadStream start scheme={} target={} "
+                    "proxy={}",
+                    target.scheme,
+                    target.host_and_port,
+                    via_proxy ? DAS::fmt::format(
+                                    "{}://{}:{}",
+                                    proxy->scheme,
+                                    proxy->host,
+                                    proxy->port)
+                              : std::string("direct"))
+                    .c_str());
+
             // Connect to the proxy when one is configured, else the target.
             const auto connect_host = via_proxy ? proxy->host : target.host;
             const auto connect_port = via_proxy ? std::to_string(proxy->port)
@@ -828,25 +993,6 @@ namespace Das::Plugins::DasMaaPi
                 on_progress,
                 out_status,
                 out_location);
-        }
-
-        // 3xx status codes whose Location header is followed by the redirect
-        // loop. 301/302/303 and 307/308 both map to a re-issued GET/HEAD here:
-        // the seam only ever issues GET or HEAD, so no method/body rewrite is
-        // ever required (303's POST→GET rule is moot without POST).
-        bool IsRedirectStatus(int status)
-        {
-            switch (status)
-            {
-            case 301: // Moved Permanently
-            case 302: // Found
-            case 303: // See Other
-            case 307: // Temporary Redirect
-            case 308: // Permanent Redirect
-                return true;
-            default:
-                return false;
-            }
         }
 
         // Resolve a Location header against the current target URL (RFC 3986
@@ -1214,6 +1360,27 @@ namespace Das::Plugins::DasMaaPi
         return DAS_S_OK;
     }
 
+    std::string RedactProxyUrlForLog(std::string_view proxy_url)
+    {
+        if (proxy_url.empty())
+        {
+            return "direct";
+        }
+        ProxyTarget target;
+        const auto  result = ParseProxyUrl(proxy_url, target);
+        if (DAS::IsFailed(result))
+        {
+            return DAS::fmt::format(
+                "unparsed(result={})",
+                static_cast<int>(result));
+        }
+        return DAS::fmt::format(
+            "{}://{}:{}",
+            target.scheme,
+            target.host,
+            target.port);
+    }
+
     // 每请求独立的 io_context 状态：io.run() 阻塞期间经 BeastHttpClient::
     // active_ 弱引用可达，RequestCancel 据此 stop()。stop 后 run() 尽快返回，
     // 已排队未调用的 handler（含被放弃协程的帧）随 io_context 析构销毁。
@@ -1288,6 +1455,7 @@ namespace Das::Plugins::DasMaaPi
         const ProgressCallback&      on_progress,
         int&                         out_status)
     {
+        const auto request_start = std::chrono::steady_clock::now();
         const auto state = std::make_shared<RequestState>();
         {
             const std::lock_guard<std::mutex> registration_lock(cancel_mutex_);
@@ -1329,6 +1497,20 @@ namespace Das::Plugins::DasMaaPi
                 outcome.result = DAS_E_FAIL;
             }
         }
+        // 请求结果默认打印（普通级别）：url/代理打码，result 十进制与
+        // 错误码定义对齐，耗时供慢网/挂起排查对账。
+        DAS_LOG_INFO(
+            DAS::fmt::format(
+                "PiHttpClient: download done url={} proxy={} status={} "
+                "result={} elapsedMs={}",
+                RedactUrlForLog(url),
+                RedactProxyUrlForLog(proxy_url),
+                out_status,
+                static_cast<int>(outcome.result),
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - request_start)
+                    .count())
+                .c_str());
         return outcome.result;
     }
 
@@ -1339,6 +1521,7 @@ namespace Das::Plugins::DasMaaPi
         std::string&       out_body,
         int&               out_status)
     {
+        const auto request_start = std::chrono::steady_clock::now();
         const auto state = std::make_shared<RequestState>();
         {
             const std::lock_guard<std::mutex> registration_lock(cancel_mutex_);
@@ -1380,6 +1563,21 @@ namespace Das::Plugins::DasMaaPi
                 outcome.result = DAS_E_FAIL;
             }
         }
+        // 请求结果默认打印（普通级别）：与 download done 同构，
+        // op 区分 get/head（检查更新链的每次请求都有迹可循）。
+        DAS_LOG_INFO(
+            DAS::fmt::format(
+                "PiHttpClient: {} done url={} proxy={} status={} result={} "
+                "elapsedMs={}",
+                head_only ? "head" : "get",
+                RedactUrlForLog(url),
+                RedactProxyUrlForLog(proxy_url),
+                out_status,
+                static_cast<int>(outcome.result),
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - request_start)
+                    .count())
+                .c_str());
         return outcome.result;
     }
 } // namespace Das::Plugins::DasMaaPi

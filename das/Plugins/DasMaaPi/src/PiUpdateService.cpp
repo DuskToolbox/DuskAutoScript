@@ -1135,6 +1135,15 @@ namespace Das::Plugins::DasMaaPi
         const std::string proxy(proxy_url);
         const std::string cdk_key(mirrorchyan_cdk);
 
+        // 代理路由可观测（打码）：检查链与下载链共用同一 proxy 配置，
+        // 入口打出可与用户配置对账，排查「代理到底有没有生效」。
+        LogInfo(
+            DAS::fmt::format(
+                "PiUpdateService: check update start channel={} proxy={}",
+                update_channel.empty() ? std::string("mirrorchyan+github")
+                                       : std::string(update_channel),
+                RedactProxyUrlForLog(proxy)));
+
         InterfaceMetadata meta;
         const auto        metadata_result = ReadInterfaceMetadata(pi_dir, meta);
         if (IsFailed(metadata_result))
@@ -1299,12 +1308,15 @@ namespace Das::Plugins::DasMaaPi
         std::error_code ec;
         std::filesystem::create_directories(update_root, ec);
 
-        // 可追溯日志（entryId / 下载 URL / 阶段 / 字节 / 错误码 / 耗时）。
+        // 可追溯日志（entryId / 下载 URL / 代理路由 / 阶段 / 字节 / 错误码 /
+        // 耗时）。proxy 经打码（认证剥离）打出，供与配置对账。
         LogInfo(
             DAS::fmt::format(
-                "PiUpdateService: update download start entryId={} url={}",
+                "PiUpdateService: update download start entryId={} url={} "
+                "proxy={}",
                 entry_id,
-                log_url));
+                log_url,
+                RedactProxyUrlForLog(proxy)));
         // 速率采样 + 上报节流（~4 Hz）：首块必报，之后每 ≥250ms 报一次，
         // 最后一块（bytes==total）必报。
         DownloadRateTracker rate_tracker;

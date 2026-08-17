@@ -233,6 +233,12 @@ namespace
         std::uint16_t Port() const { return port_; }
         int           RequestCount() const { return request_count_.load(); }
         void          SetLoopRedirect(bool loop) { loop_ = loop; }
+        // 302 响应不补 body 定界头（无 Content-Length / 非 chunked，语义为
+        // 读至连接关闭）——真实 GitHub release 302 的形态。
+        void SetUndelimitedRedirect(bool undelimited)
+        {
+            undelimited_ = undelimited;
+        }
 
     private:
         void AcceptLoop()
@@ -272,7 +278,10 @@ namespace
                               : "http://127.0.0.1:" + std::to_string(port_)
                                     + "/final";
                     resp.set(boost::beast::http::field::location, location);
-                    resp.prepare_payload();
+                    if (!undelimited_)
+                    {
+                        resp.prepare_payload();
+                    }
                 }
                 else
                 {
@@ -297,6 +306,7 @@ namespace
         std::uint16_t                                   port_ = 0;
         std::atomic<int>                                request_count_{0};
         bool                                            loop_ = false;
+        bool                                            undelimited_ = false;
     };
 
     TEST(PiHttpClient, GetReturnsBodyAndStatusFromLocalMock)
@@ -1034,6 +1044,47 @@ v6yQpUYtQbbVSIHbNlBhfp8=
         EXPECT_EQ(status, 200);
         EXPECT_EQ(server.RequestCount(), 2);
         ASSERT_FALSE(progress.empty());
+        std::ifstream ifs(out_path, std::ios::binary);
+        std::string   content(
+            (std::istreambuf_iterator<char>(ifs)),
+            std::istreambuf_iterator<char>());
+        EXPECT_EQ(content, "{\"redirected\":true}");
+        std::filesystem::remove(out_path, ec);
+    }
+
+    // 302 无 body 定界（无 Content-Length / 非 chunked，HTTP 语义为读至
+    // 连接关闭，而 keep-alive 连接不关）：真实 GitHub release 下载 302 的
+    // 实测形态。客户端读到 3xx 必须跳过 body 直接换发下一跳——旧实现挂
+    // 在 body 读取上直到 15s 超时（生产表现为下载零进度后超时失败）。
+    // 断言 5 秒内有界完成（远小于 15s per-op 超时）。
+    TEST(PiHttpClient, DownloadStreamSkipsUndelimitedRedirectBody)
+    {
+        LocalRedirectServer server;
+        server.SetUndelimitedRedirect(true);
+        server.Start();
+
+        BeastHttpClient client;
+        const auto      out_path = std::filesystem::temp_directory_path()
+                                   / "das_pi_download_undelimited_test.bin";
+        std::error_code ec;
+        std::filesystem::remove(out_path, ec);
+
+        const auto start = std::chrono::steady_clock::now();
+        int        status = 0;
+        const auto url =
+            "http://127.0.0.1:" + std::to_string(server.Port()) + "/redirect";
+        const auto result = client.DownloadStream(
+            url,
+            out_path,
+            [](const DownloadProgress&) {},
+            status);
+        const auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::steady_clock::now() - start);
+
+        EXPECT_EQ(result, DAS_S_OK);
+        EXPECT_EQ(status, 200);
+        EXPECT_EQ(server.RequestCount(), 2);
+        EXPECT_LT(elapsed.count(), 5);
         std::ifstream ifs(out_path, std::ios::binary);
         std::string   content(
             (std::istreambuf_iterator<char>(ifs)),
