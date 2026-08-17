@@ -118,6 +118,17 @@ namespace Das::Plugins::DasMaaPi
         std::vector<Sample> samples_;
     };
 
+    // 检查更新结果：result + 用户可见失败原因。reason_key 仅在 result
+    // 失败时有意义；空串 = 通用失败文案（diagnostic.checkUpdateFailed）。
+    // failure_http_status 是检查链最后一个有效 HTTP 状态码（0 = 无，纯
+    // 传输层失败），供文案占位符 {0} 填充。
+    struct UpdateCheckOutcome
+    {
+        DasResult   result = DAS_E_FAIL;
+        std::string failure_reason_key;
+        int         failure_http_status = 0;
+    };
+
     // 共享更新编排层（MaaPI 逻辑层职责）。网络经 PiHttpClient seam
     // 注入（生产传 BeastHttpClient，测试传本地 mock），文件操作全部在
     // interface.json 所在目录（项目目录）内完成，不触碰 DAS 自身二进制。
@@ -135,7 +146,7 @@ namespace Das::Plugins::DasMaaPi
         // update_channel 来自 settings 的 adapter.updateChannel（mirrorchyan /
         // github 二选一）；"github" → 仅 GitHub 单通道检查，空或
         // "mirrorchyan" → MirrorChyan 优先 + GitHub 兜底。
-        static DasResult CheckUpdate(
+        static UpdateCheckOutcome CheckUpdate(
             const std::filesystem::path& pi_dir,
             PiHttpClient&                http,
             PiUpdateInfo&                out,

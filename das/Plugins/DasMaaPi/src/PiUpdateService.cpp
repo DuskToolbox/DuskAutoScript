@@ -453,7 +453,26 @@ namespace Das::Plugins::DasMaaPi
                    + "/" + filename;
         }
 
-        DasResult CheckMirrorChyan(
+        // 检查链 HTTP 失败分类 → 用户可见 i18n key（空 = 通用失败文案）。
+        // transport 失败（无 HTTP 状态）与限流（403/429）是用户可自行处置
+        // 的两类：前者查代理/网络，后者等待配额重置或换 MirrorChyan CDK。
+        // 检查链失败分类 → 用户可见 i18n key：有 HTTP 状态 → 带状态码的
+        // 请求失败文案（{0}=状态码）；纯传输层失败（无状态）→ 网络错误
+        // 文案。文案只陈述事实（目标 + 错误码），不带处置建议。
+        std::string_view ClassifyCheckFailure(DasResult transport, int status)
+        {
+            if (status != 0)
+            {
+                return "diagnostic.checkUpdateRequestFailed";
+            }
+            if (IsFailed(transport))
+            {
+                return "diagnostic.checkUpdateNetworkFailed";
+            }
+            return {};
+        }
+
+        UpdateCheckOutcome CheckMirrorChyan(
             const InterfaceMetadata& meta,
             PiHttpClient&            http,
             const std::string&       proxy,
@@ -463,6 +482,8 @@ namespace Das::Plugins::DasMaaPi
             const std::vector<std::string> bases{
                 std::string(MIRRORCHYAN_BASE_PRIMARY),
                 std::string(MIRRORCHYAN_BASE_BACKUP)};
+            DasResult last_transport = DAS_S_OK;
+            int       last_status = 0;
             for (const auto& base : bases)
             {
                 std::string url =
@@ -479,6 +500,8 @@ namespace Das::Plugins::DasMaaPi
                 std::string body;
                 int         status = 0;
                 const auto  result = http.Get(url, body, status, proxy);
+                last_transport = result;
+                last_status = status;
                 if (IsFailed(result))
                 {
                     LogWarning(
@@ -525,7 +548,7 @@ namespace Das::Plugins::DasMaaPi
                                 ? std::optional<std::string>{}
                                 : std::optional<std::string>(data->sha256);
                     }
-                    return DAS_S_OK;
+                    return {DAS_S_OK, {}};
                 }
                 // code != 0 但 data.version_name 存在 → 按 MXU 语义返回部分
                 // PiUpdateInfo + error_code（无下载链接）。
@@ -536,17 +559,20 @@ namespace Das::Plugins::DasMaaPi
                     out.has_update =
                         CompareVersions(data->version_name, meta.version) > 0;
                     out.error_code = data->code;
-                    return DAS_S_OK;
+                    return {DAS_S_OK, {}};
                 }
                 // code != 0 且无版本信息 → 尝试备用 base。
                 LogWarning(
                     "PiUpdateService: MirrorChyan code="
                     + std::to_string(data->code) + " msg=" + data->msg);
             }
-            return DAS_E_MAAPI_UPDATE_CHECK_FAILED;
+            return {
+                DAS_E_MAAPI_UPDATE_CHECK_FAILED,
+                std::string(ClassifyCheckFailure(last_transport, last_status)),
+                last_status};
         }
 
-        DasResult CheckGithub(
+        UpdateCheckOutcome CheckGithub(
             const InterfaceMetadata& meta,
             PiHttpClient&            http,
             const std::string&       proxy,
@@ -558,11 +584,15 @@ namespace Das::Plugins::DasMaaPi
             {
                 LogError(
                     "PiUpdateService: cannot parse github url: " + meta.github);
-                return DAS_E_MAAPI_UPDATE_CHECK_FAILED;
+                return {DAS_E_MAAPI_UPDATE_CHECK_FAILED, {}};
             }
 
             const std::string api_base = std::string(GITHUB_API_BASE);
             const std::string web_base = std::string(GITHUB_WEB_BASE);
+
+            // 失败原因分类状态（transport 结果 + 最后 HTTP 状态）。
+            DasResult last_transport = DAS_S_OK;
+            int       last_status = 0;
 
             // Open Question 3 决策：先 releases/latest；version_name 与 latest
             // tag 不匹配时再 releases/tags/{version} 兜底。
@@ -574,6 +604,8 @@ namespace Das::Plugins::DasMaaPi
                 std::string body;
                 int         status = 0;
                 const auto  result = http.Get(url, body, status, proxy);
+                last_transport = result;
+                last_status = status;
                 if (IsFailed(result) || status != 200)
                 {
                     return std::nullopt;
@@ -612,7 +644,7 @@ namespace Das::Plugins::DasMaaPi
                 if (!asset_url.empty())
                 {
                     out.download_url = asset_url;
-                    return DAS_S_OK;
+                    return {DAS_S_OK, {}};
                 }
                 LogWarning(
                     "PiUpdateService: no matching GitHub asset for "
@@ -639,12 +671,23 @@ namespace Das::Plugins::DasMaaPi
                                                   : meta.version,
                         meta.version)
                     > 0;
-                return DAS_S_OK;
+                return {DAS_S_OK, {}};
+            }
+            if (head_status != 0 && last_status == 0)
+            {
+                // HEAD 拿到 HTTP 状态而 API 调用未留下状态时才补位——API
+                // 是主检查、其状态码更代表根因（直链探测结果在 API 失败
+                // 场景下多为次生 4xx）；HEAD 传输层失败不携带信息。
+                last_transport = head_result;
+                last_status = head_status;
             }
             LogWarning(
                 "PiUpdateService: GitHub direct download URL unavailable: "
                 + direct_url);
-            return DAS_E_MAAPI_UPDATE_CHECK_FAILED;
+            return {
+                DAS_E_MAAPI_UPDATE_CHECK_FAILED,
+                std::string(ClassifyCheckFailure(last_transport, last_status)),
+                last_status};
         }
 
         // -----------------------------------------------------------------
@@ -1123,7 +1166,7 @@ namespace Das::Plugins::DasMaaPi
         }
     } // namespace
 
-    DasResult PiUpdateService::CheckUpdate(
+    UpdateCheckOutcome PiUpdateService::CheckUpdate(
         const std::filesystem::path& pi_dir,
         PiHttpClient&                http,
         PiUpdateInfo&                out,
@@ -1148,8 +1191,13 @@ namespace Das::Plugins::DasMaaPi
         const auto        metadata_result = ReadInterfaceMetadata(pi_dir, meta);
         if (IsFailed(metadata_result))
         {
-            return metadata_result;
+            return {metadata_result, {}};
         }
+
+        // MirrorChyan 失败且无 GitHub 兜底可用时，失败原因沿用 MirrorChyan
+        // 的分类（有 GitHub 兜底时以兜底的分类为准）。
+        std::string fallback_reason;
+        int         fallback_status = 0;
 
         // 检查更新通道（adapter.updateChannel）：
         // "github" → 仅 GitHub 单通道检查（不触碰 MirrorChyan）；
@@ -1161,12 +1209,12 @@ namespace Das::Plugins::DasMaaPi
                 LogError(
                     "PiUpdateService: updateChannel=github but interface.json "
                     "has no github source");
-                return DAS_E_MAAPI_UPDATE_CHECK_FAILED;
+                return {DAS_E_MAAPI_UPDATE_CHECK_FAILED, {}};
             }
-            const auto github_result = CheckGithub(meta, http, proxy, out);
-            if (IsOk(github_result))
+            const auto github = CheckGithub(meta, http, proxy, out);
+            if (IsOk(github.result))
             {
-                return DAS_S_OK;
+                return {DAS_S_OK, {}};
             }
             // GitHub 通道失败但已留下有效版本信息（release 拿到、asset/
             // 直链匹配失败）→ 检查结果仍成立，返回无下载链接的成功。
@@ -1175,37 +1223,43 @@ namespace Das::Plugins::DasMaaPi
                 LogWarning(
                     "PiUpdateService: github channel failed to resolve a "
                     "download url; update info kept without one");
-                return DAS_S_OK;
+                return {DAS_S_OK, {}};
             }
-            return DAS_E_MAAPI_UPDATE_CHECK_FAILED;
+            return {
+                DAS_E_MAAPI_UPDATE_CHECK_FAILED,
+                github.failure_reason_key,
+                github.failure_http_status};
         }
 
         // MirrorChyan 优先（D-89-02）。
         if (!meta.mirrorchyan_rid.empty())
         {
-            const auto mirror_result =
+            const auto mirror =
                 CheckMirrorChyan(meta, http, proxy, cdk_key, out);
-            if (IsOk(mirror_result))
+            if (IsOk(mirror.result))
             {
                 // code!=0 部分信息 → 按 MXU 语义直接返回（不尝试 GitHub）。
                 if (out.error_code)
                 {
-                    return DAS_S_OK;
+                    return {DAS_S_OK, {}};
                 }
                 // 无更新 → 直接返回。
                 if (!out.has_update)
                 {
-                    return DAS_S_OK;
+                    return {DAS_S_OK, {}};
                 }
                 // 有更新且拿到全量下载链接 → 直接返回。
                 if (!out.download_url.empty())
                 {
-                    return DAS_S_OK;
+                    return {DAS_S_OK, {}};
                 }
                 // has_update 但无下载链接（incremental 降级 / 无 url）→
                 // 降级走 GitHub 全量兜底。
             }
-            // MirrorChyan 失败（网络 / 无版本信息）→ GitHub 兜底。
+            // MirrorChyan 失败（网络 / 无版本信息）→ GitHub 兜底
+            // （失败原因由 GitHub 兜底的分类覆盖，无兜底时用 MirrorChyan 的）。
+            fallback_reason = mirror.failure_reason_key;
+            fallback_status = mirror.failure_http_status;
         }
 
         // GitHub 兜底。GitHub 只负责补下载链接：
@@ -1215,10 +1269,10 @@ namespace Das::Plugins::DasMaaPi
         // 按钮；用户填 CDK 重查或经代理重试即可拿到链接。
         if (!meta.github.empty())
         {
-            const auto github_result = CheckGithub(meta, http, proxy, out);
-            if (IsOk(github_result))
+            const auto github = CheckGithub(meta, http, proxy, out);
+            if (IsOk(github.result))
             {
-                return DAS_S_OK;
+                return {DAS_S_OK, {}};
             }
             if (out.has_update && !out.version_name.empty())
             {
@@ -1226,9 +1280,16 @@ namespace Das::Plugins::DasMaaPi
                     "PiUpdateService: GitHub fallback failed to resolve a "
                     "download url; update info kept without one: version = "
                     + out.version_name);
-                return DAS_S_OK;
+                return {DAS_S_OK, {}};
             }
-            // GitHub 兜底失败且无版本信息 → 落到底部统一错误返回。
+            // GitHub 兜底失败且无版本信息 → 落到底部统一错误返回
+            // （兜底分类为空时沿用 MirrorChyan 侧的分类）。
+            return {
+                DAS_E_MAAPI_UPDATE_CHECK_FAILED,
+                github.failure_reason_key.empty() ? fallback_reason
+                                                  : github.failure_reason_key,
+                github.failure_reason_key.empty() ? fallback_status
+                                                  : github.failure_http_status};
         }
 
         // 无可用来源 / 增量更新暂不支持且无 GitHub 兜底。
@@ -1242,7 +1303,10 @@ namespace Das::Plugins::DasMaaPi
                 "PiUpdateService: no update source (github / "
                 "mirrorchyan_rid) and no usable download info");
         }
-        return DAS_E_MAAPI_UPDATE_CHECK_FAILED;
+        return {
+            DAS_E_MAAPI_UPDATE_CHECK_FAILED,
+            fallback_reason,
+            fallback_status};
     }
 
     DasResult PiUpdateService::ApplyUpdate(

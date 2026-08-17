@@ -491,17 +491,65 @@ TEST(PiUpdateService, CheckUpdateMirrorChyanWins)
         MakeInterface("1.0.0", "https://github.com/owner/repo", "rid-1"));
 
     PiUpdateInfo info;
-    const auto result = PiUpdateService::CheckUpdate(project.Dir(), http, info);
+    const auto check = PiUpdateService::CheckUpdate(project.Dir(), http, info);
 
-    EXPECT_EQ(result, DAS_S_OK);
+    EXPECT_EQ(check.result, DAS_S_OK);
     EXPECT_TRUE(info.has_update);
     EXPECT_EQ(info.version_name, "1.2.0");
     EXPECT_EQ(info.download_url, "https://mirror.example/package.zip");
     EXPECT_TRUE(info.sha256.has_value());
+
     EXPECT_FALSE(info.error_code.has_value());
     // MirrorChyan won — GitHub was never contacted.
     EXPECT_EQ(http.CountRequestsWith("/repos/owner/repo"), 0);
     EXPECT_EQ(http.CountRequestsWith("/api/resources/rid-1/latest"), 1);
+}
+
+// 检查失败原因分类：GitHub API 限流（403）→ 限流文案 key；网络层失败
+// （无 HTTP 状态）→ 网络文案 key。分类供 authoring 层选用户可见提示，
+// 替代无差别的「检查更新失败」。
+TEST(PiUpdateService, CheckUpdateFailureReasonCarriesHttpStatus)
+{
+    FakePiHttpClient http;
+    http.AddRoute("api.github.com", "{}", /*status=*/403);
+
+    TempPiProject project;
+    project.WriteInterface(
+        MakeInterface("1.0.0", "https://github.com/owner/repo", ""));
+
+    PiUpdateInfo info;
+    const auto   check = PiUpdateService::CheckUpdate(
+        project.Dir(),
+        http,
+        info,
+        "",
+        "",
+        "github");
+
+    EXPECT_EQ(check.result, DAS_E_MAAPI_UPDATE_CHECK_FAILED);
+    EXPECT_EQ(check.failure_reason_key, "diagnostic.checkUpdateRequestFailed");
+}
+
+TEST(PiUpdateService, CheckUpdateFailureReasonClassifiesNetworkFailure)
+{
+    FakePiHttpClient http;
+    http.SetNetworkFailure(true);
+
+    TempPiProject project;
+    project.WriteInterface(
+        MakeInterface("1.0.0", "https://github.com/owner/repo", ""));
+
+    PiUpdateInfo info;
+    const auto   check = PiUpdateService::CheckUpdate(
+        project.Dir(),
+        http,
+        info,
+        "",
+        "",
+        "github");
+
+    EXPECT_EQ(check.result, DAS_E_MAAPI_UPDATE_CHECK_FAILED);
+    EXPECT_EQ(check.failure_reason_key, "diagnostic.checkUpdateNetworkFailed");
 }
 
 TEST(PiUpdateService, CheckUpdateNoRidFallsBackToGithub)
@@ -516,9 +564,9 @@ TEST(PiUpdateService, CheckUpdateNoRidFallsBackToGithub)
         MakeInterface("1.0.0", "https://github.com/owner/repo", ""));
 
     PiUpdateInfo info;
-    const auto result = PiUpdateService::CheckUpdate(project.Dir(), http, info);
+    const auto check = PiUpdateService::CheckUpdate(project.Dir(), http, info);
 
-    EXPECT_EQ(result, DAS_S_OK);
+    EXPECT_EQ(check.result, DAS_S_OK);
     EXPECT_TRUE(info.has_update);
     EXPECT_EQ(info.version_name, "v1.2.0");
     EXPECT_EQ(
@@ -539,9 +587,9 @@ TEST(PiUpdateService, CheckUpdateMirrorCodeNonzeroReturnsPartialInfo)
     project.WriteInterface(MakeInterface("1.0.0", "", "rid-2"));
 
     PiUpdateInfo info;
-    const auto result = PiUpdateService::CheckUpdate(project.Dir(), http, info);
+    const auto check = PiUpdateService::CheckUpdate(project.Dir(), http, info);
 
-    EXPECT_EQ(result, DAS_S_OK);
+    EXPECT_EQ(check.result, DAS_S_OK);
     EXPECT_TRUE(info.has_update);
     EXPECT_TRUE(info.error_code.has_value());
     EXPECT_EQ(*info.error_code, 7002);
@@ -557,9 +605,9 @@ TEST(PiUpdateService, CheckUpdateNetworkFailureReturnsCheckFailed)
     project.WriteInterface(MakeInterface("1.0.0", "", "rid-3"));
 
     PiUpdateInfo info;
-    const auto result = PiUpdateService::CheckUpdate(project.Dir(), http, info);
+    const auto check = PiUpdateService::CheckUpdate(project.Dir(), http, info);
 
-    EXPECT_EQ(result, DAS_E_MAAPI_UPDATE_CHECK_FAILED);
+    EXPECT_EQ(check.result, DAS_E_MAAPI_UPDATE_CHECK_FAILED);
 }
 
 TEST(PiUpdateService, CheckUpdateNetworkFailureFallsBackToGithub)
@@ -575,9 +623,9 @@ TEST(PiUpdateService, CheckUpdateNetworkFailureFallsBackToGithub)
         MakeInterface("1.0.0", "https://github.com/owner/repo", "rid-4"));
 
     PiUpdateInfo info;
-    const auto result = PiUpdateService::CheckUpdate(project.Dir(), http, info);
+    const auto check = PiUpdateService::CheckUpdate(project.Dir(), http, info);
 
-    EXPECT_EQ(result, DAS_S_OK);
+    EXPECT_EQ(check.result, DAS_S_OK);
     EXPECT_TRUE(info.has_update);
     EXPECT_NE(info.download_url.find("github.com/"), std::string::npos);
 }
@@ -593,10 +641,10 @@ TEST(PiUpdateService, CheckUpdateForwardsProxyUrlToSeam)
 
     constexpr std::string_view test_proxy = "http://127.0.0.1:8899";
     PiUpdateInfo               info;
-    const auto                 result =
+    const auto                 check =
         PiUpdateService::CheckUpdate(project.Dir(), http, info, test_proxy);
 
-    EXPECT_EQ(result, DAS_S_OK);
+    EXPECT_EQ(check.result, DAS_S_OK);
     EXPECT_TRUE(info.has_update);
     // Every request through the seam carried the proxy URL.
     ASSERT_FALSE(http.Calls().empty());
@@ -616,9 +664,9 @@ TEST(PiUpdateService, CheckUpdateMissingVersionFails)
 
     FakePiHttpClient http;
     PiUpdateInfo     info;
-    const auto result = PiUpdateService::CheckUpdate(project.Dir(), http, info);
+    const auto check = PiUpdateService::CheckUpdate(project.Dir(), http, info);
 
-    EXPECT_EQ(result, DAS_E_MAAPI_UPDATE_CHECK_FAILED);
+    EXPECT_EQ(check.result, DAS_E_MAAPI_UPDATE_CHECK_FAILED);
 }
 
 TEST(PiUpdateService, CheckUpdateIncrementalDegradesToGithubFull)
@@ -643,9 +691,9 @@ TEST(PiUpdateService, CheckUpdateIncrementalDegradesToGithubFull)
         MakeInterface("1.0.0", "https://github.com/owner/repo", "rid-inc"));
 
     PiUpdateInfo info;
-    const auto result = PiUpdateService::CheckUpdate(project.Dir(), http, info);
+    const auto check = PiUpdateService::CheckUpdate(project.Dir(), http, info);
 
-    EXPECT_EQ(result, DAS_S_OK);
+    EXPECT_EQ(check.result, DAS_S_OK);
     EXPECT_TRUE(info.has_update);
     // GitHub full-package URL adopted, not the incremental mirror link.
     EXPECT_EQ(
@@ -674,9 +722,9 @@ TEST(PiUpdateService, CheckUpdateMirrorNoUrlGithubFailsKeepsUpdateInfo)
         MakeInterface("1.0.0", "https://github.com/owner/repo", "rid-nocdk"));
 
     PiUpdateInfo info;
-    const auto result = PiUpdateService::CheckUpdate(project.Dir(), http, info);
+    const auto check = PiUpdateService::CheckUpdate(project.Dir(), http, info);
 
-    EXPECT_EQ(result, DAS_S_OK);
+    EXPECT_EQ(check.result, DAS_S_OK);
     EXPECT_TRUE(info.has_update);
     EXPECT_EQ(info.version_name, "1.2.0");
     EXPECT_TRUE(info.download_url.empty());
@@ -700,7 +748,7 @@ TEST(PiUpdateService, CheckUpdateGithubChannelFailureKeepsVersionInfo)
         MakeInterface("1.0.0", "https://github.com/owner/repo", "rid-x"));
 
     PiUpdateInfo info;
-    const auto   result = PiUpdateService::CheckUpdate(
+    const auto   check = PiUpdateService::CheckUpdate(
         project.Dir(),
         http,
         info,
@@ -708,7 +756,7 @@ TEST(PiUpdateService, CheckUpdateGithubChannelFailureKeepsVersionInfo)
         /*mirrorchyan_cdk=*/{},
         /*update_channel=*/"github");
 
-    EXPECT_EQ(result, DAS_S_OK);
+    EXPECT_EQ(check.result, DAS_S_OK);
     EXPECT_TRUE(info.has_update);
     EXPECT_EQ(info.version_name, "v1.2.0");
     EXPECT_TRUE(info.download_url.empty());

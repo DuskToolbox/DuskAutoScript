@@ -5324,23 +5324,32 @@ namespace Das::Plugins::DasMaaPi
         }
         auto         http = ResolveHttp(http_seam);
         PiUpdateInfo info;
-        const auto   result = PiUpdateService::CheckUpdate(
+        const auto   check = PiUpdateService::CheckUpdate(
             *pi_dir,
             *http.value,
             info,
             settings.adapter.proxy_url.value_or(""),
             settings.adapter.mirrorchyan_cdk.value_or(""),
             settings.adapter.update_channel.value_or(""));
-        if (IsFailed(result))
+        if (IsFailed(check.result))
         {
             // IN-02: 网络/来源失败时保留旧 pending_update_ 会令 applyUpdate
             // 按钮携带陈旧信息；清空使按钮态与最新检查结果一致。
             pending_update->reset();
+            // 失败原因分类文案（请求失败带 HTTP 状态码 / 网络错误 / 通用）：
+            // 只陈述事实（目标 + 错误码），不带处置建议；状态码经占位符
+            // {0} 填充。
+            const std::string message =
+                check.failure_reason_key.empty()
+                    ? Translate("diagnostic.checkUpdateFailed")
+                    : Translate(
+                          check.failure_reason_key,
+                          check.failure_http_status);
             EmitDiagnostic(
                 diagnostics,
                 "error",
-                Translate("diagnostic.checkUpdateFailed"),
-                result,
+                message,
+                check.result,
                 "checkUpdate");
             return false;
         }
