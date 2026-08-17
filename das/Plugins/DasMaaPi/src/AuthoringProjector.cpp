@@ -13,7 +13,6 @@
 #include <MaaFramework/MaaAPI.h>
 #endif
 
-#include <das/Core/IPC/CurrentIpcContextScope.h>
 #include <das/DasApi.h>
 #include <das/DasPtr.hpp>
 #include <das/Plugins/DasMaaPi/MaaPiErrorCodes.h>
@@ -5416,11 +5415,11 @@ namespace Das::Plugins::DasMaaPi
         // 更新入口不会被锁死。
         try
         {
-            // 进度上报：seam（测试注入）优先，生产经 GetCurrentIpcContext
-            // Resolve 主进程 IDasProgressService。GetCurrentIpcContext 为空 /
-            // resolve 失败 / Start 失败 → 降级纯本地更新（不报进度），日志
-            // 警告。Start 必须留在受理路径、线程构造（TryStart 内）之前——
-            // started_ 非 atomic，线程构造建立 happens-before 后 job 线程只读。
+            // 进度上报：seam（测试注入）优先，生产经 C ABI Resolve 主进程
+            // IDasProgressService。resolve 失败 / Start 失败 → 降级纯本地
+            // 更新（不报进度），日志警告。Start 必须留在受理路径、线程构造
+            // （TryStart 内）之前——started_ 非 atomic，线程构造建立
+            // happens-before 后 job 线程只读。
             DasPtr<Das::ExportInterface::IDasProgressService> progress_service;
             if (progress_service_seam != nullptr)
             {
@@ -5428,12 +5427,15 @@ namespace Das::Plugins::DasMaaPi
                     DasPtr<Das::ExportInterface::IDasProgressService>(
                         progress_service_seam);
             }
-            else if (
-                auto* ctx = Das::Core::IPC::GetCurrentIpcContext();
-                ctx != nullptr)
+            else
             {
+                // 生产 resolve 必须走 C ABI：插件 DLL 内联的 thread_local
+                // GetCurrentIpcContext 读到的是本 DLL 的独立副本，Host
+                // BusinessThread 在 libDasCore 内设置的 TLS 对插件不可见，
+                // 恒为空（IPC 模式下进度上报从未生效的根因）。C ABI 编译于
+                // libDasCore，读 Core 侧 TLS，跨 DLL 正确。
                 DasPtr<IDasBase> base;
-                const auto       rc = ctx->ResolveMainProcessInterfaceByName(
+                const auto       rc = DasQueryMainProcessInterfaceByName(
                     "das.progress",
                     base.Put());
                 if (DAS::IsOk(rc) && base)
