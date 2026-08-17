@@ -5,6 +5,7 @@
 #include "Request.hpp"
 #include "Router.hpp"
 #include "SseSession.hpp"
+#include <algorithm>
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
@@ -47,6 +48,176 @@ namespace Das::Http::Beast
     // 推送，必须脱离请求-响应循环接管连接。
     inline constexpr std::string_view kSseRequestPathPrefix =
         "/" DAS_HTTP_API_PREFIX "authoring/events/";
+
+    // ── 入站 HTTP / 出站 WS 交换日志 ──
+    // 与 Router::Handle 的请求行互补：这里补齐请求头/请求体/响应头/响应体
+    // 与 WS 推送内容，排障时能把每次交互的内容直接对上。两条静默规则：
+    // /logs/ 端点不打（防「处理日志请求 → 写日志 → 日志 sink 广播 → 又拉
+    // 日志」反馈循环）；/alive 探活不打明细（高频零排查价值，请求行由
+    // Router 照常记录）。
+    inline constexpr std::size_t kExchangeLogBodyLimit = 512;
+
+    inline bool IsSensitiveHeaderNameForLog(std::string_view name)
+    {
+        auto equals_ci = [](std::string_view a, std::string_view b)
+        {
+            if (a.size() != b.size())
+            {
+                return false;
+            }
+            for (std::size_t i = 0; i < a.size(); ++i)
+            {
+                const auto ca = static_cast<unsigned char>(a[i] | 0x20);
+                const auto cb = static_cast<unsigned char>(b[i] | 0x20);
+                if (ca != cb)
+                {
+                    return false;
+                }
+            }
+            return true;
+        };
+        return equals_ci(name, "authorization")
+               || equals_ci(name, "proxy-authorization")
+               || equals_ci(name, "cookie") || equals_ci(name, "set-cookie");
+    }
+
+    // target（path + query）里 cdk 值打码：用户 CDK 是长期秘密。
+    inline std::string RedactTargetForLog(std::string_view target)
+    {
+        std::string result(target);
+        for (std::size_t pos = result.find("cdk="); pos != std::string::npos;
+             pos = result.find("cdk=", pos))
+        {
+            const std::size_t value_start = pos + 4;
+            const std::size_t value_end = result.find('&', value_start);
+            result.replace(
+                value_start,
+                (value_end == std::string::npos ? result.size() : value_end)
+                    - value_start,
+                "***");
+            pos = value_start + 3;
+        }
+        return result;
+    }
+
+    // JSON body 里 cdk / mirrorchyanCdk 字符串字段值打码（apply 的
+    // settings change 会携带用户 CDK）。
+    inline void RedactJsonSecretValues(std::string& body)
+    {
+        for (const std::string_view key :
+             {"\"cdk\":\"", "\"mirrorchyanCdk\":\""})
+        {
+            for (std::size_t pos = body.find(key); pos != std::string::npos;
+                 pos = body.find(key, pos))
+            {
+                const std::size_t value_start = pos + key.size();
+                const std::size_t value_end = body.find('"', value_start);
+                if (value_end == std::string::npos)
+                {
+                    break;
+                }
+                body.replace(value_start, value_end - value_start, "***");
+                pos = value_start + 3;
+            }
+        }
+    }
+
+    // body 交换日志展示串：先打码秘密值，再截断到上限并把不可打印字节
+    // 替换为 '.'。
+    inline std::string FormatBodyForExchangeLog(std::string_view body)
+    {
+        std::string redacted(body);
+        RedactJsonSecretValues(redacted);
+        const std::size_t shown =
+            std::min(redacted.size(), kExchangeLogBodyLimit);
+        std::string printable;
+        printable.reserve(shown);
+        for (std::size_t index = 0; index < shown; ++index)
+        {
+            const auto byte = static_cast<unsigned char>(redacted[index]);
+            printable.push_back(
+                (byte >= 0x20 && byte < 0x7F) ? static_cast<char>(byte) : '.');
+        }
+        return DAS_FMT_NS::format(
+            "{} ({}/{} bytes)",
+            printable,
+            shown,
+            redacted.size());
+    }
+
+    // 交换明细是否跳过（反馈循环端点 / 高频探活）。
+    inline bool ShouldSkipExchangeLog(std::string_view target)
+    {
+        return target.find("/logs/") != std::string_view::npos
+               || target.find("/alive") != std::string_view::npos;
+    }
+
+    template <typename Message>
+    inline void LogHttpMessageForExchange(
+        std::string_view direction,
+        const Message&   message)
+    {
+        const std::string target =
+            RedactTargetForLog(std::string_view(message.target()));
+        DAS_LOG_INFO(
+            DAS_FMT_NS::format(
+                "[HTTP] {} {} {} (body {} bytes)",
+                direction,
+                std::string_view(message.method_string()),
+                target,
+                message.body().size())
+                .c_str());
+        for (const auto& field : message)
+        {
+            const std::string name(field.name_string());
+            const std::string value =
+                IsSensitiveHeaderNameForLog(field.name_string())
+                    ? "***"
+                    : std::string(field.value());
+            DAS_LOG_INFO(
+                DAS_FMT_NS::format("[HTTP] {}   {}: {}", direction, name, value)
+                    .c_str());
+        }
+        if (!message.body().empty())
+        {
+            DAS_LOG_INFO(
+                DAS_FMT_NS::format(
+                    "[HTTP] {}   body {}",
+                    direction,
+                    FormatBodyForExchangeLog(message.body()))
+                    .c_str());
+        }
+    }
+
+    inline void LogHttpResponseForExchange(
+        const http::response<http::string_body>& response)
+    {
+        DAS_LOG_INFO(
+            DAS_FMT_NS::format(
+                "[HTTP] < {} {} (body {} bytes)",
+                std::to_string(static_cast<unsigned>(response.result_int())),
+                std::string(response.reason()),
+                response.body().size())
+                .c_str());
+        for (const auto& field : response)
+        {
+            const std::string name(field.name_string());
+            const std::string value =
+                IsSensitiveHeaderNameForLog(field.name_string())
+                    ? "***"
+                    : std::string(field.value());
+            DAS_LOG_INFO(
+                DAS_FMT_NS::format("[HTTP] <   {}: {}", name, value).c_str());
+        }
+        if (!response.body().empty())
+        {
+            DAS_LOG_INFO(
+                DAS_FMT_NS::format(
+                    "[HTTP] <   body {}",
+                    FormatBodyForExchangeLog(response.body()))
+                    .c_str());
+        }
+    }
 
     // 检测会话，处理单个HTTP连接
     class Session : public std::enable_shared_from_this<Session>
@@ -153,11 +324,21 @@ namespace Das::Http::Beast
         void ProcessRequest()
         {
             // keep-alive 跟随请求：响应宣称的连接语义与实际行为一致
-            const bool   keep_alive = request_.keep_alive();
+            const bool keep_alive = request_.keep_alive();
+            // 交换日志的跳过判定在请求被 move 前完成，请求/响应两侧共用。
+            const bool log_exchange = !ShouldSkipExchangeLog(request_.target());
+            if (log_exchange)
+            {
+                LogHttpMessageForExchange(">", request_);
+            }
             HttpRequest  req(std::move(request_));
             HttpResponse http_response = router_->Handle(req);
             response_ = http_response.Release();
             response_.keep_alive(keep_alive);
+            if (log_exchange)
+            {
+                LogHttpResponseForExchange(response_);
+            }
 
             DoWrite();
         }
@@ -322,6 +503,18 @@ namespace Das::Http::Beast
                     // async_write 打到已死连接）。失败即注销 hub 并退出
                     // 协程，与 DoReadLoop 清理路径一致。
                     boost::system::error_code write_ec;
+                    // WS 推送内容进日志（截断 + 秘密值打码）：推送内容此前
+                    // 是日志盲区，出问题无法对账客户端收到了什么。日志端点
+                    // 的推送静默（消息体 api 字段携带 api/v1/logs/）：该推送
+                    // 高频（前端拉调试日志的响应经 WS 回程），打了只会刷屏。
+                    if (msg->find("api/v1/logs/") == std::string::npos)
+                    {
+                        DAS_LOG_INFO(
+                            DAS_FMT_NS::format(
+                                "[WS] push {}",
+                                FormatBodyForExchangeLog(*msg))
+                                .c_str());
+                    }
                     co_await self->ws_.async_write(
                         boost::asio::buffer(*msg),
                         boost::asio::redirect_error(

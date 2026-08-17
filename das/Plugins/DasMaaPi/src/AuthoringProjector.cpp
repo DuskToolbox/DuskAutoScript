@@ -5055,6 +5055,9 @@ namespace Das::Plugins::DasMaaPi
                 "type");
             return false;
         }
+        DAS_LOG_INFO(
+            DAS::fmt::format("MaaPi authoring: ui event type={}", *type)
+                .c_str());
 
         const auto& target_val = payload_obj[std::string_view("target")];
         const auto& data_val = payload_obj[std::string_view("data")];
@@ -5710,6 +5713,13 @@ namespace Das::Plugins::DasMaaPi
                 "commandId");
             return result;
         }
+        // apply 通道的 commandId 进日志：排障时把 HTTP apply 请求与具体命令
+        // 对上（Router 只记 URL 不记 body，命令身份此前是日志盲区）。
+        DAS_LOG_INFO(
+            DAS::fmt::format(
+                "MaaPi authoring: invoke command id={}",
+                *command_id)
+                .c_str());
         // D-84.2-04: newPreset 是 D-84-28 通用 invokeCommand 在 MaaPI 的落地。
         // 把当前 flat pi 字段镜像为 snapshot 追加到 pi.custom_presets。
         if (*command_id == "newPreset")
