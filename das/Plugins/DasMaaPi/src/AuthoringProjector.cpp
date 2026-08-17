@@ -2470,7 +2470,25 @@ namespace Das::Plugins::DasMaaPi
             (*s_obj)[std::string_view("defaultExpanded")] =
                 resolve_default_expanded("update", true);
             yyjson::value entries(Array());
-            // 命令按钮组置顶作为操作入口：row 横排
+            auto          emit_update_leaf_if_present =
+                [&entries, &update_entries, &make_leaf](
+                    std::string_view field_name)
+            {
+                if (std::any_of(
+                        update_entries.begin(),
+                        update_entries.end(),
+                        [&field_name](const std::string& entry_name)
+                        { return entry_name == field_name; }))
+                {
+                    entries.as_array()->emplace_back(make_leaf(field_name));
+                }
+            };
+            // 进度三字段置顶（section 第一位）：更新进行中用户第一眼看到
+            // 进度状态/速率/耗时，SSE 字段增量也落在视野中心。
+            emit_update_leaf_if_present("updateProgress");
+            emit_update_leaf_if_present("downloadRate");
+            emit_update_leaf_if_present("downloadElapsed");
+            // 命令按钮组紧随进度：row 横排
             // [{commandId:checkUpdate}, {commandId:applyUpdate}]。commands 定义
             // 仍在根级 commands[] 投影 emit（disabled 状态投影机制保持），
             // 此处只是渲染入口从 doc 根级移到 update section 内。
@@ -2497,24 +2515,13 @@ namespace Das::Plugins::DasMaaPi
             // 再往下才是 CDK/代理/通道等配置与其余字段。纯 layout 顺序改动，
             // 不动 fields[] 声明与字段投影本体（ValidateFieldLayout 只查全
             // 覆盖不查顺序）。
-            auto emit_update_leaf_if_present =
-                [&entries, &update_entries, &make_leaf](
-                    std::string_view field_name)
-            {
-                if (std::any_of(
-                        update_entries.begin(),
-                        update_entries.end(),
-                        [&field_name](const std::string& entry_name)
-                        { return entry_name == field_name; }))
-                {
-                    entries.as_array()->emplace_back(make_leaf(field_name));
-                }
-            };
             emit_update_leaf_if_present("updateVersion");
             emit_update_leaf_if_present("releaseNote");
             for (const auto& name : update_entries)
             {
-                if (name == "updateVersion" || name == "releaseNote")
+                if (name == "updateVersion" || name == "releaseNote"
+                    || name == "updateProgress" || name == "downloadRate"
+                    || name == "downloadElapsed")
                 {
                     continue;
                 }

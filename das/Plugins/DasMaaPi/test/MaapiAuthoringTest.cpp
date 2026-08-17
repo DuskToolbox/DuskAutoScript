@@ -7966,12 +7966,13 @@ TEST(MaapiProjectionTest, CommandsApplyUpdateDisabledDrivenByPendingState)
     EXPECT_FALSE(CommandHasDisabled(apply_has_update));
 }
 
-// 更新 section 布局：版本/日志字段紧贴按钮 row（用户检查到更新后一眼看到
-// 新版本与日志），其余条目（CDK/代理/通道/resourceVersion/maafwVersion/
-// updateProgress/downloadRate/downloadElapsed）保持 fields[] 声明原序。
+// 更新 section 布局：进度三字段（updateProgress/downloadRate/
+// downloadElapsed）置顶作为 section 第一位（更新进行中用户第一眼看到
+// 进度状态），其后是命令按钮 row 与版本/日志，其余条目（CDK/代理/通道/
+// resourceVersion/maafwVersion）保持 fields[] 声明原序。
 // LayoutSectionFieldNames 跳过 row/commandId 叶子且保序。全覆盖契约
 // （ValidateFieldLayout）保持。
-TEST(MaapiProjectionTest, UpdateSectionVersionAndReleaseNoteFollowButtonRow)
+TEST(MaapiProjectionTest, UpdateSectionProgressLeadsThenVersionAndReleaseNote)
 {
     using namespace Das::Plugins::DasMaaPi;
 
@@ -7993,10 +7994,13 @@ TEST(MaapiProjectionTest, UpdateSectionVersionAndReleaseNoteFollowButtonRow)
     auto update_section = FindLayoutSection(document, "update");
     ASSERT_TRUE(update_section.has_value());
     const auto names = LayoutSectionFieldNames(*update_section);
-    ASSERT_GE(names.size(), 2u);
-    EXPECT_EQ(names[0], "updateVersion");
-    EXPECT_EQ(names[1], "releaseNote");
-    const std::vector<std::string> rest(names.begin() + 2, names.end());
+    ASSERT_GE(names.size(), 5u);
+    EXPECT_EQ(names[0], "updateProgress");
+    EXPECT_EQ(names[1], "downloadRate");
+    EXPECT_EQ(names[2], "downloadElapsed");
+    EXPECT_EQ(names[3], "updateVersion");
+    EXPECT_EQ(names[4], "releaseNote");
+    const std::vector<std::string> rest(names.begin() + 5, names.end());
     EXPECT_EQ(
         rest,
         (std::vector<std::string>{
@@ -8004,10 +8008,7 @@ TEST(MaapiProjectionTest, UpdateSectionVersionAndReleaseNoteFollowButtonRow)
             "adapter.proxyUrl",
             "adapter.updateChannel",
             "resourceVersion",
-            "maafwVersion",
-            "updateProgress",
-            "downloadRate",
-            "downloadElapsed"}))
+            "maafwVersion"}))
         << "remaining update section entries must keep fields[] order";
 }
 
