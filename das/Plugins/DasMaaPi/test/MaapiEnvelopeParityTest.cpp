@@ -1,3 +1,4 @@
+#include "../../DasFlowControl/src/FlowControlTaskComponents.h"
 #include "../src/PluginUtils.h"
 #include "MaapiAuthoringSession.h"
 
@@ -6,12 +7,15 @@
 #include <das/Plugins/DasMaaPi/AuthoringProjector.h>
 #include <das/Plugins/DasMaaPi/MaapiDto.h>
 #include <das/Utils/DasJsonCore.h>
+#include <das/Utils/TaskComponentPorts.h>
 #include <das/_autogen/idl/abi/IDasPortMap.h>
 #include <das/_autogen/idl/header/IDasPortMap.generated.h>
+#include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasTaskComponentHost.Implements.hpp>
 #include <gtest/gtest.h>
 
 #include <cstdint>
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -22,6 +26,89 @@
 // 与 graph 引用路径（RepositoryInvokeCompiler 快照 execution_input）——断言
 // 序列化字节相等，锁定「一处编译、处处消费」不变量。两条管道都以真实
 // MaapiAuthoringSession::Compile 为编译器，不 mock 编译本身。
+
+DAS_DEFINE_CLASS_IN_NAMESPACE(
+    Das::Plugins::DasMaaPi,
+    EnvelopeParityRecordingChildComponent,
+    0x3d1ebd62,
+    0xd058,
+    0x4ed0,
+    0xa2,
+    0x4f,
+    0x33,
+    0xc3,
+    0x93,
+    0xa3,
+    0x45,
+    0xfe);
+
+namespace Das::Plugins::DasMaaPi
+{
+    // 观测点 2 的记录态：子组件收到的 executionInput 端口字符串与 Do 调用数。
+    struct RecordingChildState
+    {
+        int         do_call_count = 0;
+        std::string last_execution_input_json;
+    };
+
+    // 记录型子组件（maapi run 组件的喂线接收端观测替身）：捕获
+    // RepositoryInvoke 组件喂入的 executionInput 端口字符串，Do 恒回
+    // completed——只观测喂线契约，不执行 envelope。
+    class EnvelopeParityRecordingChildComponent final
+        : public PluginInterface::DasTaskComponentImplBase<
+              EnvelopeParityRecordingChildComponent>
+    {
+    public:
+        explicit EnvelopeParityRecordingChildComponent(
+            std::shared_ptr<RecordingChildState> recording_state)
+            : recording_state_(std::move(recording_state))
+        {
+        }
+
+        DasResult DAS_STD_CALL ApplySettingsChange(
+            ExportInterface::IDasJson* /*p_request_json*/,
+            ExportInterface::IDasJson** pp_out_result_json) override
+        {
+            if (pp_out_result_json == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            yyjson::value response(Utils::MakeYyjsonObject());
+            (*response.as_object())[std::string_view("acceptedSettings")] =
+                Utils::MakeYyjsonObject();
+            auto wrapped = WrapJson(std::move(response));
+            if (!wrapped)
+            {
+                return DAS_E_FAIL;
+            }
+            *pp_out_result_json = wrapped.Get();
+            (*pp_out_result_json)->AddRef();
+            return DAS_S_OK;
+        }
+
+        DasResult DAS_STD_CALL
+        Do(PluginInterface::IDasStopToken* /*stop_token*/,
+           ExportInterface::IDasReadOnlyPortMap* p_input_port_map,
+           ExportInterface::IDasPortMap**        pp_out_port_map) override
+        {
+            if (pp_out_port_map == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            recording_state_->do_call_count += 1;
+            recording_state_->last_execution_input_json =
+                Utils::GetPortString(p_input_port_map, "executionInput");
+            return Utils::BuildResultPortMap(
+                "completed",
+                Utils::MakeYyjsonObject(),
+                Utils::MakeYyjsonArray(),
+                pp_out_port_map);
+        }
+
+    private:
+        std::shared_ptr<RecordingChildState> recording_state_;
+    };
+} // namespace Das::Plugins::DasMaaPi
 
 namespace
 {
@@ -36,6 +123,48 @@ namespace
     // maapi run 执行组件（manifest DasMaaPi.json 声明的 componentGuid）。
     const std::string MAAPI_RUN_COMPONENT_GUID_TEXT =
         "69F20008-0000-4000-8000-000000000001";
+
+    // RepositoryInvoke 组件（das.flow.invokeRepository，官方流程组件）。
+    constexpr std::string_view REPOSITORY_INVOKE_KIND =
+        "das.flow.invokeRepository";
+
+    // 观测点 2 的宿主：RepositoryInvoke 组件经宿主创建子组件，maapi run
+    // guid 命中记录型替身（喂线接收端观测）。
+    class EnvelopeParityRecordingHost final
+        : public PluginInterface::DasTaskComponentHostImplBase<
+              EnvelopeParityRecordingHost>
+    {
+    public:
+        explicit EnvelopeParityRecordingHost(
+            std::shared_ptr<RecordingChildState> recording_state)
+            : recording_state_(std::move(recording_state))
+        {
+        }
+
+        DasResult DAS_STD_CALL CreateTaskComponent(
+            const DasGuid&                       component_guid,
+            PluginInterface::IDasTaskComponent** pp_out_component) override
+        {
+            if (pp_out_component == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            const auto guid_text = DasGuidToString(component_guid);
+            if (guid_text.GetUtf8() != MAAPI_RUN_COMPONENT_GUID_TEXT)
+            {
+                *pp_out_component = nullptr;
+                return DAS_E_NOT_FOUND;
+            }
+            auto* component =
+                new EnvelopeParityRecordingChildComponent(recording_state_);
+            component->AddRef();
+            *pp_out_component = component;
+            return DAS_S_OK;
+        }
+
+    private:
+        std::shared_ptr<RecordingChildState> recording_state_;
+    };
 
     std::filesystem::path FixturePath(std::string_view name)
     {
@@ -423,4 +552,67 @@ TEST(MaapiEnvelopeParity, CleanFixtureProducesEmptyDiagnosticsOnBothPaths)
     ASSERT_TRUE(resolved.ok);
     EXPECT_EQ(resolved.diagnostics.size(), 0u)
         << "graph 路径结果 diagnostics 应为空";
+}
+
+// 观测点 2（组件输入级）：B 路快照经真实 RepositoryInvoke 组件（读
+// compiledSnapshot → 宿主创建子组件 → SetPortString("executionInput", ...)）
+// 喂线，子组件收到的 executionInput 端口字符串与 A 路产物的序列化字节
+// 逐字节相等——等价性贯通到喂线契约的接收端。
+TEST(
+    MaapiEnvelopeParity,
+    RepositoryInvokeComponentFeedsIdenticalExecutionInputPort)
+{
+    const auto properties = ParsePropertiesOrEmpty();
+
+    // A 路（调度器直跑）产物序列化。
+    MaapiAuthoringSession scheduler_session(
+        SettingsFromProperties(properties),
+        FIXTURE_ENTRY_REVISION);
+    const auto scheduler_compiled = CompileOnSession(
+        scheduler_session,
+        MakeExecutionCompileRequestValue(),
+        nullptr);
+    ASSERT_TRUE(scheduler_compiled.ok);
+    const auto scheduler_serialized = SerializeCompact(
+        ExtractExecutionInputValue(scheduler_compiled.compile));
+    ASSERT_TRUE(scheduler_serialized.has_value());
+
+    // B 路（graph 引用）快照，整体序列化为 compiledSnapshot 端口载荷。
+    const auto services = MakeParityCompileServices(properties, nullptr);
+    const auto resolved = RepositoryInvoke::ResolveRepositoryInvokeSnapshot(
+        services,
+        MakeRepositoryRef(FIXTURE_ENTRY_REVISION));
+    ASSERT_TRUE(resolved.ok);
+    ASSERT_TRUE(resolved.snapshot.has_value());
+    const auto snapshot_serialized = Utils::SerializeYyjsonValue(
+        Utils::CloneYyjsonValue(yyjson::object(*resolved.snapshot)));
+    ASSERT_TRUE(snapshot_serialized.has_value());
+
+    const auto recording_state = std::make_shared<RecordingChildState>();
+    auto       host = EnvelopeParityRecordingHost::Make(recording_state);
+    DasFlowControlTaskComponent invoke_component(
+        REPOSITORY_INVOKE_KIND,
+        DasPtr<PluginInterface::IDasTaskComponentHost>(host.Get()));
+
+    DasPtr<ExportInterface::IDasPortMap> input_map;
+    ASSERT_EQ(CreateIDasPortMap(input_map.Put()), DAS_S_OK);
+    Utils::SetPortString(
+        input_map.Get(),
+        "compiledSnapshot",
+        *snapshot_serialized);
+
+    DasPtr<ExportInterface::IDasPortMap> invoke_output;
+    const auto                           invoke_result =
+        invoke_component.Do(nullptr, input_map.Get(), invoke_output.Put());
+    ASSERT_EQ(invoke_result, DAS_S_OK);
+    ASSERT_TRUE(invoke_output);
+
+    // 子组件恰好被喂一次；其 executionInput 端口字符串与 A 路序列化字节
+    // 逐字节相等（直接 ==，无字段级宽松比较）。
+    ASSERT_EQ(recording_state->do_call_count, 1);
+    EXPECT_EQ(recording_state->last_execution_input_json, *scheduler_serialized)
+        << "RepositoryInvoke 喂线的 executionInput 端口必须与调度器直跑产物"
+        << "字节一致";
+    // RepositoryInvoke 结果口聚合子组件状态。
+    EXPECT_EQ(Utils::GetPortString(invoke_output.Get(), "status"), "completed");
 }
