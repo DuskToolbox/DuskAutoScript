@@ -4115,6 +4115,97 @@ TEST_F(
     EXPECT_EQ(shared_state_->executed_count, 0u);
 }
 
+// graph authoring 的 actionCatalog 采用 {actionId,label} 对象条目：Scheduler
+// 从组件 manifest definition 枚举 kind 作 label 注入 context，经 DasGraphTask
+// 透传到 Core SetActionCatalog，GetDocument 投影保持对象形态。断言锚定真实
+// 插件的三个组件：FlowControl 的 merge/launch 与 DasGraphTask 的 execute。
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    GraphAuthoringActionCatalogCarriesManifestKindLabels)
+{
+    WriteFactoryPluginManifest(
+        manifest_path_,
+        FactoryPluginGuidString,
+        FactoryTaskGuidString,
+        true,
+        "Cpp",
+        FactoryTaskComponentImplGuidString,
+        /*include_flow_components=*/false);
+    DeployRealPluginArtifacts(
+        "libDasGraphTask.dll",
+        "DasGraphTask.json",
+        /*force_ipc=*/true);
+    DeployRealPluginArtifacts(
+        "libDasFlowControl.dll",
+        "DasFlowControl.json",
+        /*force_ipc=*/false);
+
+    // graph 任务实例（空属性 → 空 graph 文档）。不 Enable，只走 Get 管道。
+    {
+        yyjson::value task0(Das::Utils::MakeYyjsonObject());
+        (*task0.as_object())[std::string_view("id")] = 0;
+        (*task0.as_object())[std::string_view("taskGuid")] =
+            "F4A2C9D1-7B3E-4D8A-A15F-C2E86B4D91A3";
+        (*task0.as_object())[std::string_view("pluginGuid")] =
+            "C8A4B7D0-1E2F-3A5B-6C9D-7E8F0A1B2C3D";
+        (*task0.as_object())[std::string_view("nextExecutionTime")] =
+            static_cast<int64_t>(1);
+        (*task0.as_object())[std::string_view("properties")] =
+            yyjson::value(Das::Utils::MakeYyjsonObject());
+        WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
+    }
+
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    const yyjson::value request(Das::Utils::MakeYyjsonObject());
+    auto result = scheduler_->GetTaskAuthoringDocument(0, request);
+    auto obj = result.as_object();
+    ASSERT_TRUE(obj.has_value());
+    ASSERT_TRUE(obj->contains(std::string_view("document")));
+    auto document = (*obj)[std::string_view("document")].as_object();
+    ASSERT_TRUE(document.has_value());
+    ASSERT_TRUE(document->contains(std::string_view("actionCatalog")));
+    auto catalog = (*document)[std::string_view("actionCatalog")].as_object();
+    ASSERT_TRUE(catalog.has_value());
+    ASSERT_TRUE(catalog->contains(std::string_view("entries")));
+    auto entries = (*catalog)[std::string_view("entries")].as_array();
+    ASSERT_TRUE(entries.has_value());
+
+    // label 期望 = 组件 manifest definition 的 kind 字符串（业务中立：调度
+    // 器只搬运 manifest 数据，不识别任何前缀）。
+    const std::vector<std::pair<std::string_view, std::string_view>> expected =
+        {
+            {"68F10008-0000-4000-8000-000000000008", "das.flow.merge"},
+            {"95FD2FFA-88F2-4F85-A536-C708D25B641F", "das.flow.launch"},
+            {"F4A2C9D1-7B3E-4D8A-A15F-C2E86B4D91A3", "das.graph.execute"},
+        };
+    for (const auto& [action_id, label] : expected)
+    {
+        bool found = false;
+        for (const auto& entry : *entries)
+        {
+            auto entry_obj = entry.as_object();
+            if (!entry_obj
+                || !entry_obj->contains(std::string_view("actionId")))
+            {
+                continue;
+            }
+            auto id = (*entry_obj)[std::string_view("actionId")].as_string();
+            if (!id || *id != action_id)
+            {
+                continue;
+            }
+            found = true;
+            ASSERT_TRUE(entry_obj->contains(std::string_view("label")));
+            EXPECT_EQ(
+                (*entry_obj)[std::string_view("label")].as_string().value_or(
+                    ""),
+                label);
+        }
+        EXPECT_TRUE(found) << "actionId missing from catalog: " << action_id;
+    }
+}
+
 TEST_F(
     SchedulerRuntimeBackedTest,
     SchedulerRepositoryInvokeCompileBuildsSnapshot)

@@ -5,6 +5,7 @@
 #include <das/DasString.hpp>
 #include <gtest/gtest.h>
 
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -107,13 +108,15 @@ namespace
 
     // Helper: populate the session's registry-backed actionCatalog so that
     // addGraphNode / addFormSequenceItem succeed (D-84-31/32/33). Tests inject
-    // a literal actionId set rather than reaching into PluginManager.
-    void SetActionCatalog(
+    // a literal {actionId,label} entry set rather than reaching into
+    // PluginManager. Returns the Core result so shape-rejection cases can
+    // assert on it.
+    DasResult SetActionCatalog(
         GraphAuthoringSessionState* p,
         const std::string&          json_array)
     {
         auto s = MakeStr(json_array);
-        GraphAuthoringSessionSetActionCatalog(p, s.Get());
+        return GraphAuthoringSessionSetActionCatalog(p, s.Get());
     }
 
     // The Phase 84 strict AuthoringChange parser rejects the legacy flat
@@ -170,7 +173,7 @@ namespace
     TEST(GraphAuthoringSessionTest, GraphModeApplyChangeAddGraphNode)
     {
         const SessionHandle s{""}; // graph mode
-        SetActionCatalog(s.p, R"(["{g1}"])");
+        SetActionCatalog(s.p, R"([{"actionId":"{g1}"}])");
         auto r = ApplyChange(
             s.p,
             WrapEnvelope("addGraphNode", R"({"actionId":"{g1}"})"));
@@ -236,7 +239,7 @@ namespace
             R"({"itemId":"a","target":{"targetKind":"componentRef","componentRef":{"kind":"componentRef","componentGuid":"{ga}","pluginGuid":"{p}"}},"settings":{}})";
         const SessionHandle s{
             std::string(R"({"items":[)") + std::string(item_a) + "]}"};
-        SetActionCatalog(s.p, R"(["{gb}"])");
+        SetActionCatalog(s.p, R"([{"actionId":"{gb}"}])");
         auto r = ApplyChange(
             s.p,
             WrapEnvelope("addFormSequenceItem", R"({"actionId":"{gb}"})"));
@@ -248,6 +251,108 @@ namespace
         // The original item id survived; the new item is allocated by the
         // Provider (caller does not supply an id).
         EXPECT_NE(doc.find("\"id\":\"a\""), std::string::npos);
+    }
+
+    // -----------------------------------------------------------------------
+    // actionCatalog object form: entries are {actionId,label} objects; the
+    // label comes from the component manifest definition's kind (carried by
+    // the Provider context) and falls back to the actionId when absent.
+    // -----------------------------------------------------------------------
+
+    // Label of a catalog entry looked up by actionId inside
+    // document.actionCatalog.entries; nullopt when the entry is absent, empty
+    // when the entry carries no label field.
+    std::optional<std::string> CatalogLabelOf(
+        const yyjson::value& document,
+        std::string_view     action_id)
+    {
+        auto obj = document.as_object();
+        if (!obj || !obj->contains(std::string_view("actionCatalog")))
+        {
+            return std::nullopt;
+        }
+        auto catalog = (*obj)[std::string_view("actionCatalog")].as_object();
+        if (!catalog || !catalog->contains(std::string_view("entries")))
+        {
+            return std::nullopt;
+        }
+        auto entries = (*catalog)[std::string_view("entries")].as_array();
+        if (!entries)
+        {
+            return std::nullopt;
+        }
+        for (const auto& entry : *entries)
+        {
+            auto entry_obj = entry.as_object();
+            if (!entry_obj
+                || !entry_obj->contains(std::string_view("actionId")))
+            {
+                continue;
+            }
+            auto id = (*entry_obj)[std::string_view("actionId")].as_string();
+            if (id && *id == action_id)
+            {
+                if (!entry_obj->contains(std::string_view("label")))
+                {
+                    return std::string{};
+                }
+                return std::string((*entry_obj)[std::string_view("label")]
+                                       .as_string()
+                                       .value_or(""));
+            }
+        }
+        return std::nullopt;
+    }
+
+    TEST(
+        GraphAuthoringSessionTest,
+        ActionCatalogObjectEntriesProjectLabelAndFallback)
+    {
+        const SessionHandle s{""};
+        ASSERT_EQ(
+            SetActionCatalog(
+                s.p,
+                R"([{"actionId":"{g1}","label":"das.flow.launch"},{"actionId":"{g2}"}])"),
+            DAS_S_OK);
+        const auto document = DocumentOf(s.p);
+
+        // A labeled entry keeps its label on the GetDocument projection.
+        const auto labeled = CatalogLabelOf(document, "{g1}");
+        ASSERT_TRUE(labeled.has_value());
+        EXPECT_EQ(*labeled, "das.flow.launch");
+
+        // An entry without a label falls back to its actionId so the UI
+        // always has a renderable value.
+        const auto unlabeled = CatalogLabelOf(document, "{g2}");
+        ASSERT_TRUE(unlabeled.has_value());
+        EXPECT_EQ(*unlabeled, "{g2}");
+
+        // The projected document (catalog included) stays valid strict wire.
+        auto result =
+            Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+        EXPECT_TRUE(result.valid)
+            << result.error_kind << ": " << result.message;
+    }
+
+    TEST(GraphAuthoringSessionTest, ActionCatalogRejectsMalformedEntries)
+    {
+        const SessionHandle s{""};
+        // Entry missing actionId.
+        EXPECT_EQ(
+            SetActionCatalog(s.p, R"([{"label":"x"}])"),
+            DAS_E_INVALID_ARGUMENT);
+        // Non-object entry: the legacy flat guid-string array form is gone.
+        EXPECT_EQ(SetActionCatalog(s.p, R"(["{g1}"])"), DAS_E_INVALID_ARGUMENT);
+        // Payload is not an array at all.
+        EXPECT_EQ(
+            SetActionCatalog(s.p, R"({"actionId":"{g1}"})"),
+            DAS_E_INVALID_ARGUMENT);
+
+        // Rejections leave the session untouched: no catalog is projected.
+        const auto document = DocumentOf(s.p);
+        auto       obj = document.as_object();
+        ASSERT_TRUE(obj.has_value());
+        EXPECT_FALSE(obj->contains(std::string_view("actionCatalog")));
     }
 
     // -----------------------------------------------------------------------
@@ -275,7 +380,7 @@ namespace
         // scheduler would persist, and re-seed a fresh session from it — the
         // node must survive the round-trip.
         const SessionHandle s1{""};
-        SetActionCatalog(s1.p, R"(["{g1}","{g2}"])");
+        SetActionCatalog(s1.p, R"([{"actionId":"{g1}"},{"actionId":"{g2}"}])");
         ASSERT_NE(
             Compact(
                 JsonToUtf8(
@@ -311,7 +416,7 @@ namespace
         // (object with the compiled-plan shape; execution itself is exercised
         // by DasGraphTaskTest / GraphRuntimeTest).
         const SessionHandle s{""};
-        SetActionCatalog(s.p, R"(["{g1}"])");
+        SetActionCatalog(s.p, R"([{"actionId":"{g1}"}])");
         ApplyChange(
             s.p,
             WrapEnvelope("addGraphNode", R"({"actionId":"{g1}"})"));
@@ -385,7 +490,7 @@ namespace
     TEST(GraphAuthoringSessionTest, ValidatorAccepts_GraphOutput)
     {
         const SessionHandle s{""};
-        SetActionCatalog(s.p, R"(["{g1}"])");
+        SetActionCatalog(s.p, R"([{"actionId":"{g1}"}])");
         ApplyChange(
             s.p,
             WrapEnvelope("addGraphNode", R"({"actionId":"{g1}"})"));
@@ -404,7 +509,7 @@ namespace
     TEST(GraphAuthoringSessionTest, ValidatorAccepts_ApplyResultEnvelope)
     {
         const SessionHandle s{""};
-        SetActionCatalog(s.p, R"(["{g1}"])");
+        SetActionCatalog(s.p, R"([{"actionId":"{g1}"}])");
         auto apply_json = JsonToUtf8(
             ApplyChange(
                 s.p,
