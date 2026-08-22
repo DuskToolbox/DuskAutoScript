@@ -6,8 +6,11 @@
 #include <das/DasApi.h>
 #include <das/DasString.hpp>
 #include <das/Utils/DasJsonCore.h>
+#include <das/Utils/TaskComponentPorts.h>
 #include <das/_autogen/idl/abi/IDasPortMap.h>
+#include <das/_autogen/idl/abi/IDasSettingsChangeBuilder.h>
 #include <das/_autogen/idl/header/IDasPortMap.generated.h>
+#include <das/_autogen/idl/header/IDasSettingsChangeBuilder.generated.h>
 
 #include <algorithm>
 #include <array>
@@ -104,247 +107,20 @@ namespace
         return std::nullopt;
     }
 
-    yyjson::value CloneJson(const yyjson::value& value)
-    {
-        const auto serialized = value.write(yyjson::WriteFlag::NoFlag);
-        auto       parsed = Das::Utils::ParseYyjsonFromString(
-            std::string_view(serialized.data(), serialized.size()));
-        return parsed ? std::move(*parsed) : yyjson::value{};
-    }
-
-    DasPtr<ExportInterface::IDasJson> WrapJson(yyjson::value value)
-    {
-        auto serialized = Das::Utils::SerializeYyjsonValue(value);
-        if (!serialized)
-        {
-            return {};
-        }
-
-        DasPtr<ExportInterface::IDasJson> result;
-        ParseDasJsonFromString(serialized->c_str(), result.Put());
-        return result;
-    }
-
-    /// Write a string value into a PortMap port.
-    void SetPortString(
-        ExportInterface::IDasPortMap* map,
-        std::string_view              port_id,
-        std::string_view              value)
-    {
-        const DasReadOnlyString key{std::string{port_id}.c_str()};
-        const DasReadOnlyString val{std::string{value}.c_str()};
-        map->SetString(key.Get(), val.Get());
-    }
-
-    /// Write a JSON value (as serialized string) into a PortMap port.
-    void SetPortJson(
-        ExportInterface::IDasPortMap* map,
-        std::string_view              port_id,
-        const yyjson::value&          value)
-    {
-        auto serialized = Das::Utils::SerializeYyjsonValue(value);
-        if (serialized)
-        {
-            const DasReadOnlyString key{std::string{port_id}.c_str()};
-            const DasReadOnlyString val{serialized->c_str()};
-            map->SetString(key.Get(), val.Get());
-        }
-    }
-
-    /// Read a JSON value from a PortMap string port.
-    std::optional<yyjson::value> GetPortJson(
-        ExportInterface::IDasReadOnlyPortMap* map,
-        std::string_view                      port_id)
-    {
-        IDasReadOnlyString*     p_str = nullptr;
-        const DasReadOnlyString key{std::string{port_id}.c_str()};
-        auto                    hr = map->GetString(key.Get(), &p_str);
-        if (DAS::IsFailed(hr) || p_str == nullptr)
-        {
-            return std::nullopt;
-        }
-
-        const char* utf8 = nullptr;
-        p_str->GetUtf8(&utf8);
-        const std::string str_val(utf8 ? utf8 : "");
-        p_str->Release();
-
-        if (str_val.empty())
-        {
-            return std::nullopt;
-        }
-
-        return Das::Utils::ParseYyjsonFromString(str_val);
-    }
-
-    /// Read a bool from a PortMap port.
-    bool GetPortBool(
-        ExportInterface::IDasReadOnlyPortMap* map,
-        std::string_view                      port_id,
-        bool                                  default_val = false)
-    {
-        bool                    val = default_val;
-        const DasReadOnlyString key{std::string{port_id}.c_str()};
-        auto                    hr = map->GetBool(key.Get(), &val);
-        return DAS::IsOk(hr) ? val : default_val;
-    }
-
-    /// Read an int from a PortMap port.
-    int64_t GetPortInt(
-        ExportInterface::IDasReadOnlyPortMap* map,
-        std::string_view                      port_id,
-        int64_t                               default_val = 0)
-    {
-        int64_t                 val = default_val;
-        const DasReadOnlyString key{std::string{port_id}.c_str()};
-        auto                    hr = map->GetInt(key.Get(), &val);
-        return DAS::IsOk(hr) ? val : default_val;
-    }
-
-    /// Write an int value into a PortMap port.
-    void SetPortInt(
-        ExportInterface::IDasPortMap* map,
-        std::string_view              port_id,
-        int64_t                       value)
-    {
-        const DasReadOnlyString key{std::string{port_id}.c_str()};
-        map->SetInt(key.Get(), value);
-    }
-
-    /// Emit a single control-flow signal by listing its port id in the reserved
-    /// "signals" JSON string array. The runtime materialises each entry as a
-    /// PortValue::Signal() under (node_id, signal_port_id) and gates on it; the
-    /// component itself never reads signal values (DAS-60 Stage 3 contract).
-    void EmitSignal(
-        ExportInterface::IDasPortMap* map,
-        std::string_view              signal_port_id)
-    {
-        const std::string json =
-            std::string(R"([")") + std::string(signal_port_id) + R"("])";
-        SetPortString(map, "signals", json);
-    }
-
-    using DasVariantType = Das::ExportInterface::DasVariantType;
-    using Das::ExportInterface::DAS_VARIANT_TYPE_BOOL;
-    using Das::ExportInterface::DAS_VARIANT_TYPE_FLOAT;
-    using Das::ExportInterface::DAS_VARIANT_TYPE_INT;
-    using Das::ExportInterface::DAS_VARIANT_TYPE_NULL;
-    using Das::ExportInterface::DAS_VARIANT_TYPE_STRING;
-
-    /// Copy a typed value from @p src_port of @p src into @p dst_port of @p
-    /// dst, preserving its runtime variant kind. Returns false when the source
-    /// port is absent or null (used by merge to detect which branch produced a
-    /// value). Covers the scalar kinds the data plane carries end-to-end;
-    /// object/image kinds are not pass-through-able here.
-    bool CopyTypedPort(
-        ExportInterface::IDasReadOnlyPortMap* src,
-        std::string_view                      src_port,
-        ExportInterface::IDasPortMap*         dst,
-        std::string_view                      dst_port)
-    {
-        const DasReadOnlyString key{std::string{src_port}.c_str()};
-        DasVariantType          kind = DAS_VARIANT_TYPE_NULL;
-        if (DAS::IsFailed(src->GetType(key.Get(), &kind)))
-        {
-            return false;
-        }
-        switch (kind)
-        {
-        case DAS_VARIANT_TYPE_INT:
-        {
-            int64_t v{};
-            if (DAS::IsOk(src->GetInt(key.Get(), &v)))
-            {
-                SetPortInt(dst, dst_port, v);
-                return true;
-            }
-            return false;
-        }
-        case DAS_VARIANT_TYPE_BOOL:
-        {
-            bool v{};
-            if (DAS::IsOk(src->GetBool(key.Get(), &v)))
-            {
-                const DasReadOnlyString dkey{std::string{dst_port}.c_str()};
-                dst->SetBool(dkey.Get(), v);
-                return true;
-            }
-            return false;
-        }
-        case DAS_VARIANT_TYPE_FLOAT:
-        {
-            double v{};
-            if (DAS::IsOk(src->GetFloat(key.Get(), &v)))
-            {
-                const DasReadOnlyString dkey{std::string{dst_port}.c_str()};
-                dst->SetFloat(dkey.Get(), v);
-                return true;
-            }
-            return false;
-        }
-        case DAS_VARIANT_TYPE_STRING:
-        {
-            IDasReadOnlyString* p_str = nullptr;
-            if (DAS::IsOk(src->GetString(key.Get(), &p_str))
-                && p_str != nullptr)
-            {
-                const DasReadOnlyString dkey{std::string{dst_port}.c_str()};
-                dst->SetString(dkey.Get(), p_str);
-                p_str->Release();
-                return true;
-            }
-            return false;
-        }
-        default:
-            return false;
-        }
-    }
-
-    /// Read a raw string from a PortMap string port (no JSON parsing).
-    /// Use this for ports written via SetPortString (e.g. "status"), as
-    /// opposed to GetPortJson which assumes the port holds JSON text.
-    std::string GetPortString(
-        ExportInterface::IDasReadOnlyPortMap* map,
-        std::string_view                      port_id,
-        std::string_view                      default_val = {})
-    {
-        IDasReadOnlyString*     p_str = nullptr;
-        const DasReadOnlyString key{std::string{port_id}.c_str()};
-        auto                    hr = map->GetString(key.Get(), &p_str);
-        if (DAS::IsFailed(hr) || p_str == nullptr)
-        {
-            return std::string{default_val};
-        }
-        const char* utf8 = nullptr;
-        p_str->GetUtf8(&utf8);
-        std::string val(utf8 && *utf8 ? utf8 : std::string{default_val});
-        p_str->Release();
-        return val;
-    }
-
-    /// Build a result PortMap from a status string, outputs JSON, and signals
-    /// JSON array.
-    DasResult BuildResultPortMap(
-        std::string_view               status,
-        const yyjson::value&           outputs,
-        const yyjson::value&           signals,
-        ExportInterface::IDasPortMap** pp_out_port_map)
-    {
-        DAS::DasPtr<ExportInterface::IDasPortMap> output_map;
-        const DasResult hr = CreateIDasPortMap(output_map.Put());
-        if (DAS::IsFailed(hr))
-        {
-            return hr;
-        }
-
-        SetPortString(output_map.Get(), "status", status);
-        SetPortJson(output_map.Get(), "outputs", outputs);
-        SetPortJson(output_map.Get(), "signals", signals);
-
-        *pp_out_port_map = output_map.Get();
-        output_map.Get()->AddRef();
-        return DAS_S_OK;
-    }
+    // PortMap/Json 桥接与结果口 helper 收敛到公共头（das/Utils/
+    // TaskComponentPorts.h）——本文件不再持有本地拷贝。
+    using Das::Utils::BuildResultPortMap;
+    using Das::Utils::CloneJson;
+    using Das::Utils::CopyTypedPort;
+    using Das::Utils::EmitSignal;
+    using Das::Utils::GetPortBool;
+    using Das::Utils::GetPortInt;
+    using Das::Utils::GetPortJson;
+    using Das::Utils::GetPortString;
+    using Das::Utils::SetPortInt;
+    using Das::Utils::SetPortJson;
+    using Das::Utils::SetPortString;
+    using Das::Utils::WrapJson;
 
     std::string StatusFromChild(std::string_view child_status)
     {
@@ -414,20 +190,39 @@ DasResult DasFlowControlTaskComponent::ApplySettingsChange(
             if (parsed && parsed->is_object())
             {
                 auto request_obj = *parsed->as_object();
-                auto kind = request_obj[std::string_view("kind")].as_string();
-                if (kind && *kind == "setValue")
+                if (request_obj.contains(std::string_view("settings")))
                 {
-                    auto payload =
-                        request_obj[std::string_view("payload")].as_object();
-                    if (payload)
+                    // GraphRuntime 投递的 {"settings": S, "payload": P} 包装：
+                    // compiled_settings 是节点当前配置的全量投影——替换语义
+                    // 而非逐键合并（每次投递即节点当前配置全量）。
+                    // settings 为 null 时保持现值。
+                    const auto& inner =
+                        request_obj[std::string_view("settings")];
+                    if (!inner.is_null())
                     {
-                        auto key =
-                            (*payload)[std::string_view("path")].as_string();
-                        if (key && payload->contains(std::string_view("value")))
+                        accepted = CloneJson(inner);
+                    }
+                }
+                else
+                {
+                    auto kind =
+                        request_obj[std::string_view("kind")].as_string();
+                    if (kind && *kind == "setValue")
+                    {
+                        auto payload = request_obj[std::string_view("payload")]
+                                           .as_object();
+                        if (payload)
                         {
-                            (*accepted.as_object())[std::string_view(*key)] =
-                                CloneJson(
-                                    (*payload)[std::string_view("value")]);
+                            auto key = (*payload)[std::string_view("path")]
+                                           .as_string();
+                            if (key
+                                && payload->contains(std::string_view("value")))
+                            {
+                                (*accepted
+                                      .as_object())[std::string_view(*key)] =
+                                    CloneJson(
+                                        (*payload)[std::string_view("value")]);
+                            }
                         }
                     }
                 }
@@ -436,18 +231,27 @@ DasResult DasFlowControlTaskComponent::ApplySettingsChange(
     }
 
     settings_ = CloneJson(accepted);
-    auto result = Das::Utils::MakeYyjsonObject();
-    auto obj = *result.as_object();
-    obj[std::string_view("acceptedSettings")] = std::move(accepted);
-    auto wrapped = WrapJson(std::move(result));
-    if (!wrapped)
+
+    // acceptedSettings 响应经协议 builder 组装：固定 wire 字段名进方法名，
+    // 调用方拼错字段在编译期报错。
+    Das::DasPtr<Das::ExportInterface::IDasSettingsChangeBuilder> builder;
+    DasResult hr = CreateIDasSettingsChangeBuilder(builder.Put());
+    if (DAS::IsFailed(hr) || !builder)
+    {
+        return DAS::IsFailed(hr) ? hr : DAS_E_FAIL;
+    }
+
+    auto accepted_json = WrapJson(CloneJson(accepted));
+    if (!accepted_json)
     {
         return DAS_E_INVALID_JSON;
     }
-
-    *pp_out_result_json = wrapped.Get();
-    (*pp_out_result_json)->AddRef();
-    return DAS_S_OK;
+    hr = builder->SetAcceptedSettings(accepted_json.Get());
+    if (DAS::IsFailed(hr))
+    {
+        return hr;
+    }
+    return builder->ToJson(pp_out_result_json);
 }
 
 DasResult DasFlowControlTaskComponent::DoRepositoryInvoke(
@@ -609,7 +413,6 @@ DasResult DasFlowControlTaskComponent::DoRepositoryInvoke(
             Das::Utils::SerializeYyjsonValue(snapshot.execution_input);
         if (input_serialized)
         {
-            const DasReadOnlyString val{input_serialized->c_str()};
             SetPortString(
                 child_input.Get(),
                 "executionInput",
