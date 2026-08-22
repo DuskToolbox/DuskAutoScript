@@ -90,9 +90,7 @@ if(DAS_BUILD_TEST)
 endif()
 
 # DasGraphTask - GraphRuntime thin IDasTask adapter (core-first v18)
-if(DAS_BUILD_TEST)
-    add_subdirectory(DasGraphTask)
-endif()
+add_subdirectory(DasGraphTask)
 
 
 target_link_libraries(DasAdbCapture PRIVATE zlib)

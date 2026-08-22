@@ -17,11 +17,11 @@ namespace Plugins::DasGraphTask
     {
         std::ignore = p_environment_json;
 
-        // task_settings is the CompiledGraphPlanDto serialization produced by
-        // the scheduler's authoring Compile (ExtractExecutionInput returns the
-        // whole DTO since it has no "executionInput" wrapper). GraphRuntime::
-        // Execute casts its input to the very same DTO, so this is a pure
-        // pass-through — no field extraction or transformation.
+        // task_settings is the CompiledGraphPlanDto serialization the
+        // scheduler extracted from the authoring compile envelope's
+        // compile.executionInput. GraphRuntime::Execute casts its input to
+        // the very same DTO, so this is a pure pass-through — no field
+        // extraction or transformation.
         DAS::DasPtr<IDasReadOnlyString> artifact;
         if (p_task_settings_json != nullptr)
         {

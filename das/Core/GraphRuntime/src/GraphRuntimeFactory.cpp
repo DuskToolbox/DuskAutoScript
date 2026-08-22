@@ -229,17 +229,29 @@ namespace
     bool ParseGraphDoc(const Obj& obj, GraphDocDto& out)
     {
         out = GraphDocDto{};
-        if (auto v = obj[std::string_view("documentId")].as_string())
+        // The metadata keys are optional for raw graph docs: an unguarded
+        // operator[] on a missing key throws out_of_range, so guard every
+        // read with contains first.
+        if (obj.contains(std::string_view("documentId")))
         {
-            out.document_id = std::string(*v);
+            if (auto v = obj[std::string_view("documentId")].as_string())
+            {
+                out.document_id = std::string(*v);
+            }
         }
-        if (auto v = obj[std::string_view("version")].as_int())
+        if (obj.contains(std::string_view("version")))
         {
-            out.version = static_cast<int32_t>(*v);
+            if (auto v = obj[std::string_view("version")].as_int())
+            {
+                out.version = static_cast<int32_t>(*v);
+            }
         }
-        if (auto v = obj[std::string_view("fingerprint")].as_string())
+        if (obj.contains(std::string_view("fingerprint")))
         {
-            out.fingerprint = std::string(*v);
+            if (auto v = obj[std::string_view("fingerprint")].as_string())
+            {
+                out.fingerprint = std::string(*v);
+            }
         }
         if (obj.contains(std::string_view("nodes")))
         {
@@ -1046,7 +1058,33 @@ DAS_C_API DasResult GraphAuthoringSessionCompile(
         // validation is skipped (acceptable for authoring preview).
         GR::GraphCompiler compiler;
         auto              plan = compiler.Compile(p->document);
-        return WrapValue(yyjson::object(plan), pp_out_compiled_plan_json);
+
+        // Strict authoring compile envelope: the scheduler validates Compile
+        // results with OnlyKeys {compile, diagnostics} and extracts the task
+        // input from compile.executionInput. The whole CompiledGraphPlanDto
+        // travels inside executionInput so graph tasks receive the plan
+        // unchanged (DasGraphTaskAdapter::Do is a pure pass-through).
+        yyjson::value envelope(Das::Utils::MakeYyjsonObject());
+        auto          envelope_obj = envelope.as_object();
+
+        yyjson::value compile_section(Das::Utils::MakeYyjsonObject());
+        (*compile_section.as_object())[std::string_view("executionInput")] =
+            Das::Utils::CloneYyjsonValue(yyjson::object(plan));
+        (*envelope_obj)[std::string_view("compile")] =
+            std::move(compile_section);
+
+        // The validator requires diagnostics to be an array even when empty.
+        yyjson::value diagnostics(Das::Utils::MakeYyjsonArray());
+        auto          diagnostics_arr = diagnostics.as_array();
+        for (const auto& diagnostic : plan.diagnostics)
+        {
+            diagnostics_arr->emplace_back(
+                Das::Utils::CloneYyjsonValue(diagnostic));
+        }
+        (*envelope_obj)[std::string_view("diagnostics")] =
+            std::move(diagnostics);
+
+        return WrapValue(std::move(envelope), pp_out_compiled_plan_json);
     }
     catch (const std::bad_alloc&)
     {

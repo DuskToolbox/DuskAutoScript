@@ -111,7 +111,8 @@ namespace
                         "pluginGuid": "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"
                     }
                 },
-                "settings": {}
+                "settings": {},
+                "dynamicPorts": []
             },
             {
                 "nodeId": "b",
@@ -123,7 +124,8 @@ namespace
                         "pluginGuid": "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"
                     }
                 },
-                "settings": {}
+                "settings": {},
+                "dynamicPorts": []
             }
         ],
         "edges": [
