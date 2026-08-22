@@ -255,14 +255,20 @@ TEST(TaskComponentPortsTest, WrapJsonReadJsonRoundTripThroughAbiBoundary)
     auto wrapped = WrapJson(original);
     ASSERT_NE(wrapped.Get(), nullptr);
 
-    // WrapJson output must serialise back to the same JSON text.
+    // WrapJson output must read back through ToString to the same value
+    // (ToString pretty-prints, so compare reparsed values, not raw text).
     DasPtr<IDasReadOnlyString> text;
     ASSERT_EQ(wrapped->ToString(0, text.Put()), DAS_S_OK);
     const char* utf8 = nullptr;
     ASSERT_EQ(text->GetUtf8(&utf8), DAS_S_OK);
+    const auto reparsed =
+        ParseYyjsonFromString(std::string_view(utf8 ? utf8 : ""));
+    ASSERT_TRUE(reparsed.has_value());
     const auto wrapped_text = SerializeYyjsonValue(original);
     ASSERT_TRUE(wrapped_text.has_value());
-    EXPECT_STREQ(utf8, wrapped_text->c_str());
+    const auto reparsed_text = SerializeYyjsonValue(*reparsed);
+    ASSERT_TRUE(reparsed_text.has_value());
+    EXPECT_EQ(*reparsed_text, *wrapped_text);
 
     // ReadJson inverts WrapJson byte-for-byte.
     auto round_tripped = ReadJson(wrapped.Get());
