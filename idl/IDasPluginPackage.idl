@@ -1,3 +1,5 @@
+import "IDasTaskComponent.idl";
+
 namespace Das::PluginInterface {
 
 enum DasPluginFeature {
@@ -15,6 +17,13 @@ enum DasPluginFeature {
 interface IDasPluginPackage : IDasBase {
     DasResult EnumFeature(uint64_t index, [out] DasPluginFeature* p_out_feature);
     DasResult CreateFeatureInterface(uint64_t index, [out] IDasBase** pp_out_interface);
+    // Ordering contract: the loader guarantees SetTaskComponentHost is called
+    // before any EnumFeature / CreateFeatureInterface call. Both load paths
+    // enforce it — the in-process PluginManager passes the host object before
+    // enumerating features, and the Host process injects the deserialized
+    // proxy before the plugin becomes enumerable by the main process.
+    // Plugins must not assume any other timing.
+    DasResult SetTaskComponentHost(IDasTaskComponentHost * p_host);
 }
 
 }

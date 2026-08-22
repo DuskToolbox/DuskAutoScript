@@ -98,6 +98,12 @@ TaskComponentFactoryManager::TaskComponentFactoryManager()
 
 TaskComponentFactoryManager::~TaskComponentFactoryManager() = default;
 
+Das::PluginInterface::IDasTaskComponentHost*
+TaskComponentFactoryManager::GetTaskComponentHost() const
+{
+    return host_.Get();
+}
+
 DasResult TaskComponentFactoryManager::OnPluginLoaded(
     const DasGuid&                                   plugin_guid,
     std::span<FeatureInfo* const>                    factory_features,

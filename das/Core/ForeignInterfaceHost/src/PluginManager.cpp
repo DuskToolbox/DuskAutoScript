@@ -466,6 +466,19 @@ DasResult PluginManager::LoadPlugin(
     plugin.package = std::move(package);
     plugin.desc = desc;
 
+    // 顺序契约（IDasPluginPackage）：首次 EnumFeature 之前注入 task
+    // component host 本尊。失败仅告警并继续加载——host 注入对不消费它的
+    // 包（如外语 director 默认实现返回 DAS_E_NO_IMPLEMENTATION）非致命。
+    const auto inject_host_result = plugin.package->SetTaskComponentHost(
+        task_component_factory_mgr_.GetTaskComponentHost());
+    if (DAS::IsFailed(inject_host_result))
+    {
+        DAS_CORE_LOG_WARN(
+            "SetTaskComponentHost failed for plugin {}: result={}",
+            path_str,
+            static_cast<int>(inject_host_result));
+    }
+
     uint64_t index = 0;
     while (true)
     {

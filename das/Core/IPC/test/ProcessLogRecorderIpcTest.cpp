@@ -16,6 +16,14 @@
 #include <Das.ExportInterface.IDasVariantVector.hpp>
 #include <Das.PluginInterface.IDasComponent.hpp>
 #include <Das.PluginInterface.IDasComponentFactory.Implements.hpp>
+// 依赖序：IDasPluginPackage wrapper 链到 IDasTaskComponent wrapper，
+// 其声明需要 DasJson/DasPortMap wrapper 类完整（IDasPortMap 又依赖
+// DasStringVector wrapper 先行）。
+#include <Das.ExportInterface.DasJson.hpp>
+#include <Das.ExportInterface.IDasStringVector.hpp>
+
+#include <Das.ExportInterface.IDasPortMap.hpp>
+#include <Das.ExportInterface.IDasReadOnlyPortMap.hpp>
 #include <Das.PluginInterface.IDasPluginPackage.hpp>
 #include <IpcTestConfig.h>
 

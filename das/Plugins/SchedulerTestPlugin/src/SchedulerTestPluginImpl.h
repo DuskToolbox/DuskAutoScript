@@ -230,6 +230,12 @@ public:
         uint64_t   index,
         IDasBase** pp_out_interface) override;
 
+    DasResult SetTaskComponentHost(
+        Das::PluginInterface::IDasTaskComponentHost* /*p_host*/) override
+    {
+        return DAS_S_OK;
+    }
+
 private:
     std::atomic<uint32_t>   ref_count_{0};
     FactoryTaskSharedState* state_ = nullptr;

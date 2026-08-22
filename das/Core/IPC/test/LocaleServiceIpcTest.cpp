@@ -18,6 +18,14 @@
  * AddCallback/GetDefaultLocale/SetDefaultLocale/RemoveCallback 往返。
  */
 
+// 依赖序（非字母序）：IDasPluginPackage 的 wrapper 链到
+// IDasTaskComponent wrapper，其声明需要 DasJson/DasPortMap 等 wrapper
+// 类完整；IDasPortMap wrapper 又需要 DasStringVector wrapper 先行。
+#include <Das.ExportInterface.DasJson.hpp>
+#include <Das.ExportInterface.IDasStringVector.hpp>
+
+#include <Das.ExportInterface.IDasPortMap.hpp>
+#include <Das.ExportInterface.IDasReadOnlyPortMap.hpp>
 #include <Das.ExportInterface.IDasVariantVector.hpp>
 #include <Das.PluginInterface.IDasComponent.hpp>
 #include <Das.PluginInterface.IDasComponentFactory.Implements.hpp>

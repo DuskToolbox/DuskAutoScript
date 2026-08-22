@@ -137,6 +137,12 @@ namespace Das::IPC::Test
             return DAS_E_OUT_OF_RANGE;
         }
 
+        DasResult SetTaskComponentHost(
+            Das::PluginInterface::IDasTaskComponentHost* /*p_host*/) override
+        {
+            return DAS_S_OK;
+        }
+
     private:
         std::atomic<uint32_t> ref_count_{1};
     };

@@ -49,6 +49,11 @@ public:
         const DasGuid&                            component_guid,
         Das::PluginInterface::IDasTaskComponent** pp_out_component);
 
+    /// 本尊 host 的借用访问（host_ 语义不变）：供 PluginManager 在加载
+    /// 插件包时经 IDasPluginPackage::SetTaskComponentHost 注入给包。
+    [[nodiscard]]
+    Das::PluginInterface::IDasTaskComponentHost* GetTaskComponentHost() const;
+
     [[nodiscard]]
     virtual std::vector<TaskComponentDefinitionInfo> EnumerateDefinitions()
         const;

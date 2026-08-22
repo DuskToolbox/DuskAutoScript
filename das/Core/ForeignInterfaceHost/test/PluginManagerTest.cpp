@@ -251,6 +251,12 @@ namespace
             return DAS_E_NOT_FOUND;
         }
 
+        DasResult DAS_STD_CALL
+        SetTaskComponentHost(IDasTaskComponentHost* /*p_host*/) override
+        {
+            return DAS_S_OK;
+        }
+
     private:
         std::vector<DasPluginFeature> features_;
         std::atomic<uint32_t>         ref_count_{0};
@@ -827,6 +833,12 @@ namespace
             return DAS_S_OK;
         }
 
+        DasResult DAS_STD_CALL
+        SetTaskComponentHost(IDasTaskComponentHost* /*p_host*/) override
+        {
+            return DAS_S_OK;
+        }
+
     private:
         DasGuid               factory_guid_;
         std::atomic<uint32_t> ref_count_{0};
@@ -999,6 +1011,12 @@ namespace
 
             auto* lens = PluginManagerErrorLens::MakeRaw(provider_guid_);
             *pp_out = static_cast<IDasBase*>(static_cast<IDasErrorLens*>(lens));
+            return DAS_S_OK;
+        }
+
+        DasResult DAS_STD_CALL
+        SetTaskComponentHost(IDasTaskComponentHost* /*p_host*/) override
+        {
             return DAS_S_OK;
         }
 
@@ -3205,7 +3223,8 @@ TEST(
 {
     auto host = DasPtr<IDasTaskComponentHost>(
         static_cast<IDasTaskComponentHost*>(new MinimalTaskComponentHost()));
-    auto package = DefaultHostStoragePackage::Make();
+    const DasPtr<DefaultHostStoragePackage> package{
+        new DefaultHostStoragePackage()};
     ASSERT_NE(package.Get(), nullptr);
 
     EXPECT_EQ(package->SetTaskComponentHost(host.Get()), DAS_S_OK);

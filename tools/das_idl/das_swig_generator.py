@@ -782,6 +782,36 @@ class SwigCodeGenerator:
 
         for method in interface.methods:
             out_params = [p for p in method.parameters if p.direction == ParamDirection.OUT]
+
+            # 无 [out] 参数的 DasResult 方法：无返回值出口，无法生成 DasRet
+            # 桥接；%inline 类若不实现则保持纯虚，SWIG 会因此拒绝为 director
+            # 类生成默认构造器（Java 端 new 不了，插件直接破）。这里发默认
+            # override（DAS_E_NO_IMPLEMENTATION），外语插件零源码改动仍可
+            # 实例化；SwigDirector 子类的 upcall override（若生成）优先级
+            # 更高，不受影响。
+            if (len(out_params) == 0
+                    and method.return_type.base_type == 'DasResult'):
+                default_params = []
+                for param in method.parameters:
+                    cpp_type = self._get_cpp_type(type_simple_name(param.type_info))
+                    if param.type_info.is_const and param.type_info.is_reference:
+                        default_params.append(f'const {cpp_type}& {param.name}')
+                    elif param.type_info.is_pointer:
+                        stars = '*' * param.type_info.pointer_level
+                        const_prefix = 'const ' if param.type_info.is_const else ''
+                        default_params.append(f'{const_prefix}{cpp_type}{stars} {param.name}')
+                    elif param.type_info.is_reference:
+                        default_params.append(f'{cpp_type}& {param.name}')
+                    else:
+                        default_params.append(f'{cpp_type} {param.name}')
+                lines.append(f'')
+                lines.append(f'    // Default no-op override: no [out] param means no DasRet')
+                lines.append(f'    // bridge; a body keeps the director class instantiable.')
+                lines.append(f'    DasResult {method.name}({", ".join(default_params)}) override {{')
+                lines.append(f'        return DAS_E_NO_IMPLEMENTATION;')
+                lines.append(f'    }}')
+                continue
+
             if len(out_params) != 1:
                 continue
 
@@ -1206,6 +1236,13 @@ class SwigCodeGenerator:
 
         # 检查是否满足 bridge 条件（与 _generate_director_bridge_methods 相同的逻辑）
         out_params = [p for p in method.parameters if p.direction == ParamDirection.OUT]
+
+        # 无 [out] 参数的 DasResult 方法：_generate_director_bridge_methods 为其
+        # 生成默认 no-op override（返回 DAS_E_NO_IMPLEMENTATION），基类纯虚被
+        # 覆盖，类非抽象。
+        if len(out_params) == 0 and method.return_type.base_type == 'DasResult':
+            return True
+
         if len(out_params) != 1:
             return False
 
