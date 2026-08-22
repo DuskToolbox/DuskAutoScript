@@ -357,6 +357,18 @@ if(${DAS_BUILD_TEST})
     das_add_core_test(OrtWrapper)
     das_add_core_test(GraphRuntime)
 
+    # 窗口替身（FormSequenceLaunchE2E 用）：纯 Win32 小程序，非 gtest 模块，
+    # 不走 das_add_core_test——不链 gtest、不注册 ctest，仅产出 exe 供 launch
+    # 组件 spawn。
+    # MinGW 默认库集已含 user32（RegisterClass/CreateWindow/GetMessage），无需显式链接。
+    add_executable(StubWindowTarget
+        TaskScheduler/test/tools/StubWindowTarget.cpp)
+    set_target_properties(StubWindowTarget PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/Test)
+    set_target_properties(StubWindowTarget PROPERTIES RUNTIME_OUTPUT_DIRECTORY_DEBUG ${CMAKE_BINARY_DIR}/Test)
+    set_target_properties(StubWindowTarget PROPERTIES RUNTIME_OUTPUT_DIRECTORY_RELEASE ${CMAKE_BINARY_DIR}/Test)
+    set_target_properties(StubWindowTarget PROPERTIES RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO ${CMAKE_BINARY_DIR}/Test)
+    set_target_properties(StubWindowTarget PROPERTIES RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL ${CMAKE_BINARY_DIR}/Test)
+
 # ForeignInterfaceHost/test 暴露 TestablePluginManager.h 测试专用头，
 # 跨模块测试（TaskSchedulerTest / DebugTest 调用 RegisterTestFeature）
 # 通过 #include "TestablePluginManager.h" 引用。这里只在确实需要访问
