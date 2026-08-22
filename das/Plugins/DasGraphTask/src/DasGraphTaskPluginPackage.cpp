@@ -44,8 +44,30 @@ DAS_DEFINE_CLASS_GUID_HOLDER_IN_NAMESPACE(
     0x4C,
     0x5D)
 
+namespace
+{
+    // Plugin-module-wide host slot backing SharedTaskComponentHost — see the
+    // header comment for the lifetime contract.
+    Das::PluginInterface::IDasTaskComponentHost*& SharedHostSlot()
+    {
+        static Das::PluginInterface::IDasTaskComponentHost* host = nullptr;
+        return host;
+    }
+} // namespace
+
 namespace Das::Plugins::DasGraphTask
 {
+
+    Das::PluginInterface::IDasTaskComponentHost* SharedTaskComponentHost()
+    {
+        return SharedHostSlot();
+    }
+
+    void SetSharedTaskComponentHost(
+        Das::PluginInterface::IDasTaskComponentHost* host)
+    {
+        SharedHostSlot() = host;
+    }
 
     // === DasGraphTaskComponentFactory ===
 
@@ -84,6 +106,9 @@ namespace Das::Plugins::DasGraphTask
         Das::PluginInterface::IDasTaskComponentHost* p_host)
     {
         host_ = DasPtr<Das::PluginInterface::IDasTaskComponentHost>(p_host);
+        // Publish for the IDasTask adapter, which is created before the host
+        // is bound and reads it at Do time.
+        SetSharedTaskComponentHost(host_.Get());
         return DAS_S_OK;
     }
 

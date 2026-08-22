@@ -1,6 +1,7 @@
 #include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/Core/ForeignInterfaceHost/ForeignInterfaceHost.h>
 #include <das/Core/ForeignInterfaceHost/PluginScanner.h>
+#include <das/Core/GraphRuntime/EntryRefExpansion.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/Core/TaskScheduler/SchedulerService.h>
 #include <das/Core/TaskScheduler/TaskAuthoringContract.h>
@@ -779,6 +780,31 @@ namespace Das::Core::TaskScheduler
             return CloneJsonValue((*obj)[std::string_view("executionInput")]);
         }
         return yyjson::value{};
+    }
+
+    // Maps a repository-invoke snapshot resolution onto the graph-runtime
+    // expansion vocabulary. The expanded node hosts the repository-invoke
+    // wrapper component; the resolved child snapshot travels inside the
+    // broadcast binding default that wrapper consumes.
+    static Das::Core::GraphRuntime::EntryRefResolution
+    MakeEntryRefResolutionFromSnapshotResult(
+        const RepositoryInvoke::RepositoryInvokeCompileResult& resolved)
+    {
+        Das::Core::GraphRuntime::EntryRefResolution resolution;
+        resolution.ok = resolved.ok && resolved.snapshot.has_value();
+        if (resolution.ok)
+        {
+            resolution.component_guid =
+                RepositoryInvoke::INVOKE_REPOSITORY_COMPONENT_GUID;
+            resolution.snapshot_json =
+                CloneJsonValue(yyjson::object(*resolved.snapshot));
+        }
+        for (const auto& diagnostic : resolved.diagnostics)
+        {
+            resolution.diagnostics.push_back(
+                diagnostic.code + ": " + diagnostic.message);
+        }
+        return resolution;
     }
 
     static yyjson::value MakeExecutionCompileRequest()
@@ -3035,6 +3061,15 @@ namespace Das::Core::TaskScheduler
             }
         }
 
+        return RepositoryInvoke::ResolveRepositoryInvokeSnapshot(
+            BuildRepositoryInvokeCompileServices(),
+            repository_ref,
+            source_context);
+    }
+
+    RepositoryInvoke::RepositoryInvokeCompileServices
+    SchedulerService::BuildRepositoryInvokeCompileServices()
+    {
         RepositoryInvoke::RepositoryInvokeCompileServices services;
         services.load_entry = [this](int64_t entry_id)
             -> std::optional<Repository::Dto::RepositoryEntryDto>
@@ -3178,10 +3213,7 @@ namespace Das::Core::TaskScheduler
             return result;
         };
 
-        return RepositoryInvoke::ResolveRepositoryInvokeSnapshot(
-            services,
-            repository_ref,
-            source_context);
+        return services;
     }
 
     // ----------------------------------------------------------------
@@ -4610,12 +4642,81 @@ namespace Das::Core::TaskScheduler
                     }
                     else
                     {
+                        auto execution_input = ExtractProviderExecutionInput(
+                            parsed_compile.compile);
+
+                        // Graph plans carry entryRef nodes as unexpanded
+                        // markers. Discrimination is type-driven and
+                        // business-neutral: only a CompiledGraphPlanDto-shaped
+                        // object casts cleanly; any other execution input
+                        // (e.g. a maapi envelope) throws and flows on
+                        // untouched.
+                        bool graph_plan_expanded = false;
+                        Das::Core::GraphRuntime::Dto::CompiledGraphPlanDto
+                            graph_plan;
+                        try
+                        {
+                            graph_plan =
+                                yyjson::cast<Das::Core::GraphRuntime::Dto::
+                                                 CompiledGraphPlanDto>(
+                                    execution_input);
+
+                            const auto entry_ref_resolver =
+                                [this](
+                                    int64_t entry_id,
+                                    const std::optional<int64_t>&
+                                        expected_revision)
+                                -> Das::Core::GraphRuntime::EntryRefResolution
+                            {
+                                RepositoryInvoke::Dto::RepositoryTaskRefDto
+                                    repository_ref;
+                                repository_ref.entry_id = entry_id;
+                                repository_ref.expected_revision =
+                                    expected_revision;
+                                return MakeEntryRefResolutionFromSnapshotResult(
+                                    RepositoryInvoke::
+                                        ResolveRepositoryInvokeSnapshot(
+                                            BuildRepositoryInvokeCompileServices(),
+                                            repository_ref));
+                            };
+
+                            std::vector<std::string> expand_diagnostics;
+                            const auto               expand_result =
+                                Das::Core::GraphRuntime::ExpandEntryRefNodes(
+                                    graph_plan,
+                                    entry_ref_resolver,
+                                    &expand_diagnostics);
+                            if (DAS::IsFailed(expand_result))
+                            {
+                                compile_failed = true;
+                                for (const auto& diagnostic :
+                                     expand_diagnostics)
+                                {
+                                    DAS_CORE_LOG_WARN(
+                                        "SchedulerService::OnTick: task {} "
+                                        "entryRef expansion failed: {}",
+                                        selected_id,
+                                        diagnostic);
+                                }
+                            }
+                            else
+                            {
+                                graph_plan_expanded = true;
+                            }
+                        }
+                        catch (const std::exception&)
+                        {
+                            // Not a graph plan — leave execution_input as-is.
+                        }
+
                         try
                         {
                             p_props_json =
                                 Das::MakeDasPtr<Das::Core::Utils::IDasJsonImpl>(
-                                    ExtractProviderExecutionInput(
-                                        parsed_compile.compile));
+                                    graph_plan_expanded
+                                        ? CloneJsonValue(
+                                              yyjson::object(graph_plan))
+                                        : std::move(execution_input));
                         }
                         catch (const std::bad_alloc&)
                         {

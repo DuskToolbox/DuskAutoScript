@@ -1529,7 +1529,8 @@ void WriteFactoryPluginManifest(
     std::string_view             task_guid = FactoryTaskGuidString,
     bool                         include_authoring = true,
     std::string_view             language = "Cpp",
-    std::string_view             execution_component_guid = {})
+    std::string_view             execution_component_guid = {},
+    bool                         include_flow_components = true)
 {
     yyjson::value manifest(Das::Utils::MakeYyjsonObject());
     (*manifest.as_object())[std::string_view("name")] = "FactoryPlugin";
@@ -1585,16 +1586,34 @@ void WriteFactoryPluginManifest(
                 std::move(definition);
             (*components.as_object())[component_guid] = std::move(entry);
         };
-        add_component(
-            "68F10001-0000-4000-8000-000000000001",
-            "das.flow.branch");
-        add_component(
-            "68F10002-0000-4000-8000-000000000002",
-            "das.flow.sequence");
-        add_component("68F10003-0000-4000-8000-000000000003", "das.flow.delay");
-        add_component("68F10004-0000-4000-8000-000000000004", "das.flow.for");
-        add_component("68F10005-0000-4000-8000-000000000005", "das.flow.while");
-        add_component("68F10006-0000-4000-8000-000000000006", "das.flow.goto");
+        if (include_flow_components)
+        {
+            add_component(
+                "68F10001-0000-4000-8000-000000000001",
+                "das.flow.branch");
+            add_component(
+                "68F10002-0000-4000-8000-000000000002",
+                "das.flow.sequence");
+            add_component(
+                "68F10003-0000-4000-8000-000000000003",
+                "das.flow.delay");
+            add_component(
+                "68F10004-0000-4000-8000-000000000004",
+                "das.flow.for");
+            add_component(
+                "68F10005-0000-4000-8000-000000000005",
+                "das.flow.while");
+            add_component(
+                "68F10006-0000-4000-8000-000000000006",
+                "das.flow.goto");
+        }
+        else
+        {
+            // Without the flow-component set the manifest still needs one
+            // fake-backed component: the flow guids belong to the real
+            // flow-control plugin deployed alongside this variant.
+            add_component(FactoryTaskComponentImplGuidString, "test.execution");
+        }
 
         (*task_components.as_object())[std::string_view("components")] =
             std::move(components);
@@ -1894,6 +1913,51 @@ protected:
 
         const fs::path dst_dll = plugin_dir_ / "FactoryPlugin.dll";
         fs::copy_file(src_dll, dst_dll, fs::copy_options::overwrite_existing);
+    }
+
+    // 部署构建产物里的真实插件（dll + json 成对拷贝，json 文件名带平台前缀
+    // 差异：dll 由 manifest name 字段定位，json 文件名不必与 name 一致）。
+    // force_ipc 为 true 时把部署副本的 loadMode 补写为 ipc——测试 exe 静态
+    // 链接 DasCore，进程内再加载插件 dll 会产生双份 DasCore 全局状态。
+    void DeployRealPluginArtifacts(
+        const std::string& dll_name,
+        const std::string& manifest_name,
+        bool               force_ipc)
+    {
+        namespace fs = std::filesystem;
+        const fs::path build_plugin_dir{IpcTestConfig::GetPluginDir()};
+
+        const fs::path src_dll = build_plugin_dir / dll_name;
+        ASSERT_TRUE(fs::exists(src_dll))
+            << "plugin dll not found at: " << src_dll.string();
+        fs::copy_file(
+            src_dll,
+            plugin_dir_ / dll_name,
+            fs::copy_options::overwrite_existing);
+
+        const fs::path src_manifest = build_plugin_dir / manifest_name;
+        ASSERT_TRUE(fs::exists(src_manifest))
+            << "plugin manifest not found at: " << src_manifest.string();
+        if (!force_ipc)
+        {
+            fs::copy_file(
+                src_manifest,
+                plugin_dir_ / manifest_name,
+                fs::copy_options::overwrite_existing);
+            return;
+        }
+
+        std::ifstream     ifs(src_manifest);
+        const std::string manifest_text(
+            (std::istreambuf_iterator<char>(ifs)),
+            std::istreambuf_iterator<char>());
+        auto parsed = Das::Utils::ParseYyjsonFromString(manifest_text);
+        ASSERT_TRUE(parsed.has_value());
+        auto parsed_obj = parsed->as_object();
+        ASSERT_TRUE(parsed_obj.has_value());
+        (*parsed_obj)[std::string_view("loadMode")] = "ipc";
+        std::ofstream ofs(plugin_dir_ / manifest_name, std::ios::trunc);
+        ofs << Das::Utils::SerializeYyjsonValue(*parsed).value();
     }
 
     void TearDown() override
@@ -3941,6 +4005,114 @@ TEST_F(
     EXPECT_EQ(shared_state_->last_context_entry_id, 0);
     EXPECT_FALSE(shared_state_->last_context_had_task_id);
     EXPECT_TRUE((shared_state_->executed_count == 0));
+}
+
+// graph 任务（DasGraphTask 任务类型）经真实调度器 tick 端到端执行 entryRef
+// 项：编译信封过校验墙 → OnTick 展开 entryRef → invokeRepository 组件
+// （真实 FlowControl 插件）→ 子执行组件收到 executionInput。
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    GraphTaskEntryRefItemExecutesThroughSchedulerTick)
+{
+    // FactoryPlugin 变体不带流程组件（68F1xxxx 属真实 FlowControl），执行
+    // 组件指向 FakeTaskComponent 自身 guid。
+    WriteFactoryPluginManifest(
+        manifest_path_,
+        FactoryPluginGuidString,
+        FactoryTaskGuidString,
+        true,
+        "Cpp",
+        FactoryTaskComponentImplGuidString,
+        /*include_flow_components=*/false);
+    // DasGraphTask 走 IPC（任务插件的生产形态）；FlowControl 进程内直连
+    // 主进程——invokeRepository 组件与主进程 TaskComponentHost 同进程，
+    // 整条链呈星型（每个代理跳只经主进程中转），避开兄弟 host 进程间的
+    // 响应路由缺口。
+    DeployRealPluginArtifacts(
+        "libDasGraphTask.dll",
+        "DasGraphTask.json",
+        /*force_ipc=*/true);
+    DeployRealPluginArtifacts(
+        "libDasFlowControl.dll",
+        "DasFlowControl.json",
+        /*force_ipc=*/false);
+
+    // graph 任务实例：formSequence 单 entryRef 项指向 repository entry 0。
+    {
+        yyjson::value task0(Das::Utils::MakeYyjsonObject());
+        (*task0.as_object())[std::string_view("id")] = 0;
+        (*task0.as_object())[std::string_view("taskGuid")] =
+            "F4A2C9D1-7B3E-4D8A-A15F-C2E86B4D91A3";
+        (*task0.as_object())[std::string_view("pluginGuid")] =
+            "C8A4B7D0-1E2F-3A5B-6C9D-7E8F0A1B2C3D";
+        // 立即到期：ComputeNextDelay 只看有值时间戳，null 会被排到默认
+        // 长延迟（约 20s），拖垮 tick 启动。
+        (*task0.as_object())[std::string_view("nextExecutionTime")] =
+            static_cast<int64_t>(1);
+        {
+            // item id 采用 GUID 形态：GraphRuntime 的 PortFrame 数据面以
+            // DasGuid 形态的 node_id 做键（非 GUID id 会在输出回填时抛出）。
+            auto properties = Das::Utils::ParseYyjsonFromString(R"json({
+                "items": [
+                    {
+                        "itemId": "30000000-0000-0000-0000-000000000002",
+                        "target": {
+                            "targetKind": "entryRef",
+                            "entryRef": {
+                                "kind": "entryRef",
+                                "entryId": 0,
+                                "expectedRevision": 0,
+                                "sourceFingerprint": null
+                            }
+                        },
+                        "settings": {}
+                    }
+                ]
+            })json");
+            ASSERT_TRUE(properties.has_value());
+            (*task0.as_object())[std::string_view("properties")] =
+                std::move(*properties);
+        }
+        WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
+    }
+
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    auto created = scheduler_->CreateRepositoryEntry(
+        MakeRepositoryCreateRequest("Graph entryRef child", 8));
+    ASSERT_EQ(
+        (*created.as_object())[std::string_view("entryId")].as_sint().value_or(
+            -1),
+        0);
+
+    ASSERT_EQ(scheduler_->Enable(), DAS_S_OK);
+
+    bool child_executed = false;
+    {
+        ipc_scoped_lock lock(shared_state_->mutex);
+        child_executed = shared_state_->cv.wait_for(
+            lock,
+            std::chrono::seconds(20),
+            [this]
+            {
+                return shared_state_->get_last_execution_input().find(
+                           "\"key1\":\"compiled\"")
+                       != std::string_view::npos;
+            });
+    }
+    ASSERT_EQ(scheduler_->Disable(), DAS_S_OK);
+    // 让 BusinessThread 上的 OnTick 收尾（Do 被取消后其尾段仍在跑），
+    // 避免 TearDown 销毁 scheduler 与 tick 尾段竞态。
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    ASSERT_TRUE(child_executed)
+        << "entryRef child never received its executionInput";
+
+    const ipc_scoped_lock lock(shared_state_->mutex);
+    // 编译不被拒：被引用 entry 经 resolver 完成一次 execution 编译。
+    EXPECT_EQ(shared_state_->compile_count, 1);
+    EXPECT_EQ(shared_state_->get_last_compile_purpose(), "execution");
+    // 直跑任务本体（FactoryBackedTask）不应被执行——执行的是 graph 任务。
+    EXPECT_EQ(shared_state_->executed_count, 0u);
 }
 
 TEST_F(

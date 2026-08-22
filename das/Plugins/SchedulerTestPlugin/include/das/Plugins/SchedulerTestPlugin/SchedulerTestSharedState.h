@@ -89,6 +89,12 @@ inline constexpr char FactoryTaskComponentFactoryGuidString[] =
 inline constexpr char FactoryExecutionComponentGuidString[] =
     "68F10001-0000-4000-8000-000000000001";
 
+// FakeTaskComponent 自身 guid 的字符串形，作专属执行组件目标：当测试同时
+// 部署真实流程控制插件（它拥有 68F1xxxx 流程组件 guid）时，FactoryPlugin
+// 变体以此 guid 注册自己的执行组件，避免 guid 冲突。
+inline constexpr char FactoryTaskComponentImplGuidString[] =
+    "97BA1BE0-A199-47CB-9604-440B8BBC6555";
+
 // Convenience aliases for interprocess-safe synchronization.
 // ipc_scoped_lock 同时满足 std::lock_guard 与 std::unique_lock 的用途：
 // 它在构造时加锁、析构时解锁，并支持 unlock()/lock() 复用，可直接替换
@@ -141,6 +147,9 @@ struct FactoryTaskSharedState
     static constexpr size_t MAX_STRING_LEN = 256;
     char                    last_props_key1_value[MAX_STRING_LEN]{};
     char                    last_compile_purpose[MAX_STRING_LEN]{};
+    // Last "executionInput" port value received by a FakeTaskComponent Do —
+    // observes the repository-invoke child execution path end to end.
+    char last_execution_input[MAX_STRING_LEN]{};
 
     bool apply_ok = true;
     bool compile_ok = true;
@@ -169,6 +178,13 @@ struct FactoryTaskSharedState
         last_compile_purpose[len] = '\0';
     }
 
+    void set_last_execution_input(std::string_view v)
+    {
+        auto len = std::min(v.size(), MAX_STRING_LEN - 1);
+        std::memcpy(last_execution_input, v.data(), len);
+        last_execution_input[len] = '\0';
+    }
+
     std::string_view get_last_props_key1_value() const
     {
         return last_props_key1_value;
@@ -177,6 +193,11 @@ struct FactoryTaskSharedState
     std::string_view get_last_compile_purpose() const
     {
         return last_compile_purpose;
+    }
+
+    std::string_view get_last_execution_input() const
+    {
+        return last_execution_input;
     }
 };
 

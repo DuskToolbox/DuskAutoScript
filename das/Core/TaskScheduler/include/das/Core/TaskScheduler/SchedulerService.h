@@ -281,6 +281,15 @@ namespace Das::Core::TaskScheduler
             const TaskTypeRecord&            task_type,
             Das::PluginInterface::IDasTask** pp_out_task);
 
+        /// Repository-invoke compile services shared by the public snapshot
+        /// resolver and the OnTick entryRef expansion path. The public
+        /// resolver keeps its task-working/initialization gate; the OnTick
+        /// expansion bypasses it deliberately — it runs inside the
+        /// scheduler's own tick, which is exactly the state the gate exists
+        /// to keep out.
+        RepositoryInvoke::RepositoryInvokeCompileServices
+        BuildRepositoryInvokeCompileServices();
+
         // IDasAsyncCallback implementation for PostToBusinessThread dispatch
         class TickCallback final : public IDasAsyncCallback
         {

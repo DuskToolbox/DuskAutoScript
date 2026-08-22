@@ -707,13 +707,39 @@ DasResult FakeTaskComponent::ApplySettingsChange(
 
 DasResult FakeTaskComponent::Do(
     Das::PluginInterface::IDasStopToken*,
-    Das::ExportInterface::IDasReadOnlyPortMap*,
-    Das::ExportInterface::IDasPortMap** pp_out_port_map)
+    Das::ExportInterface::IDasReadOnlyPortMap* p_input_port_map,
+    Das::ExportInterface::IDasPortMap**        pp_out_port_map)
 {
     if (!pp_out_port_map)
     {
         return DAS_E_INVALID_POINTER;
     }
+
+    // Observe the repository-invoke child feeding path: record whatever
+    // executionInput string arrived on the input port so tests can assert
+    // the compiled envelope reached the child component.
+    if (p_input_port_map != nullptr)
+    {
+        const DasReadOnlyString    execution_input_key{"executionInput"};
+        DasPtr<IDasReadOnlyString> execution_input_value;
+        if (DAS_S_OK
+                == p_input_port_map->GetString(
+                    execution_input_key.Get(),
+                    execution_input_value.Put())
+            && execution_input_value)
+        {
+            const char* raw = nullptr;
+            if (DAS_S_OK == execution_input_value->GetUtf8(&raw) && raw)
+            {
+                if (g_test_shared_state != nullptr)
+                {
+                    const ipc_scoped_lock lock(g_test_shared_state->mutex);
+                    g_test_shared_state->set_last_execution_input(raw);
+                }
+            }
+        }
+    }
+
     DAS::DasPtr<Das::ExportInterface::IDasPortMap> output_map;
     const DasResult hr = CreateIDasPortMap(output_map.Put());
     if (DAS::IsFailed(hr))
@@ -722,6 +748,10 @@ DasResult FakeTaskComponent::Do(
     }
     *pp_out_port_map = output_map.Get();
     (*pp_out_port_map)->AddRef();
+    if (g_test_shared_state != nullptr)
+    {
+        g_test_shared_state->cv.notify_all();
+    }
     return DAS_S_OK;
 }
 
@@ -817,7 +847,11 @@ DasResult FakeTaskComponentFactory::CreateComponent(
             0x68F10006,
             0x0000,
             0x4000,
-            {0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x06}}};
+            {0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x06}},
+        // The fake component's own guid — used as a dedicated execution
+        // component target when a test deploys the real flow-control plugin
+        // (which owns the 68F1xxxx flow guids) alongside this one.
+        FactoryTaskComponentImplGuid};
 
     const auto supported = std::any_of(
         SUPPORTED_COMPONENTS.begin(),

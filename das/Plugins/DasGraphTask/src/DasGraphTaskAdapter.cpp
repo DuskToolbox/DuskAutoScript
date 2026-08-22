@@ -6,6 +6,7 @@
 #include <das/DasApi.h>
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
+#include <das/Plugins/DasGraphTask/DasGraphTaskPluginPackage.h>
 
 DAS_NS_BEGIN
 namespace Plugins::DasGraphTask
@@ -33,11 +34,17 @@ namespace Plugins::DasGraphTask
             }
         }
 
-        // IDasTask contract: do not implicitly access host/storage; execute the
-        // self-contained snapshot via the hostless factory (matches the
-        // original 78935d8e IDasTask form).
+        // Node components are created through the task component host the
+        // plugin's component factory received at load time (shared
+        // plugin-wide, bound after this adapter is constructed). Without a
+        // host the runtime can only reject the graph at Configure, so fall
+        // back to the hostless factory only when no host was ever bound.
+        auto* component_host = SharedTaskComponentHost();
         DAS::DasPtr<Das::ExportInterface::IDasGraphRuntime> runtime;
-        const DasResult hr = CreateGraphRuntime(runtime.Put());
+        const DasResult                                     hr =
+            component_host != nullptr
+                ? CreateGraphRuntimeWithHost(component_host, runtime.Put())
+                : CreateGraphRuntime(runtime.Put());
         if (DAS::IsFailed(hr))
         {
             return hr;
