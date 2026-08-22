@@ -2,20 +2,21 @@
 
 #include "MaapiRunTaskComponent.h"
 
+#include "MaapiExecutionKernel.h"
 #include "PluginUtils.h"
 
 #include <das/DasApi.h>
 #include <das/DasString.hpp>
-#include <das/Plugins/DasMaaPi/MaaPiExecutionEngine.h>
 #include <das/Plugins/DasMaaPi/MaaRuntime.h>
-#include <das/Plugins/DasMaaPi/MaapiDto.h>
 #include <das/Utils/DasJsonCore.h>
-#include <das/Utils/fmt.h>
 #include <das/_autogen/idl/abi/IDasPortMap.h>
-#include <das/_autogen/idl/abi/IDasStringVector.h>
 
 #include <new>
+#include <optional>
+#include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 DAS_NS_BEGIN
 namespace Plugins::DasMaaPi
@@ -35,6 +36,46 @@ namespace Plugins::DasMaaPi
             *pp_out_result_json = wrapped.Get();
             (*pp_out_result_json)->AddRef();
             return DAS_S_OK;
+        }
+
+        yyjson::value BuildCompletedTasksArray(
+            const std::vector<std::string>& completed_tasks)
+        {
+            auto arr = Das::Utils::MakeYyjsonArray();
+            for (const auto& task : completed_tasks)
+            {
+                arr.as_array()->emplace_back(yyjson::value(std::string{task}));
+            }
+            return arr;
+        }
+
+        // 读取输入口 executionInput 的 envelope JSON 字符串。端口缺失 /
+        // 空值返回 nullopt——组件无静默兜底，由调用方显性失败。
+        std::optional<std::string> ReadExecutionInputJson(
+            ExportInterface::IDasReadOnlyPortMap* p_input_port_map)
+        {
+            if (p_input_port_map == nullptr)
+            {
+                return std::nullopt;
+            }
+
+            IDasReadOnlyString*     p_value = nullptr;
+            const DasReadOnlyString key{"executionInput"};
+            if (DAS::IsFailed(p_input_port_map->GetString(key.Get(), &p_value))
+                || p_value == nullptr)
+            {
+                return std::nullopt;
+            }
+
+            const char* utf8 = nullptr;
+            p_value->GetUtf8(&utf8);
+            std::string value(utf8 != nullptr ? utf8 : "");
+            p_value->Release();
+            if (value.empty())
+            {
+                return std::nullopt;
+            }
+            return value;
         }
     } // namespace
 
@@ -61,7 +102,7 @@ namespace Plugins::DasMaaPi
     }
 
     DasResult MaapiRunTaskComponent::ApplySettingsChange(
-        ExportInterface::IDasJson*  p_request_json,
+        ExportInterface::IDasJson*,
         ExportInterface::IDasJson** pp_out_result_json)
     {
         if (pp_out_result_json == nullptr)
@@ -70,33 +111,9 @@ namespace Plugins::DasMaaPi
         }
         *pp_out_result_json = nullptr;
 
-        if (p_request_json != nullptr)
-        {
-            auto parsed = ReadJson(p_request_json);
-            if (parsed)
-            {
-                // GraphRuntime::ApplyNodeSettings wraps the compiled_settings
-                // inside {"settings": <value>, "payload": <value>}.
-                // Extract the inner settings object when the wrapper is
-                // present.
-                auto obj = parsed->as_object();
-                if (obj && obj->contains(std::string_view("settings")))
-                {
-                    auto inner = (*obj)[std::string_view("settings")];
-                    if (!inner.is_null())
-                    {
-                        settings_ = Das::Utils::CloneYyjsonValue(inner);
-                        settings_applied_ = true;
-                    }
-                }
-                else
-                {
-                    settings_ = Das::Utils::CloneYyjsonValue(*parsed);
-                    settings_applied_ = true;
-                }
-            }
-        }
-
+        // manifest settings:[] —— 组件无可接受的设置项，空 accepted 是终态
+        // 真语义。方法与 {"acceptedSettings": {}} 响应形状保留：GraphRuntime
+        // Configure 阶段对每个节点投递 ApplySettingsChange，消费该响应形状。
         auto result = Das::Utils::MakeYyjsonObject();
         (*result.as_object())[std::string_view("acceptedSettings")] =
             Das::Utils::MakeYyjsonObject();
@@ -114,6 +131,29 @@ namespace Plugins::DasMaaPi
         }
         *pp_out_port_map = nullptr;
 
+        const auto execution_input_json =
+            ReadExecutionInputJson(p_input_port_map);
+        if (!execution_input_json.has_value())
+        {
+            return DAS_E_INVALID_ARGUMENT;
+        }
+
+        auto envelope_json =
+            Das::Utils::ParseYyjsonFromString(*execution_input_json);
+        if (!envelope_json.has_value())
+        {
+            return DAS_E_INVALID_JSON;
+        }
+
+        MaaRuntimeResult run_result;
+        const DasResult  execute_result = ExecuteEnvelope(
+            *envelope_json,
+            MaaApiBoundaryForRuntime(),
+            stop_token,
+            {},
+            {},
+            run_result);
+
         DasPtr<ExportInterface::IDasPortMap> output_map;
         DasResult hr = CreateIDasPortMap(output_map.Put());
         if (DAS::IsFailed(hr))
@@ -121,183 +161,51 @@ namespace Plugins::DasMaaPi
             return hr;
         }
 
-        if (!settings_applied_)
+        auto completed_tasks_array =
+            BuildCompletedTasksArray(run_result.completed_tasks);
+        auto completed_serialized =
+            Das::Utils::SerializeYyjsonValue(completed_tasks_array);
+        if (completed_serialized)
         {
-            return DAS_E_OBJECT_NOT_INIT;
+            output_map->SetString(
+                DasReadOnlyString("completedTasks").Get(),
+                DasReadOnlyString(completed_serialized->c_str()).Get());
         }
 
-        auto obj = settings_.as_object();
-        if (!obj)
-        {
-            return DAS_E_OBJECT_NOT_INIT;
-        }
-
-        EngineInput input;
-        input.pi_path = (*obj)["piPath"].as_string().value_or("");
-        input.task_name = (*obj)["taskName"].as_string().value_or("");
-        // 组件 settings 取证日志：编排器投喂的 compiled_settings（piPath/
-        // taskName/options 等）此前是日志盲区，出问题无法对账执行输入。
-        {
-            const auto settings_text =
-                Das::Utils::SerializeYyjsonValue(settings_);
-            DAS_LOG_INFO(
-                DAS_FMT_NS::format(
-                    "[DasMaaPi] run component settings: {}",
-                    settings_text.value_or("<serialize-failed>"))
-                    .c_str());
-        }
-        // 用户显式选择的 ADB 设备 address。PI v2 协议的 controller.adb
-        // 不含 address（运行时设备发现），Adb 控制器执行必须由任务设置
-        // 携带本字段；缺失时执行引擎按 adb-device-missing 显性失败。
-        input.adb_device = (*obj)["adbDevice"].as_string().value_or("");
-
-        auto options_val = (*obj)["options"];
-        if (options_val.is_object() || options_val.is_array())
-        {
-            input.options = Das::Utils::CloneYyjsonValue(options_val);
-        }
-        else
-        {
-            input.options = Das::Utils::MakeYyjsonObject();
-        }
-
-        auto port_map_val = (*obj)["portMap"];
-        if (port_map_val.is_object())
-        {
-            auto port_map_obj = port_map_val.as_object();
-            for (auto&& [key, value] : *port_map_obj)
-            {
-                auto pi_param = value.as_string();
-                if (pi_param)
-                {
-                    input.port_map[std::string(key)] = std::string(*pi_param);
-                }
-            }
-        }
-
-        if (p_input_port_map)
-        {
-            DasPtr<ExportInterface::IDasStringVector> keys;
-            hr = p_input_port_map->GetKeys(keys.Put());
-            if (DAS::IsOk(hr) && keys)
-            {
-                uint64_t count = 0;
-                keys->Size(&count);
-                for (uint64_t i = 0; i < count; ++i)
-                {
-                    DasPtr<IDasReadOnlyString> p_key;
-                    if (DAS::IsFailed(keys->At(i, p_key.Put())) || !p_key)
-                    {
-                        continue;
-                    }
-
-                    std::string key_str;
-                    {
-                        const char* raw = nullptr;
-                        p_key->GetUtf8(&raw);
-                        if (raw)
-                        {
-                            key_str = raw;
-                        }
-                    }
-
-                    auto pm_it = input.port_map.find(key_str);
-                    if (pm_it == input.port_map.end())
-                    {
-                        continue;
-                    }
-
-                    ExportInterface::DasVariantType type =
-                        ExportInterface::DAS_VARIANT_TYPE_NULL;
-                    hr = p_input_port_map->GetType(p_key.Get(), &type);
-
-                    if (DAS::IsFailed(hr))
-                    {
-                        continue;
-                    }
-
-                    if (type == ExportInterface::DAS_VARIANT_TYPE_STRING)
-                    {
-                        DasPtr<IDasReadOnlyString> p_val;
-                        if (DAS::IsOk(p_input_port_map->GetString(
-                                DasReadOnlyString(key_str.c_str()).Get(),
-                                p_val.Put()))
-                            && p_val)
-                        {
-                            const DasReadOnlyString val_reader{p_val.Get()};
-                            auto arr = Das::Utils::MakeYyjsonArray();
-                            arr.as_array()->emplace_back(
-                                yyjson::value(
-                                    std::string{val_reader.GetUtf8()}));
-                            input.inputs[key_str] = std::move(arr);
-                        }
-                    }
-                    else if (type == ExportInterface::DAS_VARIANT_TYPE_INT)
-                    {
-                        int64_t val = 0;
-                        if (DAS::IsOk(p_input_port_map->GetInt(
-                                DasReadOnlyString(key_str.c_str()).Get(),
-                                &val)))
-                        {
-                            input.inputs[key_str] = yyjson::value(val);
-                        }
-                    }
-                    else if (type == ExportInterface::DAS_VARIANT_TYPE_BOOL)
-                    {
-                        bool val = false;
-                        if (DAS::IsOk(p_input_port_map->GetBool(
-                                DasReadOnlyString(key_str.c_str()).Get(),
-                                &val)))
-                        {
-                            input.inputs[key_str] = yyjson::value(val);
-                        }
-                    }
-                    else if (type == ExportInterface::DAS_VARIANT_TYPE_FLOAT)
-                    {
-                        double val = 0.0;
-                        if (DAS::IsOk(p_input_port_map->GetFloat(
-                                DasReadOnlyString(key_str.c_str()).Get(),
-                                &val)))
-                        {
-                            input.inputs[key_str] = yyjson::value(val);
-                        }
-                    }
-                }
-            }
-        }
-
-        MaaPiExecutionEngine engine;
-        const EngineOutput   output =
-            engine.Execute(input, MaaApiBoundaryForRuntime(), stop_token);
-
+        // stopped 语义：内核 stop 前置短路返回 DAS_E_TIMEOUT；运行中取消由
+        // MaaRuntime 置 stopped 标志（das_result 为 DAS_E_FAIL）——两者都算停。
         output_map->SetBool(
             DasReadOnlyString("stopped").Get(),
-            output.das_result == DAS_E_TIMEOUT);
+            run_result.stopped || run_result.das_result == DAS_E_TIMEOUT);
 
-        if (!output.diagnostics.empty())
+        if (!run_result.diagnostics.empty())
         {
-            auto diag_arr = Das::Utils::MakeYyjsonArray();
-            for (const auto& d : output.diagnostics)
+            auto diagnostics_array = Das::Utils::MakeYyjsonArray();
+            for (const auto& diagnostic : run_result.diagnostics)
             {
-                auto diag_obj = Das::Utils::MakeYyjsonObject();
-                auto o = diag_obj.as_object();
-                (*o)[std::string_view("severity")] = std::make_pair(
-                    std::string_view(d.severity),
+                auto diagnostic_object = Das::Utils::MakeYyjsonObject();
+                auto diagnostic_fields = diagnostic_object.as_object();
+                (*diagnostic_fields)[std::string_view("severity")] =
+                    std::make_pair(
+                        std::string_view(diagnostic.severity),
+                        yyjson::copy_string);
+                (*diagnostic_fields)[std::string_view("code")] = std::make_pair(
+                    std::string_view(diagnostic.code),
                     yyjson::copy_string);
-                (*o)[std::string_view("code")] = std::make_pair(
-                    std::string_view(d.code),
-                    yyjson::copy_string);
-                (*o)[std::string_view("message")] = std::make_pair(
-                    std::string_view(d.message),
-                    yyjson::copy_string);
-                diag_arr.as_array()->emplace_back(std::move(obj));
+                (*diagnostic_fields)[std::string_view("message")] =
+                    std::make_pair(
+                        std::string_view(diagnostic.message),
+                        yyjson::copy_string);
+                diagnostics_array.as_array()->emplace_back(
+                    std::move(diagnostic_object));
             }
-            auto serialized = Das::Utils::SerializeYyjsonValue(diag_arr);
-            if (serialized)
+            auto diagnostics_serialized =
+                Das::Utils::SerializeYyjsonValue(diagnostics_array);
+            if (diagnostics_serialized)
             {
                 output_map->SetString(
                     DasReadOnlyString("diagnostics").Get(),
-                    DasReadOnlyString(serialized->c_str()).Get());
+                    DasReadOnlyString(diagnostics_serialized->c_str()).Get());
             }
         }
         else
@@ -307,23 +215,12 @@ namespace Plugins::DasMaaPi
                 DasReadOnlyString("[]").Get());
         }
 
-        for (const auto& [port_id, value] : output.outputs)
-        {
-            auto serialized = Das::Utils::SerializeYyjsonValue(value);
-            if (serialized)
-            {
-                output_map->SetString(
-                    DasReadOnlyString(port_id.c_str()).Get(),
-                    DasReadOnlyString(serialized->c_str()).Get());
-            }
-        }
-
         *pp_out_port_map = output_map.Get();
         output_map.Get()->AddRef();
 
-        if (DAS::IsFailed(output.das_result))
+        if (DAS::IsFailed(execute_result))
         {
-            return output.das_result;
+            return execute_result;
         }
 
         return DAS_S_OK;

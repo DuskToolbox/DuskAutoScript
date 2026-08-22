@@ -1,16 +1,8 @@
 #ifndef DAS_PLUGINS_DASMAAPI_MAAPIRUNTASKCOMPONENT_H
 #define DAS_PLUGINS_DASMAAPI_MAAPIRUNTASKCOMPONENT_H
 
-#include <cassert>
-
-#include <cpp_yyjson.hpp>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasTaskComponent.Implements.hpp>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasTaskComponentFactory.Implements.hpp>
-
-#include <cstdint>
-#include <optional>
-#include <string>
-#include <vector>
 
 DAS_DEFINE_CLASS_IN_NAMESPACE(
     Das::Plugins::DasMaaPi,
@@ -45,44 +37,16 @@ DAS_DEFINE_CLASS_IN_NAMESPACE(
 DAS_NS_BEGIN
 namespace Plugins::DasMaaPi
 {
-    struct MaapiRunTaskDiagnosticDto
-    {
-        std::string                 severity;
-        std::string                 code;
-        std::string                 message;
-        std::optional<std::string>  path;
-        std::optional<std::int64_t> provider_code;
-    };
-
-    struct MaapiRunTaskOutputsDto
-    {
-        std::vector<std::string> completed_tasks;
-        bool                     stopped = false;
-    };
-
-    struct MaapiRunTaskSignalsDto
-    {
-        bool succeeded = false;
-        bool failed = false;
-        bool cancelled = false;
-    };
-
-    struct MaapiRunTaskResultDto
-    {
-        int32_t                                version = 1;
-        std::string                            status;
-        MaapiRunTaskOutputsDto                 outputs;
-        std::vector<MaapiRunTaskDiagnosticDto> diagnostics;
-        MaapiRunTaskSignalsDto                 signals;
-    };
-
+    // manifest（DasMaaPi.json）声明的执行组件：settings 为空、输入口
+    // executionInput（object）、输出口 completedTasks/stopped/diagnostics、
+    // 信号 succeeded/failed/cancelled。Do 是纯消费者——读输入口的 envelope
+    // JSON 经共享执行内核（MaapiExecutionKernel）执行，不消费任何 settings
+    // 键；envelope 由唯一编译器（MaapiAuthoringSession::Compile）产出，经
+    // RepositoryInvoke 组件喂线（SetPortString("executionInput", ...)）。
     class MaapiRunTaskComponent final
         : public PluginInterface::DasTaskComponentImplBase<
               MaapiRunTaskComponent>
     {
-        yyjson::value settings_;
-        bool          settings_applied_ = false;
-
     public:
         DAS_IMPL GetGuid(DasGuid* p_out_guid) override;
         DAS_IMPL GetRuntimeClassName(IDasReadOnlyString** pp_out_name) override;
@@ -116,30 +80,5 @@ namespace Plugins::DasMaaPi
     };
 } // namespace Plugins::DasMaaPi
 DAS_NS_END
-
-template <>
-struct yyjson::field_name_rule<
-    Das::Plugins::DasMaaPi::MaapiRunTaskDiagnosticDto>
-{
-    using type = yyjson::snake_to_camel_transform;
-};
-
-template <>
-struct yyjson::field_name_rule<Das::Plugins::DasMaaPi::MaapiRunTaskOutputsDto>
-{
-    using type = yyjson::snake_to_camel_transform;
-};
-
-template <>
-struct yyjson::field_name_rule<Das::Plugins::DasMaaPi::MaapiRunTaskSignalsDto>
-{
-    using type = yyjson::snake_to_camel_transform;
-};
-
-template <>
-struct yyjson::field_name_rule<Das::Plugins::DasMaaPi::MaapiRunTaskResultDto>
-{
-    using type = yyjson::snake_to_camel_transform;
-};
 
 #endif // DAS_PLUGINS_DASMAAPI_MAAPIRUNTASKCOMPONENT_H
