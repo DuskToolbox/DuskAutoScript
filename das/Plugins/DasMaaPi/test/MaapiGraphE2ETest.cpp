@@ -1,19 +1,21 @@
+#include "../../DasFlowControl/src/FlowControlTaskComponents.h"
 #include "../src/MaapiRunTaskComponent.h"
 #include "FakeMaaApiBoundary.h"
 
 #include <das/Core/GraphRuntime/CompiledArtifact.h>
 #include <das/Core/GraphRuntime/Config.h>
 #include <das/Core/GraphRuntime/GraphRuntime.h>
-#include <das/Plugins/DasMaaPi/MaaPiErrorCodes.h>
+#include <das/Core/TaskScheduler/RepositoryInvokeDtos.h>
 #include <das/Plugins/DasMaaPi/MaaRuntime.h>
+#include <das/Plugins/DasMaaPi/MaapiDto.h>
 #include <das/Utils/DasJsonCore.h>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasStopToken.Implements.hpp>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasTaskComponentHost.Implements.hpp>
 #include <gtest/gtest.h>
 
-#include <filesystem>
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace
 {
@@ -23,22 +25,23 @@ namespace
     using namespace Das::Plugins::DasMaaPi;
     using namespace Das::Plugins::DasMaaPi::Test;
 
+    namespace RepositoryInvokeDto =
+        Das::Core::TaskScheduler::RepositoryInvoke::Dto;
+
     using IDasTaskComponent = PluginInterface::IDasTaskComponent;
-    using IDasTaskComponentHost = PluginInterface::IDasTaskComponentHost;
 
     // ---- Constants ----
 
     const std::string MAAPI_RUN_TASK_GUID =
         "69F20008-0000-4000-8000-000000000001";
+    const std::string REPOSITORY_INVOKE_GUID =
+        "68F10007-0000-4000-8000-000000000007";
+    const std::string REPOSITORY_INVOKE_KIND = "das.flow.invokeRepository";
     const std::string NODE_ID = "30000000-0000-0000-0000-000000000001";
 
-    // ---- Fixture path helper ----
-
-    std::filesystem::path FixturePath(std::string_view name)
-    {
-        return std::filesystem::current_path() / "DasMaaPi" / "test"
-               / "fixtures" / std::filesystem::path{name};
-    }
+    // 图输入广播绑定哨兵（与 GraphRuntime/DoAdapter 的 BROADCAST_SOURCE
+    // 一致）：source 不是真实节点，default_value 直接物化到目标输入口。
+    constexpr std::string_view GRAPH_INPUT_BROADCAST_SOURCE = "$graph_input";
 
     // ---- Mock StopToken ----
 
@@ -57,7 +60,7 @@ namespace
         }
     };
 
-    // ---- ScopedBoundaryHook (re-declared locally) ----
+    // ---- ScopedBoundaryHook ----
 
     class ScopedBoundaryHook final
     {
@@ -71,7 +74,8 @@ namespace
     };
 
     // ---- MockTaskComponentHost ----
-    // Creates real MaapiRunTaskComponent instances when the GUID matches.
+    // RepositoryInvoke 节点用真实 FlowControl 组件实现（host 注入本 mock，
+    // 供其创建子组件）；maapi run 组件为被测对象本体。
 
     class MaapiMockHost final
         : public PluginInterface::DasTaskComponentHostImplBase<MaapiMockHost>
@@ -88,16 +92,26 @@ namespace
 
             auto guid_str = DasGuidToString(component_guid);
 
-            if (guid_str.GetUtf8() != MAAPI_RUN_TASK_GUID)
+            if (guid_str.GetUtf8() == MAAPI_RUN_TASK_GUID)
             {
-                *pp_out_component = nullptr;
-                return DAS_E_NOT_FOUND;
+                auto* component = new MaapiRunTaskComponent();
+                component->AddRef();
+                *pp_out_component = component;
+                return DAS_S_OK;
             }
 
-            auto* component = new MaapiRunTaskComponent();
-            component->AddRef();
-            *pp_out_component = component;
-            return DAS_S_OK;
+            if (guid_str.GetUtf8() == REPOSITORY_INVOKE_GUID)
+            {
+                auto* component = new DasFlowControlTaskComponent(
+                    REPOSITORY_INVOKE_KIND,
+                    DasPtr<PluginInterface::IDasTaskComponentHost>(this));
+                component->AddRef();
+                *pp_out_component = component;
+                return DAS_S_OK;
+            }
+
+            *pp_out_component = nullptr;
+            return DAS_E_NOT_FOUND;
         }
     };
 
@@ -113,8 +127,62 @@ namespace
         return p;
     }
 
-    CompiledGraphPlanDto MakeSingleMaapiNodePlan(
-        const std::string& settings_json)
+    // envelope fixture 直接构造 ExecutionEnvelopeDto 并序列化——cpp_yyjson
+    // 的 default_caster 经 PFR 对每个字段调 obj[key]，缺 key（如
+    // focusTranslationsPath/schedule 即便为空也必须显式存在）在 cast 前抛
+    // std::out_of_range，手搓 JSON 字符串极易漏键。
+    yyjson::value MakeEnvelopeValue()
+    {
+        ExecutionEnvelopeDto envelope;
+        envelope.maapi.interface_directory = "C:/maa";
+        envelope.maapi.controller_name = "Android";
+        envelope.maapi.controller.name = "Android";
+        envelope.maapi.controller.type = "Adb";
+        envelope.maapi.controller.address = "127.0.0.1:5555";
+
+        AdbInitParams adb;
+        adb.address = "127.0.0.1:5555";
+        ControllerInitParams controller_init_params;
+        controller_init_params.controller_type = "Adb";
+        controller_init_params.adb = std::move(adb);
+        envelope.maapi.controller_init_params =
+            std::move(controller_init_params);
+
+        envelope.maapi.resource_name = "Official";
+        envelope.maapi.resource_paths = {"C:/maa/resource"};
+        // 与 FakeMaaApiBoundary::GetResourceHash 的默认返回一致，避免
+        // resource hash mismatch 警告诊断混入断言面。
+        envelope.maapi.resource_hash = "hash-expected";
+
+        MaaTaskExecutionDto task;
+        task.task_name = "E2ETestTask";
+        task.entry = "StartE2E";
+        task.pipeline_override = Utils::MakeYyjsonObject();
+        envelope.maapi.tasks.push_back(std::move(task));
+
+        return Utils::CloneYyjsonValue(yyjson::object(envelope));
+    }
+
+    // 编译快照：RepositoryInvoke 组件的 compiledSnapshot 输入口契约载荷
+    // （唯一编译器的 executionInput 产物内嵌其中）。
+    std::string MakeSnapshotJson()
+    {
+        RepositoryInvokeDto::ChildExecutionSnapshotDto snapshot;
+        snapshot.version = 1;
+        snapshot.source_entry_id = 42;
+        snapshot.source_revision = 7;
+        snapshot.plugin_guid = std::string(PLUGIN_GUID_TEXT);
+        snapshot.task_type_guid = std::string(TASK_GUID_TEXT);
+        snapshot.component_guid = MAAPI_RUN_TASK_GUID;
+        snapshot.execution_input = MakeEnvelopeValue();
+
+        const auto serialized = Utils::SerializeYyjsonValue(
+            Utils::CloneYyjsonValue(yyjson::object(snapshot)));
+        return serialized.value_or("{}");
+    }
+
+    CompiledGraphPlanDto MakeSingleRepositoryInvokeNodePlan(
+        const std::string& snapshot_json)
     {
         CompiledGraphPlanDto plan;
         plan.source_fingerprint = "fp_e2e";
@@ -122,94 +190,51 @@ namespace
 
         CompiledNodeSnapshotDto snap;
         snap.node_id = NODE_ID;
-        snap.component_guid = MAAPI_RUN_TASK_GUID;
-
-        auto parsed = Utils::ParseYyjsonFromString(settings_json);
-        if (parsed)
-        {
-            snap.compiled_settings = std::move(*parsed);
-        }
-
+        snap.component_guid = REPOSITORY_INVOKE_GUID;
         snap.resolved_ports = {
-            MakePortDef("graph_debug", "bool"),
-            MakePortDef("graph_timeout", "int"),
+            MakePortDef("compiledSnapshot", "object"),
+            MakePortDef("status", "string"),
+            MakePortDef("diagnostic", "string"),
             MakePortDef("completedTasks", "array<string>"),
             MakePortDef("stopped", "bool"),
             MakePortDef("diagnostics", "array<object>"),
         };
-
         plan.node_snapshots.push_back(std::move(snap));
         plan.execution_order.push_back(NODE_ID);
+
+        // 图输入广播绑定：快照 JSON 以字符串标量物化到 compiledSnapshot
+        // 输入口（GraphRuntime 只对标量做广播注入，对象/数组会被跳过）。
+        // yyjson::value 的 lvalue std::string 路径存的是视图（悬垂），
+        // 必须走 rvalue 拷贝路径让其持有字节。
+        PortBindingDto broadcast;
+        broadcast.source_node_id = std::string{GRAPH_INPUT_BROADCAST_SOURCE};
+        broadcast.source_port_id = "snapshot";
+        broadcast.target_node_id = NODE_ID;
+        broadcast.target_port_id = "compiledSnapshot";
+        broadcast.default_value = yyjson::value(std::string{snapshot_json});
+        plan.binding_plan.bindings.push_back(std::move(broadcast));
+
         return plan;
-    }
-
-    // ---- Settings builder ----
-
-    std::string MakeNodeSettingsJson(
-        const std::string& pi_path,
-        const std::string& task_name,
-        const std::string& options_json,
-        const std::string& port_map_json)
-    {
-        // Build via yyjson so special characters in pi_path (e.g. Windows
-        // backslashes from FixturePath().string()) are properly escaped.
-        // Raw string concatenation would emit invalid JSON escapes such as
-        // "\s"/"\D", which ParseYyjsonFromString rejects, leaving
-        // compiled_settings null and causing Do() to return
-        // DAS_E_OBJECT_NOT_INIT.
-        auto root = Utils::MakeYyjsonObject();
-        auto obj = root.as_object();
-        (*obj)["piPath"] = yyjson::value(pi_path);
-        (*obj)["taskName"] = yyjson::value(task_name);
-        // fixture 控制器为 Adb：任务设置必须携带设备选择，pin
-        // FakeMaaApiBoundary 默认设备的 address
-        (*obj)["adbDevice"] = yyjson::value("127.0.0.1:5555");
-
-        if (auto parsed = Utils::ParseYyjsonFromString(options_json); parsed)
-        {
-            (*obj)["options"] = Das::Utils::CloneYyjsonValue(*parsed);
-        }
-        else
-        {
-            (*obj)["options"] = Utils::MakeYyjsonObject();
-        }
-
-        if (auto parsed = Utils::ParseYyjsonFromString(port_map_json); parsed)
-        {
-            (*obj)["portMap"] = Das::Utils::CloneYyjsonValue(*parsed);
-        }
-        else
-        {
-            (*obj)["portMap"] = Utils::MakeYyjsonObject();
-        }
-
-        auto serialized = Utils::SerializeYyjsonValue(root);
-        return serialized.value_or("{}");
     }
 
 } // namespace
 
 // ===================================================================
-// Test 1: MaaPiNodeExecutesSuccessfullyInGraphRuntime
+// Test 1: RepositoryInvokeNodeExecutesMaapiChildInGraphRuntime
 //
-// Verifies the full E2E pipeline:
-//   GraphRuntime::RunWithHost → Configure → ApplySettingsChange → Do()
-//   → MaaPiExecutionEngine::Execute → PostTask (via FakeMaaApiBoundary)
-//   → Output PortMap with completedTasks
+// tracer 端到端链路验收：
+//   GraphRuntime::RunWithHost → 真实 RepositoryInvoke 组件（读
+//   compiledSnapshot）→ host CreateTaskComponent(maapi run) →
+//   SetPortString("executionInput", ...) → MaapiRunTaskComponent::Do
+//   → 共享执行内核 → MaaRuntime::Run（FakeMaaApiBoundary 观测）
 // ===================================================================
 
-TEST(MaapiGraphE2ETest, MaaPiNodeExecutesSuccessfullyInGraphRuntime)
+TEST(MaapiGraphE2ETest, RepositoryInvokeNodeExecutesMaapiChildInGraphRuntime)
 {
     FakeMaaApiBoundary       fake;
     const ScopedBoundaryHook hook(fake);
 
-    auto settings_json = MakeNodeSettingsJson(
-        FixturePath("pi_e2e_interface.json").string(),
-        "E2ETestTask",
-        R"({"screenshot_mode":"case_a","enable_debug":true,"timeout_ms":5000})",
-        R"({"graph_debug":"enable_debug","graph_timeout":"timeout_ms"})");
-
-    auto plan = MakeSingleMaapiNodePlan(settings_json);
+    auto plan = MakeSingleRepositoryInvokeNodePlan(MakeSnapshotJson());
 
     auto host = MaapiMockHost::Make();
     auto token = PluginInterface::DasStopTokenImplBase<MockStopToken>::Make();
@@ -219,54 +244,27 @@ TEST(MaapiGraphE2ETest, MaaPiNodeExecutesSuccessfullyInGraphRuntime)
 
     EXPECT_EQ(hr, DAS_S_OK);
 
-    // Verify that PostTask was called with the StartE2E entry
-    bool found_post_task = false;
-    for (const auto& call : fake.calls)
-    {
-        if (call.find("PostTask:StartE2E:") != std::string::npos)
-        {
-            found_post_task = true;
-
-            // Extract pipeline_override JSON from the call string.
-            // Format is "PostTask:StartE2E:<pipeline_override>"
-            auto colon_pos = call.find(':', call.find("PostTask:") + 9);
-            auto second_colon = call.find(':', colon_pos + 1);
-            const std::string pipeline_override = call.substr(second_colon + 1);
-
-            // Verify PortMap inputs were merged via port_map mapping.
-            // portMap maps graph_debug → enable_debug, graph_timeout →
-            // timeout_ms. Since there are no upstream nodes, no PortMap values
-            // are injected. The engine should still have called PostTask
-            // successfully.
-            EXPECT_FALSE(pipeline_override.empty());
-            break;
-        }
-    }
-    EXPECT_TRUE(found_post_task);
+    // 子组件被真实驱动：maapi run 组件经 executionInput 消费快照内的
+    // envelope 并到达 MaaRuntime 的任务投递。
+    EXPECT_TRUE(fake.ContainsSubstring("PostTask:StartE2E:"));
     EXPECT_TRUE(fake.Contains("CreateTasker"));
 }
 
 // ===================================================================
-// Test 2: MaaPiNodePropagatesExecutionFailure
+// Test 2: RepositoryInvokeNodeToleratesMaapiChildFailure
 //
-// Verifies that when FakeMaaApiBoundary reports task failure,
-// the error propagates through GraphRuntime as
-// DAS_E_MAAPI_EXECUTION_FAILED (-10005).
+// MaaFW 任务失败时子组件 Do 返回失败码，RepositoryInvoke 组件把子失败
+// 收进 status=failed 结果口（自身 Do 成功）——图执行完成，boundary 可
+// 观测到已尝试投递。
 // ===================================================================
 
-TEST(MaapiGraphE2ETest, MaaPiNodePropagatesExecutionFailure)
+TEST(MaapiGraphE2ETest, RepositoryInvokeNodeToleratesMaapiChildFailure)
 {
     FakeMaaApiBoundary fake;
     fake.wait_status_by_entry["StartE2E"] = MaaTaskStatus::Failed;
     const ScopedBoundaryHook hook(fake);
 
-    auto settings_json = MakeNodeSettingsJson(
-        FixturePath("pi_e2e_interface.json").string(),
-        "E2ETestTask",
-        R"({"screenshot_mode":"case_a","enable_debug":false,"timeout_ms":3000})",
-        R"({"graph_debug":"enable_debug","graph_timeout":"timeout_ms"})");
-
-    auto plan = MakeSingleMaapiNodePlan(settings_json);
+    auto plan = MakeSingleRepositoryInvokeNodePlan(MakeSnapshotJson());
 
     auto host = MaapiMockHost::Make();
     auto token = PluginInterface::DasStopTokenImplBase<MockStopToken>::Make();
@@ -274,8 +272,6 @@ TEST(MaapiGraphE2ETest, MaaPiNodePropagatesExecutionFailure)
     GraphRuntime rt;
     auto         hr = rt.RunWithHost(plan, "fp_e2e", token.Get(), host.Get());
 
-    EXPECT_EQ(hr, DAS_E_MAAPI_EXECUTION_FAILED);
-
-    // Verify PostTask was still called (engine tried to execute)
+    EXPECT_EQ(hr, DAS_S_OK);
     EXPECT_TRUE(fake.ContainsSubstring("PostTask:StartE2E:"));
 }

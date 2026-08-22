@@ -1651,8 +1651,7 @@ namespace Das::Plugins::DasMaaPi
         // 协议 L168-171）。物化时未选设备的 envelope 携带空 address，真实边界
         // 只会在 MaaAdbControllerCreate 处报 "requires a non-empty address"——
         // 用户无从知道去哪修。执行输入校验段显性拒绝：诊断走
-        // adb-device-missing（i18n 提示重新扫描并选择设备），与 graph 执行
-        // 路径（MaaPiExecutionEngine 编译前的设备解析）同码同语义。
+        // adb-device-missing（i18n 提示重新扫描并选择设备）。
         // （Lower helper 位于 prod-only 宏分支内，这里自带 ASCII 小写化。）
         std::string controller_type = envelope.maapi.controller.type;
         std::transform(
