@@ -1,4 +1,5 @@
 #include "MaapiTask.h"
+#include "MaapiExecutionKernel.h"
 #include "PluginUtils.h"
 
 #include <das/Plugins/DasMaaPi/MaaRuntime.h>
@@ -92,22 +93,13 @@ namespace Plugins::DasMaaPi
         {
             return DAS_E_INVALID_JSON;
         }
-        auto parsed = ParseExecutionEnvelope(*request);
-        if (DAS::IsFailed(parsed.result))
-        {
-            spdlog::error(
-                "[DasMaaPi] MaapiTask::Do: envelope parse failed, "
-                "result={}, message={}",
-                parsed.result,
-                parsed.message);
-            return parsed.result;
-        }
 
         // 今日 slot 已决策标记：Do 执行过（无论成败）即视为今日已消费。
         // 不标记则执行后 GetNextExecutionTime 的 daily catch-up 分支看到
         // 「今日未 fired 且 slot 已过」会返回 now（立即到期）再跑一次——
         // 手动立即执行与调度执行都会双跑。catch-up 本义（进程停机错过
         // slot、启动后由过期 next_execution_time 触发补跑）不受影响。
+        // schedule 语义留在 Task 侧，不进共享执行内核。
         {
             const std::time_t now = now_();
             std::tm           local_now{};
@@ -117,14 +109,15 @@ namespace Plugins::DasMaaPi
             }
         }
 
-        auto result = MaaRuntime::Run(
-            parsed.envelope,
+        MaaRuntimeResult result;
+        const auto       execute_result = ExecuteEnvelope(
+            *request,
             MaaApiBoundaryForRuntime(),
-            stop_token);
-        // 结果诊断外显（事件日志）：warning 级无论成败投递（sink 注册降级
-        // 等在成功运行也会出现），标题与 error 级仅失败时投递。
-        LogRunResult(result);
-        return result.das_result;
+            stop_token,
+            {},
+            {},
+            result);
+        return execute_result;
     }
 
     DasResult MaapiTask::GetNextExecutionTime(
