@@ -17,6 +17,8 @@
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasTaskComponentHost.Implements.hpp>
 #include <gtest/gtest.h>
 
+#include <boost/dll/runtime_symbol_info.hpp>
+
 #include "FlowControlI18n.h"
 #include "FlowControlTaskComponents.h"
 
@@ -435,6 +437,22 @@ namespace
             Das::Plugins::DasFlowControl::SetFlowControlI18nForTest(nullptr);
         }
     };
+
+    // Escape a filesystem path for embedding in a JSON string literal
+    // (backslash doubling is sufficient for Windows paths).
+    std::string JsonEscapePath(std::string_view text)
+    {
+        std::string escaped;
+        for (const char character : text)
+        {
+            if (character == '\\' || character == '"')
+            {
+                escaped.push_back('\\');
+            }
+            escaped.push_back(character);
+        }
+        return escaped;
+    }
 
     class FakeStopToken final : public Das::PluginInterface::IDasStopToken
     {
@@ -1446,6 +1464,63 @@ TEST_F(TaskComponentContractTest, LaunchDoPassesConfigToSpawner)
     EXPECT_EQ(spawned_working_directory, "C:/test/work");
 }
 
+// 生产 spawn 冒烟（无注入缝，走真实 boost::process 路径）：以「自 spawn
+// 本测试 exe 的子进程形态」启动一个 filter 命中 0 例的短命进程并让它把
+// gtest XML 结果写到落盘文件。断言 Do 返回后子进程仍存活并最终自行完成
+// 落盘（文件出现为证）——同时覆盖 spawn 真链路不崩、detach 后零句柄持有
+// （ASAN 冒烟观察项）。真窗口等待路径由注入缝行为用例覆盖，不含任何
+// 窗口类/系统组件名硬编码。
+TEST_F(TaskComponentContractTest, LaunchDoProductionSpawnSmoke)
+{
+    auto component = MakeLaunchComponent();
+    ASSERT_NE(component.Get(), nullptr);
+
+#ifdef _WIN32
+    const std::filesystem::path self_path{
+        boost::dll::program_location().wstring()};
+#else
+    const std::filesystem::path self_path{
+        boost::dll::program_location().string()};
+#endif
+    const auto        self_exe_u8 = self_path.u8string();
+    const std::string self_exe(self_exe_u8.begin(), self_exe_u8.end());
+
+    const auto marker_u8 =
+        (std::filesystem::current_path()
+         / ("launch_spawn_smoke_child_" + std::to_string(std::random_device{}())
+            + ".xml"))
+            .u8string();
+    const std::string marker_path(marker_u8.begin(), marker_u8.end());
+    std::error_code   remove_error;
+    std::filesystem::remove(marker_path, remove_error);
+
+    const std::string settings_json =
+        std::string{R"json({"exePath": ")json"} + JsonEscapePath(self_exe)
+        + R"json(", "args": ["--gtest_filter=NoLaunchSmokeChildTests", )json"
+        + R"json("--gtest_output=xml:)json" + JsonEscapePath(marker_path)
+        + R"json("]})json";
+
+    ApplyLaunchConfig(component.Get(), settings_json);
+
+    DAS::DasPtr<Das::ExportInterface::IDasPortMap> result;
+    ASSERT_EQ(component->Do(nullptr, nullptr, result.Put()), DAS_S_OK);
+
+    EXPECT_EQ(Das::Utils::GetPortString(result.Get(), "status"), "completed");
+    EXPECT_EQ(FirstEmittedSignal(result.Get()), "signal_out");
+
+    // 子进程落盘佐证：Do 返回（detach 已完成）后子进程仍在运行并最终写出
+    // gtest XML——detach 语义失败的形态（析构杀子进程）不会出现本文件。
+    bool marker_seen = false;
+    for (int attempt = 0; attempt < 150 && !marker_seen; ++attempt)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        std::error_code probe_error;
+        marker_seen = std::filesystem::exists(marker_path, probe_error);
+    }
+    EXPECT_TRUE(marker_seen) << "spawned child never wrote its result file";
+    std::filesystem::remove(marker_path, remove_error);
+}
+
 TEST_F(TaskComponentContractTest, BranchDoReturnsTrueAndFalseSignals)
 {
     auto component = CreateComponent(OFFICIAL_COMPONENTS[0].guid_text);
@@ -1766,9 +1841,9 @@ TEST_F(TaskComponentContractTest, TaskComponentDoesNotExposeDynamicComponent)
     EXPECT_EQ(out, nullptr);
 }
 
-// DAS-60 Stage 4: for is a counted loop head. It emits continue + the current
-// index while in range, then break when exhausted. The counter persists across
-// Do() calls on the same component instance.
+// DAS-60 Stage 4: for is a counted loop head. It emits continue + the
+// current index while in range, then break when exhausted. The counter
+// persists across Do() calls on the same component instance.
 TEST_F(TaskComponentContractTest, ForEmitsContinueAndIndexThenBreak)
 {
     auto component = CreateComponent(FOR_COMPONENT_GUID);
@@ -1967,5 +2042,6 @@ TEST_F(TaskComponentContractTest, DelayIsCancellableByStopToken)
     EXPECT_EQ(
         Das::Utils::GetPortString(result_map.Get(), "status"),
         "cancelled");
-    EXPECT_LT(elapsed_ms, 3000); // far below the 10s delay → was interrupted
+    EXPECT_LT(elapsed_ms,
+              3000); // far below the 10s delay → was interrupted
 }
