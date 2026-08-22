@@ -10,6 +10,7 @@
 #include <das/Plugins/DasMaaPi/PiCatalog.h>
 #include <das/Plugins/DasMaaPi/PiParser.h>
 #include <das/Utils/CommonUtils.hpp>
+#include <das/Utils/TaskComponentPorts.h>
 #include <das/_autogen/idl/abi/IDasI18n.h>
 
 #include <map>

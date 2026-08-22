@@ -93,38 +93,17 @@ namespace Plugins::DasMaaPi
     }
     DasPtr<ExportInterface::IDasJson> WrapJson(yyjson::value value)
     {
-        auto serialized = Utils::SerializeYyjsonValue(value);
-        if (!serialized)
-        {
-            return {};
-        }
-        DasPtr<ExportInterface::IDasJson> result;
-        ParseDasJsonFromString(serialized->c_str(), result.Put());
-        return result;
+        return Utils::WrapJson(std::move(value));
     }
 
     yyjson::value JsonString(std::string_view value)
     {
-        return yyjson::value(std::string(value));
+        return Utils::JsonString(value);
     }
 
     std::optional<yyjson::value> ReadJson(ExportInterface::IDasJson* json)
     {
-        if (!json)
-        {
-            return std::nullopt;
-        }
-        DasPtr<IDasReadOnlyString> text;
-        if (DAS::IsFailed(json->ToString(0, text.Put())) || !text)
-        {
-            return std::nullopt;
-        }
-        const char* raw = nullptr;
-        if (DAS::IsFailed(text->GetUtf8(&raw)) || raw == nullptr)
-        {
-            return std::nullopt;
-        }
-        return Utils::ParseYyjsonFromString(raw);
+        return Utils::ReadJson(json);
     }
 
     std::optional<PiCatalog> TryParseCatalog(
