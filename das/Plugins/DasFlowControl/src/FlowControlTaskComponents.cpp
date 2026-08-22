@@ -2,6 +2,8 @@
 
 #include "FlowControlTaskComponents.h"
 
+#include "FlowControlI18n.h"
+
 #include <das/Core/TaskScheduler/RepositoryInvokeDtos.h>
 #include <das/DasApi.h>
 #include <das/DasString.hpp>
@@ -12,6 +14,20 @@
 #include <das/_autogen/idl/header/IDasPortMap.generated.h>
 #include <das/_autogen/idl/header/IDasSettingsChangeBuilder.generated.h>
 
+DAS_DISABLE_WARNING_BEGIN
+DAS_IGNORE_BOOST_PROCESS_WARNING
+
+#include <boost/asio/io_context.hpp>
+#include <boost/process/v2/process.hpp>
+#include <boost/process/v2/start_dir.hpp>
+#include <boost/process/v2/stdio.hpp>
+
+DAS_DISABLE_WARNING_END
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -19,6 +35,7 @@
 #include <mutex>
 #include <new>
 #include <optional>
+#include <regex>
 #include <utility>
 
 DAS_NS_BEGIN
@@ -43,8 +60,16 @@ namespace
     constexpr std::string_view FOR_KIND = "das.flow.for";
     constexpr std::string_view WHILE_KIND = "das.flow.while";
     constexpr std::string_view MERGE_KIND = "das.flow.merge";
+    constexpr std::string_view LAUNCH_KIND = "das.flow.launch";
 
-    constexpr std::array<ComponentSpec, 6> COMPONENTS{
+    // waitWindow 轮询的小时间片（stop 只能轮询，切片保证响应性）与超时
+    // 上限兜底（防病态配置把执行占死）；timeoutMs 缺省用默认值。
+    constexpr auto WAIT_WINDOW_POLL_SLICE = std::chrono::milliseconds(100);
+    constexpr auto DEFAULT_WAIT_WINDOW_TIMEOUT =
+        std::chrono::milliseconds(30000);
+    constexpr auto MAX_WAIT_WINDOW_TIMEOUT = std::chrono::milliseconds(120000);
+
+    constexpr std::array<ComponentSpec, 7> COMPONENTS{
         ComponentSpec{
             DasGuid{
                 0x68f10001,
@@ -93,6 +118,14 @@ namespace
                 {0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x08}},
             "68F10008-0000-4000-8000-000000000008",
             "das.flow.merge"},
+        ComponentSpec{
+            DasGuid{
+                0x95fd2ffa,
+                0x88f2,
+                0x4f85,
+                {0xa5, 0x36, 0xc7, 0x08, 0xd2, 0x5b, 0x64, 0x1f}},
+            "95FD2FFA-88F2-4F85-A536-C708D25B641F",
+            "das.flow.launch"},
     };
 
     std::optional<ComponentSpec> FindSpec(const DasGuid& component_guid)
@@ -133,6 +166,269 @@ namespace
             return "cancelled";
         }
         return "completed";
+    }
+
+    // ---- das.flow.launch 支撑（通用 exe/窗口原语，业务中立） ----
+
+    // Compile an ECMA-262 regex. std::nullopt for an empty pattern (matches
+    // anything) so callers can short-circuit.
+    std::optional<std::regex> CompileWindowRegex(std::string_view pattern)
+    {
+        if (pattern.empty())
+        {
+            return std::nullopt;
+        }
+        return std::regex(std::string(pattern));
+    }
+
+    bool WindowRegexMatches(
+        const std::optional<std::regex>& regex,
+        std::string_view                 text)
+    {
+        if (!regex)
+        {
+            return true; // 空正则 = 匹配任意
+        }
+        return std::regex_search(std::string(text), *regex);
+    }
+
+    // cpp_yyjson 的 object operator[] 对缺失键抛 out_of_range；launch 的
+    // 配置键全部可选，统一经下列 helper 读取（缺键/类型不符 → nullopt）。
+    template <typename ObjectRef>
+    std::optional<std::string> FindObjectString(
+        const ObjectRef& object,
+        std::string_view key)
+    {
+        if (!object.contains(key))
+        {
+            return std::nullopt;
+        }
+        if (const auto text = object[key].as_string())
+        {
+            return std::string(*text);
+        }
+        return std::nullopt;
+    }
+
+    template <typename ObjectRef>
+    std::optional<int64_t> FindObjectInt(
+        const ObjectRef& object,
+        std::string_view key)
+    {
+        if (!object.contains(key))
+        {
+            return std::nullopt;
+        }
+        if (const auto number = object[key].as_int())
+        {
+            return *number;
+        }
+        return std::nullopt;
+    }
+
+    template <typename ObjectRef>
+    auto FindObjectArray(const ObjectRef& object, std::string_view key)
+        -> decltype(object[key].as_array())
+    {
+        if (!object.contains(key))
+        {
+            return std::nullopt;
+        }
+        return object[key].as_array();
+    }
+
+    template <typename ObjectRef>
+    auto FindObjectObject(const ObjectRef& object, std::string_view key)
+        -> decltype(object[key].as_object())
+    {
+        if (!object.contains(key))
+        {
+            return std::nullopt;
+        }
+        return object[key].as_object();
+    }
+
+    std::string_view LaunchDiagnosticFallbackText(
+        std::string_view diagnostic_code)
+    {
+        if (diagnostic_code == "launch-window-timeout")
+        {
+            return "Timed out waiting for the target window to appear.";
+        }
+        if (diagnostic_code == "launch-window-ambiguous")
+        {
+            return "Multiple windows matched the wait configuration; refine "
+                   "the match pattern.";
+        }
+        if (diagnostic_code == "launch-spawn-failed")
+        {
+            return "Failed to start the configured executable.";
+        }
+        if (diagnostic_code == "launch-exe-path-missing")
+        {
+            return "No executable path is configured for the launch "
+                   "component.";
+        }
+        return "";
+    }
+
+    // 失败出口：status=failed + 结构化 diagnostic（code + i18n 消息）。
+    DasResult BuildLaunchFailedPortMap(
+        std::string_view               diagnostic_code,
+        ExportInterface::IDasPortMap** pp_out_port_map)
+    {
+        DAS::DasPtr<ExportInterface::IDasPortMap> output_map;
+        const DasResult hr = CreateIDasPortMap(output_map.Put());
+        if (DAS::IsFailed(hr))
+        {
+            return hr;
+        }
+
+        SetPortString(output_map.Get(), "status", "failed");
+
+        const std::string i18n_key =
+            std::string{"flow.diagnostic."} + std::string{diagnostic_code};
+        const std::string message_text =
+            Plugins::DasFlowControl::TranslateFlowControlKey(
+                i18n_key.c_str(),
+                LaunchDiagnosticFallbackText(diagnostic_code));
+
+        auto diagnostic = Das::Utils::MakeYyjsonObject();
+        auto diagnostic_object = *diagnostic.as_object();
+        diagnostic_object[std::string_view("code")] =
+            yyjson::value(std::string{diagnostic_code});
+        diagnostic_object[std::string_view("message")] =
+            yyjson::value(std::move(message_text));
+        SetPortJson(output_map.Get(), "diagnostic", diagnostic);
+
+        *pp_out_port_map = output_map.Get();
+        output_map.Get()->AddRef();
+        return DAS_S_OK;
+    }
+
+#ifdef _WIN32
+    std::string WideToUtf8(std::wstring_view text)
+    {
+        if (text.empty())
+        {
+            return {};
+        }
+        const int size_needed = WideCharToMultiByte(
+            CP_UTF8,
+            0,
+            text.data(),
+            static_cast<int>(text.size()),
+            nullptr,
+            0,
+            nullptr,
+            nullptr);
+        if (size_needed <= 0)
+        {
+            return {};
+        }
+        std::string result(size_needed, '\0');
+        WideCharToMultiByte(
+            CP_UTF8,
+            0,
+            text.data(),
+            static_cast<int>(text.size()),
+            result.data(),
+            size_needed,
+            nullptr,
+            nullptr);
+        return result;
+    }
+
+    BOOL CALLBACK CollectVisibleWindowProc(HWND hwnd, LPARAM l_param)
+    {
+        auto* windows =
+            reinterpret_cast<std::vector<FlowControlWindowInfo>*>(l_param);
+        if (IsWindowVisible(hwnd))
+        {
+            wchar_t   class_name_buffer[256] = {};
+            const int class_name_length =
+                GetClassNameW(hwnd, class_name_buffer, 256);
+            wchar_t title_buffer[256] = {};
+            // GetWindowTextW 跨进程返回缓存标题、GetClassNameW 不发消息，
+            // 轮询无 hang 面。
+            const int title_length = GetWindowTextW(hwnd, title_buffer, 256);
+
+            FlowControlWindowInfo info;
+            info.handle = hwnd;
+            info.class_name = WideToUtf8(
+                std::wstring_view{
+                    class_name_buffer,
+                    class_name_length > 0
+                        ? static_cast<size_t>(class_name_length)
+                        : 0});
+            info.window_name = WideToUtf8(
+                std::wstring_view{
+                    title_buffer,
+                    title_length > 0 ? static_cast<size_t>(title_length) : 0});
+            windows->emplace_back(std::move(info));
+        }
+        return TRUE;
+    }
+#endif
+
+    // 生产进程启动缝：boost::process v2 spawn，成功后立即 detach——
+    // basic_process 析构 terminate_if_running，不 detach 则组件 Do 返回即
+    // 杀子进程。stdio 全部丢弃（启动器不消费子进程输出）。
+    FlowControlProcessSpawner DefaultProcessSpawner()
+    {
+        return [](const std::string&              exe_path,
+                  const std::vector<std::string>& arguments,
+                  const std::string&              working_directory) -> bool
+        {
+            try
+            {
+                boost::asio::io_context io_context;
+                if (working_directory.empty())
+                {
+                    boost::process::v2::process child(
+                        io_context,
+                        exe_path,
+                        arguments,
+                        boost::process::v2::process_stdio{
+                            {},
+                            nullptr,
+                            nullptr});
+                    (void)child.detach();
+                    return true;
+                }
+                boost::process::v2::process child(
+                    io_context,
+                    exe_path,
+                    arguments,
+                    boost::process::v2::process_start_dir(working_directory),
+                    boost::process::v2::process_stdio{{}, nullptr, nullptr});
+                (void)child.detach();
+                return true;
+            }
+            catch (...)
+            {
+                return false;
+            }
+        };
+    }
+
+    // 生产窗口枚举缝：全桌可见顶层窗口（类名 + 缓存标题）。
+    FlowControlWindowEnumerator DefaultWindowEnumerator()
+    {
+        return []() -> std::vector<FlowControlWindowInfo>
+        {
+#ifdef _WIN32
+            std::vector<FlowControlWindowInfo> windows;
+            EnumWindows(
+                CollectVisibleWindowProc,
+                reinterpret_cast<LPARAM>(&windows));
+            return windows;
+#else
+            // 插件 manifest 声明 supportedSystem=Windows；非 Windows 仅保
+            // 证可编译（枚举恒空 → 等窗口路径按超时失败）。
+            return {};
+#endif
+        };
     }
 
 } // namespace
@@ -772,11 +1068,190 @@ void DasFlowControlTaskComponent::SetWindowEnumeratorForTest(
 }
 
 DasResult DasFlowControlTaskComponent::DoLaunch(
-    PluginInterface::IDasStopToken* /*stop_token*/,
+    PluginInterface::IDasStopToken* stop_token,
     ExportInterface::IDasReadOnlyPortMap* /*p_input_port_map*/,
-    ExportInterface::IDasPortMap** /*pp_out_port_map*/)
+    ExportInterface::IDasPortMap** pp_out_port_map)
 {
-    return DAS_E_NO_IMPLEMENTATION;
+    if (pp_out_port_map == nullptr)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+
+    bool stop_requested = false;
+    if (stop_token != nullptr
+        && DAS::IsOk(stop_token->StopRequested(&stop_requested))
+        && stop_requested)
+    {
+        return BuildResultPortMap(
+            "cancelled",
+            Das::Utils::MakeYyjsonObject(),
+            Das::Utils::MakeYyjsonArray(),
+            pp_out_port_map);
+    }
+
+    // config 消费（settings_；全部缺省安全）。waitWindow 缺省 = 不等待，
+    // spawn 成功即完成（合法用法）。
+    std::string               exe_path;
+    std::vector<std::string>  arguments;
+    std::string               working_directory;
+    bool                      wait_window_configured = false;
+    std::string               class_regex;
+    std::string               window_regex;
+    std::chrono::milliseconds wait_window_timeout = DEFAULT_WAIT_WINDOW_TIMEOUT;
+
+    if (auto settings_object = settings_.as_object())
+    {
+        if (const auto configured_exe_path =
+                FindObjectString(*settings_object, "exePath"))
+        {
+            exe_path = *configured_exe_path;
+        }
+        if (const auto configured_arguments =
+                FindObjectArray(*settings_object, "args"))
+        {
+            for (const auto& argument : *configured_arguments)
+            {
+                if (const auto argument_text = argument.as_string())
+                {
+                    arguments.emplace_back(std::string(*argument_text));
+                }
+            }
+        }
+        if (const auto configured_working_directory =
+                FindObjectString(*settings_object, "workingDirectory"))
+        {
+            working_directory = *configured_working_directory;
+        }
+        if (const auto wait_window =
+                FindObjectObject(*settings_object, "waitWindow"))
+        {
+            wait_window_configured = true;
+            if (const auto configured_class_regex =
+                    FindObjectString(*wait_window, "classRegex"))
+            {
+                class_regex = *configured_class_regex;
+            }
+            if (const auto configured_window_regex =
+                    FindObjectString(*wait_window, "windowRegex"))
+            {
+                window_regex = *configured_window_regex;
+            }
+            if (const auto configured_timeout_ms =
+                    FindObjectInt(*wait_window, "timeoutMs"))
+            {
+                wait_window_timeout =
+                    std::chrono::milliseconds(*configured_timeout_ms);
+            }
+        }
+    }
+
+    if (exe_path.empty())
+    {
+        return BuildLaunchFailedPortMap(
+            "launch-exe-path-missing",
+            pp_out_port_map);
+    }
+
+    if (!process_spawner_)
+    {
+        process_spawner_ = DefaultProcessSpawner();
+    }
+    if (!process_spawner_(exe_path, arguments, working_directory))
+    {
+        return BuildLaunchFailedPortMap("launch-spawn-failed", pp_out_port_map);
+    }
+
+    if (wait_window_configured)
+    {
+        if (!window_enumerator_)
+        {
+            window_enumerator_ = DefaultWindowEnumerator();
+        }
+
+        // 超时兜底：负值归零（立即超时），上限防病态配置占死执行。
+        auto timeout = wait_window_timeout;
+        if (timeout < std::chrono::milliseconds(0))
+        {
+            timeout = std::chrono::milliseconds(0);
+        }
+        if (timeout > MAX_WAIT_WINDOW_TIMEOUT)
+        {
+            timeout = MAX_WAIT_WINDOW_TIMEOUT;
+        }
+
+        const auto class_regex_compiled = CompileWindowRegex(class_regex);
+        const auto window_regex_compiled = CompileWindowRegex(window_regex);
+        const auto deadline = std::chrono::steady_clock::now() + timeout;
+
+        // stop_token 仅轮询接口（无回调），照 DoDelay 以小时间片在条件
+        // 变量上等待、每片重查 stop——保证 stop 触发后约一片内响应。
+        std::mutex              wait_mutex;
+        std::condition_variable wait_cv;
+
+        std::unique_lock<std::mutex> lock(wait_mutex);
+        while (true)
+        {
+            bool poll_stop_requested = false;
+            if (stop_token != nullptr
+                && DAS::IsOk(stop_token->StopRequested(&poll_stop_requested))
+                && poll_stop_requested)
+            {
+                return BuildResultPortMap(
+                    "cancelled",
+                    Das::Utils::MakeYyjsonObject(),
+                    Das::Utils::MakeYyjsonArray(),
+                    pp_out_port_map);
+            }
+
+            size_t match_count = 0;
+            for (const auto& window : window_enumerator_())
+            {
+                if (WindowRegexMatches(class_regex_compiled, window.class_name)
+                    && WindowRegexMatches(
+                        window_regex_compiled,
+                        window.window_name))
+                {
+                    ++match_count;
+                }
+            }
+
+            if (match_count == 1)
+            {
+                break; // 目标窗口出现
+            }
+            if (match_count > 1)
+            {
+                return BuildLaunchFailedPortMap(
+                    "launch-window-ambiguous",
+                    pp_out_port_map);
+            }
+
+            if (std::chrono::steady_clock::now() >= deadline)
+            {
+                return BuildLaunchFailedPortMap(
+                    "launch-window-timeout",
+                    pp_out_port_map);
+            }
+
+            wait_cv.wait_for(
+                lock,
+                WAIT_WINDOW_POLL_SLICE,
+                [stop_token]()
+                {
+                    bool stop = false;
+                    return stop_token != nullptr
+                           && DAS::IsOk(stop_token->StopRequested(&stop))
+                           && stop;
+                });
+        }
+    }
+
+    // 启动（及可选等待）完成 → 发规范信号口 signal_out（formSequence 投影
+    // 信号边用这对端口名门控下游）。
+    auto outputs = Das::Utils::MakeYyjsonObject();
+    auto signals = Das::Utils::MakeYyjsonArray();
+    (*signals.as_array()).emplace_back("signal_out");
+    return BuildResultPortMap("completed", outputs, signals, pp_out_port_map);
 }
 
 DasResult DasFlowControlTaskComponent::Do(
@@ -820,6 +1295,11 @@ DasResult DasFlowControlTaskComponent::Do(
     if (kind_ == DELAY_KIND)
     {
         return DoDelay(stop_token, p_input_port_map, pp_out_port_map);
+    }
+
+    if (kind_ == LAUNCH_KIND)
+    {
+        return DoLaunch(stop_token, p_input_port_map, pp_out_port_map);
     }
 
     bool stop_requested = false;

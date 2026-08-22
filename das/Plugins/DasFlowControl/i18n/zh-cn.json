@@ -1,0 +1,7 @@
+{
+    "flow.launch": "启动进程",
+    "flow.diagnostic.launch-window-timeout": "等待目标窗口出现超时。",
+    "flow.diagnostic.launch-window-ambiguous": "多个窗口匹配等待配置，请收窄匹配条件。",
+    "flow.diagnostic.launch-spawn-failed": "启动配置的可执行文件失败。",
+    "flow.diagnostic.launch-exe-path-missing": "启动组件未配置可执行文件路径。"
+}

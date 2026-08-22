@@ -193,6 +193,41 @@
           "config": {},
           "diagnostics": []
         }
+      },
+      "95FD2FFA-88F2-4F85-A536-C708D25B641F": {
+        "factoryGuid": "2C6DFCFA-F8B6-4272-8F28-1D31738BD0D4",
+        "definition": {
+          "schemaVersion": 1,
+          "kind": "das.flow.launch",
+          "componentGuid": "95FD2FFA-88F2-4F85-A536-C708D25B641F",
+          "inputs": [
+            {
+              "id": "signal_in",
+              "type": "signal"
+            }
+          ],
+          "outputs": [
+            {
+              "id": "signal_out",
+              "type": "signal"
+            }
+          ],
+          "config": {
+            "exePath": {
+              "type": "string"
+            },
+            "args": {
+              "type": "array<string>"
+            },
+            "workingDirectory": {
+              "type": "string"
+            },
+            "waitWindow": {
+              "type": "object"
+            }
+          },
+          "diagnostics": []
+        }
       }
     }
   }

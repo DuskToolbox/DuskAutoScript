@@ -1,6 +1,11 @@
 #include "FlowControlI18n.h"
 
+#include <das/DasApi.h>
 #include <das/DasString.hpp>
+
+#include <boost/dll/runtime_symbol_info.hpp>
+
+#include <filesystem>
 
 DAS_NS_BEGIN
 
@@ -10,9 +15,76 @@ namespace Plugins::DasFlowControl
     {
         // 测试注入的替身表（持引用保活）；非空时优先于目录装载。
         DasPtr<ExportInterface::IDasI18n> test_i18n;
+
+        // <plugin_dir>/i18n/DasFlowControl 经 boost::dll::this_line_location()
+        // 推导（cwd != 插件安装目录；每插件子目录避免与 DasMaaPi 的
+        // plugins/i18n/en.json 同名互覆）。boost path → UTF-8 std::string 经
+        // std::filesystem::path 桥接（Windows wstring / Unix string），
+        // boost path 无 u8string()，.string() 在 Windows 是 ACP（中文乱码）。
+        bool LoadI18nFromPluginDirectory(DasPtr<ExportInterface::IDasI18n>& out)
+        {
+            try
+            {
+                const auto plugin_module = boost::dll::this_line_location();
+#ifdef _WIN32
+                const std::filesystem::path std_path{
+                    (plugin_module.parent_path() / "i18n" / "DasFlowControl")
+                        .wstring()};
+#else
+                const std::filesystem::path std_path{
+                    (plugin_module.parent_path() / "i18n" / "DasFlowControl")
+                        .string()};
+#endif
+                const auto        u8dir = std_path.u8string();
+                const std::string dir_utf8(u8dir.begin(), u8dir.end());
+
+                DasPtr<IDasReadOnlyString> dir_str;
+                if (DAS::IsFailed(CreateIDasReadOnlyStringFromUtf8(
+                        dir_utf8.c_str(),
+                        dir_str.Put())))
+                {
+                    return false;
+                }
+                return DAS::IsOk(CreateIDasI18nFromDirectory(
+                           dir_str.Get(),
+                           out.Put()))
+                       && out != nullptr;
+            }
+            catch (...)
+            {
+                return false;
+            }
+        }
     } // namespace
 
-    ExportInterface::IDasI18n* GetFlowControlI18n() { return test_i18n.Get(); }
+    ExportInterface::IDasI18n* GetFlowControlI18n()
+    {
+        if (test_i18n != nullptr)
+        {
+            return test_i18n.Get();
+        }
+
+        // 函数局部 static：首次调用装载，此后复用；装载失败也只试一次
+        // （永久降级硬编码英文，不重试）。
+        static DasPtr<ExportInterface::IDasI18n> loaded_i18n;
+        static bool                              load_attempted = false;
+        if (loaded_i18n != nullptr)
+        {
+            return loaded_i18n.Get();
+        }
+        if (load_attempted)
+        {
+            return nullptr;
+        }
+        load_attempted = true;
+
+        if (!LoadI18nFromPluginDirectory(loaded_i18n))
+        {
+            loaded_i18n.Reset();
+            return nullptr;
+        }
+        return loaded_i18n.Get();
+    }
 
     void SetFlowControlI18nForTest(ExportInterface::IDasI18n* i18n)
     {

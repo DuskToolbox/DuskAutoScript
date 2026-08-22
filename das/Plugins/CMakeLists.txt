@@ -20,6 +20,16 @@ das_add_plugin_library(DasAdbCapture DAS_EX_PRIVATE_LIBS)
 das_add_plugin_library(DasAdbTouch DAS_EX_PRIVATE_LIBS)
 das_add_plugin_library(DasFlowControl DAS_EX_PRIVATE_LIBS)
 das_add_plugin_library(DasWindowsCapture DAS_EX_PRIVATE_LIBS)
+
+# FlowControl i18n 翻译表随插件部署到 plugins/i18n/DasFlowControl/（每插件
+# 子目录——plugins/i18n/en.json 已被 DasMaaPi 占用，同层平铺会互相覆盖），
+# 运行期经 boost::dll::this_line_location 定位（cwd != 插件安装目录）。
+add_custom_command(
+    TARGET DasFlowControl
+    POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_CURRENT_SOURCE_DIR}/DasFlowControl/i18n
+        $<TARGET_FILE_DIR:DasFlowControl>/i18n/DasFlowControl)
 if(TARGET DasBundledMaaFramework)
     add_subdirectory(DasMaaPi)
 endif()
@@ -106,6 +116,8 @@ if(WIN32)
     target_link_libraries(DasAdbCapture PRIVATE Ws2_32 bcrypt)
     target_link_libraries(DasAdbTouch PRIVATE Ws2_32)
     target_link_libraries(DasWindowsCapture PRIVATE Ws2_32)
+    # launch 组件的 boost::process v2 spawn 经 asio io_context 拉 WSAStartup
+    target_link_libraries(DasFlowControl PRIVATE Ws2_32)
     
     # WinRT / C++/WinRT headers for DasWindowsCapture (MinGW only, MSVC has built-in SDK support)
     if(MINGW)
