@@ -2,6 +2,7 @@
 #include <das/DasApi.h>
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
+#include <das/Plugins/DasGraphTask/DasGraphTaskAdapter.h>
 #include <das/Plugins/DasGraphTask/DasGraphTaskImpl.h>
 #include <das/Plugins/DasGraphTask/DasGraphTaskPluginPackage.h>
 #include <das/Utils/DasJsonCore.h>
@@ -516,4 +517,27 @@ TEST(DasGraphTaskTest, PackageInjectedHostReachesAdapterExecution)
     const DasResult hr = task->Do(nullptr, nullptr, plan_json.Get());
     EXPECT_TRUE(DAS::IsOk(hr));
     EXPECT_GE(serving_host->create_count, 1);
+}
+
+// 委托执行契约：adapter 无 host 时以内核组件的结构化错误失败
+// （DAS_E_INVALID_POINTER——内核 host 检查），hostless 直驱回退随委托化
+// 消亡。现状 adapter 直驱 GraphRuntime（hostless 回退），断言不成立即红。
+TEST(DasGraphTaskTest, AdapterDoDelegatesToComponentKernel)
+{
+    DasGraphTaskAdapter adapter{nullptr};
+
+    // 空输入 + 无 host：委托内核在 host 检查处结构化失败。
+    EXPECT_EQ(adapter.Do(nullptr, nullptr, nullptr), DAS_E_INVALID_POINTER);
+
+    // 有编译 plan 输入 + 无 host：同样经内核结构化失败（hr 透传）。
+    const auto plan_text = CompileOneNodePlanText();
+    ASSERT_FALSE(plan_text.empty());
+    DasPtr<Das::ExportInterface::IDasJson> plan_json;
+    ASSERT_EQ(
+        ParseDasJsonFromString(plan_text.c_str(), plan_json.Put()),
+        DAS_S_OK);
+    ASSERT_NE(plan_json.Get(), nullptr);
+    EXPECT_EQ(
+        adapter.Do(nullptr, nullptr, plan_json.Get()),
+        DAS_E_INVALID_POINTER);
 }

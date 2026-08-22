@@ -27,11 +27,12 @@ DAS_DEFINE_CLASS_IN_NAMESPACE(
 DAS_NS_BEGIN
 namespace Plugins::DasGraphTask
 {
-    // IDasTask thin adapter (ROADMAP Phase 68: Scheduler top-level executor).
-    // Receives the CompiledGraphPlanDto snapshot produced by the scheduler's
-    // authoring Compile (task_settings) and passes it straight through to
-    // GraphRuntime::Execute — zero business logic. host 经构造注入（包默认
-    // 存储，加载器保证注入先于本 adapter 的创建）。
+    // IDasTask 薄适配器（调度器顶层执行入口）。职责是
+    // 纯形状适配：把 IDasTask 的 task_settings JSON 组装为 compiledPlan
+    // 输入口，委托同模块直接构造的 DasGraphTaskImpl 组件内核执行
+    // （GraphRuntime 驱动代码全插件仅此一份）。host 经构造注入（包默认
+    // 存储，加载器保证注入先于本 adapter 的创建）；无 host 时内核组件
+    // 自身以结构化错误失败。
     class DasGraphTaskAdapter final
         : public PluginInterface::DasTaskImplBase<DasGraphTaskAdapter>
     {

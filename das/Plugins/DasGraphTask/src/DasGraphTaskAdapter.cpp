@@ -2,10 +2,12 @@
 
 #include <das/Plugins/DasGraphTask/DasGraphTaskAdapter.h>
 
-#include <das/Core/GraphRuntime/GraphRuntimeFactory.h>
 #include <das/DasApi.h>
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
+#include <das/Plugins/DasGraphTask/DasGraphTaskImpl.h>
+#include <das/Utils/TaskComponentPorts.h>
+#include <das/_autogen/idl/header/IDasPortMap.generated.h>
 
 DAS_NS_BEGIN
 namespace Plugins::DasGraphTask
@@ -25,9 +27,7 @@ namespace Plugins::DasGraphTask
 
         // task_settings is the CompiledGraphPlanDto serialization the
         // scheduler extracted from the authoring compile envelope's
-        // compile.executionInput. GraphRuntime::Execute casts its input to
-        // the very same DTO, so this is a pure pass-through — no field
-        // extraction or transformation.
+        // compile.executionInput — pure pass-through, no field extraction.
         DAS::DasPtr<IDasReadOnlyString> artifact;
         if (p_task_settings_json != nullptr)
         {
@@ -39,25 +39,35 @@ namespace Plugins::DasGraphTask
             }
         }
 
-        // Node components are created through the constructor-injected host
-        // (package default storage, written by the loader before this adapter
-        // is created). Without a host the runtime can only reject the graph
-        // at Configure, so fall back to the hostless factory only when no
-        // host was ever bound.
-        DAS::DasPtr<Das::ExportInterface::IDasGraphRuntime> runtime;
-        const DasResult                                     hr =
-            host_ != nullptr
-                ? CreateGraphRuntimeWithHost(host_.Get(), runtime.Put())
-                : CreateGraphRuntime(runtime.Put());
-        if (DAS::IsFailed(hr))
+        // 形状适配：IDasTask 的 settings JSON → 内核组件的 compiledPlan 输入
+        // 口（task_settings 为 null 时不设口，保持 null artifact 语义）。
+        DAS::DasPtr<ExportInterface::IDasPortMap> input_map;
+        const auto create_map_hr = CreateIDasPortMap(input_map.Put());
+        if (DAS::IsFailed(create_map_hr))
         {
-            return hr;
+            return create_map_hr;
+        }
+        if (artifact.Get() != nullptr)
+        {
+            const char* plan_utf8 = nullptr;
+            const auto  get_hr = artifact->GetUtf8(&plan_utf8);
+            if (DAS::IsFailed(get_hr) || plan_utf8 == nullptr)
+            {
+                return get_hr;
+            }
+            Das::Utils::SetPortString(
+                input_map.Get(),
+                "compiledPlan",
+                plan_utf8);
         }
 
-        // IDasTask::Do has no structured return value (fire-and-forget, same as
-        // MaapiTask); the result JSON is discarded.
-        DAS::DasPtr<Das::ExportInterface::IDasJson> result;
-        return runtime->Execute(artifact.Get(), stop_token, result.Put());
+        // 委托同模块直接构造的组件内核执行（GraphRuntime 驱动代码仅
+        // DasGraphTaskImpl 一份）；输出 portmap 丢弃——IDasTask 无结构化
+        // 返回值（fire-and-forget，与 MaapiTask 同语义）。无 host 时内核
+        // 自身以结构化错误失败，hostless 回退分支随之消亡。
+        DasGraphTaskImpl                          component(host_.Get());
+        DAS::DasPtr<ExportInterface::IDasPortMap> output;
+        return component.Do(stop_token, input_map.Get(), output.Put());
     }
 
     DasResult DasGraphTaskAdapter::GetNextExecutionTime(
