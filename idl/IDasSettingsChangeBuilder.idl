@@ -1,0 +1,30 @@
+import "DasJson.idl";
+
+namespace Das::ExportInterface
+{
+
+    // 组件 settings-change wire 的组装 builder：把编译期定死的协议字段名
+    // （settings / payload / acceptedSettings）收敛为 ABI 方法名，调用方拼错
+    // 字段在编译期报错。内部组合 IDasJson，导出物即 IDasJson；manifest 派生
+    // 的运行时键仍由调用方直接走 IDasJson 的 Set*ByName，不经本接口。
+    [uuid("D0F4B983-9029-41D4-AE94-23338478DCE9")] interface IDasSettingsChangeBuilder
+        : IDasBase
+    {
+        DasResult SetSettings([in] IDasJson * p_in_settings);
+
+        DasResult SetPayload([in] IDasJson * p_in_payload);
+
+        DasResult SetAcceptedSettings([in] IDasJson * p_in_accepted);
+
+        DasResult ToJson([out] IDasJson * *pp_out_json);
+
+        DasResult Clear();
+    }
+
+}
+
+module
+{
+    [ export, c_abi ] DasResult CreateIDasSettingsChangeBuilder(
+        [out] Das::ExportInterface::IDasSettingsChangeBuilder * *pp_out_builder);
+}

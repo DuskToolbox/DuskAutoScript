@@ -1,0 +1,40 @@
+import "DasJson.idl";
+
+namespace Das::ExportInterface
+{
+
+    // authoring doc FieldDescriptor 固定字段的组装 builder：wire 字段名
+    // （name / label / valueType / inputType / value / description / required /
+    // readonly）收敛为 ABI 方法名，跨语言组装方拼错字段在编译期报错。
+    // 内部组合 IDasJson，导出物即 IDasJson；未设置的字段不出现在导出物中。
+    [uuid("48C6EEBB-6663-4A8B-9A3C-61FB5529B350")] interface IDasAuthoringFieldBuilder
+        : IDasBase
+    {
+        DasResult SetName([in] IDasReadOnlyString * p_in_name);
+
+        DasResult SetLabel([in] IDasReadOnlyString * p_in_label);
+
+        DasResult SetValueType(int32_t in_value_type);
+
+        DasResult SetInputType(int32_t in_input_type);
+
+        DasResult SetValue([in] IDasJson * p_in_value);
+
+        DasResult SetDescription([in] IDasReadOnlyString * p_in_description);
+
+        DasResult SetRequired(bool in_required);
+
+        DasResult SetReadonly(bool in_readonly);
+
+        DasResult ToJson([out] IDasJson * *pp_out_json);
+
+        DasResult Clear();
+    }
+
+}
+
+module
+{
+    [ export, c_abi ] DasResult CreateIDasAuthoringFieldBuilder(
+        [out] Das::ExportInterface::IDasAuthoringFieldBuilder * *pp_out_builder);
+}

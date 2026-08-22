@@ -1,0 +1,31 @@
+import "DasJson.idl";
+
+namespace Das::ExportInterface
+{
+
+    // authoring 变更信封 {kind, payload} 的组装 builder：固定协议字段名进
+    // ABI 方法名；MakeSetValueChange 一次产出 setValue 特化信封。内部组合
+    // IDasJson，导出物即 IDasJson。
+    [uuid("895BAA9B-D20D-4774-A047-E39996F62D3B")] interface IDasAuthoringChangeBuilder
+        : IDasBase
+    {
+        DasResult SetKind([in] IDasReadOnlyString * p_in_kind);
+
+        DasResult SetPayload([in] IDasJson * p_in_payload);
+
+        DasResult MakeSetValueChange(
+            [in] IDasReadOnlyString * p_in_path,
+            [in] IDasJson * p_in_value);
+
+        DasResult ToJson([out] IDasJson * *pp_out_json);
+
+        DasResult Clear();
+    }
+
+}
+
+module
+{
+    [ export, c_abi ] DasResult CreateIDasAuthoringChangeBuilder(
+        [out] Das::ExportInterface::IDasAuthoringChangeBuilder * *pp_out_builder);
+}
