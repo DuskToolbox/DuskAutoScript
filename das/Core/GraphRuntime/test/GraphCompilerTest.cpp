@@ -1,13 +1,17 @@
 #include <das/Core/ForeignInterfaceHost/TaskComponentFactoryManager.h>
 #include <das/Core/GraphRuntime/CompiledArtifact.h>
+#include <das/Core/GraphRuntime/EntryRefExpansion.h>
 #include <das/Core/GraphRuntime/GraphCompiler.h>
 #include <das/Core/GraphRuntime/GraphDocument.h>
 #include <das/Utils/DasJsonCore.h>
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <optional>
+#include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 namespace
 {
@@ -1201,4 +1205,193 @@ TEST(SignalAwareCompileTest, FromSequenceLinearChainCompilesInArrayOrder)
     EXPECT_EQ(plan_tagged.signal_routes.size(), 2u);
     EXPECT_TRUE(plan_tagged.back_edges.empty());
     EXPECT_FALSE(HasCyclicEdgeGraphDiagnostic(plan_tagged));
+}
+
+// ===================================================================
+// entryRef compile marking + expansion kernel
+// ===================================================================
+
+namespace
+{
+    // Repository-invoke flow component (das.flow.invokeRepository) — the
+    // wrapper that consumes a compiled child snapshot. Same value as the
+    // constant owned by the TaskScheduler repository-invoke compiler.
+    constexpr std::string_view INVOKE_REPOSITORY_COMPONENT_GUID =
+        "68F10007-0000-4000-8000-000000000007";
+
+    EntryRefResolution MakeResolvedSnapshot()
+    {
+        EntryRefResolution resolution;
+        resolution.ok = true;
+        resolution.component_guid =
+            std::string(INVOKE_REPOSITORY_COMPONENT_GUID);
+        auto snapshot = Das::Utils::ParseYyjsonFromString(
+            R"({"version":1,"sourceEntryId":7,"executionInput":{"key1":"compiled"}})");
+        resolution.snapshot_json =
+            snapshot ? std::move(*snapshot) : Das::Utils::MakeYyjsonObject();
+        return resolution;
+    }
+} // namespace
+
+TEST(EntryRefExpansionTest, CompileMarksEntryRefNodeWithEntryIdentity)
+{
+    GraphCompiler    compiler;
+    GraphDocumentDto doc;
+    auto             node = MakeEntryRefNode("ref", 42);
+    node.target.entry_ref->expected_revision = 3;
+    doc.nodes.push_back(std::move(node));
+
+    auto plan = compiler.Compile(doc);
+    ASSERT_EQ(plan.node_snapshots.size(), 1u);
+    // Empty component_guid is the marker the expansion pass keys on.
+    EXPECT_TRUE(plan.node_snapshots[0].component_guid.empty());
+    auto payload = plan.node_snapshots[0].compiled_payload_json.as_object();
+    ASSERT_TRUE(payload.has_value());
+    EXPECT_EQ((*payload)[std::string_view("entryId")].as_int().value_or(0), 42);
+    EXPECT_EQ(
+        (*payload)[std::string_view("expectedRevision")].as_int().value_or(0),
+        3);
+}
+
+TEST(EntryRefExpansionTest, ExpandsMarkerIntoComponentNode)
+{
+    GraphCompiler    compiler;
+    GraphDocumentDto doc;
+    auto             node = MakeEntryRefNode("ref", 42);
+    node.target.entry_ref->expected_revision = 3;
+    doc.nodes.push_back(std::move(node));
+    auto plan = compiler.Compile(doc);
+
+    int64_t                seen_entry_id = 0;
+    std::optional<int64_t> seen_revision;
+    auto resolver = [&](int64_t                       entry_id,
+                        const std::optional<int64_t>& revision)
+        -> EntryRefResolution
+    {
+        seen_entry_id = entry_id;
+        seen_revision = revision;
+        return MakeResolvedSnapshot();
+    };
+
+    ASSERT_EQ(ExpandEntryRefNodes(plan, resolver), DAS_S_OK);
+    EXPECT_EQ(seen_entry_id, 42);
+    ASSERT_TRUE(seen_revision.has_value());
+    EXPECT_EQ(*seen_revision, 3);
+
+    ASSERT_EQ(plan.node_snapshots.size(), 1u);
+    EXPECT_EQ(
+        plan.node_snapshots[0].component_guid,
+        std::string(INVOKE_REPOSITORY_COMPONENT_GUID));
+    // The entry marker payload is cleared once consumed.
+    EXPECT_TRUE(plan.node_snapshots[0].compiled_payload_json.is_null());
+}
+
+TEST(EntryRefExpansionTest, ExpansionAppendsBroadcastSnapshotBinding)
+{
+    GraphCompiler    compiler;
+    GraphDocumentDto doc;
+    doc.nodes.push_back(MakeEntryRefNode("ref", 42));
+    doc.nodes.push_back(
+        MakeComponentNode("plain", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"));
+    auto       plan = compiler.Compile(doc);
+    const auto execution_order_before = plan.execution_order;
+
+    const auto resolver = [](int64_t, const std::optional<int64_t>&)
+        -> EntryRefResolution { return MakeResolvedSnapshot(); };
+
+    ASSERT_EQ(ExpandEntryRefNodes(plan, resolver), DAS_S_OK);
+
+    ASSERT_EQ(plan.binding_plan.bindings.size(), 1u);
+    const auto& binding = plan.binding_plan.bindings[0];
+    EXPECT_EQ(binding.source_node_id, std::string("$graph_input"));
+    EXPECT_EQ(binding.source_port_id, std::string("$entry::ref"));
+    EXPECT_EQ(binding.target_node_id, std::string("ref"));
+    EXPECT_EQ(binding.target_port_id, std::string("compiledSnapshot"));
+    EXPECT_EQ(binding.expected_type, std::string("object"));
+    // The snapshot must ride as a JSON string default — the broadcast
+    // materialiser only handles scalar values.
+    auto default_text = binding.default_value.as_string();
+    ASSERT_TRUE(default_text.has_value());
+    EXPECT_NE(default_text->find("\"sourceEntryId\":7"), std::string::npos);
+    // Broadcast bindings create no data dependency: the order is untouched.
+    EXPECT_EQ(plan.execution_order, execution_order_before);
+}
+
+TEST(EntryRefExpansionTest, ResolverFailureIsFailClosed)
+{
+    GraphCompiler    compiler;
+    GraphDocumentDto doc;
+    doc.nodes.push_back(MakeEntryRefNode("ref", 42));
+    auto plan = compiler.Compile(doc);
+
+    const auto resolver =
+        [](int64_t,
+           const std::optional<int64_t>&) -> EntryRefResolution
+    {
+        EntryRefResolution resolution;
+        resolution.ok = false;
+        resolution.diagnostics.emplace_back("entry-missing");
+        return resolution;
+    };
+
+    std::vector<std::string> out_diagnostics;
+    EXPECT_EQ(
+        ExpandEntryRefNodes(plan, resolver, &out_diagnostics),
+        DAS_E_FAIL);
+
+    // The marker node stays as-is and no binding is synthesized.
+    ASSERT_EQ(plan.node_snapshots.size(), 1u);
+    EXPECT_TRUE(plan.node_snapshots[0].component_guid.empty());
+    auto payload = plan.node_snapshots[0].compiled_payload_json.as_object();
+    ASSERT_TRUE(payload.has_value());
+    EXPECT_EQ((*payload)[std::string_view("entryId")].as_int().value_or(0), 42);
+    EXPECT_TRUE(plan.binding_plan.bindings.empty());
+    ASSERT_EQ(out_diagnostics.size(), 1u);
+    EXPECT_NE(out_diagnostics[0].find("entry-missing"), std::string::npos);
+}
+
+TEST(EntryRefExpansionTest, ExpandsAllMarkersAndSkipsMarkerFreePlans)
+{
+    GraphCompiler    compiler;
+    GraphDocumentDto doc;
+    doc.nodes.push_back(MakeEntryRefNode("ref_a", 1));
+    doc.nodes.push_back(MakeEntryRefNode("ref_b", 2));
+    doc.nodes.push_back(
+        MakeComponentNode("plain", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"));
+    auto plan = compiler.Compile(doc);
+
+    int  resolve_count = 0;
+    auto resolver =
+        [&](int64_t,
+            const std::optional<int64_t>&) -> EntryRefResolution
+    {
+        ++resolve_count;
+        return MakeResolvedSnapshot();
+    };
+
+    ASSERT_EQ(ExpandEntryRefNodes(plan, resolver), DAS_S_OK);
+    EXPECT_EQ(resolve_count, 2);
+    EXPECT_EQ(plan.binding_plan.bindings.size(), 2u);
+    bool plain_node_untouched = false;
+    for (const auto& snapshot : plan.node_snapshots)
+    {
+        if (snapshot.node_id == "plain")
+        {
+            plain_node_untouched = snapshot.component_guid
+                                   == "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA";
+        }
+    }
+    EXPECT_TRUE(plain_node_untouched);
+
+    // Idempotent no-op: a plan without markers resolves nothing.
+    GraphDocumentDto plain_doc;
+    plain_doc.nodes.push_back(
+        MakeComponentNode("solo", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"));
+    auto plain_plan = compiler.Compile(plain_doc);
+    auto no_call_resolver = [](int64_t, const std::optional<int64_t>&)
+        -> EntryRefResolution { return MakeResolvedSnapshot(); };
+    ASSERT_EQ(
+        ExpandEntryRefNodes(plain_plan, no_call_resolver),
+        DAS_S_OK);
+    EXPECT_TRUE(plain_plan.binding_plan.bindings.empty());
 }
