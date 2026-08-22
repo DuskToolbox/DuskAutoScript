@@ -149,16 +149,6 @@ DasResult TaskComponentFactoryManager::OnPluginLoaded(
             continue;
         }
 
-        const auto set_host_result = factory->SetTaskComponentHost(host_.Get());
-        if (DAS::IsFailed(set_host_result))
-        {
-            DAS_CORE_LOG_WARN(
-                "Invalid task component factory feature: "
-                "SetTaskComponentHost failed, result={}",
-                static_cast<int>(set_host_result));
-            return set_host_result;
-        }
-
         if (plugin_factories.contains(factory_guid))
         {
             DAS_CORE_LOG_WARN(

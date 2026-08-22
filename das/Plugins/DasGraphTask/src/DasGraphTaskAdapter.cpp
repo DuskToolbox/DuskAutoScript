@@ -6,11 +6,16 @@
 #include <das/DasApi.h>
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
-#include <das/Plugins/DasGraphTask/DasGraphTaskPluginPackage.h>
 
 DAS_NS_BEGIN
 namespace Plugins::DasGraphTask
 {
+    DasGraphTaskAdapter::DasGraphTaskAdapter(
+        PluginInterface::IDasTaskComponentHost* p_host)
+        : host_(DasPtr<PluginInterface::IDasTaskComponentHost>(p_host))
+    {
+    }
+
     DasResult DasGraphTaskAdapter::Do(
         PluginInterface::IDasStopToken* stop_token,
         ExportInterface::IDasJson*      p_environment_json,
@@ -34,16 +39,15 @@ namespace Plugins::DasGraphTask
             }
         }
 
-        // Node components are created through the task component host the
-        // plugin's component factory received at load time (shared
-        // plugin-wide, bound after this adapter is constructed). Without a
-        // host the runtime can only reject the graph at Configure, so fall
-        // back to the hostless factory only when no host was ever bound.
-        auto* component_host = SharedTaskComponentHost();
+        // Node components are created through the constructor-injected host
+        // (package default storage, written by the loader before this adapter
+        // is created). Without a host the runtime can only reject the graph
+        // at Configure, so fall back to the hostless factory only when no
+        // host was ever bound.
         DAS::DasPtr<Das::ExportInterface::IDasGraphRuntime> runtime;
         const DasResult                                     hr =
-            component_host != nullptr
-                ? CreateGraphRuntimeWithHost(component_host, runtime.Put())
+            host_ != nullptr
+                ? CreateGraphRuntimeWithHost(host_.Get(), runtime.Put())
                 : CreateGraphRuntime(runtime.Put());
         if (DAS::IsFailed(hr))
         {

@@ -9,17 +9,8 @@
 namespace Das::Plugins::DasGraphTask
 {
 
-    // The task component host reaches the plugin through the component
-    // factory's SetTaskComponentHost, which runs after every feature
-    // interface is created — so the IDasTask adapter cannot capture the host
-    // at construction. The factory publishes the host into this plugin-wide
-    // slot and the adapter reads it at Do time. Non-owning: the factory's
-    // DasPtr holds the reference and both feature interfaces are created and
-    // released together with the loaded plugin.
-    Das::PluginInterface::IDasTaskComponentHost* SharedTaskComponentHost();
-    void                                         SetSharedTaskComponentHost(
-        Das::PluginInterface::IDasTaskComponentHost* host);
-
+    // 工厂经构造参数持有 host（包在 CreateFeatureInterface 时以
+    // GetTaskComponentHost() 注入——包默认存储由加载器先于枚举写入）。
     class DasGraphTaskComponentFactory final
         : public Das::PluginInterface::DasTaskComponentFactoryImplBase<
               DasGraphTaskComponentFactory>
@@ -27,15 +18,13 @@ namespace Das::Plugins::DasGraphTask
         DasPtr<Das::PluginInterface::IDasTaskComponentHost> host_;
 
     public:
-        DasGraphTaskComponentFactory() = default;
+        explicit DasGraphTaskComponentFactory(
+            Das::PluginInterface::IDasTaskComponentHost* p_host);
 
         DAS_IMPL CreateComponent(
             const DasGuid&                            component_guid,
             Das::PluginInterface::IDasTaskComponent** pp_out_component)
             override;
-
-        DAS_IMPL SetTaskComponentHost(
-            Das::PluginInterface::IDasTaskComponentHost* p_host) override;
     };
 
     class DasGraphTaskPluginPackage final

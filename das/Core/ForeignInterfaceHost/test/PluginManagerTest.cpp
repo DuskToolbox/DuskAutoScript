@@ -744,12 +744,6 @@ namespace
             return DAS_S_OK;
         }
 
-        DasResult DAS_STD_CALL
-        SetTaskComponentHost(IDasTaskComponentHost* /*p_host*/) override
-        {
-            return DAS_S_OK;
-        }
-
     private:
         DasGuid               guid_;
         std::atomic<uint32_t> ref_count_{0};

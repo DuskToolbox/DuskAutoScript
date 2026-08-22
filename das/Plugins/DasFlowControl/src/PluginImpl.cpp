@@ -43,7 +43,8 @@ DasResult DasFlowControlPlugin::CreateFeatureInterface(
 
     try
     {
-        auto* factory = new DasFlowControlTaskComponentFactory();
+        auto* factory =
+            new DasFlowControlTaskComponentFactory(GetTaskComponentHost());
         factory->AddRef();
         *pp_out_interface =
             static_cast<PluginInterface::IDasTaskComponentFactory*>(factory);

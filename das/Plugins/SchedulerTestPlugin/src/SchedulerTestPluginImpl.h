@@ -190,12 +190,6 @@ public:
         const DasGuid&                            component_guid,
         Das::PluginInterface::IDasTaskComponent** pp_out_component) override;
 
-    DasResult SetTaskComponentHost(
-        Das::PluginInterface::IDasTaskComponentHost* /*p_host*/) override
-    {
-        return DAS_S_OK;
-    }
-
 private:
     std::atomic<uint32_t> ref_count_{0};
 };

@@ -171,15 +171,15 @@ class DasFlowControlTaskComponentFactory final
           DasFlowControlTaskComponentFactory>
 {
 public:
+    explicit DasFlowControlTaskComponentFactory(
+        PluginInterface::IDasTaskComponentHost* p_host);
+
     DAS_IMPL GetGuid(DasGuid* p_out_guid) override;
     DAS_IMPL GetRuntimeClassName(IDasReadOnlyString** pp_out_name) override;
 
     DAS_IMPL CreateComponent(
         const DasGuid&                       component_guid,
         PluginInterface::IDasTaskComponent** pp_out_component) override;
-
-    DAS_IMPL SetTaskComponentHost(
-        PluginInterface::IDasTaskComponentHost* p_host) override;
 
 private:
     DasPtr<PluginInterface::IDasTaskComponentHost> host_;

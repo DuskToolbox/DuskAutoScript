@@ -35,7 +35,6 @@ namespace Das::PluginInterface
         DasResult CreateComponent(
             const DasGuid&            component_guid,
             [out] IDasTaskComponent** pp_out_component);
-        DasResult SetTaskComponentHost(IDasTaskComponentHost * p_host);
     }
 
 }

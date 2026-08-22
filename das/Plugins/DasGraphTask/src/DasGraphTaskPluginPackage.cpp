@@ -44,32 +44,16 @@ DAS_DEFINE_CLASS_GUID_HOLDER_IN_NAMESPACE(
     0x4C,
     0x5D)
 
-namespace
-{
-    // Plugin-module-wide host slot backing SharedTaskComponentHost — see the
-    // header comment for the lifetime contract.
-    Das::PluginInterface::IDasTaskComponentHost*& SharedHostSlot()
-    {
-        static Das::PluginInterface::IDasTaskComponentHost* host = nullptr;
-        return host;
-    }
-} // namespace
-
 namespace Das::Plugins::DasGraphTask
 {
 
-    Das::PluginInterface::IDasTaskComponentHost* SharedTaskComponentHost()
-    {
-        return SharedHostSlot();
-    }
-
-    void SetSharedTaskComponentHost(
-        Das::PluginInterface::IDasTaskComponentHost* host)
-    {
-        SharedHostSlot() = host;
-    }
-
     // === DasGraphTaskComponentFactory ===
+
+    DasGraphTaskComponentFactory::DasGraphTaskComponentFactory(
+        Das::PluginInterface::IDasTaskComponentHost* p_host)
+        : host_(DasPtr<Das::PluginInterface::IDasTaskComponentHost>(p_host))
+    {
+    }
 
     DasResult DasGraphTaskComponentFactory::CreateComponent(
         const DasGuid&                            component_guid,
@@ -100,16 +84,6 @@ namespace Das::Plugins::DasGraphTask
         {
             return DAS_E_OUT_OF_MEMORY;
         }
-    }
-
-    DasResult DasGraphTaskComponentFactory::SetTaskComponentHost(
-        Das::PluginInterface::IDasTaskComponentHost* p_host)
-    {
-        host_ = DasPtr<Das::PluginInterface::IDasTaskComponentHost>(p_host);
-        // Publish for the IDasTask adapter, which is created before the host
-        // is bound and reads it at Do time.
-        SetSharedTaskComponentHost(host_.Get());
-        return DAS_S_OK;
     }
 
     // === DasGraphTaskPluginPackage ===
@@ -157,7 +131,8 @@ namespace Das::Plugins::DasGraphTask
             {
                 // TASK -> IDasTask: the Scheduler top-level executor and the
                 // entry by which das.graph appears in availableTaskTypes.
-                auto* task = new DasGraphTaskAdapter{};
+                // host 经构造注入（包默认存储）。
+                auto* task = new DasGraphTaskAdapter{GetTaskComponentHost()};
                 task->AddRef();
                 *pp_out_interface =
                     static_cast<Das::PluginInterface::IDasTask*>(task);
@@ -177,9 +152,10 @@ namespace Das::Plugins::DasGraphTask
             }
             if (index == 2)
             {
-                // TASK_COMPONENT_FACTORY: existing graph-node component path,
-                // unchanged.
-                auto* factory = new DasGraphTaskComponentFactory{};
+                // TASK_COMPONENT_FACTORY: existing graph-node component path;
+                // host 经构造注入（包默认存储）。
+                auto* factory =
+                    new DasGraphTaskComponentFactory{GetTaskComponentHost()};
                 factory->AddRef();
                 *pp_out_interface = static_cast<
                     Das::PluginInterface::IDasTaskComponentFactory*>(factory);

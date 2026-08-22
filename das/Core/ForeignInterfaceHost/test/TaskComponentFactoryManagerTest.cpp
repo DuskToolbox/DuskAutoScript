@@ -5,6 +5,7 @@
 #include <das/DasPtr.hpp>
 #include <das/Utils/DasJsonCore.h>
 #include <das/_autogen/idl/abi/IDasTaskComponent.h>
+#include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasPluginPackage.Implements.hpp>
 #include <gtest/gtest.h>
 #include <spdlog/details/log_msg.h>
 #include <spdlog/sinks/base_sink.h>
@@ -303,18 +304,10 @@ namespace
             return DAS_S_OK;
         }
 
-        DasResult DAS_STD_CALL
-        SetTaskComponentHost(IDasTaskComponentHost* p_host) override
-        {
-            host_ = DasPtr<IDasTaskComponentHost>(p_host);
-            return DAS_S_OK;
-        }
-
-        DasGuid                       guid_;
-        DasPtr<IDasTaskComponentHost> host_;
-        DasGuid                       last_component_guid{};
-        DasResult                     create_result = DAS_S_OK;
-        int                           create_call_count = 0;
+        DasGuid   guid_;
+        DasGuid   last_component_guid{};
+        DasResult create_result = DAS_S_OK;
+        int       create_call_count = 0;
 
     private:
         std::atomic<uint32_t> ref_count_{0};
@@ -324,10 +317,12 @@ namespace
     {
     public:
         HostAwareTaskComponentFactory(
-            DasGuid factory_guid,
-            DasGuid parent_component_guid,
-            DasGuid child_component_guid)
-            : factory_guid_(factory_guid),
+            IDasTaskComponentHost* constructor_host,
+            DasGuid                factory_guid,
+            DasGuid                parent_component_guid,
+            DasGuid                child_component_guid)
+            : host(DasPtr<IDasTaskComponentHost>(constructor_host)),
+              factory_guid_(factory_guid),
               parent_component_guid_(parent_component_guid),
               child_component_guid_(child_component_guid)
         {
@@ -398,14 +393,6 @@ namespace
                 pp_out_name);
         }
 
-        DasResult DAS_STD_CALL
-        SetTaskComponentHost(IDasTaskComponentHost* p_host) override
-        {
-            ++set_host_call_count;
-            host = DasPtr<IDasTaskComponentHost>(p_host);
-            return DAS_S_OK;
-        }
-
         DasResult DAS_STD_CALL CreateComponent(
             const DasGuid&      component_guid,
             IDasTaskComponent** pp_out_component) override
@@ -435,7 +422,6 @@ namespace
 
         DasPtr<IDasTaskComponentHost> host;
         DasResult                     host_create_result = DAS_E_FAIL;
-        int                           set_host_call_count = 0;
         int                           create_call_count = 0;
         bool                          enable_reentrant_create = false;
         bool                          child_created_through_host = false;
@@ -455,6 +441,66 @@ namespace
             DasPtr<IDasBase>(static_cast<IDasBase*>(&factory));
         return feature;
     }
+
+    // 包默认存储路径的 fake 包：CreateFeatureInterface 以 getter 存量构造
+    // 工厂（host 来源 = 包默认存储，加载器保证注入先于枚举）。
+    class HostAwareFactoryPackage final
+        : public DasPluginPackageImplBase<HostAwareFactoryPackage>
+    {
+    public:
+        HostAwareFactoryPackage(
+            DasGuid factory_guid,
+            DasGuid parent_component_guid,
+            DasGuid child_component_guid)
+            : factory_guid_(factory_guid),
+              parent_component_guid_(parent_component_guid),
+              child_component_guid_(child_component_guid)
+        {
+        }
+
+        DasResult DAS_STD_CALL
+        EnumFeature(uint64_t index, DasPluginFeature* p_out_feature) override
+        {
+            if (p_out_feature == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            if (index != 0)
+            {
+                return DAS_S_FALSE;
+            }
+            *p_out_feature = DAS_PLUGIN_FEATURE_TASK_COMPONENT_FACTORY;
+            return DAS_S_OK;
+        }
+
+        DasResult DAS_STD_CALL
+        CreateFeatureInterface(uint64_t index, IDasBase** pp_out) override
+        {
+            if (pp_out == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *pp_out = nullptr;
+            if (index != 0)
+            {
+                return DAS_E_NOT_FOUND;
+            }
+
+            auto* factory = new HostAwareTaskComponentFactory(
+                GetTaskComponentHost(),
+                factory_guid_,
+                parent_component_guid_,
+                child_component_guid_);
+            factory->AddRef();
+            *pp_out = static_cast<IDasTaskComponentFactory*>(factory);
+            return DAS_S_OK;
+        }
+
+    private:
+        DasGuid factory_guid_;
+        DasGuid parent_component_guid_;
+        DasGuid child_component_guid_;
+    };
 
     class TaskComponentFactoryManagerTest : public ::testing::Test
     {
@@ -703,11 +749,27 @@ namespace
         const auto parent_component_guid = MakeTestGuid(0x68030053);
         const auto child_component_guid = MakeTestGuid(0x68030054);
 
-        auto* factory = new HostAwareTaskComponentFactory(
+        // 包默认存储路径：包收 host（加载器顺序契约的注入面）→
+        // CreateFeatureInterface 构造工厂时传入（构造注入，不经任何对工厂
+        // 的事后注入调用）。
+        HostAwareFactoryPackage package(
             factory_guid,
             parent_component_guid,
             child_component_guid);
-        factory->AddRef();
+        ASSERT_EQ(
+            package.SetTaskComponentHost(manager.GetTaskComponentHost()),
+            DAS_S_OK);
+
+        DasPtr<IDasBase> factory_base;
+        ASSERT_EQ(
+            package.CreateFeatureInterface(0, factory_base.Put()),
+            DAS_S_OK);
+        DasPtr<IDasTaskComponentFactory> factory;
+        ASSERT_EQ(factory_base.As(factory.Put()), DAS_S_OK);
+        ASSERT_NE(factory.Get(), nullptr);
+
+        auto* raw_factory =
+            static_cast<HostAwareTaskComponentFactory*>(factory.Get());
         auto         feature = MakeTaskFactoryFeature(*factory);
         FeatureInfo* feature_ptr = &feature;
         auto manifest = MakeManifest(factory_guid, parent_component_guid);
@@ -717,19 +779,17 @@ namespace
             manager.OnPluginLoaded(plugin_guid, {&feature_ptr, 1}, manifest),
             DAS_S_OK);
 
-        EXPECT_EQ(factory->set_host_call_count, 1);
-        ASSERT_NE(factory->host.Get(), nullptr);
+        ASSERT_NE(raw_factory->host.Get(), nullptr);
+        EXPECT_EQ(raw_factory->host.Get(), manager.GetTaskComponentHost());
 
-        factory->enable_reentrant_create = true;
+        raw_factory->enable_reentrant_create = true;
         DasPtr<IDasTaskComponent> component;
         ASSERT_EQ(
             manager.CreateComponent(parent_component_guid, component.Put()),
             DAS_S_OK);
 
         EXPECT_NE(component.Get(), nullptr);
-        EXPECT_EQ(factory->host_create_result, DAS_S_OK);
-        EXPECT_TRUE(factory->child_created_through_host);
-
-        factory->Release();
+        EXPECT_EQ(raw_factory->host_create_result, DAS_S_OK);
+        EXPECT_TRUE(raw_factory->child_created_through_host);
     }
 } // namespace

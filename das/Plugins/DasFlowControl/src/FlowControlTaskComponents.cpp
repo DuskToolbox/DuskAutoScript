@@ -1323,6 +1323,12 @@ DasResult DasFlowControlTaskComponent::Do(
     return BuildResultPortMap("completed", outputs, signals, pp_out_port_map);
 }
 
+DasFlowControlTaskComponentFactory::DasFlowControlTaskComponentFactory(
+    PluginInterface::IDasTaskComponentHost* p_host)
+    : host_(DasPtr<PluginInterface::IDasTaskComponentHost>(p_host))
+{
+}
+
 DasResult DasFlowControlTaskComponentFactory::GetGuid(DasGuid* p_out_guid)
 {
     if (p_out_guid == nullptr)
@@ -1373,13 +1379,6 @@ DasResult DasFlowControlTaskComponentFactory::CreateComponent(
     {
         return DAS_E_OUT_OF_MEMORY;
     }
-}
-
-DasResult DasFlowControlTaskComponentFactory::SetTaskComponentHost(
-    PluginInterface::IDasTaskComponentHost* p_host)
-{
-    host_ = DasPtr<PluginInterface::IDasTaskComponentHost>(p_host);
-    return DAS_S_OK;
 }
 
 DAS_NS_END
