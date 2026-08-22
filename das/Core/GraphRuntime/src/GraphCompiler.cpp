@@ -995,6 +995,24 @@ Dto::CompiledGraphPlanDto GraphCompiler::Compile(
             snapshot.component_guid = node.target.component_ref->component_guid;
         }
 
+        // entryRef marker: component_guid stays empty as the marker a later
+        // expansion pass keys on; the entry identity rides the payload so the
+        // expansion can resolve the referenced repository entry.
+        if (node.target.target_kind == "entryRef"
+            && node.target.entry_ref.has_value())
+        {
+            auto payload = Das::Utils::MakeYyjsonObject();
+            auto payload_obj = *payload.as_object();
+            payload_obj[std::string_view("entryId")] =
+                node.target.entry_ref->entry_id;
+            if (node.target.entry_ref->expected_revision.has_value())
+            {
+                payload_obj[std::string_view("expectedRevision")] =
+                    *node.target.entry_ref->expected_revision;
+            }
+            snapshot.compiled_payload_json = std::move(payload);
+        }
+
         // Copy settings if present
         if (!node.settings.is_null())
         {
