@@ -26,6 +26,12 @@ endif()
 
 if(TARGET TaskSchedulerTest)
     add_dependencies(TaskSchedulerTest DasFlowControl DasAutoCopyPluginMetadataFile)
+    # FlowControl 组件源码静态编入测试 exe：契约测试需要具体组件类
+    # （GraphRuntime 直驱用例与进程/窗口注入缝），DLL 加载路径拿不到类型。
+    target_sources(TaskSchedulerTest PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/DasFlowControl/src/FlowControlTaskComponents.cpp)
+    target_include_directories(TaskSchedulerTest PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/DasFlowControl/src)
 endif()
 
 # TaskSchedulerTest 需要先构建 SchedulerTestPlugin（SetUp 部署其 dll+json），

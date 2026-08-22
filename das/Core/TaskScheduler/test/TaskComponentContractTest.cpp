@@ -1,17 +1,23 @@
 #include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/Core/ForeignInterfaceHost/IForeignLanguageRuntime.h>
 #include <das/Core/ForeignInterfaceHost/PluginManager.h>
+#include <das/Core/GraphRuntime/CompiledArtifact.h>
+#include <das/Core/GraphRuntime/GraphRuntime.h>
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
 #include <das/Core/SettingsManager/SettingsManager.h>
 #include <das/Core/TaskScheduler/RepositoryInvokeDtos.h>
 #include <das/Core/Utils/DasJsonImpl.h>
 #include <das/DasString.hpp>
 #include <das/Utils/DasJsonCore.h>
+#include <das/Utils/TaskComponentPorts.h>
 #include <das/_autogen/idl/abi/IDasComponent.h>
 #include <das/_autogen/idl/abi/IDasPluginPackage.h>
 #include <das/_autogen/idl/abi/IDasTaskComponent.h>
 #include <das/_autogen/idl/header/IDasPortMap.generated.h>
+#include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasTaskComponentHost.Implements.hpp>
 #include <gtest/gtest.h>
+
+#include "FlowControlTaskComponents.h"
 
 #include <algorithm>
 #include <array>
@@ -307,79 +313,13 @@ namespace
         return (*diagnostic)[std::string_view("code")].as_string().value_or("");
     }
 
-    void TestSetPortString(
-        Das::ExportInterface::IDasPortMap* map,
-        std::string_view                   key,
-        std::string_view                   value)
-    {
-        const DasReadOnlyString k{std::string{key}.c_str()};
-        const DasReadOnlyString v{std::string{value}.c_str()};
-        map->SetString(k.Get(), v.Get());
-    }
-
-    void TestSetPortBool(
-        Das::ExportInterface::IDasPortMap* map,
-        std::string_view                   key,
-        bool                               value)
-    {
-        const DasReadOnlyString k{std::string{key}.c_str()};
-        map->SetBool(k.Get(), value);
-    }
-
-    void TestSetPortInt(
-        Das::ExportInterface::IDasPortMap* map,
-        std::string_view                   key,
-        int64_t                            value)
-    {
-        const DasReadOnlyString k{std::string{key}.c_str()};
-        map->SetInt(k.Get(), value);
-    }
-
-    int64_t TestGetPortInt(
-        Das::ExportInterface::IDasReadOnlyPortMap* map,
-        std::string_view                           key)
-    {
-        int64_t                 v{};
-        const DasReadOnlyString k{std::string{key}.c_str()};
-        map->GetInt(k.Get(), &v);
-        return v;
-    }
-
-    std::string TestGetPortString(
-        Das::ExportInterface::IDasReadOnlyPortMap* map,
-        std::string_view                           key)
-    {
-        IDasReadOnlyString*     p_str = nullptr;
-        const DasReadOnlyString k{std::string{key}.c_str()};
-        auto                    hr = map->GetString(k.Get(), &p_str);
-        if (DAS::IsFailed(hr) || !p_str)
-        {
-            return {};
-        }
-        const char* u8 = nullptr;
-        p_str->GetUtf8(&u8);
-        std::string result(u8 ? u8 : "");
-        p_str->Release();
-        return result;
-    }
-
-    std::optional<yyjson::value> TestGetPortJson(
-        Das::ExportInterface::IDasReadOnlyPortMap* map,
-        std::string_view                           key)
-    {
-        auto str = TestGetPortString(map, key);
-        if (str.empty())
-        {
-            return std::nullopt;
-        }
-        return Das::Utils::ParseYyjsonFromString(str);
-    }
-
     // Read the single signal port id this component emitted (or "" for none).
-    std::string TestGetEmittedSignal(
+    // Port 读写一律经公共头（das/Utils/TaskComponentPorts.h）——本测试文件
+    // 不再持有第四份 PortMap/Json 桥接拷贝。
+    std::string FirstEmittedSignal(
         Das::ExportInterface::IDasReadOnlyPortMap* map)
     {
-        auto j = TestGetPortJson(map, "signals");
+        auto j = Das::Utils::GetPortJson(map, "signals");
         if (!j || !j->is_array() || j->as_array()->empty())
         {
             return {};
@@ -562,8 +502,9 @@ namespace
 
             if (p_input_port_map != nullptr)
             {
-                state_->last_input_json =
-                    TestGetPortString(p_input_port_map, "executionInput");
+                state_->last_input_json = Das::Utils::GetPortString(
+                    p_input_port_map,
+                    "executionInput");
             }
 
             if (DAS::IsFailed(state_->do_result))
@@ -591,13 +532,16 @@ namespace
                 auto status_val = (*result_obj)[std::string_view("status")]
                                       .as_string()
                                       .value_or("");
-                TestSetPortString(output_map.Get(), "status", status_val);
+                Das::Utils::SetPortString(
+                    output_map.Get(),
+                    "status",
+                    status_val);
 
                 auto outputs = (*result_obj)[std::string_view("outputs")];
                 if (!outputs.is_null())
                 {
                     auto serialized = outputs.write(yyjson::WriteFlag::NoFlag);
-                    TestSetPortString(
+                    Das::Utils::SetPortString(
                         output_map.Get(),
                         "outputs",
                         std::string_view(serialized));
@@ -607,7 +551,7 @@ namespace
             {
                 // result_json 不是 object（例如 malformed 空数组）→ 模拟 child
                 // 自身报告失败，RepositoryInvoke 读到 status="failed" 后透传。
-                TestSetPortString(output_map.Get(), "status", "failed");
+                Das::Utils::SetPortString(output_map.Get(), "status", "failed");
             }
 
             *pp_out_port_map = output_map.Get();
@@ -729,6 +673,38 @@ namespace
     private:
         std::shared_ptr<RecordingChildState> state_;
         std::atomic<uint32_t>                ref_count_{0};
+    };
+
+    constexpr std::string_view DELAY_KIND_TEXT = "das.flow.delay";
+
+    // GraphRuntime 直驱用 host：创建测试 exe 内静态编入的真实 FlowControl
+    // 组件（与 DLL 内副本同源码；直驱用例需要真实组件行为，不经工厂注册表）。
+    class StaticFlowControlComponentHost final
+        : public Das::PluginInterface::DasTaskComponentHostImplBase<
+              StaticFlowControlComponentHost>
+    {
+    public:
+        DasResult CreateTaskComponent(
+            const DasGuid&                            component_guid,
+            Das::PluginInterface::IDasTaskComponent** pp_out_component) override
+        {
+            if (pp_out_component == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *pp_out_component = nullptr;
+            if (component_guid != GuidFromText(DELAY_COMPONENT_GUID))
+            {
+                return DAS_E_NOT_FOUND;
+            }
+
+            auto* component = new Das::DasFlowControlTaskComponent(
+                DELAY_KIND_TEXT,
+                DasPtr<Das::PluginInterface::IDasTaskComponentHost>(this));
+            component->AddRef();
+            *pp_out_component = component;
+            return DAS_S_OK;
+        }
     };
 
     class TaskComponentContractTest : public ::testing::Test
@@ -991,6 +967,108 @@ TEST_F(TaskComponentContractTest, ApplySettingsChangeReturnsAcceptedSettings)
         "choose route");
 }
 
+// GraphRuntime 的 settings-change wire 是 {"settings": S, "payload": P} 包装：
+// compiled_settings 是节点当前配置的全量投影，组件以替换语义接收。修复前
+// 该形状被忽略——formSequence item 的配置在运行期从未真正到达组件。
+TEST_F(TaskComponentContractTest, ApplySettingsChangeAcceptsSettingsWrapper)
+{
+    auto component = CreateComponent(DELAY_COMPONENT_GUID);
+    ASSERT_NE(component.Get(), nullptr);
+
+    auto change = Das::Utils::ParseYyjsonFromString(R"json({
+        "settings": {"delay_ms": 2500},
+        "payload": null
+    })json");
+    ASSERT_TRUE(change.has_value());
+    auto request = Wrap(std::move(*change));
+
+    DasPtr<Das::ExportInterface::IDasJson> result;
+    ASSERT_EQ(
+        component->ApplySettingsChange(request.Get(), result.Put()),
+        DAS_S_OK);
+
+    auto json = ToJson(result.Get());
+    auto accepted =
+        (*json.as_object())[std::string_view("acceptedSettings")].as_object();
+    ASSERT_TRUE(accepted.has_value());
+    EXPECT_EQ(
+        (*accepted)[std::string_view("delay_ms")].as_int().value_or(0),
+        2500);
+}
+
+// 包装形状的 acceptedSettings 响应（经协议 builder 组装）与手拼
+// {"acceptedSettings": ...} wire 逐字节等价。
+TEST_F(
+    TaskComponentContractTest,
+    SettingsWrapperAcceptedResponseMatchesHandAssembledWire)
+{
+    auto component = CreateComponent(DELAY_COMPONENT_GUID);
+    ASSERT_NE(component.Get(), nullptr);
+
+    auto change = ParseJson(R"json({
+        "settings": {"delay_ms": 2500},
+        "payload": null
+    })json");
+    auto request = Wrap(std::move(change));
+
+    DasPtr<Das::ExportInterface::IDasJson> result;
+    ASSERT_EQ(
+        component->ApplySettingsChange(request.Get(), result.Put()),
+        DAS_S_OK);
+
+    DasPtr<IDasReadOnlyString> response_text;
+    ASSERT_EQ(result->ToString(-1, response_text.Put()), DAS_S_OK);
+    const char* response_u8 = nullptr;
+    ASSERT_EQ(response_text->GetUtf8(&response_u8), DAS_S_OK);
+    ASSERT_NE(response_u8, nullptr);
+
+    auto hand_assembled = Das::Utils::MakeYyjsonObject();
+    auto hand_settings = Das::Utils::MakeYyjsonObject();
+    (*hand_settings.as_object())[std::string_view("delay_ms")] = 2500;
+    (*hand_assembled.as_object())[std::string_view("acceptedSettings")] =
+        std::move(hand_settings);
+    const auto hand_serialized =
+        Das::Utils::SerializeYyjsonValue(std::move(hand_assembled));
+    ASSERT_TRUE(hand_serialized.has_value());
+
+    EXPECT_EQ(std::string{response_u8}, *hand_serialized);
+}
+
+// F1 运行期真实生效回归：真实 GraphRuntime 驱动 delay 节点，非默认
+// delay_ms 经 {"settings": ...} 包装真实到达组件并生效（计时断言）。
+// 修复前 settings 从未到达——delay_ms 恒 0、节点零等待完成。
+TEST_F(
+    TaskComponentContractTest,
+    GraphRuntimeDeliversNodeSettingsToDelayComponent)
+{
+    Das::Core::GraphRuntime::Dto::CompiledGraphPlanDto plan;
+    plan.source_fingerprint = "fp_delay_settings";
+    plan.compiled_fingerprint = "compiled_fp_delay_settings";
+
+    Das::Core::GraphRuntime::Dto::CompiledNodeSnapshotDto node;
+    node.node_id = "31000000-0000-0000-0000-000000000001";
+    node.component_guid = std::string{DELAY_COMPONENT_GUID};
+    node.compiled_settings = ParseJson(R"json({"delay_ms": 250})json");
+    plan.node_snapshots.push_back(std::move(node));
+    plan.execution_order.push_back("31000000-0000-0000-0000-000000000001");
+
+    auto          host = StaticFlowControlComponentHost::Make();
+    FakeStopToken stop_token;
+
+    Das::Core::GraphRuntime::GraphRuntime runtime;
+    const auto start = std::chrono::steady_clock::now();
+    const auto hr =
+        runtime.RunWithHost(plan, "fp_delay_settings", &stop_token, host.Get());
+    const auto elapsed_ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - start)
+            .count();
+
+    EXPECT_EQ(hr, DAS_S_OK);
+    EXPECT_GE(elapsed_ms, 200);  // 配置的 250ms 真实生效（0 = wire 断线）
+    EXPECT_LT(elapsed_ms, 3000); // 未 hang
+}
+
 TEST_F(TaskComponentContractTest, BranchDoReturnsTrueAndFalseSignals)
 {
     auto component = CreateComponent(OFFICIAL_COMPONENTS[0].guid_text);
@@ -1005,19 +1083,21 @@ TEST_F(TaskComponentContractTest, BranchDoReturnsTrueAndFalseSignals)
     {
         DAS::DasPtr<Das::ExportInterface::IDasPortMap> input_map;
         ASSERT_EQ(CreateIDasPortMap(input_map.Put()), DAS_S_OK);
-        TestSetPortBool(input_map.Get(), "condition", condition);
+        input_map->SetBool(DasReadOnlyString("condition").Get(), condition);
 
         DAS::DasPtr<Das::ExportInterface::IDasPortMap> result_map;
         ASSERT_EQ(
             component->Do(nullptr, input_map.Get(), result_map.Put()),
             DAS_S_OK);
 
-        auto status = TestGetPortString(result_map.Get(), "status");
+        auto status = Das::Utils::GetPortString(result_map.Get(), "status");
         EXPECT_EQ(status, "completed");
-        auto outputs_json = TestGetPortJson(result_map.Get(), "outputs");
+        auto outputs_json =
+            Das::Utils::GetPortJson(result_map.Get(), "outputs");
         ASSERT_TRUE(outputs_json.has_value());
         EXPECT_TRUE(outputs_json->is_object());
-        auto signals_json = TestGetPortJson(result_map.Get(), "signals");
+        auto signals_json =
+            Das::Utils::GetPortJson(result_map.Get(), "signals");
         ASSERT_TRUE(signals_json.has_value());
         auto signals = signals_json->as_array();
         ASSERT_TRUE(signals.has_value());
@@ -1044,7 +1124,7 @@ TEST_F(TaskComponentContractTest, RepositoryInvokeExecutesCompiledSnapshotChild)
 
     DAS::DasPtr<Das::ExportInterface::IDasPortMap> input_map;
     ASSERT_EQ(CreateIDasPortMap(input_map.Put()), DAS_S_OK);
-    TestSetPortString(
+    Das::Utils::SetPortString(
         input_map.Get(),
         "compiledSnapshot",
         std::string_view(snapshot_str));
@@ -1066,11 +1146,13 @@ TEST_F(TaskComponentContractTest, RepositoryInvokeExecutesCompiledSnapshotChild)
             ""),
         std::string_view("from-snapshot"));
 
-    auto status = TestGetPortString(result_map.Get(), "status");
+    auto status = Das::Utils::GetPortString(result_map.Get(), "status");
     EXPECT_EQ(status, "completed");
-    auto child_status = TestGetPortString(result_map.Get(), "childStatus");
+    auto child_status =
+        Das::Utils::GetPortString(result_map.Get(), "childStatus");
     EXPECT_EQ(child_status, "completed");
-    auto child_outputs_json = TestGetPortJson(result_map.Get(), "childOutputs");
+    auto child_outputs_json =
+        Das::Utils::GetPortJson(result_map.Get(), "childOutputs");
     ASSERT_TRUE(child_outputs_json.has_value());
     auto child_outputs_obj = child_outputs_json->as_object();
     ASSERT_TRUE(child_outputs_obj.has_value());
@@ -1094,7 +1176,7 @@ TEST_F(TaskComponentContractTest, RepositoryInvokeRequiresCompiledSnapshot)
         component->Do(nullptr, input_map.Get(), result_map.Put()),
         DAS_S_OK);
 
-    auto status = TestGetPortString(result_map.Get(), "status");
+    auto status = Das::Utils::GetPortString(result_map.Get(), "status");
     EXPECT_EQ(status, "failed");
 }
 
@@ -1131,7 +1213,7 @@ TEST_F(TaskComponentContractTest, RepositoryInvokeFailsWhenHostUnavailable)
 
     DAS::DasPtr<Das::ExportInterface::IDasPortMap> input_map;
     ASSERT_EQ(CreateIDasPortMap(input_map.Put()), DAS_S_OK);
-    TestSetPortString(
+    Das::Utils::SetPortString(
         input_map.Get(),
         "compiledSnapshot",
         std::string_view(snapshot_str));
@@ -1139,7 +1221,7 @@ TEST_F(TaskComponentContractTest, RepositoryInvokeFailsWhenHostUnavailable)
     DAS::DasPtr<Das::ExportInterface::IDasPortMap> result;
     ASSERT_EQ(component->Do(nullptr, input_map.Get(), result.Put()), DAS_S_OK);
 
-    auto status = TestGetPortString(result.Get(), "status");
+    auto status = Das::Utils::GetPortString(result.Get(), "status");
     EXPECT_EQ(status, "failed");
 }
 
@@ -1156,7 +1238,7 @@ TEST_F(TaskComponentContractTest, RepositoryInvokeReportsMissingChildRoute)
 
     DAS::DasPtr<Das::ExportInterface::IDasPortMap> input_map;
     ASSERT_EQ(CreateIDasPortMap(input_map.Put()), DAS_S_OK);
-    TestSetPortString(
+    Das::Utils::SetPortString(
         input_map.Get(),
         "compiledSnapshot",
         std::string_view(snapshot_str));
@@ -1166,7 +1248,7 @@ TEST_F(TaskComponentContractTest, RepositoryInvokeReportsMissingChildRoute)
         component->Do(nullptr, input_map.Get(), result_map.Put()),
         DAS_S_OK);
 
-    auto status = TestGetPortString(result_map.Get(), "status");
+    auto status = Das::Utils::GetPortString(result_map.Get(), "status");
     EXPECT_EQ(status, "failed");
 }
 
@@ -1185,7 +1267,7 @@ TEST_F(TaskComponentContractTest, RepositoryInvokeReportsChildFailure)
 
     DAS::DasPtr<Das::ExportInterface::IDasPortMap> input_map;
     ASSERT_EQ(CreateIDasPortMap(input_map.Put()), DAS_S_OK);
-    TestSetPortString(
+    Das::Utils::SetPortString(
         input_map.Get(),
         "compiledSnapshot",
         std::string_view(snapshot_str));
@@ -1195,7 +1277,7 @@ TEST_F(TaskComponentContractTest, RepositoryInvokeReportsChildFailure)
         component->Do(nullptr, input_map.Get(), result_map.Put()),
         DAS_S_OK);
 
-    auto status = TestGetPortString(result_map.Get(), "status");
+    auto status = Das::Utils::GetPortString(result_map.Get(), "status");
     EXPECT_EQ(status, "failed");
 
     child_factory->Release();
@@ -1216,7 +1298,7 @@ TEST_F(TaskComponentContractTest, RepositoryInvokeReportsMalformedChildResult)
 
     DAS::DasPtr<Das::ExportInterface::IDasPortMap> input_map;
     ASSERT_EQ(CreateIDasPortMap(input_map.Put()), DAS_S_OK);
-    TestSetPortString(
+    Das::Utils::SetPortString(
         input_map.Get(),
         "compiledSnapshot",
         std::string_view(snapshot_str));
@@ -1226,7 +1308,7 @@ TEST_F(TaskComponentContractTest, RepositoryInvokeReportsMalformedChildResult)
         component->Do(nullptr, input_map.Get(), result_map.Put()),
         DAS_S_OK);
 
-    auto status = TestGetPortString(result_map.Get(), "status");
+    auto status = Das::Utils::GetPortString(result_map.Get(), "status");
     EXPECT_EQ(status, "failed");
 
     child_factory->Release();
@@ -1245,7 +1327,7 @@ TEST_F(TaskComponentContractTest, RepositoryInvokeRejectsInvalidSnapshotVersion)
 
     DAS::DasPtr<Das::ExportInterface::IDasPortMap> input_map;
     ASSERT_EQ(CreateIDasPortMap(input_map.Put()), DAS_S_OK);
-    TestSetPortString(
+    Das::Utils::SetPortString(
         input_map.Get(),
         "compiledSnapshot",
         std::string_view(snapshot_str));
@@ -1255,7 +1337,7 @@ TEST_F(TaskComponentContractTest, RepositoryInvokeRejectsInvalidSnapshotVersion)
         component->Do(nullptr, input_map.Get(), result_map.Put()),
         DAS_S_OK);
 
-    auto status = TestGetPortString(result_map.Get(), "status");
+    auto status = Das::Utils::GetPortString(result_map.Get(), "status");
     EXPECT_EQ(status, "failed");
 }
 
@@ -1275,7 +1357,7 @@ TEST_F(TaskComponentContractTest, RepositoryInvokeHonorsAlreadyRequestedStop)
 
     DAS::DasPtr<Das::ExportInterface::IDasPortMap> input_map;
     ASSERT_EQ(CreateIDasPortMap(input_map.Put()), DAS_S_OK);
-    TestSetPortString(
+    Das::Utils::SetPortString(
         input_map.Get(),
         "compiledSnapshot",
         std::string_view(snapshot_str));
@@ -1285,7 +1367,7 @@ TEST_F(TaskComponentContractTest, RepositoryInvokeHonorsAlreadyRequestedStop)
         component->Do(&stop_token, input_map.Get(), result_map.Put()),
         DAS_S_OK);
 
-    auto status = TestGetPortString(result_map.Get(), "status");
+    auto status = Das::Utils::GetPortString(result_map.Get(), "status");
     EXPECT_EQ(status, "cancelled");
     EXPECT_EQ(child_factory->create_call_count, create_count_before);
     EXPECT_EQ(state->do_call_count, 0);
@@ -1319,9 +1401,9 @@ TEST_F(TaskComponentContractTest, ForEmitsContinueAndIndexThenBreak)
     {
         DAS::DasPtr<Das::ExportInterface::IDasPortMap> input_map;
         EXPECT_EQ(CreateIDasPortMap(input_map.Put()), DAS_S_OK);
-        TestSetPortInt(input_map.Get(), "start", 0);
-        TestSetPortInt(input_map.Get(), "end", 3);
-        TestSetPortInt(input_map.Get(), "step", 1);
+        Das::Utils::SetPortInt(input_map.Get(), "start", 0);
+        Das::Utils::SetPortInt(input_map.Get(), "end", 3);
+        Das::Utils::SetPortInt(input_map.Get(), "step", 1);
         return input_map;
     };
 
@@ -1332,16 +1414,18 @@ TEST_F(TaskComponentContractTest, ForEmitsContinueAndIndexThenBreak)
         auto                                           in = make_input();
         DAS::DasPtr<Das::ExportInterface::IDasPortMap> result_map;
         ASSERT_EQ(component->Do(nullptr, in.Get(), result_map.Put()), DAS_S_OK);
-        EXPECT_EQ(TestGetPortString(result_map.Get(), "status"), "completed");
-        EXPECT_EQ(TestGetEmittedSignal(result_map.Get()), "continue");
-        EXPECT_EQ(TestGetPortInt(result_map.Get(), "index"), idx);
+        EXPECT_EQ(
+            Das::Utils::GetPortString(result_map.Get(), "status"),
+            "completed");
+        EXPECT_EQ(FirstEmittedSignal(result_map.Get()), "continue");
+        EXPECT_EQ(Das::Utils::GetPortInt(result_map.Get(), "index"), idx);
     }
 
     // 4th call: range exhausted → break, no index output.
     auto                                           in = make_input();
     DAS::DasPtr<Das::ExportInterface::IDasPortMap> result_map;
     ASSERT_EQ(component->Do(nullptr, in.Get(), result_map.Put()), DAS_S_OK);
-    EXPECT_EQ(TestGetEmittedSignal(result_map.Get()), "break");
+    EXPECT_EQ(FirstEmittedSignal(result_map.Get()), "break");
 }
 
 // DAS-60 Stage 4: while emits continue/break by the dynamic condition each
@@ -1355,12 +1439,12 @@ TEST_F(TaskComponentContractTest, WhileEmitsContinueOrBreakByCondition)
     {
         DAS::DasPtr<Das::ExportInterface::IDasPortMap> input_map;
         EXPECT_EQ(CreateIDasPortMap(input_map.Put()), DAS_S_OK);
-        TestSetPortBool(input_map.Get(), "condition", cond);
+        input_map->SetBool(DasReadOnlyString("condition").Get(), cond);
         DAS::DasPtr<Das::ExportInterface::IDasPortMap> result_map;
         EXPECT_EQ(
             component->Do(nullptr, input_map.Get(), result_map.Put()),
             DAS_S_OK);
-        return TestGetEmittedSignal(result_map.Get());
+        return FirstEmittedSignal(result_map.Get());
     };
 
     EXPECT_EQ(run(true), "continue");
@@ -1378,12 +1462,12 @@ TEST_F(TaskComponentContractTest, MergeOutputsValueFromTakenBranch)
     {
         DAS::DasPtr<Das::ExportInterface::IDasPortMap> input_map;
         EXPECT_EQ(CreateIDasPortMap(input_map.Put()), DAS_S_OK);
-        TestSetPortInt(input_map.Get(), set_port, value);
+        Das::Utils::SetPortInt(input_map.Get(), set_port, value);
         DAS::DasPtr<Das::ExportInterface::IDasPortMap> result_map;
         EXPECT_EQ(
             component->Do(nullptr, input_map.Get(), result_map.Put()),
             DAS_S_OK);
-        return TestGetPortInt(result_map.Get(), "result");
+        return Das::Utils::GetPortInt(result_map.Get(), "result");
     };
 
     EXPECT_EQ(run("value_true", 42), 42); // true branch taken
@@ -1419,8 +1503,10 @@ TEST_F(TaskComponentContractTest, DelayZeroMsEmitsNextImmediately)
             std::chrono::steady_clock::now() - start)
             .count();
 
-    EXPECT_EQ(TestGetPortString(result_map.Get(), "status"), "completed");
-    EXPECT_EQ(TestGetEmittedSignal(result_map.Get()), "next");
+    EXPECT_EQ(
+        Das::Utils::GetPortString(result_map.Get(), "status"),
+        "completed");
+    EXPECT_EQ(FirstEmittedSignal(result_map.Get()), "next");
     EXPECT_LT(elapsed_ms, 500); // no wait
 }
 
@@ -1453,8 +1539,10 @@ TEST_F(TaskComponentContractTest, DelayWaitsThenEmitsNext)
             std::chrono::steady_clock::now() - start)
             .count();
 
-    EXPECT_EQ(TestGetPortString(result_map.Get(), "status"), "completed");
-    EXPECT_EQ(TestGetEmittedSignal(result_map.Get()), "next");
+    EXPECT_EQ(
+        Das::Utils::GetPortString(result_map.Get(), "status"),
+        "completed");
+    EXPECT_EQ(FirstEmittedSignal(result_map.Get()), "next");
     EXPECT_GE(elapsed_ms, 100);  // actually waited (~150ms)
     EXPECT_LT(elapsed_ms, 3000); // did not hang
 }
@@ -1499,6 +1587,8 @@ TEST_F(TaskComponentContractTest, DelayIsCancellableByStopToken)
             .count();
     watchdog.join();
 
-    EXPECT_EQ(TestGetPortString(result_map.Get(), "status"), "cancelled");
+    EXPECT_EQ(
+        Das::Utils::GetPortString(result_map.Get(), "status"),
+        "cancelled");
     EXPECT_LT(elapsed_ms, 3000); // far below the 10s delay → was interrupted
 }
