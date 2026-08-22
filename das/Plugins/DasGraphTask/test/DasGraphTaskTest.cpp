@@ -3,10 +3,14 @@
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
 #include <das/Plugins/DasGraphTask/DasGraphTaskImpl.h>
+#include <das/Utils/DasJsonCore.h>
 #include <das/_autogen/idl/abi/IDasPortMap.h>
 #include <das/_autogen/idl/header/IDasPortMap.generated.h>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasStopToken.Implements.hpp>
 #include <gtest/gtest.h>
+
+#include <string>
+#include <string_view>
 
 using namespace Das::Plugins::DasGraphTask;
 using DAS::DasPtr;
@@ -164,16 +168,36 @@ TEST(DasGraphTaskTest, AuthoringCompilePlanFeedsIntoDo)
     DestroyGraphAuthoringSession(state);
     ASSERT_NE(plan_json.Get(), nullptr);
 
-    // Serialise the plan to the compiledPlan input port.
+    // Serialise the plan to the compiledPlan input port. The Core Compile
+    // returns the strict authoring envelope
+    // {compile:{executionInput:<plan>}, diagnostics}; extract the inner plan
+    // the same way the scheduler does before feeding the port.
     DasPtr<IDasReadOnlyString> plan_str;
     ASSERT_EQ(plan_json->ToString(0, plan_str.Put()), DAS_S_OK);
     ASSERT_NE(plan_str.Get(), nullptr);
+    const char* plan_utf8 = nullptr;
+    ASSERT_EQ(plan_str->GetUtf8(&plan_utf8), DAS_S_OK);
+    ASSERT_NE(plan_utf8, nullptr);
+
+    const auto envelope_obj = yyjson::read(std::string(plan_utf8)).as_object();
+    ASSERT_TRUE(envelope_obj.has_value());
+    ASSERT_TRUE(envelope_obj->contains(std::string_view("compile")));
+    const auto compile_section =
+        (*envelope_obj)[std::string_view("compile")].as_object();
+    ASSERT_TRUE(compile_section.has_value());
+    ASSERT_TRUE(compile_section->contains(std::string_view("executionInput")));
+    const auto inner_plan = Das::Utils::SerializeYyjsonValue(
+        (*compile_section)[std::string_view("executionInput")]);
+    ASSERT_TRUE(inner_plan.has_value());
 
     DasPtr<Das::ExportInterface::IDasPortMap> input_map;
     ASSERT_EQ(CreateIDasPortMap(input_map.Put()), DAS_S_OK);
     const DasReadOnlyString compiled_plan_key{"compiledPlan"};
+    const DasReadOnlyString compiled_plan_value{inner_plan->c_str()};
     ASSERT_EQ(
-        input_map->SetString(compiled_plan_key.Get(), plan_str.Get()),
+        input_map->SetString(
+            compiled_plan_key.Get(),
+            compiled_plan_value.Get()),
         DAS_S_OK);
 
     // Feed the compiled plan into Do and confirm it runs (empty plan → OK).

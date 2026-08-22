@@ -1,10 +1,16 @@
+#include <das/Core/GraphRuntime/CompiledArtifact.h>
 #include <das/Core/GraphRuntime/Config.h>
 #include <das/Core/GraphRuntime/GraphRuntimeFactory.h>
+#include <das/Core/TaskScheduler/TaskAuthoringContract.h>
+#include <das/DasApi.h>
 #include <das/DasPtr.hpp>
+#include <das/Utils/DasJsonCore.h>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasStopToken.Implements.hpp>
 #include <gtest/gtest.h>
 
 #include <cstring>
+#include <string>
+#include <string_view>
 
 using IDasGraphRuntime = Das::ExportInterface::IDasGraphRuntime;
 
@@ -68,4 +74,217 @@ TEST(GraphRuntimeFactoryTest, CCompliance_CreateGraphRuntime)
     const DasResult               hr = fn(runtime.Put());
     ASSERT_EQ(hr, DAS_S_OK);
     ASSERT_NE(runtime.Get(), nullptr);
+}
+
+// ===========================================================================
+// GraphAuthoringSessionCompile strict authoring envelope
+// ===========================================================================
+
+namespace
+{
+    constexpr std::string_view FORM_SEQUENCE_WITH_ONE_ITEM = R"({
+        "items": [
+            {
+                "itemId": "first",
+                "target": {
+                    "targetKind": "componentRef",
+                    "componentRef": {
+                        "kind": "componentRef",
+                        "componentGuid": "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA",
+                        "pluginGuid": "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"
+                    }
+                },
+                "settings": {}
+            }
+        ]
+    })";
+
+    constexpr std::string_view CYCLIC_GRAPH_DOC = R"({
+        "nodes": [
+            {
+                "nodeId": "a",
+                "target": {
+                    "targetKind": "componentRef",
+                    "componentRef": {
+                        "kind": "componentRef",
+                        "componentGuid": "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA",
+                        "pluginGuid": "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"
+                    }
+                },
+                "settings": {}
+            },
+            {
+                "nodeId": "b",
+                "target": {
+                    "targetKind": "componentRef",
+                    "componentRef": {
+                        "kind": "componentRef",
+                        "componentGuid": "CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC",
+                        "pluginGuid": "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"
+                    }
+                },
+                "settings": {}
+            }
+        ],
+        "edges": [
+            {
+                "edgeId": "e1",
+                "sourceNodeId": "a",
+                "sourcePortId": "out",
+                "targetNodeId": "b",
+                "targetPortId": "in",
+                "edgeType": "data"
+            },
+            {
+                "edgeId": "e2",
+                "sourceNodeId": "b",
+                "sourcePortId": "out",
+                "targetNodeId": "a",
+                "targetPortId": "in",
+                "edgeType": "data"
+            }
+        ]
+    })";
+
+    // RAII handle over a Core authoring session seeded from a raw document.
+    struct AuthoringSessionHandle
+    {
+        GraphAuthoringSessionState* state = nullptr;
+
+        explicit AuthoringSessionHandle(const std::string& context)
+        {
+            Das::DasPtr<IDasReadOnlyString> context_string;
+            CreateIDasReadOnlyStringFromUtf8(
+                context.c_str(),
+                context_string.Put());
+            CreateGraphAuthoringSession(context_string.Get(), &state);
+        }
+
+        ~AuthoringSessionHandle() { DestroyGraphAuthoringSession(state); }
+
+        AuthoringSessionHandle(const AuthoringSessionHandle&) = delete;
+        AuthoringSessionHandle& operator=(const AuthoringSessionHandle&) =
+            delete;
+    };
+
+    std::string JsonText(Das::ExportInterface::IDasJson* json)
+    {
+        if (json == nullptr)
+        {
+            return {};
+        }
+        Das::DasPtr<IDasReadOnlyString> text;
+        if (DAS::IsFailed(json->ToString(0, text.Put())) || !text.Get())
+        {
+            return {};
+        }
+        const char* utf8 = nullptr;
+        if (DAS::IsFailed(text->GetUtf8(&utf8)) || utf8 == nullptr)
+        {
+            return {};
+        }
+        return std::string(utf8);
+    }
+
+    Das::DasPtr<Das::ExportInterface::IDasJson> CompileSessionPlan(
+        GraphAuthoringSessionState* state)
+    {
+        Das::DasPtr<Das::ExportInterface::IDasJson> compiled;
+        GraphAuthoringSessionCompile(state, nullptr, compiled.Put());
+        return compiled;
+    }
+} // namespace
+
+// The Compile result must satisfy the strict scheduler-side validator
+// (OnlyKeys {compile, diagnostics}, diagnostics an array) — a bare
+// CompiledGraphPlanDto is rejected with missingField.
+TEST(GraphRuntimeFactoryTest, CompileEnvelopePassesSchedulerValidator)
+{
+    const AuthoringSessionHandle session{
+        std::string(FORM_SEQUENCE_WITH_ONE_ITEM)};
+
+    auto compiled = CompileSessionPlan(session.state);
+    ASSERT_NE(compiled.Get(), nullptr);
+
+    const auto root = yyjson::read(JsonText(compiled.Get()));
+    const auto validation =
+        Das::Core::TaskScheduler::ValidateAuthoringCompileResult(root);
+    EXPECT_TRUE(validation.valid)
+        << validation.error_kind << ": " << validation.message;
+}
+
+// compile.executionInput must round-trip back into the compiled plan DTO
+// with node identity and component wiring intact.
+TEST(GraphRuntimeFactoryTest, CompileEnvelopeExecutionInputRestoresPlan)
+{
+    const AuthoringSessionHandle session{
+        std::string(FORM_SEQUENCE_WITH_ONE_ITEM)};
+
+    auto compiled = CompileSessionPlan(session.state);
+    ASSERT_NE(compiled.Get(), nullptr);
+
+    const auto root = yyjson::read(JsonText(compiled.Get())).as_object();
+    ASSERT_TRUE(root.has_value());
+    ASSERT_TRUE(root->contains(std::string_view("compile")));
+    const auto compile_section =
+        (*root)[std::string_view("compile")].as_object();
+    ASSERT_TRUE(compile_section.has_value());
+    ASSERT_TRUE(compile_section->contains(std::string_view("executionInput")));
+
+    const auto plan =
+        yyjson::cast<Das::Core::GraphRuntime::Dto::CompiledGraphPlanDto>(
+            (*compile_section)[std::string_view("executionInput")]);
+    ASSERT_EQ(plan.execution_order.size(), 1u);
+    ASSERT_EQ(plan.node_snapshots.size(), 1u);
+    EXPECT_EQ(
+        plan.node_snapshots[0].component_guid,
+        std::string("AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"));
+}
+
+// plan.diagnostics (e.g. a cyclic graph) must surface in the envelope's
+// top-level diagnostics array, not be swallowed by the wrapper.
+TEST(GraphRuntimeFactoryTest, CompileEnvelopeCarriesDiagnostics)
+{
+    const AuthoringSessionHandle session{std::string(CYCLIC_GRAPH_DOC)};
+
+    auto compiled = CompileSessionPlan(session.state);
+    ASSERT_NE(compiled.Get(), nullptr);
+
+    const auto root = yyjson::read(JsonText(compiled.Get())).as_object();
+    ASSERT_TRUE(root.has_value());
+    ASSERT_TRUE(root->contains(std::string_view("diagnostics")));
+    const auto diagnostics =
+        (*root)[std::string_view("diagnostics")].as_array();
+    ASSERT_TRUE(diagnostics.has_value());
+    EXPECT_FALSE(diagnostics->empty());
+}
+
+// The scheduler's execution-input extraction only reads the
+// compile.executionInput key — the envelope must expose the whole plan
+// there so graph tasks receive a non-null input (a bare plan has no such
+// key and extraction returned null).
+TEST(GraphRuntimeFactoryTest, CompileEnvelopeExposesExecutionInputKey)
+{
+    const AuthoringSessionHandle session{
+        std::string(FORM_SEQUENCE_WITH_ONE_ITEM)};
+
+    auto compiled = CompileSessionPlan(session.state);
+    ASSERT_NE(compiled.Get(), nullptr);
+
+    const auto root = yyjson::read(JsonText(compiled.Get()));
+    const auto envelope = root.as_object();
+    ASSERT_TRUE(envelope.has_value());
+    const auto compile_section =
+        (*envelope)[std::string_view("compile")].as_object();
+    ASSERT_TRUE(compile_section.has_value());
+    ASSERT_TRUE(compile_section->contains(std::string_view("executionInput")));
+
+    // Mirror the scheduler extraction: clone the value under the key and
+    // confirm it is a compiled plan object, not a null placeholder.
+    const auto extracted = Das::Utils::CloneYyjsonValue(
+        (*compile_section)[std::string_view("executionInput")]);
+    ASSERT_TRUE(extracted.as_object().has_value());
+    const auto text = Das::Utils::SerializeYyjsonValue(extracted);
+    ASSERT_TRUE(text.has_value());
+    EXPECT_NE(text->find("executionOrder"), std::string::npos);
 }
