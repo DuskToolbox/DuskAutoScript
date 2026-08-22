@@ -39,6 +39,23 @@ DasResult SerializeInInterfaceParam(
     if (DAS::IsOk(lookup_result))
     {
         out_id = local_id;
+        // Pair this re-issued handle with a DOM ref: every remote proxy
+        // built from the handle REMOTE_RELEASEs once on destruction.
+        // Without the pairing the first discarded remote proxy eats the
+        // registration pin (ref=1), the ObjectId gets recycled, and later
+        // holders resolve to a stale handle — the same defect class
+        // OnLookupByName guards against with its per-issue AddRef.
+        const DasResult ref_result = object_manager.WithLocalObject(
+            out_id,
+            [](LocalObjectRef& ref)
+            {
+                ref.AddRef();
+                return DAS_S_OK;
+            });
+        if (DAS::IsFailed(ref_result))
+        {
+            return ref_result;
+        }
         return DAS_S_OK;
     }
 
