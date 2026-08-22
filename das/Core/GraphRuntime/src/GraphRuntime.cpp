@@ -6,18 +6,21 @@
 #include <das/Core/GraphRuntime/DoAdapter.h>
 #include <das/Core/GraphRuntime/PortFrame.h>
 #include <das/Core/Logger/Logger.h>
-#include <das/Core/Utils/DasJsonImpl.h>
+#include <das/DasApi.h>
 #include <das/Utils/DasJsonCore.h>
 
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
 #include <das/_autogen/idl/abi/IDasPortMap.h>
+#include <das/_autogen/idl/abi/IDasSettingsChangeBuilder.h>
 #include <das/_autogen/idl/abi/IDasTask.h>
 #include <das/_autogen/idl/abi/IDasTaskComponent.h>
 #include <das/_autogen/idl/header/IDasPortMap.generated.h>
+#include <das/_autogen/idl/header/IDasSettingsChangeBuilder.generated.h>
 
 #include <algorithm>
 #include <deque>
+#include <optional>
 #include <string>
 #include <tuple>
 #include <unordered_map>
@@ -27,6 +30,28 @@
 DAS_CORE_GRAPHRUNTIME_NS_BEGIN
 
 using IDasPortMap = Das::ExportInterface::IDasPortMap;
+
+namespace
+{
+    // 把编译期 yyjson 值桥接为 IDasJson 实参：紧凑序列化后解析，与既有
+    // IDasJsonImpl 字符串构造同形的数据通路，无额外别名。
+    std::optional<DAS::DasPtr<Das::ExportInterface::IDasJson>>
+    MakeDasJsonFromYyjsonValue(const yyjson::value& source)
+    {
+        const auto serialized = Das::Utils::SerializeYyjsonValue(source);
+        if (!serialized.has_value())
+        {
+            return std::nullopt;
+        }
+        DAS::DasPtr<Das::ExportInterface::IDasJson> result;
+        if (DAS::IsFailed(
+                ParseDasJsonFromString(serialized->c_str(), result.Put())))
+        {
+            return std::nullopt;
+        }
+        return result;
+    }
+} // namespace
 
 // ---------------------------------------------------------------------------
 // ValidateFingerprint
@@ -159,54 +184,85 @@ DasResult GraphRuntime::ApplyNodeSettings(
         return DAS_E_INVALID_POINTER;
     }
 
-    // Build a combined settings JSON from compiled_settings and
-    // compiled_payload_json.  Both are optional (may be null yyjson values).
-    auto root = Das::Utils::MakeYyjsonObject();
-    auto obj = *root.as_object();
-
-    bool has_data = false;
-
-    // Serialize compiled_settings if present
-    if (!snapshot.compiled_settings.is_null())
+    // Nothing to apply — mark as applied anyway. Both inputs are optional
+    // (may be null yyjson values).
+    if (snapshot.compiled_settings.is_null()
+        && snapshot.compiled_payload_json.is_null())
     {
-        auto cloned = Das::Utils::CloneYyjsonValue(snapshot.compiled_settings);
-        obj[std::string_view{"settings"}] = std::move(cloned);
-        has_data = true;
-    }
-
-    // Serialize compiled_payload_json if present
-    if (!snapshot.compiled_payload_json.is_null())
-    {
-        auto cloned =
-            Das::Utils::CloneYyjsonValue(snapshot.compiled_payload_json);
-        obj[std::string_view{"payload"}] = std::move(cloned);
-        has_data = true;
-    }
-
-    if (!has_data)
-    {
-        // Nothing to apply — mark as applied anyway.
         return DAS_S_OK;
     }
 
-    auto serialized = Das::Utils::SerializeYyjsonValue(root);
-    if (!serialized.has_value())
+    // Assemble the {"settings": ..., "payload": ...} settings-change wire via
+    // the protocol builder: the fixed wire field names live behind the builder
+    // methods, and each compiled yyjson value is bridged into an IDasJson
+    // argument by serializing and parsing it back.
+    DAS::DasPtr<Das::ExportInterface::IDasSettingsChangeBuilder> builder;
+    DasResult hr = CreateIDasSettingsChangeBuilder(builder.Put());
+    if (DAS_S_OK != hr)
     {
         DAS_CORE_LOG_ERROR(
-            "Failed to serialize settings for node = {}",
-            snapshot.node_id);
-        return DAS_E_FAIL;
+            "CreateIDasSettingsChangeBuilder failed: hr = {}",
+            static_cast<int>(hr));
+        return hr;
     }
 
-    // Create IDasJson from serialized string.
-    // IDasJsonImpl starts with refcount 0.  DasPtr(T*) calls AddRef()
-    // on construction (DasPtr.hpp:61), bringing the refcount to 1.
-    // The DasPtr destructor will Release when it goes out of scope.
-    auto p_settings_json = DAS::DasPtr<Das::ExportInterface::IDasJson>(
-        new Das::Core::Utils::IDasJsonImpl(serialized->c_str()));
+    if (!snapshot.compiled_settings.is_null())
+    {
+        const auto settings_json =
+            MakeDasJsonFromYyjsonValue(snapshot.compiled_settings);
+        if (!settings_json.has_value())
+        {
+            DAS_CORE_LOG_ERROR(
+                "Failed to bridge compiled settings for node = {}",
+                snapshot.node_id);
+            return DAS_E_FAIL;
+        }
+        hr = builder->SetSettings(settings_json->Get());
+        if (DAS_S_OK != hr)
+        {
+            DAS_CORE_LOG_ERROR(
+                "SetSettings failed for node = {}: hr = {}",
+                snapshot.node_id,
+                static_cast<int>(hr));
+            return hr;
+        }
+    }
+
+    if (!snapshot.compiled_payload_json.is_null())
+    {
+        const auto payload_json =
+            MakeDasJsonFromYyjsonValue(snapshot.compiled_payload_json);
+        if (!payload_json.has_value())
+        {
+            DAS_CORE_LOG_ERROR(
+                "Failed to bridge compiled payload for node = {}",
+                snapshot.node_id);
+            return DAS_E_FAIL;
+        }
+        hr = builder->SetPayload(payload_json->Get());
+        if (DAS_S_OK != hr)
+        {
+            DAS_CORE_LOG_ERROR(
+                "SetPayload failed for node = {}: hr = {}",
+                snapshot.node_id,
+                static_cast<int>(hr));
+            return hr;
+        }
+    }
+
+    DAS::DasPtr<Das::ExportInterface::IDasJson> p_settings_json;
+    hr = builder->ToJson(p_settings_json.Put());
+    if (DAS_S_OK != hr)
+    {
+        DAS_CORE_LOG_ERROR(
+            "ToJson failed for node = {}: hr = {}",
+            snapshot.node_id,
+            static_cast<int>(hr));
+        return hr;
+    }
 
     DAS::DasPtr<Das::ExportInterface::IDasJson> p_result_json;
-    DasResult hr = p_component->ApplySettingsChange(
+    hr = p_component->ApplySettingsChange(
         p_settings_json.Get(),
         p_result_json.Put());
     if (DAS_S_OK != hr)
