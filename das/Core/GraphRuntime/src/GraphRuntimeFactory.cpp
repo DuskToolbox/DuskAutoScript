@@ -157,16 +157,18 @@ DAS_C_API DasResult CreateGraphRuntimeWithHost(
 // the header); full definition lives only here, at global scope to match the
 // header's forward declaration (the C ABI entry points are also global).
 //
-// `valid_action_ids` carries the registered IDasTaskComponent component_guid
-// strings (D-84-31/32/33) translated by the Provider from
-// TaskComponentFactoryManager::EnumerateDefinitions() output. When the session
-// is created without a registry handle, the set is empty and actionId-bearing
-// change kinds reject as UnknownActionId — the production wiring (Scheduler)
+// `action_entries` carries the registered IDasTaskComponent catalog
+// ({actionId,label} objects) translated by the Provider from
+// TaskComponentFactoryManager::EnumerateDefinitions() output; the label is
+// the component manifest definition's kind. When the session is created
+// without a registry handle, the set is empty and actionId-bearing change
+// kinds reject as UnknownActionId — the production wiring (Scheduler)
 // populates this set when the session is bound to a PluginManager.
 struct GraphAuthoringSessionState
 {
     Das::Core::GraphRuntime::Dto::GraphDocumentDto document;
-    std::vector<std::string>                       valid_action_ids;
+    std::vector<Das::Core::GraphRuntime::Contract::ActionCatalogEntry>
+        action_entries;
 };
 
 namespace
@@ -918,27 +920,16 @@ DAS_C_API DasResult GraphAuthoringSessionGetDocument(
 
     try
     {
-        // Build the optional ActionCatalog projection from the registered
-        // actionIds (D-84-31/32). The Provider (GraphTask) supplies the raw
-        // component_guid strings via GraphAuthoringSessionSetActionCatalog;
-        // the Core generates the catalog entries with deterministic labels
-        // derived from the actionId so the wire is always self-describing.
+        // Build the optional ActionCatalog projection from the Provider-fed
+        // entries. GraphAuthoringSessionSetActionCatalog stores
+        // the {actionId,label} objects as-is (label already carries the
+        // manifest kind, with the actionId fallback applied at parse time),
+        // so the projection is a direct copy of the stored catalog.
         std::optional<GR::Contract::ActionCatalog> catalog;
-        if (!p->valid_action_ids.empty())
+        if (!p->action_entries.empty())
         {
             GR::Contract::ActionCatalog c;
-            c.entries.reserve(p->valid_action_ids.size());
-            for (const auto& aid : p->valid_action_ids)
-            {
-                GR::Contract::ActionCatalogEntry e;
-                e.action_id = aid;
-                // GraphTask Provider owns label/description/i18n presentation
-                // (D-84-32). For the Core-generated catalog, the label falls
-                // back to the actionId itself; production Providers can
-                // override via a richer future API.
-                e.label = aid;
-                c.entries.push_back(std::move(e));
-            }
+            c.entries = p->action_entries;
             catalog = std::move(c);
         }
         // D-84-08: 严格 Get envelope = {document, diagnostics}。
@@ -1019,10 +1010,16 @@ DAS_C_API DasResult GraphAuthoringSessionApplyChange(
                 pp_out_result_json);
         }
 
+        std::vector<std::string> valid_action_ids;
+        valid_action_ids.reserve(p->action_entries.size());
+        for (const auto& entry : p->action_entries)
+        {
+            valid_action_ids.push_back(entry.action_id);
+        }
         auto r = GR::Contract::ApplyAuthoringChange(
             p->document,
             change,
-            p->valid_action_ids);
+            valid_action_ids);
         return WrapValue(
             BuildChangeResultJson(
                 r,
@@ -1106,27 +1103,30 @@ GraphAuthoringSessionUpgradeToGraph(GraphAuthoringSessionState* p)
     return GR::Contract::UpgradeToGraph(p->document) ? DAS_S_OK : DAS_E_FAIL;
 }
 
-// Set the registered actionIds the session will accept on addGraphNode /
+// Set the registered action catalog the session will accept on addGraphNode /
 // addFormSequenceItem (D-84-31/32/33) and surface as actionCatalog entries on
-// GetDocument. The Provider (GraphTask plugin) translates
-// TaskComponentFactoryManager::EnumerateDefinitions() output into this set; the
-// Core never queries PluginManager directly (the plugin/scheduler layer owns
-// the registry translation).
+// GetDocument. `p_action_catalog_json` is a JSON array of {actionId,label}
+// objects (the Provider translates
+// TaskComponentFactoryManager::EnumerateDefinitions() output into this form);
+// pass null to clear. Shape validation is business-neutral: every entry must
+// be an object carrying a non-empty string actionId; label is an optional
+// string and falls back to the actionId when absent or empty. Malformed input
+// rejects the whole catalog and leaves the session untouched.
 DAS_C_API DasResult GraphAuthoringSessionSetActionCatalog(
     GraphAuthoringSessionState* p,
-    IDasReadOnlyString*         p_action_ids_json)
+    IDasReadOnlyString*         p_action_catalog_json)
 {
     if (p == nullptr)
     {
         return DAS_E_INVALID_POINTER;
     }
-    p->valid_action_ids.clear();
-    if (p_action_ids_json == nullptr)
+    if (p_action_catalog_json == nullptr)
     {
+        p->action_entries.clear();
         return DAS_S_OK;
     }
     const char* utf8 = nullptr;
-    if (DAS::IsFailed(p_action_ids_json->GetUtf8(&utf8)) || utf8 == nullptr)
+    if (DAS::IsFailed(p_action_catalog_json->GetUtf8(&utf8)) || utf8 == nullptr)
     {
         return DAS_E_INVALID_POINTER;
     }
@@ -1138,13 +1138,44 @@ DAS_C_API DasResult GraphAuthoringSessionSetActionCatalog(
         {
             return DAS_E_INVALID_ARGUMENT;
         }
+        std::vector<Das::Core::GraphRuntime::Contract::ActionCatalogEntry>
+            entries;
+        entries.reserve(arr->size());
         for (const auto& v : *arr)
         {
-            if (auto s = v.as_string())
+            auto entry_obj = v.as_object();
+            if (!entry_obj
+                || !entry_obj->contains(std::string_view("actionId")))
             {
-                p->valid_action_ids.emplace_back(*s);
+                return DAS_E_INVALID_ARGUMENT;
             }
+            auto action_id =
+                (*entry_obj)[std::string_view("actionId")].as_string();
+            if (!action_id || action_id->empty())
+            {
+                return DAS_E_INVALID_ARGUMENT;
+            }
+            Das::Core::GraphRuntime::Contract::ActionCatalogEntry entry;
+            entry.action_id = *action_id;
+            // Missing/empty label falls back to the actionId; a present
+            // non-string label is a shape violation.
+            entry.label = *action_id;
+            if (entry_obj->contains(std::string_view("label")))
+            {
+                auto label =
+                    (*entry_obj)[std::string_view("label")].as_string();
+                if (!label)
+                {
+                    return DAS_E_INVALID_ARGUMENT;
+                }
+                if (!label->empty())
+                {
+                    entry.label = *label;
+                }
+            }
+            entries.push_back(std::move(entry));
         }
+        p->action_entries = std::move(entries);
         return DAS_S_OK;
     }
     catch (...)

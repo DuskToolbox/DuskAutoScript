@@ -396,15 +396,37 @@ namespace Das::Core::TaskScheduler
         return revision ? *revision : 0;
     }
 
-    // Phase 84 registry-driven actionCatalog injection (D-84-31/32/33).
-    // Scheduler holds PluginManager by reference and is the natural owner of
-    // the registered IDasTaskComponent component_guid snapshot. It injects the
-    // catalog as a top-level `actionCatalog` JSON array of guid strings inside
-    // every authoring session context. Plugins that participate in the
+    // Registry-driven actionCatalog injection. Scheduler
+    // holds PluginManager by reference and is the natural owner of the
+    // registered IDasTaskComponent component snapshot. It injects the catalog
+    // as a top-level `actionCatalog` JSON array of {actionId,label} objects
+    // inside every authoring session context: the label is the component
+    // manifest definition's `kind` string so the authoring UI shows a friendly
+    // reverse-DNS name instead of a raw guid. Plugins that participate in the
     // Add-Task affordance (DasGraphTask) read this array and forward it to the
     // Core via GraphAuthoringSessionSetActionCatalog; plugins that do not
-    // simply ignore it. The array is sorted lexically for deterministic
-    // ordering.
+    // simply ignore it. The array is sorted lexically by actionId for
+    // deterministic ordering.
+    static std::string CatalogEntryLabel(
+        const Das::Core::ForeignInterfaceHost::TaskComponentDefinitionInfo&
+            definition)
+    {
+        auto definition_obj = definition.definition.as_object();
+        if (definition_obj
+            && definition_obj->contains(std::string_view("kind")))
+        {
+            auto kind = (*definition_obj)[std::string_view("kind")].as_string();
+            if (kind && !kind->empty())
+            {
+                return std::string(*kind);
+            }
+        }
+        // Definitions without a usable kind fall back to the guid — the same
+        // fallback the Core applies to catalog entries arriving without a
+        // label, so the UI always has a renderable value.
+        return GuidToString(definition.component_guid);
+    }
+
     static yyjson::value BuildActionCatalogFromRegistry(
         Das::Core::ForeignInterfaceHost::PluginManager& plugin_manager)
     {
@@ -430,20 +452,25 @@ namespace Das::Core::TaskScheduler
                        < GuidToString(definitions[rhs].component_guid);
             });
 
-        // Build a flat JSON array of guid strings. Per das-yyjson-string-safety
-        // mutable arrays do not accept the (string_view, copy_string) pair
-        // overload; we serialise the array via a small JSON literal reader so
-        // every guid is deep-copied into the document arena.
+        // Build the catalog as a JSON array of {actionId,label} objects. Per
+        // das-yyjson-string-safety mutable arrays do not accept the
+        // (string_view, copy_string) pair overload; we serialise the array via
+        // a small JSON literal reader so every string is deep-copied into the
+        // document arena. actionIds and manifest kinds are guid / reverse-DNS
+        // tokens and never need JSON escaping.
         std::string literal = "[";
         for (std::size_t i = 0; i < order.size(); ++i)
         {
+            const auto& definition = definitions[order[i]];
             if (i != 0)
             {
                 literal += ',';
             }
-            literal += '"';
-            literal += GuidToString(definitions[order[i]].component_guid);
-            literal += '"';
+            literal += "{\"actionId\":\"";
+            literal += GuidToString(definition.component_guid);
+            literal += "\",\"label\":\"";
+            literal += CatalogEntryLabel(definition);
+            literal += "\"}";
         }
         literal += ']';
 

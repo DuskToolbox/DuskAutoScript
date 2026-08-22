@@ -50,31 +50,28 @@ namespace Plugins::DasGraphTask
             return ro;
         }
 
-        // Phase 84 actionCatalog wiring (D-84-31/32): the Provider must feed
-        // the session the registered IDasTaskComponent component_guid set so
-        // the Core can (a) emit actionCatalog.entries[] on GetDocument and
-        // (b) validate actionId on addGraphNode/addFormSequenceItem.
+        // actionCatalog wiring: the Provider must feed the
+        // session the registered IDasTaskComponent catalog so the Core can
+        // (a) emit actionCatalog.entries[] (with manifest kind labels) on
+        // GetDocument and (b) validate actionId on
+        // addGraphNode/addFormSequenceItem.
         //
         // The plugin cannot reach PluginManager directly (it is loaded BY
         // PluginManager and only receives an IDasTaskComponentHost* which does
         // not expose enumeration). The Scheduler / host process that creates
         // the session context is the natural owner of the registry snapshot;
         // it injects the catalog as a top-level `actionCatalog` JSON array of
-        // strings inside the context document. The plugin forwards that array
-        // to the Core via GraphAuthoringSessionSetActionCatalog.
+        // {actionId,label} objects inside the context document. The plugin
+        // re-serialises that array unchanged and forwards it to the Core via
+        // GraphAuthoringSessionSetActionCatalog — entry shape validation and
+        // the missing-label fallback live in the Core.
         //
-        // Context shape (Phase 84 cutover):
+        // Context shape:
         //   {"properties": <GraphDocumentDto>,
-        //    "actionCatalog": ["{guid-a}", "{guid-b}", ...]}
-        // When `actionCatalog` is absent the session falls back to an empty
-        // catalog; addGraphNode/addFormSequenceItem then reject every
-        // actionId as UnknownActionId until a future wave (84-03) replaces
-        // MergeTaskComponentCatalog and the Scheduler starts injecting the
-        // registry-derived array on every session creation.
-        //
-        // Per das-yyjson-string-safety: every std::string payload written to
-        // yyjson here is a string_view literal or a value extracted by yyjson
-        // itself; no lvalue std::string is assigned.
+        //    "actionCatalog": [{"actionId":"{guid}","label":"kind"}, ...]}
+        // When `actionCatalog` is absent the session keeps an empty catalog;
+        // addGraphNode/addFormSequenceItem then reject every actionId as
+        // UnknownActionId.
         void WireActionCatalogFromContext(
             GraphAuthoringSessionState* state,
             const std::string&          context_json)
@@ -97,34 +94,20 @@ namespace Plugins::DasGraphTask
             {
                 return;
             }
-            // Re-serialise the catalog array as a flat JSON array of strings
-            // (the form GraphAuthoringSessionSetActionCatalog expects) and
-            // hand it to the Core.
             auto arr = (*obj)[std::string_view("actionCatalog")].as_array();
             if (!arr)
             {
                 return;
             }
-            std::string flat = "[";
-            bool        first = true;
-            for (const auto& v : *arr)
+            // Forward the catalog array as-is (object entries survive
+            // end-to-end; no flattening back to guid strings).
+            auto catalog_serialized = Das::Utils::SerializeYyjsonValue(
+                (*obj)[std::string_view("actionCatalog")]);
+            if (!catalog_serialized)
             {
-                auto s = v.as_string();
-                if (!s)
-                {
-                    continue;
-                }
-                if (!first)
-                {
-                    flat += ',';
-                }
-                flat += '"';
-                flat += *s;
-                flat += '"';
-                first = false;
+                return;
             }
-            flat += "]";
-            auto catalog_str = MakeReadOnlyString(flat);
+            auto catalog_str = MakeReadOnlyString(*catalog_serialized);
             GraphAuthoringSessionSetActionCatalog(state, catalog_str.Get());
         }
     } // namespace

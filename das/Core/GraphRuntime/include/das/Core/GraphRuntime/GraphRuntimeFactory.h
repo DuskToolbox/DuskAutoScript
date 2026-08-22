@@ -105,12 +105,14 @@ DAS_C_API DasResult GraphAuthoringSessionCompile(
 DAS_C_API DasResult
 GraphAuthoringSessionUpgradeToGraph(GraphAuthoringSessionState* p);
 
-/// Set the registered actionIds (D-84-31/32/33) the session will accept on
-/// addGraphNode / addFormSequenceItem and emit as actionCatalog entries on
-/// GetDocument. `p_action_ids_json` is a JSON array of strings (each is a
-/// registered IDasTaskComponent component_guid); pass null to clear.
+/// Set the registered action catalog the session will accept
+/// on addGraphNode / addFormSequenceItem and emit as actionCatalog entries on
+/// GetDocument. `p_action_catalog_json` is a JSON array of {actionId,label}
+/// objects (actionId = registered IDasTaskComponent component_guid, label =
+/// manifest definition kind; a missing label falls back to the actionId).
+/// Malformed entries reject the whole catalog; pass null to clear.
 DAS_C_API DasResult GraphAuthoringSessionSetActionCatalog(
     GraphAuthoringSessionState* p,
-    IDasReadOnlyString*         p_action_ids_json);
+    IDasReadOnlyString*         p_action_catalog_json);
 
 #endif // DAS_CORE_GRAPHRUNTIME_GRAPHRUNTIMEFACTORY_H
