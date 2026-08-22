@@ -17,6 +17,7 @@
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasTaskComponentHost.Implements.hpp>
 #include <gtest/gtest.h>
 
+#include "FlowControlI18n.h"
 #include "FlowControlTaskComponents.h"
 
 #include <algorithm>
@@ -50,7 +51,7 @@ namespace
         std::string_view guid_text;
     };
 
-    constexpr std::array<OfficialFlowComponent, 6> OFFICIAL_COMPONENTS{
+    constexpr std::array<OfficialFlowComponent, 7> OFFICIAL_COMPONENTS{
         OfficialFlowComponent{
             "branch",
             "das.flow.branch",
@@ -75,6 +76,10 @@ namespace
             "merge",
             "das.flow.merge",
             "68F10008-0000-4000-8000-000000000008"},
+        OfficialFlowComponent{
+            "launch",
+            "das.flow.launch",
+            "95FD2FFA-88F2-4F85-A536-C708D25B641F"},
     };
 
     constexpr std::string_view REPOSITORY_INVOKE_COMPONENT_GUID =
@@ -87,6 +92,9 @@ namespace
         "68F10005-0000-4000-8000-000000000005";
     constexpr std::string_view MERGE_COMPONENT_GUID =
         "68F10008-0000-4000-8000-000000000008";
+    constexpr std::string_view LAUNCH_COMPONENT_GUID =
+        "95FD2FFA-88F2-4F85-A536-C708D25B641F";
+    constexpr std::string_view LAUNCH_KIND_TEXT = "das.flow.launch";
     constexpr std::string_view FAKE_CHILD_PLUGIN_GUID =
         "68F19998-0000-4000-8000-000000000001";
     constexpr std::string_view FAKE_CHILD_FACTORY_GUID =
@@ -326,6 +334,107 @@ namespace
         }
         return std::string((*j->as_array())[0].as_string().value_or(""));
     }
+
+    // 直构 launch 组件具体类（测试 exe 静态编入源码；进程/窗口注入缝在
+    // 具体类上，经工厂拿到的 DLL 内实例无法注入）。
+    DasPtr<Das::DasFlowControlTaskComponent> MakeLaunchComponent()
+    {
+        return DasPtr<Das::DasFlowControlTaskComponent>{
+            new Das::DasFlowControlTaskComponent(
+                LAUNCH_KIND_TEXT,
+                DasPtr<Das::PluginInterface::IDasTaskComponentHost>{})};
+    }
+
+    // 经 GraphRuntime 的 {"settings": S, "payload": null} 包装形投递节点
+    // 配置（与生产 ApplyNodeSettings 投递形状一致）。
+    void ApplyLaunchConfig(
+        Das::DasFlowControlTaskComponent* component,
+        std::string_view                  settings_json)
+    {
+        auto change = ParseJson(
+            std::string{R"({"settings": )"} + std::string{settings_json}
+            + R"(, "payload": null})");
+        DasPtr<Das::ExportInterface::IDasJson> result;
+        ASSERT_EQ(
+            component->ApplySettingsChange(
+                Wrap(std::move(change)).Get(),
+                result.Put()),
+            DAS_S_OK);
+    }
+
+    // Read one string field ("code"/"message") from the structured
+    // "diagnostic" port (JSON object) of a failed component result.
+    std::string DiagnosticField(
+        Das::ExportInterface::IDasReadOnlyPortMap* map,
+        std::string_view                           field)
+    {
+        auto diagnostic = Das::Utils::GetPortJson(map, "diagnostic");
+        if (!diagnostic || !diagnostic->is_object())
+        {
+            return {};
+        }
+        auto obj = diagnostic->as_object();
+        if (!obj)
+        {
+            return {};
+        }
+        return std::string((*obj)[field].as_string().value_or(""));
+    }
+
+    // 构造可编程填充的 i18n 替身表，同一 key 同时登记 en 与 zh-cn（Translate
+    // 默认读进程级 GlobalLocale，缺失回退 en——两处都写保证任意默认 locale
+    // 下可命中）。
+    DasPtr<Das::ExportInterface::IDasMutableI18n> MakeI18nWithTranslation(
+        std::string_view key,
+        std::string_view text)
+    {
+        DasPtr<Das::ExportInterface::IDasMutableI18n> i18n;
+        if (DAS::IsFailed(CreateIDasMutableI18n(i18n.Put())) || !i18n)
+        {
+            return {};
+        }
+        for (const std::string_view locale : {"en", "zh-cn"})
+        {
+            DasPtr<IDasReadOnlyString> locale_str;
+            DasPtr<IDasReadOnlyString> key_str;
+            DasPtr<IDasReadOnlyString> text_str;
+            if (DAS::IsFailed(CreateIDasReadOnlyStringFromUtf8(
+                    std::string{locale}.c_str(),
+                    locale_str.Put()))
+                || DAS::IsFailed(CreateIDasReadOnlyStringFromUtf8(
+                    std::string{key}.c_str(),
+                    key_str.Put()))
+                || DAS::IsFailed(CreateIDasReadOnlyStringFromUtf8(
+                    std::string{text}.c_str(),
+                    text_str.Put())))
+            {
+                return {};
+            }
+            if (DAS::IsFailed(i18n->AddTranslation(
+                    locale_str.Get(),
+                    key_str.Get(),
+                    text_str.Get())))
+            {
+                return {};
+            }
+        }
+        return i18n;
+    }
+
+    // i18n 替身表作用域守卫：测试结束（含断言早退）恢复默认装载路径，
+    // 避免跨用例污染。
+    struct ScopedFlowControlI18nOverride
+    {
+        explicit ScopedFlowControlI18nOverride(
+            Das::ExportInterface::IDasI18n* i18n)
+        {
+            Das::Plugins::DasFlowControl::SetFlowControlI18nForTest(i18n);
+        }
+        ~ScopedFlowControlI18nOverride()
+        {
+            Das::Plugins::DasFlowControl::SetFlowControlI18nForTest(nullptr);
+        }
+    };
 
     class FakeStopToken final : public Das::PluginInterface::IDasStopToken
     {
@@ -1067,6 +1176,274 @@ TEST_F(
     EXPECT_EQ(hr, DAS_S_OK);
     EXPECT_GE(elapsed_ms, 200);  // 配置的 250ms 真实生效（0 = wire 断线）
     EXPECT_LT(elapsed_ms, 3000); // 未 hang
+}
+
+// ---- das.flow.launch：进程启动 + 可选等窗口（全注入缝驱动，业务中立）----
+
+// waitWindow 缺省合法：spawn 成功即完成，发规范信号口 signal_out。
+TEST_F(TaskComponentContractTest, LaunchDoSpawnsAndEmitsSignalWithoutWaitWindow)
+{
+    auto component = MakeLaunchComponent();
+    ASSERT_NE(component.Get(), nullptr);
+
+    bool spawn_called = false;
+    component->SetProcessSpawnerForTest(
+        [&spawn_called](
+            const std::string&,
+            const std::vector<std::string>&,
+            const std::string&) -> bool
+        {
+            spawn_called = true;
+            return true;
+        });
+
+    ApplyLaunchConfig(
+        component.Get(),
+        R"json({"exePath": "C:/test/app.exe"})json");
+
+    DAS::DasPtr<Das::ExportInterface::IDasPortMap> result;
+    ASSERT_EQ(component->Do(nullptr, nullptr, result.Put()), DAS_S_OK);
+
+    EXPECT_TRUE(spawn_called);
+    EXPECT_EQ(Das::Utils::GetPortString(result.Get(), "status"), "completed");
+    EXPECT_EQ(FirstEmittedSignal(result.Get()), "signal_out");
+}
+
+// waitWindow 配置后轮询窗口枚举：首枚举 0 匹配、次枚举 1 匹配 → 完成。
+TEST_F(TaskComponentContractTest, LaunchDoWaitsForSingleWindowMatch)
+{
+    auto component = MakeLaunchComponent();
+    ASSERT_NE(component.Get(), nullptr);
+
+    component->SetProcessSpawnerForTest(
+        [](const std::string&,
+           const std::vector<std::string>&,
+           const std::string&) -> bool { return true; });
+
+    int enumeration_count = 0;
+    component->SetWindowEnumeratorForTest(
+        [&enumeration_count]()
+        {
+            ++enumeration_count;
+            if (enumeration_count == 1)
+            {
+                return std::vector<Das::FlowControlWindowInfo>{};
+            }
+            return std::vector<Das::FlowControlWindowInfo>{
+                Das::FlowControlWindowInfo{
+                    nullptr,
+                    "TestWindowClass",
+                    "Test Window Title"}};
+        });
+
+    ApplyLaunchConfig(
+        component.Get(),
+        R"json({
+            "exePath": "C:/test/app.exe",
+            "waitWindow": {
+                "classRegex": "TestWindowClass",
+                "windowRegex": "",
+                "timeoutMs": 5000
+            }
+        })json");
+
+    DAS::DasPtr<Das::ExportInterface::IDasPortMap> result;
+    ASSERT_EQ(component->Do(nullptr, nullptr, result.Put()), DAS_S_OK);
+
+    EXPECT_GT(enumeration_count, 1); // 轮询真实发生（0 匹配后重试）
+    EXPECT_EQ(Das::Utils::GetPortString(result.Get(), "status"), "completed");
+    EXPECT_EQ(FirstEmittedSignal(result.Get()), "signal_out");
+}
+
+// 轮询超时：枚举恒 0 匹配、timeoutMs 小值 → failed + launch-window-timeout
+// 诊断码 + 消息经 i18n 表解析（注入替身表验证 key 链路）。
+TEST_F(TaskComponentContractTest, LaunchDoTimesOutWaitingForWindow)
+{
+    constexpr std::string_view translated_timeout_text =
+        "ZZ-launch-window-timeout-translated-ZZ";
+    auto injected_i18n = MakeI18nWithTranslation(
+        "flow.diagnostic.launch-window-timeout",
+        translated_timeout_text);
+    ASSERT_NE(injected_i18n.Get(), nullptr);
+    const ScopedFlowControlI18nOverride i18n_override{injected_i18n.Get()};
+
+    auto component = MakeLaunchComponent();
+    ASSERT_NE(component.Get(), nullptr);
+
+    component->SetProcessSpawnerForTest(
+        [](const std::string&,
+           const std::vector<std::string>&,
+           const std::string&) -> bool { return true; });
+    component->SetWindowEnumeratorForTest(
+        []() -> std::vector<Das::FlowControlWindowInfo> { return {}; });
+
+    ApplyLaunchConfig(
+        component.Get(),
+        R"json({
+            "exePath": "C:/test/app.exe",
+            "waitWindow": {"classRegex": "Anything", "timeoutMs": 300}
+        })json");
+
+    DAS::DasPtr<Das::ExportInterface::IDasPortMap> result;
+    ASSERT_EQ(component->Do(nullptr, nullptr, result.Put()), DAS_S_OK);
+
+    EXPECT_EQ(Das::Utils::GetPortString(result.Get(), "status"), "failed");
+    EXPECT_EQ(DiagnosticField(result.Get(), "code"), "launch-window-timeout");
+    EXPECT_EQ(
+        DiagnosticField(result.Get(), "message"),
+        std::string{translated_timeout_text});
+}
+
+// 枚举恒返回多于 1 个匹配 → failed + launch-window-ambiguous。
+TEST_F(TaskComponentContractTest, LaunchDoFailsOnAmbiguousWindowMatch)
+{
+    auto component = MakeLaunchComponent();
+    ASSERT_NE(component.Get(), nullptr);
+
+    component->SetProcessSpawnerForTest(
+        [](const std::string&,
+           const std::vector<std::string>&,
+           const std::string&) -> bool { return true; });
+    component->SetWindowEnumeratorForTest(
+        []() -> std::vector<Das::FlowControlWindowInfo>
+        {
+            return std::vector<Das::FlowControlWindowInfo>{
+                Das::FlowControlWindowInfo{nullptr, "TestWindowClass", "A"},
+                Das::FlowControlWindowInfo{nullptr, "TestWindowClass", "B"}};
+        });
+
+    ApplyLaunchConfig(
+        component.Get(),
+        R"json({
+            "exePath": "C:/test/app.exe",
+            "waitWindow": {"classRegex": "TestWindowClass", "timeoutMs": 5000}
+        })json");
+
+    DAS::DasPtr<Das::ExportInterface::IDasPortMap> result;
+    ASSERT_EQ(component->Do(nullptr, nullptr, result.Put()), DAS_S_OK);
+
+    EXPECT_EQ(Das::Utils::GetPortString(result.Get(), "status"), "failed");
+    EXPECT_EQ(DiagnosticField(result.Get(), "code"), "launch-window-ambiguous");
+}
+
+// spawn 缝失败 → failed + launch-spawn-failed（显性失败，无静默兜底）。
+TEST_F(TaskComponentContractTest, LaunchDoFailsWhenSpawnFails)
+{
+    auto component = MakeLaunchComponent();
+    ASSERT_NE(component.Get(), nullptr);
+
+    component->SetProcessSpawnerForTest(
+        [](const std::string&,
+           const std::vector<std::string>&,
+           const std::string&) -> bool { return false; });
+
+    ApplyLaunchConfig(
+        component.Get(),
+        R"json({"exePath": "C:/test/app.exe"})json");
+
+    DAS::DasPtr<Das::ExportInterface::IDasPortMap> result;
+    ASSERT_EQ(component->Do(nullptr, nullptr, result.Put()), DAS_S_OK);
+
+    EXPECT_EQ(Das::Utils::GetPortString(result.Get(), "status"), "failed");
+    EXPECT_EQ(DiagnosticField(result.Get(), "code"), "launch-spawn-failed");
+}
+
+// exePath 缺省/空 → failed + launch-exe-path-missing，不触碰 spawn 缝。
+TEST_F(TaskComponentContractTest, LaunchDoFailsWhenExePathMissing)
+{
+    auto component = MakeLaunchComponent();
+    ASSERT_NE(component.Get(), nullptr);
+
+    bool spawn_called = false;
+    component->SetProcessSpawnerForTest(
+        [&spawn_called](
+            const std::string&,
+            const std::vector<std::string>&,
+            const std::string&) -> bool
+        {
+            spawn_called = true;
+            return true;
+        });
+
+    ApplyLaunchConfig(component.Get(), R"json({"args": ["--flag"]})json");
+
+    DAS::DasPtr<Das::ExportInterface::IDasPortMap> result;
+    ASSERT_EQ(component->Do(nullptr, nullptr, result.Put()), DAS_S_OK);
+
+    EXPECT_FALSE(spawn_called);
+    EXPECT_EQ(Das::Utils::GetPortString(result.Get(), "status"), "failed");
+    EXPECT_EQ(DiagnosticField(result.Get(), "code"), "launch-exe-path-missing");
+}
+
+// 轮询期间 stop 置位 → cancelled（与 delay 组件同取消语义）。
+TEST_F(TaskComponentContractTest, LaunchDoCancelsDuringWindowPoll)
+{
+    auto component = MakeLaunchComponent();
+    ASSERT_NE(component.Get(), nullptr);
+
+    component->SetProcessSpawnerForTest(
+        [](const std::string&,
+           const std::vector<std::string>&,
+           const std::string&) -> bool { return true; });
+
+    FakeStopToken stop_token;
+    component->SetWindowEnumeratorForTest(
+        [&stop_token]() -> std::vector<Das::FlowControlWindowInfo>
+        {
+            stop_token.RequestStop(); // 首枚举即请求停止
+            return {};
+        });
+
+    ApplyLaunchConfig(
+        component.Get(),
+        R"json({
+            "exePath": "C:/test/app.exe",
+            "waitWindow": {"classRegex": "Anything", "timeoutMs": 5000}
+        })json");
+
+    DAS::DasPtr<Das::ExportInterface::IDasPortMap> result;
+    ASSERT_EQ(component->Do(&stop_token, nullptr, result.Put()), DAS_S_OK);
+
+    EXPECT_EQ(Das::Utils::GetPortString(result.Get(), "status"), "cancelled");
+}
+
+// config 端到端可达：spawn 缝收到 exePath/args/workingDirectory 原值。
+TEST_F(TaskComponentContractTest, LaunchDoPassesConfigToSpawner)
+{
+    auto component = MakeLaunchComponent();
+    ASSERT_NE(component.Get(), nullptr);
+
+    std::string              spawned_exe_path;
+    std::vector<std::string> spawned_arguments;
+    std::string              spawned_working_directory;
+    component->SetProcessSpawnerForTest(
+        [&spawned_exe_path, &spawned_arguments, &spawned_working_directory](
+            const std::string&              exe_path,
+            const std::vector<std::string>& arguments,
+            const std::string&              working_directory) -> bool
+        {
+            spawned_exe_path = exe_path;
+            spawned_arguments = arguments;
+            spawned_working_directory = working_directory;
+            return true;
+        });
+
+    ApplyLaunchConfig(
+        component.Get(),
+        R"json({
+            "exePath": "C:/test/app.exe",
+            "args": ["--flag", "value"],
+            "workingDirectory": "C:/test/work"
+        })json");
+
+    DAS::DasPtr<Das::ExportInterface::IDasPortMap> result;
+    ASSERT_EQ(component->Do(nullptr, nullptr, result.Put()), DAS_S_OK);
+
+    EXPECT_EQ(spawned_exe_path, "C:/test/app.exe");
+    ASSERT_EQ(spawned_arguments.size(), 2u);
+    EXPECT_EQ(spawned_arguments[0], "--flag");
+    EXPECT_EQ(spawned_arguments[1], "value");
+    EXPECT_EQ(spawned_working_directory, "C:/test/work");
 }
 
 TEST_F(TaskComponentContractTest, BranchDoReturnsTrueAndFalseSignals)

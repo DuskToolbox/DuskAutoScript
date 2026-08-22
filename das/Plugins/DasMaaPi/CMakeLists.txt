@@ -107,7 +107,8 @@ if(DAS_BUILD_TEST)
         # MaapiGraphE2ETest 的 tracer 链路消费真实 RepositoryInvoke 组件
         # （graph 编排 → RepositoryInvoke → run 组件 → 执行内核）。该实现
         # 仅依赖 Core 头，静态编入无插件间符号耦合。
-        ${CMAKE_CURRENT_SOURCE_DIR}/../DasFlowControl/src/FlowControlTaskComponents.cpp)
+        ${CMAKE_CURRENT_SOURCE_DIR}/../DasFlowControl/src/FlowControlTaskComponents.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/../DasFlowControl/src/FlowControlI18n.cpp)
     # DasMaaPiTest 静态编译 AuthoringProjector.cpp，this_line_location 在测试
     # exe 目录解析；i18n 资源需同时部署到测试输出目录，否则投影 i18n 测试
     # 加载不到翻译表。

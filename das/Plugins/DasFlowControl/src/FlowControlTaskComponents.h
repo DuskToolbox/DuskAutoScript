@@ -8,8 +8,10 @@
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasTaskComponent.Implements.hpp>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasTaskComponentFactory.Implements.hpp>
 
+#include <functional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 // {523148A6-E5BD-4B32-B8C1-C9820214014C}
 DAS_DEFINE_CLASS_IN_NAMESPACE(
@@ -45,6 +47,26 @@ DAS_DEFINE_CLASS_IN_NAMESPACE(
 
 DAS_NS_BEGIN
 
+// 一次窗口枚举结果（通用 exe/窗口等待原语，不含任何业务语义）。
+struct FlowControlWindowInfo
+{
+    void*       handle = nullptr;
+    std::string class_name;
+    std::string window_name;
+};
+
+// 进程启动缝：生产实现走 boost::process v2 spawn 并立即 detach（组件 Do
+// 返回后子进程存活）；测试注入 lambda 驱动成功/失败与参数捕获，无需真进程。
+using FlowControlProcessSpawner = std::function<bool(
+    const std::string&              exe_path,
+    const std::vector<std::string>& arguments,
+    const std::string&              working_directory)>;
+
+// 窗口枚举缝：生产实现 EnumWindows + GetClassNameW/GetWindowTextW；测试
+// 注入 lambda 驱动 0/1/N 匹配序列，无需真窗口。
+using FlowControlWindowEnumerator =
+    std::function<std::vector<FlowControlWindowInfo>()>;
+
 class DasFlowControlTaskComponent final
     : public PluginInterface::DasTaskComponentImplBase<
           DasFlowControlTaskComponent>
@@ -65,6 +87,11 @@ public:
         PluginInterface::IDasStopToken*       stop_token,
         ExportInterface::IDasReadOnlyPortMap* p_input_port_map,
         ExportInterface::IDasPortMap**        pp_out_port_map) override;
+
+    // 测试缝：注入进程启动/窗口枚举替身。传空 std::function 恢复生产实现
+    // （生产实现于首次 DoLaunch 时惰性安装）。
+    void SetProcessSpawnerForTest(FlowControlProcessSpawner spawner);
+    void SetWindowEnumeratorForTest(FlowControlWindowEnumerator enumerator);
 
 private:
     DasResult DoRepositoryInvoke(
@@ -114,6 +141,16 @@ private:
         ExportInterface::IDasReadOnlyPortMap* p_input_port_map,
         ExportInterface::IDasPortMap**        pp_out_port_map);
 
+    // 启动进程原语：读 config（exePath/args/workingDirectory/waitWindow），
+    // spawn（成功立即 detach）后可选等待目标窗口出现（轮询窗口枚举缝，
+    // 小时间片可取消；0/1/N 匹配语义）。成功发 signal_out；失败带结构化
+    // diagnostic（launch-exe-path-missing / launch-spawn-failed /
+    // launch-window-timeout / launch-window-ambiguous，消息经 i18n）。
+    DasResult DoLaunch(
+        PluginInterface::IDasStopToken*       stop_token,
+        ExportInterface::IDasReadOnlyPortMap* p_input_port_map,
+        ExportInterface::IDasPortMap**        pp_out_port_map);
+
     std::string                                    kind_;
     yyjson::value                                  settings_;
     DasPtr<PluginInterface::IDasTaskComponentHost> host_;
@@ -123,6 +160,10 @@ private:
     // it persists across the Do() calls of a single loop.
     int64_t loop_index_ = 0;
     bool    loop_started_ = false;
+
+    // 注入缝：空 = 用生产实现（首次 DoLaunch 惰性安装）。
+    FlowControlProcessSpawner   process_spawner_;
+    FlowControlWindowEnumerator window_enumerator_;
 };
 
 class DasFlowControlTaskComponentFactory final

@@ -759,6 +759,26 @@ DasResult DasFlowControlTaskComponent::DoDelay(
     return BuildResultPortMap("completed", outputs, signals, pp_out_port_map);
 }
 
+void DasFlowControlTaskComponent::SetProcessSpawnerForTest(
+    FlowControlProcessSpawner spawner)
+{
+    process_spawner_ = std::move(spawner);
+}
+
+void DasFlowControlTaskComponent::SetWindowEnumeratorForTest(
+    FlowControlWindowEnumerator enumerator)
+{
+    window_enumerator_ = std::move(enumerator);
+}
+
+DasResult DasFlowControlTaskComponent::DoLaunch(
+    PluginInterface::IDasStopToken* /*stop_token*/,
+    ExportInterface::IDasReadOnlyPortMap* /*p_input_port_map*/,
+    ExportInterface::IDasPortMap** /*pp_out_port_map*/)
+{
+    return DAS_E_NO_IMPLEMENTATION;
+}
+
 DasResult DasFlowControlTaskComponent::Do(
     PluginInterface::IDasStopToken*       stop_token,
     ExportInterface::IDasReadOnlyPortMap* p_input_port_map,
