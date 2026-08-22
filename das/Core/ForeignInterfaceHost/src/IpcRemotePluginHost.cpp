@@ -68,7 +68,8 @@ auto IpcRemotePluginHost::LoadPlugin(const RemotePluginLoadRequest& request)
             session_id,
             manifest_str.c_str(),
             op.Put(),
-            request.timeout);
+            request.timeout,
+            request.task_component_host);
         if (DAS::IsFailed(result))
         {
             DAS_CORE_LOG_ERROR(
@@ -166,7 +167,8 @@ auto IpcRemotePluginHost::LoadPlugin(const RemotePluginLoadRequest& request)
         launcher.Get(),
         manifest_path.c_str(),
         op.Put(),
-        request.timeout);
+        request.timeout,
+        request.task_component_host);
     if (DAS::IsFailed(result))
     {
         DAS_CORE_LOG_ERROR(

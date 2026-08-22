@@ -12,6 +12,7 @@
 #include <das/Core/IPC/Host/HostConfig.h>
 #include <das/Core/IPC/Host/IIpcContext.h>
 #include <das/Core/IPC/Host/IpcContext.h>
+#include <das/Core/IPC/InterfaceParamSerialization.h>
 #include <das/Core/IPC/InternalCallbackHandler.h>
 #include <das/Core/IPC/IpcCommandHandler.h>
 #include <das/Core/IPC/IpcMessageHeader.h>
@@ -1121,6 +1122,49 @@ namespace Core
                 DAS_CORE_LOG_TRACE(
                     "Successfully resolved main process interface by name: {}",
                     name);
+                out_object.Keep();
+                return DAS_S_OK;
+            }
+
+            DasResult IpcContext::ResolveInterfaceReference(
+                uint64_t   encoded_object_id,
+                uint32_t   interface_hash,
+                IDasBase** pp_out_object)
+            {
+                if (pp_out_object == nullptr)
+                {
+                    return DAS_E_INVALID_ARGUMENT;
+                }
+                DAS::DasOutPtr<IDasBase> out_object(pp_out_object);
+
+                if (!proxy_factory_ || !business_thread_)
+                {
+                    DAS_CORE_LOG_ERROR(
+                        "ResolveInterfaceReference: IPC collaborators not "
+                        "initialized");
+                    return DAS_E_IPC_NOT_INITIALIZED;
+                }
+
+                // 本地对象直查 DOM；远端对象经统一反序列化通道建代理
+                // （GetOrCreateProxy 带 hash 校验，hash 无生成物即失败）。
+                const auto deserialize_result = DeserializeInInterfaceParam(
+                    encoded_object_id,
+                    interface_hash,
+                    proxy_factory_->GetObjectManager(),
+                    run_loop_,
+                    business_thread_,
+                    *proxy_factory_,
+                    out_object.Put());
+                if (DAS::IsFailed(deserialize_result))
+                {
+                    DAS_CORE_LOG_WARN(
+                        "ResolveInterfaceReference failed, result={}, "
+                        "interface_hash=0x{:08X}",
+                        deserialize_result,
+                        interface_hash);
+                    return deserialize_result;
+                }
+
                 out_object.Keep();
                 return DAS_S_OK;
             }

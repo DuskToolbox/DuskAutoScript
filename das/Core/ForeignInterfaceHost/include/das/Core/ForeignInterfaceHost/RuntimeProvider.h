@@ -13,6 +13,12 @@
 #include <functional>
 #include <memory>
 
+namespace Das::PluginInterface
+{
+    // 前置声明：IPC 加载路径随载荷注入插件包的 task component host
+    DAS_INTERFACE IDasTaskComponentHost;
+} // namespace Das::PluginInterface
+
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 
 class IRemotePluginHost;
@@ -31,6 +37,10 @@ struct RuntimeLoadRequest
     const char* node_modules_root; // 可 nullptr（Node 专用）
     DasGuid     plugin_guid{};
     uint16_t    main_process_owner_session_id = 0;
+
+    // 可 nullptr：IPC 加载路径随 LOAD_PLUGIN 载荷注入插件包的 task
+    // component host（借用指针，加载调用期间有效）
+    Das::PluginInterface::IDasTaskComponentHost* task_component_host = nullptr;
 };
 
 /**

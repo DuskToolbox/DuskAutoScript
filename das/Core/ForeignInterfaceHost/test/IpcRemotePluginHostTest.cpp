@@ -308,13 +308,15 @@ namespace
             DAS::Core::IPC::IHostLauncher* host_launcher,
             const char*                    u8_plugin_path,
             IDasAsyncLoadPluginOperation** pp_out_operation,
-            std::chrono::milliseconds      timeout =
-                std::chrono::seconds(30)) override
+            std::chrono::milliseconds      timeout = std::chrono::seconds(30),
+            Das::PluginInterface::IDasTaskComponentHost* p_task_component_host =
+                nullptr) override
         {
             ++load_async_count;
             observed_launcher = host_launcher;
             observed_plugin_path = u8_plugin_path ? u8_plugin_path : "";
             observed_load_timeout = timeout;
+            observed_task_component_host = p_task_component_host;
             if (DAS::IsFailed(load_async_result))
             {
                 return load_async_result;
@@ -397,6 +399,8 @@ namespace
         DAS::Core::IPC::IHostLauncher*       observed_launcher = nullptr;
         std::string                          observed_plugin_path;
         std::chrono::milliseconds            observed_load_timeout{0};
+        Das::PluginInterface::IDasTaskComponentHost*
+            observed_task_component_host = nullptr;
     };
 
     RemotePluginLoadRequest MakeRequest(

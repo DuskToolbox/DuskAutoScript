@@ -14,6 +14,8 @@
 #define DAS_CORE_IPC_HANDSHAKE_SERIALIZATION_H
 
 #include <das/Core/IPC/Config.h>
+#include <das/Core/IPC/IpcErrors.h>
+#include <das/Core/IPC/ObjectId.h>
 
 #include <cstdint>
 #include <cstring>
@@ -116,6 +118,73 @@ inline bool DeserializeString(
     str.assign(reinterpret_cast<const char*>(buffer.data() + offset), len);
     offset += len;
     return true;
+}
+
+//=============================================================================
+// 接口引用（12B，与 [in] 接口参数 wire 逐字节同构）
+//=============================================================================
+
+/**
+ * @brief 将接口引用追加到字节缓冲区
+ *
+ * 格式: [uint16_t session_id][uint16_t generation][uint32_t local_id]
+ *       [uint32_t interface_hash] —— 与 [in] 接口参数 wire（SetComponent
+ *       等 COMPONENT 格式）逐字节同构。全空 ObjectId 语义 = 无引用。
+ */
+inline void SerializeInterfaceReference(
+    std::vector<uint8_t>& buffer,
+    const ObjectId&       object_id,
+    uint32_t              interface_hash)
+{
+    SerializeValue(buffer, object_id.session_id);
+    SerializeValue(buffer, object_id.generation);
+    SerializeValue(buffer, object_id.local_id);
+    SerializeValue(buffer, interface_hash);
+}
+
+/**
+ * @brief 解析载荷末尾的可选接口引用
+ *
+ * 从 offset 到缓冲区末尾的剩余字节：
+ * - 0 字节：无引用（out_object_id 置空），返回 DAS_S_OK
+ * - ≥12 字节：解析首个 12 字节引用，返回 DAS_S_OK
+ * - 1-11 字节：截断残尾，返回 DAS_E_IPC_INVALID_MESSAGE_BODY（fail-closed，
+ *   不静默吞）
+ *
+ * @param buffer 源缓冲区
+ * @param offset 当前偏移量（路径等前序字段已消费；解析成功时前移 12 字节）
+ * @param out_object_id 输出对象ID（空 ObjectId = 无引用）
+ * @param out_interface_hash 输出接口哈希（无引用时置 0）
+ * @return DasResult DAS_S_OK 或 DAS_E_IPC_INVALID_MESSAGE_BODY
+ */
+inline DasResult DeserializeTrailingInterfaceReference(
+    std::span<const uint8_t> buffer,
+    size_t&                  offset,
+    ObjectId&                out_object_id,
+    uint32_t&                out_interface_hash)
+{
+    out_object_id = ObjectId{0, 0, 0};
+    out_interface_hash = 0;
+    const size_t remaining = buffer.size() - offset;
+
+    constexpr size_t INTERFACE_REFERENCE_SIZE = 12;
+    if (remaining == 0)
+    {
+        return DAS_S_OK;
+    }
+    if (remaining < INTERFACE_REFERENCE_SIZE)
+    {
+        return DAS_E_IPC_INVALID_MESSAGE_BODY;
+    }
+
+    if (!DeserializeValue(buffer, offset, out_object_id.session_id)
+        || !DeserializeValue(buffer, offset, out_object_id.generation)
+        || !DeserializeValue(buffer, offset, out_object_id.local_id)
+        || !DeserializeValue(buffer, offset, out_interface_hash))
+    {
+        return DAS_E_IPC_INVALID_MESSAGE_BODY;
+    }
+    return DAS_S_OK;
 }
 
 DAS_CORE_IPC_NS_END

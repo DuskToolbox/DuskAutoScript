@@ -166,6 +166,37 @@ namespace Core
                     const char* name,
                     IDasBase**  pp_out_object) = 0;
 
+                /**
+                 * @brief 把编码接口引用（ObjectId + interface_hash）解析为
+                 * 本地对象或远端代理
+                 *
+                 * LOAD_PLUGIN 载荷尾随接口引用的解析通道：本地对象直查
+                 * DOM；远端对象经 DeserializeInInterfaceParam →
+                 * GetOrCreateProxy 产出代理（caller must Release）。引用未
+                 * 注册 / hash 无生成物时失败——调用方按无 host 容忍（包不
+                 * 收 host，加载不中断）。
+                 *
+                 * 默认实现返回 DAS_E_NO_IMPLEMENTATION，保证 ABI 安全
+                 * （参照 MainProcess IIpcContext
+                 * ResetHostLifecycleCallbacks 默认实现先例）。
+                 *
+                 * @param encoded_object_id 编码 ObjectId（载荷 12B 引用前三
+                 * 字段的 EncodeObjectId 产物）
+                 * @param interface_hash 接口 FNV-1a 哈希（引用第四字段）
+                 * @param pp_out_object [out] 接口指针（caller must Release）
+                 * @return DasResult DAS_S_OK on success
+                 */
+                virtual DasResult ResolveInterfaceReference(
+                    uint64_t   encoded_object_id,
+                    uint32_t   interface_hash,
+                    IDasBase** pp_out_object)
+                {
+                    (void)encoded_object_id;
+                    (void)interface_hash;
+                    (void)pp_out_object;
+                    return DAS_E_NO_IMPLEMENTATION;
+                }
+
             protected:
                 virtual ~IIpcContext() = default;
 

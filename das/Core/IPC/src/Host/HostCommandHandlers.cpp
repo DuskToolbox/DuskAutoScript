@@ -7,8 +7,11 @@
 #include <das/Core/IPC/MethodMetadata.h>
 #include <das/Core/IPC/ObjectId.h>
 #include <das/Core/Logger/Logger.h>
+#include <das/DasPtr.hpp>
 #include <das/Utils/StringUtils.h>
 #include <das/Utils/fmt.h>
+#include <das/_autogen/idl/abi/IDasPluginPackage.h>
+#include <das/_autogen/idl/abi/IDasTaskComponent.h>
 
 #include <cstring>
 #include <filesystem>
@@ -64,6 +67,77 @@ namespace Das::Core::IPC::Host
                 return DAS_E_IPC_INVALID_MESSAGE_BODY;
             }
 
+            // 可选尾随接口引用（task component host）：0 字节 = 无 host
+            // （存量 V1 载荷）；1-11 字节残尾 = 截断，fail-closed 拒绝。
+            ObjectId  host_object_id{};
+            uint32_t  host_interface_hash = 0;
+            DasResult host_parse_result = DeserializeTrailingInterfaceReference(
+                payload,
+                offset,
+                host_object_id,
+                host_interface_hash);
+            if (DAS::IsFailed(host_parse_result))
+            {
+                DAS_LOG_ERROR(
+                    DAS_FMT_NS::format(
+                        "Load plugin payload has truncated trailing reference: "
+                        "{}",
+                        manifest_path)
+                        .c_str());
+                response.error_code = host_parse_result;
+                response.response_data.clear();
+                return host_parse_result;
+            }
+
+            // 引用解析失败仅告警——按无 host 容忍（包不收 host，加载不中
+            // 断；与进程内路径同一容忍语义）。
+            DAS::DasPtr<Das::PluginInterface::IDasTaskComponentHost>
+                component_host;
+            if (!IsNullObjectId(host_object_id))
+            {
+                DAS::DasPtr<IDasBase> host_base;
+                const DasResult resolve_result = ctx.ResolveInterfaceReference(
+                    EncodeObjectId(host_object_id),
+                    host_interface_hash,
+                    host_base.Put());
+                if (DAS::IsFailed(resolve_result) || !host_base)
+                {
+                    DAS_LOG_WARNING(
+                        DAS_FMT_NS::format(
+                            "Task component host reference unresolved for "
+                            "{}, result={}",
+                            manifest_path,
+                            static_cast<uint32_t>(
+                                DAS::IsFailed(resolve_result)
+                                    ? resolve_result
+                                    : DAS_E_INVALID_POINTER))
+                            .c_str());
+                }
+                else
+                {
+                    Das::PluginInterface::IDasTaskComponentHost* host_raw =
+                        nullptr;
+                    if (DAS::IsOk(host_base->QueryInterface(
+                            DAS_IID_TASK_COMPONENT_HOST,
+                            reinterpret_cast<void**>(&host_raw)))
+                        && host_raw != nullptr)
+                    {
+                        component_host = Das::DasPtr<
+                            Das::PluginInterface::IDasTaskComponentHost>(
+                            host_raw);
+                    }
+                    else
+                    {
+                        DAS_LOG_WARNING(
+                            DAS_FMT_NS::format(
+                                "Task component host reference QI failed for "
+                                "{}",
+                                manifest_path)
+                                .c_str());
+                    }
+                }
+            }
+
             DAS_LOG_INFO(
                 DAS_FMT_NS::format("Loading plugin: {}", manifest_path)
                     .c_str());
@@ -84,6 +158,40 @@ namespace Das::Core::IPC::Host
             }
 
             auto plugin_ptr = std::move(result.value());
+
+            // 顺序契约：host 注入先于 RegisterLocalObject 与响应——main
+            // 只能在响应后经 proxy 枚举，注入必然先行。注入失败仅告警继
+            // 续（对不消费 host 的包非致命）。
+            if (component_host)
+            {
+                DAS::DasPtr<Das::PluginInterface::IDasPluginPackage> package;
+                if (DAS::IsOk(plugin_ptr->QueryInterface(
+                        DAS_IID_PLUGIN_PACKAGE,
+                        reinterpret_cast<void**>(package.Put())))
+                    && package)
+                {
+                    const DasResult inject_result =
+                        package->SetTaskComponentHost(component_host.Get());
+                    if (DAS::IsFailed(inject_result))
+                    {
+                        DAS_LOG_WARNING(
+                            DAS_FMT_NS::format(
+                                "SetTaskComponentHost failed for {}, result={}",
+                                manifest_path,
+                                static_cast<uint32_t>(inject_result))
+                                .c_str());
+                    }
+                }
+                else
+                {
+                    DAS_LOG_WARNING(
+                        DAS_FMT_NS::format(
+                            "Loaded object does not implement IDasPluginPackage, "
+                            "host not injected: {}",
+                            manifest_path)
+                            .c_str());
+                }
+            }
 
             ObjectId  object_id;
             DasResult reg_result =

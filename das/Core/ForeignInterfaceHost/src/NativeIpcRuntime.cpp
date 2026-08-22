@@ -107,6 +107,7 @@ DasResult NativeIpcRuntime::LoadPlugin(
     remote_request.timeout = timeout_;
     remote_request.on_process_exit = callbacks_.on_process_exit;
     remote_request.on_heartbeat_timeout = callbacks_.on_heartbeat_timeout;
+    remote_request.task_component_host = request.task_component_host;
 
     auto load_result = remote_plugin_host_->LoadPlugin(remote_request);
     if (!load_result)

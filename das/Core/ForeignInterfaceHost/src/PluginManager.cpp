@@ -372,6 +372,10 @@ DasResult PluginManager::LoadPlugin(
     request.main_process_owner_session_id = session_id_;
     request.node_modules_root =
         node_modules_root_u8.empty() ? nullptr : node_modules_root_u8.c_str();
+    // IPC 加载路径的包级 host 注入：host 本尊来自 TaskComponentFactoryManager
+    // （借用；经 LOAD_PLUGIN 载荷以尾随接口引用送达 Host 侧反序列化代理）。
+    request.task_component_host =
+        task_component_factory_mgr_.GetTaskComponentHost();
 
     // IPC 生命周期回调（构造内置 provider 时传入；Host 崩溃/心跳超时触发，
     // PluginManager 据此清理插件索引）。guid 按值捕获，lambda 生命周期安全。
