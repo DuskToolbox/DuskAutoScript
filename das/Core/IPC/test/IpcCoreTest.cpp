@@ -28,12 +28,15 @@
 #include <das/Core/IPC/IpcCommandHandler.h>
 #include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/IPC/MainProcess/IHostLauncher.h>
+#include <das/Core/IPC/MethodMetadata.h>
+#include <das/Core/IPC/ObjectId.h>
 #include <das/Core/IPC/ProxyFactory.h>
 #include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
 #include <das/IDasAsyncCallback.h>
 #include <das/_autogen/idl/abi/IDasPluginPackage.h>
+#include <das/_autogen/idl/abi/IDasTaskComponent.h>
 #include <filesystem>
 #include <functional>
 #include <future>
@@ -138,9 +141,67 @@ namespace Das::IPC::Test
         }
 
         DasResult SetTaskComponentHost(
-            Das::PluginInterface::IDasTaskComponentHost* /*p_host*/) override
+            Das::PluginInterface::IDasTaskComponentHost* p_host) override
         {
+            received_host = p_host;
+            host_injected = true;
             return DAS_S_OK;
+        }
+
+        Das::PluginInterface::IDasTaskComponentHost* received_host = nullptr;
+        bool                                         host_injected = false;
+
+    private:
+        std::atomic<uint32_t> ref_count_{1};
+    };
+
+    // Minimal injectable host stand-in for the LOAD_PLUGIN injection test.
+    class LoopbackTaskComponentHost final
+        : public Das::PluginInterface::IDasTaskComponentHost
+    {
+    public:
+        uint32_t DAS_STD_CALL AddRef() override { return ++ref_count_; }
+
+        uint32_t DAS_STD_CALL Release() override
+        {
+            const auto count = --ref_count_;
+            if (count == 0)
+            {
+                delete this;
+            }
+            return count;
+        }
+
+        DasResult DAS_STD_CALL
+        QueryInterface(const DasGuid& iid, void** pp_object) override
+        {
+            if (pp_object == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            if (iid == DAS_IID_BASE)
+            {
+                *pp_object = static_cast<IDasBase*>(this);
+                AddRef();
+                return DAS_S_OK;
+            }
+            if (iid == DAS_IID_TASK_COMPONENT_HOST)
+            {
+                *pp_object =
+                    static_cast<Das::PluginInterface::IDasTaskComponentHost*>(
+                        this);
+                AddRef();
+                return DAS_S_OK;
+            }
+            *pp_object = nullptr;
+            return DAS_E_NO_INTERFACE;
+        }
+
+        DasResult DAS_STD_CALL CreateTaskComponent(
+            const DasGuid&,
+            Das::PluginInterface::IDasTaskComponent**) override
+        {
+            return DAS_E_NOT_FOUND;
         }
 
     private:
@@ -196,6 +257,22 @@ namespace Das::IPC::Test
             override
         {
             return DAS_E_NO_IMPLEMENTATION;
+        }
+
+        DasResult ResolveInterfaceReference(
+            uint64_t   encoded_object_id,
+            uint32_t   interface_hash,
+            IDasBase** pp_out_object) override
+        {
+            (void)interface_hash;
+            if (pp_out_object == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *pp_out_object = nullptr;
+            const auto object_id =
+                Das::Core::IPC::DecodeObjectId(encoded_object_id);
+            return object_manager_.LookupObject(object_id, pp_out_object);
         }
 
         std::unordered_map<uint32_t, Das::Core::IPC::Host::CommandHandler>
@@ -651,6 +728,106 @@ namespace Das::IPC::Test
             qi_response.response_data.data(),
             sizeof(qi_result));
         EXPECT_EQ(qi_result, DAS_S_OK);
+    }
+
+    TEST_F(IpcCoreTestBase, HostCommandHandlersLoadPluginInjectsHostReference)
+    {
+        using Das::Core::IPC::IpcCommandResponse;
+        using Das::Core::IPC::IpcCommandType;
+        using Das::Core::IPC::ObjectId;
+        using Das::Core::IPC::ValidatedIPCMessageHeader;
+        using Das::Core::IPC::Host::HostCommandHandlerOptions;
+        using Das::Core::IPC::Host::RegisterHostCommandHandlers;
+
+        FakeHostCommandContext      ctx;
+        const std::filesystem::path manifest_path{
+            "C:/das/plugins/node-plugin/manifest.json"};
+
+        // Register the task component host object the payload will reference.
+        const DasPtr<Das::PluginInterface::IDasTaskComponentHost> host{
+            static_cast<Das::PluginInterface::IDasTaskComponentHost*>(
+                new LoopbackTaskComponentHost())};
+        ObjectId host_object_id{};
+        ASSERT_EQ(
+            ctx.RegisterLocalObject(host.Get(), host_object_id),
+            DAS_S_OK);
+
+        auto* recording_package = new HostCommandHandlerTestPackage();
+        recording_package->AddRef();
+        const DasPtr<Das::PluginInterface::IDasPluginPackage> package_owner =
+            DasPtr<Das::PluginInterface::IDasPluginPackage>::Attach(
+                static_cast<Das::PluginInterface::IDasPluginPackage*>(
+                    recording_package));
+
+        HostCommandHandlerOptions options{};
+        options.load_plugin = [&manifest_path, recording_package](
+                                  const std::filesystem::path& path)
+            -> Das::Utils::Expected<DAS::DasPtr<IDasBase>>
+        {
+            EXPECT_EQ(path, manifest_path);
+            recording_package->AddRef();
+            return DAS::DasPtr<IDasBase>::Attach(
+                static_cast<IDasBase*>(recording_package));
+        };
+
+        ASSERT_EQ(
+            RegisterHostCommandHandlers(&ctx, std::move(options)),
+            DAS_S_OK);
+        const auto load_command =
+            static_cast<uint32_t>(IpcCommandType::LoadPlugin);
+
+        // V2 payload: path + trailing 12B interface reference to the host.
+        std::vector<uint8_t> load_payload;
+        Das::Core::IPC::SerializeString(load_payload, manifest_path.string());
+        Das::Core::IPC::SerializeInterfaceReference(
+            load_payload,
+            host_object_id,
+            Das::Core::IPC::ComputeInterfaceId(DAS_IID_TASK_COMPONENT_HOST));
+
+        IpcCommandResponse load_response{};
+        ASSERT_EQ(
+            ctx.handlers.at(load_command)(
+                ValidatedIPCMessageHeader{},
+                load_payload,
+                load_response),
+            DAS_S_OK);
+        ASSERT_EQ(load_response.error_code, DAS_S_OK);
+        EXPECT_TRUE(recording_package->host_injected);
+        EXPECT_EQ(recording_package->received_host, host.Get());
+
+        // V1 payload (no trailing reference): load still succeeds, no
+        // injection reaches the package.
+        auto* second_package = new HostCommandHandlerTestPackage();
+        second_package->AddRef();
+
+        HostCommandHandlerOptions plain_options{};
+        plain_options.load_plugin =
+            [&manifest_path, second_package](const std::filesystem::path& path)
+            -> Das::Utils::Expected<DAS::DasPtr<IDasBase>>
+        {
+            EXPECT_EQ(path, manifest_path);
+            second_package->AddRef();
+            return DAS::DasPtr<IDasBase>::Attach(
+                static_cast<IDasBase*>(second_package));
+        };
+        FakeHostCommandContext plain_ctx;
+        ASSERT_EQ(
+            RegisterHostCommandHandlers(&plain_ctx, std::move(plain_options)),
+            DAS_S_OK);
+
+        std::vector<uint8_t> plain_payload;
+        Das::Core::IPC::SerializeString(plain_payload, manifest_path.string());
+        IpcCommandResponse plain_response{};
+        ASSERT_EQ(
+            plain_ctx.handlers.at(load_command)(
+                ValidatedIPCMessageHeader{},
+                plain_payload,
+                plain_response),
+            DAS_S_OK);
+        ASSERT_EQ(plain_response.error_code, DAS_S_OK);
+        EXPECT_FALSE(second_package->host_injected);
+
+        second_package->Release();
     }
 
 } // namespace Das::IPC::Test
