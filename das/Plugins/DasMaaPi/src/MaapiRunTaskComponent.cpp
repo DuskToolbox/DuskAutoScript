@@ -4,11 +4,13 @@
 
 #include "PluginUtils.h"
 
+#include <das/DasApi.h>
 #include <das/DasString.hpp>
 #include <das/Plugins/DasMaaPi/MaaPiExecutionEngine.h>
 #include <das/Plugins/DasMaaPi/MaaRuntime.h>
 #include <das/Plugins/DasMaaPi/MaapiDto.h>
 #include <das/Utils/DasJsonCore.h>
+#include <das/Utils/fmt.h>
 #include <das/_autogen/idl/abi/IDasPortMap.h>
 #include <das/_autogen/idl/abi/IDasStringVector.h>
 
@@ -133,6 +135,17 @@ namespace Plugins::DasMaaPi
         EngineInput input;
         input.pi_path = (*obj)["piPath"].as_string().value_or("");
         input.task_name = (*obj)["taskName"].as_string().value_or("");
+        // 组件 settings 取证日志：编排器投喂的 compiled_settings（piPath/
+        // taskName/options 等）此前是日志盲区，出问题无法对账执行输入。
+        {
+            const auto settings_text =
+                Das::Utils::SerializeYyjsonValue(settings_);
+            DAS_LOG_INFO(
+                DAS_FMT_NS::format(
+                    "[DasMaaPi] run component settings: {}",
+                    settings_text.value_or("<serialize-failed>"))
+                    .c_str());
+        }
         // 用户显式选择的 ADB 设备 address。PI v2 协议的 controller.adb
         // 不含 address（运行时设备发现），Adb 控制器执行必须由任务设置
         // 携带本字段；缺失时执行引擎按 adb-device-missing 显性失败。

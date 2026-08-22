@@ -1478,8 +1478,21 @@ namespace Das::Plugins::DasMaaPi
             const ExecutionEnvelopeDto&     envelope,
             PluginInterface::IDasStopToken* stop_token)
         {
+            // pretask 阶段取证日志：进入运行时的 pretask 数量与各条目，
+            // 空列表（编译链丢失）与执行失败（后续诊断）由此可分。
+            for (const auto& pretask : envelope.maapi.pretasks)
+            {
+                DAS_LOG_INFO(
+                    DAS_FMT_NS::format(
+                        "[DasMaaPi] pretask stage: name={} exec={}",
+                        pretask.name,
+                        pretask.exec)
+                        .c_str());
+            }
             if (envelope.maapi.pretasks.empty())
             {
+                DAS_LOG_INFO(
+                    "[DasMaaPi] pretask stage: envelope has no pretasks");
                 return true;
             }
             BoostPretaskRunner default_runner;

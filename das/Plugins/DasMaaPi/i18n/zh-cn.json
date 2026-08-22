@@ -104,7 +104,7 @@
     "maapi.diagnostic.controller-create-failed": "控制器创建失败：{0}",
     "maapi.diagnostic.adb-device-missing": "任务未选择 ADB 设备；请在任务设置中扫描并选择设备后重新保存运行",
     "maapi.diagnostic.adb-device-not-found": "所选 ADB 设备不在本次扫描结果中；请检查设备连接或重新选择设备：{0}",
-    "maapi.diagnostic.controller-window-not-found": "未找到匹配的桌面窗口：{0}",
+    "maapi.diagnostic.controller-window-not-found": "未找到匹配的桌面窗口，请先启动目标程序（如游戏客户端）后再运行：{0}",
     "maapi.diagnostic.controller-window-ambiguous": "多个桌面窗口匹配同一条件，请收紧匹配范围：{0}",
     "maapi.diagnostic.controller-type-unsupported-on-platform": "控制器类型在当前平台构建中不可用：{0}",
     "maapi.diagnostic.controller-connect-failed": "控制器连接失败或超时",

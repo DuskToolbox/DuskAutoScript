@@ -104,7 +104,7 @@
     "maapi.diagnostic.controller-create-failed": "Controller creation failed: {0}",
     "maapi.diagnostic.adb-device-missing": "No ADB device selected for this task; scan and select a device in the task settings, then save and run again",
     "maapi.diagnostic.adb-device-not-found": "The selected ADB device is not present in the runtime scan; check the device connection or re-select the device: {0}",
-    "maapi.diagnostic.controller-window-not-found": "No desktop window matched the controller criteria: {0}",
+    "maapi.diagnostic.controller-window-not-found": "No desktop window matched the controller criteria; start the target program (e.g. the game client) first, then run again: {0}",
     "maapi.diagnostic.controller-window-ambiguous": "Multiple desktop windows matched the same criteria; narrow the match: {0}",
     "maapi.diagnostic.controller-type-unsupported-on-platform": "Controller type is not available on this build/platform: {0}",
     "maapi.diagnostic.controller-connect-failed": "Controller connection failed or timed out",

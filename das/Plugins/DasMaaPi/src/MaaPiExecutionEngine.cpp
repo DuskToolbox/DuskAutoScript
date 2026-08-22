@@ -1,7 +1,9 @@
+#include <das/DasApi.h>
 #include <das/Plugins/DasMaaPi/MaaPiExecutionEngine.h>
 #include <das/Plugins/DasMaaPi/PiCompiler.h>
 #include <das/Plugins/DasMaaPi/PiParser.h>
 #include <das/Utils/DasJsonCore.h>
+#include <das/Utils/fmt.h>
 
 #include <algorithm>
 #include <cctype>
@@ -327,6 +329,21 @@ namespace Das::Plugins::DasMaaPi
         }
 
         auto envelope = std::move(*compile_result.execution_input);
+
+        // 执行链取证日志：pi_path/task 选择经编排器→组件→引擎→编译多层
+        // 传递，pretask/controller 丢失类问题需要逐环节对账实际值（parse
+        // 与 compile 各自的 pretask 数量、编译实际选定的 controller）。
+        DAS_LOG_INFO(
+            DAS_FMT_NS::format(
+                "[DasMaaPi] engine execute: pi_path={} task={} "
+                "catalog_pretasks={} compiled_controller={} "
+                "envelope_pretasks={}",
+                input.pi_path,
+                input.task_name,
+                catalog.pretasks.size(),
+                envelope.maapi.controller_name,
+                envelope.maapi.pretasks.size())
+                .c_str());
 
         MergePortMapInputs(envelope, input.port_map, input.inputs);
 
