@@ -104,15 +104,25 @@ public:
     ~ProcessSafeStdoutSink() override = default;
 };
 
-// 检测 PID 是否存活。detach 防止析构时误杀被查询的进程。
+// 检测 PID 是否存活。detach 防止析构时误杀被查询的进程。attach 到已退出
+// （或从未存在）的 pid 时 boost::process v2 的 process_handle 构造直接抛
+// system_error（OpenProcess 失败），必须捕获——本函数位于 g_logger 静态
+// 初始化的日志清理路径上，异常逃逸即 std::terminate 进程启动崩溃。
 bool IsProcessAlive(unsigned long long pid)
 {
-    boost::system::error_code   ec;
-    boost::process::v2::process process{
-        boost::asio::system_executor{},
-        static_cast<boost::process::v2::pid_type>(pid)};
-    process.detach();
-    return process.running(ec);
+    try
+    {
+        boost::system::error_code   ec;
+        boost::process::v2::process process{
+            boost::asio::system_executor{},
+            static_cast<boost::process::v2::pid_type>(pid)};
+        process.detach();
+        return process.running(ec);
+    }
+    catch (const boost::system::system_error&)
+    {
+        return false;
+    }
 }
 
 // 构造当前进程的日志文件路径：logs/<进程exe名>-<YYYYMMDD_HH-MM-SS>-<PID>.log。
