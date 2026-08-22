@@ -464,7 +464,10 @@ DasResult IDasJsonImpl::SetImpl(IDasReadOnlyString* p_string, const T& value)
         }
         else if constexpr (std::is_same_v<T, std::string>)
         {
-            obj[p_u8_key] = value;
+            // yyjson writer 对 lvalue std::string 走非拷贝路径（存裸指针），
+            // 源串生命周期一结束文档内即悬垂；统一经 copy_string 拷入文档池。
+            obj[p_u8_key] =
+                std::make_pair(std::string_view(value), yyjson::copy_string);
             return DAS_S_OK;
         }
         else if constexpr (std::is_same_v<T, const char*>)
@@ -528,7 +531,10 @@ DasResult IDasJsonImpl::SetImpl(size_t index, const T& value)
         }
         else if constexpr (std::is_same_v<T, std::string>)
         {
-            arr[index] = value;
+            // 同 ByName 的 std::string 分支：lvalue 赋值存裸指针，必须显式
+            // 拷贝进文档池。
+            arr[index] =
+                std::make_pair(std::string_view(value), yyjson::copy_string);
             return DAS_S_OK;
         }
         else if constexpr (std::is_same_v<T, yyjson::value>)
