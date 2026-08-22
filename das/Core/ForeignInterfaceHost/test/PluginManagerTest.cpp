@@ -13,6 +13,7 @@
 #include <das/_autogen/idl/abi/IDasTaskAuthoring.h>
 #include <das/_autogen/idl/abi/IDasTaskComponent.h>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasErrorLens.Implements.hpp>
+#include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasPluginPackage.Implements.hpp>
 #include <gtest/gtest.h>
 #include <spdlog/details/log_msg.h>
 #include <spdlog/sinks/base_sink.h>
@@ -2940,4 +2941,276 @@ TEST_F(DasPluginLoadImageFromResourceTest, MissingFile_ReturnsFileNotFound)
 
     p_path->Release();
     p_type_info->Release();
+}
+
+// ============================================================
+// 包级 task component host 注入（顺序契约 + ImplBase 默认存储）
+// ============================================================
+
+namespace
+{
+    // 记录型包：ImplBase 派生，记录接口调用顺序——顺序契约要求 host 注入
+    // 先于任何 EnumFeature / CreateFeatureInterface。
+    class RecordingPluginPackage final
+        : public DasPluginPackageImplBase<RecordingPluginPackage>
+    {
+    public:
+        DasResult DAS_STD_CALL
+        EnumFeature(uint64_t, DasPluginFeature* p_out_feature) override
+        {
+            if (p_out_feature == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            call_sequence.push_back("EnumFeature");
+            return DAS_S_FALSE;
+        }
+
+        DasResult DAS_STD_CALL
+        CreateFeatureInterface(uint64_t, IDasBase** pp_out_interface) override
+        {
+            if (pp_out_interface != nullptr)
+            {
+                *pp_out_interface = nullptr;
+            }
+            call_sequence.push_back("CreateFeatureInterface");
+            return DAS_E_NOT_FOUND;
+        }
+
+        DasResult DAS_STD_CALL
+        SetTaskComponentHost(IDasTaskComponentHost* p_host) override
+        {
+            call_sequence.push_back("SetTaskComponentHost");
+            received_host = p_host;
+            return DasPluginPackageImplBase::SetTaskComponentHost(p_host);
+        }
+
+        std::vector<std::string> call_sequence;
+        IDasTaskComponentHost*   received_host = nullptr;
+    };
+
+    class HostInjectionRuntime final : public IForeignLanguageRuntime
+    {
+    public:
+        uint32_t DAS_STD_CALL AddRef() override { return ++ref_count_; }
+
+        uint32_t DAS_STD_CALL Release() override
+        {
+            const auto count = --ref_count_;
+            if (count == 0)
+            {
+                delete this;
+            }
+            return count;
+        }
+
+        DasResult DAS_STD_CALL
+        QueryInterface(const DasGuid& iid, void** pp_out_object) override
+        {
+            if (pp_out_object == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            if (iid == DAS_IID_BASE)
+            {
+                *pp_out_object = static_cast<IDasBase*>(this);
+                AddRef();
+                return DAS_S_OK;
+            }
+            *pp_out_object = nullptr;
+            return DAS_E_NO_INTERFACE;
+        }
+
+        auto LoadPlugin(const std::filesystem::path&)
+            -> DAS::Utils::Expected<DasPtr<IDasBase>> override
+        {
+            auto* package = new RecordingPluginPackage();
+            package->AddRef();
+            last_package = package;
+            return DasPtr<IDasBase>::Attach(static_cast<IDasBase*>(package));
+        }
+
+        // 借用观测指针：包由 PluginManager 持有，断言都在 TearDown 前完成。
+        RecordingPluginPackage* last_package = nullptr;
+
+    private:
+        std::atomic<uint32_t> ref_count_{0};
+    };
+
+    // 最小可 AddRef 的 host 替身（ImplBase 默认存储测试用）。
+    class MinimalTaskComponentHost final : public IDasTaskComponentHost
+    {
+    public:
+        uint32_t DAS_STD_CALL AddRef() override { return ++ref_count_; }
+
+        uint32_t DAS_STD_CALL Release() override
+        {
+            const auto count = --ref_count_;
+            if (count == 0)
+            {
+                delete this;
+            }
+            return count;
+        }
+
+        DasResult DAS_STD_CALL
+        QueryInterface(const DasGuid& iid, void** pp_out_object) override
+        {
+            if (pp_out_object == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            if (iid == DAS_IID_BASE)
+            {
+                *pp_out_object = static_cast<IDasBase*>(this);
+                AddRef();
+                return DAS_S_OK;
+            }
+            if (iid == DasIidOf<IDasTaskComponentHost>())
+            {
+                *pp_out_object = static_cast<IDasTaskComponentHost*>(this);
+                AddRef();
+                return DAS_S_OK;
+            }
+            *pp_out_object = nullptr;
+            return DAS_E_NO_INTERFACE;
+        }
+
+        DasResult DAS_STD_CALL
+        CreateTaskComponent(const DasGuid&, IDasTaskComponent**) override
+        {
+            return DAS_E_NOT_FOUND;
+        }
+
+    private:
+        std::atomic<uint32_t> ref_count_{0};
+    };
+
+    // ImplBase 默认存储面：不 override SetTaskComponentHost，经公开包装读
+    // protected getter。
+    class DefaultHostStoragePackage final
+        : public DasPluginPackageImplBase<DefaultHostStoragePackage>
+    {
+    public:
+        DasResult DAS_STD_CALL
+        EnumFeature(uint64_t, DasPluginFeature* p_out_feature) override
+        {
+            if (p_out_feature == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            return DAS_S_FALSE;
+        }
+
+        DasResult DAS_STD_CALL
+        CreateFeatureInterface(uint64_t, IDasBase** pp_out_interface) override
+        {
+            if (pp_out_interface != nullptr)
+            {
+                *pp_out_interface = nullptr;
+            }
+            return DAS_E_NOT_FOUND;
+        }
+
+        IDasTaskComponentHost* StoredHost() const
+        {
+            return GetTaskComponentHost();
+        }
+    };
+} // namespace
+
+class PluginManagerHostInjectionTest : public ::testing::Test
+{
+protected:
+    void SetUp() override
+    {
+        test_dir_ = std::filesystem::current_path()
+                    / ("plugin_manager_host_injection_"
+                       + std::to_string(std::random_device{}()));
+        std::filesystem::create_directories(test_dir_);
+        settings_dir_ = test_dir_ / "settings";
+        settings_manager_ =
+            std::make_unique<DAS::Core::SettingsManager::SettingsManager>(
+                settings_dir_);
+        ipc_sp_ = DAS::Core::IPC::MainProcess::CreateIpcContextShared(false);
+        pm_ = std::make_unique<TestablePluginManager>(
+            *settings_manager_,
+            Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
+                ipc_sp_));
+
+        ASSERT_EQ(pm_->Initialize(1), DAS_S_OK);
+
+        runtime_ = new HostInjectionRuntime();
+        runtime_->AddRef();
+        runtime_guard_ = DasPtr<IForeignLanguageRuntime>::Attach(runtime_);
+        auto provider = CreateLocalRuntimeProvider(runtime_guard_);
+        ASSERT_TRUE(provider);
+        pm_->RegisterRuntimeProvider(
+            ForeignInterfaceLanguage::Cpp,
+            LoadMode::InProcess,
+            std::shared_ptr<IRuntimeProvider>(std::move(provider.value())));
+    }
+
+    void TearDown() override
+    {
+        pm_->Shutdown();
+        runtime_guard_.Reset();
+        std::filesystem::remove_all(test_dir_);
+    }
+
+    std::filesystem::path test_dir_;
+    std::filesystem::path settings_dir_;
+    std::unique_ptr<DAS::Core::SettingsManager::SettingsManager>
+                                                              settings_manager_;
+    std::shared_ptr<DAS::Core::IPC::MainProcess::IIpcContext> ipc_sp_;
+    std::unique_ptr<TestablePluginManager>                    pm_;
+    HostInjectionRuntime*           runtime_ = nullptr;
+    DasPtr<IForeignLanguageRuntime> runtime_guard_;
+};
+
+TEST_F(
+    PluginManagerHostInjectionTest,
+    LoadPluginInjectsHostBeforeFirstEnumFeature)
+{
+    const auto manifest_path = test_dir_ / "HostOrderPlugin.json";
+    WriteMinimalManifest(
+        manifest_path,
+        "00000000-0000-0000-0000-000000790201",
+        "HostOrderPlugin");
+
+    ASSERT_EQ(pm_->LoadPlugin(manifest_path), DAS_S_OK);
+    ASSERT_NE(runtime_->last_package, nullptr);
+
+    const auto& sequence = runtime_->last_package->call_sequence;
+    ASSERT_FALSE(sequence.empty());
+    EXPECT_EQ(sequence.front(), "SetTaskComponentHost");
+
+    const auto host_pos =
+        std::find(sequence.begin(), sequence.end(), "SetTaskComponentHost");
+    const auto enum_pos =
+        std::find(sequence.begin(), sequence.end(), "EnumFeature");
+    ASSERT_NE(enum_pos, sequence.end());
+    EXPECT_LT(host_pos, enum_pos)
+        << "host injection must precede the first EnumFeature call";
+
+    EXPECT_NE(runtime_->last_package->received_host, nullptr);
+    EXPECT_EQ(
+        runtime_->last_package->received_host,
+        pm_->GetTaskComponentFactoryManager().GetTaskComponentHost());
+}
+
+TEST(
+    DasPluginPackageImplBaseHostStorageTest,
+    DefaultImplementationStoresAndClearsHost)
+{
+    auto host = DasPtr<IDasTaskComponentHost>(
+        static_cast<IDasTaskComponentHost*>(new MinimalTaskComponentHost()));
+    auto package = DefaultHostStoragePackage::Make();
+    ASSERT_NE(package.Get(), nullptr);
+
+    EXPECT_EQ(package->SetTaskComponentHost(host.Get()), DAS_S_OK);
+    EXPECT_EQ(package->StoredHost(), host.Get());
+
+    EXPECT_EQ(package->SetTaskComponentHost(nullptr), DAS_S_OK);
+    EXPECT_EQ(package->StoredHost(), nullptr);
 }
