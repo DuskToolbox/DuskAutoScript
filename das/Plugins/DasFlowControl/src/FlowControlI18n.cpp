@@ -64,25 +64,15 @@ namespace Plugins::DasFlowControl
             return test_i18n.Get();
         }
 
-        // 函数局部 static：首次调用装载，此后复用；装载失败也只试一次
-        // （永久降级硬编码英文，不重试）。
-        static DasPtr<ExportInterface::IDasI18n> loaded_i18n;
-        static bool                              load_attempted = false;
-        if (loaded_i18n != nullptr)
+        // 函数局部 magic static（单段式，初始化线程安全）：首次调用装载，
+        // 此后复用；装载失败为空 → 每次返回 nullptr（永久降级硬编码英文，
+        // 不重试）。
+        static const DasPtr<ExportInterface::IDasI18n> loaded_i18n = []()
         {
-            return loaded_i18n.Get();
-        }
-        if (load_attempted)
-        {
-            return nullptr;
-        }
-        load_attempted = true;
-
-        if (!LoadI18nFromPluginDirectory(loaded_i18n))
-        {
-            loaded_i18n.Reset();
-            return nullptr;
-        }
+            DasPtr<ExportInterface::IDasI18n> result;
+            LoadI18nFromPluginDirectory(result);
+            return result;
+        }();
         return loaded_i18n.Get();
     }
 

@@ -12,57 +12,47 @@ namespace Plugins::DasMaaPi
 {
     ExportInterface::IDasI18n* GetPluginI18n()
     {
-        // 函数局部 static：首次调用装载，此后复用；装载失败也只试一次。
-        static DasPtr<ExportInterface::IDasI18n> i18n;
-        static bool                              load_attempted = false;
-        if (i18n != nullptr)
+        // 函数局部 magic static（单段式，初始化线程安全）：首次调用装载，
+        // 此后复用；装载失败为空 → 每次返回 nullptr（永久降级硬编码文案，
+        // 不重试）。
+        static const DasPtr<ExportInterface::IDasI18n> loaded_i18n = []()
         {
-            return i18n.Get();
-        }
-        if (load_attempted)
-        {
-            return nullptr;
-        }
-        load_attempted = true;
+            DasPtr<ExportInterface::IDasI18n> result;
 
-        // <plugin_dir>/i18n 经 boost::dll::this_line_location().parent_path()
-        // 推导（cwd != 插件安装目录）。boost path → UTF-8 std::string 经
-        // std::filesystem::path 桥接（Windows wstring / Unix string），
-        // boost path 无 u8string()，.string() 在 Windows 是 ACP（中文乱码）。
-        try
-        {
-            const auto plugin_module = boost::dll::this_line_location();
+            // <plugin_dir>/i18n 经 boost::dll::this_line_location()
+            // .parent_path() 推导（cwd != 插件安装目录）。boost path →
+            // UTF-8 std::string 经 std::filesystem::path 桥接（Windows
+            // wstring / Unix string），boost path 无 u8string()，
+            // .string() 在 Windows 是 ACP（中文乱码）。
+            try
+            {
+                const auto plugin_module = boost::dll::this_line_location();
 #ifdef _WIN32
-            const std::filesystem::path std_path{
-                (plugin_module.parent_path() / "i18n").wstring()};
+                const std::filesystem::path std_path{
+                    (plugin_module.parent_path() / "i18n").wstring()};
 #else
-            const std::filesystem::path std_path{
-                (plugin_module.parent_path() / "i18n").string()};
+                const std::filesystem::path std_path{
+                    (plugin_module.parent_path() / "i18n").string()};
 #endif
-            const auto        u8dir = std_path.u8string();
-            const std::string dir_utf8(u8dir.begin(), u8dir.end());
+                const auto        u8dir = std_path.u8string();
+                const std::string dir_utf8(u8dir.begin(), u8dir.end());
 
-            DasPtr<IDasReadOnlyString> dir_str;
-            if (DAS::IsFailed(
-                    ::CreateIDasReadOnlyStringFromUtf8(
-                        dir_utf8.c_str(),
-                        dir_str.Put())))
-            {
-                return nullptr;
+                DasPtr<IDasReadOnlyString> dir_str;
+                if (DAS::IsFailed(
+                        ::CreateIDasReadOnlyStringFromUtf8(
+                            dir_utf8.c_str(),
+                            dir_str.Put())))
+                {
+                    return result;
+                }
+                ::CreateIDasI18nFromDirectory(dir_str.Get(), result.Put());
             }
-            const auto rc =
-                ::CreateIDasI18nFromDirectory(dir_str.Get(), i18n.Put());
-            if (DAS::IsFailed(rc) || i18n == nullptr)
+            catch (...)
             {
-                i18n.Reset();
-                return nullptr;
             }
-            return i18n.Get();
-        }
-        catch (...)
-        {
-            return nullptr;
-        }
+            return result;
+        }();
+        return loaded_i18n.Get();
     }
 
     std::string TranslatePluginKey(const char* key)
