@@ -25,10 +25,6 @@ struct RemotePluginLoadRequest
 
     std::optional<uint16_t> target_session_id;
     std::string             remote_manifest_path;
-
-    // 可 nullptr：随 LOAD_PLUGIN 载荷注入插件包的 task component host
-    // （借用指针，加载调用期间有效）
-    Das::PluginInterface::IDasTaskComponentHost* task_component_host = nullptr;
 };
 
 class IRemotePluginHost

@@ -10,7 +10,6 @@
 #include <cstring>
 #include <das/Core/IPC/HandshakeSerialization.h>
 #include <das/Core/IPC/IpcCommandHandler.h>
-#include <das/Core/IPC/ObjectId.h>
 #include <gtest/gtest.h>
 #include <string>
 #include <vector>
@@ -170,97 +169,6 @@ namespace
         EXPECT_NE(parsed1, parsed2);
         EXPECT_EQ(parsed1, "/path/to/plugin1.json");
         EXPECT_EQ(parsed2, "/path/to/plugin2.json");
-    }
-
-    // ============================================================
-    // V2 trailing interface reference (task component host) tests
-    // ============================================================
-
-    TEST(LoadPluginSessionTest, V2Payload_TrailingHostReferenceRoundTrips)
-    {
-        const std::string manifest = "/plugins/MyPlugin/manifest.json";
-        auto              payload = BuildV1Payload(manifest);
-
-        const Das::Core::IPC::ObjectId host_id{42, 7, 1234};
-        constexpr uint32_t             interface_hash = 0x1234ABCDu;
-        Das::Core::IPC::SerializeInterfaceReference(
-            payload,
-            host_id,
-            interface_hash);
-        EXPECT_EQ(payload.size(), manifest.size() + sizeof(uint16_t) + 12);
-
-        std::string parsed_path;
-        size_t      offset = 0;
-        ASSERT_TRUE(
-            Das::Core::IPC::DeserializeString(payload, offset, parsed_path));
-        EXPECT_EQ(parsed_path, manifest);
-
-        Das::Core::IPC::ObjectId parsed_id{};
-        uint32_t                 parsed_hash = 0;
-        EXPECT_EQ(
-            Das::Core::IPC::DeserializeTrailingInterfaceReference(
-                payload,
-                offset,
-                parsed_id,
-                parsed_hash),
-            DAS_S_OK);
-        EXPECT_EQ(parsed_id.session_id, host_id.session_id);
-        EXPECT_EQ(parsed_id.generation, host_id.generation);
-        EXPECT_EQ(parsed_id.local_id, host_id.local_id);
-        EXPECT_EQ(parsed_hash, interface_hash);
-    }
-
-    TEST(LoadPluginSessionTest, V2Payload_WithoutTrailingReferenceIsLegal)
-    {
-        const std::string manifest = "test.json";
-        auto              payload = BuildV1Payload(manifest);
-
-        std::string parsed_path;
-        size_t      offset = 0;
-        ASSERT_TRUE(
-            Das::Core::IPC::DeserializeString(payload, offset, parsed_path));
-        EXPECT_EQ(parsed_path, manifest);
-
-        Das::Core::IPC::ObjectId parsed_id{1, 1, 1};
-        uint32_t                 parsed_hash = 0xFF;
-        EXPECT_EQ(
-            Das::Core::IPC::DeserializeTrailingInterfaceReference(
-                payload,
-                offset,
-                parsed_id,
-                parsed_hash),
-            DAS_S_OK);
-        EXPECT_TRUE(Das::Core::IPC::IsNullObjectId(parsed_id));
-        EXPECT_EQ(parsed_hash, 0u);
-    }
-
-    TEST(LoadPluginSessionTest, V2Payload_TruncatedTrailingReferenceRejected)
-    {
-        for (size_t partial = 1; partial < 12; ++partial)
-        {
-            auto payload = BuildV1Payload("test.json");
-            for (size_t i = 0; i < partial; ++i)
-            {
-                payload.push_back(static_cast<uint8_t>(0x11 * (i + 1)));
-            }
-
-            std::string parsed_path;
-            size_t      offset = 0;
-            ASSERT_TRUE(
-                Das::Core::IPC::DeserializeString(payload, offset, parsed_path))
-                << "partial=" << partial;
-
-            Das::Core::IPC::ObjectId parsed_id{};
-            uint32_t                 parsed_hash = 0;
-            EXPECT_EQ(
-                Das::Core::IPC::DeserializeTrailingInterfaceReference(
-                    payload,
-                    offset,
-                    parsed_id,
-                    parsed_hash),
-                DAS_E_IPC_INVALID_MESSAGE_BODY)
-                << "partial=" << partial;
-        }
     }
 
 } // anonymous namespace

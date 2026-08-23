@@ -16,7 +16,6 @@
 #include <das/Core/IPC/HostLauncher.h>
 #include <das/Core/IPC/HttpHost.h>
 #include <das/Core/IPC/HttpIpcTransport.h>
-#include <das/Core/IPC/InterfaceParamSerialization.h>
 #include <das/Core/IPC/InternalCallbackHandler.h>
 #include <das/Core/IPC/IpcCommandHandler.h>
 #include <das/Core/IPC/IpcMessageHeaderBuilder.h>
@@ -25,7 +24,6 @@
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
 #include <das/Core/IPC/MainProcess/InboundHostHandshakeHandler.h>
 #include <das/Core/IPC/MainProcess/IpcContext.h>
-#include <das/Core/IPC/MethodMetadata.h>
 #include <das/Core/IPC/ProxyFactory.h>
 #include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <das/Core/Logger/Logger.h>
@@ -34,7 +32,6 @@
 #include <das/Utils/DasJsonCore.h>
 #include <das/Utils/StringUtils.h>
 #include <das/Utils/fmt.h>
-#include <das/_autogen/idl/abi/IDasTaskComponent.h>
 
 DAS_NS_BEGIN
 namespace Core
@@ -486,9 +483,7 @@ namespace Core
                 IHostLauncher*                 host_launcher,
                 const char*                    u8_plugin_path,
                 IDasAsyncLoadPluginOperation** pp_out_operation,
-                std::chrono::milliseconds      timeout,
-                Das::PluginInterface::IDasTaskComponentHost*
-                    p_task_component_host)
+                std::chrono::milliseconds      timeout)
             {
                 if (!host_launcher || !u8_plugin_path || !pp_out_operation)
                 {
@@ -534,41 +529,13 @@ namespace Core
                 uint16_t path_len = static_cast<uint16_t>(plugin_path.size());
 
                 // 载荷格式: uint16_t path_len + char[] path (不含 null
-                // terminator) + 可选尾随 12B 接口引用（host）
+                // terminator)
                 std::vector<uint8_t> payload(sizeof(uint16_t) + path_len);
                 std::memcpy(payload.data(), &path_len, sizeof(uint16_t));
                 std::memcpy(
                     payload.data() + sizeof(uint16_t),
                     plugin_path.data(),
                     path_len);
-
-                // host 非空时注册进 DOM 并以尾随接口引用随载荷携带；host 为
-                // 进程级单例，注册常驻，去重分支的引用配平由
-                // SerializeInInterfaceParam 内部保证。
-                if (p_task_component_host != nullptr)
-                {
-                    ObjectId   host_object_id{};
-                    const auto host_serialize_result =
-                        SerializeInInterfaceParam(
-                            p_task_component_host,
-                            proxy_factory_->GetObjectManager(),
-                            host_object_id,
-                            nullptr);
-                    if (DAS::IsFailed(host_serialize_result))
-                    {
-                        DAS_CORE_LOG_ERROR(
-                            "LoadPluginAsync: failed to serialize task "
-                            "component host, result={}",
-                            host_serialize_result);
-                        return host_serialize_result;
-                    }
-                    SerializeInterfaceReference(
-                        payload,
-                        host_object_id,
-                        ComputeInterfaceId(
-                            DasIidOf<Das::PluginInterface::
-                                         IDasTaskComponentHost>()));
-                }
 
                 // 3. 构建消息头
                 auto header = MakeBusinessControlRequest(
@@ -600,9 +567,7 @@ namespace Core
                 uint16_t                       target_session_id,
                 const char*                    u8_plugin_path,
                 IDasAsyncLoadPluginOperation** pp_out_operation,
-                std::chrono::milliseconds      timeout,
-                Das::PluginInterface::IDasTaskComponentHost*
-                    p_task_component_host)
+                std::chrono::milliseconds      timeout)
             {
                 if (!u8_plugin_path || !pp_out_operation)
                 {
@@ -640,8 +605,7 @@ namespace Core
                 }
                 AnyTransport& transport = maybe_transport->get();
 
-                // 构建 V1 payload: uint16_t path_len + char[] path + 可选
-                // 尾随 12B 接口引用（host）
+                // 构建 V1 payload: uint16_t path_len + char[] path
                 std::string plugin_path(u8_plugin_path);
                 uint16_t path_len = static_cast<uint16_t>(plugin_path.size());
 
@@ -651,32 +615,6 @@ namespace Core
                     payload.data() + sizeof(uint16_t),
                     plugin_path.data(),
                     path_len);
-
-                // host 非空时注册进 DOM 并以尾随接口引用随载荷携带。
-                if (p_task_component_host != nullptr)
-                {
-                    ObjectId   host_object_id{};
-                    const auto host_serialize_result =
-                        SerializeInInterfaceParam(
-                            p_task_component_host,
-                            proxy_factory_->GetObjectManager(),
-                            host_object_id,
-                            nullptr);
-                    if (DAS::IsFailed(host_serialize_result))
-                    {
-                        DAS_CORE_LOG_ERROR(
-                            "LoadPluginAsync(session_id): failed to serialize "
-                            "task component host, result={}",
-                            host_serialize_result);
-                        return host_serialize_result;
-                    }
-                    SerializeInterfaceReference(
-                        payload,
-                        host_object_id,
-                        ComputeInterfaceId(
-                            DasIidOf<Das::PluginInterface::
-                                         IDasTaskComponentHost>()));
-                }
 
                 // 构建消息头
                 auto header = MakeBusinessControlRequest(

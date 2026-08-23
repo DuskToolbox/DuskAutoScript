@@ -372,10 +372,6 @@ DasResult PluginManager::LoadPlugin(
     request.main_process_owner_session_id = session_id_;
     request.node_modules_root =
         node_modules_root_u8.empty() ? nullptr : node_modules_root_u8.c_str();
-    // IPC 加载路径的包级 host 注入：host 本尊来自 TaskComponentFactoryManager
-    // （借用；经 LOAD_PLUGIN 载荷以尾随接口引用送达 Host 侧反序列化代理）。
-    request.task_component_host =
-        task_component_factory_mgr_.GetTaskComponentHost();
 
     // IPC 生命周期回调（构造内置 provider 时传入；Host 崩溃/心跳超时触发，
     // PluginManager 据此清理插件索引）。guid 按值捕获，lambda 生命周期安全。
@@ -471,8 +467,10 @@ DasResult PluginManager::LoadPlugin(
     plugin.desc = desc;
 
     // 顺序契约（IDasPluginPackage）：首次 EnumFeature 之前注入 task
-    // component host 本尊。失败仅告警并继续加载——host 注入对不消费它的
-    // 包（如外语 director 默认实现返回 DAS_E_NO_IMPLEMENTATION）非致命。
+    // component host 本尊。跨进程加载时 package 为代理——注入经代理调用，
+    // [in] 接口参数自动编组（DOM 注册 + 对端生成 host 代理），与工厂注入
+    // 同型。失败仅告警并继续加载——host 注入对不消费它的包（如外语
+    // director 默认实现返回 DAS_E_NO_IMPLEMENTATION）非致命。
     const auto inject_host_result = plugin.package->SetTaskComponentHost(
         task_component_factory_mgr_.GetTaskComponentHost());
     if (DAS::IsFailed(inject_host_result))

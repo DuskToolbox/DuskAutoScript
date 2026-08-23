@@ -15,12 +15,6 @@ namespace boost::asio
     class io_context;
 }
 
-namespace Das::PluginInterface
-{
-    // 前置声明：LOAD_PLUGIN 载荷尾随的 task component host 注入对象
-    DAS_INTERFACE IDasTaskComponentHost;
-}
-
 DAS_NS_BEGIN
 namespace Core
 {
@@ -76,9 +70,6 @@ namespace Core
                  * @param u8_plugin_path 插件 manifest 路径 (UTF-8)
                  * @param pp_out_operation 输出：异步操作对象
                  * @param timeout 超时时间（默认30秒）
-                 * @param p_task_component_host 可选：随载荷注入的 task
-                 * component host（非空时注册进 DOM 并以尾随 12B 接口引用
-                 * 随载荷携带；默认 nullptr = V1 载荷，不携带）
                  * @return DasResult DAS_S_OK 成功创建操作
                  */
                 virtual DasResult LoadPluginAsync(
@@ -86,9 +77,7 @@ namespace Core
                     const char*                    u8_plugin_path,
                     IDasAsyncLoadPluginOperation** pp_out_operation,
                     std::chrono::milliseconds      timeout =
-                        std::chrono::seconds(30),
-                    Das::PluginInterface::IDasTaskComponentHost*
-                        p_task_component_host = nullptr) = 0;
+                        std::chrono::seconds(30)) = 0;
 
                 /**
                  * @brief 异步加载插件到指定 session（直接指定
@@ -101,9 +90,6 @@ namespace Core
                  * @param u8_plugin_path 插件 manifest 路径 (UTF-8)
                  * @param pp_out_operation 输出：异步操作对象
                  * @param timeout 超时时间（默认30秒）
-                 * @param p_task_component_host 可选：随载荷注入的 task
-                 * component host（非空时注册进 DOM 并以尾随 12B 接口引用
-                 * 随载荷携带；默认 nullptr = V1 载荷，不携带）
                  * @return DasResult DAS_S_OK 成功创建操作
                  */
                 virtual DasResult LoadPluginAsync(
@@ -111,15 +97,12 @@ namespace Core
                     const char*                    u8_plugin_path,
                     IDasAsyncLoadPluginOperation** pp_out_operation,
                     std::chrono::milliseconds      timeout =
-                        std::chrono::seconds(30),
-                    Das::PluginInterface::IDasTaskComponentHost*
-                        p_task_component_host = nullptr)
+                        std::chrono::seconds(30))
                 {
                     (void)target_session_id;
                     (void)u8_plugin_path;
                     (void)pp_out_operation;
                     (void)timeout;
-                    (void)p_task_component_host;
                     return DAS_E_NO_IMPLEMENTATION;
                 }
 

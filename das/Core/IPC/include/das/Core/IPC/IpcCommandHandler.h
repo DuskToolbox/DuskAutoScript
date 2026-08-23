@@ -295,19 +295,11 @@ struct ObjectCountResponsePayload
 
 /**
  * @brief 加载插件请求 payload
- *
- * 基础格式: uint16_t plugin_path_len + char[] plugin_path (UTF-8, 不含 null
- * terminator)。可选尾随接口引用（12B，与 [in] 接口参数 wire 逐字节同构）:
- * [uint16_t session_id][uint16_t generation][uint32_t local_id]
- * [uint32_t interface_hash] —— 指向 task component host 对象；全空
- * ObjectId 语义 = 无 host；载荷以路径结束（无尾随）同样合法（存量 V1）。
- * 路径后跟 1-11 字节残尾视为截断，fail-closed 拒绝。
  */
 struct LoadPluginPayload
 {
     uint16_t plugin_path_len; // 路径长度
     // char plugin_path[plugin_path_len]  // 插件路径 (UTF-8)
-    // 可选尾随 12B 接口引用（见上，task component host）
 };
 
 /**

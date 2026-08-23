@@ -119,11 +119,6 @@ namespace Core
                     const char* name,
                     IDasBase**  pp_out_object) override;
 
-                DasResult ResolveInterfaceReference(
-                    uint64_t   encoded_object_id,
-                    uint32_t   interface_hash,
-                    IDasBase** pp_out_object) override;
-
                 DasResult RegisterService(
                     IDasBase*      p_object,
                     const DasGuid& iid) override;

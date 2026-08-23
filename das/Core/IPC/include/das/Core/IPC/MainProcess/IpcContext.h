@@ -75,18 +75,14 @@ namespace Core
                     const char*                    u8_plugin_path,
                     IDasAsyncLoadPluginOperation** pp_out_operation,
                     std::chrono::milliseconds      timeout =
-                        std::chrono::seconds(30),
-                    Das::PluginInterface::IDasTaskComponentHost*
-                        p_task_component_host = nullptr) override;
+                        std::chrono::seconds(30)) override;
 
                 DasResult LoadPluginAsync(
                     uint16_t                       target_session_id,
                     const char*                    u8_plugin_path,
                     IDasAsyncLoadPluginOperation** pp_out_operation,
                     std::chrono::milliseconds      timeout =
-                        std::chrono::seconds(30),
-                    Das::PluginInterface::IDasTaskComponentHost*
-                        p_task_component_host = nullptr) override;
+                        std::chrono::seconds(30)) override;
 
                 void PostCallback(IDasAsyncCallback* callback) override;
 
