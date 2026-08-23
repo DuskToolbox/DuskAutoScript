@@ -199,7 +199,6 @@ TEST(CompiledArtifactTest, CompiledGraphPlanDtoRoundTrip)
     plan.document_id = "doc_001";
     plan.source_revision = 3;
     plan.source_fingerprint = "sha256:aaa111";
-    plan.compiled_fingerprint = "sha256:bbb222";
     plan.node_snapshots.push_back(
         CompiledNodeSnapshotDto{
             "node_1",
@@ -224,7 +223,6 @@ TEST(CompiledArtifactTest, CompiledGraphPlanDtoRoundTrip)
     EXPECT_TRUE(serialized.contains(std::string_view("documentId")));
     EXPECT_TRUE(serialized.contains(std::string_view("sourceRevision")));
     EXPECT_TRUE(serialized.contains(std::string_view("sourceFingerprint")));
-    EXPECT_TRUE(serialized.contains(std::string_view("compiledFingerprint")));
     EXPECT_TRUE(serialized.contains(std::string_view("nodeSnapshots")));
     EXPECT_TRUE(serialized.contains(std::string_view("bindingPlan")));
     EXPECT_TRUE(serialized.contains(std::string_view("executionOrder")));
@@ -238,7 +236,6 @@ TEST(CompiledArtifactTest, CompiledGraphPlanDtoRoundTrip)
     EXPECT_EQ(round_tripped.document_id, "doc_001");
     EXPECT_EQ(round_tripped.source_revision, 3);
     EXPECT_EQ(round_tripped.source_fingerprint, "sha256:aaa111");
-    EXPECT_EQ(round_tripped.compiled_fingerprint, "sha256:bbb222");
     ASSERT_EQ(round_tripped.node_snapshots.size(), 1u);
     EXPECT_EQ(round_tripped.node_snapshots[0].node_id, "node_1");
     ASSERT_EQ(round_tripped.binding_plan.bindings.size(), 1u);
@@ -264,7 +261,6 @@ TEST(CompiledArtifactTest, CompiledSubgraphSnapshotDtoRoundTrip)
         "inner_doc",
         1,
         "sha256:inner_src",
-        "sha256:inner_comp",
         {},
         {},
         {"inner_node_1"},
@@ -312,7 +308,6 @@ namespace
         plan.document_id = "doc_test_001";
         plan.source_revision = 3;
         plan.source_fingerprint = "sha256:source_abc";
-        plan.compiled_fingerprint = "abc123";
 
         plan.node_snapshots.push_back(
             CompiledNodeSnapshotDto{
@@ -413,7 +408,7 @@ TEST(CompiledArtifactEntryStorageTest, CompiledArtifactRoundTripThroughEntry)
     ASSERT_EQ(roundtripped_plan.execution_order.size(), 2u);
     EXPECT_EQ(roundtripped_plan.execution_order[0], "nodeA");
     EXPECT_EQ(roundtripped_plan.execution_order[1], "nodeB");
-    EXPECT_EQ(roundtripped_plan.compiled_fingerprint, "abc123");
+    EXPECT_EQ(roundtripped_plan.source_fingerprint, "sha256:source_abc");
     ASSERT_GE(roundtripped_plan.diagnostics.size(), 1u);
 }
 
@@ -455,24 +450,6 @@ TEST(CompiledArtifactEntryStorageTest, CompiledArtifactPreservesExecutionOrder)
     ASSERT_EQ(roundtripped_plan.execution_order.size(), 2u);
     EXPECT_EQ(roundtripped_plan.execution_order[0], "nodeA");
     EXPECT_EQ(roundtripped_plan.execution_order[1], "nodeB");
-}
-
-// ---------------------------------------------------------------------------
-// 5. compiled_fingerprint survives round-trip (v32 fingerprint validation)
-// ---------------------------------------------------------------------------
-TEST(
-    CompiledArtifactEntryStorageTest,
-    CompiledArtifactPreservesCompiledFingerprint)
-{
-    auto entry = MakeTestEntryWithCompiledArtifact();
-
-    auto serialized_entry = yyjson::object(entry);
-    auto roundtripped_entry = yyjson::cast<EntryDto>(serialized_entry);
-    auto roundtripped_plan = yyjson::cast<CompiledGraphPlanDto>(
-        roundtripped_entry.compiled_artifact);
-
-    EXPECT_EQ(roundtripped_plan.compiled_fingerprint, "abc123");
-    EXPECT_EQ(roundtripped_plan.source_fingerprint, "sha256:source_abc");
 }
 
 // ---------------------------------------------------------------------------

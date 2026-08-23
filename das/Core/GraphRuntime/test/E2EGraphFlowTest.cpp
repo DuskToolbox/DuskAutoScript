@@ -204,7 +204,6 @@ namespace
     {
         CompiledGraphPlanDto plan;
         plan.source_fingerprint = "fp_v1";
-        plan.compiled_fingerprint = "compiled_fp_v1";
 
         for (int i = 0; i < num_nodes; ++i)
         {

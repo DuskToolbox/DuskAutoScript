@@ -907,23 +907,6 @@ yyjson::value GraphCompiler::DiagnosticToJson(const CompileEdgeDiagnostic& diag)
 }
 
 // ---------------------------------------------------------------------------
-// GenerateCompiledFingerprint
-// ---------------------------------------------------------------------------
-
-std::string GraphCompiler::GenerateCompiledFingerprint(
-    const std::string&              document_id,
-    int32_t                         source_revision,
-    const std::vector<std::string>& execution_order)
-{
-    std::string composite = document_id + ":" + std::to_string(source_revision);
-    for (const auto& node_id : execution_order)
-    {
-        composite += ":" + node_id;
-    }
-    return std::to_string(std::hash<std::string>{}(composite));
-}
-
-// ---------------------------------------------------------------------------
 // Compile
 // ---------------------------------------------------------------------------
 
@@ -932,19 +915,19 @@ Dto::CompiledGraphPlanDto GraphCompiler::Compile(
 {
     Dto::CompiledGraphPlanDto plan;
 
-    // Phase 1: Copy source metadata
+    // Copy source metadata
     plan.document_id = document.document_id;
     plan.source_revision = document.version;
     plan.source_fingerprint = document.fingerprint;
 
-    // Phase 2: Edge port validation
+    // Edge port validation
     auto edge_diagnostics = ValidateEdgePorts(document);
     for (const auto& d : edge_diagnostics)
     {
         plan.diagnostics.push_back(DiagnosticToJson(d));
     }
 
-    // Phase 3: Signal-aware topological sort (single pass — also yields
+    // Signal-aware topological sort (single pass — also yields
     // signal_routes and back_edges for the compiled plan).
     auto topology = ComputeTopology(document);
     plan.execution_order = std::move(topology.execution_order);
@@ -966,23 +949,17 @@ Dto::CompiledGraphPlanDto GraphCompiler::Compile(
         plan.diagnostics.push_back(std::move(payload));
     }
 
-    // Phase 4: Port binding plan
+    // Port binding plan
     plan.binding_plan = GeneratePortBindingPlan(document);
 
-    // Phase 5: entryRef cycle detection
+    // entryRef cycle detection
     auto ref_diagnostics = DetectCyclicEntryRefs(document);
     for (const auto& d : ref_diagnostics)
     {
         plan.diagnostics.push_back(DiagnosticToJson(d));
     }
 
-    // Phase 6: Generate compiled fingerprint
-    plan.compiled_fingerprint = GenerateCompiledFingerprint(
-        plan.document_id,
-        plan.source_revision,
-        plan.execution_order);
-
-    // Phase 7: Build node snapshots from graph document nodes
+    // Build node snapshots from graph document nodes
     for (const auto& node : document.nodes)
     {
         Dto::CompiledNodeSnapshotDto snapshot;

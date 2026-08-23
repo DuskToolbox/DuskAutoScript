@@ -8,6 +8,7 @@
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasStopToken.Implements.hpp>
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <cstring>
 #include <string>
 #include <string_view>
@@ -216,7 +217,8 @@ TEST(GraphRuntimeFactoryTest, CompileEnvelopePassesSchedulerValidator)
 }
 
 // compile.executionInput must round-trip back into the compiled plan DTO
-// with node identity and component wiring intact.
+// with node identity and component wiring intact. The wire artifact is the
+// {"fingerprint","plan"} shell; the DTO rides under the "plan" member.
 TEST(GraphRuntimeFactoryTest, CompileEnvelopeExecutionInputRestoresPlan)
 {
     const AuthoringSessionHandle session{
@@ -233,9 +235,14 @@ TEST(GraphRuntimeFactoryTest, CompileEnvelopeExecutionInputRestoresPlan)
     ASSERT_TRUE(compile_section.has_value());
     ASSERT_TRUE(compile_section->contains(std::string_view("executionInput")));
 
+    const auto shell =
+        (*compile_section)[std::string_view("executionInput")].as_object();
+    ASSERT_TRUE(shell.has_value());
+    ASSERT_TRUE(shell->contains(std::string_view("plan")));
+
     const auto plan =
         yyjson::cast<Das::Core::GraphRuntime::Dto::CompiledGraphPlanDto>(
-            (*compile_section)[std::string_view("executionInput")]);
+            (*shell)[std::string_view("plan")]);
     ASSERT_EQ(plan.execution_order.size(), 1u);
     ASSERT_EQ(plan.node_snapshots.size(), 1u);
     EXPECT_EQ(
@@ -297,12 +304,75 @@ TEST(GraphRuntimeFactoryTest, CompileEnvelopeExposesExecutionInputKey)
 
 namespace
 {
+    // 最小 host 替身：Execute 的引擎管线要求非空 host；空计划不会调用
+    // CreateTaskComponent（有节点时返回 NOT_FOUND）。
+    class NullServingTaskComponentHost final
+        : public Das::PluginInterface::IDasTaskComponentHost
+    {
+        std::atomic<uint32_t> ref_count_{0};
+
+    public:
+        uint32_t DAS_STD_CALL AddRef() override { return ++ref_count_; }
+
+        uint32_t DAS_STD_CALL Release() override
+        {
+            const auto count = --ref_count_;
+            if (count == 0)
+            {
+                delete this;
+            }
+            return count;
+        }
+
+        DasResult DAS_STD_CALL
+        QueryInterface(const DasGuid& iid, void** pp_out) override
+        {
+            if (pp_out == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            if (iid == DasIidOf<IDasBase>())
+            {
+                *pp_out = static_cast<IDasBase*>(this);
+                AddRef();
+                return DAS_S_OK;
+            }
+            if (iid == DasIidOf<Das::PluginInterface::IDasTaskComponentHost>())
+            {
+                *pp_out =
+                    static_cast<Das::PluginInterface::IDasTaskComponentHost*>(
+                        this);
+                AddRef();
+                return DAS_S_OK;
+            }
+            *pp_out = nullptr;
+            return DAS_E_NO_INTERFACE;
+        }
+
+        DasResult DAS_STD_CALL CreateTaskComponent(
+            const DasGuid&                            component_guid,
+            Das::PluginInterface::IDasTaskComponent** pp_out_component) override
+        {
+            std::ignore = component_guid;
+            if (pp_out_component == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *pp_out_component = nullptr;
+            return DAS_E_NOT_FOUND;
+        }
+    };
+
     DasResult ExecuteArtifactText(std::string_view artifact_utf8)
     {
+        auto host = Das::DasPtr<Das::PluginInterface::IDasTaskComponentHost>(
+            new NullServingTaskComponentHost());
         Das::DasPtr<IDasGraphRuntime> runtime;
-        if (DAS::IsFailed(CreateGraphRuntime(runtime.Put())))
+        const DasResult               create_result =
+            CreateGraphRuntimeWithHost(host.Get(), runtime.Put());
+        if (DAS::IsFailed(create_result))
         {
-            return DAS_E_FAIL;
+            return create_result;
         }
         Das::DasPtr<IDasReadOnlyString> artifact;
         if (DAS::IsFailed(CreateIDasReadOnlyStringFromUtf8(

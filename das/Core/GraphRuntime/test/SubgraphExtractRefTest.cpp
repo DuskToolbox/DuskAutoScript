@@ -151,7 +151,6 @@ namespace
         CompiledGraphPlanDto plan;
         plan.document_id = "doc_" + std::to_string(entry_id);
         plan.source_revision = 1;
-        plan.compiled_fingerprint = "fp_" + std::to_string(entry_id);
         return plan;
     }
 

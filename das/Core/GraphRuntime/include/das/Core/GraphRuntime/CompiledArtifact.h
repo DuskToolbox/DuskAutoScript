@@ -80,7 +80,6 @@ namespace Dto
         std::string                          document_id;
         int32_t                              source_revision = 0;
         std::string                          source_fingerprint;
-        std::string                          compiled_fingerprint;
         std::vector<CompiledNodeSnapshotDto> node_snapshots;
         PortBindingPlanDto                   binding_plan;
         std::vector<std::string>             execution_order;

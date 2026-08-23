@@ -131,7 +131,6 @@ namespace
     {
         CompiledGraphPlanDto plan;
         plan.source_fingerprint = "fp_v1";
-        plan.compiled_fingerprint = "compiled_fp_v1";
 
         for (int i = 0; i < num_nodes; ++i)
         {
@@ -165,7 +164,6 @@ namespace
     {
         CompiledGraphPlanDto plan;
         plan.source_fingerprint = "fp_v1";
-        plan.compiled_fingerprint = "compiled_fp_v1";
         return plan;
     }
 
@@ -418,7 +416,6 @@ namespace GraphRuntimeTestMock
     {
         CompiledGraphPlanDto plan;
         plan.source_fingerprint = "fp_v1";
-        plan.compiled_fingerprint = "compiled_fp_v1";
 
         CompiledNodeSnapshotDto snap;
         snap.node_id = node_id;
@@ -532,7 +529,6 @@ TEST(GraphRuntimeTest, RunWithHostSingleExecution)
     using namespace GraphRuntimeTestMock;
     CompiledGraphPlanDto plan;
     plan.source_fingerprint = "fp_v1";
-    plan.compiled_fingerprint = "compiled_fp_v1";
 
     plan.node_snapshots.push_back(
         MakeSnapshotWithPorts(NODE_A, {MakePortDef("out")}, COMP_A));
@@ -986,7 +982,6 @@ namespace SignalGatedTestMock
     {
         CompiledGraphPlanDto plan;
         plan.source_fingerprint = "fp_v1";
-        plan.compiled_fingerprint = "compiled_fp_v1";
         return plan;
     }
 } // namespace SignalGatedTestMock

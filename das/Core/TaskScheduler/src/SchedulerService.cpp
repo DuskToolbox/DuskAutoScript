@@ -1,6 +1,7 @@
 #include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/Core/ForeignInterfaceHost/ForeignInterfaceHost.h>
 #include <das/Core/ForeignInterfaceHost/PluginScanner.h>
+#include <das/Core/GraphRuntime/CompiledPlanFingerprint.h>
 #include <das/Core/GraphRuntime/EntryRefExpansion.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/Core/TaskScheduler/SchedulerService.h>
@@ -4676,68 +4677,80 @@ namespace Das::Core::TaskScheduler
                         auto execution_input = ExtractProviderExecutionInput(
                             parsed_compile.compile);
 
-                        // Graph plans carry entryRef nodes as unexpanded
-                        // markers. Discrimination is type-driven and
-                        // business-neutral: only a CompiledGraphPlanDto-shaped
-                        // object casts cleanly; any other execution input
-                        // (e.g. a maapi envelope) throws and flows on
-                        // untouched.
+                        // Graph plans travel inside the {"fingerprint","plan"}
+                        // shell and carry entryRef nodes as unexpanded markers.
+                        // Unwrap the shell for the expansion pass — markers are
+                        // only visible on the inner plan — then re-wrap the
+                        // (possibly rewritten) plan with a fresh fingerprint.
+                        // Discrimination stays type-driven and
+                        // business-neutral: a non-shell execution input (e.g. a
+                        // maapi envelope) flows on untouched.
                         bool graph_plan_expanded = false;
                         Das::Core::GraphRuntime::Dto::CompiledGraphPlanDto
-                            graph_plan;
-                        try
+                             graph_plan;
+                        auto shell_obj = execution_input.as_object();
+                        if (shell_obj
+                            && shell_obj->contains(
+                                std::string_view("fingerprint"))
+                            && shell_obj->contains(std::string_view("plan")))
                         {
-                            graph_plan =
-                                yyjson::cast<Das::Core::GraphRuntime::Dto::
-                                                 CompiledGraphPlanDto>(
-                                    execution_input);
-
-                            const auto entry_ref_resolver =
-                                [this](
-                                    int64_t entry_id,
-                                    const std::optional<int64_t>&
-                                        expected_revision)
-                                -> Das::Core::GraphRuntime::EntryRefResolution
+                            try
                             {
-                                RepositoryInvoke::Dto::RepositoryTaskRefDto
-                                    repository_ref;
-                                repository_ref.entry_id = entry_id;
-                                repository_ref.expected_revision =
-                                    expected_revision;
-                                return MakeEntryRefResolutionFromSnapshotResult(
-                                    RepositoryInvoke::
-                                        ResolveRepositoryInvokeSnapshot(
-                                            BuildRepositoryInvokeCompileServices(),
-                                            repository_ref));
-                            };
+                                graph_plan =
+                                    yyjson::cast<Das::Core::GraphRuntime::Dto::
+                                                     CompiledGraphPlanDto>(
+                                        (*shell_obj)[std::string_view("plan")]);
 
-                            std::vector<std::string> expand_diagnostics;
-                            const auto               expand_result =
-                                Das::Core::GraphRuntime::ExpandEntryRefNodes(
-                                    graph_plan,
-                                    entry_ref_resolver,
-                                    &expand_diagnostics);
-                            if (DAS::IsFailed(expand_result))
-                            {
-                                compile_failed = true;
-                                for (const auto& diagnostic :
-                                     expand_diagnostics)
+                                const auto entry_ref_resolver =
+                                    [this](
+                                        int64_t entry_id,
+                                        const std::optional<int64_t>&
+                                            expected_revision)
+                                    -> Das::Core::GraphRuntime::
+                                        EntryRefResolution
                                 {
-                                    DAS_CORE_LOG_WARN(
-                                        "SchedulerService::OnTick: task {} "
-                                        "entryRef expansion failed: {}",
-                                        selected_id,
-                                        diagnostic);
+                                    RepositoryInvoke::Dto::RepositoryTaskRefDto
+                                        repository_ref;
+                                    repository_ref.entry_id = entry_id;
+                                    repository_ref.expected_revision =
+                                        expected_revision;
+                                    return MakeEntryRefResolutionFromSnapshotResult(
+                                        RepositoryInvoke::
+                                            ResolveRepositoryInvokeSnapshot(
+                                                BuildRepositoryInvokeCompileServices(),
+                                                repository_ref));
+                                };
+
+                                std::vector<std::string> expand_diagnostics;
+                                const auto expand_result = Das::Core::
+                                    GraphRuntime::ExpandEntryRefNodes(
+                                        graph_plan,
+                                        entry_ref_resolver,
+                                        &expand_diagnostics);
+                                if (DAS::IsFailed(expand_result))
+                                {
+                                    compile_failed = true;
+                                    for (const auto& diagnostic :
+                                         expand_diagnostics)
+                                    {
+                                        DAS_CORE_LOG_WARN(
+                                            "SchedulerService::OnTick: task {} "
+                                            "entryRef expansion failed: {}",
+                                            selected_id,
+                                            diagnostic);
+                                    }
+                                }
+                                else
+                                {
+                                    graph_plan_expanded = true;
                                 }
                             }
-                            else
+                            catch (const std::exception&)
                             {
-                                graph_plan_expanded = true;
+                                // Shell-shaped but the inner payload does not
+                                // cast as a plan — pass the artifact through
+                                // untouched; Execute rejects it structurally.
                             }
-                        }
-                        catch (const std::exception&)
-                        {
-                            // Not a graph plan — leave execution_input as-is.
                         }
 
                         try
@@ -4746,7 +4759,10 @@ namespace Das::Core::TaskScheduler
                                 Das::MakeDasPtr<Das::Core::Utils::IDasJsonImpl>(
                                     graph_plan_expanded
                                         ? CloneJsonValue(
-                                              yyjson::object(graph_plan))
+                                              Das::Core::GraphRuntime::
+                                                  BuildCompiledPlanShell(
+                                                      yyjson::object(
+                                                          graph_plan)))
                                         : std::move(execution_input));
                         }
                         catch (const std::bad_alloc&)

@@ -3,6 +3,7 @@
 #include <cpp_yyjson.hpp>
 #include <das/Core/ForeignInterfaceHost/TaskComponentFactoryManager.h>
 #include <das/Core/GraphRuntime/AuthoringDocContract.h>
+#include <das/Core/GraphRuntime/CompiledPlanFingerprint.h>
 #include <das/Core/GraphRuntime/FormSequenceProjector.h>
 #include <das/Core/GraphRuntime/GraphAuthoring.h>
 #include <das/Core/GraphRuntime/GraphCompiler.h>
@@ -63,8 +64,43 @@ DasResult GraphRuntimeImpl::Execute(
         {
             try
             {
-                auto doc = yyjson::read(json_str);
-                plan = yyjson::cast<Dto::CompiledGraphPlanDto>(doc);
+                // The wire artifact is a {"fingerprint","plan"} shell. Verify
+                // the plan payload against the shell fingerprint (re-serialize
+                // the subtree with the same standard serializer and compare)
+                // before executing: a mismatch means the artifact was modified
+                // or corrupted after compilation.
+                auto shell = yyjson::read(json_str);
+                auto shell_obj = shell.as_object();
+                if (!shell_obj
+                    || !shell_obj->contains(std::string_view("fingerprint"))
+                    || !shell_obj->contains(std::string_view("plan")))
+                {
+                    throw yyjson::bad_cast{
+                        "compiled artifact is not a {fingerprint,plan} shell"};
+                }
+                auto fingerprint =
+                    (*shell_obj)[std::string_view("fingerprint")].as_string();
+                if (!fingerprint || fingerprint->empty())
+                {
+                    throw yyjson::bad_cast{
+                        "compiled artifact shell carries no fingerprint"};
+                }
+
+                const auto& plan_subtree =
+                    (*shell_obj)[std::string_view("plan")];
+                const std::string computed_fingerprint =
+                    ComputeCompiledPlanFingerprint(plan_subtree);
+                if (computed_fingerprint.empty()
+                    || computed_fingerprint != *fingerprint)
+                {
+                    last_error_ = "Execute: compiled artifact fingerprint "
+                                  "mismatch — the plan payload was modified "
+                                  "or corrupted";
+                    DAS_CORE_LOG_ERROR("{}", last_error_);
+                    return DAS_E_FAIL;
+                }
+
+                plan = yyjson::cast<Dto::CompiledGraphPlanDto>(plan_subtree);
             }
             catch (const std::exception& exception)
             {
@@ -77,10 +113,13 @@ DasResult GraphRuntimeImpl::Execute(
         }
     }
 
-    // Execute via engine.
+    // Execute via engine. The artifact is self-contained — its integrity gate
+    // is the shell fingerprint verified above. There is no live authoring
+    // document at execution time to compare freshness against, so the
+    // engine's staleness check is explicitly neutralized by self-comparison.
     const DasResult result = engine_.RunWithHost(
         plan,
-        plan.compiled_fingerprint,
+        plan.source_fingerprint,
         p_stop_token,
         host_.Get());
 
@@ -1069,15 +1108,19 @@ DAS_C_API DasResult GraphAuthoringSessionCompile(
 
         // Strict authoring compile envelope: the scheduler validates Compile
         // results with OnlyKeys {compile, diagnostics} and extracts the task
-        // input from compile.executionInput. The whole CompiledGraphPlanDto
-        // travels inside executionInput so graph tasks receive the plan
-        // unchanged (DasGraphTaskAdapter::Do is a pure pass-through).
+        // input from compile.executionInput. The wire artifact traveling
+        // inside executionInput is the {"fingerprint","plan"} shell: the
+        // whole CompiledGraphPlanDto rides under "plan" and its FNV-1a 64
+        // content fingerprint under "fingerprint" (GraphRuntime::Execute
+        // re-computes and compares before executing; DasGraphTaskAdapter::Do
+        // is a pure pass-through).
         yyjson::value envelope(Das::Utils::MakeYyjsonObject());
         auto          envelope_obj = envelope.as_object();
 
         yyjson::value compile_section(Das::Utils::MakeYyjsonObject());
         (*compile_section.as_object())[std::string_view("executionInput")] =
-            Das::Utils::CloneYyjsonValue(yyjson::object(plan));
+            Das::Core::GraphRuntime::BuildCompiledPlanShell(
+                yyjson::object(plan));
         (*envelope_obj)[std::string_view("compile")] =
             std::move(compile_section);
 

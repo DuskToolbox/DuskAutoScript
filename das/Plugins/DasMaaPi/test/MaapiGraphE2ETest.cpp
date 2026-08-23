@@ -186,7 +186,6 @@ namespace
     {
         CompiledGraphPlanDto plan;
         plan.source_fingerprint = "fp_e2e";
-        plan.compiled_fingerprint = "compiled_fp_e2e";
 
         CompiledNodeSnapshotDto snap;
         snap.node_id = NODE_ID;

@@ -1164,7 +1164,6 @@ TEST_F(
 {
     Das::Core::GraphRuntime::Dto::CompiledGraphPlanDto plan;
     plan.source_fingerprint = "fp_delay_settings";
-    plan.compiled_fingerprint = "compiled_fp_delay_settings";
 
     Das::Core::GraphRuntime::Dto::CompiledNodeSnapshotDto node;
     node.node_id = "31000000-0000-0000-0000-000000000001";

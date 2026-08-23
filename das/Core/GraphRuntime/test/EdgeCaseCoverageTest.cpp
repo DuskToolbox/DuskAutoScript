@@ -224,7 +224,6 @@ namespace
     {
         CompiledGraphPlanDto plan;
         plan.source_fingerprint = "fp_v1";
-        plan.compiled_fingerprint = "compiled_fp_v1";
         plan.node_snapshots.push_back(
             MakeSnapshot(node_id, component_guid, ports));
         plan.execution_order = {node_id};

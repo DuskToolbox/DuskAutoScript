@@ -920,32 +920,6 @@ TEST(CompileOrchestrationTest, CompileWithErrors)
     EXPECT_FALSE(plan.diagnostics.empty());
 }
 
-TEST(CompileOrchestrationTest, CompiledFingerprint)
-{
-    StubFactoryManager mgr;
-    auto               node_a_def = MakeDefinition({}, {{"out1", "int"}});
-    auto               node_b_def = MakeDefinition({{"in1", "int"}}, {});
-    mgr.AddDefinition("AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA", node_a_def);
-    mgr.AddDefinition("BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB", node_b_def);
-
-    GraphCompiler compiler;
-    compiler.SetFactoryManager(&mgr);
-
-    GraphDocumentDto doc;
-    doc.document_id = "test_doc";
-    doc.version = 1;
-    doc.fingerprint = "abc123";
-    doc.nodes.push_back(
-        MakeComponentNode("A", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"));
-    doc.nodes.push_back(
-        MakeComponentNode("B", "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"));
-    doc.edges.push_back(MakeEdge("e1", "A", "out1", "B", "in1"));
-
-    auto plan = compiler.Compile(doc);
-    EXPECT_FALSE(plan.compiled_fingerprint.empty());
-    EXPECT_NE(plan.compiled_fingerprint, plan.source_fingerprint);
-}
-
 // ===================================================================
 // Test Suite 9: SignalAwareCompileTest (DAS-60 Stage 2)
 // ===================================================================
@@ -1264,9 +1238,9 @@ TEST(EntryRefExpansionTest, ExpandsMarkerIntoComponentNode)
 
     int64_t                seen_entry_id = 0;
     std::optional<int64_t> seen_revision;
-    auto resolver = [&](int64_t                       entry_id,
-                        const std::optional<int64_t>& revision)
-        -> EntryRefResolution
+    auto                   resolver =
+        [&](int64_t                       entry_id,
+            const std::optional<int64_t>& revision) -> EntryRefResolution
     {
         seen_entry_id = entry_id;
         seen_revision = revision;
@@ -1296,8 +1270,9 @@ TEST(EntryRefExpansionTest, ExpansionAppendsBroadcastSnapshotBinding)
     auto       plan = compiler.Compile(doc);
     const auto execution_order_before = plan.execution_order;
 
-    const auto resolver = [](int64_t, const std::optional<int64_t>&)
-        -> EntryRefResolution { return MakeResolvedSnapshot(); };
+    const auto resolver =
+        [](int64_t, const std::optional<int64_t>&) -> EntryRefResolution
+    { return MakeResolvedSnapshot(); };
 
     ASSERT_EQ(ExpandEntryRefNodes(plan, resolver), DAS_S_OK);
 
@@ -1325,8 +1300,7 @@ TEST(EntryRefExpansionTest, ResolverFailureIsFailClosed)
     auto plan = compiler.Compile(doc);
 
     const auto resolver =
-        [](int64_t,
-           const std::optional<int64_t>&) -> EntryRefResolution
+        [](int64_t, const std::optional<int64_t>&) -> EntryRefResolution
     {
         EntryRefResolution resolution;
         resolution.ok = false;
@@ -1361,9 +1335,8 @@ TEST(EntryRefExpansionTest, ExpandsAllMarkersAndSkipsMarkerFreePlans)
     auto plan = compiler.Compile(doc);
 
     int  resolve_count = 0;
-    auto resolver =
-        [&](int64_t,
-            const std::optional<int64_t>&) -> EntryRefResolution
+    auto resolver = [&](int64_t,
+                        const std::optional<int64_t>&) -> EntryRefResolution
     {
         ++resolve_count;
         return MakeResolvedSnapshot();
@@ -1388,10 +1361,9 @@ TEST(EntryRefExpansionTest, ExpandsAllMarkersAndSkipsMarkerFreePlans)
     plain_doc.nodes.push_back(
         MakeComponentNode("solo", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"));
     auto plain_plan = compiler.Compile(plain_doc);
-    auto no_call_resolver = [](int64_t, const std::optional<int64_t>&)
-        -> EntryRefResolution { return MakeResolvedSnapshot(); };
-    ASSERT_EQ(
-        ExpandEntryRefNodes(plain_plan, no_call_resolver),
-        DAS_S_OK);
+    auto no_call_resolver =
+        [](int64_t, const std::optional<int64_t>&) -> EntryRefResolution
+    { return MakeResolvedSnapshot(); };
+    ASSERT_EQ(ExpandEntryRefNodes(plain_plan, no_call_resolver), DAS_S_OK);
     EXPECT_TRUE(plain_plan.binding_plan.bindings.empty());
 }

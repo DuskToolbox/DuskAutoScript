@@ -125,7 +125,7 @@ public:
     /// Unified compile entry point: runs all phases and produces a
     /// CompiledGraphPlanDto. Steps: ValidateEdgePorts ->
     /// ComputeExecutionOrder -> GeneratePortBindingPlan ->
-    /// DetectCyclicEntryRefs -> generate compiled_fingerprint.
+    /// DetectCyclicEntryRefs.
     Dto::CompiledGraphPlanDto Compile(const Dto::GraphDocumentDto& document);
 
     // -----------------------------------------------------------------------
@@ -166,13 +166,6 @@ private:
     /// Build a node index: node_id -> GraphNodeDto* for O(1) lookup.
     static std::unordered_map<std::string, const Dto::GraphNodeDto*>
     BuildNodeIndex(const Dto::GraphDocumentDto& document);
-
-    /// Generate a compiled fingerprint from document metadata + execution
-    /// order.
-    static std::string GenerateCompiledFingerprint(
-        const std::string&              document_id,
-        int32_t                         source_revision,
-        const std::vector<std::string>& execution_order);
 
     /// Convert a CompileEdgeDiagnostic to a yyjson::value for plan
     /// diagnostics.

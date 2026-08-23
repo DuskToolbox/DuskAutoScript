@@ -1,6 +1,7 @@
 #include <das/Core/GraphRuntime/ExtractSubgraph.h>
 
 #include <cpp_yyjson.hpp>
+#include <das/Core/GraphRuntime/CompiledPlanFingerprint.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/Utils/fmt.h>
 
@@ -206,12 +207,13 @@ ExtractResult ExtractSubgraph::Extract(
     // --- Compile child entry ---
     auto compiled_plan = compile_callback(result.child_entry_id);
     result.revision = 1;
-    result.fingerprint = compiled_plan.compiled_fingerprint;
 
-    // Propagate the compiled fingerprint back into the child document so
-    // downstream consumers (e.g. SubgraphCompiler) see a consistent
-    // fingerprint between the ExtractResult and child_graph_document.
-    child_doc.fingerprint = compiled_plan.compiled_fingerprint;
+    // 子计划内容指纹（标准序列化 + FNV-1a 64），同时写入提取结果与子
+    // 文档，使下游（SubgraphCompiler 等）在两者间看到一致指纹。
+    const std::string child_fingerprint =
+        ComputeCompiledPlanFingerprint(yyjson::object(compiled_plan));
+    result.fingerprint = child_fingerprint;
+    child_doc.fingerprint = child_fingerprint;
     result.child_graph_document = child_doc;
 
     DAS_CORE_LOG_INFO(
