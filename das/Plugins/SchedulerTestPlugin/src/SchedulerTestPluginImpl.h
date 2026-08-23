@@ -4,6 +4,7 @@
 #include <das/Plugins/SchedulerTestPlugin/SchedulerTestSharedState.h>
 
 #include <atomic>
+#include <das/DasPtr.hpp>
 #include <das/_autogen/idl/abi/IDasPluginPackage.h>
 #include <das/_autogen/idl/abi/IDasTask.h>
 #include <das/_autogen/idl/abi/IDasTaskAuthoring.h>
@@ -225,14 +226,23 @@ public:
         IDasBase** pp_out_interface) override;
 
     DasResult SetTaskComponentHost(
-        Das::PluginInterface::IDasTaskComponentHost* /*p_host*/) override
+        Das::PluginInterface::IDasTaskComponentHost* p_host) override
     {
+        task_component_host_ =
+            Das::DasPtr<Das::PluginInterface::IDasTaskComponentHost>(p_host);
         return DAS_S_OK;
+    }
+
+    Das::PluginInterface::IDasTaskComponentHost* GetTaskComponentHost() const
+    {
+        return task_component_host_.Get();
     }
 
 private:
     std::atomic<uint32_t>   ref_count_{0};
     FactoryTaskSharedState* state_ = nullptr;
+    Das::DasPtr<Das::PluginInterface::IDasTaskComponentHost>
+        task_component_host_;
 };
 
 DAS_NS_END

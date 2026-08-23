@@ -147,13 +147,24 @@ namespace
         }
 
         DasResult DAS_STD_CALL SetTaskComponentHost(
-            Das::PluginInterface::IDasTaskComponentHost* /*p_host*/) override
+            Das::PluginInterface::IDasTaskComponentHost* p_host) override
         {
+            task_component_host_ =
+                Das::DasPtr<Das::PluginInterface::IDasTaskComponentHost>(
+                    p_host);
             return DAS_S_OK;
+        }
+
+        Das::PluginInterface::IDasTaskComponentHost* GetTaskComponentHost()
+            const
+        {
+            return task_component_host_.Get();
         }
 
     private:
         std::atomic<uint32_t> ref_count_{0};
+        Das::DasPtr<Das::PluginInterface::IDasTaskComponentHost>
+            task_component_host_;
     };
 
     struct BackendCapture

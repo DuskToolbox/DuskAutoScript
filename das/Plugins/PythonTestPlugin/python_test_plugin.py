@@ -402,9 +402,15 @@ class PythonTestPlugin(ISwigDasPluginPackage):
     def __init__(self):
         super().__init__()
         self._session_id = 0
+        self._task_component_host = None
 
     def SetSessionId(self, session_id: int):
         self._session_id = int(session_id)
+        return DAS_S_OK
+
+    def SetTaskComponentHost(self, p_host) -> int:
+        """存储加载器注入的 task component host（注入先于任何枚举）"""
+        self._task_component_host = p_host
         return DAS_S_OK
 
     def EnumFeature(self, index: int) -> DasRetDasPluginFeature:

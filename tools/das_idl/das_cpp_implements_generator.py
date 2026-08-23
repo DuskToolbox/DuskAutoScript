@@ -374,42 +374,6 @@ class CppImplementsGenerator:
             lines.append(f"{self.indent}}}")
             lines.append("")
 
-        # IDasPluginPackage 接口级默认方法：task component host 注入存储。
-        # 顺序契约由加载器保证（SetTaskComponentHost 先于任何
-        # EnumFeature / CreateFeatureInterface，见 IDL 接口注释）；
-        # ImplBase 派生包零源码改动即可收到 host。
-        if raw_name == 'IDasPluginPackage':
-            lines.append(f"{self.indent}protected:")
-            lines.append(f"{self.indent}/// @brief Injected task component host storage; the loader")
-            lines.append(f"{self.indent}/// injects it before any feature enumeration (ordering contract)")
-            lines.append(f"{self.indent}DasPtr<Das::PluginInterface::IDasTaskComponentHost> task_component_host_;")
-            lines.append("")
-            lines.append(f"{self.indent}public:")
-            lines.append(f"{self.indent}/// @brief Default host injection implementation: hold the host")
-            lines.append(f"{self.indent}/// (null clears the storage). Derived feature interfaces should be")
-            lines.append(f"{self.indent}/// constructed with GetTaskComponentHost() so the host flows to them.")
-            lines.append(f"{self.indent}/// @param p_host Host to hold (nullptr clears)")
-            lines.append(f"{self.indent}/// @return DAS_S_OK")
-            lines.append(f"{self.indent}DasResult DAS_STD_CALL SetTaskComponentHost(")
-            lines.append(f"{self.indent}    Das::PluginInterface::IDasTaskComponentHost* p_host) override")
-            lines.append(f"{self.indent}{{")
-            lines.append(f"{self.indent}{self.indent}task_component_host_ =")
-            lines.append(f"{self.indent}{self.indent}    DasPtr<Das::PluginInterface::IDasTaskComponentHost>(p_host);")
-            lines.append(f"{self.indent}{self.indent}return DAS_S_OK;")
-            lines.append(f"{self.indent}}}")
-            lines.append("")
-            lines.append(f"{self.indent}protected:")
-            lines.append(f"{self.indent}/// @brief Borrowed access to the injected host (non-owning;")
-            lines.append(f"{self.indent}/// lifetime follows the package)")
-            lines.append(f"{self.indent}Das::PluginInterface::IDasTaskComponentHost* GetTaskComponentHost() const")
-            lines.append(f"{self.indent}{{")
-            lines.append(f"{self.indent}{self.indent}return task_component_host_.Get();")
-            lines.append(f"{self.indent}}}")
-            lines.append("")
-            # 恢复 public 访问级别，保证后续生成的 Make/MakeRaw 工厂方法公开。
-            lines.append(f"{self.indent}public:")
-            lines.append("")
-
         # Make 工厂方法
         lines.append(f"{self.indent}/// @brief Factory method to create instance wrapped in DasPtr")
         lines.append(f"{self.indent}/// @tparam Args Constructor argument types")

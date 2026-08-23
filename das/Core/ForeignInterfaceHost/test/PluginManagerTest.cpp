@@ -252,14 +252,21 @@ namespace
         }
 
         DasResult DAS_STD_CALL
-        SetTaskComponentHost(IDasTaskComponentHost* /*p_host*/) override
+        SetTaskComponentHost(IDasTaskComponentHost* p_host) override
         {
+            task_component_host_ = DasPtr<IDasTaskComponentHost>(p_host);
             return DAS_S_OK;
+        }
+
+        IDasTaskComponentHost* GetTaskComponentHost() const
+        {
+            return task_component_host_.Get();
         }
 
     private:
         std::vector<DasPluginFeature> features_;
         std::atomic<uint32_t>         ref_count_{0};
+        DasPtr<IDasTaskComponentHost> task_component_host_;
     };
 
     class CapturingRuntime final : public IForeignLanguageRuntime
@@ -828,14 +835,21 @@ namespace
         }
 
         DasResult DAS_STD_CALL
-        SetTaskComponentHost(IDasTaskComponentHost* /*p_host*/) override
+        SetTaskComponentHost(IDasTaskComponentHost* p_host) override
         {
+            task_component_host_ = DasPtr<IDasTaskComponentHost>(p_host);
             return DAS_S_OK;
         }
 
+        IDasTaskComponentHost* GetTaskComponentHost() const
+        {
+            return task_component_host_.Get();
+        }
+
     private:
-        DasGuid               factory_guid_;
-        std::atomic<uint32_t> ref_count_{0};
+        DasGuid                       factory_guid_;
+        std::atomic<uint32_t>         ref_count_{0};
+        DasPtr<IDasTaskComponentHost> task_component_host_;
     };
 
     class TaskComponentRuntime final : public IForeignLanguageRuntime
@@ -1009,14 +1023,21 @@ namespace
         }
 
         DasResult DAS_STD_CALL
-        SetTaskComponentHost(IDasTaskComponentHost* /*p_host*/) override
+        SetTaskComponentHost(IDasTaskComponentHost* p_host) override
         {
+            task_component_host_ = DasPtr<IDasTaskComponentHost>(p_host);
             return DAS_S_OK;
         }
 
+        IDasTaskComponentHost* GetTaskComponentHost() const
+        {
+            return task_component_host_.Get();
+        }
+
     private:
-        DasGuid               provider_guid_;
-        std::atomic<uint32_t> ref_count_{0};
+        DasGuid                       provider_guid_;
+        std::atomic<uint32_t>         ref_count_{0};
+        DasPtr<IDasTaskComponentHost> task_component_host_;
     };
 
     class ErrorLensRuntime final : public IForeignLanguageRuntime
@@ -2956,7 +2977,7 @@ TEST_F(DasPluginLoadImageFromResourceTest, MissingFile_ReturnsFileNotFound)
 }
 
 // ============================================================
-// 包级 task component host 注入（顺序契约 + ImplBase 默认存储）
+// 包级 task component host 注入（顺序契约 + 实现者显式存储）
 // ============================================================
 
 namespace
@@ -2994,11 +3015,20 @@ namespace
         {
             call_sequence.push_back("SetTaskComponentHost");
             received_host = p_host;
-            return DasPluginPackageImplBase::SetTaskComponentHost(p_host);
+            task_component_host_ = DasPtr<IDasTaskComponentHost>(p_host);
+            return DAS_S_OK;
+        }
+
+        IDasTaskComponentHost* GetTaskComponentHost() const
+        {
+            return task_component_host_.Get();
         }
 
         std::vector<std::string> call_sequence;
         IDasTaskComponentHost*   received_host = nullptr;
+
+    private:
+        DasPtr<IDasTaskComponentHost> task_component_host_;
     };
 
     class HostInjectionRuntime final : public IForeignLanguageRuntime
@@ -3077,87 +3107,6 @@ namespace
 
     private:
         RecordingPluginPackage*& out_last_package_;
-    };
-
-    // 最小可 AddRef 的 host 替身（ImplBase 默认存储测试用）。
-    class MinimalTaskComponentHost final : public IDasTaskComponentHost
-    {
-    public:
-        uint32_t DAS_STD_CALL AddRef() override { return ++ref_count_; }
-
-        uint32_t DAS_STD_CALL Release() override
-        {
-            const auto count = --ref_count_;
-            if (count == 0)
-            {
-                delete this;
-            }
-            return count;
-        }
-
-        DasResult DAS_STD_CALL
-        QueryInterface(const DasGuid& iid, void** pp_out_object) override
-        {
-            if (pp_out_object == nullptr)
-            {
-                return DAS_E_INVALID_POINTER;
-            }
-            if (iid == DAS_IID_BASE)
-            {
-                *pp_out_object = static_cast<IDasBase*>(this);
-                AddRef();
-                return DAS_S_OK;
-            }
-            if (iid == DasIidOf<IDasTaskComponentHost>())
-            {
-                *pp_out_object = static_cast<IDasTaskComponentHost*>(this);
-                AddRef();
-                return DAS_S_OK;
-            }
-            *pp_out_object = nullptr;
-            return DAS_E_NO_INTERFACE;
-        }
-
-        DasResult DAS_STD_CALL
-        CreateTaskComponent(const DasGuid&, IDasTaskComponent**) override
-        {
-            return DAS_E_NOT_FOUND;
-        }
-
-    private:
-        std::atomic<uint32_t> ref_count_{0};
-    };
-
-    // ImplBase 默认存储面：不 override SetTaskComponentHost，经公开包装读
-    // protected getter。
-    class DefaultHostStoragePackage final
-        : public DasPluginPackageImplBase<DefaultHostStoragePackage>
-    {
-    public:
-        DasResult DAS_STD_CALL
-        EnumFeature(uint64_t, DasPluginFeature* p_out_feature) override
-        {
-            if (p_out_feature == nullptr)
-            {
-                return DAS_E_INVALID_POINTER;
-            }
-            return DAS_S_FALSE;
-        }
-
-        DasResult DAS_STD_CALL
-        CreateFeatureInterface(uint64_t, IDasBase** pp_out_interface) override
-        {
-            if (pp_out_interface != nullptr)
-            {
-                *pp_out_interface = nullptr;
-            }
-            return DAS_E_NOT_FOUND;
-        }
-
-        IDasTaskComponentHost* StoredHost() const
-        {
-            return GetTaskComponentHost();
-        }
     };
 } // namespace
 
@@ -3292,21 +3241,4 @@ TEST_F(
     EXPECT_EQ(
         remote_package->received_host,
         pm_->GetTaskComponentFactoryManager().GetTaskComponentHost());
-}
-
-TEST(
-    DasPluginPackageImplBaseHostStorageTest,
-    DefaultImplementationStoresAndClearsHost)
-{
-    auto host = DasPtr<IDasTaskComponentHost>(
-        static_cast<IDasTaskComponentHost*>(new MinimalTaskComponentHost()));
-    const DasPtr<DefaultHostStoragePackage> package{
-        new DefaultHostStoragePackage()};
-    ASSERT_NE(package.Get(), nullptr);
-
-    EXPECT_EQ(package->SetTaskComponentHost(host.Get()), DAS_S_OK);
-    EXPECT_EQ(package->StoredHost(), host.Get());
-
-    EXPECT_EQ(package->SetTaskComponentHost(nullptr), DAS_S_OK);
-    EXPECT_EQ(package->StoredHost(), nullptr);
 }

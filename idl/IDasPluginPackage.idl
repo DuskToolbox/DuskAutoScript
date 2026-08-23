@@ -19,9 +19,11 @@ interface IDasPluginPackage : IDasBase {
     DasResult CreateFeatureInterface(uint64_t index, [out] IDasBase** pp_out_interface);
     // Ordering contract: the loader guarantees SetTaskComponentHost is called
     // before any EnumFeature / CreateFeatureInterface call. Both load paths
-    // enforce it — the in-process PluginManager passes the host object before
-    // enumerating features, and the Host process injects the deserialized
-    // proxy before the plugin becomes enumerable by the main process.
+    // enforce it through the same injection point — the main-side
+    // PluginManager calls SetTaskComponentHost right after obtaining the
+    // package interface and before enumerating features (a cross-process
+    // load receives a package proxy, so the call is marshalled like any
+    // [in] interface parameter).
     // Plugins must not assume any other timing.
     DasResult SetTaskComponentHost(IDasTaskComponentHost * p_host);
 }

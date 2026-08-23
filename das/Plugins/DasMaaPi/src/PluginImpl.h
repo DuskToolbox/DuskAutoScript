@@ -9,6 +9,8 @@ namespace Plugins::DasMaaPi
     class DasMaaPiPlugin final
         : public PluginInterface::DasPluginPackageImplBase<DasMaaPiPlugin>
     {
+        DasPtr<PluginInterface::IDasTaskComponentHost> task_component_host_;
+
     public:
         DAS_IMPL EnumFeature(
             size_t                             index,
@@ -17,6 +19,20 @@ namespace Plugins::DasMaaPi
         DAS_IMPL CreateFeatureInterface(
             size_t     index,
             IDasBase** pp_out_interface) override;
+
+        // 存储加载器注入的 task component host（顺序契约：注入先于枚举）。
+        DAS_IMPL SetTaskComponentHost(
+            PluginInterface::IDasTaskComponentHost* p_host) override
+        {
+            task_component_host_ =
+                DasPtr<PluginInterface::IDasTaskComponentHost>(p_host);
+            return DAS_S_OK;
+        }
+
+        PluginInterface::IDasTaskComponentHost* GetTaskComponentHost() const
+        {
+            return task_component_host_.Get();
+        }
     };
 } // namespace Plugins::DasMaaPi
 DAS_NS_END

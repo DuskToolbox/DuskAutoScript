@@ -442,11 +442,13 @@ namespace
         return feature;
     }
 
-    // 包默认存储路径的 fake 包：CreateFeatureInterface 以 getter 存量构造
-    // 工厂（host 来源 = 包默认存储，加载器保证注入先于枚举）。
+    // 显式 host 存储的 fake 包：CreateFeatureInterface 以 getter 存量构造
+    // 工厂（host 来源 = 包自有存储，加载器保证注入先于枚举）。
     class HostAwareFactoryPackage final
         : public DasPluginPackageImplBase<HostAwareFactoryPackage>
     {
+        DasPtr<IDasTaskComponentHost> task_component_host_;
+
     public:
         HostAwareFactoryPackage(
             DasGuid factory_guid,
@@ -494,6 +496,18 @@ namespace
             factory->AddRef();
             *pp_out = static_cast<IDasTaskComponentFactory*>(factory);
             return DAS_S_OK;
+        }
+
+        DasResult DAS_STD_CALL
+        SetTaskComponentHost(IDasTaskComponentHost* p_host) override
+        {
+            task_component_host_ = DasPtr<IDasTaskComponentHost>(p_host);
+            return DAS_S_OK;
+        }
+
+        IDasTaskComponentHost* GetTaskComponentHost() const
+        {
+            return task_component_host_.Get();
         }
 
     private:

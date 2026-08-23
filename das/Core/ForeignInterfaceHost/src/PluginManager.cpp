@@ -469,8 +469,8 @@ DasResult PluginManager::LoadPlugin(
     // 顺序契约（IDasPluginPackage）：首次 EnumFeature 之前注入 task
     // component host 本尊。跨进程加载时 package 为代理——注入经代理调用，
     // [in] 接口参数自动编组（DOM 注册 + 对端生成 host 代理），与工厂注入
-    // 同型。失败仅告警并继续加载——host 注入对不消费它的包（如外语
-    // director 默认实现返回 DAS_E_NO_IMPLEMENTATION）非致命。
+    // 同型。失败仅告警并继续加载——实现者显式返回失败（如跨进程编组
+    // 出错）时加载无需中断，host 消费方在创建组件时自行失败即可。
     const auto inject_host_result = plugin.package->SetTaskComponentHost(
         task_component_factory_mgr_.GetTaskComponentHost());
     if (DAS::IsFailed(inject_host_result))

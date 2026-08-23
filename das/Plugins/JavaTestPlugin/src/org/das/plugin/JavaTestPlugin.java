@@ -24,6 +24,7 @@ public class JavaTestPlugin extends ISwigDasPluginPackage {
     };
 
     private int sessionId_ = 0;
+    private IDasTaskComponentHost taskComponentHost_ = null;
 
     /**
      * 插件入口方法 - 由 entryPoint 配置指定
@@ -87,6 +88,16 @@ public class JavaTestPlugin extends ISwigDasPluginPackage {
         }
 
         return result;
+    }
+
+    /**
+     * 存储加载器注入的 task component host
+     * （顺序契约：注入先于任何 EnumFeature / CreateFeatureInterface）
+     */
+    @Override
+    public int SetTaskComponentHost(IDasTaskComponentHost p_host) {
+        taskComponentHost_ = p_host;
+        return DuskAutoScriptConstants.DAS_S_OK;
     }
 
     // ==========================================================================
