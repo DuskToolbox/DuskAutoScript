@@ -51,9 +51,13 @@ namespace Plugins::DasGraphTask
         {
             const char* plan_utf8 = nullptr;
             const auto  get_hr = artifact->GetUtf8(&plan_utf8);
-            if (DAS::IsFailed(get_hr) || plan_utf8 == nullptr)
+            if (DAS::IsFailed(get_hr))
             {
                 return get_hr;
+            }
+            if (plan_utf8 == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
             }
             Das::Utils::SetPortString(
                 input_map.Get(),
