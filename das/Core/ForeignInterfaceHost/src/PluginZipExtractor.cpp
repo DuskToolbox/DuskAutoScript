@@ -1,5 +1,7 @@
 #include <das/Core/ForeignInterfaceHost/PluginZipExtractor.h>
 
+// cpp_yyjson.hpp 内部使用 assert 但未自带 <cassert>，需要本翻译单元
+// 先行提供（本文件自身无 assert 调用，勿当死包含清理）。
 #include <cassert>
 #include <cpp_yyjson.hpp>
 #include <das/Core/ForeignInterfaceHost/PluginScanner.h>
@@ -7,12 +9,17 @@
 #include <das/Utils/DasJsonCore.h>
 #include <das/Utils/StringUtils.h>
 
+#include <algorithm>
+#include <array>
+#include <cctype>
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <optional>
 #include <random>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <zip.h>
@@ -52,6 +59,57 @@ namespace
         return !rel_str.empty();
     }
 
+    // Windows 保留设备名（大小写不敏感精确匹配）：CON / PRN / AUX /
+    // NUL / COM1-9 / LPT1-9。
+    bool IsReservedDeviceName(const std::string& component)
+    {
+        static constexpr std::array<std::string_view, 22> kReserved = {
+            "CON",  "PRN",  "AUX",  "NUL",  "COM1", "COM2", "COM3", "COM4",
+            "COM5", "COM6", "COM7", "COM8", "COM9", "LPT1", "LPT2", "LPT3",
+            "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"};
+        std::string upper;
+        upper.reserve(component.size());
+        for (const char c : component)
+        {
+            upper.push_back(
+                static_cast<char>(std::toupper(static_cast<unsigned char>(c))));
+        }
+        return std::find(kReserved.begin(), kReserved.end(), upper)
+               != kReserved.end();
+    }
+
+    // 组件级安全检查：拒绝 ".."、空组件（连续分隔符）、含 ':'（NTFS
+    // 备用数据流 / 驱动器相对名）、尾点 / 尾空格（Win32 落盘剥离产生
+    // 别名）与保留设备名。
+    bool IsPathComponentSafe(const std::string& component)
+    {
+        if (component.empty() || component == "..")
+        {
+            return false;
+        }
+        if (component.find(':') != std::string::npos)
+        {
+            return false;
+        }
+        if (component.back() == '.' || component.back() == ' ')
+        {
+            return false;
+        }
+        return !IsReservedDeviceName(component);
+    }
+
+    // 目录名单组件安全（flat 包自动包装目录名派生用）：非空、不含任一
+    // 分隔符且通过组件级检查。
+    bool IsSinglePathComponentSafe(const std::string& name)
+    {
+        return name.find('/') == std::string::npos
+               && name.find('\\') == std::string::npos
+               && IsPathComponentSafe(name);
+    }
+
+    // 整档首道文件名守卫：'\' 与 '/' 交错夹带 '..' / 设备名 / ADS 名等
+    // 组件在此拒绝（磁盘零写入）。归一化仅用于检查——落盘路径构造仍用
+    // 原始条目名，目录穿越 containment 由 IsPathSafe 二道兜底。
     bool IsFilenameSafe(const std::string& filename)
     {
         if (filename.empty())
@@ -64,20 +122,18 @@ namespace
             return false;
         }
 
-        std::istringstream ss(filename);
+        std::string normalized;
+        normalized.reserve(filename.size());
+        for (const char c : filename)
+        {
+            normalized.push_back(c == '\\' ? '/' : c);
+        }
+
+        std::istringstream ss(normalized);
         std::string        component;
         while (std::getline(ss, component, '/'))
         {
-            if (component == "..")
-            {
-                return false;
-            }
-        }
-
-        std::istringstream ss2(filename);
-        while (std::getline(ss2, component, '\\'))
-        {
-            if (component == "..")
+            if (!IsPathComponentSafe(component))
             {
                 return false;
             }
@@ -146,6 +202,19 @@ namespace
         }
         zip_error_fini(&open_error);
         return archive;
+    }
+
+    // 关闭 archive：zip_close 失败路径不释放 archive，必须补 zip_discard
+    // 防泄漏（成功返回 true）。两个入口统一走本函数，消除关闭纪律分叉。
+    bool CloseZipArchive(zip_t* archive)
+    {
+        if (zip_close(archive) != 0)
+        {
+            DAS_CORE_LOG_WARN("ZIP close failed: {}", zip_strerror(archive));
+            zip_discard(archive);
+            return false;
+        }
+        return true;
     }
 
     // UTF-8 std::string 到 path 的唯一物化入口：1:1 字节拷入
@@ -228,6 +297,15 @@ namespace
         {
             std::error_code ec;
             std::filesystem::create_directories(parent, ec);
+            if (ec)
+            {
+                // 真实病因（非法组件等）在此留痕；不提前返回，ofstream
+                // 打开失败仍是 fail-closed 兜底。
+                DAS_CORE_LOG_WARN(
+                    "Failed to create parent directory: {} ({})",
+                    DAS::Utils::U8AsString(parent.u8string()),
+                    ec.message());
+            }
         }
 
         std::ofstream ofs(target_path, std::ios::binary | std::ios::trunc);
@@ -259,6 +337,9 @@ namespace
             return result;
         }
 
+        // 显式 flush + close：ofstream 缓冲的尾块在析构期落盘，若不在
+        // 此验证，磁盘满 / 配额场景会把截断文件当成功装进 plugin_dir。
+        ofs.close();
         if (!ofs)
         {
             DAS_CORE_LOG_WARN(
@@ -314,6 +395,61 @@ namespace
             { out.append(data, static_cast<std::size_t>(size)); });
         zip_fclose(entry_file);
         return result;
+    }
+
+    // 单趟条目快照：条目计数失败 / 空档 / 单条目 stat 失败统一按
+    // nullopt 返回（两个入口共用，调用方 fail-closed 拒绝）。
+    std::optional<std::vector<EntryInfo>> SnapshotEntries(zip_t* archive)
+    {
+        const zip_int64_t num_entries = zip_get_num_entries(archive, 0);
+        if (num_entries < 0)
+        {
+            DAS_CORE_LOG_WARN(
+                "ZIP entry count failed: {}",
+                zip_strerror(archive));
+            return std::nullopt;
+        }
+        if (num_entries == 0)
+        {
+            DAS_CORE_LOG_WARN("ZIP archive is empty");
+            return std::nullopt;
+        }
+
+        std::vector<EntryInfo> entries;
+        entries.reserve(static_cast<std::size_t>(num_entries));
+        for (zip_int64_t i = 0; i < num_entries; ++i)
+        {
+            zip_stat_t stat;
+            zip_stat_init(&stat);
+            if (zip_stat_index(archive, static_cast<zip_uint64_t>(i), 0, &stat)
+                < 0)
+            {
+                DAS_CORE_LOG_WARN("ZIP stat failed: {}", zip_strerror(archive));
+                return std::nullopt;
+            }
+
+            EntryInfo info;
+            info.index = static_cast<zip_uint64_t>(i);
+            info.name = (stat.valid & ZIP_STAT_NAME) != 0 ? stat.name : "";
+            info.is_directory = !info.name.empty() && info.name.back() == '/';
+            info.size_valid = (stat.valid & ZIP_STAT_SIZE) != 0;
+            info.declared_size = stat.size;
+            entries.push_back(std::move(info));
+        }
+        return entries;
+    }
+
+    // flat 包判定：任一文件条目名含 '/' 即视为带子目录的 packaged 包。
+    bool HasSubdirectory(const std::vector<EntryInfo>& entries)
+    {
+        for (const auto& e : entries)
+        {
+            if (!e.is_directory && e.name.find('/') != std::string::npos)
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     // Create a unique temp directory under parent
@@ -387,42 +523,13 @@ DasResult InstallPlugin(
         return DAS_E_INVALID_ARGUMENT;
     }
 
-    const zip_int64_t num_entries = zip_get_num_entries(archive, 0);
-    if (num_entries < 0)
+    const auto snapshot = SnapshotEntries(archive);
+    if (!snapshot)
     {
-        DAS_CORE_LOG_WARN("ZIP entry count failed: {}", zip_strerror(archive));
         zip_discard(archive);
         return DAS_E_INVALID_ARGUMENT;
     }
-
-    if (num_entries == 0)
-    {
-        DAS_CORE_LOG_WARN("ZIP archive is empty");
-        zip_discard(archive);
-        return DAS_E_INVALID_ARGUMENT;
-    }
-
-    std::vector<EntryInfo> entries;
-    entries.reserve(static_cast<std::size_t>(num_entries));
-    for (zip_int64_t i = 0; i < num_entries; ++i)
-    {
-        zip_stat_t stat;
-        zip_stat_init(&stat);
-        if (zip_stat_index(archive, static_cast<zip_uint64_t>(i), 0, &stat) < 0)
-        {
-            DAS_CORE_LOG_WARN("ZIP stat failed: {}", zip_strerror(archive));
-            zip_discard(archive);
-            return DAS_E_INVALID_ARGUMENT;
-        }
-
-        EntryInfo info;
-        info.index = static_cast<zip_uint64_t>(i);
-        info.name = (stat.valid & ZIP_STAT_NAME) != 0 ? stat.name : "";
-        info.is_directory = !info.name.empty() && info.name.back() == '/';
-        info.size_valid = (stat.valid & ZIP_STAT_SIZE) != 0;
-        info.declared_size = stat.size;
-        entries.push_back(std::move(info));
-    }
+    const auto& entries = *snapshot;
 
     // 整档 fail-closed：任一条目名不安全即拒绝整个安装（磁盘零写入）。
     for (const auto& e : entries)
@@ -446,69 +553,109 @@ DasResult InstallPlugin(
     TempDirGuard temp_guard{temp_dir};
 
     // --- Step 3: Detect flat ZIP, compute effective filenames ---
-    bool has_subdir = false;
-    for (const auto& e : entries)
-    {
-        if (!e.is_directory && e.name.find('/') != std::string::npos)
-        {
-            has_subdir = true;
-            break;
-        }
-    }
+    const bool has_subdir = HasSubdirectory(entries);
 
     std::string auto_prefix;
     if (!has_subdir)
     {
-        // Need to find manifest entry to get plugin name for auto-wrap.
-        // Read only the first root .json entry (bounded in-memory read).
+        // flat 包自动包装目录名派生（与 PluginScanner 的发现约定对齐）。
+        // 候选顺序：根级 manifest.json 优先，其余根级 .json 按条目序。
+        // 候选有效 = 可读（16MiB 内存上限）+ 可解析为 JSON 对象 + 含
+        // "name" 或 "guid" 字符串字段（manifest 判别式；无这两者的干扰
+        // config.json 跳过）。
+        // 目录名规则：manifest.json 候选取 "name" 字段（legacy 兼容，
+        // 空 / 不安全按候选无效续试）；其余 X.json 候选取文件主干 X，
+        // 保证安装布局 X/X.json 命中扫描器主约定 <目录名>.json，而非
+        // name 字段。
+        std::vector<const EntryInfo*> candidates;
         for (const auto& e : entries)
         {
-            if (e.is_directory)
+            if (!e.is_directory && e.name == "manifest.json")
+            {
+                candidates.push_back(&e);
+                break;
+            }
+        }
+        for (const auto& e : entries)
+        {
+            if (!e.is_directory && e.name != "manifest.json"
+                && e.name.size() >= 5
+                && e.name.compare(e.name.size() - 5, 5, ".json") == 0
+                && e.name.find('/') == std::string::npos)
+            {
+                candidates.push_back(&e);
+            }
+        }
+
+        for (const auto* candidate : candidates)
+        {
+            std::string file_data;
+            if (ReadEntryToString(
+                    archive,
+                    *candidate,
+                    file_data,
+                    MAX_MANIFEST_ENTRY_BYTES)
+                != DAS_S_OK)
             {
                 continue;
             }
 
-            if (e.name.size() >= 5
-                && e.name.compare(e.name.size() - 5, 5, ".json") == 0)
+            try
             {
-                std::string file_data;
-                if (ReadEntryToString(
-                        archive,
-                        e,
-                        file_data,
-                        MAX_MANIFEST_ENTRY_BYTES)
-                    == DAS_S_OK)
+                auto parsed = Das::Utils::ParseYyjsonFromString(file_data);
+                if (!parsed)
                 {
-                    try
+                    continue;
+                }
+                auto obj = parsed->as_object();
+                if (!obj)
+                {
+                    continue;
+                }
+
+                auto name_val = (*obj)[std::string_view("name")];
+                auto name_opt = name_val.as_string();
+                auto guid_val = (*obj)[std::string_view("guid")];
+                auto guid_opt = guid_val.as_string();
+
+                // manifest 判别式：name / guid 字符串字段皆缺的候选跳过。
+                if (!name_opt && !guid_opt)
+                {
+                    continue;
+                }
+
+                std::string dir_name;
+                if (candidate->name == "manifest.json")
+                {
+                    dir_name = name_opt ? std::string(*name_opt) : "";
+                    if (!IsFilenameSafe(dir_name))
                     {
-                        auto parsed =
-                            Das::Utils::ParseYyjsonFromString(file_data);
-                        if (parsed)
-                        {
-                            auto obj = parsed->as_object();
-                            if (obj)
-                            {
-                                auto name_val =
-                                    (*obj)[std::string_view("name")];
-                                auto name_opt = name_val.as_string();
-                                if (name_opt)
-                                {
-                                    auto_prefix = std::string(*name_opt) + "/";
-                                }
-                            }
-                        }
-                    }
-                    catch (const std::exception&)
-                    {
+                        continue;
                     }
                 }
+                else
+                {
+                    dir_name =
+                        candidate->name.substr(0, candidate->name.size() - 5);
+                    if (!IsSinglePathComponentSafe(dir_name))
+                    {
+                        continue;
+                    }
+                }
+
+                auto_prefix = dir_name + "/";
                 break;
+            }
+            catch (const std::exception&)
+            {
             }
         }
 
         if (auto_prefix.empty())
         {
-            DAS_CORE_LOG_WARN("Flat ZIP has no manifest with 'name' field");
+            DAS_CORE_LOG_WARN(
+                "Flat ZIP has no usable manifest candidate for wrap directory "
+                "name");
             zip_discard(archive);
             return DAS_E_INVALID_ARGUMENT;
         }
@@ -552,10 +699,8 @@ DasResult InstallPlugin(
         }
     }
 
-    if (zip_close(archive) != 0)
+    if (!CloseZipArchive(archive))
     {
-        DAS_CORE_LOG_WARN("ZIP close failed: {}", zip_strerror(archive));
-        zip_discard(archive);
         return DAS_E_INVALID_ARGUMENT;
     }
 
@@ -619,6 +764,15 @@ DasResult InstallPlugin(
         if (std::filesystem::exists(old))
         {
             std::filesystem::rename(old, dst, ec);
+            if (ec)
+            {
+                // 恢复失败：既有插件已不在位，.old 目录是唯一副本，留痕
+                // 供人工恢复。
+                DAS_CORE_LOG_ERROR(
+                    "Failed to restore previous plugin version: {} -> {}",
+                    DAS::Utils::U8AsString(old.u8string()),
+                    DAS::Utils::U8AsString(dst.u8string()));
+            }
         }
         return DAS_E_FAIL;
     }
@@ -627,10 +781,22 @@ DasResult InstallPlugin(
     if (std::filesystem::exists(old))
     {
         std::filesystem::remove_all(old, ec);
+        if (ec)
+        {
+            DAS_CORE_LOG_WARN(
+                "Failed to remove old plugin version: {}",
+                DAS::Utils::U8AsString(old.u8string()));
+        }
     }
 
     temp_guard.dismiss = true;
     std::filesystem::remove_all(temp_dir, ec);
+    if (ec)
+    {
+        DAS_CORE_LOG_WARN(
+            "Failed to remove temp install directory: {}",
+            DAS::Utils::U8AsString(temp_dir.u8string()));
+    }
 
     return DAS_S_OK;
 }
@@ -654,58 +820,20 @@ DasResult ReadPluginManifestMetadataFromZip(
         return DAS_E_INVALID_ARGUMENT;
     }
 
-    const zip_int64_t num_entries = zip_get_num_entries(archive, 0);
-    if (num_entries < 0)
+    // 单趟条目快照（无名条目不可能命中 manifest 候选规则，天然被后续
+    // 筛选跳过）。
+    const auto snapshot = SnapshotEntries(archive);
+    if (!snapshot)
     {
-        DAS_CORE_LOG_WARN("ZIP entry count failed: {}", zip_strerror(archive));
         zip_discard(archive);
         return DAS_E_INVALID_ARGUMENT;
     }
+    const auto& entries = *snapshot;
 
-    if (num_entries == 0)
-    {
-        DAS_CORE_LOG_WARN(
-            "ReadPluginManifestMetadataFromZip: ZIP archive is empty");
-        zip_discard(archive);
-        return DAS_E_INVALID_ARGUMENT;
-    }
-
-    // 单趟条目快照（名有效性守卫同 InstallPlugin：无名条目不可能命中
-    // manifest 候选规则，天然被后续筛选跳过）。
-    std::vector<EntryInfo> entries;
-    entries.reserve(static_cast<std::size_t>(num_entries));
-    for (zip_int64_t i = 0; i < num_entries; ++i)
-    {
-        zip_stat_t stat;
-        zip_stat_init(&stat);
-        if (zip_stat_index(archive, static_cast<zip_uint64_t>(i), 0, &stat) < 0)
-        {
-            DAS_CORE_LOG_WARN("ZIP stat failed: {}", zip_strerror(archive));
-            zip_discard(archive);
-            return DAS_E_INVALID_ARGUMENT;
-        }
-
-        EntryInfo info;
-        info.index = static_cast<zip_uint64_t>(i);
-        info.name = (stat.valid & ZIP_STAT_NAME) != 0 ? stat.name : "";
-        info.is_directory = !info.name.empty() && info.name.back() == '/';
-        info.size_valid = (stat.valid & ZIP_STAT_SIZE) != 0;
-        info.declared_size = stat.size;
-        entries.push_back(std::move(info));
-    }
-
-    // Find manifest entry — same logic as InstallPlugin:
-    // For flat ZIPs (no subdirs), look for a .json entry at root.
-    // For packaged ZIPs (with subdirs), look for */manifest.json.
-    bool has_subdir = false;
-    for (const auto& e : entries)
-    {
-        if (!e.is_directory && e.name.find('/') != std::string::npos)
-        {
-            has_subdir = true;
-            break;
-        }
-    }
+    // Find manifest entry:
+    // For flat ZIPs (no subdirs), any root .json entry is a candidate.
+    // For packaged ZIPs (with subdirs), look for */manifest.json only.
+    const bool has_subdir = HasSubdirectory(entries);
 
     // Candidate manifest entries to try
     std::vector<const EntryInfo*> candidates;
@@ -725,7 +853,7 @@ DasResult ReadPluginManifestMetadataFromZip(
     }
     else
     {
-        // Packaged ZIP: look for */manifest.json or */{dirname}.json
+        // Packaged ZIP: look for manifest.json at root or */manifest.json.
         for (const auto& e : entries)
         {
             if (e.is_directory)
@@ -807,7 +935,7 @@ DasResult ReadPluginManifestMetadataFromZip(
 
             if (!out_guid.empty() && !out_name.empty())
             {
-                zip_close(archive);
+                CloseZipArchive(archive);
                 return DAS_S_OK;
             }
         }
@@ -825,7 +953,7 @@ DasResult ReadPluginManifestMetadataFromZip(
     // If we found at least a guid or name from partial results, that's OK
     if (!out_guid.empty() || !out_name.empty())
     {
-        zip_close(archive);
+        CloseZipArchive(archive);
         return DAS_S_OK;
     }
 
