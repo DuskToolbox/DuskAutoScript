@@ -7,8 +7,6 @@
 #include <das/Utils/DasJsonCore.h>
 #include <das/Utils/StringUtils.h>
 
-#include <algorithm>
-#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -18,84 +16,11 @@
 #include <vector>
 
 #include <zip.h>
-#include <zlib.h>
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 
 namespace
 {
-    // ZIP format signatures
-    constexpr uint32_t LOCAL_FILE_HEADER_SIG = 0x04034B50;
-    constexpr uint32_t CENTRAL_DIR_SIG = 0x02014B50;
-    constexpr uint32_t END_OF_CENTRAL_DIR_SIG = 0x06054B50;
-    constexpr uint16_t COMPRESSION_STORED = 0;
-    constexpr uint16_t COMPRESSION_DEFLATE = 8;
-    constexpr size_t   END_OF_CENTRAL_DIR_SIZE = 22;
-    constexpr size_t   MAX_COMMENT_SIZE = 65535;
-
-    // Read little-endian values from byte buffer
-    template <typename T>
-    T ReadLE(const char* data, size_t offset)
-    {
-        T value;
-        std::memcpy(&value, data + offset, sizeof(T));
-        return value;
-    }
-
-    bool FindEndOfCentralDir(const std::string& zip_data, size_t& eocd_offset)
-    {
-        // 短于 EOCD 记录的输入直接判无效：更短的输入会让下方回扫的
-        // 下标运算下溢，读到缓冲区之外（不可信输入的越界读）。
-        if (zip_data.size() < END_OF_CENTRAL_DIR_SIZE)
-        {
-            return false;
-        }
-
-        const size_t max_search = std::min(
-            zip_data.size(),
-            END_OF_CENTRAL_DIR_SIZE + MAX_COMMENT_SIZE);
-
-        for (size_t i = 0; i < max_search - END_OF_CENTRAL_DIR_SIZE + 1; ++i)
-        {
-            const size_t offset = zip_data.size() - END_OF_CENTRAL_DIR_SIZE - i;
-            if (ReadLE<uint32_t>(zip_data.data(), offset)
-                == END_OF_CENTRAL_DIR_SIG)
-            {
-                eocd_offset = offset;
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    // Decompress raw Deflate using zlib
-    bool InflateData(
-        const std::string& compressed,
-        size_t             compressed_size,
-        std::string&       output,
-        size_t             uncompressed_size)
-    {
-        output.resize(uncompressed_size);
-
-        z_stream stream{};
-        stream.next_in =
-            reinterpret_cast<Bytef*>(const_cast<char*>(compressed.data()));
-        stream.avail_in = static_cast<uInt>(compressed_size);
-        stream.next_out = reinterpret_cast<Bytef*>(output.data());
-        stream.avail_out = static_cast<uInt>(uncompressed_size);
-
-        if (inflateInit2(&stream, -MAX_WBITS) != Z_OK)
-        {
-            return false;
-        }
-
-        const int ret = inflate(&stream, Z_FINISH);
-        inflateEnd(&stream);
-
-        return ret == Z_STREAM_END;
-    }
-
     bool IsPathSafe(
         const std::filesystem::path& target_dir,
         const std::filesystem::path& entry_path)
@@ -389,93 +314,6 @@ namespace
             { out.append(data, static_cast<std::size_t>(size)); });
         zip_fclose(entry_file);
         return result;
-    }
-
-    // ZIP entry metadata — no file data, extracted directly to disk
-    struct ZipEntryMeta
-    {
-        std::string filename;
-        uint16_t    compression;
-        uint32_t    compressed_size;
-        uint32_t    uncompressed_size;
-        uint32_t    local_header_offset;
-        bool        is_directory;
-    };
-
-    // Parse Central Directory to enumerate entries (metadata only)
-    DasResult EnumerateZipEntries(
-        const std::string&         zip_data,
-        std::vector<ZipEntryMeta>& entries)
-    {
-        size_t eocd_offset = 0;
-        if (!FindEndOfCentralDir(zip_data, eocd_offset))
-        {
-            DAS_CORE_LOG_WARN(
-                "Invalid ZIP: End of Central Directory not found");
-            return DAS_E_INVALID_ARGUMENT;
-        }
-
-        auto num_entries = ReadLE<uint16_t>(zip_data.data(), eocd_offset + 10);
-        auto cd_offset = ReadLE<uint32_t>(zip_data.data(), eocd_offset + 16);
-
-        size_t pos = cd_offset;
-        for (uint16_t i = 0; i < num_entries; ++i)
-        {
-            if (pos + 46 > zip_data.size())
-            {
-                DAS_CORE_LOG_WARN("Invalid ZIP: truncated central directory");
-                return DAS_E_INVALID_ARGUMENT;
-            }
-
-            auto sig = ReadLE<uint32_t>(zip_data.data(), pos);
-            if (sig != CENTRAL_DIR_SIG)
-            {
-                DAS_CORE_LOG_WARN(
-                    "Invalid ZIP: bad central directory signature");
-                return DAS_E_INVALID_ARGUMENT;
-            }
-
-            auto compression = ReadLE<uint16_t>(zip_data.data(), pos + 10);
-            auto compressed_size = ReadLE<uint32_t>(zip_data.data(), pos + 20);
-            auto uncompressed_size =
-                ReadLE<uint32_t>(zip_data.data(), pos + 24);
-            auto filename_length = ReadLE<uint16_t>(zip_data.data(), pos + 28);
-            auto extra_length = ReadLE<uint16_t>(zip_data.data(), pos + 30);
-            auto comment_length = ReadLE<uint16_t>(zip_data.data(), pos + 32);
-            auto local_header_offset =
-                ReadLE<uint32_t>(zip_data.data(), pos + 42);
-
-            if (pos + 46 + filename_length + extra_length + comment_length
-                > zip_data.size())
-            {
-                DAS_CORE_LOG_WARN("Invalid ZIP: truncated entry metadata");
-                return DAS_E_INVALID_ARGUMENT;
-            }
-
-            std::string filename(zip_data.data() + pos + 46, filename_length);
-
-            pos += 46 + filename_length + extra_length + comment_length;
-
-            if (!IsFilenameSafe(filename))
-            {
-                DAS_CORE_LOG_WARN(
-                    "ZIP entry has unsafe filename: {}",
-                    filename);
-                return DAS_E_INVALID_ARGUMENT;
-            }
-
-            ZipEntryMeta meta;
-            meta.filename = filename;
-            meta.compression = compression;
-            meta.compressed_size = compressed_size;
-            meta.uncompressed_size = uncompressed_size;
-            meta.local_header_offset = local_header_offset;
-            meta.is_directory = !filename.empty() && filename.back() == '/';
-
-            entries.push_back(std::move(meta));
-        }
-
-        return DAS_S_OK;
     }
 
     // Create a unique temp directory under parent
@@ -810,19 +648,50 @@ DasResult ReadPluginManifestMetadataFromZip(
         return DAS_E_INVALID_ARGUMENT;
     }
 
-    std::string               zip_str(zip_data.data(), zip_data.size());
-    std::vector<ZipEntryMeta> entries;
-    auto                      result = EnumerateZipEntries(zip_str, entries);
-    if (result != DAS_S_OK)
+    zip_t* archive = OpenZipArchiveFromMemory(zip_data);
+    if (archive == nullptr)
     {
-        return result;
+        return DAS_E_INVALID_ARGUMENT;
     }
 
-    if (entries.empty())
+    const zip_int64_t num_entries = zip_get_num_entries(archive, 0);
+    if (num_entries < 0)
+    {
+        DAS_CORE_LOG_WARN("ZIP entry count failed: {}", zip_strerror(archive));
+        zip_discard(archive);
+        return DAS_E_INVALID_ARGUMENT;
+    }
+
+    if (num_entries == 0)
     {
         DAS_CORE_LOG_WARN(
             "ReadPluginManifestMetadataFromZip: ZIP archive is empty");
+        zip_discard(archive);
         return DAS_E_INVALID_ARGUMENT;
+    }
+
+    // 单趟条目快照（名有效性守卫同 InstallPlugin：无名条目不可能命中
+    // manifest 候选规则，天然被后续筛选跳过）。
+    std::vector<EntryInfo> entries;
+    entries.reserve(static_cast<std::size_t>(num_entries));
+    for (zip_int64_t i = 0; i < num_entries; ++i)
+    {
+        zip_stat_t stat;
+        zip_stat_init(&stat);
+        if (zip_stat_index(archive, static_cast<zip_uint64_t>(i), 0, &stat) < 0)
+        {
+            DAS_CORE_LOG_WARN("ZIP stat failed: {}", zip_strerror(archive));
+            zip_discard(archive);
+            return DAS_E_INVALID_ARGUMENT;
+        }
+
+        EntryInfo info;
+        info.index = static_cast<zip_uint64_t>(i);
+        info.name = (stat.valid & ZIP_STAT_NAME) != 0 ? stat.name : "";
+        info.is_directory = !info.name.empty() && info.name.back() == '/';
+        info.size_valid = (stat.valid & ZIP_STAT_SIZE) != 0;
+        info.declared_size = stat.size;
+        entries.push_back(std::move(info));
     }
 
     // Find manifest entry — same logic as InstallPlugin:
@@ -831,7 +700,7 @@ DasResult ReadPluginManifestMetadataFromZip(
     bool has_subdir = false;
     for (const auto& e : entries)
     {
-        if (!e.is_directory && e.filename.find('/') != std::string::npos)
+        if (!e.is_directory && e.name.find('/') != std::string::npos)
         {
             has_subdir = true;
             break;
@@ -839,16 +708,16 @@ DasResult ReadPluginManifestMetadataFromZip(
     }
 
     // Candidate manifest entries to try
-    std::vector<const ZipEntryMeta*> candidates;
+    std::vector<const EntryInfo*> candidates;
 
     if (!has_subdir)
     {
         // Flat ZIP: any root .json file is a candidate
         for (const auto& e : entries)
         {
-            if (!e.is_directory && e.filename.size() >= 5
-                && e.filename.compare(e.filename.size() - 5, 5, ".json") == 0
-                && e.filename.find('/') == std::string::npos)
+            if (!e.is_directory && e.name.size() >= 5
+                && e.name.compare(e.name.size() - 5, 5, ".json") == 0
+                && e.name.find('/') == std::string::npos)
             {
                 candidates.push_back(&e);
             }
@@ -863,8 +732,8 @@ DasResult ReadPluginManifestMetadataFromZip(
             {
                 continue;
             }
-            if (e.filename == "manifest.json"
-                || e.filename.find("/manifest.json") != std::string::npos)
+            if (e.name == "manifest.json"
+                || e.name.find("/manifest.json") != std::string::npos)
             {
                 candidates.push_back(&e);
             }
@@ -875,64 +744,23 @@ DasResult ReadPluginManifestMetadataFromZip(
     {
         DAS_CORE_LOG_WARN(
             "ReadPluginManifestMetadataFromZip: no manifest candidate found");
+        zip_discard(archive);
         return DAS_E_INVALID_ARGUMENT;
     }
 
-    // Try each candidate until one has guid and name
-    for (const auto* meta : candidates)
+    // 逐候选读取：声明大小无效或超 manifest 内存上限的候选在开读前
+    // 被拒（读串函数入口检查，WARN 含候选名）；读取失败（含 CRC 击穿）
+    // 同路 continue——候选中途不关包。
+    for (const auto* candidate : candidates)
     {
-        // Read entry data from memory using local header offset
-        auto local_header = meta->local_header_offset;
-        if (local_header + 30 > zip_str.size())
-        {
-            continue;
-        }
-
-        auto local_sig = ReadLE<uint32_t>(zip_str.data(), local_header);
-        if (local_sig != LOCAL_FILE_HEADER_SIG)
-        {
-            continue;
-        }
-
-        auto lfn_len = ReadLE<uint16_t>(zip_str.data(), local_header + 26);
-        auto lex_len = ReadLE<uint16_t>(zip_str.data(), local_header + 28);
-        const size_t data_off = local_header + 30 + lfn_len + lex_len;
-
-        if (data_off + meta->compressed_size > zip_str.size())
-        {
-            continue;
-        }
-
         std::string file_data;
-        if (meta->compression == COMPRESSION_STORED)
+        if (ReadEntryToString(
+                archive,
+                *candidate,
+                file_data,
+                MAX_MANIFEST_ENTRY_BYTES)
+            != DAS_S_OK)
         {
-            file_data.assign(zip_str.data() + data_off, meta->compressed_size);
-        }
-        else if (meta->compression == COMPRESSION_DEFLATE)
-        {
-            const std::string compressed(
-                zip_str.data() + data_off,
-                meta->compressed_size);
-            if (!InflateData(
-                    compressed,
-                    meta->compressed_size,
-                    file_data,
-                    meta->uncompressed_size))
-            {
-                DAS_CORE_LOG_WARN(
-                    "ReadPluginManifestMetadataFromZip: decompression failed "
-                    "for {}",
-                    meta->filename);
-                continue;
-            }
-        }
-        else
-        {
-            DAS_CORE_LOG_WARN(
-                "ReadPluginManifestMetadataFromZip: unsupported compression {} "
-                "for {}",
-                meta->compression,
-                meta->filename);
             continue;
         }
 
@@ -944,7 +772,7 @@ DasResult ReadPluginManifestMetadataFromZip(
                 DAS_CORE_LOG_WARN(
                     "ReadPluginManifestMetadataFromZip: JSON parse failed for "
                     "{}",
-                    meta->filename);
+                    candidate->name);
                 continue;
             }
 
@@ -952,9 +780,9 @@ DasResult ReadPluginManifestMetadataFromZip(
             if (!obj)
             {
                 DAS_CORE_LOG_WARN(
-                    "ReadPluginManifestMetadataFromZip: manifest is not an object "
-                    "for {}",
-                    meta->filename);
+                    "ReadPluginManifestMetadataFromZip: manifest is not an "
+                    "object for {}",
+                    candidate->name);
                 continue;
             }
 
@@ -979,6 +807,7 @@ DasResult ReadPluginManifestMetadataFromZip(
 
             if (!out_guid.empty() && !out_name.empty())
             {
+                zip_close(archive);
                 return DAS_S_OK;
             }
         }
@@ -987,7 +816,7 @@ DasResult ReadPluginManifestMetadataFromZip(
             DAS_CORE_LOG_WARN(
                 "ReadPluginManifestMetadataFromZip: JSON parse failed for "
                 "{}: {}",
-                meta->filename,
+                candidate->name,
                 e.what());
             continue;
         }
@@ -996,11 +825,13 @@ DasResult ReadPluginManifestMetadataFromZip(
     // If we found at least a guid or name from partial results, that's OK
     if (!out_guid.empty() || !out_name.empty())
     {
+        zip_close(archive);
         return DAS_S_OK;
     }
 
     DAS_CORE_LOG_WARN(
         "ReadPluginManifestMetadataFromZip: no manifest with guid/name found");
+    zip_discard(archive);
     return DAS_E_INVALID_ARGUMENT;
 }
 
