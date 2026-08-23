@@ -23,12 +23,12 @@ namespace Plugins::DasMaaPi
     // boundary 经参数注入：生产两侧传 MaaApiBoundaryForRuntime()，测试传
     // FakeMaaApiBoundary。
     DasResult ExecuteEnvelope(
-        const yyjson::value&                       envelope_json,
-        IMaaApiBoundary&                           boundary,
-        PluginInterface::IDasStopToken*            stop_token,
-        const std::map<std::string, std::string>&  port_map,
-        const std::map<std::string, yyjson::value> inputs,
-        MaaRuntimeResult&                          out_result);
+        const yyjson::value&                        envelope_json,
+        IMaaApiBoundary&                            boundary,
+        PluginInterface::IDasStopToken*             stop_token,
+        const std::map<std::string, std::string>&   port_map,
+        const std::map<std::string, yyjson::value>& inputs,
+        MaaRuntimeResult&                           out_result);
 } // namespace Plugins::DasMaaPi
 DAS_NS_END
 
