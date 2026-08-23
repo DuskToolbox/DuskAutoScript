@@ -329,3 +329,150 @@ TEST(GraphRuntimeFactoryTest, ExecuteIncompletePlanJsonReturnsInvalidJson)
 {
     EXPECT_EQ(ExecuteArtifactText(R"({"foo":1})"), DAS_E_INVALID_JSON);
 }
+
+// ===========================================================================
+// Fingerprint shell — the wire artifact is a {fingerprint, plan} envelope;
+// fingerprint = FNV-1a 64 over the standard serialization of the plan
+// subtree. Compile produces it, Execute re-computes and compares it before
+// executing (tamper evidence for the persisted artifact).
+// ===========================================================================
+
+namespace
+{
+    constexpr std::string_view FORM_SEQUENCE_WITH_OTHER_COMPONENT = R"({
+        "items": [
+            {
+                "itemId": "first",
+                "target": {
+                    "targetKind": "componentRef",
+                    "componentRef": {
+                        "kind": "componentRef",
+                        "componentGuid": "CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC",
+                        "pluginGuid": "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"
+                    }
+                },
+                "settings": {}
+            }
+        ]
+    })";
+
+    // Compile the given context and return the executionInput shell's
+    // fingerprint member ("" when the shell/fingerprint is absent).
+    std::string ExecutionInputFingerprint(std::string_view context_json)
+    {
+        const AuthoringSessionHandle session{std::string(context_json)};
+        auto compiled = CompileSessionPlan(session.state);
+        if (compiled.Get() == nullptr)
+        {
+            return {};
+        }
+
+        auto root = yyjson::read(JsonText(compiled.Get()));
+        auto root_obj = root.as_object();
+        if (!root_obj || !root_obj->contains(std::string_view("compile")))
+        {
+            return {};
+        }
+        auto compile_section =
+            (*root_obj)[std::string_view("compile")].as_object();
+        if (!compile_section
+            || !compile_section->contains(std::string_view("executionInput")))
+        {
+            return {};
+        }
+        auto shell =
+            (*compile_section)[std::string_view("executionInput")].as_object();
+        if (!shell || !shell->contains(std::string_view("fingerprint")))
+        {
+            return {};
+        }
+        auto fingerprint =
+            (*shell)[std::string_view("fingerprint")].as_string();
+        return fingerprint ? std::string(*fingerprint) : std::string{};
+    }
+
+    // Compile the given context and return the executionInput shell as text.
+    std::string ExecutionInputShellText(std::string_view context_json)
+    {
+        const AuthoringSessionHandle session{std::string(context_json)};
+        auto compiled = CompileSessionPlan(session.state);
+        if (compiled.Get() == nullptr)
+        {
+            return {};
+        }
+
+        auto root = yyjson::read(JsonText(compiled.Get()));
+        auto root_obj = root.as_object();
+        if (!root_obj || !root_obj->contains(std::string_view("compile")))
+        {
+            return {};
+        }
+        auto compile_section =
+            (*root_obj)[std::string_view("compile")].as_object();
+        if (!compile_section
+            || !compile_section->contains(std::string_view("executionInput")))
+        {
+            return {};
+        }
+        auto shell = Das::Utils::CloneYyjsonValue(
+            (*compile_section)[std::string_view("executionInput")]);
+        auto text = Das::Utils::SerializeYyjsonValue(shell);
+        return text ? *text : std::string{};
+    }
+} // namespace
+
+// Equivalence: the same document compiled twice yields the same fingerprint.
+TEST(GraphRuntimeFactoryTest, CompileShellFingerprintStableAcrossCompiles)
+{
+    const auto first = ExecutionInputFingerprint(FORM_SEQUENCE_WITH_ONE_ITEM);
+    const auto second = ExecutionInputFingerprint(FORM_SEQUENCE_WITH_ONE_ITEM);
+    EXPECT_FALSE(first.empty());
+    EXPECT_EQ(first, second);
+}
+
+// Equivalence: a changed plan (different componentGuid) yields a changed
+// fingerprint.
+TEST(GraphRuntimeFactoryTest, CompileShellFingerprintChangesWithPlanContent)
+{
+    const auto first = ExecutionInputFingerprint(FORM_SEQUENCE_WITH_ONE_ITEM);
+    const auto second =
+        ExecutionInputFingerprint(FORM_SEQUENCE_WITH_OTHER_COMPONENT);
+    EXPECT_FALSE(first.empty());
+    EXPECT_FALSE(second.empty());
+    EXPECT_NE(first, second);
+}
+
+// Tamper evidence: an untampered shell executes; editing the plan payload
+// inside the shell (leaving the fingerprint untouched) must be rejected
+// before any execution happens.
+TEST(GraphRuntimeFactoryTest, ExecuteRejectsTamperedPlanPayloadInShell)
+{
+    // Untampered: an empty document's shell executes cleanly (empty graph).
+    const auto valid_shell = ExecutionInputShellText("");
+    ASSERT_FALSE(valid_shell.empty());
+    EXPECT_EQ(ExecuteArtifactText(valid_shell), DAS_S_OK);
+
+    // Tampered: modify the plan payload member inside a compiled shell.
+    const AuthoringSessionHandle session{
+        std::string(FORM_SEQUENCE_WITH_ONE_ITEM)};
+    auto compiled = CompileSessionPlan(session.state);
+    ASSERT_NE(compiled.Get(), nullptr);
+    auto root = yyjson::read(JsonText(compiled.Get()));
+    auto root_obj = root.as_object();
+    ASSERT_TRUE(root_obj.has_value());
+    auto compile_section = (*root_obj)[std::string_view("compile")].as_object();
+    ASSERT_TRUE(compile_section.has_value());
+
+    auto shell = Das::Utils::CloneYyjsonValue(
+        (*compile_section)[std::string_view("executionInput")]);
+    auto shell_obj = shell.as_object();
+    ASSERT_TRUE(shell_obj.has_value());
+    auto plan_obj = (*shell_obj)[std::string_view("plan")].as_object();
+    ASSERT_TRUE(plan_obj.has_value());
+    (*plan_obj)[std::string_view("documentId")] =
+        std::make_pair(std::string_view("tampered"), yyjson::copy_string);
+
+    const auto tampered_text = Das::Utils::SerializeYyjsonValue(shell);
+    ASSERT_TRUE(tampered_text.has_value());
+    EXPECT_TRUE(DAS::IsFailed(ExecuteArtifactText(*tampered_text)));
+}
