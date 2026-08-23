@@ -163,14 +163,24 @@ namespace Das::Utils
     /// Emit a single control-flow signal by listing its port id in the
     /// reserved "signals" JSON string array. The runtime materialises each
     /// entry as a PortValue::Signal() under (node_id, signal_port_id) and
-    /// gates on it; the component itself never reads signal values.
+    /// gates on it; the component itself never reads signal values. The array
+    /// is assembled via the yyjson writer so port ids needing JSON escaping
+    /// survive the round trip.
     inline void EmitSignal(
         ExportInterface::IDasPortMap* map,
         std::string_view              signal_port_id)
     {
-        const std::string json =
-            std::string(R"([")") + std::string(signal_port_id) + R"("])";
-        SetPortString(map, "signals", json);
+        auto signals_array = Das::Utils::MakeYyjsonArray();
+        auto array_ref = signals_array.as_array();
+        if (array_ref)
+        {
+            array_ref->emplace_back(yyjson::value(std::string(signal_port_id)));
+        }
+        auto serialized = Das::Utils::SerializeYyjsonValue(signals_array);
+        if (serialized.has_value())
+        {
+            SetPortString(map, "signals", *serialized);
+        }
     }
 
     /// Copy a typed value from @p src_port of @p src into @p dst_port of
