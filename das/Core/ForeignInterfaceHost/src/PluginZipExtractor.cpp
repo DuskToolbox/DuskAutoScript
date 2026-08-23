@@ -11,11 +11,13 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <random>
 #include <sstream>
 #include <string>
 #include <vector>
 
+#include <zip.h>
 #include <zlib.h>
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
@@ -152,6 +154,236 @@ namespace
         return true;
     }
 
+    // ---------------------------------------------------------------------
+    // libzip 读取路径：容器解析 / CRC32 / zip64 / 文件名编码归一化由库
+    // 承担；目录穿越防护与解压炸弹上限在本侧保留。
+    // ---------------------------------------------------------------------
+
+    // 单个 zip 条目解压后的大小上限（解压炸弹防护）。声明大小与实际
+    // 大小都不得超限（声明大小来自 central directory，攻击者可控）。
+    constexpr std::size_t MAX_UNCOMPRESSED_ZIP_ENTRY_BYTES =
+        512u * 1024u * 1024u;
+
+    // 单次 zip_fread 的块大小：流式处理，不整条目驻留内存。
+    constexpr zip_uint64_t ZIP_ENTRY_READ_CHUNK_BYTES = 64u * 1024u;
+
+    // manifest 类小条目的内存读取上限：真实 manifest 是 KB 级，该上限
+    // 同时杀死 metadata 侧的内存炸弹。
+    constexpr std::size_t MAX_MANIFEST_ENTRY_BYTES = 16u * 1024u * 1024u;
+
+    // zip_stat_index 的单趟条目快照。
+    struct EntryInfo
+    {
+        zip_uint64_t index;
+        std::string  name;
+        bool         is_directory;
+        bool         size_valid;
+        zip_uint64_t declared_size;
+    };
+
+    // 打开内存 zip（只读）。freep=0：libzip 不接管缓冲所有权，调用方
+    // 缓冲必须存活到 archive 关闭（本文件各入口的 archive 都在 zip_data
+    // 存活的函数作用域内开闭）。
+    zip_t* OpenZipArchiveFromMemory(std::string_view zip_data)
+    {
+        zip_error_t open_error;
+        zip_error_init(&open_error);
+        zip_source_t* source = zip_source_buffer_create(
+            zip_data.data(),
+            static_cast<zip_uint64_t>(zip_data.size()),
+            0,
+            &open_error);
+        if (source == nullptr)
+        {
+            DAS_CORE_LOG_WARN(
+                "ZIP source create failed: {}",
+                zip_error_strerror(&open_error));
+            zip_error_fini(&open_error);
+            return nullptr;
+        }
+        zip_t* archive = zip_open_from_source(source, ZIP_RDONLY, &open_error);
+        if (archive == nullptr)
+        {
+            DAS_CORE_LOG_WARN(
+                "Invalid ZIP: {}",
+                zip_error_strerror(&open_error));
+            zip_error_fini(&open_error);
+            // 失败的 open 只 close 不 free，调用方必须补 zip_source_free。
+            zip_source_free(source);
+            return nullptr;
+        }
+        zip_error_fini(&open_error);
+        return archive;
+    }
+
+    // UTF-8 std::string 到 path 的唯一物化入口：1:1 字节拷入
+    // std::u8string 后走 C++20 path(std::u8string) 构造（u8path 自由
+    // 函数已弃用；Windows 窄构造走 ANSI 代码页，非 ASCII 名会损坏）。
+    std::filesystem::path PathFromUtf8(std::string_view utf8_text)
+    {
+        std::u8string u8_text(utf8_text.begin(), utf8_text.end());
+        return std::filesystem::path{std::move(u8_text)};
+    }
+
+    // 读取内核：64KB 分块读到 EOF。CRC 校验由 libzip 在条目数据读完时
+    // 完成，不一致以负返回击穿——循环必须跑到 EOF，停在声明大小会漏
+    // 触发校验；累计超声明值即时拒绝、EOF 后累计 != 声明值拒绝（声明
+    // 大小造假双向覆盖，同时是实际大小侧的炸弹上限）。
+    DasResult ReadZipEntryToSink(
+        const EntryInfo&                                      entry,
+        zip_file_t*                                           entry_file,
+        const std::function<void(const char*, zip_uint64_t)>& sink)
+    {
+        std::string read_buffer(
+            static_cast<std::size_t>(ZIP_ENTRY_READ_CHUNK_BYTES),
+            '\0');
+        zip_uint64_t total_read = 0;
+        for (;;)
+        {
+            const zip_int64_t read_now = zip_fread(
+                entry_file,
+                read_buffer.data(),
+                ZIP_ENTRY_READ_CHUNK_BYTES);
+            if (read_now < 0)
+            {
+                DAS_CORE_LOG_WARN(
+                    "ZIP entry read failed: {}",
+                    zip_file_strerror(entry_file));
+                return DAS_E_INVALID_ARGUMENT;
+            }
+            if (read_now == 0)
+            {
+                break;
+            }
+            total_read += static_cast<zip_uint64_t>(read_now);
+            if (total_read > entry.declared_size)
+            {
+                DAS_CORE_LOG_WARN("ZIP entry size mismatch: {}", entry.name);
+                return DAS_E_INVALID_ARGUMENT;
+            }
+            if (sink)
+            {
+                sink(read_buffer.data(), static_cast<zip_uint64_t>(read_now));
+            }
+        }
+        if (total_read != entry.declared_size)
+        {
+            DAS_CORE_LOG_WARN("ZIP entry size mismatch: {}", entry.name);
+            return DAS_E_INVALID_ARGUMENT;
+        }
+        return DAS_S_OK;
+    }
+
+    // 读取单个条目并落盘（父目录自动创建）。声明大小未知或超上限在
+    // 打开条目之前拒绝。
+    DasResult ReadEntryToFile(
+        zip_t*                       archive,
+        const EntryInfo&             entry,
+        const std::filesystem::path& target_path)
+    {
+        if (!entry.size_valid
+            || entry.declared_size > static_cast<zip_uint64_t>(
+                   MAX_UNCOMPRESSED_ZIP_ENTRY_BYTES))
+        {
+            DAS_CORE_LOG_WARN(
+                "ZIP entry uncompressed size exceeds limit or unknown: {}",
+                entry.name);
+            return DAS_E_INVALID_ARGUMENT;
+        }
+
+        auto parent = target_path.parent_path();
+        if (!parent.empty())
+        {
+            std::error_code ec;
+            std::filesystem::create_directories(parent, ec);
+        }
+
+        std::ofstream ofs(target_path, std::ios::binary | std::ios::trunc);
+        if (!ofs)
+        {
+            DAS_CORE_LOG_WARN(
+                "Failed to write file: {}",
+                DAS::Utils::U8AsString(target_path.u8string()));
+            return DAS_E_FAIL;
+        }
+
+        zip_file_t* entry_file = zip_fopen_index(archive, entry.index, 0);
+        if (entry_file == nullptr)
+        {
+            DAS_CORE_LOG_WARN(
+                "ZIP entry open failed: {}",
+                zip_strerror(archive));
+            return DAS_E_INVALID_ARGUMENT;
+        }
+
+        const auto result = ReadZipEntryToSink(
+            entry,
+            entry_file,
+            [&ofs](const char* data, zip_uint64_t size)
+            { ofs.write(data, static_cast<std::streamsize>(size)); });
+        zip_fclose(entry_file);
+        if (result != DAS_S_OK)
+        {
+            return result;
+        }
+
+        if (!ofs)
+        {
+            DAS_CORE_LOG_WARN(
+                "Failed to write file data: {}",
+                DAS::Utils::U8AsString(target_path.u8string()));
+            return DAS_E_FAIL;
+        }
+
+        return DAS_S_OK;
+    }
+
+    // 读取单个条目到内存（manifest 类小条目用）。在读取内核的声明大小
+    // 上限之外，追加调用方给定的更紧的内存上限。
+    DasResult ReadEntryToString(
+        zip_t*           archive,
+        const EntryInfo& entry,
+        std::string&     out,
+        std::size_t      max_bytes)
+    {
+        if (!entry.size_valid
+            || entry.declared_size > static_cast<zip_uint64_t>(
+                   MAX_UNCOMPRESSED_ZIP_ENTRY_BYTES))
+        {
+            DAS_CORE_LOG_WARN(
+                "ZIP entry uncompressed size exceeds limit or unknown: {}",
+                entry.name);
+            return DAS_E_INVALID_ARGUMENT;
+        }
+        if (entry.declared_size > static_cast<zip_uint64_t>(max_bytes))
+        {
+            DAS_CORE_LOG_WARN(
+                "ZIP entry size exceeds read limit: {}",
+                entry.name);
+            return DAS_E_INVALID_ARGUMENT;
+        }
+
+        out.clear();
+        out.reserve(static_cast<std::size_t>(entry.declared_size));
+
+        zip_file_t* entry_file = zip_fopen_index(archive, entry.index, 0);
+        if (entry_file == nullptr)
+        {
+            DAS_CORE_LOG_WARN(
+                "ZIP entry open failed: {}",
+                zip_strerror(archive));
+            return DAS_E_INVALID_ARGUMENT;
+        }
+
+        const auto result = ReadZipEntryToSink(
+            entry,
+            entry_file,
+            [&out](const char* data, zip_uint64_t size)
+            { out.append(data, static_cast<std::size_t>(size)); });
+        zip_fclose(entry_file);
+        return result;
+    }
+
     // ZIP entry metadata — no file data, extracted directly to disk
     struct ZipEntryMeta
     {
@@ -239,121 +471,6 @@ namespace
         return DAS_S_OK;
     }
 
-    // Extract a single ZIP entry directly to disk
-    DasResult ExtractEntryToDisk(
-        const std::string&           zip_data,
-        const ZipEntryMeta&          meta,
-        const std::filesystem::path& target_path)
-    {
-        if (meta.is_directory)
-        {
-            std::error_code ec;
-            std::filesystem::create_directories(target_path, ec);
-            if (ec)
-            {
-                DAS_CORE_LOG_WARN(
-                    "Failed to create directory: {}",
-                    DAS::Utils::U8AsString(target_path.u8string()));
-                return DAS_E_FAIL;
-            }
-            return DAS_S_OK;
-        }
-
-        // Ensure parent directory exists
-        auto parent = target_path.parent_path();
-        if (!parent.empty())
-        {
-            std::error_code ec;
-            std::filesystem::create_directories(parent, ec);
-        }
-
-        std::ofstream ofs(target_path, std::ios::binary | std::ios::trunc);
-        if (!ofs)
-        {
-            DAS_CORE_LOG_WARN(
-                "Failed to write file: {}",
-                DAS::Utils::U8AsString(target_path.u8string()));
-            return DAS_E_FAIL;
-        }
-
-        if (meta.compressed_size == 0)
-        {
-            return DAS_S_OK;
-        }
-
-        // Resolve data offset from Local File Header
-        auto local_header = meta.local_header_offset;
-        if (local_header + 30 > zip_data.size())
-        {
-            DAS_CORE_LOG_WARN("Invalid ZIP: truncated local file header");
-            return DAS_E_INVALID_ARGUMENT;
-        }
-
-        auto local_sig = ReadLE<uint32_t>(zip_data.data(), local_header);
-        if (local_sig != LOCAL_FILE_HEADER_SIG)
-        {
-            DAS_CORE_LOG_WARN("Invalid ZIP: bad local file header signature");
-            return DAS_E_INVALID_ARGUMENT;
-        }
-
-        auto local_filename_length =
-            ReadLE<uint16_t>(zip_data.data(), local_header + 26);
-        auto local_extra_length =
-            ReadLE<uint16_t>(zip_data.data(), local_header + 28);
-        const size_t data_offset =
-            local_header + 30 + local_filename_length + local_extra_length;
-
-        if (data_offset + meta.compressed_size > zip_data.size())
-        {
-            DAS_CORE_LOG_WARN(
-                "Invalid ZIP: truncated file data for {}",
-                meta.filename);
-            return DAS_E_INVALID_ARGUMENT;
-        }
-
-        if (meta.compression == COMPRESSION_STORED)
-        {
-            ofs.write(zip_data.data() + data_offset, meta.compressed_size);
-        }
-        else if (meta.compression == COMPRESSION_DEFLATE)
-        {
-            const std::string compressed(
-                zip_data.data() + data_offset,
-                meta.compressed_size);
-            std::string output;
-            if (!InflateData(
-                    compressed,
-                    meta.compressed_size,
-                    output,
-                    meta.uncompressed_size))
-            {
-                DAS_CORE_LOG_WARN(
-                    "ZIP decompression failed for {}",
-                    meta.filename);
-                return DAS_E_INVALID_ARGUMENT;
-            }
-            ofs.write(output.data(), output.size());
-        }
-        else
-        {
-            DAS_CORE_LOG_WARN(
-                "ZIP entry uses unsupported compression {}: {}",
-                meta.compression,
-                meta.filename);
-            return DAS_E_INVALID_ARGUMENT;
-        }
-
-        if (!ofs)
-        {
-            DAS_CORE_LOG_WARN(
-                "Failed to write file data: {}",
-                DAS::Utils::U8AsString(target_path.u8string()));
-            return DAS_E_FAIL;
-        }
-
-        return DAS_S_OK;
-    }
-
     // Create a unique temp directory under parent
     std::filesystem::path CreateTempDir(const std::filesystem::path& parent)
     {
@@ -418,36 +535,76 @@ DasResult InstallPlugin(
         }
     }
 
-    // --- Phase 1: Enumerate ZIP entries (metadata only, no decompression) ---
-    std::string               zip_str(zip_data.data(), zip_data.size());
-    std::vector<ZipEntryMeta> entries;
-
-    auto result = EnumerateZipEntries(zip_str, entries);
-    if (result != DAS_S_OK)
+    // --- Step 1: Open archive and snapshot entries (fail-closed) ---
+    zip_t* archive = OpenZipArchiveFromMemory(zip_data);
+    if (archive == nullptr)
     {
-        return result;
-    }
-
-    if (entries.empty())
-    {
-        DAS_CORE_LOG_WARN("ZIP archive is empty");
         return DAS_E_INVALID_ARGUMENT;
     }
 
-    // --- Phase 2: Create temp directory for atomic extraction ---
+    const zip_int64_t num_entries = zip_get_num_entries(archive, 0);
+    if (num_entries < 0)
+    {
+        DAS_CORE_LOG_WARN("ZIP entry count failed: {}", zip_strerror(archive));
+        zip_discard(archive);
+        return DAS_E_INVALID_ARGUMENT;
+    }
+
+    if (num_entries == 0)
+    {
+        DAS_CORE_LOG_WARN("ZIP archive is empty");
+        zip_discard(archive);
+        return DAS_E_INVALID_ARGUMENT;
+    }
+
+    std::vector<EntryInfo> entries;
+    entries.reserve(static_cast<std::size_t>(num_entries));
+    for (zip_int64_t i = 0; i < num_entries; ++i)
+    {
+        zip_stat_t stat;
+        zip_stat_init(&stat);
+        if (zip_stat_index(archive, static_cast<zip_uint64_t>(i), 0, &stat) < 0)
+        {
+            DAS_CORE_LOG_WARN("ZIP stat failed: {}", zip_strerror(archive));
+            zip_discard(archive);
+            return DAS_E_INVALID_ARGUMENT;
+        }
+
+        EntryInfo info;
+        info.index = static_cast<zip_uint64_t>(i);
+        info.name = (stat.valid & ZIP_STAT_NAME) != 0 ? stat.name : "";
+        info.is_directory = !info.name.empty() && info.name.back() == '/';
+        info.size_valid = (stat.valid & ZIP_STAT_SIZE) != 0;
+        info.declared_size = stat.size;
+        entries.push_back(std::move(info));
+    }
+
+    // 整档 fail-closed：任一条目名不安全即拒绝整个安装（磁盘零写入）。
+    for (const auto& e : entries)
+    {
+        if (!IsFilenameSafe(e.name))
+        {
+            DAS_CORE_LOG_WARN("ZIP entry has unsafe filename: {}", e.name);
+            zip_discard(archive);
+            return DAS_E_INVALID_ARGUMENT;
+        }
+    }
+
+    // --- Step 2: Create temp directory for atomic extraction ---
     auto temp_dir = CreateTempDir(plugin_dir);
     if (temp_dir.empty())
     {
+        zip_discard(archive);
         return DAS_E_FAIL;
     }
 
     TempDirGuard temp_guard{temp_dir};
 
-    // --- Phase 3: Detect flat ZIP, compute effective filenames ---
+    // --- Step 3: Detect flat ZIP, compute effective filenames ---
     bool has_subdir = false;
     for (const auto& e : entries)
     {
-        if (!e.is_directory && e.filename.find('/') != std::string::npos)
+        if (!e.is_directory && e.name.find('/') != std::string::npos)
         {
             has_subdir = true;
             break;
@@ -458,7 +615,7 @@ DasResult InstallPlugin(
     if (!has_subdir)
     {
         // Need to find manifest entry to get plugin name for auto-wrap.
-        // Only decompress the manifest .json entry temporarily.
+        // Read only the first root .json entry (bounded in-memory read).
         for (const auto& e : entries)
         {
             if (e.is_directory)
@@ -466,65 +623,39 @@ DasResult InstallPlugin(
                 continue;
             }
 
-            if (e.filename.size() >= 5
-                && e.filename.compare(e.filename.size() - 5, 5, ".json") == 0)
+            if (e.name.size() >= 5
+                && e.name.compare(e.name.size() - 5, 5, ".json") == 0)
             {
-                // Read and decompress just this one entry to get plugin name
-                auto local_header = e.local_header_offset;
-                if (local_header + 30 > zip_str.size())
-                {
-                    continue;
-                }
-
-                auto lfn_len =
-                    ReadLE<uint16_t>(zip_str.data(), local_header + 26);
-                auto lex_len =
-                    ReadLE<uint16_t>(zip_str.data(), local_header + 28);
-                const size_t data_off = local_header + 30 + lfn_len + lex_len;
-
-                if (data_off + e.compressed_size > zip_str.size())
-                {
-                    continue;
-                }
-
                 std::string file_data;
-                if (e.compression == COMPRESSION_STORED)
-                {
-                    file_data.assign(
-                        zip_str.data() + data_off,
-                        e.compressed_size);
-                }
-                else if (e.compression == COMPRESSION_DEFLATE)
-                {
-                    const std::string compressed(
-                        zip_str.data() + data_off,
-                        e.compressed_size);
-                    InflateData(
-                        compressed,
-                        e.compressed_size,
+                if (ReadEntryToString(
+                        archive,
+                        e,
                         file_data,
-                        e.uncompressed_size);
-                }
-
-                try
+                        MAX_MANIFEST_ENTRY_BYTES)
+                    == DAS_S_OK)
                 {
-                    auto parsed = Das::Utils::ParseYyjsonFromString(file_data);
-                    if (parsed)
+                    try
                     {
-                        auto obj = parsed->as_object();
-                        if (obj)
+                        auto parsed =
+                            Das::Utils::ParseYyjsonFromString(file_data);
+                        if (parsed)
                         {
-                            auto name_val = (*obj)[std::string_view("name")];
-                            auto name_opt = name_val.as_string();
-                            if (name_opt)
+                            auto obj = parsed->as_object();
+                            if (obj)
                             {
-                                auto_prefix = std::string(*name_opt) + "/";
+                                auto name_val =
+                                    (*obj)[std::string_view("name")];
+                                auto name_opt = name_val.as_string();
+                                if (name_opt)
+                                {
+                                    auto_prefix = std::string(*name_opt) + "/";
+                                }
                             }
                         }
                     }
-                }
-                catch (const std::exception&)
-                {
+                    catch (const std::exception&)
+                    {
+                    }
                 }
                 break;
             }
@@ -533,35 +664,57 @@ DasResult InstallPlugin(
         if (auto_prefix.empty())
         {
             DAS_CORE_LOG_WARN("Flat ZIP has no manifest with 'name' field");
+            zip_discard(archive);
             return DAS_E_INVALID_ARGUMENT;
         }
     }
 
-    // --- Phase 4: Extract each entry directly to temp dir ---
-    for (const auto& meta : entries)
+    // --- Step 4: Extract each entry to temp dir ---
+    for (const auto& entry : entries)
     {
-        auto effective_name = auto_prefix + meta.filename;
-        auto target_path = temp_dir / effective_name;
+        auto effective_name = auto_prefix + entry.name;
+        auto target_path = temp_dir / PathFromUtf8(effective_name);
 
         if (!IsPathSafe(temp_dir, target_path))
         {
             DAS_CORE_LOG_WARN(
                 "ZIP entry escapes target directory: {}",
                 effective_name);
+            zip_discard(archive);
             return DAS_E_INVALID_ARGUMENT;
         }
 
-        ZipEntryMeta effective_meta = meta;
-        effective_meta.filename = effective_name;
+        if (entry.is_directory)
+        {
+            std::error_code ec;
+            std::filesystem::create_directories(target_path, ec);
+            if (ec)
+            {
+                DAS_CORE_LOG_WARN(
+                    "Failed to create directory: {}",
+                    DAS::Utils::U8AsString(target_path.u8string()));
+                zip_discard(archive);
+                return DAS_E_FAIL;
+            }
+            continue;
+        }
 
-        result = ExtractEntryToDisk(zip_str, effective_meta, target_path);
+        auto result = ReadEntryToFile(archive, entry, target_path);
         if (result != DAS_S_OK)
         {
+            zip_discard(archive);
             return result;
         }
     }
 
-    // --- Phase 5: Validate manifest in temp dir ---
+    if (zip_close(archive) != 0)
+    {
+        DAS_CORE_LOG_WARN("ZIP close failed: {}", zip_strerror(archive));
+        zip_discard(archive);
+        return DAS_E_INVALID_ARGUMENT;
+    }
+
+    // --- Step 5: Validate manifest in temp dir ---
     bool            found_manifest = false;
     std::string     plugin_name;
     std::error_code ec;
@@ -591,10 +744,10 @@ DasResult InstallPlugin(
         return DAS_E_FAIL;
     }
 
-    // --- Phase 6: Atomic install — rename temp into final location ---
-    auto src = temp_dir / plugin_name;
-    auto dst = plugin_dir / plugin_name;
-    auto old = plugin_dir / (plugin_name + ".old");
+    // --- Step 6: Atomic install — rename temp into final location ---
+    auto src = temp_dir / PathFromUtf8(plugin_name);
+    auto dst = plugin_dir / PathFromUtf8(plugin_name);
+    auto old = plugin_dir / PathFromUtf8(plugin_name + ".old");
 
     // Move existing plugin aside
     if (std::filesystem::exists(dst))
