@@ -279,9 +279,8 @@ DasResult PluginManagerServiceImpl::InstallPluginPackageData(
         return DAS_E_INVALID_ARGUMENT;
     }
 
-    // Phase 1: Read identity from in-memory ZIP manifest BEFORE any
-    // filesystem mutation. Reuses existing ZIP parsing infrastructure
-    // (EnumerateZipEntries, local header, decompression).
+    // Read identity from the in-memory ZIP manifest (parsed via libzip)
+    // BEFORE any filesystem mutation.
     std::string plugin_guid;
     std::string plugin_name;
     auto        meta_result = ReadPluginManifestMetadataFromZip(

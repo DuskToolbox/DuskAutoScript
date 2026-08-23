@@ -29,11 +29,13 @@ DAS_EXPORT DasResult InstallPlugin(
  * @return DAS_S_OK on success; DAS_E_INVALID_ARGUMENT if the manifest is
  *         missing, malformed, unsafe, or lacks guid/name.
  *
- * @architecture HTTP config domain (Phase 52). Called from
+ * @architecture HTTP config domain. Called from
  * PluginManagerServiceImpl::InstallPluginPackageData to extract plugin
- * identity before any filesystem mutation. Reuses existing ZIP parsing
- * infrastructure (EnumerateZipEntries, local header offset resolution,
- * stored/deflate decompression) — no new ZIP library introduced.
+ * identity before any filesystem mutation. Container parsing, CRC32
+ * integrity, zip64 handling, and entry-name encoding normalization are
+ * delegated to libzip; this module keeps the path-traversal defense and
+ * the decompression/entry-size caps, and reads the manifest purely from
+ * memory.
  */
 DAS_EXPORT DasResult ReadPluginManifestMetadataFromZip(
     std::string_view zip_data,
