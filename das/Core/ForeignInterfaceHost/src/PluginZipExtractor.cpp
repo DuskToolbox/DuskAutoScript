@@ -44,6 +44,13 @@ namespace
 
     bool FindEndOfCentralDir(const std::string& zip_data, size_t& eocd_offset)
     {
+        // 短于 EOCD 记录的输入直接判无效：更短的输入会让下方回扫的
+        // 下标运算下溢，读到缓冲区之外（不可信输入的越界读）。
+        if (zip_data.size() < END_OF_CENTRAL_DIR_SIZE)
+        {
+            return false;
+        }
+
         const size_t max_search = std::min(
             zip_data.size(),
             END_OF_CENTRAL_DIR_SIZE + MAX_COMMENT_SIZE);
