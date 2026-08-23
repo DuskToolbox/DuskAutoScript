@@ -6,9 +6,7 @@
 
 DAS_NS_BEGIN
 
-using namespace Das::PluginInterface;
-
-class AdbTouchFactory final : public IDasInputFactory
+class AdbTouchFactory final : public Das::PluginInterface::IDasInputFactory
 {
 public:
     // IDasBase
@@ -19,8 +17,8 @@ public:
     DasResult GetGuid(DasGuid* p_out_guid) override;
     // IDasInputFactory
     DasResult CreateInstance(
-        IDasReadOnlyString* p_json_config,
-        IDasInput**         pp_out_input) override;
+        IDasReadOnlyString*               p_json_config,
+        Das::PluginInterface::IDasInput** pp_out_input) override;
 };
 
 DAS_NS_END

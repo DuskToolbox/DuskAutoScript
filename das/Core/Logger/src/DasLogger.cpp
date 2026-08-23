@@ -8,8 +8,6 @@
 #include <optional>
 #include <spdlog/common.h>
 
-namespace DC = DAS::Core;
-
 DAS_NS_ANONYMOUS_DETAILS_BEGIN
 
 std::optional<spdlog::source_loc> ToSpdlogSourceLocation(
@@ -73,7 +71,10 @@ void DasLogInfo(DasReadOnlyString das_string)
     DasLogInfo(p_string.Get());
 }
 
-void DasLogErrorU8(const char* p_string) { DC::g_logger->error(p_string); }
+void DasLogErrorU8(const char* p_string)
+{
+    DAS::Core::g_logger->error(p_string);
+}
 
 void DasLogErrorU8WithSourceLocation(
     const char*                               p_string,
@@ -81,7 +82,10 @@ void DasLogErrorU8WithSourceLocation(
 {
     if (const auto opt_location = Details::ToSpdlogSourceLocation({p_location}))
     {
-        DC::g_logger->log(opt_location.value(), spdlog::level::err, p_string);
+        DAS::Core::g_logger->log(
+            opt_location.value(),
+            spdlog::level::err,
+            p_string);
     }
     else
     {
@@ -91,7 +95,10 @@ void DasLogErrorU8WithSourceLocation(
 
 // ----------------------------------------------------------------
 
-void DasLogWarningU8(const char* p_string) { DC::g_logger->warn(p_string); }
+void DasLogWarningU8(const char* p_string)
+{
+    DAS::Core::g_logger->warn(p_string);
+}
 
 void DasLogWarningU8WithSourceLocation(
     const char*                               p_string,
@@ -101,7 +108,7 @@ void DasLogWarningU8WithSourceLocation(
     {
         if (opt_location)
         {
-            DC::g_logger->log(
+            DAS::Core::g_logger->log(
                 opt_location.value(),
                 spdlog::level::warn,
                 p_string);
@@ -115,7 +122,7 @@ void DasLogWarningU8WithSourceLocation(
 
 // ----------------------------------------------------------------
 
-void DasLogInfoU8(const char* p_string) { DC::g_logger->info(p_string); }
+void DasLogInfoU8(const char* p_string) { DAS::Core::g_logger->info(p_string); }
 
 void DasLogInfoU8WithSourceLocation(
     const char*                               p_string,
@@ -123,7 +130,10 @@ void DasLogInfoU8WithSourceLocation(
 {
     if (const auto opt_location = Details::ToSpdlogSourceLocation(p_location))
     {
-        DC::g_logger->log(opt_location.value(), spdlog::level::info, p_string);
+        DAS::Core::g_logger->log(
+            opt_location.value(),
+            spdlog::level::info,
+            p_string);
     }
     else
     {
@@ -133,7 +143,10 @@ void DasLogInfoU8WithSourceLocation(
 
 // ----------------------------------------------------------------
 
-void DasLogDebugU8(const char* p_string) { DC::g_logger->debug(p_string); }
+void DasLogDebugU8(const char* p_string)
+{
+    DAS::Core::g_logger->debug(p_string);
+}
 
 void DasLogDebugU8WithSourceLocation(
     const char*                               p_string,
@@ -143,7 +156,7 @@ void DasLogDebugU8WithSourceLocation(
     {
         if (opt_location)
         {
-            DC::g_logger->log(
+            DAS::Core::g_logger->log(
                 opt_location.value(),
                 spdlog::level::debug,
                 p_string);

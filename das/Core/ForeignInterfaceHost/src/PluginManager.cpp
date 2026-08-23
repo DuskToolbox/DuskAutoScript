@@ -860,24 +860,23 @@ size_t PluginManager::GetLoadedPluginCount() const
 DasGuid PluginManager::GetIidForFeature(
     Das::PluginInterface::DasPluginFeature feature) const
 {
-    using namespace Das::PluginInterface;
-
     switch (feature)
     {
-    case DAS_PLUGIN_FEATURE_CAPTURE_FACTORY:
-        return DasIidOf<IDasCaptureFactory>();
-    case DAS_PLUGIN_FEATURE_ERROR_LENS:
-        return DasIidOf<IDasErrorLens>();
-    case DAS_PLUGIN_FEATURE_TASK:
-        return DasIidOf<IDasTask>();
-    case DAS_PLUGIN_FEATURE_INPUT_FACTORY:
-        return DasIidOf<IDasInputFactory>();
-    case DAS_PLUGIN_FEATURE_COMPONENT_FACTORY:
-        return DasIidOf<IDasComponentFactory>();
-    case DAS_PLUGIN_FEATURE_TASK_AUTHORING_FACTORY:
-        return DasIidOf<IDasTaskAuthoringSessionFactory>();
-    case DAS_PLUGIN_FEATURE_TASK_COMPONENT_FACTORY:
-        return DasIidOf<IDasTaskComponentFactory>();
+    case Das::PluginInterface::DAS_PLUGIN_FEATURE_CAPTURE_FACTORY:
+        return DasIidOf<Das::PluginInterface::IDasCaptureFactory>();
+    case Das::PluginInterface::DAS_PLUGIN_FEATURE_ERROR_LENS:
+        return DasIidOf<Das::PluginInterface::IDasErrorLens>();
+    case Das::PluginInterface::DAS_PLUGIN_FEATURE_TASK:
+        return DasIidOf<Das::PluginInterface::IDasTask>();
+    case Das::PluginInterface::DAS_PLUGIN_FEATURE_INPUT_FACTORY:
+        return DasIidOf<Das::PluginInterface::IDasInputFactory>();
+    case Das::PluginInterface::DAS_PLUGIN_FEATURE_COMPONENT_FACTORY:
+        return DasIidOf<Das::PluginInterface::IDasComponentFactory>();
+    case Das::PluginInterface::DAS_PLUGIN_FEATURE_TASK_AUTHORING_FACTORY:
+        return DasIidOf<
+            Das::PluginInterface::IDasTaskAuthoringSessionFactory>();
+    case Das::PluginInterface::DAS_PLUGIN_FEATURE_TASK_COMPONENT_FACTORY:
+        return DasIidOf<Das::PluginInterface::IDasTaskComponentFactory>();
     default:
         return DasGuid{}; // 空 GUID
     }
@@ -886,23 +885,21 @@ DasGuid PluginManager::GetIidForFeature(
 std::string PluginManager::GetFeatureName(
     Das::PluginInterface::DasPluginFeature feature) const
 {
-    using namespace Das::PluginInterface;
-
     switch (feature)
     {
-    case DAS_PLUGIN_FEATURE_CAPTURE_FACTORY:
+    case Das::PluginInterface::DAS_PLUGIN_FEATURE_CAPTURE_FACTORY:
         return "CAPTURE_FACTORY";
-    case DAS_PLUGIN_FEATURE_ERROR_LENS:
+    case Das::PluginInterface::DAS_PLUGIN_FEATURE_ERROR_LENS:
         return "ERROR_LENS";
-    case DAS_PLUGIN_FEATURE_TASK:
+    case Das::PluginInterface::DAS_PLUGIN_FEATURE_TASK:
         return "TASK";
-    case DAS_PLUGIN_FEATURE_INPUT_FACTORY:
+    case Das::PluginInterface::DAS_PLUGIN_FEATURE_INPUT_FACTORY:
         return "INPUT_FACTORY";
-    case DAS_PLUGIN_FEATURE_COMPONENT_FACTORY:
+    case Das::PluginInterface::DAS_PLUGIN_FEATURE_COMPONENT_FACTORY:
         return "COMPONENT_FACTORY";
-    case DAS_PLUGIN_FEATURE_TASK_AUTHORING_FACTORY:
+    case Das::PluginInterface::DAS_PLUGIN_FEATURE_TASK_AUTHORING_FACTORY:
         return "TASK_AUTHORING_FACTORY";
-    case DAS_PLUGIN_FEATURE_TASK_COMPONENT_FACTORY:
+    case Das::PluginInterface::DAS_PLUGIN_FEATURE_TASK_COMPONENT_FACTORY:
         return "TASK_COMPONENT_FACTORY";
     default:
         return "UNKNOWN";

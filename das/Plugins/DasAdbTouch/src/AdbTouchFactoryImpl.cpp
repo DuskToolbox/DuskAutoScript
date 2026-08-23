@@ -80,8 +80,8 @@ DasResult AdbTouchFactory::GetGuid(DasGuid* p_out_guid)
 }
 
 DasResult AdbTouchFactory::CreateInstance(
-    IDasReadOnlyString* p_json_config,
-    IDasInput**         pp_out_input)
+    IDasReadOnlyString*               p_json_config,
+    Das::PluginInterface::IDasInput** pp_out_input)
 {
     DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(pp_out_input);
 

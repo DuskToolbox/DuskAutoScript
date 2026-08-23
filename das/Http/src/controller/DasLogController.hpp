@@ -87,8 +87,6 @@ namespace Das::Http
             const Beast::HttpRequest&                     request,
             DAS::DasPtr<ExportInterface::IDasLogArchive>& archive)
         {
-            using namespace Das::Http::Beast::JsonUtils;
-
             const auto& body = request.JsonBody();
 
             DAS::DasPtr<IDasReadOnlyString> lines_str;
@@ -97,12 +95,12 @@ namespace Das::Http
             bool                            eof = false;
             DasResult                       rc;
 
-            if (HasField(body, "before"))
+            if (Das::Http::Beast::JsonUtils::HasField(body, "before"))
             {
-                const auto offset =
-                    static_cast<uint64_t>(GetInt(body, "before", 0));
-                const auto lines =
-                    static_cast<uint32_t>(GetInt(body, "lines", 200));
+                const auto offset = static_cast<uint64_t>(
+                    Das::Http::Beast::JsonUtils::GetInt(body, "before", 0));
+                const auto lines = static_cast<uint32_t>(
+                    Das::Http::Beast::JsonUtils::GetInt(body, "lines", 200));
                 rc = archive->ReadBefore(
                     offset,
                     lines,
@@ -110,16 +108,16 @@ namespace Das::Http
                     &next_offset,
                     &eof);
             }
-            else if (HasField(body, "after"))
+            else if (Das::Http::Beast::JsonUtils::HasField(body, "after"))
             {
-                const auto offset =
-                    static_cast<uint64_t>(GetInt(body, "after", 0));
+                const auto offset = static_cast<uint64_t>(
+                    Das::Http::Beast::JsonUtils::GetInt(body, "after", 0));
                 rc = archive->ReadAfter(offset, lines_str.Put(), &next_offset);
             }
             else
             {
-                const auto lines =
-                    static_cast<uint32_t>(GetInt(body, "tail", 500));
+                const auto lines = static_cast<uint32_t>(
+                    Das::Http::Beast::JsonUtils::GetInt(body, "tail", 500));
                 rc = archive->ReadTail(
                     lines,
                     lines_str.Put(),

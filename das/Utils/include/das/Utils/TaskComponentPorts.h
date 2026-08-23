@@ -309,7 +309,6 @@ namespace Das::Utils
 // 与其余 das/Utils 头保持一致：Core 侧命名空间内以 Utils:: 前缀可达。
 namespace Das::Core::Utils
 {
-    using namespace Das::Utils;
 }
 
 #endif // DAS_UTILS_TASKCOMPONENTPORTS_H

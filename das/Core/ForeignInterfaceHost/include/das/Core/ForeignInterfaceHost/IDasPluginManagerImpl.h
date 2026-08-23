@@ -10,9 +10,8 @@
 
 DAS_CORE_FOREIGNINTERFACEHOST_NS_BEGIN
 
-using namespace DAS::ExportInterface;
-
-class DasPluginInfoImpl : public DasPluginInfoImplBase<DasPluginInfoImpl>
+class DasPluginInfoImpl
+    : public DAS::ExportInterface::DasPluginInfoImplBase<DasPluginInfoImpl>
 {
     std::shared_ptr<PluginPackageDesc> sp_desc_;
 
@@ -36,14 +35,17 @@ public:
 };
 
 class DasPluginInfoVectorImpl final
-    : public DasPluginInfoVectorImplBase<DasPluginInfoVectorImpl>
+    : public DAS::ExportInterface::DasPluginInfoVectorImplBase<
+          DasPluginInfoVectorImpl>
 {
     DAS::Utils::RefCounter<DasPluginInfoVectorImpl> ref_counter_{};
     std::vector<DasPtr<DasPluginInfoImpl>>          plugin_info_vector_{};
 
 public:
     DasResult Size(size_t* p_out_size) override;
-    DasResult At(size_t index, IDasPluginInfo** pp_out_info) override;
+    DasResult At(
+        size_t                                 index,
+        DAS::ExportInterface::IDasPluginInfo** pp_out_info) override;
 
     void AddInfo(DasPtr<DasPluginInfoImpl> sp_plugin_info);
 };

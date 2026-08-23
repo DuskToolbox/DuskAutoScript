@@ -10,7 +10,6 @@
 DAS_CORE_IPC_NS_BEGIN
 
 using tcp = boost::asio::ip::tcp;
-namespace websocket = boost::beast::websocket;
 
 static constexpr const char* UPGRADE_PATH = "/ipc/v1/transport";
 
@@ -123,7 +122,7 @@ struct HttpIpcServer::Impl
 
                         auto& req = parser->get();
 
-                        if (websocket::is_upgrade(req)
+                        if (boost::beast::websocket::is_upgrade(req)
                             && req.target() == UPGRADE_PATH)
                         {
                             self->UpgradeWebSocket(std::move(*socket_ptr), req);
@@ -141,10 +140,11 @@ struct HttpIpcServer::Impl
         boost::beast::http::request<Body, Allocator>& req)
     {
         auto ws =
-            std::make_unique<websocket::stream<tcp::socket>>(std::move(socket));
+            std::make_unique<boost::beast::websocket::stream<tcp::socket>>(
+                std::move(socket));
 
         ws->set_option(
-            websocket::stream_base::timeout::suggested(
+            boost::beast::websocket::stream_base::timeout::suggested(
                 boost::beast::role_type::server));
 
         auto self = this;

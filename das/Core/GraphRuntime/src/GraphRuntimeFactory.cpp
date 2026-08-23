@@ -223,7 +223,6 @@ struct GraphAuthoringSessionState
 
 namespace
 {
-    namespace GR = Das::Core::GraphRuntime;
     using FormSeqDto = Das::Core::GraphRuntime::Dto::FormSequenceDto;
     using GraphDocDto = Das::Core::GraphRuntime::Dto::GraphDocumentDto;
 
@@ -315,7 +314,7 @@ namespace
                     try
                     {
                         out.nodes.push_back(
-                            GR::Dto::Detail::CastDtoObject<
+                            Das::Core::GraphRuntime::Dto::Detail::CastDtoObject<
                                 Das::Core::GraphRuntime::Dto::GraphNodeDto>(
                                 nv));
                     }
@@ -336,7 +335,7 @@ namespace
                     try
                     {
                         out.edges.push_back(
-                            GR::Dto::Detail::CastDtoObject<
+                            Das::Core::GraphRuntime::Dto::Detail::CastDtoObject<
                                 Das::Core::GraphRuntime::Dto::GraphEdgeDto>(
                                 ev));
                     }
@@ -450,8 +449,10 @@ namespace
                     }
                 }
             }
-            s.document = GR::FormSequenceProjector::Project(seq);
-            s.document.tags.emplace_back(GR::Contract::LINEAR_TAG);
+            s.document =
+                Das::Core::GraphRuntime::FormSequenceProjector::Project(seq);
+            s.document.tags.emplace_back(
+                Das::Core::GraphRuntime::Contract::LINEAR_TAG);
             return;
         }
 
@@ -579,7 +580,7 @@ namespace
                     try
                     {
                         seq.items.push_back(
-                            GR::Dto::Detail::CastDtoObject<
+                            Das::Core::GraphRuntime::Dto::Detail::CastDtoObject<
                                 Das::Core::GraphRuntime::Dto::
                                     FormSequenceItemDto>(iv));
                     }
@@ -588,8 +589,10 @@ namespace
                     }
                 }
             }
-            s.document = GR::FormSequenceProjector::Project(seq);
-            s.document.tags.emplace_back(GR::Contract::LINEAR_TAG);
+            s.document =
+                Das::Core::GraphRuntime::FormSequenceProjector::Project(seq);
+            s.document.tags.emplace_back(
+                Das::Core::GraphRuntime::Contract::LINEAR_TAG);
         }
         else if (obj->contains(std::string_view("nodes")))
         {
@@ -642,10 +645,10 @@ namespace
     // -------------------------------------------------------------------
 
     template <typename Obj>
-    std::optional<GR::Contract::GraphConnection> ParseGraphConnection(
-        const Obj& obj)
+    std::optional<Das::Core::GraphRuntime::Contract::GraphConnection>
+    ParseGraphConnection(const Obj& obj)
     {
-        GR::Contract::GraphConnection c;
+        Das::Core::GraphRuntime::Contract::GraphConnection c;
         if (!ReadStringField(
                 obj,
                 std::string_view("fromNodeId"),
@@ -667,11 +670,11 @@ namespace
     // upstream as a malformed request. Per-kind payload fields populate the
     // optional slots of AuthoringChange; the dispatch reads them by kind.
     bool ParseAuthoringChange(
-        const yyjson::value&           json,
-        GR::Contract::AuthoringChange& out,
-        int64_t&                       out_base_revision)
+        const yyjson::value&                                json,
+        Das::Core::GraphRuntime::Contract::AuthoringChange& out,
+        int64_t&                                            out_base_revision)
     {
-        out = GR::Contract::AuthoringChange{};
+        out = Das::Core::GraphRuntime::Contract::AuthoringChange{};
         out_base_revision = 0;
         auto obj = json.as_object();
         if (!obj)
@@ -712,7 +715,7 @@ namespace
                     (*payload)[std::string_view("target")].as_object();
                 if (target_o)
                 {
-                    GR::Contract::SetValueTarget t;
+                    Das::Core::GraphRuntime::Contract::SetValueTarget t;
                     ReadStringField(
                         *target_o,
                         std::string_view("kind"),
@@ -850,9 +853,9 @@ namespace
     /// on success. The post-apply store version is reflected directly inside
     /// the emitted document; `base_revision` is retained for documentation.
     yyjson::value BuildChangeResultJson(
-        const GR::Contract::AuthoringChangeResult& r,
-        int32_t                                    base_revision,
-        const GraphDocDto&                         document)
+        const Das::Core::GraphRuntime::Contract::AuthoringChangeResult& r,
+        int32_t            base_revision,
+        const GraphDocDto& document)
     {
         auto root = Das::Utils::MakeYyjsonObject();
         auto obj = root.as_object();
@@ -865,9 +868,9 @@ namespace
             // D-41: acceptedProperties = source (persisted GraphDocumentDto);
             // document = regenerated UI view. Distinct blobs — no double-stuff.
             (*obj)[std::string_view("acceptedProperties")] =
-                GR::Contract::SerializeSource(document);
+                Das::Core::GraphRuntime::Contract::SerializeSource(document);
             (*obj)[std::string_view("document")] =
-                GR::Contract::SerializeDocument(document);
+                Das::Core::GraphRuntime::Contract::SerializeDocument(document);
         }
         else
         {
@@ -899,11 +902,11 @@ namespace
             // it so the client sees a fresh authoritative snapshot. The
             // revision reflects the unchanged store.
             (*obj)[std::string_view("document")] =
-                GR::Contract::SerializeDocument(document);
+                Das::Core::GraphRuntime::Contract::SerializeDocument(document);
             // acceptedProperties remains the persisted source so the client
             // sees the unchanged authoritative state.
             (*obj)[std::string_view("acceptedProperties")] =
-                GR::Contract::SerializeSource(document);
+                Das::Core::GraphRuntime::Contract::SerializeSource(document);
             // baseRevision-based invariant: on failure, document.revision must
             // equal base (no change). The validator only rejects on Apply
             // success paths where document.revision != base+1; failure paths
@@ -975,10 +978,10 @@ DAS_C_API DasResult GraphAuthoringSessionGetDocument(
         // the {actionId,label} objects as-is (label already carries the
         // manifest kind, with the actionId fallback applied at parse time),
         // so the projection is a direct copy of the stored catalog.
-        std::optional<GR::Contract::ActionCatalog> catalog;
+        std::optional<Das::Core::GraphRuntime::Contract::ActionCatalog> catalog;
         if (!p->action_entries.empty())
         {
-            GR::Contract::ActionCatalog c;
+            Das::Core::GraphRuntime::Contract::ActionCatalog c;
             c.entries = p->action_entries;
             catalog = std::move(c);
         }
@@ -986,7 +989,9 @@ DAS_C_API DasResult GraphAuthoringSessionGetDocument(
         // SchedulerService ValidateAuthoringGetResult 要求 top-level
         // diagnostics 数组（即使空）。Core authoring 没有 PiDiagnostic 来源，
         // diagnostics 永远为空数组（满足 validator required 约束）。
-        auto document = GR::Contract::SerializeDocument(p->document, catalog);
+        auto document = Das::Core::GraphRuntime::Contract::SerializeDocument(
+            p->document,
+            catalog);
 
         yyjson::value envelope(Das::Utils::MakeYyjsonObject());
         auto          env_obj = envelope.as_object();
@@ -1030,13 +1035,14 @@ DAS_C_API DasResult GraphAuthoringSessionApplyChange(
             return DAS_E_INVALID_POINTER;
         }
 
-        GR::Contract::AuthoringChange change;
-        int64_t                       base_revision = 0;
+        Das::Core::GraphRuntime::Contract::AuthoringChange change;
+        int64_t                                            base_revision = 0;
         if (change_utf8.empty())
         {
             auto r = WrapValue(
                 BuildChangeResultJson(
-                    {GR::Contract::ChangeErrorKind::InvalidOp,
+                    {Das::Core::GraphRuntime::Contract::ChangeErrorKind::
+                         InvalidOp,
                      "empty change request",
                      {},
                      std::nullopt},
@@ -1051,7 +1057,8 @@ DAS_C_API DasResult GraphAuthoringSessionApplyChange(
         {
             return WrapValue(
                 BuildChangeResultJson(
-                    {GR::Contract::ChangeErrorKind::InvalidOp,
+                    {Das::Core::GraphRuntime::Contract::ChangeErrorKind::
+                         InvalidOp,
                      "malformed change request",
                      {},
                      std::nullopt},
@@ -1066,7 +1073,7 @@ DAS_C_API DasResult GraphAuthoringSessionApplyChange(
         {
             valid_action_ids.push_back(entry.action_id);
         }
-        auto r = GR::Contract::ApplyAuthoringChange(
+        auto r = Das::Core::GraphRuntime::Contract::ApplyAuthoringChange(
             p->document,
             change,
             valid_action_ids);
@@ -1103,8 +1110,8 @@ DAS_C_API DasResult GraphAuthoringSessionCompile(
     {
         // No factory manager bound at the authoring boundary, so manifest port
         // validation is skipped (acceptable for authoring preview).
-        GR::GraphCompiler compiler;
-        auto              plan = compiler.Compile(p->document);
+        Das::Core::GraphRuntime::GraphCompiler compiler;
+        auto plan = compiler.Compile(p->document);
 
         // Strict authoring compile envelope: the scheduler validates Compile
         // results with OnlyKeys {compile, diagnostics} and extracts the task
@@ -1154,7 +1161,9 @@ GraphAuthoringSessionUpgradeToGraph(GraphAuthoringSessionState* p)
     {
         return DAS_E_INVALID_POINTER;
     }
-    return GR::Contract::UpgradeToGraph(p->document) ? DAS_S_OK : DAS_E_FAIL;
+    return Das::Core::GraphRuntime::Contract::UpgradeToGraph(p->document)
+               ? DAS_S_OK
+               : DAS_E_FAIL;
 }
 
 // Set the registered action catalog the session will accept on addGraphNode /

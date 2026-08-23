@@ -14,11 +14,10 @@
 namespace Das::Http
 {
 
-    using namespace Das::ExportInterface;
-
     // ToDasType removed — use Das::Utils::YyjsonValueToDasType instead.
 
-    class DasHttpJson final : public DasJsonImplBase<DasHttpJson>
+    class DasHttpJson final
+        : public Das::ExportInterface::DasJsonImplBase<DasHttpJson>
     {
     public:
         DasHttpJson() = default;
@@ -186,8 +185,8 @@ namespace Das::Http
         }
 
         DAS_IMPL GetObjectRefByName(
-            IDasReadOnlyString* key,
-            IDasJson**          pp_out_das_json) override
+            IDasReadOnlyString*              key,
+            Das::ExportInterface::IDasJson** pp_out_das_json) override
         {
             DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(key)
             DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(pp_out_das_json)
@@ -348,8 +347,8 @@ namespace Das::Http
         }
 
         DAS_IMPL SetObjectByName(
-            IDasReadOnlyString* key,
-            IDasJson*           p_in_das_json) override
+            IDasReadOnlyString*             key,
+            Das::ExportInterface::IDasJson* p_in_das_json) override
         {
             DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(key)
             DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(p_in_das_json)
@@ -499,8 +498,9 @@ namespace Das::Http
             return DAS_S_OK;
         }
 
-        DAS_IMPL GetObjectRefByIndex(size_t index, IDasJson** pp_out_das_json)
-            override
+        DAS_IMPL GetObjectRefByIndex(
+            size_t                           index,
+            Das::ExportInterface::IDasJson** pp_out_das_json) override
         {
             DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(pp_out_das_json)
 
@@ -611,8 +611,9 @@ namespace Das::Http
             return DAS_S_OK;
         }
 
-        DAS_IMPL SetObjectByIndex(size_t index, IDasJson* p_in_das_json)
-            override
+        DAS_IMPL SetObjectByIndex(
+            size_t                          index,
+            Das::ExportInterface::IDasJson* p_in_das_json) override
         {
             DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(p_in_das_json)
 
@@ -654,8 +655,9 @@ namespace Das::Http
 
         // ── Type/Size/ToString/Clear ──
 
-        DAS_IMPL GetTypeByName(IDasReadOnlyString* key, DasType* p_out_type)
-            override
+        DAS_IMPL GetTypeByName(
+            IDasReadOnlyString*            key,
+            Das::ExportInterface::DasType* p_out_type) override
         {
             DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(key)
             DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(p_out_type)
@@ -670,21 +672,23 @@ namespace Das::Http
             auto obj_opt = json_.as_object();
             if (!obj_opt)
             {
-                *p_out_type = DAS_TYPE_NULL;
+                *p_out_type = Das::ExportInterface::DAS_TYPE_NULL;
                 return DAS_S_OK;
             }
             const auto& obj = obj_opt.value();
             auto        it = obj.find(key_str);
             if (it == obj.end())
             {
-                *p_out_type = DAS_TYPE_NULL;
+                *p_out_type = Das::ExportInterface::DAS_TYPE_NULL;
                 return DAS_S_OK;
             }
             *p_out_type = Das::Utils::YyjsonValueToDasType(it->second);
             return DAS_S_OK;
         }
 
-        DAS_IMPL GetTypeByIndex(size_t index, DasType* p_out_type) override
+        DAS_IMPL GetTypeByIndex(
+            size_t                         index,
+            Das::ExportInterface::DasType* p_out_type) override
         {
             DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(p_out_type)
 

@@ -37,8 +37,8 @@ DAS_IMPL DasAdbTouchPlugin::QueryInterface(const DasGuid& iid, void** pp_object)
 }
 
 DAS_IMPL DasAdbTouchPlugin::EnumFeature(
-    size_t            index,
-    DasPluginFeature* p_out_feature)
+    size_t                                  index,
+    Das::PluginInterface::DasPluginFeature* p_out_feature)
 {
     if (p_out_feature == nullptr)
     {
@@ -74,8 +74,9 @@ DAS_IMPL DasAdbTouchPlugin::CreateFeatureInterface(
     {
         try
         {
-            const auto p_factory =
-                MakeDasPtr<IDasInputFactory, AdbTouchFactory>();
+            const auto p_factory = MakeDasPtr<
+                Das::PluginInterface::IDasInputFactory,
+                AdbTouchFactory>();
             *pp_out_interface = p_factory.Get();
             p_factory->AddRef();
             return DAS_S_OK;

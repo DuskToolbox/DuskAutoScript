@@ -8,7 +8,7 @@
 DAS_CORE_UTILS_NS_BEGIN
 
 DasResult DasBasicErrorLensImpl::GetSupportedIids(
-    IDasReadOnlyGuidVector** pp_out_iids)
+    DAS::ExportInterface::IDasReadOnlyGuidVector** pp_out_iids)
 {
     DAS_UTILS_CHECK_POINTER(pp_out_iids)
 
@@ -98,7 +98,7 @@ DasResult DasBasicErrorLensImpl::RegisterErrorMessage(
 }
 
 DasResult DasBasicErrorLensImpl::GetWritableSupportedIids(
-    IDasGuidVector** pp_out_iids)
+    DAS::ExportInterface::IDasGuidVector** pp_out_iids)
 {
     DAS_UTILS_CHECK_POINTER(pp_out_iids)
 

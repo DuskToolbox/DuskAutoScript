@@ -16,12 +16,11 @@ using Das::Utils::ToString;
 namespace Das::Http
 {
 
-    using namespace Das::ExportInterface;
-
     namespace
     {
 
-        std::optional<yyjson::value> ExtractJsonFromIDasJson(IDasJson* p_json)
+        std::optional<yyjson::value> ExtractJsonFromIDasJson(
+            Das::ExportInterface::IDasJson* p_json)
         {
             if (!p_json)
             {
@@ -131,8 +130,8 @@ namespace Das::Http
             return std::nullopt;
         }
 
-        DasPtr<IDasJson> json_result;
-        auto             result = settings_service_.GetPluginSettingsField(
+        DasPtr<Das::ExportInterface::IDasJson> json_result;
+        auto result = settings_service_.GetPluginSettingsField(
             p_profile_id.Get(),
             &guid,
             p_field.Get(),
@@ -176,8 +175,8 @@ namespace Das::Http
 
         auto* p_json_value = new DasHttpJson(serialized->c_str());
         p_json_value->AddRef();
-        const DasPtr<IDasJson> json_value =
-            DasPtr<IDasJson>::Attach(p_json_value);
+        const DasPtr<Das::ExportInterface::IDasJson> json_value =
+            DasPtr<Das::ExportInterface::IDasJson>::Attach(p_json_value);
 
         return settings_service_.UpdatePluginSettingsField(
             p_profile_id.Get(),
@@ -202,8 +201,8 @@ namespace Das::Http
 
         if (path_prefix_.empty())
         {
-            DasPtr<IDasJson> json_result;
-            auto             result = settings_service_.GetPluginSettings(
+            DasPtr<Das::ExportInterface::IDasJson> json_result;
+            auto result = settings_service_.GetPluginSettings(
                 p_profile_id.Get(),
                 &guid,
                 json_result.Put());
@@ -220,8 +219,8 @@ namespace Das::Http
             return std::nullopt;
         }
 
-        DasPtr<IDasJson> json_result;
-        auto             result = settings_service_.GetPluginSettingsField(
+        DasPtr<Das::ExportInterface::IDasJson> json_result;
+        auto result = settings_service_.GetPluginSettingsField(
             p_profile_id.Get(),
             &guid,
             p_field.Get(),
@@ -348,8 +347,8 @@ namespace Das::Http
     }
 
     DasResult DasAutoFlushJsonImpl::GetObjectRefByName(
-        IDasReadOnlyString* key,
-        IDasJson**          pp_out_das_json)
+        IDasReadOnlyString*              key,
+        Das::ExportInterface::IDasJson** pp_out_das_json)
     {
         DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(pp_out_das_json)
 
@@ -474,8 +473,8 @@ namespace Das::Http
     }
 
     DasResult DasAutoFlushJsonImpl::SetObjectByName(
-        IDasReadOnlyString* key,
-        IDasJson*           p_in_das_json)
+        IDasReadOnlyString*             key,
+        Das::ExportInterface::IDasJson* p_in_das_json)
     {
         std::string u8_key;
         auto        result = CheckWhitelist(key, u8_key);
@@ -660,8 +659,8 @@ namespace Das::Http
     }
 
     DasResult DasAutoFlushJsonImpl::GetObjectRefByIndex(
-        size_t     index,
-        IDasJson** pp_out_das_json)
+        size_t                           index,
+        Das::ExportInterface::IDasJson** pp_out_das_json)
     {
         DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(pp_out_das_json)
 
@@ -840,8 +839,8 @@ namespace Das::Http
     }
 
     DasResult DasAutoFlushJsonImpl::SetObjectByIndex(
-        size_t    index,
-        IDasJson* p_in_das_json)
+        size_t                          index,
+        Das::ExportInterface::IDasJson* p_in_das_json)
     {
         if (path_prefix_.empty())
         {
@@ -894,8 +893,8 @@ namespace Das::Http
     // ── GetType ──
 
     DasResult DasAutoFlushJsonImpl::GetTypeByName(
-        IDasReadOnlyString* key,
-        DasType*            p_out_type)
+        IDasReadOnlyString*            key,
+        Das::ExportInterface::DasType* p_out_type)
     {
         DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(p_out_type)
 
@@ -909,53 +908,53 @@ namespace Das::Http
         auto field_opt = GetField(MakeFullPath(u8_key));
         if (!field_opt || field_opt->is_null())
         {
-            *p_out_type = DAS_TYPE_NULL;
+            *p_out_type = Das::ExportInterface::DAS_TYPE_NULL;
             return DAS_S_OK;
         }
 
         const auto& field = field_opt.value();
         if (field.is_null())
         {
-            *p_out_type = DAS_TYPE_NULL;
+            *p_out_type = Das::ExportInterface::DAS_TYPE_NULL;
         }
         else if (field.is_object())
         {
-            *p_out_type = DAS_TYPE_JSON_OBJECT;
+            *p_out_type = Das::ExportInterface::DAS_TYPE_JSON_OBJECT;
         }
         else if (field.is_array())
         {
-            *p_out_type = DAS_TYPE_JSON_ARRAY;
+            *p_out_type = Das::ExportInterface::DAS_TYPE_JSON_ARRAY;
         }
         else if (field.is_string())
         {
-            *p_out_type = DAS_TYPE_STRING;
+            *p_out_type = Das::ExportInterface::DAS_TYPE_STRING;
         }
         else if (field.is_bool())
         {
-            *p_out_type = DAS_TYPE_BOOL;
+            *p_out_type = Das::ExportInterface::DAS_TYPE_BOOL;
         }
         else if (field.is_uint())
         {
-            *p_out_type = DAS_TYPE_UINT;
+            *p_out_type = Das::ExportInterface::DAS_TYPE_UINT;
         }
         else if (field.is_sint())
         {
-            *p_out_type = DAS_TYPE_INT;
+            *p_out_type = Das::ExportInterface::DAS_TYPE_INT;
         }
         else if (field.is_real())
         {
-            *p_out_type = DAS_TYPE_FLOAT;
+            *p_out_type = Das::ExportInterface::DAS_TYPE_FLOAT;
         }
         else
         {
-            *p_out_type = DAS_TYPE_UNSUPPORTED;
+            *p_out_type = Das::ExportInterface::DAS_TYPE_UNSUPPORTED;
         }
         return DAS_S_OK;
     }
 
     DasResult DasAutoFlushJsonImpl::GetTypeByIndex(
-        size_t   index,
-        DasType* p_out_type)
+        size_t                         index,
+        Das::ExportInterface::DasType* p_out_type)
     {
         DAS_UTILS_CHECK_POINTER_FOR_PLUGIN(p_out_type)
 

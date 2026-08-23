@@ -81,8 +81,8 @@ DasResult DasPluginInfoVectorImpl::Size(size_t* p_out_size)
 }
 
 DasResult DasPluginInfoVectorImpl::At(
-    size_t           index,
-    IDasPluginInfo** pp_out_info)
+    size_t                                 index,
+    DAS::ExportInterface::IDasPluginInfo** pp_out_info)
 {
     if (index < plugin_info_vector_.size())
     {

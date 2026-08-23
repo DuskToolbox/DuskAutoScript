@@ -8,7 +8,6 @@
 
 DAS_CORE_UTILS_NS_BEGIN
 
-using namespace DAS::ExportInterface;
 class DasBasicErrorLensImpl final
     : public PluginInterface::DasBasicErrorLensImplBase<DasBasicErrorLensImpl>
 {
@@ -24,7 +23,8 @@ class DasBasicErrorLensImpl final
     ForeignInterfaceHost::DasGuidVectorImpl suppored_guid_vector_{};
 
 public:
-    DasResult GetSupportedIids(IDasReadOnlyGuidVector** pp_out_iids) override;
+    DasResult GetSupportedIids(
+        DAS::ExportInterface::IDasReadOnlyGuidVector** pp_out_iids) override;
     DasResult GetErrorMessage(
         IDasReadOnlyString*  locale_name,
         DasResult            error_code,
@@ -33,7 +33,8 @@ public:
         IDasReadOnlyString* locale_name,
         DasResult           error_code,
         IDasReadOnlyString* p_explanation) override;
-    DasResult GetWritableSupportedIids(IDasGuidVector** pp_out_iids) override;
+    DasResult GetWritableSupportedIids(
+        DAS::ExportInterface::IDasGuidVector** pp_out_iids) override;
 };
 
 DAS_CORE_UTILS_NS_END

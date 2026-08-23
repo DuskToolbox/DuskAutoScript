@@ -185,7 +185,10 @@ DAS_IMPL AdbTouch::Click(int32_t x, int32_t y)
     return executor.Run();
 }
 
-DAS_IMPL AdbTouch::Swipe(DasPoint from, DasPoint to, int32_t duration_ms)
+DAS_IMPL AdbTouch::Swipe(
+    Das::PluginInterface::DasPoint from,
+    Das::PluginInterface::DasPoint to,
+    int32_t                        duration_ms)
 {
     const auto cmd = fmt::format(
         "{} shell input swipe {} {} {} {}",

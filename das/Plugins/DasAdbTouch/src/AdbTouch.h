@@ -8,9 +8,7 @@
 
 DAS_NS_BEGIN
 
-using namespace Das::PluginInterface;
-
-class AdbTouch final : public IDasTouch
+class AdbTouch final : public Das::PluginInterface::IDasTouch
 {
     // should be f"{adb_path} -s {adb_serial} "
     std::string adb_cmd_;
@@ -26,7 +24,10 @@ public:
     // IDasInput
     DAS_IMPL Click(int32_t x, int32_t y) override;
     // IDasTouch
-    DAS_IMPL Swipe(DasPoint from, DasPoint to, int32_t duration_ms) override;
+    DAS_IMPL Swipe(
+        Das::PluginInterface::DasPoint from,
+        Das::PluginInterface::DasPoint to,
+        int32_t                        duration_ms) override;
 };
 
 DAS_NS_END
