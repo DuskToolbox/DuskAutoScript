@@ -590,4 +590,147 @@ namespace
         EXPECT_FALSE(HasTmpInstallResidue(plugin_dir.Dir()));
     }
 
+    // ---------------------------------------------------------------------
+    // manifest 元数据读取（纯内存）：parity 用例 + 新增防护用例。本组
+    // 用例不建任何目录夹具——函数无 plugin_dir 入参即可调用。
+    // ---------------------------------------------------------------------
+
+    TEST(PluginZip, ReadPluginManifestMetadataFlatZipReturnsGuidAndName)
+    {
+        // flat zip：根级 manifest.json 取回 guid 与 name。
+        const auto zip = BuildTestZip({
+            TestZipEntry{
+                .filename = "manifest.json",
+                .content = ManifestJson("1")},
+            TestZipEntry{.filename = "script.txt", .content = "print('hello')"},
+        });
+
+        std::string guid;
+        std::string name;
+        const auto  result = ReadPluginManifestMetadataFromZip(zip, guid, name);
+
+        EXPECT_EQ(result, DAS_S_OK);
+        EXPECT_EQ(guid, "00000000-0000-0000-0000-000000010501");
+        EXPECT_EQ(name, "MyPlugin");
+    }
+
+    TEST(PluginZip, ReadPluginManifestMetadataPackagedZipReturnsGuidAndName)
+    {
+        // packaged zip：无法解析的干扰 manifest 候选失败后 continue 到
+        // 真正的 MyPlugin/manifest.json。
+        const auto zip = BuildTestZip({
+            TestZipEntry{
+                .filename = "Other/manifest.json",
+                .content = "not-json"},
+            TestZipEntry{
+                .filename = "MyPlugin/manifest.json",
+                .content = ManifestJson("1")},
+        });
+
+        std::string guid;
+        std::string name;
+        const auto  result = ReadPluginManifestMetadataFromZip(zip, guid, name);
+
+        EXPECT_EQ(result, DAS_S_OK);
+        EXPECT_EQ(guid, "00000000-0000-0000-0000-000000010501");
+        EXPECT_EQ(name, "MyPlugin");
+    }
+
+    TEST(PluginZip, ReadPluginManifestMetadataAcceptsPartialGuidOnly)
+    {
+        // manifest 只含 guid —— 部分结果按成功返回（name 为空）。
+        const auto zip = BuildTestZip({
+            TestZipEntry{
+                .filename = "manifest.json",
+                .content =
+                    "{\"guid\":\"00000000-0000-0000-0000-000000010501\"}"},
+        });
+
+        std::string guid;
+        std::string name;
+        const auto  result = ReadPluginManifestMetadataFromZip(zip, guid, name);
+
+        EXPECT_EQ(result, DAS_S_OK);
+        EXPECT_EQ(guid, "00000000-0000-0000-0000-000000010501");
+        EXPECT_EQ(name, "");
+    }
+
+    TEST(PluginZip, ReadPluginManifestMetadataNoCandidateFails)
+    {
+        // 只有 .dll 条目（无任何 manifest 候选）——拒绝。
+        const auto zip = BuildTestZip({
+            TestZipEntry{
+                .filename = "MyPlugin/plugin.dll",
+                .content = "MZ-bin"},
+        });
+
+        std::string guid;
+        std::string name;
+        const auto  result = ReadPluginManifestMetadataFromZip(zip, guid, name);
+
+        EXPECT_EQ(result, DAS_E_INVALID_ARGUMENT);
+        EXPECT_EQ(guid, "");
+        EXPECT_EQ(name, "");
+    }
+
+    TEST(PluginZip, ReadPluginManifestMetadataRejectsOversizedManifest)
+    {
+        // 唯一 manifest 候选声明大小 20MiB（超内存读取上限）——候选跳过、
+        // 终态拒绝。stored 条目：读取前拦截，不按伪造声明值触发大分配。
+        const auto zip = BuildTestZip({
+            TestZipEntry{
+                .filename = "manifest.json",
+                .content = ManifestJson("1"),
+                .declared_uncompressed_size = 20u * 1024u * 1024u},
+        });
+
+        std::string guid;
+        std::string name;
+        const auto  result = ReadPluginManifestMetadataFromZip(zip, guid, name);
+
+        EXPECT_EQ(result, DAS_E_INVALID_ARGUMENT);
+        EXPECT_EQ(guid, "");
+        EXPECT_EQ(name, "");
+    }
+
+    TEST(PluginZip, ReadPluginManifestMetadataRejectsStoredCorruptCrc)
+    {
+        // 唯一 manifest 候选（stored）伪造声明 CRC —— 完整性校验击穿后
+        // 候选耗尽，终态拒绝而非部分结果。
+        const auto zip = BuildTestZip({
+            TestZipEntry{
+                .filename = "manifest.json",
+                .content = ManifestJson("1"),
+                .declared_crc = 0xDEADBEEF},
+        });
+
+        std::string guid;
+        std::string name;
+        const auto  result = ReadPluginManifestMetadataFromZip(zip, guid, name);
+
+        EXPECT_EQ(result, DAS_E_INVALID_ARGUMENT);
+        EXPECT_EQ(guid, "");
+        EXPECT_EQ(name, "");
+    }
+
+    TEST(PluginZip, ReadPluginManifestMetadataRejectsDeflateCorruptCrc)
+    {
+        // 同上，deflate 条目：伪造声明 CRC 同样必须击穿并终态拒绝。
+        const auto zip = BuildTestZip({
+            TestZipEntry{
+                .filename = "manifest.json",
+                .content = ManifestJson("1"),
+                .deflate = true,
+                .declared_crc = 0xDEADBEEF},
+        });
+
+        std::string guid;
+        std::string name;
+        const auto  result = ReadPluginManifestMetadataFromZip(zip, guid, name);
+
+        EXPECT_EQ(result, DAS_E_INVALID_ARGUMENT);
+        EXPECT_EQ(guid, "");
+        EXPECT_EQ(name, "");
+    }
+
 } // namespace
