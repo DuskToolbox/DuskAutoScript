@@ -313,12 +313,23 @@ namespace Das::Core::TaskScheduler
 
             DasResult QueryInterface(const DasGuid& iid, void** pp) override
             {
-                if (iid == DasIidOf<IDasAsyncCallback>())
+                if (pp == nullptr)
                 {
+                    return DAS_E_INVALID_POINTER;
+                }
+                if (iid == DasIidOf<IDasBase>())
+                {
+                    *pp = static_cast<IDasBase*>(this);
                     AddRef();
-                    *pp = this;
                     return DAS_S_OK;
                 }
+                if (iid == DasIidOf<IDasAsyncCallback>())
+                {
+                    *pp = this;
+                    AddRef();
+                    return DAS_S_OK;
+                }
+                *pp = nullptr;
                 return DAS_E_NO_INTERFACE;
             }
 
