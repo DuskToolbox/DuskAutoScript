@@ -61,8 +61,19 @@ DasResult GraphRuntimeImpl::Execute(
         std::string json_str(utf8);
         if (!json_str.empty())
         {
-            auto doc = yyjson::read(json_str);
-            plan = yyjson::cast<Dto::CompiledGraphPlanDto>(doc);
+            try
+            {
+                auto doc = yyjson::read(json_str);
+                plan = yyjson::cast<Dto::CompiledGraphPlanDto>(doc);
+            }
+            catch (const std::exception& exception)
+            {
+                last_error_ =
+                    std::string{"Execute: invalid compiled artifact JSON: "}
+                    + exception.what();
+                DAS_CORE_LOG_ERROR("{}", last_error_);
+                return DAS_E_INVALID_JSON;
+            }
         }
     }
 

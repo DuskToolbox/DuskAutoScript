@@ -290,3 +290,42 @@ TEST(GraphRuntimeFactoryTest, CompileEnvelopeExposesExecutionInputKey)
     ASSERT_TRUE(text.has_value());
     EXPECT_NE(text->find("executionOrder"), std::string::npos);
 }
+
+// ===========================================================================
+// GraphRuntimeImpl::Execute malformed-artifact guards
+// ===========================================================================
+
+namespace
+{
+    DasResult ExecuteArtifactText(std::string_view artifact_utf8)
+    {
+        Das::DasPtr<IDasGraphRuntime> runtime;
+        if (DAS::IsFailed(CreateGraphRuntime(runtime.Put())))
+        {
+            return DAS_E_FAIL;
+        }
+        Das::DasPtr<IDasReadOnlyString> artifact;
+        if (DAS::IsFailed(CreateIDasReadOnlyStringFromUtf8(
+                std::string(artifact_utf8).c_str(),
+                artifact.Put())))
+        {
+            return DAS_E_FAIL;
+        }
+        Das::DasPtr<Das::ExportInterface::IDasJson> result_json;
+        return runtime->Execute(artifact.Get(), nullptr, result_json.Put());
+    }
+} // namespace
+
+// Malformed JSON must surface as DAS_E_INVALID_JSON instead of letting the
+// yyjson read exception escape across the C ABI boundary.
+TEST(GraphRuntimeFactoryTest, ExecuteMalformedJsonReturnsInvalidJson)
+{
+    EXPECT_EQ(ExecuteArtifactText("{ not json"), DAS_E_INVALID_JSON);
+}
+
+// A structurally invalid artifact (missing required plan fields) fails the
+// DTO cast and is rejected with DAS_E_INVALID_JSON rather than throwing.
+TEST(GraphRuntimeFactoryTest, ExecuteIncompletePlanJsonReturnsInvalidJson)
+{
+    EXPECT_EQ(ExecuteArtifactText(R"({"foo":1})"), DAS_E_INVALID_JSON);
+}
