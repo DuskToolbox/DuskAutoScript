@@ -452,34 +452,33 @@ namespace Das::Core::TaskScheduler
                        < GuidToString(definitions[rhs].component_guid);
             });
 
-        // Build the catalog as a JSON array of {actionId,label} objects. Per
-        // das-yyjson-string-safety mutable arrays do not accept the
-        // (string_view, copy_string) pair overload; we serialise the array via
-        // a small JSON literal reader so every string is deep-copied into the
-        // document arena. actionIds and manifest kinds are guid / reverse-DNS
-        // tokens and never need JSON escaping.
-        std::string literal = "[";
-        for (std::size_t i = 0; i < order.size(); ++i)
+        // Build the catalog as a JSON array of {actionId,label} objects via
+        // the yyjson writer: the label is the plugin manifest's kind field
+        // (author-controlled free text), so it must go through real JSON
+        // escaping instead of raw string concatenation — a kind containing a
+        // quote or backslash would otherwise produce invalid JSON and empty
+        // the whole catalog. Per das-yyjson-string-safety string members use
+        // the (string_view, copy_string) pair overload so every value is
+        // deep-copied into the document arena.
+        auto catalog = Das::Utils::MakeYyjsonArray();
+        auto array_ref = catalog.as_array();
+        for (std::size_t index : order)
         {
-            const auto& definition = definitions[order[i]];
-            if (i != 0)
-            {
-                literal += ',';
-            }
-            literal += "{\"actionId\":\"";
-            literal += GuidToString(definition.component_guid);
-            literal += "\",\"label\":\"";
-            literal += CatalogEntryLabel(definition);
-            literal += "\"}";
-        }
-        literal += ']';
+            const auto&       definition = definitions[index];
+            const std::string action_id =
+                GuidToString(definition.component_guid);
+            const std::string label = CatalogEntryLabel(definition);
 
-        auto parsed = Das::Utils::ParseYyjsonFromString(literal);
-        if (!parsed)
-        {
-            return yyjson::value(Das::Utils::MakeYyjsonArray());
+            auto entry = Das::Utils::MakeYyjsonObject();
+            auto obj = entry.as_object();
+            (*obj)[std::string_view("actionId")] = std::make_pair(
+                std::string_view(action_id),
+                yyjson::copy_string);
+            (*obj)[std::string_view("label")] =
+                std::make_pair(std::string_view(label), yyjson::copy_string);
+            array_ref->emplace_back(std::move(entry));
         }
-        return std::move(*parsed);
+        return catalog;
     }
 
     static yyjson::value MakeAuthoringContextJson(
