@@ -1998,7 +1998,12 @@ namespace Das::Core::TaskScheduler
 
     void SchedulerService::NotifyStateChange()
     {
-        if (!state_notify_)
+        std::shared_ptr<StateNotify> notify;
+        {
+            const std::scoped_lock lock(state_notify_mutex_);
+            notify = state_notify_;
+        }
+        if (!notify || !*notify)
         {
             return;
         }
@@ -2013,7 +2018,7 @@ namespace Das::Core::TaskScheduler
         auto state_serialized = Das::Utils::SerializeYyjsonValue(event, false);
         if (state_serialized)
         {
-            state_notify_(state_serialized->c_str());
+            (*notify)(state_serialized->c_str());
         }
     }
 
@@ -4907,7 +4912,9 @@ namespace Das::Core::TaskScheduler
         SchedulerNotifyFunc func,
         void*               user_data)
     {
-        state_notify_ = {func, user_data};
+        const std::scoped_lock lock(state_notify_mutex_);
+        state_notify_ =
+            std::make_shared<StateNotify>(StateNotify{func, user_data});
     }
 
     void SchedulerService::PostPersistEvent(int64_t task_id, int64_t next_time)
