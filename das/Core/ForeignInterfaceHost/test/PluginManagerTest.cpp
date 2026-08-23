@@ -3049,6 +3049,36 @@ namespace
         std::atomic<uint32_t> ref_count_{0};
     };
 
+    // IPC 加载形态的远端替身：生产中 IpcRemotePluginHost 返回的是远端包
+    // 的 main 侧代理，PluginManager 对它调 SetTaskComponentHost 经代理
+    // 调用送达（[in] 接口参数自动编组）；替身以本尊直连复现同一加载面
+    // （object → QI package → 注入 → 枚举）。
+    class RecordingRemotePluginHost final : public IRemotePluginHost
+    {
+    public:
+        explicit RecordingRemotePluginHost(
+            RecordingPluginPackage*& out_last_package)
+            : out_last_package_{out_last_package}
+        {
+        }
+
+        auto LoadPlugin(const RemotePluginLoadRequest& request)
+            -> DAS::Utils::Expected<RuntimeLoadResult> override
+        {
+            (void)request;
+            auto* package = new RecordingPluginPackage();
+            package->AddRef();
+            out_last_package_ = package;
+            RuntimeLoadResult result{};
+            result.object = static_cast<IDasBase*>(package);
+            result.owner_session_id = 0;
+            return result;
+        }
+
+    private:
+        RecordingPluginPackage*& out_last_package_;
+    };
+
     // 最小可 AddRef 的 host 替身（ImplBase 默认存储测试用）。
     class MinimalTaskComponentHost final : public IDasTaskComponentHost
     {
@@ -3208,6 +3238,59 @@ TEST_F(
     EXPECT_NE(runtime_->last_package->received_host, nullptr);
     EXPECT_EQ(
         runtime_->last_package->received_host,
+        pm_->GetTaskComponentFactoryManager().GetTaskComponentHost());
+}
+
+// IPC 加载形态（loadMode=ipc → NativeIpcRuntime → remote host）：加载完成
+// 后包已持有可用 host——生产中经 IPC 代理送达（[in] 接口参数自动编组），
+// 顺序由 main 侧保证（注入先于任何 EnumFeature/CreateFeatureInterface）。
+TEST_F(
+    PluginManagerHostInjectionTest,
+    LoadPluginOverIpcChannelInjectsHostBeforeFirstEnumFeature)
+{
+    const auto manifest_path = test_dir_ / "IpcHostOrderPlugin.json";
+    {
+        std::ofstream ofs(manifest_path);
+        ofs << R"({
+            "guid": "00000000-0000-0000-0000-000000790301",
+            "name": "IpcHostOrderPlugin",
+            "language": "Cpp",
+            "loadMode": "ipc",
+            "description": "test",
+            "author": "test",
+            "version": "1.0",
+            "supportedSystem": "win",
+            "pluginFilenameExtension": "dll",
+            "settings": []
+        })";
+    }
+
+    RecordingPluginPackage* remote_package = nullptr;
+    pm_->SetRemotePluginHostFactoryForTest(
+        [&remote_package]()
+        {
+            return std::make_unique<RecordingRemotePluginHost>(remote_package);
+        });
+    pm_->SetHostExePath("DasHostX.exe");
+
+    ASSERT_EQ(pm_->LoadPlugin(manifest_path), DAS_S_OK);
+    ASSERT_NE(remote_package, nullptr);
+
+    const auto& sequence = remote_package->call_sequence;
+    ASSERT_FALSE(sequence.empty());
+    EXPECT_EQ(sequence.front(), "SetTaskComponentHost");
+
+    const auto host_pos =
+        std::find(sequence.begin(), sequence.end(), "SetTaskComponentHost");
+    const auto enum_pos =
+        std::find(sequence.begin(), sequence.end(), "EnumFeature");
+    ASSERT_NE(enum_pos, sequence.end());
+    EXPECT_LT(host_pos, enum_pos)
+        << "host injection must precede the first EnumFeature call";
+
+    EXPECT_NE(remote_package->received_host, nullptr);
+    EXPECT_EQ(
+        remote_package->received_host,
         pm_->GetTaskComponentFactoryManager().GetTaskComponentHost());
 }
 
