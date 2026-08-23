@@ -742,6 +742,8 @@ DasResult IDasJsonImpl::SetObjectByName(
     IDasReadOnlyString* key,
     IDasJson*           p_in_das_json)
 {
+    DAS_UTILS_CHECK_POINTER(p_in_das_json)
+
     DasPtr<IDasJsonImpl> p_impl;
     if (const auto qi_result = p_in_das_json->QueryInterface(
             DasIidOf<IDasJsonImpl>(),
@@ -878,6 +880,8 @@ DasResult IDasJsonImpl::SetBoolByIndex(size_t index, bool in_bool)
 
 DasResult IDasJsonImpl::SetObjectByIndex(size_t index, IDasJson* p_in_das_json)
 {
+    DAS_UTILS_CHECK_POINTER(p_in_das_json)
+
     DasPtr<IDasJsonImpl> p_impl;
     if (const auto qi_result = p_in_das_json->QueryInterface(
             DasIidOf<IDasJsonImpl>(),
