@@ -2,6 +2,7 @@
 // directory + EOCD + 真实 crc32），覆盖插件安装的落盘结构、目录穿越整档
 // 拒绝、原子重装与失败保留、解压炸弹 / CRC 完整性 / 加密与未启用压缩
 // 方式条目的 fail-closed 拒绝、UTF-8 文件名正确落盘。
+#include <das/Core/ForeignInterfaceHost/PluginScanner.h>
 #include <das/Core/ForeignInterfaceHost/PluginZipExtractor.h>
 
 #include <das/_autogen/idl/abi/DasResult.h>
@@ -588,6 +589,150 @@ namespace
         }
         EXPECT_TRUE(found);
         EXPECT_FALSE(HasTmpInstallResidue(plugin_dir.Dir()));
+    }
+
+    // ---------------------------------------------------------------------
+    // 文件名守卫硬化与 flat 包发现对齐用例（RED 基线）
+    // ---------------------------------------------------------------------
+
+    TEST(PluginZip, InstallPluginRejectsMixedSeparatorTraversal)
+    {
+        // 混合分隔符穿越条目（'\' 与 '/' 交错夹带 '..' 分量）—— 首道
+        // 文件名守卫必须整档拒绝，磁盘零写入。
+        TempPluginDir plugin_dir;
+        const auto    zip = BuildTestZip({
+            TestZipEntry{
+                .filename = "MyPlugin/manifest.json",
+                .content = ManifestJson("1")},
+            TestZipEntry{.filename = "x\\../..\\evil", .content = "escape"},
+        });
+
+        const auto result = InstallPlugin(plugin_dir.Dir(), zip);
+
+        EXPECT_EQ(result, DAS_E_INVALID_ARGUMENT);
+        EXPECT_FALSE(std::filesystem::exists(plugin_dir.Dir() / "MyPlugin"));
+        EXPECT_FALSE(std::filesystem::exists(plugin_dir.Dir() / "evil"));
+        EXPECT_FALSE(HasTmpInstallResidue(plugin_dir.Dir()));
+    }
+
+    TEST(PluginZip, InstallPluginRejectsAlternateDataStreamEntry)
+    {
+        // 含 ':' 的 NTFS 备用数据流名条目 —— 整档拒绝，不得借安装写入
+        // 隐藏数据流。
+        TempPluginDir plugin_dir;
+        const auto    zip = BuildTestZip({
+            TestZipEntry{
+                .filename = "MyPlugin/manifest.json",
+                .content = ManifestJson("1")},
+            TestZipEntry{
+                .filename = "MyPlugin/good.dll:payload",
+                .content = "ads-payload"},
+        });
+
+        const auto result = InstallPlugin(plugin_dir.Dir(), zip);
+
+        EXPECT_EQ(result, DAS_E_INVALID_ARGUMENT);
+        EXPECT_FALSE(std::filesystem::exists(plugin_dir.Dir() / "MyPlugin"));
+        EXPECT_FALSE(HasTmpInstallResidue(plugin_dir.Dir()));
+    }
+
+    TEST(PluginZip, InstallPluginRejectsReservedDeviceNameEntry)
+    {
+        // Windows 保留设备名条目（CON）—— 整档拒绝，条目数据不得写向
+        // 设备。
+        TempPluginDir plugin_dir;
+        const auto    zip = BuildTestZip({
+            TestZipEntry{
+                .filename = "MyPlugin/manifest.json",
+                .content = ManifestJson("1")},
+            TestZipEntry{
+                .filename = "MyPlugin/CON",
+                .content = "device-payload"},
+        });
+
+        const auto result = InstallPlugin(plugin_dir.Dir(), zip);
+
+        EXPECT_EQ(result, DAS_E_INVALID_ARGUMENT);
+        EXPECT_FALSE(std::filesystem::exists(plugin_dir.Dir() / "MyPlugin"));
+        EXPECT_FALSE(HasTmpInstallResidue(plugin_dir.Dir()));
+    }
+
+    TEST(PluginZip, InstallPluginRejectsTrailingDotEntry)
+    {
+        // 尾点条目（Win32 落盘剥离尾点产生别名）—— 整档拒绝。
+        TempPluginDir plugin_dir;
+        const auto    zip = BuildTestZip({
+            TestZipEntry{
+                .filename = "MyPlugin/manifest.json",
+                .content = ManifestJson("1")},
+            TestZipEntry{
+                .filename = "MyPlugin/evil.txt.",
+                .content = "alias-payload"},
+        });
+
+        const auto result = InstallPlugin(plugin_dir.Dir(), zip);
+
+        EXPECT_EQ(result, DAS_E_INVALID_ARGUMENT);
+        EXPECT_FALSE(std::filesystem::exists(plugin_dir.Dir() / "MyPlugin"));
+        EXPECT_FALSE(HasTmpInstallResidue(plugin_dir.Dir()));
+    }
+
+    TEST(PluginZip, InstallPluginFlatZipSkipsNonManifestJsonInterference)
+    {
+        // flat zip 根级存在干扰 config.json（可解析为对象但无 name/guid
+        // 字段，条目序在前）+ 真正的 manifest.json：跳过干扰候选，按
+        // manifest 的 name 包装安装到 <name>/manifest.json。
+        TempPluginDir plugin_dir;
+        const auto    zip = BuildTestZip({
+            TestZipEntry{
+                .filename = "config.json",
+                .content = "{\"setting\":true}"},
+            TestZipEntry{
+                .filename = "manifest.json",
+                .content = ManifestJson("1")},
+            TestZipEntry{.filename = "plugin.dll", .content = "MZ-bin"},
+        });
+
+        const auto result = InstallPlugin(plugin_dir.Dir(), zip);
+
+        EXPECT_EQ(result, DAS_S_OK);
+        const auto installed = plugin_dir.Dir() / "MyPlugin";
+        EXPECT_TRUE(std::filesystem::exists(installed / "manifest.json"));
+        EXPECT_TRUE(std::filesystem::exists(installed / "config.json"));
+        EXPECT_TRUE(std::filesystem::exists(installed / "plugin.dll"));
+        EXPECT_EQ(
+            ReadFileContent(installed / "manifest.json"),
+            ManifestJson("1"));
+        EXPECT_FALSE(HasTmpInstallResidue(plugin_dir.Dir()));
+    }
+
+    TEST(PluginZip, InstallPluginFlatZipStemDirectoryMatchesScanner)
+    {
+        // flat zip 根级 DasMaaPi.json（name 字段 libDasMaaPi 与文件主干
+        // 不一致）：包装目录名按文件主干派生为 DasMaaPi，安装布局满足
+        // 扫描器主约定 <目录名>.json，而非 name 字段。
+        TempPluginDir plugin_dir;
+        const auto    zip = BuildTestZip({
+            TestZipEntry{
+                .filename = "DasMaaPi.json",
+                .content = "{\"guid\":\"69F20000-0000-4000-8000-000000000001\","
+                           "\"name\":\"libDasMaaPi\"}"},
+            TestZipEntry{.filename = "libDasMaaPi.dll", .content = "MZ-bin"},
+        });
+
+        const auto result = InstallPlugin(plugin_dir.Dir(), zip);
+
+        EXPECT_EQ(result, DAS_S_OK);
+        const auto installed = plugin_dir.Dir() / "DasMaaPi";
+        EXPECT_TRUE(std::filesystem::exists(installed / "DasMaaPi.json"));
+        EXPECT_TRUE(std::filesystem::exists(installed / "libDasMaaPi.dll"));
+        EXPECT_FALSE(std::filesystem::exists(plugin_dir.Dir() / "libDasMaaPi"));
+        EXPECT_FALSE(HasTmpInstallResidue(plugin_dir.Dir()));
+
+        // 安装结果可被扫描器按主约定 <目录名>.json 发现。
+        const auto manifest = FindManifest(installed);
+        EXPECT_FALSE(manifest.empty());
+        EXPECT_EQ(manifest.filename().u8string(), u8"DasMaaPi.json");
     }
 
     // ---------------------------------------------------------------------
