@@ -1,30 +1,43 @@
+#include <boost/asio/use_future.hpp>
 #include <cstdint>
 #include <cstring>
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/IpcCommandHandler.h>
 #include <das/Core/IPC/IpcMessageHeaderBuilder.h>
+#include <das/Core/IPC/IpcResponseSender.h>
+#include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/IPC/ObjectId.h>
+#include <das/Core/IPC/ProxyFactory.h>
 #include <das/Core/IPC/RemoteObjectRegistry.h>
+#include <das/Core/IPC/RemoteRefHandler.h>
 #include <das/Core/IPC/ValidatedIPCMessageHeader.h>
+#include <das/DasPtr.hpp>
+#include <future>
 #include <gtest/gtest.h>
+#include <memory>
 #include <vector>
 
 #include "MockDasObject.h"
 
 using DAS::Core::IPC::ClearSessionPayload;
+using DAS::Core::IPC::ControlPlaneContext;
 using DAS::Core::IPC::DistributedObjectManager;
 using DAS::Core::IPC::IpcCommandHandler;
 using DAS::Core::IPC::IpcCommandResponse;
 using DAS::Core::IPC::IpcCommandType;
 using DAS::Core::IPC::IPCMessageHeader;
 using DAS::Core::IPC::IPCMessageHeaderBuilder;
+using DAS::Core::IPC::IpcResponseSender;
+using DAS::Core::IPC::IpcRunLoop;
 using DAS::Core::IPC::ListSessionObjectsPayload;
 using DAS::Core::IPC::LookupByInterfacePayload;
 using DAS::Core::IPC::LookupByNamePayload;
 using DAS::Core::IPC::LookupObjectPayload;
 using DAS::Core::IPC::MessageType;
 using DAS::Core::IPC::ObjectId;
+using DAS::Core::IPC::ProxyFactory;
 using DAS::Core::IPC::RemoteObjectRegistry;
+using DAS::Core::IPC::RemoteRefHandler;
 using DAS::Core::IPC::ValidatedIPCMessageHeader;
 namespace
 {
@@ -122,13 +135,27 @@ protected:
         registry_.Clear();
         object_manager_.SetSessionId(1);
         handler_.SetSessionId(1);
+        run_loop_ = std::make_unique<IpcRunLoop>(
+            false,
+            nullptr,
+            proxy_factory_,
+            registry_);
+        remote_ref_handler_ =
+            RemoteRefHandler::Create(object_manager_, *run_loop_);
     }
 
-    void TearDown() override { registry_.Clear(); }
+    void TearDown() override
+    {
+        run_loop_.reset();
+        registry_.Clear();
+    }
 
-    RemoteObjectRegistry     registry_;
-    DistributedObjectManager object_manager_;
-    IpcCommandHandler        handler_{registry_, object_manager_};
+    ProxyFactory                proxy_factory_;
+    RemoteObjectRegistry        registry_;
+    DistributedObjectManager    object_manager_;
+    IpcCommandHandler           handler_{registry_, object_manager_};
+    DasPtr<RemoteRefHandler>    remote_ref_handler_;
+    std::unique_ptr<IpcRunLoop> run_loop_;
 };
 
 TEST_F(IpcCommandHandlerTest, LookupObject_Success)
@@ -524,4 +551,188 @@ TEST_F(IpcCommandHandlerTest, SetAndGetSessionId)
 
     handler_.SetSessionId(100);
     EXPECT_EQ(handler_.GetSessionId(), 100);
+}
+
+// ====== RemoteRefHandler（CONTROL_PLANE RemoteAddRef/RemoteRelease）======
+
+namespace
+{
+    constexpr uint16_t kRemoteRefPeerSessionId = 5;
+
+    ValidatedIPCMessageHeader MakeRemoteRefEventHeader(
+        IpcCommandType command_type,
+        uint16_t       source_session_id)
+    {
+        return IPCMessageHeaderBuilder()
+            .SetMessageType(MessageType::Event)
+            .SetControlPlaneCommand(command_type)
+            .SetSourceSessionId(source_session_id)
+            .SetTargetSessionId(1)
+            .SetBodySize(static_cast<uint32_t>(sizeof(ObjectId)))
+            .Build();
+    }
+
+    std::vector<uint8_t> MakeObjectIdBody(const ObjectId& object_id)
+    {
+        std::vector<uint8_t> body;
+        AppendToBuffer(body, object_id);
+        return body;
+    }
+
+    // 在 IO 协程域驱动一次 CONTROL_PLANE EVENT（handler 协程内无真实
+    // 挂起点，io_context.run() 同步收敛）
+    DasResult DispatchRemoteRefEvent(
+        IpcRunLoop&                      run_loop,
+        RemoteRefHandler&                remote_ref_handler,
+        const ValidatedIPCMessageHeader& header,
+        const std::vector<uint8_t>&      body)
+    {
+        IpcResponseSender   sender(run_loop);
+        ControlPlaneContext context{run_loop, header};
+        auto                future = boost::asio::co_spawn(
+            run_loop.GetIoContext(),
+            remote_ref_handler.HandleMessage(header, body, sender, context),
+            boost::asio::use_future);
+        if (run_loop.GetIoContext().stopped())
+        {
+            run_loop.GetIoContext().restart();
+        }
+        run_loop.GetIoContext().run();
+        return future.get();
+    }
+} // namespace
+
+TEST_F(
+    IpcCommandHandlerTest,
+    RemoteRefHandler_AddThenReleaseRecyclesPinlessEntry)
+{
+    auto*    mock = new MockDasObject();
+    ObjectId object_id{};
+    ASSERT_EQ(
+        object_manager_.RegisterLocalObject(mock, object_id, false),
+        DAS_S_OK);
+    EXPECT_EQ(object_manager_.GetLocalEntryCount(), 1u);
+
+    const auto add_header = MakeRemoteRefEventHeader(
+        IpcCommandType::RemoteAddRef,
+        kRemoteRefPeerSessionId);
+    EXPECT_EQ(
+        DispatchRemoteRefEvent(
+            *run_loop_,
+            *remote_ref_handler_,
+            add_header,
+            MakeObjectIdBody(object_id)),
+        DAS_S_OK);
+    EXPECT_EQ(object_manager_.GetRemoteHolderCount(object_id), 1u);
+
+    const auto release_header = MakeRemoteRefEventHeader(
+        IpcCommandType::RemoteRelease,
+        kRemoteRefPeerSessionId);
+    EXPECT_EQ(
+        DispatchRemoteRefEvent(
+            *run_loop_,
+            *remote_ref_handler_,
+            release_header,
+            MakeObjectIdBody(object_id)),
+        DAS_S_OK);
+
+    // pins==0 且 holders 空 → 条目回收；gen bump 后迟到 Lookup 收 STALE
+    EXPECT_EQ(object_manager_.GetLocalEntryCount(), 0u);
+    IDasBase* looked_up = nullptr;
+    EXPECT_EQ(
+        object_manager_.LookupObject(object_id, &looked_up),
+        DAS_E_IPC_STALE_OBJECT_HANDLE);
+}
+
+TEST_F(IpcCommandHandlerTest, RemoteRefHandler_DuplicateAddRefIsIdempotent)
+{
+    auto*    mock = new MockDasObject();
+    ObjectId object_id{};
+    ASSERT_EQ(
+        object_manager_.RegisterLocalObject(mock, object_id, false),
+        DAS_S_OK);
+
+    const auto add_header = MakeRemoteRefEventHeader(
+        IpcCommandType::RemoteAddRef,
+        kRemoteRefPeerSessionId);
+    const auto object_body = MakeObjectIdBody(object_id);
+    ASSERT_EQ(
+        DispatchRemoteRefEvent(
+            *run_loop_,
+            *remote_ref_handler_,
+            add_header,
+            object_body),
+        DAS_S_OK);
+    ASSERT_EQ(
+        DispatchRemoteRefEvent(
+            *run_loop_,
+            *remote_ref_handler_,
+            add_header,
+            object_body),
+        DAS_S_OK);
+
+    // (oid, session) set 语义：重复 ADD_REF 计数不涨
+    EXPECT_EQ(object_manager_.GetRemoteHolderCount(object_id), 1u);
+}
+
+TEST_F(
+    IpcCommandHandlerTest,
+    RemoteRefHandler_ReleaseUnknownEntryOrHolderWarnsAndSucceeds)
+{
+    // 条目不存在：WARN + 忽略，不崩溃不重建条目（D-14 known-edge）
+    const ObjectId unknown_id{
+        .session_id = 1,
+        .generation = 1,
+        .local_id = 777};
+    const auto release_header = MakeRemoteRefEventHeader(
+        IpcCommandType::RemoteRelease,
+        kRemoteRefPeerSessionId);
+    EXPECT_EQ(
+        DispatchRemoteRefEvent(
+            *run_loop_,
+            *remote_ref_handler_,
+            release_header,
+            MakeObjectIdBody(unknown_id)),
+        DAS_S_OK);
+    EXPECT_EQ(object_manager_.GetLocalEntryCount(), 0u);
+
+    // 条目存在但该 session 不是 holder：幂等 no-op，条目不动
+    auto*    mock = new MockDasObject();
+    ObjectId object_id{};
+    ASSERT_EQ(
+        object_manager_.RegisterLocalObject(mock, object_id, false),
+        DAS_S_OK);
+    EXPECT_EQ(
+        DispatchRemoteRefEvent(
+            *run_loop_,
+            *remote_ref_handler_,
+            release_header,
+            MakeObjectIdBody(object_id)),
+        DAS_S_OK);
+    EXPECT_EQ(object_manager_.GetLocalEntryCount(), 1u);
+    EXPECT_EQ(object_manager_.GetRemoteHolderCount(object_id), 0u);
+}
+
+TEST_F(IpcCommandHandlerTest, RemoteRefHandler_TruncatedBodyIsDropped)
+{
+    auto*    mock = new MockDasObject();
+    ObjectId object_id{};
+    ASSERT_EQ(
+        object_manager_.RegisterLocalObject(mock, object_id, false),
+        DAS_S_OK);
+
+    const auto add_header = MakeRemoteRefEventHeader(
+        IpcCommandType::RemoteAddRef,
+        kRemoteRefPeerSessionId);
+    const std::vector<uint8_t> truncated_body(sizeof(ObjectId) - 1, 0xAB);
+    EXPECT_EQ(
+        DispatchRemoteRefEvent(
+            *run_loop_,
+            *remote_ref_handler_,
+            add_header,
+            truncated_body),
+        DAS_S_OK);
+
+    // 尺寸不足：丢弃 + WARN，不读越界、零记账
+    EXPECT_EQ(object_manager_.GetRemoteHolderCount(object_id), 0u);
 }

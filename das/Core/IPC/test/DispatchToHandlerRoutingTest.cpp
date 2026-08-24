@@ -7,12 +7,28 @@
  * - StubContext retains BT-owned fields for business handlers
  * - IAwaitableMessageHandler accepts ControlPlaneContext (compile-time check)
  * - IMessageHandler retains StubContext (compile-time check)
+ * - CONTROL_PLANE RemoteAddRef/RemoteRelease EVENT 分发留在 IO 协程域，
+ *   不进 inbound_queue_（BusinessThread）
  */
 
+#include <boost/asio/use_future.hpp>
+#include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/IMessageHandler.h>
+#include <das/Core/IPC/IpcCommandHandler.h>
+#include <das/Core/IPC/IpcMessageHeaderBuilder.h>
+#include <das/Core/IPC/IpcMessageQueue.h>
+#include <das/Core/IPC/IpcRunLoop.h>
+#include <das/Core/IPC/ProxyFactory.h>
+#include <das/Core/IPC/RemoteObjectRegistry.h>
+#include <das/Core/IPC/RemoteRefHandler.h>
+#include <das/DasPtr.hpp>
 #include <gtest/gtest.h>
 
+#include <future>
 #include <type_traits>
+#include <vector>
+
+#include "MockDasObject.h"
 
 using namespace DAS;
 using namespace DAS::Core::IPC;
@@ -176,4 +192,88 @@ TEST(DispatchToHandlerRoutingTest, AwaitableHandler_AcceptsControlPlaneContext)
     EXPECT_EQ(add_result, 1u);
     auto release_result = handler->Release();
     EXPECT_EQ(release_result, 0u);
+}
+
+// ============================================================================
+// Runtime dispatch: CONTROL_PLANE RemoteAddRef/RemoteRelease stay on the IO
+// coroutine domain (awaitable dispatch), never enter inbound_queue_ (BT)
+// ============================================================================
+
+namespace
+{
+    std::vector<uint8_t> EncodeObjectIdBody(const ObjectId& object_id)
+    {
+        return {
+            reinterpret_cast<const uint8_t*>(&object_id),
+            reinterpret_cast<const uint8_t*>(&object_id) + sizeof(object_id)};
+    }
+} // namespace
+
+TEST(DispatchToHandlerRoutingTest, ControlPlaneRemoteRefEventStaysOnIoDomain)
+{
+    constexpr uint16_t local_session_id = 1;
+    constexpr uint16_t peer_session_id = 2;
+
+    ProxyFactory                    proxy_factory;
+    RemoteObjectRegistry            registry;
+    IpcMessageQueue<InboundMessage> inbound_queue(8);
+    IpcRunLoop run_loop(false, &inbound_queue, proxy_factory, registry);
+    run_loop.SetSessionId(local_session_id);
+
+    DistributedObjectManager& object_manager = proxy_factory.GetObjectManager();
+    object_manager.SetSessionId(local_session_id);
+
+    auto remote_ref_handler =
+        RemoteRefHandler::Create(object_manager, run_loop);
+    run_loop.RegisterHandler(
+        HeaderFlags::CONTROL_PLANE,
+        static_cast<uint32_t>(IpcCommandType::RemoteAddRef),
+        remote_ref_handler.Get());
+    run_loop.RegisterHandler(
+        HeaderFlags::CONTROL_PLANE,
+        static_cast<uint32_t>(IpcCommandType::RemoteRelease),
+        remote_ref_handler.Get());
+
+    auto*    mock = new MockDasObject();
+    ObjectId object_id{};
+    ASSERT_EQ(
+        object_manager.RegisterLocalObject(mock, object_id, false),
+        DAS_S_OK);
+
+    const auto object_body = EncodeObjectIdBody(object_id);
+    const auto make_event_header = [&](IpcCommandType command_type)
+    {
+        return IPCMessageHeaderBuilder()
+            .SetMessageType(MessageType::Event)
+            .SetControlPlaneCommand(command_type)
+            .SetSourceSessionId(peer_session_id)
+            .SetTargetSessionId(local_session_id)
+            .SetBodySize(static_cast<uint32_t>(object_body.size()))
+            .Build();
+    };
+
+    const auto route_event = [&](const ValidatedIPCMessageHeader& header)
+    {
+        auto future = boost::asio::co_spawn(
+            run_loop.GetIoContext(),
+            run_loop.RouteIncomingMessage(header, object_body),
+            boost::asio::use_future);
+        if (run_loop.GetIoContext().stopped())
+        {
+            run_loop.GetIoContext().restart();
+        }
+        run_loop.GetIoContext().run();
+        future.get();
+    };
+
+    route_event(make_event_header(IpcCommandType::RemoteAddRef));
+
+    // IO 域 awaitable 分发完成 holder 记账，未进 BT 队列
+    EXPECT_EQ(object_manager.GetRemoteHolderCount(object_id), 1u);
+    EXPECT_FALSE(inbound_queue.TryPop().has_value());
+
+    route_event(make_event_header(IpcCommandType::RemoteRelease));
+
+    EXPECT_EQ(object_manager.GetLocalEntryCount(), 0u);
+    EXPECT_FALSE(inbound_queue.TryPop().has_value());
 }
