@@ -3478,6 +3478,209 @@ TEST_F(IpcMultiProcessTestIntegration, RemoteProxy_ComponentFactory_IsSupported)
     DAS_CORE_LOG_INFO("Remote component factory support verification passed");
 }
 
+// ====== 断连清扫 E2E（host 进程强杀）======
+
+/**
+ * @brief host 进程强杀后主进程侧 owner 记账的清扫验证
+ *
+ * 完整 E2E 流程：
+ * 1. 主进程注册 IDasVariantVector 服务（显式 pin——清扫免疫断言的对象）
+ * 2. 启动 Host + 加载 IpcTestPlugin1 + 创建组件 + 一次成功的跨进程
+ *    Dispatch（kill 前工作基线）
+ * 3. 制造该 host session 的跨进程 holder 记账：与对端物化申报（ADD_REF
+ *    产生的账本状态一致——服务条目（显式 pin）与 pinless 条目各挂一个
+ *    holder；ADD_REF 接收链的行为面由 CONTROL_PLANE 记账单元用例覆盖）
+ * 4. 外部 TerminateProcess/SIGKILL 强杀 host（不经 Stop 的纯崩溃语义）
+ * 5. 管道断开 → 接收循环退出 guard → 主进程侧清扫该 session 全部 holder
+ * 6. 断言：holder 清零、服务 pin 存活（local pin 免疫）、pinless 条目按
+ *    移除条件回收、清扫后本地服务仍可解析
+ */
+TEST_F(
+    IpcMultiProcessTestIntegration,
+    HostKill_DisconnectSweepsOwnerSideHolderLedger)
+{
+    if (!std::filesystem::exists(host_exe_path_))
+    {
+        GTEST_SKIP() << "DasHostX.exe not found at: " << host_exe_path_;
+    }
+
+    std::string plugin_path;
+    try
+    {
+        plugin_path = IpcTestConfig::GetTestPluginJsonPath("IpcTestPlugin1");
+    }
+    catch (const std::exception& e)
+    {
+        GTEST_SKIP() << "Plugin JSON not found: " << e.what();
+    }
+
+    // 1. 主进程注册 IDasVariantVector 服务（io_context 线程内经 C API——
+    //    Run() 已在 run_thread_ 设置 ScopedCurrentIpcContext TLS）
+    DAS::ExportInterface::DasVariantVector service_vector;
+    {
+        DasResult vv_result = CreateIDasVariantVector(service_vector.Put());
+        ASSERT_EQ(vv_result, DAS_S_OK) << "CreateIDasVariantVector failed";
+        ASSERT_EQ(service_vector->PushBackInt(7), DAS_S_OK);
+    }
+
+    auto reg_opt = DAS::Core::IPC::wait(
+        stdexec::then(
+            stdexec::schedule(GetContext()),
+            [&]() noexcept -> DasResult
+            {
+                return DasRegisterMainProcessService(
+                    service_vector.Get(),
+                    DasIidOf<DAS::ExportInterface::IDasVariantVector>());
+            }));
+    ASSERT_TRUE(reg_opt.has_value()) << "service registration: wait failed";
+    ASSERT_EQ(std::get<0>(*reg_opt), DAS_S_OK);
+
+    // 2. 具体主进程上下文与 DOM（清扫观测点）
+    auto* main_context =
+        static_cast<DAS::Core::IPC::MainProcess::IpcContext*>(ctx_.get());
+    ASSERT_NE(main_context, nullptr);
+    auto& object_manager = main_context->GetProxyFactory().GetObjectManager();
+
+    DAS::Core::IPC::ObjectId service_oid{};
+    ASSERT_EQ(
+        object_manager.LookupObjectIdFromPtr(service_vector.Get(), service_oid),
+        DAS_S_OK);
+
+    // 3. 启动 Host + 加载插件 + 创建组件
+    const ScopedHostStop guard{launcher_};
+    ASSERT_EQ(StartHostAndSetupRunLoop(), DAS_S_OK);
+    ASSERT_TRUE(launcher_->IsRunning());
+    const uint16_t host_session_id = launcher_->GetSessionId();
+    ASSERT_NE(host_session_id, 0u);
+
+    DAS::DasPtr<IDasAsyncLoadPluginOperation> op;
+    ASSERT_EQ(
+        ctx_->LoadPluginAsync(launcher_.Get(), plugin_path.c_str(), op.Put()),
+        DAS_S_OK);
+    auto load_opt = DAS::Core::IPC::wait(
+        GetContext(),
+        DAS::Core::IPC::async_op(GetContext(), std::move(op)));
+    ASSERT_TRUE(load_opt.has_value()) << "Load plugin: wait failed";
+    auto& [load_result, package_proxy] = *load_opt;
+    ASSERT_EQ(load_result, DAS_S_OK);
+    ASSERT_NE(package_proxy, nullptr);
+
+    DAS::DasPtr<IDasBase> raw_proxy =
+        DAS::DasPtr<IDasBase>::Attach(package_proxy);
+    DAS::PluginInterface::DasPluginPackage plugin_package;
+    ASSERT_EQ(raw_proxy.As(plugin_package.Put()), DAS_S_OK);
+
+    IDasBase* factory_base_raw = nullptr;
+    ASSERT_EQ(
+        plugin_package->CreateFeatureInterface(1, &factory_base_raw),
+        DAS_S_OK);
+    const DAS::DasPtr<IDasBase> factory_base(factory_base_raw);
+
+    DAS::DasPtr<DAS::PluginInterface::IDasComponentFactory> factory;
+    ASSERT_EQ(factory_base.As(factory.Put()), DAS_S_OK);
+
+    DAS::PluginInterface::IDasComponent* component_raw = nullptr;
+    ASSERT_EQ(
+        factory->CreateInstance(
+            DasIidOf<DAS::PluginInterface::IDasComponent>(),
+            &component_raw),
+        DAS_S_OK);
+    const DAS::DasPtr<DAS::PluginInterface::IDasComponent> component(
+        component_raw);
+
+    // 工作基线：跨进程 Dispatch 成功（kill 前链路健康）
+    {
+        const DasReadOnlyString method_name{"queryMainProcessVariantVector"};
+        DAS::ExportInterface::DasVariantVector dispatch_result;
+        DAS::ExportInterface::DasVariantVector dispatch_params;
+        ASSERT_EQ(CreateIDasVariantVector(dispatch_params.Put()), DAS_S_OK);
+        ASSERT_EQ(
+            component->Dispatch(
+                method_name.Get(),
+                dispatch_params.Get(),
+                dispatch_result.Put()),
+            DAS_S_OK);
+        int64_t dispatched_value = 0;
+        ASSERT_EQ(dispatch_result->GetInt(0, &dispatched_value), DAS_S_OK);
+        EXPECT_EQ(dispatched_value, 7);
+    }
+
+    // 4. 制造跨进程 holder 记账（与 ADD_REF 到达后的账本状态一致）
+    DAS::ExportInterface::DasVariantVector pinless_vector;
+    ASSERT_EQ(CreateIDasVariantVector(pinless_vector.Put()), DAS_S_OK);
+    DAS::Core::IPC::ObjectId pinless_oid{};
+    ASSERT_EQ(
+        object_manager.RegisterLocalObject(
+            pinless_vector.Get(),
+            pinless_oid,
+            /*explicit_pin=*/false),
+        DAS_S_OK);
+    ASSERT_EQ(
+        object_manager.AddRemoteHolder(service_oid, host_session_id),
+        DAS_S_OK);
+    ASSERT_EQ(
+        object_manager.AddRemoteHolder(pinless_oid, host_session_id),
+        DAS_S_OK);
+    ASSERT_EQ(object_manager.GetRemoteHolderCount(service_oid), 1u);
+    ASSERT_EQ(object_manager.GetRemoteHolderCount(pinless_oid), 1u);
+    const size_t local_entry_baseline = object_manager.GetLocalEntryCount();
+    EXPECT_GE(local_entry_baseline, 2u);
+
+    // 5. 外部强杀 host（不经 Stop 的纯崩溃语义）
+    const uint32_t host_pid = launcher_->GetPid();
+    ASSERT_GT(host_pid, 0u);
+#ifdef _WIN32
+    {
+        HANDLE process_handle = OpenProcess(PROCESS_TERMINATE, FALSE, host_pid);
+        ASSERT_NE(process_handle, nullptr)
+            << "OpenProcess failed: error=" << GetLastError();
+        ASSERT_TRUE(TerminateProcess(process_handle, 42))
+            << "TerminateProcess failed: error=" << GetLastError();
+        CloseHandle(process_handle);
+    }
+#else
+    ASSERT_EQ(kill(static_cast<pid_t>(host_pid), SIGKILL), 0)
+        << "SIGKILL failed for host pid=" << host_pid << " errno=" << errno;
+#endif
+
+    // 6. 等待清扫：管道断开 → 接收循环退出 guard → holder 清零
+    const bool swept = WaitUntilForTest(
+        [&] { return object_manager.GetRemoteHolderCount(service_oid) == 0; },
+        std::chrono::seconds(10));
+    ASSERT_TRUE(swept)
+        << "owner-side holder ledger was not swept after host process kill";
+
+    EXPECT_EQ(object_manager.GetRemoteHolderCount(pinless_oid), 0u)
+        << "pinless entry holder ledger must be swept too";
+
+    // 7. 服务 pin 免疫 + pinless 条目按移除条件回收
+    EXPECT_TRUE(object_manager.IsValidObject(service_oid))
+        << "explicit service pin must survive the disconnect sweep";
+    EXPECT_FALSE(object_manager.IsValidObject(pinless_oid))
+        << "pinless unheld entry must be recycled by the sweep";
+    EXPECT_LE(object_manager.GetLocalEntryCount(), local_entry_baseline);
+
+    // 8. 后续操作不受影响：本地服务仍可解析使用
+    auto query_opt = DAS::Core::IPC::wait(
+        stdexec::then(
+            stdexec::schedule(GetContext()),
+            [&]() noexcept -> DasResult
+            {
+                IDasBase*       queried = nullptr;
+                const DasResult query_result = DasQueryMainProcessInterface(
+                    DasIidOf<DAS::ExportInterface::IDasVariantVector>(),
+                    &queried);
+                if (DAS::IsOk(query_result) && queried != nullptr)
+                {
+                    queried->Release();
+                }
+                return query_result;
+            }));
+    ASSERT_TRUE(query_opt.has_value()) << "post-kill query: wait failed";
+    EXPECT_EQ(std::get<0>(*query_opt), DAS_S_OK)
+        << "local service resolution must keep working after the sweep";
+}
+
 // ====== QueryMainProcessInterface E2E 测试 ======
 
 /**
