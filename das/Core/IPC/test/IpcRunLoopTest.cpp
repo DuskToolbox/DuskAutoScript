@@ -1517,3 +1517,123 @@ TEST_F(
 
     probe.Shutdown();
 }
+
+// IO 防御漏斗：IO 控制面路径（DispatchToHandlerWithSender）进入/退出后
+// pending 出清（防御性挂点可达性验证——今日该路径零物化，以直驱入队
+// 模拟既有 pending）
+TEST_F(IpcRunLoopTest, IoControlPlaneDispatchClearsPendingAddRefs)
+{
+    using DAS::Core::IPC::ObjectId;
+
+    // 外部驱动模式：夹具构造先于 StartRunLoop（连接对创建自驱收敛），
+    // 之后 io 由 run loop 的 Run 线程持续驱动
+    OutboundFrameProbe probe(runloop_->GetIoContext(), true);
+    ASSERT_TRUE(probe.IsHealthy());
+    auto counterpart_transport = probe.TakeCounterpartTransport();
+    ASSERT_TRUE(counterpart_transport.has_value());
+
+    const DAS::DasPtr<IHostConnection> host(new TestInternalHost(
+        runloop_->GetIoContext(),
+        REMOTE_SESSION_ID,
+        *counterpart_transport));
+    ASSERT_EQ(runloop_->RegisterInternalHost(host), DAS_S_OK);
+
+    std::thread run_thread;
+    StartRunLoop(run_thread);
+
+    // 主线程直驱入队（目标 = REMOTE session）
+    const ObjectId object_id{
+        .session_id = REMOTE_SESSION_ID,
+        .generation = 1,
+        .local_id = 5};
+    runloop_->EnqueueAddRef(object_id);
+    EXPECT_EQ(runloop_->GetPendingAddRefCount(REMOTE_SESSION_ID), 1u);
+
+    // 探针端注入一条 CONTROL_PLANE Event（无对应 handler）→ IO 控制面
+    // DispatchToHandlerWithSender 进入/退出 → guard 出清
+    const auto injected_header =
+        IPCMessageHeaderBuilder()
+            .SetMessageType(MessageType::Event)
+            .SetHeaderFlags(DAS::Core::IPC::HeaderFlags::CONTROL_PLANE)
+            .SetInterfaceId(0x7777)
+            .SetCallId(2)
+            .SetSourceSessionId(REMOTE_SESSION_ID)
+            .SetTargetSessionId(LOCAL_SESSION_ID)
+            .SetBodySize(0)
+            .Build();
+    const std::vector<uint8_t> injected_body;
+    ASSERT_EQ(
+        probe.SendFrameFromObserver(injected_header, injected_body),
+        DAS_S_OK);
+
+    // IO 分发周期退出后 pending 已被独立发出
+    EXPECT_EQ(probe.DrainUntil(1, std::chrono::seconds(2)), 1u);
+    EXPECT_EQ(
+        probe.CountByInterfaceId(
+            static_cast<uint32_t>(
+                DAS::Core::IPC::IpcCommandType::RemoteAddRef)),
+        1u);
+    EXPECT_EQ(runloop_->GetPendingAddRefCount(REMOTE_SESSION_ID), 0u);
+    EXPECT_TRUE(runloop_->PendingAddRefsEmpty());
+
+    StopRunLoop(run_thread);
+    probe.Shutdown();
+}
+
+// 断连清队：session 断开 → 该 session pending 清空（无滞留帧），
+// 其他 session 不受影响
+TEST_F(IpcRunLoopTest, DisconnectClearsPendingAddRefsForThatSessionOnly)
+{
+    using DAS::Core::IPC::ObjectId;
+
+    auto transport_pair =
+        CreateConnectedTransportPair("pending_disconnect_clear");
+    ASSERT_TRUE(transport_pair.has_value());
+
+    const DAS::DasPtr<IHostConnection> host(new TestInternalHost(
+        runloop_->GetIoContext(),
+        REMOTE_SESSION_ID,
+        transport_pair->run_loop_side));
+    ASSERT_EQ(runloop_->RegisterInternalHost(host), DAS_S_OK);
+
+    std::thread run_thread;
+    StartRunLoop(run_thread);
+
+    constexpr uint16_t unrelated_session_id = 99;
+    const ObjectId     remote_object_id{
+        .session_id = REMOTE_SESSION_ID,
+        .generation = 1,
+        .local_id = 7};
+    const ObjectId unrelated_object_id{
+        .session_id = unrelated_session_id,
+        .generation = 1,
+        .local_id = 8};
+
+    runloop_->EnqueueAddRef(remote_object_id);
+    runloop_->EnqueueAddRef(remote_object_id);
+    runloop_->EnqueueAddRef(unrelated_object_id);
+    EXPECT_EQ(runloop_->GetPendingAddRefCount(REMOTE_SESSION_ID), 2u);
+    EXPECT_EQ(runloop_->GetPendingAddRefCount(unrelated_session_id), 1u);
+
+    // 对端关闭连接：接收循环退出 → 断连链清队
+    transport_pair->peer_side.Cleanup();
+
+    bool remote_cleared = false;
+    for (int attempt = 0; attempt < 200; ++attempt)
+    {
+        if (runloop_->GetPendingAddRefCount(REMOTE_SESSION_ID) == 0)
+        {
+            remote_cleared = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    EXPECT_TRUE(remote_cleared)
+        << "disconnect must clear the pending ADD_REF queue for that session";
+    // 其他 session 不受影响
+    EXPECT_EQ(runloop_->GetPendingAddRefCount(unrelated_session_id), 1u);
+
+    StopRunLoop(run_thread);
+    static_cast<void>(runloop_->ClearPendingAddRefs(unrelated_session_id));
+}

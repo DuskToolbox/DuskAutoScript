@@ -54,10 +54,26 @@ public:
     /// @param io_context transport 绑定的 io_context（独立使用传测试自建
     /// 的；挂在 IpcRunLoop 上传 run loop 的 GetIoContext()——排空时会按需
     /// run 该 io_context，顺带驱动 PostSend 的发送协程）
-    explicit OutboundFrameProbe(boost::asio::io_context& io_context)
-        : io_context_(io_context)
+    /// @param io_context_externally_driven true 表示 io_context 由外部线程
+    /// 持续驱动（如 StartRunLoop 后）——发送/排空只投递协程等结果，不再
+    /// 自行 run/join（自行 join 会因外部 work guard 永不返回）
+    explicit OutboundFrameProbe(
+        boost::asio::io_context& io_context,
+        bool                     io_context_externally_driven = false)
+        : io_context_(io_context),
+          io_context_externally_driven_(io_context_externally_driven)
     {
+        // 连接对创建时 io_context 尚未被外部驱动（构造先于 StartRunLoop），
+        // 自行 run 收敛安全
         CreateConnectedPair();
+        // run() 返回后 io_context 处于 stopped 态；外部驱动模式下必须
+        // restart——否则随后的 IpcRunLoop::Run() 里 run() 对 stopped
+        // context 立即返回（io 永不执行，发送 future 永不就绪）。与
+        // IpcRunLoopTest::CreateConnectedTransportPair 收尾的 restart 同理
+        if (io_context_externally_driven_ && io_context_.stopped())
+        {
+            io_context_.restart();
+        }
     }
 
     ~OutboundFrameProbe() { Shutdown(); }
@@ -300,9 +316,16 @@ private:
     }
 
     /// 按需驱动 io_context 直到已投递的协程全部完成（同
-    /// ProxyFactoryTest::ReceiveNextSentMessage 手法）
-    void RunIoContextUntilSettled()
+    /// ProxyFactoryTest::ReceiveNextSentMessage 手法）；外部驱动模式下
+    /// 跳过（io 由外部线程持续运行，此处只等待 future）——除非
+    /// force_self_drive（连接对创建专用：外部驱动模式要求夹具构造先于
+    /// StartRunLoop，构造时 io 尚无外部 runner/队列工作，自驱必然收敛）
+    void RunIoContextUntilSettled(bool force_self_drive = false)
     {
+        if (io_context_externally_driven_ && !force_self_drive)
+        {
+            return;
+        }
         if (io_context_.stopped())
         {
             io_context_.restart();
@@ -347,7 +370,7 @@ private:
                 65536),
             boost::asio::use_future);
 
-        RunIoContextUntilSettled();
+        RunIoContextUntilSettled(true);
 
         auto [counterpart_result, counterpart_transport] =
             counterpart_future.get();
@@ -367,6 +390,9 @@ private:
     }
 
     boost::asio::io_context& io_context_;
+
+    /// io_context 是否由外部线程持续驱动（外部驱动模式下不自行 run/join）
+    bool io_context_externally_driven_ = false;
 
     /// 对端（被观测的发送方一端；等待被 TakeCounterpartTransport 取走，
     /// 取走前可用 SendFrameFromCounterpart 自证）

@@ -59,6 +59,7 @@ using DAS::Core::IPC::DecodeObjectId;
 using DAS::Core::IPC::DistributedObjectManager;
 using DAS::Core::IPC::EncodeObjectId;
 using DAS::Core::IPC::IpcCommandType;
+using DAS::Core::IPC::IPCMessageHeaderBuilder;
 using DAS::Core::IPC::IPCProxyBase;
 using DAS::Core::IPC::IpcRunLoop;
 using DAS::Core::IPC::IpcRuntimeState;
@@ -66,6 +67,7 @@ using DAS::Core::IPC::MessageType;
 using DAS::Core::IPC::ObjectId;
 using DAS::Core::IPC::ProxyFactory;
 using DAS::Core::IPC::RemoteObjectRegistry;
+using DAS::Core::IPC::ValidatedIPCMessageHeader;
 
 // Test ObjectId 编码解码后的状态一致性
 TEST(ProxyFactoryTest, ObjectIdEncodingConsistency)
@@ -1016,4 +1018,177 @@ TEST_F(
     EXPECT_TRUE(run_loop_->PendingAddRefsEmpty());
 
     materialized_proxy.Reset();
+}
+
+// ====== 闸3 周期末出清（AddRefDispatchGuard 挂点）======
+
+// T9' BT 漏斗：BT 上物化入队后本 dispatch 周期无任何出站载体 →
+// ProcessInboundMessage 退出（guard 析构）时 pending 已被独立发出——
+// 本装置 run loop 无心跳线程，帧能在当次窗口到达只可能是周期末出清
+// （时刻远早于心跳间隔）
+TEST_F(ProxyAddRefForkTest, BusinessThreadCycleEndFlushesPendingWithoutCarrier)
+{
+    DasPtr<IDasBase> materialized_proxy;
+    RunOnBusinessThread(
+        [&]()
+        {
+            auto [result, proxy] = proxy_factory_.GetOrCreateProxy(
+                *run_loop_,
+                business_thread_,
+                object_id_,
+                DasReadOnlyStringProxy::InterfaceId);
+            ASSERT_EQ(result, DAS_S_OK);
+            ASSERT_TRUE(proxy);
+            materialized_proxy = std::move(proxy);
+        });
+
+    // 入队后本周期零出站帧；周期末 guard 独立发出一条 130
+    EXPECT_EQ(probe_->DrainUntil(1, std::chrono::seconds(1)), 1u);
+    EXPECT_EQ(
+        probe_->CountByInterfaceId(
+            static_cast<uint32_t>(IpcCommandType::RemoteAddRef)),
+        1u);
+    EXPECT_EQ(run_loop_->GetPendingAddRefCount(FORK_PEER_SESSION_ID), 0u);
+    EXPECT_TRUE(run_loop_->PendingAddRefsEmpty());
+
+    // 独立帧形态：无 bit1
+    const auto add_ref_frames = probe_->FramesByInterfaceId(
+        static_cast<uint32_t>(IpcCommandType::RemoteAddRef));
+    ASSERT_EQ(add_ref_frames.size(), 1u);
+    EXPECT_EQ(
+        add_ref_frames[0]->header.GetFlags()
+            & DAS::Core::IPC::MessageFlags::RESERVED_AS_SIZE,
+        0);
+
+    materialized_proxy.Reset();
+}
+
+// T9' 队列不跨周期：一次完整入站 dispatch 周期（BT 物化 + 响应发出）→
+// 周期末断言队列空（guard 忘挂在此暴露为可执行失败）
+namespace
+{
+    constexpr uint32_t MATERIALIZING_HANDLER_INTERFACE_ID = 0x7777;
+
+    // 周期内物化（BT 入队）并发响应的测试 handler
+    class MaterializingRequestHandler final
+        : public DAS::Core::IPC::IMessageHandler
+    {
+    public:
+        MaterializingRequestHandler(
+            ProxyFactory&                 proxy_factory,
+            IpcRunLoop&                   run_loop,
+            std::weak_ptr<BusinessThread> business_thread,
+            const ObjectId&               object_id)
+            : proxy_factory_(proxy_factory), run_loop_(run_loop),
+              business_thread_(std::move(business_thread)),
+              object_id_(object_id)
+        {
+        }
+
+        [[nodiscard]]
+        uint32_t AddRef() override
+        {
+            return ++ref_count_;
+        }
+
+        [[nodiscard]]
+        uint32_t Release() override
+        {
+            const uint32_t count = --ref_count_;
+            if (count == 0)
+            {
+                delete this;
+            }
+            return count;
+        }
+
+        [[nodiscard]]
+        uint32_t GetInterfaceId() const override
+        {
+            return MATERIALIZING_HANDLER_INTERFACE_ID;
+        }
+
+        DasResult HandleMessage(
+            const ValidatedIPCMessageHeader&   header,
+            const std::vector<uint8_t>&        body,
+            DAS::Core::IPC::IpcResponseSender& sender,
+            DAS::Core::IPC::StubContext&       resolve_context) override
+        {
+            (void)body;
+            (void)resolve_context;
+
+            // BT 分发线程上物化 → 入队候车
+            auto [result, proxy] = proxy_factory_.GetOrCreateProxy(
+                run_loop_,
+                business_thread_,
+                object_id_,
+                DasReadOnlyStringProxy::InterfaceId);
+            if (DAS::IsFailed(result) || !proxy)
+            {
+                return result;
+            }
+
+            // 周期中段发出响应（业务出站帧，RESPONSE source/target 互换）
+            const auto response_header =
+                IPCMessageHeaderBuilder()
+                    .SetMessageType(MessageType::Response)
+                    .SetHeaderFlags(DAS::Core::IPC::HeaderFlags::NONE)
+                    .SetInterfaceId(header.GetInterfaceId())
+                    .SetCallId(header.GetCallId())
+                    .SetSourceSessionId(header.GetTargetSessionId())
+                    .SetTargetSessionId(header.GetSourceSessionId())
+                    .SetBodySize(0)
+                    .Build();
+            const std::vector<uint8_t> empty_body;
+            return sender.SendResponse(response_header, empty_body);
+        }
+
+    private:
+        std::atomic<uint32_t>         ref_count_{0};
+        ProxyFactory&                 proxy_factory_;
+        IpcRunLoop&                   run_loop_;
+        std::weak_ptr<BusinessThread> business_thread_;
+        const ObjectId&               object_id_;
+    };
+} // namespace
+
+TEST_F(
+    ProxyAddRefForkTest,
+    InboundDispatchCycleEndFlushesPendingBeforeReturning)
+{
+    // 堆分配（RegisterHandler 的 DasPtr 持有并在 run loop 析构时释放）
+    auto* materializing_handler = new MaterializingRequestHandler(
+        proxy_factory_,
+        *run_loop_,
+        business_thread_,
+        object_id_);
+    run_loop_->RegisterHandler(
+        DAS::Core::IPC::HeaderFlags::NONE,
+        MATERIALIZING_HANDLER_INTERFACE_ID,
+        materializing_handler);
+
+    // 投递 REQUEST 入站 → BT 拾起 → 完整 dispatch 周期（物化 + 响应）
+    DAS::Core::IPC::InboundMessage request;
+    request.header = IPCMessageHeaderBuilder()
+                         .SetMessageType(MessageType::Request)
+                         .SetHeaderFlags(DAS::Core::IPC::HeaderFlags::NONE)
+                         .SetInterfaceId(MATERIALIZING_HANDLER_INTERFACE_ID)
+                         .SetCallId(1)
+                         .SetSourceSessionId(FORK_PEER_SESSION_ID)
+                         .SetTargetSessionId(FORK_LOCAL_SESSION_ID)
+                         .Build();
+    ASSERT_EQ(inbound_queue_->Push(std::move(request)), DAS_S_OK);
+
+    // 周期内响应先发（业务帧），周期末 guard 独立发出 ADD_REF——FIFO：
+    // 响应（0x7777）先于 ADD_REF（130）
+    EXPECT_EQ(probe_->DrainUntil(2, std::chrono::seconds(2)), 2u);
+    EXPECT_EQ(
+        probe_->InterfaceIdOrder(),
+        (std::vector<uint32_t>{
+            MATERIALIZING_HANDLER_INTERFACE_ID,
+            static_cast<uint32_t>(IpcCommandType::RemoteAddRef)}));
+
+    // 队列不跨周期：周期末已出清
+    EXPECT_EQ(run_loop_->GetPendingAddRefCount(FORK_PEER_SESSION_ID), 0u);
+    EXPECT_TRUE(run_loop_->PendingAddRefsEmpty());
 }

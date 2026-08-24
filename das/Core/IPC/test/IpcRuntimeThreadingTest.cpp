@@ -10,6 +10,8 @@
 #include <thread>
 #include <vector>
 
+#include <boost/asio/io_context.hpp>
+
 #include "MockDasObject.h"
 
 using DAS::Core::IPC::DasReadOnlyStringProxy;
@@ -427,4 +429,137 @@ TEST(IpcRuntimeThreadingTest, RemoteHolderLedgerConcurrentAccessIsClean)
         static_cast<void>(manager.RemoveSessionHolders(session_id));
     }
     EXPECT_EQ(manager.GetLocalEntryCount(), 0u);
+}
+
+// pending 队列并发（Pitfall 11）：多线程 EnqueueAddRef /
+// FlushPendingStandalone / ClearPendingAddRefs 与非 BT 物化直发混跑——
+// 无数据竞争；守恒断言钉死每帧恰出队一次（发出或清除，二者计数之和
+// 恒等入队总数——重复出队或丢帧都会破坏等式）
+TEST(
+    IpcRuntimeThreadingTest,
+    PendingAddRefQueueConcurrentEnqueueFlushClearIsClean)
+{
+    using DAS::Core::IPC::InboundMessage;
+    using DAS::Core::IPC::IpcMessageQueue;
+    using DAS::Core::IPC::IpcRunLoop;
+    using DAS::Core::IPC::ObjectId;
+    using DAS::Core::IPC::ProxyFactory;
+    using DAS::Core::IPC::RemoteObjectRegistry;
+
+    ProxyFactory                    proxy_factory;
+    RemoteObjectRegistry            registry;
+    IpcMessageQueue<InboundMessage> inbound_queue(256);
+    IpcRunLoop run_loop(false, &inbound_queue, proxy_factory, registry);
+    run_loop.SetSessionId(1);
+
+    // io 线程持续驱动 PostSend 的发送协程（无 transport → 失败路径走
+    // NotifySendFailure 入站队列，发送失败无害——本用例断言队列守恒）
+    auto work_guard = boost::asio::make_work_guard(run_loop.GetIoContext());
+    std::thread io_thread([&run_loop]() { run_loop.GetIoContext().run(); });
+
+    constexpr uint16_t cleared_session_id = 2;
+    const ObjectId     object_ids[3] = {
+        ObjectId{.session_id = 2, .generation = 1, .local_id = 1},
+        ObjectId{.session_id = 3, .generation = 1, .local_id = 2},
+        ObjectId{.session_id = 4, .generation = 1, .local_id = 3}};
+
+    std::atomic<bool>   start{false};
+    std::atomic<size_t> enqueued_total{0};
+    std::atomic<size_t> flushed_total{0};
+    std::atomic<size_t> cleared_total{0};
+
+    std::vector<std::thread> threads;
+
+    // 入队者 ×2：跨三个 session 轮转入队
+    for (int enqueuer = 0; enqueuer < 2; ++enqueuer)
+    {
+        threads.emplace_back(
+            [&, enqueuer]
+            {
+                while (!start.load(std::memory_order_acquire))
+                {
+                    std::this_thread::yield();
+                }
+                for (int index = 0; index < 300; ++index)
+                {
+                    run_loop.EnqueueAddRef(object_ids[(index + enqueuer) % 3]);
+                    enqueued_total.fetch_add(1, std::memory_order_relaxed);
+                }
+            });
+    }
+
+    // 出清者：反复整体 flush
+    threads.emplace_back(
+        [&]
+        {
+            while (!start.load(std::memory_order_acquire))
+            {
+                std::this_thread::yield();
+            }
+            for (int index = 0; index < 200; ++index)
+            {
+                flushed_total.fetch_add(
+                    run_loop.FlushPendingStandalone(),
+                    std::memory_order_relaxed);
+            }
+        });
+
+    // 清队者：反复清除 session 2（部分帧按断连语义被丢弃——计数守恒）
+    threads.emplace_back(
+        [&]
+        {
+            while (!start.load(std::memory_order_acquire))
+            {
+                std::this_thread::yield();
+            }
+            for (int index = 0; index < 200; ++index)
+            {
+                cleared_total.fetch_add(
+                    run_loop.ClearPendingAddRefs(cleared_session_id),
+                    std::memory_order_relaxed);
+            }
+        });
+
+    // 物化者：非 BT 线程物化直发（与队列操作混跑——proxy cache 与 DOM
+    // 锁路径的并发回归）
+    threads.emplace_back(
+        [&]
+        {
+            while (!start.load(std::memory_order_acquire))
+            {
+                std::this_thread::yield();
+            }
+            for (int index = 0; index < 50; ++index)
+            {
+                auto [result, proxy] = proxy_factory.GetOrCreateProxy(
+                    run_loop,
+                    {},
+                    object_ids[0],
+                    DAS::Core::IPC::DasReadOnlyStringProxy::InterfaceId);
+                if (!DAS::IsFailed(result) && proxy)
+                {
+                    proxy.Reset();
+                }
+            }
+        });
+
+    start.store(true, std::memory_order_release);
+    for (std::thread& thread : threads)
+    {
+        thread.join();
+    }
+
+    // 终末出清后守恒成立：每帧恰出队一次
+    flushed_total.fetch_add(
+        run_loop.FlushPendingStandalone(),
+        std::memory_order_relaxed);
+    work_guard.reset();
+    io_thread.join();
+
+    EXPECT_EQ(
+        enqueued_total.load(),
+        flushed_total.load() + cleared_total.load());
+    EXPECT_TRUE(run_loop.PendingAddRefsEmpty());
+
+    proxy_factory.BeginShutdown();
 }
