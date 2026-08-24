@@ -846,7 +846,8 @@ TEST_F(
     ProxyAddRefForkTest,
     BusinessThreadMaterializationEnqueuesWithoutDirectSend)
 {
-    DasPtr<IDasBase> materialized_proxy;
+    DasPtr<IDasBase>    materialized_proxy;
+    std::atomic<size_t> pending_count_at_materialization{0};
     RunOnBusinessThread(
         [&]()
         {
@@ -857,18 +858,27 @@ TEST_F(
                 DasReadOnlyStringProxy::InterfaceId);
             ASSERT_EQ(result, DAS_S_OK);
             ASSERT_TRUE(proxy);
+            // 物化调用返回后、周期结束前（BT 任务体内可观测）：已入队
+            // 一条、尚未发出——入队零直发
+            pending_count_at_materialization.store(
+                run_loop_->GetPendingAddRefCount(FORK_PEER_SESSION_ID),
+                std::memory_order_release);
             materialized_proxy = std::move(proxy);
         });
 
-    // 入队一条，目标 session = owner session
-    EXPECT_EQ(run_loop_->GetPendingAddRefCount(FORK_PEER_SESSION_ID), 1u);
+    // 物化点零直发的周期内观测：恰入队一条（promise/future 与
+    // atomic 提供跨线程可见性）
+    EXPECT_EQ(
+        pending_count_at_materialization.load(std::memory_order_acquire),
+        1u);
 
-    // 零直发：窗口内探针读不到任何 130 帧
-    EXPECT_EQ(probe_->DrainFor(std::chrono::milliseconds(300)), 0u);
+    // 周期末出清（guard 析构）后：帧在当次窗口到达、队列空
+    EXPECT_EQ(probe_->DrainUntil(1, std::chrono::seconds(1)), 1u);
     EXPECT_EQ(
         probe_->CountByInterfaceId(
             static_cast<uint32_t>(IpcCommandType::RemoteAddRef)),
-        0u);
+        1u);
+    EXPECT_EQ(run_loop_->GetPendingAddRefCount(FORK_PEER_SESSION_ID), 0u);
 
     materialized_proxy.Reset();
 }
@@ -951,8 +961,9 @@ TEST_F(
 // 不直发
 TEST_F(ProxyAddRefForkTest, SecondInterfaceViewNeitherEnqueuesNorDirectSends)
 {
-    DasPtr<IDasBase> first_proxy;
-    DasPtr<IDasBase> second_proxy;
+    DasPtr<IDasBase>    first_proxy;
+    DasPtr<IDasBase>    second_proxy;
+    std::atomic<size_t> pending_count_at_materialization{0};
     RunOnBusinessThread(
         [&]()
         {
@@ -973,17 +984,26 @@ TEST_F(ProxyAddRefForkTest, SecondInterfaceViewNeitherEnqueuesNorDirectSends)
                     DasVariantVectorByValueProxy::InterfaceId);
             ASSERT_EQ(second_result, DAS_S_OK);
             ASSERT_TRUE(vector_proxy);
+            // 两视图物化后、周期结束前：pending 仍只有首视图的一条——
+            // 第二视图（QI 衍生同 oid）既不入队也不直发
+            pending_count_at_materialization.store(
+                run_loop_->GetPendingAddRefCount(FORK_PEER_SESSION_ID),
+                std::memory_order_release);
             second_proxy = std::move(vector_proxy);
         });
 
-    // 两视图物化后 pending 仍只有首视图的一条
-    EXPECT_EQ(run_loop_->GetPendingAddRefCount(FORK_PEER_SESSION_ID), 1u);
-    // 零直发
-    EXPECT_EQ(probe_->DrainFor(std::chrono::milliseconds(300)), 0u);
+    EXPECT_EQ(
+        pending_count_at_materialization.load(std::memory_order_acquire),
+        1u);
+
+    // 周期末出清：全周期恰一条 ADD_REF（首视图），第二视图零追加
+    EXPECT_EQ(probe_->DrainUntil(1, std::chrono::seconds(1)), 1u);
     EXPECT_EQ(
         probe_->CountByInterfaceId(
             static_cast<uint32_t>(IpcCommandType::RemoteAddRef)),
-        0u);
+        1u);
+    EXPECT_EQ(probe_->DrainFor(std::chrono::milliseconds(300)), 0u);
+    EXPECT_EQ(run_loop_->GetPendingAddRefCount(FORK_PEER_SESSION_ID), 0u);
 
     second_proxy.Reset();
     first_proxy.Reset();
@@ -1078,10 +1098,12 @@ namespace
             ProxyFactory&                 proxy_factory,
             IpcRunLoop&                   run_loop,
             std::weak_ptr<BusinessThread> business_thread,
-            const ObjectId&               object_id)
+            const ObjectId&               object_id,
+            DasPtr<IDasBase>*             materialized_proxy_slot)
             : proxy_factory_(proxy_factory), run_loop_(run_loop),
               business_thread_(std::move(business_thread)),
-              object_id_(object_id)
+              object_id_(object_id),
+              materialized_proxy_slot_(materialized_proxy_slot)
         {
         }
 
@@ -1117,7 +1139,8 @@ namespace
             (void)body;
             (void)resolve_context;
 
-            // BT 分发线程上物化 → 入队候车
+            // BT 分发线程上物化 → 入队候车（proxy 跨周期存活，不在
+            // 周期内析构触发 RELEASE）
             auto [result, proxy] = proxy_factory_.GetOrCreateProxy(
                 run_loop_,
                 business_thread_,
@@ -1127,6 +1150,7 @@ namespace
             {
                 return result;
             }
+            *materialized_proxy_slot_ = std::move(proxy);
 
             // 周期中段发出响应（业务出站帧，RESPONSE source/target 互换）
             const auto response_header =
@@ -1149,6 +1173,7 @@ namespace
         IpcRunLoop&                   run_loop_;
         std::weak_ptr<BusinessThread> business_thread_;
         const ObjectId&               object_id_;
+        DasPtr<IDasBase>*             materialized_proxy_slot_;
     };
 } // namespace
 
@@ -1156,12 +1181,16 @@ TEST_F(
     ProxyAddRefForkTest,
     InboundDispatchCycleEndFlushesPendingBeforeReturning)
 {
+    // 物化的 proxy 跨周期存活（真实 [in] 参数流形态），断言完成后释放
+    DasPtr<IDasBase> materialized_proxy;
+
     // 堆分配（RegisterHandler 的 DasPtr 持有并在 run loop 析构时释放）
     auto* materializing_handler = new MaterializingRequestHandler(
         proxy_factory_,
         *run_loop_,
         business_thread_,
-        object_id_);
+        object_id_,
+        &materialized_proxy);
     run_loop_->RegisterHandler(
         DAS::Core::IPC::HeaderFlags::NONE,
         MATERIALIZING_HANDLER_INTERFACE_ID,
@@ -1191,4 +1220,6 @@ TEST_F(
     // 队列不跨周期：周期末已出清
     EXPECT_EQ(run_loop_->GetPendingAddRefCount(FORK_PEER_SESSION_ID), 0u);
     EXPECT_TRUE(run_loop_->PendingAddRefsEmpty());
+
+    materialized_proxy.Reset();
 }

@@ -2,6 +2,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <das/Core/IPC/AddRefDispatchGuard.h>
 #include <das/Core/IPC/Config.h>
 #include <das/Core/IPC/ConnectionManager.h>
 #include <das/Core/IPC/Handshake.h>
@@ -288,6 +289,11 @@ boost::asio::awaitable<void> IpcRunLoop::DispatchToHandlerWithSender(
     const std::vector<uint8_t>&      body,
     IpcResponseSender&               sender)
 {
+    // 闸3 周期末出清（IO 控制面防御漏斗）：今日该路径零物化，挂点保证
+    // 将来 IO 域物化入队的帧同样在协程退出时出清（协程帧局部对象在
+    // 任何 co_return 路径析构）
+    const AddRefDispatchGuard add_ref_dispatch_guard(*this);
+
     DAS_CORE_LOG_INFO(
         "Dispatching handler: interface_id = {}, call_id = {}, "
         "header_flags = {}, body_size = {}",
@@ -1445,6 +1451,10 @@ boost::asio::awaitable<void> IpcRunLoop::InternalHostReceiveLoop(
             self->FailPendingCallsBySession(
                 session_id,
                 DAS_E_IPC_CONNECTION_LOST);
+            // 断连清队（主侧触发链）：该 session 的 pending ADD_REF 帧
+            // 不再有可达载体，随断连清空防滞留（fire-and-forget 语义下
+            // 迟到帧本就无害——此为确定性清理，不等超时）
+            static_cast<void>(self->ClearPendingAddRefs(session_id));
             // 断连清扫挂载点：fail 完 pending 之后触发（回调存在时）。
             // owner 侧 holder 记账清理由 MainProcess 侧注册的回调完成，
             // 在 IO 线程执行（free-threaded DOM 表操作合法）。正常停机

@@ -1,3 +1,4 @@
+#include <das/Core/IPC/AddRefDispatchGuard.h>
 #include <das/Core/IPC/BusinessThread.h>
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/IMessageHandler.h>
@@ -117,6 +118,11 @@ void BusinessThread::Run()
 
 void BusinessThread::ProcessInboundMessage(InboundMessage& msg)
 {
+    // 闸3 周期末出清（BT 漏斗）：本 dispatch 周期结束（含嵌套 pump 的
+    // 整个外层函数帧）时 pending 队列非空则独立发出——入队后的帧不会
+    // 滞留到下一周期
+    const AddRefDispatchGuard add_ref_dispatch_guard(run_loop_);
+
     const auto& header = msg.header;
 
     DAS_CORE_LOG_INFO(
