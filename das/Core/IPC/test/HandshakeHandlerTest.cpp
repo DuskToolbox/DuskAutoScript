@@ -9,7 +9,11 @@
 #endif
 #include <das/Core/IPC/AfUnixAvailable.h>
 #include <das/Core/IPC/AnyTransport.h>
+#include <das/Core/IPC/DistributedObjectManager.h>
+#include <das/Core/IPC/Handshake.h>
 #include <das/Core/IPC/Host/HandshakeHandler.h>
+#include <das/Core/IPC/Host/IIpcContext.h>
+#include <das/Core/IPC/Host/IpcContext.h>
 #include <das/Core/IPC/IHostConnection.h>
 #include <das/Core/IPC/IpcMessageHeaderBuilder.h>
 #include <das/Core/IPC/IpcMessageQueue.h>
@@ -18,6 +22,7 @@
 #include <das/Core/IPC/ProxyFactory.h>
 #include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <das/DasPtr.hpp>
+#include <das/IDasBase.h>
 #include <future>
 #include <gtest/gtest.h>
 #include <optional>
@@ -187,6 +192,51 @@ namespace
         uint16_t                 session_id_;
         AnyTransport&            transport_;
     };
+
+    /// 断连清扫观测用的最小本地对象（DOM 条目持有其引用）
+    class CountingLocalObject final : public IDasBase
+    {
+    public:
+        [[nodiscard]]
+        uint32_t AddRef() override
+        {
+            return ++ref_count_;
+        }
+
+        [[nodiscard]]
+        uint32_t Release() override
+        {
+            const uint32_t count = --ref_count_;
+            if (count == 0)
+            {
+                delete this;
+            }
+            return count;
+        }
+
+        DasResult QueryInterface(const DasGuid& iid, void** pp_object) override
+        {
+            (void)iid;
+            if (pp_object == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            *pp_object = nullptr;
+            return DAS_E_NO_INTERFACE;
+        }
+
+    private:
+        std::atomic<uint32_t> ref_count_{1};
+    };
+
+    /// 构造不触发实际连接的 Host IpcContext（HTTP 模式，不调 Run()）——
+    /// 内部 handshake_handler_ 注册的就是生产 SetOnClientDisconnected lambda
+    Host::IpcContextPtr MakeHostContextForDisconnectSweep()
+    {
+        Host::IpcContextConfig config;
+        config.connect_url = "ws://127.0.0.1:1";
+        return Host::CreateIpcContextEz(config);
+    }
 } // namespace
 
 // Test fixture for HandshakeHandler tests
@@ -366,4 +416,130 @@ TEST_F(
 TEST_F(HandshakeHandlerTest, GetClientCount_InitiallyZero)
 {
     EXPECT_EQ(handler_->GetClientCount(), 0u);
+}
+
+// ====== 断连清扫（host 侧生产 lambda）Tests ======
+
+TEST_F(HandshakeHandlerTest, ClientDisconnectSweepsHostSideHolderLedger)
+{
+    auto host_context = MakeHostContextForDisconnectSweep();
+    ASSERT_NE(host_context, nullptr);
+    auto* host_context_concrete =
+        static_cast<Host::IpcContext*>(host_context.get());
+    ASSERT_NE(host_context_concrete, nullptr);
+
+    auto& run_loop = host_context_concrete->GetRunLoop();
+    auto& object_manager = static_cast<DistributedObjectManager&>(
+        host_context->GetObjectManager());
+
+    // 条目 A：显式服务 pin + 该 client 的 holder——清扫后 pin 保留条目存活
+    // 条目 B：pinless auto 条目 + 该 client 的 holder——清扫后条目回收
+    const auto pinned_object =
+        DasPtr<CountingLocalObject>::Attach(new CountingLocalObject());
+    const auto pinless_object =
+        DasPtr<CountingLocalObject>::Attach(new CountingLocalObject());
+    ObjectId pinned_oid{};
+    ObjectId pinless_oid{};
+    ASSERT_EQ(
+        object_manager
+            .RegisterLocalObject(pinned_object.Get(), pinned_oid, true),
+        DAS_S_OK);
+    ASSERT_EQ(
+        object_manager
+            .RegisterLocalObject(pinless_object.Get(), pinless_oid, false),
+        DAS_S_OK);
+    ASSERT_EQ(
+        object_manager.AddRemoteHolder(pinned_oid, REMOTE_SESSION_ID),
+        DAS_S_OK);
+    ASSERT_EQ(
+        object_manager.AddRemoteHolder(pinless_oid, REMOTE_SESSION_ID),
+        DAS_S_OK);
+
+    const size_t entry_count_baseline = object_manager.GetLocalEntryCount();
+    ASSERT_EQ(entry_count_baseline, 2u);
+    ASSERT_EQ(object_manager.GetRemoteHolderCount(pinned_oid), 1u);
+    ASSERT_EQ(object_manager.GetRemoteHolderCount(pinless_oid), 1u);
+
+    auto transport_pair = CreateConnectedTransportPair(run_loop.GetIoContext());
+    ASSERT_TRUE(transport_pair.has_value());
+
+    const DasPtr<IHostConnection> connection(new TestHostConnection(
+        run_loop.GetIoContext(),
+        REMOTE_SESSION_ID,
+        transport_pair->run_loop_side));
+
+    std::thread run_thread([&run_loop]() { run_loop.Run(); });
+    for (int i = 0; i < 100 && !run_loop.IsRunning(); ++i)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    ASSERT_TRUE(run_loop.IsRunning());
+
+    // 经生产分发路径喂 HELLO：注册 client（session 由请求指定）
+    HelloRequestV1 hello{};
+    InitHelloRequest(hello, 4321, "disconnect_sweep_test");
+    hello.assigned_session_id = REMOTE_SESSION_ID;
+    std::vector<uint8_t> hello_body(sizeof(hello));
+    std::memcpy(hello_body.data(), &hello, sizeof(hello));
+
+    const auto hello_header =
+        IPCMessageHeaderBuilder()
+            .SetMessageType(MessageType::Request)
+            .SetControlPlaneCommand(HandshakeInterfaceId::HandshakeIfaceHello)
+            .SetCallId(next_call_id_++)
+            .SetSourceSessionId(REMOTE_SESSION_ID)
+            .SetTargetSessionId(LOCAL_SESSION_ID)
+            .SetBodySize(static_cast<uint32_t>(hello_body.size()))
+            .Build();
+
+    boost::asio::co_spawn(
+        run_loop.GetIoContext(),
+        run_loop
+            .DispatchToHandlerCoroutine(hello_header, hello_body, connection),
+        boost::asio::use_future)
+        .get();
+
+    ASSERT_TRUE(host_context->IsConnected());
+
+    // GOODBYE：生产 HandleGoodbye 触发 SetOnClientDisconnected lambda，
+    // host 侧 DOM 应清扫该 session 的全部 holder 记账
+    GoodbyeV1 goodbye{};
+    InitGoodbye(goodbye, GoodbyeReason::NormalShutdown);
+    std::vector<uint8_t> goodbye_body(sizeof(goodbye));
+    std::memcpy(goodbye_body.data(), &goodbye, sizeof(goodbye));
+
+    const auto goodbye_header =
+        IPCMessageHeaderBuilder()
+            .SetMessageType(MessageType::Request)
+            .SetControlPlaneCommand(HandshakeInterfaceId::HandshakeIfaceGoodbye)
+            .SetCallId(next_call_id_++)
+            .SetSourceSessionId(REMOTE_SESSION_ID)
+            .SetTargetSessionId(LOCAL_SESSION_ID)
+            .SetBodySize(static_cast<uint32_t>(goodbye_body.size()))
+            .Build();
+
+    boost::asio::co_spawn(
+        run_loop.GetIoContext(),
+        run_loop.DispatchToHandlerCoroutine(
+            goodbye_header,
+            goodbye_body,
+            connection),
+        boost::asio::use_future)
+        .get();
+
+    // 清扫在断连回调内同步完成；GOODBYE 链会请求停机，收敛 run loop
+    run_loop.RequestStop();
+    if (run_thread.joinable())
+    {
+        run_thread.join();
+    }
+
+    EXPECT_EQ(object_manager.GetRemoteHolderCount(pinned_oid), 0u)
+        << "disconnect sweep must clear the pinned entry's holder ledger";
+    EXPECT_EQ(object_manager.GetRemoteHolderCount(pinless_oid), 0u)
+        << "disconnect sweep must clear the pinless entry's holder ledger";
+    EXPECT_EQ(object_manager.GetLocalEntryCount(), 1u)
+        << "pinless unheld entry must be recycled while the explicitly "
+           "pinned entry survives (local pin immunity)";
+    EXPECT_FALSE(host_context->IsConnected());
 }
