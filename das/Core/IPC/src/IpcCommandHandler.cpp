@@ -46,31 +46,8 @@ DasResult IpcCommandHandler::HandleMessage(
     IpcCommandResponse             response;
     const std::span<const uint8_t> payload(body);
 
-    // 处理 REMOTE_RELEASE EVENT（fire-and-forget）
     // EVENT 类型不需要响应，直接在 HandleMessage 中处理
     const IpcCommandType cmd_type = ExtractCommandType(header);
-    if (cmd_type == IpcCommandType::RemoteRelease
-        && header.GetMessageType() == MessageType::Event)
-    {
-        // 解析 ObjectId 并调用 object_manager->Release
-        if (payload.size() >= sizeof(ObjectId))
-        {
-            size_t   offset = 0;
-            ObjectId object_id;
-            if (DeserializeValue(payload, offset, object_id))
-            {
-                object_manager.UnregisterObject(object_id);
-                const std::string log_msg = DAS_FMT_NS::format(
-                    "[IpcCommandHandler] REMOTE_RELEASE: released object_id "
-                    "session={}, local={}",
-                    object_id.session_id,
-                    object_id.local_id);
-                DAS_CORE_LOG_INFO(log_msg.c_str());
-            }
-        }
-        // EVENT 不需要响应，直接返回
-        return DAS_S_OK;
-    }
 
     // 处理 RELEASE_SHM_BLOCK EVENT（fire-and-forget）
     if (cmd_type == IpcCommandType::ReleaseShmBlock

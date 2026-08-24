@@ -2,7 +2,9 @@
 #include <das/Core/IPC/Config.h>
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/IPCProxyBase.h>
+#include <das/Core/IPC/IpcCommandHandler.h>
 #include <das/Core/IPC/IpcErrors.h>
+#include <das/Core/IPC/IpcMessageHeaderBuilder.h>
 #include <das/Core/IPC/IpcRuntimeState.h>
 #include <das/Core/IPC/ManualProxyRegistry.h>
 #include <das/Core/IPC/ProxyFactory.h>
@@ -118,7 +120,9 @@ std::pair<DasResult, DasPtr<IDasBase>> ProxyFactory::GetOrCreateProxy(
     }
     static_cast<void>(runtime_ptr->ReleaseRuntimeTagRef());
 
-    DasResult register_result = object_manager_.RegisterRemoteObject(object_id);
+    bool      newly_created = false;
+    DasResult register_result =
+        object_manager_.RegisterRemoteObject(object_id, newly_created);
     if (DAS::IsFailed(register_result))
     {
         DAS_CORE_LOG_ERROR(
@@ -128,6 +132,33 @@ std::pair<DasResult, DasPtr<IDasBase>> ProxyFactory::GetOrCreateProxy(
             interface_id);
         lock.unlock();
         return {register_result, nullptr};
+    }
+
+    // 首次物化申报：DOM remote 条目 0→1 时向 owner 发一条 CONTROL_PLANE
+    // RemoteAddRef（fire-and-forget），与条目移除时的 RemoteRelease 严格
+    // 配对——每 (对象×对端) 一对消息，后续接口视图物化（dedup）不再发
+    if (newly_created)
+    {
+        std::vector<uint8_t> add_ref_body;
+        add_ref_body.insert(
+            add_ref_body.end(),
+            reinterpret_cast<const uint8_t*>(&object_id),
+            reinterpret_cast<const uint8_t*>(&object_id) + sizeof(object_id));
+
+        auto add_ref_header =
+            IPCMessageHeaderBuilder()
+                .SetMessageType(MessageType::Event)
+                .SetHeaderFlags(HeaderFlags::CONTROL_PLANE)
+                .SetInterfaceId(
+                    static_cast<uint32_t>(IpcCommandType::RemoteAddRef))
+                .SetSourceSessionId(run_loop.GetSessionId())
+                .SetTargetSessionId(object_id.session_id)
+                .SetBodySize(static_cast<uint32_t>(add_ref_body.size()))
+                .Build();
+
+        // 发送失败不回滚注册（fire-and-forget，owner 侧断连清扫兜底）
+        static_cast<void>(
+            run_loop.PostSend(add_ref_header, std::move(add_ref_body)));
     }
 
     proxy_cache_[key].interfaces[interface_id] =

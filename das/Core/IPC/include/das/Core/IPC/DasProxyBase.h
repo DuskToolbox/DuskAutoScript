@@ -33,15 +33,16 @@ public:
     using InterfaceType = TInterface;
 
     /**
-     * @brief Destructor with BusinessThread-aware DOM::UnregisterObject.
+     * @brief Destructor with remote-ref paired teardown.
      *
-     * On BusinessThread: calls DOM::UnregisterObject directly.
-     * On non-BT thread: fire-and-forget enqueue via MakeAsyncCallback +
-     * IpcRunLoop::PostToBusinessThread. Does not wait for callback
-     * execution.
-     *
-     * The REMOTE_RELEASE message is always sent fire-and-forget
-     * regardless of the calling thread.
+     * Removes this proxy's interface view from the factory cache, then
+     * decrements the DOM remote view count via
+     * DOM::UnregisterObject(oid, entry_removed). A CONTROL_PLANE
+     * RemoteRelease EVENT is sent fire-and-forget only when that call
+     * removed the DOM entry (the last view of this object died) — one
+     * message per (object × peer), strictly paired with the RemoteAddRef
+     * the factory sent on first materialization. The IsRuntimeAvailable
+     * gate keeps shutdown-period destruction silent.
      */
     ~DasProxyBase() override
     {
@@ -54,28 +55,37 @@ public:
                 static_cast<IPCProxyBase*>(this));
 
             auto& dom = GetObjectManager();
-            dom.UnregisterObject(oid);
+            // 远程条目判定先于递减：同 oid 撞号的本地条目即使被移除也不
+            // 发 RELEASE——申报只配对 RegisterRemoteObject 建立的远程条目
+            const bool is_local_entry = dom.IsLocalObject(oid);
 
-            // REMOTE_RELEASE fire-and-forget message (unchanged)
-            std::vector<uint8_t> release_body;
-            release_body.insert(
-                release_body.end(),
-                reinterpret_cast<const uint8_t*>(&oid),
-                reinterpret_cast<const uint8_t*>(&oid) + sizeof(oid));
+            bool entry_removed = false;
+            dom.UnregisterObject(oid, entry_removed);
 
-            auto release_header =
-                IPCMessageHeaderBuilder()
-                    .SetMessageType(MessageType::Event)
-                    .SetHeaderFlags(HeaderFlags::BUSINESS_CONTROL)
-                    .SetInterfaceId(
-                        static_cast<uint32_t>(IpcCommandType::RemoteRelease))
-                    .SetSourceSessionId(GetSourceSessionId())
-                    .SetTargetSessionId(oid.session_id)
-                    .SetBodySize(static_cast<uint32_t>(release_body.size()))
-                    .Build();
+            if (entry_removed && !is_local_entry)
+            {
+                // 条目移除（最后一个视图归零）时发送唯一的 RELEASE
+                std::vector<uint8_t> release_body;
+                release_body.insert(
+                    release_body.end(),
+                    reinterpret_cast<const uint8_t*>(&oid),
+                    reinterpret_cast<const uint8_t*>(&oid) + sizeof(oid));
 
-            // PostSend is fire-and-forget, does not check result
-            GetRunLoop().PostSend(release_header, std::move(release_body));
+                auto release_header =
+                    IPCMessageHeaderBuilder()
+                        .SetMessageType(MessageType::Event)
+                        .SetHeaderFlags(HeaderFlags::CONTROL_PLANE)
+                        .SetInterfaceId(
+                            static_cast<uint32_t>(
+                                IpcCommandType::RemoteRelease))
+                        .SetSourceSessionId(GetSourceSessionId())
+                        .SetTargetSessionId(oid.session_id)
+                        .SetBodySize(static_cast<uint32_t>(release_body.size()))
+                        .Build();
+
+                // PostSend is fire-and-forget, does not check result
+                GetRunLoop().PostSend(release_header, std::move(release_body));
+            }
         }
     }
 
