@@ -14,6 +14,7 @@
 #include <shared_mutex>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 #include <das/Core/IPC/Config.h>
@@ -26,6 +27,10 @@ struct ObjectEntry
     ObjectId              object_id;
     DAS::DasPtr<IDasBase> object_ptr; // 本地对象非空，远程对象为 nullptr
     bool                  is_local;   // 决定 UnregisterObject 时是否 Release
+
+    // 远端 holder 账本：每对端 0/1（单 proxy 不变量），holder 身份为
+    // 对端 session_id，由 CONTROL_PLANE RemoteAddRef/RemoteRelease 维护
+    std::unordered_set<uint16_t> holder_sessions_;
 };
 
 // 本地对象的受限句柄：仅 DistributedObjectManager::WithLocalObject 在持锁
@@ -67,6 +72,50 @@ public:
         override;
     DasResult RegisterRemoteObject(const ObjectId& object_id) override;
     DasResult UnregisterObject(const ObjectId& object_id) override;
+
+    /// @brief 注册本地对象（显式 pin / pinless 双模式重载）
+    /// @param object_ptr 本地对象
+    /// @param out_object_id [out] 分配或复用的 ObjectId
+    /// @param explicit_pin true = 显式 Register/Unregister 配对（重复注册
+    ///                     递增计数，保持既有行为）；false = pinless
+    ///                     auto-register（条目计数为 0，对已存在条目为
+    ///                     无记账 no-op，配额由对端 ADD_REF 填充）
+    /// @return DAS_S_OK 成功，DAS_E_INVALID_POINTER 空指针
+    DasResult RegisterLocalObject(
+        IDasBase* object_ptr,
+        ObjectId& out_object_id,
+        bool      explicit_pin);
+
+    /// @brief 记录一个远端 holder（对端物化申报 RemoteAddRef 的记账目标）
+    /// @param object_id 本地条目 ObjectId
+    /// @param session_id 对端 session（holder 身份）
+    /// @return DAS_S_OK 成功（重复插入幂等）；DAS_E_IPC_OBJECT_NOT_FOUND
+    ///         条目不存在；DAS_E_IPC_INVALID_OBJECT_ID 条目非本地对象
+    DasResult AddRemoteHolder(const ObjectId& object_id, uint16_t session_id);
+
+    /// @brief 移除一个远端 holder；条目满足移除条件（无显式 pin 且
+    /// holders 空，仅在真实递减发生时判定）时回收：gen bump 作废该 oid、
+    /// ptr 反查清理，并把对象本体唯一一次移交给出参——DOM 不原地析构，
+    /// final Release 的线程域由调用方决定
+    /// @param object_id 本地条目 ObjectId
+    /// @param session_id 对端 session
+    /// @param out_object_to_release [out] 条目被移除时非空
+    /// @return DAS_S_OK 成功；
+    ///         DAS_E_IPC_OBJECT_NOT_FOUND 条目不存在或该 session 从不是
+    ///         holder（迟到/打空的 RELEASE，无递减不评估移除）；
+    ///         DAS_E_IPC_INVALID_OBJECT_ID 条目非本地对象
+    DasResult ReleaseRemoteHolder(
+        const ObjectId&        object_id,
+        uint16_t               session_id,
+        DAS::DasPtr<IDasBase>& out_object_to_release);
+
+    /// @brief 查询条目的远端 holder 数量（测试/日志可观测用）
+    [[nodiscard]]
+    size_t GetRemoteHolderCount(const ObjectId& object_id) const;
+
+    /// @brief 查询本地条目数量（测试/日志可观测用）
+    [[nodiscard]]
+    size_t GetLocalEntryCount() const;
 
     DasResult LookupObject(const ObjectId& object_id, IDasBase** object_ptr)
         override;

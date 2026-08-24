@@ -189,6 +189,11 @@ namespace Core
                     proxy_factory_->GetObjectManager());
                 command_handler_->SetSessionId(session_id_);
 
+                // 创建 RemoteRefHandler（CONTROL_PLANE 远端引用记账）
+                remote_ref_handler_ = RemoteRefHandler::Create(
+                    proxy_factory_->GetObjectManager(),
+                    run_loop_);
+
                 // 创建 HandshakeHandler（使用 DasPtr 管理生命周期）
                 handshake_handler_ = HandshakeHandler::Create(session_id_);
                 if (!handshake_handler_)
@@ -273,6 +278,18 @@ namespace Core
                     HeaderFlags::BUSINESS_CONTROL,
                     static_cast<uint32_t>(IpcCommandType::RemoteRelease),
                     command_handler_.Get());
+
+                // RemoteAddRef / RemoteRelease（CONTROL_PLANE IO 协程域即时
+                // 记账；与上方 BUSINESS_CONTROL 注册双注册共存过渡，旧发送端
+                // 仍发 BUSINESS_CONTROL）
+                run_loop_.RegisterHandler(
+                    HeaderFlags::CONTROL_PLANE,
+                    static_cast<uint32_t>(IpcCommandType::RemoteAddRef),
+                    remote_ref_handler_.Get());
+                run_loop_.RegisterHandler(
+                    HeaderFlags::CONTROL_PLANE,
+                    static_cast<uint32_t>(IpcCommandType::RemoteRelease),
+                    remote_ref_handler_.Get());
 
                 // RELEASE_SHM_BLOCK (fire-and-forget EVENT)
                 run_loop_.RegisterHandler(

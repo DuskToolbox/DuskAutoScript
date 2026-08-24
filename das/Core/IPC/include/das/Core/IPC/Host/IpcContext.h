@@ -16,6 +16,7 @@
 #include <das/Core/IPC/ObjectId.h>
 #include <das/Core/IPC/ProxyFactory.h>
 #include <das/Core/IPC/RemoteObjectRegistry.h>
+#include <das/Core/IPC/RemoteRefHandler.h>
 #include <das/Core/IPC/SharedMemoryPool.h>
 #include <das/DasApi.h>
 #include <das/DasPtr.hpp>
@@ -182,6 +183,10 @@ namespace Core
 
                 DasPtr<IpcCommandHandler> command_handler_;
                 DasPtr<HandshakeHandler>  handshake_handler_;
+
+                /// CONTROL_PLANE 远端引用记账 handler（RemoteAddRef/
+                /// RemoteRelease IO 域即时处理）
+                DasPtr<RemoteRefHandler> remote_ref_handler_;
 
                 /// 内部回调处理器（PostToBusinessThread 接收端）
                 DasPtr<InternalCallbackHandler> internal_callback_handler_;

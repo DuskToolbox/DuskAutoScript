@@ -16,6 +16,7 @@
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
 #include <das/Core/IPC/ProxyFactory.h>
 #include <das/Core/IPC/RemoteObjectRegistry.h>
+#include <das/Core/IPC/RemoteRefHandler.h>
 #include <das/DasApi.h>
 #include <das/DasPtr.hpp>
 #include <das/IDasAsyncLoadPluginOperation.h>
@@ -134,6 +135,10 @@ namespace Core
             private:
                 /// IPC 命令处理器
                 DasPtr<IpcCommandHandler> command_handler_;
+
+                /// CONTROL_PLANE 远端引用记账 handler（RemoteAddRef/
+                /// RemoteRelease IO 域即时处理）
+                DasPtr<RemoteRefHandler> remote_ref_handler_;
 
                 /// 内部回调处理器（PostToBusinessThread 用）
                 DasPtr<InternalCallbackHandler> internal_callback_handler_;

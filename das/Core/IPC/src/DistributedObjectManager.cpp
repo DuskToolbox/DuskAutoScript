@@ -26,6 +26,14 @@ DasResult DistributedObjectManager::RegisterLocalObject(
     IDasBase* object_ptr,
     ObjectId& out_object_id)
 {
+    return RegisterLocalObject(object_ptr, out_object_id, true);
+}
+
+DasResult DistributedObjectManager::RegisterLocalObject(
+    IDasBase* object_ptr,
+    ObjectId& out_object_id,
+    bool      explicit_pin)
+{
     if (object_ptr == nullptr)
     {
         return DAS_E_INVALID_POINTER;
@@ -41,7 +49,11 @@ DasResult DistributedObjectManager::RegisterLocalObject(
         auto            obj_it = objects_.find(existing_id);
         if (obj_it != objects_.end())
         {
-            obj_it->second.ref_count_++;
+            if (explicit_pin)
+            {
+                obj_it->second.ref_count_++;
+            }
+            // pinless 对已存在条目为无记账 no-op，直接返回既有 oid
             out_object_id = existing_id;
             return DAS_S_OK;
         }
@@ -75,12 +87,14 @@ DasResult DistributedObjectManager::RegisterLocalObject(
         .generation = generation,
         .local_id = local_id};
 
-    // DasPtr 构造函数自动 AddRef
+    // DasPtr 构造函数自动 AddRef；pinless 条目计数为 0（配额由对端
+    // ADD_REF 填充），显式注册计数为 1
     const ObjectEntry entry{
-        .ref_count_ = 1,
+        .ref_count_ = explicit_pin ? uint32_t{1} : uint32_t{0},
         .object_id = obj_id,
         .object_ptr = DAS::DasPtr<IDasBase>(object_ptr),
-        .is_local = true};
+        .is_local = true,
+        .holder_sessions_ = {}};
 
     objects_[obj_id] = entry;
     ptr_to_id_[object_ptr] = obj_id;
@@ -114,7 +128,8 @@ DasResult DistributedObjectManager::RegisterRemoteObject(
         .ref_count_ = 1,
         .object_id = object_id,
         .object_ptr = nullptr,
-        .is_local = false};
+        .is_local = false,
+        .holder_sessions_ = {}};
 
     objects_[object_id] = entry;
 
@@ -159,6 +174,111 @@ DasResult DistributedObjectManager::UnregisterObject(const ObjectId& object_id)
     }
 
     return DAS_S_OK;
+}
+
+DasResult DistributedObjectManager::AddRemoteHolder(
+    const ObjectId& object_id,
+    uint16_t        session_id)
+{
+    auto result = ValidateObjectId(object_id);
+    if (result != DAS_S_OK)
+    {
+        return result;
+    }
+
+    const std::unique_lock lock{mutex_};
+    auto                   it = objects_.find(object_id);
+    if (it == objects_.end())
+    {
+        return DAS_E_IPC_OBJECT_NOT_FOUND;
+    }
+    if (!it->second.is_local)
+    {
+        return DAS_E_IPC_INVALID_OBJECT_ID;
+    }
+
+    // set 语义：同一 (oid, session) 重复 ADD_REF 幂等，计数不涨
+    it->second.holder_sessions_.insert(session_id);
+    return DAS_S_OK;
+}
+
+DasResult DistributedObjectManager::ReleaseRemoteHolder(
+    const ObjectId&        object_id,
+    uint16_t               session_id,
+    DAS::DasPtr<IDasBase>& out_object_to_release)
+{
+    auto result = ValidateObjectId(object_id);
+    if (result != DAS_S_OK)
+    {
+        return result;
+    }
+
+    const std::unique_lock lock{mutex_};
+    auto                   it = objects_.find(object_id);
+    if (it == objects_.end())
+    {
+        return DAS_E_IPC_OBJECT_NOT_FOUND;
+    }
+    if (!it->second.is_local)
+    {
+        return DAS_E_IPC_INVALID_OBJECT_ID;
+    }
+
+    ObjectEntry& entry = it->second;
+    if (entry.holder_sessions_.erase(session_id) == 0)
+    {
+        // 该 session 从不是 holder：无递减发生，不评估移除条件
+        // （迟到/打空的 RELEASE，调用方按 D-14 known-edge 记 WARN 忽略）
+        return DAS_E_IPC_OBJECT_NOT_FOUND;
+    }
+
+    // 移除条件（递减发生时判定）：无显式 pin 且无远端 holder
+    if (entry.ref_count_ > 0 || !entry.holder_sessions_.empty())
+    {
+        return DAS_S_OK;
+    }
+
+    if (entry.object_ptr)
+    {
+        ptr_to_id_.erase(entry.object_ptr.Get());
+        local_id_generations_[object_id.local_id] =
+            IncrementGeneration(object_id.generation);
+        out_object_to_release = std::move(entry.object_ptr);
+    }
+
+    objects_.erase(it);
+    return DAS_S_OK;
+}
+
+size_t DistributedObjectManager::GetRemoteHolderCount(
+    const ObjectId& object_id) const
+{
+    if (ValidateObjectId(object_id) != DAS_S_OK)
+    {
+        return 0;
+    }
+
+    const std::shared_lock lock{mutex_};
+    auto                   it = objects_.find(object_id);
+    if (it == objects_.end() || !it->second.is_local)
+    {
+        return 0;
+    }
+    return it->second.holder_sessions_.size();
+}
+
+size_t DistributedObjectManager::GetLocalEntryCount() const
+{
+    const std::shared_lock lock{mutex_};
+    size_t                 local_entry_count = 0;
+    for (const auto& [entry_object_id, entry] : objects_)
+    {
+        if (entry.is_local)
+        {
+            ++local_entry_count;
+        }
+    }
+    return local_entry_count;
 }
 
 DasResult DistributedObjectManager::LookupObject(

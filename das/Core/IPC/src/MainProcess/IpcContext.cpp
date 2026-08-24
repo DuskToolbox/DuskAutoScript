@@ -73,6 +73,11 @@ namespace Core
                     proxy_factory_->GetObjectManager());
                 command_handler_->SetSessionId(1);
 
+                // 创建 RemoteRefHandler（CONTROL_PLANE 远端引用记账）
+                remote_ref_handler_ = RemoteRefHandler::Create(
+                    proxy_factory_->GetObjectManager(),
+                    runloop_);
+
                 // 5. 创建并注册 InternalCallbackHandler
                 internal_callback_handler_ = DasPtr<InternalCallbackHandler>(
                     new InternalCallbackHandler());
@@ -98,6 +103,18 @@ namespace Core
                     HeaderFlags::BUSINESS_CONTROL,
                     static_cast<uint32_t>(IpcCommandType::RemoteRelease),
                     command_handler_.Get());
+
+                // RemoteAddRef / RemoteRelease（CONTROL_PLANE IO 协程域即时
+                // 记账；与上方 BUSINESS_CONTROL 注册双注册共存过渡，旧发送端
+                // 仍发 BUSINESS_CONTROL）
+                runloop_.RegisterHandler(
+                    HeaderFlags::CONTROL_PLANE,
+                    static_cast<uint32_t>(IpcCommandType::RemoteAddRef),
+                    remote_ref_handler_.Get());
+                runloop_.RegisterHandler(
+                    HeaderFlags::CONTROL_PLANE,
+                    static_cast<uint32_t>(IpcCommandType::RemoteRelease),
+                    remote_ref_handler_.Get());
 
                 runloop_.RegisterHandler(
                     HeaderFlags::BUSINESS_CONTROL,
@@ -135,6 +152,10 @@ namespace Core
                     proxy_factory_->GetObjectManager());
                 command_handler_->SetSessionId(1);
 
+                remote_ref_handler_ = RemoteRefHandler::Create(
+                    proxy_factory_->GetObjectManager(),
+                    runloop_);
+
                 internal_callback_handler_ = DasPtr<InternalCallbackHandler>(
                     new InternalCallbackHandler());
 
@@ -158,6 +179,18 @@ namespace Core
                     HeaderFlags::BUSINESS_CONTROL,
                     static_cast<uint32_t>(IpcCommandType::RemoteRelease),
                     command_handler_.Get());
+
+                // RemoteAddRef / RemoteRelease（CONTROL_PLANE IO 协程域即时
+                // 记账；与上方 BUSINESS_CONTROL 注册双注册共存过渡，旧发送端
+                // 仍发 BUSINESS_CONTROL）
+                runloop_.RegisterHandler(
+                    HeaderFlags::CONTROL_PLANE,
+                    static_cast<uint32_t>(IpcCommandType::RemoteAddRef),
+                    remote_ref_handler_.Get());
+                runloop_.RegisterHandler(
+                    HeaderFlags::CONTROL_PLANE,
+                    static_cast<uint32_t>(IpcCommandType::RemoteRelease),
+                    remote_ref_handler_.Get());
 
                 runloop_.RegisterHandler(
                     HeaderFlags::BUSINESS_CONTROL,

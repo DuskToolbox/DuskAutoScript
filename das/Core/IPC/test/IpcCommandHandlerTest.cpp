@@ -150,12 +150,12 @@ protected:
         registry_.Clear();
     }
 
-    ProxyFactory                proxy_factory_;
-    RemoteObjectRegistry        registry_;
-    DistributedObjectManager    object_manager_;
-    IpcCommandHandler           handler_{registry_, object_manager_};
-    DasPtr<RemoteRefHandler>    remote_ref_handler_;
-    std::unique_ptr<IpcRunLoop> run_loop_;
+    ProxyFactory                  proxy_factory_;
+    RemoteObjectRegistry          registry_;
+    DistributedObjectManager      object_manager_;
+    IpcCommandHandler             handler_{registry_, object_manager_};
+    DAS::DasPtr<RemoteRefHandler> remote_ref_handler_;
+    std::unique_ptr<IpcRunLoop>   run_loop_;
 };
 
 TEST_F(IpcCommandHandlerTest, LookupObject_Success)
