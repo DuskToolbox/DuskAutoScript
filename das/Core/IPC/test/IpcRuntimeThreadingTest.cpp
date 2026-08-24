@@ -453,7 +453,11 @@ TEST(
     run_loop.SetSessionId(1);
 
     // io 线程持续驱动 PostSend 的发送协程（无 transport → 失败路径走
-    // NotifySendFailure 入站队列，发送失败无害——本用例断言队列守恒）
+    // NotifySendFailure 入站队列，发送失败无害——本用例断言队列守恒）。
+    // 总闸关闭：本用例断言的是队列机制守恒（入队/出清/清队互斥无重复
+    // 无丢失）——开启态下在途发送的搭车 helper 会把 riders 带离队列
+    // （搭车/先走路径），出清与清除两计数不再完备
+    run_loop.SetPiggybackEnabled(false);
     auto work_guard = boost::asio::make_work_guard(run_loop.GetIoContext());
     std::thread io_thread([&run_loop]() { run_loop.GetIoContext().run(); });
 

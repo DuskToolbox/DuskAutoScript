@@ -966,6 +966,12 @@ boost::asio::awaitable<void> IpcRunLoop::DoSendCoroutine(
     ValidatedIPCMessageHeader header,
     std::vector<uint8_t>      body)
 {
+    // 在途登记的 RAII 递减（覆盖任何退出路径），周期末 guard 据在途计数
+    // 豁免该 session 的出清——本协程必经搭车 helper 查队带走 riders
+    const InFlightOutboundSendScope in_flight_send_scope(
+        *this,
+        header.GetTargetSessionId());
+
     try
     {
         if (!connection)
@@ -1011,6 +1017,12 @@ boost::asio::awaitable<void> IpcRunLoop::SendToSessionCoroutine(
     PendingCallCompletion                 on_complete,
     std::chrono::steady_clock::time_point deadline)
 {
+    // 在途登记的 RAII 递减（覆盖任何退出路径），周期末 guard 据在途计数
+    // 豁免该 session 的出清——本协程必经搭车 helper 查队带走 riders
+    const InFlightOutboundSendScope in_flight_send_scope(
+        *this,
+        header.GetTargetSessionId());
+
     const bool has_completion = static_cast<bool>(on_complete);
 
     auto complete_send_failure =
@@ -1108,6 +1120,14 @@ DasResult IpcRunLoop::PostSend(
         return DAS_E_IPC_NOT_INITIALIZED;
     }
 
+    // 在途登记先于协程投递（生产者线程程序序）：周期末 guard 据此豁免
+    // 该 session 的出清——本发送必经搭车 helper 查队带走 riders。总闸
+    // 关闭时不登记（helper 直通不查队；关闭态 guard 出清行为与段 A 全同）
+    if (piggyback_enabled_)
+    {
+        MarkOutboundSendInFlight(header.GetTargetSessionId());
+    }
+
     boost::asio::co_spawn(
         *io_context_,
         SendToSessionCoroutine(
@@ -1136,6 +1156,14 @@ DasResult IpcRunLoop::PostSendWithTransport(
         return DAS_E_INVALID_ARGUMENT;
     }
 
+    // 在途登记先于协程投递（生产者线程程序序）：周期末 guard 据此豁免
+    // 该 session 的出清——本发送必经搭车 helper 查队带走 riders。总闸
+    // 关闭时不登记（helper 直通不查队；关闭态 guard 出清行为与段 A 全同）
+    if (piggyback_enabled_)
+    {
+        MarkOutboundSendInFlight(header.GetTargetSessionId());
+    }
+
     boost::asio::co_spawn(
         *io_context_,
         DoSendCoroutine(std::move(connection), header, std::move(body)),
@@ -1156,13 +1184,54 @@ std::vector<PendingAddRefFrame> IpcRunLoop::TakePendingAddRefs(
     {
         return riders;
     }
-    riders.reserve(session_entry->second.size());
-    for (PendingAddRefFrame& frame : session_entry->second)
+    riders.reserve(session_entry->second.frames.size());
+    for (PendingAddRefFrame& frame : session_entry->second.frames)
     {
         riders.push_back(std::move(frame));
     }
-    pending_add_refs_.erase(session_entry);
+    session_entry->second.frames.clear();
+    if (session_entry->second.in_flight_sends == 0)
+    {
+        pending_add_refs_.erase(session_entry);
+    }
     return riders;
+}
+
+void IpcRunLoop::MarkOutboundSendInFlight(uint16_t session_id)
+{
+    const std::unique_lock<std::mutex> lock(addref_pending_mutex_);
+    ++pending_add_refs_[session_id].in_flight_sends;
+}
+
+void IpcRunLoop::UnmarkOutboundSendInFlight(uint16_t session_id)
+{
+    const std::unique_lock<std::mutex> lock(addref_pending_mutex_);
+    const auto session_entry = pending_add_refs_.find(session_id);
+    if (session_entry == pending_add_refs_.end())
+    {
+        return;
+    }
+    if (session_entry->second.in_flight_sends > 0)
+    {
+        --session_entry->second.in_flight_sends;
+    }
+    if (session_entry->second.in_flight_sends == 0
+        && session_entry->second.frames.empty())
+    {
+        pending_add_refs_.erase(session_entry);
+    }
+}
+
+IpcRunLoop::InFlightOutboundSendScope::InFlightOutboundSendScope(
+    IpcRunLoop& run_loop,
+    uint16_t    session_id)
+    : run_loop_(run_loop), session_id_(session_id)
+{
+}
+
+IpcRunLoop::InFlightOutboundSendScope::~InFlightOutboundSendScope()
+{
+    run_loop_.UnmarkOutboundSendInFlight(session_id_);
 }
 
 boost::asio::awaitable<DasResult> IpcRunLoop::PrepareOutboundFrame(
@@ -1424,7 +1493,7 @@ void IpcRunLoop::EnqueueAddRef(const ObjectId& object_id)
     // proxy_cache_mutex_ 持锁区内调用安全（锁序单向 proxy_cache_mutex_ →
     // addref_pending_mutex_）
     const std::unique_lock<std::mutex> lock(addref_pending_mutex_);
-    pending_add_refs_[object_id.session_id].push_back(
+    pending_add_refs_[object_id.session_id].frames.push_back(
         BuildAddRefFrame(object_id));
 }
 
@@ -1439,19 +1508,29 @@ DasResult IpcRunLoop::PostAddRefStandalone(const ObjectId& object_id)
 size_t IpcRunLoop::FlushPendingStandalone()
 {
     // 锁内整体取走（move-out），锁外逐帧 PostSend——帧数不变（逐帧独立
-    // 形态），每 session 内 FIFO 保持
+    // 形态），每 session 内 FIFO 保持。存在在途发送的 session 豁免：其
+    // riders 由在途发送的搭车 helper 带走（搭车或先走），guard 端不重复
+    // 出清（消除同周期响应与 guard 的并发竞速）
     std::vector<PendingAddRefFrame> flushed_frames;
     {
         const std::unique_lock<std::mutex> lock(addref_pending_mutex_);
-        for (auto& [session_id, session_queue] : pending_add_refs_)
+        for (auto it = pending_add_refs_.begin();
+             it != pending_add_refs_.end();)
         {
-            (void)session_id;
-            for (PendingAddRefFrame& frame : session_queue)
+            PendingAddRefSessionState& session_state = it->second;
+            if (session_state.in_flight_sends > 0)
+            {
+                // 在途发送豁免：riders 由在途发送的搭车 helper 带走
+                // （搭车或先走），本端不重复出清
+                ++it;
+                continue;
+            }
+            for (PendingAddRefFrame& frame : session_state.frames)
             {
                 flushed_frames.push_back(std::move(frame));
             }
+            it = pending_add_refs_.erase(it);
         }
-        pending_add_refs_.clear();
     }
 
     for (PendingAddRefFrame& frame : flushed_frames)
@@ -1469,8 +1548,15 @@ size_t IpcRunLoop::ClearPendingAddRefs(uint16_t session_id)
     {
         return 0;
     }
-    const size_t cleared_count = session_entry->second.size();
-    pending_add_refs_.erase(session_entry);
+    const size_t cleared_count = session_entry->second.frames.size();
+    if (session_entry->second.in_flight_sends == 0)
+    {
+        pending_add_refs_.erase(session_entry);
+    }
+    else
+    {
+        session_entry->second.frames.clear();
+    }
     return cleared_count;
 }
 
@@ -1482,13 +1568,21 @@ size_t IpcRunLoop::GetPendingAddRefCount(uint16_t session_id) const
     {
         return 0;
     }
-    return session_entry->second.size();
+    return session_entry->second.frames.size();
 }
 
 bool IpcRunLoop::PendingAddRefsEmpty() const
 {
     const std::unique_lock<std::mutex> lock(addref_pending_mutex_);
-    return pending_add_refs_.empty();
+    for (const auto& [session_id, session_state] : pending_add_refs_)
+    {
+        (void)session_id;
+        if (!session_state.frames.empty())
+        {
+            return false;
+        }
+    }
+    return true;
 }
 
 void IpcRunLoop::NotifySendFailure(

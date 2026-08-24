@@ -101,6 +101,21 @@ struct PendingAddRefFrame
     std::vector<uint8_t>      body;
 };
 
+/// 按 target session 的候车状态：帧队列 + 在途出站发送计数
+///
+/// 在途计数是闸3 出清的豁免依据：投递中的出站发送必经搭车 helper 查队
+/// （合格载体搭走 / 不合格载体先走），周期末 guard 对存在在途发送的
+/// session 豁免出清——同周期内的响应（[in] 天然载体）确定性地先于
+/// guard 取走 riders，消除两者并发竞速的帧数漂移。
+struct PendingAddRefSessionState
+{
+    std::deque<PendingAddRefFrame> frames;
+
+    /// 该 session 的在途出站发送数（发送入口投递前递增、发送协程任何
+    /// 退出路径递减——RAII 配对）
+    size_t in_flight_sends = 0;
+};
+
 //=============================================================================
 // AwaitResponseSender — 真正的异步 IPC 响应等待 sender
 //=============================================================================
@@ -427,7 +442,9 @@ public:
      * @brief 取走全部候车队列帧并逐帧独立 PostSend（闸3 出清）
      *
      * 周期末（AddRefDispatchGuard 析构）与测试直驱共用。每 session 内
-     * FIFO；帧数不变（逐帧独立形态，无合并不捎带）。
+     * FIFO；帧数不变（逐帧独立形态，无合并不捎带）。存在在途出站发送
+     * 的 session 豁免（其 riders 由在途发送的搭车 helper 带走——同周期
+     * 响应与 guard 的并发竞速由此消除）。
      *
      * @return size_t 本次出清的帧数
      */
@@ -730,8 +747,7 @@ public:
     mutable std::mutex pending_mutex_;
 
     /// ADD_REF 候车队列（按 target session / owner 键控，每 session FIFO）
-    std::unordered_map<uint16_t, std::deque<PendingAddRefFrame>>
-        pending_add_refs_;
+    std::unordered_map<uint16_t, PendingAddRefSessionState> pending_add_refs_;
 
     /// pending_add_refs_ 的互斥锁（锁序单向：proxy_cache_mutex_ → 本锁）
     mutable std::mutex addref_pending_mutex_;
@@ -796,6 +812,33 @@ private:
 
     /// @brief 取走指定 session 的全部候车帧（锁内 move-out，FIFO 序保持）
     std::vector<PendingAddRefFrame> TakePendingAddRefs(uint16_t session_id);
+
+    /// @brief 标记该 session 的一条在途出站发送（发送入口投递前调用）
+    ///
+    /// 周期末 guard 据此豁免该 session 的出清——在途发送必经搭车 helper
+    /// 查队，riders 由它带走（搭车或先走）。piggyback 关闭时不标记
+    /// （零开销直通；关闭态生产路径队列恒空）。
+    void MarkOutboundSendInFlight(uint16_t session_id);
+
+    /// @brief 在途出站发送计数递减（发送协程任何退出路径——RAII 配对）
+    void UnmarkOutboundSendInFlight(uint16_t session_id);
+
+    /// @brief 在途出站发送计数的 RAII 递减（协程帧局部——任何退出路径
+    /// 析构成对递减，与发送入口的 MarkOutboundSendInFlight 配对）
+    class InFlightOutboundSendScope
+    {
+    public:
+        InFlightOutboundSendScope(IpcRunLoop& run_loop, uint16_t session_id);
+        ~InFlightOutboundSendScope();
+
+        InFlightOutboundSendScope(const InFlightOutboundSendScope&) = delete;
+        InFlightOutboundSendScope& operator=(const InFlightOutboundSendScope&) =
+            delete;
+
+    private:
+        IpcRunLoop& run_loop_;
+        uint16_t    session_id_;
+    };
 
     /// @brief 闸2 先走执行：riders 先独立发（FIFO）随后宿主帧
     ///
