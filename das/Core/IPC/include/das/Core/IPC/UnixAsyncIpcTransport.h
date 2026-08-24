@@ -136,6 +136,11 @@ public:
         const ValidatedIPCMessageHeader& header,
         std::vector<SendSegment>&&       segments);
 
+    /// 本传输是否允许“N 独立帧合一写”的批量合写形态（静态能力常量）
+    /// @details AF_UNIX socket 为字节流且接收端逐帧循环读——写次数对
+    ///          接收端不可见，批量合写合法
+    static constexpr bool CAN_BATCH_FRAMES = true;
+
 private:
     // 私有构造函数（由工厂函数调用）
     explicit UnixAsyncIpcTransport(boost::asio::io_context& io_context);

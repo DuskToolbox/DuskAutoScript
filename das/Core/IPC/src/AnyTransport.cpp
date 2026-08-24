@@ -266,6 +266,29 @@ boost::asio::awaitable<DasResult> AnyTransport::SendCoroutine(
         transport_);
 }
 
+boost::asio::awaitable<DasResult> AnyTransport::SendScatter(
+    const ValidatedIPCMessageHeader& header,
+    std::vector<SendSegment>&&       segments)
+{
+    // header 与段列表接管进本协程帧：转发期间内层协程引用本帧局部，
+    // 外层 co_await 挂起即存活（SendSegment 非拥有契约由内层实现承接）
+    const ValidatedIPCMessageHeader header_copy = header;
+    std::vector<SendSegment>        owned_segments = std::move(segments);
+
+    co_return co_await std::visit(
+        [&header_copy, &owned_segments](auto& t)
+        { return t.SendScatter(header_copy, std::move(owned_segments)); },
+        transport_);
+}
+
+bool AnyTransport::CanBatchFrames() const
+{
+    return std::visit(
+        [](const auto& transport) -> bool
+        { return std::decay_t<decltype(transport)>::CAN_BATCH_FRAMES; },
+        transport_);
+}
+
 boost::asio::awaitable<std::variant<DasResult, AsyncIpcMessage>>
 AnyTransport::ReceiveCoroutine()
 {

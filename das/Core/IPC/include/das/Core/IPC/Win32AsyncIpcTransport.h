@@ -107,6 +107,11 @@ public:
         const ValidatedIPCMessageHeader& header,
         std::vector<SendSegment>&&       segments);
 
+    /// 本传输是否允许“N 独立帧合一写”的批量合写形态（静态能力常量）
+    /// @details pipe 为 PIPE_TYPE_BYTE 字节流且接收端逐帧循环读——写次数
+    ///          对接收端不可见，批量合写合法
+    static constexpr bool CAN_BATCH_FRAMES = true;
+
 private:
     struct State;
 

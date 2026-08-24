@@ -11,11 +11,13 @@ DAS_IGNORE_BEAST_WARNING
 #include <boost/beast/websocket.hpp>
 DAS_DISABLE_WARNING_END
 
+#include <cstddef>
 #include <das/Core/IPC/AsyncIpcTransport.h>
 #include <das/Core/IPC/ValidatedIPCMessageHeader.h>
 #include <memory>
 #include <string>
 #include <variant>
+#include <vector>
 
 DAS_CORE_IPC_NS_BEGIN
 
@@ -73,6 +75,38 @@ public:
         const ValidatedIPCMessageHeader& header,
         const uint8_t*                   body,
         size_t                           body_size);
+
+    /**
+     * @brief scatter-gather 发送重载：合并拷贝为连续 buffer 后单次发送
+     * @param header 已验证的外层消息头（32 字节；与段所指备存储同须
+     *               存活至本协程完成）
+     * @param segments 非拥有段序列（rvalue——段列表 move 进协程帧持有；
+     *                 契约见 AsyncIpcTransport.h 的 SendSegment 定义）
+     * @note 一条 WebSocket 消息 = 一个 IPC 帧：实现内 ws async_write 恰
+     *       出现一次（拆多次 = 中间帧无外层 header 语义、接收端静默
+     *       丢尾）；本重载只承接“单外层帧搭车形态”——入口 debug 断言
+     *       校验外层 header 的 RESERVED_AS_SIZE 语义位与段数上限，
+     *       “N 独立帧合一写”的批量合写形态由 CanBatchFrames() == false
+     *       在调用侧分流，永不进入本函数
+     */
+    [[nodiscard]]
+    boost::asio::awaitable<DasResult> SendScatter(
+        const ValidatedIPCMessageHeader& header,
+        std::vector<SendSegment>&&       segments);
+
+    /**
+     * @brief SendScatter 入口形态断言的段数上限（搭车形态：扩展段 + 宿主
+     *        body，不含批量合写——该形态被 CanBatchFrames 分流）
+     */
+    static constexpr size_t MAX_SCATTER_SEGMENTS = 64;
+
+    /**
+     * @brief 本传输是否允许“N 独立帧合一写”的批量合写形态（静态能力常量）
+     * @details 一条 WebSocket 消息 = 一个 IPC 帧，背靠背多帧尾部会被
+     *          接收端静默丢弃——HTTP/WS 恒为 false（批量合写仅
+     *          pipe/AF_UNIX 字节流合法）
+     */
+    static constexpr bool CAN_BATCH_FRAMES = false;
 
     /**
      * @brief 异步接收 IPC 消息

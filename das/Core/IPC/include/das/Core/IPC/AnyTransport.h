@@ -85,6 +85,27 @@ public:
         const ValidatedIPCMessageHeader& header,
         const uint8_t*                   body,
         size_t                           body_size);
+
+    /**
+     * @brief scatter-gather 发送转发：std::visit 分发到具体传输实现
+     * @details visit 三分支模板实例化全部备选类型——任一传输漏实现
+     *          SendScatter 即编译错误（无基类的完整性强制）。header 与
+     *          段列表 move 进本协程帧后转发（外层 co_await 挂起期间
+     *          本帧存活）；段生命周期契约见 SendSegment 定义
+     */
+    boost::asio::awaitable<DasResult> SendScatter(
+        const ValidatedIPCMessageHeader& header,
+        std::vector<SendSegment>&&       segments);
+
+    /**
+     * @brief 本传输是否允许“N 独立帧合一写”的批量合写形态
+     * @details std::visit 聚合读取各传输静态能力常量：pipe/AF_UNIX
+     *          字节流 true（写次数对接收端不可见）；HTTP/WS false
+     *          （一条 WS 消息 = 一个 IPC 帧，合写丢尾）
+     */
+    [[nodiscard]]
+    bool CanBatchFrames() const;
+
     boost::asio::awaitable<std::variant<DasResult, AsyncIpcMessage>>
     ReceiveCoroutine();
 

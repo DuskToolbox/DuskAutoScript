@@ -9,6 +9,7 @@ DAS_IGNORE_BEAST_WARNING
 #include <boost/beast/websocket.hpp>
 DAS_DISABLE_WARNING_END
 
+#include <cassert>
 #include <cstring>
 #include <das/Core/IPC/AsyncMutex.h>
 #include <das/Core/IPC/IpcErrors.h>
@@ -147,6 +148,83 @@ boost::asio::awaitable<DasResult> HttpIpcTransport::SendCoroutine(
     catch (const std::exception& e)
     {
         auto msg = DAS_FMT_NS::format("SendCoroutine: {}", ToString(e.what()));
+        DAS_CORE_LOG_ERROR("{}", msg.c_str());
+        impl_->is_connected = false;
+        result = DAS_E_IPC_SEND_FAILED;
+    }
+
+    impl_->send_mutex.Unlock();
+    co_return result;
+}
+
+boost::asio::awaitable<DasResult> HttpIpcTransport::SendScatter(
+    const ValidatedIPCMessageHeader& header,
+    std::vector<SendSegment>&&       segments)
+{
+    if (!impl_ || !impl_->is_connected)
+    {
+        co_return DAS_E_IPC_CONNECTION_LOST;
+    }
+
+    // 段列表 move 进协程帧局部持有（SendSegment 非拥有契约同 pipe 实现：
+    // 备存储须存活至 async_write 完成）
+    std::vector<SendSegment> owned_segments = std::move(segments);
+
+    // 入口形态断言（debug）：本重载只承接“单外层帧搭车形态”——外层
+    // header 须已置 RESERVED_AS_SIZE 语义位（搭车拼装产物），段数有上限。
+    // “N 独立帧合一写”的批量合写形态由 CanBatchFrames() == false 在调用
+    // 侧分流，永不进入本函数
+    assert(
+        (header.GetFlags() & MessageFlags::RESERVED_AS_SIZE) != 0
+        && "Http SendScatter only accepts the single piggybacked frame form: "
+           "outer header must carry the RESERVED_AS_SIZE flag");
+    assert(
+        owned_segments.size() <= MAX_SCATTER_SEGMENTS
+        && "Http SendScatter segment count over cap");
+
+    // Lock() 返回 bool：true=cancelled，false=正常获取锁
+    const bool cancelled = co_await impl_->send_mutex.Lock();
+    if (cancelled)
+    {
+        co_return DAS_E_IPC_CONNECTION_LOST;
+    }
+
+    DasResult result = DAS_S_OK;
+    try
+    {
+        // 合并拷贝为连续 buffer 后恰一次 async_write：一条 WS 消息 =
+        // 一个 IPC 帧（拆多次 = 中间帧无外层 header 语义、接收端只取
+        // body_size 前缀静默丢尾）
+        const auto* raw_header = static_cast<const IPCMessageHeader*>(header);
+
+        size_t total_size = sizeof(IPCMessageHeader);
+        for (const SendSegment& segment : owned_segments)
+        {
+            total_size += segment.size;
+        }
+
+        std::vector<uint8_t> combined(total_size);
+        std::memcpy(combined.data(), raw_header, sizeof(IPCMessageHeader));
+        size_t offset = sizeof(IPCMessageHeader);
+        for (const SendSegment& segment : owned_segments)
+        {
+            if (segment.size > 0)
+            {
+                std::memcpy(
+                    combined.data() + offset,
+                    segment.data,
+                    segment.size);
+                offset += segment.size;
+            }
+        }
+
+        co_await impl_->ws_.async_write(
+            boost::asio::buffer(combined),
+            boost::asio::use_awaitable);
+    }
+    catch (const std::exception& e)
+    {
+        auto msg = DAS_FMT_NS::format("SendScatter: {}", ToString(e.what()));
         DAS_CORE_LOG_ERROR("{}", msg.c_str());
         impl_->is_connected = false;
         result = DAS_E_IPC_SEND_FAILED;
