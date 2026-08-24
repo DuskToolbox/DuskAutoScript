@@ -320,3 +320,111 @@ TEST(
 
     EXPECT_EQ(proxy->Release(), 0u);
 }
+
+TEST(IpcRuntimeThreadingTest, RemoteHolderLedgerConcurrentAccessIsClean)
+{
+    DistributedObjectManager manager;
+    manager.SetSessionId(1);
+
+    constexpr int         object_count = 24;
+    constexpr uint16_t    session_count = 4;
+    std::vector<ObjectId> object_ids;
+    for (int index = 0; index < object_count; ++index)
+    {
+        auto*    mock = new MockDasObject();
+        ObjectId object_id{};
+        ASSERT_EQ(
+            manager.RegisterLocalObject(mock, object_id, false),
+            DAS_S_OK);
+        object_ids.push_back(object_id);
+    }
+
+    std::atomic<bool>        start{false};
+    std::vector<std::thread> threads;
+
+    // IO 记账写者：AddRemoteHolder / ReleaseRemoteHolder 混跑
+    for (int writer = 0; writer < 2; ++writer)
+    {
+        threads.emplace_back(
+            [&, writer]
+            {
+                while (!start.load(std::memory_order_acquire))
+                {
+                    std::this_thread::yield();
+                }
+                for (int index = 0; index < 600; ++index)
+                {
+                    const auto& object_id =
+                        object_ids[(index + writer) % object_count];
+                    const auto session_id = static_cast<uint16_t>(
+                        (index / object_count) % session_count + 1);
+
+                    const auto add_result =
+                        manager.AddRemoteHolder(object_id, session_id);
+                    EXPECT_TRUE(
+                        add_result == DAS_S_OK
+                        || add_result == DAS_E_IPC_OBJECT_NOT_FOUND);
+
+                    DAS::DasPtr<IDasBase> released;
+                    const auto release_result = manager.ReleaseRemoteHolder(
+                        object_id,
+                        session_id,
+                        released);
+                    EXPECT_TRUE(
+                        release_result == DAS_S_OK
+                        || release_result == DAS_E_IPC_OBJECT_NOT_FOUND);
+                }
+            });
+    }
+
+    // 断连清扫者：RemoveSessionHolders 与记账混跑（出参对象本体集合的
+    // 析构线程域由调用方决定——此处立即析构模拟 BT 侧消费）
+    threads.emplace_back(
+        [&]
+        {
+            while (!start.load(std::memory_order_acquire))
+            {
+                std::this_thread::yield();
+            }
+            for (int index = 0; index < 300; ++index)
+            {
+                const auto removed_objects = manager.RemoveSessionHolders(
+                    static_cast<uint16_t>(index % session_count + 1));
+                (void)removed_objects;
+            }
+        });
+
+    // BT 侧读者：WithLocalObject 与记账/清扫并发
+    threads.emplace_back(
+        [&]
+        {
+            while (!start.load(std::memory_order_acquire))
+            {
+                std::this_thread::yield();
+            }
+            for (int index = 0; index < 600; ++index)
+            {
+                const auto& object_id = object_ids[index % object_count];
+                static_cast<void>(manager.WithLocalObject(
+                    object_id,
+                    [](DAS::Core::IPC::LocalObjectRef& ref)
+                    {
+                        return ref.Get() != nullptr ? DAS_S_OK
+                                                    : DAS_E_IPC_INVALID_STATE;
+                    }));
+            }
+        });
+
+    start.store(true, std::memory_order_release);
+    for (auto& thread : threads)
+    {
+        thread.join();
+    }
+
+    // 终态一致性：全 session 清扫后，无 pin 条目全部回收
+    for (uint16_t session_id = 1; session_id <= session_count; ++session_id)
+    {
+        static_cast<void>(manager.RemoveSessionHolders(session_id));
+    }
+    EXPECT_EQ(manager.GetLocalEntryCount(), 0u);
+}

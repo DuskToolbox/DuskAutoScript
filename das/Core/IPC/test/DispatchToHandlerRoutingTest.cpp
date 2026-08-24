@@ -14,6 +14,7 @@
 #include <boost/asio/use_future.hpp>
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/IMessageHandler.h>
+#include <das/Core/IPC/InternalCallbackHandler.h>
 #include <das/Core/IPC/IpcCommandHandler.h>
 #include <das/Core/IPC/IpcMessageHeaderBuilder.h>
 #include <das/Core/IPC/IpcMessageQueue.h>
@@ -275,5 +276,17 @@ TEST(DispatchToHandlerRoutingTest, ControlPlaneRemoteRefEventStaysOnIoDomain)
     route_event(make_event_header(IpcCommandType::RemoteRelease));
 
     EXPECT_EQ(object_manager.GetLocalEntryCount(), 0u);
+
+    // RELEASE 的 EVENT 本身仍在 IO 域消化；唯一入队的是条目移除后的
+    // final Release 桥接回调（内部 AsyncCallback 命令，非 130/132 EVENT）
+    auto queued = inbound_queue.TryPop();
+    ASSERT_TRUE(queued.has_value());
+    EXPECT_EQ(
+        queued->header.GetHeaderFlags(),
+        DAS::Core::IPC::HeaderFlags::BUSINESS_CONTROL);
+    EXPECT_EQ(
+        queued->header.GetInterfaceId(),
+        static_cast<uint32_t>(
+            DAS::Core::IPC::InternalBusinessCommand::AsyncCallback));
     EXPECT_FALSE(inbound_queue.TryPop().has_value());
 }

@@ -1,9 +1,11 @@
 #include <boost/asio/use_future.hpp>
+#include <chrono>
 #include <cstdint>
 #include <cstring>
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/IpcCommandHandler.h>
 #include <das/Core/IPC/IpcMessageHeaderBuilder.h>
+#include <das/Core/IPC/IpcMessageQueue.h>
 #include <das/Core/IPC/IpcResponseSender.h>
 #include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/IPC/ObjectId.h>
@@ -12,9 +14,11 @@
 #include <das/Core/IPC/RemoteRefHandler.h>
 #include <das/Core/IPC/ValidatedIPCMessageHeader.h>
 #include <das/DasPtr.hpp>
+#include <das/IDasAsyncCallback.h>
 #include <future>
 #include <gtest/gtest.h>
 #include <memory>
+#include <thread>
 #include <vector>
 
 #include "MockDasObject.h"
@@ -137,7 +141,7 @@ protected:
         handler_.SetSessionId(1);
         run_loop_ = std::make_unique<IpcRunLoop>(
             false,
-            nullptr,
+            &inbound_queue_,
             proxy_factory_,
             registry_);
         remote_ref_handler_ =
@@ -150,10 +154,12 @@ protected:
         registry_.Clear();
     }
 
-    ProxyFactory                  proxy_factory_;
-    RemoteObjectRegistry          registry_;
-    DistributedObjectManager      object_manager_;
-    IpcCommandHandler             handler_{registry_, object_manager_};
+    ProxyFactory             proxy_factory_;
+    RemoteObjectRegistry     registry_;
+    DistributedObjectManager object_manager_;
+    IpcCommandHandler        handler_{registry_, object_manager_};
+    DAS::Core::IPC::IpcMessageQueue<DAS::Core::IPC::InboundMessage>
+                                  inbound_queue_{16};
     DAS::DasPtr<RemoteRefHandler> remote_ref_handler_;
     std::unique_ptr<IpcRunLoop>   run_loop_;
 };
@@ -559,6 +565,60 @@ namespace
 {
     constexpr uint16_t kRemoteRefPeerSessionId = 5;
 
+    /// 析构追踪对象：final Release 线程域/时序断言用（静态标记随对象
+    /// 自毁存活）
+    class DestructionTrackingObject final : public IDasBase
+    {
+    public:
+        DestructionTrackingObject() { ResetTracking(); }
+
+        uint32_t DAS_STD_CALL AddRef() override { return ++ref_count_; }
+
+        uint32_t DAS_STD_CALL Release() override
+        {
+            const uint32_t count = --ref_count_;
+            if (count == 0)
+            {
+                destroyed_on_thread_.store(
+                    std::this_thread::get_id(),
+                    std::memory_order_release);
+                destroyed_.store(true, std::memory_order_release);
+                delete this;
+            }
+            return count;
+        }
+
+        DasResult DAS_STD_CALL QueryInterface(const DasGuid&, void**) override
+        {
+            return DAS_E_NO_INTERFACE;
+        }
+
+        static void ResetTracking() noexcept
+        {
+            destroyed_.store(false, std::memory_order_release);
+            destroyed_on_thread_.store(std::thread::id{});
+        }
+
+        [[nodiscard]]
+        static bool Destroyed() noexcept
+        {
+            return destroyed_.load(std::memory_order_acquire);
+        }
+
+        [[nodiscard]]
+        static std::thread::id DestroyedOnThread() noexcept
+        {
+            return destroyed_on_thread_.load(std::memory_order_acquire);
+        }
+
+    private:
+        ~DestructionTrackingObject() = default;
+
+        std::atomic<uint32_t>                      ref_count_{0};
+        inline static std::atomic<bool>            destroyed_{false};
+        inline static std::atomic<std::thread::id> destroyed_on_thread_{};
+    };
+
     ValidatedIPCMessageHeader MakeRemoteRefEventHeader(
         IpcCommandType command_type,
         uint16_t       source_session_id)
@@ -599,6 +659,61 @@ namespace
         }
         run_loop.GetIoContext().run();
         return future.get();
+    }
+
+    // 在独立 IO 线程上驱动一次 CONTROL_PLANE EVENT，返回该线程 id
+    // （final Release 线程域断言：析构线程 ≠ IO 线程）
+    DasResult DispatchRemoteRefEventOnIoThread(
+        IpcRunLoop&                      run_loop,
+        RemoteRefHandler&                remote_ref_handler,
+        const ValidatedIPCMessageHeader& header,
+        const std::vector<uint8_t>&      body,
+        std::thread::id&                 io_thread_id)
+    {
+        IpcResponseSender   sender(run_loop);
+        ControlPlaneContext context{run_loop, header};
+        auto                future = boost::asio::co_spawn(
+            run_loop.GetIoContext(),
+            remote_ref_handler.HandleMessage(header, body, sender, context),
+            boost::asio::use_future);
+        if (run_loop.GetIoContext().stopped())
+        {
+            run_loop.GetIoContext().restart();
+        }
+        std::thread io_thread([&run_loop]() { run_loop.GetIoContext().run(); });
+        io_thread_id = io_thread.get_id();
+        const DasResult result = future.get();
+        io_thread.join();
+        return result;
+    }
+
+    // 模拟 BusinessThread 泵：取出 AsyncCallback 消息并执行回调
+    void PumpPendingBridgeCallbacks(
+        DAS::Core::IPC::IpcMessageQueue<DAS::Core::IPC::InboundMessage>&
+                                  inbound_queue,
+        std::chrono::milliseconds pump_timeout)
+    {
+        const auto deadline = std::chrono::steady_clock::now() + pump_timeout;
+        while (std::chrono::steady_clock::now() < deadline)
+        {
+            auto queued = inbound_queue.TryPop();
+            if (!queued.has_value())
+            {
+                return;
+            }
+            if (queued->body.size() != sizeof(IDasAsyncCallback*))
+            {
+                continue;
+            }
+            IDasAsyncCallback* callback = nullptr;
+            std::memcpy(&callback, queued->body.data(), sizeof(callback));
+            if (callback == nullptr)
+            {
+                continue;
+            }
+            const auto owned = DAS::DasPtr<IDasAsyncCallback>::Attach(callback);
+            static_cast<void>(callback->Do());
+        }
     }
 } // namespace
 
@@ -735,4 +850,94 @@ TEST_F(IpcCommandHandlerTest, RemoteRefHandler_TruncatedBodyIsDropped)
 
     // 尺寸不足：丢弃 + WARN，不读越界、零记账
     EXPECT_EQ(object_manager_.GetRemoteHolderCount(object_id), 0u);
+}
+
+TEST_F(
+    IpcCommandHandlerTest,
+    RemoteRefHandler_FinalReleaseBridgedToBusinessThread)
+{
+    DestructionTrackingObject::ResetTracking();
+    auto*    object = new DestructionTrackingObject();
+    ObjectId object_id{};
+    ASSERT_EQ(
+        object_manager_.RegisterLocalObject(object, object_id, false),
+        DAS_S_OK);
+
+    std::thread::id io_thread_id{};
+
+    const auto add_header = MakeRemoteRefEventHeader(
+        IpcCommandType::RemoteAddRef,
+        kRemoteRefPeerSessionId);
+    ASSERT_EQ(
+        DispatchRemoteRefEventOnIoThread(
+            *run_loop_,
+            *remote_ref_handler_,
+            add_header,
+            MakeObjectIdBody(object_id),
+            io_thread_id),
+        DAS_S_OK);
+
+    // IO 域 RELEASE：条目移除，对象本体经回调桥接 BT——不在 IO 调用栈内
+    // 析构
+    const auto release_header = MakeRemoteRefEventHeader(
+        IpcCommandType::RemoteRelease,
+        kRemoteRefPeerSessionId);
+    EXPECT_EQ(
+        DispatchRemoteRefEventOnIoThread(
+            *run_loop_,
+            *remote_ref_handler_,
+            release_header,
+            MakeObjectIdBody(object_id),
+            io_thread_id),
+        DAS_S_OK);
+    EXPECT_FALSE(DestructionTrackingObject::Destroyed());
+
+    // 模拟 BT 泵：回调在泵线程上执行，对象析构随之发生
+    PumpPendingBridgeCallbacks(inbound_queue_, std::chrono::milliseconds(100));
+    EXPECT_TRUE(DestructionTrackingObject::Destroyed());
+    EXPECT_EQ(
+        DestructionTrackingObject::DestroyedOnThread(),
+        std::this_thread::get_id());
+    EXPECT_NE(DestructionTrackingObject::DestroyedOnThread(), io_thread_id);
+}
+
+TEST_F(
+    IpcCommandHandlerTest,
+    RemoteRefHandler_PostFailureAfterQueueShutdownIsSafe)
+{
+    DestructionTrackingObject::ResetTracking();
+    auto*    object = new DestructionTrackingObject();
+    ObjectId object_id{};
+    ASSERT_EQ(
+        object_manager_.RegisterLocalObject(object, object_id, false),
+        DAS_S_OK);
+
+    const auto add_header = MakeRemoteRefEventHeader(
+        IpcCommandType::RemoteAddRef,
+        kRemoteRefPeerSessionId);
+    ASSERT_EQ(
+        DispatchRemoteRefEvent(
+            *run_loop_,
+            *remote_ref_handler_,
+            add_header,
+            MakeObjectIdBody(object_id)),
+        DAS_S_OK);
+
+    // 停机：队列反初始化后 push 必失败
+    inbound_queue_.Uninitialize();
+
+    const auto release_header = MakeRemoteRefEventHeader(
+        IpcCommandType::RemoteRelease,
+        kRemoteRefPeerSessionId);
+    EXPECT_EQ(
+        DispatchRemoteRefEvent(
+            *run_loop_,
+            *remote_ref_handler_,
+            release_header,
+            MakeObjectIdBody(object_id)),
+        DAS_S_OK);
+
+    // push 失败路径不泄漏不崩溃：回调对象被既有 Attach 防御释放，
+    // 对象本体随之析构
+    EXPECT_TRUE(DestructionTrackingObject::Destroyed());
 }
