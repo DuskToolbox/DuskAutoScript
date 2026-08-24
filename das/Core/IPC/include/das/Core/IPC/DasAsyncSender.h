@@ -680,7 +680,10 @@ namespace Core::IPC
                 return DAS_S_OK;
             }
         };
-        return DasPtr<IDasAsyncCallback>(new Callback(std::forward<F>(fn)));
+        // Attach 接管构造时的初始引用：DasPtr(T*) 形态会在 ref_{1} 之上
+        // 再 AddRef，导致回调对象恒泄漏一个引用
+        return DasPtr<IDasAsyncCallback>::Attach(
+            new Callback(std::forward<F>(fn)));
     }
 
 } // namespace Core::IPC

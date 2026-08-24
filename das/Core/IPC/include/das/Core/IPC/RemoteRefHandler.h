@@ -96,7 +96,6 @@ private:
     DistributedObjectManager& object_manager_;
 
     // final Release 桥接 BusinessThread 时使用（PostToBusinessThread）
-    [[maybe_unused]]
     IpcRunLoop& run_loop_;
 };
 

@@ -1,3 +1,4 @@
+#include <das/Core/IPC/DasAsyncSender.h>
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/HandshakeSerialization.h>
 #include <das/Core/IPC/IpcCommandHandler.h>
@@ -7,9 +8,11 @@
 #include <das/Core/IPC/RemoteRefHandler.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/DasPtr.hpp>
+#include <das/IDasAsyncCallback.h>
 #include <das/IDasBase.h>
 
 #include <span>
+#include <utility>
 
 DAS_CORE_IPC_NS_BEGIN
 
@@ -119,9 +122,19 @@ boost::asio::awaitable<DasResult> RemoteRefHandler::HandleMessage(
         co_return DAS_S_OK;
     }
 
-    // 条目被移除时对象本体已唯一一次移出 DOM（object_to_release）；
-    // final Release 的 BusinessThread 桥接由 RemoteRelease 收尾段补全
-    // （线程模型不变量：真实对象析构不落在 IO 线程）
+    if (object_to_release)
+    {
+        // 条目被移除：对象本体唯一一次移出 DOM，final Release 经
+        // MakeAsyncCallback move 捕获 + PostToBusinessThread 桥接——
+        // DasPtr 在 BusinessThread 上析构即真实对象 Release 留在 BT
+        // （线程模型不变量：真实对象析构不落在 IO 线程）。push 失败
+        // 由 PostToBusinessThread 既有 Attach 防御释放，停机期无害。
+        static_cast<void>(run_loop_.PostToBusinessThread(
+            MakeAsyncCallback(
+                [released = std::move(object_to_release)]() mutable {})
+                .Get()));
+    }
+
     co_return DAS_S_OK;
 }
 
