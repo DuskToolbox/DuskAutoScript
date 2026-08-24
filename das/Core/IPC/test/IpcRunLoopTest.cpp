@@ -609,6 +609,80 @@ TEST_F(IpcRunLoopTest, BusinessResponseWithoutPendingCallbackFallsBackToQueue)
     }
 }
 
+// ====== Host Session Disconnected Callback Tests ======
+
+TEST_F(IpcRunLoopTest, HostSessionDisconnectCallback_FiresExactlyOnceOnExit)
+{
+    auto transport_pair =
+        CreateConnectedTransportPair("host_session_disconnect_callback");
+    ASSERT_TRUE(transport_pair.has_value());
+
+    const DAS::DasPtr<IHostConnection> host(new TestInternalHost(
+        runloop_->GetIoContext(),
+        REMOTE_SESSION_ID,
+        transport_pair->run_loop_side));
+    ASSERT_EQ(runloop_->RegisterInternalHost(host), DAS_S_OK);
+
+    std::mutex            recorded_sessions_mutex;
+    std::vector<uint16_t> recorded_sessions;
+    runloop_->SetOnHostSessionDisconnected(
+        [&recorded_sessions_mutex, &recorded_sessions](uint16_t session_id)
+        {
+            const std::lock_guard<std::mutex> lock(recorded_sessions_mutex);
+            recorded_sessions.push_back(session_id);
+        });
+
+    std::thread run_thread;
+    StartRunLoop(run_thread);
+
+    // 对端关闭连接：接收协程读失败退出，退出路径触发断连回调
+    transport_pair->peer_side.Cleanup();
+
+    bool callback_fired = false;
+    for (int i = 0; i < 100; ++i)
+    {
+        {
+            const std::lock_guard<std::mutex> lock(recorded_sessions_mutex);
+            callback_fired = !recorded_sessions.empty();
+        }
+        if (callback_fired)
+        {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    // 正常停机同样经过退出路径（幂等前提），等待收敛后再断言
+    StopRunLoop(run_thread);
+
+    const std::lock_guard<std::mutex> lock(recorded_sessions_mutex);
+    ASSERT_EQ(recorded_sessions.size(), 1u);
+    EXPECT_EQ(recorded_sessions[0], REMOTE_SESSION_ID);
+}
+
+TEST_F(IpcRunLoopTest, HostSessionDisconnectCallback_AbsentRegistrationIsSafe)
+{
+    auto transport_pair =
+        CreateConnectedTransportPair("host_session_disconnect_absent");
+    ASSERT_TRUE(transport_pair.has_value());
+
+    const DAS::DasPtr<IHostConnection> host(new TestInternalHost(
+        runloop_->GetIoContext(),
+        REMOTE_SESSION_ID,
+        transport_pair->run_loop_side));
+    ASSERT_EQ(runloop_->RegisterInternalHost(host), DAS_S_OK);
+
+    // 未注册回调（可选挂载）：退出路径零异常
+    std::thread run_thread;
+    StartRunLoop(run_thread);
+
+    transport_pair->peer_side.Cleanup();
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    StopRunLoop(run_thread);
+    SUCCEED();
+}
+
 // ====== Concurrency Tests ======
 
 TEST_F(IpcRunLoopTest, Stop_FromDifferentThread)

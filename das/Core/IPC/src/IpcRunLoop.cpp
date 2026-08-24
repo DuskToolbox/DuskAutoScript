@@ -169,7 +169,9 @@ void IpcRunLoop::RequestStop()
     // transport->ReceiveCoroutine() 会因 operation_aborted 退出。
 }
 
-size_t IpcRunLoop::FailPendingCallsBySession(uint16_t session_id, DasResult error)
+size_t IpcRunLoop::FailPendingCallsBySession(
+    uint16_t  session_id,
+    DasResult error)
 {
     // host 断连/崩溃：该 session 的 pending call 永远收不到回包，主动 fail
     // 回传 error 让调用方（HTTP handler / sync_wait）解除阻塞。复用 RequestStop
@@ -206,6 +208,12 @@ size_t IpcRunLoop::FailPendingCallsBySession(uint16_t session_id, DasResult erro
             session_id);
     }
     return completions.size();
+}
+
+void IpcRunLoop::SetOnHostSessionDisconnected(
+    HostSessionDisconnectedCallback callback)
+{
+    on_host_session_disconnected_ = std::move(callback);
 }
 
 void IpcRunLoop::RegisterHandler(
@@ -1195,7 +1203,9 @@ boost::asio::awaitable<void> IpcRunLoop::InternalHostReceiveLoop(
         uint16_t    session_id;
         ~PendingFailOnExit()
         {
-            self->FailPendingCallsBySession(session_id, DAS_E_IPC_CONNECTION_LOST);
+            self->FailPendingCallsBySession(
+                session_id,
+                DAS_E_IPC_CONNECTION_LOST);
         }
     } pending_fail_guard{this, session_id};
 

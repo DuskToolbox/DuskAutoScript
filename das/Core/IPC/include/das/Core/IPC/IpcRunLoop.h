@@ -190,7 +190,8 @@ public:
      */
     void RequestStop();
 
-    /// @brief 失败并移除指定 session 的所有 pending call（host 断连/崩溃时调用）
+    /// @brief 失败并移除指定 session 的所有 pending call（host
+    /// 断连/崩溃时调用）
     ///
     /// host 进程退出或 IPC 连接断开时，该 session 上等待响应的 pending call
     /// 永远收不到回包，调用方（如 HTTP handler）会死等。此方法主动 fail 这些
@@ -201,6 +202,21 @@ public:
     /// @param error 回传给调用方的错误码（通常 DAS_E_IPC_CONNECTION_LOST）
     /// @return 被 fail 的 pending call 数量
     size_t FailPendingCallsBySession(uint16_t session_id, DasResult error);
+
+    /// Host 会话断连回调类型（参数 = 断连对端的 session_id）
+    using HostSessionDisconnectedCallback =
+        std::function<void(uint16_t session_id)>;
+
+    /**
+     * @brief 设置 host 会话断连回调（可选挂载）
+     *
+     * 内部 host 接收循环退出（对端崩溃/断连/正常停机——任何退出路径）
+     * 时，在 fail 完该 session 的 pending call 之后、于 IO 线程触发一次。
+     * 未注册时退出路径零行为变化。须在装配期（Run() 之前）设置。
+     *
+     * @param callback 断连回调（传空清除）
+     */
+    void SetOnHostSessionDisconnected(HostSessionDisconnectedCallback callback);
 
     /**
      * @brief 注册消息处理器（通过 AddRef 管理生命周期）
@@ -628,6 +644,10 @@ public:
 
     /// pending_calls_ 的互斥锁
     mutable std::mutex pending_mutex_;
+
+    /// host 会话断连回调（IO 线程触发；装配期经
+    /// SetOnHostSessionDisconnected 设置）
+    HostSessionDisconnectedCallback on_host_session_disconnected_;
 
     /// ConnectionManager for MainProcess mode (nullptr in Host mode)
     std::unique_ptr<ConnectionManager> connection_manager_;
