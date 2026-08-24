@@ -1206,6 +1206,14 @@ boost::asio::awaitable<void> IpcRunLoop::InternalHostReceiveLoop(
             self->FailPendingCallsBySession(
                 session_id,
                 DAS_E_IPC_CONNECTION_LOST);
+            // 断连清扫挂载点：fail 完 pending 之后触发（回调存在时）。
+            // owner 侧 holder 记账清理由 MainProcess 侧注册的回调完成，
+            // 在 IO 线程执行（free-threaded DOM 表操作合法）。正常停机
+            // 同样经过此路径——清扫幂等，无害。
+            if (self->on_host_session_disconnected_)
+            {
+                self->on_host_session_disconnected_(session_id);
+            }
         }
     } pending_fail_guard{this, session_id};
 

@@ -53,6 +53,13 @@ namespace Core
                 proxy_factory_->GetObjectManager().SetSessionId(1);
                 runloop_.SetSessionId(1);
 
+                // 断连清扫挂载（主进程侧）：接收循环退出（对端崩溃/断连/
+                // 正常停机）时在 IO 线程清扫 owner 侧该 session 的 holder
+                // 记账，条目不再悬挂
+                runloop_.SetOnHostSessionDisconnected(
+                    [this](uint16_t session_id)
+                    { SweepSessionHolders(session_id); });
+
                 // 2. Initialize reserved session IDs
                 for (const uint16_t reserved_id : reserved_session_ids_)
                 {
@@ -134,6 +141,11 @@ namespace Core
                 // Same initialization as Named Pipe constructor
                 proxy_factory_->GetObjectManager().SetSessionId(1);
                 runloop_.SetSessionId(1);
+
+                // 断连清扫挂载（主进程侧，同 Named Pipe 构造体）
+                runloop_.SetOnHostSessionDisconnected(
+                    [this](uint16_t session_id)
+                    { SweepSessionHolders(session_id); });
 
                 for (const uint16_t reserved_id : reserved_session_ids_)
                 {
@@ -468,6 +480,26 @@ namespace Core
                 boost::asio::post(
                     runloop_.GetIoContext(),
                     [ptr = std::move(ptr)]() { ptr->Do(); });
+            }
+
+            void IpcContext::SweepSessionHolders(uint16_t session_id)
+            {
+                // IO 线程执行（接收循环退出路径）：DOM 为 free-threaded
+                // runtime table，表操作在 IO 域合法。清扫只移除该断连
+                // session 的 holder 记账，绝不动 local_pins_——服务注册
+                // pin 免疫伪造断连。被移除条目的对象本体 final Release
+                // 经 MakeAsyncCallback move 捕获 + PostToBusinessThread 回
+                // BusinessThread（真实对象析构不落 IO 线程）；push 失败
+                // 依赖其既有防御释放，停机期仅日志无害。
+                for (auto& object_to_release :
+                     proxy_factory_->GetObjectManager().RemoveSessionHolders(
+                         session_id))
+                {
+                    static_cast<void>(runloop_.PostToBusinessThread(
+                        MakeAsyncCallback([released = std::move(
+                                               object_to_release)]() mutable {})
+                            .Get()));
+                }
             }
 
             void IpcContext::PostToBusinessThread(IDasAsyncCallback* callback)
