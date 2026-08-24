@@ -1,15 +1,29 @@
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstring>
 #include <das/Core/IPC/AnyTransport.h>
 #include <das/Core/IPC/ConnectionManager.h>
+#include <das/Core/IPC/Handshake.h>
 #include <das/Core/IPC/HostLauncher.h>
+#include <das/Core/IPC/IHostConnection.h>
+#include <das/Core/IPC/IpcCommandHandler.h>
+#include <das/Core/IPC/IpcMessageHeader.h>
+#include <das/Core/IPC/IpcMessageQueue.h>
+#include <das/Core/IPC/IpcRunLoop.h>
+#include <das/Core/IPC/ObjectId.h>
+#include <das/Core/IPC/ProxyFactory.h>
+#include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <das/DasPtr.hpp>
 #include <future>
 #include <gtest/gtest.h>
+#include <memory>
 #include <mutex>
 #include <thread>
 
 #include <boost/asio/io_context.hpp>
+
+#include "OutboundFrameProbe.h"
 
 using Das::DasPtr;
 using DAS::Core::IPC::AnyTransport;
@@ -451,4 +465,323 @@ TEST_F(IpcConnectionManagerTest, TimeoutMarksClosingBeforeCallbacksFinish)
 
     ConnectionInfo after_info{};
     EXPECT_NE(manager_->GetConnection(2, after_info), DAS_S_OK);
+}
+
+// ====== 心跳班车（D-12 保险带：SendHeartbeatToAll 过闸1）======
+
+namespace
+{
+    constexpr uint16_t HEARTBEAT_BUS_LOCAL_SESSION_ID = 1;
+    constexpr uint16_t HEARTBEAT_BUS_PEER_SESSION_ID = 7;
+
+    class HeartbeatBusInternalHost final
+        : public DAS::Core::IPC::IHostConnection
+    {
+    public:
+        HeartbeatBusInternalHost(
+            boost::asio::io_context& io_context,
+            uint16_t                 session_id,
+            AnyTransport&            transport)
+            : io_context_(io_context), session_id_(session_id),
+              transport_(transport)
+        {
+        }
+
+        [[nodiscard]]
+        uint32_t AddRef() override
+        {
+            return ++ref_count_;
+        }
+
+        [[nodiscard]]
+        uint32_t Release() override
+        {
+            const auto result = --ref_count_;
+            if (result == 0)
+            {
+                delete this;
+            }
+            return result;
+        }
+
+        DasResult QueryInterface(const DasGuid& iid, void** pp_object) override
+        {
+            if (!pp_object)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            if (iid == DasIidOf<DAS::Core::IPC::IHostConnection>())
+            {
+                (void)AddRef();
+                *pp_object =
+                    static_cast<DAS::Core::IPC::IHostConnection*>(this);
+                return DAS_S_OK;
+            }
+            *pp_object = nullptr;
+            return DAS_E_NO_INTERFACE;
+        }
+
+        DAS::Core::IPC::TransportLookupResult GetTransport() override
+        {
+            if (!transport_.IsConnected())
+            {
+                return {DAS_E_IPC_CONNECTION_LOST, std::nullopt};
+            }
+            return {DAS_S_OK, std::optional{std::ref(transport_)}};
+        }
+
+        boost::asio::io_context& GetIoContext() override { return io_context_; }
+
+        uint16_t GetSessionId() const override { return session_id_; }
+
+        uint32_t GetPid() const override { return 0; }
+
+        bool IsRunning() const override { return true; }
+
+        void Stop() override {}
+        void ClearCallbacks() override {}
+        void NotifyHeartbeatTimeout() override {}
+        void TerminateIfRunning() override {}
+
+    private:
+        std::atomic<uint32_t>    ref_count_{0};
+        boost::asio::io_context& io_context_;
+        uint16_t                 session_id_;
+        AnyTransport&            transport_;
+    };
+
+    constexpr size_t HEARTBEAT_BUS_ADD_REF_FRAME_SIZE =
+        sizeof(DAS::Core::IPC::IPCMessageHeader)
+        + sizeof(DAS::Core::IPC::ObjectId);
+} // namespace
+
+// 心跳班车装置基类：真实 IpcRunLoop（其 ConnectionManager 在装配期被注入
+// 搭车入口）+ 探针观察端读 run loop 的全部出站帧
+class HeartbeatBusTest : public ::testing::Test
+{
+protected:
+    void SetUpWithHeartbeatThread(bool enable_heartbeat_thread)
+    {
+        run_loop_ = std::make_unique<DAS::Core::IPC::IpcRunLoop>(
+            enable_heartbeat_thread,
+            nullptr,
+            proxy_factory_,
+            registry_);
+        run_loop_->SetSessionId(HEARTBEAT_BUS_LOCAL_SESSION_ID);
+
+        probe_ = std::make_unique<OutboundFrameProbe>(
+            run_loop_->GetIoContext(),
+            true);
+        ASSERT_TRUE(probe_->IsHealthy());
+        counterpart_transport_ = probe_->TakeCounterpartTransport();
+        ASSERT_TRUE(counterpart_transport_.has_value());
+
+        const DasPtr<HeartbeatBusInternalHost> host(
+            new HeartbeatBusInternalHost(
+                run_loop_->GetIoContext(),
+                HEARTBEAT_BUS_PEER_SESSION_ID,
+                *counterpart_transport_));
+        // ConnectionManager 级注册（连接表条目 alive，心跳可达），不经
+        // run loop 接收循环
+        ASSERT_EQ(
+            run_loop_->GetConnectionManager().RegisterInternalHost(
+                HEARTBEAT_BUS_PEER_SESSION_ID,
+                host),
+            DAS_S_OK);
+
+        run_thread_ = std::thread([this]() { run_loop_->Run(); });
+        for (int i = 0; i < 100 && !run_loop_->IsRunning(); ++i)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        ASSERT_TRUE(run_loop_->IsRunning());
+    }
+
+    void TearDown() override
+    {
+        run_loop_->RequestStop();
+        if (run_thread_.joinable())
+        {
+            run_thread_.join();
+        }
+        probe_->Shutdown();
+        // 对端 transport 须在 run loop（io_context owner）析构之前完整析构
+        // ——socket 析构触碰 io_context 的 socket service（Cleanup 不够）；
+        // ConnectionManager 持有的 host 只持引用，析构不回调 transport
+        if (counterpart_transport_.has_value())
+        {
+            counterpart_transport_->Cleanup();
+            counterpart_transport_.reset();
+        }
+        run_loop_.reset();
+    }
+
+    DAS::Core::IPC::ProxyFactory                proxy_factory_;
+    DAS::Core::IPC::RemoteObjectRegistry        registry_;
+    std::unique_ptr<DAS::Core::IPC::IpcRunLoop> run_loop_;
+    std::unique_ptr<OutboundFrameProbe>         probe_;
+    std::optional<AnyTransport>                 counterpart_transport_;
+    std::thread                                 run_thread_;
+};
+
+// 直驱形态：不开真实心跳线程（SendHeartbeatToAll 由测试显式调用，帧窗
+// 口内零背景心跳干扰）
+class HeartbeatBusDirectTest : public HeartbeatBusTest
+{
+protected:
+    void SetUp() override { SetUpWithHeartbeatThread(false); }
+};
+
+// 真实周期形态：Run() 启动心跳线程（周期 1000ms）
+class HeartbeatBusWithThreadTest : public HeartbeatBusTest
+{
+protected:
+    void SetUp() override { SetUpWithHeartbeatThread(true); }
+};
+
+// 班车 Test 1：某 session 存在 pending ADD_REF 时心跳周期到 → 该 session
+// 心跳帧 flags 含 bit1、内嵌段携带 pending、心跳本体 body 语义不变（宿主
+// body 在扩展段之后）
+TEST_F(HeartbeatBusDirectTest, HeartbeatCarriesPendingAddRefsWhenPresent)
+{
+    const DAS::Core::IPC::ObjectId object_id{
+        .session_id = HEARTBEAT_BUS_PEER_SESSION_ID,
+        .generation = 21,
+        .local_id = 0xB1};
+    run_loop_->EnqueueAddRef(object_id);
+    EXPECT_EQ(
+        run_loop_->GetPendingAddRefCount(HEARTBEAT_BUS_PEER_SESSION_ID),
+        1u);
+
+    // 直驱一次班车（确定性，不等真实周期）
+    ASSERT_EQ(run_loop_->GetConnectionManager().SendHeartbeatToAll(), DAS_S_OK);
+
+    // 出站恰一帧：心跳帧携扩展段（bit1 + reserved），心跳本体在段之后
+    EXPECT_EQ(probe_->DrainUntil(1, std::chrono::seconds(2)), 1u);
+    EXPECT_EQ(probe_->DrainFor(std::chrono::milliseconds(300)), 0u);
+    EXPECT_EQ(probe_->TotalFrameCount(), 1u);
+    EXPECT_EQ(
+        run_loop_->GetPendingAddRefCount(HEARTBEAT_BUS_PEER_SESSION_ID),
+        0u);
+
+    const auto& heartbeat_frame = probe_->Frames()[0];
+    EXPECT_EQ(
+        heartbeat_frame.header.GetInterfaceId(),
+        static_cast<uint32_t>(
+            DAS::Core::IPC::HandshakeInterfaceId::HandshakeIfaceHeartbeat));
+    EXPECT_NE(
+        heartbeat_frame.header.GetFlags()
+            & DAS::Core::IPC::MessageFlags::RESERVED_AS_SIZE,
+        0);
+    EXPECT_EQ(
+        heartbeat_frame.header.Raw().reserved,
+        HEARTBEAT_BUS_ADD_REF_FRAME_SIZE);
+    ASSERT_EQ(
+        heartbeat_frame.body.size(),
+        HEARTBEAT_BUS_ADD_REF_FRAME_SIZE + sizeof(DAS::Core::IPC::HeartbeatV1));
+
+    // 内嵌段 = 完整 130 帧（可被剥离逻辑解析，自身不置 bit1）
+    DAS::Core::IPC::HeaderValidationResult embedded_error;
+    const auto                             embedded_header =
+        DAS::Core::IPC::ValidatedIPCMessageHeader::Deserialize(
+            heartbeat_frame.body.data(),
+            sizeof(DAS::Core::IPC::IPCMessageHeader),
+            &embedded_error);
+    ASSERT_TRUE(embedded_header.has_value());
+    EXPECT_EQ(
+        embedded_header->GetInterfaceId(),
+        static_cast<uint32_t>(DAS::Core::IPC::IpcCommandType::RemoteAddRef));
+    EXPECT_EQ(
+        embedded_header->GetFlags()
+            & DAS::Core::IPC::MessageFlags::RESERVED_AS_SIZE,
+        0);
+    DAS::Core::IPC::ObjectId embedded_object_id{};
+    std::memcpy(
+        &embedded_object_id,
+        heartbeat_frame.body.data() + sizeof(DAS::Core::IPC::IPCMessageHeader),
+        sizeof(DAS::Core::IPC::ObjectId));
+    EXPECT_EQ(embedded_object_id.session_id, object_id.session_id);
+    EXPECT_EQ(embedded_object_id.local_id, object_id.local_id);
+
+    // 心跳本体 body 语义不变：HeartbeatV1 字节原样跟在扩展段之后
+    const auto* heartbeat_body_bytes =
+        reinterpret_cast<const DAS::Core::IPC::HeartbeatV1*>(
+            heartbeat_frame.body.data() + HEARTBEAT_BUS_ADD_REF_FRAME_SIZE);
+    EXPECT_GT(heartbeat_body_bytes->timestamp_ms, 0u);
+}
+
+// 班车 Test 2（零流量清账）：零流量场景 pending 滞留不超过一个心跳周期
+// 被清——无其他出站时仅靠班车清账（保险带验证）
+TEST_F(HeartbeatBusWithThreadTest, HeartbeatClearsPendingWithinOneInterval)
+{
+    const DAS::Core::IPC::ObjectId object_id{
+        .session_id = HEARTBEAT_BUS_PEER_SESSION_ID,
+        .generation = 22,
+        .local_id = 0xB2};
+    run_loop_->EnqueueAddRef(object_id);
+
+    // 本装置无业务流量：一个心跳周期（加余量）内 pending 必被班车带走
+    bool cleared_within_bound = false;
+    for (int attempt = 0;
+         attempt < (ConnectionManager::HEARTBEAT_INTERVAL_MS + 1500)
+                       / std::chrono::milliseconds(50).count();
+         ++attempt)
+    {
+        if (run_loop_->GetPendingAddRefCount(HEARTBEAT_BUS_PEER_SESSION_ID)
+            == 0)
+        {
+            cleared_within_bound = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    EXPECT_TRUE(cleared_within_bound)
+        << "zero-traffic pending must be cleared within one heartbeat "
+           "interval by the heartbeat bus";
+
+    // 班车帧确实到达（携或未携段取决于取样时点，帧本身必须出现）
+    EXPECT_GE(probe_->DrainFor(std::chrono::milliseconds(200)), 1u);
+}
+
+// 班车 Test 3：pending 为空时心跳帧不带 bit1（零开销基线不变）
+TEST_F(HeartbeatBusDirectTest, HeartbeatWithoutPendingCarriesNoSection)
+{
+    ASSERT_EQ(run_loop_->GetConnectionManager().SendHeartbeatToAll(), DAS_S_OK);
+
+    EXPECT_EQ(probe_->DrainUntil(1, std::chrono::seconds(2)), 1u);
+    ASSERT_EQ(probe_->TotalFrameCount(), 1u);
+    const auto& heartbeat_frame = probe_->Frames()[0];
+    EXPECT_EQ(
+        heartbeat_frame.header.GetFlags()
+            & DAS::Core::IPC::MessageFlags::RESERVED_AS_SIZE,
+        0);
+    EXPECT_EQ(heartbeat_frame.header.Raw().reserved, 0u);
+    ASSERT_EQ(heartbeat_frame.body.size(), sizeof(DAS::Core::IPC::HeartbeatV1));
+}
+
+// 班车 Test 4：SetPiggybackEnabled(false) 时班车同样关闭（A/B 一致）
+TEST_F(HeartbeatBusDirectTest, DisabledPiggybackTurnsHeartbeatBusOff)
+{
+    run_loop_->SetPiggybackEnabled(false);
+
+    const DAS::Core::IPC::ObjectId object_id{
+        .session_id = HEARTBEAT_BUS_PEER_SESSION_ID,
+        .generation = 23,
+        .local_id = 0xB3};
+    run_loop_->EnqueueAddRef(object_id);
+
+    ASSERT_EQ(run_loop_->GetConnectionManager().SendHeartbeatToAll(), DAS_S_OK);
+
+    // 心跳独立形态（无 bit1），pending 不被班车带走（仍由既有出清机制管理）
+    EXPECT_EQ(probe_->DrainUntil(1, std::chrono::seconds(2)), 1u);
+    ASSERT_EQ(probe_->TotalFrameCount(), 1u);
+    const auto& heartbeat_frame = probe_->Frames()[0];
+    EXPECT_EQ(
+        heartbeat_frame.header.GetFlags()
+            & DAS::Core::IPC::MessageFlags::RESERVED_AS_SIZE,
+        0);
+    ASSERT_EQ(heartbeat_frame.body.size(), sizeof(DAS::Core::IPC::HeartbeatV1));
+    EXPECT_EQ(
+        run_loop_->GetPendingAddRefCount(HEARTBEAT_BUS_PEER_SESSION_ID),
+        1u);
 }
