@@ -87,6 +87,18 @@ IpcRunLoop::IpcRunLoop(
     connection_manager_ =
         std::make_unique<ConnectionManager>(1); // local_id = 1 for MainProcess
 
+    // 心跳班车接线（D-12 保险带）：SendHeartbeatToAll 的每 host 载体发送点
+    // 复用 PrepareOutboundFrame 同一搭车决策与拼装（单一事实源，
+    // ConnectionManager 零拼装实现）。普通 lambda 返回 awaitable——
+    // 调用 PrepareOutboundFrame 时参数即时拷贝/move 进其协程帧，awaitable
+    // 不引用 lambda 的形参
+    connection_manager_->SetHeartbeatCarrierSender(
+        [this](
+            AnyTransport&                    transport,
+            const ValidatedIPCMessageHeader& header,
+            std::vector<uint8_t>&& body) -> boost::asio::awaitable<DasResult>
+        { return PrepareOutboundFrame(transport, header, std::move(body)); });
+
     // 注册所有 IPC stub handlers（代码生成器生成的 g_stub_factory）
     DasIpcStub::g_stub_factory.RegisterAll(*this);
     DAS_CORE_LOG_INFO("Registered all IPC stub handlers");

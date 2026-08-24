@@ -44,6 +44,8 @@ struct ConnectionManager::Impl
     std::unordered_map<uint16_t, AnyTransport> host_local_transports_;
     // 共享内存池（每个连接一个，按 remote_id 索引）
     std::unordered_map<uint16_t, std::unique_ptr<SharedMemoryPool>> shm_pools_;
+    // 心跳班车搭车入口（装配期由 IpcRunLoop 注入；空 = 直发）
+    HeartbeatCarrierSender    heartbeat_carrier_sender_;
     mutable std::shared_mutex connections_mutex_;
     std::atomic<bool>         running_{false};
     std::thread               heartbeat_thread_;
@@ -644,6 +646,14 @@ void ConnectionManager::StopHeartbeatThread()
     }
 }
 
+void ConnectionManager::SetHeartbeatCarrierSender(HeartbeatCarrierSender sender)
+{
+    // 装配期设置（心跳线程启动前）：此后 SendHeartbeatToAll 的发送协程
+    // 在 io 域读取——设置与心跳发送无并发窗口
+    const std::unique_lock<std::shared_mutex> lock(impl_->connections_mutex_);
+    impl_->heartbeat_carrier_sender_ = std::move(sender);
+}
+
 DasResult ConnectionManager::SendHeartbeatToAll()
 {
     const std::shared_lock<std::shared_mutex> lock(impl_->connections_mutex_);
@@ -692,7 +702,8 @@ DasResult ConnectionManager::SendHeartbeatToAll()
             [host,
              header = validated_header,
              heartbeat_copy = heartbeat,
-             session_id]() mutable
+             session_id,
+             this]() mutable
             {
                 auto [lookup_result, maybe_transport] = host->GetTransport();
                 if (DAS::IsFailed(lookup_result) || !maybe_transport
@@ -705,7 +716,7 @@ DasResult ConnectionManager::SendHeartbeatToAll()
                 AnyTransport& transport = maybe_transport->get();
                 boost::asio::co_spawn(
                     transport.GetIoContext(),
-                    [host, header, heartbeat_copy, session_id]() mutable
+                    [host, header, heartbeat_copy, session_id, this]() mutable
                         -> boost::asio::awaitable<void>
                     {
                         auto [lookup_result, maybe_transport] =
@@ -716,12 +727,32 @@ DasResult ConnectionManager::SendHeartbeatToAll()
                             co_return;
                         }
 
-                        auto result =
-                            co_await maybe_transport->get().SendCoroutine(
-                                header,
+                        // 心跳班车（D-12 保险带）：发送前经注入的搭车入口
+                        // 过闸1——携该 session 的 pending ADD_REF 一帧带走
+                        // （拼装单一事实源在 IpcRunLoop；入口为空 = 直发）
+                        DasResult result = DAS_S_OK;
+                        if (impl_->heartbeat_carrier_sender_)
+                        {
+                            std::vector<uint8_t> heartbeat_body(
                                 reinterpret_cast<const uint8_t*>(
                                     &heartbeat_copy),
-                                sizeof(heartbeat_copy));
+                                reinterpret_cast<const uint8_t*>(
+                                    &heartbeat_copy)
+                                    + sizeof(heartbeat_copy));
+                            result = co_await impl_->heartbeat_carrier_sender_(
+                                maybe_transport->get(),
+                                header,
+                                std::move(heartbeat_body));
+                        }
+                        else
+                        {
+                            result =
+                                co_await maybe_transport->get().SendCoroutine(
+                                    header,
+                                    reinterpret_cast<const uint8_t*>(
+                                        &heartbeat_copy),
+                                    sizeof(heartbeat_copy));
+                        }
                         if (result != DAS_S_OK)
                         {
                             DAS_CORE_LOG_WARN(

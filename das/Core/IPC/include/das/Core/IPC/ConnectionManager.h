@@ -16,6 +16,7 @@
 #include <optional>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include <das/Core/IPC/Config.h>
 #include <das/DasConfig.h>
@@ -209,6 +210,30 @@ public:
 
     void StartHeartbeatThread();
     void StopHeartbeatThread();
+
+    /**
+     * @brief 心跳班车搭车发送入口（装配期由 IpcRunLoop 注入；空 = 直发）
+     *
+     * D-12 保险带：SendHeartbeatToAll 的每 host 载体发送点经此入口过闸1
+     * （搭车决策复用 IpcRunLoop 的单一实现——ConnectionManager 自身不
+     * 实现任何段拼装）。心跳恒 inline 小帧 = 永远合格载体；零流量场景
+     * pending 滞留上界 = 一个心跳周期。piggyback 总闸关闭时入口直通
+     * （由 IpcRunLoop 侧决策，ConnectionManager 不重复判开关）。
+     */
+    using HeartbeatCarrierSender =
+        std::function<boost::asio::awaitable<DasResult>(
+            AnyTransport&                    transport,
+            const ValidatedIPCMessageHeader& header,
+            std::vector<uint8_t>&&           body)>;
+
+    /**
+     * @brief 设置心跳班车搭车发送入口
+     *
+     * 须在装配期（心跳线程启动前）设置；传空清除（回退直发）。
+     *
+     * @param sender 搭车发送入口（复用 IpcRunLoop 的 PrepareOutboundFrame）
+     */
+    void SetHeartbeatCarrierSender(HeartbeatCarrierSender sender);
 
     /**
      * @brief 向所有已连接的 Host 发送 HEARTBEAT 消息
