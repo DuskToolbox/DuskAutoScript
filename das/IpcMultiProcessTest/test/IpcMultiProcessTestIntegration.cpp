@@ -25,6 +25,7 @@
 
 #include "IpcMultiProcessTestIntegration.h"
 
+#include "../../Core/IPC/test/OutboundFrameProbe.h"
 #include "FakeMainProcess.h"
 #include "IDasComponent.h"
 #include "IDasPluginPackage.h"
@@ -42,16 +43,28 @@
 #include <cstdlib>
 #include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/Core/IPC/AsyncOperationImpl.h>
+#include <das/Core/IPC/BusinessThread.h>
 #include <das/Core/IPC/ConnectionManager.h>
 #include <das/Core/IPC/DasAsyncSender.h>
+#include <das/Core/IPC/DasReadOnlyStringProxy.h>
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/HostLauncher.h>
+#include <das/Core/IPC/InternalCallbackHandler.h>
+#include <das/Core/IPC/IpcCommandHandler.h>
+#include <das/Core/IPC/IpcMessageHeader.h>
+#include <das/Core/IPC/IpcMessageHeaderBuilder.h>
+#include <das/Core/IPC/IpcMessageQueue.h>
+#include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/IPC/ObjectId.h>
+#include <das/Core/IPC/ProxyFactory.h>
 #include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <das/Core/Utils/StdExecution.h>
+#include <das/IDasAsyncCallback.h>
 #include <das/IDasAsyncLoadPluginOperation.h>
 #include <fstream>
+#include <functional>
 #include <gtest/gtest.h>
+#include <memory>
 #include <optional>
 #include <string_view>
 #include <vector>
@@ -5778,4 +5791,736 @@ TEST_F(
     DAS_CORE_LOG_INFO(
         "Host plugin queried main process IDasReadOnlyString by name via "
         "LOOKUP_BY_NAME IPC, and unregister was verified");
+}
+
+// ====== 出站帧数 T 基线（D-21 验证锚点：piggyback 开/关 A/B 对比）======
+//
+// 集成侧薄适配：以 Core 探针契约（OutboundFrameProbe 的 interface_id
+// 计数 / FIFO 帧序 / 段 dissect 语义）观测真实 IpcRunLoop + BusinessThread
+// + ProxyFactory 装配的全部出站帧。本组用例不启动真实 Host 进程（帧数
+// 观测面在测试进程内的接收端镜像），不新增生产逻辑。
+
+namespace
+{
+    constexpr uint16_t BASELINE_LOCAL_SESSION_ID = 1;
+    constexpr uint16_t BASELINE_PEER_SESSION_ID = 9;
+    constexpr uint32_t BASELINE_HANDLER_INTERFACE_ID = 0x6261;
+
+    constexpr uint32_t BASELINE_ADD_REF_INTERFACE_ID =
+        static_cast<uint32_t>(DAS::Core::IPC::IpcCommandType::RemoteAddRef);
+
+    constexpr size_t BASELINE_ADD_REF_FRAME_SIZE =
+        sizeof(DAS::Core::IPC::IPCMessageHeader)
+        + sizeof(DAS::Core::IPC::ObjectId);
+
+    // 空实现 IResolveContext（BusinessThread 构造依赖，本组用例不触达）
+    class BaselineResolveContext final : public DAS::Core::IPC::IResolveContext
+    {
+    public:
+        DasResult ResolveMainProcessInterface(const DasGuid&, IDasBase**)
+            override
+        {
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+
+        DasResult RegisterService(IDasBase*, const DasGuid&) override
+        {
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+
+        DasResult UnregisterService(const DasGuid&) override
+        {
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+
+        DasResult ResolveMainProcessInterfaceByName(const char*, IDasBase**)
+            override
+        {
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+
+        DasResult RegisterServiceByName(IDasBase*, const DasGuid&, const char*)
+            override
+        {
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+
+        DasResult UnregisterServiceByName(const char*) override
+        {
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+    };
+
+    // 把任意任务投递到真实 BusinessThread 执行线程的回调
+    class BaselineBusinessThreadTask final : public IDasAsyncCallback
+    {
+    public:
+        explicit BaselineBusinessThreadTask(std::function<void()> task)
+            : task_(std::move(task))
+        {
+        }
+
+        uint32_t AddRef() override
+        {
+            return ref_count_.fetch_add(1, std::memory_order_relaxed) + 1;
+        }
+
+        uint32_t Release() override
+        {
+            const uint32_t count =
+                ref_count_.fetch_sub(1, std::memory_order_acq_rel) - 1;
+            if (count == 0)
+            {
+                delete this;
+            }
+            return count;
+        }
+
+        DasResult QueryInterface(const DasGuid& iid, void** pp_object) override
+        {
+            if (pp_object == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            if (iid == DAS_IID_BASE)
+            {
+                *pp_object = static_cast<IDasBase*>(this);
+                AddRef();
+                return DAS_S_OK;
+            }
+            *pp_object = nullptr;
+            return DAS_E_NO_INTERFACE;
+        }
+
+        DasResult Do() noexcept override
+        {
+            task_();
+            return DAS_S_OK;
+        }
+
+    private:
+        std::atomic<uint32_t> ref_count_{1};
+        std::function<void()> task_;
+    };
+
+    // 业务脚本 handler：BT 分发线程上物化一个新对象（入队候车）并发响应
+    // （响应 body = call_id 单字节回显）
+    class BaselineMaterializingHandler final
+        : public DAS::Core::IPC::IMessageHandler
+    {
+    public:
+        BaselineMaterializingHandler(
+            DAS::Core::IPC::ProxyFactory&                 proxy_factory,
+            DAS::Core::IPC::IpcRunLoop&                   run_loop,
+            std::weak_ptr<DAS::Core::IPC::BusinessThread> business_thread,
+            DAS::DasPtr<IDasBase>* materialized_proxy_slots,
+            size_t                 slot_count)
+            : proxy_factory_(proxy_factory), run_loop_(run_loop),
+              business_thread_(std::move(business_thread)),
+              materialized_proxy_slots_(materialized_proxy_slots),
+              slot_count_(slot_count)
+        {
+        }
+
+        [[nodiscard]]
+        uint32_t AddRef() override
+        {
+            return ++ref_count_;
+        }
+
+        [[nodiscard]]
+        uint32_t Release() override
+        {
+            const uint32_t count = --ref_count_;
+            if (count == 0)
+            {
+                delete this;
+            }
+            return count;
+        }
+
+        [[nodiscard]]
+        uint32_t GetInterfaceId() const override
+        {
+            return BASELINE_HANDLER_INTERFACE_ID;
+        }
+
+        DasResult HandleMessage(
+            const DAS::Core::IPC::ValidatedIPCMessageHeader& header,
+            const std::vector<uint8_t>&                      body,
+            DAS::Core::IPC::IpcResponseSender&               sender,
+            DAS::Core::IPC::StubContext& resolve_context) override
+        {
+            (void)body;
+            (void)resolve_context;
+
+            const auto call_id = header.GetCallId();
+            if (call_id == 0 || call_id > slot_count_)
+            {
+                return DAS_E_INVALID_ARGUMENT;
+            }
+
+            // BT 分发线程上物化（D-19 分叉 → 入队候车）
+            const DAS::Core::IPC::ObjectId object_id{
+                .session_id = BASELINE_PEER_SESSION_ID,
+                .generation = 1,
+                .local_id = static_cast<uint32_t>(0x1000 + call_id)};
+            auto [result, proxy] = proxy_factory_.GetOrCreateProxy(
+                run_loop_,
+                business_thread_,
+                object_id,
+                DAS::Core::IPC::DasReadOnlyStringProxy::InterfaceId);
+            if (DAS::IsFailed(result) || !proxy)
+            {
+                return result;
+            }
+            materialized_proxy_slots_[call_id - 1] = std::move(proxy);
+
+            const auto response_header =
+                DAS::Core::IPC::IPCMessageHeaderBuilder()
+                    .SetMessageType(DAS::Core::IPC::MessageType::Response)
+                    .SetHeaderFlags(DAS::Core::IPC::HeaderFlags::NONE)
+                    .SetInterfaceId(header.GetInterfaceId())
+                    .SetCallId(call_id)
+                    .SetSourceSessionId(header.GetTargetSessionId())
+                    .SetTargetSessionId(header.GetSourceSessionId())
+                    .SetBodySize(1)
+                    .Build();
+            const std::vector<uint8_t> response_body{
+                static_cast<uint8_t>(call_id)};
+            return sender.SendResponse(response_header, response_body);
+        }
+
+    private:
+        std::atomic<uint32_t>                         ref_count_{0};
+        DAS::Core::IPC::ProxyFactory&                 proxy_factory_;
+        DAS::Core::IPC::IpcRunLoop&                   run_loop_;
+        std::weak_ptr<DAS::Core::IPC::BusinessThread> business_thread_;
+        DAS::DasPtr<IDasBase>*                        materialized_proxy_slots_;
+        size_t                                        slot_count_;
+    };
+
+    // 一次完整装配（run loop + 真实 BT + 探针），可在一个测试内按
+    // piggyback 两态各建一套
+    class BaselineAssembly
+    {
+    public:
+        explicit BaselineAssembly(bool piggyback_enabled)
+        {
+            run_loop_ = std::make_unique<DAS::Core::IPC::IpcRunLoop>(
+                false,
+                inbound_queue_.get(),
+                proxy_factory_,
+                registry_);
+            run_loop_->SetSessionId(BASELINE_LOCAL_SESSION_ID);
+            run_loop_->SetPiggybackEnabled(piggyback_enabled);
+
+            internal_callback_handler_ =
+                DAS::DasPtr<DAS::Core::IPC::InternalCallbackHandler>(
+                    new DAS::Core::IPC::InternalCallbackHandler);
+            run_loop_->RegisterHandler(
+                DAS::Core::IPC::HeaderFlags::BUSINESS_CONTROL,
+                internal_callback_handler_->GetInterfaceId(),
+                internal_callback_handler_.Get());
+
+            business_thread_ = std::make_shared<DAS::Core::IPC::BusinessThread>(
+                *inbound_queue_,
+                *run_loop_,
+                resolve_context_,
+                proxy_factory_,
+                registry_);
+
+            probe_ = std::make_unique<OutboundFrameProbe>(
+                run_loop_->GetIoContext(),
+                true);
+            state_is_healthy_ = probe_->IsHealthy();
+            if (!state_is_healthy_)
+            {
+                return;
+            }
+            auto counterpart_transport = probe_->TakeCounterpartTransport();
+            if (!counterpart_transport.has_value())
+            {
+                state_is_healthy_ = false;
+                return;
+            }
+            state_is_healthy_ = !DAS::IsFailed(
+                run_loop_->GetConnectionManager().RegisterHostLocalTransport(
+                    BASELINE_PEER_SESSION_ID,
+                    std::move(*counterpart_transport)));
+            if (!state_is_healthy_)
+            {
+                return;
+            }
+
+            // 生产拓扑：io 持续运行（Run 线程）——BT 周期内的响应发送
+            // 协程与周期末 guard 出清真实并发（探针外部驱动模式）
+            run_thread_ = std::thread([this]() { run_loop_->Run(); });
+            for (int attempt = 0; attempt < 100 && !run_loop_->IsRunning();
+                 ++attempt)
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            state_is_healthy_ = run_loop_->IsRunning();
+        }
+
+        ~BaselineAssembly()
+        {
+            // 物化的 proxy 先析构（最终 Release 的 REMOTE_RELEASE 路径要
+            // 经 run loop 发送——run loop 必须存活）
+            materialized_proxy_slots_.clear();
+            if (run_loop_)
+            {
+                run_loop_->RequestStop();
+            }
+            if (run_thread_.joinable())
+            {
+                run_thread_.join();
+            }
+            if (probe_)
+            {
+                probe_->Shutdown();
+            }
+            if (business_thread_)
+            {
+                business_thread_->Stop();
+            }
+            run_loop_.reset();
+            inbound_queue_.reset();
+        }
+
+        BaselineAssembly(const BaselineAssembly&) = delete;
+        BaselineAssembly& operator=(const BaselineAssembly&) = delete;
+
+        [[nodiscard]]
+        bool IsHealthy() const
+        {
+            return state_is_healthy_;
+        }
+
+        [[nodiscard]]
+        DAS::Core::IPC::IpcRunLoop& GetRunLoop()
+        {
+            return *run_loop_;
+        }
+
+        [[nodiscard]]
+        DAS::Core::IPC::ProxyFactory& GetProxyFactory()
+        {
+            return proxy_factory_;
+        }
+
+        [[nodiscard]]
+        std::weak_ptr<DAS::Core::IPC::BusinessThread> GetBusinessThread()
+        {
+            return business_thread_;
+        }
+
+        [[nodiscard]]
+        OutboundFrameProbe& GetProbe()
+        {
+            return *probe_;
+        }
+
+        /// 投递 k 条请求入站并等待出站收敛（每条物化一个新对象 + 发响应）
+        void RunBusinessScript(int request_count)
+        {
+            materialized_proxy_slots_ =
+                std::vector<DAS::DasPtr<IDasBase>>(request_count);
+
+            auto* handler = new BaselineMaterializingHandler(
+                proxy_factory_,
+                *run_loop_,
+                business_thread_,
+                materialized_proxy_slots_.data(),
+                materialized_proxy_slots_.size());
+            run_loop_->RegisterHandler(
+                DAS::Core::IPC::HeaderFlags::NONE,
+                BASELINE_HANDLER_INTERFACE_ID,
+                handler);
+
+            for (int call_id = 1; call_id <= request_count; ++call_id)
+            {
+                DAS::Core::IPC::InboundMessage request;
+                request.header =
+                    DAS::Core::IPC::IPCMessageHeaderBuilder()
+                        .SetMessageType(DAS::Core::IPC::MessageType::Request)
+                        .SetHeaderFlags(DAS::Core::IPC::HeaderFlags::NONE)
+                        .SetInterfaceId(BASELINE_HANDLER_INTERFACE_ID)
+                        .SetCallId(static_cast<uint16_t>(call_id))
+                        .SetSourceSessionId(BASELINE_PEER_SESSION_ID)
+                        .SetTargetSessionId(BASELINE_LOCAL_SESSION_ID)
+                        .SetBodySize(0)
+                        .Build();
+                if (DAS::IsFailed(inbound_queue_->Push(std::move(request))))
+                {
+                    state_is_healthy_ = false;
+                    return;
+                }
+            }
+
+            // 出站收敛：连续一个静默窗口无新帧即结束（两态帧数不同，
+            // 不能按固定帧数等齐）
+            for (int round = 0; round < 40; ++round)
+            {
+                const size_t frames_before = probe_->TotalFrameCount();
+                static_cast<void>(
+                    probe_->DrainFor(std::chrono::milliseconds(100)));
+                if (probe_->TotalFrameCount() == frames_before)
+                {
+                    break;
+                }
+            }
+        }
+
+        /// 在真实 BT 执行线程上运行 task 并等待完成
+        void RunOnBusinessThread(const std::function<void()>& task)
+        {
+            std::promise<void> task_done;
+            auto               task_done_future = task_done.get_future();
+            const DAS::DasPtr<IDasAsyncCallback> callback(
+                new BaselineBusinessThreadTask(
+                    [&task, &task_done]()
+                    {
+                        task();
+                        task_done.set_value();
+                    }));
+            if (DAS::IsFailed(run_loop_->PostToBusinessThread(callback.Get())))
+            {
+                state_is_healthy_ = false;
+                return;
+            }
+            if (task_done_future.wait_for(std::chrono::seconds(5))
+                != std::future_status::ready)
+            {
+                state_is_healthy_ = false;
+            }
+        }
+
+    private:
+        DAS::Core::IPC::ProxyFactory         proxy_factory_;
+        DAS::Core::IPC::RemoteObjectRegistry registry_;
+        BaselineResolveContext               resolve_context_;
+        std::unique_ptr<
+            DAS::Core::IPC::IpcMessageQueue<DAS::Core::IPC::InboundMessage>>
+            inbound_queue_ = std::make_unique<DAS::Core::IPC::IpcMessageQueue<
+                DAS::Core::IPC::InboundMessage>>(32);
+        std::unique_ptr<DAS::Core::IPC::IpcRunLoop> run_loop_;
+        DAS::DasPtr<DAS::Core::IPC::InternalCallbackHandler>
+            internal_callback_handler_;
+        std::shared_ptr<DAS::Core::IPC::BusinessThread> business_thread_;
+        std::unique_ptr<OutboundFrameProbe>             probe_;
+        std::thread                                     run_thread_;
+        std::vector<DAS::DasPtr<IDasBase>> materialized_proxy_slots_;
+        bool                               state_is_healthy_ = false;
+    };
+
+    // 探针观测的 dissect 结果：总帧数 / 业务帧数（非 130）/ 独立 130 帧
+    // 数 r / 内嵌 130 总数（扩展段 dissect）/ 携段帧数 / 响应 body 到达序
+    struct BaselineObservation
+    {
+        size_t                            total_frames = 0;
+        size_t                            business_frames = 0;
+        size_t                            standalone_add_ref_frames = 0;
+        size_t                            embedded_add_ref_frames = 0;
+        size_t                            carried_frame_count = 0;
+        std::vector<std::vector<uint8_t>> response_bodies;
+    };
+
+    // 按 Core 探针契约 dissect：扩展段内逐内嵌帧计数 130（剥离循环的
+    // 只读镜像——offset 以内嵌 body_size 自描述推进）
+    BaselineObservation DisassembleObservation(OutboundFrameProbe& probe)
+    {
+        BaselineObservation observation;
+        observation.total_frames = probe.TotalFrameCount();
+        observation.standalone_add_ref_frames =
+            probe.CountByInterfaceId(BASELINE_ADD_REF_INTERFACE_ID);
+
+        for (const auto& frame : probe.Frames())
+        {
+            const bool is_add_ref =
+                frame.header.GetInterfaceId() == BASELINE_ADD_REF_INTERFACE_ID;
+            if (!is_add_ref)
+            {
+                observation.business_frames += 1;
+            }
+
+            if ((frame.header.GetFlags()
+                 & DAS::Core::IPC::MessageFlags::RESERVED_AS_SIZE)
+                == 0)
+            {
+                if (!is_add_ref)
+                {
+                    observation.response_bodies.push_back(frame.body);
+                }
+                continue;
+            }
+            observation.carried_frame_count += 1;
+
+            const uint32_t section_size = frame.header.Raw().reserved;
+            size_t         offset = 0;
+            while (offset < section_size)
+            {
+                if (section_size - offset
+                    < sizeof(DAS::Core::IPC::IPCMessageHeader))
+                {
+                    break;
+                }
+                DAS::Core::IPC::HeaderValidationResult embedded_error;
+                const auto                             embedded_header =
+                    DAS::Core::IPC::ValidatedIPCMessageHeader::Deserialize(
+                        frame.body.data() + offset,
+                        sizeof(DAS::Core::IPC::IPCMessageHeader),
+                        &embedded_error);
+                if (!embedded_header.has_value())
+                {
+                    break;
+                }
+                if (embedded_header->GetInterfaceId()
+                    == BASELINE_ADD_REF_INTERFACE_ID)
+                {
+                    observation.embedded_add_ref_frames += 1;
+                }
+                offset += sizeof(DAS::Core::IPC::IPCMessageHeader)
+                          + embedded_header->GetBodySize();
+            }
+
+            // 携段业务帧的宿主语义 = 剥离扩展段后的尾部 body（接收端
+            // RouteIncomingMessage 剥离后路由的部分——A/B 等价的比较面）
+            if (!is_add_ref && frame.body.size() >= section_size)
+            {
+                observation.response_bodies.push_back(
+                    std::vector<uint8_t>(
+                        frame.body.begin() + section_size,
+                        frame.body.end()));
+            }
+        }
+        return observation;
+    }
+} // namespace
+
+// T 基线（D-21）：同一业务脚本（k 次调用，每次物化一个新对象 + 1 响应）
+// 在 piggyback_enabled 开/关两态下运行——开态出站帧数 == 业务基线（k 条
+// 响应）且 r==0（ADD_REF 全部内嵌）；关态出站 == 基线 + r（r==k，段 A
+// 独立帧行为对照）；两态业务帧数相等且响应字节逐条一致（语义等价，
+// 捎带模式帧数不超过独立模式）
+TEST(
+    PiggybackBaselineTest,
+    T_BaselineFrameCountsMatchBusinessBaselineAcrossSwitch)
+{
+    constexpr int request_count = 4;
+
+    BaselineAssembly assembly_on(true);
+    ASSERT_TRUE(assembly_on.IsHealthy());
+    assembly_on.RunBusinessScript(request_count);
+    ASSERT_TRUE(assembly_on.IsHealthy());
+    const BaselineObservation on_observation =
+        DisassembleObservation(assembly_on.GetProbe());
+
+    BaselineAssembly assembly_off(false);
+    ASSERT_TRUE(assembly_off.IsHealthy());
+    assembly_off.RunBusinessScript(request_count);
+    ASSERT_TRUE(assembly_off.IsHealthy());
+    const BaselineObservation off_observation =
+        DisassembleObservation(assembly_off.GetProbe());
+
+    // 两态业务帧数相等且 == 业务基线（k 条响应；捎带不合并业务帧）
+    ASSERT_EQ(
+        on_observation.business_frames,
+        static_cast<size_t>(request_count));
+    ASSERT_EQ(
+        off_observation.business_frames,
+        static_cast<size_t>(request_count));
+
+    // 开态：出站帧数 == 业务基线，r==0（ADD_REF 全部内嵌；rider 在载体间
+    // 的分布不定了——一帧可携多条，嵌骑总量恒为 k）
+    EXPECT_EQ(on_observation.total_frames, static_cast<size_t>(request_count));
+    EXPECT_EQ(on_observation.standalone_add_ref_frames, 0u);
+    EXPECT_EQ(
+        on_observation.embedded_add_ref_frames,
+        static_cast<size_t>(request_count));
+    EXPECT_LE(
+        on_observation.carried_frame_count,
+        static_cast<size_t>(request_count));
+    EXPECT_GE(on_observation.carried_frame_count, 1u);
+
+    // 关态：出站 == 基线 + r（r==k——独立帧对照，帧数与字节与段 A 相同）
+    EXPECT_EQ(
+        off_observation.total_frames,
+        static_cast<size_t>(2 * request_count));
+    EXPECT_EQ(
+        off_observation.standalone_add_ref_frames,
+        static_cast<size_t>(request_count));
+    EXPECT_EQ(off_observation.embedded_add_ref_frames, 0u);
+    EXPECT_EQ(off_observation.carried_frame_count, 0u);
+
+    // 捎带模式帧数不超过独立模式
+    EXPECT_LE(on_observation.total_frames, off_observation.total_frames);
+
+    // A/B 语义等价：响应字节逐条一致（仅帧数不同）
+    EXPECT_EQ(on_observation.response_bodies, off_observation.response_bodies);
+}
+
+// 四情形白名单 (i)：该方向整周期无出站载体——BT 物化后本 dispatch 周期
+// 无任何响应 → 周期末 guard 兜底独立发出（r==1 且仅在该情形）
+TEST(PiggybackBaselineTest, WhitelistNoCarrierFlushesStandaloneAtCycleEnd)
+{
+    BaselineAssembly assembly(true);
+    ASSERT_TRUE(assembly.IsHealthy());
+
+    const DAS::Core::IPC::ObjectId object_id{
+        .session_id = BASELINE_PEER_SESSION_ID,
+        .generation = 2,
+        .local_id = 0x2101};
+    DAS::DasPtr<IDasBase> materialized_proxy;
+    assembly.RunOnBusinessThread(
+        [&assembly, &object_id, &materialized_proxy]()
+        {
+            auto [result, proxy] = assembly.GetProxyFactory().GetOrCreateProxy(
+                assembly.GetRunLoop(),
+                assembly.GetBusinessThread(),
+                object_id,
+                DAS::Core::IPC::DasReadOnlyStringProxy::InterfaceId);
+            if (!DAS::IsFailed(result) && proxy)
+            {
+                materialized_proxy = std::move(proxy);
+            }
+        });
+    ASSERT_TRUE(materialized_proxy);
+
+    // 零载体：仅 guard 兜底的独立 130（无 bit1）
+    EXPECT_EQ(assembly.GetProbe().DrainUntil(1, std::chrono::seconds(2)), 1u);
+    const BaselineObservation observation =
+        DisassembleObservation(assembly.GetProbe());
+    EXPECT_EQ(observation.total_frames, 1u);
+    EXPECT_EQ(observation.standalone_add_ref_frames, 1u);
+    EXPECT_EQ(observation.embedded_add_ref_frames, 0u);
+    EXPECT_EQ(observation.business_frames, 0u);
+
+    materialized_proxy.Reset();
+}
+
+// 四情形白名单 (ii)：SHM 大消息帧载体——riders 全部先独立走（SHM 宿主
+// 帧经无 pool 的探针接收侧被拒——互斥防御本身，仅断言 riders 独立形态）
+TEST(PiggybackBaselineTest, WhitelistShmCarrierFlushesRidersStandalone)
+{
+    BaselineAssembly assembly(true);
+    ASSERT_TRUE(assembly.IsHealthy());
+    auto& run_loop = assembly.GetRunLoop();
+
+    const DAS::Core::IPC::ObjectId shm_object_id{
+        .session_id = BASELINE_PEER_SESSION_ID,
+        .generation = 3,
+        .local_id = 0x2201};
+    run_loop.EnqueueAddRef(shm_object_id);
+    const auto shm_carrier_header =
+        DAS::Core::IPC::IPCMessageHeaderBuilder()
+            .SetMessageType(DAS::Core::IPC::MessageType::Response)
+            .SetHeaderFlags(DAS::Core::IPC::HeaderFlags::LARGE_MESSAGE_VIA_SHM)
+            .SetInterfaceId(0x2202)
+            .SetCallId(301)
+            .SetSourceSessionId(BASELINE_LOCAL_SESSION_ID)
+            .SetTargetSessionId(BASELINE_PEER_SESSION_ID)
+            .SetBodySize(sizeof(uint64_t))
+            .Build();
+    const std::vector<uint8_t> shm_handle_body(sizeof(uint64_t), 0x22);
+    ASSERT_TRUE(!DAS::IsFailed(run_loop.PostSend(
+        shm_carrier_header,
+        std::vector<uint8_t>(shm_handle_body))));
+
+    EXPECT_EQ(assembly.GetProbe().DrainUntil(1, std::chrono::seconds(2)), 1u);
+    const BaselineObservation observation =
+        DisassembleObservation(assembly.GetProbe());
+    EXPECT_EQ(observation.standalone_add_ref_frames, 1u);
+    EXPECT_EQ(observation.embedded_add_ref_frames, 0u);
+    EXPECT_EQ(
+        observation.standalone_add_ref_frames
+            + observation.embedded_add_ref_frames,
+        1u);
+}
+
+// 四情形白名单 (iii)：溢出——body 使该载体只容得下两条 rider，第三条
+// 紧随独立发（恰一次溢出独立帧）
+TEST(PiggybackBaselineTest, WhitelistOverflowRidesPartialThenFlushesRemainder)
+{
+    BaselineAssembly assembly(true);
+    ASSERT_TRUE(assembly.IsHealthy());
+    auto& run_loop = assembly.GetRunLoop();
+
+    const DAS::Core::IPC::ObjectId overflow_object_ids[3] = {
+        DAS::Core::IPC::ObjectId{
+            .session_id = BASELINE_PEER_SESSION_ID,
+            .generation = 4,
+            .local_id = 0x2301},
+        DAS::Core::IPC::ObjectId{
+            .session_id = BASELINE_PEER_SESSION_ID,
+            .generation = 5,
+            .local_id = 0x2302},
+        DAS::Core::IPC::ObjectId{
+            .session_id = BASELINE_PEER_SESSION_ID,
+            .generation = 6,
+            .local_id = 0x2303}};
+    for (const auto& overflow_object_id : overflow_object_ids)
+    {
+        run_loop.EnqueueAddRef(overflow_object_id);
+    }
+    const size_t overflow_body_size = DAS::Core::IPC::LARGE_MESSAGE_THRESHOLD
+                                      - sizeof(DAS::Core::IPC::IPCMessageHeader)
+                                      - 3 * BASELINE_ADD_REF_FRAME_SIZE + 8;
+    const auto   overflow_carrier_header =
+        DAS::Core::IPC::IPCMessageHeaderBuilder()
+            .SetMessageType(DAS::Core::IPC::MessageType::Response)
+            .SetHeaderFlags(DAS::Core::IPC::HeaderFlags::NONE)
+            .SetInterfaceId(0x2304)
+            .SetCallId(302)
+            .SetSourceSessionId(BASELINE_LOCAL_SESSION_ID)
+            .SetTargetSessionId(BASELINE_PEER_SESSION_ID)
+            .SetBodySize(static_cast<uint32_t>(overflow_body_size))
+            .Build();
+    ASSERT_TRUE(!DAS::IsFailed(run_loop.PostSend(
+        overflow_carrier_header,
+        std::vector<uint8_t>(overflow_body_size, 0x23))));
+
+    EXPECT_EQ(assembly.GetProbe().DrainUntil(2, std::chrono::seconds(3)), 2u);
+    const BaselineObservation observation =
+        DisassembleObservation(assembly.GetProbe());
+    // 搭车帧携两条内嵌 + 溢出第三条独立
+    EXPECT_EQ(observation.embedded_add_ref_frames, 2u);
+    EXPECT_EQ(observation.standalone_add_ref_frames, 1u);
+    EXPECT_EQ(observation.carried_frame_count, 1u);
+    EXPECT_EQ(observation.business_frames, 1u);
+}
+
+// 四情形白名单 (iv)：外部线程物化 → 独立帧当次窗口出现（引用 104.2-08
+// T10 断言形态——集成侧重跑确认）
+TEST(
+    PiggybackBaselineTest,
+    WhitelistExternalThreadMaterializationSendsStandalone)
+{
+    BaselineAssembly assembly(true);
+    ASSERT_TRUE(assembly.IsHealthy());
+
+    // 测试主线程（非 BT、weak_ptr 空）物化 → D-19 分叉当场直发
+    const DAS::Core::IPC::ObjectId object_id{
+        .session_id = BASELINE_PEER_SESSION_ID,
+        .generation = 7,
+        .local_id = 0x2401};
+    auto [result, materialized_proxy] =
+        assembly.GetProxyFactory().GetOrCreateProxy(
+            assembly.GetRunLoop(),
+            {},
+            object_id,
+            DAS::Core::IPC::DasReadOnlyStringProxy::InterfaceId);
+    ASSERT_TRUE(!DAS::IsFailed(result));
+    ASSERT_TRUE(materialized_proxy);
+
+    // 独立帧当次窗口出现 + 全程零入队
+    EXPECT_EQ(assembly.GetProbe().DrainUntil(1, std::chrono::seconds(2)), 1u);
+    const BaselineObservation observation =
+        DisassembleObservation(assembly.GetProbe());
+    EXPECT_EQ(observation.standalone_add_ref_frames, 1u);
+    EXPECT_EQ(observation.embedded_add_ref_frames, 0u);
+    EXPECT_TRUE(assembly.GetRunLoop().PendingAddRefsEmpty());
+
+    materialized_proxy.Reset();
 }
