@@ -157,6 +157,12 @@ namespace Core
                 void InvokeOnAfterConnect(IIpcContext* ctx);
                 void RequestShutdown(HostShutdownReason reason);
 
+                /// 断连清扫：owner 侧 DOM 移除该 session 的全部 holder
+                /// 记账，被移除条目的对象本体 final Release 经
+                /// PostToBusinessThread 桥接回 BusinessThread（IO 线程
+                /// 调用——free-threaded DOM 表操作合法，真实对象析构留 BT）
+                void SweepSessionHolders(uint16_t session_id);
+
                 void StartParentProcessMonitor();
                 void StopParentProcessMonitor();
 

@@ -5,6 +5,7 @@
 #include <das/Core/IPC/BusinessControlRequestRaw.h>
 #include <das/Core/IPC/ConnectionManager.h>
 #include <das/Core/IPC/CurrentIpcContextScope.h>
+#include <das/Core/IPC/DasAsyncSender.h>
 #include <das/Core/IPC/DasProxyBase.h>
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/HandshakeSerialization.h>
@@ -232,7 +233,14 @@ namespace Core
                     [this]() { InvokeOnAfterConnect(this); });
 
                 handshake_handler_->SetOnClientDisconnected(
-                    [this](uint16_t /*session_id*/) { is_connected_ = false; });
+                    [this](uint16_t session_id)
+                    {
+                        is_connected_ = false;
+                        // 断连清扫（host 侧）：GOODBYE 与 HandshakeHandler
+                        // 析构两条触发链都会到达这里，owner 侧 DOM 清扫该
+                        // session 的 holder 记账，条目不再悬挂
+                        SweepSessionHolders(session_id);
+                    });
 
                 // 收到 GOODBYE 时请求进程退出
                 handshake_handler_->SetOnShutdownRequested(
@@ -828,6 +836,26 @@ namespace Core
                 // 1. 请求 runloop 停止；ConnectionManager 拥有的 transport 会在
                 //    run_loop_ 析构时自动清理。
                 run_loop_.RequestStop();
+            }
+
+            void IpcContext::SweepSessionHolders(uint16_t session_id)
+            {
+                // IO 线程执行（GOODBYE 协程 / HandshakeHandler 析构链）：
+                // DOM 为 free-threaded runtime table，表操作在 IO 域合法。
+                // 清扫只移除该断连 session 的 holder 记账，绝不动
+                // local_pins_——服务注册 pin 免疫伪造断连。被移除条目的
+                // 对象本体 final Release 经 MakeAsyncCallback move 捕获 +
+                // PostToBusinessThread 回 BusinessThread（真实对象析构不落
+                // IO 线程）；push 失败依赖其既有防御释放，停机期仅日志无害。
+                for (auto& object_to_release :
+                     proxy_factory_->GetObjectManager().RemoveSessionHolders(
+                         session_id))
+                {
+                    static_cast<void>(run_loop_.PostToBusinessThread(
+                        MakeAsyncCallback([released = std::move(
+                                               object_to_release)]() mutable {})
+                            .Get()));
+                }
             }
 
             void IpcContext::InvokeOnBeforeShutdown(HostShutdownReason reason)
