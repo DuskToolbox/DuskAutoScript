@@ -4,8 +4,10 @@
 #include <chrono>
 #include <cstring>
 #include <das/Core/IPC/AfUnixAvailable.h>
+#include <das/Core/IPC/AsyncIpcTransport.h>
 #include <das/Core/IPC/ConnectionManager.h>
 #include <das/Core/IPC/DistributedObjectManager.h>
+#include <das/Core/IPC/Handshake.h>
 #include <das/Core/IPC/IHostConnection.h>
 #include <das/Core/IPC/IMessageHandler.h>
 #include <das/Core/IPC/IpcCommandHandler.h>
@@ -1636,4 +1638,602 @@ TEST_F(IpcRunLoopTest, DisconnectClearsPendingAddRefsForThatSessionOnly)
 
     StopRunLoop(run_thread);
     static_cast<void>(runloop_->ClearPendingAddRefs(unrelated_session_id));
+}
+
+// ====== 双汇点搭车收敛（D-12 v3：闸1 搭车 / 闸2 先走 / 直通）======
+
+namespace
+{
+    constexpr uint32_t PIGGYBACK_TEST_HOST_INTERFACE_ID = 0x1234;
+    constexpr uint32_t PIGGYBACK_TEST_CALL_ID = 651;
+
+    // 汇点 A 的出站业务帧形态：本地起源的 RESPONSE（source = 本地、
+    // target = 对端——BT 响应 / proxy 请求同型）
+    ValidatedIPCMessageHeader MakeOutboundBusinessFrameHeader(
+        uint32_t    interface_id,
+        uint32_t    body_size,
+        MessageType message_type = MessageType::Response)
+    {
+        return IPCMessageHeaderBuilder()
+            .SetMessageType(message_type)
+            .SetHeaderFlags(DAS::Core::IPC::HeaderFlags::NONE)
+            .SetInterfaceId(interface_id)
+            .SetCallId(PIGGYBACK_TEST_CALL_ID)
+            .SetSourceSessionId(LOCAL_SESSION_ID)
+            .SetTargetSessionId(REMOTE_SESSION_ID)
+            .SetBodySize(body_size)
+            .Build();
+    }
+
+    constexpr size_t ADD_REF_FRAME_SIZE =
+        sizeof(IPCMessageHeader) + sizeof(DAS::Core::IPC::ObjectId);
+} // namespace
+
+// 09c 汇点 A 变体：PostSend 路径发普通小帧（如 BT 响应）且该 target 有
+// pending ADD_REF → 合格载体一帧带走——出站恰一帧、flags 含 bit1、
+// reserved = 段长、body = [扩展段][原 body]，内嵌帧完整可被剥离逻辑解析，
+// 零独立 130 帧
+TEST_F(IpcRunLoopTest, PiggybackRidesPendingOnPostSendBusinessFrame)
+{
+    using DAS::Core::IPC::ObjectId;
+
+    OutboundFrameProbe probe(runloop_->GetIoContext());
+    ASSERT_TRUE(probe.IsHealthy());
+    auto counterpart_transport = probe.TakeCounterpartTransport();
+    ASSERT_TRUE(counterpart_transport.has_value());
+    ASSERT_EQ(
+        runloop_->GetConnectionManager().RegisterHostLocalTransport(
+            REMOTE_SESSION_ID,
+            std::move(*counterpart_transport)),
+        DAS_S_OK);
+
+    const ObjectId object_id{
+        .session_id = REMOTE_SESSION_ID,
+        .generation = 3,
+        .local_id = 0x51};
+    runloop_->EnqueueAddRef(object_id);
+    EXPECT_EQ(runloop_->GetPendingAddRefCount(REMOTE_SESSION_ID), 1u);
+
+    const std::vector<uint8_t> response_body{0xDE, 0xAD, 0xBE, 0xEF};
+    ASSERT_EQ(
+        runloop_->PostSend(
+            MakeOutboundBusinessFrameHeader(
+                PIGGYBACK_TEST_HOST_INTERFACE_ID,
+                static_cast<uint32_t>(response_body.size())),
+            std::vector<uint8_t>(response_body)),
+        DAS_S_OK);
+
+    // 出站恰一帧（rider 内嵌）：零独立 130 帧
+    EXPECT_EQ(probe.DrainUntil(1, std::chrono::seconds(2)), 1u);
+    EXPECT_EQ(probe.DrainFor(std::chrono::milliseconds(200)), 0u);
+    EXPECT_EQ(probe.TotalFrameCount(), 1u);
+    EXPECT_EQ(
+        probe.CountByInterfaceId(
+            static_cast<uint32_t>(
+                DAS::Core::IPC::IpcCommandType::RemoteAddRef)),
+        0u);
+    EXPECT_EQ(runloop_->GetPendingAddRefCount(REMOTE_SESSION_ID), 0u);
+    EXPECT_TRUE(runloop_->PendingAddRefsEmpty());
+
+    const auto& frames = probe.Frames();
+    ASSERT_EQ(frames.size(), 1u);
+    // 宿主帧路由字段原样（call_id/source/target 不改——CallKey 不受影响）
+    EXPECT_EQ(
+        frames[0].header.GetInterfaceId(),
+        PIGGYBACK_TEST_HOST_INTERFACE_ID);
+    EXPECT_EQ(frames[0].header.GetCallId(), PIGGYBACK_TEST_CALL_ID);
+    EXPECT_EQ(frames[0].header.GetSourceSessionId(), LOCAL_SESSION_ID);
+    EXPECT_EQ(frames[0].header.GetTargetSessionId(), REMOTE_SESSION_ID);
+    // bit1 置位 + reserved = 段长 + body_size 含段
+    EXPECT_NE(
+        frames[0].header.GetFlags()
+            & DAS::Core::IPC::MessageFlags::RESERVED_AS_SIZE,
+        0);
+    EXPECT_EQ(frames[0].header.Raw().reserved, ADD_REF_FRAME_SIZE);
+    EXPECT_EQ(
+        frames[0].header.GetBodySize(),
+        ADD_REF_FRAME_SIZE + response_body.size());
+    ASSERT_EQ(frames[0].body.size(), ADD_REF_FRAME_SIZE + response_body.size());
+    // body = [扩展段][原 body]
+    EXPECT_EQ(
+        std::memcmp(
+            frames[0].body.data() + ADD_REF_FRAME_SIZE,
+            response_body.data(),
+            response_body.size()),
+        0);
+
+    // 内嵌帧完整可被 104.2-06 剥离逻辑解析：header 合法、接口/target 正确、
+    // 自身不置 bit1（深度=1 发送侧规则）
+    DAS::Core::IPC::HeaderValidationResult embedded_error;
+    const auto embedded_header = ValidatedIPCMessageHeader::Deserialize(
+        frames[0].body.data(),
+        sizeof(IPCMessageHeader),
+        &embedded_error);
+    ASSERT_TRUE(embedded_header.has_value());
+    EXPECT_EQ(
+        embedded_header->GetInterfaceId(),
+        static_cast<uint32_t>(DAS::Core::IPC::IpcCommandType::RemoteAddRef));
+    EXPECT_EQ(
+        embedded_header->GetFlags()
+            & DAS::Core::IPC::MessageFlags::RESERVED_AS_SIZE,
+        0);
+    EXPECT_EQ(embedded_header->GetTargetSessionId(), REMOTE_SESSION_ID);
+    ObjectId embedded_object_id{};
+    ASSERT_EQ(
+        frames[0].body.size() - sizeof(IPCMessageHeader),
+        sizeof(ObjectId));
+    std::memcpy(
+        &embedded_object_id,
+        frames[0].body.data() + sizeof(IPCMessageHeader),
+        sizeof(ObjectId));
+    EXPECT_EQ(embedded_object_id.session_id, object_id.session_id);
+    EXPECT_EQ(embedded_object_id.generation, object_id.generation);
+    EXPECT_EQ(embedded_object_id.local_id, object_id.local_id);
+
+    probe.Shutdown();
+}
+
+// 09h 汇点 B 变体：PostSendWithTransport 路径（IO HostConnection 路由响应）
+// 发帧且该 target 有 pending → 搭车同样生效——漏挂第二汇点即本用例红
+TEST_F(IpcRunLoopTest, PiggybackRidesPendingOnPostSendWithTransportResponse)
+{
+    using DAS::Core::IPC::ObjectId;
+
+    OutboundFrameProbe probe(runloop_->GetIoContext());
+    ASSERT_TRUE(probe.IsHealthy());
+    auto counterpart_transport = probe.TakeCounterpartTransport();
+    ASSERT_TRUE(counterpart_transport.has_value());
+
+    // 汇点 B 的帧形态：IO 控制面响应（CONTROL_PLANE RESPONSE，source=本地）
+    const DAS::DasPtr<IHostConnection> host(new TestInternalHost(
+        runloop_->GetIoContext(),
+        REMOTE_SESSION_ID,
+        *counterpart_transport));
+
+    const ObjectId object_id{
+        .session_id = REMOTE_SESSION_ID,
+        .generation = 4,
+        .local_id = 0x52};
+    runloop_->EnqueueAddRef(object_id);
+    EXPECT_EQ(runloop_->GetPendingAddRefCount(REMOTE_SESSION_ID), 1u);
+
+    const std::vector<uint8_t> response_body{0x11, 0x22};
+    const auto                 response_header =
+        IPCMessageHeaderBuilder()
+            .SetMessageType(MessageType::Response)
+            .SetControlPlaneCommand(
+                DAS::Core::IPC::HandshakeInterfaceId::HandshakeIfaceHeartbeat)
+            .SetCallId(652)
+            .SetSourceSessionId(LOCAL_SESSION_ID)
+            .SetTargetSessionId(REMOTE_SESSION_ID)
+            .SetBodySize(static_cast<uint32_t>(response_body.size()))
+            .Build();
+    ASSERT_EQ(
+        runloop_->PostSendWithTransport(
+            host,
+            response_header,
+            std::vector<uint8_t>(response_body)),
+        DAS_S_OK);
+
+    // 汇点 B 同样一帧带走：bit1 + reserved + [扩展段][原 body]
+    EXPECT_EQ(probe.DrainUntil(1, std::chrono::seconds(2)), 1u);
+    EXPECT_EQ(probe.TotalFrameCount(), 1u);
+    EXPECT_EQ(
+        probe.CountByInterfaceId(
+            static_cast<uint32_t>(
+                DAS::Core::IPC::IpcCommandType::RemoteAddRef)),
+        0u);
+    EXPECT_EQ(runloop_->GetPendingAddRefCount(REMOTE_SESSION_ID), 0u);
+
+    const auto& frames = probe.Frames();
+    ASSERT_EQ(frames.size(), 1u);
+    EXPECT_EQ(
+        frames[0].header.GetInterfaceId(),
+        static_cast<uint32_t>(
+            DAS::Core::IPC::HandshakeInterfaceId::HandshakeIfaceHeartbeat));
+    EXPECT_NE(
+        frames[0].header.GetFlags()
+            & DAS::Core::IPC::MessageFlags::RESERVED_AS_SIZE,
+        0);
+    EXPECT_EQ(frames[0].header.Raw().reserved, ADD_REF_FRAME_SIZE);
+    ASSERT_EQ(frames[0].body.size(), ADD_REF_FRAME_SIZE + response_body.size());
+    EXPECT_EQ(
+        std::memcmp(
+            frames[0].body.data() + ADD_REF_FRAME_SIZE,
+            response_body.data(),
+            response_body.size()),
+        0);
+
+    probe.Shutdown();
+}
+
+// 09d 先走（阈值变体）：拼完（header + body + 段总和）达到
+// LARGE_MESSAGE_THRESHOLD 的载体不合格 → pending 全部先独立发（FIFO）、
+// 随后本帧独立发出，全部无 bit1
+TEST_F(IpcRunLoopTest, FlushFirstWhenAssembledSizeReachesThreshold)
+{
+    using DAS::Core::IPC::ObjectId;
+
+    OutboundFrameProbe probe(runloop_->GetIoContext());
+    ASSERT_TRUE(probe.IsHealthy());
+    auto counterpart_transport = probe.TakeCounterpartTransport();
+    ASSERT_TRUE(counterpart_transport.has_value());
+    ASSERT_EQ(
+        runloop_->GetConnectionManager().RegisterHostLocalTransport(
+            REMOTE_SESSION_ID,
+            std::move(*counterpart_transport)),
+        DAS_S_OK);
+
+    const ObjectId object_id_one{
+        .session_id = REMOTE_SESSION_ID,
+        .generation = 5,
+        .local_id = 0x61};
+    const ObjectId object_id_two{
+        .session_id = REMOTE_SESSION_ID,
+        .generation = 6,
+        .local_id = 0x62};
+    runloop_->EnqueueAddRef(object_id_one);
+    runloop_->EnqueueAddRef(object_id_two);
+
+    // body 使 header + body + 任一 rider 都达到阈值 → 先走
+    const std::vector<uint8_t> large_body(
+        DAS::Core::IPC::LARGE_MESSAGE_THRESHOLD - sizeof(IPCMessageHeader) - 4,
+        0x33);
+    ASSERT_EQ(
+        runloop_->PostSend(
+            MakeOutboundBusinessFrameHeader(
+                PIGGYBACK_TEST_HOST_INTERFACE_ID,
+                static_cast<uint32_t>(large_body.size())),
+            std::vector<uint8_t>(large_body)),
+        DAS_S_OK);
+
+    // FIFO：两条 130 先独立、随后宿主帧独立
+    EXPECT_EQ(probe.DrainUntil(3, std::chrono::seconds(3)), 3u);
+    EXPECT_EQ(probe.TotalFrameCount(), 3u);
+    EXPECT_EQ(
+        probe.InterfaceIdOrder(),
+        (std::vector<uint32_t>{
+            static_cast<uint32_t>(DAS::Core::IPC::IpcCommandType::RemoteAddRef),
+            static_cast<uint32_t>(DAS::Core::IPC::IpcCommandType::RemoteAddRef),
+            PIGGYBACK_TEST_HOST_INTERFACE_ID}));
+    for (const auto& frame : probe.Frames())
+    {
+        EXPECT_EQ(
+            frame.header.GetFlags()
+                & DAS::Core::IPC::MessageFlags::RESERVED_AS_SIZE,
+            0);
+    }
+    // 宿主 body 完整（拒绝拼装不等于丢帧）
+    const auto& host_frame = probe.Frames().back();
+    ASSERT_EQ(host_frame.body.size(), large_body.size());
+    EXPECT_EQ(host_frame.body.front(), 0x33);
+    EXPECT_EQ(host_frame.body.back(), 0x33);
+    EXPECT_EQ(runloop_->GetPendingAddRefCount(REMOTE_SESSION_ID), 0u);
+
+    probe.Shutdown();
+}
+
+// 09d 先走（SHM 变体）：LARGE_MESSAGE_VIA_SHM 帧永不携段（SHM 互斥发送侧
+// 规则）——pending 先独立发。探针接收侧无 SHM pool，SHM 宿主帧自身会被
+// 接收防御丢弃（互斥防御本身），仅断言 riders 的独立形态与顺序
+TEST_F(IpcRunLoopTest, FlushFirstWhenCarrierIsShmFrame)
+{
+    using DAS::Core::IPC::ObjectId;
+
+    OutboundFrameProbe probe(runloop_->GetIoContext());
+    ASSERT_TRUE(probe.IsHealthy());
+    auto counterpart_transport = probe.TakeCounterpartTransport();
+    ASSERT_TRUE(counterpart_transport.has_value());
+    ASSERT_EQ(
+        runloop_->GetConnectionManager().RegisterHostLocalTransport(
+            REMOTE_SESSION_ID,
+            std::move(*counterpart_transport)),
+        DAS_S_OK);
+
+    const ObjectId object_id{
+        .session_id = REMOTE_SESSION_ID,
+        .generation = 7,
+        .local_id = 0x63};
+    runloop_->EnqueueAddRef(object_id);
+
+    const auto shm_carrier_header =
+        IPCMessageHeaderBuilder()
+            .SetMessageType(MessageType::Response)
+            .SetHeaderFlags(DAS::Core::IPC::HeaderFlags::LARGE_MESSAGE_VIA_SHM)
+            .SetInterfaceId(PIGGYBACK_TEST_HOST_INTERFACE_ID)
+            .SetCallId(PIGGYBACK_TEST_CALL_ID)
+            .SetSourceSessionId(LOCAL_SESSION_ID)
+            .SetTargetSessionId(REMOTE_SESSION_ID)
+            .SetBodySize(sizeof(uint64_t))
+            .Build();
+    const std::vector<uint8_t> shm_handle_body(sizeof(uint64_t), 0x44);
+    ASSERT_EQ(
+        runloop_->PostSend(
+            shm_carrier_header,
+            std::vector<uint8_t>(shm_handle_body)),
+        DAS_S_OK);
+
+    // rider 先独立到达（FIFO 在 SHM 宿主帧之前）、无 bit1
+    EXPECT_EQ(probe.DrainUntil(1, std::chrono::seconds(2)), 1u);
+    EXPECT_EQ(probe.TotalFrameCount(), 1u);
+    const auto& rider_frame = probe.Frames()[0];
+    EXPECT_EQ(
+        rider_frame.header.GetInterfaceId(),
+        static_cast<uint32_t>(DAS::Core::IPC::IpcCommandType::RemoteAddRef));
+    EXPECT_EQ(
+        rider_frame.header.GetFlags()
+            & DAS::Core::IPC::MessageFlags::RESERVED_AS_SIZE,
+        0);
+    EXPECT_EQ(runloop_->GetPendingAddRefCount(REMOTE_SESSION_ID), 0u);
+
+    probe.Shutdown();
+}
+
+// 09d 先走（转发帧变体，A7 定稿）：source 非本地的原样透传帧为不合格
+// 载体（转发是不透明搬运，不动其 body）——该 target 的 pending 先独立走
+TEST_F(IpcRunLoopTest, FlushFirstWhenCarrierIsForwardedFrame)
+{
+    using DAS::Core::IPC::ObjectId;
+
+    OutboundFrameProbe probe(runloop_->GetIoContext());
+    ASSERT_TRUE(probe.IsHealthy());
+    auto counterpart_transport = probe.TakeCounterpartTransport();
+    ASSERT_TRUE(counterpart_transport.has_value());
+
+    constexpr uint16_t                 third_party_session_id = 5;
+    const DAS::DasPtr<IHostConnection> host(new TestInternalHost(
+        runloop_->GetIoContext(),
+        REMOTE_SESSION_ID,
+        *counterpart_transport));
+
+    // 转发帧形态：source = 原发送方（非本地）、target = 第三方
+    const ObjectId third_party_object_id{
+        .session_id = third_party_session_id,
+        .generation = 8,
+        .local_id = 0x64};
+    runloop_->EnqueueAddRef(third_party_object_id);
+    EXPECT_EQ(runloop_->GetPendingAddRefCount(third_party_session_id), 1u);
+
+    const auto forwarded_header =
+        IPCMessageHeaderBuilder()
+            .SetMessageType(MessageType::Request)
+            .SetHeaderFlags(DAS::Core::IPC::HeaderFlags::NONE)
+            .SetInterfaceId(0x1236)
+            .SetCallId(653)
+            .SetSourceSessionId(REMOTE_SESSION_ID)
+            .SetTargetSessionId(third_party_session_id)
+            .SetBodySize(4)
+            .Build();
+    const std::vector<uint8_t> forwarded_body{0x55, 0x66, 0x77, 0x88};
+    ASSERT_EQ(
+        runloop_->PostSendWithTransport(
+            host,
+            forwarded_header,
+            std::vector<uint8_t>(forwarded_body)),
+        DAS_S_OK);
+
+    // 该 target 的 pending 先独立走（FIFO），随后转发帧原样独立发出
+    EXPECT_EQ(probe.DrainUntil(2, std::chrono::seconds(2)), 2u);
+    EXPECT_EQ(probe.TotalFrameCount(), 2u);
+    EXPECT_EQ(
+        probe.InterfaceIdOrder(),
+        (std::vector<uint32_t>{
+            static_cast<uint32_t>(DAS::Core::IPC::IpcCommandType::RemoteAddRef),
+            0x1236}));
+    const auto& rider_frame = probe.Frames()[0];
+    EXPECT_EQ(rider_frame.header.GetTargetSessionId(), third_party_session_id);
+    EXPECT_EQ(
+        rider_frame.header.GetFlags()
+            & DAS::Core::IPC::MessageFlags::RESERVED_AS_SIZE,
+        0);
+    // 转发帧不被改写：无 bit1、body 原样
+    const auto& forwarded_wire_frame = probe.Frames()[1];
+    EXPECT_EQ(
+        forwarded_wire_frame.header.GetFlags()
+            & DAS::Core::IPC::MessageFlags::RESERVED_AS_SIZE,
+        0);
+    EXPECT_EQ(forwarded_wire_frame.body, forwarded_body);
+    EXPECT_EQ(runloop_->GetPendingAddRefCount(third_party_session_id), 0u);
+
+    probe.Shutdown();
+}
+
+// 09d 溢出：pending 超阈值溢出 → 部分搭车、溢出部分紧随本帧独立发
+TEST_F(IpcRunLoopTest, OverflowRidersFollowStandaloneAfterCarryingHost)
+{
+    using DAS::Core::IPC::ObjectId;
+
+    OutboundFrameProbe probe(runloop_->GetIoContext());
+    ASSERT_TRUE(probe.IsHealthy());
+    auto counterpart_transport = probe.TakeCounterpartTransport();
+    ASSERT_TRUE(counterpart_transport.has_value());
+    ASSERT_EQ(
+        runloop_->GetConnectionManager().RegisterHostLocalTransport(
+            REMOTE_SESSION_ID,
+            std::move(*counterpart_transport)),
+        DAS_S_OK);
+
+    const ObjectId object_ids[3] = {
+        ObjectId{
+            .session_id = REMOTE_SESSION_ID,
+            .generation = 9,
+            .local_id = 0x71},
+        ObjectId{
+            .session_id = REMOTE_SESSION_ID,
+            .generation = 10,
+            .local_id = 0x72},
+        ObjectId{
+            .session_id = REMOTE_SESSION_ID,
+            .generation = 11,
+            .local_id = 0x73}};
+    for (const ObjectId& object_id : object_ids)
+    {
+        runloop_->EnqueueAddRef(object_id);
+    }
+
+    // header(32) + body + 每条 rider(40) < 阈值 才搭：该 body 只容得下
+    // 两条 rider（32 + body + 2*40 < 65536 ≤ 32 + body + 3*40）
+    const size_t host_body_size = DAS::Core::IPC::LARGE_MESSAGE_THRESHOLD
+                                  - sizeof(IPCMessageHeader)
+                                  - 3 * ADD_REF_FRAME_SIZE + 8;
+    const std::vector<uint8_t> host_body(host_body_size, 0x21);
+    ASSERT_EQ(
+        runloop_->PostSend(
+            MakeOutboundBusinessFrameHeader(
+                PIGGYBACK_TEST_HOST_INTERFACE_ID,
+                static_cast<uint32_t>(host_body.size())),
+            std::vector<uint8_t>(host_body)),
+        DAS_S_OK);
+
+    // 搭车帧（携两条内嵌）先出、溢出的第三条紧随独立发
+    EXPECT_EQ(probe.DrainUntil(2, std::chrono::seconds(3)), 2u);
+    EXPECT_EQ(probe.TotalFrameCount(), 2u);
+    EXPECT_EQ(
+        probe.InterfaceIdOrder(),
+        (std::vector<uint32_t>{
+            PIGGYBACK_TEST_HOST_INTERFACE_ID,
+            static_cast<uint32_t>(
+                DAS::Core::IPC::IpcCommandType::RemoteAddRef)}));
+
+    const auto& carrying_frame = probe.Frames()[0];
+    EXPECT_NE(
+        carrying_frame.header.GetFlags()
+            & DAS::Core::IPC::MessageFlags::RESERVED_AS_SIZE,
+        0);
+    EXPECT_EQ(carrying_frame.header.Raw().reserved, 2 * ADD_REF_FRAME_SIZE);
+    ASSERT_EQ(
+        carrying_frame.body.size(),
+        2 * ADD_REF_FRAME_SIZE + host_body.size());
+    // 溢出的第三条独立形态
+    const auto& overflow_frame = probe.Frames()[1];
+    EXPECT_EQ(
+        overflow_frame.header.GetInterfaceId(),
+        static_cast<uint32_t>(DAS::Core::IPC::IpcCommandType::RemoteAddRef));
+    EXPECT_EQ(
+        overflow_frame.header.GetFlags()
+            & DAS::Core::IPC::MessageFlags::RESERVED_AS_SIZE,
+        0);
+    ObjectId overflow_object_id{};
+    ASSERT_EQ(overflow_frame.body.size(), sizeof(ObjectId));
+    std::memcpy(
+        &overflow_object_id,
+        overflow_frame.body.data(),
+        sizeof(ObjectId));
+    EXPECT_EQ(overflow_object_id.local_id, object_ids[2].local_id);
+    EXPECT_EQ(runloop_->GetPendingAddRefCount(REMOTE_SESSION_ID), 0u);
+
+    probe.Shutdown();
+}
+
+// RELEASE 独立：RemoteRelease 出站永不携扩展段、不入队不等待——
+// pending 在其前先 flush（回收路径不能等载体）
+TEST_F(IpcRunLoopTest, RemoteReleaseFlushesPendingFirstAndNeverCarries)
+{
+    using DAS::Core::IPC::ObjectId;
+
+    OutboundFrameProbe probe(runloop_->GetIoContext());
+    ASSERT_TRUE(probe.IsHealthy());
+    auto counterpart_transport = probe.TakeCounterpartTransport();
+    ASSERT_TRUE(counterpart_transport.has_value());
+    ASSERT_EQ(
+        runloop_->GetConnectionManager().RegisterHostLocalTransport(
+            REMOTE_SESSION_ID,
+            std::move(*counterpart_transport)),
+        DAS_S_OK);
+
+    const ObjectId object_id{
+        .session_id = REMOTE_SESSION_ID,
+        .generation = 12,
+        .local_id = 0x81};
+    runloop_->EnqueueAddRef(object_id);
+
+    const auto release_header =
+        IPCMessageHeaderBuilder()
+            .SetMessageType(MessageType::Event)
+            .SetControlPlaneCommand(
+                DAS::Core::IPC::IpcCommandType::RemoteRelease)
+            .SetSourceSessionId(LOCAL_SESSION_ID)
+            .SetTargetSessionId(REMOTE_SESSION_ID)
+            .SetBodySize(static_cast<uint32_t>(sizeof(ObjectId)))
+            .Build();
+    ASSERT_EQ(
+        runloop_->PostSend(release_header, EncodeObjectIdBody(object_id)),
+        DAS_S_OK);
+
+    // pending 先独立发（FIFO），RELEASE 随后独立、永不携段
+    EXPECT_EQ(probe.DrainUntil(2, std::chrono::seconds(2)), 2u);
+    EXPECT_EQ(probe.TotalFrameCount(), 2u);
+    EXPECT_EQ(
+        probe.InterfaceIdOrder(),
+        (std::vector<uint32_t>{
+            static_cast<uint32_t>(DAS::Core::IPC::IpcCommandType::RemoteAddRef),
+            static_cast<uint32_t>(
+                DAS::Core::IPC::IpcCommandType::RemoteRelease)}));
+    const auto& release_frame = probe.Frames()[1];
+    EXPECT_EQ(
+        release_frame.header.GetFlags()
+            & DAS::Core::IPC::MessageFlags::RESERVED_AS_SIZE,
+        0);
+    EXPECT_EQ(release_frame.body, EncodeObjectIdBody(object_id));
+    EXPECT_EQ(runloop_->GetPendingAddRefCount(REMOTE_SESSION_ID), 0u);
+
+    probe.Shutdown();
+}
+
+// A/B 直通：SetPiggybackEnabled(false) → helper 直通零开销——业务帧独立
+// 原样发出、pending 不被带走（保留在队列，由既有出清机制处理）
+TEST_F(IpcRunLoopTest, DisabledPiggybackPassesBusinessFramesThrough)
+{
+    using DAS::Core::IPC::ObjectId;
+
+    OutboundFrameProbe probe(runloop_->GetIoContext());
+    ASSERT_TRUE(probe.IsHealthy());
+    auto counterpart_transport = probe.TakeCounterpartTransport();
+    ASSERT_TRUE(counterpart_transport.has_value());
+    ASSERT_EQ(
+        runloop_->GetConnectionManager().RegisterHostLocalTransport(
+            REMOTE_SESSION_ID,
+            std::move(*counterpart_transport)),
+        DAS_S_OK);
+
+    runloop_->SetPiggybackEnabled(false);
+
+    const ObjectId object_id{
+        .session_id = REMOTE_SESSION_ID,
+        .generation = 13,
+        .local_id = 0x91};
+    runloop_->EnqueueAddRef(object_id);
+
+    const std::vector<uint8_t> response_body{0x0A, 0x0B, 0x0C};
+    ASSERT_EQ(
+        runloop_->PostSend(
+            MakeOutboundBusinessFrameHeader(
+                PIGGYBACK_TEST_HOST_INTERFACE_ID,
+                static_cast<uint32_t>(response_body.size())),
+            std::vector<uint8_t>(response_body)),
+        DAS_S_OK);
+
+    // 段 A 行为：一帧独立、无 bit1、body 原样；pending 不被带走
+    EXPECT_EQ(probe.DrainUntil(1, std::chrono::seconds(2)), 1u);
+    EXPECT_EQ(probe.TotalFrameCount(), 1u);
+    const auto& frames = probe.Frames();
+    ASSERT_EQ(frames.size(), 1u);
+    EXPECT_EQ(
+        frames[0].header.GetFlags()
+            & DAS::Core::IPC::MessageFlags::RESERVED_AS_SIZE,
+        0);
+    EXPECT_EQ(frames[0].body, response_body);
+    EXPECT_EQ(runloop_->GetPendingAddRefCount(REMOTE_SESSION_ID), 1u);
+
+    // 队列仍由既有出清机制处理（独立帧形态）
+    runloop_->SetPiggybackEnabled(true);
+    EXPECT_EQ(runloop_->FlushPendingStandalone(), 1u);
+    EXPECT_EQ(probe.DrainUntil(1, std::chrono::seconds(2)), 1u);
+    EXPECT_EQ(
+        probe.CountByInterfaceId(
+            static_cast<uint32_t>(
+                DAS::Core::IPC::IpcCommandType::RemoteAddRef)),
+        1u);
+
+    probe.Shutdown();
 }
