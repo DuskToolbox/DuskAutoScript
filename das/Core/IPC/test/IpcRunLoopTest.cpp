@@ -151,10 +151,9 @@ namespace
                 .SetTargetSessionId(LOCAL_SESSION_ID)
                 .SetBodySize(static_cast<uint32_t>(sizeof(object_id)))
                 .Build();
-        std::vector<uint8_t> frame;
-        const auto* header_bytes = static_cast<const IPCMessageHeader*>(header);
-        frame.insert(
-            frame.end(),
+        const auto* header_bytes = reinterpret_cast<const uint8_t*>(
+            static_cast<const IPCMessageHeader*>(header));
+        std::vector<uint8_t> frame(
             header_bytes,
             header_bytes + sizeof(IPCMessageHeader));
         const auto object_body = EncodeObjectIdBody(object_id);

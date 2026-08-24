@@ -35,6 +35,14 @@ namespace MessageFlags
     /// bit0: 响应体数据在共享内存中（body 包含 SHM handle + size 而非 raw
     /// data）
     constexpr uint16_t SHM_RESPONSE = 0x0001;
+    /// bit1: 捎带协议扩展段标志
+    /// 置位时 reserved 字段 = 扩展段总字节数，body 布局 =
+    /// [扩展段][正常 body]（头置正序解释）；扩展段 = 若干完整内嵌帧
+    /// （32B header + body 连续拼接，body_size 自描述），接收端在
+    /// RouteIncomingMessage 剥离后递归分发。
+    /// 硬约束：与 HeaderFlags::LARGE_MESSAGE_VIA_SHM 互斥（SHM 帧
+    /// reserved 恒 0）；嵌套深度 = 1（内嵌帧禁止再置本标志）。
+    constexpr uint16_t RESERVED_AS_SIZE = 0x0002;
 } // namespace MessageFlags
 
 /// @brief IPC 消息类型

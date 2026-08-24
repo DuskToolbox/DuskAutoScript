@@ -81,6 +81,16 @@ CallKey call_key{
 
 调用 `SetErrorCode(error_code)` 会自动将 `message_type` 设为 `RESPONSE`，无需手动 `SetMessageType(MessageType::RESPONSE)`。
 
+### 规则 5: RESERVED_AS_SIZE（捎带扩展段）协议约束
+
+`MessageFlags::RESERVED_AS_SIZE = 0x0002` 置位时：`reserved` 字段 = 扩展段总字节数，body 布局 = `[扩展段][正常 body]`（头置正序解释）；扩展段 = 若干完整内嵌帧（32B header + body 连续拼接，`body_size` 自描述循环剥取）。
+
+- 接收端剥离入口：`IpcRunLoop::RouteIncomingMessage` 头部（IO 协程域即时提取，分发/转发判断之前）。内嵌帧 header 经 `ValidatedIPCMessageHeader::Deserialize` 构造后递归走同一 `RouteIncomingMessage`（校验/分流/转发/日志全复用）；在途转发帧整帧原样透传（转发是不透明字节搬运），由终点递归剥离。
+- 硬约束（`IpcHeaderValidator::ValidateExtensionSection` / `ValidateExtensionDepth`，任一违反整帧丢弃 + WARN）：
+  - 与 `HeaderFlags::LARGE_MESSAGE_VIA_SHM` 互斥（SHM 帧 reserved 恒 0；Win32/Unix 传输 4 处 SHM 重建点对 bit1 置位帧防御丢弃）；
+  - `0 < section_size <= body_size`（越界 fail-closed）；
+  - 嵌套深度 = 1（内嵌帧禁止再置本标志）。
+
 ## 关键文件索引
 
 | 文件 | 内容 |

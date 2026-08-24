@@ -36,6 +36,11 @@ enum class HeaderValidationError : uint8_t
 
     // 调用校验
     UnknownCallId,
+
+    // 扩展段（捎带协议）校验
+    ExtensionSectionShmConflict,
+    InvalidExtensionSectionSize,
+    NestedExtensionSection,
 };
 
 /// @brief 调用点信息（用于日志）
@@ -353,6 +358,91 @@ public:
         return {};
     }
 
+    /// @brief 扩展段（捎带协议）规则校验
+    ///
+    /// RESERVED_AS_SIZE 置位时 reserved 为扩展段总字节数、body 布局 =
+    /// [扩展段][正常 body]。三连硬约束（fail-closed，任一违反整帧拒绝）：
+    /// (a) 与 LARGE_MESSAGE_VIA_SHM 互斥（SHM 帧 reserved 恒 0）；
+    /// (b) reserved 大于 0 且不超过 body_size（越界整帧丢弃，DoS 面）；
+    /// (c) bit1 置位但 reserved 为 0 判非法（SHM 往返清零防御——
+    ///     拼装规则保证合法发送端永不产生该组合）。
+    /// bit1 未置位时本规则无约束（纯 inline 帧）。
+    ///
+    /// @param flags 消息 flags（RESERVED_AS_SIZE 所在字段）
+    /// @param reserved 扩展段总字节数（帧级 reserved 字段）
+    /// @param body_size 可用 body 字节数（接收点传实际持有长度）
+    /// @param header_flags 消息 header_flags（LARGE_MESSAGE_VIA_SHM 所在字段）
+    [[nodiscard]]
+    static HeaderValidationResult ValidateExtensionSection(
+        uint16_t             flags,
+        uint32_t             reserved,
+        uint32_t             body_size,
+        uint8_t              header_flags,
+        std::source_location loc = std::source_location::current()) noexcept
+    {
+        if ((flags & MessageFlags::RESERVED_AS_SIZE) == 0)
+        {
+            return {};
+        }
+
+        if ((header_flags & HeaderFlags::LARGE_MESSAGE_VIA_SHM) != 0)
+        {
+            return {
+                HeaderValidationError::ExtensionSectionShmConflict,
+                "RESERVED_AS_SIZE conflicts with LARGE_MESSAGE_VIA_SHM",
+                ValidationCallSite{
+                    loc.file_name(),
+                    loc.function_name(),
+                    static_cast<int>(loc.line())}};
+        }
+
+        if (reserved == 0)
+        {
+            return {
+                HeaderValidationError::InvalidExtensionSectionSize,
+                "Extension section size is zero with flag set",
+                ValidationCallSite{
+                    loc.file_name(),
+                    loc.function_name(),
+                    static_cast<int>(loc.line())}};
+        }
+
+        if (reserved > body_size)
+        {
+            return {
+                HeaderValidationError::InvalidExtensionSectionSize,
+                "Extension section size exceeds body size",
+                ValidationCallSite{
+                    loc.file_name(),
+                    loc.function_name(),
+                    static_cast<int>(loc.line())}};
+        }
+
+        return {};
+    }
+
+    /// @brief 嵌套深度=1 硬约束：内嵌帧禁止再置 RESERVED_AS_SIZE
+    /// @param embedded_flags 内嵌帧 header 的 flags 字段
+    /// @note 剥离循环对每个内嵌 header 施加（单一事实源在校验器）
+    [[nodiscard]]
+    static HeaderValidationResult ValidateExtensionDepth(
+        uint16_t             embedded_flags,
+        std::source_location loc = std::source_location::current()) noexcept
+    {
+        if ((embedded_flags & MessageFlags::RESERVED_AS_SIZE) != 0)
+        {
+            return {
+                HeaderValidationError::NestedExtensionSection,
+                "Nested extension section exceeds depth limit of 1",
+                ValidationCallSite{
+                    loc.file_name(),
+                    loc.function_name(),
+                    static_cast<int>(loc.line())}};
+        }
+
+        return {};
+    }
+
     // ==================== Call ID 校验使用示例 ====================
     //
     // // 定义静态回调函数（IPC 是顺序无锁的，不需要加锁）
@@ -421,6 +511,12 @@ inline const char* HeaderValidationResult::GetErrorName() const noexcept
         return "INVALID_TARGET_SESSION_ID";
     case HeaderValidationError::UnknownCallId:
         return "UNKNOWN_CALL_ID";
+    case HeaderValidationError::ExtensionSectionShmConflict:
+        return "EXTENSION_SECTION_SHM_CONFLICT";
+    case HeaderValidationError::InvalidExtensionSectionSize:
+        return "INVALID_EXTENSION_SECTION_SIZE";
+    case HeaderValidationError::NestedExtensionSection:
+        return "NESTED_EXTENSION_SECTION";
     default:
         return "UNKNOWN";
     }
