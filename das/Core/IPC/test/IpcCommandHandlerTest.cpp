@@ -363,6 +363,82 @@ TEST_F(IpcCommandHandlerTest, LookupByInterface_NotFound)
     EXPECT_EQ(result, DAS_E_IPC_OBJECT_NOT_FOUND);
 }
 
+// 同 session 重复 lookup（ByName / ByInterface）：零记账——对端物化配额由
+// 物化申报持有，owner 不做本地 +1 猜测。观测锚点 = 条目回收：单次物化/
+// 消亡 + 服务注销即归零，重复 lookup 产生的名额会让条目悬挂。
+TEST_F(IpcCommandHandlerTest, RepeatedLookupsAddNoAccounting)
+{
+    const DasGuid iid = CreateTestGuid(
+        0x12345678,
+        0x1234,
+        0x5678,
+        0x12,
+        0x34,
+        0x56,
+        0x78,
+        0x9A,
+        0xBC,
+        0xDE,
+        0xF0);
+
+    MockDasObject* mock = new MockDasObject();
+    ObjectId       obj_id{};
+    ASSERT_EQ(object_manager_.RegisterLocalObject(mock, obj_id), DAS_S_OK);
+    registry_.RegisterObject(obj_id, iid, 1, "test_object", 1);
+
+    std::vector<uint8_t> by_name_payload;
+    AppendString(by_name_payload, "test_object");
+    std::vector<uint8_t> by_interface_payload;
+    AppendToBuffer(by_interface_payload, iid);
+
+    const auto by_name_header = MakeHeader(IpcCommandType::LookupByName);
+    const auto by_interface_header =
+        MakeHeader(IpcCommandType::LookupByInterface);
+
+    const size_t entry_count_before = object_manager_.GetLocalEntryCount();
+
+    for (int lookup_round = 0; lookup_round < 3; ++lookup_round)
+    {
+        IpcCommandResponse name_response;
+        ASSERT_EQ(
+            handler_
+                .HandleCommand(by_name_header, by_name_payload, name_response),
+            DAS_S_OK);
+        IpcCommandResponse interface_response;
+        ASSERT_EQ(
+            handler_.HandleCommand(
+                by_interface_header,
+                by_interface_payload,
+                interface_response),
+            DAS_S_OK);
+    }
+
+    // 重复 lookup 零记账：条目数与远端 holder 数均不增长
+    EXPECT_EQ(object_manager_.GetLocalEntryCount(), entry_count_before);
+    EXPECT_EQ(object_manager_.GetRemoteHolderCount(obj_id), 0u);
+
+    constexpr uint16_t peer_session_id = 5;
+    ASSERT_EQ(
+        object_manager_.AddRemoteHolder(obj_id, peer_session_id),
+        DAS_S_OK);
+
+    DAS::DasPtr<IDasBase> pin_released_object;
+    ASSERT_EQ(
+        object_manager_.UnregisterLocalPin(obj_id, pin_released_object),
+        DAS_S_OK);
+
+    DAS::DasPtr<IDasBase> holder_released_object;
+    ASSERT_EQ(
+        object_manager_.ReleaseRemoteHolder(
+            obj_id,
+            peer_session_id,
+            holder_released_object),
+        DAS_S_OK);
+
+    // 单次物化/消亡 + 服务注销：条目回收
+    EXPECT_EQ(object_manager_.GetLocalEntryCount(), 0u);
+}
+
 TEST_F(IpcCommandHandlerTest, ListObjects_Empty)
 {
     std::vector<uint8_t> payload;

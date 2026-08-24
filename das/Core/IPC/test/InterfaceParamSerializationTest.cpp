@@ -88,6 +88,112 @@ TEST_F(InterfaceParamSerializationTest, NewLocalObjectAutoRegister)
     EXPECT_EQ(lookup_id, out_id);
 }
 
+// 同一已注册对象重复序列化：零记账（不新增 pin、不新增条目/holder）。
+// 观测锚点 = 条目回收：重复序列化不得产生超出"服务 pin 一次释放 + 对端
+// 唯一 proxy 一次消亡"之外的存活名额，否则条目悬挂无法归零。
+TEST_F(
+    InterfaceParamSerializationTest,
+    RepeatedSerializationOfRegisteredObjectAddsNoAccounting)
+{
+    auto     mock = new MockDasObject();
+    ObjectId registered_id{};
+    ASSERT_EQ(manager_->RegisterLocalObject(mock, registered_id), DAS_S_OK);
+
+    const size_t entry_count_before = manager_->GetLocalEntryCount();
+
+    ObjectId serialized_id{};
+    for (int serialization_round = 0; serialization_round < 5;
+         ++serialization_round)
+    {
+        ASSERT_EQ(
+            SerializeInInterfaceParam(mock, *manager_, serialized_id),
+            DAS_S_OK);
+        ASSERT_EQ(serialized_id, registered_id);
+    }
+
+    // 重复序列化零记账：条目数与远端 holder 数均不增长
+    EXPECT_EQ(manager_->GetLocalEntryCount(), entry_count_before);
+    EXPECT_EQ(manager_->GetRemoteHolderCount(registered_id), 0u);
+
+    // 对端物化唯一 proxy（物化申报的记账面）
+    constexpr uint16_t peer_session_id = 9;
+    ASSERT_EQ(
+        manager_->AddRemoteHolder(registered_id, peer_session_id),
+        DAS_S_OK);
+
+    // 服务下线：显式 pin 唯一一次释放；远端仍持有 → 条目保留
+    DAS::DasPtr<IDasBase> pin_released_object;
+    ASSERT_EQ(
+        manager_->UnregisterLocalPin(registered_id, pin_released_object),
+        DAS_S_OK);
+    EXPECT_EQ(manager_->GetLocalEntryCount(), entry_count_before);
+
+    // 对端唯一 proxy 消亡 → 条目按移除条件回收
+    DAS::DasPtr<IDasBase> holder_released_object;
+    ASSERT_EQ(
+        manager_->ReleaseRemoteHolder(
+            registered_id,
+            peer_session_id,
+            holder_released_object),
+        DAS_S_OK);
+    EXPECT_EQ(manager_->GetLocalEntryCount(), 0u);
+}
+
+// 未注册对象重复序列化 N 次后，对端唯一 proxy 消亡即回收条目——
+// auto-register 条目不得携带会悬挂的本地名额。
+TEST_F(
+    InterfaceParamSerializationTest,
+    RepeatedAutoRegistrationThenSingleProxyDeathRecyclesEntry)
+{
+    auto mock = new MockDasObject();
+
+    ObjectId auto_registered_id{};
+    bool     newly_registered = false;
+    ASSERT_EQ(
+        SerializeInInterfaceParam(
+            mock,
+            *manager_,
+            auto_registered_id,
+            &newly_registered),
+        DAS_S_OK);
+    ASSERT_TRUE(newly_registered);
+
+    for (int serialization_round = 0; serialization_round < 4;
+         ++serialization_round)
+    {
+        ObjectId repeated_id{};
+        bool     repeated_newly = true;
+        ASSERT_EQ(
+            SerializeInInterfaceParam(
+                mock,
+                *manager_,
+                repeated_id,
+                &repeated_newly),
+            DAS_S_OK);
+        ASSERT_EQ(repeated_id, auto_registered_id);
+        ASSERT_FALSE(repeated_newly);
+    }
+
+    // 重复序列化零记账：单一 auto 条目、零远端 holder
+    EXPECT_EQ(manager_->GetLocalEntryCount(), 1u);
+    EXPECT_EQ(manager_->GetRemoteHolderCount(auto_registered_id), 0u);
+
+    constexpr uint16_t peer_session_id = 9;
+    ASSERT_EQ(
+        manager_->AddRemoteHolder(auto_registered_id, peer_session_id),
+        DAS_S_OK);
+    DAS::DasPtr<IDasBase> released_object;
+    ASSERT_EQ(
+        manager_->ReleaseRemoteHolder(
+            auto_registered_id,
+            peer_session_id,
+            released_object),
+        DAS_S_OK);
+
+    // 单 proxy 消亡即回收：多余名额悬挂时条目必不归零
+    EXPECT_EQ(manager_->GetLocalEntryCount(), 0u);
+}
+
 // ====== IsTransportLevelError Tests ======
 
 TEST_F(InterfaceParamSerializationTest, IsTransportLevelError_AllCodes)
@@ -192,6 +298,39 @@ TEST_F(
     EXPECT_TRUE(manager_->IsValidObject(id1));
     EXPECT_TRUE(manager_->IsValidObject(id2));
     EXPECT_TRUE(manager_->IsValidObject(id3));
+}
+
+// 回滚条件化：对端已物化（远端 holder 非空）的条目不被 transport 回滚
+// 连根拔——条目保留，由对端 RELEASE / 断连清扫按配对收口。
+TEST_F(
+    InterfaceParamSerializationTest,
+    PendingInParamExportGuard_RollbackKeepsMaterializedEntry)
+{
+    auto     mock = new MockDasObject();
+    ObjectId object_id{};
+    ASSERT_EQ(manager_->RegisterLocalObject(mock, object_id, false), DAS_S_OK);
+
+    constexpr uint16_t peer_session_id = 9;
+    ASSERT_EQ(manager_->AddRemoteHolder(object_id, peer_session_id), DAS_S_OK);
+
+    {
+        PendingInParamExportGuard guard(*manager_);
+        guard.Track(object_id, true);
+        // No Commit() — transport-level error rollback path
+    }
+
+    // holders 非空：条目保留，不连根拔已物化条目
+    EXPECT_TRUE(manager_->IsValidObject(object_id));
+    EXPECT_EQ(manager_->GetRemoteHolderCount(object_id), 1u);
+    EXPECT_EQ(manager_->GetLocalEntryCount(), 1u);
+
+    // 对端 RELEASE 后条目按移除条件回收
+    DAS::DasPtr<IDasBase> released_object;
+    ASSERT_EQ(
+        manager_
+            ->ReleaseRemoteHolder(object_id, peer_session_id, released_object),
+        DAS_S_OK);
+    EXPECT_EQ(manager_->GetLocalEntryCount(), 0u);
 }
 
 TEST(
