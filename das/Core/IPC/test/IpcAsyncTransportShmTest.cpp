@@ -1197,3 +1197,68 @@ TEST_F(
         io_thread.join();
     }
 }
+
+TEST_F(IpcAsyncTransportShmTest, CanBatchFrames_DiscriminatesByTransportKind)
+{
+    // 静态能力常量（免实例化直读——Windows 测试环境无法实例化 unix/http
+    // 连接形态时以常量断言；批量合写仅 pipe/AF_UNIX 字节流合法，WS 一条
+    // 消息 = 一个 IPC 帧恒为假）
+#ifdef DAS_WINDOWS
+    EXPECT_TRUE(DAS::Core::IPC::Win32AsyncIpcTransport::CAN_BATCH_FRAMES);
+#endif
+    EXPECT_TRUE(DAS::Core::IPC::UnixAsyncIpcTransport::CAN_BATCH_FRAMES);
+    EXPECT_FALSE(DAS::Core::IPC::HttpIpcTransport::CAN_BATCH_FRAMES);
+
+    // Visit 聚合行为：真实传输对实例（AnyTransport 运行时选 AF_UNIX，
+    // CanBatchFrames 应为真）
+    auto transports = CreateConnectedTransports(io_context_, nullptr, nullptr);
+    ASSERT_TRUE(transports.has_value());
+    EXPECT_TRUE(transports->server.CanBatchFrames());
+}
+
+TEST_F(
+    IpcAsyncTransportShmTest,
+    AnyTransport_SendScatter_ForwardsToConcreteImplementation)
+{
+    auto transports = CreateConnectedTransports(io_context_, nullptr, nullptr);
+    ASSERT_TRUE(transports.has_value());
+
+    auto         first_body = GenerateTestBody(200);
+    auto         second_body = GenerateTestBody(300);
+    const size_t total_body_size = first_body.size() + second_body.size();
+
+    auto header = CreateTestHeader(
+        12,
+        SERVER_SESSION_ID,
+        CLIENT_SESSION_ID,
+        static_cast<uint32_t>(total_body_size));
+
+    std::vector<SendSegment> segments = {
+        SendSegment{first_body.data(), first_body.size()},
+        SendSegment{second_body.data(), second_body.size()}};
+    const std::vector<uint8_t> expected_wire_bytes =
+        BuildExpectedWireBytes(header, segments);
+
+    auto send_future = boost::asio::co_spawn(
+        io_context_,
+        transports->server.SendScatter(header, std::move(segments)),
+        boost::asio::use_future);
+    auto recv_future = boost::asio::co_spawn(
+        io_context_,
+        transports->client.ReceiveCoroutine(),
+        boost::asio::use_future);
+
+    std::thread io_thread([this]() { io_context_.run(); });
+
+    ASSERT_EQ(send_future.get(), DAS_S_OK);
+    auto recv_result = recv_future.get();
+    ASSERT_TRUE(std::holds_alternative<ScatterMessage>(recv_result));
+    const ScatterMessage& message = std::get<ScatterMessage>(recv_result);
+    ExpectFrameMatchesWireBytes(message, expected_wire_bytes);
+
+    io_context_.stop();
+    if (io_thread.joinable())
+    {
+        io_thread.join();
+    }
+}
