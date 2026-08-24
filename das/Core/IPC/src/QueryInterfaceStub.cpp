@@ -112,9 +112,13 @@ DasResult QueryInterfaceStub::HandleMessage(
     }
 
     // 5. Register the new interface pointer as a local object
+    //    （递交 pinless：配额由调用方物化申报持有，QI 结果对象的生命期
+    //    随最后一个远端 holder 的 RELEASE 收口）
     ObjectId        new_obj_id;
-    const DasResult reg_result =
-        ctx.object_manager.RegisterLocalObject(new_obj.Get(), new_obj_id);
+    const DasResult reg_result = ctx.object_manager.RegisterLocalObject(
+        new_obj.Get(),
+        new_obj_id,
+        false);
     if (DAS::IsFailed(reg_result))
     {
         auto response_header =

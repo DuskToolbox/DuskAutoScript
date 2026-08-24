@@ -1,5 +1,6 @@
 #include <das/Core/IPC/Host/HostCommandHandlers.h>
 
+#include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/HandshakeSerialization.h>
 #include <das/Core/IPC/Host/IIpcContext.h>
 #include <das/Core/IPC/IDistributedObjectManager.h>
@@ -188,9 +189,17 @@ namespace Das::Core::IPC::Host
                 return qi_result;
             }
 
-            ObjectId        new_obj_id;
-            const DasResult reg_result =
-                ctx.RegisterLocalObject(new_obj.Get(), new_obj_id);
+            ObjectId new_obj_id;
+            // 递交 pinless：QI 结果对象的配额由调用方物化申报持有。
+            // IIpcContext 仅暴露 2 参显式注册接口，pinless 重载在具体 DOM
+            // 上——所有注册本组 handler 的上下文（生产 Host IpcContext 与
+            // 测试 fake）的 GetObjectManager 均返回具体 DOM 实例
+            auto& object_manager =
+                static_cast<DistributedObjectManager&>(ctx.GetObjectManager());
+            const DasResult reg_result = object_manager.RegisterLocalObject(
+                new_obj.Get(),
+                new_obj_id,
+                false);
             if (DAS::IsFailed(reg_result))
             {
                 response.error_code = reg_result;

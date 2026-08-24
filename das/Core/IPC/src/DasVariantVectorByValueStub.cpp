@@ -236,9 +236,13 @@ namespace
             // [session_id:2B][generation:2B][local_id:4B][interface_id:4B]
             if (base_obj.Get() != nullptr)
             {
-                ObjectId        oid;
+                ObjectId oid;
+                // 出参/返回值递交：pinless——配额由接收方物化申报持有
                 const DasResult register_result =
-                    ctx.object_manager.RegisterLocalObject(base_obj.Get(), oid);
+                    ctx.object_manager.RegisterLocalObject(
+                        base_obj.Get(),
+                        oid,
+                        false);
                 if (DAS::IsFailed(register_result))
                 {
                     return register_result;
@@ -268,9 +272,13 @@ namespace
             // COMPONENT wire format (12B): same as BASE
             if (comp_obj.Get() != nullptr)
             {
-                ObjectId        oid;
+                ObjectId oid;
+                // 出参/返回值递交：pinless——配额由接收方物化申报持有
                 const DasResult register_result =
-                    ctx.object_manager.RegisterLocalObject(comp_obj.Get(), oid);
+                    ctx.object_manager.RegisterLocalObject(
+                        comp_obj.Get(),
+                        oid,
+                        false);
                 if (DAS::IsFailed(register_result))
                 {
                     return register_result;
@@ -301,11 +309,13 @@ namespace
             }
             if (image_obj.Get() != nullptr)
             {
-                ObjectId        oid;
+                ObjectId oid;
+                // 出参/返回值递交：pinless——配额由接收方物化申报持有
                 const DasResult register_result =
                     ctx.object_manager.RegisterLocalObject(
                         image_obj.Get(),
-                        oid);
+                        oid,
+                        false);
                 if (DAS::IsFailed(register_result))
                 {
                     return register_result;

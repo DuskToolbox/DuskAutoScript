@@ -766,10 +766,12 @@ class IpcStubGenerator:
                 iface_id_hash = BUILTIN_INTERFACE_HASHES.get(interface_name, 0)
 
             # Inline null check + RegisterLocalObject + 4-field assignment
+            # [out] 递交 pinless：配额由接收方物化申报（RemoteAddRef）持有，
+            # 本地不携带会悬挂的显式名额
             lines.append(f"{indent}if ({local_name} != nullptr)")
             lines.append(f"{indent}{{")
             lines.append(f"{indent}    Das::Core::IPC::ObjectId {local_name}_oid;")
-            lines.append(f"{indent}    serial_result = object_manager.RegisterLocalObject({local_name}, {local_name}_oid);")
+            lines.append(f"{indent}    serial_result = object_manager.RegisterLocalObject({local_name}, {local_name}_oid, false);")
             lines.append(f"{indent}    if (DAS::IsFailed(serial_result))")
             lines.append(f"{indent}    {{")
             lines.append(f"{indent}        return serial_result;")
@@ -1245,8 +1247,8 @@ class IpcStubGenerator:
                 lines.append(f"{indent}if ({var_name} != nullptr)")
                 lines.append(f"{indent}{{")
                 lines.append(f"{indent}    Das::Core::IPC::ObjectId {var_name}_oid;")
-                lines.append(f"{indent}    // RegisterLocalObject 内部 DasPtr 构造函数自动 AddRef")
-                lines.append(f"{indent}    serial_result = object_manager.RegisterLocalObject({var_name}, {var_name}_oid);")
+                lines.append(f"{indent}    // [out] 递交 pinless：配额由接收方物化申报持有，DasPtr 构造自动 AddRef")
+                lines.append(f"{indent}    serial_result = object_manager.RegisterLocalObject({var_name}, {var_name}_oid, false);")
                 lines.append(f"{indent}    if (DAS::IsFailed(serial_result))")
                 lines.append(f"{indent}    {{")
                 lines.append(f"{indent}        return serial_result;")
@@ -1267,7 +1269,8 @@ class IpcStubGenerator:
                 lines.append(f"{indent}if ({var_name} != nullptr)")
                 lines.append(f"{indent}{{")
                 lines.append(f"{indent}    Das::Core::IPC::ObjectId {var_name}_oid;")
-                lines.append(f"{indent}    serial_result = object_manager.RegisterLocalObject({var_name}, {var_name}_oid);")
+                lines.append(f"{indent}    // [out] 递交 pinless：配额由接收方物化申报持有")
+                lines.append(f"{indent}    serial_result = object_manager.RegisterLocalObject({var_name}, {var_name}_oid, false);")
                 lines.append(f"{indent}    if (DAS::IsFailed(serial_result))")
                 lines.append(f"{indent}    {{")
                 lines.append(f"{indent}        return serial_result;")
