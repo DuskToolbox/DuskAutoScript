@@ -881,6 +881,34 @@ namespace
         }
         co_return co_await sender.SendScatter(header, std::move(segments));
     }
+
+    // 循环接收 frame_count 帧（接收端逐帧循环读形态——读循环与发送写次数
+    // 无关，是批量合写下帧数不可见性的观测载体）
+    boost::asio::awaitable<std::vector<ScatterMessage>> ReceiveFramesInLoop(
+        ScatterTransportUnderTest& receiver_transport,
+        size_t                     frame_count)
+    {
+        std::vector<ScatterMessage> messages;
+        for (size_t index = 0; index < frame_count; ++index)
+        {
+            auto result = co_await receiver_transport.ReceiveCoroutine();
+            if (!std::holds_alternative<ScatterMessage>(result))
+            {
+                break;
+            }
+            messages.push_back(std::get<ScatterMessage>(std::move(result)));
+        }
+        co_return messages;
+    }
+
+    // 分流契约测试侧守卫：批量合写（N 独立帧合一写）只允许
+    // CanBatchFrames 为真的传输进入——WS 一条消息 = 一个 IPC 帧，合写即
+    // 接收端静默丢尾（回归丢尾风险的分流防线；批量合写真实调用点在
+    // 汇点接入后此守卫成为该路径的门）
+    bool ShouldBatchMergeFrames(const AnyTransport& transport)
+    {
+        return transport.CanBatchFrames();
+    }
 } // namespace
 
 TEST_F(IpcAsyncTransportShmTest, SendScatter_WireBytesEqualHeaderPlusSegments)
@@ -1261,4 +1289,232 @@ TEST_F(
     {
         io_thread.join();
     }
+}
+
+// ====== 批量合写语义（09f）测试 ======
+// 批量合写调用形态：SendScatter 的 header 参数恒在线首，故第一帧拆为
+// header + body 段、其余帧整帧为段——线上字节 = N 个独立完整帧背靠背
+
+TEST_F(IpcAsyncTransportShmTest, SendScatter_BatchMergedFrames_AllArrive)
+{
+    constexpr size_t frame_count = 5;
+
+    auto transports = CreateConnectedScatterTransports();
+    ASSERT_TRUE(transports.has_value());
+
+    // 构造 N 个独立完整帧（各自 32B header + body）作为段序列
+    std::vector<std::vector<uint8_t>> wire_frames;
+    for (size_t index = 0; index < frame_count; ++index)
+    {
+        const size_t body_size = 64 + index * 37;
+        auto         header = CreateTestHeader(
+            static_cast<uint16_t>(index + 1),
+            SERVER_SESSION_ID,
+            CLIENT_SESSION_ID,
+            static_cast<uint32_t>(body_size));
+        auto body = GenerateTestBody(body_size);
+
+        std::vector<uint8_t> wire_frame(sizeof(IPCMessageHeader) + body_size);
+        std::memcpy(
+            wire_frame.data(),
+            static_cast<const IPCMessageHeader*>(header),
+            sizeof(IPCMessageHeader));
+        std::memcpy(
+            wire_frame.data() + sizeof(IPCMessageHeader),
+            body.data(),
+            body_size);
+        wire_frames.push_back(std::move(wire_frame));
+    }
+
+    // 第一帧拆为 header 参数 + body 段，其余整帧为段
+    auto first_header = CreateTestHeader(
+        1,
+        SERVER_SESSION_ID,
+        CLIENT_SESSION_ID,
+        static_cast<uint32_t>(64));
+    std::vector<SendSegment> batch_segments;
+    batch_segments.push_back(
+        SendSegment{
+            wire_frames[0].data() + sizeof(IPCMessageHeader),
+            wire_frames[0].size() - sizeof(IPCMessageHeader)});
+    for (size_t index = 1; index < frame_count; ++index)
+    {
+        batch_segments.push_back(
+            SendSegment{wire_frames[index].data(), wire_frames[index].size()});
+    }
+
+    auto send_future = boost::asio::co_spawn(
+        io_context_,
+        transports->server->SendScatter(
+            first_header,
+            std::move(batch_segments)),
+        boost::asio::use_future);
+    auto recv_future = boost::asio::co_spawn(
+        io_context_,
+        ReceiveFramesInLoop(*transports->client, frame_count),
+        boost::asio::use_future);
+
+    std::thread io_thread([this]() { io_context_.run(); });
+
+    ASSERT_EQ(send_future.get(), DAS_S_OK);
+
+    // 接收端逐帧循环读出 N 个完整帧：零丢帧、零粘包错位，每帧字节与
+    // 源帧逐段等价——批量合写下帧数对接收端不可见性的证据（一次写与
+    // N+1 次写对接收端读循环无差别）
+    const std::vector<ScatterMessage> messages = recv_future.get();
+    ASSERT_EQ(messages.size(), frame_count);
+    for (size_t index = 0; index < frame_count; ++index)
+    {
+        const auto* received_header =
+            static_cast<const IPCMessageHeader*>(messages[index].first);
+        EXPECT_EQ(
+            0,
+            std::memcmp(
+                received_header,
+                wire_frames[index].data(),
+                sizeof(IPCMessageHeader)))
+            << "frame " << index << " header mismatch";
+        ASSERT_EQ(
+            messages[index].second.size(),
+            wire_frames[index].size() - sizeof(IPCMessageHeader))
+            << "frame " << index << " body size mismatch";
+        EXPECT_EQ(
+            0,
+            std::memcmp(
+                messages[index].second.data(),
+                wire_frames[index].data() + sizeof(IPCMessageHeader),
+                messages[index].second.size()))
+            << "frame " << index << " body mismatch";
+    }
+
+    io_context_.stop();
+    if (io_thread.joinable())
+    {
+        io_thread.join();
+    }
+}
+
+TEST_F(IpcAsyncTransportShmTest, SendScatter_SegmentOrderRidersBeforeHostHeld)
+{
+    auto transports = CreateConnectedScatterTransports();
+    ASSERT_TRUE(transports.has_value());
+
+    // 段序约定：riders 在前、宿主在后（D-12）——先走批量合写的 FIFO 序
+    const size_t rider_first_body_size = 40;
+    const size_t rider_second_body_size = 60;
+    const size_t host_body_size = 300;
+
+    auto rider_first_header = CreateTestHeader(
+        20,
+        SERVER_SESSION_ID,
+        CLIENT_SESSION_ID,
+        static_cast<uint32_t>(rider_first_body_size));
+    auto rider_second_header = CreateTestHeader(
+        21,
+        SERVER_SESSION_ID,
+        CLIENT_SESSION_ID,
+        static_cast<uint32_t>(rider_second_body_size));
+    auto host_header = CreateTestHeader(
+        22,
+        SERVER_SESSION_ID,
+        CLIENT_SESSION_ID,
+        static_cast<uint32_t>(host_body_size));
+
+    auto rider_first_body = GenerateTestBody(rider_first_body_size);
+    auto rider_second_body = GenerateTestBody(rider_second_body_size);
+    auto host_body = GenerateTestBody(host_body_size);
+
+    std::vector<uint8_t> rider_second_frame(
+        sizeof(IPCMessageHeader) + rider_second_body_size);
+    std::memcpy(
+        rider_second_frame.data(),
+        static_cast<const IPCMessageHeader*>(rider_second_header),
+        sizeof(IPCMessageHeader));
+    std::memcpy(
+        rider_second_frame.data() + sizeof(IPCMessageHeader),
+        rider_second_body.data(),
+        rider_second_body_size);
+
+    std::vector<uint8_t> host_frame(sizeof(IPCMessageHeader) + host_body_size);
+    std::memcpy(
+        host_frame.data(),
+        static_cast<const IPCMessageHeader*>(host_header),
+        sizeof(IPCMessageHeader));
+    std::memcpy(
+        host_frame.data() + sizeof(IPCMessageHeader),
+        host_body.data(),
+        host_body_size);
+
+    std::vector<SendSegment> batch_segments;
+    batch_segments.push_back(
+        SendSegment{rider_first_body.data(), rider_first_body.size()});
+    batch_segments.push_back(
+        SendSegment{rider_second_frame.data(), rider_second_frame.size()});
+    batch_segments.push_back(SendSegment{host_frame.data(), host_frame.size()});
+
+    auto send_future = boost::asio::co_spawn(
+        io_context_,
+        transports->server->SendScatter(
+            rider_first_header,
+            std::move(batch_segments)),
+        boost::asio::use_future);
+    auto recv_future = boost::asio::co_spawn(
+        io_context_,
+        ReceiveFramesInLoop(*transports->client, 3),
+        boost::asio::use_future);
+
+    std::thread io_thread([this]() { io_context_.run(); });
+
+    ASSERT_EQ(send_future.get(), DAS_S_OK);
+
+    // 接收端保持段序：riders（call_id 20、21）先于宿主（call_id 22）到达
+    const std::vector<ScatterMessage> messages = recv_future.get();
+    ASSERT_EQ(messages.size(), 3);
+    EXPECT_EQ(messages[0].first.Raw().call_id, 20);
+    EXPECT_EQ(messages[0].second.size(), rider_first_body_size);
+    EXPECT_EQ(
+        0,
+        std::memcmp(
+            messages[0].second.data(),
+            rider_first_body.data(),
+            rider_first_body_size));
+    EXPECT_EQ(messages[1].first.Raw().call_id, 21);
+    EXPECT_EQ(messages[1].second.size(), rider_second_body_size);
+    EXPECT_EQ(
+        0,
+        std::memcmp(
+            messages[1].second.data(),
+            rider_second_body.data(),
+            rider_second_body_size));
+    EXPECT_EQ(messages[2].first.Raw().call_id, 22);
+    EXPECT_EQ(messages[2].second.size(), host_body_size);
+    EXPECT_EQ(
+        0,
+        std::memcmp(
+            messages[2].second.data(),
+            host_body.data(),
+            host_body_size));
+
+    io_context_.stop();
+    if (io_thread.joinable())
+    {
+        io_thread.join();
+    }
+}
+
+TEST_F(
+    IpcAsyncTransportShmTest,
+    BatchMergeGuard_NonBatchableTransportNeverBatches)
+{
+    // 分流契约的可执行载体：CanBatchFrames 为假的传输永不进入批量合写
+    // 调用路径——http 恒为假（静态常量直读，免实例化），守卫函数与
+    // CanBatchFrames 同源（真实调用点在汇点落地后此守卫成为路径门）
+    EXPECT_FALSE(DAS::Core::IPC::HttpIpcTransport::CAN_BATCH_FRAMES);
+
+    auto transports = CreateConnectedTransports(io_context_, nullptr, nullptr);
+    ASSERT_TRUE(transports.has_value());
+    EXPECT_TRUE(ShouldBatchMergeFrames(transports->server));
+    EXPECT_EQ(
+        ShouldBatchMergeFrames(transports->server),
+        transports->server.CanBatchFrames());
 }
