@@ -501,20 +501,44 @@ TEST(
         probe.SendFrameFromObserver(request_header, empty_body),
         DAS_S_OK);
 
-    // 帧序：spawn 的响应协程先于 guard 出清的独立 130（co_spawn 队序）——
-    // 响应出第二汇点时队列已被 guard 取走 → 独立帧形态、账不丢。
-    // （时序锚点用例：IO 分发域的响应恒被闸3 guard 先行出清——搭车机会
-    // 属于 spawn 序更早的响应协程不可达的路径；第二汇点的搭车分支由
-    // ForwardedFrameFlushesPendingThroughSecondFunnel 与
-    // IpcRunLoopTest 的 PostSendWithTransport 直驱用例钉死）
-    EXPECT_EQ(probe.DrainUntil(2, std::chrono::seconds(2)), 2u);
-    EXPECT_EQ(probe.TotalFrameCount(), 2u);
+    // 收敛后语义：IO 分发域的响应协程与分发协程帧析构里的 guard 出清并发
+    // 竞速，两种合法结局（响应经第二汇点携 rider 一帧带走 / 响应独立 +
+    // guard 出清独立 130）都不跨周期且账完整。响应帧恒先出线
+    EXPECT_EQ(probe.DrainUntil(1, std::chrono::seconds(2)), 1u);
+    ASSERT_EQ(probe.TotalFrameCount(), 1u);
+    const auto& response_frame = probe.Frames()[0];
     EXPECT_EQ(
-        probe.InterfaceIdOrder(),
-        (std::vector<uint32_t>{
-            static_cast<uint32_t>(
-                HandshakeInterfaceId::HandshakeIfaceHeartbeat),
-            static_cast<uint32_t>(IpcCommandType::RemoteAddRef)}));
+        response_frame.header.GetInterfaceId(),
+        static_cast<uint32_t>(HandshakeInterfaceId::HandshakeIfaceHeartbeat));
+
+    size_t embedded_add_ref_count = 0;
+    if (response_frame.header.GetFlags()
+        & DAS::Core::IPC::MessageFlags::RESERVED_AS_SIZE)
+    {
+        // 结局一：响应经第二汇点携 rider——扩展段恰一条内嵌 130
+        DAS::Core::IPC::HeaderValidationResult embedded_error;
+        const auto embedded_header = ValidatedIPCMessageHeader::Deserialize(
+            response_frame.body.data(),
+            sizeof(DAS::Core::IPC::IPCMessageHeader),
+            &embedded_error);
+        ASSERT_TRUE(embedded_header.has_value());
+        EXPECT_EQ(
+            embedded_header->GetInterfaceId(),
+            static_cast<uint32_t>(IpcCommandType::RemoteAddRef));
+        embedded_add_ref_count = 1;
+    }
+    else
+    {
+        // 结局二：guard 先出清——独立 130 紧随
+        EXPECT_EQ(probe.DrainUntil(1, std::chrono::seconds(2)), 1u);
+    }
+
+    // 守恒：恰一次 ADD_REF 申报到达（内嵌 + 独立 == 1）
+    EXPECT_EQ(
+        embedded_add_ref_count
+            + probe.CountByInterfaceId(
+                static_cast<uint32_t>(IpcCommandType::RemoteAddRef)),
+        1u);
     EXPECT_EQ(run_loop.GetPendingAddRefCount(ROUTING_E2E_PEER_SESSION_ID), 0u);
     EXPECT_TRUE(run_loop.PendingAddRefsEmpty());
 

@@ -1208,14 +1208,49 @@ TEST_F(
                          .Build();
     ASSERT_EQ(inbound_queue_->Push(std::move(request)), DAS_S_OK);
 
-    // 周期内响应先发（业务帧），周期末 guard 独立发出 ADD_REF——FIFO：
-    // 响应（0x7777）先于 ADD_REF（130）
-    EXPECT_EQ(probe_->DrainUntil(2, std::chrono::seconds(2)), 2u);
+    // 收敛后语义（104.2-10）：周期内的响应是合格载体——IO 线程的响应发送
+    // 协程与 BT 线程的周期末 guard 出清并发竞速，两种合法结局（响应携
+    // rider 一帧带走 / 响应独立 + guard 出清独立 130）都不跨周期且账完整。
+    // 响应帧恒先出线（两结局的第一帧都是它）
+    EXPECT_EQ(probe_->DrainUntil(1, std::chrono::seconds(2)), 1u);
+    ASSERT_EQ(probe_->TotalFrameCount(), 1u);
+    const auto& response_frame = probe_->Frames()[0];
     EXPECT_EQ(
-        probe_->InterfaceIdOrder(),
-        (std::vector<uint32_t>{
-            MATERIALIZING_HANDLER_INTERFACE_ID,
-            static_cast<uint32_t>(IpcCommandType::RemoteAddRef)}));
+        response_frame.header.GetInterfaceId(),
+        MATERIALIZING_HANDLER_INTERFACE_ID);
+
+    size_t embedded_add_ref_count = 0;
+    if (response_frame.header.GetFlags()
+        & DAS::Core::IPC::MessageFlags::RESERVED_AS_SIZE)
+    {
+        // 结局一：响应携 rider——扩展段恰一条内嵌 130（零独立 130）
+        EXPECT_EQ(
+            response_frame.header.Raw().reserved,
+            sizeof(DAS::Core::IPC::IPCMessageHeader) + sizeof(ObjectId));
+        DAS::Core::IPC::HeaderValidationResult embedded_error;
+        const auto embedded_header = ValidatedIPCMessageHeader::Deserialize(
+            response_frame.body.data(),
+            sizeof(DAS::Core::IPC::IPCMessageHeader),
+            &embedded_error);
+        ASSERT_TRUE(embedded_header.has_value());
+        EXPECT_EQ(
+            embedded_header->GetInterfaceId(),
+            static_cast<uint32_t>(IpcCommandType::RemoteAddRef));
+        embedded_add_ref_count = 1;
+    }
+    else
+    {
+        // 结局二：guard 先出清——响应独立形态，独立 130 紧随（FIFO）
+        EXPECT_EQ(probe_->DrainUntil(1, std::chrono::seconds(2)), 1u);
+        embedded_add_ref_count = 0;
+    }
+
+    // 守恒：无论哪种结局，恰一次 ADD_REF 申报到达（内嵌 + 独立 == 1）
+    EXPECT_EQ(
+        embedded_add_ref_count
+            + probe_->CountByInterfaceId(
+                static_cast<uint32_t>(IpcCommandType::RemoteAddRef)),
+        1u);
 
     // 队列不跨周期：周期末已出清
     EXPECT_EQ(run_loop_->GetPendingAddRefCount(FORK_PEER_SESSION_ID), 0u);

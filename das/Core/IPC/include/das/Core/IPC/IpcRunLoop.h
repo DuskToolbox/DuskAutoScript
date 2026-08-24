@@ -774,6 +774,42 @@ private:
     /// 单一事实源——字节与段 A 的物化申报完全一致。
     PendingAddRefFrame BuildAddRefFrame(const ObjectId& object_id);
 
+    /// @brief 双汇点共享的出站搭车 helper（D-12 v3：逻辑单点、物理双挂点）
+    ///
+    /// SendToSessionCoroutine 与 DoSendCoroutine 在 transport 解析后、
+    /// SendCoroutine 调用前各调用一次。决策树（piggyback_enabled_ 为假时
+    /// 直通零开销 = 段 A 行为）：
+    /// - pending[本帧 target session] 为空 → 原样直发；
+    /// - 本帧为 RELEASE / SHM 大消息帧 / 转发帧（A7：source 非本地的
+    ///   原样透传帧）/ 拼完（header + body + 任一 rider）达到
+    ///   LARGE_MESSAGE_THRESHOLD → 闸2 先走：pending 全部先独立发（FIFO）
+    ///   再发本帧；
+    /// - 合格载体 → 闸1 搭车：riders 塞本帧前缀一帧带走（外层 header 置
+    ///   RESERVED_AS_SIZE 位、reserved = 段总字节、body_size 增段总长，
+    ///   call_id/source/target 原样），溢出部分紧随独立发。
+    /// riders 容器与宿主 body 均为本协程帧局部持有（存活至 async_write
+    /// 完成，Pitfall 8）。
+    boost::asio::awaitable<DasResult> PrepareOutboundFrame(
+        AnyTransport&             transport,
+        ValidatedIPCMessageHeader header,
+        std::vector<uint8_t>      body);
+
+    /// @brief 取走指定 session 的全部候车帧（锁内 move-out，FIFO 序保持）
+    std::vector<PendingAddRefFrame> TakePendingAddRefs(uint16_t session_id);
+
+    /// @brief 闸2 先走执行：riders 先独立发（FIFO）随后宿主帧
+    ///
+    /// CanBatchFrames 为真且合写总长低于阈值时 N 个 rider 帧 + 宿主帧合
+    /// 一次 SendScatter（第一帧拆为 header 参数 + body 段、其余帧整帧为
+    /// 段——SendScatter header 恒在线首的调用形态约定；段序 riders 在前
+    /// 宿主在后 = FIFO）；否则逐帧 SendCoroutine（WS 分流契约）。rider
+    /// 发送失败仅告警（fire-and-forget 语义），宿主帧结果如实返回。
+    boost::asio::awaitable<DasResult> SendRidersThenHostStandalone(
+        AnyTransport&                     transport,
+        std::vector<PendingAddRefFrame>&& riders,
+        ValidatedIPCMessageHeader&&       host_header,
+        std::vector<uint8_t>&&            host_body);
+
     /// @brief 通过协程发送 IPC 消息（内部共用实现）
     ///
     /// 封装 SendCoroutine 调用、连接检查和错误处理。

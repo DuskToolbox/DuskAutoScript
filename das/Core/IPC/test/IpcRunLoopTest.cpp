@@ -1758,10 +1758,9 @@ TEST_F(IpcRunLoopTest, PiggybackRidesPendingOnPostSendBusinessFrame)
             & DAS::Core::IPC::MessageFlags::RESERVED_AS_SIZE,
         0);
     EXPECT_EQ(embedded_header->GetTargetSessionId(), REMOTE_SESSION_ID);
+    // 内嵌 body = ObjectId 8B（其后紧接宿主 body，段边界由 reserved 划定）
     ObjectId embedded_object_id{};
-    ASSERT_EQ(
-        frames[0].body.size() - sizeof(IPCMessageHeader),
-        sizeof(ObjectId));
+    ASSERT_GE(frames[0].body.size(), ADD_REF_FRAME_SIZE);
     std::memcpy(
         &embedded_object_id,
         frames[0].body.data() + sizeof(IPCMessageHeader),

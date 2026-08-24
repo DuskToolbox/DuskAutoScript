@@ -123,6 +123,15 @@ public:
         return *this;
     }
 
+    /// @brief 设置 reserved 字段（RESERVED_AS_SIZE 置位时 = 扩展段总字节数）
+    /// @note 捎带拼装侧专用（发送侧改写外层 header 的唯一合法入口）；
+    ///       Reset 默认仍为 0（纯 inline 帧不携带扩展段）
+    IPCMessageHeaderBuilder& SetReserved(uint32_t reserved) noexcept
+    {
+        header_.reserved = reserved;
+        return *this;
+    }
+
     IPCMessageHeaderBuilder& SetErrorCode(int32_t error_code) noexcept
     {
         header_.error_code = error_code;

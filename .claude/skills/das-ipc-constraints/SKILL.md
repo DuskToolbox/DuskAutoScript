@@ -91,6 +91,14 @@ CallKey call_key{
   - `0 < section_size <= body_size`（越界 fail-closed）；
   - 嵌套深度 = 1（内嵌帧禁止再置本标志）。
 
+### 规则 6: 发送侧捎带（搭车）决策单一事实源
+
+bit1 帧的**构造与改写**只发生在 `IpcRunLoop::PrepareOutboundFrame`（私有共享 helper，双汇点挂接：`SendToSessionCoroutine` 与 `DoSendCoroutine` 各一次——出站帧有两个独立 transport 发送调用点，漏挂第二汇点 = 该路径 pending 永远搭不上车）。其他代码**不得**手工拼装扩展段或改写 `reserved`（测试外唯一合法写入通道是 `IPCMessageHeaderBuilder::SetReserved`）。
+
+- 决策树（`piggyback_enabled_` 为假时直通零开销 = 段 A 独立帧行为）：pending[本帧 target session] 空 → 原样直发；本帧为 RELEASE / SHM 大消息帧 / 转发帧（source 非本地）/ 拼完达到 `LARGE_MESSAGE_THRESHOLD` → pending 先独立发（FIFO）再发本帧；合格 → riders 进本帧前缀（外层 header 置 bit1 + `SetReserved(段总字节)` + `body_size` 增段总长，call_id/source/target 原样）。
+- 发前查不是发后查（货要进这帧的前缀）；心跳班车（`ConnectionManager::SendHeartbeatToAll`）经装配期注入的窄回调复用同一 helper——ConnectionManager 不实现拼装。
+- 发送侧三连规则：内嵌帧自身不置 bit1（深度=1）；SHM 帧永不携段（互斥）；搭车后宿主帧传输模式不变。
+
 ## 关键文件索引
 
 | 文件 | 内容 |
