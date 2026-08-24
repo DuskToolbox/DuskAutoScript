@@ -185,9 +185,7 @@ namespace Core
                 // FindTransport 在需要时解析 AnyTransport 引用。
 
                 // 创建并初始化 IpcCommandHandler
-                command_handler_ = IpcCommandHandler::Create(
-                    registry_,
-                    proxy_factory_->GetObjectManager());
+                command_handler_ = IpcCommandHandler::Create(registry_);
                 command_handler_->SetSessionId(session_id_);
 
                 // 创建 RemoteRefHandler（CONTROL_PLANE 远端引用记账）

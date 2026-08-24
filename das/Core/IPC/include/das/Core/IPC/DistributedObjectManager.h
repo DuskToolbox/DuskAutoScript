@@ -43,8 +43,9 @@ struct ObjectEntry
 };
 
 // 本地对象的受限句柄：仅 DistributedObjectManager::WithLocalObject 在持锁
-// 期间发给回调，只暴露合法的引用计数/取值操作——既避免调用方反复加锁，
-// 又不泄露 ObjectEntry 内部。
+// 期间发给回调，只暴露合法的取值操作——既避免调用方反复加锁，又不泄露
+// ObjectEntry 内部。pin 记账一律走显式 Register/Unregister 配对（+
+// 1 的唯一来源是对端物化申报），持锁回调内不再提供 +1 入口。
 class LocalObjectRef
 {
     ObjectEntry& entry_;
@@ -52,9 +53,6 @@ class LocalObjectRef
     friend class DistributedObjectManager;
 
 public:
-    // 显式 pin +1（配平既有调用方的 Register/Unregister 配对记账）。
-    void AddRef() noexcept { entry_.local_pins_++; }
-
     [[nodiscard]]
     IDasBase* Get() const noexcept
     {

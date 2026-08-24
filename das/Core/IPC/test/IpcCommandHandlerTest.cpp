@@ -157,7 +157,7 @@ protected:
     ProxyFactory             proxy_factory_;
     RemoteObjectRegistry     registry_;
     DistributedObjectManager object_manager_;
-    IpcCommandHandler        handler_{registry_, object_manager_};
+    IpcCommandHandler        handler_{registry_};
     DAS::Core::IPC::IpcMessageQueue<DAS::Core::IPC::InboundMessage>
                                   inbound_queue_{16};
     DAS::DasPtr<RemoteRefHandler> remote_ref_handler_;
