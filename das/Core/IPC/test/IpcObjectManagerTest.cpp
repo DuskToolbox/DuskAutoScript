@@ -1,7 +1,9 @@
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/ObjectId.h>
 #include <das/DasPtr.hpp>
+#include <das/IDasBase.h>
 #include <gtest/gtest.h>
+#include <vector>
 
 #include "MockDasObject.h"
 
@@ -350,4 +352,182 @@ TEST_F(
 
     ObjectId stale_id = id;
     EXPECT_FALSE(manager_->IsLocalObject(stale_id));
+}
+
+// ====== 双账本：local_pins_ + holder_sessions_ + remote_views_ ======
+
+TEST_F(IpcObjectManagerTest, ExplicitPinPairsWithUnregisterLocalPin)
+{
+    auto     mock = new MockDasObject();
+    ObjectId object_id{};
+    ASSERT_EQ(manager_->RegisterLocalObject(mock, object_id, true), DAS_S_OK);
+    EXPECT_EQ(manager_->GetLocalEntryCount(), 1u);
+
+    DAS::DasPtr<IDasBase> released;
+    ASSERT_EQ(manager_->UnregisterLocalPin(object_id, released), DAS_S_OK);
+
+    // pins 归零且 holders 空 → 条目移除，对象本体唯一一次移交出参
+    EXPECT_EQ(manager_->GetLocalEntryCount(), 0u);
+    EXPECT_NE(released.Get(), nullptr);
+    EXPECT_FALSE(manager_->IsValidObject(object_id));
+}
+
+TEST_F(IpcObjectManagerTest, PinlessRegistrationIsNoOpOnExistingEntry)
+{
+    auto     mock = new MockDasObject();
+    ObjectId first_id{};
+    ASSERT_EQ(manager_->RegisterLocalObject(mock, first_id, false), DAS_S_OK);
+    EXPECT_EQ(manager_->GetLocalEntryCount(), 1u);
+
+    ObjectId second_id{};
+    ASSERT_EQ(manager_->RegisterLocalObject(mock, second_id, false), DAS_S_OK);
+    EXPECT_EQ(second_id, first_id);
+
+    // 重复 pinless 注册：不建新条目、不涨任何计数
+    EXPECT_EQ(manager_->GetLocalEntryCount(), 1u);
+    EXPECT_EQ(manager_->GetRemoteHolderCount(first_id), 0u);
+
+    // pins==0 但存在远端 holder → 条目存活（配额由对端 ADD_REF 填充）
+    ASSERT_EQ(manager_->AddRemoteHolder(first_id, 7), DAS_S_OK);
+    EXPECT_EQ(manager_->GetLocalEntryCount(), 1u);
+    EXPECT_TRUE(manager_->IsValidObject(first_id));
+}
+
+TEST_F(IpcObjectManagerTest, HolderAddReleasePairingAndFinalHandoff)
+{
+    auto     mock = new MockDasObject();
+    ObjectId object_id{};
+    ASSERT_EQ(manager_->RegisterLocalObject(mock, object_id, false), DAS_S_OK);
+
+    ASSERT_EQ(manager_->AddRemoteHolder(object_id, 7), DAS_S_OK);
+    ASSERT_EQ(manager_->AddRemoteHolder(object_id, 9), DAS_S_OK);
+    EXPECT_EQ(manager_->GetRemoteHolderCount(object_id), 2u);
+
+    DAS::DasPtr<IDasBase> partial_release;
+    ASSERT_EQ(
+        manager_->ReleaseRemoteHolder(object_id, 7, partial_release),
+        DAS_S_OK);
+    EXPECT_EQ(partial_release.Get(), nullptr); // 条目仍在，无移交
+    EXPECT_EQ(manager_->GetRemoteHolderCount(object_id), 1u);
+    EXPECT_EQ(manager_->GetLocalEntryCount(), 1u);
+
+    DAS::DasPtr<IDasBase> final_release;
+    ASSERT_EQ(
+        manager_->ReleaseRemoteHolder(object_id, 9, final_release),
+        DAS_S_OK);
+    EXPECT_NE(final_release.Get(), nullptr); // 最后一个 holder：唯一一次移交
+    EXPECT_EQ(manager_->GetLocalEntryCount(), 0u);
+
+    // gen bump 生效：迟到 Lookup 收 STALE 而非 NOT_FOUND
+    IDasBase* looked_up = nullptr;
+    EXPECT_EQ(
+        manager_->LookupObject(object_id, &looked_up),
+        DAS_E_IPC_STALE_OBJECT_HANDLE);
+}
+
+TEST_F(IpcObjectManagerTest, RemoveSessionHoldersNeverTouchesLocalPins)
+{
+    auto     mock = new MockDasObject();
+    ObjectId object_id{};
+    ASSERT_EQ(manager_->RegisterLocalObject(mock, object_id, true), DAS_S_OK);
+    ASSERT_EQ(manager_->AddRemoteHolder(object_id, 7), DAS_S_OK);
+    ASSERT_EQ(manager_->AddRemoteHolder(object_id, 9), DAS_S_OK);
+
+    // 只清 session 7 的 holder：pins 不动，条目存活
+    const auto cleared_seven = manager_->RemoveSessionHolders(7);
+    EXPECT_TRUE(cleared_seven.empty());
+    EXPECT_EQ(manager_->GetRemoteHolderCount(object_id), 1u);
+    EXPECT_EQ(manager_->GetLocalEntryCount(), 1u);
+    EXPECT_TRUE(manager_->IsValidObject(object_id));
+
+    // 清掉剩余 holder：pins>0 条目仍存活（服务 pin 不被断连清扫吃掉）
+    const auto cleared_nine = manager_->RemoveSessionHolders(9);
+    EXPECT_TRUE(cleared_nine.empty());
+    EXPECT_EQ(manager_->GetLocalEntryCount(), 1u);
+    EXPECT_TRUE(manager_->IsValidObject(object_id));
+
+    // 服务 pin 仍可正常配对注销
+    DAS::DasPtr<IDasBase> pin_release;
+    ASSERT_EQ(manager_->UnregisterLocalPin(object_id, pin_release), DAS_S_OK);
+    EXPECT_NE(pin_release.Get(), nullptr);
+    EXPECT_EQ(manager_->GetLocalEntryCount(), 0u);
+}
+
+TEST_F(IpcObjectManagerTest, RemoveSessionHoldersRecyclesPinlessUnheldEntries)
+{
+    auto     pinless_mock = new MockDasObject();
+    ObjectId pinless_id{};
+    ASSERT_EQ(
+        manager_->RegisterLocalObject(pinless_mock, pinless_id, false),
+        DAS_S_OK);
+    auto     pinned_mock = new MockDasObject();
+    ObjectId pinned_id{};
+    ASSERT_EQ(
+        manager_->RegisterLocalObject(pinned_mock, pinned_id, true),
+        DAS_S_OK);
+
+    ASSERT_EQ(manager_->AddRemoteHolder(pinless_id, 7), DAS_S_OK);
+    ASSERT_EQ(manager_->AddRemoteHolder(pinned_id, 7), DAS_S_OK);
+
+    const auto released = manager_->RemoveSessionHolders(7);
+    ASSERT_EQ(released.size(), 1u); // 只有 pinless 且 holders 清空的条目被移除
+    EXPECT_EQ(released[0].Get(), pinless_mock);
+    EXPECT_EQ(manager_->GetLocalEntryCount(), 1u);
+    EXPECT_TRUE(manager_->IsValidObject(pinned_id));
+}
+
+TEST_F(IpcObjectManagerTest, RemoteViewTransitionsAreObservable)
+{
+    const ObjectId remote_id{.session_id = 2, .generation = 1, .local_id = 100};
+
+    bool newly_created = false;
+    ASSERT_EQ(
+        manager_->RegisterRemoteObject(remote_id, newly_created),
+        DAS_S_OK);
+    EXPECT_TRUE(newly_created); // 0→1 首次物化
+
+    newly_created = true;
+    ASSERT_EQ(
+        manager_->RegisterRemoteObject(remote_id, newly_created),
+        DAS_S_OK);
+    EXPECT_FALSE(newly_created); // dedup = view 递增，非首建
+
+    bool entry_removed = true;
+    ASSERT_EQ(manager_->UnregisterObject(remote_id, entry_removed), DAS_S_OK);
+    EXPECT_FALSE(entry_removed); // view 归 1，条目仍在
+    EXPECT_TRUE(manager_->IsValidObject(remote_id));
+
+    entry_removed = false;
+    ASSERT_EQ(manager_->UnregisterObject(remote_id, entry_removed), DAS_S_OK);
+    EXPECT_TRUE(entry_removed); // view 归零 → 条目移除
+    EXPECT_FALSE(manager_->IsValidObject(remote_id));
+}
+
+TEST_F(IpcObjectManagerTest, RemoveIfUnheldAutoEntryOnlyRemovesUnheld)
+{
+    auto     held_mock = new MockDasObject();
+    ObjectId held_id{};
+    ASSERT_EQ(
+        manager_->RegisterLocalObject(held_mock, held_id, false),
+        DAS_S_OK);
+    ASSERT_EQ(manager_->AddRemoteHolder(held_id, 7), DAS_S_OK);
+
+    DAS::DasPtr<IDasBase> not_removed;
+    ASSERT_EQ(
+        manager_->RemoveIfUnheldAutoEntry(held_id, not_removed),
+        DAS_S_OK);
+    EXPECT_EQ(not_removed.Get(), nullptr); // holders 非空：不动条目
+    EXPECT_EQ(manager_->GetLocalEntryCount(), 1u);
+
+    auto     unheld_mock = new MockDasObject();
+    ObjectId unheld_id{};
+    ASSERT_EQ(
+        manager_->RegisterLocalObject(unheld_mock, unheld_id, false),
+        DAS_S_OK);
+
+    DAS::DasPtr<IDasBase> removed;
+    ASSERT_EQ(manager_->RemoveIfUnheldAutoEntry(unheld_id, removed), DAS_S_OK);
+    EXPECT_NE(removed.Get(), nullptr); // holders 空 + pins 0 → 移除移交
+    EXPECT_EQ(manager_->GetLocalEntryCount(), 1u);
+    EXPECT_FALSE(manager_->IsValidObject(unheld_id));
 }
