@@ -5,6 +5,7 @@
 #include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/Core/ForeignInterfaceHost/ForeignInterfaceHost.h>
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
+#include <das/Core/IPC/ObjectId.h>
 #include <das/DasPtr.hpp>
 #include <das/DasSharedRef.hpp>
 #include <das/_autogen/idl/abi/IDasTaskComponent.h>
@@ -72,6 +73,10 @@ public:
         const;
 
 private:
+    /// host 本尊经注入上下文显式注册进 DOM（幂等守卫：已注册或未注入时
+    /// 空转；下转具体上下文失败的外来实现同样跳过）
+    void RegisterHostObject();
+
     struct FactoryEntry
     {
         DasGuid                                                plugin_guid{};
@@ -91,6 +96,11 @@ private:
 
     // 注入的主进程 IPC 上下文（共享引用保证注销时 DOM 仍存活）
     std::shared_ptr<DAS::Core::IPC::MainProcess::IIpcContext> ipc_context_;
+
+    // host 本尊显式注册进 DOM 后的 ObjectId 与幂等守卫：停机/析构链
+    // 确定性注销的记账锚点（未注册或已注销时守卫为 false）
+    DAS::Core::IPC::ObjectId host_object_id_{};
+    bool                     host_registered_ = false;
 
     mutable std::shared_mutex mutex_;
 };

@@ -118,6 +118,9 @@ PluginManager::PluginManager(
     Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext> ipc_context)
     : settings_manager_(settings_manager), ipc_context_{std::move(ipc_context)}
 {
+    // host 本尊的 DOM 显式注册（显式 pin）：停机链确定性注销的记账锚点，
+    // 跨进程注入经代理编组时的 auto-register 与之 dedup 共存
+    task_component_factory_mgr_.SetIpcContext(ipc_context_);
     remote_plugin_host_factory_ = [this]()
     { return std::make_unique<IpcRemotePluginHost>(ipc_context_); };
 }
@@ -204,6 +207,10 @@ DasResult PluginManager::Shutdown()
     // callback_mutex_ drain 在途回调（CR-02 drain 屏障），让心跳线程后续 Invoke
     // 空转碰不到悬空 [this]。
     ipc_context_.get().ResetHostLifecycleCallbacks();
+
+    // host 本尊的 DOM 条目确定性注销：先于成员析构消亡，迟到 proxy 调用
+    // 收 OBJECT_NOT_FOUND；TCFM 析构兜底注销幂等（registered 守卫）
+    task_component_factory_mgr_.Shutdown();
 
     DAS_CORE_LOG_INFO("PluginManager shutdown complete");
     return DAS_S_OK;

@@ -1,6 +1,7 @@
 #include <das/Core/ForeignInterfaceHost/TaskComponentFactoryManager.h>
 
 #include <das/Core/ForeignInterfaceHost/PluginManager.h>
+#include <das/Core/IPC/MainProcess/IpcContext.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/DasPtr.hpp>
 #include <das/Utils/CommonUtils.hpp>
@@ -96,7 +97,13 @@ TaskComponentFactoryManager::TaskComponentFactoryManager()
 {
 }
 
-TaskComponentFactoryManager::~TaskComponentFactoryManager() = default;
+TaskComponentFactoryManager::~TaskComponentFactoryManager()
+{
+    // 停机链兜底注销：host 本尊的 DOM 条目先于对象本体消亡移除（host_
+    // 成员在析构体之后释放），迟到 proxy 调用收 OBJECT_NOT_FOUND 而非
+    // 解引用悬垂 manager；幂等守卫保证显式 Shutdown 后的二次注销无害
+    Shutdown();
+}
 
 Das::PluginInterface::IDasTaskComponentHost*
 TaskComponentFactoryManager::GetTaskComponentHost() const
@@ -108,9 +115,70 @@ void TaskComponentFactoryManager::SetIpcContext(
     Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext> ipc_context)
 {
     ipc_context_ = ipc_context.shared();
+    RegisterHostObject();
 }
 
-void TaskComponentFactoryManager::Shutdown() {}
+void TaskComponentFactoryManager::RegisterHostObject()
+{
+    if (host_registered_ || !ipc_context_)
+    {
+        return;
+    }
+
+    // 主进程上下文接口不暴露对象管理器（ABI 零改动约束），经具体实现类
+    // 取 DOM；外来实现下转失败即跳过注册（注销链经同一守卫跳过）
+    auto* concrete_context =
+        dynamic_cast<DAS::Core::IPC::MainProcess::IpcContext*>(
+            ipc_context_.get());
+    if (concrete_context == nullptr)
+    {
+        DAS_CORE_LOG_WARN(
+            "TaskComponentHost DOM registration skipped: ipc context is not "
+            "the concrete main process implementation");
+        return;
+    }
+
+    const auto register_result =
+        concrete_context->GetProxyFactory()
+            .GetObjectManager()
+            .RegisterLocalObject(host_.Get(), host_object_id_);
+    if (DAS::IsFailed(register_result))
+    {
+        DAS_CORE_LOG_WARN(
+            "TaskComponentHost DOM registration failed, result={}",
+            register_result);
+        return;
+    }
+    host_registered_ = true;
+}
+
+void TaskComponentFactoryManager::Shutdown()
+{
+    if (!host_registered_)
+    {
+        return;
+    }
+    host_registered_ = false;
+
+    auto* concrete_context =
+        dynamic_cast<DAS::Core::IPC::MainProcess::IpcContext*>(
+            ipc_context_.get());
+    if (concrete_context == nullptr)
+    {
+        // 注册成功时下转必然成功；防御分支仅保证不崩溃
+        return;
+    }
+
+    const auto unregister_result =
+        concrete_context->GetProxyFactory().GetObjectManager().UnregisterObject(
+            host_object_id_);
+    if (DAS::IsFailed(unregister_result))
+    {
+        DAS_CORE_LOG_WARN(
+            "TaskComponentHost DOM unregister failed, result={}",
+            unregister_result);
+    }
+}
 
 DasResult TaskComponentFactoryManager::OnPluginLoaded(
     const DasGuid&                                   plugin_guid,

@@ -898,7 +898,7 @@ namespace
 
     TEST_F(
         TaskComponentFactoryManagerTest,
-        HostDomShutdownRemovesEntryAndLateLookupsGetNotFound)
+        HostDomShutdownRemovesEntryAndLateLookupsFailCleanly)
     {
         TaskComponentFactoryManager injected_manager;
         injected_manager.SetIpcContext(MakeIpcContextRef());
@@ -910,10 +910,13 @@ namespace
 
         injected_manager.Shutdown();
 
+        // 条目移除时 DOM 对该 oid 做 gen bump 作废——本地 session 的迟到
+        // Lookup 收 STALE_OBJECT_HANDLE（比 NOT_FOUND 更精确的干净报错，
+        // 不会解析进别的对象），"干净报错而非解引用悬垂"锚点成立
         Das::DasPtr<IDasBase> resolved_host;
         EXPECT_EQ(
             GetHostDom().LookupObject(host_object_id, resolved_host.Put()),
-            DAS_E_IPC_OBJECT_NOT_FOUND)
+            DAS_E_IPC_STALE_OBJECT_HANDLE)
             << "late proxy lookups must fail cleanly after shutdown";
         EXPECT_FALSE(GetHostDom().IsValidObject(host_object_id));
         EXPECT_EQ(
@@ -946,10 +949,11 @@ namespace
         EXPECT_EQ(
             GetHostDom().GetLocalEntryCount(),
             host_dom_baseline_entry_count_);
+        // gen bump 作废后的迟到 Lookup 收 STALE_OBJECT_HANDLE（干净报错）
         Das::DasPtr<IDasBase> resolved_host;
         EXPECT_EQ(
             GetHostDom().LookupObject(host_object_id, resolved_host.Put()),
-            DAS_E_IPC_OBJECT_NOT_FOUND);
+            DAS_E_IPC_STALE_OBJECT_HANDLE);
     }
 
     TEST_F(
