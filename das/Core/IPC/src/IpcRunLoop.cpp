@@ -373,6 +373,141 @@ boost::asio::awaitable<void> IpcRunLoop::RouteIncomingMessage(
     std::vector<uint8_t>             body,
     DasPtr<IHostConnection>          connection)
 {
+    // 捎带扩展段接收侧剥离（IO 协程域即时提取，分发/转发判断之前）。
+    // 置位 RESERVED_AS_SIZE 时 body = [扩展段][正常 body]，扩展段 = 若干
+    // 完整内嵌帧（32B header + body 连续拼接，body_size 自描述循环剥取）。
+    // 转发兼容（D-12/T-104.2-17）：转发是不透明字节搬运——在途帧整帧
+    // 原样透传、由终点递归剥离，以下判定与下方既有转发分支的条件保持
+    // 一致（控制平面消息永远本地消费，不会进转发分支）。
+    if ((header.GetFlags() & MessageFlags::RESERVED_AS_SIZE) != 0)
+    {
+        const bool is_transit_frame =
+            !IsControlPlaneMessage(header) && connection_manager_
+            && header.GetTargetSessionId() != 0
+            && header.GetTargetSessionId() != local_session_id_;
+
+        if (!is_transit_frame)
+        {
+            const auto section_result =
+                IpcHeaderValidator::ValidateExtensionSection(
+                    header.GetFlags(),
+                    header.Raw().reserved,
+                    static_cast<uint32_t>(body.size()),
+                    header.GetHeaderFlags());
+            if (!section_result.IsOk())
+            {
+                DAS_CORE_LOG_WARN(
+                    "Extension section rejected, frame dropped: error = {}, "
+                    "flags = {}, reserved = {}, body_size = {}",
+                    section_result.GetErrorName(),
+                    header.GetFlags(),
+                    header.Raw().reserved,
+                    header.GetBodySize());
+                co_return;
+            }
+
+            // 剥离循环不变量：偏移单调推进，以 section_size 不超过可用
+            // body 与内嵌 body_size 自描述为界——杜绝死循环/越界读
+            const uint32_t section_size = header.Raw().reserved;
+            size_t         offset = 0;
+            while (offset < section_size)
+            {
+                const size_t remaining_section =
+                    static_cast<size_t>(section_size) - offset;
+                if (remaining_section < sizeof(IPCMessageHeader))
+                {
+                    DAS_CORE_LOG_WARN(
+                        "Extension section truncated at header boundary, "
+                        "host frame dropped: offset = {}, section_size = {}",
+                        offset,
+                        section_size);
+                    co_return;
+                }
+
+                const uint8_t*         embedded_frame = body.data() + offset;
+                HeaderValidationResult embedded_error;
+                const auto             embedded_header =
+                    ValidatedIPCMessageHeader::Deserialize(
+                        embedded_frame,
+                        sizeof(IPCMessageHeader),
+                        &embedded_error);
+                if (!embedded_header)
+                {
+                    DAS_CORE_LOG_WARN(
+                        "Embedded frame header invalid, host frame dropped: "
+                        "error = {}, offset = {}",
+                        embedded_error.GetErrorName(),
+                        offset);
+                    co_return;
+                }
+
+                // 深度=1 硬约束：内嵌帧禁止再置 RESERVED_AS_SIZE
+                const auto depth_result =
+                    IpcHeaderValidator::ValidateExtensionDepth(
+                        embedded_header->GetFlags());
+                if (!depth_result.IsOk())
+                {
+                    DAS_CORE_LOG_WARN(
+                        "Nested extension section rejected, host frame "
+                        "dropped: error = {}, offset = {}",
+                        depth_result.GetErrorName(),
+                        offset);
+                    co_return;
+                }
+
+                const size_t embedded_frame_size =
+                    sizeof(IPCMessageHeader) + embedded_header->GetBodySize();
+                if (embedded_frame_size > remaining_section)
+                {
+                    DAS_CORE_LOG_WARN(
+                        "Embedded frame overruns extension section, host "
+                        "frame dropped: declared = {}, remaining = {}",
+                        embedded_frame_size,
+                        remaining_section);
+                    co_return;
+                }
+
+                std::vector<uint8_t> embedded_body(
+                    embedded_frame + sizeof(IPCMessageHeader),
+                    embedded_frame + embedded_frame_size);
+                // 递归走同一入口：校验/分流/转发/日志全复用
+                co_await RouteIncomingMessage(
+                    *embedded_header,
+                    std::move(embedded_body),
+                    connection);
+                offset += embedded_frame_size;
+            }
+
+            // 剩余 body 作为宿主正常 body：剥掉扩展段标记后经既有
+            // Deserialize 路径重建 header，走既有路由
+            IPCMessageHeader host_raw = header.Raw();
+            host_raw.flags = static_cast<uint16_t>(
+                host_raw.flags & ~MessageFlags::RESERVED_AS_SIZE);
+            host_raw.reserved = 0;
+            host_raw.body_size =
+                static_cast<uint32_t>(body.size() - section_size);
+            const auto host_header = ValidatedIPCMessageHeader::Deserialize(
+                &host_raw,
+                sizeof(host_raw));
+            if (!host_header)
+            {
+                DAS_CORE_LOG_WARN(
+                    "Host header rebuild failed after extension strip, "
+                    "frame dropped");
+                co_return;
+            }
+
+            std::vector<uint8_t> host_body(
+                body.begin() + section_size,
+                body.end());
+            co_await RouteIncomingMessage(
+                *host_header,
+                std::move(host_body),
+                connection);
+            co_return;
+        }
+    }
+
     if (IsControlPlaneMessage(header))
     {
         if (header.GetMessageType() == MessageType::Response)

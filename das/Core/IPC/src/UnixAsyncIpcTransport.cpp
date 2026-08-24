@@ -470,6 +470,16 @@ UnixAsyncIpcTransport::ReceiveCoroutine()
 
     if (header.Raw().header_flags & HeaderFlags::LARGE_MESSAGE_VIA_SHM)
     {
+        // 捎带协议防御（D-12 互斥）：SHM 重建会静默清零 reserved——bit1
+        // 置位的 SHM 帧必为非法组合（合法发送端拼装规则永不产生），整帧丢弃
+        if (header.GetFlags() & MessageFlags::RESERVED_AS_SIZE)
+        {
+            DAS_CORE_LOG_WARN(
+                "SHM frame with RESERVED_AS_SIZE flag rejected: flags = {}",
+                header.GetFlags());
+            co_return DAS_E_IPC_INVALID_MESSAGE;
+        }
+
         if (shared_memory_pool_ == nullptr)
         {
             DAS_LOG_ERROR(
@@ -547,6 +557,19 @@ boost::asio::awaitable<DasResult> UnixAsyncIpcTransport::SendCoroutine(
     // 上限拒绝，或阻塞管道）
     if (body_size >= LARGE_MESSAGE_THRESHOLD)
     {
+        // 捎带协议防御（D-12 互斥）：SHM 分流重建会静默清零 reserved——
+        // bit1 置位的帧禁止进入 SHM 路径（合法发送端拼装规则永不产生）
+        if (header.GetFlags() & MessageFlags::RESERVED_AS_SIZE)
+        {
+            DAS_CORE_LOG_WARN(
+                "SendCoroutine: frame with RESERVED_AS_SIZE flag must not "
+                "take the SHM path: flags = {}, body_size = {}",
+                header.GetFlags(),
+                body_size);
+            send_mutex_.Unlock();
+            co_return DAS_E_IPC_INVALID_MESSAGE;
+        }
+
         if (shared_memory_pool_ == nullptr)
         {
             DAS_CORE_LOG_WARN(
