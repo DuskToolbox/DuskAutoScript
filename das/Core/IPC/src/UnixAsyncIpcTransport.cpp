@@ -670,4 +670,72 @@ boost::asio::awaitable<DasResult> UnixAsyncIpcTransport::SendCoroutine(
     co_return result;
 }
 
+boost::asio::awaitable<DasResult> UnixAsyncIpcTransport::SendScatter(
+    const ValidatedIPCMessageHeader& header,
+    std::vector<SendSegment>&&       segments)
+{
+    // 段列表 move 进协程帧局部持有：SendSegment 非拥有，段与备存储的
+    // 生命周期契约见 SendSegment 定义（存活至 async_write 完成）
+    std::vector<SendSegment> owned_segments = std::move(segments);
+
+    // 入口防呆：scatter 只承接直写路径的小帧拼装，总长（header + 段总和）
+    // 达到 LARGE_MESSAGE_THRESHOLD 即拒发——SHM 大消息路径不接纳
+    // scatter，且无降级直写（拼装越界由调用方按阈值决策，传输层兜底）
+    size_t total_size = sizeof(IPCMessageHeader);
+    for (const SendSegment& segment : owned_segments)
+    {
+        total_size += segment.size;
+    }
+    if (total_size >= LARGE_MESSAGE_THRESHOLD)
+    {
+        DAS_CORE_LOG_WARN(
+            "scatter frame assembled at or over threshold: total_size = {}, "
+            "segment_count = {}; rejecting",
+            total_size,
+            owned_segments.size());
+        co_return DAS_E_IPC_MESSAGE_TOO_LARGE;
+    }
+
+    // Lock() 返回 bool：true=cancelled，false=正常获取锁
+    const bool cancelled = co_await send_mutex_.Lock();
+    if (cancelled)
+    {
+        co_return DAS_E_IPC_CONNECTION_LOST; // 不访问任何 transport 成员
+    }
+
+    DasResult result = DAS_S_OK;
+
+    // 直写路径 N 段同型扩展：header + 各段构造 const_buffer 序列，一次
+    // async_write
+    std::vector<boost::asio::const_buffer> buffers;
+    buffers.reserve(owned_segments.size() + 1);
+    const auto* raw_header = static_cast<const IPCMessageHeader*>(header);
+    buffers.emplace_back(raw_header, sizeof(IPCMessageHeader));
+    for (const SendSegment& segment : owned_segments)
+    {
+        if (segment.size > 0)
+        {
+            buffers.emplace_back(segment.data, segment.size);
+        }
+    }
+
+    try
+    {
+        co_await boost::asio::async_write(
+            socket_,
+            buffers,
+            boost::asio::use_awaitable);
+    }
+    catch (const std::exception& e)
+    {
+        DAS_CORE_LOG_ERROR(
+            "scatter async_write failed: {}",
+            ToString(e.what()));
+        result = DAS_E_IPC_SEND_FAILED;
+    }
+
+    send_mutex_.Unlock();
+    co_return result;
+}
+
 DAS_CORE_IPC_NS_END

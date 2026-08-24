@@ -121,6 +121,21 @@ public:
         const uint8_t*                   body,
         size_t                           body_size);
 
+    /// scatter-gather 发送协程：header 与 N 段构造 const_buffer 序列一次
+    /// async_write（帧数不变写次数归一——AF_UNIX 字节流写次数对接收端
+    /// 不可见）
+    /// @param header 已验证的消息头（32 字节；与段所指备存储同须存活至
+    ///               本协程完成）
+    /// @param segments 非拥有段序列（rvalue——段列表 move 进协程帧持有；
+    ///                 契约见 AsyncIpcTransport.h 的 SendSegment 定义）
+    /// @note 仅承接直写路径的小帧拼装：总长（header + 段总和）达到
+    ///       LARGE_MESSAGE_THRESHOLD 即拒发（SHM 大消息路径维持既有单段
+    ///       语义不接纳 scatter，且无降级直写）
+    [[nodiscard]]
+    boost::asio::awaitable<DasResult> SendScatter(
+        const ValidatedIPCMessageHeader& header,
+        std::vector<SendSegment>&&       segments);
+
 private:
     // 私有构造函数（由工厂函数调用）
     explicit UnixAsyncIpcTransport(boost::asio::io_context& io_context);
