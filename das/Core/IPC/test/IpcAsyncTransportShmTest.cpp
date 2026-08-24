@@ -3,10 +3,13 @@
 #include <boost/asio/use_future.hpp>
 #include <chrono>
 #include <condition_variable>
+#include <cstring>
 #include <das/Core/IPC/AnyTransport.h>
+#include <das/Core/IPC/IpcErrors.h>
 #include <das/Core/IPC/IpcMessageHeader.h>
 #include <das/Core/IPC/IpcMessageHeaderBuilder.h>
 #include <das/Core/IPC/SharedMemoryPool.h>
+#include <das/Core/IPC/UnixAsyncIpcTransport.h>
 #include <das/Core/IPC/ValidatedIPCMessageHeader.h>
 #include <das/Utils/fmt.h>
 #include <future>
@@ -14,6 +17,10 @@
 #include <mutex>
 #include <thread>
 #include <vector>
+
+#ifdef DAS_WINDOWS
+#include <das/Core/IPC/Win32AsyncIpcTransport.h>
+#endif
 
 #ifdef _WIN32
 #include <windows.h>
@@ -26,11 +33,20 @@ using DAS::Core::IPC::AnyTransport;
 using DAS::Core::IPC::IPCMessageHeader;
 using DAS::Core::IPC::IPCMessageHeaderBuilder;
 using DAS::Core::IPC::PoolMode;
+using DAS::Core::IPC::SendSegment;
 using DAS::Core::IPC::SharedMemoryBlock;
 using DAS::Core::IPC::SharedMemoryPool;
 using DAS::Core::IPC::ShmBlockGuard;
 using DAS::Core::IPC::ValidatedIPCMessageHeader;
 using namespace DAS::Core::IPC::HeaderFlags;
+
+// scatter 用例直测平台原生具体实现（Windows=Named Pipe，非
+// Windows=AF_UNIX）；AnyTransport 变体转发路径由既有夹具另测
+#ifdef DAS_WINDOWS
+using ScatterTransportUnderTest = DAS::Core::IPC::Win32AsyncIpcTransport;
+#else
+using ScatterTransportUnderTest = DAS::Core::IPC::UnixAsyncIpcTransport;
+#endif
 
 namespace
 {
@@ -229,6 +245,74 @@ protected:
         return TransportPair{
             std::move(*server_transport),
             std::move(*client_transport)};
+    }
+
+    // 创建连接的具体传输对（scatter 用例直测平台原生实现）
+    struct ScatterTransportPair
+    {
+        std::unique_ptr<ScatterTransportUnderTest> server;
+        std::unique_ptr<ScatterTransportUnderTest> client;
+    };
+
+    std::optional<ScatterTransportPair> CreateConnectedScatterTransports()
+    {
+        static std::atomic<uint32_t> next_scatter_endpoint_id{1};
+        const auto                   base = DAS_FMT_NS::format(
+            "scatter_test_{}_{}",
+            GetCurrentProcessId() % 10000,
+            next_scatter_endpoint_id.fetch_add(1));
+        const auto read_endpoint = base + "_read";
+        const auto write_endpoint = base + "_write";
+
+        auto work_guard = boost::asio::make_work_guard(io_context_);
+
+        auto server_future = boost::asio::co_spawn(
+            io_context_,
+            ScatterTransportUnderTest::CreateAsync(
+                io_context_,
+                read_endpoint,
+                write_endpoint,
+                true),
+            boost::asio::use_future);
+
+        auto client_future = boost::asio::co_spawn(
+            io_context_,
+            ScatterTransportUnderTest::CreateAsync(
+                io_context_,
+                read_endpoint,
+                write_endpoint,
+                false),
+            boost::asio::use_future);
+
+        std::thread io_thread([this]() { io_context_.run(); });
+
+        auto server_result = server_future.get();
+        auto client_result = client_future.get();
+
+        work_guard.reset();
+        if (io_thread.joinable())
+        {
+            io_thread.join();
+        }
+        io_context_.restart();
+
+        if (!server_result.has_value() || !server_result.value())
+        {
+            ADD_FAILURE() << "Failed to create server scatter transport: "
+                          << server_result.error();
+            return std::nullopt;
+        }
+
+        if (!client_result.has_value() || !client_result.value())
+        {
+            ADD_FAILURE() << "Failed to create client scatter transport: "
+                          << client_result.error();
+            return std::nullopt;
+        }
+
+        return ScatterTransportPair{
+            std::move(server_result.value()),
+            std::move(client_result.value())};
     }
 
     std::string                       pool_name_;
@@ -724,6 +808,388 @@ TEST_F(IpcAsyncTransportShmTest, UnconnectedPools_HandleGracefully)
     // handle 会失败但不崩溃。 这里验证发送侧不崩（graceful）——send_result
     // 应为成功。
     EXPECT_EQ(send_result, DAS_S_OK);
+
+    io_context_.stop();
+    if (io_thread.joinable())
+    {
+        io_thread.join();
+    }
+}
+
+// ====== SendScatter（scatter-gather 发送）测试 ======
+
+namespace
+{
+    using ScatterMessage = DAS::Core::IPC::AsyncIpcMessage;
+
+    // 期望线上字节：header 32B 与各段顺序拼接（09a 锚点——与拼接后
+    // 单段 Send 完全一致，新旧互通、接收端零改动）
+    std::vector<uint8_t> BuildExpectedWireBytes(
+        const ValidatedIPCMessageHeader& header,
+        const std::vector<SendSegment>&  segments)
+    {
+        std::vector<uint8_t> expected(sizeof(IPCMessageHeader));
+        std::memcpy(
+            expected.data(),
+            static_cast<const IPCMessageHeader*>(header),
+            sizeof(IPCMessageHeader));
+        for (const SendSegment& segment : segments)
+        {
+            expected.insert(
+                expected.end(),
+                segment.data,
+                segment.data + segment.size);
+        }
+        return expected;
+    }
+
+    // 断言接收帧与期望线上字节逐字节相等（header 32B + body 全量）
+    void ExpectFrameMatchesWireBytes(
+        const ScatterMessage&       message,
+        const std::vector<uint8_t>& expected_wire_bytes)
+    {
+        ASSERT_EQ(
+            message.second.size() + sizeof(IPCMessageHeader),
+            expected_wire_bytes.size());
+        EXPECT_EQ(
+            0,
+            std::memcmp(
+                static_cast<const IPCMessageHeader*>(message.first),
+                expected_wire_bytes.data(),
+                sizeof(IPCMessageHeader)));
+        EXPECT_EQ(
+            0,
+            std::memcmp(
+                message.second.data(),
+                expected_wire_bytes.data() + sizeof(IPCMessageHeader),
+                message.second.size()));
+    }
+
+    // 备存储按值 move 进协程帧局部持有——调用方随即清空源容器仍安全。
+    // SendSegment 非拥有契约的正向形态载体：若段备存储的帧转移失效，
+    // async_write 处的悬空读必被 ASAN 检出（负向形态的漏检面）
+    boost::asio::awaitable<DasResult> SendScatterWithFrameOwnedBacking(
+        ScatterTransportUnderTest&        sender,
+        ValidatedIPCMessageHeader         header,
+        std::vector<std::vector<uint8_t>> backing_frames)
+    {
+        std::vector<SendSegment> segments;
+        segments.reserve(backing_frames.size());
+        for (const std::vector<uint8_t>& frame : backing_frames)
+        {
+            segments.push_back(SendSegment{frame.data(), frame.size()});
+        }
+        co_return co_await sender.SendScatter(header, std::move(segments));
+    }
+} // namespace
+
+TEST_F(IpcAsyncTransportShmTest, SendScatter_WireBytesEqualHeaderPlusSegments)
+{
+    // K 取 1/3/8 三档；3/8 档含空段边界（size 0）
+    const std::vector<std::vector<size_t>> segment_size_tables = {
+        {700},
+        {100, 0, 200},
+        {1, 0, 33, 64, 511, 1000, 4096, 17},
+    };
+
+    for (const std::vector<size_t>& segment_sizes : segment_size_tables)
+    {
+        auto transports = CreateConnectedScatterTransports();
+        ASSERT_TRUE(transports.has_value());
+
+        size_t total_body_size = 0;
+        for (size_t segment_size : segment_sizes)
+        {
+            total_body_size += segment_size;
+        }
+
+        std::vector<std::vector<uint8_t>> backing;
+        for (size_t segment_size : segment_sizes)
+        {
+            backing.push_back(GenerateTestBody(segment_size));
+        }
+
+        std::vector<SendSegment> segments;
+        segments.reserve(backing.size());
+        for (const std::vector<uint8_t>& body : backing)
+        {
+            segments.push_back(SendSegment{body.data(), body.size()});
+        }
+
+        auto header = CreateTestHeader(
+            7,
+            SERVER_SESSION_ID,
+            CLIENT_SESSION_ID,
+            static_cast<uint32_t>(total_body_size));
+
+        const std::vector<uint8_t> expected_wire_bytes =
+            BuildExpectedWireBytes(header, segments);
+
+        auto send_future = boost::asio::co_spawn(
+            io_context_,
+            transports->server->SendScatter(header, std::move(segments)),
+            boost::asio::use_future);
+        auto recv_future = boost::asio::co_spawn(
+            io_context_,
+            transports->client->ReceiveCoroutine(),
+            boost::asio::use_future);
+
+        std::thread io_thread([this]() { io_context_.run(); });
+
+        const DasResult send_result = send_future.get();
+        ASSERT_EQ(send_result, DAS_S_OK);
+
+        auto recv_result = recv_future.get();
+        ASSERT_TRUE(std::holds_alternative<ScatterMessage>(recv_result));
+        const ScatterMessage& message = std::get<ScatterMessage>(recv_result);
+        ExpectFrameMatchesWireBytes(message, expected_wire_bytes);
+
+        io_context_.stop();
+        if (io_thread.joinable())
+        {
+            io_thread.join();
+        }
+        io_context_.restart();
+    }
+}
+
+TEST_F(IpcAsyncTransportShmTest, SendScatter_WireBytesMatchSingleSegmentSend)
+{
+    auto transports = CreateConnectedScatterTransports();
+    ASSERT_TRUE(transports.has_value());
+
+    auto           first_body = GenerateTestBody(300);
+    auto           second_body = GenerateTestBody(100);
+    const size_t   total_body_size = first_body.size() + second_body.size();
+    ScatterMessage scatter_message;
+    ScatterMessage single_message;
+
+    auto header = CreateTestHeader(
+        8,
+        SERVER_SESSION_ID,
+        CLIENT_SESSION_ID,
+        static_cast<uint32_t>(total_body_size));
+
+    // 第一轮：两段 scatter 发送
+    {
+        std::vector<SendSegment> segments = {
+            SendSegment{first_body.data(), first_body.size()},
+            SendSegment{second_body.data(), second_body.size()}};
+
+        auto send_future = boost::asio::co_spawn(
+            io_context_,
+            transports->server->SendScatter(header, std::move(segments)),
+            boost::asio::use_future);
+        auto recv_future = boost::asio::co_spawn(
+            io_context_,
+            transports->client->ReceiveCoroutine(),
+            boost::asio::use_future);
+
+        std::thread io_thread([this]() { io_context_.run(); });
+
+        ASSERT_EQ(send_future.get(), DAS_S_OK);
+        auto recv_result = recv_future.get();
+        ASSERT_TRUE(std::holds_alternative<ScatterMessage>(recv_result));
+        scatter_message = std::get<ScatterMessage>(std::move(recv_result));
+
+        io_context_.stop();
+        if (io_thread.joinable())
+        {
+            io_thread.join();
+        }
+        io_context_.restart();
+    }
+
+    // 第二轮：同逻辑内容单段 Send（两 body 拼接后一次发送）
+    {
+        std::vector<uint8_t> combined(total_body_size);
+        std::memcpy(combined.data(), first_body.data(), first_body.size());
+        std::memcpy(
+            combined.data() + first_body.size(),
+            second_body.data(),
+            second_body.size());
+
+        auto send_future = boost::asio::co_spawn(
+            io_context_,
+            transports->server
+                ->SendCoroutine(header, combined.data(), total_body_size),
+            boost::asio::use_future);
+        auto recv_future = boost::asio::co_spawn(
+            io_context_,
+            transports->client->ReceiveCoroutine(),
+            boost::asio::use_future);
+
+        std::thread io_thread([this]() { io_context_.run(); });
+
+        ASSERT_EQ(send_future.get(), DAS_S_OK);
+        auto recv_result = recv_future.get();
+        ASSERT_TRUE(std::holds_alternative<ScatterMessage>(recv_result));
+        single_message = std::get<ScatterMessage>(std::move(recv_result));
+
+        io_context_.stop();
+        if (io_thread.joinable())
+        {
+            io_thread.join();
+        }
+    }
+
+    // 线上字节一致（互通性）：header 32B 与 body 全量逐字节相等
+    EXPECT_EQ(
+        0,
+        std::memcmp(
+            static_cast<const IPCMessageHeader*>(scatter_message.first),
+            static_cast<const IPCMessageHeader*>(single_message.first),
+            sizeof(IPCMessageHeader)));
+    ASSERT_EQ(scatter_message.second.size(), single_message.second.size());
+    EXPECT_EQ(
+        0,
+        std::memcmp(
+            scatter_message.second.data(),
+            single_message.second.data(),
+            scatter_message.second.size()));
+}
+
+TEST_F(
+    IpcAsyncTransportShmTest,
+    SendScatter_RejectsAtThresholdWithoutPartialWrite)
+{
+    auto transports = CreateConnectedScatterTransports();
+    ASSERT_TRUE(transports.has_value());
+
+    // 段总和使总长（header + 段总和）恰好达到 LARGE_MESSAGE_THRESHOLD
+    const size_t oversized_body_size =
+        LARGE_MESSAGE_THRESHOLD - sizeof(IPCMessageHeader);
+    const auto oversized_body = GenerateTestBody(oversized_body_size);
+    const auto oversized_header = CreateTestHeader(
+        9,
+        SERVER_SESSION_ID,
+        CLIENT_SESSION_ID,
+        static_cast<uint32_t>(oversized_body_size));
+    std::vector<SendSegment> oversized_segments = {
+        SendSegment{oversized_body.data(), oversized_body.size()}};
+
+    {
+        auto send_future = boost::asio::co_spawn(
+            io_context_,
+            transports->server->SendScatter(
+                oversized_header,
+                std::move(oversized_segments)),
+            boost::asio::use_future);
+
+        std::thread io_thread([this]() { io_context_.run(); });
+
+        // 入口防呆：达到阈值即拒发（SHM 大消息路径不接纳 scatter，
+        // 无降级直写——不产生半写）
+        EXPECT_EQ(send_future.get(), DAS_E_IPC_MESSAGE_TOO_LARGE);
+
+        io_context_.stop();
+        if (io_thread.joinable())
+        {
+            io_thread.join();
+        }
+        io_context_.restart();
+    }
+
+    // 零半写证明：拒绝后同对连接发一帧合法 scatter 帧，接收端读到且
+    // 仅读到它（若拒绝路径泄漏了部分字节，此处帧内容必然错位）
+    const auto valid_body = GenerateTestBody(500);
+    const auto valid_header = CreateTestHeader(
+        10,
+        SERVER_SESSION_ID,
+        CLIENT_SESSION_ID,
+        static_cast<uint32_t>(valid_body.size()));
+    std::vector<SendSegment> valid_segments = {
+        SendSegment{valid_body.data(), valid_body.size()}};
+    const std::vector<uint8_t> expected_wire_bytes =
+        BuildExpectedWireBytes(valid_header, valid_segments);
+
+    auto send_future = boost::asio::co_spawn(
+        io_context_,
+        transports->server->SendScatter(
+            valid_header,
+            std::move(valid_segments)),
+        boost::asio::use_future);
+    auto recv_future = boost::asio::co_spawn(
+        io_context_,
+        transports->client->ReceiveCoroutine(),
+        boost::asio::use_future);
+
+    std::thread io_thread([this]() { io_context_.run(); });
+
+    ASSERT_EQ(send_future.get(), DAS_S_OK);
+    auto recv_result = recv_future.get();
+    ASSERT_TRUE(std::holds_alternative<ScatterMessage>(recv_result));
+    const ScatterMessage& message = std::get<ScatterMessage>(recv_result);
+    ExpectFrameMatchesWireBytes(message, expected_wire_bytes);
+
+    io_context_.stop();
+    if (io_thread.joinable())
+    {
+        io_thread.join();
+    }
+}
+
+TEST_F(
+    IpcAsyncTransportShmTest,
+    SendScatter_BackingStorageOwnedByCoroutineFrame)
+{
+    auto transports = CreateConnectedScatterTransports();
+    ASSERT_TRUE(transports.has_value());
+
+    std::vector<std::vector<uint8_t>> backing_frames;
+    backing_frames.push_back(GenerateTestBody(500));
+    backing_frames.push_back(GenerateTestBody(250));
+    size_t total_body_size = 0;
+    for (const std::vector<uint8_t>& frame : backing_frames)
+    {
+        total_body_size += frame.size();
+    }
+
+    auto header = CreateTestHeader(
+        11,
+        SERVER_SESSION_ID,
+        CLIENT_SESSION_ID,
+        static_cast<uint32_t>(total_body_size));
+
+    // 期望字节先于源容器清空构建
+    std::vector<uint8_t> expected_wire_bytes(sizeof(IPCMessageHeader));
+    std::memcpy(
+        expected_wire_bytes.data(),
+        static_cast<const IPCMessageHeader*>(header),
+        sizeof(IPCMessageHeader));
+    for (const std::vector<uint8_t>& frame : backing_frames)
+    {
+        expected_wire_bytes.insert(
+            expected_wire_bytes.end(),
+            frame.data(),
+            frame.data() + frame.size());
+    }
+
+    auto send_future = boost::asio::co_spawn(
+        io_context_,
+        SendScatterWithFrameOwnedBacking(
+            *transports->server,
+            header,
+            std::move(backing_frames)),
+        boost::asio::use_future);
+
+    // 源容器立即析构（moved-from——清空并释放容量；备存储所有权已在
+    // 协程帧，发送仍未完成）
+    backing_frames.clear();
+    backing_frames.shrink_to_fit();
+
+    auto recv_future = boost::asio::co_spawn(
+        io_context_,
+        transports->client->ReceiveCoroutine(),
+        boost::asio::use_future);
+
+    std::thread io_thread([this]() { io_context_.run(); });
+
+    ASSERT_EQ(send_future.get(), DAS_S_OK);
+    auto recv_result = recv_future.get();
+    ASSERT_TRUE(std::holds_alternative<ScatterMessage>(recv_result));
+    const ScatterMessage& message = std::get<ScatterMessage>(recv_result);
+    ExpectFrameMatchesWireBytes(message, expected_wire_bytes);
 
     io_context_.stop();
     if (io_thread.joinable())
