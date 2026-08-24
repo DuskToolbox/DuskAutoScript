@@ -104,6 +104,14 @@ TaskComponentFactoryManager::GetTaskComponentHost() const
     return host_.Get();
 }
 
+void TaskComponentFactoryManager::SetIpcContext(
+    Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext> ipc_context)
+{
+    ipc_context_ = ipc_context.shared();
+}
+
+void TaskComponentFactoryManager::Shutdown() {}
+
 DasResult TaskComponentFactoryManager::OnPluginLoaded(
     const DasGuid&                                   plugin_guid,
     std::span<FeatureInfo* const>                    factory_features,

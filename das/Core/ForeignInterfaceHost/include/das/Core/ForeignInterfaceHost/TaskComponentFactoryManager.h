@@ -4,9 +4,12 @@
 #include <das/Core/ForeignInterfaceHost/Config.h>
 #include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/Core/ForeignInterfaceHost/ForeignInterfaceHost.h>
+#include <das/Core/IPC/MainProcess/IIpcContext.h>
 #include <das/DasPtr.hpp>
+#include <das/DasSharedRef.hpp>
 #include <das/_autogen/idl/abi/IDasTaskComponent.h>
 
+#include <memory>
 #include <optional>
 #include <shared_mutex>
 #include <span>
@@ -54,6 +57,16 @@ public:
     [[nodiscard]]
     Das::PluginInterface::IDasTaskComponentHost* GetTaskComponentHost() const;
 
+    /// 注入主进程 IPC 上下文：host 本尊随即显式注册进 DOM（显式 pin，
+    /// 作为停机链确定性注销的记账锚点）。未注入时注册/注销链全部跳过。
+    void SetIpcContext(
+        Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>
+            ipc_context);
+
+    /// 停机链：确定性注销 host 本尊的 DOM 条目（幂等；析构函数兜底再调，
+    /// registered 标志守卫保证二次注销无害）
+    void Shutdown();
+
     [[nodiscard]]
     virtual std::vector<TaskComponentDefinitionInfo> EnumerateDefinitions()
         const;
@@ -75,6 +88,9 @@ private:
     DasPtr<Das::PluginInterface::IDasTaskComponentHost> host_;
     std::unordered_map<DasGuid, FactoryEntry>           factories_;
     std::unordered_map<DasGuid, ComponentRoute>         routes_;
+
+    // 注入的主进程 IPC 上下文（共享引用保证注销时 DOM 仍存活）
+    std::shared_ptr<DAS::Core::IPC::MainProcess::IIpcContext> ipc_context_;
 
     mutable std::shared_mutex mutex_;
 };

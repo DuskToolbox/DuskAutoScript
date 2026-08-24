@@ -1,8 +1,12 @@
 #include <das/Core/ForeignInterfaceHost/TaskComponentFactoryManager.h>
 
 #include <das/Core/ForeignInterfaceHost/PluginManager.h>
+#include <das/Core/IPC/DistributedObjectManager.h>
+#include <das/Core/IPC/MainProcess/IIpcContext.h>
+#include <das/Core/IPC/MainProcess/IpcContext.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/DasPtr.hpp>
+#include <das/IDasBase.h>
 #include <das/Utils/DasJsonCore.h>
 #include <das/_autogen/idl/abi/IDasTaskComponent.h>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasPluginPackage.Implements.hpp>
@@ -520,6 +524,58 @@ namespace
     {
     protected:
         TaskComponentFactoryManager manager;
+
+        /// host 本尊 DOM 生命周期用例的辅助：惰性创建真实主进程 IPC 上下文
+        /// （仅 host 注册/注销用例调用，既有用例零开销）。创建时刻的本地
+        /// 条目数即基线（此前无任何注册）。
+        DAS::Core::IPC::MainProcess::IpcContext* GetConcreteIpcContext()
+        {
+            if (!ipc_context_sp_)
+            {
+                ipc_context_sp_ =
+                    DAS::Core::IPC::MainProcess::CreateIpcContextShared(false);
+                concrete_ipc_context_ =
+                    dynamic_cast<DAS::Core::IPC::MainProcess::IpcContext*>(
+                        ipc_context_sp_.get());
+                EXPECT_NE(concrete_ipc_context_, nullptr);
+                host_dom_baseline_entry_count_ =
+                    concrete_ipc_context_->GetProxyFactory()
+                        .GetObjectManager()
+                        .GetLocalEntryCount();
+            }
+            return concrete_ipc_context_;
+        }
+
+        DAS::Core::IPC::DistributedObjectManager& GetHostDom()
+        {
+            return GetConcreteIpcContext()
+                ->GetProxyFactory()
+                .GetObjectManager();
+        }
+
+        Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>
+        MakeIpcContextRef()
+        {
+            GetConcreteIpcContext();
+            return Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
+                ipc_context_sp_);
+        }
+
+        DasResult LookupHostObjectId(
+            TaskComponentFactoryManager& manager_with_host,
+            DAS::Core::IPC::ObjectId&    out_object_id)
+        {
+            IDasBase* host_as_base = manager_with_host.GetTaskComponentHost();
+            return GetHostDom().LookupObjectIdFromPtr(
+                host_as_base,
+                out_object_id);
+        }
+
+        std::shared_ptr<DAS::Core::IPC::MainProcess::IIpcContext>
+                                                 ipc_context_sp_;
+        DAS::Core::IPC::MainProcess::IpcContext* concrete_ipc_context_ =
+            nullptr;
+        size_t host_dom_baseline_entry_count_ = 0;
     };
 
     TEST_F(
@@ -805,5 +861,112 @@ namespace
         EXPECT_NE(component.Get(), nullptr);
         EXPECT_EQ(raw_factory->host_create_result, DAS_S_OK);
         EXPECT_TRUE(raw_factory->child_created_through_host);
+    }
+
+    // ============================================================
+    // host 本尊的 DOM 显式注册与确定性注销生命周期
+    // ============================================================
+
+    TEST_F(
+        TaskComponentFactoryManagerTest,
+        HostDomInjectedContextRegistersHostExplicitly)
+    {
+        TaskComponentFactoryManager injected_manager;
+        injected_manager.SetIpcContext(MakeIpcContextRef());
+
+        DAS::Core::IPC::ObjectId host_object_id{};
+        ASSERT_EQ(
+            LookupHostObjectId(injected_manager, host_object_id),
+            DAS_S_OK)
+            << "host should be explicitly registered after SetIpcContext";
+
+        EXPECT_TRUE(GetHostDom().IsValidObject(host_object_id));
+        EXPECT_EQ(
+            GetHostDom().GetLocalEntryCount(),
+            host_dom_baseline_entry_count_ + 1);
+
+        Das::DasPtr<IDasBase> resolved_host;
+        EXPECT_EQ(
+            GetHostDom().LookupObject(host_object_id, resolved_host.Put()),
+            DAS_S_OK);
+        EXPECT_EQ(
+            resolved_host.Get(),
+            static_cast<IDasBase*>(injected_manager.GetTaskComponentHost()));
+
+        injected_manager.Shutdown();
+    }
+
+    TEST_F(
+        TaskComponentFactoryManagerTest,
+        HostDomShutdownRemovesEntryAndLateLookupsGetNotFound)
+    {
+        TaskComponentFactoryManager injected_manager;
+        injected_manager.SetIpcContext(MakeIpcContextRef());
+
+        DAS::Core::IPC::ObjectId host_object_id{};
+        ASSERT_EQ(
+            LookupHostObjectId(injected_manager, host_object_id),
+            DAS_S_OK);
+
+        injected_manager.Shutdown();
+
+        Das::DasPtr<IDasBase> resolved_host;
+        EXPECT_EQ(
+            GetHostDom().LookupObject(host_object_id, resolved_host.Put()),
+            DAS_E_IPC_OBJECT_NOT_FOUND)
+            << "late proxy lookups must fail cleanly after shutdown";
+        EXPECT_FALSE(GetHostDom().IsValidObject(host_object_id));
+        EXPECT_EQ(
+            GetHostDom().GetLocalEntryCount(),
+            host_dom_baseline_entry_count_);
+    }
+
+    TEST_F(
+        TaskComponentFactoryManagerTest,
+        HostDomRepeatedShutdownAndDestructionStayIdempotent)
+    {
+        DAS::Core::IPC::ObjectId host_object_id{};
+        {
+            TaskComponentFactoryManager injected_manager;
+            injected_manager.SetIpcContext(MakeIpcContextRef());
+            ASSERT_EQ(
+                LookupHostObjectId(injected_manager, host_object_id),
+                DAS_S_OK);
+            EXPECT_EQ(
+                GetHostDom().GetLocalEntryCount(),
+                host_dom_baseline_entry_count_ + 1);
+
+            injected_manager.Shutdown();
+            injected_manager.Shutdown();
+            EXPECT_EQ(
+                GetHostDom().GetLocalEntryCount(),
+                host_dom_baseline_entry_count_);
+        }
+        // 析构兜底注销是第三次注销尝试：不得产生副作用或崩溃
+        EXPECT_EQ(
+            GetHostDom().GetLocalEntryCount(),
+            host_dom_baseline_entry_count_);
+        Das::DasPtr<IDasBase> resolved_host;
+        EXPECT_EQ(
+            GetHostDom().LookupObject(host_object_id, resolved_host.Put()),
+            DAS_E_IPC_OBJECT_NOT_FOUND);
+    }
+
+    TEST_F(
+        TaskComponentFactoryManagerTest,
+        HostDomMissingContextInjectionSkipsSafely)
+    {
+        // 夹具自带的 manager 未注入 context：注册跳过、注销跳过、析构兜底
+        // 跳过——防御分支不崩溃
+        EXPECT_NE(manager.GetTaskComponentHost(), nullptr);
+
+        DAS::Core::IPC::ObjectId host_object_id{};
+        EXPECT_EQ(LookupHostObjectId(manager, host_object_id), DAS_E_NOT_FOUND)
+            << "without injected context the host must not enter the DOM";
+
+        manager.Shutdown();
+        EXPECT_EQ(
+            GetHostDom().GetLocalEntryCount(),
+            host_dom_baseline_entry_count_);
     }
 } // namespace
