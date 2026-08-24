@@ -871,6 +871,16 @@ void IpcRunLoop::SetSessionId(uint16_t session_id)
     local_session_id_ = session_id;
 }
 
+void IpcRunLoop::SetPiggybackEnabled(bool enabled)
+{
+    piggyback_enabled_ = enabled;
+}
+
+bool IpcRunLoop::IsPiggybackEnabled() const noexcept
+{
+    return piggyback_enabled_;
+}
+
 DasResult IpcRunLoop::PostToBusinessThread(IDasAsyncCallback* callback) noexcept
 {
     if (!callback)

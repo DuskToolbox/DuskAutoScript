@@ -312,6 +312,22 @@ public:
         return local_session_id_;
     }
 
+    /**
+     * @brief 设置 piggyback 搭车总闸（默认开）
+     *
+     * 唯一闸门位于物化点分叉（GetOrCreateProxy 的 BT 支路）：关闭时一切
+     * ADD_REF 物化走 PostAddRefStandalone 当场直发（完全等价于关闭前的
+     * 独立帧行为），pending 队列恒空，下游出清机制因队列恒空自然 no-op。
+     * 测试/调试旋钮（D-21 帧数基线 A/B 对比的依赖件），不进产品配置面。
+     *
+     * @param enabled 是否启用搭车（物化点 BT 入队候车）
+     */
+    void SetPiggybackEnabled(bool enabled);
+
+    /// @brief 查询 piggyback 搭车总闸状态
+    [[nodiscard]]
+    bool IsPiggybackEnabled() const noexcept;
+
     /// 获取 io_context 引用（用于 HostLauncher 等需要共享 io_context 的场景）
     /// 注意：构造完成后可用
     /// @return io_context 引用，生命周期绑定到 this
@@ -638,6 +654,10 @@ public:
 
     /// 是否启用心跳线程
     bool enable_heartbeat_ = true;
+
+    /// piggyback 搭车总闸（默认开；测试/调试旋钮——物化点分叉的唯一
+    /// 闸门，关闭即回退独立帧直发行为）
+    bool piggyback_enabled_ = true;
 
     /// 退出码
     std::atomic<DasResult> exit_code_{DAS_S_OK};

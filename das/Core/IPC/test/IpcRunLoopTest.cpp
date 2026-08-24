@@ -25,6 +25,7 @@
 #include <vector>
 
 #include "MockDasObject.h"
+#include "OutboundFrameProbe.h"
 using DAS::Core::IPC::AnyTransport;
 using DAS::Core::IPC::CallKey;
 using DAS::Core::IPC::IHostConnection;
@@ -1307,4 +1308,126 @@ TEST_F(IpcRunLoopTest, PiggybackSection_MalformedSectionDropsWholeFrame)
 
     StopRunLoop(run_thread);
     SUCCEED();
+}
+
+// ====== OutboundFrameProbe 观测 seam（Wave 0 测试基建）======
+
+// 探针自证：发送端写 N 条已知帧（不同 interface_id 含 130）→ 探针另一端
+// 逐帧读出——总帧数、按 interface_id 的 dissect 计数、FIFO 帧序三者可信，
+// 是后续全部 Stage B 帧数断言的前提
+TEST_F(IpcRunLoopTest, OutboundFrameProbeCountsDissectsAndPreservesOrder)
+{
+    using DAS::Core::IPC::ObjectId;
+
+    OutboundFrameProbe probe(runloop_->GetIoContext());
+    ASSERT_TRUE(probe.IsHealthy());
+    // 自证形态：对端保留在夹具内，从对端投递已知帧 → 探针观察端读回
+    // （挂到 run loop 上时同一对端经 TakeCounterpartTransport 交给
+    // ConnectionManager，探针读到的就是 run loop 的出站帧镜像）
+
+    const ObjectId object_id_one{
+        .session_id = REMOTE_SESSION_ID,
+        .generation = 1,
+        .local_id = 0x1111};
+    const ObjectId object_id_two{
+        .session_id = REMOTE_SESSION_ID,
+        .generation = 2,
+        .local_id = 0x2222};
+
+    const auto make_frame_header =
+        [](uint32_t interface_id) -> ValidatedIPCMessageHeader
+    {
+        return IPCMessageHeaderBuilder()
+            .SetMessageType(MessageType::Event)
+            .SetHeaderFlags(DAS::Core::IPC::HeaderFlags::CONTROL_PLANE)
+            .SetInterfaceId(interface_id)
+            .SetSourceSessionId(LOCAL_SESSION_ID)
+            .SetTargetSessionId(REMOTE_SESSION_ID)
+            .SetBodySize(static_cast<uint32_t>(sizeof(ObjectId)))
+            .Build();
+    };
+
+    const auto object_body = [](const ObjectId& object_id)
+    {
+        return std::vector<uint8_t>{
+            reinterpret_cast<const uint8_t*>(&object_id),
+            reinterpret_cast<const uint8_t*>(&object_id) + sizeof(object_id)};
+    };
+
+    // 四条帧：130 / 45 / 130 / 200（130 为 RemoteAddRef，body = ObjectId）
+    ASSERT_EQ(
+        probe.SendFrameFromCounterpart(
+            make_frame_header(130),
+            object_body(object_id_one)),
+        DAS_S_OK);
+    ASSERT_EQ(
+        probe.SendFrameFromCounterpart(
+            make_frame_header(45),
+            object_body(object_id_two)),
+        DAS_S_OK);
+    ASSERT_EQ(
+        probe.SendFrameFromCounterpart(
+            make_frame_header(130),
+            object_body(object_id_two)),
+        DAS_S_OK);
+    ASSERT_EQ(
+        probe.SendFrameFromCounterpart(
+            make_frame_header(200),
+            object_body(object_id_one)),
+        DAS_S_OK);
+
+    EXPECT_EQ(probe.DrainUntil(4, std::chrono::seconds(2)), 4u);
+    // 排空窗口内不得再有多余帧
+    EXPECT_EQ(probe.DrainFor(std::chrono::milliseconds(200)), 0u);
+
+    // 总帧数 == N
+    EXPECT_EQ(probe.TotalFrameCount(), 4u);
+    // 按 interface_id 的 dissect 计数
+    EXPECT_EQ(probe.CountByInterfaceId(130), 2u);
+    EXPECT_EQ(probe.CountByInterfaceId(45), 1u);
+    EXPECT_EQ(probe.CountByInterfaceId(200), 1u);
+    EXPECT_EQ(probe.CountByInterfaceId(999), 0u);
+    // FIFO 帧序保持
+    EXPECT_EQ(
+        probe.InterfaceIdOrder(),
+        (std::vector<uint32_t>{130, 45, 130, 200}));
+
+    // 130 号帧 dissect：逐条核对 body 与 target
+    const auto add_ref_frames = probe.FramesByInterfaceId(130);
+    ASSERT_EQ(add_ref_frames.size(), 2u);
+    EXPECT_EQ(
+        std::memcmp(
+            add_ref_frames[0]->body.data(),
+            &object_id_one,
+            sizeof(ObjectId)),
+        0);
+    EXPECT_EQ(
+        std::memcmp(
+            add_ref_frames[1]->body.data(),
+            &object_id_two,
+            sizeof(ObjectId)),
+        0);
+    EXPECT_EQ(
+        add_ref_frames[0]->header.GetTargetSessionId(),
+        REMOTE_SESSION_ID);
+    EXPECT_EQ(
+        add_ref_frames[1]->header.GetTargetSessionId(),
+        REMOTE_SESSION_ID);
+
+    // Reset 清空观测面
+    probe.Reset();
+    EXPECT_EQ(probe.TotalFrameCount(), 0u);
+    EXPECT_TRUE(probe.InterfaceIdOrder().empty());
+
+    probe.Shutdown();
+}
+
+// piggyback 总闸：默认开，可翻转（D-21 帧数基线 A/B 的依赖件）
+TEST_F(IpcRunLoopTest, PiggybackSwitchDefaultsOnAndToggles)
+{
+    EXPECT_TRUE(runloop_->IsPiggybackEnabled());
+    runloop_->SetPiggybackEnabled(false);
+    EXPECT_FALSE(runloop_->IsPiggybackEnabled());
+    runloop_->SetPiggybackEnabled(true);
+    EXPECT_TRUE(runloop_->IsPiggybackEnabled());
 }
