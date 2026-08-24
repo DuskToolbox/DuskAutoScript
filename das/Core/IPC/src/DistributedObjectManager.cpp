@@ -180,30 +180,25 @@ DasResult DistributedObjectManager::UnregisterObject(
             return DAS_S_OK;
         }
 
-        // 本地条目过渡语义：显式 pin 递减；无 pin 时旧
-        // BUSINESS_CONTROL RELEASE（无 session 身份）只能吃任一 holder
-        bool decremented = false;
-        if (entry.local_pins_ > 0)
+        // 本地条目 = 纯 pin 递减（与显式 RegisterLocalObject 配对）；无
+        // pin 可减时不动条目（holder 账本只由 ReleaseRemoteHolder /
+        // RemoveSessionHolders 动，RELEASE 吃 pin 或 holder 的原混账机制
+        // 不可再现）
+        if (entry.local_pins_ == 0)
         {
-            --entry.local_pins_;
-            decremented = true;
-        }
-        else if (!entry.holder_sessions_.empty())
-        {
-            entry.holder_sessions_.erase(entry.holder_sessions_.begin());
-            decremented = true;
             DAS_CORE_LOG_WARN(
-                "UnregisterObject transitional path consumed a remote holder "
-                "without session identity: object_id = (session={}, gen={}, "
-                "local={})",
+                "UnregisterObject local entry has no pin to decrement, "
+                "entry untouched: object_id = (session={}, gen={}, local={})",
                 object_id.session_id,
                 object_id.generation,
                 object_id.local_id);
+            return DAS_E_IPC_INVALID_STATE;
         }
 
-        // 移除条件（仅在递减发生时判定）：pins 归零且 holders 空
-        if (!decremented || entry.local_pins_ > 0
-            || !entry.holder_sessions_.empty())
+        --entry.local_pins_;
+
+        // 移除条件（递减后判定）：pins 归零且 holders 空
+        if (entry.local_pins_ > 0 || !entry.holder_sessions_.empty())
         {
             return DAS_S_OK;
         }

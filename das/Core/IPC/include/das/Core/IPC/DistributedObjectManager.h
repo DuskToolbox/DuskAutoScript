@@ -105,13 +105,15 @@ public:
         bool&           out_newly_created);
 
     /// @brief 注销对象（entry_removed 跃迁重载）
-    /// 远程条目 = remote_views_ 递减（归零移除）；本地条目过渡语义：
-    /// local_pins_ 大于 0 则递减，否则 holders 非空则移除任一 holder 并
-    /// WARN（旧 BUSINESS_CONTROL RELEASE 无 session 身份的过渡分支，
-    /// 发送端迁移后收口为纯 pin 递减）。条目移除时 gen bump 作废 oid。
+    /// 远程条目 = remote_views_ 递减（归零移除）；本地条目 = 纯 pin 递减
+    /// （与显式 RegisterLocalObject 配对），pins==0 时不动条目仅 WARN——
+    /// holder 账本只由 ReleaseRemoteHolder/RemoveSessionHolders 动，
+    /// RELEASE 吃 pin 或 holder 的原混账机制不可再现。条目移除时 gen
+    /// bump 作废 oid，对象本体在锁外于调用线程析构。
     /// @param object_id 目标条目 ObjectId
     /// @param out_entry_removed [out] 本次调用导致条目被移除时 true
-    /// @return DAS_S_OK 成功；DAS_E_IPC_OBJECT_NOT_FOUND 条目不存在
+    /// @return DAS_S_OK 成功；DAS_E_IPC_OBJECT_NOT_FOUND 条目不存在；
+    ///         DAS_E_IPC_INVALID_STATE 本地条目无 pin 可递减（WARN）
     DasResult UnregisterObject(
         const ObjectId& object_id,
         bool&           out_entry_removed);
