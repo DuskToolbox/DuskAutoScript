@@ -2,10 +2,12 @@
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/use_future.hpp>
 #include <chrono>
+#include <cstring>
 #include <das/Core/IPC/AfUnixAvailable.h>
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/IHostConnection.h>
 #include <das/Core/IPC/IMessageHandler.h>
+#include <das/Core/IPC/IpcCommandHandler.h>
 #include <das/Core/IPC/IpcMessageHeader.h>
 #include <das/Core/IPC/IpcMessageHeaderBuilder.h>
 #include <das/Core/IPC/IpcResponseSender.h>
@@ -13,6 +15,7 @@
 #include <das/Core/IPC/IpcTransport.h>
 #include <das/Core/IPC/ProxyFactory.h>
 #include <das/Core/IPC/RemoteObjectRegistry.h>
+#include <das/Core/IPC/RemoteRefHandler.h>
 #include <das/IDasAsyncCallback.h>
 #include <das/Utils/fmt.h>
 #include <future>
@@ -20,6 +23,8 @@
 #include <optional>
 #include <thread>
 #include <vector>
+
+#include "MockDasObject.h"
 using DAS::Core::IPC::AnyTransport;
 using DAS::Core::IPC::CallKey;
 using DAS::Core::IPC::IHostConnection;
@@ -121,6 +126,62 @@ namespace
         uint16_t                 session_id_;
         AnyTransport&            transport_;
     };
+
+    // ====== 捎带扩展段（RESERVED_AS_SIZE，D-12 段 A 接收侧）测试构造 ======
+    // 模拟段 B 发送端拼装：builder 无 SetReserved，测试直接改写 wire 字节后
+    // 经既有 Deserialize 路径构造合法 header。
+
+    std::vector<uint8_t> EncodeObjectIdBody(
+        const DAS::Core::IPC::ObjectId& object_id)
+    {
+        return {
+            reinterpret_cast<const uint8_t*>(&object_id),
+            reinterpret_cast<const uint8_t*>(&object_id) + sizeof(object_id)};
+    }
+
+    std::vector<uint8_t> BuildEmbeddedControlPlaneEvent(
+        const DAS::Core::IPC::ObjectId& object_id)
+    {
+        const auto header =
+            IPCMessageHeaderBuilder()
+                .SetMessageType(MessageType::Event)
+                .SetControlPlaneCommand(
+                    DAS::Core::IPC::IpcCommandType::RemoteAddRef)
+                .SetSourceSessionId(REMOTE_SESSION_ID)
+                .SetTargetSessionId(LOCAL_SESSION_ID)
+                .SetBodySize(static_cast<uint32_t>(sizeof(object_id)))
+                .Build();
+        std::vector<uint8_t> frame;
+        const auto* header_bytes = static_cast<const IPCMessageHeader*>(header);
+        frame.insert(
+            frame.end(),
+            header_bytes,
+            header_bytes + sizeof(IPCMessageHeader));
+        const auto object_body = EncodeObjectIdBody(object_id);
+        frame.insert(frame.end(), object_body.begin(), object_body.end());
+        return frame;
+    }
+
+    ValidatedIPCMessageHeader MakePiggybackHostHeader(
+        uint32_t section_size,
+        uint32_t total_body_size)
+    {
+        const auto base = IPCMessageHeaderBuilder()
+                              .SetMessageType(MessageType::Response)
+                              .SetHeaderFlags(DAS::Core::IPC::HeaderFlags::NONE)
+                              .SetInterfaceId(0x1234)
+                              .SetCallId(901)
+                              .SetSourceSessionId(REMOTE_SESSION_ID)
+                              .SetTargetSessionId(LOCAL_SESSION_ID)
+                              .SetBodySize(total_body_size)
+                              .Build();
+        IPCMessageHeader raw = base.Raw();
+        raw.flags = raw.flags | DAS::Core::IPC::MessageFlags::RESERVED_AS_SIZE;
+        raw.reserved = section_size;
+        // magic/version 未动，Deserialize 必然成功；失败会抛出并被测试捕获
+        return ValidatedIPCMessageHeader::Deserialize(&raw, sizeof(raw))
+            .value();
+    }
 } // namespace
 
 // Test fixture for IpcRunLoop tests
@@ -1055,4 +1116,196 @@ TEST_F(IpcRunLoopTest, PostCallback_FromOtherThread)
     {
         run_thread.join();
     }
+}
+
+// ====== Piggyback Extension Section Tests（RESERVED_AS_SIZE 接收侧）======
+
+TEST_F(
+    IpcRunLoopTest,
+    PiggybackSection_StripsAndRecursivelyRoutesEmbeddedFrames)
+{
+    auto transport_pair = CreateConnectedTransportPair("piggyback_strip_route");
+    ASSERT_TRUE(transport_pair.has_value());
+
+    const DAS::DasPtr<IHostConnection> host(new TestInternalHost(
+        runloop_->GetIoContext(),
+        REMOTE_SESSION_ID,
+        transport_pair->run_loop_side));
+    ASSERT_EQ(runloop_->RegisterInternalHost(host), DAS_S_OK);
+
+    // CONTROL_PLANE 130 记账 handler + 两个本地条目：递归分发的可观测锚点
+    auto& object_manager = proxy_factory_.GetObjectManager();
+    object_manager.SetSessionId(LOCAL_SESSION_ID);
+    const DAS::DasPtr<DAS::Core::IPC::RemoteRefHandler> remote_ref_handler =
+        DAS::Core::IPC::RemoteRefHandler::Create(object_manager, *runloop_);
+    runloop_->RegisterHandler(
+        DAS::Core::IPC::HeaderFlags::CONTROL_PLANE,
+        static_cast<uint32_t>(DAS::Core::IPC::IpcCommandType::RemoteAddRef),
+        remote_ref_handler.Get());
+
+    auto*                    mock_object_one = new MockDasObject();
+    auto*                    mock_object_two = new MockDasObject();
+    DAS::Core::IPC::ObjectId object_id_one{};
+    DAS::Core::IPC::ObjectId object_id_two{};
+    ASSERT_EQ(
+        object_manager
+            .RegisterLocalObject(mock_object_one, object_id_one, false),
+        DAS_S_OK);
+    ASSERT_EQ(
+        object_manager
+            .RegisterLocalObject(mock_object_two, object_id_two, false),
+        DAS_S_OK);
+
+    std::thread run_thread;
+    StartRunLoop(run_thread);
+
+    const std::vector<uint8_t> embedded_one =
+        BuildEmbeddedControlPlaneEvent(object_id_one);
+    const std::vector<uint8_t> embedded_two =
+        BuildEmbeddedControlPlaneEvent(object_id_two);
+    const std::vector<uint8_t> host_body{0xAA, 0xBB, 0xCC, 0xDD};
+
+    std::vector<uint8_t> piggybacked_body = embedded_one;
+    piggybacked_body.insert(
+        piggybacked_body.end(),
+        embedded_two.begin(),
+        embedded_two.end());
+    piggybacked_body.insert(
+        piggybacked_body.end(),
+        host_body.begin(),
+        host_body.end());
+
+    const uint32_t section_size =
+        static_cast<uint32_t>(embedded_one.size() + embedded_two.size());
+    const auto header = MakePiggybackHostHeader(
+        section_size,
+        static_cast<uint32_t>(piggybacked_body.size()));
+
+    auto send_future = boost::asio::co_spawn(
+        runloop_->GetIoContext(),
+        transport_pair->peer_side.SendCoroutine(
+            header,
+            piggybacked_body.data(),
+            piggybacked_body.size()),
+        boost::asio::use_future);
+    EXPECT_EQ(send_future.get(), DAS_S_OK);
+
+    auto queued = WaitForInboundMessage(std::chrono::milliseconds(2000));
+    StopRunLoop(run_thread);
+
+    // 两个内嵌帧各自按其 header 递归路由：CONTROL_PLANE 130 记账发生
+    EXPECT_EQ(object_manager.GetRemoteHolderCount(object_id_one), 1u);
+    EXPECT_EQ(object_manager.GetRemoteHolderCount(object_id_two), 1u);
+
+    // 宿主 body 剥离扩展段后走正常路由（无 pending callback → 入站队列）
+    ASSERT_TRUE(queued.has_value());
+    EXPECT_EQ(queued->body, host_body);
+    EXPECT_EQ(
+        queued->header.GetFlags()
+            & DAS::Core::IPC::MessageFlags::RESERVED_AS_SIZE,
+        0);
+}
+
+TEST_F(IpcRunLoopTest, PiggybackSection_MalformedSectionDropsWholeFrame)
+{
+    auto transport_pair =
+        CreateConnectedTransportPair("piggyback_malformed_drop");
+    ASSERT_TRUE(transport_pair.has_value());
+
+    const DAS::DasPtr<IHostConnection> host(new TestInternalHost(
+        runloop_->GetIoContext(),
+        REMOTE_SESSION_ID,
+        transport_pair->run_loop_side));
+    ASSERT_EQ(runloop_->RegisterInternalHost(host), DAS_S_OK);
+
+    auto& object_manager = proxy_factory_.GetObjectManager();
+    object_manager.SetSessionId(LOCAL_SESSION_ID);
+    const DAS::DasPtr<DAS::Core::IPC::RemoteRefHandler> remote_ref_handler =
+        DAS::Core::IPC::RemoteRefHandler::Create(object_manager, *runloop_);
+    runloop_->RegisterHandler(
+        DAS::Core::IPC::HeaderFlags::CONTROL_PLANE,
+        static_cast<uint32_t>(DAS::Core::IPC::IpcCommandType::RemoteAddRef),
+        remote_ref_handler.Get());
+
+    auto*                    mock_object = new MockDasObject();
+    DAS::Core::IPC::ObjectId object_id{};
+    ASSERT_EQ(
+        object_manager.RegisterLocalObject(mock_object, object_id, false),
+        DAS_S_OK);
+
+    std::thread run_thread;
+    StartRunLoop(run_thread);
+
+    const auto send_piggyback = [this, &transport_pair](
+                                    const ValidatedIPCMessageHeader& header,
+                                    const std::vector<uint8_t>&      body)
+    {
+        auto send_future = boost::asio::co_spawn(
+            runloop_->GetIoContext(),
+            transport_pair->peer_side
+                .SendCoroutine(header, body.data(), body.size()),
+            boost::asio::use_future);
+        EXPECT_EQ(send_future.get(), DAS_S_OK);
+    };
+
+    const std::vector<uint8_t> host_body{0xAA, 0xBB, 0xCC, 0xDD};
+
+    // 场景 A：section 声称超过 body_size —— 校验器整帧拒绝，不进循环
+    {
+        const std::vector<uint8_t> short_body(64, 0x11);
+        send_piggyback(MakePiggybackHostHeader(4096, 64), short_body);
+    }
+
+    // 场景 B：section 尺寸合法但内嵌帧声明的 body_size 越过 section 边界
+    // —— 剥离循环按自描述长度封顶，整帧丢弃不越界读
+    {
+        std::vector<uint8_t> embedded =
+            BuildEmbeddedControlPlaneEvent(object_id);
+        IPCMessageHeader patch{};
+        std::memcpy(&patch, embedded.data(), sizeof(patch));
+        patch.body_size = 9999;
+        std::memcpy(embedded.data(), &patch, sizeof(patch));
+
+        std::vector<uint8_t> piggybacked_body = embedded;
+        piggybacked_body.insert(
+            piggybacked_body.end(),
+            host_body.begin(),
+            host_body.end());
+        send_piggyback(
+            MakePiggybackHostHeader(
+                static_cast<uint32_t>(embedded.size()),
+                static_cast<uint32_t>(piggybacked_body.size())),
+            piggybacked_body);
+    }
+
+    // 场景 C：内嵌帧自身再置 bit1（深度=2）—— 剥离循环施加深度=1 硬约束
+    {
+        std::vector<uint8_t> embedded =
+            BuildEmbeddedControlPlaneEvent(object_id);
+        IPCMessageHeader patch{};
+        std::memcpy(&patch, embedded.data(), sizeof(patch));
+        patch.flags = DAS::Core::IPC::MessageFlags::RESERVED_AS_SIZE;
+        patch.reserved = 4;
+        std::memcpy(embedded.data(), &patch, sizeof(patch));
+
+        std::vector<uint8_t> piggybacked_body = embedded;
+        piggybacked_body.insert(
+            piggybacked_body.end(),
+            host_body.begin(),
+            host_body.end());
+        send_piggyback(
+            MakePiggybackHostHeader(
+                static_cast<uint32_t>(embedded.size()),
+                static_cast<uint32_t>(piggybacked_body.size())),
+            piggybacked_body);
+    }
+
+    // 三个畸形帧全部整帧丢弃：入站队列保持空、holder 记账零发生、
+    // 接收循环存活（无死循环/越界读崩溃）
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    EXPECT_FALSE(inbound_queue_->TryPop().has_value());
+    EXPECT_EQ(object_manager.GetRemoteHolderCount(object_id), 0u);
+
+    StopRunLoop(run_thread);
+    SUCCEED();
 }

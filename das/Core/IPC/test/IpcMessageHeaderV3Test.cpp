@@ -10,6 +10,7 @@
  */
 
 #include <cstring>
+#include <das/Core/IPC/IpcHeaderValidator.h>
 #include <das/Core/IPC/IpcMessageHeader.h>
 #include <das/Core/IPC/IpcMessageHeaderBuilder.h>
 #include <gtest/gtest.h>
@@ -215,6 +216,86 @@ namespace Das::Core::IPC::Test
             IPCMessageHeaderBuilder().SetInterfaceId(0x12345678).Build();
 
         EXPECT_EQ(validated.Raw().interface_id, 0x12345678u);
+    }
+
+    // ==================== Piggyback Extension Section Rules
+    // ==================== RESERVED_AS_SIZE（D-12 捎带协议）：置位时 reserved =
+    // 扩展段总字节数， body = [扩展段][正常
+    // body]。以下用例钉死校验器三连硬约束与深度=1。
+
+    TEST(IpcMessageHeaderV3Test, ExtensionSection_ValidCombinationAccepted)
+    {
+        // 合法组合：bit1 置位 + 0 < reserved <= body_size + 非 SHM flags
+        const auto result = IpcHeaderValidator::ValidateExtensionSection(
+            MessageFlags::RESERVED_AS_SIZE,
+            64,
+            1024,
+            HeaderFlags::NONE);
+        EXPECT_TRUE(result.IsOk());
+    }
+
+    TEST(IpcMessageHeaderV3Test, ExtensionSection_ShmMutualExclusionRejected)
+    {
+        // RESERVED_AS_SIZE 与 LARGE_MESSAGE_VIA_SHM 互斥（SHM 帧 reserved 恒
+        // 0）
+        const auto result = IpcHeaderValidator::ValidateExtensionSection(
+            MessageFlags::RESERVED_AS_SIZE,
+            64,
+            1024,
+            HeaderFlags::LARGE_MESSAGE_VIA_SHM);
+        EXPECT_FALSE(result.IsOk());
+        EXPECT_EQ(
+            result.error,
+            HeaderValidationError::ExtensionSectionShmConflict);
+    }
+
+    TEST(IpcMessageHeaderV3Test, ExtensionSection_NestedDepthRejected)
+    {
+        // 深度=1：内嵌帧再置 bit1 即拒绝
+        const auto nested = IpcHeaderValidator::ValidateExtensionDepth(
+            MessageFlags::RESERVED_AS_SIZE);
+        EXPECT_FALSE(nested.IsOk());
+        EXPECT_EQ(nested.error, HeaderValidationError::NestedExtensionSection);
+
+        // 纯 inline 内嵌帧放行
+        const auto plain =
+            IpcHeaderValidator::ValidateExtensionDepth(MessageFlags::NONE);
+        EXPECT_TRUE(plain.IsOk());
+    }
+
+    TEST(
+        IpcMessageHeaderV3Test,
+        ExtensionSection_ZeroReservedAndOverrunRejected)
+    {
+        // SHM 往返清零防御：bit1 置位但 reserved 为 0
+        const auto zero_reserved = IpcHeaderValidator::ValidateExtensionSection(
+            MessageFlags::RESERVED_AS_SIZE,
+            0,
+            1024,
+            HeaderFlags::NONE);
+        EXPECT_FALSE(zero_reserved.IsOk());
+        EXPECT_EQ(
+            zero_reserved.error,
+            HeaderValidationError::InvalidExtensionSectionSize);
+
+        // 越界：reserved 超过 body_size（fail-closed 整帧拒绝）
+        const auto overrun = IpcHeaderValidator::ValidateExtensionSection(
+            MessageFlags::RESERVED_AS_SIZE,
+            2048,
+            1024,
+            HeaderFlags::NONE);
+        EXPECT_FALSE(overrun.IsOk());
+        EXPECT_EQ(
+            overrun.error,
+            HeaderValidationError::InvalidExtensionSectionSize);
+
+        // bit1 未置位时本规则无约束（纯 inline 帧）
+        const auto plain = IpcHeaderValidator::ValidateExtensionSection(
+            MessageFlags::NONE,
+            0,
+            1024,
+            HeaderFlags::NONE);
+        EXPECT_TRUE(plain.IsOk());
     }
 
 } // namespace Das::Core::IPC::Test
