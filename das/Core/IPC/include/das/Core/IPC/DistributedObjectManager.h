@@ -16,6 +16,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
+#include <vector>
 
 #include <das/Core/IPC/Config.h>
 
@@ -23,14 +24,22 @@ DAS_CORE_IPC_NS_BEGIN
 
 struct ObjectEntry
 {
-    uint32_t              ref_count_{1}; // 引用计数（注册次数）
+    // 本地条目：显式 Register/Unregister 配对的服务 pin 计数
+    // （显式注册置 1，pinless auto-register 置 0——配额由对端 ADD_REF
+    // 填充，两本账分离后一条 RELEASE 吃不掉显式 pin）
+    uint32_t              local_pins_{0};
     ObjectId              object_id;
     DAS::DasPtr<IDasBase> object_ptr; // 本地对象非空，远程对象为 nullptr
     bool                  is_local;   // 决定 UnregisterObject 时是否 Release
 
-    // 远端 holder 账本：每对端 0/1（单 proxy 不变量），holder 身份为
-    // 对端 session_id，由 CONTROL_PLANE RemoteAddRef/RemoteRelease 维护
+    // 本地条目：远端 holder 账本——每对端 0/1（单 proxy 不变量），holder
+    // 身份为对端 session_id，由 CONTROL_PLANE RemoteAddRef/RemoteRelease
+    // 维护（AddRemoteHolder/ReleaseRemoteHolder）
     std::unordered_set<uint16_t> holder_sessions_;
+
+    // 远程条目：peer 侧自有视图计数（每接口视图一个 proxy 实例各加减 1，
+    // 0→1 = 首次物化该对象）
+    uint32_t remote_views_{0};
 };
 
 // 本地对象的受限句柄：仅 DistributedObjectManager::WithLocalObject 在持锁
@@ -43,8 +52,8 @@ class LocalObjectRef
     friend class DistributedObjectManager;
 
 public:
-    // 引用计数 +1（配平远端 proxy 销毁时的 REMOTE_RELEASE）。
-    void AddRef() noexcept { entry_.ref_count_++; }
+    // 显式 pin +1（配平既有调用方的 Register/Unregister 配对记账）。
+    void AddRef() noexcept { entry_.local_pins_++; }
 
     [[nodiscard]]
     IDasBase* Get() const noexcept
@@ -77,14 +86,49 @@ public:
     /// @param object_ptr 本地对象
     /// @param out_object_id [out] 分配或复用的 ObjectId
     /// @param explicit_pin true = 显式 Register/Unregister 配对（重复注册
-    ///                     递增计数，保持既有行为）；false = pinless
-    ///                     auto-register（条目计数为 0，对已存在条目为
-    ///                     无记账 no-op，配额由对端 ADD_REF 填充）
+    ///                     local_pins_ 递增，保持既有行为）；false =
+    ///                     pinless auto-register（条目 local_pins_ 为 0，
+    ///                     对已存在条目为无记账 no-op，配额由对端 ADD_REF
+    ///                     填充）
     /// @return DAS_S_OK 成功，DAS_E_INVALID_POINTER 空指针
     DasResult RegisterLocalObject(
         IDasBase* object_ptr,
         ObjectId& out_object_id,
         bool      explicit_pin);
+
+    /// @brief 注册远端对象视图（peer 侧自有账本，newly_created 跃迁重载）
+    /// @param object_id 远端对象 ObjectId
+    /// @param out_newly_created [out] 首次建条目 true，dedup（remote_views_
+    ///                递增）false——发送侧只在 0→1 时申报 ADD_REF
+    /// @return DAS_S_OK 成功；DAS_E_DUPLICATE_ELEMENT 与本地条目撞号；
+    ///         其余为参数校验错误
+    DasResult RegisterRemoteObject(
+        const ObjectId& object_id,
+        bool&           out_newly_created);
+
+    /// @brief 注销对象（entry_removed 跃迁重载）
+    /// 远程条目 = remote_views_ 递减（归零移除）；本地条目过渡语义：
+    /// local_pins_ 大于 0 则递减，否则 holders 非空则移除任一 holder 并
+    /// WARN（旧 BUSINESS_CONTROL RELEASE 无 session 身份的过渡分支，
+    /// 发送端迁移后收口为纯 pin 递减）。条目移除时 gen bump 作废 oid。
+    /// @param object_id 目标条目 ObjectId
+    /// @param out_entry_removed [out] 本次调用导致条目被移除时 true
+    /// @return DAS_S_OK 成功；DAS_E_IPC_OBJECT_NOT_FOUND 条目不存在
+    DasResult UnregisterObject(
+        const ObjectId& object_id,
+        bool&           out_entry_removed);
+
+    /// @brief 显式 pin 递减（与显式 RegisterLocalObject 配对）
+    /// local_pins_ 大于 0 时递减（为 0 时无递减、幂等）；递减后满足移除
+    /// 条件（pins 归零且 holders 空）时回收条目并把对象本体唯一一次移交
+    /// 出参——DOM 不原地析构，final Release 的线程域由调用方决定
+    /// @param object_id 本地条目 ObjectId
+    /// @param out_object_to_release [out] 条目被移除时非空
+    /// @return DAS_S_OK 成功；DAS_E_IPC_OBJECT_NOT_FOUND 条目不存在；
+    ///         DAS_E_IPC_INVALID_OBJECT_ID 条目非本地对象
+    DasResult UnregisterLocalPin(
+        const ObjectId&        object_id,
+        DAS::DasPtr<IDasBase>& out_object_to_release);
 
     /// @brief 记录一个远端 holder（对端物化申报 RemoteAddRef 的记账目标）
     /// @param object_id 本地条目 ObjectId
@@ -107,6 +151,25 @@ public:
     DasResult ReleaseRemoteHolder(
         const ObjectId&        object_id,
         uint16_t               session_id,
+        DAS::DasPtr<IDasBase>& out_object_to_release);
+
+    /// @brief 断连清扫：移除所有本地条目上该 session 的 holder
+    /// 只动 holder_sessions_，绝不动 local_pins_（防伪造断连吃服务 pin）；
+    /// 清空后满足移除条件（pins 为 0 且 holders 空）的条目被回收
+    /// @param session_id 断连的对端 session
+    /// @return 被移除条目的对象本体集合（调用方须在 BusinessThread 析构）
+    [[nodiscard]]
+    std::vector<DAS::DasPtr<IDasBase>> RemoveSessionHolders(
+        uint16_t session_id);
+
+    /// @brief 无主 auto 条目回收（guard 回滚用）：holders 空且 pins 为 0
+    /// 才移除并移交对象本体；holders 非空或仍有 pin 时不动条目
+    /// @param object_id 本地条目 ObjectId
+    /// @param out_object_to_release [out] 条目被移除时非空（非空 ⇔ 移除）
+    /// @return DAS_S_OK 成功；DAS_E_IPC_OBJECT_NOT_FOUND 条目不存在；
+    ///         DAS_E_IPC_INVALID_OBJECT_ID 条目非本地对象
+    DasResult RemoveIfUnheldAutoEntry(
+        const ObjectId&        object_id,
         DAS::DasPtr<IDasBase>& out_object_to_release);
 
     /// @brief 查询条目的远端 holder 数量（测试/日志可观测用）

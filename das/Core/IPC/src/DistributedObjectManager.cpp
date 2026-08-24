@@ -51,7 +51,7 @@ DasResult DistributedObjectManager::RegisterLocalObject(
         {
             if (explicit_pin)
             {
-                obj_it->second.ref_count_++;
+                obj_it->second.local_pins_++;
             }
             // pinless 对已存在条目为无记账 no-op，直接返回既有 oid
             out_object_id = existing_id;
@@ -68,33 +68,24 @@ DasResult DistributedObjectManager::RegisterLocalObject(
         return DAS_E_IPC_INVALID_STATE;
     }
 
-    // 首次注册：分配新 ObjectId
+    // 首次注册：分配新 ObjectId（next_local_id_ 单调递增，gen 恒从 1 起）
     const uint32_t local_id = next_local_id_++;
-
-    uint16_t generation = 1;
-    auto     it = local_id_generations_.find(local_id);
-    if (it != local_id_generations_.end())
-    {
-        generation = it->second;
-    }
-    else
-    {
-        local_id_generations_[local_id] = generation;
-    }
+    local_id_generations_[local_id] = 1;
 
     const ObjectId obj_id{
         .session_id = GetLocalSessionId(),
-        .generation = generation,
+        .generation = 1,
         .local_id = local_id};
 
-    // DasPtr 构造函数自动 AddRef；pinless 条目计数为 0（配额由对端
-    // ADD_REF 填充），显式注册计数为 1
+    // DasPtr 构造函数自动 AddRef；pinless 条目 local_pins_ 为 0（配额由
+    // 对端 ADD_REF 填充），显式注册置 1
     const ObjectEntry entry{
-        .ref_count_ = explicit_pin ? uint32_t{1} : uint32_t{0},
+        .local_pins_ = explicit_pin ? uint32_t{1} : uint32_t{0},
         .object_id = obj_id,
         .object_ptr = DAS::DasPtr<IDasBase>(object_ptr),
         .is_local = true,
-        .holder_sessions_ = {}};
+        .holder_sessions_ = {},
+        .remote_views_ = 0};
 
     objects_[obj_id] = entry;
     ptr_to_id_[object_ptr] = obj_id;
@@ -105,6 +96,14 @@ DasResult DistributedObjectManager::RegisterLocalObject(
 
 DasResult DistributedObjectManager::RegisterRemoteObject(
     const ObjectId& object_id)
+{
+    bool newly_created = false;
+    return RegisterRemoteObject(object_id, newly_created);
+}
+
+DasResult DistributedObjectManager::RegisterRemoteObject(
+    const ObjectId& object_id,
+    bool&           out_newly_created)
 {
     auto result = ValidateObjectId(object_id);
     if (result != DAS_S_OK)
@@ -120,23 +119,34 @@ DasResult DistributedObjectManager::RegisterRemoteObject(
         {
             return DAS_E_DUPLICATE_ELEMENT;
         }
-        ++existing->second.ref_count_;
+        ++existing->second.remote_views_;
+        out_newly_created = false;
         return DAS_S_OK;
     }
 
     const ObjectEntry entry{
-        .ref_count_ = 1,
+        .local_pins_ = 0,
         .object_id = object_id,
         .object_ptr = nullptr,
         .is_local = false,
-        .holder_sessions_ = {}};
+        .holder_sessions_ = {},
+        .remote_views_ = 1};
 
     objects_[object_id] = entry;
+    out_newly_created = true;
 
     return DAS_S_OK;
 }
 
 DasResult DistributedObjectManager::UnregisterObject(const ObjectId& object_id)
+{
+    bool entry_removed = false;
+    return UnregisterObject(object_id, entry_removed);
+}
+
+DasResult DistributedObjectManager::UnregisterObject(
+    const ObjectId& object_id,
+    bool&           out_entry_removed)
 {
     auto result = ValidateObjectId(object_id);
     if (result != DAS_S_OK)
@@ -144,6 +154,7 @@ DasResult DistributedObjectManager::UnregisterObject(const ObjectId& object_id)
         return result;
     }
 
+    out_entry_removed = false;
     DAS::DasPtr<IDasBase> object_to_release;
 
     {
@@ -155,14 +166,49 @@ DasResult DistributedObjectManager::UnregisterObject(const ObjectId& object_id)
         }
 
         ObjectEntry& entry = it->second;
-        if (entry.ref_count_ > 1)
+
+        if (!entry.is_local)
         {
-            --entry.ref_count_;
+            // 远程条目：peer 侧自有视图计数递减，归零移除
+            if (entry.remote_views_ > 1)
+            {
+                --entry.remote_views_;
+                return DAS_S_OK;
+            }
+            objects_.erase(it);
+            out_entry_removed = true;
             return DAS_S_OK;
         }
 
-        const bool is_local = entry.is_local;
-        if (is_local && entry.object_ptr)
+        // 本地条目过渡语义：显式 pin 递减；无 pin 时旧
+        // BUSINESS_CONTROL RELEASE（无 session 身份）只能吃任一 holder
+        bool decremented = false;
+        if (entry.local_pins_ > 0)
+        {
+            --entry.local_pins_;
+            decremented = true;
+        }
+        else if (!entry.holder_sessions_.empty())
+        {
+            entry.holder_sessions_.erase(entry.holder_sessions_.begin());
+            decremented = true;
+            DAS_CORE_LOG_WARN(
+                "UnregisterObject transitional path consumed a remote holder "
+                "without session identity: object_id = (session={}, gen={}, "
+                "local={})",
+                object_id.session_id,
+                object_id.generation,
+                object_id.local_id);
+        }
+
+        // 移除条件（仅在递减发生时判定）：pins 归零且 holders 空
+        if (!decremented || entry.local_pins_ > 0
+            || !entry.holder_sessions_.empty())
+        {
+            return DAS_S_OK;
+        }
+
+        if (entry.object_ptr)
         {
             ptr_to_id_.erase(entry.object_ptr.Get());
             local_id_generations_[object_id.local_id] =
@@ -171,8 +217,10 @@ DasResult DistributedObjectManager::UnregisterObject(const ObjectId& object_id)
         }
 
         objects_.erase(it);
+        out_entry_removed = true;
     }
 
+    // 出锁后析构（锁外 final Release，防死锁）
     return DAS_S_OK;
 }
 
@@ -228,12 +276,138 @@ DasResult DistributedObjectManager::ReleaseRemoteHolder(
     if (entry.holder_sessions_.erase(session_id) == 0)
     {
         // 该 session 从不是 holder：无递减发生，不评估移除条件
-        // （迟到/打空的 RELEASE，调用方按 D-14 known-edge 记 WARN 忽略）
+        // （迟到/打空的 RELEASE，调用方按 known-edge 记 WARN 忽略）
         return DAS_E_IPC_OBJECT_NOT_FOUND;
     }
 
     // 移除条件（递减发生时判定）：无显式 pin 且无远端 holder
-    if (entry.ref_count_ > 0 || !entry.holder_sessions_.empty())
+    if (entry.local_pins_ > 0 || !entry.holder_sessions_.empty())
+    {
+        return DAS_S_OK;
+    }
+
+    if (entry.object_ptr)
+    {
+        ptr_to_id_.erase(entry.object_ptr.Get());
+        local_id_generations_[object_id.local_id] =
+            IncrementGeneration(object_id.generation);
+        out_object_to_release = std::move(entry.object_ptr);
+    }
+
+    objects_.erase(it);
+    return DAS_S_OK;
+}
+
+DasResult DistributedObjectManager::UnregisterLocalPin(
+    const ObjectId&        object_id,
+    DAS::DasPtr<IDasBase>& out_object_to_release)
+{
+    auto result = ValidateObjectId(object_id);
+    if (result != DAS_S_OK)
+    {
+        return result;
+    }
+
+    const std::unique_lock lock{mutex_};
+    auto                   it = objects_.find(object_id);
+    if (it == objects_.end())
+    {
+        return DAS_E_IPC_OBJECT_NOT_FOUND;
+    }
+    if (!it->second.is_local)
+    {
+        return DAS_E_IPC_INVALID_OBJECT_ID;
+    }
+
+    ObjectEntry& entry = it->second;
+
+    // pin 递减（为 0 时无递减、幂等），仅在递减后评估移除条件
+    bool decremented = false;
+    if (entry.local_pins_ > 0)
+    {
+        --entry.local_pins_;
+        decremented = true;
+    }
+
+    if (!decremented || entry.local_pins_ > 0
+        || !entry.holder_sessions_.empty())
+    {
+        return DAS_S_OK;
+    }
+
+    if (entry.object_ptr)
+    {
+        ptr_to_id_.erase(entry.object_ptr.Get());
+        local_id_generations_[object_id.local_id] =
+            IncrementGeneration(object_id.generation);
+        out_object_to_release = std::move(entry.object_ptr);
+    }
+
+    objects_.erase(it);
+    return DAS_S_OK;
+}
+
+std::vector<DAS::DasPtr<IDasBase>>
+DistributedObjectManager::RemoveSessionHolders(uint16_t session_id)
+{
+    std::vector<DAS::DasPtr<IDasBase>> removed_objects;
+
+    const std::unique_lock lock{mutex_};
+    for (auto it = objects_.begin(); it != objects_.end();)
+    {
+        ObjectEntry& entry = it->second;
+        if (!entry.is_local || entry.holder_sessions_.erase(session_id) == 0)
+        {
+            ++it;
+            continue;
+        }
+
+        // 只动 holder_sessions_，绝不动 local_pins_；清空后满足移除条件
+        // （pins 为 0 且 holders 空）的条目回收
+        if (entry.local_pins_ > 0 || !entry.holder_sessions_.empty())
+        {
+            ++it;
+            continue;
+        }
+
+        if (entry.object_ptr)
+        {
+            ptr_to_id_.erase(entry.object_ptr.Get());
+            local_id_generations_[entry.object_id.local_id] =
+                IncrementGeneration(entry.object_id.generation);
+            removed_objects.push_back(std::move(entry.object_ptr));
+        }
+        it = objects_.erase(it);
+    }
+
+    return removed_objects;
+}
+
+DasResult DistributedObjectManager::RemoveIfUnheldAutoEntry(
+    const ObjectId&        object_id,
+    DAS::DasPtr<IDasBase>& out_object_to_release)
+{
+    auto result = ValidateObjectId(object_id);
+    if (result != DAS_S_OK)
+    {
+        return result;
+    }
+
+    const std::unique_lock lock{mutex_};
+    auto                   it = objects_.find(object_id);
+    if (it == objects_.end())
+    {
+        return DAS_E_IPC_OBJECT_NOT_FOUND;
+    }
+    if (!it->second.is_local)
+    {
+        return DAS_E_IPC_INVALID_OBJECT_ID;
+    }
+
+    ObjectEntry& entry = it->second;
+
+    // holders 非空（对端已物化）或仍有显式 pin：不动条目
+    if (entry.local_pins_ > 0 || !entry.holder_sessions_.empty())
     {
         return DAS_S_OK;
     }
