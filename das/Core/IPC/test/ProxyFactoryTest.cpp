@@ -10,9 +10,11 @@
 
 #include <das/Core/IPC/AnyTransport.h>
 #include <das/Core/IPC/AsyncIpcTransport.h>
+#include <das/Core/IPC/BusinessThread.h>
 #include <das/Core/IPC/ConnectionManager.h>
 #include <das/Core/IPC/DasReadOnlyStringProxy.h>
 #include <das/Core/IPC/DasVariantVectorByValueProxy.h>
+#include <das/Core/IPC/InternalCallbackHandler.h>
 #include <das/Core/IPC/IpcCommandHandler.h>
 #include <das/Core/IPC/IpcMessageHeader.h>
 #include <das/Core/IPC/IpcRunLoop.h>
@@ -39,9 +41,13 @@
 #include <atomic>
 #include <chrono>
 #include <cstring>
+#include <functional>
+#include <future>
 #include <optional>
 #include <thread>
 #include <utility>
+
+#include "OutboundFrameProbe.h"
 
 using DAS::DasPtr;
 using DAS::Core::IPC::AnyTransport;
@@ -638,4 +644,376 @@ TEST_F(ProxyRemoteRefPairingTest, ShutdownBlocksRemoteRefSendsWithoutCrash)
 
     EXPECT_FALSE(
         ReceiveNextSentMessage(std::chrono::milliseconds(300)).has_value());
+}
+
+// ====== D-19 物化点线程判别分叉（段 B 候车机制）======
+
+namespace
+{
+    constexpr uint16_t FORK_LOCAL_SESSION_ID = 1;
+    constexpr uint16_t FORK_PEER_SESSION_ID = 7;
+
+    // 空实现 IResolveContext（BusinessThread 构造依赖，分叉测试不触达）
+    class ForkResolveContext final : public DAS::Core::IPC::IResolveContext
+    {
+    public:
+        DasResult ResolveMainProcessInterface(const DasGuid&, IDasBase**)
+            override
+        {
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+
+        DasResult RegisterService(IDasBase*, const DasGuid&) override
+        {
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+
+        DasResult UnregisterService(const DasGuid&) override
+        {
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+
+        DasResult ResolveMainProcessInterfaceByName(const char*, IDasBase**)
+            override
+        {
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+
+        DasResult RegisterServiceByName(IDasBase*, const DasGuid&, const char*)
+            override
+        {
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+
+        DasResult UnregisterServiceByName(const char*) override
+        {
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+    };
+
+    // 把任意任务投递到真实 BusinessThread 执行线程的回调（照 IpcCoreTest
+    // 的 BusinessThreadProbeCallback 手法）
+    class BusinessThreadTaskCallback final : public IDasAsyncCallback
+    {
+    public:
+        explicit BusinessThreadTaskCallback(std::function<void()> task)
+            : task_(std::move(task))
+        {
+        }
+
+        uint32_t AddRef() override
+        {
+            return ref_count_.fetch_add(1, std::memory_order_relaxed) + 1;
+        }
+
+        uint32_t Release() override
+        {
+            const uint32_t count =
+                ref_count_.fetch_sub(1, std::memory_order_acq_rel) - 1;
+            if (count == 0)
+            {
+                delete this;
+            }
+            return count;
+        }
+
+        DasResult QueryInterface(const DasGuid& iid, void** pp_object) override
+        {
+            if (pp_object == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            if (iid == DAS_IID_BASE)
+            {
+                *pp_object = static_cast<IDasBase*>(this);
+                AddRef();
+                return DAS_S_OK;
+            }
+            *pp_object = nullptr;
+            return DAS_E_NO_INTERFACE;
+        }
+
+        DasResult Do() noexcept override
+        {
+            task_();
+            return DAS_S_OK;
+        }
+
+    private:
+        std::atomic<uint32_t> ref_count_{1};
+        std::function<void()> task_;
+    };
+} // namespace
+
+// D-19 分叉测试装置：真实 BusinessThread（线程身份真实）+ OutboundFrameProbe
+// 观测 seam（对端注册为 peer session 的 host-local transport，探针读到的即
+// run loop 全部出站帧）
+class ProxyAddRefForkTest : public ::testing::Test
+{
+protected:
+    void SetUp() override
+    {
+        run_loop_ = std::make_unique<IpcRunLoop>(
+            false,
+            inbound_queue_.get(),
+            proxy_factory_,
+            registry_);
+        run_loop_->SetSessionId(FORK_LOCAL_SESSION_ID);
+
+        internal_callback_handler_ =
+            DasPtr<DAS::Core::IPC::InternalCallbackHandler>(
+                new DAS::Core::IPC::InternalCallbackHandler);
+        run_loop_->RegisterHandler(
+            DAS::Core::IPC::HeaderFlags::BUSINESS_CONTROL,
+            internal_callback_handler_->GetInterfaceId(),
+            internal_callback_handler_.Get());
+
+        business_thread_ = std::make_shared<BusinessThread>(
+            *inbound_queue_,
+            *run_loop_,
+            resolve_context_,
+            proxy_factory_,
+            registry_);
+
+        probe_ =
+            std::make_unique<OutboundFrameProbe>(run_loop_->GetIoContext());
+        ASSERT_TRUE(probe_->IsHealthy());
+        auto counterpart_transport = probe_->TakeCounterpartTransport();
+        ASSERT_TRUE(counterpart_transport.has_value());
+        ASSERT_EQ(
+            run_loop_->GetConnectionManager().RegisterHostLocalTransport(
+                FORK_PEER_SESSION_ID,
+                std::move(*counterpart_transport)),
+            DAS_S_OK);
+    }
+
+    void TearDown() override
+    {
+        // 生命期序：探针 transport 先关（io_context 的 owner 是 run loop），
+        // BT 先停（引用 run loop 与队列），run loop 随后析构
+        if (probe_)
+        {
+            probe_->Shutdown();
+        }
+        if (business_thread_)
+        {
+            business_thread_->Stop();
+        }
+        run_loop_.reset();
+        inbound_queue_.reset();
+    }
+
+    // 在真实 BusinessThread 执行线程上运行 task 并等待完成（嵌套 pump 之外
+    // 的测试直驱形态）
+    void RunOnBusinessThread(const std::function<void()>& task)
+    {
+        std::promise<void> task_done;
+        auto               task_done_future = task_done.get_future();
+        const DasPtr<IDasAsyncCallback> callback(new BusinessThreadTaskCallback(
+            [&task, &task_done]()
+            {
+                task();
+                task_done.set_value();
+            }));
+        ASSERT_EQ(run_loop_->PostToBusinessThread(callback.Get()), DAS_S_OK);
+        ASSERT_EQ(
+            task_done_future.wait_for(std::chrono::seconds(5)),
+            std::future_status::ready);
+    }
+
+    ProxyFactory         proxy_factory_;
+    RemoteObjectRegistry registry_;
+    std::unique_ptr<
+        DAS::Core::IPC::IpcMessageQueue<DAS::Core::IPC::InboundMessage>>
+                                inbound_queue_ = std::make_unique<
+                                    DAS::Core::IPC::IpcMessageQueue<DAS::Core::IPC::InboundMessage>>(
+                                    16);
+    ForkResolveContext          resolve_context_;
+    std::unique_ptr<IpcRunLoop> run_loop_;
+    DasPtr<DAS::Core::IPC::InternalCallbackHandler> internal_callback_handler_;
+    std::shared_ptr<BusinessThread>                 business_thread_;
+    std::unique_ptr<OutboundFrameProbe>             probe_;
+    const ObjectId                                  object_id_{
+        .session_id = FORK_PEER_SESSION_ID,
+        .generation = 1,
+        .local_id = 42};
+};
+
+// BT 执行线程上首次物化：入队候车，零直发（pending 计数 1、探针零 130 帧）
+TEST_F(
+    ProxyAddRefForkTest,
+    BusinessThreadMaterializationEnqueuesWithoutDirectSend)
+{
+    DasPtr<IDasBase> materialized_proxy;
+    RunOnBusinessThread(
+        [&]()
+        {
+            auto [result, proxy] = proxy_factory_.GetOrCreateProxy(
+                *run_loop_,
+                business_thread_,
+                object_id_,
+                DasReadOnlyStringProxy::InterfaceId);
+            ASSERT_EQ(result, DAS_S_OK);
+            ASSERT_TRUE(proxy);
+            materialized_proxy = std::move(proxy);
+        });
+
+    // 入队一条，目标 session = owner session
+    EXPECT_EQ(run_loop_->GetPendingAddRefCount(FORK_PEER_SESSION_ID), 1u);
+
+    // 零直发：窗口内探针读不到任何 130 帧
+    EXPECT_EQ(probe_->DrainFor(std::chrono::milliseconds(300)), 0u);
+    EXPECT_EQ(
+        probe_->CountByInterfaceId(
+            static_cast<uint32_t>(IpcCommandType::RemoteAddRef)),
+        0u);
+
+    materialized_proxy.Reset();
+}
+
+// 非 BT 线程（测试主线程，传真实 BT 的 weak_ptr）：当场直发，零入队
+TEST_F(
+    ProxyAddRefForkTest,
+    NonBusinessThreadMaterializationDirectSendsWithoutEnqueue)
+{
+    auto [result, proxy] = proxy_factory_.GetOrCreateProxy(
+        *run_loop_,
+        business_thread_,
+        object_id_,
+        DasReadOnlyStringProxy::InterfaceId);
+    ASSERT_EQ(result, DAS_S_OK);
+    ASSERT_TRUE(proxy);
+
+    EXPECT_EQ(probe_->DrainUntil(1, std::chrono::seconds(1)), 1u);
+    EXPECT_EQ(
+        probe_->CountByInterfaceId(
+            static_cast<uint32_t>(IpcCommandType::RemoteAddRef)),
+        1u);
+    EXPECT_EQ(run_loop_->GetPendingAddRefCount(FORK_PEER_SESSION_ID), 0u);
+    EXPECT_TRUE(run_loop_->PendingAddRefsEmpty());
+
+    proxy.Reset();
+}
+
+// T10 完整锚点：非 BT 线程物化 → ①调用窗口内已产生一条独立 ADD_REF 帧
+// 且 header 无 bit1；②pending 队列全程为空；③该帧 target = oid.session_id
+TEST_F(
+    ProxyAddRefForkTest,
+    ExternalThreadMaterializationSendsStandaloneFrameWithinCallWindow)
+{
+    EXPECT_TRUE(run_loop_->PendingAddRefsEmpty());
+
+    auto [result, proxy] = proxy_factory_.GetOrCreateProxy(
+        *run_loop_,
+        business_thread_,
+        object_id_,
+        DasReadOnlyStringProxy::InterfaceId);
+    ASSERT_EQ(result, DAS_S_OK);
+    ASSERT_TRUE(proxy);
+
+    // ① 返回后当次窗口内已直发一条独立 ADD_REF（不经队列、不待周期）
+    EXPECT_EQ(probe_->DrainUntil(1, std::chrono::seconds(1)), 1u);
+    const auto add_ref_frames = probe_->FramesByInterfaceId(
+        static_cast<uint32_t>(IpcCommandType::RemoteAddRef));
+    ASSERT_EQ(add_ref_frames.size(), 1u);
+    EXPECT_EQ(
+        add_ref_frames[0]->header.GetMessageType(),
+        DAS::Core::IPC::MessageType::Event);
+    EXPECT_EQ(
+        add_ref_frames[0]->header.GetHeaderFlags(),
+        DAS::Core::IPC::HeaderFlags::CONTROL_PLANE);
+    // 独立帧形态：无 RESERVED_AS_SIZE（bit1）
+    EXPECT_EQ(
+        add_ref_frames[0]->header.GetFlags()
+            & DAS::Core::IPC::MessageFlags::RESERVED_AS_SIZE,
+        0);
+    // ③ target = oid.session_id（owner）+ body 为 ObjectId 字节
+    EXPECT_EQ(
+        add_ref_frames[0]->header.GetTargetSessionId(),
+        object_id_.session_id);
+    ASSERT_EQ(add_ref_frames[0]->body.size(), sizeof(ObjectId));
+    EXPECT_EQ(
+        std::memcmp(
+            add_ref_frames[0]->body.data(),
+            &object_id_,
+            sizeof(ObjectId)),
+        0);
+
+    // ② pending 队列全程为空（前置 + 后置双侧观测）
+    EXPECT_TRUE(run_loop_->PendingAddRefsEmpty());
+
+    proxy.Reset();
+}
+
+// 仅 newly_created 触发：同对象第二接口视图（QI 衍生同 oid）既不入队也
+// 不直发
+TEST_F(ProxyAddRefForkTest, SecondInterfaceViewNeitherEnqueuesNorDirectSends)
+{
+    DasPtr<IDasBase> first_proxy;
+    DasPtr<IDasBase> second_proxy;
+    RunOnBusinessThread(
+        [&]()
+        {
+            auto [first_result, string_proxy] = proxy_factory_.GetOrCreateProxy(
+                *run_loop_,
+                business_thread_,
+                object_id_,
+                DasReadOnlyStringProxy::InterfaceId);
+            ASSERT_EQ(first_result, DAS_S_OK);
+            ASSERT_TRUE(string_proxy);
+            first_proxy = std::move(string_proxy);
+
+            auto [second_result, vector_proxy] =
+                proxy_factory_.GetOrCreateProxy(
+                    *run_loop_,
+                    business_thread_,
+                    object_id_,
+                    DasVariantVectorByValueProxy::InterfaceId);
+            ASSERT_EQ(second_result, DAS_S_OK);
+            ASSERT_TRUE(vector_proxy);
+            second_proxy = std::move(vector_proxy);
+        });
+
+    // 两视图物化后 pending 仍只有首视图的一条
+    EXPECT_EQ(run_loop_->GetPendingAddRefCount(FORK_PEER_SESSION_ID), 1u);
+    // 零直发
+    EXPECT_EQ(probe_->DrainFor(std::chrono::milliseconds(300)), 0u);
+    EXPECT_EQ(
+        probe_->CountByInterfaceId(
+            static_cast<uint32_t>(IpcCommandType::RemoteAddRef)),
+        0u);
+
+    second_proxy.Reset();
+    first_proxy.Reset();
+}
+
+// piggyback 总闸关闭：BT 线程物化也当场直发（A/B 基线行为 = 段 A）
+TEST_F(
+    ProxyAddRefForkTest,
+    DisabledPiggybackMakesBusinessThreadMaterializationDirectSend)
+{
+    run_loop_->SetPiggybackEnabled(false);
+
+    DasPtr<IDasBase> materialized_proxy;
+    RunOnBusinessThread(
+        [&]()
+        {
+            auto [result, proxy] = proxy_factory_.GetOrCreateProxy(
+                *run_loop_,
+                business_thread_,
+                object_id_,
+                DasReadOnlyStringProxy::InterfaceId);
+            ASSERT_EQ(result, DAS_S_OK);
+            ASSERT_TRUE(proxy);
+            materialized_proxy = std::move(proxy);
+        });
+
+    EXPECT_EQ(probe_->DrainUntil(1, std::chrono::seconds(1)), 1u);
+    EXPECT_EQ(
+        probe_->CountByInterfaceId(
+            static_cast<uint32_t>(IpcCommandType::RemoteAddRef)),
+        1u);
+    EXPECT_TRUE(run_loop_->PendingAddRefsEmpty());
+
+    materialized_proxy.Reset();
 }

@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cstring>
 #include <das/Core/IPC/AfUnixAvailable.h>
+#include <das/Core/IPC/ConnectionManager.h>
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/IHostConnection.h>
 #include <das/Core/IPC/IMessageHandler.h>
@@ -1430,4 +1431,89 @@ TEST_F(IpcRunLoopTest, PiggybackSwitchDefaultsOnAndToggles)
     EXPECT_FALSE(runloop_->IsPiggybackEnabled());
     runloop_->SetPiggybackEnabled(true);
     EXPECT_TRUE(runloop_->IsPiggybackEnabled());
+}
+
+// FlushPendingStandalone 独立发出队列全部帧：逐帧 PostSend 形态（帧数
+// 不变、各自独立），header 无 bit1，FIFO 序保持
+TEST_F(
+    IpcRunLoopTest,
+    FlushPendingStandaloneSendsQueuedFramesIndependentlyInOrder)
+{
+    using DAS::Core::IPC::ObjectId;
+
+    OutboundFrameProbe probe(runloop_->GetIoContext());
+    ASSERT_TRUE(probe.IsHealthy());
+    auto counterpart_transport = probe.TakeCounterpartTransport();
+    ASSERT_TRUE(counterpart_transport.has_value());
+    ASSERT_EQ(
+        runloop_->GetConnectionManager().RegisterHostLocalTransport(
+            REMOTE_SESSION_ID,
+            std::move(*counterpart_transport)),
+        DAS_S_OK);
+
+    // 同 target session 三个不同 ObjectId：FIFO 序可辨
+    const ObjectId object_id_one{
+        .session_id = REMOTE_SESSION_ID,
+        .generation = 1,
+        .local_id = 0x01};
+    const ObjectId object_id_two{
+        .session_id = REMOTE_SESSION_ID,
+        .generation = 2,
+        .local_id = 0x02};
+    const ObjectId object_id_three{
+        .session_id = REMOTE_SESSION_ID,
+        .generation = 3,
+        .local_id = 0x03};
+
+    runloop_->EnqueueAddRef(object_id_one);
+    runloop_->EnqueueAddRef(object_id_two);
+    runloop_->EnqueueAddRef(object_id_three);
+    EXPECT_EQ(runloop_->GetPendingAddRefCount(REMOTE_SESSION_ID), 3u);
+
+    // 入队不直发：窗口内零帧
+    EXPECT_EQ(probe.DrainFor(std::chrono::milliseconds(200)), 0u);
+
+    // 一次出清全部
+    EXPECT_EQ(runloop_->FlushPendingStandalone(), 3u);
+    EXPECT_EQ(runloop_->GetPendingAddRefCount(REMOTE_SESSION_ID), 0u);
+    EXPECT_TRUE(runloop_->PendingAddRefsEmpty());
+
+    EXPECT_EQ(probe.DrainUntil(3, std::chrono::seconds(2)), 3u);
+    EXPECT_EQ(probe.TotalFrameCount(), 3u);
+    // 逐帧独立形态 + FIFO
+    EXPECT_EQ(
+        probe.InterfaceIdOrder(),
+        (std::vector<uint32_t>{
+            static_cast<uint32_t>(DAS::Core::IPC::IpcCommandType::RemoteAddRef),
+            static_cast<uint32_t>(DAS::Core::IPC::IpcCommandType::RemoteAddRef),
+            static_cast<uint32_t>(
+                DAS::Core::IPC::IpcCommandType::RemoteAddRef)}));
+
+    const auto& frames = probe.Frames();
+    ASSERT_EQ(frames.size(), 3u);
+    const ObjectId expected_order[3] = {
+        object_id_one,
+        object_id_two,
+        object_id_three};
+    for (size_t index = 0; index < 3; ++index)
+    {
+        EXPECT_EQ(frames[index].header.GetMessageType(), MessageType::Event);
+        EXPECT_EQ(
+            frames[index].header.GetHeaderFlags(),
+            DAS::Core::IPC::HeaderFlags::CONTROL_PLANE);
+        EXPECT_EQ(
+            frames[index].header.GetFlags()
+                & DAS::Core::IPC::MessageFlags::RESERVED_AS_SIZE,
+            0);
+        EXPECT_EQ(frames[index].header.GetTargetSessionId(), REMOTE_SESSION_ID);
+        ASSERT_EQ(frames[index].body.size(), sizeof(ObjectId));
+        EXPECT_EQ(
+            std::memcmp(
+                frames[index].body.data(),
+                &expected_order[index],
+                sizeof(ObjectId)),
+            0);
+    }
+
+    probe.Shutdown();
 }
