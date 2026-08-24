@@ -104,14 +104,8 @@ namespace Core
                     static_cast<uint32_t>(IpcCommandType::LookupByName),
                     command_handler_.Get());
 
-                runloop_.RegisterHandler(
-                    HeaderFlags::BUSINESS_CONTROL,
-                    static_cast<uint32_t>(IpcCommandType::RemoteRelease),
-                    command_handler_.Get());
-
-                // RemoteAddRef / RemoteRelease（CONTROL_PLANE IO 协程域即时
-                // 记账；与上方 BUSINESS_CONTROL 注册双注册共存过渡，旧发送端
-                // 仍发 BUSINESS_CONTROL）
+                // RemoteAddRef / RemoteRelease：CONTROL_PLANE IO 协程域即时
+                // 记账（REMOTE_RELEASE 的唯一注册形态，发送端已全部迁移）
                 runloop_.RegisterHandler(
                     HeaderFlags::CONTROL_PLANE,
                     static_cast<uint32_t>(IpcCommandType::RemoteAddRef),
@@ -183,14 +177,8 @@ namespace Core
                     static_cast<uint32_t>(IpcCommandType::LookupByName),
                     command_handler_.Get());
 
-                runloop_.RegisterHandler(
-                    HeaderFlags::BUSINESS_CONTROL,
-                    static_cast<uint32_t>(IpcCommandType::RemoteRelease),
-                    command_handler_.Get());
-
-                // RemoteAddRef / RemoteRelease（CONTROL_PLANE IO 协程域即时
-                // 记账；与上方 BUSINESS_CONTROL 注册双注册共存过渡，旧发送端
-                // 仍发 BUSINESS_CONTROL）
+                // RemoteAddRef / RemoteRelease：CONTROL_PLANE IO 协程域即时
+                // 记账（REMOTE_RELEASE 的唯一注册形态，发送端已全部迁移）
                 runloop_.RegisterHandler(
                     HeaderFlags::CONTROL_PLANE,
                     static_cast<uint32_t>(IpcCommandType::RemoteAddRef),
@@ -1380,10 +1368,15 @@ namespace Core
                     session_id,
                     resolved_name);
 
-                // 4. Partial failure rollback
+                // Partial failure rollback：显式 pin 的 -1 与上方注册的 +1
+                // 严格配对（本函数恒在 BusinessThread 执行，移交出的 DasPtr
+                // 在调用栈原地析构）
                 if (DAS::IsFailed(result))
                 {
-                    proxy_factory_->GetObjectManager().UnregisterObject(obj_id);
+                    DAS::DasPtr<IDasBase> rollback_release;
+                    proxy_factory_->GetObjectManager().UnregisterLocalPin(
+                        obj_id,
+                        rollback_release);
                     return result;
                 }
 
@@ -1430,9 +1423,12 @@ namespace Core
                     return result;
                 }
 
-                // 3. Release from DistributedObjectManager
-                proxy_factory_->GetObjectManager().UnregisterObject(
-                    info.object_id);
+                // 撤销服务注册的显式 pin（-1 与注册 +1 配对；本函数恒在
+                // BusinessThread 执行，移交出的 DasPtr 原地析构）
+                DAS::DasPtr<IDasBase> unregister_release;
+                proxy_factory_->GetObjectManager().UnregisterLocalPin(
+                    info.object_id,
+                    unregister_release);
                 return DAS_S_OK;
             }
 
@@ -1584,9 +1580,12 @@ namespace Core
                     return result;
                 }
 
-                // 3. Release from DistributedObjectManager
-                proxy_factory_->GetObjectManager().UnregisterObject(
-                    info.object_id);
+                // 撤销服务注册的显式 pin（-1 与注册 +1 配对；本函数恒在
+                // BusinessThread 执行，移交出的 DasPtr 原地析构）
+                DAS::DasPtr<IDasBase> unregister_release;
+                proxy_factory_->GetObjectManager().UnregisterLocalPin(
+                    info.object_id,
+                    unregister_release);
                 return DAS_S_OK;
             }
 

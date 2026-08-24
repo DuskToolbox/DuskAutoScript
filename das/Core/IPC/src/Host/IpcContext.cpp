@@ -279,15 +279,8 @@ namespace Core
                         HandshakeInterfaceId::HandshakeIfaceGoodbye),
                     handshake_handler_.Get());
 
-                // REMOTE_RELEASE (fire-and-forget EVENT)
-                run_loop_.RegisterHandler(
-                    HeaderFlags::BUSINESS_CONTROL,
-                    static_cast<uint32_t>(IpcCommandType::RemoteRelease),
-                    command_handler_.Get());
-
-                // RemoteAddRef / RemoteRelease（CONTROL_PLANE IO 协程域即时
-                // 记账；与上方 BUSINESS_CONTROL 注册双注册共存过渡，旧发送端
-                // 仍发 BUSINESS_CONTROL）
+                // RemoteAddRef / RemoteRelease：CONTROL_PLANE IO 协程域即时
+                // 记账（REMOTE_RELEASE 的唯一注册形态，发送端已全部迁移）
                 run_loop_.RegisterHandler(
                     HeaderFlags::CONTROL_PLANE,
                     static_cast<uint32_t>(IpcCommandType::RemoteAddRef),

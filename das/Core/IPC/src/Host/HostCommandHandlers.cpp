@@ -86,7 +86,10 @@ namespace Das::Core::IPC::Host
 
             auto plugin_ptr = std::move(result.value());
 
-            ObjectId  object_id;
+            ObjectId object_id;
+            // 插件对象按服务语义注册显式 pin：host 进程持有插件生命期，
+            // 条目与对象存活至 host 停机，不随对端 proxy 消亡回收——与
+            // QI/出参递交通道的 pinless（配额属接收方）二分
             DasResult reg_result =
                 ctx.RegisterLocalObject(plugin_ptr.Get(), object_id);
             if (DAS::IsFailed(reg_result))
