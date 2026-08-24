@@ -241,13 +241,14 @@ TEST_F(
 {
     auto     mock = new MockDasObject();
     ObjectId object_id{};
-    ASSERT_EQ(manager_->RegisterLocalObject(mock, object_id), DAS_S_OK);
+    // pinless 注册 = auto-register 的生产形态（transport 错误回滚的目标）
+    ASSERT_EQ(manager_->RegisterLocalObject(mock, object_id, false), DAS_S_OK);
     ASSERT_TRUE(manager_->IsValidObject(object_id));
 
     {
         PendingInParamExportGuard guard(*manager_);
         guard.Track(object_id, true);
-        // No Commit() — guard destructor should unregister
+        // No Commit() — guard destructor should recycle the unheld auto entry
     }
 
     // Object should be unregistered after guard destruction

@@ -20,8 +20,13 @@ class BusinessThread;
 /// (out_newly_registered = true), the caller uses Track() to record it.
 /// After SendRequest returns, if the result is NOT a transport-level
 /// error (IsTransportLevelError), Commit() is called and the destructor
-/// does nothing. If it IS a transport-level error, the destructor calls
-/// UnregisterObject() for all tracked newly-registered objects.
+/// does nothing. If it IS a transport-level error, the destructor rolls
+/// back each tracked entry conditionally: only entries with no remote
+/// holder and no explicit pin are removed (RemoveIfUnheldAutoEntry) —
+/// the remote never received the handle on a transport error, so an
+/// unheld auto entry is safe to recycle in place; a materialized entry
+/// (remote holder present) is kept and left to the paired RELEASE /
+/// disconnect sweep.
 class PendingInParamExportGuard
 {
 public:
@@ -31,16 +36,7 @@ public:
     {
     }
 
-    ~PendingInParamExportGuard()
-    {
-        if (!committed_)
-        {
-            for (const auto& id : pending_ids_)
-            {
-                object_manager_.UnregisterObject(id);
-            }
-        }
-    }
+    ~PendingInParamExportGuard();
 
     // Non-copyable, non-movable
     PendingInParamExportGuard(const PendingInParamExportGuard&) = delete;

@@ -13,6 +13,46 @@
 
 DAS_CORE_IPC_NS_BEGIN
 
+PendingInParamExportGuard::~PendingInParamExportGuard()
+{
+    if (committed_)
+    {
+        return;
+    }
+    for (const auto& pending_id : pending_ids_)
+    {
+        DAS::DasPtr<IDasBase> object_to_release;
+        const DasResult remove_result = object_manager_.RemoveIfUnheldAutoEntry(
+            pending_id,
+            object_to_release);
+        if (DAS::IsFailed(remove_result))
+        {
+            DAS_CORE_LOG_WARN(
+                "PendingInParamExportGuard rollback could not inspect entry, "
+                "result = {}, object_id = (session={}, gen={}, local={})",
+                remove_result,
+                pending_id.session_id,
+                pending_id.generation,
+                pending_id.local_id);
+            continue;
+        }
+        if (object_to_release.Get() == nullptr)
+        {
+            // 条目仍被远端 holder 或显式 pin 持有：保留，由对端 RELEASE /
+            // 显式注销按配对收口——绝不连根拔已物化条目
+            DAS_CORE_LOG_WARN(
+                "PendingInParamExportGuard rollback kept a still-held entry, "
+                "object_id = (session={}, gen={}, local={})",
+                pending_id.session_id,
+                pending_id.generation,
+                pending_id.local_id);
+            continue;
+        }
+        // 对端从未收到 handle（transport 错误）：条目就地回收，对象本体在
+        // 序列化调用线程（业务侧调用栈）原地析构
+    }
+}
+
 DasResult SerializeInInterfaceParam(
     IDasBase*                 interface_ptr,
     DistributedObjectManager& object_manager,
@@ -38,24 +78,9 @@ DasResult SerializeInInterfaceParam(
         object_manager.LookupObjectIdFromPtr(interface_ptr, local_id);
     if (DAS::IsOk(lookup_result))
     {
+        // Dedup 命中：零记账零消息——对端缓存单例不产生新 proxy，配额由
+        // 对端物化申报（RemoteAddRef）持有
         out_id = local_id;
-        // Pair this re-issued handle with a DOM ref: every remote proxy
-        // built from the handle REMOTE_RELEASEs once on destruction.
-        // Without the pairing the first discarded remote proxy eats the
-        // registration pin (ref=1), the ObjectId gets recycled, and later
-        // holders resolve to a stale handle — the same defect class
-        // OnLookupByName guards against with its per-issue AddRef.
-        const DasResult ref_result = object_manager.WithLocalObject(
-            out_id,
-            [](LocalObjectRef& ref)
-            {
-                ref.AddRef();
-                return DAS_S_OK;
-            });
-        if (DAS::IsFailed(ref_result))
-        {
-            return ref_result;
-        }
         return DAS_S_OK;
     }
 
@@ -73,11 +98,13 @@ DasResult SerializeInInterfaceParam(
     // DAS_E_NO_INTERFACE is NOT an error, try auto-register next
 
     // Auto-register as a new local object (not found in registry and not a
-    // Proxy)
+    // Proxy). Pinless：条目不携带本地名额，对端物化时以 RemoteAddRef 申报
+    // 配额；"handle 发出但对端从未物化"的条目空挂至进程退出（有界，缓存
+    // 语义）
     DAS_CORE_LOG_TRACE(
         "SerializeInInterfaceParam: auto-registering new local object");
     DasResult register_result =
-        object_manager.RegisterLocalObject(interface_ptr, out_id);
+        object_manager.RegisterLocalObject(interface_ptr, out_id, false);
     if (DAS::IsFailed(register_result))
     {
         DAS_CORE_LOG_ERROR(
