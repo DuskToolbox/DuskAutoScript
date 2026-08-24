@@ -13,6 +13,7 @@
 #include <das/Core/Utils/StdExecution.h>
 #include <das/IDasAsyncCallback.h>
 #include <das/IDasBase.h>
+#include <deque>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -90,6 +91,14 @@ struct PendingCallState
     std::chrono::steady_clock::time_point deadline;
     PendingCallCompletion                 on_complete;
     uint16_t                              response_flags = 0; ///< 响应头 flags
+};
+
+/// 候车中的完整 ADD_REF 帧（每 (对象×对端) 一条；入队/直发两出口共用
+/// 同一帧构造——单一事实源在 IpcRunLoop::BuildAddRefFrame）
+struct PendingAddRefFrame
+{
+    ValidatedIPCMessageHeader header;
+    std::vector<uint8_t>      body;
 };
 
 //=============================================================================
@@ -388,6 +397,61 @@ public:
                                     std::vector<uint8_t>&& body);
     // clang-format on
 
+    //=========================================================================
+    // ADD_REF 候车与出清（段 B 基建：D-12 闸3 出清 + D-19 分叉的承接面）
+    //=========================================================================
+
+    /**
+     * @brief 把一条完整 ADD_REF 帧加入 pending 候车队列（叶子操作）
+     *
+     * 物化点在 proxy_cache_mutex_ 持锁区内调用——本方法自带 mutex、
+     * 零回调零 IO：锁内仅帧构造与入队（锁序单向 proxy_cache_mutex_ →
+     * addref_pending_mutex_）。按 target session（owner）键控。
+     *
+     * @param object_id 远端对象 id（target = object_id.session_id）
+     */
+    void EnqueueAddRef(const ObjectId& object_id);
+
+    /**
+     * @brief 当场构帧独立直发一条 ADD_REF（段 A 行为的单一事实源）
+     *
+     * 非 BT 线程物化（外部线程/IO/weak_ptr 过期）或 piggyback 关闭时的
+     * 出口：零延迟零窗口，不经队列不待周期。
+     *
+     * @param object_id 远端对象 id
+     * @return DasResult PostSend 投递结果（fire-and-forget，失败不回滚）
+     */
+    DasResult PostAddRefStandalone(const ObjectId& object_id);
+
+    /**
+     * @brief 取走全部候车队列帧并逐帧独立 PostSend（闸3 出清）
+     *
+     * 周期末（AddRefDispatchGuard 析构）与测试直驱共用。每 session 内
+     * FIFO；帧数不变（逐帧独立形态，无合并不捎带）。
+     *
+     * @return size_t 本次出清的帧数
+     */
+    size_t FlushPendingStandalone();
+
+    /**
+     * @brief 清空指定 session 的候车队列（断连清队）
+     *
+     * 连接断开后该 session 的 pending 帧不再有可达载体，随断连清空
+     * 防滞留（fire-and-forget 语义下迟到帧本就无害）。
+     *
+     * @param session_id 断连的对端 session
+     * @return size_t 清掉的帧数
+     */
+    size_t ClearPendingAddRefs(uint16_t session_id);
+
+    /// @brief 查询指定 session 的候车帧数（测试观测访问器）
+    [[nodiscard]]
+    size_t GetPendingAddRefCount(uint16_t session_id) const;
+
+    /// @brief 候车队列是否为空（测试观测访问器）
+    [[nodiscard]]
+    bool PendingAddRefsEmpty() const;
+
     /**
      * @brief Fire-and-forget enqueue to BusinessThread.
      *
@@ -665,6 +729,13 @@ public:
     /// pending_calls_ 的互斥锁
     mutable std::mutex pending_mutex_;
 
+    /// ADD_REF 候车队列（按 target session / owner 键控，每 session FIFO）
+    std::unordered_map<uint16_t, std::deque<PendingAddRefFrame>>
+        pending_add_refs_;
+
+    /// pending_add_refs_ 的互斥锁（锁序单向：proxy_cache_mutex_ → 本锁）
+    mutable std::mutex addref_pending_mutex_;
+
     /// host 会话断连回调（IO 线程触发；装配期经
     /// SetOnHostSessionDisconnected 设置）
     HostSessionDisconnectedCallback on_host_session_disconnected_;
@@ -695,6 +766,13 @@ private:
     void NotifySendFailure(
         const ValidatedIPCMessageHeader& header,
         DasResult                        error_code);
+
+    /// @brief 构造一条完整 ADD_REF 帧（CONTROL_PLANE Event + 130 +
+    /// Source=本地 + Target=oid.session_id + body=ObjectId 8B）
+    ///
+    /// 入队（EnqueueAddRef）与直发（PostAddRefStandalone）两出口共用的
+    /// 单一事实源——字节与段 A 的物化申报完全一致。
+    PendingAddRefFrame BuildAddRefFrame(const ObjectId& object_id);
 
     /// @brief 通过协程发送 IPC 消息（内部共用实现）
     ///

@@ -1110,6 +1110,100 @@ DasResult IpcRunLoop::PostSendWithTransport(
     return DAS_S_OK;
 }
 
+PendingAddRefFrame IpcRunLoop::BuildAddRefFrame(const ObjectId& object_id)
+{
+    std::vector<uint8_t> add_ref_body;
+    add_ref_body.insert(
+        add_ref_body.end(),
+        reinterpret_cast<const uint8_t*>(&object_id),
+        reinterpret_cast<const uint8_t*>(&object_id) + sizeof(object_id));
+
+    auto add_ref_header =
+        IPCMessageHeaderBuilder()
+            .SetMessageType(MessageType::Event)
+            .SetHeaderFlags(HeaderFlags::CONTROL_PLANE)
+            .SetInterfaceId(static_cast<uint32_t>(IpcCommandType::RemoteAddRef))
+            .SetSourceSessionId(local_session_id_)
+            .SetTargetSessionId(object_id.session_id)
+            .SetBodySize(static_cast<uint32_t>(add_ref_body.size()))
+            .Build();
+
+    return {std::move(add_ref_header), std::move(add_ref_body)};
+}
+
+void IpcRunLoop::EnqueueAddRef(const ObjectId& object_id)
+{
+    // 叶子操作：自带 mutex、锁内仅帧构造与入队，零回调零 IO——物化点在
+    // proxy_cache_mutex_ 持锁区内调用安全（锁序单向 proxy_cache_mutex_ →
+    // addref_pending_mutex_）
+    const std::unique_lock<std::mutex> lock(addref_pending_mutex_);
+    pending_add_refs_[object_id.session_id].push_back(
+        BuildAddRefFrame(object_id));
+}
+
+DasResult IpcRunLoop::PostAddRefStandalone(const ObjectId& object_id)
+{
+    // 段 A 直发行为的单一事实源：当场构帧独立 PostSend——零延迟零窗口
+    PendingAddRefFrame frame = BuildAddRefFrame(object_id);
+    // 发送失败不回滚注册（fire-and-forget，owner 侧断连清扫兜底）
+    return PostSend(frame.header, std::move(frame.body));
+}
+
+size_t IpcRunLoop::FlushPendingStandalone()
+{
+    // 锁内整体取走（move-out），锁外逐帧 PostSend——帧数不变（逐帧独立
+    // 形态），每 session 内 FIFO 保持
+    std::vector<PendingAddRefFrame> flushed_frames;
+    {
+        const std::unique_lock<std::mutex> lock(addref_pending_mutex_);
+        for (auto& [session_id, session_queue] : pending_add_refs_)
+        {
+            (void)session_id;
+            for (PendingAddRefFrame& frame : session_queue)
+            {
+                flushed_frames.push_back(std::move(frame));
+            }
+        }
+        pending_add_refs_.clear();
+    }
+
+    for (PendingAddRefFrame& frame : flushed_frames)
+    {
+        static_cast<void>(PostSend(frame.header, std::move(frame.body)));
+    }
+    return flushed_frames.size();
+}
+
+size_t IpcRunLoop::ClearPendingAddRefs(uint16_t session_id)
+{
+    const std::unique_lock<std::mutex> lock(addref_pending_mutex_);
+    const auto session_entry = pending_add_refs_.find(session_id);
+    if (session_entry == pending_add_refs_.end())
+    {
+        return 0;
+    }
+    const size_t cleared_count = session_entry->second.size();
+    pending_add_refs_.erase(session_entry);
+    return cleared_count;
+}
+
+size_t IpcRunLoop::GetPendingAddRefCount(uint16_t session_id) const
+{
+    const std::unique_lock<std::mutex> lock(addref_pending_mutex_);
+    const auto session_entry = pending_add_refs_.find(session_id);
+    if (session_entry == pending_add_refs_.end())
+    {
+        return 0;
+    }
+    return session_entry->second.size();
+}
+
+bool IpcRunLoop::PendingAddRefsEmpty() const
+{
+    const std::unique_lock<std::mutex> lock(addref_pending_mutex_);
+    return pending_add_refs_.empty();
+}
+
 void IpcRunLoop::NotifySendFailure(
     const ValidatedIPCMessageHeader& header,
     DasResult                        error_code)
