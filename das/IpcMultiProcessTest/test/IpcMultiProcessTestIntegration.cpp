@@ -2650,7 +2650,97 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_HostToHostCall)
         session_a,
         session_b);
 
-    // 6. 清理
+    // 6. 跨 host 调用链（[out] 递物 + [in] 递代理 + hostA 物化 + 中转调用）。
+    //    断言只经该通道触发的跨 host 调用；直接调 proxy_b 是 main→hostB
+    //    直连腿，其成功不能作为跨 host 证据。
+    {
+        DAS::PluginInterface::DasPluginPackage package_a;
+        ASSERT_EQ(proxy_a.As(package_a.Put()), DAS_S_OK);
+        DAS::PluginInterface::DasPluginPackage package_b;
+        ASSERT_EQ(proxy_b.As(package_b.Put()), DAS_S_OK);
+
+        // [out] 通道：pluginB 在 B 进程造 host feature 对象递给 main，
+        // main 持有的是 B-owned 代理。
+        IDasBase* host_from_b_raw = nullptr;
+        ASSERT_EQ(
+            package_b->CreateFeatureInterface(1, &host_from_b_raw),
+            DAS_S_OK);
+        const DAS::DasPtr<IDasBase> host_from_b(host_from_b_raw);
+        ASSERT_NE(host_from_b.Get(), nullptr);
+        DAS::DasPtr<DAS::PluginInterface::IDasTaskComponentHost>
+            task_component_host_from_b;
+        ASSERT_EQ(host_from_b.As(task_component_host_from_b.Put()), DAS_S_OK);
+
+        // [in] 通道：递入 pluginA。proxy 保真序列化原始 ObjectId，hostA
+        // 侧物化 target=hostB 的跨 host 代理（此点 main 日志可能出现
+        // RemoteAddRef 死信 WARN——地址分类落地前的预期中间态，不设断言）。
+        ASSERT_EQ(
+            package_a->SetTaskComponentHost(task_component_host_from_b.Get()),
+            DAS_S_OK);
+
+        // 注入之后取组件工厂（工厂构造递 host，组件经持有的 host 发起
+        // 中转调用）。
+        IDasBase* factory_base_raw = nullptr;
+        ASSERT_EQ(
+            package_a->CreateFeatureInterface(1, &factory_base_raw),
+            DAS_S_OK);
+        const DAS::DasPtr<IDasBase> factory_base(factory_base_raw);
+
+        DAS::DasPtr<DAS::PluginInterface::IDasComponentFactory>
+            component_factory;
+        ASSERT_EQ(factory_base.As(component_factory.Put()), DAS_S_OK);
+
+        DAS::PluginInterface::IDasComponent* component_raw = nullptr;
+        ASSERT_EQ(
+            component_factory->CreateInstance(
+                DasIidOf<DAS::PluginInterface::IDasComponent>(),
+                &component_raw),
+            DAS_S_OK);
+        const DAS::DasPtr<DAS::PluginInterface::IDasComponent> query_component(
+            component_raw);
+
+        // tracer 闭环断言：Request 经 hostA→main→hostB 中转、Response
+        // 原路回程（回显结果码 + 组件非空标志）。
+        {
+            const DasReadOnlyString method_name{
+                "CreateTaskComponentViaHeldHost"};
+            DAS::ExportInterface::DasVariantVector dispatch_result;
+            DAS::ExportInterface::DasVariantVector dispatch_params;
+            ASSERT_EQ(CreateIDasVariantVector(dispatch_params.Put()), DAS_S_OK);
+            ASSERT_EQ(
+                query_component->Dispatch(
+                    method_name.Get(),
+                    dispatch_params.Get(),
+                    dispatch_result.Put()),
+                DAS_S_OK);
+            int64_t create_result_code = 0;
+            int64_t component_non_null = 0;
+            ASSERT_EQ(
+                dispatch_result->GetInt(0, &create_result_code),
+                DAS_S_OK);
+            ASSERT_EQ(
+                dispatch_result->GetInt(1, &component_non_null),
+                DAS_S_OK);
+            EXPECT_EQ(create_result_code, DAS_S_OK);
+            EXPECT_EQ(component_non_null, 1);
+        }
+
+        // 释放持有物（顺带走通 RELEASE 中转腿，深度断言留给后续扩展）。
+        {
+            const DasReadOnlyString method_name{"ReleaseHeldTaskComponent"};
+            DAS::ExportInterface::DasVariantVector dispatch_result;
+            DAS::ExportInterface::DasVariantVector dispatch_params;
+            ASSERT_EQ(CreateIDasVariantVector(dispatch_params.Put()), DAS_S_OK);
+            ASSERT_EQ(
+                query_component->Dispatch(
+                    method_name.Get(),
+                    dispatch_params.Get(),
+                    dispatch_result.Put()),
+                DAS_S_OK);
+        }
+    }
+
+    // 7. 清理
     host_a->Stop();
     host_b->Stop();
 }
