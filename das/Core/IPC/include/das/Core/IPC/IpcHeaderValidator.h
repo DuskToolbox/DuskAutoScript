@@ -2,6 +2,7 @@
 #define DAS_CORE_IPC_IPC_HEADER_VALIDATOR_H
 
 #include <das/Core/IPC/Handshake.h>
+#include <das/Core/IPC/IpcCommandType.h>
 #include <das/Core/IPC/IpcMessageHeader.h>
 #include <source_location>
 #include <string_view>
@@ -204,7 +205,13 @@ public:
     {
         const auto type = static_cast<MessageType>(header.message_type);
 
-        if (type != MessageType::Request && type != MessageType::Response)
+        // Request/Response 为业务调用平面；Event 为控制面（远端引用
+        // 申报 RemoteAddRef/RemoteRelease）与 BUSINESS_CONTROL 异步回调
+        // 的合法消息类型
+        const bool is_legal_type = type == MessageType::Request
+                                   || type == MessageType::Response
+                                   || type == MessageType::Event;
+        if (!is_legal_type)
         {
             return {
                 HeaderValidationError::InvalidMessageType,
@@ -472,13 +479,22 @@ public:
         return (header.header_flags & HeaderFlags::CONTROL_PLANE) != 0;
     }
 
+    /// @brief 判断 CONTROL_PLANE interface_id 是否为合法命令
+    /// @note 合法集 = 握手命令区间 + 远端引用申报命令
+    ///       （RemoteAddRef/RemoteRelease，物化申报配对协议）
     [[nodiscard]]
     static bool IsValidControlPlaneCommand(uint32_t interface_id) noexcept
     {
-        return interface_id >= static_cast<uint32_t>(
-                   HandshakeInterfaceId::HandshakeIfaceHello)
-               && interface_id <= static_cast<uint32_t>(
-                      HandshakeInterfaceId::HandshakeIfaceGoodbye);
+        const bool is_handshake_command =
+            interface_id >= static_cast<uint32_t>(
+                HandshakeInterfaceId::HandshakeIfaceHello)
+            && interface_id <= static_cast<uint32_t>(
+                   HandshakeInterfaceId::HandshakeIfaceGoodbye);
+        const bool is_remote_ref_command =
+            interface_id == static_cast<uint32_t>(IpcCommandType::RemoteAddRef)
+            || interface_id
+                   == static_cast<uint32_t>(IpcCommandType::RemoteRelease);
+        return is_handshake_command || is_remote_ref_command;
     }
 };
 
