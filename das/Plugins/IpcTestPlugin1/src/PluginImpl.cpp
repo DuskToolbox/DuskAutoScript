@@ -15,6 +15,7 @@
 #include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasProgressService.Implements.hpp>
 #include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasProgressUpdate.Implements.hpp>
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cstring>
@@ -405,6 +406,11 @@ DasResult DasQueryComponentImpl::Dispatch(
     if (method == "CreateTaskComponentViaHeldHost")
     {
         return HandleCreateTaskComponentViaHeldHost(pp_out_result);
+    }
+
+    if (method == "ApplySettingsViaHeldComponent")
+    {
+        return HandleApplySettingsViaHeldComponent(p_arguments, pp_out_result);
     }
 
     if (method == "ReleaseHeldTaskComponent")
@@ -953,6 +959,107 @@ DasResult DasQueryComponentImpl::HandleCreateTaskComponentViaHeldHost(
     (*pp_out_result)->PushBackInt(static_cast<int64_t>(create_result));
     (*pp_out_result)->PushBackInt(held_task_component_ ? 1 : 0);
     return create_result;
+}
+
+DasResult DasQueryComponentImpl::HandleApplySettingsViaHeldComponent(
+    ExportInterface::IDasVariantVector*  p_arguments,
+    ExportInterface::IDasVariantVector** pp_out_result)
+{
+    if (!pp_out_result || !p_arguments)
+    {
+        return DAS_E_INVALID_ARGUMENT;
+    }
+    if (!held_task_component_)
+    {
+        return DAS_E_OBJECT_NOT_INIT;
+    }
+
+    // Dispatch 载荷即完整 JSON 文本（调用方构造好的字符串值形式），经
+    // C ABI 工厂解析成 IDasJson 再发起跨 host 调用。
+    DAS::DasPtr<IDasReadOnlyString> payload_text;
+    DasResult hr = p_arguments->GetString(0, payload_text.Put());
+    if (DAS::IsFailed(hr) || !payload_text)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+    const char* payload_utf8 = nullptr;
+    hr = payload_text->GetUtf8(&payload_utf8);
+    if (DAS::IsFailed(hr) || !payload_utf8)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+
+    DAS::DasPtr<ExportInterface::IDasJson> request_json;
+    hr = ParseDasJsonFromString(payload_utf8, request_json.Put());
+    if (DAS::IsFailed(hr) || !request_json)
+    {
+        return hr;
+    }
+
+    // 跨 host 大参数调用靶：Request 携带大 payload 去、[out] Response
+    // 回显大 payload 回（各过一次中转，SHM split/rebuild 自然覆盖）。
+    DAS::DasPtr<ExportInterface::IDasJson> result_json;
+    const DasResult apply_result = held_task_component_->ApplySettingsChange(
+        request_json.Get(),
+        result_json.Put());
+
+    int64_t     echoed_length = 0;
+    std::string echoed_head;
+    std::string echoed_tail;
+    if (result_json)
+    {
+        DAS::DasPtr<IDasReadOnlyString> result_text;
+        hr = result_json->ToString(0, result_text.Put());
+        if (DAS::IsFailed(hr) || !result_text)
+        {
+            return DAS::IsFailed(hr) ? hr : DAS_E_INVALID_POINTER;
+        }
+        const char* result_utf8 = nullptr;
+        hr = result_text->GetUtf8(&result_utf8);
+        if (DAS::IsFailed(hr) || !result_utf8)
+        {
+            return DAS::IsFailed(hr) ? hr : DAS_E_INVALID_POINTER;
+        }
+        const std::string echoed_text(result_utf8);
+        echoed_length = static_cast<int64_t>(echoed_text.size());
+        constexpr size_t slice_length = 64;
+        echoed_head =
+            echoed_text.substr(0, std::min(slice_length, echoed_text.size()));
+        if (echoed_text.size() > slice_length)
+        {
+            echoed_tail = echoed_text.substr(echoed_text.size() - slice_length);
+        }
+        else
+        {
+            echoed_tail = echoed_text;
+        }
+    }
+
+    hr = CreateIDasVariantVector(pp_out_result);
+    if (DAS::IsFailed(hr))
+    {
+        return hr;
+    }
+    (*pp_out_result)->PushBackInt(static_cast<int64_t>(apply_result));
+    (*pp_out_result)->PushBackInt(echoed_length);
+    const auto push_string =
+        [pp_out_result](const std::string& text) -> DasResult
+    {
+        DasPtr<IDasReadOnlyString> text_value;
+        const DasResult            create_result =
+            CreateIDasReadOnlyStringFromUtf8(text.c_str(), text_value.Put());
+        if (DAS::IsFailed(create_result))
+        {
+            return create_result;
+        }
+        return (*pp_out_result)->PushBackString(text_value.Get());
+    };
+    hr = push_string(echoed_head);
+    if (DAS::IsFailed(hr))
+    {
+        return hr;
+    }
+    return push_string(echoed_tail);
 }
 
 DasResult DasQueryComponentImpl::HandleReleaseHeldTaskComponent(

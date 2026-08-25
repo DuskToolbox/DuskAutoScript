@@ -26,6 +26,7 @@
 #include "IpcMultiProcessTestIntegration.h"
 
 #include "../../Core/IPC/test/OutboundFrameProbe.h"
+#include "../../Plugins/IpcTestPlugin2/src/EchoComponentSharedState.h"
 #include "FakeMainProcess.h"
 #include "IDasComponent.h"
 #include "IDasPluginPackage.h"
@@ -36,7 +37,9 @@
 #include <das/_autogen/idl/abi/IDasTaskAuthoring.h>
 #include <das/_autogen/idl/abi/IDasTaskComponent.h>
 
+#include <algorithm>
 #include <array>
+#include <atomic>
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
@@ -59,15 +62,25 @@
 #include <das/Core/IPC/ProxyFactory.h>
 #include <das/Core/IPC/RemoteObjectRegistry.h>
 #include <das/Core/Utils/StdExecution.h>
+#include <das/DasConfig.h>
 #include <das/IDasAsyncCallback.h>
 #include <das/IDasAsyncLoadPluginOperation.h>
 #include <fstream>
 #include <functional>
 #include <gtest/gtest.h>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string_view>
 #include <vector>
+
+#include <spdlog/details/log_msg.h>
+#include <spdlog/sinks/base_sink.h>
+
+DAS_DISABLE_WARNING_BEGIN
+DAS_IGNORE_BOOST_INTERPROCESS_WARNING
+#include <boost/interprocess/managed_shared_memory.hpp>
+DAS_DISABLE_WARNING_END
 
 #ifndef DAS_NODE_PACKAGE_NAME
 #define DAS_NODE_PACKAGE_NAME "das-core-node"
@@ -534,6 +547,120 @@ namespace
 
         return predicate();
     }
+
+    // 主进程（测试进程即 main）日志捕获：把捕获 sink 挂进 DAS::Core::
+    // g_logger，跨 host 全链期间 main 侧死信 WARN 的负面断言载体。
+    class CapturingMainLogSink final
+        : public spdlog::sinks::base_sink<std::mutex>
+    {
+    public:
+        std::vector<std::string> messages;
+
+    protected:
+        void sink_it_(const spdlog::details::log_msg& msg) override
+        {
+            messages.emplace_back(msg.payload.data(), msg.payload.size());
+        }
+
+        void flush_() override {}
+    };
+
+    class ScopedMainLogCapture
+    {
+    public:
+        ScopedMainLogCapture()
+        {
+            sink_ = std::make_shared<CapturingMainLogSink>();
+            DAS::Core::g_logger->sinks().push_back(sink_);
+        }
+
+        ~ScopedMainLogCapture()
+        {
+            auto& sinks = DAS::Core::g_logger->sinks();
+            sinks.erase(
+                std::remove(sinks.begin(), sinks.end(), sink_),
+                sinks.end());
+        }
+
+        ScopedMainLogCapture(const ScopedMainLogCapture&) = delete;
+        ScopedMainLogCapture& operator=(const ScopedMainLogCapture&) = delete;
+
+        bool Contains(std::string_view needle) const
+        {
+            return std::any_of(
+                sink_->messages.begin(),
+                sink_->messages.end(),
+                [needle](const std::string& message)
+                { return message.find(needle) != std::string::npos; });
+        }
+
+    private:
+        std::shared_ptr<CapturingMainLogSink> sink_;
+    };
+
+    // 析构观测段的 RAII 载体：构造即建段（pid + 序号唯一化段名）并把段
+    // 名经环境变量告知后续 spawn 的 host 子进程，析构即销毁状态对象并
+    // 移除段。host 子进程内的 IpcTestPlugin2 经 open_only 接入同一状态。
+    class ScopedEchoSharedStateSegment
+    {
+    public:
+        ScopedEchoSharedStateSegment()
+        {
+            const uint64_t pid =
+                static_cast<uint64_t>(DAS_IPC_TEST_CURRENT_PROCESS_ID());
+            static std::atomic<uint64_t> segment_counter{0};
+            segment_name_ = "DasIpcHostToHostE2E_" + std::to_string(pid) + "_"
+                            + std::to_string(segment_counter.fetch_add(1));
+
+            boost::interprocess::shared_memory_object::remove(
+                segment_name_.c_str());
+
+            constexpr size_t segment_extra_bytes = 4096;
+            segment_ =
+                std::make_unique<boost::interprocess::managed_shared_memory>(
+                    boost::interprocess::create_only_t{},
+                    segment_name_.c_str(),
+                    sizeof(Das::EchoComponentSharedState)
+                        + segment_extra_bytes);
+            shared_state_ =
+                segment_->construct<Das::EchoComponentSharedState>("state")();
+#ifdef _WIN32
+            _putenv_s(Das::kIpcTestPlugin2ShmEnvName, segment_name_.c_str());
+#else
+            setenv(
+                Das::kIpcTestPlugin2ShmEnvName,
+                segment_name_.c_str(),
+                /*replace=*/1);
+#endif
+        }
+
+        ~ScopedEchoSharedStateSegment()
+        {
+            if (segment_ && shared_state_ != nullptr)
+            {
+                segment_->destroy<Das::EchoComponentSharedState>("state");
+            }
+            segment_.reset();
+            boost::interprocess::shared_memory_object::remove(
+                segment_name_.c_str());
+        }
+
+        ScopedEchoSharedStateSegment(const ScopedEchoSharedStateSegment&) =
+            delete;
+        ScopedEchoSharedStateSegment& operator=(
+            const ScopedEchoSharedStateSegment&) = delete;
+
+        [[nodiscard]]
+        Das::EchoComponentSharedState* Get() const
+        {
+            return shared_state_;
+        }
+
+    private:
+        std::string segment_name_;
+        std::unique_ptr<boost::interprocess::managed_shared_memory> segment_;
+        Das::EchoComponentSharedState* shared_state_ = nullptr;
+    };
 
     std::chrono::milliseconds HeartbeatTimeoutWindowForTest()
     {
@@ -2576,6 +2703,10 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_HostToHostCall)
         GTEST_SKIP() << "DasHostX.exe not found at: " << host_exe_path_;
     }
 
+    // 0. 析构观测段先于 host spawn 建立：host 子进程经继承的环境变量
+    //    接入同一共享状态（释放链深度断言的信号载体）。
+    ScopedEchoSharedStateSegment echo_shared_state_segment;
+
     // 1. 创建并启动 Host B（目标进程）
     DAS::Core::IPC::IHostLauncher* raw_host_b = nullptr;
     DasResult result = ctx_->CreateHostLauncher(&raw_host_b);
@@ -2649,6 +2780,10 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_HostToHostCall)
         "host_b_session = {}",
         session_a,
         session_b);
+
+    // main 死信负面断言的捕获窗口：覆盖全部跨 host 链段（含 130/132
+    // 中转记账）。测试进程即 main，捕获 sink 直挂 g_logger。
+    const ScopedMainLogCapture main_log_capture;
 
     // 6. 跨 host 调用链（[out] 递物 + [in] 递代理 + hostA 物化 + 中转调用）。
     //    断言只经该通道触发的跨 host 调用；直接调 proxy_b 是 main→hostB
@@ -2725,7 +2860,93 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_HostToHostCall)
             EXPECT_EQ(component_non_null, 1);
         }
 
-        // 释放持有物（顺带走通 RELEASE 中转腿，深度断言留给后续扩展）。
+        // 析构信号基线：创建恰好一次、尚未析构——释放链段观测到的
+        // destroyed 递增由此锚定为释放链所致（而非预置状态）。
+        {
+            Das::EchoComponentSharedState* const shared_state =
+                echo_shared_state_segment.Get();
+            Das::EchoIpcScopedLock lock(shared_state->mutex);
+            ASSERT_EQ(shared_state->created_count, 1);
+            ASSERT_EQ(shared_state->destroyed_count, 0);
+        }
+
+        // >64K 大消息段（D-08）：Dispatch 载荷（完整 JSON 文本，128KB
+        // 字符串值）→ hostA 解析成 IDasJson → 跨 host ApplySettingsChange
+        // 往返——Request 与回显 Response 各过一次中转，接收侧 rebuild
+        // 物化 + 目标腿/回程腿自行 SHM split 的自然覆盖验证（无专门
+        // 机制）。回显长度 + 首尾切片一致即内容一致。
+        {
+            constexpr size_t large_payload_size = 128u * 1024u;
+            ASSERT_GT(
+                large_payload_size,
+                DAS::Core::IPC::LARGE_MESSAGE_THRESHOLD);
+
+            std::string large_payload(large_payload_size, 'a');
+            for (size_t index = 0; index < large_payload.size(); ++index)
+            {
+                large_payload[index] = static_cast<char>('a' + (index % 26));
+            }
+            const std::string large_payload_json = "\"" + large_payload + "\"";
+
+            DAS::DasPtr<IDasReadOnlyString> payload_value;
+            ASSERT_EQ(
+                CreateIDasReadOnlyStringFromUtf8(
+                    large_payload_json.c_str(),
+                    payload_value.Put()),
+                DAS_S_OK);
+
+            const DasReadOnlyString method_name{
+                "ApplySettingsViaHeldComponent"};
+            DAS::ExportInterface::DasVariantVector dispatch_result;
+            DAS::ExportInterface::DasVariantVector dispatch_params;
+            ASSERT_EQ(CreateIDasVariantVector(dispatch_params.Put()), DAS_S_OK);
+            ASSERT_EQ(
+                dispatch_params->PushBackString(payload_value.Get()),
+                DAS_S_OK);
+            ASSERT_EQ(
+                query_component->Dispatch(
+                    method_name.Get(),
+                    dispatch_params.Get(),
+                    dispatch_result.Put()),
+                DAS_S_OK);
+
+            int64_t apply_result_code = 0;
+            int64_t echoed_length = 0;
+            ASSERT_EQ(dispatch_result->GetInt(0, &apply_result_code), DAS_S_OK);
+            ASSERT_EQ(dispatch_result->GetInt(1, &echoed_length), DAS_S_OK);
+            EXPECT_EQ(apply_result_code, DAS_S_OK);
+            ASSERT_EQ(
+                echoed_length,
+                static_cast<int64_t>(large_payload_json.size()));
+
+            constexpr size_t  slice_length = 64;
+            const std::string expected_head =
+                large_payload_json.substr(0, slice_length);
+            const std::string expected_tail = large_payload_json.substr(
+                large_payload_json.size() - slice_length);
+
+            DAS::DasPtr<IDasReadOnlyString> echoed_head;
+            ASSERT_EQ(
+                dispatch_result->GetString(2, echoed_head.Put()),
+                DAS_S_OK);
+            const char* echoed_head_text = nullptr;
+            ASSERT_EQ(echoed_head->GetUtf8(&echoed_head_text), DAS_S_OK);
+            ASSERT_NE(echoed_head_text, nullptr);
+            EXPECT_STREQ(echoed_head_text, expected_head.c_str());
+
+            DAS::DasPtr<IDasReadOnlyString> echoed_tail;
+            ASSERT_EQ(
+                dispatch_result->GetString(3, echoed_tail.Put()),
+                DAS_S_OK);
+            const char* echoed_tail_text = nullptr;
+            ASSERT_EQ(echoed_tail->GetUtf8(&echoed_tail_text), DAS_S_OK);
+            ASSERT_NE(echoed_tail_text, nullptr);
+            EXPECT_STREQ(echoed_tail_text, expected_tail.c_str());
+        }
+
+        // 释放链段（WR-01②/D-04）：hostA 释放持有物 → RELEASE(132) 经
+        // main 中转 → hostB holder 移除 → 条目按移除条件回收 → 对象
+        // 析构信号到达（SHM 共享状态，秒级上限）。
         {
             const DasReadOnlyString method_name{"ReleaseHeldTaskComponent"};
             DAS::ExportInterface::DasVariantVector dispatch_result;
@@ -2738,6 +2959,29 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_HostToHostCall)
                     dispatch_result.Put()),
                 DAS_S_OK);
         }
+
+        bool echo_component_destroyed = false;
+        {
+            Das::EchoComponentSharedState* const shared_state =
+                echo_shared_state_segment.Get();
+            Das::EchoIpcScopedLock lock(shared_state->mutex);
+            echo_component_destroyed = shared_state->cv.wait_for(
+                lock,
+                std::chrono::seconds(10),
+                [shared_state] { return shared_state->destroyed_count >= 1; });
+        }
+        ASSERT_TRUE(echo_component_destroyed)
+            << "held EchoTaskComponent was not destroyed after the "
+               "cross-host release chain";
+
+        // main 死信负面断言：跨 host 130/132 全部经中转到达 owner，
+        // main 侧不出现 unknown-object 死信 WARN。
+        EXPECT_FALSE(main_log_capture.Contains(
+            "RemoteAddRef for unknown object ignored"))
+            << "cross-host RemoteAddRef was dead-lettered at main";
+        EXPECT_FALSE(main_log_capture.Contains(
+            "RemoteRelease for unknown object ignored"))
+            << "cross-host RemoteRelease was dead-lettered at main";
     }
 
     // 7. 清理

@@ -164,6 +164,8 @@ public:
  * - "queryMainProcessStringByName": 通过名称查询主进程 IDasReadOnlyString
  * - "CreateTaskComponentViaHeldHost": 经持有的 task component host 创建
  *   测试组件（host 为跨 host 代理时即触发中转调用）
+ * - "ApplySettingsViaHeldComponent": 经持有的测试组件发起 IDasJson
+ *   大参数跨 host 往返（>64K 大消息链靶）
  * - "ReleaseHeldTaskComponent": 释放持有的测试组件
  */
 class DasQueryComponentImpl final
@@ -214,6 +216,13 @@ private:
     // 经持有的 task component host 创建约定 guid 的测试组件，结果码与
     // 组件非空标志回显进 Dispatch 响应。
     DasResult HandleCreateTaskComponentViaHeldHost(
+        ExportInterface::IDasVariantVector** pp_out_result);
+
+    // 经持有的测试组件走 IDasJson 大参数跨 host 往返（>64K 大消息链
+    // 靶）：Dispatch 载荷解析成 IDasJson 后调 ApplySettingsChange，回显
+    // 结果码/文本长度/首尾切片进 Dispatch 响应。
+    DasResult HandleApplySettingsViaHeldComponent(
+        ExportInterface::IDasVariantVector*  p_arguments,
         ExportInterface::IDasVariantVector** pp_out_result);
 
     // 释放持有的测试组件（走通释放中转腿的触发面）。
