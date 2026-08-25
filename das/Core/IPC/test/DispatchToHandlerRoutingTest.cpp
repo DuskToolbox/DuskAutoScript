@@ -1630,3 +1630,33 @@ TEST(DispatchToHandlerRoutingTest, SynthesizedFailureDoesNotRecurse)
     EXPECT_EQ(fixture.probe->TotalFrameCount(), 0u);
     EXPECT_FALSE(fixture.inbound_queue.TryPop().has_value());
 }
+
+// 无 CallKey 配对语义的 transit Event（130 引用申报形态）target 无路由：
+// 丢弃——不转发、不合成、不落本地死信（WARN 为日志侧，不作断言）
+TEST(DispatchToHandlerRoutingTest, TransitEventFailureDroppedWithoutForwarding)
+{
+    AddressRuleFixture fixture;
+    fixture.SetUp();
+    ASSERT_TRUE(fixture.run_loop->IsRunning());
+
+    const ObjectId reported_object_id{
+        .session_id = TRANSIT_FAILURE_DEAD_TARGET_SESSION_ID,
+        .generation = 1,
+        .local_id = 0x79};
+    const auto object_body = EncodeObjectIdBody(reported_object_id);
+    const auto transit_event_header =
+        IPCMessageHeaderBuilder()
+            .SetMessageType(MessageType::Event)
+            .SetControlPlaneCommand(IpcCommandType::RemoteAddRef)
+            .SetSourceSessionId(ROUTING_E2E_PEER_SESSION_ID)
+            .SetTargetSessionId(TRANSIT_FAILURE_DEAD_TARGET_SESSION_ID)
+            .SetBodySize(static_cast<uint32_t>(object_body.size()))
+            .Build();
+    ASSERT_EQ(
+        fixture.probe->SendFrameFromObserver(transit_event_header, object_body),
+        DAS_S_OK);
+
+    EXPECT_EQ(fixture.probe->DrainFor(std::chrono::milliseconds(300)), 0u);
+    EXPECT_EQ(fixture.probe->TotalFrameCount(), 0u);
+    EXPECT_FALSE(fixture.inbound_queue.TryPop().has_value());
+}

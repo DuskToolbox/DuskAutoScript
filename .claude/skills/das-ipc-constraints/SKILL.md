@@ -105,7 +105,7 @@ bit1 帧的**构造与改写**只发生在 `IpcRunLoop::PrepareOutboundFrame`（
 |------|------|
 | `IpcMessageHeaderBuilder.h` | 构造 ValidatedIPCMessageHeader 的唯一公开方式 |
 | `IpcRunLoop.cpp` — `PostSend` | 异步发送入口，失败时通过 NotifySendFailure 通知 |
-| `IpcRunLoop.cpp` — `NotifySendFailure` | 构造失败 RESPONSE 推入 inbound_queue_ |
+| `IpcRunLoop.cpp` — `NotifySendFailure` | 失败通知按帧来源分流：本地起源构失败 RESPONSE 推入 inbound_queue_；transit Request 合成失败 Response 回投原 source（CONNECTION_LOST），transit Event/Response 丢弃 + WARN |
 | `IpcRunLoop.cpp` — `CompletePendingCall` | 匹配 CallKey 并触发回调 |
 | `BusinessThread.cpp` — `ProcessInboundMessage` | 分发 RESPONSE 时调 CompletePendingCall |
 | `BusinessThread.cpp` — `PumpUntilResponse` | BusinessThread 路径从 inbound_queue_ 泵消息 |
@@ -115,13 +115,22 @@ bit1 帧的**构造与改写**只发生在 `IpcRunLoop::PrepareOutboundFrame`（
 
 ## 异步失败通知设计
 
-PostSend 失败时，通过推入 `inbound_queue_` 统一覆盖两条等待路径：
+PostSend 失败时，NotifySendFailure 按帧来源（source session 是否本地）分流：
+
+**本地起源帧（source == local）**：构造失败 RESPONSE 推入 `inbound_queue_`，统一覆盖两条等待路径：
 
 ```
 NotifySendFailure → inbound_queue_ → BusinessThread::ProcessInboundMessage
   ├─ BusinessThread 路径: PumpUntilResponse 从队列泵出
   └─ 外部线程路径: CompletePendingCall → on_complete 回调
 ```
+
+**transit 帧（source != local，经本进程中转的在途帧）**——失败通知的收件人是原发起方，不是本地：
+
+- **Request**：在转发点合成失败 Response（source/target 与原帧互换、call_id 原样、error_code 统一 `DAS_E_IPC_CONNECTION_LOST`——星型拓扑下查表 miss 与在途发送失败同为"目标 session 已死/不可达"）经 `PostSend` 回投原发起方，发起方 pending CallKey 确定性清理。合成帧走 PostSend 自动过 PrepareOutboundFrame 第二汇点（is_forwarding_frame 为真，闸 2 riders-先行宿主原样语义）。递归安全：合成帧自身是 Response，发起方也不可达时再次失败走丢弃路径终止。
+- **Event/Response**：无 CallKey 配对语义，丢弃 + WARN（target/source 十进制、interface_id `0x{:08X}`；**不设限流**——每条 WARN 对应一次真实死目标流量，信号不藏）。
+
+边界：已越过转发点、在目标侧死掉的在途帧不在上述覆盖内——维持既有 30s TIMEOUT 语义（TickPendingSenders）。
 
 **不要**在 NotifySendFailure 中直接调用 CompletePendingCall，否则 BusinessThread 路径的 PumpUntilResponse 永远收不到失败通知。
 
