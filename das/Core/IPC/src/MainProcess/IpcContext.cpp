@@ -43,11 +43,30 @@ namespace Core
             // ====== IpcContext 实现（RAII 风格，无 pimpl）======
 
             IpcContext::IpcContext(bool enable_heartbeat)
-                : proxy_factory_(std::in_place), runloop_(
-                                                     enable_heartbeat,
-                                                     &inbound_queue_,
-                                                     *proxy_factory_,
-                                                     registry_)
+                : proxy_factory_(std::in_place),
+                  runloop_(
+                      enable_heartbeat,
+                      &inbound_queue_,
+                      *proxy_factory_,
+                      registry_,
+                      [this](
+                          uint16_t target_session_id) -> TransportLookupResult
+                      {
+                          // MainProcess 语义两级查表（调用期现读 CM）：命中托管
+                          // host 取其 transport，否则查 host-local 表——与
+                          // SendToSessionCoroutine 旧解析段逐字同义
+                          auto& connection_manager =
+                              runloop_.GetConnectionManager();
+                          const DasPtr<IHostConnection> host =
+                              connection_manager.FindManagedHostConnection(
+                                  target_session_id);
+                          if (host)
+                          {
+                              return host->GetTransport();
+                          }
+                          return connection_manager.FindHostLocalTransport(
+                              target_session_id);
+                      })
             {
                 // 1. 设置 session_id
                 proxy_factory_->GetObjectManager().SetSessionId(1);
@@ -124,11 +143,29 @@ namespace Core
             IpcContext::IpcContext(
                 bool                  enable_heartbeat,
                 HttpIpcServer::Config http_config)
-                : proxy_factory_(std::in_place), runloop_(
-                                                     enable_heartbeat,
-                                                     &inbound_queue_,
-                                                     *proxy_factory_,
-                                                     registry_)
+                : proxy_factory_(std::in_place),
+                  runloop_(
+                      enable_heartbeat,
+                      &inbound_queue_,
+                      *proxy_factory_,
+                      registry_,
+                      [this](
+                          uint16_t target_session_id) -> TransportLookupResult
+                      {
+                          // MainProcess 语义两级查表（与 Named Pipe
+                          // 构造体同型， 调用期现读 CM）
+                          auto& connection_manager =
+                              runloop_.GetConnectionManager();
+                          const DasPtr<IHostConnection> host =
+                              connection_manager.FindManagedHostConnection(
+                                  target_session_id);
+                          if (host)
+                          {
+                              return host->GetTransport();
+                          }
+                          return connection_manager.FindHostLocalTransport(
+                              target_session_id);
+                      })
             {
                 // Same initialization as Named Pipe constructor
                 proxy_factory_->GetObjectManager().SetSessionId(1);

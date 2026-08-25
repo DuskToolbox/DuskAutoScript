@@ -216,6 +216,27 @@ namespace
             reinterpret_cast<const uint8_t*>(&object_id),
             reinterpret_cast<const uint8_t*>(&object_id) + sizeof(object_id)};
     }
+
+    constexpr uint16_t UPSTREAM_FALLBACK_HOST_SESSION_ID = 5;
+    constexpr uint16_t UPSTREAM_FALLBACK_MAIN_SESSION_ID = 1;
+    constexpr uint16_t UPSTREAM_FALLBACK_UNKNOWN_TARGET_SESSION_ID = 42;
+    constexpr uint32_t UPSTREAM_FALLBACK_INTERFACE_ID = 0x4242;
+
+    // main 语义解析体（两级查表）：FindManagedHostConnection 命中取
+    // host->GetTransport()，否则 FindHostLocalTransport——本文件全部
+    // main 角色构造点共用（各构造点 lambda 自行捕获 run loop 引用）
+    TransportLookupResult ResolveTransportMainSemantic(
+        ConnectionManager& connection_manager,
+        uint16_t           target_session_id)
+    {
+        const DasPtr<IHostConnection> host =
+            connection_manager.FindManagedHostConnection(target_session_id);
+        if (host)
+        {
+            return host->GetTransport();
+        }
+        return connection_manager.FindHostLocalTransport(target_session_id);
+    }
 } // namespace
 
 TEST(DispatchToHandlerRoutingTest, ControlPlaneRemoteRefEventStaysOnIoDomain)
@@ -226,7 +247,19 @@ TEST(DispatchToHandlerRoutingTest, ControlPlaneRemoteRefEventStaysOnIoDomain)
     ProxyFactory                    proxy_factory;
     RemoteObjectRegistry            registry;
     IpcMessageQueue<InboundMessage> inbound_queue(8);
-    IpcRunLoop run_loop(false, &inbound_queue, proxy_factory, registry);
+    // main 语义构造点：显式传两级查表 resolver（模拟 main 角色的
+    // 发送解析）
+    IpcRunLoop run_loop(
+        false,
+        &inbound_queue,
+        proxy_factory,
+        registry,
+        [&run_loop](uint16_t target_session_id) -> TransportLookupResult
+        {
+            return ResolveTransportMainSemantic(
+                run_loop.GetConnectionManager(),
+                target_session_id);
+        });
     run_loop.SetSessionId(local_session_id);
 
     DistributedObjectManager& object_manager = proxy_factory.GetObjectManager();
@@ -446,7 +479,19 @@ TEST(
     ProxyFactory                    proxy_factory;
     RemoteObjectRegistry            registry;
     IpcMessageQueue<InboundMessage> inbound_queue(8);
-    IpcRunLoop run_loop(false, &inbound_queue, proxy_factory, registry);
+    // main 语义构造点：显式传两级查表 resolver（模拟 main 角色的
+    // 发送解析）
+    IpcRunLoop run_loop(
+        false,
+        &inbound_queue,
+        proxy_factory,
+        registry,
+        [&run_loop](uint16_t target_session_id) -> TransportLookupResult
+        {
+            return ResolveTransportMainSemantic(
+                run_loop.GetConnectionManager(),
+                target_session_id);
+        });
     run_loop.SetSessionId(ROUTING_E2E_LOCAL_SESSION_ID);
 
     // 外部驱动模式：夹具构造先于 StartRunLoop，之后 io 由 Run 线程持续驱动
@@ -561,7 +606,19 @@ TEST(
     ProxyFactory                    proxy_factory;
     RemoteObjectRegistry            registry;
     IpcMessageQueue<InboundMessage> inbound_queue(8);
-    IpcRunLoop run_loop(false, &inbound_queue, proxy_factory, registry);
+    // main 语义构造点：显式传两级查表 resolver（模拟 main 角色的
+    // 发送解析）
+    IpcRunLoop run_loop(
+        false,
+        &inbound_queue,
+        proxy_factory,
+        registry,
+        [&run_loop](uint16_t target_session_id) -> TransportLookupResult
+        {
+            return ResolveTransportMainSemantic(
+                run_loop.GetConnectionManager(),
+                target_session_id);
+        });
     run_loop.SetSessionId(ROUTING_E2E_LOCAL_SESSION_ID);
 
     OutboundFrameProbe probe(run_loop.GetIoContext(), true);
@@ -637,30 +694,6 @@ TEST(
 // 对未知 target 的 PostSend 帧经上行管道出线且 header 逐字段不改写；
 // main 两级查表语义保持既有失败路径；空 callable 构造期 fail-fast
 // ============================================================================
-
-namespace
-{
-    constexpr uint16_t UPSTREAM_FALLBACK_HOST_SESSION_ID = 5;
-    constexpr uint16_t UPSTREAM_FALLBACK_MAIN_SESSION_ID = 1;
-    constexpr uint16_t UPSTREAM_FALLBACK_UNKNOWN_TARGET_SESSION_ID = 42;
-    constexpr uint32_t UPSTREAM_FALLBACK_INTERFACE_ID = 0x4242;
-
-    // main 语义解析体（两级查表）：FindManagedHostConnection 命中取
-    // host->GetTransport()，否则 FindHostLocalTransport——本文件全部
-    // main 角色构造点共用（各构造点 lambda 自行捕获 run loop 引用）
-    TransportLookupResult ResolveTransportMainSemantic(
-        ConnectionManager& connection_manager,
-        uint16_t           target_session_id)
-    {
-        const DasPtr<IHostConnection> host =
-            connection_manager.FindManagedHostConnection(target_session_id);
-        if (host)
-        {
-            return host->GetTransport();
-        }
-        return connection_manager.FindHostLocalTransport(target_session_id);
-    }
-} // namespace
 
 TEST(
     DispatchToHandlerRoutingTest,

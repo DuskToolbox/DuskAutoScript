@@ -9,6 +9,7 @@
 #endif
 #include <das/Core/IPC/AfUnixAvailable.h>
 #include <das/Core/IPC/AnyTransport.h>
+#include <das/Core/IPC/ConnectionManager.h>
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/Handshake.h>
 #include <das/Core/IPC/Host/HandshakeHandler.h>
@@ -38,6 +39,22 @@ namespace
 {
     constexpr uint16_t LOCAL_SESSION_ID = 1;
     constexpr uint16_t REMOTE_SESSION_ID = 2;
+
+    // main 语义解析体（两级查表）：FindManagedHostConnection 命中取
+    // host->GetTransport()，否则 FindHostLocalTransport——本文件 run loop
+    // 构造点模拟 main 角色（发送解析的显式角色声明）
+    TransportLookupResult ResolveTransportMainSemantic(
+        ConnectionManager& connection_manager,
+        uint16_t           target_session_id)
+    {
+        const DasPtr<IHostConnection> host =
+            connection_manager.FindManagedHostConnection(target_session_id);
+        if (host)
+        {
+            return host->GetTransport();
+        }
+        return connection_manager.FindHostLocalTransport(target_session_id);
+    }
 
     struct ConnectedAnyTransportPair
     {
@@ -317,7 +334,18 @@ TEST_F(
     IpcMessageQueue<InboundMessage> inbound_queue(8);
     ProxyFactory                    proxy_factory;
     RemoteObjectRegistry            registry;
-    IpcRunLoop run_loop(false, &inbound_queue, proxy_factory, registry);
+    // main 语义构造点：显式传两级查表 resolver
+    IpcRunLoop run_loop(
+        false,
+        &inbound_queue,
+        proxy_factory,
+        registry,
+        [&run_loop](uint16_t target_session_id) -> TransportLookupResult
+        {
+            return ResolveTransportMainSemantic(
+                run_loop.GetConnectionManager(),
+                target_session_id);
+        });
     run_loop.SetSessionId(LOCAL_SESSION_ID);
 
     auto transport_pair = CreateConnectedTransportPair(run_loop.GetIoContext());

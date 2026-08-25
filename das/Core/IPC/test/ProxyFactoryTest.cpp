@@ -14,6 +14,7 @@
 #include <das/Core/IPC/ConnectionManager.h>
 #include <das/Core/IPC/DasReadOnlyStringProxy.h>
 #include <das/Core/IPC/DasVariantVectorByValueProxy.h>
+#include <das/Core/IPC/IHostConnection.h>
 #include <das/Core/IPC/InternalCallbackHandler.h>
 #include <das/Core/IPC/IpcCommandHandler.h>
 #include <das/Core/IPC/IpcMessageHeader.h>
@@ -67,7 +68,27 @@ using DAS::Core::IPC::MessageType;
 using DAS::Core::IPC::ObjectId;
 using DAS::Core::IPC::ProxyFactory;
 using DAS::Core::IPC::RemoteObjectRegistry;
+using DAS::Core::IPC::TransportLookupResult;
 using DAS::Core::IPC::ValidatedIPCMessageHeader;
+
+namespace
+{
+    // main 语义解析体（两级查表）：FindManagedHostConnection 命中取
+    // host->GetTransport()，否则 FindHostLocalTransport——本文件全部
+    // run loop 构造点模拟 main 角色（发送解析的显式角色声明）
+    TransportLookupResult ResolveTransportMainSemantic(
+        DAS::Core::IPC::ConnectionManager& connection_manager,
+        uint16_t                           target_session_id)
+    {
+        const DasPtr<DAS::Core::IPC::IHostConnection> host =
+            connection_manager.FindManagedHostConnection(target_session_id);
+        if (host)
+        {
+            return host->GetTransport();
+        }
+        return connection_manager.FindHostLocalTransport(target_session_id);
+    }
+} // namespace
 
 // Test ObjectId 编码解码后的状态一致性
 TEST(ProxyFactoryTest, ObjectIdEncodingConsistency)
@@ -123,7 +144,18 @@ TEST(ProxyFactoryTest, BeginShutdownFlipsRuntimeStateAndBlocksProxyCreation)
 {
     ProxyFactory         proxy_factory;
     RemoteObjectRegistry registry;
-    IpcRunLoop           run_loop(false, nullptr, proxy_factory, registry);
+    // main 语义构造点：显式传两级查表 resolver
+    IpcRunLoop run_loop(
+        false,
+        nullptr,
+        proxy_factory,
+        registry,
+        [&run_loop](uint16_t target_session_id) -> TransportLookupResult
+        {
+            return ResolveTransportMainSemantic(
+                run_loop.GetConnectionManager(),
+                target_session_id);
+        });
     const ObjectId object_id{.session_id = 7, .generation = 1, .local_id = 42};
 
     auto runtime_state = proxy_factory.GetRuntimeState().lock();
@@ -148,11 +180,19 @@ class ProxyRefcountTest : public ::testing::Test
 protected:
     void SetUp() override
     {
+        // main 语义构造点：显式传两级查表 resolver（调用期经 this 现读
+        // 成员 run loop 的 ConnectionManager）
         run_loop_ = std::make_unique<IpcRunLoop>(
             false,
             nullptr,
             proxy_factory_,
-            registry_);
+            registry_,
+            [this](uint16_t target_session_id) -> TransportLookupResult
+            {
+                return ResolveTransportMainSemantic(
+                    run_loop_->GetConnectionManager(),
+                    target_session_id);
+            });
     }
 
     ProxyFactory                  proxy_factory_;
@@ -373,11 +413,19 @@ class ProxyRemoteRefPairingTest : public ::testing::Test
 protected:
     void SetUp() override
     {
+        // main 语义构造点：显式传两级查表 resolver（调用期经 this 现读
+        // 成员 run loop 的 ConnectionManager）
         run_loop_ = std::make_unique<IpcRunLoop>(
             false,
             nullptr,
             proxy_factory_,
-            registry_);
+            registry_,
+            [this](uint16_t target_session_id) -> TransportLookupResult
+            {
+                return ResolveTransportMainSemantic(
+                    run_loop_->GetConnectionManager(),
+                    target_session_id);
+            });
         run_loop_->SetSessionId(REMOTE_REF_LOCAL_SESSION_ID);
 
         ASSERT_TRUE(CreateConnectedCapturePair());
@@ -755,11 +803,18 @@ class ProxyAddRefForkTest : public ::testing::Test
 protected:
     void SetUp() override
     {
+        // main 语义构造点：显式传两级查表 resolver
         run_loop_ = std::make_unique<IpcRunLoop>(
             false,
             inbound_queue_.get(),
             proxy_factory_,
-            registry_);
+            registry_,
+            [this](uint16_t target_session_id) -> TransportLookupResult
+            {
+                return ResolveTransportMainSemantic(
+                    run_loop_->GetConnectionManager(),
+                    target_session_id);
+            });
         run_loop_->SetSessionId(FORK_LOCAL_SESSION_ID);
 
         internal_callback_handler_ =

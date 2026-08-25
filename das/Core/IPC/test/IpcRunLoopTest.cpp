@@ -185,6 +185,22 @@ namespace
         return ValidatedIPCMessageHeader::Deserialize(&raw, sizeof(raw))
             .value();
     }
+
+    // main 语义解析体（两级查表）：FindManagedHostConnection 命中取
+    // host->GetTransport()，否则 FindHostLocalTransport——本文件 run loop
+    // 构造点模拟 main 角色（发送解析的显式角色声明）
+    DAS::Core::IPC::TransportLookupResult ResolveTransportMainSemantic(
+        DAS::Core::IPC::ConnectionManager& connection_manager,
+        uint16_t                           target_session_id)
+    {
+        const DAS::DasPtr<IHostConnection> host =
+            connection_manager.FindManagedHostConnection(target_session_id);
+        if (host)
+        {
+            return host->GetTransport();
+        }
+        return connection_manager.FindHostLocalTransport(target_session_id);
+    }
 } // namespace
 
 // Test fixture for IpcRunLoop tests
@@ -197,11 +213,19 @@ protected:
 
         try
         {
+            // main 语义构造点：显式传两级查表 resolver
             runloop_ = std::make_unique<IpcRunLoop>(
                 true,
                 inbound_queue_.get(),
                 proxy_factory_,
-                registry_);
+                registry_,
+                [this](uint16_t target_session_id)
+                    -> DAS::Core::IPC::TransportLookupResult
+                {
+                    return ResolveTransportMainSemantic(
+                        runloop_->GetConnectionManager(),
+                        target_session_id);
+                });
             runloop_->SetSessionId(LOCAL_SESSION_ID);
         }
         catch (const std::exception& e)
@@ -802,11 +826,19 @@ TEST_F(IpcRunLoopTest, Run_AfterStopAndReinitialize)
     // Reinitialize and run again
     try
     {
+        // main 语义构造点：显式传两级查表 resolver
         runloop_ = std::make_unique<IpcRunLoop>(
             true,
             nullptr,
             proxy_factory_,
-            registry_);
+            registry_,
+            [this](uint16_t target_session_id)
+                -> DAS::Core::IPC::TransportLookupResult
+            {
+                return ResolveTransportMainSemantic(
+                    runloop_->GetConnectionManager(),
+                    target_session_id);
+            });
     }
     catch (const std::exception& e)
     {

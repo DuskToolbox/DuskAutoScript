@@ -126,7 +126,22 @@ namespace Core
 
             IpcContext::IpcContext(const IpcContextConfig& config)
                 : config_(config), proxy_factory_(std::in_place),
-                  run_loop_(false, &inbound_queue_, *proxy_factory_, registry_)
+                  run_loop_(
+                      false,
+                      &inbound_queue_,
+                      *proxy_factory_,
+                      registry_,
+                      [this](uint16_t /*target_session_id*/)
+                          -> TransportLookupResult
+                      {
+                          // Host 语义恒上行：忽略 target，一切出站帧经
+                          // host-local 表中 main session 的上行管道出线。
+                          // 每次调用现读（禁构造期快照 transport 引用）——
+                          // 重连/传输重建后闭包不持过期引用
+                          constexpr uint16_t main_process_session_id = 1;
+                          return run_loop_.GetConnectionManager()
+                              .FindHostLocalTransport(main_process_session_id);
+                      })
             {
                 // 获取当前进程 PID
                 host_pid_ =

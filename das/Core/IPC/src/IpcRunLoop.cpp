@@ -19,6 +19,7 @@
 #include <das/Core/IPC/ProxyFactory.h>
 #include <das/_autogen/idl/ipc/IpcStubFactory.h>
 #include <mutex>
+#include <stdexcept>
 #include <unordered_map>
 #include <utility>
 
@@ -77,10 +78,21 @@ IpcRunLoop::IpcRunLoop(
     bool                             enable_heartbeat,
     IpcMessageQueue<InboundMessage>* inbound_queue,
     ProxyFactory&                    proxy_factory,
-    RemoteObjectRegistry&            registry)
+    RemoteObjectRegistry&            registry,
+    TransportResolver                transport_resolver)
     : enable_heartbeat_(enable_heartbeat), inbound_queue_(inbound_queue),
-      proxy_factory_(proxy_factory), registry_(registry)
+      proxy_factory_(proxy_factory), registry_(registry),
+      transport_resolver_(std::move(transport_resolver))
 {
+    // resolver 必填（fail-fast）：空 callable 在构造期拒绝——"没传
+    // resolver 的 run loop"在构造层面无法存在，不造出来后默默走旧路
+    const bool transport_resolver_is_empty = !transport_resolver_;
+    if (transport_resolver_is_empty)
+    {
+        throw std::invalid_argument(
+            "IpcRunLoop: TransportResolver must not be empty");
+    }
+
     io_context_ = std::make_unique<boost::asio::io_context>();
     timeout_timer_ = std::make_unique<boost::asio::steady_timer>(*io_context_);
 
@@ -1058,20 +1070,11 @@ boost::asio::awaitable<void> IpcRunLoop::SendToSessionCoroutine(
     }
 
     const uint16_t target_session_id = header.GetTargetSessionId();
-    const DasPtr<IHostConnection> host =
-        connection_manager_->FindManagedHostConnection(target_session_id);
-
-    DasResult                      lookup_result = DAS_E_IPC_OBJECT_NOT_FOUND;
-    std::optional<AnyTransportRef> maybe_transport;
-    if (host)
-    {
-        std::tie(lookup_result, maybe_transport) = host->GetTransport();
-    }
-    else
-    {
-        std::tie(lookup_result, maybe_transport) =
-            connection_manager_->FindHostLocalTransport(target_session_id);
-    }
+    // 解析单点：构造注入的 resolver 无条件调用——角色差异（MainProcess
+    // 两级查表 / Host 恒上行）全部在装配期 lambda 体内，本协程零角色
+    // 知识、零分支
+    const auto [lookup_result, maybe_transport] =
+        transport_resolver_(target_session_id);
 
     if (DAS::IsFailed(lookup_result) || !maybe_transport)
     {

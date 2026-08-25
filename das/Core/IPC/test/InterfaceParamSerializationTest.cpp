@@ -1,11 +1,14 @@
+#include <das/Core/IPC/ConnectionManager.h>
 #include <das/Core/IPC/DasReadOnlyStringProxy.h>
 #include <das/Core/IPC/DasVariantVectorByValueProxy.h>
 #include <das/Core/IPC/DistributedObjectManager.h>
+#include <das/Core/IPC/IHostConnection.h>
 #include <das/Core/IPC/InterfaceParamSerialization.h>
 #include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/IPC/ObjectId.h>
 #include <das/Core/IPC/ProxyFactory.h>
 #include <das/Core/IPC/RemoteObjectRegistry.h>
+#include <das/DasPtr.hpp>
 #include <gtest/gtest.h>
 
 #include "MockDasObject.h"
@@ -23,6 +26,26 @@ using Das::Core::IPC::PendingInParamExportGuard;
 using Das::Core::IPC::ProxyFactory;
 using Das::Core::IPC::RemoteObjectRegistry;
 using Das::Core::IPC::SerializeInInterfaceParam;
+using Das::Core::IPC::TransportLookupResult;
+
+namespace
+{
+    // main 语义解析体（两级查表）：FindManagedHostConnection 命中取
+    // host->GetTransport()，否则 FindHostLocalTransport——本文件 run loop
+    // 构造点模拟 main 角色（发送解析的显式角色声明）
+    TransportLookupResult ResolveTransportMainSemantic(
+        Das::Core::IPC::ConnectionManager& connection_manager,
+        uint16_t                           target_session_id)
+    {
+        const Das::DasPtr<Das::Core::IPC::IHostConnection> host =
+            connection_manager.FindManagedHostConnection(target_session_id);
+        if (host)
+        {
+            return host->GetTransport();
+        }
+        return connection_manager.FindHostLocalTransport(target_session_id);
+    }
+} // namespace
 
 // Test fixture for InterfaceParamSerialization tests
 class InterfaceParamSerializationTest : public ::testing::Test
@@ -340,7 +363,18 @@ TEST(
 {
     ProxyFactory         proxy_factory;
     RemoteObjectRegistry registry;
-    IpcRunLoop           run_loop(false, nullptr, proxy_factory, registry);
+    // main 语义构造点：显式传两级查表 resolver
+    IpcRunLoop run_loop(
+        false,
+        nullptr,
+        proxy_factory,
+        registry,
+        [&run_loop](uint16_t target_session_id) -> TransportLookupResult
+        {
+            return ResolveTransportMainSemantic(
+                run_loop.GetConnectionManager(),
+                target_session_id);
+        });
     const ObjectId remote_id{.session_id = 88, .generation = 1, .local_id = 5};
 
     IDasBase* out = nullptr;
@@ -367,7 +401,18 @@ TEST(
 {
     ProxyFactory         proxy_factory;
     RemoteObjectRegistry registry;
-    IpcRunLoop           run_loop(false, nullptr, proxy_factory, registry);
+    // main 语义构造点：显式传两级查表 resolver
+    IpcRunLoop run_loop(
+        false,
+        nullptr,
+        proxy_factory,
+        registry,
+        [&run_loop](uint16_t target_session_id) -> TransportLookupResult
+        {
+            return ResolveTransportMainSemantic(
+                run_loop.GetConnectionManager(),
+                target_session_id);
+        });
     const ObjectId remote_id{.session_id = 89, .generation = 1, .local_id = 6};
 
     IDasBase* out = nullptr;

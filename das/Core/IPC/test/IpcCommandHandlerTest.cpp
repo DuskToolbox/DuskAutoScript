@@ -2,7 +2,9 @@
 #include <chrono>
 #include <cstdint>
 #include <cstring>
+#include <das/Core/IPC/ConnectionManager.h>
 #include <das/Core/IPC/DistributedObjectManager.h>
+#include <das/Core/IPC/IHostConnection.h>
 #include <das/Core/IPC/IpcCommandHandler.h>
 #include <das/Core/IPC/IpcMessageHeaderBuilder.h>
 #include <das/Core/IPC/IpcMessageQueue.h>
@@ -42,9 +44,26 @@ using DAS::Core::IPC::ObjectId;
 using DAS::Core::IPC::ProxyFactory;
 using DAS::Core::IPC::RemoteObjectRegistry;
 using DAS::Core::IPC::RemoteRefHandler;
+using DAS::Core::IPC::TransportLookupResult;
 using DAS::Core::IPC::ValidatedIPCMessageHeader;
 namespace
 {
+    // main 语义解析体（两级查表）：FindManagedHostConnection 命中取
+    // host->GetTransport()，否则 FindHostLocalTransport——本文件 run loop
+    // 构造点模拟 main 角色（发送解析的显式角色声明）
+    TransportLookupResult ResolveTransportMainSemantic(
+        DAS::Core::IPC::ConnectionManager& connection_manager,
+        uint16_t                           target_session_id)
+    {
+        const DAS::DasPtr<DAS::Core::IPC::IHostConnection> host =
+            connection_manager.FindManagedHostConnection(target_session_id);
+        if (host)
+        {
+            return host->GetTransport();
+        }
+        return connection_manager.FindHostLocalTransport(target_session_id);
+    }
+
     DasGuid CreateTestGuid(
         uint32_t data1,
         uint16_t data2,
@@ -139,11 +158,18 @@ protected:
         registry_.Clear();
         object_manager_.SetSessionId(1);
         handler_.SetSessionId(1);
+        // main 语义构造点：显式传两级查表 resolver
         run_loop_ = std::make_unique<IpcRunLoop>(
             false,
             &inbound_queue_,
             proxy_factory_,
-            registry_);
+            registry_,
+            [this](uint16_t target_session_id) -> TransportLookupResult
+            {
+                return ResolveTransportMainSemantic(
+                    run_loop_->GetConnectionManager(),
+                    target_session_id);
+            });
         remote_ref_handler_ =
             RemoteRefHandler::Create(object_manager_, *run_loop_);
     }

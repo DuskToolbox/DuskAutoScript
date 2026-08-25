@@ -1,10 +1,13 @@
 #include <atomic>
 #include <cstdint>
+#include <das/Core/IPC/ConnectionManager.h>
 #include <das/Core/IPC/DasReadOnlyStringProxy.h>
 #include <das/Core/IPC/DistributedObjectManager.h>
+#include <das/Core/IPC/IHostConnection.h>
 #include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/IPC/ProxyFactory.h>
 #include <das/Core/IPC/RemoteObjectRegistry.h>
+#include <das/DasPtr.hpp>
 #include <gtest/gtest.h>
 #include <memory>
 #include <thread>
@@ -21,9 +24,26 @@ using DAS::Core::IPC::ObjectId;
 using DAS::Core::IPC::ProxyFactory;
 using DAS::Core::IPC::RemoteObjectInfo;
 using DAS::Core::IPC::RemoteObjectRegistry;
+using DAS::Core::IPC::TransportLookupResult;
 
 namespace
 {
+    // main 语义解析体（两级查表）：FindManagedHostConnection 命中取
+    // host->GetTransport()，否则 FindHostLocalTransport——本文件 run loop
+    // 构造点模拟 main 角色（发送解析的显式角色声明）
+    TransportLookupResult ResolveTransportMainSemantic(
+        DAS::Core::IPC::ConnectionManager& connection_manager,
+        uint16_t                           target_session_id)
+    {
+        const DAS::DasPtr<DAS::Core::IPC::IHostConnection> host =
+            connection_manager.FindManagedHostConnection(target_session_id);
+        if (host)
+        {
+            return host->GetTransport();
+        }
+        return connection_manager.FindHostLocalTransport(target_session_id);
+    }
+
     DasGuid MakeThreadingGuid(uint32_t seed)
     {
         return DasGuid{
@@ -306,8 +326,19 @@ TEST(
 {
     auto                 proxy_factory = std::make_unique<ProxyFactory>();
     RemoteObjectRegistry registry;
-    auto                 run_loop =
-        std::make_unique<IpcRunLoop>(false, nullptr, *proxy_factory, registry);
+    std::unique_ptr<IpcRunLoop> run_loop;
+    // main 语义构造点：显式传两级查表 resolver
+    run_loop = std::make_unique<IpcRunLoop>(
+        false,
+        nullptr,
+        *proxy_factory,
+        registry,
+        [&run_loop](uint16_t target_session_id) -> TransportLookupResult
+        {
+            return ResolveTransportMainSemantic(
+                run_loop->GetConnectionManager(),
+                target_session_id);
+        });
 
     auto* proxy = new DasReadOnlyStringProxy(
         DasReadOnlyStringProxy::InterfaceId,
@@ -449,7 +480,18 @@ TEST(
     ProxyFactory                    proxy_factory;
     RemoteObjectRegistry            registry;
     IpcMessageQueue<InboundMessage> inbound_queue(256);
-    IpcRunLoop run_loop(false, &inbound_queue, proxy_factory, registry);
+    // main 语义构造点：显式传两级查表 resolver
+    IpcRunLoop run_loop(
+        false,
+        &inbound_queue,
+        proxy_factory,
+        registry,
+        [&run_loop](uint16_t target_session_id) -> TransportLookupResult
+        {
+            return ResolveTransportMainSemantic(
+                run_loop.GetConnectionManager(),
+                target_session_id);
+        });
     run_loop.SetSessionId(1);
 
     // io 线程持续驱动 PostSend 的发送协程（无 transport → 失败路径走

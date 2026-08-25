@@ -60,6 +60,18 @@ DAS_CORE_IPC_NS_BEGIN
 using PendingCallCompletion = std::function<
     void(DasResult, std::vector<uint8_t>, uint16_t response_flags)>;
 
+/// 发送目标 transport 解析器（构造注入、必填非可选）
+///
+/// 每个进程角色在装配期定死一份实现，运行期零判断：
+/// - MainProcess 语义：两级查表（FindManagedHostConnection 命中取
+///   host->GetTransport()，否则 FindHostLocalTransport(target)）；
+/// - Host 语义：恒上行（忽略 target，每次调用现读 host-local 表中
+///   main session 的上行 transport——重连/传输重建后闭包不持过期引用）。
+/// SendToSessionCoroutine 对其无条件调用（无 if 包裹、无空态回退）；
+/// 空 callable 在 IpcRunLoop 构造期被拒绝（fail-fast）。
+using TransportResolver =
+    std::function<TransportLookupResult(uint16_t target_session_id)>;
+
 /// 用于匹配请求和响应的二元组 key
 struct CallKey
 {
@@ -193,12 +205,18 @@ public:
      * nullptr
      * @param proxy_factory ProxyFactory 引用（由 IpcContext 持有）
      * @param registry RemoteObjectRegistry 引用（由 IpcContext 持有）
+     * @param transport_resolver 发送目标解析器（必填，无默认值——不传即编译
+     * 失败）。两角色形态：MainProcess 传两级查表实现（lambda 捕获 this、
+     * 调用期现读 GetConnectionManager()）；Host 传恒上行实现（忽略 target、
+     * 调用期现读 FindHostLocalTransport(main session)）。空 callable 构造期
+     * 抛 std::invalid_argument（fail-fast）。
      */
     explicit IpcRunLoop(
         bool                             enable_heartbeat,
         IpcMessageQueue<InboundMessage>* inbound_queue,
         ProxyFactory&                    proxy_factory,
-        RemoteObjectRegistry&            registry);
+        RemoteObjectRegistry&            registry,
+        TransportResolver                transport_resolver);
 
     ~IpcRunLoop();
 
@@ -361,10 +379,11 @@ public:
     }
 
     /**
-     * @brief 获取 ConnectionManager（MainProcess 模式）
+     * @brief 获取 ConnectionManager
      *
-     * ConnectionManager 用于管理 HostLauncher 实例。
-     * 在 Host 模式下 connection_manager_ 为空，解引用将导致 UB。
+     * ConnectionManager 由构造函数无条件创建：MainProcess 侧用于管理
+     * HostLauncher / internal host 连接；Host 侧用于登记上行 host-local
+     * transport（main session）。
      *
      * @return ConnectionManager& 引用，生命周期绑定到 this
      */
@@ -756,7 +775,8 @@ public:
     /// SetOnHostSessionDisconnected 设置）
     HostSessionDisconnectedCallback on_host_session_disconnected_;
 
-    /// ConnectionManager for MainProcess mode (nullptr in Host mode)
+    /// ConnectionManager（构造无条件创建：MainProcess 侧管理 host 连接，
+    /// Host 侧登记上行 host-local transport）
     std::unique_ptr<ConnectionManager> connection_manager_;
 
     /// Last time SHM stale block cleanup was triggered
@@ -774,6 +794,10 @@ public:
     /// RemoteObjectRegistry 引用（非持有，由 IpcContext 管理）
     /// 用于传递给控制平面 handler 的 StubContext
     RemoteObjectRegistry& registry_;
+
+    /// 发送目标解析器（构造注入、必填——空 callable 构造期拒绝；
+    /// SendToSessionCoroutine 无条件调用，角色差异全部在装配期 lambda 内）
+    TransportResolver transport_resolver_;
 
 private:
     /// @brief 发送失败时构造失败 RESPONSE 并推入 inbound_queue_

@@ -19,11 +19,13 @@
 #include <chrono>
 #include <cstring>
 #include <das/Core/IPC/BusinessThread.h>
+#include <das/Core/IPC/ConnectionManager.h>
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/HandshakeSerialization.h>
 #include <das/Core/IPC/Host/HostCommandHandlers.h>
 #include <das/Core/IPC/Host/IIpcContext.h>
 #include <das/Core/IPC/HostLauncher.h>
+#include <das/Core/IPC/IHostConnection.h>
 #include <das/Core/IPC/InternalCallbackHandler.h>
 #include <das/Core/IPC/IpcCommandHandler.h>
 #include <das/Core/IPC/IpcRunLoop.h>
@@ -338,7 +340,27 @@ namespace Das::IPC::Test
         IpcMessageQueue<InboundMessage> inbound_queue(8);
         ProxyFactory                    proxy_factory;
         RemoteObjectRegistry            registry;
-        IpcRunLoop run_loop(false, &inbound_queue, proxy_factory, registry);
+        // main 语义构造点：显式传两级查表 resolver（模拟 main 角色的
+        // 发送解析）
+        IpcRunLoop run_loop(
+            false,
+            &inbound_queue,
+            proxy_factory,
+            registry,
+            [&run_loop](uint16_t target_session_id)
+                -> Das::Core::IPC::TransportLookupResult
+            {
+                auto& connection_manager = run_loop.GetConnectionManager();
+                const DAS::DasPtr<Das::Core::IPC::IHostConnection> host =
+                    connection_manager.FindManagedHostConnection(
+                        target_session_id);
+                if (host)
+                {
+                    return host->GetTransport();
+                }
+                return connection_manager.FindHostLocalTransport(
+                    target_session_id);
+            });
         const DAS::DasPtr<Das::Core::IPC::InternalCallbackHandler>
             internal_callback_handler(
                 new Das::Core::IPC::InternalCallbackHandler);
