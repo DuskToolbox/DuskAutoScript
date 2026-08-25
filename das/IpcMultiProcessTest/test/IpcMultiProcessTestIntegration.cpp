@@ -71,11 +71,10 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <regex>
+#include <string>
 #include <string_view>
 #include <vector>
-
-#include <spdlog/details/log_msg.h>
-#include <spdlog/sinks/base_sink.h>
 
 DAS_DISABLE_WARNING_BEGIN
 DAS_IGNORE_BOOST_INTERPROCESS_WARNING
@@ -548,38 +547,37 @@ namespace
         return predicate();
     }
 
-    // 主进程（测试进程即 main）日志捕获：把捕获 sink 挂进 DAS::Core::
-    // g_logger，跨 host 全链期间 main 侧死信 WARN 的负面断言载体。
-    class CapturingMainLogSink final
-        : public spdlog::sinks::base_sink<std::mutex>
-    {
-    public:
-        std::vector<std::string> messages;
-
-    protected:
-        void sink_it_(const spdlog::details::log_msg& msg) override
-        {
-            messages.emplace_back(msg.payload.data(), msg.payload.size());
-        }
-
-        void flush_() override {}
-    };
-
+    // 主进程（测试进程即 main）日志捕获窗口：跨 host 全链期间 main 侧
+    // 死信 WARN 的负面断言载体。禁止向 DAS::Core::g_logger->sinks() 增删
+    // 捕获 sink——该 vector 进程级固定（Logger.cpp Pitfall #2：vector 固定
+    // 使 sink_it_ 的无锁迭代安全），运行时 push_back/erase 与并发日志
+    // 线程构成数据竞争。改为复用构造期固定挂载的 rotating_file sink：
+    // 窗口起点先 flush 落盘并记录文件偏移，断言时再 flush 后仅扫描窗口
+    // 内追加的字节（flush 经 base_sink 互斥与写路径串行，文件读取不经
+    // 任何共享内存）。
     class ScopedMainLogCapture
     {
     public:
         ScopedMainLogCapture()
         {
-            sink_ = std::make_shared<CapturingMainLogSink>();
-            DAS::Core::g_logger->sinks().push_back(sink_);
-        }
+            log_path_ = FindCurrentProcessLogPath();
+            if (log_path_.empty())
+            {
+                ADD_FAILURE() << "no per-process log file found under logs/ "
+                                 "matching the current pid";
+                return;
+            }
 
-        ~ScopedMainLogCapture()
-        {
-            auto& sinks = DAS::Core::g_logger->sinks();
-            sinks.erase(
-                std::remove(sinks.begin(), sinks.end(), sink_),
-                sinks.end());
+            DAS::Core::g_logger->flush();
+            std::error_code error_code;
+            window_start_ = std::filesystem::file_size(log_path_, error_code);
+            if (error_code)
+            {
+                ADD_FAILURE() << "failed to stat the per-process log file: "
+                              << log_path_.string()
+                              << ", error: " << error_code.message();
+                log_path_.clear();
+            }
         }
 
         ScopedMainLogCapture(const ScopedMainLogCapture&) = delete;
@@ -587,15 +585,149 @@ namespace
 
         bool Contains(std::string_view needle) const
         {
-            return std::any_of(
-                sink_->messages.begin(),
-                sink_->messages.end(),
-                [needle](const std::string& message)
-                { return message.find(needle) != std::string::npos; });
+            if (log_path_.empty())
+            {
+                // 窗口建立失败按命中处理：负面断言立即失败，绝不因捕获
+                // 基础设施失效而空转通过。
+                ADD_FAILURE() << "log capture window was not established";
+                return true;
+            }
+
+            DAS::Core::g_logger->flush();
+
+            std::error_code error_code;
+            const uintmax_t current_size =
+                std::filesystem::file_size(log_path_, error_code);
+            if (error_code)
+            {
+                ADD_FAILURE() << "failed to stat the per-process log file: "
+                              << log_path_.string()
+                              << ", error: " << error_code.message();
+                return true;
+            }
+
+            // 窗口中途轮转（单文件 50MB 上限）时基文件重新从零计数：
+            // 轮转副本窗口偏移之后的字节 + 新文件全量，拼接仍覆盖完整
+            // 窗口。
+            std::string appended;
+            if (current_size < window_start_)
+            {
+                const auto rotated_bytes = ReadFileRange(
+                    std::filesystem::path{log_path_.string() + ".1"},
+                    window_start_);
+                const auto fresh_bytes = ReadFileRange(log_path_, 0);
+                if (!rotated_bytes.has_value() || !fresh_bytes.has_value())
+                {
+                    ADD_FAILURE()
+                        << "failed to read the rotated per-process log files";
+                    return true;
+                }
+                appended = *rotated_bytes;
+                appended += *fresh_bytes;
+            }
+            else
+            {
+                const auto appended_range =
+                    ReadFileRange(log_path_, window_start_);
+                if (!appended_range.has_value())
+                {
+                    ADD_FAILURE() << "failed to read the per-process log file: "
+                                  << log_path_.string();
+                    return true;
+                }
+                appended = *appended_range;
+            }
+
+            return appended.find(needle) != std::string::npos;
         }
 
     private:
-        std::shared_ptr<CapturingMainLogSink> sink_;
+        // 按生产侧命名（logs/<exe>-<YYYYMMDD_HH-MM-SS>-<PID>.log，见
+        // Logger.cpp 的 MakeProcessLogPath）定位当前测试进程自己的日志
+        // 文件。同 pid 历史残留（pid 复用）取最后写入时间最新者。
+        static std::filesystem::path FindCurrentProcessLogPath()
+        {
+            const std::regex name_pattern(
+                R"(^(.+)-(\d{8}_\d{2}-\d{2}-\d{2})-(\d+)\.log$)");
+            const std::string current_pid = std::to_string(
+                static_cast<unsigned long long>(
+                    DAS_IPC_TEST_CURRENT_PROCESS_ID()));
+
+            std::error_code error_code;
+            if (!std::filesystem::exists("logs", error_code) || error_code)
+            {
+                return {};
+            }
+
+            std::filesystem::path           matched_path;
+            std::filesystem::file_time_type matched_write_time{};
+            for (const auto& entry :
+                 std::filesystem::directory_iterator("logs", error_code))
+            {
+                if (error_code)
+                {
+                    break;
+                }
+                if (!entry.is_regular_file())
+                {
+                    continue;
+                }
+
+                const std::string file_name = entry.path().filename().string();
+                std::smatch       match;
+                if (!std::regex_match(file_name, match, name_pattern)
+                    || match[3].str() != current_pid)
+                {
+                    continue;
+                }
+
+                const auto write_time = entry.last_write_time(error_code);
+                if (error_code)
+                {
+                    error_code.clear();
+                    continue;
+                }
+                if (matched_path.empty() || write_time > matched_write_time)
+                {
+                    matched_path = entry.path();
+                    matched_write_time = write_time;
+                }
+            }
+            return matched_path;
+        }
+
+        // 读取 file_path 自 offset_bytes 起的全部字节；stat 或打开失败
+        // 返回 nullopt，由调用方按断言失败安全方向处理。
+        static std::optional<std::string> ReadFileRange(
+            const std::filesystem::path& file_path,
+            uintmax_t                    offset_bytes)
+        {
+            std::error_code error_code;
+            const uintmax_t file_size =
+                std::filesystem::file_size(file_path, error_code);
+            if (error_code || offset_bytes > file_size)
+            {
+                return std::nullopt;
+            }
+
+            std::ifstream stream(file_path, std::ios::binary);
+            if (!stream.is_open())
+            {
+                return std::nullopt;
+            }
+
+            std::string content(
+                static_cast<size_t>(file_size - offset_bytes),
+                '\0');
+            stream.read(
+                content.data(),
+                static_cast<std::streamsize>(content.size()));
+            content.resize(static_cast<size_t>(stream.gcount()));
+            return content;
+        }
+
+        std::filesystem::path log_path_;
+        uintmax_t             window_start_ = 0;
     };
 
     // 析构观测段的 RAII 载体：构造即建段（pid + 序号唯一化段名）并把段
@@ -2946,7 +3078,8 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_HostToHostCall)
         session_b);
 
     // main 死信负面断言的捕获窗口：覆盖全部跨 host 链段（含 130/132
-    // 中转记账）。测试进程即 main，捕获 sink 直挂 g_logger。
+    // 中转记账）。测试进程即 main，窗口锚定在本进程日志文件的当前偏移
+    // （不动 g_logger 的 sinks vector，机制见类注释）。
     const ScopedMainLogCapture main_log_capture;
 
     // 6. 跨 host 调用链（[out] 递物 + [in] 递代理 + hostA 物化 + 中转调用）。
