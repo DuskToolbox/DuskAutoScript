@@ -662,6 +662,170 @@ namespace
         Das::EchoComponentSharedState* shared_state_ = nullptr;
     };
 
+    // 跨 host 调用拓扑的部署产物：双 host + 双插件代理 + 经 [out]/[in]
+    // 通道接通的 query component（与 CrossProcess_HostToHostCall 的部署
+    // 段同构，供强杀用例独立部署、不污染主用例拓扑）。
+    struct HostToHostCallDeployment
+    {
+        DAS::DasPtr<DAS::Core::IPC::IHostLauncher>       host_a;
+        DAS::DasPtr<DAS::Core::IPC::IHostLauncher>       host_b;
+        uint16_t                                         session_a = 0;
+        uint16_t                                         session_b = 0;
+        DAS::DasPtr<IDasBase>                            proxy_a;
+        DAS::DasPtr<IDasBase>                            proxy_b;
+        DAS::DasPtr<DAS::PluginInterface::IDasComponent> query_component;
+    };
+
+    // 部署三进程拓扑并接通跨 host 调用链（[out] 递物 + [in] 递代理 +
+    // hostA 物化 + 工厂/组件构造递 host）。任一步失败返回首个错误码，
+    // 由调用方断言。
+    DasResult DeployHostToHostCallTopology(
+        DAS::Core::IPC::MainProcess::IIpcContext& context,
+        const std::string&                        host_exe_path,
+        const std::string&                        plugin1_path,
+        const std::string&                        plugin2_path,
+        HostToHostCallDeployment&                 deployment)
+    {
+        DAS::Core::IPC::IHostLauncher* raw_host_b = nullptr;
+        DasResult result = context.CreateHostLauncher(&raw_host_b);
+        if (DAS::IsFailed(result) || raw_host_b == nullptr)
+        {
+            return DAS::IsFailed(result) ? result : DAS_E_FAIL;
+        }
+        deployment.host_b =
+            DAS::DasPtr<DAS::Core::IPC::IHostLauncher>(raw_host_b);
+
+        result = deployment.host_b->Start(
+            host_exe_path,
+            deployment.session_b,
+            IpcTestConfig::GetHostStartTimeoutMs());
+        if (DAS::IsFailed(result))
+        {
+            return result;
+        }
+
+        DAS::Core::IPC::IHostLauncher* raw_host_a = nullptr;
+        result = context.CreateHostLauncher(&raw_host_a);
+        if (DAS::IsFailed(result) || raw_host_a == nullptr)
+        {
+            return DAS::IsFailed(result) ? result : DAS_E_FAIL;
+        }
+        deployment.host_a =
+            DAS::DasPtr<DAS::Core::IPC::IHostLauncher>(raw_host_a);
+
+        result = deployment.host_a->Start(
+            host_exe_path,
+            deployment.session_a,
+            IpcTestConfig::GetHostStartTimeoutMs());
+        if (DAS::IsFailed(result))
+        {
+            return result;
+        }
+
+        DAS::DasPtr<IDasAsyncLoadPluginOperation> operation_a;
+        result = context.LoadPluginAsync(
+            deployment.host_a.Get(),
+            plugin1_path.c_str(),
+            operation_a.Put());
+        if (DAS::IsFailed(result))
+        {
+            return result;
+        }
+        DAS::DasPtr<IDasAsyncLoadPluginOperation> operation_b;
+        result = context.LoadPluginAsync(
+            deployment.host_b.Get(),
+            plugin2_path.c_str(),
+            operation_b.Put());
+        if (DAS::IsFailed(result))
+        {
+            return result;
+        }
+
+        auto both = stdexec::when_all(
+            DAS::Core::IPC::async_op(context, std::move(operation_a)),
+            DAS::Core::IPC::async_op(context, std::move(operation_b)));
+        auto results = DAS::Core::IPC::wait(context, std::move(both));
+        if (!results.has_value())
+        {
+            return DAS_E_FAIL;
+        }
+        auto& [result_a, proxy_a_raw, result_b, proxy_b_raw] = *results;
+        if (DAS::IsFailed(result_a) || DAS::IsFailed(result_b))
+        {
+            return DAS::IsFailed(result_a) ? result_a : result_b;
+        }
+        deployment.proxy_a = DAS::DasPtr<IDasBase>::Attach(proxy_a_raw);
+        deployment.proxy_b = DAS::DasPtr<IDasBase>::Attach(proxy_b_raw);
+        if (!deployment.proxy_a || !deployment.proxy_b)
+        {
+            return DAS_E_INVALID_POINTER;
+        }
+
+        DAS::PluginInterface::DasPluginPackage package_a;
+        result = deployment.proxy_a.As(package_a.Put());
+        if (DAS::IsFailed(result))
+        {
+            return result;
+        }
+        DAS::PluginInterface::DasPluginPackage package_b;
+        result = deployment.proxy_b.As(package_b.Put());
+        if (DAS::IsFailed(result))
+        {
+            return result;
+        }
+
+        // [out] 通道：pluginB 递出 B-owned host feature 对象。
+        IDasBase* host_from_b_raw = nullptr;
+        result = package_b->CreateFeatureInterface(1, &host_from_b_raw);
+        if (DAS::IsFailed(result))
+        {
+            return result;
+        }
+        const DAS::DasPtr<IDasBase> host_from_b(host_from_b_raw);
+        DAS::DasPtr<DAS::PluginInterface::IDasTaskComponentHost>
+            task_component_host_from_b;
+        result = host_from_b.As(task_component_host_from_b.Put());
+        if (DAS::IsFailed(result))
+        {
+            return result;
+        }
+
+        // [in] 通道：递入 pluginA，hostA 物化 target=hostB 的跨 host 代理。
+        result =
+            package_a->SetTaskComponentHost(task_component_host_from_b.Get());
+        if (DAS::IsFailed(result))
+        {
+            return result;
+        }
+
+        IDasBase* factory_base_raw = nullptr;
+        result = package_a->CreateFeatureInterface(1, &factory_base_raw);
+        if (DAS::IsFailed(result))
+        {
+            return result;
+        }
+        const DAS::DasPtr<IDasBase> factory_base(factory_base_raw);
+        DAS::DasPtr<DAS::PluginInterface::IDasComponentFactory>
+            component_factory;
+        result = factory_base.As(component_factory.Put());
+        if (DAS::IsFailed(result))
+        {
+            return result;
+        }
+
+        DAS::PluginInterface::IDasComponent* component_raw = nullptr;
+        result = component_factory->CreateInstance(
+            DasIidOf<DAS::PluginInterface::IDasComponent>(),
+            &component_raw);
+        if (DAS::IsFailed(result))
+        {
+            return result;
+        }
+        deployment.query_component =
+            DAS::DasPtr<DAS::PluginInterface::IDasComponent>(component_raw);
+        return DAS_S_OK;
+    }
+
     std::chrono::milliseconds HeartbeatTimeoutWindowForTest()
     {
         using DAS::Core::IPC::ConnectionManager;
@@ -2987,6 +3151,153 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_HostToHostCall)
     // 7. 清理
     host_a->Stop();
     host_b->Stop();
+}
+
+/**
+ * @brief hostB 强杀后跨 host 调用快速失败（D-06 E2E 面）
+ *
+ * 三进程拓扑同构部署（独立 helper，不污染主用例）后：
+ * 1. 基线跨 host 创建成功（kill 前链路健康）
+ * 2. main 侧注册本地对象并让 hostB 持有——强杀后 holder 清零即 main
+ *    已处理断连（InternalHostReceiveLoop 退出 guard 已跑），为调用提供
+ *    确定性定序：排除“帧已越过转发点在 B 侧死掉”的 30s TIMEOUT 边界
+ *    分支，断言目标锚定转发点失败面
+ * 3. 外部 TerminateProcess/SIGKILL 强杀 hostB（纯崩溃语义）
+ * 4. hostA 发起的跨 host 调用快速失败：返回 DAS_E_IPC_CONNECTION_LOST
+ *    （转发点合成失败 Response 回投）且耗时秒级，远低于 30s pending
+ *    deadline——非超时悬挂
+ */
+TEST_F(
+    IpcMultiProcessTestIntegration,
+    CrossProcess_HostToHostCall_HostKillFailsFast)
+{
+    if (!std::filesystem::exists(host_exe_path_))
+    {
+        GTEST_SKIP() << "DasHostX.exe not found at: " << host_exe_path_;
+    }
+
+    std::string plugin1_path, plugin2_path;
+    try
+    {
+        plugin1_path = IpcTestConfig::GetTestPluginJsonPath("IpcTestPlugin1");
+        plugin2_path = IpcTestConfig::GetTestPluginJsonPath("IpcTestPlugin2");
+    }
+    catch (const std::exception& e)
+    {
+        GTEST_SKIP() << "Plugin JSON not found: " << e.what();
+    }
+
+    HostToHostCallDeployment deployment;
+    ASSERT_EQ(
+        DeployHostToHostCallTopology(
+            *ctx_,
+            host_exe_path_,
+            plugin1_path,
+            plugin2_path,
+            deployment),
+        DAS_S_OK);
+    ASSERT_NE(deployment.session_b, 0u);
+    ASSERT_NE(deployment.session_a, deployment.session_b);
+    ASSERT_NE(deployment.query_component.Get(), nullptr);
+
+    // 基线：跨 host 创建成功（kill 前链路健康）。
+    {
+        const DasReadOnlyString method_name{"CreateTaskComponentViaHeldHost"};
+        DAS::ExportInterface::DasVariantVector dispatch_result;
+        DAS::ExportInterface::DasVariantVector dispatch_params;
+        ASSERT_EQ(CreateIDasVariantVector(dispatch_params.Put()), DAS_S_OK);
+        ASSERT_EQ(
+            deployment.query_component->Dispatch(
+                method_name.Get(),
+                dispatch_params.Get(),
+                dispatch_result.Put()),
+            DAS_S_OK);
+        int64_t create_result_code = 0;
+        int64_t component_non_null = 0;
+        ASSERT_EQ(dispatch_result->GetInt(0, &create_result_code), DAS_S_OK);
+        ASSERT_EQ(dispatch_result->GetInt(1, &component_non_null), DAS_S_OK);
+        EXPECT_EQ(create_result_code, DAS_S_OK);
+        EXPECT_EQ(component_non_null, 1);
+    }
+
+    // main 侧断连观测点：本地注册对象 + hostB 持有记账。
+    auto* main_context =
+        static_cast<DAS::Core::IPC::MainProcess::IpcContext*>(ctx_.get());
+    ASSERT_NE(main_context, nullptr);
+    auto& object_manager = main_context->GetProxyFactory().GetObjectManager();
+
+    DAS::ExportInterface::DasVariantVector holder_vector;
+    ASSERT_EQ(CreateIDasVariantVector(holder_vector.Put()), DAS_S_OK);
+    ASSERT_EQ(holder_vector->PushBackInt(11), DAS_S_OK);
+    DAS::Core::IPC::ObjectId holder_object_id{};
+    ASSERT_EQ(
+        object_manager.RegisterLocalObject(
+            holder_vector.Get(),
+            holder_object_id,
+            /*explicit_pin=*/false),
+        DAS_S_OK);
+    ASSERT_EQ(
+        object_manager.AddRemoteHolder(holder_object_id, deployment.session_b),
+        DAS_S_OK);
+    EXPECT_EQ(object_manager.GetRemoteHolderCount(holder_object_id), 1u);
+
+    // 外部强杀 hostB（不经 Stop 的纯崩溃语义）。
+    const uint32_t host_b_pid = deployment.host_b->GetPid();
+    ASSERT_GT(host_b_pid, 0u);
+#ifdef _WIN32
+    {
+        HANDLE process_handle =
+            OpenProcess(PROCESS_TERMINATE, FALSE, host_b_pid);
+        ASSERT_NE(process_handle, nullptr)
+            << "OpenProcess failed: error=" << GetLastError();
+        ASSERT_TRUE(TerminateProcess(process_handle, 42))
+            << "TerminateProcess failed: error=" << GetLastError();
+        CloseHandle(process_handle);
+    }
+#else
+    ASSERT_EQ(kill(static_cast<pid_t>(host_b_pid), SIGKILL), 0)
+        << "SIGKILL failed for host pid=" << host_b_pid << " errno=" << errno;
+#endif
+
+    // 等 main 处理断连：holder 清扫 = 接收循环退出 guard 已触发。
+    const bool swept = WaitUntilForTest(
+        [&]
+        { return object_manager.GetRemoteHolderCount(holder_object_id) == 0; },
+        std::chrono::seconds(10));
+    ASSERT_TRUE(swept)
+        << "main did not process hostB disconnect before the timed call";
+
+    // 计时调用：转发点确定性失败——CONNECTION_LOST 快速回投而非 30s
+    // 超时悬挂。
+    const auto      call_start = std::chrono::steady_clock::now();
+    const DasResult dispatch_result_code = [&]
+    {
+        const DasReadOnlyString method_name{"CreateTaskComponentViaHeldHost"};
+        DAS::ExportInterface::DasVariantVector dispatch_result;
+        DAS::ExportInterface::DasVariantVector dispatch_params;
+        if (DAS::IsFailed(CreateIDasVariantVector(dispatch_params.Put())))
+        {
+            return DAS_E_FAIL;
+        }
+        return deployment.query_component->Dispatch(
+            method_name.Get(),
+            dispatch_params.Get(),
+            dispatch_result.Put());
+    }();
+    const auto elapsed = std::chrono::steady_clock::now() - call_start;
+
+    EXPECT_EQ(dispatch_result_code, DAS_E_IPC_CONNECTION_LOST)
+        << "cross-host call after host kill must fail fast with "
+           "CONNECTION_LOST, actual = "
+        << dispatch_result_code;
+    EXPECT_LT(
+        std::chrono::duration_cast<std::chrono::seconds>(elapsed).count(),
+        15)
+        << "failure must arrive in seconds, not the 30s pending deadline";
+
+    // 收尾：hostA 正常停；hostB 已死，Stop 走幂等清理。
+    deployment.host_a->Stop();
+    deployment.host_b->Stop();
 }
 
 /**
