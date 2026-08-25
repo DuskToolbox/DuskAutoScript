@@ -800,6 +800,18 @@ public:
     TransportResolver transport_resolver_;
 
 private:
+    /// @brief 单一转发谓词：帧是否按收件地址应整帧透传
+    ///
+    /// 纯地址规则：收件地址非未定址（0）且非本地即透传——零消息类别
+    /// 项、零 source 项。握手/心跳的收件人恒为直连对端（或 0），天然
+    /// 落本地消费；引用申报帧发给 owner 即转 owner 是地址规则的天然
+    /// 结果。扩展段剥离判定（is_transit_frame）、CONTROL_PLANE 本地
+    /// 消费分支守卫与转发分支三处共用本谓词——单一判定，无第二份
+    /// 分歧判断。
+    [[nodiscard]]
+    bool IsForwardableFrame(
+        const ValidatedIPCMessageHeader& header) const noexcept;
+
     /// @brief 发送失败时构造失败 RESPONSE 并推入 inbound_queue_
     /// @param header 原始请求的 header（用于获取 call_id, session_id）
     /// @param error_code 失败原因的错误码

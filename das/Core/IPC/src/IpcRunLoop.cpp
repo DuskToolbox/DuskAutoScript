@@ -409,6 +409,13 @@ boost::asio::awaitable<void> IpcRunLoop::RouteIncomingMessage(
     co_await RouteIncomingMessage(header, std::move(body), {});
 }
 
+bool IpcRunLoop::IsForwardableFrame(
+    const ValidatedIPCMessageHeader& header) const noexcept
+{
+    return connection_manager_ && header.GetTargetSessionId() != 0
+           && header.GetTargetSessionId() != local_session_id_;
+}
+
 boost::asio::awaitable<void> IpcRunLoop::RouteIncomingMessage(
     const ValidatedIPCMessageHeader& header,
     std::vector<uint8_t>             body,
@@ -417,15 +424,12 @@ boost::asio::awaitable<void> IpcRunLoop::RouteIncomingMessage(
     // 捎带扩展段接收侧剥离（IO 协程域即时提取，分发/转发判断之前）。
     // 置位 RESERVED_AS_SIZE 时 body = [扩展段][正常 body]，扩展段 = 若干
     // 完整内嵌帧（32B header + body 连续拼接，body_size 自描述循环剥取）。
-    // 转发兼容（D-12/T-104.2-17）：转发是不透明字节搬运——在途帧整帧
-    // 原样透传、由终点递归剥离，以下判定与下方既有转发分支的条件保持
-    // 一致（控制平面消息永远本地消费，不会进转发分支）。
+    // 转发兼容：转发是不透明字节搬运——在途帧（收件地址非本地，含组合
+    // 控制面帧）整帧原样透传、由终点递归剥离；剥离判定与转发分支共用
+    // 同一地址谓词 IsForwardableFrame（单一判定，无第二份分歧判断）。
     if ((header.GetFlags() & MessageFlags::RESERVED_AS_SIZE) != 0)
     {
-        const bool is_transit_frame =
-            !IsControlPlaneMessage(header) && connection_manager_
-            && header.GetTargetSessionId() != 0
-            && header.GetTargetSessionId() != local_session_id_;
+        const bool is_transit_frame = IsForwardableFrame(header);
 
         if (!is_transit_frame)
         {
