@@ -13,6 +13,7 @@
 
 #include <boost/asio/use_future.hpp>
 #include <das/Core/IPC/AnyTransport.h>
+#include <das/Core/IPC/ConnectionManager.h>
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/Handshake.h>
 #include <das/Core/IPC/IHostConnection.h>
@@ -629,4 +630,218 @@ TEST(
         run_thread.join();
     }
     probe.Shutdown();
+}
+
+// ============================================================================
+// 发送侧解析注入（TransportResolver 必填构造）单元锚点：host 恒上行语义
+// 对未知 target 的 PostSend 帧经上行管道出线且 header 逐字段不改写；
+// main 两级查表语义保持既有失败路径；空 callable 构造期 fail-fast
+// ============================================================================
+
+namespace
+{
+    constexpr uint16_t UPSTREAM_FALLBACK_HOST_SESSION_ID = 5;
+    constexpr uint16_t UPSTREAM_FALLBACK_MAIN_SESSION_ID = 1;
+    constexpr uint16_t UPSTREAM_FALLBACK_UNKNOWN_TARGET_SESSION_ID = 42;
+    constexpr uint32_t UPSTREAM_FALLBACK_INTERFACE_ID = 0x4242;
+
+    // main 语义解析体（两级查表）：FindManagedHostConnection 命中取
+    // host->GetTransport()，否则 FindHostLocalTransport——本文件全部
+    // main 角色构造点共用（各构造点 lambda 自行捕获 run loop 引用）
+    TransportLookupResult ResolveTransportMainSemantic(
+        ConnectionManager& connection_manager,
+        uint16_t           target_session_id)
+    {
+        const DasPtr<IHostConnection> host =
+            connection_manager.FindManagedHostConnection(target_session_id);
+        if (host)
+        {
+            return host->GetTransport();
+        }
+        return connection_manager.FindHostLocalTransport(target_session_id);
+    }
+} // namespace
+
+TEST(
+    DispatchToHandlerRoutingTest,
+    UpstreamFallbackSendsUnknownTargetThroughUpstreamUnmodified)
+{
+    ProxyFactory                    proxy_factory;
+    RemoteObjectRegistry            registry;
+    IpcMessageQueue<InboundMessage> inbound_queue(8);
+    // host 语义构造点：显式传恒上行 resolver——忽略 target，调用期现读
+    // host-local 表中 main session 的上行管道（不快照 transport 引用）
+    IpcRunLoop run_loop(
+        false,
+        &inbound_queue,
+        proxy_factory,
+        registry,
+        [&run_loop](uint16_t /*target_session_id*/) -> TransportLookupResult
+        {
+            constexpr uint16_t main_process_session_id = 1;
+            return run_loop.GetConnectionManager().FindHostLocalTransport(
+                main_process_session_id);
+        });
+    run_loop.SetSessionId(UPSTREAM_FALLBACK_HOST_SESSION_ID);
+
+    // 探针对端注册为 host-local session 1 充当上行管道
+    OutboundFrameProbe probe(run_loop.GetIoContext(), true);
+    ASSERT_TRUE(probe.IsHealthy());
+    auto counterpart_transport = probe.TakeCounterpartTransport();
+    ASSERT_TRUE(counterpart_transport.has_value());
+    ASSERT_EQ(
+        run_loop.GetConnectionManager().RegisterHostLocalTransport(
+            UPSTREAM_FALLBACK_MAIN_SESSION_ID,
+            std::move(*counterpart_transport)),
+        DAS_S_OK);
+
+    std::thread run_thread([&run_loop]() { run_loop.Run(); });
+    for (int i = 0; i < 100 && !run_loop.IsRunning(); ++i)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    ASSERT_TRUE(run_loop.IsRunning());
+
+    // 未知 target session 的 PostSend：host 语义下不再本地即败——帧经
+    // 上行出线（裁决权在接收侧）
+    const auto outbound_header =
+        IPCMessageHeaderBuilder()
+            .SetMessageType(MessageType::Request)
+            .SetHeaderFlags(HeaderFlags::NONE)
+            .SetInterfaceId(UPSTREAM_FALLBACK_INTERFACE_ID)
+            .SetCallId(99)
+            .SetSourceSessionId(UPSTREAM_FALLBACK_HOST_SESSION_ID)
+            .SetTargetSessionId(UPSTREAM_FALLBACK_UNKNOWN_TARGET_SESSION_ID)
+            .SetBodySize(0)
+            .Build();
+    ASSERT_EQ(
+        run_loop.PostSend(outbound_header, std::vector<uint8_t>{}),
+        DAS_S_OK);
+
+    ASSERT_EQ(probe.DrainUntil(1, std::chrono::seconds(2)), 1u);
+    ASSERT_EQ(probe.TotalFrameCount(), 1u);
+    const auto& wire_frame = probe.Frames()[0];
+    // header 逐字段不改写：source/target/call_id/interface_id/flags 原样
+    EXPECT_EQ(
+        wire_frame.header.GetSourceSessionId(),
+        UPSTREAM_FALLBACK_HOST_SESSION_ID);
+    EXPECT_EQ(
+        wire_frame.header.GetTargetSessionId(),
+        UPSTREAM_FALLBACK_UNKNOWN_TARGET_SESSION_ID);
+    EXPECT_EQ(wire_frame.header.GetCallId(), 99);
+    EXPECT_EQ(
+        wire_frame.header.GetInterfaceId(),
+        UPSTREAM_FALLBACK_INTERFACE_ID);
+    EXPECT_EQ(wire_frame.header.GetHeaderFlags(), HeaderFlags::NONE);
+    EXPECT_EQ(
+        wire_frame.header.GetFlags()
+            & DAS::Core::IPC::MessageFlags::RESERVED_AS_SIZE,
+        0);
+
+    run_loop.RequestStop();
+    if (run_thread.joinable())
+    {
+        run_thread.join();
+    }
+    probe.Shutdown();
+}
+
+TEST(
+    DispatchToHandlerRoutingTest,
+    TwoLevelLookupResolverKeepsExistingFailureSemantics)
+{
+    ProxyFactory                    proxy_factory;
+    RemoteObjectRegistry            registry;
+    IpcMessageQueue<InboundMessage> inbound_queue(8);
+    // main 语义构造点：显式传两级查表 resolver（解析体单源在
+    // ResolveTransportMainSemantic）
+    IpcRunLoop run_loop(
+        false,
+        &inbound_queue,
+        proxy_factory,
+        registry,
+        [&run_loop](uint16_t target_session_id) -> TransportLookupResult
+        {
+            return ResolveTransportMainSemantic(
+                run_loop.GetConnectionManager(),
+                target_session_id);
+        });
+    run_loop.SetSessionId(UPSTREAM_FALLBACK_MAIN_SESSION_ID);
+
+    // 探针注册为 session 1 的 host-local 位——失败路径零出帧的反证
+    // 观察点
+    OutboundFrameProbe probe(run_loop.GetIoContext(), true);
+    ASSERT_TRUE(probe.IsHealthy());
+    auto counterpart_transport = probe.TakeCounterpartTransport();
+    ASSERT_TRUE(counterpart_transport.has_value());
+    ASSERT_EQ(
+        run_loop.GetConnectionManager().RegisterHostLocalTransport(
+            UPSTREAM_FALLBACK_MAIN_SESSION_ID,
+            std::move(*counterpart_transport)),
+        DAS_S_OK);
+
+    std::thread run_thread([&run_loop]() { run_loop.Run(); });
+    for (int i = 0; i < 100 && !run_loop.IsRunning(); ++i)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    ASSERT_TRUE(run_loop.IsRunning());
+
+    // 未知 target 的带回调 PostSend：既有失败语义保持——无任何出帧，
+    // 完成回调收到 DAS_E_IPC_NO_CONNECTIONS
+    std::promise<DasResult> completion_promise;
+    auto                    completion_future = completion_promise.get_future();
+    const auto              request_header =
+        IPCMessageHeaderBuilder()
+            .SetMessageType(MessageType::Request)
+            .SetHeaderFlags(HeaderFlags::NONE)
+            .SetInterfaceId(UPSTREAM_FALLBACK_INTERFACE_ID)
+            .SetCallId(100)
+            .SetSourceSessionId(UPSTREAM_FALLBACK_MAIN_SESSION_ID)
+            .SetTargetSessionId(UPSTREAM_FALLBACK_UNKNOWN_TARGET_SESSION_ID)
+            .SetBodySize(0)
+            .Build();
+    ASSERT_EQ(
+        run_loop.PostSend(
+            request_header,
+            std::vector<uint8_t>{},
+            [&completion_promise](
+                DasResult            result,
+                std::vector<uint8_t> response,
+                uint16_t             response_flags)
+            {
+                (void)response;
+                (void)response_flags;
+                completion_promise.set_value(result);
+            }),
+        DAS_S_OK);
+
+    ASSERT_EQ(completion_future.get(), DAS_E_IPC_NO_CONNECTIONS);
+    EXPECT_EQ(probe.DrainFor(std::chrono::milliseconds(200)), 0u);
+    EXPECT_EQ(probe.TotalFrameCount(), 0u);
+
+    run_loop.RequestStop();
+    if (run_thread.joinable())
+    {
+        run_thread.join();
+    }
+    probe.Shutdown();
+}
+
+TEST(DispatchToHandlerRoutingTest, EmptyResolverFailsFastAtConstruction)
+{
+    ProxyFactory         proxy_factory;
+    RemoteObjectRegistry registry;
+    // 空 callable（默认构造的 TransportResolver）——构造期 fail-fast，
+    // 不产生可用对象
+    EXPECT_THROW(
+        {
+            IpcRunLoop run_loop(
+                false,
+                nullptr,
+                proxy_factory,
+                registry,
+                TransportResolver{});
+        },
+        std::invalid_argument);
 }
