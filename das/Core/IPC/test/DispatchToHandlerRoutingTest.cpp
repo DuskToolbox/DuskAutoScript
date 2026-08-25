@@ -878,3 +878,166 @@ TEST(DispatchToHandlerRoutingTest, EmptyResolverFailsFastAtConstruction)
         },
         std::invalid_argument);
 }
+
+// ============================================================================
+// 接收分类地址化单元锚点：转发判定按收件地址（单一谓词供扩展段剥离
+// 判定 / CONTROL_PLANE 本地消费分支守卫 / 转发分支三处共用，无第二份
+// 分歧判断）
+// ============================================================================
+
+namespace
+{
+    // 物化方 session（组合帧的 source）：既非本地 main 也非 owner 对端
+    constexpr uint16_t ADDRESS_RULE_MATERIALIZER_SESSION_ID = 3;
+
+    // 内嵌 130 rider 完整帧（32B header + ObjectId 8B body，自描述）
+    std::vector<uint8_t> BuildEmbeddedAddRefFrame(
+        const ObjectId& object_id,
+        uint16_t        target_session_id)
+    {
+        const auto header =
+            IPCMessageHeaderBuilder()
+                .SetMessageType(MessageType::Event)
+                .SetControlPlaneCommand(IpcCommandType::RemoteAddRef)
+                .SetSourceSessionId(ADDRESS_RULE_MATERIALIZER_SESSION_ID)
+                .SetTargetSessionId(target_session_id)
+                .SetBodySize(static_cast<uint32_t>(sizeof(object_id)))
+                .Build();
+        const auto* header_bytes = reinterpret_cast<const uint8_t*>(
+            static_cast<const IPCMessageHeader*>(header));
+        std::vector<uint8_t> frame(
+            header_bytes,
+            header_bytes + sizeof(IPCMessageHeader));
+        const auto object_body = EncodeObjectIdBody(object_id);
+        frame.insert(frame.end(), object_body.begin(), object_body.end());
+        return frame;
+    }
+
+    // bit1 组合宿主帧：CONTROL_PLANE Event 130 携带内嵌扩展段（闸1 搭车
+    // 产物的真实线上形态——130 宿主不在载体排除列表）
+    ValidatedIPCMessageHeader MakePiggybackedControlPlaneHostHeader(
+        uint16_t target_session_id,
+        uint32_t section_size,
+        uint32_t total_body_size)
+    {
+        const auto base =
+            IPCMessageHeaderBuilder()
+                .SetMessageType(MessageType::Event)
+                .SetControlPlaneCommand(IpcCommandType::RemoteAddRef)
+                .SetSourceSessionId(ADDRESS_RULE_MATERIALIZER_SESSION_ID)
+                .SetTargetSessionId(target_session_id)
+                .SetBodySize(total_body_size)
+                .Build();
+        IPCMessageHeader raw = base.Raw();
+        raw.flags = raw.flags | DAS::Core::IPC::MessageFlags::RESERVED_AS_SIZE;
+        raw.reserved = section_size;
+        // magic/version 未动，Deserialize 必然成功
+        return ValidatedIPCMessageHeader::Deserialize(&raw, sizeof(raw))
+            .value();
+    }
+} // namespace
+
+TEST(
+    DispatchToHandlerRoutingTest,
+    PiggybackedControlPlaneFrameStaysTransparentInTransit)
+{
+    ProxyFactory                    proxy_factory;
+    RemoteObjectRegistry            registry;
+    IpcMessageQueue<InboundMessage> inbound_queue(8);
+    // main 语义构造点：显式传两级查表 resolver（模拟 main 角色的
+    // 发送解析）
+    IpcRunLoop run_loop(
+        false,
+        &inbound_queue,
+        proxy_factory,
+        registry,
+        [&run_loop](uint16_t target_session_id) -> TransportLookupResult
+        {
+            return ResolveTransportMainSemantic(
+                run_loop.GetConnectionManager(),
+                target_session_id);
+        });
+    run_loop.SetSessionId(ROUTING_E2E_LOCAL_SESSION_ID);
+
+    // owner（收件地址）为已注册托管连接：地址规则下在途帧可达转发分支
+    OutboundFrameProbe probe(run_loop.GetIoContext(), true);
+    ASSERT_TRUE(probe.IsHealthy());
+    auto counterpart_transport = probe.TakeCounterpartTransport();
+    ASSERT_TRUE(counterpart_transport.has_value());
+
+    const DasPtr<IHostConnection> host(new RoutingE2ETestInternalHost(
+        run_loop.GetIoContext(),
+        ROUTING_E2E_PEER_SESSION_ID,
+        *counterpart_transport));
+    ASSERT_EQ(run_loop.RegisterInternalHost(host), DAS_S_OK);
+
+    // rider 与宿主各自申报的对象（本地 DOM 条目 = 递归分发的可观测锚点）
+    DistributedObjectManager& object_manager = proxy_factory.GetObjectManager();
+    object_manager.SetSessionId(ROUTING_E2E_LOCAL_SESSION_ID);
+    const DasPtr<RemoteRefHandler> remote_ref_handler =
+        RemoteRefHandler::Create(object_manager, run_loop);
+    run_loop.RegisterHandler(
+        HeaderFlags::CONTROL_PLANE,
+        static_cast<uint32_t>(IpcCommandType::RemoteAddRef),
+        remote_ref_handler.Get());
+
+    auto*    mock_rider_object = new MockDasObject();
+    auto*    mock_host_object = new MockDasObject();
+    ObjectId rider_object_id{};
+    ObjectId host_object_id{};
+    ASSERT_EQ(
+        object_manager
+            .RegisterLocalObject(mock_rider_object, rider_object_id, false),
+        DAS_S_OK);
+    ASSERT_EQ(
+        object_manager
+            .RegisterLocalObject(mock_host_object, host_object_id, false),
+        DAS_S_OK);
+
+    std::thread run_thread([&run_loop]() { run_loop.Run(); });
+    for (int i = 0; i < 100 && !run_loop.IsRunning(); ++i)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    ASSERT_TRUE(run_loop.IsRunning());
+
+    // 组合帧体：[内嵌 130 rider（target=local）][宿主正常 body（ObjectId）]
+    const std::vector<uint8_t> embedded_rider =
+        BuildEmbeddedAddRefFrame(rider_object_id, ROUTING_E2E_LOCAL_SESSION_ID);
+    const std::vector<uint8_t> host_tail = EncodeObjectIdBody(host_object_id);
+    std::vector<uint8_t>       transit_body = embedded_rider;
+    transit_body.insert(transit_body.end(), host_tail.begin(), host_tail.end());
+    const auto transit_header = MakePiggybackedControlPlaneHostHeader(
+        ROUTING_E2E_PEER_SESSION_ID,
+        static_cast<uint32_t>(embedded_rider.size()),
+        static_cast<uint32_t>(transit_body.size()));
+
+    // 在途半（宿主 target=owner ≠ local）：整帧不剥离——内嵌 rider 不在
+    // 本地递归分发（剥离判定与转发分支共用同一地址谓词）
+    ASSERT_EQ(
+        probe.SendFrameFromObserver(transit_header, transit_body),
+        DAS_S_OK);
+    static_cast<void>(probe.DrainUntil(1, std::chrono::milliseconds(500)));
+    EXPECT_EQ(object_manager.GetRemoteHolderCount(rider_object_id), 0u);
+    EXPECT_EQ(object_manager.GetRemoteHolderCount(host_object_id), 0u);
+
+    // 对照半（宿主 target=local）：本地剥离 + 内嵌帧递归分发（终点递归
+    // 剥离语义不回归）
+    std::vector<uint8_t> local_body = embedded_rider;
+    local_body.insert(local_body.end(), host_tail.begin(), host_tail.end());
+    const auto local_header = MakePiggybackedControlPlaneHostHeader(
+        ROUTING_E2E_LOCAL_SESSION_ID,
+        static_cast<uint32_t>(embedded_rider.size()),
+        static_cast<uint32_t>(local_body.size()));
+    ASSERT_EQ(probe.SendFrameFromObserver(local_header, local_body), DAS_S_OK);
+    static_cast<void>(probe.DrainFor(std::chrono::milliseconds(300)));
+    EXPECT_EQ(object_manager.GetRemoteHolderCount(rider_object_id), 1u);
+    EXPECT_EQ(object_manager.GetRemoteHolderCount(host_object_id), 1u);
+
+    run_loop.RequestStop();
+    if (run_thread.joinable())
+    {
+        run_thread.join();
+    }
+    probe.Shutdown();
+}
