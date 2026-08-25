@@ -1473,3 +1473,160 @@ TEST(
     }
     probe.Shutdown();
 }
+
+// ============================================================================
+// 转发失败确定性语义（D-06）单元锚点：transit Request 转发失败时在转发
+// 点合成失败 Response 回投原发起方（CONNECTION_LOST）；transit
+// Event/Response 丢弃不转发；本地起源帧的失败通知行为零变化；发起方
+// 也不可达时合成帧丢弃终止不递归
+// ============================================================================
+
+namespace
+{
+    // 无路由的死目标 session：转发分支查表必 miss
+    constexpr uint16_t TRANSIT_FAILURE_DEAD_TARGET_SESSION_ID = 999;
+
+    // 同样无路由的发起方 session：合成 Response 的回投腿也失败的形态
+    constexpr uint16_t TRANSIT_FAILURE_UNROUTED_ORIGIN_SESSION_ID = 8;
+
+    constexpr uint32_t TRANSIT_FAILURE_INTERFACE_ID = 0x5150;
+
+    // 轮询取本地 inbound_queue_（失败通知在 IO 线程异步入队）
+    std::optional<InboundMessage> TryPopInboundWithDeadline(
+        IpcMessageQueue<InboundMessage>& inbound_queue)
+    {
+        for (int attempt = 0; attempt < 100; ++attempt)
+        {
+            if (auto queued = inbound_queue.TryPop(); queued.has_value())
+            {
+                return queued;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        return std::nullopt;
+    }
+} // namespace
+
+// transit Request（source=已注册对端、target=无路由死目标）转发失败：
+// main 在转发点合成失败 Response 回投原 source——source 侧 probe 收到
+// source=原 target、target=原 source、call_id 原样、error_code 为
+// CONNECTION_LOST 的 Response；本地 inbound_queue_ 零死信
+TEST(
+    DispatchToHandlerRoutingTest,
+    TransitRequestFailureSynthesizesResponseToOrigin)
+{
+    AddressRuleFixture fixture;
+    fixture.SetUp();
+    ASSERT_TRUE(fixture.run_loop->IsRunning());
+
+    const auto transit_request_header =
+        IPCMessageHeaderBuilder()
+            .SetMessageType(MessageType::Request)
+            .SetHeaderFlags(HeaderFlags::NONE)
+            .SetInterfaceId(TRANSIT_FAILURE_INTERFACE_ID)
+            .SetCallId(91)
+            .SetSourceSessionId(ROUTING_E2E_PEER_SESSION_ID)
+            .SetTargetSessionId(TRANSIT_FAILURE_DEAD_TARGET_SESSION_ID)
+            .SetBodySize(0)
+            .Build();
+    ASSERT_EQ(
+        fixture.probe->SendFrameFromObserver(
+            transit_request_header,
+            std::vector<uint8_t>{}),
+        DAS_S_OK);
+
+    // 合成失败 Response 从 source 侧出线（本地死信消除是行为主体）
+    ASSERT_EQ(fixture.probe->DrainUntil(1, std::chrono::seconds(2)), 1u);
+    ASSERT_EQ(fixture.probe->TotalFrameCount(), 1u);
+    const auto& failure_frame = fixture.probe->Frames()[0];
+    EXPECT_EQ(failure_frame.header.GetMessageType(), MessageType::Response);
+    EXPECT_EQ(
+        failure_frame.header.GetSourceSessionId(),
+        TRANSIT_FAILURE_DEAD_TARGET_SESSION_ID);
+    EXPECT_EQ(
+        failure_frame.header.GetTargetSessionId(),
+        ROUTING_E2E_PEER_SESSION_ID);
+    EXPECT_EQ(failure_frame.header.GetCallId(), 91);
+    EXPECT_EQ(
+        failure_frame.header.GetErrorCode(),
+        static_cast<int32_t>(DAS_E_IPC_CONNECTION_LOST));
+
+    // 失败 Response 不再推进本地 inbound_queue_（pending 在发起方侧）
+    EXPECT_FALSE(fixture.inbound_queue.TryPop().has_value());
+}
+
+// 本地起源（source=local）无回调帧发送失败：失败 Response 仍推本地
+// inbound_queue_（既有行为零变化——BusinessThread/外部线程两条等待路径
+// 的覆盖形态）
+TEST(DispatchToHandlerRoutingTest, LocalOriginFailureStillNotifiedLocally)
+{
+    AddressRuleFixture fixture;
+    fixture.SetUp();
+    ASSERT_TRUE(fixture.run_loop->IsRunning());
+
+    const auto local_request_header =
+        IPCMessageHeaderBuilder()
+            .SetMessageType(MessageType::Request)
+            .SetHeaderFlags(HeaderFlags::NONE)
+            .SetInterfaceId(TRANSIT_FAILURE_INTERFACE_ID)
+            .SetCallId(92)
+            .SetSourceSessionId(ROUTING_E2E_LOCAL_SESSION_ID)
+            .SetTargetSessionId(TRANSIT_FAILURE_DEAD_TARGET_SESSION_ID)
+            .SetBodySize(0)
+            .Build();
+    ASSERT_EQ(
+        fixture.run_loop->PostSend(
+            local_request_header,
+            std::vector<uint8_t>{}),
+        DAS_S_OK);
+
+    const auto queued = TryPopInboundWithDeadline(fixture.inbound_queue);
+    ASSERT_TRUE(queued.has_value());
+    EXPECT_EQ(queued->header.GetMessageType(), MessageType::Response);
+    EXPECT_EQ(
+        queued->header.GetSourceSessionId(),
+        TRANSIT_FAILURE_DEAD_TARGET_SESSION_ID);
+    EXPECT_EQ(
+        queued->header.GetTargetSessionId(),
+        ROUTING_E2E_LOCAL_SESSION_ID);
+    EXPECT_EQ(queued->header.GetCallId(), 92);
+    EXPECT_EQ(
+        queued->header.GetErrorCode(),
+        static_cast<int32_t>(DAS_E_IPC_NO_CONNECTIONS));
+    EXPECT_FALSE(fixture.inbound_queue.TryPop().has_value());
+
+    // 本地起源失败不出站帧
+    EXPECT_EQ(fixture.probe->DrainFor(std::chrono::milliseconds(200)), 0u);
+    EXPECT_EQ(fixture.probe->TotalFrameCount(), 0u);
+}
+
+// 发起方也不可达（合成 Response 的 target 无路由）：合成帧自身失败再入
+// 失败通知时因其 MessageType 为 Response 走丢弃路径终止——无二次合成
+// 出帧（全部 probe 零出帧）、本地零死信
+TEST(DispatchToHandlerRoutingTest, SynthesizedFailureDoesNotRecurse)
+{
+    AddressRuleFixture fixture;
+    fixture.SetUp();
+    ASSERT_TRUE(fixture.run_loop->IsRunning());
+
+    const auto transit_request_header =
+        IPCMessageHeaderBuilder()
+            .SetMessageType(MessageType::Request)
+            .SetHeaderFlags(HeaderFlags::NONE)
+            .SetInterfaceId(TRANSIT_FAILURE_INTERFACE_ID)
+            .SetCallId(93)
+            .SetSourceSessionId(TRANSIT_FAILURE_UNROUTED_ORIGIN_SESSION_ID)
+            .SetTargetSessionId(TRANSIT_FAILURE_DEAD_TARGET_SESSION_ID)
+            .SetBodySize(0)
+            .Build();
+    ASSERT_EQ(
+        fixture.probe->SendFrameFromObserver(
+            transit_request_header,
+            std::vector<uint8_t>{}),
+        DAS_S_OK);
+
+    // 两级失败（转发 miss + 回投 miss）后 WARN 丢弃终止：零出帧、零死信
+    EXPECT_EQ(fixture.probe->DrainFor(std::chrono::milliseconds(300)), 0u);
+    EXPECT_EQ(fixture.probe->TotalFrameCount(), 0u);
+    EXPECT_FALSE(fixture.inbound_queue.TryPop().has_value());
+}
