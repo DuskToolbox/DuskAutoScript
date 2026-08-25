@@ -412,7 +412,11 @@ boost::asio::awaitable<void> IpcRunLoop::RouteIncomingMessage(
 bool IpcRunLoop::IsForwardableFrame(
     const ValidatedIPCMessageHeader& header) const noexcept
 {
-    return connection_manager_ && header.GetTargetSessionId() != 0
+    // 地址未确立的接收方一律本地消费——握手期收件人还不知道自己的
+    // 地址，无权把帧判给别人（main 首条 HELLO 以本进程未来的 session
+    // 定址，处理该帧时 session 才经握手落位）
+    return connection_manager_ && local_session_id_ != 0
+           && header.GetTargetSessionId() != 0
            && header.GetTargetSessionId() != local_session_id_;
 }
 
@@ -553,7 +557,10 @@ boost::asio::awaitable<void> IpcRunLoop::RouteIncomingMessage(
         }
     }
 
-    if (IsControlPlaneMessage(header))
+    // 控制面帧仅当收件地址为本地（或未定址 0）才进本地消费——按地址
+    // 分类，不按消息类别（握手/心跳的收件人恒为直连对端，天然本地；
+    // 引用申报帧发给 owner 即转 owner）
+    if (IsControlPlaneMessage(header) && !IsForwardableFrame(header))
     {
         if (header.GetMessageType() == MessageType::Response)
         {
@@ -589,8 +596,7 @@ boost::asio::awaitable<void> IpcRunLoop::RouteIncomingMessage(
         co_return;
     }
 
-    if (connection_manager_ && header.GetTargetSessionId() != 0
-        && header.GetTargetSessionId() != local_session_id_)
+    if (IsForwardableFrame(header))
     {
         DAS_CORE_LOG_DEBUG(
             "Forwarding message: target = {}, source = {}, type = {}",

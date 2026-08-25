@@ -802,12 +802,14 @@ public:
 private:
     /// @brief 单一转发谓词：帧是否按收件地址应整帧透传
     ///
-    /// 纯地址规则：收件地址非未定址（0）且非本地即透传——零消息类别
-    /// 项、零 source 项。握手/心跳的收件人恒为直连对端（或 0），天然
-    /// 落本地消费；引用申报帧发给 owner 即转 owner 是地址规则的天然
-    /// 结果。扩展段剥离判定（is_transit_frame）、CONTROL_PLANE 本地
-    /// 消费分支守卫与转发分支三处共用本谓词——单一判定，无第二份
-    /// 分歧判断。
+    /// 纯地址规则：自身地址已确立（非 0）且收件地址非未定址（0）、
+    /// 非本地即透传——零消息类别项、零 source 项。自身地址未确立
+    /// （握手 bootstrap 期，session 尚为 0）的接收方一律本地消费——
+    /// 它还不知道自己的地址，无权把帧判给别人。握手/心跳的收件人恒
+    /// 为直连对端（或 0），天然落本地消费；引用申报帧发给 owner 即转
+    /// owner 是地址规则的天然结果。扩展段剥离判定（is_transit_frame）、
+    /// CONTROL_PLANE 本地消费分支守卫与转发分支三处共用本谓词——
+    /// 单一判定，无第二份分歧判断。
     [[nodiscard]]
     bool IsForwardableFrame(
         const ValidatedIPCMessageHeader& header) const noexcept;

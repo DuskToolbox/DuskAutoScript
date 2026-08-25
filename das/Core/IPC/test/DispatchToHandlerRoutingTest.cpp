@@ -1386,3 +1386,90 @@ TEST(
     static_cast<void>(fixture.probe->DrainFor(std::chrono::milliseconds(200)));
     EXPECT_EQ(fixture.probe->TotalFrameCount(), 1u);
 }
+
+// bootstrap 期回归锚：自身地址未确立（未 SetSessionId，local=0）的
+// 接收方收到以自己未来 session 定址的首条 HELLO（target 非 0）——
+// 一律本地消费，不转发（握手期收件人还不知道自己的地址，无权把帧
+// 判给别人）
+TEST(
+    DispatchToHandlerRoutingTest,
+    BootstrapHelloWithUnestablishedSessionConsumedLocally)
+{
+    ProxyFactory                    proxy_factory;
+    RemoteObjectRegistry            registry;
+    IpcMessageQueue<InboundMessage> inbound_queue(8);
+    // main 语义构造点：显式传两级查表 resolver（模拟 main 角色的
+    // 发送解析）
+    IpcRunLoop run_loop(
+        false,
+        &inbound_queue,
+        proxy_factory,
+        registry,
+        [&run_loop](uint16_t target_session_id) -> TransportLookupResult
+        {
+            return ResolveTransportMainSemantic(
+                run_loop.GetConnectionManager(),
+                target_session_id);
+        });
+    // 注意：不调用 SetSessionId——local_session_id_ 保持 0（握手
+    // bootstrap 期的接收方形态）
+
+    OutboundFrameProbe probe(run_loop.GetIoContext(), true);
+    ASSERT_TRUE(probe.IsHealthy());
+    auto counterpart_transport = probe.TakeCounterpartTransport();
+    ASSERT_TRUE(counterpart_transport.has_value());
+
+    const DasPtr<IHostConnection> host(new RoutingE2ETestInternalHost(
+        run_loop.GetIoContext(),
+        ROUTING_E2E_PEER_SESSION_ID,
+        *counterpart_transport));
+    ASSERT_EQ(run_loop.RegisterInternalHost(host), DAS_S_OK);
+
+    static RecordingHandshakeHandler recording_handler;
+    RecordingHandshakeHandler::invocation_count_.store(
+        0,
+        std::memory_order_release);
+    run_loop.RegisterHandler(
+        HeaderFlags::CONTROL_PLANE,
+        static_cast<uint32_t>(HandshakeInterfaceId::HandshakeIfaceHello),
+        &recording_handler);
+
+    std::thread run_thread([&run_loop]() { run_loop.Run(); });
+    for (int i = 0; i < 100 && !run_loop.IsRunning(); ++i)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    ASSERT_TRUE(run_loop.IsRunning());
+
+    // main 首条 HELLO 的真实形态：source=main(1)、target=本进程未来的
+    // session（非 0）
+    const auto bootstrap_hello_header =
+        IPCMessageHeaderBuilder()
+            .SetMessageType(MessageType::Request)
+            .SetControlPlaneCommand(HandshakeInterfaceId::HandshakeIfaceHello)
+            .SetCallId(86)
+            .SetSourceSessionId(UPSTREAM_FALLBACK_MAIN_SESSION_ID)
+            .SetTargetSessionId(ROUTING_E2E_PEER_SESSION_ID)
+            .SetBodySize(0)
+            .Build();
+    ASSERT_EQ(
+        probe.SendFrameFromObserver(
+            bootstrap_hello_header,
+            std::vector<uint8_t>{}),
+        DAS_S_OK);
+
+    // 本地 handler 消费触发、零出帧（bootstrap 期无转发资格）
+    static_cast<void>(probe.DrainFor(std::chrono::milliseconds(300)));
+    EXPECT_EQ(
+        RecordingHandshakeHandler::invocation_count_.load(
+            std::memory_order_acquire),
+        1u);
+    EXPECT_EQ(probe.TotalFrameCount(), 0u);
+
+    run_loop.RequestStop();
+    if (run_thread.joinable())
+    {
+        run_thread.join();
+    }
+    probe.Shutdown();
+}
