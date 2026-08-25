@@ -1,8 +1,9 @@
 // FormSequence launch 端到端测试：起源痛点场景（目标程序未启动 → 自动启动
 // + 等窗口出现 + 执行被编排任务）的可重复自动化证明。
-// 拓扑照真实 IPC 插件 + SchedulerService 全链形态：调度器与 FlowControl 在
-// 测试进程内加载，DasGraphTask 任务插件走 IPC——星型部署，所有代理跳终止于
-// 测试进程，避开兄弟 host 进程间响应路由缺口（既有 IPC 拓扑限制）。
+// 拓扑照真实部署形态：调度器在测试进程内，DasGraphTask 与 FlowControl 均
+// 走 IPC 加载（各自独立 host 兄弟进程）——launch 组件被 GraphTask host 跨
+// host 调用时，代理腿经 main 中转，跨 host 消息中转链路是本测试覆盖面的
+// 一部分。
 // 窗口替身 = StubWindowTarget.exe（隐藏创建 + 延迟显示，模拟「spawn 到窗口
 // 出现有数秒延迟」）；launch 组件 spawn 替身并轮询可见窗口，窗口出现后发
 // signal_out 门控 entryRef 节点经 RepositoryInvoke 执行子任务。
@@ -518,7 +519,7 @@ namespace
         DeployPluginArtifacts(
             "libDasFlowControl.dll",
             "DasFlowControl.json",
-            /*force_ipc=*/false);
+            /*force_ipc=*/true);
 
         const std::filesystem::path stub_exe = ResolveStubWindowTargetPath();
         ASSERT_TRUE(std::filesystem::exists(stub_exe))
