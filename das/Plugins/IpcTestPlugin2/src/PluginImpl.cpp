@@ -4,6 +4,14 @@
 #include <das/DasString.hpp>
 #include <das/Utils/fmt.h>
 
+#include <cstdlib>
+#include <memory>
+
+DAS_DISABLE_WARNING_BEGIN
+DAS_IGNORE_BOOST_INTERPROCESS_WARNING
+#include <boost/interprocess/managed_shared_memory.hpp>
+DAS_DISABLE_WARNING_END
+
 #define DAS_BUILD_SHARED
 
 DAS_NS_BEGIN
@@ -17,6 +25,41 @@ namespace
         0xFC73,
         0x4527,
         {0xB3, 0x9B, 0x89, 0xB4, 0x85, 0x3B, 0x1D, 0xE0}};
+
+    // 析构观测段的懒解析：环境变量传入段名（host 子进程继承测试进程的
+    // 环境），open_only 接入后指针随 dll 生命周期存活。环境变量缺失
+    // （其他用例加载本插件）或段不可达时解析为空指针——信号路径静默
+    // 跳过，零行为影响。首次调用即定死结果，之后零开销。
+    EchoComponentSharedState* ResolveEchoSharedState()
+    {
+        static std::unique_ptr<boost::interprocess::managed_shared_memory>
+                                               segment;
+        static EchoComponentSharedState* const shared_state = []()
+        {
+            const char* segment_name = std::getenv(kIpcTestPlugin2ShmEnvName);
+            if (segment_name == nullptr || segment_name[0] == '\0')
+            {
+                return static_cast<EchoComponentSharedState*>(nullptr);
+            }
+            try
+            {
+                segment = std::make_unique<
+                    boost::interprocess::managed_shared_memory>(
+                    boost::interprocess::open_only_t{},
+                    segment_name);
+                auto found = segment->find<EchoComponentSharedState>("state");
+                return found.first;
+            }
+            catch (...)
+            {
+                // 段尚未就绪或名称失配：保持未接入状态（析构信号缺失会
+                // 在依赖它的测试里显性暴露，不静默伪造）。
+                segment.reset();
+                return static_cast<EchoComponentSharedState*>(nullptr);
+            }
+        }();
+        return shared_state;
+    }
 } // namespace
 
 // === DasComponentImpl ===
@@ -169,6 +212,26 @@ DasResult DasComponentFactoryImpl::CreateInstance(
 }
 
 // === EchoTaskComponent ===
+
+EchoTaskComponent::EchoTaskComponent() : shared_state_(ResolveEchoSharedState())
+{
+    if (shared_state_ != nullptr)
+    {
+        const EchoIpcScopedLock lock(shared_state_->mutex);
+        ++shared_state_->created_count;
+        shared_state_->cv.notify_all();
+    }
+}
+
+EchoTaskComponent::~EchoTaskComponent()
+{
+    if (shared_state_ != nullptr)
+    {
+        const EchoIpcScopedLock lock(shared_state_->mutex);
+        ++shared_state_->destroyed_count;
+        shared_state_->cv.notify_all();
+    }
+}
 
 DasResult EchoTaskComponent::ApplySettingsChange(
     ExportInterface::IDasJson*  p_request_json,

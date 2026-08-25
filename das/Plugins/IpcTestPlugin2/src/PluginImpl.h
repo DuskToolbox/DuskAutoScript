@@ -1,6 +1,8 @@
 #ifndef DAS_PLUGINS_IPCTESTPLUGIN2_PLUGINIMPL_H
 #define DAS_PLUGINS_IPCTESTPLUGIN2_PLUGINIMPL_H
 
+#include "EchoComponentSharedState.h"
+
 #include <das/Utils/CommonUtils.hpp>
 #include <das/_autogen/idl/abi/IDasComponent.h>
 #include <das/_autogen/idl/abi/IDasTaskComponent.h>
@@ -140,11 +142,18 @@ public:
  *
  * ApplySettingsChange 把请求 JSON 原样写入出参（跨 host 大消息链的靶），
  * Do 未实现（返回 DAS_E_NO_IMPLEMENTATION）。
+ *
+ * 构造/析构经 SHM 共享状态段写计数（环境变量传入段名，见
+ * EchoComponentSharedState.h）——跨 host 释放链的对象析构可被测试进程
+ * 观测；环境变量缺失时 shared_state_ 为空，信号路径静默跳过。
  */
 class EchoTaskComponent final
     : public PluginInterface::DasTaskComponentImplBase<EchoTaskComponent>
 {
 public:
+    EchoTaskComponent();
+    ~EchoTaskComponent() override;
+
     DAS_IMPL ApplySettingsChange(
         ExportInterface::IDasJson*  p_request_json,
         ExportInterface::IDasJson** pp_out_result_json) override;
@@ -153,6 +162,9 @@ public:
         PluginInterface::IDasStopToken*       stop_token,
         ExportInterface::IDasReadOnlyPortMap* p_input_port_map,
         ExportInterface::IDasPortMap**        pp_out_port_map) override;
+
+private:
+    EchoComponentSharedState* shared_state_ = nullptr;
 };
 
 /**
