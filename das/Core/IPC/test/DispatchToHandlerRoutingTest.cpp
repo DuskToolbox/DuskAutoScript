@@ -1012,12 +1012,33 @@ TEST(
         static_cast<uint32_t>(embedded_rider.size()),
         static_cast<uint32_t>(transit_body.size()));
 
-    // 在途半（宿主 target=owner ≠ local）：整帧不剥离——内嵌 rider 不在
-    // 本地递归分发（剥离判定与转发分支共用同一地址谓词）
+    // 在途半（宿主 target=owner ≠ local）：整帧不剥离不消费——原样透传
+    // 至 owner（bit1/reserved/body 逐字节保真），内嵌 rider 不在本地递归
+    // 分发（剥离判定与转发分支共用同一地址谓词）
     ASSERT_EQ(
         probe.SendFrameFromObserver(transit_header, transit_body),
         DAS_S_OK);
-    static_cast<void>(probe.DrainUntil(1, std::chrono::milliseconds(500)));
+    ASSERT_EQ(probe.DrainUntil(1, std::chrono::seconds(2)), 1u);
+    ASSERT_EQ(probe.TotalFrameCount(), 1u);
+    const auto& transit_wire_frame = probe.Frames()[0];
+    EXPECT_EQ(
+        transit_wire_frame.header.GetFlags()
+            & DAS::Core::IPC::MessageFlags::RESERVED_AS_SIZE,
+        DAS::Core::IPC::MessageFlags::RESERVED_AS_SIZE);
+    EXPECT_EQ(
+        transit_wire_frame.header.Raw().reserved,
+        transit_header.Raw().reserved);
+    EXPECT_EQ(
+        transit_wire_frame.header.GetInterfaceId(),
+        static_cast<uint32_t>(IpcCommandType::RemoteAddRef));
+    EXPECT_EQ(transit_wire_frame.header.GetMessageType(), MessageType::Event);
+    EXPECT_EQ(
+        transit_wire_frame.header.GetSourceSessionId(),
+        ADDRESS_RULE_MATERIALIZER_SESSION_ID);
+    EXPECT_EQ(
+        transit_wire_frame.header.GetTargetSessionId(),
+        ROUTING_E2E_PEER_SESSION_ID);
+    EXPECT_EQ(transit_wire_frame.body, transit_body);
     EXPECT_EQ(object_manager.GetRemoteHolderCount(rider_object_id), 0u);
     EXPECT_EQ(object_manager.GetRemoteHolderCount(host_object_id), 0u);
 
@@ -1040,4 +1061,328 @@ TEST(
         run_thread.join();
     }
     probe.Shutdown();
+}
+
+namespace
+{
+    // 记录型握手命令 handler（本地消费路径的可观测锚点：静态存储不自删）
+    class RecordingHandshakeHandler final : public IAwaitableMessageHandler
+    {
+    public:
+        [[nodiscard]]
+        uint32_t AddRef() override
+        {
+            return ++ref_count_;
+        }
+
+        [[nodiscard]]
+        uint32_t Release() override
+        {
+            return --ref_count_;
+        }
+
+        [[nodiscard]]
+        uint32_t GetInterfaceId() const override
+        {
+            return static_cast<uint32_t>(
+                HandshakeInterfaceId::HandshakeIfaceHello);
+        }
+
+        boost::asio::awaitable<DasResult> HandleMessage(
+            const ValidatedIPCMessageHeader& /*header*/,
+            const std::vector<uint8_t>& /*body*/,
+            IpcResponseSender& /*sender*/,
+            ControlPlaneContext& /*ctx*/) override
+        {
+            invocation_count_.fetch_add(1, std::memory_order_release);
+            co_return DAS_S_OK;
+        }
+
+        static std::atomic<uint32_t> invocation_count_;
+
+    private:
+        std::atomic<uint32_t> ref_count_{0};
+    };
+
+    std::atomic<uint32_t> RecordingHandshakeHandler::invocation_count_{0};
+
+    // 地址规则测试共用装配：main 语义 run loop + probe 对端注册为 owner
+    // 托管连接 + 后台驱动线程。返回前调用方负责 RequestStop/join/Shutdown
+    struct AddressRuleFixture
+    {
+        ProxyFactory                    proxy_factory;
+        RemoteObjectRegistry            registry;
+        IpcMessageQueue<InboundMessage> inbound_queue{8};
+        std::unique_ptr<IpcRunLoop>     run_loop;
+        // host 侧 transport 端的生命周期锚（内部 host 持其引用—— SetUp
+        // 局部作用域结束时不得析构，否则 socket 关闭、引用悬空）
+        std::optional<AnyTransport>         counterpart_transport;
+        std::unique_ptr<OutboundFrameProbe> probe;
+        std::thread                         run_thread;
+
+        ~AddressRuleFixture()
+        {
+            if (run_loop)
+            {
+                run_loop->RequestStop();
+            }
+            if (run_thread.joinable())
+            {
+                run_thread.join();
+            }
+            if (probe)
+            {
+                probe->Shutdown();
+            }
+        }
+
+        void SetUp()
+        {
+            run_loop = std::make_unique<IpcRunLoop>(
+                false,
+                &inbound_queue,
+                proxy_factory,
+                registry,
+                [this](uint16_t target_session_id) -> TransportLookupResult
+                {
+                    return ResolveTransportMainSemantic(
+                        run_loop->GetConnectionManager(),
+                        target_session_id);
+                });
+            run_loop->SetSessionId(ROUTING_E2E_LOCAL_SESSION_ID);
+
+            probe = std::make_unique<OutboundFrameProbe>(
+                run_loop->GetIoContext(),
+                true);
+            ASSERT_TRUE(probe->IsHealthy());
+            counterpart_transport = probe->TakeCounterpartTransport();
+            ASSERT_TRUE(counterpart_transport.has_value());
+
+            const DasPtr<IHostConnection> host(new RoutingE2ETestInternalHost(
+                run_loop->GetIoContext(),
+                ROUTING_E2E_PEER_SESSION_ID,
+                *counterpart_transport));
+            ASSERT_EQ(run_loop->RegisterInternalHost(host), DAS_S_OK);
+
+            run_thread = std::thread([this]() { run_loop->Run(); });
+            for (int i = 0; i < 100 && !run_loop->IsRunning(); ++i)
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            ASSERT_TRUE(run_loop->IsRunning());
+        }
+    };
+} // namespace
+
+// 远端引用申报（130/132）target 为 owner（非本地）时整帧透传：owner 侧
+// 各收一帧，header 逐字段不变（source 保持物化方——owner 侧凭 source
+// 记账的前提）
+TEST(DispatchToHandlerRoutingTest, RemoteRefEventsForwardedWhenTargetRemote)
+{
+    AddressRuleFixture fixture;
+    fixture.SetUp();
+    ASSERT_TRUE(fixture.run_loop->IsRunning());
+
+    const ObjectId reported_object_id{
+        .session_id = ROUTING_E2E_PEER_SESSION_ID,
+        .generation = 1,
+        .local_id = 0x77};
+    const auto object_body = EncodeObjectIdBody(reported_object_id);
+    const auto make_remote_ref_header =
+        [&object_body](IpcCommandType command_type, uint16_t call_id)
+    {
+        return IPCMessageHeaderBuilder()
+            .SetMessageType(MessageType::Event)
+            .SetControlPlaneCommand(command_type)
+            .SetCallId(call_id)
+            .SetSourceSessionId(ADDRESS_RULE_MATERIALIZER_SESSION_ID)
+            .SetTargetSessionId(ROUTING_E2E_PEER_SESSION_ID)
+            .SetBodySize(static_cast<uint32_t>(object_body.size()))
+            .Build();
+    };
+
+    const auto assert_forwarded_intact =
+        [&](IpcCommandType command_type, uint16_t call_id)
+    {
+        ASSERT_EQ(
+            fixture.probe->SendFrameFromObserver(
+                make_remote_ref_header(command_type, call_id),
+                object_body),
+            DAS_S_OK);
+        ASSERT_EQ(fixture.probe->DrainUntil(1, std::chrono::seconds(2)), 1u);
+        const auto& wire_frame = fixture.probe->Frames().back();
+        EXPECT_EQ(
+            wire_frame.header.GetInterfaceId(),
+            static_cast<uint32_t>(command_type));
+        EXPECT_EQ(wire_frame.header.GetMessageType(), MessageType::Event);
+        EXPECT_EQ(
+            wire_frame.header.GetHeaderFlags(),
+            DAS::Core::IPC::HeaderFlags::CONTROL_PLANE);
+        EXPECT_EQ(
+            wire_frame.header.GetSourceSessionId(),
+            ADDRESS_RULE_MATERIALIZER_SESSION_ID);
+        EXPECT_EQ(
+            wire_frame.header.GetTargetSessionId(),
+            ROUTING_E2E_PEER_SESSION_ID);
+        EXPECT_EQ(wire_frame.header.GetCallId(), call_id);
+        EXPECT_EQ(wire_frame.body, object_body);
+    };
+
+    assert_forwarded_intact(IpcCommandType::RemoteAddRef, 81);
+    assert_forwarded_intact(IpcCommandType::RemoteRelease, 82);
+    EXPECT_EQ(fixture.probe->TotalFrameCount(), 2u);
+}
+
+// 握手命令 target 为本地：本地 handler 分发路径触发，不转发（目标侧
+// 零出帧）
+TEST(
+    DispatchToHandlerRoutingTest,
+    HandshakeCommandWithLocalTargetConsumedLocally)
+{
+    AddressRuleFixture fixture;
+    fixture.SetUp();
+    ASSERT_TRUE(fixture.run_loop->IsRunning());
+
+    static RecordingHandshakeHandler recording_handler;
+    RecordingHandshakeHandler::invocation_count_.store(
+        0,
+        std::memory_order_release);
+    fixture.run_loop->RegisterHandler(
+        HeaderFlags::CONTROL_PLANE,
+        static_cast<uint32_t>(HandshakeInterfaceId::HandshakeIfaceHello),
+        &recording_handler);
+
+    const auto local_hello_header =
+        IPCMessageHeaderBuilder()
+            .SetMessageType(MessageType::Request)
+            .SetControlPlaneCommand(HandshakeInterfaceId::HandshakeIfaceHello)
+            .SetCallId(84)
+            .SetSourceSessionId(ROUTING_E2E_PEER_SESSION_ID)
+            .SetTargetSessionId(ROUTING_E2E_LOCAL_SESSION_ID)
+            .SetBodySize(0)
+            .Build();
+    ASSERT_EQ(
+        fixture.probe->SendFrameFromObserver(
+            local_hello_header,
+            std::vector<uint8_t>{}),
+        DAS_S_OK);
+
+    static_cast<void>(fixture.probe->DrainFor(std::chrono::milliseconds(300)));
+    EXPECT_EQ(
+        RecordingHandshakeHandler::invocation_count_.load(
+            std::memory_order_acquire),
+        1u);
+    EXPECT_EQ(fixture.probe->TotalFrameCount(), 0u);
+}
+
+// 任意控制面命令（含握手形态）target 为远端：照常透传——握手/心跳本地
+// 不是因为类别被特判，而是其收件人恒为直连对端（地址规则的天然结果）
+TEST(
+    DispatchToHandlerRoutingTest,
+    ControlPlaneWithRemoteTargetForwardedRegardlessOfCommand)
+{
+    AddressRuleFixture fixture;
+    fixture.SetUp();
+    ASSERT_TRUE(fixture.run_loop->IsRunning());
+
+    const auto remote_hello_header =
+        IPCMessageHeaderBuilder()
+            .SetMessageType(MessageType::Request)
+            .SetControlPlaneCommand(HandshakeInterfaceId::HandshakeIfaceHello)
+            .SetCallId(85)
+            .SetSourceSessionId(ADDRESS_RULE_MATERIALIZER_SESSION_ID)
+            .SetTargetSessionId(ROUTING_E2E_PEER_SESSION_ID)
+            .SetBodySize(0)
+            .Build();
+    ASSERT_EQ(
+        fixture.probe->SendFrameFromObserver(
+            remote_hello_header,
+            std::vector<uint8_t>{}),
+        DAS_S_OK);
+
+    ASSERT_EQ(fixture.probe->DrainUntil(1, std::chrono::seconds(2)), 1u);
+    ASSERT_EQ(fixture.probe->TotalFrameCount(), 1u);
+    const auto& wire_frame = fixture.probe->Frames()[0];
+    EXPECT_EQ(
+        wire_frame.header.GetInterfaceId(),
+        static_cast<uint32_t>(HandshakeInterfaceId::HandshakeIfaceHello));
+    EXPECT_EQ(wire_frame.header.GetMessageType(), MessageType::Request);
+    EXPECT_EQ(
+        wire_frame.header.GetSourceSessionId(),
+        ADDRESS_RULE_MATERIALIZER_SESSION_ID);
+    EXPECT_EQ(
+        wire_frame.header.GetTargetSessionId(),
+        ROUTING_E2E_PEER_SESSION_ID);
+    EXPECT_EQ(wire_frame.header.GetCallId(), 85);
+}
+
+// 控制面 Response（target 为本地）的 CallKey 配对路径零回归：pending
+// 完成回调收到配对结果，响应本地消化不出帧
+TEST(
+    DispatchToHandlerRoutingTest,
+    ControlPlaneResponseWithLocalTargetCompletesPendingCall)
+{
+    AddressRuleFixture fixture;
+    fixture.SetUp();
+    ASSERT_TRUE(fixture.run_loop->IsRunning());
+
+    // 模板经 PrepareAsyncSendHeader 取得 call_id（pending 注册键
+    // {target, call_id} 的一半）
+    const auto request_template =
+        IPCMessageHeaderBuilder()
+            .SetMessageType(MessageType::Request)
+            .SetControlPlaneCommand(
+                HandshakeInterfaceId::HandshakeIfaceHeartbeat)
+            .SetTargetSessionId(ROUTING_E2E_PEER_SESSION_ID)
+            .SetBodySize(0)
+            .Build();
+    const auto [request_header, request_call_key] =
+        fixture.run_loop->PrepareAsyncSendHeader(request_template);
+
+    std::promise<DasResult> completion_promise;
+    auto                    completion_future = completion_promise.get_future();
+    ASSERT_EQ(
+        fixture.run_loop->PostSend(
+            request_header,
+            std::vector<uint8_t>{},
+            [&completion_promise](
+                DasResult            result,
+                std::vector<uint8_t> response,
+                uint16_t             response_flags)
+            {
+                (void)response;
+                (void)response_flags;
+                completion_promise.set_value(result);
+            }),
+        DAS_S_OK);
+
+    // 请求出线（发送路径直发 owner 托管连接）
+    ASSERT_EQ(fixture.probe->DrainUntil(1, std::chrono::seconds(2)), 1u);
+    const auto& request_wire_frame = fixture.probe->Frames()[0];
+    EXPECT_EQ(request_wire_frame.header.GetCallId(), request_call_key.call_id);
+
+    // 响应（target=本地）注入：CallKey {source=owner, call_id} 配对完成
+    const auto response_header =
+        IPCMessageHeaderBuilder()
+            .SetMessageType(MessageType::Response)
+            .SetControlPlaneCommand(
+                HandshakeInterfaceId::HandshakeIfaceHeartbeat)
+            .SetCallId(request_call_key.call_id)
+            .SetSourceSessionId(ROUTING_E2E_PEER_SESSION_ID)
+            .SetTargetSessionId(ROUTING_E2E_LOCAL_SESSION_ID)
+            .SetBodySize(0)
+            .Build();
+    ASSERT_EQ(
+        fixture.probe->SendFrameFromObserver(
+            response_header,
+            std::vector<uint8_t>{}),
+        DAS_S_OK);
+
+    ASSERT_EQ(
+        completion_future.wait_for(std::chrono::seconds(2)),
+        std::future_status::ready);
+    EXPECT_EQ(completion_future.get(), DAS_S_OK);
+    // 响应在本地配对消化：无新增出站帧
+    static_cast<void>(fixture.probe->DrainFor(std::chrono::milliseconds(200)));
+    EXPECT_EQ(fixture.probe->TotalFrameCount(), 1u);
 }
