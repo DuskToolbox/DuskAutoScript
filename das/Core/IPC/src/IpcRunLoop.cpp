@@ -949,11 +949,13 @@ DasResult IpcRunLoop::PostToBusinessThread(IDasAsyncCallback* callback) noexcept
     DasResult push_result = inbound_queue_->Push(std::move(msg));
     if (DAS::IsFailed(push_result))
     {
-        // Push failed: release the callback reference we AddRef'd above
-        auto released = DasPtr<IDasAsyncCallback>::Attach(callback);
-        (void)released;
+        // 停机窗口（队列未初始化/已关闭）：为入队 AddRef 的引用有意
+        // 不在此释放——本函数调用域在 IO 线程，原地析构回调会把它
+        // 捕获的对象 DasPtr 一并 final Release，违反“真实对象析构
+        // 不落在 IO 线程”不变量。有界泄漏，由进程退出统一回收。
         DAS_CORE_LOG_ERROR(
-            "PostToBusinessThread: Push failed, result={}",
+            "PostToBusinessThread: Push failed, callback intentionally "
+            "leaked until process exit, result = {}",
             push_result);
         return push_result;
     }

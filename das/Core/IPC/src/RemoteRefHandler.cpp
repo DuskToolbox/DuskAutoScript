@@ -128,7 +128,8 @@ boost::asio::awaitable<DasResult> RemoteRefHandler::HandleMessage(
         // MakeAsyncCallback move 捕获 + PostToBusinessThread 桥接——
         // DasPtr 在 BusinessThread 上析构即真实对象 Release 留在 BT
         // （线程模型不变量：真实对象析构不落在 IO 线程）。push 失败
-        // 由 PostToBusinessThread 既有 Attach 防御释放，停机期无害。
+        // （停机窗口）时回调与其捕获的对象引用被有意泄漏到进程退出，
+        // 绝不在 IO 线程析构。
         static_cast<void>(run_loop_.PostToBusinessThread(
             MakeAsyncCallback(
                 [released = std::move(object_to_release)]() mutable {})

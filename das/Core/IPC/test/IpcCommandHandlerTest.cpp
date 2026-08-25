@@ -1013,7 +1013,8 @@ TEST_F(
             MakeObjectIdBody(object_id)),
         DAS_S_OK);
 
-    // push 失败路径不泄漏不崩溃：回调对象被既有 Attach 防御释放，
-    // 对象本体随之析构
-    EXPECT_TRUE(DestructionTrackingObject::Destroyed());
+    // push 失败（停机窗口）不崩溃：回调与其捕获的对象引用被有意
+    // 泄漏到进程退出，绝不在本线程析构（线程模型不变量：真实对象
+    // 析构不落在 IO 线程）
+    EXPECT_FALSE(DestructionTrackingObject::Destroyed());
 }

@@ -841,7 +841,8 @@ namespace Core
                 // local_pins_——服务注册 pin 免疫伪造断连。被移除条目的
                 // 对象本体 final Release 经 MakeAsyncCallback move 捕获 +
                 // PostToBusinessThread 回 BusinessThread（真实对象析构不落
-                // IO 线程）；push 失败依赖其既有防御释放，停机期仅日志无害。
+                // IO 线程）；push 失败（停机窗口）时回调与其捕获的对象
+                // 引用被有意泄漏到进程退出，不在本线程析构。
                 for (auto& object_to_release :
                      proxy_factory_->GetObjectManager().RemoveSessionHolders(
                          session_id))
