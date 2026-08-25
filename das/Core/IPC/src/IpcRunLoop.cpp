@@ -1604,7 +1604,48 @@ void IpcRunLoop::NotifySendFailure(
     const ValidatedIPCMessageHeader& header,
     DasResult                        error_code)
 {
-    // 构造失败 RESPONSE，推入 inbound_queue_
+    // transit 分支：source 非本地的帧是经本进程中转的在途帧——失败通知
+    // 的收件人是原发起方（source），不是本地。Request 照下方本地路径同一
+    // builder 模板合成失败 Response 改投原 source；Event/Response 无
+    // CallKey 配对语义，丢弃 + WARN（不限流——每条 WARN 对应一次真实的
+    // 死目标流量，信号不藏）。错误码统一 CONNECTION_LOST：星型拓扑下
+    // 查表 miss 与在途发送失败同为“目标 session 已死/不可达”（含触发
+    // 原因为 NO_CONNECTIONS 的场景）。递归安全：合成帧自身是 Response，
+    // 回投腿也失败时再入本分支走 Event/Response 丢弃路径终止。
+    // 汇点一致性：合成帧经 PostSend 自动过 PrepareOutboundFrame 第二汇点，
+    // is_forwarding_frame（source = 原 target ≠ 本地）为真走闸 2
+    // riders-先行宿主原样语义，无需额外接线。
+    if (header.GetSourceSessionId() != local_session_id_)
+    {
+        if (header.GetMessageType() == MessageType::Request)
+        {
+            // RESPONSE 的 source/target 必须与 REQUEST 互换（与 IStubBase
+            // 一致），否则 CallKey 匹配不到发起方 pending_calls_ 中的条目；
+            // body 为空——错误码仅在 header
+            auto fail_header =
+                IPCMessageHeaderBuilder()
+                    .SetCallId(header.GetCallId())
+                    .SetSourceSessionId(header.GetTargetSessionId())
+                    .SetTargetSessionId(header.GetSourceSessionId())
+                    .SetErrorCode(
+                        static_cast<int32_t>(DAS_E_IPC_CONNECTION_LOST))
+                    .Build();
+            PostSend(fail_header, std::vector<uint8_t>{});
+            return;
+        }
+
+        DAS_CORE_LOG_WARN(
+            "Dropped unreachable transit frame: message_type = {}, "
+            "target = {}, source = {}, interface_id = 0x{:08X}, call_id = {}",
+            static_cast<int>(header.GetMessageType()),
+            header.GetTargetSessionId(),
+            header.GetSourceSessionId(),
+            header.GetInterfaceId(),
+            header.GetCallId());
+        return;
+    }
+
+    // 本地起源路径：构造失败 RESPONSE，推入 inbound_queue_
     // BusinessThread::Run() → RedispatchMessage 会发现它是 RESPONSE
     // → 调用 CompletePendingCall，同时覆盖两条等待路径：
     //   - BusinessThread 路径：PumpUntilResponse 从队列中泵出
