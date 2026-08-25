@@ -32,6 +32,14 @@ namespace
         0x4000,
         {0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01}};
 
+    // 跨 host 测试约定的 component guid：与 IpcTestPlugin2 侧的同名常量
+    // 逐字节一致（对端 TestTaskComponentHostFeature 只认这个 guid）。
+    constexpr DasGuid IPC_HELD_TASK_COMPONENT_GUID{
+        0x26B2F2BC,
+        0xFC73,
+        0x4527,
+        {0xB3, 0x9B, 0x89, 0xB4, 0x85, 0x3B, 0x1D, 0xE0}};
+
     DasPtr<ExportInterface::IDasJson> WrapJson(yyjson::value value)
     {
         auto serialized = Utils::SerializeYyjsonValue(value);
@@ -314,6 +322,12 @@ DasResult DasTouchMockImpl::Swipe(
 
 // === DasQueryComponentImpl ===
 
+DasQueryComponentImpl::DasQueryComponentImpl(
+    PluginInterface::IDasTaskComponentHost* p_task_component_host)
+    : task_component_host_(p_task_component_host)
+{
+}
+
 DasResult DasQueryComponentImpl::GetGuid(DasGuid* p_out_guid)
 {
     if (!p_out_guid)
@@ -386,6 +400,16 @@ DasResult DasQueryComponentImpl::Dispatch(
     if (method == "processLogRecorderRoundTrip")
     {
         return HandleProcessLogRecorderRoundTrip(pp_out_result);
+    }
+
+    if (method == "CreateTaskComponentViaHeldHost")
+    {
+        return HandleCreateTaskComponentViaHeldHost(pp_out_result);
+    }
+
+    if (method == "ReleaseHeldTaskComponent")
+    {
+        return HandleReleaseHeldTaskComponent(pp_out_result);
     }
 
     return DAS_E_INVALID_ARGUMENT;
@@ -904,7 +928,58 @@ DasResult DasQueryComponentImpl::HandleProcessLogRecorderRoundTrip(
     return hr;
 }
 
+DasResult DasQueryComponentImpl::HandleCreateTaskComponentViaHeldHost(
+    ExportInterface::IDasVariantVector** pp_out_result)
+{
+    if (!pp_out_result)
+    {
+        return DAS_E_INVALID_ARGUMENT;
+    }
+    if (!task_component_host_)
+    {
+        return DAS_E_OBJECT_NOT_INIT;
+    }
+
+    // 调用靶：host 为跨 host 代理时 Request 与 Response 各过一次中转。
+    const auto create_result = task_component_host_->CreateTaskComponent(
+        IPC_HELD_TASK_COMPONENT_GUID,
+        held_task_component_.Put());
+
+    const auto push_result = CreateIDasVariantVector(pp_out_result);
+    if (DAS::IsFailed(push_result))
+    {
+        return push_result;
+    }
+    (*pp_out_result)->PushBackInt(static_cast<int64_t>(create_result));
+    (*pp_out_result)->PushBackInt(held_task_component_ ? 1 : 0);
+    return create_result;
+}
+
+DasResult DasQueryComponentImpl::HandleReleaseHeldTaskComponent(
+    ExportInterface::IDasVariantVector** pp_out_result)
+{
+    if (!pp_out_result)
+    {
+        return DAS_E_INVALID_ARGUMENT;
+    }
+
+    held_task_component_.Reset();
+
+    const auto push_result = CreateIDasVariantVector(pp_out_result);
+    if (DAS::IsFailed(push_result))
+    {
+        return push_result;
+    }
+    return (*pp_out_result)->PushBackInt(1);
+}
+
 // === DasQueryComponentFactoryImpl ===
+
+DasQueryComponentFactoryImpl::DasQueryComponentFactoryImpl(
+    PluginInterface::IDasTaskComponentHost* p_task_component_host)
+    : task_component_host_(p_task_component_host)
+{
+}
 
 DasResult DasQueryComponentFactoryImpl::GetGuid(DasGuid* p_out_guid)
 {
@@ -951,7 +1026,7 @@ DasResult DasQueryComponentFactoryImpl::CreateInstance(
         return DAS_E_NO_IMPLEMENTATION;
     }
 
-    auto* instance = new DasQueryComponentImpl();
+    auto* instance = new DasQueryComponentImpl(task_component_host_.Get());
     instance->AddRef();
     *pp_out_component = instance;
     return DAS_S_OK;
@@ -1178,8 +1253,10 @@ DasResult IpcTestPlugin1::CreateFeatureInterface(
     }
     else if (index == 1)
     {
-        // index == 1: 创建 DasQueryComponentFactoryImpl
-        auto* factory = new DasQueryComponentFactoryImpl();
+        // index == 1: 创建 DasQueryComponentFactoryImpl（构造递 host，
+        // 组件经持有的 host 发起跨进程/跨 host 调用）
+        auto* factory =
+            new DasQueryComponentFactoryImpl(GetTaskComponentHost());
         factory->AddRef();
         *pp_out_interface =
             static_cast<PluginInterface::IDasComponentFactory*>(factory);

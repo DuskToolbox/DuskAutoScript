@@ -162,12 +162,17 @@ public:
  * - "queryMainProcessString": 通过 IID 查询主进程 IDasReadOnlyString
  * - "queryMainProcessVariantVector": 通过 IID 查询主进程 IDasVariantVector
  * - "queryMainProcessStringByName": 通过名称查询主进程 IDasReadOnlyString
+ * - "CreateTaskComponentViaHeldHost": 经持有的 task component host 创建
+ *   测试组件（host 为跨 host 代理时即触发中转调用）
+ * - "ReleaseHeldTaskComponent": 释放持有的测试组件
  */
 class DasQueryComponentImpl final
     : public PluginInterface::DasComponentImplBase<DasQueryComponentImpl>
 {
 public:
-    DasQueryComponentImpl() = default;
+    // 构造递 host（跨 host 代理时组件经此发起中转调用）。
+    explicit DasQueryComponentImpl(
+        PluginInterface::IDasTaskComponentHost* p_task_component_host);
 
     DAS_IMPL GetGuid(DasGuid* p_out_guid) override;
     DAS_IMPL GetRuntimeClassName(IDasReadOnlyString** pp_out_name) override;
@@ -205,19 +210,32 @@ private:
     // 跨进程 proxy 经 RPC 转发回此插件侧 impl 读真值。
     DasResult HandleProcessLogRecorderRoundTrip(
         ExportInterface::IDasVariantVector** pp_out_result);
+
+    // 经持有的 task component host 创建约定 guid 的测试组件，结果码与
+    // 组件非空标志回显进 Dispatch 响应。
+    DasResult HandleCreateTaskComponentViaHeldHost(
+        ExportInterface::IDasVariantVector** pp_out_result);
+
+    // 释放持有的测试组件（走通释放中转腿的触发面）。
+    DasResult HandleReleaseHeldTaskComponent(
+        ExportInterface::IDasVariantVector** pp_out_result);
+
+    DasPtr<PluginInterface::IDasTaskComponentHost> task_component_host_;
+    DasPtr<PluginInterface::IDasTaskComponent>     held_task_component_;
 };
 
 /**
  * @brief IDasComponentFactory 实现
  *
- * 创建 DasQueryComponentImpl 实例。
+ * 创建 DasQueryComponentImpl 实例（构造递 host，组件经此发起中转调用）。
  */
 class DasQueryComponentFactoryImpl final
     : public PluginInterface::DasComponentFactoryImplBase<
           DasQueryComponentFactoryImpl>
 {
 public:
-    DasQueryComponentFactoryImpl() = default;
+    explicit DasQueryComponentFactoryImpl(
+        PluginInterface::IDasTaskComponentHost* p_task_component_host);
 
     DAS_IMPL GetGuid(DasGuid* p_out_guid) override;
     DAS_IMPL GetRuntimeClassName(IDasReadOnlyString** pp_out_name) override;
@@ -226,6 +244,9 @@ public:
     DAS_IMPL CreateInstance(
         const DasGuid&                   component_iid,
         PluginInterface::IDasComponent** pp_out_component) override;
+
+private:
+    DasPtr<PluginInterface::IDasTaskComponentHost> task_component_host_;
 };
 
 class IpcTaskAuthoringSessionImpl final
