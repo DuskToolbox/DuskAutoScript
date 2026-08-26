@@ -1757,7 +1757,7 @@ TEST_F(IpcRunLoopTest, DisconnectClearsPendingAddRefsForThatSessionOnly)
     EXPECT_EQ(runloop_->GetPendingAddRefCount(unrelated_session_id), 1u);
 
     StopRunLoop(run_thread);
-    static_cast<void>(runloop_->ClearPendingAddRefs(unrelated_session_id));
+    static_cast<void>(runloop_->ClearOutboundFifo(unrelated_session_id));
 }
 
 // ====== 双汇点搭车收敛（D-12 v3：闸1 搭车 / 闸2 先走 / 直通）======

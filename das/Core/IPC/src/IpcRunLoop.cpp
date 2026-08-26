@@ -58,16 +58,6 @@ namespace
                    HandshakeInterfaceId::HandshakeIfaceHeartbeat);
     }
 
-    /// RELEASE 帧判别：CONTROL_PLANE Event + RemoteRelease（回收路径不能
-    /// 等载体——出站前该 target 的 pending 先 flush）
-    bool IsRemoteReleaseEvent(const ValidatedIPCMessageHeader& header) noexcept
-    {
-        return IsControlPlaneMessage(header)
-               && header.GetMessageType() == MessageType::Event
-               && header.GetInterfaceId()
-                      == static_cast<uint32_t>(IpcCommandType::RemoteRelease);
-    }
-
     DasResult GetResponseResult(
         const ValidatedIPCMessageHeader& header) noexcept
     {
@@ -999,144 +989,6 @@ DasResult IpcRunLoop::PostToBusinessThread(IDasAsyncCallback* callback) noexcept
     return DAS_S_OK;
 }
 
-boost::asio::awaitable<void> IpcRunLoop::DoSendCoroutine(
-    DasPtr<IHostConnection>   connection,
-    ValidatedIPCMessageHeader header,
-    std::vector<uint8_t>      body)
-{
-    // 在途登记的 RAII 递减（覆盖任何退出路径），周期末 guard 据在途计数
-    // 豁免该 session 的出清——本协程必经搭车 helper 查队带走 riders
-    const InFlightOutboundSendScope in_flight_send_scope(
-        *this,
-        header.GetTargetSessionId());
-
-    try
-    {
-        if (!connection)
-        {
-            NotifySendFailure(header, DAS_E_IPC_NO_CONNECTIONS);
-            co_return;
-        }
-
-        auto [lookup_result, maybe_transport] = connection->GetTransport();
-        if (DAS::IsFailed(lookup_result) || !maybe_transport)
-        {
-            NotifySendFailure(header, lookup_result);
-            co_return;
-        }
-
-        AnyTransport& transport = maybe_transport->get();
-        if (!transport.IsConnected())
-        {
-            NotifySendFailure(header, DAS_E_IPC_CONNECTION_LOST);
-            co_return;
-        }
-
-        // 双汇点挂点之二（Pitfall 14）：搭车决策与拼装经共享 helper——
-        // 漏挂本汇点则 IO HostConnection 路由响应/转发帧路径的 pending
-        // 永远搭不上车
-        auto result =
-            co_await PrepareOutboundFrame(transport, header, std::move(body));
-        if (result != DAS_S_OK)
-        {
-            NotifySendFailure(header, result);
-        }
-    }
-    catch (const std::exception& e)
-    {
-        DAS_CORE_LOG_ERROR("Send failed: {}", ToString(e.what()));
-        NotifySendFailure(header, DAS_E_IPC_SEND_FAILED);
-    }
-}
-
-boost::asio::awaitable<void> IpcRunLoop::SendToSessionCoroutine(
-    ValidatedIPCMessageHeader             header,
-    std::vector<uint8_t>                  body,
-    PendingCallCompletion                 on_complete,
-    std::chrono::steady_clock::time_point deadline)
-{
-    // 在途登记的 RAII 递减（覆盖任何退出路径），周期末 guard 据在途计数
-    // 豁免该 session 的出清——本协程必经搭车 helper 查队带走 riders
-    const InFlightOutboundSendScope in_flight_send_scope(
-        *this,
-        header.GetTargetSessionId());
-
-    const bool has_completion = static_cast<bool>(on_complete);
-
-    auto complete_send_failure =
-        [this, &header, has_completion](DasResult error)
-    {
-        if (has_completion)
-        {
-            CompletePendingCall(
-                CallKey{header.GetTargetSessionId(), header.GetCallId()},
-                error,
-                {},
-                uint16_t{0});
-        }
-        else
-        {
-            NotifySendFailure(header, error);
-        }
-    };
-
-    // Register pending call on IO thread (before send) to avoid
-    // response arriving before registration.
-    if (on_complete)
-    {
-        const CallKey call_key{header.GetTargetSessionId(), header.GetCallId()};
-        const std::unique_lock<std::mutex> lock(pending_mutex_);
-        pending_calls_[call_key] = PendingCallState{
-            .call_key = call_key,
-            .deadline = deadline,
-            .on_complete = std::move(on_complete),
-            .response_flags = 0};
-    }
-
-    const uint16_t target_session_id = header.GetTargetSessionId();
-    // 解析单点：构造注入的 resolver 无条件调用——角色差异（MainProcess
-    // 两级查表 / Host 恒上行）全部在装配期 lambda 体内，本协程零角色
-    // 知识、零分支
-    const auto [lookup_result, maybe_transport] =
-        transport_resolver_(target_session_id);
-
-    if (DAS::IsFailed(lookup_result) || !maybe_transport)
-    {
-        DAS_CORE_LOG_ERROR(
-            "PostSend: no transport for session = {}, result = {}",
-            target_session_id,
-            lookup_result);
-        complete_send_failure(DAS_E_IPC_NO_CONNECTIONS);
-        co_return;
-    }
-
-    try
-    {
-        AnyTransport& transport = maybe_transport->get();
-        if (!transport.IsConnected())
-        {
-            complete_send_failure(DAS_E_IPC_CONNECTION_LOST);
-            co_return;
-        }
-
-        // 双汇点挂点之一：搭车决策与拼装经共享 helper（物理双挂点、
-        // 逻辑单点）
-        auto result =
-            co_await PrepareOutboundFrame(transport, header, std::move(body));
-        if (result != DAS_S_OK)
-        {
-            complete_send_failure(result);
-        }
-    }
-    catch (const std::exception& e)
-    {
-        DAS_CORE_LOG_ERROR(
-            "SendToSessionCoroutine: exception: {}",
-            ToString(e.what()));
-        complete_send_failure(DAS_E_IPC_SEND_FAILED);
-    }
-}
-
 DasResult IpcRunLoop::PostSend(
     const ValidatedIPCMessageHeader&      header,
     std::vector<uint8_t>&&                body,
@@ -1192,300 +1044,6 @@ DasResult IpcRunLoop::PostSendWithTransport(
     TriggerDrain(target_session_id);
 
     return DAS_S_OK;
-}
-
-std::vector<PendingAddRefFrame> IpcRunLoop::TakePendingAddRefs(
-    uint16_t session_id)
-{
-    // 锁内整体取走（move-out）：取走后新入队的帧等待下一次机会（机会主义
-    // 捎带——绝不让人等帧，只让帧等人）
-    std::vector<PendingAddRefFrame>    riders;
-    const std::unique_lock<std::mutex> lock(addref_pending_mutex_);
-    const auto session_entry = pending_add_refs_.find(session_id);
-    if (session_entry == pending_add_refs_.end())
-    {
-        return riders;
-    }
-    riders.reserve(session_entry->second.frames.size());
-    for (PendingAddRefFrame& frame : session_entry->second.frames)
-    {
-        riders.push_back(std::move(frame));
-    }
-    session_entry->second.frames.clear();
-    if (session_entry->second.in_flight_sends == 0)
-    {
-        pending_add_refs_.erase(session_entry);
-    }
-    return riders;
-}
-
-void IpcRunLoop::MarkOutboundSendInFlight(uint16_t session_id)
-{
-    const std::unique_lock<std::mutex> lock(addref_pending_mutex_);
-    ++pending_add_refs_[session_id].in_flight_sends;
-}
-
-void IpcRunLoop::UnmarkOutboundSendInFlight(uint16_t session_id)
-{
-    const std::unique_lock<std::mutex> lock(addref_pending_mutex_);
-    const auto session_entry = pending_add_refs_.find(session_id);
-    if (session_entry == pending_add_refs_.end())
-    {
-        return;
-    }
-    if (session_entry->second.in_flight_sends > 0)
-    {
-        --session_entry->second.in_flight_sends;
-    }
-    if (session_entry->second.in_flight_sends == 0
-        && session_entry->second.frames.empty())
-    {
-        pending_add_refs_.erase(session_entry);
-    }
-}
-
-IpcRunLoop::InFlightOutboundSendScope::InFlightOutboundSendScope(
-    IpcRunLoop& run_loop,
-    uint16_t    session_id)
-    : run_loop_(run_loop), session_id_(session_id)
-{
-}
-
-IpcRunLoop::InFlightOutboundSendScope::~InFlightOutboundSendScope()
-{
-    run_loop_.UnmarkOutboundSendInFlight(session_id_);
-}
-
-boost::asio::awaitable<DasResult> IpcRunLoop::PrepareOutboundFrame(
-    AnyTransport&             transport,
-    ValidatedIPCMessageHeader header,
-    std::vector<uint8_t>      body)
-{
-    // 总闸关闭：直通零开销（段 A 独立帧行为，A/B 可回退）
-    if (!piggyback_enabled_)
-    {
-        co_return co_await transport.SendCoroutine(
-            header,
-            body.data(),
-            body.size());
-    }
-
-    // 发前查不是发后查——货要进这帧的前缀：取走该 target 的候车帧
-    std::vector<PendingAddRefFrame> riders =
-        TakePendingAddRefs(header.GetTargetSessionId());
-
-    if (riders.empty())
-    {
-        co_return co_await transport.SendCoroutine(
-            header,
-            body.data(),
-            body.size());
-    }
-
-    // 转发帧判别（A7 定稿）：source 非本地的帧 = 原样透传的转发帧
-    // （本地起源的一切出站帧 source 恒为 local_session_id_；转发是不透明
-    // 搬运，不动其 body——该 target 的 pending 先独立走）
-    const bool is_forwarding_frame =
-        header.GetSourceSessionId() != local_session_id_;
-
-    // SHM 互斥发送侧规则（Pitfall 5）：SHM 大消息帧永不携段
-    const bool is_shm_frame =
-        (header.GetHeaderFlags() & HeaderFlags::LARGE_MESSAGE_VIA_SHM) != 0;
-
-    // 阈值钳制与传输层入口拒绝同尺（header + body + 段总和 达到即不合格，
-    // 杜绝拼装越界整帧被 transport 拒发）
-    const size_t first_rider_frame_size =
-        sizeof(IPCMessageHeader) + riders.front().body.size();
-    const bool reaches_threshold =
-        sizeof(IPCMessageHeader) + body.size() + first_rider_frame_size
-        >= LARGE_MESSAGE_THRESHOLD;
-
-    if (is_forwarding_frame || IsRemoteReleaseEvent(header) || is_shm_frame
-        || reaches_threshold)
-    {
-        co_return co_await SendRidersThenHostStandalone(
-            transport,
-            std::move(riders),
-            std::move(header),
-            std::move(body));
-    }
-
-    // 闸1 搭车：贪心取尽量多的 riders 进本帧前缀（阈值 + 段数上限双钳制，
-    // 段数预算 = 每 rider 两段（header/body）+ 宿主 body 一段不超过
-    // MAX_SCATTER_SEGMENTS——Http SendScatter 的入口形态断言要求外层
-    // header 已完成 bit1/reserved/body_size 改写）
-    const size_t max_carried_riders =
-        (HttpIpcTransport::MAX_SCATTER_SEGMENTS - 1) / 2;
-    size_t section_size = 0;
-    size_t total_size = sizeof(IPCMessageHeader) + body.size();
-    size_t carried_count = 0;
-    for (const PendingAddRefFrame& rider : riders)
-    {
-        const size_t rider_frame_size =
-            sizeof(IPCMessageHeader) + rider.body.size();
-        if (carried_count >= max_carried_riders
-            || total_size + rider_frame_size >= LARGE_MESSAGE_THRESHOLD)
-        {
-            break;
-        }
-        total_size += rider_frame_size;
-        section_size += rider_frame_size;
-        ++carried_count;
-    }
-
-    // 防御：一条都搭不上时回退先走（合法发送端永不产生 reserved=0 且
-    // bit1 置位的组合）
-    if (carried_count == 0)
-    {
-        co_return co_await SendRidersThenHostStandalone(
-            transport,
-            std::move(riders),
-            std::move(header),
-            std::move(body));
-    }
-
-    // 外层 header 改写经 IPCMessageHeaderBuilder：flags 置 RESERVED_AS_SIZE
-    // 位、SetReserved(段总字节)、body_size 增段总长；call_id/source/target
-    // 原样（CallKey 注册不受影响）
-    const IPCMessageHeader  raw = header.Raw();
-    IPCMessageHeaderBuilder outer_builder;
-    outer_builder.SetMessageType(static_cast<MessageType>(raw.message_type))
-        .SetHeaderFlags(raw.header_flags)
-        .SetInterfaceId(raw.interface_id)
-        .SetCallId(raw.call_id)
-        .SetSourceSessionId(raw.source_session_id)
-        .SetTargetSessionId(raw.target_session_id)
-        .SetFlags(
-            static_cast<uint16_t>(raw.flags | MessageFlags::RESERVED_AS_SIZE))
-        .SetBodySize(static_cast<uint32_t>(raw.body_size + section_size))
-        .SetReserved(static_cast<uint32_t>(section_size));
-    if (raw.message_type == static_cast<uint8_t>(MessageType::Response))
-    {
-        // SetErrorCode 会重设 Response（本就是）——错误响应的 error_code
-        // 不能在改写中丢失
-        outer_builder.SetErrorCode(raw.error_code);
-    }
-    const ValidatedIPCMessageHeader outer_header = outer_builder.Build();
-
-    // 段序列：carried riders 整帧在前（每帧 header 段 + body 段）、宿主
-    // body 段在后——wire = [外层 header][扩展段][宿主 body]；riders 与
-    // body 均为本协程帧局部持有，存活至 async_write 完成（Pitfall 8）
-    std::vector<SendSegment> segments;
-    segments.reserve(carried_count * 2 + 1);
-    for (size_t index = 0; index < carried_count; ++index)
-    {
-        const PendingAddRefFrame& rider = riders[index];
-        segments.push_back(
-            SendSegment{
-                reinterpret_cast<const uint8_t*>(
-                    static_cast<const IPCMessageHeader*>(rider.header)),
-                sizeof(IPCMessageHeader)});
-        segments.push_back(SendSegment{rider.body.data(), rider.body.size()});
-    }
-    segments.push_back(SendSegment{body.data(), body.size()});
-
-    const DasResult send_result =
-        co_await transport.SendScatter(outer_header, std::move(segments));
-    if (send_result != DAS_S_OK)
-    {
-        // 搭车写失败：riders 随帧丢失（fire-and-forget 语义，owner 侧断连
-        // 清扫兜底），宿主帧失败如实上报
-        co_return send_result;
-    }
-
-    // 溢出部分紧随独立发（阈值/段上限导致未能搭车的 riders，FIFO 序保持）
-    for (size_t index = carried_count; index < riders.size(); ++index)
-    {
-        const PendingAddRefFrame& rider = riders[index];
-        const DasResult rider_result = co_await transport.SendCoroutine(
-            rider.header,
-            rider.body.data(),
-            rider.body.size());
-        if (rider_result != DAS_S_OK)
-        {
-            DAS_CORE_LOG_WARN(
-                "Overflow ADD_REF rider send failed: result = {}",
-                rider_result);
-        }
-    }
-    co_return DAS_S_OK;
-}
-
-boost::asio::awaitable<DasResult> IpcRunLoop::SendRidersThenHostStandalone(
-    AnyTransport&                     transport,
-    std::vector<PendingAddRefFrame>&& riders,
-    ValidatedIPCMessageHeader&&       host_header,
-    std::vector<uint8_t>&&            host_body)
-{
-    if (riders.empty())
-    {
-        co_return co_await transport.SendCoroutine(
-            host_header,
-            host_body.data(),
-            host_body.size());
-    }
-
-    // 批量合写（D-20）：pipe/AF_UNIX 上 N 个 rider 帧 + 宿主帧合一次
-    // SendScatter（合写省写次数不省帧数）；WS（CanBatchFrames 为假）与
-    // 超阈值情形逐帧发
-    size_t batched_total_size = sizeof(IPCMessageHeader);
-    for (const PendingAddRefFrame& rider : riders)
-    {
-        batched_total_size += sizeof(IPCMessageHeader) + rider.body.size();
-    }
-    batched_total_size += sizeof(IPCMessageHeader) + host_body.size();
-
-    if (transport.CanBatchFrames()
-        && batched_total_size < LARGE_MESSAGE_THRESHOLD)
-    {
-        // 第一帧拆为 header 参数 + body 段、其余帧整帧为段（SendScatter
-        // header 恒在线首），段序 riders 在前宿主在后 = FIFO
-        const PendingAddRefFrame& first_rider = riders.front();
-        std::vector<SendSegment>  segments;
-        segments.reserve(2 * riders.size() + 1);
-        segments.push_back(
-            SendSegment{first_rider.body.data(), first_rider.body.size()});
-        for (size_t index = 1; index < riders.size(); ++index)
-        {
-            const PendingAddRefFrame& rider = riders[index];
-            segments.push_back(
-                SendSegment{
-                    reinterpret_cast<const uint8_t*>(
-                        static_cast<const IPCMessageHeader*>(rider.header)),
-                    sizeof(IPCMessageHeader)});
-            segments.push_back(
-                SendSegment{rider.body.data(), rider.body.size()});
-        }
-        segments.push_back(
-            SendSegment{
-                reinterpret_cast<const uint8_t*>(
-                    static_cast<const IPCMessageHeader*>(host_header)),
-                sizeof(IPCMessageHeader)});
-        segments.push_back(SendSegment{host_body.data(), host_body.size()});
-        co_return co_await transport.SendScatter(
-            first_rider.header,
-            std::move(segments));
-    }
-
-    // 逐帧独立发：riders FIFO 在前，宿主随后（rider 失败仅告警——
-    // fire-and-forget，不拖垮宿主帧投递）
-    for (const PendingAddRefFrame& rider : riders)
-    {
-        const DasResult rider_result = co_await transport.SendCoroutine(
-            rider.header,
-            rider.body.data(),
-            rider.body.size());
-        if (rider_result != DAS_S_OK)
-        {
-            DAS_CORE_LOG_WARN(
-                "Pending ADD_REF flush send failed: result = {}",
-                rider_result);
-        }
-    }
-    co_return co_await transport.SendCoroutine(
-        host_header,
-        host_body.data(),
-        host_body.size());
 }
 
 OutboundFrame IpcRunLoop::BuildAddRefFrame(const ObjectId& object_id)
@@ -1655,7 +1213,7 @@ boost::asio::awaitable<void> IpcRunLoop::DrainOutboundCoroutine(
         }
 
         // 带完成回调的帧先注册 pending_calls_（IO 线程、物理写前——消除
-        // 响应早于注册的竞态，注册时机语义照 SendToSessionCoroutine）
+        // 响应早于注册的竞态）
         for (OutboundFrame& frame : frames)
         {
             if (frame.on_complete)
@@ -1689,13 +1247,13 @@ boost::asio::awaitable<void> IpcRunLoop::DrainOutboundCoroutine(
 bool IpcRunLoop::IsStandaloneOutboundFrame(
     const OutboundFrame& frame) const noexcept
 {
-    // 转发帧（不透明搬运裁决：独走，不进连写批——保守且与现状
-    // SendRidersThenHostStandalone 对转发宿主的处理一致）
+    // 转发帧（不透明搬运裁决：独走，不进连写批也不作拼装宿主——
+    // 保守且与“不透明搬运”语义的表意一致）
     if (frame.header.GetSourceSessionId() != local_session_id_)
     {
         return true;
     }
-    // 在途拼装帧（对端 bit1 帧经本机转发）：深度=1 接收侧硬约束禁止再
+    // 经本机转发的拼装帧（对端 bit1 帧）：深度=1 接收侧硬约束禁止再
     // 拼装（P-3）
     if ((frame.header.GetFlags() & MessageFlags::RESERVED_AS_SIZE) != 0)
     {
@@ -1753,7 +1311,6 @@ boost::asio::awaitable<void> IpcRunLoop::WriteFramesCoalesced(
 
     // 解析单点（统一走 resolver 裁决）：drain 持非拥有 AnyTransportRef，
     // 寿命由 ConnectionManager 表条目 + 接收协程持有的 host DasPtr 覆盖
-    // （与切换前 SendToSessionCoroutine 同一寿命假设）
     const auto [lookup_result, maybe_transport] =
         transport_resolver_(session_id);
     if (DAS::IsFailed(lookup_result) || !maybe_transport)
@@ -2039,7 +1596,7 @@ size_t IpcRunLoop::ClearOutboundFifo(uint16_t session_id)
     const size_t cleared_count = session_entry->second.frames.size();
     if (session_entry->second.drain_active)
     {
-        // 在途 drain 收尾自回收（成对实现）：只清 frames 不 erase 条目
+        // 活跃 drain 收尾自回收（成对实现）：只清 frames 不 erase 条目
         // ——drain 循环按空队/retrigger 语义自行退出并 erase
         session_entry->second.frames.clear();
     }
@@ -2048,48 +1605,6 @@ size_t IpcRunLoop::ClearOutboundFifo(uint16_t session_id)
         outbound_queues_.erase(session_entry);
     }
     return cleared_count;
-}
-
-size_t IpcRunLoop::FlushPendingStandalone()
-{
-    // 锁内整体取走（move-out），锁外逐帧 PostSend——帧数不变（逐帧独立
-    // 形态），每 session 内 FIFO 保持。存在在途发送的 session 豁免：其
-    // riders 由在途发送的搭车 helper 带走（搭车或先走），guard 端不重复
-    // 出清（消除同周期响应与 guard 的并发竞速）
-    std::vector<PendingAddRefFrame> flushed_frames;
-    {
-        const std::unique_lock<std::mutex> lock(addref_pending_mutex_);
-        for (auto it = pending_add_refs_.begin();
-             it != pending_add_refs_.end();)
-        {
-            PendingAddRefSessionState& session_state = it->second;
-            if (session_state.in_flight_sends > 0)
-            {
-                // 在途发送豁免：riders 由在途发送的搭车 helper 带走
-                // （搭车或先走），本端不重复出清
-                ++it;
-                continue;
-            }
-            for (PendingAddRefFrame& frame : session_state.frames)
-            {
-                flushed_frames.push_back(std::move(frame));
-            }
-            it = pending_add_refs_.erase(it);
-        }
-    }
-
-    for (PendingAddRefFrame& frame : flushed_frames)
-    {
-        static_cast<void>(PostSend(frame.header, std::move(frame.body)));
-    }
-    return flushed_frames.size();
-}
-
-size_t IpcRunLoop::ClearPendingAddRefs(uint16_t session_id)
-{
-    // 出站统一 FIFO 后的断连清队委托（Host 侧断连路径挂点）：语义全部
-    // 在 ClearOutboundFifo（in-flight 分支手法照抄为 drain_active 分支）
-    return ClearOutboundFifo(session_id);
 }
 
 size_t IpcRunLoop::GetPendingAddRefCount(uint16_t session_id) const
@@ -2129,12 +1644,12 @@ void IpcRunLoop::NotifySendFailure(
     // builder 模板合成失败 Response 改投原 source；Event/Response 无
     // CallKey 配对语义，丢弃 + WARN（不限流——每条 WARN 对应一次真实的
     // 死目标流量，信号不藏）。错误码统一 CONNECTION_LOST：星型拓扑下
-    // 查表 miss 与在途发送失败同为“目标 session 已死/不可达”（含触发
+    // 查表 miss 与传输写失败同为“目标 session 已死/不可达”（含触发
     // 原因为 NO_CONNECTIONS 的场景）。递归安全：合成帧自身是 Response，
     // 回投腿也失败时再入本分支走 Event/Response 丢弃路径终止。
-    // 汇点一致性：合成帧经 PostSend 自动过 PrepareOutboundFrame 第二汇点，
-    // is_forwarding_frame（source = 原 target ≠ 本地）为真走闸 2
-    // riders-先行宿主原样语义，无需额外接线。
+    // 路由一致性：合成帧经 PostSend 入队 FIFO、由 drain 统一写出，转发
+    // 形态（source = 原 target ≠ 本地）被切断扫描判为独走帧、原样透传，
+    // 无需额外接线。
     if (header.GetSourceSessionId() != local_session_id_)
     {
         if (header.GetMessageType() == MessageType::Request)
@@ -2404,8 +1919,8 @@ boost::asio::awaitable<void> IpcRunLoop::InternalHostReceiveLoop(
                 DAS_E_IPC_CONNECTION_LOST);
             // 断连清队（主侧触发链）：该 session 的出站 FIFO 帧不再
             // 可达，随断连清空防滞留（fire-and-forget 语义下迟到帧本就
-            // 无害——此为确定性清理，不等超时）；在途 drain 活跃时由
-            // 其收尾自回收条目
+            // 无害——此为确定性清理，不等超时）；活跃 drain 由其收尾
+            // 自回收条目
             static_cast<void>(self->ClearOutboundFifo(session_id));
             // 断连清扫挂载点：fail 完 pending 之后触发（回调存在时）。
             // owner 侧 holder 记账清理由 MainProcess 侧注册的回调完成，

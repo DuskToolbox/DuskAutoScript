@@ -249,10 +249,10 @@ namespace Core
                     [this](uint16_t session_id)
                     {
                         is_connected_ = false;
-                        // 断连清队（host 侧触发链）：该 session 的 pending
-                        // ADD_REF 帧不再有可达载体，随断连清空防滞留
+                        // 断连清队（host 侧触发链）：该 session 的出站
+                        // FIFO 帧不再可达，随断连清空防滞留
                         static_cast<void>(
-                            run_loop_.ClearPendingAddRefs(session_id));
+                            run_loop_.ClearOutboundFifo(session_id));
                         // 断连清扫（host 侧）：GOODBYE 与 HandshakeHandler
                         // 析构两条触发链都会到达这里，owner 侧 DOM 清扫该
                         // session 的 holder 记账，条目不再悬挂

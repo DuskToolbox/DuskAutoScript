@@ -67,8 +67,8 @@ using PendingCallCompletion = std::function<
 ///   host->GetTransport()，否则 FindHostLocalTransport(target)）；
 /// - Host 语义：恒上行（忽略 target，每次调用现读 host-local 表中
 ///   main session 的上行 transport——重连/传输重建后闭包不持过期引用）。
-/// SendToSessionCoroutine 对其无条件调用（无 if 包裹、无空态回退）；
-/// 空 callable 在 IpcRunLoop 构造期被拒绝（fail-fast）。
+/// drain 写路径（WriteFramesCoalesced）对其无条件调用（无 if 包裹、
+/// 无空态回退）；空 callable 在 IpcRunLoop 构造期被拒绝（fail-fast）。
 using TransportResolver =
     std::function<TransportLookupResult(uint16_t target_session_id)>;
 
@@ -105,31 +105,8 @@ struct PendingCallState
     uint16_t                              response_flags = 0; ///< 响应头 flags
 };
 
-/// 候车中的完整 ADD_REF 帧（每 (对象×对端) 一条；入队/直发两出口共用
-/// 同一帧构造——单一事实源在 IpcRunLoop::BuildAddRefFrame）
-struct PendingAddRefFrame
-{
-    ValidatedIPCMessageHeader header;
-    std::vector<uint8_t>      body;
-};
-
-/// 按 target session 的候车状态：帧队列 + 在途出站发送计数
-///
-/// 在途计数是闸3 出清的豁免依据：投递中的出站发送必经搭车 helper 查队
-/// （合格载体搭走 / 不合格载体先走），周期末 guard 对存在在途发送的
-/// session 豁免出清——同周期内的响应（[in] 天然载体）确定性地先于
-/// guard 取走 riders，消除两者并发竞速的帧数漂移。
-struct PendingAddRefSessionState
-{
-    std::deque<PendingAddRefFrame> frames;
-
-    /// 该 session 的在途出站发送数（发送入口投递前递增、发送协程任何
-    /// 退出路径递减——RAII 配对）
-    size_t in_flight_sends = 0;
-};
-
-/// 出站 FIFO 队列元素（PendingAddRefFrame 同形泛化）：完整一帧 +
-/// 仅业务 Request 帧需要的可选完成回调与超时 deadline 携带位
+/// 出站 FIFO 队列元素：完整一帧 + 仅业务 Request 帧需要的可选完成回调
+/// 与超时 deadline 携带位
 struct OutboundFrame
 {
     ValidatedIPCMessageHeader             header;
@@ -382,18 +359,19 @@ public:
     }
 
     /**
-     * @brief 设置 piggyback 合写总闸（默认开）
+     * @brief 设置 drain 合写开关（默认开）
      *
-     * 出站统一 FIFO 后的语义重定义：off = drain 不合写逐帧发（帧仍全部
-     * 经 FIFO 入队、逐帧 SendCoroutine 出——帧序不变，严禁实现成旁路
-     * 直发重新引入双写者）；on = drain 合写（pipe 多帧一次 SendScatter）。
-     * 测试/调试旋钮（帧数基线 A/B 对比的依赖件），不进产品配置面。
+     * 出站统一 FIFO 后的语义：off = 不合写逐帧发（帧仍全部经 FIFO 入队、
+     * 逐帧 SendCoroutine 出——帧序不变，严禁实现成旁路直发重新引入双
+     * 写者）；on = drain 合写（pipe 多帧一次 SendScatter 连写、Http 扩展
+     * 段拼装一条 WS 消息）。测试/调试旋钮（帧数基线 A/B 对比的依赖件），
+     * 不进产品配置面。
      *
      * @param enabled 是否启用合写
      */
     void SetPiggybackEnabled(bool enabled);
 
-    /// @brief 查询 piggyback 搭车总闸状态
+    /// @brief 查询 drain 合写开关状态
     [[nodiscard]]
     bool IsPiggybackEnabled() const noexcept;
 
@@ -459,15 +437,16 @@ public:
     // clang-format on
 
     //=========================================================================
-    // ADD_REF 候车与出清（段 B 基建：D-12 闸3 出清 + D-19 分叉的承接面）
+    // 控制面帧入队与出站 FIFO 出清
     //=========================================================================
 
     /**
-     * @brief 把一条完整 ADD_REF 帧加入 pending 候车队列（叶子操作）
+     * @brief 把一条完整 ADD_REF 帧加入出站 FIFO（叶子操作）
      *
      * 物化点在 proxy_cache_mutex_ 持锁区内调用——本方法自带 mutex、
      * 零回调零 IO：锁内仅帧构造与入队（锁序单向 proxy_cache_mutex_ →
-     * addref_pending_mutex_）。按 target session（owner）键控。
+     * fifo_mutex_）。按 target session（owner）键控。BT 物化入队不触发
+     * drain——同周期的业务帧 post 触发时一并合写带走。
      *
      * @param object_id 远端对象 id（target = object_id.session_id）
      */
@@ -500,7 +479,7 @@ public:
      * @brief 清空指定 session 的出站 FIFO（断连清队）
      *
      * 连接断开后该 session 的出站帧不再可达，随断连清空防滞留
-     * （fire-and-forget 语义下迟到帧本就无害）。在途 drain 活跃时只清
+     * （fire-and-forget 语义下迟到帧本就无害）。活跃 drain 期间只清
      * frames 不 erase 条目——drain 循环自己收尾回收。
      *
      * @param session_id 断连的对端 session
@@ -509,44 +488,22 @@ public:
     size_t ClearOutboundFifo(uint16_t session_id);
 
     /**
-     * @brief 当场构帧独立直发一条 ADD_REF（段 A 行为的单一事实源）
+     * @brief 当场构帧入队一条 ADD_REF 并立即触发 drain（非 BT 物化出口）
      *
      * 非 BT 线程物化（外部线程/IO/weak_ptr 过期）或 piggyback 关闭时的
-     * 出口：零延迟零窗口，不经队列不待周期。
+     * 出口：入队 + 立即触发——延迟等价旧直发，单一 drain 写者取代旁路
+     * 直发（禁止双写者竞态帧序）。
      *
      * @param object_id 远端对象 id
-     * @return DasResult PostSend 投递结果（fire-and-forget，失败不回滚）
+     * @return DasResult 投递结果（fire-and-forget，失败不回滚）
      */
     DasResult PostAddRefStandalone(const ObjectId& object_id);
 
-    /**
-     * @brief 取走全部候车队列帧并逐帧独立 PostSend（闸3 出清）
-     *
-     * 周期末（AddRefDispatchGuard 析构）与测试直驱共用。每 session 内
-     * FIFO；帧数不变（逐帧独立形态，无合并不捎带）。存在在途出站发送
-     * 的 session 豁免（其 riders 由在途发送的搭车 helper 带走——同周期
-     * 响应与 guard 的并发竞速由此消除）。
-     *
-     * @return size_t 本次出清的帧数
-     */
-    size_t FlushPendingStandalone();
-
-    /**
-     * @brief 清空指定 session 的候车队列（断连清队）
-     *
-     * 连接断开后该 session 的 pending 帧不再有可达载体，随断连清空
-     * 防滞留（fire-and-forget 语义下迟到帧本就无害）。
-     *
-     * @param session_id 断连的对端 session
-     * @return size_t 清掉的帧数
-     */
-    size_t ClearPendingAddRefs(uint16_t session_id);
-
-    /// @brief 查询指定 session 的候车帧数（测试观测访问器）
+    /// @brief 查询指定 session 的出站 FIFO 深度（测试观测访问器）
     [[nodiscard]]
     size_t GetPendingAddRefCount(uint16_t session_id) const;
 
-    /// @brief 候车队列是否为空（测试观测访问器）
+    /// @brief 全部 session 的出站 FIFO 是否无滞留帧（测试观测访问器）
     [[nodiscard]]
     bool PendingAddRefsEmpty() const;
 
@@ -831,8 +788,9 @@ public:
     /// 是否启用心跳线程
     bool enable_heartbeat_ = true;
 
-    /// piggyback 搭车总闸（默认开；测试/调试旋钮——物化点分叉的唯一
-    /// 闸门，关闭即回退独立帧直发行为）
+    /// drain 合写开关（默认开；测试/调试旋钮）：off = 帧仍全部入队
+    /// FIFO 但不合写逐帧发（帧序不变）；on = drain 合写（pipe 连写 /
+    /// Http 扩展段拼装）
     bool piggyback_enabled_ = true;
 
     /// 退出码
@@ -850,19 +808,13 @@ public:
     /// pending_calls_ 的互斥锁
     mutable std::mutex pending_mutex_;
 
-    /// ADD_REF 候车队列（按 target session / owner 键控，每 session FIFO）
-    std::unordered_map<uint16_t, PendingAddRefSessionState> pending_add_refs_;
-
-    /// pending_add_refs_ 的互斥锁（锁序单向：proxy_cache_mutex_ → 本锁）
-    mutable std::mutex addref_pending_mutex_;
-
     /// 出站 FIFO（按 target session 键控，每 session 一条）：所有出站帧
     /// （业务 Request/Response、ADD_REF、RELEASE、心跳班车帧）经唯一入队
     /// 叶子 EnqueueOutboundFrame 进入本表，wire 序 == 入队序
     std::unordered_map<uint16_t, OutboundSessionQueue> outbound_queues_;
 
-    /// outbound_queues_ 的互斥锁（锁序位置继承 addref_pending_mutex_：
-    /// 单向 proxy_cache_mutex_ → fifo_mutex_）
+    /// outbound_queues_ 的互斥锁（锁序单向：proxy_cache_mutex_ →
+    /// fifo_mutex_）
     mutable std::mutex fifo_mutex_;
 
     /// host 会话断连回调（IO 线程触发；装配期经
@@ -890,7 +842,7 @@ public:
     RemoteObjectRegistry& registry_;
 
     /// 发送目标解析器（构造注入、必填——空 callable 构造期拒绝；
-    /// SendToSessionCoroutine 无条件调用，角色差异全部在装配期 lambda 内）
+    /// drain 写路径无条件调用，角色差异全部在装配期 lambda 内）
     TransportResolver transport_resolver_;
 
 private:
@@ -949,7 +901,7 @@ private:
 
     /// @brief drain 写路径：切断扫描 + pipe D-20 连写 / Http 扩展段拼装
     ///
-    /// 特殊帧（转发/bit1 在途/SHM/本地大帧）独走 SendCoroutine 前后各自
+    /// 特殊帧（转发/携 bit1 拼装标记/SHM/本地大帧）独走 SendCoroutine 前后
     /// 成批；CanBatchFrames 为真且批总长低于阈值时一次 SendScatter 连写；
     /// CanBatchFrames 为假（Http/WS——一条消息一帧）时批内末帧为宿主、
     /// 其余帧内嵌其扩展段一次 SendScatter 拼装（骑手预算
@@ -962,95 +914,6 @@ private:
     /// @brief 切断谓词：该帧是否必须独走 SendCoroutine 不进连写批
     [[nodiscard]]
     bool IsStandaloneOutboundFrame(const OutboundFrame& frame) const noexcept;
-
-    /// @brief 双汇点共享的出站搭车 helper（D-12 v3：逻辑单点、物理双挂点）
-    ///
-    /// SendToSessionCoroutine 与 DoSendCoroutine 在 transport 解析后、
-    /// SendCoroutine 调用前各调用一次。决策树（piggyback_enabled_ 为假时
-    /// 直通零开销 = 段 A 行为）：
-    /// - pending[本帧 target session] 为空 → 原样直发；
-    /// - 本帧为 RELEASE / SHM 大消息帧 / 转发帧（A7：source 非本地的
-    ///   原样透传帧）/ 拼完（header + body + 任一 rider）达到
-    ///   LARGE_MESSAGE_THRESHOLD → 闸2 先走：pending 全部先独立发（FIFO）
-    ///   再发本帧；
-    /// - 合格载体 → 闸1 搭车：riders 塞本帧前缀一帧带走（外层 header 置
-    ///   RESERVED_AS_SIZE 位、reserved = 段总字节、body_size 增段总长，
-    ///   call_id/source/target 原样），溢出部分紧随独立发。
-    /// riders 容器与宿主 body 均为本协程帧局部持有（存活至 async_write
-    /// 完成，Pitfall 8）。
-    boost::asio::awaitable<DasResult> PrepareOutboundFrame(
-        AnyTransport&             transport,
-        ValidatedIPCMessageHeader header,
-        std::vector<uint8_t>      body);
-
-    /// @brief 取走指定 session 的全部候车帧（锁内 move-out，FIFO 序保持）
-    std::vector<PendingAddRefFrame> TakePendingAddRefs(uint16_t session_id);
-
-    /// @brief 标记该 session 的一条在途出站发送（发送入口投递前调用）
-    ///
-    /// 周期末 guard 据此豁免该 session 的出清——在途发送必经搭车 helper
-    /// 查队，riders 由它带走（搭车或先走）。piggyback 关闭时不标记
-    /// （零开销直通；关闭态生产路径队列恒空）。
-    void MarkOutboundSendInFlight(uint16_t session_id);
-
-    /// @brief 在途出站发送计数递减（发送协程任何退出路径——RAII 配对）
-    void UnmarkOutboundSendInFlight(uint16_t session_id);
-
-    /// @brief 在途出站发送计数的 RAII 递减（协程帧局部——任何退出路径
-    /// 析构成对递减，与发送入口的 MarkOutboundSendInFlight 配对）
-    class InFlightOutboundSendScope
-    {
-    public:
-        InFlightOutboundSendScope(IpcRunLoop& run_loop, uint16_t session_id);
-        ~InFlightOutboundSendScope();
-
-        InFlightOutboundSendScope(const InFlightOutboundSendScope&) = delete;
-        InFlightOutboundSendScope& operator=(const InFlightOutboundSendScope&) =
-            delete;
-
-    private:
-        IpcRunLoop& run_loop_;
-        uint16_t    session_id_;
-    };
-
-    /// @brief 闸2 先走执行：riders 先独立发（FIFO）随后宿主帧
-    ///
-    /// CanBatchFrames 为真且合写总长低于阈值时 N 个 rider 帧 + 宿主帧合
-    /// 一次 SendScatter（第一帧拆为 header 参数 + body 段、其余帧整帧为
-    /// 段——SendScatter header 恒在线首的调用形态约定；段序 riders 在前
-    /// 宿主在后 = FIFO）；否则逐帧 SendCoroutine（WS 分流契约）。rider
-    /// 发送失败仅告警（fire-and-forget 语义），宿主帧结果如实返回。
-    boost::asio::awaitable<DasResult> SendRidersThenHostStandalone(
-        AnyTransport&                     transport,
-        std::vector<PendingAddRefFrame>&& riders,
-        ValidatedIPCMessageHeader&&       host_header,
-        std::vector<uint8_t>&&            host_body);
-
-    /// @brief 通过协程发送 IPC 消息（内部共用实现）
-    ///
-    /// 封装 SendCoroutine 调用、连接检查和错误处理。
-    /// @param transport 目标传输层
-    /// @param header 消息头
-    /// @param body 消息体
-    boost::asio::awaitable<void> DoSendCoroutine(
-        DasPtr<IHostConnection>   connection,
-        ValidatedIPCMessageHeader header,
-        std::vector<uint8_t>      body);
-
-    /// @brief 按 session_id 查找 transport 并发送（由 PostSend 委托）
-    ///
-    /// 从 ConnectionManager 查找 launcher/transport，发送前注册
-    /// pending call（IO 线程内完成，消除响应早于注册的竞态）。
-    ///
-    /// @param header 消息头
-    /// @param body 消息体
-    /// @param on_complete 可选的完成回调（非空时注册 pending call）
-    /// @param deadline 超时截止时间
-    boost::asio::awaitable<void> SendToSessionCoroutine(
-        ValidatedIPCMessageHeader             header,
-        std::vector<uint8_t>                  body,
-        PendingCallCompletion                 on_complete,
-        std::chrono::steady_clock::time_point deadline);
 
     boost::asio::awaitable<void> DispatchToHandlerWithSender(
         const ValidatedIPCMessageHeader& header,

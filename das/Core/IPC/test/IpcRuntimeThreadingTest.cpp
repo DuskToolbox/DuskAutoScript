@@ -565,7 +565,7 @@ TEST(
             for (int index = 0; index < 200; ++index)
             {
                 cleared_total.fetch_add(
-                    run_loop.ClearPendingAddRefs(cleared_session_id),
+                    run_loop.ClearOutboundFifo(cleared_session_id),
                     std::memory_order_relaxed);
             }
         });

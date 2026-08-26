@@ -45,8 +45,7 @@ namespace Core
             namespace
             {
                 // MainProcess 语义两级查表（调用期现读 CM）：命中托管
-                // host 取其 transport，否则查 host-local 表——与
-                // SendToSessionCoroutine 旧解析段逐字同义。构造点壳
+                // host 取其 transport，否则查 host-local 表。构造点壳
                 // lambda 只捕获 this，查表推迟到调用期（构造完成后）
                 // 执行
                 TransportLookupResult ResolveTransportMainProcess(
