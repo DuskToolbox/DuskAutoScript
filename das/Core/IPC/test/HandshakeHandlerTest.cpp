@@ -341,7 +341,11 @@ TEST_F(
         run_loop.GetIoContext(),
         REMOTE_SESSION_ID,
         transport_pair->run_loop_side));
-    IpcResponseSender             sender(
+    // 连接注册进 ConnectionManager：出站 FIFO 的 drain 统一经
+    // transport_resolver_ 两级查表解析——未注册的 connection 查表必
+    // miss（HostConnectionRoute 的 connection 参数仅是路由提示）
+    ASSERT_EQ(run_loop.RegisterInternalHost(connection), DAS_S_OK);
+    IpcResponseSender sender(
         IpcResponseSender::HostConnectionRoute{&run_loop, connection});
 
     HeartbeatV1 request{};
