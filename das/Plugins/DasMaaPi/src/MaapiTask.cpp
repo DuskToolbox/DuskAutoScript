@@ -1,3 +1,5 @@
+// sscanf 触发的 CRT 弃用告警仅在 MSVC 存在，预定义宏关闭。
+#define _CRT_SECURE_NO_WARNINGS
 #include "MaapiTask.h"
 #include "MaapiExecutionKernel.h"
 #include "PluginUtils.h"

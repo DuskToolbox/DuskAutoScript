@@ -71,6 +71,15 @@ namespace detail
         using type = stdexec::set_value_t(Args...);
     };
 
+    // 无参完成签名（asio::post 一类操作经 AsioSenderToken 实例化）没有
+    // 可剥离的首参，直接映射 set_value 空值域。用全特化而非泛化偏特化：
+    // 其余未预期签名保持主模板未定义的硬失败，不会被静默发明成值语义。
+    template <>
+    struct signature<void()>
+    {
+        using type = stdexec::set_value_t();
+    };
+
     template <typename... Signatures>
     using completion_signatures = stdexec::completion_signatures<
         typename signature<Signatures>::type...,

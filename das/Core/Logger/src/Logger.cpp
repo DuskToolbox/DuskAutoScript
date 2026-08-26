@@ -5,7 +5,13 @@
 #include <array>
 #include <boost/asio/system_executor.hpp>
 #include <boost/dll/runtime_symbol_info.hpp>
+
+#include <das/DasConfig.h>
+DAS_DISABLE_WARNING_BEGIN
+DAS_IGNORE_BOOST_PROCESS_WARNING
 #include <boost/process/v2/process.hpp>
+DAS_DISABLE_WARNING_END
+
 #include <ctime>
 #include <das/Core/Logger/CrossProcessMutex.h>
 #include <das/Core/Logger/DasLogNotifierSink.h>

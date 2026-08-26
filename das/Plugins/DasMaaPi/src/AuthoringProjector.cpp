@@ -172,9 +172,12 @@ namespace Das::Plugins::DasMaaPi
             {
                 return text;
             }
-            return DAS_FMT_NS::vformat(
-                std::string_view(text),
-                DAS_FMT_NS::make_format_args(args...));
+            else
+            {
+                return DAS_FMT_NS::vformat(
+                    std::string_view(text),
+                    DAS_FMT_NS::make_format_args(args...));
+            }
         }
 
         // D-84-23: ResolveI18n 的严格化变体。当 $key 在当前 language 找不到
@@ -312,7 +315,7 @@ namespace Das::Plugins::DasMaaPi
             {
                 return std::nullopt;
             }
-            return obj[key].as_sint().value_or(0);
+            return static_cast<int>(obj[key].as_sint().value_or(0));
         }
 
         template <typename TObject>
