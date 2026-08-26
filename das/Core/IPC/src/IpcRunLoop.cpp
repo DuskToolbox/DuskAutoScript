@@ -1520,6 +1520,35 @@ DasResult IpcRunLoop::PostAddRefStandalone(const ObjectId& object_id)
     return PostSend(frame.header, std::move(frame.body));
 }
 
+PendingAddRefFrame IpcRunLoop::BuildReleaseFrame(const ObjectId& object_id)
+{
+    std::vector<uint8_t> release_body;
+    release_body.insert(
+        release_body.end(),
+        reinterpret_cast<const uint8_t*>(&object_id),
+        reinterpret_cast<const uint8_t*>(&object_id) + sizeof(object_id));
+
+    auto release_header =
+        IPCMessageHeaderBuilder()
+            .SetMessageType(MessageType::Event)
+            .SetHeaderFlags(HeaderFlags::CONTROL_PLANE)
+            .SetInterfaceId(
+                static_cast<uint32_t>(IpcCommandType::RemoteRelease))
+            .SetSourceSessionId(local_session_id_)
+            .SetTargetSessionId(object_id.session_id)
+            .SetBodySize(static_cast<uint32_t>(release_body.size()))
+            .Build();
+
+    return {std::move(release_header), std::move(release_body)};
+}
+
+void IpcRunLoop::EnqueueReleaseFrame(const ObjectId& object_id)
+{
+    // RED 过渡实现：沿用旧直发出口（GREEN 切换为 FIFO 入队 + BT 条件触发）
+    PendingAddRefFrame frame = BuildReleaseFrame(object_id);
+    static_cast<void>(PostSend(frame.header, std::move(frame.body)));
+}
+
 size_t IpcRunLoop::FlushPendingStandalone()
 {
     // 锁内整体取走（move-out），锁外逐帧 PostSend——帧数不变（逐帧独立

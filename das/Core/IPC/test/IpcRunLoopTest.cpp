@@ -5,11 +5,13 @@
 #include <cstring>
 #include <das/Core/IPC/AfUnixAvailable.h>
 #include <das/Core/IPC/AsyncIpcTransport.h>
+#include <das/Core/IPC/BusinessThread.h>
 #include <das/Core/IPC/ConnectionManager.h>
 #include <das/Core/IPC/DistributedObjectManager.h>
 #include <das/Core/IPC/Handshake.h>
 #include <das/Core/IPC/IHostConnection.h>
 #include <das/Core/IPC/IMessageHandler.h>
+#include <das/Core/IPC/InternalCallbackHandler.h>
 #include <das/Core/IPC/IpcCommandHandler.h>
 #include <das/Core/IPC/IpcMessageHeader.h>
 #include <das/Core/IPC/IpcMessageHeaderBuilder.h>
@@ -21,8 +23,10 @@
 #include <das/Core/IPC/RemoteRefHandler.h>
 #include <das/IDasAsyncCallback.h>
 #include <das/Utils/fmt.h>
+#include <functional>
 #include <future>
 #include <gtest/gtest.h>
+#include <memory>
 #include <optional>
 #include <thread>
 #include <vector>
@@ -186,6 +190,98 @@ namespace
         return ValidatedIPCMessageHeader::Deserialize(&raw, sizeof(raw))
             .value();
     }
+
+    // 空实现 IResolveContext（BusinessThread 构造依赖，直驱任务不触达）
+    class RunLoopFifoResolveContext final
+        : public DAS::Core::IPC::IResolveContext
+    {
+    public:
+        DasResult ResolveMainProcessInterface(const DasGuid&, IDasBase**)
+            override
+        {
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+
+        DasResult RegisterService(IDasBase*, const DasGuid&) override
+        {
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+
+        DasResult UnregisterService(const DasGuid&) override
+        {
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+
+        DasResult ResolveMainProcessInterfaceByName(const char*, IDasBase**)
+            override
+        {
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+
+        DasResult RegisterServiceByName(IDasBase*, const DasGuid&, const char*)
+            override
+        {
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+
+        DasResult UnregisterServiceByName(const char*) override
+        {
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+    };
+
+    // 把任意任务投递到真实 BusinessThread 执行线程的回调（照
+    // ProxyAddRefForkTest 的 BusinessThreadTaskCallback 手法）
+    class RunLoopFifoTaskCallback final : public IDasAsyncCallback
+    {
+    public:
+        explicit RunLoopFifoTaskCallback(std::function<void()> task)
+            : task_(std::move(task))
+        {
+        }
+
+        uint32_t AddRef() override
+        {
+            return ref_count_.fetch_add(1, std::memory_order_relaxed) + 1;
+        }
+
+        uint32_t Release() override
+        {
+            const uint32_t count =
+                ref_count_.fetch_sub(1, std::memory_order_acq_rel) - 1;
+            if (count == 0)
+            {
+                delete this;
+            }
+            return count;
+        }
+
+        DasResult QueryInterface(const DasGuid& iid, void** pp_object) override
+        {
+            if (pp_object == nullptr)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+            if (iid == DAS_IID_BASE)
+            {
+                *pp_object = static_cast<IDasBase*>(this);
+                AddRef();
+                return DAS_S_OK;
+            }
+            *pp_object = nullptr;
+            return DAS_E_NO_INTERFACE;
+        }
+
+        DasResult Do() noexcept override
+        {
+            task_();
+            return DAS_S_OK;
+        }
+
+    private:
+        std::atomic<uint32_t> ref_count_{1};
+        std::function<void()> task_;
+    };
 } // namespace
 
 // Test fixture for IpcRunLoop tests
@@ -1685,6 +1781,222 @@ namespace
     constexpr size_t ADD_REF_FRAME_SIZE =
         sizeof(IPCMessageHeader) + sizeof(DAS::Core::IPC::ObjectId);
 } // namespace
+
+// 稳态一次物理写：BT 任务体内一次调用 = [ADD_REF][RELEASE][Response]
+// 三帧入队（前两者不触发、Response 触发 drain）→ drain 合一批连写。
+// 断言：物理写增量 == 调用数 N、逻辑帧增量 == 3N、InterfaceIdOrder 呈
+// {130,132,业务接口} 相邻三连 × N、130==132 计数平衡、全帧无 bit1
+// （pipe 连写不置位）
+TEST_F(IpcRunLoopTest, OutboundFifoCoalescesSteadyStateIntoSinglePhysicalWrite)
+{
+    using DAS::Core::IPC::BusinessThread;
+    using DAS::Core::IPC::ObjectId;
+
+    OutboundFrameProbe probe(runloop_->GetIoContext());
+    ASSERT_TRUE(probe.IsHealthy());
+    auto counterpart_transport = probe.TakeCounterpartTransport();
+    ASSERT_TRUE(counterpart_transport.has_value());
+    ASSERT_EQ(
+        runloop_->GetConnectionManager().RegisterHostLocalTransport(
+            REMOTE_SESSION_ID,
+            std::move(*counterpart_transport)),
+        DAS_S_OK);
+
+    // 内部回调 handler + 真实 BusinessThread：稳态须在 BT 执行线程上模拟
+    // （物化 ADD_REF 与析构 RELEASE 的不触发语义依赖 BT 线程身份）
+    const DAS::DasPtr<DAS::Core::IPC::InternalCallbackHandler>
+        internal_callback_handler(new DAS::Core::IPC::InternalCallbackHandler);
+    runloop_->RegisterHandler(
+        DAS::Core::IPC::HeaderFlags::BUSINESS_CONTROL,
+        internal_callback_handler->GetInterfaceId(),
+        internal_callback_handler.Get());
+
+    RunLoopFifoResolveContext             resolve_context;
+    const std::shared_ptr<BusinessThread> business_thread =
+        std::make_shared<BusinessThread>(
+            *inbound_queue_,
+            *runloop_,
+            resolve_context,
+            proxy_factory_,
+            registry_);
+
+    const ObjectId object_id{
+        .session_id = REMOTE_SESSION_ID,
+        .generation = 21,
+        .local_id = 0xA1};
+    constexpr int              steady_state_call_count = 5;
+    const std::vector<uint8_t> response_body{0xE1, 0xE2, 0xE3};
+
+    const auto physical_writes_before =
+        runloop_->GetOutboundPhysicalWriteCount();
+    const auto logical_frames_before = runloop_->GetOutboundLogicalFrameCount();
+
+    for (int cycle = 0; cycle < steady_state_call_count; ++cycle)
+    {
+        std::promise<void> cycle_done;
+        auto               cycle_done_future = cycle_done.get_future();
+        const DAS::DasPtr<IDasAsyncCallback> cycle_task(
+            new RunLoopFifoTaskCallback(
+                [this, &object_id, &response_body, &cycle_done]()
+                {
+                    // BT 任务体 = 一次稳态调用：物化申报（入队不触发）→
+                    // owner 析构 RELEASE（BT 线程不触发）→ 响应 post（触发）
+                    runloop_->EnqueueAddRef(object_id);
+                    runloop_->EnqueueReleaseFrame(object_id);
+                    static_cast<void>(runloop_->PostSend(
+                        MakeOutboundBusinessFrameHeader(
+                            PIGGYBACK_TEST_HOST_INTERFACE_ID,
+                            static_cast<uint32_t>(response_body.size())),
+                        std::vector<uint8_t>(response_body)));
+                    cycle_done.set_value();
+                }));
+        ASSERT_EQ(runloop_->PostToBusinessThread(cycle_task.Get()), DAS_S_OK);
+        ASSERT_EQ(
+            cycle_done_future.wait_for(std::chrono::seconds(5)),
+            std::future_status::ready);
+
+        // 每调用一次物理写：本周期三帧在 drain 内合一批连写后到达
+        EXPECT_EQ(probe.DrainUntil(3, std::chrono::seconds(2)), 3u);
+    }
+
+    business_thread->Stop();
+
+    // (a) 帧序：{130, 132, 业务接口 id} 相邻三连 × N
+    std::vector<uint32_t> expected_order;
+    for (int cycle = 0; cycle < steady_state_call_count; ++cycle)
+    {
+        expected_order.push_back(
+            static_cast<uint32_t>(
+                DAS::Core::IPC::IpcCommandType::RemoteAddRef));
+        expected_order.push_back(
+            static_cast<uint32_t>(
+                DAS::Core::IPC::IpcCommandType::RemoteRelease));
+        expected_order.push_back(PIGGYBACK_TEST_HOST_INTERFACE_ID);
+    }
+    EXPECT_EQ(probe.TotalFrameCount(), 3u * steady_state_call_count);
+    EXPECT_EQ(probe.InterfaceIdOrder(), expected_order);
+
+    // (b) 计数平衡：窗口内 ADD/RELEASE 先建后拆配对
+    EXPECT_EQ(
+        probe.CountByInterfaceId(
+            static_cast<uint32_t>(
+                DAS::Core::IPC::IpcCommandType::RemoteAddRef)),
+        static_cast<size_t>(steady_state_call_count));
+    EXPECT_EQ(
+        probe.CountByInterfaceId(
+            static_cast<uint32_t>(
+                DAS::Core::IPC::IpcCommandType::RemoteRelease)),
+        static_cast<size_t>(steady_state_call_count));
+
+    // (c) 每调用恰一次物理写
+    EXPECT_EQ(
+        runloop_->GetOutboundPhysicalWriteCount() - physical_writes_before,
+        static_cast<std::uint64_t>(steady_state_call_count));
+    // (d) 逻辑帧增量 == 3N
+    EXPECT_EQ(
+        runloop_->GetOutboundLogicalFrameCount() - logical_frames_before,
+        static_cast<std::uint64_t>(3 * steady_state_call_count));
+
+    // (e) pipe 连写不置 RESERVED_AS_SIZE 位（P-4 有意行为变化）
+    for (const auto& frame : probe.Frames())
+    {
+        EXPECT_EQ(
+            frame.header.GetFlags()
+                & DAS::Core::IPC::MessageFlags::RESERVED_AS_SIZE,
+            0);
+    }
+
+    EXPECT_EQ(runloop_->GetPendingAddRefCount(REMOTE_SESSION_ID), 0u);
+
+    probe.Shutdown();
+}
+
+// 触发矩阵边界：非 BT 线程 RELEASE 入队即触发（帧在观察窗口内到达）；
+// BT 路径 ADD_REF 入队不触发（任务体内 FIFO 深度 1、零直发——出清由
+// 周期末 guard 兜底，与 BusinessThreadMaterializationEnqueuesWithoutDirectSend
+// 同型）
+TEST_F(IpcRunLoopTest, OutboundFifoTriggerMatrixBoundaries)
+{
+    using DAS::Core::IPC::BusinessThread;
+    using DAS::Core::IPC::ObjectId;
+
+    OutboundFrameProbe probe(runloop_->GetIoContext());
+    ASSERT_TRUE(probe.IsHealthy());
+    auto counterpart_transport = probe.TakeCounterpartTransport();
+    ASSERT_TRUE(counterpart_transport.has_value());
+    ASSERT_EQ(
+        runloop_->GetConnectionManager().RegisterHostLocalTransport(
+            REMOTE_SESSION_ID,
+            std::move(*counterpart_transport)),
+        DAS_S_OK);
+
+    const ObjectId object_id{
+        .session_id = REMOTE_SESSION_ID,
+        .generation = 22,
+        .local_id = 0xA2};
+
+    // —— 非 BT 线程（测试主线程）RELEASE：入队即触发 ——
+    runloop_->EnqueueReleaseFrame(object_id);
+    EXPECT_EQ(probe.DrainUntil(1, std::chrono::seconds(2)), 1u);
+    EXPECT_EQ(
+        probe.CountByInterfaceId(
+            static_cast<uint32_t>(
+                DAS::Core::IPC::IpcCommandType::RemoteRelease)),
+        1u);
+    EXPECT_EQ(runloop_->GetPendingAddRefCount(REMOTE_SESSION_ID), 0u);
+
+    // —— BT 路径 ADD_REF：入队不触发（任务体内可观测） ——
+    const DAS::DasPtr<DAS::Core::IPC::InternalCallbackHandler>
+        internal_callback_handler(new DAS::Core::IPC::InternalCallbackHandler);
+    runloop_->RegisterHandler(
+        DAS::Core::IPC::HeaderFlags::BUSINESS_CONTROL,
+        internal_callback_handler->GetInterfaceId(),
+        internal_callback_handler.Get());
+
+    RunLoopFifoResolveContext             resolve_context;
+    const std::shared_ptr<BusinessThread> business_thread =
+        std::make_shared<BusinessThread>(
+            *inbound_queue_,
+            *runloop_,
+            resolve_context,
+            proxy_factory_,
+            registry_);
+
+    std::atomic<size_t> pending_count_at_enqueue{0};
+    std::promise<void>  enqueue_done;
+    auto                enqueue_done_future = enqueue_done.get_future();
+    const DAS::DasPtr<IDasAsyncCallback> enqueue_task(
+        new RunLoopFifoTaskCallback(
+            [this, &object_id, &pending_count_at_enqueue, &enqueue_done]()
+            {
+                runloop_->EnqueueAddRef(object_id);
+                // BT 任务体内：已入队一条、尚未发出（入队零直发）
+                pending_count_at_enqueue.store(
+                    runloop_->GetPendingAddRefCount(REMOTE_SESSION_ID),
+                    std::memory_order_release);
+                enqueue_done.set_value();
+            }));
+    ASSERT_EQ(runloop_->PostToBusinessThread(enqueue_task.Get()), DAS_S_OK);
+    ASSERT_EQ(
+        enqueue_done_future.wait_for(std::chrono::seconds(5)),
+        std::future_status::ready);
+
+    EXPECT_EQ(pending_count_at_enqueue.load(std::memory_order_acquire), 1u);
+
+    // 周期末 guard 兜底出清后：帧在当次窗口到达、队列空
+    EXPECT_EQ(probe.DrainUntil(1, std::chrono::seconds(2)), 1u);
+    EXPECT_EQ(
+        probe.CountByInterfaceId(
+            static_cast<uint32_t>(
+                DAS::Core::IPC::IpcCommandType::RemoteAddRef)),
+        1u);
+    EXPECT_EQ(runloop_->GetPendingAddRefCount(REMOTE_SESSION_ID), 0u);
+    EXPECT_TRUE(runloop_->PendingAddRefsEmpty());
+
+    business_thread->Stop();
+
+    probe.Shutdown();
+}
 
 // 09c 汇点 A 变体：PostSend 路径发普通小帧（如 BT 响应）且该 target 有
 // pending ADD_REF → 合格载体一帧带走——出站恰一帧、flags 含 bit1、

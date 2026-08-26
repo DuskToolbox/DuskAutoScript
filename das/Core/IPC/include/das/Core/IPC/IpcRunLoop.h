@@ -447,6 +447,19 @@ public:
     void EnqueueAddRef(const ObjectId& object_id);
 
     /**
+     * @brief 把一条完整 RELEASE 帧加入出站 FIFO
+     *
+     * DasProxyBase 析构的唯一 RELEASE 出口（替代直接 PostSend）：
+     * fire-and-forget 语义不变，owner 侧条目拆除延迟上界 = 一个
+     * dispatch 周期。触发矩阵：BT 线程入队不触发（同周期 Response
+     * 带走）；非 BT 线程入队即触发（无 guard 兜底，滞留上界不能退化
+     * 为心跳周期）。
+     *
+     * @param object_id 远端对象 id（target = object_id.session_id）
+     */
+    void EnqueueReleaseFrame(const ObjectId& object_id);
+
+    /**
      * @brief 当场构帧独立直发一条 ADD_REF（段 A 行为的单一事实源）
      *
      * 非 BT 线程物化（外部线程/IO/weak_ptr 过期）或 piggyback 关闭时的
@@ -487,6 +500,20 @@ public:
     /// @brief 候车队列是否为空（测试观测访问器）
     [[nodiscard]]
     bool PendingAddRefsEmpty() const;
+
+    /// @brief 出站物理写计数（测量 seam：每次 transport 物理写成功递增）
+    [[nodiscard]]
+    std::uint64_t GetOutboundPhysicalWriteCount() const noexcept
+    {
+        return outbound_physical_writes_.load(std::memory_order_relaxed);
+    }
+
+    /// @brief 出站逻辑帧计数（测量 seam：连写批内按帧数累计）
+    [[nodiscard]]
+    std::uint64_t GetOutboundLogicalFrameCount() const noexcept
+    {
+        return outbound_logical_frames_.load(std::memory_order_relaxed);
+    }
 
     /**
      * @brief Fire-and-forget enqueue to BusinessThread.
@@ -762,6 +789,15 @@ public:
     /// 退出码
     std::atomic<DasResult> exit_code_{DAS_S_OK};
 
+    /// 出站物理写计数（测量 seam，恒开）：每次 transport 物理写成功递增。
+    /// 测量纪律：热路径禁任何流式打点（每帧 stderr 写 +50~100us 污染
+    /// 测量），只允许此类 atomic 计数 + 进程退出汇总
+    std::atomic<std::uint64_t> outbound_physical_writes_{0};
+
+    /// 出站逻辑帧计数（测量 seam）：每写出一条完整逻辑帧递增（连写批内
+    /// 按帧数累计）——与物理写计数的比值即合写效率
+    std::atomic<std::uint64_t> outbound_logical_frames_{0};
+
     /// pending_calls_ 的互斥锁
     mutable std::mutex pending_mutex_;
 
@@ -827,6 +863,13 @@ private:
     /// 入队（EnqueueAddRef）与直发（PostAddRefStandalone）两出口共用的
     /// 单一事实源——字节与段 A 的物化申报完全一致。
     PendingAddRefFrame BuildAddRefFrame(const ObjectId& object_id);
+
+    /// @brief 构造一条完整 RELEASE 帧（CONTROL_PLANE Event + 132 +
+    /// Source=本地 + Target=oid.session_id + body=ObjectId 8B）
+    ///
+    /// 镜像 BuildAddRefFrame 的单一事实源形态——字节与 DasProxyBase
+    /// 析构旧内联构造完全一致。
+    PendingAddRefFrame BuildReleaseFrame(const ObjectId& object_id);
 
     /// @brief 双汇点共享的出站搭车 helper（D-12 v3：逻辑单点、物理双挂点）
     ///
