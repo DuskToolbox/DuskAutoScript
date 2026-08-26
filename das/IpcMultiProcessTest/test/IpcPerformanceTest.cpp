@@ -56,6 +56,18 @@
 using namespace Das::PluginInterface;
 using namespace Das::ExportInterface;
 
+// ====== 性能验收线断言门控 ======
+
+// ASAN 构建的延迟乘数达 1.4~2.6 且波动大，不可用于性能 A/B 判定：
+// ASAN 编译期跳过验收断言（保留测量与打印）；no-ASAN 构建断言生效，
+// ctest 退出码直接承载验收结果。
+#if defined(__SANITIZE_ADDRESS__)                                              \
+    || (defined(__has_feature) && __has_feature(address_sanitizer))
+#define IPC_PERFORMANCE_ACCEPTANCE_ASSERT_ACTIVE 0
+#else
+#define IPC_PERFORMANCE_ACCEPTANCE_ASSERT_ACTIVE 1
+#endif
+
 // ====== RAII Guard ======
 
 /**
@@ -1074,6 +1086,13 @@ TEST_F(IpcPerformanceTest, RoundTripLatency_Compute)
         min_val,
         max_val,
         throughput);
+
+#if IPC_PERFORMANCE_ACCEPTANCE_ASSERT_ACTIVE
+    // 验收线（no-ASAN 判定）：mean ≤ 250us（对照修复前 ~524us、短路模拟上限
+    // 197us、老仓库基线 158us）。禁止以注释/删除本断言或修改阈值换取绿。
+    EXPECT_LE(mean, 250.0)
+        << "RoundTripLatency_Compute mean exceeds acceptance line";
+#endif
 }
 
 // ====== Task 4: RoundTripLatency_Echo_SmallString ======
@@ -2192,6 +2211,13 @@ TEST_F(IpcPerformanceTest, RemoteProxy_IsSupported_FirstCall)
         min_val,
         max_val,
         throughput);
+
+#if IPC_PERFORMANCE_ACCEPTANCE_ASSERT_ACTIVE
+    // 验收线（no-ASAN 判定）：mean ≤ 100us（对照修复前 ~150us、短路模拟上限
+    // 86us、老仓库基线 79us）。禁止以注释/删除本断言或修改阈值换取绿。
+    EXPECT_LE(mean, 100.0)
+        << "RemoteProxy_IsSupported_FirstCall mean exceeds acceptance line";
+#endif
 }
 
 // ====== Task 8: Stress_HighFrequency_Dispatch ======
