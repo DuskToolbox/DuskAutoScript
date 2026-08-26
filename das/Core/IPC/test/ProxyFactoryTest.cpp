@@ -628,11 +628,28 @@ TEST_F(
     vector_proxy.Reset();
     string_proxy.Reset();
 
-    auto release_message = ReceiveNextSentMessage(std::chrono::seconds(1));
-    ASSERT_TRUE(release_message.has_value())
+    // 观察窗口的 drain 触发点：非 BT 析构入队即触发之外，显式叠加一次
+    // guard 出清动作（FlushOutboundFifo）——RELEASE 到达不依赖心跳或
+    // 后续业务载体
+    static_cast<void>(run_loop_->FlushOutboundFifo());
+
+    // 窗口内收帧至静默：恰一条 RELEASE（条目只移除一次，绝不按 proxy
+    // 实例数多发）
+    std::vector<AsyncIpcMessage> window_messages;
+    if (auto first_message = ReceiveNextSentMessage(std::chrono::seconds(1)))
+    {
+        window_messages.push_back(std::move(*first_message));
+        while (auto next_message =
+                   ReceiveNextSentMessage(std::chrono::milliseconds(300)))
+        {
+            window_messages.push_back(std::move(*next_message));
+        }
+    }
+    ASSERT_EQ(window_messages.size(), 1u)
         << "entry removal must send exactly one RemoteRelease";
 
-    const auto& release_header = release_message->first;
+    const auto& release_message = window_messages.front();
+    const auto& release_header = release_message.first;
     EXPECT_EQ(release_header.GetMessageType(), MessageType::Event);
     EXPECT_EQ(
         release_header.GetHeaderFlags(),
@@ -642,17 +659,13 @@ TEST_F(
         static_cast<uint32_t>(IpcCommandType::RemoteRelease));
     EXPECT_EQ(release_header.GetSourceSessionId(), run_loop_->GetSessionId());
     EXPECT_EQ(release_header.GetTargetSessionId(), object_id_.session_id);
-    ASSERT_EQ(release_message->second.size(), sizeof(ObjectId));
+    ASSERT_EQ(release_message.second.size(), sizeof(ObjectId));
     EXPECT_EQ(
         std::memcmp(
-            release_message->second.data(),
+            release_message.second.data(),
             &object_id_,
             sizeof(ObjectId)),
         0);
-
-    // 恰好一条：条目只移除一次，不得按 proxy 实例数多发
-    EXPECT_FALSE(
-        ReceiveNextSentMessage(std::chrono::milliseconds(300)).has_value());
 }
 
 // 停机期销毁（IsRuntimeAvailable 门）：不发送任何远端引用报文，也不崩溃
@@ -920,11 +933,16 @@ TEST_F(
     materialized_proxy.Reset();
 }
 
-// 非 BT 线程（测试主线程，传真实 BT 的 weak_ptr）：当场直发，零入队
+// 非 BT 线程（测试主线程，传真实 BT 的 weak_ptr）物化：入队 + 立即触发
+// drain——帧在调用窗口内到达（零延迟语义等价旧直发），单帧独占一次
+// 物理写
 TEST_F(
     ProxyAddRefForkTest,
-    NonBusinessThreadMaterializationDirectSendsWithoutEnqueue)
+    NonBusinessThreadMaterializationSendsWithinWindowViaImmediateDrain)
 {
+    const auto physical_writes_before =
+        run_loop_->GetOutboundPhysicalWriteCount();
+
     auto [result, proxy] = proxy_factory_.GetOrCreateProxy(
         *run_loop_,
         business_thread_,
@@ -938,6 +956,9 @@ TEST_F(
         probe_->CountByInterfaceId(
             static_cast<uint32_t>(IpcCommandType::RemoteAddRef)),
         1u);
+    EXPECT_EQ(
+        run_loop_->GetOutboundPhysicalWriteCount() - physical_writes_before,
+        1u);
     EXPECT_EQ(run_loop_->GetPendingAddRefCount(FORK_PEER_SESSION_ID), 0u);
     EXPECT_TRUE(run_loop_->PendingAddRefsEmpty());
 
@@ -945,12 +966,15 @@ TEST_F(
 }
 
 // T10 完整锚点：非 BT 线程物化 → ①调用窗口内已产生一条独立 ADD_REF 帧
-// 且 header 无 bit1；②pending 队列全程为空；③该帧 target = oid.session_id
+// 且 header 无 bit1；②FIFO 前置为空、帧到达后出清为空；③该帧 target =
+// oid.session_id
 TEST_F(
     ProxyAddRefForkTest,
     ExternalThreadMaterializationSendsStandaloneFrameWithinCallWindow)
 {
     EXPECT_TRUE(run_loop_->PendingAddRefsEmpty());
+    const auto physical_writes_before =
+        run_loop_->GetOutboundPhysicalWriteCount();
 
     auto [result, proxy] = proxy_factory_.GetOrCreateProxy(
         *run_loop_,
@@ -960,8 +984,12 @@ TEST_F(
     ASSERT_EQ(result, DAS_S_OK);
     ASSERT_TRUE(proxy);
 
-    // ① 返回后当次窗口内已直发一条独立 ADD_REF（不经队列、不待周期）
+    // ① 返回后当次窗口内已到达一条独立 ADD_REF（入队即触发 drain，
+    // 不待周期）
     EXPECT_EQ(probe_->DrainUntil(1, std::chrono::seconds(1)), 1u);
+    EXPECT_EQ(
+        run_loop_->GetOutboundPhysicalWriteCount() - physical_writes_before,
+        1u);
     const auto add_ref_frames = probe_->FramesByInterfaceId(
         static_cast<uint32_t>(IpcCommandType::RemoteAddRef));
     ASSERT_EQ(add_ref_frames.size(), 1u);
@@ -988,7 +1016,7 @@ TEST_F(
             sizeof(ObjectId)),
         0);
 
-    // ② pending 队列全程为空（前置 + 后置双侧观测）
+    // ② FIFO 前置为空、帧到达后出清为空（前置 + 后置双侧观测）
     EXPECT_TRUE(run_loop_->PendingAddRefsEmpty());
 
     proxy.Reset();
@@ -1046,12 +1074,16 @@ TEST_F(ProxyAddRefForkTest, SecondInterfaceViewNeitherEnqueuesNorDirectSends)
     first_proxy.Reset();
 }
 
-// piggyback 总闸关闭：BT 线程物化也当场直发（A/B 基线行为 = 段 A）
+// piggyback 总闸关闭：off = drain 不合写逐帧发——帧仍全部经 FIFO 入队
+// （禁止旁路直发重新引入双写者），物化帧在窗口内到达且独占一次物理写
+// （A/B 基线行为）
 TEST_F(
     ProxyAddRefForkTest,
-    DisabledPiggybackMakesBusinessThreadMaterializationDirectSend)
+    DisabledPiggybackFlushesBusinessThreadMaterializationFrameByFrame)
 {
     run_loop_->SetPiggybackEnabled(false);
+    const auto physical_writes_before =
+        run_loop_->GetOutboundPhysicalWriteCount();
 
     DasPtr<IDasBase> materialized_proxy;
     RunOnBusinessThread(
@@ -1071,6 +1103,9 @@ TEST_F(
     EXPECT_EQ(
         probe_->CountByInterfaceId(
             static_cast<uint32_t>(IpcCommandType::RemoteAddRef)),
+        1u);
+    EXPECT_EQ(
+        run_loop_->GetOutboundPhysicalWriteCount() - physical_writes_before,
         1u);
     EXPECT_TRUE(run_loop_->PendingAddRefsEmpty());
 
@@ -1085,6 +1120,9 @@ TEST_F(
 // （时刻远早于心跳间隔）
 TEST_F(ProxyAddRefForkTest, BusinessThreadCycleEndFlushesPendingWithoutCarrier)
 {
+    const auto physical_writes_before =
+        run_loop_->GetOutboundPhysicalWriteCount();
+
     DasPtr<IDasBase> materialized_proxy;
     RunOnBusinessThread(
         [&]()
@@ -1099,16 +1137,20 @@ TEST_F(ProxyAddRefForkTest, BusinessThreadCycleEndFlushesPendingWithoutCarrier)
             materialized_proxy = std::move(proxy);
         });
 
-    // 入队后本周期零出站帧；周期末 guard 独立发出一条 130
+    // 入队后本周期零出站帧；周期末 guard 兜底触发 drain——滞留帧以合写
+    // 批出清（单帧批一次物理写、一逻辑帧）
     EXPECT_EQ(probe_->DrainUntil(1, std::chrono::seconds(1)), 1u);
     EXPECT_EQ(
         probe_->CountByInterfaceId(
             static_cast<uint32_t>(IpcCommandType::RemoteAddRef)),
         1u);
+    EXPECT_EQ(
+        run_loop_->GetOutboundPhysicalWriteCount() - physical_writes_before,
+        1u);
     EXPECT_EQ(run_loop_->GetPendingAddRefCount(FORK_PEER_SESSION_ID), 0u);
     EXPECT_TRUE(run_loop_->PendingAddRefsEmpty());
 
-    // 独立帧形态：无 bit1
+    // 合写批内帧形态：无 bit1（pipe 连写不置位）
     const auto add_ref_frames = probe_->FramesByInterfaceId(
         static_cast<uint32_t>(IpcCommandType::RemoteAddRef));
     ASSERT_EQ(add_ref_frames.size(), 1u);
@@ -1233,6 +1275,9 @@ TEST_F(
         MATERIALIZING_HANDLER_INTERFACE_ID,
         materializing_handler);
 
+    const auto physical_writes_before =
+        run_loop_->GetOutboundPhysicalWriteCount();
+
     // 投递 REQUEST 入站 → BT 拾起 → 完整 dispatch 周期（物化 + 响应）
     DAS::Core::IPC::InboundMessage request;
     request.header = IPCMessageHeaderBuilder()
@@ -1245,48 +1290,38 @@ TEST_F(
                          .Build();
     ASSERT_EQ(inbound_queue_->Push(std::move(request)), DAS_S_OK);
 
-    // 收敛后语义（104.2-10）：周期内的响应是合格载体——IO 线程的响应发送
-    // 协程与 BT 线程的周期末 guard 出清并发竞速，两种合法结局（响应携
-    // rider 一帧带走 / 响应独立 + guard 出清独立 130）都不跨周期且账完整。
-    // 响应帧恒先出线（两结局的第一帧都是它）
-    EXPECT_EQ(probe_->DrainUntil(1, std::chrono::seconds(2)), 1u);
-    ASSERT_EQ(probe_->TotalFrameCount(), 1u);
-    const auto& response_frame = probe_->Frames()[0];
+    // 出站 FIFO 语义：BT 物化的 130 入队不触发，同周期 Response post 即
+    // 触发 drain——两帧同批连写一次物理写，wire 序 [130][Response] =
+    // 入队序 = 事件序；周期末 guard 对已出清队列零动作，队列不跨周期
+    EXPECT_EQ(probe_->DrainUntil(2, std::chrono::seconds(2)), 2u);
+    ASSERT_EQ(probe_->TotalFrameCount(), 2u);
+    EXPECT_EQ(
+        probe_->InterfaceIdOrder(),
+        (std::vector<uint32_t>{
+            static_cast<uint32_t>(IpcCommandType::RemoteAddRef),
+            MATERIALIZING_HANDLER_INTERFACE_ID}));
+
+    const auto& response_frame = probe_->Frames()[1];
     EXPECT_EQ(
         response_frame.header.GetInterfaceId(),
         MATERIALIZING_HANDLER_INTERFACE_ID);
 
-    size_t embedded_add_ref_count = 0;
-    if (response_frame.header.GetFlags()
-        & DAS::Core::IPC::MessageFlags::RESERVED_AS_SIZE)
+    // 连写形态：两逻辑帧恰一次物理写、全帧无 bit1（pipe 连写不置位）
+    EXPECT_EQ(
+        run_loop_->GetOutboundPhysicalWriteCount() - physical_writes_before,
+        1u);
+    for (const auto& wire_frame : probe_->Frames())
     {
-        // 结局一：响应携 rider——扩展段恰一条内嵌 130（零独立 130）
         EXPECT_EQ(
-            response_frame.header.Raw().reserved,
-            sizeof(DAS::Core::IPC::IPCMessageHeader) + sizeof(ObjectId));
-        DAS::Core::IPC::HeaderValidationResult embedded_error;
-        const auto embedded_header = ValidatedIPCMessageHeader::Deserialize(
-            response_frame.body.data(),
-            sizeof(DAS::Core::IPC::IPCMessageHeader),
-            &embedded_error);
-        ASSERT_TRUE(embedded_header.has_value());
-        EXPECT_EQ(
-            embedded_header->GetInterfaceId(),
-            static_cast<uint32_t>(IpcCommandType::RemoteAddRef));
-        embedded_add_ref_count = 1;
-    }
-    else
-    {
-        // 结局二：guard 先出清——响应独立形态，独立 130 紧随（FIFO）
-        EXPECT_EQ(probe_->DrainUntil(1, std::chrono::seconds(2)), 1u);
-        embedded_add_ref_count = 0;
+            wire_frame.header.GetFlags()
+                & DAS::Core::IPC::MessageFlags::RESERVED_AS_SIZE,
+            0);
     }
 
-    // 守恒：无论哪种结局，恰一次 ADD_REF 申报到达（内嵌 + 独立 == 1）
+    // 守恒：恰一次 ADD_REF 申报到达
     EXPECT_EQ(
-        embedded_add_ref_count
-            + probe_->CountByInterfaceId(
-                static_cast<uint32_t>(IpcCommandType::RemoteAddRef)),
+        probe_->CountByInterfaceId(
+            static_cast<uint32_t>(IpcCommandType::RemoteAddRef)),
         1u);
 
     // 队列不跨周期：周期末已出清

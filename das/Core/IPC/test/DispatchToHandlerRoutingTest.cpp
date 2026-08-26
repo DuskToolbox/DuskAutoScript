@@ -319,9 +319,9 @@ TEST(DispatchToHandlerRoutingTest, ControlPlaneRemoteRefEventStaysOnIoDomain)
 
 // ============================================================================
 // 09h 汇点 B E2E：IO 控制面分发（CONTROL_PLANE + HostConnection 路由）的
-// 响应经 PostSendWithTransport → DoSendCoroutine 出站——第二汇点可达性
-// 与该路径的 pending 出清时序（闸3 guard 在分发协程退出时先出清，
-// 随后 spawn 的响应协程过第二汇点时队列已空 = 独立帧形态；账不丢）
+// 响应经 PostSendWithTransport 入队并触发 drain 出站——第二汇点可达性
+// 与该路径的 FIFO 出清时序（响应 post 触发的 drain 把同 target 已入队
+// 的 130 与响应帧同批连写一次物理写，账不丢、队列不滞留）
 // ============================================================================
 
 namespace
@@ -513,10 +513,14 @@ TEST(
     run_loop.EnqueueAddRef(object_id);
     EXPECT_EQ(run_loop.GetPendingAddRefCount(ROUTING_E2E_PEER_SESSION_ID), 1u);
 
+    const auto physical_writes_before =
+        run_loop.GetOutboundPhysicalWriteCount();
+
     // 注入 CONTROL_PLANE 请求 → IO 分发（guard 挂点）→ handler 经
-    // HostConnectionRoute 应答 → DoSendCoroutine（第二汇点）出站
-    // （interface_id 为测试专用值，不经 SetControlPlaneCommand 的
-    // IpcCommandType 强转——该枚举底层 uint8_t 会截断）
+    // HostConnectionRoute 应答 → PostSendWithTransport 入队并触发 drain
+    // （第二汇点）出站（interface_id 为测试专用值，不经
+    // SetControlPlaneCommand 的 IpcCommandType 强转——该枚举底层 uint8_t
+    // 会截断）
     const auto request_header =
         IPCMessageHeaderBuilder()
             .SetMessageType(MessageType::Request)
@@ -532,43 +536,37 @@ TEST(
         probe.SendFrameFromObserver(request_header, empty_body),
         DAS_S_OK);
 
-    // 收敛后语义：IO 分发域的响应协程与分发协程帧析构里的 guard 出清并发
-    // 竞速，两种合法结局（响应经第二汇点携 rider 一帧带走 / 响应独立 +
-    // guard 出清独立 130）都不跨周期且账完整。响应帧恒先出线
-    EXPECT_EQ(probe.DrainUntil(1, std::chrono::seconds(2)), 1u);
-    ASSERT_EQ(probe.TotalFrameCount(), 1u);
-    const auto& response_frame = probe.Frames()[0];
+    // 出站 FIFO 语义：响应 post 触发的 drain 把同 target 已入队的 130 与
+    // 响应帧同批连写——wire 序 [130][Response] = 入队序 = 事件序，一次
+    // 物理写、全帧无 bit1（pipe 连写不置位）
+    EXPECT_EQ(probe.DrainUntil(2, std::chrono::seconds(2)), 2u);
+    ASSERT_EQ(probe.TotalFrameCount(), 2u);
+    EXPECT_EQ(
+        probe.InterfaceIdOrder(),
+        (std::vector<uint32_t>{
+            static_cast<uint32_t>(IpcCommandType::RemoteAddRef),
+            static_cast<uint32_t>(
+                HandshakeInterfaceId::HandshakeIfaceHeartbeat)}));
+    const auto& response_frame = probe.Frames()[1];
     EXPECT_EQ(
         response_frame.header.GetInterfaceId(),
         static_cast<uint32_t>(HandshakeInterfaceId::HandshakeIfaceHeartbeat));
 
-    size_t embedded_add_ref_count = 0;
-    if (response_frame.header.GetFlags()
-        & DAS::Core::IPC::MessageFlags::RESERVED_AS_SIZE)
+    EXPECT_EQ(
+        run_loop.GetOutboundPhysicalWriteCount() - physical_writes_before,
+        1u);
+    for (const auto& wire_frame : probe.Frames())
     {
-        // 结局一：响应经第二汇点携 rider——扩展段恰一条内嵌 130
-        DAS::Core::IPC::HeaderValidationResult embedded_error;
-        const auto embedded_header = ValidatedIPCMessageHeader::Deserialize(
-            response_frame.body.data(),
-            sizeof(DAS::Core::IPC::IPCMessageHeader),
-            &embedded_error);
-        ASSERT_TRUE(embedded_header.has_value());
         EXPECT_EQ(
-            embedded_header->GetInterfaceId(),
-            static_cast<uint32_t>(IpcCommandType::RemoteAddRef));
-        embedded_add_ref_count = 1;
-    }
-    else
-    {
-        // 结局二：guard 先出清——独立 130 紧随
-        EXPECT_EQ(probe.DrainUntil(1, std::chrono::seconds(2)), 1u);
+            wire_frame.header.GetFlags()
+                & DAS::Core::IPC::MessageFlags::RESERVED_AS_SIZE,
+            0);
     }
 
-    // 守恒：恰一次 ADD_REF 申报到达（内嵌 + 独立 == 1）
+    // 守恒：恰一次 ADD_REF 申报到达
     EXPECT_EQ(
-        embedded_add_ref_count
-            + probe.CountByInterfaceId(
-                static_cast<uint32_t>(IpcCommandType::RemoteAddRef)),
+        probe.CountByInterfaceId(
+            static_cast<uint32_t>(IpcCommandType::RemoteAddRef)),
         1u);
     EXPECT_EQ(run_loop.GetPendingAddRefCount(ROUTING_E2E_PEER_SESSION_ID), 0u);
     EXPECT_TRUE(run_loop.PendingAddRefsEmpty());
@@ -625,7 +623,7 @@ TEST(
     }
     ASSERT_TRUE(run_loop.IsRunning());
 
-    // 转发帧的 target = 已注册托管连接的对端 session：pending 按同 target 键控
+    // 转发帧的 target = 已注册托管连接的对端 session：FIFO 按同 target 键控
     const ObjectId object_id{
         .session_id = ROUTING_E2E_PEER_SESSION_ID,
         .generation = 2,
@@ -633,8 +631,11 @@ TEST(
     run_loop.EnqueueAddRef(object_id);
     EXPECT_EQ(run_loop.GetPendingAddRefCount(ROUTING_E2E_PEER_SESSION_ID), 1u);
 
+    const auto physical_writes_before =
+        run_loop.GetOutboundPhysicalWriteCount();
+
     // 注入非控制平面帧：target=对端（非本地）→ 转发分支 →
-    // PostSendWithTransport → DoSendCoroutine（第二汇点）
+    // PostSendWithTransport 入队并触发 drain（第二汇点）
     const auto forwarded_header =
         IPCMessageHeaderBuilder()
             .SetMessageType(MessageType::Request)
@@ -650,7 +651,9 @@ TEST(
         probe.SendFrameFromObserver(forwarded_header, empty_body),
         DAS_S_OK);
 
-    // 第二汇点过闸2：pending 先独立发（FIFO）随后转发帧原样独立发出
+    // 第二汇点：drain 按 FIFO 序带走 [130][转发帧]；转发帧（source 非
+    // 本地）切断独走不进连写批——两逻辑帧各占一次物理写，转发帧字节
+    // 原样透传
     EXPECT_EQ(probe.DrainUntil(2, std::chrono::seconds(2)), 2u);
     EXPECT_EQ(probe.TotalFrameCount(), 2u);
     EXPECT_EQ(
@@ -658,6 +661,9 @@ TEST(
         (std::vector<uint32_t>{
             static_cast<uint32_t>(IpcCommandType::RemoteAddRef),
             0x1237}));
+    EXPECT_EQ(
+        run_loop.GetOutboundPhysicalWriteCount() - physical_writes_before,
+        2u);
     const auto& forwarded_wire_frame = probe.Frames()[1];
     EXPECT_EQ(
         forwarded_wire_frame.header.GetFlags()
