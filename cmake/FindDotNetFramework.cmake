@@ -36,6 +36,19 @@ if(DEFINED ENV{NET48_REFERENCE_ASSEMBLIES_DIR})
     list(APPEND _NET48_REF_CANDIDATES "${_NET48_ENV_REF_DIR}")
 endif()
 
+# 约定布局探测，与 MSBuild ToolLocationHelper 的解析约定一致：安装根跟随
+# ProgramFiles(x86) 环境变量，不硬编码盘符。锚点 mscorlib.dll 存在即视为
+# targeting pack 可用；个别程序集缺失不在 find 阶段兜底校验，由 csc 编译期
+# CS0006 显性报错。
+# 环境变量名含括号，$ENV{} 引用不能在源码直书（CMake 4.x 严格解析拒绝），
+# 经普通变量间接展开成引用名再读。
+set(_NET48_PROGRAM_FILES_X86_NAME "ProgramFiles(x86)")
+set(_NET48_CONVENTIONAL_REFERENCE_DIR
+    "$ENV{${_NET48_PROGRAM_FILES_X86_NAME}}/Reference Assemblies/Microsoft/Framework/.NETFramework/v4.8")
+if(EXISTS "${_NET48_CONVENTIONAL_REFERENCE_DIR}/mscorlib.dll")
+    list(APPEND _NET48_REF_CANDIDATES "${_NET48_CONVENTIONAL_REFERENCE_DIR}")
+endif()
+
 set(DotNetFramework_NET48_REFERENCE_DIR "")
 set(DotNetFramework_NET48_MSCORLIB "")
 
