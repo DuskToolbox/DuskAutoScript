@@ -714,14 +714,19 @@ TEST(CSharpHostBackendNetFx, DefaultBackendIsDeterministicWithoutClrSeam)
 
     CSharpNetFxBackend backend;
 
-#ifdef _WIN32
-    EXPECT_EQ(
-        InvokeBackend(backend, manifest),
-        DAS_E_CSHARP_COM_CLR_INIT_FAILED);
-#else
+#if !defined(_WIN32)
     EXPECT_EQ(
         InvokeBackend(backend, manifest),
         DAS_E_CSHARP_NETFX_UNSUPPORTED_PLATFORM);
+#elif defined(DAS_CSHARP_NETFX_BACKEND)
+    // 真宿主路径：CLR 拉起成功，确定性失败在托管入口（临时布局无程序集）。
+    EXPECT_EQ(
+        InvokeBackend(backend, manifest),
+        DAS_E_CSHARP_ENTRYPOINT_MISSING);
+#else
+    EXPECT_EQ(
+        InvokeBackend(backend, manifest),
+        DAS_E_CSHARP_COM_CLR_INIT_FAILED);
 #endif
 }
 

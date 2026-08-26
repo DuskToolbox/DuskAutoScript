@@ -79,7 +79,12 @@ endif()
 set(DAS_CORE_LUA_OPEN_MODULE_NAME DasCoreApi)
 set(DAS_CORE_LUA_OPEN_FUNCTION_NAME "luaopen_${DAS_CORE_LUA_OPEN_MODULE_NAME}")
 set(DAS_CORE_CSHARP_NAMESPACE_ROOT Das.Generated)
-set(DAS_CORE_CSHARP_DAS_NATIVE_MODULE_NAME das)
+# C# 侧 DllImport 的核心模块名必须与 DasCore 目标的实际产物基名一致
+# （前缀随工具链：MSVC 为 DasCore.dll，MinGW 为 libDasCore.dll）；net48
+# 无 NativeLibrary 解析器做名字桥接，名字不一致即 EntryPointNotFound。
+set(DAS_CORE_LIBRARY_TARGET DasCore)
+set(DAS_CORE_CSHARP_DAS_NATIVE_MODULE_NAME
+    "${CMAKE_SHARED_LIBRARY_PREFIX}${DAS_CORE_LIBRARY_TARGET}")
 set(DAS_CORE_CSHARP_NATIVE_SUPPORT_MODULE_NAME DasCSharpNativeSupport)
 
 #获取 idl / 目录下所有.idl 文件名
@@ -287,7 +292,7 @@ target_sources(DasCoreObjects PRIVATE ${DasCore_IPC_GENERATED_CPP})
 set_source_files_properties(${DasCore_IPC_GENERATED_CPP} PROPERTIES GENERATED TRUE)
 target_include_directories(DasCoreObjects PUBLIC "${CMAKE_BINARY_DIR}/das/include/das/_autogen/idl/ipc")
 
-add_library(DasCore SHARED)
+add_library(${DAS_CORE_LIBRARY_TARGET} SHARED)
 add_dependencies(DasCore DasCoreObjects)
 
 add_compile_definitions(DAS_BUILD_SHARED)

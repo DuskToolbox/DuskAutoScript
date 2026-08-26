@@ -60,6 +60,11 @@ function(das_add_csharp_test_plugin_build
     file(GLOB _CS_PLUGIN_SOURCES CONFIGURE_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cs")
 
+    # 生成的 C# 源必须以文件级依赖参与增量：目标名依赖（DasCoreCSharpExport）
+    # 在 Ninja 中退化为 order-only，.cs 再生不会触发本命令重跑。
+    file(GLOB_RECURSE _CS_GENERATED_SOURCES CONFIGURE_DEPENDS
+        "${DAS_CORE_CSHARP_OUTPUT_DIR}/Das.Generated/*.cs")
+
     add_custom_command(
         OUTPUT "${_BUILD_STAMP}"
         COMMAND ${CMAKE_COMMAND} -E make_directory "${_BUILD_OUTPUT_DIR}"
@@ -76,6 +81,7 @@ function(das_add_csharp_test_plugin_build
         DEPENDS
             "${CSHARP_TEST_PLUGIN_PROJECT}"
             ${_CS_PLUGIN_SOURCES}
+            ${_CS_GENERATED_SOURCES}
             DasCoreCSharpExport
         COMMENT "Building C# plugin ${PACKAGE_NAME} (${TARGET_FRAMEWORK})"
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"

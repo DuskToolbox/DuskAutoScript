@@ -2,12 +2,15 @@
 
 #include "CSharpNetFxBackend.h"
 
+#include <das/DasPtr.hpp>
+
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
 
 #if defined(_WIN32) && defined(DAS_CSHARP_NETFX_BACKEND)
+#include <metahost.h>
 #include <mscoree.h>
 #endif
 
@@ -165,20 +168,43 @@ namespace
                 return 0;
             }
 
-            static const GUID RUNTIME_HOST_CLASS_ID{
-                0x90F1A06E,
-                0x7712,
-                0x4762,
-                {0x86, 0xB5, 0x7A, 0x5E, 0xBA, 0x6B, 0xDB, 0x02}};
+            // 非弃用宿主路径：CLRCreateInstance → GetRuntime → GetInterface，
+            // 落点与旧 CorBindToRuntimeEx 相同的 ICLRRuntimeHost；工作站 GC
+            // 为该路径默认，单域加载优化经 SetDefaultStartupFlags 显式保留。
+            // 中间接口经 DasPtr 持有，早退路径自动 Release。
+            Das::DasPtr<ICLRMetaHost> meta_host;
+            auto                      hr = CLRCreateInstance(
+                CLSID_CLRMetaHost,
+                IID_ICLRMetaHost,
+                meta_host.PutVoid());
+            if (FAILED(hr) || !meta_host)
+            {
+                return static_cast<int>(hr);
+            }
+
+            Das::DasPtr<ICLRRuntimeInfo> runtime_info;
+            hr = meta_host->GetRuntime(
+                L"v4.0.30319",
+                IID_ICLRRuntimeInfo,
+                runtime_info.PutVoid());
+            if (FAILED(hr) || !runtime_info)
+            {
+                return static_cast<int>(hr);
+            }
+
+            hr = runtime_info->SetDefaultStartupFlags(
+                STARTUP_LOADER_OPTIMIZATION_SINGLE_DOMAIN,
+                nullptr);
+            if (FAILED(hr))
+            {
+                return static_cast<int>(hr);
+            }
 
             ICLRRuntimeHost* raw_host = nullptr;
-            auto             hr = CorBindToRuntimeEx(
-                L"v4.0.30319",
-                L"wks",
-                STARTUP_LOADER_OPTIMIZATION_SINGLE_DOMAIN,
-                RUNTIME_HOST_CLASS_ID,
+            hr = runtime_info->GetInterface(
+                CLSID_CLRRuntimeHost,
                 IID_ICLRRuntimeHost,
-                reinterpret_cast<void**>(&raw_host));
+                reinterpret_cast<LPVOID*>(&raw_host));
             if (FAILED(hr) || raw_host == nullptr)
             {
                 return static_cast<int>(hr);
