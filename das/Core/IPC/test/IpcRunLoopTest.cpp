@@ -2177,6 +2177,75 @@ TEST_F(IpcRunLoopTest, PiggybackRidesPendingOnPostSendWithTransportResponse)
     probe.Shutdown();
 }
 
+// 断连清队快速失败：带完成回调的帧滞留 FIFO（drain 未取走）时对端断连
+// → ClearOutboundFifo 锁外以 CONNECTION_LOST 直接调用回调——不落入
+// wait() 的 30s 外部兜底、不误报 TIMEOUT。io_context 全程不驱动：drain
+// 协程 co_spawn 后从未执行，帧确定性滞留在队列
+TEST_F(IpcRunLoopTest, ClearOutboundFifoFailsStrandedCompletionPromptly)
+{
+    std::atomic<int>       completion_count{0};
+    std::atomic<DasResult> completion_result{DAS_S_OK};
+
+    ASSERT_EQ(
+        runloop_->PostSend(
+            MakeOutboundBusinessFrameHeader(
+                PIGGYBACK_TEST_HOST_INTERFACE_ID,
+                2),
+            std::vector<uint8_t>{0xCA, 0xFE},
+            [&completion_count, &completion_result](
+                DasResult                   result,
+                const std::vector<uint8_t>& response,
+                uint16_t                    response_flags)
+            {
+                EXPECT_TRUE(response.empty());
+                EXPECT_EQ(response_flags, 0u);
+                completion_result.store(result);
+                completion_count.fetch_add(1);
+            }),
+        DAS_S_OK);
+    EXPECT_EQ(runloop_->GetPendingAddRefCount(REMOTE_SESSION_ID), 1u);
+
+    // 断连清队：滞留回调在清队调用窗口内同步收到 CONNECTION_LOST
+    EXPECT_EQ(runloop_->ClearOutboundFifo(REMOTE_SESSION_ID), 1u);
+    EXPECT_EQ(completion_count.load(), 1);
+    EXPECT_EQ(completion_result.load(), DAS_E_IPC_CONNECTION_LOST);
+    EXPECT_EQ(runloop_->GetPendingAddRefCount(REMOTE_SESSION_ID), 0u);
+    EXPECT_TRUE(runloop_->PendingAddRefsEmpty());
+}
+
+// 停机清扫面：FIFO 残留带回调帧 + RequestStop（run loop 从未 Run，
+// running_ 为 false 也必须清扫）→ 回调收到 CONNECTION_LOST，而非被
+// ~IpcRunLoop 析构 outbound_queues_ 时静默销毁
+TEST_F(IpcRunLoopTest, RequestStopFailsStrandedFifoCompletion)
+{
+    std::atomic<int>       completion_count{0};
+    std::atomic<DasResult> completion_result{DAS_S_OK};
+
+    ASSERT_EQ(
+        runloop_->PostSend(
+            MakeOutboundBusinessFrameHeader(
+                PIGGYBACK_TEST_HOST_INTERFACE_ID,
+                1),
+            std::vector<uint8_t>{0xB5},
+            [&completion_count, &completion_result](
+                DasResult                   result,
+                const std::vector<uint8_t>& response,
+                uint16_t                    response_flags)
+            {
+                EXPECT_TRUE(response.empty());
+                EXPECT_EQ(response_flags, 0u);
+                completion_result.store(result);
+                completion_count.fetch_add(1);
+            }),
+        DAS_S_OK);
+    EXPECT_EQ(runloop_->GetPendingAddRefCount(REMOTE_SESSION_ID), 1u);
+
+    runloop_->RequestStop();
+    EXPECT_EQ(completion_count.load(), 1);
+    EXPECT_EQ(completion_result.load(), DAS_E_IPC_CONNECTION_LOST);
+    EXPECT_EQ(runloop_->GetPendingAddRefCount(REMOTE_SESSION_ID), 0u);
+}
+
 // 阈值切断变体：本地大帧（header + body 达到 LARGE_MESSAGE_THRESHOLD）
 // 不进连写批（独走 SendCoroutine 让传输层做 SHM 变换/直写）——滞留批
 // [130,130] 一批连写在前、大帧独走在后，全部无 bit1，恰两次物理写

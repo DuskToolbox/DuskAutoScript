@@ -175,6 +175,33 @@ void IpcRunLoop::RequestStop()
         io_context_->stop();
     }
 
+    // 出站 FIFO 残留帧清扫（停机面，无条件执行——~IpcRunLoop 析构
+    // outbound_queues_ 前经由本函数到达）：滞留帧的完成回调从未注册进
+    // pending_calls_，直接析构会静默吞掉——锁内收集、锁外以
+    // CONNECTION_LOST 调用，与下方 pending_calls_ 取消块同一 fail 模式
+    {
+        std::vector<PendingCallCompletion> dropped_completions;
+        {
+            const std::unique_lock<std::mutex> lock(fifo_mutex_);
+            for (auto& [session_id, queue] : outbound_queues_)
+            {
+                for (OutboundFrame& frame : queue.frames)
+                {
+                    if (frame.on_complete)
+                    {
+                        dropped_completions.push_back(
+                            std::move(frame.on_complete));
+                    }
+                }
+                queue.frames.clear();
+            }
+        }
+        for (PendingCallCompletion& completion : dropped_completions)
+        {
+            completion(DAS_E_IPC_CONNECTION_LOST, {}, uint16_t{0});
+        }
+    }
+
     if (!running_.load())
     {
         return;
@@ -1587,22 +1614,42 @@ size_t IpcRunLoop::FlushOutboundFifo()
 
 size_t IpcRunLoop::ClearOutboundFifo(uint16_t session_id)
 {
-    const std::unique_lock<std::mutex> lock(fifo_mutex_);
-    const auto session_entry = outbound_queues_.find(session_id);
-    if (session_entry == outbound_queues_.end())
+    // 滞留帧携带的完成回调尚未注册进 pending_calls_（注册推迟到 drain
+    // 取帧之后），静默销毁会把调用方压到 wait() 的 30s 外部兜底并误报
+    // DAS_E_IPC_TIMEOUT——锁内先收集、锁外以 CONNECTION_LOST 直接调用
+    // （未注册条目不能走 CompletePendingCall），与 FailPendingCallsBySession
+    // 的断连快速失败契约对齐
+    std::vector<PendingCallCompletion> dropped_completions;
+    size_t                             cleared_count = 0;
     {
-        return 0;
+        const std::unique_lock<std::mutex> lock(fifo_mutex_);
+        const auto session_entry = outbound_queues_.find(session_id);
+        if (session_entry == outbound_queues_.end())
+        {
+            return 0;
+        }
+        cleared_count = session_entry->second.frames.size();
+        for (OutboundFrame& frame : session_entry->second.frames)
+        {
+            if (frame.on_complete)
+            {
+                dropped_completions.push_back(std::move(frame.on_complete));
+            }
+        }
+        if (session_entry->second.drain_active)
+        {
+            // 活跃 drain 收尾自回收（成对实现）：只清 frames 不 erase 条目
+            // ——drain 循环按空队/retrigger 语义自行退出并 erase
+            session_entry->second.frames.clear();
+        }
+        else
+        {
+            outbound_queues_.erase(session_entry);
+        }
     }
-    const size_t cleared_count = session_entry->second.frames.size();
-    if (session_entry->second.drain_active)
+    for (PendingCallCompletion& completion : dropped_completions)
     {
-        // 活跃 drain 收尾自回收（成对实现）：只清 frames 不 erase 条目
-        // ——drain 循环按空队/retrigger 语义自行退出并 erase
-        session_entry->second.frames.clear();
-    }
-    else
-    {
-        outbound_queues_.erase(session_entry);
+        completion(DAS_E_IPC_CONNECTION_LOST, {}, uint16_t{0});
     }
     return cleared_count;
 }
