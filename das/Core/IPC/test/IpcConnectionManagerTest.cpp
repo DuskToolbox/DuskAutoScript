@@ -550,10 +550,6 @@ namespace
         uint16_t                 session_id_;
         AnyTransport&            transport_;
     };
-
-    constexpr size_t HEARTBEAT_BUS_ADD_REF_FRAME_SIZE =
-        sizeof(DAS::Core::IPC::IPCMessageHeader)
-        + sizeof(DAS::Core::IPC::ObjectId);
 } // namespace
 
 // 心跳班车装置基类：真实 IpcRunLoop（其 ConnectionManager 在装配期被注入
@@ -648,9 +644,10 @@ protected:
     void SetUp() override { SetUpWithHeartbeatThread(true); }
 };
 
-// 班车 Test 1：某 session 存在 pending ADD_REF 时心跳周期到 → 该 session
-// 心跳帧 flags 含 bit1、内嵌段携带 pending、心跳本体 body 语义不变（宿主
-// body 在扩展段之后）
+// 班车 Test 1：某 session 存在 pending ADD_REF 时心跳周期到 → carrier
+// 入队心跳帧并触发 drain——[130][心跳] 两逻辑帧同批连写一次物理写、
+// 全帧无 bit1（pipe 连写不置位，旧拼装形态为有意行为变化），心跳本体
+// body 语义不变
 TEST_F(HeartbeatBusDirectTest, HeartbeatCarriesPendingAddRefsWhenPresent)
 {
     const DAS::Core::IPC::ObjectId object_id{
@@ -662,65 +659,65 @@ TEST_F(HeartbeatBusDirectTest, HeartbeatCarriesPendingAddRefsWhenPresent)
         run_loop_->GetPendingAddRefCount(HEARTBEAT_BUS_PEER_SESSION_ID),
         1u);
 
+    const auto physical_writes_before =
+        run_loop_->GetOutboundPhysicalWriteCount();
+
     // 直驱一次班车（确定性，不等真实周期）
     ASSERT_EQ(run_loop_->GetConnectionManager().SendHeartbeatToAll(), DAS_S_OK);
 
-    // 出站恰一帧：心跳帧携扩展段（bit1 + reserved），心跳本体在段之后
-    EXPECT_EQ(probe_->DrainUntil(1, std::chrono::seconds(2)), 1u);
+    // 出站两逻辑帧一次物理写：[130][心跳]，FIFO 序 = 入队序
+    EXPECT_EQ(probe_->DrainUntil(2, std::chrono::seconds(2)), 2u);
     EXPECT_EQ(probe_->DrainFor(std::chrono::milliseconds(300)), 0u);
-    EXPECT_EQ(probe_->TotalFrameCount(), 1u);
+    ASSERT_EQ(probe_->TotalFrameCount(), 2u);
     EXPECT_EQ(
         run_loop_->GetPendingAddRefCount(HEARTBEAT_BUS_PEER_SESSION_ID),
         0u);
+    EXPECT_EQ(
+        probe_->InterfaceIdOrder(),
+        (std::vector<uint32_t>{
+            static_cast<uint32_t>(DAS::Core::IPC::IpcCommandType::RemoteAddRef),
+            static_cast<uint32_t>(DAS::Core::IPC::HandshakeInterfaceId::
+                                      HandshakeIfaceHeartbeat)}));
+    EXPECT_EQ(
+        run_loop_->GetOutboundPhysicalWriteCount() - physical_writes_before,
+        1u);
 
-    const auto& heartbeat_frame = probe_->Frames()[0];
+    // 连写批内帧形态：130 帧原样（无 bit1、body 为 ObjectId 字节）
+    const auto& add_ref_frame = probe_->Frames()[0];
+    EXPECT_EQ(
+        add_ref_frame.header.GetFlags()
+            & DAS::Core::IPC::MessageFlags::RESERVED_AS_SIZE,
+        0);
+    ASSERT_EQ(add_ref_frame.body.size(), sizeof(DAS::Core::IPC::ObjectId));
+    DAS::Core::IPC::ObjectId wire_object_id{};
+    std::memcpy(
+        &wire_object_id,
+        add_ref_frame.body.data(),
+        sizeof(DAS::Core::IPC::ObjectId));
+    EXPECT_EQ(wire_object_id.session_id, object_id.session_id);
+    EXPECT_EQ(wire_object_id.local_id, object_id.local_id);
+
+    // 心跳本体帧语义不变：独立帧形态（无 bit1、reserved 0）、
+    // HeartbeatV1 字节原样
+    const auto& heartbeat_frame = probe_->Frames()[1];
     EXPECT_EQ(
         heartbeat_frame.header.GetInterfaceId(),
         static_cast<uint32_t>(
             DAS::Core::IPC::HandshakeInterfaceId::HandshakeIfaceHeartbeat));
-    EXPECT_NE(
+    EXPECT_EQ(
         heartbeat_frame.header.GetFlags()
             & DAS::Core::IPC::MessageFlags::RESERVED_AS_SIZE,
         0);
-    EXPECT_EQ(
-        heartbeat_frame.header.Raw().reserved,
-        HEARTBEAT_BUS_ADD_REF_FRAME_SIZE);
-    ASSERT_EQ(
-        heartbeat_frame.body.size(),
-        HEARTBEAT_BUS_ADD_REF_FRAME_SIZE + sizeof(DAS::Core::IPC::HeartbeatV1));
-
-    // 内嵌段 = 完整 130 帧（可被剥离逻辑解析，自身不置 bit1）
-    DAS::Core::IPC::HeaderValidationResult embedded_error;
-    const auto                             embedded_header =
-        DAS::Core::IPC::ValidatedIPCMessageHeader::Deserialize(
-            heartbeat_frame.body.data(),
-            sizeof(DAS::Core::IPC::IPCMessageHeader),
-            &embedded_error);
-    ASSERT_TRUE(embedded_header.has_value());
-    EXPECT_EQ(
-        embedded_header->GetInterfaceId(),
-        static_cast<uint32_t>(DAS::Core::IPC::IpcCommandType::RemoteAddRef));
-    EXPECT_EQ(
-        embedded_header->GetFlags()
-            & DAS::Core::IPC::MessageFlags::RESERVED_AS_SIZE,
-        0);
-    DAS::Core::IPC::ObjectId embedded_object_id{};
-    std::memcpy(
-        &embedded_object_id,
-        heartbeat_frame.body.data() + sizeof(DAS::Core::IPC::IPCMessageHeader),
-        sizeof(DAS::Core::IPC::ObjectId));
-    EXPECT_EQ(embedded_object_id.session_id, object_id.session_id);
-    EXPECT_EQ(embedded_object_id.local_id, object_id.local_id);
-
-    // 心跳本体 body 语义不变：HeartbeatV1 字节原样跟在扩展段之后
+    EXPECT_EQ(heartbeat_frame.header.Raw().reserved, 0u);
+    ASSERT_EQ(heartbeat_frame.body.size(), sizeof(DAS::Core::IPC::HeartbeatV1));
     const auto* heartbeat_body_bytes =
         reinterpret_cast<const DAS::Core::IPC::HeartbeatV1*>(
-            heartbeat_frame.body.data() + HEARTBEAT_BUS_ADD_REF_FRAME_SIZE);
+            heartbeat_frame.body.data());
     EXPECT_GT(heartbeat_body_bytes->timestamp_ms, 0u);
 }
 
-// 班车 Test 2（零流量清账）：零流量场景 pending 滞留不超过一个心跳周期
-// 被清——无其他出站时仅靠班车清账（保险带验证）
+// 班车 Test 2（零流量清账）：零流量场景 FIFO 滞留不超过一个心跳周期被
+// 清——无其他出站时仅靠班车 carrier 触发的 drain 清账（保险带验证）
 TEST_F(HeartbeatBusWithThreadTest, HeartbeatClearsPendingWithinOneInterval)
 {
     const DAS::Core::IPC::ObjectId object_id{
@@ -729,7 +726,7 @@ TEST_F(HeartbeatBusWithThreadTest, HeartbeatClearsPendingWithinOneInterval)
         .local_id = 0xB2};
     run_loop_->EnqueueAddRef(object_id);
 
-    // 本装置无业务流量：一个心跳周期（加余量）内 pending 必被班车带走
+    // 本装置无业务流量：一个心跳周期（加余量）内 FIFO 必被班车带走
     bool cleared_within_bound = false;
     for (int attempt = 0;
          attempt < (ConnectionManager::HEARTBEAT_INTERVAL_MS + 1500)
@@ -748,11 +745,11 @@ TEST_F(HeartbeatBusWithThreadTest, HeartbeatClearsPendingWithinOneInterval)
         << "zero-traffic pending must be cleared within one heartbeat "
            "interval by the heartbeat bus";
 
-    // 班车帧确实到达（携或未携段取决于取样时点，帧本身必须出现）
+    // 班车帧确实到达（130 是否同批取决于取样时点，心跳帧本身必须出现）
     EXPECT_GE(probe_->DrainFor(std::chrono::milliseconds(200)), 1u);
 }
 
-// 班车 Test 3：pending 为空时心跳帧不带 bit1（零开销基线不变）
+// 班车 Test 3：FIFO 为空时心跳帧独立形态（无 bit1，零开销基线不变）
 TEST_F(HeartbeatBusDirectTest, HeartbeatWithoutPendingCarriesNoSection)
 {
     ASSERT_EQ(run_loop_->GetConnectionManager().SendHeartbeatToAll(), DAS_S_OK);
@@ -768,7 +765,9 @@ TEST_F(HeartbeatBusDirectTest, HeartbeatWithoutPendingCarriesNoSection)
     ASSERT_EQ(heartbeat_frame.body.size(), sizeof(DAS::Core::IPC::HeartbeatV1));
 }
 
-// 班车 Test 4：SetPiggybackEnabled(false) 时班车同样关闭（A/B 一致）
+// 班车 Test 4：SetPiggybackEnabled(false) = drain 不合写逐帧出——班车仍
+// 入队 + 触发（off 严禁旁路直发重新引入双写者），两逻辑帧各占一次物理
+// 写、无 bit1、FIFO 同样出清（A/B 一致）
 TEST_F(HeartbeatBusDirectTest, DisabledPiggybackTurnsHeartbeatBusOff)
 {
     run_loop_->SetPiggybackEnabled(false);
@@ -778,19 +777,38 @@ TEST_F(HeartbeatBusDirectTest, DisabledPiggybackTurnsHeartbeatBusOff)
         .generation = 23,
         .local_id = 0xB3};
     run_loop_->EnqueueAddRef(object_id);
-
-    ASSERT_EQ(run_loop_->GetConnectionManager().SendHeartbeatToAll(), DAS_S_OK);
-
-    // 心跳独立形态（无 bit1），pending 不被班车带走（仍由既有出清机制管理）
-    EXPECT_EQ(probe_->DrainUntil(1, std::chrono::seconds(2)), 1u);
-    ASSERT_EQ(probe_->TotalFrameCount(), 1u);
-    const auto& heartbeat_frame = probe_->Frames()[0];
-    EXPECT_EQ(
-        heartbeat_frame.header.GetFlags()
-            & DAS::Core::IPC::MessageFlags::RESERVED_AS_SIZE,
-        0);
-    ASSERT_EQ(heartbeat_frame.body.size(), sizeof(DAS::Core::IPC::HeartbeatV1));
     EXPECT_EQ(
         run_loop_->GetPendingAddRefCount(HEARTBEAT_BUS_PEER_SESSION_ID),
         1u);
+
+    const auto physical_writes_before =
+        run_loop_->GetOutboundPhysicalWriteCount();
+
+    ASSERT_EQ(run_loop_->GetConnectionManager().SendHeartbeatToAll(), DAS_S_OK);
+
+    // off = 逐帧出：[130][心跳] 两逻辑帧、两物理写、无 bit1
+    EXPECT_EQ(probe_->DrainUntil(2, std::chrono::seconds(2)), 2u);
+    ASSERT_EQ(probe_->TotalFrameCount(), 2u);
+    EXPECT_EQ(
+        probe_->InterfaceIdOrder(),
+        (std::vector<uint32_t>{
+            static_cast<uint32_t>(DAS::Core::IPC::IpcCommandType::RemoteAddRef),
+            static_cast<uint32_t>(DAS::Core::IPC::HandshakeInterfaceId::
+                                      HandshakeIfaceHeartbeat)}));
+    EXPECT_EQ(
+        run_loop_->GetOutboundPhysicalWriteCount() - physical_writes_before,
+        2u);
+    for (const auto& wire_frame : probe_->Frames())
+    {
+        EXPECT_EQ(
+            wire_frame.header.GetFlags()
+                & DAS::Core::IPC::MessageFlags::RESERVED_AS_SIZE,
+            0);
+    }
+
+    const auto& heartbeat_frame = probe_->Frames()[1];
+    ASSERT_EQ(heartbeat_frame.body.size(), sizeof(DAS::Core::IPC::HeartbeatV1));
+    EXPECT_EQ(
+        run_loop_->GetPendingAddRefCount(HEARTBEAT_BUS_PEER_SESSION_ID),
+        0u);
 }

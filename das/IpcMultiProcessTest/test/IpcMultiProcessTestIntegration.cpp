@@ -6589,6 +6589,9 @@ namespace
     constexpr uint32_t BASELINE_ADD_REF_INTERFACE_ID =
         static_cast<uint32_t>(DAS::Core::IPC::IpcCommandType::RemoteAddRef);
 
+    constexpr uint32_t BASELINE_RELEASE_INTERFACE_ID =
+        static_cast<uint32_t>(DAS::Core::IPC::IpcCommandType::RemoteRelease);
+
     constexpr size_t BASELINE_ADD_REF_FRAME_SIZE =
         sizeof(DAS::Core::IPC::IPCMessageHeader)
         + sizeof(DAS::Core::IPC::ObjectId);
@@ -6684,7 +6687,9 @@ namespace
     };
 
     // 业务脚本 handler：BT 分发线程上物化一个新对象（入队候车）并发响应
-    // （响应 body = call_id 单字节回显）
+    // （响应 body = call_id 单字节回显）。transient 模式 = 真实 [in] 参数
+    // 流形态：物化即死亡（RELEASE 在响应 post 前入队）——每调用产生
+    // [ADD_REF][RELEASE][Response] 三连帧序
     class BaselineMaterializingHandler final
         : public DAS::Core::IPC::IMessageHandler
     {
@@ -6694,11 +6699,12 @@ namespace
             DAS::Core::IPC::IpcRunLoop&                   run_loop,
             std::weak_ptr<DAS::Core::IPC::BusinessThread> business_thread,
             DAS::DasPtr<IDasBase>* materialized_proxy_slots,
-            size_t                 slot_count)
+            size_t                 slot_count,
+            bool                   transient_proxy = false)
             : proxy_factory_(proxy_factory), run_loop_(run_loop),
               business_thread_(std::move(business_thread)),
               materialized_proxy_slots_(materialized_proxy_slots),
-              slot_count_(slot_count)
+              slot_count_(slot_count), transient_proxy_(transient_proxy)
         {
         }
 
@@ -6740,7 +6746,9 @@ namespace
                 return DAS_E_INVALID_ARGUMENT;
             }
 
-            // BT 分发线程上物化（D-19 分叉 → 入队候车）
+            // BT 分发线程上物化（D-19 分叉 → 入队候车）；transient 模式下
+            // proxy 在响应 post 前析构（[in] 参数流形态——RELEASE 同周期
+            // 入队不触发，与 Response 同批连写）
             const DAS::Core::IPC::ObjectId object_id{
                 .session_id = BASELINE_PEER_SESSION_ID,
                 .generation = 1,
@@ -6754,7 +6762,14 @@ namespace
             {
                 return result;
             }
-            materialized_proxy_slots_[call_id - 1] = std::move(proxy);
+            if (transient_proxy_)
+            {
+                proxy.Reset();
+            }
+            else
+            {
+                materialized_proxy_slots_[call_id - 1] = std::move(proxy);
+            }
 
             const auto response_header =
                 DAS::Core::IPC::IPCMessageHeaderBuilder()
@@ -6778,6 +6793,7 @@ namespace
         std::weak_ptr<DAS::Core::IPC::BusinessThread> business_thread_;
         DAS::DasPtr<IDasBase>*                        materialized_proxy_slots_;
         size_t                                        slot_count_;
+        bool                                          transient_proxy_;
     };
 
     // 一次完整装配（run loop + 真实 BT + 探针），可在一个测试内按
@@ -6910,8 +6926,11 @@ namespace
             return *probe_;
         }
 
-        /// 投递 k 条请求入站并等待出站收敛（每条物化一个新对象 + 发响应）
-        void RunBusinessScript(int request_count)
+        /// 投递 k 条请求入站并等待出站收敛（每条物化一个新对象 + 发响应；
+        /// transient_proxies = 物化即死亡的 [in] 参数流形态）
+        void RunBusinessScript(
+            int  request_count,
+            bool transient_proxies = false)
         {
             materialized_proxy_slots_ =
                 std::vector<DAS::DasPtr<IDasBase>>(request_count);
@@ -6921,7 +6940,8 @@ namespace
                 *run_loop_,
                 business_thread_,
                 materialized_proxy_slots_.data(),
-                materialized_proxy_slots_.size());
+                materialized_proxy_slots_.size(),
+                transient_proxies);
             run_loop_->RegisterHandler(
                 DAS::Core::IPC::HeaderFlags::NONE,
                 BASELINE_HANDLER_INTERFACE_ID,
@@ -7003,13 +7023,15 @@ namespace
         bool                               state_is_healthy_ = false;
     };
 
-    // 探针观测的 dissect 结果：总帧数 / 业务帧数（非 130）/ 独立 130 帧
-    // 数 r / 内嵌 130 总数（扩展段 dissect）/ 携段帧数 / 响应 body 到达序
+    // 探针观测的 dissect 结果：总帧数 / 业务帧数（非 130/132）/ 独立
+    // 130 帧数 / 独立 132 帧数 / 内嵌 130 总数（扩展段 dissect）/ 携段
+    // 帧数 / 响应 body 到达序
     struct BaselineObservation
     {
         size_t                            total_frames = 0;
         size_t                            business_frames = 0;
         size_t                            standalone_add_ref_frames = 0;
+        size_t                            standalone_release_frames = 0;
         size_t                            embedded_add_ref_frames = 0;
         size_t                            carried_frame_count = 0;
         std::vector<std::vector<uint8_t>> response_bodies;
@@ -7023,12 +7045,16 @@ namespace
         observation.total_frames = probe.TotalFrameCount();
         observation.standalone_add_ref_frames =
             probe.CountByInterfaceId(BASELINE_ADD_REF_INTERFACE_ID);
+        observation.standalone_release_frames =
+            probe.CountByInterfaceId(BASELINE_RELEASE_INTERFACE_ID);
 
         for (const auto& frame : probe.Frames())
         {
-            const bool is_add_ref =
-                frame.header.GetInterfaceId() == BASELINE_ADD_REF_INTERFACE_ID;
-            if (!is_add_ref)
+            const bool is_control_frame =
+                frame.header.GetInterfaceId() == BASELINE_ADD_REF_INTERFACE_ID
+                || frame.header.GetInterfaceId()
+                       == BASELINE_RELEASE_INTERFACE_ID;
+            if (!is_control_frame)
             {
                 observation.business_frames += 1;
             }
@@ -7037,7 +7063,7 @@ namespace
                  & DAS::Core::IPC::MessageFlags::RESERVED_AS_SIZE)
                 == 0)
             {
-                if (!is_add_ref)
+                if (!is_control_frame)
                 {
                     observation.response_bodies.push_back(frame.body);
                 }
@@ -7075,7 +7101,7 @@ namespace
 
             // 携段业务帧的宿主语义 = 剥离扩展段后的尾部 body（接收端
             // RouteIncomingMessage 剥离后路由的部分——A/B 等价的比较面）
-            if (!is_add_ref && frame.body.size() >= section_size)
+            if (!is_control_frame && frame.body.size() >= section_size)
             {
                 observation.response_bodies.push_back(
                     std::vector<uint8_t>(
@@ -7087,32 +7113,68 @@ namespace
     }
 } // namespace
 
-// T 基线（D-21）：同一业务脚本（k 次调用，每次物化一个新对象 + 1 响应）
-// 在 piggyback_enabled 开/关两态下运行——开态出站帧数 == 业务基线（k 条
-// 响应）且 r==0（ADD_REF 全部内嵌）；关态出站 == 基线 + r（r==k，段 A
-// 独立帧行为对照）；两态业务帧数相等且响应字节逐条一致（语义等价，
-// 捎带模式帧数不超过独立模式）
+// T 基线：同一业务脚本（[in] 参数流形态——每调用物化一个新对象并在响应
+// 前死亡）在 piggyback 开/关两态下运行。每调用产出 [ADD_REF][RELEASE]
+// [Response] 三连帧序（wire 序 = 入队序 = 事件序，D-05 稳态）；两态逻辑
+// 帧数与响应字节完全一致（语义等价），差异仅在物理写次数——开态合写批
+// （每调用恰一次物理写）、关态逐帧出（每帧一次物理写）
 TEST(
     PiggybackBaselineTest,
     T_BaselineFrameCountsMatchBusinessBaselineAcrossSwitch)
 {
     constexpr int request_count = 4;
 
+    // 单调用确定性锚点（REQ-C 集成级背书）：恰三逻辑帧一次物理写、
+    // InterfaceIdOrder 三连 {130,132,业务}、全帧无 bit1
+    {
+        BaselineAssembly assembly_single(true);
+        ASSERT_TRUE(assembly_single.IsHealthy());
+        const auto logical_frames_before =
+            assembly_single.GetRunLoop().GetOutboundLogicalFrameCount();
+        const auto physical_writes_before =
+            assembly_single.GetRunLoop().GetOutboundPhysicalWriteCount();
+        assembly_single.RunBusinessScript(1, true);
+        ASSERT_TRUE(assembly_single.IsHealthy());
+
+        EXPECT_EQ(assembly_single.GetProbe().TotalFrameCount(), 3u);
+        EXPECT_EQ(
+            assembly_single.GetProbe().InterfaceIdOrder(),
+            (std::vector<uint32_t>{
+                BASELINE_ADD_REF_INTERFACE_ID,
+                BASELINE_RELEASE_INTERFACE_ID,
+                BASELINE_HANDLER_INTERFACE_ID}));
+        EXPECT_EQ(
+            assembly_single.GetRunLoop().GetOutboundPhysicalWriteCount()
+                - physical_writes_before,
+            1u);
+        EXPECT_EQ(
+            assembly_single.GetRunLoop().GetOutboundLogicalFrameCount()
+                - logical_frames_before,
+            3u);
+        for (const auto& wire_frame : assembly_single.GetProbe().Frames())
+        {
+            EXPECT_EQ(
+                wire_frame.header.GetFlags()
+                    & DAS::Core::IPC::MessageFlags::RESERVED_AS_SIZE,
+                0);
+        }
+    }
+
     BaselineAssembly assembly_on(true);
     ASSERT_TRUE(assembly_on.IsHealthy());
-    assembly_on.RunBusinessScript(request_count);
+    assembly_on.RunBusinessScript(request_count, true);
     ASSERT_TRUE(assembly_on.IsHealthy());
     const BaselineObservation on_observation =
         DisassembleObservation(assembly_on.GetProbe());
 
     BaselineAssembly assembly_off(false);
     ASSERT_TRUE(assembly_off.IsHealthy());
-    assembly_off.RunBusinessScript(request_count);
+    assembly_off.RunBusinessScript(request_count, true);
     ASSERT_TRUE(assembly_off.IsHealthy());
     const BaselineObservation off_observation =
         DisassembleObservation(assembly_off.GetProbe());
 
-    // 两态业务帧数相等且 == 业务基线（k 条响应；捎带不合并业务帧）
+    // 两态业务帧数相等且 == 业务基线（k 条响应；合写不合并逻辑帧）
     ASSERT_EQ(
         on_observation.business_frames,
         static_cast<size_t>(request_count));
@@ -7120,37 +7182,51 @@ TEST(
         off_observation.business_frames,
         static_cast<size_t>(request_count));
 
-    // 开态：出站帧数 == 业务基线，r==0（ADD_REF 全部内嵌；rider 在载体间
-    // 的分布不定了——一帧可携多条，嵌骑总量恒为 k）
-    EXPECT_EQ(on_observation.total_frames, static_cast<size_t>(request_count));
-    EXPECT_EQ(on_observation.standalone_add_ref_frames, 0u);
+    // 帧数守恒（两态同形）：130/132 各 k 条独立帧（先建后拆平衡）、零
+    // bit1 零内嵌（pipe 连写不置位）、总数 == 3k
     EXPECT_EQ(
-        on_observation.embedded_add_ref_frames,
+        on_observation.standalone_add_ref_frames,
         static_cast<size_t>(request_count));
-    EXPECT_LE(
-        on_observation.carried_frame_count,
+    EXPECT_EQ(
+        on_observation.standalone_release_frames,
         static_cast<size_t>(request_count));
-    EXPECT_GE(on_observation.carried_frame_count, 1u);
+    EXPECT_EQ(on_observation.embedded_add_ref_frames, 0u);
+    EXPECT_EQ(on_observation.carried_frame_count, 0u);
+    EXPECT_EQ(
+        on_observation.total_frames,
+        static_cast<size_t>(3 * request_count));
 
-    // 关态：出站 == 基线 + r（r==k——独立帧对照，帧数与字节与段 A 相同）
-    EXPECT_EQ(
-        off_observation.total_frames,
-        static_cast<size_t>(2 * request_count));
     EXPECT_EQ(
         off_observation.standalone_add_ref_frames,
         static_cast<size_t>(request_count));
+    EXPECT_EQ(
+        off_observation.standalone_release_frames,
+        static_cast<size_t>(request_count));
     EXPECT_EQ(off_observation.embedded_add_ref_frames, 0u);
-    EXPECT_EQ(off_observation.carried_frame_count, 0u);
+    EXPECT_EQ(
+        off_observation.total_frames,
+        static_cast<size_t>(3 * request_count));
 
-    // 捎带模式帧数不超过独立模式
-    EXPECT_LE(on_observation.total_frames, off_observation.total_frames);
+    // 物理写分化（两态唯一差异面）：关态逐帧出（物理写 == 逻辑帧，比值
+    // ==1）；开态合写批（物理写不大于关态——跨调用批并取决于 IO/BT 竞
+    // 速，仅钳上下界）
+    const auto on_physical_writes =
+        assembly_on.GetRunLoop().GetOutboundPhysicalWriteCount();
+    const auto off_physical_writes =
+        assembly_off.GetRunLoop().GetOutboundPhysicalWriteCount();
+    EXPECT_EQ(
+        off_physical_writes,
+        static_cast<std::uint64_t>(3 * request_count));
+    EXPECT_LE(on_physical_writes, off_physical_writes);
+    EXPECT_GE(on_physical_writes, 1u);
 
-    // A/B 语义等价：响应字节逐条一致（仅帧数不同）
+    // A/B 语义等价：响应字节逐条一致（仅物理写形态不同）
     EXPECT_EQ(on_observation.response_bodies, off_observation.response_bodies);
 }
 
 // 四情形白名单 (i)：该方向整周期无出站载体——BT 物化后本 dispatch 周期
-// 无任何响应 → 周期末 guard 兜底独立发出（r==1 且仅在该情形）
+// 无任何响应 → 周期末 guard 兜底触发 drain，滞留 130 以合写批（单帧批）
+// 出清（r==1 且仅在该情形）
 TEST(PiggybackBaselineTest, WhitelistNoCarrierFlushesStandaloneAtCycleEnd)
 {
     BaselineAssembly assembly(true);
@@ -7176,7 +7252,7 @@ TEST(PiggybackBaselineTest, WhitelistNoCarrierFlushesStandaloneAtCycleEnd)
         });
     ASSERT_TRUE(materialized_proxy);
 
-    // 零载体：仅 guard 兜底的独立 130（无 bit1）
+    // 零载体：仅 guard 兜底的独立 130（合写批内单帧，无 bit1）
     EXPECT_EQ(assembly.GetProbe().DrainUntil(1, std::chrono::seconds(2)), 1u);
     const BaselineObservation observation =
         DisassembleObservation(assembly.GetProbe());
@@ -7184,12 +7260,17 @@ TEST(PiggybackBaselineTest, WhitelistNoCarrierFlushesStandaloneAtCycleEnd)
     EXPECT_EQ(observation.standalone_add_ref_frames, 1u);
     EXPECT_EQ(observation.embedded_add_ref_frames, 0u);
     EXPECT_EQ(observation.business_frames, 0u);
+    EXPECT_EQ(
+        assembly.GetProbe().Frames()[0].header.GetFlags()
+            & DAS::Core::IPC::MessageFlags::RESERVED_AS_SIZE,
+        0);
 
     materialized_proxy.Reset();
 }
 
-// 四情形白名单 (ii)：SHM 大消息帧载体——riders 全部先独立走（SHM 宿主
-// 帧经无 pool 的探针接收侧被拒——互斥防御本身，仅断言 riders 独立形态）
+// 四情形白名单 (ii)：SHM 大消息帧载体——SHM 帧切断独走（扩展段/连写批
+// 不经传输层 SHM 重组，P-2 互斥防御本身；SHM 宿主帧经无 pool 的探针接收
+// 侧被拒，仅断言 riders 批形态）——130 一批一物理写 + SHM 帧独走一物理写
 TEST(PiggybackBaselineTest, WhitelistShmCarrierFlushesRidersStandalone)
 {
     BaselineAssembly assembly(true);
@@ -7201,6 +7282,8 @@ TEST(PiggybackBaselineTest, WhitelistShmCarrierFlushesRidersStandalone)
         .generation = 3,
         .local_id = 0x2201};
     run_loop.EnqueueAddRef(shm_object_id);
+    const auto physical_writes_before =
+        run_loop.GetOutboundPhysicalWriteCount();
     const auto shm_carrier_header =
         DAS::Core::IPC::IPCMessageHeaderBuilder()
             .SetMessageType(DAS::Core::IPC::MessageType::Response)
@@ -7225,10 +7308,18 @@ TEST(PiggybackBaselineTest, WhitelistShmCarrierFlushesRidersStandalone)
         observation.standalone_add_ref_frames
             + observation.embedded_add_ref_frames,
         1u);
+    EXPECT_EQ(
+        assembly.GetProbe().Frames()[0].header.GetFlags()
+            & DAS::Core::IPC::MessageFlags::RESERVED_AS_SIZE,
+        0);
+    // 切断形态：130 批一次物理写 + SHM 帧独走一次物理写
+    EXPECT_EQ(
+        run_loop.GetOutboundPhysicalWriteCount() - physical_writes_before,
+        2u);
 }
 
-// 四情形白名单 (iii)：溢出——body 使该载体只容得下两条 rider，第三条
-// 紧随独立发（恰一次溢出独立帧）
+// 四情形白名单 (iii)：阈值切断——三条 130 累积后批总长加大帧达到阈值，
+// 切断为 [130][130][130] 一批连写 + 大帧独走（pipe 合写的溢出形态）
 TEST(PiggybackBaselineTest, WhitelistOverflowRidesPartialThenFlushesRemainder)
 {
     BaselineAssembly assembly(true);
@@ -7265,18 +7356,39 @@ TEST(PiggybackBaselineTest, WhitelistOverflowRidesPartialThenFlushesRemainder)
             .SetTargetSessionId(BASELINE_PEER_SESSION_ID)
             .SetBodySize(static_cast<uint32_t>(overflow_body_size))
             .Build();
+    const auto physical_writes_before =
+        run_loop.GetOutboundPhysicalWriteCount();
     ASSERT_TRUE(!DAS::IsFailed(run_loop.PostSend(
         overflow_carrier_header,
         std::vector<uint8_t>(overflow_body_size, 0x23))));
 
-    EXPECT_EQ(assembly.GetProbe().DrainUntil(2, std::chrono::seconds(3)), 2u);
+    // FIFO 序 = 入队序：三条 130 同批连写在前、大帧独走在后
+    EXPECT_EQ(assembly.GetProbe().DrainUntil(4, std::chrono::seconds(3)), 4u);
     const BaselineObservation observation =
         DisassembleObservation(assembly.GetProbe());
-    // 搭车帧携两条内嵌 + 溢出第三条独立
-    EXPECT_EQ(observation.embedded_add_ref_frames, 2u);
-    EXPECT_EQ(observation.standalone_add_ref_frames, 1u);
-    EXPECT_EQ(observation.carried_frame_count, 1u);
+    EXPECT_EQ(observation.total_frames, 4u);
+    EXPECT_EQ(observation.standalone_add_ref_frames, 3u);
+    EXPECT_EQ(observation.embedded_add_ref_frames, 0u);
+    EXPECT_EQ(observation.carried_frame_count, 0u);
     EXPECT_EQ(observation.business_frames, 1u);
+    EXPECT_EQ(
+        assembly.GetProbe().InterfaceIdOrder(),
+        (std::vector<uint32_t>{
+            BASELINE_ADD_REF_INTERFACE_ID,
+            BASELINE_ADD_REF_INTERFACE_ID,
+            BASELINE_ADD_REF_INTERFACE_ID,
+            0x2304}));
+    // 切断形态：三 130 一批一物理写 + 大帧独走一物理写，全帧无 bit1
+    EXPECT_EQ(
+        run_loop.GetOutboundPhysicalWriteCount() - physical_writes_before,
+        2u);
+    for (const auto& wire_frame : assembly.GetProbe().Frames())
+    {
+        EXPECT_EQ(
+            wire_frame.header.GetFlags()
+                & DAS::Core::IPC::MessageFlags::RESERVED_AS_SIZE,
+            0);
+    }
 }
 
 // 四情形白名单 (iv)：外部线程物化 → 独立帧当次窗口出现（引用 104.2-08
@@ -7288,11 +7400,14 @@ TEST(
     BaselineAssembly assembly(true);
     ASSERT_TRUE(assembly.IsHealthy());
 
-    // 测试主线程（非 BT、weak_ptr 空）物化 → D-19 分叉当场直发
+    // 测试主线程（非 BT、weak_ptr 空）物化 → 入队即触发 drain（零等待
+    // 周期，延迟等价旧直发）
     const DAS::Core::IPC::ObjectId object_id{
         .session_id = BASELINE_PEER_SESSION_ID,
         .generation = 7,
         .local_id = 0x2401};
+    const auto physical_writes_before =
+        assembly.GetRunLoop().GetOutboundPhysicalWriteCount();
     auto [result, materialized_proxy] =
         assembly.GetProxyFactory().GetOrCreateProxy(
             assembly.GetRunLoop(),
@@ -7302,12 +7417,16 @@ TEST(
     ASSERT_TRUE(!DAS::IsFailed(result));
     ASSERT_TRUE(materialized_proxy);
 
-    // 独立帧当次窗口出现 + 全程零入队
+    // 独立帧当次窗口出现 + FIFO 即入即清（观测面恒空）
     EXPECT_EQ(assembly.GetProbe().DrainUntil(1, std::chrono::seconds(2)), 1u);
     const BaselineObservation observation =
         DisassembleObservation(assembly.GetProbe());
     EXPECT_EQ(observation.standalone_add_ref_frames, 1u);
     EXPECT_EQ(observation.embedded_add_ref_frames, 0u);
+    EXPECT_EQ(
+        assembly.GetRunLoop().GetOutboundPhysicalWriteCount()
+            - physical_writes_before,
+        1u);
     EXPECT_TRUE(assembly.GetRunLoop().PendingAddRefsEmpty());
 
     materialized_proxy.Reset();
