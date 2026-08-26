@@ -12,6 +12,7 @@
 #include <gtest/gtest.h>
 
 #include "MockDasObject.h"
+#include "TestTransportResolvers.h"
 
 using Das::Core::IPC::DasReadOnlyStringProxy;
 using Das::Core::IPC::DasVariantVectorByValueProxy;
@@ -27,25 +28,6 @@ using Das::Core::IPC::ProxyFactory;
 using Das::Core::IPC::RemoteObjectRegistry;
 using Das::Core::IPC::SerializeInInterfaceParam;
 using Das::Core::IPC::TransportLookupResult;
-
-namespace
-{
-    // main 语义解析体（两级查表）：FindManagedHostConnection 命中取
-    // host->GetTransport()，否则 FindHostLocalTransport——本文件 run loop
-    // 构造点模拟 main 角色（发送解析的显式角色声明）
-    TransportLookupResult ResolveTransportMainSemantic(
-        Das::Core::IPC::ConnectionManager& connection_manager,
-        uint16_t                           target_session_id)
-    {
-        const Das::DasPtr<Das::Core::IPC::IHostConnection> host =
-            connection_manager.FindManagedHostConnection(target_session_id);
-        if (host)
-        {
-            return host->GetTransport();
-        }
-        return connection_manager.FindHostLocalTransport(target_session_id);
-    }
-} // namespace
 
 // Test fixture for InterfaceParamSerialization tests
 class InterfaceParamSerializationTest : public ::testing::Test

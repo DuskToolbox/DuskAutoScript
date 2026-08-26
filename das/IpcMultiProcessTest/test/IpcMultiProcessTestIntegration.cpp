@@ -26,6 +26,7 @@
 #include "IpcMultiProcessTestIntegration.h"
 
 #include "../../Core/IPC/test/OutboundFrameProbe.h"
+#include "../../Core/IPC/test/TestTransportResolvers.h"
 #include "../../Plugins/IpcTestPlugin2/src/EchoComponentSharedState.h"
 #include "FakeMainProcess.h"
 #include "IDasComponent.h"
@@ -3104,8 +3105,9 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_HostToHostCall)
         ASSERT_EQ(host_from_b.As(task_component_host_from_b.Put()), DAS_S_OK);
 
         // [in] 通道：递入 pluginA。proxy 保真序列化原始 ObjectId，hostA
-        // 侧物化 target=hostB 的跨 host 代理（此点 main 日志可能出现
-        // RemoteAddRef 死信 WARN——地址分类落地前的预期中间态，不设断言）。
+        // 侧物化 target=hostB 的跨 host 代理——物化触发的 130 经中转
+        // 送达 owner，不再死信；日志捕获窗口有意从物化点之后开窗，
+        // 终态由 created_count==1 断言覆盖。
         ASSERT_EQ(
             package_a->SetTaskComponentHost(task_component_host_from_b.Get()),
             DAS_S_OK);
@@ -6590,22 +6592,6 @@ namespace
     constexpr size_t BASELINE_ADD_REF_FRAME_SIZE =
         sizeof(DAS::Core::IPC::IPCMessageHeader)
         + sizeof(DAS::Core::IPC::ObjectId);
-
-    // main 语义解析体（两级查表）：FindManagedHostConnection 命中取
-    // host->GetTransport()，否则 FindHostLocalTransport——本文件 run loop
-    // 构造点模拟 main 角色（发送解析的显式角色声明）
-    DAS::Core::IPC::TransportLookupResult ResolveTransportMainSemantic(
-        DAS::Core::IPC::ConnectionManager& connection_manager,
-        uint16_t                           target_session_id)
-    {
-        const DAS::DasPtr<DAS::Core::IPC::IHostConnection> host =
-            connection_manager.FindManagedHostConnection(target_session_id);
-        if (host)
-        {
-            return host->GetTransport();
-        }
-        return connection_manager.FindHostLocalTransport(target_session_id);
-    }
 
     // 空实现 IResolveContext（BusinessThread 构造依赖，本组用例不触达）
     class BaselineResolveContext final : public DAS::Core::IPC::IResolveContext

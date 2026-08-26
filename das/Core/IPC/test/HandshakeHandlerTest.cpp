@@ -31,6 +31,8 @@
 
 #include <boost/asio/use_future.hpp>
 
+#include "TestTransportResolvers.h"
+
 using namespace DAS;
 using namespace DAS::Core::IPC;
 using namespace DAS::Core::IPC::Host;
@@ -39,22 +41,6 @@ namespace
 {
     constexpr uint16_t LOCAL_SESSION_ID = 1;
     constexpr uint16_t REMOTE_SESSION_ID = 2;
-
-    // main 语义解析体（两级查表）：FindManagedHostConnection 命中取
-    // host->GetTransport()，否则 FindHostLocalTransport——本文件 run loop
-    // 构造点模拟 main 角色（发送解析的显式角色声明）
-    TransportLookupResult ResolveTransportMainSemantic(
-        ConnectionManager& connection_manager,
-        uint16_t           target_session_id)
-    {
-        const DasPtr<IHostConnection> host =
-            connection_manager.FindManagedHostConnection(target_session_id);
-        if (host)
-        {
-            return host->GetTransport();
-        }
-        return connection_manager.FindHostLocalTransport(target_session_id);
-    }
 
     struct ConnectedAnyTransportPair
     {

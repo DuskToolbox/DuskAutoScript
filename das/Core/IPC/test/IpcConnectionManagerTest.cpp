@@ -24,6 +24,7 @@
 #include <boost/asio/io_context.hpp>
 
 #include "OutboundFrameProbe.h"
+#include "TestTransportResolvers.h"
 
 using Das::DasPtr;
 using DAS::Core::IPC::AnyTransport;
@@ -553,22 +554,6 @@ namespace
     constexpr size_t HEARTBEAT_BUS_ADD_REF_FRAME_SIZE =
         sizeof(DAS::Core::IPC::IPCMessageHeader)
         + sizeof(DAS::Core::IPC::ObjectId);
-
-    // main 语义解析体（两级查表）：FindManagedHostConnection 命中取
-    // host->GetTransport()，否则 FindHostLocalTransport——本文件 run loop
-    // 构造点模拟 main 角色（发送解析的显式角色声明）
-    DAS::Core::IPC::TransportLookupResult ResolveTransportMainSemantic(
-        DAS::Core::IPC::ConnectionManager& connection_manager,
-        uint16_t                           target_session_id)
-    {
-        const DAS::DasPtr<DAS::Core::IPC::IHostConnection> host =
-            connection_manager.FindManagedHostConnection(target_session_id);
-        if (host)
-        {
-            return host->GetTransport();
-        }
-        return connection_manager.FindHostLocalTransport(target_session_id);
-    }
 } // namespace
 
 // 心跳班车装置基类：真实 IpcRunLoop（其 ConnectionManager 在装配期被注入

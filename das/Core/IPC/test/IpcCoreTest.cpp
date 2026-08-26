@@ -43,6 +43,8 @@
 #include <type_traits>
 #include <unordered_map>
 
+#include "TestTransportResolvers.h"
+
 namespace Das::IPC::Test
 {
 
@@ -350,15 +352,8 @@ namespace Das::IPC::Test
             [&run_loop](uint16_t target_session_id)
                 -> Das::Core::IPC::TransportLookupResult
             {
-                auto& connection_manager = run_loop.GetConnectionManager();
-                const DAS::DasPtr<Das::Core::IPC::IHostConnection> host =
-                    connection_manager.FindManagedHostConnection(
-                        target_session_id);
-                if (host)
-                {
-                    return host->GetTransport();
-                }
-                return connection_manager.FindHostLocalTransport(
+                return ResolveTransportMainSemantic(
+                    run_loop.GetConnectionManager(),
                     target_session_id);
             });
         const DAS::DasPtr<Das::Core::IPC::InternalCallbackHandler>

@@ -29,6 +29,7 @@
 
 #include "MockDasObject.h"
 #include "OutboundFrameProbe.h"
+#include "TestTransportResolvers.h"
 using DAS::Core::IPC::AnyTransport;
 using DAS::Core::IPC::CallKey;
 using DAS::Core::IPC::IHostConnection;
@@ -184,22 +185,6 @@ namespace
         // magic/version 未动，Deserialize 必然成功；失败会抛出并被测试捕获
         return ValidatedIPCMessageHeader::Deserialize(&raw, sizeof(raw))
             .value();
-    }
-
-    // main 语义解析体（两级查表）：FindManagedHostConnection 命中取
-    // host->GetTransport()，否则 FindHostLocalTransport——本文件 run loop
-    // 构造点模拟 main 角色（发送解析的显式角色声明）
-    DAS::Core::IPC::TransportLookupResult ResolveTransportMainSemantic(
-        DAS::Core::IPC::ConnectionManager& connection_manager,
-        uint16_t                           target_session_id)
-    {
-        const DAS::DasPtr<IHostConnection> host =
-            connection_manager.FindManagedHostConnection(target_session_id);
-        if (host)
-        {
-            return host->GetTransport();
-        }
-        return connection_manager.FindHostLocalTransport(target_session_id);
     }
 } // namespace
 

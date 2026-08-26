@@ -38,6 +38,7 @@
 
 #include "MockDasObject.h"
 #include "OutboundFrameProbe.h"
+#include "TestTransportResolvers.h"
 
 using namespace DAS;
 using namespace DAS::Core::IPC;
@@ -221,22 +222,6 @@ namespace
     constexpr uint16_t UPSTREAM_FALLBACK_MAIN_SESSION_ID = 1;
     constexpr uint16_t UPSTREAM_FALLBACK_UNKNOWN_TARGET_SESSION_ID = 42;
     constexpr uint32_t UPSTREAM_FALLBACK_INTERFACE_ID = 0x4242;
-
-    // main 语义解析体（两级查表）：FindManagedHostConnection 命中取
-    // host->GetTransport()，否则 FindHostLocalTransport——本文件全部
-    // main 角色构造点共用（各构造点 lambda 自行捕获 run loop 引用）
-    TransportLookupResult ResolveTransportMainSemantic(
-        ConnectionManager& connection_manager,
-        uint16_t           target_session_id)
-    {
-        const DasPtr<IHostConnection> host =
-            connection_manager.FindManagedHostConnection(target_session_id);
-        if (host)
-        {
-            return host->GetTransport();
-        }
-        return connection_manager.FindHostLocalTransport(target_session_id);
-    }
 } // namespace
 
 TEST(DispatchToHandlerRoutingTest, ControlPlaneRemoteRefEventStaysOnIoDomain)
