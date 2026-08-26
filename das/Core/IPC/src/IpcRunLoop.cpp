@@ -9,6 +9,7 @@
 #include <das/Core/IPC/ConnectionManager.h>
 #include <das/Core/IPC/Handshake.h>
 #include <das/Core/IPC/HostLauncher.h>
+#include <das/Core/IPC/HttpIpcTransport.h>
 #include <das/Core/IPC/IHostConnection.h>
 #include <das/Core/IPC/IMessageHandler.h>
 #include <das/Core/IPC/InternalCallbackHandler.h>
@@ -1780,10 +1781,15 @@ boost::asio::awaitable<void> IpcRunLoop::WriteFramesCoalesced(
             co_return;
         }
 
+        // Http 扩展段拼装的骑手预算：每骑手整帧两段（header+body）+
+        // 宿主 body 一段，段总数不超过 Http SendScatter 的段数上限
+        const size_t max_carried_riders =
+            (HttpIpcTransport::MAX_SCATTER_SEGMENTS - 1) / 2;
+
         size_t batch_begin = 0;
         while (batch_begin < owned_frames.size())
         {
-            // 切断扫描：[batch_begin, batch_end) 为一个连写批。特殊帧
+            // 切断扫描：[batch_begin, batch_end) 为一个合写批。特殊帧
             // 独立成批（独走 SendCoroutine）；piggyback 关闭时不累积
             // （全部逐帧出——off 必须仍走 FIFO 只是逐帧发，禁止旁路
             // 直发重新引入双写者）
@@ -1805,6 +1811,13 @@ boost::asio::awaitable<void> IpcRunLoop::WriteFramesCoalesced(
                         sizeof(IPCMessageHeader) + candidate.body.size();
                     if (batch_end - batch_begin
                         >= OUTBOUND_COALESCE_FRAME_LIMIT)
+                    {
+                        break;
+                    }
+                    // Http 骑手预算止批：溢出部分由外层 while 同轮下一批
+                    // 继续拼装（批批有序，不跨轮滞留）
+                    if (!transport.CanBatchFrames()
+                        && batch_end - batch_begin >= max_carried_riders + 1)
                     {
                         break;
                     }
@@ -1867,11 +1880,92 @@ boost::asio::awaitable<void> IpcRunLoop::WriteFramesCoalesced(
                     }
                 }
             }
+            else if (batch_frame_count > 1)
+            {
+                // Http 扩展段拼装（一条 WS 消息 = 一个 IPC 帧）：末帧为
+                // 宿主、其余帧按序内嵌扩展段——外层 header 改写置
+                // RESERVED_AS_SIZE、reserved=段总字节、body_size 增段总长
+                // （Response 帧保留 error_code 字段语义），段序列 = 骑手
+                // 整帧在前（每帧 header+body 两段）+ 宿主 body 段收尾。
+                // 接收侧 RouteIncomingMessage 剥离时内嵌帧先于宿主递归
+                // 派发，与入队序严格对应；Http SendScatter 入口断言外层
+                // header 已置位（本分支即其唯一合法喂入方）
+                const OutboundFrame& host_frame = owned_frames[batch_end - 1];
+                size_t               section_size = 0;
+                for (size_t index = batch_begin; index + 1 < batch_end; ++index)
+                {
+                    const OutboundFrame& rider = owned_frames[index];
+                    section_size +=
+                        sizeof(IPCMessageHeader) + rider.body.size();
+                }
+
+                const IPCMessageHeader  raw = host_frame.header.Raw();
+                IPCMessageHeaderBuilder outer_builder;
+                outer_builder
+                    .SetMessageType(static_cast<MessageType>(raw.message_type))
+                    .SetHeaderFlags(raw.header_flags)
+                    .SetInterfaceId(raw.interface_id)
+                    .SetCallId(raw.call_id)
+                    .SetSourceSessionId(raw.source_session_id)
+                    .SetTargetSessionId(raw.target_session_id)
+                    .SetFlags(
+                        static_cast<uint16_t>(
+                            raw.flags | MessageFlags::RESERVED_AS_SIZE))
+                    .SetBodySize(
+                        static_cast<uint32_t>(raw.body_size + section_size))
+                    .SetReserved(static_cast<uint32_t>(section_size));
+                if (raw.message_type
+                    == static_cast<uint8_t>(MessageType::Response))
+                {
+                    // 错误响应的 error_code 不能在改写中丢失
+                    outer_builder.SetErrorCode(raw.error_code);
+                }
+                const ValidatedIPCMessageHeader outer_header =
+                    outer_builder.Build();
+
+                std::vector<SendSegment> segments;
+                segments.reserve(2 * (batch_frame_count - 1) + 1);
+                for (size_t index = batch_begin; index + 1 < batch_end; ++index)
+                {
+                    const OutboundFrame& rider = owned_frames[index];
+                    segments.push_back(
+                        SendSegment{
+                            reinterpret_cast<const uint8_t*>(
+                                static_cast<const IPCMessageHeader*>(
+                                    rider.header)),
+                            sizeof(IPCMessageHeader)});
+                    segments.push_back(
+                        SendSegment{rider.body.data(), rider.body.size()});
+                }
+                segments.push_back(
+                    SendSegment{
+                        host_frame.body.data(),
+                        host_frame.body.size()});
+
+                const DasResult send_result = co_await transport.SendScatter(
+                    outer_header,
+                    std::move(segments));
+                if (send_result == DAS_S_OK)
+                {
+                    outbound_physical_writes_.fetch_add(
+                        1,
+                        std::memory_order_relaxed);
+                    outbound_logical_frames_.fetch_add(
+                        batch_frame_count,
+                        std::memory_order_relaxed);
+                }
+                else
+                {
+                    for (size_t index = batch_begin; index < batch_end; ++index)
+                    {
+                        fail_frame(owned_frames[index], send_result);
+                    }
+                }
+            }
             else
             {
-                // 逐帧 SendCoroutine：单帧批、piggyback off、Http
-                // （CanBatchFrames 为假——扩展段拼装分支后续迁入）与
-                // 特殊帧独走的共同路径
+                // 逐帧 SendCoroutine：单帧批、piggyback off 与特殊帧独走
+                // 的共同路径
                 for (size_t index = batch_begin; index < batch_end; ++index)
                 {
                     OutboundFrame&  frame = owned_frames[index];

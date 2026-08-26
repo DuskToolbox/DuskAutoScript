@@ -947,11 +947,14 @@ private:
     /// 注册 pending_calls_（消除响应早于注册的竞态）。
     boost::asio::awaitable<void> DrainOutboundCoroutine(uint16_t session_id);
 
-    /// @brief drain 写路径：切断扫描 + pipe D-20 连写 / Http 逐帧退化
+    /// @brief drain 写路径：切断扫描 + pipe D-20 连写 / Http 扩展段拼装
     ///
     /// 特殊帧（转发/bit1 在途/SHM/本地大帧）独走 SendCoroutine 前后各自
     /// 成批；CanBatchFrames 为真且批总长低于阈值时一次 SendScatter 连写；
-    /// piggyback 关闭时不合写逐帧发（仍走 FIFO，禁止旁路直发）。
+    /// CanBatchFrames 为假（Http/WS——一条消息一帧）时批内末帧为宿主、
+    /// 其余帧内嵌其扩展段一次 SendScatter 拼装（骑手预算
+    /// (MAX_SCATTER_SEGMENTS-1)/2，溢出同轮多批）；piggyback 关闭时不
+    /// 合写逐帧发（仍走 FIFO，禁止旁路直发）。
     boost::asio::awaitable<void> WriteFramesCoalesced(
         uint16_t                     session_id,
         std::vector<OutboundFrame>&& frames);

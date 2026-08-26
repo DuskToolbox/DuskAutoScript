@@ -219,17 +219,21 @@ namespace
         std::optional<boost::process::v2::process> process_;
     };
 
-    /// 每次调用经 HTTP host 工厂现取一条远端字符串的转发服务。
+    /// 每次调用经 HTTP host 工厂现建一个远端组件并读其运行时类名的
+    /// 转发服务。
     ///
-    /// 转发发生在主进程 BusinessThread（reverse IPC 处理协程内）：每次
-    /// GetRuntimeClassName 的出参在主进程侧新鲜物化一个瞬态远端代理
-    /// （[ADD_REF] 入队不触发），随后该代理上的调用帧与 [RELEASE] 构成
-    /// WS 出站路径的稳态多帧批——正是 Http 扩展段拼装分支的真实压测面
+    /// 转发发生在主进程 BusinessThread（reverse IPC 处理协程内）：
+    /// CreateInstance 的出参是远端引用（区别于按值编组的字符串出参），
+    /// 在主进程侧新鲜物化一个瞬态远端组件代理（[ADD_REF] 入队不触发）；
+    /// 上一代视图在下一代调用开头拆除（[RELEASE] 入队不触发、与紧随的
+    /// CreateInstance Request 同批）——WS 出站路径由此获得稳态多帧批，
+    /// 正是 Http 扩展段拼装分支的真实压测面
     class ForwardingReadOnlyString final : public IDasReadOnlyString
     {
     public:
         explicit ForwardingReadOnlyString(
-            DAS::DasPtr<Das::PluginInterface::IDasComponentFactory> target_factory)
+            DAS::DasPtr<Das::PluginInterface::IDasComponentFactory>
+                target_factory)
             : target_factory_(std::move(target_factory))
         {
         }
@@ -240,22 +244,16 @@ namespace
             {
                 return DAS_E_INVALID_POINTER;
             }
-            if (!target_factory_)
-            {
-                return DAS_E_INVALID_POINTER;
-            }
 
-            DAS::DasPtr<IDasReadOnlyString> remote_string;
-            const DasResult                 fetch_result =
-                target_factory_->GetRuntimeClassName(remote_string.Put());
-            if (DAS::IsFailed(fetch_result) || !remote_string)
+            DAS::DasPtr<IDasReadOnlyString> name;
+            const DasResult fetch_result = FetchFreshComponentClassName(name);
+            if (DAS::IsFailed(fetch_result))
             {
-                return DAS::IsFailed(fetch_result) ? fetch_result
-                                                   : DAS_E_NO_INTERFACE;
+                return fetch_result;
             }
 
             const char*     remote_text = nullptr;
-            const DasResult result = remote_string->GetUtf8(&remote_text);
+            const DasResult result = name->GetUtf8(&remote_text);
             if (DAS::IsFailed(result))
             {
                 return result;
@@ -273,24 +271,17 @@ namespace
             {
                 return DAS_E_INVALID_POINTER;
             }
-            if (!target_factory_)
-            {
-                return DAS_E_INVALID_POINTER;
-            }
 
-            DAS::DasPtr<IDasReadOnlyString> remote_string;
-            const DasResult                 fetch_result =
-                target_factory_->GetRuntimeClassName(remote_string.Put());
-            if (DAS::IsFailed(fetch_result) || !remote_string)
+            DAS::DasPtr<IDasReadOnlyString> name;
+            const DasResult fetch_result = FetchFreshComponentClassName(name);
+            if (DAS::IsFailed(fetch_result))
             {
-                return DAS::IsFailed(fetch_result) ? fetch_result
-                                                   : DAS_E_NO_INTERFACE;
+                return fetch_result;
             }
 
             const char16_t* remote_text = nullptr;
             size_t          remote_size = 0;
-            const DasResult result =
-                remote_string->GetUtf16(&remote_text, &remote_size);
+            const DasResult result = name->GetUtf16(&remote_text, &remote_size);
             if (DAS::IsFailed(result))
             {
                 return result;
@@ -319,19 +310,12 @@ namespace
 
         DasBool DAS_STD_CALL Equals(IDasReadOnlyString* other) noexcept override
         {
-            if (!target_factory_)
-            {
-                return other == nullptr;
-            }
-
-            DAS::DasPtr<IDasReadOnlyString> remote_string;
-            if (DAS::IsFailed(
-                    target_factory_->GetRuntimeClassName(remote_string.Put()))
-                || !remote_string)
+            DAS::DasPtr<IDasReadOnlyString> name;
+            if (DAS::IsFailed(FetchFreshComponentClassName(name)) || !name)
             {
                 return false;
             }
-            return remote_string->Equals(other);
+            return name->Equals(other);
         }
 
         DasResult DAS_STD_CALL
@@ -367,10 +351,52 @@ namespace
         }
 
     private:
+        /// 现建远端组件并取其运行时类名（类名字符串按值编组、本地读取）
+        DasResult FetchFreshComponentClassName(
+            DAS::DasPtr<IDasReadOnlyString>& out_name)
+        {
+            if (!target_factory_)
+            {
+                return DAS_E_INVALID_POINTER;
+            }
+
+            // 上一代组件视图先拆：[RELEASE] 在 BT 域入队不触发，紧随的
+            // CreateInstance Request 触发 drain 时并入同一扩展段拼装批
+            // （嵌套 pump 的周期末出清插不进这两步之间）
+            static_cast<void>(held_remote_component_.Reset());
+
+            IDasComponent*  component_raw = nullptr;
+            const DasResult create_result = target_factory_->CreateInstance(
+                DasIidOf<IDasComponent>(),
+                &component_raw);
+            if (DAS::IsFailed(create_result) || !component_raw)
+            {
+                return DAS::IsFailed(create_result) ? create_result
+                                                    : DAS_E_NO_INTERFACE;
+            }
+            DAS::DasPtr<IDasComponent> fresh_component(component_raw);
+
+            const DasResult name_result =
+                fresh_component->GetRuntimeClassName(out_name.Put());
+            if (DAS::IsFailed(name_result) || !out_name)
+            {
+                return DAS::IsFailed(name_result) ? name_result
+                                                  : DAS_E_NO_INTERFACE;
+            }
+
+            // 组件视图持有到下一代调用再拆（换代即死亡——本转发服务的
+            // 瞬态视图生命周期形态）
+            held_remote_component_ = std::move(fresh_component);
+            return DAS_S_OK;
+        }
+
         DAS::DasPtr<Das::PluginInterface::IDasComponentFactory> target_factory_;
-        std::string                                        utf8_cache_;
-        std::u16string                                     utf16_cache_;
-        std::atomic<uint32_t>                              ref_count_{1};
+
+        /// 上一代远端组件视图（换代即拆——每次调用现建新组件）
+        DAS::DasPtr<IDasComponent> held_remote_component_;
+        std::string                utf8_cache_;
+        std::u16string             utf16_cache_;
+        std::atomic<uint32_t>      ref_count_{1};
     };
 } // namespace
 
@@ -1982,7 +2008,7 @@ TEST_F(IpcPerformanceTest, MixedTransport_HttpAndIpcHostToHostPerformance)
     PrintBenchmarkResult(
         "MixedTransport_HttpAndIpcHostToHostPerformance",
         num_iterations,
-        "queryMainProcessString dispatch, per-call fresh HTTP remote string",
+        "queryMainProcessString dispatch, per-call fresh HTTP remote component",
         mean,
         p50,
         p95,
