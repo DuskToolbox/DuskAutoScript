@@ -421,11 +421,14 @@ public:
     /**
      * @brief 投递发送任务到 IO 线程（指定 connected-host owner）
      *
-     * 协程捕获 IHostConnection owner guard，并在协程内部临时取得
-     * AnyTransport 引用后发送，避免裸 transport 引用逃逸到 detached
-     * coroutine。
+     * connection 参数为路由提示（非拥有）：FIFO 化后 drain 统一经
+     * transport_resolver_ 按 target session 解析裁决，与显式持
+     * connection 的路由结果一致。transport owner 的保活由 drain 侧
+     * 独立承担——WriteFramesCoalesced 解析到 managed host 时取
+     * FindManagedHostConnection 返回的 DasPtr 持有至本批写出完成，
+     * 其他线程并发注销（心跳超时/显式 Unregister）期间写出不悬空。
      *
-     * @param connection connected-host owner guard
+     * @param connection connected-host owner guard（仅作路由提示）
      * @param header 消息头
      * @param body 消息体（会被 move）
      * @return DasResult 投递结果

@@ -1336,8 +1336,17 @@ boost::asio::awaitable<void> IpcRunLoop::WriteFramesCoalesced(
         NotifySendFailure(frame.header, error);
     };
 
+    // owner guard：managed host 命中时取其 DasPtr 存入协程帧，保活
+    // transport 的真实 owner（IHostConnection）跨本批全部 co_await——
+    // 心跳超时/注销在其他线程 erase ConnectionManager 表条目即可释放
+    // 最后一个引用（Http 传输 impl_ 为 unique_ptr，无 Win32 路径
+    // shared_ptr<State> 自保护），悬挂窗口内恢复执行即 use-after-free。
+    // 非托管目标（host 上行 host-local 表/测试注入）guard 为空，transport
+    // 由 ConnectionManager 表值直接持有，无此并发释放面
+    const DasPtr<IHostConnection> host_owner_guard =
+        connection_manager_->FindManagedHostConnection(session_id);
     // 解析单点（统一走 resolver 裁决）：drain 持非拥有 AnyTransportRef，
-    // 寿命由 ConnectionManager 表条目 + 接收协程持有的 host DasPtr 覆盖
+    // 托管目标寿命由上方 owner guard 覆盖
     const auto [lookup_result, maybe_transport] =
         transport_resolver_(session_id);
     if (DAS::IsFailed(lookup_result) || !maybe_transport)
