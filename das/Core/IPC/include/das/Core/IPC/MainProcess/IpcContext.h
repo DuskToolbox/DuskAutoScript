@@ -68,6 +68,10 @@ namespace Core
 
                 ProxyFactory& GetProxyFactory() DAS_LIFETIMEBOUND;
 
+                /// 主进程 run loop 访问（测试观测 seam：出站物理写/逻辑帧
+                /// 计数、drain 合写开关），生命周期绑定到 this
+                IpcRunLoop& GetRunLoop() DAS_LIFETIMEBOUND { return runloop_; }
+
                 DasResult CreateHostLauncher(
                     IHostLauncher** pp_out_launcher) override;
 

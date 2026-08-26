@@ -219,12 +219,18 @@ namespace
         std::optional<boost::process::v2::process> process_;
     };
 
+    /// 每次调用经 HTTP host 工厂现取一条远端字符串的转发服务。
+    ///
+    /// 转发发生在主进程 BusinessThread（reverse IPC 处理协程内）：每次
+    /// GetRuntimeClassName 的出参在主进程侧新鲜物化一个瞬态远端代理
+    /// （[ADD_REF] 入队不触发），随后该代理上的调用帧与 [RELEASE] 构成
+    /// WS 出站路径的稳态多帧批——正是 Http 扩展段拼装分支的真实压测面
     class ForwardingReadOnlyString final : public IDasReadOnlyString
     {
     public:
         explicit ForwardingReadOnlyString(
-            DAS::DasPtr<IDasReadOnlyString> target)
-            : target_(std::move(target))
+            DAS::DasPtr<Das::PluginInterface::IDasComponentFactory> target_factory)
+            : target_factory_(std::move(target_factory))
         {
         }
 
@@ -234,13 +240,22 @@ namespace
             {
                 return DAS_E_INVALID_POINTER;
             }
-            if (!target_)
+            if (!target_factory_)
             {
                 return DAS_E_INVALID_POINTER;
             }
 
+            DAS::DasPtr<IDasReadOnlyString> remote_string;
+            const DasResult                 fetch_result =
+                target_factory_->GetRuntimeClassName(remote_string.Put());
+            if (DAS::IsFailed(fetch_result) || !remote_string)
+            {
+                return DAS::IsFailed(fetch_result) ? fetch_result
+                                                   : DAS_E_NO_INTERFACE;
+            }
+
             const char*     remote_text = nullptr;
-            const DasResult result = target_->GetUtf8(&remote_text);
+            const DasResult result = remote_string->GetUtf8(&remote_text);
             if (DAS::IsFailed(result))
             {
                 return result;
@@ -258,15 +273,24 @@ namespace
             {
                 return DAS_E_INVALID_POINTER;
             }
-            if (!target_)
+            if (!target_factory_)
             {
                 return DAS_E_INVALID_POINTER;
+            }
+
+            DAS::DasPtr<IDasReadOnlyString> remote_string;
+            const DasResult                 fetch_result =
+                target_factory_->GetRuntimeClassName(remote_string.Put());
+            if (DAS::IsFailed(fetch_result) || !remote_string)
+            {
+                return DAS::IsFailed(fetch_result) ? fetch_result
+                                                   : DAS_E_NO_INTERFACE;
             }
 
             const char16_t* remote_text = nullptr;
             size_t          remote_size = 0;
             const DasResult result =
-                target_->GetUtf16(&remote_text, &remote_size);
+                remote_string->GetUtf16(&remote_text, &remote_size);
             if (DAS::IsFailed(result))
             {
                 return result;
@@ -295,11 +319,19 @@ namespace
 
         DasBool DAS_STD_CALL Equals(IDasReadOnlyString* other) noexcept override
         {
-            if (!target_)
+            if (!target_factory_)
             {
                 return other == nullptr;
             }
-            return target_->Equals(other);
+
+            DAS::DasPtr<IDasReadOnlyString> remote_string;
+            if (DAS::IsFailed(
+                    target_factory_->GetRuntimeClassName(remote_string.Put()))
+                || !remote_string)
+            {
+                return false;
+            }
+            return remote_string->Equals(other);
         }
 
         DasResult DAS_STD_CALL
@@ -335,10 +367,10 @@ namespace
         }
 
     private:
-        DAS::DasPtr<IDasReadOnlyString> target_;
-        std::string                     utf8_cache_;
-        std::u16string                  utf16_cache_;
-        std::atomic<uint32_t>           ref_count_{1};
+        DAS::DasPtr<Das::PluginInterface::IDasComponentFactory> target_factory_;
+        std::string                                        utf8_cache_;
+        std::u16string                                     utf16_cache_;
+        std::atomic<uint32_t>                              ref_count_{1};
     };
 } // namespace
 
@@ -388,6 +420,9 @@ protected:
                     enable_heartbeat,
                     http_config),
                 DAS::Core::IPC::MainProcess::DestroyIpcContext);
+            mixed_transport_concrete_context_ =
+                static_cast<DAS::Core::IPC::MainProcess::IpcContext*>(
+                    ctx_.get());
         }
         else
         {
@@ -872,6 +907,11 @@ protected:
     std::shared_ptr<DAS::Core::IPC::MainProcess::IIpcContext> ctx_;
     std::thread                                               run_thread_;
     uint16_t                                                  http_port_ = 0;
+
+    /// MixedTransport 用例的混凝土上下文指针（非持有，指向 ctx_ 内对象）：
+    /// 经 GetRunLoop() 读出站计数 seam 与合写开关做 Http 合写形态断言
+    DAS::Core::IPC::MainProcess::IpcContext* mixed_transport_concrete_context_ =
+        nullptr;
 };
 
 // ====== 辅助函数 ======
@@ -1814,12 +1854,6 @@ TEST_F(IpcPerformanceTest, MixedTransport_HttpAndIpcHostToHostPerformance)
         GetComponentFactoryFromPackage(http_package.Get(), /*feature_index=*/0);
     ASSERT_NE(http_factory.Get(), nullptr);
 
-    DAS::DasPtr<IDasReadOnlyString> http_remote_name;
-    ASSERT_EQ(
-        http_factory->GetRuntimeClassName(http_remote_name.Put()),
-        DAS_S_OK);
-    ASSERT_NE(http_remote_name.Get(), nullptr);
-
     auto ipc_package = LoadPluginPackageForHost(
         ipc_launcher.Get(),
         ipc_plugin_path,
@@ -1846,7 +1880,7 @@ TEST_F(IpcPerformanceTest, MixedTransport_HttpAndIpcHostToHostPerformance)
     {
         const DAS::DasPtr<IDasReadOnlyString> forwarding_service =
             DAS::DasPtr<IDasReadOnlyString>::Attach(
-                new ForwardingReadOnlyString(http_remote_name));
+                new ForwardingReadOnlyString(http_factory));
 
         DasResult call_result = ctx_->RegisterService(
             forwarding_service.Get(),
@@ -1888,6 +1922,39 @@ TEST_F(IpcPerformanceTest, MixedTransport_HttpAndIpcHostToHostPerformance)
         ASSERT_EQ(invoke_mixed_dispatch(nullptr), DAS_S_OK);
     }
 
+    // ====== Http 合写形态断言取样准备（P-10）======
+    // WS 一条消息一帧：合写只能走扩展段拼装——末帧宿主、其余帧内嵌其
+    // body 前缀，一条 WS 消息写出。断言经主进程 run loop 的出站计数
+    // seam 以「同迭代数 开/关 两窗口」对比（关 = drain 不合写逐帧出）。
+    // 拼装形态若被对端拒收（接收侧扩展段校验失败整帧丢弃），宿主调用
+    // 会超时/失败——全部调用成功即证明宿主帧携扩展段的形态被 HTTP host
+    // 正确剥离递归派发
+    auto& mixed_run_loop = mixed_transport_concrete_context_->GetRunLoop();
+
+    // 出站计数稳定读：drain 物理写与 BT 周期末出清异步完成，轮询至
+    // 两轮读数相等再取样（消除断言竞态）
+    const auto settled_outbound_counts = [&mixed_run_loop]()
+    {
+        auto previous = std::pair{
+            mixed_run_loop.GetOutboundLogicalFrameCount(),
+            mixed_run_loop.GetOutboundPhysicalWriteCount()};
+        for (int attempt = 0; attempt < 100; ++attempt)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            const auto current = std::pair{
+                mixed_run_loop.GetOutboundLogicalFrameCount(),
+                mixed_run_loop.GetOutboundPhysicalWriteCount()};
+            if (current == previous)
+            {
+                break;
+            }
+            previous = current;
+        }
+        return previous;
+    };
+
+    const auto [on_frames_begin, on_writes_begin] = settled_outbound_counts();
+
     const SuppressLogDuringBenchmark log_guard;
 
     std::vector<double> latencies;
@@ -1915,7 +1982,7 @@ TEST_F(IpcPerformanceTest, MixedTransport_HttpAndIpcHostToHostPerformance)
     PrintBenchmarkResult(
         "MixedTransport_HttpAndIpcHostToHostPerformance",
         num_iterations,
-        "queryMainProcessString dispatch, refreshed forwarding service",
+        "queryMainProcessString dispatch, per-call fresh HTTP remote string",
         mean,
         p50,
         p95,
@@ -1923,6 +1990,40 @@ TEST_F(IpcPerformanceTest, MixedTransport_HttpAndIpcHostToHostPerformance)
         min_val,
         max_val,
         throughput);
+
+    // ====== Http 合写形态断言（P-10）======
+    const auto [on_frames_end, on_writes_end] = settled_outbound_counts();
+    const auto on_window_frames = on_frames_end - on_frames_begin;
+    const auto on_window_writes = on_writes_end - on_writes_begin;
+
+    // 关态窗口：等迭代数复跑（off = 帧仍全部经 FIFO 入队，drain 逐帧发
+    // ——逐帧独立形态是可对照的物理写基线）
+    mixed_run_loop.SetPiggybackEnabled(false);
+    for (size_t i = 0; i < warmup; ++i)
+    {
+        ASSERT_EQ(invoke_mixed_dispatch(nullptr), DAS_S_OK);
+    }
+    const auto [off_frames_begin, off_writes_begin] = settled_outbound_counts();
+    for (size_t i = 0; i < num_iterations; ++i)
+    {
+        ASSERT_EQ(invoke_mixed_dispatch(nullptr), DAS_S_OK);
+    }
+    const auto [off_frames_end, off_writes_end] = settled_outbound_counts();
+    const auto off_window_frames = off_frames_end - off_frames_begin;
+    const auto off_window_writes = off_writes_end - off_writes_begin;
+    mixed_run_loop.SetPiggybackEnabled(true);
+
+    // 帧数守恒：两态逻辑帧完全一致（合写只聚合物理写，不增删逻辑帧）
+    ASSERT_EQ(on_window_frames, off_window_frames);
+    // 关态逐帧基线自证：写数==帧数
+    ASSERT_EQ(off_window_writes, off_window_frames);
+    // 物理写收敛：开态严格少写——Http 拼装把 [ADD_REF] 骑手并入宿主
+    // Request 的一条 WS 消息
+    ASSERT_LT(on_window_writes, on_window_frames);
+    // 每次调用至少省一次物理写（REQ-C 在 Http 路径上的收敛下界）
+    ASSERT_GE(
+        off_window_writes - on_window_writes,
+        static_cast<std::uint64_t>(num_iterations));
 
     http_host.Stop();
     ipc_launcher->Stop();
