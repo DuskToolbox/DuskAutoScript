@@ -64,27 +64,11 @@ public:
 
             if (entry_removed && !is_local_entry)
             {
-                // 条目移除（最后一个视图归零）时发送唯一的 RELEASE
-                std::vector<uint8_t> release_body;
-                release_body.insert(
-                    release_body.end(),
-                    reinterpret_cast<const uint8_t*>(&oid),
-                    reinterpret_cast<const uint8_t*>(&oid) + sizeof(oid));
-
-                auto release_header =
-                    IPCMessageHeaderBuilder()
-                        .SetMessageType(MessageType::Event)
-                        .SetHeaderFlags(HeaderFlags::CONTROL_PLANE)
-                        .SetInterfaceId(
-                            static_cast<uint32_t>(
-                                IpcCommandType::RemoteRelease))
-                        .SetSourceSessionId(GetSourceSessionId())
-                        .SetTargetSessionId(oid.session_id)
-                        .SetBodySize(static_cast<uint32_t>(release_body.size()))
-                        .Build();
-
-                // PostSend is fire-and-forget, does not check result
-                GetRunLoop().PostSend(release_header, std::move(release_body));
+                // 条目移除（最后一个视图归零）时发送唯一的 RELEASE：经
+                // 出站 FIFO 入队（fire-and-forget 不变，帧构造单一事实源
+                // 在 IpcRunLoop::BuildReleaseFrame；owner 侧条目拆除延迟
+                // 上界 = 一个 dispatch 周期）
+                GetRunLoop().EnqueueReleaseFrame(oid);
             }
         }
     }

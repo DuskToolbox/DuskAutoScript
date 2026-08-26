@@ -128,6 +128,33 @@ struct PendingAddRefSessionState
     size_t in_flight_sends = 0;
 };
 
+/// 出站 FIFO 队列元素（PendingAddRefFrame 同形泛化）：完整一帧 +
+/// 仅业务 Request 帧需要的可选完成回调与超时 deadline 携带位
+struct OutboundFrame
+{
+    ValidatedIPCMessageHeader             header;
+    std::vector<uint8_t>                  body;
+    PendingCallCompletion                 on_complete = nullptr;
+    std::chrono::steady_clock::time_point deadline =
+        std::chrono::steady_clock::time_point::max();
+
+    /// 已由 drain 注册进 pending_calls_ 的标记（写失败处置据此选
+    /// CompletePendingCall 而非 NotifySendFailure）
+    bool pending_call_registered = false;
+};
+
+/// 按 target session 的出站 FIFO 状态：帧队列 + drain 单飞双标志
+///
+/// drain_active/drain_retrigger 的读写全部在 fifo_mutex_ 内：单飞标志
+/// 结构性消灭并发双 drain 抢队列（双写者帧序断裂），retrigger 覆盖
+/// 「drain 在跑期间又有触发」的竞速窗口（drain 收尾时复查，防丢醒）。
+struct OutboundSessionQueue
+{
+    std::deque<OutboundFrame> frames; ///< FIFO：入队序 = wire 序
+    bool drain_active = false;        ///< 该 session 是否有 drain 协程在跑
+    bool drain_retrigger = false;     ///< drain 在跑期间又来了触发（防丢醒）
+};
+
 //=============================================================================
 // AwaitResponseSender — 真正的异步 IPC 响应等待 sender
 //=============================================================================
@@ -355,14 +382,14 @@ public:
     }
 
     /**
-     * @brief 设置 piggyback 搭车总闸（默认开）
+     * @brief 设置 piggyback 合写总闸（默认开）
      *
-     * 唯一闸门位于物化点分叉（GetOrCreateProxy 的 BT 支路）：关闭时一切
-     * ADD_REF 物化走 PostAddRefStandalone 当场直发（完全等价于关闭前的
-     * 独立帧行为），pending 队列恒空，下游出清机制因队列恒空自然 no-op。
-     * 测试/调试旋钮（D-21 帧数基线 A/B 对比的依赖件），不进产品配置面。
+     * 出站统一 FIFO 后的语义重定义：off = drain 不合写逐帧发（帧仍全部
+     * 经 FIFO 入队、逐帧 SendCoroutine 出——帧序不变，严禁实现成旁路
+     * 直发重新引入双写者）；on = drain 合写（pipe 多帧一次 SendScatter）。
+     * 测试/调试旋钮（帧数基线 A/B 对比的依赖件），不进产品配置面。
      *
-     * @param enabled 是否启用搭车（物化点 BT 入队候车）
+     * @param enabled 是否启用合写
      */
     void SetPiggybackEnabled(bool enabled);
 
@@ -458,6 +485,28 @@ public:
      * @param object_id 远端对象 id（target = object_id.session_id）
      */
     void EnqueueReleaseFrame(const ObjectId& object_id);
+
+    /**
+     * @brief 出清全部 session 的出站 FIFO（guard 周期末兜底）
+     *
+     * 对全部有滞留帧的 session 触发一次 drain（合写形态出清）——控制
+     * 帧滞留上界 = 一个 dispatch 周期。
+     *
+     * @return size_t 触发时全部 session 滞留的帧数
+     */
+    size_t FlushOutboundFifo();
+
+    /**
+     * @brief 清空指定 session 的出站 FIFO（断连清队）
+     *
+     * 连接断开后该 session 的出站帧不再可达，随断连清空防滞留
+     * （fire-and-forget 语义下迟到帧本就无害）。在途 drain 活跃时只清
+     * frames 不 erase 条目——drain 循环自己收尾回收。
+     *
+     * @param session_id 断连的对端 session
+     * @return size_t 清掉的帧数
+     */
+    size_t ClearOutboundFifo(uint16_t session_id);
 
     /**
      * @brief 当场构帧独立直发一条 ADD_REF（段 A 行为的单一事实源）
@@ -807,6 +856,15 @@ public:
     /// pending_add_refs_ 的互斥锁（锁序单向：proxy_cache_mutex_ → 本锁）
     mutable std::mutex addref_pending_mutex_;
 
+    /// 出站 FIFO（按 target session 键控，每 session 一条）：所有出站帧
+    /// （业务 Request/Response、ADD_REF、RELEASE、心跳班车帧）经唯一入队
+    /// 叶子 EnqueueOutboundFrame 进入本表，wire 序 == 入队序
+    std::unordered_map<uint16_t, OutboundSessionQueue> outbound_queues_;
+
+    /// outbound_queues_ 的互斥锁（锁序位置继承 addref_pending_mutex_：
+    /// 单向 proxy_cache_mutex_ → fifo_mutex_）
+    mutable std::mutex fifo_mutex_;
+
     /// host 会话断连回调（IO 线程触发；装配期经
     /// SetOnHostSessionDisconnected 设置）
     HostSessionDisconnectedCallback on_host_session_disconnected_;
@@ -862,14 +920,45 @@ private:
     ///
     /// 入队（EnqueueAddRef）与直发（PostAddRefStandalone）两出口共用的
     /// 单一事实源——字节与段 A 的物化申报完全一致。
-    PendingAddRefFrame BuildAddRefFrame(const ObjectId& object_id);
+    OutboundFrame BuildAddRefFrame(const ObjectId& object_id);
 
     /// @brief 构造一条完整 RELEASE 帧（CONTROL_PLANE Event + 132 +
     /// Source=本地 + Target=oid.session_id + body=ObjectId 8B）
     ///
     /// 镜像 BuildAddRefFrame 的单一事实源形态——字节与 DasProxyBase
     /// 析构旧内联构造完全一致。
-    PendingAddRefFrame BuildReleaseFrame(const ObjectId& object_id);
+    OutboundFrame BuildReleaseFrame(const ObjectId& object_id);
+
+    /// @brief 出站 FIFO 唯一入队叶子
+    ///
+    /// 锁内仅 move 入队，零回调零 IO 零 co_spawn（EnqueueAddRef 的叶子
+    /// 契约原样继承——proxy_cache_mutex_ 持锁区调用安全）。
+    void EnqueueOutboundFrame(uint16_t session_id, OutboundFrame&& frame);
+
+    /// @brief 触发指定 session 的 drain 协程
+    ///
+    /// 锁内只做单飞判定/翻 retrigger 标志，co_spawn 在锁外（锁内零分配
+    /// 零 post——P-9 触发判定与投递分离）。
+    void TriggerDrain(uint16_t session_id);
+
+    /// @brief drain 协程：循环取空该 session 的 FIFO 并合写（单飞）
+    ///
+    /// 取帧与清 retrigger 同锁原子（防丢醒）；带完成回调的帧在物理写前
+    /// 注册 pending_calls_（消除响应早于注册的竞态）。
+    boost::asio::awaitable<void> DrainOutboundCoroutine(uint16_t session_id);
+
+    /// @brief drain 写路径：切断扫描 + pipe D-20 连写 / Http 逐帧退化
+    ///
+    /// 特殊帧（转发/bit1 在途/SHM/本地大帧）独走 SendCoroutine 前后各自
+    /// 成批；CanBatchFrames 为真且批总长低于阈值时一次 SendScatter 连写；
+    /// piggyback 关闭时不合写逐帧发（仍走 FIFO，禁止旁路直发）。
+    boost::asio::awaitable<void> WriteFramesCoalesced(
+        uint16_t                     session_id,
+        std::vector<OutboundFrame>&& frames);
+
+    /// @brief 切断谓词：该帧是否必须独走 SendCoroutine 不进连写批
+    [[nodiscard]]
+    bool IsStandaloneOutboundFrame(const OutboundFrame& frame) const noexcept;
 
     /// @brief 双汇点共享的出站搭车 helper（D-12 v3：逻辑单点、物理双挂点）
     ///

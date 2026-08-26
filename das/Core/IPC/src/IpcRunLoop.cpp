@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <das/Core/IPC/AddRefDispatchGuard.h>
 #include <das/Core/IPC/AsyncIpcTransport.h>
+#include <das/Core/IPC/BusinessThread.h>
 #include <das/Core/IPC/Config.h>
 #include <das/Core/IPC/ConnectionManager.h>
 #include <das/Core/IPC/Handshake.h>
@@ -40,6 +41,10 @@ DAS_CORE_IPC_NS_BEGIN
 
 namespace
 {
+    /// 连写批帧数软上限（防御性裁决：极端积压下单批段向量过大——阈值
+    /// 64KB 已隐式限制单批，软上限是 polish；超限部分留下一轮循环）
+    constexpr size_t OUTBOUND_COALESCE_FRAME_LIMIT = 256;
+
     bool IsControlPlaneMessage(const ValidatedIPCMessageHeader& header) noexcept
     {
         return (header.GetHeaderFlags() & HeaderFlags::CONTROL_PLANE) != 0;
@@ -99,17 +104,25 @@ IpcRunLoop::IpcRunLoop(
     connection_manager_ =
         std::make_unique<ConnectionManager>(1); // local_id = 1 for MainProcess
 
-    // 心跳班车接线（D-12 保险带）：SendHeartbeatToAll 的每 host 载体发送点
-    // 复用 PrepareOutboundFrame 同一搭车决策与拼装（单一事实源，
-    // ConnectionManager 零拼装实现）。普通 lambda 返回 awaitable——
-    // 调用 PrepareOutboundFrame 时参数即时拷贝/move 进其协程帧，awaitable
-    // 不引用 lambda 的形参
+    // 心跳班车接线（零流量清账保险带）：SendHeartbeatToAll 的每 host 载体
+    // 发送点入队出站 FIFO 并触发 drain（零流量场景滞留上界 = 一个心跳
+    // 周期）。transport 参数保留但忽略——drain 统一经 transport_resolver_
+    // 解析；空 sender 回退直发路径在 ConnectionManager 侧不动
     connection_manager_->SetHeartbeatCarrierSender(
         [this](
             AnyTransport&                    transport,
             const ValidatedIPCMessageHeader& header,
             std::vector<uint8_t>&& body) -> boost::asio::awaitable<DasResult>
-        { return PrepareOutboundFrame(transport, header, std::move(body)); });
+        {
+            (void)transport;
+            const uint16_t target_session_id = header.GetTargetSessionId();
+            OutboundFrame  frame;
+            frame.header = header;
+            frame.body = std::move(body);
+            EnqueueOutboundFrame(target_session_id, std::move(frame));
+            TriggerDrain(target_session_id);
+            co_return DAS_S_OK;
+        });
 
     // 注册所有 IPC stub handlers（代码生成器生成的 g_stub_factory）
     DasIpcStub::g_stub_factory.RegisterAll(*this);
@@ -1135,22 +1148,17 @@ DasResult IpcRunLoop::PostSend(
         return DAS_E_IPC_NOT_INITIALIZED;
     }
 
-    // 在途登记先于协程投递（生产者线程程序序）：周期末 guard 据此豁免
-    // 该 session 的出清——本发送必经搭车 helper 查队带走 riders。总闸
-    // 关闭时不登记（helper 直通不查队；关闭态 guard 出清行为与段 A 全同）
-    if (piggyback_enabled_)
-    {
-        MarkOutboundSendInFlight(header.GetTargetSessionId());
-    }
-
-    boost::asio::co_spawn(
-        *io_context_,
-        SendToSessionCoroutine(
-            header,
-            std::move(body),
-            std::move(on_complete),
-            deadline),
-        boost::asio::detached);
+    // 业务帧入队即触发 drain（只带走已入队帧——保证无后续事件时响应
+    // 不被压到下一周期）。完成回调与 deadline 随帧携带，由 drain 在
+    // 物理写前注册 pending_calls_
+    OutboundFrame frame;
+    frame.header = header;
+    frame.body = std::move(body);
+    frame.on_complete = std::move(on_complete);
+    frame.deadline = deadline;
+    const uint16_t target_session_id = frame.header.GetTargetSessionId();
+    EnqueueOutboundFrame(target_session_id, std::move(frame));
+    TriggerDrain(target_session_id);
 
     return DAS_S_OK;
 }
@@ -1171,18 +1179,16 @@ DasResult IpcRunLoop::PostSendWithTransport(
         return DAS_E_INVALID_ARGUMENT;
     }
 
-    // 在途登记先于协程投递（生产者线程程序序）：周期末 guard 据此豁免
-    // 该 session 的出清——本发送必经搭车 helper 查队带走 riders。总闸
-    // 关闭时不登记（helper 直通不查队；关闭态 guard 出清行为与段 A 全同）
-    if (piggyback_enabled_)
-    {
-        MarkOutboundSendInFlight(header.GetTargetSessionId());
-    }
-
-    boost::asio::co_spawn(
-        *io_context_,
-        DoSendCoroutine(std::move(connection), header, std::move(body)),
-        boost::asio::detached);
+    // connection 参数弱化为路由提示（resolver 统一解析裁决）：drain 经
+    // transport_resolver_(target) 两级查表——第一条即 FindManagedHost
+    // Connection，与显式持 connection 的路由结果一致；FIFO 化后所有
+    // 出站帧共用同一 drain 写路径
+    OutboundFrame frame;
+    frame.header = header;
+    frame.body = std::move(body);
+    const uint16_t target_session_id = frame.header.GetTargetSessionId();
+    EnqueueOutboundFrame(target_session_id, std::move(frame));
+    TriggerDrain(target_session_id);
 
     return DAS_S_OK;
 }
@@ -1481,7 +1487,7 @@ boost::asio::awaitable<DasResult> IpcRunLoop::SendRidersThenHostStandalone(
         host_body.size());
 }
 
-PendingAddRefFrame IpcRunLoop::BuildAddRefFrame(const ObjectId& object_id)
+OutboundFrame IpcRunLoop::BuildAddRefFrame(const ObjectId& object_id)
 {
     std::vector<uint8_t> add_ref_body;
     add_ref_body.insert(
@@ -1504,23 +1510,32 @@ PendingAddRefFrame IpcRunLoop::BuildAddRefFrame(const ObjectId& object_id)
 
 void IpcRunLoop::EnqueueAddRef(const ObjectId& object_id)
 {
-    // 叶子操作：自带 mutex、锁内仅帧构造与入队，零回调零 IO——物化点在
-    // proxy_cache_mutex_ 持锁区内调用安全（锁序单向 proxy_cache_mutex_ →
-    // addref_pending_mutex_）
-    const std::unique_lock<std::mutex> lock(addref_pending_mutex_);
-    pending_add_refs_[object_id.session_id].frames.push_back(
-        BuildAddRefFrame(object_id));
+    // BT 物化语义：入队不触发（同周期 Response 带走——保证每调用一次
+    // 物理写；触发即独写 [ADD_REF] 会使随后的 Response 变第二写）。
+    // 叶子契约原样继承：构帧在锁外、入队自带 mutex 零回调零 IO——
+    // proxy_cache_mutex_ 持锁区内调用安全（锁序单向 proxy_cache_mutex_
+    // → fifo_mutex_）
+    OutboundFrame frame = BuildAddRefFrame(object_id);
+    EnqueueOutboundFrame(object_id.session_id, std::move(frame));
 }
 
 DasResult IpcRunLoop::PostAddRefStandalone(const ObjectId& object_id)
 {
-    // 段 A 直发行为的单一事实源：当场构帧独立 PostSend——零延迟零窗口
-    PendingAddRefFrame frame = BuildAddRefFrame(object_id);
-    // 发送失败不回滚注册（fire-and-forget，owner 侧断连清扫兜底）
-    return PostSend(frame.header, std::move(frame.body));
+    // 非 BT 物化：入队 + 立即触发——延迟等价旧直发，单一 drain 写者
+    // 取代旁路直发（禁止双写者竞态帧序）。发送失败不回滚注册
+    // （fire-and-forget，owner 侧断连清扫兜底）
+    if (!io_context_)
+    {
+        return DAS_E_IPC_NOT_INITIALIZED;
+    }
+    OutboundFrame  frame = BuildAddRefFrame(object_id);
+    const uint16_t target_session_id = frame.header.GetTargetSessionId();
+    EnqueueOutboundFrame(target_session_id, std::move(frame));
+    TriggerDrain(target_session_id);
+    return DAS_S_OK;
 }
 
-PendingAddRefFrame IpcRunLoop::BuildReleaseFrame(const ObjectId& object_id)
+OutboundFrame IpcRunLoop::BuildReleaseFrame(const ObjectId& object_id)
 {
     std::vector<uint8_t> release_body;
     release_body.insert(
@@ -1544,9 +1559,401 @@ PendingAddRefFrame IpcRunLoop::BuildReleaseFrame(const ObjectId& object_id)
 
 void IpcRunLoop::EnqueueReleaseFrame(const ObjectId& object_id)
 {
-    // RED 过渡实现：沿用旧直发出口（GREEN 切换为 FIFO 入队 + BT 条件触发）
-    PendingAddRefFrame frame = BuildReleaseFrame(object_id);
-    static_cast<void>(PostSend(frame.header, std::move(frame.body)));
+    // DasProxyBase 析构的唯一 RELEASE 出口：入队参与 FIFO（fire-and-forget
+    // 语义不变，owner 侧条目拆除延迟上界 = 周期末）。触发矩阵：BT 线程
+    // 不触发（[ADD_REF][RELEASE] 等同周期 Response 带走）；非 BT 线程
+    // 触发（无 guard 兜底，滞留上界不能退化为心跳周期）。错判只是
+    // 性能/延迟问题非正确性问题
+    OutboundFrame  frame = BuildReleaseFrame(object_id);
+    const uint16_t target_session_id = frame.header.GetTargetSessionId();
+    EnqueueOutboundFrame(target_session_id, std::move(frame));
+    if (!IsCurrentBusinessThread())
+    {
+        TriggerDrain(target_session_id);
+    }
+}
+
+void IpcRunLoop::EnqueueOutboundFrame(
+    uint16_t        session_id,
+    OutboundFrame&& frame)
+{
+    // 唯一入队叶子（P-9 契约）：自带 mutex、锁内仅 move 入队，零回调
+    // 零 IO 零 co_spawn——proxy_cache_mutex_ 持锁区内调用安全（锁序单向
+    // proxy_cache_mutex_ → fifo_mutex_）
+    const std::unique_lock<std::mutex> lock(fifo_mutex_);
+    outbound_queues_[session_id].frames.push_back(std::move(frame));
+}
+
+void IpcRunLoop::TriggerDrain(uint16_t session_id)
+{
+    {
+        const std::unique_lock<std::mutex> lock(fifo_mutex_);
+        OutboundSessionQueue&              queue = outbound_queues_[session_id];
+        if (queue.drain_active)
+        {
+            queue.drain_retrigger = true;
+            return;
+        }
+        queue.drain_active = true;
+    }
+
+    if (!io_context_)
+    {
+        // 停机窗口（io_context_ 缺失/已析构）：复位单飞标志，滞留帧由
+        // 进程退出回收（fire-and-forget 语义）
+        const std::unique_lock<std::mutex> lock(fifo_mutex_);
+        const auto session_entry = outbound_queues_.find(session_id);
+        if (session_entry != outbound_queues_.end())
+        {
+            session_entry->second.drain_active = false;
+        }
+        return;
+    }
+
+    // co_spawn 在 fifo_mutex_ 临界区之外（锁内零分配零 post）
+    boost::asio::co_spawn(
+        *io_context_,
+        DrainOutboundCoroutine(session_id),
+        boost::asio::detached);
+}
+
+boost::asio::awaitable<void> IpcRunLoop::DrainOutboundCoroutine(
+    uint16_t session_id)
+{
+    for (;;)
+    {
+        std::vector<OutboundFrame> frames;
+        {
+            const std::unique_lock<std::mutex> lock(fifo_mutex_);
+            const auto session_entry = outbound_queues_.find(session_id);
+            if (session_entry == outbound_queues_.end())
+            {
+                // 已被断连清扫（ClearOutboundFifo erase）：直接收尾
+                co_return;
+            }
+            OutboundSessionQueue& queue = session_entry->second;
+            if (queue.frames.empty())
+            {
+                if (queue.drain_retrigger)
+                {
+                    queue.drain_retrigger = false;
+                    continue; // 竞速窗口内又有帧入队：不丢醒
+                }
+                outbound_queues_.erase(session_entry); // 空且无重触发：回收
+                co_return;
+            }
+            // 取帧与清 retrigger 同锁原子：本轮整体取走，之后入队的帧
+            // 由 retrigger 语义交由下一轮
+            queue.drain_retrigger = false;
+            frames.reserve(queue.frames.size());
+            for (OutboundFrame& frame : queue.frames)
+            {
+                frames.push_back(std::move(frame));
+            }
+            queue.frames.clear();
+        }
+
+        // 带完成回调的帧先注册 pending_calls_（IO 线程、物理写前——消除
+        // 响应早于注册的竞态，注册时机语义照 SendToSessionCoroutine）
+        for (OutboundFrame& frame : frames)
+        {
+            if (frame.on_complete)
+            {
+                const CallKey call_key{
+                    frame.header.GetTargetSessionId(),
+                    frame.header.GetCallId()};
+                const std::unique_lock<std::mutex> lock(pending_mutex_);
+                pending_calls_[call_key] = PendingCallState{
+                    .call_key = call_key,
+                    .deadline = frame.deadline,
+                    .on_complete = std::move(frame.on_complete),
+                    .response_flags = 0};
+                frame.pending_call_registered = true;
+            }
+        }
+
+        try
+        {
+            co_await WriteFramesCoalesced(session_id, std::move(frames));
+        }
+        catch (const std::exception& e)
+        {
+            DAS_CORE_LOG_ERROR(
+                "DrainOutboundCoroutine: exception: {}",
+                ToString(e.what()));
+        }
+    }
+}
+
+bool IpcRunLoop::IsStandaloneOutboundFrame(
+    const OutboundFrame& frame) const noexcept
+{
+    // 转发帧（不透明搬运裁决：独走，不进连写批——保守且与现状
+    // SendRidersThenHostStandalone 对转发宿主的处理一致）
+    if (frame.header.GetSourceSessionId() != local_session_id_)
+    {
+        return true;
+    }
+    // 在途拼装帧（对端 bit1 帧经本机转发）：深度=1 接收侧硬约束禁止再
+    // 拼装（P-3）
+    if ((frame.header.GetFlags() & MessageFlags::RESERVED_AS_SIZE) != 0)
+    {
+        return true;
+    }
+    // SHM 帧（转发的 LARGE_MESSAGE_VIA_SHM）：扩展段/连写批不经传输层
+    // SHM 重组，handle 字节不可当真实 body 混入（P-2）
+    if ((frame.header.GetHeaderFlags() & HeaderFlags::LARGE_MESSAGE_VIA_SHM)
+        != 0)
+    {
+        return true;
+    }
+    // 本地大帧：按 body_size 判（SHM 位是 SendCoroutine 内部才置的，
+    // 入队时未置——P-2）；独走让传输层做 SHM 变换
+    if (sizeof(IPCMessageHeader) + frame.body.size() >= LARGE_MESSAGE_THRESHOLD)
+    {
+        return true;
+    }
+    return false;
+}
+
+boost::asio::awaitable<void> IpcRunLoop::WriteFramesCoalesced(
+    uint16_t                     session_id,
+    std::vector<OutboundFrame>&& frames)
+{
+    // frames 容器 move 进本协程帧（SendSegment 非拥有契约，P-1：批内
+    // 禁止再按引用切子批——段备存储存活至 async_write 完成）
+    std::vector<OutboundFrame> owned_frames = std::move(frames);
+
+    auto fail_frame = [this](OutboundFrame& frame, DasResult error)
+    {
+        if (frame.pending_call_registered)
+        {
+            CompletePendingCall(
+                CallKey{
+                    frame.header.GetTargetSessionId(),
+                    frame.header.GetCallId()},
+                error,
+                {},
+                uint16_t{0});
+            return;
+        }
+        if (IsControlPlaneMessage(frame.header))
+        {
+            // 控制面 fire-and-forget 帧：仅告警（owner 侧断连清扫兜底）
+            DAS_CORE_LOG_WARN(
+                "Outbound control frame dropped: interface_id = 0x{:08X}, "
+                "result = {}",
+                frame.header.GetInterfaceId(),
+                error);
+            return;
+        }
+        NotifySendFailure(frame.header, error);
+    };
+
+    // 解析单点（统一走 resolver 裁决）：drain 持非拥有 AnyTransportRef，
+    // 寿命由 ConnectionManager 表条目 + 接收协程持有的 host DasPtr 覆盖
+    // （与切换前 SendToSessionCoroutine 同一寿命假设）
+    const auto [lookup_result, maybe_transport] =
+        transport_resolver_(session_id);
+    if (DAS::IsFailed(lookup_result) || !maybe_transport)
+    {
+        DAS_CORE_LOG_ERROR(
+            "Drain: no transport for session = {}, result = {}",
+            session_id,
+            lookup_result);
+        for (OutboundFrame& frame : owned_frames)
+        {
+            fail_frame(frame, DAS_E_IPC_NO_CONNECTIONS);
+        }
+        co_return;
+    }
+
+    try
+    {
+        AnyTransport& transport = maybe_transport->get();
+        if (!transport.IsConnected())
+        {
+            for (OutboundFrame& frame : owned_frames)
+            {
+                fail_frame(frame, DAS_E_IPC_CONNECTION_LOST);
+            }
+            co_return;
+        }
+
+        size_t batch_begin = 0;
+        while (batch_begin < owned_frames.size())
+        {
+            // 切断扫描：[batch_begin, batch_end) 为一个连写批。特殊帧
+            // 独立成批（独走 SendCoroutine）；piggyback 关闭时不累积
+            // （全部逐帧出——off 必须仍走 FIFO 只是逐帧发，禁止旁路
+            // 直发重新引入双写者）
+            size_t batch_end = batch_begin + 1;
+            if (!IsStandaloneOutboundFrame(owned_frames[batch_begin])
+                && piggyback_enabled_)
+            {
+                size_t batch_total_size =
+                    sizeof(IPCMessageHeader)
+                    + owned_frames[batch_begin].body.size();
+                while (batch_end < owned_frames.size())
+                {
+                    const OutboundFrame& candidate = owned_frames[batch_end];
+                    if (IsStandaloneOutboundFrame(candidate))
+                    {
+                        break;
+                    }
+                    const size_t candidate_frame_size =
+                        sizeof(IPCMessageHeader) + candidate.body.size();
+                    if (batch_end - batch_begin
+                        >= OUTBOUND_COALESCE_FRAME_LIMIT)
+                    {
+                        break;
+                    }
+                    if (batch_total_size + candidate_frame_size
+                        >= LARGE_MESSAGE_THRESHOLD)
+                    {
+                        break;
+                    }
+                    batch_total_size += candidate_frame_size;
+                    ++batch_end;
+                }
+            }
+
+            const size_t batch_frame_count = batch_end - batch_begin;
+            const bool   can_batch =
+                batch_frame_count > 1 && transport.CanBatchFrames();
+
+            if (can_batch)
+            {
+                // D-20 连写：首帧拆 header 参数 + body 段、其余帧整帧
+                // 两段（SendScatter header 恒在线首的调用形态约定），
+                // 一次 async_write；段序 = FIFO
+                std::vector<SendSegment> segments;
+                segments.reserve(2 * batch_frame_count);
+                const OutboundFrame& first_frame = owned_frames[batch_begin];
+                segments.push_back(
+                    SendSegment{
+                        first_frame.body.data(),
+                        first_frame.body.size()});
+                for (size_t index = batch_begin + 1; index < batch_end; ++index)
+                {
+                    const OutboundFrame& frame = owned_frames[index];
+                    segments.push_back(
+                        SendSegment{
+                            reinterpret_cast<const uint8_t*>(
+                                static_cast<const IPCMessageHeader*>(
+                                    frame.header)),
+                            sizeof(IPCMessageHeader)});
+                    segments.push_back(
+                        SendSegment{frame.body.data(), frame.body.size()});
+                }
+
+                const DasResult send_result = co_await transport.SendScatter(
+                    first_frame.header,
+                    std::move(segments));
+                if (send_result == DAS_S_OK)
+                {
+                    outbound_physical_writes_.fetch_add(
+                        1,
+                        std::memory_order_relaxed);
+                    outbound_logical_frames_.fetch_add(
+                        batch_frame_count,
+                        std::memory_order_relaxed);
+                }
+                else
+                {
+                    for (size_t index = batch_begin; index < batch_end; ++index)
+                    {
+                        fail_frame(owned_frames[index], send_result);
+                    }
+                }
+            }
+            else
+            {
+                // 逐帧 SendCoroutine：单帧批、piggyback off、Http
+                // （CanBatchFrames 为假——扩展段拼装分支后续迁入）与
+                // 特殊帧独走的共同路径
+                for (size_t index = batch_begin; index < batch_end; ++index)
+                {
+                    OutboundFrame&  frame = owned_frames[index];
+                    const DasResult send_result =
+                        co_await transport.SendCoroutine(
+                            frame.header,
+                            frame.body.data(),
+                            frame.body.size());
+                    if (send_result == DAS_S_OK)
+                    {
+                        outbound_physical_writes_.fetch_add(
+                            1,
+                            std::memory_order_relaxed);
+                        outbound_logical_frames_.fetch_add(
+                            1,
+                            std::memory_order_relaxed);
+                    }
+                    else
+                    {
+                        fail_frame(frame, send_result);
+                    }
+                }
+            }
+            batch_begin = batch_end;
+        }
+    }
+    catch (const std::exception& e)
+    {
+        DAS_CORE_LOG_ERROR(
+            "WriteFramesCoalesced: exception: {}",
+            ToString(e.what()));
+        for (OutboundFrame& frame : owned_frames)
+        {
+            fail_frame(frame, DAS_E_IPC_SEND_FAILED);
+        }
+    }
+}
+
+size_t IpcRunLoop::FlushOutboundFifo()
+{
+    // guard 周期末兜底：对全部有滞留帧的 session 触发一次 drain（合写
+    // 形态出清）——控制帧滞留上界 = 一个 dispatch 周期
+    std::vector<uint16_t> sessions_to_drain;
+    size_t                queued_frame_count = 0;
+    {
+        const std::unique_lock<std::mutex> lock(fifo_mutex_);
+        for (const auto& [session_id, queue] : outbound_queues_)
+        {
+            if (!queue.frames.empty())
+            {
+                sessions_to_drain.push_back(session_id);
+                queued_frame_count += queue.frames.size();
+            }
+        }
+    }
+    for (const uint16_t session_id : sessions_to_drain)
+    {
+        TriggerDrain(session_id);
+    }
+    return queued_frame_count;
+}
+
+size_t IpcRunLoop::ClearOutboundFifo(uint16_t session_id)
+{
+    const std::unique_lock<std::mutex> lock(fifo_mutex_);
+    const auto session_entry = outbound_queues_.find(session_id);
+    if (session_entry == outbound_queues_.end())
+    {
+        return 0;
+    }
+    const size_t cleared_count = session_entry->second.frames.size();
+    if (session_entry->second.drain_active)
+    {
+        // 在途 drain 收尾自回收（成对实现）：只清 frames 不 erase 条目
+        // ——drain 循环按空队/retrigger 语义自行退出并 erase
+        session_entry->second.frames.clear();
+    }
+    else
+    {
+        outbound_queues_.erase(session_entry);
+    }
+    return cleared_count;
 }
 
 size_t IpcRunLoop::FlushPendingStandalone()
@@ -1586,29 +1993,18 @@ size_t IpcRunLoop::FlushPendingStandalone()
 
 size_t IpcRunLoop::ClearPendingAddRefs(uint16_t session_id)
 {
-    const std::unique_lock<std::mutex> lock(addref_pending_mutex_);
-    const auto session_entry = pending_add_refs_.find(session_id);
-    if (session_entry == pending_add_refs_.end())
-    {
-        return 0;
-    }
-    const size_t cleared_count = session_entry->second.frames.size();
-    if (session_entry->second.in_flight_sends == 0)
-    {
-        pending_add_refs_.erase(session_entry);
-    }
-    else
-    {
-        session_entry->second.frames.clear();
-    }
-    return cleared_count;
+    // 出站统一 FIFO 后的断连清队委托（Host 侧断连路径挂点）：语义全部
+    // 在 ClearOutboundFifo（in-flight 分支手法照抄为 drain_active 分支）
+    return ClearOutboundFifo(session_id);
 }
 
 size_t IpcRunLoop::GetPendingAddRefCount(uint16_t session_id) const
 {
-    const std::unique_lock<std::mutex> lock(addref_pending_mutex_);
-    const auto session_entry = pending_add_refs_.find(session_id);
-    if (session_entry == pending_add_refs_.end())
+    // 语义重定义：出站 FIFO 深度（已入队未写出的帧数）——测试观测面
+    // 同名保留（38+ 处引用零改动）
+    const std::unique_lock<std::mutex> lock(fifo_mutex_);
+    const auto session_entry = outbound_queues_.find(session_id);
+    if (session_entry == outbound_queues_.end())
     {
         return 0;
     }
@@ -1617,11 +2013,12 @@ size_t IpcRunLoop::GetPendingAddRefCount(uint16_t session_id) const
 
 bool IpcRunLoop::PendingAddRefsEmpty() const
 {
-    const std::unique_lock<std::mutex> lock(addref_pending_mutex_);
-    for (const auto& [session_id, session_state] : pending_add_refs_)
+    // 语义重定义：全部 session 的出站 FIFO 均无滞留帧
+    const std::unique_lock<std::mutex> lock(fifo_mutex_);
+    for (const auto& [session_id, queue] : outbound_queues_)
     {
         (void)session_id;
-        if (!session_state.frames.empty())
+        if (!queue.frames.empty())
         {
             return false;
         }
@@ -1911,10 +2308,11 @@ boost::asio::awaitable<void> IpcRunLoop::InternalHostReceiveLoop(
             self->FailPendingCallsBySession(
                 session_id,
                 DAS_E_IPC_CONNECTION_LOST);
-            // 断连清队（主侧触发链）：该 session 的 pending ADD_REF 帧
-            // 不再有可达载体，随断连清空防滞留（fire-and-forget 语义下
-            // 迟到帧本就无害——此为确定性清理，不等超时）
-            static_cast<void>(self->ClearPendingAddRefs(session_id));
+            // 断连清队（主侧触发链）：该 session 的出站 FIFO 帧不再
+            // 可达，随断连清空防滞留（fire-and-forget 语义下迟到帧本就
+            // 无害——此为确定性清理，不等超时）；在途 drain 活跃时由
+            // 其收尾自回收条目
+            static_cast<void>(self->ClearOutboundFifo(session_id));
             // 断连清扫挂载点：fail 完 pending 之后触发（回调存在时）。
             // owner 侧 holder 记账清理由 MainProcess 侧注册的回调完成，
             // 在 IO 线程执行（free-threaded DOM 表操作合法）。正常停机
