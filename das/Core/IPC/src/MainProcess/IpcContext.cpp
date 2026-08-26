@@ -42,6 +42,30 @@ namespace Core
         {
             // ====== IpcContext 实现（RAII 风格，无 pimpl）======
 
+            namespace
+            {
+                // MainProcess 语义两级查表（调用期现读 CM）：命中托管
+                // host 取其 transport，否则查 host-local 表——与
+                // SendToSessionCoroutine 旧解析段逐字同义。构造点壳
+                // lambda 只捕获 this，查表推迟到调用期（构造完成后）
+                // 执行
+                TransportLookupResult ResolveTransportMainProcess(
+                    IpcRunLoop& run_loop,
+                    uint16_t    target_session_id)
+                {
+                    auto& connection_manager = run_loop.GetConnectionManager();
+                    const DasPtr<IHostConnection> host =
+                        connection_manager.FindManagedHostConnection(
+                            target_session_id);
+                    if (host)
+                    {
+                        return host->GetTransport();
+                    }
+                    return connection_manager.FindHostLocalTransport(
+                        target_session_id);
+                }
+            } // namespace
+
             IpcContext::IpcContext(bool enable_heartbeat)
                 : proxy_factory_(std::in_place),
                   runloop_(
@@ -52,19 +76,8 @@ namespace Core
                       [this](
                           uint16_t target_session_id) -> TransportLookupResult
                       {
-                          // MainProcess 语义两级查表（调用期现读 CM）：命中托管
-                          // host 取其 transport，否则查 host-local 表——与
-                          // SendToSessionCoroutine 旧解析段逐字同义
-                          auto& connection_manager =
-                              runloop_.GetConnectionManager();
-                          const DasPtr<IHostConnection> host =
-                              connection_manager.FindManagedHostConnection(
-                                  target_session_id);
-                          if (host)
-                          {
-                              return host->GetTransport();
-                          }
-                          return connection_manager.FindHostLocalTransport(
+                          return ResolveTransportMainProcess(
+                              runloop_,
                               target_session_id);
                       })
             {
@@ -152,18 +165,8 @@ namespace Core
                       [this](
                           uint16_t target_session_id) -> TransportLookupResult
                       {
-                          // MainProcess 语义两级查表（与 Named Pipe
-                          // 构造体同型， 调用期现读 CM）
-                          auto& connection_manager =
-                              runloop_.GetConnectionManager();
-                          const DasPtr<IHostConnection> host =
-                              connection_manager.FindManagedHostConnection(
-                                  target_session_id);
-                          if (host)
-                          {
-                              return host->GetTransport();
-                          }
-                          return connection_manager.FindHostLocalTransport(
+                          return ResolveTransportMainProcess(
+                              runloop_,
                               target_session_id);
                       })
             {
