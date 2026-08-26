@@ -161,7 +161,13 @@ IpcRunLoop::~IpcRunLoop()
 
     work_guard_.reset();
     timeout_timer_.reset();
-    io_context_.reset();
+    {
+        // 排他临界区内 reset：与 TriggerDrain 的 shared 判空+co_spawn
+        // 互斥，消灭"判空通过后指针被 reset"的 TOCTOU（任意线程的
+        // RELEASE 入队触发都到达 TriggerDrain）
+        const std::unique_lock<std::shared_mutex> io_lock(io_context_mutex_);
+        io_context_.reset();
+    }
 }
 
 void IpcRunLoop::RequestStop()
@@ -170,9 +176,13 @@ void IpcRunLoop::RequestStop()
     // 这处理 RequestStop() 与 Run() 启动并发执行、且观察到 running_==false
     // 的竞态： 若不在此处 stop，后续 Run() 会因 work_guard_ 仍存在而永久阻塞在
     // io_context_->run() 上。io_context::stop() 线程安全且幂等。
-    if (io_context_)
+    // shared 临界区内访问：防与 ~IpcRunLoop 排他 reset 的竞争
     {
-        io_context_->stop();
+        const std::shared_lock<std::shared_mutex> io_lock(io_context_mutex_);
+        if (io_context_)
+        {
+            io_context_->stop();
+        }
     }
 
     // 出站 FIFO 残留帧清扫（停机面，无条件执行——~IpcRunLoop 析构
@@ -1107,24 +1117,36 @@ void IpcRunLoop::TriggerDrain(uint16_t session_id)
         queue.drain_active = true;
     }
 
-    if (!io_context_)
+    // 判空与 co_spawn 同一 shared 临界区：~IpcRunLoop 的排他 reset 无法
+    // 插进两者之间（任意线程的 RELEASE 入队触发都到达此处，裸判空+
+    // 锁外使用即 TOCTOU）。co_spawn 仍在 fifo_mutex_ 临界区之外（锁内
+    // 零分配零 post）
+    bool drain_spawned = false;
     {
-        // 停机窗口（io_context_ 缺失/已析构）：复位单飞标志，滞留帧由
-        // 进程退出回收（fire-and-forget 语义）
-        const std::unique_lock<std::mutex> lock(fifo_mutex_);
-        const auto session_entry = outbound_queues_.find(session_id);
-        if (session_entry != outbound_queues_.end())
+        const std::shared_lock<std::shared_mutex> io_lock(io_context_mutex_);
+        if (io_context_)
         {
-            session_entry->second.drain_active = false;
+            boost::asio::co_spawn(
+                *io_context_,
+                DrainOutboundCoroutine(session_id),
+                boost::asio::detached);
+            drain_spawned = true;
         }
+    }
+
+    if (drain_spawned)
+    {
         return;
     }
 
-    // co_spawn 在 fifo_mutex_ 临界区之外（锁内零分配零 post）
-    boost::asio::co_spawn(
-        *io_context_,
-        DrainOutboundCoroutine(session_id),
-        boost::asio::detached);
+    // 停机窗口（io_context_ 缺失/已析构）：复位单飞标志，滞留帧由
+    // 进程退出回收（fire-and-forget 语义）
+    const std::unique_lock<std::mutex> lock(fifo_mutex_);
+    const auto session_entry = outbound_queues_.find(session_id);
+    if (session_entry != outbound_queues_.end())
+    {
+        session_entry->second.drain_active = false;
+    }
 }
 
 boost::asio::awaitable<void> IpcRunLoop::DrainOutboundCoroutine(

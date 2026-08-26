@@ -18,6 +18,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <shared_mutex>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -728,6 +729,13 @@ public:
 
     /// io_context 用于驱动异步 I/O
     std::unique_ptr<boost::asio::io_context> io_context_;
+
+    /// io_context_ 的析构期互斥：TriggerDrain 在任意线程（经
+    /// EnqueueReleaseFrame 的 RELEASE 入队可达）读 io_context_ 并
+    /// co_spawn（shared 持有），~IpcRunLoop 排他 reset（exclusive
+    /// 持有）——判空与使用同临界区，消灭"判空通过后指针被 reset"的
+    /// TOCTOU。锁序约束：本锁不与 fifo_mutex_ 嵌套持有
+    std::shared_mutex io_context_mutex_;
 
     /// 超时计时器（用于 pending call 超时管理）
     std::unique_ptr<boost::asio::steady_timer> timeout_timer_;
