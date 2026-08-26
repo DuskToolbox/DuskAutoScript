@@ -1362,6 +1362,12 @@ boost::asio::awaitable<void> IpcRunLoop::WriteFramesCoalesced(
         co_return;
     }
 
+    // 批处置进度：[0, completed_up_to) 的帧已全部处置完毕（成功或已按
+    // send_result 失败）——异常兜底只 fail 其后的帧，防止对已成功写出的
+    // 帧误报失败（真实响应到达时 pending 已被 erase → 丢弃）与本批已
+    // 失败帧的二次死信
+    size_t completed_up_to = 0;
+
     try
     {
         AnyTransport& transport = maybe_transport->get();
@@ -1583,6 +1589,9 @@ boost::asio::awaitable<void> IpcRunLoop::WriteFramesCoalesced(
                 }
             }
             batch_begin = batch_end;
+            // 本批帧已全部处置（每个批次要么整批写出成功、要么整批按
+            // send_result 失败——单帧批逐帧独立处置）
+            completed_up_to = batch_end;
         }
     }
     catch (const std::exception& e)
@@ -1590,9 +1599,10 @@ boost::asio::awaitable<void> IpcRunLoop::WriteFramesCoalesced(
         DAS_CORE_LOG_ERROR(
             "WriteFramesCoalesced: exception: {}",
             ToString(e.what()));
-        for (OutboundFrame& frame : owned_frames)
+        for (size_t index = completed_up_to; index < owned_frames.size();
+             ++index)
         {
-            fail_frame(frame, DAS_E_IPC_SEND_FAILED);
+            fail_frame(owned_frames[index], DAS_E_IPC_SEND_FAILED);
         }
     }
 }
