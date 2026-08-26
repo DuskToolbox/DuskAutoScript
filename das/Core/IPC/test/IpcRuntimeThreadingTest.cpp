@@ -1,4 +1,5 @@
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <das/Core/IPC/ConnectionManager.h>
 #include <das/Core/IPC/DasReadOnlyStringProxy.h>
@@ -16,6 +17,7 @@
 #include <boost/asio/io_context.hpp>
 
 #include "MockDasObject.h"
+#include "OutboundFrameProbe.h"
 #include "TestTransportResolvers.h"
 
 using DAS::Core::IPC::DasReadOnlyStringProxy;
@@ -447,10 +449,11 @@ TEST(IpcRuntimeThreadingTest, RemoteHolderLedgerConcurrentAccessIsClean)
     EXPECT_EQ(manager.GetLocalEntryCount(), 0u);
 }
 
-// pending 队列并发（Pitfall 11）：多线程 EnqueueAddRef /
-// FlushPendingStandalone / ClearPendingAddRefs 与非 BT 物化直发混跑——
-// 无数据竞争；守恒断言钉死每帧恰出队一次（发出或清除，二者计数之和
-// 恒等入队总数——重复出队或丢帧都会破坏等式）
+// 出站 FIFO 并发（Pitfall 11）：多线程 EnqueueAddRef / FlushOutboundFifo /
+// ClearOutboundFifo 与非 BT 物化（入队即触发 drain）混跑——无数据竞争；
+// 守恒断言钉死每帧恰出队一次（drain 写出或清除，二者计数之和恒等入队
+// 总数——重复出队或丢帧都会破坏等式）。drain 消费数经逻辑帧计数观测
+// （每 session 挂真实 pipe，写出全部成功）
 TEST(
     IpcRuntimeThreadingTest,
     PendingAddRefQueueConcurrentEnqueueFlushClearIsClean)
@@ -479,29 +482,46 @@ TEST(
         });
     run_loop.SetSessionId(1);
 
-    // io 线程持续驱动 PostSend 的发送协程（无 transport → 失败路径走
-    // NotifySendFailure 入站队列，发送失败无害——本用例断言队列守恒）。
-    // 总闸关闭：本用例断言的是队列机制守恒（入队/出清/清队互斥无重复
-    // 无丢失）——开启态下在途发送的搭车 helper 会把 riders 带离队列
-    // （搭车/先走路径），出清与清除两计数不再完备
-    run_loop.SetPiggybackEnabled(false);
-    auto work_guard = boost::asio::make_work_guard(run_loop.GetIoContext());
-    std::thread io_thread([&run_loop]() { run_loop.GetIoContext().run(); });
-
     constexpr uint16_t cleared_session_id = 2;
     const ObjectId     object_ids[3] = {
         ObjectId{.session_id = 2, .generation = 1, .local_id = 1},
         ObjectId{.session_id = 3, .generation = 1, .local_id = 2},
         ObjectId{.session_id = 4, .generation = 1, .local_id = 3}};
 
+    // 三个 session 各挂一条真实 pipe（io 线程启动前注册）：drain 写出
+    // 可达——逻辑帧计数即 drain 消费数的可观测面（守恒方程的第二项）
+    std::vector<std::unique_ptr<OutboundFrameProbe>> session_probes;
+    for (const ObjectId& object_id : object_ids)
+    {
+        auto probe =
+            std::make_unique<OutboundFrameProbe>(run_loop.GetIoContext(), true);
+        ASSERT_TRUE(probe->IsHealthy());
+        auto counterpart_transport = probe->TakeCounterpartTransport();
+        ASSERT_TRUE(counterpart_transport.has_value());
+        ASSERT_EQ(
+            run_loop.GetConnectionManager().RegisterHostLocalTransport(
+                object_id.session_id,
+                std::move(*counterpart_transport)),
+            DAS_S_OK);
+        session_probes.push_back(std::move(probe));
+    }
+    const auto logical_frames_before = run_loop.GetOutboundLogicalFrameCount();
+
+    // io 线程持续驱动 drain 协程（外部驱动模式，与生产拓扑一致）
+    auto work_guard = boost::asio::make_work_guard(run_loop.GetIoContext());
+    std::thread io_thread([&run_loop]() { run_loop.GetIoContext().run(); });
+
+    constexpr int enqueue_iterations = 300;
+    constexpr int materialize_iterations = 50;
+
     std::atomic<bool>   start{false};
     std::atomic<size_t> enqueued_total{0};
-    std::atomic<size_t> flushed_total{0};
     std::atomic<size_t> cleared_total{0};
 
     std::vector<std::thread> threads;
 
-    // 入队者 ×2：跨三个 session 轮转入队
+    // 入队者 ×2：跨三个 session 轮转入队（入队不触发——滞留由出清/清除
+    // /drain 触发者消费）
     for (int enqueuer = 0; enqueuer < 2; ++enqueuer)
     {
         threads.emplace_back(
@@ -511,7 +531,7 @@ TEST(
                 {
                     std::this_thread::yield();
                 }
-                for (int index = 0; index < 300; ++index)
+                for (int index = 0; index < enqueue_iterations; ++index)
                 {
                     run_loop.EnqueueAddRef(object_ids[(index + enqueuer) % 3]);
                     enqueued_total.fetch_add(1, std::memory_order_relaxed);
@@ -519,7 +539,8 @@ TEST(
             });
     }
 
-    // 出清者：反复整体 flush
+    // 出清者：反复触发整体 drain（消费数并入逻辑帧计数，不单独累计——
+    // FlushOutboundFifo 返回触发时点滞留数，非消费数）
     threads.emplace_back(
         [&]
         {
@@ -529,9 +550,7 @@ TEST(
             }
             for (int index = 0; index < 200; ++index)
             {
-                flushed_total.fetch_add(
-                    run_loop.FlushPendingStandalone(),
-                    std::memory_order_relaxed);
+                static_cast<void>(run_loop.FlushOutboundFifo());
             }
         });
 
@@ -551,8 +570,9 @@ TEST(
             }
         });
 
-    // 物化者：非 BT 线程物化直发（与队列操作混跑——proxy cache 与 DOM
-    // 锁路径的并发回归）
+    // 物化者：非 BT 线程物化（入队即触发 drain，与队列操作混跑——
+    // proxy cache 与 DOM 锁路径的并发回归）；每迭代物化+死亡恰 2 帧
+    // （ADD_REF + RELEASE）额外进入 FIFO
     threads.emplace_back(
         [&]
         {
@@ -560,7 +580,7 @@ TEST(
             {
                 std::this_thread::yield();
             }
-            for (int index = 0; index < 50; ++index)
+            for (int index = 0; index < materialize_iterations; ++index)
             {
                 auto [result, proxy] = proxy_factory.GetOrCreateProxy(
                     run_loop,
@@ -580,16 +600,41 @@ TEST(
         thread.join();
     }
 
-    // 终末出清后守恒成立：每帧恰出队一次
-    flushed_total.fetch_add(
-        run_loop.FlushPendingStandalone(),
-        std::memory_order_relaxed);
+    // 终末出清：触发全部残留 session 的 drain，等 FIFO 排空且在途写
+    // 完成（逻辑帧计数稳定）
+    static_cast<void>(run_loop.FlushOutboundFifo());
+    bool queue_drained = false;
+    for (int attempt = 0; attempt < 100; ++attempt)
+    {
+        if (run_loop.PendingAddRefsEmpty())
+        {
+            queue_drained = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    ASSERT_TRUE(queue_drained) << "outbound FIFO must drain after final flush";
+    auto settled_logical_frames = run_loop.GetOutboundLogicalFrameCount();
+    for (int attempt = 0; attempt < 40; ++attempt)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        const auto latest_logical_frames =
+            run_loop.GetOutboundLogicalFrameCount();
+        if (latest_logical_frames == settled_logical_frames)
+        {
+            break;
+        }
+        settled_logical_frames = latest_logical_frames;
+    }
     work_guard.reset();
     io_thread.join();
 
+    // 守恒成立：每帧恰出队一次（drain 写出 + 清除 == 入队总数；物化者
+    // 每迭代额外贡献 ADD_REF/RELEASE 两帧）
     EXPECT_EQ(
-        enqueued_total.load(),
-        flushed_total.load() + cleared_total.load());
+        enqueued_total.load() + 2 * static_cast<size_t>(materialize_iterations),
+        (settled_logical_frames - logical_frames_before)
+            + cleared_total.load());
     EXPECT_TRUE(run_loop.PendingAddRefsEmpty());
 
     proxy_factory.BeginShutdown();
