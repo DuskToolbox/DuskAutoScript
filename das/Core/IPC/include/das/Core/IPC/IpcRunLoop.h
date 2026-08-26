@@ -668,21 +668,6 @@ public:
         const ValidatedIPCMessageHeader& request_header);
 
     /**
-     * @brief 使用指定 transport 准备发送请求
-     *
-     * @param transport 目标传输层
-     * @param request_header 原始请求头
-     * @param body 请求体
-     * @param body_size 请求体大小
-     * @return pair<DasResult, CallKey>: 结果码和分配的 CallKey
-     */
-    std::pair<DasResult, CallKey> PrepareSendRequestWithTransport(
-        AnyTransport&                    transport,
-        const ValidatedIPCMessageHeader& request_header,
-        const uint8_t*                   body,
-        size_t                           body_size);
-
-    /**
      * @brief 完成指定 CallKey 的 pending call
      *
      * 从 pending_calls_ 中取出 on_complete 回调并调用，

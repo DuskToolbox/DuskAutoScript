@@ -780,60 +780,6 @@ void ConnectionManager::UpdateHeartbeatTimestamp(uint16_t session_id)
     }
 }
 
-boost::asio::awaitable<DasResult> ConnectionManager::ForwardMessage(
-    uint16_t                         target_session_id,
-    const ValidatedIPCMessageHeader& header,
-    const uint8_t*                   body,
-    size_t                           body_size)
-{
-    // 1. 查找目标 Transport
-    auto [lookup_result, maybe_transport] = FindTransport(target_session_id);
-    if (DAS::IsFailed(lookup_result) || !maybe_transport)
-    {
-        DAS_CORE_LOG_ERROR(
-            "Forward failed: target_session_id={} not found, result={}",
-            target_session_id,
-            lookup_result);
-        co_return lookup_result;
-    }
-
-    // 2. 获取本地 session_id
-    const uint16_t local_session_id = impl_->local_id_;
-
-    // 3. 使用 IPCMessageHeaderBuilder 重建 header，修改 source_session_id
-    auto forward_header = IPCMessageHeaderBuilder()
-                              .SetMessageType(header.GetMessageType())
-                              .SetInterfaceId(header.GetInterfaceId())
-                              .SetCallId(header.GetCallId())
-                              .SetFlags(header.GetFlags())
-                              .SetBodySize(static_cast<uint32_t>(body_size))
-                              .SetSourceSessionId(local_session_id)
-                              .SetTargetSessionId(target_session_id)
-                              .Build();
-
-    // 4. 发送消息
-    AnyTransport& transport = maybe_transport->get();
-    auto          result =
-        co_await transport.SendCoroutine(forward_header, body, body_size);
-
-    if (result != DAS_S_OK)
-    {
-        DAS_CORE_LOG_ERROR(
-            "Forward failed: target_session_id={}, error={}",
-            target_session_id,
-            result);
-    }
-    else
-    {
-        DAS_CORE_LOG_DEBUG(
-            "Forwarded message to target_session_id={}, message_type={}",
-            target_session_id,
-            static_cast<int>(header.GetMessageType()));
-    }
-
-    co_return result;
-}
-
 DasResult ConnectionManager::CleanupConnectionResources(uint16_t remote_id)
 {
     // 清理内部 Host

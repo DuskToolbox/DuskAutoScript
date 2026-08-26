@@ -255,24 +255,6 @@ public:
      */
     void UpdateHeartbeatTimestamp(uint16_t session_id);
 
-    /**
-     * @brief 转发消息到目标 session
-     *
-     * 将消息转发到指定的 target_session_id。
-     * 转发时会修改 header.source_session_id 为本地 session_id（用于响应路由）。
-     *
-     * @param target_session_id 目标 session ID
-     * @param header 消息头（会被修改 source_session_id）
-     * @param body 消息体
-     * @param body_size 消息体大小
-     * @return DasResult DAS_S_OK 成功, DAS_E_IPC_OBJECT_NOT_FOUND 目标不存在
-     */
-    boost::asio::awaitable<DasResult> ForwardMessage(
-        uint16_t                         target_session_id,
-        const ValidatedIPCMessageHeader& header,
-        const uint8_t*                   body,
-        size_t                           body_size);
-
     static constexpr uint32_t HEARTBEAT_INTERVAL_MS = 1000;
     static constexpr uint32_t HEARTBEAT_TIMEOUT_MS = 5000;
 
