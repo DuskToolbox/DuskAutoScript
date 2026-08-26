@@ -715,8 +715,11 @@ public:
     /// pending calls 映射
     std::unordered_map<CallKey, PendingCallState, CallKeyHash> pending_calls_;
 
-    /// 本地 session_id（MainProcess=1, Host 从 Handshake 获取）
-    uint16_t local_session_id_ = 0;
+    /// 本地 session_id（MainProcess=1, Host 从 Handshake 获取）。
+    /// atomic（relaxed 隐式序）：握手回调在 IO 线程写、构帧路径
+    /// （BuildReleaseFrame 等）在任意线程读——单点配置翻转，无跨线程
+    /// 顺序依赖
+    std::atomic<uint16_t> local_session_id_{0};
 
     // async_transport_ 已移除
     // IpcRunLoop 不再持有任何 transport，所有 transport 由外部管理
@@ -778,8 +781,9 @@ public:
 
     /// drain 合写开关（默认开；测试/调试旋钮）：off = 帧仍全部入队
     /// FIFO 但不合写逐帧发（帧序不变）；on = drain 合写（pipe 连写 /
-    /// Http 扩展段拼装）
-    bool piggyback_enabled_ = true;
+    /// Http 扩展段拼装）。atomic（relaxed 隐式序）：测试/控制线程翻转
+    /// 与 drain 协程 IO 线程读并发——单点开关翻转，无顺序依赖
+    std::atomic<bool> piggyback_enabled_{true};
 
     /// 退出码
     std::atomic<DasResult> exit_code_{DAS_S_OK};
