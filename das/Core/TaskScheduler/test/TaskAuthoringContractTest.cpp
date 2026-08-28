@@ -184,6 +184,44 @@ TEST(TaskAuthoringContractTest, GraphNodePortShapeViolationsFail)
     }
 }
 
+TEST(TaskAuthoringContractTest, DocumentViewDataPartitionPasses)
+{
+    // Document-level viewData partition (UI-owned canvas coordinates): the
+    // strict contract must whitelist the root key so moveGraphNode results
+    // survive the provider boundary. Content stays the UI's free partition —
+    // the contract only pins the container type.
+    auto document = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "graph",
+        "revision": 2,
+        "graph": {"nodes": []},
+        "viewData": {
+            "positions": {"n1": {"x": 30, "y": -4.5}}
+        }
+    })json");
+
+    auto result = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+
+    EXPECT_TRUE(result.valid);
+    EXPECT_TRUE(result.error_kind.empty()) << result.message;
+}
+
+TEST(TaskAuthoringContractTest, DocumentViewDataNonObjectFails)
+{
+    auto document = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "graph",
+        "revision": 2,
+        "graph": {"nodes": []},
+        "viewData": 7
+    })json");
+
+    auto result = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+
+    EXPECT_FALSE(result.valid);
+    EXPECT_EQ(result.error_kind, "invalidViewData");
+}
+
 TEST(TaskAuthoringContractTest, MissingContractVersionFails)
 {
     auto document = ParseJson(R"json({
