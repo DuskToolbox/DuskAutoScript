@@ -286,6 +286,10 @@ namespace Contract
         std::optional<std::string> form_sequence_item_id;
         std::optional<int64_t>     destination_index;
 
+        // moveGraphNode (viewData coordinates)
+        std::optional<double> position_x;
+        std::optional<double> position_y;
+
         // removeFormSequenceItem (id) / removeGraphNode (id)
         std::optional<std::string> item_or_node_id;
 

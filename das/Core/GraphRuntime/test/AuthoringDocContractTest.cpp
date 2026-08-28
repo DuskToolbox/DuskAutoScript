@@ -761,6 +761,134 @@ namespace
     }
 
     // -----------------------------------------------------------------------
+    // moveGraphNode — document-level viewData partition (graph mode)
+    // -----------------------------------------------------------------------
+
+    /// Read viewData.positions[node_id].axis from the store; nullopt when the
+    /// partition, the node entry, or the axis is absent.
+    std::optional<double> ViewPositionOf(
+        const Dto::GraphDocumentDto& doc,
+        std::string_view             node_id,
+        std::string_view             axis)
+    {
+        auto view = doc.view_data.as_object();
+        if (!view || !view->contains(std::string_view("positions")))
+        {
+            return std::nullopt;
+        }
+        auto positions = (*view)[std::string_view("positions")].as_object();
+        if (!positions || !positions->contains(node_id))
+        {
+            return std::nullopt;
+        }
+        auto position = (*positions)[node_id].as_object();
+        if (!position || !position->contains(axis))
+        {
+            return std::nullopt;
+        }
+        return (*position)[axis].as_num();
+    }
+
+    AuthoringChange MakeMoveGraphNode(
+        std::string_view node_id,
+        double           x,
+        double           y)
+    {
+        AuthoringChange move;
+        move.kind = "moveGraphNode";
+        if (!node_id.empty())
+        {
+            move.item_or_node_id = std::string(node_id);
+        }
+        move.position_x = x;
+        move.position_y = y;
+        return move;
+    }
+
+    TEST(
+        AuthoringDocContractTest,
+        GraphChange_MoveGraphNodeWritesViewDataPositions)
+    {
+        GraphDocumentDto doc;
+        doc.nodes.push_back(MakeNode("n1", "{g1}", 0.0));
+        doc.nodes.push_back(MakeNode("n2", "{g2}", 0.0));
+
+        auto r =
+            ApplyAuthoringChange(doc, MakeMoveGraphNode("n1", 120.5, 88.0));
+        ASSERT_TRUE(r.Ok()) << r.message;
+
+        // The coordinates live in the document-level viewData partition.
+        ASSERT_TRUE(ViewPositionOf(doc, "n1", "x").has_value());
+        EXPECT_DOUBLE_EQ(*ViewPositionOf(doc, "n1", "x"), 120.5);
+        ASSERT_TRUE(ViewPositionOf(doc, "n1", "y").has_value());
+        EXPECT_DOUBLE_EQ(*ViewPositionOf(doc, "n1", "y"), 88.0);
+        // node.settings stays untouched (viewData is not node data).
+        auto settings_obj = doc.nodes[0].settings.as_object();
+        ASSERT_TRUE(settings_obj.has_value());
+        EXPECT_FALSE(settings_obj->contains(std::string_view("x")));
+        EXPECT_FALSE(settings_obj->contains(std::string_view("y")));
+
+        // The public document wire carries a root-level viewData key.
+        auto json = ToJson(doc);
+        EXPECT_NE(json.find("\"viewData\""), std::string::npos);
+        EXPECT_NE(json.find("\"positions\""), std::string::npos);
+    }
+
+    TEST(AuthoringDocContractTest, GraphChange_MoveGraphNodeRequiresNodeId)
+    {
+        GraphDocumentDto doc;
+        doc.nodes.push_back(MakeNode("n1", "{g1}", 0.0));
+
+        auto r = ApplyAuthoringChange(doc, MakeMoveGraphNode("", 1.0, 2.0));
+        EXPECT_FALSE(r.Ok());
+        EXPECT_EQ(r.error_kind, ChangeErrorKind::InvalidOp);
+        EXPECT_NE(
+            r.message.find("moveGraphNode.nodeId required"),
+            std::string::npos);
+        // The store is untouched on failure.
+        EXPECT_TRUE(doc.view_data.is_null());
+    }
+
+    TEST(
+        AuthoringDocContractTest,
+        GraphChange_MoveGraphNodeCreatesPositionsOnBareViewData)
+    {
+        GraphDocumentDto doc; // fresh store: view_data is the null default
+        doc.nodes.push_back(MakeNode("n1", "{g1}", 0.0));
+        doc.nodes.push_back(MakeNode("n2", "{g2}", 0.0));
+        ASSERT_TRUE(doc.view_data.is_null());
+
+        ASSERT_TRUE(
+            ApplyAuthoringChange(doc, MakeMoveGraphNode("n1", 10.0, 20.0))
+                .Ok());
+        ASSERT_TRUE(doc.view_data.as_object().has_value());
+
+        // A second node id lands in the same lazily-created positions map.
+        ASSERT_TRUE(
+            ApplyAuthoringChange(doc, MakeMoveGraphNode("n2", 30.0, 40.0))
+                .Ok());
+        ASSERT_TRUE(ViewPositionOf(doc, "n1", "x").has_value());
+        EXPECT_DOUBLE_EQ(*ViewPositionOf(doc, "n1", "x"), 10.0);
+        ASSERT_TRUE(ViewPositionOf(doc, "n2", "y").has_value());
+        EXPECT_DOUBLE_EQ(*ViewPositionOf(doc, "n2", "y"), 40.0);
+    }
+
+    TEST(AuthoringDocContractTest, SerializeSource_EmitsViewDataKey)
+    {
+        GraphDocumentDto doc;
+        doc.nodes.push_back(MakeNode("n1", "{g1}", 0.0));
+
+        ASSERT_TRUE(
+            ApplyAuthoringChange(doc, MakeMoveGraphNode("n1", 5.5, 6.5)).Ok());
+
+        auto source = Contract::SerializeSource(doc);
+        auto source_str =
+            Das::Utils::SerializeYyjsonValue(source).value_or(std::string{});
+        EXPECT_NE(source_str.find("\"viewData\""), std::string::npos);
+        EXPECT_NE(source_str.find("\"positions\""), std::string::npos);
+    }
+
+    // -----------------------------------------------------------------------
     // Phase 84 strict wire (D-84-02/07/13/38/39) — viewKind, items[], no
     // public settings/sourceFingerprint, EntryRef={entryId} only.
     // -----------------------------------------------------------------------

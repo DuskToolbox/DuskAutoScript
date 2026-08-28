@@ -79,6 +79,10 @@ namespace Dto
         // Graph-level markers (e.g. "fromsequence") mirroring the per-port
         // GraphPortDefinitionDto::tags style.
         std::vector<std::string> tags;
+        // UI-owned view data partition (e.g. node layout coordinates).
+        // apply/compile pass it through without interpretation; the wire key
+        // is "viewData" via the registered snake_to_camel rule.
+        yyjson::value view_data;
     };
 
     namespace Detail
