@@ -2214,6 +2214,13 @@ namespace Das::Core::TaskScheduler
             }
         }
 
+        // Document-level viewData partition (UI-owned canvas coordinates,
+        // written by moveGraphNode): container type only — the content is
+        // the UI's free partition and must not be interpreted here.
+        if (obj.contains("viewData") && !obj["viewData"].is_object())
+        {
+            return Fail("invalidViewData", "viewData must be object");
+        }
         if (!OnlyKeys(
                 obj,
                 {"contractVersion",
@@ -2224,7 +2231,8 @@ namespace Das::Core::TaskScheduler
                  "commands",
                  "formSequence",
                  "graph",
-                 "actionCatalog"}))
+                 "actionCatalog",
+                 "viewData"}))
         {
             return Fail(
                 "unknownField",

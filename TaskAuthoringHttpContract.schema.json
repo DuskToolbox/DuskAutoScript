@@ -453,7 +453,8 @@
         },
         "formSequence": { "$ref": "#/$defs/FormSequence" },
         "graph": { "$ref": "#/$defs/GraphDocument" },
-        "actionCatalog": { "$ref": "#/$defs/ActionCatalog" }
+        "actionCatalog": { "$ref": "#/$defs/ActionCatalog" },
+        "viewData": { "type": "object" }
       }
     },
     "AuthoringChangeKind": {
