@@ -50,7 +50,8 @@ TEST(OcrResultInterface, GetTextReturnsStoredText)
         std::move(char_boxes),
         std::move(char_scores));
     result->AddRef();
-    const DasPtr<Das::ExportInterface::IDasOcrResult> ptr(result);
+    const DasPtr<Das::ExportInterface::IDasOcrResult> ptr =
+        DasPtr<Das::ExportInterface::IDasOcrResult>::Attach(result);
 
     IDasReadOnlyString* text = nullptr;
     auto                cr = ptr->GetText(&text);
@@ -68,7 +69,8 @@ TEST(OcrResultInterface, GetBoxReturnsStoredBox)
     auto*                               result =
         new Das::Core::OrtWrapper::IDasOcrResultImpl("test", box, 0.9, {}, {});
     result->AddRef();
-    const DasPtr<Das::ExportInterface::IDasOcrResult> ptr(result);
+    const DasPtr<Das::ExportInterface::IDasOcrResult> ptr =
+        DasPtr<Das::ExportInterface::IDasOcrResult>::Attach(result);
 
     Das::ExportInterface::DasRect out_box{};
     auto                          cr = ptr->GetBox(&out_box);
@@ -88,7 +90,8 @@ TEST(OcrResultInterface, GetScoreReturnsStoredScore)
         {},
         {});
     result->AddRef();
-    const DasPtr<Das::ExportInterface::IDasOcrResult> ptr(result);
+    const DasPtr<Das::ExportInterface::IDasOcrResult> ptr =
+        DasPtr<Das::ExportInterface::IDasOcrResult>::Attach(result);
 
     double score = 0.0;
     auto   cr = ptr->GetScore(&score);
@@ -111,7 +114,8 @@ TEST(OcrResultInterface, CharAccessors)
         std::move(char_boxes),
         std::move(char_scores));
     result->AddRef();
-    const DasPtr<Das::ExportInterface::IDasOcrResult> ptr(result);
+    const DasPtr<Das::ExportInterface::IDasOcrResult> ptr =
+        DasPtr<Das::ExportInterface::IDasOcrResult>::Attach(result);
 
     uint32_t count = 0;
     auto     cr = ptr->GetCharCount(&count);
@@ -141,7 +145,8 @@ TEST(OcrResultVectorTest, EmptyVector)
 {
     auto* vec = new Das::Core::OrtWrapper::IDasOcrResultVectorImpl();
     vec->AddRef();
-    const DasPtr<Das::ExportInterface::IDasOcrResultVector> ptr(vec);
+    const DasPtr<Das::ExportInterface::IDasOcrResultVector> ptr =
+        DasPtr<Das::ExportInterface::IDasOcrResultVector>::Attach(vec);
 
     uint32_t count = 99;
     auto     cr = vec->GetCount(&count);
@@ -177,7 +182,8 @@ TEST(OcrResultVectorTest, VectorWithResults)
     r1->Release();
     r2->Release();
 
-    const DasPtr<Das::ExportInterface::IDasOcrResultVector> ptr(vec);
+    const DasPtr<Das::ExportInterface::IDasOcrResultVector> ptr =
+        DasPtr<Das::ExportInterface::IDasOcrResultVector>::Attach(vec);
 
     uint32_t count = 0;
     auto     cr = vec->GetCount(&count);

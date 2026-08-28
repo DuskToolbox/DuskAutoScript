@@ -352,8 +352,9 @@ namespace
             {
                 return {};
             }
-            const DasPtr<Das::PluginInterface::IDasComponentFactory> factory(
-                factory_raw);
+            const DasPtr<Das::PluginInterface::IDasComponentFactory> factory =
+                DasPtr<Das::PluginInterface::IDasComponentFactory>::Attach(
+                    factory_raw);
             DasPtr<Das::PluginInterface::IDasComponent> component;
             if (DAS::IsFailed(factory->CreateInstance(
                     DasIidOf<Das::PluginInterface::IDasComponent>(),

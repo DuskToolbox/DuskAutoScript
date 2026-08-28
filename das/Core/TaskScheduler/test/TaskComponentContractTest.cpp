@@ -1027,7 +1027,8 @@ TEST_F(
             &factory_base_raw),
         DAS_S_OK);
     ASSERT_NE(factory_base_raw, nullptr);
-    const DasPtr<IDasBase> factory_base(factory_base_raw);
+    const DasPtr<IDasBase> factory_base =
+        DasPtr<IDasBase>::Attach(factory_base_raw);
 
     DasPtr<Das::PluginInterface::IDasTaskComponentFactory> factory;
     ASSERT_EQ(factory_base.As(factory.Put()), DAS_S_OK);
@@ -1638,7 +1639,8 @@ TEST_F(TaskComponentContractTest, RepositoryInvokeFailsWhenHostUnavailable)
     IDasBase* factory_base_raw = nullptr;
     ASSERT_EQ(package->CreateFeatureInterface(0, &factory_base_raw), DAS_S_OK);
     ASSERT_NE(factory_base_raw, nullptr);
-    const DasPtr<IDasBase> factory_base(factory_base_raw);
+    const DasPtr<IDasBase> factory_base =
+        DasPtr<IDasBase>::Attach(factory_base_raw);
 
     DasPtr<Das::PluginInterface::IDasTaskComponentFactory> factory;
     ASSERT_EQ(factory_base.As(factory.Put()), DAS_S_OK);
