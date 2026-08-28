@@ -412,7 +412,34 @@ namespace
         std::map<std::string, std::string> values;
         for (const auto item : boost::process::v2::environment::current())
         {
-            values[item.key().string()] = item.value().string();
+            // 空值条目（KEY=）直写空串，不可转换条目跳过并 WARN：
+            // https://github.com/boostorg/process/issues/554
+            // （size_as_utf8 缺 size==0 守卫，空串转换抛 system:87）
+            try
+            {
+                if (item.value().size() == 0)
+                {
+                    values.try_emplace(item.key().string(), std::string{});
+                    continue;
+                }
+                values[item.key().string()] = item.value().string();
+            }
+            catch (const boost::system::system_error& error)
+            {
+                std::string entry_name = "[unconvertible]";
+                try
+                {
+                    entry_name = item.key().string();
+                }
+                catch (const boost::system::system_error&)
+                {
+                }
+                DAS_CORE_LOG_WARN(
+                    "Process environment entry is not convertible to UTF-8 "
+                    "and will be skipped: name = {}, result = {}",
+                    entry_name,
+                    error.code().value());
+            }
         }
 
         const auto delimiter = PathListDelimiter();

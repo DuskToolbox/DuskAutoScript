@@ -210,11 +210,41 @@ namespace Das::Plugins::DasMaaPi::AgentRuntime
             const std::vector<PiEnvVarDto>& pi_env)
         {
             std::vector<std::pair<std::string, std::string>> inherited;
+            // 空值条目（KEY=）直写空串，不可转换条目跳过并 WARN：
+            // https://github.com/boostorg/process/issues/554
+            // （size_as_utf8 缺 size==0 守卫，空串转换抛 system:87）
             for (const auto item : boost::process::v2::environment::current())
             {
-                inherited.emplace_back(
-                    item.key().string(),
-                    item.value().string());
+                try
+                {
+                    if (item.value().size() == 0)
+                    {
+                        inherited.emplace_back(
+                            item.key().string(),
+                            std::string{});
+                        continue;
+                    }
+                    inherited.emplace_back(
+                        item.key().string(),
+                        item.value().string());
+                }
+                catch (const boost::system::system_error& error)
+                {
+                    std::string entry_name = "[unconvertible]";
+                    try
+                    {
+                        entry_name = item.key().string();
+                    }
+                    catch (const boost::system::system_error&)
+                    {
+                    }
+                    const auto reason = std::format(
+                        "Process environment entry is not convertible to "
+                        "UTF-8 and will be skipped: name = {}, result = {}",
+                        entry_name,
+                        error.code().value());
+                    DAS_LOG_WARNING(reason.c_str());
+                }
             }
             return BuildProcessEnvironment(pi_env, inherited);
         }
