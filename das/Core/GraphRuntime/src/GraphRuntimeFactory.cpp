@@ -359,6 +359,14 @@ namespace
                 }
             }
         }
+        // The viewData partition is preserved verbatim (pass-through, no
+        // interpretation) so layout coordinates survive the
+        // acceptedProperties -> re-seed round-trip.
+        if (obj.contains(std::string_view("viewData")))
+        {
+            out.view_data = Das::Utils::CloneYyjsonValue(
+                obj[std::string_view("viewData")]);
+        }
         return true;
     }
 
@@ -469,6 +477,13 @@ namespace
                     *obj,
                     std::string_view("sourceFingerprint"),
                     s.document.fingerprint);
+                // Contract docs carry the viewData partition at the root
+                // (same level as graph); preserve it verbatim.
+                if (obj->contains(std::string_view("viewData")))
+                {
+                    s.document.view_data = Das::Utils::CloneYyjsonValue(
+                        (*obj)[std::string_view("viewData")]);
+                }
                 if (gobj->contains(std::string_view("nodes")))
                 {
                     if (auto arr =
@@ -814,6 +829,43 @@ namespace
                                  .as_int())
                 {
                     out.destination_index = static_cast<int64_t>(*v);
+                }
+            }
+            return true;
+        }
+        // moveGraphNode payload: {nodeId, position:{x,y}}. The coordinates
+        // ride the document-level viewData partition (not node.settings).
+        // as_num accepts both "120" and "120.5" so integer-formatted JSON
+        // coordinates deserialize identically.
+        if (out.kind == "moveGraphNode")
+        {
+            std::string id;
+            if (ReadStringField(*payload, std::string_view("nodeId"), id)
+                && !id.empty())
+            {
+                out.item_or_node_id = std::move(id);
+            }
+            if (payload->contains(std::string_view("position")))
+            {
+                if (auto position =
+                        (*payload)[std::string_view("position")].as_object())
+                {
+                    if (position->contains(std::string_view("x")))
+                    {
+                        if (auto x_value =
+                                (*position)[std::string_view("x")].as_num())
+                        {
+                            out.position_x = *x_value;
+                        }
+                    }
+                    if (position->contains(std::string_view("y")))
+                    {
+                        if (auto y_value =
+                                (*position)[std::string_view("y")].as_num())
+                        {
+                            out.position_y = *y_value;
+                        }
+                    }
                 }
             }
             return true;

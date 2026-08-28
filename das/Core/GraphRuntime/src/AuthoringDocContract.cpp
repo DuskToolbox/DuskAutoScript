@@ -716,6 +716,16 @@ namespace Contract
             root_obj["graph"] = std::move(g_v);
         }
 
+        // The viewData partition is emitted at the document root (same level
+        // as actionCatalog) whenever engaged, so clients receive the layout
+        // coordinates on every GetDocument/Apply round-trip. SerializeSource
+        // emits the same key via the GraphDocumentDto field reflection.
+        if (!document.view_data.is_null())
+        {
+            root_obj["viewData"] =
+                Das::Utils::CloneYyjsonValue(document.view_data);
+        }
+
         if (action_catalog.has_value())
         {
             root_obj["actionCatalog"] =
@@ -1378,6 +1388,59 @@ namespace Contract
                         {},
                         std::nullopt};
                 }
+                return {ChangeErrorKind::None, "", {}, std::nullopt};
+            }
+            else if (change.kind == "moveGraphNode")
+            {
+                if (!change.item_or_node_id.has_value()
+                    || change.item_or_node_id->empty())
+                {
+                    return {
+                        ChangeErrorKind::InvalidOp,
+                        "moveGraphNode.nodeId required",
+                        {},
+                        std::nullopt};
+                }
+                // The coordinate pair is written inline into the
+                // document-level viewData partition (viewData is a
+                // document-level partition, not node.settings, so the
+                // GraphAuthoringChange variant is not involved). Key-set
+                // validation is the scheduler payload validator's job; a
+                // disengaged numeric slot is still rejected here so the store
+                // never gains a null coordinate pair.
+                if (!change.position_x.has_value()
+                    || !change.position_y.has_value())
+                {
+                    return {
+                        ChangeErrorKind::InvalidOp,
+                        "moveGraphNode.position.x/y required",
+                        {},
+                        std::nullopt};
+                }
+                auto view_obj = document.view_data.as_object();
+                if (!view_obj)
+                {
+                    document.view_data = Das::Utils::MakeYyjsonObject();
+                    view_obj = document.view_data.as_object();
+                }
+                auto positions =
+                    (*view_obj)[std::string_view("positions")].as_object();
+                if (!positions)
+                {
+                    (*view_obj)[std::string_view("positions")] =
+                        Das::Utils::MakeYyjsonObject();
+                    positions =
+                        (*view_obj)[std::string_view("positions")].as_object();
+                }
+                auto position = Das::Utils::MakeYyjsonObject();
+                auto position_obj = position.as_object();
+                if (position_obj)
+                {
+                    (*position_obj)[std::string_view("x")] = *change.position_x;
+                    (*position_obj)[std::string_view("y")] = *change.position_y;
+                }
+                (*positions)[std::string_view(*change.item_or_node_id)] =
+                    std::move(position);
                 return {ChangeErrorKind::None, "", {}, std::nullopt};
             }
             else if (change.kind == "convertView")
