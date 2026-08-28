@@ -9,6 +9,7 @@
 #include <cstring>
 #include <das/Core/IPC/AsyncIpcTransport.h>
 #include <das/Core/IPC/IpcErrors.h>
+#include <das/Core/IPC/IpcFrameReceiveLoop.h>
 #include <das/Core/IPC/IpcMessageHeaderBuilder.h>
 #include <das/Core/IPC/SharedMemoryPool.h>
 #include <das/Core/Logger/Logger.h>
@@ -89,7 +90,7 @@ static std::string NormalizeUnixEndpoint(const std::string& endpoint)
 UnixAsyncIpcTransport::UnixAsyncIpcTransport(
     boost::asio::io_context& io_context)
     : io_context_(io_context), send_mutex_(io_context_.get()),
-      socket_(io_context_.get()), header_buffer_(sizeof(IPCMessageHeader))
+      socket_(io_context_.get())
 {
 }
 
@@ -105,8 +106,8 @@ UnixAsyncIpcTransport::UnixAsyncIpcTransport(
       is_connected_(std::exchange(other.is_connected_, false)),
       max_message_size_(other.max_message_size_),
       shared_memory_pool_(other.shared_memory_pool_),
-      header_buffer_(std::move(other.header_buffer_)),
-      body_buffer_(std::move(other.body_buffer_))
+      frame_assembler_(std::move(other.frame_assembler_)),
+      read_stage_(std::move(other.read_stage_))
 {
 }
 
@@ -125,8 +126,8 @@ UnixAsyncIpcTransport& UnixAsyncIpcTransport::operator=(
         is_connected_ = std::exchange(other.is_connected_, false);
         max_message_size_ = other.max_message_size_;
         shared_memory_pool_ = other.shared_memory_pool_;
-        header_buffer_ = std::move(other.header_buffer_);
-        body_buffer_ = std::move(other.body_buffer_);
+        frame_assembler_ = std::move(other.frame_assembler_);
+        read_stage_ = std::move(other.read_stage_);
     }
     return *this;
 }
@@ -233,7 +234,7 @@ boost::asio::awaitable<DasResult> UnixAsyncIpcTransport::InitializeAsync(
     is_server_ = is_server;
     max_message_size_ = max_message_size;
     shared_memory_pool_ = pool;
-    body_buffer_.reserve(max_message_size);
+    frame_assembler_.SetMaxBodySize(max_message_size);
 
     if (is_server)
     {
@@ -423,119 +424,13 @@ void UnixAsyncIpcTransport::SetSharedMemoryPool(SharedMemoryPool* pool)
 boost::asio::awaitable<std::variant<DasResult, AsyncIpcMessage>>
 UnixAsyncIpcTransport::ReceiveCoroutine()
 {
-    co_await boost::asio::async_read(
+    // 单次读帧（两平台共享一份循环逻辑）：read_some 收多少吃多少，
+    // 重组器吃帧，尾段（SHM/日志）走 FinalizeReceivedFrame
+    co_return co_await ReceiveFrameLoop(
         socket_,
-        boost::asio::buffer(header_buffer_),
-        boost::asio::use_awaitable);
-
-    HeaderValidationResult validation_error;
-    auto validated_header = ValidatedIPCMessageHeader::Deserialize(
-        header_buffer_.data(),
-        header_buffer_.size(),
-        &validation_error);
-
-    if (!validated_header.has_value())
-    {
-        DAS_LOG_ERROR(
-            DAS_FMT_NS::format(
-                "Header validation failed: {}",
-                validation_error.message)
-                .c_str());
-        co_return DAS_E_IPC_INVALID_MESSAGE;
-    }
-
-    auto header = *validated_header;
-
-    const auto body_size = header.Raw().body_size;
-    if (body_size > max_message_size_)
-    {
-        DAS_LOG_ERROR(
-            DAS_FMT_NS::format(
-                "Message body too large: body_size = {}, max = {}",
-                body_size,
-                max_message_size_)
-                .c_str());
-        co_return DAS_E_IPC_INVALID_MESSAGE;
-    }
-
-    body_buffer_.resize(body_size);
-
-    if (body_size > 0)
-    {
-        co_await boost::asio::async_read(
-            socket_,
-            boost::asio::buffer(body_buffer_),
-            boost::asio::use_awaitable);
-    }
-
-    if (header.Raw().header_flags & HeaderFlags::LARGE_MESSAGE_VIA_SHM)
-    {
-        // 捎带协议防御（D-12 互斥）：SHM 重建会静默清零 reserved——bit1
-        // 置位的 SHM 帧必为非法组合（合法发送端拼装规则永不产生），整帧丢弃
-        if (header.GetFlags() & MessageFlags::RESERVED_AS_SIZE)
-        {
-            DAS_CORE_LOG_WARN(
-                "SHM frame with RESERVED_AS_SIZE flag rejected: flags = {}",
-                header.GetFlags());
-            co_return DAS_E_IPC_INVALID_MESSAGE;
-        }
-
-        if (shared_memory_pool_ == nullptr)
-        {
-            DAS_LOG_ERROR(
-                "Large message received but shared memory pool not set");
-            co_return DAS_E_IPC_INVALID_MESSAGE;
-        }
-
-        if (body_buffer_.size() < sizeof(uint64_t))
-        {
-            DAS_LOG_ERROR("Large message handle missing");
-            co_return DAS_E_IPC_INVALID_MESSAGE;
-        }
-
-        uint64_t handle;
-        std::memcpy(&handle, body_buffer_.data(), sizeof(uint64_t));
-
-        const ShmBlockGuard guard =
-            ShmBlockGuard::Attach(shared_memory_pool_, handle, 0);
-        if (!guard)
-        {
-            DAS_LOG_ERROR(
-                DAS_FMT_NS::format(
-                    "Failed to attach shared memory block for handle = {}",
-                    handle)
-                    .c_str());
-            co_return DAS_E_IPC_INVALID_MESSAGE;
-        }
-
-        const uint64_t       real_size = *static_cast<uint64_t*>(guard.Data());
-        std::vector<uint8_t> large_body(real_size);
-        std::memcpy(
-            large_body.data(),
-            static_cast<uint8_t*>(guard.Data()) + 8,
-            real_size);
-        // guard 出作用域析构释放
-
-        // 重组返回的 header 要恢复真实 body_size，清掉 LARGE_MESSAGE_VIA_SHM 位
-        auto orig = header.Raw();
-        auto restored_header =
-            IPCMessageHeaderBuilder()
-                .SetMessageType(static_cast<MessageType>(orig.message_type))
-                .SetHeaderFlags(
-                    orig.header_flags & ~HeaderFlags::LARGE_MESSAGE_VIA_SHM)
-                .SetCallId(orig.call_id)
-                .SetSourceSessionId(orig.source_session_id)
-                .SetTargetSessionId(orig.target_session_id)
-                .SetFlags(orig.flags)
-                .SetInterfaceId(orig.interface_id)
-                .SetErrorCode(orig.error_code)
-                .SetBodySize(static_cast<uint32_t>(real_size))
-                .Build();
-
-        co_return AsyncIpcMessage{restored_header, std::move(large_body)};
-    }
-
-    co_return AsyncIpcMessage{header, body_buffer_};
+        frame_assembler_,
+        read_stage_,
+        shared_memory_pool_);
 }
 
 boost::asio::awaitable<DasResult> UnixAsyncIpcTransport::SendCoroutine(

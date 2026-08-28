@@ -1,7 +1,6 @@
 #ifndef DAS_CORE_IPC_UNIX_ASYNC_IPC_TRANSPORT_H
 #define DAS_CORE_IPC_UNIX_ASYNC_IPC_TRANSPORT_H
 
-#include <array>
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/local/stream_protocol.hpp>
@@ -9,6 +8,7 @@
 #include <cstdint>
 #include <das/Core/IPC/AsyncIpcTransport.h>
 #include <das/Core/IPC/AsyncMutex.h>
+#include <das/Core/IPC/IpcFrameAssembler.h>
 #include <das/Core/IPC/SharedMemoryPool.h>
 #include <das/Core/IPC/ValidatedIPCMessageHeader.h>
 #include <das/DasExport.h>
@@ -168,8 +168,10 @@ private:
 
     SharedMemoryPool* shared_memory_pool_ = nullptr;
 
-    std::vector<uint8_t> header_buffer_;
-    std::vector<uint8_t> body_buffer_;
+    // 单次读帧：重组器与 staging 随连接常驻（残留字节/完整帧跨协程
+    // 调用保留——合写批次一次 read_some 收全后逐帧零系统调用取出）
+    IpcFrameAssembler    frame_assembler_{65536};
+    std::vector<uint8_t> read_stage_;
 };
 
 DAS_CORE_IPC_NS_END

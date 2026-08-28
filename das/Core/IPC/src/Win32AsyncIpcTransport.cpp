@@ -11,6 +11,8 @@
 #include <cstring>
 #include <das/Core/IPC/AsyncIpcTransport.h>
 #include <das/Core/IPC/IpcErrors.h>
+#include <das/Core/IPC/IpcFrameAssembler.h>
+#include <das/Core/IPC/IpcFrameReceiveLoop.h>
 #include <das/Core/IPC/IpcMessageHeaderBuilder.h>
 #include <das/Core/IPC/SharedMemoryPool.h>
 #include <das/Core/Logger/Logger.h>
@@ -125,6 +127,11 @@ struct Win32AsyncIpcTransport::State
     bool        is_server = false;
     bool        is_connected = false;
     size_t      max_message_size = 65536;
+
+    // 单次读帧：重组器与 staging 随连接常驻（残留字节/完整帧跨协程
+    // 调用保留——合写批次一次 read_some 收全后逐帧零系统调用取出）
+    IpcFrameAssembler    frame_assembler{65536};
+    std::vector<uint8_t> read_stage;
 
     SharedMemoryPool* shared_memory_pool = nullptr;
 };
@@ -519,6 +526,7 @@ boost::asio::awaitable<DasResult> Win32AsyncIpcTransport::InitializeAsync(
     }
 
     state->max_message_size = max_message_size;
+    state->frame_assembler.SetMaxBodySize(max_message_size);
     state->shared_memory_pool = pool;
 
     if (is_server)
@@ -633,149 +641,13 @@ Win32AsyncIpcTransport::ReceiveCoroutine()
         co_return DAS_E_IPC_NOT_INITIALIZED;
     }
 
-    // 使用局部变量而非成员变量，避免并发协程访问导致数据竞争
-    // Header 大小固定，使用 std::array 避免堆分配
-    std::array<uint8_t, sizeof(IPCMessageHeader)> header_buffer{};
-
-    try
-    {
-        co_await boost::asio::async_read(
-            state->read_pipe,
-            boost::asio::buffer(header_buffer),
-            boost::asio::use_awaitable);
-    }
-    catch (const std::exception&)
-    {
-        throw;
-    }
-
-    HeaderValidationResult validation_error;
-    auto validated_header = ValidatedIPCMessageHeader::Deserialize(
-        header_buffer.data(),
-        header_buffer.size(),
-        &validation_error);
-
-    if (!validated_header.has_value())
-    {
-        // Log raw bytes for debugging
-        std::string hex_bytes;
-        for (unsigned char& i : header_buffer)
-        {
-            hex_bytes += DAS_FMT_NS::format("{:02X} ", i);
-        }
-        DAS_LOG_ERROR(
-            DAS_FMT_NS::format(
-                "Header validation failed: {}, raw bytes: [{}]",
-                validation_error.message,
-                hex_bytes)
-                .c_str());
-        co_return DAS_E_IPC_INVALID_MESSAGE;
-    }
-
-    auto header = *validated_header;
-
-    const auto body_size = header.Raw().body_size;
-    DAS_LOG_INFO(
-        DAS_FMT_NS::format(
-            "ReceiveCoroutine: received header: msg_type={}, interface_id={}, "
-            "call_id={}, body_size={}, header_flags={}",
-            static_cast<int>(header.Raw().message_type),
-            header.Raw().interface_id,
-            header.Raw().call_id,
-            body_size,
-            static_cast<int>(header.Raw().header_flags))
-            .c_str());
-
-    if (body_size > state->max_message_size)
-    {
-        DAS_LOG_ERROR(
-            DAS_FMT_NS::format(
-                "Message body too large: body_size = {}, max = {}",
-                body_size,
-                state->max_message_size)
-                .c_str());
-        co_return DAS_E_IPC_INVALID_MESSAGE;
-    }
-
-    // 使用局部变量而非成员变量，避免并发协程访问导致数据竞争
-    std::vector<uint8_t> body_buffer(body_size);
-
-    if (body_size > 0)
-    {
-        co_await boost::asio::async_read(
-            state->read_pipe,
-            boost::asio::buffer(body_buffer),
-            boost::asio::use_awaitable);
-    }
-
-    if (header.Raw().header_flags & HeaderFlags::LARGE_MESSAGE_VIA_SHM)
-    {
-        // 捎带协议防御（D-12 互斥）：SHM 重建会静默清零 reserved——bit1
-        // 置位的 SHM 帧必为非法组合（合法发送端拼装规则永不产生），整帧丢弃
-        if (header.GetFlags() & MessageFlags::RESERVED_AS_SIZE)
-        {
-            DAS_CORE_LOG_WARN(
-                "SHM frame with RESERVED_AS_SIZE flag rejected: flags = {}",
-                header.GetFlags());
-            co_return DAS_E_IPC_INVALID_MESSAGE;
-        }
-
-        if (state->shared_memory_pool == nullptr)
-        {
-            DAS_LOG_ERROR(
-                "Large message received but shared memory pool not set");
-            co_return DAS_E_IPC_INVALID_MESSAGE;
-        }
-
-        if (body_buffer.size() < sizeof(uint64_t))
-        {
-            DAS_LOG_ERROR("Large message handle missing");
-            co_return DAS_E_IPC_INVALID_MESSAGE;
-        }
-
-        uint64_t handle;
-        std::memcpy(&handle, body_buffer.data(), sizeof(uint64_t));
-
-        const ShmBlockGuard guard =
-            ShmBlockGuard::Attach(state->shared_memory_pool, handle, 0);
-        if (!guard)
-        {
-            DAS_LOG_ERROR(
-                DAS_FMT_NS::format(
-                    "Failed to attach shared memory block for handle = {}",
-                    handle)
-                    .c_str());
-            co_return DAS_E_IPC_INVALID_MESSAGE;
-        }
-
-        const uint64_t       real_size = *static_cast<uint64_t*>(guard.Data());
-        std::vector<uint8_t> large_body(real_size);
-        std::memcpy(
-            large_body.data(),
-            static_cast<uint8_t*>(guard.Data()) + 8,
-            real_size);
-        // guard 出作用域析构释放
-
-        // 重组返回的 header 要恢复真实 body_size，清掉 LARGE_MESSAGE_VIA_SHM 位
-        auto orig = header.Raw();
-        auto restored_header =
-            IPCMessageHeaderBuilder()
-                .SetMessageType(static_cast<MessageType>(orig.message_type))
-                .SetHeaderFlags(
-                    orig.header_flags & ~HeaderFlags::LARGE_MESSAGE_VIA_SHM)
-                .SetCallId(orig.call_id)
-                .SetSourceSessionId(orig.source_session_id)
-                .SetTargetSessionId(orig.target_session_id)
-                .SetFlags(orig.flags)
-                .SetInterfaceId(orig.interface_id)
-                .SetErrorCode(orig.error_code)
-                .SetBodySize(static_cast<uint32_t>(real_size))
-                .Build();
-
-        co_return AsyncIpcMessage{restored_header, std::move(large_body)};
-    }
-
-    co_return AsyncIpcMessage{header, std::move(body_buffer)};
+    // 单次读帧（两平台共享一份循环逻辑）：read_some 收多少吃多少，
+    // 重组器吃帧，尾段（SHM/日志）走 FinalizeReceivedFrame
+    co_return co_await ReceiveFrameLoop(
+        state->read_pipe,
+        state->frame_assembler,
+        state->read_stage,
+        state->shared_memory_pool);
 }
 
 boost::asio::awaitable<DasResult> Win32AsyncIpcTransport::SendCoroutine(
