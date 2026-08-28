@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <set>
@@ -31,7 +32,8 @@ namespace Das::Core::TaskScheduler
             "removeGraphNode",
             "connectGraphPorts",
             "disconnectGraphPorts",
-            "uiEvent"};
+            "uiEvent",
+            "moveGraphNode"};
 
         constexpr std::array<int, 7> VALUE_TYPES{0, 1, 2, 4, 8, 16, 32};
 
@@ -1910,6 +1912,70 @@ namespace Das::Core::TaskScheduler
             return Pass();
         }
 
+        // moveGraphNode payload: {nodeId, position:{x,y}}。节点布局坐标走
+        // 文档级 viewData 轻量通道（不推进语义 revision）。键集锁死 +
+        // 坐标数值有限性检查，防任意 viewData 子树注入。
+        AuthoringValidationResult ValidateMoveGraphNodePayload(
+            const yyjson::value& payload)
+        {
+            auto obj_opt = payload.as_object();
+            if (!obj_opt)
+            {
+                return Fail("invalidPayload", "payload must be object");
+            }
+            const auto& obj = obj_opt.value();
+            if (auto r = RequireNonEmptyString(
+                    obj,
+                    "nodeId",
+                    "invalidNodeId",
+                    "moveGraphNode.nodeId required and non-empty");
+                !r.valid)
+            {
+                return r;
+            }
+            if (!HasObjectField(obj, "position"))
+            {
+                return Fail("missingField", "moveGraphNode.position required");
+            }
+            if (!OnlyKeys(obj, {"nodeId", "position"}))
+            {
+                return Fail(
+                    "unknownField",
+                    "moveGraphNode rejects unknown field");
+            }
+            const auto& position = obj["position"];
+            auto        position_obj = position.as_object();
+            static constexpr std::string_view AXES[]{"x", "y"};
+            for (auto axis : AXES)
+            {
+                if (!position_obj->contains(axis))
+                {
+                    return Fail(
+                        "missingField",
+                        std::string{"moveGraphNode.position."}
+                            + std::string{axis} + " required");
+                }
+                // as_num 兼容整数格式坐标（C# 序列化器把 100.0 写成
+                // 100）；有限性检查拒绝 NaN/Infinity 溢出值。
+                auto coordinate =
+                    (*position_obj)[std::string_view(axis)].as_num();
+                if (!coordinate || !std::isfinite(*coordinate))
+                {
+                    return Fail(
+                        "invalidPosition",
+                        std::string{"moveGraphNode.position."}
+                            + std::string{axis} + " must be a finite number");
+                }
+            }
+            if (!OnlyKeys(*position_obj, {"x", "y"}))
+            {
+                return Fail(
+                    "unknownField",
+                    "moveGraphNode.position rejects unknown field");
+            }
+            return Pass();
+        }
+
         AuthoringValidationResult ValidateGraphPortsPayload(
             const yyjson::value& payload,
             std::string_view     kind)
@@ -1989,6 +2055,10 @@ namespace Das::Core::TaskScheduler
                 return ValidateGraphPortsPayload(
                     payload,
                     "disconnectGraphPorts");
+            }
+            if (kind == std::string_view("moveGraphNode"))
+            {
+                return ValidateMoveGraphNodePayload(payload);
             }
             // Unknown kinds are rejected by the caller before dispatch.
             return Pass();

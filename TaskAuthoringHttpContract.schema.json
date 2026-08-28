@@ -453,8 +453,27 @@
         "removeGraphNode",
         "connectGraphPorts",
         "disconnectGraphPorts",
-        "uiEvent"
+        "uiEvent",
+        "moveGraphNode"
       ]
+    },
+    "MoveGraphNode": {
+      "type": "object",
+      "required": ["nodeId", "position"],
+      "additionalProperties": false,
+      "$comment": "Node layout coordinates ride the document-level viewData partition; a successful moveGraphNode does not bump the semantic revision.",
+      "properties": {
+        "nodeId": { "type": "string", "minLength": 1 },
+        "position": {
+          "type": "object",
+          "required": ["x", "y"],
+          "additionalProperties": false,
+          "properties": {
+            "x": { "type": "number" },
+            "y": { "type": "number" }
+          }
+        }
+      }
     },
     "SetValueTarget": {
       "oneOf": [
@@ -572,7 +591,8 @@
             "toNodeId": { "type": "string", "minLength": 1 },
             "toPortId": { "type": "string", "minLength": 1 }
           }
-        }
+        },
+        { "$ref": "#/$defs/MoveGraphNode" }
       ]
     },
     "AuthoringApplyRequest": {
