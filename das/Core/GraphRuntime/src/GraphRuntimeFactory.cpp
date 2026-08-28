@@ -364,8 +364,8 @@ namespace
         // acceptedProperties -> re-seed round-trip.
         if (obj.contains(std::string_view("viewData")))
         {
-            out.view_data = Das::Utils::CloneYyjsonValue(
-                obj[std::string_view("viewData")]);
+            out.view_data =
+                Das::Utils::CloneYyjsonValue(obj[std::string_view("viewData")]);
         }
         return true;
     }
@@ -899,6 +899,23 @@ namespace
         return true;
     }
 
+    /// Optional ActionCatalog projection from the session's stored registry
+    /// snapshot. Both the Get and the Apply document serialisation paths must
+    /// pass it so the node port projection (static registry ports merged by
+    /// componentGuid) stays identical across GetDocument and every Apply
+    /// round-trip.
+    std::optional<Das::Core::GraphRuntime::Contract::ActionCatalog>
+    MakeCatalogFromState(const GraphAuthoringSessionState& state)
+    {
+        if (state.action_entries.empty())
+        {
+            return std::nullopt;
+        }
+        Das::Core::GraphRuntime::Contract::ActionCatalog catalog;
+        catalog.entries = state.action_entries;
+        return catalog;
+    }
+
     /// Build the apply-result JSON. Per D-84-08/D-84-10, the result envelope
     /// is {acceptedProperties, document, diagnostics[]}; per the Phase 84
     /// validator (plan 01), `document.revision` must equal `baseRevision + 1`
@@ -907,7 +924,9 @@ namespace
     yyjson::value BuildChangeResultJson(
         const Das::Core::GraphRuntime::Contract::AuthoringChangeResult& r,
         int32_t            base_revision,
-        const GraphDocDto& document)
+        const GraphDocDto& document,
+        const std::optional<Das::Core::GraphRuntime::Contract::ActionCatalog>&
+            action_catalog)
     {
         auto root = Das::Utils::MakeYyjsonObject();
         auto obj = root.as_object();
@@ -922,7 +941,9 @@ namespace
             (*obj)[std::string_view("acceptedProperties")] =
                 Das::Core::GraphRuntime::Contract::SerializeSource(document);
             (*obj)[std::string_view("document")] =
-                Das::Core::GraphRuntime::Contract::SerializeDocument(document);
+                Das::Core::GraphRuntime::Contract::SerializeDocument(
+                    document,
+                    action_catalog);
         }
         else
         {
@@ -954,7 +975,9 @@ namespace
             // it so the client sees a fresh authoritative snapshot. The
             // revision reflects the unchanged store.
             (*obj)[std::string_view("document")] =
-                Das::Core::GraphRuntime::Contract::SerializeDocument(document);
+                Das::Core::GraphRuntime::Contract::SerializeDocument(
+                    document,
+                    action_catalog);
             // acceptedProperties remains the persisted source so the client
             // sees the unchanged authoritative state.
             (*obj)[std::string_view("acceptedProperties")] =
@@ -1030,13 +1053,7 @@ DAS_C_API DasResult GraphAuthoringSessionGetDocument(
         // the {actionId,label} objects as-is (label already carries the
         // manifest kind, with the actionId fallback applied at parse time),
         // so the projection is a direct copy of the stored catalog.
-        std::optional<Das::Core::GraphRuntime::Contract::ActionCatalog> catalog;
-        if (!p->action_entries.empty())
-        {
-            Das::Core::GraphRuntime::Contract::ActionCatalog c;
-            c.entries = p->action_entries;
-            catalog = std::move(c);
-        }
+        const auto catalog = MakeCatalogFromState(*p);
         // D-84-08: 严格 Get envelope = {document, diagnostics}。
         // SchedulerService ValidateAuthoringGetResult 要求 top-level
         // diagnostics 数组（即使空）。Core authoring 没有 PiDiagnostic 来源，
@@ -1099,7 +1116,8 @@ DAS_C_API DasResult GraphAuthoringSessionApplyChange(
                      {},
                      std::nullopt},
                     p->document.version,
-                    p->document),
+                    p->document,
+                    MakeCatalogFromState(*p)),
                 pp_out_result_json);
             return r;
         }
@@ -1115,7 +1133,8 @@ DAS_C_API DasResult GraphAuthoringSessionApplyChange(
                      {},
                      std::nullopt},
                     p->document.version,
-                    p->document),
+                    p->document,
+                    MakeCatalogFromState(*p)),
                 pp_out_result_json);
         }
 
@@ -1133,7 +1152,8 @@ DAS_C_API DasResult GraphAuthoringSessionApplyChange(
             BuildChangeResultJson(
                 r,
                 static_cast<int32_t>(base_revision),
-                p->document),
+                p->document,
+                MakeCatalogFromState(*p)),
             pp_out_result_json);
     }
     catch (const std::bad_alloc&)
@@ -1225,8 +1245,12 @@ GraphAuthoringSessionUpgradeToGraph(GraphAuthoringSessionState* p)
 // TaskComponentFactoryManager::EnumerateDefinitions() output into this form);
 // pass null to clear. Shape validation is business-neutral: every entry must
 // be an object carrying a non-empty string actionId; label is an optional
-// string and falls back to the actionId when absent or empty. Malformed input
-// rejects the whole catalog and leaves the session untouched.
+// string and falls back to the actionId when absent or empty. Each entry may
+// also carry a `ports` array — the registry-declared static port surface of
+// the component — whose elements must be exactly
+// {portId,portType,direction[,displayLabel]} with direction in
+// {"input","output"}. Malformed input rejects the whole catalog and leaves
+// the session untouched.
 DAS_C_API DasResult GraphAuthoringSessionSetActionCatalog(
     GraphAuthoringSessionState* p,
     IDasReadOnlyString*         p_action_catalog_json)
@@ -1286,6 +1310,85 @@ DAS_C_API DasResult GraphAuthoringSessionSetActionCatalog(
                 if (!label->empty())
                 {
                     entry.label = *label;
+                }
+            }
+            if (entry_obj->contains(std::string_view("ports")))
+            {
+                auto ports_val =
+                    (*entry_obj)[std::string_view("ports")].as_array();
+                if (!ports_val)
+                {
+                    return DAS_E_INVALID_ARGUMENT;
+                }
+                entry.ports.reserve(ports_val->size());
+                for (const auto& port_val : *ports_val)
+                {
+                    auto port_obj = port_val.as_object();
+                    if (!port_obj
+                        || !port_obj->contains(std::string_view("portId"))
+                        || !port_obj->contains(std::string_view("portType"))
+                        || !port_obj->contains(std::string_view("direction")))
+                    {
+                        return DAS_E_INVALID_ARGUMENT;
+                    }
+                    // Exactly the four-key locked shape: any other key on a
+                    // port element is a shape violation.
+                    for (const auto& [key, value] : *port_obj)
+                    {
+                        (void)value;
+                        if (key != std::string_view("portId")
+                            && key != std::string_view("portType")
+                            && key != std::string_view("direction")
+                            && key != std::string_view("displayLabel"))
+                        {
+                            return DAS_E_INVALID_ARGUMENT;
+                        }
+                    }
+                    Das::Core::GraphRuntime::Contract::GraphNodePort port;
+                    if (auto id =
+                            (*port_obj)[std::string_view("portId")].as_string();
+                        id && !id->empty())
+                    {
+                        port.port_id = *id;
+                    }
+                    else
+                    {
+                        return DAS_E_INVALID_ARGUMENT;
+                    }
+                    if (auto type = (*port_obj)[std::string_view("portType")]
+                                        .as_string();
+                        type && !type->empty())
+                    {
+                        port.port_type = *type;
+                    }
+                    else
+                    {
+                        return DAS_E_INVALID_ARGUMENT;
+                    }
+                    auto direction =
+                        (*port_obj)[std::string_view("direction")].as_string();
+                    if (direction
+                        && (*direction == std::string_view("input")
+                            || *direction == std::string_view("output")))
+                    {
+                        port.direction = *direction;
+                    }
+                    else
+                    {
+                        return DAS_E_INVALID_ARGUMENT;
+                    }
+                    if (port_obj->contains(std::string_view("displayLabel")))
+                    {
+                        auto display_label =
+                            (*port_obj)[std::string_view("displayLabel")]
+                                .as_string();
+                        if (!display_label)
+                        {
+                            return DAS_E_INVALID_ARGUMENT;
+                        }
+                        port.display_label = *display_label;
+                    }
+                    entry.ports.push_back(std::move(port));
                 }
             }
             entries.push_back(std::move(entry));

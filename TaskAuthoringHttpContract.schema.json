@@ -347,7 +347,23 @@
         "commands": {
           "type": "array",
           "items": { "$ref": "#/$defs/CommandDescriptor" }
+        },
+        "ports": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/GraphNodePort" }
         }
+      }
+    },
+    "GraphNodePort": {
+      "type": "object",
+      "required": ["portId", "displayLabel", "portType", "direction"],
+      "additionalProperties": false,
+      "$comment": "Node port projection (drag-link precheck data source): thin-map of the port surface merged from the registry-declared static component ports (direction by inputs/outputs list membership) and the document's dynamic ports (direction derived from the edge role). portType is a free-form pass-through string the client consumes for soft filtering; compile stays the authoritative validation.",
+      "properties": {
+        "portId": { "type": "string", "minLength": 1 },
+        "displayLabel": { "type": "string" },
+        "portType": { "type": "string" },
+        "direction": { "type": "string", "enum": ["input", "output"] }
       }
     },
     "FormSequence": {

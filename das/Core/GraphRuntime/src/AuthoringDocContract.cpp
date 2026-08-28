@@ -239,11 +239,48 @@ namespace Contract
         // Thin graph mapping (drops runtime-private fields)
         // -------------------------------------------------------------------
 
+        constexpr std::string_view PORT_DIRECTION_INPUT = "input";
+        constexpr std::string_view PORT_DIRECTION_OUTPUT = "output";
+
+        /// Direction-derivation fact for one dynamic port: which edge roles
+        /// reference it inside this document. Compile validates direction by
+        /// edge position (source side is an output, target side an input),
+        /// so the port's referencing edges are the only in-document
+        /// directional evidence a projection may use.
+        struct DynamicPortRole
+        {
+            bool referenced_as_input = false;
+            bool referenced_as_output = false;
+        };
+
+        std::unordered_map<std::string, std::unordered_set<std::string>>
+        CollectPortIds(
+            const std::vector<Dto::GraphEdgeDto>& edges,
+            bool                                  target_side)
+        {
+            std::unordered_map<std::string, std::unordered_set<std::string>>
+                roles;
+            for (const auto& edge : edges)
+            {
+                if (target_side)
+                {
+                    roles[edge.target_node_id].insert(edge.target_port_id);
+                }
+                else
+                {
+                    roles[edge.source_node_id].insert(edge.source_port_id);
+                }
+            }
+            return roles;
+        }
+
         GraphView MapGraphView(
             const Dto::GraphDocumentDto&        doc,
             const std::optional<ActionCatalog>& action_catalog)
         {
-            (void)action_catalog;
+            const auto input_roles = CollectPortIds(doc.edges, true);
+            const auto output_roles = CollectPortIds(doc.edges, false);
+
             GraphView view;
             view.nodes.reserve(doc.nodes.size());
             for (const auto& node : doc.nodes)
@@ -254,6 +291,72 @@ namespace Contract
                 out.target_kind = TargetKindOf(node);
                 out.entry_ref = EntryRefOf(node);
                 out.fields = ProjectFields(node.settings);
+
+                // Registry-declared static port surface: catalog entries are
+                // keyed by actionId == componentGuid and already carry the
+                // direction from the declaring inputs/outputs list.
+                if (action_catalog.has_value())
+                {
+                    for (const auto& entry : action_catalog->entries)
+                    {
+                        if (entry.action_id == out.component_guid)
+                        {
+                            out.ports.reserve(
+                                out.ports.size() + entry.ports.size());
+                            for (const auto& port : entry.ports)
+                            {
+                                out.ports.push_back(port);
+                            }
+                            break;
+                        }
+                    }
+                }
+
+                // Dynamic ports: a port referenced only on the target side
+                // projects as input, only on the source side as output; a
+                // port with no (or conflicting) directional evidence projects
+                // once per direction so the soft client-side precheck never
+                // over-restricts (compile stays the authority).
+                for (const auto& port : node.dynamic_ports)
+                {
+                    DynamicPortRole role;
+                    if (auto it = input_roles.find(node.node_id);
+                        it != input_roles.end())
+                    {
+                        role.referenced_as_input =
+                            it->second.count(port.port_id) > 0;
+                    }
+                    if (auto it = output_roles.find(node.node_id);
+                        it != output_roles.end())
+                    {
+                        role.referenced_as_output =
+                            it->second.count(port.port_id) > 0;
+                    }
+
+                    const bool directional =
+                        role.referenced_as_input != role.referenced_as_output;
+                    GraphNodePort projected;
+                    projected.port_id = port.port_id;
+                    projected.display_label = port.display_label;
+                    projected.port_type = port.port_type;
+                    if (directional)
+                    {
+                        projected.direction =
+                            role.referenced_as_input
+                                ? std::string(PORT_DIRECTION_INPUT)
+                                : std::string(PORT_DIRECTION_OUTPUT);
+                        out.ports.push_back(std::move(projected));
+                    }
+                    else
+                    {
+                        projected.direction = std::string(PORT_DIRECTION_INPUT);
+                        out.ports.push_back(projected);
+                        projected.direction =
+                            std::string(PORT_DIRECTION_OUTPUT);
+                        out.ports.push_back(std::move(projected));
+                    }
+                }
+
                 view.nodes.push_back(std::move(out));
             }
 
@@ -461,6 +564,47 @@ namespace Contract
             return root;
         }
 
+        // Build the ports[] array as a standalone yyjson::value. Every element
+        // carries exactly the four locked keys (portId/displayLabel/
+        // portType/direction); a node without ports still emits the key as an
+        // empty array so the wire shape stays stable. Per
+        // das-yyjson-string-safety every std::string payload is deep-copied
+        // into the document arena.
+        yyjson::value BuildPortsValue(const std::vector<GraphNodePort>& ports)
+        {
+            auto root = Das::Utils::MakeYyjsonArray();
+            auto arr_o = root.as_array();
+            if (!arr_o)
+            {
+                return root;
+            }
+            auto& arr = *arr_o;
+            for (const auto& port : ports)
+            {
+                auto p_v = Das::Utils::MakeYyjsonObject();
+                auto p_o = p_v.as_object();
+                if (!p_o)
+                {
+                    continue;
+                }
+                auto po = *p_o;
+                po["portId"] = std::make_pair(
+                    std::string_view(port.port_id),
+                    yyjson::copy_string);
+                po["displayLabel"] = std::make_pair(
+                    std::string_view(port.display_label),
+                    yyjson::copy_string);
+                po["portType"] = std::make_pair(
+                    std::string_view(port.port_type),
+                    yyjson::copy_string);
+                po["direction"] = std::make_pair(
+                    std::string_view(port.direction),
+                    yyjson::copy_string);
+                arr.emplace_back(std::move(p_v));
+            }
+            return root;
+        }
+
         yyjson::value BuildNodeValue(const GraphNode& node)
         {
             auto root = Das::Utils::MakeYyjsonObject();
@@ -489,6 +633,7 @@ namespace Contract
             {
                 obj["fields"] = BuildFieldsValue(node.fields);
             }
+            obj["ports"] = BuildPortsValue(node.ports);
             return root;
         }
 

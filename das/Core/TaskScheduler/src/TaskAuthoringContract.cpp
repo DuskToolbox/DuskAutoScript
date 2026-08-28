@@ -1250,6 +1250,86 @@ namespace Das::Core::TaskScheduler
             return Pass();
         }
 
+        // Node port projection element: exactly the four locked keys
+        // {portId, displayLabel, portType, direction} with direction in
+        // {"input", "output"} (drag-link precheck data source; the projection
+        // never interprets portType semantics).
+        AuthoringValidationResult ValidateGraphNodePort(
+            const yyjson::value& port)
+        {
+            auto obj_opt = port.as_object();
+            if (!obj_opt)
+            {
+                return Fail(
+                    "invalidGraphNodePort",
+                    "GraphNode port must be object");
+            }
+            const auto& obj = obj_opt.value();
+
+            if (!HasStringField(obj, "portId"))
+            {
+                return Fail("missingField", "GraphNode port.portId required");
+            }
+            if (obj["portId"].as_string().value().empty())
+            {
+                return Fail(
+                    "invalidPortId",
+                    "GraphNode port.portId must be non-empty");
+            }
+            if (!HasStringField(obj, "displayLabel"))
+            {
+                return Fail(
+                    "missingField",
+                    "GraphNode port.displayLabel required");
+            }
+            if (!HasStringField(obj, "portType"))
+            {
+                return Fail("missingField", "GraphNode port.portType required");
+            }
+            if (!HasStringField(obj, "direction"))
+            {
+                return Fail(
+                    "missingField",
+                    "GraphNode port.direction required");
+            }
+            const auto direction = obj["direction"].as_string().value();
+            if (direction != std::string_view("input")
+                && direction != std::string_view("output"))
+            {
+                return Fail(
+                    "invalidPortDirection",
+                    "GraphNode port.direction must be input|output");
+            }
+
+            if (!OnlyKeys(
+                    obj,
+                    {"portId", "displayLabel", "portType", "direction"}))
+            {
+                return Fail(
+                    "unknownField",
+                    "GraphNode port rejects unknown field");
+            }
+            return Pass();
+        }
+
+        AuthoringValidationResult ValidateGraphNodePorts(
+            const yyjson::value& ports)
+        {
+            auto arr_opt = ports.as_array();
+            if (!arr_opt)
+            {
+                return Fail("invalidPorts", "GraphNode.ports must be array");
+            }
+            for (const auto& port : arr_opt.value())
+            {
+                if (auto r = ValidateGraphNodePort(port); !r.valid)
+                {
+                    return r;
+                }
+            }
+            return Pass();
+        }
+
         AuthoringValidationResult ValidateGraphNode(const yyjson::value& node)
         {
             auto obj_opt = node.as_object();
@@ -1290,6 +1370,14 @@ namespace Das::Core::TaskScheduler
                 return Fail("invalidDebugInfo", "debugInfo must be object");
             }
 
+            if (obj.contains("ports"))
+            {
+                if (auto r = ValidateGraphNodePorts(obj["ports"]); !r.valid)
+                {
+                    return r;
+                }
+            }
+
             std::set<std::string> field_names;
             if (auto r = ValidateFieldContainer(obj, field_names); !r.valid)
             {
@@ -1305,6 +1393,7 @@ namespace Das::Core::TaskScheduler
                      "fields",
                      "fieldLayout",
                      "commands",
+                     "ports",
                      "debugInfo"}))
             {
                 return Fail("unknownField", "GraphNode rejects unknown field");

@@ -408,9 +408,13 @@ namespace
     TEST(AuthoringDocContractTest, BothModes_NeverLeakRuntimePrivateFields)
     {
         // graph mode: a node with dynamic_ports + a data edge + a signal edge.
+        // The port type deliberately avoids the "data"/"signal" tokens: those
+        // are edge-type vocabulary, and the zero-leak assertions below check
+        // the edge-type tokens never surface — the projected portType is
+        // public wire and would otherwise collide with the substring check.
         GraphDocumentDto g;
         auto&            n1 = g.nodes.emplace_back(MakeNode("n1", "{g1}", 0.0));
-        n1.dynamic_ports.push_back({.port_id = "dyn", .port_type = "data"});
+        n1.dynamic_ports.push_back({.port_id = "dyn", .port_type = "image"});
         g.nodes.push_back(MakeNode("n2", "{g2}", 0.0));
         GraphEdgeDto data_edge = MakeSignalEdge("e-data", "n1", "n2");
         data_edge.edge_type = "data";

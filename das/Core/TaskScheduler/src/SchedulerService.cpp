@@ -428,6 +428,56 @@ namespace Das::Core::TaskScheduler
         return GuidToString(definition.component_guid);
     }
 
+    // Static port surface of one component, read from the manifest
+    // definition's `inputs`/`outputs` arrays ({id,type} entries). Direction
+    // is the list membership — the same authority compile-time port
+    // validation uses (edge source ports are looked up in manifest outputs,
+    // edge target ports in manifest inputs). Ports are appended directly to
+    // the destination array; the array rides the catalog context channel so
+    // the Core node port projection can merge it onto nodes by
+    // componentGuid.
+    static void AppendEntryPortsFromDefinition(
+        const yyjson::value&       definition,
+        std::string_view           list_key,
+        std::string_view           direction,
+        yyjson::writer::array_ref& destination)
+    {
+        auto def_obj = definition.as_object();
+        if (!def_obj || !def_obj->contains(list_key))
+        {
+            return;
+        }
+        auto list = (*def_obj)[list_key].as_array();
+        if (!list)
+        {
+            return;
+        }
+        for (const auto& item : list.value())
+        {
+            auto port_obj = item.as_object();
+            if (!port_obj || !port_obj->contains(std::string_view("id"))
+                || !port_obj->contains(std::string_view("type")))
+            {
+                continue;
+            }
+            auto id = (*port_obj)[std::string_view("id")].as_string();
+            auto type = (*port_obj)[std::string_view("type")].as_string();
+            if (!id || id->empty() || !type)
+            {
+                continue;
+            }
+            auto port = Das::Utils::MakeYyjsonObject();
+            auto obj = port.as_object();
+            (*obj)[std::string_view("portId")] =
+                std::make_pair(std::string_view(*id), yyjson::copy_string);
+            (*obj)[std::string_view("portType")] =
+                std::make_pair(std::string_view(*type), yyjson::copy_string);
+            (*obj)[std::string_view("direction")] =
+                std::make_pair(direction, yyjson::copy_string);
+            destination.emplace_back(std::move(port));
+        }
+    }
+
     static yyjson::value BuildActionCatalogFromRegistry(
         Das::Core::ForeignInterfaceHost::PluginManager& plugin_manager)
     {
@@ -477,6 +527,26 @@ namespace Das::Core::TaskScheduler
                 yyjson::copy_string);
             (*obj)[std::string_view("label")] =
                 std::make_pair(std::string_view(label), yyjson::copy_string);
+            // Static port surface: the manifest definition declares
+            // inputs[]/outputs[] ({id,type}); list membership is the
+            // direction. Emitted only when the component declares at least
+            // one port.
+            auto ports = Das::Utils::MakeYyjsonArray();
+            auto ports_arr = ports.as_array();
+            AppendEntryPortsFromDefinition(
+                definition.definition,
+                std::string_view("inputs"),
+                std::string_view("input"),
+                *ports_arr);
+            AppendEntryPortsFromDefinition(
+                definition.definition,
+                std::string_view("outputs"),
+                std::string_view("output"),
+                *ports_arr);
+            if (ports_arr->size() > 0)
+            {
+                (*obj)[std::string_view("ports")] = std::move(ports);
+            }
             array_ref->emplace_back(std::move(entry));
         }
         return catalog;
