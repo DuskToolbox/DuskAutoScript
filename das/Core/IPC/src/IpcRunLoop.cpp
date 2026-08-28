@@ -1096,17 +1096,25 @@ void IpcRunLoop::EnqueueAddRef(const ObjectId& object_id)
 
 DasResult IpcRunLoop::PostAddRefStandalone(const ObjectId& object_id)
 {
-    // 非 BT 物化：入队 + 立即触发——延迟等价旧直发，单一 drain 写者
-    // 取代旁路直发（禁止双写者竞态帧序）。发送失败不回滚注册
-    // （fire-and-forget，owner 侧断连清扫兜底）
+    // 非 BT 物化：入队候车（与 BT 分支同款语义）——外部线程同步调用
+    // 稳态下下一帧（下一次调用的请求/响应）几十微秒后必到，drain 全队
+    // 顺路带走，搭车批才能成立（立即触发会让批永远只剩本帧 1 帧，
+    // 合写/拼段稳态零执行）。滞留兜底三级：下一写者（活跃期）、
+    // guard 周期末出清、心跳班车（经 FIFO 发送顺路 drain）。
+    // owner 侧无定时清扫无主条目的路径，静默期申报晚到无正确性风险；
+    // 断连由 RequestStop FIFO 清扫 + owner 侧断连清扫兜底
     if (!io_context_)
     {
         return DAS_E_IPC_NOT_INITIALIZED;
     }
-    OutboundFrame  frame = BuildAddRefFrame(object_id);
-    const uint16_t target_session_id = frame.header.GetTargetSessionId();
-    EnqueueOutboundFrame(target_session_id, std::move(frame));
-    TriggerDrain(target_session_id);
+    OutboundFrame frame = BuildAddRefFrame(object_id);
+    EnqueueOutboundFrame(object_id.session_id, std::move(frame));
+    // 总闸关闭 = 回退立即发（零窗口旧语义；drain 侧此时也不积批，
+    // 立即触发只影响本帧延迟不影响批形态）
+    if (!piggyback_enabled_.load(std::memory_order_relaxed))
+    {
+        TriggerDrain(object_id.session_id);
+    }
     return DAS_S_OK;
 }
 
@@ -1134,18 +1142,14 @@ OutboundFrame IpcRunLoop::BuildReleaseFrame(const ObjectId& object_id)
 
 void IpcRunLoop::EnqueueReleaseFrame(const ObjectId& object_id)
 {
-    // DasProxyBase 析构的唯一 RELEASE 出口：入队参与 FIFO（fire-and-forget
-    // 语义不变，owner 侧条目拆除延迟上界 = 周期末）。触发矩阵：BT 线程
-    // 不触发（[ADD_REF][RELEASE] 等同周期 Response 带走）；非 BT 线程
-    // 触发（无 guard 兜底，滞留上界不能退化为心跳周期）。错判只是
-    // 性能/延迟问题非正确性问题
-    OutboundFrame  frame = BuildReleaseFrame(object_id);
-    const uint16_t target_session_id = frame.header.GetTargetSessionId();
-    EnqueueOutboundFrame(target_session_id, std::move(frame));
-    if (!IsCurrentBusinessThread())
-    {
-        TriggerDrain(target_session_id);
-    }
+    // DasProxyBase 析构的唯一 RELEASE 出口：入队参与 FIFO、不触发
+    // （BT/非 BT 同款语义）。RELEASE 迟到只晚拆条目（防 UAF 方向
+    // 安全），滞留兜底三级：下一写者（外部线程同步调用稳态下
+    // 几十微秒后必到）、guard 周期末出清、心跳班车（经 FIFO 发送
+    // 顺路 drain）。fire-and-forget 语义不变，owner 侧条目拆除延迟
+    // 上界 = 周期末/心跳周期
+    OutboundFrame frame = BuildReleaseFrame(object_id);
+    EnqueueOutboundFrame(object_id.session_id, std::move(frame));
 }
 
 void IpcRunLoop::EnqueueOutboundFrame(
@@ -1611,7 +1615,9 @@ boost::asio::awaitable<void> IpcRunLoop::WriteFramesCoalesced(
 size_t IpcRunLoop::FlushOutboundFifo()
 {
     // guard 周期末兜底：对全部有滞留帧的 session 触发一次 drain（合写
-    // 形态出清）——控制帧滞留上界 = 一个 dispatch 周期
+    // 形态出清）——控制帧滞留上界 = 一个 dispatch 周期。零载体/静默期
+    // 场景（无下一写者、心跳可能未启）这是候车控制面的唯一确定性
+    // 送出机制，不得按帧类别豁免
     std::vector<uint16_t> sessions_to_drain;
     size_t                queued_frame_count = 0;
     {

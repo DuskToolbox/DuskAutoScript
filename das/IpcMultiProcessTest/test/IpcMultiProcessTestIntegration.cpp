@@ -914,7 +914,8 @@ namespace
         {
             return result;
         }
-        const DAS::DasPtr<IDasBase> host_from_b(host_from_b_raw);
+        const DAS::DasPtr<IDasBase> host_from_b =
+            DAS::DasPtr<IDasBase>::Attach(host_from_b_raw);
         DAS::DasPtr<DAS::PluginInterface::IDasTaskComponentHost>
             task_component_host_from_b;
         result = host_from_b.As(task_component_host_from_b.Put());
@@ -937,7 +938,8 @@ namespace
         {
             return result;
         }
-        const DAS::DasPtr<IDasBase> factory_base(factory_base_raw);
+        const DAS::DasPtr<IDasBase> factory_base =
+            DAS::DasPtr<IDasBase>::Attach(factory_base_raw);
         DAS::DasPtr<DAS::PluginInterface::IDasComponentFactory>
             component_factory;
         result = factory_base.As(component_factory.Put());
@@ -2789,7 +2791,8 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_TaskAuthoringFactory)
         factory->CreateSession(IPC_TASK_GUID, nullptr, &session_raw),
         DAS_S_OK);
     ASSERT_NE(session_raw, nullptr);
-    const DAS::DasPtr<IDasTaskAuthoringSession> session(session_raw);
+    const DAS::DasPtr<IDasTaskAuthoringSession> session =
+        DAS::DasPtr<IDasTaskAuthoringSession>::Attach(session_raw);
 
     DAS::DasPtr<IDasJson> document;
     ASSERT_EQ(session->GetDocument(nullptr, document.Put()), DAS_S_OK);
@@ -2886,7 +2889,8 @@ TEST_F(
             &session_raw),
         DAS_S_OK);
     ASSERT_NE(session_raw, nullptr);
-    const DAS::DasPtr<IDasTaskAuthoringSession> session(session_raw);
+    const DAS::DasPtr<IDasTaskAuthoringSession> session =
+        DAS::DasPtr<IDasTaskAuthoringSession>::Attach(session_raw);
 
     DAS::DasPtr<IDasJson> document;
     ASSERT_EQ(session->GetDocument(nullptr, document.Put()), DAS_S_OK);
@@ -2972,7 +2976,8 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_TaskComponentFactory)
         factory->CreateComponent(IPC_TASK_COMPONENT_GUID, &component_raw),
         DAS_S_OK);
     ASSERT_NE(component_raw, nullptr);
-    const DAS::DasPtr<IDasTaskComponent> component(component_raw);
+    const DAS::DasPtr<IDasTaskComponent> component =
+        DAS::DasPtr<IDasTaskComponent>::Attach(component_raw);
 
     DAS::DasPtr<IDasJson> settings_result;
     ASSERT_EQ(
@@ -3106,7 +3111,8 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_HostToHostCall)
         ASSERT_EQ(
             package_b->CreateFeatureInterface(1, &host_from_b_raw),
             DAS_S_OK);
-        const DAS::DasPtr<IDasBase> host_from_b(host_from_b_raw);
+        const DAS::DasPtr<IDasBase> host_from_b =
+            DAS::DasPtr<IDasBase>::Attach(host_from_b_raw);
         ASSERT_NE(host_from_b.Get(), nullptr);
         DAS::DasPtr<DAS::PluginInterface::IDasTaskComponentHost>
             task_component_host_from_b;
@@ -3126,7 +3132,8 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_HostToHostCall)
         ASSERT_EQ(
             package_a->CreateFeatureInterface(1, &factory_base_raw),
             DAS_S_OK);
-        const DAS::DasPtr<IDasBase> factory_base(factory_base_raw);
+        const DAS::DasPtr<IDasBase> factory_base =
+            DAS::DasPtr<IDasBase>::Attach(factory_base_raw);
 
         DAS::DasPtr<DAS::PluginInterface::IDasComponentFactory>
             component_factory;
@@ -3138,8 +3145,9 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_HostToHostCall)
                 DasIidOf<DAS::PluginInterface::IDasComponent>(),
                 &component_raw),
             DAS_S_OK);
-        const DAS::DasPtr<DAS::PluginInterface::IDasComponent> query_component(
-            component_raw);
+        const DAS::DasPtr<DAS::PluginInterface::IDasComponent> query_component =
+            DAS::DasPtr<DAS::PluginInterface::IDasComponent>::Attach(
+                component_raw);
 
         // tracer 闭环断言：Request 经 hostA→main→hostB 中转、Response
         // 原路回程（回显结果码 + 组件非空标志）。
@@ -3734,8 +3742,8 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LoadJavaPlugin)
             &component_raw),
         DAS_S_OK);
     ASSERT_NE(component_raw, nullptr);
-    const DAS::DasPtr<DAS::PluginInterface::IDasComponent> component(
-        component_raw);
+    const DAS::DasPtr<DAS::PluginInterface::IDasComponent> component =
+        DAS::DasPtr<DAS::PluginInterface::IDasComponent>::Attach(component_raw);
 
     // 调用 Dispatch("echo", ...) 跨进程验证
     // 设计意图：传递空 VariantVector，Java 端应返回 DAS_E_INVALID_ARGUMENT，
@@ -4375,7 +4383,8 @@ TEST_F(
     ASSERT_EQ(
         plugin_package->CreateFeatureInterface(1, &factory_base_raw),
         DAS_S_OK);
-    const DAS::DasPtr<IDasBase> factory_base(factory_base_raw);
+    const DAS::DasPtr<IDasBase> factory_base =
+        DAS::DasPtr<IDasBase>::Attach(factory_base_raw);
 
     DAS::DasPtr<DAS::PluginInterface::IDasComponentFactory> factory;
     ASSERT_EQ(factory_base.As(factory.Put()), DAS_S_OK);
@@ -4386,8 +4395,8 @@ TEST_F(
             DasIidOf<DAS::PluginInterface::IDasComponent>(),
             &component_raw),
         DAS_S_OK);
-    const DAS::DasPtr<DAS::PluginInterface::IDasComponent> component(
-        component_raw);
+    const DAS::DasPtr<DAS::PluginInterface::IDasComponent> component =
+        DAS::DasPtr<DAS::PluginInterface::IDasComponent>::Attach(component_raw);
 
     // 工作基线：跨进程 Dispatch 成功（kill 前链路健康）
     {
@@ -4680,7 +4689,8 @@ TEST_F(IpcMultiProcessTestIntegration, QueryMainProcessInterface_E2E)
     result = plugin_package->CreateFeatureInterface(1, &factory_base_raw);
     ASSERT_EQ(result, DAS_S_OK);
     ASSERT_NE(factory_base_raw, nullptr);
-    const DAS::DasPtr<IDasBase> factory_base(factory_base_raw);
+    const DAS::DasPtr<IDasBase> factory_base =
+        DAS::DasPtr<IDasBase>::Attach(factory_base_raw);
 
     DAS::DasPtr<DAS::PluginInterface::IDasComponentFactory> factory;
     ASSERT_EQ(factory_base.As(factory.Put()), DAS_S_OK);
@@ -4696,8 +4706,8 @@ TEST_F(IpcMultiProcessTestIntegration, QueryMainProcessInterface_E2E)
         &component_raw);
     ASSERT_EQ(result, DAS_S_OK);
     ASSERT_NE(component_raw, nullptr);
-    const DAS::DasPtr<DAS::PluginInterface::IDasComponent> component(
-        component_raw);
+    const DAS::DasPtr<DAS::PluginInterface::IDasComponent> component =
+        DAS::DasPtr<DAS::PluginInterface::IDasComponent>::Attach(component_raw);
 
     // 9. Dispatch("queryMainProcessString") — 核心验证
     {
@@ -4821,7 +4831,8 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_QueryMainProcessString)
     result = plugin_package->CreateFeatureInterface(1, &factory_base_raw);
     ASSERT_EQ(result, DAS_S_OK);
     ASSERT_NE(factory_base_raw, nullptr);
-    const DAS::DasPtr<IDasBase> factory_base(factory_base_raw);
+    const DAS::DasPtr<IDasBase> factory_base =
+        DAS::DasPtr<IDasBase>::Attach(factory_base_raw);
 
     DAS::DasPtr<DAS::PluginInterface::IDasComponentFactory> factory;
     ASSERT_EQ(factory_base.As(factory.Put()), DAS_S_OK);
@@ -4837,8 +4848,8 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_QueryMainProcessString)
         &component_raw);
     ASSERT_EQ(result, DAS_S_OK);
     ASSERT_NE(component_raw, nullptr);
-    const DAS::DasPtr<DAS::PluginInterface::IDasComponent> component(
-        component_raw);
+    const DAS::DasPtr<DAS::PluginInterface::IDasComponent> component =
+        DAS::DasPtr<DAS::PluginInterface::IDasComponent>::Attach(component_raw);
 
     // 8. Dispatch("queryMainProcessString") — 核心验证
     {
@@ -6492,7 +6503,8 @@ TEST_F(
     result = plugin_package->CreateFeatureInterface(1, &factory_base_raw);
     ASSERT_EQ(result, DAS_S_OK);
     ASSERT_NE(factory_base_raw, nullptr);
-    const DAS::DasPtr<IDasBase> factory_base(factory_base_raw);
+    const DAS::DasPtr<IDasBase> factory_base =
+        DAS::DasPtr<IDasBase>::Attach(factory_base_raw);
 
     DAS::DasPtr<DAS::PluginInterface::IDasComponentFactory> factory;
     ASSERT_EQ(factory_base.As(factory.Put()), DAS_S_OK);
@@ -6503,8 +6515,8 @@ TEST_F(
         &component_raw);
     ASSERT_EQ(result, DAS_S_OK);
     ASSERT_NE(component_raw, nullptr);
-    const DAS::DasPtr<DAS::PluginInterface::IDasComponent> component(
-        component_raw);
+    const DAS::DasPtr<DAS::PluginInterface::IDasComponent> component =
+        DAS::DasPtr<DAS::PluginInterface::IDasComponent>::Attach(component_raw);
 
     // 6. Dispatch("queryMainProcessStringByName", [name]) — 核心验证
     {
@@ -7407,13 +7419,14 @@ TEST(PiggybackBaselineTest, WhitelistOverflowRidesPartialThenFlushesRemainder)
 // T10 断言形态——集成侧重跑确认）
 TEST(
     PiggybackBaselineTest,
-    WhitelistExternalThreadMaterializationSendsStandalone)
+    WhitelistExternalThreadMaterializationWaitsForNextWriter)
 {
     BaselineAssembly assembly(true);
     ASSERT_TRUE(assembly.IsHealthy());
 
-    // 测试主线程（非 BT、weak_ptr 空）物化 → 入队即触发 drain（零等待
-    // 周期，延迟等价旧直发）
+    // 测试主线程（非 BT、weak_ptr 空）物化 → 入队候车（不立即触发：
+    // 立即触发会让搭车批永远只剩本帧 1 帧——合写/拼段稳态零执行；
+    // 滞留兜底 = 下一写者 / guard 周期末 / 心跳班车）
     const DAS::Core::IPC::ObjectId object_id{
         .session_id = BASELINE_PEER_SESSION_ID,
         .generation = 7,
@@ -7429,12 +7442,36 @@ TEST(
     ASSERT_TRUE(!DAS::IsFailed(result));
     ASSERT_TRUE(materialized_proxy);
 
-    // 独立帧当次窗口出现 + FIFO 即入即清（观测面恒空）
-    EXPECT_EQ(assembly.GetProbe().DrainUntil(1, std::chrono::seconds(2)), 1u);
+    // 候车中：观测面零写、FIFO 恰有一条滞留
+    EXPECT_EQ(
+        assembly.GetRunLoop().GetOutboundPhysicalWriteCount()
+            - physical_writes_before,
+        0u);
+    EXPECT_EQ(
+        assembly.GetRunLoop().GetPendingAddRefCount(BASELINE_PEER_SESSION_ID),
+        1u);
+
+    // 下一写者（后续调用的业务帧）触发 drain 顺路带走：一批两帧
+    // 一次物理写（搭车形态）
+    const auto carrier_header =
+        DAS::Core::IPC::IPCMessageHeaderBuilder()
+            .SetMessageType(DAS::Core::IPC::MessageType::Request)
+            .SetInterfaceId(0x2402)
+            .SetCallId(402)
+            .SetSourceSessionId(BASELINE_LOCAL_SESSION_ID)
+            .SetTargetSessionId(BASELINE_PEER_SESSION_ID)
+            .SetBodySize(0)
+            .Build();
+    ASSERT_TRUE(!DAS::IsFailed(assembly.GetRunLoop().PostSend(
+        carrier_header,
+        std::vector<uint8_t>())));
+    EXPECT_EQ(assembly.GetProbe().DrainUntil(2, std::chrono::seconds(2)), 2u);
     const BaselineObservation observation =
         DisassembleObservation(assembly.GetProbe());
+    EXPECT_EQ(observation.total_frames, 2u);
     EXPECT_EQ(observation.standalone_add_ref_frames, 1u);
     EXPECT_EQ(observation.embedded_add_ref_frames, 0u);
+    EXPECT_EQ(observation.business_frames, 1u);
     EXPECT_EQ(
         assembly.GetRunLoop().GetOutboundPhysicalWriteCount()
             - physical_writes_before,

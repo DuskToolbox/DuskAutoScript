@@ -386,7 +386,8 @@ namespace
                 return DAS::IsFailed(create_result) ? create_result
                                                     : DAS_E_NO_INTERFACE;
             }
-            DAS::DasPtr<IDasComponent> fresh_component(component_raw);
+            DAS::DasPtr<IDasComponent> fresh_component =
+                DAS::DasPtr<IDasComponent>::Attach(component_raw);
 
             const DasResult name_result =
                 fresh_component->GetRuntimeClassName(out_name.Put());
@@ -661,7 +662,8 @@ protected:
         {
             return nullptr;
         }
-        const DAS::DasPtr<IDasBase> factory_base(factory_base_raw);
+        const DAS::DasPtr<IDasBase> factory_base =
+            DAS::DasPtr<IDasBase>::Attach(factory_base_raw);
 
         DAS::DasPtr<DAS::PluginInterface::IDasComponentFactory> factory;
         if (DAS::IsFailed(factory_base.As(factory.Put())))
@@ -763,7 +765,8 @@ protected:
         {
             return nullptr;
         }
-        const DAS::DasPtr<IDasBase> factory_base(factory_base_raw);
+        const DAS::DasPtr<IDasBase> factory_base =
+            DAS::DasPtr<IDasBase>::Attach(factory_base_raw);
 
         DAS::DasPtr<DAS::PluginInterface::IDasComponentFactory> factory;
         if (DAS::IsFailed(factory_base.As(factory.Put())))
@@ -847,7 +850,8 @@ protected:
         {
             return {};
         }
-        const DAS::DasPtr<IDasBase> factory_base(factory_base_raw);
+        const DAS::DasPtr<IDasBase> factory_base =
+            DAS::DasPtr<IDasBase>::Attach(factory_base_raw);
 
         DAS::DasPtr<IDasComponentFactory> factory;
         if (DAS::IsFailed(factory_base.As(factory.Put())))
@@ -1473,7 +1477,8 @@ TEST(IpcPerfColdStart, ColdStart_FirstCall)
             run_thread.join();
             continue;
         }
-        const DAS::DasPtr<IDasBase> factory_base(factory_base_raw);
+        const DAS::DasPtr<IDasBase> factory_base =
+            DAS::DasPtr<IDasBase>::Attach(factory_base_raw);
 
         DAS::DasPtr<IDasComponentFactory> factory;
         if (DAS::IsFailed(factory_base.As(factory.Put())))
@@ -1499,7 +1504,8 @@ TEST(IpcPerfColdStart, ColdStart_FirstCall)
             run_thread.join();
             continue;
         }
-        const DAS::DasPtr<IDasComponent> component(component_raw);
+        const DAS::DasPtr<IDasComponent> component =
+            DAS::DasPtr<IDasComponent>::Attach(component_raw);
 
         // 5. Measure first Dispatch call
         {
@@ -1913,7 +1919,8 @@ TEST_F(IpcPerformanceTest, MixedTransport_HttpAndIpcHostToHostPerformance)
     ASSERT_EQ(
         ipc_factory->CreateInstance(DasIidOf<IDasComponent>(), &component_raw),
         DAS_S_OK);
-    DAS::DasPtr<IDasComponent> component(component_raw);
+    DAS::DasPtr<IDasComponent> component =
+        DAS::DasPtr<IDasComponent>::Attach(component_raw);
     ASSERT_NE(component.Get(), nullptr);
 
     DAS::ExportInterface::DasVariantVector empty_params;
@@ -2144,13 +2151,15 @@ TEST_F(IpcPerformanceTest, RemoteProxy_IsSupported_FirstCall)
 
     // Warmup: 100 iterations of IsSupported (re-using same factory proxy)
     {
-        IDasBase* factory_base_raw = nullptr;
+        // [out] 接口参数按 COM 惯例返回已 AddRef 的拥有引用：必须以 Put()
+        // 出参直传接管；DasPtr(裸指针) 构造会再 AddRef 造成引用悬置——
+        // proxy 永不析构、RemoteRelease 永不发、owner 侧对象泄漏
+        DAS::DasPtr<IDasBase> factory_base;
         if (DAS::IsFailed(
-                plugin_package->CreateFeatureInterface(0, &factory_base_raw)))
+                plugin_package->CreateFeatureInterface(0, factory_base.Put())))
         {
             GTEST_SKIP() << "CreateFeatureInterface failed";
         }
-        const DAS::DasPtr<IDasBase> factory_base(factory_base_raw);
 
         DAS::DasPtr<IDasComponentFactory> factory;
         if (DAS::IsFailed(factory_base.As(factory.Put())))
@@ -2173,9 +2182,9 @@ TEST_F(IpcPerformanceTest, RemoteProxy_IsSupported_FirstCall)
     for (size_t i = 0; i < num_iterations; ++i)
     {
         // Each measurement: get factory proxy + call IsSupported
-        IDasBase* factory_base_raw = nullptr;
-        plugin_package->CreateFeatureInterface(0, &factory_base_raw);
-        const DAS::DasPtr<IDasBase> factory_base(factory_base_raw);
+        // （Put() 出参直传接管 [out] 拥有引用，杜绝 DasPtr(裸指针) 双 AddRef）
+        DAS::DasPtr<IDasBase> factory_base;
+        plugin_package->CreateFeatureInterface(0, factory_base.Put());
 
         DAS::DasPtr<IDasComponentFactory> factory;
         factory_base.As(factory.Put());
@@ -2401,7 +2410,8 @@ TEST_F(IpcPerformanceTest, DualHost_AlternatingCalls)
         {
             return nullptr;
         }
-        const DAS::DasPtr<IDasBase> factory_base(factory_base_raw);
+        const DAS::DasPtr<IDasBase> factory_base =
+            DAS::DasPtr<IDasBase>::Attach(factory_base_raw);
 
         DAS::DasPtr<IDasComponentFactory> factory;
         if (DAS::IsFailed(factory_base.As(factory.Put())))
@@ -2569,4 +2579,108 @@ TEST_F(IpcPerformanceTest, DualHost_AlternatingCalls)
                  "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550"
                  "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550"
                  "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n";
+}
+
+// ====== 诊断：FirstCall 每迭代出站帧预算审计 ======
+// 读客户端 RunLoop 的逻辑帧/物理写计数器：1000 次「物化→IsSupported→
+// 析构」迭代的出站帧数。piggyback 失效时每迭代 3 帧
+// （请求+ADD_REF+RELEASE），搭车生效时应趋于 1 帧出头
+TEST_F(IpcPerformanceTest, FirstCallOutboundFrameAudit)
+{
+    if (!std::filesystem::exists(host_exe_path_))
+    {
+        GTEST_SKIP() << "DasHostX.exe not found";
+    }
+
+    auto launcher = StartSingleHost();
+    if (!launcher)
+    {
+        GTEST_SKIP() << "Failed to start Host process";
+    }
+
+    std::string plugin_path;
+    try
+    {
+        plugin_path = IpcTestConfig::GetTestPluginJsonPath("IpcTestPlugin2");
+    }
+    catch (const std::exception&)
+    {
+        GTEST_SKIP() << "Plugin JSON not found";
+    }
+
+    DAS::DasPtr<IDasAsyncLoadPluginOperation> op;
+    const DasResult                           result =
+        ctx_->LoadPluginAsync(launcher.Get(), plugin_path.c_str(), op.Put());
+    if (DAS::IsFailed(result))
+    {
+        GTEST_SKIP() << "LoadPluginAsync failed";
+    }
+
+    auto opt = DAS::Core::IPC::wait(
+        GetContext(),
+        DAS::Core::IPC::async_op(GetContext(), std::move(op)));
+    if (!opt.has_value())
+    {
+        GTEST_SKIP() << "wait(async_op) failed";
+    }
+
+    auto& [load_result, proxy] = *opt;
+    if (DAS::IsFailed(load_result) || !proxy)
+    {
+        GTEST_SKIP() << "Plugin load failed";
+    }
+
+    DAS::DasPtr<IDasBase> raw_proxy;
+    raw_proxy = DAS::DasPtr<IDasBase>::Attach(proxy);
+    if (!raw_proxy)
+    {
+        GTEST_SKIP() << "Attach proxy failed";
+    }
+
+    DasPluginPackage plugin_package;
+    if (DAS::IsFailed(raw_proxy.As(plugin_package.Put())))
+    {
+        GTEST_SKIP() << "As(DasPluginPackage) failed";
+    }
+
+    DasPluginFeature feature;
+    if (DAS::IsFailed(plugin_package->EnumFeature(0, &feature)))
+    {
+        GTEST_SKIP() << "EnumFeature failed";
+    }
+
+    // 与 fc 基准同构的迭代体，但取计数器而非时延
+    auto& run_loop =
+        static_cast<DAS::Core::IPC::MainProcess::IpcContext*>(ctx_.get())
+            ->GetRunLoop();
+    const uint64_t frames_before = run_loop.GetOutboundLogicalFrameCount();
+    const uint64_t writes_before = run_loop.GetOutboundPhysicalWriteCount();
+
+    constexpr size_t num_iterations = 1000;
+    for (size_t i = 0; i < num_iterations; ++i)
+    {
+        // （Put() 出参直传接管 [out] 拥有引用，杜绝 DasPtr(裸指针) 双 AddRef）
+        DAS::DasPtr<IDasBase> factory_base;
+        plugin_package->CreateFeatureInterface(0, factory_base.Put());
+
+        DAS::DasPtr<IDasComponentFactory> factory;
+        factory_base.As(factory.Put());
+
+        factory->IsSupported(DasIidOf<IDasComponent>());
+    }
+
+    // 出作用域析构（含最后一批 proxy 释放）后读终值
+    const uint64_t frames_after = run_loop.GetOutboundLogicalFrameCount();
+    const uint64_t writes_after = run_loop.GetOutboundPhysicalWriteCount();
+
+    printf(
+        "  FrameAudit: %zu iterations, outbound frames=%llu (%.2f/iter), "
+        "physical writes=%llu (%.2f/iter)\n",
+        num_iterations,
+        static_cast<unsigned long long>(frames_after - frames_before),
+        static_cast<double>(frames_after - frames_before) / num_iterations,
+        static_cast<unsigned long long>(writes_after - writes_before),
+        static_cast<double>(writes_after - writes_before) / num_iterations);
+
+    SUCCEED();
 }

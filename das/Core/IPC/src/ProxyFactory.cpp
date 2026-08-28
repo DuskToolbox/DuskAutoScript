@@ -80,17 +80,6 @@ std::pair<DasResult, DasPtr<IDasBase>> ProxyFactory::GetOrCreateProxy(
         }
     }
 
-    // D-19 取样：在 CreateProxyByInterfaceIdWithFallback 的
-    // std::move(business_thread) 之前读取线程身份——取样在 move 之后
-    // lock 恒失败，BT 搭车会静默失效。具名 shared_ptr + 成员访问器
-    // IsCurrentThread()（非 lambda 非 thread_local）；lock 为空即 false，
-    // 绝不解引用空指针。取样与使用点之间只隔 proxy 构造与本地 tag QI
-    // （不跨进程不换线程），结果在 newly_created 分支处仍有效
-    const std::shared_ptr<BusinessThread> locked_business_thread =
-        business_thread.lock();
-    const bool materialize_on_business_thread =
-        locked_business_thread && locked_business_thread->IsCurrentThread();
-
     // Cache miss: 工厂返回 DasPtr，存 ProxyCacheEntry，move 出去
     auto [create_result, proxy] = CreateProxyByInterfaceIdWithFallback(
         interface_id,
@@ -147,13 +136,13 @@ std::pair<DasResult, DasPtr<IDasBase>> ProxyFactory::GetOrCreateProxy(
     // 首次物化申报：DOM remote 条目 0→1 时向 owner 申报一条 CONTROL_PLANE
     // RemoteAddRef（fire-and-forget），与条目移除时的 RemoteRelease 严格
     // 配对——每 (对象×对端) 一对消息，后续接口视图物化（dedup）不再发。
-    // D-19 分叉：BT 线程物化（piggyback 总闸开着）→ 入队候车（周期末
-    // guard 出清 / 后续汇点搭车）；非 BT 线程（外部线程/IO/weak_ptr 过期）
-    // 或总闸关闭 → 当场直发（零延迟零窗口）。帧构造单一事实源在
-    // IpcRunLoop（直发/入队两出口字节一致）
+    // D-19 分叉（线程判别已并除）：piggyback 总闸开 → 入队候车（外部
+    // 线程同步调用稳态下下一帧几十微秒后必到，drain 全队顺路带走——
+    // 立即触发会让批永远只剩 1 帧，合写/拼段稳态零执行）；总闸关闭 →
+    // 当场直发（零延迟零窗口回退语义）。帧构造单一事实源在 IpcRunLoop
     if (newly_created)
     {
-        if (run_loop.IsPiggybackEnabled() && materialize_on_business_thread)
+        if (run_loop.IsPiggybackEnabled())
         {
             run_loop.EnqueueAddRef(object_id);
         }

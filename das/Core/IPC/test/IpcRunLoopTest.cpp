@@ -1939,15 +1939,33 @@ TEST_F(IpcRunLoopTest, OutboundFifoTriggerMatrixBoundaries)
         .generation = 22,
         .local_id = 0xA2};
 
-    // —— 非 BT 线程（测试主线程）RELEASE：入队即触发 ——
+    // —— 非 BT 线程（测试主线程）RELEASE：入队候车（不立即触发，
+    // 下一写者/心跳/guard 兜底带走）——
     runloop_->EnqueueReleaseFrame(object_id);
-    EXPECT_EQ(probe.DrainUntil(1, std::chrono::seconds(2)), 1u);
+    EXPECT_EQ(runloop_->GetPendingAddRefCount(REMOTE_SESSION_ID), 1u);
+    // 下一写者（后续调用的业务帧）入队触发 drain，顺路带走候车帧：
+    // 一批两帧一次物理写（搭车形态）
+    const auto writes_before = runloop_->GetOutboundPhysicalWriteCount();
+    const auto carrier_header =
+        DAS::Core::IPC::IPCMessageHeaderBuilder()
+            .SetMessageType(DAS::Core::IPC::MessageType::Request)
+            .SetInterfaceId(0xE301)
+            .SetCallId(701)
+            .SetSourceSessionId(LOCAL_SESSION_ID)
+            .SetTargetSessionId(REMOTE_SESSION_ID)
+            .SetBodySize(0)
+            .Build();
+    ASSERT_EQ(
+        runloop_->PostSend(carrier_header, std::vector<uint8_t>()),
+        DAS_S_OK);
+    EXPECT_EQ(probe.DrainUntil(2, std::chrono::seconds(2)), 2u);
     EXPECT_EQ(
         probe.CountByInterfaceId(
             static_cast<uint32_t>(
                 DAS::Core::IPC::IpcCommandType::RemoteRelease)),
         1u);
     EXPECT_EQ(runloop_->GetPendingAddRefCount(REMOTE_SESSION_ID), 0u);
+    EXPECT_EQ(runloop_->GetOutboundPhysicalWriteCount() - writes_before, 1u);
 
     // —— BT 路径 ADD_REF：入队不触发（任务体内可观测） ——
     const DAS::DasPtr<DAS::Core::IPC::InternalCallbackHandler>
@@ -2574,18 +2592,38 @@ TEST_F(IpcRunLoopTest, RemoteReleaseJoinsFifoBatchInOrder)
     const auto physical_writes_before =
         runloop_->GetOutboundPhysicalWriteCount();
 
-    // 测试主线程 = 非 BT 线程：入队即触发
+    // 测试主线程 = 非 BT 线程：入队候车（不立即触发，下一写者/guard/
+    // 心跳兜底）。候车中：两帧滞留、零写
     runloop_->EnqueueReleaseFrame(object_id);
+    EXPECT_EQ(runloop_->GetPendingAddRefCount(REMOTE_SESSION_ID), 2u);
+    EXPECT_EQ(
+        runloop_->GetOutboundPhysicalWriteCount() - physical_writes_before,
+        0u);
 
-    // [130][132] 同批连写：两逻辑帧、恰一次物理写、序 == 入队序
-    EXPECT_EQ(probe.DrainUntil(2, std::chrono::seconds(2)), 2u);
-    EXPECT_EQ(probe.TotalFrameCount(), 2u);
+    // 下一写者（后续调用的业务帧）触发 drain：[130][132][业务帧] 同批
+    // 连写——序 == 入队序
+    const auto carrier_header = IPCMessageHeaderBuilder()
+                                    .SetMessageType(MessageType::Request)
+                                    .SetInterfaceId(0x8101)
+                                    .SetCallId(801)
+                                    .SetSourceSessionId(LOCAL_SESSION_ID)
+                                    .SetTargetSessionId(REMOTE_SESSION_ID)
+                                    .SetBodySize(0)
+                                    .Build();
+    ASSERT_EQ(
+        runloop_->PostSend(carrier_header, std::vector<uint8_t>()),
+        DAS_S_OK);
+
+    // [130][132][业务] 同批连写：三逻辑帧、恰一次物理写、序 == 入队序
+    EXPECT_EQ(probe.DrainUntil(3, std::chrono::seconds(2)), 3u);
+    EXPECT_EQ(probe.TotalFrameCount(), 3u);
     EXPECT_EQ(
         probe.InterfaceIdOrder(),
         (std::vector<uint32_t>{
             static_cast<uint32_t>(DAS::Core::IPC::IpcCommandType::RemoteAddRef),
             static_cast<uint32_t>(
-                DAS::Core::IPC::IpcCommandType::RemoteRelease)}));
+                DAS::Core::IPC::IpcCommandType::RemoteRelease),
+            0x8101u}));
     EXPECT_EQ(
         runloop_->GetOutboundPhysicalWriteCount() - physical_writes_before,
         1u);
