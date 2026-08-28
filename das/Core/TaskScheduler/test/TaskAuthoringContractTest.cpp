@@ -1573,6 +1573,111 @@ TEST(TaskAuthoringContractTest, ApplyResultFailsWhenRevisionIsNotBasePlusOne)
     EXPECT_EQ(r.error_kind, "revisionMismatch");
 }
 
+// moveGraphNode 走 viewData 轻量通道：成功也不推进语义 revision（GraphRuntime
+// 外壳不 ++version），成功 envelope 须 revision == baseRevision；失败 envelope
+// 维持既有「不推进」不变量；语义 kind 的 base+1 强制不变。
+TEST(
+    TaskAuthoringContractTest,
+    ApplyResultMoveGraphNodeSuccessKeepsBaseRevision)
+{
+    auto result = ParseJson(R"json({
+        "acceptedProperties": {},
+        "document": {
+            "contractVersion": 1,
+            "viewKind": "graph",
+            "revision": 4
+        },
+        "diagnostics": []
+    })json");
+
+    auto r = Das::Core::TaskScheduler::ValidateAuthoringApplyResult(
+        result,
+        4,
+        "moveGraphNode");
+    EXPECT_TRUE(r.valid);
+    EXPECT_TRUE(r.error_kind.empty()) << r.message;
+}
+
+TEST(
+    TaskAuthoringContractTest,
+    ApplyResultMoveGraphNodeSuccessRejectsBumpedRevision)
+{
+    auto result = ParseJson(R"json({
+        "acceptedProperties": {},
+        "document": {
+            "contractVersion": 1,
+            "viewKind": "graph",
+            "revision": 5
+        },
+        "diagnostics": []
+    })json");
+
+    auto r = Das::Core::TaskScheduler::ValidateAuthoringApplyResult(
+        result,
+        4,
+        "moveGraphNode");
+    EXPECT_FALSE(r.valid);
+    EXPECT_EQ(r.error_kind, "revisionMismatch");
+}
+
+TEST(
+    TaskAuthoringContractTest,
+    ApplyResultMoveGraphNodeFailureKeepsBaseRevision)
+{
+    auto result = ParseJson(R"json({
+        "acceptedProperties": {},
+        "document": {
+            "contractVersion": 1,
+            "viewKind": "graph",
+            "revision": 4
+        },
+        "diagnostics": [
+            {"severity": "error", "message": "moveGraphNode.nodeId required"}
+        ]
+    })json");
+
+    auto r = Das::Core::TaskScheduler::ValidateAuthoringApplyResult(
+        result,
+        4,
+        "moveGraphNode");
+    EXPECT_TRUE(r.valid);
+    EXPECT_TRUE(r.error_kind.empty()) << r.message;
+}
+
+TEST(TaskAuthoringContractTest, ApplyResultSemanticKindStillRequiresBasePlusOne)
+{
+    auto bumped = ParseJson(R"json({
+        "acceptedProperties": {},
+        "document": {
+            "contractVersion": 1,
+            "viewKind": "graph",
+            "revision": 5
+        },
+        "diagnostics": []
+    })json");
+    auto r_bumped = Das::Core::TaskScheduler::ValidateAuthoringApplyResult(
+        bumped,
+        4,
+        "connectGraphPorts");
+    EXPECT_TRUE(r_bumped.valid) << r_bumped.message;
+
+    auto unbumped = ParseJson(R"json({
+        "acceptedProperties": {},
+        "document": {
+            "contractVersion": 1,
+            "viewKind": "graph",
+            "revision": 4
+        },
+        "diagnostics": []
+    })json");
+    auto r_unbumped = Das::Core::TaskScheduler::ValidateAuthoringApplyResult(
+        unbumped,
+        4,
+        "connectGraphPorts");
+    EXPECT_FALSE(r_unbumped.valid);
+    EXPECT_EQ(r_unbumped.error_kind, "revisionMismatch");
+}
+
 TEST(TaskAuthoringContractTest, ApplyResultPassesForProviderRejectedApply)
 {
     // A provider-rejected apply is a legitimate failure envelope: error

@@ -40,9 +40,15 @@ namespace Das::Core::TaskScheduler
     // `{acceptedProperties, document, diagnostics[]}`. The result must carry
     // non-null `acceptedProperties`, a valid `document`, and a strict
     // `diagnostics` array; `document.revision` must equal `baseRevision + 1`.
+    // `kind` names the applied change: the viewData lightweight channel
+    // ("moveGraphNode") does not bump the semantic revision, so its success
+    // envelope must keep `document.revision == baseRevision`; every other
+    // kind still requires `baseRevision + 1` on success. The default keeps
+    // existing callers on the semantic path.
     AuthoringValidationResult ValidateAuthoringApplyResult(
         const yyjson::value& result,
-        int64_t              baseRevision);
+        int64_t              baseRevision,
+        std::string_view     kind = {});
 
     // D-84-08: provider Compile result envelope `{compile, diagnostics[]}`.
     AuthoringValidationResult ValidateAuthoringCompileResult(

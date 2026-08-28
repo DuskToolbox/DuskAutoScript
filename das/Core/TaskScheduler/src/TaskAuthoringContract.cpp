@@ -2279,8 +2279,10 @@ namespace Das::Core::TaskScheduler
 
     AuthoringValidationResult ValidateAuthoringApplyResult(
         const yyjson::value& result,
-        int64_t              baseRevision)
+        int64_t              baseRevision,
+        std::string_view     kind)
     {
+        (void)kind;
         auto obj_opt = result.as_object();
         if (!obj_opt)
         {
