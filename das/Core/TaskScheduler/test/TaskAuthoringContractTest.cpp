@@ -3,6 +3,12 @@
 #include <das/Utils/DasJsonCore.h>
 #include <gtest/gtest.h>
 
+#include <filesystem>
+#include <fstream>
+#include <optional>
+#include <set>
+#include <sstream>
+#include <string>
 #include <string_view>
 
 namespace
@@ -12,6 +18,55 @@ namespace
         auto parsed = Das::Utils::ParseYyjsonFromString(json);
         EXPECT_TRUE(parsed.has_value());
         return parsed ? std::move(*parsed) : yyjson::value{};
+    }
+
+    // 与 ParseJson 相同，但放行 NaN/Infinity 字面量——构造非有限数值
+    // 输入，供有限性校验用例使用（默认 flag 下 yyjson 直接拒绝该文档，
+    // 非有限值只能经 AllowInfAndNan 语法进入）。
+    yyjson::value ParseJsonAllowingNonFinite(std::string_view json)
+    {
+        auto parsed = Das::Utils::ParseYyjsonFromString(
+            json,
+            yyjson::ReadFlag::AllowInfAndNan);
+        EXPECT_TRUE(parsed.has_value());
+        return parsed ? std::move(*parsed) : yyjson::value{};
+    }
+
+    // 仓库根 schema 契约文件定位：ctest WORKING_DIRECTORY 位于构建树内，
+    // 逐级向上直到命中仓库根的 TaskAuthoringHttpContract.schema.json。
+    std::optional<std::filesystem::path> ResolveSchemaJsonPath()
+    {
+        namespace fs = std::filesystem;
+        auto directory = fs::current_path();
+        for (int depth = 0; depth < 8; ++depth)
+        {
+            const auto candidate =
+                directory / "TaskAuthoringHttpContract.schema.json";
+            std::error_code error_code;
+            if (fs::exists(candidate, error_code))
+            {
+                return candidate;
+            }
+            const auto parent = directory.parent_path();
+            if (parent == directory)
+            {
+                break;
+            }
+            directory = parent;
+        }
+        return std::nullopt;
+    }
+
+    std::optional<std::string> ReadFileText(const std::filesystem::path& path)
+    {
+        std::ifstream stream(path, std::ios::binary);
+        if (!stream)
+        {
+            return std::nullopt;
+        }
+        std::ostringstream buffer;
+        buffer << stream.rdbuf();
+        return buffer.str();
     }
 } // namespace
 
@@ -832,6 +887,7 @@ TEST(TaskAuthoringContractTest, SupportedChangeKindsPass)
          R"({"fromNodeId":"a","fromPortId":"p1","toNodeId":"b","toPortId":"p2"})"},
         {"disconnectGraphPorts",
          R"({"fromNodeId":"a","fromPortId":"p1","toNodeId":"b","toPortId":"p2"})"},
+        {"moveGraphNode", R"({"nodeId":"n-1","position":{"x":12.5,"y":-3}})"},
         // uiEvent：Core 契约层只放行 kind，payload 语义由 MaaPI
         // ApplyUiEventChange 校验（Core 不解 ui.values 黑盒）。
         {"uiEvent",
@@ -1084,6 +1140,247 @@ TEST(TaskAuthoringContractTest, GraphNodeChangePayloadsStrict)
     })json");
     auto r4 = Das::Core::TaskScheduler::ValidateAuthoringChange(disconnect);
     EXPECT_TRUE(r4.valid) << r4.message;
+}
+
+// moveGraphNode：节点布局坐标走文档级 viewData 轻量通道。payload 键集
+// 锁死 {nodeId, position{x,y}}，多余键/空 id/非数值或非有限坐标一律显式
+// 拒绝，防任意 viewData 子树注入。
+TEST(TaskAuthoringContractTest, MoveGraphNodeChangePayloadStrict)
+{
+    auto ok = ParseJson(R"json({
+        "baseRevision": 5,
+        "kind": "moveGraphNode",
+        "payload": {"nodeId": "n1", "position": {"x": 1.5, "y": 2.5}}
+    })json");
+    auto r_ok = Das::Core::TaskScheduler::ValidateAuthoringChange(ok);
+    EXPECT_TRUE(r_ok.valid) << r_ok.message;
+
+    // 整数格式坐标等价放行（C# 序列化器把 100.0 写成 100）。
+    auto integer_coordinates = ParseJson(R"json({
+        "baseRevision": 5,
+        "kind": "moveGraphNode",
+        "payload": {"nodeId": "n1", "position": {"x": 30, "y": -40}}
+    })json");
+    auto r_integers =
+        Das::Core::TaskScheduler::ValidateAuthoringChange(integer_coordinates);
+    EXPECT_TRUE(r_integers.valid) << r_integers.message;
+
+    auto extra_payload_key = ParseJson(R"json({
+        "baseRevision": 5,
+        "kind": "moveGraphNode",
+        "payload": {
+            "nodeId": "n1",
+            "position": {"x": 1.5, "y": 2.5},
+            "extra": true
+        }
+    })json");
+    auto r_extra =
+        Das::Core::TaskScheduler::ValidateAuthoringChange(extra_payload_key);
+    EXPECT_FALSE(r_extra.valid);
+    EXPECT_EQ(r_extra.error_kind, "unknownField");
+
+    auto empty_node_id = ParseJson(R"json({
+        "baseRevision": 5,
+        "kind": "moveGraphNode",
+        "payload": {"nodeId": "", "position": {"x": 1.5, "y": 2.5}}
+    })json");
+    auto r_empty =
+        Das::Core::TaskScheduler::ValidateAuthoringChange(empty_node_id);
+    EXPECT_FALSE(r_empty.valid);
+    EXPECT_EQ(r_empty.error_kind, "invalidNodeId");
+
+    auto missing_node_id = ParseJson(R"json({
+        "baseRevision": 5,
+        "kind": "moveGraphNode",
+        "payload": {"position": {"x": 1.5, "y": 2.5}}
+    })json");
+    auto r_missing =
+        Das::Core::TaskScheduler::ValidateAuthoringChange(missing_node_id);
+    EXPECT_FALSE(r_missing.valid);
+    EXPECT_EQ(r_missing.error_kind, "missingField");
+
+    auto string_coordinate = ParseJson(R"json({
+        "baseRevision": 5,
+        "kind": "moveGraphNode",
+        "payload": {"nodeId": "n1", "position": {"x": "1.5", "y": 2.5}}
+    })json");
+    auto r_string =
+        Das::Core::TaskScheduler::ValidateAuthoringChange(string_coordinate);
+    EXPECT_FALSE(r_string.valid);
+    EXPECT_EQ(r_string.error_kind, "invalidPosition");
+
+    auto missing_coordinate = ParseJson(R"json({
+        "baseRevision": 5,
+        "kind": "moveGraphNode",
+        "payload": {"nodeId": "n1", "position": {"y": 2.5}}
+    })json");
+    auto r_missing_coordinate =
+        Das::Core::TaskScheduler::ValidateAuthoringChange(missing_coordinate);
+    EXPECT_FALSE(r_missing_coordinate.valid);
+    EXPECT_EQ(r_missing_coordinate.error_kind, "missingField");
+
+    // 非有限坐标（Infinity 经 AllowInfAndNan 语法进入）必须拒绝。
+    auto infinite_coordinate = ParseJsonAllowingNonFinite(R"json({
+        "baseRevision": 5,
+        "kind": "moveGraphNode",
+        "payload": {"nodeId": "n1", "position": {"x": Infinity, "y": 2.5}}
+    })json");
+    auto r_infinite =
+        Das::Core::TaskScheduler::ValidateAuthoringChange(infinite_coordinate);
+    EXPECT_FALSE(r_infinite.valid);
+    EXPECT_EQ(r_infinite.error_kind, "invalidPosition");
+
+    auto extra_position_key = ParseJson(R"json({
+        "baseRevision": 5,
+        "kind": "moveGraphNode",
+        "payload": {"nodeId": "n1", "position": {"x": 1.5, "y": 2.5, "z": 0}}
+    })json");
+    auto r_extra_position =
+        Das::Core::TaskScheduler::ValidateAuthoringChange(extra_position_key);
+    EXPECT_FALSE(r_extra_position.valid);
+    EXPECT_EQ(r_extra_position.error_kind, "unknownField");
+}
+
+// schema 契约与 C++ 白名单对账：AuthoringChangeKind enum 集合逐项一致
+// （缺项/多项都在此暴露，防 C++/schema/前端三方漂移）；MoveGraphNode
+// $def 锁死 {nodeId, position{x,y}} 键集与数值类型。
+TEST(TaskAuthoringContractTest, SchemaJsonTracksChangeKindWhitelist)
+{
+    const auto schema_path = ResolveSchemaJsonPath();
+    ASSERT_TRUE(schema_path.has_value())
+        << "TaskAuthoringHttpContract.schema.json not found above "
+        << std::filesystem::current_path();
+    const auto schema_text = ReadFileText(*schema_path);
+    ASSERT_TRUE(schema_text.has_value());
+
+    auto schema = ParseJson(*schema_text);
+    auto schema_object = schema.as_object();
+    ASSERT_TRUE(schema_object.has_value());
+    auto defs_value = (*schema_object)[std::string_view("$defs")];
+    auto defs_object = defs_value.as_object();
+    ASSERT_TRUE(defs_object.has_value());
+
+    auto kind_def =
+        (*defs_object)[std::string_view("AuthoringChangeKind")].as_object();
+    ASSERT_TRUE(kind_def.has_value());
+    auto enum_array = (*kind_def)[std::string_view("enum")].as_array();
+    ASSERT_TRUE(enum_array.has_value());
+    std::set<std::string> schema_kinds;
+    for (const auto& item : *enum_array)
+    {
+        auto text = item.as_string();
+        ASSERT_TRUE(text.has_value());
+        schema_kinds.insert(std::string(*text));
+    }
+    // 与 TaskAuthoringContract.cpp 的 CHANGE_KINDS 白名单逐项一致。
+    const std::set<std::string> expected_kinds{
+        "setValue",
+        "invokeCommand",
+        "convertView",
+        "addFormSequenceItem",
+        "moveFormSequenceItem",
+        "removeFormSequenceItem",
+        "addGraphNode",
+        "removeGraphNode",
+        "connectGraphPorts",
+        "disconnectGraphPorts",
+        "uiEvent",
+        "moveGraphNode"};
+    EXPECT_EQ(schema_kinds, expected_kinds);
+
+    auto move_def =
+        (*defs_object)[std::string_view("MoveGraphNode")].as_object();
+    ASSERT_TRUE(move_def.has_value());
+    auto no_extra_fields =
+        (*move_def)[std::string_view("additionalProperties")].as_bool();
+    ASSERT_TRUE(no_extra_fields.has_value());
+    EXPECT_FALSE(*no_extra_fields);
+
+    std::set<std::string> required_fields;
+    auto required_array = (*move_def)[std::string_view("required")].as_array();
+    ASSERT_TRUE(required_array.has_value());
+    for (const auto& item : *required_array)
+    {
+        auto text = item.as_string();
+        ASSERT_TRUE(text.has_value());
+        required_fields.insert(std::string(*text));
+    }
+    const std::set<std::string> expected_required{"nodeId", "position"};
+    EXPECT_EQ(required_fields, expected_required);
+
+    auto properties = (*move_def)[std::string_view("properties")].as_object();
+    ASSERT_TRUE(properties.has_value());
+    auto node_id = (*properties)[std::string_view("nodeId")].as_object();
+    ASSERT_TRUE(node_id.has_value());
+    EXPECT_EQ(
+        (*node_id)[std::string_view("type")].as_string().value(),
+        "string");
+    EXPECT_EQ((*node_id)[std::string_view("minLength")].as_sint().value(), 1);
+
+    auto position = (*properties)[std::string_view("position")].as_object();
+    ASSERT_TRUE(position.has_value());
+    EXPECT_EQ(
+        (*position)[std::string_view("type")].as_string().value(),
+        "object");
+    auto position_no_extra =
+        (*position)[std::string_view("additionalProperties")].as_bool();
+    ASSERT_TRUE(position_no_extra.has_value());
+    EXPECT_FALSE(*position_no_extra);
+
+    std::set<std::string> position_required;
+    auto                  position_required_array =
+        (*position)[std::string_view("required")].as_array();
+    ASSERT_TRUE(position_required_array.has_value());
+    for (const auto& item : *position_required_array)
+    {
+        auto text = item.as_string();
+        ASSERT_TRUE(text.has_value());
+        position_required.insert(std::string(*text));
+    }
+    const std::set<std::string> expected_position_required{"x", "y"};
+    EXPECT_EQ(position_required, expected_position_required);
+
+    auto position_properties =
+        (*position)[std::string_view("properties")].as_object();
+    ASSERT_TRUE(position_properties.has_value());
+    for (const std::string_view axis : {"x", "y"})
+    {
+        auto axis_definition =
+            (*position_properties)[std::string_view(axis)].as_object();
+        ASSERT_TRUE(axis_definition.has_value()) << axis;
+        EXPECT_EQ(
+            (*axis_definition)[std::string_view("type")].as_string().value(),
+            "number")
+            << axis;
+    }
+
+    // AuthoringChangePayload 的 oneOf 分支集含 MoveGraphNode $ref。
+    auto payload_definition =
+        (*defs_object)[std::string_view("AuthoringChangePayload")].as_object();
+    ASSERT_TRUE(payload_definition.has_value());
+    auto payload_branches =
+        (*payload_definition)[std::string_view("oneOf")].as_array();
+    ASSERT_TRUE(payload_branches.has_value());
+    bool found_move_branch = false;
+    for (const auto& branch : *payload_branches)
+    {
+        auto branch_object = branch.as_object();
+        if (!branch_object)
+        {
+            continue;
+        }
+        if (branch_object->contains(std::string_view("$ref")))
+        {
+            auto reference =
+                (*branch_object)[std::string_view("$ref")].as_string();
+            if (reference
+                && *reference == std::string_view("#/$defs/MoveGraphNode"))
+            {
+                found_move_branch = true;
+            }
+        }
+    }
+    EXPECT_TRUE(found_move_branch);
 }
 
 TEST(TaskAuthoringContractTest, ChangeRejectsOpWrapper)
