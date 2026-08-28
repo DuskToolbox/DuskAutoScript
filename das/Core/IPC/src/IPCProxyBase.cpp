@@ -1,3 +1,4 @@
+#include <das/Core/IPC/BlockingCallWait.h>
 #include <das/Core/IPC/BusinessThread.h>
 #include <das/Core/IPC/Config.h>
 #include <das/Core/IPC/IPCProxyBase.h>
@@ -158,25 +159,26 @@ DasResult IPCProxyBase::SendRequest(
             return runtime_result;
         }
 
-        // External thread: AwaitResponseSender 的 start() 会调用
-        // PostSend(带回调)，在 IO 线程注册 pending call 后再发送
+        // External thread: StartAndSpinWaitResponseCall 内部经 PostSend(带
+        // 回调) 发送——IO 线程注册 pending call 后再发，spin-then-park 等待
         constexpr auto timeout = std::chrono::milliseconds{30000};
 
         std::vector<uint8_t> body_vec(body, body + body_size);
-        AwaitResponseSender
-             sender{&run_loop_, header, std::move(body_vec), call_key, timeout};
-        auto result = stdexec::sync_wait(std::move(sender));
-        if (!result)
+        const auto           inner_result = StartAndSpinWaitResponseCall(
+            run_loop_,
+            header,
+            std::move(body_vec),
+            timeout);
+        if (!inner_result)
         {
             DAS_CORE_LOG_ERROR(
-                "IPCProxyBase::SendRequest: sync_wait failed for "
+                "IPCProxyBase::SendRequest: spin wait failed for "
                 "call_id = {}",
                 call_id);
             return DAS_E_IPC_REMOTE_ERROR;
         }
 
-        // sync_wait returns optional<tuple<DasResult, vector, uint16_t flags>>
-        auto&                inner = std::get<0>(*result);
+        auto&                inner = *inner_result;
         const DasResult      ipc_result = std::get<0>(inner);
         std::vector<uint8_t> response_body = std::move(std::get<1>(inner));
         const uint16_t       response_flags = std::get<2>(inner);
@@ -256,24 +258,26 @@ DasResult IPCProxyBase::SendBusinessControlRequest(
             return runtime_result;
         }
 
-        // External thread: AwaitResponseSender 的 start() 会调用
-        // PostSend(带回调)，在 IO 线程注册 pending call 后再发送
+        // External thread: StartAndSpinWaitResponseCall 内部经 PostSend(带
+        // 回调) 发送——IO 线程注册 pending call 后再发，spin-then-park 等待
         constexpr auto timeout = std::chrono::milliseconds{30000};
 
         std::vector<uint8_t> body_vec(body, body + body_size);
-        AwaitResponseSender
-             sender{&run_loop_, header, std::move(body_vec), call_key, timeout};
-        auto result = stdexec::sync_wait(std::move(sender));
-        if (!result)
+        const auto           inner_result = StartAndSpinWaitResponseCall(
+            run_loop_,
+            header,
+            std::move(body_vec),
+            timeout);
+        if (!inner_result)
         {
             DAS_CORE_LOG_ERROR(
-                "IPCProxyBase::SendBusinessControlRequest: sync_wait failed "
+                "IPCProxyBase::SendBusinessControlRequest: spin wait failed "
                 "for call_id = {}",
                 call_id);
             return DAS_E_IPC_REMOTE_ERROR;
         }
 
-        auto&                inner = std::get<0>(*result);
+        auto&                inner = *inner_result;
         const DasResult      ipc_result = std::get<0>(inner);
         std::vector<uint8_t> response_body = std::move(std::get<1>(inner));
         out_response = std::move(response_body);

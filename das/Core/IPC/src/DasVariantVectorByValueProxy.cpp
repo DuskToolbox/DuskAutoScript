@@ -1,6 +1,7 @@
 #include <das/Core/IPC/DasVariantVectorByValueProxy.h>
 
 #include <cstring>
+#include <das/Core/IPC/BlockingCallWait.h>
 #include <das/Core/IPC/InterfaceParamSerialization.h>
 #include <das/Core/IPC/IpcRunLoop.h>
 #include <das/Core/IPC/ObjectId.h>
@@ -108,6 +109,7 @@ DasResult DasVariantVectorByValueProxy::EnsureDataLoaded(uint16_t method_id)
             .SetTargetSessionId(GetObjectId().session_id)
             .Build();
 
+    [[maybe_unused]]
     const CallKey call_key{GetObjectId().session_id, call_id};
 
     std::vector<uint8_t> response;
@@ -133,20 +135,22 @@ DasResult DasVariantVectorByValueProxy::EnsureDataLoaded(uint16_t method_id)
     }
     else
     {
-        // External thread path: AwaitResponseSender 的 start() 会调用
-        // PostSend(带回调)，在 IO 线程注册 pending call 后再发送
+        // External thread path: StartAndSpinWaitResponseCall 内部经 PostSend(
+        // 带回调) 发送——IO 线程注册 pending call 后再发，spin-then-park 等待
         constexpr auto timeout = std::chrono::milliseconds{30000};
 
-        AwaitResponseSender
-             sender{&GetRunLoop(), header, std::move(body), call_key, timeout};
-        auto result = stdexec::sync_wait(std::move(sender));
-        if (!result)
+        const auto inner_result = StartAndSpinWaitResponseCall(
+            GetRunLoop(),
+            header,
+            std::move(body),
+            timeout);
+        if (!inner_result)
         {
-            DAS_CORE_LOG_ERROR("sync_wait failed for call_id = {}", call_id);
+            DAS_CORE_LOG_ERROR("spin wait failed for call_id = {}", call_id);
             return DAS_E_IPC_REMOTE_ERROR;
         }
 
-        auto&     inner = std::get<0>(*result);
+        auto&     inner = *inner_result;
         DasResult ipc_result = std::get<0>(inner);
         response = std::move(std::get<1>(inner));
 

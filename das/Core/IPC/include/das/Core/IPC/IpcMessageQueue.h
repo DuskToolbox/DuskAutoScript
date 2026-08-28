@@ -9,10 +9,36 @@
 #include <condition_variable>
 #include <mutex>
 #include <optional>
+#include <thread>
 #include <type_traits>
 #include <vector>
 
+#if defined(_MSC_VER)
+#include <intrin.h>
+#else
+#include <x86intrin.h>
+#endif
+
 DAS_CORE_IPC_NS_BEGIN
+
+// 出队自旋前缀参数：先短暂自旋重试非阻塞出队，吃掉条件变量停车-唤醒延迟
+// （Windows 上典型 5~20us）；预算耗尽回落到原有阻塞等待。每轮插入少量
+// _mm_pause 放松总线，避免自旋侧与生产者互相打缓存行。
+inline constexpr unsigned MESSAGE_QUEUE_POP_SPIN_ATTEMPTS = 512;
+inline constexpr unsigned MESSAGE_QUEUE_POP_PAUSE_ROUNDS_PER_ATTEMPT = 8;
+
+namespace detail
+{
+    inline void MessageQueueSpinPause() noexcept
+    {
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__)                \
+    || defined(_M_IX86)
+        _mm_pause();
+#else
+        std::this_thread::yield();
+#endif
+    }
+} // namespace detail
 
 /// @brief 入站消息结构体 - 用于 IO 线程到业务线程的消息传递
 /// @note 不包含 transport 指针——业务线程不应接触 transport
@@ -82,6 +108,24 @@ public:
     /// @return 有元素返回元素，否则返回 nullopt（队列已关闭时）
     std::optional<T> Pop()
     {
+        // 自旋前缀：稳态消息到达在数十微秒级，先重试非阻塞出队吃掉
+        // 停车-唤醒延迟；队列关闭与谓词完成语义仍由下方阻塞路径裁决
+        for (unsigned attempt = 0; attempt < MESSAGE_QUEUE_POP_SPIN_ATTEMPTS;
+             ++attempt)
+        {
+            auto spin_item = TryPop();
+            if (spin_item.has_value())
+            {
+                return spin_item;
+            }
+            for (unsigned pause_round = 0;
+                 pause_round < MESSAGE_QUEUE_POP_PAUSE_ROUNDS_PER_ATTEMPT;
+                 ++pause_round)
+            {
+                detail::MessageQueueSpinPause();
+            }
+        }
+
         std::unique_lock<std::mutex> lock(mutex_);
 
         cv_.wait(lock, [this]() { return !ring_.empty() || uninitialized_; });
@@ -106,6 +150,28 @@ public:
         static_assert(
             std::is_invocable_r_v<bool, Predicate&>,
             "IpcMessageQueue::PopUntil predicate must return bool");
+
+        // 自旋前缀：与 Pop 相同的动机；谓词完成时立即退出自旋，把
+        // pred-完成语义交还原阻塞路径裁决
+        for (unsigned attempt = 0; attempt < MESSAGE_QUEUE_POP_SPIN_ATTEMPTS;
+             ++attempt)
+        {
+            auto spin_item = TryPop();
+            if (spin_item.has_value())
+            {
+                return spin_item;
+            }
+            if (is_done())
+            {
+                break;
+            }
+            for (unsigned pause_round = 0;
+                 pause_round < MESSAGE_QUEUE_POP_PAUSE_ROUNDS_PER_ATTEMPT;
+                 ++pause_round)
+            {
+                detail::MessageQueueSpinPause();
+            }
+        }
 
         std::unique_lock<std::mutex> lock(mutex_);
 
