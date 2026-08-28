@@ -5,6 +5,7 @@
 #include <array>
 #include <boost/asio/system_executor.hpp>
 #include <boost/dll/runtime_symbol_info.hpp>
+#include <cctype>
 
 #include <das/DasConfig.h>
 DAS_DISABLE_WARNING_BEGIN
@@ -26,6 +27,7 @@ DAS_DISABLE_WARNING_END
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <sstream>
 #include <string>
+#include <string_view>
 
 #if defined(_WIN32) || defined(__CYGWIN__)
 #include <windows.h>
@@ -256,7 +258,55 @@ namespace Core
         spdlog::set_pattern(
             "[%Y-%m-%d %H:%M:%S.%e][%P][%t][%^%l%$][%!()][%s:%#][%i] %v");
 
-        spdlog::set_level(spdlog::level::trace);
+        // 启动级别 env 门控（DAS_LOG_LEVEL = trace/debug/info/warn/error/
+        // off，大小写无关；缺省 info）：诊断密度按排查需求显式打开。历史
+        // 默认 trace 使每次排查期加入热路径的调试日志在常规运行中全量
+        // 计税（格式化 + stdout + 滚动文件 + notifier 三路 sink）
+        spdlog::level::level_enum startup_level = spdlog::level::info;
+        if (const char* requested_level = std::getenv("DAS_LOG_LEVEL"))
+        {
+            const std::string_view normalized{requested_level};
+            auto                   matches = [normalized](std::string_view name)
+            {
+                return normalized.size() == name.size()
+                       && std::equal(
+                           normalized.begin(),
+                           normalized.end(),
+                           name.begin(),
+                           [](char a, char b)
+                           {
+                               return std::tolower(
+                                          static_cast<unsigned char>(a))
+                                      == b;
+                           });
+            };
+            if (matches("trace"))
+            {
+                startup_level = spdlog::level::trace;
+            }
+            else if (matches("debug"))
+            {
+                startup_level = spdlog::level::debug;
+            }
+            else if (matches("info"))
+            {
+                startup_level = spdlog::level::info;
+            }
+            else if (matches("warn") || matches("warning"))
+            {
+                startup_level = spdlog::level::warn;
+            }
+            else if (matches("error"))
+            {
+                startup_level = spdlog::level::err;
+            }
+            else if (matches("off"))
+            {
+                startup_level = spdlog::level::off;
+            }
+        }
+
+        spdlog::set_level(startup_level);
 
         DAS_CONFIG_WIN32_CONSOLE;
 
