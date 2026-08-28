@@ -326,6 +326,103 @@ TEST(GraphDocumentDtoTest, GraphDocumentDtoRoundTrip)
     EXPECT_EQ(round_tripped.tags[0], "fromsequence");
 }
 
+// ---------------------------------------------------------------------------
+// viewData partition — legacy-doc safety and coordinate round-trip
+// ---------------------------------------------------------------------------
+
+/// Read viewData.positions[node_id].axis from a document blob; nullopt when
+/// the partition, the node entry, or the axis is absent.
+std::optional<double> ViewDataPositionOf(
+    const GraphDocumentDto& doc,
+    std::string_view        node_id,
+    std::string_view        axis)
+{
+    auto view = doc.view_data.as_object();
+    if (!view || !view->contains(std::string_view("positions")))
+    {
+        return std::nullopt;
+    }
+    auto positions = (*view)[std::string_view("positions")].as_object();
+    if (!positions || !positions->contains(node_id))
+    {
+        return std::nullopt;
+    }
+    auto position = (*positions)[node_id].as_object();
+    if (!position || !position->contains(axis))
+    {
+        return std::nullopt;
+    }
+    return (*position)[axis].as_num();
+}
+
+/// Materialize a JSON literal into a writer-side value, mirroring how
+/// production consumes persisted blobs (RepositoryEntryDto::graph_document
+/// is a writer value by the time GraphDocumentDto is cast from it — a
+/// missing key keeps the field default instead of tripping the reader-side
+/// strict operator[]).
+yyjson::value ToWriterValue(std::string_view json)
+{
+    auto parsed = yyjson::read(std::string(json));
+    const yyjson::reader::const_value_ref parsed_ref = parsed;
+    return Das::Utils::CloneYyjsonValue(parsed_ref);
+}
+
+// A pre-viewData document carries every old DTO key and no viewData entry.
+constexpr std::string_view OLD_DOC_WITHOUT_VIEW_DATA =
+    R"({"documentId":"d1","version":1,"fingerprint":"fp","nodes":[],)"
+    R"("edges":[],"graphInputs":[],"graphOutputs":[],"tags":[]})";
+
+TEST(GraphDocumentDtoTest, ViewDataMissingKeyDeserializesToNull)
+{
+    GraphDocumentDto doc;
+    SCOPED_TRACE(std::string(OLD_DOC_WITHOUT_VIEW_DATA));
+    ASSERT_NO_THROW(
+        doc = yyjson::cast<GraphDocumentDto>(
+            ToWriterValue(OLD_DOC_WITHOUT_VIEW_DATA)));
+    EXPECT_TRUE(doc.view_data.is_null());
+}
+
+TEST(GraphDocumentDtoTest, ViewDataExplicitNullDeserializesToNull)
+{
+    const std::string json = std::string(OLD_DOC_WITHOUT_VIEW_DATA.substr(
+                                 0,
+                                 OLD_DOC_WITHOUT_VIEW_DATA.size() - 1))
+                             + R"(,"viewData":null})";
+    GraphDocumentDto  doc;
+    SCOPED_TRACE(json);
+    ASSERT_NO_THROW(doc = yyjson::cast<GraphDocumentDto>(ToWriterValue(json)));
+    EXPECT_TRUE(doc.view_data.is_null());
+}
+
+TEST(GraphDocumentDtoTest, ViewDataCoordinatesRoundTrip)
+{
+    const std::string json =
+        std::string(OLD_DOC_WITHOUT_VIEW_DATA.substr(
+            0,
+            OLD_DOC_WITHOUT_VIEW_DATA.size() - 1))
+        + R"(,"viewData":{"positions":{"n1":{"x":1.5,"y":2.5},)"
+          R"("n2":{"x":30,"y":40}}}})";
+    GraphDocumentDto doc;
+    ASSERT_NO_THROW(doc = yyjson::cast<GraphDocumentDto>(ToWriterValue(json)));
+    ASSERT_TRUE(doc.view_data.as_object().has_value());
+
+    auto serialized = yyjson::object(doc);
+    EXPECT_TRUE(serialized.contains(std::string_view("viewData")));
+    GraphDocumentDto round_tripped;
+    SCOPED_TRACE(std::string(serialized.write()));
+    ASSERT_NO_THROW(round_tripped = yyjson::cast<GraphDocumentDto>(serialized));
+
+    ASSERT_TRUE(ViewDataPositionOf(round_tripped, "n1", "x").has_value());
+    EXPECT_DOUBLE_EQ(*ViewDataPositionOf(round_tripped, "n1", "x"), 1.5);
+    ASSERT_TRUE(ViewDataPositionOf(round_tripped, "n1", "y").has_value());
+    EXPECT_DOUBLE_EQ(*ViewDataPositionOf(round_tripped, "n1", "y"), 2.5);
+    // Integer-formatted coordinates round-trip numerically equal.
+    ASSERT_TRUE(ViewDataPositionOf(round_tripped, "n2", "x").has_value());
+    EXPECT_DOUBLE_EQ(*ViewDataPositionOf(round_tripped, "n2", "x"), 30.0);
+    ASSERT_TRUE(ViewDataPositionOf(round_tripped, "n2", "y").has_value());
+    EXPECT_DOUBLE_EQ(*ViewDataPositionOf(round_tripped, "n2", "y"), 40.0);
+}
+
 // ===========================================================================
 // GraphTaskEntryStorageTest — entry storage round-trip (v31)
 // ===========================================================================

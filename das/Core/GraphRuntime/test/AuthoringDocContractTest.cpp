@@ -888,6 +888,52 @@ namespace
         EXPECT_NE(source_str.find("\"positions\""), std::string::npos);
     }
 
+    TEST(AuthoringDocContractTest, GraphChange_MoveGraphNodeDoesNotBumpRevision)
+    {
+        GraphDocumentDto doc;
+        doc.nodes.push_back(MakeNode("n1", "{g1}", 0.0));
+        doc.version = 5;
+
+        auto r = ApplyAuthoringChange(doc, MakeMoveGraphNode("n1", 1.0, 2.0));
+        ASSERT_TRUE(r.Ok()) << r.message;
+        // Coordinate changes ride the lightweight viewData channel: the
+        // semantic revision must stay put.
+        EXPECT_EQ(doc.version, 5);
+    }
+
+    TEST(
+        AuthoringDocContractTest,
+        GraphChange_ConnectGraphPortsStillBumpsRevision)
+    {
+        GraphDocumentDto doc;
+        doc.nodes.push_back(MakeNode("n1", "{g1}", 0.0));
+        doc.nodes.push_back(MakeNode("n2", "{g2}", 0.0));
+        doc.version = 5;
+
+        AuthoringChange conn;
+        conn.kind = "connectGraphPorts";
+        conn.connection = GraphConnection{"n1", "o", "n2", "i"};
+        auto r = ApplyAuthoringChange(doc, conn);
+        ASSERT_TRUE(r.Ok()) << r.message;
+        EXPECT_EQ(doc.version, 6);
+    }
+
+    TEST(AuthoringDocContractTest, GraphChange_SetValueStillBumpsRevision)
+    {
+        GraphDocumentDto doc;
+        doc.nodes.push_back(MakeNode("n1", "{g1}", 0.0));
+        doc.version = 5;
+
+        AuthoringChange set;
+        set.kind = "setValue";
+        set.target = SetValueTarget{"graphNode", "n1"};
+        set.field_name = "threshold";
+        set.value = 0.9;
+        auto r = ApplyAuthoringChange(doc, set);
+        ASSERT_TRUE(r.Ok()) << r.message;
+        EXPECT_EQ(doc.version, 6);
+    }
+
     // -----------------------------------------------------------------------
     // Phase 84 strict wire (D-84-02/07/13/38/39) — viewKind, items[], no
     // public settings/sourceFingerprint, EntryRef={entryId} only.
