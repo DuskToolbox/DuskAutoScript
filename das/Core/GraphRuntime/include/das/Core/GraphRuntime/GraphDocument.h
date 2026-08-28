@@ -125,10 +125,9 @@ DAS_CORE_GRAPHRUNTIME_NS_END
 DAS_GRAPHRUNTIME_DTO_CASTER(GraphPortDefinitionDto);
 DAS_GRAPHRUNTIME_DTO_CASTER(ComponentRefDto);
 DAS_GRAPHRUNTIME_DTO_CASTER(EntryRefDto);
-// GraphNodeTargetDto omitted — custom caster below.
+// GraphNodeTargetDto and GraphDocumentDto omitted — custom casters below.
 DAS_GRAPHRUNTIME_DTO_CASTER(GraphNodeDto);
 DAS_GRAPHRUNTIME_DTO_CASTER(GraphEdgeDto);
-DAS_GRAPHRUNTIME_DTO_CASTER(GraphDocumentDto);
 
 #undef DAS_GRAPHRUNTIME_DTO_CASTER
 
@@ -187,6 +186,94 @@ struct yyjson::caster<Das::Core::GraphRuntime::Dto::GraphNodeTargetDto>
         }
 
         return target;
+    }
+};
+
+// ---------------------------------------------------------------------------
+// Custom caster for GraphDocumentDto
+// ---------------------------------------------------------------------------
+// The aggregate default_caster resolves every field key through the strict
+// object operator[], which throws out_of_range when the key is absent — a
+// document persisted before the viewData partition existed would therefore
+// fail to deserialize once the view_data field joined the aggregate. This
+// hand-written from_json guards every read with contains() so absent keys
+// (including "viewData") keep the field's default value instead.
+// Serialization (to_json) stays on the aggregate reflection + field_name_rule
+// path, matching the GraphNodeTargetDto split above.
+// ---------------------------------------------------------------------------
+template <>
+struct yyjson::caster<Das::Core::GraphRuntime::Dto::GraphDocumentDto>
+{
+    template <yyjson::json_value Json>
+    static Das::Core::GraphRuntime::Dto::GraphDocumentDto from_json(
+        const Json& json)
+    {
+        auto object = json.as_object();
+        if (!object.has_value())
+        {
+            throw yyjson::bad_cast(
+                "GraphDocumentDto is not constructible from non-object JSON");
+        }
+
+        Das::Core::GraphRuntime::Dto::GraphDocumentDto document;
+
+        if (object->contains(std::string_view("documentId")))
+        {
+            if (auto v = (*object)[std::string_view("documentId")].as_string())
+            {
+                document.document_id = std::string(*v);
+            }
+        }
+        if (object->contains(std::string_view("version")))
+        {
+            if (auto v = (*object)[std::string_view("version")].as_int())
+            {
+                document.version = static_cast<int32_t>(*v);
+            }
+        }
+        if (object->contains(std::string_view("fingerprint")))
+        {
+            if (auto v = (*object)[std::string_view("fingerprint")].as_string())
+            {
+                document.fingerprint = std::string(*v);
+            }
+        }
+        if (object->contains(std::string_view("nodes")))
+        {
+            document.nodes = yyjson::cast<
+                std::vector<Das::Core::GraphRuntime::Dto::GraphNodeDto>>(
+                (*object)[std::string_view("nodes")]);
+        }
+        if (object->contains(std::string_view("edges")))
+        {
+            document.edges = yyjson::cast<
+                std::vector<Das::Core::GraphRuntime::Dto::GraphEdgeDto>>(
+                (*object)[std::string_view("edges")]);
+        }
+        if (object->contains(std::string_view("graphInputs")))
+        {
+            document.graph_inputs = yyjson::cast<std::vector<
+                Das::Core::GraphRuntime::Dto::GraphPortDefinitionDto>>(
+                (*object)[std::string_view("graphInputs")]);
+        }
+        if (object->contains(std::string_view("graphOutputs")))
+        {
+            document.graph_outputs = yyjson::cast<std::vector<
+                Das::Core::GraphRuntime::Dto::GraphPortDefinitionDto>>(
+                (*object)[std::string_view("graphOutputs")]);
+        }
+        if (object->contains(std::string_view("tags")))
+        {
+            document.tags = yyjson::cast<std::vector<std::string>>(
+                (*object)[std::string_view("tags")]);
+        }
+        if (object->contains(std::string_view("viewData")))
+        {
+            document.view_data = Das::Utils::CloneYyjsonValue(
+                (*object)[std::string_view("viewData")]);
+        }
+
+        return document;
     }
 };
 

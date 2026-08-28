@@ -757,6 +757,15 @@ namespace Contract
             return IsLinear(doc);
         }
 
+        /// View-only kinds ride the lightweight viewData channel and skip the
+        /// semantic revision bump so coordinate updates never participate in
+        /// revision conflict detection. Every other kind keeps the
+        /// success-bumps-revision invariant.
+        bool BumpsRevision(std::string_view kind) noexcept
+        {
+            return kind != "moveGraphNode";
+        }
+
         /// Ordered node ids of a linear signal chain (head → tail), then any
         /// disconnected nodes in array order. Shared by the reverse
         /// projections.
@@ -1499,7 +1508,7 @@ namespace Contract
             IsLinearMode(document)
                 ? ApplyLinearChange(document, change, valid_action_ids)
                 : ApplyGraphChange(document, change, valid_action_ids);
-        if (r.Ok())
+        if (r.Ok() && BumpsRevision(change.kind))
         {
             ++document.version;
         }
