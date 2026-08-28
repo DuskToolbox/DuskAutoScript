@@ -80,10 +80,29 @@ namespace Contract
         std::vector<yyjson::value> candidates;
     };
 
+    /// One projected node port (drag-link precheck data source). Four-field
+    /// thin-map: port identity, display label, type and the derived direction
+    /// ("input" | "output"). Business-neutral: the projection never
+    /// interprets port_type semantics (string pass-through); direction comes
+    /// from the structural role of the port in its declaring source and
+    /// client-side filtering rules consume it as a soft hint only — compile
+    /// stays the authoritative validation.
+    struct GraphNodePort
+    {
+        std::string port_id;
+        std::string display_label;
+        std::string port_type;
+        std::string direction;
+    };
+
     /// One canvas node in the public contract. componentGuid is sourced from
-    /// the internal target.component_ref.component_guid; dynamic_ports and
-    /// settings are dropped (D-84-07). targetKind/entryRef carry the subgraph
-    /// reference when the node targets an entry (D-84-39).
+    /// the internal target.component_ref.component_guid; raw settings are
+    /// dropped. targetKind/entryRef carry the subgraph reference when the
+    /// node targets an entry. ports[] projects the node's
+    /// port surface: registry-declared static ports of the referenced
+    /// component (carried on the actionCatalog channel, direction by
+    /// inputs/outputs list membership) plus the document's dynamic_ports
+    /// (direction derived from the port's edge role in the document).
     struct GraphNode
     {
         std::string                  id;
@@ -91,6 +110,7 @@ namespace Contract
         std::string                  target_kind{"componentRef"};
         std::optional<EntryRef>      entry_ref;
         std::vector<FieldDescriptor> fields;
+        std::vector<GraphNodePort>   ports;
     };
 
     /// One canvas connection in the public contract. edge_id and edge_type are
@@ -132,16 +152,21 @@ namespace Contract
         std::vector<GraphConnection> connections;
     };
 
-    /// One entry in the shared actionCatalog (D-84-31). `actionId` is the
-    /// Provider-scoped opaque ID of a creatable type (not componentGuid, not
-    /// instance id, not repository entryId). For GraphTask, the Provider
-    /// derives it from the registered IDasTaskComponent definition.
+    /// One entry in the shared actionCatalog. `action_id` is the
+    /// Provider-scoped opaque ID of a creatable type (for GraphTask the
+    /// componentGuid). `ports` carries the registry-declared static port
+    /// surface of the component (definition.inputs/outputs, direction by list
+    /// membership) so the node projection can merge it onto nodes — this
+    /// field is internal to the catalog channel and is NOT emitted on the
+    /// public actionCatalog wire (BuildActionCatalogValue keeps the strict
+    /// {actionId,label,description?,icon?} shape).
     struct ActionCatalogEntry
     {
         std::string                action_id;
         std::string                label;
         std::optional<std::string> description;
         std::optional<std::string> icon;
+        std::vector<GraphNodePort> ports;
     };
 
     /// Optional actionCatalog grouping (D-84-33): stable id, localized label,
@@ -189,8 +214,12 @@ namespace Contract
     ///                         linear signal chain into a flat items[].
     ///   - Canvas (untagged)→ viewKind == Graph; thin-maps nodes/connections,
     ///                         dropping runtime-private fields.
+    /// `action_catalog` additionally supplies the registry-declared static
+    /// port surface per component (matched onto nodes by componentGuid ==
+    /// actionId); when absent the node ports[] carry dynamic ports only.
     AuthoringDocument ToAuthoringDocument(
-        const Dto::GraphDocumentDto& document);
+        const Dto::GraphDocumentDto&        document,
+        const std::optional<ActionCatalog>& action_catalog = std::nullopt);
 
     // -----------------------------------------------------------------------
     // Upgrade (formSequence → graph) — one-way, lossless, in-place on the store

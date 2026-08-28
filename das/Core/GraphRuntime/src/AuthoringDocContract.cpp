@@ -239,8 +239,11 @@ namespace Contract
         // Thin graph mapping (drops runtime-private fields)
         // -------------------------------------------------------------------
 
-        GraphView MapGraphView(const Dto::GraphDocumentDto& doc)
+        GraphView MapGraphView(
+            const Dto::GraphDocumentDto&        doc,
+            const std::optional<ActionCatalog>& action_catalog)
         {
+            (void)action_catalog;
             GraphView view;
             view.nodes.reserve(doc.nodes.size());
             for (const auto& node : doc.nodes)
@@ -323,7 +326,9 @@ namespace Contract
         return HasTag(document, LINEAR_TAG);
     }
 
-    AuthoringDocument ToAuthoringDocument(const Dto::GraphDocumentDto& document)
+    AuthoringDocument ToAuthoringDocument(
+        const Dto::GraphDocumentDto&        document,
+        const std::optional<ActionCatalog>& action_catalog)
     {
         AuthoringDocument out;
         out.revision = document.version;
@@ -338,7 +343,7 @@ namespace Contract
         else
         {
             out.view_kind = ViewKind::Graph;
-            out.graph = MapGraphView(document);
+            out.graph = MapGraphView(document, action_catalog);
         }
         return out;
     }
@@ -662,7 +667,7 @@ namespace Contract
         {
             root_obj["viewKind"] =
                 std::make_pair(std::string_view("graph"), yyjson::copy_string);
-            const auto view = MapGraphView(document);
+            const auto view = MapGraphView(document, action_catalog);
             auto       g_v = Das::Utils::MakeYyjsonObject();
             auto       g_o = g_v.as_object();
             if (g_o)

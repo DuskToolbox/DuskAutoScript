@@ -356,6 +356,126 @@ namespace
     }
 
     // -----------------------------------------------------------------------
+    // Node port projection through the session C ABI: the registry-declared
+    // static port surface rides the actionCatalog channel (context entries
+    // carry a per-entry "ports" array; the public actionCatalog wire keeps
+    // the strict {actionId,label} shape) and merges onto nodes by
+    // componentGuid == actionId.
+    // -----------------------------------------------------------------------
+
+    /// Ports array of the first graph node inside a Get document; nullopt
+    /// when the node carries no "ports" key at all.
+    std::optional<yyjson::value> FirstNodePortsOf(const yyjson::value& document)
+    {
+        auto obj = document.as_object();
+        if (!obj || !obj->contains(std::string_view("graph")))
+        {
+            return std::nullopt;
+        }
+        auto graph = (*obj)[std::string_view("graph")].as_object();
+        if (!graph || !graph->contains(std::string_view("nodes")))
+        {
+            return std::nullopt;
+        }
+        auto nodes = (*graph)[std::string_view("nodes")].as_array();
+        if (!nodes || nodes->empty())
+        {
+            return std::nullopt;
+        }
+        auto node_obj = (*nodes)[0].as_object();
+        if (!node_obj || !node_obj->contains(std::string_view("ports")))
+        {
+            return std::nullopt;
+        }
+        return Das::Utils::CloneYyjsonValue(
+            (*node_obj)[std::string_view("ports")]);
+    }
+
+    TEST(GraphAuthoringSessionTest, NodePortsProjectThroughSessionCatalog)
+    {
+        const SessionHandle s{""}; // graph mode
+        // The registry snapshot form the Scheduler injects into the context:
+        // {actionId,label} entries plus the per-entry static port surface
+        // read from the component manifest definition
+        // (inputs → "input", outputs → "output").
+        ASSERT_EQ(
+            SetActionCatalog(
+                s.p,
+                R"json([{"actionId":"{g1}","label":"das.flow.branch","ports":[{"portId":"condition","portType":"bool","direction":"input"},{"portId":"true","portType":"signal","direction":"output"}]}])json"),
+            DAS_S_OK);
+
+        // The node is minted from the catalog entry, so its componentGuid is
+        // the actionId the static ports merge onto.
+        ApplyChange(
+            s.p,
+            WrapEnvelope("addGraphNode", R"({"actionId":"{g1}"})"));
+
+        const auto document = DocumentOf(s.p);
+
+        // Static ports surface on the node in the declared order.
+        const auto ports = FirstNodePortsOf(document);
+        ASSERT_TRUE(ports.has_value());
+        auto arr = ports->as_array();
+        ASSERT_TRUE(arr.has_value());
+        ASSERT_EQ(arr->size(), 2u);
+        auto first = (*arr)[0].as_object();
+        ASSERT_TRUE(first.has_value());
+        EXPECT_TRUE(first->contains(std::string_view("portId")));
+        EXPECT_TRUE(first->contains(std::string_view("displayLabel")));
+        EXPECT_TRUE(first->contains(std::string_view("portType")));
+        EXPECT_TRUE(first->contains(std::string_view("direction")));
+        auto condition = (*first)[std::string_view("portId")].as_string();
+        ASSERT_TRUE(condition.has_value());
+        EXPECT_EQ(*condition, "condition");
+
+        // The public actionCatalog wire keeps the strict {actionId,label}
+        // shape — the port surface is node-level only, never catalog-level.
+        const auto catalog_label = CatalogLabelOf(document, "{g1}");
+        ASSERT_TRUE(catalog_label.has_value());
+        auto doc_obj = document.as_object();
+        ASSERT_TRUE(doc_obj.has_value());
+        ASSERT_TRUE(doc_obj->contains(std::string_view("actionCatalog")));
+        auto catalog_json = Das::Utils::SerializeYyjsonValue(
+            (*doc_obj)[std::string_view("actionCatalog")]);
+        ASSERT_TRUE(catalog_json.has_value());
+        EXPECT_EQ(catalog_json->find("portId"), std::string::npos);
+
+        // The ports-bearing document stays valid strict wire.
+        auto result =
+            Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+        EXPECT_TRUE(result.valid)
+            << result.error_kind << ": " << result.message;
+    }
+
+    // A malformed static-port entry (bad direction / unknown key / non-object)
+    // rejects the whole catalog — the same all-or-nothing contract as the
+    // {actionId,label} shape.
+    TEST(GraphAuthoringSessionTest, ActionCatalogRejectsMalformedPortEntries)
+    {
+        const SessionHandle s{""};
+        EXPECT_EQ(
+            SetActionCatalog(
+                s.p,
+                R"json([{"actionId":"{g1}","ports":[{"portId":"x","portType":"bool","direction":"sideways"}]}])json"),
+            DAS_E_INVALID_ARGUMENT);
+        EXPECT_EQ(
+            SetActionCatalog(
+                s.p,
+                R"json([{"actionId":"{g1}","ports":[{"portId":"x","portType":"bool","direction":"input","extra":1}]}])json"),
+            DAS_E_INVALID_ARGUMENT);
+        EXPECT_EQ(
+            SetActionCatalog(
+                s.p,
+                R"json([{"actionId":"{g1}","ports":["x"]}])json"),
+            DAS_E_INVALID_ARGUMENT);
+        EXPECT_EQ(
+            SetActionCatalog(
+                s.p,
+                R"json([{"actionId":"{g1}","ports":{"portId":"x"}}])json"),
+            DAS_E_INVALID_ARGUMENT);
+    }
+
+    // -----------------------------------------------------------------------
     // E2E: store round-trips through the scheduler contract
     // (context.properties <-> ApplyChange.acceptedProperties)
     // -----------------------------------------------------------------------

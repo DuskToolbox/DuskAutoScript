@@ -123,6 +123,67 @@ TEST(TaskAuthoringContractTest, ValidGraphDocumentWithConnectionsPasses)
     EXPECT_TRUE(result.error_kind.empty()) << result.message;
 }
 
+TEST(TaskAuthoringContractTest, ValidGraphNodePortsPass)
+{
+    // Node port projection: each element is exactly the four locked keys
+    // {portId, displayLabel, portType, direction} with direction ∈
+    // {input, output} (drag-link precheck data source).
+    auto document = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "graph",
+        "revision": 2,
+        "graph": {
+            "nodes": [
+                {
+                    "id": "n1",
+                    "ports": [
+                        {"portId":"condition","displayLabel":"","portType":"bool","direction":"input"},
+                        {"portId":"true","displayLabel":"True","portType":"signal","direction":"output"}
+                    ]
+                },
+                {"id": "n2", "ports": []}
+            ]
+        }
+    })json");
+
+    auto result = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+
+    EXPECT_TRUE(result.valid);
+    EXPECT_TRUE(result.error_kind.empty()) << result.message;
+}
+
+TEST(TaskAuthoringContractTest, GraphNodePortShapeViolationsFail)
+{
+    const std::vector<std::string> invalid_ports = {
+        // direction outside the enum
+        R"([{"portId":"x","displayLabel":"","portType":"bool","direction":"sideways"}])",
+        // unknown extra key on the element
+        R"([{"portId":"x","displayLabel":"","portType":"bool","direction":"input","extra":1}])",
+        // missing required key (direction)
+        R"([{"portId":"x","displayLabel":"","portType":"bool"}])",
+        // empty portId
+        R"([{"portId":"","displayLabel":"","portType":"bool","direction":"input"}])",
+        // non-string portType
+        R"([{"portId":"x","displayLabel":"","portType":5,"direction":"input"}])",
+        // element is not an object
+        R"(["x"])",
+    };
+    for (const auto& ports_json : invalid_ports)
+    {
+        auto document = ParseJson(
+            std::string(R"json({
+            "contractVersion": 1,
+            "viewKind": "graph",
+            "revision": 2,
+            "graph": {"nodes": [{"id": "n1", "ports": )json")
+            + ports_json + "}]} }");
+        auto result =
+            Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+        EXPECT_FALSE(result.valid)
+            << "ports json: " << ports_json << " error: " << result.message;
+    }
+}
+
 TEST(TaskAuthoringContractTest, MissingContractVersionFails)
 {
     auto document = ParseJson(R"json({
