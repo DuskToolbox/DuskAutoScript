@@ -2184,6 +2184,10 @@ TEST_F(IpcMultiProcessTestIntegration, NodeHostLoadPluginQueryInterface)
 
 TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LoadNodePlugin)
 {
+#ifndef DAS_EXPORT_NODE
+    GTEST_SKIP() << "DAS_EXPORT_NODE is not enabled";
+#endif
+
     std::string plugin_json_path;
     try
     {
@@ -2274,6 +2278,10 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LoadNodePlugin)
 
 TEST_F(IpcMultiProcessTestIntegration, CrossProcess_LoadNodeFolderPlugin)
 {
+#ifndef DAS_EXPORT_NODE
+    GTEST_SKIP() << "DAS_EXPORT_NODE is not enabled";
+#endif
+
     std::string plugin_json_path;
     try
     {
@@ -5739,6 +5747,10 @@ TEST_F(IpcMultiProcessTestIntegration, CrossProcess_PythonFolderFailurePathTest)
 
 TEST_F(IpcMultiProcessTestIntegration, CrossProcess_NodeDirectorLifecycleTest)
 {
+#ifndef DAS_EXPORT_NODE
+    GTEST_SKIP() << "DAS_EXPORT_NODE is not enabled";
+#endif
+
     std::string plugin_json_path;
     try
     {
@@ -7430,4 +7442,48 @@ TEST(
     EXPECT_TRUE(assembly.GetRunLoop().PendingAddRefsEmpty());
 
     materialized_proxy.Reset();
+}
+
+// 配对性诊断：物化（ADD_REF 0→1）→ 析构（RELEASE 1→0）必须在
+// owner 侧严格配对——物化后立刻释放，探针应恰好收到一条 130 和
+// 一条 132（一进一出）。任何一侧缺失 = 记账泄漏
+TEST(PiggybackBaselineTest, MaterializeReleasePairingControlPlane)
+{
+    BaselineAssembly assembly(true);
+    ASSERT_TRUE(assembly.IsHealthy());
+
+    const DAS::Core::IPC::ObjectId object_id{
+        .session_id = BASELINE_PEER_SESSION_ID,
+        .generation = 9,
+        .local_id = 0x2501};
+
+    DAS::DasPtr<IDasBase> materialized_proxy;
+    assembly.RunOnBusinessThread(
+        [&assembly, &object_id, &materialized_proxy]()
+        {
+            auto [result, proxy] = assembly.GetProxyFactory().GetOrCreateProxy(
+                assembly.GetRunLoop(),
+                assembly.GetBusinessThread(),
+                object_id,
+                DAS::Core::IPC::DasReadOnlyStringProxy::InterfaceId);
+            if (!DAS::IsFailed(result) && proxy)
+            {
+                materialized_proxy = std::move(proxy);
+            }
+        });
+    ASSERT_TRUE(materialized_proxy);
+
+    // 释放（析构链触发 RELEASE）
+    materialized_proxy.Reset();
+
+    // ADD_REF + RELEASE 都应恰好一条（BT 物化入队候车 + guard 出清；
+    // 外部线程析构候车 + guard 出清）
+    EXPECT_EQ(assembly.GetProbe().DrainUntil(2, std::chrono::seconds(3)), 2u);
+    const BaselineObservation observation =
+        DisassembleObservation(assembly.GetProbe());
+    EXPECT_EQ(observation.standalone_add_ref_frames, 1u);
+    EXPECT_EQ(observation.standalone_release_frames, 1u);
+    EXPECT_EQ(
+        assembly.GetRunLoop().GetPendingAddRefCount(BASELINE_PEER_SESSION_ID),
+        0u);
 }
