@@ -808,6 +808,11 @@ public:
     /// pending_calls_ 的互斥锁
     mutable std::mutex pending_mutex_;
 
+    // 调查 seam（CMake 开关 DAS_IPC_TRACE_SEAMS）：业务 Request 到达路由的
+    // 时间戳，按 (请求源 session, call_id) 与响应出队配对得到 H_SERVICE
+    std::mutex                             seam_arrival_mutex_;
+    std::unordered_map<uint64_t, uint64_t> seam_request_arrivals_ns_;
+
     /// 出站 FIFO（按 target session 键控，每 session 一条）：所有出站帧
     /// （业务 Request/Response、ADD_REF、RELEASE、心跳班车帧）经唯一入队
     /// 叶子 EnqueueOutboundFrame 进入本表，wire 序 == 入队序

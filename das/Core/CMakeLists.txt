@@ -287,6 +287,13 @@ das_add_core_component(GraphRuntime)
 das_add_core_component(CoreServices)
 das_add_core_component(IPC)
 
+# IPC seam 打点（五段时延分解，进程退出时向 stderr 聚合上报）：
+# 诊断构建开启，默认关闭且经编译期常量折叠零开销
+option(DAS_IPC_TRACE_SEAMS "Enable IPC seam tracing (five-segment latency breakdown)" OFF)
+if(DAS_IPC_TRACE_SEAMS)
+    target_compile_definitions(DasCoreObjects PRIVATE DAS_IPC_TRACE_SEAMS=1)
+endif()
+
 #将IpcGenerated.cpp添加到DasCoreObjects（与OfficialIids相同的模式）
 target_sources(DasCoreObjects PRIVATE ${DasCore_IPC_GENERATED_CPP})
 set_source_files_properties(${DasCore_IPC_GENERATED_CPP} PROPERTIES GENERATED TRUE)

@@ -18,6 +18,7 @@
 #include <das/Core/IPC/IpcMessageQueue.h>
 #include <das/Core/IPC/IpcResponseSender.h>
 #include <das/Core/IPC/IpcRunLoop.h>
+#include <das/Core/IPC/IpcSeamTimer.h>
 #include <das/Core/IPC/ProxyFactory.h>
 #include <das/_autogen/idl/ipc/IpcStubFactory.h>
 #include <mutex>
@@ -466,6 +467,27 @@ boost::asio::awaitable<void> IpcRunLoop::RouteIncomingMessage(
     std::vector<uint8_t>             body,
     DasPtr<IHostConnection>          connection)
 {
+    // 调查 seam：客户端响应收尾段起点（CMake 开关门控；响应完成回调调用前
+    // Record，量 IO 线程从开始处理响应帧到完成回调的全部工作）
+    const uint64_t seam_response_entry_ns =
+        (IpcSeam::Enabled() && header.GetMessageType() == MessageType::Response)
+            ? IpcSeam::NowNs()
+            : 0;
+
+    // 调查 seam：业务 Request 到达时刻（CMake 开关门控；与响应出队戳配对）
+    if (IpcSeam::Enabled() && !IsControlPlaneMessage(header)
+        && header.GetMessageType() == MessageType::Request)
+    {
+        const uint64_t seam_key =
+            (static_cast<uint64_t>(header.GetSourceSessionId()) << 16)
+            | header.GetCallId();
+        {
+            const std::lock_guard<std::mutex> seam_lock(seam_arrival_mutex_);
+            seam_request_arrivals_ns_[seam_key] = IpcSeam::NowNs();
+        }
+        IpcSeam::EnsureExitReportRegistered();
+    }
+
     // 捎带扩展段接收侧剥离（IO 协程域即时提取，分发/转发判断之前）。
     // 置位 RESERVED_AS_SIZE 时 body = [扩展段][正常 body]，扩展段 = 若干
     // 完整内嵌帧（32B header + body 连续拼接，body_size 自描述循环剥取）。
@@ -619,6 +641,11 @@ boost::asio::awaitable<void> IpcRunLoop::RouteIncomingMessage(
                 GetResponseResult(header),
                 body,
                 header.GetFlags()));
+            if (seam_response_entry_ns != 0)
+            {
+                IpcSeam::ClientDispatch().Record(
+                    IpcSeam::NowNs() - seam_response_entry_ns);
+            }
             co_return;
         }
 
@@ -675,11 +702,17 @@ boost::asio::awaitable<void> IpcRunLoop::RouteIncomingMessage(
     if (header.GetMessageType() == MessageType::Response)
     {
         const CallKey call_key{header.GetSourceSessionId(), header.GetCallId()};
-        if (TryCompletePendingCallbackOnly(
-                call_key,
-                GetResponseResult(header),
-                body,
-                header.GetFlags()))
+        const bool    completed = TryCompletePendingCallbackOnly(
+            call_key,
+            GetResponseResult(header),
+            body,
+            header.GetFlags());
+        if (seam_response_entry_ns != 0)
+        {
+            IpcSeam::ClientDispatch().Record(
+                IpcSeam::NowNs() - seam_response_entry_ns);
+        }
+        if (completed)
         {
             co_return;
         }
@@ -971,6 +1004,28 @@ DasResult IpcRunLoop::PostSend(
     frame.on_complete = std::move(on_complete);
     frame.deadline = deadline;
     const uint16_t target_session_id = frame.header.GetTargetSessionId();
+    // 调查 seam：响应出队即计服务时长终点（与请求到达戳配对）
+    if (IpcSeam::Enabled() && header.GetMessageType() == MessageType::Response)
+    {
+        const uint64_t seam_key =
+            (static_cast<uint64_t>(header.GetTargetSessionId()) << 16)
+            | header.GetCallId();
+        uint64_t arrival_ns = 0;
+        {
+            const std::lock_guard<std::mutex> seam_lock(seam_arrival_mutex_);
+            const auto seam_it = seam_request_arrivals_ns_.find(seam_key);
+            if (seam_it != seam_request_arrivals_ns_.end())
+            {
+                arrival_ns = seam_it->second;
+                seam_request_arrivals_ns_.erase(seam_it);
+            }
+        }
+        if (arrival_ns != 0)
+        {
+            IpcSeam::HostService().Record(IpcSeam::NowNs() - arrival_ns);
+            IpcSeam::EnsureExitReportRegistered();
+        }
+    }
     EnqueueOutboundFrame(target_session_id, std::move(frame));
     TriggerDrain(target_session_id);
 
