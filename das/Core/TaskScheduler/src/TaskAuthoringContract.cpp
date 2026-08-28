@@ -2282,7 +2282,6 @@ namespace Das::Core::TaskScheduler
         int64_t              baseRevision,
         std::string_view     kind)
     {
-        (void)kind;
         auto obj_opt = result.as_object();
         if (!obj_opt)
         {
@@ -2328,8 +2327,11 @@ namespace Das::Core::TaskScheduler
             const int64_t actual_revision = ReadInt(doc["revision"]);
             // 失败 envelope（有 error diagnostic）不推进 revision（须 ==
             // baseRevision）； 成功 envelope 必须推进（须 == baseRevision +
-            // 1）。
+            // 1）。唯一例外：viewData 轻量通道 kind（moveGraphNode）成功也
+            // 不推进语义 revision，须 == baseRevision。
             const bool has_error = HasErrorDiagnostic(obj["diagnostics"]);
+            const bool bumps_revision =
+                kind != std::string_view("moveGraphNode");
             if (has_error)
             {
                 if (actual_revision != baseRevision)
@@ -2341,12 +2343,23 @@ namespace Das::Core::TaskScheduler
                         "on failure)");
                 }
             }
-            else if (actual_revision != baseRevision + 1)
+            else if (bumps_revision)
+            {
+                if (actual_revision != baseRevision + 1)
+                {
+                    return Fail(
+                        "revisionMismatch",
+                        "AuthoringApplyResult.document.revision must equal "
+                        "baseRevision + 1");
+                }
+            }
+            else if (actual_revision != baseRevision)
             {
                 return Fail(
                     "revisionMismatch",
-                    "AuthoringApplyResult.document.revision must equal "
-                    "baseRevision + 1");
+                    "moveGraphNode AuthoringApplyResult.document.revision "
+                    "must equal baseRevision (viewData changes do not bump "
+                    "the semantic revision)");
             }
         }
 

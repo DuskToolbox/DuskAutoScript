@@ -669,8 +669,10 @@ namespace Das::Core::TaskScheduler
             outcome.diagnostics =
                 CloneJsonValue((*pre_obj)[std::string_view("diagnostics")]);
         }
-        auto validation =
-            ValidateAuthoringApplyResult(provider_result, base_revision);
+        auto validation = ValidateAuthoringApplyResult(
+            provider_result,
+            base_revision,
+            change_kind);
         if (!validation.valid)
         {
             outcome.error_kind = validation.error_kind;
