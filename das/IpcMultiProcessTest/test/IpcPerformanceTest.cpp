@@ -61,9 +61,17 @@ using namespace Das::ExportInterface;
 // ASAN 构建的延迟乘数达 1.4~2.6 且波动大，不可用于性能 A/B 判定：
 // ASAN 编译期跳过验收断言（保留测量与打印）；no-ASAN 构建断言生效，
 // ctest 退出码直接承载验收结果。
-#if defined(__SANITIZE_ADDRESS__)                                              \
-    || (defined(__has_feature) && __has_feature(address_sanitizer))
+// __has_feature 双检必须分层嵌套：MSVC 传统预处理器不短路 &&，
+// 未定义的函数式宏名进入常量表达式是硬错误（GCC 的 __SANITIZE_ADDRESS__
+// 与 Clang 的 __has_feature 分开判，MSVC 自家 ASAN 定义前者）
+#if defined(__SANITIZE_ADDRESS__)
 #define IPC_PERFORMANCE_ACCEPTANCE_ASSERT_ACTIVE 0
+#elif defined(__has_feature)
+#if __has_feature(address_sanitizer)
+#define IPC_PERFORMANCE_ACCEPTANCE_ASSERT_ACTIVE 0
+#else
+#define IPC_PERFORMANCE_ACCEPTANCE_ASSERT_ACTIVE 1
+#endif
 #else
 #define IPC_PERFORMANCE_ACCEPTANCE_ASSERT_ACTIVE 1
 #endif
