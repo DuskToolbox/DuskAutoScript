@@ -523,4 +523,222 @@ namespace
         EXPECT_TRUE(result.valid)
             << result.error_kind << ": " << result.message;
     }
+
+    // -----------------------------------------------------------------------
+    // moveGraphNode — C ABI end-to-end (wire envelope -> viewData -> Get)
+    // -----------------------------------------------------------------------
+
+    /// Read viewData.positions[node_id].axis from a GetDocument document
+    /// blob; nullopt when the partition, the node entry, or the axis is
+    /// absent.
+    std::optional<double> DocumentViewPositionOf(
+        const yyjson::value& document,
+        std::string_view     node_id,
+        std::string_view     axis)
+    {
+        auto obj = document.as_object();
+        if (!obj || !obj->contains(std::string_view("viewData")))
+        {
+            return std::nullopt;
+        }
+        auto view = (*obj)[std::string_view("viewData")].as_object();
+        if (!view || !view->contains(std::string_view("positions")))
+        {
+            return std::nullopt;
+        }
+        auto positions = (*view)[std::string_view("positions")].as_object();
+        if (!positions || !positions->contains(node_id))
+        {
+            return std::nullopt;
+        }
+        auto position = (*positions)[node_id].as_object();
+        if (!position || !position->contains(axis))
+        {
+            return std::nullopt;
+        }
+        return (*position)[axis].as_num();
+    }
+
+    /// Root revision of a GetDocument document blob; nullopt when absent.
+    std::optional<int64_t> DocumentRevisionOf(const yyjson::value& document)
+    {
+        auto obj = document.as_object();
+        if (!obj || !obj->contains(std::string_view("revision")))
+        {
+            return std::nullopt;
+        }
+        return (*obj)[std::string_view("revision")].as_int();
+    }
+
+    /// Id of the first node in the document's graph projection; nullopt when
+    /// the document carries no node.
+    std::optional<std::string> FirstGraphNodeOf(const yyjson::value& document)
+    {
+        auto obj = document.as_object();
+        if (!obj || !obj->contains(std::string_view("graph")))
+        {
+            return std::nullopt;
+        }
+        auto graph = (*obj)[std::string_view("graph")].as_object();
+        if (!graph || !graph->contains(std::string_view("nodes")))
+        {
+            return std::nullopt;
+        }
+        auto nodes = (*graph)[std::string_view("nodes")].as_array();
+        if (!nodes || nodes->size() == 0)
+        {
+            return std::nullopt;
+        }
+        auto first = (*nodes)[0].as_object();
+        if (!first || !first->contains(std::string_view("id")))
+        {
+            return std::nullopt;
+        }
+        auto id = (*first)[std::string_view("id")].as_string();
+        if (!id)
+        {
+            return std::nullopt;
+        }
+        return std::string(*id);
+    }
+
+    /// Build the moveGraphNode payload {nodeId, position:{x,y}} for the
+    /// strict envelope.
+    std::string MakeMovePayload(std::string_view node_id, double x, double y)
+    {
+        return std::string(R"({"nodeId":")") + std::string(node_id)
+               + R"(","position":{"x":)" + std::to_string(x) + R"(,"y":)"
+               + std::to_string(y) + R"(}})";
+    }
+
+    TEST(GraphAuthoringSessionTest, MoveGraphNodeEndToEndWritesViewData)
+    {
+        const SessionHandle s{""};
+        SetActionCatalog(s.p, R"([{"actionId":"{g1}"}])");
+        ASSERT_EQ(
+            Compact(
+                JsonToUtf8(
+                    ApplyChange(
+                        s.p,
+                        WrapEnvelope("addGraphNode", R"({"actionId":"{g1}"})"))
+                        .Get()))
+                .find("\"severity\":\"error\""),
+            std::string::npos)
+            << "addGraphNode must succeed";
+        const auto node_id = FirstGraphNodeOf(DocumentOf(s.p));
+        ASSERT_TRUE(node_id.has_value());
+
+        // Wire coordinates formatted as integers exercise the as_num path.
+        const auto apply =
+            Compact(JsonToUtf8(ApplyChange(
+                                   s.p,
+                                   WrapEnvelope(
+                                       "moveGraphNode",
+                                       MakeMovePayload(*node_id, 120.5, 88.0)))
+                                   .Get()));
+        EXPECT_EQ(apply.find("\"severity\":\"error\""), std::string::npos)
+            << apply;
+
+        const auto document = DocumentOf(s.p);
+        ASSERT_TRUE(
+            DocumentViewPositionOf(document, *node_id, "x").has_value());
+        EXPECT_DOUBLE_EQ(
+            *DocumentViewPositionOf(document, *node_id, "x"),
+            120.5);
+        ASSERT_TRUE(
+            DocumentViewPositionOf(document, *node_id, "y").has_value());
+        EXPECT_DOUBLE_EQ(
+            *DocumentViewPositionOf(document, *node_id, "y"),
+            88.0);
+    }
+
+    TEST(GraphAuthoringSessionTest, MoveGraphNodeOverwritesExistingPosition)
+    {
+        const SessionHandle s{""};
+        SetActionCatalog(s.p, R"([{"actionId":"{g1}"}])");
+        ApplyChange(
+            s.p,
+            WrapEnvelope("addGraphNode", R"({"actionId":"{g1}"})"));
+        const auto node_id = FirstGraphNodeOf(DocumentOf(s.p));
+        ASSERT_TRUE(node_id.has_value());
+
+        ApplyChange(
+            s.p,
+            WrapEnvelope("moveGraphNode", MakeMovePayload(*node_id, 1.0, 2.0)));
+        ApplyChange(
+            s.p,
+            WrapEnvelope("moveGraphNode", MakeMovePayload(*node_id, 9.0, 9.0)));
+
+        const auto document = DocumentOf(s.p);
+        ASSERT_TRUE(
+            DocumentViewPositionOf(document, *node_id, "x").has_value());
+        EXPECT_DOUBLE_EQ(*DocumentViewPositionOf(document, *node_id, "x"), 9.0);
+        ASSERT_TRUE(
+            DocumentViewPositionOf(document, *node_id, "y").has_value());
+        EXPECT_DOUBLE_EQ(*DocumentViewPositionOf(document, *node_id, "y"), 9.0);
+    }
+
+    TEST(GraphAuthoringSessionTest, MoveGraphNodeKeepsRevisionStable)
+    {
+        const SessionHandle s{""};
+        SetActionCatalog(s.p, R"([{"actionId":"{g1}"}])");
+        ApplyChange(
+            s.p,
+            WrapEnvelope("addGraphNode", R"({"actionId":"{g1}"})"));
+        const auto node_id = FirstGraphNodeOf(DocumentOf(s.p));
+        ASSERT_TRUE(node_id.has_value());
+        const auto revision_before = DocumentRevisionOf(DocumentOf(s.p));
+        ASSERT_TRUE(revision_before.has_value());
+        ASSERT_GT(*revision_before, 0);
+
+        const auto apply =
+            Compact(JsonToUtf8(ApplyChange(
+                                   s.p,
+                                   WrapEnvelope(
+                                       "moveGraphNode",
+                                       MakeMovePayload(*node_id, 3.0, 4.0)))
+                                   .Get()));
+        EXPECT_EQ(apply.find("\"severity\":\"error\""), std::string::npos)
+            << apply;
+
+        // The lightweight coordinate channel leaves the revision untouched.
+        const auto revision_after = DocumentRevisionOf(DocumentOf(s.p));
+        ASSERT_TRUE(revision_after.has_value());
+        EXPECT_EQ(*revision_after, *revision_before);
+    }
+
+    TEST(GraphAuthoringSessionTest, MoveGraphNodeSurvivesReseedFromProperties)
+    {
+        // The scheduler persists acceptedProperties and re-seeds sessions
+        // from it — the viewData partition must survive that round-trip.
+        const SessionHandle s1{""};
+        SetActionCatalog(s1.p, R"([{"actionId":"{g1}"}])");
+        ApplyChange(
+            s1.p,
+            WrapEnvelope("addGraphNode", R"({"actionId":"{g1}"})"));
+        const auto node_id = FirstGraphNodeOf(DocumentOf(s1.p));
+        ASSERT_TRUE(node_id.has_value());
+
+        const auto persisted = ExtractAcceptedProperties(
+            ApplyChange(
+                s1.p,
+                WrapEnvelope(
+                    "moveGraphNode",
+                    MakeMovePayload(*node_id, 7.5, 12.25)))
+                .Get());
+        ASSERT_FALSE(persisted.empty());
+
+        const std::string context =
+            std::string(R"({"properties":)") + persisted + "}";
+        const SessionHandle s2{context};
+        const auto          document = DocumentOf(s2.p);
+        ASSERT_TRUE(
+            DocumentViewPositionOf(document, *node_id, "x").has_value());
+        EXPECT_DOUBLE_EQ(*DocumentViewPositionOf(document, *node_id, "x"), 7.5);
+        ASSERT_TRUE(
+            DocumentViewPositionOf(document, *node_id, "y").has_value());
+        EXPECT_DOUBLE_EQ(
+            *DocumentViewPositionOf(document, *node_id, "y"),
+            12.25);
+    }
 } // namespace
