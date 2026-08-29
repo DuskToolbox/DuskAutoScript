@@ -909,12 +909,52 @@ namespace Contract
 
         /// View-only kinds ride the lightweight viewData channel and skip the
         /// semantic revision bump so coordinate updates never participate in
-        /// revision conflict detection. Every other kind keeps the
-        /// success-bumps-revision invariant.
+        /// revision conflict detection (singular moveGraphNode and the
+        /// moveGraphNodes batch share the exemption family). Every other kind
+        /// keeps the success-bumps-revision invariant.
         bool BumpsRevision(std::string_view kind) noexcept
         {
-            return kind != "moveGraphNode";
+            return kind != "moveGraphNode" && kind != "moveGraphNodes";
         }
+
+        /// Erase viewData.positions[node_id] when present so node removal
+        /// never leaves an orphan coordinate entry in the persisted
+        /// partition.
+        void EraseViewPosition(
+            Dto::GraphDocumentDto& document,
+            std::string_view       node_id)
+        {
+            auto view = document.view_data.as_object();
+            if (!view || !view->contains(std::string_view("positions")))
+            {
+                return;
+            }
+            auto positions = (*view)[std::string_view("positions")].as_object();
+            if (positions)
+            {
+                positions->erase(node_id);
+            }
+        }
+
+        /// Linear node existence lookup over the authoritative store.
+        bool NodeExists(
+            const Dto::GraphDocumentDto& document,
+            std::string_view             node_id) noexcept
+        {
+            for (const auto& node : document.nodes)
+            {
+                if (node.node_id == node_id)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /// Defaults for disengaged batch slots — iterating over these is a
+        /// no-op, keeping the batch loops branch-free.
+        const std::vector<std::string>     EMPTY_NODE_IDS{};
+        const std::vector<GraphConnection> EMPTY_CONNECTIONS{};
 
         /// Ordered node ids of a linear signal chain (head → tail), then any
         /// disconnected nodes in array order. Shared by the reverse
@@ -1430,6 +1470,117 @@ namespace Contract
                         std::nullopt};
                 }
                 gac.payload = RemoveNodeChange{*change.item_or_node_id};
+                auto node_result = ApplySettingsChange(document, gac);
+                if (!node_result.Ok())
+                {
+                    return {
+                        MapGraphError(node_result.error_kind),
+                        std::move(node_result.message),
+                        {},
+                        std::nullopt};
+                }
+                // Node removal must not leave an orphan coordinate entry
+                // behind in the persisted viewData partition.
+                EraseViewPosition(document, *change.item_or_node_id);
+                return {ChangeErrorKind::None, "", {}, std::nullopt};
+            }
+            if (change.kind == "removeGraphNodes")
+            {
+                const auto& batch_node_ids = change.removed_node_ids;
+                const auto& batch_connections = change.removed_connections;
+                const bool  has_node_ids =
+                    batch_node_ids.has_value() && !batch_node_ids->empty();
+                const bool has_connections = batch_connections.has_value()
+                                             && !batch_connections->empty();
+                if (!has_node_ids && !has_connections)
+                {
+                    return {
+                        ChangeErrorKind::InvalidOp,
+                        "removeGraphNodes requires at least one nodeIds "
+                        "entry or connections entry",
+                        {},
+                        std::nullopt};
+                }
+                // Atomic batch: validate ALL node ids and resolve ALL
+                // connections before touching the store — any miss rejects
+                // the whole message with zero mutation.
+                for (const auto& node_id :
+                     batch_node_ids.value_or(EMPTY_NODE_IDS))
+                {
+                    if (!NodeExists(document, node_id))
+                    {
+                        return {
+                            ChangeErrorKind::NodeNotFound,
+                            "removeGraphNodes node not found: " + node_id,
+                            {},
+                            std::nullopt};
+                    }
+                }
+                std::vector<std::string> edge_ids;
+                for (const auto& connection :
+                     batch_connections.value_or(EMPTY_CONNECTIONS))
+                {
+                    std::string edge_id;
+                    for (const auto& edge : document.edges)
+                    {
+                        if (edge.source_node_id == connection.from_node_id
+                            && edge.source_port_id == connection.from_port_id
+                            && edge.target_node_id == connection.to_node_id
+                            && edge.target_port_id == connection.to_port_id)
+                        {
+                            edge_id = edge.edge_id;
+                            break;
+                        }
+                    }
+                    if (edge_id.empty())
+                    {
+                        return {
+                            ChangeErrorKind::EdgeNotFound,
+                            "no edge matches the given connection endpoints",
+                            {},
+                            std::nullopt};
+                    }
+                    // Duplicate connection entries are idempotent — the
+                    // second disconnect would otherwise fail mid-mutation
+                    // and break batch atomicity.
+                    if (std::find(edge_ids.begin(), edge_ids.end(), edge_id)
+                        == edge_ids.end())
+                    {
+                        edge_ids.push_back(std::move(edge_id));
+                    }
+                }
+                // Mutation phase: explicit connections first (their endpoint
+                // nodes survive), then node removal with edge cascade and
+                // coordinate cleanup.
+                for (const auto& edge_id : edge_ids)
+                {
+                    gac.payload = DisconnectPortsChange{edge_id};
+                    auto edge_result = ApplySettingsChange(document, gac);
+                    if (!edge_result.Ok())
+                    {
+                        return {
+                            MapGraphError(edge_result.error_kind),
+                            std::move(edge_result.message),
+                            {},
+                            std::nullopt};
+                    }
+                }
+                for (const auto& node_id :
+                     batch_node_ids.value_or(EMPTY_NODE_IDS))
+                {
+                    gac.payload = RemoveNodeChange{node_id};
+                    auto node_result = ApplySettingsChange(document, gac);
+                    if (!node_result.Ok())
+                    {
+                        return {
+                            MapGraphError(node_result.error_kind),
+                            std::move(node_result.message),
+                            {},
+                            std::nullopt};
+                    }
+                    EraseViewPosition(document, node_id);
+                }
+                return {ChangeErrorKind::None, "", {}, std::nullopt};
             }
             else if (change.kind == "connectGraphPorts")
             {
@@ -1576,6 +1727,17 @@ namespace Contract
                         {},
                         std::nullopt};
                 }
+                // Unknown nodes are rejected instead of writing an orphan
+                // coordinate entry into the persisted partition.
+                if (!NodeExists(document, *change.item_or_node_id))
+                {
+                    return {
+                        ChangeErrorKind::NodeNotFound,
+                        "moveGraphNode node not found: "
+                            + *change.item_or_node_id,
+                        {},
+                        std::nullopt};
+                }
                 auto view_obj = document.view_data.as_object();
                 if (!view_obj)
                 {
@@ -1600,6 +1762,63 @@ namespace Contract
                 }
                 (*positions)[std::string_view(*change.item_or_node_id)] =
                     std::move(position);
+                return {ChangeErrorKind::None, "", {}, std::nullopt};
+            }
+            else if (change.kind == "moveGraphNodes")
+            {
+                if (!change.node_moves.has_value()
+                    || change.node_moves->empty())
+                {
+                    return {
+                        ChangeErrorKind::InvalidOp,
+                        "moveGraphNodes.moves required",
+                        {},
+                        std::nullopt};
+                }
+                // Atomic batch: every node must exist before any coordinate
+                // is written so a rejected batch never leaks a partial
+                // position update.
+                for (const auto& node_move : *change.node_moves)
+                {
+                    if (!NodeExists(document, node_move.node_id))
+                    {
+                        return {
+                            ChangeErrorKind::NodeNotFound,
+                            "moveGraphNodes node not found: "
+                                + node_move.node_id,
+                            {},
+                            std::nullopt};
+                    }
+                }
+                auto view_obj = document.view_data.as_object();
+                if (!view_obj)
+                {
+                    document.view_data = Das::Utils::MakeYyjsonObject();
+                    view_obj = document.view_data.as_object();
+                }
+                auto positions =
+                    (*view_obj)[std::string_view("positions")].as_object();
+                if (!positions)
+                {
+                    (*view_obj)[std::string_view("positions")] =
+                        Das::Utils::MakeYyjsonObject();
+                    positions =
+                        (*view_obj)[std::string_view("positions")].as_object();
+                }
+                for (const auto& node_move : *change.node_moves)
+                {
+                    auto position = Das::Utils::MakeYyjsonObject();
+                    auto position_obj = position.as_object();
+                    if (position_obj)
+                    {
+                        (*position_obj)[std::string_view("x")] =
+                            node_move.position_x;
+                        (*position_obj)[std::string_view("y")] =
+                            node_move.position_y;
+                    }
+                    (*positions)[std::string_view(node_move.node_id)] =
+                        std::move(position);
+                }
                 return {ChangeErrorKind::None, "", {}, std::nullopt};
             }
             else if (change.kind == "convertView")

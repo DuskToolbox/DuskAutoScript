@@ -870,6 +870,116 @@ namespace
             }
             return true;
         }
+        // removeGraphNodes payload: {nodeIds[], connections?[]}. Batch node
+        // removal — ApplyGraphChange validates all ids and resolves all
+        // connections before mutating (atomic validate-all-then-mutate).
+        if (out.kind == "removeGraphNodes")
+        {
+            if (payload->contains(std::string_view("nodeIds")))
+            {
+                if (auto ids =
+                        (*payload)[std::string_view("nodeIds")].as_array())
+                {
+                    std::vector<std::string> node_ids;
+                    for (const auto& item : *ids)
+                    {
+                        if (auto id = item.as_string())
+                        {
+                            node_ids.emplace_back(*id);
+                        }
+                    }
+                    out.removed_node_ids = std::move(node_ids);
+                }
+            }
+            if (payload->contains(std::string_view("connections")))
+            {
+                if (auto connections =
+                        (*payload)[std::string_view("connections")].as_array())
+                {
+                    std::vector<
+                        Das::Core::GraphRuntime::Contract::GraphConnection>
+                        parsed_connections;
+                    for (const auto& connection : *connections)
+                    {
+                        auto connection_obj = connection.as_object();
+                        if (!connection_obj)
+                        {
+                            continue;
+                        }
+                        if (auto parsed = ParseGraphConnection(*connection_obj))
+                        {
+                            parsed_connections.push_back(std::move(*parsed));
+                        }
+                    }
+                    out.removed_connections = std::move(parsed_connections);
+                }
+            }
+            return true;
+        }
+        // moveGraphNodes payload: {moves[]} — each entry is
+        // {nodeId, position:{x,y}}. as_num accepts both "120" and "120.5"
+        // so integer-formatted JSON coordinates deserialize identically.
+        if (out.kind == "moveGraphNodes")
+        {
+            if (payload->contains(std::string_view("moves")))
+            {
+                if (auto moves =
+                        (*payload)[std::string_view("moves")].as_array())
+                {
+                    std::vector<
+                        Das::Core::GraphRuntime::Contract::GraphNodeMove>
+                        node_moves;
+                    for (const auto& item : *moves)
+                    {
+                        auto move_obj = item.as_object();
+                        if (!move_obj)
+                        {
+                            continue;
+                        }
+                        Das::Core::GraphRuntime::Contract::GraphNodeMove
+                                    node_move;
+                        std::string id;
+                        if (ReadStringField(
+                                *move_obj,
+                                std::string_view("nodeId"),
+                                id)
+                            && !id.empty())
+                        {
+                            node_move.node_id = std::move(id);
+                        }
+                        if (move_obj->contains(std::string_view("position")))
+                        {
+                            if (auto position =
+                                    (*move_obj)[std::string_view("position")]
+                                        .as_object())
+                            {
+                                if (position->contains(std::string_view("x")))
+                                {
+                                    if (auto x_value =
+                                            (*position)[std::string_view("x")]
+                                                .as_num())
+                                    {
+                                        node_move.position_x = *x_value;
+                                    }
+                                }
+                                if (position->contains(std::string_view("y")))
+                                {
+                                    if (auto y_value =
+                                            (*position)[std::string_view("y")]
+                                                .as_num())
+                                    {
+                                        node_move.position_y = *y_value;
+                                    }
+                                }
+                            }
+                        }
+                        node_moves.push_back(std::move(node_move));
+                    }
+                    out.node_moves = std::move(node_moves);
+                }
+            }
+            return true;
+        }
         // removeFormSequenceItem / removeGraphNode payload:
         // {formSequenceItemId} or {nodeId}. Both are surfaced via
         // item_or_node_id.
