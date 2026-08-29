@@ -9,7 +9,9 @@
 #include <cpp_yyjson.hpp>
 
 #include <cstdint>
+#include <functional>
 #include <mutex>
+#include <string>
 
 DAS_DEFINE_CLASS_IN_NAMESPACE(
     Das::Plugins::DasMaaPi,
@@ -44,6 +46,24 @@ DAS_DEFINE_CLASS_IN_NAMESPACE(
 DAS_NS_BEGIN
 namespace Plugins::DasMaaPi
 {
+    // 仓库条目解析结果：成功携带编译产物 executionInput（envelope）JSON；
+    // 失败携带可读原因（进 diagnostics 出口，不静默成功）。
+    struct RepositoryResolveOutcome
+    {
+        bool        ok = false;
+        std::string envelope_json;
+        std::string error_message;
+    };
+
+    // 仓库条目解析缝：输入 = repositoryRef 的 entryId。生产实现经主进程
+    // C ABI（DasQueryMainProcessInterfaceByName → IDasSchedulerService）
+    // 编译仓库条目；测试注入 fake（照 SetMaaApiBoundaryForTest 范式）。
+    using RepositoryEntryResolver =
+        std::function<RepositoryResolveOutcome(int64_t entry_id)>;
+
+    // 测试注入 hook：传 nullptr 恢复生产实现。
+    void SetRepositoryEntryResolverForTest(RepositoryEntryResolver resolver);
+
     // manifest（DasMaaPi.json）声明的执行组件：config 声明 repositoryRef
     // （type=taskRepositoryRef，值 = 纯 entryId 整数）与 runtimeInputs
     // （object）两键、输入口 executionInput（object）、输出口

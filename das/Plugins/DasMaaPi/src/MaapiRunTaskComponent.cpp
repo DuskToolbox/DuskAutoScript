@@ -25,6 +25,29 @@ namespace Plugins::DasMaaPi
 {
     namespace
     {
+        // 仓库条目解析缝（测试可注入；空 = 生产实现）。互斥保护：注入与
+        // Do 可能来自不同线程。
+        std::mutex& RepositoryResolverMutex()
+        {
+            static std::mutex mutex;
+            return mutex;
+        }
+
+        RepositoryEntryResolver& RepositoryResolverSlot()
+        {
+            static RepositoryEntryResolver resolver;
+            return resolver;
+        }
+    } // namespace
+
+    void SetRepositoryEntryResolverForTest(RepositoryEntryResolver resolver)
+    {
+        const std::scoped_lock lock(RepositoryResolverMutex());
+        RepositoryResolverSlot() = std::move(resolver);
+    }
+
+    namespace
+    {
         DasResult ReturnJson(
             yyjson::value                     value,
             ExportInterface::IDasJson** const pp_out_result_json)
