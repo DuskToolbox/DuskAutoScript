@@ -4,6 +4,13 @@
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasTaskComponent.Implements.hpp>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasTaskComponentFactory.Implements.hpp>
 
+#include <cassert>
+
+#include <cpp_yyjson.hpp>
+
+#include <cstdint>
+#include <mutex>
+
 DAS_DEFINE_CLASS_IN_NAMESPACE(
     Das::Plugins::DasMaaPi,
     MaapiRunTaskComponent,
@@ -37,12 +44,13 @@ DAS_DEFINE_CLASS_IN_NAMESPACE(
 DAS_NS_BEGIN
 namespace Plugins::DasMaaPi
 {
-    // manifest（DasMaaPi.json）声明的执行组件：settings 为空、输入口
-    // executionInput（object）、输出口 completedTasks/stopped/diagnostics、
-    // 信号 succeeded/failed/cancelled。Do 是纯消费者——读输入口的 envelope
-    // JSON 经共享执行内核（MaapiExecutionKernel）执行，不消费任何 settings
-    // 键；envelope 由唯一编译器（MaapiAuthoringSession::Compile）产出，经
-    // RepositoryInvoke 组件喂线（SetPortString("executionInput", ...)）。
+    // manifest（DasMaaPi.json）声明的执行组件：config 声明 repositoryRef
+    // （type=taskRepositoryRef，值 = 纯 entryId 整数）与 runtimeInputs
+    // （object）两键、输入口 executionInput（object）、输出口
+    // completedTasks/stopped/diagnostics、信号 succeeded/failed/cancelled。
+    // Do 消费 settings 的 repositoryRef/runtimeInputs 两键：executionInput
+    // 喂线时行为与纯消费者一致；executionInput 缺失且 repositoryRef 有效时
+    // 自行解析仓库条目并执行（envelope 经主进程调度服务编译产出）。
     class MaapiRunTaskComponent final
         : public PluginInterface::DasTaskComponentImplBase<
               MaapiRunTaskComponent>
@@ -59,6 +67,15 @@ namespace Plugins::DasMaaPi
             PluginInterface::IDasStopToken*       stop_token,
             ExportInterface::IDasReadOnlyPortMap* p_input_port_map,
             ExportInterface::IDasPortMap**        pp_out_port_map) override;
+
+    private:
+        // settings 存储锁：ApplySettingsChange（Configure 阶段投递）与 Do
+        // （执行）可能来自不同线程。
+        mutable std::mutex settings_mutex_;
+        // repositoryRef 存储值（纯 entryId 整数）；0 = 未设置。
+        int64_t repository_entry_id_ = 0;
+        // runtimeInputs 存储值（对象级运行时输入覆盖）；null = 未设置。
+        yyjson::value runtime_inputs_;
     };
 
     class MaapiRunTaskComponentFactory final

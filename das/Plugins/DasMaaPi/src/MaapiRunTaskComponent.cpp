@@ -11,6 +11,8 @@
 #include <das/Utils/DasJsonCore.h>
 #include <das/_autogen/idl/abi/IDasPortMap.h>
 
+#include <spdlog/spdlog.h>
+
 #include <new>
 #include <optional>
 #include <string>
@@ -77,6 +79,47 @@ namespace Plugins::DasMaaPi
             }
             return value;
         }
+
+        // GraphRuntime Configure 阶段的 settings 投递包装：请求体形如
+        // {"settings": S}，S 为节点当前配置的全量投影（替换语义）。请求
+        // 缺失 / 非对象 / 无 settings 键 / settings 为 null 时按空对象
+        // 处理（空投递 = 节点无配置）。
+        yyjson::value ReadDeliveredSettings(
+            ExportInterface::IDasJson* p_request_json)
+        {
+            if (p_request_json == nullptr)
+            {
+                return Das::Utils::MakeYyjsonObject();
+            }
+
+            DasPtr<IDasReadOnlyString> request_string;
+            if (DAS::IsFailed(p_request_json->ToString(0, request_string.Put()))
+                || !request_string)
+            {
+                return Das::Utils::MakeYyjsonObject();
+            }
+
+            const char* request_utf8 = nullptr;
+            request_string->GetUtf8(&request_utf8);
+            auto parsed = Das::Utils::ParseYyjsonFromString(
+                request_utf8 != nullptr ? request_utf8 : "");
+            if (!parsed || !parsed->is_object())
+            {
+                return Das::Utils::MakeYyjsonObject();
+            }
+
+            auto request_object = parsed->as_object();
+            if (!request_object->contains(std::string_view("settings")))
+            {
+                return Das::Utils::MakeYyjsonObject();
+            }
+            const auto& inner = (*request_object)[std::string_view("settings")];
+            if (inner.is_null() || !inner.is_object())
+            {
+                return Das::Utils::MakeYyjsonObject();
+            }
+            return Das::Utils::CloneYyjsonValue(inner);
+        }
     } // namespace
 
     DasResult MaapiRunTaskComponent::GetGuid(DasGuid* p_out_guid)
@@ -102,7 +145,7 @@ namespace Plugins::DasMaaPi
     }
 
     DasResult MaapiRunTaskComponent::ApplySettingsChange(
-        ExportInterface::IDasJson*,
+        ExportInterface::IDasJson*  p_request_json,
         ExportInterface::IDasJson** pp_out_result_json)
     {
         if (pp_out_result_json == nullptr)
@@ -111,12 +154,80 @@ namespace Plugins::DasMaaPi
         }
         *pp_out_result_json = nullptr;
 
-        // manifest settings:[] —— 组件无可接受的设置项，空 accepted 是终态
-        // 真语义。方法与 {"acceptedSettings": {}} 响应形状保留：GraphRuntime
-        // Configure 阶段对每个节点投递 ApplySettingsChange，消费该响应形状。
+        // manifest config 声明 repositoryRef（type=taskRepositoryRef，值 =
+        // 纯 entryId 整数）与 runtimeInputs（object）两键。Configure 投递是
+        // 全量替换语义；形状非法整包拒绝（不落半截状态）——项目未发布，
+        // 无 legacy 值需要宽容。
+        auto                   settings = ReadDeliveredSettings(p_request_json);
+        auto                   settings_obj = settings.as_object();
+        std::optional<int64_t> accepted_entry_id;
+        std::optional<yyjson::value> accepted_runtime_inputs;
+
+        if (settings_obj.has_value()
+            && settings_obj->contains(std::string_view("repositoryRef")))
+        {
+            const auto& repository_ref =
+                (*settings_obj)[std::string_view("repositoryRef")];
+            if (!repository_ref.is_null())
+            {
+                const auto entry_id = repository_ref.as_int();
+                if (!entry_id.has_value() || *entry_id <= 0)
+                {
+                    spdlog::error(
+                        "[DasMaaPi] ApplySettingsChange: repositoryRef must "
+                        "be a positive integer entry id, got non-conforming "
+                        "value");
+                    return DAS_E_INVALID_ARGUMENT;
+                }
+                accepted_entry_id = *entry_id;
+            }
+        }
+
+        if (settings_obj.has_value()
+            && settings_obj->contains(std::string_view("runtimeInputs")))
+        {
+            const auto& runtime_inputs =
+                (*settings_obj)[std::string_view("runtimeInputs")];
+            if (!runtime_inputs.is_null())
+            {
+                if (!runtime_inputs.is_object())
+                {
+                    spdlog::error(
+                        "[DasMaaPi] ApplySettingsChange: runtimeInputs must "
+                        "be an object");
+                    return DAS_E_INVALID_ARGUMENT;
+                }
+                accepted_runtime_inputs =
+                    Das::Utils::CloneYyjsonValue(runtime_inputs);
+            }
+        }
+
+        {
+            const std::scoped_lock lock(settings_mutex_);
+            repository_entry_id_ = accepted_entry_id.value_or(0);
+            runtime_inputs_ =
+                accepted_runtime_inputs.has_value()
+                    ? Das::Utils::CloneYyjsonValue(*accepted_runtime_inputs)
+                    : yyjson::value{};
+        }
+
+        // acceptedSettings 回显本轮实际接受的键（存储值）。
+        auto accepted = Das::Utils::MakeYyjsonObject();
+        auto accepted_object = accepted.as_object();
+        if (accepted_entry_id.has_value())
+        {
+            (*accepted_object)[std::string_view("repositoryRef")] =
+                *accepted_entry_id;
+        }
+        if (accepted_runtime_inputs.has_value())
+        {
+            (*accepted_object)[std::string_view("runtimeInputs")] =
+                Das::Utils::CloneYyjsonValue(*accepted_runtime_inputs);
+        }
+
         auto result = Das::Utils::MakeYyjsonObject();
         (*result.as_object())[std::string_view("acceptedSettings")] =
-            Das::Utils::MakeYyjsonObject();
+            std::move(accepted);
         return ReturnJson(std::move(result), pp_out_result_json);
     }
 

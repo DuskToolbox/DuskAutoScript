@@ -70,7 +70,14 @@
               "id": "cancelled"
             }
           ],
-          "config": {},
+          "config": {
+            "repositoryRef": {
+              "type": "taskRepositoryRef"
+            },
+            "runtimeInputs": {
+              "type": "object"
+            }
+          },
           "diagnostics": []
         }
       }
