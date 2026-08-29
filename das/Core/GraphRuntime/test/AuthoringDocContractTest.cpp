@@ -213,11 +213,14 @@ namespace
         EXPECT_EQ(nodes[0].ports[0].direction, "input");
         EXPECT_EQ(nodes[0].ports[0].port_type, "bool");
         EXPECT_EQ(nodes[0].ports[0].display_label, "");
+        EXPECT_EQ(nodes[0].ports[0].category, "data");
         EXPECT_EQ(nodes[0].ports[1].port_id, "next");
         EXPECT_EQ(nodes[0].ports[1].direction, "output");
+        EXPECT_EQ(nodes[0].ports[1].category, "execution");
         EXPECT_EQ(nodes[0].ports[2].port_id, "dyn_out");
         EXPECT_EQ(nodes[0].ports[2].direction, "output");
         EXPECT_EQ(nodes[0].ports[2].port_type, "image");
+        EXPECT_EQ(nodes[0].ports[2].category, "data");
 
         // n2: no catalog entry for {g2}; dynamic port used as edge target
         // only → "input"; display_label thin-maps through.
@@ -225,6 +228,7 @@ namespace
         EXPECT_EQ(nodes[1].ports[0].port_id, "dyn_in");
         EXPECT_EQ(nodes[1].ports[0].display_label, "Dyn In");
         EXPECT_EQ(nodes[1].ports[0].direction, "input");
+        EXPECT_EQ(nodes[1].ports[0].category, "data");
 
         // n3: unreferenced dynamic port carries no directional evidence →
         // projected once per direction.
@@ -233,6 +237,74 @@ namespace
         EXPECT_EQ(nodes[2].ports[0].direction, "input");
         EXPECT_EQ(nodes[2].ports[1].port_id, "dyn_free");
         EXPECT_EQ(nodes[2].ports[1].direction, "output");
+    }
+
+    // Category derivation is single-point in the Core projection: every port
+    // (registry-declared static and document dynamic alike) derives
+    // category == "execution" iff its port_type is the "signal" protocol
+    // literal, "data" otherwise. The DasFlowControl branch shape (bool
+    // condition in, signal true/false out) and the DasMaaPi run shape (object
+    // in, signal-comparable out) both anchor the rule on real manifest
+    // vocabulary.
+    TEST(AuthoringDocContractTest, PortProjection_SignalVersusDataCategory)
+    {
+        GraphDocumentDto doc;
+        // n1: edge-referenced dynamic signal port (target side → input) and
+        // an unreferenced dynamic data port (projected both directions).
+        auto n1 = MakeNode("n1", "{g1}", 0.0);
+        n1.dynamic_ports.push_back(MakePortDef("dyn_signal", "signal"));
+        doc.nodes.push_back(n1);
+        doc.nodes.push_back(MakeNode("n2", "{g2}", 0.0));
+        doc.edges.push_back(
+            MakeDataEdge("e1", "n2", "src", "n1", "dyn_signal"));
+
+        // Static catalog surface mirroring das.flow.branch: bool condition
+        // input + signal true/false outputs, plus an object-typed input.
+        ActionCatalog      catalog;
+        ActionCatalogEntry entry;
+        entry.action_id = "{g2}";
+        entry.label = "{g2}";
+        entry.ports = {
+            GraphNodePort{"condition", "", "bool", "input"},
+            GraphNodePort{"executionInput", "", "object", "input"},
+            GraphNodePort{"true", "", "signal", "output"},
+            GraphNodePort{"false", "", "signal", "output"},
+        };
+        catalog.entries.push_back(entry);
+
+        const auto  out = ToAuthoringDocument(doc, catalog);
+        const auto& nodes = out.graph->nodes;
+
+        // Static: signal ports are execution, bool/object ports are data.
+        ASSERT_EQ(nodes[1].ports.size(), 4u);
+        EXPECT_EQ(nodes[1].ports[0].port_type, "bool");
+        EXPECT_EQ(nodes[1].ports[0].category, "data");
+        EXPECT_EQ(nodes[1].ports[1].port_type, "object");
+        EXPECT_EQ(nodes[1].ports[1].category, "data");
+        EXPECT_EQ(nodes[1].ports[2].port_type, "signal");
+        EXPECT_EQ(nodes[1].ports[2].category, "execution");
+        EXPECT_EQ(nodes[1].ports[3].port_type, "signal");
+        EXPECT_EQ(nodes[1].ports[3].category, "execution");
+
+        // Dynamic: signal port derives execution regardless of the
+        // edge-derived direction.
+        ASSERT_EQ(nodes[0].ports.size(), 1u);
+        EXPECT_EQ(nodes[0].ports[0].port_type, "signal");
+        EXPECT_EQ(nodes[0].ports[0].direction, "input");
+        EXPECT_EQ(nodes[0].ports[0].category, "execution");
+
+        // Dynamic non-signal port without directional evidence projects once
+        // per direction, both carrying the data category.
+        auto n3 = MakeNode("n3", "{g3}", 0.0);
+        n3.dynamic_ports.push_back(MakePortDef("dyn_data", "image"));
+        doc.nodes.push_back(n3);
+        const auto  out2 = ToAuthoringDocument(doc, catalog);
+        const auto& ports3 = out2.graph->nodes[3].ports;
+        ASSERT_EQ(ports3.size(), 2u);
+        EXPECT_EQ(ports3[0].direction, "input");
+        EXPECT_EQ(ports3[0].category, "data");
+        EXPECT_EQ(ports3[1].direction, "output");
+        EXPECT_EQ(ports3[1].category, "data");
     }
 
     // Document-level graph_inputs/graph_outputs are graph boundary data
@@ -250,8 +322,9 @@ namespace
         EXPECT_TRUE(out.graph->nodes[0].ports.empty());
     }
 
-    // Wire element key set is exactly the four locked keys (T-109-08).
-    TEST(AuthoringDocContractTest, PortProjection_WireEmitsExactlyFourKeys)
+    // Wire element key set is exactly the five locked keys: the four
+    // projection keys plus the derived category (T-109-08 shape + category).
+    TEST(AuthoringDocContractTest, PortProjection_WireEmitsExactlyFiveKeys)
     {
         GraphDocumentDto doc;
         auto             n1 = MakeNode("n1", "{g1}", 0.0);
@@ -287,33 +360,44 @@ namespace
                 (*node_obj)[std::string_view("ports")]);
         };
 
-        // Dynamic port with an edge role: single entry, exact four keys.
+        // Dynamic port with an edge role: single entry, exact five keys with
+        // the derived category value ("image" is not the signal literal).
         const auto dyn_ports = ports_of(0);
         ASSERT_TRUE(dyn_ports.is_array());
         ASSERT_EQ(dyn_ports.as_array()->size(), 1u);
         const auto dyn_port_obj = (*dyn_ports.as_array())[0].as_object();
         ASSERT_TRUE(dyn_port_obj.has_value());
-        EXPECT_EQ(dyn_port_obj->size(), 4u);
+        EXPECT_EQ(dyn_port_obj->size(), 5u);
         EXPECT_TRUE(dyn_port_obj->contains(std::string_view("portId")));
         EXPECT_TRUE(dyn_port_obj->contains(std::string_view("displayLabel")));
         EXPECT_TRUE(dyn_port_obj->contains(std::string_view("portType")));
         EXPECT_TRUE(dyn_port_obj->contains(std::string_view("direction")));
+        EXPECT_TRUE(dyn_port_obj->contains(std::string_view("category")));
         auto dyn_label =
             (*dyn_port_obj)[std::string_view("displayLabel")].as_string();
         ASSERT_TRUE(dyn_label.has_value());
         EXPECT_EQ(*dyn_label, "Out");
+        auto dyn_category =
+            (*dyn_port_obj)[std::string_view("category")].as_string();
+        ASSERT_TRUE(dyn_category.has_value());
+        EXPECT_EQ(*dyn_category, "data");
 
         // Static registry port lands on the wire node with its declared
-        // direction.
+        // direction and the derived category.
         const auto static_ports = ports_of(1);
         ASSERT_TRUE(static_ports.is_array());
         ASSERT_EQ(static_ports.as_array()->size(), 1u);
         const auto static_port_obj = (*static_ports.as_array())[0].as_object();
         ASSERT_TRUE(static_port_obj.has_value());
+        EXPECT_EQ(static_port_obj->size(), 5u);
         auto static_dir =
             (*static_port_obj)[std::string_view("direction")].as_string();
         ASSERT_TRUE(static_dir.has_value());
         EXPECT_EQ(*static_dir, "input");
+        auto static_category =
+            (*static_port_obj)[std::string_view("category")].as_string();
+        ASSERT_TRUE(static_category.has_value());
+        EXPECT_EQ(*static_category, "data");
     }
 
     // A node without any port still emits the "ports" key as an empty array
@@ -404,16 +488,18 @@ namespace
 
     // Comprehensive zero-leak guard: the contract output must NEVER carry any
     // runtime-private field, regardless of mode or edge type. Covers edgeType,
-    // edgeId, dynamicPorts, and the signal/data edge-type tokens (which only
-    // exist on the internal GraphEdgeDto, never on the contract
-    // GraphConnection).
+    // edgeId and dynamicPorts keys, and pins the contract GraphConnection to
+    // exactly its four endpoint keys — the signal/data edge-type tokens only
+    // exist on the internal GraphEdgeDto and have no slot on the connection
+    // shape. (The projected port category legitimately reuses the
+    // "signal"/"data" vocabulary, so token-level substring checks are
+    // structural here, not textual.)
     TEST(AuthoringDocContractTest, BothModes_NeverLeakRuntimePrivateFields)
     {
         // graph mode: a node with dynamic_ports + a data edge + a signal edge.
-        // The port type deliberately avoids the "data"/"signal" tokens: those
-        // are edge-type vocabulary, and the zero-leak assertions below check
-        // the edge-type tokens never surface — the projected portType is
-        // public wire and would otherwise collide with the substring check.
+        // The port type deliberately avoids the "data"/"signal" tokens so the
+        // assertions below isolate the connection shape from the port
+        // projection shape.
         GraphDocumentDto g;
         auto&            n1 = g.nodes.emplace_back(MakeNode("n1", "{g1}", 0.0));
         n1.dynamic_ports.push_back({.port_id = "dyn", .port_type = "image"});
@@ -428,8 +514,30 @@ namespace
         EXPECT_EQ(graph_json.find("edgeType"), std::string::npos);
         EXPECT_EQ(graph_json.find("edgeId"), std::string::npos);
         EXPECT_EQ(graph_json.find("dynamicPorts"), std::string::npos);
-        EXPECT_EQ(graph_json.find("\"signal\""), std::string::npos);
-        EXPECT_EQ(graph_json.find("\"data\""), std::string::npos);
+
+        // Structural edge-type leak guard: every projected connection carries
+        // exactly the four endpoint keys — no edgeType/edgeId slot exists.
+        const auto parsed = yyjson::read(graph_json);
+        auto       root = parsed.as_object();
+        ASSERT_TRUE(root.has_value());
+        ASSERT_TRUE(root->contains(std::string_view("graph")));
+        auto graph = (*root)[std::string_view("graph")].as_object();
+        ASSERT_TRUE(graph.has_value());
+        auto connections = (*graph)[std::string_view("connections")].as_array();
+        ASSERT_TRUE(connections.has_value());
+        ASSERT_EQ(connections->size(), 2u);
+        for (const auto& connection : *connections)
+        {
+            auto connection_obj = connection.as_object();
+            ASSERT_TRUE(connection_obj.has_value());
+            EXPECT_EQ(connection_obj->size(), 4u);
+            EXPECT_TRUE(
+                connection_obj->contains(std::string_view("fromNodeId")));
+            EXPECT_TRUE(
+                connection_obj->contains(std::string_view("fromPortId")));
+            EXPECT_TRUE(connection_obj->contains(std::string_view("toNodeId")));
+            EXPECT_TRUE(connection_obj->contains(std::string_view("toPortId")));
+        }
 
         // formSequence mode: project a sequence (signal edges auto-generated) +
         // ensure the same fields are absent in the projected view.

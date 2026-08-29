@@ -80,19 +80,24 @@ namespace Contract
         std::vector<yyjson::value> candidates;
     };
 
-    /// One projected node port (drag-link precheck data source). Four-field
-    /// thin-map: port identity, display label, type and the derived direction
-    /// ("input" | "output"). Business-neutral: the projection never
-    /// interprets port_type semantics (string pass-through); direction comes
-    /// from the structural role of the port in its declaring source and
-    /// client-side filtering rules consume it as a soft hint only — compile
-    /// stays the authoritative validation.
+    /// One projected node port (drag-link precheck data source). Five-field
+    /// thin-map: port identity, display label, type, the derived direction
+    /// ("input" | "output") and the derived category ("execution" | "data").
+    /// Business-neutral: the projection never interprets Provider semantics;
+    /// direction comes from the structural role of the port in its declaring
+    /// source, and category is derived in this projection layer from the one
+    /// Core-owned protocol literal — a port whose port_type is "signal" is an
+    /// execution-flow port, everything else is a data port (the same
+    /// signal/data vocabulary GraphEdgeDto.edge_type and signal-gated
+    /// execution already use). Client-side filtering rules consume both as a
+    /// soft hint only — compile stays the authoritative validation.
     struct GraphNodePort
     {
         std::string port_id;
         std::string display_label;
         std::string port_type;
         std::string direction;
+        std::string category;
     };
 
     /// One canvas node in the public contract. componentGuid is sourced from

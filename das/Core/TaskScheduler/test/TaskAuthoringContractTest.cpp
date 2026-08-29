@@ -125,9 +125,10 @@ TEST(TaskAuthoringContractTest, ValidGraphDocumentWithConnectionsPasses)
 
 TEST(TaskAuthoringContractTest, ValidGraphNodePortsPass)
 {
-    // Node port projection: each element is exactly the four locked keys
-    // {portId, displayLabel, portType, direction} with direction ∈
-    // {input, output} (drag-link precheck data source).
+    // Node port projection: each element is exactly the five locked keys
+    // {portId, displayLabel, portType, direction, category} with direction ∈
+    // {input, output} and category ∈ {execution, data} (drag-link precheck
+    // data source; the category carries the execution/data split).
     auto document = ParseJson(R"json({
         "contractVersion": 1,
         "viewKind": "graph",
@@ -137,8 +138,8 @@ TEST(TaskAuthoringContractTest, ValidGraphNodePortsPass)
                 {
                     "id": "n1",
                     "ports": [
-                        {"portId":"condition","displayLabel":"","portType":"bool","direction":"input"},
-                        {"portId":"true","displayLabel":"True","portType":"signal","direction":"output"}
+                        {"portId":"condition","displayLabel":"","portType":"bool","direction":"input","category":"data"},
+                        {"portId":"true","displayLabel":"True","portType":"signal","direction":"output","category":"execution"}
                     ]
                 },
                 {"id": "n2", "ports": []}
@@ -156,15 +157,19 @@ TEST(TaskAuthoringContractTest, GraphNodePortShapeViolationsFail)
 {
     const std::vector<std::string> invalid_ports = {
         // direction outside the enum
-        R"([{"portId":"x","displayLabel":"","portType":"bool","direction":"sideways"}])",
-        // unknown extra key on the element
-        R"([{"portId":"x","displayLabel":"","portType":"bool","direction":"input","extra":1}])",
+        R"([{"portId":"x","displayLabel":"","portType":"bool","direction":"sideways","category":"data"}])",
+        // category outside the enum
+        R"([{"portId":"x","displayLabel":"","portType":"bool","direction":"input","category":"foo"}])",
+        // missing required key (category)
+        R"([{"portId":"x","displayLabel":"","portType":"bool","direction":"input"}])",
         // missing required key (direction)
-        R"([{"portId":"x","displayLabel":"","portType":"bool"}])",
+        R"([{"portId":"x","displayLabel":"","portType":"bool","category":"data"}])",
+        // unknown extra key on the element
+        R"([{"portId":"x","displayLabel":"","portType":"bool","direction":"input","category":"data","extra":1}])",
         // empty portId
-        R"([{"portId":"","displayLabel":"","portType":"bool","direction":"input"}])",
+        R"([{"portId":"","displayLabel":"","portType":"bool","direction":"input","category":"data"}])",
         // non-string portType
-        R"([{"portId":"x","displayLabel":"","portType":5,"direction":"input"}])",
+        R"([{"portId":"x","displayLabel":"","portType":5,"direction":"input","category":"data"}])",
         // element is not an object
         R"(["x"])",
     };
@@ -1845,6 +1850,74 @@ TEST(TaskAuthoringContractTest, SchemaJsonTracksChangeKindWhitelist)
         }
     }
     EXPECT_TRUE(found_move_nodes_branch);
+}
+
+// schema GraphNodePort $def 对账：五键锁死（含 category）、category 枚举
+// {execution, data}、additionalProperties:false——与 C++ 校验器
+// ValidateGraphNodePort 的键集/值域逐项一致，防 C++/schema/前端三方漂移。
+TEST(TaskAuthoringContractTest, SchemaJsonGraphNodePortCategoryLocked)
+{
+    const auto schema_path = ResolveSchemaJsonPath();
+    ASSERT_TRUE(schema_path.has_value())
+        << "TaskAuthoringHttpContract.schema.json not found above "
+        << std::filesystem::current_path();
+    const auto schema_text = ReadFileText(*schema_path);
+    ASSERT_TRUE(schema_text.has_value());
+
+    auto schema = ParseJson(*schema_text);
+    auto schema_object = schema.as_object();
+    ASSERT_TRUE(schema_object.has_value());
+    auto defs_value = (*schema_object)[std::string_view("$defs")];
+    auto defs_object = defs_value.as_object();
+    ASSERT_TRUE(defs_object.has_value());
+
+    auto port_def =
+        (*defs_object)[std::string_view("GraphNodePort")].as_object();
+    ASSERT_TRUE(port_def.has_value());
+
+    auto no_extra_fields =
+        (*port_def)[std::string_view("additionalProperties")].as_bool();
+    ASSERT_TRUE(no_extra_fields.has_value());
+    EXPECT_FALSE(*no_extra_fields);
+
+    std::set<std::string> required_fields;
+    auto required_array = (*port_def)[std::string_view("required")].as_array();
+    ASSERT_TRUE(required_array.has_value());
+    for (const auto& item : *required_array)
+    {
+        auto text = item.as_string();
+        ASSERT_TRUE(text.has_value());
+        required_fields.insert(std::string(*text));
+    }
+    const std::set<std::string> expected_required{
+        "portId",
+        "displayLabel",
+        "portType",
+        "direction",
+        "category"};
+    EXPECT_EQ(required_fields, expected_required);
+
+    auto properties = (*port_def)[std::string_view("properties")].as_object();
+    ASSERT_TRUE(properties.has_value());
+    ASSERT_TRUE(properties->contains(std::string_view("category")));
+    auto category_definition =
+        (*properties)[std::string_view("category")].as_object();
+    ASSERT_TRUE(category_definition.has_value());
+    EXPECT_EQ(
+        (*category_definition)[std::string_view("type")].as_string().value(),
+        "string");
+    auto category_enum =
+        (*category_definition)[std::string_view("enum")].as_array();
+    ASSERT_TRUE(category_enum.has_value());
+    std::set<std::string> category_values;
+    for (const auto& item : *category_enum)
+    {
+        auto text = item.as_string();
+        ASSERT_TRUE(text.has_value());
+        category_values.insert(std::string(*text));
+    }
+    const std::set<std::string> expected_category{"execution", "data"};
+    EXPECT_EQ(category_values, expected_category);
 }
 
 TEST(TaskAuthoringContractTest, ChangeRejectsOpWrapper)
