@@ -275,6 +275,28 @@ namespace Das::Http
                 }
             }
 
+            // Register IDasSchedulerService as a named service (das.progress /
+            // das.locale 范式)：IPC 模式插件组件（如 DasMaaPi 的仓库条目
+            // 解析）经 ResolveMainProcessInterfaceByName("das.scheduler")
+            // 取服务并编译仓库条目。注册表另持 COM 引用保活。
+            {
+                const auto scheduler_reg_result =
+                    ipc_context->RegisterServiceByName(
+                        components.scheduler_svc.Get(),
+                        DasIidOf<IDasSchedulerService>(),
+                        "das.scheduler");
+                if (DAS::IsFailed(scheduler_reg_result))
+                {
+                    DAS_LOG_ERROR(
+                        DAS_FMT_NS::format(
+                            "Failed to register IDasSchedulerService named "
+                            "service. result = {}",
+                            scheduler_reg_result)
+                            .c_str());
+                    return scheduler_reg_result;
+                }
+            }
+
             // Register computer vision services (cv.cpu / cv.cuda)
             {
                 auto                     debug_dir_str = debug_dir.u8string();
