@@ -2185,11 +2185,12 @@ TEST(TaskAuthoringContractTest, SchemaJsonRenameGraphNodeLocked)
     EXPECT_TRUE(found_rename_branch);
 }
 
-// inputType 9（仓库条目选择器，valueType=16 对象——config 声明类型
-// taskRepositoryRef 的投影控件类型）进值域；10 仍然拒绝。
-TEST(TaskAuthoringContractTest, RepositoryRefInputTypeNineAccepted)
+// inputType 词表保持 0-8 官方词表：9（曾短暂用于仓库条目选择器）与 10
+// 一并拒绝——taskRepositoryRef 的分派走字段 config 类型词（"type" 键），
+// 不在 inputType 上扩词。
+TEST(TaskAuthoringContractTest, RepositoryRefInputTypeNineRejected)
 {
-    auto valid = ParseJson(R"json({
+    auto unsupported = ParseJson(R"json({
         "contractVersion": 1,
         "viewKind": "graph",
         "revision": 0,
@@ -2203,10 +2204,11 @@ TEST(TaskAuthoringContractTest, RepositoryRefInputTypeNineAccepted)
             }
         ]}]}
     })json");
-    auto r1 = Das::Core::TaskScheduler::ValidateAuthoringDocument(valid);
-    EXPECT_TRUE(r1.valid) << r1.message;
+    auto r1 = Das::Core::TaskScheduler::ValidateAuthoringDocument(unsupported);
+    EXPECT_FALSE(r1.valid);
+    EXPECT_EQ(r1.error_kind, "invalidInputType");
 
-    auto unsupported = ParseJson(R"json({
+    auto ten = ParseJson(R"json({
         "contractVersion": 1,
         "viewKind": "graph",
         "revision": 0,
@@ -2220,13 +2222,56 @@ TEST(TaskAuthoringContractTest, RepositoryRefInputTypeNineAccepted)
             }
         ]}]}
     })json");
-    auto r2 = Das::Core::TaskScheduler::ValidateAuthoringDocument(unsupported);
+    auto r2 = Das::Core::TaskScheduler::ValidateAuthoringDocument(ten);
     EXPECT_FALSE(r2.valid);
     EXPECT_EQ(r2.error_kind, "invalidInputType");
 }
 
-// schema FieldDescriptor.inputType enum 含 9（与 C++ INPUT_TYPES 对账）。
-TEST(TaskAuthoringContractTest, SchemaJsonInputTypeNineLocked)
+// 字段 config 类型词（可选 "type" 字符串键）：合法字符串接受；非字符串
+// 拒绝；缺省照常接受（未声明 config 的字段不携带该键）。
+TEST(TaskAuthoringContractTest, FieldTypeWordOptionalStringKey)
+{
+    auto with_type = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "graph",
+        "revision": 0,
+        "graph": {"nodes": [{"id": "n", "fields": [
+            {
+                "name": "repositoryRef",
+                "label": "repositoryRef",
+                "valueType": 16,
+                "inputType": 0,
+                "type": "taskRepositoryRef",
+                "value": 7
+            }
+        ]}]}
+    })json");
+    auto r1 = Das::Core::TaskScheduler::ValidateAuthoringDocument(with_type);
+    EXPECT_TRUE(r1.valid) << r1.message;
+
+    auto bad_type = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "graph",
+        "revision": 0,
+        "graph": {"nodes": [{"id": "n", "fields": [
+            {
+                "name": "repositoryRef",
+                "label": "repositoryRef",
+                "valueType": 16,
+                "inputType": 0,
+                "type": 7,
+                "value": 7
+            }
+        ]}]}
+    })json");
+    auto r2 = Das::Core::TaskScheduler::ValidateAuthoringDocument(bad_type);
+    EXPECT_FALSE(r2.valid);
+    EXPECT_EQ(r2.error_kind, "invalidFieldType");
+}
+
+// schema FieldDescriptor.inputType enum 不含 9（与 C++ INPUT_TYPES 对账），
+// 且 "type"（config 类型词）属性在 schema 内声明为字符串。
+TEST(TaskAuthoringContractTest, SchemaJsonInputTypeVocabularyAndTypeWordLocked)
 {
     const auto schema_path = ResolveSchemaJsonPath();
     ASSERT_TRUE(schema_path.has_value())
@@ -2261,8 +2306,22 @@ TEST(TaskAuthoringContractTest, SchemaJsonInputTypeNineLocked)
         ASSERT_TRUE(value.has_value());
         input_type_values.insert(*value);
     }
-    EXPECT_TRUE(input_type_values.contains(9));
+    EXPECT_FALSE(input_type_values.contains(9));
     EXPECT_FALSE(input_type_values.contains(10));
+    for (int64_t legal : {0, 1, 2, 3, 4, 5, 6, 7, 8})
+    {
+        EXPECT_TRUE(input_type_values.contains(legal)) << legal;
+    }
+
+    ASSERT_TRUE(properties->contains(std::string_view("type")));
+    auto type_word_definition =
+        (*properties)[std::string_view("type")].as_object();
+    ASSERT_TRUE(type_word_definition.has_value());
+    EXPECT_TRUE(type_word_definition->contains(std::string_view("type")));
+    auto type_word_json_type =
+        (*type_word_definition)[std::string_view("type")].as_string();
+    ASSERT_TRUE(type_word_json_type.has_value());
+    EXPECT_EQ(*type_word_json_type, std::string_view("string"));
 }
 
 TEST(TaskAuthoringContractTest, ChangeRejectsOpWrapper)

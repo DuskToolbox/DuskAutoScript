@@ -705,9 +705,10 @@ namespace
         EXPECT_EQ(fields[1].value_type, 4);
     }
 
-    // Manifest config type → FieldDescriptor (valueType, inputType) mapping:
-    // taskRepositoryRef is the one typed control (repository entry picker);
-    // unknown types map conservatively to plain object.
+    // Manifest config type → FieldDescriptor typing pair + wire type word:
+    // inputType stays within the official 0-8 vocabulary — taskRepositoryRef
+    // maps conservatively like unknown types and its typed dispatch rides on
+    // the carried config type word instead.
     TEST(AuthoringDocContractTest, ConfigProjection_TypeMappingMatrix)
     {
         GraphDocumentDto doc;
@@ -743,7 +744,8 @@ namespace
             {8, 0},   // bool
             {16, 0},  // object
             {32, 0},  // array<string>
-            {16, 9},  // taskRepositoryRef (repository entry picker)
+            {16, 0},  // taskRepositoryRef → conservative object (typed
+                      // dispatch rides on the config type word, NOT inputType)
             {16, 0}}; // unknown → conservative object
         const auto& fields = out.graph->nodes[0].fields;
         // One declared field per matrix row, then the live "threshold".
@@ -758,6 +760,65 @@ namespace
         // Fields without a default and without a settings value project a
         // null value (JsonValue allows null — the picker starts empty).
         EXPECT_TRUE(fields[9].value.is_null());
+
+        // Declared fields carry their manifest config type word; undeclared
+        // live settings keys never do.
+        ASSERT_TRUE(fields[0].type_word.has_value());
+        EXPECT_EQ(*fields[0].type_word, "int");
+        ASSERT_TRUE(fields[9].type_word.has_value());
+        EXPECT_EQ(*fields[9].type_word, "taskRepositoryRef");
+        EXPECT_FALSE(fields[11].type_word.has_value());
+    }
+
+    // The wire field descriptor emits the optional "type" key only for
+    // config-declared fields (engaged-only emission, copy_string).
+    TEST(AuthoringDocContractTest, ConfigProjection_WireEmitsTypeWord)
+    {
+        GraphDocumentDto doc;
+        auto             payload = Das::Utils::MakeYyjsonObject();
+        (*payload.as_object())[std::string_view("f_ref")] = 7;
+        (*payload.as_object())[std::string_view("custom_note")] =
+            std::string("keep me");
+        auto node = MakeNode("n1", "{g1}", 0.0);
+        node.settings = payload;
+        doc.nodes.push_back(node);
+
+        ActionCatalog      catalog;
+        ActionCatalogEntry entry;
+        entry.action_id = "{g1}";
+        entry.label = "typed";
+        entry.config_fields.push_back(
+            MakeConfigField("f_ref", "taskRepositoryRef"));
+        catalog.entries.push_back(entry);
+
+        const auto wire = SerializeDocument(doc, catalog);
+        auto       wire_obj = wire.as_object();
+        ASSERT_TRUE(wire_obj.has_value());
+        auto graph = (*wire_obj)[std::string_view("graph")].as_object();
+        ASSERT_TRUE(graph.has_value());
+        auto nodes = (*graph)[std::string_view("nodes")].as_array();
+        ASSERT_TRUE(nodes.has_value());
+        ASSERT_EQ(nodes->size(), 1u);
+        auto node_obj = (*nodes)[0].as_object();
+        ASSERT_TRUE(node_obj.has_value());
+        auto fields = (*node_obj)[std::string_view("fields")].as_array();
+        ASSERT_TRUE(fields.has_value());
+        ASSERT_EQ(fields->size(), 2u);
+
+        auto declared = (*fields)[0].as_object();
+        ASSERT_TRUE(declared.has_value());
+        ASSERT_TRUE(declared->contains(std::string_view("type")));
+        EXPECT_EQ(
+            (*declared)[std::string_view("type")].as_string().value_or(""),
+            "taskRepositoryRef");
+        // Plain entryId integer value rides the wire as-is.
+        EXPECT_EQ(
+            (*declared)[std::string_view("value")].as_int().value_or(-1),
+            7);
+
+        auto undeclared = (*fields)[1].as_object();
+        ASSERT_TRUE(undeclared.has_value());
+        EXPECT_FALSE(undeclared->contains(std::string_view("type")));
     }
 
     // The formSequence projection merges config declarations the same way

@@ -67,6 +67,10 @@ namespace Contract
     /// shared field shape so the same renderer covers properties and authoring
     /// containers. Two-dimensional typing (value_type = data type, input_type =
     /// UI control type) plus label/description/required/readonly/candidates.
+    /// `type_word` carries the manifest config type word verbatim (engaged
+    /// only for config-declared fields) — the typed-dispatch channel for
+    /// component-domain type words (e.g. taskRepositoryRef) lives here, NOT
+    /// in the official 0-8 inputType vocabulary.
     struct FieldDescriptor
     {
         std::string                name;
@@ -74,6 +78,7 @@ namespace Contract
         int32_t                    value_type = 0;
         int32_t                    input_type = 0;
         yyjson::value              value;
+        std::optional<std::string> type_word;
         std::optional<std::string> description;
         bool                       required = false;
         bool                       readonly = false;

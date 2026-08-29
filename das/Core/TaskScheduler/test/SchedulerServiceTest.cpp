@@ -4436,7 +4436,8 @@ TEST_F(
 
 // 组件 manifest config 声明 → 注册表 catalog 通道 → 节点 fields[] 投影全
 // 链：delay_ms（int64，default 1000）与 repositoryRef（taskRepositoryRef →
-// valueType 16 / inputType 9）在新建节点（settings 空）上即可见可编辑。
+// valueType 16 / inputType 0 + wire 携带 config 类型词）在新建节点（settings
+// 空）上即可见可编辑。
 TEST_F(
     SchedulerRuntimeBackedTest,
     GraphAuthoringCatalogProjectsConfigDefaultsIntoFields)
@@ -4588,8 +4589,9 @@ TEST_F(
     ASSERT_TRUE(delay_input_type.has_value());
     EXPECT_EQ(*delay_input_type, 0);
 
-    // taskRepositoryRef → valueType 16 / inputType 9（仓库条目选择器），
-    // 无默认无设置 → value null（选择器从空开始）。
+    // taskRepositoryRef → valueType 16 / inputType 0（保守 object；分派走
+    // 字段 config 类型词 "type"，inputType 官方词表 0-8 不扩词），无默认
+    // 无设置 → value null（选择器从空开始）。
     const auto ref_field = field_of("repositoryRef");
     ASSERT_TRUE(ref_field.has_value());
     auto ref_value_type = integer_field(*ref_field, "valueType");
@@ -4597,8 +4599,23 @@ TEST_F(
     EXPECT_EQ(*ref_value_type, 16);
     auto ref_input_type = integer_field(*ref_field, "inputType");
     ASSERT_TRUE(ref_input_type.has_value());
-    EXPECT_EQ(*ref_input_type, 9);
+    EXPECT_EQ(*ref_input_type, 0);
     ASSERT_TRUE((*ref_field->as_object())[std::string_view("value")].is_null());
+
+    // config 类型词随 wire 字段投影携带（声明字段才有）。
+    auto ref_field_object = ref_field->as_object();
+    ASSERT_TRUE(ref_field_object.has_value());
+    ASSERT_TRUE(ref_field_object->contains(std::string_view("type")));
+    EXPECT_EQ(
+        (*ref_field_object)[std::string_view("type")].as_string().value_or(""),
+        "taskRepositoryRef");
+    const auto delay_field_object = delay_field->as_object();
+    ASSERT_TRUE(delay_field_object.has_value());
+    ASSERT_TRUE(delay_field_object->contains(std::string_view("type")));
+    EXPECT_EQ(
+        (*delay_field_object)[std::string_view("type")].as_string().value_or(
+            ""),
+        "int64");
 }
 
 TEST_F(
