@@ -160,14 +160,10 @@ namespace
         {
             write_json(
                 "en.json",
-                R"json({"progress.updateFound": "New version available ({0})",)"
-                R"json( "progress.upToDate": "Already up to date ({0})",)"
-                R"json( "progress.checkFailed": "Check failed: {0}"})json");
+                R"json({"progress.updateFound": "New version available ({0})", "progress.upToDate": "Already up to date ({0})", "progress.checkFailed": "Check failed: {0}"})json");
             write_json(
                 "zh-cn.json",
-                R"json({"progress.updateFound": "发现新版本（{0}）",)"
-                R"json( "progress.upToDate": "已是最新（{0}）",)"
-                R"json( "progress.checkFailed": "检查失败：{0}"})json");
+                R"json({"progress.updateFound": "发现新版本（{0}）", "progress.upToDate": "已是最新（{0}）", "progress.checkFailed": "检查失败：{0}"})json");
         }
         else
         {

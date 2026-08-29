@@ -548,11 +548,105 @@ namespace Plugins::DasMaaPi
         const std::string&  current_version,
         const std::string&  failure_detail)
     {
-        // RED 阶段最小结构声明：行为留空，由 GREEN 落地。
-        (void)kind;
-        (void)info;
-        (void)current_version;
-        (void)failure_detail;
+        // 与 ReportFinal 同款早退链：断开后不再浪费 IPC，未 Start / 无
+        // service 直接返回。
+        if (!started_ || disconnected_.load())
+        {
+            return;
+        }
+        if (!service_)
+        {
+            return;
+        }
+        auto* const i18n = GetI18n();
+
+        // 三终局的模板键、{0} 绑定值与缺译硬编码文案（FoundUpdate 绑目标
+        // 版本；UpToDate 绑当前版本；Failed 绑失败分类文案）。
+        const char* tmpl_key = "";
+        std::string bound_value;
+        std::string fallback_text;
+        switch (kind)
+        {
+        case CheckOutcomeKind::FoundUpdate:
+            tmpl_key = "progress.updateFound";
+            bound_value = info.version_name;
+            fallback_text = "发现新版本（" + info.version_name + "）";
+            break;
+        case CheckOutcomeKind::UpToDate:
+            tmpl_key = "progress.upToDate";
+            bound_value = current_version;
+            fallback_text = "已是最新（" + current_version + "）";
+            break;
+        case CheckOutcomeKind::Failed:
+            tmpl_key = "progress.checkFailed";
+            bound_value = failure_detail;
+            fallback_text = "检查失败：" + failure_detail;
+            break;
+        }
+        const auto  tmpl = TranslateKey(i18n, tmpl_key);
+        std::string text;
+        if (!tmpl.empty())
+        {
+            // make_format_args 持引用而非拥有：参数须是具名局部变量，生命
+            // 周期覆盖 vformat 调用（禁临时量悬垂引用）。
+            const std::string& bound_text = bound_value;
+            text = DAS_FMT_NS::vformat(
+                std::string_view(tmpl),
+                DAS_FMT_NS::make_format_args(bound_text));
+        }
+        else
+        {
+            text = fallback_text;
+        }
+
+        // updateVersion：FoundUpdate 推「cur → next」三元退化构造（空侧
+        // 退化单值，照投影五字段构造逻辑复写于 reporter 侧）；UpToDate /
+        // Failed 推空串。检查链无下载指标，不推 downloadRate /
+        // downloadElapsed。
+        std::string version_text;
+        if (kind == CheckOutcomeKind::FoundUpdate)
+        {
+            if (current_version.empty())
+            {
+                version_text = info.version_name;
+            }
+            else if (info.version_name.empty())
+            {
+                version_text = current_version;
+            }
+            else
+            {
+                version_text = current_version + " → " + info.version_name;
+            }
+        }
+
+        // 字段值必须经 MakeJsonFieldValue（copy_string——裸 brace init 变单
+        // 元素数组，service 侧标量校验会跳过字段）。
+        std::vector<DasProgressUpdateImpl::Field> fields;
+        fields.emplace_back("updateVersion", MakeJsonFieldValue(version_text));
+        if (kind == CheckOutcomeKind::FoundUpdate)
+        {
+            // releaseNote：日志原文（可为空串——无更新无日志，投影侧兜底
+            // 「暂无更新日志」属文档职责，推送只带原文）。
+            fields.emplace_back(
+                "releaseNote",
+                MakeJsonFieldValue(info.release_note));
+        }
+        fields.emplace_back("updateProgress", MakeJsonFieldValue(text));
+
+        DasPtr<Das::ExportInterface::IDasProgressUpdate> entry =
+            DasProgressUpdateImpl::Make(key_, std::move(fields));
+        const auto rc = service_->Report(entry.Get());
+        if (DAS::IsFailed(rc))
+        {
+            DAS_LOG_ERROR(
+                DAS::fmt::format(
+                    "DasProgressReporter: ReportCheckOutcome failed key={} "
+                    "result={}",
+                    key_,
+                    static_cast<int>(rc))
+                    .c_str());
+        }
     }
 
     void DasProgressReporter::OnSubscribersDisconnected()
