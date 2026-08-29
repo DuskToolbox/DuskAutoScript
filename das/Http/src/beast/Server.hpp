@@ -298,10 +298,19 @@ namespace Das::Http::Beast
             {
                 return false;
             }
+            // key 门：既无快照也无活跃上报者的 key 拒绝订阅——返回 false
+            // 落普通路由（events 路径无注册路由 → 404）。空门 = 放行
+            // （向后兼容）。
+            if (sse_key_gate_ && !sse_key_gate_(std::string(key)))
+            {
+                return false;
+            }
             auto sse = std::make_shared<SseSession>(
                 std::move(socket_),
                 std::string(key),
-                sse_hub_);
+                sse_hub_,
+                std::chrono::seconds(15),
+                sse_on_registered_);
             sse->DoStart();
             return true;
         }

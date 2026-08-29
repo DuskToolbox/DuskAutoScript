@@ -150,6 +150,15 @@ namespace Das::Http::Beast
                             self->shared_from_this(),
                             self->key_);
                     }
+                    // 注册完成后触发重放注入点：本回调与 Broadcast 的
+                    // dispatch 同在会话 strand 上串行，此处补发的重放帧
+                    // 必先于注册后的直播帧。顺序不可颠倒：注册前对会话
+                    // WriteData 会与未完成的头写入并发 async_write 同一
+                    // socket，chunk 字节与头字节交错损坏 HTTP 流。
+                    if (self->on_registered_)
+                    {
+                        self->on_registered_(*self);
+                    }
                     self->StartKeepalive();
                 });
         }

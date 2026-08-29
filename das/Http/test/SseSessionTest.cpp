@@ -212,10 +212,12 @@ namespace
             std::string(Das::Http::Beast::kSseRequestPathPrefix) + "dead-key";
 
         // 观察点：路由被命中即证明请求落进了普通路由（响应 404 对齐生产
-        // events 路径无注册路由的语义）。
+        // events 路径无注册路由的语义）。注册路径不带前导斜杠（生产路由
+        // 均以 DAS_HTTP_API_PREFIX 开头注册，Handle 查找时剥离请求 target
+        // 的前导斜杠）。
         bool routed = false;
         router->Get(
-            target,
+            target.substr(1),
             [&routed](const Das::Http::Beast::HttpRequest&)
             {
                 routed = true;
