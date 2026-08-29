@@ -6,13 +6,18 @@
 #include <das/Plugins/DasMaaPi/AcceptedSettings.h>
 #include <das/Plugins/DasMaaPi/AuthoringProjector.h>
 #include <das/Utils/DasJsonCore.h>
+#include <das/Utils/StringUtils.h>
 #include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasProgressService.Implements.hpp>
 #include <gtest/gtest.h>
 
 #include <algorithm>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <map>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -113,6 +118,79 @@ namespace
         return {
             name_raw != nullptr ? std::string(name_raw) : std::string{},
             text_raw != nullptr ? std::string(text_raw) : std::string{}};
+    }
+
+    // entry 全字段读回（name → JSON 序列化值；字符串值带引号）。
+    std::map<std::string, std::string> ReadEntryFields(
+        Das::ExportInterface::IDasProgressUpdate* entry)
+    {
+        std::map<std::string, std::string> result;
+        size_t                             count = 0;
+        EXPECT_EQ(entry->GetFieldCount(&count), DAS_S_OK);
+        for (size_t index = 0; index < count; ++index)
+        {
+            auto [name, value] = ReadEntryField(entry, index);
+            result[name] = value;
+        }
+        return result;
+    }
+
+    // 为 ReportCheckOutcome 用例构造注入式 i18n 表：临时目录写 en/zh-cn
+    // JSON 后经工厂装载（经 SetI18n 注入缝，绕开 this_line_location 懒加
+    // 载）。with_check_keys=false 时写不含 progress.updateFound/upToDate/
+    // checkFailed 的表（缺译回退用例）。ctest 每用例独立进程，目录以用例
+    // 名区分防并行互踩。
+    DasPtr<Das::ExportInterface::IDasI18n> MakeInjectedCheckOutcomeI18n(
+        const char* test_name,
+        bool        with_check_keys)
+    {
+        const auto dir =
+            std::filesystem::temp_directory_path()
+            / (std::string("maapi_reporter_check_outcome_") + test_name);
+        std::error_code ec;
+        std::filesystem::remove_all(dir, ec);
+        std::filesystem::create_directories(dir, ec);
+
+        const auto write_json = [&dir](const char* name, std::string_view body)
+        {
+            std::ofstream ofs(dir / name, std::ios::binary | std::ios::trunc);
+            ofs.write(body.data(), static_cast<std::streamsize>(body.size()));
+        };
+        if (with_check_keys)
+        {
+            write_json(
+                "en.json",
+                R"json({"progress.updateFound": "New version available ({0})",)"
+                R"json( "progress.upToDate": "Already up to date ({0})",)"
+                R"json( "progress.checkFailed": "Check failed: {0}"})json");
+            write_json(
+                "zh-cn.json",
+                R"json({"progress.updateFound": "发现新版本（{0}）",)"
+                R"json( "progress.upToDate": "已是最新（{0}）",)"
+                R"json( "progress.checkFailed": "检查失败：{0}"})json");
+        }
+        else
+        {
+            write_json("en.json", R"json({"label.confirm": "Confirm"})json");
+            write_json("zh-cn.json", R"json({"label.confirm": "确认"})json");
+        }
+
+        const std::string dir_utf8{DAS::Utils::U8AsString(dir.u8string())};
+        DasPtr<IDasReadOnlyString> dir_str;
+        ::CreateIDasReadOnlyStringFromUtf8(dir_utf8.c_str(), dir_str.Put());
+        DasPtr<Das::ExportInterface::IDasI18n> table;
+        if (dir_str != nullptr)
+        {
+            EXPECT_EQ(
+                ::CreateIDasI18nFromDirectory(dir_str.Get(), table.Put()),
+                DAS_S_OK);
+        }
+        else
+        {
+            ADD_FAILURE() << "CreateIDasReadOnlyStringFromUtf8 failed";
+        }
+        std::filesystem::remove_all(dir, ec);
+        return table;
     }
 } // namespace
 
@@ -347,6 +425,251 @@ TEST(MaapiProgressReporterTest, ReportFinalAfterStopDoesNotPush)
 
     EXPECT_EQ(fake->entries.size(), 0u);
     EXPECT_EQ(fake->remove_count, remove_count_before);
+}
+
+// ============================================================================
+// ReportCheckOutcome：checkUpdate 三终局多字段推送（FoundUpdate 三字段：
+// updateVersion「cur → next」三元退化 + releaseNote 原文 + updateProgress
+// 模板文案；UpToDate/Failed 两字段：updateVersion 空串 + updateProgress。
+// 不推 downloadRate/downloadElapsed。i18n 表经 SetI18n 注入缝（临时目录
+// 工厂装载），缺译回退硬编码中文。
+// ============================================================================
+
+// FoundUpdate：恰 3 字段，{0}=目标版本，版本为「cur → next」。
+TEST(MaapiProgressReporterTest, ReportCheckOutcomeFoundUpdatePushesThreeFields)
+{
+    GlobalLocaleGuard                      locale_guard("zh-cn");
+    DasPtr<Das::ExportInterface::IDasI18n> i18n = MakeInjectedCheckOutcomeI18n(
+        "ReportCheckOutcomeFoundUpdatePushesThreeFields",
+        /*with_check_keys=*/true);
+    ASSERT_NE(i18n.Get(), nullptr);
+
+    DasPtr<Das::ExportInterface::IDasProgressService> service =
+        FakeProgressService::Make();
+    auto* fake = static_cast<FakeProgressService*>(service.Get());
+
+    auto reporter = std::make_shared<DasProgressReporter>("key1", service);
+    reporter->SetI18n(i18n);
+    ASSERT_TRUE(reporter->Start());
+
+    PiUpdateInfo info;
+    info.has_update = true;
+    info.version_name = "v2.23.0";
+    info.release_note = "日志";
+    reporter->ReportCheckOutcome(
+        DasProgressReporter::CheckOutcomeKind::FoundUpdate,
+        info,
+        "v2.22.0",
+        "");
+
+    ASSERT_EQ(fake->entries.size(), 1u);
+    auto entry = fake->entries.front();
+    EXPECT_EQ(ReadEntryKey(entry.Get()), "key1");
+
+    const auto fields = ReadEntryFields(entry.Get());
+    ASSERT_EQ(fields.size(), 3u);
+    EXPECT_EQ(fields.at("updateVersion"), "\"v2.22.0 → v2.23.0\"");
+    EXPECT_EQ(fields.at("releaseNote"), "\"日志\"");
+    EXPECT_EQ(fields.at("updateProgress"), "\"发现新版本（v2.23.0）\"");
+    EXPECT_EQ(fields.count("downloadRate"), 0u);
+    EXPECT_EQ(fields.count("downloadElapsed"), 0u);
+
+    reporter->Stop();
+}
+
+// UpToDate：恰 2 字段，updateVersion 空串，{0}=当前版本。
+TEST(MaapiProgressReporterTest, ReportCheckOutcomeUpToDatePushesTwoFields)
+{
+    GlobalLocaleGuard                      locale_guard("zh-cn");
+    DasPtr<Das::ExportInterface::IDasI18n> i18n = MakeInjectedCheckOutcomeI18n(
+        "ReportCheckOutcomeUpToDatePushesTwoFields",
+        /*with_check_keys=*/true);
+    ASSERT_NE(i18n.Get(), nullptr);
+
+    DasPtr<Das::ExportInterface::IDasProgressService> service =
+        FakeProgressService::Make();
+    auto* fake = static_cast<FakeProgressService*>(service.Get());
+
+    auto reporter = std::make_shared<DasProgressReporter>("key1", service);
+    reporter->SetI18n(i18n);
+    ASSERT_TRUE(reporter->Start());
+
+    PiUpdateInfo info;
+    reporter->ReportCheckOutcome(
+        DasProgressReporter::CheckOutcomeKind::UpToDate,
+        info,
+        "v2.22.0",
+        "");
+
+    ASSERT_EQ(fake->entries.size(), 1u);
+    const auto fields = ReadEntryFields(fake->entries.front().Get());
+    ASSERT_EQ(fields.size(), 2u);
+    EXPECT_EQ(fields.at("updateVersion"), "\"\"");
+    EXPECT_EQ(fields.at("updateProgress"), "\"已是最新（v2.22.0）\"");
+    EXPECT_EQ(fields.count("releaseNote"), 0u);
+    EXPECT_EQ(fields.count("downloadRate"), 0u);
+
+    reporter->Stop();
+}
+
+// Failed：恰 2 字段，updateVersion 空串，{0}=失败分类文案。
+TEST(MaapiProgressReporterTest, ReportCheckOutcomeFailedPushesTwoFields)
+{
+    GlobalLocaleGuard                      locale_guard("zh-cn");
+    DasPtr<Das::ExportInterface::IDasI18n> i18n = MakeInjectedCheckOutcomeI18n(
+        "ReportCheckOutcomeFailedPushesTwoFields",
+        /*with_check_keys=*/true);
+    ASSERT_NE(i18n.Get(), nullptr);
+
+    DasPtr<Das::ExportInterface::IDasProgressService> service =
+        FakeProgressService::Make();
+    auto* fake = static_cast<FakeProgressService*>(service.Get());
+
+    auto reporter = std::make_shared<DasProgressReporter>("key1", service);
+    reporter->SetI18n(i18n);
+    ASSERT_TRUE(reporter->Start());
+
+    PiUpdateInfo info;
+    reporter->ReportCheckOutcome(
+        DasProgressReporter::CheckOutcomeKind::Failed,
+        info,
+        "",
+        "分类文案");
+
+    ASSERT_EQ(fake->entries.size(), 1u);
+    const auto fields = ReadEntryFields(fake->entries.front().Get());
+    ASSERT_EQ(fields.size(), 2u);
+    EXPECT_EQ(fields.at("updateVersion"), "\"\"");
+    EXPECT_EQ(fields.at("updateProgress"), "\"检查失败：分类文案\"");
+
+    reporter->Stop();
+}
+
+// version_text 三元退化：current_version 空且 version_name 非空 → 单值
+// next；反向 → 单值 cur（照投影五字段构造逻辑）。
+TEST(
+    MaapiProgressReporterTest,
+    ReportCheckOutcomeVersionTextDegradesWhenSideEmpty)
+{
+    GlobalLocaleGuard                      locale_guard("zh-cn");
+    DasPtr<Das::ExportInterface::IDasI18n> i18n = MakeInjectedCheckOutcomeI18n(
+        "ReportCheckOutcomeVersionTextDegradesWhenSideEmpty",
+        /*with_check_keys=*/true);
+    ASSERT_NE(i18n.Get(), nullptr);
+
+    DasPtr<Das::ExportInterface::IDasProgressService> service =
+        FakeProgressService::Make();
+    auto* fake = static_cast<FakeProgressService*>(service.Get());
+
+    auto reporter = std::make_shared<DasProgressReporter>("key1", service);
+    reporter->SetI18n(i18n);
+    ASSERT_TRUE(reporter->Start());
+
+    {
+        PiUpdateInfo info;
+        info.has_update = true;
+        info.version_name = "v2.23.0";
+        reporter->ReportCheckOutcome(
+            DasProgressReporter::CheckOutcomeKind::FoundUpdate,
+            info,
+            "",
+            "");
+        ASSERT_EQ(fake->entries.size(), 1u);
+        const auto fields = ReadEntryFields(fake->entries.back().Get());
+        EXPECT_EQ(fields.at("updateVersion"), "\"v2.23.0\"");
+    }
+    {
+        PiUpdateInfo info;
+        info.has_update = true;
+        reporter->ReportCheckOutcome(
+            DasProgressReporter::CheckOutcomeKind::FoundUpdate,
+            info,
+            "v2.22.0",
+            "");
+        ASSERT_EQ(fake->entries.size(), 2u);
+        const auto fields = ReadEntryFields(fake->entries.back().Get());
+        EXPECT_EQ(fields.at("updateVersion"), "\"v2.22.0\"");
+    }
+
+    reporter->Stop();
+}
+
+// 缺译回退：注入不含 progress.updateFound/upToDate/checkFailed 的表 →
+// updateProgress 落硬编码中文（发现新版本（…）/已是最新（…）/检查失败：…）。
+TEST(MaapiProgressReporterTest, ReportCheckOutcomeFallsBackWhenKeyMissing)
+{
+    GlobalLocaleGuard                      locale_guard("zh-cn");
+    DasPtr<Das::ExportInterface::IDasI18n> i18n = MakeInjectedCheckOutcomeI18n(
+        "ReportCheckOutcomeFallsBackWhenKeyMissing",
+        /*with_check_keys=*/false);
+    ASSERT_NE(i18n.Get(), nullptr);
+
+    DasPtr<Das::ExportInterface::IDasProgressService> service =
+        FakeProgressService::Make();
+    auto* fake = static_cast<FakeProgressService*>(service.Get());
+
+    auto reporter = std::make_shared<DasProgressReporter>("key1", service);
+    reporter->SetI18n(i18n);
+    ASSERT_TRUE(reporter->Start());
+
+    {
+        PiUpdateInfo info;
+        info.has_update = true;
+        info.version_name = "v2.23.0";
+        reporter->ReportCheckOutcome(
+            DasProgressReporter::CheckOutcomeKind::FoundUpdate,
+            info,
+            "v2.22.0",
+            "");
+    }
+    {
+        PiUpdateInfo info;
+        reporter->ReportCheckOutcome(
+            DasProgressReporter::CheckOutcomeKind::UpToDate,
+            info,
+            "v2.22.0",
+            "");
+    }
+    {
+        PiUpdateInfo info;
+        reporter->ReportCheckOutcome(
+            DasProgressReporter::CheckOutcomeKind::Failed,
+            info,
+            "",
+            "分类文案");
+    }
+
+    ASSERT_EQ(fake->entries.size(), 3u);
+    EXPECT_EQ(
+        ReadEntryFields(fake->entries[0].Get()).at("updateProgress"),
+        "\"发现新版本（v2.23.0）\"");
+    EXPECT_EQ(
+        ReadEntryFields(fake->entries[1].Get()).at("updateProgress"),
+        "\"已是最新（v2.22.0）\"");
+    EXPECT_EQ(
+        ReadEntryFields(fake->entries[2].Get()).at("updateProgress"),
+        "\"检查失败：分类文案\"");
+
+    reporter->Stop();
+}
+
+// 早退链：未 Start 的 reporter 调用 → service 零 entry（零 AddCallback）。
+TEST(MaapiProgressReporterTest, ReportCheckOutcomeWithoutStartDoesNotPush)
+{
+    DasPtr<Das::ExportInterface::IDasProgressService> service =
+        FakeProgressService::Make();
+    auto* fake = static_cast<FakeProgressService*>(service.Get());
+
+    auto reporter = std::make_shared<DasProgressReporter>("key1", service);
+    PiUpdateInfo info;
+    reporter->ReportCheckOutcome(
+        DasProgressReporter::CheckOutcomeKind::FoundUpdate,
+        info,
+        "v2.22.0",
+        "");
+
+    EXPECT_EQ(fake->add_count, 0);
+    EXPECT_EQ(fake->entries.size(), 0u);
 }
 
 // ============================================================================

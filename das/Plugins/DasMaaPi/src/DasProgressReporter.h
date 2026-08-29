@@ -46,6 +46,28 @@ namespace Plugins::DasMaaPi
         // SSE 字段通道收到终态（零新协议）。
         void ReportFinal(bool ok, const std::string& detail);
 
+        // checkUpdate 三终局（后台检查 job 查完调用，D-05）：
+        // - FoundUpdate：updateVersion（「cur → next」三元退化构造，空侧
+        //   退化单值）+ releaseNote（info.release_note 原文，可为空串）+
+        //   updateProgress（progress.updateFound 模板 {0}=目标版本）。
+        // - UpToDate：updateVersion 空串 + updateProgress
+        //   （progress.upToDate 模板 {0}=当前版本）。
+        // - Failed：updateVersion 空串 + updateProgress
+        //   （progress.checkFailed 模板 {0}=失败分类文案）。
+        // 不推 downloadRate/downloadElapsed（检查链无下载指标）。缺译回退
+        // 硬编码中文文案（照 ReportFinal 降级范式）。
+        enum class CheckOutcomeKind
+        {
+            FoundUpdate,
+            UpToDate,
+            Failed
+        };
+        void ReportCheckOutcome(
+            CheckOutcomeKind    kind,
+            const PiUpdateInfo& info,
+            const std::string&  current_version,
+            const std::string&  failure_detail);
+
         // 该 key 所有 SSE 订阅断开（OnAllSubscribersDisconnected 命中 own
         // key）。
         bool IsDisconnected() const { return disconnected_.load(); }

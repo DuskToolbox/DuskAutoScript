@@ -542,6 +542,19 @@ namespace Plugins::DasMaaPi
         }
     }
 
+    void DasProgressReporter::ReportCheckOutcome(
+        CheckOutcomeKind    kind,
+        const PiUpdateInfo& info,
+        const std::string&  current_version,
+        const std::string&  failure_detail)
+    {
+        // RED 阶段最小结构声明：行为留空，由 GREEN 落地。
+        (void)kind;
+        (void)info;
+        (void)current_version;
+        (void)failure_detail;
+    }
+
     void DasProgressReporter::OnSubscribersDisconnected()
     {
         disconnected_.store(true);
