@@ -9,6 +9,7 @@
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
 
+#include <format>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -100,7 +101,10 @@ namespace Plugins::DasGraphTask
                 return;
             }
             // Forward the catalog array as-is (object entries survive
-            // end-to-end; no flattening back to guid strings).
+            // end-to-end; no flattening back to guid strings). A rejection
+            // leaves the session with an empty catalog — surface it loudly
+            // instead of silently degrading every addGraphNode to
+            // UnknownActionId.
             auto catalog_serialized = Das::Utils::SerializeYyjsonValue(
                 (*obj)[std::string_view("actionCatalog")]);
             if (!catalog_serialized)
@@ -108,7 +112,17 @@ namespace Plugins::DasGraphTask
                 return;
             }
             auto catalog_str = MakeReadOnlyString(*catalog_serialized);
-            GraphAuthoringSessionSetActionCatalog(state, catalog_str.Get());
+            const DasResult catalog_result =
+                GraphAuthoringSessionSetActionCatalog(state, catalog_str.Get());
+            if (DAS::IsFailed(catalog_result))
+            {
+                const auto reason = std::format(
+                    "GraphAuthoringSessionSetActionCatalog rejected the "
+                    "context actionCatalog (result={}); the session keeps "
+                    "an empty catalog",
+                    catalog_result);
+                DAS_LOG_WARNING(reason.c_str());
+            }
         }
     } // namespace
 

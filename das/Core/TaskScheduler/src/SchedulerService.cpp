@@ -429,17 +429,26 @@ namespace Das::Core::TaskScheduler
     }
 
     // Static port surface of one component, read from the manifest
-    // definition's `inputs`/`outputs` arrays ({id,type} entries). Direction
-    // is the list membership — the same authority compile-time port
-    // validation uses (edge source ports are looked up in manifest outputs,
-    // edge target ports in manifest inputs). Ports are appended directly to
-    // the destination array; the array rides the catalog context channel so
-    // the Core node port projection can merge it onto nodes by
+    // definition's port declaration lists (`inputs`/`outputs`/`signals`).
+    // Direction is the list membership — the same authority compile-time
+    // port validation uses (edge source ports are looked up in manifest
+    // outputs, edge target ports in manifest inputs); the signals list is
+    // output-only execution flow. Entries carry {id,type} with an optional
+    // string `label`; a missing type falls back to `fallback_port_type`
+    // (the signals list declares bare {id} entries that project as
+    // "signal"). Entries without a usable id, or whose resolved type is
+    // empty, are skipped — a single malformed declaration must not ride
+    // the channel, because the Core consumer rejects the whole catalog on
+    // an empty portType. The display label falls back to the port id so
+    // every projected port is renderable. Ports are appended directly to
+    // the destination array; the array rides the catalog context channel
+    // so the Core node port projection can merge it onto nodes by
     // componentGuid.
     static void AppendEntryPortsFromDefinition(
         const yyjson::value&       definition,
         std::string_view           list_key,
         std::string_view           direction,
+        std::string_view           fallback_port_type,
         yyjson::writer::array_ref& destination)
     {
         auto def_obj = definition.as_object();
@@ -455,23 +464,51 @@ namespace Das::Core::TaskScheduler
         for (const auto& item : list.value())
         {
             auto port_obj = item.as_object();
-            if (!port_obj || !port_obj->contains(std::string_view("id"))
-                || !port_obj->contains(std::string_view("type")))
+            if (!port_obj || !port_obj->contains(std::string_view("id")))
             {
                 continue;
             }
             auto id = (*port_obj)[std::string_view("id")].as_string();
-            auto type = (*port_obj)[std::string_view("type")].as_string();
-            if (!id || id->empty() || !type)
+            if (!id || id->empty())
             {
                 continue;
+            }
+            std::string_view resolved_type = fallback_port_type;
+            if (port_obj->contains(std::string_view("type")))
+            {
+                auto type = (*port_obj)[std::string_view("type")].as_string();
+                if (!type)
+                {
+                    continue;
+                }
+                resolved_type = *type;
+            }
+            if (resolved_type.empty())
+            {
+                continue;
+            }
+            std::string_view resolved_label;
+            if (port_obj->contains(std::string_view("label")))
+            {
+                auto label = (*port_obj)[std::string_view("label")].as_string();
+                if (!label)
+                {
+                    continue;
+                }
+                resolved_label = *label;
+            }
+            if (resolved_label.empty())
+            {
+                resolved_label = *id;
             }
             auto port = Das::Utils::MakeYyjsonObject();
             auto obj = port.as_object();
             (*obj)[std::string_view("portId")] =
                 std::make_pair(std::string_view(*id), yyjson::copy_string);
+            (*obj)[std::string_view("displayLabel")] =
+                std::make_pair(resolved_label, yyjson::copy_string);
             (*obj)[std::string_view("portType")] =
-                std::make_pair(std::string_view(*type), yyjson::copy_string);
+                std::make_pair(resolved_type, yyjson::copy_string);
             (*obj)[std::string_view("direction")] =
                 std::make_pair(direction, yyjson::copy_string);
             destination.emplace_back(std::move(port));
@@ -528,20 +565,29 @@ namespace Das::Core::TaskScheduler
             (*obj)[std::string_view("label")] =
                 std::make_pair(std::string_view(label), yyjson::copy_string);
             // Static port surface: the manifest definition declares
-            // inputs[]/outputs[] ({id,type}); list membership is the
-            // direction. Emitted only when the component declares at least
-            // one port.
+            // inputs[]/outputs[]/signals[]; list membership is the
+            // direction (signals are output-only execution flow, entries
+            // may omit the type and project as "signal"). Emitted only
+            // when the component declares at least one port.
             auto ports = Das::Utils::MakeYyjsonArray();
             auto ports_arr = ports.as_array();
             AppendEntryPortsFromDefinition(
                 definition.definition,
                 std::string_view("inputs"),
                 std::string_view("input"),
+                std::string_view(),
                 *ports_arr);
             AppendEntryPortsFromDefinition(
                 definition.definition,
                 std::string_view("outputs"),
                 std::string_view("output"),
+                std::string_view(),
+                *ports_arr);
+            AppendEntryPortsFromDefinition(
+                definition.definition,
+                std::string_view("signals"),
+                std::string_view("output"),
+                std::string_view("signal"),
                 *ports_arr);
             if (ports_arr->size() > 0)
             {
