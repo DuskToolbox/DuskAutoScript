@@ -100,6 +100,10 @@ namespace Das::Http
         {
         }
 
+        // 快照总量上限（never-subscribed key 不触发 key-empty，FIFO 逐出
+        // 最旧兜底保证「内存有界」字面成立）。
+        static constexpr std::size_t MAX_SNAPSHOT_KEYS = 256;
+
         DasResult AddCallback(
             Das::ExportInterface::IDasProgressCallback* callback) override
         {
@@ -259,6 +263,33 @@ namespace Das::Http
                             .c_str());
                 }
             }
+        }
+
+        /**
+         * @brief key 是否已知（订阅拒绝谓词）。
+         *
+         * 双信号：快照命中 OR 存在活跃上报者（callbacks 非空）。后者是
+         * IDL 硬约束（callbacks 无 per-key 信息）下的放行信号——受理路径
+         * reporter Start 先于订阅到达，check job 期间零 Report 零快照的
+         * 合法首订阅不被误杀。
+         */
+        [[nodiscard]]
+        bool IsKeyKnown(const std::string& key) const
+        {
+            return false;
+        }
+
+        /**
+         * @brief 取 key 的字段级快照 payload（按 fieldName 字典序）。
+         *
+         * 返回该 key 每个字段最后一次广播的 payload，供订阅建立处逐条
+         * 重放；重放字段序不具语义（字段值幂等覆盖）。未知 key 返回空。
+         */
+        [[nodiscard]]
+        std::vector<std::shared_ptr<const std::string>> TakeSnapshot(
+            const std::string& key) const
+        {
+            return {};
         }
 
     private:

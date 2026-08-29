@@ -367,3 +367,151 @@ TEST(DasProgressServiceTest, ReportSkipsBadFieldsWithoutCrashing)
     EXPECT_EQ(parsed->field_name, "goodField");
     EXPECT_EQ(parsed->value_text, "\"ok\"");
 }
+
+// 无订阅者时 Report 的帧不被任何人消费，但快照必须记录最后状态
+// （订阅建立处重放的来源）。
+TEST(DasProgressServiceTest, SnapshotRecordsFieldsReportedWithoutSubscribers)
+{
+    ServiceFixture fixture;
+
+    std::vector<std::optional<FakeProgressUpdate::Field>> fields;
+    fields.emplace_back(
+        std::make_pair(
+            std::string("updateProgress"),
+            MakeJsonValue("发现新版本（v2.23.0）")));
+    fields.emplace_back(
+        std::make_pair(std::string("downloadRate"), MakeJsonValue("2.5 MB/s")));
+    auto entry = FakeProgressUpdate::Make("snap-key", std::move(fields));
+
+    ASSERT_EQ(fixture.service->Report(entry.Get()), DAS_S_OK);
+    fixture.ioc.poll();
+
+    const auto snapshot = fixture.service->TakeSnapshot("snap-key");
+    ASSERT_EQ(snapshot.size(), 2u);
+    // TakeSnapshot 按 fieldName 字典序返回。
+    auto first = ParsePayload(*snapshot[0]);
+    ASSERT_TRUE(first.has_value());
+    EXPECT_EQ(first->field_name, "downloadRate");
+    EXPECT_EQ(first->value_text, "\"2.5 MB/s\"");
+
+    auto second = ParsePayload(*snapshot[1]);
+    ASSERT_TRUE(second.has_value());
+    EXPECT_EQ(second->field_name, "updateProgress");
+    EXPECT_EQ(second->value_text, "\"发现新版本（v2.23.0）\"");
+}
+
+// 同 key 后续 Report 覆盖同名字段：快照只保留每字段的最后 payload。
+TEST(DasProgressServiceTest, SnapshotMergesLatestPayloadPerField)
+{
+    ServiceFixture fixture;
+
+    std::vector<std::optional<FakeProgressUpdate::Field>> first_fields;
+    first_fields.emplace_back(
+        std::make_pair(std::string("alpha"), MakeJsonValue("v1")));
+    first_fields.emplace_back(
+        std::make_pair(std::string("beta"), MakeJsonValue("b1")));
+    auto first_entry =
+        FakeProgressUpdate::Make("merge-key", std::move(first_fields));
+    ASSERT_EQ(fixture.service->Report(first_entry.Get()), DAS_S_OK);
+
+    std::vector<std::optional<FakeProgressUpdate::Field>> second_fields;
+    second_fields.emplace_back(
+        std::make_pair(std::string("alpha"), MakeJsonValue("v2")));
+    auto second_entry =
+        FakeProgressUpdate::Make("merge-key", std::move(second_fields));
+    ASSERT_EQ(fixture.service->Report(second_entry.Get()), DAS_S_OK);
+    fixture.ioc.poll();
+
+    const auto snapshot = fixture.service->TakeSnapshot("merge-key");
+    ASSERT_EQ(snapshot.size(), 2u);
+    auto first = ParsePayload(*snapshot[0]);
+    ASSERT_TRUE(first.has_value());
+    EXPECT_EQ(first->field_name, "alpha");
+    EXPECT_EQ(first->value_text, "\"v2\"");
+
+    auto second = ParsePayload(*snapshot[1]);
+    ASSERT_TRUE(second.has_value());
+    EXPECT_EQ(second->field_name, "beta");
+    EXPECT_EQ(second->value_text, "\"b1\"");
+}
+
+// key 订阅归零（key-empty 反向通知路径）逐出该 key 的快照——内存有界
+// 的主路径。
+TEST(DasProgressServiceTest, KeyEmptyEvictsSnapshot)
+{
+    ServiceFixture fixture;
+    fixture.WireKeyEmpty();
+
+    std::vector<std::optional<FakeProgressUpdate::Field>> fields;
+    fields.emplace_back(
+        std::make_pair(std::string("updateProgress"), MakeJsonValue("done")));
+    auto entry = FakeProgressUpdate::Make("evict-key", std::move(fields));
+    ASSERT_EQ(fixture.service->Report(entry.Get()), DAS_S_OK);
+    ASSERT_FALSE(fixture.service->TakeSnapshot("evict-key").empty());
+
+    auto session = std::make_shared<FakeSession>(fixture.ioc, "evict-key");
+    fixture.hub->Register(session, "evict-key");
+    fixture.hub->Unregister(session.get(), "evict-key");
+    ASSERT_EQ(fixture.hub->SubscriberCount("evict-key"), 0u);
+    // key-empty 反向通知经 post 异步执行（不阻塞 strand 线程），poll 驱动。
+    fixture.ioc.poll();
+
+    EXPECT_TRUE(fixture.service->TakeSnapshot("evict-key").empty());
+}
+
+// 拒绝谓词双信号：快照命中 OR 有活跃上报者（callbacks 非空）。后者保住
+// check job 期间零 Report 零快照的合法首订阅不被误杀。
+TEST(DasProgressServiceTest, IsKeyKnownUsesSnapshotOrCallbackDualSignal)
+{
+    ServiceFixture fixture;
+
+    std::vector<std::optional<FakeProgressUpdate::Field>> fields;
+    fields.emplace_back(
+        std::make_pair(std::string("updateProgress"), MakeJsonValue("x")));
+    auto entry = FakeProgressUpdate::Make("known-key", std::move(fields));
+    ASSERT_EQ(fixture.service->Report(entry.Get()), DAS_S_OK);
+
+    // 快照命中 → 已知。
+    EXPECT_TRUE(fixture.service->IsKeyKnown("known-key"));
+    // 无快照且无活跃上报者 → 拒绝。
+    EXPECT_FALSE(fixture.service->IsKeyKnown("dead-key"));
+
+    // 无快照但有活跃上报者 → 放行（受理路径 reporter Start 先于订阅）。
+    auto* raw_cb = new FakeProgressCallback();
+    ASSERT_EQ(fixture.service->AddCallback(raw_cb), DAS_S_OK);
+    EXPECT_TRUE(fixture.service->IsKeyKnown("dead-key"));
+
+    fixture.service->RemoveCallback(raw_cb);
+    raw_cb->Release();
+}
+
+// 快照总量上限兜底：never-subscribed key 不触发 key-empty，FIFO 逐出
+// 最旧保证快照集有界。
+TEST(DasProgressServiceTest, SnapshotCapEvictsOldestKey)
+{
+    ServiceFixture fixture;
+
+    constexpr auto total =
+        Das::Http::DasProgressServiceImpl::MAX_SNAPSHOT_KEYS + 1;
+    for (int index = 0; index < static_cast<int>(total); ++index)
+    {
+        std::vector<std::optional<FakeProgressUpdate::Field>> fields;
+        fields.emplace_back(
+            std::make_pair(
+                std::string("updateProgress"),
+                MakeJsonValue(std::to_string(index))));
+        auto entry = FakeProgressUpdate::Make(
+            "cap-key-" + std::to_string(index),
+            std::move(fields));
+        ASSERT_EQ(fixture.service->Report(entry.Get()), DAS_S_OK);
+    }
+
+    // 最旧 key 被逐出，最新 key 仍在。
+    EXPECT_TRUE(fixture.service->TakeSnapshot("cap-key-0").empty());
+    const auto newest =
+        fixture.service->TakeSnapshot("cap-key-" + std::to_string(total - 1));
+    ASSERT_EQ(newest.size(), 1u);
+    auto parsed = ParsePayload(*newest[0]);
+    ASSERT_TRUE(parsed.has_value());
+    EXPECT_EQ(parsed->value_text, "\"" + std::to_string(total - 1) + "\"");
+}
