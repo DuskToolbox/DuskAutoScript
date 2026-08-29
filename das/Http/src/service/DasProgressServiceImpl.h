@@ -12,10 +12,13 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <deque>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -83,12 +86,15 @@ namespace Das::Http
      *
      * DasHttp 侧实现 IDL 接口并经 RegisterServiceByName("das.progress")
      * 按名注册。Report(entry) 读只读 entry 的字段增量，装配 authoring setValue
-     * payload，经 SseHub 按 key 广播到前端 SSE；AddCallback/RemoveCallback
+     * payload，经 SseHub 按 key 广播到前端 SSE，同时按 key 维护字段级最后
+     * 状态快照（订阅建立处重放，弥补 SSE 广播不是信箱的语义）；快照在 key
+     * 订阅归零时逐出，总量受上限兜底；AddCallback/RemoveCallback
      * 管理跨进程 callback 生命周期（RemoveCallback 释放 proxy
      * 触发远端释放链）； SseHub key 订阅归零时反向通知
      * OnAllSubscribersDisconnected。
      *
-     * @thread_safety 所有公开方法线程安全（callbacks_ 有互斥保护）。
+     * @thread_safety 所有公开方法线程安全（callbacks_/snapshots_ 有互斥
+     * 保护）。
      */
     class DasProgressServiceImpl final
         : public Das::ExportInterface::DasProgressServiceImplBase<
@@ -207,8 +213,16 @@ namespace Das::Http
                 {
                     continue;
                 }
+                auto frame =
+                    std::make_shared<const std::string>(std::move(*payload));
+                {
+                    // 快照与广播共用同一已验证 payload（零新输入面）；
+                    // 锁内只做 map 写入，锁外再走 hub。
+                    const std::unique_lock lock(mutex_);
+                    RecordSnapshotLocked(key, field_name, frame);
+                }
                 // 零订阅者告警：推送打到无人订阅的 key（前端未订阅/订阅已
-                // 断开/注册未完成），帧丢失的确定性信号。
+                // 断开/注册未完成），帧丢失的确定性信号（快照兜底可重放）。
                 if (hub_->SubscriberCount(key) == 0)
                 {
                     DAS_LOG_ERROR(
@@ -219,15 +233,17 @@ namespace Das::Http
                             field_name)
                             .c_str());
                 }
-                hub_->Broadcast(
-                    key,
-                    std::make_shared<const std::string>(std::move(*payload)));
+                hub_->Broadcast(key, frame);
             }
             return DAS_S_OK;
         }
 
         /**
          * @brief SseHub key 订阅归零时反向通知全部已注册 callback。
+         *
+         * 同步逐出该 key 的快照（快照只在「订阅可能晚于推送」的窗口内有
+         * 价值；订阅归零即无人再需要重放）。锁内段完成状态清理，锁外调
+         * callback（防重入死锁）。
          *
          * @param key 订阅归零的业务 key；callback 侧按 own_key 过滤。
          */
@@ -238,6 +254,13 @@ namespace Das::Http
             {
                 const std::unique_lock lock(mutex_);
                 callbacks = callbacks_;
+                snapshots_.erase(key);
+                snapshot_insert_order_.erase(
+                    std::remove(
+                        snapshot_insert_order_.begin(),
+                        snapshot_insert_order_.end(),
+                        key),
+                    snapshot_insert_order_.end());
             }
             Das::DasPtr<IDasReadOnlyString> key_str;
             if (DAS::IsFailed(CreateIDasReadOnlyStringFromUtf8(
@@ -271,12 +294,14 @@ namespace Das::Http
          * 双信号：快照命中 OR 存在活跃上报者（callbacks 非空）。后者是
          * IDL 硬约束（callbacks 无 per-key 信息）下的放行信号——受理路径
          * reporter Start 先于订阅到达，check job 期间零 Report 零快照的
-         * 合法首订阅不被误杀。
+         * 合法首订阅不被误杀。残余：死 key + 恰有无关上报者运行时静默
+         * 放行（不劣于纯广播的今日行为）。
          */
         [[nodiscard]]
         bool IsKeyKnown(const std::string& key) const
         {
-            return false;
+            const std::unique_lock lock(mutex_);
+            return snapshots_.contains(key) || !callbacks_.empty();
         }
 
         /**
@@ -289,10 +314,42 @@ namespace Das::Http
         std::vector<std::shared_ptr<const std::string>> TakeSnapshot(
             const std::string& key) const
         {
-            return {};
+            const std::unique_lock                          lock(mutex_);
+            std::vector<std::shared_ptr<const std::string>> result;
+            const auto found = snapshots_.find(key);
+            if (found == snapshots_.end())
+            {
+                return result;
+            }
+            result.reserve(found->second.size());
+            for (const auto& [field_name, payload] : found->second)
+            {
+                result.push_back(payload);
+            }
+            return result;
         }
 
     private:
+        // 记录字段级快照（调用方须持 mutex_）。key 首次入快照时维护插入
+        // 序；总量超上限时 FIFO 逐出最旧——never-subscribed key 不触发
+        // key-empty，上限是快照集「内存有界」的兜底。
+        void RecordSnapshotLocked(
+            const std::string&                 key,
+            const std::string&                 field_name,
+            std::shared_ptr<const std::string> payload)
+        {
+            if (!snapshots_.contains(key))
+            {
+                snapshot_insert_order_.push_back(key);
+            }
+            snapshots_[key][field_name] = std::move(payload);
+            while (snapshot_insert_order_.size() > MAX_SNAPSHOT_KEYS)
+            {
+                snapshots_.erase(snapshot_insert_order_.front());
+                snapshot_insert_order_.pop_front();
+            }
+        }
+
         // 读 entry 字段的 IDasJson value，装配 payload；解析失败/非法类型
         // 返回 nullopt（安全跳过）。
         static std::optional<std::string> ReadFieldPayload(
@@ -327,9 +384,19 @@ namespace Das::Http
         }
 
         std::shared_ptr<SseHub> hub_;
-        std::mutex              mutex_;
+        // const 读路径（IsKeyKnown/TakeSnapshot）也要加锁 → mutable。
+        mutable std::mutex mutex_;
         std::vector<Das::DasPtr<Das::ExportInterface::IDasProgressCallback>>
             callbacks_;
+        // key → fieldName → 最后一次广播 payload（字段级快照，订阅建立
+        // 处重放用）。受 mutex_ 保护，与 snapshot_insert_order_ 键集同步
+        // 维护。
+        std::unordered_map<
+            std::string,
+            std::map<std::string, std::shared_ptr<const std::string>>>
+            snapshots_;
+        // snapshots_ 的插入序（FIFO 逐出最旧用）。
+        std::deque<std::string> snapshot_insert_order_;
     };
 
 } // namespace Das::Http
