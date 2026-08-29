@@ -5366,6 +5366,94 @@ namespace Das::Plugins::DasMaaPi
         return true;
     }
 
+    // 更新 job 受理样板公共 helper（check / apply 两条受理路径共用，禁止
+    // 复制改参）。收编原 ApplyApplyUpdateCommand 内联受理四段（等价移动）：
+    // ① http 归 shared_ptr（seam 别名 / owned BeastHttpClient）；② progress
+    // service 解析（seam 优先，生产 C ABI Resolve，失败降级告警）；③
+    // reporter 构造 + Start（Start 失败 reset 降级；Start 必须留在受理
+    // 路径、TryStart 内线程构造之前——started_ 非 atomic，线程构造建立
+    // happens-before 后 job 线程只读）；④ registry TryStart 占位。返回
+    // nullptr = TryStart 被拒（防重入），诊断文案与回滚逻辑留在调用方命令
+    // 内；helper 内异常向上传播，由调用方命令的 catch-all 统一映射。
+    std::shared_ptr<UpdateJobSlot> StartUpdateJob(
+        const std::filesystem::path&               pi_dir,
+        PiHttpClient*                              http_seam,
+        Das::ExportInterface::IDasProgressService* progress_service_seam,
+        const std::string&                         progress_key,
+        UpdateJobRegistry::JobBody                 job_body,
+        std::shared_ptr<DasProgressReporter>&      out_reporter)
+    {
+        // http 归 shared_ptr 持有：slot 持有保证 registry 析构收尾时
+        // RequestCancel 可达。测试注入的 fake 由测试侧 shared_ptr 持有、
+        // .get() 喂 seam，此处构造非持有别名（无操作 deleter），杜绝双重
+        // 释放。
+        std::shared_ptr<PiHttpClient> http;
+        if (http_seam != nullptr)
+        {
+            http =
+                std::shared_ptr<PiHttpClient>(http_seam, [](PiHttpClient*) {});
+        }
+        else
+        {
+            http = std::make_shared<BeastHttpClient>();
+        }
+
+        // 进度上报：seam（测试注入）优先，生产经 C ABI Resolve 主进程
+        // IDasProgressService。resolve 失败 / Start 失败 → 降级纯本地
+        // 更新（不报进度），日志警告。Start 必须留在受理路径、线程构造
+        // （TryStart 内）之前——started_ 非 atomic，线程构造建立
+        // happens-before 后 job 线程只读。
+        DasPtr<Das::ExportInterface::IDasProgressService> progress_service;
+        if (progress_service_seam != nullptr)
+        {
+            progress_service =
+                DasPtr<Das::ExportInterface::IDasProgressService>(
+                    progress_service_seam);
+        }
+        else
+        {
+            // 生产 resolve 必须走 C ABI：插件 DLL 内联的 thread_local
+            // GetCurrentIpcContext 读到的是本 DLL 的独立副本，Host
+            // BusinessThread 在 libDasCore 内设置的 TLS 对插件不可见，
+            // 恒为空（IPC 模式下进度上报从未生效的根因）。C ABI 编译于
+            // libDasCore，读 Core 侧 TLS，跨 DLL 正确。
+            DasPtr<IDasBase> base;
+            const auto       rc =
+                DasQueryMainProcessInterfaceByName("das.progress", base.Put());
+            if (DAS::IsOk(rc) && base)
+            {
+                (void)base.As(progress_service);
+            }
+        }
+        if (!progress_service)
+        {
+            DAS_LOG_WARNING(
+                "ApplyUpdate: progress service unavailable, degrade to "
+                "local update");
+        }
+
+        // 更新期间真实经 IPC 上报字段增量（成对
+        // AddCallback/RemoveCallback）。shared_ptr 管理：
+        // DasProgressCallbackImpl 内部持 weak_ptr 访问 owner（跨进程
+        // proxy 保活使其可能活得比 reporter 久），且析构 RAII 兜底
+        // RemoveCallback。reporter 经 out 参数交 job 体推终态。
+        if (progress_service && !progress_key.empty())
+        {
+            out_reporter = std::make_shared<DasProgressReporter>(
+                progress_key,
+                progress_service);
+            if (!out_reporter->Start())
+            {
+                out_reporter.reset();
+            }
+        }
+
+        return UpdateJobRegistry::Instance().TryStart(
+            pi_dir,
+            http,
+            std::move(job_body));
+    }
+
     // applyUpdate 受理异步化 dispatch。受理路径（IPC BusinessThread 上快速
     // 返回）：前置校验（pending engaged + has_update + download_url 非空 +
     // pi_dir 可解析）→ registry TryStart 防重入 → 拷贝 job 数据入后台线程执行
@@ -5373,6 +5461,8 @@ namespace Das::Plugins::DasMaaPi
     // DasProgressReporter::ReportFinal 推送（既有 SSE 字段增量通道）。受理
     // 成功不清 pending_update_（job 完成时 session 可能已被驱逐重建，pending
     // 清理交给下次 checkUpdate 覆盖；按钮防重入由 registry 状态驱动投影）。
+    // 受理样板（http / progress service / reporter Start / TryStart）收编于
+    // 上方 StartUpdateJob helper。
     bool ApplyApplyUpdateCommand(
         AcceptedSettingsDto&                       settings,
         std::vector<PiDiagnosticDto>&              diagnostics,
@@ -5413,89 +5503,20 @@ namespace Das::Plugins::DasMaaPi
             return false;
         }
 
-        // http 归 shared_ptr 持有：slot 持有保证 registry 析构收尾时
-        // RequestCancel 可达。测试注入的 fake 由测试侧 shared_ptr 持有、
-        // .get() 喂 seam，此处构造非持有别名（无操作 deleter），杜绝双重
-        // 释放。
-        std::shared_ptr<PiHttpClient> http;
-        if (http_seam != nullptr)
-        {
-            http =
-                std::shared_ptr<PiHttpClient>(http_seam, [](PiHttpClient*) {});
-        }
-        else
-        {
-            http = std::make_shared<BeastHttpClient>();
-        }
+        // reporter 间接层：job 体 lambda 先于受理 helper 构造（reporter 在
+        // helper 内构造 + Start 并写入 out 参数），经 shared_ptr 间接层在
+        // job 线程内读取（TryStart 内线程构造建立 happens-before，读取安
+        // 全；lambda 直接按引用捕获受理栈变量会随受理返回悬垂）。
+        const auto reporter_holder =
+            std::make_shared<std::shared_ptr<DasProgressReporter>>();
 
-        auto& registry = UpdateJobRegistry::Instance();
-
-        // 受理路径的全部准备工作（progress service 解析 / reporter Start /
-        // job 全量值拷贝 / 线程体构造）先于 registry 占位：TryStart 在锁内
-        // 完成 running 置位与 worker 线程构造（不变量 running==true ⇒
+        // 受理路径的全部准备工作（job 全量值拷贝 / 线程体构造 / helper 内
+        // progress service 解析与 reporter Start）先于 registry 占位：TryStart
+        // 在锁内完成 running 置位与 worker 线程构造（不变量 running==true ⇒
         // joinable()==true），此前任何异常都无需回滚 running——该 pi_dir 的
         // 更新入口不会被锁死。
         try
         {
-            // 进度上报：seam（测试注入）优先，生产经 C ABI Resolve 主进程
-            // IDasProgressService。resolve 失败 / Start 失败 → 降级纯本地
-            // 更新（不报进度），日志警告。Start 必须留在受理路径、线程构造
-            // （TryStart 内）之前——started_ 非 atomic，线程构造建立
-            // happens-before 后 job 线程只读。
-            DasPtr<Das::ExportInterface::IDasProgressService> progress_service;
-            if (progress_service_seam != nullptr)
-            {
-                progress_service =
-                    DasPtr<Das::ExportInterface::IDasProgressService>(
-                        progress_service_seam);
-            }
-            else
-            {
-                // 生产 resolve 必须走 C ABI：插件 DLL 内联的 thread_local
-                // GetCurrentIpcContext 读到的是本 DLL 的独立副本，Host
-                // BusinessThread 在 libDasCore 内设置的 TLS 对插件不可见，
-                // 恒为空（IPC 模式下进度上报从未生效的根因）。C ABI 编译于
-                // libDasCore，读 Core 侧 TLS，跨 DLL 正确。
-                DasPtr<IDasBase> base;
-                const auto       rc = DasQueryMainProcessInterfaceByName(
-                    "das.progress",
-                    base.Put());
-                if (DAS::IsOk(rc) && base)
-                {
-                    (void)base.As(progress_service);
-                }
-            }
-            if (!progress_service)
-            {
-                DAS_LOG_WARNING(
-                    "ApplyUpdate: progress service unavailable, degrade to "
-                    "local update");
-            }
-
-            // 更新期间真实经 IPC 上报字段增量（成对
-            // AddCallback/RemoveCallback）。 shared_ptr
-            // 管理：DasProgressCallbackImpl 内部持 weak_ptr 访问 owner（跨进程
-            // proxy 保活使其可能活得比 reporter 久），且析构 RAII 兜底
-            // RemoveCallback。
-            std::shared_ptr<DasProgressReporter> reporter;
-            if (progress_service && pending_update->has_value()
-                && !(*pending_update)->progress_key.empty())
-            {
-                reporter = std::make_shared<DasProgressReporter>(
-                    (*pending_update)->progress_key,
-                    progress_service);
-                if (!reporter->Start())
-                {
-                    reporter.reset();
-                }
-            }
-            ProgressReporter progress_cb;
-            if (reporter)
-            {
-                progress_cb = [reporter](const UpdateProgress& p)
-                { reporter->Report(p); };
-            }
-
             // job 全量值拷贝：job 线程绝不触碰 session / settings /
             // diagnostics 等受理栈对象（session 可能在 job 期间被驱逐销毁）。
             const PiUpdateInfo          job_info = info;
@@ -5508,15 +5529,23 @@ namespace Das::Plugins::DasMaaPi
             // job 线程体（registry 在锁内以 slot 为实参启动它）：取消标志挂
             // 在 slot 上（析构收尾置位），经 cancel_check 贯穿解压/替换循环，
             // 命中即走「更新已中止」失败终态，使退出收尾 join 有界。
+            // reporter / http 经间接层与 slot 解析：reporter 由受理 helper
+            // 构造（reporter_holder），http 由 TryStart 存档进 slot。
             auto job_body =
                 [job_pi_dir,
                  job_info,
-                 http,
                  proxy_url,
                  mirrorchyan_cdk,
-                 progress_cb,
-                 reporter](const std::shared_ptr<UpdateJobSlot>& slot)
+                 reporter_holder](const std::shared_ptr<UpdateJobSlot>& slot)
             {
+                const std::shared_ptr<DasProgressReporter> reporter =
+                    *reporter_holder;
+                ProgressReporter progress_cb;
+                if (reporter)
+                {
+                    progress_cb = [reporter](const UpdateProgress& p)
+                    { reporter->Report(p); };
+                }
                 const std::function<bool()> cancel_check = [slot]
                 { return slot->cancel_requested.load(); };
                 // 失败终态按阶段映射文案：progress 回调顺序即阶段推进
@@ -5541,7 +5570,7 @@ namespace Das::Plugins::DasMaaPi
                         return PiUpdateService::ApplyUpdate(
                             job_pi_dir,
                             job_info,
-                            *http,
+                            *slot->http,
                             proxy_url,
                             mirrorchyan_cdk,
                             stage_tracking_cb,
@@ -5613,7 +5642,13 @@ namespace Das::Plugins::DasMaaPi
                 UpdateJobRegistry::Instance().Finish(slot);
             };
 
-            auto slot = registry.TryStart(*pi_dir, http, std::move(job_body));
+            auto slot = StartUpdateJob(
+                *pi_dir,
+                http_seam,
+                progress_service_seam,
+                info.progress_key,
+                std::move(job_body),
+                *reporter_holder);
             if (slot == nullptr)
             {
                 // 防重入拒绝：该 pi_dir 已有 running job。此前 Start 的
