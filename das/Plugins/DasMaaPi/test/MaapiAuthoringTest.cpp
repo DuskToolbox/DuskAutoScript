@@ -6757,7 +6757,27 @@ namespace
             latch_cv_.notify_all();
         }
 
-        void RequestCancel() override { ReleaseDownload(); }
+        // 检查挂起 latch（checkUpdate 走 Get/Head → Dispatch
+        // 路径）：BlockChecks 后 Dispatch 在命中路由时阻塞，直到
+        // ReleaseChecks（测试主动）或 RequestCancel（registry 析构收尾同时释放
+        // download 与 check 两类 latch——check 挂起用例退出时不双释放则 join
+        // 永等挂死）。等待有界 （超时自行放行），防误用导致的无限挂起。
+        void BlockChecks() { block_checks_ = true; }
+
+        void ReleaseChecks()
+        {
+            {
+                const std::lock_guard<std::mutex> lock(latch_mutex_);
+                release_checks_ = true;
+            }
+            latch_cv_.notify_all();
+        }
+
+        void RequestCancel() override
+        {
+            ReleaseDownload();
+            ReleaseChecks();
+        }
 
         int CountRequestsWith(std::string_view fragment) const
         {
@@ -6859,6 +6879,16 @@ namespace
             {
                 if (url.find(route.path_fragment) != std::string::npos)
                 {
+                    // BlockChecks 置位时在返回 canned 响应前阻塞（模拟外网
+                    // 检查请求挂起，驱动 checkUpdate 受理秒回断言）。
+                    if (block_checks_)
+                    {
+                        std::unique_lock<std::mutex> lock(latch_mutex_);
+                        latch_cv_.wait_for(
+                            lock,
+                            std::chrono::seconds(3),
+                            [this] { return release_checks_; });
+                    }
                     out_body = route.body;
                     out_status = route.status;
                     return DAS_S_OK;
@@ -6878,9 +6908,11 @@ namespace
         std::vector<Call>       calls_;
         bool                    fail_all_ = false;
         bool                    block_downloads_ = false;
+        bool                    block_checks_ = false;
         std::mutex              latch_mutex_;
         std::condition_variable latch_cv_;
         bool                    release_latch_ = false;
+        bool                    release_checks_ = false;
     };
 
     // 临时项目目录（interface.json 所在目录 = D-89-01 更新目标）。唯一名防并行
