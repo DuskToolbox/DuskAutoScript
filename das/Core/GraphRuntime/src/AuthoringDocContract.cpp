@@ -242,6 +242,23 @@ namespace Contract
         constexpr std::string_view PORT_DIRECTION_INPUT = "input";
         constexpr std::string_view PORT_DIRECTION_OUTPUT = "output";
 
+        constexpr std::string_view PORT_CATEGORY_EXECUTION = "execution";
+        constexpr std::string_view PORT_CATEGORY_DATA = "data";
+
+        /// The single point where the execution/data port category is
+        /// derived. The rule recognizes exactly one Core-owned protocol
+        /// literal: a port whose declared type is "signal" participates in
+        /// execution flow, everything else carries data. This is the same
+        /// signal/data vocabulary GraphEdgeDto.edge_type and signal-gated
+        /// execution already define — the projection never interprets
+        /// Provider semantics beyond this literal.
+        std::string DerivePortCategory(std::string_view port_type)
+        {
+            return port_type == std::string_view("signal")
+                       ? std::string(PORT_CATEGORY_EXECUTION)
+                       : std::string(PORT_CATEGORY_DATA);
+        }
+
         /// Direction-derivation fact for one dynamic port: which edge roles
         /// reference it inside this document. Compile validates direction by
         /// edge position (source side is an output, target side an input),
@@ -294,7 +311,9 @@ namespace Contract
 
                 // Registry-declared static port surface: catalog entries are
                 // keyed by actionId == componentGuid and already carry the
-                // direction from the declaring inputs/outputs list.
+                // direction from the declaring inputs/outputs list. The
+                // category is derived here — the single derivation point —
+                // from the port's declared type.
                 if (action_catalog.has_value())
                 {
                     for (const auto& entry : action_catalog->entries)
@@ -305,7 +324,10 @@ namespace Contract
                                 out.ports.size() + entry.ports.size());
                             for (const auto& port : entry.ports)
                             {
-                                out.ports.push_back(port);
+                                GraphNodePort projected = port;
+                                projected.category =
+                                    DerivePortCategory(port.port_type);
+                                out.ports.push_back(std::move(projected));
                             }
                             break;
                         }
@@ -339,6 +361,7 @@ namespace Contract
                     projected.port_id = port.port_id;
                     projected.display_label = port.display_label;
                     projected.port_type = port.port_type;
+                    projected.category = DerivePortCategory(port.port_type);
                     if (directional)
                     {
                         projected.direction =
@@ -565,8 +588,8 @@ namespace Contract
         }
 
         // Build the ports[] array as a standalone yyjson::value. Every element
-        // carries exactly the four locked keys (portId/displayLabel/
-        // portType/direction); a node without ports still emits the key as an
+        // carries exactly the five locked keys (portId/displayLabel/portType/
+        // direction/category); a node without ports still emits the key as an
         // empty array so the wire shape stays stable. Per
         // das-yyjson-string-safety every std::string payload is deep-copied
         // into the document arena.
@@ -599,6 +622,9 @@ namespace Contract
                     yyjson::copy_string);
                 po["direction"] = std::make_pair(
                     std::string_view(port.direction),
+                    yyjson::copy_string);
+                po["category"] = std::make_pair(
+                    std::string_view(port.category),
                     yyjson::copy_string);
                 arr.emplace_back(std::move(p_v));
             }

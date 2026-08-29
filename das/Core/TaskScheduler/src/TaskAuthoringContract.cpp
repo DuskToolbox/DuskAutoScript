@@ -1252,10 +1252,12 @@ namespace Das::Core::TaskScheduler
             return Pass();
         }
 
-        // Node port projection element: exactly the four locked keys
-        // {portId, displayLabel, portType, direction} with direction in
-        // {"input", "output"} (drag-link precheck data source; the projection
-        // never interprets portType semantics).
+        // Node port projection element: exactly the five locked keys
+        // {portId, displayLabel, portType, direction, category} with
+        // direction in {"input", "output"} and category in
+        // {"execution", "data"} (drag-link precheck data source; the
+        // projection never interprets portType semantics — the category is
+        // the Core-derived execution/data split).
         AuthoringValidationResult ValidateGraphNodePort(
             const yyjson::value& port)
         {
@@ -1302,10 +1304,26 @@ namespace Das::Core::TaskScheduler
                     "invalidPortDirection",
                     "GraphNode port.direction must be input|output");
             }
+            if (!HasStringField(obj, "category"))
+            {
+                return Fail("missingField", "GraphNode port.category required");
+            }
+            const auto category = obj["category"].as_string().value();
+            if (category != std::string_view("execution")
+                && category != std::string_view("data"))
+            {
+                return Fail(
+                    "invalidPortCategory",
+                    "GraphNode port.category must be execution|data");
+            }
 
             if (!OnlyKeys(
                     obj,
-                    {"portId", "displayLabel", "portType", "direction"}))
+                    {"portId",
+                     "displayLabel",
+                     "portType",
+                     "direction",
+                     "category"}))
             {
                 return Fail(
                     "unknownField",

@@ -299,7 +299,7 @@ namespace
         n3.dynamic_ports.push_back(MakePortDef("dyn_data", "image"));
         doc.nodes.push_back(n3);
         const auto  out2 = ToAuthoringDocument(doc, catalog);
-        const auto& ports3 = out2.graph->nodes[3].ports;
+        const auto& ports3 = out2.graph->nodes[2].ports;
         ASSERT_EQ(ports3.size(), 2u);
         EXPECT_EQ(ports3[0].direction, "input");
         EXPECT_EQ(ports3[0].category, "data");

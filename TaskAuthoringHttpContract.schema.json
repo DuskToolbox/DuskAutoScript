@@ -356,14 +356,15 @@
     },
     "GraphNodePort": {
       "type": "object",
-      "required": ["portId", "displayLabel", "portType", "direction"],
+      "required": ["portId", "displayLabel", "portType", "direction", "category"],
       "additionalProperties": false,
-      "$comment": "Node port projection (drag-link precheck data source): thin-map of the port surface merged from the registry-declared static component ports (direction by inputs/outputs list membership) and the document's dynamic ports (direction derived from the edge role). portType is a free-form pass-through string the client consumes for soft filtering; compile stays the authoritative validation.",
+      "$comment": "Node port projection (drag-link precheck data source): thin-map of the port surface merged from the registry-declared static component ports (direction by inputs/outputs list membership) and the document's dynamic ports (direction derived from the edge role). portType is a free-form pass-through string; category is the Core-derived execution/data split (a port whose type is the \"signal\" protocol literal is execution, everything else is data). The client consumes both for soft filtering; compile stays the authoritative validation.",
       "properties": {
         "portId": { "type": "string", "minLength": 1 },
         "displayLabel": { "type": "string" },
         "portType": { "type": "string" },
-        "direction": { "type": "string", "enum": ["input", "output"] }
+        "direction": { "type": "string", "enum": ["input", "output"] },
+        "category": { "type": "string", "enum": ["execution", "data"] }
       }
     },
     "FormSequence": {
