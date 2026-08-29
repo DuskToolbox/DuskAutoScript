@@ -173,6 +173,20 @@ namespace Contract
         std::vector<GraphConnection> connections;
     };
 
+    /// One config field declaration carried on the catalog channel: the
+    /// manifest `config` entry for one component field. `type` uses the
+    /// manifest type vocabulary (int/int64/uint/float/double/string/bool/
+    /// object/array<...>/taskRepositoryRef); `default_value` is the declared
+    /// default (null = none declared). Like ports, this is internal to the
+    /// catalog channel and is NOT emitted on the public actionCatalog wire —
+    /// the node fields[] projection is where config declarations surface.
+    struct ConfigFieldDescriptor
+    {
+        std::string   name;
+        std::string   type;
+        yyjson::value default_value;
+    };
+
     /// One entry in the shared actionCatalog. `action_id` is the
     /// Provider-scoped opaque ID of a creatable type (for GraphTask the
     /// componentGuid). `ports` carries the registry-declared static port
@@ -180,14 +194,18 @@ namespace Contract
     /// membership) so the node projection can merge it onto nodes — this
     /// field is internal to the catalog channel and is NOT emitted on the
     /// public actionCatalog wire (BuildActionCatalogValue keeps the strict
-    /// {actionId,label,description?,icon?} shape).
+    /// {actionId,label,description?,icon?} shape). `config_fields` carries
+    /// the manifest config declarations the same way (channel-internal; the
+    /// projection merges them into node fields[] so a freshly added node is
+    /// immediately editable with its declared defaults).
     struct ActionCatalogEntry
     {
-        std::string                action_id;
-        std::string                label;
-        std::optional<std::string> description;
-        std::optional<std::string> icon;
-        std::vector<GraphNodePort> ports;
+        std::string                        action_id;
+        std::string                        label;
+        std::optional<std::string>         description;
+        std::optional<std::string>         icon;
+        std::vector<GraphNodePort>         ports;
+        std::vector<ConfigFieldDescriptor> config_fields;
     };
 
     /// Optional actionCatalog grouping (D-84-33): stable id, localized label,

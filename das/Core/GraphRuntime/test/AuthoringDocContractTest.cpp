@@ -587,6 +587,205 @@ namespace
     }
 
     // -----------------------------------------------------------------------
+    // Config-declared field projection: manifest config entries merge into
+    // node fields[] so a freshly added node is immediately editable. Value
+    // priority: settings override > declared default > null; undeclared
+    // settings keys keep the existing live-value projection, appended after
+    // the declared fields.
+    // -----------------------------------------------------------------------
+
+    ConfigFieldDescriptor MakeConfigField(
+        std::string_view    name,
+        std::string_view    type,
+        const yyjson::value default_value = yyjson::value{})
+    {
+        ConfigFieldDescriptor field;
+        field.name = std::string(name);
+        field.type = std::string(type);
+        field.default_value = Das::Utils::CloneYyjsonValue(default_value);
+        return field;
+    }
+
+    ActionCatalog MakeDelayCatalog()
+    {
+        ActionCatalog      catalog;
+        ActionCatalogEntry entry;
+        entry.action_id = "{g1}";
+        entry.label = "das.flow.delay";
+        entry.config_fields.push_back(
+            MakeConfigField("delay_ms", "int64", yyjson::value(1000)));
+        catalog.entries.push_back(entry);
+        return catalog;
+    }
+
+    TEST(
+        AuthoringDocContractTest,
+        ConfigProjection_DeclaredDefaultsVisibleWithoutSettings)
+    {
+        GraphDocumentDto doc;
+        doc.nodes.push_back(MakeNode("n1", "{g1}", 0.0)); // threshold only
+
+        const auto catalog = MakeDelayCatalog();
+        const auto out = ToAuthoringDocument(doc, catalog);
+        ASSERT_EQ(out.graph->nodes.size(), 1u);
+        const auto& fields = out.graph->nodes[0].fields;
+        ASSERT_EQ(fields.size(), 2u); // declared delay_ms + live threshold
+
+        const auto& delay_field = fields[0];
+        EXPECT_EQ(delay_field.name, "delay_ms");
+        EXPECT_EQ(delay_field.label, "delay_ms");
+        EXPECT_EQ(delay_field.value_type, 0);
+        EXPECT_EQ(delay_field.input_type, 0);
+        ASSERT_TRUE(delay_field.value.as_int().has_value());
+        EXPECT_EQ(*delay_field.value.as_int(), 1000);
+
+        // The wire carries the declared default so the detail panel can
+        // render and edit it with zero setValue round-trips.
+        const auto json = ToJsonWithCatalog(doc, catalog);
+        EXPECT_NE(json.find("\"name\":\"delay_ms\""), std::string::npos);
+        EXPECT_NE(json.find("\"value\":1000"), std::string::npos);
+    }
+
+    TEST(
+        AuthoringDocContractTest,
+        ConfigProjection_SettingsValueOverridesDeclaredDefault)
+    {
+        GraphDocumentDto doc;
+        auto             n1 = MakeNode("n1", "{g1}", 0.0);
+        auto             payload = Das::Utils::MakeYyjsonObject();
+        (*payload.as_object())[std::string_view("delay_ms")] = 500;
+        n1.settings = payload;
+        doc.nodes.push_back(n1);
+
+        const auto out = ToAuthoringDocument(doc, MakeDelayCatalog());
+        ASSERT_EQ(out.graph->nodes.size(), 1u);
+        const auto& fields = out.graph->nodes[0].fields;
+        ASSERT_EQ(fields.size(), 2u);
+        EXPECT_EQ(fields[0].name, "delay_ms");
+        ASSERT_TRUE(fields[0].value.as_int().has_value());
+        EXPECT_EQ(*fields[0].value.as_int(), 500);
+
+        // A settings null clears to the declared default (null reads as
+        // "no override", matching the live-value projection semantics).
+        auto null_payload = Das::Utils::MakeYyjsonObject();
+        (*null_payload.as_object())[std::string_view("delay_ms")] = nullptr;
+        doc.nodes[0].settings = null_payload;
+        const auto  out2 = ToAuthoringDocument(doc, MakeDelayCatalog());
+        const auto& fields2 = out2.graph->nodes[0].fields;
+        ASSERT_EQ(fields2.size(), 2u);
+        EXPECT_EQ(fields2[0].name, "delay_ms");
+        ASSERT_TRUE(fields2[0].value.as_int().has_value());
+        EXPECT_EQ(*fields2[0].value.as_int(), 1000);
+    }
+
+    TEST(
+        AuthoringDocContractTest,
+        ConfigProjection_UndeclaredSettingsKeysAppendAfterDeclared)
+    {
+        GraphDocumentDto doc;
+        auto             n1 = MakeNode("n1", "{g1}", 0.0);
+        auto             payload = Das::Utils::MakeYyjsonObject();
+        (*payload.as_object())[std::string_view("delay_ms")] = 250;
+        (*payload.as_object())[std::string_view("custom_note")] =
+            std::string("keep me");
+        n1.settings = payload;
+        doc.nodes.push_back(n1);
+
+        const auto  out = ToAuthoringDocument(doc, MakeDelayCatalog());
+        const auto& fields = out.graph->nodes[0].fields;
+        ASSERT_EQ(fields.size(), 3u);
+        // Declared fields come first in declaration order...
+        EXPECT_EQ(fields[0].name, "delay_ms");
+        ASSERT_TRUE(fields[0].value.as_int().has_value());
+        EXPECT_EQ(*fields[0].value.as_int(), 250);
+        // ...then the undeclared live settings keys (threshold from
+        // MakeNode, custom_note) in the existing projection order. Unknown
+        // legacy keys are never dropped.
+        EXPECT_EQ(fields[1].name, "threshold");
+        EXPECT_EQ(fields[2].name, "custom_note");
+        EXPECT_EQ(fields[2].value_type, 4);
+    }
+
+    // Manifest config type → FieldDescriptor (valueType, inputType) mapping:
+    // taskRepositoryRef is the one typed control (repository entry picker);
+    // unknown types map conservatively to plain object.
+    TEST(AuthoringDocContractTest, ConfigProjection_TypeMappingMatrix)
+    {
+        GraphDocumentDto doc;
+        doc.nodes.push_back(MakeNode("n1", "{g1}", 0.0));
+
+        ActionCatalog      catalog;
+        ActionCatalogEntry entry;
+        entry.action_id = "{g1}";
+        entry.label = "matrix";
+        entry.config_fields.push_back(MakeConfigField("f_int", "int"));
+        entry.config_fields.push_back(MakeConfigField("f_int64", "int64"));
+        entry.config_fields.push_back(MakeConfigField("f_uint", "uint"));
+        entry.config_fields.push_back(MakeConfigField("f_float", "float"));
+        entry.config_fields.push_back(MakeConfigField("f_double", "double"));
+        entry.config_fields.push_back(MakeConfigField("f_string", "string"));
+        entry.config_fields.push_back(MakeConfigField("f_bool", "bool"));
+        entry.config_fields.push_back(MakeConfigField("f_object", "object"));
+        entry.config_fields.push_back(
+            MakeConfigField("f_array", "array<string>"));
+        entry.config_fields.push_back(
+            MakeConfigField("f_ref", "taskRepositoryRef"));
+        entry.config_fields.push_back(MakeConfigField("f_weird", "quux"));
+        catalog.entries.push_back(entry);
+
+        const auto out = ToAuthoringDocument(doc, catalog);
+        const std::vector<std::pair<int32_t, int32_t>> expected{
+            {0, 0},   // int
+            {0, 0},   // int64
+            {0, 0},   // uint
+            {2, 0},   // float
+            {2, 0},   // double
+            {4, 0},   // string
+            {8, 0},   // bool
+            {16, 0},  // object
+            {32, 0},  // array<string>
+            {16, 9},  // taskRepositoryRef (repository entry picker)
+            {16, 0}}; // unknown → conservative object
+        const auto& fields = out.graph->nodes[0].fields;
+        // One declared field per matrix row, then the live "threshold".
+        ASSERT_EQ(fields.size(), expected.size() + 1);
+        for (std::size_t index = 0; index < expected.size(); ++index)
+        {
+            EXPECT_EQ(fields[index].value_type, expected[index].first)
+                << fields[index].name;
+            EXPECT_EQ(fields[index].input_type, expected[index].second)
+                << fields[index].name;
+        }
+        // Fields without a default and without a settings value project a
+        // null value (JsonValue allows null — the picker starts empty).
+        EXPECT_TRUE(fields[9].value.is_null());
+    }
+
+    // The formSequence projection merges config declarations the same way
+    // (items of a linear document reference components too).
+    TEST(AuthoringDocContractTest, ConfigProjection_FormSequenceItemsMerge)
+    {
+        FormSequenceDto seq;
+        seq.items.push_back(
+            {.item_id = "a",
+             .target =
+                 {.target_kind = "componentRef",
+                  .component_ref = MakeCompRef("{g1}")},
+             .settings = Das::Utils::MakeYyjsonObject()});
+        auto doc = FormSequenceProjector::Project(seq);
+        doc.tags.emplace_back(LINEAR_TAG);
+
+        const auto out = ToAuthoringDocument(doc, MakeDelayCatalog());
+        ASSERT_TRUE(out.form_sequence.has_value());
+        ASSERT_EQ(out.form_sequence->items.size(), 1u);
+        const auto& fields = out.form_sequence->items[0].fields;
+        ASSERT_EQ(fields.size(), 1u);
+        EXPECT_EQ(fields[0].name, "delay_ms");
+        ASSERT_TRUE(fields[0].value.as_int().has_value());
+        EXPECT_EQ(*fields[0].value.as_int(), 1000);
+    }
+
+    // -----------------------------------------------------------------------
     // ToAuthoringDocument — formSequence mode (linear tag)
     // -----------------------------------------------------------------------
 

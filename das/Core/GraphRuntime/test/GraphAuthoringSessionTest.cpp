@@ -1333,4 +1333,144 @@ namespace
         ASSERT_TRUE(reseeded_id.has_value());
         EXPECT_EQ(*reseeded_id, *node_id);
     }
+
+    // -----------------------------------------------------------------------
+    // Config channel — SetActionCatalog parses the manifest config
+    // declarations ({name,type,default?} three-key lockstep like the port
+    // channel) and the node fields[] projection merges them so a freshly
+    // added node is immediately editable.
+    // -----------------------------------------------------------------------
+
+    /// Field lookup in the first node of a document blob's graph
+    /// projection; nullopt when the node carries no such field.
+    std::optional<yyjson::value> FirstGraphNodeFieldDescriptorOf(
+        const yyjson::value& document,
+        std::string_view     field_name)
+    {
+        auto obj = document.as_object();
+        if (!obj || !obj->contains(std::string_view("graph")))
+        {
+            return std::nullopt;
+        }
+        auto graph = (*obj)[std::string_view("graph")].as_object();
+        if (!graph || !graph->contains(std::string_view("nodes")))
+        {
+            return std::nullopt;
+        }
+        auto nodes = (*graph)[std::string_view("nodes")].as_array();
+        if (!nodes || nodes->size() == 0)
+        {
+            return std::nullopt;
+        }
+        auto first = (*nodes)[0].as_object();
+        if (!first || !first->contains(std::string_view("fields")))
+        {
+            return std::nullopt;
+        }
+        auto fields = (*first)[std::string_view("fields")].as_array();
+        if (!fields)
+        {
+            return std::nullopt;
+        }
+        for (const auto& field : *fields)
+        {
+            auto field_obj = field.as_object();
+            if (!field_obj || !field_obj->contains(std::string_view("name")))
+            {
+                continue;
+            }
+            auto name = (*field_obj)[std::string_view("name")].as_string();
+            if (name && *name == field_name)
+            {
+                return Das::Utils::CloneYyjsonValue(field);
+            }
+        }
+        return std::nullopt;
+    }
+
+    TEST(GraphAuthoringSessionTest, SetActionCatalogConfigProjectsIntoFields)
+    {
+        const SessionHandle s{""};
+        ASSERT_EQ(
+            SetActionCatalog(
+                s.p,
+                R"([{"actionId":"{g1}","label":"das.flow.delay","config":[)"
+                R"({"name":"delay_ms","type":"int64","default":1000}]}])"),
+            DAS_S_OK);
+
+        ApplyChange(
+            s.p,
+            WrapEnvelope("addGraphNode", R"({"actionId":"{g1}"})"));
+
+        // The fresh node (settings {}) already carries the declared default
+        // as an editable field.
+        const auto document = DocumentOf(s.p);
+        const auto delay_field = FirstGraphNodeFieldDescriptorOf(
+            document,
+            std::string_view("delay_ms"));
+        ASSERT_TRUE(delay_field.has_value());
+        auto field_obj = delay_field->as_object();
+        ASSERT_TRUE(field_obj.has_value());
+        auto value = (*field_obj)[std::string_view("value")].as_int();
+        ASSERT_TRUE(value.has_value());
+        EXPECT_EQ(*value, 1000);
+        auto value_type = (*field_obj)[std::string_view("valueType")].as_int();
+        ASSERT_TRUE(value_type.has_value());
+        EXPECT_EQ(*value_type, 0);
+    }
+
+    // Malformed config channel entries reject the whole catalog (same
+    // lockstep as the port channel); the previously accepted catalog stays
+    // in place so a single bad producer cannot silently blank the session.
+    TEST(GraphAuthoringSessionTest, SetActionCatalogConfigMalformedRejected)
+    {
+        const SessionHandle s{""};
+        ASSERT_EQ(
+            SetActionCatalog(
+                s.p,
+                R"([{"actionId":"{g1}","config":[{"name":"delay_ms",)"
+                R"("type":"int64","default":1000}]}])"),
+            DAS_S_OK);
+
+        // Unknown key on a config element.
+        EXPECT_EQ(
+            SetActionCatalog(
+                s.p,
+                R"([{"actionId":"{g1}","config":[{"name":"d","type":"int",)"
+                R"("default":1,"extra":2}]}])"),
+            DAS_E_INVALID_ARGUMENT);
+        // Missing name / missing type / empty type.
+        EXPECT_EQ(
+            SetActionCatalog(
+                s.p,
+                R"([{"actionId":"{g1}","config":[{"type":"int"}]}])"),
+            DAS_E_INVALID_ARGUMENT);
+        EXPECT_EQ(
+            SetActionCatalog(
+                s.p,
+                R"([{"actionId":"{g1}","config":[{"name":"d"}]}])"),
+            DAS_E_INVALID_ARGUMENT);
+        EXPECT_EQ(
+            SetActionCatalog(
+                s.p,
+                R"([{"actionId":"{g1}","config":[{"name":"d","type":""}]}])"),
+            DAS_E_INVALID_ARGUMENT);
+        // Non-array config value.
+        EXPECT_EQ(
+            SetActionCatalog(
+                s.p,
+                R"([{"actionId":"{g1}","config":{"delay_ms":1}}])"),
+            DAS_E_INVALID_ARGUMENT);
+
+        // The first (well-formed) catalog survived the failed sets: the
+        // session still projects the delay_ms field.
+        ApplyChange(
+            s.p,
+            WrapEnvelope("addGraphNode", R"({"actionId":"{g1}"})"));
+        const auto document = DocumentOf(s.p);
+        EXPECT_TRUE(FirstGraphNodeFieldDescriptorOf(
+                        document,
+                        std::string_view("delay_ms"))
+                        .has_value());
+    }
 } // namespace

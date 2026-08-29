@@ -4434,6 +4434,173 @@ TEST_F(
     }
 }
 
+// 组件 manifest config 声明 → 注册表 catalog 通道 → 节点 fields[] 投影全
+// 链：delay_ms（int64，default 1000）与 repositoryRef（taskRepositoryRef →
+// valueType 16 / inputType 9）在新建节点（settings 空）上即可见可编辑。
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    GraphAuthoringCatalogProjectsConfigDefaultsIntoFields)
+{
+    WriteFactoryPluginManifest(
+        manifest_path_,
+        FactoryPluginGuidString,
+        FactoryTaskGuidString,
+        true,
+        "Cpp",
+        FactoryTaskComponentImplGuidString,
+        /*include_flow_components=*/false);
+    InjectPortDeclarationsIntoFactoryManifest(
+        manifest_path_,
+        FactoryTaskComponentImplGuidString,
+        R"json({
+            "config": {
+                "delay_ms": {"type": "int64", "default": 1000},
+                "repositoryRef": {"type": "taskRepositoryRef"}
+            }
+        })json");
+    DeployRealPluginArtifacts(
+        "libDasGraphTask.dll",
+        "DasGraphTask.json",
+        /*force_ipc=*/true);
+
+    // graph 任务实例：properties 携带一个 componentRef 节点指向探针组件，
+    // settings 为空——config 声明的默认值应直接进入 fields[]。
+    {
+        yyjson::value task0(Das::Utils::MakeYyjsonObject());
+        (*task0.as_object())[std::string_view("id")] = 0;
+        (*task0.as_object())[std::string_view("taskGuid")] =
+            "F4A2C9D1-7B3E-4D8A-A15F-C2E86B4D91A3";
+        (*task0.as_object())[std::string_view("pluginGuid")] =
+            "C8A4B7D0-1E2F-3A5B-6C9D-7E8F0A1B2C3D";
+        (*task0.as_object())[std::string_view("nextExecutionTime")] =
+            static_cast<int64_t>(1);
+        yyjson::value properties(Das::Utils::MakeYyjsonObject());
+        auto          props_obj = properties.as_object();
+        (*props_obj)[std::string_view("documentId")] = "config-probe-graph";
+        (*props_obj)[std::string_view("version")] = 1;
+        yyjson::value nodes(Das::Utils::MakeYyjsonArray());
+        {
+            yyjson::value node(Das::Utils::MakeYyjsonObject());
+            (*node.as_object())[std::string_view("nodeId")] = "probe";
+            yyjson::value target(Das::Utils::MakeYyjsonObject());
+            (*target.as_object())[std::string_view("targetKind")] =
+                "componentRef";
+            yyjson::value component_ref(Das::Utils::MakeYyjsonObject());
+            (*component_ref.as_object())[std::string_view("kind")] =
+                "componentRef";
+            (*component_ref.as_object())[std::string_view("componentGuid")] =
+                std::string(FactoryTaskComponentImplGuidString);
+            (*component_ref.as_object())[std::string_view("pluginGuid")] =
+                std::string(FactoryPluginGuidString);
+            (*target.as_object())[std::string_view("componentRef")] =
+                std::move(component_ref);
+            (*node.as_object())[std::string_view("target")] = std::move(target);
+            (*node.as_object())[std::string_view("settings")] =
+                yyjson::value(Das::Utils::MakeYyjsonObject());
+            (*node.as_object())[std::string_view("dynamicPorts")] =
+                yyjson::value(Das::Utils::MakeYyjsonArray());
+            nodes.as_array()->emplace_back(std::move(node));
+        }
+        (*props_obj)[std::string_view("nodes")] = std::move(nodes);
+        (*props_obj)[std::string_view("edges")] =
+            yyjson::value(Das::Utils::MakeYyjsonArray());
+        (*props_obj)[std::string_view("graphInputs")] =
+            yyjson::value(Das::Utils::MakeYyjsonArray());
+        (*props_obj)[std::string_view("graphOutputs")] =
+            yyjson::value(Das::Utils::MakeYyjsonArray());
+        (*props_obj)[std::string_view("tags")] =
+            yyjson::value(Das::Utils::MakeYyjsonArray());
+        (*task0.as_object())[std::string_view("properties")] =
+            std::move(properties);
+        WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
+    }
+
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    const yyjson::value request(Das::Utils::MakeYyjsonObject());
+    auto result = scheduler_->GetTaskAuthoringDocument(0, request);
+    auto obj = result.as_object();
+    ASSERT_TRUE(obj.has_value());
+    ASSERT_TRUE(obj->contains(std::string_view("document")));
+    auto document = (*obj)[std::string_view("document")].as_object();
+    ASSERT_TRUE(document.has_value());
+    ASSERT_TRUE(document->contains(std::string_view("graph")));
+    auto graph = (*document)[std::string_view("graph")].as_object();
+    ASSERT_TRUE(graph.has_value());
+    ASSERT_TRUE(graph->contains(std::string_view("nodes")));
+    auto nodes = (*graph)[std::string_view("nodes")].as_array();
+    ASSERT_TRUE(nodes.has_value());
+    ASSERT_EQ(nodes->size(), 1u);
+    auto node_obj = (*nodes)[0].as_object();
+    ASSERT_TRUE(node_obj.has_value());
+    ASSERT_TRUE(node_obj->contains(std::string_view("fields")));
+    auto fields = (*node_obj)[std::string_view("fields")].as_array();
+    ASSERT_TRUE(fields.has_value());
+
+    // 字段查找替身：按 name 定位并返回字段对象的克隆。
+    const auto field_of =
+        [&fields](std::string_view field_name) -> std::optional<yyjson::value>
+    {
+        for (const auto& field : *fields)
+        {
+            auto field_object = field.as_object();
+            if (!field_object)
+            {
+                continue;
+            }
+            auto name = (*field_object)[std::string_view("name")].as_string();
+            if (name && *name == field_name)
+            {
+                return Das::Utils::CloneYyjsonValue(field);
+            }
+        }
+        return std::nullopt;
+    };
+    const auto integer_field =
+        [](const yyjson::value& field_value, std::string_view key)
+    {
+        auto field_object = field_value.as_object();
+        if (!field_object)
+        {
+            return std::optional<int64_t>{};
+        }
+        return (*field_object)[key].as_int();
+    };
+
+    // 声明序（字典序）先出：delay_ms 的默认值可见可编辑。
+    const auto delay_field = field_of("delay_ms");
+    ASSERT_TRUE(delay_field.has_value());
+    ASSERT_EQ(fields->size() >= 2u, true);
+    EXPECT_EQ(
+        (*fields)[0]
+            .as_object()
+            .value()[std::string_view("name")]
+            .as_string()
+            .value(),
+        std::string_view("delay_ms"));
+    auto delay_value = integer_field(*delay_field, "value");
+    ASSERT_TRUE(delay_value.has_value());
+    EXPECT_EQ(*delay_value, 1000);
+    auto delay_value_type = integer_field(*delay_field, "valueType");
+    ASSERT_TRUE(delay_value_type.has_value());
+    EXPECT_EQ(*delay_value_type, 0);
+    auto delay_input_type = integer_field(*delay_field, "inputType");
+    ASSERT_TRUE(delay_input_type.has_value());
+    EXPECT_EQ(*delay_input_type, 0);
+
+    // taskRepositoryRef → valueType 16 / inputType 9（仓库条目选择器），
+    // 无默认无设置 → value null（选择器从空开始）。
+    const auto ref_field = field_of("repositoryRef");
+    ASSERT_TRUE(ref_field.has_value());
+    auto ref_value_type = integer_field(*ref_field, "valueType");
+    ASSERT_TRUE(ref_value_type.has_value());
+    EXPECT_EQ(*ref_value_type, 16);
+    auto ref_input_type = integer_field(*ref_field, "inputType");
+    ASSERT_TRUE(ref_input_type.has_value());
+    EXPECT_EQ(*ref_input_type, 9);
+    ASSERT_TRUE((*ref_field->as_object())[std::string_view("value")].is_null());
+}
+
 TEST_F(
     SchedulerRuntimeBackedTest,
     SchedulerRepositoryInvokeCompileBuildsSnapshot)

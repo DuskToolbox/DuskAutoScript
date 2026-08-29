@@ -2185,6 +2185,86 @@ TEST(TaskAuthoringContractTest, SchemaJsonRenameGraphNodeLocked)
     EXPECT_TRUE(found_rename_branch);
 }
 
+// inputType 9（仓库条目选择器，valueType=16 对象——config 声明类型
+// taskRepositoryRef 的投影控件类型）进值域；10 仍然拒绝。
+TEST(TaskAuthoringContractTest, RepositoryRefInputTypeNineAccepted)
+{
+    auto valid = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "graph",
+        "revision": 0,
+        "graph": {"nodes": [{"id": "n", "fields": [
+            {
+                "name": "repositoryRef",
+                "label": "repositoryRef",
+                "valueType": 16,
+                "inputType": 9,
+                "value": null
+            }
+        ]}]}
+    })json");
+    auto r1 = Das::Core::TaskScheduler::ValidateAuthoringDocument(valid);
+    EXPECT_TRUE(r1.valid) << r1.message;
+
+    auto unsupported = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "graph",
+        "revision": 0,
+        "graph": {"nodes": [{"id": "n", "fields": [
+            {
+                "name": "repositoryRef",
+                "label": "repositoryRef",
+                "valueType": 16,
+                "inputType": 10,
+                "value": null
+            }
+        ]}]}
+    })json");
+    auto r2 = Das::Core::TaskScheduler::ValidateAuthoringDocument(unsupported);
+    EXPECT_FALSE(r2.valid);
+    EXPECT_EQ(r2.error_kind, "invalidInputType");
+}
+
+// schema FieldDescriptor.inputType enum 含 9（与 C++ INPUT_TYPES 对账）。
+TEST(TaskAuthoringContractTest, SchemaJsonInputTypeNineLocked)
+{
+    const auto schema_path = ResolveSchemaJsonPath();
+    ASSERT_TRUE(schema_path.has_value())
+        << "TaskAuthoringHttpContract.schema.json not found above "
+        << std::filesystem::current_path();
+    const auto schema_text = ReadFileText(*schema_path);
+    ASSERT_TRUE(schema_text.has_value());
+
+    auto schema = ParseJson(*schema_text);
+    auto schema_object = schema.as_object();
+    ASSERT_TRUE(schema_object.has_value());
+    auto defs_value = (*schema_object)[std::string_view("$defs")];
+    auto defs_object = defs_value.as_object();
+    ASSERT_TRUE(defs_object.has_value());
+
+    auto field_def =
+        (*defs_object)[std::string_view("FieldDescriptor")].as_object();
+    ASSERT_TRUE(field_def.has_value());
+    auto properties = (*field_def)[std::string_view("properties")].as_object();
+    ASSERT_TRUE(properties.has_value());
+    ASSERT_TRUE(properties->contains(std::string_view("inputType")));
+    auto input_type_definition =
+        (*properties)[std::string_view("inputType")].as_object();
+    ASSERT_TRUE(input_type_definition.has_value());
+    auto input_type_enum =
+        (*input_type_definition)[std::string_view("enum")].as_array();
+    ASSERT_TRUE(input_type_enum.has_value());
+    std::set<int64_t> input_type_values;
+    for (const auto& item : *input_type_enum)
+    {
+        auto value = item.as_sint();
+        ASSERT_TRUE(value.has_value());
+        input_type_values.insert(*value);
+    }
+    EXPECT_TRUE(input_type_values.contains(9));
+    EXPECT_FALSE(input_type_values.contains(10));
+}
+
 TEST(TaskAuthoringContractTest, ChangeRejectsOpWrapper)
 {
     auto change = ParseJson(R"json({
