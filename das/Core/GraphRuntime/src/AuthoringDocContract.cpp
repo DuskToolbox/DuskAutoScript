@@ -141,11 +141,144 @@ namespace Contract
         }
 
         // -------------------------------------------------------------------
+        // Config-declared field projection: manifest config entries merge
+        // into fields[] so a freshly added node is immediately editable.
+        // Value priority: settings override > declared default > null.
+        // -------------------------------------------------------------------
+
+        /// Map a manifest config type onto the FieldDescriptor typing pair
+        /// (value_type, input_type). taskRepositoryRef is the one typed
+        /// input control (a repository entry picker); unknown types map
+        /// conservatively to a plain object (no executable semantics).
+        std::pair<int32_t, int32_t> ConfigFieldInputTypes(std::string_view type)
+        {
+            if (type == std::string_view("taskRepositoryRef"))
+            {
+                return {16, 9};
+            }
+            if (type == std::string_view("int")
+                || type == std::string_view("int64")
+                || type == std::string_view("uint"))
+            {
+                return {0, 0};
+            }
+            if (type == std::string_view("float")
+                || type == std::string_view("double"))
+            {
+                return {2, 0};
+            }
+            if (type == std::string_view("string"))
+            {
+                return {4, 0};
+            }
+            if (type == std::string_view("bool"))
+            {
+                return {8, 0};
+            }
+            if (type == std::string_view("object"))
+            {
+                return {16, 0};
+            }
+            if (type.starts_with(std::string_view("array")))
+            {
+                return {32, 0};
+            }
+            return {16, 0};
+        }
+
+        /// Merge the config-declared fields (declaration order, label =
+        /// name, value = settings override ?? declared default ?? null)
+        /// ahead of the undeclared live settings keys (existing
+        /// ProjectFields order). A null config pointer keeps the plain
+        /// live-value projection.
+        std::vector<FieldDescriptor> ProjectFieldsWithConfig(
+            const yyjson::value&                      settings,
+            const std::vector<ConfigFieldDescriptor>* config_fields)
+        {
+            if (config_fields == nullptr || config_fields->empty())
+            {
+                return ProjectFields(settings);
+            }
+            std::vector<FieldDescriptor> out;
+            out.reserve(config_fields->size());
+            auto                            settings_obj = settings.as_object();
+            std::unordered_set<std::string> covered;
+            for (const auto& config_field : *config_fields)
+            {
+                FieldDescriptor field;
+                field.name = config_field.name;
+                field.label = config_field.name;
+                const auto [value_type, input_type] =
+                    ConfigFieldInputTypes(config_field.type);
+                field.value_type = value_type;
+                field.input_type = input_type;
+                bool value_assigned = false;
+                if (settings_obj.has_value()
+                    && settings_obj->contains(
+                        std::string_view(config_field.name)))
+                {
+                    const auto& settings_value =
+                        (*settings_obj)[std::string_view(config_field.name)];
+                    // A null settings value reads as "no override" (the same
+                    // semantics the live-value projection gives nulls).
+                    if (!settings_value.is_null())
+                    {
+                        field.value =
+                            Das::Utils::CloneYyjsonValue(settings_value);
+                        value_assigned = true;
+                    }
+                }
+                if (!value_assigned && !config_field.default_value.is_null())
+                {
+                    field.value = Das::Utils::CloneYyjsonValue(
+                        config_field.default_value);
+                }
+                covered.insert(config_field.name);
+                out.push_back(std::move(field));
+            }
+            // Undeclared settings keys keep the existing live-value
+            // projection, appended after the declared fields.
+            for (auto& field : ProjectFields(settings))
+            {
+                if (covered.count(field.name) != 0)
+                {
+                    continue;
+                }
+                out.push_back(std::move(field));
+            }
+            return out;
+        }
+
+        // -------------------------------------------------------------------
         // Reverse projection: linear signal chain -> FormSequenceItem[]
         // -------------------------------------------------------------------
 
+        /// First catalog entry matching componentGuid == actionId, or null.
+        /// The single merge point for everything a catalog entry contributes
+        /// to a node/item projection: static ports, the default display name
+        /// (entry.label carries the manifest kind), the presentation
+        /// metadata (description/icon) and the config field declarations.
+        const ActionCatalogEntry* FindCatalogEntry(
+            const std::optional<ActionCatalog>& action_catalog,
+            std::string_view                    component_guid)
+        {
+            if (!action_catalog.has_value())
+            {
+                return nullptr;
+            }
+            for (const auto& entry : action_catalog->entries)
+            {
+                if (entry.action_id == component_guid)
+                {
+                    return &entry;
+                }
+            }
+            return nullptr;
+        }
+
         std::vector<FormSequenceItem> ReverseProjectSequence(
-            const Dto::GraphDocumentDto& doc)
+            const Dto::GraphDocumentDto&        doc,
+            const std::optional<ActionCatalog>& action_catalog)
         {
             std::unordered_map<std::string, std::string> signal_next;
             std::unordered_set<std::string>              signal_targets;
@@ -187,7 +320,12 @@ namespace Contract
                 item.component_guid = ComponentGuidOf(node);
                 item.target_kind = TargetKindOf(node);
                 item.entry_ref = EntryRefOf(node);
-                item.fields = ProjectFields(node.settings);
+                const ActionCatalogEntry* matched_entry =
+                    FindCatalogEntry(action_catalog, item.component_guid);
+                item.fields = ProjectFieldsWithConfig(
+                    node.settings,
+                    matched_entry != nullptr ? &matched_entry->config_fields
+                                             : nullptr);
                 items.push_back(std::move(item));
                 visited.insert(node.node_id);
             };
@@ -291,29 +429,6 @@ namespace Contract
             return roles;
         }
 
-        /// First catalog entry matching componentGuid == actionId, or null.
-        /// The single merge point for everything a catalog entry contributes
-        /// to a node projection: static ports, the default display name
-        /// (entry.label carries the manifest kind) and the presentation
-        /// metadata (description/icon).
-        const ActionCatalogEntry* FindCatalogEntry(
-            const std::optional<ActionCatalog>& action_catalog,
-            std::string_view                    component_guid)
-        {
-            if (!action_catalog.has_value())
-            {
-                return nullptr;
-            }
-            for (const auto& entry : action_catalog->entries)
-            {
-                if (entry.action_id == component_guid)
-                {
-                    return &entry;
-                }
-            }
-            return nullptr;
-        }
-
         GraphView MapGraphView(
             const Dto::GraphDocumentDto&        doc,
             const std::optional<ActionCatalog>& action_catalog)
@@ -330,16 +445,20 @@ namespace Contract
                 out.component_guid = ComponentGuidOf(node);
                 out.target_kind = TargetKindOf(node);
                 out.entry_ref = EntryRefOf(node);
-                out.fields = ProjectFields(node.settings);
 
                 // Catalog merge by componentGuid == actionId. The display
                 // name follows the priority chain: the store user label (a
                 // renameGraphNode write) wins; an unnamed node follows the
                 // catalog default name so manifest kind renames propagate
                 // automatically. description/icon merge from the matching
-                // entry only.
+                // entry only, and the config declarations merge into the
+                // fields projection (declared fields first).
                 const ActionCatalogEntry* matched_entry =
                     FindCatalogEntry(action_catalog, out.component_guid);
+                out.fields = ProjectFieldsWithConfig(
+                    node.settings,
+                    matched_entry != nullptr ? &matched_entry->config_fields
+                                             : nullptr);
                 if (node.label.has_value() && !node.label->empty())
                 {
                     out.label = *node.label;
@@ -497,7 +616,7 @@ namespace Contract
         {
             out.view_kind = ViewKind::FormSequence;
             FormSequenceView view;
-            view.items = ReverseProjectSequence(document);
+            view.items = ReverseProjectSequence(document, action_catalog);
             out.form_sequence = std::move(view);
         }
         else
@@ -816,27 +935,20 @@ namespace Contract
                                 std::string_view(*group.icon),
                                 yyjson::copy_string);
                         }
-                        // Build actionIds[] as a JSON-encoded string value:
-                        // per the yyjson skill, mutable arrays do not accept
-                        // pair_like, so we construct the entire array value via
-                        // yyjson::read on a JSON literal and assign directly.
-                        // This is a rare path (groups are Provider-authored,
-                        // not hot).
-                        std::string aids_json = "[";
-                        for (std::size_t k = 0; k < group.action_ids.size();
-                             ++k)
+                        // Build actionIds[] element by element: every string
+                        // is written through the (string, copy_string)
+                        // primitive path so quotes, backslashes and control
+                        // characters in an action id cannot corrupt the
+                        // array (hand-building a JSON literal would).
+                        auto aids = Das::Utils::MakeYyjsonArray();
+                        auto aids_arr = aids.as_array();
+                        for (const auto& action_id : group.action_ids)
                         {
-                            if (k != 0)
-                            {
-                                aids_json += ',';
-                            }
-                            aids_json += '"';
-                            aids_json += group.action_ids[k];
-                            aids_json += '"';
+                            aids_arr->emplace_back(
+                                std::string_view(action_id),
+                                yyjson::copy_string);
                         }
-                        aids_json += "]";
-                        auto aids_value = yyjson::read(aids_json);
-                        go[std::string_view("actionIds")] = aids_value;
+                        go[std::string_view("actionIds")] = std::move(aids);
                         groups_arr.emplace_back(std::move(group_v));
                     }
                 }
@@ -882,7 +994,8 @@ namespace Contract
                 if (items_o)
                 {
                     auto& items_arr = *items_o;
-                    for (const auto& item : ReverseProjectSequence(document))
+                    for (const auto& item :
+                         ReverseProjectSequence(document, action_catalog))
                     {
                         items_arr.emplace_back(BuildItemValue(item));
                     }

@@ -313,8 +313,12 @@ namespace
                 {
                     try
                     {
+                        // yyjson::cast routes through the hand-written
+                        // GraphNodeDto caster (missing-key tolerant);
+                        // Detail::CastDtoObject would bypass it and hit the
+                        // strict aggregate, dropping pre-label nodes.
                         out.nodes.push_back(
-                            Das::Core::GraphRuntime::Dto::Detail::CastDtoObject<
+                            yyjson::cast<
                                 Das::Core::GraphRuntime::Dto::GraphNodeDto>(
                                 nv));
                     }
@@ -335,7 +339,7 @@ namespace
                     try
                     {
                         out.edges.push_back(
-                            Das::Core::GraphRuntime::Dto::Detail::CastDtoObject<
+                            yyjson::cast<
                                 Das::Core::GraphRuntime::Dto::GraphEdgeDto>(
                                 ev));
                     }
@@ -372,8 +376,11 @@ namespace
 
     // Reverse-map a contract authoring doc (the shape SerializeDocument emits,
     // and the shape the scheduler persists in `properties`) back onto the
-    // authoritative GraphDocumentDto store. Also accepts a raw formSequence
-    // ({items}) or raw graph ({nodes,edges}) doc for direct callers/tests.
+    // authoritative GraphDocumentDto store. The formSequence branch accepts
+    // both the current contract shape (formSequence.items[]) and the legacy
+    // pre-cutover shape (formSequence.sequence[]); also accepts a raw
+    // formSequence ({items}) or raw graph ({nodes,edges}) doc for direct
+    // callers/tests.
     void SeedFromDocValue(
         GraphAuthoringSessionState& s,
         const yyjson::value&        doc)
@@ -395,8 +402,10 @@ namespace
 
         if (kind == "formSequence" || has_form_seq)
         {
-            // Contract formSequence doc:
-            // formSequence.sequence:[{id,type,settings}].
+            // Contract formSequence doc. Two shapes are accepted: the
+            // current wire's formSequence.items[] and the legacy
+            // pre-cutover formSequence.sequence[] — items first, sequence
+            // as the fallback, empty document when neither key exists.
             FormSeqDto seq;
             ReadStringField(
                 *obj,
@@ -407,53 +416,61 @@ namespace
             {
                 seq_src = (*obj)[std::string_view("formSequence")];
             }
-            if (auto seq_obj = seq_src.as_object();
-                seq_obj && seq_obj->contains(std::string_view("sequence")))
+            if (auto seq_obj = seq_src.as_object())
             {
-                if (auto arr =
-                        (*seq_obj)[std::string_view("sequence")].as_array())
+                const std::string_view item_list_key =
+                    seq_obj->contains(std::string_view("items"))
+                        ? std::string_view("items")
+                        : std::string_view("sequence");
+                if (seq_obj->contains(item_list_key))
                 {
-                    for (const auto& iv : *arr)
+                    if (auto arr =
+                            (*seq_obj)[item_list_key].as_array())
                     {
-                        auto io = iv.as_object();
-                        if (!io)
+                        for (const auto& iv : *arr)
                         {
-                            continue;
+                            auto io = iv.as_object();
+                            if (!io)
+                            {
+                                continue;
+                            }
+                            Das::Core::GraphRuntime::Dto::FormSequenceItemDto
+                                item;
+                            if (auto v =
+                                    (*io)[std::string_view("id")].as_string())
+                            {
+                                item.item_id = std::string(*v);
+                            }
+                            std::string guid;
+                            // DAS-81: componentGuid (renamed from type).
+                            // Accept both for backward compat with persisted
+                            // contract docs.
+                            if (!ReadStringField(
+                                    *io,
+                                    std::string_view("componentGuid"),
+                                    guid))
+                            {
+                                ReadStringField(
+                                    *io,
+                                    std::string_view("type"),
+                                    guid);
+                            }
+                            if (!guid.empty())
+                            {
+                                item.target.target_kind = "componentRef";
+                                item.target.component_ref = Das::Core::
+                                    GraphRuntime::Dto::ComponentRefDto{
+                                        "componentRef",
+                                        guid,
+                                        {}};
+                            }
+                            if (io->contains(std::string_view("settings")))
+                            {
+                                item.settings = Das::Utils::CloneYyjsonValue(
+                                    (*io)[std::string_view("settings")]);
+                            }
+                            seq.items.push_back(std::move(item));
                         }
-                        Das::Core::GraphRuntime::Dto::FormSequenceItemDto item;
-                        if (auto v = (*io)[std::string_view("id")].as_string())
-                        {
-                            item.item_id = std::string(*v);
-                        }
-                        std::string guid;
-                        // DAS-81: componentGuid (renamed from type). Accept
-                        // both for backward compat with persisted contract
-                        // docs.
-                        if (!ReadStringField(
-                                *io,
-                                std::string_view("componentGuid"),
-                                guid))
-                        {
-                            ReadStringField(
-                                *io,
-                                std::string_view("type"),
-                                guid);
-                        }
-                        if (!guid.empty())
-                        {
-                            item.target.target_kind = "componentRef";
-                            item.target.component_ref =
-                                Das::Core::GraphRuntime::Dto::ComponentRefDto{
-                                    "componentRef",
-                                    guid,
-                                    {}};
-                        }
-                        if (io->contains(std::string_view("settings")))
-                        {
-                            item.settings = Das::Utils::CloneYyjsonValue(
-                                (*io)[std::string_view("settings")]);
-                        }
-                        seq.items.push_back(std::move(item));
                     }
                 }
             }
@@ -1518,6 +1535,67 @@ DAS_C_API DasResult GraphAuthoringSessionSetActionCatalog(
                         port.display_label = *display_label;
                     }
                     entry.ports.push_back(std::move(port));
+                }
+            }
+            // Optional config channel: {name,type,default?} elements with
+            // the element key set locked to exactly those three keys — the
+            // same whole-catalog rejection on malformed input as the port
+            // channel.
+            if (entry_obj->contains(std::string_view("config")))
+            {
+                auto config_val =
+                    (*entry_obj)[std::string_view("config")].as_array();
+                if (!config_val)
+                {
+                    return DAS_E_INVALID_ARGUMENT;
+                }
+                entry.config_fields.reserve(config_val->size());
+                for (const auto& config_item : *config_val)
+                {
+                    auto config_obj = config_item.as_object();
+                    if (!config_obj
+                        || !config_obj->contains(std::string_view("name"))
+                        || !config_obj->contains(std::string_view("type")))
+                    {
+                        return DAS_E_INVALID_ARGUMENT;
+                    }
+                    for (const auto& [key, value] : *config_obj)
+                    {
+                        (void)value;
+                        if (key != std::string_view("name")
+                            && key != std::string_view("type")
+                            && key != std::string_view("default"))
+                        {
+                            return DAS_E_INVALID_ARGUMENT;
+                        }
+                    }
+                    auto name =
+                        (*config_obj)[std::string_view("name")].as_string();
+                    if (!name || name->empty())
+                    {
+                        return DAS_E_INVALID_ARGUMENT;
+                    }
+                    auto type =
+                        (*config_obj)[std::string_view("type")].as_string();
+                    if (!type || type->empty())
+                    {
+                        return DAS_E_INVALID_ARGUMENT;
+                    }
+                    Das::Core::GraphRuntime::Contract::ConfigFieldDescriptor
+                        field;
+                    field.name = *name;
+                    field.type = *type;
+                    if (config_obj->contains(std::string_view("default")))
+                    {
+                        const auto& default_value =
+                            (*config_obj)[std::string_view("default")];
+                        if (!default_value.is_null())
+                        {
+                            field.default_value =
+                                Das::Utils::CloneYyjsonValue(default_value);
+                        }
+                    }
+                    entry.config_fields.push_back(std::move(field));
                 }
             }
             entries.push_back(std::move(entry));

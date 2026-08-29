@@ -660,7 +660,8 @@ namespace
         const auto out = ToAuthoringDocument(doc, MakeDelayCatalog());
         ASSERT_EQ(out.graph->nodes.size(), 1u);
         const auto& fields = out.graph->nodes[0].fields;
-        ASSERT_EQ(fields.size(), 2u);
+        // delay_ms only — the payload replaced the MakeNode threshold key.
+        ASSERT_EQ(fields.size(), 1u);
         EXPECT_EQ(fields[0].name, "delay_ms");
         ASSERT_TRUE(fields[0].value.as_int().has_value());
         EXPECT_EQ(*fields[0].value.as_int(), 500);
@@ -672,7 +673,7 @@ namespace
         doc.nodes[0].settings = null_payload;
         const auto  out2 = ToAuthoringDocument(doc, MakeDelayCatalog());
         const auto& fields2 = out2.graph->nodes[0].fields;
-        ASSERT_EQ(fields2.size(), 2u);
+        ASSERT_EQ(fields2.size(), 1u);
         EXPECT_EQ(fields2[0].name, "delay_ms");
         ASSERT_TRUE(fields2[0].value.as_int().has_value());
         EXPECT_EQ(*fields2[0].value.as_int(), 1000);
@@ -693,17 +694,15 @@ namespace
 
         const auto  out = ToAuthoringDocument(doc, MakeDelayCatalog());
         const auto& fields = out.graph->nodes[0].fields;
-        ASSERT_EQ(fields.size(), 3u);
+        ASSERT_EQ(fields.size(), 2u);
         // Declared fields come first in declaration order...
         EXPECT_EQ(fields[0].name, "delay_ms");
         ASSERT_TRUE(fields[0].value.as_int().has_value());
         EXPECT_EQ(*fields[0].value.as_int(), 250);
-        // ...then the undeclared live settings keys (threshold from
-        // MakeNode, custom_note) in the existing projection order. Unknown
-        // legacy keys are never dropped.
-        EXPECT_EQ(fields[1].name, "threshold");
-        EXPECT_EQ(fields[2].name, "custom_note");
-        EXPECT_EQ(fields[2].value_type, 4);
+        // ...then the undeclared live settings keys in the existing
+        // projection order. Unknown legacy keys are never dropped.
+        EXPECT_EQ(fields[1].name, "custom_note");
+        EXPECT_EQ(fields[1].value_type, 4);
     }
 
     // Manifest config type → FieldDescriptor (valueType, inputType) mapping:
@@ -1399,13 +1398,9 @@ namespace
         set.kind = "setValue";
         set.target = SetValueTarget{"graphNode", "n1"};
         set.field_name = "threshold";
-        auto v = Das::Utils::MakeYyjsonObject();
-        (*v.as_object())[std::string_view("threshold")] = 0.9;
-        set.value = v;
-        // Strip the inner field — the setValue payload is the raw value.
-        auto value_payload = Das::Utils::MakeYyjsonObject();
-        (*value_payload.as_object())[std::string_view("v")] = 0.9;
-        set.value = 0.9; // assignment of literal uses yyjson::value::operator=
+        // The setValue payload is the raw value (yyjson::value::operator=
+        // accepts the literal directly).
+        set.value = 0.9;
         ASSERT_TRUE(ApplyAuthoringChange(doc, set).Ok());
 
         // The internal store now carries the new value under node.settings.

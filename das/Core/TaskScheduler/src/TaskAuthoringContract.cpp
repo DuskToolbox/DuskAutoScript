@@ -40,7 +40,7 @@ namespace Das::Core::TaskScheduler
 
         constexpr std::array<int, 7> VALUE_TYPES{0, 1, 2, 4, 8, 16, 32};
 
-        constexpr std::array<int, 9> INPUT_TYPES{0, 1, 2, 3, 4, 5, 6, 7, 8};
+        constexpr std::array<int, 10> INPUT_TYPES{0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
 
         bool IsOneOf(
             std::string_view value,
@@ -2889,8 +2889,13 @@ namespace Das::Core::TaskScheduler
     {
         auto error = Das::Utils::MakeYyjsonObject();
         auto obj = *error.as_object();
-        obj[std::string_view("errorKind")] = error_kind;
-        obj[std::string_view("message")] = message;
+        // The string_view parameters must be deep-copied into the document
+        // arena (das-yyjson-string-safety): a bare assignment only stores
+        // the view's data pointer, dangling once the caller's strings die.
+        obj[std::string_view("errorKind")] =
+            std::make_pair(error_kind, yyjson::copy_string);
+        obj[std::string_view("message")] =
+            std::make_pair(message, yyjson::copy_string);
         return error;
     }
 

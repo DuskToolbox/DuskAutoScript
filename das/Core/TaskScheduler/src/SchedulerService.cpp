@@ -515,6 +515,65 @@ namespace Das::Core::TaskScheduler
         }
     }
 
+    // Config field declarations of one component, read from the manifest
+    // definition's `config` object ({field_name: {type, default?}}).
+    // Emitted in lexical key order for determinism; entries without a
+    // usable non-empty type string are skipped (the same skip-not-poison
+    // rule as the port lists — the Core consumer rejects the whole catalog
+    // on a malformed channel entry). Rides the catalog context channel
+    // alongside ports so the Core node fields projection can merge it onto
+    // nodes by componentGuid.
+    static void AppendConfigFromDefinition(
+        const yyjson::value&       definition,
+        yyjson::writer::array_ref& destination)
+    {
+        auto def_obj = definition.as_object();
+        if (!def_obj || !def_obj->contains(std::string_view("config")))
+        {
+            return;
+        }
+        auto config = (*def_obj)[std::string_view("config")].as_object();
+        if (!config)
+        {
+            return;
+        }
+        std::vector<std::string_view> field_names;
+        field_names.reserve(config->size());
+        for (const auto& [key, value] : *config)
+        {
+            (void)value;
+            field_names.push_back(key);
+        }
+        std::sort(field_names.begin(), field_names.end());
+        for (const auto& field_name : field_names)
+        {
+            auto field_obj = (*config)[field_name].as_object();
+            if (!field_obj)
+            {
+                continue;
+            }
+            auto type = (*field_obj)[std::string_view("type")].as_string();
+            if (!type || type->empty())
+            {
+                continue;
+            }
+            auto config_field = Das::Utils::MakeYyjsonObject();
+            auto obj = config_field.as_object();
+            (*obj)[std::string_view("name")] =
+                std::make_pair(field_name, yyjson::copy_string);
+            (*obj)[std::string_view("type")] =
+                std::make_pair(std::string_view(*type), yyjson::copy_string);
+            if (field_obj->contains(std::string_view("default"))
+                && !(*field_obj)[std::string_view("default")].is_null())
+            {
+                (*obj)[std::string_view("default")] =
+                    Das::Utils::CloneYyjsonValue(
+                        (*field_obj)[std::string_view("default")]);
+            }
+            destination.emplace_back(std::move(config_field));
+        }
+    }
+
     static yyjson::value BuildActionCatalogFromRegistry(
         Das::Core::ForeignInterfaceHost::PluginManager& plugin_manager)
     {
@@ -592,6 +651,16 @@ namespace Das::Core::TaskScheduler
             if (ports_arr->size() > 0)
             {
                 (*obj)[std::string_view("ports")] = std::move(ports);
+            }
+            // Config field declarations: {name,type,default?} in lexical key
+            // order — the Core consumer locks the element shape to exactly
+            // these three keys.
+            auto config = Das::Utils::MakeYyjsonArray();
+            auto config_arr = config.as_array();
+            AppendConfigFromDefinition(definition.definition, *config_arr);
+            if (config_arr->size() > 0)
+            {
+                (*obj)[std::string_view("config")] = std::move(config);
             }
             array_ref->emplace_back(std::move(entry));
         }
