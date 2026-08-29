@@ -451,7 +451,8 @@ namespace
 
     // A malformed static-port entry (bad direction / unknown key / non-object)
     // rejects the whole catalog — the same all-or-nothing contract as the
-    // {actionId,label} shape.
+    // {actionId,label} shape. An empty portType rejects too: the consumer
+    // stays the all-or-nothing backstop behind the producer's skip rule.
     TEST(GraphAuthoringSessionTest, ActionCatalogRejectsMalformedPortEntries)
     {
         const SessionHandle s{""};
@@ -459,6 +460,11 @@ namespace
             SetActionCatalog(
                 s.p,
                 R"json([{"actionId":"{g1}","ports":[{"portId":"x","portType":"bool","direction":"sideways"}]}])json"),
+            DAS_E_INVALID_ARGUMENT);
+        EXPECT_EQ(
+            SetActionCatalog(
+                s.p,
+                R"json([{"actionId":"{g1}","ports":[{"portId":"x","portType":"","direction":"input"}]}])json"),
             DAS_E_INVALID_ARGUMENT);
         EXPECT_EQ(
             SetActionCatalog(
@@ -475,6 +481,88 @@ namespace
                 s.p,
                 R"json([{"actionId":"{g1}","ports":{"portId":"x"}}])json"),
             DAS_E_INVALID_ARGUMENT);
+    }
+
+    // Five-key port projection end to end through the C ABI session: the
+    // registry snapshot carries the channel form (with displayLabel, as the
+    // scheduler produces since the label backfill), and GetDocument projects
+    // each node port with exactly the five locked keys — signal ports
+    // category "execution" with a non-empty displayLabel, everything else
+    // "data". This locks the wire shape the UI fixture consumes.
+    TEST(GraphAuthoringSessionTest, NodePortsProjectFiveKeysEndToEnd)
+    {
+        const SessionHandle s{""}; // graph mode
+        ASSERT_EQ(
+            SetActionCatalog(
+                s.p,
+                R"json([{"actionId":"{g1}","label":"das.maapi.run","ports":[
+                    {"portId":"executionInput","portType":"object","direction":"input","displayLabel":"Execution Input"},
+                    {"portId":"completedTasks","portType":"array<string>","direction":"output","displayLabel":"Completed Tasks"},
+                    {"portId":"succeeded","portType":"signal","direction":"output","displayLabel":"Succeeded"},
+                    {"portId":"failed","portType":"signal","direction":"output","displayLabel":"Failed"}
+                ]}])json"),
+            DAS_S_OK);
+        ApplyChange(
+            s.p,
+            WrapEnvelope("addGraphNode", R"({"actionId":"{g1}"})"));
+
+        const auto ports = FirstNodePortsOf(DocumentOf(s.p));
+        ASSERT_TRUE(ports.has_value());
+        auto arr = ports->as_array();
+        ASSERT_TRUE(arr.has_value());
+        ASSERT_EQ(arr->size(), 4u);
+
+        const auto category_of = [](const yyjson::value& port) -> std::string
+        {
+            auto port_obj = port.as_object();
+            if (!port_obj || !port_obj->contains(std::string_view("category")))
+            {
+                return {};
+            }
+            return std::string(
+                (*port_obj)[std::string_view("category")].as_string().value_or(
+                    ""));
+        };
+        const auto label_of = [](const yyjson::value& port) -> std::string
+        {
+            auto port_obj = port.as_object();
+            if (!port_obj
+                || !port_obj->contains(std::string_view("displayLabel")))
+            {
+                return {};
+            }
+            return std::string((*port_obj)[std::string_view("displayLabel")]
+                                   .as_string()
+                                   .value_or(""));
+        };
+
+        for (const auto& port : *arr)
+        {
+            auto port_obj = port.as_object();
+            ASSERT_TRUE(port_obj.has_value());
+            // Exactly the five locked keys, category included.
+            EXPECT_EQ(port_obj->size(), 5u);
+            EXPECT_TRUE(port_obj->contains(std::string_view("portId")));
+            EXPECT_TRUE(port_obj->contains(std::string_view("displayLabel")));
+            EXPECT_TRUE(port_obj->contains(std::string_view("portType")));
+            EXPECT_TRUE(port_obj->contains(std::string_view("direction")));
+            EXPECT_TRUE(port_obj->contains(std::string_view("category")));
+            EXPECT_FALSE(label_of(port).empty());
+        }
+
+        // Data ports carry the object/array<string> types with category
+        // "data"; signal ports project "execution".
+        EXPECT_EQ(category_of((*arr)[0]), "data");
+        EXPECT_EQ(category_of((*arr)[1]), "data");
+        EXPECT_EQ(category_of((*arr)[2]), "execution");
+        EXPECT_EQ(category_of((*arr)[3]), "execution");
+        EXPECT_EQ(label_of((*arr)[2]), "Succeeded");
+
+        // The five-key document stays valid strict wire.
+        auto result = Das::Core::TaskScheduler::ValidateAuthoringDocument(
+            DocumentOf(s.p));
+        EXPECT_TRUE(result.valid)
+            << result.error_kind << ": " << result.message;
     }
 
     // -----------------------------------------------------------------------
