@@ -120,11 +120,10 @@ namespace Plugins::DasMaaPi
     }
 
     yyjson::value BuildDocument(
-        const AcceptedSettingsDto&         settings,
-        int64_t                            revision,
-        std::vector<PiDiagnosticDto>&      diagnostics,
-        const std::optional<PiUpdateInfo>* pending_update,
-        const std::vector<AdbDeviceInfo>*  device_cache)
+        const AcceptedSettingsDto&        settings,
+        int64_t                           revision,
+        std::vector<PiDiagnosticDto>&     diagnostics,
+        const std::vector<AdbDeviceInfo>* device_cache)
     {
         auto catalog = TryParseCatalog(settings, diagnostics);
         return ProjectAuthoringDocument(
@@ -133,18 +132,16 @@ namespace Plugins::DasMaaPi
             diagnostics,
             revision,
             nullptr,
-            pending_update,
             device_cache);
     }
 
     yyjson::value BuildApplyResult(
-        const AcceptedSettingsDto&         settings,
-        int64_t                            revision,
-        std::vector<PiDiagnosticDto>       diagnostics,
-        bool                               project_document,
-        const std::optional<PiUpdateInfo>* pending_update,
-        const yyjson::value*               command_result,
-        const std::vector<AdbDeviceInfo>*  device_cache)
+        const AcceptedSettingsDto&        settings,
+        int64_t                           revision,
+        std::vector<PiDiagnosticDto>      diagnostics,
+        bool                              project_document,
+        const yyjson::value*              command_result,
+        const std::vector<AdbDeviceInfo>* device_cache)
     {
         // project_document=false（uiEvent 等 UI 事件）时跳过 catalog 解析 +
         // document 投影，省下 TryParseCatalog 的文件 IO + 解析开销。
@@ -170,7 +167,6 @@ namespace Plugins::DasMaaPi
                 diagnostics,
                 revision,
                 nullptr,
-                pending_update,
                 device_cache);
         }
 

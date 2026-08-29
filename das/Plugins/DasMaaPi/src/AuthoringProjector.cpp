@@ -6,6 +6,7 @@
 #include "MaapiAuthoringSession.h"
 #include "PiHttpClient.h"
 #include "PiUpdateService.h"
+#include "UpdateCheckStore.h"
 #include "UpdateJobRegistry.h"
 #include <das/Plugins/DasMaaPi/AdbDeviceFinder.h>
 
@@ -42,6 +43,14 @@
 
 namespace Das::Plugins::DasMaaPi
 {
+    // 同 namespace 前置声明（PluginUtils.h 定义）——不直接 include 该头：
+    // 其命名空间级 JsonString 与本文件匿名 namespace 的同名助手构成重载
+    // 歧义。checkUpdate 受理捕获当前 catalog 版本时调用（与投影同源解析
+    // 器）。
+    std::optional<PiCatalog> TryParseCatalog(
+        const AcceptedSettingsDto&    settings,
+        std::vector<PiDiagnosticDto>& diagnostics);
+
     namespace
     {
         yyjson::value Object() { return Das::Utils::MakeYyjsonObject(); }
@@ -2759,7 +2768,6 @@ namespace Das::Plugins::DasMaaPi
         const std::vector<PiDiagnosticDto>& diagnostics,
         int64_t                             revision,
         std::vector<PiDiagnosticDto>*       projection_diagnostics,
-        const std::optional<PiUpdateInfo>*  pending_update,
         const std::vector<AdbDeviceInfo>*   device_cache)
     {
         yyjson::value document(Object());
@@ -3095,35 +3103,80 @@ namespace Das::Plugins::DasMaaPi
             nullptr,
             /*readonly=*/true));
 
-        // 更新 section 五字段（pending engaged 且有更新时投影，不常驻）。
-        // key 传递方案 B：不投影 progress_key/updateKey——SSE 订阅 key 经
-        // checkUpdate 响应 commandResult 返回，不污染 document。字段集合在
-        // 初始 document 固定（增量只改 value，不增删字段）。
-        if (pending_update != nullptr && pending_update->has_value()
-            && (*pending_update)->has_update)
+        // 更新 section 五字段（检查结果表有该 pi_dir 条目时投影，点检查才
+        // 出现，不常驻）。key 传递方案 B：不投影 progress_key/updateKey——SSE
+        // 订阅 key 经 checkUpdate 响应 commandResult 返回，不污染 document。
+        // 字段集合在初始 document 固定（增量只改 value，不增删字段）。
+        // 条目四态派生：Checking → 版本/日志空 + 「正在检查更新…」；
+        // FoundUpdate → 既有「cur → next」构造 + 日志 + 占位进度（下载中实时
+        // 值由 SSE 覆盖）；UpToDate/Failed → 版本空 + 终态文案（与 SSE 推过的
+        // 终态一致）。受理线程在 TryStart 前写 Checking、同一 ApplyChange 内
+        // 投影后读——同 BT 线程先写后读，受理响应必含五字段（无时序依赖）。
+        // downloadRate/downloadElapsed 四态恒空串（检查链无下载指标）。
+        // 投影读条目快照一次，五字段门 / update_section_top / apply 按钮门
+        // 共用同一快照（同源布尔，四态全置顶）。
+        const std::optional<UpdateCheckEntry> check_entry =
+            [&]() -> std::optional<UpdateCheckEntry>
         {
-            const auto& update_info = **pending_update;
-
-            const std::string current_version =
-                catalog != nullptr ? catalog->version : std::string{};
-            const std::string target_version = update_info.version_name;
-            std::string       version_text;
-            if (current_version.empty())
+            const auto entry_pi_dir = ResolvePiDir(settings);
+            if (!entry_pi_dir)
             {
-                version_text = target_version;
+                return std::nullopt;
             }
-            else if (target_version.empty())
+            return UpdateCheckStore::Instance().Get(*entry_pi_dir);
+        }();
+        if (check_entry.has_value())
+        {
+            std::string version_text;
+            std::string release_text;
+            std::string progress_text;
+            if (check_entry->state == UpdateCheckEntry::State::FoundUpdate)
             {
-                version_text = current_version;
+                const auto&       update_info = check_entry->info;
+                const std::string current_version =
+                    catalog != nullptr ? catalog->version : std::string{};
+                const std::string target_version = update_info.version_name;
+                if (current_version.empty())
+                {
+                    version_text = target_version;
+                }
+                else if (target_version.empty())
+                {
+                    version_text = current_version;
+                }
+                else
+                {
+                    version_text = current_version + " → " + target_version;
+                }
+                release_text = update_info.release_note.empty()
+                                   ? Translate("field.releaseNote.empty")
+                                   : update_info.release_note;
+                progress_text = Translate("field.updateProgress.initial");
+            }
+            else if (check_entry->state == UpdateCheckEntry::State::Checking)
+            {
+                progress_text = Translate("progress.checkRunning");
+            }
+            else if (check_entry->state == UpdateCheckEntry::State::UpToDate)
+            {
+                const std::string catalog_version =
+                    catalog != nullptr ? catalog->version : std::string{};
+                progress_text = Translate("progress.upToDate", catalog_version);
             }
             else
             {
-                version_text = current_version + " → " + target_version;
+                // Failed：条目记原始分类（reason_key + http_status），投影侧
+                // Translate（与 job 终态推送同一分类消费）——语言切换后两侧
+                // 文案一致。空 key 回退通用文案。
+                const std::string failure_detail =
+                    check_entry->failure_reason_key.empty()
+                        ? Translate("diagnostic.checkUpdateFailed")
+                        : Translate(
+                              check_entry->failure_reason_key,
+                              check_entry->failure_http_status);
+                progress_text =
+                    Translate("progress.checkFailed", failure_detail);
             }
-            const std::string release_text =
-                update_info.release_note.empty()
-                    ? Translate("field.releaseNote.empty")
-                    : update_info.release_note;
 
             fields.as_array()->emplace_back(MakePropertyField(
                 "updateVersion",
@@ -3134,7 +3187,7 @@ namespace Das::Plugins::DasMaaPi
                 nullptr,
                 /*readonly=*/true));
             // releaseNote：inputType=7=markdown，契约强制
-            // readonly（只读展示）。
+            // readonly（只读展示）。非 FoundUpdate 态为空串（无更新无日志）。
             fields.as_array()->emplace_back(MakePropertyField(
                 "releaseNote",
                 Translate("field.releaseNote"),
@@ -3148,7 +3201,7 @@ namespace Das::Plugins::DasMaaPi
                 Translate("field.updateProgress"),
                 4,
                 0,
-                yyjson::value(Translate("field.updateProgress.initial")),
+                yyjson::value(progress_text),
                 nullptr,
                 /*readonly=*/true));
             fields.as_array()->emplace_back(MakePropertyField(
@@ -3264,11 +3317,10 @@ namespace Das::Plugins::DasMaaPi
         }
 
         // 根级 fieldLayout 必须在 fields 移走前构建（按 const ref 读 fields）。
-        // pending engaged → 更新 section 置顶（检测到更新时更新 panel 出现在
-        // document 顶部，前端零硬编码）。
-        const bool    update_section_top = pending_update != nullptr
-                                           && pending_update->has_value()
-                                           && (*pending_update)->has_update;
+        // 检查结果表有条目 → 更新 section 置顶（用户点检查即期待看到反馈，
+        // Checking 期置顶是稳定状态——条目无 TTL 不闪烁；与五字段门同源
+        // 布尔，四态全置顶）。
+        const bool    update_section_top = check_entry.has_value();
         yyjson::value field_layout = BuildRootFieldLayout(
             fields,
             catalog,
@@ -3585,12 +3637,11 @@ namespace Das::Plugins::DasMaaPi
         // 84-07 注入当前 baseRevision。
         //
         // D-89-04: 追加 checkUpdate / applyUpdate 双按钮。checkUpdate 恒可点；
-        // applyUpdate disabled 由后端 pending_update_（checkUpdate 结果暂态）
-        // 驱动（Open Question 1 决策：后端状态驱动 commands 投影，前端只按投影
-        // disabled 渲染，业务中立）。wire disabled 位于命令对象顶层（89-04
-        // 契约"缺失=false"，故仅 disabled 时 emit）。commandId 拼写
-        // checkUpdate / applyUpdate 与 89-04 DasNativeUI 锁定一致（Pitfall 8 /
-        // T-89-03-02）。
+        // applyUpdate disabled 由后端检查结果表条目（checkUpdate 结果真相源）
+        // 驱动（后端状态驱动 commands 投影，前端只按投影 disabled 渲染，业务
+        // 中立）。wire disabled 位于命令对象顶层（89-04 契约"缺失=false"，故仅
+        // disabled 时 emit）。commandId 拼写 checkUpdate / applyUpdate 与 89-04
+        // DasNativeUI 锁定一致（Pitfall 8 / T-89-03-02）。
         {
             yyjson::value commands(Array());
             auto          emit_command = [&](std::string_view command_id,
@@ -3632,15 +3683,17 @@ namespace Das::Plugins::DasMaaPi
                     UpdateJobRegistry::Instance().IsRunning(*running_pi_dir);
             }
             emit_command("checkUpdate", check_label, update_running);
-            // WR-05: 部分信息路径（MirrorChyan code!=0 但 data.version_name
+            // applyUpdate 门：检查结果条目为 FoundUpdate 且有下载链接才可点。
+            // 部分信息路径（MirrorChyan code!=0 但 data.version_name
             // 存在）返回 has_update=true 且 download_url 为空，后端
             // ApplyApplyUpdateCommand 以 "nothing to apply" 拒绝——投影必须与
             // 后端命令可用性一致：无下载链接时按钮 disabled，避免可点但必失败。
+            // Failed/UpToDate/Checking 条目 → disabled（按钮不携带陈旧
+            // has_update/download_url 信息）。
             const bool apply_update_disabled =
-                (pending_update == nullptr || !pending_update->has_value()
-                 || !(*pending_update)->has_update
-                 || (*pending_update)->download_url.empty())
-                || update_running;
+                !check_entry.has_value()
+                || check_entry->state != UpdateCheckEntry::State::FoundUpdate
+                || check_entry->info.download_url.empty() || update_running;
             emit_command("applyUpdate", apply_label, apply_update_disabled);
             // discoverAdbDevices：仅 Adb controller 投影（win32/gamepad 不需
             // 要扫描 ADB 设备）。命令被 controller section fieldLayout row
@@ -5253,29 +5306,6 @@ namespace Das::Plugins::DasMaaPi
         return true;
     }
 
-    // D-89-03: 网络 seam 解析。测试注入 FakePiHttpClient；生产 seam 为空时
-    // 构造 BeastHttpClient（owned 保持存活到本次调用结束）。
-    struct ResolvedHttp
-    {
-        std::unique_ptr<PiHttpClient> owned;
-        PiHttpClient*                 value = nullptr;
-    };
-
-    ResolvedHttp ResolveHttp(PiHttpClient* seam)
-    {
-        ResolvedHttp resolved;
-        if (seam != nullptr)
-        {
-            resolved.value = seam;
-        }
-        else
-        {
-            resolved.owned = std::make_unique<BeastHttpClient>();
-            resolved.value = resolved.owned.get();
-        }
-        return resolved;
-    }
-
     // 随机不可枚举 SSE 订阅 key：全熵 std::random_device 生成 32 个十六进制
     // 字符（128 bit）。key 是 /authoring/events/{key} 的唯一访问屏障，不用
     // mt19937（非 CSPRNG，收集同进程 624×32bit 输出即可重建状态预测后续
@@ -5294,32 +5324,65 @@ namespace Das::Plugins::DasMaaPi
         return oss.str();
     }
 
-    // D-89-04: checkUpdate dispatch。调 PiUpdateService::CheckUpdate（读
-    // interface.json 顶层 github / mirrorchyan_rid + PiSemver 比较），成功把
-    // PiUpdateInfo 暂存 pending_update（commands 投影据此驱动 applyUpdate
-    // disabled）。失败 emit 诊断返回 DAS_E_MAAPI_UPDATE_CHECK_FAILED。
-    bool ApplyCheckUpdateCommand(
-        AcceptedSettingsDto&          settings,
-        std::vector<PiDiagnosticDto>& diagnostics,
-        std::optional<PiUpdateInfo>*  pending_update,
-        PiHttpClient*                 http_seam)
+    // 前置声明（定义于下方，受理样板收编注释见定义处）：checkUpdate 与
+    // applyUpdate 两条受理路径共用的公共 helper。
+    std::shared_ptr<UpdateJobSlot> StartUpdateJob(
+        const std::filesystem::path&               pi_dir,
+        PiHttpClient*                              http_seam,
+        Das::ExportInterface::IDasProgressService* progress_service_seam,
+        const std::string&                         progress_key,
+        UpdateJobRegistry::JobBody                 job_body,
+        std::shared_ptr<DasProgressReporter>&      out_reporter);
+
+    // check job 体异常终态收尾：store 覆盖 Failed 条目（真相源先落）+ 尽力
+    // 终态推送（reporter 可能为空——受理降级纯本地检查）。主路径（带失败
+    // 分类的 CheckUpdate 结果）在 job 体内联组装，本 helper 供 catch 路径
+    // （后台线程绝不让异常逃逸 → std::terminate 杀死整个 Host 进程）。
+    void PutCheckFailureOutcome(
+        const std::filesystem::path&                pi_dir,
+        const std::string&                          progress_key,
+        const std::shared_ptr<DasProgressReporter>& reporter,
+        const std::string&                          current_version)
     {
-        if (pending_update == nullptr)
+        UpdateCheckEntry failed;
+        failed.state = UpdateCheckEntry::State::Failed;
+        failed.progress_key = progress_key;
+        UpdateCheckStore::Instance().PutOutcome(pi_dir, std::move(failed));
+        if (reporter)
         {
-            EmitDiagnostic(
-                diagnostics,
-                "error",
-                Translate("diagnostic.checkUpdateRequiresPendingState"),
-                DAS_E_INVALID_ARGUMENT,
-                "pendingUpdate");
-            return false;
+            reporter->ReportCheckOutcome(
+                DasProgressReporter::CheckOutcomeKind::Failed,
+                PiUpdateInfo{},
+                current_version,
+                Translate("diagnostic.checkUpdateFailed"));
         }
+    }
+
+    // checkUpdate 受理化 dispatch（协议语义变更：同步跑完检查链 → 受理秒回 +
+    // 后台查 + 查完经 SSE 推结果）。受理路径（IPC BusinessThread 上快速
+    // 返回，零网络请求）：前置校验 → 生成 key → 写 Checking 条目（必须在
+    // TryStart 之前——否则 TryStart 内构造的 job 线程可能在受理线程写
+    // Checking 前覆盖终态，受理线程的 Checking 反糊终态；且同一线程先写后读
+    // 保证受理响应文档必含五字段）→ StartUpdateJob helper（http/service/
+    // reporter/TryStart）→ key 经 out 参数供 dispatch 自填 commandResult
+    // {commandId:"checkUpdate", data:{progressKey}}（与旧成功路径同形状，
+    // 前端分流零改动）。本地校验失败（pi_dir 不可解析）/ registry 占用
+    // （重复点击，check 与 apply 共用 per-pi_dir slot）仍同步拒绝。检查链
+    // 全部在后台 job 线程执行：CheckUpdate（不改其内部）→ store 终态覆盖
+    // （失败覆盖为 Failed 条目而非清空）→ ReportCheckOutcome
+    // 三分支 → Stop → Finish。
+    bool ApplyCheckUpdateCommand(
+        AcceptedSettingsDto&                       settings,
+        std::vector<PiDiagnosticDto>&              diagnostics,
+        PiHttpClient*                              http_seam,
+        Das::ExportInterface::IDasProgressService* progress_service_seam,
+        std::string*                               out_progress_key)
+    {
         const auto pi_dir = ResolvePiDir(settings);
         if (!pi_dir)
         {
-            // IN-02: 复查失败时清空既有 pending_update_（按钮回 disabled），
-            // 避免按钮携带过期 has_update/download_url 信息。
-            pending_update->reset();
+            // 同步拒绝不动 store（保留原条目——本地校验失败不清既有检查
+            // 结果）。
             EmitDiagnostic(
                 diagnostics,
                 "error",
@@ -5328,41 +5391,213 @@ namespace Das::Plugins::DasMaaPi
                 "adapter.interfacePath");
             return false;
         }
-        auto         http = ResolveHttp(http_seam);
-        PiUpdateInfo info;
-        const auto   check = PiUpdateService::CheckUpdate(
-            *pi_dir,
-            *http.value,
-            info,
-            settings.adapter.proxy_url.value_or(""),
-            settings.adapter.mirrorchyan_cdk.value_or(""),
-            settings.adapter.update_channel.value_or(""));
-        if (IsFailed(check.result))
+        // 生成随机不可枚举 SSE 订阅 key（random_device 128-bit hex，受理时
+        // 即可生成——不依赖查询结果；经 Apply 响应 commandResult 返回，不
+        // 投影 document）。
+        const std::string key = GenerateProgressKey();
+        // 捕获当前 catalog 版本（与投影同源解析器 TryParseCatalog）：UpToDate
+        // 终态 {0} 绑定当前版本；解析失败降级空串（文案退化为「已是最新
+        // （）」，可接受）。探测诊断丢弃——版本捕获是尽力而为。
+        std::string current_version;
         {
-            // IN-02: 网络/来源失败时保留旧 pending_update_ 会令 applyUpdate
-            // 按钮携带陈旧信息；清空使按钮态与最新检查结果一致。
-            pending_update->reset();
-            // 失败原因分类文案（请求失败带 HTTP 状态码 / 网络错误 / 通用）：
-            // 只陈述事实（目标 + 错误码），不带处置建议；状态码经占位符
-            // {0} 填充。
-            const std::string message =
-                check.failure_reason_key.empty()
-                    ? Translate("diagnostic.checkUpdateFailed")
-                    : Translate(
-                          check.failure_reason_key,
-                          check.failure_http_status);
+            std::vector<PiDiagnosticDto> version_probe;
+            if (const auto catalog = TryParseCatalog(settings, version_probe))
+            {
+                current_version = catalog->version;
+            }
+        }
+        // 受理写 Checking（先于 TryStart，顺序契约）：锁内原子「保存旧值 →
+        // 写 Checking」，prev 供 TryStart 被拒时回滚。
+        const auto prev =
+            UpdateCheckStore::Instance().SaveAndPutChecking(*pi_dir, key);
+
+        // reporter 间接层：job 体 lambda 先于受理 helper 构造（reporter 在
+        // helper 内构造 + Start 并写入 out 参数），经 shared_ptr 间接层在
+        // job 线程内读取（与 ApplyApplyUpdateCommand 同范式）。
+        const auto reporter_holder =
+            std::make_shared<std::shared_ptr<DasProgressReporter>>();
+
+        // 受理的全部准备工作先于 registry 占位（TryStart 在锁内完成 running
+        // 置位与线程构造，此前任何异常都无需回滚 running）。
+        try
+        {
+            // job 全量值拷贝：job 线程绝不触碰 session / settings /
+            // diagnostics 等受理栈对象（session 可能在 job 期间被驱逐销毁）。
+            const std::filesystem::path job_pi_dir = *pi_dir;
+            const std::string           job_key = key;
+            const std::string           job_current_version = current_version;
+            const std::string           proxy_url =
+                settings.adapter.proxy_url.value_or("");
+            const std::string mirrorchyan_cdk =
+                settings.adapter.mirrorchyan_cdk.value_or("");
+            const std::string update_channel =
+                settings.adapter.update_channel.value_or("");
+
+            // check job 线程体：CheckUpdate → store.PutOutcome（真相源先落）
+            // → ReportCheckOutcome（推送是通知，断连早退不丢终态）→ Stop →
+            // Finish。http 经 slot 解析（TryStart 存档的同一 shared_ptr）。
+            auto job_body =
+                [job_pi_dir,
+                 job_key,
+                 job_current_version,
+                 proxy_url,
+                 mirrorchyan_cdk,
+                 update_channel,
+                 reporter_holder](const std::shared_ptr<UpdateJobSlot>& slot)
+            {
+                const std::shared_ptr<DasProgressReporter> reporter =
+                    *reporter_holder;
+                try
+                {
+                    PiUpdateInfo info;
+                    const auto   check = PiUpdateService::CheckUpdate(
+                        job_pi_dir,
+                        *slot->http,
+                        info,
+                        proxy_url,
+                        mirrorchyan_cdk,
+                        update_channel);
+                    UpdateCheckEntry outcome;
+                    outcome.progress_key = job_key;
+                    if (IsFailed(check.result))
+                    {
+                        // 失败覆盖为 Failed 条目而非清空（按钮照样
+                        // 禁用、版本照样空）。记原始分类（reason_key +
+                        // http_status），消费侧（投影 / 终态推送）各自
+                        // Translate——语言切换后两侧一致。
+                        outcome.state = UpdateCheckEntry::State::Failed;
+                        outcome.failure_reason_key = check.failure_reason_key;
+                        outcome.failure_http_status = check.failure_http_status;
+                    }
+                    else if (info.has_update)
+                    {
+                        outcome.state = UpdateCheckEntry::State::FoundUpdate;
+                        // 条目内 key：applyUpdate 的 reporter 用同一 key
+                        // （apply 与 check 同一流）。
+                        info.progress_key = job_key;
+                        outcome.info = info;
+                    }
+                    else
+                    {
+                        outcome.state = UpdateCheckEntry::State::UpToDate;
+                    }
+                    UpdateCheckStore::Instance().PutOutcome(
+                        job_pi_dir,
+                        std::move(outcome));
+                    if (reporter)
+                    {
+                        if (IsFailed(check.result))
+                        {
+                            // 失败原因分类文案（请求失败带 HTTP 状态码 /
+                            // 网络错误 / 通用）：与投影侧同一消费。
+                            const std::string failure_detail =
+                                check.failure_reason_key.empty()
+                                    ? Translate("diagnostic.checkUpdateFailed")
+                                    : Translate(
+                                          check.failure_reason_key,
+                                          check.failure_http_status);
+                            reporter->ReportCheckOutcome(
+                                DasProgressReporter::CheckOutcomeKind::Failed,
+                                info,
+                                job_current_version,
+                                failure_detail);
+                        }
+                        else if (info.has_update)
+                        {
+                            reporter->ReportCheckOutcome(
+                                DasProgressReporter::CheckOutcomeKind::
+                                    FoundUpdate,
+                                info,
+                                job_current_version,
+                                "");
+                        }
+                        else
+                        {
+                            reporter->ReportCheckOutcome(
+                                DasProgressReporter::CheckOutcomeKind::UpToDate,
+                                info,
+                                job_current_version,
+                                "");
+                        }
+                    }
+                }
+                catch (const std::exception& error)
+                {
+                    DAS_LOG_ERROR(
+                        DAS::fmt::format(
+                            "checkUpdate: background check job exception "
+                            "what={}",
+                            error.what())
+                            .c_str());
+                    PutCheckFailureOutcome(
+                        job_pi_dir,
+                        job_key,
+                        reporter,
+                        job_current_version);
+                }
+                catch (...)
+                {
+                    DAS_LOG_ERROR(
+                        "checkUpdate: background check job unknown exception");
+                    PutCheckFailureOutcome(
+                        job_pi_dir,
+                        job_key,
+                        reporter,
+                        job_current_version);
+                }
+                if (reporter)
+                {
+                    reporter->Stop();
+                }
+                UpdateJobRegistry::Instance().Finish(slot);
+            };
+
+            auto slot = StartUpdateJob(
+                *pi_dir,
+                http_seam,
+                progress_service_seam,
+                key,
+                std::move(job_body),
+                *reporter_holder);
+            if (slot == nullptr)
+            {
+                // 防重入拒绝（该 pi_dir 已有 check/apply job 在跑，共用
+                // slot）：锁内恒等回滚 Checking（仅当条目未被 job 覆盖），
+                // 不留第二次 Checking 残留。此前 Start 的 reporter 随
+                // shared_ptr 析构 RAII Stop（RemoveCallback）。
+                UpdateCheckStore::Instance().RollbackCheckingIfUnchanged(
+                    *pi_dir,
+                    key,
+                    prev);
+                EmitDiagnostic(
+                    diagnostics,
+                    "error",
+                    Translate("diagnostic.updateBusy"),
+                    DAS_E_MAAPI_UPDATE_CHECK_FAILED,
+                    "checkUpdate");
+                return false;
+            }
+        }
+        catch (...)
+        {
+            // 受理路径异常（如线程构造失败）：回滚 Checking（若未被 job
+            // 覆盖），不留无 job 的永久 Checking 条目。
+            UpdateCheckStore::Instance().RollbackCheckingIfUnchanged(
+                *pi_dir,
+                key,
+                prev);
             EmitDiagnostic(
                 diagnostics,
                 "error",
-                message,
-                check.result,
+                Translate("diagnostic.checkUpdateFailed"),
+                DAS_E_MAAPI_UPDATE_CHECK_FAILED,
                 "checkUpdate");
             return false;
         }
-        // 生成随机不可枚举 SSE 订阅 key（经 Apply 响应 commandResult 返回，
-        // 不投影 document）。
-        info.progress_key = GenerateProgressKey();
-        *pending_update = std::move(info);
+        if (out_progress_key != nullptr)
+        {
+            *out_progress_key = key;
+        }
         return true;
     }
 
@@ -5455,42 +5690,20 @@ namespace Das::Plugins::DasMaaPi
     }
 
     // applyUpdate 受理异步化 dispatch。受理路径（IPC BusinessThread 上快速
-    // 返回）：前置校验（pending engaged + has_update + download_url 非空 +
-    // pi_dir 可解析）→ registry TryStart 防重入 → 拷贝 job 数据入后台线程执行
-    // PiUpdateService::ApplyUpdate（下载→解压→备份→原子替换），终态经
-    // DasProgressReporter::ReportFinal 推送（既有 SSE 字段增量通道）。受理
-    // 成功不清 pending_update_（job 完成时 session 可能已被驱逐重建，pending
-    // 清理交给下次 checkUpdate 覆盖；按钮防重入由 registry 状态驱动投影）。
-    // 受理样板（http / progress service / reporter Start / TryStart）收编于
-    // 上方 StartUpdateJob helper。
+    // 返回）：前置校验（检查结果表有 FoundUpdate 条目 + has_update +
+    // download_url 非空 + pi_dir 可解析）→ registry TryStart 防重入 → 拷贝
+    // job 数据入后台线程执行 PiUpdateService::ApplyUpdate（下载→解压→备份
+    // →原子替换），终态经 DasProgressReporter::ReportFinal 推送（既有 SSE
+    // 字段增量通道）。受理成功不清检查结果条目（job 完成时 session 可能已被
+    // 驱逐重建，条目清理交给下次 checkUpdate 覆盖；按钮防重入由 registry
+    // 状态驱动投影）。受理样板（http / progress service / reporter Start /
+    // TryStart）收编于上方 StartUpdateJob helper。
     bool ApplyApplyUpdateCommand(
         AcceptedSettingsDto&                       settings,
         std::vector<PiDiagnosticDto>&              diagnostics,
-        std::optional<PiUpdateInfo>*               pending_update,
         PiHttpClient*                              http_seam,
         Das::ExportInterface::IDasProgressService* progress_service_seam)
     {
-        if (pending_update == nullptr || !pending_update->has_value())
-        {
-            EmitDiagnostic(
-                diagnostics,
-                "error",
-                Translate("diagnostic.applyUpdateRequiresPendingUpdate"),
-                DAS_E_MAAPI_UPDATE_APPLY_FAILED,
-                "applyUpdate");
-            return false;
-        }
-        const auto& info = **pending_update;
-        if (!info.has_update || info.download_url.empty())
-        {
-            EmitDiagnostic(
-                diagnostics,
-                "error",
-                Translate("diagnostic.applyUpdateNothingToApply"),
-                DAS_E_MAAPI_UPDATE_APPLY_FAILED,
-                "applyUpdate");
-            return false;
-        }
         const auto pi_dir = ResolvePiDir(settings);
         if (!pi_dir)
         {
@@ -5500,6 +5713,33 @@ namespace Das::Plugins::DasMaaPi
                 Translate("diagnostic.applyUpdateRequiresInterfacePath"),
                 DAS_E_MAAPI_UPDATE_APPLY_FAILED,
                 "adapter.interfacePath");
+            return false;
+        }
+        // 前置读检查结果表（checkUpdate 结果真相源，进程级存活）：需
+        // FoundUpdate 条目（含 info 全量 + 条目内 progress_key——apply 的
+        // reporter 与 check 同一流）。非 FoundUpdate（未检查过 / Checking /
+        // UpToDate / Failed）→ 同步拒绝。
+        const auto pending = UpdateCheckStore::Instance().Get(*pi_dir);
+        if (!pending.has_value()
+            || pending->state != UpdateCheckEntry::State::FoundUpdate)
+        {
+            EmitDiagnostic(
+                diagnostics,
+                "error",
+                Translate("diagnostic.applyUpdateRequiresPendingUpdate"),
+                DAS_E_MAAPI_UPDATE_APPLY_FAILED,
+                "applyUpdate");
+            return false;
+        }
+        const auto& info = pending->info;
+        if (!info.has_update || info.download_url.empty())
+        {
+            EmitDiagnostic(
+                diagnostics,
+                "error",
+                Translate("diagnostic.applyUpdateNothingToApply"),
+                DAS_E_MAAPI_UPDATE_APPLY_FAILED,
+                "applyUpdate");
             return false;
         }
 
@@ -5672,16 +5912,16 @@ namespace Das::Plugins::DasMaaPi
                 "applyUpdate");
             return false;
         }
-        // 受理成功。pending_update_ 不清：job 完成时 session 可能已被
-        // Get-after- Apply 驱逐重建，内存清理无意义；pending 的清理由下次
+        // 受理成功。检查结果条目不清：job 完成时 session 可能已被
+        // Get-after- Apply 驱逐重建，内存清理无意义；条目的清理由下次
         // checkUpdate 覆盖（缓存失效经 TryParseCatalog
         // 内容感知重解析自然生效）。
         return true;
     }
 
     // discoverAdbDevices dispatch：调 AdbDeviceFinder::FindAllAdbDevices 扫描
-    // 设备 → 填 session.device_cache_（session 内存态，与 pending_update_
-    // 同范式不落盘）。设备列表随后经 ProjectAuthoringDocument 投影到
+    // 设备 → 填 session.device_cache_（session 内存态，不落盘）。设备列表
+    // 随后经 ProjectAuthoringDocument 投影到
     // adbDevice.candidates（不走 commandResult.data，设备走 document field
     // candidates — 前端 dropdown 现成机制）。零设备返回 ok=true（扫描成功
     // 但无设备，candidates 投影空数组，前端 dropdown 空候补）。
@@ -5771,20 +6011,21 @@ namespace Das::Plugins::DasMaaPi
         // commandId 仍走下方 DAS_E_NOT_FOUND 拒绝。
         if (*command_id == "checkUpdate")
         {
-            // session& 引用直读写 pending_update_（零 T* 出参指针 — DasRef/
-            // DasOutPtr 全量替换 T** 出参的风格）。helper 仍接 raw 指针（既有
-            // 范式），传 session 成员地址作为 dispatch 内部实现细节，对调用
-            // 方暴露的只是 InvokeCommandResult 结构体返回。
+            // 受理化（协议语义变更）：受理秒回 + 后台查 + SSE 推结果。
+            // key 经 out 参数本地返回（不再回读 session 暂态——检查结果
+            // 进程级存活于 UpdateCheckStore，受理线程写 Checking 在投影读
+            // 表之前，响应文档必含五字段）。
+            std::string progress_key;
             result.ok = ApplyCheckUpdateCommand(
                 settings,
                 diagnostics,
-                &session.pending_update_,
-                http_seam);
-            // checkUpdate 成功 + pending_update 有 progress_key → 自填
-            // command_result {commandId, data:{progressKey}}（SSE 订阅 key，
-            // 随机不可枚举；经 commandResult 返回，不投影 document）。
-            if (result.ok && session.pending_update_.has_value()
-                && !session.pending_update_->progress_key.empty())
+                http_seam,
+                progress_service_seam,
+                &progress_key);
+            // 受理成功 → 自填 command_result {commandId, data:{progressKey}}
+            // （SSE 订阅 key，随机不可枚举；经 commandResult 返回，不投影
+            // document；与旧成功路径同形状，前端 checkUpdate 分流零改动）。
+            if (result.ok && !progress_key.empty())
             {
                 yyjson::value cr(Das::Utils::MakeYyjsonObject());
                 auto          cr_obj = cr.as_object();
@@ -5793,7 +6034,7 @@ namespace Das::Plugins::DasMaaPi
                 yyjson::value data(Das::Utils::MakeYyjsonObject());
                 auto          data_obj = data.as_object();
                 (*data_obj)[std::string_view("progressKey")] =
-                    JsonString(session.pending_update_->progress_key);
+                    JsonString(progress_key);
                 (*cr_obj)[std::string_view("data")] = std::move(data);
                 result.command_result = std::move(cr);
             }
@@ -5804,7 +6045,6 @@ namespace Das::Plugins::DasMaaPi
             result.ok = ApplyApplyUpdateCommand(
                 settings,
                 diagnostics,
-                &session.pending_update_,
                 http_seam,
                 progress_service_seam);
             // 受理成功自填 command_result {commandId, data:{accepted:true}}

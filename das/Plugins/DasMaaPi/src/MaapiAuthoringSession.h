@@ -54,8 +54,9 @@ namespace Plugins::DasMaaPi
               MaapiAuthoringSession>
     {
         // ApplyInvokeCommandChange 是 invokeCommand dispatch 中枢，直接
-        // 读写 pending_update_ / device_cache_（零 T* 出参指针 — 通过
-        // session& 引用而非成员地址指针承载状态）。
+        // 读写 device_cache_（零 T* 出参指针 — 通过 session& 引用而非成员
+        // 地址指针承载状态）。checkUpdate/applyUpdate 的检查结果经进程级
+        // UpdateCheckStore 传递，不经 session。
         friend InvokeCommandResult ApplyInvokeCommandChange(
             MaapiAuthoringSession&                     session,
             AcceptedSettingsDto&                       settings,
@@ -87,24 +88,14 @@ namespace Plugins::DasMaaPi
             ExportInterface::IDasJson*  p_request_json,
             ExportInterface::IDasJson** pp_out_result_json) override;
 
-        // D-89-04: checkUpdate 结果暂态（会话内存态，不入 acceptedProperties、
-        // 不落盘——Phase 87 黑盒约束）。commands 投影的 applyUpdate disabled 由
-        // 它驱动（后端状态驱动投影，Open Question 1 决策）。
-        const std::optional<PiUpdateInfo>& PendingUpdate() const
-        {
-            return pending_update_;
-        }
-        void SetPendingUpdate(std::optional<PiUpdateInfo> pending)
-        {
-            pending_update_ = std::move(pending);
-        }
-
         // ADB 扫描结果暂态（会话内存态，不入 acceptedProperties、不落
-        // 盘——同 pending_update_ 范式）。discoverAdbDevices 命令调用
+        // 盘）。discoverAdbDevices 命令调用
         // AdbDeviceFinder::FindAllAdbDevices 填充；adbDevice 字段投影的
         // candidates 从此读取；PiCompiler 编译期按
         // settings.pi.controller_adb_device 在此查六字段。空 vector =
         // 未扫描或扫描到 0 设备（前端 dropdown 空候补）。
+        // checkUpdate 结果不再走 session 暂态：进程级 UpdateCheckStore 按
+        // pi_dir 存活（后台 job 线程不许碰 session——session 会被驱逐重建）。
         const std::vector<AdbDeviceInfo>& DeviceCache() const
         {
             return device_cache_;
@@ -125,9 +116,8 @@ namespace Plugins::DasMaaPi
         }
 
     private:
-        AcceptedSettingsDto         settings_{};
-        int64_t                     revision_ = 0;
-        std::optional<PiUpdateInfo> pending_update_;
+        AcceptedSettingsDto settings_{};
+        int64_t             revision_ = 0;
         // session 内存态，不进 AcceptedSettingsDto 不序列化
         // （设备状态会变 — adb 拔出/换机，持久化 cache 会陈旧）。重启时
         // controllerAdbDevice 持久化字段仍在但 cache 空 → 用户重扫描即可。

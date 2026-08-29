@@ -1,5 +1,6 @@
 #include "../src/DasProgressReporter.h"
 #include "../src/PiUpdateService.h"
+#include "../src/UpdateCheckStore.h"
 
 #include <das/DasApi.h>
 #include <das/DasString.hpp>
@@ -672,6 +673,27 @@ TEST(MaapiProgressReporterTest, ReportCheckOutcomeWithoutStartDoesNotPush)
 // Task 3: 更新 section 字段投影（五字段无 updateKey + fieldLayout 置顶）
 // ============================================================================
 
+// 检查结果表种子辅助（五字段投影门 store 化迁移）：ResolvePiDir 只取
+// interface_path 的父目录字符串（不触碰文件系统），投影经 catalog=nullptr
+// 不解析 catalog——无需真实项目目录，用唯一假路径隔离 per-test store 键。
+AcceptedSettingsDto MakeSeededCheckSettings(
+    const std::string&  unique_key,
+    const PiUpdateInfo& info)
+{
+    AcceptedSettingsDto settings;
+    settings.adapter.interface_path =
+        "C:/das-reporter-test-check-store/" + unique_key + "/interface.json";
+    UpdateCheckEntry entry;
+    entry.state = UpdateCheckEntry::State::FoundUpdate;
+    entry.info = info;
+    entry.info.has_update = true;
+    entry.progress_key = unique_key;
+    UpdateCheckStore::Instance().PutOutcome(
+        std::filesystem::path(*settings.adapter.interface_path).parent_path(),
+        std::move(entry));
+    return settings;
+}
+
 std::optional<yyjson::value> FindRootField(
     const yyjson::value& document,
     std::string_view     name)
@@ -758,22 +780,21 @@ std::vector<std::string> LayoutSectionFieldNames(const yyjson::value& section)
     return names;
 }
 
-// Behavior 1: pending_update engaged → document.fields[] 含五字段（无
-// updateKey）；releaseNote inputType==7 && readonly==true。
+// Behavior 1: 检查结果表有 FoundUpdate 条目 → document.fields[] 含五字段
+// （无 updateKey）；releaseNote inputType==7 && readonly==true。
 TEST(MaapiProgressReporterTest, UpdateSectionProjectedWhenPending)
 {
     using namespace Das::Plugins::DasMaaPi;
 
-    AcceptedSettingsDto         settings;
-    std::optional<PiUpdateInfo> pending;
-    pending.emplace();
-    pending->has_update = true;
-    pending->version_name = "v1.2.3";
-    pending->release_note = "# 更新\n- 新功能";
-    pending->download_url = "https://example.com/package.zip";
+    PiUpdateInfo info;
+    info.has_update = true;
+    info.version_name = "v1.2.3";
+    info.release_note = "# 更新\n- 新功能";
+    info.download_url = "https://example.com/package.zip";
+    AcceptedSettingsDto settings =
+        MakeSeededCheckSettings("projected-when-pending", info);
 
-    auto document =
-        ProjectAuthoringDocument(settings, nullptr, {}, 0, nullptr, &pending);
+    auto document = ProjectAuthoringDocument(settings, nullptr, {}, 0);
 
     auto version = FindRootField(document, "updateVersion");
     ASSERT_TRUE(version.has_value());
@@ -801,7 +822,7 @@ TEST(MaapiProgressReporterTest, UpdateSectionProjectedWhenPending)
     EXPECT_FALSE(FindRootField(document, "progressKey").has_value());
 }
 
-// Behavior 2: 无 pending_update → 五字段不出现（更新 panel 不常驻）；既有更新
+// Behavior 2: 无检查结果条目 → 五字段不出现（更新 panel 不常驻）；既有更新
 // section 字段（CDK/代理/通道/版本）仍存在。
 TEST(MaapiProgressReporterTest, UpdateSectionAbsentWhenNoPending)
 {
@@ -820,27 +841,20 @@ TEST(MaapiProgressReporterTest, UpdateSectionAbsentWhenNoPending)
     EXPECT_TRUE(FindRootField(document, "resourceVersion").has_value());
 }
 
-// Behavior 3: releaseNote 值为 markdown 文本（来自
-// PiUpdateInfo.release_note）； 无内容 → 「暂无更新日志」。
+// Behavior 3: releaseNote 值为 markdown 文本（来自条目 info.release_note）；
+// 无内容 → 「暂无更新日志」。
 TEST(MaapiProgressReporterTest, ReleaseNoteValueFromPendingAndEmptyFallback)
 {
     GlobalLocaleGuard locale_guard("zh-cn");
     using namespace Das::Plugins::DasMaaPi;
 
-    AcceptedSettingsDto settings;
-
     {
-        std::optional<PiUpdateInfo> pending;
-        pending.emplace();
-        pending->has_update = true;
-        pending->release_note = "**加粗** release note";
-        auto document = ProjectAuthoringDocument(
-            settings,
-            nullptr,
-            {},
-            0,
-            nullptr,
-            &pending);
+        PiUpdateInfo info;
+        info.has_update = true;
+        info.release_note = "**加粗** release note";
+        AcceptedSettingsDto settings =
+            MakeSeededCheckSettings("release-note-value", info);
+        auto document = ProjectAuthoringDocument(settings, nullptr, {}, 0);
         auto release = FindRootField(document, "releaseNote");
         ASSERT_TRUE(release.has_value());
         EXPECT_EQ(
@@ -851,16 +865,11 @@ TEST(MaapiProgressReporterTest, ReleaseNoteValueFromPendingAndEmptyFallback)
     }
 
     {
-        std::optional<PiUpdateInfo> pending;
-        pending.emplace();
-        pending->has_update = true;
-        auto document = ProjectAuthoringDocument(
-            settings,
-            nullptr,
-            {},
-            0,
-            nullptr,
-            &pending);
+        PiUpdateInfo info;
+        info.has_update = true;
+        AcceptedSettingsDto settings =
+            MakeSeededCheckSettings("release-note-empty", info);
+        auto document = ProjectAuthoringDocument(settings, nullptr, {}, 0);
         auto release = FindRootField(document, "releaseNote");
         ASSERT_TRUE(release.has_value());
         EXPECT_EQ(
@@ -871,22 +880,21 @@ TEST(MaapiProgressReporterTest, ReleaseNoteValueFromPendingAndEmptyFallback)
     }
 }
 
-// Behavior 4: pending 时 fieldLayout 首位是更新 section，且五字段在更新 section
-// 内。
+// Behavior 4: 有条目时 fieldLayout 首位是更新 section，且五字段在更新
+// section 内。
 TEST(MaapiProgressReporterTest, UpdateSectionFirstInLayoutWhenPending)
 {
     using namespace Das::Plugins::DasMaaPi;
 
-    AcceptedSettingsDto         settings;
-    std::optional<PiUpdateInfo> pending;
-    pending.emplace();
-    pending->has_update = true;
-    pending->version_name = "v1.2.3";
-    pending->release_note = "note";
-    pending->download_url = "https://example.com/package.zip";
+    PiUpdateInfo info;
+    info.has_update = true;
+    info.version_name = "v1.2.3";
+    info.release_note = "note";
+    info.download_url = "https://example.com/package.zip";
+    AcceptedSettingsDto settings =
+        MakeSeededCheckSettings("first-in-layout", info);
 
-    auto document =
-        ProjectAuthoringDocument(settings, nullptr, {}, 0, nullptr, &pending);
+    auto document = ProjectAuthoringDocument(settings, nullptr, {}, 0);
 
     auto doc_obj = document.as_object();
     ASSERT_TRUE(doc_obj.has_value());

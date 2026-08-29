@@ -13,18 +13,14 @@ namespace Das::ExportInterface
 
 namespace Das::Plugins::DasMaaPi
 {
-    // D-89-03: 更新检查暂态（checkUpdate 结果 + applyUpdate 输入）。跨
-    // session 持久化的"待更新"状态不存在——pending_update_ 是
-    // MaapiAuthoringSession 内存暂态，不入 acceptedProperties、不落盘（Phase 87
-    // 黑盒约束）。
     struct PiUpdateInfo;
     class PiHttpClient;
     class MaapiAuthoringSession;
 
     // invokeCommand 命令业务结果回传结构。各分支自填 command_result；
     // 调用方（MaapiAuthoringSession::ApplyChange）按 engaged 状态塞
-    // envelope。零 T* 出参指针 — session 的 pending_update_/device_cache_
-    // 通过 MaapiAuthoringSession& 引用直读直写，符合 DAS DasRef/DasOutPtr
+    // envelope。零 T* 出参指针 — session 的 device_cache_ 通过
+    // MaapiAuthoringSession& 引用直读直写，符合 DAS DasRef/DasOutPtr
     // 全量替换 T** 出参的风格。
     struct InvokeCommandResult
     {
@@ -36,9 +32,10 @@ namespace Das::Plugins::DasMaaPi
     yyjson::value       SerializeAcceptedSettings(
         const AcceptedSettingsDto& settings);
 
-    // pending_update 为空指针（或未 engaged）时 applyUpdate 命令投影 disabled。
-    // 后端状态驱动 commands 投影（Open Question 1 决策）；前端只按投影
-    // disabled 字段渲染，业务中立。
+    // 更新五字段（updateVersion 等）与 applyUpdate 按钮态由进程级
+    // UpdateCheckStore 的 per-pi_dir 条目驱动（checkUpdate 结果真相源）：
+    // 无条目 → 五字段不投影 + applyUpdate disabled；条目四态派生见投影
+    // 实现。后端状态驱动 commands 投影，前端只按投影渲染，业务中立。
     //
     // device_cache 为空指针时 adbDevice.candidates 投影为空（前端 dropdown 空
     // 候补但字段仍 emit）；非空时按 cache 内容构造 {value=address, label=name}
@@ -49,7 +46,6 @@ namespace Das::Plugins::DasMaaPi
         const std::vector<PiDiagnosticDto>& diagnostics,
         int64_t                             revision,
         std::vector<PiDiagnosticDto>*       projection_diagnostics = nullptr,
-        const std::optional<PiUpdateInfo>*  pending_update = nullptr,
         const std::vector<AdbDeviceInfo>*   device_cache = nullptr);
 
     void ApplySetValueChange(
@@ -97,12 +93,14 @@ namespace Das::Plugins::DasMaaPi
         std::vector<PiDiagnosticDto>& diagnostics);
 
     // invokeCommand 严格 dispatch。返回 InvokeCommandResult {ok,
-    // command_result}，零 T* 出参指针 — pending_update_/device_cache_ 经
-    // session 引用直读直写。已知 commandId：
+    // command_result}，零 T* 出参指针 — device_cache_ 经 session 引用直读
+    // 直写；checkUpdate/applyUpdate 的检查结果经进程级 UpdateCheckStore
+    // 传递（不再有 session 暂态）。已知 commandId：
     //   - "newPreset"（通用 invokeCommand 落地，command_result nullopt）
-    //   - "checkUpdate"（成功且有 pending progress_key → command_result 自填
+    //   - "checkUpdate"（受理成功 → command_result 自填
     //     {commandId:"checkUpdate", data:{progressKey}}；否则 nullopt）
-    //   - "applyUpdate"（成功清 pending；command_result nullopt）
+    //   - "applyUpdate"（受理成功 → command_result 自填
+    //     {commandId:"applyUpdate", data:{accepted:true}}）
     //   - "discoverAdbDevices"（扫描设备填 session.device_cache_，
     //     command_result nullopt — 设备进 adbDevice field candidates 不走
     //     commandResult.data）

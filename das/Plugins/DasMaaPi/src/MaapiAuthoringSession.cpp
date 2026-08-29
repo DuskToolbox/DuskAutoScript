@@ -266,12 +266,8 @@ namespace Plugins::DasMaaPi
         // diagnostics 数组（即使空）。BuildDocument 既投影 document 又填充
         // diagnostics，envelope 同级包装二者（与 Compile 对称）。
         std::vector<PiDiagnosticDto> diagnostics;
-        auto                         document = BuildDocument(
-            settings_,
-            revision_,
-            diagnostics,
-            &pending_update_,
-            &device_cache_);
+        auto                         document =
+            BuildDocument(settings_, revision_, diagnostics, &device_cache_);
 
         yyjson::value envelope(Das::Utils::MakeYyjsonObject());
         auto          env_obj = envelope.as_object();
@@ -372,8 +368,9 @@ namespace Plugins::DasMaaPi
             if (kind == "invokeCommand")
             {
                 // invokeCommand 单独 dispatch — 返回 InvokeCommandResult
-                // 结构体（零 T* 出参指针：pending_update_ 经 *this session
-                // 引用直读写）。
+                // 结构体（零 T* 出参指针：device_cache_ 经 *this session
+                // 引用直读写；checkUpdate/applyUpdate 结果经进程级
+                // UpdateCheckStore 传递）。
                 auto cmd_result = ApplyInvokeCommandChange(
                     *this,
                     candidate,
@@ -444,7 +441,6 @@ namespace Plugins::DasMaaPi
             result_revision,
             std::move(diagnostics),
             /*project_document=*/kind != "uiEvent",
-            &pending_update_,
             command_result ? &*command_result : nullptr,
             &device_cache_);
 
