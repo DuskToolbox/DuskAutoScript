@@ -147,15 +147,13 @@ namespace Contract
         // -------------------------------------------------------------------
 
         /// Map a manifest config type onto the FieldDescriptor typing pair
-        /// (value_type, input_type). taskRepositoryRef is the one typed
-        /// input control (a repository entry picker); unknown types map
-        /// conservatively to a plain object (no executable semantics).
+        /// (value_type, input_type). inputType stays within the official 0-8
+        /// vocabulary — component-domain type words (taskRepositoryRef) map
+        /// conservatively like unknown types; their typed dispatch rides on
+        /// the carried config type word (FieldDescriptor::type_word), never
+        /// on inputType.
         std::pair<int32_t, int32_t> ConfigFieldInputTypes(std::string_view type)
         {
-            if (type == std::string_view("taskRepositoryRef"))
-            {
-                return {16, 9};
-            }
             if (type == std::string_view("int")
                 || type == std::string_view("int64")
                 || type == std::string_view("uint"))
@@ -212,6 +210,9 @@ namespace Contract
                     ConfigFieldInputTypes(config_field.type);
                 field.value_type = value_type;
                 field.input_type = input_type;
+                // The manifest config type word rides the wire verbatim —
+                // the typed-dispatch channel for component-domain words.
+                field.type_word = config_field.type;
                 bool value_assigned = false;
                 if (settings_obj.has_value()
                     && settings_obj->contains(
@@ -675,6 +676,12 @@ namespace Contract
                 fo["valueType"] = f.value_type;
                 fo["inputType"] = f.input_type;
                 fo["value"] = Das::Utils::CloneYyjsonValue(f.value);
+                if (f.type_word.has_value())
+                {
+                    fo["type"] = std::make_pair(
+                        std::string_view(*f.type_word),
+                        yyjson::copy_string);
+                }
                 if (f.description.has_value())
                 {
                     fo["description"] = std::make_pair(

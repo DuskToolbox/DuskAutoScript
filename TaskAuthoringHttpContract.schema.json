@@ -152,10 +152,15 @@
         },
         "inputType": {
           "type": "integer",
-          "enum": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
-          "$comment": "0=plain 1=select 2=multiselect 3=long-input 4=region-select 5=filePath 6=directoryPath 7=markdown (readonly, release note/welcome; value may be markdown text or http(s) URL — URL triggers client-side fetch + RFC 7234 cache + markdown render). 8=time (24h \"HH:MM\" string; requires valueType=4). 9=taskRepositoryRef (repository entry picker; valueType=16 object — the value references a task repository entry)."
+          "enum": [0, 1, 2, 3, 4, 5, 6, 7, 8],
+          "$comment": "0=plain 1=select 2=multiselect 3=long-input 4=region-select 5=filePath 6=directoryPath 7=markdown (readonly, release note/welcome; value may be markdown text or http(s) URL — URL triggers client-side fetch + RFC 7234 cache + markdown render). 8=time (24h \"HH:MM\" string; requires valueType=4). The vocabulary is closed at 0-8: component-domain type words (taskRepositoryRef) never extend it — their typed dispatch rides on the optional \"type\" config type word instead."
         },
         "value": { "$ref": "#/$defs/JsonValue" },
+        "type": {
+          "type": "string",
+          "minLength": 1,
+          "$comment": "Optional manifest config type word carried verbatim on config-declared fields (e.g. \"int64\", \"object\", \"taskRepositoryRef\"). Graph editors dispatch on this word BEFORE entering the generic field control; the inputType pair stays within the official 0-8 vocabulary. For a taskRepositoryRef field the value is a plain repository entry id integer (or null when unset)."
+        },
         "description": { "type": "string" },
         "required": { "type": "boolean" },
         "readonly": { "type": "boolean" },

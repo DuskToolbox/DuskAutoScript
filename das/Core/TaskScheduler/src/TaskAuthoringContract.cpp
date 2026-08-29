@@ -40,7 +40,7 @@ namespace Das::Core::TaskScheduler
 
         constexpr std::array<int, 7> VALUE_TYPES{0, 1, 2, 4, 8, 16, 32};
 
-        constexpr std::array<int, 10> INPUT_TYPES{0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
+        constexpr std::array<int, 9> INPUT_TYPES{0, 1, 2, 3, 4, 5, 6, 7, 8};
 
         bool IsOneOf(
             std::string_view value,
@@ -443,6 +443,16 @@ namespace Das::Core::TaskScheduler
                 return Fail("missingField", "FieldDescriptor.value required");
             }
 
+            // Optional config type word (manifest config type vocabulary,
+            // e.g. "taskRepositoryRef"): the typed-dispatch channel for
+            // component-domain words — plain string, no value-shape coupling.
+            if (obj.contains("type") && !obj["type"].is_string())
+            {
+                return Fail(
+                    "invalidFieldType",
+                    "FieldDescriptor.type must be string");
+            }
+
             if (obj.contains("description") && !obj["description"].is_string())
             {
                 return Fail(
@@ -537,6 +547,7 @@ namespace Das::Core::TaskScheduler
                      "valueType",
                      "inputType",
                      "value",
+                     "type",
                      "description",
                      "required",
                      "readonly",
