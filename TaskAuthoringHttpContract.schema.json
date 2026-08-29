@@ -327,8 +327,12 @@
       "type": "object",
       "required": ["id"],
       "additionalProperties": false,
+      "$comment": "label/description/icon are presentation metadata: label follows the store-user-label > catalog-default-name priority chain (omitted when neither source provided one — clients fall back to the node id); description/icon merge from the matching actionCatalog entry.",
       "properties": {
         "id": { "type": "string", "minLength": 1 },
+        "label": { "type": "string" },
+        "description": { "type": "string" },
+        "icon": { "$ref": "#/$defs/IconString" },
         "componentGuid": { "type": "string" },
         "targetKind": {
           "type": "string",

@@ -1376,6 +1376,19 @@ namespace Das::Core::TaskScheduler
                     "componentGuid must be string");
             }
 
+            // Presentation metadata: the display label (store user label or
+            // catalog default name) and the catalog-merged description.
+            if (obj.contains("label") && !obj["label"].is_string())
+            {
+                return Fail("invalidLabel", "GraphNode.label must be string");
+            }
+            if (obj.contains("description") && !obj["description"].is_string())
+            {
+                return Fail(
+                    "invalidDescription",
+                    "GraphNode.description must be string");
+            }
+
             if (obj.contains("targetKind"))
             {
                 if (auto r = ValidateTarget(obj, /*allow_entry_ref=*/true);
@@ -1388,6 +1401,14 @@ namespace Das::Core::TaskScheduler
             if (obj.contains("debugInfo") && !obj["debugInfo"].is_object())
             {
                 return Fail("invalidDebugInfo", "debugInfo must be object");
+            }
+
+            // The node icon is the catalog entry icon passed through the
+            // projection — the same absolute-path/http(s) URI rule the
+            // catalog entry itself enforces.
+            if (auto r = ValidateOptionalIcon(obj, "icon"); !r.valid)
+            {
+                return r;
             }
 
             if (obj.contains("ports"))
@@ -1407,6 +1428,9 @@ namespace Das::Core::TaskScheduler
             if (!OnlyKeys(
                     obj,
                     {"id",
+                     "label",
+                     "description",
+                     "icon",
                      "componentGuid",
                      "targetKind",
                      "entryRef",

@@ -497,9 +497,23 @@ namespace
         // The store user label wins over the catalog default name.
         EXPECT_EQ(out.graph->nodes[0].label, "我的延迟");
 
-        const auto json = ToJsonWithCatalog(doc, catalog);
-        EXPECT_NE(json.find("\"label\":\"我的延迟\""), std::string::npos);
-        EXPECT_EQ(json.find("\"label\":\"das.flow.delay\""), std::string::npos);
+        // Wire-level: the projected node carries the user label (the
+        // catalog section keeps its own entry label — inspect the node
+        // object, not the whole document text).
+        const auto value = SerializeDocument(doc, catalog);
+        const auto root = value.as_object();
+        ASSERT_TRUE(root.has_value());
+        const auto graph = (*root)[std::string_view("graph")].as_object();
+        ASSERT_TRUE(graph.has_value());
+        const auto nodes = (*graph)[std::string_view("nodes")].as_array();
+        ASSERT_TRUE(nodes.has_value());
+        ASSERT_EQ(nodes->size(), 1u);
+        const auto node_obj = (*nodes)[0].as_object();
+        ASSERT_TRUE(node_obj.has_value());
+        ASSERT_TRUE(node_obj->contains(std::string_view("label")));
+        auto wire_label = (*node_obj)[std::string_view("label")].as_string();
+        ASSERT_TRUE(wire_label.has_value());
+        EXPECT_EQ(*wire_label, "我的延迟");
     }
 
     TEST(AuthoringDocContractTest, LabelProjection_NoSourceOmitsKey)
@@ -1606,6 +1620,161 @@ namespace
         EXPECT_FALSE(ViewPositionOf(doc, "n1", "x").has_value());
         ASSERT_TRUE(ViewPositionOf(doc, "n2", "x").has_value());
         EXPECT_DOUBLE_EQ(*ViewPositionOf(doc, "n2", "x"), 3.0);
+    }
+
+    // -----------------------------------------------------------------------
+    // renameGraphNode — the store display label. Semantic change (revision
+    // exactly +1); the label is pure presentation data, so the entire
+    // addressing surface (node id, viewData.positions keys, edge endpoints,
+    // subsequent message addressing) must stay untouched.
+    // -----------------------------------------------------------------------
+
+    AuthoringChange MakeRenameGraphNode(
+        std::string_view node_id,
+        std::string_view label)
+    {
+        AuthoringChange change;
+        change.kind = "renameGraphNode";
+        if (!node_id.empty())
+        {
+            change.item_or_node_id = std::string(node_id);
+        }
+        if (!label.empty())
+        {
+            change.rename_label = std::string(label);
+        }
+        return change;
+    }
+
+    TEST(
+        AuthoringDocContractTest,
+        GraphChange_RenameGraphNodeWritesStoreLabelAndBumpsRevision)
+    {
+        GraphDocumentDto doc;
+        doc.nodes.push_back(MakeNode("n1", "{g1}", 0.0));
+        doc.version = 5;
+
+        auto r = ApplyAuthoringChange(
+            doc,
+            MakeRenameGraphNode("n1", "我的延迟节点"));
+        ASSERT_TRUE(r.Ok()) << r.message;
+        ASSERT_TRUE(doc.nodes[0].label.has_value());
+        EXPECT_EQ(*doc.nodes[0].label, "我的延迟节点");
+        // Semantic change: the revision moves exactly once per rename.
+        EXPECT_EQ(doc.version, 6);
+
+        // Renaming again overwrites the previous label and bumps once more.
+        auto r2 =
+            ApplyAuthoringChange(doc, MakeRenameGraphNode("n1", "第二个名字"));
+        ASSERT_TRUE(r2.Ok()) << r2.message;
+        ASSERT_TRUE(doc.nodes[0].label.has_value());
+        EXPECT_EQ(*doc.nodes[0].label, "第二个名字");
+        EXPECT_EQ(doc.version, 7);
+    }
+
+    TEST(AuthoringDocContractTest, GraphChange_RenameGraphNodeProjectsOntoWire)
+    {
+        GraphDocumentDto doc;
+        doc.nodes.push_back(MakeNode("n1", "{g1}", 0.0));
+
+        ActionCatalog      catalog;
+        ActionCatalogEntry entry;
+        entry.action_id = "{g1}";
+        entry.label = "das.flow.delay";
+        catalog.entries.push_back(entry);
+
+        ASSERT_TRUE(
+            ApplyAuthoringChange(doc, MakeRenameGraphNode("n1", "用户名"))
+                .Ok());
+        const auto out = ToAuthoringDocument(doc, catalog);
+        ASSERT_EQ(out.graph->nodes.size(), 1u);
+        // The store label wins over the catalog default name after rename.
+        EXPECT_EQ(out.graph->nodes[0].label, "用户名");
+    }
+
+    TEST(
+        AuthoringDocContractTest,
+        GraphChange_RenameGraphNodeRejectsUnknownNodeAtomically)
+    {
+        GraphDocumentDto doc;
+        doc.nodes.push_back(MakeNode("n1", "{g1}", 0.0));
+        doc.nodes[0].label = "原名";
+        doc.nodes.push_back(MakeNode("n2", "{g2}", 0.0));
+        doc.version = 5;
+
+        auto r =
+            ApplyAuthoringChange(doc, MakeRenameGraphNode("ghost", "新名"));
+        EXPECT_FALSE(r.Ok());
+        EXPECT_EQ(r.error_kind, ChangeErrorKind::NodeNotFound);
+        // The whole change is rejected — zero mutation.
+        EXPECT_EQ(doc.version, 5);
+        ASSERT_EQ(doc.nodes.size(), 2u);
+        ASSERT_TRUE(doc.nodes[0].label.has_value());
+        EXPECT_EQ(*doc.nodes[0].label, "原名");
+    }
+
+    TEST(
+        AuthoringDocContractTest,
+        GraphChange_RenameGraphNodeRequiresBothFields)
+    {
+        GraphDocumentDto doc;
+        doc.nodes.push_back(MakeNode("n1", "{g1}", 0.0));
+
+        auto r_no_id = ApplyAuthoringChange(doc, MakeRenameGraphNode("", "名"));
+        EXPECT_FALSE(r_no_id.Ok());
+        EXPECT_EQ(r_no_id.error_kind, ChangeErrorKind::InvalidOp);
+
+        auto r_no_label =
+            ApplyAuthoringChange(doc, MakeRenameGraphNode("n1", ""));
+        EXPECT_FALSE(r_no_label.Ok());
+        EXPECT_EQ(r_no_label.error_kind, ChangeErrorKind::InvalidOp);
+        // Neither failure touched the store.
+        EXPECT_FALSE(doc.nodes[0].label.has_value());
+    }
+
+    // The label is display-only: renaming must leave the node id, the
+    // viewData.positions key set, the edge endpoints and subsequent message
+    // addressing (setValueGraphNode on the same id) completely untouched.
+    TEST(AuthoringDocContractTest, GraphChange_RenameGraphNodeKeepsAddressing)
+    {
+        GraphDocumentDto doc;
+        doc.nodes.push_back(MakeNode("n1", "{g1}", 0.0));
+        doc.nodes.push_back(MakeNode("n2", "{g2}", 0.0));
+        doc.edges.push_back(MakeDataEdge("e1", "n1", "out", "n2", "in"));
+        ASSERT_TRUE(
+            ApplyAuthoringChange(doc, MakeMoveGraphNode("n1", 11.0, 12.0))
+                .Ok());
+        ASSERT_TRUE(
+            ApplyAuthoringChange(doc, MakeMoveGraphNode("n2", 21.0, 22.0))
+                .Ok());
+
+        auto r = ApplyAuthoringChange(doc, MakeRenameGraphNode("n1", "重命名"));
+        ASSERT_TRUE(r.Ok()) << r.message;
+
+        // Node id unchanged (label never becomes an address).
+        ASSERT_EQ(doc.nodes.size(), 2u);
+        EXPECT_EQ(doc.nodes[0].node_id, "n1");
+        EXPECT_EQ(doc.nodes[1].node_id, "n2");
+        // viewData.positions key set and values unchanged.
+        ASSERT_TRUE(ViewPositionOf(doc, "n1", "x").has_value());
+        EXPECT_DOUBLE_EQ(*ViewPositionOf(doc, "n1", "x"), 11.0);
+        ASSERT_TRUE(ViewPositionOf(doc, "n2", "y").has_value());
+        EXPECT_DOUBLE_EQ(*ViewPositionOf(doc, "n2", "y"), 22.0);
+        // Edge endpoints unchanged.
+        ASSERT_EQ(doc.edges.size(), 1u);
+        EXPECT_EQ(doc.edges[0].source_node_id, "n1");
+        EXPECT_EQ(doc.edges[0].source_port_id, "out");
+        EXPECT_EQ(doc.edges[0].target_node_id, "n2");
+        EXPECT_EQ(doc.edges[0].target_port_id, "in");
+
+        // Subsequent message addressing on the same node id still works.
+        AuthoringChange set;
+        set.kind = "setValue";
+        set.target = SetValueTarget{"graphNode", "n1"};
+        set.field_name = "threshold";
+        set.value = 0.75;
+        auto set_result = ApplyAuthoringChange(doc, set);
+        EXPECT_TRUE(set_result.Ok()) << set_result.message;
     }
 
     // -----------------------------------------------------------------------

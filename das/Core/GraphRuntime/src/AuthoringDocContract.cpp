@@ -291,6 +291,29 @@ namespace Contract
             return roles;
         }
 
+        /// First catalog entry matching componentGuid == actionId, or null.
+        /// The single merge point for everything a catalog entry contributes
+        /// to a node projection: static ports, the default display name
+        /// (entry.label carries the manifest kind) and the presentation
+        /// metadata (description/icon).
+        const ActionCatalogEntry* FindCatalogEntry(
+            const std::optional<ActionCatalog>& action_catalog,
+            std::string_view                    component_guid)
+        {
+            if (!action_catalog.has_value())
+            {
+                return nullptr;
+            }
+            for (const auto& entry : action_catalog->entries)
+            {
+                if (entry.action_id == component_guid)
+                {
+                    return &entry;
+                }
+            }
+            return nullptr;
+        }
+
         GraphView MapGraphView(
             const Dto::GraphDocumentDto&        doc,
             const std::optional<ActionCatalog>& action_catalog)
@@ -309,28 +332,39 @@ namespace Contract
                 out.entry_ref = EntryRefOf(node);
                 out.fields = ProjectFields(node.settings);
 
-                // Registry-declared static port surface: catalog entries are
-                // keyed by actionId == componentGuid and already carry the
-                // direction from the declaring inputs/outputs list. The
-                // category is derived here — the single derivation point —
-                // from the port's declared type.
-                if (action_catalog.has_value())
+                // Catalog merge by componentGuid == actionId. The display
+                // name follows the priority chain: the store user label (a
+                // renameGraphNode write) wins; an unnamed node follows the
+                // catalog default name so manifest kind renames propagate
+                // automatically. description/icon merge from the matching
+                // entry only.
+                const ActionCatalogEntry* matched_entry =
+                    FindCatalogEntry(action_catalog, out.component_guid);
+                if (node.label.has_value() && !node.label->empty())
                 {
-                    for (const auto& entry : action_catalog->entries)
+                    out.label = *node.label;
+                }
+                else if (matched_entry != nullptr)
+                {
+                    out.label = matched_entry->label;
+                }
+                if (matched_entry != nullptr)
+                {
+                    out.description = matched_entry->description;
+                    out.icon = matched_entry->icon;
+
+                    // Registry-declared static port surface: the entry
+                    // already carries the direction from the declaring
+                    // inputs/outputs list. The category is derived here —
+                    // the single derivation point — from the port's
+                    // declared type.
+                    out.ports.reserve(
+                        out.ports.size() + matched_entry->ports.size());
+                    for (const auto& port : matched_entry->ports)
                     {
-                        if (entry.action_id == out.component_guid)
-                        {
-                            out.ports.reserve(
-                                out.ports.size() + entry.ports.size());
-                            for (const auto& port : entry.ports)
-                            {
-                                GraphNodePort projected = port;
-                                projected.category =
-                                    DerivePortCategory(port.port_type);
-                                out.ports.push_back(std::move(projected));
-                            }
-                            break;
-                        }
+                        GraphNodePort projected = port;
+                        projected.category = DerivePortCategory(port.port_type);
+                        out.ports.push_back(std::move(projected));
                     }
                 }
 
@@ -642,6 +676,29 @@ namespace Contract
             auto obj = *obj_o;
             obj["id"] =
                 std::make_pair(std::string_view(node.id), yyjson::copy_string);
+            // Presentation metadata: the label is emitted only when a
+            // source (store user label or catalog default name) provided a
+            // non-empty value — never an empty string, clients fall back to
+            // the node id themselves. description/icon are engaged-only
+            // catalog merges.
+            if (!node.label.empty())
+            {
+                obj["label"] = std::make_pair(
+                    std::string_view(node.label),
+                    yyjson::copy_string);
+            }
+            if (node.description.has_value())
+            {
+                obj["description"] = std::make_pair(
+                    std::string_view(*node.description),
+                    yyjson::copy_string);
+            }
+            if (node.icon.has_value())
+            {
+                obj["icon"] = std::make_pair(
+                    std::string_view(*node.icon),
+                    yyjson::copy_string);
+            }
             if (!node.component_guid.empty())
             {
                 obj["componentGuid"] = std::make_pair(
