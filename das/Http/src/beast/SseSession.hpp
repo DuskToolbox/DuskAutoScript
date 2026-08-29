@@ -14,6 +14,7 @@
 #include <chrono>
 #include <cstddef>
 #include <deque>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -78,16 +79,22 @@ namespace Das::Http::Beast
          * @param key 业务任务标识（如更新任务的 entry id）。
          * @param hub 会话所属 SseHub（强引用，会话内保活）。
          * @param keepalive_interval keep-alive comment 帧间隔（可注入测试）。
+         * @param on_registered 注册完成回调（头写完 + hub Register 之后、
+         * 一切直播帧之前调用，供订阅建立处补发快照重放）。beast 层对该
+         * 回调业务无知；注册完成前对会话 WriteData 会与未完成的头写入
+         * 并发写同一 socket，字节交错损坏 HTTP 流——调用点顺序不可移动。
          */
         SseSessionT(
             Stream                             socket,
             std::string                        key,
             std::shared_ptr<Das::Http::SseHub> hub,
             std::chrono::milliseconds          keepalive_interval =
-                std::chrono::seconds(15))
+                std::chrono::seconds(15),
+            std::function<void(SseSessionBase&)> on_registered = {})
             : socket_(std::move(socket)), key_(std::move(key)),
               hub_(std::move(hub)), keepalive_interval_(keepalive_interval),
-              keepalive_timer_(socket_.get_executor())
+              keepalive_timer_(socket_.get_executor()),
+              on_registered_(std::move(on_registered))
         {
         }
 
@@ -331,6 +338,7 @@ namespace Das::Http::Beast
         Stream                                       socket_;
         std::string                                  key_;
         std::shared_ptr<Das::Http::SseHub>           hub_;
+        std::function<void(SseSessionBase&)>         on_registered_;
         std::mutex                                   write_mutex_;
         std::deque<std::string>                      write_queue_;
         bool                                         write_in_flight_ = false;

@@ -2,6 +2,7 @@
 #define DAS_HTTP_BEAST_SERVER_HPP
 
 #include "../Config.h"
+#include "../NotificationHub.hpp"
 #include "Request.hpp"
 #include "Router.hpp"
 #include "SseSession.hpp"
@@ -232,18 +233,27 @@ namespace Das::Http::Beast
         std::function<void()> on_server_stop_;
         // SSE 分流（keep-alive 跟随请求命中订阅路径时移交 SseSession）。
         std::shared_ptr<SseHub> sse_hub_;
+        // SSE 订阅 key 门（返回 false 拒绝订阅：落普通路由 404）。空 = 放行
+        // （向后兼容）。
+        std::function<bool(const std::string&)> sse_key_gate_;
+        // SSE 会话注册完成回调（订阅建立处快照重放注入点）。
+        std::function<void(SseSessionBase&)> sse_on_registered_;
 
     public:
         Session(
-            tcp::socket             socket,
-            std::shared_ptr<Router> router,
-            std::function<bool()>   stop_condition,
-            std::function<void()>   on_server_stop = nullptr,
-            std::shared_ptr<SseHub> sse_hub = nullptr)
+            tcp::socket                             socket,
+            std::shared_ptr<Router>                 router,
+            std::function<bool()>                   stop_condition,
+            std::function<void()>                   on_server_stop = nullptr,
+            std::shared_ptr<SseHub>                 sse_hub = nullptr,
+            std::function<bool(const std::string&)> sse_key_gate = nullptr,
+            std::function<void(SseSessionBase&)>    sse_on_registered = nullptr)
             : socket_(std::move(socket)), router_(std::move(router)),
               stop_condition_(std::move(stop_condition)),
               on_server_stop_(std::move(on_server_stop)),
-              sse_hub_(std::move(sse_hub))
+              sse_hub_(std::move(sse_hub)),
+              sse_key_gate_(std::move(sse_key_gate)),
+              sse_on_registered_(std::move(sse_on_registered))
         {
         }
 
@@ -577,26 +587,32 @@ namespace Das::Http::Beast
      */
     class UpgradeDetector : public std::enable_shared_from_this<UpgradeDetector>
     {
-        tcp::socket                      socket_;
-        std::shared_ptr<Router>          router_;
-        std::function<bool()>            stop_condition_;
-        std::function<void()>            on_server_stop_;
-        std::shared_ptr<NotificationHub> hub_;
-        std::shared_ptr<SseHub>          sse_hub_;
-        boost::beast::flat_buffer        buffer_;
+        tcp::socket                             socket_;
+        std::shared_ptr<Router>                 router_;
+        std::function<bool()>                   stop_condition_;
+        std::function<void()>                   on_server_stop_;
+        std::shared_ptr<NotificationHub>        hub_;
+        std::shared_ptr<SseHub>                 sse_hub_;
+        std::function<bool(const std::string&)> sse_key_gate_;
+        std::function<void(SseSessionBase&)>    sse_on_registered_;
+        boost::beast::flat_buffer               buffer_;
 
     public:
         UpgradeDetector(
-            tcp::socket                      socket,
-            std::shared_ptr<Router>          router,
-            std::function<bool()>            stop_condition,
-            std::shared_ptr<NotificationHub> hub,
-            std::function<void()>            on_server_stop = nullptr,
-            std::shared_ptr<SseHub>          sse_hub = nullptr)
+            tcp::socket                             socket,
+            std::shared_ptr<Router>                 router,
+            std::function<bool()>                   stop_condition,
+            std::shared_ptr<NotificationHub>        hub,
+            std::function<void()>                   on_server_stop = nullptr,
+            std::shared_ptr<SseHub>                 sse_hub = nullptr,
+            std::function<bool(const std::string&)> sse_key_gate = nullptr,
+            std::function<void(SseSessionBase&)>    sse_on_registered = nullptr)
             : socket_(std::move(socket)), router_(std::move(router)),
               stop_condition_(std::move(stop_condition)),
               on_server_stop_(std::move(on_server_stop)), hub_(std::move(hub)),
-              sse_hub_(std::move(sse_hub))
+              sse_hub_(std::move(sse_hub)),
+              sse_key_gate_(std::move(sse_key_gate)),
+              sse_on_registered_(std::move(sse_on_registered))
         {
         }
 
@@ -646,7 +662,9 @@ namespace Das::Http::Beast
                             self->router_,
                             self->stop_condition_,
                             self->on_server_stop_,
-                            self->sse_hub_);
+                            self->sse_hub_,
+                            self->sse_key_gate_,
+                            self->sse_on_registered_);
                         session->RunWithParser(self->parser_.release());
                     }
                 });
@@ -659,27 +677,33 @@ namespace Das::Http::Beast
     // 监听器，接受传入的连接
     class Listener : public std::enable_shared_from_this<Listener>
     {
-        tcp::acceptor                    acceptor_;
-        std::shared_ptr<Router>          router_;
-        std::shared_ptr<NotificationHub> hub_;
-        std::shared_ptr<SseHub>          sse_hub_;
-        std::function<bool()>            stop_condition_;
-        std::function<void()>            on_server_stop_;
+        tcp::acceptor                           acceptor_;
+        std::shared_ptr<Router>                 router_;
+        std::shared_ptr<NotificationHub>        hub_;
+        std::shared_ptr<SseHub>                 sse_hub_;
+        std::function<bool()>                   stop_condition_;
+        std::function<void()>                   on_server_stop_;
+        std::function<bool(const std::string&)> sse_key_gate_;
+        std::function<void(SseSessionBase&)>    sse_on_registered_;
 
     public:
         Listener(
-            boost::asio::io_context&         ioc,
-            tcp::endpoint                    endpoint,
-            std::shared_ptr<Router>          router,
-            std::function<bool()>            stop_condition,
-            std::shared_ptr<NotificationHub> hub,
-            std::function<void()>            on_server_stop = nullptr,
-            std::shared_ptr<SseHub>          sse_hub = nullptr)
+            boost::asio::io_context&                ioc,
+            tcp::endpoint                           endpoint,
+            std::shared_ptr<Router>                 router,
+            std::function<bool()>                   stop_condition,
+            std::shared_ptr<NotificationHub>        hub,
+            std::function<void()>                   on_server_stop = nullptr,
+            std::shared_ptr<SseHub>                 sse_hub = nullptr,
+            std::function<bool(const std::string&)> sse_key_gate = nullptr,
+            std::function<void(SseSessionBase&)>    sse_on_registered = nullptr)
             : acceptor_(boost::asio::make_strand(ioc)),
               router_(std::move(router)), hub_(std::move(hub)),
               sse_hub_(std::move(sse_hub)),
               stop_condition_(std::move(stop_condition)),
-              on_server_stop_(std::move(on_server_stop))
+              on_server_stop_(std::move(on_server_stop)),
+              sse_key_gate_(std::move(sse_key_gate)),
+              sse_on_registered_(std::move(sse_on_registered))
         {
             // open/bind/listen 失败必须 fail-fast 抛异常：否则 acceptor_
             // 处于未监听状态，DoAccept 的 async_accept 立即以错误完成且不
@@ -738,6 +762,22 @@ namespace Das::Http::Beast
             sse_hub_ = std::move(sse_hub);
         }
 
+        /**
+         * @brief 设置 SSE 订阅 key 门（延迟注入）。
+         */
+        void SetSseKeyGate(std::function<bool(const std::string&)> gate)
+        {
+            sse_key_gate_ = std::move(gate);
+        }
+
+        /**
+         * @brief 设置 SSE 会话注册完成回调（延迟注入）。
+         */
+        void SetSseOnRegistered(std::function<void(SseSessionBase&)> callback)
+        {
+            sse_on_registered_ = std::move(callback);
+        }
+
     private:
         void DoAccept()
         {
@@ -760,7 +800,9 @@ namespace Das::Http::Beast
                         self->stop_condition_,
                         self->hub_,
                         self->on_server_stop_,
-                        self->sse_hub_);
+                        self->sse_hub_,
+                        self->sse_key_gate_,
+                        self->sse_on_registered_);
                     detector->Detect();
 
                     // Continue accepting
@@ -842,6 +884,37 @@ namespace Das::Http::Beast
             if (listener_)
             {
                 listener_->SetSseHub(sse_hub_);
+            }
+        }
+
+        /**
+         * @brief 设置 SSE 订阅 key 门（延迟注入）。
+         *
+         * gate 对既无快照也无活跃上报者的 key 返回 false → 拒绝订阅，
+         * 落普通路由（events 路径无注册路由 → 404）；空 gate 放行。
+         * 同时传播到 Listener。
+         */
+        void SetSseKeyGate(std::function<bool(const std::string&)> gate)
+        {
+            sse_key_gate_ = std::move(gate);
+            if (listener_)
+            {
+                listener_->SetSseKeyGate(sse_key_gate_);
+            }
+        }
+
+        /**
+         * @brief 设置 SSE 会话注册完成回调（延迟注入）。
+         *
+         * 会话注册完成后调用（头写完 + hub Register 之后），供订阅建立
+         * 处补发快照重放。同时传播到 Listener。
+         */
+        void SetSseOnRegistered(std::function<void(SseSessionBase&)> callback)
+        {
+            sse_on_registered_ = std::move(callback);
+            if (listener_)
+            {
+                listener_->SetSseOnRegistered(sse_on_registered_);
             }
         }
 
@@ -939,13 +1012,15 @@ namespace Das::Http::Beast
         const Router& GetRouter() const { return *router_; }
 
     private:
-        std::shared_ptr<Router>          router_;
-        std::shared_ptr<NotificationHub> hub_;
-        std::shared_ptr<SseHub>          sse_hub_;
-        std::function<bool()>            stop_condition_;
-        boost::asio::io_context          ioc_;
-        std::shared_ptr<Listener>        listener_;
-        std::vector<std::thread>         threads_;
+        std::shared_ptr<Router>                 router_;
+        std::shared_ptr<NotificationHub>        hub_;
+        std::shared_ptr<SseHub>                 sse_hub_;
+        std::function<bool()>                   stop_condition_;
+        std::function<bool(const std::string&)> sse_key_gate_;
+        std::function<void(SseSessionBase&)>    sse_on_registered_;
+        boost::asio::io_context                 ioc_;
+        std::shared_ptr<Listener>               listener_;
+        std::vector<std::thread>                threads_;
     };
 
 } // namespace Das::Http::Beast
