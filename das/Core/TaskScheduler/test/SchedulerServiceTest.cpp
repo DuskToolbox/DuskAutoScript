@@ -1681,6 +1681,48 @@ void WriteFactoryPluginManifest(
     ofs << *Das::Utils::SerializeYyjsonValue(manifest, true);
 }
 
+// 在既有工厂清单的目标组件 definition 上覆写端口声明（inputs/outputs/
+// signals 探针）——避免为单一用例复制整套清单构造。definition 其余字段
+// （kind/componentGuid/config 等）保持 WriteFactoryPluginManifest 原样；
+// 探针片段对象的每个键整体替换 definition 的同名键。
+void InjectPortDeclarationsIntoFactoryManifest(
+    const std::filesystem::path& manifest_path,
+    std::string_view             component_guid,
+    std::string_view             port_declarations_json)
+{
+    std::ifstream     ifs(manifest_path);
+    const std::string manifest_text(
+        (std::istreambuf_iterator<char>(ifs)),
+        std::istreambuf_iterator<char>());
+    auto parsed = Das::Utils::ParseYyjsonFromString(manifest_text);
+    ASSERT_TRUE(parsed.has_value());
+    auto manifest_obj = parsed->as_object();
+    ASSERT_TRUE(manifest_obj.has_value());
+    auto task_components =
+        (*manifest_obj)[std::string_view("taskComponents")].as_object();
+    ASSERT_TRUE(task_components.has_value());
+    auto components =
+        (*task_components)[std::string_view("components")].as_object();
+    ASSERT_TRUE(components.has_value());
+    ASSERT_TRUE(components->contains(component_guid));
+    auto entry = (*components)[std::string(component_guid)].as_object();
+    ASSERT_TRUE(entry.has_value());
+    auto definition = (*entry)[std::string_view("definition")].as_object();
+    ASSERT_TRUE(definition.has_value());
+
+    auto fragment = Das::Utils::ParseYyjsonFromString(port_declarations_json);
+    ASSERT_TRUE(fragment.has_value());
+    auto fragment_obj = fragment->as_object();
+    ASSERT_TRUE(fragment_obj.has_value());
+    for (const auto& [key, value] : *fragment_obj)
+    {
+        (*definition)[key] = Das::Utils::CloneYyjsonValue(value);
+    }
+
+    std::ofstream ofs(manifest_path, std::ios::trunc);
+    ofs << Das::Utils::SerializeYyjsonValue(*parsed).value();
+}
+
 namespace
 {
 
@@ -4203,6 +4245,192 @@ TEST_F(
                 label);
         }
         EXPECT_TRUE(found) << "actionId missing from catalog: " << action_id;
+    }
+}
+
+// graph authoring 的 catalog 端口生产端全链：manifest definition 的独立
+// signals[] 声明（DasMaaPi 形状——条目只有 {id}）、端口级 label 回填、
+// 空 type 条目跳过（单条畸形不再进入通道），经真实调度器 → context →
+// DasGraphTask 会话 → Core 投影落到 GetDocument 的节点 ports[]（五键）。
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    GraphAuthoringCatalogProjectsSignalsAndPortLabels)
+{
+    WriteFactoryPluginManifest(
+        manifest_path_,
+        FactoryPluginGuidString,
+        FactoryTaskGuidString,
+        true,
+        "Cpp",
+        FactoryTaskComponentImplGuidString,
+        /*include_flow_components=*/false);
+    InjectPortDeclarationsIntoFactoryManifest(
+        manifest_path_,
+        FactoryTaskComponentImplGuidString,
+        R"json({
+            "inputs": [
+                {"id": "in", "type": "object"},
+                {"id": "bad_empty_type", "type": ""},
+                {"id": "labeled_in", "type": "bool", "label": "Labeled In"}
+            ],
+            "outputs": [
+                {"id": "out", "type": "array<string>"}
+            ],
+            "signals": [
+                {"id": "succeeded"},
+                {"id": "failed"},
+                {"id": "cancelled"}
+            ]
+        })json");
+    DeployRealPluginArtifacts(
+        "libDasGraphTask.dll",
+        "DasGraphTask.json",
+        /*force_ipc=*/true);
+
+    // graph 任务实例：properties 携带一个 componentRef 节点指向探针组件，
+    // 其静态端口面（inputs/outputs/signals）应投影到该节点的 ports[]。
+    {
+        yyjson::value task0(Das::Utils::MakeYyjsonObject());
+        (*task0.as_object())[std::string_view("id")] = 0;
+        (*task0.as_object())[std::string_view("taskGuid")] =
+            "F4A2C9D1-7B3E-4D8A-A15F-C2E86B4D91A3";
+        (*task0.as_object())[std::string_view("pluginGuid")] =
+            "C8A4B7D0-1E2F-3A5B-6C9D-7E8F0A1B2C3D";
+        (*task0.as_object())[std::string_view("nextExecutionTime")] =
+            static_cast<int64_t>(1);
+        yyjson::value properties(Das::Utils::MakeYyjsonObject());
+        auto          props_obj = properties.as_object();
+        (*props_obj)[std::string_view("documentId")] = "port-probe-graph";
+        (*props_obj)[std::string_view("version")] = 1;
+        yyjson::value nodes(Das::Utils::MakeYyjsonArray());
+        {
+            yyjson::value node(Das::Utils::MakeYyjsonObject());
+            (*node.as_object())[std::string_view("nodeId")] = "probe";
+            yyjson::value target(Das::Utils::MakeYyjsonObject());
+            (*target.as_object())[std::string_view("targetKind")] =
+                "componentRef";
+            yyjson::value component_ref(Das::Utils::MakeYyjsonObject());
+            (*component_ref.as_object())[std::string_view("kind")] =
+                "componentRef";
+            (*component_ref.as_object())[std::string_view("componentGuid")] =
+                std::string(FactoryTaskComponentImplGuidString);
+            (*component_ref.as_object())[std::string_view("pluginGuid")] =
+                std::string(FactoryPluginGuidString);
+            (*target.as_object())[std::string_view("componentRef")] =
+                std::move(component_ref);
+            (*node.as_object())[std::string_view("target")] = std::move(target);
+            (*node.as_object())[std::string_view("settings")] =
+                yyjson::value(Das::Utils::MakeYyjsonObject());
+            (*node.as_object())[std::string_view("dynamicPorts")] =
+                yyjson::value(Das::Utils::MakeYyjsonArray());
+            nodes.as_array()->emplace_back(std::move(node));
+        }
+        (*props_obj)[std::string_view("nodes")] = std::move(nodes);
+        (*props_obj)[std::string_view("edges")] =
+            yyjson::value(Das::Utils::MakeYyjsonArray());
+        (*props_obj)[std::string_view("graphInputs")] =
+            yyjson::value(Das::Utils::MakeYyjsonArray());
+        (*props_obj)[std::string_view("graphOutputs")] =
+            yyjson::value(Das::Utils::MakeYyjsonArray());
+        (*props_obj)[std::string_view("tags")] =
+            yyjson::value(Das::Utils::MakeYyjsonArray());
+        (*task0.as_object())[std::string_view("properties")] =
+            std::move(properties);
+        WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
+    }
+
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    const yyjson::value request(Das::Utils::MakeYyjsonObject());
+    auto result = scheduler_->GetTaskAuthoringDocument(0, request);
+    auto obj = result.as_object();
+    ASSERT_TRUE(obj.has_value());
+    ASSERT_TRUE(obj->contains(std::string_view("document")));
+    auto document = (*obj)[std::string_view("document")].as_object();
+    ASSERT_TRUE(document.has_value());
+    ASSERT_TRUE(document->contains(std::string_view("graph")));
+    auto graph = (*document)[std::string_view("graph")].as_object();
+    ASSERT_TRUE(graph.has_value());
+    ASSERT_TRUE(graph->contains(std::string_view("nodes")));
+    auto nodes = (*graph)[std::string_view("nodes")].as_array();
+    ASSERT_TRUE(nodes.has_value());
+    ASSERT_EQ(nodes->size(), 1u);
+    auto node_obj = (*nodes)[0].as_object();
+    ASSERT_TRUE(node_obj.has_value());
+    ASSERT_TRUE(node_obj->contains(std::string_view("ports")));
+    auto ports = (*node_obj)[std::string_view("ports")].as_array();
+    ASSERT_TRUE(ports.has_value());
+
+    // 端口查找替身：按 portId 定位并返回端口对象的克隆。
+    const auto port_of =
+        [&ports](std::string_view port_id) -> std::optional<yyjson::value>
+    {
+        for (const auto& port : *ports)
+        {
+            auto port_object = port.as_object();
+            if (!port_object)
+            {
+                continue;
+            }
+            auto id = (*port_object)[std::string_view("portId")].as_string();
+            if (id && *id == port_id)
+            {
+                return Das::Utils::CloneYyjsonValue(port);
+            }
+        }
+        return std::nullopt;
+    };
+    const auto string_field =
+        [](const yyjson::value& port_value, std::string_view key)
+    {
+        auto port_object = port_value.as_object();
+        if (!port_object)
+        {
+            return std::string{};
+        }
+        return std::string((*port_object)[key].as_string().value_or(""));
+    };
+
+    // 期望端口总数：inputs 2（空 type 条目被跳过）+ outputs 1 + signals 3。
+    ASSERT_EQ(ports->size(), 6u);
+
+    // inputs：方向 input；label 声明用之，缺失回退 portId。
+    const auto in_port = port_of("in");
+    ASSERT_TRUE(in_port.has_value());
+    EXPECT_EQ(string_field(*in_port, "direction"), "input");
+    EXPECT_EQ(string_field(*in_port, "portType"), "object");
+    EXPECT_EQ(string_field(*in_port, "displayLabel"), "in");
+    EXPECT_EQ(string_field(*in_port, "category"), "data");
+    const auto labeled_port = port_of("labeled_in");
+    ASSERT_TRUE(labeled_port.has_value());
+    EXPECT_EQ(string_field(*labeled_port, "displayLabel"), "Labeled In");
+    EXPECT_EQ(string_field(*labeled_port, "category"), "data");
+
+    // 空 type 的畸形条目不进入通道（不再产出空 portType 条目）。
+    EXPECT_FALSE(port_of("bad_empty_type").has_value());
+
+    // outputs：方向 output，displayLabel 回退 portId。
+    const auto out_port = port_of("out");
+    ASSERT_TRUE(out_port.has_value());
+    EXPECT_EQ(string_field(*out_port, "direction"), "output");
+    EXPECT_EQ(string_field(*out_port, "portType"), "array<string>");
+    EXPECT_EQ(string_field(*out_port, "displayLabel"), "out");
+    EXPECT_EQ(string_field(*out_port, "category"), "data");
+
+    // signals[]（DasMaaPi 形状：条目只有 {id}）：方向 output、portType 投影
+    // 为 signal、displayLabel 回退 portId、类别 execution。
+    for (const std::string_view signal_id :
+         {"succeeded", "failed", "cancelled"})
+    {
+        const auto signal_port = port_of(signal_id);
+        ASSERT_TRUE(signal_port.has_value()) << signal_id;
+        EXPECT_EQ(string_field(*signal_port, "direction"), "output")
+            << signal_id;
+        EXPECT_EQ(string_field(*signal_port, "portType"), "signal")
+            << signal_id;
+        EXPECT_EQ(string_field(*signal_port, "displayLabel"), signal_id);
+        EXPECT_EQ(string_field(*signal_port, "category"), "execution")
+            << signal_id;
     }
 }
 

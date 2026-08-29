@@ -12,6 +12,8 @@
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasStopToken.Implements.hpp>
 #include <gtest/gtest.h>
 
+#include "../src/DasGraphTaskAuthoringSession.h"
+
 #include <string>
 #include <string_view>
 
@@ -540,4 +542,30 @@ TEST(DasGraphTaskTest, AdapterDoDelegatesToComponentKernel)
     EXPECT_EQ(
         adapter.Do(nullptr, nullptr, plan_json.Get()),
         DAS_E_INVALID_POINTER);
+}
+
+// 会话构造携带畸形 actionCatalog（空 portType 条目）时：Core 的
+// SetActionCatalog 整包拒绝，接线层记录 WARN 后会话保持可用（空目录），
+// 构造与 GetDocument 均不得崩溃或中断——拒绝路径的失败分支回归锁。
+TEST(DasGraphTaskTest, AuthoringSessionSurvivesMalformedCatalogContext)
+{
+    const std::string context =
+        R"({"properties":{},"actionCatalog":[{"actionId":"{g1}","ports":[{"portId":"x","portType":"","direction":"input"}]}]})";
+
+    DasGraphTaskAuthoringSession           session{context};
+    DasPtr<Das::ExportInterface::IDasJson> request;
+    ASSERT_EQ(ParseDasJsonFromString("{}", request.Put()), DAS_S_OK);
+    ASSERT_NE(request.Get(), nullptr);
+    DasPtr<Das::ExportInterface::IDasJson> document;
+    EXPECT_EQ(session.GetDocument(request.Get(), document.Put()), DAS_S_OK);
+    ASSERT_NE(document.Get(), nullptr);
+
+    // 被拒的 catalog 不得投影：GetDocument 文档不带 actionCatalog 键。
+    DasPtr<IDasReadOnlyString> document_text;
+    ASSERT_EQ(document->ToString(0, document_text.Put()), DAS_S_OK);
+    const char* utf8 = nullptr;
+    ASSERT_EQ(document_text->GetUtf8(&utf8), DAS_S_OK);
+    ASSERT_NE(utf8, nullptr);
+    const std::string_view text{utf8};
+    EXPECT_EQ(text.find("actionCatalog"), std::string_view::npos);
 }
