@@ -123,6 +123,15 @@ namespace Contract
         std::string to_port_id;
     };
 
+    /// One entry of a moveGraphNodes batch: the node id plus its new
+    /// viewData coordinate pair.
+    struct GraphNodeMove
+    {
+        std::string node_id;
+        double      position_x = 0;
+        double      position_y = 0;
+    };
+
     /// One step in a linear formSequence view (D-84-13). The public type name
     /// is the full `FormSequenceItem`; the internal short alias
     /// (`SequenceItem`) may remain inside GraphRuntime C++ but never crosses
@@ -324,6 +333,14 @@ namespace Contract
 
         // connectGraphPorts / disconnectGraphPorts
         std::optional<GraphConnection> connection;
+
+        // removeGraphNodes (batch): node ids to delete plus optional extra
+        // connections whose endpoint nodes survive.
+        std::optional<std::vector<std::string>>     removed_node_ids;
+        std::optional<std::vector<GraphConnection>> removed_connections;
+
+        // moveGraphNodes (batch)
+        std::optional<std::vector<GraphNodeMove>> node_moves;
     };
 
     enum class ChangeErrorKind

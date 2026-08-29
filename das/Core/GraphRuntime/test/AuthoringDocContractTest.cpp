@@ -6,6 +6,8 @@
 
 #include <string>
 #include <string_view>
+#include <tuple>
+#include <vector>
 
 namespace
 {
@@ -1137,6 +1139,234 @@ namespace
         auto r = ApplyAuthoringChange(doc, set);
         ASSERT_TRUE(r.Ok()) << r.message;
         EXPECT_EQ(doc.version, 6);
+    }
+
+    // -----------------------------------------------------------------------
+    // removeGraphNodes / moveGraphNodes — batch primitives. One gesture =
+    // one message: validate-all-then-mutate atomicity (any reject leaves the
+    // store byte-identical), removeGraphNodes bumps the semantic revision
+    // exactly once, moveGraphNodes rides the viewData lightweight channel.
+    // -----------------------------------------------------------------------
+
+    AuthoringChange MakeRemoveGraphNodes(
+        const std::vector<std::string>&     node_ids,
+        const std::vector<GraphConnection>& connections = {})
+    {
+        AuthoringChange change;
+        change.kind = "removeGraphNodes";
+        change.removed_node_ids = node_ids;
+        change.removed_connections = connections;
+        return change;
+    }
+
+    AuthoringChange MakeMoveGraphNodes(
+        const std::vector<std::tuple<std::string, double, double>>& moves)
+    {
+        AuthoringChange change;
+        change.kind = "moveGraphNodes";
+        std::vector<GraphNodeMove> node_moves;
+        node_moves.reserve(moves.size());
+        for (const auto& [node_id, x, y] : moves)
+        {
+            node_moves.push_back(GraphNodeMove{node_id, x, y});
+        }
+        change.node_moves = std::move(node_moves);
+        return change;
+    }
+
+    TEST(
+        AuthoringDocContractTest,
+        GraphChange_RemoveGraphNodesDeletesBatchAtomically)
+    {
+        GraphDocumentDto doc;
+        doc.nodes.push_back(MakeNode("n1", "{g1}", 0.0));
+        doc.nodes.push_back(MakeNode("n2", "{g2}", 0.0));
+        doc.nodes.push_back(MakeNode("n3", "{g3}", 0.0));
+        doc.edges.push_back(MakeDataEdge("e1", "n1", "o", "n2", "i"));
+        doc.version = 5;
+        // Seed coordinates for the doomed nodes plus a survivor (the
+        // coordinate channel never bumps the revision).
+        ASSERT_TRUE(
+            ApplyAuthoringChange(doc, MakeMoveGraphNode("n1", 1.0, 2.0)).Ok());
+        ASSERT_TRUE(
+            ApplyAuthoringChange(doc, MakeMoveGraphNode("n2", 3.0, 4.0)).Ok());
+        ASSERT_TRUE(
+            ApplyAuthoringChange(doc, MakeMoveGraphNode("n3", 5.0, 6.0)).Ok());
+
+        auto r = ApplyAuthoringChange(doc, MakeRemoveGraphNodes({"n1", "n2"}));
+        ASSERT_TRUE(r.Ok()) << r.message;
+
+        // Both nodes are gone and the cascaded edge went with them.
+        ASSERT_EQ(doc.nodes.size(), 1u);
+        EXPECT_EQ(doc.nodes[0].node_id, "n3");
+        EXPECT_TRUE(doc.edges.empty());
+        // Orphan coordinate entries are cleaned with their nodes.
+        EXPECT_FALSE(ViewPositionOf(doc, "n1", "x").has_value());
+        EXPECT_FALSE(ViewPositionOf(doc, "n2", "x").has_value());
+        ASSERT_TRUE(ViewPositionOf(doc, "n3", "x").has_value());
+        EXPECT_DOUBLE_EQ(*ViewPositionOf(doc, "n3", "x"), 5.0);
+        // One message bumps the semantic revision exactly once (not once
+        // per node).
+        EXPECT_EQ(doc.version, 6);
+    }
+
+    TEST(
+        AuthoringDocContractTest,
+        GraphChange_RemoveGraphNodesRejectsUnknownIdAtomically)
+    {
+        GraphDocumentDto doc;
+        doc.nodes.push_back(MakeNode("n1", "{g1}", 0.0));
+        doc.nodes.push_back(MakeNode("n2", "{g2}", 0.0));
+        doc.edges.push_back(MakeDataEdge("e1", "n1", "o", "n2", "i"));
+        doc.version = 5;
+        ASSERT_TRUE(
+            ApplyAuthoringChange(doc, MakeMoveGraphNode("n1", 1.0, 2.0)).Ok());
+
+        auto r =
+            ApplyAuthoringChange(doc, MakeRemoveGraphNodes({"n1", "ghost"}));
+        EXPECT_FALSE(r.Ok());
+        EXPECT_EQ(r.error_kind, ChangeErrorKind::NodeNotFound);
+
+        // The whole batch is rejected — the store is byte-identical.
+        EXPECT_EQ(doc.version, 5);
+        ASSERT_EQ(doc.nodes.size(), 2u);
+        ASSERT_EQ(doc.edges.size(), 1u);
+        ASSERT_TRUE(ViewPositionOf(doc, "n1", "x").has_value());
+    }
+
+    TEST(
+        AuthoringDocContractTest,
+        GraphChange_RemoveGraphNodesDropsListedConnections)
+    {
+        GraphDocumentDto doc;
+        doc.nodes.push_back(MakeNode("n1", "{g1}", 0.0));
+        doc.nodes.push_back(MakeNode("n2", "{g2}", 0.0));
+        doc.nodes.push_back(MakeNode("n3", "{g3}", 0.0));
+        doc.edges.push_back(MakeDataEdge("e1", "n1", "o", "n2", "i"));
+        doc.edges.push_back(MakeDataEdge("e2", "n2", "o", "n3", "i"));
+        doc.version = 3;
+
+        auto r = ApplyAuthoringChange(
+            doc,
+            MakeRemoveGraphNodes({}, {GraphConnection{"n1", "o", "n2", "i"}}));
+        ASSERT_TRUE(r.Ok()) << r.message;
+
+        // Only the listed connection is dropped; the endpoint nodes survive.
+        ASSERT_EQ(doc.nodes.size(), 3u);
+        ASSERT_EQ(doc.edges.size(), 1u);
+        EXPECT_EQ(doc.edges[0].edge_id, "e2");
+        EXPECT_EQ(doc.version, 4);
+    }
+
+    TEST(
+        AuthoringDocContractTest,
+        GraphChange_RemoveGraphNodesRejectsUnknownConnectionAtomically)
+    {
+        GraphDocumentDto doc;
+        doc.nodes.push_back(MakeNode("n1", "{g1}", 0.0));
+        doc.nodes.push_back(MakeNode("n2", "{g2}", 0.0));
+        doc.edges.push_back(MakeDataEdge("e1", "n1", "o", "n2", "i"));
+        doc.version = 3;
+
+        auto r = ApplyAuthoringChange(
+            doc,
+            MakeRemoveGraphNodes(
+                {"n1"},
+                {GraphConnection{"n1", "o", "n2", "WRONG_PORT"}}));
+        EXPECT_FALSE(r.Ok());
+        EXPECT_EQ(r.error_kind, ChangeErrorKind::EdgeNotFound);
+
+        // The whole batch is rejected — node deletion included.
+        EXPECT_EQ(doc.version, 3);
+        ASSERT_EQ(doc.nodes.size(), 2u);
+        ASSERT_EQ(doc.edges.size(), 1u);
+    }
+
+    TEST(
+        AuthoringDocContractTest,
+        GraphChange_MoveGraphNodesWritesCoordinatesWithoutBump)
+    {
+        GraphDocumentDto doc;
+        doc.nodes.push_back(MakeNode("n1", "{g1}", 0.0));
+        doc.nodes.push_back(MakeNode("n2", "{g2}", 0.0));
+        doc.version = 9;
+
+        auto r = ApplyAuthoringChange(
+            doc,
+            MakeMoveGraphNodes({{"n1", 11.5, 12.0}, {"n2", 21.0, 22.25}}));
+        ASSERT_TRUE(r.Ok()) << r.message;
+
+        ASSERT_TRUE(ViewPositionOf(doc, "n1", "x").has_value());
+        EXPECT_DOUBLE_EQ(*ViewPositionOf(doc, "n1", "x"), 11.5);
+        ASSERT_TRUE(ViewPositionOf(doc, "n1", "y").has_value());
+        EXPECT_DOUBLE_EQ(*ViewPositionOf(doc, "n1", "y"), 12.0);
+        ASSERT_TRUE(ViewPositionOf(doc, "n2", "x").has_value());
+        EXPECT_DOUBLE_EQ(*ViewPositionOf(doc, "n2", "x"), 21.0);
+        ASSERT_TRUE(ViewPositionOf(doc, "n2", "y").has_value());
+        EXPECT_DOUBLE_EQ(*ViewPositionOf(doc, "n2", "y"), 22.25);
+        // The lightweight coordinate channel leaves the revision untouched.
+        EXPECT_EQ(doc.version, 9);
+    }
+
+    TEST(
+        AuthoringDocContractTest,
+        GraphChange_MoveGraphNodesRejectsUnknownIdAtomically)
+    {
+        GraphDocumentDto doc;
+        doc.nodes.push_back(MakeNode("n1", "{g1}", 0.0));
+        doc.nodes.push_back(MakeNode("n2", "{g2}", 0.0));
+        doc.version = 7;
+
+        auto r = ApplyAuthoringChange(
+            doc,
+            MakeMoveGraphNodes({{"n1", 1.0, 2.0}, {"ghost", 3.0, 4.0}}));
+        EXPECT_FALSE(r.Ok());
+        EXPECT_EQ(r.error_kind, ChangeErrorKind::NodeNotFound);
+
+        // Zero coordinate writes leaked through the rejected batch.
+        EXPECT_TRUE(doc.view_data.is_null());
+        EXPECT_FALSE(ViewPositionOf(doc, "n1", "x").has_value());
+        EXPECT_EQ(doc.version, 7);
+    }
+
+    // The singular move must reject unknown nodes instead of writing
+    // orphan coordinates into the persisted viewData partition.
+    TEST(AuthoringDocContractTest, GraphChange_MoveGraphNodeRejectsUnknownNode)
+    {
+        GraphDocumentDto doc;
+        doc.nodes.push_back(MakeNode("n1", "{g1}", 0.0));
+        doc.version = 5;
+
+        auto r =
+            ApplyAuthoringChange(doc, MakeMoveGraphNode("ghost", 1.0, 2.0));
+        EXPECT_FALSE(r.Ok());
+        EXPECT_EQ(r.error_kind, ChangeErrorKind::NodeNotFound);
+        EXPECT_TRUE(doc.view_data.is_null());
+        EXPECT_EQ(doc.version, 5);
+    }
+
+    // Node removal must clean the orphan coordinate entry so stale
+    // positions never ride along into persistence.
+    TEST(AuthoringDocContractTest, GraphChange_RemoveGraphNodeCleansPosition)
+    {
+        GraphDocumentDto doc;
+        doc.nodes.push_back(MakeNode("n1", "{g1}", 0.0));
+        doc.nodes.push_back(MakeNode("n2", "{g2}", 0.0));
+        ASSERT_TRUE(
+            ApplyAuthoringChange(doc, MakeMoveGraphNode("n1", 1.0, 2.0)).Ok());
+        ASSERT_TRUE(
+            ApplyAuthoringChange(doc, MakeMoveGraphNode("n2", 3.0, 4.0)).Ok());
+
+        AuthoringChange remove;
+        remove.kind = "removeGraphNode";
+        remove.item_or_node_id = "n1";
+        auto r = ApplyAuthoringChange(doc, remove);
+        ASSERT_TRUE(r.Ok()) << r.message;
+
+        ASSERT_EQ(doc.nodes.size(), 1u);
+        EXPECT_FALSE(ViewPositionOf(doc, "n1", "x").has_value());
+        ASSERT_TRUE(ViewPositionOf(doc, "n2", "x").has_value());
+        EXPECT_DOUBLE_EQ(*ViewPositionOf(doc, "n2", "x"), 3.0);
     }
 
     // -----------------------------------------------------------------------
