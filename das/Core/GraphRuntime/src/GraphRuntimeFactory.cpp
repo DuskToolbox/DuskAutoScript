@@ -424,8 +424,7 @@ namespace
                         : std::string_view("sequence");
                 if (seq_obj->contains(item_list_key))
                 {
-                    if (auto arr =
-                            (*seq_obj)[item_list_key].as_array())
+                    if (auto arr = (*seq_obj)[item_list_key].as_array())
                     {
                         for (const auto& iv : *arr)
                         {

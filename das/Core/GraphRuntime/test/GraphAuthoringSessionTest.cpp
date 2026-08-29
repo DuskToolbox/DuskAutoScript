@@ -172,6 +172,55 @@ namespace
         EXPECT_EQ(json.find("\"settings\""), std::string::npos);
     }
 
+    // Seeding accepts the current contract doc shape: formSequence.items[]
+    // (what SerializeDocument emits). The legacy sequence[] alias stays
+    // accepted as the fallback — neither must seed an empty document.
+    TEST(GraphAuthoringSessionTest, FormSequenceSeedAcceptsContractItemsShape)
+    {
+        constexpr std::string_view contract_doc = R"({
+            "contractVersion": 1,
+            "viewKind": "formSequence",
+            "revision": 2,
+            "formSequence": {
+                "items": [
+                    {"id": "x", "componentGuid": "{gx}", "targetKind": "componentRef"},
+                    {"id": "y", "componentGuid": "{gy}", "targetKind": "componentRef"}
+                ]
+            }
+        })";
+        const SessionHandle        items_seeded{
+            std::string(R"({"properties":)") + std::string(contract_doc)
+            + "}"};
+        auto items_json = Compact(
+            Das::Utils::SerializeYyjsonValue(DocumentOf(items_seeded.p))
+                .value_or(""));
+        EXPECT_NE(
+            items_json.find("\"viewKind\":\"formSequence\""),
+            std::string::npos);
+        EXPECT_NE(items_json.find("\"id\":\"x\""), std::string::npos);
+        EXPECT_NE(items_json.find("\"id\":\"y\""), std::string::npos);
+
+        constexpr std::string_view legacy_doc = R"({
+            "contractVersion": 1,
+            "viewKind": "formSequence",
+            "revision": 2,
+            "formSequence": {
+                "sequence": [
+                    {"id": "x", "componentGuid": "{gx}"},
+                    {"id": "y", "componentGuid": "{gy}"}
+                ]
+            }
+        })";
+        const SessionHandle        legacy_seeded{
+            std::string(R"({"properties":)") + std::string(legacy_doc)
+            + "}"};
+        auto legacy_json = Compact(
+            Das::Utils::SerializeYyjsonValue(DocumentOf(legacy_seeded.p))
+                .value_or(""));
+        EXPECT_NE(legacy_json.find("\"id\":\"x\""), std::string::npos);
+        EXPECT_NE(legacy_json.find("\"id\":\"y\""), std::string::npos);
+    }
+
     TEST(GraphAuthoringSessionTest, GraphModeApplyChangeAddGraphNode)
     {
         const SessionHandle s{""}; // graph mode

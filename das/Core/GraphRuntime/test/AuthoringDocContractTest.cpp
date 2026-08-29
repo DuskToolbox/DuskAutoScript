@@ -923,6 +923,59 @@ namespace
         EXPECT_EQ(fs_json.find("\"signal\""), std::string::npos);
     }
 
+    // Catalog groups' actionIds are built element by element through the
+    // (string, copy_string) primitive path: an action id carrying quotes,
+    // backslashes or control characters must survive serialization as
+    // properly escaped JSON instead of corrupting the document (the old
+    // hand-built JSON literal path threw read_error and took the whole
+    // Get/Apply pipeline down with it).
+    TEST(AuthoringDocContractTest, ActionCatalogGroupsWithHostileIdsSerialize)
+    {
+        GraphDocumentDto doc;
+        doc.nodes.push_back(MakeNode("n1", "{g1}", 0.0));
+
+        ActionCatalog      catalog;
+        ActionCatalogEntry entry;
+        entry.action_id = "{g1}";
+        entry.label = "das.flow.delay";
+        catalog.entries.push_back(entry);
+        ActionCatalogGroup group;
+        group.id = "g1";
+        group.label = "Flow";
+        group.action_ids = {
+            "{g1}",
+            "hostile\"quote\\and\\slash",
+            "with\nnewline",
+        };
+        catalog.groups.push_back(group);
+
+        // Must not throw; the escaped id round-trips through a re-parse.
+        const auto json = ToJsonWithCatalog(doc, catalog);
+        EXPECT_NE(json.find("\"actionIds\""), std::string::npos);
+        const auto parsed = yyjson::read(json);
+        auto       root = parsed.as_object();
+        ASSERT_TRUE(root.has_value());
+        ASSERT_TRUE(root->contains(std::string_view("actionCatalog")));
+        auto action_catalog =
+            (*root)[std::string_view("actionCatalog")].as_object();
+        ASSERT_TRUE(action_catalog.has_value());
+        ASSERT_TRUE(action_catalog->contains(std::string_view("groups")));
+        auto groups = (*action_catalog)[std::string_view("groups")].as_array();
+        ASSERT_TRUE(groups.has_value());
+        ASSERT_EQ(groups->size(), 1u);
+        auto group_obj = (*groups)[0].as_object();
+        ASSERT_TRUE(group_obj.has_value());
+        auto ids = (*group_obj)[std::string_view("actionIds")].as_array();
+        ASSERT_TRUE(ids.has_value());
+        ASSERT_EQ(ids->size(), 3u);
+        auto hostile = (*ids)[1].as_string();
+        ASSERT_TRUE(hostile.has_value());
+        EXPECT_EQ(*hostile, std::string_view("hostile\"quote\\and\\slash"));
+        auto newline_id = (*ids)[2].as_string();
+        ASSERT_TRUE(newline_id.has_value());
+        EXPECT_EQ(*newline_id, std::string_view("with\nnewline"));
+    }
+
     // -----------------------------------------------------------------------
     // DAS-81 compliance: componentGuid (no `type`), entryRef emit, fields[]
     // -----------------------------------------------------------------------
