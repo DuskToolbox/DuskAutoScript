@@ -219,6 +219,40 @@ TEST(GraphDocumentDtoTest, GraphNodeDtoRoundTrip)
     EXPECT_EQ(round_tripped.dynamic_ports[0].port_id, "output_result");
 }
 
+// The store display label survives the aggregate serialization round-trip,
+// and a node persisted before the label field existed (key absent)
+// deserializes with the label disengaged instead of throwing — the caster
+// guards every field read with contains().
+TEST(GraphDocumentDtoTest, GraphNodeDtoLabelRoundTripAndMissingKeySafe)
+{
+    GraphNodeDto node;
+    node.node_id = "node_1";
+    node.label = "我的延迟节点";
+
+    auto serialized = yyjson::object(node);
+    ASSERT_TRUE(serialized.contains(std::string_view("label")));
+
+    GraphNodeDto round_tripped;
+    SCOPED_TRACE(std::string(serialized.write()));
+    ASSERT_NO_THROW(round_tripped = yyjson::cast<GraphNodeDto>(serialized));
+    ASSERT_TRUE(round_tripped.label.has_value());
+    EXPECT_EQ(*round_tripped.label, "我的延迟节点");
+
+    // A pre-label document carries no "label" key at all — the caster must
+    // keep the field disengaged rather than fail the whole node.
+    const auto legacy = Das::Utils::ParseYyjsonFromString(
+        std::string_view(
+            R"({"nodeId":"legacy_node","target":{"targetKind":"componentRef"},)"
+            R"("settings":{},"dynamicPorts":[]})"));
+    ASSERT_TRUE(legacy.has_value());
+    GraphNodeDto legacy_node;
+    SCOPED_TRACE(
+        Das::Utils::SerializeYyjsonValue(*legacy).value_or(std::string{}));
+    ASSERT_NO_THROW(legacy_node = yyjson::cast<GraphNodeDto>(*legacy));
+    EXPECT_EQ(legacy_node.node_id, "legacy_node");
+    EXPECT_FALSE(legacy_node.label.has_value());
+}
+
 // ---------------------------------------------------------------------------
 // GraphEdgeDto
 // ---------------------------------------------------------------------------

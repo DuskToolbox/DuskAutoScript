@@ -901,6 +901,60 @@ TEST(TaskAuthoringContractTest, EntryRefOnlyEntryIdAllowed)
     EXPECT_EQ(r2.error_kind, "unknownField");
 }
 
+// 节点呈现元数据三键（label 用户/默认显示名、description、icon——自
+// actionCatalog 条目合流）进 GraphNode 键集：可选字符串（icon 走与条目
+// 相同的绝对路径/http(s) 校验），未知键仍然整体拒绝。
+TEST(TaskAuthoringContractTest, GraphNodePresentationKeysAccepted)
+{
+    auto valid = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "graph",
+        "revision": 0,
+        "graph": {"nodes": [{
+            "id": "n-1",
+            "label": "我的延迟节点",
+            "description": "Delays the signal chain",
+            "icon": "https://example.com/delay.png",
+            "ports": []
+        }]}
+    })json");
+    auto r1 = Das::Core::TaskScheduler::ValidateAuthoringDocument(valid);
+    EXPECT_TRUE(r1.valid) << r1.message;
+
+    auto label_not_string = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "graph",
+        "revision": 0,
+        "graph": {"nodes": [{"id": "n", "label": 5}]}
+    })json");
+    auto r2 =
+        Das::Core::TaskScheduler::ValidateAuthoringDocument(label_not_string);
+    EXPECT_FALSE(r2.valid);
+    EXPECT_EQ(r2.error_kind, "invalidLabel");
+
+    auto description_not_string = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "graph",
+        "revision": 0,
+        "graph": {"nodes": [{"id": "n", "description": true}]}
+    })json");
+    auto r3 = Das::Core::TaskScheduler::ValidateAuthoringDocument(
+        description_not_string);
+    EXPECT_FALSE(r3.valid);
+    EXPECT_EQ(r3.error_kind, "invalidDescription");
+
+    auto relative_icon = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "graph",
+        "revision": 0,
+        "graph": {"nodes": [{"id": "n", "icon": "icons/delay.png"}]}
+    })json");
+    auto r4 =
+        Das::Core::TaskScheduler::ValidateAuthoringDocument(relative_icon);
+    EXPECT_FALSE(r4.valid);
+    EXPECT_EQ(r4.error_kind, "invalidIcon");
+}
+
 TEST(TaskAuthoringContractTest, ActionCatalogStrictShape)
 {
     auto valid = ParseJson(R"json({
@@ -1918,6 +1972,57 @@ TEST(TaskAuthoringContractTest, SchemaJsonGraphNodePortCategoryLocked)
     }
     const std::set<std::string> expected_category{"execution", "data"};
     EXPECT_EQ(category_values, expected_category);
+}
+
+// schema GraphNode $def 对账：label/description/icon 三个可选呈现键与
+// C++ ValidateGraphNode 键集扩展逐项一致（icon 复用 IconString 引用），
+// 防 C++/schema/前端三方漂移。
+TEST(TaskAuthoringContractTest, SchemaJsonGraphNodePresentationKeysLocked)
+{
+    const auto schema_path = ResolveSchemaJsonPath();
+    ASSERT_TRUE(schema_path.has_value())
+        << "TaskAuthoringHttpContract.schema.json not found above "
+        << std::filesystem::current_path();
+    const auto schema_text = ReadFileText(*schema_path);
+    ASSERT_TRUE(schema_text.has_value());
+
+    auto schema = ParseJson(*schema_text);
+    auto schema_object = schema.as_object();
+    ASSERT_TRUE(schema_object.has_value());
+    auto defs_value = (*schema_object)[std::string_view("$defs")];
+    auto defs_object = defs_value.as_object();
+    ASSERT_TRUE(defs_object.has_value());
+
+    auto node_def = (*defs_object)[std::string_view("GraphNode")].as_object();
+    ASSERT_TRUE(node_def.has_value());
+
+    // The presentation keys stay optional: "id" alone remains the required
+    // set of a GraphNode.
+    auto required_array = (*node_def)[std::string_view("required")].as_array();
+    ASSERT_TRUE(required_array.has_value());
+    ASSERT_EQ(required_array->size(), 1u);
+    EXPECT_EQ(
+        (*required_array)[0].as_string().value_or(""),
+        std::string_view("id"));
+
+    auto properties = (*node_def)[std::string_view("properties")].as_object();
+    ASSERT_TRUE(properties.has_value());
+    for (const std::string_view key : {"label", "description"})
+    {
+        ASSERT_TRUE(properties->contains(key)) << key;
+        auto key_definition = (*properties)[key].as_object();
+        ASSERT_TRUE(key_definition.has_value()) << key;
+        EXPECT_EQ(
+            (*key_definition)[std::string_view("type")].as_string().value(),
+            "string")
+            << key;
+    }
+    ASSERT_TRUE(properties->contains(std::string_view("icon")));
+    auto icon_definition = (*properties)[std::string_view("icon")].as_object();
+    ASSERT_TRUE(icon_definition.has_value());
+    EXPECT_EQ(
+        (*icon_definition)[std::string_view("$ref")].as_string().value(),
+        "#/$defs/IconString");
 }
 
 TEST(TaskAuthoringContractTest, ChangeRejectsOpWrapper)

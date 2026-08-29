@@ -108,12 +108,19 @@ namespace Contract
     /// component (carried on the actionCatalog channel, direction by
     /// inputs/outputs list membership) plus the document's dynamic_ports
     /// (direction derived from the port's edge role in the document).
+    /// label/description/icon are presentation metadata: label follows the
+    /// store-user-label > catalog-default-name priority chain (empty when
+    /// neither source provided one — clients fall back to the node id);
+    /// description/icon merge from the matching catalog entry only.
     struct GraphNode
     {
         std::string                  id;
+        std::string                  label;
         std::string                  component_guid;
         std::string                  target_kind{"componentRef"};
         std::optional<EntryRef>      entry_ref;
+        std::optional<std::string>   description;
+        std::optional<std::string>   icon;
         std::vector<FieldDescriptor> fields;
         std::vector<GraphNodePort>   ports;
     };

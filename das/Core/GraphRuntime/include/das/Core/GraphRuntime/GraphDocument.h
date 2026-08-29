@@ -53,6 +53,12 @@ namespace Dto
         GraphNodeTargetDto                  target;
         yyjson::value                       settings;
         std::vector<GraphPortDefinitionDto> dynamic_ports;
+        // User-authored display label. Pure presentation data — never a
+        // node address, binding key or edge endpoint. Disengaged = never
+        // renamed; the wire projection then falls back to the catalog
+        // default name (componentGuid == actionId merge) before the client
+        // side falls back to the node id.
+        std::optional<std::string> label;
     };
 
     struct GraphEdgeDto
@@ -125,8 +131,8 @@ DAS_CORE_GRAPHRUNTIME_NS_END
 DAS_GRAPHRUNTIME_DTO_CASTER(GraphPortDefinitionDto);
 DAS_GRAPHRUNTIME_DTO_CASTER(ComponentRefDto);
 DAS_GRAPHRUNTIME_DTO_CASTER(EntryRefDto);
-// GraphNodeTargetDto and GraphDocumentDto omitted — custom casters below.
-DAS_GRAPHRUNTIME_DTO_CASTER(GraphNodeDto);
+// GraphNodeTargetDto, GraphNodeDto and GraphDocumentDto omitted — custom
+// casters below.
 DAS_GRAPHRUNTIME_DTO_CASTER(GraphEdgeDto);
 
 #undef DAS_GRAPHRUNTIME_DTO_CASTER
@@ -186,6 +192,74 @@ struct yyjson::caster<Das::Core::GraphRuntime::Dto::GraphNodeTargetDto>
         }
 
         return target;
+    }
+};
+
+// ---------------------------------------------------------------------------
+// Custom caster for GraphNodeDto
+// ---------------------------------------------------------------------------
+// Same rationale as GraphDocumentDto below: the aggregate default_caster
+// resolves every field key through the strict object operator[], which
+// throws out_of_range when the key is absent — a node persisted before the
+// label field existed would fail to deserialize once label joined the
+// aggregate. Guards every read with contains() so absent keys keep the
+// field's default value. Serialization (to_json) stays on the aggregate
+// reflection + field_name_rule path, matching the split above.
+// ---------------------------------------------------------------------------
+template <>
+struct yyjson::caster<Das::Core::GraphRuntime::Dto::GraphNodeDto>
+{
+    using Dto = Das::Core::GraphRuntime::Dto::GraphNodeDto;
+
+    template <yyjson::json_value Json>
+    static Dto from_json(const Json& json)
+    {
+        auto object = json.as_object();
+        if (!object.has_value())
+        {
+            throw yyjson::bad_cast(
+                "GraphNodeDto is not constructible from non-object JSON");
+        }
+
+        Dto node;
+
+        if (object->contains(std::string_view("nodeId")))
+        {
+            if (auto v = (*object)[std::string_view("nodeId")].as_string())
+            {
+                node.node_id = std::string(*v);
+            }
+        }
+        if (object->contains(std::string_view("target")))
+        {
+            node.target =
+                yyjson::cast<Das::Core::GraphRuntime::Dto::GraphNodeTargetDto>(
+                    (*object)[std::string_view("target")]);
+        }
+        if (object->contains(std::string_view("settings")))
+        {
+            node.settings = Das::Utils::CloneYyjsonValue(
+                (*object)[std::string_view("settings")]);
+        }
+        if (object->contains(std::string_view("dynamicPorts")))
+        {
+            node.dynamic_ports = yyjson::cast<std::vector<
+                Das::Core::GraphRuntime::Dto::GraphPortDefinitionDto>>(
+                (*object)[std::string_view("dynamicPorts")]);
+        }
+        if (object->contains(std::string_view("label")))
+        {
+            const auto& label_value = (*object)[std::string_view("label")];
+            if (!label_value.is_null())
+            {
+                if (auto label = label_value.as_string())
+                {
+                    node.label = std::string(*label);
+                }
+            }
+        }
+
+        return node;
     }
 };
 

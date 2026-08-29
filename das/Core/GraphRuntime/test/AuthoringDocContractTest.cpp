@@ -71,6 +71,16 @@ namespace
         return str.value_or(std::string{});
     }
 
+    /// Catalog-aware variant of ToJson for the merge projections.
+    std::string ToJsonWithCatalog(
+        const Dto::GraphDocumentDto&        doc,
+        const std::optional<ActionCatalog>& catalog)
+    {
+        auto v = Contract::SerializeDocument(doc, catalog);
+        auto str = Das::Utils::SerializeYyjsonValue(v);
+        return str.value_or(std::string{});
+    }
+
     GraphPortDefinitionDto MakePortDef(
         std::string_view id,
         std::string_view type,
@@ -98,6 +108,23 @@ namespace
         edge.target_port_id = std::string(to_port);
         edge.edge_type = "data";
         return edge;
+    }
+
+    GraphNodeDto MakeEntryRefNode(
+        std::string_view id,
+        int64_t          entry_id,
+        int64_t          expected_rev,
+        std::string_view fingerprint)
+    {
+        GraphNodeDto node;
+        node.node_id = std::string(id);
+        node.target.target_kind = "entryRef";
+        node.target.entry_ref = EntryRefDto{
+            "entryRef",
+            entry_id,
+            expected_rev,
+            std::string(fingerprint)};
+        return node;
     }
 
     // -----------------------------------------------------------------------
@@ -425,6 +452,127 @@ namespace
     }
 
     // -----------------------------------------------------------------------
+    // Node display-name projection — priority chain: store user label >
+    // catalog entry merge (componentGuid == actionId, entry label carries
+    // the manifest kind default name) > (client-side) node id. description/
+    // icon merge from the matching catalog entry only.
+    // -----------------------------------------------------------------------
+
+    TEST(AuthoringDocContractTest, LabelProjection_CatalogDefaultNameFallback)
+    {
+        GraphDocumentDto doc;
+        doc.nodes.push_back(MakeNode("n1", "{g1}", 0.0)); // store label unset
+
+        ActionCatalog      catalog;
+        ActionCatalogEntry entry;
+        entry.action_id = "{g1}";
+        entry.label = "das.flow.delay";
+        catalog.entries.push_back(entry);
+
+        const auto out = ToAuthoringDocument(doc, catalog);
+        ASSERT_EQ(out.graph->nodes.size(), 1u);
+        // The unnamed node follows the catalog default name (the manifest
+        // kind) so catalog renames propagate to never-renamed nodes.
+        EXPECT_EQ(out.graph->nodes[0].label, "das.flow.delay");
+
+        const auto json = ToJsonWithCatalog(doc, catalog);
+        EXPECT_NE(json.find("\"label\":\"das.flow.delay\""), std::string::npos);
+    }
+
+    TEST(AuthoringDocContractTest, LabelProjection_StoreLabelOverridesCatalog)
+    {
+        GraphDocumentDto doc;
+        auto             n1 = MakeNode("n1", "{g1}", 0.0);
+        n1.label = "我的延迟";
+        doc.nodes.push_back(n1);
+
+        ActionCatalog      catalog;
+        ActionCatalogEntry entry;
+        entry.action_id = "{g1}";
+        entry.label = "das.flow.delay";
+        catalog.entries.push_back(entry);
+
+        const auto out = ToAuthoringDocument(doc, catalog);
+        ASSERT_EQ(out.graph->nodes.size(), 1u);
+        // The store user label wins over the catalog default name.
+        EXPECT_EQ(out.graph->nodes[0].label, "我的延迟");
+
+        const auto json = ToJsonWithCatalog(doc, catalog);
+        EXPECT_NE(json.find("\"label\":\"我的延迟\""), std::string::npos);
+        EXPECT_EQ(json.find("\"label\":\"das.flow.delay\""), std::string::npos);
+    }
+
+    TEST(AuthoringDocContractTest, LabelProjection_NoSourceOmitsKey)
+    {
+        GraphDocumentDto doc;
+        // componentRef node with no catalog match + no store label...
+        doc.nodes.push_back(MakeNode("n1", "{g1}", 0.0));
+        // ...and an entryRef node (no catalog match by construction).
+        doc.nodes.push_back(MakeEntryRefNode("sub", 42, 3, "fp-sub"));
+
+        ActionCatalog      catalog;
+        ActionCatalogEntry entry;
+        entry.action_id = "{other}";
+        entry.label = "unrelated";
+        catalog.entries.push_back(entry);
+
+        const auto value = SerializeDocument(doc, catalog);
+        const auto root = value.as_object();
+        ASSERT_TRUE(root.has_value());
+        const auto graph = (*root)[std::string_view("graph")].as_object();
+        ASSERT_TRUE(graph.has_value());
+        const auto nodes = (*graph)[std::string_view("nodes")].as_array();
+        ASSERT_TRUE(nodes.has_value());
+        ASSERT_EQ(nodes->size(), 2u);
+        for (const auto& node : *nodes)
+        {
+            auto node_obj = node.as_object();
+            ASSERT_TRUE(node_obj.has_value());
+            // No empty-string label on the wire — the client falls back to
+            // the node id itself.
+            EXPECT_FALSE(node_obj->contains(std::string_view("label")));
+        }
+
+        const auto out = ToAuthoringDocument(doc, catalog);
+        EXPECT_TRUE(out.graph->nodes[0].label.empty());
+        EXPECT_TRUE(out.graph->nodes[1].label.empty());
+    }
+
+    TEST(AuthoringDocContractTest, LabelProjection_DescriptionIconFromCatalog)
+    {
+        GraphDocumentDto doc;
+        auto             n1 = MakeNode("n1", "{g1}", 0.0);
+        n1.label = "用户名"; // store label engaged — metadata still merges
+        doc.nodes.push_back(n1);
+        doc.nodes.push_back(MakeNode("n2", "{g2}", 0.0)); // no catalog match
+
+        ActionCatalog      catalog;
+        ActionCatalogEntry entry;
+        entry.action_id = "{g1}";
+        entry.label = "das.flow.delay";
+        entry.description = "Delays the signal chain";
+        entry.icon = "https://example.com/delay.png";
+        catalog.entries.push_back(entry);
+
+        const auto out = ToAuthoringDocument(doc, catalog);
+        ASSERT_EQ(out.graph->nodes.size(), 2u);
+        ASSERT_TRUE(out.graph->nodes[0].description.has_value());
+        EXPECT_EQ(*out.graph->nodes[0].description, "Delays the signal chain");
+        ASSERT_TRUE(out.graph->nodes[0].icon.has_value());
+        EXPECT_EQ(*out.graph->nodes[0].icon, "https://example.com/delay.png");
+        EXPECT_FALSE(out.graph->nodes[1].description.has_value());
+        EXPECT_FALSE(out.graph->nodes[1].icon.has_value());
+
+        const auto json = ToJsonWithCatalog(doc, catalog);
+        EXPECT_NE(
+            json.find("\"description\":\"Delays the signal chain\""),
+            std::string::npos);
+        EXPECT_NE(
+            json.find("\"icon\":\"https://example.com/delay.png\""),
+            std::string::npos);
+    }
+
+    // -----------------------------------------------------------------------
     // ToAuthoringDocument — formSequence mode (linear tag)
     // -----------------------------------------------------------------------
 
@@ -566,23 +714,6 @@ namespace
     // -----------------------------------------------------------------------
     // DAS-81 compliance: componentGuid (no `type`), entryRef emit, fields[]
     // -----------------------------------------------------------------------
-
-    GraphNodeDto MakeEntryRefNode(
-        std::string_view id,
-        int64_t          entry_id,
-        int64_t          expected_rev,
-        std::string_view fingerprint)
-    {
-        GraphNodeDto node;
-        node.node_id = std::string(id);
-        node.target.target_kind = "entryRef";
-        node.target.entry_ref = EntryRefDto{
-            "entryRef",
-            entry_id,
-            expected_rev,
-            std::string(fingerprint)};
-        return node;
-    }
 
     TEST(AuthoringDocContractTest, GraphMode_EmitsComponentGuidAndNotType)
     {
