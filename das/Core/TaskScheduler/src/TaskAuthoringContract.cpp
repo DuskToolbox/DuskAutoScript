@@ -35,7 +35,8 @@ namespace Das::Core::TaskScheduler
             "uiEvent",
             "moveGraphNode",
             "removeGraphNodes",
-            "moveGraphNodes"};
+            "moveGraphNodes",
+            "renameGraphNode"};
 
         constexpr std::array<int, 7> VALUE_TYPES{0, 1, 2, 4, 8, 16, 32};
 
@@ -2356,6 +2357,55 @@ namespace Das::Core::TaskScheduler
             return Pass();
         }
 
+        // renameGraphNode payload: {nodeId, label}。label 是纯显示数据
+        // （用户重命名，语义变更 revision+1）：键集锁死、两键非空、label
+        // UTF-8 字节数 ≤200（防无界文本入档）。寻址面零扰动由应用层
+        // 测试锁定——label 永不参与节点寻址。
+        AuthoringValidationResult ValidateRenameGraphNodePayload(
+            const yyjson::value& payload)
+        {
+            auto obj_opt = payload.as_object();
+            if (!obj_opt)
+            {
+                return Fail("invalidPayload", "payload must be object");
+            }
+            const auto& obj = obj_opt.value();
+            if (!OnlyKeys(obj, {"nodeId", "label"}))
+            {
+                return Fail(
+                    "unknownField",
+                    "renameGraphNode rejects unknown field");
+            }
+            if (auto r = RequireNonEmptyString(
+                    obj,
+                    "nodeId",
+                    "invalidNodeId",
+                    "renameGraphNode.nodeId required and non-empty");
+                !r.valid)
+            {
+                return r;
+            }
+            if (auto r = RequireNonEmptyString(
+                    obj,
+                    "label",
+                    "invalidPayload",
+                    "renameGraphNode.label required and non-empty");
+                !r.valid)
+            {
+                return r;
+            }
+            constexpr std::size_t MAX_LABEL_UTF8_BYTES = 200;
+            const auto            label = obj["label"].as_string().value();
+            if (label.size() > MAX_LABEL_UTF8_BYTES)
+            {
+                return Fail(
+                    "invalidPayload",
+                    "renameGraphNode.label must be at most 200 UTF-8 "
+                    "bytes");
+            }
+            return Pass();
+        }
+
         AuthoringValidationResult ValidateChangePayload(
             std::string_view     kind,
             const yyjson::value& payload)
@@ -2413,6 +2463,10 @@ namespace Das::Core::TaskScheduler
             if (kind == std::string_view("moveGraphNodes"))
             {
                 return ValidateMoveGraphNodesPayload(payload);
+            }
+            if (kind == std::string_view("renameGraphNode"))
+            {
+                return ValidateRenameGraphNodePayload(payload);
             }
             // Unknown kinds are rejected by the caller before dispatch.
             return Pass();

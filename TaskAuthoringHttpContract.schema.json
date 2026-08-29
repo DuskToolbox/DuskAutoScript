@@ -478,7 +478,8 @@
         "uiEvent",
         "moveGraphNode",
         "removeGraphNodes",
-        "moveGraphNodes"
+        "moveGraphNodes",
+        "renameGraphNode"
       ]
     },
     "GraphConnectionEndpoints": {
@@ -557,6 +558,21 @@
               }
             }
           }
+        }
+      }
+    },
+    "RenameGraphNode": {
+      "type": "object",
+      "required": ["nodeId", "label"],
+      "additionalProperties": false,
+      "$comment": "User-authored display label on the store node. Pure presentation: the node id, viewData.positions keys and edge endpoints are untouched and addressing never uses the label. A successful rename bumps the semantic revision exactly once.",
+      "properties": {
+        "nodeId": { "type": "string", "minLength": 1 },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "$comment": "UTF-8 byte length cap (defensive upper bound against unbounded text entering the persisted store)."
         }
       }
     },
@@ -679,7 +695,8 @@
         },
         { "$ref": "#/$defs/MoveGraphNode" },
         { "$ref": "#/$defs/RemoveGraphNodes" },
-        { "$ref": "#/$defs/MoveGraphNodes" }
+        { "$ref": "#/$defs/MoveGraphNodes" },
+        { "$ref": "#/$defs/RenameGraphNode" }
       ]
     },
     "AuthoringApplyRequest": {

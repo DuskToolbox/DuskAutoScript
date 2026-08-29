@@ -1904,6 +1904,52 @@ namespace Contract
                 }
                 return {ChangeErrorKind::None, "", {}, std::nullopt};
             }
+            else if (change.kind == "renameGraphNode")
+            {
+                if (!change.item_or_node_id.has_value()
+                    || change.item_or_node_id->empty())
+                {
+                    return {
+                        ChangeErrorKind::InvalidOp,
+                        "renameGraphNode.nodeId required",
+                        {},
+                        std::nullopt};
+                }
+                if (!change.rename_label.has_value()
+                    || change.rename_label->empty())
+                {
+                    return {
+                        ChangeErrorKind::InvalidOp,
+                        "renameGraphNode.label required",
+                        {},
+                        std::nullopt};
+                }
+                // The label is pure presentation data written straight onto
+                // the store node — the addressing surface (node id,
+                // viewData.positions keys, edge endpoints) is untouched. A
+                // missing node rejects the whole change with zero mutation
+                // (no orphan label ever enters the store).
+                bool found = false;
+                for (auto& node : document.nodes)
+                {
+                    if (node.node_id == *change.item_or_node_id)
+                    {
+                        node.label = *change.rename_label;
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found)
+                {
+                    return {
+                        ChangeErrorKind::NodeNotFound,
+                        "renameGraphNode node not found: "
+                            + *change.item_or_node_id,
+                        {},
+                        std::nullopt};
+                }
+                return {ChangeErrorKind::None, "", {}, std::nullopt};
+            }
             else if (change.kind == "convertView")
             {
                 if (!change.target_view_kind.has_value())

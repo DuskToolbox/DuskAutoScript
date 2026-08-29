@@ -980,6 +980,25 @@ namespace
             }
             return true;
         }
+        // renameGraphNode payload: {nodeId, label}. The label is pure
+        // presentation data written onto the store node; addressing stays on
+        // the node id (same slot convention as moveGraphNode).
+        if (out.kind == "renameGraphNode")
+        {
+            std::string id;
+            if (ReadStringField(*payload, std::string_view("nodeId"), id)
+                && !id.empty())
+            {
+                out.item_or_node_id = std::move(id);
+            }
+            std::string label;
+            if (ReadStringField(*payload, std::string_view("label"), label)
+                && !label.empty())
+            {
+                out.rename_label = std::move(label);
+            }
+            return true;
+        }
         // removeFormSequenceItem / removeGraphNode payload:
         // {formSequenceItemId} or {nodeId}. Both are surfaced via
         // item_or_node_id.

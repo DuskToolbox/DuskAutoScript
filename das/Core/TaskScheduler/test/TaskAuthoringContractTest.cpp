@@ -1733,10 +1733,12 @@ TEST(TaskAuthoringContractTest, RenameGraphNodeChangePayloadStrict)
     EXPECT_FALSE(r_extra_key.valid);
     EXPECT_EQ(r_extra_key.error_kind, "unknownField");
 
+    // 非对象 payload 在信封层被拒（HasObjectField "payload required"，
+    // 与其余 kind 同路径），到不了 per-kind 校验器。
     auto r_non_object = Das::Core::TaskScheduler::ValidateAuthoringChange(
         make_change(R"(["n_0","名字"])"));
     EXPECT_FALSE(r_non_object.valid);
-    EXPECT_EQ(r_non_object.error_kind, "invalidPayload");
+    EXPECT_EQ(r_non_object.error_kind, "missingField");
 }
 
 // schema 契约与 C++ 白名单对账：AuthoringChangeKind enum 集合逐项一致
