@@ -253,4 +253,39 @@ namespace
             || entry->state == UpdateCheckEntry::State::UpToDate
             || entry->state == UpdateCheckEntry::State::Failed);
     }
+
+    // Test 8: 并发双 check 的确定性交错序列（受理化 e2e 语义在 store 层钉死；
+    // e2e 侧无法确定性构造「B 回滚晚于 A 终态」的窗口——受理与回滚在同一
+    // BT 调用内相邻）：A 写 Checking(A) → B 受理写 Checking(B)（prev=A 的
+    // Checking）→ A 的 job 终态落下 → B 被拒回滚——恒等判定见条目已非
+    // Checking，prev（A 的 Checking）不得恢复：A 终态不被糊掉，也不留任何
+    // Checking 残留。
+    TEST(UpdateCheckStoreTest, RollbackAfterTerminalOverwriteKeepsFirstTerminal)
+    {
+        auto&                       store = UpdateCheckStore::Instance();
+        const std::filesystem::path pi_dir =
+            "C:/store/test/rollback-after-terminal";
+
+        // A 受理（首写，prev 为空）→ 条目 Checking(A)。
+        const auto prev_a = store.SaveAndPutChecking(pi_dir, "key-a");
+        EXPECT_FALSE(prev_a.has_value());
+
+        // B 受理（保存 prev = A 的 Checking）→ 条目 Checking(B)。
+        const auto prev_b = store.SaveAndPutChecking(pi_dir, "key-b");
+        ASSERT_TRUE(prev_b.has_value());
+        EXPECT_EQ(prev_b->state, UpdateCheckEntry::State::Checking);
+        EXPECT_EQ(prev_b->progress_key, "key-a");
+
+        // A 的 job 终态在 B 回滚前落下 → 条目翻为 A 终态。
+        store.PutOutcome(pi_dir, MakeFoundUpdateEntry("v2.23.0", "key-a"));
+
+        // B 回滚：条目已非 Checking → 不恢复 prev、不动终态。
+        store.RollbackCheckingIfUnchanged(pi_dir, "key-b", prev_b);
+
+        const auto entry = store.Get(pi_dir);
+        ASSERT_TRUE(entry.has_value());
+        EXPECT_EQ(entry->state, UpdateCheckEntry::State::FoundUpdate);
+        EXPECT_EQ(entry->progress_key, "key-a");
+        EXPECT_EQ(entry->info.version_name, "v2.23.0");
+    }
 } // namespace

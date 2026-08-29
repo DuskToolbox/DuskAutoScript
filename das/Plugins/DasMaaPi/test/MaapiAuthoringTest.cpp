@@ -7,6 +7,7 @@
 #include <das/Core/SettingsManager/SettingsManager.h>
 #include <das/Core/TaskScheduler/TaskAuthoringContract.h>
 #include <das/DasApi.h>
+#include <das/DasString.hpp>
 #include <das/Plugins/DasMaaPi/AcceptedSettings.h>
 #include <das/Plugins/DasMaaPi/AuthoringProjector.h>
 #include <das/Plugins/DasMaaPi/MaapiDto.h>
@@ -7348,6 +7349,32 @@ namespace
         }
         return false;
     }
+
+    // RAII：构造时设进程级 GlobalLocale，析构时复位 en（进程单例，测试间
+    // 隔离；与 MaapiProgressReporterTest 的同名 guard 同款）。投影 i18n
+    // Translate 经 GlobalLocale 解析；需要精确文案断言（如已是最新/检查失败
+    // 的中文模板）时使用，其余用例保持 locale 无关断言。
+    class GlobalLocaleGuard
+    {
+    public:
+        explicit GlobalLocaleGuard(const char* locale)
+        {
+            SetGlobalLocale(locale);
+        }
+
+        ~GlobalLocaleGuard() { SetGlobalLocale("en"); }
+
+    private:
+        static void SetGlobalLocale(const char* utf8)
+        {
+            DasPtr<IDasReadOnlyString> locale_name;
+            ::CreateIDasReadOnlyStringFromUtf8(utf8, locale_name.Put());
+            if (locale_name != nullptr)
+            {
+                ::DasSetDefaultLocale(locale_name.Get());
+            }
+        }
+    };
 } // namespace
 
 // checkUpdate 受理化端到端（受理 → running 拒重 → 终态三段）：挂起检查
@@ -7800,6 +7827,333 @@ TEST(
     ASSERT_TRUE(entry.has_value());
     EXPECT_EQ(entry->state, UpdateCheckEntry::State::FoundUpdate);
     EXPECT_EQ(entry->info.progress_key, progress_key);
+}
+
+// D-08（未检查无字段）：无 checkUpdate 历史（store 无条目）的文档投影——
+// 五字段（updateVersion/releaseNote/updateProgress/downloadRate/
+// downloadElapsed）全部不存在；更新 section 常驻字段（CDK/代理/通道/两个
+// 版本只读）照常投影；两命令按钮在 commands[]（applyUpdate disabled——
+// 无条目即无 FoundUpdate；checkUpdate enabled——slot idle）；fieldLayout
+// 更新 section 仍存在但不置顶（无条目时置顶布尔为 false）。
+TEST(
+    MaapiUpdateCommandTest,
+    InvokeCommandUncheckedDocumentProjectsNoUpdateFields)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    TempUpdateProject project;
+    project.WriteInterface(
+        MakeUpdateInterface("1.0.0", "https://github.com/owner/repo"));
+
+    // 从未点过检查：store 无该 pi_dir 条目。
+    EXPECT_FALSE(UpdateCheckStore::Instance().Get(project.Dir()).has_value());
+
+    auto document = ProjectAuthoringDocument(
+        MakeUpdateSettings(project.Dir()),
+        nullptr,
+        {},
+        0);
+
+    // 五字段全部不存在（更新 panel 不常驻，点检查才出现）。
+    for (const std::string_view field_name :
+         {"updateVersion",
+          "releaseNote",
+          "updateProgress",
+          "downloadRate",
+          "downloadElapsed"})
+    {
+        EXPECT_FALSE(FindRootField(document, field_name).has_value())
+            << "unchecked document must not contain " << field_name;
+    }
+
+    // 更新 section 常驻字段照常投影。
+    EXPECT_TRUE(FindRootField(document, "adapter.mirrorchyanCdk").has_value());
+    EXPECT_TRUE(FindRootField(document, "adapter.proxyUrl").has_value());
+    EXPECT_TRUE(FindRootField(document, "adapter.updateChannel").has_value());
+    EXPECT_TRUE(FindRootField(document, "resourceVersion").has_value());
+    EXPECT_TRUE(FindRootField(document, "maafwVersion").has_value());
+
+    // 两命令按钮：applyUpdate disabled（无条目即无 FoundUpdate，按钮不携带
+    // 任何更新信息）；checkUpdate enabled（无 job 运行）。
+    auto apply_cmd = FindCommand(document, "applyUpdate");
+    ASSERT_TRUE(apply_cmd.has_value());
+    EXPECT_TRUE(FieldOf(*apply_cmd, "disabled").as_bool().value_or(false));
+    auto check_cmd = FindCommand(document, "checkUpdate");
+    ASSERT_TRUE(check_cmd.has_value());
+    EXPECT_FALSE(CommandHasDisabled(check_cmd));
+
+    // fieldLayout：更新 section 存在（常驻字段仍在）但不置顶（无条目）。
+    ASSERT_TRUE(FindLayoutSection(document, "update").has_value());
+    auto doc_obj = document.as_object();
+    ASSERT_TRUE(doc_obj.has_value());
+    ASSERT_TRUE(doc_obj->contains(std::string_view("fieldLayout")));
+    auto layout = (*doc_obj)[std::string_view("fieldLayout")].as_array();
+    ASSERT_TRUE(layout.has_value());
+    ASSERT_FALSE(layout->empty());
+    auto first_section = layout->begin()->as_object();
+    ASSERT_TRUE(first_section.has_value());
+    EXPECT_NE(
+        std::string(
+            (*first_section)[std::string_view("id")].as_string().value_or("")),
+        "update");
+}
+
+// D-08（Failed 条目覆盖，按钮不得携带陈旧更新信息）：首次检查发现新版 →
+// FoundUpdate 条目（apply 按钮 enabled、版本「cur → next」）；再次检查网络
+// 失败 → Failed 条目覆盖（不清空表）→ 再投影：apply 按钮 disabled、
+// updateVersion 回到空串（陈旧 has_update/download_url 不得残留）、
+// updateProgress 为「检查失败：{分类文案}」——复查失败语义与首查失败一致。
+TEST(MaapiUpdateCommandTest, InvokeCommandCheckUpdateFailedOverwritesStaleFound)
+{
+    using namespace Das::Plugins::DasMaaPi;
+    GlobalLocaleGuard locale_guard("zh-cn");
+
+    TempUpdateProject project;
+    project.WriteInterface(
+        MakeUpdateInterface("1.0.0", "https://github.com/owner/repo"));
+
+    auto http = std::make_shared<FakeUpdateHttpClient>();
+    http->AddRoute(
+        "/repos/owner/repo/releases/latest",
+        UpdateGithubRelease("v1.2.0"));
+
+    MaapiAuthoringSession session(MakeUpdateSettings(project.Dir()));
+    session.SetHttpClientForTest(http.get());
+
+    // —— 首查：发现新版 → FoundUpdate（apply 可点、版本含目标版本）。
+    DasPtr<Das::ExportInterface::IDasJson> r1_json;
+    auto                                   c1 = ParseDasJson(
+        "{\"baseRevision\":0,\"kind\":\"invokeCommand\","
+        "\"payload\":{\"commandId\":\"checkUpdate\"}}");
+    ASSERT_EQ(session.ApplyChange(c1.Get(), r1_json.Put()), DAS_S_OK);
+    ASSERT_TRUE(
+        UpdateJobRegistry::Instance().WaitForSlotIdleForTest(
+            project.Dir(),
+            std::chrono::seconds(10)));
+    {
+        const auto entry = UpdateCheckStore::Instance().Get(project.Dir());
+        ASSERT_TRUE(entry.has_value());
+        EXPECT_EQ(entry->state, UpdateCheckEntry::State::FoundUpdate);
+    }
+    {
+        auto stale_document = ProjectAuthoringDocument(
+            MakeUpdateSettings(project.Dir()),
+            nullptr,
+            {},
+            0);
+        auto stale_apply = FindCommand(stale_document, "applyUpdate");
+        ASSERT_TRUE(stale_apply.has_value());
+        EXPECT_FALSE(CommandHasDisabled(stale_apply));
+        auto stale_version_field =
+            FindRootField(stale_document, "updateVersion");
+        ASSERT_TRUE(stale_version_field.has_value());
+        EXPECT_NE(
+            FieldOf(*stale_version_field, "value")
+                .as_string()
+                .value_or("")
+                .find("v1.2.0"),
+            std::string::npos);
+    }
+
+    // —— 复查（网络失败）：Failed 条目覆盖 FoundUpdate。
+    http->SetNetworkFailure(true);
+    DasPtr<Das::ExportInterface::IDasJson> r2_json;
+    auto                                   c2 = ParseDasJson(
+        "{\"baseRevision\":1,\"kind\":\"invokeCommand\","
+        "\"payload\":{\"commandId\":\"checkUpdate\"}}");
+    ASSERT_EQ(session.ApplyChange(c2.Get(), r2_json.Put()), DAS_S_OK);
+    ASSERT_TRUE(
+        UpdateJobRegistry::Instance().WaitForSlotIdleForTest(
+            project.Dir(),
+            std::chrono::seconds(10)));
+    {
+        const auto entry = UpdateCheckStore::Instance().Get(project.Dir());
+        ASSERT_TRUE(entry.has_value());
+        EXPECT_EQ(entry->state, UpdateCheckEntry::State::Failed);
+        EXPECT_FALSE(entry->info.has_update);
+    }
+
+    // —— 再投影：apply 按钮 disabled、版本空串（陈旧版本/下载地址不得残留）、
+    //    updateProgress 为检查失败文案。
+    auto document = ProjectAuthoringDocument(
+        MakeUpdateSettings(project.Dir()),
+        nullptr,
+        {},
+        0);
+    auto apply_cmd = FindCommand(document, "applyUpdate");
+    ASSERT_TRUE(apply_cmd.has_value());
+    EXPECT_TRUE(FieldOf(*apply_cmd, "disabled").as_bool().value_or(false));
+    auto version_field = FindRootField(document, "updateVersion");
+    ASSERT_TRUE(version_field.has_value());
+    EXPECT_EQ(
+        FieldOf(*version_field, "value").as_string().value_or("x"),
+        std::string{});
+    auto progress_field = FindRootField(document, "updateProgress");
+    ASSERT_TRUE(progress_field.has_value());
+    EXPECT_TRUE(FieldOf(*progress_field, "value")
+                    .as_string()
+                    .value_or("")
+                    .starts_with("检查失败："));
+}
+
+// D-08（UpToDate 反馈修复）：无更新终态投影五字段全部出现（同步流程下
+// 「已是最新时字段不出现、界面零反馈」的既有缺陷修复断言）；
+// updateVersion 空串、updateProgress==已是最新（{当前版本}）（{0} 绑定
+// 投影时的 catalog 版本）、releaseNote/downloadRate/downloadElapsed 空串。
+TEST(MaapiUpdateCommandTest, InvokeCommandCheckUpdateUpToDateProjectionFeedback)
+{
+    using namespace Das::Plugins::DasMaaPi;
+    GlobalLocaleGuard locale_guard("zh-cn");
+
+    TempUpdateProject project;
+
+    UpdateCheckEntry up_to_date;
+    up_to_date.state = UpdateCheckEntry::State::UpToDate;
+    up_to_date.progress_key = "up-to-date-seed-key";
+    UpdateCheckStore::Instance().PutOutcome(
+        project.Dir(),
+        std::move(up_to_date));
+
+    auto catalog = MakeStrictProjectionMockCatalog();
+    catalog.version = "v9.9.9";
+    auto document = ProjectAuthoringDocument(
+        MakeUpdateSettings(project.Dir()),
+        &catalog,
+        {},
+        0);
+
+    // 五字段全部出现（缺陷修复：UpToDate 也有界面反馈）。
+    for (const std::string_view field_name :
+         {"updateVersion",
+          "releaseNote",
+          "updateProgress",
+          "downloadRate",
+          "downloadElapsed"})
+    {
+        ASSERT_TRUE(FindRootField(document, field_name).has_value())
+            << "missing field " << field_name;
+    }
+    auto version_field = FindRootField(document, "updateVersion");
+    ASSERT_TRUE(version_field.has_value());
+    EXPECT_EQ(
+        FieldOf(*version_field, "value").as_string().value_or("x"),
+        std::string{});
+    auto progress_field = FindRootField(document, "updateProgress");
+    ASSERT_TRUE(progress_field.has_value());
+    EXPECT_EQ(
+        FieldOf(*progress_field, "value").as_string().value_or(""),
+        "已是最新（v9.9.9）");
+    auto release_field = FindRootField(document, "releaseNote");
+    ASSERT_TRUE(release_field.has_value());
+    EXPECT_EQ(
+        FieldOf(*release_field, "value").as_string().value_or("x"),
+        std::string{});
+    auto rate_field = FindRootField(document, "downloadRate");
+    ASSERT_TRUE(rate_field.has_value());
+    EXPECT_EQ(
+        FieldOf(*rate_field, "value").as_string().value_or("x"),
+        std::string{});
+    auto elapsed_field = FindRootField(document, "downloadElapsed");
+    ASSERT_TRUE(elapsed_field.has_value());
+    EXPECT_EQ(
+        FieldOf(*elapsed_field, "value").as_string().value_or("x"),
+        std::string{});
+}
+
+// D-08（置顶顺序）：store 有条目（四态各一变体）时投影 document 的
+// fieldLayout 首位是更新 section（四态全置顶的可观察断言）；无条目时不
+// 置顶（更新 section 仍存在但不首位）。ResolvePiDir 只取 interface_path
+// 的父目录字符串（不触碰文件系统），用唯一假路径隔离 per-test store 键。
+TEST(MaapiUpdateCommandTest, UpdateSectionTopOrderingAcrossCheckEntryStates)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    const auto make_seeded_settings = [](const std::string& variant)
+    {
+        AcceptedSettingsDto settings;
+        settings.adapter.interface_path =
+            "C:/das-authoring-check-top/" + variant + "/interface.json";
+        return settings;
+    };
+    const auto dir_of = [](const AcceptedSettingsDto& settings)
+    {
+        return std::filesystem::path(*settings.adapter.interface_path)
+            .parent_path();
+    };
+    const auto first_section_id = [](const yyjson::value& document)
+    {
+        auto obj = document.as_object();
+        if (!obj || !obj->contains(std::string_view("fieldLayout")))
+        {
+            return std::string{};
+        }
+        auto layout = (*obj)[std::string_view("fieldLayout")].as_array();
+        if (!layout || layout->empty())
+        {
+            return std::string{};
+        }
+        auto first = layout->begin()->as_object();
+        if (!first)
+        {
+            return std::string{};
+        }
+        return std::string(
+            (*first)[std::string_view("id")].as_string().value_or(""));
+    };
+
+    // Checking 变体：受理写入的挂起态也置顶。
+    {
+        auto settings = make_seeded_settings("checking");
+        (void)UpdateCheckStore::Instance().SaveAndPutChecking(
+            dir_of(settings),
+            "top-checking-key");
+        auto document = ProjectAuthoringDocument(settings, nullptr, {}, 0);
+        EXPECT_EQ(first_section_id(document), "update");
+    }
+    // FoundUpdate 变体。
+    {
+        auto         settings = make_seeded_settings("found-update");
+        PiUpdateInfo info;
+        info.has_update = true;
+        info.version_name = "v1.2.0";
+        info.download_url = "https://example.com/pkg.zip";
+        info.progress_key = "top-found-key";
+        SeedFoundUpdateOutcome(dir_of(settings), info);
+        auto document = ProjectAuthoringDocument(settings, nullptr, {}, 0);
+        EXPECT_EQ(first_section_id(document), "update");
+    }
+    // UpToDate 变体。
+    {
+        auto             settings = make_seeded_settings("up-to-date");
+        UpdateCheckEntry up_to_date;
+        up_to_date.state = UpdateCheckEntry::State::UpToDate;
+        up_to_date.progress_key = "top-uptodate-key";
+        UpdateCheckStore::Instance().PutOutcome(
+            dir_of(settings),
+            std::move(up_to_date));
+        auto document = ProjectAuthoringDocument(settings, nullptr, {}, 0);
+        EXPECT_EQ(first_section_id(document), "update");
+    }
+    // Failed 变体。
+    {
+        auto             settings = make_seeded_settings("failed");
+        UpdateCheckEntry failed;
+        failed.state = UpdateCheckEntry::State::Failed;
+        failed.progress_key = "top-failed-key";
+        failed.failure_reason_key = "diagnostic.checkUpdateNetworkFailed";
+        UpdateCheckStore::Instance().PutOutcome(
+            dir_of(settings),
+            std::move(failed));
+        auto document = ProjectAuthoringDocument(settings, nullptr, {}, 0);
+        EXPECT_EQ(first_section_id(document), "update");
+    }
+    // 无条目：不置顶（更新 section 仍存在）。
+    {
+        auto settings = make_seeded_settings("no-entry");
+        auto document = ProjectAuthoringDocument(settings, nullptr, {}, 0);
+        EXPECT_NE(first_section_id(document), "update");
+        EXPECT_TRUE(FindLayoutSection(document, "update").has_value());
+    }
 }
 
 // applyUpdate 受理后后台 job 经进度 service 上报字段增量：受理返回
@@ -8906,13 +9260,8 @@ TEST(MaapiProjectionTest, AdbDeviceCandidatesFromCache)
     dev_real.address = "192.168.1.42:5555";
     cache.push_back(dev_real);
 
-    auto document = ProjectAuthoringDocument(
-        settings,
-        &catalog,
-        {},
-        0,
-        nullptr,
-        &cache);
+    auto document =
+        ProjectAuthoringDocument(settings, &catalog, {}, 0, nullptr, &cache);
 
     auto field = FindRootField(document, "adbDevice");
     ASSERT_TRUE(field.has_value());
@@ -8946,11 +9295,7 @@ TEST(MaapiProjectionTest, AdbDeviceCandidatesEmptyWhenCacheNull)
     settings.pi.language = "zh_cn";
     settings.pi.controller_name = catalog.controllers.front().dto.name;
 
-    auto document = ProjectAuthoringDocument(
-        settings,
-        &catalog,
-        {},
-        0);
+    auto document = ProjectAuthoringDocument(settings, &catalog, {}, 0);
     auto valid = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
     EXPECT_TRUE(valid.valid)
         << "error_kind=" << valid.error_kind << " message=" << valid.message;
