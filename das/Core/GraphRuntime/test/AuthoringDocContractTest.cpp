@@ -1091,10 +1091,12 @@ namespace
 
         // Dynamically-fillable parts come from the live settings.
         EXPECT_EQ(fields[0].name, "threshold");
-        // Metadata hints carry schema-valid defaults (no dynamic source).
+        // Live keys have no declaration to source metadata from: the label
+        // falls back to the key itself (the strict wire requires a non-empty
+        // label), everything else carries the schema defaults.
         for (const auto& f : fields)
         {
-            EXPECT_TRUE(f.label.empty());
+            EXPECT_EQ(f.label, f.name);
             EXPECT_FALSE(f.description.has_value());
             EXPECT_FALSE(f.required);
             EXPECT_FALSE(f.readonly);

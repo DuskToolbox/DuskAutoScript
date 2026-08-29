@@ -153,6 +153,36 @@ TEST(TaskAuthoringContractTest, ValidGraphNodePortsPass)
     EXPECT_TRUE(result.error_kind.empty()) << result.message;
 }
 
+TEST(TaskAuthoringContractTest, GraphNodePortOptionalValueKeyPasses)
+{
+    // The optional port default-value key: "value" carries the raw settings
+    // entry bound to an unconnected input data port — any JSON shape. Ports
+    // without the key stay valid (absence is the norm), and an unknown key
+    // beyond the six-shape vocabulary still rejects.
+    auto document = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "graph",
+        "revision": 2,
+        "graph": {
+            "nodes": [
+                {
+                    "id": "n1",
+                    "ports": [
+                        {"portId":"condition","displayLabel":"","portType":"bool","direction":"input","category":"data","value":true},
+                        {"portId":"threshold","displayLabel":"","portType":"int","direction":"input","category":"data","value":{"nested":[1,2]}},
+                        {"portId":"true","displayLabel":"True","portType":"signal","direction":"output","category":"execution"}
+                    ]
+                }
+            ]
+        }
+    })json");
+
+    auto result = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+
+    EXPECT_TRUE(result.valid);
+    EXPECT_TRUE(result.error_kind.empty()) << result.message;
+}
+
 TEST(TaskAuthoringContractTest, GraphNodePortShapeViolationsFail)
 {
     const std::vector<std::string> invalid_ports = {

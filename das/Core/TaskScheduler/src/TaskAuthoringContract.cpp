@@ -1264,12 +1264,16 @@ namespace Das::Core::TaskScheduler
             return Pass();
         }
 
-        // Node port projection element: exactly the five locked keys
-        // {portId, displayLabel, portType, direction, category} with
-        // direction in {"input", "output"} and category in
+        // Node port projection element: the five locked keys
+        // {portId, displayLabel, portType, direction, category} plus the
+        // optional default-value key "value" with direction in
+        // {"input", "output"} and category in
         // {"execution", "data"} (drag-link precheck data source; the
         // projection never interprets portType semantics — the category is
-        // the Core-derived execution/data split).
+        // the Core-derived execution/data split). "value" carries the raw
+        // node settings entry bound to an unconnected input data port —
+        // any JSON shape, engaged-only on the wire (absent key, never an
+        // explicit null).
         AuthoringValidationResult ValidateGraphNodePort(
             const yyjson::value& port)
         {
@@ -1335,7 +1339,8 @@ namespace Das::Core::TaskScheduler
                      "displayLabel",
                      "portType",
                      "direction",
-                     "category"}))
+                     "category",
+                     "value"}))
             {
                 return Fail(
                     "unknownField",

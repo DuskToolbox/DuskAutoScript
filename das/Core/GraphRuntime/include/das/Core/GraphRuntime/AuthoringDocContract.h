@@ -96,13 +96,21 @@ namespace Contract
     /// signal/data vocabulary GraphEdgeDto.edge_type and signal-gated
     /// execution already use). Client-side filtering rules consume both as a
     /// soft hint only — compile stays the authoritative validation.
+    ///
+    /// `value` is the optional default-value channel for unconnected input
+    /// ports: engaged only for direction "input" + category "data" ports
+    /// whose node settings carry a key matching the port id, carrying that
+    /// raw settings value verbatim (no type conversion) so the UI can render
+    /// and edit the port's current bound default. Disengaged everywhere else
+    /// — the wire key is then absent, never an explicit null.
     struct GraphNodePort
     {
-        std::string port_id;
-        std::string display_label;
-        std::string port_type;
-        std::string direction;
-        std::string category;
+        std::string                  port_id;
+        std::string                  display_label;
+        std::string                  port_type;
+        std::string                  direction;
+        std::string                  category;
+        std::optional<yyjson::value> value;
     };
 
     /// One canvas node in the public contract. componentGuid is sourced from

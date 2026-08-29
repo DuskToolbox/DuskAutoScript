@@ -189,8 +189,7 @@ namespace
             }
         })";
         const SessionHandle        items_seeded{
-            std::string(R"({"properties":)") + std::string(contract_doc)
-            + "}"};
+            std::string(R"({"properties":)") + std::string(contract_doc) + "}"};
         auto items_json = Compact(
             Das::Utils::SerializeYyjsonValue(DocumentOf(items_seeded.p))
                 .value_or(""));
@@ -212,8 +211,7 @@ namespace
             }
         })";
         const SessionHandle        legacy_seeded{
-            std::string(R"({"properties":)") + std::string(legacy_doc)
-            + "}"};
+            std::string(R"({"properties":)") + std::string(legacy_doc) + "}"};
         auto legacy_json = Compact(
             Das::Utils::SerializeYyjsonValue(DocumentOf(legacy_seeded.p))
                 .value_or(""));
@@ -859,6 +857,135 @@ namespace
             return std::nullopt;
         }
         return std::string(*id);
+    }
+
+    // Optional port default-value channel end to end through the C ABI
+    // session: an input data port whose node settings carry a matching key
+    // projects the raw value verbatim; a settings-less port, a signal input
+    // and the outputs (even with a same-named settings key) keep the key
+    // absent. Locks the wire shape the UI consumes for editing unconnected
+    // input defaults (branch.condition-style ports).
+    TEST(GraphAuthoringSessionTest, InputDataPortsCarryOptionalValueKey)
+    {
+        const SessionHandle s{""}; // graph mode
+        ASSERT_EQ(
+            SetActionCatalog(
+                s.p,
+                R"json([{"actionId":"{g1}","label":"das.flow.branch","ports":[
+                    {"portId":"condition","portType":"bool","direction":"input"},
+                    {"portId":"in","portType":"signal","direction":"input"},
+                    {"portId":"true","portType":"signal","direction":"output"},
+                    {"portId":"index","portType":"int","direction":"output"}
+                ]}])json"),
+            DAS_S_OK);
+        ASSERT_EQ(
+            Compact(
+                JsonToUtf8(
+                    ApplyChange(
+                        s.p,
+                        WrapEnvelope("addGraphNode", R"({"actionId":"{g1}"})"))
+                        .Get()))
+                .find("\"severity\":\"error\""),
+            std::string::npos)
+            << "addGraphNode must succeed";
+        const auto node_id = FirstGraphNodeOf(DocumentOf(s.p));
+        ASSERT_TRUE(node_id.has_value());
+
+        const auto port_of =
+            [&s](std::string_view port_id) -> std::optional<yyjson::value>
+        {
+            const auto ports = FirstNodePortsOf(DocumentOf(s.p));
+            if (!ports.has_value())
+            {
+                return std::nullopt;
+            }
+            auto arr = ports->as_array();
+            if (!arr.has_value())
+            {
+                return std::nullopt;
+            }
+            for (const auto& port : *arr)
+            {
+                auto port_obj = port.as_object();
+                if (!port_obj)
+                {
+                    continue;
+                }
+                auto id = (*port_obj)[std::string_view("portId")].as_string();
+                if (id.has_value() && *id == port_id)
+                {
+                    return Das::Utils::CloneYyjsonValue(port);
+                }
+            }
+            return std::nullopt;
+        };
+
+        // Before any setValue the settings are empty: every port stays at
+        // exactly the five locked keys — the value key is absent, not null.
+        const auto bare_condition = port_of("condition");
+        ASSERT_TRUE(bare_condition.has_value());
+        auto bare_obj = bare_condition->as_object();
+        ASSERT_TRUE(bare_obj.has_value());
+        EXPECT_EQ(bare_obj->size(), 5u);
+        EXPECT_FALSE(bare_obj->contains(std::string_view("value")));
+
+        // setValue lands in node.settings: condition mirrors its raw bound
+        // value; the same-named keys written for a signal input and an
+        // output must NOT surface a value on those ports.
+        const auto set_value =
+            [&](std::string_view field_name, std::string_view raw_value)
+        {
+            const std::string payload =
+                std::string(R"({"target":{"kind":"graphNode","id":")")
+                + *node_id + R"("},"fieldName":")" + std::string(field_name)
+                + R"(","value":)" + std::string(raw_value) + "}";
+            const auto        apply = Compact(
+                JsonToUtf8(
+                    ApplyChange(
+                        s.p, WrapEnvelope("setValue", payload))
+                        .Get()));
+            EXPECT_FALSE(apply.empty());
+            EXPECT_EQ(apply.find("\"severity\":\"error\""), std::string::npos)
+                << apply;
+        };
+        set_value("condition", "true");
+        set_value("in", "false");
+        set_value("true", "42");
+
+        const auto condition = port_of("condition");
+        ASSERT_TRUE(condition.has_value());
+        auto condition_obj = condition->as_object();
+        ASSERT_TRUE(condition_obj.has_value());
+        EXPECT_EQ(condition_obj->size(), 6u);
+        ASSERT_TRUE(condition_obj->contains(std::string_view("value")));
+        EXPECT_EQ(
+            (*condition_obj)[std::string_view("value")].as_bool(),
+            std::optional<bool>{true});
+
+        const auto signal_input = port_of("in");
+        ASSERT_TRUE(signal_input.has_value());
+        auto signal_input_obj = signal_input->as_object();
+        ASSERT_TRUE(signal_input_obj.has_value());
+        EXPECT_FALSE(signal_input_obj->contains(std::string_view("value")));
+
+        const auto signal_output = port_of("true");
+        ASSERT_TRUE(signal_output.has_value());
+        auto signal_output_obj = signal_output->as_object();
+        ASSERT_TRUE(signal_output_obj.has_value());
+        EXPECT_FALSE(signal_output_obj->contains(std::string_view("value")));
+
+        const auto data_output = port_of("index");
+        ASSERT_TRUE(data_output.has_value());
+        auto data_output_obj = data_output->as_object();
+        ASSERT_TRUE(data_output_obj.has_value());
+        EXPECT_FALSE(data_output_obj->contains(std::string_view("value")));
+
+        // The value-bearing document stays valid strict wire (validator and
+        // schema treat the key as optional).
+        auto result = Das::Core::TaskScheduler::ValidateAuthoringDocument(
+            DocumentOf(s.p));
+        EXPECT_TRUE(result.valid)
+            << result.error_kind << ": " << result.message;
     }
 
     /// Build the moveGraphNode payload {nodeId, position:{x,y}} for the

@@ -105,6 +105,11 @@ namespace Contract
                 }
                 FieldDescriptor f;
                 f.name = std::string(kv.first);
+                // Live keys carry no declaration to source a label from —
+                // fall back to the key itself (the same label = name rule
+                // the config-declared path applies) so the projected field
+                // always satisfies the strict non-empty label contract.
+                f.label = f.name;
                 f.input_type = 0;
                 if (v.is_bool())
                 {
@@ -398,6 +403,39 @@ namespace Contract
                        : std::string(PORT_CATEGORY_DATA);
         }
 
+        /// Optional default-value channel for unconnected input ports: when
+        /// the node's settings carry a key matching an input data port's id,
+        /// the projected port exposes that raw value verbatim (no type
+        /// conversion) so the UI can render and edit the port's current
+        /// bound default. Every other port shape — signal inputs, outputs,
+        /// ports without a matching settings key — keeps the channel
+        /// disengaged; a null settings value reads as "no value" (the same
+        /// semantics the field projection gives nulls). The wire key is then
+        /// absent, never an explicit null.
+        void AttachPortValueFromSettings(
+            const yyjson::value& settings,
+            GraphNodePort&       projected)
+        {
+            if (projected.direction != std::string_view(PORT_DIRECTION_INPUT)
+                || projected.category != std::string_view(PORT_CATEGORY_DATA))
+            {
+                return;
+            }
+            auto settings_obj = settings.as_object();
+            if (!settings_obj.has_value()
+                || !settings_obj->contains(std::string_view(projected.port_id)))
+            {
+                return;
+            }
+            const auto& settings_value =
+                (*settings_obj)[std::string_view(projected.port_id)];
+            if (settings_value.is_null())
+            {
+                return;
+            }
+            projected.value = Das::Utils::CloneYyjsonValue(settings_value);
+        }
+
         /// Direction-derivation fact for one dynamic port: which edge roles
         /// reference it inside this document. Compile validates direction by
         /// edge position (source side is an output, target side an input),
@@ -484,6 +522,7 @@ namespace Contract
                     {
                         GraphNodePort projected = port;
                         projected.category = DerivePortCategory(port.port_type);
+                        AttachPortValueFromSettings(node.settings, projected);
                         out.ports.push_back(std::move(projected));
                     }
                 }
@@ -522,14 +561,20 @@ namespace Contract
                             role.referenced_as_input
                                 ? std::string(PORT_DIRECTION_INPUT)
                                 : std::string(PORT_DIRECTION_OUTPUT);
+                        AttachPortValueFromSettings(node.settings, projected);
                         out.ports.push_back(std::move(projected));
                     }
                     else
                     {
                         projected.direction = std::string(PORT_DIRECTION_INPUT);
+                        AttachPortValueFromSettings(node.settings, projected);
                         out.ports.push_back(projected);
                         projected.direction =
                             std::string(PORT_DIRECTION_OUTPUT);
+                        // The output twin never carries the default-value
+                        // channel even though it was copied from the input
+                        // projection.
+                        projected.value.reset();
                         out.ports.push_back(std::move(projected));
                     }
                 }
@@ -748,9 +793,11 @@ namespace Contract
         }
 
         // Build the ports[] array as a standalone yyjson::value. Every element
-        // carries exactly the five locked keys (portId/displayLabel/portType/
-        // direction/category); a node without ports still emits the key as an
-        // empty array so the wire shape stays stable. Per
+        // carries the five locked keys (portId/displayLabel/portType/
+        // direction/category) plus the optional default-value key "value" —
+        // emitted only where the projection engaged it (input data ports
+        // with a matching settings key); a node without ports still emits
+        // the key as an empty array so the wire shape stays stable. Per
         // das-yyjson-string-safety every std::string payload is deep-copied
         // into the document arena.
         yyjson::value BuildPortsValue(const std::vector<GraphNodePort>& ports)
@@ -786,6 +833,15 @@ namespace Contract
                 po["category"] = std::make_pair(
                     std::string_view(port.category),
                     yyjson::copy_string);
+                // Optional, engaged-only: the emission gate mirrors the
+                // attach gate so the key can never ride an output or
+                // execution port.
+                if (port.value.has_value()
+                    && port.direction == std::string_view(PORT_DIRECTION_INPUT)
+                    && port.category == std::string_view(PORT_CATEGORY_DATA))
+                {
+                    po["value"] = Das::Utils::CloneYyjsonValue(*port.value);
+                }
                 arr.emplace_back(std::move(p_v));
             }
             return root;
