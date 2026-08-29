@@ -1197,4 +1197,140 @@ namespace
         ASSERT_TRUE(revision_after.has_value());
         EXPECT_EQ(*revision_after, *revision_before);
     }
+
+    // -----------------------------------------------------------------------
+    // renameGraphNode — C ABI end-to-end: the user display label lands on
+    // both blobs (public document + persisted source), the node id and the
+    // semantic revision invariant hold, and the label survives a re-seed
+    // from acceptedProperties (the scheduler's persistence round-trip).
+    // -----------------------------------------------------------------------
+
+    /// String field of the first node of a document blob's graph
+    /// projection; nullopt when the node or the key is absent.
+    std::optional<std::string> FirstGraphNodeFieldOf(
+        const yyjson::value& document,
+        std::string_view     key)
+    {
+        auto obj = document.as_object();
+        if (!obj || !obj->contains(std::string_view("graph")))
+        {
+            return std::nullopt;
+        }
+        auto graph = (*obj)[std::string_view("graph")].as_object();
+        if (!graph || !graph->contains(std::string_view("nodes")))
+        {
+            return std::nullopt;
+        }
+        auto nodes = (*graph)[std::string_view("nodes")].as_array();
+        if (!nodes || nodes->size() == 0)
+        {
+            return std::nullopt;
+        }
+        auto first = (*nodes)[0].as_object();
+        if (!first || !first->contains(key))
+        {
+            return std::nullopt;
+        }
+        auto value = (*first)[key].as_string();
+        if (!value)
+        {
+            return std::nullopt;
+        }
+        return std::string(*value);
+    }
+
+    /// String field of the first node of a source blob (the internal
+    /// GraphDocumentDto wire, camelCase Dto keys); nullopt when absent.
+    std::optional<std::string> FirstSourceNodeFieldOf(
+        const yyjson::value& source,
+        std::string_view     key)
+    {
+        auto obj = source.as_object();
+        if (!obj || !obj->contains(std::string_view("nodes")))
+        {
+            return std::nullopt;
+        }
+        auto nodes = (*obj)[std::string_view("nodes")].as_array();
+        if (!nodes || nodes->size() == 0)
+        {
+            return std::nullopt;
+        }
+        auto first = (*nodes)[0].as_object();
+        if (!first || !first->contains(key))
+        {
+            return std::nullopt;
+        }
+        auto value = (*first)[key].as_string();
+        if (!value)
+        {
+            return std::nullopt;
+        }
+        return std::string(*value);
+    }
+
+    TEST(GraphAuthoringSessionTest, RenameGraphNodeEndToEndSurvivesReseed)
+    {
+        const SessionHandle s1{""};
+        SetActionCatalog(s1.p, R"([{"actionId":"{g1}"}])");
+        ApplyChange(
+            s1.p,
+            WrapEnvelope("addGraphNode", R"({"actionId":"{g1}"})"));
+        const auto node_id = FirstGraphNodeOf(DocumentOf(s1.p));
+        ASSERT_TRUE(node_id.has_value());
+        const auto base_revision = DocumentRevisionOf(DocumentOf(s1.p));
+        ASSERT_TRUE(base_revision.has_value());
+
+        const auto response = ApplyChange(
+            s1.p,
+            WrapEnvelope(
+                "renameGraphNode",
+                R"({"nodeId":")" + *node_id + R"(","label":"我的延迟节点"})"));
+        const auto apply = Compact(JsonToUtf8(response.Get()));
+        EXPECT_EQ(apply.find("\"severity\":\"error\""), std::string::npos)
+            << apply;
+
+        // The public document blob carries the new label; the node id is
+        // untouched (label is pure presentation, never an address); the
+        // semantic revision moved exactly once.
+        const auto document = DocumentOf(s1.p);
+        const auto wire_label =
+            FirstGraphNodeFieldOf(document, std::string_view("label"));
+        ASSERT_TRUE(wire_label.has_value());
+        EXPECT_EQ(*wire_label, "我的延迟节点");
+        const auto wire_id =
+            FirstGraphNodeFieldOf(document, std::string_view("id"));
+        ASSERT_TRUE(wire_id.has_value());
+        EXPECT_EQ(*wire_id, *node_id);
+        const auto revision_after = DocumentRevisionOf(document);
+        ASSERT_TRUE(revision_after.has_value());
+        EXPECT_EQ(*revision_after, *base_revision + 1);
+
+        // The persisted source blob (acceptedProperties) agrees.
+        const auto source = AcceptedPropertiesOf(response.Get());
+        const auto source_label =
+            FirstSourceNodeFieldOf(source, std::string_view("label"));
+        ASSERT_TRUE(source_label.has_value());
+        EXPECT_EQ(*source_label, "我的延迟节点");
+        const auto source_id =
+            FirstSourceNodeFieldOf(source, std::string_view("nodeId"));
+        ASSERT_TRUE(source_id.has_value());
+        EXPECT_EQ(*source_id, *node_id);
+
+        // Re-seed from acceptedProperties: the label survives the
+        // scheduler's persistence round-trip.
+        const std::string context =
+            std::string(R"({"properties":)")
+            + Das::Utils::SerializeYyjsonValue(source).value_or(std::string{})
+            + "}";
+        const SessionHandle s2{context};
+        const auto          reseeded = DocumentOf(s2.p);
+        const auto          reseeded_label =
+            FirstGraphNodeFieldOf(reseeded, std::string_view("label"));
+        ASSERT_TRUE(reseeded_label.has_value());
+        EXPECT_EQ(*reseeded_label, "我的延迟节点");
+        const auto reseeded_id =
+            FirstGraphNodeFieldOf(reseeded, std::string_view("id"));
+        ASSERT_TRUE(reseeded_id.has_value());
+        EXPECT_EQ(*reseeded_id, *node_id);
+    }
 } // namespace

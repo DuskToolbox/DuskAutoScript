@@ -1050,6 +1050,7 @@ TEST(TaskAuthoringContractTest, SupportedChangeKindsPass)
          R"({"nodeIds":["n-1","n-2"],"connections":[{"fromNodeId":"a","fromPortId":"p","toNodeId":"b","toPortId":"q"}]})"},
         {"moveGraphNodes",
          R"({"moves":[{"nodeId":"n-1","position":{"x":1.5,"y":2}}]})"},
+        {"renameGraphNode", R"({"nodeId":"n_0","label":"我的延迟节点"})"},
         // uiEvent：Core 契约层只放行 kind，payload 语义由 MaaPI
         // ApplyUiEventChange 校验（Core 不解 ui.values 黑盒）。
         {"uiEvent",
@@ -1666,6 +1667,78 @@ TEST(TaskAuthoringContractTest, MoveGraphNodesChangePayloadStrict)
     EXPECT_EQ(r_extra_top_key.error_kind, "unknownField");
 }
 
+// renameGraphNode payload: {nodeId, label}。label 是纯显示数据（用户重命
+// 名，语义变更 revision+1）：键集锁死、两键非空、label UTF-8 长度 ≤200。
+TEST(TaskAuthoringContractTest, RenameGraphNodeChangePayloadStrict)
+{
+    const auto make_change = [](std::string_view payload)
+    {
+        return ParseJson(
+            std::string{
+                R"({"baseRevision":3,"kind":"renameGraphNode","payload":)"}
+            + std::string{payload} + "}");
+    };
+
+    auto r_ok = Das::Core::TaskScheduler::ValidateAuthoringChange(
+        make_change(R"({"nodeId":"n_0","label":"我的延迟节点"})"));
+    EXPECT_TRUE(r_ok.valid) << r_ok.message;
+
+    // 恰 200 字节的 label 放行（上限含）。
+    const std::string label_at_limit(200, 'a');
+    auto r_at_limit = Das::Core::TaskScheduler::ValidateAuthoringChange(
+        make_change(R"({"nodeId":"n_0","label":")" + label_at_limit + R"("})"));
+    EXPECT_TRUE(r_at_limit.valid) << r_at_limit.message;
+
+    // 201 字节拒绝（防无界文本入档）。
+    const std::string label_over_limit(201, 'a');
+    auto              r_over_limit =
+        Das::Core::TaskScheduler::ValidateAuthoringChange(make_change(
+            R"({"nodeId":"n_0","label":")" + label_over_limit + R"("})"));
+    EXPECT_FALSE(r_over_limit.valid);
+    EXPECT_EQ(r_over_limit.error_kind, "invalidPayload");
+
+    auto r_missing_node_id = Das::Core::TaskScheduler::ValidateAuthoringChange(
+        make_change(R"({"label":"名字"})"));
+    EXPECT_FALSE(r_missing_node_id.valid);
+    EXPECT_EQ(r_missing_node_id.error_kind, "missingField");
+
+    auto r_empty_node_id = Das::Core::TaskScheduler::ValidateAuthoringChange(
+        make_change(R"({"nodeId":"","label":"名字"})"));
+    EXPECT_FALSE(r_empty_node_id.valid);
+    EXPECT_EQ(r_empty_node_id.error_kind, "invalidNodeId");
+
+    auto r_non_string_node_id =
+        Das::Core::TaskScheduler::ValidateAuthoringChange(
+            make_change(R"({"nodeId":7,"label":"名字"})"));
+    EXPECT_FALSE(r_non_string_node_id.valid);
+    EXPECT_EQ(r_non_string_node_id.error_kind, "missingField");
+
+    auto r_missing_label = Das::Core::TaskScheduler::ValidateAuthoringChange(
+        make_change(R"({"nodeId":"n_0"})"));
+    EXPECT_FALSE(r_missing_label.valid);
+    EXPECT_EQ(r_missing_label.error_kind, "missingField");
+
+    auto r_empty_label = Das::Core::TaskScheduler::ValidateAuthoringChange(
+        make_change(R"({"nodeId":"n_0","label":""})"));
+    EXPECT_FALSE(r_empty_label.valid);
+    EXPECT_EQ(r_empty_label.error_kind, "invalidPayload");
+
+    auto r_non_string_label = Das::Core::TaskScheduler::ValidateAuthoringChange(
+        make_change(R"({"nodeId":"n_0","label":42})"));
+    EXPECT_FALSE(r_non_string_label.valid);
+    EXPECT_EQ(r_non_string_label.error_kind, "missingField");
+
+    auto r_extra_key = Das::Core::TaskScheduler::ValidateAuthoringChange(
+        make_change(R"({"nodeId":"n_0","label":"名字","extra":1})"));
+    EXPECT_FALSE(r_extra_key.valid);
+    EXPECT_EQ(r_extra_key.error_kind, "unknownField");
+
+    auto r_non_object = Das::Core::TaskScheduler::ValidateAuthoringChange(
+        make_change(R"(["n_0","名字"])"));
+    EXPECT_FALSE(r_non_object.valid);
+    EXPECT_EQ(r_non_object.error_kind, "invalidPayload");
+}
+
 // schema 契约与 C++ 白名单对账：AuthoringChangeKind enum 集合逐项一致
 // （缺项/多项都在此暴露，防 C++/schema/前端三方漂移）；MoveGraphNode
 // $def 锁死 {nodeId, position{x,y}} 键集与数值类型。
@@ -1712,7 +1785,8 @@ TEST(TaskAuthoringContractTest, SchemaJsonTracksChangeKindWhitelist)
         "uiEvent",
         "moveGraphNode",
         "removeGraphNodes",
-        "moveGraphNodes"};
+        "moveGraphNodes",
+        "renameGraphNode"};
     EXPECT_EQ(schema_kinds, expected_kinds);
 
     auto move_def =
@@ -2023,6 +2097,90 @@ TEST(TaskAuthoringContractTest, SchemaJsonGraphNodePresentationKeysLocked)
     EXPECT_EQ(
         (*icon_definition)[std::string_view("$ref")].as_string().value(),
         "#/$defs/IconString");
+}
+
+// schema RenameGraphNode $def 对账：required {nodeId, label}、键集锁死
+// （additionalProperties:false）、两键 minLength 1、label maxLength 200——
+// 与 C++ ValidateRenameGraphNodePayload 逐项一致；payload oneOf 含 $ref。
+TEST(TaskAuthoringContractTest, SchemaJsonRenameGraphNodeLocked)
+{
+    const auto schema_path = ResolveSchemaJsonPath();
+    ASSERT_TRUE(schema_path.has_value())
+        << "TaskAuthoringHttpContract.schema.json not found above "
+        << std::filesystem::current_path();
+    const auto schema_text = ReadFileText(*schema_path);
+    ASSERT_TRUE(schema_text.has_value());
+
+    auto schema = ParseJson(*schema_text);
+    auto schema_object = schema.as_object();
+    ASSERT_TRUE(schema_object.has_value());
+    auto defs_value = (*schema_object)[std::string_view("$defs")];
+    auto defs_object = defs_value.as_object();
+    ASSERT_TRUE(defs_object.has_value());
+
+    auto rename_def =
+        (*defs_object)[std::string_view("RenameGraphNode")].as_object();
+    ASSERT_TRUE(rename_def.has_value());
+
+    auto no_extra_fields =
+        (*rename_def)[std::string_view("additionalProperties")].as_bool();
+    ASSERT_TRUE(no_extra_fields.has_value());
+    EXPECT_FALSE(*no_extra_fields);
+
+    std::set<std::string> required_fields;
+    auto                  required_array =
+        (*rename_def)[std::string_view("required")].as_array();
+    ASSERT_TRUE(required_array.has_value());
+    for (const auto& item : *required_array)
+    {
+        auto text = item.as_string();
+        ASSERT_TRUE(text.has_value());
+        required_fields.insert(std::string(*text));
+    }
+    const std::set<std::string> expected_required{"nodeId", "label"};
+    EXPECT_EQ(required_fields, expected_required);
+
+    auto properties = (*rename_def)[std::string_view("properties")].as_object();
+    ASSERT_TRUE(properties.has_value());
+    auto node_id = (*properties)[std::string_view("nodeId")].as_object();
+    ASSERT_TRUE(node_id.has_value());
+    EXPECT_EQ(
+        (*node_id)[std::string_view("type")].as_string().value(),
+        "string");
+    EXPECT_EQ((*node_id)[std::string_view("minLength")].as_sint().value(), 1);
+
+    auto label = (*properties)[std::string_view("label")].as_object();
+    ASSERT_TRUE(label.has_value());
+    EXPECT_EQ((*label)[std::string_view("type")].as_string().value(), "string");
+    EXPECT_EQ((*label)[std::string_view("minLength")].as_sint().value(), 1);
+    EXPECT_EQ((*label)[std::string_view("maxLength")].as_sint().value(), 200);
+
+    // AuthoringChangePayload 的 oneOf 分支集含 RenameGraphNode $ref。
+    auto payload_definition =
+        (*defs_object)[std::string_view("AuthoringChangePayload")].as_object();
+    ASSERT_TRUE(payload_definition.has_value());
+    auto payload_branches =
+        (*payload_definition)[std::string_view("oneOf")].as_array();
+    ASSERT_TRUE(payload_branches.has_value());
+    bool found_rename_branch = false;
+    for (const auto& branch : *payload_branches)
+    {
+        auto branch_obj = branch.as_object();
+        if (!branch_obj)
+        {
+            continue;
+        }
+        if (branch_obj->contains(std::string_view("$ref")))
+        {
+            auto ref = (*branch_obj)[std::string_view("$ref")].as_string();
+            if (ref == std::string_view("#/$defs/RenameGraphNode"))
+            {
+                found_rename_branch = true;
+                break;
+            }
+        }
+    }
+    EXPECT_TRUE(found_rename_branch);
 }
 
 TEST(TaskAuthoringContractTest, ChangeRejectsOpWrapper)
@@ -2366,6 +2524,44 @@ TEST(
         unbumped,
         4,
         "removeGraphNodes");
+    EXPECT_FALSE(r_unbumped.valid);
+    EXPECT_EQ(r_unbumped.error_kind, "revisionMismatch");
+}
+
+// renameGraphNode 是语义变更：成功必须 revision == baseRevision + 1（与
+// viewData 轻量通道两族相反）；未推进时 revisionMismatch。
+TEST(
+    TaskAuthoringContractTest,
+    ApplyResultRenameGraphNodeSuccessRequiresBasePlusOne)
+{
+    auto bumped = ParseJson(R"json({
+        "acceptedProperties": {},
+        "document": {
+            "contractVersion": 1,
+            "viewKind": "graph",
+            "revision": 5
+        },
+        "diagnostics": []
+    })json");
+    auto r_bumped = Das::Core::TaskScheduler::ValidateAuthoringApplyResult(
+        bumped,
+        4,
+        "renameGraphNode");
+    EXPECT_TRUE(r_bumped.valid) << r_bumped.message;
+
+    auto unbumped = ParseJson(R"json({
+        "acceptedProperties": {},
+        "document": {
+            "contractVersion": 1,
+            "viewKind": "graph",
+            "revision": 4
+        },
+        "diagnostics": []
+    })json");
+    auto r_unbumped = Das::Core::TaskScheduler::ValidateAuthoringApplyResult(
+        unbumped,
+        4,
+        "renameGraphNode");
     EXPECT_FALSE(r_unbumped.valid);
     EXPECT_EQ(r_unbumped.error_kind, "revisionMismatch");
 }

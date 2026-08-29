@@ -343,6 +343,11 @@ namespace Contract
         // removeFormSequenceItem (id) / removeGraphNode (id)
         std::optional<std::string> item_or_node_id;
 
+        // renameGraphNode (store display label). The nodeId rides the
+        // shared item_or_node_id slot like moveGraphNode; the label is pure
+        // presentation data and never participates in node addressing.
+        std::optional<std::string> rename_label;
+
         // connectGraphPorts / disconnectGraphPorts
         std::optional<GraphConnection> connection;
 
