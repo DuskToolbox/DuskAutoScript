@@ -439,9 +439,9 @@ namespace Das::Core::TaskScheduler
     // "signal"). Entries without a usable id, or whose resolved type is
     // empty, are skipped — a single malformed declaration must not ride
     // the channel, because the Core consumer rejects the whole catalog on
-    // an empty portType. The display label falls back to the port id so
-    // every projected port is renderable. Ports are appended directly to
-    // the destination array; the array rides the catalog context channel
+    // an empty portType. The emitted displayLabel falls back to the port
+    // id so every projected port is renderable. Ports are appended directly
+    // to the destination array; the array rides the catalog context channel
     // so the Core node port projection can merge it onto nodes by
     // componentGuid.
     static void AppendEntryPortsFromDefinition(
