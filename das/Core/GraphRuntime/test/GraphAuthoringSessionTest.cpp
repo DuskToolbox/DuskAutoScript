@@ -8,6 +8,8 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <tuple>
+#include <vector>
 
 namespace
 {
@@ -860,5 +862,251 @@ namespace
         EXPECT_DOUBLE_EQ(
             *DocumentViewPositionOf(document, *node_id, "y"),
             12.25);
+    }
+
+    // -----------------------------------------------------------------------
+    // removeGraphNodes / moveGraphNodes — C ABI end-to-end (one gesture =
+    // one batch message through the session shell)
+    // -----------------------------------------------------------------------
+
+    /// All node ids in a GetDocument document blob's graph projection.
+    std::vector<std::string> DocumentGraphNodeIds(const yyjson::value& document)
+    {
+        std::vector<std::string> ids;
+        auto                     obj = document.as_object();
+        if (!obj || !obj->contains(std::string_view("graph")))
+        {
+            return ids;
+        }
+        auto graph = (*obj)[std::string_view("graph")].as_object();
+        if (!graph || !graph->contains(std::string_view("nodes")))
+        {
+            return ids;
+        }
+        auto nodes = (*graph)[std::string_view("nodes")].as_array();
+        if (!nodes)
+        {
+            return ids;
+        }
+        for (const auto& node : *nodes)
+        {
+            auto node_obj = node.as_object();
+            if (node_obj && node_obj->contains(std::string_view("id")))
+            {
+                if (auto id = (*node_obj)[std::string_view("id")].as_string())
+                {
+                    ids.emplace_back(*id);
+                }
+            }
+        }
+        return ids;
+    }
+
+    /// All nodeId strings inside an acceptedProperties source blob (the
+    /// internal GraphDocumentDto wire).
+    std::vector<std::string> SourceGraphNodeIds(const yyjson::value& source)
+    {
+        std::vector<std::string> ids;
+        auto                     obj = source.as_object();
+        if (!obj || !obj->contains(std::string_view("nodes")))
+        {
+            return ids;
+        }
+        auto nodes = (*obj)[std::string_view("nodes")].as_array();
+        if (!nodes)
+        {
+            return ids;
+        }
+        for (const auto& node : *nodes)
+        {
+            auto node_obj = node.as_object();
+            if (node_obj && node_obj->contains(std::string_view("nodeId")))
+            {
+                if (auto id =
+                        (*node_obj)[std::string_view("nodeId")].as_string())
+                {
+                    ids.emplace_back(*id);
+                }
+            }
+        }
+        return ids;
+    }
+
+    /// Clone the acceptedProperties value out of an ApplyChange response.
+    yyjson::value AcceptedPropertiesOf(Das::ExportInterface::IDasJson* response)
+    {
+        auto full = JsonToUtf8(response);
+        auto obj = yyjson::read(full).as_object();
+        if (!obj || !obj->contains(std::string_view("acceptedProperties")))
+        {
+            return Das::Utils::MakeYyjsonObject();
+        }
+        return Das::Utils::CloneYyjsonValue(
+            (*obj)[std::string_view("acceptedProperties")]);
+    }
+
+    /// Build the removeGraphNodes payload {"nodeIds":[...]}.
+    std::string MakeRemoveGraphNodesPayload(
+        const std::vector<std::string>& node_ids)
+    {
+        std::string payload = R"({"nodeIds":[)";
+        for (std::size_t index = 0; index < node_ids.size(); ++index)
+        {
+            if (index != 0)
+            {
+                payload += ',';
+            }
+            payload += "\"" + node_ids[index] + "\"";
+        }
+        payload += "]}";
+        return payload;
+    }
+
+    /// Build the moveGraphNodes payload
+    /// {"moves":[{"nodeId":..,"position":{"x":..,"y":..}},...]}.
+    std::string MakeMoveGraphNodesPayload(
+        const std::vector<std::tuple<std::string, double, double>>& moves)
+    {
+        std::string payload = R"({"moves":[)";
+        for (std::size_t index = 0; index < moves.size(); ++index)
+        {
+            if (index != 0)
+            {
+                payload += ',';
+            }
+            const auto& [node_id, x, y] = moves[index];
+            payload += "{\"nodeId\":\"" + node_id + R"(","position":{"x":)"
+                       + std::to_string(x) + R"(,"y":)" + std::to_string(y)
+                       + "}}";
+        }
+        payload += "]}";
+        return payload;
+    }
+
+    TEST(GraphAuthoringSessionTest, RemoveGraphNodesEndToEndDropsBatch)
+    {
+        const SessionHandle s{""};
+        SetActionCatalog(s.p, R"([{"actionId":"{g1}"}])");
+        for (int node_count = 0; node_count < 3; ++node_count)
+        {
+            ApplyChange(
+                s.p,
+                WrapEnvelope("addGraphNode", R"({"actionId":"{g1}"})"));
+        }
+        const auto node_ids = DocumentGraphNodeIds(DocumentOf(s.p));
+        ASSERT_EQ(node_ids.size(), 3u);
+        // Wire n0 -> n1 -> n2 so the batch removal also proves edge cascade.
+        ApplyChange(
+            s.p,
+            WrapEnvelope(
+                "connectGraphPorts",
+                R"({"fromNodeId":")" + node_ids[0] + R"(","fromPortId":"o",)"
+                    + R"("toNodeId":")" + node_ids[1]
+                    + R"(","toPortId":"i"})"));
+        ApplyChange(
+            s.p,
+            WrapEnvelope(
+                "connectGraphPorts",
+                R"({"fromNodeId":")" + node_ids[1] + R"(","fromPortId":"o",)"
+                    + R"("toNodeId":")" + node_ids[2]
+                    + R"(","toPortId":"i"})"));
+        const auto base_revision = DocumentRevisionOf(DocumentOf(s.p));
+        ASSERT_TRUE(base_revision.has_value());
+
+        const auto response = ApplyChange(
+            s.p,
+            WrapEnvelope(
+                "removeGraphNodes",
+                MakeRemoveGraphNodesPayload({node_ids[0], node_ids[1]})));
+        const auto apply = Compact(JsonToUtf8(response.Get()));
+        EXPECT_EQ(apply.find("\"severity\":\"error\""), std::string::npos)
+            << apply;
+
+        // The document blob no longer carries the deleted nodes (nor any
+        // trace of their ids — connections included).
+        const auto document = DocumentOf(s.p);
+        const auto remaining = DocumentGraphNodeIds(document);
+        ASSERT_EQ(remaining.size(), 1u);
+        EXPECT_EQ(remaining[0], node_ids[2]);
+        const auto document_text =
+            Compact(Das::Utils::SerializeYyjsonValue(document).value_or(""));
+        EXPECT_EQ(document_text.find(node_ids[0]), std::string::npos);
+        EXPECT_EQ(document_text.find(node_ids[1]), std::string::npos);
+
+        // The persisted source blob agrees, and the semantic revision moved
+        // exactly once for the whole batch.
+        const auto source_ids =
+            SourceGraphNodeIds(AcceptedPropertiesOf(response.Get()));
+        ASSERT_EQ(source_ids.size(), 1u);
+        EXPECT_EQ(source_ids[0], node_ids[2]);
+        const auto after_revision = DocumentRevisionOf(document);
+        ASSERT_TRUE(after_revision.has_value());
+        EXPECT_EQ(*after_revision, *base_revision + 1);
+    }
+
+    TEST(GraphAuthoringSessionTest, MoveGraphNodesEndToEndWritesBatch)
+    {
+        const SessionHandle s{""};
+        SetActionCatalog(s.p, R"([{"actionId":"{g1}"}])");
+        ApplyChange(
+            s.p,
+            WrapEnvelope("addGraphNode", R"({"actionId":"{g1}"})"));
+        ApplyChange(
+            s.p,
+            WrapEnvelope("addGraphNode", R"({"actionId":"{g1}"})"));
+        const auto node_ids = DocumentGraphNodeIds(DocumentOf(s.p));
+        ASSERT_EQ(node_ids.size(), 2u);
+        const auto revision_before = DocumentRevisionOf(DocumentOf(s.p));
+        ASSERT_TRUE(revision_before.has_value());
+
+        const auto response = ApplyChange(
+            s.p,
+            WrapEnvelope(
+                "moveGraphNodes",
+                MakeMoveGraphNodesPayload(
+                    {{node_ids[0], 15.5, 16.0}, {node_ids[1], 25.0, 26.25}})));
+        const auto apply = Compact(JsonToUtf8(response.Get()));
+        EXPECT_EQ(apply.find("\"severity\":\"error\""), std::string::npos)
+            << apply;
+
+        // Both blobs (public document + persisted source) carry the batch
+        // coordinates under viewData.positions.
+        const auto document = DocumentOf(s.p);
+        ASSERT_TRUE(
+            DocumentViewPositionOf(document, node_ids[0], "x").has_value());
+        EXPECT_DOUBLE_EQ(
+            *DocumentViewPositionOf(document, node_ids[0], "x"),
+            15.5);
+        ASSERT_TRUE(
+            DocumentViewPositionOf(document, node_ids[0], "y").has_value());
+        EXPECT_DOUBLE_EQ(
+            *DocumentViewPositionOf(document, node_ids[0], "y"),
+            16.0);
+        ASSERT_TRUE(
+            DocumentViewPositionOf(document, node_ids[1], "x").has_value());
+        EXPECT_DOUBLE_EQ(
+            *DocumentViewPositionOf(document, node_ids[1], "x"),
+            25.0);
+        ASSERT_TRUE(
+            DocumentViewPositionOf(document, node_ids[1], "y").has_value());
+        EXPECT_DOUBLE_EQ(
+            *DocumentViewPositionOf(document, node_ids[1], "y"),
+            26.25);
+        const auto source = AcceptedPropertiesOf(response.Get());
+        ASSERT_TRUE(
+            DocumentViewPositionOf(source, node_ids[0], "x").has_value());
+        EXPECT_DOUBLE_EQ(
+            *DocumentViewPositionOf(source, node_ids[0], "x"),
+            15.5);
+        ASSERT_TRUE(
+            DocumentViewPositionOf(source, node_ids[1], "y").has_value());
+        EXPECT_DOUBLE_EQ(
+            *DocumentViewPositionOf(source, node_ids[1], "y"),
+            26.25);
+
+        // The lightweight coordinate channel leaves the revision untouched.
+        const auto revision_after = DocumentRevisionOf(document);
+        ASSERT_TRUE(revision_after.has_value());
+        EXPECT_EQ(*revision_after, *revision_before);
     }
 } // namespace
