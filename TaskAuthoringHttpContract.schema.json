@@ -471,8 +471,22 @@
         "connectGraphPorts",
         "disconnectGraphPorts",
         "uiEvent",
-        "moveGraphNode"
+        "moveGraphNode",
+        "removeGraphNodes",
+        "moveGraphNodes"
       ]
+    },
+    "GraphConnectionEndpoints": {
+      "type": "object",
+      "required": ["fromNodeId", "fromPortId", "toNodeId", "toPortId"],
+      "additionalProperties": false,
+      "$comment": "Four-key connection endpoint shape shared by connect/disconnect payloads and the removeGraphNodes batch connections[].",
+      "properties": {
+        "fromNodeId": { "type": "string", "minLength": 1 },
+        "fromPortId": { "type": "string", "minLength": 1 },
+        "toNodeId": { "type": "string", "minLength": 1 },
+        "toPortId": { "type": "string", "minLength": 1 }
+      }
     },
     "MoveGraphNode": {
       "type": "object",
@@ -488,6 +502,55 @@
           "properties": {
             "x": { "type": "number" },
             "y": { "type": "number" }
+          }
+        }
+      }
+    },
+    "RemoveGraphNodes": {
+      "type": "object",
+      "additionalProperties": false,
+      "$comment": "Atomic batch node removal: validate-all-then-mutate — any NodeNotFound/EdgeNotFound rejects the whole batch (no partial mutation), success bumps the semantic revision exactly once. connections[] names extra edges to drop while keeping their endpoint nodes (connection-only batches are valid).",
+      "properties": {
+        "nodeIds": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "connections": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/GraphConnectionEndpoints" }
+        }
+      },
+      "anyOf": [
+        { "required": ["nodeIds"] },
+        { "required": ["connections"] }
+      ]
+    },
+    "MoveGraphNodes": {
+      "type": "object",
+      "required": ["moves"],
+      "additionalProperties": false,
+      "$comment": "Batch coordinate commit onto the document-level viewData partition; a successful moveGraphNodes does not bump the semantic revision (same exemption family as moveGraphNode).",
+      "properties": {
+        "moves": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["nodeId", "position"],
+            "additionalProperties": false,
+            "properties": {
+              "nodeId": { "type": "string", "minLength": 1 },
+              "position": {
+                "type": "object",
+                "required": ["x", "y"],
+                "additionalProperties": false,
+                "properties": {
+                  "x": { "type": "number" },
+                  "y": { "type": "number" }
+                }
+              }
+            }
           }
         }
       }
@@ -609,7 +672,9 @@
             "toPortId": { "type": "string", "minLength": 1 }
           }
         },
-        { "$ref": "#/$defs/MoveGraphNode" }
+        { "$ref": "#/$defs/MoveGraphNode" },
+        { "$ref": "#/$defs/RemoveGraphNodes" },
+        { "$ref": "#/$defs/MoveGraphNodes" }
       ]
     },
     "AuthoringApplyRequest": {

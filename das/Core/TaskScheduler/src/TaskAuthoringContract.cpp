@@ -33,7 +33,9 @@ namespace Das::Core::TaskScheduler
             "connectGraphPorts",
             "disconnectGraphPorts",
             "uiEvent",
-            "moveGraphNode"};
+            "moveGraphNode",
+            "removeGraphNodes",
+            "moveGraphNodes"};
 
         constexpr std::array<int, 7> VALUE_TYPES{0, 1, 2, 4, 8, 16, 32};
 
@@ -2065,6 +2067,219 @@ namespace Das::Core::TaskScheduler
             return Pass();
         }
 
+        // removeGraphNodes（批量删除）payload: {nodeIds[], connections?[]}。
+        // nodeIds 必须是非空字符串数组且无重复；connections 可选，每项为
+        // 四非空字符串键的连接形状；nodeIds 与 connections 至少一项非空
+        // （连线批量删除可不带 nodeIds，端点节点保留）。
+        AuthoringValidationResult ValidateRemoveGraphNodesPayload(
+            const yyjson::value& payload)
+        {
+            auto obj_opt = payload.as_object();
+            if (!obj_opt)
+            {
+                return Fail("invalidPayload", "payload must be object");
+            }
+            const auto& obj = obj_opt.value();
+            if (!OnlyKeys(obj, {"nodeIds", "connections"}))
+            {
+                return Fail(
+                    "unknownField",
+                    "removeGraphNodes rejects unknown field");
+            }
+            bool has_node_ids = false;
+            if (obj.contains("nodeIds"))
+            {
+                auto ids = obj["nodeIds"].as_array();
+                if (!ids)
+                {
+                    return Fail(
+                        "invalidPayload",
+                        "removeGraphNodes.nodeIds must be array");
+                }
+                has_node_ids = !ids->empty();
+                std::set<std::string> seen_node_ids;
+                for (const auto& item : *ids)
+                {
+                    auto id = item.as_string();
+                    if (!id || id->empty())
+                    {
+                        return Fail(
+                            "invalidNodeId",
+                            "removeGraphNodes.nodeIds entries must be "
+                            "non-empty strings");
+                    }
+                    if (!seen_node_ids.insert(std::string(*id)).second)
+                    {
+                        return Fail(
+                            "invalidPayload",
+                            "removeGraphNodes.nodeIds entries must be "
+                            "unique");
+                    }
+                }
+            }
+            bool has_connections = false;
+            if (obj.contains("connections"))
+            {
+                auto connections = obj["connections"].as_array();
+                if (!connections)
+                {
+                    return Fail(
+                        "invalidPayload",
+                        "removeGraphNodes.connections must be array");
+                }
+                has_connections = !connections->empty();
+                static constexpr std::string_view FIELDS[] =
+                    {"fromNodeId", "fromPortId", "toNodeId", "toPortId"};
+                for (const auto& connection : *connections)
+                {
+                    auto connection_obj = connection.as_object();
+                    if (!connection_obj)
+                    {
+                        return Fail(
+                            "invalidPayload",
+                            "removeGraphNodes.connections entries must be "
+                            "objects");
+                    }
+                    for (auto f : FIELDS)
+                    {
+                        if (!HasStringField(*connection_obj, f)
+                            || (*connection_obj)[f].as_string().value().empty())
+                        {
+                            return Fail(
+                                "missingField",
+                                std::string{"removeGraphNodes.connections[]."}
+                                    + std::string{f}
+                                    + " required and non-empty");
+                        }
+                    }
+                    if (!OnlyKeys(
+                            *connection_obj,
+                            {"fromNodeId",
+                             "fromPortId",
+                             "toNodeId",
+                             "toPortId"}))
+                    {
+                        return Fail(
+                            "unknownField",
+                            "removeGraphNodes.connections[] rejects unknown "
+                            "field");
+                    }
+                }
+            }
+            if (!has_node_ids && !has_connections)
+            {
+                return Fail(
+                    "invalidPayload",
+                    "removeGraphNodes requires at least one nodeIds entry "
+                    "or connections entry");
+            }
+            return Pass();
+        }
+
+        // moveGraphNodes（批量坐标提交）payload: {moves[]}。moves 必须为
+        // 非空数组；每项 OnlyKeys({nodeId, position})，nodeId 非空且整个
+        // moves 内无重复；position 复用 moveGraphNode 的 as_num +
+        // isfinite 有限性检查。
+        AuthoringValidationResult ValidateMoveGraphNodesPayload(
+            const yyjson::value& payload)
+        {
+            auto obj_opt = payload.as_object();
+            if (!obj_opt)
+            {
+                return Fail("invalidPayload", "payload must be object");
+            }
+            const auto& obj = obj_opt.value();
+            if (!HasArrayField(obj, "moves"))
+            {
+                return Fail("missingField", "moveGraphNodes.moves required");
+            }
+            if (!OnlyKeys(obj, {"moves"}))
+            {
+                return Fail(
+                    "unknownField",
+                    "moveGraphNodes rejects unknown field");
+            }
+            auto moves = obj["moves"].as_array();
+            if (moves->empty())
+            {
+                return Fail(
+                    "invalidPayload",
+                    "moveGraphNodes.moves must be non-empty");
+            }
+            std::set<std::string> seen_node_ids;
+            for (const auto& item : *moves)
+            {
+                auto move_obj = item.as_object();
+                if (!move_obj)
+                {
+                    return Fail(
+                        "invalidPayload",
+                        "moveGraphNodes.moves entries must be objects");
+                }
+                if (auto r = RequireNonEmptyString(
+                        *move_obj,
+                        "nodeId",
+                        "invalidNodeId",
+                        "moveGraphNodes.moves[].nodeId required and "
+                        "non-empty");
+                    !r.valid)
+                {
+                    return r;
+                }
+                if (!HasObjectField(*move_obj, "position"))
+                {
+                    return Fail(
+                        "missingField",
+                        "moveGraphNodes.moves[].position required");
+                }
+                if (!OnlyKeys(*move_obj, {"nodeId", "position"}))
+                {
+                    return Fail(
+                        "unknownField",
+                        "moveGraphNodes.moves[] rejects unknown field");
+                }
+                const auto& position = (*move_obj)["position"];
+                auto        position_obj = position.as_object();
+                static constexpr std::string_view AXES[]{"x", "y"};
+                for (auto axis : AXES)
+                {
+                    if (!position_obj->contains(axis))
+                    {
+                        return Fail(
+                            "missingField",
+                            std::string{"moveGraphNodes.moves[].position."}
+                                + std::string{axis} + " required");
+                    }
+                    auto coordinate =
+                        (*position_obj)[std::string_view(axis)].as_num();
+                    if (!coordinate || !std::isfinite(*coordinate))
+                    {
+                        return Fail(
+                            "invalidPosition",
+                            std::string{"moveGraphNodes.moves[].position."}
+                                + std::string{axis}
+                                + " must be a finite number");
+                    }
+                }
+                if (!OnlyKeys(*position_obj, {"x", "y"}))
+                {
+                    return Fail(
+                        "unknownField",
+                        "moveGraphNodes.moves[].position rejects unknown "
+                        "field");
+                }
+                const auto node_id = (*move_obj)["nodeId"].as_string().value();
+                if (!seen_node_ids.insert(std::string(node_id)).second)
+                {
+                    return Fail(
+                        "invalidPayload",
+                        "moveGraphNodes.moves[].nodeId must be unique "
+                        "within moves");
+                }
+            }
+            return Pass();
+        }
+
         AuthoringValidationResult ValidateGraphPortsPayload(
             const yyjson::value& payload,
             std::string_view     kind)
@@ -2148,6 +2363,14 @@ namespace Das::Core::TaskScheduler
             if (kind == std::string_view("moveGraphNode"))
             {
                 return ValidateMoveGraphNodePayload(payload);
+            }
+            if (kind == std::string_view("removeGraphNodes"))
+            {
+                return ValidateRemoveGraphNodesPayload(payload);
+            }
+            if (kind == std::string_view("moveGraphNodes"))
+            {
+                return ValidateMoveGraphNodesPayload(payload);
             }
             // Unknown kinds are rejected by the caller before dispatch.
             return Pass();
@@ -2424,11 +2647,13 @@ namespace Das::Core::TaskScheduler
             const int64_t actual_revision = ReadInt(doc["revision"]);
             // 失败 envelope（有 error diagnostic）不推进 revision（须 ==
             // baseRevision）； 成功 envelope 必须推进（须 == baseRevision +
-            // 1）。唯一例外：viewData 轻量通道 kind（moveGraphNode）成功也
-            // 不推进语义 revision，须 == baseRevision。
+            // 1）。唯一例外：viewData 轻量通道 kind（moveGraphNode 单数与
+            // moveGraphNodes 批量）成功也不推进语义 revision，须 ==
+            // baseRevision。
             const bool has_error = HasErrorDiagnostic(obj["diagnostics"]);
             const bool bumps_revision =
-                kind != std::string_view("moveGraphNode");
+                kind != std::string_view("moveGraphNode")
+                && kind != std::string_view("moveGraphNodes");
             if (has_error)
             {
                 if (actual_revision != baseRevision)
@@ -2454,9 +2679,10 @@ namespace Das::Core::TaskScheduler
             {
                 return Fail(
                     "revisionMismatch",
-                    "moveGraphNode AuthoringApplyResult.document.revision "
-                    "must equal baseRevision (viewData changes do not bump "
-                    "the semantic revision)");
+                    "viewData-channel kinds (moveGraphNode/moveGraphNodes) "
+                    "AuthoringApplyResult.document.revision must equal "
+                    "baseRevision (viewData changes do not bump the "
+                    "semantic revision)");
             }
         }
 
