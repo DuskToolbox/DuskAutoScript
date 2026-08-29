@@ -712,6 +712,43 @@ namespace Das::Http
                         service->OnKeySubscribersEmpty(key);
                     }
                 });
+            // SSE 订阅 key 门：既无快照也无活跃上报者的 key 拒绝订阅——
+            // 落普通路由（events 路径无注册路由 → 404），把「订了个死
+            // key」从静默变成可诊断信号。service 已亡 = 主进程关闭中，
+            // 放行无害（连接即将关闭）。
+            server.SetSseKeyGate(
+                [weak_service =
+                     std::weak_ptr<Das::Http::DasProgressServiceImpl>(
+                         progress_service)](const std::string& key)
+                {
+                    if (auto service = weak_service.lock())
+                    {
+                        return service->IsKeyKnown(key);
+                    }
+                    return true;
+                });
+            // 订阅建立处快照重放：会话注册完成后取该 key 的字段级快照
+            // 逐条补发，再接直播帧（重放触发点由 SseSession 的
+            // on_registered 保证在头写完 + hub Register 之后——注册前
+            // 补发会与头写入并发交错损坏流；strand 串行使重放帧先于
+            // 注册后直播帧）。查失败毫秒级跑赢订阅建立时 UI 不再卡在
+            // 「正在检查更新」。session 经引用传入不持有；lambda 按值
+            // 捕 weak_service 防悬垂。
+            server.SetSseOnRegistered(
+                [weak_service =
+                     std::weak_ptr<Das::Http::DasProgressServiceImpl>(
+                         progress_service)](
+                    Das::Http::Beast::SseSessionBase& session)
+                {
+                    if (auto service = weak_service.lock())
+                    {
+                        for (const auto& payload :
+                             service->TakeSnapshot(session.Key()))
+                        {
+                            session.WriteData(payload);
+                        }
+                    }
+                });
 
             // Wire notify callbacks through COM interfaces → WebSocket
             // broadcast Core layer sends {"code","msg","data"}; we inject "api"

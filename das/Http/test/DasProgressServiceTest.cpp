@@ -2,6 +2,7 @@
 #include "beast/SseSession.hpp" // for SseSessionBase
 #include "service/DasProgressServiceImpl.h"
 
+#include <boost/beast/_experimental/test/stream.hpp>
 #include <das/DasString.hpp>
 #include <das/Utils/DasJsonCore.h>
 #include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasProgressCallback.Implements.hpp>
@@ -9,6 +10,7 @@
 #include <gtest/gtest.h>
 
 #include <atomic>
+#include <chrono>
 #include <memory>
 #include <optional>
 #include <string>
@@ -263,6 +265,15 @@ namespace
                                { service->OnKeySubscribersEmpty(key); });
         }
     };
+
+    // 驱动就绪的异步 handler 链（SSE 头写 → 注册 → 重放 → 直播多级链）。
+    void PumpIo(boost::asio::io_context& ioc)
+    {
+        for (int i = 0; i < 50; ++i)
+        {
+            ioc.poll();
+        }
+    }
 } // namespace
 
 TEST(DasProgressServiceTest, ReportBroadcastsSetValuePayloadPerField)
@@ -514,4 +525,116 @@ TEST(DasProgressServiceTest, SnapshotCapEvictsOldestKey)
     auto parsed = ParsePayload(*newest[0]);
     ASSERT_TRUE(parsed.has_value());
     EXPECT_EQ(parsed->value_text, "\"" + std::to_string(total - 1) + "\"");
+}
+
+// 快照重放端到端：受理期 Report（无订阅，广播丢失但快照已记）→ 新订阅
+// 建立（App 同款门 + 注册回调接线）→ 订阅者先收重放帧再接直播帧。
+TEST(DasProgressServiceTest, SnapshotReplayE2E_ReplayBeforeLive)
+{
+    ServiceFixture             fixture;
+    boost::beast::test::stream client(fixture.ioc);
+    boost::beast::test::stream server_stream(fixture.ioc);
+    client.connect(server_stream);
+
+    // 受理期推一帧：无人订阅，广播丢失，快照记录最后状态。
+    std::vector<std::optional<FakeProgressUpdate::Field>> early_fields;
+    early_fields.emplace_back(
+        std::make_pair(
+            std::string("updateProgress"),
+            MakeJsonValue("检查失败：网络错误")));
+    auto early_entry =
+        FakeProgressUpdate::Make("e2e-key", std::move(early_fields));
+    ASSERT_EQ(fixture.service->Report(early_entry.Get()), DAS_S_OK);
+    fixture.ioc.poll();
+
+    // App.cpp 同款接线（weak_service 捕获形态照抄）。
+    const std::weak_ptr<Das::Http::DasProgressServiceImpl> weak_service =
+        fixture.service;
+    const auto key_gate = [weak_service](const std::string& key)
+    {
+        if (auto service = weak_service.lock())
+        {
+            return service->IsKeyKnown(key);
+        }
+        return true;
+    };
+    const auto on_registered =
+        [weak_service](Das::Http::Beast::SseSessionBase& session)
+    {
+        if (auto service = weak_service.lock())
+        {
+            for (const auto& payload : service->TakeSnapshot(session.Key()))
+            {
+                session.WriteData(payload);
+            }
+        }
+    };
+
+    // 快照命中 → 门放行，订阅建立（真实 SSE 会话走头写 → 注册 → 重放链）。
+    ASSERT_TRUE(key_gate("e2e-key"));
+    using TestSseSession =
+        Das::Http::Beast::SseSessionT<boost::beast::test::stream>;
+    auto session = std::make_shared<TestSseSession>(
+        std::move(server_stream),
+        "e2e-key",
+        fixture.hub,
+        std::chrono::seconds(15),
+        on_registered);
+    session->DoStart();
+    PumpIo(fixture.ioc);
+    ASSERT_EQ(fixture.hub->SubscriberCount("e2e-key"), 1u);
+
+    // 注册后推直播帧。
+    std::vector<std::optional<FakeProgressUpdate::Field>> live_fields;
+    live_fields.emplace_back(
+        std::make_pair(
+            std::string("updateProgress"),
+            MakeJsonValue("已是最新（v2.23.0）")));
+    auto live_entry =
+        FakeProgressUpdate::Make("e2e-key", std::move(live_fields));
+    ASSERT_EQ(fixture.service->Report(live_entry.Get()), DAS_S_OK);
+    PumpIo(fixture.ioc);
+
+    // 客户端字节流：200 头 → 重放帧（受理期快照）→ 直播帧。
+    const std::string data(client.str());
+    const auto        header_pos = data.find("HTTP/1.1 200 OK");
+    const auto        replay_pos = data.find("检查失败：网络错误");
+    const auto        live_pos = data.find("已是最新（v2.23.0）");
+    ASSERT_NE(header_pos, std::string::npos);
+    ASSERT_NE(replay_pos, std::string::npos);
+    ASSERT_NE(live_pos, std::string::npos);
+    EXPECT_LT(header_pos, replay_pos);
+    EXPECT_LT(replay_pos, live_pos);
+
+    session->Close();
+    PumpIo(fixture.ioc);
+}
+
+// 无效 key 拒绝端到端：App 同款门谓词对无快照且无活跃上报者的 key 返回
+// false（Server 层落普通路由 404）；上报者存在时放行（合法首订阅不误杀）。
+TEST(DasProgressServiceTest, UnknownKeyGateRejectionE2E)
+{
+    ServiceFixture fixture;
+
+    const std::weak_ptr<Das::Http::DasProgressServiceImpl> weak_service =
+        fixture.service;
+    const auto key_gate = [weak_service](const std::string& key)
+    {
+        if (auto service = weak_service.lock())
+        {
+            return service->IsKeyKnown(key);
+        }
+        return true;
+    };
+
+    // 无快照、无活跃上报者 → 拒绝（订了个死 key 的可诊断信号）。
+    EXPECT_FALSE(key_gate("never-reported-key"));
+
+    // 上报者存在 → 放行（check job 期间零 Report 零快照的首订阅）。
+    auto* raw_cb = new FakeProgressCallback();
+    ASSERT_EQ(fixture.service->AddCallback(raw_cb), DAS_S_OK);
+    EXPECT_TRUE(key_gate("never-reported-key"));
+
+    fixture.service->RemoveCallback(raw_cb);
+    raw_cb->Release();
 }
