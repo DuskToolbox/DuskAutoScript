@@ -987,6 +987,10 @@ TEST(TaskAuthoringContractTest, SupportedChangeKindsPass)
         {"disconnectGraphPorts",
          R"({"fromNodeId":"a","fromPortId":"p1","toNodeId":"b","toPortId":"p2"})"},
         {"moveGraphNode", R"({"nodeId":"n-1","position":{"x":12.5,"y":-3}})"},
+        {"removeGraphNodes",
+         R"({"nodeIds":["n-1","n-2"],"connections":[{"fromNodeId":"a","fromPortId":"p","toNodeId":"b","toPortId":"q"}]})"},
+        {"moveGraphNodes",
+         R"({"moves":[{"nodeId":"n-1","position":{"x":1.5,"y":2}}]})"},
         // uiEvent：Core 契约层只放行 kind，payload 语义由 MaaPI
         // ApplyUiEventChange 校验（Core 不解 ui.values 黑盒）。
         {"uiEvent",
@@ -1340,6 +1344,269 @@ TEST(TaskAuthoringContractTest, MoveGraphNodeChangePayloadStrict)
     EXPECT_EQ(r_extra_position.error_kind, "unknownField");
 }
 
+// removeGraphNodes（批量删除）：nodeIds 必须是非空字符串数组且无重复，
+// connections 可选（每项四键齐全非空）；nodeIds 与 connections 至少一项
+// 非空；多余键 unknownField。原子批量删除的服务端半边入口。
+TEST(TaskAuthoringContractTest, RemoveGraphNodesChangePayloadStrict)
+{
+    auto ok = ParseJson(R"json({
+        "baseRevision": 3,
+        "kind": "removeGraphNodes",
+        "payload": {
+            "nodeIds": ["a", "b"],
+            "connections": [
+                {"fromNodeId": "n", "fromPortId": "p",
+                 "toNodeId": "m", "toPortId": "q"}
+            ]
+        }
+    })json");
+    auto r_ok = Das::Core::TaskScheduler::ValidateAuthoringChange(ok);
+    EXPECT_TRUE(r_ok.valid) << r_ok.message;
+
+    // nodeIds 单独出现（不带 connections）合法。
+    auto node_ids_only = ParseJson(R"json({
+        "baseRevision": 3,
+        "kind": "removeGraphNodes",
+        "payload": {"nodeIds": ["a"]}
+    })json");
+    auto r_node_ids_only =
+        Das::Core::TaskScheduler::ValidateAuthoringChange(node_ids_only);
+    EXPECT_TRUE(r_node_ids_only.valid) << r_node_ids_only.message;
+
+    // connections 单独出现（连线批量删除，端点节点保留）合法。
+    auto connections_only = ParseJson(R"json({
+        "baseRevision": 3,
+        "kind": "removeGraphNodes",
+        "payload": {
+            "connections": [
+                {"fromNodeId": "n", "fromPortId": "p",
+                 "toNodeId": "m", "toPortId": "q"}
+            ]
+        }
+    })json");
+    auto r_connections_only =
+        Das::Core::TaskScheduler::ValidateAuthoringChange(connections_only);
+    EXPECT_TRUE(r_connections_only.valid) << r_connections_only.message;
+
+    // nodeIds 空数组且 connections 缺失 → 至少一项非空不成立。
+    auto both_empty = ParseJson(R"json({
+        "baseRevision": 3,
+        "kind": "removeGraphNodes",
+        "payload": {"nodeIds": []}
+    })json");
+    auto r_both_empty =
+        Das::Core::TaskScheduler::ValidateAuthoringChange(both_empty);
+    EXPECT_FALSE(r_both_empty.valid);
+    EXPECT_EQ(r_both_empty.error_kind, "invalidPayload");
+
+    // nodeIds 含空串 → invalidNodeId。
+    auto empty_node_id = ParseJson(R"json({
+        "baseRevision": 3,
+        "kind": "removeGraphNodes",
+        "payload": {"nodeIds": ["a", ""]}
+    })json");
+    auto r_empty_node_id =
+        Das::Core::TaskScheduler::ValidateAuthoringChange(empty_node_id);
+    EXPECT_FALSE(r_empty_node_id.valid);
+    EXPECT_EQ(r_empty_node_id.error_kind, "invalidNodeId");
+
+    // nodeIds 含非字符串项 → invalidNodeId。
+    auto non_string_node_id = ParseJson(R"json({
+        "baseRevision": 3,
+        "kind": "removeGraphNodes",
+        "payload": {"nodeIds": ["a", 7]}
+    })json");
+    auto r_non_string =
+        Das::Core::TaskScheduler::ValidateAuthoringChange(non_string_node_id);
+    EXPECT_FALSE(r_non_string.valid);
+    EXPECT_EQ(r_non_string.error_kind, "invalidNodeId");
+
+    // nodeIds 重复 → invalidPayload。
+    auto duplicate_node_ids = ParseJson(R"json({
+        "baseRevision": 3,
+        "kind": "removeGraphNodes",
+        "payload": {"nodeIds": ["a", "a"]}
+    })json");
+    auto r_duplicate =
+        Das::Core::TaskScheduler::ValidateAuthoringChange(duplicate_node_ids);
+    EXPECT_FALSE(r_duplicate.valid);
+    EXPECT_EQ(r_duplicate.error_kind, "invalidPayload");
+
+    // connections 单项缺四键之一 → missingField。
+    auto missing_connection_key = ParseJson(R"json({
+        "baseRevision": 3,
+        "kind": "removeGraphNodes",
+        "payload": {
+            "nodeIds": ["a"],
+            "connections": [
+                {"fromNodeId": "n", "fromPortId": "p", "toNodeId": "m"}
+            ]
+        }
+    })json");
+    auto r_missing_key = Das::Core::TaskScheduler::ValidateAuthoringChange(
+        missing_connection_key);
+    EXPECT_FALSE(r_missing_key.valid);
+    EXPECT_EQ(r_missing_key.error_kind, "missingField");
+
+    // connections 单项值为空串 → missingField。
+    auto empty_connection_value = ParseJson(R"json({
+        "baseRevision": 3,
+        "kind": "removeGraphNodes",
+        "payload": {
+            "nodeIds": ["a"],
+            "connections": [
+                {"fromNodeId": "n", "fromPortId": "", "toNodeId": "m",
+                 "toPortId": "q"}
+            ]
+        }
+    })json");
+    auto r_empty_value = Das::Core::TaskScheduler::ValidateAuthoringChange(
+        empty_connection_value);
+    EXPECT_FALSE(r_empty_value.valid);
+    EXPECT_EQ(r_empty_value.error_kind, "missingField");
+
+    // 未知键 → unknownField。
+    auto extra_key = ParseJson(R"json({
+        "baseRevision": 3,
+        "kind": "removeGraphNodes",
+        "payload": {"nodeIds": [], "extra": 1}
+    })json");
+    auto r_extra_key =
+        Das::Core::TaskScheduler::ValidateAuthoringChange(extra_key);
+    EXPECT_FALSE(r_extra_key.valid);
+    EXPECT_EQ(r_extra_key.error_kind, "unknownField");
+
+    // nodeIds 缺失且 connections 为空数组 → 至少一项非空不成立。
+    auto missing_node_ids = ParseJson(R"json({
+        "baseRevision": 3,
+        "kind": "removeGraphNodes",
+        "payload": {"connections": []}
+    })json");
+    auto r_missing_node_ids =
+        Das::Core::TaskScheduler::ValidateAuthoringChange(missing_node_ids);
+    EXPECT_FALSE(r_missing_node_ids.valid);
+    EXPECT_EQ(r_missing_node_ids.error_kind, "invalidPayload");
+}
+
+// moveGraphNodes（批量坐标提交）：moves 必须为非空数组；每项
+// OnlyKeys({nodeId, position})，nodeId 非空且整个 moves 内无重复；
+// position 复用 moveGraphNode 的 as_num + isfinite 有限性检查。
+TEST(TaskAuthoringContractTest, MoveGraphNodesChangePayloadStrict)
+{
+    auto ok = ParseJson(R"json({
+        "baseRevision": 5,
+        "kind": "moveGraphNodes",
+        "payload": {
+            "moves": [
+                {"nodeId": "a", "position": {"x": 1.5, "y": 2}},
+                {"nodeId": "b", "position": {"x": -3, "y": 40.25}}
+            ]
+        }
+    })json");
+    auto r_ok = Das::Core::TaskScheduler::ValidateAuthoringChange(ok);
+    EXPECT_TRUE(r_ok.valid) << r_ok.message;
+
+    auto empty_moves = ParseJson(R"json({
+        "baseRevision": 5,
+        "kind": "moveGraphNodes",
+        "payload": {"moves": []}
+    })json");
+    auto r_empty_moves =
+        Das::Core::TaskScheduler::ValidateAuthoringChange(empty_moves);
+    EXPECT_FALSE(r_empty_moves.valid);
+    EXPECT_EQ(r_empty_moves.error_kind, "invalidPayload");
+
+    auto missing_moves = ParseJson(R"json({
+        "baseRevision": 5,
+        "kind": "moveGraphNodes",
+        "payload": {}
+    })json");
+    auto r_missing_moves =
+        Das::Core::TaskScheduler::ValidateAuthoringChange(missing_moves);
+    EXPECT_FALSE(r_missing_moves.valid);
+    EXPECT_EQ(r_missing_moves.error_kind, "missingField");
+
+    // moves 单项 nodeId 重复出现 → 拒绝。
+    auto duplicate_node_id = ParseJson(R"json({
+        "baseRevision": 5,
+        "kind": "moveGraphNodes",
+        "payload": {
+            "moves": [
+                {"nodeId": "a", "position": {"x": 1, "y": 2}},
+                {"nodeId": "a", "position": {"x": 3, "y": 4}}
+            ]
+        }
+    })json");
+    auto r_duplicate =
+        Das::Core::TaskScheduler::ValidateAuthoringChange(duplicate_node_id);
+    EXPECT_FALSE(r_duplicate.valid);
+    EXPECT_EQ(r_duplicate.error_kind, "invalidPayload");
+
+    // position 非数值 → invalidPosition。
+    auto string_coordinate = ParseJson(R"json({
+        "baseRevision": 5,
+        "kind": "moveGraphNodes",
+        "payload": {
+            "moves": [{"nodeId": "a", "position": {"x": "1.5", "y": 2}}]
+        }
+    })json");
+    auto r_string =
+        Das::Core::TaskScheduler::ValidateAuthoringChange(string_coordinate);
+    EXPECT_FALSE(r_string.valid);
+    EXPECT_EQ(r_string.error_kind, "invalidPosition");
+
+    // 非有限坐标（Infinity 经 AllowInfAndNan 语法进入）→ invalidPosition。
+    auto infinite_coordinate = ParseJsonAllowingNonFinite(R"json({
+        "baseRevision": 5,
+        "kind": "moveGraphNodes",
+        "payload": {
+            "moves": [{"nodeId": "a", "position": {"x": Infinity, "y": 2}}]
+        }
+    })json");
+    auto r_infinite =
+        Das::Core::TaskScheduler::ValidateAuthoringChange(infinite_coordinate);
+    EXPECT_FALSE(r_infinite.valid);
+    EXPECT_EQ(r_infinite.error_kind, "invalidPosition");
+
+    // moves 单项缺 position → missingField。
+    auto missing_position = ParseJson(R"json({
+        "baseRevision": 5,
+        "kind": "moveGraphNodes",
+        "payload": {"moves": [{"nodeId": "a"}]}
+    })json");
+    auto r_missing_position =
+        Das::Core::TaskScheduler::ValidateAuthoringChange(missing_position);
+    EXPECT_FALSE(r_missing_position.valid);
+    EXPECT_EQ(r_missing_position.error_kind, "missingField");
+
+    // moves 单项多余键 → unknownField。
+    auto extra_move_key = ParseJson(R"json({
+        "baseRevision": 5,
+        "kind": "moveGraphNodes",
+        "payload": {
+            "moves": [
+                {"nodeId": "a", "position": {"x": 1, "y": 2}, "extra": 0}
+            ]
+        }
+    })json");
+    auto r_extra_move_key =
+        Das::Core::TaskScheduler::ValidateAuthoringChange(extra_move_key);
+    EXPECT_FALSE(r_extra_move_key.valid);
+    EXPECT_EQ(r_extra_move_key.error_kind, "unknownField");
+
+    // 顶层多余键 → unknownField。
+    auto extra_top_key = ParseJson(R"json({
+        "baseRevision": 5,
+        "kind": "moveGraphNodes",
+        "payload": {"moves": [{"nodeId": "a", "position": {"x": 1, "y": 2}}],
+                    "extra": 1}
+    })json");
+    auto r_extra_top_key =
+        Das::Core::TaskScheduler::ValidateAuthoringChange(extra_top_key);
+    EXPECT_FALSE(r_extra_top_key.valid);
+    EXPECT_EQ(r_extra_top_key.error_kind, "unknownField");
+}
+
 // schema 契约与 C++ 白名单对账：AuthoringChangeKind enum 集合逐项一致
 // （缺项/多项都在此暴露，防 C++/schema/前端三方漂移）；MoveGraphNode
 // $def 锁死 {nodeId, position{x,y}} 键集与数值类型。
@@ -1384,7 +1651,9 @@ TEST(TaskAuthoringContractTest, SchemaJsonTracksChangeKindWhitelist)
         "connectGraphPorts",
         "disconnectGraphPorts",
         "uiEvent",
-        "moveGraphNode"};
+        "moveGraphNode",
+        "removeGraphNodes",
+        "moveGraphNodes"};
     EXPECT_EQ(schema_kinds, expected_kinds);
 
     auto move_def =
@@ -1480,6 +1749,102 @@ TEST(TaskAuthoringContractTest, SchemaJsonTracksChangeKindWhitelist)
         }
     }
     EXPECT_TRUE(found_move_branch);
+
+    // RemoveGraphNodes $def：nodeIds minItems 1 字符串数组 + 可选
+    // connections 四键数组；additionalProperties:false 两级锁死。
+    auto remove_nodes_def =
+        (*defs_object)[std::string_view("RemoveGraphNodes")].as_object();
+    ASSERT_TRUE(remove_nodes_def.has_value());
+    auto remove_nodes_no_extra =
+        (*remove_nodes_def)[std::string_view("additionalProperties")].as_bool();
+    ASSERT_TRUE(remove_nodes_no_extra.has_value());
+    EXPECT_FALSE(*remove_nodes_no_extra);
+    auto remove_nodes_properties =
+        (*remove_nodes_def)[std::string_view("properties")].as_object();
+    ASSERT_TRUE(remove_nodes_properties.has_value());
+    auto node_ids_definition =
+        (*remove_nodes_properties)[std::string_view("nodeIds")].as_object();
+    ASSERT_TRUE(node_ids_definition.has_value());
+    EXPECT_EQ(
+        (*node_ids_definition)[std::string_view("type")].as_string().value(),
+        "array");
+    EXPECT_EQ(
+        (*node_ids_definition)[std::string_view("minItems")].as_sint().value(),
+        1);
+    ASSERT_TRUE(
+        remove_nodes_properties->contains(std::string_view("connections")));
+    ASSERT_TRUE((*remove_nodes_properties)[std::string_view("connections")]
+                    .as_object()
+                    .has_value());
+    bool found_remove_nodes_branch = false;
+    for (const auto& branch : *payload_branches)
+    {
+        auto branch_object = branch.as_object();
+        if (branch_object && branch_object->contains(std::string_view("$ref")))
+        {
+            auto reference =
+                (*branch_object)[std::string_view("$ref")].as_string();
+            if (reference
+                && *reference == std::string_view("#/$defs/RemoveGraphNodes"))
+            {
+                found_remove_nodes_branch = true;
+            }
+        }
+    }
+    EXPECT_TRUE(found_remove_nodes_branch);
+
+    // MoveGraphNodes $def：moves minItems 1，元素 {nodeId, position{x,y}}
+    // 键集与数值类型锁死。
+    auto move_nodes_def =
+        (*defs_object)[std::string_view("MoveGraphNodes")].as_object();
+    ASSERT_TRUE(move_nodes_def.has_value());
+    auto move_nodes_required =
+        (*move_nodes_def)[std::string_view("required")].as_array();
+    ASSERT_TRUE(move_nodes_required.has_value());
+    std::set<std::string> move_nodes_required_fields;
+    for (const auto& item : *move_nodes_required)
+    {
+        auto text = item.as_string();
+        ASSERT_TRUE(text.has_value());
+        move_nodes_required_fields.insert(std::string(*text));
+    }
+    const std::set<std::string> expected_move_nodes_required{"moves"};
+    EXPECT_EQ(move_nodes_required_fields, expected_move_nodes_required);
+    auto move_nodes_properties =
+        (*move_nodes_def)[std::string_view("properties")].as_object();
+    ASSERT_TRUE(move_nodes_properties.has_value());
+    auto moves_definition =
+        (*move_nodes_properties)[std::string_view("moves")].as_object();
+    ASSERT_TRUE(moves_definition.has_value());
+    EXPECT_EQ(
+        (*moves_definition)[std::string_view("type")].as_string().value(),
+        "array");
+    EXPECT_EQ(
+        (*moves_definition)[std::string_view("minItems")].as_sint().value(),
+        1);
+    auto moves_items =
+        (*moves_definition)[std::string_view("items")].as_object();
+    ASSERT_TRUE(moves_items.has_value());
+    auto moves_item_no_extra =
+        (*moves_items)[std::string_view("additionalProperties")].as_bool();
+    ASSERT_TRUE(moves_item_no_extra.has_value());
+    EXPECT_FALSE(*moves_item_no_extra);
+    bool found_move_nodes_branch = false;
+    for (const auto& branch : *payload_branches)
+    {
+        auto branch_object = branch.as_object();
+        if (branch_object && branch_object->contains(std::string_view("$ref")))
+        {
+            auto reference =
+                (*branch_object)[std::string_view("$ref")].as_string();
+            if (reference
+                && *reference == std::string_view("#/$defs/MoveGraphNodes"))
+            {
+                found_move_nodes_branch = true;
+            }
+        }
+    }
+    EXPECT_TRUE(found_move_nodes_branch);
 }
 
 TEST(TaskAuthoringContractTest, ChangeRejectsOpWrapper)
@@ -1741,6 +2106,90 @@ TEST(
         "moveGraphNode");
     EXPECT_TRUE(r.valid);
     EXPECT_TRUE(r.error_kind.empty()) << r.message;
+}
+
+// moveGraphNodes 与 moveGraphNode 同族：viewData 轻量通道，成功也不推进
+// 语义 revision；错误地 +1 反而 revisionMismatch。
+TEST(
+    TaskAuthoringContractTest,
+    ApplyResultMoveGraphNodesSuccessKeepsBaseRevision)
+{
+    auto result = ParseJson(R"json({
+        "acceptedProperties": {},
+        "document": {
+            "contractVersion": 1,
+            "viewKind": "graph",
+            "revision": 4
+        },
+        "diagnostics": []
+    })json");
+
+    auto r = Das::Core::TaskScheduler::ValidateAuthoringApplyResult(
+        result,
+        4,
+        "moveGraphNodes");
+    EXPECT_TRUE(r.valid);
+    EXPECT_TRUE(r.error_kind.empty()) << r.message;
+}
+
+TEST(
+    TaskAuthoringContractTest,
+    ApplyResultMoveGraphNodesSuccessRejectsBumpedRevision)
+{
+    auto result = ParseJson(R"json({
+        "acceptedProperties": {},
+        "document": {
+            "contractVersion": 1,
+            "viewKind": "graph",
+            "revision": 5
+        },
+        "diagnostics": []
+    })json");
+
+    auto r = Das::Core::TaskScheduler::ValidateAuthoringApplyResult(
+        result,
+        4,
+        "moveGraphNodes");
+    EXPECT_FALSE(r.valid);
+    EXPECT_EQ(r.error_kind, "revisionMismatch");
+}
+
+// removeGraphNodes 是语义变更：成功必须 revision == baseRevision + 1；
+// 未推进（== base）时 revisionMismatch（一条消息一次原子删除恰 +1）。
+TEST(
+    TaskAuthoringContractTest,
+    ApplyResultRemoveGraphNodesSuccessRequiresBasePlusOne)
+{
+    auto bumped = ParseJson(R"json({
+        "acceptedProperties": {},
+        "document": {
+            "contractVersion": 1,
+            "viewKind": "graph",
+            "revision": 5
+        },
+        "diagnostics": []
+    })json");
+    auto r_bumped = Das::Core::TaskScheduler::ValidateAuthoringApplyResult(
+        bumped,
+        4,
+        "removeGraphNodes");
+    EXPECT_TRUE(r_bumped.valid) << r_bumped.message;
+
+    auto unbumped = ParseJson(R"json({
+        "acceptedProperties": {},
+        "document": {
+            "contractVersion": 1,
+            "viewKind": "graph",
+            "revision": 4
+        },
+        "diagnostics": []
+    })json");
+    auto r_unbumped = Das::Core::TaskScheduler::ValidateAuthoringApplyResult(
+        unbumped,
+        4,
+        "removeGraphNodes");
+    EXPECT_FALSE(r_unbumped.valid);
+    EXPECT_EQ(r_unbumped.error_kind, "revisionMismatch");
 }
 
 TEST(TaskAuthoringContractTest, ApplyResultSemanticKindStillRequiresBasePlusOne)
