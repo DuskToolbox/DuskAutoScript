@@ -41,6 +41,10 @@
           "settings": [],
           "inputs": [
             {
+              "id": "in",
+              "type": "signal"
+            },
+            {
               "id": "executionInput",
               "type": "object"
             }
