@@ -9,8 +9,10 @@
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasStopToken.Implements.hpp>
 #include <gtest/gtest.h>
 
+#include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace
 {
@@ -193,6 +195,228 @@ TEST(DasMaaPiRunTaskComponent, ApplySettingsChangeReturnsEmptyAcceptedSettings)
     EXPECT_EQ(
         (*obj)[std::string_view("acceptedSettings")].as_object()->size(),
         0u);
+}
+
+// ApplySettingsChange settings 包装请求构造器：{"settings": <settings>}——
+// 与 GraphRuntime Configure 阶段的投递形状一致。
+DasPtr<ExportInterface::IDasJson> MakeSettingsChangeRequest(
+    const yyjson::value& settings)
+{
+    auto root = Utils::MakeYyjsonObject();
+    (*root.as_object())[std::string_view("settings")] =
+        Utils::CloneYyjsonValue(settings);
+    return WrapJson(std::move(root));
+}
+
+DasPtr<ExportInterface::IDasJson> MakeSettingsChangeRequestFromText(
+    std::string_view settings_json)
+{
+    auto parsed = Utils::ParseYyjsonFromString(std::string{settings_json});
+    EXPECT_TRUE(parsed.has_value());
+    return MakeSettingsChangeRequest(
+        parsed.value_or(Utils::MakeYyjsonObject()));
+}
+
+// 读 acceptedSettings 对象（失败返回 nullopt——响应形状由调用方先断言）。
+std::optional<yyjson::value> ReadAcceptedSettings(
+    ExportInterface::IDasJson* result_json)
+{
+    const auto parsed = ReadJson(result_json);
+    if (!parsed)
+    {
+        return std::nullopt;
+    }
+    auto obj = parsed->as_object();
+    if (!obj || !obj->contains(std::string_view("acceptedSettings")))
+    {
+        return std::nullopt;
+    }
+    auto accepted = (*obj)[std::string_view("acceptedSettings")].as_object();
+    if (!accepted)
+    {
+        return std::nullopt;
+    }
+    return Das::Utils::CloneYyjsonValue(
+        (*obj)[std::string_view("acceptedSettings")]);
+}
+
+// manifest config 声明 repositoryRef（type=taskRepositoryRef，值 = 纯
+// entryId 整数）与 runtimeInputs（object）两键：ApplySettingsChange 接受并
+// 存储两键，acceptedSettings 回显存储值。
+TEST(
+    DasMaaPiRunTaskComponent,
+    ApplySettingsChangeStoresRepositoryRefAndRuntimeInputs)
+{
+    MaapiRunTaskComponent    component;
+    FakeMaaApiBoundary       fake;
+    const ScopedBoundaryHook hook(fake);
+
+    auto runtime_inputs = Utils::MakeYyjsonObject();
+    (*runtime_inputs.as_object())[std::string_view("x")] = 1;
+
+    auto settings = Utils::MakeYyjsonObject();
+    (*settings.as_object())[std::string_view("repositoryRef")] = 7;
+    (*settings.as_object())[std::string_view("runtimeInputs")] =
+        std::move(runtime_inputs);
+
+    const auto request = MakeSettingsChangeRequest(settings);
+
+    DasPtr<ExportInterface::IDasJson> result_json;
+    ASSERT_EQ(
+        component.ApplySettingsChange(request.Get(), result_json.Put()),
+        DAS_S_OK);
+    ASSERT_TRUE(result_json);
+
+    const auto accepted = ReadAcceptedSettings(result_json.Get());
+    ASSERT_TRUE(accepted.has_value());
+    auto accepted_obj = accepted->as_object();
+    ASSERT_TRUE(accepted_obj);
+    ASSERT_TRUE(accepted_obj->contains(std::string_view("repositoryRef")));
+    EXPECT_EQ(
+        (*accepted_obj)[std::string_view("repositoryRef")].as_int().value_or(
+            -1),
+        7);
+    ASSERT_TRUE(accepted_obj->contains(std::string_view("runtimeInputs")));
+    auto inputs_obj =
+        (*accepted_obj)[std::string_view("runtimeInputs")].as_object();
+    ASSERT_TRUE(inputs_obj);
+    EXPECT_EQ((*inputs_obj)[std::string_view("x")].as_int().value_or(-1), 1);
+}
+
+// repositoryRef 非纯整数（旧 {kind,entryId} 包装形状/字符串/布尔）→ 该键
+// 拒绝：返回失败诊断，不落半截状态（后续合法投递照常生效）。
+TEST(
+    DasMaaPiRunTaskComponent,
+    ApplySettingsChangeRejectsObjectShapedRepositoryRef)
+{
+    MaapiRunTaskComponent    component;
+    FakeMaaApiBoundary       fake;
+    const ScopedBoundaryHook hook(fake);
+
+    DasPtr<ExportInterface::IDasJson> result_json;
+    EXPECT_EQ(
+        component.ApplySettingsChange(
+            MakeSettingsChangeRequestFromText(
+                R"({"repositoryRef": {"kind": "taskRepositoryRef", "entryId": 7}})")
+                .Get(),
+            result_json.Put()),
+        DAS_E_INVALID_ARGUMENT);
+
+    // 字符串 / 布尔同样拒绝（值域 = 纯正整数或 null/缺键）。
+    EXPECT_EQ(
+        component.ApplySettingsChange(
+            MakeSettingsChangeRequestFromText(R"({"repositoryRef": "7"})")
+                .Get(),
+            result_json.Put()),
+        DAS_E_INVALID_ARGUMENT);
+    EXPECT_EQ(
+        component.ApplySettingsChange(
+            MakeSettingsChangeRequestFromText(R"({"repositoryRef": true})")
+                .Get(),
+            result_json.Put()),
+        DAS_E_INVALID_ARGUMENT);
+
+    // 拒绝后不落半截状态：合法投递照常接受。
+    EXPECT_EQ(
+        component.ApplySettingsChange(
+            MakeSettingsChangeRequestFromText(R"({"repositoryRef": 11})").Get(),
+            result_json.Put()),
+        DAS_S_OK);
+    const auto accepted = ReadAcceptedSettings(result_json.Get());
+    ASSERT_TRUE(accepted.has_value());
+    auto accepted_obj = accepted->as_object();
+    ASSERT_TRUE(accepted_obj);
+    EXPECT_EQ(
+        (*accepted_obj)[std::string_view("repositoryRef")].as_int().value_or(
+            -1),
+        11);
+}
+
+// repositoryRef 0 / 负数（非正整数）显式拒绝——0 内部保留为「未设置」。
+TEST(
+    DasMaaPiRunTaskComponent,
+    ApplySettingsChangeRejectsNonPositiveRepositoryRef)
+{
+    MaapiRunTaskComponent    component;
+    FakeMaaApiBoundary       fake;
+    const ScopedBoundaryHook hook(fake);
+
+    DasPtr<ExportInterface::IDasJson> result_json;
+    EXPECT_EQ(
+        component.ApplySettingsChange(
+            MakeSettingsChangeRequestFromText(R"({"repositoryRef": 0})").Get(),
+            result_json.Put()),
+        DAS_E_INVALID_ARGUMENT);
+    EXPECT_EQ(
+        component.ApplySettingsChange(
+            MakeSettingsChangeRequestFromText(R"({"repositoryRef": -3})").Get(),
+            result_json.Put()),
+        DAS_E_INVALID_ARGUMENT);
+}
+
+// runtimeInputs 非对象（数组/标量）→ 拒绝；repositoryRef 合法也不落半截。
+TEST(DasMaaPiRunTaskComponent, ApplySettingsChangeRejectsNonObjectRuntimeInputs)
+{
+    MaapiRunTaskComponent    component;
+    FakeMaaApiBoundary       fake;
+    const ScopedBoundaryHook hook(fake);
+
+    DasPtr<ExportInterface::IDasJson> result_json;
+    EXPECT_EQ(
+        component.ApplySettingsChange(
+            MakeSettingsChangeRequestFromText(
+                R"({"repositoryRef": 7, "runtimeInputs": [1, 2]})")
+                .Get(),
+            result_json.Put()),
+        DAS_E_INVALID_ARGUMENT);
+    EXPECT_EQ(
+        component.ApplySettingsChange(
+            MakeSettingsChangeRequestFromText(
+                R"({"repositoryRef": 7, "runtimeInputs": 5})")
+                .Get(),
+            result_json.Put()),
+        DAS_E_INVALID_ARGUMENT);
+
+    // 上一轮整包拒绝后未存储：空投递回显空 accepted。
+    EXPECT_EQ(
+        component.ApplySettingsChange(
+            MakeSettingsChangeRequestFromText(R"({})").Get(),
+            result_json.Put()),
+        DAS_S_OK);
+    const auto accepted = ReadAcceptedSettings(result_json.Get());
+    ASSERT_TRUE(accepted.has_value());
+    EXPECT_EQ(accepted->as_object()->size(), 0u);
+}
+
+// 连续两次投递存储为最新值（幂等覆盖，全量替换语义）。
+TEST(DasMaaPiRunTaskComponent, ApplySettingsChangeOverwritesWithLatestValues)
+{
+    MaapiRunTaskComponent    component;
+    FakeMaaApiBoundary       fake;
+    const ScopedBoundaryHook hook(fake);
+
+    DasPtr<ExportInterface::IDasJson> result_json;
+    ASSERT_EQ(
+        component.ApplySettingsChange(
+            MakeSettingsChangeRequestFromText(R"({"repositoryRef": 7})").Get(),
+            result_json.Put()),
+        DAS_S_OK);
+    ASSERT_EQ(
+        component.ApplySettingsChange(
+            MakeSettingsChangeRequestFromText(R"({"repositoryRef": 9})").Get(),
+            result_json.Put()),
+        DAS_S_OK);
+
+    const auto accepted = ReadAcceptedSettings(result_json.Get());
+    ASSERT_TRUE(accepted.has_value());
+    auto accepted_obj = accepted->as_object();
+    ASSERT_TRUE(accepted_obj);
+    EXPECT_EQ(
+        (*accepted_obj)[std::string_view("repositoryRef")].as_int().value_or(
+            -1),
+        9);
+    // 全量替换：第二次投递未携带 runtimeInputs → 不回显。
+    EXPECT_FALSE(accepted_obj->contains(std::string_view("runtimeInputs")));
 }
 
 // 任务执行失败（MaaFW 任务 Failed）：输出口 diagnostics 带失败诊断，
