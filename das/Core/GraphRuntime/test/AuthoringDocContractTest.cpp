@@ -128,14 +128,19 @@ namespace
     }
 
     ConfigFieldDescriptor MakeConfigField(
-        std::string_view    name,
-        std::string_view    type,
-        const yyjson::value default_value = yyjson::value{})
+        std::string_view                name,
+        std::string_view                type,
+        const yyjson::value             default_value = yyjson::value{},
+        std::optional<std::string_view> task_guid = std::nullopt)
     {
         ConfigFieldDescriptor field;
         field.name = std::string(name);
         field.type = std::string(type);
         field.default_value = Das::Utils::CloneYyjsonValue(default_value);
+        if (task_guid.has_value())
+        {
+            field.task_guid = std::string(*task_guid);
+        }
         return field;
     }
 
@@ -841,6 +846,60 @@ namespace
         EXPECT_EQ(
             (*declared)[std::string_view("value")].as_int().value_or(-1),
             7);
+    }
+
+    // The declared target task type (taskGuid) rides the declaration→
+    // projection→wire channel engaged-only: a config declaration naming a
+    // task type surfaces it on the projected field and the wire descriptor;
+    // declarations without one carry no key (never an explicit null).
+    TEST(AuthoringDocContractTest, ConfigProjection_TaskGuidChannel)
+    {
+        GraphDocumentDto doc;
+        doc.nodes.push_back(MakeNode("n1", "{g1}", 0.0));
+
+        ActionCatalog      catalog;
+        ActionCatalogEntry entry;
+        entry.action_id = "{g1}";
+        entry.label = "typed";
+        entry.config_fields.push_back(MakeConfigField(
+            "repositoryRef",
+            "taskRepositoryRef",
+            yyjson::value{},
+            "69F20001-0000-4000-8000-000000000001"));
+        entry.config_fields.push_back(
+            MakeConfigField("runtimeInputs", "object"));
+        catalog.entries.push_back(entry);
+
+        const auto  out = ToAuthoringDocument(doc, catalog);
+        const auto& fields = out.graph->nodes[0].fields;
+        ASSERT_EQ(fields.size(), 2u);
+
+        ASSERT_TRUE(fields[0].task_guid.has_value());
+        EXPECT_EQ(*fields[0].task_guid, "69F20001-0000-4000-8000-000000000001");
+        EXPECT_FALSE(fields[1].task_guid.has_value());
+
+        const auto wire = SerializeDocument(doc, catalog);
+        auto       wire_obj = wire.as_object();
+        ASSERT_TRUE(wire_obj.has_value());
+        auto graph = (*wire_obj)[std::string_view("graph")].as_object();
+        ASSERT_TRUE(graph.has_value());
+        auto nodes = (*graph)[std::string_view("nodes")].as_array();
+        ASSERT_TRUE(nodes.has_value());
+        auto node_obj = (*nodes)[0].as_object();
+        ASSERT_TRUE(node_obj.has_value());
+        auto wire_fields = (*node_obj)[std::string_view("fields")].as_array();
+        ASSERT_TRUE(wire_fields.has_value());
+        ASSERT_EQ(wire_fields->size(), 2u);
+
+        auto ref_field = (*wire_fields)[0].as_object();
+        ASSERT_TRUE(ref_field.has_value());
+        ASSERT_TRUE(ref_field->contains(std::string_view("taskGuid")));
+        EXPECT_EQ(
+            (*ref_field)[std::string_view("taskGuid")].as_string().value_or(""),
+            "69F20001-0000-4000-8000-000000000001");
+        auto inputs_field = (*wire_fields)[1].as_object();
+        ASSERT_TRUE(inputs_field.has_value());
+        EXPECT_FALSE(inputs_field->contains(std::string_view("taskGuid")));
     }
 
     // The formSequence projection merges config declarations the same way

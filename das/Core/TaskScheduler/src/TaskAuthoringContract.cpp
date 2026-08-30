@@ -453,6 +453,16 @@ namespace Das::Core::TaskScheduler
                     "FieldDescriptor.type must be string");
             }
 
+            // Optional declared target task type (component-domain fields
+            // whose manifest declaration names one, e.g. a taskRepositoryRef
+            // bound to a specific task type): plain string, engaged-only.
+            if (obj.contains("taskGuid") && !obj["taskGuid"].is_string())
+            {
+                return Fail(
+                    "invalidFieldTaskGuid",
+                    "FieldDescriptor.taskGuid must be string");
+            }
+
             if (obj.contains("description") && !obj["description"].is_string())
             {
                 return Fail(
@@ -548,6 +558,7 @@ namespace Das::Core::TaskScheduler
                      "inputType",
                      "value",
                      "type",
+                     "taskGuid",
                      "description",
                      "required",
                      "readonly",

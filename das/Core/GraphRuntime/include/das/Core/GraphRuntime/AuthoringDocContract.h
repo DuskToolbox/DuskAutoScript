@@ -71,6 +71,10 @@ namespace Contract
     /// only for config-declared fields) — the typed-dispatch channel for
     /// component-domain type words (e.g. taskRepositoryRef) lives here, NOT
     /// in the official 0-8 inputType vocabulary.
+    /// `task_guid` carries the manifest-declared target task type of a
+    /// component-domain field (engaged only when the declaration names one) —
+    /// the declaration-as-data channel so the UI can resolve a repositoryRef
+    /// picker's task type without a component→task reverse lookup.
     struct FieldDescriptor
     {
         std::string                name;
@@ -79,6 +83,7 @@ namespace Contract
         int32_t                    input_type = 0;
         yyjson::value              value;
         std::optional<std::string> type_word;
+        std::optional<std::string> task_guid;
         std::optional<std::string> description;
         bool                       required = false;
         bool                       readonly = false;
@@ -190,14 +195,18 @@ namespace Contract
     /// manifest `config` entry for one component field. `type` uses the
     /// manifest type vocabulary (int/int64/uint/float/double/string/bool/
     /// object/array<...>/taskRepositoryRef); `default_value` is the declared
-    /// default (null = none declared). Like ports, this is internal to the
-    /// catalog channel and is NOT emitted on the public actionCatalog wire —
-    /// the node fields[] projection is where config declarations surface.
+    /// default (null = none declared); `task_guid` is the optional declared
+    /// target task type for component-domain fields (e.g. a taskRepositoryRef
+    /// pointing at one task type — declaration-as-data, engaged only when the
+    /// manifest names one). Like ports, this is internal to the catalog
+    /// channel and is NOT emitted on the public actionCatalog wire — the node
+    /// fields[] projection is where config declarations surface.
     struct ConfigFieldDescriptor
     {
-        std::string   name;
-        std::string   type;
-        yyjson::value default_value;
+        std::string                name;
+        std::string                type;
+        yyjson::value              default_value;
+        std::optional<std::string> task_guid;
     };
 
     /// One entry in the shared actionCatalog. `action_id` is the

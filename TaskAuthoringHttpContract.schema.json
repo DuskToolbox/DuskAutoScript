@@ -161,6 +161,11 @@
           "minLength": 1,
           "$comment": "Optional manifest config type word carried verbatim on config-declared fields (e.g. \"int64\", \"object\", \"taskRepositoryRef\"). Graph editors dispatch on this word BEFORE entering the generic field control; the inputType pair stays within the official 0-8 vocabulary. For a taskRepositoryRef field the value is a plain repository entry id integer (or null when unset)."
         },
+        "taskGuid": {
+          "type": "string",
+          "minLength": 1,
+          "$comment": "Optional declared target task type (taskGuid) of a component-domain field — the manifest declaration names the task type the field binds to (e.g. a taskRepositoryRef pointing at one task type), so editors resolve the picker's entry source without a component→task reverse lookup. Engaged-only: emitted when the manifest declaration names one."
+        },
         "description": { "type": "string" },
         "required": { "type": "boolean" },
         "readonly": { "type": "boolean" },

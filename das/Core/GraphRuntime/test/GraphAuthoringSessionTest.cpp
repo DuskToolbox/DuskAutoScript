@@ -939,11 +939,8 @@ namespace
                 std::string(R"({"target":{"kind":"graphNode","id":")")
                 + *node_id + R"("},"fieldName":")" + std::string(field_name)
                 + R"(","value":)" + std::string(raw_value) + "}";
-            const auto        apply = Compact(
-                JsonToUtf8(
-                    ApplyChange(
-                        s.p, WrapEnvelope("setValue", payload))
-                        .Get()));
+            const auto apply = Compact(JsonToUtf8(
+                ApplyChange(s.p, WrapEnvelope("setValue", payload)).Get()));
             EXPECT_FALSE(apply.empty());
             EXPECT_EQ(apply.find("\"severity\":\"error\""), std::string::npos)
                 << apply;
@@ -1648,5 +1645,65 @@ namespace
                         document,
                         std::string_view("delay_ms"))
                         .has_value());
+    }
+
+    // The optional taskGuid declaration on a config element rides the
+    // catalog channel onto the projected field (engaged-only wire key); a
+    // non-string taskGuid is a shape violation rejecting the whole catalog.
+    TEST(GraphAuthoringSessionTest, SetActionCatalogConfigCarriesTaskGuid)
+    {
+        const SessionHandle s{""};
+        ASSERT_EQ(
+            SetActionCatalog(
+                s.p,
+                R"([{"actionId":"{g1}","label":"das.maapi.run","config":[)"
+                R"({"name":"repositoryRef","type":"taskRepositoryRef",)"
+                R"("taskGuid":"69F20001-0000-4000-8000-000000000001"},)"
+                R"({"name":"runtimeInputs","type":"object"}]}])"),
+            DAS_S_OK);
+
+        ApplyChange(
+            s.p,
+            WrapEnvelope("addGraphNode", R"({"actionId":"{g1}"})"));
+
+        const auto document = DocumentOf(s.p);
+        const auto ref_field = FirstGraphNodeFieldDescriptorOf(
+            document,
+            std::string_view("repositoryRef"));
+        ASSERT_TRUE(ref_field.has_value());
+        auto ref_obj = ref_field->as_object();
+        ASSERT_TRUE(ref_obj.has_value());
+        ASSERT_TRUE(ref_obj->contains(std::string_view("taskGuid")));
+        EXPECT_EQ(
+            (*ref_obj)[std::string_view("taskGuid")].as_string().value_or(""),
+            "69F20001-0000-4000-8000-000000000001");
+
+        const auto inputs_field = FirstGraphNodeFieldDescriptorOf(
+            document,
+            std::string_view("runtimeInputs"));
+        ASSERT_TRUE(inputs_field.has_value());
+        auto inputs_obj = inputs_field->as_object();
+        ASSERT_TRUE(inputs_obj.has_value());
+        EXPECT_FALSE(inputs_obj->contains(std::string_view("taskGuid")));
+
+        // Non-string taskGuid rejects the whole catalog; the accepted
+        // catalog stays in place (same lockstep as the other shape rules).
+        EXPECT_EQ(
+            SetActionCatalog(
+                s.p,
+                R"([{"actionId":"{g1}","config":[{"name":"d","type":"int",)"
+                R"("taskGuid":7}]}])"),
+            DAS_E_INVALID_ARGUMENT);
+        ApplyChange(
+            s.p,
+            WrapEnvelope("addGraphNode", R"({"actionId":"{g1}"})"));
+        const auto after_reject = DocumentOf(s.p);
+        const auto survived = FirstGraphNodeFieldDescriptorOf(
+            after_reject,
+            std::string_view("repositoryRef"));
+        ASSERT_TRUE(survived.has_value());
+        auto survived_obj = survived->as_object();
+        ASSERT_TRUE(survived_obj.has_value());
+        EXPECT_TRUE(survived_obj->contains(std::string_view("taskGuid")));
     }
 } // namespace

@@ -2299,6 +2299,52 @@ TEST(TaskAuthoringContractTest, FieldTypeWordOptionalStringKey)
     EXPECT_EQ(r2.error_kind, "invalidFieldType");
 }
 
+// 字段可选 taskGuid 键（声明的目标任务类型）：合法字符串接受；非字符串
+// 拒绝；缺省照常接受（声明未命名任务类型的字段不携带该键）。
+TEST(TaskAuthoringContractTest, FieldTaskGuidOptionalStringKey)
+{
+    auto with_task_guid = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "graph",
+        "revision": 0,
+        "graph": {"nodes": [{"id": "n", "fields": [
+            {
+                "name": "repositoryRef",
+                "label": "repositoryRef",
+                "valueType": 16,
+                "inputType": 0,
+                "type": "taskRepositoryRef",
+                "taskGuid": "69F20001-0000-4000-8000-000000000001",
+                "value": 7
+            }
+        ]}]}
+    })json");
+    auto r1 =
+        Das::Core::TaskScheduler::ValidateAuthoringDocument(with_task_guid);
+    EXPECT_TRUE(r1.valid) << r1.message;
+
+    auto bad_task_guid = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "graph",
+        "revision": 0,
+        "graph": {"nodes": [{"id": "n", "fields": [
+            {
+                "name": "repositoryRef",
+                "label": "repositoryRef",
+                "valueType": 16,
+                "inputType": 0,
+                "type": "taskRepositoryRef",
+                "taskGuid": 7,
+                "value": 7
+            }
+        ]}]}
+    })json");
+    auto r2 =
+        Das::Core::TaskScheduler::ValidateAuthoringDocument(bad_task_guid);
+    EXPECT_FALSE(r2.valid);
+    EXPECT_EQ(r2.error_kind, "invalidFieldTaskGuid");
+}
+
 // schema FieldDescriptor.inputType enum 不含 9（与 C++ INPUT_TYPES 对账），
 // 且 "type"（config 类型词）属性在 schema 内声明为字符串。
 TEST(TaskAuthoringContractTest, SchemaJsonInputTypeVocabularyAndTypeWordLocked)
@@ -2352,6 +2398,17 @@ TEST(TaskAuthoringContractTest, SchemaJsonInputTypeVocabularyAndTypeWordLocked)
         (*type_word_definition)[std::string_view("type")].as_string();
     ASSERT_TRUE(type_word_json_type.has_value());
     EXPECT_EQ(*type_word_json_type, std::string_view("string"));
+
+    // taskGuid（声明的目标任务类型）与 C++ validator 同步声明为字符串。
+    ASSERT_TRUE(properties->contains(std::string_view("taskGuid")));
+    auto task_guid_definition =
+        (*properties)[std::string_view("taskGuid")].as_object();
+    ASSERT_TRUE(task_guid_definition.has_value());
+    EXPECT_TRUE(task_guid_definition->contains(std::string_view("type")));
+    auto task_guid_json_type =
+        (*task_guid_definition)[std::string_view("type")].as_string();
+    ASSERT_TRUE(task_guid_json_type.has_value());
+    EXPECT_EQ(*task_guid_json_type, std::string_view("string"));
 }
 
 TEST(TaskAuthoringContractTest, ChangeRejectsOpWrapper)

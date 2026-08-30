@@ -227,6 +227,11 @@ namespace Contract
                 // The manifest config type word rides the wire verbatim —
                 // the typed-dispatch channel for component-domain words.
                 field.type_word = config_field.type;
+                // The declared target task type rides along the same
+                // declaration channel (engaged only when the manifest named
+                // one) so consumers can resolve a repositoryRef picker
+                // without a component→task reverse lookup.
+                field.task_guid = config_field.task_guid;
                 bool value_assigned = false;
                 if (settings_obj.has_value()
                     && settings_obj->contains(
@@ -739,6 +744,15 @@ namespace Contract
                 {
                     fo["type"] = std::make_pair(
                         std::string_view(*f.type_word),
+                        yyjson::copy_string);
+                }
+                // Optional, engaged-only: the declared target task type of a
+                // component-domain field — emitted only when the manifest
+                // declaration named one.
+                if (f.task_guid.has_value())
+                {
+                    fo["taskGuid"] = std::make_pair(
+                        std::string_view(*f.task_guid),
                         yyjson::copy_string);
                 }
                 if (f.description.has_value())

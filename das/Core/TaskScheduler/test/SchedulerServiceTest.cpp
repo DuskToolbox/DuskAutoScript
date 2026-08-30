@@ -4436,8 +4436,8 @@ TEST_F(
 
 // 组件 manifest config 声明 → 注册表 catalog 通道 → 节点 fields[] 投影全
 // 链：delay_ms（int64，default 1000）与 repositoryRef（taskRepositoryRef →
-// valueType 16 / inputType 0 + wire 携带 config 类型词）在新建节点（settings
-// 空）上即可见可编辑。
+// valueType 16 / inputType 0 + wire 携带 config 类型词与声明的 taskGuid）在
+// 新建节点（settings 空）上即可见可编辑。
 TEST_F(
     SchedulerRuntimeBackedTest,
     GraphAuthoringCatalogProjectsConfigDefaultsIntoFields)
@@ -4456,7 +4456,10 @@ TEST_F(
         R"json({
             "config": {
                 "delay_ms": {"type": "int64", "default": 1000},
-                "repositoryRef": {"type": "taskRepositoryRef"}
+                "repositoryRef": {
+                    "type": "taskRepositoryRef",
+                    "taskGuid": "69F20001-0000-4000-8000-000000000001"
+                }
             }
         })json");
     DeployRealPluginArtifacts(
@@ -4602,13 +4605,19 @@ TEST_F(
     EXPECT_EQ(*ref_input_type, 0);
     ASSERT_TRUE((*ref_field->as_object())[std::string_view("value")].is_null());
 
-    // config 类型词随 wire 字段投影携带（声明字段才有）。
+    // config 类型词随 wire 字段投影携带（声明字段才有）；声明的目标任务
+    // 类型（taskGuid）同样 engaged-only 携带——未声明的字段不带该键。
     auto ref_field_object = ref_field->as_object();
     ASSERT_TRUE(ref_field_object.has_value());
     ASSERT_TRUE(ref_field_object->contains(std::string_view("type")));
     EXPECT_EQ(
         (*ref_field_object)[std::string_view("type")].as_string().value_or(""),
         "taskRepositoryRef");
+    ASSERT_TRUE(ref_field_object->contains(std::string_view("taskGuid")));
+    EXPECT_EQ(
+        (*ref_field_object)[std::string_view("taskGuid")].as_string().value_or(
+            ""),
+        "69F20001-0000-4000-8000-000000000001");
     const auto delay_field_object = delay_field->as_object();
     ASSERT_TRUE(delay_field_object.has_value());
     ASSERT_TRUE(delay_field_object->contains(std::string_view("type")));
@@ -4616,6 +4625,7 @@ TEST_F(
         (*delay_field_object)[std::string_view("type")].as_string().value_or(
             ""),
         "int64");
+    EXPECT_FALSE(delay_field_object->contains(std::string_view("taskGuid")));
 }
 
 TEST_F(

@@ -516,13 +516,14 @@ namespace Das::Core::TaskScheduler
     }
 
     // Config field declarations of one component, read from the manifest
-    // definition's `config` object ({field_name: {type, default?}}).
+    // definition's `config` object ({field_name: {type, default?, taskGuid?}}).
     // Emitted in lexical key order for determinism; entries without a
     // usable non-empty type string are skipped (the same skip-not-poison
     // rule as the port lists — the Core consumer rejects the whole catalog
-    // on a malformed channel entry). Rides the catalog context channel
-    // alongside ports so the Core node fields projection can merge it onto
-    // nodes by componentGuid.
+    // on a malformed channel entry). The optional taskGuid declaration
+    // names the target task type of a component-domain field; it rides the
+    // channel verbatim (engaged-only) so the Core fields projection can
+    // surface it without a component→task reverse lookup.
     static void AppendConfigFromDefinition(
         const yyjson::value&       definition,
         yyjson::writer::array_ref& destination)
@@ -569,6 +570,17 @@ namespace Das::Core::TaskScheduler
                 (*obj)[std::string_view("default")] =
                     Das::Utils::CloneYyjsonValue(
                         (*field_obj)[std::string_view("default")]);
+            }
+            if (field_obj->contains(std::string_view("taskGuid")))
+            {
+                auto task_guid =
+                    (*field_obj)[std::string_view("taskGuid")].as_string();
+                if (task_guid.has_value() && !task_guid->empty())
+                {
+                    (*obj)[std::string_view("taskGuid")] = std::make_pair(
+                        std::string_view(*task_guid),
+                        yyjson::copy_string);
+                }
             }
             destination.emplace_back(std::move(config_field));
         }
@@ -652,9 +664,9 @@ namespace Das::Core::TaskScheduler
             {
                 (*obj)[std::string_view("ports")] = std::move(ports);
             }
-            // Config field declarations: {name,type,default?} in lexical key
-            // order — the Core consumer locks the element shape to exactly
-            // these three keys.
+            // Config field declarations: {name,type,default?,taskGuid?} in
+            // lexical key order — the Core consumer locks the element shape
+            // to exactly these four keys.
             auto config = Das::Utils::MakeYyjsonArray();
             auto config_arr = config.as_array();
             AppendConfigFromDefinition(definition.definition, *config_arr);

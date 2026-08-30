@@ -1536,10 +1536,10 @@ DAS_C_API DasResult GraphAuthoringSessionSetActionCatalog(
                     entry.ports.push_back(std::move(port));
                 }
             }
-            // Optional config channel: {name,type,default?} elements with
-            // the element key set locked to exactly those three keys — the
-            // same whole-catalog rejection on malformed input as the port
-            // channel.
+            // Optional config channel: {name,type,default?,taskGuid?}
+            // elements with the element key set locked to exactly those four
+            // keys — the same whole-catalog rejection on malformed input as
+            // the port channel.
             if (entry_obj->contains(std::string_view("config")))
             {
                 auto config_val =
@@ -1563,7 +1563,8 @@ DAS_C_API DasResult GraphAuthoringSessionSetActionCatalog(
                         (void)value;
                         if (key != std::string_view("name")
                             && key != std::string_view("type")
-                            && key != std::string_view("default"))
+                            && key != std::string_view("default")
+                            && key != std::string_view("taskGuid"))
                         {
                             return DAS_E_INVALID_ARGUMENT;
                         }
@@ -1592,6 +1593,24 @@ DAS_C_API DasResult GraphAuthoringSessionSetActionCatalog(
                         {
                             field.default_value =
                                 Das::Utils::CloneYyjsonValue(default_value);
+                        }
+                    }
+                    // Optional declared target task type of a
+                    // component-domain field: a non-string value is a shape
+                    // violation; an empty string reads as "none declared"
+                    // (the same engaged-only reading the producer applies).
+                    if (config_obj->contains(std::string_view("taskGuid")))
+                    {
+                        auto task_guid =
+                            (*config_obj)[std::string_view("taskGuid")]
+                                .as_string();
+                        if (!task_guid)
+                        {
+                            return DAS_E_INVALID_ARGUMENT;
+                        }
+                        if (!task_guid->empty())
+                        {
+                            field.task_guid = *task_guid;
                         }
                     }
                     entry.config_fields.push_back(std::move(field));
