@@ -752,6 +752,17 @@ namespace Das::Core::TaskScheduler
         return bool_value && !*bool_value;
     }
 
+    // provider compile 结果是否显式声明 ok=false：键缺席（各 provider 契约
+    // 不同，如 graph 的 compile 只带 executionInput）视为未声明——不抛、
+    // 不拒（cpp_yyjson object operator[] 对缺失键 throw out_of_range，
+    // 消费侧必须 contains 先行，同 RepositoryInvokeCompiler 判定形态）。
+    static bool ProviderCompileExplicitFalse(const yyjson::value& compile)
+    {
+        auto compile_obj = compile.as_object();
+        return compile_obj && compile_obj->contains(std::string_view("ok"))
+               && IsExplicitFalse((*compile_obj)[std::string_view("ok")]);
+    }
+
     static bool GetBoolField(
         const yyjson::value& value,
         std::string_view     key,
@@ -4213,9 +4224,7 @@ namespace Das::Core::TaskScheduler
                 return std::nullopt;
             }
 
-            auto compile_obj = compiled_pipeline.parsed.compile.as_object();
-            if (compile_obj
-                && IsExplicitFalse((*compile_obj)[std::string_view("ok")]))
+            if (ProviderCompileExplicitFalse(compiled_pipeline.parsed.compile))
             {
                 DAS_CORE_LOG_WARN(
                     "SchedulerService::ComputeInitialNextExecutionTime: task {} "
@@ -4848,10 +4857,7 @@ namespace Das::Core::TaskScheduler
                             parsed_compile.error_kind);
                     }
                     else if (
-                        auto compile_obj = parsed_compile.compile.as_object();
-                        compile_obj
-                        && IsExplicitFalse(
-                            (*compile_obj)[std::string_view("ok")]))
+                        ProviderCompileExplicitFalse(parsed_compile.compile))
                     {
                         compile_failed = true;
                         DAS_CORE_LOG_WARN(

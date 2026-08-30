@@ -6,9 +6,11 @@
 #include <condition_variable>
 #include <cpp_yyjson.hpp>
 #include <das/Core/ForeignInterfaceHost/ForeignInterfaceHost.h>
+
 #include <das/Core/ForeignInterfaceHost/IPluginLifecycleListener.h>
 #include <das/Core/ForeignInterfaceHost/PluginManager.h>
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
+#include <das/Core/Logger/Logger.h>
 #include <das/Core/SettingsManager/SettingsManager.h>
 #include <das/Core/TaskScheduler/RepositoryInvokeCompiler.h>
 #include <das/Core/TaskScheduler/TaskAuthoringContract.h>
@@ -335,9 +337,29 @@ namespace Das::Core::TaskScheduler
 
             DasResult Do() noexcept override
             {
-                if (scheduler_)
+                if (!scheduler_)
+                {
+                    return DAS_S_OK;
+                }
+                // 调度循环兜底：单次 tick 内任何逃逸异常（如 provider
+                // 响应形状消费 throw）不得击穿 noexcept 终止进程——
+                // 记日志并返回 INTERNAL_FATAL_ERROR（下一 tick 照常调度）。
+                try
                 {
                     scheduler_->OnTick();
+                }
+                catch (const std::exception& exception)
+                {
+                    DAS_CORE_LOG_ERROR(
+                        "SchedulerService::OnTick threw exception: {}",
+                        exception.what());
+                    return DAS_E_INTERNAL_FATAL_ERROR;
+                }
+                catch (...)
+                {
+                    DAS_CORE_LOG_ERROR(
+                        "SchedulerService::OnTick threw unknown exception");
+                    return DAS_E_INTERNAL_FATAL_ERROR;
                 }
                 return DAS_S_OK;
             }
