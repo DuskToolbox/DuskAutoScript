@@ -3295,14 +3295,18 @@ namespace Das::Plugins::DasMaaPi
         {
             const std::string schedule_kind =
                 settings.pi.schedule_kind.value_or("");
-            // kind select：candidates off/interval/daily。
+            // kind select：candidates off/interval/daily。value 保持存储值
+            // 原文（寻址语义），label 经 host i18n 词条本地化（缺译回退
+            // value 原文——与字段 label 同一回退链）。
             yyjson::value kind_candidates(Array());
             for (const std::string_view kv : {"off", "interval", "daily"})
             {
                 yyjson::value candidate(Object());
                 auto          candidate_obj = candidate.as_object();
                 (*candidate_obj)[std::string_view("value")] = JsonString(kv);
-                (*candidate_obj)[std::string_view("label")] = JsonString(kv);
+                (*candidate_obj)[std::string_view("label")] =
+                    JsonString(Translate(
+                        std::string("candidate.schedule.") + std::string(kv)));
                 kind_candidates.as_array()->emplace_back(std::move(candidate));
             }
             fields.as_array()->emplace_back(MakePropertyField(

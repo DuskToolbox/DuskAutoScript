@@ -99,7 +99,6 @@
     "diagnostic.invokeCommandIdNotRegistered": "invokeCommand commandId not registered",
     "diagnostic.convertViewUnsupported": "convertView unsupported by MaaPI",
     "diagnostic.missingTranslation": "Missing translation for key '{0}' in language '{1}'",
-
     "maapi.runFailed": "MaaPI task run failed (result {0})",
     "maapi.diagnostic.invalid-envelope": "Execution envelope is not supported by the MaaPI runtime",
     "maapi.diagnostic.create-resource-failed": "MaaFramework resource creation failed",
@@ -133,5 +132,8 @@
     "maapi.diagnostic.agent-runtime-stop-timeout": "Agent subprocess stop timed out",
     "maapi.diagnostic.create-recorder-failed": "Focus log recorder creation failed",
     "maapi.diagnostic.focus-translations-missing": "Focus translation file missing",
-    "maapi.diagnostic.focus-translations-parse-failed": "Focus translation file failed to parse"
+    "maapi.diagnostic.focus-translations-parse-failed": "Focus translation file failed to parse",
+    "candidate.schedule.off": "Off",
+    "candidate.schedule.interval": "Interval",
+    "candidate.schedule.daily": "Daily"
 }
