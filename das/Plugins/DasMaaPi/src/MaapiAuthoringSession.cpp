@@ -245,52 +245,10 @@ namespace Plugins::DasMaaPi
     } // namespace
 
     MaapiAuthoringSession::MaapiAuthoringSession(
-        AcceptedSettingsDto                       settings,
-        int64_t                                   revision,
-        std::vector<RegistryActionCatalogEntry>&& registry_action_catalog)
-        : settings_(std::move(settings)), revision_(revision),
-          registry_action_catalog_(std::move(registry_action_catalog))
+        AcceptedSettingsDto settings,
+        int64_t             revision)
+        : settings_(std::move(settings)), revision_(revision)
     {
-    }
-
-    void MaapiAuthoringSession::FillEmptyActionCatalogFromRegistry(
-        yyjson::writer::object_ref document_object) const
-    {
-        if (registry_action_catalog_.empty())
-        {
-            return;
-        }
-        if (!document_object.contains(std::string_view("actionCatalog")))
-        {
-            return;
-        }
-        auto catalog_object_opt =
-            document_object[std::string_view("actionCatalog")].as_object();
-        if (!catalog_object_opt
-            || !catalog_object_opt->contains(std::string_view("entries")))
-        {
-            return;
-        }
-        auto entries_array_opt =
-            (*catalog_object_opt)[std::string_view("entries")].as_array();
-        if (entries_array_opt && !entries_array_opt->empty())
-        {
-            // PI 接口目录已在（条目已配置 interfacePath）——注册表快照不
-            // 掺入，可添加的 PI 任务与组件 guid 禁止混排。
-            return;
-        }
-        yyjson::value entries(Das::Utils::MakeYyjsonArray());
-        for (const auto& registry_entry : registry_action_catalog_)
-        {
-            yyjson::value entry(Das::Utils::MakeYyjsonObject());
-            auto          entry_object = entry.as_object();
-            (*entry_object)[std::string_view("actionId")] =
-                JsonString(registry_entry.action_id);
-            (*entry_object)[std::string_view("label")] =
-                JsonString(registry_entry.label);
-            entries.as_array()->emplace_back(std::move(entry));
-        }
-        (*catalog_object_opt)[std::string_view("entries")] = std::move(entries);
     }
 
     DasResult MaapiAuthoringSession::GetDocument(
@@ -310,12 +268,6 @@ namespace Plugins::DasMaaPi
         std::vector<PiDiagnosticDto> diagnostics;
         auto                         document =
             BuildDocument(settings_, revision_, diagnostics, &device_cache_);
-        // PI 接口目录缺席（新建条目未配置 interfacePath）时填入注册表目录
-        // 快照，避免「添加子任务」面对空目录。
-        if (auto document_object = document.as_object())
-        {
-            FillEmptyActionCatalogFromRegistry(*document_object);
-        }
 
         yyjson::value envelope(Das::Utils::MakeYyjsonObject());
         auto          env_obj = envelope.as_object();
@@ -495,20 +447,6 @@ namespace Plugins::DasMaaPi
         // 5) 注入 portDefinitions/portMap 到 acceptedProperties（Provider 私有
         //    运行期派生，不属于 document UI IR）。
         InjectPortDerivations(result_json, settings_, catalog);
-
-        // PI 接口目录缺席时同样填注册表兜底，保持 apply 往返后目录不塌回
-        // 空数组（uiEvent 等无 document 的响应自然跳过）。
-        auto result_object_opt = result_json.as_object();
-        if (result_object_opt
-            && result_object_opt->contains(std::string_view("document")))
-        {
-            auto document_object =
-                (*result_object_opt)[std::string_view("document")].as_object();
-            if (document_object)
-            {
-                FillEmptyActionCatalogFromRegistry(*document_object);
-            }
-        }
 
         auto wrapped = WrapJson(std::move(result_json));
         *pp_out_result_json = wrapped.Get();

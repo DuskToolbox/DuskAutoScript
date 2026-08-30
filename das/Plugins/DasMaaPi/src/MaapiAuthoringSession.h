@@ -8,9 +8,6 @@
 #include <das/Plugins/DasMaaPi/PiDto.h>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasTaskAuthoringSession.Implements.hpp>
 
-#include <string>
-#include <vector>
-
 namespace Das::ExportInterface
 {
     struct IDasProgressService;
@@ -34,16 +31,6 @@ DAS_DEFINE_CLASS_IN_NAMESPACE(
 DAS_NS_BEGIN
 namespace Plugins::DasMaaPi
 {
-    // 组件注册表目录条目 {actionId,label}：Scheduler 注入 authoring context
-    // 的注册表快照（与 graph 任务的 actionCatalog 同源同形状，公共 wire 两
-    // 键投影）。PI 接口目录缺席（新建条目尚未配置 interfacePath）时作为
-    // GetDocument/ApplyChange 文档 actionCatalog.entries 的兜底内容。
-    struct RegistryActionCatalogEntry
-    {
-        std::string action_id;
-        std::string label;
-    };
-
     // Forward decl for friend declaration below.
     struct InvokeCommandResult;
     InvokeCommandResult ApplyInvokeCommandChange(
@@ -88,10 +75,8 @@ namespace Plugins::DasMaaPi
     public:
         MaapiAuthoringSession() = default;
         explicit MaapiAuthoringSession(
-            AcceptedSettingsDto                       settings,
-            int64_t                                   revision = 0,
-            std::vector<RegistryActionCatalogEntry>&& registry_action_catalog =
-                {});
+            AcceptedSettingsDto settings,
+            int64_t             revision = 0);
 
         DAS_IMPL GetDocument(
             ExportInterface::IDasJson*  p_request_json,
@@ -131,16 +116,8 @@ namespace Plugins::DasMaaPi
         }
 
     private:
-        // PI 接口目录缺席时（新建条目未配置 interfacePath），把注入的注册表
-        // 目录快照填入文档 actionCatalog.entries（条目键恰 {actionId,label}，
-        // Core 校验器严格形状）。PI 目录已在时不动——可添加的 PI 任务与
-        // 组件 guid 禁止混排。
-        void FillEmptyActionCatalogFromRegistry(
-            yyjson::writer::object_ref document_object) const;
-
-        AcceptedSettingsDto                     settings_{};
-        int64_t                                 revision_ = 0;
-        std::vector<RegistryActionCatalogEntry> registry_action_catalog_{};
+        AcceptedSettingsDto settings_{};
+        int64_t             revision_ = 0;
         // session 内存态，不进 AcceptedSettingsDto 不序列化
         // （设备状态会变 — adb 拔出/换机，持久化 cache 会陈旧）。重启时
         // controllerAdbDevice 持久化字段仍在但 cache 空 → 用户重扫描即可。
