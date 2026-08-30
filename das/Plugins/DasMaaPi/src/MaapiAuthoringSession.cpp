@@ -22,12 +22,11 @@ namespace Plugins::DasMaaPi
         // InvokeCommandResult 结构体（含可选 command_result），由调用方
         // ApplyChange 显式 dispatch，不走本 bool 表。
         bool DispatchStrictChange(
-            const std::string&                             kind,
-            const yyjson::value&                           payload,
-            AcceptedSettingsDto&                           candidate,
-            const std::optional<PiCatalog>&                catalog,
-            std::vector<PiDiagnosticDto>&                  diagnostics,
-            const std::vector<RegistryActionCatalogEntry>* registry_entries)
+            const std::string&              kind,
+            const yyjson::value&            payload,
+            AcceptedSettingsDto&            candidate,
+            const std::optional<PiCatalog>& catalog,
+            std::vector<PiDiagnosticDto>&   diagnostics)
         {
             const PiCatalog* catalog_ptr =
                 catalog.has_value() ? &*catalog : nullptr;
@@ -45,8 +44,7 @@ namespace Plugins::DasMaaPi
                     candidate,
                     catalog_ptr,
                     payload,
-                    diagnostics,
-                    registry_entries);
+                    diagnostics);
             }
             if (kind == "moveFormSequenceItem")
             {
@@ -438,8 +436,7 @@ namespace Plugins::DasMaaPi
                     payload,
                     candidate,
                     catalog,
-                    diagnostics,
-                    &registry_action_catalog_);
+                    diagnostics);
             }
             if (dispatch_ok)
             {

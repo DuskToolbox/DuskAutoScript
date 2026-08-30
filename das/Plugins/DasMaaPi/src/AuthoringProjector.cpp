@@ -5010,11 +5010,10 @@ namespace Das::Plugins::DasMaaPi
     }
 
     bool ApplyAddFormSequenceItem(
-        AcceptedSettingsDto&                           settings,
-        const PiCatalog*                               catalog,
-        const yyjson::value&                           payload,
-        std::vector<PiDiagnosticDto>&                  diagnostics,
-        const std::vector<RegistryActionCatalogEntry>* registry_entries)
+        AcceptedSettingsDto&          settings,
+        const PiCatalog*              catalog,
+        const yyjson::value&          payload,
+        std::vector<PiDiagnosticDto>& diagnostics)
     {
         auto payload_obj_opt = payload.as_object();
         if (!payload_obj_opt)
@@ -5078,20 +5077,8 @@ namespace Das::Plugins::DasMaaPi
                     ? idx_val.as_sint().value_or(0)
                     : static_cast<std::int64_t>(idx_val.as_uint().value_or(0)));
         }
-        // actionId 必须在 PI 目录或组件注册表目录（显示层与写入校验同源：
-        // PI 接口目录缺席（新建条目未配置 interfacePath）时文档 actionCatalog
-        // 以注册表快照兜底呈现——写入校验同样认注册表，否则出现「目录可选、
-        // 选中被拒」的分裂）。
-        const std::string action_id_text(*action_id);
-        const bool        registered_in_registry =
-            registry_entries != nullptr
-            && std::any_of(
-                registry_entries->begin(),
-                registry_entries->end(),
-                [&action_id_text](const RegistryActionCatalogEntry& entry)
-                { return entry.action_id == action_id_text; });
-        if ((!catalog || !HasTask(*catalog, *action_id))
-            && !registered_in_registry)
+        // actionId 必须在 catalog 已注册。
+        if (!catalog || !HasTask(*catalog, *action_id))
         {
             EmitDiagnostic(
                 diagnostics,
@@ -5108,10 +5095,7 @@ namespace Das::Plugins::DasMaaPi
         new_task.item_id = AllocateItemId(settings);
         new_task.task_name = std::string(*action_id);
         new_task.enabled = true;
-        // PI 目录缺席（新建条目未配置 interfacePath）时 catalog 为空——注册表
-        // 组件无 option 声明，跳过 option 默认值初始化（空 options 即默认）。
-        const auto* catalog_task =
-            catalog != nullptr ? FindTask(*catalog, *action_id) : nullptr;
+        const auto* catalog_task = FindTask(*catalog, *action_id);
         if (catalog_task)
         {
             InitializeOptionDefaults(
