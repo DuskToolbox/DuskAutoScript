@@ -127,6 +127,30 @@ namespace
         return node;
     }
 
+    ConfigFieldDescriptor MakeConfigField(
+        std::string_view    name,
+        std::string_view    type,
+        const yyjson::value default_value = yyjson::value{})
+    {
+        ConfigFieldDescriptor field;
+        field.name = std::string(name);
+        field.type = std::string(type);
+        field.default_value = Das::Utils::CloneYyjsonValue(default_value);
+        return field;
+    }
+
+    ActionCatalog MakeDelayCatalog()
+    {
+        ActionCatalog      catalog;
+        ActionCatalogEntry entry;
+        entry.action_id = "{g1}";
+        entry.label = "das.flow.delay";
+        entry.config_fields.push_back(
+            MakeConfigField("delay_ms", "int64", yyjson::value(1000)));
+        catalog.entries.push_back(entry);
+        return catalog;
+    }
+
     // -----------------------------------------------------------------------
     // ToAuthoringDocument — graph mode (no linear tag)
     // -----------------------------------------------------------------------
@@ -188,7 +212,19 @@ namespace
         doc.nodes.push_back(MakeNode("n1", "{g1}", 0.0));
         doc.nodes.back().settings = payload;
 
-        auto json = ToJson(doc);
+        // Declared config fields (graph view): the settings overrides ride
+        // the declared-field deep copy — undeclared live keys are port
+        // value-key channel data and stay off the fields wire.
+        ActionCatalog      catalog;
+        ActionCatalogEntry entry;
+        entry.action_id = "{g1}";
+        entry.label = "deep";
+        entry.config_fields = {
+            MakeConfigField("name", "string"),
+            MakeConfigField("threshold", "float")};
+        catalog.entries.push_back(entry);
+
+        auto json = ToJsonWithCatalog(doc, catalog);
         // The projected fields[] preserve nested string payloads even though
         // the public wire drops the raw `settings` blob.
         EXPECT_NE(json.find("deep-string-payload"), std::string::npos);
@@ -594,30 +630,6 @@ namespace
     // the declared fields.
     // -----------------------------------------------------------------------
 
-    ConfigFieldDescriptor MakeConfigField(
-        std::string_view    name,
-        std::string_view    type,
-        const yyjson::value default_value = yyjson::value{})
-    {
-        ConfigFieldDescriptor field;
-        field.name = std::string(name);
-        field.type = std::string(type);
-        field.default_value = Das::Utils::CloneYyjsonValue(default_value);
-        return field;
-    }
-
-    ActionCatalog MakeDelayCatalog()
-    {
-        ActionCatalog      catalog;
-        ActionCatalogEntry entry;
-        entry.action_id = "{g1}";
-        entry.label = "das.flow.delay";
-        entry.config_fields.push_back(
-            MakeConfigField("delay_ms", "int64", yyjson::value(1000)));
-        catalog.entries.push_back(entry);
-        return catalog;
-    }
-
     TEST(
         AuthoringDocContractTest,
         ConfigProjection_DeclaredDefaultsVisibleWithoutSettings)
@@ -629,7 +641,11 @@ namespace
         const auto out = ToAuthoringDocument(doc, catalog);
         ASSERT_EQ(out.graph->nodes.size(), 1u);
         const auto& fields = out.graph->nodes[0].fields;
-        ASSERT_EQ(fields.size(), 2u); // declared delay_ms + live threshold
+        // Declared delay_ms only — undeclared live settings keys (port
+        // binding defaults like threshold) ride the port "value" key channel
+        // instead of fields (one data source, one editing control).
+        ASSERT_EQ(fields.size(), 1u);
+        EXPECT_EQ(fields[0].name, "delay_ms");
 
         const auto& delay_field = fields[0];
         EXPECT_EQ(delay_field.name, "delay_ms");
@@ -694,15 +710,22 @@ namespace
 
         const auto  out = ToAuthoringDocument(doc, MakeDelayCatalog());
         const auto& fields = out.graph->nodes[0].fields;
-        ASSERT_EQ(fields.size(), 2u);
-        // Declared fields come first in declaration order...
+        // Graph view carries declared config fields only — undeclared live
+        // settings keys ride the port "value" key channel, never fields
+        // (one data source, one editing control).
+        ASSERT_EQ(fields.size(), 1u);
         EXPECT_EQ(fields[0].name, "delay_ms");
         ASSERT_TRUE(fields[0].value.as_int().has_value());
         EXPECT_EQ(*fields[0].value.as_int(), 250);
-        // ...then the undeclared live settings keys in the existing
-        // projection order. Unknown legacy keys are never dropped.
-        EXPECT_EQ(fields[1].name, "custom_note");
-        EXPECT_EQ(fields[1].value_type, 4);
+        bool custom_note_found = false;
+        for (const auto& field : fields)
+        {
+            if (field.name == "custom_note")
+            {
+                custom_note_found = true;
+            }
+        }
+        EXPECT_FALSE(custom_note_found);
     }
 
     // Manifest config type → FieldDescriptor typing pair + wire type word:
@@ -748,8 +771,9 @@ namespace
                       // dispatch rides on the config type word, NOT inputType)
             {16, 0}}; // unknown → conservative object
         const auto& fields = out.graph->nodes[0].fields;
-        // One declared field per matrix row, then the live "threshold".
-        ASSERT_EQ(fields.size(), expected.size() + 1);
+        // One declared field per matrix row; the live "threshold" rides the
+        // port value-key channel instead of fields (graph view).
+        ASSERT_EQ(fields.size(), expected.size());
         for (std::size_t index = 0; index < expected.size(); ++index)
         {
             EXPECT_EQ(fields[index].value_type, expected[index].first)
@@ -761,13 +785,13 @@ namespace
         // null value (JsonValue allows null — the picker starts empty).
         EXPECT_TRUE(fields[9].value.is_null());
 
-        // Declared fields carry their manifest config type word; undeclared
-        // live settings keys never do.
+        // Declared fields carry their manifest config type word.
         ASSERT_TRUE(fields[0].type_word.has_value());
         EXPECT_EQ(*fields[0].type_word, "int");
         ASSERT_TRUE(fields[9].type_word.has_value());
         EXPECT_EQ(*fields[9].type_word, "taskRepositoryRef");
-        EXPECT_FALSE(fields[11].type_word.has_value());
+        ASSERT_TRUE(fields[10].type_word.has_value());
+        EXPECT_EQ(*fields[10].type_word, "quux");
     }
 
     // The wire field descriptor emits the optional "type" key only for
@@ -803,7 +827,9 @@ namespace
         ASSERT_TRUE(node_obj.has_value());
         auto fields = (*node_obj)[std::string_view("fields")].as_array();
         ASSERT_TRUE(fields.has_value());
-        ASSERT_EQ(fields->size(), 2u);
+        // Declared f_ref only — the undeclared live "custom_note" rides the
+        // port value-key channel instead of fields (graph view).
+        ASSERT_EQ(fields->size(), 1u);
 
         auto declared = (*fields)[0].as_object();
         ASSERT_TRUE(declared.has_value());
@@ -815,10 +841,6 @@ namespace
         EXPECT_EQ(
             (*declared)[std::string_view("value")].as_int().value_or(-1),
             7);
-
-        auto undeclared = (*fields)[1].as_object();
-        ASSERT_TRUE(undeclared.has_value());
-        EXPECT_FALSE(undeclared->contains(std::string_view("type")));
     }
 
     // The formSequence projection merges config declarations the same way
@@ -1071,7 +1093,7 @@ namespace
         EXPECT_EQ(json.find("\"sourceFingerprint\""), std::string::npos);
     }
 
-    TEST(AuthoringDocContractTest, GraphMode_FieldsProjectedFromSettings)
+    TEST(AuthoringDocContractTest, GraphMode_LiveSettingsKeysNotInFields)
     {
         GraphDocumentDto doc;
         auto& n = doc.nodes.emplace_back(MakeNode("n1", "{g1}", 0.0));
@@ -1086,36 +1108,16 @@ namespace
         auto out = ToAuthoringDocument(doc);
         ASSERT_TRUE(out.graph.has_value());
         ASSERT_EQ(out.graph->nodes.size(), 1u);
+        // Graph view synthesizes NO fields from undeclared live settings
+        // keys — the values ride the port "value" key channel (keys with no
+        // declared port surface are ghost keys and stay invisible; one data
+        // source, one editing control).
         const auto& fields = out.graph->nodes[0].fields;
-        ASSERT_EQ(fields.size(), 4u);
-
-        // Dynamically-fillable parts come from the live settings.
-        EXPECT_EQ(fields[0].name, "threshold");
-        // Live keys have no declaration to source metadata from: the label
-        // falls back to the key itself (the strict wire requires a non-empty
-        // label), everything else carries the schema defaults.
-        for (const auto& f : fields)
-        {
-            EXPECT_EQ(f.label, f.name);
-            EXPECT_FALSE(f.description.has_value());
-            EXPECT_FALSE(f.required);
-            EXPECT_FALSE(f.readonly);
-            EXPECT_TRUE(f.candidates.empty());
-        }
+        ASSERT_EQ(fields.size(), 0u);
 
         auto json = ToJson(doc);
-        EXPECT_NE(json.find("\"fields\""), std::string::npos);
-        EXPECT_NE(json.find("\"valueType\":2"), std::string::npos);
-        EXPECT_NE(json.find("\"valueType\":0"), std::string::npos);
-        EXPECT_NE(json.find("\"inputType\":0"), std::string::npos);
-        // The properties-mode PropertySchema shape keys are all emitted when
-        // engaged. Per strict Phase 84 semantics, optional fields are omitted
-        // when absent (description / candidates absent here).
-        EXPECT_NE(json.find("\"label\""), std::string::npos);
-        EXPECT_NE(json.find("\"required\""), std::string::npos);
-        EXPECT_NE(json.find("\"readonly\""), std::string::npos);
-        EXPECT_EQ(json.find("\"description\""), std::string::npos);
-        EXPECT_EQ(json.find("\"candidates\""), std::string::npos);
+        EXPECT_EQ(json.find("\"threshold\""), std::string::npos);
+        EXPECT_EQ(json.find("\"enabled\""), std::string::npos);
     }
 
     TEST(AuthoringDocContractTest, SerializeSource_PersistsFullGraphDocumentDto)

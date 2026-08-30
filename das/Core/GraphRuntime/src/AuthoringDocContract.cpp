@@ -194,13 +194,22 @@ namespace Contract
         /// ahead of the undeclared live settings keys (existing
         /// ProjectFields order). A null config pointer keeps the plain
         /// live-value projection.
+        ///
+        /// include_undeclared_live_keys=false（graph 节点视图）：fields 只含
+        /// config 声明——未声明的 settings 键（端口 binding 默认值）经端口
+        /// 投影的 value 键通道呈现，不得在 fields 里重复合成（同一数据双
+        /// 通道会让编辑 UI 渲染两个联动控件）。formSequence item 视图无端口
+        /// 渲染区，保持 true（live 合成是其唯一值编辑通道）。
         std::vector<FieldDescriptor> ProjectFieldsWithConfig(
             const yyjson::value&                      settings,
-            const std::vector<ConfigFieldDescriptor>* config_fields)
+            const std::vector<ConfigFieldDescriptor>* config_fields,
+            bool include_undeclared_live_keys = true)
         {
             if (config_fields == nullptr || config_fields->empty())
             {
-                return ProjectFields(settings);
+                return include_undeclared_live_keys
+                           ? ProjectFields(settings)
+                           : std::vector<FieldDescriptor>{};
             }
             std::vector<FieldDescriptor> out;
             out.reserve(config_fields->size());
@@ -243,14 +252,18 @@ namespace Contract
                 out.push_back(std::move(field));
             }
             // Undeclared settings keys keep the existing live-value
-            // projection, appended after the declared fields.
-            for (auto& field : ProjectFields(settings))
+            // projection, appended after the declared fields (formSequence
+            // item view only — see the include_undeclared_live_keys note).
+            if (include_undeclared_live_keys)
             {
-                if (covered.count(field.name) != 0)
+                for (auto& field : ProjectFields(settings))
                 {
-                    continue;
+                    if (covered.count(field.name) != 0)
+                    {
+                        continue;
+                    }
+                    out.push_back(std::move(field));
                 }
-                out.push_back(std::move(field));
             }
             return out;
         }
@@ -497,7 +510,8 @@ namespace Contract
                 out.fields = ProjectFieldsWithConfig(
                     node.settings,
                     matched_entry != nullptr ? &matched_entry->config_fields
-                                             : nullptr);
+                                             : nullptr,
+                    /*include_undeclared_live_keys=*/false);
                 if (node.label.has_value() && !node.label->empty())
                 {
                     out.label = *node.label;
