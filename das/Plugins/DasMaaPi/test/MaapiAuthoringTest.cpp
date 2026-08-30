@@ -6241,8 +6241,11 @@ TEST(
 {
     using namespace Das::Plugins::DasMaaPi;
 
-    auto                      catalog = MakeNeutralProjectionMockCatalog();
-    const AcceptedSettingsDto settings;
+    auto catalog = MakeNeutralProjectionMockCatalog();
+    // 已配置 project_interface 的 entry（更新分区按配置存在性投影）。
+    AcceptedSettingsDto settings;
+    settings.adapter.interface_path =
+        "C:/das-authoring-layout-sections/interface.json";
 
     std::vector<PiDiagnosticDto> diags;
     auto document = ProjectAuthoringDocument(settings, &catalog, {}, 0, &diags);
@@ -6352,8 +6355,11 @@ TEST(
 {
     using namespace Das::Plugins::DasMaaPi;
 
-    auto                      catalog = MakeNeutralProjectionMockCatalog();
-    const AcceptedSettingsDto settings;
+    auto catalog = MakeNeutralProjectionMockCatalog();
+    // 已配置 project_interface 的 entry（更新命令按配置存在性投影）。
+    AcceptedSettingsDto settings;
+    settings.adapter.interface_path =
+        "C:/das-authoring-update-commands/interface.json";
 
     std::vector<PiDiagnosticDto> diags;
     auto document = ProjectAuthoringDocument(settings, &catalog, {}, 0, &diags);
@@ -6396,7 +6402,10 @@ TEST(
     EXPECT_EQ(emitted_ids.count("newPreset"), 1u);
 }
 
-// catalog 缺席（无 PI 接口）时，fieldLayout 仍存在并覆盖 adapter 两字段。
+// catalog 缺席（无 PI 接口）且 project_interface 未配置（新建 entry 的
+// 初始形态）时，fieldLayout 覆盖 adapter 两字段；更新分区（CDK / 代理 /
+// 通道 + 版本只读字段 + checkUpdate/applyUpdate 命令）不预置——空任务是
+// 干净空表单，用户实测「双击新建 entry 默认带上更新内容」的回归守卫。
 TEST(MaapiProjectionTest, RootFieldLayoutCoversAdapterFieldsWhenCatalogAbsent)
 {
     using namespace Das::Plugins::DasMaaPi;
@@ -6412,24 +6421,48 @@ TEST(MaapiProjectionTest, RootFieldLayoutCoversAdapterFieldsWhenCatalogAbsent)
     auto project_section = FindLayoutSection(document, "project");
     ASSERT_TRUE(project_section.has_value());
     auto project_fields = LayoutSectionFieldNames(*project_section);
-    // D-89-09 增量：mirrorchyanCdk / proxyUrl / updateChannel + 版本字段独立
-    // 到 update section；project 只含 adapter 两字段（interfacePath /
-    // executionPolicy）。
+    // mirrorchyanCdk / proxyUrl / updateChannel + 版本字段独立到 update
+    // section；project 只含 adapter 两字段（interfacePath / executionPolicy）。
     ASSERT_EQ(project_fields.size(), 2u);
     EXPECT_EQ(project_fields[0], "adapter.interfacePath");
     EXPECT_EQ(project_fields[1], "adapter.executionPolicy.failFast");
 
-    // 无 catalog 时 update section 仍覆盖 CDK / 代理 / 通道 + 两个版本字段
-    // （值回退空串）。
-    auto update_section = FindLayoutSection(document, "update");
-    ASSERT_TRUE(update_section.has_value());
-    auto update_fields = LayoutSectionFieldNames(*update_section);
-    ASSERT_EQ(update_fields.size(), 5u);
-    EXPECT_EQ(update_fields[0], "adapter.mirrorchyanCdk");
-    EXPECT_EQ(update_fields[1], "adapter.proxyUrl");
-    EXPECT_EQ(update_fields[2], "adapter.updateChannel");
-    EXPECT_EQ(update_fields[3], "resourceVersion");
-    EXPECT_EQ(update_fields[4], "maafwVersion");
+    // project_interface 未配置 → 更新分区整体省略（fields / fieldLayout
+    // section / commands 三处载体都不预置）。
+    EXPECT_FALSE(FindLayoutSection(document, "update").has_value());
+    for (const std::string_view update_field :
+         {"adapter.mirrorchyanCdk",
+          "adapter.proxyUrl",
+          "adapter.updateChannel",
+          "resourceVersion",
+          "maafwVersion"})
+    {
+        EXPECT_FALSE(FindRootField(document, update_field).has_value())
+            << "update field " << update_field
+            << " must not be projected for unconfigured entry";
+    }
+    {
+        std::set<std::string> emitted_command_ids;
+        auto                  doc_obj = document.as_object();
+        ASSERT_TRUE(doc_obj.has_value());
+        if (auto commands = (*doc_obj)[std::string_view("commands")].as_array())
+        {
+            for (auto it = commands->begin(); it != commands->end(); ++it)
+            {
+                auto cmd_obj = it->as_object();
+                if (!cmd_obj)
+                {
+                    continue;
+                }
+                emitted_command_ids.insert(std::string(
+                    (*cmd_obj)[std::string_view("id")].as_string().value_or(
+                        "")));
+            }
+        }
+        EXPECT_EQ(emitted_command_ids.count("checkUpdate"), 0u);
+        EXPECT_EQ(emitted_command_ids.count("applyUpdate"), 0u);
+        EXPECT_EQ(emitted_command_ids.count("newPreset"), 1u);
+    }
 
     auto                        layout_names = LayoutLeafFieldNames(document);
     auto                        field_names = RootFieldNames(document);
@@ -8671,9 +8704,12 @@ TEST(MaapiProjectionTest, CommandsApplyUpdateDisabledDrivenByPendingState)
     auto                catalog = MakeStrictProjectionMockCatalog();
     AcceptedSettingsDto settings;
     settings.pi.language = "zh_cn";
+    // 已配置 project_interface 但尚未检查（无检查结果表条目——假路径隔离
+    // per-test store 键，ResolvePiDir 只取父目录字符串不触碰文件系统）。
+    settings.adapter.interface_path =
+        "C:/das-authoring-apply-disabled-no-pending/interface.json";
 
-    // 无条目（未检查——settings 无 interfacePath，ResolvePiDir 失败读不到
-    // 表）→ applyUpdate disabled。
+    // 无条目（未检查）→ applyUpdate disabled。
     auto doc_no_pending = ProjectAuthoringDocument(settings, &catalog, {}, 0);
     auto apply_no_pending = FindCommand(doc_no_pending, "applyUpdate");
     ASSERT_TRUE(apply_no_pending.has_value());
@@ -8855,6 +8891,9 @@ TEST(MaapiProjectionTest, ProjectAuthoringDocumentProjectsReadonlyVersionFields)
     catalog.version = "1.2.3";
     AcceptedSettingsDto settings;
     settings.pi.language = "zh_cn";
+    // 已配置 project_interface 的 entry（版本字段按配置存在性投影）。
+    settings.adapter.interface_path =
+        "C:/das-authoring-version-fields/interface.json";
 
     auto document = ProjectAuthoringDocument(settings, &catalog, {}, 0);
     auto valid = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
@@ -8896,14 +8935,19 @@ TEST(MaapiProjectionTest, ProjectAuthoringDocumentProjectsReadonlyVersionFields)
         names.end());
 }
 
-// D-89-07 修订：catalog 缺席（无 PI 接口）时版本字段仍投影，值回退空串，
-// fieldLayout 更新 section（update 桶）仍覆盖。
+// catalog 缺席（已配置 interfacePath 但解析失败——生产上 catalog=nullptr
+// 的既有文档形态）时版本字段仍投影，值回退空串，fieldLayout 更新 section
+// （update 桶）仍覆盖。已配置行为不变（条件挂配置存在性，非全局砍分区）；
+// 全新未配置 entry 的干净表单由
+// RootFieldLayoutCoversAdapterFieldsWhenCatalogAbsent 守卫。
 TEST(MaapiProjectionTest, ProjectAuthoringDocumentVersionFieldsCatalogAbsent)
 {
     using namespace Das::Plugins::DasMaaPi;
 
     AcceptedSettingsDto settings;
     settings.pi.language = "zh_cn";
+    settings.adapter.interface_path =
+        "C:/das-authoring-version-fields-catalog-absent/interface.json";
 
     auto document = ProjectAuthoringDocument(settings, nullptr, {}, 0);
     auto valid = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);

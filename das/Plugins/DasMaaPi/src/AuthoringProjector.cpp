@@ -2762,6 +2762,17 @@ namespace Das::Plugins::DasMaaPi
             .parent_path();
     }
 
+    // project_interface 是否已配置（adapter.interfacePath 非空）。更新分区
+    // 的投影门：更新目标 = interface.json 所在项目目录整体替换，未配置的
+    // 新建 entry 上 CDK/代理/检查通道/版本只读字段与 checkUpdate/applyUpdate
+    // 按钮整体无意义——不预置该分区，文档保持干净空表单。已配置（含配置后
+    // catalog 解析失败）行为不变，分区照常投影。
+    bool IsProjectInterfaceConfigured(const AcceptedSettingsDto& settings)
+    {
+        return settings.adapter.interface_path.has_value()
+               && !settings.adapter.interface_path->empty();
+    }
+
     yyjson::value ProjectAuthoringDocument(
         const AcceptedSettingsDto&          settings,
         const PiCatalog*                    catalog,
@@ -2803,59 +2814,69 @@ namespace Das::Plugins::DasMaaPi
         // 代理设置在 CDK 之后，同属更新 section）。CDK 仅在通道为
         // mirrorchyan（或未设置）时投影；选 github 时字段消失（fields[] 与
         // fieldLayout 同步不发射 CDK，DasNativeUI 按 document 渲染，零改动）。
-        const bool hide_mirrorchyan_cdk =
-            settings.adapter.update_channel.has_value()
-            && !settings.adapter.update_channel->empty()
-            && *settings.adapter.update_channel == "github";
-        if (!hide_mirrorchyan_cdk)
+        // project_interface 未配置时不投影整组——更新目标尚未存在，新建
+        // entry 不预置更新分区（干净空表单）。
+        const bool pi_configured = IsProjectInterfaceConfigured(settings);
+        if (pi_configured)
         {
+            const bool hide_mirrorchyan_cdk =
+                settings.adapter.update_channel.has_value()
+                && !settings.adapter.update_channel->empty()
+                && *settings.adapter.update_channel == "github";
+            if (!hide_mirrorchyan_cdk)
+            {
+                fields.as_array()->emplace_back(MakePropertyField(
+                    "adapter.mirrorchyanCdk",
+                    Translate("field.cdk"),
+                    4,
+                    0,
+                    settings.adapter.mirrorchyan_cdk
+                        ? yyjson::value(*settings.adapter.mirrorchyan_cdk)
+                        : yyjson::value(std::string{})));
+            }
             fields.as_array()->emplace_back(MakePropertyField(
-                "adapter.mirrorchyanCdk",
-                Translate("field.cdk"),
+                "adapter.proxyUrl",
+                Translate("field.proxyAddress"),
                 4,
                 0,
-                settings.adapter.mirrorchyan_cdk
-                    ? yyjson::value(*settings.adapter.mirrorchyan_cdk)
+                settings.adapter.proxy_url
+                    ? yyjson::value(*settings.adapter.proxy_url)
                     : yyjson::value(std::string{})));
-        }
-        fields.as_array()->emplace_back(MakePropertyField(
-            "adapter.proxyUrl",
-            Translate("field.proxyAddress"),
-            4,
-            0,
-            settings.adapter.proxy_url
-                ? yyjson::value(*settings.adapter.proxy_url)
-                : yyjson::value(std::string{})));
-        // 检查更新通道（MirrorChyan / GitHub 二选一）。通用 select 字段
-        // （valueType=4 string / inputType=1 select，复用 presetName 的
-        // candidates 机制），值域 mirrorchyan / github，UI 用通用 select
-        // 渲染，业务中立。空或未设置时投影默认 mirrorchyan（现有
-        // CheckUpdate 逻辑优先 MirrorChyan）。
-        {
-            yyjson::value channel_candidates(Array());
+            // 检查更新通道（MirrorChyan / GitHub 二选一）。通用 select 字段
+            // （valueType=4 string / inputType=1 select，复用 presetName 的
+            // candidates 机制），值域 mirrorchyan / github，UI 用通用 select
+            // 渲染，业务中立。空或未设置时投影默认 mirrorchyan（现有
+            // CheckUpdate 逻辑优先 MirrorChyan）。
             {
-                yyjson::value mirror(Object());
-                auto          mirror_obj = mirror.as_object();
-                (*mirror_obj)[std::string_view("value")] =
-                    JsonString("mirrorchyan");
-                (*mirror_obj)[std::string_view("label")] =
-                    JsonString(Translate("candidate.mirror.mirrorchyan"));
-                channel_candidates.as_array()->emplace_back(std::move(mirror));
-                yyjson::value github(Object());
-                auto          github_obj = github.as_object();
-                (*github_obj)[std::string_view("value")] = JsonString("github");
-                (*github_obj)[std::string_view("label")] = JsonString("GitHub");
-                channel_candidates.as_array()->emplace_back(std::move(github));
+                yyjson::value channel_candidates(Array());
+                {
+                    yyjson::value mirror(Object());
+                    auto          mirror_obj = mirror.as_object();
+                    (*mirror_obj)[std::string_view("value")] =
+                        JsonString("mirrorchyan");
+                    (*mirror_obj)[std::string_view("label")] =
+                        JsonString(Translate("candidate.mirror.mirrorchyan"));
+                    channel_candidates.as_array()->emplace_back(
+                        std::move(mirror));
+                    yyjson::value github(Object());
+                    auto          github_obj = github.as_object();
+                    (*github_obj)[std::string_view("value")] =
+                        JsonString("github");
+                    (*github_obj)[std::string_view("label")] =
+                        JsonString("GitHub");
+                    channel_candidates.as_array()->emplace_back(
+                        std::move(github));
+                }
+                const std::string channel_value =
+                    settings.adapter.update_channel.value_or("mirrorchyan");
+                fields.as_array()->emplace_back(MakePropertyField(
+                    "adapter.updateChannel",
+                    Translate("field.updateChannel"),
+                    4,
+                    1,
+                    yyjson::value(channel_value),
+                    &channel_candidates));
             }
-            const std::string channel_value =
-                settings.adapter.update_channel.value_or("mirrorchyan");
-            fields.as_array()->emplace_back(MakePropertyField(
-                "adapter.updateChannel",
-                Translate("field.updateChannel"),
-                4,
-                1,
-                yyjson::value(channel_value),
-                &channel_candidates));
         }
         fields.as_array()->emplace_back(MakePropertyField(
             "adapter.executionPolicy.failFast",
@@ -3073,35 +3094,42 @@ namespace Das::Plugins::DasMaaPi
         // 空串）。字段名是通用只读字段，UI 不识别 Provider 业务前缀、不硬编码
         // 标题（authoring-doc-layering）；DasNativeUI 渲染器已支持 readonly →
         // TextBlock，零改动。只读字段不经 setValue 写回（UI 不可编辑）。
-        const std::string resource_version =
-            catalog != nullptr ? catalog->version : std::string{};
-        // 字段 label 走 host i18n（DAS chrome），随 GlobalLocale 切换。
-        const std::string resource_label = Translate("field.resourceVersion");
-        fields.as_array()->emplace_back(MakePropertyField(
-            "resourceVersion",
-            resource_label,
-            4,
-            0,
-            yyjson::value(resource_version),
-            nullptr,
-            /*readonly=*/true));
-        // maafwVersion = MaaFW MaaVersion() 硬链调用（与 PiCompiler 同源，
-        // 跨平台天然正确）。测试构建（DAS_MAAPI_DISABLE_REAL_MAA_BOUNDARY）
-        // 不链接 MaaFramework，MaaVersion() 不可用，退化为空串。
+        // project_interface 未配置时不投影——版本归属项目（resourceVersion
+        // = interface.json 顶层 version），无项目即无版本可示，与更新分区
+        // 其余字段同一配置存在性门。
+        if (pi_configured)
+        {
+            const std::string resource_version =
+                catalog != nullptr ? catalog->version : std::string{};
+            // 字段 label 走 host i18n（DAS chrome），随 GlobalLocale 切换。
+            const std::string resource_label =
+                Translate("field.resourceVersion");
+            fields.as_array()->emplace_back(MakePropertyField(
+                "resourceVersion",
+                resource_label,
+                4,
+                0,
+                yyjson::value(resource_version),
+                nullptr,
+                /*readonly=*/true));
+            // maafwVersion = MaaFW MaaVersion() 硬链调用（与 PiCompiler 同源，
+            // 跨平台天然正确）。测试构建（DAS_MAAPI_DISABLE_REAL_MAA_BOUNDARY）
+            // 不链接 MaaFramework，MaaVersion() 不可用，退化为空串。
 #ifndef DAS_MAAPI_DISABLE_REAL_MAA_BOUNDARY
-        const std::string maafw_version = std::string{MaaVersion()};
+            const std::string maafw_version = std::string{MaaVersion()};
 #else
-        const std::string maafw_version{};
+            const std::string maafw_version{};
 #endif
-        const std::string maafw_label = Translate("field.maafwVersion");
-        fields.as_array()->emplace_back(MakePropertyField(
-            "maafwVersion",
-            maafw_label,
-            4,
-            0,
-            yyjson::value(maafw_version),
-            nullptr,
-            /*readonly=*/true));
+            const std::string maafw_label = Translate("field.maafwVersion");
+            fields.as_array()->emplace_back(MakePropertyField(
+                "maafwVersion",
+                maafw_label,
+                4,
+                0,
+                yyjson::value(maafw_version),
+                nullptr,
+                /*readonly=*/true));
+        }
 
         // 更新 section 五字段（检查结果表有该 pi_dir 条目时投影，点检查才
         // 出现，不常驻）。key 传递方案 B：不投影 progress_key/updateKey——SSE
@@ -3668,33 +3696,42 @@ namespace Das::Plugins::DasMaaPi
                 commands.as_array()->emplace_back(std::move(cmd));
             };
             emit_command("newPreset", Translate("command.newPreset"));
-            // 命令 label 走 host i18n（DAS chrome），随 GlobalLocale
-            // 切换，语言切换时不再硬编码中文。
-            const std::string check_label = Translate("command.checkUpdate");
-            const std::string apply_label = Translate("command.applyUpdate");
+            // project_interface 未配置时不投影更新命令——checkUpdate 受理对
+            // 未配置 entry 必失败（checkUpdateRequiresInterfacePath），投影
+            // 与后端命令可用性一致；已配置行为不变。
+            if (pi_configured)
+            {
+                // 命令 label 走 host i18n（DAS chrome），随 GlobalLocale
+                // 切换，语言切换时不再硬编码中文。
+                const std::string check_label =
+                    Translate("command.checkUpdate");
+                const std::string apply_label =
+                    Translate("command.applyUpdate");
+                // 后台更新 job 运行中（registry per-pi_dir 状态驱动投影）：两键
+                // 都禁用，防 job 期间重复触发；slot idle 后恢复既有条件。
+                bool update_running = false;
+                if (const auto running_pi_dir = ResolvePiDir(settings))
+                {
+                    update_running = UpdateJobRegistry::Instance().IsRunning(
+                        *running_pi_dir);
+                }
+                emit_command("checkUpdate", check_label, update_running);
+                // applyUpdate 门：检查结果条目为 FoundUpdate
+                // 且有下载链接才可点。 部分信息路径（MirrorChyan code!=0 但
+                // data.version_name 存在）返回 has_update=true 且 download_url
+                // 为空，后端 ApplyApplyUpdateCommand 以 "nothing to apply"
+                // 拒绝——投影必须与 后端命令可用性一致：无下载链接时按钮
+                // disabled，避免可点但必失败。 Failed/UpToDate/Checking 条目 →
+                // disabled（按钮不携带陈旧 has_update/download_url 信息）。
+                const bool apply_update_disabled =
+                    !check_entry.has_value()
+                    || check_entry->state
+                           != UpdateCheckEntry::State::FoundUpdate
+                    || check_entry->info.download_url.empty() || update_running;
+                emit_command("applyUpdate", apply_label, apply_update_disabled);
+            }
             const std::string discover_label =
                 Translate("command.discoverAdbDevices");
-            // 后台更新 job 运行中（registry per-pi_dir 状态驱动投影）：两键
-            // 都禁用，防 job 期间重复触发；slot idle 后恢复既有条件。
-            bool update_running = false;
-            if (const auto running_pi_dir = ResolvePiDir(settings))
-            {
-                update_running =
-                    UpdateJobRegistry::Instance().IsRunning(*running_pi_dir);
-            }
-            emit_command("checkUpdate", check_label, update_running);
-            // applyUpdate 门：检查结果条目为 FoundUpdate 且有下载链接才可点。
-            // 部分信息路径（MirrorChyan code!=0 但 data.version_name
-            // 存在）返回 has_update=true 且 download_url 为空，后端
-            // ApplyApplyUpdateCommand 以 "nothing to apply" 拒绝——投影必须与
-            // 后端命令可用性一致：无下载链接时按钮 disabled，避免可点但必失败。
-            // Failed/UpToDate/Checking 条目 → disabled（按钮不携带陈旧
-            // has_update/download_url 信息）。
-            const bool apply_update_disabled =
-                !check_entry.has_value()
-                || check_entry->state != UpdateCheckEntry::State::FoundUpdate
-                || check_entry->info.download_url.empty() || update_running;
-            emit_command("applyUpdate", apply_label, apply_update_disabled);
             // discoverAdbDevices：仅 Adb controller 投影（win32/gamepad 不需
             // 要扫描 ADB 设备）。命令被 controller section fieldLayout row
             // 引用为 {commandId:"discoverAdbDevices"} 叶子，前端 row 横排成

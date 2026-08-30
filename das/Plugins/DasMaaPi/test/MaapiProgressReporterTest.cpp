@@ -823,12 +823,14 @@ TEST(MaapiProgressReporterTest, UpdateSectionProjectedWhenPending)
 }
 
 // Behavior 2: 无检查结果条目 → 五字段不出现（更新 panel 不常驻）；既有更新
-// section 字段（CDK/代理/通道/版本）仍存在。
+// section 字段（CDK/代理/通道/版本）仍存在（project_interface 已配置）。
 TEST(MaapiProgressReporterTest, UpdateSectionAbsentWhenNoPending)
 {
     using namespace Das::Plugins::DasMaaPi;
 
     AcceptedSettingsDto settings;
+    settings.adapter.interface_path =
+        "C:/das-reporter-test-no-pending/interface.json";
     auto document = ProjectAuthoringDocument(settings, nullptr, {}, 0);
 
     EXPECT_FALSE(FindRootField(document, "updateVersion").has_value());
