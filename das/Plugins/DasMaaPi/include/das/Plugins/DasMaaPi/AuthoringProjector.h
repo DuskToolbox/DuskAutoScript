@@ -16,6 +16,7 @@ namespace Das::Plugins::DasMaaPi
     struct PiUpdateInfo;
     class PiHttpClient;
     class MaapiAuthoringSession;
+    struct RegistryActionCatalogEntry;
 
     // invokeCommand 命令业务结果回传结构。各分支自填 command_result；
     // 调用方（MaapiAuthoringSession::ApplyChange）按 engaged 状态塞
@@ -80,7 +81,8 @@ namespace Das::Plugins::DasMaaPi
         AcceptedSettingsDto&          settings,
         const PiCatalog*              catalog,
         const yyjson::value&          payload,
-        std::vector<PiDiagnosticDto>& diagnostics);
+        std::vector<PiDiagnosticDto>& diagnostics,
+        const std::vector<RegistryActionCatalogEntry>* registry_entries);
 
     bool ApplyMoveFormSequenceItem(
         AcceptedSettingsDto&          settings,
