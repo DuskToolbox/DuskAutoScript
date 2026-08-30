@@ -10056,3 +10056,195 @@ TEST(MaapiAuthoringScheduleRoundTrip, IntervalKeepsKindAndMinutes)
     EXPECT_FALSE(restored.pi.schedule_daily_time.has_value());
     EXPECT_FALSE(restored.pi.schedule_daily_catch_up.has_value());
 }
+
+// ===== 注册表目录兜底测试 =====
+//
+// 新建 maapi 条目（未配置 interfacePath）的 PI 接口目录为空，GetDocument 的
+// actionCatalog.entries 投影为空数组——「添加子任务」目录无物可加。兜底契约：
+// Scheduler 注入 authoring context 的组件注册表快照（与 graph 任务 catalog
+// 同源同形状，公共 wire 两键 {actionId,label}）在 PI 目录缺席时填入 entries；
+// PI 目录已在时保持原样（可添加的 PI 任务与组件 guid 禁止混排）。
+
+namespace
+{
+    std::vector<Das::Plugins::DasMaaPi::RegistryActionCatalogEntry>
+    MakeRegistryCatalogSnapshot()
+    {
+        using namespace Das::Plugins::DasMaaPi;
+        std::vector<RegistryActionCatalogEntry> entries;
+        RegistryActionCatalogEntry              branch;
+        branch.action_id = "68F10001-0000-4000-8000-000000000001";
+        branch.label = "das.flow.branch";
+        entries.push_back(std::move(branch));
+        RegistryActionCatalogEntry delay;
+        delay.action_id = "68F10003-0000-4000-8000-000000000003";
+        delay.label = "das.flow.delay";
+        entries.push_back(std::move(delay));
+        RegistryActionCatalogEntry run;
+        run.action_id = "69F20008-0000-4000-8000-000000000001";
+        run.label = "das.maapi.run";
+        entries.push_back(std::move(run));
+        return entries;
+    }
+
+    // 取 document.actionCatalog.entries 为 {actionId -> label} 映射；同时断言
+    // 每个条目键集恰为 {actionId,label}（公共 wire 两键，graph 内部通道字段
+    // 不得泄漏到文档投影）。
+    std::map<std::string, std::string> ActionCatalogEntries(
+        const yyjson::value& document)
+    {
+        std::map<std::string, std::string> result;
+        auto                               obj = document.as_object();
+        if (!obj || !obj->contains(std::string_view("actionCatalog")))
+        {
+            return result;
+        }
+        auto catalog = (*obj)[std::string_view("actionCatalog")].as_object();
+        if (!catalog || !catalog->contains(std::string_view("entries")))
+        {
+            return result;
+        }
+        auto entries =
+            (*catalog)[std::string_view("entries")].as_array().value();
+        for (const auto& entry : entries)
+        {
+            auto entry_obj = entry.as_object().value();
+            EXPECT_EQ(entry_obj.size(), 2u);
+            EXPECT_TRUE(entry_obj.contains(std::string_view("actionId")));
+            EXPECT_TRUE(entry_obj.contains(std::string_view("label")));
+            result[std::string(
+                entry_obj[std::string_view("actionId")].as_string()
+                    .value())] =
+                std::string(
+                    entry_obj[std::string_view("label")].as_string().value());
+        }
+        return result;
+    }
+} // namespace
+
+TEST(MaapiRegistryCatalogTest, GetDocumentFillsEmptyCatalogFromRegistrySnapshot)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    AcceptedSettingsDto   settings; // 无 interfacePath → PI 目录缺席
+    MaapiAuthoringSession session(settings, 0, MakeRegistryCatalogSnapshot());
+
+    DasPtr<Das::ExportInterface::IDasJson> document_json;
+    ASSERT_EQ(session.GetDocument(nullptr, document_json.Put()), DAS_S_OK);
+    auto document = DocumentOfGet(document_json.Get());
+
+    const auto entries = ActionCatalogEntries(document);
+    EXPECT_EQ(entries.size(), 3u);
+    EXPECT_EQ(
+        entries.at("68F10001-0000-4000-8000-000000000001"),
+        "das.flow.branch");
+    EXPECT_EQ(
+        entries.at("68F10003-0000-4000-8000-000000000003"),
+        "das.flow.delay");
+    EXPECT_EQ(
+        entries.at("69F20008-0000-4000-8000-000000000001"),
+        "das.maapi.run");
+
+    // 兜底填充后的文档仍过 Core 共享严格 validator（label 非空/键集封闭）。
+    auto validation =
+        Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+    EXPECT_TRUE(validation.valid) << "error_kind=" << validation.error_kind
+                                  << " message=" << validation.message;
+}
+
+TEST(MaapiRegistryCatalogTest, PiCatalogEntriesWinOverRegistrySnapshot)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    AcceptedSettingsDto settings;
+    settings.adapter.interface_path =
+        FixturePath("interface_authoring.jsonc").string();
+    MaapiAuthoringSession session(settings, 0, MakeRegistryCatalogSnapshot());
+
+    DasPtr<Das::ExportInterface::IDasJson> document_json;
+    ASSERT_EQ(session.GetDocument(nullptr, document_json.Put()), DAS_S_OK);
+    auto document = DocumentOfGet(document_json.Get());
+
+    // PI 目录已在：entries 只含 PI task（DailyFarm），注册表组件 guid 不掺入。
+    const auto entries = ActionCatalogEntries(document);
+    EXPECT_FALSE(entries.empty());
+    EXPECT_EQ(entries.count("DailyFarm"), 1u);
+    for (const auto& registry_entry : MakeRegistryCatalogSnapshot())
+    {
+        EXPECT_EQ(entries.count(registry_entry.action_id), 0u)
+            << registry_entry.action_id;
+    }
+}
+
+TEST(MaapiRegistryCatalogTest, ApplyChangeDocumentKeepsRegistryCatalogFallback)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    AcceptedSettingsDto settings; // 无 interfacePath → addFormSequenceItem 必拒
+    MaapiAuthoringSession session(settings, 0, MakeRegistryCatalogSnapshot());
+
+    auto change = ParseDasJson(
+        R"({"baseRevision":0,"kind":"addFormSequenceItem","payload":)"
+        R"({"actionId":"DailyFarm"}})");
+    DasPtr<Das::ExportInterface::IDasJson> result_json;
+    ASSERT_EQ(session.ApplyChange(change.Get(), result_json.Put()), DAS_S_OK);
+    auto result = ReadJsonInterface(result_json.Get());
+    auto result_obj = result.as_object();
+    ASSERT_TRUE(result_obj.has_value());
+    ASSERT_TRUE(result_obj->contains(std::string_view("document")));
+
+    // 被拒的 apply 响应仍带 document，其 actionCatalog.entries 保持注册表
+    // 兜底（apply 往返后目录不塌回空数组）。
+    auto       document = (*result_obj)[std::string_view("document")];
+    const auto entries = ActionCatalogEntries(document);
+    EXPECT_EQ(entries.size(), 3u);
+    EXPECT_EQ(
+        entries.at("68F10001-0000-4000-8000-000000000001"),
+        "das.flow.branch");
+}
+
+TEST(MaapiRegistryCatalogTest, SessionWithoutRegistrySnapshotKeepsEmptyCatalog)
+{
+    using namespace Das::Plugins::DasMaaPi;
+
+    AcceptedSettingsDto   settings;
+    MaapiAuthoringSession session(settings); // 无注入快照 → 行为与既往一致
+
+    DasPtr<Das::ExportInterface::IDasJson> document_json;
+    ASSERT_EQ(session.GetDocument(nullptr, document_json.Put()), DAS_S_OK);
+    auto document = DocumentOfGet(document_json.Get());
+
+    const auto entries = ActionCatalogEntries(document);
+    EXPECT_TRUE(entries.empty());
+}
+
+// 工厂链路（真实 IPC worker）：Scheduler 注入 context 顶层 actionCatalog →
+// MaapiAuthoringSessionFactory 解析（公共两键 + label 兜底 + 坏条目跳过）→
+// session 文档兜底投影。条目携带 graph 侧内部通道字段（ports），不得进入
+// 文档投影。
+TEST_F(MaapiAuthoringFixture, ContextActionCatalogWiredIntoSessionDocument)
+{
+    auto session = CreateSession(
+        R"({"entryId":1,"properties":{},"revision":3,"actionCatalog":[)"
+        R"({"actionId":"68F10001-0000-4000-8000-000000000001","label":)"
+        R"("das.flow.branch","ports":[{"portId":"in","portType":"signal",)"
+        R"("direction":"input","displayLabel":"in"}]},)"
+        R"({"actionId":"69F20008-0000-4000-8000-000000000001"},)"
+        R"({"label":"missing actionId skipped"},)"
+        R"("not-an-object"]})");
+    ASSERT_TRUE(session != nullptr);
+
+    DasPtr<Das::ExportInterface::IDasJson> document_json;
+    ASSERT_EQ(session->GetDocument(nullptr, document_json.Put()), DAS_S_OK);
+    auto document = DocumentOfGet(document_json.Get());
+
+    const auto entries = ActionCatalogEntries(document);
+    ASSERT_EQ(entries.size(), 2u);
+    EXPECT_EQ(
+        entries.at("68F10001-0000-4000-8000-000000000001"),
+        "das.flow.branch");
+    // 缺 label 的条目以 actionId 兜底（Core 校验器要求 label 非空）。
+    EXPECT_EQ(
+        entries.at("69F20008-0000-4000-8000-000000000001"),
+        "69F20008-0000-4000-8000-000000000001");
+}
