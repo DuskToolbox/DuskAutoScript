@@ -66,8 +66,15 @@ configure_file(
     ${CMAKE_BINARY_DIR}/das/tmp/DasMaaPi.json
     @ONLY)
 
+# manifest 部署挂独立 ALL 目标而非本 DLL 的 POST_BUILD：只改 json 不重链 DLL
+# 时 POST_BUILD 不执行，部署副本 plugins/DasMaaPi/DasMaaPi.json 停留旧文件，
+# label map 静默不生效。ALL 目标每次构建都刷新（configure_file 在 cmake 重跑
+# 时先更新 das/tmp 副本）。机制与 das/Plugins 的 DasAutoCopyPluginMetadataFile
+# 同款；因 add_custom_command(TARGET) 只能作用于本目录创建的目标，无法从
+# 子目录把拷贝并入该收集目标，故在本目录建独立 ALL 目标。
+add_custom_target(DasMaaPiPluginMetadataDeploy ALL)
 add_custom_command(
-    TARGET DasMaaPi
+    TARGET DasMaaPiPluginMetadataDeploy
     POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         ${CMAKE_BINARY_DIR}/das/tmp/DasMaaPi.json
@@ -160,7 +167,8 @@ if(DAS_BUILD_TEST)
     add_dependencies(DasMaaPiTest
         DasMaaPi
         DasAutoCopyDll
-        DasAutoCopyPluginMetadataFile)
+        DasAutoCopyPluginMetadataFile
+        DasMaaPiPluginMetadataDeploy)
 
     add_custom_command(
         TARGET DasMaaPiTest
