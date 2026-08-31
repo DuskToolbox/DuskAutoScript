@@ -109,11 +109,18 @@ namespace Das::Core::TaskScheduler
         // (an Apply bumped it), the cached session's document view is stale and
         // is rebuilt. -1 = untracked.
         int64_t creation_revision = -1;
+        // catalog 构建时的进程 GlobalLocale 快照（原始读数照存照比：读取
+        // 失败/未设置时为空串，是合法戳值——两次读数一致即视为 locale 未
+        // 变）。与 creation_revision 同类的读侧陈旧性戳：label 是 session
+        // 创建时经 context 烤进缓存视图的，locale 变了缓存 session 的
+        // label 视图就是旧语言，读侧按戳失效重建。
+        std::string creation_locale;
 
         AuthoringSessionEntry() = default;
         AuthoringSessionEntry(AuthoringSessionEntry&& other) noexcept
             : session(std::move(other.session)),
-              creation_revision(other.creation_revision)
+              creation_revision(other.creation_revision),
+              creation_locale(std::move(other.creation_locale))
         {
         }
         AuthoringSessionEntry& operator=(AuthoringSessionEntry&& other) noexcept
@@ -122,6 +129,7 @@ namespace Das::Core::TaskScheduler
             {
                 session = std::move(other.session);
                 creation_revision = other.creation_revision;
+                creation_locale = std::move(other.creation_locale);
             }
             return *this;
         }

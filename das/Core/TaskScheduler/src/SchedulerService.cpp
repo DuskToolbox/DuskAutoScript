@@ -1224,6 +1224,28 @@ namespace Das::Core::TaskScheduler
             session.Put());
     }
 
+    // 进程级 GlobalLocale 的原始读数，作为 authoring session 缓存的
+    // locale 陈旧性戳：读取失败/未设置时为空串，是合法戳值（两次读数
+    // 一致即视为 locale 未变），不做 en 回退——回退是 catalog label
+    // 解析侧的渲染策略，戳侧只需忠反映射「创建时 vs 现在」的读数差异。
+    // 与 BuildActionCatalogFromRegistry 的读法同源（同一 C API）。
+    static std::string ReadGlobalLocaleStamp()
+    {
+        std::string                     locale;
+        Das::DasPtr<IDasReadOnlyString> p_locale;
+        if (DAS::IsOk(::DasGetDefaultLocale(p_locale.Put()))
+            && p_locale.Get() != nullptr)
+        {
+            const char* locale_utf8 = nullptr;
+            p_locale->GetUtf8(&locale_utf8);
+            if (locale_utf8 != nullptr)
+            {
+                locale = locale_utf8;
+            }
+        }
+        return locale;
+    }
+
     // Cache core, shared by the member GetOrCreateAuthoringSession (Task/Repo
     // Get + Compile callers, which resolve the session before any pipeline)
     // and by the Apply pipeline, which must resolve the session AFTER its ③④
@@ -1231,6 +1253,23 @@ namespace Das::Core::TaskScheduler
     // create a session). `mutex` guards only find/emplace; session creation
     // happens outside the lock (v1.3 short-critical-section rule). Returns
     // null on create failure without inserting an empty entry.
+    //
+    // Read-side staleness has two stamps, both checked under `mutex`:
+    // - revision (Get path only, enforce_fresh): the on-disk authoring
+    //   revision advanced since creation → rebuild.
+    // - locale (both paths): the process GlobalLocale changed since the
+    //   session's context was computed → rebuild. Callers recompute the
+    //   context on every Get/Apply (MakeAuthoringContextJson →
+    //   BuildActionCatalogFromRegistry reads the locale live), so a cache
+    //   hit merely skips session rebuild — after the erase the rebuild
+    //   consumes the caller's freshly-built context and the new language
+    //   takes effect naturally. NOT gated on enforce_fresh: the Apply path
+    //   reuses a session on the premise that its view is still fresh, and a
+    //   locale change makes the label view stale there too. Stamp comparison
+    //   is byte-wise (case-sensitive): a zh-cn → ZH-CN switch triggers one
+    //   extra harmless rebuild because label resolution normalizes case on
+    //   both sides — erring toward one redundant rebuild, never toward
+    //   serving a stale language.
     static std::shared_ptr<AuthoringSessionEntry> ResolveCachedAuthoringSession(
         std::unordered_map<int64_t, std::shared_ptr<AuthoringSessionEntry>>&
                                                         cache,
@@ -1242,6 +1281,9 @@ namespace Das::Core::TaskScheduler
         int64_t                                         current_revision,
         bool                                            enforce_fresh)
     {
+        // 取一次贯穿本次解析：命中比对与（若陈旧而重建的）新条目赋值用
+        // 同一读数，重建后的新 session 戳的就是触发这次重建的 locale。
+        const std::string current_locale = ReadGlobalLocaleStamp();
         {
             const std::scoped_lock lock(mutex);
             auto                   it = cache.find(id);
@@ -1251,9 +1293,10 @@ namespace Das::Core::TaskScheduler
                 // because the provider's document view is built from the
                 // context captured at session creation. Apply skips this
                 // (enforce_fresh=false) so consecutive Applies reuse one
-                // session.
-                if (enforce_fresh
-                    && it->second->creation_revision != current_revision)
+                // session — unless the locale stamp diverged (see above).
+                if ((enforce_fresh
+                     && it->second->creation_revision != current_revision)
+                    || it->second->creation_locale != current_locale)
                 {
                     cache.erase(it);
                 }
@@ -1278,6 +1321,7 @@ namespace Das::Core::TaskScheduler
         auto entry = std::make_shared<AuthoringSessionEntry>();
         entry->session = std::move(session);
         entry->creation_revision = current_revision;
+        entry->creation_locale = current_locale;
 
         // emplace (not operator[]) so a concurrent inserter wins and ours is
         // dropped: avoids overwriting a live entry.

@@ -4744,6 +4744,235 @@ TEST_F(
         "执行子图");
 }
 
+// locale 热替换下的缓存陈旧性（读侧 locale 戳）：authoring session 缓存
+// 的 label 视图烤在创建时捕获的 context 里，进程 GlobalLocale 切换后同一
+// task 的后续 Get 必须拿到新语言的 label——缓存 session 因 locale 戳不等
+// 而失效重建，重建消费调用方本次现算的新 context（MakeAuthoringContextJson
+// → BuildActionCatalogFromRegistry 现读 locale）。此前该断言因缓存语义
+// 无法在同 task 上成立（只能靠多 task 实例各开 session 规避），locale 戳
+// 落地后原语义回归；同 locale 连续 Get 仍复用 session（locale 戳与
+// revision 戳都不变 → 命中复用分支；复用的计数器级证明由
+// SchedulerAuthoringTaskCapabilityRegistryGetDocument 家族的
+// authoring_session_count==1 断言承担）。locale 的保存/还原由夹具
+// saved_locale_ 负责。
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    GraphAuthoringCatalogRebuildsSessionOnLocaleChange)
+{
+    WriteFactoryPluginManifest(
+        manifest_path_,
+        FactoryPluginGuidString,
+        FactoryTaskGuidString,
+        true,
+        "Cpp",
+        FactoryTaskComponentImplGuidString,
+        /*include_flow_components=*/false);
+    InjectPortDeclarationsIntoFactoryManifest(
+        manifest_path_,
+        FactoryTaskComponentImplGuidString,
+        R"json({
+            "label": {"en": "Localized Kind", "zh-cn": "本地化组件"},
+            "inputs": [
+                {"id": "localized_in", "type": "bool",
+                 "label": {"en": "Localized In", "zh-cn": "本地化输入"}}
+            ]
+        })json");
+    DeployRealPluginArtifacts(
+        "libDasGraphTask.dll",
+        "DasGraphTask.json",
+        /*force_ipc=*/true);
+
+    // 单个 graph 任务实例：locale 切换前后的 Get 都打在同一 task id 上，
+    // 直面缓存 session 的陈旧性（多实例规避会绕开被测语义）。
+    {
+        yyjson::value task(Das::Utils::MakeYyjsonObject());
+        (*task.as_object())[std::string_view("id")] = static_cast<int64_t>(0);
+        (*task.as_object())[std::string_view("taskGuid")] =
+            "F4A2C9D1-7B3E-4D8A-A15F-C2E86B4D91A3";
+        (*task.as_object())[std::string_view("pluginGuid")] =
+            "C8A4B7D0-1E2F-3A5B-6C9D-7E8F0A1B2C3D";
+        (*task.as_object())[std::string_view("nextExecutionTime")] =
+            static_cast<int64_t>(1);
+        yyjson::value properties(Das::Utils::MakeYyjsonObject());
+        auto          props_obj = properties.as_object();
+        (*props_obj)[std::string_view("documentId")] = "locale-rebuild-graph-0";
+        (*props_obj)[std::string_view("version")] = 1;
+        yyjson::value nodes(Das::Utils::MakeYyjsonArray());
+        {
+            yyjson::value node(Das::Utils::MakeYyjsonObject());
+            (*node.as_object())[std::string_view("nodeId")] = "probe";
+            yyjson::value target(Das::Utils::MakeYyjsonObject());
+            (*target.as_object())[std::string_view("targetKind")] =
+                "componentRef";
+            yyjson::value component_ref(Das::Utils::MakeYyjsonObject());
+            (*component_ref.as_object())[std::string_view("kind")] =
+                "componentRef";
+            (*component_ref.as_object())[std::string_view("componentGuid")] =
+                std::string(FactoryTaskComponentImplGuidString);
+            (*component_ref.as_object())[std::string_view("pluginGuid")] =
+                std::string(FactoryPluginGuidString);
+            (*target.as_object())[std::string_view("componentRef")] =
+                std::move(component_ref);
+            (*node.as_object())[std::string_view("target")] = std::move(target);
+            (*node.as_object())[std::string_view("settings")] =
+                yyjson::value(Das::Utils::MakeYyjsonObject());
+            (*node.as_object())[std::string_view("dynamicPorts")] =
+                yyjson::value(Das::Utils::MakeYyjsonArray());
+            nodes.as_array()->emplace_back(std::move(node));
+        }
+        (*props_obj)[std::string_view("nodes")] = std::move(nodes);
+        (*props_obj)[std::string_view("edges")] =
+            yyjson::value(Das::Utils::MakeYyjsonArray());
+        (*props_obj)[std::string_view("graphInputs")] =
+            yyjson::value(Das::Utils::MakeYyjsonArray());
+        (*props_obj)[std::string_view("graphOutputs")] =
+            yyjson::value(Das::Utils::MakeYyjsonArray());
+        (*props_obj)[std::string_view("tags")] =
+            yyjson::value(Das::Utils::MakeYyjsonArray());
+        (*task.as_object())[std::string_view("properties")] =
+            std::move(properties);
+        WriteSchedulerState(*settings_manager_, 1, {0}, {task});
+    }
+
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    const auto read_document_clone = [this]() -> yyjson::value
+    {
+        const yyjson::value request(Das::Utils::MakeYyjsonObject());
+        auto result = scheduler_->GetTaskAuthoringDocument(0, request);
+        auto obj = result.as_object();
+        EXPECT_TRUE(obj.has_value());
+        if (!obj.has_value() || !obj->contains(std::string_view("document")))
+        {
+            return yyjson::value{};
+        }
+        return Das::Utils::CloneYyjsonValue(
+            (*obj)[std::string_view("document")]);
+    };
+
+    const auto entry_label_of = [](const yyjson::value& document_value,
+                                   std::string_view action_id) -> std::string
+    {
+        auto document = document_value.as_object();
+        if (!document.has_value()
+            || !document->contains(std::string_view("actionCatalog")))
+        {
+            return {};
+        }
+        auto catalog =
+            (*document)[std::string_view("actionCatalog")].as_object();
+        if (!catalog.has_value()
+            || !catalog->contains(std::string_view("entries")))
+        {
+            return {};
+        }
+        auto entries = (*catalog)[std::string_view("entries")].as_array();
+        if (!entries.has_value())
+        {
+            return {};
+        }
+        for (const auto& entry : *entries)
+        {
+            auto entry_obj = entry.as_object();
+            if (!entry_obj
+                || !entry_obj->contains(std::string_view("actionId")))
+            {
+                continue;
+            }
+            auto id = (*entry_obj)[std::string_view("actionId")].as_string();
+            if (id && *id == action_id)
+            {
+                return std::string((*entry_obj)[std::string_view("label")]
+                                       .as_string()
+                                       .value_or(""));
+            }
+        }
+        return {};
+    };
+
+    const auto port_label_of = [](const yyjson::value& document_value,
+                                  std::string_view     port_id) -> std::string
+    {
+        auto document = document_value.as_object();
+        if (!document.has_value()
+            || !document->contains(std::string_view("graph")))
+        {
+            return {};
+        }
+        auto graph = (*document)[std::string_view("graph")].as_object();
+        if (!graph.has_value() || !graph->contains(std::string_view("nodes")))
+        {
+            return {};
+        }
+        auto nodes = (*graph)[std::string_view("nodes")].as_array();
+        if (!nodes.has_value())
+        {
+            return {};
+        }
+        for (const auto& node : *nodes)
+        {
+            auto node_obj = node.as_object();
+            if (!node_obj || !node_obj->contains(std::string_view("ports")))
+            {
+                continue;
+            }
+            auto ports = (*node_obj)[std::string_view("ports")].as_array();
+            if (!ports.has_value())
+            {
+                continue;
+            }
+            for (const auto& port : *ports)
+            {
+                auto port_object = port.as_object();
+                if (!port_object)
+                {
+                    continue;
+                }
+                auto id =
+                    (*port_object)[std::string_view("portId")].as_string();
+                if (id && *id == port_id)
+                {
+                    return std::string(
+                        (*port_object)[std::string_view("displayLabel")]
+                            .as_string()
+                            .value_or(""));
+                }
+            }
+        }
+        return {};
+    };
+
+    // 默认 locale=en：首次 Get 创建 session，label 取 map 的 en 值。
+    {
+        const auto document = read_document_clone();
+        EXPECT_EQ(
+            entry_label_of(document, FactoryTaskComponentImplGuidString),
+            "Localized Kind");
+        EXPECT_EQ(port_label_of(document, "localized_in"), "Localized In");
+    }
+
+    // 同 locale 二次 Get：语义结果与首次一致（locale/revision 戳均未变，
+    // 命中复用分支）。
+    {
+        const auto document = read_document_clone();
+        EXPECT_EQ(
+            entry_label_of(document, FactoryTaskComponentImplGuidString),
+            "Localized Kind");
+        EXPECT_EQ(port_label_of(document, "localized_in"), "Localized In");
+    }
+
+    // locale 热切换到 zh-cn 后同一 task 的 Get：缓存 session 的 locale 戳
+    // 不等 → 失效重建，新 session 按新 context 现算，label 换中文。
+    SetDefaultLocaleForTest("zh-cn");
+    {
+        const auto document = read_document_clone();
+        EXPECT_EQ(
+            entry_label_of(document, FactoryTaskComponentImplGuidString),
+            "本地化组件");
+        EXPECT_EQ(port_label_of(document, "localized_in"), "本地化输入");
+    }
+}
+
 // 真实 manifest 文案全链本地化（DasFlowControl 与 DasGraphTask 的 label
 // map 落地后）：默认 locale=en 时 entry label 与节点端口 displayLabel 均
 // 取 manifest map 的 en 值；GlobalLocale 切到 zh-cn（测试内模拟重启后
