@@ -37,41 +37,50 @@
         "definition": {
           "schemaVersion": 1,
           "kind": "das.maapi.run",
+          "label": { "en": "Maa Run", "zh-cn": "Maa 执行" },
           "componentGuid": "69F20008-0000-4000-8000-000000000001",
           "settings": [],
           "inputs": [
             {
               "id": "in",
-              "type": "signal"
+              "type": "signal",
+              "label": { "en": "Input Signal", "zh-cn": "输入信号" }
             },
             {
               "id": "executionInput",
-              "type": "object"
+              "type": "object",
+              "label": { "en": "Execution Input", "zh-cn": "执行输入" }
             }
           ],
           "outputs": [
             {
               "id": "completedTasks",
-              "type": "array<string>"
+              "type": "array<string>",
+              "label": { "en": "Completed Tasks", "zh-cn": "已完成任务" }
             },
             {
               "id": "stopped",
-              "type": "bool"
+              "type": "bool",
+              "label": { "en": "Stopped", "zh-cn": "已停止" }
             },
             {
               "id": "diagnostics",
-              "type": "array<object>"
+              "type": "array<object>",
+              "label": { "en": "Diagnostics", "zh-cn": "诊断信息" }
             }
           ],
           "signals": [
             {
-              "id": "succeeded"
+              "id": "succeeded",
+              "label": { "en": "Succeeded", "zh-cn": "成功" }
             },
             {
-              "id": "failed"
+              "id": "failed",
+              "label": { "en": "Failed", "zh-cn": "失败" }
             },
             {
-              "id": "cancelled"
+              "id": "cancelled",
+              "label": { "en": "Cancelled", "zh-cn": "已取消" }
             }
           ],
           "config": {

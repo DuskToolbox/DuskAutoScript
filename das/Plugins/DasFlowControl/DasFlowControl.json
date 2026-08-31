@@ -18,21 +18,25 @@
         "definition": {
           "schemaVersion": 1,
           "kind": "das.flow.branch",
+          "label": { "en": "Branch", "zh-cn": "分支" },
           "componentGuid": "68F10001-0000-4000-8000-000000000001",
           "inputs": [
             {
               "id": "condition",
-              "type": "bool"
+              "type": "bool",
+              "label": { "en": "Condition", "zh-cn": "条件" }
             }
           ],
           "outputs": [
             {
               "id": "true",
-              "type": "signal"
+              "type": "signal",
+              "label": { "en": "True Branch", "zh-cn": "真分支" }
             },
             {
               "id": "false",
-              "type": "signal"
+              "type": "signal",
+              "label": { "en": "False Branch", "zh-cn": "假分支" }
             }
           ],
           "config": {},
@@ -44,17 +48,20 @@
         "definition": {
           "schemaVersion": 1,
           "kind": "das.flow.delay",
+          "label": { "en": "Delay", "zh-cn": "延时" },
           "componentGuid": "68F10003-0000-4000-8000-000000000003",
           "inputs": [
             {
               "id": "in",
-              "type": "signal"
+              "type": "signal",
+              "label": { "en": "Input Signal", "zh-cn": "输入信号" }
             }
           ],
           "outputs": [
             {
               "id": "next",
-              "type": "signal"
+              "type": "signal",
+              "label": { "en": "Next", "zh-cn": "下一步" }
             }
           ],
           "config": {
@@ -71,33 +78,40 @@
         "definition": {
           "schemaVersion": 1,
           "kind": "das.flow.for",
+          "label": { "en": "For Loop", "zh-cn": "循环" },
           "componentGuid": "68F10004-0000-4000-8000-000000000004",
           "inputs": [
             {
               "id": "start",
-              "type": "int"
+              "type": "int",
+              "label": { "en": "Start", "zh-cn": "起始值" }
             },
             {
               "id": "end",
-              "type": "int"
+              "type": "int",
+              "label": { "en": "End", "zh-cn": "结束值" }
             },
             {
               "id": "step",
-              "type": "int"
+              "type": "int",
+              "label": { "en": "Step", "zh-cn": "步长" }
             }
           ],
           "outputs": [
             {
               "id": "continue",
-              "type": "signal"
+              "type": "signal",
+              "label": { "en": "Continue", "zh-cn": "继续" }
             },
             {
               "id": "break",
-              "type": "signal"
+              "type": "signal",
+              "label": { "en": "Break", "zh-cn": "跳出" }
             },
             {
               "id": "index",
-              "type": "int"
+              "type": "int",
+              "label": { "en": "Index", "zh-cn": "当前索引" }
             }
           ],
           "config": {},
@@ -109,21 +123,25 @@
         "definition": {
           "schemaVersion": 1,
           "kind": "das.flow.while",
+          "label": { "en": "While Loop", "zh-cn": "条件循环" },
           "componentGuid": "68F10005-0000-4000-8000-000000000005",
           "inputs": [
             {
               "id": "condition",
-              "type": "bool"
+              "type": "bool",
+              "label": { "en": "Condition", "zh-cn": "条件" }
             }
           ],
           "outputs": [
             {
               "id": "continue",
-              "type": "signal"
+              "type": "signal",
+              "label": { "en": "Continue", "zh-cn": "继续" }
             },
             {
               "id": "break",
-              "type": "signal"
+              "type": "signal",
+              "label": { "en": "Break", "zh-cn": "跳出" }
             }
           ],
           "config": {},
@@ -135,21 +153,25 @@
         "definition": {
           "schemaVersion": 1,
           "kind": "das.flow.invokeRepository",
+          "label": { "en": "Invoke Repository", "zh-cn": "调用仓库" },
           "componentGuid": "68F10007-0000-4000-8000-000000000007",
           "inputs": [
             {
               "id": "compiledSnapshot",
-              "type": "object"
+              "type": "object",
+              "label": { "en": "Compiled Snapshot", "zh-cn": "编译快照" }
             },
             {
               "id": "runtimeInputs",
-              "type": "object"
+              "type": "object",
+              "label": { "en": "Runtime Inputs", "zh-cn": "运行期输入" }
             }
           ],
           "outputs": [
             {
               "id": "result",
-              "type": "object"
+              "type": "object",
+              "label": { "en": "Result", "zh-cn": "结果" }
             }
           ],
           "config": {
@@ -165,29 +187,35 @@
         "definition": {
           "schemaVersion": 1,
           "kind": "das.flow.merge",
+          "label": { "en": "Merge", "zh-cn": "合并" },
           "componentGuid": "68F10008-0000-4000-8000-000000000008",
           "inputs": [
             {
               "id": "in_true",
-              "type": "signal"
+              "type": "signal",
+              "label": { "en": "True Input", "zh-cn": "真值输入" }
             },
             {
               "id": "in_false",
-              "type": "signal"
+              "type": "signal",
+              "label": { "en": "False Input", "zh-cn": "假值输入" }
             },
             {
               "id": "value_true",
-              "type": "object"
+              "type": "object",
+              "label": { "en": "True Value", "zh-cn": "真值" }
             },
             {
               "id": "value_false",
-              "type": "object"
+              "type": "object",
+              "label": { "en": "False Value", "zh-cn": "假值" }
             }
           ],
           "outputs": [
             {
               "id": "result",
-              "type": "object"
+              "type": "object",
+              "label": { "en": "Result", "zh-cn": "结果" }
             }
           ],
           "config": {},
@@ -199,17 +227,20 @@
         "definition": {
           "schemaVersion": 1,
           "kind": "das.flow.launch",
+          "label": { "en": "Launch Process", "zh-cn": "启动进程" },
           "componentGuid": "95FD2FFA-88F2-4F85-A536-C708D25B641F",
           "inputs": [
             {
               "id": "signal_in",
-              "type": "signal"
+              "type": "signal",
+              "label": { "en": "Input Signal", "zh-cn": "输入信号" }
             }
           ],
           "outputs": [
             {
               "id": "signal_out",
-              "type": "signal"
+              "type": "signal",
+              "label": { "en": "Output Signal", "zh-cn": "输出信号" }
             }
           ],
           "config": {
