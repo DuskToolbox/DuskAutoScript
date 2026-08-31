@@ -67,6 +67,7 @@
           "config": {
             "delay_ms": {
               "type": "int64",
+              "label": { "en": "Delay Duration (ms)", "zh-cn": "延时时长（毫秒）" },
               "default": 1000
             }
           },
@@ -176,7 +177,8 @@
           ],
           "config": {
             "repositoryRef": {
-              "type": "object"
+              "type": "object",
+              "label": { "en": "Repository Entry", "zh-cn": "仓库条目" }
             }
           },
           "diagnostics": []
@@ -245,16 +247,20 @@
           ],
           "config": {
             "exePath": {
-              "type": "string"
+              "type": "string",
+              "label": { "en": "Executable Path", "zh-cn": "可执行文件路径" }
             },
             "args": {
-              "type": "array<string>"
+              "type": "array<string>",
+              "label": { "en": "Arguments", "zh-cn": "启动参数" }
             },
             "workingDirectory": {
-              "type": "string"
+              "type": "string",
+              "label": { "en": "Working Directory", "zh-cn": "工作目录" }
             },
             "waitWindow": {
-              "type": "object"
+              "type": "object",
+              "label": { "en": "Wait for Window", "zh-cn": "等待窗口出现" }
             }
           },
           "diagnostics": []

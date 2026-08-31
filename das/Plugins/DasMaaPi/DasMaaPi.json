@@ -86,10 +86,12 @@
           "config": {
             "repositoryRef": {
               "type": "taskRepositoryRef",
+              "label": { "en": "Repository Entry", "zh-cn": "仓库条目" },
               "taskGuid": "69F20001-0000-4000-8000-000000000001"
             },
             "runtimeInputs": {
-              "type": "object"
+              "type": "object",
+              "label": { "en": "Runtime Inputs", "zh-cn": "运行期输入" }
             }
           },
           "diagnostics": []

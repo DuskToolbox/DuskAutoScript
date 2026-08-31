@@ -190,10 +190,10 @@ namespace Contract
         }
 
         /// Merge the config-declared fields (declaration order, label =
-        /// name, value = settings override ?? declared default ?? null)
-        /// ahead of the undeclared live settings keys (existing
-        /// ProjectFields order). A null config pointer keeps the plain
-        /// live-value projection.
+        /// declared label ?? name, value = settings override ?? declared
+        /// default ?? null) ahead of the undeclared live settings keys
+        /// (existing ProjectFields order). A null config pointer keeps the
+        /// plain live-value projection.
         ///
         /// include_undeclared_live_keys=false（graph 节点视图）：fields 只含
         /// config 声明——未声明的 settings 键（端口 binding 默认值）经端口
@@ -219,7 +219,10 @@ namespace Contract
             {
                 FieldDescriptor field;
                 field.name = config_field.name;
-                field.label = config_field.name;
+                // 声明的显示文案（locale 已在 catalog 生产侧解析成字符串）；
+                // 未声明（空）回退字段名——与端口 displayLabel 的回退链同构。
+                field.label = config_field.label.empty() ? config_field.name
+                                                         : config_field.label;
                 const auto [value_type, input_type] =
                     ConfigFieldInputTypes(config_field.type);
                 field.value_type = value_type;

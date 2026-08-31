@@ -581,16 +581,23 @@ namespace Das::Core::TaskScheduler
     }
 
     // Config field declarations of one component, read from the manifest
-    // definition's `config` object ({field_name: {type, default?, taskGuid?}}).
-    // Emitted in lexical key order for determinism; entries without a
-    // usable non-empty type string are skipped (the same skip-not-poison
-    // rule as the port lists — the Core consumer rejects the whole catalog
-    // on a malformed channel entry). The optional taskGuid declaration
-    // names the target task type of a component-domain field; it rides the
-    // channel verbatim (engaged-only) so the Core fields projection can
-    // surface it without a component→task reverse lookup.
+    // definition's `config` object
+    // ({field_name: {type, label?, default?, taskGuid?}}). Emitted in
+    // lexical key order for determinism; entries without a usable non-empty
+    // type string are skipped (the same skip-not-poison rule as the port
+    // lists — the Core consumer rejects the whole catalog on a malformed
+    // channel entry). The optional taskGuid declaration names the target
+    // task type of a component-domain field; it rides the channel verbatim
+    // (engaged-only) so the Core fields projection can surface it without a
+    // component→task reverse lookup. The optional per-field multi-locale
+    // `label` map resolves against `locale` (miss → en; any miss keeps the
+    // key absent so the element stays four-key) into the resolved display
+    // string the Core projection uses as the field label (falling back to
+    // the field name there) — label is pure display data, so a malformed
+    // map never skips the field.
     static void AppendConfigFromDefinition(
         const yyjson::value&       definition,
+        std::string_view           locale,
         yyjson::writer::array_ref& destination)
     {
         auto def_obj = definition.as_object();
@@ -623,12 +630,30 @@ namespace Das::Core::TaskScheduler
             {
                 continue;
             }
+            std::string_view resolved_label;
+            if (field_obj->contains(std::string_view("label")))
+            {
+                // label 是多语言 map：任何 miss（非 object/键缺失/值非
+                // string/空串）都不发该键，元素保持四键现状。
+                auto resolved = ResolveLocalizedLabel(
+                    (*field_obj)[std::string_view("label")],
+                    locale);
+                if (resolved.has_value())
+                {
+                    resolved_label = *resolved;
+                }
+            }
             auto config_field = Das::Utils::MakeYyjsonObject();
             auto obj = config_field.as_object();
             (*obj)[std::string_view("name")] =
                 std::make_pair(field_name, yyjson::copy_string);
             (*obj)[std::string_view("type")] =
                 std::make_pair(std::string_view(*type), yyjson::copy_string);
+            if (!resolved_label.empty())
+            {
+                (*obj)[std::string_view("label")] =
+                    std::make_pair(resolved_label, yyjson::copy_string);
+            }
             if (field_obj->contains(std::string_view("default"))
                 && !(*field_obj)[std::string_view("default")].is_null())
             {
@@ -752,12 +777,16 @@ namespace Das::Core::TaskScheduler
             {
                 (*obj)[std::string_view("ports")] = std::move(ports);
             }
-            // Config field declarations: {name,type,default?,taskGuid?} in
-            // lexical key order — the Core consumer locks the element shape
-            // to exactly these four keys.
+            // Config field declarations: {name,type,default?,taskGuid?,label?}
+            // in lexical key order — the Core consumer locks the element shape
+            // to exactly these keys; label is the locale-resolved display
+            // string (engaged-only).
             auto config = Das::Utils::MakeYyjsonArray();
             auto config_arr = config.as_array();
-            AppendConfigFromDefinition(definition.definition, *config_arr);
+            AppendConfigFromDefinition(
+                definition.definition,
+                std::string_view(locale),
+                *config_arr);
             if (config_arr->size() > 0)
             {
                 (*obj)[std::string_view("config")] = std::move(config);

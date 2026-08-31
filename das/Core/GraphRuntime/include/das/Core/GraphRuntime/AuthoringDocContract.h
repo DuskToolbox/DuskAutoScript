@@ -194,17 +194,21 @@ namespace Contract
     /// One config field declaration carried on the catalog channel: the
     /// manifest `config` entry for one component field. `type` uses the
     /// manifest type vocabulary (int/int64/uint/float/double/string/bool/
-    /// object/array<...>/taskRepositoryRef); `default_value` is the declared
-    /// default (null = none declared); `task_guid` is the optional declared
-    /// target task type for component-domain fields (e.g. a taskRepositoryRef
-    /// pointing at one task type — declaration-as-data, engaged only when the
-    /// manifest names one). Like ports, this is internal to the catalog
-    /// channel and is NOT emitted on the public actionCatalog wire — the node
-    /// fields[] projection is where config declarations surface.
+    /// object/array<...>/taskRepositoryRef); `label` is the producer-resolved
+    /// display label (locale-resolved from the manifest's multi-locale label
+    /// map; empty = none declared, the projection then uses the field name);
+    /// `default_value` is the declared default (null = none declared);
+    /// `task_guid` is the optional declared target task type for
+    /// component-domain fields (e.g. a taskRepositoryRef pointing at one task
+    /// type — declaration-as-data, engaged only when the manifest names one).
+    /// Like ports, this is internal to the catalog channel and is NOT emitted
+    /// on the public actionCatalog wire — the node fields[] projection is
+    /// where config declarations surface.
     struct ConfigFieldDescriptor
     {
         std::string                name;
         std::string                type;
+        std::string                label;
         yyjson::value              default_value;
         std::optional<std::string> task_guid;
     };

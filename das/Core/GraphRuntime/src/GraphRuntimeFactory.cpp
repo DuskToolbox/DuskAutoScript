@@ -1536,10 +1536,10 @@ DAS_C_API DasResult GraphAuthoringSessionSetActionCatalog(
                     entry.ports.push_back(std::move(port));
                 }
             }
-            // Optional config channel: {name,type,default?,taskGuid?}
-            // elements with the element key set locked to exactly those four
-            // keys — the same whole-catalog rejection on malformed input as
-            // the port channel.
+            // Optional config channel: {name,type,default?,taskGuid?,label?}
+            // elements with the element key set locked to exactly those keys
+            // — the same whole-catalog rejection on malformed input as the
+            // port channel.
             if (entry_obj->contains(std::string_view("config")))
             {
                 auto config_val =
@@ -1564,7 +1564,8 @@ DAS_C_API DasResult GraphAuthoringSessionSetActionCatalog(
                         if (key != std::string_view("name")
                             && key != std::string_view("type")
                             && key != std::string_view("default")
-                            && key != std::string_view("taskGuid"))
+                            && key != std::string_view("taskGuid")
+                            && key != std::string_view("label"))
                         {
                             return DAS_E_INVALID_ARGUMENT;
                         }
@@ -1611,6 +1612,24 @@ DAS_C_API DasResult GraphAuthoringSessionSetActionCatalog(
                         if (!task_guid->empty())
                         {
                             field.task_guid = *task_guid;
+                        }
+                    }
+                    // Optional producer-resolved display label of the field:
+                    // a non-string value is a shape violation; an empty or
+                    // absent label reads as "none declared" and the fields
+                    // projection falls back to the field name (the same
+                    // engaged-only reading the producer applies).
+                    if (config_obj->contains(std::string_view("label")))
+                    {
+                        auto label = (*config_obj)[std::string_view("label")]
+                                         .as_string();
+                        if (!label)
+                        {
+                            return DAS_E_INVALID_ARGUMENT;
+                        }
+                        if (!label->empty())
+                        {
+                            field.label = *label;
                         }
                     }
                     entry.config_fields.push_back(std::move(field));

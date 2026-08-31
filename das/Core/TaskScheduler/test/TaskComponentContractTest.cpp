@@ -988,10 +988,11 @@ TEST_F(
 }
 
 // 三份真实 manifest（DasFlowControl/DasMaaPi/DasGraphTask）的 label map
-// 完整账本：每个 definition 顶层 label 与每个 inputs/outputs/signals 端口
-// 条目的 label 均为 object 且含非空 "en" 与 "zh-cn" 键（共 9 个 definition
-// map + 34 个端口 map）。label map 是 catalog 本地化显示的唯一数据源，
-// 文案回退丢失（map 缺失/键缺失/空值）在此即红。
+// 完整账本：每个 definition 顶层 label、每个 inputs/outputs/signals 端口
+// 条目的 label、每个 config 声明字段的 label 均为 object 且含非空 "en" 与
+// "zh-cn" 键（共 9 个 definition map + 34 个端口 map + 8 个 config 字段
+// map）。label map 是 catalog 本地化显示的唯一数据源，文案回退丢失（map
+// 缺失/键缺失/空值）在此即红。
 TEST_F(TaskComponentContractTest, RealManifestsCarryLocalizedLabelMaps)
 {
     struct ManifestSpec
@@ -999,13 +1000,15 @@ TEST_F(TaskComponentContractTest, RealManifestsCarryLocalizedLabelMaps)
         std::string_view plugin_dir_name;
         size_t           definition_count;
         size_t           port_count;
+        size_t           config_field_count;
     };
     // port_count = inputs + outputs + signals 条目总和（DasFlowControl 无
-    // signals 键，DasMaaPi 的 signals 条目形状为 {id,label}）。
+    // signals 键，DasMaaPi 的 signals 条目形状为 {id,label}）；
+    // config_field_count = config 对象的声明字段数（空 config 计 0）。
     const std::array<ManifestSpec, 3> manifests{
-        ManifestSpec{"DasFlowControl", 7, 24},
-        ManifestSpec{"DasMaaPi", 1, 8},
-        ManifestSpec{"DasGraphTask", 1, 2},
+        ManifestSpec{"DasFlowControl", 7, 24, 6},
+        ManifestSpec{"DasMaaPi", 1, 8, 2},
+        ManifestSpec{"DasGraphTask", 1, 2, 0},
     };
 
     const auto expect_label_map =
@@ -1025,6 +1028,7 @@ TEST_F(TaskComponentContractTest, RealManifestsCarryLocalizedLabelMaps)
 
     size_t total_definitions = 0;
     size_t total_ports = 0;
+    size_t total_config_fields = 0;
     for (const auto& spec : manifests)
     {
         const auto manifest_path =
@@ -1043,6 +1047,7 @@ TEST_F(TaskComponentContractTest, RealManifestsCarryLocalizedLabelMaps)
 
         size_t definitions_with_label = 0;
         size_t ports_with_label = 0;
+        size_t config_fields_with_label = 0;
         for (const auto& [guid_text, entry] : *components)
         {
             auto entry_obj = entry.as_object();
@@ -1080,15 +1085,37 @@ TEST_F(TaskComponentContractTest, RealManifestsCarryLocalizedLabelMaps)
                     ++ports_with_label;
                 }
             }
+
+            // config 声明字段（{field_name: {type,label?,…}}）：节点编辑窗
+            // fields[] 的显示文案源，同样要求双语 map 全覆盖。
+            auto config = (*definition)[std::string_view("config")].as_object();
+            ASSERT_TRUE(config.has_value()) << guid_text;
+            for (const auto& [field_name, declaration] : *config)
+            {
+                auto declaration_obj = declaration.as_object();
+                ASSERT_TRUE(declaration_obj.has_value())
+                    << guid_text << '/' << field_name;
+                ASSERT_TRUE(
+                    declaration_obj->contains(std::string_view("label")))
+                    << guid_text << '/' << field_name << " lacks label map";
+                expect_label_map(
+                    (*declaration_obj)[std::string_view("label")],
+                    std::string(guid_text) + "/" + std::string(field_name));
+                ++config_fields_with_label;
+            }
         }
         EXPECT_EQ(definitions_with_label, spec.definition_count)
             << spec.plugin_dir_name;
         EXPECT_EQ(ports_with_label, spec.port_count) << spec.plugin_dir_name;
+        EXPECT_EQ(config_fields_with_label, spec.config_field_count)
+            << spec.plugin_dir_name;
         total_definitions += definitions_with_label;
         total_ports += ports_with_label;
+        total_config_fields += config_fields_with_label;
     }
     EXPECT_EQ(total_definitions, 9u);
     EXPECT_EQ(total_ports, 34u);
+    EXPECT_EQ(total_config_fields, 8u);
 }
 
 TEST_F(

@@ -4978,6 +4978,188 @@ TEST_F(
     }
 }
 
+// config 字段文案全链本地化（manifest config 条目的 label map 落地后）：节点
+// 编辑窗 fields[] 的 label 不再是裸机器名——catalog 生产侧把 config 条目的
+// label map 按进程默认 locale 解析成字符串随通道下发（engaged-only），Core
+// 字段投影以其为显示文案（无声明才回退字段名）。默认 locale=en 取 map 的
+// en 值；GlobalLocale 切到 zh-cn（测试内模拟重启后 locale）新 session 现算
+// 取中文值。authoring session 按 (task, revision) 缓存，同 task 二次 Get
+// 复用旧 context，故用两个 task 实例各开一个 session。
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    GraphAuthoringCatalogLocalizesRealManifestConfigFieldLabels)
+{
+    WriteFactoryPluginManifest(
+        manifest_path_,
+        FactoryPluginGuidString,
+        FactoryTaskGuidString,
+        true,
+        "Cpp",
+        FactoryTaskComponentImplGuidString,
+        /*include_flow_components=*/false);
+    DeployRealPluginArtifacts(
+        "libDasGraphTask.dll",
+        "DasGraphTask.json",
+        /*force_ipc=*/true);
+    DeployRealPluginArtifacts(
+        "libDasFlowControl.dll",
+        "DasFlowControl.json",
+        /*force_ipc=*/false);
+
+    // 两个 graph 任务实例：componentRef 节点指向 das.flow.launch（4 个
+    // config 声明字段），其字段面投影到节点 fields[]（graph 视图只含
+    // config 声明）。
+    {
+        std::vector<yyjson::value> tasks;
+        for (int64_t task_id = 0; task_id < 2; ++task_id)
+        {
+            yyjson::value task(Das::Utils::MakeYyjsonObject());
+            (*task.as_object())[std::string_view("id")] = task_id;
+            (*task.as_object())[std::string_view("taskGuid")] =
+                "F4A2C9D1-7B3E-4D8A-A15F-C2E86B4D91A3";
+            (*task.as_object())[std::string_view("pluginGuid")] =
+                "C8A4B7D0-1E2F-3A5B-6C9D-7E8F0A1B2C3D";
+            (*task.as_object())[std::string_view("nextExecutionTime")] =
+                static_cast<int64_t>(1);
+            yyjson::value properties(Das::Utils::MakeYyjsonObject());
+            auto          props_obj = properties.as_object();
+            (*props_obj)[std::string_view("documentId")] =
+                "config-label-graph-" + std::to_string(task_id);
+            (*props_obj)[std::string_view("version")] = 1;
+            yyjson::value nodes(Das::Utils::MakeYyjsonArray());
+            {
+                yyjson::value node(Das::Utils::MakeYyjsonObject());
+                (*node.as_object())[std::string_view("nodeId")] = "launch";
+                yyjson::value target(Das::Utils::MakeYyjsonObject());
+                (*target.as_object())[std::string_view("targetKind")] =
+                    "componentRef";
+                yyjson::value component_ref(Das::Utils::MakeYyjsonObject());
+                (*component_ref.as_object())[std::string_view("kind")] =
+                    "componentRef";
+                (*component_ref
+                      .as_object())[std::string_view("componentGuid")] =
+                    "95FD2FFA-88F2-4F85-A536-C708D25B641F";
+                (*component_ref.as_object())[std::string_view("pluginGuid")] =
+                    "7115BBFA-7E57-494E-82D5-D4134C367E13";
+                (*target.as_object())[std::string_view("componentRef")] =
+                    std::move(component_ref);
+                (*node.as_object())[std::string_view("target")] =
+                    std::move(target);
+                (*node.as_object())[std::string_view("settings")] =
+                    yyjson::value(Das::Utils::MakeYyjsonObject());
+                (*node.as_object())[std::string_view("dynamicPorts")] =
+                    yyjson::value(Das::Utils::MakeYyjsonArray());
+                nodes.as_array()->emplace_back(std::move(node));
+            }
+            (*props_obj)[std::string_view("nodes")] = std::move(nodes);
+            (*props_obj)[std::string_view("edges")] =
+                yyjson::value(Das::Utils::MakeYyjsonArray());
+            (*props_obj)[std::string_view("graphInputs")] =
+                yyjson::value(Das::Utils::MakeYyjsonArray());
+            (*props_obj)[std::string_view("graphOutputs")] =
+                yyjson::value(Das::Utils::MakeYyjsonArray());
+            (*props_obj)[std::string_view("tags")] =
+                yyjson::value(Das::Utils::MakeYyjsonArray());
+            (*task.as_object())[std::string_view("properties")] =
+                std::move(properties);
+            tasks.push_back(std::move(task));
+        }
+        WriteSchedulerState(*settings_manager_, 2, {0, 1}, tasks);
+    }
+
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    // 首次 Get 该 task 即创建 session（按当时 locale 现算 catalog）。
+    const auto read_document_clone = [this](int64_t task_id) -> yyjson::value
+    {
+        const yyjson::value request(Das::Utils::MakeYyjsonObject());
+        auto result = scheduler_->GetTaskAuthoringDocument(task_id, request);
+        auto obj = result.as_object();
+        EXPECT_TRUE(obj.has_value());
+        if (!obj.has_value() || !obj->contains(std::string_view("document")))
+        {
+            return yyjson::value{};
+        }
+        return Das::Utils::CloneYyjsonValue(
+            (*obj)[std::string_view("document")]);
+    };
+
+    // 节点 fields[] 中按 name 取字段的 label。
+    const auto field_label_of = [](const yyjson::value& document_value,
+                                   std::string_view field_name) -> std::string
+    {
+        auto document = document_value.as_object();
+        if (!document.has_value()
+            || !document->contains(std::string_view("graph")))
+        {
+            return {};
+        }
+        auto graph = (*document)[std::string_view("graph")].as_object();
+        if (!graph.has_value() || !graph->contains(std::string_view("nodes")))
+        {
+            return {};
+        }
+        auto nodes = (*graph)[std::string_view("nodes")].as_array();
+        if (!nodes.has_value())
+        {
+            return {};
+        }
+        for (const auto& node : *nodes)
+        {
+            auto node_obj = node.as_object();
+            if (!node_obj || !node_obj->contains(std::string_view("fields")))
+            {
+                continue;
+            }
+            auto fields = (*node_obj)[std::string_view("fields")].as_array();
+            if (!fields.has_value())
+            {
+                continue;
+            }
+            for (const auto& field : *fields)
+            {
+                auto field_object = field.as_object();
+                if (!field_object)
+                {
+                    continue;
+                }
+                auto name =
+                    (*field_object)[std::string_view("name")].as_string();
+                if (name && *name == field_name)
+                {
+                    return std::string(
+                        (*field_object)[std::string_view("label")]
+                            .as_string()
+                            .value_or(""));
+                }
+            }
+        }
+        return {};
+    };
+
+    // 默认 locale=en：真实 manifest 的 en 值经调度器→context→插件会话→
+    // Core 字段投影全链可见。
+    {
+        const auto document = read_document_clone(0);
+        EXPECT_EQ(field_label_of(document, "exePath"), "Executable Path");
+        EXPECT_EQ(field_label_of(document, "args"), "Arguments");
+        EXPECT_EQ(
+            field_label_of(document, "workingDirectory"),
+            "Working Directory");
+        EXPECT_EQ(field_label_of(document, "waitWindow"), "Wait for Window");
+    }
+
+    // zh-cn：真实 manifest 的中文值（模拟重启后 locale 的 catalog 重建）。
+    SetDefaultLocaleForTest("zh-cn");
+    {
+        const auto document = read_document_clone(1);
+        EXPECT_EQ(field_label_of(document, "exePath"), "可执行文件路径");
+        EXPECT_EQ(field_label_of(document, "args"), "启动参数");
+        EXPECT_EQ(field_label_of(document, "workingDirectory"), "工作目录");
+        EXPECT_EQ(field_label_of(document, "waitWindow"), "等待窗口出现");
+    }
+}
+
 // manifest label map 键大小写无关命中：BCP47 语言标签的规范书写是语言
 // 小写、地区大写（"zh-CN"），第三方 manifest 作者按标准习惯写键名时，
 // zh-cn 查询（查询侧与键侧双侧 toLower 后比较）必须命中该键的值，不得
@@ -5372,6 +5554,16 @@ TEST_F(
             ""),
         "int64");
     EXPECT_FALSE(delay_field_object->contains(std::string_view("taskGuid")));
+
+    // 无 label map 的 config 字段：fields[] 的 label 回退字段名——label 通道
+    // 引入后无声明字段的投影行为不变（回退链锁定）。
+    EXPECT_EQ(
+        (*delay_field_object)[std::string_view("label")].as_string().value_or(
+            ""),
+        "delay_ms");
+    EXPECT_EQ(
+        (*ref_field_object)[std::string_view("label")].as_string().value_or(""),
+        "repositoryRef");
 }
 
 TEST_F(
