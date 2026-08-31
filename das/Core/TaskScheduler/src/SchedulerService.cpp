@@ -436,18 +436,35 @@ namespace Das::Core::TaskScheduler
     // holds PluginManager by reference and is the natural owner of the
     // registered IDasTaskComponent component snapshot. It injects the catalog
     // as a top-level `actionCatalog` JSON array of {actionId,label} objects
-    // inside every authoring session context: the label is the component
-    // manifest definition's `kind` string so the authoring UI shows a friendly
-    // reverse-DNS name instead of a raw guid. Plugins that participate in the
-    // Add-Task affordance (DasGraphTask) read this array and forward it to the
-    // Core via GraphAuthoringSessionSetActionCatalog; plugins that do not
-    // simply ignore it. The array is sorted lexically by actionId for
-    // deterministic ordering.
+    // inside every authoring session context: the label resolves from the
+    // component manifest definition's top-level localized label map when
+    // present (locale→en), falling back to the `kind` string and then the
+    // guid, so the authoring UI always shows a friendly renderable name.
+    // Plugins that participate in the Add-Task affordance (DasGraphTask) read
+    // this array and forward it to the Core via
+    // GraphAuthoringSessionSetActionCatalog; plugins that do not simply
+    // ignore it. The array is sorted lexically by actionId for deterministic
+    // ordering.
     static std::string CatalogEntryLabel(
         const Das::Core::ForeignInterfaceHost::TaskComponentDefinitionInfo&
-            definition)
+                         definition,
+        std::string_view locale)
     {
         auto definition_obj = definition.definition.as_object();
+        // 组件名 label map（kind 兄弟字段）先行解析；kind 字段本身保持
+        // 机器名语义不动（label 是纯显示数据，寻址键恒为 actionId/
+        // componentGuid）。
+        if (definition_obj
+            && definition_obj->contains(std::string_view("label")))
+        {
+            auto resolved = ResolveLocalizedLabel(
+                (*definition_obj)[std::string_view("label")],
+                locale);
+            if (resolved.has_value())
+            {
+                return std::string(*resolved);
+            }
+        }
         if (definition_obj
             && definition_obj->contains(std::string_view("kind")))
         {
@@ -686,7 +703,8 @@ namespace Das::Core::TaskScheduler
             const auto&       definition = definitions[index];
             const std::string action_id =
                 GuidToString(definition.component_guid);
-            const std::string label = CatalogEntryLabel(definition);
+            const std::string label =
+                CatalogEntryLabel(definition, std::string_view(locale));
 
             auto entry = Das::Utils::MakeYyjsonObject();
             auto obj = entry.as_object();
