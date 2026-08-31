@@ -258,9 +258,17 @@
               "type": "string",
               "label": { "en": "Working Directory", "zh-cn": "工作目录" }
             },
-            "waitWindow": {
-              "type": "object",
-              "label": { "en": "Wait for Window", "zh-cn": "等待窗口出现" }
+            "waitWindowClassRegex": {
+              "type": "string",
+              "label": { "en": "Window Class Regex", "zh-cn": "窗口类名正则" }
+            },
+            "waitWindowWindowRegex": {
+              "type": "string",
+              "label": { "en": "Window Title Regex", "zh-cn": "窗口标题正则" }
+            },
+            "waitWindowTimeoutMs": {
+              "type": "int",
+              "label": { "en": "Wait Timeout (ms)", "zh-cn": "等待超时（毫秒）" }
             }
           },
           "diagnostics": []

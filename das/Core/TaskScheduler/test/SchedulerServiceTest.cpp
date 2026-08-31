@@ -5235,7 +5235,7 @@ TEST_F(
         "DasFlowControl.json",
         /*force_ipc=*/false);
 
-    // 两个 graph 任务实例：componentRef 节点指向 das.flow.launch（4 个
+    // 两个 graph 任务实例：componentRef 节点指向 das.flow.launch（6 个
     // config 声明字段），其字段面投影到节点 fields[]（graph 视图只含
     // config 声明）。
     {
@@ -5375,7 +5375,15 @@ TEST_F(
         EXPECT_EQ(
             field_label_of(document, "workingDirectory"),
             "Working Directory");
-        EXPECT_EQ(field_label_of(document, "waitWindow"), "Wait for Window");
+        EXPECT_EQ(
+            field_label_of(document, "waitWindowClassRegex"),
+            "Window Class Regex");
+        EXPECT_EQ(
+            field_label_of(document, "waitWindowWindowRegex"),
+            "Window Title Regex");
+        EXPECT_EQ(
+            field_label_of(document, "waitWindowTimeoutMs"),
+            "Wait Timeout (ms)");
     }
 
     // zh-cn：真实 manifest 的中文值（模拟重启后 locale 的 catalog 重建）。
@@ -5385,7 +5393,15 @@ TEST_F(
         EXPECT_EQ(field_label_of(document, "exePath"), "可执行文件路径");
         EXPECT_EQ(field_label_of(document, "args"), "启动参数");
         EXPECT_EQ(field_label_of(document, "workingDirectory"), "工作目录");
-        EXPECT_EQ(field_label_of(document, "waitWindow"), "等待窗口出现");
+        EXPECT_EQ(
+            field_label_of(document, "waitWindowClassRegex"),
+            "窗口类名正则");
+        EXPECT_EQ(
+            field_label_of(document, "waitWindowWindowRegex"),
+            "窗口标题正则");
+        EXPECT_EQ(
+            field_label_of(document, "waitWindowTimeoutMs"),
+            "等待超时（毫秒）");
     }
 }
 

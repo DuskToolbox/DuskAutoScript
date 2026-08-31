@@ -62,8 +62,8 @@ namespace
     constexpr std::string_view MERGE_KIND = "das.flow.merge";
     constexpr std::string_view LAUNCH_KIND = "das.flow.launch";
 
-    // waitWindow 轮询的小时间片（stop 只能轮询，切片保证响应性）与超时
-    // 上限兜底（防病态配置把执行占死）；timeoutMs 缺省用默认值。
+    // 等窗轮询的小时间片（stop 只能轮询，切片保证响应性）与超时上限兜底
+    // （防病态配置把执行占死）；waitWindowTimeoutMs 缺省用默认值。
     constexpr auto WAIT_WINDOW_POLL_SLICE = std::chrono::milliseconds(100);
     constexpr auto DEFAULT_WAIT_WINDOW_TIMEOUT =
         std::chrono::milliseconds(30000);
@@ -235,17 +235,6 @@ namespace
             return std::nullopt;
         }
         return object[key].as_array();
-    }
-
-    template <typename ObjectRef>
-    auto FindObjectObject(const ObjectRef& object, std::string_view key)
-        -> decltype(object[key].as_object())
-    {
-        if (!object.contains(key))
-        {
-            return std::nullopt;
-        }
-        return object[key].as_object();
     }
 
     std::string_view LaunchDiagnosticFallbackText(
@@ -1089,8 +1078,8 @@ DasResult DasFlowControlTaskComponent::DoLaunch(
             pp_out_port_map);
     }
 
-    // config 消费（settings_；全部缺省安全）。waitWindow 缺省 = 不等待，
-    // spawn 成功即完成（合法用法）。
+    // config 消费（settings_；全部缺省安全）。两个等窗正则均缺省 = 不
+    // 等待，spawn 成功即完成（合法用法）。
     std::string               exe_path;
     std::vector<std::string>  arguments;
     std::string               working_directory;
@@ -1122,28 +1111,26 @@ DasResult DasFlowControlTaskComponent::DoLaunch(
         {
             working_directory = *configured_working_directory;
         }
-        if (const auto wait_window =
-                FindObjectObject(*settings_object, "waitWindow"))
+        if (const auto configured_class_regex =
+                FindObjectString(*settings_object, "waitWindowClassRegex"))
         {
-            wait_window_configured = true;
-            if (const auto configured_class_regex =
-                    FindObjectString(*wait_window, "classRegex"))
-            {
-                class_regex = *configured_class_regex;
-            }
-            if (const auto configured_window_regex =
-                    FindObjectString(*wait_window, "windowRegex"))
-            {
-                window_regex = *configured_window_regex;
-            }
-            if (const auto configured_timeout_ms =
-                    FindObjectInt(*wait_window, "timeoutMs"))
-            {
-                wait_window_timeout =
-                    std::chrono::milliseconds(*configured_timeout_ms);
-            }
+            class_regex = *configured_class_regex;
+        }
+        if (const auto configured_window_regex =
+                FindObjectString(*settings_object, "waitWindowWindowRegex"))
+        {
+            window_regex = *configured_window_regex;
+        }
+        if (const auto configured_timeout_ms =
+                FindObjectInt(*settings_object, "waitWindowTimeoutMs"))
+        {
+            wait_window_timeout =
+                std::chrono::milliseconds(*configured_timeout_ms);
         }
     }
+
+    // 任一正则非空即等待；两个正则均缺省/为空 = 不等待（仅配超时不触发）。
+    wait_window_configured = !class_regex.empty() || !window_regex.empty();
 
     if (exe_path.empty())
     {

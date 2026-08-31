@@ -141,7 +141,8 @@ private:
         ExportInterface::IDasReadOnlyPortMap* p_input_port_map,
         ExportInterface::IDasPortMap**        pp_out_port_map);
 
-    // 启动进程原语：读 config（exePath/args/workingDirectory/waitWindow），
+    // 启动进程原语：读 config（exePath/args/workingDirectory/
+    // waitWindowClassRegex/waitWindowWindowRegex/waitWindowTimeoutMs），
     // spawn（成功立即 detach）后可选等待目标窗口出现（轮询窗口枚举缝，
     // 小时间片可取消；0/1/N 匹配语义）。成功发 signal_out；失败带结构化
     // diagnostic（launch-exe-path-missing / launch-spawn-failed /

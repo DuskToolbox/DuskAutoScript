@@ -110,7 +110,7 @@ namespace
     }
 
     // 每次运行唯一的窗口类名/标题 token：防同机历史残留替身窗口造成
-    // ambiguous 匹配，也让 windowRegex 不误伤无关窗口（regex_search 语义）。
+    // ambiguous 匹配，也让标题正则不误伤无关窗口（regex_search 语义）。
     std::string MakeUniqueWindowToken()
     {
         static std::atomic<uint64_t> counter{0};
@@ -606,23 +606,21 @@ namespace
                                 std::move(arguments);
                         }
                         {
-                            yyjson::value wait_window(
-                                Das::Utils::MakeYyjsonObject());
-                            (*wait_window.as_object())[std::string_view(
-                                "classRegex")] =
+                            // 等窗三键为顶层 config 字段；字符串一律带
+                            // copy_string 标签深拷贝入文档（同上 args）。
+                            (*settings.as_object())[std::string_view(
+                                "waitWindowClassRegex")] =
                                 std::make_pair(
                                     std::string_view(window_class),
                                     yyjson::copy_string);
-                            (*wait_window.as_object())[std::string_view(
-                                "windowRegex")] =
+                            (*settings.as_object())[std::string_view(
+                                "waitWindowWindowRegex")] =
                                 std::make_pair(
                                     std::string_view(window_title),
                                     yyjson::copy_string);
-                            (*wait_window
-                                  .as_object())[std::string_view("timeoutMs")] =
-                                WAIT_WINDOW_TIMEOUT_MS;
                             (*settings.as_object())[std::string_view(
-                                "waitWindow")] = std::move(wait_window);
+                                "waitWindowTimeoutMs")] =
+                                WAIT_WINDOW_TIMEOUT_MS;
                         }
                         (*launch_item
                               .as_object())[std::string_view("settings")] =

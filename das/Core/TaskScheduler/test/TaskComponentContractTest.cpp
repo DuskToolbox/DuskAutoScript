@@ -990,7 +990,7 @@ TEST_F(
 // 三份真实 manifest（DasFlowControl/DasMaaPi/DasGraphTask）的 label map
 // 完整账本：每个 definition 顶层 label、每个 inputs/outputs/signals 端口
 // 条目的 label、每个 config 声明字段的 label 均为 object 且含非空 "en" 与
-// "zh-cn" 键（共 9 个 definition map + 34 个端口 map + 8 个 config 字段
+// "zh-cn" 键（共 9 个 definition map + 34 个端口 map + 10 个 config 字段
 // map）。label map 是 catalog 本地化显示的唯一数据源，文案回退丢失（map
 // 缺失/键缺失/空值）在此即红。
 TEST_F(TaskComponentContractTest, RealManifestsCarryLocalizedLabelMaps)
@@ -1006,7 +1006,7 @@ TEST_F(TaskComponentContractTest, RealManifestsCarryLocalizedLabelMaps)
     // signals 键，DasMaaPi 的 signals 条目形状为 {id,label}）；
     // config_field_count = config 对象的声明字段数（空 config 计 0）。
     const std::array<ManifestSpec, 3> manifests{
-        ManifestSpec{"DasFlowControl", 7, 24, 6},
+        ManifestSpec{"DasFlowControl", 7, 24, 8},
         ManifestSpec{"DasMaaPi", 1, 8, 2},
         ManifestSpec{"DasGraphTask", 1, 2, 0},
     };
@@ -1115,7 +1115,7 @@ TEST_F(TaskComponentContractTest, RealManifestsCarryLocalizedLabelMaps)
     }
     EXPECT_EQ(total_definitions, 9u);
     EXPECT_EQ(total_ports, 34u);
-    EXPECT_EQ(total_config_fields, 8u);
+    EXPECT_EQ(total_config_fields, 10u);
 }
 
 TEST_F(
@@ -1323,7 +1323,7 @@ TEST_F(
 
 // ---- das.flow.launch：进程启动 + 可选等窗口（全注入缝驱动，业务中立）----
 
-// waitWindow 缺省合法：spawn 成功即完成，发规范信号口 signal_out。
+// 等窗字段缺省合法：spawn 成功即完成，发规范信号口 signal_out。
 TEST_F(TaskComponentContractTest, LaunchDoSpawnsAndEmitsSignalWithoutWaitWindow)
 {
     auto component = MakeLaunchComponent();
@@ -1352,7 +1352,7 @@ TEST_F(TaskComponentContractTest, LaunchDoSpawnsAndEmitsSignalWithoutWaitWindow)
     EXPECT_EQ(FirstEmittedSignal(result.Get()), "signal_out");
 }
 
-// waitWindow 配置后轮询窗口枚举：首枚举 0 匹配、次枚举 1 匹配 → 完成。
+// 等窗正则配置后轮询窗口枚举：首枚举 0 匹配、次枚举 1 匹配 → 完成。
 TEST_F(TaskComponentContractTest, LaunchDoWaitsForSingleWindowMatch)
 {
     auto component = MakeLaunchComponent();
@@ -1383,11 +1383,9 @@ TEST_F(TaskComponentContractTest, LaunchDoWaitsForSingleWindowMatch)
         component.Get(),
         R"json({
             "exePath": "C:/test/app.exe",
-            "waitWindow": {
-                "classRegex": "TestWindowClass",
-                "windowRegex": "",
-                "timeoutMs": 5000
-            }
+            "waitWindowClassRegex": "TestWindowClass",
+            "waitWindowWindowRegex": "",
+            "waitWindowTimeoutMs": 5000
         })json");
 
     DAS::DasPtr<Das::ExportInterface::IDasPortMap> result;
@@ -1398,7 +1396,8 @@ TEST_F(TaskComponentContractTest, LaunchDoWaitsForSingleWindowMatch)
     EXPECT_EQ(FirstEmittedSignal(result.Get()), "signal_out");
 }
 
-// 轮询超时：枚举恒 0 匹配、timeoutMs 小值 → failed + launch-window-timeout
+// 轮询超时：枚举恒 0 匹配、waitWindowTimeoutMs 小值 → failed +
+// launch-window-timeout
 // 诊断码 + 消息经 i18n 表解析（注入替身表验证 key 链路）。
 TEST_F(TaskComponentContractTest, LaunchDoTimesOutWaitingForWindow)
 {
@@ -1424,7 +1423,8 @@ TEST_F(TaskComponentContractTest, LaunchDoTimesOutWaitingForWindow)
         component.Get(),
         R"json({
             "exePath": "C:/test/app.exe",
-            "waitWindow": {"classRegex": "Anything", "timeoutMs": 300}
+            "waitWindowClassRegex": "Anything",
+            "waitWindowTimeoutMs": 300
         })json");
 
     DAS::DasPtr<Das::ExportInterface::IDasPortMap> result;
@@ -1459,7 +1459,8 @@ TEST_F(TaskComponentContractTest, LaunchDoFailsOnAmbiguousWindowMatch)
         component.Get(),
         R"json({
             "exePath": "C:/test/app.exe",
-            "waitWindow": {"classRegex": "TestWindowClass", "timeoutMs": 5000}
+            "waitWindowClassRegex": "TestWindowClass",
+            "waitWindowTimeoutMs": 5000
         })json");
 
     DAS::DasPtr<Das::ExportInterface::IDasPortMap> result;
@@ -1541,7 +1542,8 @@ TEST_F(TaskComponentContractTest, LaunchDoCancelsDuringWindowPoll)
         component.Get(),
         R"json({
             "exePath": "C:/test/app.exe",
-            "waitWindow": {"classRegex": "Anything", "timeoutMs": 5000}
+            "waitWindowClassRegex": "Anything",
+            "waitWindowTimeoutMs": 5000
         })json");
 
     DAS::DasPtr<Das::ExportInterface::IDasPortMap> result;
@@ -1635,8 +1637,10 @@ TEST_F(TaskComponentContractTest, LaunchDoProductionSpawnSmoke)
 
     // 子进程落盘佐证：Do 返回（detach 已完成）后子进程仍在运行并最终写出
     // gtest XML——detach 语义失败的形态（析构杀子进程）不会出现本文件。
+    // 预算 90s：子进程与本体同为大体积 ASAN 二进制，静态初始化/收尾墙钟
+    // 可达数十秒（负载相关），15s 级预算会产生机器慢即红的假失败。
     bool marker_seen = false;
-    for (int attempt = 0; attempt < 150 && !marker_seen; ++attempt)
+    for (int attempt = 0; attempt < 900 && !marker_seen; ++attempt)
     {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
         std::error_code probe_error;
