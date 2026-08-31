@@ -397,6 +397,41 @@ namespace Das::Core::TaskScheduler
         return revision ? *revision : 0;
     }
 
+    // 多语言 label map（{"en": "...", "zh-cn": "..."}，manifest 作者自由
+    // 文本）的解析 helper：按 locale → en 顺序查表返回 resolved 文案。
+    // locale 查表前 toLower 归一（照 IDasI18nImpl::Lookup 先例——存储侧
+    // 不归一，查表侧归一）；map 键按小写中划线约定书写，不做归一。
+    // as_object 失败、候选键缺失、值非 string、空串值一律视为 miss 返回
+    // nullopt，由调用方走自己的终级回退（portId / kind / guid）——label
+    // 是纯显示数据，畸形不丢端口不失败。返回的 string_view 指向
+    // definition 文档 arena，definition 存活期内有效。
+    static std::optional<std::string_view> ResolveLocalizedLabel(
+        const yyjson::value& label_map,
+        std::string_view     locale)
+    {
+        auto map_obj = label_map.as_object();
+        if (!map_obj)
+        {
+            return std::nullopt;
+        }
+        std::string normalized_locale(locale);
+        DAS::Utils::ToLowerInPlace(normalized_locale);
+        for (const std::string_view candidate :
+             {std::string_view(normalized_locale), std::string_view("en")})
+        {
+            if (!map_obj->contains(candidate))
+            {
+                continue;
+            }
+            auto text = (*map_obj)[candidate].as_string();
+            if (text && !text->empty())
+            {
+                return *text;
+            }
+        }
+        return std::nullopt;
+    }
+
     // Registry-driven actionCatalog injection. Scheduler
     // holds PluginManager by reference and is the natural owner of the
     // registered IDasTaskComponent component snapshot. It injects the catalog
@@ -434,21 +469,24 @@ namespace Das::Core::TaskScheduler
     // port validation uses (edge source ports are looked up in manifest
     // outputs, edge target ports in manifest inputs); the signals list is
     // output-only execution flow. Entries carry {id,type} with an optional
-    // string `label`; a missing type falls back to `fallback_port_type`
+    // multi-locale `label` map resolved against `locale` (miss → en →
+    // port-id fallback); a missing type falls back to `fallback_port_type`
     // (the signals list declares bare {id} entries that project as
     // "signal"). Entries without a usable id, or whose resolved type is
     // empty, are skipped — a single malformed declaration must not ride
     // the channel, because the Core consumer rejects the whole catalog on
-    // an empty portType. The emitted displayLabel falls back to the port
-    // id so every projected port is renderable. Ports are appended directly
-    // to the destination array; the array rides the catalog context channel
-    // so the Core node port projection can merge it onto nodes by
-    // componentGuid.
+    // an empty portType. A malformed label never skips the port: it is
+    // pure display data, so it degrades to the port id instead. The
+    // emitted displayLabel falls back to the port id so every projected
+    // port is renderable. Ports are appended directly to the destination
+    // array; the array rides the catalog context channel so the Core node
+    // port projection can merge it onto nodes by componentGuid.
     static void AppendEntryPortsFromDefinition(
         const yyjson::value&       definition,
         std::string_view           list_key,
         std::string_view           direction,
         std::string_view           fallback_port_type,
+        std::string_view           locale,
         yyjson::writer::array_ref& destination)
     {
         auto def_obj = definition.as_object();
@@ -490,12 +528,15 @@ namespace Das::Core::TaskScheduler
             std::string_view resolved_label;
             if (port_obj->contains(std::string_view("label")))
             {
-                auto label = (*port_obj)[std::string_view("label")].as_string();
-                if (!label)
+                // label 是多语言 map：任何 miss（非 object/键缺失/值非
+                // string/空串）都留空走 portId 回退，端口照常投影。
+                auto resolved = ResolveLocalizedLabel(
+                    (*port_obj)[std::string_view("label")],
+                    locale);
+                if (resolved.has_value())
                 {
-                    continue;
+                    resolved_label = *resolved;
                 }
-                resolved_label = *label;
             }
             if (resolved_label.empty())
             {
@@ -596,6 +637,25 @@ namespace Das::Core::TaskScheduler
             return yyjson::value(Das::Utils::MakeYyjsonArray());
         }
 
+        // label map 解析的 locale 源是进程级 GlobalLocale（DAS 系 locale，
+        // 经 DasGetDefaultLocale C API 直调）：函数头取一次传给各解析点，
+        // 避免每端口重复查询；读不到或为空时用 en（回退链保证 portId/kind
+        // 仍可渲染，catalog 构建不因 locale 缺失失败）。
+        std::string locale("en");
+        {
+            DAS::DasPtr<IDasReadOnlyString> p_locale;
+            if (DAS::IsOk(::DasGetDefaultLocale(p_locale.Put()))
+                && p_locale.Get() != nullptr)
+            {
+                const char* locale_utf8 = nullptr;
+                p_locale->GetUtf8(&locale_utf8);
+                if (locale_utf8 != nullptr && *locale_utf8 != '\0')
+                {
+                    locale = locale_utf8;
+                }
+            }
+        }
+
         std::vector<std::size_t> order;
         order.reserve(definitions.size());
         for (std::size_t i = 0; i < definitions.size(); ++i)
@@ -647,18 +707,21 @@ namespace Das::Core::TaskScheduler
                 std::string_view("inputs"),
                 std::string_view("input"),
                 std::string_view(),
+                std::string_view(locale),
                 *ports_arr);
             AppendEntryPortsFromDefinition(
                 definition.definition,
                 std::string_view("outputs"),
                 std::string_view("output"),
                 std::string_view(),
+                std::string_view(locale),
                 *ports_arr);
             AppendEntryPortsFromDefinition(
                 definition.definition,
                 std::string_view("signals"),
                 std::string_view("output"),
                 std::string_view("signal"),
+                std::string_view(locale),
                 *ports_arr);
             if (ports_arr->size() > 0)
             {
