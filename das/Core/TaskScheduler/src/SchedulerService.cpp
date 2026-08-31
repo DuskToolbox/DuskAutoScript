@@ -399,8 +399,10 @@ namespace Das::Core::TaskScheduler
 
     // 多语言 label map（{"en": "...", "zh-cn": "..."}，manifest 作者自由
     // 文本）的解析 helper：按 locale → en 顺序查表返回 resolved 文案。
-    // locale 查表前 toLower 归一（照 IDasI18nImpl::Lookup 先例——存储侧
-    // 不归一，查表侧归一）；map 键按小写中划线约定书写，不做归一。
+    // 键匹配大小写无关：查询 locale 与 map 键双侧 toLower 归一后比较
+    // （与 IDasI18nImpl 装载侧/查询侧双侧归一的先例对齐——manifest 文档
+    // 从定义读取、不可变，故键在比较时归一），BCP47 规范大小写（语言
+    // 小写、地区大写，如 "zh-CN"）的键与任意大小写的 locale 值互相命中。
     // as_object 失败、候选键缺失、值非 string、空串值一律视为 miss 返回
     // nullopt，由调用方走自己的终级回退（portId / kind / guid）——label
     // 是纯显示数据，畸形不丢端口不失败。返回的 string_view 指向
@@ -419,14 +421,19 @@ namespace Das::Core::TaskScheduler
         for (const std::string_view candidate :
              {std::string_view(normalized_locale), std::string_view("en")})
         {
-            if (!map_obj->contains(candidate))
+            for (const auto& [key, value] : *map_obj)
             {
-                continue;
-            }
-            auto text = (*map_obj)[candidate].as_string();
-            if (text && !text->empty())
-            {
-                return *text;
+                std::string normalized_key(key);
+                DAS::Utils::ToLowerInPlace(normalized_key);
+                if (normalized_key != candidate)
+                {
+                    continue;
+                }
+                auto text = value.as_string();
+                if (text && !text->empty())
+                {
+                    return *text;
+                }
             }
         }
         return std::nullopt;
