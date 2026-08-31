@@ -757,6 +757,8 @@ namespace
         entry.config_fields.push_back(
             MakeConfigField("f_array", "array<string>"));
         entry.config_fields.push_back(
+            MakeConfigField("f_array_int", "array<int>"));
+        entry.config_fields.push_back(
             MakeConfigField("f_ref", "taskRepositoryRef"));
         entry.config_fields.push_back(MakeConfigField("f_weird", "quux"));
         catalog.entries.push_back(entry);
@@ -771,7 +773,10 @@ namespace
             {4, 0},   // string
             {8, 0},   // bool
             {16, 0},  // object
-            {32, 0},  // array<string>
+            {32, 2},  // array<string> → multiselect comma channel (panel
+                      // edits round-trip as a JSON string array)
+            {32, 0},  // array<int> → generic array keeps no control
+                      // preference (comma channel would split into text)
             {16, 0},  // taskRepositoryRef → conservative object (typed
                       // dispatch rides on the config type word, NOT inputType)
             {16, 0}}; // unknown → conservative object
@@ -788,15 +793,15 @@ namespace
         }
         // Fields without a default and without a settings value project a
         // null value (JsonValue allows null — the picker starts empty).
-        EXPECT_TRUE(fields[9].value.is_null());
+        EXPECT_TRUE(fields[10].value.is_null());
 
         // Declared fields carry their manifest config type word.
         ASSERT_TRUE(fields[0].type_word.has_value());
         EXPECT_EQ(*fields[0].type_word, "int");
-        ASSERT_TRUE(fields[9].type_word.has_value());
-        EXPECT_EQ(*fields[9].type_word, "taskRepositoryRef");
         ASSERT_TRUE(fields[10].type_word.has_value());
-        EXPECT_EQ(*fields[10].type_word, "quux");
+        EXPECT_EQ(*fields[10].type_word, "taskRepositoryRef");
+        ASSERT_TRUE(fields[11].type_word.has_value());
+        EXPECT_EQ(*fields[11].type_word, "quux");
     }
 
     // The wire field descriptor emits the optional "type" key only for

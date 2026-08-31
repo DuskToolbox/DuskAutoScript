@@ -182,8 +182,20 @@ namespace Contract
             {
                 return {16, 0};
             }
+            if (type == std::string_view("array<string>"))
+            {
+                // String arrays ride the multiselect comma channel (official
+                // inputType vocabulary) so panel edits round-trip as a JSON
+                // string array instead of being saved as one string that
+                // array readers silently drop. Comma splitting breaks
+                // arguments containing commas — precise editing waits for
+                // the unified input-editor design.
+                return {32, 2};
+            }
             if (type.starts_with(std::string_view("array")))
             {
+                // Generic arrays keep no control preference: the comma
+                // channel would split non-string elements into text.
                 return {32, 0};
             }
             return {16, 0};
