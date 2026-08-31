@@ -4249,9 +4249,11 @@ TEST_F(
 }
 
 // graph authoring 的 catalog 端口生产端全链：manifest definition 的独立
-// signals[] 声明（DasMaaPi 形状——条目只有 {id}）、端口级 label 回填、
-// 空 type 条目跳过（单条畸形不再进入通道），经真实调度器 → context →
-// DasGraphTask 会话 → Core 投影落到 GetDocument 的节点 ports[]（五键）。
+// signals[] 声明（DasMaaPi 形状——条目只有 {id}）、端口级多语言 label map
+// 解析（默认 locale=en 取 map 的 en 值；miss/畸形回退 portId，显示数据
+// 畸形不丢端口）、空 type 条目跳过（单条畸形不再进入通道），经真实调度器
+// → context → DasGraphTask 会话 → Core 投影落到 GetDocument 的节点
+// ports[]（五键）。
 TEST_F(
     SchedulerRuntimeBackedTest,
     GraphAuthoringCatalogProjectsSignalsAndPortLabels)
@@ -4271,7 +4273,13 @@ TEST_F(
             "inputs": [
                 {"id": "in", "type": "object"},
                 {"id": "bad_empty_type", "type": ""},
-                {"id": "labeled_in", "type": "bool", "label": "Labeled In"}
+                {"id": "labeled_in", "type": "bool",
+                 "label": {"en": "Labeled In", "zh-cn": "已标注输入"}},
+                {"id": "labeled_en_only", "type": "bool",
+                 "label": {"en": "En Only"}},
+                {"id": "labeled_empty_value", "type": "bool",
+                 "label": {"en": ""}},
+                {"id": "bad_label_type", "type": "bool", "label": 123}
             ],
             "outputs": [
                 {"id": "out", "type": "array<string>"}
@@ -4391,10 +4399,11 @@ TEST_F(
         return std::string((*port_object)[key].as_string().value_or(""));
     };
 
-    // 期望端口总数：inputs 2（空 type 条目被跳过）+ outputs 1 + signals 3。
-    ASSERT_EQ(ports->size(), 6u);
+    // 期望端口总数：inputs 5（空 type 条目被跳过；label 畸形不丢端口）+
+    // outputs 1 + signals 3。
+    ASSERT_EQ(ports->size(), 9u);
 
-    // inputs：方向 input；label 声明用之，缺失回退 portId。
+    // inputs：方向 input；label map 解析用之，缺失回退 portId。
     const auto in_port = port_of("in");
     ASSERT_TRUE(in_port.has_value());
     EXPECT_EQ(string_field(*in_port, "direction"), "input");
@@ -4405,6 +4414,25 @@ TEST_F(
     ASSERT_TRUE(labeled_port.has_value());
     EXPECT_EQ(string_field(*labeled_port, "displayLabel"), "Labeled In");
     EXPECT_EQ(string_field(*labeled_port, "category"), "data");
+
+    // map 仅含 en：默认 locale=en 命中 en 值。
+    const auto en_only_port = port_of("labeled_en_only");
+    ASSERT_TRUE(en_only_port.has_value());
+    EXPECT_EQ(string_field(*en_only_port, "displayLabel"), "En Only");
+    EXPECT_EQ(string_field(*en_only_port, "direction"), "input");
+
+    // 空 map 值视为 miss：回退 portId。
+    const auto empty_value_port = port_of("labeled_empty_value");
+    ASSERT_TRUE(empty_value_port.has_value());
+    EXPECT_EQ(
+        string_field(*empty_value_port, "displayLabel"),
+        "labeled_empty_value");
+
+    // label 非 object 亦非 string（数字字面量）：端口仍投影，displayLabel
+    // 回退 portId——显示数据畸形不丢端口。
+    const auto bad_label_port = port_of("bad_label_type");
+    ASSERT_TRUE(bad_label_port.has_value());
+    EXPECT_EQ(string_field(*bad_label_port, "displayLabel"), "bad_label_type");
 
     // 空 type 的畸形条目不进入通道（不再产出空 portType 条目）。
     EXPECT_FALSE(port_of("bad_empty_type").has_value());
