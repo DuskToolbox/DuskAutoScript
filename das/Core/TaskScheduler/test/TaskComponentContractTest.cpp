@@ -990,7 +990,7 @@ TEST_F(
 // 三份真实 manifest（DasFlowControl/DasMaaPi/DasGraphTask）的 label map
 // 完整账本：每个 definition 顶层 label、每个 inputs/outputs/signals 端口
 // 条目的 label、每个 config 声明字段的 label 均为 object 且含非空 "en" 与
-// "zh-cn" 键（共 9 个 definition map + 34 个端口 map + 10 个 config 字段
+// "zh-cn" 键（共 9 个 definition map + 34 个端口 map + 9 个 config 字段
 // map）。label map 是 catalog 本地化显示的唯一数据源，文案回退丢失（map
 // 缺失/键缺失/空值）在此即红。
 TEST_F(TaskComponentContractTest, RealManifestsCarryLocalizedLabelMaps)
@@ -1006,7 +1006,7 @@ TEST_F(TaskComponentContractTest, RealManifestsCarryLocalizedLabelMaps)
     // signals 键，DasMaaPi 的 signals 条目形状为 {id,label}）；
     // config_field_count = config 对象的声明字段数（空 config 计 0）。
     const std::array<ManifestSpec, 3> manifests{
-        ManifestSpec{"DasFlowControl", 7, 24, 8},
+        ManifestSpec{"DasFlowControl", 7, 24, 7},
         ManifestSpec{"DasMaaPi", 1, 8, 2},
         ManifestSpec{"DasGraphTask", 1, 2, 0},
     };
@@ -1115,7 +1115,7 @@ TEST_F(TaskComponentContractTest, RealManifestsCarryLocalizedLabelMaps)
     }
     EXPECT_EQ(total_definitions, 9u);
     EXPECT_EQ(total_ports, 34u);
-    EXPECT_EQ(total_config_fields, 10u);
+    EXPECT_EQ(total_config_fields, 9u);
 }
 
 TEST_F(

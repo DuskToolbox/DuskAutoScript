@@ -175,12 +175,7 @@
               "label": { "en": "Result", "zh-cn": "结果" }
             }
           ],
-          "config": {
-            "repositoryRef": {
-              "type": "object",
-              "label": { "en": "Repository Entry", "zh-cn": "仓库条目" }
-            }
-          },
+          "config": {},
           "diagnostics": []
         }
       },

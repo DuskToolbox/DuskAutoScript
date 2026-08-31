@@ -199,6 +199,21 @@ namespace Das::Core::TaskScheduler::RepositoryInvoke
                 {
                     continue;
                 }
+                // Reference values ride the wire either as the wrapped
+                // object ({kind, entryId}) or as a plain entryId integer
+                // (the only shape settings writers emit today). Both shapes
+                // must join the dependency graph, otherwise cycles behind
+                // integer refs are invisible to cycle detection.
+                if (auto integer_ref = (*object)[key].as_sint())
+                {
+                    RepositoryDependencyEdge edge;
+                    edge.source_entry_id = source_entry_id;
+                    edge.target_entry_id = *integer_ref;
+                    edge.source_node_id = source_node_id;
+                    edge.source_node_label = source_node_label;
+                    edges.push_back(std::move(edge));
+                    continue;
+                }
                 auto ref = (*object)[key].as_object();
                 if (ref)
                 {

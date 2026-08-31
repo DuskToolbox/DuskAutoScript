@@ -359,6 +359,42 @@ TEST(RepositoryInvokeCompilerTest, DirectCycleReturnsDiagnosticBeforeSnapshot)
     EXPECT_EQ(fake.compile_count, 0);
 }
 
+// Reference values of the plain integer shape (settings.repositoryRef =
+// entryId, the only shape settings writers emit today) must join cycle
+// detection too — an integer ref closing a cycle is rejected before the
+// entry is even loaded, with the same diagnostic as the wrapped shape.
+TEST(RepositoryInvokeCompilerTest, IntegerRepositoryRefShapeJoinsCycleDetection)
+{
+    FakeCompilerServices fake;
+    fake.entry = MakeAvailableEntry();
+    RepositoryInvokeSourceContext context;
+    context.source_entry_id = 42;
+    context.source_graph = ParseJson(R"json({
+        "nodes": [
+            {
+                "id": "node-self",
+                "label": "Invoke self",
+                "settings": {
+                    "repositoryRef": 42
+                }
+            }
+        ]
+    })json");
+    auto services = fake.Bind();
+
+    auto result =
+        ResolveRepositoryInvokeSnapshot(services, MakeRef(42), context);
+
+    EXPECT_FALSE(result.ok);
+    EXPECT_FALSE(result.snapshot.has_value());
+    EXPECT_EQ(FirstDiagnostic(result).code, "repository-invoke-cycle");
+    EXPECT_EQ(CycleEntryIds(result.cycle_path), (std::vector<int64_t>{42, 42}));
+    ASSERT_FALSE(result.cycle_path.empty());
+    EXPECT_EQ(result.cycle_path.front().source_node_label, "Invoke self");
+    EXPECT_EQ(fake.load_count, 0);
+    EXPECT_EQ(fake.compile_count, 0);
+}
+
 TEST(RepositoryInvokeCompilerTest, IndirectCycleReturnsFullCyclePath)
 {
     FakeCompilerServices fake;
