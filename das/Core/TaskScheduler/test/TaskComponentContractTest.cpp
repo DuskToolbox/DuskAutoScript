@@ -987,6 +987,110 @@ TEST_F(
         std::string_view("das.maapi.run"));
 }
 
+// 三份真实 manifest（DasFlowControl/DasMaaPi/DasGraphTask）的 label map
+// 完整账本：每个 definition 顶层 label 与每个 inputs/outputs/signals 端口
+// 条目的 label 均为 object 且含非空 "en" 与 "zh-cn" 键（共 9 个 definition
+// map + 34 个端口 map）。label map 是 catalog 本地化显示的唯一数据源，
+// 文案回退丢失（map 缺失/键缺失/空值）在此即红。
+TEST_F(TaskComponentContractTest, RealManifestsCarryLocalizedLabelMaps)
+{
+    struct ManifestSpec
+    {
+        std::string_view plugin_dir_name;
+        size_t           definition_count;
+        size_t           port_count;
+    };
+    // port_count = inputs + outputs + signals 条目总和（DasFlowControl 无
+    // signals 键，DasMaaPi 的 signals 条目形状为 {id,label}）。
+    const std::array<ManifestSpec, 3> manifests{
+        ManifestSpec{"DasFlowControl", 7, 24},
+        ManifestSpec{"DasMaaPi", 1, 8},
+        ManifestSpec{"DasGraphTask", 1, 2},
+    };
+
+    const auto expect_label_map =
+        [](const yyjson::value& label_map, std::string_view context)
+    {
+        auto map_obj = label_map.as_object();
+        ASSERT_TRUE(map_obj.has_value()) << context;
+        for (const std::string_view locale : {"en", "zh-cn"})
+        {
+            ASSERT_TRUE(map_obj->contains(locale))
+                << context << " lacks locale " << locale;
+            const auto text = (*map_obj)[locale].as_string();
+            ASSERT_TRUE(text.has_value() && !text->empty())
+                << context << " has empty " << locale;
+        }
+    };
+
+    size_t total_definitions = 0;
+    size_t total_ports = 0;
+    for (const auto& spec : manifests)
+    {
+        const auto manifest_path =
+            (SourceRoot() / "das" / "Plugins"
+             / std::string(spec.plugin_dir_name))
+            / (std::string(spec.plugin_dir_name) + ".json");
+        auto manifest = ParseJson(ReadFileText(manifest_path));
+        auto manifest_obj = manifest.as_object();
+        ASSERT_TRUE(manifest_obj.has_value()) << spec.plugin_dir_name;
+        auto task_components =
+            (*manifest_obj)[std::string_view("taskComponents")].as_object();
+        ASSERT_TRUE(task_components.has_value()) << spec.plugin_dir_name;
+        auto components =
+            (*task_components)[std::string_view("components")].as_object();
+        ASSERT_TRUE(components.has_value()) << spec.plugin_dir_name;
+
+        size_t definitions_with_label = 0;
+        size_t ports_with_label = 0;
+        for (const auto& [guid_text, entry] : *components)
+        {
+            auto entry_obj = entry.as_object();
+            ASSERT_TRUE(entry_obj.has_value()) << guid_text;
+            auto definition =
+                (*entry_obj)[std::string_view("definition")].as_object();
+            ASSERT_TRUE(definition.has_value()) << guid_text;
+
+            ASSERT_TRUE(definition->contains(std::string_view("label")))
+                << guid_text << " definition lacks label map";
+            expect_label_map(
+                (*definition)[std::string_view("label")],
+                guid_text);
+            ++definitions_with_label;
+
+            for (const std::string_view list_key :
+                 {"inputs", "outputs", "signals"})
+            {
+                if (!definition->contains(list_key))
+                {
+                    continue;
+                }
+                auto list = (*definition)[list_key].as_array();
+                ASSERT_TRUE(list.has_value()) << guid_text << ' ' << list_key;
+                for (const auto& port : *list)
+                {
+                    auto port_obj = port.as_object();
+                    ASSERT_TRUE(port_obj.has_value()) << guid_text;
+                    const auto port_id = StringField(*port_obj, "id");
+                    ASSERT_TRUE(port_obj->contains(std::string_view("label")))
+                        << guid_text << '/' << port_id << " lacks label map";
+                    expect_label_map(
+                        (*port_obj)[std::string_view("label")],
+                        std::string(guid_text) + "/" + std::string(port_id));
+                    ++ports_with_label;
+                }
+            }
+        }
+        EXPECT_EQ(definitions_with_label, spec.definition_count)
+            << spec.plugin_dir_name;
+        EXPECT_EQ(ports_with_label, spec.port_count) << spec.plugin_dir_name;
+        total_definitions += definitions_with_label;
+        total_ports += ports_with_label;
+    }
+    EXPECT_EQ(total_definitions, 9u);
+    EXPECT_EQ(total_ports, 34u);
+}
+
 TEST_F(
     TaskComponentContractTest,
     DasFlowControlFeatureFactoryCreatesManifestComponents)
