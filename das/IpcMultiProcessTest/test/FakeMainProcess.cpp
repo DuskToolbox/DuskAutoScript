@@ -426,7 +426,7 @@ namespace FakeMainProcess
         }
 
         // 2. 创建 IPC 上下文（作为主进程）
-        auto ctx = DAS::Core::IPC::MainProcess::CreateIpcContextShared();
+        auto ctx = DAS::Core::IPC::MainProcess::CreateIpcContext();
         if (!ctx)
         {
             DAS_CORE_LOG_ERROR("[FakeMain] Failed to create IPC context");

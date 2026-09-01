@@ -328,13 +328,12 @@ namespace
             settings_manager_ =
                 std::make_unique<Das::Core::SettingsManager::SettingsManager>(
                     settings_dir_);
-            ipc_sp_ =
-                Das::Core::IPC::MainProcess::CreateIpcContextShared(false);
+            ipc_sp_ = Das::Core::IPC::MainProcess::CreateIpcContext(false);
             ipc_run_thread_ = std::thread([this]() { ipc_sp_->Run(); });
             plugin_manager_ = std::make_unique<PluginManager>(
                 *settings_manager_,
-                Das::DasSharedRef<Das::Core::IPC::MainProcess::IIpcContext>(
-                    ipc_sp_));
+                Das::DasRef<Das::Core::IPC::MainProcess::IIpcContext>(
+                    ipc_sp_.Get()));
             ASSERT_EQ(plugin_manager_->Initialize(1), DAS_S_OK);
             // 模拟生产 DasHttp 启动设 host path（App.cpp:146），让 loadMode:ipc
             // 的 DasMaaPi.json 能 spawn 真实 DasHost。host
@@ -402,10 +401,10 @@ namespace
 
         std::filesystem::path settings_dir_;
         std::unique_ptr<Das::Core::SettingsManager::SettingsManager>
-                                       settings_manager_;
-        std::unique_ptr<PluginManager> plugin_manager_;
-        std::shared_ptr<Das::Core::IPC::MainProcess::IIpcContext> ipc_sp_;
-        std::thread ipc_run_thread_;
+                                                              settings_manager_;
+        std::unique_ptr<PluginManager>                        plugin_manager_;
+        Das::DasPtr<Das::Core::IPC::MainProcess::IIpcContext> ipc_sp_;
+        std::thread                                           ipc_run_thread_;
     };
 
     // D-84-13/21/31: 严格 IR 查找助手。在 document 根级 fields[] 按名查找。
@@ -6454,9 +6453,10 @@ TEST(MaapiProjectionTest, RootFieldLayoutCoversAdapterFieldsWhenCatalogAbsent)
                 {
                     continue;
                 }
-                emitted_command_ids.insert(std::string(
-                    (*cmd_obj)[std::string_view("id")].as_string().value_or(
-                        "")));
+                emitted_command_ids.insert(
+                    std::string(
+                        (*cmd_obj)[std::string_view("id")].as_string().value_or(
+                            "")));
             }
         }
         EXPECT_EQ(emitted_command_ids.count("checkUpdate"), 0u);

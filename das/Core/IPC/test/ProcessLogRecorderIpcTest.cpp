@@ -85,11 +85,11 @@ namespace
     class ProcessLogRecorderIpcE2ETest : public ::testing::Test
     {
     protected:
-        std::string                               host_exe_path_;
-        std::shared_ptr<MainProcess::IIpcContext> ctx_;
-        DasPtr<IHostLauncher>                     launcher_;
-        std::thread                               run_thread_;
-        bool                                      plugin_missing_ = false;
+        std::string                      host_exe_path_;
+        DasPtr<MainProcess::IIpcContext> ctx_;
+        DasPtr<IHostLauncher>            launcher_;
+        std::thread                      run_thread_;
+        bool                             plugin_missing_ = false;
 
         // session + recorder 主进程侧持有（注入式 RAII）。
         DasPtr<EP::IDasLogSession>         session_;
@@ -102,7 +102,7 @@ namespace
         void SetUp() override
         {
             host_exe_path_ = IpcTestConfig::GetDasHostPath();
-            ctx_ = MainProcess::CreateIpcContextShared(true);
+            ctx_ = MainProcess::CreateIpcContext(true);
             ASSERT_NE(ctx_, nullptr);
 
             // 建立测试用 debug_dir（隔离每个用例的 session）。
@@ -136,7 +136,7 @@ namespace
 
             // 注册主进程 recorder 为具名服务。
             const ScopedCurrentIpcContext scope(
-                static_cast<MainProcess::IpcContext*>(ctx_.get()));
+                static_cast<MainProcess::IpcContext*>(ctx_.Get()));
             ASSERT_EQ(
                 ctx_->RegisterServiceByName(
                     recorder_.Get(),
@@ -172,7 +172,7 @@ namespace
             launcher_.Reset();
             recorder_.Reset();
             session_.Reset();
-            ctx_.reset();
+            ctx_ = nullptr;
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
 

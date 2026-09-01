@@ -68,17 +68,16 @@ protected:
         settings_manager_ =
             std::make_unique<Das::Core::SettingsManager::SettingsManager>(
                 settings_dir_);
-        auto ipc_sp =
-            DAS::Core::IPC::MainProcess::CreateIpcContextShared(false);
+        auto ipc_sp = DAS::Core::IPC::MainProcess::CreateIpcContext(false);
         plugin_manager_ =
             std::make_unique<Das::Core::ForeignInterfaceHost::PluginManager>(
                 *settings_manager_,
-                Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
-                    ipc_sp));
+                Das::DasRef<DAS::Core::IPC::MainProcess::IIpcContext>(
+                    ipc_sp.Get()));
         scheduler_ = std::make_unique<SchedulerService>(
             *plugin_manager_,
-            Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
-                ipc_sp));
+            Das::DasRef<DAS::Core::IPC::MainProcess::IIpcContext>(
+                ipc_sp.Get()));
     }
 
     void TearDown() override

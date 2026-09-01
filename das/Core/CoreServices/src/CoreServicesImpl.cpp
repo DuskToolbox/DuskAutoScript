@@ -15,18 +15,12 @@
 DAS_CORE_CORE_SERVICES_NS_BEGIN
 
 CoreServicesImpl::CoreServicesImpl(
-    DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext> ipc_context,
-    std::filesystem::path                                  settings_dir,
-    std::filesystem::path                                  plugin_dir)
+    DasRef<DAS::Core::IPC::MainProcess::IIpcContext> ipc_context,
+    std::filesystem::path                             settings_dir,
+    std::filesystem::path                             plugin_dir)
     : ipc_context_{std::move(ipc_context)}, settings_manager_{settings_dir},
-      plugin_manager_{
-          settings_manager_,
-          DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
-              ipc_context_.shared())},
-      scheduler_svc_{
-          plugin_manager_,
-          DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
-              ipc_context_.shared())}
+      plugin_manager_{settings_manager_, ipc_context_},
+      scheduler_svc_{plugin_manager_, ipc_context_}
 {
     Das::Core::ForeignInterfaceHost::CleanupMarkedPlugins(plugin_dir);
 
@@ -196,11 +190,10 @@ DAS_C_API DasResult CreateIDasCoreServices(
 
     try
     {
-        // Take ownership before any fallible path conversion below so the
-        // raw IPC context is released even when argument decoding fails.
-        Das::DasSharedRef<Das::Core::IPC::MainProcess::IIpcContext> ipc_context{
-            p_ipc_context,
-            Das::Core::IPC::MainProcess::IpcContextDeleter{}};
+        // 共享所有权：CoreServices 自持一份引用（AddRef），
+        // 调用方保留自己的引用，双方互不接管
+        Das::DasRef<Das::Core::IPC::MainProcess::IIpcContext> ipc_context{
+            p_ipc_context};
 
         // 反序列化路径参数
         const char* u8_settings_dir = nullptr;

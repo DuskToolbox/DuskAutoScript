@@ -128,8 +128,8 @@ class QueryMainProcessInterfaceE2ETest : public ::testing::Test
 protected:
     void SetUp() override
     {
-        concrete_ctx_ = MainProcess::CreateIpcContextEz(false);
-        ASSERT_NE(concrete_ctx_.get(), nullptr);
+        concrete_ctx_ = MainProcess::CreateIpcContext(false);
+        ASSERT_NE(concrete_ctx_.Get(), nullptr);
     }
 
     void TearDown() override
@@ -138,7 +138,7 @@ protected:
         concrete_ctx_->UnregisterService(DAS_IID_READ_ONLY_STRING);
     }
 
-    MainProcess::IpcContextPtr concrete_ctx_;
+    DAS::DasPtr<MainProcess::IIpcContext> concrete_ctx_;
 };
 
 TEST_F(
@@ -150,7 +150,7 @@ TEST_F(
     // Use public RegisterService API (replaces direct object_manager_ +
     // registry_ access)
     const ScopedCurrentIpcContext scope(
-        static_cast<MainProcess::IpcContext*>(concrete_ctx_.get()));
+        static_cast<MainProcess::IpcContext*>(concrete_ctx_.Get()));
 
     const DasResult reg_result =
         concrete_ctx_->RegisterService(test_string, DAS_IID_READ_ONLY_STRING);
@@ -180,7 +180,7 @@ TEST_F(
     auto* test_string = new TestReadOnlyString("test");
 
     const ScopedCurrentIpcContext scope(
-        static_cast<MainProcess::IpcContext*>(concrete_ctx_.get()));
+        static_cast<MainProcess::IpcContext*>(concrete_ctx_.Get()));
 
     const DasResult reg_result =
         concrete_ctx_->RegisterService(test_string, DAS_IID_READ_ONLY_STRING);
@@ -208,7 +208,7 @@ TEST_F(
     auto* str2 = new TestReadOnlyString("Second string");
 
     const ScopedCurrentIpcContext scope(
-        static_cast<MainProcess::IpcContext*>(concrete_ctx_.get()));
+        static_cast<MainProcess::IpcContext*>(concrete_ctx_.Get()));
 
     // Register first string under DAS_IID_READ_ONLY_STRING
     const DasResult reg1 =
@@ -241,7 +241,7 @@ TEST_F(QueryMainProcessInterfaceE2ETest, QueryRegisteredName_ReturnsValidObject)
     auto* test_string = new TestReadOnlyString("Hello by name!");
 
     const ScopedCurrentIpcContext scope(
-        static_cast<MainProcess::IpcContext*>(concrete_ctx_.get()));
+        static_cast<MainProcess::IpcContext*>(concrete_ctx_.Get()));
 
     const DasResult reg_result = concrete_ctx_->RegisterServiceByName(
         test_string,
@@ -269,7 +269,7 @@ TEST_F(QueryMainProcessInterfaceE2ETest, QueryRegisteredName_ReturnsValidObject)
 TEST_F(QueryMainProcessInterfaceE2ETest, QueryUnknownName_ReturnsObjectNotFound)
 {
     const ScopedCurrentIpcContext scope(
-        static_cast<MainProcess::IpcContext*>(concrete_ctx_.get()));
+        static_cast<MainProcess::IpcContext*>(concrete_ctx_.Get()));
 
     auto result = QueryMainProcessInterfaceByName("nonexistent_service");
     EXPECT_EQ(result.GetErrorCode(), DAS_E_IPC_OBJECT_NOT_FOUND);

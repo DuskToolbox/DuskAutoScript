@@ -10,7 +10,7 @@
 #include <das/Core/SettingsManager/SettingsManager.h>
 #include <das/DasApi.h>
 #include <das/DasPtr.hpp>
-#include <das/DasSharedRef.hpp>
+#include <das/DasRef.hpp>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasCapture.Implements.hpp>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasCaptureFactory.Implements.hpp>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasInput.Implements.hpp>
@@ -162,14 +162,14 @@ namespace Das::Core::Debug::Test
         }
 
         auto RegisterWriterForRuntime(const std::filesystem::path& dir)
-            -> DAS::Core::IPC::MainProcess::IpcContextPtr
+            -> DAS::DasPtr<DAS::Core::IPC::MainProcess::IIpcContext>
         {
             InitializeRuntime(dir, true);
-            auto ctx = DAS::Core::IPC::MainProcess::CreateIpcContextEz(false);
-            EXPECT_NE(ctx.get(), nullptr);
+            auto ctx = DAS::Core::IPC::MainProcess::CreateIpcContext(false);
+            EXPECT_NE(ctx.Get(), nullptr);
             const DAS::Core::IPC::ScopedCurrentIpcContext scope(
                 static_cast<DAS::Core::IPC::MainProcess::IpcContext*>(
-                    ctx.get()));
+                    ctx.Get()));
             EXPECT_EQ(RegisterDebugWriterService(*ctx), DAS_S_OK);
             return ctx;
         }
@@ -540,13 +540,11 @@ namespace Das::Core::Debug::Test
             PluginManagerHarness()
                 : settings_dir_(UniqueTempDir("settings")),
                   settings_manager_(settings_dir_),
-                  ipc_sp_(
-                      DAS::Core::IPC::MainProcess::CreateIpcContextShared(
-                          false)),
+                  ipc_sp_(DAS::Core::IPC::MainProcess::CreateIpcContext(false)),
                   plugin_manager_(
                       settings_manager_,
-                      Das::DasSharedRef<
-                          DAS::Core::IPC::MainProcess::IIpcContext>(ipc_sp_))
+                      Das::DasRef<DAS::Core::IPC::MainProcess::IIpcContext>(
+                          ipc_sp_.Get()))
             {
             }
 
@@ -564,7 +562,7 @@ namespace Das::Core::Debug::Test
         private:
             std::filesystem::path                       settings_dir_;
             DAS::Core::SettingsManager::SettingsManager settings_manager_;
-            std::shared_ptr<DAS::Core::IPC::MainProcess::IIpcContext> ipc_sp_;
+            DAS::DasPtr<DAS::Core::IPC::MainProcess::IIpcContext> ipc_sp_;
             ForeignInterfaceHost::TestablePluginManager plugin_manager_;
         };
 

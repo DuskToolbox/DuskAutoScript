@@ -70,20 +70,17 @@ protected:
         if (use_http_context)
         {
             http_port_ = FindFreeLoopbackPort();
-            DAS::Core::IPC::HttpIpcServer::Config http_config;
-            http_config.listen_address = "127.0.0.1";
-            http_config.listen_port = http_port_;
+            DAS::Core::IPC::MainProcess::WebSocketConfig ws_config;
+            ws_config.listen_address = "127.0.0.1";
+            ws_config.listen_port = http_port_;
 
-            ctx_ = std::shared_ptr<DAS::Core::IPC::MainProcess::IIpcContext>(
-                new DAS::Core::IPC::MainProcess::IpcContext(
-                    /*enable_heartbeat=*/
-                    !IpcTestConfig::ShouldDisableHeartbeat(),
-                    http_config),
-                DAS::Core::IPC::MainProcess::DestroyIpcContext);
+            ctx_ = DAS::Core::IPC::MainProcess::CreateIpcContext(
+                /*enable_heartbeat=*/!IpcTestConfig::ShouldDisableHeartbeat(),
+                ws_config);
         }
         else
         {
-            ctx_ = DAS::Core::IPC::MainProcess::CreateIpcContextShared(
+            ctx_ = DAS::Core::IPC::MainProcess::CreateIpcContext(
                 /*enable_heartbeat=*/
                 !IpcTestConfig::ShouldDisableHeartbeat());
         }
@@ -135,7 +132,7 @@ protected:
         // 重置 ctx_（ConnectionManager 会被销毁）
         // 如果 launcher_ 的引用计数 > 1， DasPtr 仍持有引用
         // ConnectionManager 销毁时也会释放其 DasPtr
-        ctx_.reset();
+        ctx_ = nullptr;
 
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
@@ -212,9 +209,9 @@ protected:
         return 0;
     }
 
-    std::string                                               host_exe_path_;
-    std::shared_ptr<DAS::Core::IPC::MainProcess::IIpcContext> ctx_;
-    DAS::DasPtr<DAS::Core::IPC::IHostLauncher>                launcher_;
-    std::thread                                               run_thread_;
-    uint16_t                                                  http_port_ = 0;
+    std::string                                           host_exe_path_;
+    DAS::DasPtr<DAS::Core::IPC::MainProcess::IIpcContext> ctx_;
+    DAS::DasPtr<DAS::Core::IPC::IHostLauncher>            launcher_;
+    std::thread                                           run_thread_;
+    uint16_t                                              http_port_ = 0;
 };

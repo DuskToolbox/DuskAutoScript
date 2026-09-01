@@ -288,6 +288,18 @@ namespace
                     DAS::DasPtr<IDasBase>::Attach(object)));
         }
 
+        uint32_t AddRef() override { return ++ref_count_; }
+
+        uint32_t Release() override
+        {
+            const auto count = --ref_count_;
+            if (count == 0)
+            {
+                delete this;
+            }
+            return count;
+        }
+
         DasResult CreateHostLauncher(
             DAS::Core::IPC::IHostLauncher** pp_out_launcher) override
         {
@@ -416,6 +428,7 @@ namespace
         DAS::Core::IPC::IHostLauncher*       observed_launcher = nullptr;
         std::string                          observed_plugin_path;
         std::chrono::milliseconds            observed_load_timeout{0};
+        std::atomic<uint32_t>                ref_count_{0};
     };
 
     RemotePluginLoadRequest MakeRequest(
@@ -544,9 +557,9 @@ TEST(IpcRemotePluginHostContract, LifecycleCallbacksAreOptionalHooks)
 TEST(IpcRemotePluginHostLifecycle, LoadStartsHostAndReturnsOwnerSession)
 {
     auto launcher = DAS::DasPtr<FakeHostLauncher>(new FakeHostLauncher());
-    auto context = std::make_shared<FakeIpcContext>(launcher);
+    auto context = DAS::DasPtr<FakeIpcContext>(new FakeIpcContext(launcher));
     IpcRemotePluginHost host{
-        DAS::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(context)};
+        DAS::DasRef<DAS::Core::IPC::MainProcess::IIpcContext>(context.Get())};
 
     DAS::DasPtr<IDasReadOnlyString> executable;
     auto                            request = MakeRequest(executable);
@@ -576,10 +589,10 @@ TEST(IpcRemotePluginHostLifecycle, LoadStartsHostAndReturnsOwnerSession)
 TEST(IpcRemotePluginHostLifecycle, LoadFailureAfterStartStopsLauncher)
 {
     auto launcher = DAS::DasPtr<FakeHostLauncher>(new FakeHostLauncher());
-    auto context = std::make_shared<FakeIpcContext>(launcher);
+    auto context = DAS::DasPtr<FakeIpcContext>(new FakeIpcContext(launcher));
     context->load_async_result = DAS_E_FILE_NOT_FOUND;
     IpcRemotePluginHost host{
-        DAS::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(context)};
+        DAS::DasRef<DAS::Core::IPC::MainProcess::IIpcContext>(context.Get())};
 
     DAS::DasPtr<IDasReadOnlyString> executable;
     auto                            request = MakeRequest(executable);

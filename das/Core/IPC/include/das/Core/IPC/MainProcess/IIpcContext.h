@@ -4,10 +4,10 @@
 #include <das/Core/IPC/MainProcess/IHostLauncher.h>
 #include <das/Core/IPC/ObjectId.h>
 #include <das/DasApi.h>
+#include <das/DasPtr.hpp>
 #include <das/DasTypes.hpp>
 #include <das/IDasAsyncCallback.h>
 #include <das/IDasAsyncLoadPluginOperation.h>
-#include <memory>
 
 // Forward declaration for boost::asio::io_context
 namespace boost::asio
@@ -34,9 +34,6 @@ namespace Core
         namespace MainProcess
         {
 
-            // 前置声明 DestroyIpcContext，用于友元
-            DAS_API void DestroyIpcContext(IIpcContext* ctx);
-
             /**
              * @brief 主进程 IPC 上下文接口
  *
@@ -48,6 +45,9 @@ namespace Core
              */
             struct IIpcContext
             {
+                virtual uint32_t AddRef() = 0;
+                virtual uint32_t Release() = 0;
+
                 /**
                  * @brief 创建 HostLauncher 实例
                  *
@@ -286,37 +286,22 @@ namespace Core
                 virtual DasResult UnregisterServiceByName(const char* name) = 0;
 
             protected:
+                // 仅 Release() 归零自毁；外部不可 delete
                 virtual ~IIpcContext() = default;
-
-                // 允许 DestroyIpcContext 访问 protected 析构函数
-                friend void DestroyIpcContext(IIpcContext* ctx);
             };
 
             /**
-             * @brief IIpcContext 的删除器
+             * @brief 创建主进程 IPC 上下文
              *
-             * inline 转发到跨模块销毁接缝 DestroyIpcContext：delete 必须
-             * 发生在 libDasCore 内（对象在哪创建就在哪销毁），protected
-             * 析构 + friend 保证只有 DestroyIpcContext 能删。
-             */
-            struct IpcContextDeleter
-            {
-                void operator()(IIpcContext* ctx) const
-                {
-                    DestroyIpcContext(ctx);
-                }
-            };
-
-            using IpcContextPtr =
-                std::unique_ptr<IIpcContext, IpcContextDeleter>;
-
-            /**
-             * @brief 创建主进程 IPC 上下文（返回裸指针）
+             * 返回的 DasPtr 持有一份引用（RAII，析构即 Release），
+             * 与 CoreServices 等其他持有方构成共享所有权。
+             *
              * @param enable_heartbeat
              * 是否启用心跳线程（调试时可禁用，避免超时杀进程）
-             * @return IIpcContext* 上下文指针，失败返回 nullptr
+             * @return DasPtr<IIpcContext> 上下文句柄，失败为空
              */
-            DAS_API IIpcContext* CreateIpcContext(bool enable_heartbeat = true);
+            DAS_API DasPtr<IIpcContext> CreateIpcContext(
+                bool enable_heartbeat = true);
 
             /**
              * @brief WebSocket IPC 服务器配置
@@ -335,35 +320,11 @@ namespace Core
              *
              * @param enable_heartbeat 是否启用心跳
              * @param ws_config WebSocket 服务器配置
-             * @return IIpcContext* 上下文指针，失败返回 nullptr
+             * @return DasPtr<IIpcContext> 上下文句柄，失败为空
              */
-            DAS_API IIpcContext* CreateIpcContext(
+            DAS_API DasPtr<IIpcContext> CreateIpcContext(
                 bool            enable_heartbeat,
                 WebSocketConfig ws_config);
-
-            /**
-             * @brief 便捷创建函数（返回 unique_ptr）
-             * @param enable_heartbeat 是否启用心跳线程
-             * @return IpcContextPtr 自动管理生命周期的智能指针
-             */
-            inline IpcContextPtr CreateIpcContextEz(
-                bool enable_heartbeat = true)
-            {
-                return IpcContextPtr{CreateIpcContext(enable_heartbeat)};
-            }
-
-            /**
-             * @brief 便捷创建函数（返回 shared_ptr）
-             * @param enable_heartbeat 是否启用心跳线程
-             * @return std::shared_ptr<IIpcContext> 可共享的智能指针
-             */
-            inline std::shared_ptr<IIpcContext> CreateIpcContextShared(
-                bool enable_heartbeat = true)
-            {
-                return std::shared_ptr<IIpcContext>(
-                    CreateIpcContext(enable_heartbeat),
-                    DestroyIpcContext);
-            }
 
         } // namespace MainProcess
     } // namespace IPC

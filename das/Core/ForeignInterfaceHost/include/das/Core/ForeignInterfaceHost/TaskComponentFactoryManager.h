@@ -7,7 +7,7 @@
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
 #include <das/Core/IPC/ObjectId.h>
 #include <das/DasPtr.hpp>
-#include <das/DasSharedRef.hpp>
+#include <das/DasRef.hpp>
 #include <das/_autogen/idl/abi/IDasTaskComponent.h>
 
 #include <memory>
@@ -61,8 +61,7 @@ public:
     /// 注入主进程 IPC 上下文：host 本尊随即显式注册进 DOM（显式 pin，
     /// 作为停机链确定性注销的记账锚点）。未注入时注册/注销链全部跳过。
     void SetIpcContext(
-        Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>
-            ipc_context);
+        Das::DasRef<DAS::Core::IPC::MainProcess::IIpcContext> ipc_context);
 
     /// 停机链：确定性注销 host 本尊的 DOM 条目（幂等；析构函数兜底再调，
     /// registered 标志守卫保证二次注销无害）
@@ -94,8 +93,9 @@ private:
     std::unordered_map<DasGuid, FactoryEntry>           factories_;
     std::unordered_map<DasGuid, ComponentRoute>         routes_;
 
-    // 注入的主进程 IPC 上下文（共享引用保证注销时 DOM 仍存活）
-    std::shared_ptr<DAS::Core::IPC::MainProcess::IIpcContext> ipc_context_;
+    // 注入的主进程 IPC 上下文（共享引用保证注销时 DOM 仍存活；
+    // 注入前为空）
+    DasPtr<DAS::Core::IPC::MainProcess::IIpcContext> ipc_context_;
 
     // host 本尊显式注册进 DOM 后的 ObjectId 与幂等守卫：停机/析构链
     // 确定性注销的记账锚点（未注册或已注销时守卫为 false）

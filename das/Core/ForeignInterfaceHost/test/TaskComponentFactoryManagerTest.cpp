@@ -533,10 +533,10 @@ namespace
             if (!ipc_context_sp_)
             {
                 ipc_context_sp_ =
-                    DAS::Core::IPC::MainProcess::CreateIpcContextShared(false);
+                    DAS::Core::IPC::MainProcess::CreateIpcContext(false);
                 concrete_ipc_context_ =
                     dynamic_cast<DAS::Core::IPC::MainProcess::IpcContext*>(
-                        ipc_context_sp_.get());
+                        ipc_context_sp_.Get());
                 EXPECT_NE(concrete_ipc_context_, nullptr);
                 host_dom_baseline_entry_count_ =
                     concrete_ipc_context_->GetProxyFactory()
@@ -553,12 +553,12 @@ namespace
                 .GetObjectManager();
         }
 
-        Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>
+        Das::DasRef<DAS::Core::IPC::MainProcess::IIpcContext>
         MakeIpcContextRef()
         {
             GetConcreteIpcContext();
-            return Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
-                ipc_context_sp_);
+            return Das::DasRef<DAS::Core::IPC::MainProcess::IIpcContext>(
+                ipc_context_sp_.Get());
         }
 
         DasResult LookupHostObjectId(
@@ -571,8 +571,7 @@ namespace
                 out_object_id);
         }
 
-        std::shared_ptr<DAS::Core::IPC::MainProcess::IIpcContext>
-                                                 ipc_context_sp_;
+        Das::DasPtr<DAS::Core::IPC::MainProcess::IIpcContext> ipc_context_sp_;
         DAS::Core::IPC::MainProcess::IpcContext* concrete_ipc_context_ =
             nullptr;
         size_t host_dom_baseline_entry_count_ = 0;

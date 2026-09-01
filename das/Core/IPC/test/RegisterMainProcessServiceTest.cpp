@@ -124,8 +124,8 @@ class RegisterMainProcessServiceTest : public ::testing::Test
 protected:
     void SetUp() override
     {
-        ctx_ = MainProcess::CreateIpcContextEz(false);
-        ASSERT_NE(ctx_.get(), nullptr);
+        ctx_ = MainProcess::CreateIpcContext(false);
+        ASSERT_NE(ctx_.Get(), nullptr);
     }
 
     void TearDown() override
@@ -133,13 +133,13 @@ protected:
         ctx_->UnregisterService(DAS_IID_READ_ONLY_STRING);
     }
 
-    MainProcess::IpcContextPtr ctx_;
+    DAS::DasPtr<MainProcess::IIpcContext> ctx_;
 };
 
 TEST_F(RegisterMainProcessServiceTest, NullObject_ReturnsInvalidPointer)
 {
     const ScopedCurrentIpcContext scope(
-        static_cast<MainProcess::IpcContext*>(ctx_.get()));
+        static_cast<MainProcess::IpcContext*>(ctx_.Get()));
 
     auto result =
         DasRegisterMainProcessService(nullptr, DAS_IID_READ_ONLY_STRING);
@@ -151,7 +151,7 @@ TEST_F(RegisterMainProcessServiceTest, E2E_RegisterQuery_VerifyObject)
     auto* test_string = new TestReadOnlyString("Service OK");
 
     const ScopedCurrentIpcContext scope(
-        static_cast<MainProcess::IpcContext*>(ctx_.get()));
+        static_cast<MainProcess::IpcContext*>(ctx_.Get()));
 
     // Register
     auto reg_result =
@@ -180,7 +180,7 @@ TEST_F(RegisterMainProcessServiceTest, DuplicateIID_ReturnsDuplicateElement)
     auto* obj2 = new TestReadOnlyString("second");
 
     const ScopedCurrentIpcContext scope(
-        static_cast<MainProcess::IpcContext*>(ctx_.get()));
+        static_cast<MainProcess::IpcContext*>(ctx_.Get()));
 
     // First registration succeeds
     auto reg1 = DasRegisterMainProcessService(obj1, DAS_IID_READ_ONLY_STRING);
@@ -203,7 +203,7 @@ TEST_F(
     auto* test_string = new TestReadOnlyString("temporary");
 
     const ScopedCurrentIpcContext scope(
-        static_cast<MainProcess::IpcContext*>(ctx_.get()));
+        static_cast<MainProcess::IpcContext*>(ctx_.Get()));
 
     // Register
     auto reg_result =
@@ -226,7 +226,7 @@ TEST_F(
     UnregisterUnknownIID_ReturnsObjectNotFound)
 {
     const ScopedCurrentIpcContext scope(
-        static_cast<MainProcess::IpcContext*>(ctx_.get()));
+        static_cast<MainProcess::IpcContext*>(ctx_.Get()));
 
     const DasGuid unknown_iid = {
         0xDEADBEEF,
@@ -277,8 +277,8 @@ class RegisterMainProcessServiceByNameTest : public ::testing::Test
 protected:
     void SetUp() override
     {
-        ctx_ = MainProcess::CreateIpcContextEz(false);
-        ASSERT_NE(ctx_.get(), nullptr);
+        ctx_ = MainProcess::CreateIpcContext(false);
+        ASSERT_NE(ctx_.Get(), nullptr);
     }
 
     void TearDown() override
@@ -290,7 +290,7 @@ protected:
         ctx_->UnregisterService(DAS_IID_READ_ONLY_STRING);
     }
 
-    MainProcess::IpcContextPtr ctx_;
+    DAS::DasPtr<MainProcess::IIpcContext> ctx_;
 };
 
 TEST_F(
@@ -299,7 +299,7 @@ TEST_F(
 {
     auto*                         obj = new TestReadOnlyString("test");
     const ScopedCurrentIpcContext scope(
-        static_cast<MainProcess::IpcContext*>(ctx_.get()));
+        static_cast<MainProcess::IpcContext*>(ctx_.Get()));
 
     auto result = DasRegisterMainProcessServiceByName(
         obj,
@@ -314,7 +314,7 @@ TEST_F(
     NullObject_RegisterByNameReturnsInvalidPointer)
 {
     const ScopedCurrentIpcContext scope(
-        static_cast<MainProcess::IpcContext*>(ctx_.get()));
+        static_cast<MainProcess::IpcContext*>(ctx_.Get()));
 
     auto result = DasRegisterMainProcessServiceByName(
         nullptr,
@@ -330,7 +330,7 @@ TEST_F(
     auto* test_string = new TestReadOnlyString("Named Service");
 
     const ScopedCurrentIpcContext scope(
-        static_cast<MainProcess::IpcContext*>(ctx_.get()));
+        static_cast<MainProcess::IpcContext*>(ctx_.Get()));
 
     // Register by name
     auto reg_result = DasRegisterMainProcessServiceByName(
@@ -361,7 +361,7 @@ TEST_F(
     auto* test_string = new TestReadOnlyString("Default Name");
 
     const ScopedCurrentIpcContext scope(
-        static_cast<MainProcess::IpcContext*>(ctx_.get()));
+        static_cast<MainProcess::IpcContext*>(ctx_.Get()));
 
     // Register with default (IID-based) name
     auto reg_result =
@@ -399,7 +399,7 @@ TEST_F(
         {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08}};
 
     const ScopedCurrentIpcContext scope(
-        static_cast<MainProcess::IpcContext*>(ctx_.get()));
+        static_cast<MainProcess::IpcContext*>(ctx_.Get()));
 
     // First registration with name "shared_name"
     auto reg1 = DasRegisterMainProcessServiceByName(
@@ -427,7 +427,7 @@ TEST_F(
     auto* test_string = new TestReadOnlyString("temporary_named");
 
     const ScopedCurrentIpcContext scope(
-        static_cast<MainProcess::IpcContext*>(ctx_.get()));
+        static_cast<MainProcess::IpcContext*>(ctx_.Get()));
 
     // Register by name
     auto reg_result = DasRegisterMainProcessServiceByName(

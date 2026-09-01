@@ -10,7 +10,7 @@
 #include <das/Core/TaskScheduler/SchedulerServiceImpl.h>
 #include <das/Core/Utils/DasJsonImpl.h>
 #include <das/DasApi.h>
-#include <das/DasSharedRef.hpp>
+#include <das/DasRef.hpp>
 #include <das/DasString.hpp>
 #include <das/IDasSchedulerService.h>
 #include <das/IDasSettingsService.h>
@@ -198,17 +198,16 @@ protected:
         settings_manager_ =
             std::make_unique<Das::Core::SettingsManager::SettingsManager>(
                 settings_dir_);
-        auto ipc_sp =
-            DAS::Core::IPC::MainProcess::CreateIpcContextShared(false);
+        auto ipc_sp = DAS::Core::IPC::MainProcess::CreateIpcContext(false);
         plugin_manager_ = std::make_unique<
             Das::Core::ForeignInterfaceHost::TestablePluginManager>(
             *settings_manager_,
-            Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
-                ipc_sp));
+            Das::DasRef<DAS::Core::IPC::MainProcess::IIpcContext>(
+                ipc_sp.Get()));
         scheduler_ = std::make_unique<SchedulerService>(
             *plugin_manager_,
-            Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
-                ipc_sp));
+            Das::DasRef<DAS::Core::IPC::MainProcess::IIpcContext>(
+                ipc_sp.Get()));
     }
 
     void TearDown() override
@@ -1098,10 +1097,10 @@ TEST_F(SchedulerServiceTest, UpdateInternalProperties_PersistsToFile)
         DAS_S_OK);
 
     // Re-initialize a new scheduler to verify persistence
-    auto ipc_sp = DAS::Core::IPC::MainProcess::CreateIpcContextShared(false);
+    auto ipc_sp = DAS::Core::IPC::MainProcess::CreateIpcContext(false);
     auto scheduler2 = std::make_unique<SchedulerService>(
         *plugin_manager_,
-        Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(ipc_sp));
+        Das::DasRef<DAS::Core::IPC::MainProcess::IIpcContext>(ipc_sp.Get()));
     ASSERT_EQ(scheduler2->Initialize(plugin_dir_, {}), DAS_S_OK);
 
     auto state = scheduler2->Get();
@@ -1185,17 +1184,16 @@ protected:
         settings_manager_ =
             std::make_unique<Das::Core::SettingsManager::SettingsManager>(
                 settings_dir_);
-        auto ipc_sp =
-            DAS::Core::IPC::MainProcess::CreateIpcContextShared(false);
+        auto ipc_sp = DAS::Core::IPC::MainProcess::CreateIpcContext(false);
         plugin_manager_ = std::make_unique<
             Das::Core::ForeignInterfaceHost::TestablePluginManager>(
             *settings_manager_,
-            Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
-                ipc_sp));
+            Das::DasRef<DAS::Core::IPC::MainProcess::IIpcContext>(
+                ipc_sp.Get()));
         scheduler_ = std::make_unique<SchedulerService>(
             *plugin_manager_,
-            Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
-                ipc_sp));
+            Das::DasRef<DAS::Core::IPC::MainProcess::IIpcContext>(
+                ipc_sp.Get()));
         // Use raw pointer with AddRef/Release lifecycle
         impl_ = new SchedulerServiceImpl(*scheduler_);
         impl_->AddRef();
@@ -1799,16 +1797,16 @@ protected:
         settings_manager_ =
             std::make_unique<Das::Core::SettingsManager::SettingsManager>(
                 settings_dir_);
-        ipc_sp_ = DAS::Core::IPC::MainProcess::CreateIpcContextShared(false);
+        ipc_sp_ = DAS::Core::IPC::MainProcess::CreateIpcContext(false);
         plugin_manager_ = std::make_unique<
             Das::Core::ForeignInterfaceHost::TestablePluginManager>(
             *settings_manager_,
-            Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
-                ipc_sp_));
+            Das::DasRef<DAS::Core::IPC::MainProcess::IIpcContext>(
+                ipc_sp_.Get()));
         scheduler_ = std::make_unique<SchedulerService>(
             *plugin_manager_,
-            Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
-                ipc_sp_));
+            Das::DasRef<DAS::Core::IPC::MainProcess::IIpcContext>(
+                ipc_sp_.Get()));
 
         // Start IO thread so that steady_timer can fire
         io_thread_ = std::thread(
@@ -1839,8 +1837,8 @@ protected:
     std::filesystem::path settings_dir_;
     std::filesystem::path plugin_dir_;
     std::unique_ptr<Das::Core::SettingsManager::SettingsManager>
-                                                              settings_manager_;
-    std::shared_ptr<DAS::Core::IPC::MainProcess::IIpcContext> ipc_sp_;
+                                                          settings_manager_;
+    DAS::DasPtr<DAS::Core::IPC::MainProcess::IIpcContext> ipc_sp_;
     std::unique_ptr<Das::Core::ForeignInterfaceHost::TestablePluginManager>
                                       plugin_manager_;
     std::unique_ptr<SchedulerService> scheduler_;
@@ -1879,12 +1877,12 @@ protected:
                 settings_dir_);
         settings_manager_->CreateProfile("0");
 
-        ipc_sp_ = DAS::Core::IPC::MainProcess::CreateIpcContextShared(false);
+        ipc_sp_ = DAS::Core::IPC::MainProcess::CreateIpcContext(false);
         plugin_manager_ = std::make_unique<
             Das::Core::ForeignInterfaceHost::TestablePluginManager>(
             *settings_manager_,
-            Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
-                ipc_sp_));
+            Das::DasRef<DAS::Core::IPC::MainProcess::IIpcContext>(
+                ipc_sp_.Get()));
         // IPC 模式下 PluginManager 需要 DasHost.exe 路径才能 spawn 子进程
         // 加载 FactoryPlugin.dll。DAS_HOST_EXE_PATH 由 ctest 注入。
         try
@@ -1903,8 +1901,8 @@ protected:
 
         scheduler_ = std::make_unique<SchedulerService>(
             *plugin_manager_,
-            Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
-                ipc_sp_));
+            Das::DasRef<DAS::Core::IPC::MainProcess::IIpcContext>(
+                ipc_sp_.Get()));
 
         ASSERT_EQ(plugin_manager_->Initialize(1), DAS_S_OK);
 
@@ -2098,8 +2096,8 @@ protected:
     std::filesystem::path plugin_dir_;
     std::filesystem::path manifest_path_;
     std::unique_ptr<Das::Core::SettingsManager::SettingsManager>
-                                                              settings_manager_;
-    std::shared_ptr<DAS::Core::IPC::MainProcess::IIpcContext> ipc_sp_;
+                                                          settings_manager_;
+    DAS::DasPtr<DAS::Core::IPC::MainProcess::IIpcContext> ipc_sp_;
     std::unique_ptr<Das::Core::ForeignInterfaceHost::TestablePluginManager>
                                       plugin_manager_;
     std::unique_ptr<SchedulerService> scheduler_;
@@ -8753,16 +8751,16 @@ protected:
         settings_manager_ =
             std::make_unique<Das::Core::SettingsManager::SettingsManager>(
                 settings_dir_);
-        ipc_sp_ = DAS::Core::IPC::MainProcess::CreateIpcContextShared(false);
+        ipc_sp_ = DAS::Core::IPC::MainProcess::CreateIpcContext(false);
         plugin_manager_ = std::make_unique<
             Das::Core::ForeignInterfaceHost::TestablePluginManager>(
             *settings_manager_,
-            Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
-                ipc_sp_));
+            Das::DasRef<DAS::Core::IPC::MainProcess::IIpcContext>(
+                ipc_sp_.Get()));
         scheduler_ = std::make_unique<SchedulerService>(
             *plugin_manager_,
-            Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
-                ipc_sp_));
+            Das::DasRef<DAS::Core::IPC::MainProcess::IIpcContext>(
+                ipc_sp_.Get()));
 
         settings_manager_->CreateProfile("0");
     }
@@ -8779,8 +8777,8 @@ protected:
     std::filesystem::path settings_dir_;
     std::filesystem::path plugin_dir_;
     std::unique_ptr<Das::Core::SettingsManager::SettingsManager>
-                                                              settings_manager_;
-    std::shared_ptr<DAS::Core::IPC::MainProcess::IIpcContext> ipc_sp_;
+                                                          settings_manager_;
+    DAS::DasPtr<DAS::Core::IPC::MainProcess::IIpcContext> ipc_sp_;
     std::unique_ptr<Das::Core::ForeignInterfaceHost::TestablePluginManager>
                                       plugin_manager_;
     std::unique_ptr<SchedulerService> scheduler_;
@@ -9022,10 +9020,10 @@ TEST_F(SchedulerLifecycleTest, FullTaskInstanceLifecycle)
         1);
 
     // 15. A new scheduler instance sees persisted final state
-    auto ipc_sp2 = DAS::Core::IPC::MainProcess::CreateIpcContextShared(false);
+    auto ipc_sp2 = DAS::Core::IPC::MainProcess::CreateIpcContext(false);
     auto scheduler2 = std::make_unique<SchedulerService>(
         *plugin_manager_,
-        Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(ipc_sp2));
+        Das::DasRef<DAS::Core::IPC::MainProcess::IIpcContext>(ipc_sp2.Get()));
     ASSERT_EQ(scheduler2->Initialize(plugin_dir_, {}), DAS_S_OK);
 
     auto state2 = scheduler2->Get();
@@ -9129,16 +9127,16 @@ protected:
         settings_manager_ =
             std::make_unique<Das::Core::SettingsManager::SettingsManager>(
                 settings_dir_);
-        ipc_sp_ = DAS::Core::IPC::MainProcess::CreateIpcContextShared(false);
+        ipc_sp_ = DAS::Core::IPC::MainProcess::CreateIpcContext(false);
         plugin_manager_ = std::make_unique<
             Das::Core::ForeignInterfaceHost::TestablePluginManager>(
             *settings_manager_,
-            Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
-                ipc_sp_));
+            Das::DasRef<DAS::Core::IPC::MainProcess::IIpcContext>(
+                ipc_sp_.Get()));
         scheduler_ = std::make_unique<SchedulerService>(
             *plugin_manager_,
-            Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
-                ipc_sp_));
+            Das::DasRef<DAS::Core::IPC::MainProcess::IIpcContext>(
+                ipc_sp_.Get()));
 
         settings_manager_->CreateProfile("0");
     }
@@ -9155,8 +9153,8 @@ protected:
     std::filesystem::path settings_dir_;
     std::filesystem::path plugin_dir_;
     std::unique_ptr<Das::Core::SettingsManager::SettingsManager>
-                                                              settings_manager_;
-    std::shared_ptr<DAS::Core::IPC::MainProcess::IIpcContext> ipc_sp_;
+                                                          settings_manager_;
+    DAS::DasPtr<DAS::Core::IPC::MainProcess::IIpcContext> ipc_sp_;
     std::unique_ptr<Das::Core::ForeignInterfaceHost::TestablePluginManager>
                                       plugin_manager_;
     std::unique_ptr<SchedulerService> scheduler_;

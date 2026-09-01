@@ -95,7 +95,8 @@ namespace Das::Http
             return pd_cr;
         }
 
-        auto ipc_owner = [&]() -> DAS::Core::IPC::MainProcess::IpcContextPtr
+        auto ipc_owner =
+            [&]() -> Das::DasPtr<DAS::Core::IPC::MainProcess::IIpcContext>
         {
             if (ws_config)
             {
@@ -103,13 +104,11 @@ namespace Das::Http
                     << "[DasHttp] --ipc-ws: creating WS-enabled IpcContext on "
                     << ws_config->listen_address << ":"
                     << ws_config->listen_port << std::endl;
-                return DAS::Core::IPC::MainProcess::IpcContextPtr{
-                    DAS::Core::IPC::MainProcess::CreateIpcContext(
-                        false,
-                        *ws_config)};
+                return DAS::Core::IPC::MainProcess::CreateIpcContext(
+                    false,
+                    *ws_config);
             }
-            return DAS::Core::IPC::MainProcess::IpcContextPtr{
-                DAS::Core::IPC::MainProcess::CreateIpcContext(false)};
+            return DAS::Core::IPC::MainProcess::CreateIpcContext(false);
         }();
 
         if (!ipc_owner)
@@ -117,15 +116,21 @@ namespace Das::Http
             DAS_LOG_ERROR("Failed to create IPC context");
             return DAS_E_FAIL;
         }
-        auto* raw_ipc = ipc_owner.get();
 
-        // Create CoreServices — IPC ownership transfers here
+        // 宿主对 IPC context 的用途（都是组合根职责）：
+        // 1. 把 Http 层构造的服务发布进 IPC 全局服务表（依赖 SseHub /
+        //    log session 等，只有宿主能构造），插件 Host 子进程经跨进程
+        //    resolve 拿 proxy 调用；
+        // 2. 起线程驱动 IPC 事件循环（下方 ipc_thread）；
+        // 3. HTTP 业务派发进 BusinessThread（GIL / 插件生命周期线程亲和）；
+        // 4. 关停时 RequestStop 停泵。
+        // 与 CoreServices 各持一份引用（引用计数共享所有权），析构顺序
+        // 无约束：最后一个 Release 触发销毁。
         auto cs_result = CreateIDasCoreServices(
             p_settings_dir.Get(),
             p_plugin_dir.Get(),
-            raw_ipc,
+            ipc_owner.Get(),
             components.core_services.Put());
-        static_cast<void>(ipc_owner.release());
         if (DAS::IsFailed(cs_result))
         {
             const auto message =
@@ -202,43 +207,17 @@ namespace Das::Http
             }
         }
 
-        // IPC context for registration: get from CoreServices
-        // CoreServices owns the IPC, we need a borrowed pointer for
-        // ScopedCurrentIpcContext and thread launching.
-        // We create a shared_ptr that does NOT own (null deleter) just for
-        // the scope and thread — CoreServices is the real owner.
-        // However, CreateIpcContext returned a raw pointer that was consumed
-        // by CoreServices. We need to retrieve the IIpcContext pointer.
-        // CoreServices wraps it with shared_ptr internally. We can get a raw
-        // pointer from CoreServices for IPC registration and thread.
-        //
-        // Actually, we need the IpcContext for:
-        // 1. ScopedCurrentIpcContext (needs IpcContext* for downcast)
-        // 2. RegisterService calls
-        // 3. ipc_context->Run() on a separate thread
-        // 4. ipc_context->RequestStop() at shutdown
-        //
-        // The raw_ipc pointer is still valid since CoreServices holds it via
-        // shared_ptr. We can use it directly for the scope/thread.
-        auto ipc_context =
-            std::shared_ptr<DAS::Core::IPC::MainProcess::IIpcContext>(
-                raw_ipc,
-                [](DAS::Core::IPC::MainProcess::IIpcContext*)
-                {
-                    // No-op deleter: CoreServices owns the real lifetime
-                });
-
         {
             const DAS::Core::IPC::ScopedCurrentIpcContext scope(
                 static_cast<DAS::Core::IPC::MainProcess::IpcContext*>(
-                    ipc_context.get()));
+                    ipc_owner.Get()));
 
             auto* profile_service = new DasProfileServiceImpl(
                 *components.plugin_mgr_service,
                 *components.settings_service);
             profile_service->AddRef();
 
-            const auto reg_result = ipc_context->RegisterService(
+            const auto reg_result = ipc_owner->RegisterService(
                 profile_service,
                 DasIidOf<Das::ExportInterface::IDasProfileService>());
 
@@ -259,7 +238,7 @@ namespace Das::Http
                     *components.plugin_mgr_service);
                 plugin_mgr_service_impl->AddRef();
 
-                const auto plugin_reg_result = ipc_context->RegisterService(
+                const auto plugin_reg_result = ipc_owner->RegisterService(
                     plugin_mgr_service_impl,
                     DasIidOf<Das::ExportInterface::IDasPluginManager>());
 
@@ -281,7 +260,7 @@ namespace Das::Http
             // 取服务并编译仓库条目。注册表另持 COM 引用保活。
             {
                 const auto scheduler_reg_result =
-                    ipc_context->RegisterServiceByName(
+                    ipc_owner->RegisterServiceByName(
                         components.scheduler_svc.Get(),
                         DasIidOf<IDasSchedulerService>(),
                         "das.scheduler");
@@ -303,7 +282,7 @@ namespace Das::Http
                 const DasCoreInitOptions init_options{
                     reinterpret_cast<const char*>(debug_dir_str.c_str())};
                 auto init_cv_result = InitializeDasCoreWithOptions(
-                    ipc_context.get(),
+                    ipc_owner.Get(),
                     &init_options);
                 if (DAS::IsFailed(init_cv_result))
                 {
@@ -317,9 +296,10 @@ namespace Das::Http
             }
         }
 
+        // IPC 事件循环（io_context / WS 监听）在独立线程驱动，关停在
+        // run() 末尾 RequestStop + join。线程拷贝引用计数句柄（AddRef）。
         components.ipc_thread =
-            std::thread([&ipc_context]() { ipc_context->Run(); });
-        components.ipc_context = ipc_context;
+            std::thread([ipc_owner]() { ipc_owner->Run(); });
 
         // 焦点日志会话目录 + 统一通知器 + 主进程 recorder（注入式生命周期）：
         // session 是 RAII，run() 退出时 DasPtr<IDasLogSession> 析构递归删除
@@ -389,8 +369,8 @@ namespace Das::Http
         {
             const DAS::Core::IPC::ScopedCurrentIpcContext scope(
                 static_cast<DAS::Core::IPC::MainProcess::IpcContext*>(
-                    ipc_context.get()));
-            const auto recorder_reg = ipc_context->RegisterServiceByName(
+                    ipc_owner.Get()));
+            const auto recorder_reg = ipc_owner->RegisterServiceByName(
                 log_recorder_main.Get(),
                 DasIidOf<Das::ExportInterface::IDasProcessLogRecorder>(),
                 "das.focus-log-recorder");
@@ -652,8 +632,8 @@ namespace Das::Http
             {
                 const DAS::Core::IPC::ScopedCurrentIpcContext scope(
                     static_cast<DAS::Core::IPC::MainProcess::IpcContext*>(
-                        ipc_context.get()));
-                const auto progress_reg = ipc_context->RegisterServiceByName(
+                        ipc_owner.Get()));
+                const auto progress_reg = ipc_owner->RegisterServiceByName(
                     progress_raw,
                     DasIidOf<Das::ExportInterface::IDasProgressService>(),
                     "das.progress");
@@ -689,8 +669,8 @@ namespace Das::Http
             {
                 const DAS::Core::IPC::ScopedCurrentIpcContext scope(
                     static_cast<DAS::Core::IPC::MainProcess::IpcContext*>(
-                        ipc_context.get()));
-                const auto locale_reg = ipc_context->RegisterServiceByName(
+                        ipc_owner.Get()));
+                const auto locale_reg = ipc_owner->RegisterServiceByName(
                     locale_raw,
                     DasIidOf<Das::ExportInterface::IDasLocaleService>(),
                     "das.locale");
@@ -935,10 +915,7 @@ namespace Das::Http
         // （幂等，run_server 未执行时 session 也已构造）。
 
         // 停 IPC（排空在途 Report）：service 仍由注册表（DOM）保活，join 安全。
-        if (components.ipc_context)
-        {
-            components.ipc_context->RequestStop();
-        }
+        ipc_owner->RequestStop();
         if (components.ipc_thread.joinable())
         {
             components.ipc_thread.join();

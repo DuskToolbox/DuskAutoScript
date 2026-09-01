@@ -92,9 +92,8 @@ public:
      * @param ipc_context IPC 上下文（共享所有权）
      */
     explicit PluginManager(
-        Das::Core::SettingsManager::SettingsManager& settings_manager,
-        Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>
-            ipc_context);
+        Das::Core::SettingsManager::SettingsManager&          settings_manager,
+        Das::DasRef<DAS::Core::IPC::MainProcess::IIpcContext> ipc_context);
 
     ~PluginManager();
 
@@ -390,8 +389,8 @@ protected:
     ErrorLensManager            error_lens_mgr_;
 
     // IPC 相关成员
-    Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext> ipc_context_;
-    std::string                                                 host_exe_path_;
+    Das::DasRef<DAS::Core::IPC::MainProcess::IIpcContext> ipc_context_;
+    std::string                                           host_exe_path_;
 
     // 外部注册的 runtime provider（进程内注入扩展点）。LoadPlugin 选 provider
     // 时先查此表（language/load_mode 匹配），命中优先于内置

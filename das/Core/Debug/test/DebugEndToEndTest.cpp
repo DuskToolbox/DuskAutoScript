@@ -125,11 +125,11 @@ namespace Das::Core::Debug::Test
         }
 
         auto RegisterWriterForRuntime(const std::filesystem::path& dir)
-            -> DAS::Core::IPC::MainProcess::IpcContextPtr
+            -> DAS::DasPtr<DAS::Core::IPC::MainProcess::IIpcContext>
         {
             InitializeRuntime(dir, "1");
-            auto ctx = DAS::Core::IPC::MainProcess::CreateIpcContextEz(false);
-            EXPECT_NE(ctx.get(), nullptr);
+            auto ctx = DAS::Core::IPC::MainProcess::CreateIpcContext(false);
+            EXPECT_NE(ctx.Get(), nullptr);
             EXPECT_EQ(RegisterDebugWriterService(*ctx), DAS_S_OK);
             return ctx;
         }
@@ -460,10 +460,10 @@ namespace Das::Core::Debug::Test
         void RunAllFamilies(const std::filesystem::path& dir)
         {
             auto ctx = RegisterWriterForRuntime(dir);
-            ASSERT_NE(ctx.get(), nullptr);
+            ASSERT_NE(ctx.Get(), nullptr);
             const DAS::Core::IPC::ScopedCurrentIpcContext scope(
                 static_cast<DAS::Core::IPC::MainProcess::IpcContext*>(
-                    ctx.get()));
+                    ctx.Get()));
 
             auto capture =
                 MaybeDecorateCapture(FakeCapture::Make(), "end_to_end_capture");

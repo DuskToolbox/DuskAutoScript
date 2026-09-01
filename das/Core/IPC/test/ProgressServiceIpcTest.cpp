@@ -251,7 +251,7 @@ namespace
         void SetUp() override
         {
             host_exe_path_ = IpcTestConfig::GetDasHostPath();
-            ctx_ = MainProcess::CreateIpcContextShared(true);
+            ctx_ = MainProcess::CreateIpcContext(true);
             ASSERT_NE(ctx_, nullptr);
 
             IHostLauncher* raw_launcher = nullptr;
@@ -280,7 +280,7 @@ namespace
                 run_thread_.join();
             }
             launcher_.Reset();
-            ctx_.reset();
+            ctx_ = nullptr;
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
 
@@ -365,11 +365,11 @@ namespace
             return component;
         }
 
-        std::string                               host_exe_path_;
-        std::shared_ptr<MainProcess::IIpcContext> ctx_;
-        DasPtr<IHostLauncher>                     launcher_;
-        std::thread                               run_thread_;
-        bool                                      plugin_missing_ = false;
+        std::string                      host_exe_path_;
+        DasPtr<MainProcess::IIpcContext> ctx_;
+        DasPtr<IHostLauncher>            launcher_;
+        std::thread                      run_thread_;
+        bool                             plugin_missing_ = false;
     };
 
 } // namespace

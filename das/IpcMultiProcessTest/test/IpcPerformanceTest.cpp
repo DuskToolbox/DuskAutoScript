@@ -458,22 +458,20 @@ protected:
         if (use_http_context)
         {
             http_port_ = FindFreeLoopbackPort();
-            DAS::Core::IPC::HttpIpcServer::Config http_config;
-            http_config.listen_address = "127.0.0.1";
-            http_config.listen_port = http_port_;
+            DAS::Core::IPC::MainProcess::WebSocketConfig ws_config;
+            ws_config.listen_address = "127.0.0.1";
+            ws_config.listen_port = http_port_;
 
-            ctx_ = std::shared_ptr<DAS::Core::IPC::MainProcess::IIpcContext>(
-                new DAS::Core::IPC::MainProcess::IpcContext(
-                    enable_heartbeat,
-                    http_config),
-                DAS::Core::IPC::MainProcess::DestroyIpcContext);
+            ctx_ = DAS::Core::IPC::MainProcess::CreateIpcContext(
+                enable_heartbeat,
+                ws_config);
             mixed_transport_concrete_context_ =
                 static_cast<DAS::Core::IPC::MainProcess::IpcContext*>(
-                    ctx_.get());
+                    ctx_.Get());
         }
         else
         {
-            ctx_ = DAS::Core::IPC::MainProcess::CreateIpcContextShared(
+            ctx_ = DAS::Core::IPC::MainProcess::CreateIpcContext(
                 /*enable_heartbeat=*/enable_heartbeat);
         }
         if (!ctx_)
@@ -506,7 +504,7 @@ protected:
         }
 
         // 3. 清理
-        ctx_.reset();
+        ctx_ = nullptr;
 
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
@@ -953,10 +951,10 @@ protected:
 
     // ====== 成员变量 ======
 
-    std::string                                               host_exe_path_;
-    std::shared_ptr<DAS::Core::IPC::MainProcess::IIpcContext> ctx_;
-    std::thread                                               run_thread_;
-    uint16_t                                                  http_port_ = 0;
+    std::string                                           host_exe_path_;
+    DAS::DasPtr<DAS::Core::IPC::MainProcess::IIpcContext> ctx_;
+    std::thread                                           run_thread_;
+    uint16_t                                              http_port_ = 0;
 
     /// MixedTransport 用例的混凝土上下文指针（非持有，指向 ctx_ 内对象）：
     /// 经 GetRunLoop() 读出站计数 seam 与合写开关做 Http 合写形态断言
@@ -1371,7 +1369,7 @@ TEST(IpcPerfColdStart, ColdStart_FirstCall)
     for (size_t cycle = 0; cycle < num_cycles; ++cycle)
     {
         // 1. Create IIpcContext
-        auto ctx = DAS::Core::IPC::MainProcess::CreateIpcContextShared(
+        auto ctx = DAS::Core::IPC::MainProcess::CreateIpcContext(
             /*enable_heartbeat=*/!IpcTestConfig::ShouldDisableHeartbeat());
         if (!ctx)
         {
@@ -1544,7 +1542,7 @@ TEST(IpcPerfColdStart, ColdStart_FirstCall)
         launcher.Reset();
         ctx->RequestStop();
         run_thread.join();
-        ctx.reset();
+        ctx = nullptr;
 
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
@@ -2659,7 +2657,7 @@ TEST_F(IpcPerformanceTest, FirstCallOutboundFrameAudit)
 
     // 与 fc 基准同构的迭代体，但取计数器而非时延
     auto& run_loop =
-        static_cast<DAS::Core::IPC::MainProcess::IpcContext*>(ctx_.get())
+        static_cast<DAS::Core::IPC::MainProcess::IpcContext*>(ctx_.Get())
             ->GetRunLoop();
     const uint64_t frames_before = run_loop.GetOutboundLogicalFrameCount();
     const uint64_t writes_before = run_loop.GetOutboundPhysicalWriteCount();

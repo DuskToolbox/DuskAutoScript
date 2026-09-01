@@ -39,7 +39,7 @@ namespace
 } // namespace
 
 IpcRemotePluginHost::IpcRemotePluginHost(
-    DAS::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext> ipc_context)
+    DAS::DasRef<DAS::Core::IPC::MainProcess::IIpcContext> ipc_context)
     : ipc_context_{std::move(ipc_context)}
 {
 }

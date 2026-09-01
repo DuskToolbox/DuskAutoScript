@@ -37,7 +37,7 @@ protected:
         DAS_LOG_INFO(msg.c_str());
 
         // 创建 IPC 上下文（替代 MainProcessServer 单例）
-        ctx_ = DAS::Core::IPC::MainProcess::CreateIpcContextShared(
+        ctx_ = DAS::Core::IPC::MainProcess::CreateIpcContext(
             /*enable_heartbeat=*/!IpcTestConfig::ShouldDisableHeartbeat());
         if (!ctx_)
         {
@@ -64,7 +64,7 @@ protected:
             launcher_->Stop();
         }
 
-        ctx_.reset();
+        ctx_ = nullptr;
 
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
         DAS_LOG_INFO("IpcContext shutdown");
@@ -104,8 +104,8 @@ protected:
     }
 
 protected:
-    std::string                                               host_exe_path_;
-    std::shared_ptr<DAS::Core::IPC::MainProcess::IIpcContext> ctx_;
-    std::shared_ptr<DAS::Core::IPC::HostLauncher>             launcher_;
-    std::thread                                               run_thread_;
+    std::string                                           host_exe_path_;
+    DAS::DasPtr<DAS::Core::IPC::MainProcess::IIpcContext> ctx_;
+    std::shared_ptr<DAS::Core::IPC::HostLauncher>         launcher_;
+    std::thread                                           run_thread_;
 };

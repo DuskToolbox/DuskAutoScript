@@ -211,14 +211,13 @@ namespace
         void SetUp() override
         {
             SetActiveErrorLensManager(&manager_);
-            ipc_context_ =
-                DAS::Core::IPC::MainProcess::CreateIpcContextShared(false);
+            ipc_context_ = DAS::Core::IPC::MainProcess::CreateIpcContext(false);
             ASSERT_NE(ipc_context_, nullptr);
         }
 
         void TearDown() override
         {
-            ipc_context_.reset();
+            ipc_context_ = nullptr;
             ClearActiveErrorLensManager(&manager_);
         }
 
@@ -271,8 +270,8 @@ namespace
             }
         }
 
-        ErrorLensManager             manager_;
-        std::shared_ptr<IIpcContext> ipc_context_;
+        ErrorLensManager         manager_;
+        DAS::DasPtr<IIpcContext> ipc_context_;
     };
 
     TEST_F(GlobalErrorMessagesTest, PluginExactMessageWins)

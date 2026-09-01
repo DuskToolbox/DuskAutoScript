@@ -24,7 +24,7 @@
 #include <das/Core/TaskScheduler/SchedulerService.h>
 #include <das/Core/Utils/DasJsonImpl.h>
 #include <das/DasApi.h>
-#include <das/DasSharedRef.hpp>
+#include <das/DasRef.hpp>
 #include <das/DasString.hpp>
 #include <das/IDasSchedulerService.h>
 #include <das/Plugins/SchedulerTestPlugin/SchedulerTestSharedState.h>
@@ -344,12 +344,12 @@ protected:
                 settings_dir_);
         settings_manager_->CreateProfile("0");
 
-        ipc_sp_ = DAS::Core::IPC::MainProcess::CreateIpcContextShared(false);
+        ipc_sp_ = DAS::Core::IPC::MainProcess::CreateIpcContext(false);
         plugin_manager_ = std::make_unique<
             Das::Core::ForeignInterfaceHost::TestablePluginManager>(
             *settings_manager_,
-            Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
-                ipc_sp_));
+            Das::DasRef<DAS::Core::IPC::MainProcess::IIpcContext>(
+                ipc_sp_.Get()));
         try
         {
             const auto host_path = IpcTestConfig::GetDasHostPath();
@@ -365,8 +365,8 @@ protected:
 
         scheduler_ = std::make_unique<SchedulerService>(
             *plugin_manager_,
-            Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
-                ipc_sp_));
+            Das::DasRef<DAS::Core::IPC::MainProcess::IIpcContext>(
+                ipc_sp_.Get()));
 
         ASSERT_EQ(plugin_manager_->Initialize(1), DAS_S_OK);
 
@@ -524,8 +524,8 @@ protected:
     std::filesystem::path plugin_dir_;
     std::filesystem::path manifest_path_;
     std::unique_ptr<Das::Core::SettingsManager::SettingsManager>
-                                                              settings_manager_;
-    std::shared_ptr<DAS::Core::IPC::MainProcess::IIpcContext> ipc_sp_;
+                                                          settings_manager_;
+    DAS::DasPtr<DAS::Core::IPC::MainProcess::IIpcContext> ipc_sp_;
     std::unique_ptr<Das::Core::ForeignInterfaceHost::TestablePluginManager>
                                       plugin_manager_;
     std::unique_ptr<SchedulerService> scheduler_;

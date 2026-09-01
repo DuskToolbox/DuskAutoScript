@@ -7,7 +7,7 @@
 #include <das/Core/Logger/Logger.h>
 #include <das/Core/SettingsManager/SettingsManager.h>
 #include <das/DasApi.h>
-#include <das/DasSharedRef.hpp>
+#include <das/DasRef.hpp>
 #include <das/Utils/DasJsonCore.h>
 #include <das/_autogen/idl/abi/IDasErrorLens.h>
 #include <das/_autogen/idl/abi/IDasTaskAuthoring.h>
@@ -1107,11 +1107,11 @@ protected:
         settings_manager_ =
             std::make_unique<DAS::Core::SettingsManager::SettingsManager>(
                 settings_dir_);
-        ipc_sp_ = DAS::Core::IPC::MainProcess::CreateIpcContextShared(false);
+        ipc_sp_ = DAS::Core::IPC::MainProcess::CreateIpcContext(false);
         pm_ = std::make_unique<TestablePluginManager>(
             *settings_manager_,
-            Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
-                ipc_sp_));
+            Das::DasRef<DAS::Core::IPC::MainProcess::IIpcContext>(
+                ipc_sp_.Get()));
         ASSERT_EQ(pm_->Initialize(1), DAS_S_OK);
     }
 
@@ -1122,10 +1122,10 @@ protected:
     }
 
     std::unique_ptr<DAS::Core::SettingsManager::SettingsManager>
-                                                              settings_manager_;
-    std::shared_ptr<DAS::Core::IPC::MainProcess::IIpcContext> ipc_sp_;
-    std::unique_ptr<TestablePluginManager>                    pm_;
-    std::filesystem::path                                     settings_dir_;
+                                                          settings_manager_;
+    DAS::DasPtr<DAS::Core::IPC::MainProcess::IIpcContext> ipc_sp_;
+    std::unique_ptr<TestablePluginManager>                pm_;
+    std::filesystem::path                                 settings_dir_;
 };
 
 TEST_F(PluginManagerGuidTest, LoadPluginAndFindByGuid)
@@ -1214,11 +1214,11 @@ protected:
         settings_manager_ =
             std::make_unique<DAS::Core::SettingsManager::SettingsManager>(
                 settings_dir_);
-        ipc_sp_ = DAS::Core::IPC::MainProcess::CreateIpcContextShared(false);
+        ipc_sp_ = DAS::Core::IPC::MainProcess::CreateIpcContext(false);
         pm_ = std::make_unique<TestablePluginManager>(
             *settings_manager_,
-            Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
-                ipc_sp_));
+            Das::DasRef<DAS::Core::IPC::MainProcess::IIpcContext>(
+                ipc_sp_.Get()));
 
         ASSERT_EQ(pm_->Initialize(1), DAS_S_OK);
 
@@ -1251,11 +1251,11 @@ protected:
     std::filesystem::path test_dir_;
     std::filesystem::path settings_dir_;
     std::unique_ptr<DAS::Core::SettingsManager::SettingsManager>
-                                                              settings_manager_;
-    std::shared_ptr<DAS::Core::IPC::MainProcess::IIpcContext> ipc_sp_;
-    std::unique_ptr<TestablePluginManager>                    pm_;
-    CapturingRuntime*               runtime_ = nullptr;
-    DasPtr<IForeignLanguageRuntime> runtime_guard_;
+                                                          settings_manager_;
+    DAS::DasPtr<DAS::Core::IPC::MainProcess::IIpcContext> ipc_sp_;
+    std::unique_ptr<TestablePluginManager>                pm_;
+    CapturingRuntime*                                     runtime_ = nullptr;
+    DasPtr<IForeignLanguageRuntime>                       runtime_guard_;
 };
 
 TEST_F(
@@ -1348,11 +1348,11 @@ protected:
         settings_manager_ =
             std::make_unique<DAS::Core::SettingsManager::SettingsManager>(
                 settings_dir_);
-        ipc_sp_ = DAS::Core::IPC::MainProcess::CreateIpcContextShared(false);
+        ipc_sp_ = DAS::Core::IPC::MainProcess::CreateIpcContext(false);
         pm_ = std::make_unique<TestablePluginManager>(
             *settings_manager_,
-            Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
-                ipc_sp_));
+            Das::DasRef<DAS::Core::IPC::MainProcess::IIpcContext>(
+                ipc_sp_.Get()));
 
         ASSERT_EQ(pm_->Initialize(1), DAS_S_OK);
 
@@ -1381,12 +1381,12 @@ protected:
     std::filesystem::path test_dir_;
     std::filesystem::path settings_dir_;
     std::unique_ptr<DAS::Core::SettingsManager::SettingsManager>
-                                                              settings_manager_;
-    std::shared_ptr<DAS::Core::IPC::MainProcess::IIpcContext> ipc_sp_;
-    std::unique_ptr<TestablePluginManager>                    pm_;
-    DasPtr<IForeignLanguageRuntime>                           runtime_guard_;
-    TaskComponentRuntime* runtime_ = nullptr;
-    DasGuid               factory_guid_{};
+                                                          settings_manager_;
+    DAS::DasPtr<DAS::Core::IPC::MainProcess::IIpcContext> ipc_sp_;
+    std::unique_ptr<TestablePluginManager>                pm_;
+    DasPtr<IForeignLanguageRuntime>                       runtime_guard_;
+    TaskComponentRuntime*                                 runtime_ = nullptr;
+    DasGuid                                               factory_guid_{};
 };
 
 TEST_F(
@@ -1484,12 +1484,11 @@ protected:
         settings_manager_ =
             std::make_unique<DAS::Core::SettingsManager::SettingsManager>(
                 settings_dir_);
-        auto ipc_sp =
-            DAS::Core::IPC::MainProcess::CreateIpcContextShared(false);
+        auto ipc_sp = DAS::Core::IPC::MainProcess::CreateIpcContext(false);
         pm_ = std::make_unique<TestablePluginManager>(
             *settings_manager_,
-            Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
-                ipc_sp));
+            Das::DasRef<DAS::Core::IPC::MainProcess::IIpcContext>(
+                ipc_sp.Get()));
     }
 
     void TearDown() override
@@ -3123,11 +3122,11 @@ protected:
         settings_manager_ =
             std::make_unique<DAS::Core::SettingsManager::SettingsManager>(
                 settings_dir_);
-        ipc_sp_ = DAS::Core::IPC::MainProcess::CreateIpcContextShared(false);
+        ipc_sp_ = DAS::Core::IPC::MainProcess::CreateIpcContext(false);
         pm_ = std::make_unique<TestablePluginManager>(
             *settings_manager_,
-            Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
-                ipc_sp_));
+            Das::DasRef<DAS::Core::IPC::MainProcess::IIpcContext>(
+                ipc_sp_.Get()));
 
         ASSERT_EQ(pm_->Initialize(1), DAS_S_OK);
 
@@ -3152,11 +3151,11 @@ protected:
     std::filesystem::path test_dir_;
     std::filesystem::path settings_dir_;
     std::unique_ptr<DAS::Core::SettingsManager::SettingsManager>
-                                                              settings_manager_;
-    std::shared_ptr<DAS::Core::IPC::MainProcess::IIpcContext> ipc_sp_;
-    std::unique_ptr<TestablePluginManager>                    pm_;
-    HostInjectionRuntime*           runtime_ = nullptr;
-    DasPtr<IForeignLanguageRuntime> runtime_guard_;
+                                                          settings_manager_;
+    DAS::DasPtr<DAS::Core::IPC::MainProcess::IIpcContext> ipc_sp_;
+    std::unique_ptr<TestablePluginManager>                pm_;
+    HostInjectionRuntime*                                 runtime_ = nullptr;
+    DasPtr<IForeignLanguageRuntime>                       runtime_guard_;
 };
 
 TEST_F(

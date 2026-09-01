@@ -20,6 +20,7 @@
 #include <das/DasApi.h>
 #include <das/DasPtr.hpp>
 #include <das/IDasAsyncLoadPluginOperation.h>
+#include <das/Utils/CommonUtils.hpp>
 #include <memory>
 #include <optional>
 #include <unordered_map>
@@ -65,6 +66,9 @@ namespace Core
                 IpcContext& operator=(const IpcContext&) = delete;
                 IpcContext(IpcContext&&) = delete;
                 IpcContext& operator=(IpcContext&&) = delete;
+
+                uint32_t AddRef() override;
+                uint32_t Release() override;
 
                 ProxyFactory& GetProxyFactory() DAS_LIFETIMEBOUND;
 
@@ -137,6 +141,9 @@ namespace Core
                 DasResult InternalRegisterHostLauncher(uint16_t session_id);
 
             private:
+                /// 引用计数（0 起；工厂显式 AddRef 后交接给 DasPtr）
+                DAS::Utils::RefCounter<IpcContext> ref_counter_{};
+
                 /// IPC 命令处理器
                 DasPtr<IpcCommandHandler> command_handler_;
 

@@ -112,9 +112,9 @@ TaskComponentFactoryManager::GetTaskComponentHost() const
 }
 
 void TaskComponentFactoryManager::SetIpcContext(
-    Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext> ipc_context)
+    Das::DasRef<DAS::Core::IPC::MainProcess::IIpcContext> ipc_context)
 {
-    ipc_context_ = ipc_context.shared();
+    ipc_context_ = ipc_context.as_ptr();
     RegisterHostObject();
 }
 
@@ -129,7 +129,7 @@ void TaskComponentFactoryManager::RegisterHostObject()
     // 取 DOM；外来实现下转失败即跳过注册（注销链经同一守卫跳过）
     auto* concrete_context =
         dynamic_cast<DAS::Core::IPC::MainProcess::IpcContext*>(
-            ipc_context_.get());
+            ipc_context_.Get());
     if (concrete_context == nullptr)
     {
         DAS_CORE_LOG_WARN(
@@ -162,7 +162,7 @@ void TaskComponentFactoryManager::Shutdown()
 
     auto* concrete_context =
         dynamic_cast<DAS::Core::IPC::MainProcess::IpcContext*>(
-            ipc_context_.get());
+            ipc_context_.Get());
     if (concrete_context == nullptr)
     {
         // 注册成功时下转必然成功；防御分支仅保证不崩溃

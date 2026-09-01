@@ -837,12 +837,11 @@ namespace
             settings_manager_ =
                 std::make_unique<Das::Core::SettingsManager::SettingsManager>(
                     settings_dir_);
-            ipc_sp_ =
-                DAS::Core::IPC::MainProcess::CreateIpcContextShared(false);
+            ipc_sp_ = DAS::Core::IPC::MainProcess::CreateIpcContext(false);
             plugin_manager_ = std::make_unique<PluginManager>(
                 *settings_manager_,
-                Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>(
-                    ipc_sp_));
+                Das::DasRef<DAS::Core::IPC::MainProcess::IIpcContext>(
+                    ipc_sp_.Get()));
 
             ASSERT_EQ(plugin_manager_->Initialize(1), DAS_S_OK);
 
@@ -903,9 +902,9 @@ namespace
         std::filesystem::path settings_dir_;
         std::filesystem::path manifest_path_;
         std::unique_ptr<Das::Core::SettingsManager::SettingsManager>
-            settings_manager_;
-        std::shared_ptr<DAS::Core::IPC::MainProcess::IIpcContext> ipc_sp_;
-        std::unique_ptr<PluginManager> plugin_manager_;
+                                                              settings_manager_;
+        DAS::DasPtr<DAS::Core::IPC::MainProcess::IIpcContext> ipc_sp_;
+        std::unique_ptr<PluginManager>                        plugin_manager_;
     };
 
 } // namespace

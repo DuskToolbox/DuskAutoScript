@@ -210,20 +210,20 @@ class PaddleOcrTest : public ::testing::Test
 protected:
     void SetUp() override
     {
-        concrete_ctx_ = MainProcess::CreateIpcContextEz(false);
-        ASSERT_NE(concrete_ctx_.get(), nullptr);
+        concrete_ctx_ = MainProcess::CreateIpcContext(false);
+        ASSERT_NE(concrete_ctx_.Get(), nullptr);
 
         scope_.emplace(
-            static_cast<MainProcess::IpcContext*>(concrete_ctx_.get()));
+            static_cast<MainProcess::IpcContext*>(concrete_ctx_.Get()));
     }
 
     void TearDown() override
     {
         scope_.reset();
-        concrete_ctx_.reset();
+        concrete_ctx_ = nullptr;
     }
 
-    MainProcess::IpcContextPtr             concrete_ctx_;
+    DAS::DasPtr<MainProcess::IIpcContext>  concrete_ctx_;
     std::optional<ScopedCurrentIpcContext> scope_;
 };
 

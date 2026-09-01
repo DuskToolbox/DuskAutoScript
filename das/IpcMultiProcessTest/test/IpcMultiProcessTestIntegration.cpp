@@ -3373,7 +3373,7 @@ TEST_F(
 
     // main 侧断连观测点：本地注册对象 + hostB 持有记账。
     auto* main_context =
-        static_cast<DAS::Core::IPC::MainProcess::IpcContext*>(ctx_.get());
+        static_cast<DAS::Core::IPC::MainProcess::IpcContext*>(ctx_.Get());
     ASSERT_NE(main_context, nullptr);
     auto& object_manager = main_context->GetProxyFactory().GetObjectManager();
 
@@ -4346,7 +4346,7 @@ TEST_F(
 
     // 2. 具体主进程上下文与 DOM（清扫观测点）
     auto* main_context =
-        static_cast<DAS::Core::IPC::MainProcess::IpcContext*>(ctx_.get());
+        static_cast<DAS::Core::IPC::MainProcess::IpcContext*>(ctx_.Get());
     ASSERT_NE(main_context, nullptr);
     auto& object_manager = main_context->GetProxyFactory().GetObjectManager();
 

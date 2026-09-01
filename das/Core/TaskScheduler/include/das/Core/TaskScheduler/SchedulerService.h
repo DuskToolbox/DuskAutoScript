@@ -143,8 +143,7 @@ namespace Das::Core::TaskScheduler
     public:
         explicit SchedulerService(
             Das::Core::ForeignInterfaceHost::PluginManager& plugin_manager,
-            Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>
-                ipc_context);
+            Das::DasRef<DAS::Core::IPC::MainProcess::IIpcContext> ipc_context);
 
         ~SchedulerService();
 
@@ -510,9 +509,8 @@ namespace Das::Core::TaskScheduler
         void FsmActRejectFail();
         void FsmActRejectIgnored();
 
-        Das::Core::ForeignInterfaceHost::PluginManager& plugin_manager_;
-        Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext>
-            ipc_context_;
+        Das::Core::ForeignInterfaceHost::PluginManager&       plugin_manager_;
+        Das::DasRef<DAS::Core::IPC::MainProcess::IIpcContext> ipc_context_;
 
         mutable std::mutex          mutex_;
         std::atomic<SchedulerState> state_{SchedulerState::Stopped};

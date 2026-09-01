@@ -1037,15 +1037,26 @@ namespace Core
                     session_id);
             }
 
+            // ====== 引用计数 ======
+
+            uint32_t IpcContext::AddRef() { return ref_counter_.AddRef(); }
+
+            uint32_t IpcContext::Release()
+            {
+                return ref_counter_.Release(this);
+            }
+
             // ====== C API 实现 ======
 
-            DAS_API IIpcContext* CreateIpcContext(bool enable_heartbeat)
+            DAS_API DasPtr<IIpcContext> CreateIpcContext(bool enable_heartbeat)
             {
                 try
                 {
-                    // 构造即初始化（RAII）
+                    // 构造即初始化（RAII）；工厂显式取首份引用，
+                    // 交接给返回的 DasPtr（Attach 不再 AddRef）
                     auto* context{new IpcContext(enable_heartbeat)};
-                    return context;
+                    context->AddRef();
+                    return DasPtr<IIpcContext>::Attach(context);
                 }
                 catch (const std::exception& e)
                 {
@@ -1062,7 +1073,7 @@ namespace Core
                 }
             }
 
-            DAS_API IIpcContext* CreateIpcContext(
+            DAS_API DasPtr<IIpcContext> CreateIpcContext(
                 bool            enable_heartbeat,
                 WebSocketConfig ws_config)
             {
@@ -1073,7 +1084,8 @@ namespace Core
                     http_config.listen_port = ws_config.listen_port;
                     auto* context{
                         new IpcContext(enable_heartbeat, http_config)};
-                    return context;
+                    context->AddRef();
+                    return DasPtr<IIpcContext>::Attach(context);
                 }
                 catch (const std::exception& e)
                 {
@@ -1088,12 +1100,6 @@ namespace Core
                         "CreateIpcContext(WS) failed: unknown exception");
                     return nullptr;
                 }
-            }
-
-            DAS_API void DestroyIpcContext(IIpcContext* ctx)
-            {
-                // 析构即清理（RAII）
-                delete ctx;
             }
 
             const uint16_t IpcContext::reserved_session_ids_[3] = {

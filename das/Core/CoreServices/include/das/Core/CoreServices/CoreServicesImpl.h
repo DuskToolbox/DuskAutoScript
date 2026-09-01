@@ -8,7 +8,7 @@
 #include <das/Core/SettingsManager/SettingsManager.h>
 #include <das/Core/TaskScheduler/SchedulerService.h>
 #include <das/DasPtr.hpp>
-#include <das/DasSharedRef.hpp>
+#include <das/DasRef.hpp>
 #include <das/IDasCoreServices.h>
 #include <memory>
 
@@ -22,15 +22,15 @@ DAS_CORE_CORE_SERVICES_NS_BEGIN
  * 然后为每个服务创建 COM 风格的包装器。
  *
  * 接收已初始化的 IIpcContext（不负责创建/运行/关闭），
- * 内部包装为 DasSharedRef<IIpcContext> 保持 RAII 生命周期。
+ * 以 DasRef 引用计数共享生命周期。
  */
 class CoreServicesImpl final : public IDasCoreServices
 {
 public:
     explicit CoreServicesImpl(
-        DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext> ipc_context,
-        std::filesystem::path                                  settings_dir,
-        std::filesystem::path                                  plugin_dir);
+        DasRef<DAS::Core::IPC::MainProcess::IIpcContext> ipc_context,
+        std::filesystem::path                            settings_dir,
+        std::filesystem::path                            plugin_dir);
 
     ~CoreServicesImpl();
 
@@ -47,14 +47,17 @@ public:
     DAS_IMPL GetSchedulerService(IDasSchedulerService** pp_out) override;
     DAS_IMPL Shutdown() override;
 
+    /// 借用内部拥有的 IPC context（裸指针，生命周期随本对象）
+    DAS::Core::IPC::MainProcess::IIpcContext* GetIpcContext() const;
+
 private:
     DasResult ShutdownCoreRuntime() noexcept;
 
     std::atomic<uint32_t> ref_count_{0};
     std::atomic_bool      shutdown_called_{false};
 
-    // IPC context (shared ownership via DasSharedRef)
-    DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext> ipc_context_;
+    // IPC context (shared ownership via refcount)
+    DasRef<DAS::Core::IPC::MainProcess::IIpcContext> ipc_context_;
 
     // Concrete business services (owned)
     Das::Core::SettingsManager::SettingsManager    settings_manager_;

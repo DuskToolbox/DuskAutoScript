@@ -1751,8 +1751,8 @@ namespace Das::Core::TaskScheduler
     // ----------------------------------------------------------------
 
     SchedulerService::SchedulerService(
-        Das::Core::ForeignInterfaceHost::PluginManager& plugin_manager,
-        Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext> ipc_context)
+        Das::Core::ForeignInterfaceHost::PluginManager&       plugin_manager,
+        Das::DasRef<DAS::Core::IPC::MainProcess::IIpcContext> ipc_context)
         : plugin_manager_(plugin_manager), ipc_context_{std::move(ipc_context)}
     {
         fsm_ = std::make_unique<boost::sml::sm<FsmDefinition>>(*this);

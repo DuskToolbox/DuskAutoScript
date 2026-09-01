@@ -4,7 +4,6 @@
 #include "NotificationHub.hpp"
 #include "beast/Router.hpp"
 #include "beast/Server.hpp"
-#include <das/Core/IPC/MainProcess/IIpcContext.h>
 #include <das/DasApi.h>
 #include <das/DasPtr.hpp>
 #include <das/IDasCoreServices.h>
@@ -33,9 +32,6 @@ namespace Das::Http
         DasPtr<IDasSchedulerService>     scheduler_svc;
 
         std::filesystem::path plugin_dir;
-
-        // IPC context (process-level)
-        std::shared_ptr<DAS::Core::IPC::MainProcess::IIpcContext> ipc_context;
 
         std::thread ipc_thread;
 

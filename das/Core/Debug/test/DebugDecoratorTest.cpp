@@ -109,14 +109,14 @@ namespace Das::Core::Debug::Test
         }
 
         auto RegisterWriterForRuntime(const std::filesystem::path& dir)
-            -> DAS::Core::IPC::MainProcess::IpcContextPtr
+            -> DAS::DasPtr<DAS::Core::IPC::MainProcess::IIpcContext>
         {
             InitializeEnabledRuntime(dir);
-            auto ctx = DAS::Core::IPC::MainProcess::CreateIpcContextEz(false);
-            EXPECT_NE(ctx.get(), nullptr);
+            auto ctx = DAS::Core::IPC::MainProcess::CreateIpcContext(false);
+            EXPECT_NE(ctx.Get(), nullptr);
             const DAS::Core::IPC::ScopedCurrentIpcContext scope(
                 static_cast<DAS::Core::IPC::MainProcess::IpcContext*>(
-                    ctx.get()));
+                    ctx.Get()));
             EXPECT_EQ(RegisterDebugWriterService(*ctx), DAS_S_OK);
             return ctx;
         }
@@ -258,7 +258,7 @@ namespace Das::Core::Debug::Test
         auto       ctx = RegisterWriterForRuntime(dir);
 
         const DAS::Core::IPC::ScopedCurrentIpcContext scope(
-            static_cast<DAS::Core::IPC::MainProcess::IpcContext*>(ctx.get()));
+            static_cast<DAS::Core::IPC::MainProcess::IpcContext*>(ctx.Get()));
         DasPtr<IDasBase> base_guard;
         ASSERT_EQ(
             DasQueryMainProcessInterfaceByName(

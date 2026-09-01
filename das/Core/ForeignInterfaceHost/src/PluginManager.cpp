@@ -114,8 +114,8 @@ namespace
 } // namespace
 
 PluginManager::PluginManager(
-    Das::Core::SettingsManager::SettingsManager& settings_manager,
-    Das::DasSharedRef<DAS::Core::IPC::MainProcess::IIpcContext> ipc_context)
+    Das::Core::SettingsManager::SettingsManager&          settings_manager,
+    Das::DasRef<DAS::Core::IPC::MainProcess::IIpcContext> ipc_context)
     : settings_manager_(settings_manager), ipc_context_{std::move(ipc_context)}
 {
     // host 本尊的 DOM 显式注册（显式 pin）：停机链确定性注销的记账锚点，
