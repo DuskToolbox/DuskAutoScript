@@ -387,6 +387,25 @@ namespace
             return DAS_E_NO_IMPLEMENTATION;
         }
 
+        DasResult LoadPluginAsync(
+            uint16_t,
+            const char*,
+            IDasAsyncLoadPluginOperation**,
+            std::chrono::milliseconds) override
+        {
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+
+        DasResult ResetHostLifecycleCallbacks() override
+        {
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+
+        DasResult UnregisterHostLauncherBySession(uint16_t) override
+        {
+            return DAS_E_NO_IMPLEMENTATION;
+        }
+
         DAS::DasPtr<FakeHostLauncher>        launcher_;
         DAS::DasPtr<FakeLoadPluginOperation> load_operation_;
         boost::asio::io_context              io_context_;

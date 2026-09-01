@@ -174,7 +174,10 @@ namespace Core
 
             struct IpcContextDeleter
             {
-                DAS_API void operator()(IIpcContext* ctx) const;
+                void operator()(IIpcContext* ctx) const
+                {
+                    DestroyIpcContext(ctx);
+                }
             };
 
             using IpcContextPtr =

@@ -1096,13 +1096,6 @@ namespace Core
                 delete ctx;
             }
 
-            // ====== IpcContextDeleter 实现 ======
-
-            void IpcContextDeleter::operator()(IIpcContext* ctx) const
-            {
-                DestroyIpcContext(ctx);
-            }
-
             const uint16_t IpcContext::reserved_session_ids_[3] = {
                 0,
                 1,

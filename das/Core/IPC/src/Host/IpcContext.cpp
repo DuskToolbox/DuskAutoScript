@@ -1238,13 +1238,6 @@ namespace Core
                 }
             }
 
-            // ====== IpcContextDeleter 实现 ======
-
-            void IpcContextDeleter::operator()(IIpcContext* ctx) const
-            {
-                DestroyIpcContext(ctx);
-            }
-
         } // namespace Host
     } // namespace IPC
 } // namespace Core

@@ -84,7 +84,6 @@ namespace Core
                  * target_session_id，不需要 HostLauncher）
                  *
                  * 用于向已连接的远端 Host（如 WebSocket Host）发送加载请求。
-                 * 默认实现返回 DAS_E_NO_IMPLEMENTATION。
                  *
                  * @param target_session_id 目标 Host 的 session_id
                  * @param u8_plugin_path 插件 manifest 路径 (UTF-8)
@@ -97,14 +96,7 @@ namespace Core
                     const char*                    u8_plugin_path,
                     IDasAsyncLoadPluginOperation** pp_out_operation,
                     std::chrono::milliseconds      timeout =
-                        std::chrono::seconds(30))
-                {
-                    (void)target_session_id;
-                    (void)u8_plugin_path;
-                    (void)pp_out_operation;
-                    (void)timeout;
-                    return DAS_E_NO_IMPLEMENTATION;
-                }
+                        std::chrono::seconds(30)) = 0;
 
                 /**
                  * @brief 重置所有 HostLauncher 的 Host 生命周期监护事件回调
@@ -118,17 +110,9 @@ namespace Core
                  * HostLauncher（ConnectionManager 唯一管 HostLauncher）。持锁
                  * Clear 让心跳线程后续 Invoke 空转， 碰不到悬空 [this]。
                  *
-                 * 默认实现返回 DAS_E_NO_IMPLEMENTATION，保证 ABI 安全
-                 * （旧实现 IIpcContext 的宿主不破坏，参照 LoadPluginAsync
-                 * 第二重载 IIpcContext.h:95-107 默认实现先例）。
-                 *
-                 * @return DasResult DAS_S_OK 成功，DAS_E_NO_IMPLEMENTATION
-                 *                   默认实现（接口未 override）
+                 * @return DasResult DAS_S_OK 成功
                  */
-                virtual DasResult ResetHostLifecycleCallbacks()
-                {
-                    return DAS_E_NO_IMPLEMENTATION;
-                }
+                virtual DasResult ResetHostLifecycleCallbacks() = 0;
 
                 /**
                  * @brief 按 session 主动停止 HostLauncher（停 Host 进程 + 清
@@ -147,19 +131,11 @@ namespace Core
                  * 按 session 单点停止（主动 Stop Host 进程 + 清索引），后者是
                  * 遍历全部 launchers 只清回调不 Stop。
                  *
-                 * 默认实现返回 DAS_E_NO_IMPLEMENTATION，保证 ABI 安全
-                 * （参照 LoadPluginAsync 第二重载默认实现先例）。
-                 *
                  * @param session_id 目标 HostLauncher 的 session_id
-                 * @return DasResult DAS_S_OK 成功，DAS_E_NO_IMPLEMENTATION
-                 *                   默认实现（接口未 override）
+                 * @return DasResult DAS_S_OK 成功
                  */
                 virtual DasResult UnregisterHostLauncherBySession(
-                    uint16_t session_id)
-                {
-                    (void)session_id;
-                    return DAS_E_NO_IMPLEMENTATION;
-                }
+                    uint16_t session_id) = 0;
 
                 /**
                  * @brief 将回调投递到 io_context 线程执行
@@ -318,10 +294,17 @@ namespace Core
 
             /**
              * @brief IIpcContext 的删除器
+             *
+             * inline 转发到跨模块销毁接缝 DestroyIpcContext：delete 必须
+             * 发生在 libDasCore 内（对象在哪创建就在哪销毁），protected
+             * 析构 + friend 保证只有 DestroyIpcContext 能删。
              */
             struct IpcContextDeleter
             {
-                DAS_API void operator()(IIpcContext* ctx) const;
+                void operator()(IIpcContext* ctx) const
+                {
+                    DestroyIpcContext(ctx);
+                }
             };
 
             using IpcContextPtr =
