@@ -1,8 +1,9 @@
 #include "FlowControlErrorLensRegistration.h"
 
+#include "FlowControlErrorCodes.h"
+
 #include <das/DasApi.h>
 #include <das/DasString.hpp>
-#include <das/Plugins/DasFlowControl/FlowControlErrorCodes.h>
 
 #include <spdlog/spdlog.h>
 
