@@ -17,9 +17,9 @@ namespace Das::Core::TaskScheduler::RepositoryInvoke
 {
     // Component guid of the official repository-invoke flow component
     // (das.flow.invokeRepository, registered by the DasFlowControl plugin).
-    // EntryRef expansion rewrites entryRef marker nodes into this component
-    // and delivers the resolved child snapshot through its compiledSnapshot
-    // input. Must match the componentGuid declared in DasFlowControl.json.
+    // Settings-driven invocation nodes bind a repository entry and consume
+    // the resolved child snapshot through its compiledSnapshot input. Must
+    // match the componentGuid declared in DasFlowControl.json.
     inline constexpr std::string_view INVOKE_REPOSITORY_COMPONENT_GUID =
         "68F10007-0000-4000-8000-000000000007";
 

@@ -110,6 +110,10 @@ struct FactoryTaskSharedState
 
     int created_instance_count = 0;
 
+    // FakeTaskComponent::Do 的执行计数——图内组件节点执行链的观测通道
+    // （任务级 executed_count 只覆盖 FactoryBackedTask 直跑路径）。
+    size_t component_do_count = 0;
+
     // Fixed-size replacement for std::vector<int>.
     static constexpr size_t MAX_EXECUTED_IDS = 32;
     int                     executed_instance_ids[MAX_EXECUTED_IDS]{};

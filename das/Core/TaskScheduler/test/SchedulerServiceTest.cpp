@@ -4168,12 +4168,11 @@ TEST_F(
     EXPECT_TRUE((shared_state_->executed_count == 0));
 }
 
-// graph 任务（DasGraphTask 任务类型）经真实调度器 tick 端到端执行 entryRef
-// 项：编译信封过校验墙 → OnTick 展开 entryRef → invokeRepository 组件
-// （真实 FlowControl 插件）→ 子执行组件收到 executionInput。
-TEST_F(
-    SchedulerRuntimeBackedTest,
-    GraphTaskEntryRefItemExecutesThroughSchedulerTick)
+// graph 任务（DasGraphTask 任务类型）经真实调度器 tick 端到端执行
+// componentRef 节点：OnTick 对 {"fingerprint","plan"} shell 形状的执行
+// 输入直接透传（不预 cast、不重写、不诊断），shell 指纹校验由执行侧
+// GraphRuntime 承担——探针组件执行即透传链路完好的证据。
+TEST_F(SchedulerRuntimeBackedTest, GraphTaskShellExecutionInputPassesThrough)
 {
     // FactoryPlugin 变体不带流程组件（68F1xxxx 属真实 FlowControl），执行
     // 组件指向 FakeTaskComponent 自身 guid。
@@ -4185,20 +4184,13 @@ TEST_F(
         "Cpp",
         FactoryTaskComponentImplGuidString,
         /*include_flow_components=*/false);
-    // DasGraphTask 走 IPC（任务插件的生产形态）；FlowControl 进程内直连
-    // 主进程——invokeRepository 组件与主进程 TaskComponentHost 同进程，
-    // 整条链呈星型（每个代理跳只经主进程中转），避开兄弟 host 进程间的
-    // 响应路由缺口。
     DeployRealPluginArtifacts(
         "libDasGraphTask.dll",
         "DasGraphTask.json",
         /*force_ipc=*/true);
-    DeployRealPluginArtifacts(
-        "libDasFlowControl.dll",
-        "DasFlowControl.json",
-        /*force_ipc=*/false);
 
-    // graph 任务实例：formSequence 单 entryRef 项指向 repository entry 0。
+    // graph 任务实例：单 componentRef 探针节点（短字符串节点 id，节点
+    // 标识统一后的生产形态）。
     {
         yyjson::value task0(Das::Utils::MakeYyjsonObject());
         (*task0.as_object())[std::string_view("id")] = 0;
@@ -4210,66 +4202,56 @@ TEST_F(
         // 长延迟（约 20s），拖垮 tick 启动。
         (*task0.as_object())[std::string_view("nextExecutionTime")] =
             static_cast<int64_t>(1);
-        {
-            // item id 采用 GUID 形态：GraphRuntime 的 PortFrame 数据面以
-            // DasGuid 形态的 node_id 做键（非 GUID id 会在输出回填时抛出）。
-            auto properties = Das::Utils::ParseYyjsonFromString(R"json({
-                "items": [
-                    {
-                        "itemId": "30000000-0000-0000-0000-000000000002",
-                        "target": {
-                            "targetKind": "entryRef",
-                            "entryRef": {
-                                "kind": "entryRef",
-                                "entryId": 0,
-                                "expectedRevision": 0,
-                                "sourceFingerprint": null
-                            }
-                        },
-                        "settings": {}
-                    }
-                ]
-            })json");
-            ASSERT_TRUE(properties.has_value());
-            (*task0.as_object())[std::string_view("properties")] =
-                std::move(*properties);
-        }
+        auto properties = Das::Utils::ParseYyjsonFromString(R"json({
+            "documentId": "shell-passthrough-graph",
+            "version": 1,
+            "nodes": [
+                {
+                    "nodeId": "probe",
+                    "target": {
+                        "targetKind": "componentRef",
+                        "componentRef": {
+                            "kind": "componentRef",
+                            "componentGuid": "97BA1BE0-A199-47CB-9604-440B8BBC6555",
+                            "pluginGuid": "12345678-9ABC-4DEF-8123-456789ABCDEF"
+                        }
+                    },
+                    "settings": {},
+                    "dynamicPorts": []
+                }
+            ],
+            "edges": [],
+            "graphInputs": [],
+            "graphOutputs": [],
+            "tags": []
+        })json");
+        ASSERT_TRUE(properties.has_value());
+        (*task0.as_object())[std::string_view("properties")] =
+            std::move(*properties);
         WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
     }
 
     ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
-
-    auto created = scheduler_->CreateRepositoryEntry(
-        MakeRepositoryCreateRequest("Graph entryRef child", 8));
-    ASSERT_EQ(
-        (*created.as_object())[std::string_view("entryId")].as_sint().value_or(
-            -1),
-        0);
-
     ASSERT_EQ(scheduler_->Enable(), DAS_S_OK);
 
-    bool child_executed = false;
+    bool probe_executed = false;
     {
         ipc_scoped_lock lock(shared_state_->mutex);
-        child_executed = shared_state_->cv.wait_for(
+        probe_executed = shared_state_->cv.wait_for(
             lock,
             std::chrono::seconds(20),
-            [this]
-            {
-                return shared_state_->get_last_execution_input().find(
-                           "\"key1\":\"compiled\"")
-                       != std::string_view::npos;
-            });
+            [this] { return shared_state_->component_do_count >= 1; });
     }
     ASSERT_EQ(scheduler_->Disable(), DAS_S_OK);
     // 让 BusinessThread 上的 OnTick 收尾（Do 被取消后其尾段仍在跑），
     // 避免 TearDown 销毁 scheduler 与 tick 尾段竞态。
     std::this_thread::sleep_for(std::chrono::milliseconds(500));
-    ASSERT_TRUE(child_executed)
-        << "entryRef child never received its executionInput";
+    ASSERT_TRUE(probe_executed)
+        << "probe component never executed through the tick";
 
     const ipc_scoped_lock lock(shared_state_->mutex);
-    // 编译不被拒：被引用 entry 经 resolver 完成一次 execution 编译。
+    // 透传不触发额外编译：只有任务自身的一次 execution 编译，无条目解析
+    // 编译混入，也无编译失败诊断拦截执行。
     EXPECT_EQ(shared_state_->compile_count, 1);
     EXPECT_EQ(shared_state_->get_last_compile_purpose(), "execution");
     // 直跑任务本体（FactoryBackedTask）不应被执行——执行的是 graph 任务。

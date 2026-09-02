@@ -6,7 +6,7 @@
 // 一部分。
 // 窗口替身 = StubWindowTarget.exe（隐藏创建 + 延迟显示，模拟「spawn 到窗口
 // 出现有数秒延迟」）；launch 组件 spawn 替身并轮询可见窗口，窗口出现后发
-// signal_out 门控 entryRef 节点经 RepositoryInvoke 执行子任务。
+// signal_out 门控后继探针组件节点执行（FakeTaskComponent 计数观测）。
 #include <IpcTestConfig.h>
 // winsock 依赖序：本 TU 的 Windows.h 先于 asio（经 PluginManager 头间接
 // 进入），LEAN_AND_MEAN 让 Windows.h 跳过 WinSock v1，asio 随后自带
@@ -64,11 +64,10 @@ namespace
     constexpr std::string_view FLOW_CONTROL_PLUGIN_GUID =
         "7115BBFA-7E57-494E-82D5-D4134C367E13";
 
-    // formSequence itemId（GUID 形态：GraphRuntime 数据面以 DasGuid 形态
-    // node_id 做键；脚本生成并全仓验碰撞通过）。
+    // formSequence itemId（GUID 形态沿用历史约定，任意唯一字符串均可）。
     constexpr std::string_view LAUNCH_ITEM_ID =
         "5A192404-4C64-4E4A-A6E8-7E7B2A6D1DCB";
-    constexpr std::string_view ENTRY_REF_ITEM_ID =
+    constexpr std::string_view PROBE_ITEM_ID =
         "625A1850-E1EA-4569-8FC3-A5D804E06535";
 
     constexpr int64_t STUB_WINDOW_DELAY_MS = 800;
@@ -219,7 +218,7 @@ namespace
                 "Scheduler test task";
             {
                 // descriptors 是任务类型 DTO 的必位键（caster 缺键即解析
-                // 失败、任务类型静默不注册）；retryCount 供 entry 创建校验。
+                // 失败、任务类型静默不注册）。
                 yyjson::value descriptors(Das::Utils::MakeYyjsonArray());
                 {
                     yyjson::value descriptor(Das::Utils::MakeYyjsonObject());
@@ -278,23 +277,6 @@ namespace
 
         std::ofstream output_stream(manifest_path);
         output_stream << *Das::Utils::SerializeYyjsonValue(manifest, true);
-    }
-
-    yyjson::value MakeLaunchE2ERepositoryCreateRequest()
-    {
-        yyjson::value request(Das::Utils::MakeYyjsonObject());
-        (*request.as_object())[std::string_view("pluginGuid")] =
-            std::string(FactoryPluginGuidString);
-        (*request.as_object())[std::string_view("taskTypeGuid")] =
-            std::string(FactoryTaskGuidString);
-        (*request.as_object())[std::string_view("displayName")] =
-            "FormSequence launch E2E child";
-        yyjson::value initial(Das::Utils::MakeYyjsonObject());
-        (*initial.as_object())[std::string_view("retryCount")] =
-            static_cast<int64_t>(8);
-        (*request.as_object())[std::string_view("initialProperties")] =
-            std::move(initial);
-        return request;
     }
 
     class FormSequenceLaunchE2ETest : public ::testing::Test
@@ -505,11 +487,11 @@ namespace
     };
 
     // 目标程序未启动等价场景：formSequence 图 = [launch 节点（spawn 窗口
-    // 替身 + 等可见窗口出现）→ entryRef 节点（repository 引用子任务）]，
+    // 替身 + 等可见窗口出现）→ 探针组件节点（信号门控后执行并计数）]，
     // 经真实调度器 tick 端到端执行。
     TEST_F(
         FormSequenceLaunchE2ETest,
-        LaunchWaitsForStubWindowThenEntryRefChildReceivesCompiledInput)
+        LaunchWaitsForStubWindowThenSignalGatesProbeComponent)
     {
         DeployPluginArtifacts(
             "libDasGraphTask.dll",
@@ -532,8 +514,8 @@ namespace
             window_class.end());
 
         // graph 任务实例：formSequence 两项——launch 首节点 spawn 替身并等
-        // 窗口（延迟 800ms 出现，超时 20s），entryRef 次节点指向 repository
-        // entry 0（信号边由投影自动生成，门控链路推进）。
+        // 窗口（延迟 800ms 出现，超时 20s），探针次节点被 launch 的
+        // signal_out 门控（信号边由投影自动生成，门控链路推进）。
         {
             yyjson::value task0(Das::Utils::MakeYyjsonObject());
             (*task0.as_object())[std::string_view("id")] =
@@ -628,30 +610,32 @@ namespace
                     (*items.as_array()).emplace_back(std::move(launch_item));
                 }
                 {
-                    yyjson::value entry_item(Das::Utils::MakeYyjsonObject());
-                    (*entry_item.as_object())[std::string_view("itemId")] =
-                        std::string(ENTRY_REF_ITEM_ID);
+                    yyjson::value probe_item(Das::Utils::MakeYyjsonObject());
+                    (*probe_item.as_object())[std::string_view("itemId")] =
+                        std::string(PROBE_ITEM_ID);
                     {
                         yyjson::value target(Das::Utils::MakeYyjsonObject());
                         (*target.as_object())[std::string_view("targetKind")] =
-                            "entryRef";
-                        yyjson::value entry_ref(Das::Utils::MakeYyjsonObject());
-                        (*entry_ref.as_object())[std::string_view("kind")] =
-                            "entryRef";
-                        (*entry_ref.as_object())[std::string_view("entryId")] =
-                            static_cast<int64_t>(0);
-                        (*entry_ref.as_object())[std::string_view(
-                            "expectedRevision")] = static_cast<int64_t>(0);
-                        (*entry_ref.as_object())[std::string_view(
-                            "sourceFingerprint")] = yyjson::value{};
-                        (*target.as_object())[std::string_view("entryRef")] =
-                            std::move(entry_ref);
-                        (*entry_item.as_object())[std::string_view("target")] =
+                            "componentRef";
+                        yyjson::value component_ref(
+                            Das::Utils::MakeYyjsonObject());
+                        (*component_ref.as_object())[std::string_view("kind")] =
+                            "componentRef";
+                        (*component_ref
+                              .as_object())[std::string_view("componentGuid")] =
+                            std::string(FactoryTaskComponentImplGuidString);
+                        (*component_ref
+                              .as_object())[std::string_view("pluginGuid")] =
+                            std::string(FactoryPluginGuidString);
+                        (*target
+                              .as_object())[std::string_view("componentRef")] =
+                            std::move(component_ref);
+                        (*probe_item.as_object())[std::string_view("target")] =
                             std::move(target);
                     }
-                    (*entry_item.as_object())[std::string_view("settings")] =
+                    (*probe_item.as_object())[std::string_view("settings")] =
                         yyjson::value(Das::Utils::MakeYyjsonObject());
-                    (*items.as_array()).emplace_back(std::move(entry_item));
+                    (*items.as_array()).emplace_back(std::move(probe_item));
                 }
                 yyjson::value properties(Das::Utils::MakeYyjsonObject());
                 (*properties.as_object())[std::string_view("items")] =
@@ -664,47 +648,18 @@ namespace
 
         ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
 
-        auto created = scheduler_->CreateRepositoryEntry(
-            MakeLaunchE2ERepositoryCreateRequest());
-        ASSERT_EQ(
-            (*created.as_object())[std::string_view("entryId")]
-                .as_sint()
-                .value_or(-1),
-            0)
-            << "create response: "
-            << Das::Utils::SerializeYyjsonValue(created, true).value_or("");
-
-        // 编译产物基准（E2E 层逐字节断言的期望侧）：被引 entry 经生产
-        // resolver 编译出的 execution_input 序列化。
-        Das::Core::TaskScheduler::RepositoryInvoke::Dto::RepositoryTaskRefDto
-            repository_ref;
-        repository_ref.entry_id = 0;
-        repository_ref.expected_revision = 0;
-        const auto resolved =
-            scheduler_->ResolveRepositoryInvokeSnapshot(repository_ref);
-        ASSERT_TRUE(resolved.ok);
-        ASSERT_TRUE(resolved.snapshot.has_value());
-        const auto expected_serialized = Das::Utils::SerializeYyjsonValue(
-            resolved.snapshot->execution_input);
-        ASSERT_TRUE(expected_serialized.has_value());
-
         const auto tick_start = std::chrono::steady_clock::now();
         ASSERT_EQ(scheduler_->Enable(), DAS_S_OK);
 
-        // 等链路推进到子组件：launch 完成等窗 + 发 signal_out 门控后，
-        // entryRef 节点执行、子组件收到 executionInput。真 spawn + 延迟
-        // 出现 + 轮询 + IPC，余量给足。
-        bool child_executed = false;
+        // 等链路推进到探针组件：launch 完成等窗 + 发 signal_out 门控后，
+        // 探针节点执行并计数。真 spawn + 延迟出现 + 轮询 + IPC，余量给足。
+        bool probe_executed = false;
         {
             ipc_scoped_lock lock(shared_state_->mutex);
-            child_executed = shared_state_->cv.wait_for(
+            probe_executed = shared_state_->cv.wait_for(
                 lock,
                 std::chrono::seconds(60),
-                [this, &expected_serialized]
-                {
-                    return shared_state_->get_last_execution_input()
-                           == *expected_serialized;
-                });
+                [this] { return shared_state_->component_do_count >= 1; });
         }
 
         // 失败与否都先清窗口：WM_CLOSE 到唯一类名窗口；lifetime-ms 定时器
@@ -721,15 +676,15 @@ namespace
         // 与 tick 尾段竞态。
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
-        ASSERT_TRUE(child_executed)
-            << "entryRef child never received its compiled executionInput";
+        ASSERT_TRUE(probe_executed)
+            << "probe component never executed behind the launch signal gate";
 
         const auto elapsed_ms =
             std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::steady_clock::now() - tick_start)
                 .count();
         // 等窗真实生效的行为证据：替身窗口延迟 800ms 才可见，launch 不等
-        // 窗口就不可能完成，链路推进到子组件的时刻必然晚于延迟。
+        // 窗口就不可能完成，链路推进到探针组件的时刻必然晚于延迟。
         EXPECT_GE(elapsed_ms, STUB_WINDOW_DELAY_MS);
 
         // 替身窗口曾被创建且此刻仍在（等窗匹配成功后无人销毁它，仅测试
@@ -739,15 +694,9 @@ namespace
             << "stub window was never created or already vanished";
 
         const ipc_scoped_lock lock(shared_state_->mutex);
-        // 子组件收到的 executionInput 与 entry 编译产物逐字节相等。
-        EXPECT_EQ(
-            shared_state_->get_last_execution_input(),
-            std::string_view(*expected_serialized));
-        // 被引用 entry 经 resolver 完成过 execution 编译（测试侧预取 + tick
-        // 侧展开，二者至少其一必然发生）。
-        EXPECT_GE(shared_state_->compile_count, 1);
-        EXPECT_EQ(shared_state_->get_last_compile_purpose(), "execution");
-        // 直跑任务本体（FactoryBackedTask）不应被执行——执行的是 graph 任务。
+        // 探针恰好执行一次（信号门控链只推进一轮），直跑任务本体
+        // （FactoryBackedTask）不应被执行——执行的是 graph 任务。
+        EXPECT_EQ(shared_state_->component_do_count, 1u);
         EXPECT_EQ(shared_state_->executed_count, 0u);
     }
 } // namespace

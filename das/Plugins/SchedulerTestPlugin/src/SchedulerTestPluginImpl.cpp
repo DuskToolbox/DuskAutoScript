@@ -715,6 +715,13 @@ DasResult FakeTaskComponent::Do(
         return DAS_E_INVALID_POINTER;
     }
 
+    // 图内组件节点执行观测：无论端口面如何，Do 被调用即计数。
+    if (g_test_shared_state != nullptr)
+    {
+        const ipc_scoped_lock lock(g_test_shared_state->mutex);
+        ++g_test_shared_state->component_do_count;
+    }
+
     // Observe the repository-invoke child feeding path: record whatever
     // executionInput string arrived on the input port so tests can assert
     // the compiled envelope reached the child component.
