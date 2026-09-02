@@ -1328,7 +1328,23 @@ DAS_C_API DasResult GraphAuthoringSessionCompile(
         // No factory manager bound at the authoring boundary, so manifest port
         // validation is skipped (acceptable for authoring preview).
         Das::Core::GraphRuntime::GraphCompiler compiler;
-        auto plan = compiler.Compile(p->document);
+        // required 清单由会话 catalog 推导注入（compiler 无 catalog 访问）：
+        // action_id 即 GraphTask 域的 componentGuid，config 字段的 required
+        // 声明聚合成 component_guid → 字段名集，编译期对空值产出
+        // RequiredFieldMissing diagnostic。
+        std::unordered_map<std::string, std::unordered_set<std::string>>
+            required_fields;
+        for (const auto& entry : p->action_entries)
+        {
+            for (const auto& config_field : entry.config_fields)
+            {
+                if (config_field.required)
+                {
+                    required_fields[entry.action_id].insert(config_field.name);
+                }
+            }
+        }
+        auto plan = compiler.Compile(p->document, required_fields);
 
         // Strict authoring compile envelope: the scheduler validates Compile
         // results with OnlyKeys {compile, diagnostics} and extracts the task
@@ -1536,7 +1552,8 @@ DAS_C_API DasResult GraphAuthoringSessionSetActionCatalog(
                     entry.ports.push_back(std::move(port));
                 }
             }
-            // Optional config channel: {name,type,default?,taskGuid?,label?}
+            // Optional config channel:
+            // {name,type,default?,taskGuid?,label?,required?}
             // elements with the element key set locked to exactly those keys
             // — the same whole-catalog rejection on malformed input as the
             // port channel.
@@ -1565,7 +1582,8 @@ DAS_C_API DasResult GraphAuthoringSessionSetActionCatalog(
                             && key != std::string_view("type")
                             && key != std::string_view("default")
                             && key != std::string_view("taskGuid")
-                            && key != std::string_view("label"))
+                            && key != std::string_view("label")
+                            && key != std::string_view("required"))
                         {
                             return DAS_E_INVALID_ARGUMENT;
                         }
@@ -1631,6 +1649,21 @@ DAS_C_API DasResult GraphAuthoringSessionSetActionCatalog(
                         {
                             field.label = *label;
                         }
+                    }
+                    // Optional required declaration: a non-bool value is a
+                    // shape violation rejecting the whole catalog; absent or
+                    // false reads as not required (the projection always
+                    // emits the boolean so consumers see the declaration).
+                    if (config_obj->contains(std::string_view("required")))
+                    {
+                        auto required =
+                            (*config_obj)[std::string_view("required")]
+                                .as_bool();
+                        if (!required)
+                        {
+                            return DAS_E_INVALID_ARGUMENT;
+                        }
+                        field.required = *required;
                     }
                     entry.config_fields.push_back(std::move(field));
                 }

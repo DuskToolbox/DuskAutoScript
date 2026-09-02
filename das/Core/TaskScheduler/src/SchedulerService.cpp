@@ -580,8 +580,8 @@ namespace Das::Core::TaskScheduler
 
     // Config field declarations of one component, read from the manifest
     // definition's `config` object
-    // ({field_name: {type, label?, default?, taskGuid?}}). Emitted in
-    // lexical key order for determinism; entries without a usable non-empty
+    // ({field_name: {type, label?, default?, taskGuid?, required?}}). Emitted
+    // in lexical key order for determinism; entries without a usable non-empty
     // type string are skipped (the same skip-not-poison rule as the port
     // lists — the Core consumer rejects the whole catalog on a malformed
     // channel entry). The optional taskGuid declaration names the target
@@ -668,6 +668,18 @@ namespace Das::Core::TaskScheduler
                     (*obj)[std::string_view("taskGuid")] = std::make_pair(
                         std::string_view(*task_guid),
                         yyjson::copy_string);
+                }
+            }
+            // required 声明 engaged-only 发射：仅 required:true 落键；非布尔
+            // 值跳过发射不报错——与 label 的 miss 容忍语义一致（fail-closed
+            // 的形状校验在 Core 消费侧：非布尔 required 整 catalog 拒绝）。
+            if (field_obj->contains(std::string_view("required")))
+            {
+                auto required =
+                    (*field_obj)[std::string_view("required")].as_bool();
+                if (required.has_value() && *required)
+                {
+                    (*obj)[std::string_view("required")] = true;
                 }
             }
             destination.emplace_back(std::move(config_field));

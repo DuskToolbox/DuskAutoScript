@@ -9,6 +9,8 @@
 #include <unordered_map>
 #include <unordered_set>
 
+#include <algorithm>
+#include <cctype>
 #include <functional>
 
 DAS_CORE_GRAPHRUNTIME_NS_BEGIN
@@ -830,6 +832,78 @@ Dto::PortBindingPlanDto GraphCompiler::GeneratePortBindingPlan(
 }
 
 // ---------------------------------------------------------------------------
+// ValidateRequiredFields
+// ---------------------------------------------------------------------------
+
+std::vector<CompileEdgeDiagnostic> GraphCompiler::ValidateRequiredFields(
+    const Dto::GraphDocumentDto& document,
+    const std::unordered_map<std::string, std::unordered_set<std::string>>&
+        required_fields)
+{
+    std::vector<CompileEdgeDiagnostic> diagnostics;
+    if (required_fields.empty())
+    {
+        return diagnostics;
+    }
+    for (const auto& node : document.nodes)
+    {
+        if (node.target.target_kind != "componentRef"
+            || !node.target.component_ref.has_value())
+        {
+            continue;
+        }
+        const auto required_it =
+            required_fields.find(node.target.component_ref->component_guid);
+        if (required_it == required_fields.end())
+        {
+            continue;
+        }
+        auto settings_obj = node.settings.as_object();
+        for (const auto& field_name : required_it->second)
+        {
+            bool satisfied = false;
+            if (settings_obj.has_value()
+                && settings_obj->contains(std::string_view(field_name)))
+            {
+                const auto& value =
+                    (*settings_obj)[std::string_view(field_name)];
+                if (!value.is_null())
+                {
+                    // 空值判定与运行时 launch exe_path.empty() 对齐：字符串
+                    // 额外要求非纯空白；数值/布尔/结构类型键存在即满足。
+                    if (auto text = value.as_string(); text.has_value())
+                    {
+                        satisfied = std::any_of(
+                            text->begin(),
+                            text->end(),
+                            [](char ch)
+                            {
+                                return std::isspace(
+                                           static_cast<unsigned char>(ch))
+                                       == 0;
+                            });
+                    }
+                    else
+                    {
+                        satisfied = true;
+                    }
+                }
+            }
+            if (!satisfied)
+            {
+                CompileEdgeDiagnostic diagnostic;
+                diagnostic.kind = CompileDiagnosticKind::RequiredFieldMissing;
+                diagnostic.node_id = node.node_id;
+                diagnostic.message =
+                    "Required field '" + field_name + "' has no value";
+                diagnostics.push_back(std::move(diagnostic));
+            }
+        }
+    }
+    return diagnostics;
+}
+
+// ---------------------------------------------------------------------------
 // DiagnosticToJson
 // ---------------------------------------------------------------------------
 
@@ -865,6 +939,17 @@ yyjson::value GraphCompiler::DiagnosticToJson(const CompileEdgeDiagnostic& diag)
 Dto::CompiledGraphPlanDto GraphCompiler::Compile(
     const Dto::GraphDocumentDto& document)
 {
+    static const std::
+        unordered_map<std::string, std::unordered_set<std::string>>
+            no_required_fields;
+    return Compile(document, no_required_fields);
+}
+
+Dto::CompiledGraphPlanDto GraphCompiler::Compile(
+    const Dto::GraphDocumentDto& document,
+    const std::unordered_map<std::string, std::unordered_set<std::string>>&
+        required_fields)
+{
     Dto::CompiledGraphPlanDto plan;
 
     // Copy source metadata
@@ -875,6 +960,15 @@ Dto::CompiledGraphPlanDto GraphCompiler::Compile(
     // Edge port validation
     auto edge_diagnostics = ValidateEdgePorts(document);
     for (const auto& d : edge_diagnostics)
+    {
+        plan.diagnostics.push_back(DiagnosticToJson(d));
+    }
+
+    // Required-field validation (the session layer injects the
+    // catalog-derived map — the compiler has no catalog access).
+    auto required_diagnostics =
+        ValidateRequiredFields(document, required_fields);
+    for (const auto& d : required_diagnostics)
     {
         plan.diagnostics.push_back(DiagnosticToJson(d));
     }

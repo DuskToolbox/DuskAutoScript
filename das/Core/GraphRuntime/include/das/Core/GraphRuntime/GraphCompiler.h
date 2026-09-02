@@ -8,6 +8,7 @@
 
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 // Forward declaration — avoid pulling full ForeignInterfaceHost header.
@@ -31,7 +32,8 @@ enum class CompileDiagnosticKind
     NodeNotFound,              // Edge references a node_id not in the graph
     UnknownPortType,           // Port type string not in known set (warning)
     UnresolvableComponentGuid, // component_guid not in factory manager
-    CyclicEdgeGraph // Edge-based cycle detected during topological sort
+    CyclicEdgeGraph,     // Edge-based cycle detected during topological sort
+    RequiredFieldMissing // Required field has no usable value in node settings
 };
 
 struct CompileEdgeDiagnostic
@@ -115,10 +117,30 @@ public:
     Dto::PortBindingPlanDto GeneratePortBindingPlan(
         const Dto::GraphDocumentDto& document);
 
+    /// Validate that every required field declared for a node's component
+    /// has a usable value in the node settings. `required_fields` maps
+    /// component_guid → required field-name set — the compiler has no
+    /// catalog access, so the session layer derives the map from its action
+    /// catalog (the manifest-declared required flags) and injects it. A
+    /// field is empty when the settings key is absent or null; string values
+    /// are additionally empty when blank (whitespace-only), matching the
+    /// runtime launch exe_path.empty() judgement.
+    static std::vector<CompileEdgeDiagnostic> ValidateRequiredFields(
+        const Dto::GraphDocumentDto& document,
+        const std::unordered_map<std::string, std::unordered_set<std::string>>&
+            required_fields);
+
     /// Unified compile entry point: runs all phases and produces a
     /// CompiledGraphPlanDto. Steps: ValidateEdgePorts ->
     /// ComputeExecutionOrder -> GeneratePortBindingPlan.
     Dto::CompiledGraphPlanDto Compile(const Dto::GraphDocumentDto& document);
+
+    /// Required-aware overload: additionally runs ValidateRequiredFields and
+    /// merges its diagnostics into the plan.
+    Dto::CompiledGraphPlanDto Compile(
+        const Dto::GraphDocumentDto& document,
+        const std::unordered_map<std::string, std::unordered_set<std::string>>&
+            required_fields);
 
     // -----------------------------------------------------------------------
     // Signal-aware topology analysis (DAS-60 Stage 2)

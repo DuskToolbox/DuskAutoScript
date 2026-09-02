@@ -243,7 +243,8 @@
           "config": {
             "exePath": {
               "type": "string",
-              "label": { "en": "Executable Path", "zh-cn": "可执行文件路径" }
+              "label": { "en": "Executable Path", "zh-cn": "可执行文件路径" },
+              "required": true
             },
             "args": {
               "type": "array<string>",

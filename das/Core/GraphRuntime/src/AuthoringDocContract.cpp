@@ -236,6 +236,11 @@ namespace Contract
                 // one) so consumers can resolve a repositoryRef picker
                 // without a component→task reverse lookup.
                 field.task_guid = config_field.task_guid;
+                // The required declaration rides onto the projected field —
+                // BuildFieldsValue always emits the boolean, so the
+                // declaration surfaces even for fresh nodes (no settings
+                // yet).
+                field.required = config_field.required;
                 bool value_assigned = false;
                 if (settings_obj.has_value()
                     && settings_obj->contains(

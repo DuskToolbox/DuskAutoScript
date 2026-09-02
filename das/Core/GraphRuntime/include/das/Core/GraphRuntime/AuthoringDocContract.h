@@ -188,7 +188,10 @@ namespace Contract
     /// `default_value` is the declared default (null = none declared);
     /// `task_guid` is the optional declared target task type for
     /// component-domain fields (e.g. a taskRepositoryRef pointing at one task
-    /// type — declaration-as-data, engaged only when the manifest names one).
+    /// type — declaration-as-data, engaged only when the manifest names one);
+    /// `required` marks the field as compile-validated (an empty value yields
+    /// a RequiredFieldMissing diagnostic — the compile layer receives the
+    /// declaration through the session-injected required map).
     /// Like ports, this is internal to the catalog channel and is NOT emitted
     /// on the public actionCatalog wire — the node fields[] projection is
     /// where config declarations surface.
@@ -199,6 +202,7 @@ namespace Contract
         std::string                label;
         yyjson::value              default_value;
         std::optional<std::string> task_guid;
+        bool                       required = false;
     };
 
     /// One entry in the shared actionCatalog. `action_id` is the
