@@ -2,6 +2,7 @@
 #include "controller/DasSchedulerController.hpp"
 #include <IpcTestConfig.h>
 #include <Windows.h>
+#include <das/Core/ForeignInterfaceHost/ErrorLensManager.h>
 #include <das/Core/ForeignInterfaceHost/IForeignLanguageRuntime.h>
 #include <das/Core/IPC/MainProcess/IIpcContext.h>
 #include <das/Core/SettingsManager/SettingsManager.h>
@@ -17,10 +18,13 @@
 #include <das/Plugins/SchedulerTestPlugin/SchedulerTestSharedState.h>
 #include <das/Utils/Expected.h>
 #include <das/_autogen/idl/abi/IDasGuidVector.h>
+#include <das/_autogen/idl/abi/IDasLogRecorder.h>
 #include <das/_autogen/idl/abi/IDasPluginPackage.h>
 #include <das/_autogen/idl/abi/IDasTask.h>
 #include <das/_autogen/idl/abi/IDasTaskAuthoring.h>
 #include <das/_autogen/idl/header/IDasPortMap.generated.h>
+#include <das/_autogen/idl/wrapper/Das.ExportInterface.IDasProcessLogRecorder.Implements.hpp>
+#include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasErrorLens.Implements.hpp>
 #include <gtest/gtest.h>
 
 #include <algorithm>
@@ -32,9 +36,11 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include <das/DasConfig.h>
@@ -1400,6 +1406,10 @@ public:
     bool throw_on_do = false;
     bool throw_on_get_next_execution_time = false;
 
+    // Do 返回值注入：默认成功；置失败码模拟任务执行失败（OnTick 失败段
+    // focus toast 发射链路的触发条件）。
+    DasResult do_result = DAS_S_OK;
+
     uint32_t AddRef() override { return ++ref_count_; }
 
     uint32_t Release() override
@@ -1496,7 +1506,7 @@ public:
             }
         }
 
-        return DAS_S_OK;
+        return do_result;
     }
 
     DasResult GetNextExecutionTime(
@@ -1518,6 +1528,123 @@ public:
             return DAS_S_OK;
         }
         return DAS_E_FAIL;
+    }
+};
+
+// ============================================================
+// Fake focus recorder / error lens for the OnTick Do-failure
+// emission chain
+// ============================================================
+
+// 经接口 getter 读全字段（recorder 侧读 entry 的规范形态，跨进程 proxy
+// 也走 getter），捕获 Record 到的条目供断言。
+struct RecordedLogEntry
+{
+    Das::ExportInterface::DasLogType                 type{};
+    std::vector<std::string>                         texts;
+    std::vector<std::pair<std::string, std::string>> fields;
+};
+
+class FakeFocusLogRecorder final
+    : public Das::ExportInterface::DasProcessLogRecorderImplBase<
+          FakeFocusLogRecorder>
+{
+public:
+    DasResult Record(Das::ExportInterface::IDasLogEntry* entry) override
+    {
+        if (entry == nullptr)
+        {
+            return DAS_E_INVALID_POINTER;
+        }
+        RecordedLogEntry recorded;
+        (void)entry->GetType(&recorded.type);
+        size_t text_count = 0;
+        if (DAS::IsOk(entry->GetTextCount(&text_count)))
+        {
+            for (size_t index = 0; index < text_count; ++index)
+            {
+                DasPtr<IDasReadOnlyString> text;
+                if (DAS::IsOk(entry->GetText(index, text.Put())) && text)
+                {
+                    const char* utf8 = nullptr;
+                    if (DAS::IsOk(text->GetUtf8(&utf8)) && utf8 != nullptr)
+                    {
+                        recorded.texts.emplace_back(utf8);
+                    }
+                }
+            }
+        }
+        size_t field_count = 0;
+        if (DAS::IsOk(entry->GetFieldCount(&field_count)))
+        {
+            for (size_t index = 0; index < field_count; ++index)
+            {
+                DasPtr<IDasReadOnlyString> key;
+                DasPtr<IDasReadOnlyString> value;
+                if (DAS::IsOk(entry->GetField(index, key.Put(), value.Put()))
+                    && key && value)
+                {
+                    const char* key_utf8 = nullptr;
+                    const char* value_utf8 = nullptr;
+                    if (DAS::IsOk(key->GetUtf8(&key_utf8))
+                        && DAS::IsOk(value->GetUtf8(&value_utf8))
+                        && key_utf8 != nullptr && value_utf8 != nullptr)
+                    {
+                        recorded.fields.emplace_back(key_utf8, value_utf8);
+                    }
+                }
+            }
+        }
+        {
+            const std::scoped_lock lock(mutex);
+            entries.push_back(std::move(recorded));
+        }
+        return DAS_S_OK;
+    }
+
+    std::mutex                    mutex;
+    std::vector<RecordedLogEntry> entries;
+};
+
+// 只解释单一错误码的 fake lens：命中返回固定文案，其余码 miss——驱动
+// ErrorLens 扫描 API 在 OnTick 失败段命中人话的链路。
+class TaskFailureCodeLens final
+    : public Das::PluginInterface::DasErrorLensImplBase<TaskFailureCodeLens>
+{
+public:
+    DasResult            served_code = DAS_E_FAIL;
+    std::string          message;
+    std::vector<DasGuid> supported_iids;
+
+    DasResult GetSupportedIids(
+        Das::ExportInterface::IDasReadOnlyGuidVector** pp_out_iids) override
+    {
+        DasPtr<Das::ExportInterface::IDasGuidVector> writable_iids;
+        const auto create_result = ::CreateIDasGuidVector(
+            supported_iids.data(),
+            supported_iids.size(),
+            writable_iids.Put());
+        if (DAS::IsFailed(create_result))
+        {
+            return create_result;
+        }
+        return writable_iids->ToConst(pp_out_iids);
+    }
+
+    DasResult GetErrorMessage(
+        IDasReadOnlyString*,
+        DasResult            error_code,
+        IDasReadOnlyString** out_string) override
+    {
+        if (out_string != nullptr)
+        {
+            *out_string = nullptr;
+        }
+        if (error_code != served_code)
+        {
+            return DAS_E_OUT_OF_RANGE;
+        }
+        return ::CreateIDasReadOnlyStringFromUtf8(message.c_str(), out_string);
     }
 };
 
@@ -2375,6 +2502,131 @@ TEST_F(
             .as_sint()
             .value(),
         4102444799LL);
+}
+
+// 任务 Do 返回失败：OnTick 失败段经 C ABI 按名解析 recorder（fake 注册为
+// das.focus-log-recorder），发射一条 focus 条目——错误说明文本来自 fake
+// lens（经 ErrorLens 扫描按码命中）并附 task id，displayChannels 含
+// toast+log 双渠道。
+TEST_F(SchedulerExecutionTest, OnTick_DoFailureEmitsFocusToastEntry)
+{
+    auto* fake = SetupSchedulerWithFakeTask(
+        *scheduler_,
+        *settings_manager_,
+        plugin_dir_,
+        *plugin_manager_);
+    fake->do_result = DAS_E_FAIL;
+
+    // fake lens 注册进进程 active ErrorLensManager：本 fixture 不走
+    // Initialize 的测试须显式 Initialize 才会置 active（析构路径会清）。
+    ASSERT_EQ(plugin_manager_->Initialize(1), DAS_S_OK);
+    auto* lens = TaskFailureCodeLens::MakeRaw();
+    lens->served_code = DAS_E_FAIL;
+    lens->message = "fake lens failure explanation";
+    lens->supported_iids = {DasGuid{
+        0x5C6D7E8F,
+        0x9A0B,
+        0x4C1D,
+        {0x80, 0x2E, 0x3F, 0x44, 0x55, 0x66, 0x77, 0x88}}};
+    {
+        DasPtr<Das::ExportInterface::IDasGuidVector> writable_iids;
+        ASSERT_EQ(
+            CreateIDasGuidVector(
+                lens->supported_iids.data(),
+                lens->supported_iids.size(),
+                writable_iids.Put()),
+            DAS_S_OK);
+        DasPtr<Das::ExportInterface::IDasReadOnlyGuidVector> readonly_iids;
+        ASSERT_EQ(writable_iids->ToConst(readonly_iids.Put()), DAS_S_OK);
+        auto* active_lens_manager =
+            Das::Core::ForeignInterfaceHost::GetActiveErrorLensManager();
+        ASSERT_NE(active_lens_manager, nullptr);
+        ASSERT_EQ(
+            active_lens_manager->Register(readonly_iids.Get(), lens),
+            DAS_S_OK);
+    }
+
+    // fake recorder 注册为 das.focus-log-recorder（OnTick 在 BT 线程经
+    // C ABI 按名解析到它，in-process 快路径）。MakeRaw 引用归本测试持有，
+    // 注销后 Release 配对。
+    auto* recorder = FakeFocusLogRecorder::MakeRaw();
+    ASSERT_EQ(
+        ipc_sp_->RegisterServiceByName(
+            recorder,
+            DasIidOf<Das::ExportInterface::IDasProcessLogRecorder>(),
+            "das.focus-log-recorder"),
+        DAS_S_OK);
+
+    ASSERT_EQ(scheduler_->Enable(), DAS_S_OK);
+    std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+    auto stop_result = scheduler_->Disable();
+    EXPECT_EQ(stop_result, DAS_S_OK);
+    ASSERT_TRUE(
+        WaitForSchedulerStopped(*scheduler_, std::chrono::milliseconds(2000)));
+
+    EXPECT_GE(fake->do_call_count, 1);
+
+    {
+        const std::scoped_lock lock(recorder->mutex);
+        ASSERT_EQ(recorder->entries.size(), 1u);
+        const auto& entry = recorder->entries[0];
+        EXPECT_EQ(entry.type, Das::ExportInterface::DAS_LOG_TYPE_ERROR);
+        ASSERT_EQ(entry.texts.size(), 1u);
+        EXPECT_NE(
+            entry.texts[0].find("fake lens failure explanation"),
+            std::string::npos);
+        EXPECT_NE(entry.texts[0].find("task 0"), std::string::npos);
+        bool channels_found = false;
+        for (const auto& [key, value] : entry.fields)
+        {
+            if (key == std::string("displayChannels"))
+            {
+                channels_found = true;
+                EXPECT_NE(value.find("toast"), std::string::npos);
+                EXPECT_NE(value.find("log"), std::string::npos);
+            }
+        }
+        EXPECT_TRUE(channels_found) << "displayChannels field missing";
+    }
+
+    ipc_sp_->UnregisterServiceByName("das.focus-log-recorder");
+    recorder->Release();
+    lens->Release();
+}
+
+// 任务 Do 成功：零 focus 条目（发射只在失败时发生，非每 tick）。
+TEST_F(SchedulerExecutionTest, OnTick_DoSuccessEmitsNoFocusEntry)
+{
+    auto* fake = SetupSchedulerWithFakeTask(
+        *scheduler_,
+        *settings_manager_,
+        plugin_dir_,
+        *plugin_manager_);
+
+    auto* recorder = FakeFocusLogRecorder::MakeRaw();
+    ASSERT_EQ(
+        ipc_sp_->RegisterServiceByName(
+            recorder,
+            DasIidOf<Das::ExportInterface::IDasProcessLogRecorder>(),
+            "das.focus-log-recorder"),
+        DAS_S_OK);
+
+    ASSERT_EQ(scheduler_->Enable(), DAS_S_OK);
+    std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+    auto stop_result = scheduler_->Disable();
+    EXPECT_EQ(stop_result, DAS_S_OK);
+    ASSERT_TRUE(
+        WaitForSchedulerStopped(*scheduler_, std::chrono::milliseconds(2000)));
+
+    EXPECT_GE(fake->do_call_count, 1);
+
+    {
+        const std::scoped_lock lock(recorder->mutex);
+        EXPECT_EQ(recorder->entries.size(), 0u);
+    }
+
+    ipc_sp_->UnregisterServiceByName("das.focus-log-recorder");
+    recorder->Release();
 }
 
 TEST_F(SchedulerExecutionTest, Stop_RequestsCancellationToken)

@@ -8,7 +8,9 @@
 #include <atomic>
 #include <chrono>
 #include <future>
+#include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 using namespace DAS::Core::ForeignInterfaceHost;
@@ -78,7 +80,53 @@ namespace
         }
     };
 
-    FeatureInfo MakeFeature(FakeErrorLens& lens)
+    // 按码返回固定文案的 lens：命中返回消息、miss 返 OUT_OF_RANGE——
+    // 驱动扫描式按码查询（caller 只知数值码，无 type guid 路由）。
+    class CodeMessageFakeLens final
+        : public DasErrorLensImplBase<CodeMessageFakeLens>
+    {
+    public:
+        std::unordered_map<DasResult, std::string> messages;
+        std::vector<DasGuid>                       supported_iids;
+
+        DasResult GetSupportedIids(
+            Das::ExportInterface::IDasReadOnlyGuidVector** pp_out_iids) override
+        {
+            DasPtr<Das::ExportInterface::IDasGuidVector> writable_iids;
+            const auto create_result = ::CreateIDasGuidVector(
+                supported_iids.data(),
+                supported_iids.size(),
+                writable_iids.Put());
+            if (DAS::IsFailed(create_result))
+            {
+                return create_result;
+            }
+
+            return writable_iids->ToConst(pp_out_iids);
+        }
+
+        DasResult GetErrorMessage(
+            IDasReadOnlyString*,
+            DasResult            error_code,
+            IDasReadOnlyString** out_string) override
+        {
+            if (out_string != nullptr)
+            {
+                *out_string = nullptr;
+            }
+            const auto it = messages.find(error_code);
+            if (it == messages.end())
+            {
+                return DAS_E_OUT_OF_RANGE;
+            }
+            return ::CreateIDasReadOnlyStringFromUtf8(
+                it->second.c_str(),
+                out_string);
+        }
+    };
+
+    template <typename TLens>
+    FeatureInfo MakeFeature(TLens& lens)
     {
         FeatureInfo feat{};
         feat.feature_type = DAS_PLUGIN_FEATURE_ERROR_LENS;
@@ -177,5 +225,63 @@ namespace
             DAS_E_NO_INTERFACE);
 
         lens->Release();
+    }
+
+    // 扫描式按码查询：两个不同 plugin 域的 lens 各自解释不同码——无
+    // type guid 路由时横扫全部注册域，各自码返回各自文案、未注册码
+    // 全 miss 回落（调用方接 Core 预定义表）。
+    TEST_F(ErrorLensManagerTest, GetErrorMessageForCodeScansAllDomains)
+    {
+        const auto plugin_guid_a = MakeTestGuid(7);
+        const auto domain_a = MakeTestGuid(8);
+        const auto plugin_guid_b = MakeTestGuid(9);
+        const auto domain_b = MakeTestGuid(10);
+
+        auto* lens_a = CodeMessageFakeLens::MakeRaw();
+        lens_a->supported_iids = {domain_a};
+        lens_a->messages[DAS_E_FAIL] = "domain A explains fail";
+
+        auto* lens_b = CodeMessageFakeLens::MakeRaw();
+        lens_b->supported_iids = {domain_b};
+        lens_b->messages[DAS_E_TIMEOUT] = "domain B explains timeout";
+
+        auto         feature_a = MakeFeature(*lens_a);
+        auto         feature_b = MakeFeature(*lens_b);
+        FeatureInfo* features[] = {&feature_a, &feature_b};
+        ASSERT_EQ(mgr.OnPluginLoaded(plugin_guid_a, {features, 1}), DAS_S_OK);
+        ASSERT_EQ(
+            mgr.OnPluginLoaded(plugin_guid_b, {features + 1, 1}),
+            DAS_S_OK);
+
+        const auto read_text =
+            [](const DasPtr<IDasReadOnlyString>& text) -> std::string
+        {
+            if (!text)
+            {
+                return {};
+            }
+            const char* utf8 = nullptr;
+            if (DAS::IsFailed(text->GetUtf8(&utf8)) || utf8 == nullptr)
+            {
+                return {};
+            }
+            return utf8;
+        };
+
+        auto message_a = mgr.GetErrorMessageForCode(nullptr, DAS_E_FAIL);
+        ASSERT_TRUE(message_a.has_value());
+        EXPECT_EQ(read_text(message_a.value()), "domain A explains fail");
+
+        auto message_b = mgr.GetErrorMessageForCode(nullptr, DAS_E_TIMEOUT);
+        ASSERT_TRUE(message_b.has_value());
+        EXPECT_EQ(read_text(message_b.value()), "domain B explains timeout");
+
+        // 未注册码：全部域 miss → 错误返回，调用方回落预定义表。
+        auto message_miss =
+            mgr.GetErrorMessageForCode(nullptr, DAS_E_ACCESS_DENIED);
+        EXPECT_FALSE(message_miss.has_value());
+
+        lens_a->Release();
+        lens_b->Release();
     }
 } // namespace
