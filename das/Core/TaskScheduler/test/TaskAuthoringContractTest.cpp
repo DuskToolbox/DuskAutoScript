@@ -10,6 +10,7 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace
 {
@@ -67,6 +68,60 @@ namespace
         std::ostringstream buffer;
         buffer << stream.rdbuf();
         return buffer.str();
+    }
+
+    // 既有用例的输入字面量保持单 change 形态（可读性），经此包装为批量
+    // apply 请求 {baseRevision, changes:[{kind,payload}]} 后再校验。缺少
+    // kind/payload 的输入按原样缺失透传（缺失类错误码仍由校验器报告），
+    // 非对象输入原样透传走 invalidChange 路径。
+    yyjson::value AsBatchApplyRequest(const yyjson::value& single_change)
+    {
+        auto single_object = single_change.as_object();
+        if (!single_object)
+        {
+            return Das::Utils::CloneYyjsonValue(single_change);
+        }
+        yyjson::value request(Das::Utils::MakeYyjsonObject());
+        auto          request_object = request.as_object();
+        if (single_object->contains(std::string_view("baseRevision")))
+        {
+            auto base_revision =
+                (*single_object)[std::string_view("baseRevision")].as_sint();
+            if (base_revision.has_value())
+            {
+                (*request_object)[std::string_view("baseRevision")] =
+                    *base_revision;
+            }
+        }
+        yyjson::value element(Das::Utils::MakeYyjsonObject());
+        auto          element_object = element.as_object();
+        if (single_object->contains(std::string_view("kind")))
+        {
+            auto kind = (*single_object)[std::string_view("kind")].as_string();
+            if (kind.has_value())
+            {
+                (*element_object)[std::string_view("kind")] = std::make_pair(
+                    std::string_view(*kind),
+                    yyjson::copy_string);
+            }
+        }
+        if (single_object->contains(std::string_view("payload")))
+        {
+            (*element_object)[std::string_view("payload")] =
+                Das::Utils::CloneYyjsonValue(
+                    (*single_object)[std::string_view("payload")]);
+        }
+        auto changes = Das::Utils::MakeYyjsonArray();
+        (*changes.as_array()).emplace_back(std::move(element));
+        (*request_object)[std::string_view("changes")] = std::move(changes);
+        return request;
+    }
+
+    Das::Core::TaskScheduler::AuthoringValidationResult
+    ValidateBatchAuthoringChange(const yyjson::value& single_change)
+    {
+        return Das::Core::TaskScheduler::ValidateAuthoringChange(
+            AsBatchApplyRequest(single_change));
     }
 } // namespace
 
@@ -1049,7 +1104,7 @@ TEST(TaskAuthoringContractTest, ChangeRequiresBaseRevision)
         }
     })json");
 
-    auto result = Das::Core::TaskScheduler::ValidateAuthoringChange(change);
+    auto result = ValidateBatchAuthoringChange(change);
 
     EXPECT_FALSE(result.valid);
     EXPECT_EQ(result.error_kind, "missingField");
@@ -1096,7 +1151,7 @@ TEST(TaskAuthoringContractTest, SupportedChangeKindsPass)
             std::string{R"({"baseRevision":1,"kind":")"} + std::string{c.kind}
             + R"(","payload":)" + std::string{c.payload} + "}");
 
-        auto result = Das::Core::TaskScheduler::ValidateAuthoringChange(change);
+        auto result = ValidateBatchAuthoringChange(change);
 
         EXPECT_TRUE(result.valid) << c.kind << ": " << result.message;
     }
@@ -1121,7 +1176,7 @@ TEST(TaskAuthoringContractTest, ChangeRejectsOldKindAliases)
             std::string{R"({"baseRevision":1,"kind":")"} + std::string{kind}
             + R"(","payload":{}})");
 
-        auto result = Das::Core::TaskScheduler::ValidateAuthoringChange(change);
+        auto result = ValidateBatchAuthoringChange(change);
 
         EXPECT_FALSE(result.valid) << kind;
         EXPECT_EQ(result.error_kind, "unsupportedChange") << kind;
@@ -1142,7 +1197,7 @@ TEST(TaskAuthoringContractTest, SetValueTargetVariants)
             + "{\"target\":" + std::string{target}
             + R"(,"fieldName":"x","value":null}})");
 
-        auto result = Das::Core::TaskScheduler::ValidateAuthoringChange(change);
+        auto result = ValidateBatchAuthoringChange(change);
 
         EXPECT_TRUE(result.valid) << target << ": " << result.message;
     }
@@ -1160,7 +1215,7 @@ TEST(TaskAuthoringContractTest, SetValueRejectsInvalidTargetKind)
         }
     })json");
 
-    auto r = Das::Core::TaskScheduler::ValidateAuthoringChange(change);
+    auto r = ValidateBatchAuthoringChange(change);
     EXPECT_FALSE(r.valid);
     EXPECT_EQ(r.error_kind, "invalidTargetKind");
 }
@@ -1176,7 +1231,7 @@ TEST(TaskAuthoringContractTest, SetValueTargetRequiresIdForItemKind)
             "value": null
         }
     })json");
-    auto r1 = Das::Core::TaskScheduler::ValidateAuthoringChange(missing_id);
+    auto r1 = ValidateBatchAuthoringChange(missing_id);
     EXPECT_FALSE(r1.valid);
     EXPECT_EQ(r1.error_kind, "missingField");
 
@@ -1189,7 +1244,7 @@ TEST(TaskAuthoringContractTest, SetValueTargetRequiresIdForItemKind)
             "value": null
         }
     })json");
-    auto r2 = Das::Core::TaskScheduler::ValidateAuthoringChange(with_extra);
+    auto r2 = ValidateBatchAuthoringChange(with_extra);
     EXPECT_FALSE(r2.valid);
     EXPECT_EQ(r2.error_kind, "unknownField");
 }
@@ -1207,7 +1262,7 @@ TEST(TaskAuthoringContractTest, SetValueRejectsExtraPayloadField)
         }
     })json");
 
-    auto r = Das::Core::TaskScheduler::ValidateAuthoringChange(change);
+    auto r = ValidateBatchAuthoringChange(change);
     EXPECT_FALSE(r.valid);
     EXPECT_EQ(r.error_kind, "unknownField");
 }
@@ -1219,7 +1274,7 @@ TEST(TaskAuthoringContractTest, InvokeCommandPayloadStrict)
         "kind": "invokeCommand",
         "payload": {"commandId": "new-config"}
     })json");
-    auto r_ok = Das::Core::TaskScheduler::ValidateAuthoringChange(ok);
+    auto r_ok = ValidateBatchAuthoringChange(ok);
     EXPECT_TRUE(r_ok.valid) << r_ok.message;
 
     auto empty = ParseJson(R"json({
@@ -1227,7 +1282,7 @@ TEST(TaskAuthoringContractTest, InvokeCommandPayloadStrict)
         "kind": "invokeCommand",
         "payload": {"commandId": ""}
     })json");
-    auto r_empty = Das::Core::TaskScheduler::ValidateAuthoringChange(empty);
+    auto r_empty = ValidateBatchAuthoringChange(empty);
     EXPECT_FALSE(r_empty.valid);
     EXPECT_EQ(r_empty.error_kind, "invalidCommandId");
 
@@ -1236,7 +1291,7 @@ TEST(TaskAuthoringContractTest, InvokeCommandPayloadStrict)
         "kind": "invokeCommand",
         "payload": {"commandId": "x", "args": {}}
     })json");
-    auto r_extra = Das::Core::TaskScheduler::ValidateAuthoringChange(extra);
+    auto r_extra = ValidateBatchAuthoringChange(extra);
     EXPECT_FALSE(r_extra.valid);
     EXPECT_EQ(r_extra.error_kind, "unknownField");
 }
@@ -1248,7 +1303,7 @@ TEST(TaskAuthoringContractTest, ConvertViewPayloadStrict)
         "kind": "convertView",
         "payload": {"targetViewKind": "graph"}
     })json");
-    auto r_ok = Das::Core::TaskScheduler::ValidateAuthoringChange(ok);
+    auto r_ok = ValidateBatchAuthoringChange(ok);
     EXPECT_TRUE(r_ok.valid) << r_ok.message;
 
     auto bad = ParseJson(R"json({
@@ -1256,7 +1311,7 @@ TEST(TaskAuthoringContractTest, ConvertViewPayloadStrict)
         "kind": "convertView",
         "payload": {"targetViewKind": "custom"}
     })json");
-    auto r_bad = Das::Core::TaskScheduler::ValidateAuthoringChange(bad);
+    auto r_bad = ValidateBatchAuthoringChange(bad);
     EXPECT_FALSE(r_bad.valid);
     EXPECT_EQ(r_bad.error_kind, "unsupportedViewKind");
 }
@@ -1268,7 +1323,7 @@ TEST(TaskAuthoringContractTest, FormSequenceItemChangePayloadsStrict)
         "kind": "addFormSequenceItem",
         "payload": {"actionId": "A", "insertionIndex": 3}
     })json");
-    auto r1 = Das::Core::TaskScheduler::ValidateAuthoringChange(add_with_index);
+    auto r1 = ValidateBatchAuthoringChange(add_with_index);
     EXPECT_TRUE(r1.valid) << r1.message;
 
     auto move = ParseJson(R"json({
@@ -1276,7 +1331,7 @@ TEST(TaskAuthoringContractTest, FormSequenceItemChangePayloadsStrict)
         "kind": "moveFormSequenceItem",
         "payload": {"formSequenceItemId": "i-1", "destinationIndex": 0}
     })json");
-    auto r2 = Das::Core::TaskScheduler::ValidateAuthoringChange(move);
+    auto r2 = ValidateBatchAuthoringChange(move);
     EXPECT_TRUE(r2.valid) << r2.message;
 
     auto remove = ParseJson(R"json({
@@ -1284,7 +1339,7 @@ TEST(TaskAuthoringContractTest, FormSequenceItemChangePayloadsStrict)
         "kind": "removeFormSequenceItem",
         "payload": {"formSequenceItemId": "i-1"}
     })json");
-    auto r3 = Das::Core::TaskScheduler::ValidateAuthoringChange(remove);
+    auto r3 = ValidateBatchAuthoringChange(remove);
     EXPECT_TRUE(r3.valid) << r3.message;
 
     auto add_extra = ParseJson(R"json({
@@ -1292,7 +1347,7 @@ TEST(TaskAuthoringContractTest, FormSequenceItemChangePayloadsStrict)
         "kind": "addFormSequenceItem",
         "payload": {"actionId": "A", "itemId": "legacy"}
     })json");
-    auto r4 = Das::Core::TaskScheduler::ValidateAuthoringChange(add_extra);
+    auto r4 = ValidateBatchAuthoringChange(add_extra);
     EXPECT_FALSE(r4.valid);
     EXPECT_EQ(r4.error_kind, "unknownField");
 }
@@ -1304,7 +1359,7 @@ TEST(TaskAuthoringContractTest, GraphNodeChangePayloadsStrict)
         "kind": "addGraphNode",
         "payload": {"actionId": "A"}
     })json");
-    auto r1 = Das::Core::TaskScheduler::ValidateAuthoringChange(add);
+    auto r1 = ValidateBatchAuthoringChange(add);
     EXPECT_TRUE(r1.valid) << r1.message;
 
     auto remove = ParseJson(R"json({
@@ -1312,7 +1367,7 @@ TEST(TaskAuthoringContractTest, GraphNodeChangePayloadsStrict)
         "kind": "removeGraphNode",
         "payload": {"nodeId": "n-1"}
     })json");
-    auto r2 = Das::Core::TaskScheduler::ValidateAuthoringChange(remove);
+    auto r2 = ValidateBatchAuthoringChange(remove);
     EXPECT_TRUE(r2.valid) << r2.message;
 
     auto connect = ParseJson(R"json({
@@ -1323,7 +1378,7 @@ TEST(TaskAuthoringContractTest, GraphNodeChangePayloadsStrict)
             "toNodeId": "b", "toPortId": "p2"
         }
     })json");
-    auto r3 = Das::Core::TaskScheduler::ValidateAuthoringChange(connect);
+    auto r3 = ValidateBatchAuthoringChange(connect);
     EXPECT_TRUE(r3.valid) << r3.message;
 
     auto disconnect = ParseJson(R"json({
@@ -1334,7 +1389,7 @@ TEST(TaskAuthoringContractTest, GraphNodeChangePayloadsStrict)
             "toNodeId": "b", "toPortId": "p2"
         }
     })json");
-    auto r4 = Das::Core::TaskScheduler::ValidateAuthoringChange(disconnect);
+    auto r4 = ValidateBatchAuthoringChange(disconnect);
     EXPECT_TRUE(r4.valid) << r4.message;
 }
 
@@ -1348,7 +1403,7 @@ TEST(TaskAuthoringContractTest, MoveGraphNodeChangePayloadStrict)
         "kind": "moveGraphNode",
         "payload": {"nodeId": "n1", "position": {"x": 1.5, "y": 2.5}}
     })json");
-    auto r_ok = Das::Core::TaskScheduler::ValidateAuthoringChange(ok);
+    auto r_ok = ValidateBatchAuthoringChange(ok);
     EXPECT_TRUE(r_ok.valid) << r_ok.message;
 
     // 整数格式坐标等价放行（C# 序列化器把 100.0 写成 100）。
@@ -1357,8 +1412,7 @@ TEST(TaskAuthoringContractTest, MoveGraphNodeChangePayloadStrict)
         "kind": "moveGraphNode",
         "payload": {"nodeId": "n1", "position": {"x": 30, "y": -40}}
     })json");
-    auto r_integers =
-        Das::Core::TaskScheduler::ValidateAuthoringChange(integer_coordinates);
+    auto r_integers = ValidateBatchAuthoringChange(integer_coordinates);
     EXPECT_TRUE(r_integers.valid) << r_integers.message;
 
     auto extra_payload_key = ParseJson(R"json({
@@ -1370,8 +1424,7 @@ TEST(TaskAuthoringContractTest, MoveGraphNodeChangePayloadStrict)
             "extra": true
         }
     })json");
-    auto r_extra =
-        Das::Core::TaskScheduler::ValidateAuthoringChange(extra_payload_key);
+    auto r_extra = ValidateBatchAuthoringChange(extra_payload_key);
     EXPECT_FALSE(r_extra.valid);
     EXPECT_EQ(r_extra.error_kind, "unknownField");
 
@@ -1380,8 +1433,7 @@ TEST(TaskAuthoringContractTest, MoveGraphNodeChangePayloadStrict)
         "kind": "moveGraphNode",
         "payload": {"nodeId": "", "position": {"x": 1.5, "y": 2.5}}
     })json");
-    auto r_empty =
-        Das::Core::TaskScheduler::ValidateAuthoringChange(empty_node_id);
+    auto r_empty = ValidateBatchAuthoringChange(empty_node_id);
     EXPECT_FALSE(r_empty.valid);
     EXPECT_EQ(r_empty.error_kind, "invalidNodeId");
 
@@ -1390,8 +1442,7 @@ TEST(TaskAuthoringContractTest, MoveGraphNodeChangePayloadStrict)
         "kind": "moveGraphNode",
         "payload": {"position": {"x": 1.5, "y": 2.5}}
     })json");
-    auto r_missing =
-        Das::Core::TaskScheduler::ValidateAuthoringChange(missing_node_id);
+    auto r_missing = ValidateBatchAuthoringChange(missing_node_id);
     EXPECT_FALSE(r_missing.valid);
     EXPECT_EQ(r_missing.error_kind, "missingField");
 
@@ -1400,8 +1451,7 @@ TEST(TaskAuthoringContractTest, MoveGraphNodeChangePayloadStrict)
         "kind": "moveGraphNode",
         "payload": {"nodeId": "n1", "position": {"x": "1.5", "y": 2.5}}
     })json");
-    auto r_string =
-        Das::Core::TaskScheduler::ValidateAuthoringChange(string_coordinate);
+    auto r_string = ValidateBatchAuthoringChange(string_coordinate);
     EXPECT_FALSE(r_string.valid);
     EXPECT_EQ(r_string.error_kind, "invalidPosition");
 
@@ -1411,7 +1461,7 @@ TEST(TaskAuthoringContractTest, MoveGraphNodeChangePayloadStrict)
         "payload": {"nodeId": "n1", "position": {"y": 2.5}}
     })json");
     auto r_missing_coordinate =
-        Das::Core::TaskScheduler::ValidateAuthoringChange(missing_coordinate);
+        ValidateBatchAuthoringChange(missing_coordinate);
     EXPECT_FALSE(r_missing_coordinate.valid);
     EXPECT_EQ(r_missing_coordinate.error_kind, "missingField");
 
@@ -1421,8 +1471,7 @@ TEST(TaskAuthoringContractTest, MoveGraphNodeChangePayloadStrict)
         "kind": "moveGraphNode",
         "payload": {"nodeId": "n1", "position": {"x": Infinity, "y": 2.5}}
     })json");
-    auto r_infinite =
-        Das::Core::TaskScheduler::ValidateAuthoringChange(infinite_coordinate);
+    auto r_infinite = ValidateBatchAuthoringChange(infinite_coordinate);
     EXPECT_FALSE(r_infinite.valid);
     EXPECT_EQ(r_infinite.error_kind, "invalidPosition");
 
@@ -1431,8 +1480,7 @@ TEST(TaskAuthoringContractTest, MoveGraphNodeChangePayloadStrict)
         "kind": "moveGraphNode",
         "payload": {"nodeId": "n1", "position": {"x": 1.5, "y": 2.5, "z": 0}}
     })json");
-    auto r_extra_position =
-        Das::Core::TaskScheduler::ValidateAuthoringChange(extra_position_key);
+    auto r_extra_position = ValidateBatchAuthoringChange(extra_position_key);
     EXPECT_FALSE(r_extra_position.valid);
     EXPECT_EQ(r_extra_position.error_kind, "unknownField");
 }
@@ -1453,7 +1501,7 @@ TEST(TaskAuthoringContractTest, RemoveGraphNodesChangePayloadStrict)
             ]
         }
     })json");
-    auto r_ok = Das::Core::TaskScheduler::ValidateAuthoringChange(ok);
+    auto r_ok = ValidateBatchAuthoringChange(ok);
     EXPECT_TRUE(r_ok.valid) << r_ok.message;
 
     // nodeIds 单独出现（不带 connections）合法。
@@ -1462,8 +1510,7 @@ TEST(TaskAuthoringContractTest, RemoveGraphNodesChangePayloadStrict)
         "kind": "removeGraphNodes",
         "payload": {"nodeIds": ["a"]}
     })json");
-    auto r_node_ids_only =
-        Das::Core::TaskScheduler::ValidateAuthoringChange(node_ids_only);
+    auto r_node_ids_only = ValidateBatchAuthoringChange(node_ids_only);
     EXPECT_TRUE(r_node_ids_only.valid) << r_node_ids_only.message;
 
     // connections 单独出现（连线批量删除，端点节点保留）合法。
@@ -1477,8 +1524,7 @@ TEST(TaskAuthoringContractTest, RemoveGraphNodesChangePayloadStrict)
             ]
         }
     })json");
-    auto r_connections_only =
-        Das::Core::TaskScheduler::ValidateAuthoringChange(connections_only);
+    auto r_connections_only = ValidateBatchAuthoringChange(connections_only);
     EXPECT_TRUE(r_connections_only.valid) << r_connections_only.message;
 
     // nodeIds 空数组且 connections 缺失 → 至少一项非空不成立。
@@ -1487,8 +1533,7 @@ TEST(TaskAuthoringContractTest, RemoveGraphNodesChangePayloadStrict)
         "kind": "removeGraphNodes",
         "payload": {"nodeIds": []}
     })json");
-    auto r_both_empty =
-        Das::Core::TaskScheduler::ValidateAuthoringChange(both_empty);
+    auto r_both_empty = ValidateBatchAuthoringChange(both_empty);
     EXPECT_FALSE(r_both_empty.valid);
     EXPECT_EQ(r_both_empty.error_kind, "invalidPayload");
 
@@ -1498,8 +1543,7 @@ TEST(TaskAuthoringContractTest, RemoveGraphNodesChangePayloadStrict)
         "kind": "removeGraphNodes",
         "payload": {"nodeIds": ["a", ""]}
     })json");
-    auto r_empty_node_id =
-        Das::Core::TaskScheduler::ValidateAuthoringChange(empty_node_id);
+    auto r_empty_node_id = ValidateBatchAuthoringChange(empty_node_id);
     EXPECT_FALSE(r_empty_node_id.valid);
     EXPECT_EQ(r_empty_node_id.error_kind, "invalidNodeId");
 
@@ -1509,8 +1553,7 @@ TEST(TaskAuthoringContractTest, RemoveGraphNodesChangePayloadStrict)
         "kind": "removeGraphNodes",
         "payload": {"nodeIds": ["a", 7]}
     })json");
-    auto r_non_string =
-        Das::Core::TaskScheduler::ValidateAuthoringChange(non_string_node_id);
+    auto r_non_string = ValidateBatchAuthoringChange(non_string_node_id);
     EXPECT_FALSE(r_non_string.valid);
     EXPECT_EQ(r_non_string.error_kind, "invalidNodeId");
 
@@ -1520,8 +1563,7 @@ TEST(TaskAuthoringContractTest, RemoveGraphNodesChangePayloadStrict)
         "kind": "removeGraphNodes",
         "payload": {"nodeIds": ["a", "a"]}
     })json");
-    auto r_duplicate =
-        Das::Core::TaskScheduler::ValidateAuthoringChange(duplicate_node_ids);
+    auto r_duplicate = ValidateBatchAuthoringChange(duplicate_node_ids);
     EXPECT_FALSE(r_duplicate.valid);
     EXPECT_EQ(r_duplicate.error_kind, "invalidPayload");
 
@@ -1536,8 +1578,7 @@ TEST(TaskAuthoringContractTest, RemoveGraphNodesChangePayloadStrict)
             ]
         }
     })json");
-    auto r_missing_key = Das::Core::TaskScheduler::ValidateAuthoringChange(
-        missing_connection_key);
+    auto r_missing_key = ValidateBatchAuthoringChange(missing_connection_key);
     EXPECT_FALSE(r_missing_key.valid);
     EXPECT_EQ(r_missing_key.error_kind, "missingField");
 
@@ -1553,8 +1594,7 @@ TEST(TaskAuthoringContractTest, RemoveGraphNodesChangePayloadStrict)
             ]
         }
     })json");
-    auto r_empty_value = Das::Core::TaskScheduler::ValidateAuthoringChange(
-        empty_connection_value);
+    auto r_empty_value = ValidateBatchAuthoringChange(empty_connection_value);
     EXPECT_FALSE(r_empty_value.valid);
     EXPECT_EQ(r_empty_value.error_kind, "missingField");
 
@@ -1564,8 +1604,7 @@ TEST(TaskAuthoringContractTest, RemoveGraphNodesChangePayloadStrict)
         "kind": "removeGraphNodes",
         "payload": {"nodeIds": [], "extra": 1}
     })json");
-    auto r_extra_key =
-        Das::Core::TaskScheduler::ValidateAuthoringChange(extra_key);
+    auto r_extra_key = ValidateBatchAuthoringChange(extra_key);
     EXPECT_FALSE(r_extra_key.valid);
     EXPECT_EQ(r_extra_key.error_kind, "unknownField");
 
@@ -1575,8 +1614,7 @@ TEST(TaskAuthoringContractTest, RemoveGraphNodesChangePayloadStrict)
         "kind": "removeGraphNodes",
         "payload": {"connections": []}
     })json");
-    auto r_missing_node_ids =
-        Das::Core::TaskScheduler::ValidateAuthoringChange(missing_node_ids);
+    auto r_missing_node_ids = ValidateBatchAuthoringChange(missing_node_ids);
     EXPECT_FALSE(r_missing_node_ids.valid);
     EXPECT_EQ(r_missing_node_ids.error_kind, "invalidPayload");
 }
@@ -1596,7 +1634,7 @@ TEST(TaskAuthoringContractTest, MoveGraphNodesChangePayloadStrict)
             ]
         }
     })json");
-    auto r_ok = Das::Core::TaskScheduler::ValidateAuthoringChange(ok);
+    auto r_ok = ValidateBatchAuthoringChange(ok);
     EXPECT_TRUE(r_ok.valid) << r_ok.message;
 
     auto empty_moves = ParseJson(R"json({
@@ -1604,8 +1642,7 @@ TEST(TaskAuthoringContractTest, MoveGraphNodesChangePayloadStrict)
         "kind": "moveGraphNodes",
         "payload": {"moves": []}
     })json");
-    auto r_empty_moves =
-        Das::Core::TaskScheduler::ValidateAuthoringChange(empty_moves);
+    auto r_empty_moves = ValidateBatchAuthoringChange(empty_moves);
     EXPECT_FALSE(r_empty_moves.valid);
     EXPECT_EQ(r_empty_moves.error_kind, "invalidPayload");
 
@@ -1614,8 +1651,7 @@ TEST(TaskAuthoringContractTest, MoveGraphNodesChangePayloadStrict)
         "kind": "moveGraphNodes",
         "payload": {}
     })json");
-    auto r_missing_moves =
-        Das::Core::TaskScheduler::ValidateAuthoringChange(missing_moves);
+    auto r_missing_moves = ValidateBatchAuthoringChange(missing_moves);
     EXPECT_FALSE(r_missing_moves.valid);
     EXPECT_EQ(r_missing_moves.error_kind, "missingField");
 
@@ -1630,8 +1666,7 @@ TEST(TaskAuthoringContractTest, MoveGraphNodesChangePayloadStrict)
             ]
         }
     })json");
-    auto r_duplicate =
-        Das::Core::TaskScheduler::ValidateAuthoringChange(duplicate_node_id);
+    auto r_duplicate = ValidateBatchAuthoringChange(duplicate_node_id);
     EXPECT_FALSE(r_duplicate.valid);
     EXPECT_EQ(r_duplicate.error_kind, "invalidPayload");
 
@@ -1643,8 +1678,7 @@ TEST(TaskAuthoringContractTest, MoveGraphNodesChangePayloadStrict)
             "moves": [{"nodeId": "a", "position": {"x": "1.5", "y": 2}}]
         }
     })json");
-    auto r_string =
-        Das::Core::TaskScheduler::ValidateAuthoringChange(string_coordinate);
+    auto r_string = ValidateBatchAuthoringChange(string_coordinate);
     EXPECT_FALSE(r_string.valid);
     EXPECT_EQ(r_string.error_kind, "invalidPosition");
 
@@ -1656,8 +1690,7 @@ TEST(TaskAuthoringContractTest, MoveGraphNodesChangePayloadStrict)
             "moves": [{"nodeId": "a", "position": {"x": Infinity, "y": 2}}]
         }
     })json");
-    auto r_infinite =
-        Das::Core::TaskScheduler::ValidateAuthoringChange(infinite_coordinate);
+    auto r_infinite = ValidateBatchAuthoringChange(infinite_coordinate);
     EXPECT_FALSE(r_infinite.valid);
     EXPECT_EQ(r_infinite.error_kind, "invalidPosition");
 
@@ -1667,8 +1700,7 @@ TEST(TaskAuthoringContractTest, MoveGraphNodesChangePayloadStrict)
         "kind": "moveGraphNodes",
         "payload": {"moves": [{"nodeId": "a"}]}
     })json");
-    auto r_missing_position =
-        Das::Core::TaskScheduler::ValidateAuthoringChange(missing_position);
+    auto r_missing_position = ValidateBatchAuthoringChange(missing_position);
     EXPECT_FALSE(r_missing_position.valid);
     EXPECT_EQ(r_missing_position.error_kind, "missingField");
 
@@ -1682,8 +1714,7 @@ TEST(TaskAuthoringContractTest, MoveGraphNodesChangePayloadStrict)
             ]
         }
     })json");
-    auto r_extra_move_key =
-        Das::Core::TaskScheduler::ValidateAuthoringChange(extra_move_key);
+    auto r_extra_move_key = ValidateBatchAuthoringChange(extra_move_key);
     EXPECT_FALSE(r_extra_move_key.valid);
     EXPECT_EQ(r_extra_move_key.error_kind, "unknownField");
 
@@ -1694,8 +1725,7 @@ TEST(TaskAuthoringContractTest, MoveGraphNodesChangePayloadStrict)
         "payload": {"moves": [{"nodeId": "a", "position": {"x": 1, "y": 2}}],
                     "extra": 1}
     })json");
-    auto r_extra_top_key =
-        Das::Core::TaskScheduler::ValidateAuthoringChange(extra_top_key);
+    auto r_extra_top_key = ValidateBatchAuthoringChange(extra_top_key);
     EXPECT_FALSE(r_extra_top_key.valid);
     EXPECT_EQ(r_extra_top_key.error_kind, "unknownField");
 }
@@ -1712,64 +1742,62 @@ TEST(TaskAuthoringContractTest, RenameGraphNodeChangePayloadStrict)
             + std::string{payload} + "}");
     };
 
-    auto r_ok = Das::Core::TaskScheduler::ValidateAuthoringChange(
+    auto r_ok = ValidateBatchAuthoringChange(
         make_change(R"({"nodeId":"n_0","label":"我的延迟节点"})"));
     EXPECT_TRUE(r_ok.valid) << r_ok.message;
 
     // 恰 200 字节的 label 放行（上限含）。
     const std::string label_at_limit(200, 'a');
-    auto r_at_limit = Das::Core::TaskScheduler::ValidateAuthoringChange(
+    auto              r_at_limit = ValidateBatchAuthoringChange(
         make_change(R"({"nodeId":"n_0","label":")" + label_at_limit + R"("})"));
     EXPECT_TRUE(r_at_limit.valid) << r_at_limit.message;
 
     // 201 字节拒绝（防无界文本入档）。
     const std::string label_over_limit(201, 'a');
-    auto              r_over_limit =
-        Das::Core::TaskScheduler::ValidateAuthoringChange(make_change(
-            R"({"nodeId":"n_0","label":")" + label_over_limit + R"("})"));
+    auto              r_over_limit = ValidateBatchAuthoringChange(make_change(
+        R"({"nodeId":"n_0","label":")" + label_over_limit + R"("})"));
     EXPECT_FALSE(r_over_limit.valid);
     EXPECT_EQ(r_over_limit.error_kind, "invalidPayload");
 
-    auto r_missing_node_id = Das::Core::TaskScheduler::ValidateAuthoringChange(
-        make_change(R"({"label":"名字"})"));
+    auto r_missing_node_id =
+        ValidateBatchAuthoringChange(make_change(R"({"label":"名字"})"));
     EXPECT_FALSE(r_missing_node_id.valid);
     EXPECT_EQ(r_missing_node_id.error_kind, "missingField");
 
-    auto r_empty_node_id = Das::Core::TaskScheduler::ValidateAuthoringChange(
+    auto r_empty_node_id = ValidateBatchAuthoringChange(
         make_change(R"({"nodeId":"","label":"名字"})"));
     EXPECT_FALSE(r_empty_node_id.valid);
     EXPECT_EQ(r_empty_node_id.error_kind, "invalidNodeId");
 
-    auto r_non_string_node_id =
-        Das::Core::TaskScheduler::ValidateAuthoringChange(
-            make_change(R"({"nodeId":7,"label":"名字"})"));
+    auto r_non_string_node_id = ValidateBatchAuthoringChange(
+        make_change(R"({"nodeId":7,"label":"名字"})"));
     EXPECT_FALSE(r_non_string_node_id.valid);
     EXPECT_EQ(r_non_string_node_id.error_kind, "missingField");
 
-    auto r_missing_label = Das::Core::TaskScheduler::ValidateAuthoringChange(
-        make_change(R"({"nodeId":"n_0"})"));
+    auto r_missing_label =
+        ValidateBatchAuthoringChange(make_change(R"({"nodeId":"n_0"})"));
     EXPECT_FALSE(r_missing_label.valid);
     EXPECT_EQ(r_missing_label.error_kind, "missingField");
 
-    auto r_empty_label = Das::Core::TaskScheduler::ValidateAuthoringChange(
+    auto r_empty_label = ValidateBatchAuthoringChange(
         make_change(R"({"nodeId":"n_0","label":""})"));
     EXPECT_FALSE(r_empty_label.valid);
     EXPECT_EQ(r_empty_label.error_kind, "invalidPayload");
 
-    auto r_non_string_label = Das::Core::TaskScheduler::ValidateAuthoringChange(
+    auto r_non_string_label = ValidateBatchAuthoringChange(
         make_change(R"({"nodeId":"n_0","label":42})"));
     EXPECT_FALSE(r_non_string_label.valid);
     EXPECT_EQ(r_non_string_label.error_kind, "missingField");
 
-    auto r_extra_key = Das::Core::TaskScheduler::ValidateAuthoringChange(
+    auto r_extra_key = ValidateBatchAuthoringChange(
         make_change(R"({"nodeId":"n_0","label":"名字","extra":1})"));
     EXPECT_FALSE(r_extra_key.valid);
     EXPECT_EQ(r_extra_key.error_kind, "unknownField");
 
     // 非对象 payload 在信封层被拒（HasObjectField "payload required"，
     // 与其余 kind 同路径），到不了 per-kind 校验器。
-    auto r_non_object = Das::Core::TaskScheduler::ValidateAuthoringChange(
-        make_change(R"(["n_0","名字"])"));
+    auto r_non_object =
+        ValidateBatchAuthoringChange(make_change(R"(["n_0","名字"])"));
     EXPECT_FALSE(r_non_object.valid);
     EXPECT_EQ(r_non_object.error_kind, "missingField");
 }
@@ -2421,9 +2449,269 @@ TEST(TaskAuthoringContractTest, ChangeRejectsOpWrapper)
         "change": {"op": "setValue", "path": "x"}
     })json");
 
-    auto r = Das::Core::TaskScheduler::ValidateAuthoringChange(change);
+    auto r = ValidateBatchAuthoringChange(change);
     EXPECT_FALSE(r.valid);
     EXPECT_EQ(r.error_kind, "missingField");
+}
+
+// =============================================================================
+// 批量 apply 请求 wire：{baseRevision, changes:[{kind,payload},...]}。
+// 单 change 顶层形态（{baseRevision,kind,payload}）退役——项目未发布无
+// 兼容包袱，全量迁移 fail-closed。
+// =============================================================================
+
+TEST(TaskAuthoringContractTest, ApplyRequestAcceptsBatchChanges)
+{
+    auto multi = ParseJson(R"json({
+        "baseRevision": 4,
+        "changes": [
+            {"kind": "setValue", "payload": {
+                "target": {"kind": "document"},
+                "fieldName": "x",
+                "value": null}},
+            {"kind": "removeGraphNodes", "payload": {
+                "nodeIds": ["n-1", "n-2"]}}
+        ]
+    })json");
+    auto multi_result =
+        Das::Core::TaskScheduler::ValidateAuthoringChange(multi);
+    EXPECT_TRUE(multi_result.valid) << multi_result.message;
+
+    auto single = ParseJson(R"json({
+        "baseRevision": 4,
+        "changes": [
+            {"kind": "invokeCommand", "payload": {"commandId": "do-thing"}}
+        ]
+    })json");
+    auto single_result =
+        Das::Core::TaskScheduler::ValidateAuthoringChange(single);
+    EXPECT_TRUE(single_result.valid) << single_result.message;
+}
+
+TEST(TaskAuthoringContractTest, ApplyRequestRejectsLegacySingleChangeShape)
+{
+    auto legacy = ParseJson(R"json({
+        "baseRevision": 4,
+        "kind": "setValue",
+        "payload": {
+            "target": {"kind": "document"},
+            "fieldName": "x",
+            "value": null
+        }
+    })json");
+
+    auto result = Das::Core::TaskScheduler::ValidateAuthoringChange(legacy);
+    EXPECT_FALSE(result.valid);
+}
+
+TEST(TaskAuthoringContractTest, ApplyRequestRejectsMalformedChangesArray)
+{
+    auto missing = ParseJson(R"json({"baseRevision": 4})json");
+    auto missing_result =
+        Das::Core::TaskScheduler::ValidateAuthoringChange(missing);
+    EXPECT_FALSE(missing_result.valid);
+    EXPECT_EQ(missing_result.error_kind, "missingField");
+
+    auto not_array = ParseJson(
+        R"json({"baseRevision": 4, "changes": {"kind": "setValue"}})json");
+    auto not_array_result =
+        Das::Core::TaskScheduler::ValidateAuthoringChange(not_array);
+    EXPECT_FALSE(not_array_result.valid);
+
+    auto empty = ParseJson(R"json({"baseRevision": 4, "changes": []})json");
+    auto empty_result =
+        Das::Core::TaskScheduler::ValidateAuthoringChange(empty);
+    EXPECT_FALSE(empty_result.valid);
+    EXPECT_EQ(empty_result.error_kind, "invalidChanges");
+}
+
+TEST(TaskAuthoringContractTest, ApplyRequestRejectsTooManyChanges)
+{
+    auto request = ParseJson(R"json({"baseRevision": 0, "changes": []})json");
+    auto changes_array = request.as_object();
+    (*changes_array)[std::string_view("changes")] = []()
+    {
+        auto          changes = Das::Utils::MakeYyjsonArray();
+        auto          array_view = changes.as_array();
+        yyjson::value element(Das::Utils::MakeYyjsonObject());
+        auto          element_object = element.as_object();
+        (*element_object)[std::string_view("kind")] = std::make_pair(
+            std::string_view("moveGraphNode"),
+            yyjson::copy_string);
+        yyjson::value payload(Das::Utils::MakeYyjsonObject());
+        (*payload.as_object())[std::string_view("nodeId")] =
+            std::make_pair(std::string_view("n_1"), yyjson::copy_string);
+        yyjson::value position(Das::Utils::MakeYyjsonObject());
+        (*position.as_object())[std::string_view("x")] = 1.0;
+        (*position.as_object())[std::string_view("y")] = 2.0;
+        (*payload.as_object())[std::string_view("position")] =
+            std::move(position);
+        (*element_object)[std::string_view("payload")] = std::move(payload);
+        const std::size_t total =
+            Das::Core::TaskScheduler::kMaxAuthoringApplyChanges + 1;
+        for (std::size_t index = 0; index < total; ++index)
+        {
+            array_view->emplace_back(Das::Utils::CloneYyjsonValue(element));
+        }
+        return changes;
+    }();
+
+    auto result = Das::Core::TaskScheduler::ValidateAuthoringChange(request);
+    EXPECT_FALSE(result.valid);
+    EXPECT_EQ(result.error_kind, "tooManyChanges");
+}
+
+TEST(TaskAuthoringContractTest, ApplyRequestRejectsUnknownKeyInChangeElement)
+{
+    auto with_extra = ParseJson(R"json({
+        "baseRevision": 4,
+        "changes": [
+            {"kind": "setValue", "payload": {
+                "target": {"kind": "document"},
+                "fieldName": "x",
+                "value": null},
+             "baseRevision": 0}
+        ]
+    })json");
+
+    auto result = Das::Core::TaskScheduler::ValidateAuthoringChange(with_extra);
+    EXPECT_FALSE(result.valid);
+    EXPECT_EQ(result.error_kind, "unknownField");
+}
+
+TEST(TaskAuthoringContractTest, ApplyRequestRejectsNonObjectChangeElement)
+{
+    auto with_scalar =
+        ParseJson(R"json({"baseRevision": 4, "changes": ["setValue"]})json");
+
+    auto result =
+        Das::Core::TaskScheduler::ValidateAuthoringChange(with_scalar);
+    EXPECT_FALSE(result.valid);
+    EXPECT_EQ(result.error_kind, "invalidChange");
+}
+
+// 批量 revision 不变量：成功域为 [base + (存在 bump change ? 1 : 0),
+// base + bump change 数]（每个语义 change 恰 +1，viewData 轻量通道 0）；
+// 失败 envelope 恒 == base。
+TEST(TaskAuthoringContractTest, BatchApplyResultAcceptsMultiBumpDomain)
+{
+    const auto make_result = [](int64_t revision)
+    {
+        return ParseJson(
+            std::string{R"json({
+            "acceptedProperties": {},
+            "document": {
+                "contractVersion": 1,
+                "viewKind": "graph",
+                "revision": )json"}
+            + std::to_string(revision) + R"json(
+            },
+            "diagnostics": []
+        })json");
+    };
+
+    // 双 bump 批（setValue + addGraphNode）：base+2 合法，base+1 落在域内
+    // （对应混合批的单 bump 场景），base+3 超出 base+len 不合法。
+    const std::vector<std::string> two_bumping_kinds{
+        "setValue",
+        "addGraphNode"};
+    auto at_two_bumps = Das::Core::TaskScheduler::ValidateAuthoringApplyResult(
+        make_result(6),
+        4,
+        two_bumping_kinds);
+    EXPECT_TRUE(at_two_bumps.valid) << at_two_bumps.message;
+
+    const std::vector<std::string> one_bumping_kinds{
+        "setValue",
+        "moveGraphNodes"};
+    auto at_one_bump = Das::Core::TaskScheduler::ValidateAuthoringApplyResult(
+        make_result(5),
+        4,
+        one_bumping_kinds);
+    EXPECT_TRUE(at_one_bump.valid) << at_one_bump.message;
+
+    auto beyond_budget = Das::Core::TaskScheduler::ValidateAuthoringApplyResult(
+        make_result(7),
+        4,
+        two_bumping_kinds);
+    EXPECT_FALSE(beyond_budget.valid);
+    EXPECT_EQ(beyond_budget.error_kind, "revisionMismatch");
+}
+
+TEST(TaskAuthoringContractTest, BatchApplyResultPureViewDataBatchKeepsBase)
+{
+    const std::vector<std::string> view_data_kinds{
+        "moveGraphNode",
+        "moveGraphNodes"};
+    auto at_base = ParseJson(R"json({
+        "acceptedProperties": {},
+        "document": {
+            "contractVersion": 1,
+            "viewKind": "graph",
+            "revision": 4
+        },
+        "diagnostics": []
+    })json");
+    auto base_result = Das::Core::TaskScheduler::ValidateAuthoringApplyResult(
+        at_base,
+        4,
+        view_data_kinds);
+    EXPECT_TRUE(base_result.valid) << base_result.message;
+
+    auto bumped = ParseJson(R"json({
+        "acceptedProperties": {},
+        "document": {
+            "contractVersion": 1,
+            "viewKind": "graph",
+            "revision": 5
+        },
+        "diagnostics": []
+    })json");
+    auto bumped_result = Das::Core::TaskScheduler::ValidateAuthoringApplyResult(
+        bumped,
+        4,
+        view_data_kinds);
+    EXPECT_FALSE(bumped_result.valid);
+    EXPECT_EQ(bumped_result.error_kind, "revisionMismatch");
+}
+
+TEST(TaskAuthoringContractTest, BatchApplyResultFailureKeepsBaseRevision)
+{
+    const std::vector<std::string> kinds{"setValue", "addGraphNode"};
+    auto                           failed_at_base = ParseJson(R"json({
+        "acceptedProperties": {},
+        "document": {
+            "contractVersion": 1,
+            "viewKind": "graph",
+            "revision": 4
+        },
+        "diagnostics": [
+            {"severity": "error", "message": "unknown nodeId"}
+        ]
+    })json");
+    auto base_result = Das::Core::TaskScheduler::ValidateAuthoringApplyResult(
+        failed_at_base,
+        4,
+        kinds);
+    EXPECT_TRUE(base_result.valid) << base_result.message;
+
+    auto failed_beyond_base = ParseJson(R"json({
+        "acceptedProperties": {},
+        "document": {
+            "contractVersion": 1,
+            "viewKind": "graph",
+            "revision": 5
+        },
+        "diagnostics": [
+            {"severity": "error", "message": "unknown nodeId"}
+        ]
+    })json");
+    auto beyond_result = Das::Core::TaskScheduler::ValidateAuthoringApplyResult(
+        failed_beyond_base,
+        4,
+        kinds);
+    EXPECT_FALSE(beyond_result.valid);
+    EXPECT_EQ(beyond_result.error_kind, "revisionMismatch");
 }
 
 TEST(TaskAuthoringContractTest, AuthoringErrorUsesLowerCamelCase)
