@@ -1,4 +1,5 @@
 #include <das/Core/ForeignInterfaceHost/DasGuid.h>
+#include <das/Core/ForeignInterfaceHost/ErrorLensManager.h>
 #include <das/Core/ForeignInterfaceHost/ForeignInterfaceHost.h>
 #include <das/Core/ForeignInterfaceHost/PluginScanner.h>
 #include <das/Core/Logger/Logger.h>
@@ -12,6 +13,7 @@
 #include <das/Utils/CommonUtils.hpp>
 #include <das/Utils/DasJsonCore.h>
 #include <das/Utils/StringUtils.h>
+#include <das/_autogen/idl/abi/IDasLogRecorder.h>
 #include <das/_autogen/idl/abi/IDasPluginPackage.h>
 #include <das/_autogen/idl/abi/IDasTask.h>
 #include <das/_autogen/idl/abi/IDasTaskAuthoring.h>
@@ -4851,6 +4853,165 @@ namespace Das::Core::TaskScheduler
     // Timer and tick
     // ----------------------------------------------------------------
 
+    // 任务执行失败的用户可见出口：经 focus 渠道推 toast（错误说明文本），
+    // log 渠道随 recorder 落 user.jsonl。只挂 OnTick 的 Do 失败一处——
+    // 发射语义即"任务失败了"，成功路径零条目（非每 tick）。任何一步失败
+    // 都降级为 DAS_CORE_LOG_WARN，不阻塞调度。
+    static void EmitTaskFailureFocusToast(int64_t task_id, DasResult do_result)
+    {
+        // 主进程服务解析必须走 C ABI（in-process 快路径；inline
+        // thread_local 直读跨 DLL 分裂恒空）。
+        DAS::DasPtr<IDasBase> raw_object;
+        DasResult             hr = ::DasQueryMainProcessInterfaceByName(
+            "das.focus-log-recorder",
+            raw_object.Put());
+        if (DAS::IsFailed(hr) || !raw_object)
+        {
+            DAS_CORE_LOG_WARN(
+                "TaskFailureFocusToast: resolve das.focus-log-recorder "
+                "failed, result={} (task {})",
+                hr,
+                task_id);
+            return;
+        }
+        DAS::DasPtr<Das::ExportInterface::IDasProcessLogRecorder> recorder;
+        hr = raw_object.As(recorder.Put());
+        if (DAS::IsFailed(hr) || !recorder)
+        {
+            DAS_CORE_LOG_WARN(
+                "TaskFailureFocusToast: recorder interface cast failed, "
+                "result={} (task {})",
+                hr,
+                task_id);
+            return;
+        }
+
+        // 错误说明文本三级回落：ErrorLens 扫描按码人话 → Core 预定义表
+        // → 数值文本。locale 读进程级 GlobalLocale（与 catalog 构建同源）。
+        std::string message;
+        {
+            DAS::DasPtr<IDasReadOnlyString> locale_string;
+            if (DAS::IsFailed(::DasGetDefaultLocale(locale_string.Put())))
+            {
+                locale_string.Reset();
+            }
+            const auto* active_lens_manager =
+                Das::Core::ForeignInterfaceHost::GetActiveErrorLensManager();
+            if (active_lens_manager != nullptr)
+            {
+                auto lens_message = active_lens_manager->GetErrorMessageForCode(
+                    locale_string.Get(),
+                    do_result);
+                if (lens_message.has_value() && lens_message.value())
+                {
+                    const char* message_utf8 = nullptr;
+                    if (DAS::IsOk(lens_message.value()->GetUtf8(&message_utf8))
+                        && message_utf8 != nullptr && *message_utf8 != '\0')
+                    {
+                        message = message_utf8;
+                    }
+                }
+            }
+        }
+        if (message.empty())
+        {
+            DAS::DasPtr<IDasReadOnlyString> predefined_message;
+            if (DAS::IsOk(
+                    ::DasGetPredefinedErrorMessage(
+                        do_result,
+                        predefined_message.Put()))
+                && predefined_message)
+            {
+                const char* message_utf8 = nullptr;
+                if (DAS::IsOk(predefined_message->GetUtf8(&message_utf8))
+                    && message_utf8 != nullptr)
+                {
+                    message = message_utf8;
+                }
+            }
+        }
+        if (message.empty())
+        {
+            message = DAS_FMT_NS::format("result={}", do_result);
+        }
+        const std::string entry_text =
+            DAS_FMT_NS::format("{} (task {})", message, task_id);
+
+        // 条目构造照 MaaPi focus display 形态：type=error + 文本 +
+        // displayChannels ["toast","log"]（toast 推送 + log 渠道落盘）。
+        DAS::DasPtr<Das::ExportInterface::IDasLogEntry> entry;
+        hr = ::CreateIDasLogEntry(entry.Put());
+        if (DAS::IsFailed(hr) || !entry)
+        {
+            DAS_CORE_LOG_WARN(
+                "TaskFailureFocusToast: CreateIDasLogEntry failed, "
+                "result={} (task {})",
+                hr,
+                task_id);
+            return;
+        }
+        hr = entry->SetType(Das::ExportInterface::DAS_LOG_TYPE_ERROR);
+        if (DAS::IsFailed(hr))
+        {
+            DAS_CORE_LOG_WARN(
+                "TaskFailureFocusToast: SetType failed, result={} (task {})",
+                hr,
+                task_id);
+            return;
+        }
+        DasU8StringOnStack text_value{entry_text.c_str()};
+        hr = entry->AddText(&text_value);
+        if (DAS::IsFailed(hr))
+        {
+            DAS_CORE_LOG_WARN(
+                "TaskFailureFocusToast: AddText failed, result={} (task {})",
+                hr,
+                task_id);
+            return;
+        }
+        // channels JSON 构造照 FormatDisplayChannelsJson 产出形态（yyjson
+        // 数组 + copy_string，拷贝语义防悬挂）。
+        std::string display_channels_json;
+        {
+            auto channels_array = Das::Utils::MakeYyjsonArray();
+            auto array_ref = channels_array.as_array();
+            if (array_ref)
+            {
+                array_ref->emplace_back(
+                    std::string_view{"toast"},
+                    yyjson::copy_string);
+                array_ref->emplace_back(
+                    std::string_view{"log"},
+                    yyjson::copy_string);
+            }
+            auto serialized = Das::Utils::SerializeYyjsonValue(channels_array);
+            display_channels_json = serialized ? *serialized : "[]";
+        }
+        DasU8StringOnStack channels_key{"displayChannels"};
+        DasU8StringOnStack channels_value{display_channels_json.c_str()};
+        hr = entry->SetField(&channels_key, &channels_value);
+        if (DAS::IsFailed(hr))
+        {
+            DAS_CORE_LOG_WARN(
+                "TaskFailureFocusToast: SetField failed, result={} (task {})",
+                hr,
+                task_id);
+            return;
+        }
+
+        hr = recorder->Record(entry.Get());
+        if (DAS::IsFailed(hr))
+        {
+            // 降级兜底：recorder 失败时文本不进日志黑洞，落调试日志。
+            DAS_CORE_LOG_WARN(
+                "TaskFailureFocusToast: Record failed, result={} (task {}): "
+                "{}",
+                hr,
+                task_id,
+                entry_text);
+        }
+    }
+
     void SchedulerService::StartTickTimer(
         std::chrono::steady_clock::duration delay)
     {
@@ -5101,6 +5262,9 @@ namespace Das::Core::TaskScheduler
                     "SchedulerService::OnTick: task {} Do returned result={}",
                     selected_id,
                     do_result);
+                // 失败的用户可见出口：focus toast + log 渠道（内部自带
+                // 降级，失败不阻塞调度）。
+                EmitTaskFailureFocusToast(selected_id, do_result);
             }
         }
 

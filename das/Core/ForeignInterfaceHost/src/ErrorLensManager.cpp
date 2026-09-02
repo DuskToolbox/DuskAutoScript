@@ -324,6 +324,52 @@ auto ErrorLensManager::GetErrorMessage(
     return tl::make_unexpected(get_error_message_result);
 }
 
+auto ErrorLensManager::GetErrorMessageForCode(
+    IDasReadOnlyString* locale_name,
+    DasResult           error_code) const
+    -> DAS::Utils::Expected<DasPtr<IDasReadOnlyString>>
+{
+    // 一个 lens 可注册多个 guid 域：按裸指针去重，每个 lens 只问一次。
+    // 与 GetErrorMessage 同款锁纪律——锁内拷贝 DasPtr，逐域调用在锁外
+    // （不持管理器锁过 lens 调用，插件卸载并发安全）。
+    std::vector<DasPtr<PluginInterface::IDasErrorLens>> lenses;
+    {
+        const std::shared_lock lock{mutex_};
+        lenses.reserve(routes_.size());
+        for (const auto& [route_guid, route] : routes_)
+        {
+            (void)route_guid;
+            if (!route.lens)
+            {
+                continue;
+            }
+            const auto* raw = route.lens.Get();
+            const auto  already_snapshoted = std::any_of(
+                lenses.begin(),
+                lenses.end(),
+                [raw](const DasPtr<PluginInterface::IDasErrorLens>& snapshoted)
+                { return snapshoted.Get() == raw; });
+            if (!already_snapshoted)
+            {
+                lenses.push_back(route.lens);
+            }
+        }
+    }
+
+    for (const auto& lens : lenses)
+    {
+        DasPtr<IDasReadOnlyString> p_result{};
+        const auto                 get_error_message_result =
+            lens->GetErrorMessage(locale_name, error_code, p_result.Put());
+        if (IsOk(get_error_message_result) && p_result)
+        {
+            return p_result;
+        }
+    }
+
+    return tl::make_unexpected(DAS_E_OUT_OF_RANGE);
+}
+
 void SetActiveErrorLensManager(ErrorLensManager* p_manager)
 {
     Details::g_active_error_lens_manager.store(

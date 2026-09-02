@@ -54,6 +54,16 @@ public:
         IDasReadOnlyString* locale_name,
         DasResult           error_code) const
         -> DAS::Utils::Expected<DasPtr<IDasReadOnlyString>>;
+
+    /// Scan-style per-code lookup for callers that only know the numeric
+    /// error code (no type-guid routing): every registered lens domain gets
+    /// a chance to explain the code and the first hit wins; all-miss yields
+    /// DAS_E_OUT_OF_RANGE so the caller can fall back to the Core
+    /// predefined-message table.
+    auto GetErrorMessageForCode(
+        IDasReadOnlyString* locale_name,
+        DasResult           error_code) const
+        -> DAS::Utils::Expected<DasPtr<IDasReadOnlyString>>;
 };
 
 void              SetActiveErrorLensManager(ErrorLensManager* p_manager);
