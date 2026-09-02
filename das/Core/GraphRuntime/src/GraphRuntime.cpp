@@ -478,10 +478,31 @@ DasResult GraphRuntime::ExecuteNodeWithComponent(
 
     // 4. Call Do() directly with PortMap — no JSON conversion
     DAS::DasPtr<IDasPortMap> output_portmap;
-    DasResult                hr = p_component->Do(
-        p_stop_token,
-        input_portmap.Get(),
-        output_portmap.Put());
+    DasResult                hr = DAS_E_FAIL;
+    try
+    {
+        hr = p_component->Do(
+            p_stop_token,
+            input_portmap.Get(),
+            output_portmap.Put());
+    }
+    catch (const std::exception& exception)
+    {
+        // 组件 Do 是插件边界：插件抛出的异常必须就地转错误码，不允许
+        // 穿透运行时击穿上层调度器状态机。
+        DAS_CORE_LOG_ERROR(
+            "IDasTaskComponent::Do() threw exception for node = {}: {}",
+            node_id,
+            exception.what());
+        return DAS_E_INTERNAL_FATAL_ERROR;
+    }
+    catch (...)
+    {
+        DAS_CORE_LOG_ERROR(
+            "IDasTaskComponent::Do() threw unknown exception for node = {}",
+            node_id);
+        return DAS_E_INTERNAL_FATAL_ERROR;
+    }
 
     if (DAS_S_OK != hr)
     {
@@ -495,8 +516,7 @@ DasResult GraphRuntime::ExecuteNodeWithComponent(
     // 5. Extract output PortMap → PortFrame
     if (output_portmap)
     {
-        auto guid = Das::Core::ForeignInterfaceHost::MakeDasGuid(node_id);
-        hr = ExtractOutputPortMap(output_portmap.Get(), guid, frame);
+        hr = ExtractOutputPortMap(output_portmap.Get(), node_id, frame);
         if (DAS_S_OK != hr)
         {
             DAS_CORE_LOG_ERROR(
@@ -741,12 +761,10 @@ DasResult GraphRuntime::RunSignalGated(
         state[n] = NState::Pending;
     }
 
-    auto guid_of = [](const std::string& id)
-    { return Das::Core::ForeignInterfaceHost::MakeDasGuid(id); };
     auto port_signaled = [&](const Dto::SignalRouteDto& r) -> bool
     {
         const auto* pv =
-            frame.Find(PortKey{guid_of(r.source_node_id), r.source_port_id});
+            frame.Find(PortKey{r.source_node_id, r.source_port_id});
         return pv != nullptr && pv->IsSignal();
     };
     auto can_decide = [&](const std::string& n) -> bool
@@ -855,8 +873,7 @@ DasResult GraphRuntime::RunSignalGated(
             std::string fired_head;
             for (const auto& be : back_edges_by_source[n])
             {
-                const auto* pv =
-                    frame.Find(PortKey{guid_of(n), be.source_port_id});
+                const auto* pv = frame.Find(PortKey{n, be.source_port_id});
                 if (pv != nullptr && pv->IsSignal())
                 {
                     fired_head = be.loop_head_node_id;
@@ -869,7 +886,7 @@ DasResult GraphRuntime::RunSignalGated(
                 // body
                 for (const auto& m : loop_scc[fired_head])
                 {
-                    frame.ClearSignalsByNode(guid_of(m));
+                    frame.ClearSignalsByNode(m);
                 }
                 state[fired_head] = NState::Pending;
                 for (const auto& m : loop_scc[fired_head])

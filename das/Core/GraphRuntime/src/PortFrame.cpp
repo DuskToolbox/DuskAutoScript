@@ -154,7 +154,7 @@ bool PortKey::operator!=(const PortKey& other) const noexcept
 
 std::size_t PortKeyHash::operator()(const PortKey& key) const noexcept
 {
-    auto h1 = std::hash<DasGuid>{}(key.node_id);
+    auto h1 = std::hash<std::string>{}(key.node_id);
     auto h2 = std::hash<std::string>{}(key.port_id);
     h1 ^= h2 + 0x9e3779b9 + (h1 << 6) + (h1 >> 2);
     return h1;
@@ -169,16 +169,16 @@ void PortFrame::Set(const PortKey& key, PortValue value)
     entries_.insert_or_assign(key, std::move(value));
 }
 
-void PortFrame::Set(DasGuid node_id, std::string port_id, PortValue value)
+void PortFrame::Set(std::string node_id, std::string port_id, PortValue value)
 {
-    Set(PortKey{node_id, std::move(port_id)}, std::move(value));
+    Set(PortKey{std::move(node_id), std::move(port_id)}, std::move(value));
 }
 
 bool PortFrame::Remove(const PortKey& key) { return entries_.erase(key) > 0; }
 
 void PortFrame::Clear() noexcept { entries_.clear(); }
 
-std::size_t PortFrame::ClearSignalsByNode(DasGuid node_id)
+std::size_t PortFrame::ClearSignalsByNode(const std::string& node_id)
 {
     std::size_t removed = 0;
     for (auto it = entries_.begin(); it != entries_.end();)

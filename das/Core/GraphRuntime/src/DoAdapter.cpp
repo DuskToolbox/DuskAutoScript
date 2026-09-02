@@ -1,6 +1,5 @@
 #include <das/Core/GraphRuntime/DoAdapter.h>
 
-#include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/Core/Utils/DasJsonImpl.h>
 #include <das/DasPtr.hpp>
@@ -110,7 +109,7 @@ namespace
     DasResult PortMapEntryToPortValue(
         IDasPortMap*       map,
         const std::string& port_id,
-        DasGuid            node_id,
+        const std::string& node_id,
         PortFrame&         frame)
     {
         const DasReadOnlyString key_str{port_id.c_str()};
@@ -244,7 +243,7 @@ namespace
     /// absent (no signals emitted is the common, non-control-flow case).
     DasResult ExtractEmittedSignals(
         Das::ExportInterface::IDasPortMap* map,
-        DasGuid                            node_id,
+        const std::string&                 node_id,
         PortFrame&                         frame)
     {
         const DasReadOnlyString key{std::string{EMITTED_SIGNALS_KEY}.c_str()};
@@ -371,9 +370,9 @@ DasResult BuildInputPortMap(
     for (const auto& binding : bindings)
     {
         // Broadcast (graph-input) binding: materialise from its declared
-        // default_value — there is no upstream node to read from the frame, and
-        // MakeDasGuid would reject the sentinel string. (DAS-75 graph_inputs
-        // broadcast injection.)
+        // default_value — the sentinel source marks no real upstream node,
+        // so there is no frame entry to read. (DAS-75 graph_inputs broadcast
+        // injection.)
         if (binding.source_node_id == std::string{BROADCAST_SOURCE})
         {
             const DasResult r = SetDefaultFromYyjson(
@@ -391,12 +390,11 @@ DasResult BuildInputPortMap(
             continue;
         }
 
-        // Convert string node_id → DasGuid and look up the source value.
-        const auto source_node = DAS::Core::ForeignInterfaceHost::MakeDasGuid(
-            binding.source_node_id);
-
-        const PortKey source_key{source_node, binding.source_port_id};
-        const auto*   pv = frame.Find(source_key);
+        // Look up the source value in the frame by string node key.
+        const PortKey source_key{
+            binding.source_node_id,
+            binding.source_port_id};
+        const auto* pv = frame.Find(source_key);
         if (pv == nullptr)
         {
             DAS_CORE_LOG_WARN(
@@ -426,7 +424,7 @@ DasResult BuildInputPortMap(
 
 DasResult ExtractOutputPortMap(
     Das::ExportInterface::IDasPortMap* output_map,
-    DasGuid                            node_id,
+    const std::string&                 node_id,
     PortFrame&                         frame)
 {
     if (output_map == nullptr)

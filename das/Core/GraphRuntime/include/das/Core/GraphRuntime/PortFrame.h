@@ -11,7 +11,6 @@
 #include <vector>
 
 #include <cpp_yyjson.hpp>
-#include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/Core/GraphRuntime/Config.h>
 #include <das/DasPtr.hpp>
 
@@ -154,10 +153,13 @@ private:
 
 // ---------------------------------------------------------------------------
 // PortKey — composite key (node_id, port_id) for the frame map
+//
+// node_id 是 authoring 契约层分配的短字符串（如 "n_1"），不是 GUID——
+// 文档层与帧数据平面共用同一字符串标识。
 // ---------------------------------------------------------------------------
 struct PortKey
 {
-    DasGuid     node_id{};
+    std::string node_id;
     std::string port_id;
 
     bool operator==(const PortKey& other) const noexcept;
@@ -170,7 +172,7 @@ struct PortKeyHash
 };
 
 // ---------------------------------------------------------------------------
-// PortFrame — unordered_map<DasGuid+port_id, PortValue>
+// PortFrame — unordered_map<node_id+port_id, PortValue>
 //
 // A snapshot of all port values for a compiled graph at a single execution
 // step.  Core-internal only — no IDL, no IPC.
@@ -182,7 +184,7 @@ public:
 
     // -- Mutators ------------------------------------------------------------
     void Set(const PortKey& key, PortValue value);
-    void Set(DasGuid node_id, std::string port_id, PortValue value);
+    void Set(std::string node_id, std::string port_id, PortValue value);
 
     [[nodiscard]]
     bool Remove(const PortKey& key);
@@ -193,7 +195,7 @@ public:
     // markers (e.g. a branch's true/false output from the previous iteration)
     // so gates re-evaluate cleanly. Data entries are preserved. (DAS-60
     // Stage 3.)
-    std::size_t ClearSignalsByNode(DasGuid node_id);
+    std::size_t ClearSignalsByNode(const std::string& node_id);
 
     // -- Observers -----------------------------------------------------------
     [[nodiscard]]

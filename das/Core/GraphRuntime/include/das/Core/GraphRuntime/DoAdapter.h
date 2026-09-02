@@ -14,8 +14,9 @@ DAS_CORE_GRAPHRUNTIME_NS_BEGIN
 // ---------------------------------------------------------------------------
 // DoAdapter — PortFrame ↔ IDasPortMap / IDasReadOnlyPortMap conversion layer
 //
-// Bridges the internal PortFrame (keyed by DasGuid+port_id) with the public
-// v42 ABI contract  Do(stop_token, IDasReadOnlyPortMap* in, IDasPortMap** out).
+// Bridges the internal PortFrame (keyed by node_id string + port_id) with the
+// public v42 ABI contract  Do(stop_token, IDasReadOnlyPortMap* in,
+// IDasPortMap** out).
 //
 // BuildInputPortMap:  reads upstream PortFrame entries via the binding plan,
 //                     populates a fresh IDasPortMap (exposed as read-only).
@@ -42,12 +43,12 @@ DasResult BuildInputPortMap(
 /// into @p frame under the given @p node_id.
 ///
 /// @param output_map  The IDasPortMap produced by the node's Do() call.
-/// @param node_id     GUID of the node that produced this output.
+/// @param node_id     String node id of the node that produced this output.
 /// @param frame       The execution frame to update.
 /// @return DAS_S_OK on success.
 DasResult ExtractOutputPortMap(
     Das::ExportInterface::IDasPortMap* output_map,
-    DasGuid                            node_id,
+    const std::string&                 node_id,
     PortFrame&                         frame);
 
 DAS_CORE_GRAPHRUNTIME_NS_END
