@@ -2,10 +2,12 @@
 
 #include "PluginImpl.h"
 
+#include "FlowControlErrorLensRegistration.h"
 #include "FlowControlTaskComponents.h"
 
 #include <das/DasApi.h>
 
+#include <array>
 #include <new>
 
 DAS_NS_BEGIN
@@ -18,12 +20,16 @@ DasResult DasFlowControlPlugin::EnumFeature(
     {
         return DAS_E_INVALID_POINTER;
     }
-    if (index != 0)
+
+    static constexpr std::array features{
+        PluginInterface::DAS_PLUGIN_FEATURE_TASK_COMPONENT_FACTORY,
+        PluginInterface::DAS_PLUGIN_FEATURE_ERROR_LENS};
+    if (index >= features.size())
     {
         return DAS_E_OUT_OF_RANGE;
     }
 
-    *p_out_feature = PluginInterface::DAS_PLUGIN_FEATURE_TASK_COMPONENT_FACTORY;
+    *p_out_feature = features[index];
     return DAS_S_OK;
 }
 
@@ -36,24 +42,38 @@ DasResult DasFlowControlPlugin::CreateFeatureInterface(
         return DAS_E_INVALID_POINTER;
     }
     *pp_out_interface = nullptr;
-    if (index != 0)
-    {
-        return DAS_E_OUT_OF_RANGE;
-    }
 
     try
     {
-        auto* factory =
-            new DasFlowControlTaskComponentFactory(GetTaskComponentHost());
-        factory->AddRef();
-        *pp_out_interface =
-            static_cast<PluginInterface::IDasTaskComponentFactory*>(factory);
-        return DAS_S_OK;
+        if (index == 0)
+        {
+            auto* factory =
+                new DasFlowControlTaskComponentFactory(GetTaskComponentHost());
+            factory->AddRef();
+            *pp_out_interface =
+                static_cast<PluginInterface::IDasTaskComponentFactory*>(
+                    factory);
+            return DAS_S_OK;
+        }
+        if (index == 1)
+        {
+            auto lens =
+                Plugins::DasFlowControl::CreateRegisteredFlowControlErrorLens();
+            if (!lens)
+            {
+                return DAS_E_OUT_OF_MEMORY;
+            }
+            return lens->QueryInterface(
+                DasIidOf<PluginInterface::IDasErrorLens>(),
+                reinterpret_cast<void**>(pp_out_interface));
+        }
     }
     catch (const std::bad_alloc&)
     {
         return DAS_E_OUT_OF_MEMORY;
     }
+
+    return DAS_E_OUT_OF_RANGE;
 }
 
 DAS_NS_END
