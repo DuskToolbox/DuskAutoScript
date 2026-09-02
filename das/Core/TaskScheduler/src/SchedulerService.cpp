@@ -3399,6 +3399,25 @@ namespace Das::Core::TaskScheduler
         // D-84-08/09: Compile response preserves the Provider envelope
         // `{compile, diagnostics}`. canExecute/summary rewrapping was removed;
         // entryId is echoed purely as a routing ack, matching Get/Apply.
+        //
+        // 插件侧调用方无组件注册表访问：把条目任务类型解析出的执行组件
+        // guid 附到 compile 段（engaged-only——解析不到缺省不发），调用方
+        // 仅凭编译响应即可组装子执行快照。
+        if (auto execution_component =
+                BuildRepositoryInvokeCompileServices().find_execution_component(
+                    entry);
+            execution_component.has_value())
+        {
+            if (auto compile_object = pipeline.parsed.compile.as_object())
+            {
+                // 左值 std::string 直接赋值只存裸指针（源串析构即悬挂），
+                // 必须经 copy_string 拷入 yyjson 文档池。
+                (*compile_object)[std::string_view("executionComponentGuid")] =
+                    std::make_pair(
+                        std::string_view(*execution_component),
+                        yyjson::copy_string);
+            }
+        }
         yyjson::value result(Das::Utils::MakeYyjsonObject());
         auto          obj = result.as_object();
         (*obj)[std::string_view("entryId")] = entry_id;

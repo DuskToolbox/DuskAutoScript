@@ -39,8 +39,9 @@ namespace Plugins::DasGraphTask
             }
         }
 
-        // 形状适配：IDasTask 的 settings JSON → 内核组件的 compiledPlan 输入
-        // 口（task_settings 为 null 时不设口，保持 null artifact 语义）。
+        // 形状适配：IDasTask 的 settings JSON → 内核组件的 executionInput
+        // 输入口（与调用组件喂线同键；task_settings 为 null 时不设口，保持
+        // null artifact 语义）。
         DAS::DasPtr<ExportInterface::IDasPortMap> input_map;
         const auto create_map_hr = CreateIDasPortMap(input_map.Put());
         if (DAS::IsFailed(create_map_hr))
@@ -61,7 +62,7 @@ namespace Plugins::DasGraphTask
             }
             Das::Utils::SetPortString(
                 input_map.Get(),
-                "compiledPlan",
+                "executionInput",
                 plan_utf8);
         }
 

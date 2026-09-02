@@ -40,9 +40,9 @@
           "componentGuid": "F4A2C9D1-7B3E-4D8A-A15F-C2E86B4D91A3",
           "inputs": [
             {
-              "id": "compiledPlan",
+              "id": "executionInput",
               "type": "object",
-              "label": { "en": "Compiled Plan", "zh-cn": "编译计划" }
+              "label": { "en": "Execution Input", "zh-cn": "执行输入" }
             }
           ],
           "outputs": [

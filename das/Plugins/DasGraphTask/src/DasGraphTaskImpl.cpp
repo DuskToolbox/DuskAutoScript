@@ -70,14 +70,14 @@ namespace Das::Plugins::DasGraphTask
             return DAS_E_INVALID_POINTER;
         }
 
-        // Read compiled artifact string from "compiledPlan" port
+        // Read compiled artifact string from "executionInput" port
         DAS::DasPtr<IDasReadOnlyString> p_artifact;
         DasResult                       hr = DAS_S_OK;
         if (p_input_port_map != nullptr)
         {
-            const DasReadOnlyString compiled_plan_key{"compiledPlan"};
+            const DasReadOnlyString execution_input_key{"executionInput"};
             hr = p_input_port_map->GetString(
-                compiled_plan_key.Get(),
+                execution_input_key.Get(),
                 p_artifact.Put());
             // It's OK if the port doesn't exist — we pass null artifact.
         }
