@@ -163,14 +163,17 @@ namespace
 
     // Builds a Phase 84 strict change. Default kind is setValue because that is
     // the most exercise-heavy payload (target/fieldName/value). invokeCommand
-    // callers pass the kind explicitly.
+    // callers pass the kind explicitly. 批量 apply wire：单 change 经
+    // changes[] 包装提交。
     yyjson::value MakeStrictAuthoringChange(
         int64_t          base_revision,
         std::string_view kind = "setValue")
     {
         yyjson::value change(Das::Utils::MakeYyjsonObject());
         (*change.as_object())[std::string_view("baseRevision")] = base_revision;
-        (*change.as_object())[std::string_view("kind")] = std::string(kind);
+        yyjson::value element(Das::Utils::MakeYyjsonObject());
+        (*element.as_object())[std::string_view("kind")] =
+            std::make_pair(std::string_view(kind), yyjson::copy_string);
         yyjson::value payload(Das::Utils::MakeYyjsonObject());
         if (kind == std::string_view("setValue"))
         {
@@ -185,7 +188,47 @@ namespace
         {
             (*payload.as_object())[std::string_view("commandId")] = "test";
         }
-        (*change.as_object())[std::string_view("payload")] = std::move(payload);
+        (*element.as_object())[std::string_view("payload")] =
+            std::move(payload);
+        auto changes = Das::Utils::MakeYyjsonArray();
+        (*changes.as_array()).emplace_back(std::move(element));
+        (*change.as_object())[std::string_view("changes")] = std::move(changes);
+        return change;
+    }
+
+    // 批量 apply 请求构造：kinds 逐元素生成与
+    // MakeStrictAuthoringChange 同形的 change（setValue/invokeCommand 载荷）。
+    yyjson::value MakeStrictAuthoringBatchRequest(
+        int64_t                                 base_revision,
+        std::initializer_list<std::string_view> kinds)
+    {
+        yyjson::value change(Das::Utils::MakeYyjsonObject());
+        (*change.as_object())[std::string_view("baseRevision")] = base_revision;
+        auto changes = Das::Utils::MakeYyjsonArray();
+        for (auto kind : kinds)
+        {
+            yyjson::value element(Das::Utils::MakeYyjsonObject());
+            (*element.as_object())[std::string_view("kind")] =
+                std::make_pair(kind, yyjson::copy_string);
+            yyjson::value payload(Das::Utils::MakeYyjsonObject());
+            if (kind == std::string_view("setValue"))
+            {
+                yyjson::value target(Das::Utils::MakeYyjsonObject());
+                (*target.as_object())[std::string_view("kind")] = "document";
+                (*payload.as_object())[std::string_view("target")] =
+                    std::move(target);
+                (*payload.as_object())[std::string_view("fieldName")] = "key1";
+                (*payload.as_object())[std::string_view("value")] = "edited";
+            }
+            else if (kind == std::string_view("invokeCommand"))
+            {
+                (*payload.as_object())[std::string_view("commandId")] = "test";
+            }
+            (*element.as_object())[std::string_view("payload")] =
+                std::move(payload);
+            (*changes.as_array()).emplace_back(std::move(element));
+        }
+        (*change.as_object())[std::string_view("changes")] = std::move(changes);
         return change;
     }
 } // namespace
@@ -3127,7 +3170,9 @@ namespace
             (*change.as_object())[std::string_view("baseRevision")] =
                 *base_revision;
         }
-        (*change.as_object())[std::string_view("kind")] = std::string(kind);
+        yyjson::value element(Das::Utils::MakeYyjsonObject());
+        (*element.as_object())[std::string_view("kind")] =
+            std::make_pair(std::string_view(kind), yyjson::copy_string);
         yyjson::value payload(Das::Utils::MakeYyjsonObject());
         // Phase 84 strict change payloads: setValue requires target/fieldName/
         // value; invokeCommand requires commandId. The legacy empty-payload
@@ -3146,7 +3191,11 @@ namespace
         {
             (*payload.as_object())[std::string_view("commandId")] = "test";
         }
-        (*change.as_object())[std::string_view("payload")] = std::move(payload);
+        (*element.as_object())[std::string_view("payload")] =
+            std::move(payload);
+        auto changes = Das::Utils::MakeYyjsonArray();
+        (*changes.as_array()).emplace_back(std::move(element));
+        (*change.as_object())[std::string_view("changes")] = std::move(changes);
         return change;
     }
 
@@ -3899,6 +3948,239 @@ TEST_F(
 
     const ipc_scoped_lock lock(shared_state_->mutex);
     EXPECT_EQ(shared_state_->apply_change_count, 1);
+}
+
+// =============================================================================
+// 批量 apply 事务（changes[] 全成或全败）
+// =============================================================================
+
+// 成功组：双 change 批全部生效——revision 双推进（base+2，响应与持久层
+// 一致）、每 change 各一次 ApplyChange、lastChangeKind 为 kinds 以 "+"
+// 连接；持久化只在批尾发生一次（终态一次落盘）。
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerAuthoringBatchApplyCommitsAllChanges)
+{
+    SeedEmptyAuthoringTask(*settings_manager_, 0, 0, "initial");
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+    EnableStrictAuthoringWire(*shared_state_);
+
+    auto result = scheduler_->ApplyTaskAuthoringChange(
+        0,
+        MakeStrictAuthoringBatchRequest(0, {"setValue", "invokeCommand"}));
+    auto obj = result.as_object();
+    ASSERT_TRUE(obj.has_value());
+    EXPECT_TRUE((*obj)[std::string_view("ok")].as_bool().value_or(false));
+    EXPECT_EQ((*obj)[std::string_view("revision")].as_sint().value_or(-1), 2);
+    auto document = (*obj)[std::string_view("document")].as_object();
+    ASSERT_TRUE(document.has_value());
+    EXPECT_EQ(
+        (*document)[std::string_view("revision")].as_sint().value_or(-1),
+        2);
+
+    auto persisted = settings_manager_->GetTaskInstanceJson("0", 0);
+    auto persisted_obj = persisted.as_object();
+    ASSERT_TRUE(persisted_obj.has_value());
+    auto persisted_authoring =
+        (*persisted_obj)[std::string_view("authoring")].as_object();
+    ASSERT_TRUE(persisted_authoring.has_value());
+    EXPECT_EQ(
+        (*persisted_authoring)[std::string_view("revision")].as_sint().value_or(
+            -1),
+        2);
+    EXPECT_EQ(
+        (*persisted_authoring)[std::string_view("lastChangeKind")]
+            .as_string()
+            .value_or(""),
+        std::string_view("setValue+invokeCommand"));
+
+    const ipc_scoped_lock lock(shared_state_->mutex);
+    EXPECT_EQ(shared_state_->apply_change_count, 2);
+    EXPECT_EQ(shared_state_->authoring_session_count, 1);
+}
+
+// 顺序执行组：三 change 批、第 3 个被注入拒绝——前两个已逐个派发
+// （apply_change_count==3 证明逐元素顺序执行，addGraphNode 等分配型
+// change 的跨 kind 依赖依赖此顺序语义），失败定位前缀指向 change[2]，
+// diagnostics 聚合携带失败 change 的注入诊断，store 零持久化。
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerAuthoringBatchApplyStopsAtFailingChange)
+{
+    SeedEmptyAuthoringTask(*settings_manager_, 0, 0, "initial");
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+    EnableStrictAuthoringWire(*shared_state_);
+    {
+        const ipc_scoped_lock lock(shared_state_->mutex);
+        shared_state_->apply_reject_at_count = 3;
+    }
+
+    auto result = scheduler_->ApplyTaskAuthoringChange(
+        0,
+        MakeStrictAuthoringBatchRequest(
+            0,
+            {"setValue", "setValue", "setValue"}));
+    auto obj = result.as_object();
+    ASSERT_TRUE(obj.has_value());
+    EXPECT_FALSE((*obj)[std::string_view("ok")].as_bool().value_or(true));
+    EXPECT_EQ(
+        (*obj)[std::string_view("errorKind")].as_string().value_or(""),
+        std::string_view("applyRejected"));
+    const auto message =
+        (*obj)[std::string_view("message")].as_string().value_or("");
+    EXPECT_NE(message.find("change[2](setValue)"), std::string::npos)
+        << message;
+    auto diagnostics = (*obj)[std::string_view("diagnostics")].as_array();
+    ASSERT_TRUE(diagnostics.has_value());
+    ASSERT_EQ(diagnostics->size(), 1u);
+
+    // 中途失败零持久化：批前 revision 0 原样。
+    auto persisted = settings_manager_->GetTaskInstanceJson("0", 0);
+    auto persisted_obj = persisted.as_object();
+    ASSERT_TRUE(persisted_obj.has_value());
+    auto persisted_authoring =
+        (*persisted_obj)[std::string_view("authoring")].as_object();
+    if (persisted_authoring.has_value())
+    {
+        EXPECT_EQ(
+            (*persisted_authoring)[std::string_view("revision")]
+                .as_sint()
+                .value_or(-1),
+            0);
+    }
+
+    const ipc_scoped_lock lock(shared_state_->mutex);
+    EXPECT_EQ(shared_state_->apply_change_count, 3);
+    EXPECT_EQ(shared_state_->authoring_session_count, 1);
+}
+
+// 逐出重建组：中途失败（applyRejected）后紧跟一次合法单 change apply
+// （base 仍取批前 revision）→ 成功且 revision==base+1。会话计数递增证明
+// 失败批的会话缓存已被逐出、新会话从持久层（批前状态）重建——内存里
+// 的半批突变从未被后续请求观察到。
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerAuthoringBatchApplyEvictsSessionAndRebuildsFromPersistedState)
+{
+    SeedEmptyAuthoringTask(*settings_manager_, 0, 0, "initial");
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+    EnableStrictAuthoringWire(*shared_state_);
+    {
+        const ipc_scoped_lock lock(shared_state_->mutex);
+        shared_state_->apply_reject_at_count = 2;
+    }
+
+    auto failed = scheduler_->ApplyTaskAuthoringChange(
+        0,
+        MakeStrictAuthoringBatchRequest(0, {"setValue", "setValue"}));
+    auto failed_obj = failed.as_object();
+    ASSERT_TRUE(failed_obj.has_value());
+    EXPECT_FALSE(
+        (*failed_obj)[std::string_view("ok")].as_bool().value_or(true));
+    EXPECT_EQ(
+        (*failed_obj)[std::string_view("errorKind")].as_string().value_or(""),
+        std::string_view("applyRejected"));
+
+    auto recovery =
+        scheduler_->ApplyTaskAuthoringChange(0, MakeStrictAuthoringChange(0));
+    auto recovery_obj = recovery.as_object();
+    ASSERT_TRUE(recovery_obj.has_value());
+    EXPECT_TRUE(
+        (*recovery_obj)[std::string_view("ok")].as_bool().value_or(false))
+        << "recovery apply must succeed from the pre-batch persisted state";
+    EXPECT_EQ(
+        (*recovery_obj)[std::string_view("revision")].as_sint().value_or(-1),
+        1);
+
+    const ipc_scoped_lock lock(shared_state_->mutex);
+    EXPECT_EQ(shared_state_->apply_change_count, 3);
+    EXPECT_EQ(shared_state_->authoring_session_count, 2);
+}
+
+// 中途失败回滚的 providerFailed 变体：首个 change 成功、第二个
+// providerFailed——同样逐出回滚、零持久化、定位前缀指向 change[1]。
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerAuthoringBatchApplyProviderFailureRollsBackBatch)
+{
+    SeedEmptyAuthoringTask(*settings_manager_, 0, 0, "initial");
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+    EnableStrictAuthoringWire(*shared_state_);
+    {
+        const ipc_scoped_lock lock(shared_state_->mutex);
+        shared_state_->apply_fail_at_count = 2;
+    }
+
+    auto result = scheduler_->ApplyTaskAuthoringChange(
+        0,
+        MakeStrictAuthoringBatchRequest(0, {"setValue", "setValue"}));
+    auto obj = result.as_object();
+    ASSERT_TRUE(obj.has_value());
+    EXPECT_FALSE((*obj)[std::string_view("ok")].as_bool().value_or(true));
+    EXPECT_EQ(
+        (*obj)[std::string_view("errorKind")].as_string().value_or(""),
+        std::string_view("providerFailed"));
+    const auto message =
+        (*obj)[std::string_view("message")].as_string().value_or("");
+    EXPECT_NE(message.find("change[1](setValue)"), std::string::npos)
+        << message;
+
+    auto persisted = settings_manager_->GetTaskInstanceJson("0", 0);
+    auto persisted_obj = persisted.as_object();
+    ASSERT_TRUE(persisted_obj.has_value());
+    auto properties =
+        (*persisted_obj)[std::string_view("properties")].as_object();
+    ASSERT_TRUE(properties.has_value());
+    EXPECT_EQ(
+        (*properties)[std::string_view("key1")].as_string().value_or(""),
+        std::string_view("initial"));
+
+    auto recovery =
+        scheduler_->ApplyTaskAuthoringChange(0, MakeStrictAuthoringChange(0));
+    EXPECT_TRUE(
+        (*recovery.as_object())[std::string_view("ok")].as_bool().value_or(
+            false));
+
+    const ipc_scoped_lock lock(shared_state_->mutex);
+    EXPECT_EQ(shared_state_->authoring_session_count, 2);
+}
+
+// 首个 change 即失败：session 文档零突变，无需逐出——后续 apply 复用
+// 同一会话（authoring_session_count 保持 1），回滚标志的精确性。
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerAuthoringBatchApplyFirstChangeFailureKeepsCachedSession)
+{
+    SeedEmptyAuthoringTask(*settings_manager_, 0, 0, "initial");
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+    EnableStrictAuthoringWire(*shared_state_);
+    {
+        const ipc_scoped_lock lock(shared_state_->mutex);
+        shared_state_->apply_fail_at_count = 1;
+    }
+
+    auto result = scheduler_->ApplyTaskAuthoringChange(
+        0,
+        MakeStrictAuthoringBatchRequest(0, {"setValue", "setValue"}));
+    auto obj = result.as_object();
+    ASSERT_TRUE(obj.has_value());
+    EXPECT_EQ(
+        (*obj)[std::string_view("errorKind")].as_string().value_or(""),
+        std::string_view("providerFailed"));
+    const auto message =
+        (*obj)[std::string_view("message")].as_string().value_or("");
+    EXPECT_NE(message.find("change[0](setValue)"), std::string::npos)
+        << message;
+
+    auto recovery =
+        scheduler_->ApplyTaskAuthoringChange(0, MakeStrictAuthoringChange(0));
+    EXPECT_TRUE(
+        (*recovery.as_object())[std::string_view("ok")].as_bool().value_or(
+            false));
+
+    const ipc_scoped_lock lock(shared_state_->mutex);
+    EXPECT_EQ(shared_state_->authoring_session_count, 1);
+    EXPECT_EQ(shared_state_->apply_change_count, 3);
 }
 
 TEST_F(
@@ -4755,11 +5037,16 @@ TEST_F(
     yyjson::value change(Das::Utils::MakeYyjsonObject());
     (*change.as_object())[std::string_view("baseRevision")] =
         static_cast<int64_t>(0);
-    (*change.as_object())[std::string_view("kind")] = "addGraphNode";
+    yyjson::value element(Das::Utils::MakeYyjsonObject());
+    (*element.as_object())[std::string_view("kind")] =
+        std::make_pair(std::string_view("addGraphNode"), yyjson::copy_string);
     yyjson::value payload(Das::Utils::MakeYyjsonObject());
     (*payload.as_object())[std::string_view("actionId")] =
         "95FD2FFA-88F2-4F85-A536-C708D25B641F";
-    (*change.as_object())[std::string_view("payload")] = std::move(payload);
+    (*element.as_object())[std::string_view("payload")] = std::move(payload);
+    auto changes = Das::Utils::MakeYyjsonArray();
+    (*changes.as_array()).emplace_back(std::move(element));
+    (*change.as_object())[std::string_view("changes")] = std::move(changes);
 
     auto result = scheduler_->ApplyTaskAuthoringChange(0, change);
     auto obj = result.as_object();
@@ -9614,7 +9901,14 @@ TEST_F(
 
     yyjson::value change(Das::Utils::MakeYyjsonObject());
     (*change.as_object())[std::string_view("baseRevision")] = 0;
-    (*change.as_object())[std::string_view("kind")] = "setValue";
+    yyjson::value element(Das::Utils::MakeYyjsonObject());
+    (*element.as_object())[std::string_view("kind")] =
+        std::make_pair(std::string_view("setValue"), yyjson::copy_string);
+    (*element.as_object())[std::string_view("payload")] =
+        yyjson::value(Das::Utils::MakeYyjsonObject());
+    auto changes = Das::Utils::MakeYyjsonArray();
+    (*changes.as_array()).emplace_back(std::move(element));
+    (*change.as_object())[std::string_view("changes")] = std::move(changes);
     auto apply = scheduler_->ApplyTaskAuthoringChange(task_id, change);
     ASSERT_TRUE(apply.is_object());
     EXPECT_EQ(

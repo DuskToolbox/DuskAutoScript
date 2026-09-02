@@ -198,7 +198,9 @@ namespace
     {
         yyjson::value change(Das::Utils::MakeYyjsonObject());
         (*change.as_object())[std::string_view("baseRevision")] = base_revision;
-        (*change.as_object())[std::string_view("kind")] = std::string(kind);
+        yyjson::value element(Das::Utils::MakeYyjsonObject());
+        (*element.as_object())[std::string_view("kind")] =
+            std::make_pair(std::string_view(kind), yyjson::copy_string);
         yyjson::value payload(Das::Utils::MakeYyjsonObject());
         if (kind == std::string_view("setValue"))
         {
@@ -209,7 +211,11 @@ namespace
             (*payload.as_object())[std::string_view("fieldName")] = "key1";
             (*payload.as_object())[std::string_view("value")] = "edited";
         }
-        (*change.as_object())[std::string_view("payload")] = std::move(payload);
+        (*element.as_object())[std::string_view("payload")] =
+            std::move(payload);
+        auto changes = Das::Utils::MakeYyjsonArray();
+        (*changes.as_array()).emplace_back(std::move(element));
+        (*change.as_object())[std::string_view("changes")] = std::move(changes);
         return change;
     }
 

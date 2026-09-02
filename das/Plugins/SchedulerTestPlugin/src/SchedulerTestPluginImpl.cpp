@@ -280,6 +280,7 @@ DasResult FakeAuthoringSession::ApplyChange(
     }
     bool    emit_strict = false;
     bool    omit_document = false;
+    bool    inject_rejection = false;
     int64_t revision_delta = 0;
     int64_t session_revision = 0;
     {
@@ -289,8 +290,16 @@ DasResult FakeAuthoringSession::ApplyChange(
         {
             return DAS_E_FAIL;
         }
+        if (state_->apply_fail_at_count >= 0
+            && state_->apply_change_count == state_->apply_fail_at_count)
+        {
+            return DAS_E_FAIL;
+        }
         emit_strict = state_->emit_strict_wire;
         omit_document = state_->apply_omit_document;
+        inject_rejection =
+            state_->apply_reject_at_count >= 0
+            && state_->apply_change_count == state_->apply_reject_at_count;
         revision_delta = state_->apply_document_revision_delta;
         session_revision = state_->last_context_revision;
         state_->apply_entered = true;
@@ -333,10 +342,30 @@ DasResult FakeAuthoringSession::ApplyChange(
         (*obj)[std::string_view("acceptedProperties")] = std::move(props);
         if (!omit_document)
         {
-            (*obj)[std::string_view("document")] =
-                MakeStrictAuthoringDocument(base_revision + 1 + revision_delta);
+            // 注入的拒绝是「provider 拒绝了这次 change」：envelope 的
+            // document.revision 必须回落到 base（失败不变量），否则调度器
+            // 的 revision 校验会先把它挡成 revisionMismatch。
+            (*obj)[std::string_view("document")] = MakeStrictAuthoringDocument(
+                inject_rejection ? base_revision
+                                 : base_revision + 1 + revision_delta);
         }
-        (*obj)[std::string_view("diagnostics")] = MakeStrictDiagnostics();
+        if (inject_rejection)
+        {
+            yyjson::value diagnostics = Das::Utils::MakeYyjsonArray();
+            yyjson::value diagnostic(Das::Utils::MakeYyjsonObject());
+            (*diagnostic.as_object())[std::string_view("severity")] =
+                std::make_pair(std::string_view("error"), yyjson::copy_string);
+            (*diagnostic.as_object())[std::string_view("message")] =
+                std::make_pair(
+                    std::string_view("injected batch rejection"),
+                    yyjson::copy_string);
+            (*diagnostics.as_array()).emplace_back(std::move(diagnostic));
+            (*obj)[std::string_view("diagnostics")] = std::move(diagnostics);
+        }
+        else
+        {
+            (*obj)[std::string_view("diagnostics")] = MakeStrictDiagnostics();
+        }
         auto wrapped = WrapJson(std::move(result));
         *pp_out_result_json = wrapped.Get();
         (*pp_out_result_json)->AddRef();

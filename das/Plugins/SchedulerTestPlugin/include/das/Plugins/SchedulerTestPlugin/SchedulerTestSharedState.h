@@ -167,6 +167,14 @@ struct FactoryTaskSharedState
     bool    apply_omit_document = false;
     int64_t apply_document_revision_delta = 0;
     bool    compile_omit_compile = false;
+    // 批量 apply 中途失败注入：apply_change_count 达到该值时，本次
+    // ApplyChange 返回 DAS_E_FAIL（providerFailed 路径）；-1 = 不注入。
+    // 供批量事务用例构造「首个 change 成功、后续 change 失败」的批次。
+    int64_t apply_fail_at_count = -1;
+    // 同上但走 applyRejected 路径：返回 DAS_S_OK + 一条 severity=error 的
+    // 诊断（消息文本固定，便于断言 change[i](kind) 定位前缀），且 envelope
+    // 的 document.revision 回落到 base（失败不变量）。
+    int64_t apply_reject_at_count = -1;
 
     void set_last_props_key1_value(std::string_view v)
     {
