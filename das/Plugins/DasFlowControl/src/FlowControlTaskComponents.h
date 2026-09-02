@@ -181,6 +181,12 @@ private:
     yyjson::value                                  settings_;
     DasPtr<PluginInterface::IDasTaskComponentHost> host_;
 
+    // settings.repositoryRef 存储锁：ApplySettingsChange（Configure 阶段
+    // 投递）与 Do（执行）可能来自不同线程。
+    mutable std::mutex repository_entry_mutex_;
+    // settings.repositoryRef 存储值（纯 entryId 整数）；0 = 未设置。
+    int64_t repository_entry_id_ = 0;
+
     // for-loop counter state. A fresh component instance is created per graph
     // execution (GraphRuntime::Configure), so this naturally resets per run;
     // it persists across the Do() calls of a single loop.
