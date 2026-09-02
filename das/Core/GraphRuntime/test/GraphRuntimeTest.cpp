@@ -1,3 +1,4 @@
+#include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/Core/GraphRuntime/CompiledArtifact.h>
 #include <das/Core/GraphRuntime/Config.h>
 #include <das/Core/GraphRuntime/DoAdapter.h>
@@ -38,17 +39,13 @@ namespace
     using IDasPortMap = Das::ExportInterface::IDasPortMap;
     using IDasStopToken = Das::PluginInterface::IDasStopToken;
 
-    // ---- GUID helpers ----
+    // ---- ID helpers ----
 
-    DasGuid MakeNodeGuid(const std::string_view s)
-    {
-        return Das::Core::ForeignInterfaceHost::MakeDasGuid(s);
-    }
-
-    // Test node GUIDs — 36-char standard format
-    const std::string NODE_A = "10000000-0000-0000-0000-000000000001";
-    const std::string NODE_B = "10000000-0000-0000-0000-000000000002";
-    const std::string NODE_C = "10000000-0000-0000-0000-000000000003";
+    // 节点 ID 采用 authoring 契约层 AllocateStableNodeId 分配的 "n_N"
+    // 短字符串生产形态——文档层与帧数据平面的节点标识都是字符串。
+    const std::string NODE_A = "n_1";
+    const std::string NODE_B = "n_2";
+    const std::string NODE_C = "n_3";
 
     // Test component GUIDs — 36-char standard format for MakeDasGuid
     const std::string COMP_A = "20000000-0000-0000-0000-000000000001";
@@ -134,10 +131,7 @@ namespace
 
         for (int i = 0; i < num_nodes; ++i)
         {
-            // Generate GUID-format node_id
-            char buf[64];
-            snprintf(buf, sizeof(buf), "10000000-0000-0000-0000-%012d", i + 1);
-            const std::string nid(buf);
+            const std::string nid = "n_" + std::to_string(i + 1);
 
             auto snap = MakeSnapshotWithPorts(
                 nid,
@@ -992,9 +986,9 @@ namespace SignalGatedTestMock
 TEST(SignalGatedRuntimeTest, BranchIfOnlyHitBranchRuns)
 {
     using namespace SignalGatedTestMock;
-    const std::string branch{"10000000-0000-0000-0000-000000000011"};
-    const std::string trueSink{"10000000-0000-0000-0000-000000000012"};
-    const std::string falseSink{"10000000-0000-0000-0000-000000000013"};
+    const std::string branch{"n_11"};
+    const std::string trueSink{"n_12"};
+    const std::string falseSink{"n_13"};
 
     auto plan = MakeBasePlan();
     plan.node_snapshots = {
@@ -1038,10 +1032,10 @@ TEST(SignalGatedRuntimeTest, BranchIfOnlyHitBranchRuns)
 TEST(SignalGatedRuntimeTest, SkipPropagatesAlongDataEdges)
 {
     using namespace SignalGatedTestMock;
-    const std::string branch{"10000000-0000-0000-0000-000000000021"};
-    const std::string a{"10000000-0000-0000-0000-000000000022"};
-    const std::string b{"10000000-0000-0000-0000-000000000023"};
-    const std::string c{"10000000-0000-0000-0000-000000000024"};
+    const std::string branch{"n_21"};
+    const std::string a{"n_22"};
+    const std::string b{"n_23"};
+    const std::string c{"n_24"};
 
     auto plan = MakeBasePlan();
     plan.node_snapshots = {
@@ -1087,8 +1081,8 @@ TEST(SignalGatedRuntimeTest, SkipPropagatesAlongDataEdges)
 TEST(SignalGatedRuntimeTest, ForLoopIteratesCorrectly)
 {
     using namespace SignalGatedTestMock;
-    const std::string forNode{"10000000-0000-0000-0000-000000000031"};
-    const std::string body{"10000000-0000-0000-0000-000000000032"};
+    const std::string forNode{"n_31"};
+    const std::string body{"n_32"};
 
     auto plan = MakeBasePlan();
     plan.node_snapshots = {
@@ -1132,11 +1126,11 @@ TEST(SignalGatedRuntimeTest, ForLoopIteratesCorrectly)
 TEST(SignalGatedRuntimeTest, LoopWithInnerBranchHasNoCrossIterationResidue)
 {
     using namespace SignalGatedTestMock;
-    const std::string forNode{"10000000-0000-0000-0000-000000000041"};
-    const std::string selector{"10000000-0000-0000-0000-000000000042"};
-    const std::string sinkT{"10000000-0000-0000-0000-000000000043"};
-    const std::string sinkF{"10000000-0000-0000-0000-000000000044"};
-    const std::string term{"10000000-0000-0000-0000-000000000045"};
+    const std::string forNode{"n_41"};
+    const std::string selector{"n_42"};
+    const std::string sinkT{"n_43"};
+    const std::string sinkF{"n_44"};
+    const std::string term{"n_45"};
 
     auto plan = MakeBasePlan();
     plan.node_snapshots = {
@@ -1203,10 +1197,10 @@ TEST(SignalGatedRuntimeTest, LoopWithInnerBranchHasNoCrossIterationResidue)
 TEST(SignalGatedRuntimeTest, MergeJoinRunsOnTakenBranch)
 {
     using namespace SignalGatedTestMock;
-    const std::string branch{"10000000-0000-0000-0000-000000000051"};
-    const std::string a{"10000000-0000-0000-0000-000000000052"};
-    const std::string b{"10000000-0000-0000-0000-000000000053"};
-    const std::string mergeNode{"10000000-0000-0000-0000-000000000054"};
+    const std::string branch{"n_51"};
+    const std::string a{"n_52"};
+    const std::string b{"n_53"};
+    const std::string mergeNode{"n_54"};
 
     auto plan = MakeBasePlan();
     plan.node_snapshots = {
@@ -1249,4 +1243,42 @@ TEST(SignalGatedRuntimeTest, MergeJoinRunsOnTakenBranch)
     EXPECT_EQ(
         h->components[3]->picked_value,
         h->components[1]->do_count.load());
+}
+
+// -------------------------------------------------------------------
+// 节点 ID 生产形态端到端：authoring 契约层分配的 "n_1" 短字符串节点上，
+// 组件 Do 返回 S_OK 且产出 output portmap 时，值必须以字符串节点键落进
+// 帧并沿数据边流到下游——帧键误型为 GUID 的实现在此形态直接抛
+// InvalidGuidStringSizeException。
+// -------------------------------------------------------------------
+TEST(GraphRuntimeTest, NodeIdShortFormProducesOutputPortMap)
+{
+    using namespace SignalGatedTestMock;
+    const std::string producer{"n_1"};
+    const std::string consumer{"n_2"};
+
+    auto plan = MakeBasePlan();
+    plan.node_snapshots = {
+        MakeBehaviorSnapshot(producer, R"({"mode":"record"})"),
+        MakeBehaviorSnapshot(consumer, R"({"mode":"merge"})"),
+    };
+    plan.execution_order = {producer, consumer};
+    plan.binding_plan.bindings = {
+        MakeBinding(producer, "out", consumer, "value_true", "int"),
+    };
+
+    auto                             host = BehaviorHost::Make();
+    GraphRuntime                     rt;
+    const Das::DasPtr<IDasStopToken> token =
+        Das::PluginInterface::DasStopTokenImplBase<MockStopToken>::Make();
+
+    auto hr = rt.RunWithHost(plan, "fp_v1", token.Get(), host.Get());
+    ASSERT_EQ(hr, DAS_S_OK);
+
+    auto* h = static_cast<BehaviorHost*>(host.Get());
+    ASSERT_EQ(h->components.size(), 2u);
+    EXPECT_EQ(h->components[0]->do_count.load(), 1); // producer ran
+    EXPECT_EQ(h->components[1]->do_count.load(), 1); // consumer ran
+    // producer.out = 1 经帧流到 merge.value_true。
+    EXPECT_EQ(h->components[1]->picked_value, 1);
 }

@@ -1,6 +1,5 @@
 #include <das/Core/GraphRuntime/PortFrame.h>
 
-#include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <gtest/gtest.h>
 
 #include <cstdint>
@@ -11,18 +10,13 @@ namespace
 {
     using namespace Das::Core::GraphRuntime;
 
-    // Helper: build a DasGuid from a canonical string.
-    DasGuid MakeNode(const std::string_view s)
-    {
-        return Das::Core::ForeignInterfaceHost::MakeDasGuid(s);
-    }
+    // 节点 ID 采用 authoring 契约层 AllocateStableNodeId 分配的 "n_N"
+    // 短字符串生产形态——帧键是字符串，不是 GUID。
+    const std::string NODE1 = "n_1";
+    const std::string NODE2 = "n_2";
+    const std::string NODE3 = "n_3";
 
-    // Fixed GUIDs for tests.
-    const DasGuid NODE1 = MakeNode("11111111-1111-1111-1111-111111111111");
-    const DasGuid NODE2 = MakeNode("22222222-2222-2222-2222-222222222222");
-    const DasGuid NODE3 = MakeNode("33333333-3333-3333-3333-333333333333");
-
-    PortKey Key(const DasGuid& node, const std::string& port)
+    PortKey Key(const std::string& node, const std::string& port)
     {
         return PortKey{node, port};
     }
@@ -291,6 +285,23 @@ TEST(PortFrameTest, MultipleEntries)
     EXPECT_TRUE(frame.Find(Key(NODE1, "out_str"))->IsString());
     EXPECT_TRUE(frame.Find(Key(NODE2, "out_flt"))->IsFloat());
     EXPECT_TRUE(frame.Find(Key(NODE3, "out_sig"))->IsSignal());
+}
+
+// ===========================================================================
+// PortFrame — signal clearing at loop iteration boundaries
+// ===========================================================================
+
+TEST(PortFrameTest, ClearSignalsByNodeOnlyDropsSignalsForNode)
+{
+    PortFrame frame;
+    frame.Set(NODE1, "sig", PortValue::Signal());
+    frame.Set(NODE1, "data", PortValue(int64_t{5}));
+    frame.Set(NODE2, "sig", PortValue::Signal());
+
+    EXPECT_EQ(frame.ClearSignalsByNode(NODE1), 1u);
+    EXPECT_EQ(frame.Find(Key(NODE1, "sig")), nullptr);
+    EXPECT_NE(frame.Find(Key(NODE1, "data")), nullptr);
+    EXPECT_NE(frame.Find(Key(NODE2, "sig")), nullptr);
 }
 
 // ===========================================================================

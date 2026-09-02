@@ -1,6 +1,5 @@
 #include <das/Core/GraphRuntime/DoAdapter.h>
 
-#include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
 #include <das/Utils/DasJsonCore.h>
@@ -18,16 +17,11 @@ namespace
 
     using IDasPortMap = Das::ExportInterface::IDasPortMap;
 
-    DasGuid MakeNode(const std::string_view s)
-    {
-        return Das::Core::ForeignInterfaceHost::MakeDasGuid(s);
-    }
-
-    const DasGuid SOURCE_NODE =
-        MakeNode("11111111-1111-1111-1111-111111111111");
-    const DasGuid TARGET_NODE =
-        MakeNode("22222222-2222-2222-2222-222222222222");
-    const DasGuid OTHER_NODE = MakeNode("33333333-3333-3333-3333-333333333333");
+    // 节点 ID 采用 authoring 契约层 AllocateStableNodeId 分配的 "n_N"
+    // 短字符串生产形态——帧键是字符串，不是 GUID。
+    const std::string SOURCE_NODE = "n_1";
+    const std::string TARGET_NODE = "n_2";
+    const std::string OTHER_NODE = "n_3";
 
     Dto::PortBindingDto MakeBinding(
         const std::string& src_node,
@@ -37,15 +31,10 @@ namespace
         Dto::PortBindingDto b;
         b.source_node_id = src_node;
         b.source_port_id = src_port;
-        b.target_node_id = "22222222-2222-2222-2222-222222222222";
+        b.target_node_id = TARGET_NODE;
         b.target_port_id = tgt_port;
         b.expected_type = "";
         return b;
-    }
-
-    std::string GuidToString(DasGuid guid)
-    {
-        return Das::Core::ForeignInterfaceHost::DasGuidToStdString(guid);
     }
 
     // Broadcast (graph-input) binding: the source is the "$graph_input"
@@ -59,7 +48,7 @@ namespace
         Dto::PortBindingDto b;
         b.source_node_id = "$graph_input";
         b.source_port_id = graph_input_port;
-        b.target_node_id = "22222222-2222-2222-2222-222222222222";
+        b.target_node_id = TARGET_NODE;
         b.target_port_id = tgt_port;
         b.expected_type = "";
         b.default_value = std::move(default_value);
@@ -83,7 +72,7 @@ TEST(DoAdapterTest, BuildInputPortMap_IntValue)
     PortFrame frame;
     frame.Set(SOURCE_NODE, "out", PortValue(int64_t{42}));
 
-    auto bindings = {MakeBinding(GuidToString(SOURCE_NODE), "out", "in")};
+    auto bindings = {MakeBinding(SOURCE_NODE, "out", "in")};
 
     DAS::DasPtr<IDasPortMap> map;
     ASSERT_EQ(BuildInputPortMap(frame, bindings, map.Put()), DAS_S_OK);
@@ -100,7 +89,7 @@ TEST(DoAdapterTest, BuildInputPortMap_FloatValue)
     PortFrame frame;
     frame.Set(SOURCE_NODE, "out", PortValue(3.14));
 
-    auto bindings = {MakeBinding(GuidToString(SOURCE_NODE), "out", "in")};
+    auto bindings = {MakeBinding(SOURCE_NODE, "out", "in")};
 
     DAS::DasPtr<IDasPortMap> map;
     ASSERT_EQ(BuildInputPortMap(frame, bindings, map.Put()), DAS_S_OK);
@@ -116,7 +105,7 @@ TEST(DoAdapterTest, BuildInputPortMap_StringValue)
     PortFrame frame;
     frame.Set(SOURCE_NODE, "out", PortValue(std::string("hello")));
 
-    auto bindings = {MakeBinding(GuidToString(SOURCE_NODE), "out", "in")};
+    auto bindings = {MakeBinding(SOURCE_NODE, "out", "in")};
 
     DAS::DasPtr<IDasPortMap> map;
     ASSERT_EQ(BuildInputPortMap(frame, bindings, map.Put()), DAS_S_OK);
@@ -137,7 +126,7 @@ TEST(DoAdapterTest, BuildInputPortMap_BoolValue)
     PortFrame frame;
     frame.Set(SOURCE_NODE, "out", PortValue(true));
 
-    auto bindings = {MakeBinding(GuidToString(SOURCE_NODE), "out", "in")};
+    auto bindings = {MakeBinding(SOURCE_NODE, "out", "in")};
 
     DAS::DasPtr<IDasPortMap> map;
     ASSERT_EQ(BuildInputPortMap(frame, bindings, map.Put()), DAS_S_OK);
@@ -153,7 +142,7 @@ TEST(DoAdapterTest, BuildInputPortMap_SignalValue)
     PortFrame frame;
     frame.Set(SOURCE_NODE, "out", PortValue::Signal());
 
-    auto bindings = {MakeBinding(GuidToString(SOURCE_NODE), "out", "in")};
+    auto bindings = {MakeBinding(SOURCE_NODE, "out", "in")};
 
     DAS::DasPtr<IDasPortMap> map;
     ASSERT_EQ(BuildInputPortMap(frame, bindings, map.Put()), DAS_S_OK);
@@ -178,9 +167,9 @@ TEST(DoAdapterTest, BuildInputPortMap_MultipleBindings)
     frame.Set(OTHER_NODE, "result", PortValue(2.5));
 
     auto bindings = {
-        MakeBinding(GuidToString(SOURCE_NODE), "out_a", "in_x"),
-        MakeBinding(GuidToString(SOURCE_NODE), "out_b", "in_y"),
-        MakeBinding(GuidToString(OTHER_NODE), "result", "in_z"),
+        MakeBinding(SOURCE_NODE, "out_a", "in_x"),
+        MakeBinding(SOURCE_NODE, "out_b", "in_y"),
+        MakeBinding(OTHER_NODE, "result", "in_z"),
     };
 
     DAS::DasPtr<IDasPortMap> map;
@@ -213,7 +202,7 @@ TEST(DoAdapterTest, BuildInputPortMap_MultipleBindings)
 TEST(DoAdapterTest, BuildInputPortMap_NullOutput)
 {
     const PortFrame frame;
-    auto bindings = {MakeBinding(GuidToString(SOURCE_NODE), "out", "in")};
+    auto            bindings = {MakeBinding(SOURCE_NODE, "out", "in")};
 
     EXPECT_EQ(
         BuildInputPortMap(frame, bindings, nullptr),
@@ -229,8 +218,7 @@ TEST(DoAdapterTest, BuildInputPortMap_MissingSourcePort)
     const PortFrame frame;
     // No entries in frame.
 
-    auto bindings = {
-        MakeBinding(GuidToString(SOURCE_NODE), "nonexistent", "in")};
+    auto bindings = {MakeBinding(SOURCE_NODE, "nonexistent", "in")};
 
     DAS::DasPtr<IDasPortMap> map;
     // Should succeed — missing source ports are logged and skipped.
@@ -253,7 +241,7 @@ TEST(DoAdapterTest, BuildInputPortMap_NullValueSkipped)
     PortFrame frame;
     frame.Set(SOURCE_NODE, "out", PortValue());
 
-    auto bindings = {MakeBinding(GuidToString(SOURCE_NODE), "out", "in")};
+    auto bindings = {MakeBinding(SOURCE_NODE, "out", "in")};
 
     DAS::DasPtr<IDasPortMap> map;
     ASSERT_EQ(BuildInputPortMap(frame, bindings, map.Put()), DAS_S_OK);
@@ -378,7 +366,7 @@ TEST(DoAdapterTest, BuildInputPortMap_BroadcastAndPointToPointCoexist)
     frame.Set(SOURCE_NODE, "out", PortValue(int64_t{7}));
 
     const std::vector<Dto::PortBindingDto> bindings = {
-        MakeBinding(GuidToString(SOURCE_NODE), "out", "in_data"),
+        MakeBinding(SOURCE_NODE, "out", "in_data"),
         MakeBroadcastBinding("threshold", "in_opt", ParseJson("99")),
     };
 
@@ -518,8 +506,8 @@ TEST(DoAdapterTest, RoundTrip_IntAndString)
 
     // Build input map for the target node.
     auto bindings = {
-        MakeBinding(GuidToString(SOURCE_NODE), "count", "count"),
-        MakeBinding(GuidToString(SOURCE_NODE), "name", "name"),
+        MakeBinding(SOURCE_NODE, "count", "count"),
+        MakeBinding(SOURCE_NODE, "name", "name"),
     };
 
     DAS::DasPtr<IDasPortMap> input_map;
