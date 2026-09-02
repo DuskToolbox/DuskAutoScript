@@ -3,15 +3,10 @@
 // using _dupenv_s instead.
 #define _CRT_SECURE_NO_WARNINGS
 #include <array>
-#include <boost/asio/system_executor.hpp>
 #include <boost/dll/runtime_symbol_info.hpp>
 #include <cctype>
 
 #include <das/DasConfig.h>
-DAS_DISABLE_WARNING_BEGIN
-DAS_IGNORE_BOOST_PROCESS_WARNING
-#include <boost/process/v2/process.hpp>
-DAS_DISABLE_WARNING_END
 
 #include <ctime>
 #include <das/Core/Logger/CrossProcessMutex.h>
@@ -74,6 +69,10 @@ DAS_NS_ANONYMOUS_DETAILS_END
     ::Details::UseUtf8Console();                                               \
     ::Details::EnableVirtualTerminalProcessing()
 #else
+#include <cerrno>
+#include <signal.h>
+#include <sys/types.h>
+#include <unistd.h>
 #define DAS_CONFIG_WIN32_CONSOLE
 #endif // DAS_WINDOWS
 
@@ -112,25 +111,40 @@ public:
     ~ProcessSafeStdoutSink() override = default;
 };
 
-// 检测 PID 是否存活。detach 防止析构时误杀被查询的进程。attach 到已退出
-// （或从未存在）的 pid 时 boost::process v2 的 process_handle 构造直接抛
-// system_error（OpenProcess 失败），必须捕获——本函数位于 g_logger 静态
-// 初始化的日志清理路径上，异常逃逸即 std::terminate 进程启动崩溃。
+// 检测 PID 是否存活。本函数位于 g_logger 静态初始化的日志清理路径上——静态
+// 初始化在 DLL 加载（加载器锁）内执行，禁止使用任何会创建线程的实现：
+// boost::process::v2::process 携带 asio executor，首次构造会创建全局
+// system_context 线程池；新线程启动需要获取加载器锁，与等待线程就绪的
+// 静态初始化线程互等，进程永久挂起。因此这里只允许纯系统调用。
 bool IsProcessAlive(unsigned long long pid)
 {
-    try
-    {
-        boost::system::error_code   ec;
-        boost::process::v2::process process{
-            boost::asio::system_executor{},
-            static_cast<boost::process::v2::pid_type>(pid)};
-        process.detach();
-        return process.running(ec);
-    }
-    catch (const boost::system::system_error&)
+    if (pid == 0)
     {
         return false;
     }
+#if defined(_WIN32) || defined(__CYGWIN__)
+    const HANDLE process_handle = ::OpenProcess(
+        PROCESS_QUERY_LIMITED_INFORMATION,
+        FALSE,
+        static_cast<DWORD>(pid));
+    if (process_handle == nullptr)
+    {
+        return false;
+    }
+    DWORD      exit_code = 0;
+    const BOOL query_succeeded =
+        ::GetExitCodeProcess(process_handle, &exit_code);
+    ::CloseHandle(process_handle);
+    return query_succeeded != FALSE && exit_code == STILL_ACTIVE;
+#else
+    const int probe_result = ::kill(static_cast<pid_t>(pid), 0);
+    if (probe_result == 0)
+    {
+        return true;
+    }
+    // EPERM：目标进程存在但属于其他用户，同样视为存活；ESRCH 才是已退出。
+    return errno == EPERM;
+#endif
 }
 
 // 构造当前进程的日志文件路径：logs/<进程exe名>-<YYYYMMDD_HH-MM-SS>-<PID>.log。
@@ -159,7 +173,11 @@ std::string MakeProcessLogPath()
         "logs/{}-{}-{}.log",
         process_stem,
         time_buffer,
-        static_cast<unsigned long long>(boost::process::v2::current_pid()));
+#if defined(_WIN32) || defined(__CYGWIN__)
+        static_cast<unsigned long long>(::GetCurrentProcessId()));
+#else
+        static_cast<unsigned long long>(::getpid()));
+#endif
 }
 
 // 删除超过 max_age_days 且进程已退出的旧日志；活跃进程的日志不删。best-effort。
