@@ -1856,8 +1856,48 @@ DasResult HostLauncher::ConnectToHost(uint32_t timeout_ms)
                 impl_->pool_.get()),
             boost::asio::use_future);
 
-        auto status = future.wait_for(duration);
-        if (status == std::future_status::timeout)
+        const auto wait_deadline = std::chrono::steady_clock::now() + duration;
+
+        // 分片等待：子进程在管道连通前退出（如启动即崩）时立即失败，不再
+        // 烧满整个超时窗口；子进程挂死（未退出）的场景仍由超时兜底。
+        std::future_status status = std::future_status::deferred;
+        while (true)
+        {
+            status = future.wait_for(std::chrono::milliseconds(100));
+            if (status == std::future_status::ready)
+            {
+                break;
+            }
+
+            boost::system::error_code process_error;
+            const bool                host_running =
+                impl_->process ? impl_->process->running(process_error) : false;
+            if (impl_->process && !process_error && !host_running)
+            {
+                int exit_code = -1;
+                try
+                {
+                    exit_code = impl_->process->exit_code();
+                }
+                catch (const std::exception&)
+                {
+                    // 诊断信息 best-effort：取不到退出码不影响失败路径
+                }
+                DAS_CORE_LOG_ERROR(
+                    "Host process exited before IPC transport connected: "
+                    "pid={}, exit_code={}",
+                    impl_->pid,
+                    exit_code);
+                return DAS_E_IPC_CONNECTION_LOST;
+            }
+
+            if (std::chrono::steady_clock::now() >= wait_deadline)
+            {
+                break;
+            }
+        }
+
+        if (status != std::future_status::ready)
         {
             DAS_CORE_LOG_ERROR("Timeout creating Host IPC transport");
             return DAS_E_IPC_TIMEOUT;
