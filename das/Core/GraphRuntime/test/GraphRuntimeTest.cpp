@@ -1,8 +1,10 @@
 #include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/Core/GraphRuntime/CompiledArtifact.h>
+#include <das/Core/GraphRuntime/CompiledPlanFingerprint.h>
 #include <das/Core/GraphRuntime/Config.h>
 #include <das/Core/GraphRuntime/DoAdapter.h>
 #include <das/Core/GraphRuntime/GraphDocument.h>
+#include <das/Core/GraphRuntime/GraphRuntimeFactory.h>
 #include <das/Core/GraphRuntime/PortFrame.h>
 #include <das/Core/GraphRuntime/RuntimeExecutionCache.h>
 #include <das/Core/Utils/DasJsonImpl.h>
@@ -1281,4 +1283,119 @@ TEST(GraphRuntimeTest, NodeIdShortFormProducesOutputPortMap)
     EXPECT_EQ(h->components[1]->do_count.load(), 1); // consumer ran
     // producer.out = 1 经帧流到 merge.value_true。
     EXPECT_EQ(h->components[1]->picked_value, 1);
+}
+
+// -------------------------------------------------------------------
+// Execute 成功结果的 graphOutputs 导出：编译产物携带边界输出口清单
+// （boundaryPorts.outputs，含节点定位）且子图执行后对应悬空口有值时，
+// 结果 JSON 的 graphOutputs 收敛 {口名:值}；无清单时 graphOutputs 为空
+// 对象（键在场，向后兼容空结果消费方）。
+// -------------------------------------------------------------------
+namespace
+{
+    std::string ExecutePlanShellText(
+        Das::PluginInterface::IDasTaskComponentHost* host,
+        const CompiledGraphPlanDto&                  plan)
+    {
+        const auto shell = BuildCompiledPlanShell(yyjson::object(plan));
+        const auto shell_text = Das::Utils::SerializeYyjsonValue(shell);
+        if (!shell_text.has_value())
+        {
+            return {};
+        }
+
+        Das::DasPtr<Das::ExportInterface::IDasGraphRuntime> runtime;
+        if (CreateGraphRuntimeWithHost(host, runtime.Put()) != DAS_S_OK)
+        {
+            return {};
+        }
+        Das::DasPtr<IDasReadOnlyString> artifact;
+        CreateIDasReadOnlyStringFromUtf8(shell_text->c_str(), artifact.Put());
+        Das::DasPtr<Das::ExportInterface::IDasJson> result_json;
+        if (runtime->Execute(artifact.Get(), nullptr, result_json.Put())
+                != DAS_S_OK
+            || result_json.Get() == nullptr)
+        {
+            return {};
+        }
+
+        Das::DasPtr<IDasReadOnlyString> result_text;
+        if (result_json->ToString(0, result_text.Put()) != DAS_S_OK
+            || result_text.Get() == nullptr)
+        {
+            return {};
+        }
+        const char* utf8 = nullptr;
+        result_text->GetUtf8(&utf8);
+        return utf8 != nullptr ? std::string(utf8) : std::string{};
+    }
+} // namespace
+
+TEST(GraphRuntimeTest, ExecuteExportsBoundaryOutputValues)
+{
+    using namespace GraphRuntimeTestMock;
+
+    CompiledGraphPlanDto plan;
+    plan.source_fingerprint = "fp_boundary";
+    plan.node_snapshots.push_back(MakeSnapshot(NODE_A, COMP_A));
+    plan.execution_order = {NODE_A};
+
+    // 悬空输入经 broadcast 物化为 "hello"；替身组件回显输入口 → 帧
+    // (n_1, p2) 有值；p2 同时是清单里的边界输出口。
+    PortBindingDto broadcast;
+    broadcast.source_node_id = "$graph_input";
+    broadcast.source_port_id = "p2";
+    broadcast.target_node_id = NODE_A;
+    broadcast.target_port_id = "p2";
+    broadcast.expected_type = "string";
+    auto default_parsed = Das::Utils::ParseYyjsonFromString(R"("hello")");
+    ASSERT_TRUE(default_parsed.has_value());
+    broadcast.default_value = std::move(*default_parsed);
+    plan.binding_plan.bindings.push_back(std::move(broadcast));
+
+    BoundaryPortDto boundary_output;
+    boundary_output.port_id = "p2";
+    boundary_output.port_type = "string";
+    boundary_output.node_ids = {NODE_A};
+    plan.boundary_ports.outputs.push_back(std::move(boundary_output));
+
+    auto       host = MockTaskComponentHost::Make();
+    const auto result_text = ExecutePlanShellText(host.Get(), plan);
+    ASSERT_FALSE(result_text.empty());
+
+    auto result = yyjson::read(result_text);
+    auto result_obj = result.as_object();
+    ASSERT_TRUE(result_obj.has_value());
+    ASSERT_TRUE(result_obj->contains(std::string_view("graphOutputs")));
+    auto graph_outputs =
+        (*result_obj)[std::string_view("graphOutputs")].as_object();
+    ASSERT_TRUE(graph_outputs.has_value());
+    ASSERT_TRUE(graph_outputs->contains(std::string_view("p2")));
+    EXPECT_EQ(
+        (*graph_outputs)[std::string_view("p2")].as_string().value_or(""),
+        std::string_view("hello"));
+}
+
+TEST(GraphRuntimeTest, ExecuteWithoutBoundaryOutputsYieldsEmptyGraphOutputs)
+{
+    using namespace GraphRuntimeTestMock;
+
+    CompiledGraphPlanDto plan;
+    plan.source_fingerprint = "fp_no_boundary";
+    plan.node_snapshots.push_back(MakeSnapshot(NODE_A, COMP_A));
+    plan.execution_order = {NODE_A};
+
+    auto       host = MockTaskComponentHost::Make();
+    const auto result_text = ExecutePlanShellText(host.Get(), plan);
+    ASSERT_FALSE(result_text.empty());
+
+    auto result = yyjson::read(result_text);
+    auto result_obj = result.as_object();
+    ASSERT_TRUE(result_obj.has_value());
+    // 空清单回退：graphOutputs 键在场且为空对象。
+    ASSERT_TRUE(result_obj->contains(std::string_view("graphOutputs")));
+    auto graph_outputs =
+        (*result_obj)[std::string_view("graphOutputs")].as_object();
+    ASSERT_TRUE(graph_outputs.has_value());
+    EXPECT_TRUE(graph_outputs->empty());
 }
