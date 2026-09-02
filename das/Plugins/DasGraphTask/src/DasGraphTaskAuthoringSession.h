@@ -4,6 +4,8 @@
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasTaskAuthoringSession.Implements.hpp>
 
 #include <cstdint>
+#include <functional>
+#include <optional>
 #include <string>
 
 // Forward declaration of the Core-owned opaque authoring session state (defined
@@ -29,6 +31,17 @@ DAS_DEFINE_CLASS_IN_NAMESPACE(
 DAS_NS_BEGIN
 namespace Plugins::DasGraphTask
 {
+    // 条目文档获取缝：入参 = 仓库条目 id，出参 = 调度服务条目 authoring
+    // Get 响应 JSON 文本（含 acceptedProperties 持久化源）。生产实现经主
+    // 进程 C ABI 查 IDasSchedulerService；测试注入 fake（不发明 IPC）。
+    // nullopt = 获取失败（调用方降级零注入，不阻断 Get）。
+    using RepositoryEntryDocumentFetcher =
+        std::function<std::optional<std::string>(int64_t entry_id)>;
+
+    // 测试注入 hook：传空 std::function 恢复生产实现。
+    void SetRepositoryEntryDocumentFetcherForTest(
+        RepositoryEntryDocumentFetcher fetcher);
+
     // IDasTaskAuthoringSession shell (DAS-77). Holds an opaque handle to a
     // Core-owned authoring session whose authoritative store is a
     // GraphDocumentDto (never exposed across the boundary). GetDocument /
@@ -63,6 +76,9 @@ namespace Plugins::DasGraphTask
     private:
         // Opaque Core-owned authoring session (GraphAuthoringSessionState*).
         GraphAuthoringSessionState* state_ = nullptr;
+        // 会话自己的 actionCatalog 副本（context 原文）：边界推导的 C ABI
+        // 需要 catalog 端口面解析声明通道。
+        std::string catalog_json_;
     };
 } // namespace Plugins::DasGraphTask
 DAS_NS_END

@@ -14,6 +14,7 @@
 
 #include "../src/DasGraphTaskAuthoringSession.h"
 
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -598,4 +599,297 @@ TEST(DasGraphTaskTest, AuthoringSessionSurvivesMalformedCatalogContext)
     ASSERT_NE(utf8, nullptr);
     const std::string_view text{utf8};
     EXPECT_EQ(text.find("actionCatalog"), std::string_view::npos);
+}
+
+// ---------------------------------------------------------------------
+// 调用节点端口投影：已绑 graph 条目的节点在 GetDocument 响应自带条目
+// 边界端口（ports[] 幂等合入，现算现投影不落盘）；未绑节点零注入；内部
+// 条目获取请求的投影关闭旗标断开引用环递归。
+// ---------------------------------------------------------------------
+
+namespace
+{
+    // 条目 Get 响应信封：acceptedProperties 是条目的 GraphDocumentDto 持久
+    // 化源（内部节点引用目录组件 {gc}，其声明端口面在会话 catalog 中）。
+    constexpr std::string_view BOUND_ENTRY_RESPONSE = R"json({
+        "entryId": 42,
+        "taskTypeGuid": "F4A2C9D1-7B3E-4D8A-A15F-C2E86B4D91A3",
+        "revision": 1,
+        "diagnostics": [],
+        "acceptedProperties": {
+            "nodes": [{
+                "nodeId": "inner_1",
+                "target": {
+                    "targetKind": "componentRef",
+                    "componentRef": {
+                        "kind": "componentRef",
+                        "componentGuid": "{gc}",
+                        "pluginGuid": "{gp}"
+                    }
+                },
+                "settings": {},
+                "dynamicPorts": []
+            }],
+            "edges": [],
+            "graphInputs": [],
+            "graphOutputs": []
+        }
+    })json";
+
+    // 父图上下文：n_1 绑 repositoryRef=42（catalog 声明该字段类型为
+    // taskRepositoryRef）；目录组件 {gc} 的端口面在 actionCatalog。
+    constexpr std::string_view BOUND_NODE_CONTEXT = R"json({
+        "properties": {
+            "nodes": [{
+                "nodeId": "n_1",
+                "target": {
+                    "targetKind": "componentRef",
+                    "componentRef": {
+                        "kind": "componentRef",
+                        "componentGuid": "{gi}",
+                        "pluginGuid": "{gp}"
+                    }
+                },
+                "settings": {"repositoryRef": 42},
+                "dynamicPorts": []
+            }],
+            "edges": [],
+            "graphInputs": [],
+            "graphOutputs": []
+        },
+        "actionCatalog": [
+            {
+                "actionId": "{gi}",
+                "config": [{"name": "repositoryRef", "type": "taskRepositoryRef"}]
+            },
+            {
+                "actionId": "{gc}",
+                "ports": [
+                    {"portId": "seed", "portType": "int", "direction": "input"},
+                    {"portId": "result", "portType": "string", "direction": "output"}
+                ]
+            }
+        ]
+    })json";
+
+    // 获取缝注入守卫：测试结束（含断言早退）恢复生产实现。
+    struct ScopedEntryDocumentFetcherOverride
+    {
+        explicit ScopedEntryDocumentFetcherOverride(
+            Das::Plugins::DasGraphTask::RepositoryEntryDocumentFetcher fetcher)
+        {
+            Das::Plugins::DasGraphTask::
+                SetRepositoryEntryDocumentFetcherForTest(std::move(fetcher));
+        }
+
+        ~ScopedEntryDocumentFetcherOverride()
+        {
+            Das::Plugins::DasGraphTask::
+                SetRepositoryEntryDocumentFetcherForTest(nullptr);
+        }
+    };
+
+    std::string DocumentTextOf(
+        Das::Plugins::DasGraphTask::DasGraphTaskAuthoringSession& session,
+        std::string_view                                          request_text)
+    {
+        DasPtr<Das::ExportInterface::IDasJson> request;
+        if (!request_text.empty())
+        {
+            ParseDasJsonFromString(
+                std::string(request_text).c_str(),
+                request.Put());
+        }
+        DasPtr<Das::ExportInterface::IDasJson> document;
+        EXPECT_EQ(session.GetDocument(request.Get(), document.Put()), DAS_S_OK);
+        EXPECT_NE(document.Get(), nullptr);
+        if (document.Get() == nullptr)
+        {
+            return {};
+        }
+        DasPtr<IDasReadOnlyString> document_text;
+        EXPECT_EQ(document->ToString(0, document_text.Put()), DAS_S_OK);
+        const char* utf8 = nullptr;
+        if (document_text.Get() == nullptr
+            || DAS::IsFailed(document_text->GetUtf8(&utf8)) || utf8 == nullptr)
+        {
+            return {};
+        }
+        return std::string(utf8);
+    }
+
+    // 统计 (portId, direction) 在首个节点 ports[] 的出现次数。
+    std::size_t CountNodePort(
+        const std::string& document_text,
+        std::string_view   port_id,
+        std::string_view   direction)
+    {
+        auto parsed = Das::Utils::ParseYyjsonFromString(document_text);
+        if (!parsed.has_value())
+        {
+            return 0;
+        }
+        auto root = parsed->as_object();
+        if (!root.has_value() || !root->contains(std::string_view("document")))
+        {
+            return 0;
+        }
+        auto document_object =
+            (*root)[std::string_view("document")].as_object();
+        if (!document_object.has_value())
+        {
+            return 0;
+        }
+        auto graph_object =
+            (*document_object)[std::string_view("graph")].as_object();
+        if (!graph_object.has_value())
+        {
+            return 0;
+        }
+        auto nodes = (*graph_object)[std::string_view("nodes")].as_array();
+        if (!nodes.has_value() || nodes->empty())
+        {
+            return 0;
+        }
+        auto first_node = (*nodes)[0].as_object();
+        if (!first_node.has_value()
+            || !first_node->contains(std::string_view("ports")))
+        {
+            return 0;
+        }
+        auto ports = (*first_node)[std::string_view("ports")].as_array();
+        if (!ports.has_value())
+        {
+            return 0;
+        }
+        std::size_t count = 0;
+        for (const auto& port : *ports)
+        {
+            auto port_object = port.as_object();
+            if (!port_object.has_value())
+            {
+                continue;
+            }
+            if ((*port_object)[std::string_view("portId")].as_string().value_or(
+                    "")
+                    == port_id
+                && (*port_object)[std::string_view("direction")]
+                           .as_string()
+                           .value_or("")
+                       == direction)
+            {
+                ++count;
+            }
+        }
+        return count;
+    }
+} // namespace
+
+TEST(DasGraphTaskTest, AuthoringSessionProjectsBoundaryPortsOnBoundCallNode)
+{
+    int                                      fetch_calls = 0;
+    const ScopedEntryDocumentFetcherOverride fetcher_override{
+        [&fetch_calls](int64_t entry_id) -> std::optional<std::string>
+        {
+            ++fetch_calls;
+            if (entry_id != 42)
+            {
+                return std::nullopt;
+            }
+            return std::string{BOUND_ENTRY_RESPONSE};
+        }};
+
+    Das::Plugins::DasGraphTask::DasGraphTaskAuthoringSession session{
+        std::string{BOUND_NODE_CONTEXT}};
+
+    const auto document_text = DocumentTextOf(session, "{}");
+    ASSERT_FALSE(document_text.empty());
+    EXPECT_EQ(fetch_calls, 1);
+
+    // 边界输入 seed / 边界输出 result 投影进该节点 ports[]（严格五键
+    // wire 形，category 按 port_type 派生）。
+    EXPECT_EQ(CountNodePort(document_text, "seed", "input"), 1u);
+    EXPECT_EQ(CountNodePort(document_text, "result", "output"), 1u);
+}
+
+TEST(DasGraphTaskTest, AuthoringSessionBoundaryProjectionIsIdempotent)
+{
+    const ScopedEntryDocumentFetcherOverride fetcher_override{
+        [](int64_t) -> std::optional<std::string>
+        { return std::string{BOUND_ENTRY_RESPONSE}; }};
+
+    Das::Plugins::DasGraphTask::DasGraphTaskAuthoringSession session{
+        std::string{BOUND_NODE_CONTEXT}};
+
+    // 连续两次 Get：现算现投影，端口不重复叠加。
+    const auto first = DocumentTextOf(session, "{}");
+    ASSERT_FALSE(first.empty());
+    const auto second = DocumentTextOf(session, "{}");
+    ASSERT_FALSE(second.empty());
+    EXPECT_EQ(CountNodePort(second, "seed", "input"), 1u);
+    EXPECT_EQ(CountNodePort(second, "result", "output"), 1u);
+}
+
+TEST(DasGraphTaskTest, AuthoringSessionSkipsProjectionForUnboundNode)
+{
+    int                                      fetch_calls = 0;
+    const ScopedEntryDocumentFetcherOverride fetcher_override{
+        [&fetch_calls](int64_t) -> std::optional<std::string>
+        {
+            ++fetch_calls;
+            return std::string{BOUND_ENTRY_RESPONSE};
+        }};
+
+    // settings 无 repositoryRef 值：字段声明在场但值为空 → 未绑条目。
+    constexpr std::string_view unbound_context = R"json({
+        "properties": {
+            "nodes": [{
+                "nodeId": "n_1",
+                "target": {
+                    "targetKind": "componentRef",
+                    "componentRef": {
+                        "kind": "componentRef",
+                        "componentGuid": "{gi}",
+                        "pluginGuid": "{gp}"
+                    }
+                },
+                "settings": {},
+                "dynamicPorts": []
+            }],
+            "edges": []
+        },
+        "actionCatalog": [
+            {"actionId": "{gi}", "config": [{"name": "repositoryRef", "type": "taskRepositoryRef"}]}
+        ]
+    })json";
+
+    Das::Plugins::DasGraphTask::DasGraphTaskAuthoringSession session{
+        std::string{unbound_context}};
+
+    const auto document_text = DocumentTextOf(session, "{}");
+    ASSERT_FALSE(document_text.empty());
+    EXPECT_EQ(fetch_calls, 0);
+    EXPECT_EQ(CountNodePort(document_text, "seed", "input"), 0u);
+}
+
+TEST(DasGraphTaskTest, AuthoringSessionBoundaryProjectionGuardDisablesFetch)
+{
+    int                                      fetch_calls = 0;
+    const ScopedEntryDocumentFetcherOverride fetcher_override{
+        [&fetch_calls](int64_t) -> std::optional<std::string>
+        {
+            ++fetch_calls;
+            return std::string{BOUND_ENTRY_RESPONSE};
+        }};
+
+    Das::Plugins::DasGraphTask::DasGraphTaskAuthoringSession session{
+        std::string{BOUND_NODE_CONTEXT}};
+
+    // 内部条目获取请求形态（投影关闭旗标）：零获取零注入——引用环的
+    // Get 投影递归在此断开。
+    const auto document_text =
+        DocumentTextOf(session, R"({"boundaryPortProjection":false})");
+    ASSERT_FALSE(document_text.empty());
+    EXPECT_EQ(fetch_calls, 0);
+    EXPECT_EQ(CountNodePort(document_text, "seed", "input"), 0u);
 }

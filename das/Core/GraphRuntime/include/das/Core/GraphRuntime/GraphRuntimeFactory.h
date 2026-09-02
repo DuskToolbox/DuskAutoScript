@@ -115,4 +115,20 @@ DAS_C_API DasResult GraphAuthoringSessionSetActionCatalog(
     GraphAuthoringSessionState* p,
     IDasReadOnlyString*         p_action_catalog_json);
 
+/// Derive the boundary port surface of a graph document (ports are derived,
+/// never authored): dangling input ports (no incoming edge, no same-name
+/// explicit graph_input) project as boundary inputs, dangling output ports as
+/// boundary outputs. `p_document_json` is a GraphDocumentDto JSON;
+/// `p_catalog_json` is the same action-catalog array shape SetActionCatalog
+/// accepts (its per-entry declared port surface resolves manifest-declared
+/// ports; pass null to derive from dynamic ports alone). Output is
+/// {inputs:[...],outputs:[...]} with each entry carrying
+/// {portId,displayLabel,portType,isRequired,defaultValue,nodeIds}. The pure
+/// derivation lives in Core; plugins (which cannot call Core C++ symbols
+/// across the DLL boundary) reach it through this C ABI.
+DAS_C_API DasResult GraphDeriveBoundaryPorts(
+    IDasReadOnlyString*  p_document_json,
+    IDasReadOnlyString*  p_catalog_json,
+    IDasReadOnlyString** pp_out_boundary_json);
+
 #endif // DAS_CORE_GRAPHRUNTIME_GRAPHRUNTIMEFACTORY_H
