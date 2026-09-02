@@ -32,6 +32,7 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
@@ -1393,6 +1394,12 @@ public:
     Das::ExportInterface::DasDate next_date{};
     bool                          has_next_date = false;
 
+    // 异常注入开关：调度器对插件交互段的防护必须在异常抛出时仍走完
+    // tick（清理段恒可达）。GetNextExecutionTime 抛非 std::exception 类型
+    // 以覆盖兜底 catch (...) 层。
+    bool throw_on_do = false;
+    bool throw_on_get_next_execution_time = false;
+
     uint32_t AddRef() override { return ++ref_count_; }
 
     uint32_t Release() override
@@ -1458,6 +1465,10 @@ public:
         Das::ExportInterface::IDasJson*      p_task_settings_json) override
     {
         ++do_call_count;
+        if (throw_on_do)
+        {
+            throw std::runtime_error("FakeTask Do injected failure");
+        }
         stop_token_was_null = (stop_token == nullptr);
         env_was_null = (p_environment_json == nullptr);
         props_was_null = (p_task_settings_json == nullptr);
@@ -1492,6 +1503,11 @@ public:
         Das::ExportInterface::IDasJson* /*p_task_settings_json*/,
         Das::ExportInterface::DasDate* p_out_date) override
     {
+        if (throw_on_get_next_execution_time)
+        {
+            // 非 std::exception 类型：验证兜底 catch (...) 层。
+            throw 42;
+        }
         if (!p_out_date)
         {
             return DAS_E_INVALID_POINTER;
@@ -2270,6 +2286,85 @@ TEST_F(SchedulerExecutionTest, OnTick_GetNextExecutionTimeFailure_SetsSentinel)
     EXPECT_GE(fake->do_call_count, 1);
 
     // The sentinel far-future timestamp should be persisted
+    auto persisted = settings_manager_->GetTaskInstanceJson("0", 0);
+    ASSERT_TRUE((*persisted.as_object())
+                    .contains(std::string_view("nextExecutionTime")));
+    ASSERT_TRUE((*persisted.as_object())[std::string_view("nextExecutionTime")]
+                    .is_sint());
+    EXPECT_EQ(
+        (*persisted.as_object())[std::string_view("nextExecutionTime")]
+            .as_sint()
+            .value(),
+        4102444799LL);
+}
+
+// 插件 Do 抛异常：tick 必须完整走完（执行槽清理、收尾状态机可达），
+// 调度器不得永久停留在执行中状态。
+TEST_F(
+    SchedulerExecutionTest,
+    OnTick_DoThrowsException_CompletesTickAndClearsCurrentTask)
+{
+    auto* fake = SetupSchedulerWithFakeTask(
+        *scheduler_,
+        *settings_manager_,
+        plugin_dir_,
+        *plugin_manager_);
+
+    fake->throw_on_do = true;
+
+    ASSERT_EQ(scheduler_->Enable(), DAS_S_OK);
+
+    // Wait for one tick to execute
+    std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+
+    // 执行槽被清理后 Disable 才能走到 Stopped——异常穿透路径会卡住。
+    auto stop_result = scheduler_->Disable();
+    EXPECT_EQ(stop_result, DAS_S_OK);
+    ASSERT_TRUE(
+        WaitForSchedulerStopped(*scheduler_, std::chrono::milliseconds(2000)));
+
+    EXPECT_GE(fake->do_call_count, 1);
+
+    // tick 走过 Do 调用点：GetNextExecutionTime 返回失败（fake 默认），
+    // 哨兵时间落盘证明刷新与持久化段照常执行。
+    auto persisted = settings_manager_->GetTaskInstanceJson("0", 0);
+    ASSERT_TRUE((*persisted.as_object())
+                    .contains(std::string_view("nextExecutionTime")));
+    ASSERT_TRUE((*persisted.as_object())[std::string_view("nextExecutionTime")]
+                    .is_sint());
+    EXPECT_EQ(
+        (*persisted.as_object())[std::string_view("nextExecutionTime")]
+            .as_sint()
+            .value(),
+        4102444799LL);
+}
+
+// 插件 GetNextExecutionTime 抛异常：与返回错误码同型，哨兵时间落盘，
+// tick 完整走完。
+TEST_F(
+    SchedulerExecutionTest,
+    OnTick_GetNextExecutionTimeThrowsException_SetsSentinel)
+{
+    auto* fake = SetupSchedulerWithFakeTask(
+        *scheduler_,
+        *settings_manager_,
+        plugin_dir_,
+        *plugin_manager_);
+
+    fake->throw_on_get_next_execution_time = true;
+
+    ASSERT_EQ(scheduler_->Enable(), DAS_S_OK);
+
+    // Wait for one tick to execute
+    std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+
+    auto stop_result = scheduler_->Disable();
+    EXPECT_EQ(stop_result, DAS_S_OK);
+    ASSERT_TRUE(
+        WaitForSchedulerStopped(*scheduler_, std::chrono::milliseconds(2000)));
+
+    EXPECT_GE(fake->do_call_count, 1);
+
     auto persisted = settings_manager_->GetTaskInstanceJson("0", 0);
     ASSERT_TRUE((*persisted.as_object())
                     .contains(std::string_view("nextExecutionTime")));
