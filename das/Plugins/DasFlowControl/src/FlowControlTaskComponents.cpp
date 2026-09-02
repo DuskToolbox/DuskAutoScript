@@ -543,6 +543,9 @@ DasResult DasFlowControlTaskComponent::ApplySettingsChange(
     return builder->ToJson(pp_out_result_json);
 }
 
+// 两层失败语义：快照解析/子组件创建失败 = 无法完成调用动作 → DAS_E_FLOW_
+// INVOKE_* 执行失败错误码（GraphRuntime 失败接管路径终止图）；子任务自身
+// 成败 = 业务结果 → status/childStatus 端口、返回成功码。
 DasResult DasFlowControlTaskComponent::DoRepositoryInvoke(
     PluginInterface::IDasStopToken*       stop_token,
     ExportInterface::IDasReadOnlyPortMap* p_input_port_map,
@@ -583,7 +586,7 @@ DasResult DasFlowControlTaskComponent::DoRepositoryInvoke(
             "Repository invoke requires a compiled child snapshot.");
         *pp_out_port_map = output_map.Get();
         output_map.Get()->AddRef();
-        return DAS_S_OK;
+        return Plugins::DasFlowControl::DAS_E_FLOW_INVOKE_SNAPSHOT_MISSING;
     }
 
     RepositoryInvokeDto::ChildExecutionSnapshotDto snapshot;
@@ -607,7 +610,7 @@ DasResult DasFlowControlTaskComponent::DoRepositoryInvoke(
             "Compiled child snapshot JSON is not valid.");
         *pp_out_port_map = output_map.Get();
         output_map.Get()->AddRef();
-        return DAS_S_OK;
+        return Plugins::DasFlowControl::DAS_E_FLOW_INVOKE_SNAPSHOT_INVALID;
     }
 
     if (snapshot.version != 1)
@@ -625,7 +628,8 @@ DasResult DasFlowControlTaskComponent::DoRepositoryInvoke(
             "Compiled child snapshot version is not supported.");
         *pp_out_port_map = output_map.Get();
         output_map.Get()->AddRef();
-        return DAS_S_OK;
+        return Plugins::DasFlowControl::
+            DAS_E_FLOW_INVOKE_SNAPSHOT_VERSION_UNSUPPORTED;
     }
 
     if (!host_)
@@ -643,7 +647,7 @@ DasResult DasFlowControlTaskComponent::DoRepositoryInvoke(
             "Task component host is unavailable.");
         *pp_out_port_map = output_map.Get();
         output_map.Get()->AddRef();
-        return DAS_S_OK;
+        return Plugins::DasFlowControl::DAS_E_FLOW_INVOKE_HOST_UNAVAILABLE;
     }
 
     DasGuid    child_component_guid{};
@@ -664,7 +668,7 @@ DasResult DasFlowControlTaskComponent::DoRepositoryInvoke(
             "Compiled child snapshot component GUID is invalid.");
         *pp_out_port_map = output_map.Get();
         output_map.Get()->AddRef();
-        return DAS_S_OK;
+        return Plugins::DasFlowControl::DAS_E_FLOW_INVOKE_CHILD_GUID_INVALID;
     }
 
     DasPtr<PluginInterface::IDasTaskComponent> child_component;
@@ -685,7 +689,7 @@ DasResult DasFlowControlTaskComponent::DoRepositoryInvoke(
             "Child task component could not be created.");
         *pp_out_port_map = output_map.Get();
         output_map.Get()->AddRef();
-        return DAS_S_OK;
+        return Plugins::DasFlowControl::DAS_E_FLOW_INVOKE_CHILD_CREATE_FAILED;
     }
 
     // Build child input PortMap from snapshot execution_input
