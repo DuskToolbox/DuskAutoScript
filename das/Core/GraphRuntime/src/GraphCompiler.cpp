@@ -62,6 +62,86 @@ void GraphCompiler::SetFactoryManager(
 }
 
 // ---------------------------------------------------------------------------
+// SetPortSurfaceProvider
+// ---------------------------------------------------------------------------
+
+void GraphCompiler::SetPortSurfaceProvider(
+    ComponentPortSurfaceProvider provider)
+{
+    port_surface_provider_ = std::move(provider);
+}
+
+// ---------------------------------------------------------------------------
+// ResolveDeclaredPorts / ResolveNodePorts
+// ---------------------------------------------------------------------------
+
+GraphCompiler::ManifestPorts GraphCompiler::ResolveDeclaredPorts(
+    const std::string&                              component_guid,
+    std::unordered_map<std::string, ManifestPorts>& cache) const
+{
+    auto cached = cache.find(component_guid);
+    if (cached != cache.end())
+    {
+        return cached->second;
+    }
+
+    ManifestPorts ports;
+    if (factory_manager_)
+    {
+        ports = ReadManifest(component_guid);
+    }
+    if (!ports.was_resolved && port_surface_provider_)
+    {
+        auto surface = port_surface_provider_(component_guid);
+        if (surface.has_value())
+        {
+            ports.inputs.clear();
+            ports.outputs.clear();
+            for (const auto& port : surface->inputs)
+            {
+                ports.inputs.push_back({port.port_id, port.port_type});
+            }
+            for (const auto& port : surface->outputs)
+            {
+                ports.outputs.push_back({port.port_id, port.port_type});
+            }
+            ports.was_resolved = true;
+        }
+    }
+
+    cache[component_guid] = ports;
+    return ports;
+}
+
+GraphCompiler::ManifestPorts GraphCompiler::ResolveNodePorts(
+    const Dto::GraphNodeDto&                        node,
+    std::unordered_map<std::string, ManifestPorts>& cache) const
+{
+    if (node.target.target_kind != "componentRef"
+        || !node.target.component_ref.has_value())
+    {
+        return {};
+    }
+
+    ManifestPorts ports =
+        ResolveDeclaredPorts(node.target.component_ref->component_guid, cache);
+    if (!ports.was_resolved)
+    {
+        return ports;
+    }
+
+    for (const auto& dynamic_port : node.dynamic_ports)
+    {
+        // 静态清单不含此端口时，边角色是 dynamic port 唯一的方向证据——
+        // 校验按边位置判方向（source 侧=输出、target 侧=输入），因此两侧
+        // 端点集都并入（存在性与类型判定都认）。
+        ports.inputs.push_back({dynamic_port.port_id, dynamic_port.port_type});
+        ports.outputs.push_back({dynamic_port.port_id, dynamic_port.port_type});
+    }
+    return ports;
+}
+
+// ---------------------------------------------------------------------------
 // ReadManifest
 // ---------------------------------------------------------------------------
 
@@ -258,30 +338,6 @@ std::vector<CompileEdgeDiagnostic> GraphCompiler::ValidateEdgePorts(
     // Cache manifest lookups to avoid redundant EnumerateDefinitions calls
     std::unordered_map<std::string, ManifestPorts> manifest_cache;
 
-    // Helper: resolve manifest for a node
-    auto resolve_manifest = [&](const Dto::GraphNodeDto& node) -> ManifestPorts
-    {
-        if (node.target.target_kind != "componentRef"
-            || !node.target.component_ref.has_value())
-        {
-            // Unknown target kinds resolve no manifest; their edges fall
-            // through to port-existence diagnostics below (fail-closed).
-            return {};
-        }
-
-        const auto& guid = node.target.component_ref->component_guid;
-
-        auto it = manifest_cache.find(guid);
-        if (it != manifest_cache.end())
-        {
-            return it->second;
-        }
-
-        auto ports = ReadManifest(guid);
-        manifest_cache[guid] = ports;
-        return ports;
-    };
-
     for (const auto& edge : document.edges)
     {
         // --- Node existence checks ---
@@ -334,7 +390,7 @@ std::vector<CompileEdgeDiagnostic> GraphCompiler::ValidateEdgePorts(
                 continue;
             }
 
-            src_manifest = resolve_manifest(src_node);
+            src_manifest = ResolveNodePorts(src_node, manifest_cache);
 
             // Check if manifest was resolved.  A component may legitimately
             // declare zero ports, so we use an explicit flag instead of
@@ -373,7 +429,7 @@ std::vector<CompileEdgeDiagnostic> GraphCompiler::ValidateEdgePorts(
                 continue;
             }
 
-            tgt_manifest = resolve_manifest(tgt_node);
+            tgt_manifest = ResolveNodePorts(tgt_node, manifest_cache);
 
             if (!tgt_manifest.was_resolved)
             {
@@ -724,7 +780,7 @@ Dto::PortBindingPlanDto GraphCompiler::GeneratePortBindingPlan(
 {
     Dto::PortBindingPlanDto plan;
 
-    if (!factory_manager_)
+    if (!factory_manager_ && !port_surface_provider_)
     {
         return plan;
     }
@@ -733,26 +789,6 @@ Dto::PortBindingPlanDto GraphCompiler::GeneratePortBindingPlan(
 
     // Cache manifest lookups
     std::unordered_map<std::string, ManifestPorts> manifest_cache;
-
-    auto resolve_manifest = [&](const Dto::GraphNodeDto& node) -> ManifestPorts
-    {
-        if (node.target.target_kind != "componentRef"
-            || !node.target.component_ref.has_value())
-        {
-            return {};
-        }
-
-        const auto& guid = node.target.component_ref->component_guid;
-        auto        it = manifest_cache.find(guid);
-        if (it != manifest_cache.end())
-        {
-            return it->second;
-        }
-
-        auto ports = ReadManifest(guid);
-        manifest_cache[guid] = ports;
-        return ports;
-    };
 
     for (const auto& edge : document.edges)
     {
@@ -769,7 +805,7 @@ Dto::PortBindingPlanDto GraphCompiler::GeneratePortBindingPlan(
             const auto& src_node = *src_it->second;
             if (src_node.target.target_kind == "componentRef")
             {
-                auto src_manifest = resolve_manifest(src_node);
+                auto src_manifest = ResolveNodePorts(src_node, manifest_cache);
                 for (const auto& p : src_manifest.outputs)
                 {
                     if (p.port_id == edge.source_port_id)
@@ -791,8 +827,10 @@ Dto::PortBindingPlanDto GraphCompiler::GeneratePortBindingPlan(
     // them — by port_id name match. Unlike point-to-point data edges this is
     // a one-to-many binding; its source_node_id is the sentinel
     // GRAPH_INPUT_BROADCAST_SOURCE and it carries the graph input's default.
+    std::unordered_set<std::string> explicit_graph_input_names;
     for (const auto& graph_input : document.graph_inputs)
     {
+        explicit_graph_input_names.insert(graph_input.port_id);
         for (const auto& node : document.nodes)
         {
             if (node.target.target_kind != "componentRef"
@@ -801,7 +839,7 @@ Dto::PortBindingPlanDto GraphCompiler::GeneratePortBindingPlan(
                 continue;
             }
 
-            auto manifest = resolve_manifest(node);
+            auto manifest = ResolveNodePorts(node, manifest_cache);
             if (!manifest.was_resolved)
             {
                 continue;
@@ -825,6 +863,33 @@ Dto::PortBindingPlanDto GraphCompiler::GeneratePortBindingPlan(
                     Das::Utils::CloneYyjsonValue(graph_input.default_value);
                 plan.bindings.push_back(std::move(binding));
             }
+        }
+    }
+
+    // Derived broadcast bindings: every dangling input port (no incoming
+    // edge) is a boundary input of this graph — it receives the same
+    // $graph_input sentinel binding carrying the port's declared default, so
+    // the runtime materialises it and the caller-side value forwarding has a
+    // patch target. Explicit graph_inputs win on name clashes — the derived
+    // set never duplicates them.
+    Dto::BoundaryPortsDto boundary = DeriveBoundaryPorts(document);
+    for (const auto& boundary_input : boundary.inputs)
+    {
+        if (explicit_graph_input_names.count(boundary_input.port_id) > 0)
+        {
+            continue;
+        }
+        for (const auto& node_id : boundary_input.node_ids)
+        {
+            Dto::PortBindingDto binding;
+            binding.source_node_id = std::string(GRAPH_INPUT_BROADCAST_SOURCE);
+            binding.source_port_id = boundary_input.port_id;
+            binding.target_node_id = node_id;
+            binding.target_port_id = boundary_input.port_id;
+            binding.expected_type = boundary_input.port_type;
+            binding.default_value =
+                Das::Utils::CloneYyjsonValue(boundary_input.default_value);
+            plan.bindings.push_back(std::move(binding));
         }
     }
 
@@ -901,6 +966,203 @@ std::vector<CompileEdgeDiagnostic> GraphCompiler::ValidateRequiredFields(
         }
     }
     return diagnostics;
+}
+
+// ---------------------------------------------------------------------------
+// DeriveBoundaryPorts
+// ---------------------------------------------------------------------------
+
+Dto::BoundaryPortsDto GraphCompiler::DeriveBoundaryPorts(
+    const Dto::GraphDocumentDto& document) const
+{
+    ComponentPortSurfaceProvider provider;
+    if (factory_manager_ || port_surface_provider_)
+    {
+        // 声明端口面统一经 ResolveDeclaredPorts（manifest 优先、catalog
+        // provider 兜底），两条声明通道在推导侧不分先后语义。
+        provider = [this](const std::string& component_guid)
+            -> std::optional<ComponentPortSurface>
+        {
+            std::unordered_map<std::string, ManifestPorts> cache;
+            const ManifestPorts                            ports =
+                ResolveDeclaredPorts(component_guid, cache);
+            if (!ports.was_resolved)
+            {
+                return std::nullopt;
+            }
+            ComponentPortSurface surface;
+            for (const auto& port : ports.inputs)
+            {
+                Dto::GraphPortDefinitionDto definition;
+                definition.port_id = port.port_id;
+                definition.port_type = port.port_type;
+                surface.inputs.push_back(std::move(definition));
+            }
+            for (const auto& port : ports.outputs)
+            {
+                Dto::GraphPortDefinitionDto definition;
+                definition.port_id = port.port_id;
+                definition.port_type = port.port_type;
+                surface.outputs.push_back(std::move(definition));
+            }
+            return surface;
+        };
+    }
+    return DeriveBoundaryPorts(document, provider);
+}
+
+Dto::BoundaryPortsDto GraphCompiler::DeriveBoundaryPorts(
+    const Dto::GraphDocumentDto&        document,
+    const ComponentPortSurfaceProvider& provider)
+{
+    // 边角色证据（与 authoring 投影层的 CollectPortIds 同思想）：文档内对
+    // 端口方向唯一可用的证据是边的位置——target 侧引用=输入、source 侧
+    // 引用=输出。悬空判定不需要仓库访问。
+    std::unordered_map<std::string, std::unordered_set<std::string>>
+        input_roles;
+    std::unordered_map<std::string, std::unordered_set<std::string>>
+        output_roles;
+    for (const auto& edge : document.edges)
+    {
+        input_roles[edge.target_node_id].insert(edge.target_port_id);
+        output_roles[edge.source_node_id].insert(edge.source_port_id);
+    }
+
+    std::unordered_set<std::string> explicit_graph_input_names;
+    for (const auto& graph_input : document.graph_inputs)
+    {
+        explicit_graph_input_names.insert(graph_input.port_id);
+    }
+
+    Dto::BoundaryPortsDto                        boundary;
+    std::unordered_map<std::string, std::size_t> merged_input_index;
+    std::unordered_map<std::string, std::size_t> merged_output_index;
+
+    auto referenced_as = [](const std::unordered_map<
+                                std::string,
+                                std::unordered_set<std::string>>& roles,
+                            const std::string&                    node_id,
+                            const std::string& port_id) -> bool
+    {
+        auto it = roles.find(node_id);
+        return it != roles.end() && it->second.count(port_id) > 0;
+    };
+
+    for (const auto& node : document.nodes)
+    {
+        std::optional<ComponentPortSurface> surface;
+        if (provider && node.target.target_kind == "componentRef"
+            && node.target.component_ref.has_value())
+        {
+            surface = provider(node.target.component_ref->component_guid);
+        }
+
+        auto add_boundary_input = [&](const Dto::GraphPortDefinitionDto& port)
+        {
+            if (explicit_graph_input_names.count(port.port_id) > 0)
+            {
+                // 显式 graph_inputs 同名优先：显式通道已覆盖该口，推导集
+                // 不重复收编。
+                return;
+            }
+            if (referenced_as(input_roles, node.node_id, port.port_id))
+            {
+                return; // 有入边，非悬空。
+            }
+            auto merged = merged_input_index.find(port.port_id);
+            if (merged == merged_input_index.end())
+            {
+                Dto::BoundaryPortDto entry;
+                entry.port_id = port.port_id;
+                entry.display_label = port.display_label;
+                entry.port_type = port.port_type;
+                entry.is_required = port.is_required;
+                entry.default_value =
+                    Das::Utils::CloneYyjsonValue(port.default_value);
+                entry.node_ids.push_back(node.node_id);
+                merged_input_index[port.port_id] = boundary.inputs.size();
+                boundary.inputs.push_back(std::move(entry));
+                return;
+            }
+            // by-name 合并：同名悬空输入口共用一个边界口（广播语义），
+            // 先出现者贡献元数据。
+            auto& existing = boundary.inputs[merged->second];
+            if (std::find(
+                    existing.node_ids.begin(),
+                    existing.node_ids.end(),
+                    node.node_id)
+                == existing.node_ids.end())
+            {
+                existing.node_ids.push_back(node.node_id);
+            }
+        };
+
+        auto add_boundary_output = [&](const Dto::GraphPortDefinitionDto& port)
+        {
+            if (referenced_as(output_roles, node.node_id, port.port_id))
+            {
+                return; // 有出边，非悬空。
+            }
+            auto merged = merged_output_index.find(port.port_id);
+            if (merged == merged_output_index.end())
+            {
+                Dto::BoundaryPortDto entry;
+                entry.port_id = port.port_id;
+                entry.display_label = port.display_label;
+                entry.port_type = port.port_type;
+                entry.is_required = port.is_required;
+                entry.default_value =
+                    Das::Utils::CloneYyjsonValue(port.default_value);
+                entry.node_ids.push_back(node.node_id);
+                merged_output_index[port.port_id] = boundary.outputs.size();
+                boundary.outputs.push_back(std::move(entry));
+                return;
+            }
+            auto& existing = boundary.outputs[merged->second];
+            if (std::find(
+                    existing.node_ids.begin(),
+                    existing.node_ids.end(),
+                    node.node_id)
+                == existing.node_ids.end())
+            {
+                existing.node_ids.push_back(node.node_id);
+            }
+        };
+
+        if (surface.has_value())
+        {
+            for (const auto& port : surface->inputs)
+            {
+                add_boundary_input(port);
+            }
+            for (const auto& port : surface->outputs)
+            {
+                add_boundary_output(port);
+            }
+        }
+
+        for (const auto& dynamic_port : node.dynamic_ports)
+        {
+            // 非纯输出（无输出证据）→ 输入候选；非纯输入 → 输出候选。
+            // 无证据端口两个方向都悬空（投影层同款双向处置）；纯输入/纯
+            // 输出端口各只有一个方向的候选，且该方向的入边/出边证据使其
+            // 天然非悬空。
+            const bool referenced_as_input =
+                referenced_as(input_roles, node.node_id, dynamic_port.port_id);
+            const bool referenced_as_output =
+                referenced_as(output_roles, node.node_id, dynamic_port.port_id);
+            if (!referenced_as_output)
+            {
+                add_boundary_input(dynamic_port);
+            }
+            if (!referenced_as_input)
+            {
+                add_boundary_output(dynamic_port);
+            }
+        }
+    }
+
+    return boundary;
 }
 
 // ---------------------------------------------------------------------------
@@ -997,6 +1259,11 @@ Dto::CompiledGraphPlanDto GraphCompiler::Compile(
 
     // Port binding plan
     plan.binding_plan = GeneratePortBindingPlan(document);
+
+    // 推导边界口清单入编译产物：输入侧已由 GeneratePortBindingPlan 落成
+    // broadcast 绑定（与显式 graph_inputs 合并、显式优先）；输出侧是执行
+    // 侧 graphOutputs 导出的依据。
+    plan.boundary_ports = DeriveBoundaryPorts(document);
 
     // Build node snapshots from graph document nodes. A node whose target is
     // not a componentRef keeps an empty component_guid; the runtime's

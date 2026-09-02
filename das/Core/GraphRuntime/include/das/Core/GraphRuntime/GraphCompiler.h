@@ -6,6 +6,8 @@
 #include <das/Core/GraphRuntime/Config.h>
 #include <das/Core/GraphRuntime/GraphDocument.h>
 
+#include <functional>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -114,8 +116,60 @@ public:
 
     /// Generate port binding plan from edges + manifest port type info.
     /// Each edge becomes one PortBindingDto with expected_type from source.
+    /// Dangling input ports additionally derive $graph_input broadcast
+    /// bindings (merged with explicit graph_inputs — an explicit same-name
+    /// input wins and is never duplicated).
     Dto::PortBindingPlanDto GeneratePortBindingPlan(
         const Dto::GraphDocumentDto& document);
+
+    // -----------------------------------------------------------------------
+    // Port surface provider (session-catalog channel)
+    // -----------------------------------------------------------------------
+
+    /// Registry/catalog-declared port surface of one component. The
+    /// declaration carries the direction (inputs/outputs list membership),
+    /// unlike document dynamic_ports whose direction is edge-role evidence.
+    struct ComponentPortSurface
+    {
+        std::vector<Dto::GraphPortDefinitionDto> inputs;
+        std::vector<Dto::GraphPortDefinitionDto> outputs;
+    };
+
+    /// component_guid → declared port surface (nullopt = unknown component).
+    /// The authoring-session compile path has no factory manager bound, so
+    /// the session layer derives the provider from its action catalog and
+    /// injects it here — the same injected-knowledge pattern as the
+    /// required_fields map (the compiler has no catalog access).
+    using ComponentPortSurfaceProvider =
+        std::function<std::optional<ComponentPortSurface>(
+            const std::string& component_guid)>;
+
+    /// Bind the catalog-declared port surface provider. Extends (does not
+    /// replace) factory-manager manifest resolution: edge validation,
+    /// binding-plan generation and boundary derivation all consult it when
+    /// the manifest path is unbound or unresolved.
+    void SetPortSurfaceProvider(ComponentPortSurfaceProvider provider);
+
+    // -----------------------------------------------------------------------
+    // Boundary port derivation (ports are derived, never authored)
+    // -----------------------------------------------------------------------
+
+    /// Derive the boundary port surface of a document by pure document
+    /// analysis — no repository access. Dangling rule (edge-role evidence):
+    /// an input port with no incoming edge and no same-name explicit
+    /// graph_input projects as a boundary input; an output port with no
+    /// outgoing edge projects as a boundary output. Same-name dangling sites
+    /// merge under one boundary port (by-name broadcast semantics); the
+    /// first occurrence contributes the port metadata.
+    static Dto::BoundaryPortsDto DeriveBoundaryPorts(
+        const Dto::GraphDocumentDto&        document,
+        const ComponentPortSurfaceProvider& provider);
+
+    /// Member form: resolves declared port surfaces from the bound factory
+    /// manager (when set), then runs the static derivation. Without a
+    /// factory manager only dynamic_ports carry port candidates.
+    Dto::BoundaryPortsDto DeriveBoundaryPorts(
+        const Dto::GraphDocumentDto& document) const;
 
     /// Validate that every required field declared for a node's component
     /// has a usable value in the node settings. `required_fields` maps
@@ -167,6 +221,8 @@ public:
 private:
     TaskComponentFactoryManager* factory_manager_ = nullptr;
 
+    ComponentPortSurfaceProvider port_surface_provider_;
+
     /// Check type compatibility between source output and target input.
     static bool IsTypeCompatible(
         const std::string& source_type,
@@ -176,6 +232,22 @@ private:
     static std::vector<PortEntry> PortsFromDefinitionList(
         const yyjson::value& definition,
         const std::string&   list_key); // "inputs" or "outputs"
+
+    /// Resolve the declared (per-component_guid, cacheable) port surface:
+    /// factory-manager manifest first, then the injected catalog provider.
+    /// `was_resolved` stays false when neither source knows the component.
+    ManifestPorts ResolveDeclaredPorts(
+        const std::string&                              component_guid,
+        std::unordered_map<std::string, ManifestPorts>& cache) const;
+
+    /// Resolve the effective per-node port set: declared surface (when the
+    /// component resolves) ∪ node.dynamic_ports. Dynamic ports join BOTH
+    /// directions — their only in-document directional evidence is edge
+    /// role, which validation checks by edge position anyway, so a dynamic
+    /// port is a valid endpoint on either side.
+    ManifestPorts ResolveNodePorts(
+        const Dto::GraphNodeDto&                        node,
+        std::unordered_map<std::string, ManifestPorts>& cache) const;
 
     /// Build a node index: node_id -> GraphNodeDto* for O(1) lookup.
     static std::unordered_map<std::string, const Dto::GraphNodeDto*>

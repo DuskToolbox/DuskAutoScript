@@ -1328,6 +1328,44 @@ DAS_C_API DasResult GraphAuthoringSessionCompile(
         // No factory manager bound at the authoring boundary, so manifest port
         // validation is skipped (acceptable for authoring preview).
         Das::Core::GraphRuntime::GraphCompiler compiler;
+        // 端口面注入（与 required 清单同范式）：catalog 声明的静态端口面
+        // （direction 由 inputs/outputs 声明携带）喂给编译器，使无 factory
+        // manager 的 authoring 编译路径也能做端口校验与边界端口推导——
+        // 生产执行输入正是这条编译路径的产物。
+        compiler.SetPortSurfaceProvider(
+            [&action_entries =
+                 p->action_entries](const std::string& component_guid)
+                -> std::optional<Das::Core::GraphRuntime::GraphCompiler::
+                                     ComponentPortSurface>
+            {
+                for (const auto& entry : action_entries)
+                {
+                    if (entry.action_id != component_guid)
+                    {
+                        continue;
+                    }
+                    Das::Core::GraphRuntime::GraphCompiler::ComponentPortSurface
+                        surface;
+                    for (const auto& port : entry.ports)
+                    {
+                        Das::Core::GraphRuntime::Dto::GraphPortDefinitionDto
+                            definition;
+                        definition.port_id = port.port_id;
+                        definition.display_label = port.display_label;
+                        definition.port_type = port.port_type;
+                        if (port.direction == std::string_view("input"))
+                        {
+                            surface.inputs.push_back(std::move(definition));
+                        }
+                        else
+                        {
+                            surface.outputs.push_back(std::move(definition));
+                        }
+                    }
+                    return surface;
+                }
+                return std::nullopt;
+            });
         // required 清单由会话 catalog 推导注入（compiler 无 catalog 访问）：
         // action_id 即 GraphTask 域的 componentGuid，config 字段的 required
         // 声明聚合成 component_guid → 字段名集，编译期对空值产出

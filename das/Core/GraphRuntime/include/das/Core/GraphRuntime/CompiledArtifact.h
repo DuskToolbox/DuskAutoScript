@@ -73,6 +73,30 @@ namespace Dto
         std::string loop_head_node_id;
     };
 
+    // ---- derived boundary port (ports-are-derived, never authored) ----
+    // One boundary-facing port of a graph: an input port with no incoming
+    // edge (and no same-name explicit graph_input) projects as a boundary
+    // input; an output port with no outgoing edge projects as a boundary
+    // output. Same-name dangling sites merge under one boundary port
+    // (by-name broadcast semantics) and `node_ids` carries every dangling
+    // location so both the broadcast binding generation and the runtime
+    // frame export can address them.
+    struct BoundaryPortDto
+    {
+        std::string              port_id;
+        std::string              display_label;
+        std::string              port_type;
+        bool                     is_required = false;
+        yyjson::value            default_value;
+        std::vector<std::string> node_ids;
+    };
+
+    struct BoundaryPortsDto
+    {
+        std::vector<BoundaryPortDto> inputs;
+        std::vector<BoundaryPortDto> outputs;
+    };
+
     // ---- compiled plan for an entire graph ----
     struct CompiledGraphPlanDto
     {
@@ -85,6 +109,11 @@ namespace Dto
         std::vector<yyjson::value>           diagnostics;
         std::vector<SignalRouteDto>          signal_routes;
         std::vector<BackEdgeDto>             back_edges;
+        // Derived boundary surface (ports-are-derived). Inputs ride the
+        // broadcast binding generation ($graph_input sentinel, merged with
+        // explicit graph_inputs — explicit wins on name clash); outputs are
+        // the runtime's graphOutputs export list.
+        BoundaryPortsDto boundary_ports;
     };
 
     // ---- compiled snapshot of a subgraph reference (02-07 serialization) ----
@@ -122,6 +151,8 @@ DAS_GRAPHRUNTIME_DTO_CASTER(PortBindingPlanDto);
 DAS_GRAPHRUNTIME_DTO_CASTER(CompiledNodeSnapshotDto);
 DAS_GRAPHRUNTIME_DTO_CASTER(SignalRouteDto);
 DAS_GRAPHRUNTIME_DTO_CASTER(BackEdgeDto);
+DAS_GRAPHRUNTIME_DTO_CASTER(BoundaryPortDto);
+DAS_GRAPHRUNTIME_DTO_CASTER(BoundaryPortsDto);
 DAS_GRAPHRUNTIME_DTO_CASTER(CompiledGraphPlanDto);
 DAS_GRAPHRUNTIME_DTO_CASTER(CompiledSubgraphSnapshotDto);
 
@@ -157,6 +188,18 @@ struct yyjson::field_name_rule<Das::Core::GraphRuntime::Dto::SignalRouteDto>
 
 template <>
 struct yyjson::field_name_rule<Das::Core::GraphRuntime::Dto::BackEdgeDto>
+{
+    using type = yyjson::snake_to_camel_transform;
+};
+
+template <>
+struct yyjson::field_name_rule<Das::Core::GraphRuntime::Dto::BoundaryPortDto>
+{
+    using type = yyjson::snake_to_camel_transform;
+};
+
+template <>
+struct yyjson::field_name_rule<Das::Core::GraphRuntime::Dto::BoundaryPortsDto>
 {
     using type = yyjson::snake_to_camel_transform;
 };
