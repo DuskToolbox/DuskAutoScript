@@ -1751,6 +1751,7 @@ TEST_F(TaskComponentContractTest, RepositoryInvokeExecutesCompiledSnapshotChild)
     child_factory->Release();
 }
 
+// 端口缺失 = 无法完成调用动作 → 专用执行失败错误码 + diagnostic 载荷。
 TEST_F(TaskComponentContractTest, RepositoryInvokeRequiresCompiledSnapshot)
 {
     auto component = CreateComponent(REPOSITORY_INVOKE_COMPONENT_GUID);
@@ -1762,10 +1763,54 @@ TEST_F(TaskComponentContractTest, RepositoryInvokeRequiresCompiledSnapshot)
     DAS::DasPtr<Das::ExportInterface::IDasPortMap> result_map;
     ASSERT_EQ(
         component->Do(nullptr, input_map.Get(), result_map.Put()),
-        DAS_S_OK);
+        DAS_E_FLOW_INVOKE_SNAPSHOT_MISSING);
 
-    auto status = Das::Utils::GetPortString(result_map.Get(), "status");
-    EXPECT_EQ(status, "failed");
+    EXPECT_FALSE(
+        Das::Utils::GetPortString(result_map.Get(), "diagnostic").empty());
+}
+
+// JSON 合法但 DTO 形状不符（version 非整数）→ 快照无效错误码。
+TEST_F(TaskComponentContractTest, RepositoryInvokeRejectsInvalidSnapshotJson)
+{
+    auto component = CreateComponent(REPOSITORY_INVOKE_COMPONENT_GUID);
+    ASSERT_NE(component.Get(), nullptr);
+
+    DAS::DasPtr<Das::ExportInterface::IDasPortMap> input_map;
+    ASSERT_EQ(CreateIDasPortMap(input_map.Put()), DAS_S_OK);
+    Das::Utils::SetPortString(
+        input_map.Get(),
+        "compiledSnapshot",
+        R"json({"version": "not-an-int"})json");
+
+    DAS::DasPtr<Das::ExportInterface::IDasPortMap> result_map;
+    ASSERT_EQ(
+        component->Do(nullptr, input_map.Get(), result_map.Put()),
+        DAS_E_FLOW_INVOKE_SNAPSHOT_INVALID);
+}
+
+// 快照形状合法但组件 GUID 串非法 → GUID 无效错误码。
+TEST_F(TaskComponentContractTest, RepositoryInvokeRejectsInvalidChildGuid)
+{
+    auto component = CreateComponent(REPOSITORY_INVOKE_COMPONENT_GUID);
+    ASSERT_NE(component.Get(), nullptr);
+
+    auto input = MakeRepositoryInvokeInput("not-a-guid");
+    auto input_obj = input.as_object();
+    ASSERT_TRUE(input_obj.has_value());
+    auto snapshot_val = (*input_obj)[std::string_view("compiledSnapshot")];
+    auto snapshot_str = snapshot_val.write(yyjson::WriteFlag::NoFlag);
+
+    DAS::DasPtr<Das::ExportInterface::IDasPortMap> input_map;
+    ASSERT_EQ(CreateIDasPortMap(input_map.Put()), DAS_S_OK);
+    Das::Utils::SetPortString(
+        input_map.Get(),
+        "compiledSnapshot",
+        std::string_view(snapshot_str));
+
+    DAS::DasPtr<Das::ExportInterface::IDasPortMap> result_map;
+    ASSERT_EQ(
+        component->Do(nullptr, input_map.Get(), result_map.Put()),
+        DAS_E_FLOW_INVOKE_CHILD_GUID_INVALID);
 }
 
 TEST_F(TaskComponentContractTest, RepositoryInvokeFailsWhenHostUnavailable)
@@ -1808,10 +1853,11 @@ TEST_F(TaskComponentContractTest, RepositoryInvokeFailsWhenHostUnavailable)
         std::string_view(snapshot_str));
 
     DAS::DasPtr<Das::ExportInterface::IDasPortMap> result;
-    ASSERT_EQ(component->Do(nullptr, input_map.Get(), result.Put()), DAS_S_OK);
+    ASSERT_EQ(
+        component->Do(nullptr, input_map.Get(), result.Put()),
+        DAS_E_FLOW_INVOKE_HOST_UNAVAILABLE);
 
-    auto status = Das::Utils::GetPortString(result.Get(), "status");
-    EXPECT_EQ(status, "failed");
+    EXPECT_FALSE(Das::Utils::GetPortString(result.Get(), "diagnostic").empty());
 }
 
 TEST_F(TaskComponentContractTest, RepositoryInvokeReportsMissingChildRoute)
@@ -1835,12 +1881,14 @@ TEST_F(TaskComponentContractTest, RepositoryInvokeReportsMissingChildRoute)
     DAS::DasPtr<Das::ExportInterface::IDasPortMap> result_map;
     ASSERT_EQ(
         component->Do(nullptr, input_map.Get(), result_map.Put()),
-        DAS_S_OK);
+        DAS_E_FLOW_INVOKE_CHILD_CREATE_FAILED);
 
-    auto status = Das::Utils::GetPortString(result_map.Get(), "status");
-    EXPECT_EQ(status, "failed");
+    EXPECT_FALSE(
+        Das::Utils::GetPortString(result_map.Get(), "diagnostic").empty());
 }
 
+// 子任务 Do 返回错误码 = 业务结果通道：invokeRepository 自身返回成功码，
+// status=failed 端口由控制流组件消费（执行失败/业务结果两层分离）。
 TEST_F(TaskComponentContractTest, RepositoryInvokeReportsChildFailure)
 {
     auto state = std::make_shared<RecordingChildState>();
@@ -1872,6 +1920,8 @@ TEST_F(TaskComponentContractTest, RepositoryInvokeReportsChildFailure)
     child_factory->Release();
 }
 
+// 子组件报告业务失败（Do 成功但 status=failed）= 业务结果通道：成功码 +
+// status/childStatus 聚合透传（两层分离的保持断言）。
 TEST_F(TaskComponentContractTest, RepositoryInvokeReportsMalformedChildResult)
 {
     auto state = std::make_shared<RecordingChildState>();
@@ -1897,12 +1947,15 @@ TEST_F(TaskComponentContractTest, RepositoryInvokeReportsMalformedChildResult)
         component->Do(nullptr, input_map.Get(), result_map.Put()),
         DAS_S_OK);
 
-    auto status = Das::Utils::GetPortString(result_map.Get(), "status");
-    EXPECT_EQ(status, "failed");
+    EXPECT_EQ(Das::Utils::GetPortString(result_map.Get(), "status"), "failed");
+    EXPECT_EQ(
+        Das::Utils::GetPortString(result_map.Get(), "childStatus"),
+        "failed");
 
     child_factory->Release();
 }
 
+// 快照版本不受支持 → 版本错误码 + diagnostic 载荷。
 TEST_F(TaskComponentContractTest, RepositoryInvokeRejectsInvalidSnapshotVersion)
 {
     auto component = CreateComponent(REPOSITORY_INVOKE_COMPONENT_GUID);
@@ -1924,10 +1977,10 @@ TEST_F(TaskComponentContractTest, RepositoryInvokeRejectsInvalidSnapshotVersion)
     DAS::DasPtr<Das::ExportInterface::IDasPortMap> result_map;
     ASSERT_EQ(
         component->Do(nullptr, input_map.Get(), result_map.Put()),
-        DAS_S_OK);
+        DAS_E_FLOW_INVOKE_SNAPSHOT_VERSION_UNSUPPORTED);
 
-    auto status = Das::Utils::GetPortString(result_map.Get(), "status");
-    EXPECT_EQ(status, "failed");
+    EXPECT_FALSE(
+        Das::Utils::GetPortString(result_map.Get(), "diagnostic").empty());
 }
 
 TEST_F(TaskComponentContractTest, RepositoryInvokeHonorsAlreadyRequestedStop)
