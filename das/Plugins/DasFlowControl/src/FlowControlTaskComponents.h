@@ -4,11 +4,13 @@
 #include <cassert>
 
 #include <cpp_yyjson.hpp>
+#include <das/Core/TaskScheduler/RepositoryInvokeDtos.h>
 #include <das/Utils/CommonUtils.hpp>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasTaskComponent.Implements.hpp>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasTaskComponentFactory.Implements.hpp>
 
 #include <functional>
+#include <mutex>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -66,6 +68,27 @@ using FlowControlProcessSpawner = std::function<bool(
 // 注入 lambda 驱动 0/1/N 匹配序列，无需真窗口。
 using FlowControlWindowEnumerator =
     std::function<std::vector<FlowControlWindowInfo>()>;
+
+// 仓库条目解析结果：成功携带可执行的子执行快照；失败携带可读原因（进
+// diagnostic 出口，不静默成功）。
+struct RepositoryEntryResolveOutcome
+{
+    bool ok = false;
+    Das::Core::TaskScheduler::RepositoryInvoke::Dto::ChildExecutionSnapshotDto
+                snapshot;
+    std::string error_message;
+};
+
+// 仓库条目解析缝：输入 = 条目引用（expected_revision/source_fingerprint
+// 恒不填——调用节点无版本对账概念）。生产实现经主进程 C ABI
+// （DasQueryMainProcessInterfaceByName → IDasSchedulerService）编译仓库
+// 条目；测试注入 fake（照 SetProcessSpawnerForTest 范式）。
+using RepositoryEntryResolver = std::function<RepositoryEntryResolveOutcome(
+    const Das::Core::TaskScheduler::RepositoryInvoke::Dto::RepositoryTaskRefDto&
+        repository_ref)>;
+
+// 测试注入 hook：传 nullptr 恢复生产实现。
+void SetRepositoryEntryResolverForTest(RepositoryEntryResolver resolver);
 
 class DasFlowControlTaskComponent final
     : public PluginInterface::DasTaskComponentImplBase<

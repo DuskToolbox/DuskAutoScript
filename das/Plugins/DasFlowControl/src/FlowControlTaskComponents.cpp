@@ -56,6 +56,20 @@ namespace
     constexpr std::string_view REPOSITORY_INVOKE_KIND =
         "das.flow.invokeRepository";
 
+    // 仓库条目解析缝（测试可注入；空 = 生产实现）。互斥保护：注入与 Do
+    // 可能来自不同线程。
+    std::mutex& RepositoryResolverMutex()
+    {
+        static std::mutex mutex;
+        return mutex;
+    }
+
+    RepositoryEntryResolver& RepositoryResolverSlot()
+    {
+        static RepositoryEntryResolver resolver;
+        return resolver;
+    }
+
     constexpr std::string_view BRANCH_KIND = "das.flow.branch";
     constexpr std::string_view DELAY_KIND = "das.flow.delay";
     constexpr std::string_view FOR_KIND = "das.flow.for";
@@ -425,6 +439,12 @@ namespace
     }
 
 } // namespace
+
+void SetRepositoryEntryResolverForTest(RepositoryEntryResolver resolver)
+{
+    const std::scoped_lock lock(RepositoryResolverMutex());
+    RepositoryResolverSlot() = std::move(resolver);
+}
 
 DasFlowControlTaskComponent::DasFlowControlTaskComponent(
     std::string_view                               kind,
