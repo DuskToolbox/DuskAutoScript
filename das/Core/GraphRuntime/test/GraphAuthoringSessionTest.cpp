@@ -688,6 +688,99 @@ namespace
         EXPECT_NE(plan.find("executionOrder"), std::string::npos);
     }
 
+    // 会话编译端口面注入：catalog 声明的静态端口面（无 factory manager 绑
+    // 定的 authoring 编译路径）驱动边界端口推导——未连线的声明输入口生成
+    // $graph_input broadcast 绑定、边界口清单进编译产物。
+    TEST(GraphAuthoringSessionTest, CompileDerivesBoundaryFromSessionCatalog)
+    {
+        const SessionHandle s{""};
+        ASSERT_EQ(
+            SetActionCatalog(
+                s.p,
+                R"([{"actionId":"{g1}","ports":[)"
+                R"({"portId":"seed","portType":"int","direction":"input"},)"
+                R"({"portId":"result","portType":"string","direction":"output"}]"
+                R"(}])"),
+            DAS_S_OK);
+        ASSERT_NE(
+            Compact(
+                JsonToUtf8(
+                    ApplyChange(
+                        s.p,
+                        WrapEnvelope("addGraphNode", R"({"actionId":"{g1}"})"))
+                        .Get()))
+                .find("\"revision\":1"),
+            std::string::npos);
+
+        DasPtr<Das::ExportInterface::IDasJson> plan_json;
+        ASSERT_EQ(
+            GraphAuthoringSessionCompile(s.p, nullptr, plan_json.Put()),
+            DAS_S_OK);
+        ASSERT_NE(plan_json.Get(), nullptr);
+
+        const auto root = yyjson::read(JsonToUtf8(plan_json.Get())).as_object();
+        ASSERT_TRUE(root.has_value());
+        const auto compile_section =
+            (*root)[std::string_view("compile")].as_object();
+        ASSERT_TRUE(compile_section.has_value());
+        const auto shell =
+            (*compile_section)[std::string_view("executionInput")].as_object();
+        ASSERT_TRUE(shell.has_value());
+        const auto plan_obj = (*shell)[std::string_view("plan")].as_object();
+        ASSERT_TRUE(plan_obj.has_value());
+
+        // 未连线声明输入口（seed）→ 推导 $graph_input broadcast 绑定。
+        const auto binding_plan =
+            (*plan_obj)[std::string_view("bindingPlan")].as_object();
+        ASSERT_TRUE(binding_plan.has_value());
+        const auto bindings =
+            (*binding_plan)[std::string_view("bindings")].as_array();
+        ASSERT_TRUE(bindings.has_value());
+        bool seed_broadcast_found = false;
+        for (const auto& binding : *bindings)
+        {
+            auto binding_obj = binding.as_object();
+            ASSERT_TRUE(binding_obj.has_value());
+            if ((*binding_obj)[std::string_view("sourceNodeId")]
+                        .as_string()
+                        .value_or("")
+                    == std::string_view("$graph_input")
+                && (*binding_obj)[std::string_view("targetPortId")]
+                           .as_string()
+                           .value_or("")
+                       == std::string_view("seed"))
+            {
+                seed_broadcast_found = true;
+                break;
+            }
+        }
+        EXPECT_TRUE(seed_broadcast_found);
+
+        // 边界口清单进编译产物（输入 seed / 输出 result）。
+        const auto boundary_ports =
+            (*plan_obj)[std::string_view("boundaryPorts")].as_object();
+        ASSERT_TRUE(boundary_ports.has_value());
+        const auto inputs =
+            (*boundary_ports)[std::string_view("inputs")].as_array();
+        ASSERT_TRUE(inputs.has_value());
+        ASSERT_FALSE(inputs->empty());
+        auto first_input = (*inputs)[0].as_object();
+        ASSERT_TRUE(first_input.has_value());
+        EXPECT_EQ(
+            (*first_input)[std::string_view("portId")].as_string().value_or(""),
+            std::string_view("seed"));
+        const auto outputs =
+            (*boundary_ports)[std::string_view("outputs")].as_array();
+        ASSERT_TRUE(outputs.has_value());
+        ASSERT_FALSE(outputs->empty());
+        auto first_output = (*outputs)[0].as_object();
+        ASSERT_TRUE(first_output.has_value());
+        EXPECT_EQ(
+            (*first_output)[std::string_view("portId")].as_string().value_or(
+                ""),
+            std::string_view("result"));
+    }
+
     TEST(GraphAuthoringSessionTest, E2E_UpgradeIsLossless)
     {
         // Seed linear, capture nodes, upgrade (lossless), and verify the
