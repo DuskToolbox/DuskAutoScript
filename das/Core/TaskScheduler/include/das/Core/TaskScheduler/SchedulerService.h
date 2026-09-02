@@ -115,12 +115,19 @@ namespace Das::Core::TaskScheduler
         // 创建时经 context 烤进缓存视图的，locale 变了缓存 session 的
         // label 视图就是旧语言，读侧按戳失效重建。
         std::string creation_locale;
+        // 批量 apply 中途失败的回滚墓碑：置位者持有 entry 写锁；命中者
+        // （在逐出前已解析到本 entry 的并发 Apply 写锁等待者）不得继续
+        // 使用其 session——内存文档带着未持久化的半批突变，必须从持久层
+        // 重建。读侧只需 Apply 写路径复查；Get/Compile 读路径容忍一次
+        // 瞬态旧视图（下次访问自然重建）。
+        bool invalidated_by_rollback = false;
 
         AuthoringSessionEntry() = default;
         AuthoringSessionEntry(AuthoringSessionEntry&& other) noexcept
             : session(std::move(other.session)),
               creation_revision(other.creation_revision),
-              creation_locale(std::move(other.creation_locale))
+              creation_locale(std::move(other.creation_locale)),
+              invalidated_by_rollback(other.invalidated_by_rollback)
         {
         }
         AuthoringSessionEntry& operator=(AuthoringSessionEntry&& other) noexcept
@@ -130,6 +137,7 @@ namespace Das::Core::TaskScheduler
                 session = std::move(other.session);
                 creation_revision = other.creation_revision;
                 creation_locale = std::move(other.creation_locale);
+                invalidated_by_rollback = other.invalidated_by_rollback;
             }
             return *this;
         }

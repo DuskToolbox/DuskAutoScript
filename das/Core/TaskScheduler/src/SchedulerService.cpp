@@ -1320,27 +1320,108 @@ namespace Das::Core::TaskScheduler
     // Structured result of the shared Apply pipeline. The caller owns response
     // construction (taskId vs entryId) and path-specific error message wording
     // for revisionConflict / sessionCreateFailed / providerFailed kinds.
+    // error_locator carries "change[i](kind)" on batch failure — the caller
+    // prefixes it onto the final message so the failing element is locatable.
+    // rollback is set when an earlier change in the batch already mutated the
+    // session document: nothing was persisted, so the caller must tombstone +
+    // evict the cache entry (next resolve rebuilds from the persisted
+    // pre-batch state).
     struct AuthoringApplyPipelineResult
     {
         bool                   ok = false;
+        bool                   rollback = false;
         std::string            error_kind;
         std::string            error_message;
+        std::string            error_locator;
         int64_t                current_revision = 0;
         int64_t                next_revision = 0;
         AuthoringProviderApply parsed;
         yyjson::value          authoring;
     };
 
+    // 批量失败定位串：change[i](kind) ——响应消息前缀，标明失败元素在
+    // changes[] 中的下标与 kind。
+    static std::string MakeBatchChangeLocator(
+        std::size_t      change_index,
+        std::string_view kind)
+    {
+        std::string locator = "change[";
+        locator += std::to_string(change_index);
+        locator += "](";
+        locator.append(kind);
+        locator += ")";
+        return locator;
+    }
+
+    // 批内逐 change 诊断聚合：全批（含失败 change）的 diagnostics 按序
+    // 拼接，失败响应一次携带完整原因链。
+    static void AppendDiagnosticsInto(
+        std::vector<yyjson::value>& aggregated,
+        const yyjson::value&        diagnostics)
+    {
+        auto array = diagnostics.as_array();
+        if (!array)
+        {
+            return;
+        }
+        for (const auto& diagnostic : *array)
+        {
+            aggregated.push_back(CloneJsonValue(diagnostic));
+        }
+    }
+
+    static yyjson::value BuildAggregatedDiagnostics(
+        const std::vector<yyjson::value>& aggregated)
+    {
+        yyjson::value diagnostics = Das::Utils::MakeYyjsonArray();
+        auto          array_view = diagnostics.as_array();
+        for (const auto& diagnostic : aggregated)
+        {
+            array_view->emplace_back(CloneJsonValue(diagnostic));
+        }
+        return diagnostics;
+    }
+
+    // 批内 kinds 按 "+" 连接为 lastChangeKind（顺序保留）。消费方按自由
+    // 文本读取该字段（无定长假设），changes 上限 256 约束了最长情形。
+    static std::string JoinChangeKinds(const std::vector<std::string>& kinds)
+    {
+        std::string joined;
+        for (std::size_t index = 0; index < kinds.size(); ++index)
+        {
+            if (index > 0)
+            {
+                joined += "+";
+            }
+            joined += kinds[index];
+        }
+        return joined;
+    }
+
     // Locked core of the Apply pipeline. The caller has already done the
     // envelope validation, the revision check on a fresh settings read, and the
-    // cache resolve, and holds `entry->lock` (unique_lock) so this Provider
-    // ApplyChange (M) + parse + rejection check + persisted-metadata build runs
-    // atomically with the caller's persist (W). The whole M-W section lives
-    // outside mutex_ and inside entry->lock (D-87-07 mutex-not-abused).
-    // Returns true on success (result.parsed/next_revision/authoring filled);
-    // false on provider/parse/rejection error (result.error_kind/message set,
-    // result.parsed stays populated so an applyRejected response can carry the
-    // diagnostics array).
+    // cache resolve, and holds `entry->lock` (unique_lock) so the whole batch
+    // — per-change Provider ApplyChange (M), parse, rejection check, and
+    // persisted-metadata build — runs atomically with the caller's single
+    // trailing persist (W). The request carries the batch wire
+    // {baseRevision, changes:[...]}; each element is re-wrapped into the
+    // single-change wire {baseRevision, kind, payload} the Provider session
+    // contract expects, with the iteration base advancing to the previous
+    // change's returned revision. Cross-kind dependencies (an id allocated by
+    // an earlier addGraphNode referenced by a later change) are why the batch
+    // cannot be validated ahead of mutation — execution order is semantic,
+    // atomicity comes from all-or-nothing persist plus the caller's
+    // eviction rollback on failure. The whole M-W section lives outside
+    // mutex_ and inside entry->lock (per-session serialization — the mutex
+    // is not abused as the session lock).
+    // Returns true on success (result.parsed/next_revision/authoring filled:
+    // acceptedProperties/diagnostics from the last change, document from the
+    // last document-bearing change); false on provider/parse/rejection error
+    // (result.error_kind/message set, result.error_locator locates the
+    // failing change, result.rollback set when an earlier change already
+    // mutated the session document, and result.parsed.diagnostics carries the
+    // aggregated batch diagnostics so an applyRejected response can surface
+    // the real rejection reason).
     static bool RunAuthoringApplyPipelineLocked(
         const std::shared_ptr<AuthoringSessionEntry>& entry,
         const yyjson::value&                          change,
@@ -1350,49 +1431,135 @@ namespace Das::Core::TaskScheduler
     {
         auto& session = entry->session;
 
-        auto change_json = WrapJsonValue(CloneJsonValue(change));
-        DasPtr<Das::ExportInterface::IDasJson> apply_result_json;
-        auto                                   apply_result =
-            session->ApplyChange(change_json.Get(), apply_result_json.Put());
-        if (DAS::IsFailed(apply_result) || !apply_result_json)
+        // 契约层（ValidateAuthoringChange）已保证 changes 形状；此处防线
+        // 仅为异常不穿越 ABI 边界——cpp_yyjson object operator[] 对缺失键
+        // throw out_of_range，消费侧必须 contains 先行。
+        auto request_object = change.as_object();
+        if (!request_object
+            || !request_object->contains(std::string_view("changes")))
         {
-            result.error_kind = "providerFailed";
-            result.error_message = "Authoring provider rejected change";
+            result.error_kind = "missingField";
+            result.error_message = "AuthoringChange.changes required";
+            return false;
+        }
+        auto changes_array =
+            (*request_object)[std::string_view("changes")].as_array();
+        if (!changes_array)
+        {
+            result.error_kind = "invalidChanges";
+            result.error_message = "AuthoringChange.changes must be an array";
             return false;
         }
 
-        auto       provider_result = ReadJsonInterface(apply_result_json.Get());
-        const auto change_kind = GetStringField(change, "kind", "");
-        auto       parsed = ParseAuthoringProviderApply(
-            provider_result,
-            current_revision,
-            change_kind);
-        if (!parsed.error_kind.empty())
-        {
-            result.error_kind = parsed.error_kind;
-            result.error_message = parsed.error_message;
-            return false;
-        }
-        result.parsed = std::move(parsed);
+        int64_t                    revision_cursor = current_revision;
+        std::vector<std::string>   applied_kinds;
+        std::vector<yyjson::value> aggregated_diagnostics;
+        yyjson::value              last_accepted_properties;
+        yyjson::value              last_document;
+        yyjson::value              last_command_result;
+        bool                       has_command_result = false;
 
-        // Provider-rejected apply: the envelope is valid but the provider
-        // declined the change (error diagnostics present). Do not advance the
-        // store (no persist, no revision bump); surface the real rejection
-        // reason. result.parsed stays populated so the response carries the
-        // diagnostics array.
-        if (HasErrorDiagnostic(result.parsed.diagnostics))
+        std::size_t change_index = 0;
+        for (const auto& element : *changes_array)
         {
-            result.error_kind = "applyRejected";
-            result.error_message =
-                FirstErrorDiagnosticMessage(result.parsed.diagnostics);
-            if (result.error_message.empty())
+            const std::string change_kind = GetStringField(element, "kind", "");
+            result.error_locator =
+                MakeBatchChangeLocator(change_index, change_kind);
+
+            yyjson::value single_change(Das::Utils::MakeYyjsonObject());
+            auto          single_object = single_change.as_object();
+            (*single_object)[std::string_view("baseRevision")] =
+                revision_cursor;
+            (*single_object)[std::string_view("kind")] = std::make_pair(
+                std::string_view(change_kind),
+                yyjson::copy_string);
+            auto element_object = element.as_object();
+            if (!element_object
+                || !element_object->contains(std::string_view("payload")))
             {
-                result.error_message = "Authoring change rejected by provider";
+                result.error_kind = "missingField";
+                result.error_message = "changes element payload required";
+                result.rollback = change_index > 0;
+                return false;
             }
-            return false;
+            (*single_object)[std::string_view("payload")] =
+                CloneJsonValue((*element_object)[std::string_view("payload")]);
+
+            auto change_json = WrapJsonValue(std::move(single_change));
+            DasPtr<Das::ExportInterface::IDasJson> apply_result_json;
+            auto apply_result = session->ApplyChange(
+                change_json.Get(),
+                apply_result_json.Put());
+            if (DAS::IsFailed(apply_result) || !apply_result_json)
+            {
+                result.error_kind = "providerFailed";
+                result.error_message = "Authoring provider rejected change";
+                result.rollback = change_index > 0;
+                result.parsed.diagnostics =
+                    BuildAggregatedDiagnostics(aggregated_diagnostics);
+                return false;
+            }
+
+            auto provider_result = ReadJsonInterface(apply_result_json.Get());
+            auto parsed = ParseAuthoringProviderApply(
+                provider_result,
+                revision_cursor,
+                change_kind);
+            AppendDiagnosticsInto(aggregated_diagnostics, parsed.diagnostics);
+            if (!parsed.error_kind.empty())
+            {
+                result.error_kind = parsed.error_kind;
+                result.error_message = parsed.error_message;
+                result.rollback = change_index > 0;
+                result.parsed.diagnostics =
+                    BuildAggregatedDiagnostics(aggregated_diagnostics);
+                return false;
+            }
+
+            // Provider-rejected change: the envelope is valid but the provider
+            // declined this change (error diagnostics present). Stop the batch
+            // — no persist, no store revision advance; surface the real
+            // rejection reason via the aggregated diagnostics.
+            if (HasErrorDiagnostic(parsed.diagnostics))
+            {
+                result.error_kind = "applyRejected";
+                result.error_message =
+                    FirstErrorDiagnosticMessage(parsed.diagnostics);
+                if (result.error_message.empty())
+                {
+                    result.error_message =
+                        "Authoring change rejected by provider";
+                }
+                result.rollback = change_index > 0;
+                result.parsed.diagnostics =
+                    BuildAggregatedDiagnostics(aggregated_diagnostics);
+                return false;
+            }
+
+            revision_cursor = parsed.returned_revision;
+            applied_kinds.push_back(change_kind);
+            last_accepted_properties = std::move(parsed.accepted_properties);
+            if (!parsed.document.is_null())
+            {
+                last_document = std::move(parsed.document);
+            }
+            if (parsed.has_command_result)
+            {
+                last_command_result = std::move(parsed.command_result);
+                has_command_result = true;
+            }
+            ++change_index;
         }
 
-        result.next_revision = result.parsed.returned_revision;
+        result.parsed.accepted_properties = std::move(last_accepted_properties);
+        result.parsed.document = std::move(last_document);
+        result.parsed.diagnostics =
+            BuildAggregatedDiagnostics(aggregated_diagnostics);
+        result.parsed.command_result = std::move(last_command_result);
+        result.parsed.has_command_result = has_command_result;
+        result.parsed.returned_revision = revision_cursor;
+        result.next_revision = revision_cursor;
+        result.error_locator.clear();
 
         yyjson::value previous_authoring;
         if (auto src_obj = source_json.as_object();
@@ -1403,11 +1570,38 @@ namespace Das::Core::TaskScheduler
         }
         result.authoring = MakePersistedAuthoringMetadata(
             result.next_revision,
-            change_kind,
+            JoinChangeKinds(applied_kinds),
             previous_authoring);
 
         result.ok = true;
         return true;
+    }
+
+    // 回滚墓碑命中后的会话重建：构造一个不经缓存的替代 entry（session 从
+    // 持久层重建 = 批前状态）。不回填缓存的原因：回填会引入第二个可并发
+    // 进入的锁域，破坏 per-session 写锁串行化；不回填只让下一个请求多一
+    // 次会话创建（仅批量失败路径可达）。
+    static std::shared_ptr<AuthoringSessionEntry> BuildUncachedAuthoringSession(
+        Das::Core::ForeignInterfaceHost::PluginManager& plugin_manager,
+        const TaskAuthoringCapability&                  capability,
+        yyjson::value                                   context,
+        int64_t                                         current_revision)
+    {
+        DasPtr<Das::PluginInterface::IDasTaskAuthoringSession> session;
+        auto session_result = CreateAuthoringSessionWithContext(
+            plugin_manager,
+            capability,
+            std::move(context),
+            session);
+        if (DAS::IsFailed(session_result) || !session)
+        {
+            return nullptr;
+        }
+        auto entry = std::make_shared<AuthoringSessionEntry>();
+        entry->session = std::move(session);
+        entry->creation_revision = current_revision;
+        entry->creation_locale = ReadGlobalLocaleStamp();
+        return entry;
     }
 
     // Structured result of the shared Get pipeline. The caller owns response
@@ -3211,6 +3405,29 @@ namespace Das::Core::TaskScheduler
                 return err;
             }
 
+            if (session_entry->invalidated_by_rollback)
+            {
+                // 本请求在批量失败逐出之前已解析到该 entry（写锁等待者）。
+                // 其 session 内存文档携带未持久化的半批突变，不能继续使用
+                // ——从持久层重建替代会话（不经缓存，原因见 helper 注释）。
+                auto rebuilt = BuildUncachedAuthoringSession(
+                    plugin_manager_,
+                    capability,
+                    MakeRepositoryAuthoringContextJson(
+                        plugin_manager_,
+                        entry_id,
+                        entry.accepted_properties,
+                        fresh_json),
+                    pipeline.current_revision);
+                if (!rebuilt || !rebuilt->session)
+                {
+                    return MakeRepositoryResponseError(
+                        "sessionCreateFailed",
+                        "Failed to create repository authoring session");
+                }
+                session_entry = std::move(rebuilt);
+            }
+
             if (!RunAuthoringApplyPipelineLocked(
                     session_entry,
                     change,
@@ -3218,6 +3435,21 @@ namespace Das::Core::TaskScheduler
                     pipeline.current_revision,
                     pipeline))
             {
+                if (pipeline.rollback)
+                {
+                    // 中途失败回滚：墓碑 + 逐出都在写锁内完成——若在锁外
+                    // 逐出，并发请求可在窗口内重新解析到带半批突变的
+                    // session 并成功提交（半批幽灵状态落盘）。逐出需要
+                    // mutex_，形成 entry->lock → mutex_ 的受控逆向嵌套：
+                    // 全库不存在持 mutex_ 再取 entry->lock 的路径（缓存
+                    // resolve 只在 mutex_ 内做 find/emplace/erase），无
+                    // AB-BA 环。
+                    session_entry->invalidated_by_rollback = true;
+                    const std::scoped_lock cache_lock(mutex_);
+                    EvictAuthoringSession(
+                        repository_authoring_sessions_,
+                        entry_id);
+                }
                 std::string message = std::move(pipeline.error_message);
                 if (pipeline.error_kind == "sessionCreateFailed")
                 {
@@ -3229,6 +3461,10 @@ namespace Das::Core::TaskScheduler
                 }
                 // applyRejected: keep pipeline.error_message (the real
                 // diagnostic) and surface the provider's diagnostics array.
+                if (!pipeline.error_locator.empty())
+                {
+                    message = pipeline.error_locator + ": " + message;
+                }
                 const yyjson::value* diags =
                     (pipeline.error_kind == "applyRejected")
                         ? &pipeline.parsed.diagnostics
@@ -4662,6 +4898,29 @@ namespace Das::Core::TaskScheduler
                 return err;
             }
 
+            if (entry->invalidated_by_rollback)
+            {
+                // 本请求在批量失败逐出之前已解析到该 entry（写锁等待者）。
+                // 其 session 内存文档携带未持久化的半批突变，不能继续使用
+                // ——从持久层重建替代会话（不经缓存，原因见 helper 注释）。
+                auto rebuilt = BuildUncachedAuthoringSession(
+                    plugin_manager_,
+                    capability,
+                    MakeAuthoringContextJson(
+                        plugin_manager_,
+                        task_id,
+                        properties,
+                        fresh_json),
+                    pipeline.current_revision);
+                if (!rebuilt || !rebuilt->session)
+                {
+                    return MakeAuthoringResponseError(
+                        "sessionCreateFailed",
+                        "Failed to create task authoring session");
+                }
+                entry = std::move(rebuilt);
+            }
+
             if (!RunAuthoringApplyPipelineLocked(
                     entry,
                     change,
@@ -4669,6 +4928,16 @@ namespace Das::Core::TaskScheduler
                     pipeline.current_revision,
                     pipeline))
             {
+                if (pipeline.rollback)
+                {
+                    // 中途失败回滚：墓碑 + 逐出都在写锁内完成（Repository
+                    // 路径同款注释：锁外逐出会让并发请求在窗口内重新解析
+                    // 到带半批突变的 session；entry->lock → mutex_ 嵌套无
+                    // AB-BA——全库不存在反向获取路径）。
+                    entry->invalidated_by_rollback = true;
+                    const std::scoped_lock cache_lock(mutex_);
+                    EvictAuthoringSession(task_authoring_sessions_, task_id);
+                }
                 std::string message = std::move(pipeline.error_message);
                 if (pipeline.error_kind == "providerFailed")
                 {
@@ -4681,6 +4950,10 @@ namespace Das::Core::TaskScheduler
                 // applyRejected: keep pipeline.error_message (the real
                 // diagnostic); also surface the provider's diagnostics array so
                 // the UI shows the precise rejection reason.
+                if (!pipeline.error_locator.empty())
+                {
+                    message = pipeline.error_locator + ": " + message;
+                }
                 const yyjson::value* diags =
                     (pipeline.error_kind == "applyRejected")
                         ? &pipeline.parsed.diagnostics

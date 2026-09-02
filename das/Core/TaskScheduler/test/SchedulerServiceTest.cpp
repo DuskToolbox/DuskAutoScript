@@ -4180,7 +4180,8 @@ TEST_F(
 
     const ipc_scoped_lock lock(shared_state_->mutex);
     EXPECT_EQ(shared_state_->authoring_session_count, 1);
-    EXPECT_EQ(shared_state_->apply_change_count, 3);
+    // 批在 change[0] 即停（1 次 ApplyChange）+ 恢复 apply（1 次）。
+    EXPECT_EQ(shared_state_->apply_change_count, 2);
 }
 
 TEST_F(
