@@ -8,6 +8,7 @@
 #include <das/Core/Logger/Logger.h>
 #include <das/DasApi.h>
 #include <das/Utils/DasJsonCore.h>
+#include <das/Utils/TaskComponentPorts.h>
 
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
@@ -560,6 +561,35 @@ namespace
     // node, so it creates no data dependency. Must match GraphCompiler.
     constexpr std::string_view BROADCAST_SOURCE = "$graph_input";
 
+    // 可序列化端口值 → JSON（graphOutputs 导出通道）。Base/Component/
+    // Image/Signal 不跨结果 JSON 序列化——调用方侧无从物化，跳过（TRACE）。
+    std::optional<yyjson::value> PortValueToJson(const PortValue& value)
+    {
+        if (value.IsInt())
+        {
+            return yyjson::value(*value.AsInt());
+        }
+        if (value.IsFloat())
+        {
+            return yyjson::value(*value.AsFloat());
+        }
+        if (value.IsBool())
+        {
+            return yyjson::value(*value.AsBool());
+        }
+        if (value.IsString())
+        {
+            // JsonString 构造的不可变值自持字符串内容（与生产端口载荷同
+            // 通道），导出对象生命周期独立于帧内源串。
+            return Das::Utils::JsonString(*value.AsString());
+        }
+        if (value.IsJson())
+        {
+            return Das::Utils::CloneYyjsonValue(value.AsJson()->value);
+        }
+        return std::nullopt;
+    }
+
     using EdgeKey =
         std::tuple<std::string, std::string, std::string, std::string>;
 
@@ -913,6 +943,7 @@ DasResult GraphRuntime::RunWithHost(
     Das::PluginInterface::IDasTaskComponentHost* p_host)
 {
     last_error_.clear();
+    last_graph_outputs_ = Das::Utils::MakeYyjsonObject();
 
     // Phase 1: Fingerprint validation
     DasResult hr =
@@ -999,6 +1030,42 @@ DasResult GraphRuntime::RunWithHost(
     {
         SetError(hr, "Execution cancelled after completing all nodes");
         return hr;
+    }
+
+    // 边界输出口导出——frame 尚在作用域内，按编译产物清单把悬空输出口
+    // 的值收敛为 graphOutputs（同名多位置时后执行位置覆盖；不可序列化类
+    // 型跳过）。
+    {
+        auto outputs_object = last_graph_outputs_.as_object();
+        if (outputs_object.has_value())
+        {
+            for (const auto& boundary_output : plan.boundary_ports.outputs)
+            {
+                for (const auto& node_id : boundary_output.node_ids)
+                {
+                    const PortValue* port_value =
+                        frame.Find(PortKey{node_id, boundary_output.port_id});
+                    if (port_value == nullptr)
+                    {
+                        continue;
+                    }
+                    auto exported = PortValueToJson(*port_value);
+                    if (!exported.has_value())
+                    {
+                        DAS_CORE_LOG_TRACE(
+                            "Boundary output port = {} on node = {} carries "
+                            "a non-serializable value; skipped from "
+                            "graphOutputs",
+                            boundary_output.port_id,
+                            node_id);
+                        continue;
+                    }
+                    (*outputs_object)[std::string_view(
+                        boundary_output.port_id)] =
+                        Das::Utils::CloneYyjsonValue(*exported);
+                }
+            }
+        }
     }
 
     DAS_CORE_LOG_INFO(

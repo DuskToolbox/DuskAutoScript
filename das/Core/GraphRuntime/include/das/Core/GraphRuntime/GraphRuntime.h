@@ -57,6 +57,15 @@ public:
     // Get error message from last failed execution.
     const std::string& GetLastErrorMessage() const { return last_error_; }
 
+    // 最近一次成功执行的边界输出口值映射（{port_id: value}，按编译产物
+    // boundary_ports.outputs 清单从帧导出；无清单/无值时为空对象）。frame
+    // 只在 RunWithHost 作用域内存活，导出在引擎侧完成后经此暴露给 COM
+    // 包装层组装结果 JSON。
+    const yyjson::value& GetLastGraphOutputs() const
+    {
+        return last_graph_outputs_;
+    }
+
     // -- Configure / Prepare / RunWithHost (Plan 02-14) ---------------------
 
     // Configure: create per-node IDasTaskComponent instances from
@@ -99,6 +108,9 @@ public:
 
 private:
     std::string last_error_;
+
+    // 最近一次成功执行的 graphOutputs 导出（成员形式暴露给包装层）。
+    yyjson::value last_graph_outputs_;
 
     // Per-node component cache populated by Configure().
     std::unordered_map<std::string, NodeComponentEntry> node_components_;

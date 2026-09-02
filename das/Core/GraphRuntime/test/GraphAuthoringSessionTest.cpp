@@ -697,10 +697,7 @@ namespace
         ASSERT_EQ(
             SetActionCatalog(
                 s.p,
-                R"([{"actionId":"{g1}","ports":[)"
-                R"({"portId":"seed","portType":"int","direction":"input"},)"
-                R"({"portId":"result","portType":"string","direction":"output"}]"
-                R"(}])"),
+                R"json([{"actionId":"{g1}","ports":[{"portId":"seed","portType":"int","direction":"input"},{"portId":"result","portType":"string","direction":"output"}]}])json"),
             DAS_S_OK);
         ASSERT_NE(
             Compact(

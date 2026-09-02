@@ -681,6 +681,12 @@ namespace
                         std::string_view(serialized));
                 }
             }
+            else
+            {
+                // result_json 不是 object（例如 malformed 空数组）→ 模拟 child
+                // 自身报告失败，RepositoryInvoke 读到 status="failed" 后透传。
+                Das::Utils::SetPortString(output_map.Get(), "status", "failed");
+            }
 
             // GraphTask 形态：执行结果 JSON 整体落在 result 口（graphOutputs
             // 段经此回传，invokeRepository 解析后投影到自身输出 portmap）。
@@ -690,12 +696,6 @@ namespace
                     output_map.Get(),
                     "result",
                     state_->result_port_json);
-            }
-            else
-            {
-                // result_json 不是 object（例如 malformed 空数组）→ 模拟 child
-                // 自身报告失败，RepositoryInvoke 读到 status="failed" 后透传。
-                Das::Utils::SetPortString(output_map.Get(), "status", "failed");
             }
 
             *pp_out_port_map = output_map.Get();

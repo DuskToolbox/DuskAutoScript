@@ -134,8 +134,19 @@ DasResult GraphRuntimeImpl::Execute(
         return result;
     }
 
-    // Return an empty result JSON on success.
-    return CreateEmptyDasJson(pp_out_result_json);
+    // 成功结果携带 graphOutputs（引擎侧按编译产物边界清单从帧导出的悬空
+    // 输出口值映射；空清单/无值时为空对象——消费方按缺键处理即可）。
+    yyjson::value result_payload(Das::Utils::MakeYyjsonObject());
+    (*result_payload.as_object())[std::string_view("graphOutputs")] =
+        Das::Utils::CloneYyjsonValue(engine_.GetLastGraphOutputs());
+    auto result_serialized = Das::Utils::SerializeYyjsonValue(result_payload);
+    if (!result_serialized.has_value())
+    {
+        return CreateEmptyDasJson(pp_out_result_json);
+    }
+    return ParseDasJsonFromString(
+        result_serialized->c_str(),
+        pp_out_result_json);
 }
 
 DAS_CORE_GRAPHRUNTIME_NS_END
