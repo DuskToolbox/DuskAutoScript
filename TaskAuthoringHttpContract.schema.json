@@ -714,14 +714,26 @@
     },
     "AuthoringApplyRequest": {
       "type": "object",
-      "required": ["baseRevision", "kind", "payload"],
+      "required": ["baseRevision", "changes"],
       "additionalProperties": false,
-      "$comment": "D-84-01: wire is {baseRevision, kind, payload} directly; no change.op wrapper.",
+      "$comment": "Batch atomic apply: wire is {baseRevision, changes:[{kind,payload},...]}; the backend applies the whole batch all-or-nothing (a mid-batch failure mutates nothing and persists nothing). Legacy single-change top-level kind/payload shape is retired (rejected).",
       "properties": {
         "endpoint": { "$ref": "#/$defs/Endpoint" },
         "baseRevision": { "type": "integer", "minimum": 0 },
-        "kind": { "$ref": "#/$defs/AuthoringChangeKind" },
-        "payload": { "type": "object" }
+        "changes": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 256,
+          "items": {
+            "type": "object",
+            "required": ["kind", "payload"],
+            "additionalProperties": false,
+            "properties": {
+              "kind": { "$ref": "#/$defs/AuthoringChangeKind" },
+              "payload": { "type": "object" }
+            }
+          }
+        }
       }
     },
     "AuthoringGetRequest": {
@@ -789,7 +801,7 @@
                 },
                 "commandResult": { "$ref": "#/$defs/CommandResult" }
               },
-              "$comment": "document.revision must equal baseRevision + 1 (checked by the C++ validator). commandResult is optional (D-92-17); responses without business results omit it."
+              "$comment": "On success document.revision must stay within [baseRevision, baseRevision + bumping-change count] (each semantic change bumps +1; moveGraphNode/moveGraphNodes bump 0 — checked by the C++ validator). A failed batch keeps document.revision == baseRevision. commandResult is optional (D-92-17); responses without business results omit it."
             }
           }
         }

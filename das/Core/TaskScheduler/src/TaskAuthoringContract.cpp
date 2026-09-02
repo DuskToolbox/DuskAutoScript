@@ -866,9 +866,10 @@ namespace Das::Core::TaskScheduler
         }
 
         // Validate the apply template portion of a CommandDescriptor. The
-        // template has the same {kind, payload} shape as AuthoringChange but
-        // must NOT carry baseRevision; the caller injects the current
-        // revision at submit time.
+        // template keeps the single-change element shape {kind, payload} and
+        // must NOT carry baseRevision; the submit-time builder wraps it (plus
+        // the current revision) into the batch apply request
+        // {baseRevision, changes:[...]}.
         AuthoringValidationResult ValidateCommandApplyTemplate(
             const yyjson::value& apply)
         {
@@ -2561,29 +2562,66 @@ namespace Das::Core::TaskScheduler
                 "missingField",
                 "AuthoringChange.baseRevision required");
         }
-        if (!HasStringField(obj, "kind"))
+        if (!HasArrayField(obj, "changes"))
         {
-            return Fail("missingField", "AuthoringChange.kind required");
+            return Fail("missingField", "AuthoringChange.changes required");
         }
 
-        auto kind = obj["kind"].as_string().value();
-        if (!IsOneOf(kind, CHANGE_KINDS))
+        auto changes_array = obj["changes"].as_array();
+        if (changes_array->empty())
         {
             return Fail(
-                "unsupportedChange",
-                "AuthoringChange.kind unsupported");
+                "invalidChanges",
+                "AuthoringChange.changes must not be empty");
         }
-        if (!HasObjectField(obj, "payload"))
+        if (changes_array->size() > kMaxAuthoringApplyChanges)
         {
-            return Fail("missingField", "AuthoringChange.payload required");
+            return Fail(
+                "tooManyChanges",
+                "AuthoringChange.changes exceeds the batch limit");
         }
 
-        if (auto r = ValidateChangePayload(kind, obj["payload"]); !r.valid)
+        for (const auto& element : *changes_array)
         {
-            return r;
+            auto element_obj = element.as_object();
+            if (!element_obj)
+            {
+                return Fail(
+                    "invalidChange",
+                    "AuthoringChange.changes element must be object");
+            }
+            if (!HasStringField(*element_obj, "kind"))
+            {
+                return Fail("missingField", "changes element kind required");
+            }
+
+            auto kind = (*element_obj)["kind"].as_string().value();
+            if (!IsOneOf(kind, CHANGE_KINDS))
+            {
+                return Fail(
+                    "unsupportedChange",
+                    "changes element kind unsupported");
+            }
+            if (!HasObjectField(*element_obj, "payload"))
+            {
+                return Fail("missingField", "changes element payload required");
+            }
+
+            if (auto r = ValidateChangePayload(kind, (*element_obj)["payload"]);
+                !r.valid)
+            {
+                return r;
+            }
+
+            if (!OnlyKeys(*element_obj, {"kind", "payload"}))
+            {
+                return Fail(
+                    "unknownField",
+                    "changes element rejects unknown field");
+            }
         }
 
-        if (!OnlyKeys(obj, {"baseRevision", "kind", "payload"}))
+        if (!OnlyKeys(obj, {"baseRevision", "changes"}))
         {
             return Fail(
                 "unknownField",
@@ -2678,10 +2716,23 @@ namespace Das::Core::TaskScheduler
         return {};
     }
 
-    AuthoringValidationResult ValidateAuthoringApplyResult(
+    // viewData 轻量通道 kind：成功也不推进语义 revision（canvas 坐标走
+    // document.viewData 分区，GraphRuntime 外壳不 ++version）。
+    static bool IsViewDataChannelKind(std::string_view kind)
+    {
+        return kind == std::string_view("moveGraphNode")
+               || kind == std::string_view("moveGraphNodes");
+    }
+
+    // Apply 结果 envelope 共用校验核。revision 合法域由调用方按批量语义
+    // 折算后传入：单 change 形态下界 == 上界（精确 +1 或 viewData 的 0）；
+    // 批量形态下界 = base +（存在 bump change ? 1 : 0）、上界 =
+    // base + bump change 数（每个语义 change 恰 +1）。
+    static AuthoringValidationResult ValidateApplyResultEnvelope(
         const yyjson::value& result,
-        int64_t              baseRevision,
-        std::string_view     kind)
+        int64_t              base_revision,
+        int64_t              minimum_success_revision,
+        int64_t              maximum_success_revision)
     {
         auto obj_opt = result.as_object();
         if (!obj_opt)
@@ -2727,17 +2778,12 @@ namespace Das::Core::TaskScheduler
             }
             const int64_t actual_revision = ReadInt(doc["revision"]);
             // 失败 envelope（有 error diagnostic）不推进 revision（须 ==
-            // baseRevision）； 成功 envelope 必须推进（须 == baseRevision +
-            // 1）。唯一例外：viewData 轻量通道 kind（moveGraphNode 单数与
-            // moveGraphNodes 批量）成功也不推进语义 revision，须 ==
-            // baseRevision。
+            // baseRevision，批内零突变）；成功 envelope 的 revision 须落在
+            // 调用方折算的批量推进域内。
             const bool has_error = HasErrorDiagnostic(obj["diagnostics"]);
-            const bool bumps_revision =
-                kind != std::string_view("moveGraphNode")
-                && kind != std::string_view("moveGraphNodes");
             if (has_error)
             {
-                if (actual_revision != baseRevision)
+                if (actual_revision != base_revision)
                 {
                     return Fail(
                         "revisionMismatch",
@@ -2746,24 +2792,14 @@ namespace Das::Core::TaskScheduler
                         "on failure)");
                 }
             }
-            else if (bumps_revision)
-            {
-                if (actual_revision != baseRevision + 1)
-                {
-                    return Fail(
-                        "revisionMismatch",
-                        "AuthoringApplyResult.document.revision must equal "
-                        "baseRevision + 1");
-                }
-            }
-            else if (actual_revision != baseRevision)
+            else if (
+                actual_revision < minimum_success_revision
+                || actual_revision > maximum_success_revision)
             {
                 return Fail(
                     "revisionMismatch",
-                    "viewData-channel kinds (moveGraphNode/moveGraphNodes) "
-                    "AuthoringApplyResult.document.revision must equal "
-                    "baseRevision (viewData changes do not bump the "
-                    "semantic revision)");
+                    "AuthoringApplyResult.document.revision must stay within "
+                    "the batch advance domain [base, base + bumping changes]");
             }
         }
 
@@ -2828,6 +2864,39 @@ namespace Das::Core::TaskScheduler
                 "AuthoringApplyResult rejects unknown field");
         }
         return Pass();
+    }
+
+    AuthoringValidationResult ValidateAuthoringApplyResult(
+        const yyjson::value& result,
+        int64_t              baseRevision,
+        std::string_view     kind)
+    {
+        const bool bumps_revision = !IsViewDataChannelKind(kind);
+        return ValidateApplyResultEnvelope(
+            result,
+            baseRevision,
+            baseRevision + (bumps_revision ? 1 : 0),
+            baseRevision + (bumps_revision ? 1 : 0));
+    }
+
+    AuthoringValidationResult ValidateAuthoringApplyResult(
+        const yyjson::value&            result,
+        int64_t                         baseRevision,
+        const std::vector<std::string>& kinds)
+    {
+        int64_t bumping_changes = 0;
+        for (const auto& kind : kinds)
+        {
+            if (!IsViewDataChannelKind(kind))
+            {
+                ++bumping_changes;
+            }
+        }
+        return ValidateApplyResultEnvelope(
+            result,
+            baseRevision,
+            baseRevision + (bumping_changes > 0 ? 1 : 0),
+            baseRevision + bumping_changes);
     }
 
     AuthoringValidationResult ValidateAuthoringCompileResult(

@@ -649,8 +649,9 @@ namespace Das::Http
         //   POST /api/v1/scheduler/{profile}/tasks/{taskId}/authoring/get
         //   POST /api/v1/scheduler/{profile}/tasks/{taskId}/authoring/apply
         //   POST /api/v1/scheduler/{profile}/tasks/{taskId}/authoring/compile
-        // request body: JSON object; apply carries baseRevision plus change
-        // payload, get/compile carry provider request context.
+        // request body: JSON object; apply carries baseRevision plus a
+        // changes[] array the backend applies atomically (all-or-nothing),
+        // get/compile carry provider request context.
         // success response: standard envelope with Scheduler-returned lower
         // camelCase JSON in data.
         // errorKind matrix: taskNotFound, capabilityMissing,
