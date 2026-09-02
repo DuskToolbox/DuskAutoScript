@@ -907,28 +907,31 @@ TEST(TaskAuthoringContractTest, GraphNodeStrictShape)
     EXPECT_EQ(r2.error_kind, "unknownField");
 }
 
-TEST(TaskAuthoringContractTest, EntryRefOnlyEntryIdAllowed)
+// targetKind 只认 componentRef：entryRef 目标整体拒绝（fail-closed），
+// 附带的 entryRef 键同样不再属于 GraphNode 键集。
+TEST(TaskAuthoringContractTest, EntryRefTargetRejected)
 {
-    auto valid = ParseJson(R"json({
+    auto entry_ref_target = ParseJson(R"json({
         "contractVersion": 1,
         "viewKind": "graph",
         "revision": 0,
         "graph": {"nodes": [{"id": "n", "targetKind": "entryRef", "entryRef": {"entryId": 5}}]}
     })json");
-    auto r1 = Das::Core::TaskScheduler::ValidateAuthoringDocument(valid);
-    EXPECT_TRUE(r1.valid) << r1.message;
+    auto r1 =
+        Das::Core::TaskScheduler::ValidateAuthoringDocument(entry_ref_target);
+    EXPECT_FALSE(r1.valid);
+    EXPECT_EQ(r1.error_kind, "invalidTargetKind");
 
-    auto legacy = ParseJson(R"json({
+    auto unknown_target = ParseJson(R"json({
         "contractVersion": 1,
         "viewKind": "graph",
         "revision": 0,
-        "graph": {"nodes": [{"id": "n", "targetKind": "entryRef", "entryRef": {
-            "entryId": 5, "expectedRevision": 1, "sourceFingerprint": "abc"
-        }}]}
+        "graph": {"nodes": [{"id": "n", "targetKind": "somethingElse"}]}
     })json");
-    auto r2 = Das::Core::TaskScheduler::ValidateAuthoringDocument(legacy);
+    auto r2 =
+        Das::Core::TaskScheduler::ValidateAuthoringDocument(unknown_target);
     EXPECT_FALSE(r2.valid);
-    EXPECT_EQ(r2.error_kind, "unknownField");
+    EXPECT_EQ(r2.error_kind, "invalidTargetKind");
 }
 
 // 节点呈现元数据三键（label 用户/默认显示名、description、icon——自

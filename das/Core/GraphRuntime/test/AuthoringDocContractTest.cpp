@@ -110,23 +110,6 @@ namespace
         return edge;
     }
 
-    GraphNodeDto MakeEntryRefNode(
-        std::string_view id,
-        int64_t          entry_id,
-        int64_t          expected_rev,
-        std::string_view fingerprint)
-    {
-        GraphNodeDto node;
-        node.node_id = std::string(id);
-        node.target.target_kind = "entryRef";
-        node.target.entry_ref = EntryRefDto{
-            "entryRef",
-            entry_id,
-            expected_rev,
-            std::string(fingerprint)};
-        return node;
-    }
-
     ConfigFieldDescriptor MakeConfigField(
         std::string_view                name,
         std::string_view                type,
@@ -560,10 +543,9 @@ namespace
     TEST(AuthoringDocContractTest, LabelProjection_NoSourceOmitsKey)
     {
         GraphDocumentDto doc;
-        // componentRef node with no catalog match + no store label...
+        // Two componentRef nodes with no catalog match + no store label.
         doc.nodes.push_back(MakeNode("n1", "{g1}", 0.0));
-        // ...and an entryRef node (no catalog match by construction).
-        doc.nodes.push_back(MakeEntryRefNode("sub", 42, 3, "fp-sub"));
+        doc.nodes.push_back(MakeNode("sub", "{g-unmatched}", 0.0));
 
         ActionCatalog      catalog;
         ActionCatalogEntry entry;
@@ -1124,7 +1106,7 @@ namespace
     }
 
     // -----------------------------------------------------------------------
-    // DAS-81 compliance: componentGuid (no `type`), entryRef emit, fields[]
+    // DAS-81 compliance: componentGuid (no `type`), fields[]
     // -----------------------------------------------------------------------
 
     TEST(AuthoringDocContractTest, GraphMode_EmitsComponentGuidAndNotType)
@@ -1137,24 +1119,27 @@ namespace
         EXPECT_EQ(json.find("\"type\":\"{g1}\""), std::string::npos);
     }
 
-    TEST(AuthoringDocContractTest, GraphMode_EntryRefCarriesOnlyEntryId)
+    // entryRef 目标已退役：投影与 wire 均不再输出 entryRef 键，targetKind
+    // 只投影 componentRef。
+    TEST(AuthoringDocContractTest, GraphMode_NoEntryRefKeyEmitted)
     {
-        // D-84-39: public entryRef is exactly {entryId}; expectedRevision and
-        // sourceFingerprint remain internal to GraphDocumentDto.
         GraphDocumentDto doc;
-        doc.nodes.push_back(MakeEntryRefNode("sub", 42, 3, "fp-sub"));
+        GraphNodeDto     legacy_node;
+        legacy_node.node_id = "legacy";
+        legacy_node.target.target_kind = "entryRef";
+        doc.nodes.push_back(std::move(legacy_node));
+
         auto out = ToAuthoringDocument(doc);
         ASSERT_TRUE(out.graph.has_value());
         ASSERT_EQ(out.graph->nodes.size(), 1u);
         const auto& n = out.graph->nodes[0];
         EXPECT_EQ(n.target_kind, "entryRef");
-        ASSERT_TRUE(n.entry_ref.has_value());
-        EXPECT_EQ(n.entry_ref->entry_id, 42);
+        EXPECT_EQ(n.component_guid, "");
 
         auto json = ToJson(doc);
-        EXPECT_NE(json.find("\"entryId\":42"), std::string::npos);
-        EXPECT_EQ(json.find("\"expectedRevision\""), std::string::npos);
-        EXPECT_EQ(json.find("\"sourceFingerprint\""), std::string::npos);
+        // 键形态断言（带冒号）：targetKind 的 "entryRef" 值不算命中。
+        EXPECT_EQ(json.find("\"entryRef\":"), std::string::npos);
+        EXPECT_EQ(json.find("\"entryId\""), std::string::npos);
     }
 
     TEST(AuthoringDocContractTest, GraphMode_LiveSettingsKeysNotInFields)
@@ -2154,8 +2139,8 @@ namespace
     }
 
     // -----------------------------------------------------------------------
-    // Phase 84 strict wire (D-84-02/07/13/38/39) — viewKind, items[], no
-    // public settings/sourceFingerprint, EntryRef={entryId} only.
+    // Strict wire — viewKind, items[], no
+    // public settings/sourceFingerprint.
     // -----------------------------------------------------------------------
 
     TEST(
@@ -2200,19 +2185,6 @@ namespace
         // Public wire drops business settings (D-84-07) and the document-level
         // sourceFingerprint (D-84-04).
         EXPECT_EQ(json.find("\"settings\""), std::string::npos);
-        EXPECT_EQ(json.find("\"sourceFingerprint\""), std::string::npos);
-    }
-
-    TEST(AuthoringDocContractTest, NewWire_EntryRefCarriesOnlyEntryId)
-    {
-        GraphDocumentDto doc;
-        doc.nodes.push_back(MakeEntryRefNode("sub", 42, 3, "fp-sub"));
-
-        const auto json = ToJson(doc);
-        EXPECT_NE(json.find("\"entryId\":42"), std::string::npos);
-        // D-84-39: expectedRevision and sourceFingerprint are removed from the
-        // public entryRef. They remain internal to GraphDocumentDto.
-        EXPECT_EQ(json.find("\"expectedRevision\""), std::string::npos);
         EXPECT_EQ(json.find("\"sourceFingerprint\""), std::string::npos);
     }
 } // namespace

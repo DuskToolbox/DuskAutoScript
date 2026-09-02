@@ -31,7 +31,6 @@ enum class CompileDiagnosticKind
     NodeNotFound,              // Edge references a node_id not in the graph
     UnknownPortType,           // Port type string not in known set (warning)
     UnresolvableComponentGuid, // component_guid not in factory manager
-    CyclicEntryRef,            // entryRef cycle detected (reserved for 02-10)
     CyclicEdgeGraph // Edge-based cycle detected during topological sort
 };
 
@@ -116,16 +115,9 @@ public:
     Dto::PortBindingPlanDto GeneratePortBindingPlan(
         const Dto::GraphDocumentDto& document);
 
-    /// Detect cycles in entryRef references.
-    /// Scans all nodes with target.kind="entryRef" and checks for
-    /// self-reference or recursive references (via visited set).
-    std::vector<CompileEdgeDiagnostic> DetectCyclicEntryRefs(
-        const Dto::GraphDocumentDto& document);
-
     /// Unified compile entry point: runs all phases and produces a
     /// CompiledGraphPlanDto. Steps: ValidateEdgePorts ->
-    /// ComputeExecutionOrder -> GeneratePortBindingPlan ->
-    /// DetectCyclicEntryRefs.
+    /// ComputeExecutionOrder -> GeneratePortBindingPlan.
     Dto::CompiledGraphPlanDto Compile(const Dto::GraphDocumentDto& document);
 
     // -----------------------------------------------------------------------

@@ -1112,28 +1112,7 @@ namespace Das::Core::TaskScheduler
             return Pass();
         }
 
-        AuthoringValidationResult ValidateEntryRef(const yyjson::value& ref)
-        {
-            auto obj_opt = ref.as_object();
-            if (!obj_opt)
-            {
-                return Fail("invalidEntryRef", "entryRef must be object");
-            }
-            const auto& obj = obj_opt.value();
-            if (!HasIntegerField(obj, "entryId"))
-            {
-                return Fail("missingField", "entryRef.entryId required");
-            }
-            if (!OnlyKeys(obj, {"entryId"}))
-            {
-                return Fail("unknownField", "entryRef rejects unknown field");
-            }
-            return Pass();
-        }
-
-        AuthoringValidationResult ValidateTarget(
-            const auto& obj,
-            bool        allow_entry_ref)
+        AuthoringValidationResult ValidateTarget(const auto& obj)
         {
             if (!HasStringField(obj, "targetKind"))
             {
@@ -1144,25 +1123,8 @@ namespace Das::Core::TaskScheduler
             {
                 return Pass();
             }
-            if (tk == std::string_view("entryRef"))
-            {
-                if (!allow_entry_ref)
-                {
-                    return Fail(
-                        "invalidTargetKind",
-                        "targetKind=entryRef not allowed here");
-                }
-                if (!obj.contains("entryRef"))
-                {
-                    return Fail(
-                        "missingField",
-                        "entryRef required when targetKind=entryRef");
-                }
-                return ValidateEntryRef(obj["entryRef"]);
-            }
-            return Fail(
-                "invalidTargetKind",
-                "targetKind must be componentRef|entryRef");
+            // Fail-closed: componentRef is the only accepted target shape.
+            return Fail("invalidTargetKind", "targetKind must be componentRef");
         }
 
         AuthoringValidationResult ValidateFormSequenceItem(
@@ -1198,8 +1160,7 @@ namespace Das::Core::TaskScheduler
 
             if (obj.contains("targetKind"))
             {
-                if (auto r = ValidateTarget(obj, /*allow_entry_ref=*/true);
-                    !r.valid)
+                if (auto r = ValidateTarget(obj); !r.valid)
                 {
                     return r;
                 }
@@ -1259,7 +1220,6 @@ namespace Das::Core::TaskScheduler
                     {"id",
                      "componentGuid",
                      "targetKind",
-                     "entryRef",
                      "label",
                      "description",
                      "fields",
@@ -1419,8 +1379,7 @@ namespace Das::Core::TaskScheduler
 
             if (obj.contains("targetKind"))
             {
-                if (auto r = ValidateTarget(obj, /*allow_entry_ref=*/true);
-                    !r.valid)
+                if (auto r = ValidateTarget(obj); !r.valid)
                 {
                     return r;
                 }
@@ -1461,7 +1420,6 @@ namespace Das::Core::TaskScheduler
                      "icon",
                      "componentGuid",
                      "targetKind",
-                     "entryRef",
                      "fields",
                      "fieldLayout",
                      "commands",

@@ -99,35 +99,6 @@ TEST(GraphDocumentDtoTest, ComponentRefDtoRoundTrip)
 }
 
 // ---------------------------------------------------------------------------
-// EntryRefDto
-// ---------------------------------------------------------------------------
-TEST(GraphDocumentDtoTest, EntryRefDtoRoundTrip)
-{
-    EntryRefDto ref;
-    ref.kind = "entryRef";
-    ref.entry_id = 42;
-    ref.expected_revision = 7;
-    ref.source_fingerprint = "abc123hash";
-
-    auto serialized = yyjson::object(ref);
-
-    EXPECT_TRUE(serialized.contains(std::string_view("kind")));
-    EXPECT_TRUE(serialized.contains(std::string_view("entryId")));
-    EXPECT_TRUE(serialized.contains(std::string_view("expectedRevision")));
-    EXPECT_TRUE(serialized.contains(std::string_view("sourceFingerprint")));
-
-    EntryRefDto round_tripped;
-    SCOPED_TRACE(std::string(serialized.write()));
-    ASSERT_NO_THROW(round_tripped = yyjson::cast<EntryRefDto>(serialized));
-    EXPECT_EQ(round_tripped.kind, "entryRef");
-    EXPECT_EQ(round_tripped.entry_id, 42);
-    ASSERT_TRUE(round_tripped.expected_revision.has_value());
-    EXPECT_EQ(round_tripped.expected_revision.value(), 7);
-    ASSERT_TRUE(round_tripped.source_fingerprint.has_value());
-    EXPECT_EQ(round_tripped.source_fingerprint.value(), "abc123hash");
-}
-
-// ---------------------------------------------------------------------------
 // GraphNodeTargetDto — componentRef variant
 // ---------------------------------------------------------------------------
 TEST(GraphDocumentDtoTest, GraphNodeTargetDtoComponentRefRoundTrip)
@@ -136,13 +107,12 @@ TEST(GraphDocumentDtoTest, GraphNodeTargetDtoComponentRefRoundTrip)
     target.target_kind = "componentRef";
     target.component_ref =
         ComponentRefDto{"componentRef", "{guid-component}", "{guid-plugin}"};
-    target.entry_ref = std::nullopt;
 
     auto serialized = yyjson::object(target);
 
     EXPECT_TRUE(serialized.contains(std::string_view("targetKind")));
     EXPECT_TRUE(serialized.contains(std::string_view("componentRef")));
-    EXPECT_TRUE(serialized.contains(std::string_view("entryRef")));
+    EXPECT_FALSE(serialized.contains(std::string_view("entryRef")));
 
     GraphNodeTargetDto round_tripped;
     SCOPED_TRACE(std::string(serialized.write()));
@@ -152,33 +122,6 @@ TEST(GraphDocumentDtoTest, GraphNodeTargetDtoComponentRefRoundTrip)
     ASSERT_TRUE(round_tripped.component_ref.has_value());
     EXPECT_EQ(round_tripped.component_ref->component_guid, "{guid-component}");
     EXPECT_EQ(round_tripped.component_ref->plugin_guid, "{guid-plugin}");
-    EXPECT_FALSE(round_tripped.entry_ref.has_value());
-}
-
-// ---------------------------------------------------------------------------
-// GraphNodeTargetDto — entryRef variant
-// ---------------------------------------------------------------------------
-TEST(GraphDocumentDtoTest, GraphNodeTargetDtoEntryRefRoundTrip)
-{
-    GraphNodeTargetDto target;
-    target.target_kind = "entryRef";
-    target.component_ref = std::nullopt;
-    target.entry_ref = EntryRefDto{"entryRef", 99, 3, "fp-hash"};
-
-    auto serialized = yyjson::object(target);
-
-    GraphNodeTargetDto round_tripped;
-    SCOPED_TRACE(std::string(serialized.write()));
-    ASSERT_NO_THROW(
-        round_tripped = yyjson::cast<GraphNodeTargetDto>(serialized));
-    EXPECT_EQ(round_tripped.target_kind, "entryRef");
-    EXPECT_FALSE(round_tripped.component_ref.has_value());
-    ASSERT_TRUE(round_tripped.entry_ref.has_value());
-    EXPECT_EQ(round_tripped.entry_ref->entry_id, 99);
-    ASSERT_TRUE(round_tripped.entry_ref->expected_revision.has_value());
-    EXPECT_EQ(round_tripped.entry_ref->expected_revision.value(), 3);
-    ASSERT_TRUE(round_tripped.entry_ref->source_fingerprint.has_value());
-    EXPECT_EQ(round_tripped.entry_ref->source_fingerprint.value(), "fp-hash");
 }
 
 // ---------------------------------------------------------------------------
@@ -190,8 +133,7 @@ TEST(GraphDocumentDtoTest, GraphNodeDtoRoundTrip)
     node.node_id = "node_1";
     node.target = GraphNodeTargetDto{
         "componentRef",
-        ComponentRefDto{"componentRef", "{comp-guid}", "{plug-guid}"},
-        std::nullopt};
+        ComponentRefDto{"componentRef", "{comp-guid}", "{plug-guid}"}};
     node.settings = MakeSettingsPayload();
     node.dynamic_ports.push_back(
         GraphPortDefinitionDto{
@@ -298,8 +240,7 @@ TEST(GraphDocumentDtoTest, GraphDocumentDtoRoundTrip)
             "node_1",
             GraphNodeTargetDto{
                 "componentRef",
-                ComponentRefDto{"componentRef", "{comp-guid}", "{plug-guid}"},
-                std::nullopt},
+                ComponentRefDto{"componentRef", "{comp-guid}", "{plug-guid}"}},
             MakeSettingsPayload(),
             {}});
     doc.edges.push_back(
@@ -482,17 +423,18 @@ namespace
             ComponentRefDto{
                 "componentRef",
                 "{aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee}",
-                "{11111111-2222-3333-4444-555555555555}"},
-            std::nullopt};
+                "{11111111-2222-3333-4444-555555555555}"}};
         node1.settings = MakeSettingsPayload();
 
-        // Node 2 — entryRef
+        // Node 2 — second componentRef（边与往返断言的双节点形态）
         GraphNodeDto node2;
         node2.node_id = "node_entry";
         node2.target = GraphNodeTargetDto{
-            "entryRef",
-            std::nullopt,
-            EntryRefDto{"entryRef", 42, 7, "fp_abc123"}};
+            "componentRef",
+            ComponentRefDto{
+                "componentRef",
+                "{aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee}",
+                "{11111111-2222-3333-4444-555555555555}"}};
         node2.settings = MakeDefaultPayload();
 
         doc.nodes.push_back(std::move(node1));
@@ -653,26 +595,6 @@ TEST(GraphTaskEntryStorageTest, GraphDocumentRoundTripThroughAcceptedProperties)
     EXPECT_EQ(restored.edges[0].source_port_id, "output_result");
     ASSERT_EQ(restored.graph_inputs.size(), 1u);
     EXPECT_EQ(restored.graph_inputs[0].port_id, "graph_in");
-}
-
-// ---------------------------------------------------------------------------
-// EntryRef target survives round-trip
-// ---------------------------------------------------------------------------
-TEST(GraphTaskEntryStorageTest, GraphDocumentRoundTripPreservesEntryRefTarget)
-{
-    auto original = MakeTestGraphDocument();
-    auto restored = RoundTripGraphDocument(original);
-
-    ASSERT_EQ(restored.nodes.size(), 2u);
-    auto& node2 = restored.nodes[1];
-    EXPECT_EQ(node2.node_id, "node_entry");
-    EXPECT_EQ(node2.target.target_kind, "entryRef");
-    ASSERT_TRUE(node2.target.entry_ref.has_value());
-    EXPECT_EQ(node2.target.entry_ref->entry_id, 42);
-    ASSERT_TRUE(node2.target.entry_ref->expected_revision.has_value());
-    EXPECT_EQ(node2.target.entry_ref->expected_revision.value(), 7);
-    ASSERT_TRUE(node2.target.entry_ref->source_fingerprint.has_value());
-    EXPECT_EQ(node2.target.entry_ref->source_fingerprint.value(), "fp_abc123");
 }
 
 // ---------------------------------------------------------------------------

@@ -10,7 +10,6 @@
 #include <cpp_yyjson.hpp>
 #include <das/Core/GraphRuntime/Config.h>
 #include <das/Core/GraphRuntime/GraphDocument.h>
-#include <das/Core/GraphRuntime/GraphEntryId.h>
 #include <das/Utils/DasJsonCore.h>
 
 DAS_CORE_GRAPHRUNTIME_NS_BEGIN
@@ -88,15 +87,6 @@ namespace Dto
         std::vector<BackEdgeDto>             back_edges;
     };
 
-    // ---- port mapping across subgraph boundaries ----
-    struct PortMappingDto
-    {
-        std::string outer_port_id; // port_id in the outer (calling) graph
-        std::string inner_port_id; // port_id in the inner (referenced) graph
-        std::string node_id;   // node_id in the inner graph owning this port
-        std::string port_type; // expected Variant type from port definition
-    };
-
     // ---- compiled snapshot of a subgraph reference (02-07 serialization) ----
     struct CompiledSubgraphSnapshotDto
     {
@@ -106,32 +96,6 @@ namespace Dto
         std::map<std::string, std::string> input_mapping;
         std::map<std::string, std::string> output_mapping;
         CompiledGraphPlanDto               inner_snapshot;
-    };
-
-    // ---- compile-time result from SubgraphCompiler (02-21, in-memory only)
-    // ---- Recursive structure — NOT serialised via yyjson aggregate
-    // reflection. Holds port projection mappings (outer↔inner), nested subgraph
-    // results, and cycle-detection diagnostics.
-    struct SubgraphCompileResultDto
-    {
-        GraphEntryId entry_id = 0;       // the referenced entry
-        int64_t      revision = 0;       // pinned revision
-        std::string  source_fingerprint; // pinned fingerprint
-
-        CompiledGraphPlanDto compiled_plan; // from GraphCompiler::Compile()
-
-        // Deserialized inner document — populated by CompileEntryRef(),
-        // consumed by CompileRecursiveImpl() to avoid a second
-        // entry_accessor() call per entryRef.
-        std::optional<GraphDocumentDto> deserialized_document;
-
-        std::vector<PortMappingDto> input_mapping;  // outer graph → inner root
-        std::vector<PortMappingDto> output_mapping; // inner terminal → outer
-
-        std::vector<SubgraphCompileResultDto>
-            nested_snapshots; // recursive children
-
-        std::vector<std::string> diagnostics; // warnings and errors
     };
 
 } // namespace Dto
@@ -159,7 +123,6 @@ DAS_GRAPHRUNTIME_DTO_CASTER(CompiledNodeSnapshotDto);
 DAS_GRAPHRUNTIME_DTO_CASTER(SignalRouteDto);
 DAS_GRAPHRUNTIME_DTO_CASTER(BackEdgeDto);
 DAS_GRAPHRUNTIME_DTO_CASTER(CompiledGraphPlanDto);
-DAS_GRAPHRUNTIME_DTO_CASTER(PortMappingDto);
 DAS_GRAPHRUNTIME_DTO_CASTER(CompiledSubgraphSnapshotDto);
 
 #undef DAS_GRAPHRUNTIME_DTO_CASTER
@@ -201,12 +164,6 @@ struct yyjson::field_name_rule<Das::Core::GraphRuntime::Dto::BackEdgeDto>
 template <>
 struct yyjson::field_name_rule<
     Das::Core::GraphRuntime::Dto::CompiledGraphPlanDto>
-{
-    using type = yyjson::snake_to_camel_transform;
-};
-
-template <>
-struct yyjson::field_name_rule<Das::Core::GraphRuntime::Dto::PortMappingDto>
 {
     using type = yyjson::snake_to_camel_transform;
 };

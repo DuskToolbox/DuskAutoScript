@@ -46,7 +46,7 @@ namespace Contract
         }
 
         // -------------------------------------------------------------------
-        // componentGuid / entryRef / targetKind extraction
+        // componentGuid / targetKind extraction
         // -------------------------------------------------------------------
 
         std::string ComponentGuidOf(const Dto::GraphNodeDto& node)
@@ -56,17 +56,6 @@ namespace Contract
                 return node.target.component_ref->component_guid;
             }
             return {};
-        }
-
-        // D-84-39: only entryId crosses the boundary. The internal
-        // expected_revision/source_fingerprint stay inside GraphDocumentDto.
-        std::optional<EntryRef> EntryRefOf(const Dto::GraphNodeDto& node)
-        {
-            if (!node.target.entry_ref.has_value())
-            {
-                return std::nullopt;
-            }
-            return EntryRef{node.target.entry_ref->entry_id};
         }
 
         std::string TargetKindOf(const Dto::GraphNodeDto& node)
@@ -358,7 +347,6 @@ namespace Contract
                 item.id = node.node_id;
                 item.component_guid = ComponentGuidOf(node);
                 item.target_kind = TargetKindOf(node);
-                item.entry_ref = EntryRefOf(node);
                 const ActionCatalogEntry* matched_entry =
                     FindCatalogEntry(action_catalog, item.component_guid);
                 item.fields = ProjectFieldsWithConfig(
@@ -516,7 +504,6 @@ namespace Contract
                 out.id = node.node_id;
                 out.component_guid = ComponentGuidOf(node);
                 out.target_kind = TargetKindOf(node);
-                out.entry_ref = EntryRefOf(node);
 
                 // Catalog merge by componentGuid == actionId. The display
                 // name follows the priority chain: the store user label (a
@@ -783,23 +770,6 @@ namespace Contract
             return root;
         }
 
-        yyjson::value BuildEntryRefValue(
-            const std::optional<EntryRef>& entry_ref)
-        {
-            auto root = Das::Utils::MakeYyjsonObject();
-            if (!entry_ref.has_value())
-            {
-                return root;
-            }
-            auto obj_o = root.as_object();
-            if (!obj_o)
-            {
-                return root;
-            }
-            (*obj_o)["entryId"] = entry_ref->entry_id;
-            return root;
-        }
-
         yyjson::value BuildItemValue(const FormSequenceItem& item)
         {
             auto root = Das::Utils::MakeYyjsonObject();
@@ -820,10 +790,6 @@ namespace Contract
             obj["targetKind"] = std::make_pair(
                 std::string_view(item.target_kind),
                 yyjson::copy_string);
-            if (item.entry_ref.has_value())
-            {
-                obj["entryRef"] = BuildEntryRefValue(item.entry_ref);
-            }
             if (!item.fields.empty())
             {
                 obj["fields"] = BuildFieldsValue(item.fields);
@@ -933,10 +899,6 @@ namespace Contract
             obj["targetKind"] = std::make_pair(
                 std::string_view(node.target_kind),
                 yyjson::copy_string);
-            if (node.entry_ref.has_value())
-            {
-                obj["entryRef"] = BuildEntryRefValue(node.entry_ref);
-            }
             if (!node.fields.empty())
             {
                 obj["fields"] = BuildFieldsValue(node.fields);

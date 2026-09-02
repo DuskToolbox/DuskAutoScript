@@ -33,7 +33,7 @@ DAS_CORE_GRAPHRUNTIME_NS_BEGIN
 namespace Dto
 {
     /// One step in a linear formSequence. Carries the same target shape as a
-    /// graph node (componentRef | entryRef) plus a free-form settings blob.
+    /// graph node (componentRef) plus a free-form settings blob.
     struct FormSequenceItemDto
     {
         std::string        item_id;

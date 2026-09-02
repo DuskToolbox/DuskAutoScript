@@ -32,19 +32,10 @@ namespace Dto
         std::string plugin_guid;
     };
 
-    struct EntryRefDto
-    {
-        std::string                kind = "entryRef";
-        int64_t                    entry_id = 0;
-        std::optional<int64_t>     expected_revision;
-        std::optional<std::string> source_fingerprint;
-    };
-
     struct GraphNodeTargetDto
     {
         std::string                    target_kind;
         std::optional<ComponentRefDto> component_ref;
-        std::optional<EntryRefDto>     entry_ref;
     };
 
     struct GraphNodeDto
@@ -113,8 +104,7 @@ DAS_CORE_GRAPHRUNTIME_NS_END
 
 // Macro-based caster: provides from_json via Detail::CastDtoObject.
 // GraphNodeTargetDto is handled separately below because its
-// std::optional<ComponentRefDto> / std::optional<EntryRefDto> fields need
-// manual deserialization.
+// std::optional<ComponentRefDto> field needs manual deserialization.
 #define DAS_GRAPHRUNTIME_DTO_CASTER(DtoType)                                   \
     template <>                                                                \
     struct yyjson::caster<Das::Core::GraphRuntime::Dto::DtoType>               \
@@ -130,7 +120,6 @@ DAS_CORE_GRAPHRUNTIME_NS_END
 
 DAS_GRAPHRUNTIME_DTO_CASTER(GraphPortDefinitionDto);
 DAS_GRAPHRUNTIME_DTO_CASTER(ComponentRefDto);
-DAS_GRAPHRUNTIME_DTO_CASTER(EntryRefDto);
 // GraphNodeTargetDto, GraphNodeDto and GraphDocumentDto omitted — custom
 // casters below.
 DAS_GRAPHRUNTIME_DTO_CASTER(GraphEdgeDto);
@@ -177,17 +166,6 @@ struct yyjson::caster<Das::Core::GraphRuntime::Dto::GraphNodeTargetDto>
                 target.component_ref =
                     Das::Core::GraphRuntime::Dto::Detail::CastDtoObject<
                         Das::Core::GraphRuntime::Dto::ComponentRefDto>(ref);
-            }
-        }
-
-        if (object->contains(std::string_view("entryRef")))
-        {
-            auto ref = (*object)[std::string_view("entryRef")];
-            if (!ref.is_null())
-            {
-                target.entry_ref =
-                    Das::Core::GraphRuntime::Dto::Detail::CastDtoObject<
-                        Das::Core::GraphRuntime::Dto::EntryRefDto>(ref);
             }
         }
 
@@ -363,12 +341,6 @@ struct yyjson::field_name_rule<
 
 template <>
 struct yyjson::field_name_rule<Das::Core::GraphRuntime::Dto::ComponentRefDto>
-{
-    using type = yyjson::snake_to_camel_transform;
-};
-
-template <>
-struct yyjson::field_name_rule<Das::Core::GraphRuntime::Dto::EntryRefDto>
 {
     using type = yyjson::snake_to_camel_transform;
 };

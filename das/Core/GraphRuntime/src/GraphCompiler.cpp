@@ -262,7 +262,8 @@ std::vector<CompileEdgeDiagnostic> GraphCompiler::ValidateEdgePorts(
         if (node.target.target_kind != "componentRef"
             || !node.target.component_ref.has_value())
         {
-            // entryRef nodes: no manifest resolution in this wave
+            // Unknown target kinds resolve no manifest; their edges fall
+            // through to port-existence diagnostics below (fail-closed).
             return {};
         }
 
@@ -351,11 +352,6 @@ std::vector<CompileEdgeDiagnostic> GraphCompiler::ValidateEdgePorts(
                 continue;
             }
         }
-        else if (src_node.target.target_kind == "entryRef")
-        {
-            // entryRef nodes: skip port validation (Wave 20 responsibility)
-            continue;
-        }
 
         // --- Target manifest resolution ---
         ManifestPorts tgt_manifest;
@@ -391,11 +387,6 @@ std::vector<CompileEdgeDiagnostic> GraphCompiler::ValidateEdgePorts(
                 diagnostics.push_back(std::move(d));
                 continue;
             }
-        }
-        else if (tgt_node.target.target_kind == "entryRef")
-        {
-            // entryRef nodes: skip port validation
-            continue;
         }
 
         // --- Source port existence check ---
@@ -786,7 +777,8 @@ Dto::PortBindingPlanDto GraphCompiler::GeneratePortBindingPlan(
                     }
                 }
             }
-            // entryRef nodes: expected_type remains empty
+            // Non-componentRef sources keep an empty expected_type — the
+            // binding plan never invents a type it cannot resolve.
         }
 
         plan.bindings.push_back(std::move(binding));
@@ -835,46 +827,6 @@ Dto::PortBindingPlanDto GraphCompiler::GeneratePortBindingPlan(
     }
 
     return plan;
-}
-
-// ---------------------------------------------------------------------------
-// DetectCyclicEntryRefs
-// ---------------------------------------------------------------------------
-
-std::vector<CompileEdgeDiagnostic> GraphCompiler::DetectCyclicEntryRefs(
-    const Dto::GraphDocumentDto& document)
-{
-    std::vector<CompileEdgeDiagnostic> diagnostics;
-
-    for (const auto& node : document.nodes)
-    {
-        if (node.target.target_kind != "entryRef"
-            || !node.target.entry_ref.has_value())
-        {
-            continue;
-        }
-
-        const auto& entry_ref = *node.target.entry_ref;
-
-        // Self-reference: source_fingerprint matches the document's
-        // fingerprint
-        if (entry_ref.source_fingerprint.has_value()
-            && !entry_ref.source_fingerprint->empty()
-            && entry_ref.source_fingerprint == document.fingerprint)
-        {
-            CompileEdgeDiagnostic d;
-            d.kind = CompileDiagnosticKind::CyclicEntryRef;
-            d.node_id = node.node_id;
-            d.message = DAS_FMT_NS::format(
-                "Cyclic entryRef detected: node '{}' references "
-                "entry_id={} with matching fingerprint",
-                node.node_id,
-                entry_ref.entry_id);
-            diagnostics.push_back(std::move(d));
-        }
-    }
-
-    return diagnostics;
 }
 
 // ---------------------------------------------------------------------------
@@ -952,14 +904,10 @@ Dto::CompiledGraphPlanDto GraphCompiler::Compile(
     // Port binding plan
     plan.binding_plan = GeneratePortBindingPlan(document);
 
-    // entryRef cycle detection
-    auto ref_diagnostics = DetectCyclicEntryRefs(document);
-    for (const auto& d : ref_diagnostics)
-    {
-        plan.diagnostics.push_back(DiagnosticToJson(d));
-    }
-
-    // Build node snapshots from graph document nodes
+    // Build node snapshots from graph document nodes. A node whose target is
+    // not a componentRef keeps an empty component_guid; the runtime's
+    // Configure step rejects it with INVALID_ARGUMENT (fail-closed handling
+    // of unknown target kinds — no silent fallback).
     for (const auto& node : document.nodes)
     {
         Dto::CompiledNodeSnapshotDto snapshot;
@@ -970,24 +918,6 @@ Dto::CompiledGraphPlanDto GraphCompiler::Compile(
             && node.target.component_ref.has_value())
         {
             snapshot.component_guid = node.target.component_ref->component_guid;
-        }
-
-        // entryRef marker: component_guid stays empty as the marker a later
-        // expansion pass keys on; the entry identity rides the payload so the
-        // expansion can resolve the referenced repository entry.
-        if (node.target.target_kind == "entryRef"
-            && node.target.entry_ref.has_value())
-        {
-            auto payload = Das::Utils::MakeYyjsonObject();
-            auto payload_obj = *payload.as_object();
-            payload_obj[std::string_view("entryId")] =
-                node.target.entry_ref->entry_id;
-            if (node.target.entry_ref->expected_revision.has_value())
-            {
-                payload_obj[std::string_view("expectedRevision")] =
-                    *node.target.entry_ref->expected_revision;
-            }
-            snapshot.compiled_payload_json = std::move(payload);
         }
 
         // Copy settings if present
