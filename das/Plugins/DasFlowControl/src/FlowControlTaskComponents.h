@@ -144,8 +144,10 @@ private:
     // 启动进程原语：读 config（exePath/args/workingDirectory/
     // waitWindowClassRegex/waitWindowWindowRegex/waitWindowTimeoutMs），
     // spawn（成功立即 detach）后可选等待目标窗口出现（轮询窗口枚举缝，
-    // 小时间片可取消；0/1/N 匹配语义）。成功发 signal_out；失败带结构化
-    // diagnostic（launch-exe-path-missing / launch-spawn-failed /
+    // 小时间片可取消；0/1/N 匹配语义）。成功发 signal_out；失败全部属
+    // 「无法完成启动动作」= 执行失败，返回 DAS_E_FLOW_LAUNCH_* 专用错误码
+    // （GraphRuntime 失败接管路径终止图），同时尽力构建 diagnostic 载荷
+    // （launch-exe-path-missing / launch-spawn-failed /
     // launch-window-timeout / launch-window-ambiguous，消息经 i18n）。
     DasResult DoLaunch(
         PluginInterface::IDasStopToken*       stop_token,

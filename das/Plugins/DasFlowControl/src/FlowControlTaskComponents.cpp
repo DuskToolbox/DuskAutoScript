@@ -2,6 +2,7 @@
 
 #include "FlowControlTaskComponents.h"
 
+#include "FlowControlErrorCodes.h"
 #include "FlowControlI18n.h"
 
 #include <das/Core/TaskScheduler/RepositoryInvokeDtos.h>
@@ -261,9 +262,12 @@ namespace
         return "";
     }
 
-    // 失败出口：status=failed + 结构化 diagnostic（code + i18n 消息）。
+    // 失败出口：尽力构建结构化 diagnostic 载荷（code + i18n 消息，供直驱
+    // 调用方冗余显示），并回传执行失败错误码——GraphRuntime 失败接管路径
+    // 据此终止图并携带 node id 冒泡。
     DasResult BuildLaunchFailedPortMap(
         std::string_view               diagnostic_code,
+        DasResult                      error_code,
         ExportInterface::IDasPortMap** pp_out_port_map)
     {
         DAS::DasPtr<ExportInterface::IDasPortMap> output_map;
@@ -292,7 +296,7 @@ namespace
 
         *pp_out_port_map = output_map.Get();
         output_map.Get()->AddRef();
-        return DAS_S_OK;
+        return error_code;
     }
 
 #ifdef _WIN32
@@ -1136,6 +1140,7 @@ DasResult DasFlowControlTaskComponent::DoLaunch(
     {
         return BuildLaunchFailedPortMap(
             "launch-exe-path-missing",
+            Plugins::DasFlowControl::DAS_E_FLOW_LAUNCH_EXE_PATH_MISSING,
             pp_out_port_map);
     }
 
@@ -1145,7 +1150,10 @@ DasResult DasFlowControlTaskComponent::DoLaunch(
     }
     if (!process_spawner_(exe_path, arguments, working_directory))
     {
-        return BuildLaunchFailedPortMap("launch-spawn-failed", pp_out_port_map);
+        return BuildLaunchFailedPortMap(
+            "launch-spawn-failed",
+            Plugins::DasFlowControl::DAS_E_FLOW_LAUNCH_SPAWN_FAILED,
+            pp_out_port_map);
     }
 
     if (wait_window_configured)
@@ -1210,6 +1218,7 @@ DasResult DasFlowControlTaskComponent::DoLaunch(
             {
                 return BuildLaunchFailedPortMap(
                     "launch-window-ambiguous",
+                    Plugins::DasFlowControl::DAS_E_FLOW_LAUNCH_WINDOW_AMBIGUOUS,
                     pp_out_port_map);
             }
 
@@ -1217,6 +1226,7 @@ DasResult DasFlowControlTaskComponent::DoLaunch(
             {
                 return BuildLaunchFailedPortMap(
                     "launch-window-timeout",
+                    Plugins::DasFlowControl::DAS_E_FLOW_LAUNCH_WINDOW_TIMEOUT,
                     pp_out_port_map);
             }
 

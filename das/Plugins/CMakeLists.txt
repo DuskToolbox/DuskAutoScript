@@ -44,8 +44,7 @@ if(TARGET TaskSchedulerTest)
         ${CMAKE_CURRENT_SOURCE_DIR}/DasFlowControl/src/FlowControlI18n.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/DasFlowControl/src/FlowControlErrorLensRegistration.cpp)
     target_include_directories(TaskSchedulerTest PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/DasFlowControl/src
-        ${CMAKE_CURRENT_SOURCE_DIR}/DasFlowControl/include)
+        ${CMAKE_CURRENT_SOURCE_DIR}/DasFlowControl/src)
 endif()
 
 # E2EGraphFlowTest 直驱真实 launch 组件（执行失败语义端到端）：FlowControl
@@ -55,8 +54,7 @@ if(TARGET GraphRuntimeTest)
         ${CMAKE_CURRENT_SOURCE_DIR}/DasFlowControl/src/FlowControlTaskComponents.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/DasFlowControl/src/FlowControlI18n.cpp)
     target_include_directories(GraphRuntimeTest PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/DasFlowControl/src
-        ${CMAKE_CURRENT_SOURCE_DIR}/DasFlowControl/include)
+        ${CMAKE_CURRENT_SOURCE_DIR}/DasFlowControl/src)
 endif()
 
 # TaskSchedulerTest 需要先构建 SchedulerTestPlugin（SetUp 部署其 dll+json），

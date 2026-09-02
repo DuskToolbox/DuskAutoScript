@@ -1,8 +1,8 @@
+#include "FlowControlErrorCodes.h"
 #include "FlowControlErrorLensRegistration.h"
 
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
-#include <das/Plugins/DasFlowControl/FlowControlErrorCodes.h>
 #include <das/_autogen/idl/abi/IDasErrorLens.h>
 #include <gtest/gtest.h>
 

@@ -9,7 +9,6 @@
 #include <das/Core/Utils/DasJsonImpl.h>
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
-#include <das/Plugins/DasFlowControl/FlowControlErrorCodes.h>
 #include <das/Utils/DasJsonCore.h>
 #include <das/_autogen/idl/abi/IDasPortMap.h>
 #include <das/_autogen/idl/abi/IDasTaskComponent.h>
@@ -18,6 +17,7 @@
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasTaskComponentHost.Implements.hpp>
 #include <gtest/gtest.h>
 
+#include "FlowControlErrorCodes.h"
 #include "FlowControlTaskComponents.h"
 
 #include <algorithm>

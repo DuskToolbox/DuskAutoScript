@@ -19,10 +19,9 @@
 
 #include <boost/dll/runtime_symbol_info.hpp>
 
+#include "FlowControlErrorCodes.h"
 #include "FlowControlI18n.h"
 #include "FlowControlTaskComponents.h"
-
-#include <das/Plugins/DasFlowControl/FlowControlErrorCodes.h>
 
 #include <algorithm>
 #include <array>
