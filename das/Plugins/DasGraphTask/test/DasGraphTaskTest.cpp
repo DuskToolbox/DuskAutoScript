@@ -158,7 +158,7 @@ TEST(DasGraphTaskTest, DoStopTokenCancel)
 }
 
 // Smoke: a plan produced by the authoring Compile path can be fed into
-// DasGraphTaskImpl::Do (compiledPlan port) and execute without error on an
+// DasGraphTaskImpl::Do (executionInput port) and execute without error on an
 // empty graph. Validates the authoring→compile→Do handoff (DAS-77 Wave3 A1).
 TEST(DasGraphTaskTest, AuthoringCompilePlanFeedsIntoDo)
 {
@@ -173,7 +173,7 @@ TEST(DasGraphTaskTest, AuthoringCompilePlanFeedsIntoDo)
     DestroyGraphAuthoringSession(state);
     ASSERT_NE(plan_json.Get(), nullptr);
 
-    // Serialise the plan to the compiledPlan input port. The Core Compile
+    // Serialise the plan to the executionInput input port. The Core Compile
     // returns the strict authoring envelope
     // {compile:{executionInput:<plan>}, diagnostics}; extract the inner plan
     // the same way the scheduler does before feeding the port.
@@ -197,12 +197,12 @@ TEST(DasGraphTaskTest, AuthoringCompilePlanFeedsIntoDo)
 
     DasPtr<Das::ExportInterface::IDasPortMap> input_map;
     ASSERT_EQ(CreateIDasPortMap(input_map.Put()), DAS_S_OK);
-    const DasReadOnlyString compiled_plan_key{"compiledPlan"};
-    const DasReadOnlyString compiled_plan_value{inner_plan->c_str()};
+    const DasReadOnlyString execution_input_key{"executionInput"};
+    const DasReadOnlyString execution_input_value{inner_plan->c_str()};
     ASSERT_EQ(
         input_map->SetString(
-            compiled_plan_key.Get(),
-            compiled_plan_value.Get()),
+            execution_input_key.Get(),
+            execution_input_value.Get()),
         DAS_S_OK);
 
     // Feed the compiled plan into Do and confirm it runs (empty plan → OK).
@@ -460,6 +460,36 @@ namespace
         return *inner_plan;
     }
 } // namespace
+
+// 输入键统一为 executionInput：经该端口喂入编译产物时节点组件经 host
+// 真实创建并执行（组件读旧键时节点永不执行——scheduler 直驱与调用组件
+// 喂线两条执行路径同键的行为锁定）。
+TEST(DasGraphTaskTest, ExecutionInputPortDrivesNodeExecution)
+{
+    const auto plan_text = CompileOneNodePlanText();
+    ASSERT_FALSE(plan_text.empty());
+
+    auto host = DasPtr<Das::PluginInterface::IDasTaskComponentHost>(
+        new NodeServingHost(NodeComponentGuid()));
+    auto* serving_host = static_cast<NodeServingHost*>(host.Get());
+    auto  task = DasGraphTaskImpl::Make(host.Get());
+    ASSERT_NE(task.Get(), nullptr);
+
+    DasPtr<Das::ExportInterface::IDasPortMap> input_map;
+    ASSERT_EQ(CreateIDasPortMap(input_map.Put()), DAS_S_OK);
+    const DasReadOnlyString execution_input_key{"executionInput"};
+    const DasReadOnlyString execution_input_value{plan_text.c_str()};
+    ASSERT_EQ(
+        input_map->SetString(
+            execution_input_key.Get(),
+            execution_input_value.Get()),
+        DAS_S_OK);
+
+    DasPtr<Das::ExportInterface::IDasPortMap> result;
+    const DasResult hr = task->Do(nullptr, input_map.Get(), result.Put());
+    EXPECT_TRUE(DAS::IsOk(hr));
+    EXPECT_GE(serving_host->create_count, 1);
+}
 
 // 工厂经包构造拿 host：包默认存储 → CreateFeatureInterface(2) → 工厂 →
 // 组件持有可用 host（无任何对工厂的直接注入调用）。

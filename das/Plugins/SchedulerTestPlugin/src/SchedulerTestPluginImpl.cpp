@@ -858,7 +858,15 @@ DasResult FakeTaskComponentFactory::CreateComponent(
         // The fake component's own guid — used as a dedicated execution
         // component target when a test deploys the real flow-control plugin
         // (which owns the 68F1xxxx flow guids) alongside this one.
-        FactoryTaskComponentImplGuid};
+        FactoryTaskComponentImplGuid,
+        // das.graph 的执行组件 guid（真实 DasGraphTask manifest 中任务类型
+        // 与执行组件同 guid）——供条目编译响应对 graph 执行组件映射的用例
+        // 声明到清单。
+        DasGuid{
+            0xF4A2C9D1,
+            0x7B3E,
+            0x4D8A,
+            {0xA1, 0x5F, 0xC2, 0xE8, 0x6B, 0x4D, 0x91, 0xA3}}};
 
     const auto supported = std::any_of(
         SUPPORTED_COMPONENTS.begin(),

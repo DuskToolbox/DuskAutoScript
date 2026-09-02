@@ -1864,6 +1864,71 @@ void InjectPortDeclarationsIntoFactoryManifest(
     ofs << Das::Utils::SerializeYyjsonValue(*parsed).value();
 }
 
+// 在既有工厂清单上补声明执行组件并把任务类型的 executionComponent 指到
+// 它（manifest 校验要求 executionComponent.componentGuid 必须在
+// taskComponents.components 中声明）——照 InjectPortDeclarations 的读改写
+// 形态，避免为单一用例复制整套清单构造。
+void DeclareExecutionComponentInFactoryManifest(
+    const std::filesystem::path& manifest_path,
+    std::string_view             task_guid,
+    std::string_view             component_guid)
+{
+    std::ifstream     ifs(manifest_path);
+    const std::string manifest_text(
+        (std::istreambuf_iterator<char>(ifs)),
+        std::istreambuf_iterator<char>());
+    auto parsed = Das::Utils::ParseYyjsonFromString(manifest_text);
+    ASSERT_TRUE(parsed.has_value());
+    auto manifest_obj = parsed->as_object();
+    ASSERT_TRUE(manifest_obj.has_value());
+    auto task_components =
+        (*manifest_obj)[std::string_view("taskComponents")].as_object();
+    ASSERT_TRUE(task_components.has_value());
+    auto components =
+        (*task_components)[std::string_view("components")].as_object();
+    ASSERT_TRUE(components.has_value());
+
+    // components 补声明（definition 最小形状与 WriteFactoryPluginManifest
+    // 的 add_component 相同）。
+    {
+        yyjson::value definition(Das::Utils::MakeYyjsonObject());
+        (*definition.as_object())[std::string_view("schemaVersion")] = 1;
+        (*definition.as_object())[std::string_view("kind")] = "test.execution";
+        (*definition.as_object())[std::string_view("componentGuid")] =
+            std::string(component_guid);
+        (*definition.as_object())[std::string_view("inputs")] =
+            yyjson::value(Das::Utils::MakeYyjsonArray());
+        (*definition.as_object())[std::string_view("outputs")] =
+            yyjson::value(Das::Utils::MakeYyjsonArray());
+        (*definition.as_object())[std::string_view("config")] =
+            yyjson::value(Das::Utils::MakeYyjsonObject());
+        (*definition.as_object())[std::string_view("diagnostics")] =
+            yyjson::value(Das::Utils::MakeYyjsonArray());
+
+        yyjson::value entry(Das::Utils::MakeYyjsonObject());
+        (*entry.as_object())[std::string_view("factoryGuid")] =
+            FactoryTaskComponentFactoryGuidString;
+        (*entry.as_object())[std::string_view("definition")] =
+            std::move(definition);
+        (*components)[std::string(component_guid)] = std::move(entry);
+    }
+
+    // 任务类型的 executionComponent 指到补声明的组件。
+    auto tasks = (*manifest_obj)[std::string_view("tasks")].as_object();
+    ASSERT_TRUE(tasks.has_value());
+    ASSERT_TRUE(tasks->contains(task_guid));
+    auto task_entry = (*tasks)[std::string(task_guid)].as_object();
+    ASSERT_TRUE(task_entry.has_value());
+    yyjson::value execution_component(Das::Utils::MakeYyjsonObject());
+    (*execution_component.as_object())[std::string_view("componentGuid")] =
+        std::string(component_guid);
+    (*task_entry)[std::string_view("executionComponent")] =
+        std::move(execution_component);
+
+    std::ofstream ofs(manifest_path, std::ios::trunc);
+    ofs << Das::Utils::SerializeYyjsonValue(*parsed).value();
+}
+
 // 测试内切换进程级 GlobalLocale（经 C API 构造只读字符串后 Set）；
 // 原值的保存与还原由 SchedulerRuntimeBackedTest 夹具负责。
 void SetDefaultLocaleForTest(std::string_view locale_utf8)
@@ -4329,6 +4394,46 @@ TEST_F(
     EXPECT_FALSE(shared_state_->last_context_had_task_id);
     EXPECT_EQ(shared_state_->get_last_props_key1_value(), "default");
     EXPECT_TRUE((shared_state_->executed_count == 0));
+}
+
+// 条目任务类型声明的执行组件 guid 经 compile 响应 compile 段外显
+// （executionComponentGuid）：插件侧调用方无组件注册表访问，仅凭编译
+// 响应即可组装子执行快照。执行组件声明为 das.graph 的执行组件 guid
+// （真实 DasGraphTask manifest 中任务类型与执行组件同 guid 的映射在
+// 注册表层的等价形态）。解析不到执行组件时该字段缺省不发（engaged-only）。
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    SchedulerRepositoryCompileSurfacesExecutionComponentGuid)
+{
+    constexpr std::string_view graph_execution_component_guid =
+        "F4A2C9D1-7B3E-4D8A-A15F-C2E86B4D91A3";
+
+    WriteFactoryPluginManifest(manifest_path_);
+    DeclareExecutionComponentInFactoryManifest(
+        manifest_path_,
+        FactoryTaskGuidString,
+        graph_execution_component_guid);
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    auto created = scheduler_->CreateRepositoryEntry(
+        MakeRepositoryCreateRequest("Graph execution component entry"));
+    ASSERT_EQ(
+        (*created.as_object())[std::string_view("entryId")].as_sint().value_or(
+            -1),
+        0);
+
+    yyjson::value request(Das::Utils::MakeYyjsonObject());
+    (*request.as_object())[std::string_view("purpose")] = "execution";
+    auto result = scheduler_->CompileRepositoryEntryAuthoring(0, request);
+    auto obj = result.as_object();
+    ASSERT_TRUE(obj.has_value());
+    auto compile = (*obj)[std::string_view("compile")].as_object();
+    ASSERT_TRUE(compile.has_value());
+    EXPECT_EQ(
+        (*compile)[std::string_view("executionComponentGuid")]
+            .as_string()
+            .value_or(""),
+        graph_execution_component_guid);
 }
 
 TEST_F(
