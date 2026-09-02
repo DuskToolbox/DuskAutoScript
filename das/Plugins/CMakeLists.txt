@@ -48,6 +48,17 @@ if(TARGET TaskSchedulerTest)
         ${CMAKE_CURRENT_SOURCE_DIR}/DasFlowControl/include)
 endif()
 
+# E2EGraphFlowTest 直驱真实 launch 组件（执行失败语义端到端）：FlowControl
+# 源码静态编入 GraphRuntimeTest，与 TaskSchedulerTest 同模式。
+if(TARGET GraphRuntimeTest)
+    target_sources(GraphRuntimeTest PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/DasFlowControl/src/FlowControlTaskComponents.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/DasFlowControl/src/FlowControlI18n.cpp)
+    target_include_directories(GraphRuntimeTest PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/DasFlowControl/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/DasFlowControl/include)
+endif()
+
 # TaskSchedulerTest 需要先构建 SchedulerTestPlugin（SetUp 部署其 dll+json），
 # 并能 include 其共享头 SchedulerTestSharedState.h。
 if(TARGET TaskSchedulerTest)

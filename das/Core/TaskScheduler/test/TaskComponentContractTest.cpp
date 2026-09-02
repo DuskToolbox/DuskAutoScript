@@ -22,6 +22,8 @@
 #include "FlowControlI18n.h"
 #include "FlowControlTaskComponents.h"
 
+#include <das/Plugins/DasFlowControl/FlowControlErrorCodes.h>
+
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -39,6 +41,7 @@
 namespace
 {
     using Das::DasPtr;
+    using namespace Das::Plugins::DasFlowControl;
     using Das::Core::ForeignInterfaceHost::PluginManager;
     using Das::Core::TaskScheduler::RepositoryInvoke::Dto::
         ChildExecutionSnapshotDto;
@@ -1395,9 +1398,9 @@ TEST_F(TaskComponentContractTest, LaunchDoWaitsForSingleWindowMatch)
     EXPECT_EQ(FirstEmittedSignal(result.Get()), "signal_out");
 }
 
-// 轮询超时：枚举恒 0 匹配、waitWindowTimeoutMs 小值 → failed +
-// launch-window-timeout
-// 诊断码 + 消息经 i18n 表解析（注入替身表验证 key 链路）。
+// 轮询超时：枚举恒 0 匹配、waitWindowTimeoutMs 小值 → 专用执行失败错误码
+// + launch-window-timeout 诊断载荷；消息经 i18n 表解析（注入替身表验证
+// key 链路）。
 TEST_F(TaskComponentContractTest, LaunchDoTimesOutWaitingForWindow)
 {
     constexpr std::string_view translated_timeout_text =
@@ -1427,16 +1430,17 @@ TEST_F(TaskComponentContractTest, LaunchDoTimesOutWaitingForWindow)
         })json");
 
     DAS::DasPtr<Das::ExportInterface::IDasPortMap> result;
-    ASSERT_EQ(component->Do(nullptr, nullptr, result.Put()), DAS_S_OK);
+    ASSERT_EQ(
+        component->Do(nullptr, nullptr, result.Put()),
+        DAS_E_FLOW_LAUNCH_WINDOW_TIMEOUT);
 
-    EXPECT_EQ(Das::Utils::GetPortString(result.Get(), "status"), "failed");
     EXPECT_EQ(DiagnosticField(result.Get(), "code"), "launch-window-timeout");
     EXPECT_EQ(
         DiagnosticField(result.Get(), "message"),
         std::string{translated_timeout_text});
 }
 
-// 枚举恒返回多于 1 个匹配 → failed + launch-window-ambiguous。
+// 枚举恒返回多于 1 个匹配 → 专用错误码 + launch-window-ambiguous 载荷。
 TEST_F(TaskComponentContractTest, LaunchDoFailsOnAmbiguousWindowMatch)
 {
     auto component = MakeLaunchComponent();
@@ -1463,13 +1467,15 @@ TEST_F(TaskComponentContractTest, LaunchDoFailsOnAmbiguousWindowMatch)
         })json");
 
     DAS::DasPtr<Das::ExportInterface::IDasPortMap> result;
-    ASSERT_EQ(component->Do(nullptr, nullptr, result.Put()), DAS_S_OK);
+    ASSERT_EQ(
+        component->Do(nullptr, nullptr, result.Put()),
+        DAS_E_FLOW_LAUNCH_WINDOW_AMBIGUOUS);
 
-    EXPECT_EQ(Das::Utils::GetPortString(result.Get(), "status"), "failed");
     EXPECT_EQ(DiagnosticField(result.Get(), "code"), "launch-window-ambiguous");
 }
 
-// spawn 缝失败 → failed + launch-spawn-failed（显性失败，无静默兜底）。
+// spawn 缝失败 → 专用错误码 + launch-spawn-failed 载荷（显性失败，无静默
+// 兜底）。
 TEST_F(TaskComponentContractTest, LaunchDoFailsWhenSpawnFails)
 {
     auto component = MakeLaunchComponent();
@@ -1485,13 +1491,15 @@ TEST_F(TaskComponentContractTest, LaunchDoFailsWhenSpawnFails)
         R"json({"exePath": "C:/test/app.exe"})json");
 
     DAS::DasPtr<Das::ExportInterface::IDasPortMap> result;
-    ASSERT_EQ(component->Do(nullptr, nullptr, result.Put()), DAS_S_OK);
+    ASSERT_EQ(
+        component->Do(nullptr, nullptr, result.Put()),
+        DAS_E_FLOW_LAUNCH_SPAWN_FAILED);
 
-    EXPECT_EQ(Das::Utils::GetPortString(result.Get(), "status"), "failed");
     EXPECT_EQ(DiagnosticField(result.Get(), "code"), "launch-spawn-failed");
 }
 
-// exePath 缺省/空 → failed + launch-exe-path-missing，不触碰 spawn 缝。
+// exePath 缺省/空 → 专用错误码 + launch-exe-path-missing 载荷，不触碰
+// spawn 缝。
 TEST_F(TaskComponentContractTest, LaunchDoFailsWhenExePathMissing)
 {
     auto component = MakeLaunchComponent();
@@ -1511,10 +1519,11 @@ TEST_F(TaskComponentContractTest, LaunchDoFailsWhenExePathMissing)
     ApplyLaunchConfig(component.Get(), R"json({"args": ["--flag"]})json");
 
     DAS::DasPtr<Das::ExportInterface::IDasPortMap> result;
-    ASSERT_EQ(component->Do(nullptr, nullptr, result.Put()), DAS_S_OK);
+    ASSERT_EQ(
+        component->Do(nullptr, nullptr, result.Put()),
+        DAS_E_FLOW_LAUNCH_EXE_PATH_MISSING);
 
     EXPECT_FALSE(spawn_called);
-    EXPECT_EQ(Das::Utils::GetPortString(result.Get(), "status"), "failed");
     EXPECT_EQ(DiagnosticField(result.Get(), "code"), "launch-exe-path-missing");
 }
 

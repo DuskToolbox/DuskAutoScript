@@ -9,12 +9,16 @@
 #include <das/Core/Utils/DasJsonImpl.h>
 #include <das/DasPtr.hpp>
 #include <das/DasString.hpp>
+#include <das/Plugins/DasFlowControl/FlowControlErrorCodes.h>
 #include <das/Utils/DasJsonCore.h>
 #include <das/_autogen/idl/abi/IDasPortMap.h>
 #include <das/_autogen/idl/abi/IDasTaskComponent.h>
 #include <das/_autogen/idl/header/IDasPortMap.generated.h>
 #include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasStopToken.Implements.hpp>
+#include <das/_autogen/idl/wrapper/Das.PluginInterface.IDasTaskComponentHost.Implements.hpp>
 #include <gtest/gtest.h>
+
+#include "FlowControlTaskComponents.h"
 
 #include <algorithm>
 #include <atomic>
@@ -317,3 +321,67 @@ protected:
     std::unique_ptr<StubFactoryManager> stub_mgr_;
     DAS::DasPtr<IDasStopToken>          token_;
 };
+
+// ---- 真实 launch 组件直驱（FlowControl 源码静态编入本测试目标） ----
+
+constexpr std::string_view LAUNCH_COMPONENT_GUID_TEXT =
+    "95FD2FFA-88F2-4F85-A536-C708D25B641F";
+constexpr std::string_view LAUNCH_KIND_TEXT = "das.flow.launch";
+
+class LaunchComponentHost final
+    : public Das::PluginInterface::DasTaskComponentHostImplBase<
+          LaunchComponentHost>
+{
+public:
+    DasResult CreateTaskComponent(
+        const DasGuid&                            component_guid,
+        Das::PluginInterface::IDasTaskComponent** pp_out_component) override
+    {
+        if (pp_out_component == nullptr)
+        {
+            return DAS_E_INVALID_POINTER;
+        }
+        *pp_out_component = nullptr;
+        if (component_guid
+            != Das::Core::ForeignInterfaceHost::MakeDasGuid(
+                std::string{LAUNCH_COMPONENT_GUID_TEXT}))
+        {
+            return DAS_E_NOT_FOUND;
+        }
+
+        auto* component = new Das::DasFlowControlTaskComponent(
+            LAUNCH_KIND_TEXT,
+            DAS::DasPtr<Das::PluginInterface::IDasTaskComponentHost>{});
+        component->AddRef();
+        *pp_out_component = component;
+        return DAS_S_OK;
+    }
+};
+
+// launch 执行失败（空配置）→ 图以专用错误码终止，错误文本携带节点 id
+// 冒泡（GraphRuntime 现有失败接管路径，无 status=failed 继续跑）。
+TEST_F(E2EGraphFlowTest, LaunchFailureTerminatesGraphWithErrorCode)
+{
+    CompiledGraphPlanDto plan;
+    plan.source_fingerprint = "fp_launch_failure";
+
+    CompiledNodeSnapshotDto launch_node;
+    launch_node.node_id = "n_1";
+    launch_node.component_guid = std::string{LAUNCH_COMPONENT_GUID_TEXT};
+    plan.node_snapshots.push_back(std::move(launch_node));
+    plan.execution_order.push_back("n_1");
+
+    auto         host = LaunchComponentHost::Make();
+    GraphRuntime runtime;
+    const auto   hr = runtime.RunWithHost(
+        plan,
+        "fp_launch_failure",
+        token_.Get(),
+        host.Get());
+
+    EXPECT_EQ(
+        hr,
+        Das::Plugins::DasFlowControl::DAS_E_FLOW_LAUNCH_EXE_PATH_MISSING);
+    EXPECT_NE(runtime.GetLastErrorMessage().find("n_1"), std::string::npos)
+        << runtime.GetLastErrorMessage();
+}
