@@ -3,14 +3,23 @@
 
 #include "Request.hpp"
 #include <cpp_yyjson.hpp>
+#include <das/Core/IPC/DasAsyncSender.h>
+#include <das/Core/IPC/MainProcess/IIpcContext.h>
 #include <das/DasApi.h>
 #include <das/IDasBase.h>
 #include <das/Utils/fmt.h>
+
+DAS_DISABLE_WARNING_BEGIN
+DAS_IGNORE_STDEXEC_PARAMETERS
+#include <exec/async_scope.hpp>
+DAS_DISABLE_WARNING_END
 
 #include <functional>
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace Das::Http::Beast
@@ -67,11 +76,17 @@ namespace Das::Http::Beast
         RouteHandler             handler;
     };
 
-    // 路由器
     class Router
     {
     public:
+        using BusinessScheduler = DAS::Core::IPC::BusinessThreadScheduler<
+            DAS::Core::IPC::MainProcess::IIpcContext>;
+
         Router() = default;
+
+        explicit Router(BusinessScheduler scheduler) : bt_scheduler_(scheduler)
+        {
+        }
 
         // 注册路由
         void Register(
@@ -235,9 +250,60 @@ namespace Das::Http::Beast
             return routes_.find(key) != routes_.end();
         }
 
+        // 标记路由留在 io 线程内联（alive 探针须在业务线程卡死时仍可应答；
+        // request_shutdown 停机触发耦合在响应写完成回调）
+        void RegisterInline(const std::string& method, const std::string& path)
+        {
+            inline_routes_.insert(method + ":" + path);
+        }
+
+        // 键构造与 Handle 的精确匹配同构；参数路由与未匹配返回 false
+        bool IsInlineRoute(const HttpRequest& request) const
+        {
+            if (inline_routes_.empty())
+            {
+                return false;
+            }
+            std::string target = std::string(request.Target());
+            if (!target.empty() && target.front() == '/')
+            {
+                target = target.substr(1);
+            }
+            const std::string key =
+                std::string(request.Method()) + ":" + target;
+            return inline_routes_.find(key) != inline_routes_.end();
+        }
+
+        bool DispatchToBusiness(const HttpRequest& request) const
+        {
+            return bt_scheduler_.ctx != nullptr && !IsInlineRoute(request);
+        }
+
+        BusinessScheduler GetBusinessScheduler() const { return bt_scheduler_; }
+
+        template <typename Sender>
+        void SpawnBusiness(Sender&& sender)
+        {
+            business_scope_.spawn(std::forward<Sender>(sender));
+        }
+
+        /**
+         * @brief 停机排空：业务完成回调会向 io_context post，ioc 析构前
+         *        必须等完。等待必然终止——BT 在途工作不依赖 HTTP io
+         *        执行与 MAIN。
+         */
+        void WaitBusinessDrained()
+        {
+            static_cast<void>(stdexec::sync_wait(business_scope_.on_empty()));
+        }
+
     private:
         std::unordered_map<std::string, RouteHandler> routes_;
         std::vector<ParamRoute>                       param_routes_;
+        std::unordered_set<std::string>               inline_routes_;
+        // ctx == nullptr = 不派发，全内联
+        BusinessScheduler bt_scheduler_{nullptr};
+        exec::async_scope business_scope_;
     };
 
 } // namespace Das::Http::Beast

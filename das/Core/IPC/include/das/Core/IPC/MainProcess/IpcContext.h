@@ -97,6 +97,11 @@ namespace Core
 
                 void PostToBusinessThread(IDasAsyncCallback* callback) override;
 
+                /// PostToBusinessThread 的带结果变体（DAS_API：exe 侧
+                /// 调用，lld 不自动导出）
+                DAS_API DasResult
+                TryPostToBusinessThread(IDasAsyncCallback* callback);
+
                 DasResult Run() override;
                 void      RequestStop() override;
 

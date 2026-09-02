@@ -27,11 +27,13 @@
 #include <boost/program_options.hpp>
 #include <filesystem>
 #include <memory>
+#include <string_view>
 
 #include "./service/DasPluginManagerServiceImpl.h"
 #include "./service/DasProfileServiceImpl.h"
 #include "./service/DasProgressServiceImpl.h"
 #include <das/Core/IPC/CurrentIpcContextScope.h>
+#include <das/Core/IPC/DasAsyncSender.h>
 #include <das/Core/IPC/HttpIpcServer.h>
 #include <das/Core/IPC/MainProcess/IpcContext.h>
 #include <das/Core/Logger/DasLogSessionImpl.h>
@@ -165,6 +167,11 @@ namespace Das::Http
             return sc_result;
         }
 
+        // 业务路由经此调度器派发 BusinessThread 执行（覆盖 AppComponent
+        // 里的占位路由——那个无调度器，全内联）
+        components.router = std::make_shared<Das::Http::Beast::Router>(
+            DAS::Core::IPC::schedule_on_business_thread(*ipc_owner));
+
         // 解析 IPC plugin host 子进程（DasHostX）路径：优先环境变量
         // DAS_HOST_EXE_PATH（ctest 测试注入），缺失则兜底为 cwd 下的
         // DasHostX。DasHttp 依赖 DasHostX 才能加载 loadMode=ipc 的插件，
@@ -172,33 +179,37 @@ namespace Das::Http
         // 注入环境变量。cwd 兜底与 DasHostX main.cpp 用 current_path()
         // 解析 plugin_dir 的约定一致；调用方启动 DasHttp 时 cwd 即其
         // 部署目录，二者同目录部署。
-        const char*   env_host_exe = std::getenv("DAS_HOST_EXE_PATH");
+        const char* env_host_exe = std::getenv("DAS_HOST_EXE_PATH");
+        // 两个来源（getenv 返回值 / fallback 的 u8string.c_str()）均以
+        // NUL 结尾，data() 传 C API 安全
+        std::string_view host_exe_utf8{
+            env_host_exe != nullptr ? env_host_exe : ""};
         std::u8string host_exe_fallback_u8;
-        if (!env_host_exe || strlen(env_host_exe) == 0)
+        if (host_exe_utf8.empty())
         {
 #if defined(_WIN32)
-            constexpr auto HOST_EXECUTABLE_NAME = "DasHostX.exe";
+            constexpr std::u8string_view HOST_EXECUTABLE_NAME =
+                u8"DasHostX.exe";
 #else
-            constexpr auto HOST_EXECUTABLE_NAME = "DasHostX";
+            constexpr std::u8string_view HOST_EXECUTABLE_NAME = u8"DasHostX";
 #endif
             host_exe_fallback_u8 =
-                (std::filesystem::current_path() / HOST_EXECUTABLE_NAME)
+                (std::filesystem::current_path()
+                 / std::filesystem::path{HOST_EXECUTABLE_NAME})
                     .u8string();
             std::cout << "[DasHttp] DAS_HOST_EXE_PATH not set; falling back to "
                       << reinterpret_cast<const char*>(
                              host_exe_fallback_u8.c_str())
                       << std::endl;
+            host_exe_utf8 =
+                reinterpret_cast<const char*>(host_exe_fallback_u8.c_str());
         }
 
-        const char* host_exe_utf8 =
-            (env_host_exe && strlen(env_host_exe) > 0)
-                ? env_host_exe
-                : reinterpret_cast<const char*>(host_exe_fallback_u8.c_str());
-        if (host_exe_utf8 && strlen(host_exe_utf8) > 0)
+        if (!host_exe_utf8.empty())
         {
             DasPtr<IDasReadOnlyString> p_host_path;
             auto                       hp_cr = CreateIDasReadOnlyStringFromUtf8(
-                host_exe_utf8,
+                host_exe_utf8.data(),
                 p_host_path.Put());
             if (DAS::IsOk(hp_cr))
             {
@@ -411,6 +422,12 @@ namespace Das::Http
             DAS_HTTP_API_PREFIX "request_shutdown",
             [misc_controller](const Das::Http::Beast::HttpRequest& req)
             { return misc_controller->RequestShutdown(req); });
+
+        // 基础设施端点留 io 内联（alive 探针独立性 / 停机时序）
+        components.router->RegisterInline("POST", DAS_HTTP_API_PREFIX "alive");
+        components.router->RegisterInline(
+            "POST",
+            DAS_HTTP_API_PREFIX "request_shutdown");
 
         // Log
         // 调试日志端点（3 段 logs/debug/{profile}）：返回 spdlog 文件的纯文本
@@ -887,6 +904,10 @@ namespace Das::Http
             // 过渡期（RequestServerStop → server.Run 返回）IPC 写 dispatch 到
             // 还在 run 的 ioc，无害。
             sse_hub->Invalidate();
+
+            // ioc 随 Server 栈帧析构，完成回调的 post 须先排空
+            components.router->WaitBusinessDrained();
+
             // 会话目录由外层 DasPtr<IDasLogSession> log_session 析构 RAII
             // 删除， 无需 Shutdown 调用（替代原
             // LogRecorderRuntime::Shutdown）。
@@ -923,6 +944,10 @@ namespace Das::Http
 
         // IPC 停止后才释放 service 注册表（core Shutdown），确保无晚到 Report
         // 打已析构 service。bind 失败路径（server 未启动）也统一在此清理。
+        // PluginManager 卸载（ShutdownCoreRuntime 内）会派发到 BusinessThread：
+        // BT 由 ~IpcContext 停止（CoreServicesImpl
+        // 成员析构阶段，晚于其函数体）， 此处与 components 析构两条路径 BT
+        // 均存活，派发必达。
         const auto shutdown_result = components.core_services->Shutdown();
         if (DAS::IsFailed(shutdown_result))
         {
@@ -932,6 +957,7 @@ namespace Das::Http
                     shutdown_result)
                     .c_str());
         }
+
         return run_result;
     }
 }

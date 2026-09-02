@@ -32,7 +32,9 @@
 #include <das/IDasAsyncCallback.h>
 #include <das/IDasAsyncHandshakeOperation.h>
 #include <das/IDasAsyncLoadPluginOperation.h>
+#include <functional>
 #include <optional>
+#include <string_view>
 DAS_DISABLE_WARNING_BEGIN
 DAS_IGNORE_STDEXEC_PARAMETERS
 
@@ -47,6 +49,15 @@ DAS_DISABLE_WARNING_END
 DAS_NS_BEGIN
 namespace Core::IPC
 {
+    // 前置声明 + 自由函数桥（BusinessThread.h 与本头文件互相依赖，成员
+    // 访问不可行；实现见 BusinessThread.cpp）
+    DAS_API bool IsOnBusinessThread() noexcept;
+    // 仅当当前线程是 BusinessThread 时边泵入站消息边等 predicate；
+    // 返回 DAS_S_OK（谓词完成）/ DAS_E_IPC_CANCELED（队列关闭）/
+    // DAS_E_IPC_INVALID_STATE（当前线程不是 BT，未等待）。
+    DAS_API DasResult PumpBusinessThreadUntilPredicate(
+        std::string_view             reason,
+        const std::function<bool()>& is_done);
 
     //=============================================================================
     // ScheduleEnv — scheduler 环境（模板化，支持任何 Context 类型）
@@ -530,6 +541,7 @@ namespace Core::IPC
             friend void tag_invoke(
                 stdexec::set_error_t,
                 SyncWaitReceiver&& self,
+                // NOLINTNEXTLINE(performance-unnecessary-value-param)
                 std::exception_ptr) noexcept
             {
                 *self.done = true;
@@ -612,6 +624,40 @@ namespace Core::IPC
             std::tuple,
             std::type_identity_t>>
     {
+        // BT 上盲轮询会自锁（完成路径可能是回本线程队列的 continuation，
+        // 被等待方也需 BT 处理入站）；改泵式等待，谓词保留 30 秒死线
+        if (IsOnBusinessThread())
+        {
+            using value_tuple_t = stdexec::value_types_of_t<
+                std::decay_t<Sender>,
+                stdexec::env<>,
+                std::tuple,
+                std::type_identity_t>;
+
+            std::optional<value_tuple_t> result;
+            bool                         done = false;
+            const void*                  wakeup = nullptr;
+
+            auto op = stdexec::connect(
+                std::forward<Sender>(sender),
+                internal::SyncWaitReceiver<value_tuple_t>{
+                    &result,
+                    &done,
+                    &wakeup});
+            stdexec::start(op);
+
+            const auto deadline =
+                std::chrono::steady_clock::now() + std::chrono::seconds(30);
+            static_cast<void>(PumpBusinessThreadUntilPredicate(
+                "async_op wait",
+                [&done, deadline]()
+                {
+                    return done || std::chrono::steady_clock::now() >= deadline;
+                }));
+
+            return result;
+        }
+
         return wait(std::forward<Sender>(sender));
     }
 

@@ -16,8 +16,8 @@ DAS_CORE_CORE_SERVICES_NS_BEGIN
 
 CoreServicesImpl::CoreServicesImpl(
     DasRef<DAS::Core::IPC::MainProcess::IIpcContext> ipc_context,
-    std::filesystem::path                             settings_dir,
-    std::filesystem::path                             plugin_dir)
+    std::filesystem::path                            settings_dir,
+    std::filesystem::path                            plugin_dir)
     : ipc_context_{std::move(ipc_context)}, settings_manager_{settings_dir},
       plugin_manager_{settings_manager_, ipc_context_},
       scheduler_svc_{plugin_manager_, ipc_context_}
@@ -61,6 +61,8 @@ DasResult CoreServicesImpl::ShutdownCoreRuntime() noexcept
 
     try
     {
+        plugin_manager_.Shutdown();
+
         Das::Core::Debug::DebugRuntime::Shutdown();
         return DAS_S_OK;
     }

@@ -46,6 +46,19 @@ BusinessThread* GetCurrentBusinessThread() noexcept
     return g_current_business_thread;
 }
 
+bool IsOnBusinessThread() noexcept { return IsCurrentBusinessThread(); }
+
+DasResult PumpBusinessThreadUntilPredicate(
+    std::string_view             reason,
+    const std::function<bool()>& is_done)
+{
+    if (g_current_business_thread == nullptr)
+    {
+        return DAS_E_IPC_INVALID_STATE;
+    }
+    return g_current_business_thread->PumpUntilPredicate(reason, is_done);
+}
+
 BusinessThread::BusinessThread(
     IpcMessageQueue<InboundMessage>& inbound,
     IpcRunLoop&                      run_loop,

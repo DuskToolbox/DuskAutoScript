@@ -11,6 +11,7 @@
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
 #include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/post.hpp>
 #include <boost/asio/redirect_error.hpp>
 #include <boost/asio/steady_timer.hpp>
 #include <boost/asio/strand.hpp>
@@ -21,6 +22,7 @@
 #include <boost/beast/websocket.hpp>
 #include <boost/config.hpp>
 #include <chrono>
+#include <das/Core/IPC/IpcErrors.h>
 #include <das/DasApi.h>
 #include <das/Utils/fmt.h>
 #include <functional>
@@ -350,8 +352,49 @@ namespace Das::Http::Beast
             {
                 LogHttpMessageForExchange(">", request_);
             }
-            HttpRequest  req(std::move(request_));
-            HttpResponse http_response = router_->Handle(req);
+            HttpRequest req(std::move(request_));
+
+            if (router_->DispatchToBusiness(req))
+            {
+                // sender 捕获要求可拷贝，HttpRequest 为 move-only
+                auto self = shared_from_this();
+                auto request_holder =
+                    std::make_shared<HttpRequest>(std::move(req));
+                router_->SpawnBusiness(
+                    stdexec::schedule(router_->GetBusinessScheduler())
+                    | stdexec::then(
+                        [self, request_holder, keep_alive, log_exchange]()
+                        {
+                            HttpResponse http_response =
+                                self->router_->Handle(*request_holder);
+                            auto response_holder =
+                                std::make_shared<HttpResponse>(
+                                    std::move(http_response));
+                            boost::asio::post(
+                                self->socket_.get_executor(),
+                                [self,
+                                 response_holder,
+                                 keep_alive,
+                                 log_exchange]()
+                                {
+                                    self->FinishRequest(
+                                        std::move(*response_holder),
+                                        keep_alive,
+                                        log_exchange);
+                                });
+                        }));
+                return;
+            }
+
+            FinishRequest(router_->Handle(req), keep_alive, log_exchange);
+        }
+
+        // 内联路径与派发完成回调共用的写回路径（io 线程）
+        void FinishRequest(
+            HttpResponse http_response,
+            bool         keep_alive,
+            bool         log_exchange)
+        {
             response_ = http_response.Release();
             response_.keep_alive(keep_alive);
             if (log_exchange)

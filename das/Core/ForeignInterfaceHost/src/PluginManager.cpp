@@ -4,7 +4,10 @@
 #include <das/Core/Debug/DebugDecorators.h>
 #include <das/Core/ForeignInterfaceHost/PluginScanner.h>
 #include <das/Core/ForeignInterfaceHost/RemotePluginHost.h>
+#include <das/Core/IPC/BusinessThread.h>
+#include <das/Core/IPC/DasAsyncSender.h>
 #include <das/Core/IPC/HostLauncher.h>
+#include <das/Core/IPC/MainProcess/IpcContext.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/DasPtr.hpp>
 #include <das/Utils/DasJsonCore.h>
@@ -160,6 +163,26 @@ DasResult PluginManager::Initialize(uint16_t session_id)
 
 DasResult PluginManager::Shutdown()
 {
+    // 插件卸载触碰线程亲和资源（GIL/解释器），须与加载同在 BusinessThread。
+    // 非 BT 调用时派发到 BT 执行并等待；失败（停机窗口/超时）回退本线程
+    // （Shutdown 幂等）。
+    if (!DAS::Core::IPC::IsCurrentBusinessThread())
+    {
+        auto shutdown_sender =
+            stdexec::schedule(
+                DAS::Core::IPC::schedule_on_business_thread(ipc_context_.get()))
+            | stdexec::then([this]() { return Shutdown(); });
+        if (auto wait_result = DAS::Core::IPC::wait(
+                ipc_context_.get(),
+                std::move(shutdown_sender)))
+        {
+            return std::get<0>(*wait_result);
+        }
+        DAS_CORE_LOG_ERROR(
+            "PluginManager::Shutdown: BusinessThread dispatch wait failed, "
+            "falling back to caller thread");
+    }
+
     // CR-03 / INV-03: Shutdown 采用方案 A 两阶段 —— 阶段 1 在 mutex_ 锁内
     // 清空所有索引（这些操作不阻塞、不碰 callback_mutex_，锁内安全）；阶段 2
     // 在释放 mutex_ 后调用 ipc_context_->ResetHostLifecycleCallbacks()

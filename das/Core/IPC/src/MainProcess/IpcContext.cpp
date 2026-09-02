@@ -528,9 +528,15 @@ namespace Core
 
             void IpcContext::PostToBusinessThread(IDasAsyncCallback* callback)
             {
+                static_cast<void>(TryPostToBusinessThread(callback));
+            }
+
+            DasResult IpcContext::TryPostToBusinessThread(
+                IDasAsyncCallback* callback)
+            {
                 if (!callback)
                 {
-                    return;
+                    return DAS_E_INVALID_ARGUMENT;
                 }
 
                 // AddRef 保持生命周期（body 持有的引用）
@@ -566,6 +572,7 @@ namespace Core
                         "PostToBusinessThread: Push failed, result={}",
                         push_result);
                 }
+                return push_result;
             }
 
             DasResult IpcContext::LoadPluginAsync(
