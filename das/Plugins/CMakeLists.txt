@@ -38,11 +38,14 @@ if(TARGET TaskSchedulerTest)
     add_dependencies(TaskSchedulerTest DasFlowControl DasAutoCopyPluginMetadataFile)
     # FlowControl 组件源码静态编入测试 exe：契约测试需要具体组件类
     # （GraphRuntime 直驱用例与进程/窗口注入缝），DLL 加载路径拿不到类型。
+    # ErrorLens 注册源同理由：FlowControlErrorLensTest 直测注册产物。
     target_sources(TaskSchedulerTest PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/DasFlowControl/src/FlowControlTaskComponents.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/DasFlowControl/src/FlowControlI18n.cpp)
+        ${CMAKE_CURRENT_SOURCE_DIR}/DasFlowControl/src/FlowControlI18n.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/DasFlowControl/src/FlowControlErrorLensRegistration.cpp)
     target_include_directories(TaskSchedulerTest PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/DasFlowControl/src)
+        ${CMAKE_CURRENT_SOURCE_DIR}/DasFlowControl/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/DasFlowControl/include)
 endif()
 
 # TaskSchedulerTest 需要先构建 SchedulerTestPlugin（SetUp 部署其 dll+json），
