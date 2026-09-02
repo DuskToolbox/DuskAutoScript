@@ -5158,11 +5158,34 @@ namespace Das::Core::TaskScheduler
 
         if (!compile_failed)
         {
-            // Call IDasTask::Do WITHOUT holding the mutex
-            auto do_result = task_holder.Get()->Do(
-                stop_token_.Get(),
-                p_env_json ? p_env_json.Get() : nullptr,
-                p_props_json ? p_props_json.Get() : nullptr);
+            // Call IDasTask::Do WITHOUT holding the mutex.
+            // 窄 catch 而非依赖 TickCallback 兜底：兜底接住异常时 tick 的
+            // 清理段（执行槽清零、收尾状态机）已被跳过，调度器会永久停留
+            // 执行中——插件边界异常必须就地转错误码让 tick 走完。
+            DasResult do_result = DAS_E_FAIL;
+            try
+            {
+                do_result = task_holder.Get()->Do(
+                    stop_token_.Get(),
+                    p_env_json ? p_env_json.Get() : nullptr,
+                    p_props_json ? p_props_json.Get() : nullptr);
+            }
+            catch (const std::exception& exception)
+            {
+                do_result = DAS_E_INTERNAL_FATAL_ERROR;
+                DAS_CORE_LOG_ERROR(
+                    "SchedulerService::OnTick: task {} Do threw exception: {}",
+                    selected_id,
+                    exception.what());
+            }
+            catch (...)
+            {
+                do_result = DAS_E_INTERNAL_FATAL_ERROR;
+                DAS_CORE_LOG_ERROR(
+                    "SchedulerService::OnTick: task {} Do threw unknown "
+                    "exception",
+                    selected_id);
+            }
 
             if (IsFailed(do_result))
             {
@@ -5189,9 +5212,32 @@ namespace Das::Core::TaskScheduler
         }
         else
         {
-            auto net_result = task_holder.Get()->GetNextExecutionTime(
-                p_props_json ? p_props_json.Get() : nullptr,
-                &next_date);
+            // 与 Do 调用点同理的窄 catch：插件抛异常时按失败结果处理，
+            // 保证后续哨兵分支、执行槽清理与收尾恒可达。
+            DasResult net_result = DAS_E_FAIL;
+            try
+            {
+                net_result = task_holder.Get()->GetNextExecutionTime(
+                    p_props_json ? p_props_json.Get() : nullptr,
+                    &next_date);
+            }
+            catch (const std::exception& exception)
+            {
+                net_result = DAS_E_INTERNAL_FATAL_ERROR;
+                DAS_CORE_LOG_ERROR(
+                    "SchedulerService::OnTick: task {} GetNextExecutionTime "
+                    "threw exception: {}",
+                    selected_id,
+                    exception.what());
+            }
+            catch (...)
+            {
+                net_result = DAS_E_INTERNAL_FATAL_ERROR;
+                DAS_CORE_LOG_ERROR(
+                    "SchedulerService::OnTick: task {} GetNextExecutionTime "
+                    "threw unknown exception",
+                    selected_id);
+            }
             if (IsOk(net_result))
             {
                 refreshed_time = DasDateToUnix(next_date);
