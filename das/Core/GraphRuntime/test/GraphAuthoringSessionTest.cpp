@@ -1706,4 +1706,66 @@ namespace
         ASSERT_TRUE(survived_obj.has_value());
         EXPECT_TRUE(survived_obj->contains(std::string_view("taskGuid")));
     }
+
+    // The required declaration on a config element rides the catalog channel
+    // onto the projected field (fields[].required); a non-bool required is a
+    // shape violation rejecting the whole catalog — the whitelist opens for
+    // exactly the bool-typed key and nothing else.
+    TEST(GraphAuthoringSessionTest, SetActionCatalogConfigCarriesRequired)
+    {
+        const SessionHandle s{""};
+        ASSERT_EQ(
+            SetActionCatalog(
+                s.p,
+                R"([{"actionId":"{g1}","label":"das.flow.launch","config":[)"
+                R"({"name":"exePath","type":"string","required":true},)"
+                R"({"name":"args","type":"array<string>"}]}])"),
+            DAS_S_OK);
+
+        ApplyChange(
+            s.p,
+            WrapEnvelope("addGraphNode", R"({"actionId":"{g1}"})"));
+
+        const auto document = DocumentOf(s.p);
+        const auto exe_field = FirstGraphNodeFieldDescriptorOf(
+            document,
+            std::string_view("exePath"));
+        ASSERT_TRUE(exe_field.has_value());
+        auto exe_obj = exe_field->as_object();
+        ASSERT_TRUE(exe_obj.has_value());
+        ASSERT_TRUE(exe_obj->contains(std::string_view("required")));
+        EXPECT_TRUE(
+            (*exe_obj)[std::string_view("required")].as_bool().value_or(false));
+
+        const auto args_field =
+            FirstGraphNodeFieldDescriptorOf(document, std::string_view("args"));
+        ASSERT_TRUE(args_field.has_value());
+        auto args_obj = args_field->as_object();
+        ASSERT_TRUE(args_obj.has_value());
+        ASSERT_TRUE(args_obj->contains(std::string_view("required")));
+        EXPECT_FALSE(
+            (*args_obj)[std::string_view("required")].as_bool().value_or(true));
+
+        // Non-bool required rejects the whole catalog; the accepted catalog
+        // stays in place (same lockstep as taskGuid/label shape rules).
+        EXPECT_EQ(
+            SetActionCatalog(
+                s.p,
+                R"([{"actionId":"{g1}","config":[{"name":"d","type":"int",)"
+                R"("required":"yes"}]}])"),
+            DAS_E_INVALID_ARGUMENT);
+        ApplyChange(
+            s.p,
+            WrapEnvelope("addGraphNode", R"({"actionId":"{g1}"})"));
+        const auto after_reject = DocumentOf(s.p);
+        const auto survived = FirstGraphNodeFieldDescriptorOf(
+            after_reject,
+            std::string_view("exePath"));
+        ASSERT_TRUE(survived.has_value());
+        auto survived_obj = survived->as_object();
+        ASSERT_TRUE(survived_obj.has_value());
+        EXPECT_TRUE(
+            (*survived_obj)[std::string_view("required")].as_bool().value_or(
+                false));
+    }
 } // namespace

@@ -4352,6 +4352,110 @@ TEST_F(
     }
 }
 
+// manifest required 声明全链透传：真实 DasFlowControl manifest 的 launch
+// exePath required:true 经 AppendConfigFromDefinition 发射 → catalog 通道
+// （SetActionCatalog 键集）→ 会话投影落到 addGraphNode 响应的节点
+// fields[].required；同组件未声明的字段（args）保持 false。断言锚定真实
+// 插件部署（非手工 catalog 注入）——任何一层漏透传该断言即失败。
+TEST_F(
+    SchedulerRuntimeBackedTest,
+    GraphAuthoringManifestRequiredProjectsIntoNodeFields)
+{
+    WriteFactoryPluginManifest(
+        manifest_path_,
+        FactoryPluginGuidString,
+        FactoryTaskGuidString,
+        true,
+        "Cpp",
+        FactoryTaskComponentImplGuidString,
+        /*include_flow_components=*/false);
+    DeployRealPluginArtifacts(
+        "libDasGraphTask.dll",
+        "DasGraphTask.json",
+        /*force_ipc=*/true);
+    DeployRealPluginArtifacts(
+        "libDasFlowControl.dll",
+        "DasFlowControl.json",
+        /*force_ipc=*/false);
+
+    // graph 任务实例（空属性 → 空 graph 文档）。不 Enable，只走 apply 管线。
+    {
+        yyjson::value task0(Das::Utils::MakeYyjsonObject());
+        (*task0.as_object())[std::string_view("id")] = 0;
+        (*task0.as_object())[std::string_view("taskGuid")] =
+            "F4A2C9D1-7B3E-4D8A-A15F-C2E86B4D91A3";
+        (*task0.as_object())[std::string_view("pluginGuid")] =
+            "C8A4B7D0-1E2F-3A5B-6C9D-7E8F0A1B2C3D";
+        (*task0.as_object())[std::string_view("nextExecutionTime")] =
+            static_cast<int64_t>(1);
+        (*task0.as_object())[std::string_view("properties")] =
+            yyjson::value(Das::Utils::MakeYyjsonObject());
+        WriteSchedulerState(*settings_manager_, 1, {0}, {task0});
+    }
+
+    ASSERT_EQ(scheduler_->Initialize(plugin_dir_, {}), DAS_S_OK);
+
+    yyjson::value change(Das::Utils::MakeYyjsonObject());
+    (*change.as_object())[std::string_view("baseRevision")] =
+        static_cast<int64_t>(0);
+    (*change.as_object())[std::string_view("kind")] = "addGraphNode";
+    yyjson::value payload(Das::Utils::MakeYyjsonObject());
+    (*payload.as_object())[std::string_view("actionId")] =
+        "95FD2FFA-88F2-4F85-A536-C708D25B641F";
+    (*change.as_object())[std::string_view("payload")] = std::move(payload);
+
+    auto result = scheduler_->ApplyTaskAuthoringChange(0, change);
+    auto obj = result.as_object();
+    ASSERT_TRUE(obj.has_value());
+    EXPECT_TRUE((*obj)[std::string_view("ok")].as_bool().value_or(false));
+    auto document = (*obj)[std::string_view("document")].as_object();
+    ASSERT_TRUE(document.has_value());
+    ASSERT_TRUE(document->contains(std::string_view("graph")));
+    auto graph = (*document)[std::string_view("graph")].as_object();
+    ASSERT_TRUE(graph.has_value());
+    ASSERT_TRUE(graph->contains(std::string_view("nodes")));
+    auto nodes = (*graph)[std::string_view("nodes")].as_array();
+    ASSERT_TRUE(nodes.has_value());
+    ASSERT_EQ(nodes->size(), 1u);
+
+    // fields[] 里 exePath 声明 required:true，未声明的 args 保持 false。
+    auto node_obj = (*nodes)[0].as_object();
+    ASSERT_TRUE(node_obj.has_value());
+    ASSERT_TRUE(node_obj->contains(std::string_view("fields")));
+    auto fields = (*node_obj)[std::string_view("fields")].as_array();
+    ASSERT_TRUE(fields.has_value());
+    bool exe_path_found = false;
+    bool args_found = false;
+    for (const auto& field : *fields)
+    {
+        auto field_obj = field.as_object();
+        if (!field_obj || !field_obj->contains(std::string_view("name")))
+        {
+            continue;
+        }
+        const auto name =
+            (*field_obj)[std::string_view("name")].as_string().value_or("");
+        if (name == std::string_view("exePath"))
+        {
+            exe_path_found = true;
+            ASSERT_TRUE(field_obj->contains(std::string_view("required")));
+            EXPECT_TRUE(
+                (*field_obj)[std::string_view("required")].as_bool().value_or(
+                    false));
+        }
+        else if (name == std::string_view("args"))
+        {
+            args_found = true;
+            ASSERT_TRUE(field_obj->contains(std::string_view("required")));
+            EXPECT_FALSE(
+                (*field_obj)[std::string_view("required")].as_bool().value_or(
+                    true));
+        }
+    }
+    EXPECT_TRUE(exe_path_found) << "exePath field missing from projection";
+    EXPECT_TRUE(args_found) << "args field missing from projection";
+}
+
 // graph authoring 的 catalog 端口生产端全链：manifest definition 的独立
 // signals[] 声明（DasMaaPi 形状——条目只有 {id}）、端口级多语言 label map
 // 解析（默认 locale=en 取 map 的 en 值；miss/畸形回退 portId，显示数据

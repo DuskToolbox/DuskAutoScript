@@ -9,6 +9,8 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -1142,4 +1144,128 @@ TEST(CompileOrchestrationTest, CompileLeavesUnknownTargetKindGuidEmpty)
     ASSERT_EQ(plan.node_snapshots.size(), 1u);
     EXPECT_TRUE(plan.node_snapshots[0].component_guid.empty());
     EXPECT_TRUE(plan.node_snapshots[0].compiled_payload_json.is_null());
+}
+
+// ===================================================================
+// Test Suite: RequiredFieldValidationTest
+// 编译期 required 空值校验：会话层从 catalog 注入 required 清单
+// （component_guid → 字段名集），Compile 对空值产出
+// RequiredFieldMissing diagnostic，有值放行。
+// ===================================================================
+
+namespace
+{
+    using RequiredFieldMap =
+        std::unordered_map<std::string, std::unordered_set<std::string>>;
+
+    RequiredFieldMap MakeLaunchRequiredMap()
+    {
+        RequiredFieldMap required_fields;
+        required_fields["95FD2FFA-88F2-4F85-A536-C708D25B641F"].insert(
+            "exePath");
+        return required_fields;
+    }
+
+    void SetNodeSettings(GraphNodeDto& node, std::string_view settings_json)
+    {
+        auto parsed =
+            Das::Utils::ParseYyjsonFromString(std::string(settings_json));
+        ASSERT_TRUE(parsed.has_value());
+        node.settings = std::move(*parsed);
+    }
+
+    // RequiredFieldMissing diagnostic kind serialised as its enum int string.
+    std::size_t CountRequiredFieldMissing(
+        const Dto::CompiledGraphPlanDto& plan,
+        std::string_view                 node_id = {})
+    {
+        const std::string wanted_kind = std::to_string(
+            static_cast<int>(CompileDiagnosticKind::RequiredFieldMissing));
+        std::size_t count = 0;
+        for (const auto& diag : plan.diagnostics)
+        {
+            auto obj = diag.as_object();
+            if (!obj.has_value())
+            {
+                continue;
+            }
+            auto kind = (*obj)[std::string_view("kind")].as_string();
+            if (!kind.has_value() || *kind != wanted_kind)
+            {
+                continue;
+            }
+            if (!node_id.empty())
+            {
+                auto diag_node =
+                    (*obj)[std::string_view("node_id")].as_string();
+                if (!diag_node.has_value() || *diag_node != node_id)
+                {
+                    continue;
+                }
+            }
+            ++count;
+        }
+        return count;
+    }
+} // namespace
+
+TEST(RequiredFieldValidationTest, MissingRequiredFieldProducesDiagnostic)
+{
+    GraphCompiler compiler;
+
+    GraphDocumentDto doc;
+    doc.document_id = "required_missing";
+    // settings 整体缺失（fresh addGraphNode 形态）。
+    auto no_settings =
+        MakeComponentNode("n_1", "95FD2FFA-88F2-4F85-A536-C708D25B641F");
+    // settings 存在但键缺失。
+    auto key_missing =
+        MakeComponentNode("n_2", "95FD2FFA-88F2-4F85-A536-C708D25B641F");
+    SetNodeSettings(key_missing, R"({"args":[]})");
+    // 空串与纯空白串（与运行时 exe_path.empty() 判定对齐）。
+    auto empty_string =
+        MakeComponentNode("n_3", "95FD2FFA-88F2-4F85-A536-C708D25B641F");
+    SetNodeSettings(empty_string, R"({"exePath":""})");
+    auto whitespace_string =
+        MakeComponentNode("n_4", "95FD2FFA-88F2-4F85-A536-C708D25B641F");
+    SetNodeSettings(whitespace_string, R"({"exePath":"   "})");
+    // null 值与"键缺失或 null 判空"的数值字段（非字符串键存在即满足）。
+    auto null_value =
+        MakeComponentNode("n_5", "95FD2FFA-88F2-4F85-A536-C708D25B641F");
+    SetNodeSettings(null_value, R"({"exePath":null})");
+    doc.nodes.push_back(std::move(no_settings));
+    doc.nodes.push_back(std::move(key_missing));
+    doc.nodes.push_back(std::move(empty_string));
+    doc.nodes.push_back(std::move(whitespace_string));
+    doc.nodes.push_back(std::move(null_value));
+
+    auto plan = compiler.Compile(doc, MakeLaunchRequiredMap());
+    EXPECT_EQ(CountRequiredFieldMissing(plan), 5u);
+    for (std::string_view node_id : {"n_1", "n_2", "n_3", "n_4", "n_5"})
+    {
+        EXPECT_EQ(CountRequiredFieldMissing(plan, node_id), 1u)
+            << "missing RequiredFieldMissing diagnostic for " << node_id;
+    }
+}
+
+TEST(RequiredFieldValidationTest, SatisfiedRequiredFieldEmitsNoDiagnostic)
+{
+    GraphCompiler compiler;
+
+    GraphDocumentDto doc;
+    doc.document_id = "required_satisfied";
+    auto configured =
+        MakeComponentNode("n_1", "95FD2FFA-88F2-4F85-A536-C708D25B641F");
+    SetNodeSettings(configured, R"({"exePath":"C:\\tool\\app.exe"})");
+    // 组件不在 required 清单内：零诊断（含 settings 为空的节点）。
+    auto other_component =
+        MakeComponentNode("n_2", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA");
+    doc.nodes.push_back(std::move(configured));
+    doc.nodes.push_back(std::move(other_component));
+
+    auto plan = compiler.Compile(doc, MakeLaunchRequiredMap());
+    EXPECT_EQ(CountRequiredFieldMissing(plan), 0u);
+    // 无清单注入（现有调用方形态）零诊断。
+    auto plan_without_map = compiler.Compile(doc);
+    EXPECT_EQ(CountRequiredFieldMissing(plan_without_map), 0u);
 }
