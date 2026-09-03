@@ -113,10 +113,10 @@ namespace
         return edge;
     }
 
-    GraphPortDefinitionDto MakeGraphInput(
+    GraphPortDefinitionDto MakePortDefinition(
         const std::string& port_id,
         const std::string& port_type,
-        const std::string& default_json)
+        const std::string& default_json = {})
     {
         GraphPortDefinitionDto port;
         port.port_id = port_id;
@@ -127,14 +127,6 @@ namespace
             port.default_value = std::move(*parsed);
         }
         return port;
-    }
-
-    GraphPortDefinitionDto MakeDynamicPort(
-        const std::string& port_id,
-        const std::string& port_type,
-        const std::string& default_json = {})
-    {
-        return MakeGraphInput(port_id, port_type, default_json);
     }
 
     // CyclicEdgeGraph diagnostic kind serialised as a string of its enum int.
@@ -185,6 +177,38 @@ namespace
     private:
         std::vector<TaskComponentDefinitionInfo> definitions_;
     };
+
+    // 会话 catalog 注入通道替身：component_guid → 声明端口面（无 factory
+    // manager 的生产 authoring 编译路径形态）。
+    GraphCompiler::ComponentPortSurfaceProvider MakePortSurfaceProvider(
+        const std::unordered_map<
+            std::string,
+            std::pair<
+                std::vector<std::pair<std::string, std::string>>,
+                std::vector<std::pair<std::string, std::string>>>>& surfaces)
+    {
+        return [&surfaces](const std::string& component_guid)
+                   -> std::optional<GraphCompiler::ComponentPortSurface>
+        {
+            auto it = surfaces.find(component_guid);
+            if (it == surfaces.end())
+            {
+                return std::nullopt;
+            }
+            GraphCompiler::ComponentPortSurface surface;
+            for (const auto& [port_id, port_type] : it->second.first)
+            {
+                surface.inputs.push_back(
+                    MakePortDefinition(port_id, port_type));
+            }
+            for (const auto& [port_id, port_type] : it->second.second)
+            {
+                surface.outputs.push_back(
+                    MakePortDefinition(port_id, port_type));
+            }
+            return surface;
+        };
+    }
 
 } // namespace
 
@@ -361,6 +385,36 @@ TEST(EdgePortExistenceTest, NodeNotFound)
     auto diagnostics = compiler.ValidateEdgePorts(doc);
     ASSERT_FALSE(diagnostics.empty());
     EXPECT_EQ(diagnostics[0].kind, CompileDiagnosticKind::NodeNotFound);
+}
+
+// 注入端口面（无 factory manager）时边校验照常出诊断：authoring 会话编译
+// 路径只绑定 provider，提前返回会静默吞掉全部边诊断。
+TEST(EdgePortExistenceTest, ProviderSurfaceValidatesEdgesWithoutFactoryManager)
+{
+    std::unordered_map<
+        std::string,
+        std::pair<
+            std::vector<std::pair<std::string, std::string>>,
+            std::vector<std::pair<std::string, std::string>>>>
+        surfaces;
+    surfaces["AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"] = {{}, {{"out1", "int"}}};
+    surfaces["BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"] = {{{"in1", "int"}}, {}};
+
+    GraphCompiler compiler;
+    compiler.SetPortSurfaceProvider(MakePortSurfaceProvider(surfaces));
+
+    GraphDocumentDto doc;
+    doc.nodes.push_back(
+        MakeComponentNode("nodeA", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"));
+    doc.nodes.push_back(
+        MakeComponentNode("nodeB", "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"));
+    doc.edges.push_back(MakeEdge("e1", "nodeA", "nonexistent", "nodeB", "in1"));
+
+    auto diagnostics = compiler.ValidateEdgePorts(doc);
+    ASSERT_FALSE(diagnostics.empty());
+    EXPECT_EQ(diagnostics[0].kind, CompileDiagnosticKind::PortNotFound);
+    EXPECT_EQ(diagnostics[0].node_id, "nodeA");
+    EXPECT_EQ(diagnostics[0].port_id, "nonexistent");
 }
 
 TEST(EdgePortExistenceTest, NoEdgesGraph)
@@ -767,7 +821,23 @@ TEST(PortBindingPlanTest, MultiEdgeBindings)
     doc.edges.push_back(MakeEdge("e4", "C", "out1", "D", "in1"));
 
     auto plan = compiler.GeneratePortBindingPlan(doc);
-    EXPECT_EQ(plan.bindings.size(), 4u);
+    // 四条点对点边 + 一条推导 broadcast（A.in1 悬空——B/C/D 的 in1 均有
+    // 入边，只有链头的 A 缺值来源）。
+    ASSERT_EQ(plan.bindings.size(), 5u);
+    const PortBindingDto* broadcast = nullptr;
+    for (const auto& binding : plan.bindings)
+    {
+        if (binding.source_node_id == "$graph_input")
+        {
+            broadcast = &binding;
+        }
+    }
+    ASSERT_NE(broadcast, nullptr);
+    EXPECT_EQ(broadcast->source_port_id, "in1");
+    EXPECT_EQ(broadcast->target_node_id, "A");
+    EXPECT_EQ(broadcast->target_port_id, "in1");
+    EXPECT_EQ(broadcast->expected_type, "int");
+    EXPECT_TRUE(broadcast->default_value.is_null());
 }
 
 TEST(PortBindingPlanTest, ExpectedTypeFromSource)
@@ -808,7 +878,15 @@ TEST(PortBindingPlanTest, NoEdgesGraph)
         MakeComponentNode("A", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"));
 
     auto plan = compiler.GeneratePortBindingPlan(doc);
-    EXPECT_TRUE(plan.bindings.empty());
+    // 无边图：唯一的绑定是悬空声明输入 in1 的 $graph_input broadcast
+    // （声明通道不携带默认值 → default 通道 null，运行时按口未设处理）。
+    ASSERT_EQ(plan.bindings.size(), 1u);
+    EXPECT_EQ(plan.bindings[0].source_node_id, "$graph_input");
+    EXPECT_EQ(plan.bindings[0].source_port_id, "in1");
+    EXPECT_EQ(plan.bindings[0].target_node_id, "A");
+    EXPECT_EQ(plan.bindings[0].target_port_id, "in1");
+    EXPECT_EQ(plan.bindings[0].expected_type, "int");
+    EXPECT_TRUE(plan.bindings[0].default_value.is_null());
 }
 
 // ===================================================================
@@ -1028,11 +1106,12 @@ TEST(SignalAwareCompileTest, DataCycleStillRejectedAsCyclicEdgeGraph)
     EXPECT_TRUE(plan.back_edges.empty());
 }
 
-TEST(SignalAwareCompileTest, GraphInputsBroadcastBoundToMatchingPorts)
+TEST(SignalAwareCompileTest, DanglingInputsBroadcastBoundToMatchingPorts)
 {
     StubFactoryManager mgr;
-    // Node declares an input whose port_id matches a graph_input ("threshold")
-    // and one that does not ("private").
+    // 节点声明两个输入口，均无入边——都推导为边界入参（$graph_input
+    // 绑定；声明通道不携带默认值 → default 通道 null，运行时按口未设
+    // 处理）。
     auto node_def =
         MakeDefinition({{"threshold", "int"}, {"private", "int"}}, {});
     mgr.AddDefinition("AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA", node_def);
@@ -1043,12 +1122,8 @@ TEST(SignalAwareCompileTest, GraphInputsBroadcastBoundToMatchingPorts)
     GraphDocumentDto doc;
     doc.nodes.push_back(
         MakeComponentNode("N", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"));
-    doc.graph_inputs.push_back(MakeGraphInput("threshold", "int", "42"));
 
     auto plan = compiler.GeneratePortBindingPlan(doc);
-    // 匹配口收显式 broadcast 绑定；未连线的悬空输入口（private）也推导
-    // $graph_input 绑定（无声明默认 → default 通道 null，运行时按口未设
-    // 处理）——端口全自动推导语义。
     ASSERT_EQ(plan.bindings.size(), 2u);
     const PortBindingDto* threshold_binding = nullptr;
     const PortBindingDto* private_binding = nullptr;
@@ -1069,13 +1144,13 @@ TEST(SignalAwareCompileTest, GraphInputsBroadcastBoundToMatchingPorts)
     EXPECT_EQ(threshold_binding->target_node_id, "N");
     EXPECT_EQ(threshold_binding->target_port_id, "threshold");
     EXPECT_EQ(threshold_binding->expected_type, "int");
-    EXPECT_EQ(threshold_binding->default_value.write(), std::string("42"));
+    EXPECT_TRUE(threshold_binding->default_value.is_null());
     ASSERT_NE(private_binding, nullptr);
     EXPECT_EQ(private_binding->source_node_id, "$graph_input");
     EXPECT_TRUE(private_binding->default_value.is_null());
 }
 
-TEST(SignalAwareCompileTest, GraphInputsBroadcastToOneToManyNodes)
+TEST(SignalAwareCompileTest, DanglingInputsBroadcastToOneToManyNodes)
 {
     StubFactoryManager mgr;
     auto               node_def = MakeDefinition({{"threshold", "int"}}, {});
@@ -1090,17 +1165,17 @@ TEST(SignalAwareCompileTest, GraphInputsBroadcastToOneToManyNodes)
         MakeComponentNode("N1", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"));
     doc.nodes.push_back(
         MakeComponentNode("N2", "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"));
-    doc.graph_inputs.push_back(MakeGraphInput("threshold", "int", "7"));
 
     auto plan = compiler.GeneratePortBindingPlan(doc);
-    // One graph input broadcast to two nodes (one-to-many).
+    // 同名悬空输入广播到两个节点（one-to-many by-name 合并）。
     ASSERT_EQ(plan.bindings.size(), 2u);
     EXPECT_EQ(plan.bindings[0].target_node_id, "N1");
     EXPECT_EQ(plan.bindings[1].target_node_id, "N2");
     for (const auto& binding : plan.bindings)
     {
         EXPECT_EQ(binding.source_node_id, "$graph_input");
-        EXPECT_EQ(binding.default_value.write(), std::string("7"));
+        EXPECT_EQ(binding.source_port_id, "threshold");
+        EXPECT_TRUE(binding.default_value.is_null());
     }
 }
 
@@ -1298,59 +1373,70 @@ TEST(RequiredFieldValidationTest, SatisfiedRequiredFieldEmitsNoDiagnostic)
 
 // ===================================================================
 // Test Suite: BoundaryPortDerivationTest
-// 边界端口推导（端口全自动推导）：悬空判定=边角色证据——无入边的输入口
-// 推导为边界输入、无出边的输出口推导为边界输出；同名悬空口 by-name 合并；
-// 显式 graph_inputs 同名优先（不重复推导）。
+// 边界端口推导（端口全自动推导，只吃声明面+边角色）：输入侧悬空判定
+// （无入边的声明输入口→边界入参，最小集——值需有来源）；输出侧声明面
+// 输出口全量导出（内部消费与对外导出不互斥，扇出合法）；同名口两侧
+// by-name 合并。
 // ===================================================================
 
 TEST(BoundaryPortDerivationTest, DanglingPortsDeriveAsBoundaryPorts)
 {
-    GraphDocumentDto doc;
-    auto             node_a =
-        MakeComponentNode("n_1", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA");
-    node_a.dynamic_ports = {
-        MakeDynamicPort("feed", "int"),
-        MakeDynamicPort("p1", "int", "7")};
-    auto node_b =
-        MakeComponentNode("n_2", "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB");
-    node_b.dynamic_ports = {
-        MakeDynamicPort("eat", "int"),
-        MakeDynamicPort("p2", "string")};
-    doc.nodes.push_back(std::move(node_a));
-    doc.nodes.push_back(std::move(node_b));
-    doc.edges.push_back(MakeEdge("e1", "n_1", "feed", "n_2", "eat"));
+    StubFactoryManager mgr;
+    auto definition_a = MakeDefinition({{"p1", "int"}}, {{"feed", "int"}});
+    auto definition_b = MakeDefinition({{"eat", "int"}}, {{"p2", "string"}});
+    mgr.AddDefinition("AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA", definition_a);
+    mgr.AddDefinition("BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB", definition_b);
 
     GraphCompiler compiler;
-    auto          boundary = compiler.DeriveBoundaryPorts(doc);
+    compiler.SetFactoryManager(&mgr);
 
+    GraphDocumentDto doc;
+    doc.nodes.push_back(
+        MakeComponentNode("n_1", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"));
+    doc.nodes.push_back(
+        MakeComponentNode("n_2", "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"));
+    doc.edges.push_back(MakeEdge("e1", "n_1", "feed", "n_2", "eat"));
+
+    auto boundary = compiler.DeriveBoundaryPorts(doc);
+
+    // 输入侧悬空判定：eat 有入边（值有来源）非边界；p1 悬空 → 边界入参。
     ASSERT_EQ(boundary.inputs.size(), 1u);
     EXPECT_EQ(boundary.inputs[0].port_id, "p1");
     EXPECT_EQ(boundary.inputs[0].port_type, "int");
     ASSERT_EQ(boundary.inputs[0].node_ids.size(), 1u);
     EXPECT_EQ(boundary.inputs[0].node_ids[0], "n_1");
-    EXPECT_EQ(boundary.inputs[0].default_value.write(), std::string("7"));
+    EXPECT_TRUE(boundary.inputs[0].default_value.is_null());
 
-    ASSERT_EQ(boundary.outputs.size(), 1u);
-    EXPECT_EQ(boundary.outputs[0].port_id, "p2");
-    EXPECT_EQ(boundary.outputs[0].port_type, "string");
+    // 输出侧全量导出：feed 虽有出边（被内部消费）仍导出；p2 悬空同样
+    // 导出——两条声明输出口都在边界清单里。
+    ASSERT_EQ(boundary.outputs.size(), 2u);
+    EXPECT_EQ(boundary.outputs[0].port_id, "feed");
+    EXPECT_EQ(boundary.outputs[0].port_type, "int");
     ASSERT_EQ(boundary.outputs[0].node_ids.size(), 1u);
-    EXPECT_EQ(boundary.outputs[0].node_ids[0], "n_2");
+    EXPECT_EQ(boundary.outputs[0].node_ids[0], "n_1");
+    EXPECT_EQ(boundary.outputs[1].port_id, "p2");
+    EXPECT_EQ(boundary.outputs[1].port_type, "string");
+    ASSERT_EQ(boundary.outputs[1].node_ids.size(), 1u);
+    EXPECT_EQ(boundary.outputs[1].node_ids[0], "n_2");
 }
 
 TEST(BoundaryPortDerivationTest, SameNameDanglingInputsMergeByPortName)
 {
-    GraphDocumentDto doc;
-    auto             node_a =
-        MakeComponentNode("n_1", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA");
-    node_a.dynamic_ports = {MakeDynamicPort("p1", "int", "3")};
-    auto node_b =
-        MakeComponentNode("n_2", "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB");
-    node_b.dynamic_ports = {MakeDynamicPort("p1", "int")};
-    doc.nodes.push_back(std::move(node_a));
-    doc.nodes.push_back(std::move(node_b));
+    StubFactoryManager mgr;
+    auto               definition = MakeDefinition({{"p1", "int"}}, {});
+    mgr.AddDefinition("AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA", definition);
+    mgr.AddDefinition("BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB", definition);
 
     GraphCompiler compiler;
-    auto          boundary = compiler.DeriveBoundaryPorts(doc);
+    compiler.SetFactoryManager(&mgr);
+
+    GraphDocumentDto doc;
+    doc.nodes.push_back(
+        MakeComponentNode("n_1", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"));
+    doc.nodes.push_back(
+        MakeComponentNode("n_2", "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"));
+
+    auto boundary = compiler.DeriveBoundaryPorts(doc);
 
     // 两个同名悬空输入口合并为一个边界口（by-name 广播语义），携带两个
     // 悬空位置。
@@ -1359,25 +1445,6 @@ TEST(BoundaryPortDerivationTest, SameNameDanglingInputsMergeByPortName)
     ASSERT_EQ(boundary.inputs[0].node_ids.size(), 2u);
     EXPECT_EQ(boundary.inputs[0].node_ids[0], "n_1");
     EXPECT_EQ(boundary.inputs[0].node_ids[1], "n_2");
-}
-
-TEST(BoundaryPortDerivationTest, ExplicitGraphInputNamesExcludedFromDerivation)
-{
-    GraphDocumentDto doc;
-    auto             node_a =
-        MakeComponentNode("n_1", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA");
-    node_a.dynamic_ports = {
-        MakeDynamicPort("covered", "int"),
-        MakeDynamicPort("dangling", "int")};
-    doc.nodes.push_back(std::move(node_a));
-    // 显式 graph_inputs 同名优先：covered 由显式通道喂入，不进推导集。
-    doc.graph_inputs.push_back(MakeGraphInput("covered", "int", "5"));
-
-    GraphCompiler compiler;
-    auto          boundary = compiler.DeriveBoundaryPorts(doc);
-
-    ASSERT_EQ(boundary.inputs.size(), 1u);
-    EXPECT_EQ(boundary.inputs[0].port_id, "dangling");
 }
 
 // manifest 声明端口面的悬空推导：未连线的声明输入口/输出口同样是边界口。
@@ -1405,80 +1472,31 @@ TEST(BoundaryPortDerivationTest, DeclaredManifestPortsDeriveWhenDangling)
 }
 
 // ===================================================================
-// 动态端口校验扩认：连到节点声明 dynamic_ports 端口的边不再报
-// PortNotFound（既有盲区修正）；类型相容判定走 dynamic_ports 的 port_type。
+// 注入端口面的绑定类型解析：无 factory manager 时 expected_type 从会话
+// catalog 注入的声明面解析（生产 authoring 编译路径形态）。
 // ===================================================================
 
-TEST(EdgePortExistenceTest, EdgesIntoDynamicPortsProduceNoPortNotFound)
+TEST(PortBindingPlanTest, ExpectedTypeResolvesFromInjectedPortSurface)
 {
-    StubFactoryManager mgr;
-    auto definition = MakeDefinition({{"in1", "int"}}, {{"out1", "int"}});
-    mgr.AddDefinition("AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA", definition);
-    mgr.AddDefinition("BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB", definition);
+    std::unordered_map<
+        std::string,
+        std::pair<
+            std::vector<std::pair<std::string, std::string>>,
+            std::vector<std::pair<std::string, std::string>>>>
+        surfaces;
+    surfaces["AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"] = {
+        {},
+        {{"dyn_out", "image"}}};
+    surfaces["BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"] = {{{"in1", "int"}}, {}};
 
     GraphCompiler compiler;
-    compiler.SetFactoryManager(&mgr);
+    compiler.SetPortSurfaceProvider(MakePortSurfaceProvider(surfaces));
 
     GraphDocumentDto doc;
-    auto             node_a =
-        MakeComponentNode("A", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA");
-    node_a.dynamic_ports = {MakeDynamicPort("dyn_out", "int")};
-    auto node_b =
-        MakeComponentNode("B", "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB");
-    node_b.dynamic_ports = {MakeDynamicPort("dyn_in", "int")};
-    doc.nodes.push_back(std::move(node_a));
-    doc.nodes.push_back(std::move(node_b));
-    doc.edges.push_back(MakeEdge("e1", "A", "dyn_out", "B", "dyn_in"));
-
-    auto diagnostics = compiler.ValidateEdgePorts(doc);
-    EXPECT_TRUE(diagnostics.empty());
-}
-
-TEST(EdgePortExistenceTest, DynamicPortTypeMismatchUsesDeclaredPortType)
-{
-    StubFactoryManager mgr;
-    auto definition = MakeDefinition({{"in1", "int"}}, {{"out1", "int"}});
-    mgr.AddDefinition("AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA", definition);
-    mgr.AddDefinition("BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB", definition);
-
-    GraphCompiler compiler;
-    compiler.SetFactoryManager(&mgr);
-
-    GraphDocumentDto doc;
-    auto             node_a =
-        MakeComponentNode("A", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA");
-    node_a.dynamic_ports = {MakeDynamicPort("dyn_out", "image")};
-    auto node_b =
-        MakeComponentNode("B", "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB");
-    node_b.dynamic_ports = {MakeDynamicPort("dyn_in", "string")};
-    doc.nodes.push_back(std::move(node_a));
-    doc.nodes.push_back(std::move(node_b));
-    doc.edges.push_back(MakeEdge("e1", "A", "dyn_out", "B", "dyn_in"));
-
-    auto diagnostics = compiler.ValidateEdgePorts(doc);
-    ASSERT_FALSE(diagnostics.empty());
-    EXPECT_EQ(diagnostics[0].kind, CompileDiagnosticKind::TypeMismatch);
-    EXPECT_EQ(diagnostics[0].expected_type, "string");
-    EXPECT_EQ(diagnostics[0].actual_type, "image");
-}
-
-TEST(PortBindingPlanTest, ExpectedTypeResolvesFromDynamicPorts)
-{
-    StubFactoryManager mgr;
-    auto               definition = MakeDefinition({}, {{"out1", "int"}});
-    mgr.AddDefinition("AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA", definition);
-
-    GraphCompiler compiler;
-    compiler.SetFactoryManager(&mgr);
-
-    GraphDocumentDto doc;
-    auto             node_a =
-        MakeComponentNode("A", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA");
-    node_a.dynamic_ports = {MakeDynamicPort("dyn_out", "image")};
-    auto node_b =
-        MakeComponentNode("B", "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB");
-    doc.nodes.push_back(std::move(node_a));
-    doc.nodes.push_back(std::move(node_b));
+    doc.nodes.push_back(
+        MakeComponentNode("A", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"));
+    doc.nodes.push_back(
+        MakeComponentNode("B", "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"));
     doc.edges.push_back(MakeEdge("e1", "A", "dyn_out", "B", "in1"));
 
     auto plan = compiler.GeneratePortBindingPlan(doc);
@@ -1488,23 +1506,30 @@ TEST(PortBindingPlanTest, ExpectedTypeResolvesFromDynamicPorts)
 
 // ===================================================================
 // 推导悬空输入的 broadcast 集成：编译产物为悬空输入生成 $graph_input
-// 哨兵绑定（default_value 取该口声明默认值）；显式 graph_inputs 与推导
-// 集合并（显式同名优先，不重复生成）；边界口清单写入编译产物。
+// 哨兵绑定（default_value 取该口声明默认值——注入端口面通道可携带默认，
+// manifest 通道不携带即为 null）；边界口清单写入编译产物。
 // ===================================================================
 
 TEST(SignalAwareCompileTest, DerivedDanglingInputsGenerateBroadcastBindings)
 {
-    StubFactoryManager mgr;
-    auto definition = MakeDefinition({{"declared_in", "int"}}, {});
-    mgr.AddDefinition("AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA", definition);
-
+    GraphCompiler::ComponentPortSurface surface;
+    surface.inputs.push_back(MakePortDefinition("p1", "int", "42"));
+    surface.inputs.push_back(MakePortDefinition("declared_in", "int"));
     GraphCompiler compiler;
-    compiler.SetFactoryManager(&mgr);
+    compiler.SetPortSurfaceProvider(
+        [&surface](const std::string& component_guid)
+            -> std::optional<GraphCompiler::ComponentPortSurface>
+        {
+            if (component_guid != "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA")
+            {
+                return std::nullopt;
+            }
+            return surface;
+        });
 
     GraphDocumentDto doc;
-    auto node = MakeComponentNode("N", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA");
-    node.dynamic_ports = {MakeDynamicPort("p1", "int", "42")};
-    doc.nodes.push_back(std::move(node));
+    doc.nodes.push_back(
+        MakeComponentNode("N", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"));
 
     auto plan = compiler.Compile(doc);
 
@@ -1530,74 +1555,43 @@ TEST(SignalAwareCompileTest, DerivedDanglingInputsGenerateBroadcastBindings)
     EXPECT_EQ(p1_binding->target_node_id, "N");
     EXPECT_EQ(p1_binding->expected_type, "int");
     EXPECT_EQ(p1_binding->default_value.write(), std::string("42"));
-    // manifest 声明的悬空输入同样推导（无声明默认 → default 通道为 null）。
+    // 无声明默认的悬空输入同样推导（default 通道为 null，运行时按口未设）。
     ASSERT_NE(declared_binding, nullptr);
     EXPECT_TRUE(declared_binding->default_value.is_null());
-}
-
-TEST(SignalAwareCompileTest, ExplicitGraphInputsWinOverDerivedBroadcast)
-{
-    StubFactoryManager mgr;
-    auto definition = MakeDefinition({{"declared_in", "int"}}, {});
-    mgr.AddDefinition("AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA", definition);
-
-    GraphCompiler compiler;
-    compiler.SetFactoryManager(&mgr);
-
-    GraphDocumentDto doc;
-    auto node = MakeComponentNode("N", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA");
-    node.dynamic_ports = {MakeDynamicPort("p1", "int", "42")};
-    doc.nodes.push_back(std::move(node));
-    doc.graph_inputs.push_back(MakeGraphInput("p1", "int", "5"));
-
-    auto plan = compiler.Compile(doc);
-
-    std::size_t           p1_binding_count = 0;
-    const PortBindingDto* p1_binding = nullptr;
-    for (const auto& binding : plan.binding_plan.bindings)
-    {
-        if (binding.source_node_id != "$graph_input")
-        {
-            continue;
-        }
-        if (binding.target_port_id == "p1")
-        {
-            ++p1_binding_count;
-            p1_binding = &binding;
-        }
-    }
-    // 显式同名优先：p1 只有显式绑定一条（default 5），推导不重复生成。
-    ASSERT_EQ(p1_binding_count, 1u);
-    ASSERT_NE(p1_binding, nullptr);
-    EXPECT_EQ(p1_binding->default_value.write(), std::string("5"));
 }
 
 TEST(CompileOrchestrationTest, CompileCarriesBoundaryPortsInPlan)
 {
     StubFactoryManager mgr;
-    auto definition = MakeDefinition({{"declared_in", "int"}}, {});
-    mgr.AddDefinition("AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA", definition);
+    auto               definition_a = MakeDefinition(
+        {{"declared_in", "int"}, {"p1", "int"}},
+        {{"p2", "string"}});
+    auto definition_b = MakeDefinition({{"take", "string"}}, {});
+    mgr.AddDefinition("AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA", definition_a);
+    mgr.AddDefinition("BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB", definition_b);
 
     GraphCompiler compiler;
     compiler.SetFactoryManager(&mgr);
 
     GraphDocumentDto doc;
-    auto             node =
-        MakeComponentNode("n_1", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA");
-    node.dynamic_ports = {
-        MakeDynamicPort("p1", "int", "42"),
-        MakeDynamicPort("p2", "string")};
-    doc.nodes.push_back(std::move(node));
+    doc.nodes.push_back(
+        MakeComponentNode("n_1", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"));
+    doc.nodes.push_back(
+        MakeComponentNode("n_2", "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"));
+    // p2 被内部边消费（n_1.p2 → n_2.take）。
+    doc.edges.push_back(MakeEdge("e1", "n_1", "p2", "n_2", "take"));
 
     auto plan = compiler.Compile(doc);
 
-    ASSERT_EQ(plan.boundary_ports.inputs.size(), 1u);
-    EXPECT_EQ(plan.boundary_ports.inputs[0].port_id, "p1");
-    EXPECT_EQ(plan.boundary_ports.inputs[0].port_type, "int");
-    ASSERT_EQ(plan.boundary_ports.inputs[0].node_ids.size(), 1u);
-    EXPECT_EQ(plan.boundary_ports.inputs[0].node_ids[0], "n_1");
+    // 悬空声明输入（declared_in/p1 均无入边）= 边界入参；take 有入边排除。
+    ASSERT_EQ(plan.boundary_ports.inputs.size(), 2u);
+    EXPECT_EQ(plan.boundary_ports.inputs[0].port_id, "declared_in");
+    EXPECT_EQ(plan.boundary_ports.inputs[1].port_id, "p1");
+    EXPECT_EQ(plan.boundary_ports.inputs[1].port_type, "int");
+    ASSERT_EQ(plan.boundary_ports.inputs[1].node_ids.size(), 1u);
+    EXPECT_EQ(plan.boundary_ports.inputs[1].node_ids[0], "n_1");
 
-    // 悬空输出口清单（p2 + manifest 无输出声明，仅 p2）：执行侧导出依据。
+    // 输出侧全量导出：p2 虽被内部边消费仍进边界清单（执行侧导出依据）。
     ASSERT_EQ(plan.boundary_ports.outputs.size(), 1u);
     EXPECT_EQ(plan.boundary_ports.outputs[0].port_id, "p2");
     EXPECT_EQ(plan.boundary_ports.outputs[0].port_type, "string");

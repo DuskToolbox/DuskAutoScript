@@ -410,7 +410,6 @@ namespace Contract
         // -------------------------------------------------------------------
 
         constexpr std::string_view PORT_DIRECTION_INPUT = "input";
-        constexpr std::string_view PORT_DIRECTION_OUTPUT = "output";
 
         constexpr std::string_view PORT_CATEGORY_EXECUTION = "execution";
         constexpr std::string_view PORT_CATEGORY_DATA = "data";
@@ -462,45 +461,10 @@ namespace Contract
             projected.value = Das::Utils::CloneYyjsonValue(settings_value);
         }
 
-        /// Direction-derivation fact for one dynamic port: which edge roles
-        /// reference it inside this document. Compile validates direction by
-        /// edge position (source side is an output, target side an input),
-        /// so the port's referencing edges are the only in-document
-        /// directional evidence a projection may use.
-        struct DynamicPortRole
-        {
-            bool referenced_as_input = false;
-            bool referenced_as_output = false;
-        };
-
-        std::unordered_map<std::string, std::unordered_set<std::string>>
-        CollectPortIds(
-            const std::vector<Dto::GraphEdgeDto>& edges,
-            bool                                  target_side)
-        {
-            std::unordered_map<std::string, std::unordered_set<std::string>>
-                roles;
-            for (const auto& edge : edges)
-            {
-                if (target_side)
-                {
-                    roles[edge.target_node_id].insert(edge.target_port_id);
-                }
-                else
-                {
-                    roles[edge.source_node_id].insert(edge.source_port_id);
-                }
-            }
-            return roles;
-        }
-
         GraphView MapGraphView(
             const Dto::GraphDocumentDto&        doc,
             const std::optional<ActionCatalog>& action_catalog)
         {
-            const auto input_roles = CollectPortIds(doc.edges, true);
-            const auto output_roles = CollectPortIds(doc.edges, false);
-
             GraphView view;
             view.nodes.reserve(doc.nodes.size());
             for (const auto& node : doc.nodes)
@@ -549,58 +513,6 @@ namespace Contract
                         GraphNodePort projected = port;
                         projected.category = DerivePortCategory(port.port_type);
                         AttachPortValueFromSettings(node.settings, projected);
-                        out.ports.push_back(std::move(projected));
-                    }
-                }
-
-                // Dynamic ports: a port referenced only on the target side
-                // projects as input, only on the source side as output; a
-                // port with no (or conflicting) directional evidence projects
-                // once per direction so the soft client-side precheck never
-                // over-restricts (compile stays the authority).
-                for (const auto& port : node.dynamic_ports)
-                {
-                    DynamicPortRole role;
-                    if (auto it = input_roles.find(node.node_id);
-                        it != input_roles.end())
-                    {
-                        role.referenced_as_input =
-                            it->second.count(port.port_id) > 0;
-                    }
-                    if (auto it = output_roles.find(node.node_id);
-                        it != output_roles.end())
-                    {
-                        role.referenced_as_output =
-                            it->second.count(port.port_id) > 0;
-                    }
-
-                    const bool directional =
-                        role.referenced_as_input != role.referenced_as_output;
-                    GraphNodePort projected;
-                    projected.port_id = port.port_id;
-                    projected.display_label = port.display_label;
-                    projected.port_type = port.port_type;
-                    projected.category = DerivePortCategory(port.port_type);
-                    if (directional)
-                    {
-                        projected.direction =
-                            role.referenced_as_input
-                                ? std::string(PORT_DIRECTION_INPUT)
-                                : std::string(PORT_DIRECTION_OUTPUT);
-                        AttachPortValueFromSettings(node.settings, projected);
-                        out.ports.push_back(std::move(projected));
-                    }
-                    else
-                    {
-                        projected.direction = std::string(PORT_DIRECTION_INPUT);
-                        AttachPortValueFromSettings(node.settings, projected);
-                        out.ports.push_back(projected);
-                        projected.direction =
-                            std::string(PORT_DIRECTION_OUTPUT);
-                        // The output twin never carries the default-value
-                        // channel even though it was copied from the input
-                        // projection.
-                        projected.value.reset();
                         out.ports.push_back(std::move(projected));
                     }
                 }

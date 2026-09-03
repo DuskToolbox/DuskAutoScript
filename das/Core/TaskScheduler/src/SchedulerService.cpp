@@ -3227,7 +3227,7 @@ namespace Das::Core::TaskScheduler
             std::move(pipeline.parsed.diagnostics);
         // 持久化源文档随行：Provider 会话侧的调用节点边界端口推导需要从
         // 条目的 GraphDocumentDto 原文做悬空分析（投影 document 不携带
-        // graphInputs/dynamicPorts 原始区分，推导不可靠）。
+        // 完整拓扑原文，推导不可靠）。
         (*obj)[std::string_view("acceptedProperties")] =
             CloneJsonValue(entry.accepted_properties);
         return result;

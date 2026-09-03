@@ -135,30 +135,20 @@ TEST(GraphDocumentDtoTest, GraphNodeDtoRoundTrip)
         "componentRef",
         ComponentRefDto{"componentRef", "{comp-guid}", "{plug-guid}"}};
     node.settings = MakeSettingsPayload();
-    node.dynamic_ports.push_back(
-        GraphPortDefinitionDto{
-            "output_result",
-            "Result",
-            "string",
-            true,
-            yyjson::value(),
-            {}});
 
     auto serialized = yyjson::object(node);
 
     EXPECT_TRUE(serialized.contains(std::string_view("nodeId")));
     EXPECT_TRUE(serialized.contains(std::string_view("target")));
     EXPECT_TRUE(serialized.contains(std::string_view("settings")));
-    EXPECT_TRUE(serialized.contains(std::string_view("dynamicPorts")));
-    EXPECT_FALSE(serialized.contains(std::string_view("dynamic_ports")));
+    // 节点不再携带端口声明——端口面归声明面（manifest/catalog）与推导。
+    EXPECT_FALSE(serialized.contains(std::string_view("dynamicPorts")));
 
     GraphNodeDto round_tripped;
     SCOPED_TRACE(std::string(serialized.write()));
     ASSERT_NO_THROW(round_tripped = yyjson::cast<GraphNodeDto>(serialized));
     EXPECT_EQ(round_tripped.node_id, "node_1");
     EXPECT_EQ(round_tripped.target.target_kind, "componentRef");
-    ASSERT_EQ(round_tripped.dynamic_ports.size(), 1u);
-    EXPECT_EQ(round_tripped.dynamic_ports[0].port_id, "output_result");
 }
 
 // The store display label survives the aggregate serialization round-trip,
@@ -185,7 +175,7 @@ TEST(GraphDocumentDtoTest, GraphNodeDtoLabelRoundTripAndMissingKeySafe)
     const auto legacy = Das::Utils::ParseYyjsonFromString(
         std::string_view(
             R"({"nodeId":"legacy_node","target":{"targetKind":"componentRef"},)"
-            R"("settings":{},"dynamicPorts":[]})"));
+            R"("settings":{}})"));
     ASSERT_TRUE(legacy.has_value());
     GraphNodeDto legacy_node;
     SCOPED_TRACE(
@@ -241,8 +231,7 @@ TEST(GraphDocumentDtoTest, GraphDocumentDtoRoundTrip)
             GraphNodeTargetDto{
                 "componentRef",
                 ComponentRefDto{"componentRef", "{comp-guid}", "{plug-guid}"}},
-            MakeSettingsPayload(),
-            {}});
+            MakeSettingsPayload()});
     doc.edges.push_back(
         GraphEdgeDto{
             "edge_1",
@@ -250,22 +239,6 @@ TEST(GraphDocumentDtoTest, GraphDocumentDtoRoundTrip)
             "output_result",
             "node_2",
             "input_data"});
-    doc.graph_inputs.push_back(
-        GraphPortDefinitionDto{
-            "graph_input",
-            "Graph Input",
-            "image",
-            true,
-            yyjson::value(),
-            {}});
-    doc.graph_outputs.push_back(
-        GraphPortDefinitionDto{
-            "graph_output",
-            "Graph Output",
-            "string",
-            false,
-            yyjson::value(),
-            {}});
     // Graph-level markers (e.g. "fromsequence") — the authoring-doc contract
     // the frontend depends on (DAS-75).
     doc.tags = {"fromsequence"};
@@ -277,11 +250,11 @@ TEST(GraphDocumentDtoTest, GraphDocumentDtoRoundTrip)
     EXPECT_TRUE(serialized.contains(std::string_view("fingerprint")));
     EXPECT_TRUE(serialized.contains(std::string_view("nodes")));
     EXPECT_TRUE(serialized.contains(std::string_view("edges")));
-    EXPECT_TRUE(serialized.contains(std::string_view("graphInputs")));
-    EXPECT_TRUE(serialized.contains(std::string_view("graphOutputs")));
     EXPECT_TRUE(serialized.contains(std::string_view("tags")));
     EXPECT_FALSE(serialized.contains(std::string_view("document_id")));
-    EXPECT_FALSE(serialized.contains(std::string_view("graph_inputs")));
+    // 文档不再携带图级端口声明——边界口是推导物（声明面+边角色）。
+    EXPECT_FALSE(serialized.contains(std::string_view("graphInputs")));
+    EXPECT_FALSE(serialized.contains(std::string_view("graphOutputs")));
 
     GraphDocumentDto round_tripped;
     SCOPED_TRACE(std::string(serialized.write()));
@@ -293,10 +266,6 @@ TEST(GraphDocumentDtoTest, GraphDocumentDtoRoundTrip)
     EXPECT_EQ(round_tripped.nodes[0].node_id, "node_1");
     ASSERT_EQ(round_tripped.edges.size(), 1u);
     EXPECT_EQ(round_tripped.edges[0].edge_id, "edge_1");
-    ASSERT_EQ(round_tripped.graph_inputs.size(), 1u);
-    EXPECT_EQ(round_tripped.graph_inputs[0].port_id, "graph_input");
-    ASSERT_EQ(round_tripped.graph_outputs.size(), 1u);
-    EXPECT_EQ(round_tripped.graph_outputs[0].port_id, "graph_output");
     ASSERT_EQ(round_tripped.tags.size(), 1u);
     EXPECT_EQ(round_tripped.tags[0], "fromsequence");
 }
@@ -345,7 +314,7 @@ yyjson::value ToWriterValue(std::string_view json)
 // A pre-viewData document carries every old DTO key and no viewData entry.
 constexpr std::string_view OLD_DOC_WITHOUT_VIEW_DATA =
     R"({"documentId":"d1","version":1,"fingerprint":"fp","nodes":[],)"
-    R"("edges":[],"graphInputs":[],"graphOutputs":[],"tags":[]})";
+    R"("edges":[],"tags":[]})";
 
 TEST(GraphDocumentDtoTest, ViewDataMissingKeyDeserializesToNull)
 {
@@ -448,16 +417,6 @@ namespace
                 "output_result",
                 "node_entry",
                 "input_data"});
-
-        // Graph input port
-        doc.graph_inputs.push_back(
-            GraphPortDefinitionDto{
-                "graph_in",
-                "Graph Input",
-                "image",
-                true,
-                yyjson::value(),
-                {}});
         return doc;
     }
 
@@ -576,8 +535,6 @@ TEST(GraphTaskEntryStorageTest, GraphDocumentRoundTripThroughGraphDocument)
     ASSERT_EQ(restored.edges.size(), 1u);
     EXPECT_EQ(restored.edges[0].edge_id, "edge_1");
     EXPECT_EQ(restored.edges[0].source_port_id, "output_result");
-    ASSERT_EQ(restored.graph_inputs.size(), 1u);
-    EXPECT_EQ(restored.graph_inputs[0].port_id, "graph_in");
 }
 
 // ---------------------------------------------------------------------------
@@ -593,8 +550,6 @@ TEST(GraphTaskEntryStorageTest, GraphDocumentRoundTripThroughAcceptedProperties)
     EXPECT_EQ(restored.nodes[0].target.target_kind, "componentRef");
     ASSERT_EQ(restored.edges.size(), 1u);
     EXPECT_EQ(restored.edges[0].source_port_id, "output_result");
-    ASSERT_EQ(restored.graph_inputs.size(), 1u);
-    EXPECT_EQ(restored.graph_inputs[0].port_id, "graph_in");
 }
 
 // ---------------------------------------------------------------------------
@@ -630,6 +585,4 @@ TEST(GraphTaskEntryStorageTest, GraphDocumentRoundTripEmptyGraph)
     EXPECT_EQ(restored.fingerprint, "sha256:empty");
     EXPECT_TRUE(restored.nodes.empty());
     EXPECT_TRUE(restored.edges.empty());
-    EXPECT_TRUE(restored.graph_inputs.empty());
-    EXPECT_TRUE(restored.graph_outputs.empty());
 }

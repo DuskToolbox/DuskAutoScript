@@ -40,10 +40,9 @@ namespace Dto
 
     struct GraphNodeDto
     {
-        std::string                         node_id;
-        GraphNodeTargetDto                  target;
-        yyjson::value                       settings;
-        std::vector<GraphPortDefinitionDto> dynamic_ports;
+        std::string        node_id;
+        GraphNodeTargetDto target;
+        yyjson::value      settings;
         // User-authored display label. Pure presentation data — never a
         // node address, binding key or edge endpoint. Disengaged = never
         // renamed; the wire projection then falls back to the catalog
@@ -66,13 +65,11 @@ namespace Dto
 
     struct GraphDocumentDto
     {
-        std::string                         document_id;
-        int32_t                             version = 0;
-        std::string                         fingerprint;
-        std::vector<GraphNodeDto>           nodes;
-        std::vector<GraphEdgeDto>           edges;
-        std::vector<GraphPortDefinitionDto> graph_inputs;
-        std::vector<GraphPortDefinitionDto> graph_outputs;
+        std::string               document_id;
+        int32_t                   version = 0;
+        std::string               fingerprint;
+        std::vector<GraphNodeDto> nodes;
+        std::vector<GraphEdgeDto> edges;
         // Graph-level markers (e.g. "fromsequence") mirroring the per-port
         // GraphPortDefinitionDto::tags style.
         std::vector<std::string> tags;
@@ -80,6 +77,11 @@ namespace Dto
         // apply/compile pass it through without interpretation; the wire key
         // is "viewData" via the registered snake_to_camel rule.
         yyjson::value view_data;
+        // The document stores only reference (componentGuid), topology (edge
+        // coordinates) and config (settings). Port identity lives in the
+        // declared surfaces (component manifests / session catalogs) and in
+        // derivation (boundary projection); dangling is the complement of the
+        // edge set and is never stored.
     };
 
     namespace Detail
@@ -219,12 +221,6 @@ struct yyjson::caster<Das::Core::GraphRuntime::Dto::GraphNodeDto>
             node.settings = Das::Utils::CloneYyjsonValue(
                 (*object)[std::string_view("settings")]);
         }
-        if (object->contains(std::string_view("dynamicPorts")))
-        {
-            node.dynamic_ports = yyjson::cast<std::vector<
-                Das::Core::GraphRuntime::Dto::GraphPortDefinitionDto>>(
-                (*object)[std::string_view("dynamicPorts")]);
-        }
         if (object->contains(std::string_view("label")))
         {
             const auto& label_value = (*object)[std::string_view("label")];
@@ -301,18 +297,6 @@ struct yyjson::caster<Das::Core::GraphRuntime::Dto::GraphDocumentDto>
             document.edges = yyjson::cast<
                 std::vector<Das::Core::GraphRuntime::Dto::GraphEdgeDto>>(
                 (*object)[std::string_view("edges")]);
-        }
-        if (object->contains(std::string_view("graphInputs")))
-        {
-            document.graph_inputs = yyjson::cast<std::vector<
-                Das::Core::GraphRuntime::Dto::GraphPortDefinitionDto>>(
-                (*object)[std::string_view("graphInputs")]);
-        }
-        if (object->contains(std::string_view("graphOutputs")))
-        {
-            document.graph_outputs = yyjson::cast<std::vector<
-                Das::Core::GraphRuntime::Dto::GraphPortDefinitionDto>>(
-                (*object)[std::string_view("graphOutputs")]);
         }
         if (object->contains(std::string_view("tags")))
         {

@@ -81,18 +81,6 @@ namespace
         return str.value_or(std::string{});
     }
 
-    GraphPortDefinitionDto MakePortDef(
-        std::string_view id,
-        std::string_view type,
-        std::string_view label = {})
-    {
-        GraphPortDefinitionDto port;
-        port.port_id = std::string(id);
-        port.port_type = std::string(type);
-        port.display_label = std::string(label);
-        return port;
-    }
-
     GraphEdgeDto MakeDataEdge(
         std::string_view id,
         std::string_view from_node,
@@ -225,24 +213,16 @@ namespace
 
     // Static registry ports (carried on the actionCatalog channel, direction
     // by definition.inputs/outputs list membership) merge onto nodes by
-    // componentGuid == actionId; dynamic ports derive direction from their
-    // edge role in the document (target side = input, source side = output;
-    // no directional evidence → once per direction so the soft precheck
-    // never over-restricts).
-    TEST(AuthoringDocContractTest, PortProjection_MergesStaticAndDynamic)
+    // componentGuid == actionId; nodes without a catalog entry carry no port
+    // surface (the document itself stores no port declarations).
+    TEST(
+        AuthoringDocContractTest,
+        PortProjection_StaticRegistryPortsProjectOntoNodes)
     {
         GraphDocumentDto doc;
-        auto             n1 = MakeNode("n1", "{g1}", 0.0);
-        n1.dynamic_ports.push_back(MakePortDef("dyn_out", "image"));
-        doc.nodes.push_back(n1);
-        auto n2 = MakeNode("n2", "{g2}", 0.0);
-        n2.dynamic_ports.push_back(MakePortDef("dyn_in", "image", "Dyn In"));
-        doc.nodes.push_back(n2);
-        auto n3 = MakeNode("n3", "{g3}", 0.0);
-        n3.dynamic_ports.push_back(MakePortDef("dyn_free", "json"));
-        doc.nodes.push_back(n3);
-        doc.edges.push_back(
-            MakeDataEdge("e1", "n1", "dyn_out", "n2", "dyn_in"));
+        doc.nodes.push_back(MakeNode("n1", "{g1}", 0.0));
+        doc.nodes.push_back(MakeNode("n2", "{g2}", 0.0));
+        doc.nodes.push_back(MakeNode("n3", "{g3}", 0.0));
 
         ActionCatalog      catalog;
         ActionCatalogEntry entry;
@@ -257,9 +237,9 @@ namespace
         const auto  out = ToAuthoringDocument(doc, catalog);
         const auto& nodes = out.graph->nodes;
 
-        // n1: static registry ports first (catalog order), then the dynamic
-        // port with the edge-role derived direction ("output": source only).
-        ASSERT_EQ(nodes[0].ports.size(), 3u);
+        // n1: static registry ports project in catalog order with their
+        // declared direction and the single-point derived category.
+        ASSERT_EQ(nodes[0].ports.size(), 2u);
         EXPECT_EQ(nodes[0].ports[0].port_id, "cond");
         EXPECT_EQ(nodes[0].ports[0].direction, "input");
         EXPECT_EQ(nodes[0].ports[0].port_type, "bool");
@@ -268,60 +248,43 @@ namespace
         EXPECT_EQ(nodes[0].ports[1].port_id, "next");
         EXPECT_EQ(nodes[0].ports[1].direction, "output");
         EXPECT_EQ(nodes[0].ports[1].category, "execution");
-        EXPECT_EQ(nodes[0].ports[2].port_id, "dyn_out");
-        EXPECT_EQ(nodes[0].ports[2].direction, "output");
-        EXPECT_EQ(nodes[0].ports[2].port_type, "image");
-        EXPECT_EQ(nodes[0].ports[2].category, "data");
 
-        // n2: no catalog entry for {g2}; dynamic port used as edge target
-        // only → "input"; display_label thin-maps through.
-        ASSERT_EQ(nodes[1].ports.size(), 1u);
-        EXPECT_EQ(nodes[1].ports[0].port_id, "dyn_in");
-        EXPECT_EQ(nodes[1].ports[0].display_label, "Dyn In");
-        EXPECT_EQ(nodes[1].ports[0].direction, "input");
-        EXPECT_EQ(nodes[1].ports[0].category, "data");
-
-        // n3: unreferenced dynamic port carries no directional evidence →
-        // projected once per direction.
-        ASSERT_EQ(nodes[2].ports.size(), 2u);
-        EXPECT_EQ(nodes[2].ports[0].port_id, "dyn_free");
-        EXPECT_EQ(nodes[2].ports[0].direction, "input");
-        EXPECT_EQ(nodes[2].ports[1].port_id, "dyn_free");
-        EXPECT_EQ(nodes[2].ports[1].direction, "output");
+        // n2/n3: no catalog entry → no port surface.
+        EXPECT_TRUE(nodes[1].ports.empty());
+        EXPECT_TRUE(nodes[2].ports.empty());
     }
 
-    // Category derivation is single-point in the Core projection: every port
-    // (registry-declared static and document dynamic alike) derives
-    // category == "execution" iff its port_type is the "signal" protocol
-    // literal, "data" otherwise. The DasFlowControl branch shape (bool
-    // condition in, signal true/false out) and the DasMaaPi run shape (object
-    // in, signal-comparable out) both anchor the rule on real manifest
-    // vocabulary.
+    // Category derivation is single-point in the Core projection: every
+    // declared port derives category == "execution" iff its port_type is the
+    // "signal" protocol literal, "data" otherwise. The DasFlowControl branch
+    // shape (bool condition in, signal true/false out) and the DasMaaPi run
+    // shape (object in, signal-comparable out) both anchor the rule on real
+    // manifest vocabulary.
     TEST(AuthoringDocContractTest, PortProjection_SignalVersusDataCategory)
     {
         GraphDocumentDto doc;
-        // n1: edge-referenced dynamic signal port (target side → input) and
-        // an unreferenced dynamic data port (projected both directions).
-        auto n1 = MakeNode("n1", "{g1}", 0.0);
-        n1.dynamic_ports.push_back(MakePortDef("dyn_signal", "signal"));
-        doc.nodes.push_back(n1);
+        doc.nodes.push_back(MakeNode("n1", "{g1}", 0.0));
         doc.nodes.push_back(MakeNode("n2", "{g2}", 0.0));
-        doc.edges.push_back(
-            MakeDataEdge("e1", "n2", "src", "n1", "dyn_signal"));
 
         // Static catalog surface mirroring das.flow.branch: bool condition
-        // input + signal true/false outputs, plus an object-typed input.
+        // input + signal true/false outputs, plus an object-typed input; the
+        // {g1} entry anchors the signal-input (execution input) shape.
         ActionCatalog      catalog;
-        ActionCatalogEntry entry;
-        entry.action_id = "{g2}";
-        entry.label = "{g2}";
-        entry.ports = {
+        ActionCatalogEntry branch_entry;
+        branch_entry.action_id = "{g2}";
+        branch_entry.label = "{g2}";
+        branch_entry.ports = {
             GraphNodePort{"condition", "", "bool", "input"},
             GraphNodePort{"executionInput", "", "object", "input"},
             GraphNodePort{"true", "", "signal", "output"},
             GraphNodePort{"false", "", "signal", "output"},
         };
-        catalog.entries.push_back(entry);
+        catalog.entries.push_back(branch_entry);
+        ActionCatalogEntry wake_entry;
+        wake_entry.action_id = "{g1}";
+        wake_entry.label = "{g1}";
+        wake_entry.ports = {GraphNodePort{"wake", "", "signal", "input"}};
+        catalog.entries.push_back(wake_entry);
 
         const auto  out = ToAuthoringDocument(doc, catalog);
         const auto& nodes = out.graph->nodes;
@@ -337,40 +300,12 @@ namespace
         EXPECT_EQ(nodes[1].ports[3].port_type, "signal");
         EXPECT_EQ(nodes[1].ports[3].category, "execution");
 
-        // Dynamic: signal port derives execution regardless of the
-        // edge-derived direction.
+        // A declared signal INPUT port derives execution regardless of
+        // direction membership.
         ASSERT_EQ(nodes[0].ports.size(), 1u);
         EXPECT_EQ(nodes[0].ports[0].port_type, "signal");
         EXPECT_EQ(nodes[0].ports[0].direction, "input");
         EXPECT_EQ(nodes[0].ports[0].category, "execution");
-
-        // Dynamic non-signal port without directional evidence projects once
-        // per direction, both carrying the data category.
-        auto n3 = MakeNode("n3", "{g3}", 0.0);
-        n3.dynamic_ports.push_back(MakePortDef("dyn_data", "image"));
-        doc.nodes.push_back(n3);
-        const auto  out2 = ToAuthoringDocument(doc, catalog);
-        const auto& ports3 = out2.graph->nodes[2].ports;
-        ASSERT_EQ(ports3.size(), 2u);
-        EXPECT_EQ(ports3[0].direction, "input");
-        EXPECT_EQ(ports3[0].category, "data");
-        EXPECT_EQ(ports3[1].direction, "output");
-        EXPECT_EQ(ports3[1].category, "data");
-    }
-
-    // Document-level graph_inputs/graph_outputs are graph boundary data
-    // without an owning node; node-to-boundary authoring does not exist
-    // (connectGraphPorts is strictly node-to-node), so they never surface
-    // as node ports.
-    TEST(AuthoringDocContractTest, PortProjection_ExcludesDocumentLevelPorts)
-    {
-        GraphDocumentDto doc;
-        doc.nodes.push_back(MakeNode("n1", "{g1}", 0.0));
-        doc.graph_inputs.push_back(MakePortDef("in_param", "image"));
-        doc.graph_outputs.push_back(MakePortDef("out_result", "image"));
-
-        const auto out = ToAuthoringDocument(doc);
-        EXPECT_TRUE(out.graph->nodes[0].ports.empty());
     }
 
     // Wire element key set is exactly the five locked keys: the four
@@ -378,18 +313,20 @@ namespace
     TEST(AuthoringDocContractTest, PortProjection_WireEmitsExactlyFiveKeys)
     {
         GraphDocumentDto doc;
-        auto             n1 = MakeNode("n1", "{g1}", 0.0);
-        n1.dynamic_ports.push_back(MakePortDef("dyn_out", "image", "Out"));
-        doc.nodes.push_back(n1);
+        doc.nodes.push_back(MakeNode("n1", "{g1}", 0.0));
         doc.nodes.push_back(MakeNode("n2", "{g2}", 0.0));
-        doc.edges.push_back(MakeDataEdge("e1", "n1", "dyn_out", "n2", "sink"));
 
         ActionCatalog      catalog;
         ActionCatalogEntry entry;
-        entry.action_id = "{g2}";
-        entry.label = "{g2}";
-        entry.ports = {GraphNodePort{"sink", "", "bool", "input"}};
+        entry.action_id = "{g1}";
+        entry.label = "{g1}";
+        entry.ports = {GraphNodePort{"dyn_out", "Out", "image", "output"}};
         catalog.entries.push_back(entry);
+        ActionCatalogEntry sink_entry;
+        sink_entry.action_id = "{g2}";
+        sink_entry.label = "{g2}";
+        sink_entry.ports = {GraphNodePort{"sink", "", "bool", "input"}};
+        catalog.entries.push_back(sink_entry);
 
         const auto value = SerializeDocument(doc, catalog);
         const auto root = value.as_object();
@@ -411,27 +348,30 @@ namespace
                 (*node_obj)[std::string_view("ports")]);
         };
 
-        // Dynamic port with an edge role: single entry, exact five keys with
-        // the derived category value ("image" is not the signal literal).
-        const auto dyn_ports = ports_of(0);
-        ASSERT_TRUE(dyn_ports.is_array());
-        ASSERT_EQ(dyn_ports.as_array()->size(), 1u);
-        const auto dyn_port_obj = (*dyn_ports.as_array())[0].as_object();
-        ASSERT_TRUE(dyn_port_obj.has_value());
-        EXPECT_EQ(dyn_port_obj->size(), 5u);
-        EXPECT_TRUE(dyn_port_obj->contains(std::string_view("portId")));
-        EXPECT_TRUE(dyn_port_obj->contains(std::string_view("displayLabel")));
-        EXPECT_TRUE(dyn_port_obj->contains(std::string_view("portType")));
-        EXPECT_TRUE(dyn_port_obj->contains(std::string_view("direction")));
-        EXPECT_TRUE(dyn_port_obj->contains(std::string_view("category")));
-        auto dyn_label =
-            (*dyn_port_obj)[std::string_view("displayLabel")].as_string();
-        ASSERT_TRUE(dyn_label.has_value());
-        EXPECT_EQ(*dyn_label, "Out");
-        auto dyn_category =
-            (*dyn_port_obj)[std::string_view("category")].as_string();
-        ASSERT_TRUE(dyn_category.has_value());
-        EXPECT_EQ(*dyn_category, "data");
+        // Declared port with a display label: single entry, exact five keys
+        // with the derived category value ("image" is not the signal
+        // literal).
+        const auto declared_ports = ports_of(0);
+        ASSERT_TRUE(declared_ports.is_array());
+        ASSERT_EQ(declared_ports.as_array()->size(), 1u);
+        const auto declared_port_obj =
+            (*declared_ports.as_array())[0].as_object();
+        ASSERT_TRUE(declared_port_obj.has_value());
+        EXPECT_EQ(declared_port_obj->size(), 5u);
+        EXPECT_TRUE(declared_port_obj->contains(std::string_view("portId")));
+        EXPECT_TRUE(
+            declared_port_obj->contains(std::string_view("displayLabel")));
+        EXPECT_TRUE(declared_port_obj->contains(std::string_view("portType")));
+        EXPECT_TRUE(declared_port_obj->contains(std::string_view("direction")));
+        EXPECT_TRUE(declared_port_obj->contains(std::string_view("category")));
+        auto declared_label =
+            (*declared_port_obj)[std::string_view("displayLabel")].as_string();
+        ASSERT_TRUE(declared_label.has_value());
+        EXPECT_EQ(*declared_label, "Out");
+        auto declared_category =
+            (*declared_port_obj)[std::string_view("category")].as_string();
+        ASSERT_TRUE(declared_category.has_value());
+        EXPECT_EQ(*declared_category, "data");
 
         // Static registry port lands on the wire node with its declared
         // direction and the derived category.
@@ -985,13 +925,12 @@ namespace
     // structural here, not textual.)
     TEST(AuthoringDocContractTest, BothModes_NeverLeakRuntimePrivateFields)
     {
-        // graph mode: a node with dynamic_ports + a data edge + a signal edge.
-        // The port type deliberately avoids the "data"/"signal" tokens so the
-        // assertions below isolate the connection shape from the port
+        // graph mode: a data edge + a signal edge between two nodes. The
+        // port type vocabulary deliberately avoids the "data"/"signal" tokens
+        // so the assertions below isolate the connection shape from the port
         // projection shape.
         GraphDocumentDto g;
-        auto&            n1 = g.nodes.emplace_back(MakeNode("n1", "{g1}", 0.0));
-        n1.dynamic_ports.push_back({.port_id = "dyn", .port_type = "image"});
+        g.nodes.emplace_back(MakeNode("n1", "{g1}", 0.0));
         g.nodes.push_back(MakeNode("n2", "{g2}", 0.0));
         GraphEdgeDto data_edge = MakeSignalEdge("e-data", "n1", "n2");
         data_edge.edge_type = "data";
@@ -1172,14 +1111,13 @@ namespace
     TEST(AuthoringDocContractTest, SerializeSource_PersistsFullGraphDocumentDto)
     {
         // D-41: acceptedProperties = source (full GraphDocumentDto). It MUST
-        // carry the internal-only fields (edgeId/edgeType/dynamicPorts) that
-        // the regenerated document view deliberately drops — proving source and
+        // carry the internal-only fields (edgeId/edgeType) that the
+        // regenerated document view deliberately drops — proving source and
         // view are now distinct blobs.
         GraphDocumentDto doc;
         doc.version = 5;
         doc.fingerprint = "fp";
-        auto& n1 = doc.nodes.emplace_back(MakeNode("n1", "{g1}", 0.0));
-        n1.dynamic_ports.push_back({.port_id = "dyn", .port_type = "data"});
+        doc.nodes.emplace_back(MakeNode("n1", "{g1}", 0.0));
         doc.nodes.push_back(MakeNode("n2", "{g2}", 0.0));
         GraphEdgeDto e;
         e.edge_id = "e1";
@@ -1196,14 +1134,12 @@ namespace
         // Source keeps internal-only fields...
         EXPECT_NE(src_str.find("\"edgeId\""), std::string::npos);
         EXPECT_NE(src_str.find("\"edgeType\""), std::string::npos);
-        EXPECT_NE(src_str.find("\"dynamicPorts\""), std::string::npos);
         EXPECT_NE(src_str.find("\"nodes\""), std::string::npos);
 
         // ...while the document view still strips them.
         auto view_str = ToJson(doc);
         EXPECT_EQ(view_str.find("edgeId"), std::string::npos);
         EXPECT_EQ(view_str.find("edgeType"), std::string::npos);
-        EXPECT_EQ(view_str.find("dynamicPorts"), std::string::npos);
     }
 
     // -----------------------------------------------------------------------

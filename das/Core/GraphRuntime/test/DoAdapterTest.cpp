@@ -37,9 +37,9 @@ namespace
         return b;
     }
 
-    // Broadcast (graph-input) binding: the source is the "$graph_input"
-    // sentinel rather than a real node, and the value comes from default_value.
-    // (DAS-75 graph_inputs broadcast injection.)
+    // Broadcast (graph-level input) binding: the source is the "$graph_input"
+    // sentinel rather than a real node, and the value comes from
+    // default_value.
     Dto::PortBindingDto MakeBroadcastBinding(
         const std::string& graph_input_port,
         const std::string& tgt_port,
@@ -253,11 +253,11 @@ TEST(DoAdapterTest, BuildInputPortMap_NullValueSkipped)
 }
 
 // ===========================================================================
-// BuildInputPortMap — broadcast (graph-input) bindings (DAS-75)
+// BuildInputPortMap — broadcast (graph-level input) bindings
 //
-// A graph_inputs broadcast binding carries no upstream node; its default_value
-// must be materialised directly into the input PortMap so graph-level settings
-// reach the component (MAA global_option semantics).
+// A broadcast binding carries no upstream node; its default_value must be
+// materialised directly into the input PortMap so graph-level settings reach
+// the component (MAA global_option semantics).
 // ===========================================================================
 
 TEST(DoAdapterTest, BuildInputPortMap_BroadcastIntDefault)

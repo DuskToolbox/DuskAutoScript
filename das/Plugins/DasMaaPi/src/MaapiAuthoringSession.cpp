@@ -192,7 +192,7 @@ namespace Plugins::DasMaaPi
 
         // 把 port derivation 写入 acceptedProperties（Provider 私有运行期派生，
         // 不进入 document UI IR）。基于 settings_.pi.tasks[0] 计算。
-        // 84-07 修复：dynamic_ports 不再写入 envelope 根（违反 84-01
+        // 84-07 修复：端口派生不写入 envelope 根（违反 84-01
         // ApplyResult 严格 schema）；portDefinitions/portMap 已经在
         // acceptedProperties 内，是 Provider-owned runtime state。
         void InjectPortDerivations(

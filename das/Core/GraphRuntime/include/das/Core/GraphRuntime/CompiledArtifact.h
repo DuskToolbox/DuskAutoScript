@@ -75,12 +75,12 @@ namespace Dto
 
     // ---- derived boundary port (ports-are-derived, never authored) ----
     // One boundary-facing port of a graph: an input port with no incoming
-    // edge (and no same-name explicit graph_input) projects as a boundary
-    // input; an output port with no outgoing edge projects as a boundary
-    // output. Same-name dangling sites merge under one boundary port
-    // (by-name broadcast semantics) and `node_ids` carries every dangling
-    // location so both the broadcast binding generation and the runtime
-    // frame export can address them.
+    // edge projects as a boundary input (the "value needs a source" minimum
+    // set); every declared output port projects as a boundary output
+    // (internal consumption and external export are not mutually exclusive).
+    // Same-name sites merge under one boundary port (by-name broadcast
+    // semantics) and `node_ids` carries every location so both the broadcast
+    // binding generation and the runtime frame export can address them.
     struct BoundaryPortDto
     {
         std::string              port_id;
@@ -109,10 +109,10 @@ namespace Dto
         std::vector<yyjson::value>           diagnostics;
         std::vector<SignalRouteDto>          signal_routes;
         std::vector<BackEdgeDto>             back_edges;
-        // Derived boundary surface (ports-are-derived). Inputs ride the
-        // broadcast binding generation ($graph_input sentinel, merged with
-        // explicit graph_inputs — explicit wins on name clash); outputs are
-        // the runtime's graphOutputs export list.
+        // Derived boundary surface (ports-are-derived). Inputs (dangling
+        // declared inputs) ride the broadcast binding generation
+        // ($graph_input sentinel); outputs (all declared outputs) are the
+        // runtime's graphOutputs export list.
         BoundaryPortsDto boundary_ports;
     };
 

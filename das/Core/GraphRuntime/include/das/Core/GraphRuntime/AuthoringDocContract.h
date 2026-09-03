@@ -111,11 +111,12 @@ namespace Contract
 
     /// One canvas node in the public contract. componentGuid is sourced from
     /// the internal target.component_ref.component_guid; raw settings are
-    /// dropped. ports[] projects the node's
-    /// port surface: registry-declared static ports of the referenced
-    /// component (carried on the actionCatalog channel, direction by
-    /// inputs/outputs list membership) plus the document's dynamic_ports
-    /// (direction derived from the port's edge role in the document).
+    /// dropped. ports[] projects the node's declared port surface:
+    /// registry-declared static ports of the referenced component (carried
+    /// on the actionCatalog channel, direction by inputs/outputs list
+    /// membership). The document itself stores no port declarations —
+    /// boundary ports of bound call nodes arrive through the session-layer
+    /// projection channel instead.
     /// label/description/icon are presentation metadata: label follows the
     /// store-user-label > catalog-default-name priority chain (empty when
     /// neither source provided one — clients fall back to the node id);

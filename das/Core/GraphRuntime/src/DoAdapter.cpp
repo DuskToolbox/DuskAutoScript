@@ -291,20 +291,20 @@ namespace
         return DAS_S_OK;
     }
 
-    // Sentinel source marking a broadcast (graph-input) binding — not a real
-    // node, so there is no upstream PortFrame entry to read. Must match
-    // GraphCompiler::GRAPH_INPUT_BROADCAST_SOURCE and
-    // GraphRuntime::BROADCAST_SOURCE. (DAS-75 graph_inputs broadcast
-    // injection.)
+    // Sentinel source marking a broadcast (graph-level input) binding — not
+    // a real node, so there is no upstream PortFrame entry to read. Must
+    // match GraphCompiler::GRAPH_INPUT_BROADCAST_SOURCE and
+    // GraphRuntime::BROADCAST_SOURCE. The binding targets are the derived
+    // dangling input ports (the graph's boundary inputs).
     constexpr std::string_view BROADCAST_SOURCE = "$graph_input";
 
-    /// Materialise a broadcast (graph-input) binding's @p default_value
+    /// Materialise a broadcast (graph-level input) binding's @p default_value
     /// directly into @p map under @p port_id. Unlike a point-to-point data edge
     /// there is no upstream node to read from the frame; the value comes from
-    /// the graph input's declared default. Scalars (bool/int/float/string) are
+    /// the port's declared default. Scalars (bool/int/float/string) are
     /// set by JSON value kind; null leaves the port unset (the component keeps
     /// its own default); other kinds (object/array) are skipped with a warning
-    /// — graph inputs are scalar options, mirroring MAA global_option.
+    /// — broadcast inputs are scalar options, mirroring MAA global_option.
     DasResult SetDefaultFromYyjson(
         IDasPortMap*         map,
         const std::string&   port_id,
@@ -369,10 +369,9 @@ DasResult BuildInputPortMap(
 
     for (const auto& binding : bindings)
     {
-        // Broadcast (graph-input) binding: materialise from its declared
-        // default_value — the sentinel source marks no real upstream node,
-        // so there is no frame entry to read. (DAS-75 graph_inputs broadcast
-        // injection.)
+        // Broadcast (graph-level input) binding: materialise from its
+        // declared default_value — the sentinel source marks no real upstream
+        // node, so there is no frame entry to read.
         if (binding.source_node_id == std::string{BROADCAST_SOURCE})
         {
             const DasResult r = SetDefaultFromYyjson(
@@ -382,7 +381,7 @@ DasResult BuildInputPortMap(
             if (DAS::IsFailed(r))
             {
                 DAS_CORE_LOG_ERROR(
-                    "Failed to materialise graph-input default for "
+                    "Failed to materialise graph-level input default for "
                     "target_port_id = {}.",
                     binding.target_port_id);
                 return r;

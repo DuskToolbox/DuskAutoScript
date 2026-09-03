@@ -117,8 +117,7 @@ public:
     /// Generate port binding plan from edges + manifest port type info.
     /// Each edge becomes one PortBindingDto with expected_type from source.
     /// Dangling input ports additionally derive $graph_input broadcast
-    /// bindings (merged with explicit graph_inputs — an explicit same-name
-    /// input wins and is never duplicated).
+    /// bindings (the graph's boundary inputs).
     Dto::PortBindingPlanDto GeneratePortBindingPlan(
         const Dto::GraphDocumentDto& document);
 
@@ -127,8 +126,8 @@ public:
     // -----------------------------------------------------------------------
 
     /// Registry/catalog-declared port surface of one component. The
-    /// declaration carries the direction (inputs/outputs list membership),
-    /// unlike document dynamic_ports whose direction is edge-role evidence.
+    /// declaration carries the direction (inputs/outputs list membership);
+    /// the document itself stores no port declarations.
     struct ComponentPortSurface
     {
         std::vector<Dto::GraphPortDefinitionDto> inputs;
@@ -155,19 +154,20 @@ public:
     // -----------------------------------------------------------------------
 
     /// Derive the boundary port surface of a document by pure document
-    /// analysis — no repository access. Dangling rule (edge-role evidence):
-    /// an input port with no incoming edge and no same-name explicit
-    /// graph_input projects as a boundary input; an output port with no
-    /// outgoing edge projects as a boundary output. Same-name dangling sites
-    /// merge under one boundary port (by-name broadcast semantics); the
-    /// first occurrence contributes the port metadata.
+    /// analysis — no repository access. The two sides are asymmetric by
+    /// design: an input port with no incoming edge projects as a boundary
+    /// input (exposing an input is the "value needs a source" minimum set),
+    /// while EVERY declared output port projects as a boundary output
+    /// (internal consumption and external export are not mutually exclusive
+    /// — fan-out is legal, so half-boundary ports survive extraction).
+    /// Same-name sites merge under one boundary port (by-name broadcast
+    /// semantics); the first occurrence contributes the port metadata.
     static Dto::BoundaryPortsDto DeriveBoundaryPorts(
         const Dto::GraphDocumentDto&        document,
         const ComponentPortSurfaceProvider& provider);
 
-    /// Member form: resolves declared port surfaces from the bound factory
-    /// manager (when set), then runs the static derivation. Without a
-    /// factory manager only dynamic_ports carry port candidates.
+    /// Member form: resolves declared port surfaces via the bound factory
+    /// manager / injected catalog provider, then runs the static derivation.
     Dto::BoundaryPortsDto DeriveBoundaryPorts(
         const Dto::GraphDocumentDto& document) const;
 
@@ -240,11 +240,9 @@ private:
         const std::string&                              component_guid,
         std::unordered_map<std::string, ManifestPorts>& cache) const;
 
-    /// Resolve the effective per-node port set: declared surface (when the
-    /// component resolves) ∪ node.dynamic_ports. Dynamic ports join BOTH
-    /// directions — their only in-document directional evidence is edge
-    /// role, which validation checks by edge position anyway, so a dynamic
-    /// port is a valid endpoint on either side.
+    /// Resolve the effective per-node port set: the declared surface of the
+    /// node's referenced component (empty and unresolved when the target is
+    /// not a componentRef or neither declaration source knows it).
     ManifestPorts ResolveNodePorts(
         const Dto::GraphNodeDto&                        node,
         std::unordered_map<std::string, ManifestPorts>& cache) const;
