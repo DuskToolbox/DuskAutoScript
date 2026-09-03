@@ -4856,13 +4856,10 @@ TEST_F(SchedulerRuntimeBackedTest, GraphTaskShellExecutionInputPassesThrough)
                             "pluginGuid": "12345678-9ABC-4DEF-8123-456789ABCDEF"
                         }
                     },
-                    "settings": {},
-                    "dynamicPorts": []
+                    "settings": {}
                 }
             ],
             "edges": [],
-            "graphInputs": [],
-            "graphOutputs": [],
             "tags": []
         })json");
         ASSERT_TRUE(properties.has_value());
@@ -4890,10 +4887,10 @@ TEST_F(SchedulerRuntimeBackedTest, GraphTaskShellExecutionInputPassesThrough)
         << "probe component never executed through the tick";
 
     const ipc_scoped_lock lock(shared_state_->mutex);
-    // 透传不触发额外编译：只有任务自身的一次 execution 编译，无条目解析
-    // 编译混入，也无编译失败诊断拦截执行。
-    EXPECT_EQ(shared_state_->compile_count, 1);
-    EXPECT_EQ(shared_state_->get_last_compile_purpose(), "execution");
+    // 透传不触发 Fake 会话编译：graph 任务的编译走真实 DasGraphTask
+    // authoring 会话（其插件工厂），恒不经 FactoryPlugin 的 Fake——零
+    // Fake/条目解析编译混入即透传链路完好的负断言证据。
+    EXPECT_EQ(shared_state_->compile_count, 0);
     // 直跑任务本体（FactoryBackedTask）不应被执行——执行的是 graph 任务。
     EXPECT_EQ(shared_state_->executed_count, 0u);
 }
@@ -5182,16 +5179,10 @@ TEST_F(
             (*node.as_object())[std::string_view("target")] = std::move(target);
             (*node.as_object())[std::string_view("settings")] =
                 yyjson::value(Das::Utils::MakeYyjsonObject());
-            (*node.as_object())[std::string_view("dynamicPorts")] =
-                yyjson::value(Das::Utils::MakeYyjsonArray());
             nodes.as_array()->emplace_back(std::move(node));
         }
         (*props_obj)[std::string_view("nodes")] = std::move(nodes);
         (*props_obj)[std::string_view("edges")] =
-            yyjson::value(Das::Utils::MakeYyjsonArray());
-        (*props_obj)[std::string_view("graphInputs")] =
-            yyjson::value(Das::Utils::MakeYyjsonArray());
-        (*props_obj)[std::string_view("graphOutputs")] =
             yyjson::value(Das::Utils::MakeYyjsonArray());
         (*props_obj)[std::string_view("tags")] =
             yyjson::value(Das::Utils::MakeYyjsonArray());
@@ -5396,16 +5387,10 @@ TEST_F(
                     std::move(target);
                 (*node.as_object())[std::string_view("settings")] =
                     yyjson::value(Das::Utils::MakeYyjsonObject());
-                (*node.as_object())[std::string_view("dynamicPorts")] =
-                    yyjson::value(Das::Utils::MakeYyjsonArray());
                 nodes.as_array()->emplace_back(std::move(node));
             }
             (*props_obj)[std::string_view("nodes")] = std::move(nodes);
             (*props_obj)[std::string_view("edges")] =
-                yyjson::value(Das::Utils::MakeYyjsonArray());
-            (*props_obj)[std::string_view("graphInputs")] =
-                yyjson::value(Das::Utils::MakeYyjsonArray());
-            (*props_obj)[std::string_view("graphOutputs")] =
                 yyjson::value(Das::Utils::MakeYyjsonArray());
             (*props_obj)[std::string_view("tags")] =
                 yyjson::value(Das::Utils::MakeYyjsonArray());
@@ -5640,16 +5625,10 @@ TEST_F(
             (*node.as_object())[std::string_view("target")] = std::move(target);
             (*node.as_object())[std::string_view("settings")] =
                 yyjson::value(Das::Utils::MakeYyjsonObject());
-            (*node.as_object())[std::string_view("dynamicPorts")] =
-                yyjson::value(Das::Utils::MakeYyjsonArray());
             nodes.as_array()->emplace_back(std::move(node));
         }
         (*props_obj)[std::string_view("nodes")] = std::move(nodes);
         (*props_obj)[std::string_view("edges")] =
-            yyjson::value(Das::Utils::MakeYyjsonArray());
-        (*props_obj)[std::string_view("graphInputs")] =
-            yyjson::value(Das::Utils::MakeYyjsonArray());
-        (*props_obj)[std::string_view("graphOutputs")] =
             yyjson::value(Das::Utils::MakeYyjsonArray());
         (*props_obj)[std::string_view("tags")] =
             yyjson::value(Das::Utils::MakeYyjsonArray());
@@ -5865,16 +5844,10 @@ TEST_F(
                     std::move(target);
                 (*node.as_object())[std::string_view("settings")] =
                     yyjson::value(Das::Utils::MakeYyjsonObject());
-                (*node.as_object())[std::string_view("dynamicPorts")] =
-                    yyjson::value(Das::Utils::MakeYyjsonArray());
                 nodes.as_array()->emplace_back(std::move(node));
             }
             (*props_obj)[std::string_view("nodes")] = std::move(nodes);
             (*props_obj)[std::string_view("edges")] =
-                yyjson::value(Das::Utils::MakeYyjsonArray());
-            (*props_obj)[std::string_view("graphInputs")] =
-                yyjson::value(Das::Utils::MakeYyjsonArray());
-            (*props_obj)[std::string_view("graphOutputs")] =
                 yyjson::value(Das::Utils::MakeYyjsonArray());
             (*props_obj)[std::string_view("tags")] =
                 yyjson::value(Das::Utils::MakeYyjsonArray());
@@ -6100,16 +6073,10 @@ TEST_F(
                     std::move(target);
                 (*node.as_object())[std::string_view("settings")] =
                     yyjson::value(Das::Utils::MakeYyjsonObject());
-                (*node.as_object())[std::string_view("dynamicPorts")] =
-                    yyjson::value(Das::Utils::MakeYyjsonArray());
                 nodes.as_array()->emplace_back(std::move(node));
             }
             (*props_obj)[std::string_view("nodes")] = std::move(nodes);
             (*props_obj)[std::string_view("edges")] =
-                yyjson::value(Das::Utils::MakeYyjsonArray());
-            (*props_obj)[std::string_view("graphInputs")] =
-                yyjson::value(Das::Utils::MakeYyjsonArray());
-            (*props_obj)[std::string_view("graphOutputs")] =
                 yyjson::value(Das::Utils::MakeYyjsonArray());
             (*props_obj)[std::string_view("tags")] =
                 yyjson::value(Das::Utils::MakeYyjsonArray());
@@ -6297,16 +6264,10 @@ TEST_F(
             (*node.as_object())[std::string_view("target")] = std::move(target);
             (*node.as_object())[std::string_view("settings")] =
                 yyjson::value(Das::Utils::MakeYyjsonObject());
-            (*node.as_object())[std::string_view("dynamicPorts")] =
-                yyjson::value(Das::Utils::MakeYyjsonArray());
             nodes.as_array()->emplace_back(std::move(node));
         }
         (*props_obj)[std::string_view("nodes")] = std::move(nodes);
         (*props_obj)[std::string_view("edges")] =
-            yyjson::value(Das::Utils::MakeYyjsonArray());
-        (*props_obj)[std::string_view("graphInputs")] =
-            yyjson::value(Das::Utils::MakeYyjsonArray());
-        (*props_obj)[std::string_view("graphOutputs")] =
             yyjson::value(Das::Utils::MakeYyjsonArray());
         (*props_obj)[std::string_view("tags")] =
             yyjson::value(Das::Utils::MakeYyjsonArray());
@@ -6498,16 +6459,10 @@ TEST_F(
             (*node.as_object())[std::string_view("target")] = std::move(target);
             (*node.as_object())[std::string_view("settings")] =
                 yyjson::value(Das::Utils::MakeYyjsonObject());
-            (*node.as_object())[std::string_view("dynamicPorts")] =
-                yyjson::value(Das::Utils::MakeYyjsonArray());
             nodes.as_array()->emplace_back(std::move(node));
         }
         (*props_obj)[std::string_view("nodes")] = std::move(nodes);
         (*props_obj)[std::string_view("edges")] =
-            yyjson::value(Das::Utils::MakeYyjsonArray());
-        (*props_obj)[std::string_view("graphInputs")] =
-            yyjson::value(Das::Utils::MakeYyjsonArray());
-        (*props_obj)[std::string_view("graphOutputs")] =
             yyjson::value(Das::Utils::MakeYyjsonArray());
         (*props_obj)[std::string_view("tags")] =
             yyjson::value(Das::Utils::MakeYyjsonArray());

@@ -627,12 +627,9 @@ namespace
                         "pluginGuid": "{gp}"
                     }
                 },
-                "settings": {},
-                "dynamicPorts": []
+                "settings": {}
             }],
-            "edges": [],
-            "graphInputs": [],
-            "graphOutputs": []
+            "edges": []
         }
     })json";
 
@@ -650,12 +647,9 @@ namespace
                         "pluginGuid": "{gp}"
                     }
                 },
-                "settings": {"repositoryRef": 42},
-                "dynamicPorts": []
+                "settings": {"repositoryRef": 42}
             }],
-            "edges": [],
-            "graphInputs": [],
-            "graphOutputs": []
+            "edges": []
         },
         "actionCatalog": [
             {
@@ -853,8 +847,7 @@ TEST(DasGraphTaskTest, AuthoringSessionSkipsProjectionForUnboundNode)
                         "pluginGuid": "{gp}"
                     }
                 },
-                "settings": {},
-                "dynamicPorts": []
+                "settings": {}
             }],
             "edges": []
         },
