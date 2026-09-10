@@ -25,6 +25,13 @@ namespace Dto
         std::string target_node_id;
         std::string target_port_id;
         std::string expected_type;
+        // Declared type of the target input port — the read-side
+        // materialisation knowledge (integer sources widen into float
+        // targets at consumer read time; float sources never truncate
+        // into integer targets). Empty when unresolvable: the binding
+        // plan never invents a type, mirroring expected_type's
+        // source-side contract.
+        std::string target_type;
         // Broadcast (graph-input) bindings carry the graph input's default so
         // the runtime can materialise the port even without an explicit value.
         // Empty for ordinary point-to-point data edges. (DAS-60 Stage 2)

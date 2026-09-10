@@ -151,6 +151,14 @@ public:
     /// the manifest path is unbound or unresolved.
     void SetPortSurfaceProvider(ComponentPortSurfaceProvider provider);
 
+    /// Check type compatibility between source output and target input.
+    /// The Core-side authoritative half of the numeric-equivalence table —
+    /// the UI-side GraphConnectionRules.CanConnect (DasNativeUI) mirrors
+    /// the same rules; the two sides must not drift.
+    static bool IsTypeCompatible(
+        const std::string& source_type,
+        const std::string& target_type);
+
     // -----------------------------------------------------------------------
     // Boundary port derivation (ports are derived, never authored)
     // -----------------------------------------------------------------------
@@ -229,11 +237,6 @@ private:
     TaskComponentFactoryManager* factory_manager_ = nullptr;
 
     ComponentPortSurfaceProvider port_surface_provider_;
-
-    /// Check type compatibility between source output and target input.
-    static bool IsTypeCompatible(
-        const std::string& source_type,
-        const std::string& target_type);
 
     /// Resolve port entries from a manifest definition yyjson::value.
     static std::vector<PortEntry> PortsFromDefinitionList(

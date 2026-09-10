@@ -660,6 +660,159 @@ TEST(PortTypeCompatibilityTest, UnknownTypeWarning)
     EXPECT_TRUE(found_unknown);
 }
 
+// ---------------------------------------------------------------------
+// 数字等价类兼容矩阵（IsTypeCompatible 直测）——Core 权威判定与 UI 侧
+// GraphConnectionRules.CanConnect 等价表是同一张表的两侧，改一侧必改
+// 另一侧，漂移即红。
+// ---------------------------------------------------------------------
+TEST(PortTypeCompatibilityTest, NumericEquivalenceMatrix)
+{
+    struct MatrixEntry
+    {
+        const char* source_type;
+        const char* target_type;
+        bool        expected_compatible;
+    };
+    const MatrixEntry matrix[] = {
+        // 同词
+        {"int", "int", true},
+        {"int64", "int64", true},
+        {"float", "float", true},
+        {"double", "double", true},
+        {"bool", "bool", true},
+        {"string", "string", true},
+        {"object", "object", true},
+        // 整数族内互连
+        {"int", "int64", true},
+        {"int64", "int", true},
+        // 浮点族内互连（double→float 收窄按裁决放行：运行期值恒以
+        // double 承载，族内换词不构成语义截断）
+        {"float", "double", true},
+        {"double", "float", true},
+        // 整数 → 浮点：无损宽化放行
+        {"int", "double", true},
+        {"int", "float", true},
+        {"int64", "double", true},
+        {"int64", "float", true},
+        // 浮点 → 整数：精度截断不静默做，拒绝
+        {"double", "int", false},
+        {"double", "int64", false},
+        {"float", "int", false},
+        {"float", "int64", false},
+        // bool/string/object 与数字族互拒（fail-closed，bool↔number 坑源）
+        {"bool", "int", false},
+        {"int", "bool", false},
+        {"bool", "double", false},
+        {"double", "bool", false},
+        {"string", "int", false},
+        {"int", "string", false},
+        {"object", "int", false},
+        {"int", "object", false}};
+
+    for (const auto& entry : matrix)
+    {
+        SCOPED_TRACE(
+            std::string(entry.source_type) + " -> " + entry.target_type);
+        EXPECT_EQ(
+            GraphCompiler::IsTypeCompatible(
+                entry.source_type,
+                entry.target_type),
+            entry.expected_compatible);
+    }
+}
+
+// ---------------------------------------------------------------------
+// 边校验间接测矩阵方向性：整数→浮点连线零诊断；浮点→整数连线
+// TypeMismatch（expected=目标声明类型，actual=源类型）。
+// ---------------------------------------------------------------------
+TEST(PortTypeCompatibilityTest, IntToDoubleEdgePassesTypeCheck)
+{
+    StubFactoryManager mgr;
+    auto               node_a_def = MakeDefinition({}, {{"out1", "int"}});
+    auto               node_b_def = MakeDefinition({{"in1", "double"}}, {});
+    mgr.AddDefinition("AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA", node_a_def);
+    mgr.AddDefinition("BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB", node_b_def);
+
+    GraphCompiler compiler;
+    compiler.SetFactoryManager(&mgr);
+
+    GraphDocumentDto doc;
+    doc.nodes.push_back(
+        MakeComponentNode("nodeA", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"));
+    doc.nodes.push_back(
+        MakeComponentNode("nodeB", "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"));
+    doc.edges.push_back(MakeEdge("e1", "nodeA", "out1", "nodeB", "in1"));
+
+    auto diagnostics = compiler.ValidateEdgePorts(doc);
+    EXPECT_TRUE(diagnostics.empty());
+}
+
+TEST(PortTypeCompatibilityTest, DoubleToIntEdgeRejectedAsTypeMismatch)
+{
+    StubFactoryManager mgr;
+    auto               node_a_def = MakeDefinition({}, {{"out1", "double"}});
+    auto               node_b_def = MakeDefinition({{"in1", "int64"}}, {});
+    mgr.AddDefinition("AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA", node_a_def);
+    mgr.AddDefinition("BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB", node_b_def);
+
+    GraphCompiler compiler;
+    compiler.SetFactoryManager(&mgr);
+
+    GraphDocumentDto doc;
+    doc.nodes.push_back(
+        MakeComponentNode("nodeA", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"));
+    doc.nodes.push_back(
+        MakeComponentNode("nodeB", "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"));
+    doc.edges.push_back(MakeEdge("e1", "nodeA", "out1", "nodeB", "in1"));
+
+    auto diagnostics = compiler.ValidateEdgePorts(doc);
+    ASSERT_FALSE(diagnostics.empty());
+    bool found_type_mismatch = false;
+    for (const auto& d : diagnostics)
+    {
+        if (d.kind == CompileDiagnosticKind::TypeMismatch)
+        {
+            found_type_mismatch = true;
+            EXPECT_EQ(d.expected_type, "int64");
+            EXPECT_EQ(d.actual_type, "double");
+            break;
+        }
+    }
+    EXPECT_TRUE(found_type_mismatch);
+}
+
+TEST(PortTypeCompatibilityTest, BoolNumberEdgeRejectedAsTypeMismatch)
+{
+    StubFactoryManager mgr;
+    auto               node_a_def = MakeDefinition({}, {{"out1", "int"}});
+    auto               node_b_def = MakeDefinition({{"in1", "bool"}}, {});
+    mgr.AddDefinition("AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA", node_a_def);
+    mgr.AddDefinition("BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB", node_b_def);
+
+    GraphCompiler compiler;
+    compiler.SetFactoryManager(&mgr);
+
+    GraphDocumentDto doc;
+    doc.nodes.push_back(
+        MakeComponentNode("nodeA", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"));
+    doc.nodes.push_back(
+        MakeComponentNode("nodeB", "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"));
+    doc.edges.push_back(MakeEdge("e1", "nodeA", "out1", "nodeB", "in1"));
+
+    auto diagnostics = compiler.ValidateEdgePorts(doc);
+    ASSERT_FALSE(diagnostics.empty());
+    bool found_type_mismatch = false;
+    for (const auto& d : diagnostics)
+    {
+        if (d.kind == CompileDiagnosticKind::TypeMismatch)
+        {
+            found_type_mismatch = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(found_type_mismatch);
+}
+
 // ===================================================================
 // Test Suite 4: ComponentRefTargetResolutionTest
 // ===================================================================
@@ -917,6 +1070,8 @@ TEST(PortBindingPlanTest, MultiEdgeBindings)
     EXPECT_EQ(broadcast->target_node_id, "A");
     EXPECT_EQ(broadcast->target_port_id, "in1");
     EXPECT_EQ(broadcast->expected_type, "int");
+    // broadcast 绑定的目标口类型来自边界推导的声明类型（与源侧同源）。
+    EXPECT_EQ(broadcast->target_type, "int");
     EXPECT_TRUE(broadcast->default_value.is_null());
 }
 
@@ -942,6 +1097,70 @@ TEST(PortBindingPlanTest, ExpectedTypeFromSource)
     ASSERT_EQ(plan.bindings.size(), 1u);
     // expected_type must come from source port type
     EXPECT_EQ(plan.bindings[0].expected_type, "image");
+}
+
+// ---------------------------------------------------------------------
+// target_type 记录：binding 同时携带两端类型知识——expected_type 来自
+// 源口声明、target_type 来自目标输入口声明。两端类型不同（整数→浮点）
+// 时字段各自独立，供读值侧物化消费。
+// ---------------------------------------------------------------------
+TEST(PortBindingPlanTest, TargetTypeRecordedFromTargetManifestInputs)
+{
+    StubFactoryManager mgr;
+    auto               node_a_def = MakeDefinition({}, {{"out1", "int"}});
+    auto               node_b_def = MakeDefinition({{"in1", "double"}}, {});
+    mgr.AddDefinition("AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA", node_a_def);
+    mgr.AddDefinition("BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB", node_b_def);
+
+    GraphCompiler compiler;
+    compiler.SetFactoryManager(&mgr);
+
+    GraphDocumentDto doc;
+    doc.nodes.push_back(
+        MakeComponentNode("A", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"));
+    doc.nodes.push_back(
+        MakeComponentNode("B", "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"));
+    doc.edges.push_back(MakeEdge("e1", "A", "out1", "B", "in1"));
+
+    auto plan = compiler.GeneratePortBindingPlan(doc);
+    ASSERT_EQ(plan.bindings.size(), 1u);
+    EXPECT_EQ(plan.bindings[0].expected_type, "int");
+    EXPECT_EQ(plan.bindings[0].target_type, "double");
+}
+
+// 目标口不在 manifest inputs：解析不到留空，binding plan 不发明类型。
+TEST(PortBindingPlanTest, TargetTypeEmptyWhenTargetPortUnresolvable)
+{
+    StubFactoryManager mgr;
+    auto               node_a_def = MakeDefinition({}, {{"out1", "int"}});
+    auto               node_b_def = MakeDefinition({{"in1", "double"}}, {});
+    mgr.AddDefinition("AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA", node_a_def);
+    mgr.AddDefinition("BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB", node_b_def);
+
+    GraphCompiler compiler;
+    compiler.SetFactoryManager(&mgr);
+
+    GraphDocumentDto doc;
+    doc.nodes.push_back(
+        MakeComponentNode("A", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"));
+    doc.nodes.push_back(
+        MakeComponentNode("B", "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"));
+    doc.edges.push_back(MakeEdge("e1", "A", "out1", "B", "in_unknown"));
+
+    auto plan = compiler.GeneratePortBindingPlan(doc);
+    // 边绑定 + B.in1 悬空推导的 broadcast 绑定（in_unknown 占走了入边）。
+    ASSERT_EQ(plan.bindings.size(), 2u);
+    const PortBindingDto* edge_binding = nullptr;
+    for (const auto& binding : plan.bindings)
+    {
+        if (binding.target_port_id == "in_unknown")
+        {
+            edge_binding = &binding;
+        }
+    }
+    ASSERT_NE(edge_binding, nullptr);
+    EXPECT_EQ(edge_binding->expected_type, "int");
+    EXPECT_EQ(edge_binding->target_type, "");
 }
 
 TEST(PortBindingPlanTest, NoEdgesGraph)
