@@ -528,6 +528,83 @@ namespace
         ASSERT_TRUE(ports[1].value.has_value());
     }
 
+    // The source-indicator channel mirrors the value channel on the wire:
+    // a connected input data port carries "connectedFrom"
+    // ("source_node::source_port" of the first matching incoming edge) and
+    // suppresses "value"; an unconnected port with a settings value carries
+    // "value" and no "connectedFrom"; other port shapes carry neither.
+    // Engaged-only — absent key, never an explicit null.
+    TEST(
+        AuthoringDocContractTest,
+        PortSource_ConnectedInputPortCarriesConnectedFrom)
+    {
+        GraphDocumentDto doc;
+        doc.nodes.push_back(MakeNode("n1", "{g1}", 0.5));
+        (*doc.nodes[0].settings.as_object())[std::string_view("spare")] = 1.5;
+        doc.nodes.push_back(MakeNode("n2", "{g2}", 0.0));
+        doc.edges.push_back(MakeDataEdge("e1", "n2", "o", "n1", "threshold"));
+
+        ActionCatalog      catalog;
+        ActionCatalogEntry entry;
+        entry.action_id = "{g1}";
+        entry.label = "{g1}";
+        entry.ports = {
+            GraphNodePort{"threshold", "", "double", "input"},
+            GraphNodePort{"spare", "", "double", "input"},
+            GraphNodePort{"result", "", "double", "output"}};
+        catalog.entries.push_back(entry);
+
+        const auto value = SerializeDocument(doc, catalog);
+        const auto root = value.as_object();
+        ASSERT_TRUE(root.has_value());
+        const auto graph = (*root)[std::string_view("graph")].as_object();
+        ASSERT_TRUE(graph.has_value());
+        const auto nodes = (*graph)[std::string_view("nodes")].as_array();
+        ASSERT_TRUE(nodes.has_value());
+        ASSERT_EQ(nodes->size(), 1u);
+        const auto node_obj = (*nodes)[0].as_object();
+        ASSERT_TRUE(node_obj.has_value());
+        const auto ports = (*node_obj)[std::string_view("ports")].as_array();
+        ASSERT_TRUE(ports.has_value());
+        ASSERT_EQ(ports->size(), 3u);
+
+        const auto port_at = [&](std::size_t index)
+        {
+            const auto port_obj = (*ports)[index].as_object();
+            EXPECT_TRUE(port_obj.has_value());
+            return port_obj;
+        };
+
+        // Connected input data port: exactly six keys — the five locked
+        // ones plus connectedFrom; the value key is suppressed.
+        const auto connected = port_at(0);
+        ASSERT_TRUE(connected.has_value());
+        EXPECT_EQ(connected->size(), 6u);
+        EXPECT_TRUE(connected->contains(std::string_view("connectedFrom")));
+        auto source =
+            (*connected)[std::string_view("connectedFrom")].as_string();
+        ASSERT_TRUE(source.has_value());
+        EXPECT_EQ(*source, "n2::o");
+        EXPECT_FALSE(connected->contains(std::string_view("value")));
+
+        // Unconnected input data port with a settings value: the value key
+        // rides, no source indicator.
+        const auto unconnected = port_at(1);
+        ASSERT_TRUE(unconnected.has_value());
+        EXPECT_FALSE(unconnected->contains(std::string_view("connectedFrom")));
+        EXPECT_TRUE(unconnected->contains(std::string_view("value")));
+        auto spare_value = (*unconnected)[std::string_view("value")].as_real();
+        ASSERT_TRUE(spare_value.has_value());
+        EXPECT_EQ(*spare_value, 1.5);
+
+        // Output port: neither channel engages.
+        const auto output = port_at(2);
+        ASSERT_TRUE(output.has_value());
+        EXPECT_EQ(output->size(), 5u);
+        EXPECT_FALSE(output->contains(std::string_view("connectedFrom")));
+        EXPECT_FALSE(output->contains(std::string_view("value")));
+    }
+
     // -----------------------------------------------------------------------
     // Node display-name projection — priority chain: store user label >
     // catalog entry merge (componentGuid == actionId, entry label carries

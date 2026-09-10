@@ -238,6 +238,37 @@ TEST(TaskAuthoringContractTest, GraphNodePortOptionalValueKeyPasses)
     EXPECT_TRUE(result.error_kind.empty()) << result.message;
 }
 
+TEST(TaskAuthoringContractTest, GraphNodePortConnectedFromKeyPasses)
+{
+    // The optional port source-indicator key: "connectedFrom" carries the
+    // backend-generated origin ("source_node::source_port") of a connected
+    // input data port — the server re-projection channel, not a
+    // client-side lookup. Ports without the key stay valid (absence is the
+    // norm), and the shape-violations test keeps rejecting non-string
+    // values and unknown extra keys.
+    auto document = ParseJson(R"json({
+        "contractVersion": 1,
+        "viewKind": "graph",
+        "revision": 2,
+        "graph": {
+            "nodes": [
+                {
+                    "id": "n1",
+                    "ports": [
+                        {"portId":"threshold","displayLabel":"","portType":"double","direction":"input","category":"data","connectedFrom":"n2::o"},
+                        {"portId":"result","displayLabel":"","portType":"double","direction":"output","category":"data"}
+                    ]
+                }
+            ]
+        }
+    })json");
+
+    auto result = Das::Core::TaskScheduler::ValidateAuthoringDocument(document);
+
+    EXPECT_TRUE(result.valid);
+    EXPECT_TRUE(result.error_kind.empty()) << result.message;
+}
+
 TEST(TaskAuthoringContractTest, GraphNodePortShapeViolationsFail)
 {
     const std::vector<std::string> invalid_ports = {
@@ -255,6 +286,8 @@ TEST(TaskAuthoringContractTest, GraphNodePortShapeViolationsFail)
         R"([{"portId":"","displayLabel":"","portType":"bool","direction":"input","category":"data"}])",
         // non-string portType
         R"([{"portId":"x","displayLabel":"","portType":5,"direction":"input","category":"data"}])",
+        // non-string source-indicator key
+        R"([{"portId":"x","displayLabel":"","portType":"bool","direction":"input","category":"data","connectedFrom":5}])",
         // element is not an object
         R"(["x"])",
     };
