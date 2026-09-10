@@ -481,6 +481,15 @@ constexpr std::string_view CONCAT_STRING_COMPONENT_GUID_TEXT =
     "68F10011-0000-4000-8000-000000000011";
 constexpr std::string_view CONCAT_STRING_KIND_TEXT = "das.flow.concat_string";
 
+// ---- 整数/字符串比较组件（guid ↔ kind 与 manifest 登记一一对应） ----
+
+constexpr std::string_view COMPARE_INT64_COMPONENT_GUID_TEXT =
+    "68F1000D-0000-4000-8000-00000000000D";
+constexpr std::string_view COMPARE_INT64_KIND_TEXT = "das.flow.compare_int64";
+constexpr std::string_view COMPARE_STRING_COMPONENT_GUID_TEXT =
+    "68F1000F-0000-4000-8000-00000000000F";
+constexpr std::string_view COMPARE_STRING_KIND_TEXT = "das.flow.compare_string";
+
 // 执行侧观测装饰器：转发真实组件的 Do 并计数、捕获末次 result 浮点值
 // ——while+数据回边收敛断言（执行次数/终值）的唯一测量点。
 class CountingTaskComponent final
@@ -492,6 +501,7 @@ public:
     double                last_result = 0.0;
     std::string           last_string_result;
     std::string           last_string_output;
+    bool                  last_bool_result = false;
 
     explicit CountingTaskComponent(
         Das::DasPtr<Das::PluginInterface::IDasTaskComponent> inner)
@@ -559,6 +569,7 @@ public:
             }
             last_string_result = PortMapGetString(*pp_out_port_map, "result");
             last_string_output = PortMapGetString(*pp_out_port_map, "value");
+            (void)PortMapGetBool(*pp_out_port_map, "result", last_bool_result);
         }
         return hr;
     }
@@ -615,9 +626,30 @@ public:
         else if (
             component_guid
             == Das::Core::ForeignInterfaceHost::MakeDasGuid(
+                std::string{CONSTANT_INT64_COMPONENT_GUID_TEXT}))
+        {
+            kind = CONSTANT_INT64_KIND_TEXT;
+        }
+        else if (
+            component_guid
+            == Das::Core::ForeignInterfaceHost::MakeDasGuid(
                 std::string{CONCAT_STRING_COMPONENT_GUID_TEXT}))
         {
             kind = CONCAT_STRING_KIND_TEXT;
+        }
+        else if (
+            component_guid
+            == Das::Core::ForeignInterfaceHost::MakeDasGuid(
+                std::string{COMPARE_INT64_COMPONENT_GUID_TEXT}))
+        {
+            kind = COMPARE_INT64_KIND_TEXT;
+        }
+        else if (
+            component_guid
+            == Das::Core::ForeignInterfaceHost::MakeDasGuid(
+                std::string{COMPARE_STRING_COMPONENT_GUID_TEXT}))
+        {
+            kind = COMPARE_STRING_KIND_TEXT;
         }
         else
         {
@@ -911,5 +943,157 @@ TEST_F(E2EGraphFlowTest, ScalarConstantComponentsEmitTypedValue)
         ASSERT_NE(out.Get(), nullptr);
         EXPECT_EQ(PortMapGetInt(out.Get(), "value"), 0);
         EXPECT_EQ(PortMapGetString(out.Get(), "status"), "completed");
+    }
+}
+
+// ---- 整数/字符串比较组件 ----
+
+// int 比较链：constant_int64 产 7、compare_int64 连线吃左值 + 面板默认
+// 右值（10）按 "<" 产出 true。
+TEST_F(E2EGraphFlowTest, CompareInt64ChainProducesBool)
+{
+    const std::string node_constant{"n_constant"};
+    const std::string node_compare{"n_compare"};
+
+    stub_mgr_->AddDefinition(
+        std::string{CONSTANT_INT64_COMPONENT_GUID_TEXT},
+        MakeDefinition({}, {{"value", "int64"}}));
+    stub_mgr_->AddDefinition(
+        std::string{COMPARE_INT64_COMPONENT_GUID_TEXT},
+        MakeDefinition(
+            {{"left", "int64"}, {"right", "int64"}},
+            {{"result", "bool"}}));
+
+    GraphDocumentDto doc;
+    doc.document_id = "doc_compare_int64";
+    auto constant_node = MakeComponentNode(
+        node_constant,
+        std::string{CONSTANT_INT64_COMPONENT_GUID_TEXT});
+    auto constant_settings = Das::Utils::MakeYyjsonObject();
+    (*constant_settings.as_object())[std::string_view("value")] = 7;
+    constant_node.settings = constant_settings;
+    doc.nodes.push_back(std::move(constant_node));
+    auto compare_node = MakeComponentNode(
+        node_compare,
+        std::string{COMPARE_INT64_COMPONENT_GUID_TEXT});
+    auto compare_settings = Das::Utils::MakeYyjsonObject();
+    (*compare_settings.as_object())[std::string_view("operator")] =
+        std::string("<");
+    (*compare_settings.as_object())[std::string_view("right")] = 10;
+    compare_node.settings = compare_settings;
+    doc.nodes.push_back(std::move(compare_node));
+
+    doc.edges.push_back(
+        MakeEdge("e_left", node_constant, "value", node_compare, "left"));
+
+    auto plan = CompileDocument(doc);
+    ASSERT_EQ(plan.execution_order.size(), 2u);
+
+    auto  host = FlowControlCountingHost::Make();
+    auto* counting_host = static_cast<FlowControlCountingHost*>(host.Get());
+    GraphRuntime runtime;
+    const auto   hr =
+        runtime.RunWithHost(plan, "fp_compare_int64", token_.Get(), host.Get());
+    ASSERT_EQ(hr, DAS_S_OK) << runtime.GetLastErrorMessage();
+
+    ASSERT_EQ(counting_host->counters.size(), 2u);
+    EXPECT_EQ(counting_host->counters[1]->do_count.load(), 1);
+    EXPECT_TRUE(counting_host->counters[1]->last_bool_result);
+}
+
+// string 比较链 + 运算符值域 fail-closed：等值比较产出 true；值域外
+// 运算符（"<" 不在 string 的 {==,!=} 域）经图执行链以专用错误码显性
+// 终止（不静默走默认分支），错误文本携带节点 id。
+TEST_F(E2EGraphFlowTest, CompareStringChainAndOperatorDomainFailClosed)
+{
+    const std::string node_constant{"n_constant"};
+    const std::string node_compare{"n_compare"};
+
+    stub_mgr_->AddDefinition(
+        std::string{CONSTANT_STRING_COMPONENT_GUID_TEXT},
+        MakeDefinition({}, {{"value", "string"}}));
+    stub_mgr_->AddDefinition(
+        std::string{COMPARE_STRING_COMPONENT_GUID_TEXT},
+        MakeDefinition(
+            {{"left", "string"}, {"right", "string"}},
+            {{"result", "bool"}}));
+
+    {
+        GraphDocumentDto doc;
+        doc.document_id = "doc_compare_string";
+        auto constant_node = MakeComponentNode(
+            node_constant,
+            std::string{CONSTANT_STRING_COMPONENT_GUID_TEXT});
+        auto constant_settings = Das::Utils::MakeYyjsonObject();
+        (*constant_settings.as_object())[std::string_view("value")] =
+            std::string("abc");
+        constant_node.settings = constant_settings;
+        doc.nodes.push_back(std::move(constant_node));
+        auto compare_node = MakeComponentNode(
+            node_compare,
+            std::string{COMPARE_STRING_COMPONENT_GUID_TEXT});
+        auto compare_settings = Das::Utils::MakeYyjsonObject();
+        (*compare_settings.as_object())[std::string_view("operator")] =
+            std::string("==");
+        (*compare_settings.as_object())[std::string_view("right")] =
+            std::string("abc");
+        compare_node.settings = compare_settings;
+        doc.nodes.push_back(std::move(compare_node));
+
+        doc.edges.push_back(
+            MakeEdge("e_left", node_constant, "value", node_compare, "left"));
+
+        auto plan = CompileDocument(doc);
+        ASSERT_EQ(plan.execution_order.size(), 2u);
+
+        auto  host = FlowControlCountingHost::Make();
+        auto* counting_host = static_cast<FlowControlCountingHost*>(host.Get());
+        GraphRuntime runtime;
+        const auto   hr = runtime.RunWithHost(
+            plan,
+            "fp_compare_string",
+            token_.Get(),
+            host.Get());
+        ASSERT_EQ(hr, DAS_S_OK) << runtime.GetLastErrorMessage();
+
+        ASSERT_EQ(counting_host->counters.size(), 2u);
+        EXPECT_EQ(counting_host->counters[1]->do_count.load(), 1);
+        EXPECT_TRUE(counting_host->counters[1]->last_bool_result);
+    }
+
+    {
+        // 值域外运算符：图执行以专用错误码终止，消息携带节点 id。
+        GraphDocumentDto doc;
+        doc.document_id = "doc_compare_string_invalid";
+        auto compare_node = MakeComponentNode(
+            node_compare,
+            std::string{COMPARE_STRING_COMPONENT_GUID_TEXT});
+        auto compare_settings = Das::Utils::MakeYyjsonObject();
+        (*compare_settings.as_object())[std::string_view("operator")] =
+            std::string("<");
+        (*compare_settings.as_object())[std::string_view("left")] =
+            std::string("abc");
+        (*compare_settings.as_object())[std::string_view("right")] =
+            std::string("abd");
+        compare_node.settings = compare_settings;
+        doc.nodes.push_back(std::move(compare_node));
+
+        auto plan = CompileDocument(doc);
+        ASSERT_EQ(plan.execution_order.size(), 1u);
+
+        auto         host = FlowControlCountingHost::Make();
+        GraphRuntime runtime;
+        const auto   hr = runtime.RunWithHost(
+            plan,
+            "fp_invalid_op",
+            token_.Get(),
+            host.Get());
+        EXPECT_EQ(
+            hr,
+            Das::Plugins::DasFlowControl::DAS_E_FLOW_OPERATOR_INVALID);
+        EXPECT_NE(
+            runtime.GetLastErrorMessage().find(node_compare),
+            std::string::npos)
+            << runtime.GetLastErrorMessage();
     }
 }
