@@ -671,11 +671,17 @@ namespace SignalGatedTestMock
         std::atomic<int>      do_count{0};
 
         // role configuration (parsed from compiled_settings)
-        std::string mode;         // emit | record | loop | alternate
+        std::string mode; // emit | record | loop | alternate | accumulator
         std::string emit_signal;  // mode=emit: which signal port to fire
         int         loop_end = 0; // mode=loop: iteration count
         int         counter = 0;  // mode=loop / alternate: persists across Do()
         int64_t     picked_value = -1; // mode=merge: value copied to result
+        // mode=accumulator: the "in" fallback when the frame holds no value
+        // (the outer-restart clearing evidence), the bound up to which the
+        // loop keeps iterating, and the observed input sequence.
+        int64_t              acc_seed = 0;
+        int64_t              acc_until = INT64_MAX;
+        std::vector<int64_t> input_values;
 
         uint32_t DAS_STD_CALL AddRef() override { return ++ref_count_; }
 
@@ -796,6 +802,22 @@ namespace SignalGatedTestMock
                     loop_end = std::atoi(std::string(*e).c_str());
                 }
             }
+            if (sobj->contains(std::string_view("seed")))
+            {
+                auto s = (*sobj)[std::string_view("seed")].as_string();
+                if (s.has_value())
+                {
+                    acc_seed = std::atoll(std::string(*s).c_str());
+                }
+            }
+            if (sobj->contains(std::string_view("until")))
+            {
+                auto u = (*sobj)[std::string_view("until")].as_string();
+                if (u.has_value())
+                {
+                    acc_until = std::atoll(std::string(*u).c_str());
+                }
+            }
             return DAS_S_OK;
         }
 
@@ -878,6 +900,29 @@ namespace SignalGatedTestMock
                         picked_value = v;
                     }
                 }
+            }
+            else if (mode == "accumulator")
+            {
+                // 数据面观测载体：读 in（缺键回落 seed——数据回边源口被清
+                // 后第一圈的回落锚点）、out = in + 1；界内发 done 推进环迭
+                // 代、界外改发 break 把下游门打开——有界环需要一个条件发
+                // 射点，其余保持纯观测。
+                int64_t in_value = acc_seed;
+                if (p_input_port_map != nullptr)
+                {
+                    const DasReadOnlyString key{"in"};
+                    int64_t                 v{};
+                    if (DAS::IsOk(p_input_port_map->GetInt(key.Get(), &v)))
+                    {
+                        in_value = v;
+                    }
+                }
+                input_values.push_back(in_value);
+                const int64_t out_value = in_value + 1;
+                SetOutInt(output.Get(), "out", out_value);
+                EmitSignal(
+                    output.Get(),
+                    out_value <= acc_until ? "done" : "break");
             }
             else
             {
@@ -975,15 +1020,46 @@ namespace SignalGatedTestMock
         return be;
     }
 
+    BackEdgeDto MakeDataBackEdge(
+        const std::string& edge_id,
+        const std::string& src_node,
+        const std::string& src_port,
+        const std::string& tgt_node,
+        const std::string& tgt_port,
+        const std::string& loop_head)
+    {
+        BackEdgeDto be = MakeBackEdge(
+            edge_id,
+            src_node,
+            src_port,
+            tgt_node,
+            tgt_port,
+            loop_head);
+        be.edge_kind = "data";
+        be.loop_id = "loop::" + loop_head;
+        return be;
+    }
+
+    PortRefDto MakePortRef(const std::string& node, const std::string& port)
+    {
+        PortRefDto ref;
+        ref.node_id = node;
+        ref.port_id = port;
+        return ref;
+    }
+
     LoopLayerDto MakeLoopLayer(
         const std::string&       head,
-        std::vector<std::string> members)
+        std::vector<std::string> members,
+        int                      tier = 0,
+        std::vector<PortRefDto>  data_back_edge_sources = {})
     {
         LoopLayerDto layer;
         layer.loop_id = "loop::" + head;
         layer.head_node_id = head;
-        layer.tier = 0;
+        layer.tier = tier;
         layer.members = std::move(members);
+        layer.data_back_edge_sources = std::move(data_back_edge_sources);
         return layer;
     }
 
@@ -992,6 +1068,139 @@ namespace SignalGatedTestMock
         CompiledGraphPlanDto plan;
         plan.source_fingerprint = "fp_v1";
         return plan;
+    }
+
+    // 「外层刷体力×内层 M 次动作」形状（嵌套循环推演蓝本）：
+    //   W1 --continue--> B --tick--> W2 --continue--> A
+    //   A --done--> W2（内层回边）；A --break--> C1；C1 --done--> W1（外层
+    //   回边）；A.out --data--> A.in（内层体数据回边喂自身）。
+    // 内层每轮恰跑 inner_runs 次（accumulator 直到 seed+inner_runs-1 界
+    // 内持续发 done），外层跑 outer_rounds 轮。
+    struct NestedLoopFixture
+    {
+        CompiledGraphPlanDto plan;
+        std::string          outer_head;
+        std::string          outer_body;
+        std::string          inner_head;
+        std::string          inner_body;
+        std::string          outer_tail;
+    };
+
+    NestedLoopFixture MakeNestedLoopPlan(
+        int     outer_rounds,
+        int     inner_runs,
+        int64_t seed)
+    {
+        NestedLoopFixture fx;
+        fx.outer_head = "n_o1";
+        fx.outer_body = "n_o2";
+        fx.inner_head = "n_i1";
+        fx.inner_body = "n_i2";
+        fx.outer_tail = "n_o3";
+        const std::string until = std::to_string(seed + inner_runs - 1);
+
+        auto plan = MakeBasePlan();
+        plan.node_snapshots = {
+            MakeBehaviorSnapshot(
+                fx.outer_head,
+                R"({"mode":"loop","end":")" + std::to_string(outer_rounds)
+                    + R"("})"),
+            MakeBehaviorSnapshot(
+                fx.outer_body,
+                R"({"mode":"emit","signal":"tick"})"),
+            MakeBehaviorSnapshot(
+                fx.inner_head,
+                R"({"mode":"emit","signal":"continue"})"),
+            MakeBehaviorSnapshot(
+                fx.inner_body,
+                R"({"mode":"accumulator","seed":")" + std::to_string(seed)
+                    + R"(","until":")" + until + R"("})"),
+            MakeBehaviorSnapshot(
+                fx.outer_tail,
+                R"({"mode":"emit","signal":"done"})"),
+        };
+        plan.execution_order = {
+            fx.outer_head,
+            fx.outer_body,
+            fx.inner_head,
+            fx.inner_body,
+            fx.outer_tail};
+        plan.signal_routes = {
+            MakeSignalRoute(fx.outer_head, "continue", fx.outer_body, "in"),
+            MakeSignalRoute(fx.outer_body, "tick", fx.inner_head, "in"),
+            MakeSignalRoute(fx.inner_head, "continue", fx.inner_body, "in"),
+            MakeSignalRoute(fx.inner_body, "done", fx.inner_head, "loop_in"),
+            MakeSignalRoute(fx.inner_body, "break", fx.outer_tail, "in"),
+            MakeSignalRoute(fx.outer_tail, "done", fx.outer_head, "loop_in"),
+        };
+        plan.back_edges = {
+            MakeBackEdge(
+                "be_inner",
+                fx.inner_body,
+                "done",
+                fx.inner_head,
+                "loop_in",
+                fx.inner_head),
+            MakeBackEdge(
+                "be_outer",
+                fx.outer_tail,
+                "done",
+                fx.outer_head,
+                "loop_in",
+                fx.outer_head),
+            MakeDataBackEdge(
+                "be_data",
+                fx.inner_body,
+                "out",
+                fx.inner_body,
+                "in",
+                fx.inner_head),
+        };
+        plan.loop_layers = {
+            MakeLoopLayer(
+                fx.outer_head,
+                {fx.outer_head,
+                 fx.outer_body,
+                 fx.inner_head,
+                 fx.inner_body,
+                 fx.outer_tail}),
+            MakeLoopLayer(
+                fx.inner_head,
+                {fx.inner_head, fx.inner_body},
+                1,
+                {MakePortRef(fx.inner_body, "out")}),
+        };
+        plan.binding_plan.bindings = {
+            MakeBinding(
+                fx.outer_head,
+                "continue",
+                fx.outer_body,
+                "in",
+                "signal"),
+            MakeBinding(fx.outer_body, "tick", fx.inner_head, "in", "signal"),
+            MakeBinding(
+                fx.inner_head,
+                "continue",
+                fx.inner_body,
+                "in",
+                "signal"),
+            MakeBinding(
+                fx.inner_body,
+                "done",
+                fx.inner_head,
+                "loop_in",
+                "signal"),
+            MakeBinding(fx.inner_body, "break", fx.outer_tail, "in", "signal"),
+            MakeBinding(
+                fx.outer_tail,
+                "done",
+                fx.outer_head,
+                "loop_in",
+                "signal"),
+            MakeBinding(fx.inner_body, "out", fx.inner_body, "in", "int"),
+        };
+        fx.plan = std::move(plan);
+        return fx;
     }
 } // namespace SignalGatedTestMock
 
@@ -1202,6 +1411,126 @@ TEST(SignalGatedRuntimeTest, LoopWithInnerBranchHasNoCrossIterationResidue)
         h->components[3]->do_count.load(),
         1); // sinkF only on iter 1 (false)
     EXPECT_EQ(h->components[4]->do_count.load(), 2); // term each iteration
+}
+
+// -------------------------------------------------------------------
+// 嵌套隔离：内层回边发火只重置内层成员——内层 M 次迭代期间外层体保持
+// Done 不重跑（外层体恰 1 次/圈），外层头只在圈界重跑。
+// -------------------------------------------------------------------
+TEST(SignalGatedRuntimeTest, NestedInnerFiringLeavesOuterBodyDone)
+{
+    using namespace SignalGatedTestMock;
+    const auto fx = MakeNestedLoopPlan(1, 3, 5);
+
+    auto                             host = BehaviorHost::Make();
+    GraphRuntime                     rt;
+    const Das::DasPtr<IDasStopToken> token =
+        Das::PluginInterface::DasStopTokenImplBase<MockStopToken>::Make();
+
+    auto hr = rt.RunWithHost(fx.plan, "fp_v1", token.Get(), host.Get());
+    ASSERT_EQ(hr, DAS_S_OK);
+
+    auto* h = static_cast<BehaviorHost*>(host.Get());
+    ASSERT_EQ(h->components.size(), 5u);
+    EXPECT_EQ(h->components[0]->do_count.load(), 2); // W1: continue + break
+    EXPECT_EQ(h->components[1]->do_count.load(), 1); // B: 每外圈恰 1 次
+    EXPECT_EQ(h->components[2]->do_count.load(), 3); // W2: 每内圈 1 次
+    EXPECT_EQ(h->components[3]->do_count.load(), 3); // A: 内层动作 M 次
+    EXPECT_EQ(h->components[4]->do_count.load(), 1); // C1: 每外圈 1 次
+}
+
+// -------------------------------------------------------------------
+// 外层清场：外层回边发火清内层数据回边源口——内层重开第一圈 in 缺键回
+// 落 seed，无跨外层圈的脏值透传（值序列含 seed 重现）。
+// -------------------------------------------------------------------
+TEST(SignalGatedRuntimeTest, NestedOuterFiringClearsInnerDataSources)
+{
+    using namespace SignalGatedTestMock;
+    const auto fx = MakeNestedLoopPlan(2, 3, 5);
+
+    auto                             host = BehaviorHost::Make();
+    GraphRuntime                     rt;
+    const Das::DasPtr<IDasStopToken> token =
+        Das::PluginInterface::DasStopTokenImplBase<MockStopToken>::Make();
+
+    auto hr = rt.RunWithHost(fx.plan, "fp_v1", token.Get(), host.Get());
+    ASSERT_EQ(hr, DAS_S_OK);
+
+    auto* h = static_cast<BehaviorHost*>(host.Get());
+    ASSERT_EQ(h->components.size(), 5u);
+    EXPECT_EQ(
+        h->components[3]->input_values,
+        (std::vector<int64_t>{5, 6, 7, 5, 6, 7}));
+}
+
+// -------------------------------------------------------------------
+// 嵌套计数与终值：外层 N 圈 × 内层每圈 M 次——内层组件执行总数 N*M、外
+// 层体恰 N 次、终值 seed+M-1。
+// -------------------------------------------------------------------
+TEST(SignalGatedRuntimeTest, NestedInnerRunsPerOuterRoundCounts)
+{
+    using namespace SignalGatedTestMock;
+    const auto fx = MakeNestedLoopPlan(2, 3, 5);
+
+    auto                             host = BehaviorHost::Make();
+    GraphRuntime                     rt;
+    const Das::DasPtr<IDasStopToken> token =
+        Das::PluginInterface::DasStopTokenImplBase<MockStopToken>::Make();
+
+    auto hr = rt.RunWithHost(fx.plan, "fp_v1", token.Get(), host.Get());
+    ASSERT_EQ(hr, DAS_S_OK);
+
+    auto* h = static_cast<BehaviorHost*>(host.Get());
+    ASSERT_EQ(h->components.size(), 5u);
+    EXPECT_EQ(h->components[3]->do_count.load(), 6); // A: N*M
+    EXPECT_EQ(h->components[1]->do_count.load(), 2); // B: 恰 N 次
+    EXPECT_EQ(
+        h->components[0]->do_count.load(),
+        3); // W1: N 次 continue + 末次 break
+    EXPECT_EQ(h->components[4]->do_count.load(), 2); // C1: 恰 N 次
+    ASSERT_FALSE(h->components[3]->input_values.empty());
+    EXPECT_EQ(h->components[3]->input_values.back(), 7);
+}
+
+// -------------------------------------------------------------------
+// 数据回边不失控钉测：无 signal 发火的数据回边图，多趟循环按 no-progress
+// 终止（数据回边永不发火，单趟执行后无进展即收尾）——迭代边界只由
+// signal 回边承载，环状态通道不引入任何重启机制。
+// -------------------------------------------------------------------
+TEST(SignalGatedRuntimeTest, DataBackEdgeAloneNeverFiresAndTerminates)
+{
+    using namespace SignalGatedTestMock;
+    const std::string acc{"n_acc"};
+
+    auto plan = MakeBasePlan();
+    plan.node_snapshots = {
+        MakeBehaviorSnapshot(
+            acc,
+            R"({"mode":"accumulator","seed":"0","until":"5"})"),
+    };
+    plan.execution_order = {acc};
+    plan.back_edges = {
+        MakeDataBackEdge("be_data", acc, "out", acc, "in", acc),
+    };
+    plan.loop_layers = {
+        MakeLoopLayer(acc, {acc}, 0, {MakePortRef(acc, "out")}),
+    };
+    plan.binding_plan.bindings = {
+        MakeBinding(acc, "out", acc, "in", "int"),
+    };
+
+    auto                             host = BehaviorHost::Make();
+    GraphRuntime                     rt;
+    const Das::DasPtr<IDasStopToken> token =
+        Das::PluginInterface::DasStopTokenImplBase<MockStopToken>::Make();
+
+    auto hr = rt.RunWithHost(plan, "fp_v1", token.Get(), host.Get());
+    ASSERT_EQ(hr, DAS_S_OK);
+
+    auto* h = static_cast<BehaviorHost*>(host.Get());
+    ASSERT_EQ(h->components.size(), 1u);
+    EXPECT_EQ(h->components[0]->do_count.load(), 1);
+    EXPECT_EQ(h->components[0]->input_values, (std::vector<int64_t>{0}));
 }
 
 // -------------------------------------------------------------------
