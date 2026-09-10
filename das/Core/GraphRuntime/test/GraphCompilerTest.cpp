@@ -150,6 +150,41 @@ namespace
         return false;
     }
 
+    // UnbackedDataCycle diagnostic kind serialised as a string of its enum
+    // int; true when at least one such diagnostic carries the guidance
+    // message text.
+    bool HasUnbackedDataCycleDiagnostic(
+        const Dto::CompiledGraphPlanDto& plan,
+        const std::string&               message_fragment = {})
+    {
+        const std::string unbacked_kind = std::to_string(
+            static_cast<int>(CompileDiagnosticKind::UnbackedDataCycle));
+        for (const auto& diag : plan.diagnostics)
+        {
+            auto obj = diag.as_object();
+            if (!obj.has_value())
+            {
+                continue;
+            }
+            auto kind = (*obj)[std::string_view("kind")].as_string();
+            if (!kind.has_value() || *kind != unbacked_kind)
+            {
+                continue;
+            }
+            if (message_fragment.empty())
+            {
+                return true;
+            }
+            auto message = (*obj)[std::string_view("message")].as_string();
+            if (message.has_value()
+                && message->find(message_fragment) != std::string_view::npos)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
     // ---------------------------------------------------------------
     // Stub TaskComponentFactoryManager for testing
     // Overrides EnumerateDefinitions to return injected test data
@@ -1087,7 +1122,7 @@ TEST(SignalAwareCompileTest, ForWhileBackEdgeCompilesWithoutCycle)
     ASSERT_EQ(topo.signal_routes.size(), 2u);
 }
 
-TEST(SignalAwareCompileTest, DataCycleToleratedAndRecordedAsDataBackEdge)
+TEST(SignalAwareCompileTest, PureDataCycleRejectedAsUnbackedDataCycle)
 {
     StubFactoryManager mgr;
     auto node_def = MakeDefinition({{"in", "int"}}, {{"out", "int"}});
@@ -1111,28 +1146,136 @@ TEST(SignalAwareCompileTest, DataCycleToleratedAndRecordedAsDataBackEdge)
     doc.edges.push_back(MakeEdge("e3", "C", "out", "A", "in"));
 
     auto plan = compiler.Compile(doc);
-    // 数据回边=循环状态通道，不再整体拒绝：Kahn 剔除回边后仍保序，环层
-    // 记档入 plan（无 signal 回路承载的 fail-closed 检查由编译期承载
-    // 检查接手，本用例只钉记档形态）。
-    ASSERT_EQ(plan.execution_order.size(), 3u);
-    EXPECT_EQ(plan.execution_order[0], "A");
-    EXPECT_EQ(plan.execution_order[1], "B");
-    EXPECT_EQ(plan.execution_order[2], "C");
+    // 纯数据环（零顺序线）：第一圈都没有起点——fail-closed 拒绝并给出
+    // 指引（用 while/for 承载或把完成线连回循环头），execution_order 清空。
+    EXPECT_TRUE(plan.execution_order.empty());
+    EXPECT_TRUE(HasUnbackedDataCycleDiagnostic(plan, "while"));
+    EXPECT_TRUE(HasUnbackedDataCycleDiagnostic(plan, "signal"));
+    // 数据环新语义不复用 Kahn 兜底诊断（那是拓扑真失败专用）。
+    EXPECT_FALSE(HasCyclicEdgeGraphDiagnostic(plan));
+}
+
+TEST(
+    SignalAwareCompileTest,
+    HalfLoopWithoutSignalCircuitRejectedAsUnbackedDataCycle)
+{
+    StubFactoryManager mgr;
+    auto node_def = MakeDefinition({{"in", "int"}}, {{"out", "int"}});
+    mgr.AddDefinition("AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA", node_def);
+    mgr.AddDefinition("BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB", node_def);
+
+    GraphCompiler compiler;
+    compiler.SetFactoryManager(&mgr);
+
+    GraphDocumentDto doc;
+    doc.nodes.push_back(
+        MakeComponentNode("A", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"));
+    doc.nodes.push_back(
+        MakeComponentNode("B", "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"));
+    // 半吊子环：顺序线前向 + 数据边回来——没有 signal 回路承载，跑一次
+    // 即停，用户以为是循环实为静默错误，必须显性拒绝。
+    doc.edges.push_back(MakeSignalEdge("e1", "A", "out", "B", "in"));
+    doc.edges.push_back(MakeEdge("e2", "B", "out", "A", "in"));
+
+    auto plan = compiler.Compile(doc);
+    EXPECT_TRUE(plan.execution_order.empty());
+    EXPECT_TRUE(HasUnbackedDataCycleDiagnostic(plan, "while"));
+    EXPECT_FALSE(HasCyclicEdgeGraphDiagnostic(plan));
+}
+
+TEST(SignalAwareCompileTest, SignalCarriedDataBackEdgesPassUnbackedCheck)
+{
+    StubFactoryManager mgr;
+    auto               head_def = MakeDefinition(
+        {{"cond", "int"}, {"loop_in", "signal"}},
+        {{"continue", "signal"}});
+    auto tail_def = MakeDefinition(
+        {{"in", "signal"}},
+        {{"done", "signal"}, {"out", "int"}});
+    mgr.AddDefinition("AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA", head_def);
+    mgr.AddDefinition("BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB", tail_def);
+
+    GraphCompiler compiler;
+    compiler.SetFactoryManager(&mgr);
+
+    GraphDocumentDto doc;
+    doc.nodes.push_back(
+        MakeComponentNode("head", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"));
+    doc.nodes.push_back(
+        MakeComponentNode("tail", "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"));
+    // 顺序回边（signal）承载迭代 + 数据回边回传循环状态——合法形态，
+    // 放行且保序（数据回边不触发承载拒绝）。
+    doc.edges.push_back(MakeSignalEdge("e1", "head", "continue", "tail", "in"));
+    doc.edges.push_back(
+        MakeSignalEdge("e2", "tail", "done", "head", "loop_in"));
+    doc.edges.push_back(MakeEdge("e3", "tail", "out", "head", "cond"));
+
+    auto plan = compiler.Compile(doc);
+    EXPECT_FALSE(plan.execution_order.empty());
+    ASSERT_EQ(plan.execution_order.size(), 2u);
+    EXPECT_EQ(plan.execution_order[0], "head");
+    EXPECT_EQ(plan.execution_order[1], "tail");
+    EXPECT_FALSE(HasUnbackedDataCycleDiagnostic(plan));
     EXPECT_FALSE(HasCyclicEdgeGraphDiagnostic(plan));
 
-    ASSERT_EQ(plan.back_edges.size(), 1u);
-    EXPECT_EQ(plan.back_edges[0].edge_id, "e3");
-    EXPECT_EQ(plan.back_edges[0].edge_kind, "data");
-    EXPECT_EQ(plan.back_edges[0].loop_head_node_id, "A");
-    EXPECT_EQ(plan.back_edges[0].loop_id, "loop::A");
-
+    ASSERT_EQ(plan.back_edges.size(), 2u);
     ASSERT_EQ(plan.loop_layers.size(), 1u);
-    EXPECT_EQ(plan.loop_layers[0].head_node_id, "A");
-    EXPECT_EQ(plan.loop_layers[0].tier, 0);
-    ASSERT_EQ(plan.loop_layers[0].members.size(), 3u);
+    EXPECT_EQ(plan.loop_layers[0].head_node_id, "head");
     ASSERT_EQ(plan.loop_layers[0].data_back_edge_sources.size(), 1u);
-    EXPECT_EQ(plan.loop_layers[0].data_back_edge_sources[0].node_id, "C");
+    EXPECT_EQ(plan.loop_layers[0].data_back_edge_sources[0].node_id, "tail");
     EXPECT_EQ(plan.loop_layers[0].data_back_edge_sources[0].port_id, "out");
+}
+
+// 会话路径钉测：authoring 会话编译只绑 port_surface_provider（镜像
+// GraphAuthoringSessionCompile 的注入形态），规范口名 signal 边落在不声明
+// signal 口的组件上零 PortNotFound（无论此前是否已刷过噪声，豁免后的
+// 终态由本用例固化）。
+TEST(SignalAwareCompileTest, CanonicalSignalPortsSkipPortNotFoundViaProvider)
+{
+    GraphCompiler compiler;
+    compiler.SetPortSurfaceProvider(
+        [](const std::string& component_guid)
+            -> std::optional<GraphCompiler::ComponentPortSurface>
+        {
+            if (component_guid != "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"
+                && component_guid != "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB")
+            {
+                return std::nullopt;
+            }
+            GraphCompiler::ComponentPortSurface surface;
+            Dto::GraphPortDefinitionDto         input;
+            input.port_id = "value";
+            input.port_type = "int";
+            surface.inputs.push_back(std::move(input));
+            Dto::GraphPortDefinitionDto output;
+            output.port_id = "out";
+            output.port_type = "int";
+            surface.outputs.push_back(std::move(output));
+            return surface;
+        });
+
+    GraphDocumentDto doc;
+    doc.nodes.push_back(
+        MakeComponentNode("first", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"));
+    doc.nodes.push_back(
+        MakeComponentNode("second", "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"));
+    // 两条规范口名 signal 边：两端组件都不声明 signal_in/signal_out。
+    doc.edges.push_back(
+        MakeSignalEdge("e1", "first", "signal_out", "second", "signal_in"));
+    doc.edges.push_back(
+        MakeSignalEdge("e2", "second", "signal_out", "first", "signal_in"));
+
+    auto              plan = compiler.Compile(doc);
+    const std::string port_not_found_kind =
+        std::to_string(static_cast<int>(CompileDiagnosticKind::PortNotFound));
+    for (const auto& diag : plan.diagnostics)
+    {
+        auto obj = diag.as_object();
+        ASSERT_TRUE(obj.has_value());
+        auto kind = (*obj)[std::string_view("kind")].as_string();
+        EXPECT_NE(kind.value_or(""), port_not_found_kind)
+            << "canonical signal ports must be exempt from PortNotFound";
+    }
 }
 
 TEST(SignalAwareCompileTest, DanglingInputsBroadcastBoundToMatchingPorts)
