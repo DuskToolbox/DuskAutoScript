@@ -4,6 +4,7 @@
 #include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/Core/GraphRuntime/CompiledArtifact.h>
 #include <das/Core/GraphRuntime/DoAdapter.h>
+#include <das/Core/GraphRuntime/GraphCompiler.h>
 #include <das/Core/GraphRuntime/PortFrame.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/DasApi.h>
@@ -946,6 +947,48 @@ DasResult GraphRuntime::RunWithHost(
     if (DAS_S_OK != hr)
     {
         return hr;
+    }
+
+    // 带节点却无执行序的计划是编译期否决产物（无信号回路承载的数据环会
+    // 清空 execution_order）：放行会跑成「成功+零节点」，必须拒绝并把
+    // fatal 诊断透出到 last_error。
+    if (plan.execution_order.empty() && !plan.node_snapshots.empty())
+    {
+        std::string fatal_messages;
+        const auto  unbacked_cycle_kind = std::to_string(
+            static_cast<int>(CompileDiagnosticKind::UnbackedDataCycle));
+        const auto cyclic_kind = std::to_string(
+            static_cast<int>(CompileDiagnosticKind::CyclicEdgeGraph));
+        for (const auto& diagnostic : plan.diagnostics)
+        {
+            auto diagnostic_object = diagnostic.as_object();
+            if (!diagnostic_object.has_value())
+            {
+                continue;
+            }
+            const auto kind = (*diagnostic_object)[std::string_view("kind")]
+                                  .as_string()
+                                  .value_or("");
+            if (kind != unbacked_cycle_kind && kind != cyclic_kind)
+            {
+                continue;
+            }
+            if (!fatal_messages.empty())
+            {
+                fatal_messages += "; ";
+            }
+            fatal_messages += (*diagnostic_object)[std::string_view("message")]
+                                  .as_string()
+                                  .value_or("");
+        }
+        SetError(
+            DAS_E_FAIL,
+            DAS_FMT_NS::format(
+                "Compiled plan carries {} nodes but no executable order; "
+                "compile was rejected. {}",
+                plan.node_snapshots.size(),
+                fatal_messages));
+        return DAS_E_FAIL;
     }
 
     // Phase 4: Build RuntimeExecutionCache — reserved for future slot-optimized

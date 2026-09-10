@@ -620,6 +620,51 @@ TEST(GraphRuntimeTest, RunWithHostEmptyGraph)
 }
 
 // ===================================================================
+// 编译否决产物（带节点、无执行序、有数据回边）必须执行失败而非
+// 「成功+零节点」，且 fatal 诊断消息透出到 last_error。
+// ===================================================================
+TEST(GraphRuntimeTest, RunWithHostRejectedPlanFailsClosed)
+{
+    using namespace GraphRuntimeTestMock;
+
+    CompiledGraphPlanDto plan;
+    plan.source_fingerprint = "fp_v1";
+    plan.node_snapshots.push_back(
+        MakeSnapshotWithPorts(NODE_A, {MakePortDef("out")}, COMP_A));
+
+    Dto::BackEdgeDto back_edge;
+    back_edge.source_node_id = NODE_A;
+    back_edge.source_port_id = "out";
+    back_edge.target_node_id = NODE_A;
+    back_edge.target_port_id = "in";
+    back_edge.loop_head_node_id = NODE_A;
+    back_edge.edge_kind = "data";
+    plan.back_edges.push_back(std::move(back_edge));
+
+    auto diagnostic = Das::Utils::ParseYyjsonFromString(
+        R"({"kind":"7","node_id":")" + NODE_A
+        + R"(","message":"Data cycle has no signal circuit to carry the loop"})");
+    ASSERT_TRUE(diagnostic.has_value());
+    plan.diagnostics.push_back(std::move(*diagnostic));
+
+    auto host = MockTaskComponentHost::Make();
+
+    GraphRuntime                     rt;
+    const Das::DasPtr<IDasStopToken> token =
+        Das::PluginInterface::DasStopTokenImplBase<MockStopToken>::Make();
+
+    auto hr = rt.RunWithHost(plan, "fp_v1", token.Get(), host.Get());
+    EXPECT_EQ(hr, DAS_E_FAIL);
+    EXPECT_NE(
+        rt.GetLastErrorMessage().find("no executable order"),
+        std::string::npos);
+    EXPECT_NE(
+        rt.GetLastErrorMessage().find(
+            "Data cycle has no signal circuit to carry the loop"),
+        std::string::npos);
+}
+
+// ===================================================================
 // Test 25: V17DataSepSettingsNotInPortMap
 // ===================================================================
 TEST(GraphRuntimeTest, V17DataSepSettingsNotInPortMap)
