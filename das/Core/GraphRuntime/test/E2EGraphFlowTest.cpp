@@ -270,6 +270,38 @@ namespace
         return type;
     }
 
+    bool PortMapGetDouble(
+        IDasReadOnlyPortMap* map,
+        const std::string&   key,
+        double&              value)
+    {
+        auto port_id = DasReadOnlyString::FromUtf8(key.c_str(), nullptr);
+        return DAS::IsOk(map->GetFloat(port_id.Get(), &value));
+    }
+
+    // 诊断 kind 在 plan.diagnostics 里序列化为枚举整数的字符串形式。
+    size_t CountDiagnosticsOfKind(
+        const CompiledGraphPlanDto& plan,
+        CompileDiagnosticKind       kind)
+    {
+        const std::string kind_text = std::to_string(static_cast<int>(kind));
+        size_t            count = 0;
+        for (const auto& diag : plan.diagnostics)
+        {
+            auto obj = diag.as_object();
+            if (!obj.has_value())
+            {
+                continue;
+            }
+            auto kind_value = (*obj)[std::string_view("kind")].as_string();
+            if (kind_value.has_value() && *kind_value == kind_text)
+            {
+                ++count;
+            }
+        }
+        return count;
+    }
+
 } // namespace
 
 // =====================================================================
@@ -384,4 +416,253 @@ TEST_F(E2EGraphFlowTest, LaunchFailureTerminatesGraphWithErrorCode)
         Das::Plugins::DasFlowControl::DAS_E_FLOW_LAUNCH_EXE_PATH_MISSING);
     EXPECT_NE(runtime.GetLastErrorMessage().find("n_1"), std::string::npos)
         << runtime.GetLastErrorMessage();
+}
+
+// ---- 真实 while + 数据回边经典形状（FlowControl 源码静态编入本测试目标） ----
+
+constexpr std::string_view WHILE_COMPONENT_GUID_TEXT =
+    "68F10005-0000-4000-8000-000000000005";
+constexpr std::string_view WHILE_KIND_TEXT = "das.flow.while";
+constexpr std::string_view COMPARE_DOUBLE_COMPONENT_GUID_TEXT =
+    "68F1000E-0000-4000-8000-00000000000E";
+constexpr std::string_view COMPARE_DOUBLE_KIND_TEXT = "das.flow.compare_double";
+constexpr std::string_view ARITHMETIC_NUMBER_COMPONENT_GUID_TEXT =
+    "68F10010-0000-4000-8000-000000000010";
+constexpr std::string_view ARITHMETIC_NUMBER_KIND_TEXT =
+    "das.flow.arithmetic_number";
+
+// 执行侧观测装饰器：转发真实组件的 Do 并计数、捕获末次 result 浮点值
+// ——while+数据回边收敛断言（执行次数/终值）的唯一测量点。
+class CountingTaskComponent final
+    : public Das::PluginInterface::IDasTaskComponent
+{
+public:
+    std::atomic<uint32_t> ref_count_{0};
+    std::atomic<int>      do_count{0};
+    double                last_result = 0.0;
+
+    explicit CountingTaskComponent(
+        Das::DasPtr<Das::PluginInterface::IDasTaskComponent> inner)
+        : inner_(std::move(inner))
+    {
+    }
+
+    uint32_t DAS_STD_CALL AddRef() override { return ++ref_count_; }
+
+    uint32_t DAS_STD_CALL Release() override
+    {
+        auto remaining = --ref_count_;
+        if (remaining == 0)
+        {
+            ref_count_ = 1;
+            delete this;
+        }
+        return remaining;
+    }
+
+    DasResult DAS_STD_CALL
+    QueryInterface(const DasGuid& iid, void** pp_out) override
+    {
+        if (pp_out == nullptr)
+        {
+            return DAS_E_INVALID_POINTER;
+        }
+        *pp_out = nullptr;
+        return DAS_E_NO_INTERFACE;
+    }
+
+    DasResult DAS_STD_CALL GetGuid(DasGuid* p_out_guid) override
+    {
+        return inner_->GetGuid(p_out_guid);
+    }
+
+    DasResult DAS_STD_CALL
+    GetRuntimeClassName(IDasReadOnlyString** pp_out_name) override
+    {
+        return inner_->GetRuntimeClassName(pp_out_name);
+    }
+
+    DasResult ApplySettingsChange(
+        Das::ExportInterface::IDasJson*  p_request_json,
+        Das::ExportInterface::IDasJson** pp_out_result_json) override
+    {
+        return inner_->ApplySettingsChange(p_request_json, pp_out_result_json);
+    }
+
+    DasResult Do(
+        IDasStopToken*                             p_stop_token,
+        Das::ExportInterface::IDasReadOnlyPortMap* p_input_port_map,
+        Das::ExportInterface::IDasPortMap**        pp_out_port_map) override
+    {
+        const DasResult hr =
+            inner_->Do(p_stop_token, p_input_port_map, pp_out_port_map);
+        if (DAS::IsOk(hr) && pp_out_port_map != nullptr
+            && *pp_out_port_map != nullptr)
+        {
+            do_count.fetch_add(1);
+            double value = 0.0;
+            if (PortMapGetDouble(*pp_out_port_map, "result", value))
+            {
+                last_result = value;
+            }
+        }
+        return hr;
+    }
+
+private:
+    Das::DasPtr<Das::PluginInterface::IDasTaskComponent> inner_;
+};
+
+// 按 component_guid 创建真实 FlowControl 组件并套计数装饰器（guid ↔ kind
+// 与 manifest 登记一一对应）。
+class FlowControlCountingHost final
+    : public Das::PluginInterface::DasTaskComponentHostImplBase<
+          FlowControlCountingHost>
+{
+public:
+    DasResult CreateTaskComponent(
+        const DasGuid&                            component_guid,
+        Das::PluginInterface::IDasTaskComponent** pp_out_component) override
+    {
+        if (pp_out_component == nullptr)
+        {
+            return DAS_E_INVALID_POINTER;
+        }
+        *pp_out_component = nullptr;
+
+        std::string_view kind;
+        if (component_guid
+            == Das::Core::ForeignInterfaceHost::MakeDasGuid(
+                std::string{WHILE_COMPONENT_GUID_TEXT}))
+        {
+            kind = WHILE_KIND_TEXT;
+        }
+        else if (
+            component_guid
+            == Das::Core::ForeignInterfaceHost::MakeDasGuid(
+                std::string{COMPARE_DOUBLE_COMPONENT_GUID_TEXT}))
+        {
+            kind = COMPARE_DOUBLE_KIND_TEXT;
+        }
+        else if (
+            component_guid
+            == Das::Core::ForeignInterfaceHost::MakeDasGuid(
+                std::string{ARITHMETIC_NUMBER_COMPONENT_GUID_TEXT}))
+        {
+            kind = ARITHMETIC_NUMBER_KIND_TEXT;
+        }
+        else
+        {
+            return DAS_E_NOT_FOUND;
+        }
+
+        auto inner = Das::DasPtr<Das::PluginInterface::IDasTaskComponent>(
+            new Das::DasFlowControlTaskComponent(
+                kind,
+                Das::DasPtr<Das::PluginInterface::IDasTaskComponentHost>{}));
+        // 裸构造即持有一份引用（new 出的对象计数为 0 → 挪入 DasPtr 后归
+        // 1），装饰器与宿主各自持链即可。
+        auto* wrapper = new CountingTaskComponent(std::move(inner));
+        wrapper->AddRef();
+        *pp_out_component = wrapper;
+        counters.push_back(wrapper);
+        return DAS_S_OK;
+    }
+
+    std::vector<CountingTaskComponent*> counters;
+};
+
+// while(cond){ x = step(x) } 经典形状端到端：真实 FlowControl 组件
+// （while 首条件口 + arithmetic_number + compare_double）+ 数据回边
+// （A.result→A.left 自环喂值、C.result→W.condition 回边入头）。
+TEST_F(E2EGraphFlowTest, WhileLoopWithDataBackEdgeConverges)
+{
+    const std::string node_while{"n_while"};
+    const std::string node_arith{"n_arith"};
+    const std::string node_compare{"n_compare"};
+
+    // 编译侧口面（镜像 manifest 声明）。
+    stub_mgr_->AddDefinition(
+        std::string{WHILE_COMPONENT_GUID_TEXT},
+        MakeDefinition(
+            {{"condition", "bool"}, {"first_condition", "bool"}},
+            {{"continue", "signal"}, {"break", "signal"}}));
+    stub_mgr_->AddDefinition(
+        std::string{ARITHMETIC_NUMBER_COMPONENT_GUID_TEXT},
+        MakeDefinition(
+            {{"left", "double"}, {"right", "double"}},
+            {{"result", "double"}}));
+    stub_mgr_->AddDefinition(
+        std::string{COMPARE_DOUBLE_COMPONENT_GUID_TEXT},
+        MakeDefinition(
+            {{"left", "double"}, {"right", "double"}},
+            {{"result", "bool"}}));
+
+    GraphDocumentDto doc;
+    doc.document_id = "doc_while_data";
+    doc.nodes.push_back(
+        MakeComponentNode(node_while, std::string{WHILE_COMPONENT_GUID_TEXT}));
+    doc.nodes.push_back(MakeComponentNode(
+        node_arith,
+        std::string{ARITHMETIC_NUMBER_COMPONENT_GUID_TEXT}));
+    doc.nodes.push_back(MakeComponentNode(
+        node_compare,
+        std::string{COMPARE_DOUBLE_COMPONENT_GUID_TEXT}));
+
+    // 顺序线：W.continue → A.signal_in（门控）；A.signal_out → W.signal_in
+    // （顺序回边承载迭代）。
+    auto e_seq_body =
+        MakeEdge("e_seq_body", node_while, "continue", node_arith, "signal_in");
+    e_seq_body.edge_type = "signal";
+    auto e_seq_back = MakeEdge(
+        "e_seq_back",
+        node_arith,
+        "signal_out",
+        node_while,
+        "signal_in");
+    e_seq_back.edge_type = "signal";
+    // 数据回边：A.result → A.left（跨圈自喂）；前向：A.result → C.left；
+    // 数据回边：C.result → W.condition（比较真值回传循环头）。
+    doc.edges.push_back(std::move(e_seq_body));
+    doc.edges.push_back(std::move(e_seq_back));
+    doc.edges.push_back(
+        MakeEdge("e_data_self", node_arith, "result", node_arith, "left"));
+    doc.edges.push_back(
+        MakeEdge("e_data_cond", node_arith, "result", node_compare, "left"));
+    doc.edges.push_back(MakeEdge(
+        "e_data_back",
+        node_compare,
+        "result",
+        node_while,
+        "condition"));
+
+    auto plan = CompileDocument(doc);
+
+    // 规范口名 signal 边（signal_in/signal_out）落在未声明这些口的组件上
+    // 不构成 PortNotFound（隐式顺序口豁免）。
+    EXPECT_EQ(
+        CountDiagnosticsOfKind(plan, CompileDiagnosticKind::PortNotFound),
+        0);
+
+    // 数据回边与顺序回边同档记档（3 条），Kahn 剔除全部回边后保序。
+    ASSERT_EQ(plan.back_edges.size(), 3u);
+    ASSERT_EQ(plan.execution_order.size(), 3u);
+    EXPECT_EQ(plan.execution_order[0], node_while);
+    EXPECT_EQ(plan.execution_order[1], node_arith);
+    EXPECT_EQ(plan.execution_order[2], node_compare);
+
+    auto  host = FlowControlCountingHost::Make();
+    auto* counting_host = static_cast<FlowControlCountingHost*>(host.Get());
+    GraphRuntime runtime;
+    const auto   hr =
+        runtime.RunWithHost(plan, "fp_v1", token_.Get(), host.Get());
+    ASSERT_EQ(hr, DAS_S_OK) << runtime.GetLastErrorMessage();
+
+    // 首条件口缺省 true 启动第一圈；A 每圈 result 递增 1（left 默认 0、
+    // right 默认 1），C 在 3 < 3 为假时让 while 读 false 走 break。
+    ASSERT_EQ(counting_host->counters.size(), 3u);
+    EXPECT_EQ(counting_host->counters[1]->do_count.load(), 3);
+    EXPECT_EQ(counting_host->counters[1]->last_result, 3.0);
+    EXPECT_EQ(counting_host->counters[0]->do_count.load(), 4);
+    EXPECT_EQ(counting_host->counters[2]->do_count.load(), 3);
 }
