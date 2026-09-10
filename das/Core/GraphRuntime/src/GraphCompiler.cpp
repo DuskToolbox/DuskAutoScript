@@ -302,8 +302,10 @@ bool GraphCompiler::IsTypeCompatible(
     // not a semantic truncation — the {int, int64, double} ruling extends
     // consistently over the pre-existing float word; the hard line is
     // float -> integer, where precision truncation is never done silently.
-    // Mirrors the UI-side GraphConnectionRules equivalence table (the two
-    // sides must not drift).
+    // Mirrors the UI-side GraphConnectionRules equivalence table
+    // (DasNativeUI/Services/GraphConnectionRules.cs CanConnect) — the two
+    // sides are one table: changing one side requires changing the other,
+    // and the matrix tests pin the Core half so drift goes red.
     const auto in_integer_family = [](const std::string& type)
     { return type == "int" || type == "int64"; };
     const auto in_float_family = [](const std::string& type)
@@ -1434,6 +1436,28 @@ Dto::PortBindingPlanDto GraphCompiler::GeneratePortBindingPlan(
             // binding plan never invents a type it cannot resolve.
         }
 
+        // Resolve target_type from the target manifest inputs — the
+        // read-side materialisation knowledge. Mirrors the source-side
+        // block: only a resolved declaration fills the field, otherwise
+        // it stays empty.
+        auto tgt_it = node_index.find(edge.target_node_id);
+        if (tgt_it != node_index.end())
+        {
+            const auto& tgt_node = *tgt_it->second;
+            if (tgt_node.target.target_kind == "componentRef")
+            {
+                auto tgt_manifest = ResolveNodePorts(tgt_node, manifest_cache);
+                for (const auto& p : tgt_manifest.inputs)
+                {
+                    if (p.port_id == edge.target_port_id)
+                    {
+                        binding.target_type = p.port_type;
+                        break;
+                    }
+                }
+            }
+        }
+
         plan.bindings.push_back(std::move(binding));
     }
 
@@ -1455,6 +1479,10 @@ Dto::PortBindingPlanDto GraphCompiler::GeneratePortBindingPlan(
             binding.target_node_id = node_id;
             binding.target_port_id = boundary_input.port_id;
             binding.expected_type = boundary_input.port_type;
+            // The boundary input IS the target port — its derived declared
+            // type is the target-side knowledge, same source of truth as
+            // expected_type here.
+            binding.target_type = boundary_input.port_type;
             binding.default_value =
                 Das::Utils::CloneYyjsonValue(boundary_input.default_value);
             plan.bindings.push_back(std::move(binding));
