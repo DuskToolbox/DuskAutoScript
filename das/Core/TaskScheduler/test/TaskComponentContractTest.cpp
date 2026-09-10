@@ -1177,7 +1177,7 @@ TEST_F(TaskComponentContractTest, RealManifestsCarryLocalizedLabelMaps)
     // signals 键，DasMaaPi 的 signals 条目形状为 {id,label}）；
     // config_field_count = config 对象的声明字段数（空 config 计 0）。
     const std::array<ManifestSpec, 3> manifests{
-        ManifestSpec{"DasFlowControl", 16, 44, 26},
+        ManifestSpec{"DasFlowControl", 16, 45, 26},
         ManifestSpec{"DasMaaPi", 1, 8, 2},
         ManifestSpec{"DasGraphTask", 1, 2, 0},
     };
@@ -1285,7 +1285,7 @@ TEST_F(TaskComponentContractTest, RealManifestsCarryLocalizedLabelMaps)
         total_config_fields += config_fields_with_label;
     }
     EXPECT_EQ(total_definitions, 18u);
-    EXPECT_EQ(total_ports, 54u);
+    EXPECT_EQ(total_ports, 55u);
     EXPECT_EQ(total_config_fields, 28u);
 }
 
