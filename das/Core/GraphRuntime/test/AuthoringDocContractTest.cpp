@@ -1410,11 +1410,25 @@ namespace
         auto r2 = ApplyAuthoringChange(doc, add2, {"{g2}"});
         ASSERT_TRUE(r2.Ok());
 
+        // The declared port surface the edge-type derivation resolves
+        // through: both endpoints name declared data ports.
+        ActionCatalog      catalog;
+        ActionCatalogEntry source_entry;
+        source_entry.action_id = "{g1}";
+        source_entry.label = "{g1}";
+        source_entry.ports = {GraphNodePort{"out", "", "int", "output"}};
+        catalog.entries.push_back(source_entry);
+        ActionCatalogEntry sink_entry;
+        sink_entry.action_id = "{g2}";
+        sink_entry.label = "{g2}";
+        sink_entry.ports = {GraphNodePort{"in", "", "int", "input"}};
+        catalog.entries.push_back(sink_entry);
+
         AuthoringChange conn;
         conn.kind = "connectGraphPorts";
         conn.connection =
             GraphConnection{*r1.allocated_id, "out", *r2.allocated_id, "in"};
-        ASSERT_TRUE(ApplyAuthoringChange(doc, conn).Ok());
+        ASSERT_TRUE(ApplyAuthoringChange(doc, conn, {}, catalog).Ok());
         ASSERT_EQ(doc.edges.size(), 1u);
         EXPECT_EQ(doc.edges[0].source_node_id, *r1.allocated_id);
         EXPECT_EQ(doc.edges[0].edge_type, "data"); // graph-mode edges are data
@@ -1423,6 +1437,95 @@ namespace
         auto json = ToJson(doc);
         EXPECT_EQ(json.find("edgeType"), std::string::npos);
         EXPECT_EQ(json.find("edgeId"), std::string::npos);
+    }
+
+    // connectGraphPorts derives the stored edge_type from the endpoint port
+    // categories (server-side, zero wire change — the change stays a plain
+    // endpoint four-tuple). The canonical signal port names resolve the
+    // execution category with no declaration at all, so a node-level
+    // sequence wire between two ordinary components lands as edge_type
+    // "signal".
+    TEST(
+        AuthoringDocContractTest,
+        GraphChange_ConnectGraphPortsDerivesSignalEdgeType)
+    {
+        GraphDocumentDto doc;
+        doc.nodes.push_back(MakeNode("n1", "{g1}", 0.0));
+        doc.nodes.push_back(MakeNode("n2", "{g2}", 0.0));
+
+        AuthoringChange conn;
+        conn.kind = "connectGraphPorts";
+        conn.connection = GraphConnection{
+            "n1",
+            std::string(FormSequenceProjector::SignalOutPort),
+            "n2",
+            std::string(FormSequenceProjector::SignalInPort)};
+        auto r = ApplyAuthoringChange(doc, conn);
+        ASSERT_TRUE(r.Ok()) << r.message;
+        ASSERT_EQ(doc.edges.size(), 1u);
+        EXPECT_EQ(doc.edges[0].edge_type, "signal");
+    }
+
+    // An endpoint pair mixing execution and data categories rejects the
+    // change (InvalidOp, message naming the endpoints) with zero mutation —
+    // a sequence wire landing on a data port would otherwise compile as a
+    // silently mistyped edge.
+    TEST(
+        AuthoringDocContractTest,
+        GraphChange_ConnectGraphPortsRejectsCategoryMismatch)
+    {
+        GraphDocumentDto doc;
+        doc.nodes.push_back(MakeNode("n1", "{g1}", 0.0));
+        doc.nodes.push_back(MakeNode("n2", "{g2}", 0.0));
+
+        ActionCatalog      catalog;
+        ActionCatalogEntry sink_entry;
+        sink_entry.action_id = "{g2}";
+        sink_entry.label = "{g2}";
+        sink_entry.ports = {GraphNodePort{"threshold", "", "double", "input"}};
+        catalog.entries.push_back(sink_entry);
+
+        AuthoringChange conn;
+        conn.kind = "connectGraphPorts";
+        conn.connection = GraphConnection{
+            "n1",
+            std::string(FormSequenceProjector::SignalOutPort),
+            "n2",
+            "threshold"};
+        auto r = ApplyAuthoringChange(doc, conn, {}, catalog);
+        ASSERT_FALSE(r.Ok());
+        EXPECT_EQ(r.error_kind, ChangeErrorKind::InvalidOp);
+        EXPECT_NE(r.message.find("signal_out"), std::string::npos);
+        EXPECT_NE(r.message.find("threshold"), std::string::npos);
+        EXPECT_TRUE(doc.edges.empty());
+        EXPECT_EQ(doc.version, 0); // no revision bump on rejection
+    }
+
+    // An endpoint that is neither a canonical signal port name nor a
+    // catalog-declared port rejects the change (InvalidOp, message naming
+    // the endpoint) — the type is derived, never guessed: a silent data
+    // fallback would store a sequence wire the compiler treats as data.
+    TEST(
+        AuthoringDocContractTest,
+        GraphChange_ConnectGraphPortsRejectsUnresolvableEndpoint)
+    {
+        GraphDocumentDto doc;
+        doc.nodes.push_back(MakeNode("n1", "{g1}", 0.0));
+        doc.nodes.push_back(MakeNode("n2", "{g2}", 0.0));
+
+        AuthoringChange conn;
+        conn.kind = "connectGraphPorts";
+        conn.connection = GraphConnection{
+            "n1",
+            "mystery",
+            "n2",
+            std::string(FormSequenceProjector::SignalInPort)};
+        auto r = ApplyAuthoringChange(doc, conn);
+        ASSERT_FALSE(r.Ok());
+        EXPECT_EQ(r.error_kind, ChangeErrorKind::InvalidOp);
+        EXPECT_NE(r.message.find("mystery"), std::string::npos);
+        EXPECT_TRUE(doc.edges.empty());
+        EXPECT_EQ(doc.version, 0); // no revision bump on rejection
     }
 
     TEST(AuthoringDocContractTest, GraphChange_RemoveGraphNodeCascadesEdges)
@@ -1857,10 +1960,22 @@ namespace
         doc.nodes.push_back(MakeNode("n2", "{g2}", 0.0));
         doc.version = 5;
 
+        ActionCatalog      catalog;
+        ActionCatalogEntry source_entry;
+        source_entry.action_id = "{g1}";
+        source_entry.label = "{g1}";
+        source_entry.ports = {GraphNodePort{"o", "", "int", "output"}};
+        catalog.entries.push_back(source_entry);
+        ActionCatalogEntry sink_entry;
+        sink_entry.action_id = "{g2}";
+        sink_entry.label = "{g2}";
+        sink_entry.ports = {GraphNodePort{"i", "", "int", "input"}};
+        catalog.entries.push_back(sink_entry);
+
         AuthoringChange conn;
         conn.kind = "connectGraphPorts";
         conn.connection = GraphConnection{"n1", "o", "n2", "i"};
-        auto r = ApplyAuthoringChange(doc, conn);
+        auto r = ApplyAuthoringChange(doc, conn, {}, catalog);
         ASSERT_TRUE(r.Ok()) << r.message;
         EXPECT_EQ(doc.version, 6);
     }

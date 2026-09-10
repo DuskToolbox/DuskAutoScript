@@ -1640,10 +1640,15 @@ namespace Contract
         // -----------------------------------------------------------------
 
         AuthoringChangeResult ApplyGraphChange(
-            Dto::GraphDocumentDto&          document,
-            const AuthoringChange&          change,
-            const std::vector<std::string>& valid_action_ids)
+            Dto::GraphDocumentDto&              document,
+            const AuthoringChange&              change,
+            const std::vector<std::string>&     valid_action_ids,
+            const std::optional<ActionCatalog>& action_catalog)
         {
+            // Plumbing seam only in this commit — the edge-type derivation
+            // that consumes it lands together with the green fix for the
+            // failing derivation tests.
+            (void)action_catalog;
             GraphAuthoringChange gac;
             if (change.kind == "addGraphNode")
             {
@@ -2147,14 +2152,19 @@ namespace Contract
     } // anonymous namespace
 
     AuthoringChangeResult ApplyAuthoringChange(
-        Dto::GraphDocumentDto&          document,
-        const AuthoringChange&          change,
-        const std::vector<std::string>& valid_action_ids)
+        Dto::GraphDocumentDto&              document,
+        const AuthoringChange&              change,
+        const std::vector<std::string>&     valid_action_ids,
+        const std::optional<ActionCatalog>& action_catalog)
     {
         AuthoringChangeResult r =
             IsLinearMode(document)
                 ? ApplyLinearChange(document, change, valid_action_ids)
-                : ApplyGraphChange(document, change, valid_action_ids);
+                : ApplyGraphChange(
+                      document,
+                      change,
+                      valid_action_ids,
+                      action_catalog);
         if (r.Ok() && BumpsRevision(change.kind))
         {
             ++document.version;

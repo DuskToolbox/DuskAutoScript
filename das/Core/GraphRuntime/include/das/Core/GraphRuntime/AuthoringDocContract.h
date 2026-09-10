@@ -460,10 +460,20 @@ namespace Contract
     /// change kind is addGraphNode/addFormSequenceItem and the actionId is not
     /// in the set, the change is rejected with UnknownActionId and the store
     /// is untouched (no revision change, no partial mutation).
+    ///
+    /// `action_catalog` supplies the declared port surface per component (the
+    /// same session catalog the compile path injects via
+    /// SetPortSurfaceProvider): connectGraphPorts derives the stored
+    /// edge_type from the endpoint port categories through it. The canonical
+    /// signal port names resolve execution without any declaration; every
+    /// other connect endpoint that names no declared port rejects the change
+    /// (InvalidOp) instead of silently landing a data edge — as does an
+    /// execution/data category mismatch across the endpoint pair.
     AuthoringChangeResult ApplyAuthoringChange(
-        Dto::GraphDocumentDto&          document,
-        const AuthoringChange&          change,
-        const std::vector<std::string>& valid_action_ids = {});
+        Dto::GraphDocumentDto&              document,
+        const AuthoringChange&              change,
+        const std::vector<std::string>&     valid_action_ids = {},
+        const std::optional<ActionCatalog>& action_catalog = std::nullopt);
 } // namespace Contract
 
 DAS_CORE_GRAPHRUNTIME_NS_END
