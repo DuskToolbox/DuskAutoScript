@@ -416,6 +416,119 @@ namespace
     }
 
     // -----------------------------------------------------------------------
+    // Port default-value channel — the "unconnected" gating (panel value
+    // semantics). The channel is for unconnected input data ports only: a
+    // connected port's live value rides the wire, so the residual settings
+    // value must not resurface as an editable default. Disconnecting
+    // revives it (the settings residual survives as the reconnection
+    // default), and an execution edge on another port of the same node
+    // does not interfere — the endpoint match is exact (node_id, port_id),
+    // the same coordinate pair the UI client gate consumes.
+    // -----------------------------------------------------------------------
+
+    TEST(AuthoringDocContractTest, PortValue_UnconnectedPortKeepsSettingsValue)
+    {
+        GraphDocumentDto doc;
+        doc.nodes.push_back(MakeNode("n1", "{g1}", 0.5));
+
+        ActionCatalog      catalog;
+        ActionCatalogEntry entry;
+        entry.action_id = "{g1}";
+        entry.label = "{g1}";
+        entry.ports = {GraphNodePort{"threshold", "", "double", "input"}};
+        catalog.entries.push_back(entry);
+
+        const auto out = ToAuthoringDocument(doc, catalog);
+        ASSERT_EQ(out.graph->nodes[0].ports.size(), 1u);
+        EXPECT_EQ(out.graph->nodes[0].ports[0].category, "data");
+        ASSERT_TRUE(out.graph->nodes[0].ports[0].value.has_value());
+        ASSERT_TRUE(out.graph->nodes[0].ports[0].value->as_real().has_value());
+        EXPECT_EQ(*out.graph->nodes[0].ports[0].value->as_real(), 0.5);
+    }
+
+    // An incoming edge landing exactly on the input data port suppresses
+    // the value key — the connection is the live value source, and a
+    // residual settings value would mislead the panel into editing a
+    // value the wire overwrites.
+    TEST(AuthoringDocContractTest, PortValue_ConnectedInputPortSuppressesValue)
+    {
+        GraphDocumentDto doc;
+        doc.nodes.push_back(MakeNode("n1", "{g1}", 0.5));
+        doc.nodes.push_back(MakeNode("n2", "{g2}", 0.0));
+        doc.edges.push_back(MakeDataEdge("e1", "n2", "o", "n1", "threshold"));
+
+        ActionCatalog      catalog;
+        ActionCatalogEntry entry;
+        entry.action_id = "{g1}";
+        entry.label = "{g1}";
+        entry.ports = {GraphNodePort{"threshold", "", "double", "input"}};
+        catalog.entries.push_back(entry);
+
+        const auto out = ToAuthoringDocument(doc, catalog);
+        ASSERT_EQ(out.graph->nodes[0].ports.size(), 1u);
+        EXPECT_FALSE(out.graph->nodes[0].ports[0].value.has_value());
+    }
+
+    // Disconnect revives the value: while the edge targets the port the
+    // key stays suppressed, and once the edge is gone the settings
+    // residual becomes the port default again.
+    TEST(AuthoringDocContractTest, PortValue_DisconnectRevivesSettingsValue)
+    {
+        GraphDocumentDto doc;
+        doc.nodes.push_back(MakeNode("n1", "{g1}", 0.5));
+        doc.nodes.push_back(MakeNode("n2", "{g2}", 0.0));
+        doc.edges.push_back(MakeDataEdge("e1", "n2", "o", "n1", "threshold"));
+
+        ActionCatalog      catalog;
+        ActionCatalogEntry entry;
+        entry.action_id = "{g1}";
+        entry.label = "{g1}";
+        entry.ports = {GraphNodePort{"threshold", "", "double", "input"}};
+        catalog.entries.push_back(entry);
+
+        const auto suppressed = ToAuthoringDocument(doc, catalog);
+        ASSERT_FALSE(suppressed.graph->nodes[0].ports[0].value.has_value());
+
+        AuthoringChange disc;
+        disc.kind = "disconnectGraphPorts";
+        disc.connection = GraphConnection{"n2", "o", "n1", "threshold"};
+        ASSERT_TRUE(ApplyAuthoringChange(doc, disc).Ok());
+
+        const auto revived = ToAuthoringDocument(doc, catalog);
+        ASSERT_EQ(revived.graph->nodes[0].ports.size(), 1u);
+        ASSERT_TRUE(revived.graph->nodes[0].ports[0].value.has_value());
+        ASSERT_TRUE(
+            revived.graph->nodes[0].ports[0].value->as_real().has_value());
+        EXPECT_EQ(*revived.graph->nodes[0].ports[0].value->as_real(), 0.5);
+    }
+
+    // An execution edge landing on a different port of the same node must
+    // not disturb the data port's value channel.
+    TEST(AuthoringDocContractTest, PortValue_ExecutionEdgeOnOtherPortKeepsValue)
+    {
+        GraphDocumentDto doc;
+        doc.nodes.push_back(MakeNode("n1", "{g1}", 0.5));
+        doc.nodes.push_back(MakeNode("n2", "{g2}", 0.0));
+        doc.edges.push_back(MakeSignalEdge("e1", "n2", "n1"));
+
+        ActionCatalog      catalog;
+        ActionCatalogEntry entry;
+        entry.action_id = "{g1}";
+        entry.label = "{g1}";
+        entry.ports = {
+            GraphNodePort{"signal_in", "", "signal", "input"},
+            GraphNodePort{"threshold", "", "double", "input"}};
+        catalog.entries.push_back(entry);
+
+        const auto  out = ToAuthoringDocument(doc, catalog);
+        const auto& ports = out.graph->nodes[0].ports;
+        ASSERT_EQ(ports.size(), 2u);
+        EXPECT_EQ(ports[0].category, "execution");
+        EXPECT_EQ(ports[1].category, "data");
+        ASSERT_TRUE(ports[1].value.has_value());
+    }
+
+    // -----------------------------------------------------------------------
     // Node display-name projection — priority chain: store user label >
     // catalog entry merge (componentGuid == actionId, entry label carries
     // the manifest kind default name) > (client-side) node id. description/
