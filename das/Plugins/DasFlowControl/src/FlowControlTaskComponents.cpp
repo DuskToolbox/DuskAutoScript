@@ -666,8 +666,9 @@ namespace
         return std::regex_search(std::string(text), *regex);
     }
 
-    // cpp_yyjson 的 object operator[] 对缺失键抛 out_of_range；launch 的
-    // 配置键全部可选，统一经下列 helper 读取（缺键/类型不符 → nullopt）。
+    // cpp_yyjson 的 object operator[] 对缺失键抛 out_of_range（mutable 侧
+    // 则插入 null 键，读带副作用）；配置键全部可选，统一经下列 helper
+    // contains-first 读取（缺键/类型不符 → nullopt）。
     template <typename ObjectRef>
     std::optional<std::string> FindObjectString(
         const ObjectRef& object,
@@ -709,6 +710,38 @@ namespace
             return std::nullopt;
         }
         return object[key].as_array();
+    }
+
+    template <typename ObjectRef>
+    std::optional<double> FindObjectDouble(
+        const ObjectRef& object,
+        std::string_view key)
+    {
+        if (!object.contains(key))
+        {
+            return std::nullopt;
+        }
+        if (const auto number = object[key].as_num())
+        {
+            return *number;
+        }
+        return std::nullopt;
+    }
+
+    template <typename ObjectRef>
+    std::optional<bool> FindObjectBool(
+        const ObjectRef& object,
+        std::string_view key)
+    {
+        if (!object.contains(key))
+        {
+            return std::nullopt;
+        }
+        if (const auto flag = object[key].as_bool())
+        {
+            return *flag;
+        }
+        return std::nullopt;
     }
 
     std::string_view LaunchDiagnosticFallbackText(
@@ -1529,16 +1562,15 @@ DasResult DasFlowControlTaskComponent::DoCompareDouble(
     double      right_default = 3.0;
     if (auto settings_obj = settings_.as_object())
     {
-        if (const auto v =
-                (*settings_obj)[std::string_view("operator")].as_string())
+        if (const auto v = FindObjectString(*settings_obj, "operator"))
         {
-            op = std::string(*v);
+            op = *v;
         }
-        if (const auto v = (*settings_obj)[std::string_view("left")].as_num())
+        if (const auto v = FindObjectDouble(*settings_obj, "left"))
         {
             left_default = *v;
         }
-        if (const auto v = (*settings_obj)[std::string_view("right")].as_num())
+        if (const auto v = FindObjectDouble(*settings_obj, "right"))
         {
             right_default = *v;
         }
@@ -1618,16 +1650,15 @@ DasResult DasFlowControlTaskComponent::DoCompareInt64(
     int64_t     right_default = 0;
     if (auto settings_obj = settings_.as_object())
     {
-        if (const auto v =
-                (*settings_obj)[std::string_view("operator")].as_string())
+        if (const auto v = FindObjectString(*settings_obj, "operator"))
         {
-            op = std::string(*v);
+            op = *v;
         }
-        if (const auto v = (*settings_obj)[std::string_view("left")].as_int())
+        if (const auto v = FindObjectInt(*settings_obj, "left"))
         {
             left_default = *v;
         }
-        if (const auto v = (*settings_obj)[std::string_view("right")].as_int())
+        if (const auto v = FindObjectInt(*settings_obj, "right"))
         {
             right_default = *v;
         }
@@ -1706,20 +1737,17 @@ DasResult DasFlowControlTaskComponent::DoCompareString(
     std::string right_default;
     if (auto settings_obj = settings_.as_object())
     {
-        if (const auto v =
-                (*settings_obj)[std::string_view("operator")].as_string())
+        if (const auto v = FindObjectString(*settings_obj, "operator"))
         {
-            op = std::string(*v);
+            op = *v;
         }
-        if (const auto v =
-                (*settings_obj)[std::string_view("left")].as_string())
+        if (const auto v = FindObjectString(*settings_obj, "left"))
         {
-            left_default = std::string(*v);
+            left_default = *v;
         }
-        if (const auto v =
-                (*settings_obj)[std::string_view("right")].as_string())
+        if (const auto v = FindObjectString(*settings_obj, "right"))
         {
-            right_default = std::string(*v);
+            right_default = *v;
         }
     }
 
@@ -1782,16 +1810,15 @@ DasResult DasFlowControlTaskComponent::DoArithmeticNumber(
     double      right_default = 1.0;
     if (auto settings_obj = settings_.as_object())
     {
-        if (const auto v =
-                (*settings_obj)[std::string_view("operator")].as_string())
+        if (const auto v = FindObjectString(*settings_obj, "operator"))
         {
-            op = std::string(*v);
+            op = *v;
         }
-        if (const auto v = (*settings_obj)[std::string_view("left")].as_num())
+        if (const auto v = FindObjectDouble(*settings_obj, "left"))
         {
             left_default = *v;
         }
-        if (const auto v = (*settings_obj)[std::string_view("right")].as_num())
+        if (const auto v = FindObjectDouble(*settings_obj, "right"))
         {
             right_default = *v;
         }
@@ -1864,7 +1891,7 @@ DasResult DasFlowControlTaskComponent::DoConstantBool(
     bool value = false;
     if (auto settings_obj = settings_.as_object())
     {
-        if (const auto v = (*settings_obj)[std::string_view("value")].as_bool())
+        if (const auto v = FindObjectBool(*settings_obj, "value"))
         {
             value = *v;
         }
@@ -1903,7 +1930,7 @@ DasResult DasFlowControlTaskComponent::DoConstantInt64(
     int64_t value = 0;
     if (auto settings_obj = settings_.as_object())
     {
-        if (const auto v = (*settings_obj)[std::string_view("value")].as_int())
+        if (const auto v = FindObjectInt(*settings_obj, "value"))
         {
             value = *v;
         }
@@ -1941,7 +1968,7 @@ DasResult DasFlowControlTaskComponent::DoConstantDouble(
     double value = 0.0;
     if (auto settings_obj = settings_.as_object())
     {
-        if (const auto v = (*settings_obj)[std::string_view("value")].as_num())
+        if (const auto v = FindObjectDouble(*settings_obj, "value"))
         {
             value = *v;
         }
@@ -1979,10 +2006,9 @@ DasResult DasFlowControlTaskComponent::DoConstantString(
     std::string value;
     if (auto settings_obj = settings_.as_object())
     {
-        if (const auto v =
-                (*settings_obj)[std::string_view("value")].as_string())
+        if (const auto v = FindObjectString(*settings_obj, "value"))
         {
-            value = std::string(*v);
+            value = *v;
         }
     }
 
@@ -2018,15 +2044,13 @@ DasResult DasFlowControlTaskComponent::DoConcatString(
     std::string right_default;
     if (auto settings_obj = settings_.as_object())
     {
-        if (const auto v =
-                (*settings_obj)[std::string_view("left")].as_string())
+        if (const auto v = FindObjectString(*settings_obj, "left"))
         {
-            left_default = std::string(*v);
+            left_default = *v;
         }
-        if (const auto v =
-                (*settings_obj)[std::string_view("right")].as_string())
+        if (const auto v = FindObjectString(*settings_obj, "right"))
         {
-            right_default = std::string(*v);
+            right_default = *v;
         }
     }
 
@@ -2115,8 +2139,7 @@ DasResult DasFlowControlTaskComponent::DoDelay(
     int64_t delay_ms = 0;
     if (auto settings_obj = settings_.as_object())
     {
-        if (const auto v =
-                (*settings_obj)[std::string_view("delay_ms")].as_int())
+        if (const auto v = FindObjectInt(*settings_obj, "delay_ms"))
         {
             delay_ms = *v;
         }
