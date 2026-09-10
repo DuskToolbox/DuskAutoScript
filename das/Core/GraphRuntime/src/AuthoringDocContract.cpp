@@ -241,6 +241,36 @@ namespace Contract
                 // declaration surfaces even for fresh nodes (no settings
                 // yet).
                 field.required = config_field.required;
+                // The closed candidate-list declaration switches the control
+                // to select: candidates are strict CandidateDescriptor
+                // objects derived mechanically from the manifest string
+                // array (each entry is both the value and the label — the
+                // authoring side stays a single plain-string declaration).
+                // inputType overrides the generic type mapping: a field with
+                // a declared value domain is a dropdown, never free text.
+                if (!config_field.options.empty())
+                {
+                    field.input_type = 1;
+                    field.candidates.reserve(config_field.options.size());
+                    for (const auto& option : config_field.options)
+                    {
+                        auto candidate = Das::Utils::MakeYyjsonObject();
+                        auto candidate_object = candidate.as_object();
+                        if (!candidate_object)
+                        {
+                            continue;
+                        }
+                        (*candidate_object)[std::string_view("value")] =
+                            std::make_pair(
+                                std::string_view(option),
+                                yyjson::copy_string);
+                        (*candidate_object)[std::string_view("label")] =
+                            std::make_pair(
+                                std::string_view(option),
+                                yyjson::copy_string);
+                        field.candidates.push_back(std::move(candidate));
+                    }
+                }
                 bool value_assigned = false;
                 if (settings_obj.has_value()
                     && settings_obj->contains(
@@ -764,6 +794,24 @@ namespace Contract
                 }
                 fo["required"] = f.required;
                 fo["readonly"] = f.readonly;
+                // Optional, engaged-only: the closed candidate list of a
+                // select/multiselect field — emitted only when the
+                // projection engaged it (a config options declaration); a
+                // field without one carries no key, never an explicit null.
+                if (!f.candidates.empty())
+                {
+                    auto candidates_value = Das::Utils::MakeYyjsonArray();
+                    auto candidates_array = candidates_value.as_array();
+                    if (candidates_array)
+                    {
+                        for (const auto& candidate : f.candidates)
+                        {
+                            candidates_array->emplace_back(
+                                Das::Utils::CloneYyjsonValue(candidate));
+                        }
+                    }
+                    fo["candidates"] = std::move(candidates_value);
+                }
                 arr.emplace_back(std::move(f_v));
             }
             return root;

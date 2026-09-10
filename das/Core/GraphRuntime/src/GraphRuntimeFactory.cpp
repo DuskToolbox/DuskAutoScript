@@ -1723,7 +1723,7 @@ DAS_C_API DasResult GraphAuthoringSessionSetActionCatalog(
                 }
             }
             // Optional config channel:
-            // {name,type,default?,taskGuid?,label?,required?}
+            // {name,type,default?,taskGuid?,label?,required?,options?}
             // elements with the element key set locked to exactly those keys
             // — the same whole-catalog rejection on malformed input as the
             // port channel.
@@ -1753,7 +1753,8 @@ DAS_C_API DasResult GraphAuthoringSessionSetActionCatalog(
                             && key != std::string_view("default")
                             && key != std::string_view("taskGuid")
                             && key != std::string_view("label")
-                            && key != std::string_view("required"))
+                            && key != std::string_view("required")
+                            && key != std::string_view("options"))
                         {
                             return DAS_E_INVALID_ARGUMENT;
                         }
@@ -1834,6 +1835,33 @@ DAS_C_API DasResult GraphAuthoringSessionSetActionCatalog(
                             return DAS_E_INVALID_ARGUMENT;
                         }
                         field.required = *required;
+                    }
+                    // Optional closed candidate-list declaration: a non-empty
+                    // array of strings (the field's value domain, e.g. an
+                    // operator vocabulary). A non-array value or any
+                    // non-string/empty element is a shape violation rejecting
+                    // the whole catalog (fail-closed); an empty array reads
+                    // as not declared (engaged-only, the producer never
+                    // emits one).
+                    if (config_obj->contains(std::string_view("options")))
+                    {
+                        auto options =
+                            (*config_obj)[std::string_view("options")]
+                                .as_array();
+                        if (!options)
+                        {
+                            return DAS_E_INVALID_ARGUMENT;
+                        }
+                        field.options.reserve(options->size());
+                        for (const auto& option : *options)
+                        {
+                            auto option_text = option.as_string();
+                            if (!option_text || option_text->empty())
+                            {
+                                return DAS_E_INVALID_ARGUMENT;
+                            }
+                            field.options.emplace_back(*option_text);
+                        }
                     }
                     entry.config_fields.push_back(std::move(field));
                 }

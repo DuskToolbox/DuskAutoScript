@@ -582,7 +582,8 @@ namespace Das::Core::TaskScheduler
 
     // Config field declarations of one component, read from the manifest
     // definition's `config` object
-    // ({field_name: {type, label?, default?, taskGuid?, required?}}). Emitted
+    // ({field_name: {type, label?, default?, taskGuid?, required?,
+    // options?}}). Emitted
     // in lexical key order for determinism; entries without a usable non-empty
     // type string are skipped (the same skip-not-poison rule as the port
     // lists — the Core consumer rejects the whole catalog on a malformed
@@ -682,6 +683,45 @@ namespace Das::Core::TaskScheduler
                 if (required.has_value() && *required)
                 {
                     (*obj)[std::string_view("required")] = true;
+                }
+            }
+            // options 闭值域声明 engaged-only 发射：仅当 manifest 值是全
+            // 非空字符串的非空数组时落键（运算符词表——单一字符串数组即
+            // 完整声明，label 机械等于 value）；任何非字符串/空串元素视为
+            // 未声明跳过（消费侧对 wire 上出现的 options 做全字符串形状
+            // 校验——生产侧 miss 容忍与 label/required 同语义）。
+            if (field_obj->contains(std::string_view("options")))
+            {
+                auto options =
+                    (*field_obj)[std::string_view("options")].as_array();
+                if (options.has_value() && !options->empty())
+                {
+                    bool all_strings = true;
+                    for (const auto& option : *options)
+                    {
+                        auto option_text = option.as_string();
+                        if (!option_text || option_text->empty())
+                        {
+                            all_strings = false;
+                            break;
+                        }
+                    }
+                    if (all_strings)
+                    {
+                        auto options_value = Das::Utils::MakeYyjsonArray();
+                        auto options_array = options_value.as_array();
+                        if (options_array)
+                        {
+                            for (const auto& option : *options)
+                            {
+                                options_array->emplace_back(
+                                    yyjson::value(
+                                        std::string(*option.as_string())));
+                            }
+                        }
+                        (*obj)[std::string_view("options")] =
+                            std::move(options_value);
+                    }
                 }
             }
             destination.emplace_back(std::move(config_field));
@@ -789,7 +829,8 @@ namespace Das::Core::TaskScheduler
             {
                 (*obj)[std::string_view("ports")] = std::move(ports);
             }
-            // Config field declarations: {name,type,default?,taskGuid?,label?}
+            // Config field declarations:
+            // {name,type,default?,taskGuid?,label?,required?,options?}
             // in lexical key order — the Core consumer locks the element shape
             // to exactly these keys; label is the locale-resolved display
             // string (engaged-only).
