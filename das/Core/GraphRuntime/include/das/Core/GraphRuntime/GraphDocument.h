@@ -23,6 +23,13 @@ namespace Dto
         bool                     is_required = false;
         yyjson::value            default_value;
         std::vector<std::string> tags;
+        // Loop-carried channel declaration (outputs only): the port carries
+        // the node's own loop state and pairs with the same-name input — the
+        // compiler synthesizes the self-loop value route and the runtime
+        // resets it at outer-loop boundaries via the loop-layer records.
+        // Trailing position: existing aggregate initialisers address the
+        // fields above positionally.
+        bool loop_carried = false;
     };
 
     struct ComponentRefDto

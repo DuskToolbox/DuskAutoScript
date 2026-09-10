@@ -219,6 +219,39 @@ namespace
         return false;
     }
 
+    // LoopCarriedPortInvalid diagnostic kind（loopCarried 输出口无同名输入
+    // 口配对）：kind 以枚举整数字符串序列化。
+    bool HasLoopCarriedPortInvalidDiagnostic(
+        const Dto::CompiledGraphPlanDto& plan,
+        const std::string&               node_id = {})
+    {
+        const std::string invalid_kind = std::to_string(
+            static_cast<int>(CompileDiagnosticKind::LoopCarriedPortInvalid));
+        for (const auto& diag : plan.diagnostics)
+        {
+            auto obj = diag.as_object();
+            if (!obj.has_value())
+            {
+                continue;
+            }
+            auto kind = (*obj)[std::string_view("kind")].as_string();
+            if (!kind.has_value() || *kind != invalid_kind)
+            {
+                continue;
+            }
+            if (node_id.empty())
+            {
+                return true;
+            }
+            auto node = (*obj)[std::string_view("node_id")].as_string();
+            if (node.has_value() && *node == node_id)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
     // ---------------------------------------------------------------
     // Stub TaskComponentFactoryManager for testing
     // Overrides EnumerateDefinitions to return injected test data
@@ -1672,6 +1705,137 @@ TEST(SignalAwareCompileTest, DataBackEdgeToOuterHeadOwnedByOuterLayer)
     EXPECT_EQ(inner->data_back_edge_sources[0].port_id, "out");
 
     EXPECT_TRUE(topo.diagnostics.empty());
+}
+
+// ---------------------------------------------------------------------
+// loopCarried 通道合成：成对声明的 index 口在编译产物中长出自环值路由
+// （binding）与 data 回边记档（归属 for 自身层），内部状态口不投影为
+// 图边界输入。
+// ---------------------------------------------------------------------
+TEST(SignalAwareCompileTest, LoopCarriedPairSynthesizesSelfLoopChannel)
+{
+    GraphCompiler compiler;
+
+    StubFactoryManager factory_manager;
+    factory_manager.AddDefinition(
+        "00000000-0000-0000-0000-0000000000f1",
+        *Das::Utils::ParseYyjsonFromString(R"({
+            "inputs": [
+                {"id": "index", "type": "int"},
+                {"id": "start", "type": "int"},
+                {"id": "end", "type": "int"}
+            ],
+            "outputs": [
+                {"id": "continue", "type": "signal"},
+                {"id": "break", "type": "signal"},
+                {"id": "index", "type": "int", "loopCarried": true}
+            ]
+        })"));
+    factory_manager.AddDefinition(
+        "00000000-0000-0000-0000-0000000000b1",
+        *Das::Utils::ParseYyjsonFromString(
+            R"({"inputs": [{"id": "value", "type": "int"}],
+                "outputs": [{"id": "signal_out", "type": "signal"}]})"));
+    compiler.SetFactoryManager(&factory_manager);
+
+    GraphDocumentDto doc;
+    doc.nodes.push_back(
+        MakeComponentNode("F", "00000000-0000-0000-0000-0000000000f1"));
+    doc.nodes.push_back(
+        MakeComponentNode("B", "00000000-0000-0000-0000-0000000000b1"));
+    doc.edges.push_back(
+        MakeSignalEdge("e_s1", "F", "continue", "B", "signal_in"));
+    doc.edges.push_back(
+        MakeSignalEdge("e_s2", "B", "signal_out", "F", "signal_in"));
+    doc.edges.push_back(MakeEdge("e_d1", "F", "index", "B", "value"));
+
+    auto plan = compiler.Compile(doc);
+
+    EXPECT_FALSE(HasLoopCarriedPortInvalidDiagnostic(plan));
+
+    // 合成自环 binding：F.index → F.index，类型按声明双侧填充。
+    const Dto::PortBindingDto* self_binding = nullptr;
+    for (const auto& binding : plan.binding_plan.bindings)
+    {
+        if (binding.source_node_id == "F" && binding.source_port_id == "index"
+            && binding.target_node_id == "F"
+            && binding.target_port_id == "index")
+        {
+            self_binding = &binding;
+        }
+    }
+    ASSERT_NE(self_binding, nullptr);
+    EXPECT_EQ(self_binding->expected_type, "int");
+    EXPECT_EQ(self_binding->target_type, "int");
+
+    // 合成 data 回边记档（归属 for 自身层），源口入该层清单。
+    const Dto::BackEdgeDto* carried_back = nullptr;
+    for (const auto& back_edge : plan.back_edges)
+    {
+        if (back_edge.edge_kind == "data" && back_edge.source_node_id == "F"
+            && back_edge.target_node_id == "F")
+        {
+            carried_back = &back_edge;
+        }
+    }
+    ASSERT_NE(carried_back, nullptr);
+    EXPECT_EQ(carried_back->edge_id, "loopcarried::F::index");
+    EXPECT_EQ(carried_back->loop_head_node_id, "F");
+
+    ASSERT_EQ(plan.loop_layers.size(), 1u);
+    ASSERT_EQ(plan.loop_layers[0].data_back_edge_sources.size(), 1u);
+    EXPECT_EQ(plan.loop_layers[0].data_back_edge_sources[0].node_id, "F");
+    EXPECT_EQ(plan.loop_layers[0].data_back_edge_sources[0].port_id, "index");
+
+    // 内部状态口不出现在图边界输入面（start/end 悬空仍正常投影）。
+    std::unordered_set<std::string> boundary_input_ids;
+    for (const auto& boundary_input : plan.boundary_ports.inputs)
+    {
+        boundary_input_ids.insert(boundary_input.port_id);
+    }
+    EXPECT_EQ(boundary_input_ids.count("index"), 0u);
+    EXPECT_EQ(boundary_input_ids.count("start"), 1u);
+    EXPECT_EQ(boundary_input_ids.count("end"), 1u);
+}
+
+// ---------------------------------------------------------------------
+// loopCarried 校验：输出口带 loopCarried 声明但无同名输入口配对时编译
+// 诊断报错，且不合成任何自环通道。
+// ---------------------------------------------------------------------
+TEST(SignalAwareCompileTest, LoopCarriedOutputWithoutSameNameInputDiagnosed)
+{
+    GraphCompiler compiler;
+
+    StubFactoryManager factory_manager;
+    factory_manager.AddDefinition(
+        "00000000-0000-0000-0000-0000000000f2",
+        *Das::Utils::ParseYyjsonFromString(R"({
+            "inputs": [{"id": "start", "type": "int"}],
+            "outputs": [
+                {"id": "count", "type": "int", "loopCarried": true}
+            ]
+        })"));
+    compiler.SetFactoryManager(&factory_manager);
+
+    GraphDocumentDto doc;
+    doc.nodes.push_back(
+        MakeComponentNode("N", "00000000-0000-0000-0000-0000000000f2"));
+
+    auto plan = compiler.Compile(doc);
+
+    EXPECT_TRUE(HasLoopCarriedPortInvalidDiagnostic(plan, "N"));
+
+    // 无配对输入口 → 不合成自环 binding，也不记 data 回边。
+    for (const auto& binding : plan.binding_plan.bindings)
+    {
+        EXPECT_FALSE(
+            binding.source_node_id == "N" && binding.target_node_id == "N");
+    }
+    for (const auto& back_edge : plan.back_edges)
+    {
+        EXPECT_FALSE(
+            back_edge.source_node_id == "N" && back_edge.target_node_id == "N");
+    }
 }
 
 // ---------------------------------------------------------------------

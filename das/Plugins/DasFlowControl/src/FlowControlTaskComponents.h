@@ -130,10 +130,13 @@ private:
         ExportInterface::IDasReadOnlyPortMap* p_input_port_map,
         ExportInterface::IDasPortMap**        pp_out_port_map);
 
-    // Counted loop head: maintains `loop_index_` across Do() calls. Each call
-    // writes the current `index` output and emits `continue`, or emits `break`
-    // when the range is exhausted. The body is a separate main-graph node
-    // re-activated by the runtime via the continue signal + back-edge.
+    // Counted loop head: the counter lives in the frame (loopCarried `index`
+    // port pair — the compiler synthesizes the self-loop value route), so the
+    // component itself is stateless across Do() calls and an outer-loop
+    // restart resets the count naturally. Each call writes the current
+    // `index` output and emits `continue`, or emits `break` when the range is
+    // exhausted. The body is a separate main-graph node re-activated by the
+    // runtime via the continue signal + back-edge.
     DasResult DoFor(
         PluginInterface::IDasStopToken*       stop_token,
         ExportInterface::IDasReadOnlyPortMap* p_input_port_map,
@@ -260,12 +263,6 @@ private:
     mutable std::mutex repository_entry_mutex_;
     // settings.repositoryRef 存储值（纯 entryId 整数）；0 = 未设置。
     int64_t repository_entry_id_ = 0;
-
-    // for-loop counter state. A fresh component instance is created per graph
-    // execution (GraphRuntime::Configure), so this naturally resets per run;
-    // it persists across the Do() calls of a single loop.
-    int64_t loop_index_ = 0;
-    bool    loop_started_ = false;
 
     // 注入缝：空 = 用生产实现（首次 DoLaunch 惰性安装）。
     FlowControlProcessSpawner   process_spawner_;

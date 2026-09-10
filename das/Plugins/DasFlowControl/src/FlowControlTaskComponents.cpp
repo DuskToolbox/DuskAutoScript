@@ -1423,13 +1423,14 @@ DasResult DasFlowControlTaskComponent::DoFor(
         step = 1; // 0 步长无意义且会死循环，兜底为 1。
     }
 
-    // 首次进入初始化计数器；循环状态是组件成员，跨多次 Do() 保持。组件实例
-    // 每次 GraphRuntime::Configure 重建，自然按图执行重置（不进 PortFrame）。
-    if (!loop_started_)
-    {
-        loop_index_ = start;
-        loop_started_ = true;
-    }
+    // 计数状态入帧：index 输入口经编译器合成的自环绑定携带上圈输出（输
+    // 出写本圈序号，下圈读回即 +step 推进）。首轮缺键回落 start-step 使
+    // 首圈输出恰为 start；外层环清场删掉帧值后同样回落——嵌套外圈重启
+    // 时计数自动从头开始，组件自身无跨 Do 状态。
+    const int64_t current =
+        p_input_port_map
+            ? GetPortInt(p_input_port_map, "index", start - step) + step
+            : start;
 
     DAS::DasPtr<ExportInterface::IDasPortMap> output_map;
     const DasResult hr = CreateIDasPortMap(output_map.Put());
@@ -1439,15 +1440,13 @@ DasResult DasFlowControlTaskComponent::DoFor(
     }
     SetPortString(output_map.Get(), "status", "completed");
 
-    const bool in_range =
-        (step > 0) ? (loop_index_ < end) : (loop_index_ > end);
+    const bool in_range = (step > 0) ? (current < end) : (current > end);
     if (in_range)
     {
         // 写循环变量 index（data 输出端口，循环体经 binding 读取），emit
         // continue 激活循环体；循环体完成后 back-edge 回到 for 重新 Do()。
-        SetPortInt(output_map.Get(), "index", loop_index_);
+        SetPortInt(output_map.Get(), "index", current);
         EmitSignal(output_map.Get(), "continue");
-        loop_index_ += step;
     }
     else
     {

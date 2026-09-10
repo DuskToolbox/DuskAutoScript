@@ -2560,32 +2560,40 @@ TEST_F(TaskComponentContractTest, ForEmitsContinueAndIndexThenBreak)
     auto component = CreateComponent(FOR_COMPONENT_GUID);
     ASSERT_NE(component.Get(), nullptr);
 
-    auto make_input = [&]()
+    // 模拟运行期自环绑定：上圈 index 输出回填下圈 index 输入（首轮不填，
+    // 缺键回落 start）。
+    auto make_input = [&](std::optional<int64_t> carried_index)
     {
         DAS::DasPtr<Das::ExportInterface::IDasPortMap> input_map;
         EXPECT_EQ(CreateIDasPortMap(input_map.Put()), DAS_S_OK);
         Das::Utils::SetPortInt(input_map.Get(), "start", 0);
         Das::Utils::SetPortInt(input_map.Get(), "end", 3);
         Das::Utils::SetPortInt(input_map.Get(), "step", 1);
+        if (carried_index.has_value())
+        {
+            Das::Utils::SetPortInt(input_map.Get(), "index", *carried_index);
+        }
         return input_map;
     };
 
     // start=0, end=3, step=1 → continue with index 0,1,2.
     const std::array<int64_t, 3> expected_indices{0, 1, 2};
+    std::optional<int64_t>       carried;
     for (auto idx : expected_indices)
     {
-        auto                                           in = make_input();
+        auto                                           in = make_input(carried);
         DAS::DasPtr<Das::ExportInterface::IDasPortMap> result_map;
         ASSERT_EQ(component->Do(nullptr, in.Get(), result_map.Put()), DAS_S_OK);
         EXPECT_EQ(
             Das::Utils::GetPortString(result_map.Get(), "status"),
             "completed");
         EXPECT_EQ(FirstEmittedSignal(result_map.Get()), "continue");
-        EXPECT_EQ(Das::Utils::GetPortInt(result_map.Get(), "index"), idx);
+        carried = Das::Utils::GetPortInt(result_map.Get(), "index");
+        EXPECT_EQ(*carried, idx);
     }
 
     // 4th call: range exhausted → break, no index output.
-    auto                                           in = make_input();
+    auto                                           in = make_input(carried);
     DAS::DasPtr<Das::ExportInterface::IDasPortMap> result_map;
     ASSERT_EQ(component->Do(nullptr, in.Get(), result_map.Put()), DAS_S_OK);
     EXPECT_EQ(FirstEmittedSignal(result_map.Get()), "break");

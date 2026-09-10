@@ -1215,7 +1215,8 @@ namespace
                         if (key != std::string_view("portId")
                             && key != std::string_view("portType")
                             && key != std::string_view("direction")
-                            && key != std::string_view("displayLabel"))
+                            && key != std::string_view("displayLabel")
+                            && key != std::string_view("loopCarried"))
                         {
                             return std::nullopt;
                         }
@@ -1252,6 +1253,17 @@ namespace
                     if (!direction.has_value())
                     {
                         return std::nullopt;
+                    }
+                    if (port_obj->contains(std::string_view("loopCarried")))
+                    {
+                        auto carried =
+                            (*port_obj)[std::string_view("loopCarried")]
+                                .as_bool();
+                        if (!carried.has_value())
+                        {
+                            return std::nullopt;
+                        }
+                        definition.loop_carried = *carried;
                     }
                     if (*direction == std::string_view("input"))
                     {

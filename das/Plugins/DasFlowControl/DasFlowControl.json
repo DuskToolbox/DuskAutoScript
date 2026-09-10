@@ -96,6 +96,11 @@
               "id": "step",
               "type": "int",
               "label": { "en": "Step", "zh-cn": "步长" }
+            },
+            {
+              "id": "index",
+              "type": "int",
+              "label": { "en": "Index", "zh-cn": "当前序号" }
             }
           ],
           "outputs": [
@@ -112,6 +117,7 @@
             {
               "id": "index",
               "type": "int",
+              "loopCarried": true,
               "label": { "en": "Index", "zh-cn": "当前索引" }
             }
           ],

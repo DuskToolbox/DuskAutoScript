@@ -453,6 +453,9 @@ TEST_F(E2EGraphFlowTest, LaunchFailureTerminatesGraphWithErrorCode)
 constexpr std::string_view WHILE_COMPONENT_GUID_TEXT =
     "68F10005-0000-4000-8000-000000000005";
 constexpr std::string_view WHILE_KIND_TEXT = "das.flow.while";
+constexpr std::string_view FOR_COMPONENT_GUID_TEXT =
+    "68F10004-0000-4000-8000-000000000004";
+constexpr std::string_view FOR_KIND_TEXT = "das.flow.for";
 constexpr std::string_view COMPARE_DOUBLE_COMPONENT_GUID_TEXT =
     "68F1000E-0000-4000-8000-00000000000E";
 constexpr std::string_view COMPARE_DOUBLE_KIND_TEXT = "das.flow.compare_double";
@@ -601,6 +604,13 @@ public:
                 std::string{WHILE_COMPONENT_GUID_TEXT}))
         {
             kind = WHILE_KIND_TEXT;
+        }
+        else if (
+            component_guid
+            == Das::Core::ForeignInterfaceHost::MakeDasGuid(
+                std::string{FOR_COMPONENT_GUID_TEXT}))
+        {
+            kind = FOR_KIND_TEXT;
         }
         else if (
             component_guid
@@ -795,6 +805,304 @@ TEST_F(E2EGraphFlowTest, WhileLoopWithDataBackEdgeConverges)
     EXPECT_EQ(counting_host->counters[1]->last_result, 3.0);
     EXPECT_EQ(counting_host->counters[0]->do_count.load(), 4);
     EXPECT_EQ(counting_host->counters[2]->do_count.load(), 3);
+}
+
+// ---- for 计数入帧（loopCarried 自环通道） ----
+
+// for{body} 单层：计数经编译器合成的 index 自环通道入帧（组件零跨 Do 状
+// 态），自环进 back_edges 后不构成数据依赖——for 不会等自己死锁。
+TEST_F(E2EGraphFlowTest, ForLoopCountsViaLoopCarriedSelfChannel)
+{
+    const std::string node_for{"n_for"};
+    const std::string node_body{"n_body"};
+    const std::string node_end{"n_end"};
+
+    stub_mgr_->AddDefinition(
+        std::string{FOR_COMPONENT_GUID_TEXT},
+        *Das::Utils::ParseYyjsonFromString(R"({
+            "inputs": [
+                {"id": "start", "type": "int"},
+                {"id": "end", "type": "int"},
+                {"id": "step", "type": "int"},
+                {"id": "index", "type": "int"}
+            ],
+            "outputs": [
+                {"id": "continue", "type": "signal"},
+                {"id": "break", "type": "signal"},
+                {"id": "index", "type": "int", "loopCarried": true}
+            ]
+        })"));
+    stub_mgr_->AddDefinition(
+        std::string{COMPARE_INT64_COMPONENT_GUID_TEXT},
+        MakeDefinition(
+            {{"left", "int64"}, {"right", "int64"}},
+            {{"result", "bool"}, {"signal_out", "signal"}}));
+    stub_mgr_->AddDefinition(
+        std::string{CONSTANT_INT64_COMPONENT_GUID_TEXT},
+        MakeDefinition({}, {{"value", "int64"}}));
+
+    GraphDocumentDto doc;
+    doc.document_id = "doc_for_self_channel";
+    doc.nodes.push_back(
+        MakeComponentNode(node_for, std::string{FOR_COMPONENT_GUID_TEXT}));
+    doc.nodes.push_back(MakeComponentNode(
+        node_body,
+        std::string{COMPARE_INT64_COMPONENT_GUID_TEXT}));
+    auto end_node = MakeComponentNode(
+        node_end,
+        std::string{CONSTANT_INT64_COMPONENT_GUID_TEXT});
+    auto end_settings = Das::Utils::MakeYyjsonObject();
+    (*end_settings.as_object())[std::string_view("value")] = 3;
+    end_node.settings = end_settings;
+    doc.nodes.push_back(std::move(end_node));
+
+    auto e_body_gate =
+        MakeEdge("e_body_gate", node_for, "continue", node_body, "signal_in");
+    e_body_gate.edge_type = "signal";
+    auto e_body_back =
+        MakeEdge("e_body_back", node_body, "signal_out", node_for, "signal_in");
+    e_body_back.edge_type = "signal";
+    doc.edges.push_back(std::move(e_body_gate));
+    doc.edges.push_back(std::move(e_body_back));
+    doc.edges.push_back(
+        MakeEdge("e_index", node_for, "index", node_body, "left"));
+    doc.edges.push_back(MakeEdge("e_end", node_end, "value", node_for, "end"));
+
+    auto plan = CompileDocument(doc);
+
+    // 合成回边记档：自环 data 回边归属 for 自身层，源口入层清单。
+    const Dto::BackEdgeDto* carried_back = nullptr;
+    for (const auto& back_edge : plan.back_edges)
+    {
+        if (back_edge.edge_kind == "data"
+            && back_edge.source_node_id == node_for
+            && back_edge.target_node_id == node_for)
+        {
+            carried_back = &back_edge;
+        }
+    }
+    ASSERT_NE(carried_back, nullptr);
+    EXPECT_EQ(carried_back->loop_head_node_id, node_for);
+    ASSERT_EQ(plan.loop_layers.size(), 1u);
+    ASSERT_EQ(plan.loop_layers[0].data_back_edge_sources.size(), 1u);
+    EXPECT_EQ(plan.loop_layers[0].data_back_edge_sources[0].node_id, node_for);
+    EXPECT_EQ(plan.loop_layers[0].data_back_edge_sources[0].port_id, "index");
+
+    auto  host = FlowControlCountingHost::Make();
+    auto* counting_host = static_cast<FlowControlCountingHost*>(host.Get());
+    GraphRuntime runtime;
+    const auto   hr =
+        runtime.RunWithHost(plan, "fp_for", token_.Get(), host.Get());
+    ASSERT_EQ(hr, DAS_S_OK) << runtime.GetLastErrorMessage();
+
+    // end=3：for 3 次 continue（index 0/1/2）+ 1 次 break，body 每圈执行。
+    ASSERT_EQ(counting_host->counters.size(), 3u);
+    EXPECT_EQ(counting_host->counters[0]->do_count.load(), 4);
+    EXPECT_EQ(counting_host->counters[1]->do_count.load(), 3);
+}
+
+// 嵌套 while{for{body}}：外层 2 圈 × 内层从头计数——for 的 index 状态入
+// 帧且归属内层清单，外层发火清严格内层源口时计数复位（外圈 2 起 body 每
+// 圈照常执行 N 次）。
+TEST_F(E2EGraphFlowTest, NestedWhileForRestartsInnerCountPerOuterRound)
+{
+    const std::string node_while{"n_while"};
+    const std::string node_counter{"n_counter"};
+    const std::string node_for{"n_for"};
+    const std::string node_body{"n_body"};
+    const std::string node_tail{"n_tail"};
+    const std::string node_end{"n_end"};
+
+    stub_mgr_->AddDefinition(
+        std::string{WHILE_COMPONENT_GUID_TEXT},
+        MakeDefinition(
+            {{"condition", "bool"}, {"first_condition", "bool"}},
+            {{"continue", "signal"}, {"break", "signal"}}));
+    stub_mgr_->AddDefinition(
+        std::string{FOR_COMPONENT_GUID_TEXT},
+        *Das::Utils::ParseYyjsonFromString(R"({
+            "inputs": [
+                {"id": "start", "type": "int"},
+                {"id": "end", "type": "int"},
+                {"id": "step", "type": "int"},
+                {"id": "index", "type": "int"}
+            ],
+            "outputs": [
+                {"id": "continue", "type": "signal"},
+                {"id": "break", "type": "signal"},
+                {"id": "index", "type": "int", "loopCarried": true}
+            ]
+        })"));
+    stub_mgr_->AddDefinition(
+        std::string{COMPARE_INT64_COMPONENT_GUID_TEXT},
+        MakeDefinition(
+            {{"left", "int64"}, {"right", "int64"}},
+            {{"result", "bool"}, {"signal_out", "signal"}}));
+    stub_mgr_->AddDefinition(
+        std::string{COMPARE_DOUBLE_COMPONENT_GUID_TEXT},
+        MakeDefinition(
+            {{"left", "double"}, {"right", "double"}},
+            {{"result", "bool"}, {"signal_out", "signal"}}));
+    stub_mgr_->AddDefinition(
+        std::string{ARITHMETIC_NUMBER_COMPONENT_GUID_TEXT},
+        MakeDefinition(
+            {{"left", "double"}, {"right", "double"}},
+            {{"result", "double"}}));
+    stub_mgr_->AddDefinition(
+        std::string{CONSTANT_INT64_COMPONENT_GUID_TEXT},
+        MakeDefinition({}, {{"value", "int64"}}));
+
+    GraphDocumentDto doc;
+    doc.document_id = "doc_nested_while_for";
+    doc.nodes.push_back(
+        MakeComponentNode(node_while, std::string{WHILE_COMPONENT_GUID_TEXT}));
+    doc.nodes.push_back(MakeComponentNode(
+        node_counter,
+        std::string{ARITHMETIC_NUMBER_COMPONENT_GUID_TEXT}));
+    doc.nodes.push_back(
+        MakeComponentNode(node_for, std::string{FOR_COMPONENT_GUID_TEXT}));
+    doc.nodes.push_back(MakeComponentNode(
+        node_body,
+        std::string{COMPARE_INT64_COMPONENT_GUID_TEXT}));
+    auto tail_node = MakeComponentNode(
+        node_tail,
+        std::string{COMPARE_DOUBLE_COMPONENT_GUID_TEXT});
+    // 外层条件：counter < 2（counter 每外圈 +1，第 2 圈收尾时翻假）。计数
+    // 器输出 double，条件比较必须用 double 侧——浮点→整数物化按设计拒
+    // 绝，错配会让左值恒缺回落 0 永真。
+    auto tail_settings = Das::Utils::MakeYyjsonObject();
+    auto tail_settings_object = *tail_settings.as_object();
+    tail_settings_object[std::string_view("operator")] =
+        std::make_pair(std::string_view("<"), yyjson::copy_string);
+    tail_settings_object[std::string_view("right")] = 2;
+    tail_node.settings = tail_settings;
+    doc.nodes.push_back(std::move(tail_node));
+    auto end_node = MakeComponentNode(
+        node_end,
+        std::string{CONSTANT_INT64_COMPONENT_GUID_TEXT});
+    auto end_settings = Das::Utils::MakeYyjsonObject();
+    (*end_settings.as_object())[std::string_view("value")] = 3;
+    end_node.settings = end_settings;
+    doc.nodes.push_back(std::move(end_node));
+
+    // 顺序线：W.continue 门控外圈计数器与 for；for.continue 门控 body；
+    // body 完成信号回 for（内层回边）；for 耗尽发 break 门控外层尾；外层
+    // 尾完成信号回 W（外层回边）。计数器与 body 都必须受门控：无门的
+    // 环内节点每趟无条件执行，会把回边发成死循环。
+    auto e_gate_counter = MakeEdge(
+        "e_gate_counter",
+        node_while,
+        "continue",
+        node_counter,
+        "signal_in");
+    e_gate_counter.edge_type = "signal";
+    auto e_gate_for =
+        MakeEdge("e_gate_for", node_while, "continue", node_for, "signal_in");
+    e_gate_for.edge_type = "signal";
+    auto e_gate_body =
+        MakeEdge("e_gate_body", node_for, "continue", node_body, "signal_in");
+    e_gate_body.edge_type = "signal";
+    auto e_inner_back = MakeEdge(
+        "e_inner_back",
+        node_body,
+        "signal_out",
+        node_for,
+        "signal_in");
+    e_inner_back.edge_type = "signal";
+    auto e_gate_tail =
+        MakeEdge("e_gate_tail", node_for, "break", node_tail, "signal_in");
+    e_gate_tail.edge_type = "signal";
+    auto e_outer_back = MakeEdge(
+        "e_outer_back",
+        node_tail,
+        "signal_out",
+        node_while,
+        "signal_in");
+    e_outer_back.edge_type = "signal";
+    doc.edges.push_back(std::move(e_gate_counter));
+    doc.edges.push_back(std::move(e_gate_for));
+    doc.edges.push_back(std::move(e_gate_body));
+    doc.edges.push_back(std::move(e_inner_back));
+    doc.edges.push_back(std::move(e_gate_tail));
+    doc.edges.push_back(std::move(e_outer_back));
+
+    // 数据面：for.index 门控 body 比较左值；counter 自环累计并喂外层条件
+    // 比较；外层条件真值回 W.condition（外层数据回边）；常数 3 喂 for.end。
+    doc.edges.push_back(
+        MakeEdge("e_body_left", node_for, "index", node_body, "left"));
+    doc.edges.push_back(MakeEdge(
+        "e_counter_self",
+        node_counter,
+        "result",
+        node_counter,
+        "left"));
+    doc.edges.push_back(
+        MakeEdge("e_counter_tail", node_counter, "result", node_tail, "left"));
+    doc.edges.push_back(MakeEdge(
+        "e_condition_back",
+        node_tail,
+        "result",
+        node_while,
+        "condition"));
+    doc.edges.push_back(
+        MakeEdge("e_for_end", node_end, "value", node_for, "end"));
+
+    auto plan = CompileDocument(doc);
+
+    // 合成回边归属内层（for 自身层），源口在内层清单——外层发火清严格内
+    // 层源口时复位计数。
+    const Dto::BackEdgeDto* carried_back = nullptr;
+    for (const auto& back_edge : plan.back_edges)
+    {
+        if (back_edge.edge_kind == "data"
+            && back_edge.source_node_id == node_for
+            && back_edge.target_node_id == node_for)
+        {
+            carried_back = &back_edge;
+        }
+    }
+    ASSERT_NE(carried_back, nullptr);
+    EXPECT_EQ(carried_back->loop_head_node_id, node_for);
+    bool has_self_binding = false;
+    for (const auto& binding : plan.binding_plan.bindings)
+    {
+        if (binding.source_node_id == node_for
+            && binding.source_port_id == "index"
+            && binding.target_node_id == node_for
+            && binding.target_port_id == "index")
+        {
+            has_self_binding = true;
+        }
+    }
+    EXPECT_TRUE(has_self_binding);
+    const Dto::LoopLayerDto* inner_layer = nullptr;
+    for (const auto& layer : plan.loop_layers)
+    {
+        if (layer.head_node_id == node_for)
+        {
+            inner_layer = &layer;
+        }
+    }
+    ASSERT_NE(inner_layer, nullptr);
+    ASSERT_EQ(inner_layer->data_back_edge_sources.size(), 1u);
+    EXPECT_EQ(inner_layer->data_back_edge_sources[0].node_id, node_for);
+    EXPECT_EQ(inner_layer->data_back_edge_sources[0].port_id, "index");
+
+    auto  host = FlowControlCountingHost::Make();
+    auto* counting_host = static_cast<FlowControlCountingHost*>(host.Get());
+    GraphRuntime runtime;
+    const auto   hr =
+        runtime.RunWithHost(plan, "fp_nested", token_.Get(), host.Get());
+    ASSERT_EQ(hr, DAS_S_OK) << runtime.GetLastErrorMessage();
+
+    // body 每外圈执行 3 次（end=3，外圈 2 起从头计数）共 6；外圈计数器
+    // 每外圈 1 次共 2（值 1、2）；while 2 次 continue + 1 次 break。
+    ASSERT_EQ(counting_host->counters.size(), 6u);
+    EXPECT_EQ(counting_host->counters[3]->do_count.load(), 6);
+    EXPECT_EQ(counting_host->counters[1]->do_count.load(), 2);
+    EXPECT_EQ(counting_host->counters[1]->last_result, 2.0);
+    EXPECT_EQ(counting_host->counters[0]->do_count.load(), 3);
+    EXPECT_EQ(counting_host->counters[4]->do_count.load(), 2);
 }
 
 // ---- 常量组件族 + 字符串拼接 ----

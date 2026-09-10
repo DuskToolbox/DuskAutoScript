@@ -37,7 +37,9 @@ enum class CompileDiagnosticKind
     CyclicEdgeGraph,      // Edge-based cycle detected during topological sort
     RequiredFieldMissing, // Required field has no usable value in node settings
     UnbackedDataCycle, // Data cycle without a signal circuit carrying the loop
-    LoopBodyDataLeak   // Loop-body data edge leaves the loop (stale-value risk)
+    LoopBodyDataLeak,  // Loop-body data edge leaves the loop (stale-value risk)
+    // loopCarried output port without a same-name input port to pair with
+    LoopCarriedPortInvalid
 };
 
 struct CompileEdgeDiagnostic
@@ -81,6 +83,8 @@ public:
     {
         std::string port_id;
         std::string port_type;
+        // Mirrors GraphPortDefinitionDto::loop_carried (manifest channel).
+        bool loop_carried = false;
     };
 
     struct ManifestPorts

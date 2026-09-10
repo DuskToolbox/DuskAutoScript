@@ -576,6 +576,18 @@ namespace Das::Core::TaskScheduler
                 std::make_pair(resolved_type, yyjson::copy_string);
             (*obj)[std::string_view("direction")] =
                 std::make_pair(direction, yyjson::copy_string);
+            // loopCarried 声明 engaged-only 发射：仅布尔真值落键（循环携
+            // 带口标记，编译器据此合成自环值路由）；非布尔值跳过发射与
+            // label/required 同 miss 容忍语义。
+            if (port_obj->contains(std::string_view("loopCarried")))
+            {
+                auto carried =
+                    (*port_obj)[std::string_view("loopCarried")].as_bool();
+                if (carried.has_value() && *carried)
+                {
+                    (*obj)[std::string_view("loopCarried")] = true;
+                }
+            }
             destination.emplace_back(std::move(port));
         }
     }

@@ -106,11 +106,13 @@ GraphCompiler::ManifestPorts GraphCompiler::ResolveDeclaredPorts(
             ports.outputs.clear();
             for (const auto& port : surface->inputs)
             {
-                ports.inputs.push_back({port.port_id, port.port_type});
+                ports.inputs.push_back(
+                    {port.port_id, port.port_type, port.loop_carried});
             }
             for (const auto& port : surface->outputs)
             {
-                ports.outputs.push_back({port.port_id, port.port_type});
+                ports.outputs.push_back(
+                    {port.port_id, port.port_type, port.loop_carried});
             }
             ports.was_resolved = true;
         }
@@ -262,6 +264,18 @@ std::vector<GraphCompiler::PortEntry> GraphCompiler::PortsFromDefinitionList(
             continue;
         }
         port.port_type = std::string(*type_str);
+
+        // loopCarried 声明 engaged-only 提取：仅布尔真值置位，缺失/非布
+        // 尔一律视为普通口（与 required 的 miss 容忍语义一致）。
+        if (entry_obj->contains(std::string_view("loopCarried")))
+        {
+            auto carried =
+                (*entry_obj)[std::string_view("loopCarried")].as_bool();
+            if (carried.has_value() && *carried)
+            {
+                port.loop_carried = true;
+            }
+        }
 
         ports.push_back(std::move(port));
     }
@@ -1473,6 +1487,44 @@ Dto::PortBindingPlanDto GraphCompiler::GeneratePortBindingPlan(
         plan.bindings.push_back(std::move(binding));
     }
 
+    // loopCarried 自环值路由：声明面 loopCarried 输出口与同名输入口成对
+    // 时合成节点内 binding（循环状态入帧的值通道）。合成边不进
+    // document.edges、不进边校验；同名输入口缺失的声明在 Compile 校验段
+    // 报诊断，这里跳过不合成。
+    for (const auto& node : document.nodes)
+    {
+        if (node.target.target_kind != "componentRef"
+            || !node.target.component_ref.has_value())
+        {
+            continue;
+        }
+        const ManifestPorts node_ports = ResolveNodePorts(node, manifest_cache);
+        for (const auto& output_port : node_ports.outputs)
+        {
+            if (!output_port.loop_carried)
+            {
+                continue;
+            }
+            const auto matched_input = std::find_if(
+                node_ports.inputs.begin(),
+                node_ports.inputs.end(),
+                [&](const PortEntry& candidate)
+                { return candidate.port_id == output_port.port_id; });
+            if (matched_input == node_ports.inputs.end())
+            {
+                continue;
+            }
+            Dto::PortBindingDto binding;
+            binding.source_node_id = node.node_id;
+            binding.source_port_id = output_port.port_id;
+            binding.target_node_id = node.node_id;
+            binding.target_port_id = matched_input->port_id;
+            binding.expected_type = output_port.port_type;
+            binding.target_type = matched_input->port_type;
+            plan.bindings.push_back(std::move(binding));
+        }
+    }
+
     // Derived broadcast bindings: every dangling input port (no incoming
     // edge) is a boundary input of this graph — it receives the same
     // $graph_input sentinel binding carrying the port's declared default (the
@@ -1604,6 +1656,7 @@ Dto::BoundaryPortsDto GraphCompiler::DeriveBoundaryPorts(
                         Dto::GraphPortDefinitionDto definition;
                         definition.port_id = port.port_id;
                         definition.port_type = port.port_type;
+                        definition.loop_carried = port.loop_carried;
                         surface.inputs.push_back(std::move(definition));
                     }
                     for (const auto& port : ports.outputs)
@@ -1611,6 +1664,7 @@ Dto::BoundaryPortsDto GraphCompiler::DeriveBoundaryPorts(
                         Dto::GraphPortDefinitionDto definition;
                         definition.port_id = port.port_id;
                         definition.port_type = port.port_type;
+                        definition.loop_carried = port.loop_carried;
                         surface.outputs.push_back(std::move(definition));
                     }
                     return surface;
@@ -1660,11 +1714,30 @@ Dto::BoundaryPortsDto GraphCompiler::DeriveBoundaryPorts(
             surface = provider(node.target.component_ref->component_guid);
         }
 
+        // loopCarried 声明落在输出口上，其同名输入口的值来源是编译器合成
+        // 的节点内自环通道（非 document 边，悬空判定对它不可见）——收集
+        // 携带口名集合，输入侧据此排除，内部状态通道不出现在图边界面上。
+        std::unordered_set<std::string> carried_port_ids;
+        if (surface.has_value())
+        {
+            for (const auto& output_port : surface->outputs)
+            {
+                if (output_port.loop_carried)
+                {
+                    carried_port_ids.insert(output_port.port_id);
+                }
+            }
+        }
+
         auto add_boundary_input = [&](const Dto::GraphPortDefinitionDto& port)
         {
             if (referenced_as_input(node.node_id, port.port_id))
             {
                 return; // 有入边，值已有来源，非边界入参。
+            }
+            if (carried_port_ids.count(port.port_id) > 0)
+            {
+                return;
             }
             auto merged = merged_input_index.find(port.port_id);
             if (merged == merged_input_index.end())
@@ -1853,6 +1926,111 @@ Dto::CompiledGraphPlanDto GraphCompiler::Compile(
 
     // Port binding plan
     plan.binding_plan = GeneratePortBindingPlan(document);
+
+    // loopCarried 通道记档与校验：成对口合成 data 型回边入 plan.back_edges
+    // （运行期据此把自环排除出 data_preds，节点不会等自己；外层清场经层
+    // 清单清到该口）。归属沿用回边归属规则：节点自身为某层头（for 组件的
+    // 自然形态）归该层，否则归最内含该节点的层，无层则仅记边不入清单。
+    {
+        std::unordered_map<std::string, ManifestPorts> manifest_cache;
+        for (const auto& node : document.nodes)
+        {
+            if (node.target.target_kind != "componentRef"
+                || !node.target.component_ref.has_value())
+            {
+                continue;
+            }
+            const ManifestPorts node_ports =
+                ResolveNodePorts(node, manifest_cache);
+            for (const auto& output_port : node_ports.outputs)
+            {
+                if (!output_port.loop_carried)
+                {
+                    continue;
+                }
+                const auto matched_input = std::find_if(
+                    node_ports.inputs.begin(),
+                    node_ports.inputs.end(),
+                    [&](const PortEntry& candidate)
+                    { return candidate.port_id == output_port.port_id; });
+                if (matched_input == node_ports.inputs.end())
+                {
+                    CompileEdgeDiagnostic diagnostic;
+                    diagnostic.kind =
+                        CompileDiagnosticKind::LoopCarriedPortInvalid;
+                    diagnostic.node_id = node.node_id;
+                    diagnostic.port_id = output_port.port_id;
+                    diagnostic.message = DAS_FMT_NS::format(
+                        "loopCarried output port '{}.{}' has no same-name "
+                        "input port to pair with; the loop state channel "
+                        "cannot be synthesized",
+                        node.node_id,
+                        output_port.port_id);
+                    plan.diagnostics.push_back(DiagnosticToJson(diagnostic));
+                    continue;
+                }
+
+                Dto::BackEdgeDto back;
+                back.edge_id =
+                    "loopcarried::" + node.node_id + "::" + output_port.port_id;
+                back.source_node_id = node.node_id;
+                back.source_port_id = output_port.port_id;
+                back.target_node_id = node.node_id;
+                back.target_port_id = matched_input->port_id;
+                back.edge_kind = "data";
+
+                std::size_t owner = plan.loop_layers.size();
+                for (std::size_t layer_index = 0;
+                     layer_index < plan.loop_layers.size();
+                     ++layer_index)
+                {
+                    const auto& layer = plan.loop_layers[layer_index];
+                    if (layer.head_node_id == node.node_id)
+                    {
+                        owner = layer_index;
+                        break;
+                    }
+                }
+                if (owner == plan.loop_layers.size())
+                {
+                    for (std::size_t layer_index = 0;
+                         layer_index < plan.loop_layers.size();
+                         ++layer_index)
+                    {
+                        const auto& layer = plan.loop_layers[layer_index];
+                        const bool  is_member = std::find(
+                                                    layer.members.begin(),
+                                                    layer.members.end(),
+                                                    node.node_id)
+                                                != layer.members.end();
+                        if (is_member
+                            && (owner == plan.loop_layers.size()
+                                || layer.tier > plan.loop_layers[owner].tier))
+                        {
+                            owner = layer_index;
+                        }
+                    }
+                }
+                if (owner != plan.loop_layers.size())
+                {
+                    back.loop_head_node_id =
+                        plan.loop_layers[owner].head_node_id;
+                    Dto::PortRefDto source;
+                    source.node_id = node.node_id;
+                    source.port_id = output_port.port_id;
+                    plan.loop_layers[owner].data_back_edge_sources.push_back(
+                        std::move(source));
+                }
+                else
+                {
+                    // 节点不在任何环层（如未连线环体的裸 for）：回边仍记档
+                    // 保住 data_preds 排除，头指针回落节点自身保持形状。
+                    back.loop_head_node_id = node.node_id;
+                }
+                plan.back_edges.push_back(std::move(back));
+            }
+        }
+    }
 
     // 推导边界口清单入编译产物：输入侧（悬空声明输入）已由
     // GeneratePortBindingPlan 落成 broadcast 绑定；输出侧（声明面输出口
