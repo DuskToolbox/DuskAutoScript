@@ -1327,11 +1327,12 @@ namespace Das::Core::TaskScheduler
             // engaged-only on the wire, so a present value must be a
             // non-empty string (the projection never emits empty).
             if (obj.contains("connectedFrom")
-                && !obj["connectedFrom"].is_string())
+                && (!obj["connectedFrom"].is_string()
+                    || obj["connectedFrom"].as_string().value().empty()))
             {
                 return Fail(
                     "invalidPortConnectedFrom",
-                    "GraphNode port.connectedFrom must be a string");
+                    "GraphNode port.connectedFrom must be a non-empty string");
             }
             return Pass();
         }

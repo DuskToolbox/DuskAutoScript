@@ -288,6 +288,8 @@ TEST(TaskAuthoringContractTest, GraphNodePortShapeViolationsFail)
         R"([{"portId":"x","displayLabel":"","portType":5,"direction":"input","category":"data"}])",
         // non-string source-indicator key
         R"([{"portId":"x","displayLabel":"","portType":"bool","direction":"input","category":"data","connectedFrom":5}])",
+        // empty source-indicator string (projection never emits empty)
+        R"([{"portId":"x","displayLabel":"","portType":"bool","direction":"input","category":"data","connectedFrom":""}])",
         // element is not an object
         R"(["x"])",
     };
