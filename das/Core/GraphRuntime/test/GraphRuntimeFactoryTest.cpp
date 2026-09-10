@@ -398,6 +398,25 @@ TEST(GraphRuntimeFactoryTest, ExecuteIncompletePlanJsonReturnsInvalidJson)
     EXPECT_EQ(ExecuteArtifactText(R"({"foo":1})"), DAS_E_INVALID_JSON);
 }
 
+// Null / empty artifacts are rejected up front: silently running an empty
+// plan would mask the caller's assembly gap as success.
+TEST(GraphRuntimeFactoryTest, ExecuteNullArtifactReturnsInvalidArgument)
+{
+    auto host = Das::DasPtr<Das::PluginInterface::IDasTaskComponentHost>(
+        new NullServingTaskComponentHost());
+    Das::DasPtr<IDasGraphRuntime> runtime;
+    ASSERT_EQ(DAS_S_OK, CreateGraphRuntimeWithHost(host.Get(), runtime.Put()));
+    Das::DasPtr<Das::ExportInterface::IDasJson> result_json;
+    EXPECT_EQ(
+        runtime->Execute(nullptr, nullptr, result_json.Put()),
+        DAS_E_INVALID_ARGUMENT);
+}
+
+TEST(GraphRuntimeFactoryTest, ExecuteEmptyArtifactReturnsInvalidArgument)
+{
+    EXPECT_EQ(ExecuteArtifactText(""), DAS_E_INVALID_ARGUMENT);
+}
+
 // ===========================================================================
 // Fingerprint shell — the wire artifact is a {fingerprint, plan} envelope;
 // fingerprint = FNV-1a 64 over the standard serialization of the plan

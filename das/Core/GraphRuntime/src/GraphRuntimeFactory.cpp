@@ -48,7 +48,14 @@ DasResult GraphRuntimeImpl::Execute(
 
     // Parse compiled graph plan from JSON string.
     Dto::CompiledGraphPlanDto plan;
-    if (p_compiled_artifact_json)
+    if (!p_compiled_artifact_json)
+    {
+        // 空指针不是「空图」：静默跑空计划会把调用方的装配缺漏吞成成
+        // 功，必须显性拒绝。
+        last_error_ = "Execute: compiled artifact is null";
+        DAS_CORE_LOG_ERROR("{}", last_error_);
+        return DAS_E_INVALID_ARGUMENT;
+    }
     {
         const char*     utf8 = nullptr;
         const DasResult hr = p_compiled_artifact_json->GetUtf8(&utf8);
@@ -60,7 +67,12 @@ DasResult GraphRuntimeImpl::Execute(
         }
 
         std::string json_str(utf8);
-        if (!json_str.empty())
+        if (json_str.empty())
+        {
+            last_error_ = "Execute: compiled artifact is empty";
+            DAS_CORE_LOG_ERROR("{}", last_error_);
+            return DAS_E_INVALID_ARGUMENT;
+        }
         {
             try
             {

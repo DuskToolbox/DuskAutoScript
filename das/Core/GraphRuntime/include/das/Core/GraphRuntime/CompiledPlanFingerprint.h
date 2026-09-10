@@ -1,6 +1,7 @@
 #ifndef DAS_CORE_GRAPHRUNTIME_COMPILEDPLANFINGERPRINT_H
 #define DAS_CORE_GRAPHRUNTIME_COMPILEDPLANFINGERPRINT_H
 
+#include <cassert>
 #include <cstdint>
 #include <string>
 #include <string_view>

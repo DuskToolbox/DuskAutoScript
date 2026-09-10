@@ -105,6 +105,50 @@ public:
 
 // ---- Tests ----
 
+// 空 store 经 Core 编译链产出合法空 plan 文本（executionInput 内层）——
+// 空 artifact 已被执行门拒绝，测试需要「合法的空」必须走真编译产物。
+std::string EmptyCompiledPlanText()
+{
+    GraphAuthoringSessionState* state = nullptr;
+    EXPECT_EQ(CreateGraphAuthoringSession(nullptr, &state), DAS_S_OK);
+    DasPtr<Das::ExportInterface::IDasJson> plan_json;
+    EXPECT_EQ(
+        GraphAuthoringSessionCompile(state, nullptr, plan_json.Put()),
+        DAS_S_OK);
+    DestroyGraphAuthoringSession(state);
+    EXPECT_NE(plan_json.Get(), nullptr);
+
+    DasPtr<IDasReadOnlyString> plan_str;
+    EXPECT_EQ(plan_json->ToString(0, plan_str.Put()), DAS_S_OK);
+    const char* utf8 = nullptr;
+    EXPECT_EQ(plan_str->GetUtf8(&utf8), DAS_S_OK);
+    const auto envelope = yyjson::read(std::string(utf8)).as_object();
+    EXPECT_TRUE(envelope.has_value());
+    const auto compile_section =
+        (*envelope)[std::string_view("compile")].as_object();
+    EXPECT_TRUE(compile_section.has_value());
+    const auto inner_plan = Das::Utils::SerializeYyjsonValue(
+        (*compile_section)[std::string_view("executionInput")]);
+    EXPECT_TRUE(inner_plan.has_value());
+    return inner_plan.value_or(std::string{});
+}
+
+// 把 plan 文本装进 executionInput 输入口（组件读该端口的唯一喂线形态）。
+DasPtr<Das::ExportInterface::IDasPortMap> MakeExecutionInputMap(
+    const std::string& plan_text)
+{
+    DasPtr<Das::ExportInterface::IDasPortMap> input_map;
+    EXPECT_EQ(CreateIDasPortMap(input_map.Put()), DAS_S_OK);
+    const DasReadOnlyString execution_input_key{"executionInput"};
+    const DasReadOnlyString execution_input_value{plan_text.c_str()};
+    EXPECT_EQ(
+        input_map->SetString(
+            execution_input_key.Get(),
+            execution_input_value.Get()),
+        DAS_S_OK);
+    return input_map;
+}
+
 TEST(DasGraphTaskTest, ConstructWithNullHost)
 {
     auto task = DasGraphTaskImpl::Make(nullptr);
@@ -139,7 +183,10 @@ TEST(DasGraphTaskTest, DoWithMockHostReturnsSuccessOnEmptyPlan)
     ASSERT_NE(task.Get(), nullptr);
 
     DasPtr<Das::ExportInterface::IDasPortMap> result;
-    const DasResult hr = task->Do(nullptr, nullptr, result.Put());
+    const DasResult                           hr = task->Do(
+        nullptr,
+        MakeExecutionInputMap(EmptyCompiledPlanText()).Get(),
+        result.Put());
     // Empty plan runs without error (empty graph).
     EXPECT_TRUE(DAS::IsOk(hr));
 }
@@ -514,10 +561,14 @@ TEST(DasGraphTaskTest, PackageInjectsHostIntoFactoryCreatedComponent)
         DAS_S_OK);
     ASSERT_NE(component.Get(), nullptr);
 
-    // 组件持有可用 host：空 plan 经 host 路径执行成功（host 缺失时 Do
-    // 结构化失败）。
+    // 组件持有可用 host：空 plan（真编译产物；空 artifact 已被执行门拒
+    // 绝）经 host 路径执行成功（host 缺失时 Do 结构化失败）。
     DasPtr<Das::ExportInterface::IDasPortMap> result;
-    EXPECT_TRUE(DAS::IsOk(component->Do(nullptr, nullptr, result.Put())));
+    EXPECT_TRUE(
+        DAS::IsOk(component->Do(
+            nullptr,
+            MakeExecutionInputMap(EmptyCompiledPlanText()).Get(),
+            result.Put())));
 }
 
 // adapter 同链：包注入 host → CreateFeatureInterface(0) → adapter 经 host
