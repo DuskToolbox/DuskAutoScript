@@ -25,9 +25,12 @@ BOM = b"\xef\xbb\xbf"
 
 # 代码新增行中的过程产物编号引用：review finding 编号、决策 ID、phase 编号、plan 编号。
 # 这些编号是过程产物，不应以注释形式残留在代码里（与 .githooks/commit-msg 对齐）。
+# 决策 ID 的 D 前置 \b：D 是十六进制字符，GUID 字面量（68F1000D-0000-...）
+# 天然含 D-数字-数字 形——决策 ID 的 D 前恒为词边界（空格/括号），GUID 内
+# D 前恒为数字（非边界），以此区分两者。
 REVIEW_FINDING_REF = re.compile(
     r"\b(CR|WR|IN)-[0-9]+\b"
-    r"|D-[0-9]+(\.[0-9]+)?-[0-9]+"
+    r"|\bD-[0-9]+(\.[0-9]+)?-[0-9]+"
     r"|(?:Phase|phase|Plan|plan)[ \t]+[0-9]+"
 )
 
