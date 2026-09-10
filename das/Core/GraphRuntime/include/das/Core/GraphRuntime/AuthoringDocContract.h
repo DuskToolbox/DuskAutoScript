@@ -99,6 +99,13 @@ namespace Contract
     /// raw settings value verbatim (no type conversion) so the UI can render
     /// and edit the port's current bound default. Disengaged everywhere else
     /// — the wire key is then absent, never an explicit null.
+    /// `connected_from` is the source-indicator channel, the mirror of the
+    /// value channel for the connected state: engaged only for direction
+    /// "input" + category "data" ports an edge lands on, carrying
+    /// "source_node_id::source_port_id" of the first matching incoming edge
+    /// (backend-generated server re-projection — the UI never assembles the
+    /// origin from the connections list itself). Empty = no incoming edge;
+    /// the wire key is absent, never an explicit null.
     struct GraphNodePort
     {
         std::string                  port_id;
@@ -107,6 +114,7 @@ namespace Contract
         std::string                  direction;
         std::string                  category;
         std::optional<yyjson::value> value;
+        std::string                  connected_from;
     };
 
     /// One canvas node in the public contract. componentGuid is sourced from

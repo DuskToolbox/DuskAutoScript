@@ -561,7 +561,7 @@ namespace
         ASSERT_TRUE(graph.has_value());
         const auto nodes = (*graph)[std::string_view("nodes")].as_array();
         ASSERT_TRUE(nodes.has_value());
-        ASSERT_EQ(nodes->size(), 1u);
+        ASSERT_EQ(nodes->size(), 2u); // n1 (target) + n2 (source)
         const auto node_obj = (*nodes)[0].as_object();
         ASSERT_TRUE(node_obj.has_value());
         const auto ports = (*node_obj)[std::string_view("ports")].as_array();

@@ -428,33 +428,40 @@ namespace Contract
                        : std::string(PORT_CATEGORY_DATA);
         }
 
-        /// Optional default-value channel for unconnected input ports: when
-        /// the node's settings carry a key matching an input data port's id
-        /// and no document edge lands on that exact (node_id, port_id)
-        /// endpoint, the projected port exposes that raw value verbatim (no
-        /// type conversion) so the UI can render and edit the port's current
-        /// bound default. A connected port's live value rides the wire, so a
-        /// residual settings value must not resurface as an editable default
-        /// — the settings residual survives for the disconnected state
-        /// instead (reconnection default). Every other port shape — signal
-        /// inputs, outputs, ports without a matching settings key — keeps
-        /// the channel disengaged; a null settings value reads as "no value"
+        /// The two engaged-only channels of an input data port, decided by
+        /// the connected state. Unconnected: the default-value channel —
+        /// when the node's settings carry a key matching the port id, the
+        /// projected port exposes that raw value verbatim (no type
+        /// conversion) so the UI can render and edit the port's current
+        /// bound default; the settings residual survives for the
+        /// disconnected state (reconnection default). Connected (an edge
+        /// lands on that exact (node_id, port_id) endpoint): the
+        /// source-indicator channel instead — the live value rides the wire
+        /// so the residual must not resurface as an editable default, and
+        /// the first matching incoming edge's source coordinates
+        /// ("source_node_id::source_port_id") become the read-only origin
+        /// the panel renders. Every other port shape — signal inputs,
+        /// outputs, ports without a matching settings key — keeps both
+        /// channels disengaged; a null settings value reads as "no value"
         /// (the same semantics the field projection gives nulls). The wire
-        /// key is then absent, never an explicit null.
+        /// keys are then absent, never an explicit null.
         void AttachPortValueFromSettings(
-            const yyjson::value&                   settings,
-            const std::string&                     node_id,
-            const std::unordered_set<std::string>& connected_input_ports,
-            GraphNodePort&                         projected)
+            const yyjson::value& settings,
+            const std::string&   node_id,
+            const std::unordered_map<std::string, std::string>&
+                           connected_input_sources,
+            GraphNodePort& projected)
         {
             if (projected.direction != std::string_view(PORT_DIRECTION_INPUT)
                 || projected.category != std::string_view(PORT_CATEGORY_DATA))
             {
                 return;
             }
-            if (connected_input_ports.count(node_id + "::" + projected.port_id)
-                > 0)
+            const auto hit = connected_input_sources.find(
+                node_id + "::" + projected.port_id);
+            if (hit != connected_input_sources.end())
             {
+                projected.connected_from = hit->second;
                 return;
             }
             auto settings_obj = settings.as_object();
@@ -478,16 +485,20 @@ namespace Contract
         {
             GraphView view;
             // Connected input-port endpoints, keyed
-            // "target_node_id::target_port_id": the exact coordinate pair
-            // the value-channel gate matches on, so a connected port never
-            // also projects an editable settings default regardless of the
-            // edge type (the public connections projection drops edge_type,
-            // so the UI client gate applies the same type-agnostic rule).
-            std::unordered_set<std::string> connected_input_ports;
+            // "target_node_id::target_port_id" and mapped to the first
+            // matching incoming edge's "source_node_id::source_port_id":
+            // the exact coordinate pair both port channels gate on, so a
+            // connected port never also projects an editable settings
+            // default regardless of the edge type (the public connections
+            // projection drops edge_type, so the UI client gate applies the
+            // same type-agnostic rule).
+            std::unordered_map<std::string, std::string>
+                connected_input_sources;
             for (const auto& edge : doc.edges)
             {
-                connected_input_ports.insert(
-                    edge.target_node_id + "::" + edge.target_port_id);
+                connected_input_sources.emplace(
+                    edge.target_node_id + "::" + edge.target_port_id,
+                    edge.source_node_id + "::" + edge.source_port_id);
             }
             view.nodes.reserve(doc.nodes.size());
             for (const auto& node : doc.nodes)
@@ -538,7 +549,7 @@ namespace Contract
                         AttachPortValueFromSettings(
                             node.settings,
                             node.node_id,
-                            connected_input_ports,
+                            connected_input_sources,
                             projected);
                         out.ports.push_back(std::move(projected));
                     }
@@ -747,10 +758,12 @@ namespace Contract
 
         // Build the ports[] array as a standalone yyjson::value. Every element
         // carries the five locked keys (portId/displayLabel/portType/
-        // direction/category) plus the optional default-value key "value" —
-        // emitted only where the projection engaged it (input data ports
-        // with a matching settings key); a node without ports still emits
-        // the key as an empty array so the wire shape stays stable. Per
+        // direction/category) plus the two optional engaged-only channels —
+        // the default-value key "value" (unconnected input data ports with a
+        // matching settings key) and the source-indicator key "connectedFrom"
+        // (input data ports an edge lands on) — each emitted only where the
+        // projection engaged it; a node without ports still emits the key as
+        // an empty array so the wire shape stays stable. Per
         // das-yyjson-string-safety every std::string payload is deep-copied
         // into the document arena.
         yyjson::value BuildPortsValue(const std::vector<GraphNodePort>& ports)
@@ -794,6 +807,17 @@ namespace Contract
                     && port.category == std::string_view(PORT_CATEGORY_DATA))
                 {
                     po["value"] = Das::Utils::CloneYyjsonValue(*port.value);
+                }
+                // Optional, engaged-only source indicator: the mirror gate
+                // of the value channel for the connected state — a plain
+                // string, deep-copied per das-yyjson-string-safety.
+                if (!port.connected_from.empty()
+                    && port.direction == std::string_view(PORT_DIRECTION_INPUT)
+                    && port.category == std::string_view(PORT_CATEGORY_DATA))
+                {
+                    po["connectedFrom"] = std::make_pair(
+                        std::string_view(port.connected_from),
+                        yyjson::copy_string);
                 }
                 arr.emplace_back(std::move(p_v));
             }

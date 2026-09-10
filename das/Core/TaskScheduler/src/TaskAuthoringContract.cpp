@@ -1238,14 +1238,17 @@ namespace Das::Core::TaskScheduler
 
         // Node port projection element: the five locked keys
         // {portId, displayLabel, portType, direction, category} plus the
-        // optional default-value key "value" with direction in
+        // optional default-value key "value" and the optional
+        // source-indicator key "connectedFrom" with direction in
         // {"input", "output"} and category in
         // {"execution", "data"} (drag-link precheck data source; the
         // projection never interprets portType semantics — the category is
         // the Core-derived execution/data split). "value" carries the raw
         // node settings entry bound to an unconnected input data port —
         // any JSON shape, engaged-only on the wire (absent key, never an
-        // explicit null).
+        // explicit null). "connectedFrom" carries the backend-generated
+        // origin ("source_node::source_port") of a connected input data
+        // port — a plain string, engaged-only the same way.
         AuthoringValidationResult ValidateGraphNodePort(
             const yyjson::value& port)
         {
@@ -1312,11 +1315,23 @@ namespace Das::Core::TaskScheduler
                      "portType",
                      "direction",
                      "category",
-                     "value"}))
+                     "value",
+                     "connectedFrom"}))
             {
                 return Fail(
                     "unknownField",
                     "GraphNode port rejects unknown field");
+            }
+            // Optional source-indicator key: the backend-generated origin
+            // ("source_node::source_port") of a connected input data port —
+            // engaged-only on the wire, so a present value must be a
+            // non-empty string (the projection never emits empty).
+            if (obj.contains("connectedFrom")
+                && !obj["connectedFrom"].is_string())
+            {
+                return Fail(
+                    "invalidPortConnectedFrom",
+                    "GraphNode port.connectedFrom must be a string");
             }
             return Pass();
         }
