@@ -176,6 +176,15 @@ struct PortKeyHash
 //
 // A snapshot of all port values for a compiled graph at a single execution
 // step.  Core-internal only — no IDL, no IPC.
+//
+// Data retention across loop iterations is last-write-wins: a data port holds
+// the value of the iteration that last wrote it, so a consumer reading on a
+// skipped iteration observes the previous active iteration's value rather
+// than a fresh one. Crossing iterations with a value that must track the
+// loop is what data back edges are for — loop-carried state has an explicit
+// channel. The outer-restart clearing of nested data back-edge sources in
+// RunSignalGated is the one precise exception to "signals clear, data
+// persists".
 // ---------------------------------------------------------------------------
 class PortFrame
 {

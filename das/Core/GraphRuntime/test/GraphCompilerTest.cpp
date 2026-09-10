@@ -800,6 +800,9 @@ TEST(ToposortTest, DisconnectedGraph)
     EXPECT_NE(std::find(order.begin(), order.end(), "C"), order.end());
 }
 
+// 数据环在排序层被容留（回边剔除出 Kahn 后仍可排序），拒绝发生在
+// Compile() 的承载检查（UnbackedDataCycle + 清空 execution_order）——
+// 「排序层直接空」的旧语义已随数据回边合法化退役。
 TEST(ToposortTest, CycleDetection)
 {
     GraphDocumentDto doc;
@@ -816,7 +819,11 @@ TEST(ToposortTest, CycleDetection)
     GraphCompiler compiler;
     auto          order = compiler.ComputeExecutionOrder(doc);
 
-    EXPECT_TRUE(order.empty());
+    EXPECT_FALSE(order.empty());
+
+    auto plan = compiler.Compile(doc);
+    EXPECT_TRUE(plan.execution_order.empty());
+    EXPECT_TRUE(HasUnbackedDataCycleDiagnostic(plan));
 }
 
 TEST(ToposortTest, SelfLoopCycle)
@@ -829,7 +836,11 @@ TEST(ToposortTest, SelfLoopCycle)
     GraphCompiler compiler;
     auto          order = compiler.ComputeExecutionOrder(doc);
 
-    EXPECT_TRUE(order.empty());
+    EXPECT_FALSE(order.empty());
+
+    auto plan = compiler.Compile(doc);
+    EXPECT_TRUE(plan.execution_order.empty());
+    EXPECT_TRUE(HasUnbackedDataCycleDiagnostic(plan));
 }
 
 // ===================================================================

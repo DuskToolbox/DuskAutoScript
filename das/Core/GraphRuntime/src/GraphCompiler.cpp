@@ -803,8 +803,37 @@ GraphCompiler::TopologyResult GraphCompiler::ComputeTopology(
         }
     }
 
-    // Layer under construction: SCC member set for tier/nesting, expanded
-    // member set (SCC ∪ producer closure) for the recorded DTO.
+    // Layer seeds. A cyclic SCC may hold several nested cycles: an inner loop
+    // re-entered from an outer body collapses into one SCC over the full edge
+    // set (everything is mutually reachable), so plain Tarjan cannot see the
+    // nesting. Each signal back edge inside the SCC defines a natural loop
+    // and back edges sharing a head merge into one layer. Membership is the
+    // textbook two-half rule: nodes that reach a back-edge source without
+    // passing the head, intersected with nodes the head reaches without
+    // using any back edge. The second half keeps outer-level machinery (only
+    // reachable through an outer back edge) out of inner loops, while bodies
+    // chained by data edges stay in — the loop-carried flow may ride data
+    // lines, not just signal lines.
+    const auto edge_is_signal = [](const Dto::GraphEdgeDto* edge)
+    { return edge->edge_type == "signal"; };
+
+    std::unordered_map<std::string, std::vector<std::string>> all_preds;
+    std::unordered_map<std::string, std::vector<const Dto::GraphEdgeDto*>>
+        all_succ;
+    for (const auto& edge : document.edges)
+    {
+        if (node_index.count(edge.source_node_id) == 0
+            || node_index.count(edge.target_node_id) == 0)
+        {
+            continue;
+        }
+        all_preds[edge.target_node_id].push_back(edge.source_node_id);
+        all_succ[edge.source_node_id].push_back(&edge);
+    }
+
+    // Layer under construction: natural-loop member set for tier/nesting,
+    // expanded member set (natural loop ∪ producer closure) for the recorded
+    // DTO.
     struct LayerDraft
     {
         std::set<std::string> scc_members;
@@ -813,6 +842,75 @@ GraphCompiler::TopologyResult GraphCompiler::ComputeTopology(
         bool                  has_signal_back_edge = false;
     };
     std::vector<LayerDraft> layer_drafts;
+
+    const auto natural_loop_of =
+        [&](const std::set<std::string>&                 scc,
+            const std::string&                           head,
+            const std::vector<const Dto::GraphEdgeDto*>& sources)
+    {
+        std::unordered_set<std::string> reaches_source;
+        std::vector<std::string>        backward_pending;
+        for (const auto* edge : sources)
+        {
+            if (scc.count(edge->source_node_id) > 0
+                && reaches_source.insert(edge->source_node_id).second)
+            {
+                backward_pending.push_back(edge->source_node_id);
+            }
+        }
+        while (!backward_pending.empty())
+        {
+            const std::string node = backward_pending.back();
+            backward_pending.pop_back();
+            auto pred_it = all_preds.find(node);
+            if (pred_it == all_preds.end())
+            {
+                continue;
+            }
+            for (const auto& pred : pred_it->second)
+            {
+                if (pred != head && scc.count(pred) > 0
+                    && reaches_source.insert(pred).second)
+                {
+                    backward_pending.push_back(pred);
+                }
+            }
+        }
+
+        std::unordered_set<std::string> forward_from_head{head};
+        std::vector<std::string>        forward_pending{head};
+        while (!forward_pending.empty())
+        {
+            const std::string node = forward_pending.back();
+            forward_pending.pop_back();
+            auto succ_it = all_succ.find(node);
+            if (succ_it == all_succ.end())
+            {
+                continue;
+            }
+            for (const auto* edge : succ_it->second)
+            {
+                if (back_edge_ids.count(edge->edge_id) > 0
+                    || scc.count(edge->target_node_id) == 0
+                    || !forward_from_head.insert(edge->target_node_id).second)
+                {
+                    continue;
+                }
+                forward_pending.push_back(edge->target_node_id);
+            }
+        }
+
+        std::set<std::string> members{head};
+        for (const auto& node : reaches_source)
+        {
+            if (forward_from_head.count(node) > 0)
+            {
+                members.insert(node);
+            }
+        }
+        return members;
+    };
+
     for (auto& scc : scc_sets)
     {
         const bool is_cycle =
@@ -821,77 +919,100 @@ GraphCompiler::TopologyResult GraphCompiler::ComputeTopology(
         {
             continue;
         }
-        LayerDraft draft;
-        draft.scc_members = scc;
-        draft.expanded_members = std::move(scc);
-        layer_drafts.push_back(std::move(draft));
+
+        // Group this SCC's signal back edges by their target (the head each
+        // returns to); heads sorted by document index keep drafts
+        // deterministic.
+        std::vector<const Dto::GraphEdgeDto*> scc_signal_backs;
+        for (const auto* edge : back_edges_raw)
+        {
+            if (edge_is_signal(edge) && scc.count(edge->source_node_id) > 0)
+            {
+                scc_signal_backs.push_back(edge);
+            }
+        }
+
+        if (scc_signal_backs.empty())
+        {
+            // No signal circuit in this SCC: keep it whole so the carrying
+            // check one level up can reject it with guidance.
+            LayerDraft draft;
+            draft.scc_members = scc;
+            draft.expanded_members = scc;
+            layer_drafts.push_back(std::move(draft));
+            continue;
+        }
+
+        std::vector<std::string> heads;
+        for (const auto* edge : scc_signal_backs)
+        {
+            if (std::find(heads.begin(), heads.end(), edge->target_node_id)
+                == heads.end())
+            {
+                heads.push_back(edge->target_node_id);
+            }
+        }
+        std::sort(
+            heads.begin(),
+            heads.end(),
+            [&](const std::string& a, const std::string& b)
+            { return node_index[a] < node_index[b]; });
+        for (const auto& head : heads)
+        {
+            std::vector<const Dto::GraphEdgeDto*> sources;
+            for (const auto* edge : scc_signal_backs)
+            {
+                if (edge->target_node_id == head)
+                {
+                    sources.push_back(edge);
+                }
+            }
+            LayerDraft draft;
+            draft.scc_members = natural_loop_of(scc, head, sources);
+            draft.expanded_members = draft.scc_members;
+            draft.head_node_id = head;
+            draft.has_signal_back_edge = true;
+            layer_drafts.push_back(std::move(draft));
+        }
     }
 
-    // tier = nesting depth: how many other layers' SCC member sets strictly
-    // contain this layer's. Plain Tarjan SCCs are pairwise disjoint, so the
-    // single-level graphs here always land tier 0; nested layer derivation
-    // (peeling inner layers) slots into this rule unchanged.
-    const auto layer_contains =
-        [](const LayerDraft& outer, const LayerDraft& inner)
+    // Whole-SCC drafts (no signal back edge) fall back to their first member
+    // in document order as head; split drafts already carry their back-edge
+    // target (the carrying check one layer up in Compile() rejects the
+    // former).
+    for (std::size_t i = 0; i < layer_drafts.size(); ++i)
     {
-        if (outer.scc_members.size() <= inner.scc_members.size())
+        if (!layer_drafts[i].head_node_id.empty())
         {
-            return false;
+            continue;
         }
-        return std::includes(
-            outer.scc_members.begin(),
-            outer.scc_members.end(),
-            inner.scc_members.begin(),
-            inner.scc_members.end());
-    };
+        for (const auto& node : document.nodes)
+        {
+            if (layer_drafts[i].scc_members.count(node.node_id) > 0)
+            {
+                layer_drafts[i].head_node_id = node.node_id;
+                break;
+            }
+        }
+    }
+
+    // tier = nesting depth: how many other layers' member sets contain this
+    // layer's head (L' nested in L iff head(L') ∈ members(L), L' ≠ L).
+    // Natural loops of one SCC nest; disjoint SCCs cannot contain each
+    // other's heads, so isolated rings stay tier 0.
     std::vector<int> layer_tiers(layer_drafts.size(), 0);
     for (std::size_t i = 0; i < layer_drafts.size(); ++i)
     {
         for (std::size_t j = 0; j < layer_drafts.size(); ++j)
         {
-            if (i != j && layer_contains(layer_drafts[j], layer_drafts[i]))
+            if (i != j
+                && layer_drafts[j].scc_members.count(
+                       layer_drafts[i].head_node_id)
+                       > 0)
             {
                 ++layer_tiers[i];
             }
         }
-    }
-
-    // Layer head: the loop head is the node the layer's signal back edges
-    // return to (smallest document index wins for determinism); a layer
-    // with no signal back edge falls back to its first member in document
-    // order (the carrying check one layer up in Compile() rejects those).
-    const auto edge_is_signal = [](const Dto::GraphEdgeDto* edge)
-    { return edge->edge_type == "signal"; };
-
-    for (std::size_t i = 0; i < layer_drafts.size(); ++i)
-    {
-        std::string best_head;
-        for (const auto* edge : back_edges_raw)
-        {
-            if (!edge_is_signal(edge)
-                || layer_drafts[i].scc_members.count(edge->source_node_id) == 0)
-            {
-                continue;
-            }
-            layer_drafts[i].has_signal_back_edge = true;
-            if (best_head.empty()
-                || node_index[edge->target_node_id] < node_index[best_head])
-            {
-                best_head = edge->target_node_id;
-            }
-        }
-        if (best_head.empty())
-        {
-            for (const auto& node : document.nodes)
-            {
-                if (layer_drafts[i].scc_members.count(node.node_id) > 0)
-                {
-                    best_head = node.node_id;
-                    break;
-                }
-            }
-        }
-        layer_drafts[i].head_node_id = std::move(best_head);
     }
 
     // Producer closure: a data producer with no incoming signal edge has no
@@ -918,12 +1039,15 @@ GraphCompiler::TopologyResult GraphCompiler::ComputeTopology(
         }
     }
 
-    std::unordered_map<std::string, std::size_t> layer_of_member;
+    // Nested layers overlap (an inner layer's members belong to the outer
+    // layer too), so membership is multi-valued; every consumer-side lookup
+    // then picks the innermost candidate.
+    std::unordered_map<std::string, std::vector<std::size_t>> layers_of_member;
     for (std::size_t i = 0; i < layer_drafts.size(); ++i)
     {
         for (const auto& member : layer_drafts[i].expanded_members)
         {
-            layer_of_member[member] = i;
+            layers_of_member[member].push_back(i);
         }
     }
 
@@ -939,6 +1063,18 @@ GraphCompiler::TopologyResult GraphCompiler::ComputeTopology(
         return node_index[layer_drafts[candidate].head_node_id]
                < node_index[layer_drafts[incumbent].head_node_id];
     };
+    const auto innermost_of = [&](const std::vector<std::size_t>& candidates)
+    {
+        std::size_t best = candidates.front();
+        for (std::size_t k = 1; k < candidates.size(); ++k)
+        {
+            if (is_innermost_choice(candidates[k], best))
+            {
+                best = candidates[k];
+            }
+        }
+        return best;
+    };
 
     bool closure_grew = true;
     while (closure_grew)
@@ -946,7 +1082,7 @@ GraphCompiler::TopologyResult GraphCompiler::ComputeTopology(
         closure_grew = false;
         for (const auto& node : document.nodes)
         {
-            if (layer_of_member.count(node.node_id) > 0
+            if (layers_of_member.count(node.node_id) > 0
                 || nodes_with_signal_in_edge.count(node.node_id) > 0)
             {
                 continue;
@@ -954,15 +1090,18 @@ GraphCompiler::TopologyResult GraphCompiler::ComputeTopology(
             std::size_t best_layer = layer_drafts.size();
             for (const auto& consumer : data_forward[node.node_id])
             {
-                auto found = layer_of_member.find(consumer);
-                if (found == layer_of_member.end())
+                auto found = layers_of_member.find(consumer);
+                if (found == layers_of_member.end())
                 {
                     continue;
                 }
-                if (best_layer == layer_drafts.size()
-                    || is_innermost_choice(found->second, best_layer))
+                for (const auto candidate : found->second)
                 {
-                    best_layer = found->second;
+                    if (best_layer == layer_drafts.size()
+                        || is_innermost_choice(candidate, best_layer))
+                    {
+                        best_layer = candidate;
+                    }
                 }
             }
             if (best_layer == layer_drafts.size())
@@ -970,14 +1109,23 @@ GraphCompiler::TopologyResult GraphCompiler::ComputeTopology(
                 continue;
             }
             layer_drafts[best_layer].expanded_members.insert(node.node_id);
-            layer_of_member[node.node_id] = best_layer;
+            layers_of_member[node.node_id].push_back(best_layer);
             closure_grew = true;
         }
     }
 
     // Back-edge records: every loop-closing edge lands in the plan with its
     // kind and owning layer (head + loop id bridge the runtime's firing and
-    // reset bookkeeping).
+    // reset bookkeeping). A signal back edge belongs to the layer whose head
+    // it returns to; a data back edge belongs to the innermost layer holding
+    // its source, so nested loops keep their own loop-carried channels apart.
+    std::unordered_map<std::string, std::size_t> layer_of_head;
+    for (std::size_t i = 0; i < layer_drafts.size(); ++i)
+    {
+        layer_of_head[layer_drafts[i].head_node_id] = i;
+    }
+    std::vector<std::set<std::pair<std::string, std::string>>>
+        layer_data_sources(layer_drafts.size());
     for (const auto* edge : back_edges_raw)
     {
         Dto::BackEdgeDto back;
@@ -987,13 +1135,36 @@ GraphCompiler::TopologyResult GraphCompiler::ComputeTopology(
         back.target_node_id = edge->target_node_id;
         back.target_port_id = edge->target_port_id;
         back.edge_kind = edge_is_signal(edge) ? "signal" : "data";
-        auto layer_it = layer_of_member.find(edge->source_node_id);
-        if (layer_it != layer_of_member.end())
+        std::size_t owner = layer_drafts.size();
+        if (edge_is_signal(edge))
         {
-            back.loop_head_node_id =
-                layer_drafts[layer_it->second].head_node_id;
-            back.loop_id =
-                "loop::" + layer_drafts[layer_it->second].head_node_id;
+            auto head_it = layer_of_head.find(edge->target_node_id);
+            if (head_it != layer_of_head.end()
+                && layer_drafts[head_it->second].scc_members.count(
+                       edge->source_node_id)
+                       > 0)
+            {
+                owner = head_it->second;
+            }
+        }
+        else
+        {
+            auto member_it = layers_of_member.find(edge->source_node_id);
+            if (member_it != layers_of_member.end()
+                && !member_it->second.empty())
+            {
+                owner = innermost_of(member_it->second);
+            }
+        }
+        if (owner != layer_drafts.size())
+        {
+            back.loop_head_node_id = layer_drafts[owner].head_node_id;
+            back.loop_id = "loop::" + layer_drafts[owner].head_node_id;
+            if (!edge_is_signal(edge))
+            {
+                layer_data_sources[owner].insert(
+                    {edge->source_node_id, edge->source_port_id});
+            }
         }
         else
         {
@@ -1036,6 +1207,40 @@ GraphCompiler::TopologyResult GraphCompiler::ComputeTopology(
             result.diagnostics.push_back(std::move(diagnostic));
         }
     }
+
+    // Recorded members: core ∪ closure, plus every strictly-nested layer's
+    // recorded members — the outer reset set must cover the inner loop's
+    // entirety. Nesting is decided core-side (head containment); closure
+    // producers never carry a signal in-edge, so they can never masquerade
+    // as heads and the recursion stays acyclic.
+    std::vector<std::set<std::string>> recorded_members(layer_drafts.size());
+    std::function<void(std::size_t)>   collect_recorded = [&](std::size_t i)
+    {
+        if (!recorded_members[i].empty())
+        {
+            return;
+        }
+        recorded_members[i] = layer_drafts[i].expanded_members;
+        for (std::size_t j = 0; j < layer_drafts.size(); ++j)
+        {
+            if (j == i
+                || layer_drafts[i].scc_members.count(
+                       layer_drafts[j].head_node_id)
+                       == 0)
+            {
+                continue;
+            }
+            collect_recorded(j);
+            recorded_members[i].insert(
+                recorded_members[j].begin(),
+                recorded_members[j].end());
+        }
+    };
+    for (std::size_t i = 0; i < layer_drafts.size(); ++i)
+    {
+        collect_recorded(i);
+    }
+
     for (std::size_t i = 0; i < layer_drafts.size(); ++i)
     {
         Dto::LoopLayerDto layer;
@@ -1044,23 +1249,12 @@ GraphCompiler::TopologyResult GraphCompiler::ComputeTopology(
         layer.tier = layer_tiers[i];
         for (const auto& node : document.nodes)
         {
-            if (layer_drafts[i].expanded_members.count(node.node_id) > 0)
+            if (recorded_members[i].count(node.node_id) > 0)
             {
                 layer.members.push_back(node.node_id);
             }
         }
-        std::set<std::pair<std::string, std::string>> source_sites;
-        for (const auto* edge : back_edges_raw)
-        {
-            if (!edge_is_signal(edge)
-                && layer_drafts[i].expanded_members.count(edge->source_node_id)
-                       > 0)
-            {
-                source_sites.insert(
-                    {edge->source_node_id, edge->source_port_id});
-            }
-        }
-        for (const auto& [node_id, port_id] : source_sites)
+        for (const auto& [node_id, port_id] : layer_data_sources[i])
         {
             Dto::PortRefDto ref;
             ref.node_id = node_id;
@@ -1068,6 +1262,43 @@ GraphCompiler::TopologyResult GraphCompiler::ComputeTopology(
             layer.data_back_edge_sources.push_back(std::move(ref));
         }
         result.loop_layers.push_back(std::move(layer));
+    }
+
+    // Leak lint: a member's data edge leaving every loop layer (and not a
+    // back edge) is a stale-value risk, not an error — the port does not
+    // refresh on skipped iterations, so outside readers observe the last
+    // active iteration's value. Edges between two layers' members (an inner
+    // body feeding an outer body) are fine: the outer restart re-runs the
+    // inner loop from scratch, so the value never goes stale across a
+    // boundary it actually crosses.
+    std::unordered_set<std::string> any_layer_members;
+    for (std::size_t i = 0; i < layer_drafts.size(); ++i)
+    {
+        any_layer_members.insert(
+            recorded_members[i].begin(),
+            recorded_members[i].end());
+    }
+    for (const auto& edge : document.edges)
+    {
+        if (edge.edge_type == "signal" || back_edge_ids.count(edge.edge_id) > 0
+            || any_layer_members.count(edge.source_node_id) == 0
+            || any_layer_members.count(edge.target_node_id) > 0)
+        {
+            continue;
+        }
+        CompileEdgeDiagnostic diagnostic;
+        diagnostic.kind = CompileDiagnosticKind::LoopBodyDataLeak;
+        diagnostic.node_id = edge.source_node_id;
+        diagnostic.port_id = edge.source_port_id;
+        diagnostic.edge_id = edge.edge_id;
+        diagnostic.message = DAS_FMT_NS::format(
+            "Loop-body data edge leaves every loop layer: port '{}.{}' does "
+            "not refresh on skipped iterations, so outside readers observe "
+            "the last active iteration's value; carry the state with a data "
+            "back edge instead",
+            edge.source_node_id,
+            edge.source_port_id);
+        result.diagnostics.push_back(std::move(diagnostic));
     }
 
     // Signal routes: every signal edge becomes a route (forward + back).
@@ -1547,15 +1778,21 @@ Dto::CompiledGraphPlanDto GraphCompiler::Compile(
     plan.signal_routes = std::move(topology.signal_routes);
     plan.back_edges = std::move(topology.back_edges);
     plan.loop_layers = std::move(topology.loop_layers);
-    if (!topology.diagnostics.empty())
+    // Topology diagnostics ride along, split by severity: unbacked data
+    // cycles fail closed with guidance (the plan carries no executable
+    // order), while the loop-body leak lint is a stale-value risk hint
+    // that must not block compilation.
+    bool has_fatal_topology_diagnostic = false;
+    for (const auto& diagnostic : topology.diagnostics)
     {
-        // Unbacked data cycles: fail-closed with guidance — the plan carries
-        // no executable order (the same rejection shape the Kahn fallback
-        // below uses, but a distinct diagnostic kind the UI can consume).
-        for (const auto& diagnostic : topology.diagnostics)
+        plan.diagnostics.push_back(DiagnosticToJson(diagnostic));
+        if (diagnostic.kind == CompileDiagnosticKind::UnbackedDataCycle)
         {
-            plan.diagnostics.push_back(DiagnosticToJson(diagnostic));
+            has_fatal_topology_diagnostic = true;
         }
+    }
+    if (has_fatal_topology_diagnostic)
+    {
         plan.execution_order.clear();
     }
     else if (plan.execution_order.empty() && !document.nodes.empty())
