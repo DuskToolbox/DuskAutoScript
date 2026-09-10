@@ -1175,7 +1175,6 @@ GraphCompiler::TopologyResult GraphCompiler::ComputeTopology(
         if (owner != layer_drafts.size())
         {
             back.loop_head_node_id = layer_drafts[owner].head_node_id;
-            back.loop_id = "loop::" + layer_drafts[owner].head_node_id;
             if (!edge_is_signal(edge))
             {
                 layer_data_sources[owner].insert(
@@ -1260,7 +1259,6 @@ GraphCompiler::TopologyResult GraphCompiler::ComputeTopology(
     for (std::size_t i = 0; i < layer_drafts.size(); ++i)
     {
         Dto::LoopLayerDto layer;
-        layer.loop_id = "loop::" + layer_drafts[i].head_node_id;
         layer.head_node_id = layer_drafts[i].head_node_id;
         layer.tier = layer_tiers[i];
         for (const auto& node : document.nodes)

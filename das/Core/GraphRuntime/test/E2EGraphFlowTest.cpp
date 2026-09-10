@@ -770,7 +770,6 @@ TEST_F(E2EGraphFlowTest, WhileLoopWithDataBackEdgeConverges)
     ASSERT_EQ(plan.loop_layers.size(), 1u);
     EXPECT_EQ(plan.loop_layers[0].head_node_id, node_while);
     EXPECT_EQ(plan.loop_layers[0].tier, 0);
-    EXPECT_EQ(plan.loop_layers[0].loop_id, "loop::" + node_while);
     ASSERT_EQ(plan.loop_layers[0].members.size(), 3u);
     EXPECT_EQ(plan.loop_layers[0].members[0], node_while);
     EXPECT_EQ(plan.loop_layers[0].members[1], node_arith);

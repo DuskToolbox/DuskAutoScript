@@ -1097,7 +1097,6 @@ namespace SignalGatedTestMock
             tgt_port,
             loop_head);
         be.edge_kind = "data";
-        be.loop_id = "loop::" + loop_head;
         return be;
     }
 
@@ -1116,7 +1115,6 @@ namespace SignalGatedTestMock
         std::vector<PortRefDto>  data_back_edge_sources = {})
     {
         LoopLayerDto layer;
-        layer.loop_id = "loop::" + head;
         layer.head_node_id = head;
         layer.tier = tier;
         layer.members = std::move(members);

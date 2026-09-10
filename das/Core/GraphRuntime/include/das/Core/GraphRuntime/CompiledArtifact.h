@@ -72,8 +72,7 @@ namespace Dto
     // edge_kind splits the two loop-carried channels explicitly: "signal"
     // back edges carry the iteration boundary (the runtime fires and re-pends
     // the loop on them), "data" back edges carry loop state (values survive
-    // across iterations; they never fire). loop_id bridges the edge to its
-    // owning LoopLayerDto.
+    // across iterations; they never fire).
     struct BackEdgeDto
     {
         std::string edge_id;
@@ -83,7 +82,6 @@ namespace Dto
         std::string target_port_id;
         std::string loop_head_node_id;
         std::string edge_kind = "signal";
-        std::string loop_id;
     };
 
     // ---- port coordinate (node + port pair) ----
@@ -104,7 +102,6 @@ namespace Dto
     // state channel of the loop.
     struct LoopLayerDto
     {
-        std::string              loop_id;
         std::string              head_node_id;
         int32_t                  tier = 0;
         std::vector<std::string> members;

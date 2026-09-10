@@ -1371,7 +1371,6 @@ TEST(SignalAwareCompileTest, ForWhileBackEdgeCompilesWithoutCycle)
     EXPECT_EQ(topo.back_edges[0].target_node_id, "for");
     EXPECT_EQ(topo.back_edges[0].loop_head_node_id, "for");
     EXPECT_EQ(topo.back_edges[0].edge_kind, "signal");
-    EXPECT_EQ(topo.back_edges[0].loop_id, "loop::for");
 
     // The cycle layer is recorded for the runtime's iteration reset set.
     ASSERT_EQ(topo.loop_layers.size(), 1u);
@@ -1581,11 +1580,11 @@ TEST(SignalAwareCompileTest, NestedWhileLoopsRecordTwoTiersAndOwnership)
     ASSERT_NE(outer_back, nullptr);
     ASSERT_NE(data_back, nullptr);
     EXPECT_EQ(inner_back->edge_kind, "signal");
-    EXPECT_EQ(inner_back->loop_id, "loop::W2");
+    EXPECT_EQ(inner_back->loop_head_node_id, "W2");
     EXPECT_EQ(outer_back->edge_kind, "signal");
-    EXPECT_EQ(outer_back->loop_id, "loop::W1");
+    EXPECT_EQ(outer_back->loop_head_node_id, "W1");
     EXPECT_EQ(data_back->edge_kind, "data");
-    EXPECT_EQ(data_back->loop_id, "loop::W2");
+    EXPECT_EQ(data_back->loop_head_node_id, "W2");
 
     // 数据回边源口只记在内层（外层自身的环承载通道为空——内层的源口归
     // 内层清单，外层发火时按嵌套关系清内层清单）。
