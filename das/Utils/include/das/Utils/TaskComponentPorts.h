@@ -160,6 +160,29 @@ namespace Das::Utils
         map->SetInt(key.Get(), value);
     }
 
+    /// Read a float from a PortMap port (default on missing or type
+    /// mismatch). The float family rides the double ABI slot end to end.
+    inline double GetPortFloat(
+        ExportInterface::IDasReadOnlyPortMap* map,
+        std::string_view                      port_id,
+        double                                default_val = 0.0)
+    {
+        double                  val = default_val;
+        const DasReadOnlyString key{std::string{port_id}.c_str()};
+        auto                    hr = map->GetFloat(key.Get(), &val);
+        return DAS::IsOk(hr) ? val : default_val;
+    }
+
+    /// Write a float value into a PortMap port.
+    inline void SetPortFloat(
+        ExportInterface::IDasPortMap* map,
+        std::string_view              port_id,
+        double                        value)
+    {
+        const DasReadOnlyString key{std::string{port_id}.c_str()};
+        map->SetFloat(key.Get(), value);
+    }
+
     /// Emit a single control-flow signal by listing its port id in the
     /// reserved "signals" JSON string array. The runtime materialises each
     /// entry as a PortValue::Signal() under (node_id, signal_port_id) and

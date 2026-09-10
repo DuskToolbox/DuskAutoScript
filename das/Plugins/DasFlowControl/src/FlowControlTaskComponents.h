@@ -140,8 +140,28 @@ private:
         ExportInterface::IDasPortMap**        pp_out_port_map);
 
     // Condition loop head: reads `condition` each call and emits
-    // `continue`/`break`. No internal state.
+    // `continue`/`break`; the first iteration falls back to the
+    // `first_condition` port (default true) while the loop-carried condition
+    // has produced no value yet. No internal state.
     DasResult DoWhile(
+        PluginInterface::IDasStopToken*       stop_token,
+        ExportInterface::IDasReadOnlyPortMap* p_input_port_map,
+        ExportInterface::IDasPortMap**        pp_out_port_map);
+
+    // Double comparison: reads left/right (falling back to config panel
+    // defaults on unconnected ports), applies the configured operator and
+    // writes the bool `result`. Operator outside < <= > >= == != is a
+    // fail-closed error (never silently coerced).
+    DasResult DoCompareDouble(
+        PluginInterface::IDasStopToken*       stop_token,
+        ExportInterface::IDasReadOnlyPortMap* p_input_port_map,
+        ExportInterface::IDasPortMap**        pp_out_port_map);
+
+    // Double arithmetic: reads left/right (falling back to config panel
+    // defaults on unconnected ports), applies the configured operator and
+    // writes `result`. Operator outside + - * / is a fail-closed error;
+    // division by zero is rejected, not silently mapped to inf.
+    DasResult DoArithmeticNumber(
         PluginInterface::IDasStopToken*       stop_token,
         ExportInterface::IDasReadOnlyPortMap* p_input_port_map,
         ExportInterface::IDasPortMap**        pp_out_port_map);

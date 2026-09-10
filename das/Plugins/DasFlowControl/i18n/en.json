@@ -3,5 +3,7 @@
     "flow.diagnostic.launch-window-timeout": "Timed out waiting for the target window to appear.",
     "flow.diagnostic.launch-window-ambiguous": "Multiple windows matched the wait configuration; refine the match pattern.",
     "flow.diagnostic.launch-spawn-failed": "Failed to start the configured executable.",
-    "flow.diagnostic.launch-exe-path-missing": "No executable path is configured for the launch component."
+    "flow.diagnostic.launch-exe-path-missing": "No executable path is configured for the launch component.",
+    "flow.diagnostic.operator-invalid": "The configured operator is not supported by the component.",
+    "flow.diagnostic.divide-by-zero": "Arithmetic component division by zero."
 }

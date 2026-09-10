@@ -131,6 +131,11 @@
               "id": "condition",
               "type": "bool",
               "label": { "en": "Condition", "zh-cn": "条件" }
+            },
+            {
+              "id": "first_condition",
+              "type": "bool",
+              "label": { "en": "First Condition", "zh-cn": "首次条件" }
             }
           ],
           "outputs": [
@@ -222,6 +227,98 @@
             }
           ],
           "config": {},
+          "diagnostics": []
+        }
+      },
+      "68F1000E-0000-4000-8000-00000000000E": {
+        "factoryGuid": "2C6DFCFA-F8B6-4272-8F28-1D31738BD0D4",
+        "definition": {
+          "schemaVersion": 1,
+          "kind": "das.flow.compare_double",
+          "label": { "en": "Compare (Double)", "zh-cn": "比较（双精度）" },
+          "componentGuid": "68F1000E-0000-4000-8000-00000000000E",
+          "inputs": [
+            {
+              "id": "left",
+              "type": "double",
+              "label": { "en": "Left", "zh-cn": "左值" }
+            },
+            {
+              "id": "right",
+              "type": "double",
+              "label": { "en": "Right", "zh-cn": "右值" }
+            }
+          ],
+          "outputs": [
+            {
+              "id": "result",
+              "type": "bool",
+              "label": { "en": "Result", "zh-cn": "结果" }
+            }
+          ],
+          "config": {
+            "operator": {
+              "type": "string",
+              "label": { "en": "Operator", "zh-cn": "运算符" },
+              "default": "<"
+            },
+            "left": {
+              "type": "double",
+              "label": { "en": "Left Default", "zh-cn": "左值默认" },
+              "default": 0
+            },
+            "right": {
+              "type": "double",
+              "label": { "en": "Right Default", "zh-cn": "右值默认" },
+              "default": 3
+            }
+          },
+          "diagnostics": []
+        }
+      },
+      "68F10010-0000-4000-8000-000000000010": {
+        "factoryGuid": "2C6DFCFA-F8B6-4272-8F28-1D31738BD0D4",
+        "definition": {
+          "schemaVersion": 1,
+          "kind": "das.flow.arithmetic_number",
+          "label": { "en": "Arithmetic (Number)", "zh-cn": "算术运算" },
+          "componentGuid": "68F10010-0000-4000-8000-000000000010",
+          "inputs": [
+            {
+              "id": "left",
+              "type": "double",
+              "label": { "en": "Left", "zh-cn": "左值" }
+            },
+            {
+              "id": "right",
+              "type": "double",
+              "label": { "en": "Right", "zh-cn": "右值" }
+            }
+          ],
+          "outputs": [
+            {
+              "id": "result",
+              "type": "double",
+              "label": { "en": "Result", "zh-cn": "结果" }
+            }
+          ],
+          "config": {
+            "operator": {
+              "type": "string",
+              "label": { "en": "Operator", "zh-cn": "运算符" },
+              "default": "+"
+            },
+            "left": {
+              "type": "double",
+              "label": { "en": "Left Default", "zh-cn": "左值默认" },
+              "default": 0
+            },
+            "right": {
+              "type": "double",
+              "label": { "en": "Right Default", "zh-cn": "右值默认" },
+              "default": 1
+            }
+          },
           "diagnostics": []
         }
       },

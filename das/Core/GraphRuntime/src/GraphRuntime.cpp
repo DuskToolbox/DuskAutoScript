@@ -20,7 +20,6 @@
 #include <das/_autogen/idl/header/IDasSettingsChangeBuilder.generated.h>
 
 #include <algorithm>
-#include <deque>
 #include <optional>
 #include <string>
 #include <tuple>
@@ -661,7 +660,12 @@ DasResult GraphRuntime::RunSignalGated(
             b.source_port_id,
             b.target_node_id,
             b.target_port_id);
-        if (signal_edge_keys.count(key) > 0)
+        // Back edges (signal AND data) carry no node-level data dependency:
+        // a back edge's source resolves only after its target has run, so
+        // keeping it here would deadlock the loop head waiting on the loop
+        // tail. Value routing is unaffected — BuildInputPortMap walks
+        // input_bindings directly and never consults data_preds.
+        if (signal_edge_keys.count(key) > 0 || back_edge_keys.count(key) > 0)
         {
             continue;
         }
@@ -691,91 +695,37 @@ DasResult GraphRuntime::RunSignalGated(
         gate_routes[r.target_node_id].push_back(r);
     }
 
-    // -- loop structure: back-edge sources + loop heads ---------------------
+    // -- loop structure: signal back-edge firing registry --------------------
+    // Only signal back edges carry the iteration boundary; data back edges
+    // move loop state and never fire (edge_kind split is explicit — do not
+    // rely on the frame value's IsSignal marker as the discriminator).
     std::unordered_map<std::string, std::vector<Dto::BackEdgeDto>>
-                                    back_edges_by_source;
-    std::unordered_set<std::string> loop_heads;
+        back_edges_by_source;
     for (const auto& be : plan.back_edges)
     {
-        loop_heads.insert(be.loop_head_node_id);
+        if (be.edge_kind != "signal")
+        {
+            continue;
+        }
         back_edges_by_source[be.source_node_id].push_back(be);
     }
 
-    // -- unified adjacency (data + every signal route incl. back-edges) -----
-    std::unordered_map<std::string, std::vector<std::string>> fwd_adj;
-    std::unordered_map<std::string, std::vector<std::string>> bwd_adj;
-    auto link = [&](const std::string& from, const std::string& to)
-    {
-        fwd_adj[from].push_back(to);
-        bwd_adj[to].push_back(from);
-    };
-    for (const auto& [tgt, preds] : data_preds)
-    {
-        for (const auto& p : preds)
-        {
-            link(p, tgt);
-        }
-    }
-    for (const auto& r : plan.signal_routes)
-    {
-        link(r.source_node_id, r.target_node_id);
-    }
-
-    // Nodes that participate in this graph (for reachability scoping).
-    std::unordered_set<std::string> graph_nodes;
-    for (const auto& n : plan.execution_order)
-    {
-        graph_nodes.insert(n);
-    }
-
-    auto reach =
-        [&](const std::string& start,
-            const std::unordered_map<std::string, std::vector<std::string>>&
-                adj) -> std::unordered_set<std::string>
-    {
-        std::unordered_set<std::string> seen{start};
-        std::deque<std::string>         q{start};
-        while (!q.empty())
-        {
-            const std::string u = q.front();
-            q.pop_front();
-            auto it = adj.find(u);
-            if (it == adj.end())
-            {
-                continue;
-            }
-            for (const auto& v : it->second)
-            {
-                if (graph_nodes.count(v) == 0)
-                {
-                    continue;
-                }
-                if (seen.insert(v).second)
-                {
-                    q.push_back(v);
-                }
-            }
-        }
-        return seen;
-    };
-
-    // Per-loop-head reset set = the SCC containing the head
-    // (forward-reachable ∩ backward-reachable), whose Signal markers must be
-    // cleared at each iteration boundary.
+    // Per-loop-head reset set: consumed verbatim from the compile-time loop
+    // layers (cycle SCC ∪ signal-less producer closure). Recomputing
+    // reachability here would lose the closure knowledge only the compiler
+    // has, so an empty layer list alongside real back edges is a compiler
+    // contract violation — logged loudly, resets disabled, never silently
+    // recomputed.
     std::unordered_map<std::string, std::vector<std::string>> loop_scc;
-    for (const auto& head : loop_heads)
+    if (!plan.back_edges.empty() && plan.loop_layers.empty())
     {
-        const auto               fr = reach(head, fwd_adj);
-        const auto               br = reach(head, bwd_adj);
-        std::vector<std::string> scc;
-        for (const auto& n : fr)
-        {
-            if (br.count(n) > 0)
-            {
-                scc.push_back(n);
-            }
-        }
-        loop_scc[head] = std::move(scc);
+        DAS_CORE_LOG_ERROR(
+            "Compiled plan carries back edges but no loop layers (compiler "
+            "contract violation); loop iteration resets are disabled.");
+    }
+    for (const auto& layer : plan.loop_layers)
+    {
+        loop_scc[layer.head_node_id] = layer.members;
     }
 
     // -- scheduling state ---------------------------------------------------

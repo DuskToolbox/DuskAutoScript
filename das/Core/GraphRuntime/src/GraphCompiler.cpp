@@ -1,17 +1,20 @@
 #include <das/Core/ForeignInterfaceHost/DasGuid.h>
 #include <das/Core/ForeignInterfaceHost/TaskComponentFactoryManager.h>
+#include <das/Core/GraphRuntime/FormSequenceProjector.h>
 #include <das/Core/GraphRuntime/GraphCompiler.h>
 #include <das/Core/Logger/Logger.h>
 #include <das/Utils/DasJsonCore.h>
 #include <das/Utils/fmt.h>
 
 #include <queue>
+#include <set>
 #include <unordered_map>
 #include <unordered_set>
 
 #include <algorithm>
 #include <cctype>
 #include <functional>
+#include <utility>
 
 DAS_CORE_GRAPHRUNTIME_NS_BEGIN
 
@@ -34,7 +37,9 @@ static const std::unordered_set<std::string>& GetKnownTypes()
 {
     static const std::unordered_set<std::string> known_types = {
         "int",
+        "int64",
         "float",
+        "double",
         "string",
         "bool",
         "image",
@@ -42,6 +47,7 @@ static const std::unordered_set<std::string>& GetKnownTypes()
         "component",
         "signal",
         "json",
+        "object",
         "null"};
     return known_types;
 }
@@ -289,8 +295,38 @@ bool GraphCompiler::IsTypeCompatible(
         return true;
     }
 
-    // If either type is unknown (not in known set), treat as compatible
-    // (permissive — the compiler emits a warning, not a rejection)
+    // Number equivalence classes: the integer family {int, int64} and the
+    // float family {float, double} interconnect freely inside a family and
+    // integer widens to float (loss-free). double -> float is allowed as a
+    // family-internal link because representation precision narrowing is
+    // not a semantic truncation — the {int, int64, double} ruling extends
+    // consistently over the pre-existing float word; the hard line is
+    // float -> integer, where precision truncation is never done silently.
+    // Mirrors the UI-side GraphConnectionRules equivalence table (the two
+    // sides must not drift).
+    const auto in_integer_family = [](const std::string& type)
+    { return type == "int" || type == "int64"; };
+    const auto in_float_family = [](const std::string& type)
+    { return type == "float" || type == "double"; };
+    if (in_integer_family(source_type) && in_integer_family(target_type))
+    {
+        return true;
+    }
+    if (in_float_family(source_type) && in_float_family(target_type))
+    {
+        return true;
+    }
+    if (in_integer_family(source_type) && in_float_family(target_type))
+    {
+        return true;
+    }
+
+    // Unknown types stay permissive here BY DESIGN: Core carries custom
+    // plugin-declared port types its vocabulary cannot enumerate, so it
+    // warns (UnknownPortType) instead of rejecting, while the UI side has
+    // no manifest context and must fail closed (GraphConnectionRules).
+    // Equivalence classes must never ride on this permissive path — they
+    // are explicit rules over known words only.
     const auto& known = GetKnownTypes();
     if (!known.contains(source_type) || !known.contains(target_type))
     {
@@ -449,7 +485,19 @@ std::vector<CompileEdgeDiagnostic> GraphCompiler::ValidateEdgePorts(
             }
         }
 
-        if (!src_port)
+        // Canonical implicit sequencing endpoint: a node-level signal wire
+        // leaves on the canonical "signal_out" without any manifest
+        // declaration (the canonical port names are the wire-layer
+        // coordinate system — per-component signal port declarations were
+        // explicitly rejected). Only UNDECLARED canonical endpoints are
+        // exempt; declared signal ports validate normally.
+        const bool src_canonical_implicit =
+            edge.edge_type == "signal"
+            && edge.source_port_id
+                   == std::string(FormSequenceProjector::SignalOutPort)
+            && src_port == nullptr;
+
+        if (!src_port && !src_canonical_implicit)
         {
             CompileEdgeDiagnostic d;
             d.kind = CompileDiagnosticKind::PortNotFound;
@@ -476,7 +524,15 @@ std::vector<CompileEdgeDiagnostic> GraphCompiler::ValidateEdgePorts(
             }
         }
 
-        if (!tgt_port)
+        // Target-side mirror of the canonical sequencing exemption: the
+        // implicit "enter node" landing point is the canonical "signal_in".
+        const bool tgt_canonical_implicit =
+            edge.edge_type == "signal"
+            && edge.target_port_id
+                   == std::string(FormSequenceProjector::SignalInPort)
+            && tgt_port == nullptr;
+
+        if (!tgt_port && !tgt_canonical_implicit)
         {
             CompileEdgeDiagnostic d;
             d.kind = CompileDiagnosticKind::PortNotFound;
@@ -492,48 +548,53 @@ std::vector<CompileEdgeDiagnostic> GraphCompiler::ValidateEdgePorts(
             continue;
         }
 
-        // --- Unknown type warning ---
-        const auto& known = GetKnownTypes();
-        if (!known.contains(src_port->port_type)
-            || !known.contains(tgt_port->port_type))
+        // Implicit canonical endpoints carry no declared type — type checks
+        // run only when both endpoints resolved against a manifest.
+        if (src_port != nullptr && tgt_port != nullptr)
         {
-            CompileEdgeDiagnostic d;
-            d.kind = CompileDiagnosticKind::UnknownPortType;
-            d.node_id = edge.source_node_id;
-            d.port_id = edge.source_port_id;
-            d.edge_id = edge.edge_id;
-            d.direction = CompileEdgeDiagnostic::PortDirection::Output;
-            d.message = DAS_FMT_NS::format(
-                "Unknown port type: source='{}' target='{}'",
-                src_port->port_type,
-                tgt_port->port_type);
-            d.actual_type = src_port->port_type;
-            d.expected_type = tgt_port->port_type;
-            diagnostics.push_back(std::move(d));
-            // Unknown types are warnings — don't block, but continue to
-            // type check
-        }
+            // --- Unknown type warning ---
+            const auto& known = GetKnownTypes();
+            if (!known.contains(src_port->port_type)
+                || !known.contains(tgt_port->port_type))
+            {
+                CompileEdgeDiagnostic d;
+                d.kind = CompileDiagnosticKind::UnknownPortType;
+                d.node_id = edge.source_node_id;
+                d.port_id = edge.source_port_id;
+                d.edge_id = edge.edge_id;
+                d.direction = CompileEdgeDiagnostic::PortDirection::Output;
+                d.message = DAS_FMT_NS::format(
+                    "Unknown port type: source='{}' target='{}'",
+                    src_port->port_type,
+                    tgt_port->port_type);
+                d.actual_type = src_port->port_type;
+                d.expected_type = tgt_port->port_type;
+                diagnostics.push_back(std::move(d));
+                // Unknown types are warnings — don't block, but continue to
+                // type check
+            }
 
-        // --- Type compatibility check ---
-        if (!IsTypeCompatible(src_port->port_type, tgt_port->port_type))
-        {
-            CompileEdgeDiagnostic d;
-            d.kind = CompileDiagnosticKind::TypeMismatch;
-            d.node_id = edge.target_node_id;
-            d.port_id = edge.target_port_id;
-            d.edge_id = edge.edge_id;
-            d.direction = CompileEdgeDiagnostic::PortDirection::Input;
-            d.expected_type = tgt_port->port_type;
-            d.actual_type = src_port->port_type;
-            d.message = DAS_FMT_NS::format(
-                "Type mismatch on edge '{}': source port '{}' has type "
-                "'{}', target port '{}' expects type '{}'",
-                edge.edge_id,
-                edge.source_port_id,
-                src_port->port_type,
-                edge.target_port_id,
-                tgt_port->port_type);
-            diagnostics.push_back(std::move(d));
+            // --- Type compatibility check ---
+            if (!IsTypeCompatible(src_port->port_type, tgt_port->port_type))
+            {
+                CompileEdgeDiagnostic d;
+                d.kind = CompileDiagnosticKind::TypeMismatch;
+                d.node_id = edge.target_node_id;
+                d.port_id = edge.target_port_id;
+                d.edge_id = edge.edge_id;
+                d.direction = CompileEdgeDiagnostic::PortDirection::Input;
+                d.expected_type = tgt_port->port_type;
+                d.actual_type = src_port->port_type;
+                d.message = DAS_FMT_NS::format(
+                    "Type mismatch on edge '{}': source port '{}' has type "
+                    "'{}', target port '{}' expects type '{}'",
+                    edge.edge_id,
+                    edge.source_port_id,
+                    src_port->port_type,
+                    edge.target_port_id,
+                    tgt_port->port_type);
+                diagnostics.push_back(std::move(d));
+            }
         }
     }
 
@@ -610,7 +671,8 @@ GraphCompiler::TopologyResult GraphCompiler::ComputeTopology(
         color[node.node_id] = Color::White;
     }
 
-    std::unordered_set<std::string> back_edge_ids;
+    std::unordered_set<std::string>       back_edge_ids;
+    std::vector<const Dto::GraphEdgeDto*> back_edges_raw;
 
     std::function<void(const std::string&)> dfs = [&](const std::string& u)
     {
@@ -632,23 +694,12 @@ GraphCompiler::TopologyResult GraphCompiler::ComputeTopology(
 
                 if (cit->second == Color::Gray)
                 {
-                    // Back-edge: u -> ancestor v closes a cycle.
+                    // Back-edge: u -> ancestor v closes a cycle. Signal and
+                    // data back-edges are recorded symmetrically — the
+                    // former carries the iteration boundary, the latter is
+                    // loop-carried state and no longer rejects the graph.
                     back_edge_ids.insert(edge->edge_id);
-                    if (edge->edge_type == "signal")
-                    {
-                        Dto::BackEdgeDto back;
-                        back.edge_id = edge->edge_id;
-                        back.source_node_id = edge->source_node_id;
-                        back.source_port_id = edge->source_port_id;
-                        back.target_node_id = edge->target_node_id;
-                        back.target_port_id = edge->target_port_id;
-                        back.loop_head_node_id = edge->target_node_id;
-                        result.back_edges.push_back(std::move(back));
-                    }
-                    else
-                    {
-                        result.has_data_cycle = true;
-                    }
+                    back_edges_raw.push_back(edge);
                 }
                 else if (cit->second == Color::White)
                 {
@@ -667,6 +718,326 @@ GraphCompiler::TopologyResult GraphCompiler::ComputeTopology(
         {
             dfs(node.node_id);
         }
+    }
+
+    // --- Tarjan SCC over the full edge set: the cycle layers ---------------
+    // Layer membership comes from SCC + edge direction, not from the DFS
+    // back-edge set: on nested/crossing graphs the two differ (an in-SCC
+    // cross edge closes a cycle DFS never classified as a back-edge), and
+    // the runtime consumes these layers as its iteration reset sets.
+    std::unordered_map<std::string, int> tarjan_index;
+    std::unordered_map<std::string, int> tarjan_lowlink;
+    std::unordered_set<std::string>      on_tarjan_stack;
+    std::vector<std::string>             tarjan_stack;
+    int                                  next_tarjan_index = 0;
+    std::vector<std::set<std::string>>   scc_sets;
+
+    std::function<void(const std::string&)> strong_connect =
+        [&](const std::string& v)
+    {
+        tarjan_index[v] = next_tarjan_index;
+        tarjan_lowlink[v] = next_tarjan_index;
+        ++next_tarjan_index;
+        tarjan_stack.push_back(v);
+        on_tarjan_stack.insert(v);
+
+        auto adj_it = adjacency.find(v);
+        if (adj_it != adjacency.end())
+        {
+            for (const Dto::GraphEdgeDto* edge : adj_it->second)
+            {
+                const std::string& w = edge->target_node_id;
+                if (node_index.count(w) == 0)
+                {
+                    continue;
+                }
+                if (tarjan_index.find(w) == tarjan_index.end())
+                {
+                    strong_connect(w);
+                    tarjan_lowlink[v] =
+                        std::min(tarjan_lowlink[v], tarjan_lowlink[w]);
+                }
+                else if (on_tarjan_stack.count(w) > 0)
+                {
+                    tarjan_lowlink[v] =
+                        std::min(tarjan_lowlink[v], tarjan_index[w]);
+                }
+            }
+        }
+
+        if (tarjan_lowlink[v] == tarjan_index[v])
+        {
+            std::set<std::string> scc;
+            while (true)
+            {
+                const std::string w = tarjan_stack.back();
+                tarjan_stack.pop_back();
+                on_tarjan_stack.erase(w);
+                scc.insert(w);
+                if (w == v)
+                {
+                    break;
+                }
+            }
+            scc_sets.push_back(std::move(scc));
+        }
+    };
+
+    for (const auto& node : document.nodes)
+    {
+        if (tarjan_index.find(node.node_id) == tarjan_index.end())
+        {
+            strong_connect(node.node_id);
+        }
+    }
+
+    // Only cyclic SCCs are loop layers: size > 1, or a single node with a
+    // self-edge (a self-feeding data back edge closes a one-node cycle).
+    std::unordered_set<std::string> self_loop_nodes;
+    for (const auto& edge : document.edges)
+    {
+        if (edge.source_node_id == edge.target_node_id
+            && node_index.count(edge.source_node_id) > 0)
+        {
+            self_loop_nodes.insert(edge.source_node_id);
+        }
+    }
+
+    // Layer under construction: SCC member set for tier/nesting, expanded
+    // member set (SCC ∪ producer closure) for the recorded DTO.
+    struct LayerDraft
+    {
+        std::set<std::string> scc_members;
+        std::set<std::string> expanded_members;
+        std::string           head_node_id;
+        bool                  has_signal_back_edge = false;
+    };
+    std::vector<LayerDraft> layer_drafts;
+    for (auto& scc : scc_sets)
+    {
+        const bool is_cycle =
+            scc.size() > 1 || self_loop_nodes.count(*scc.begin()) > 0;
+        if (!is_cycle)
+        {
+            continue;
+        }
+        LayerDraft draft;
+        draft.scc_members = scc;
+        draft.expanded_members = std::move(scc);
+        layer_drafts.push_back(std::move(draft));
+    }
+
+    // tier = nesting depth: how many other layers' SCC member sets strictly
+    // contain this layer's. Plain Tarjan SCCs are pairwise disjoint, so the
+    // single-level graphs here always land tier 0; nested layer derivation
+    // (peeling inner layers) slots into this rule unchanged.
+    const auto layer_contains =
+        [](const LayerDraft& outer, const LayerDraft& inner)
+    {
+        if (outer.scc_members.size() <= inner.scc_members.size())
+        {
+            return false;
+        }
+        return std::includes(
+            outer.scc_members.begin(),
+            outer.scc_members.end(),
+            inner.scc_members.begin(),
+            inner.scc_members.end());
+    };
+    std::vector<int> layer_tiers(layer_drafts.size(), 0);
+    for (std::size_t i = 0; i < layer_drafts.size(); ++i)
+    {
+        for (std::size_t j = 0; j < layer_drafts.size(); ++j)
+        {
+            if (i != j && layer_contains(layer_drafts[j], layer_drafts[i]))
+            {
+                ++layer_tiers[i];
+            }
+        }
+    }
+
+    // Layer head: the loop head is the node the layer's signal back edges
+    // return to (smallest document index wins for determinism); a layer
+    // with no signal back edge falls back to its first member in document
+    // order (the carrying check one layer up in Compile() rejects those).
+    const auto edge_is_signal = [](const Dto::GraphEdgeDto* edge)
+    { return edge->edge_type == "signal"; };
+
+    for (std::size_t i = 0; i < layer_drafts.size(); ++i)
+    {
+        std::string best_head;
+        for (const auto* edge : back_edges_raw)
+        {
+            if (!edge_is_signal(edge)
+                || layer_drafts[i].scc_members.count(edge->source_node_id) == 0)
+            {
+                continue;
+            }
+            layer_drafts[i].has_signal_back_edge = true;
+            if (best_head.empty()
+                || node_index[edge->target_node_id] < node_index[best_head])
+            {
+                best_head = edge->target_node_id;
+            }
+        }
+        if (best_head.empty())
+        {
+            for (const auto& node : document.nodes)
+            {
+                if (layer_drafts[i].scc_members.count(node.node_id) > 0)
+                {
+                    best_head = node.node_id;
+                    break;
+                }
+            }
+        }
+        layer_drafts[i].head_node_id = std::move(best_head);
+    }
+
+    // Producer closure: a data producer with no incoming signal edge has no
+    // execution timing of its own — its evaluation follows its consumers.
+    // A consumer inside a loop pulls the producer into that (innermost)
+    // layer so it re-evaluates every iteration; consumers all outside any
+    // loop leave the producer out (evaluated once at startup).
+    std::unordered_set<std::string> nodes_with_signal_in_edge;
+    std::unordered_map<std::string, std::vector<std::string>> data_forward;
+    for (const auto& edge : document.edges)
+    {
+        if (node_index.count(edge.source_node_id) == 0
+            || node_index.count(edge.target_node_id) == 0)
+        {
+            continue;
+        }
+        if (edge.edge_type == "signal")
+        {
+            nodes_with_signal_in_edge.insert(edge.target_node_id);
+        }
+        else
+        {
+            data_forward[edge.source_node_id].push_back(edge.target_node_id);
+        }
+    }
+
+    std::unordered_map<std::string, std::size_t> layer_of_member;
+    for (std::size_t i = 0; i < layer_drafts.size(); ++i)
+    {
+        for (const auto& member : layer_drafts[i].expanded_members)
+        {
+            layer_of_member[member] = i;
+        }
+    }
+
+    // "Innermost" among candidate layers = highest tier; ties break on the
+    // head's document index so closure joins are deterministic.
+    const auto is_innermost_choice =
+        [&](std::size_t candidate, std::size_t incumbent)
+    {
+        if (layer_tiers[candidate] != layer_tiers[incumbent])
+        {
+            return layer_tiers[candidate] > layer_tiers[incumbent];
+        }
+        return node_index[layer_drafts[candidate].head_node_id]
+               < node_index[layer_drafts[incumbent].head_node_id];
+    };
+
+    bool closure_grew = true;
+    while (closure_grew)
+    {
+        closure_grew = false;
+        for (const auto& node : document.nodes)
+        {
+            if (layer_of_member.count(node.node_id) > 0
+                || nodes_with_signal_in_edge.count(node.node_id) > 0)
+            {
+                continue;
+            }
+            std::size_t best_layer = layer_drafts.size();
+            for (const auto& consumer : data_forward[node.node_id])
+            {
+                auto found = layer_of_member.find(consumer);
+                if (found == layer_of_member.end())
+                {
+                    continue;
+                }
+                if (best_layer == layer_drafts.size()
+                    || is_innermost_choice(found->second, best_layer))
+                {
+                    best_layer = found->second;
+                }
+            }
+            if (best_layer == layer_drafts.size())
+            {
+                continue;
+            }
+            layer_drafts[best_layer].expanded_members.insert(node.node_id);
+            layer_of_member[node.node_id] = best_layer;
+            closure_grew = true;
+        }
+    }
+
+    // Back-edge records: every loop-closing edge lands in the plan with its
+    // kind and owning layer (head + loop id bridge the runtime's firing and
+    // reset bookkeeping).
+    for (const auto* edge : back_edges_raw)
+    {
+        Dto::BackEdgeDto back;
+        back.edge_id = edge->edge_id;
+        back.source_node_id = edge->source_node_id;
+        back.source_port_id = edge->source_port_id;
+        back.target_node_id = edge->target_node_id;
+        back.target_port_id = edge->target_port_id;
+        back.edge_kind = edge_is_signal(edge) ? "signal" : "data";
+        auto layer_it = layer_of_member.find(edge->source_node_id);
+        if (layer_it != layer_of_member.end())
+        {
+            back.loop_head_node_id =
+                layer_drafts[layer_it->second].head_node_id;
+            back.loop_id =
+                "loop::" + layer_drafts[layer_it->second].head_node_id;
+        }
+        else
+        {
+            // Unreachable for real cycles (a back edge's source is always
+            // inside its SCC); the naive target keeps the record well-formed.
+            back.loop_head_node_id = edge->target_node_id;
+        }
+        result.back_edges.push_back(std::move(back));
+    }
+
+    // Loop-layer records: members in document order, data back-edge source
+    // sites deduplicated, ready for the runtime to consume as reset sets.
+    for (std::size_t i = 0; i < layer_drafts.size(); ++i)
+    {
+        Dto::LoopLayerDto layer;
+        layer.loop_id = "loop::" + layer_drafts[i].head_node_id;
+        layer.head_node_id = layer_drafts[i].head_node_id;
+        layer.tier = layer_tiers[i];
+        for (const auto& node : document.nodes)
+        {
+            if (layer_drafts[i].expanded_members.count(node.node_id) > 0)
+            {
+                layer.members.push_back(node.node_id);
+            }
+        }
+        std::set<std::pair<std::string, std::string>> source_sites;
+        for (const auto* edge : back_edges_raw)
+        {
+            if (!edge_is_signal(edge)
+                && layer_drafts[i].expanded_members.count(edge->source_node_id)
+                       > 0)
+            {
+                source_sites.insert(
+                    {edge->source_node_id, edge->source_port_id});
+            }
+        }
+        for (const auto& [node_id, port_id] : source_sites)
+        {
+            Dto::PortRefDto ref;
+            ref.node_id = node_id;
+            ref.port_id = port_id;
+            layer.data_back_edge_sources.push_back(std::move(ref));
+        }
+        result.loop_layers.push_back(std::move(layer));
     }
 
     // Signal routes: every signal edge becomes a route (forward + back).
@@ -749,14 +1120,6 @@ GraphCompiler::TopologyResult GraphCompiler::ComputeTopology(
                 }
             }
         }
-    }
-
-    // A cycle among data edges is the only legitimate reason to reject the
-    // graph; surface it as an empty execution_order so Compile() reports
-    // CyclicEdgeGraph. (Signal back-edges are tolerated, never fatal.)
-    if (result.has_data_cycle)
-    {
-        result.execution_order.clear();
     }
 
     return result;
@@ -1148,11 +1511,12 @@ Dto::CompiledGraphPlanDto GraphCompiler::Compile(
     }
 
     // Signal-aware topological sort (single pass — also yields
-    // signal_routes and back_edges for the compiled plan).
+    // signal_routes, back_edges and loop_layers for the compiled plan).
     auto topology = ComputeTopology(document);
     plan.execution_order = std::move(topology.execution_order);
     plan.signal_routes = std::move(topology.signal_routes);
     plan.back_edges = std::move(topology.back_edges);
+    plan.loop_layers = std::move(topology.loop_layers);
     if (plan.execution_order.empty() && !document.nodes.empty())
     {
         auto payload = Das::Utils::MakeYyjsonObject();

@@ -34,8 +34,10 @@ enum class CompileDiagnosticKind
     NodeNotFound,              // Edge references a node_id not in the graph
     UnknownPortType,           // Port type string not in known set (warning)
     UnresolvableComponentGuid, // component_guid not in factory manager
-    CyclicEdgeGraph,     // Edge-based cycle detected during topological sort
-    RequiredFieldMissing // Required field has no usable value in node settings
+    CyclicEdgeGraph,      // Edge-based cycle detected during topological sort
+    RequiredFieldMissing, // Required field has no usable value in node settings
+    UnbackedDataCycle, // Data cycle without a signal circuit carrying the loop
+    LoopBodyDataLeak   // Loop-body data edge leaves the loop (stale-value risk)
 };
 
 struct CompileEdgeDiagnostic
@@ -201,21 +203,23 @@ public:
     // -----------------------------------------------------------------------
 
     /// Result of signal-aware topological analysis. Carries the deterministic
-    /// execution_order plus the signal_routes (every signal edge) and the
-    /// controlled back_edges (signal edges that close a loop). has_data_cycle
-    /// is set when a cycle survives among data edges — the only condition
-    /// that should reject the graph.
+    /// execution_order plus the signal_routes (every signal edge), the
+    /// back_edges (every loop-closing edge, signal or data — the loop-carried
+    /// channels) and the loop_layers (cycle SCCs expanded with signal-less
+    /// producer closures; the runtime's per-head iteration reset sets).
     struct TopologyResult
     {
         std::vector<std::string>         execution_order;
         std::vector<Dto::SignalRouteDto> signal_routes;
         std::vector<Dto::BackEdgeDto>    back_edges;
-        bool                             has_data_cycle = false;
+        std::vector<Dto::LoopLayerDto>   loop_layers;
     };
 
-    /// DFS back-edge classification + deterministic Kahn over (data edges ∪
-    /// forward signal edges). Signal back-edges are recorded (not ordered);
-    /// data back-edges flag a cycle.
+    /// DFS back-edge classification + Tarjan SCC layering + deterministic
+    /// Kahn over (data edges ∪ forward edges with every back edge removed).
+    /// Signal and data back-edges are both recorded (not ordered); data
+    /// back-edges are loop-carried state channels and no longer reject the
+    /// graph — carrying checks live one layer up in Compile().
     TopologyResult ComputeTopology(const Dto::GraphDocumentDto& document);
 
 private:

@@ -179,6 +179,28 @@ namespace Plugins::DasFlowControl
             DAS_E_FLOW_INVOKE_RESOLVE_FAILED,
             "仓库条目解析失败。");
 
+        RegisterOneMessage(
+            lens.Get(),
+            "en",
+            DAS_E_FLOW_OPERATOR_INVALID,
+            "The configured operator is not supported by the component.");
+        RegisterOneMessage(
+            lens.Get(),
+            "zh-cn",
+            DAS_E_FLOW_OPERATOR_INVALID,
+            "组件配置的运算符不受支持。");
+
+        RegisterOneMessage(
+            lens.Get(),
+            "en",
+            DAS_E_FLOW_DIVIDE_BY_ZERO,
+            "Arithmetic component division by zero.");
+        RegisterOneMessage(
+            lens.Get(),
+            "zh-cn",
+            DAS_E_FLOW_DIVIDE_BY_ZERO,
+            "算术组件除数为零。");
+
         return lens;
     }
 

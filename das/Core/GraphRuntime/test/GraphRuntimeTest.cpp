@@ -971,7 +971,20 @@ namespace SignalGatedTestMock
         be.target_node_id = tgt_node;
         be.target_port_id = tgt_port;
         be.loop_head_node_id = loop_head;
+        be.edge_kind = "signal";
         return be;
+    }
+
+    LoopLayerDto MakeLoopLayer(
+        const std::string&       head,
+        std::vector<std::string> members)
+    {
+        LoopLayerDto layer;
+        layer.loop_id = "loop::" + head;
+        layer.head_node_id = head;
+        layer.tier = 0;
+        layer.members = std::move(members);
+        return layer;
     }
 
     CompiledGraphPlanDto MakeBasePlan()
@@ -1099,6 +1112,7 @@ TEST(SignalGatedRuntimeTest, ForLoopIteratesCorrectly)
     plan.back_edges = {
         MakeBackEdge("be1", body, "done", forNode, "loop_in", forNode),
     };
+    plan.loop_layers = {MakeLoopLayer(forNode, {forNode, body})};
     plan.binding_plan.bindings = {
         MakeBinding(forNode, "continue", body, "in", "signal"),
         MakeBinding(body, "done", forNode, "loop_in", "signal"),
@@ -1154,6 +1168,8 @@ TEST(SignalGatedRuntimeTest, LoopWithInnerBranchHasNoCrossIterationResidue)
     plan.back_edges = {
         MakeBackEdge("be1", term, "done", forNode, "loop_in", forNode),
     };
+    plan.loop_layers = {
+        MakeLoopLayer(forNode, {forNode, selector, sinkT, sinkF, term})};
     plan.binding_plan.bindings = {
         MakeBinding(forNode, "continue", selector, "in", "signal"),
         MakeBinding(selector, "true", sinkT, "in", "signal"),

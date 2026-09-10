@@ -609,14 +609,16 @@ TEST_F(E2EGraphFlowTest, WhileLoopWithDataBackEdgeConverges)
         node_compare,
         std::string{COMPARE_DOUBLE_COMPONENT_GUID_TEXT}));
 
-    // 顺序线：W.continue → A.signal_in（门控）；A.signal_out → W.signal_in
-    // （顺序回边承载迭代）。
+    // 顺序线：W.continue → A.signal_in（门控）；C.signal_out → W.signal_in
+    // （顺序回边承载迭代）。回边必须从环尾（执行序最后一节点）发出：多趟
+    // 调度器在回边发火处立即重启 pass，环尾之后的节点在本圈永远轮不到
+    // ——比较节点若落在发火点之后就永远不执行，循环条件永不更新。
     auto e_seq_body =
         MakeEdge("e_seq_body", node_while, "continue", node_arith, "signal_in");
     e_seq_body.edge_type = "signal";
     auto e_seq_back = MakeEdge(
         "e_seq_back",
-        node_arith,
+        node_compare,
         "signal_out",
         node_while,
         "signal_in");
@@ -646,6 +648,35 @@ TEST_F(E2EGraphFlowTest, WhileLoopWithDataBackEdgeConverges)
 
     // 数据回边与顺序回边同档记档（3 条），Kahn 剔除全部回边后保序。
     ASSERT_EQ(plan.back_edges.size(), 3u);
+    size_t signal_kind_count = 0;
+    size_t data_kind_count = 0;
+    for (const auto& back : plan.back_edges)
+    {
+        if (back.edge_kind == "signal")
+        {
+            ++signal_kind_count;
+            EXPECT_EQ(back.edge_id, "e_seq_back");
+            EXPECT_EQ(back.loop_head_node_id, node_while);
+        }
+        else
+        {
+            ++data_kind_count;
+        }
+    }
+    EXPECT_EQ(signal_kind_count, 1u);
+    EXPECT_EQ(data_kind_count, 2u);
+
+    // 环层记档：恰一层（tier 0），成员含 W/A/C，数据回边源口两组坐标。
+    ASSERT_EQ(plan.loop_layers.size(), 1u);
+    EXPECT_EQ(plan.loop_layers[0].head_node_id, node_while);
+    EXPECT_EQ(plan.loop_layers[0].tier, 0);
+    EXPECT_EQ(plan.loop_layers[0].loop_id, "loop::" + node_while);
+    ASSERT_EQ(plan.loop_layers[0].members.size(), 3u);
+    EXPECT_EQ(plan.loop_layers[0].members[0], node_while);
+    EXPECT_EQ(plan.loop_layers[0].members[1], node_arith);
+    EXPECT_EQ(plan.loop_layers[0].members[2], node_compare);
+    ASSERT_EQ(plan.loop_layers[0].data_back_edge_sources.size(), 2u);
+
     ASSERT_EQ(plan.execution_order.size(), 3u);
     EXPECT_EQ(plan.execution_order[0], node_while);
     EXPECT_EQ(plan.execution_order[1], node_arith);

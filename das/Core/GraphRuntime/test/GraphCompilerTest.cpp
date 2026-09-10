@@ -986,7 +986,7 @@ TEST(SignalAwareCompileTest, SignalChainProducesDeterministicOrder)
     EXPECT_EQ(topo.signal_routes[0].target_node_id, "B");
     EXPECT_EQ(topo.signal_routes[1].target_node_id, "C");
     EXPECT_TRUE(topo.back_edges.empty());
-    EXPECT_FALSE(topo.has_data_cycle);
+    EXPECT_TRUE(topo.loop_layers.empty());
 }
 
 TEST(SignalAwareCompileTest, BranchSignalRoutesCaptureBothBranches)
@@ -1064,7 +1064,6 @@ TEST(SignalAwareCompileTest, ForWhileBackEdgeCompilesWithoutCycle)
     ASSERT_EQ(topo.execution_order.size(), 2u);
     EXPECT_EQ(topo.execution_order[0], "for");
     EXPECT_EQ(topo.execution_order[1], "body");
-    EXPECT_FALSE(topo.has_data_cycle);
 
     // The back-edge is recorded with the loop head as its target.
     ASSERT_EQ(topo.back_edges.size(), 1u);
@@ -1072,12 +1071,23 @@ TEST(SignalAwareCompileTest, ForWhileBackEdgeCompilesWithoutCycle)
     EXPECT_EQ(topo.back_edges[0].source_node_id, "body");
     EXPECT_EQ(topo.back_edges[0].target_node_id, "for");
     EXPECT_EQ(topo.back_edges[0].loop_head_node_id, "for");
+    EXPECT_EQ(topo.back_edges[0].edge_kind, "signal");
+    EXPECT_EQ(topo.back_edges[0].loop_id, "loop::for");
+
+    // The cycle layer is recorded for the runtime's iteration reset set.
+    ASSERT_EQ(topo.loop_layers.size(), 1u);
+    EXPECT_EQ(topo.loop_layers[0].head_node_id, "for");
+    EXPECT_EQ(topo.loop_layers[0].tier, 0);
+    ASSERT_EQ(topo.loop_layers[0].members.size(), 2u);
+    EXPECT_EQ(topo.loop_layers[0].members[0], "for");
+    EXPECT_EQ(topo.loop_layers[0].members[1], "body");
+    EXPECT_TRUE(topo.loop_layers[0].data_back_edge_sources.empty());
 
     // Back-edge still carries a signal route (the loop-back signal).
     ASSERT_EQ(topo.signal_routes.size(), 2u);
 }
 
-TEST(SignalAwareCompileTest, DataCycleStillRejectedAsCyclicEdgeGraph)
+TEST(SignalAwareCompileTest, DataCycleToleratedAndRecordedAsDataBackEdge)
 {
     StubFactoryManager mgr;
     auto node_def = MakeDefinition({{"in", "int"}}, {{"out", "int"}});
@@ -1101,9 +1111,28 @@ TEST(SignalAwareCompileTest, DataCycleStillRejectedAsCyclicEdgeGraph)
     doc.edges.push_back(MakeEdge("e3", "C", "out", "A", "in"));
 
     auto plan = compiler.Compile(doc);
-    EXPECT_TRUE(plan.execution_order.empty());
-    EXPECT_TRUE(HasCyclicEdgeGraphDiagnostic(plan));
-    EXPECT_TRUE(plan.back_edges.empty());
+    // 数据回边=循环状态通道，不再整体拒绝：Kahn 剔除回边后仍保序，环层
+    // 记档入 plan（无 signal 回路承载的 fail-closed 检查由编译期承载
+    // 检查接手，本用例只钉记档形态）。
+    ASSERT_EQ(plan.execution_order.size(), 3u);
+    EXPECT_EQ(plan.execution_order[0], "A");
+    EXPECT_EQ(plan.execution_order[1], "B");
+    EXPECT_EQ(plan.execution_order[2], "C");
+    EXPECT_FALSE(HasCyclicEdgeGraphDiagnostic(plan));
+
+    ASSERT_EQ(plan.back_edges.size(), 1u);
+    EXPECT_EQ(plan.back_edges[0].edge_id, "e3");
+    EXPECT_EQ(plan.back_edges[0].edge_kind, "data");
+    EXPECT_EQ(plan.back_edges[0].loop_head_node_id, "A");
+    EXPECT_EQ(plan.back_edges[0].loop_id, "loop::A");
+
+    ASSERT_EQ(plan.loop_layers.size(), 1u);
+    EXPECT_EQ(plan.loop_layers[0].head_node_id, "A");
+    EXPECT_EQ(plan.loop_layers[0].tier, 0);
+    ASSERT_EQ(plan.loop_layers[0].members.size(), 3u);
+    ASSERT_EQ(plan.loop_layers[0].data_back_edge_sources.size(), 1u);
+    EXPECT_EQ(plan.loop_layers[0].data_back_edge_sources[0].node_id, "C");
+    EXPECT_EQ(plan.loop_layers[0].data_back_edge_sources[0].port_id, "out");
 }
 
 TEST(SignalAwareCompileTest, DanglingInputsBroadcastBoundToMatchingPorts)

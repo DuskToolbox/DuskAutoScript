@@ -62,7 +62,11 @@ namespace Dto
 
     // ---- controlled back edge (DAS-60 signal-gated loop control) ----
     // A back edge that closes a loop, plus the loop-head node it returns to.
-    // Only the DTO shape + serialization is defined here.
+    // edge_kind splits the two loop-carried channels explicitly: "signal"
+    // back edges carry the iteration boundary (the runtime fires and re-pends
+    // the loop on them), "data" back edges carry loop state (values survive
+    // across iterations; they never fire). loop_id bridges the edge to its
+    // owning LoopLayerDto.
     struct BackEdgeDto
     {
         std::string edge_id;
@@ -71,6 +75,33 @@ namespace Dto
         std::string target_node_id;
         std::string target_port_id;
         std::string loop_head_node_id;
+        std::string edge_kind = "signal";
+        std::string loop_id;
+    };
+
+    // ---- port coordinate (node + port pair) ----
+    // Used by loop-layer records that address a concrete port site (e.g. the
+    // sources of data back edges feeding a loop layer).
+    struct PortRefDto
+    {
+        std::string node_id;
+        std::string port_id;
+    };
+
+    // ---- one loop layer of the compiled graph ----
+    // A cycle layer is a strongly connected component that is an actual cycle
+    // (size > 1, or a self-loop), optionally expanded with signal-less data
+    // producers whose evaluation timing follows an in-loop consumer. tier is
+    // the nesting depth (0 = outermost); the runtime consumes members as the
+    // per-head iteration reset set and data_back_edge_sources as the stale
+    // state channel of the loop.
+    struct LoopLayerDto
+    {
+        std::string              loop_id;
+        std::string              head_node_id;
+        int32_t                  tier = 0;
+        std::vector<std::string> members;
+        std::vector<PortRefDto>  data_back_edge_sources;
     };
 
     // ---- derived boundary port (ports-are-derived, never authored) ----
@@ -109,6 +140,10 @@ namespace Dto
         std::vector<yyjson::value>           diagnostics;
         std::vector<SignalRouteDto>          signal_routes;
         std::vector<BackEdgeDto>             back_edges;
+        // Cycle layers (SCC ∪ signal-less producer closure) recorded at
+        // compile time; the runtime consumes them as the per-head iteration
+        // reset sets instead of recomputing reachability.
+        std::vector<LoopLayerDto> loop_layers;
         // Derived boundary surface (ports-are-derived). Inputs (dangling
         // declared inputs) ride the broadcast binding generation
         // ($graph_input sentinel); outputs (all declared outputs) are the
@@ -151,6 +186,8 @@ DAS_GRAPHRUNTIME_DTO_CASTER(PortBindingPlanDto);
 DAS_GRAPHRUNTIME_DTO_CASTER(CompiledNodeSnapshotDto);
 DAS_GRAPHRUNTIME_DTO_CASTER(SignalRouteDto);
 DAS_GRAPHRUNTIME_DTO_CASTER(BackEdgeDto);
+DAS_GRAPHRUNTIME_DTO_CASTER(PortRefDto);
+DAS_GRAPHRUNTIME_DTO_CASTER(LoopLayerDto);
 DAS_GRAPHRUNTIME_DTO_CASTER(BoundaryPortDto);
 DAS_GRAPHRUNTIME_DTO_CASTER(BoundaryPortsDto);
 DAS_GRAPHRUNTIME_DTO_CASTER(CompiledGraphPlanDto);
@@ -188,6 +225,18 @@ struct yyjson::field_name_rule<Das::Core::GraphRuntime::Dto::SignalRouteDto>
 
 template <>
 struct yyjson::field_name_rule<Das::Core::GraphRuntime::Dto::BackEdgeDto>
+{
+    using type = yyjson::snake_to_camel_transform;
+};
+
+template <>
+struct yyjson::field_name_rule<Das::Core::GraphRuntime::Dto::PortRefDto>
+{
+    using type = yyjson::snake_to_camel_transform;
+};
+
+template <>
+struct yyjson::field_name_rule<Das::Core::GraphRuntime::Dto::LoopLayerDto>
 {
     using type = yyjson::snake_to_camel_transform;
 };
