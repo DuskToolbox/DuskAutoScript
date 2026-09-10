@@ -1337,7 +1337,13 @@ namespace
     TEST(GraphAuthoringSessionTest, RemoveGraphNodesEndToEndDropsBatch)
     {
         const SessionHandle s{""};
-        SetActionCatalog(s.p, R"([{"actionId":"{g1}"}])");
+        // The declared data port surface the edge-type derivation resolves
+        // through ("o" output / "i" input on {g1}).
+        SetActionCatalog(
+            s.p,
+            R"([{"actionId":"{g1}","ports":[)"
+            R"({"portId":"o","portType":"int","direction":"output"},)"
+            R"({"portId":"i","portType":"int","direction":"input"}]}])");
         for (int node_count = 0; node_count < 3; ++node_count)
         {
             ApplyChange(

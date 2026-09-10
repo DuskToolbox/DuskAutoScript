@@ -1415,10 +1415,16 @@ DAS_C_API DasResult GraphAuthoringSessionApplyChange(
         {
             valid_action_ids.push_back(entry.action_id);
         }
+        // The declared port surface rides the same session catalog the
+        // compile path injects via SetPortSurfaceProvider — connectGraphPorts
+        // derives the stored edge_type from the endpoint port categories
+        // through it (canonical signal port names resolve with no
+        // declaration; undeclared endpoints reject).
         auto r = Das::Core::GraphRuntime::Contract::ApplyAuthoringChange(
             p->document,
             change,
-            valid_action_ids);
+            valid_action_ids,
+            MakeCatalogFromState(*p));
         return WrapValue(
             BuildChangeResultJson(
                 r,

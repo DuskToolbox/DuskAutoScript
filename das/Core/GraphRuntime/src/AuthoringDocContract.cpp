@@ -428,6 +428,50 @@ namespace Contract
                        : std::string(PORT_CATEGORY_DATA);
         }
 
+        /// Resolve the execution/data category of a connect endpoint for the
+        /// stored edge_type derivation. The canonical signal port names
+        /// resolve execution outright — they are the wire-layer coordinate
+        /// system, no component ever declares them; any other port resolves
+        /// through the catalog-declared port surface of the endpoint node's
+        /// component (the caller threads the same session catalog the
+        /// compile path injects). Nullopt = the endpoint names no
+        /// resolvable port, and the change must reject rather than
+        /// silently store a mistyped edge.
+        std::optional<std::string> ResolveEndpointPortCategory(
+            const Dto::GraphDocumentDto&        document,
+            const std::optional<ActionCatalog>& action_catalog,
+            const std::string&                  node_id,
+            const std::string&                  port_id)
+        {
+            if (port_id == FormSequenceProjector::SignalInPort
+                || port_id == FormSequenceProjector::SignalOutPort)
+            {
+                return std::string(PORT_CATEGORY_EXECUTION);
+            }
+            for (const auto& node : document.nodes)
+            {
+                if (node.node_id != node_id)
+                {
+                    continue;
+                }
+                const ActionCatalogEntry* entry =
+                    FindCatalogEntry(action_catalog, ComponentGuidOf(node));
+                if (entry == nullptr)
+                {
+                    return std::nullopt;
+                }
+                for (const auto& port : entry->ports)
+                {
+                    if (port.port_id == port_id)
+                    {
+                        return DerivePortCategory(port.port_type);
+                    }
+                }
+                return std::nullopt;
+            }
+            return std::nullopt;
+        }
+
         /// The two engaged-only channels of an input data port, decided by
         /// the connected state. Unconnected: the default-value channel —
         /// when the node's settings carry a key matching the port id, the
@@ -1645,10 +1689,6 @@ namespace Contract
             const std::vector<std::string>&     valid_action_ids,
             const std::optional<ActionCatalog>& action_catalog)
         {
-            // Plumbing seam only in this commit — the edge-type derivation
-            // that consumes it lands together with the green fix for the
-            // failing derivation tests.
-            (void)action_catalog;
             GraphAuthoringChange gac;
             if (change.kind == "addGraphNode")
             {
@@ -1829,7 +1869,71 @@ namespace Contract
                         {},
                         std::nullopt};
                 }
-                const auto&        conn = *change.connection;
+                const auto& conn = *change.connection;
+                // Server-side edge-type derivation: the stored type follows
+                // the endpoint port categories (canonical signal port names
+                // resolve execution with no declaration; any other endpoint
+                // resolves through the catalog-declared surface). An
+                // unresolved endpoint or an execution/data mismatch rejects
+                // the change — a silent data fallback would store a
+                // sequence wire the compiler then treats as data. Node
+                // existence stays HandleConnectPorts' rejection, so a
+                // missing node skips the category check and fails
+                // downstream with the established error kind; the payload's
+                // placeholder type never reaches the store on that path.
+                std::string edge_type = "data";
+                if (NodeExists(document, conn.from_node_id)
+                    && NodeExists(document, conn.to_node_id))
+                {
+                    const auto source_category = ResolveEndpointPortCategory(
+                        document,
+                        action_catalog,
+                        conn.from_node_id,
+                        conn.from_port_id);
+                    if (!source_category.has_value())
+                    {
+                        return {
+                            ChangeErrorKind::InvalidOp,
+                            "connectGraphPorts source port not declared: node "
+                                + conn.from_node_id + " port "
+                                + conn.from_port_id,
+                            {},
+                            std::nullopt};
+                    }
+                    const auto target_category = ResolveEndpointPortCategory(
+                        document,
+                        action_catalog,
+                        conn.to_node_id,
+                        conn.to_port_id);
+                    if (!target_category.has_value())
+                    {
+                        return {
+                            ChangeErrorKind::InvalidOp,
+                            "connectGraphPorts target port not declared: node "
+                                + conn.to_node_id + " port " + conn.to_port_id,
+                            {},
+                            std::nullopt};
+                    }
+                    if (*source_category != *target_category)
+                    {
+                        return {
+                            ChangeErrorKind::InvalidOp,
+                            "connectGraphPorts endpoint categories mismatch: "
+                            "from node "
+                                + conn.from_node_id + " port "
+                                + conn.from_port_id + " (" + *source_category
+                                + ") vs to node " + conn.to_node_id + " port "
+                                + conn.to_port_id + " (" + *target_category
+                                + ")",
+                            {},
+                            std::nullopt};
+                    }
+                    edge_type =
+                        *source_category
+                                == std::string_view(PORT_CATEGORY_EXECUTION)
+                            ? "signal"
+                            : "data";
+                }
                 ConnectPortsChange c;
                 c.edge.edge_id =
                     "edge::" + conn.from_node_id + "::" + conn.from_port_id
@@ -1838,7 +1942,7 @@ namespace Contract
                 c.edge.source_port_id = conn.from_port_id;
                 c.edge.target_node_id = conn.to_node_id;
                 c.edge.target_port_id = conn.to_port_id;
-                c.edge.edge_type = "data";
+                c.edge.edge_type = std::move(edge_type);
                 gac.payload = c;
             }
             else if (change.kind == "disconnectGraphPorts")
