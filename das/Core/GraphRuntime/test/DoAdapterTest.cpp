@@ -100,6 +100,97 @@ TEST(DoAdapterTest, BuildInputPortMap_FloatValue)
     EXPECT_DOUBLE_EQ(val, 3.14);
 }
 
+// ===========================================================================
+// BuildInputPortMap — read-side numeric materialisation by target_type
+//
+// The producer writes its own declared kind into the frame; the consumer
+// materialises the frame value into the TARGET port's declared type at
+// read time (binding.target_type is the compile-time declared type).
+// ===========================================================================
+
+TEST(DoAdapterTest, BuildInputPortMap_IntegerSourceWidensToFloatTarget)
+{
+    for (const char* target_type : {"double", "float"})
+    {
+        SCOPED_TRACE(target_type);
+        PortFrame frame;
+        frame.Set(SOURCE_NODE, "out", PortValue(int64_t{10}));
+
+        Dto::PortBindingDto binding = MakeBinding(SOURCE_NODE, "out", "in");
+        binding.target_type = target_type;
+        auto bindings = {binding};
+
+        DAS::DasPtr<IDasPortMap> map;
+        ASSERT_EQ(BuildInputPortMap(frame, bindings, map.Put()), DAS_S_OK);
+
+        double                  val{};
+        const DasReadOnlyString key{"in"};
+        // 整数值经无损宽化写为目标键的浮点物化值（10 -> 10.0）。
+        ASSERT_EQ(map->GetFloat(key.Get(), &val), DAS_S_OK);
+        EXPECT_DOUBLE_EQ(val, 10.0);
+    }
+}
+
+TEST(DoAdapterTest, BuildInputPortMap_FloatSourceSkipsIntegerTarget)
+{
+    for (const char* target_type : {"int", "int64"})
+    {
+        SCOPED_TRACE(target_type);
+        PortFrame frame;
+        frame.Set(SOURCE_NODE, "out", PortValue(2.5));
+
+        Dto::PortBindingDto binding = MakeBinding(SOURCE_NODE, "out", "in");
+        binding.target_type = target_type;
+        auto bindings = {binding};
+
+        DAS::DasPtr<IDasPortMap> map;
+        // 拒绝物化不构成装配失败——目标键缺席，组件见缺键回落自身默认
+        // （与「源口无帧值」的缺口语径同构）。
+        ASSERT_EQ(BuildInputPortMap(frame, bindings, map.Put()), DAS_S_OK);
+
+        const DasReadOnlyString key{"in"};
+        bool                    has{};
+        ASSERT_EQ(map->Has(key.Get(), &has), DAS_S_OK);
+        EXPECT_FALSE(has);
+    }
+}
+
+TEST(DoAdapterTest, BuildInputPortMap_SameFamilyTargetKeepsVariantKind)
+{
+    {
+        PortFrame frame;
+        frame.Set(SOURCE_NODE, "out", PortValue(int64_t{7}));
+
+        Dto::PortBindingDto binding = MakeBinding(SOURCE_NODE, "out", "in");
+        binding.target_type = "int64";
+        auto bindings = {binding};
+
+        DAS::DasPtr<IDasPortMap> map;
+        ASSERT_EQ(BuildInputPortMap(frame, bindings, map.Put()), DAS_S_OK);
+
+        int64_t                 val{};
+        const DasReadOnlyString key{"in"};
+        ASSERT_EQ(map->GetInt(key.Get(), &val), DAS_S_OK);
+        EXPECT_EQ(val, 7);
+    }
+    {
+        PortFrame frame;
+        frame.Set(SOURCE_NODE, "out", PortValue(2.5));
+
+        Dto::PortBindingDto binding = MakeBinding(SOURCE_NODE, "out", "in");
+        binding.target_type = "double";
+        auto bindings = {binding};
+
+        DAS::DasPtr<IDasPortMap> map;
+        ASSERT_EQ(BuildInputPortMap(frame, bindings, map.Put()), DAS_S_OK);
+
+        double                  val{};
+        const DasReadOnlyString key{"in"};
+        ASSERT_EQ(map->GetFloat(key.Get(), &val), DAS_S_OK);
+        EXPECT_DOUBLE_EQ(val, 2.5);
+    }
+}
+
 TEST(DoAdapterTest, BuildInputPortMap_StringValue)
 {
     PortFrame frame;
