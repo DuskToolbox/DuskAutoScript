@@ -185,6 +185,40 @@ namespace
         return false;
     }
 
+    // LoopBodyDataLeak diagnostic kind serialised as a string of its enum
+    // int; true when at least one such diagnostic exists (optionally scoped
+    // to a node_id).
+    bool HasLoopBodyDataLeakDiagnostic(
+        const Dto::CompiledGraphPlanDto& plan,
+        const std::string&               node_id = {})
+    {
+        const std::string leak_kind = std::to_string(
+            static_cast<int>(CompileDiagnosticKind::LoopBodyDataLeak));
+        for (const auto& diag : plan.diagnostics)
+        {
+            auto obj = diag.as_object();
+            if (!obj.has_value())
+            {
+                continue;
+            }
+            auto kind = (*obj)[std::string_view("kind")].as_string();
+            if (!kind.has_value() || *kind != leak_kind)
+            {
+                continue;
+            }
+            if (node_id.empty())
+            {
+                return true;
+            }
+            auto node = (*obj)[std::string_view("node_id")].as_string();
+            if (node.has_value() && *node == node_id)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
     // ---------------------------------------------------------------
     // Stub TaskComponentFactoryManager for testing
     // Overrides EnumerateDefinitions to return injected test data
@@ -1224,6 +1258,186 @@ TEST(SignalAwareCompileTest, SignalCarriedDataBackEdgesPassUnbackedCheck)
     ASSERT_EQ(plan.loop_layers[0].data_back_edge_sources.size(), 1u);
     EXPECT_EQ(plan.loop_layers[0].data_back_edge_sources[0].node_id, "tail");
     EXPECT_EQ(plan.loop_layers[0].data_back_edge_sources[0].port_id, "out");
+}
+
+// ---------------------------------------------------------------------
+// 嵌套循环分层：外层 while（W1）内含内层 while（W2），内层体 A 数据回边
+// 喂自身。整图互相可达坍缩成一个大 SCC，必须按信号回边头拆成自然环两
+// 层：外层 members ⊇ 内层全员（含闭包生产者 P1）、tier 按嵌套深度、每
+// 条回边归属自己的层（内层数据回边归内层、外层 signal 回边归外层）。
+// ---------------------------------------------------------------------
+TEST(SignalAwareCompileTest, NestedWhileLoopsRecordTwoTiersAndOwnership)
+{
+    GraphCompiler compiler;
+
+    GraphDocumentDto doc;
+    for (const char* id : {"W1", "B", "W2", "A", "C1", "P1"})
+    {
+        doc.nodes.push_back(
+            MakeComponentNode(id, "00000000-0000-0000-0000-000000000001"));
+    }
+    // 顺序线：外层头→外层体→内层头→内层体；内层回边回内层头，内层退
+    // 出线连外层尾，外层回边回外层头（break 无作用域：连哪算哪）。
+    doc.edges.push_back(MakeSignalEdge("e_s1", "W1", "continue", "B", "in"));
+    doc.edges.push_back(MakeSignalEdge("e_s2", "B", "out", "W2", "in"));
+    doc.edges.push_back(MakeSignalEdge("e_s3", "W2", "continue", "A", "in"));
+    doc.edges.push_back(MakeSignalEdge("e_s4", "A", "done", "W2", "loop_in"));
+    doc.edges.push_back(MakeSignalEdge("e_s5", "A", "break", "C1", "in"));
+    doc.edges.push_back(MakeSignalEdge("e_s6", "C1", "done", "W1", "loop_in"));
+    // 内层体数据回边喂自身；内层→外层体数据边（两层均环内成员，非泄
+    // 漏形状）；无顺序线生产者 P1 的消费者在内层（闭包入最内层）。
+    doc.edges.push_back(MakeEdge("e_d1", "A", "out", "A", "state"));
+    doc.edges.push_back(MakeEdge("e_d2", "A", "out", "C1", "value"));
+    doc.edges.push_back(MakeEdge("e_d3", "P1", "out", "A", "extra"));
+
+    auto topo = compiler.ComputeTopology(doc);
+
+    ASSERT_EQ(topo.execution_order.size(), 6u);
+    ASSERT_EQ(topo.loop_layers.size(), 2u);
+    const Dto::LoopLayerDto* outer = nullptr;
+    const Dto::LoopLayerDto* inner = nullptr;
+    for (const auto& layer : topo.loop_layers)
+    {
+        if (layer.head_node_id == "W1")
+        {
+            outer = &layer;
+        }
+        else if (layer.head_node_id == "W2")
+        {
+            inner = &layer;
+        }
+    }
+    ASSERT_NE(outer, nullptr);
+    ASSERT_NE(inner, nullptr);
+
+    EXPECT_EQ(outer->tier, 0);
+    EXPECT_EQ(inner->tier, 1);
+
+    // 外层环成员含内环全员（含闭包成员）；内层成员为自身自然环 + 闭包。
+    std::unordered_set<std::string> outer_members(
+        outer->members.begin(),
+        outer->members.end());
+    ASSERT_EQ(outer->members.size(), 6u);
+    for (const auto& member : inner->members)
+    {
+        EXPECT_EQ(outer_members.count(member), 1u)
+            << "outer layer must contain every inner member: " << member;
+    }
+    ASSERT_EQ(inner->members.size(), 3u);
+    EXPECT_EQ(inner->members[0], "W2");
+    EXPECT_EQ(inner->members[1], "A");
+    EXPECT_EQ(inner->members[2], "P1");
+
+    // 回边归属：内层 signal 回边与数据回边归内层、外层 signal 回边归外层。
+    const Dto::BackEdgeDto* inner_back = nullptr;
+    const Dto::BackEdgeDto* outer_back = nullptr;
+    const Dto::BackEdgeDto* data_back = nullptr;
+    for (const auto& be : topo.back_edges)
+    {
+        if (be.edge_id == "e_s4")
+        {
+            inner_back = &be;
+        }
+        else if (be.edge_id == "e_s6")
+        {
+            outer_back = &be;
+        }
+        else if (be.edge_id == "e_d1")
+        {
+            data_back = &be;
+        }
+    }
+    ASSERT_NE(inner_back, nullptr);
+    ASSERT_NE(outer_back, nullptr);
+    ASSERT_NE(data_back, nullptr);
+    EXPECT_EQ(inner_back->edge_kind, "signal");
+    EXPECT_EQ(inner_back->loop_id, "loop::W2");
+    EXPECT_EQ(outer_back->edge_kind, "signal");
+    EXPECT_EQ(outer_back->loop_id, "loop::W1");
+    EXPECT_EQ(data_back->edge_kind, "data");
+    EXPECT_EQ(data_back->loop_id, "loop::W2");
+
+    // 数据回边源口只记在内层（外层自身的环承载通道为空——内层的源口归
+    // 内层清单，外层发火时按嵌套关系清内层清单）。
+    ASSERT_EQ(inner->data_back_edge_sources.size(), 1u);
+    EXPECT_EQ(inner->data_back_edge_sources[0].node_id, "A");
+    EXPECT_EQ(inner->data_back_edge_sources[0].port_id, "out");
+    EXPECT_TRUE(outer->data_back_edge_sources.empty());
+
+    // 内层→外层体的数据边不出泄漏提示；嵌套承载形态无承载拒绝。
+    EXPECT_TRUE(topo.diagnostics.empty());
+}
+
+// ---------------------------------------------------------------------
+// 闭包边界：无顺序线生产者的归属由消费者位置精确决定——P1 的消费者在
+// 环内 → 并入环成员每圈重算；P2 的消费者全在环外 → 不入任何层（启动
+// 时只算一次）。
+// ---------------------------------------------------------------------
+TEST(SignalAwareCompileTest, ProducerClosureJoinsOnlyItsConsumerLoop)
+{
+    GraphCompiler compiler;
+
+    GraphDocumentDto doc;
+    for (const char* id : {"W", "A", "C", "P1", "P2", "Q"})
+    {
+        doc.nodes.push_back(
+            MakeComponentNode(id, "00000000-0000-0000-0000-000000000001"));
+    }
+    doc.edges.push_back(MakeSignalEdge("e_s1", "W", "continue", "A", "in"));
+    doc.edges.push_back(MakeSignalEdge("e_s2", "A", "done", "C", "in"));
+    doc.edges.push_back(MakeSignalEdge("e_s3", "C", "done", "W", "loop_in"));
+    doc.edges.push_back(MakeEdge("e_d1", "P1", "out", "A", "extra"));
+    doc.edges.push_back(MakeEdge("e_d2", "P2", "out", "Q", "in"));
+
+    auto topo = compiler.ComputeTopology(doc);
+
+    ASSERT_EQ(topo.execution_order.size(), 6u);
+    ASSERT_EQ(topo.loop_layers.size(), 1u);
+    EXPECT_EQ(topo.loop_layers[0].head_node_id, "W");
+    EXPECT_EQ(topo.loop_layers[0].tier, 0);
+    ASSERT_EQ(topo.loop_layers[0].members.size(), 4u);
+    EXPECT_EQ(topo.loop_layers[0].members[0], "W");
+    EXPECT_EQ(topo.loop_layers[0].members[1], "A");
+    EXPECT_EQ(topo.loop_layers[0].members[2], "C");
+    EXPECT_EQ(topo.loop_layers[0].members[3], "P1");
+    // P2/Q 不属于任何层：P2 启动时只算一次，Q 不参与环重置。
+    for (const auto& layer : topo.loop_layers)
+    {
+        for (const auto& member : layer.members)
+        {
+            EXPECT_NE(member, "P2");
+            EXPECT_NE(member, "Q");
+        }
+    }
+}
+
+// ---------------------------------------------------------------------
+// 泄漏 lint：环成员的数据边直连环外节点（不属于任何层成员、非回边）→
+// LoopBodyDataLeak warning——该口在跳过的圈次不刷新，环外读者读到上一
+// 活跃圈的值。提示不阻断编译：execution_order 保持非空。
+// ---------------------------------------------------------------------
+TEST(SignalAwareCompileTest, LoopBodyDataLeakWarnsWithoutBlocking)
+{
+    GraphCompiler compiler;
+
+    GraphDocumentDto doc;
+    for (const char* id : {"W", "A", "C", "X"})
+    {
+        doc.nodes.push_back(
+            MakeComponentNode(id, "00000000-0000-0000-0000-000000000001"));
+    }
+    doc.edges.push_back(MakeSignalEdge("e_s1", "W", "continue", "A", "in"));
+    doc.edges.push_back(MakeSignalEdge("e_s2", "A", "done", "C", "in"));
+    doc.edges.push_back(MakeSignalEdge("e_s3", "C", "done", "W", "loop_in"));
+    doc.edges.push_back(MakeEdge("e_d1", "A", "out", "X", "in"));
+
+    auto plan = compiler.Compile(doc);
+
+    // warning 不阻断：全部节点仍进 execution_order，也无承载拒绝。
+    ASSERT_EQ(plan.execution_order.size(), 4u);
+    EXPECT_FALSE(HasUnbackedDataCycleDiagnostic(plan));
+    EXPECT_FALSE(HasCyclicEdgeGraphDiagnostic(plan));
+    EXPECT_TRUE(HasLoopBodyDataLeakDiagnostic(plan, "A"));
 }
 
 // 会话路径钉测：authoring 会话编译只绑 port_surface_provider（镜像
