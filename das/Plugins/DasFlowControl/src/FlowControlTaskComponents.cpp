@@ -450,6 +450,8 @@ namespace
     constexpr std::string_view MERGE_KIND = "das.flow.merge";
     constexpr std::string_view LAUNCH_KIND = "das.flow.launch";
     constexpr std::string_view COMPARE_DOUBLE_KIND = "das.flow.compare_double";
+    constexpr std::string_view COMPARE_INT64_KIND = "das.flow.compare_int64";
+    constexpr std::string_view COMPARE_STRING_KIND = "das.flow.compare_string";
     constexpr std::string_view ARITHMETIC_NUMBER_KIND =
         "das.flow.arithmetic_number";
     constexpr std::string_view CONSTANT_BOOL_KIND = "das.flow.constant_bool";
@@ -467,7 +469,7 @@ namespace
         std::chrono::milliseconds(30000);
     constexpr auto MAX_WAIT_WINDOW_TIMEOUT = std::chrono::milliseconds(120000);
 
-    constexpr std::array<ComponentSpec, 14> COMPONENTS{
+    constexpr std::array<ComponentSpec, 16> COMPONENTS{
         ComponentSpec{
             DasGuid{
                 0x68f10001,
@@ -550,12 +552,28 @@ namespace
             "das.flow.constant_string"},
         ComponentSpec{
             DasGuid{
+                0x68f1000d,
+                0x0000,
+                0x4000,
+                {0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0d}},
+            "68F1000D-0000-4000-8000-00000000000D",
+            "das.flow.compare_int64"},
+        ComponentSpec{
+            DasGuid{
                 0x68f1000e,
                 0x0000,
                 0x4000,
                 {0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0e}},
             "68F1000E-0000-4000-8000-00000000000E",
             "das.flow.compare_double"},
+        ComponentSpec{
+            DasGuid{
+                0x68f1000f,
+                0x0000,
+                0x4000,
+                {0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0f}},
+            "68F1000F-0000-4000-8000-00000000000F",
+            "das.flow.compare_string"},
         ComponentSpec{
             DasGuid{
                 0x68f10010,
@@ -1583,6 +1601,170 @@ DasResult DasFlowControlTaskComponent::DoCompareDouble(
     return DAS_S_OK;
 }
 
+DasResult DasFlowControlTaskComponent::DoCompareInt64(
+    PluginInterface::IDasStopToken*       stop_token,
+    ExportInterface::IDasReadOnlyPortMap* p_input_port_map,
+    ExportInterface::IDasPortMap**        pp_out_port_map)
+{
+    if (pp_out_port_map == nullptr)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+
+    // 纯数据原语：无子调用无等待，不轮询取消。
+    (void)stop_token;
+
+    std::string op = "<";
+    int64_t     left_default = 0;
+    int64_t     right_default = 0;
+    if (auto settings_obj = settings_.as_object())
+    {
+        if (const auto v =
+                (*settings_obj)[std::string_view("operator")].as_string())
+        {
+            op = std::string(*v);
+        }
+        if (const auto v = (*settings_obj)[std::string_view("left")].as_int())
+        {
+            left_default = *v;
+        }
+        if (const auto v = (*settings_obj)[std::string_view("right")].as_int())
+        {
+            right_default = *v;
+        }
+    }
+
+    // 悬空口回落面板默认值（缺省即语义）：连线则动态、不连则阈值填面板。
+    const int64_t left =
+        p_input_port_map ? GetPortInt(p_input_port_map, "left", left_default)
+                         : left_default;
+    const int64_t right =
+        p_input_port_map ? GetPortInt(p_input_port_map, "right", right_default)
+                         : right_default;
+
+    bool result = false;
+    if (op == "<")
+    {
+        result = left < right;
+    }
+    else if (op == "<=")
+    {
+        result = left <= right;
+    }
+    else if (op == ">")
+    {
+        result = left > right;
+    }
+    else if (op == ">=")
+    {
+        result = left >= right;
+    }
+    else if (op == "==")
+    {
+        result = left == right;
+    }
+    else if (op == "!=")
+    {
+        result = left != right;
+    }
+    else
+    {
+        // 运算符是行为不是口面类型：值域外显性失败，不静默选一个。
+        return Plugins::DasFlowControl::DAS_E_FLOW_OPERATOR_INVALID;
+    }
+
+    DAS::DasPtr<ExportInterface::IDasPortMap> output_map;
+    const DasResult hr = CreateIDasPortMap(output_map.Put());
+    if (DAS::IsFailed(hr))
+    {
+        return hr;
+    }
+    SetPortString(output_map.Get(), "status", "completed");
+    const DasReadOnlyString result_key{"result"};
+    output_map.Get()->SetBool(result_key.Get(), result);
+    EmitSignal(output_map.Get(), "signal_out");
+
+    *pp_out_port_map = output_map.Get();
+    output_map.Get()->AddRef();
+    return DAS_S_OK;
+}
+
+DasResult DasFlowControlTaskComponent::DoCompareString(
+    PluginInterface::IDasStopToken*       stop_token,
+    ExportInterface::IDasReadOnlyPortMap* p_input_port_map,
+    ExportInterface::IDasPortMap**        pp_out_port_map)
+{
+    if (pp_out_port_map == nullptr)
+    {
+        return DAS_E_INVALID_POINTER;
+    }
+
+    // 纯数据原语：无子调用无等待，不轮询取消。
+    (void)stop_token;
+
+    std::string op = "==";
+    std::string left_default;
+    std::string right_default;
+    if (auto settings_obj = settings_.as_object())
+    {
+        if (const auto v =
+                (*settings_obj)[std::string_view("operator")].as_string())
+        {
+            op = std::string(*v);
+        }
+        if (const auto v =
+                (*settings_obj)[std::string_view("left")].as_string())
+        {
+            left_default = std::string(*v);
+        }
+        if (const auto v =
+                (*settings_obj)[std::string_view("right")].as_string())
+        {
+            right_default = std::string(*v);
+        }
+    }
+
+    // 悬空口回落面板默认值（缺省即语义）：连线则动态、不连则阈值填面板。
+    const std::string left =
+        p_input_port_map ? GetPortString(p_input_port_map, "left", left_default)
+                         : left_default;
+    const std::string right =
+        p_input_port_map
+            ? GetPortString(p_input_port_map, "right", right_default)
+            : right_default;
+
+    // 字符串的运算符值域只含等值/不等值：序比较对字符串无业务定义，
+    // 越域显性失败（比较语义归比较节点，值域单源在 Do 内校验）。
+    bool result = false;
+    if (op == "==")
+    {
+        result = left == right;
+    }
+    else if (op == "!=")
+    {
+        result = left != right;
+    }
+    else
+    {
+        return Plugins::DasFlowControl::DAS_E_FLOW_OPERATOR_INVALID;
+    }
+
+    DAS::DasPtr<ExportInterface::IDasPortMap> output_map;
+    const DasResult hr = CreateIDasPortMap(output_map.Put());
+    if (DAS::IsFailed(hr))
+    {
+        return hr;
+    }
+    SetPortString(output_map.Get(), "status", "completed");
+    const DasReadOnlyString result_key{"result"};
+    output_map.Get()->SetBool(result_key.Get(), result);
+    EmitSignal(output_map.Get(), "signal_out");
+
+    *pp_out_port_map = output_map.Get();
+    output_map.Get()->AddRef();
+    return DAS_S_OK;
+}
+
 DasResult DasFlowControlTaskComponent::DoArithmeticNumber(
     PluginInterface::IDasStopToken*       stop_token,
     ExportInterface::IDasReadOnlyPortMap* p_input_port_map,
@@ -2239,6 +2421,16 @@ DasResult DasFlowControlTaskComponent::Do(
     if (kind_ == COMPARE_DOUBLE_KIND)
     {
         return DoCompareDouble(stop_token, p_input_port_map, pp_out_port_map);
+    }
+
+    if (kind_ == COMPARE_INT64_KIND)
+    {
+        return DoCompareInt64(stop_token, p_input_port_map, pp_out_port_map);
+    }
+
+    if (kind_ == COMPARE_STRING_KIND)
+    {
+        return DoCompareString(stop_token, p_input_port_map, pp_out_port_map);
     }
 
     if (kind_ == ARITHMETIC_NUMBER_KIND)

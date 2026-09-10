@@ -157,6 +157,25 @@ private:
         ExportInterface::IDasReadOnlyPortMap* p_input_port_map,
         ExportInterface::IDasPortMap**        pp_out_port_map);
 
+    // Int64 comparison: reads left/right (falling back to config panel
+    // defaults on unconnected ports), applies the configured operator and
+    // writes the bool `result`. Operator outside < <= > >= == != is a
+    // fail-closed error (never silently coerced).
+    DasResult DoCompareInt64(
+        PluginInterface::IDasStopToken*       stop_token,
+        ExportInterface::IDasReadOnlyPortMap* p_input_port_map,
+        ExportInterface::IDasPortMap**        pp_out_port_map);
+
+    // String comparison: reads left/right (falling back to config panel
+    // defaults on unconnected ports) and writes the bool `result`. The
+    // operator vocabulary is closed at equality only (== !=) — ordering
+    // operators have no defined string semantics here and return the
+    // fail-closed operator error instead of silently coercing.
+    DasResult DoCompareString(
+        PluginInterface::IDasStopToken*       stop_token,
+        ExportInterface::IDasReadOnlyPortMap* p_input_port_map,
+        ExportInterface::IDasPortMap**        pp_out_port_map);
+
     // Double arithmetic: reads left/right (falling back to config panel
     // defaults on unconnected ports), applies the configured operator and
     // writes `result`. Operator outside + - * / is a fail-closed error;

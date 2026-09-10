@@ -330,6 +330,53 @@
           "diagnostics": []
         }
       },
+      "68F1000D-0000-4000-8000-00000000000D": {
+        "factoryGuid": "2C6DFCFA-F8B6-4272-8F28-1D31738BD0D4",
+        "definition": {
+          "schemaVersion": 1,
+          "kind": "das.flow.compare_int64",
+          "label": { "en": "Compare (Int64)", "zh-cn": "比较（整数）" },
+          "componentGuid": "68F1000D-0000-4000-8000-00000000000D",
+          "inputs": [
+            {
+              "id": "left",
+              "type": "int64",
+              "label": { "en": "Left", "zh-cn": "左值" }
+            },
+            {
+              "id": "right",
+              "type": "int64",
+              "label": { "en": "Right", "zh-cn": "右值" }
+            }
+          ],
+          "outputs": [
+            {
+              "id": "result",
+              "type": "bool",
+              "label": { "en": "Result", "zh-cn": "结果" }
+            }
+          ],
+          "config": {
+            "operator": {
+              "type": "string",
+              "label": { "en": "Operator", "zh-cn": "运算符" },
+              "default": "<",
+              "options": ["<", "<=", ">", ">=", "==", "!="]
+            },
+            "left": {
+              "type": "int64",
+              "label": { "en": "Left Default", "zh-cn": "左值默认" },
+              "default": 0
+            },
+            "right": {
+              "type": "int64",
+              "label": { "en": "Right Default", "zh-cn": "右值默认" },
+              "default": 0
+            }
+          },
+          "diagnostics": []
+        }
+      },
       "68F1000E-0000-4000-8000-00000000000E": {
         "factoryGuid": "2C6DFCFA-F8B6-4272-8F28-1D31738BD0D4",
         "definition": {
@@ -372,6 +419,53 @@
               "type": "double",
               "label": { "en": "Right Default", "zh-cn": "右值默认" },
               "default": 3
+            }
+          },
+          "diagnostics": []
+        }
+      },
+      "68F1000F-0000-4000-8000-00000000000F": {
+        "factoryGuid": "2C6DFCFA-F8B6-4272-8F28-1D31738BD0D4",
+        "definition": {
+          "schemaVersion": 1,
+          "kind": "das.flow.compare_string",
+          "label": { "en": "Compare (String)", "zh-cn": "比较（字符串）" },
+          "componentGuid": "68F1000F-0000-4000-8000-00000000000F",
+          "inputs": [
+            {
+              "id": "left",
+              "type": "string",
+              "label": { "en": "Left", "zh-cn": "左值" }
+            },
+            {
+              "id": "right",
+              "type": "string",
+              "label": { "en": "Right", "zh-cn": "右值" }
+            }
+          ],
+          "outputs": [
+            {
+              "id": "result",
+              "type": "bool",
+              "label": { "en": "Result", "zh-cn": "结果" }
+            }
+          ],
+          "config": {
+            "operator": {
+              "type": "string",
+              "label": { "en": "Operator", "zh-cn": "运算符" },
+              "default": "==",
+              "options": ["==", "!="]
+            },
+            "left": {
+              "type": "string",
+              "label": { "en": "Left Default", "zh-cn": "左值默认" },
+              "default": ""
+            },
+            "right": {
+              "type": "string",
+              "label": { "en": "Right Default", "zh-cn": "右值默认" },
+              "default": ""
             }
           },
           "diagnostics": []
